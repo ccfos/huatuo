@@ -61,7 +61,7 @@ All events provide default values and are operational without any configuration.
 | `softlockup` | kprobe | CPU unable to schedule for extended time (~1 second) | Soft lockup, response anomalies |
 | `hungtask` | raw tracepoint; tracepoint fallback (host only) | D-state process task hang | Transient mass D-state processes, IO blocking |
 | `oom` | kprobe | OOM Killer triggered | Container/host memory exhaustion |
-| `memory_reclaim_events` | kprobe | Container process direct reclaim time > threshold (default 900ms) | Business stalls caused by memory pressure |
+| `memory_reclaim_events` | kprobe | Direct reclaim time > threshold (default 900ms); known containers emit container events; unresolved events use the host stream | Business stalls caused by memory pressure |
 | `ras` | tracepoint | CPU/MEM/PCIe hardware errors | Hardware fault detection |
 | `dropwatch` | tracepoint | Kernel network stack packet drop | Business jitter caused by protocol stack drops |
 | `tcp_retransmit` | tracepoint; optional kprobe for TLP | TCP retransmission or Tail Loss Probe | TCP loss, reordering, congestion, and latency diagnosis |
@@ -372,7 +372,31 @@ All event records include the following common fields:
 
 ### 7. memory_reclaim_events
 
-**Description** Detects direct memory reclaim events for container processes. Triggered when the direct reclaim time of the same process within 1 second exceeds the configured threshold (default 900ms). Records the reclaim duration, process, and container information. **Note: this observer only records events for container processes; host process events are filtered out.**
+**Description** Detects direct memory reclaim events for host and container processes. Triggered when the direct reclaim time of the same process within 1 second exceeds the configured threshold (default 900ms). Records the reclaim duration, process, and container information. Events without a resolved container are retained in the host stream.
+
+Slow direct-reclaim events without a resolved container are retained in the
+host event stream whenever `memory_reclaim_events` is enabled. Existing `try_to_free_pages` entry/return probes, duration threshold,
+event name (`memory_reclaim`) and container output are unchanged.
+
+An empty container ID does **not** prove that the reclaiming process is a host
+service: bare-metal tasks and unresolved container tasks are both retained with
+`container_attribution="unresolved"`. Known containers still produce a single
+container event, not a duplicate host event. This is not kswapd tracing or an
+aggregate reclaim counter. Container discovery failures cannot suppress the
+host stream. Attribution uses the existing refresh policy: cache hits have a five-second TTL, while misses retry at most
+once per second. New containers may initially be unresolved until discovery
+and a cache refresh succeed; repeated host events cannot force a refresh storm.
+
+No new BPF probes or maps. Additional cost is event serialization/storage for
+previously discarded events; keep the existing duration threshold.
+
+Validation on the 5.10 test VM: the current-source BPF object loads and both
+existing probes attach. A labeled fixture verifies host-stream serialization
+and SQLite persistence. These are separate checks, not a real reclaim event
+delivery test. Global direct-reclaim pressure has not been generated: imposing
+a limit on one cgroup does not equivalently exercise `try_to_free_pages`.
+Run the opt-in attach test with `HUATUO_TRIGGER_BPF_DIR`; the persistence test
+requires only the `integration` build tag.
 
 **Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
 
@@ -395,6 +419,7 @@ All event records include the following common fields:
 - **pid**: PID of the triggering process
 - **tid**: TID of the triggering thread
 - **reclaim_duration_ns**: Direct reclaim duration (nanoseconds)
+- **container_attribution**: Optional; `unresolved` for host-stream events without a resolved container
 
 ### 8. ras
 
