@@ -15,6 +15,7 @@
 package autotracing
 
 import (
+	"errors"
 	"slices"
 	"sync/atomic"
 
@@ -71,10 +72,11 @@ type Config struct {
 	}
 
 	Dload struct {
-		ThresholdLoad   int64 `default:"5"`
-		Interval        int64 `default:"10"`
-		IntervalTracing int64 `default:"1800"`
-		EnableDebug     bool  `default:"false"`
+		HostThresholdLoad int64 `default:"5"`
+		ThresholdLoad     int64 `default:"5"`
+		Interval          int64 `default:"10"`
+		IntervalTracing   int64 `default:"1800"`
+		EnableDebug       bool  `default:"false"`
 	}
 
 	IOTracing struct {
@@ -107,6 +109,18 @@ func Set(c *Config) {
 
 func configSnapshot() *Config {
 	return currentConfig.Load()
+}
+
+// Validate rejects invalid host tracing thresholds before publication.
+func (c *Config) Validate() error {
+	return c.validateDloadHostThreshold()
+}
+
+func (c *Config) validateDloadHostThreshold() error {
+	if c.Dload.HostThresholdLoad < 0 {
+		return errors.New("dload host threshold must be non-negative")
+	}
+	return nil
 }
 
 // Clone returns a deep copy suitable for immutable publication.
