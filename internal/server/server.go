@@ -172,7 +172,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 
 	shutdownErr := execution.shutdown(ctx)
-	serveResult := execution.wait(ctx)
+	if shutdownErr != nil {
+		shutdownErr = errors.Join(shutdownErr, execution.httpServer.Close())
+	}
+	serveResult := execution.wait(context.Background())
 
 	s.mu.Lock()
 	s.activeExecution = nil
