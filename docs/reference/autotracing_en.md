@@ -374,3 +374,63 @@ test additionally requires `HUATUO_DLOAD_WORKER_PID`. Use only a disposable VM;
 the fixture must exit on its own and the test never creates an unbounded D task.
 
 Sampling follows `AutoTracing.Dload.Interval` (default 10 seconds), not `MetricCollector.Loadavg.Interval`.
+
+### add host user and total CPU burst triggers
+
+| Parameter | Default | Description |
+| --------- | ------- | ----------- |
+| `cpusys.user_threshold` | `0` (%) | User utilization threshold; 0 disables the user trigger |
+| `cpusys.delta_user_threshold` | `0` (percentage points) | User utilization increase threshold |
+| `cpusys.usage_threshold` | `0` (%) | Total executing CPU utilization threshold; 0 disables the total trigger |
+| `cpusys.delta_usage_threshold` | `0` (percentage points) | Total executing CPU utilization increase threshold |
+| `cpusys` | Host | Default: sys > 45% and delta_sys > 20%. Optional user/total triggers require both utilization and its increase to exceed their configured thresholds. | Host CPU spikes and hotspots |
+| Trigger | Numerator |
+| Existing system | `system` |
+| Total executing | `user + nice + system + irq + softirq` |
+
+Five event types are supported: `cpusys` (host CPU sys spike, user/total CPU spikes), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (host memory bursts).
+Host dload runs whenever its tracer is enabled and prerequisites are met. The additional cpusys user/total triggers also require a positive `UserThreshold`/`UsageThreshold`, respectively; both default to disabled. Table parameter names are shorthand; use the TOML keys in the [configuration reference](../configuration/huatuo-bamai-configuration_en.md).
+
+`cpusys` can additionally trigger on host user CPU or total executing CPU.
+It reuses the existing `/proc/stat` sampling loop, the CPU profiling tool
+selected by `AutoTracing.CPUSys.Tool` (`perf` by default, or `profiler`),
+and the `cpusys` storage record. No new tracer, probe or periodic reader is added.
+
+```toml
+[AutoTracing.CPUSys]
+UserThreshold = 75
+DeltaUserThreshold = 45
+UsageThreshold = 90
+DeltaUsageThreshold = 55
+```
+
+Existing system thresholds, sampling interval, capture duration and cooldown
+remain unchanged. The four user/total thresholds default to 0; a positive
+`UserThreshold` or `UsageThreshold` enables the corresponding trigger, as in
+the example above. Omitted settings preserve system-only triggering.
+Each trigger requires both the percentage and its increase from the
+previous interval to **exceed** their thresholds. This detects bursts, not every
+case of sustained high usage. The first percentage sample establishes a baseline.
+
+All percentages use the delta of aggregate CPU time as their denominator:
+
+
+The denominator sums the first eight `/proc/stat` CPU counters. Guest time is
+already included in user/nice and is not counted twice. Idle, iowait and steal
+are excluded from total executing time: local on-CPU profiling cannot explain
+waiting or time stolen by a hypervisor. This is whole-machine utilization,
+including container work, not a container's quota-normalized utilization.
+
+All three triggers share one capture and cooldown. Simultaneous crossings do
+not launch repeated captures. `container_id` stays empty. Existing system JSON fields
+are preserved. Records also include `user_percent*`, `total_percent*` and
+`trigger_reasons` (`user`, `total`, `system`); zero-valued additional fields are omitted.
+
+Verification: existing unit tests check CPU parsing and system-trigger behavior.
+The opt-in `integration/test_observability.sh` CPU scenario starts the standard
+daemon, waits for a sampled baseline, releases a bounded CPU workload, and checks
+user/total trigger reasons, real perf output, and local persistence. Set
+`HUATUO_CPU_LIVE_DIR` to a directory containing this build's `perf` executable. The daemon's normal
+BPF directory must contain `perf.o`. Run only in a disposable VM with BPF/perf privileges. Dedicated
+regression coverage for independent user/total crossings and their boundaries
+remains pending.

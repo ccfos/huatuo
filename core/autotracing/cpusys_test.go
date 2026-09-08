@@ -85,12 +85,12 @@ func TestParseCPUUsage(t *testing.T) {
 		{
 			name:     "all counters",
 			input:    "cpu 100 10 30 860 5 2 3 1 50 4\n",
-			expected: cpuUsage{system: 30, total: 1011},
+			expected: cpuUsage{system: 30, total: 1011, user: 110, busy: 145},
 		},
 		{
 			name:     "minimum counters",
 			input:    "cpu 1 2 3 4\n",
-			expected: cpuUsage{system: 3, total: 10},
+			expected: cpuUsage{system: 3, total: 10, user: 3, busy: 6},
 		},
 		{
 			name:      "empty input",
@@ -167,7 +167,7 @@ func TestReadCPUUsageUsesProcfsPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readCPUUsage() error = %v", err)
 	}
-	expected := cpuUsage{system: 30, total: 1000}
+	expected := cpuUsage{system: 30, total: 1000, user: 110, busy: 140}
 	if actual != expected {
 		t.Fatalf("readCPUUsage() = %+v, want %+v", actual, expected)
 	}
@@ -319,7 +319,7 @@ func TestCPUSysTracingShouldTrace(t *testing.T) {
 				threshold:        cpuSysThreshold{usage: 45, delta: 20},
 				lastTraceAt:      tt.lastTraceAt,
 			}
-			if actual := tracer.shouldTrace(state, sampledAt); actual != tt.expected {
+			if actual := tracer.shouldTrace(&state, sampledAt); actual != tt.expected {
 				t.Fatalf("shouldTrace() = %t, want %t", actual, tt.expected)
 			}
 		})

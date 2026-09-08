@@ -1361,3 +1361,26 @@ huatuo-bamai --region <region> [选项]
   超过阈值触发主机堆栈采集，主机独立维护冷却状态，
   冷却时长使用 `IntervalTracing`。复用 `Interval`（默认 10 秒）采样，
   不是 `/proc/loadavg` 的 R+D 负载，也不受 `MetricCollector.Loadavg.Interval` 控制。
+
+### add host user and total CPU burst triggers
+
+| 可选配置项 | 默认值 | 范围与行为 |
+| --- | --- | --- |
+| `UserThreshold` | `0`（%） | 0 关闭 user 触发，正值启用；用户态使用率须超过此值。 |
+| `DeltaUserThreshold` | `0`（百分点） | 用户态使用率相较上一采样区间的增幅也须超过此值。 |
+| `UsageThreshold` | `0`（%） | 0 关闭 total 触发，正值启用；实际执行 CPU 使用率须超过此值。 |
+| `DeltaUsageThreshold` | `0`（百分点） | 实际执行 CPU 使用率相较上一采样区间的增幅也须超过此值。 |
+
+#### 7.2 CPUSys 自动追踪 — 宿主机 CPU 突增
+# Both thresholds of any trigger are exceeded (system, user or total).
+	# UserThreshold = 0
+	# DeltaUserThreshold = 0
+	# UsageThreshold = 0
+	# DeltaUsageThreshold = 0
+
+**触发逻辑与前提**：须启用 `cpusys`、可读取主机 `/proc/stat`，且现有整机 perf
+采集工具及其所需权限可用。每种触发条件都要求使用率与正向增幅同时超过对应阈值，
+任意一种命中即可触发。三种条件共用采集流程与 `IntervalTracing` 冷却时间，
+同时命中不会重复采集。使用率按整机 CPU 时间计算，包含容器工作量，不按容器配额归一化。
+未配置 user/total 时，保持原有仅 system 触发的行为。四个新增阈值均须在 [0, 100] 范围内。
+显式启用示例（使用率/增幅）：user 75/45，total 90/55。
