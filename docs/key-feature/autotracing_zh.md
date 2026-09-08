@@ -19,7 +19,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 采集内容包括 eBPF 火焰图（`perf` 工具系统级或容器级 CPU 调用栈采样）、D 状态进程内核调用栈、磁盘 IO 调用栈、进程内存使用排行等。为避免持续触发导致的数据冗余，各事件均内置冷却策略（默认 30 分钟），确保在事件风暴期间仅保留关键快照。
 
-当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器及物理机 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（物理机及容器内存突增）。
+当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增，user/总 CPU 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器及物理机 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（物理机及容器内存突增）。
 
 ## 🎯 场景
 
@@ -50,6 +50,10 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 | `cpuidle.run_tracing_tool_timeout` | `10`（秒） | perf 火焰图采集超时 |
 | `cpusys.sys_threshold` | `45`（%） | 物理机 CPU sys 占用率触发阈值 |
 | `cpusys.delta_sys_threshold` | `20`（%） | 物理机 CPU sys 占用率增量触发阈值 |
+| `cpusys.user_threshold` | `0`（%） | user 占用率阈值；0 关闭 user 触发 |
+| `cpusys.delta_user_threshold` | `0`（百分点） | user 占用率增量阈值 |
+| `cpusys.usage_threshold` | `0`（%） | 总执行 CPU 占用率阈值；0 关闭 total 触发 |
+| `cpusys.delta_usage_threshold` | `0`（百分点） | 总执行 CPU 占用率增量阈值 |
 | `cpusys.interval` | `10`（秒） | 检测间隔 |
 | `cpusys.interval_tracing` | `1800`（秒） | 全局触发冷却时间 |
 | `cpusys.run_tracing_tool_timeout` | `10`（秒） | perf 火焰图采集超时 |
@@ -73,9 +77,11 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 ### 事件列表
 
+主机 dload 与容器 memburst 在对应 tracer 启用且满足依赖时运行。cpusys 新增的 user/总 CPU 触发还分别要求 `UserThreshold`/`UsageThreshold` 为正值，默认均关闭。表中参数名为简写，实际 TOML 配置键见[配置文档](../configuration/huatuo-bamai-configuration_zh.md)。
+
 | 事件名称（tracer_name） | 观测对象 | 触发条件 | 典型场景 |
 | ----------------------- | -------- | -------- | -------- |
-| `cpusys` | 物理机 | sys > 45% 且 delta_sys > 20% | 内核态 CPU 突增、系统调用热点 |
+| `cpusys` | 物理机 | 默认：sys > 45% 且 delta_sys > 20%。可选 user/total 触发要求占用率及其增量同时超过各自配置阈值。 | 物理机 CPU 突增、热点分析 |
 | `cpuidle` | 容器 | (user>75% 且 delta_user>45%) 或 (sys>45% 且 delta_sys>20%) 或 (total>90% 且 delta_total>55%) | 容器 CPU 使用率突增、热点函数分析 |
 | `dload` | 容器；整机 | D 状态任务数的一分钟 EMA > 5，阈值与冷却独立 | D 状态进程堆积、IO 阻塞 |
 | `iotracing` | 物理机 | 磁盘 IO 指标连续两次超阈值 | 磁盘 IO 打满、IO 等待高延迟 |
@@ -102,6 +108,30 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 ### 1. cpusys
 
 **功能描述** 周期性读取 `/proc/stat`，计算物理机 CPU sys 占用率及相邻两次采样的增量。当 sys 占用率超过阈值（默认 45%）且增量超过阈值（默认 20%）时，触发系统级 perf 采样，生成全机 CPU 火焰图数据。全局默认冷却 30 分钟，避免重复触发。
+
+启用 `cpusys` 后，可通过下列配置额外检测主机 user 和总执行 CPU 突增，复用原有 `/proc/stat` 采样、整机 perf 抓取、`cpusys` 存储格式与共享冷却，不增加 tracer、探针或周期读取。四个新增阈值默认均为 0；`UserThreshold` 或 `UsageThreshold` 为正值时才启用对应触发，未配置时保持原有仅 system 触发的行为。
+
+```toml
+[AutoTracing.CPUSys]
+UserThreshold = 75
+DeltaUserThreshold = 45
+UsageThreshold = 90
+DeltaUsageThreshold = 55
+```
+
+每组都要求占用率及相对上次采样的增量**同时超过**对应阈值；检测的是突增，不是所有持续高使用率。首个使用率样本只建立基线，原 system 阈值、采样间隔、抓取时长与冷却保持不变。
+
+| 触发类型 | CPU 时间分子 |
+| --- | --- |
+| 原有 system | `system` |
+| user | `user + nice` |
+| 总执行 CPU | `user + nice + system + irq + softirq` |
+
+分母为 `/proc/stat` 前八个 CPU 时间计数器之和的增量；guest 已包含在 user/nice 中，不重复累计。总执行时间排除 idle、iowait 和 steal，因为本机 on-CPU 抓取无法解释等待或被虚拟机管理器占用的时间。口径是包含容器工作的整机占用率，不是按容器配额归一化的使用率。
+
+三组同时越线只抓取一次，共享冷却。`container_id` 仍为空，保留原 system JSON 字段，新增 `user_percent*`、`total_percent*` 和 `trigger_reasons`（`user`、`total`、`system`），零值新增字段省略。
+
+验证范围：单元测试覆盖计数器计算、回退、默认值、触发组合、阈值边界及冷却，LocalFile 集成测试覆盖载荷持久化。`TestCPUHostLiveTrigger` 仅在设置 `HUATUO_CPU_LIVE_DIR` 时运行有界单进程负载，检查真实采样 → perf → LocalFile 本地文件路径。该目录需包含本次构建的 `perf` 可执行文件和 `perf.o`，仅在具备 BPF/perf 权限的测试虚拟机运行。
 
 **数据存储** 事件数据自动存储至 Elasticsearch 或物理机磁盘文件。
 
