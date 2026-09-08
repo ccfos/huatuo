@@ -820,12 +820,18 @@ func (m *Manager) markJobRunning(ctx context.Context, job *Job) error {
 		m.mu.Unlock()
 		return nil
 	}
+	previousStatus := job.Status
+	previousUpdatedAt := job.UpdatedAt
 	job.Status = JobStatusRunning
 	job.UpdatedAt = time.Now()
 	snapshot := cloneJob(job)
 	m.mu.Unlock()
 	if err := m.storage.Save(ctx, snapshot); err != nil {
 		m.persistenceFailures.Add(1)
+		m.mu.Lock()
+		job.Status = previousStatus
+		job.UpdatedAt = previousUpdatedAt
+		m.mu.Unlock()
 		return errors.Join(ErrPersistence, fmt.Errorf("persist running job %s: %w", job.ID, err))
 	}
 	return nil

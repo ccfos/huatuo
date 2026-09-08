@@ -1238,3 +1238,27 @@ func TestManagerListDoesNotMutateFilter(t *testing.T) {
 		t.Errorf("List() filter=%+v, want unchanged %+v", *filter, want)
 	}
 }
+
+// TestManagerMarkJobRunningRollsBackOnPersistenceFailure verifies that a
+// failed running-state save leaves the in-memory job pending so the monitor
+// retries the transition on a later poll.
+func TestManagerMarkJobRunningRollsBackOnPersistenceFailure(t *testing.T) {
+	storeErr := errors.New("save failed")
+	storage := &stubJobStore{saveErr: storeErr}
+	manager := newTestManager(storage, &stubNodeAgent{})
+	job := &Job{
+		Type:   "oncpu",
+		ID:     "job-pending-2026",
+		Status: JobStatusPending,
+	}
+	manager.jobs[job.ID] = job
+
+	err := manager.markJobRunning(t.Context(), job)
+	if !errors.Is(err, ErrPersistence) {
+		t.Fatalf("markJobRunning() error=%v, want ErrPersistence", err)
+	}
+	if job.Status != JobStatusPending {
+		t.Fatalf("markJobRunning() job.Status=%s, want %s after failed save",
+			job.Status, JobStatusPending)
+	}
+}
