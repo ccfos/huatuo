@@ -500,7 +500,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
 **Trigger Logic**: Tracing is triggered when both SysThreshold and DeltaSysThreshold are satisfied.
 
-#### 7.3 Dload AutoTracing — D-State Task Profiling for Containers
+#### 7.3 Dload AutoTracing — Container and Host D-State Profiling
 
 ```bash
 # dload
@@ -521,14 +521,28 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 # performance impact.
 # Default: 1800s
 #
-# Cgroup v2 dload uses a BPF task iterator that walks all
+# Cgroup v2 and host dload use a shared BPF task iterator that walks all
 # host tasks once per sample. Kubernetes deployments require hostPID: true.
 #
 [AutoTracing.Dload]
+	# HostThresholdLoad = 5
 	# ThresholdLoad = 5
 	# Interval = 10
 	# IntervalTracing = 1800
 ```
+
+- **Host trigger**: Runs independently and includes container threads; it is
+  not a host-services-only count.
+  Requires `dload` to be enabled, readable kernel BTF, BPF `task` iterator support,
+  BPF privileges and host PID visibility (`hostPID: true` in Kubernetes).
+  Works on cgroup v1 and v2. Unsupported iterator kernels cannot provide
+  the host trigger; the existing v1 container netlink path remains available.
+
+- **HostThresholdLoad**: Host D-state task count's one-minute EMA threshold.
+  Default: `5`. A value above the threshold triggers
+  host stack capture, subject to a separate host cooldown using `IntervalTracing`.
+  Reuses `Interval` (default 10 seconds); it is not the R+D `/proc/loadavg` value
+  and is independent of `MetricCollector.Loadavg.Interval`.
 
 - **ThresholdLoad**: One-minute EMA threshold for the number of uninterruptible
   (D-state) tasks in a container.
