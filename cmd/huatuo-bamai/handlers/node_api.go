@@ -46,46 +46,87 @@ func (h *NodeAPIHandler) StartOperation(
 	ctx context.Context,
 	request nodeapi.StartOperationRequestObject,
 ) (nodeapi.StartOperationResponseObject, error) {
-	switch request.Body.Kind {
-	case nodeapi.OperationKindProfiling:
-		spec, err := request.Body.Spec.AsProfilingOperationSpec()
-		if err != nil {
-			return nil, nodeAPIError(fmt.Errorf("decode profiling operation spec: %w", err))
-		}
-		profilingRequest, err := profilingOperationRequest(request.Body, spec)
-		if err != nil {
-			return nil, nodeAPIError(err)
-		}
-		snapshot, created, err := h.profiling.Start(ctx, &profilingRequest)
-		if err != nil {
-			return nil, nodeAPIError(fmt.Errorf("start profiling operation: %w", err))
-		}
-		payload := operationResponse(snapshot)
-		if created {
-			return nodeapi.StartOperation202JSONResponse(payload), nil
-		}
-		return nodeapi.StartOperation200JSONResponse(payload), nil
-	case nodeapi.OperationKindTracing:
-		spec, err := request.Body.Spec.AsTracingOperationSpec()
-		if err != nil {
-			return nil, nodeAPIError(fmt.Errorf("decode tracing operation spec: %w", err))
-		}
-		tracingRequest, err := tracingOperationRequest(request.Body, spec)
-		if err != nil {
-			return nil, nodeAPIError(err)
-		}
-		snapshot, created, err := h.tracing.Start(ctx, tracingRequest)
-		if err != nil {
-			return nil, nodeAPIError(fmt.Errorf("start tracing operation: %w", err))
-		}
-		payload := operationResponse(snapshot)
-		if created {
-			return nodeapi.StartOperation202JSONResponse(payload), nil
-		}
-		return nodeapi.StartOperation200JSONResponse(payload), nil
-	default:
-		return nil, nodeAPIError(fmt.Errorf("unsupported operation kind %q", request.Body.Kind))
+	kind := request.Body.Kind
+	if kind != nodeapi.OperationKindProfiling && kind != nodeapi.OperationKindTracing {
+		return nil, nodeAPIError(fmt.Errorf("unsupported operation kind %q", kind))
 	}
+	duration, err := secondsDuration(request.Body.DurationSeconds)
+	if err != nil {
+		return nil, nodeAPIError(fmt.Errorf("%w: %w", operation.ErrInvalidRequest, err))
+	}
+
+	var (
+		snapshot *operation.Operation
+		created  bool
+	)
+	switch kind {
+	case nodeapi.OperationKindProfiling:
+		snapshot, created, err = h.startProfilingOperation(ctx, request.Body, duration)
+	case nodeapi.OperationKindTracing:
+		snapshot, created, err = h.startTracingOperation(ctx, request.Body, duration)
+	}
+	if err != nil {
+		return nil, nodeAPIError(err)
+	}
+
+	payload := operationResponse(snapshot)
+	if created {
+		return nodeapi.StartOperation202JSONResponse(payload), nil
+	}
+	return nodeapi.StartOperation200JSONResponse(payload), nil
+}
+
+func (h *NodeAPIHandler) startProfilingOperation(
+	ctx context.Context,
+	body *nodeapi.StartOperationJSONRequestBody,
+	duration time.Duration,
+) (*operation.Operation, bool, error) {
+	spec, err := body.Spec.AsProfilingOperationSpec()
+	if err != nil {
+		return nil, false, fmt.Errorf("decode profiling operation spec: %w", err)
+	}
+	request := nodeprofiling.StartRequest{
+		RequestID:   body.RequestID,
+		Duration:    duration,
+		Scope:       observation.Scope(body.Scope),
+		ContainerID: optionalString(body.ContainerID),
+		Spec: profilingdomain.Spec{
+			Type:            profilingdomain.Type(spec.Type),
+			Language:        profilingdomain.Language(spec.Language),
+			Mode:            profilingdomain.Mode(spec.Mode),
+			BinaryMatchPath: optionalString(spec.BinaryMatchPath),
+		},
+	}
+	snapshot, created, err := h.profiling.Start(ctx, &request)
+	if err != nil {
+		return nil, false, fmt.Errorf("start profiling operation: %w", err)
+	}
+	return snapshot, created, nil
+}
+
+func (h *NodeAPIHandler) startTracingOperation(
+	ctx context.Context,
+	body *nodeapi.StartOperationJSONRequestBody,
+	duration time.Duration,
+) (*operation.Operation, bool, error) {
+	spec, err := body.Spec.AsTracingOperationSpec()
+	if err != nil {
+		return nil, false, fmt.Errorf("decode tracing operation spec: %w", err)
+	}
+	request := nodetracing.StartRequest{
+		RequestID:   body.RequestID,
+		Duration:    duration,
+		Scope:       observation.Scope(body.Scope),
+		ContainerID: optionalString(body.ContainerID),
+		Spec: tracingdomain.Spec{
+			Type: tracingdomain.Type(spec.Type),
+		},
+	}
+	snapshot, created, err := h.tracing.Start(ctx, &request)
+	if err != nil {
+		return nil, false, fmt.Errorf("start tracing operation: %w", err)
+	}
+	return snapshot, created, nil
 }
 
 // GetOperation returns a retained Node Operation of any supported kind.
@@ -173,47 +214,6 @@ func (h *NodeAPIHandler) GetOpenAPI(
 	nodeapi.GetOpenAPIRequestObject,
 ) (nodeapi.GetOpenAPIResponseObject, error) {
 	return h.openAPI, nil
-}
-
-func profilingOperationRequest(
-	body *nodeapi.StartOperationJSONRequestBody,
-	spec nodeapi.ProfilingOperationSpec,
-) (nodeprofiling.StartRequest, error) {
-	duration, err := secondsDuration(body.DurationSeconds)
-	if err != nil {
-		return nodeprofiling.StartRequest{}, fmt.Errorf("%w: %w", nodeprofiling.ErrInvalidRequest, err)
-	}
-	return nodeprofiling.StartRequest{
-		RequestID:   body.RequestID,
-		Duration:    duration,
-		Scope:       observation.Scope(body.Scope),
-		ContainerID: optionalString(body.ContainerID),
-		Spec: profilingdomain.Spec{
-			Type:            profilingdomain.Type(spec.Type),
-			Language:        profilingdomain.Language(spec.Language),
-			Mode:            profilingdomain.Mode(spec.Mode),
-			BinaryMatchPath: optionalString(spec.BinaryMatchPath),
-		},
-	}, nil
-}
-
-func tracingOperationRequest(
-	body *nodeapi.StartOperationJSONRequestBody,
-	spec nodeapi.TracingOperationSpec,
-) (nodetracing.StartRequest, error) {
-	duration, err := secondsDuration(body.DurationSeconds)
-	if err != nil {
-		return nodetracing.StartRequest{}, fmt.Errorf("%w: %w", nodetracing.ErrInvalidRequest, err)
-	}
-	return nodetracing.StartRequest{
-		RequestID:   body.RequestID,
-		Duration:    duration,
-		Scope:       observation.Scope(body.Scope),
-		ContainerID: optionalString(body.ContainerID),
-		Spec: tracingdomain.Spec{
-			Type: tracingdomain.Type(spec.Type),
-		},
-	}, nil
 }
 
 func secondsDuration(seconds int64) (time.Duration, error) {

@@ -59,7 +59,7 @@ func NewService(manager *operation.Manager) (*Service, error) {
 // executor is unavailable.
 func (s *Service) Start(
 	_ context.Context,
-	request StartRequest,
+	request *StartRequest,
 ) (operationSnapshot *operation.Operation, created bool, err error) {
 	if err := validateRequest(request); err != nil {
 		return nil, false, err
@@ -75,7 +75,10 @@ func (s *Service) Start(
 	return nil, false, ErrNotImplemented
 }
 
-func validateRequest(request StartRequest) error {
+func validateRequest(request *StartRequest) error {
+	if request == nil {
+		return fmt.Errorf("%w: request is required", ErrInvalidRequest)
+	}
 	if err := observation.ValidateScope(request.Scope, request.ContainerID); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}

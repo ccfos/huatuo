@@ -60,7 +60,7 @@ func TestStartValidatesThenReportsExecutorUnavailable(t *testing.T) {
 			Type: tracingdomain.TypeNetworkingDrop,
 		},
 	}
-	operationSnapshot, created, err := service.Start(t.Context(), request)
+	operationSnapshot, created, err := service.Start(t.Context(), &request)
 	if !errors.Is(err, ErrNotImplemented) || created || operationSnapshot != nil {
 		t.Fatalf("Start() = (%+v, %t, %v)", operationSnapshot, created, err)
 	}
@@ -71,7 +71,7 @@ func TestStartRejectsUnsupportedScopeBeforeAvailability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
-	_, _, err = service.Start(t.Context(), StartRequest{
+	_, _, err = service.Start(t.Context(), &StartRequest{
 		RequestID:   "job-1",
 		Duration:    time.Minute,
 		Scope:       observation.ScopeContainer,
@@ -81,6 +81,16 @@ func TestStartRejectsUnsupportedScopeBeforeAvailability(t *testing.T) {
 		},
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("Start() error = %v, want ErrInvalidRequest", err)
+	}
+}
+
+func TestStartRejectsNilRequest(t *testing.T) {
+	service, err := NewService(newOperationManager(t))
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	if _, _, err := service.Start(t.Context(), nil); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("Start() error = %v, want ErrInvalidRequest", err)
 	}
 }
