@@ -1049,6 +1049,21 @@ func TestELFPreflightRejectsHostileMetadata(t *testing.T) {
 			t.Fatalf("expanded section names: %v", err)
 		}
 	})
+	t.Run("repeated-section-names", func(t *testing.T) {
+		input := bytes.Clone(image)
+		h := header
+		h.Shstrndx = 1
+		copy(input, encodeELFStruct(t, h))
+		names := append([]byte{0}, bytes.Repeat([]byte{'x'}, 1498)...)
+		names = append(names, 0)
+		section := elf.Section64{Name: 1, Type: uint32(elf.SHT_STRTAB), Off: uint64(len(input)), Size: uint64(len(names))}
+		copy(input[h.Shoff+uint64(h.Shentsize):], encodeELFStruct(t, section))
+		binary.LittleEndian.PutUint32(input[h.Shoff+2*uint64(h.Shentsize):], 1)
+		input = append(input, names...)
+		if err := preflightELF(bytes.NewReader(input), uint64(len(input)), 4096); !errors.Is(err, errELFSymbolLimit) {
+			t.Fatalf("repeated section-name copies: %v", err)
+		}
+	})
 }
 
 func TestELFPCResultCacheIsBoundedAcrossBatches(t *testing.T) {

@@ -172,8 +172,10 @@ func preflightELF(r io.ReaderAt, fileSize, limit uint64) error {
 			section.Size = uint64(h.Size)
 		}
 	}
-	if section.Size > remaining {
-		return fmt.Errorf("%w: expanded ELF section names exceed metadata budget", errELFSymbolLimit)
+	// debug/elf copies each section name, even when offsets repeat. Reserve
+	// the table plus one worst-case copy per header before opening the file.
+	if section.Size > remaining/(shnum+1) {
+		return fmt.Errorf("%w: ELF section names and their copies exceed metadata budget", errELFSymbolLimit)
 	}
 	return nil
 }
