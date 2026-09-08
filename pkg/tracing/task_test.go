@@ -118,6 +118,8 @@ func TestRunTaskCommandKillsOutputLimitedProcess(t *testing.T) {
 	}
 	resultCh := make(chan result, 1)
 	go func() {
+		// The helper writes before sleeping, but this test only needs to
+		// observe that reaching the output limit wins promptly.
 		_, err := runTaskCommand(t.Context(), exe, []string{
 			"-test.run=^TestNoisySleepHelperProcess$",
 			"--",
