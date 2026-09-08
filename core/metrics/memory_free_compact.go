@@ -66,10 +66,10 @@ func (c *reclaimCompact) Update() ([]*metric.Data, error) {
 	}
 	defer lease.Release()
 
-	return c.update(lease.BPF.(*memoryStallObject), pod.NormalContainers)
+	return c.update(lease.BPF.(*memoryStallObject), pod.NormalContainers, paths.KernfsID)
 }
 
-func (c *reclaimCompact) update(obj *memoryStallObject, discover func() (map[string]*pod.Container, error)) ([]*metric.Data, error) {
+func (c *reclaimCompact) update(obj *memoryStallObject, discover func() (map[string]*pod.Container, error), resolve func(string) (uint64, error)) ([]*metric.Data, error) {
 	items, err := obj.DumpMapByName("mm_free_compact_map")
 	if err != nil {
 		return nil, fmt.Errorf("dump map mm_free_compact_map: %w", err)
@@ -116,7 +116,7 @@ func (c *reclaimCompact) update(obj *memoryStallObject, discover func() (map[str
 		if cgroups.CgroupMode() != cgroups.Unified {
 			cgroupPath = paths.Path(subsystem.SubsystemMemory, root)
 		}
-		id, err := paths.KernfsID(cgroupPath)
+		id, err := resolve(cgroupPath)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}

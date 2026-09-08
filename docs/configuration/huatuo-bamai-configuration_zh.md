@@ -496,11 +496,25 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 | `IntervalTracing` | 两次追踪之间的最小间隔，单位秒，默认 `1800`。 |
 | `RunTracingToolTimeout` | 采集时长，单位秒，默认 `10`。 |
 
-**触发条件**：满足追踪间隔后，系统态 CPU 使用率严格大于 `SysThreshold`，且其增量严格大于 `DeltaSysThreshold` 时触发。
+**触发条件**：共用冷却结束后，任一已启用的 system/user/total 条件组同时超过使用率和增幅阈值即可触发；默认仍只启用 system 条件，可选 user/total 配置见下表。
 
-#### 7.3 容器 D 状态负载
 
-依赖 cgroup v1 的负载统计接口；cgroup v2 下跳过该追踪器。
+user/total 触发为可选项，与 system 触发共用配置的采集工具和冷却时间。
+每种条件均要求使用率和正向增幅同时严格超过对应阈值；使用率单位为百分比，
+增幅单位为百分点，四项取值均须在 [0, 100] 范围内。
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `UserThreshold` | `0` | 用户态 CPU 使用率；0 关闭此触发。 |
+| `DeltaUserThreshold` | `0` | 用户态使用率增幅；0 仍要求正向增长。 |
+| `UsageThreshold` | `0` | 实际执行 CPU 总使用率；0 关闭此触发。 |
+| `DeltaUsageThreshold` | `0` | 总使用率增幅；0 仍要求正向增长。 |
+
+#### 7.3 容器与整机 D 状态负载
+
+容器 D 状态计数在 cgroup v1 使用 netlink，在 v2 使用 BPF task iterator；
+整机计数在两个版本均使用 iterator。要求内核 BTF 可读、BPF 权限和主机 PID 可见性
+（Kubernetes 设置 `hostPID: true`）。不支持 iterator 的内核仍保留原有 v1 容器路径。
 
 ```toml
 # dload
@@ -527,6 +541,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 # Default: false
 #
 [AutoTracing.Dload]
+    # HostThresholdLoad = 5
     # ThresholdLoad = 5
     # Interval = 10
     # IntervalTracing = 1800
@@ -539,6 +554,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 | `Interval` | 容器负载采样间隔，单位秒，默认 `10`。 |
 | `IntervalTracing` | 两次自动追踪之间的最小间隔，单位秒，默认 `1800`（30 分钟）。 |
 | `EnableDebug` | 调试开关，默认 `false`。启用后跳过负载阈值和最小追踪间隔检查，尝试采集容器及宿主机各状态任务的栈，可能增加开销，仅用于调试。 |
+| `HostThresholdLoad` | 整机 D 状态任务计数的一分钟 EMA 阈值，包含容器线程。默认 `5`，须非负，`0` 在任意正 EMA 时触发；整机与各容器独立维护 `IntervalTracing` 冷却。 |
 
 #### 7.4 容器 I/O 性能
 
@@ -807,6 +823,11 @@ LocalFile 不足以保存该结果。
 | 字段 | 说明 |
 | --- | --- |
 | `BlockedThreshold` | 内存回收阻塞时间阈值，单位纳秒，默认 `900000000`（900 ms）。进程因内存回收阻塞超过该时间时，上报事件并采集上下文。 |
+
+未解析容器归属的慢直接回收事件经冷却后保留到主机流，标记
+`container_attribution="unresolved"`；空 ID 不代表一定来自主机服务。
+已识别容器仅输出一条容器事件。未归属事件每个 tracer 每秒最多输出一条，
+其余事件计入 `huatuo_bamai_memory_reclaim_events_unresolved_suppressed_total`。
 
 #### 8.3 网络接收延迟
 
@@ -1222,6 +1243,20 @@ LocalFile 不足以保存该结果。
 
 以上开关在每次指标采集时读取最新配置；使用 Node API 更新后，下次采集生效。
 
+#### 9.11 负载均值与整机 D 状态计数
+
+```toml
+[MetricCollector.Loadavg]
+    # Interval = 15
+```
+
+启用 `loadavg` 后自动后台采样。`Interval` 单位为秒，`0` 使用默认 15 秒，
+负值无效；控制容器负载和整机 D 状态采样。Prometheus 抓取读取缓存，
+不改变主机 procfs 负载采集或 `AutoTracing.Dload.Interval`。
+v2 iterator 仅统计直接挂到目标 cgroup 的任务，不含子 cgroup。
+支持 iterator 时，整机 D 状态采样也可用于 v1；不支持则省略该指标，
+保留 procfs 主机负载和原有 v1 容器指标。Kubernetes 要求 `hostPID: true`。
+
 ### 10. Pod 容器信息
 
 本节配置从 kubelet 获取 Pod 信息的端口和凭证，用于关联容器与 Pod 标签。
@@ -1301,86 +1336,3 @@ huatuo-bamai --region <region> [选项]
 - **自动追踪调优**：根据业务负载特征调整阈值，过低阈值会导致频繁触发，过高则可能遗漏问题。建议在测试环境逐步验证。
 - **安全性**：ES 配置中请使用强密码，并考虑启用 HTTPS；避免在配置文件中硬编码敏感信息。
 - **兼容性**：启用功能前，核对所需的内核能力、硬件和运行时依赖。
-
-### retain unresolved reclaim events in the host stream
-
-- **主机输出**：将未解析出容器归属的慢速直接回收事件保留在主机事件流。
-  要求启用 `memory_reclaim_events` 采集器，且现有 `try_to_free_pages` 入口/返回探针
-  可用并能挂载；不新增探针，也没有额外的 cgroup 版本开关。
-  沿用 `memory_reclaim` 事件名和 `BlockedThreshold`。
-  空容器 ID 标记为 `container_attribution="unresolved"`，可能是主机任务，
-  也可能是归属未解析的容器任务，不能认为已确认属于物理机服务。
-  已知容器仍只输出一条容器事件，不重复输出主机事件。此路径不采集 kswapd，
-  也不增加聚合指标；新增开销是原先丢弃事件的输出与存储。
-
-### collect cgroup v2 task states with a BPF iterator
-
-# 容器 D 状态任务数量的一分钟 EMA 阈值，超过该值时触发 dload 剖析。
-- **ThresholdLoad**：容器不可中断睡眠（D 状态）任务数量的一分钟 EMA 阈值。
-  默认 5。当 D 状态任务 EMA 超过该值时触发剖析。
-
-### enable v2 load stats for metrics and dload
-
-# cgroup v2 dload 使用 BPF task iterator，每次采样遍历宿主机全部任务。
-# Kubernetes 部署必须设置 hostPID: true。
-#
-- **Cgroup v2**：随 `dload` 启用，cgroup v1 保持 netlink 路径。v2 实现要求内核 BTF 可读并支持 BPF `task` iterator；统计仅包含
-  直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。
-
-	# loadavg 启用后自动后台采样，Prometheus 抓取读取缓存的
-	# 容器负载及主机 D 状态计数。BPF iterator 要求 Kubernetes 设置 hostPID: true。
-	[MetricCollector.Loadavg]
-
-### estimate container load averages on cgroup v1 and v2
-
-# cgroup v2 容器负载与主机 D 状态指标共用 BPF task iterator，默认每 15 秒
-	# 遍历宿主机全部任务。不支持时仍保留宿主机 loadavg 和 cgroup v1 容器指标。
-		# 后台采样间隔，单位秒；0 使用默认值 15。
-		# 控制容器负载及主机 D 状态采样，不影响主机 /proc/loadavg 抓取，
-		# 也不影响 AutoTracing.Dload.Interval（默认 10 秒）。
-		# Interval = 15
-
-### add host D-state counts using the shared task iterator
-
-# 开启主机参与负载计算的 D 状态任务计数，每 Interval 秒采样。
-		# 适用于 cgroup v1/v2，需要主机 PID 可见性、内核 BTF 和 BPF
-		# task iterator，与 v2 容器统计共用遍历；不支持时省略指标。
-
-### trigger host dload independently
-
-#### 7.3 Dload 自动追踪 — 容器与主机 D 状态任务剖析
-# cgroup v2 与主机 dload 共用 BPF task iterator，每次采样遍历宿主机全部任务。
-	# HostThresholdLoad = 5
-- **主机触发**：随 `dload` 启用，独立检测整机 D 状态负载。包含容器线程，
-  不代表仅统计物理机服务。要求启用 `dload`、内核 BTF 可读、支持 BPF `task` iterator、
-  具备 BPF 权限及主机 PID 可见性（Kubernetes 设置 `hostPID: true`）。支持 cgroup v1/v2，
-  内核不支持 iterator 时无法提供主机触发，
-  原有 v1 容器 netlink 路径仍可使用。
-
-- **HostThresholdLoad**：整机 D 状态任务数量的一分钟 EMA 阈值，默认 `5`，
-  超过阈值触发主机堆栈采集，主机独立维护冷却状态，
-  冷却时长使用 `IntervalTracing`。复用 `Interval`（默认 10 秒）采样，
-  不是 `/proc/loadavg` 的 R+D 负载，也不受 `MetricCollector.Loadavg.Interval` 控制。
-
-### add host user and total CPU burst triggers
-
-| 可选配置项 | 默认值 | 范围与行为 |
-| --- | --- | --- |
-| `UserThreshold` | `0`（%） | 0 关闭 user 触发，正值启用；用户态使用率须超过此值。 |
-| `DeltaUserThreshold` | `0`（百分点） | 用户态使用率相较上一采样区间的增幅也须超过此值。 |
-| `UsageThreshold` | `0`（%） | 0 关闭 total 触发，正值启用；实际执行 CPU 使用率须超过此值。 |
-| `DeltaUsageThreshold` | `0`（百分点） | 实际执行 CPU 使用率相较上一采样区间的增幅也须超过此值。 |
-
-#### 7.2 CPUSys 自动追踪 — 宿主机 CPU 突增
-# Both thresholds of any trigger are exceeded (system, user or total).
-	# UserThreshold = 0
-	# DeltaUserThreshold = 0
-	# UsageThreshold = 0
-	# DeltaUsageThreshold = 0
-
-**触发逻辑与前提**：须启用 `cpusys`、可读取主机 `/proc/stat`，且现有整机 perf
-采集工具及其所需权限可用。每种触发条件都要求使用率与正向增幅同时超过对应阈值，
-任意一种命中即可触发。三种条件共用采集流程与 `IntervalTracing` 冷却时间，
-同时命中不会重复采集。使用率按整机 CPU 时间计算，包含容器工作量，不按容器配额归一化。
-未配置 user/total 时，保持原有仅 system 触发的行为。四个新增阈值均须在 [0, 100] 范围内。
-显式启用示例（使用率/增幅）：user 75/45，total 90/55。

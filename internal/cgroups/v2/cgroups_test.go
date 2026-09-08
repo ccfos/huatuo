@@ -744,3 +744,33 @@ func TestSharedLoadStatsCloseResetsState(t *testing.T) {
 		t.Fatal("reinitialized consumer inherited the closed iterator's state")
 	}
 }
+
+func TestLazyLoadStatsCachesRuntimeUnsupported(t *testing.T) {
+	for _, failure := range []error{ErrTaskIteratorNotSupported, errors.New("transient scan failure")} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			f := &loadStatsFixture{capacity: 128, scan: func([]uint64) error { return failure }}
+			s := &lazyTaskLoadSnapshotter{newCollector: func(uint32) (loadCollector, error) { return f, nil }}
+			for i := 0; i < 2; i++ {
+				if _, err := s.Snapshot([]uint64{1}); !errors.Is(err, failure) {
+					t.Fatalf("snapshot error=%v", err)
+				}
+			}
+			want := 2
+			if errors.Is(failure, ErrTaskIteratorNotSupported) {
+				want = 1
+			}
+			if len(f.calls) != want {
+				t.Fatalf("scans=%d want=%d", len(f.calls), want)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Snapshot([]uint64{1}); !errors.Is(err, failure) {
+				t.Fatalf("recheck error=%v", err)
+			}
+			if len(f.calls) != want+1 {
+				t.Fatal("Close did not permit recheck")
+			}
+		})
+	}
+}

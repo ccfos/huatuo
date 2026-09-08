@@ -113,6 +113,8 @@ Example with some common fields omitted:
 
 Observer: `hungtask`.
 
+`hungtask_container_total` attributes events using the blocked task's cgroup identity captured at the raw tracepoint; matched traces carry `ContainerID`. It does not resolve a potentially reused TID later in userspace. Missing container metadata or unsupported identity capture leaves events in the host total only. Container counting is independent of trace-save backoff. CPU and blocked-task stack snapshots remain system-wide. See [HungTask metrics](metrics_en.md#attribute-hungtask-events-and-counts-to-containers) for hierarchy matching, fallback and accounting details.
+
 Detects system hung-task events and collects kernel stacks of D-state (uninterruptible sleep) processes and CPU backtraces. The repeat reporting interval increases from 10 minutes to at most 3 hours, while events continue to be counted. The observer is not registered if the kernel does not provide `hung_task_timeout_secs`. Setting that value to `0` disables kernel hung-task detection.
 
 Example with some common fields omitted:
@@ -205,7 +207,7 @@ Example with some fields omitted:
 
 Observer: `memory_reclaim_events`.
 
-Records the duration of an individual direct memory reclaim by a container thread. When `try_to_free_pages` returns after exceeding the threshold (default: 900 milliseconds), it reports process, thread, and container details. Events without a container association are filtered out. Blacklists use the registration name `memory_reclaim_events`; stored records use `tracer_name=memory_reclaim`.
+Records the duration of an individual direct memory reclaim by a container thread. When `try_to_free_pages` returns after exceeding the threshold (default: 900 milliseconds), it reports process, thread, and container details. Events without a resolved container are retained in the host stream with an output cooldown. Blacklists use the registration name `memory_reclaim_events`; stored records use `tracer_name=memory_reclaim`.
 
 Example with some common fields omitted:
 
@@ -227,6 +229,33 @@ Example with some common fields omitted:
 | `pid` | Triggering process PID |
 | `tid` | Triggering thread TID |
 | `reclaim_duration_ns` | Direct reclaim duration (nanoseconds) |
+
+Slow direct-reclaim events without a resolved container are retained in the
+host event stream whenever `memory_reclaim_events` is enabled. Existing `try_to_free_pages` entry/return probes, duration threshold,
+event name (`memory_reclaim`) and container output are unchanged.
+
+An empty container ID does **not** prove that the reclaiming process is a host
+service: bare-metal tasks and unresolved container tasks are both retained with
+`container_attribution="unresolved"`. Known containers still produce a single
+container event, not a duplicate host event. This is not kswapd tracing or an
+aggregate reclaim counter. Container discovery failures cannot suppress the
+host stream. Attribution uses the existing refresh policy: cache hits have a five-second TTL, while misses retry at most
+once per second. New containers may initially be unresolved until discovery
+and a cache refresh succeed; repeated host events cannot force a refresh storm.
+
+No new BPF probes or maps. Additional cost is event serialization/storage for
+previously discarded events; keep the existing duration threshold.
+
+- **container_attribution**: Optional; `unresolved` for host-stream events without a resolved container
+
+Unresolved reclaim events share a one-second output cooldown per tracer.
+Only the first event after cooldown is logged and persisted; excess events
+are dropped without queuing or per-event logs. Resolved container events
+are unaffected. The host Counter
+`huatuo_bamai_memory_reclaim_events_unresolved_suppressed_total` counts
+suppressed events. Cooldown and count survive stop/start of the same tracer
+instance; creating a new instance resets them. This bounds userspace output,
+not kernel event production or perf-buffer reads.
 
 ## Network
 
@@ -432,54 +461,3 @@ The OOM kill tracer is now `memory_oom_kill`, previously `memory_oom` and earlie
 The metric prefix is now `huatuo_bamai_memory_oom_kill_`, replacing `huatuo_bamai_memory_oom_` and the earlier `huatuo_bamai_oom_`. Update metric dashboards and recording rules accordingly.
 
 Historical events retain their original names. Cross-version queries must match all three; the built-in event dashboard already covers them.
-
-### attribute hungtask events and counts to containers
-
-| Event Name (tracer_name) | Probe Type | Trigger Condition | Typical Scenarios |
-| ------------------------ | ---------- | ----------------- | ----------------- |
-| `hungtask` | raw tracepoint; tracepoint fallback (host only) | D-state process task hang | Transient mass D-state processes, IO blocking |
-
-`hungtask_container_total` attributes events using the blocked task's cgroup identity captured at the raw tracepoint; matched traces carry `ContainerID`. It does not resolve a potentially reused TID later in userspace. Missing container metadata or unsupported identity capture leaves events in the host total only. Container counting is independent of trace-save backoff. CPU and blocked-task stack snapshots remain system-wide. See [HungTask metrics](kernel-wide-insight_en.md#hungtask) for hierarchy matching, fallback and accounting details.
-
-        K1["kprobe hooks\n(sched_tick / softlockup\n memory_oom_kill / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
-        K2["raw tracepoint / tracepoint hooks\n(hungtask: raw tracepoint,\n tracepoint fallback, host only\n ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
-
-### retain unresolved reclaim events in the host stream
-
-| Event Name (tracer_name) | Probe Type | Trigger Condition | Typical Scenarios |
-| ------------------------ | ---------- | ----------------- | ----------------- |
-| `memory_reclaim_events` | kprobe | Direct reclaim time > threshold (default 900ms); known containers emit container events; unresolved events use the host stream | Business stalls caused by memory pressure |
-
-**Description** Detects direct memory reclaim events for host and container processes. Triggered when the direct reclaim time of the same process within 1 second exceeds the configured threshold (default 900ms). Records the reclaim duration, process, and container information. Events without a resolved container are retained in the host stream.
-
-Slow direct-reclaim events without a resolved container are retained in the
-host event stream whenever `memory_reclaim_events` is enabled. Existing `try_to_free_pages` entry/return probes, duration threshold,
-event name (`memory_reclaim`) and container output are unchanged.
-
-An empty container ID does **not** prove that the reclaiming process is a host
-service: bare-metal tasks and unresolved container tasks are both retained with
-`container_attribution="unresolved"`. Known containers still produce a single
-container event, not a duplicate host event. This is not kswapd tracing or an
-aggregate reclaim counter. Container discovery failures cannot suppress the
-host stream. Attribution uses the existing refresh policy: cache hits have a five-second TTL, while misses retry at most
-once per second. New containers may initially be unresolved until discovery
-and a cache refresh succeed; repeated host events cannot force a refresh storm.
-
-No new BPF probes or maps. Additional cost is event serialization/storage for
-previously discarded events; keep the existing duration threshold.
-
-The opt-in `integration/test_observability.sh` starts the standard daemon and
-checks reclaim probe attachment and tracing status with `HUATUO_TRIGGER_BPF_DIR`.
-This is not a real reclaim event delivery or persistence test. Global direct-reclaim
-pressure has not been generated: imposing a limit on one cgroup does not
-equivalently exercise `try_to_free_pages`.
-- **container_attribution**: Optional; `unresolved` for host-stream events without a resolved container
-
-Unresolved reclaim events share a one-second output cooldown per tracer.
-Only the first event after cooldown is logged and persisted; excess events
-are dropped without queuing or per-event logs. Resolved container events
-are unaffected. The host Counter
-`huatuo_bamai_memory_reclaim_events_unresolved_suppressed_total` counts
-suppressed events. Cooldown and count survive stop/start of the same tracer
-instance; creating a new instance resets them. This bounds userspace output,
-not kernel event production or perf-buffer reads.

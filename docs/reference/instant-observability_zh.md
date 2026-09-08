@@ -113,6 +113,8 @@ weight: 3
 
 观测器：`hungtask`。
 
+`hungtask_container_total` 使用 raw tracepoint 在事件时刻记录的阻塞任务 cgroup 身份匹配容器，已匹配追踪附带 `ContainerID`，不再事后通过 TID 查询归属。容器元数据缺失或不支持身份采集时，仅保留主机总计。容器计数不受追踪保存退避影响；CPU 与阻塞任务栈仍为全机快照。层级匹配、回退及计数语义见 [HungTask 指标](metrics_zh.md#attribute-hungtask-events-and-counts-to-containers)。
+
 检测系统 hungtask 事件，采集 D 状态（不可中断睡眠）进程的内核栈及 CPU 回溯信息。重复事件的上报间隔从 10 分钟递增至最长 3 小时，期间仍累计事件计数。内核未提供 `hung_task_timeout_secs` 时不注册观测器；将该值设为 `0` 会禁用内核 hungtask 检测。
 
 示例（省略部分公共字段）：
@@ -205,7 +207,7 @@ weight: 3
 
 观测器：`memory_reclaim_events`。
 
-记录容器线程单次直接内存回收的耗时。`try_to_free_pages` 返回时，若本次调用超过阈值（默认 900 毫秒），则上报进程、线程和容器信息。未关联到容器的事件会被过滤。黑名单使用注册名 `memory_reclaim_events`，落盘记录的 `tracer_name` 为 `memory_reclaim`。
+记录容器线程单次直接内存回收的耗时。`try_to_free_pages` 返回时，若本次调用超过阈值（默认 900 毫秒），则上报进程、线程和容器信息。未解析到容器的事件经输出冷却后保留到主机事件流。黑名单使用注册名 `memory_reclaim_events`，落盘记录的 `tracer_name` 为 `memory_reclaim`。
 
 示例（省略部分公共字段）：
 
@@ -227,6 +229,20 @@ weight: 3
 | `pid` | 触发进程的 PID |
 | `tid` | 触发线程的 TID |
 | `reclaim_duration_ns` | 直接回收耗时（纳秒） |
+
+启用 `memory_reclaim_events` 后，无法解析容器归属的慢直接回收事件保留到主机事件流。复用原有 `try_to_free_pages` 入口/返回探针、耗时阈值、事件名（`memory_reclaim`）及容器输出，不增加 BPF 探针或 map。
+
+容器 ID 为空**不代表**一定是主机服务：主机任务和未识别容器任务均标记 `container_attribution="unresolved"`。已识别容器仍只输出一条容器事件，不重复输出主机事件。这不是 kswapd 追踪，也不是汇总回收计数器。容器发现失败不应丢弃主机事件流。归属解析沿用缓存刷新策略：命中项 TTL 为 5 秒，未命中最多每秒重试一次；新容器在发现及缓存刷新成功前可能暂时无法归属，重复主机事件不会导致刷新风暴。
+
+额外开销仅为原先被丢弃事件的序列化与存储，继续使用已有耗时阈值。
+
+- **container_attribution**：可选字段；主机事件流中未解析到容器的事件标记为 `unresolved`
+
+未归属 reclaim 事件共用每个 tracer 实例一秒的输出冷却。冷却结束后首条事件打印日志并落盘，
+期间其余事件直接丢弃，不排队、不逐条打印日志；已归属容器事件不受影响。
+主机 Counter `huatuo_bamai_memory_reclaim_events_unresolved_suppressed_total` 累计被抑制事件数。
+同一 tracer 实例停止、重启时保留冷却和计数，重新创建实例会重置。
+这只限制用户态输出，不减少内核事件产生或 perf buffer 读取开销。
 
 ## 网络
 
@@ -432,37 +448,3 @@ OOM kill 追踪器现命名为 `memory_oom_kill`（此前为 `memory_oom`，更�
 指标前缀现为 `huatuo_bamai_memory_oom_kill_`，替代 `huatuo_bamai_memory_oom_` 及更早的 `huatuo_bamai_oom_`，需同步更新指标仪表盘和记录规则。
 
 历史事件保留原名称，跨版本查询需匹配这三个名称；内置事件仪表盘已覆盖三者。
-
-### attribute hungtask events and counts to containers
-
-| 事件名称（tracer_name） | 探针类型 | 触发条件 | 典型场景 |
-| ----------------------- | -------- | -------- | -------- |
-| `hungtask` | raw tracepoint；回退 tracepoint（仅主机） | D 状态进程任务挂起 | 瞬时批量 D 进程、IO 阻塞 |
-
-`hungtask_container_total` 使用 raw tracepoint 在事件时刻记录的阻塞任务 cgroup 身份匹配容器，已匹配追踪附带 `ContainerID`，不再事后通过 TID 查询归属。容器元数据缺失或不支持身份采集时，仅保留主机总计。容器计数不受追踪保存退避影响；CPU 与阻塞任务栈仍为全机快照。层级匹配、回退及计数语义见 [HungTask 指标](kernel-wide-insight_zh.md#hungtask)。
-
-        K1["kprobe 挂钩\n(sched_tick / softlockup\n memory_oom_kill / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP，可选)"]
-        K2["raw tracepoint / tracepoint 挂钩\n(hungtask: raw tracepoint，\n 回退 tracepoint，仅主机\n ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
-
-### retain unresolved reclaim events in the host stream
-
-| 事件名称（tracer_name） | 探针类型 | 触发条件 | 典型场景 |
-| ----------------------- | -------- | -------- | -------- |
-| `memory_reclaim_events` | kprobe | 直接回收时间 > 阈值（默认 900ms）；已知容器输出容器事件，未解析归属的事件输出到主机事件流 | 内存压力导致业务卡顿 |
-
-**功能描述** 检测主机和容器进程发生直接内存回收（direct reclaim）的事件，当同一进程在 1 秒内直接回收时间超过阈值（默认 900ms）时触发，记录回收耗时、进程及容器信息。未解析到容器的事件保留到主机事件流。
-
-启用 `memory_reclaim_events` 后，无法解析容器归属的慢直接回收事件保留到主机事件流。复用原有 `try_to_free_pages` 入口/返回探针、耗时阈值、事件名（`memory_reclaim`）及容器输出，不增加 BPF 探针或 map。
-
-容器 ID 为空**不代表**一定是主机服务：主机任务和未识别容器任务均标记 `container_attribution="unresolved"`。已识别容器仍只输出一条容器事件，不重复输出主机事件。这不是 kswapd 追踪，也不是汇总回收计数器。容器发现失败不应丢弃主机事件流。归属解析沿用缓存刷新策略：命中项 TTL 为 5 秒，未命中最多每秒重试一次；新容器在发现及缓存刷新成功前可能暂时无法归属，重复主机事件不会导致刷新风暴。
-
-额外开销仅为原先被丢弃事件的序列化与存储，继续使用已有耗时阈值。
-
-可选的 `integration/test_observability.sh` 使用 `HUATUO_TRIGGER_BPF_DIR` 启动标准 daemon，检查原有 reclaim 探针挂载与 tracing 状态，不等同于真实回收事件投递或持久化测试。未制造全局直接回收压力，仅限制单个 cgroup 并不等价于触发 `try_to_free_pages`。
-- **container_attribution**：可选字段；主机事件流中未解析到容器的事件标记为 `unresolved`
-
-未归属 reclaim 事件共用每个 tracer 实例一秒的输出冷却。冷却结束后首条事件打印日志并落盘，
-期间其余事件直接丢弃，不排队、不逐条打印日志；已归属容器事件不受影响。
-主机 Counter `huatuo_bamai_memory_reclaim_events_unresolved_suppressed_total` 累计被抑制事件数。
-同一 tracer 实例停止、重启时保留冷却和计数，重新创建实例会重置。
-这只限制用户态输出，不减少内核事件产生或 perf buffer 读取开销。

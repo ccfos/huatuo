@@ -15,9 +15,14 @@
 package events
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
@@ -186,5 +191,115 @@ func BenchmarkReclaimOutputCooldown(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+type hungTaskAttachStub struct {
+	bpf.BPF
+	attachErr, closeErr error
+	closed              int
+}
+
+func (s *hungTaskAttachStub) AttachAndEventPipe(context.Context, string, uint32) (bpf.PerfEventReader, error) {
+	return nil, s.attachErr
+}
+func (s *hungTaskAttachStub) Close() error { s.closed++; return s.closeErr }
+func TestHungTaskHostFallback(t *testing.T) {
+	for _, stage := range []string{"load", "attach", "host", "close"} {
+		t.Run(stage, func(t *testing.T) {
+			failure := errors.New("container unavailable")
+			hostFailure := errors.New("host unavailable")
+			closeFailure := errors.New("close failed")
+			first, last := &hungTaskAttachStub{}, &hungTaskAttachStub{}
+			calls := []bool{}
+			obj, _, err := startHungTaskBPF(context.Background(), "fixture", func(_ string, containers bool) (bpf.BPF, error) {
+				calls = append(calls, containers)
+				if !containers {
+					if stage == "host" {
+						return nil, hostFailure
+					}
+					return last, nil
+				}
+				if stage == "load" || stage == "host" {
+					return nil, failure
+				}
+				first.attachErr = failure
+				if stage == "close" {
+					first.closeErr = closeFailure
+				}
+				return first, nil
+			})
+			if stage == "host" || stage == "close" {
+				if obj != nil || !errors.Is(err, failure) {
+					t.Fatalf("obj=%v err=%v", obj, err)
+				}
+				expected := hostFailure
+				if stage == "close" {
+					expected = closeFailure
+				}
+				if !errors.Is(err, expected) {
+					t.Fatalf("missing error %v: %v", expected, err)
+				}
+			} else if err != nil || obj != last {
+				t.Fatalf("fallback obj=%v err=%v", obj, err)
+			}
+			want := 2
+			if stage == "close" {
+				want = 1
+			}
+			if len(calls) != want || !calls[0] || (want == 2 && calls[1]) {
+				t.Fatalf("load modes=%v", calls)
+			}
+			if stage == "attach" || stage == "close" {
+				if first.closed != 1 {
+					t.Fatal("failed object not closed")
+				}
+			}
+		})
+	}
+}
+
+func TestHungTaskContainerAttribution(t *testing.T) {
+	nearest := &pod.Container{ID: "nearest", CgroupPath: "/nearest"}
+	ancestor := &pod.Container{ID: "ancestor", CgroupPath: "/ancestor"}
+	containers := map[string]*pod.Container{"nearest": nearest, "ancestor": ancestor, "invalid": {CgroupPath: "relative"}, "nil": nil}
+	event := abi.HungtaskEvent{CgroupCount: 2}
+	event.CgroupIds[0] = 42
+	event.CgroupIds[1] = 43
+	for _, tc := range []struct {
+		name            string
+		missing, failed bool
+		want            *pod.Container
+	}{
+		{name: "nearest ancestor wins", want: nearest},
+		{name: "missing nearest retains ancestor", missing: true, want: ancestor},
+		{name: "resolver failure retains ancestor", failed: true, want: ancestor},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hungTaskContainer(&event, containers, func(root string) (uint64, error) {
+				if root == "/ancestor" {
+					return 43, nil
+				}
+				if root != "/nearest" {
+					t.Fatalf("invalid path resolved: %s", root)
+				}
+				if tc.failed {
+					return 0, errors.New("unavailable")
+				}
+				if tc.missing {
+					return 0, nil
+				}
+				return 42, nil
+			})
+			if got != tc.want {
+				t.Fatalf("container=%v want=%v", got, tc.want)
+			}
+		})
+	}
+	for _, count := range []uint32{0, uint32(len(event.CgroupIds)) + 1} {
+		event.CgroupCount = count
+		if got := hungTaskContainer(&event, containers, func(string) (uint64, error) { t.Fatal("invalid event resolved"); return 0, nil }); got != nil {
+			t.Fatal("invalid event attributed")
+		}
 	}
 }

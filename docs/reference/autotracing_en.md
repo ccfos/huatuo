@@ -344,8 +344,9 @@ Kubernetes deployments must run Huatuo with `hostPID: true`. Without host PID na
 | --------- | ------- | ----------- |
 | `dload.host_threshold_load` | `5` | Host D-state task count's one-minute EMA threshold |
 | `dload.interval_tracing` | `1800` (s) | Independent cooldown for each container and the host trigger |
-| `dload` | Container; whole host | D-state task count's one-minute EMA > 5, with independent thresholds and cooldowns | D-state process accumulation, IO blocking |
+
 | Feature | Configuration | Implementation |
+| --- | --- | --- |
 | Host `dload` | `HostThresholdLoad=5` | Shared BPF task iterator counts whole-host D-state threads; reuse the existing interval-based EMA and stack capture. Threshold and cooldown state are independent of container triggers. |
 
 Five event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (memory burst allocation).
@@ -369,9 +370,9 @@ in D state until its child exits. A one-second sample and host threshold zero
 produce D=1 and D-load=0.02, trigger independently without container discovery,
 and persist a LocalFile record containing the worker's kernel stack. The existing
 debug capture test also reads the local file rather than accepting an unconfigured
-`Save` as proof. Live tests require `HUATUO_TRIGGER_BPF_DIR`; the normal trigger
-test additionally requires `HUATUO_DLOAD_WORKER_PID`. Use only a disposable VM;
-the fixture must exit on its own and the test never creates an unbounded D task.
+`Save` as proof. `integration/test_autotracing_dload.sh` uses standard build artifacts and
+creates two bounded D-state workers itself. It runs from the default integration
+runner on disposable VMs with task-iterator support.
 
 Sampling follows `AutoTracing.Dload.Interval` (default 10 seconds), not `MetricCollector.Loadavg.Interval`.
 
@@ -427,10 +428,9 @@ are preserved. Records also include `user_percent*`, `total_percent*` and
 `trigger_reasons` (`user`, `total`, `system`); zero-valued additional fields are omitted.
 
 Verification: existing unit tests check CPU parsing and system-trigger behavior.
-The opt-in `integration/test_observability.sh` CPU scenario starts the standard
+The default `integration/test_autotracing_cpusys_live.sh` CPU scenario starts the standard
 daemon, waits for a sampled baseline, releases a bounded CPU workload, and checks
-user/total trigger reasons, real perf output, and local persistence. Set
-`HUATUO_CPU_LIVE_DIR` to a directory containing this build's `perf` executable. The daemon's normal
+user/total trigger reasons, real perf output, and local persistence. It uses the standard `_output/bin/perf` executable. The daemon's normal
 BPF directory must contain `perf.o`. Run only in a disposable VM with BPF/perf privileges. Dedicated
 regression coverage for independent user/total crossings and their boundaries
 remains pending.

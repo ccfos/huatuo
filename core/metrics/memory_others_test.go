@@ -101,12 +101,13 @@ func TestContainerMemoryStallsConversion(t *testing.T) {
 
 type memoryStallBPFStub struct {
 	bpf.BPF
-	containerErr error
+	containerErr   error
+	containerItems []bpf.MapItem
 }
 
 func (s *memoryStallBPFStub) DumpMapByName(name string) ([]bpf.MapItem, error) {
 	if name == "mm_container_free_compact_map" {
-		return nil, s.containerErr
+		return s.containerItems, s.containerErr
 	}
 	value := make([]byte, 16)
 	binary.LittleEndian.PutUint64(value, 10000000)
@@ -124,9 +125,126 @@ func TestMemoryStallsPreserveHostOnContainerFailure(t *testing.T) {
 					return nil, failure
 				}
 				return map[string]*pod.Container{"fixture": {Name: "fixture"}}, nil
-			})
+			}, paths.KernfsID)
 			if !errors.Is(err, failure) || len(data) != 2 || data[0].Value != 10 || data[1].Value != 20 {
 				t.Fatalf("host output lost on %s failure: data=%v err=%v", stage, data, err)
+			}
+		})
+	}
+}
+
+func TestMemoryStallsPreserveSiblingOnResolverFailure(t *testing.T) {
+	for _, failure := range []error{os.ErrNotExist, os.ErrPermission} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			item := func(id uint64) bpf.MapItem {
+				key, value := make([]byte, 8), make([]byte, 16)
+				binary.LittleEndian.PutUint64(key, id)
+				binary.LittleEndian.PutUint64(value, 2000000)
+				binary.LittleEndian.PutUint64(value[8:], 3000000)
+				return bpf.MapItem{Key: key, Value: value}
+			}
+			obj := &memoryStallObject{BPF: &memoryStallBPFStub{containerItems: []bpf.MapItem{item(42), item(43)}}, containers: true}
+			calls := make(map[string]int)
+			data, err := (&reclaimCompact{}).update(obj, func() (map[string]*pod.Container, error) {
+				return map[string]*pod.Container{
+					"valid":   {Name: "valid", CgroupPath: "/valid", Labels: map[string]any{"HostNamespace": "default"}},
+					"invalid": {Name: "invalid", CgroupPath: "/invalid", Labels: map[string]any{"HostNamespace": "default"}},
+				}, nil
+			}, func(path string) (uint64, error) {
+				target := filepath.Base(path)
+				calls[target]++
+				if target == "invalid" {
+					return 0, failure
+				}
+				if target != "valid" {
+					t.Fatalf("unexpected resolver path %q", path)
+				}
+				return 42, nil
+			})
+			if errors.Is(failure, os.ErrNotExist) {
+				if err != nil {
+					t.Fatalf("disappearance returned error: %v", err)
+				}
+			} else if !errors.Is(err, failure) {
+				t.Fatalf("resolver error=%v, want %v", err, failure)
+			}
+			if len(calls) != 2 || calls["valid"] != 1 || calls["invalid"] != 1 {
+				t.Fatalf("resolver calls=%v", calls)
+			}
+			if len(data) != 4 {
+				t.Fatalf("host/sibling output lost or invalid target exported: data=%v", data)
+			}
+			for i, name := range []string{"compaction_stall", "allocpages_stall", "container_compaction_stall", "container_allocpages_stall"} {
+				want := []float64{10, 20, 2, 3}[i]
+				if data[i].Name() != name || data[i].Value != want {
+					t.Fatalf("metric %d: name=%s value=%v", i, data[i].Name(), data[i].Value)
+				}
+				if i >= 2 && data[i].Labels()[metric.LabelContainerName] != "valid" {
+					t.Fatalf("invalid sibling labels: %v", data[i].Labels())
+				}
+			}
+		})
+	}
+}
+
+type memoryStallAttachStub struct {
+	bpf.BPF
+	attachErr, closeErr error
+	closed              int
+}
+
+func (s *memoryStallAttachStub) AttachWithOptions([]bpf.AttachOption) error { return s.attachErr }
+func (s *memoryStallAttachStub) Close() error                               { s.closed++; return s.closeErr }
+func TestMemoryStallsHostFallback(t *testing.T) {
+	for _, stage := range []string{"load", "attach", "host", "close"} {
+		t.Run(stage, func(t *testing.T) {
+			failure := errors.New("container unavailable")
+			hostFailure := errors.New("host unavailable")
+			closeFailure := errors.New("close failed")
+			first, last := &memoryStallAttachStub{}, &memoryStallAttachStub{}
+			calls := []bool{}
+			obj, err := loadMemoryStalls("fixture", func(_ string, containers bool) (bpf.BPF, error) {
+				calls = append(calls, containers)
+				if !containers {
+					if stage == "host" {
+						return nil, hostFailure
+					}
+					return last, nil
+				}
+				if stage == "load" || stage == "host" {
+					return nil, failure
+				}
+				first.attachErr = failure
+				if stage == "close" {
+					first.closeErr = closeFailure
+				}
+				return first, nil
+			})
+			if stage == "host" || stage == "close" {
+				if obj != nil || !errors.Is(err, failure) {
+					t.Fatalf("obj=%v err=%v", obj, err)
+				}
+				expected := hostFailure
+				if stage == "close" {
+					expected = closeFailure
+				}
+				if !errors.Is(err, expected) {
+					t.Fatalf("missing error %v: %v", expected, err)
+				}
+			} else if err != nil || obj == nil || obj.containers || obj.BPF != last {
+				t.Fatalf("fallback obj=%v err=%v", obj, err)
+			}
+			want := 2
+			if stage == "close" {
+				want = 1
+			}
+			if len(calls) != want || !calls[0] || (want == 2 && calls[1]) {
+				t.Fatalf("load modes=%v", calls)
+			}
+			if stage == "attach" || stage == "close" {
+				if first.closed != 1 {
+					t.Fatal("failed object not closed")
+				}
 			}
 		})
 	}

@@ -344,7 +344,6 @@ Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机
 | ---- | ------ | ---- |
 | `dload.host_threshold_load` | `5` | 物理机 D 状态任务数的一分钟 EMA 阈值 |
 | `dload.interval_tracing` | `1800`（秒） | 各容器与物理机触发分别独立冷却 |
-| `dload` | 容器；整机 | D 状态任务数的一分钟 EMA > 5，阈值与冷却独立 | D 状态进程堆积、IO 阻塞 |
 
 当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器及物理机 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（内存突发分配）。
 `dload` 启用后独立检测包含容器线程的整机 D 状态负载，不是仅统计非容器任务。`HostThresholdLoad` 默认 5，主机一分钟 D 状态 EMA 超过阈值后抓取堆栈，与容器触发分别维护阈值和冷却；事件名和数据结构不变。
@@ -353,7 +352,7 @@ Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机
 
 采样遵循 `AutoTracing.Dload.Interval`（默认 10 秒），不使用 `MetricCollector.Loadavg.Interval`。不增加 BPF 探针或 map；除可复用兼容的新鲜快照外，每次采样遍历一次主机任务。
 
-验证范围：5.10 测试虚拟机中，有界 `vfork` worker 在子进程退出前保持 D 状态。关闭 debug、采样间隔设为 1 秒、主机阈值设为 0 时，采集到 D=1、D-load=0.02，无需容器发现即可独立触发，并在 LocalFile 本地文件中确认包含 worker 内核堆栈的记录。debug 抓取测试也读取本地文件，不将未配置的 `Save` 当作持久化证据。实机测试需要 `HUATUO_TRIGGER_BPF_DIR`，正常触发测试另需 `HUATUO_DLOAD_WORKER_PID`。仅在可丢弃的虚拟机运行，fixture 必须自行退出，不创建无限期 D 状态任务。
+验证范围：5.10 测试虚拟机中，有界 `vfork` worker 在子进程退出前保持 D 状态。关闭 debug、采样间隔设为 1 秒、主机阈值设为 0 时，采集到 D=1、D-load=0.02，无需容器发现即可独立触发，并在 LocalFile 本地文件中确认包含 worker 内核堆栈的记录。debug 抓取测试也读取本地文件，不将未配置的 `Save` 当作持久化证据。默认集成入口 `integration/test_autotracing_dload.sh` 使用标准构建产物，自动创建两条有超时保护的 D 状态负载；只在支持 task iterator 的可丢弃虚拟机中运行。
 
 ### add host user and total CPU burst triggers
 
@@ -389,4 +388,4 @@ DeltaUsageThreshold = 55
 
 三组同时越线只抓取一次，共享冷却。`container_id` 仍为空，保留原 system JSON 字段，新增 `user_percent*`、`total_percent*` 和 `trigger_reasons`（`user`、`total`、`system`），零值新增字段省略。
 
-验证范围：已有单元测试检查 CPU 解析及 system 触发行为。可选的 `integration/test_observability.sh` CPU 场景启动标准 daemon，等待实际采样基线后释放有界 CPU 负载，并校验 user/total 触发原因、真实 perf 输出及本地落盘。`HUATUO_CPU_LIVE_DIR` 应包含本次构建的 `perf`，daemon 的正常 BPF 目录应包含 `perf.o`；仅在具备 BPF/perf 权限的可丢弃虚拟机中运行。user/total 独立触发及阈值边界的专门回归覆盖仍待补充。
+验证范围：已有单元测试检查 CPU 解析及 system 触发行为。默认的 `integration/test_autotracing_cpusys_live.sh` CPU 场景启动标准 daemon，等待实际采样基线后释放有界 CPU 负载，并校验 user/total 触发原因、真实 perf 输出及本地落盘。使用标准 `_output/bin/perf`，daemon 的正常 BPF 目录应包含 `perf.o`；仅在具备 BPF/perf 权限的可丢弃虚拟机中运行。user/total 独立触发及阈值边界的专门回归覆盖仍待补充。
