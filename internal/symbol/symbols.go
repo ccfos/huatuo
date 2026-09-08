@@ -291,8 +291,73 @@ type elfSymbolCandidate struct {
 	size       uint64
 }
 
-func sectionKey(section *elf.Section) elfSectionKey {
-	return elfSectionKey{typ: section.Type, offset: section.Offset, size: section.Size}
+// elfSymbols is retained for synthetic and full-table tests; production
+// resolution uses elfSymbolsForPCs to materialize only requested names.
+// It extracts all STT_FUNC entries from .dynsym and .symtab. Version
+// metadata is intentionally not parsed because the resolver only consumes the
+// symbol name, address, and size.
+func elfSymbols(f *elf.File, limits ELFSymbolLimits) (symbols, error) {
+	return elfSymbolsFromSources(f, elfSymbolTables[:], limits)
+}
+
+func elfSymbolsFromSources(f *elf.File, sources []elfSymbolTable, limits ELFSymbolLimits) (symbols, error) {
+	syms := symbols{}
+	state := newELFSymbolParseState(limits)
+	var parseErrors []error
+	for _, source := range sources {
+		sourceSymbols, err := state.parseSource(f, source)
+		if err != nil {
+			if !errors.Is(err, elf.ErrNoSymbols) {
+				parseErrors = append(parseErrors, fmt.Errorf("%s: %w", source.name, err))
+			}
+			continue
+		}
+		syms = append(syms, sourceSymbols...)
+	}
+	syms.sort()
+	return syms, errors.Join(parseErrors...)
+}
+
+// elfSymbolsForPCs scans bounded symbol metadata but materializes names only
+// for the symbols that cover the requested ELF-relative PCs.
+func elfSymbolsForPCs(f *elf.File, pcs []uint64, limits ELFSymbolLimits) (symbols, error) {
+	return elfSymbolsForPCsWithState(f, pcs, newELFSymbolParseState(limits))
+}
+
+func elfSymbolsForPCsWithState(f *elf.File, pcs []uint64, state *elfSymbolParseState) (symbols, error) {
+	if len(pcs) == 0 {
+		return nil, nil
+	}
+	syms := symbols{}
+	var parseErrors []error
+	remainingPCs := pcs
+	for _, source := range elfSymbolTables {
+		if len(remainingPCs) == 0 {
+			break
+		}
+		sourceSymbols, err := state.parseSource(f, source, remainingPCs...)
+		if err != nil {
+			if !errors.Is(err, elf.ErrNoSymbols) {
+				parseErrors = append(parseErrors, fmt.Errorf("%s: %w", source.name, err))
+			}
+			continue
+		}
+		sourceSymbols.sort()
+		next := make([]uint64, 0, len(remainingPCs))
+		for _, pc := range remainingPCs {
+			name := sourceSymbols.resolve(pc)
+			if name == "" {
+				next = append(next, pc)
+				continue
+			}
+			// Keep the source decision for this PC, not a range that a
+			// later source could shadow when results are combined.
+			syms = append(syms, &symbol{Addr: pc, Name: name})
+		}
+		remainingPCs = next
+	}
+	syms.sort()
+	return syms, errors.Join(parseErrors...)
 }
 
 func newELFSymbolParseState(limits ELFSymbolLimits) *elfSymbolParseState {
@@ -302,21 +367,6 @@ func newELFSymbolParseState(limits ELFSymbolLimits) *elfSymbolParseState {
 		indexes:          make(map[elfSectionKey][]elfSymbolCandidate),
 		names:            make(map[elfSectionKey]map[uint32]string),
 	}
-}
-
-func elfSymbolTableSections(f *elf.File, source elfSymbolTable) (*elf.Section, *elf.Section, error) {
-	section := f.SectionByType(source.typ)
-	if section == nil {
-		return nil, nil, elf.ErrNoSymbols
-	}
-	if section.Link == 0 || section.Link >= uint32(len(f.Sections)) {
-		return nil, nil, fmt.Errorf("symbol section has invalid string table link %d", section.Link)
-	}
-	stringsSection := f.Sections[section.Link]
-	if stringsSection.Type != elf.SHT_STRTAB {
-		return nil, nil, fmt.Errorf("symbol section links to %s instead of SHT_STRTAB", stringsSection.Type)
-	}
-	return section, stringsSection, nil
 }
 
 func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable, pcs ...uint64) (symbols, error) {
@@ -384,6 +434,21 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable
 	return result, nil
 }
 
+func elfSymbolTableSections(f *elf.File, source elfSymbolTable) (*elf.Section, *elf.Section, error) {
+	section := f.SectionByType(source.typ)
+	if section == nil {
+		return nil, nil, elf.ErrNoSymbols
+	}
+	if section.Link == 0 || section.Link >= uint32(len(f.Sections)) {
+		return nil, nil, fmt.Errorf("symbol section has invalid string table link %d", section.Link)
+	}
+	stringsSection := f.Sections[section.Link]
+	if stringsSection.Type != elf.SHT_STRTAB {
+		return nil, nil, fmt.Errorf("symbol section links to %s instead of SHT_STRTAB", stringsSection.Type)
+	}
+	return section, stringsSection, nil
+}
+
 func (state *elfSymbolParseState) checkSymbolLimits(f *elf.File, section, stringsSection *elf.Section, allSymbols bool) (uint64, uint64, uint64, error) {
 	var symbolSize uint64
 	switch f.Class {
@@ -432,6 +497,14 @@ func (state *elfSymbolParseState) checkSymbolLimits(f *elf.File, section, string
 	return symbolSize, metadataBytes, symbolCount, nil
 }
 
+func buildELFSymbolIndex(f *elf.File, data []byte, symbolSize uint64) []elfSymbolCandidate {
+	index := scanELFSymbolEntries(f, data, symbolSize)
+	sort.SliceStable(index, func(i, j int) bool {
+		return index[i].value < index[j].value
+	})
+	return index
+}
+
 func scanELFSymbolEntries(f *elf.File, data []byte, symbolSize uint64) []elfSymbolCandidate {
 	var candidates []elfSymbolCandidate
 	for offset := symbolSize; offset < uint64(len(data)); offset += symbolSize {
@@ -456,14 +529,6 @@ func scanELFSymbolEntries(f *elf.File, data []byte, symbolSize uint64) []elfSymb
 		candidates = append(candidates, elfSymbolCandidate{nameOffset: nameOffset, value: value, size: size})
 	}
 	return candidates
-}
-
-func buildELFSymbolIndex(f *elf.File, data []byte, symbolSize uint64) []elfSymbolCandidate {
-	index := scanELFSymbolEntries(f, data, symbolSize)
-	sort.SliceStable(index, func(i, j int) bool {
-		return index[i].value < index[j].value
-	})
-	return index
 }
 
 func selectELFSymbolCandidates(index []elfSymbolCandidate, pcs []uint64) []elfSymbolCandidate {
@@ -549,73 +614,8 @@ func readELFSymbolName(reader io.ReadSeeker, size uint64, offset uint32, limit u
 	return "", fmt.Errorf("symbol name at offset %d is not NUL-terminated: %w", offset, err)
 }
 
-func elfSymbolsFromSources(f *elf.File, sources []elfSymbolTable, limits ELFSymbolLimits) (symbols, error) {
-	syms := symbols{}
-	state := newELFSymbolParseState(limits)
-	var parseErrors []error
-	for _, source := range sources {
-		sourceSymbols, err := state.parseSource(f, source)
-		if err != nil {
-			if !errors.Is(err, elf.ErrNoSymbols) {
-				parseErrors = append(parseErrors, fmt.Errorf("%s: %w", source.name, err))
-			}
-			continue
-		}
-		syms = append(syms, sourceSymbols...)
-	}
-	syms.sort()
-	return syms, errors.Join(parseErrors...)
-}
-
-// elfSymbols is retained for synthetic and full-table tests; production
-// resolution uses elfSymbolsForPCs to materialize only requested names.
-// It extracts all STT_FUNC entries from .dynsym and .symtab. Version
-// metadata is intentionally not parsed because the resolver only consumes the
-// symbol name, address, and size.
-func elfSymbols(f *elf.File, limits ELFSymbolLimits) (symbols, error) {
-	return elfSymbolsFromSources(f, elfSymbolTables[:], limits)
-}
-
-// elfSymbolsForPCs scans bounded symbol metadata but materializes names only
-// for the symbols that cover the requested ELF-relative PCs.
-func elfSymbolsForPCs(f *elf.File, pcs []uint64, limits ELFSymbolLimits) (symbols, error) {
-	return elfSymbolsForPCsWithState(f, pcs, newELFSymbolParseState(limits))
-}
-
-func elfSymbolsForPCsWithState(f *elf.File, pcs []uint64, state *elfSymbolParseState) (symbols, error) {
-	if len(pcs) == 0 {
-		return nil, nil
-	}
-	syms := symbols{}
-	var parseErrors []error
-	remainingPCs := pcs
-	for _, source := range elfSymbolTables {
-		if len(remainingPCs) == 0 {
-			break
-		}
-		sourceSymbols, err := state.parseSource(f, source, remainingPCs...)
-		if err != nil {
-			if !errors.Is(err, elf.ErrNoSymbols) {
-				parseErrors = append(parseErrors, fmt.Errorf("%s: %w", source.name, err))
-			}
-			continue
-		}
-		sourceSymbols.sort()
-		next := make([]uint64, 0, len(remainingPCs))
-		for _, pc := range remainingPCs {
-			name := sourceSymbols.resolve(pc)
-			if name == "" {
-				next = append(next, pc)
-				continue
-			}
-			// Keep the source decision for this PC, not a range that a
-			// later source could shadow when results are combined.
-			syms = append(syms, &symbol{Addr: pc, Name: name})
-		}
-		remainingPCs = next
-	}
-	syms.sort()
-	return syms, errors.Join(parseErrors...)
+func sectionKey(section *elf.Section) elfSectionKey {
+	return elfSectionKey{typ: section.Type, offset: section.Offset, size: section.Size}
 }
 
 // demangleSymbolName returns name unchanged when it is not a mangled C++/Rust symbol.

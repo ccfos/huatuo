@@ -149,17 +149,6 @@ type pendingELFPCs struct {
 	failures []string
 }
 
-func addPendingELFPC(groups map[string]*pendingELFPCs, path string, cache *elfSymbolCache, pc uint64, index int, failure string) {
-	group := groups[path]
-	if group == nil {
-		group = &pendingELFPCs{path: path, cache: cache}
-		groups[path] = group
-	}
-	group.pcs = append(group.pcs, pc)
-	group.indices = append(group.indices, index)
-	group.failures = append(group.failures, failure)
-}
-
 func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 	result := slices.Repeat([]string{failFrame("elf-load-fail", "")}, len(addrs))
 	cache, err := r.loadElfCaches(pid)
@@ -219,6 +208,17 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 		r.fillELFFrames(result, group, names)
 	}
 	return result
+}
+
+func addPendingELFPC(groups map[string]*pendingELFPCs, path string, cache *elfSymbolCache, pc uint64, index int, failure string) {
+	group := groups[path]
+	if group == nil {
+		group = &pendingELFPCs{path: path, cache: cache}
+		groups[path] = group
+	}
+	group.pcs = append(group.pcs, pc)
+	group.indices = append(group.indices, index)
+	group.failures = append(group.failures, failure)
 }
 
 func (r *UsymResolver) fillELFFrames(result []string, group *pendingELFPCs, names map[uint64]string) {
