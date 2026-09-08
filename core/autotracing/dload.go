@@ -93,11 +93,15 @@ const (
 type taskScope int
 
 type dloadTracing struct {
-	containers   map[string]*containerDloadInfo
-	interval     time.Duration
-	decayFactors [2]uint64
-	threshold    dloadThreshold
-	v2LoadStats  func([]string) (map[string]cgroupStats.LoadStats, error)
+	containers      map[string]*containerDloadInfo
+	interval        time.Duration
+	decayFactors    [2]uint64
+	threshold       dloadThreshold
+	v2LoadStats     func([]string) (map[string]cgroupStats.LoadStats, error)
+	hostUnsupported bool
+	host            containerDloadInfo
+	hostThreshold   dloadThreshold
+	hostStats       *cgroupStats.LoadStats
 }
 
 type dloadThreshold struct {
@@ -124,21 +128,32 @@ func newDloadTracing(config *Config) (*dloadTracing, error) {
 	if config.Dload.ThresholdLoad < 0 {
 		return nil, errors.New("dload threshold must be non-negative")
 	}
+	if err := config.validateDloadHostThreshold(); err != nil {
+		return nil, err
+	}
 
 	interval := time.Duration(config.Dload.Interval) * time.Second
-	return &dloadTracing{
+	d := &dloadTracing{
 		containers:   make(map[string]*containerDloadInfo),
 		interval:     interval,
 		decayFactors: loadDecayFactors(interval),
-		v2LoadStats: func(paths []string) (map[string]cgroupStats.LoadStats, error) {
-			return cgroupV2.SharedLoadStats(cgroupV2.LoadStatsConsumerDload, paths)
+		hostThreshold: dloadThreshold{
+			load:             config.Dload.HostThresholdLoad,
+			minTraceInterval: time.Duration(config.Dload.IntervalTracing) * time.Second,
+			isDebug:          config.Dload.EnableDebug,
 		},
 		threshold: dloadThreshold{
 			load:             config.Dload.ThresholdLoad,
 			minTraceInterval: time.Duration(config.Dload.IntervalTracing) * time.Second,
 			isDebug:          config.Dload.EnableDebug,
 		},
-	}, nil
+	}
+	d.v2LoadStats = func(paths []string) (map[string]cgroupStats.LoadStats, error) {
+		result, host, err := cgroupV2.SharedLoadStatsWithHost(cgroupV2.LoadStatsConsumerDload, paths)
+		d.hostStats = host
+		return result, err
+	}
+	return d, nil
 }
 
 func (d *dloadTracing) reconcileContainers(containers map[string]*pod.Container) {
@@ -170,13 +185,17 @@ func (d *dloadTracing) reconcileContainers(containers map[string]*pod.Container)
 }
 
 func (d *dloadTracing) shouldTrace(container *containerDloadInfo, sampledAt time.Time) bool {
-	if d.threshold.isDebug {
+	return d.threshold.shouldTrace(container, sampledAt)
+}
+
+func (threshold dloadThreshold) shouldTrace(container *containerDloadInfo, sampledAt time.Time) bool {
+	if threshold.isDebug {
 		return true
 	}
-	if container.dLoad[0] <= float64(d.threshold.load) {
+	if container.dLoad[0] <= float64(threshold.load) {
 		return false
 	}
-	if sampledAt.Sub(container.lastTraceAt) < d.threshold.minTraceInterval {
+	if sampledAt.Sub(container.lastTraceAt) < threshold.minTraceInterval {
 		return false
 	}
 
@@ -292,27 +311,38 @@ func legacyLoadStats(load cadvisorV1.LoadStats) cgroupStats.LoadStats {
 func (d *dloadTracing) buildAndSave(
 	container *containerDloadInfo,
 	loadStats cgroupStats.LoadStats,
+	stacks *dloadStackCapture,
 ) error {
 	startedTimestamp := time.Now().UTC()
 	cgroupPath := container.cgroupName
-	containerID := container.container.ID
-
-	cgroupStack, err := dumpUninterruptibleTaskStack(
-		taskScopeCgroup,
-		cgroupPath,
-		d.threshold.isDebug,
-	)
-	if err != nil {
-		return fmt.Errorf("capture container task stacks: %w", err)
+	containerID := ""
+	scope := taskScopeHost
+	threshold := d.hostThreshold
+	if container.container != nil {
+		containerID = container.container.ID
+		scope = taskScopeCgroup
+		threshold = d.threshold
 	}
 
-	if cgroupStack == "" && !d.threshold.isDebug {
+	cgroupStack, err := stacks.capture(
+		scope,
+		cgroupPath,
+		threshold.isDebug,
+	)
+	if err != nil {
+		return fmt.Errorf("capture dload task stacks: %w", err)
+	}
+
+	if cgroupStack == "" && !threshold.isDebug {
 		return nil
 	}
 
-	hostStack, err := dumpUninterruptibleTaskStack(taskScopeHost, "", d.threshold.isDebug)
-	if err != nil {
-		return fmt.Errorf("capture host task stacks: %w", err)
+	hostStack := ""
+	if scope == taskScopeCgroup {
+		hostStack, err = stacks.capture(taskScopeHost, "", d.threshold.isDebug)
+		if err != nil {
+			return fmt.Errorf("capture host task stacks: %w", err)
+		}
 	}
 
 	data := &DloadTracingData{
@@ -323,7 +353,7 @@ func (d *dloadTracing) buildAndSave(
 		NrIoWait:          loadStats.NrIoWait,
 		LoadAvg:           container.loadAvg[0],
 		DLoadAvg:          container.dLoad[0],
-		Threshold:         uint64(d.threshold.load),
+		Threshold:         uint64(threshold.load),
 		Stack:             cgroupStack + hostStack,
 	}
 
@@ -435,12 +465,41 @@ func cgroupHostTasks(scope taskScope, path string) ([]int32, error) {
 
 		pidList := make([]int32, 0, len(procs))
 		for _, p := range procs {
-			pidList = append(pidList, int32(p.PID))
+			threads, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", p.PID))
+			if err != nil {
+				continue
+			}
+			for _, thread := range threads {
+				var tid int32
+				if _, err := fmt.Sscan(thread.Name(), &tid); err == nil {
+					pidList = append(pidList, tid)
+				}
+			}
 		}
 		return pidList, nil
 	default:
 		return nil, fmt.Errorf("unsupported task scope %d", scope)
 	}
+}
+
+// A capture belongs to one sampling tick; host and container events can share
+// its host stacks, including an empty result or error, but not across ticks.
+type dloadStackCapture struct {
+	dump         func(taskScope, string, bool) (string, error)
+	hostStack    string
+	hostErr      error
+	hostCaptured bool
+}
+
+func (s *dloadStackCapture) capture(scope taskScope, path string, all bool) (string, error) {
+	if scope != taskScopeHost {
+		return s.dump(scope, path, all)
+	}
+	if !s.hostCaptured {
+		s.hostStack, s.hostErr = s.dump(scope, path, all)
+		s.hostCaptured = true
+	}
+	return s.hostStack, s.hostErr
 }
 
 func dumpUninterruptibleTaskStack(scope taskScope, path string, all bool) (string, error) {
@@ -490,10 +549,7 @@ func dumpUninterruptibleTaskStack(scope taskScope, path string, all bool) (strin
 // Start detect work, monitor the load of containers.
 func (d *dloadTracing) Start(ctx context.Context) error {
 	mode := cgroups.CgroupMode()
-	if mode == cgroups.Unified {
-		defer cgroupV2.ForgetSharedLoadStatsConsumer(
-			cgroupV2.LoadStatsConsumerDload)
-	}
+	defer cgroupV2.ForgetSharedLoadStatsConsumer(cgroupV2.LoadStatsConsumerDload)
 
 	ticker := time.NewTicker(d.interval)
 	defer ticker.Stop()
@@ -503,24 +559,64 @@ func (d *dloadTracing) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
 		case sampledAt := <-ticker.C:
+			stacks := dloadStackCapture{dump: dumpUninterruptibleTaskStack}
+			d.hostStats = nil
+			if !d.hostUnsupported && mode != cgroups.Unified {
+				_, host, err := cgroupV2.SharedLoadStatsWithHost(cgroupV2.LoadStatsConsumerDload, nil)
+				d.hostStats = host
+				if err != nil {
+					log.WithError(err).Warn("host dload snapshot unavailable")
+					if errors.Is(err, cgroupV2.ErrTaskIteratorNotSupported) {
+						d.hostUnsupported = true
+					}
+				}
+			}
 			containers, err := pod.Containers()
 			if err != nil {
+				if !d.hostUnsupported && mode == cgroups.Unified {
+					_, d.hostStats, _ = cgroupV2.SharedLoadStatsWithHost(cgroupV2.LoadStatsConsumerDload, nil)
+				}
+				d.traceHost(sampledAt, &stacks)
+				if !d.hostUnsupported {
+					log.WithError(err).Warn("list containers for dload sampling")
+					continue
+				}
 				return fmt.Errorf("list containers for dload sampling: %w", err)
 			}
 			d.reconcileContainers(containers)
 
 			container, loadStats, err := d.selectTraceTarget(sampledAt, mode)
+			d.traceHost(sampledAt, &stacks)
 			if err != nil {
+				if !d.hostUnsupported && !errors.Is(err, types.ErrNotSupported) {
+					log.WithError(err).Warn("container dload snapshot unavailable")
+					continue
+				}
 				return err
 			}
 			if container == nil {
 				continue
 			}
 
-			if err := d.buildAndSave(container, loadStats); err != nil {
+			if err := d.buildAndSave(container, loadStats, &stacks); err != nil {
 				return err
 			}
 			container.lastTraceAt = sampledAt
 		}
+	}
+}
+
+func (d *dloadTracing) traceHost(sampledAt time.Time, stacks *dloadStackCapture) {
+	if d.hostStats == nil {
+		return
+	}
+	updateLoad(&d.host, d.hostStats.NrRunning, d.hostStats.NrUninterruptible, d.decayFactors)
+	if !d.hostThreshold.shouldTrace(&d.host, sampledAt) {
+		return
+	}
+	// Keep capture attempts rate-limited even when saving fails.
+	d.host.lastTraceAt = sampledAt
+	if err := d.buildAndSave(&d.host, *d.hostStats, stacks); err != nil {
+		log.WithError(err).Warn("save host dload trace")
 	}
 }
