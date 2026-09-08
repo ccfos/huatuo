@@ -114,17 +114,16 @@ func TestRunTaskCommandKillsOutputLimitedProcess(t *testing.T) {
 	}
 
 	type result struct {
-		output []byte
-		err    error
+		err error
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		output, err := runTaskCommand(t.Context(), exe, []string{
+		_, err := runTaskCommand(t.Context(), exe, []string{
 			"-test.run=^TestNoisySleepHelperProcess$",
 			"--",
 			"noisy-sleep-helper",
 		}, 1024)
-		resultCh <- result{output: output, err: err}
+		resultCh <- result{err: err}
 	}()
 
 	select {
