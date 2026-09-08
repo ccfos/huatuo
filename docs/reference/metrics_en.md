@@ -120,6 +120,7 @@ Memory reclaim and compaction can block tasks. These metrics record host cumulat
 | `memory_free_allocpages_stall` | Cumulative host direct-reclaim duration | Milliseconds | Host | eBPF | — |
 | `memory_free_compaction_stall` | Cumulative host memory-compaction duration | Milliseconds | Host | eBPF | — |
 | `memory_reclaim_container_directstall` | Container direct-reclaim event count | Count | Container | eBPF | — |
+| `memory_reclaim_events_unresolved_suppressed_total` | Unresolved reclaim events suppressed by the one-second output cooldown (Counter) | Count | Host | Event collector | — |
 
 `memory_others_container_directstall_time`, `memory_others_container_asyncreclaim_time`, and `memory_others_container_local_direct_reclaim_time` depend on DiDi custom-kernel interfaces `memory.directstall_stat`, `memory.asynreclaim_stat`, and `memory.local_direct_reclaim_time`.
 

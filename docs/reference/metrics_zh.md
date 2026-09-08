@@ -120,6 +120,7 @@ huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg"
 | `memory_free_allocpages_stall` | 宿主机直接回收累计耗时 | 毫秒 | 宿主机 | eBPF | — |
 | `memory_free_compaction_stall` | 宿主机内存规整累计耗时 | 毫秒 | 宿主机 | eBPF | — |
 | `memory_reclaim_container_directstall` | 容器直接回收事件次数 | 计数 | 容器 | eBPF | — |
+| `memory_reclaim_events_unresolved_suppressed_total` | 一秒输出冷却期间抑制的未归属 reclaim 事件（Counter） | 计数 | 宿主机 | 事件采集器 | — |
 
 `memory_others_container_directstall_time`、`memory_others_container_asyncreclaim_time`、`memory_others_container_local_direct_reclaim_time` 依赖滴滴定制内核的 `memory.directstall_stat`、`memory.asynreclaim_stat`、`memory.local_direct_reclaim_time` 接口。
 

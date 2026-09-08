@@ -1301,3 +1301,14 @@ huatuo-bamai --region <region> [选项]
 - **自动追踪调优**：根据业务负载特征调整阈值，过低阈值会导致频繁触发，过高则可能遗漏问题。建议在测试环境逐步验证。
 - **安全性**：ES 配置中请使用强密码，并考虑启用 HTTPS；避免在配置文件中硬编码敏感信息。
 - **兼容性**：启用功能前，核对所需的内核能力、硬件和运行时依赖。
+
+### retain unresolved reclaim events in the host stream
+
+- **主机输出**：将未解析出容器归属的慢速直接回收事件保留在主机事件流。
+  要求启用 `memory_reclaim_events` 采集器，且现有 `try_to_free_pages` 入口/返回探针
+  可用并能挂载；不新增探针，也没有额外的 cgroup 版本开关。
+  沿用 `memory_reclaim` 事件名和 `BlockedThreshold`。
+  空容器 ID 标记为 `container_attribution="unresolved"`，可能是主机任务，
+  也可能是归属未解析的容器任务，不能认为已确认属于物理机服务。
+  已知容器仍只输出一条容器事件，不重复输出主机事件。此路径不采集 kswapd，
+  也不增加聚合指标；新增开销是原先丢弃事件的输出与存储。

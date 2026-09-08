@@ -17,6 +17,11 @@ package events
 import (
 	"encoding/json"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,6 +101,89 @@ func TestEventJSONFieldNames(t *testing.T) {
 			require.NoError(t, json.Unmarshal(encoded, &fields))
 			for _, name := range tt.expected {
 				assert.Contains(t, fields, name)
+			}
+		})
+	}
+}
+
+func TestReclaimUnresolvedOutputCooldown(t *testing.T) {
+	attr, err := newMemoryReclaim()
+	require.NoError(t, err)
+	require.NotZero(t, attr.Flag&tracing.FlagMetric)
+	c := attr.TracingData.(*memoryReclaimTracing)
+	now := time.Unix(100, 0)
+	require.True(t, c.allowReclaimOutput(nil, now))
+	for range 100 {
+		require.False(t, c.allowReclaimOutput(nil, now), "unresolved flood exceeded output budget")
+	}
+	require.False(t, c.allowReclaimOutput(nil, now.Add(time.Second-time.Nanosecond)))
+	deadline := c.nextUnresolved
+	for range 100 {
+		require.True(t, c.allowReclaimOutput(&pod.Container{ID: "resolved"}, now))
+	}
+	require.Equal(t, deadline, c.nextUnresolved, "resolved events consumed or refilled host budget")
+	metrics, err := c.Update()
+	require.NoError(t, err)
+	require.Len(t, metrics, 1)
+	assert.Equal(t, "unresolved_suppressed_total", metrics[0].Name())
+	assert.Equal(t, metric.MetricTypeCounter, metrics[0].Type())
+	assert.Equal(t, float64(101), metrics[0].Value)
+	require.True(t, c.allowReclaimOutput(nil, now.Add(time.Second)), "exact cooldown boundary must recover")
+	require.False(t, c.allowReclaimOutput(nil, now.Add(time.Second)), "cooldown must begin before saving")
+	require.True(t, c.allowReclaimOutput(nil, now.Add(time.Hour)))
+	require.False(t, c.allowReclaimOutput(nil, now.Add(time.Hour)), "idle time must not accumulate burst credits")
+	metrics, err = c.Update()
+	require.NoError(t, err)
+	assert.Equal(t, float64(103), metrics[0].Value, "recovery must not reset suppression count")
+}
+
+func TestReclaimSuppressionConcurrentScrapes(t *testing.T) {
+	c := &memoryReclaimTracing{}
+	now := time.Unix(100, 0)
+	require.True(t, c.allowReclaimOutput(nil, now))
+	start, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		<-start
+		for range 1000 {
+			c.allowReclaimOutput(nil, now)
+		}
+	}()
+	close(start)
+	var previous float64
+	for range 1000 {
+		metrics, err := c.Update()
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, metrics[0].Value, previous)
+		previous = metrics[0].Value
+	}
+	<-done
+	metrics, err := c.Update()
+	require.NoError(t, err)
+	assert.Equal(t, float64(1000), metrics[0].Value)
+}
+
+func BenchmarkReclaimOutputCooldown(b *testing.B) {
+	for _, mode := range []string{"resolved", "allowed", "suppressed"} {
+		b.Run(mode, func(b *testing.B) {
+			c := &memoryReclaimTracing{}
+			now := time.Unix(100, 0)
+			var container *pod.Container
+			if mode == "resolved" {
+				container = &pod.Container{ID: "resolved"}
+			}
+			if mode == "suppressed" {
+				c.nextUnresolved = now.Add(time.Hour)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				if mode == "allowed" {
+					now = now.Add(time.Second)
+				}
+				if c.allowReclaimOutput(container, now) != (mode != "suppressed") {
+					b.Fatal("unexpected output decision")
+				}
 			}
 		})
 	}
