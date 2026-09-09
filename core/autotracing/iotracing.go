@@ -18,8 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"path"
 	"strconv"
 	"strings"
@@ -27,6 +25,7 @@ import (
 	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
+	"huatuo-bamai/internal/exec"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs/blockdevice"
 	"huatuo-bamai/internal/randomid"
@@ -39,7 +38,6 @@ const (
 	iotracingToolName                = "iotracing"
 	iotracingSnapshotTimeout         = 5 * time.Second
 	iotracingSnapshotSaveTimeout     = 30 * time.Second
-	iotracingProcessWaitTimeout      = 5 * time.Second
 	iotracingSamplingIntervalSeconds = 5
 )
 
@@ -441,45 +439,24 @@ func (i *ioTracing) Start(ctx context.Context) error {
 		"--max-files-per-process", strconv.Itoa(i.maxFilesPerProcess),
 	}
 
-	cmd := exec.CommandContext(
-		ctx,
-		path.Join(internalconfig.CoreBinDir, iotracingToolName),
-		args...,
-	)
-	if err := cmd.Start(); err != nil {
+	process, err := exec.New(exec.Spec{
+		Path: path.Join(internalconfig.CoreBinDir, iotracingToolName),
+		Args: args,
+	})
+	if err != nil {
 		pendingReasons.Delete(taskID)
-		return fmt.Errorf("start iotracing: %w", err)
+		return fmt.Errorf("build iotracing command: %w", err)
 	}
-
-	log.WithField("pid", cmd.Process.Pid).Info("iotracing started")
-
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case <-ctx.Done():
+	if err := process.Run(ctx); err != nil {
 		pendingReasons.Delete(taskID)
-		if err := killIOTracingProcessAndWait(
-			cmd.Process,
-			done,
-			iotracingProcessWaitTimeout,
-		); err != nil {
-			return err
-		}
-		log.Info("iotracing stopped")
-		return nil
-	case werr := <-done:
 		if ctx.Err() != nil {
-			pendingReasons.Delete(taskID)
 			log.Info("iotracing stopped")
 			return nil
 		}
-		if werr != nil {
-			pendingReasons.Delete(taskID)
-			return fmt.Errorf("iotracing exited: %w", werr)
+		if stderr := process.Err(); len(stderr) > 0 {
+			return fmt.Errorf("run iotracing: %w; stderr: %s", err, stderr)
 		}
+		return fmt.Errorf("run iotracing: %w", err)
 	}
 
 	return waitForSnapshot(
@@ -540,30 +517,6 @@ func waitForSnapshotSave(
 		return nil
 	case <-timer.C:
 		return errors.New("timed out waiting for iotracing snapshot save")
-	}
-}
-
-type processKiller interface {
-	Kill() error
-}
-
-func killIOTracingProcessAndWait(
-	process processKiller,
-	done <-chan error,
-	waitTimeout time.Duration,
-) error {
-	if err := process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("stop iotracing: %w", err)
-	}
-
-	timer := time.NewTimer(waitTimeout)
-	defer timer.Stop()
-
-	select {
-	case <-done:
-		return nil
-	case <-timer.C:
-		return errors.New("timed out waiting for iotracing to stop")
 	}
 }
 

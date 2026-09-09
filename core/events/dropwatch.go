@@ -22,12 +22,12 @@ import (
 	"strconv"
 
 	internalconfig "huatuo-bamai/internal/config"
+	"huatuo-bamai/internal/exec"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/timeutil"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/types"
 )
@@ -59,12 +59,21 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 		"--source-types", toolstream.SourceTypeEvent,
 	}
 
-	result := executil.ExecCmd(ctx, 0, path.Join(internalconfig.CoreBinDir, "dropwatch"), args...)
-	if errors.Is(result.CmdErr, context.Canceled) {
-		return nil
+	process, err := exec.New(exec.Spec{
+		Path: path.Join(internalconfig.CoreBinDir, "dropwatch"),
+		Args: args,
+	})
+	if err != nil {
+		return fmt.Errorf("create dropwatch process: %w", err)
 	}
-	if result.CmdErr != nil {
-		return fmt.Errorf("run dropwatch: %w", executil.VerifyResults([]executil.CmdResult{result}))
+	if err := process.Run(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		if stderr := process.Err(); len(stderr) > 0 {
+			return fmt.Errorf("run dropwatch: %w; stderr: %s", err, stderr)
+		}
+		return fmt.Errorf("run dropwatch: %w", err)
 	}
 	return nil
 }

@@ -22,11 +22,11 @@ import (
 	"strconv"
 
 	internalconfig "huatuo-bamai/internal/config"
+	"huatuo-bamai/internal/exec"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/timeutil"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/types"
 )
@@ -73,12 +73,21 @@ func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
 		args = append(args, "--enable-tlp")
 	}
 
-	result := executil.ExecCmd(ctx, 0, path.Join(internalconfig.CoreBinDir, tcpSharkToolName), args...)
-	if errors.Is(result.CmdErr, context.Canceled) {
-		return nil
+	process, err := exec.New(exec.Spec{
+		Path: path.Join(internalconfig.CoreBinDir, tcpSharkToolName),
+		Args: args,
+	})
+	if err != nil {
+		return fmt.Errorf("create %s process: %w", tcpSharkToolName, err)
 	}
-	if result.CmdErr != nil {
-		return fmt.Errorf("run %s: %w", tcpSharkToolName, executil.VerifyResults([]executil.CmdResult{result}))
+	if err := process.Run(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		if stderr := process.Err(); len(stderr) > 0 {
+			return fmt.Errorf("run %s: %w; stderr: %s", tcpSharkToolName, err, stderr)
+		}
+		return fmt.Errorf("run %s: %w", tcpSharkToolName, err)
 	}
 	return nil
 }

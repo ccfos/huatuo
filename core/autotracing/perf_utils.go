@@ -19,20 +19,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
+	"huatuo-bamai/internal/exec"
 )
 
 const (
-	perfExitGracePeriod     = 30 * time.Second
-	maxPerfErrorOutputLen   = 4096
-	maxTimerDurationSeconds = int64(time.Duration(1<<63-1) / time.Second)
-	maxPerfDurationSeconds  = int64(
-		(time.Duration(1<<63-1) - perfExitGracePeriod) / time.Second,
+	perfCompletionGracePeriod = 30 * time.Second
+	maxPerfOutputBytes        = 16 << 20
+	maxPerfErrorOutputLen     = 4096
+	maxTimerDurationSeconds   = int64(time.Duration(1<<63-1) / time.Second)
+	maxPerfDurationSeconds    = int64(
+		(time.Duration(1<<63-1) - perfCompletionGracePeriod) / time.Second,
 	)
 )
 
@@ -42,7 +43,7 @@ type perfRequest struct {
 }
 
 func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(parent, request.duration+perfExitGracePeriod)
+	ctx, cancel := context.WithTimeout(parent, request.duration+perfCompletionGracePeriod)
 	defer cancel()
 
 	args := []string{
@@ -58,15 +59,26 @@ func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error)
 		strconv.FormatInt(int64(request.duration/time.Second), 10),
 	)
 
-	cmd := exec.CommandContext(
-		ctx,
-		filepath.Join(internalconfig.CoreBinDir, "perf"),
-		args...,
-	)
-	output, err := cmd.CombinedOutput()
+	process, err := exec.New(exec.Spec{
+		Path:           filepath.Join(internalconfig.CoreBinDir, "perf"),
+		Args:           args,
+		MaxOutputBytes: maxPerfOutputBytes,
+	})
 	if err != nil {
-		return nil, perfCommandError(request.containerID, output, err)
+		return nil, perfCommandError(request.containerID, nil, err)
 	}
+	err = process.Run(ctx)
+	if err != nil {
+		diagnostic := process.Output()
+		if stderr := process.Err(); len(stderr) > 0 {
+			if len(diagnostic) > 0 {
+				diagnostic = append(diagnostic, '\n')
+			}
+			diagnostic = append(diagnostic, stderr...)
+		}
+		return nil, perfCommandError(request.containerID, diagnostic, err)
+	}
+	output := process.Output()
 	if len(bytes.TrimSpace(output)) == 0 {
 		return nil, perfCommandError(
 			request.containerID,
