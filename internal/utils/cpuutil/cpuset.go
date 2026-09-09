@@ -15,10 +15,12 @@
 package cpuutil
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -33,7 +35,12 @@ func ParseOnlineCores(path string) (uint64, error) {
 		return 0, err
 	}
 
-	list := strings.TrimSpace(string(v))
+	return ParseCPUListCount(string(v))
+}
+
+// ParseCPUListCount returns the number of CPUs in a Linux CPU list.
+func ParseCPUListCount(list string) (uint64, error) {
+	list = strings.TrimSpace(list)
 	if list == "" {
 		return 0, nil
 	}
@@ -44,27 +51,15 @@ func ParseOnlineCores(path string) (uint64, error) {
 			return 0, fmt.Errorf("invalid CPU list %q", list)
 		}
 
-		firstText, lastText, isRange := strings.Cut(item, "-")
-		first, err := strconv.ParseUint(firstText, 10, 64)
+		first, last, err := parseCPURange(item)
 		if err != nil {
-			return 0, fmt.Errorf("parse CPU %q: %w", item, err)
+			return 0, err
 		}
-
-		size := uint64(1)
-		if isRange {
-			last, err := strconv.ParseUint(lastText, 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parse CPU range %q: %w", item, err)
-			}
-			if last < first {
-				return 0, fmt.Errorf("invalid CPU range %q", item)
-			}
-			width := last - first
-			if width == math.MaxUint64 {
-				return 0, errors.New("cpu count overflow")
-			}
-			size = width + 1
+		width := last - first
+		if width == math.MaxUint64 {
+			return 0, errors.New("cpu count overflow")
 		}
+		size := width + 1
 		if count > math.MaxUint64-size {
 			return 0, errors.New("cpu count overflow")
 		}
@@ -72,6 +67,98 @@ func ParseOnlineCores(path string) (uint64, error) {
 	}
 
 	return count, nil
+}
+
+func parseCPURange(item string) (uint64, uint64, error) {
+	firstText, lastText, isRange := strings.Cut(item, "-")
+	first, err := strconv.ParseUint(firstText, 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse CPU %q: %w", item, err)
+	}
+	if !isRange {
+		return first, first, nil
+	}
+	last, err := strconv.ParseUint(lastText, 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse CPU range %q: %w", item, err)
+	}
+	if last < first {
+		return 0, 0, fmt.Errorf("invalid CPU range %q", item)
+	}
+	return first, last, nil
+}
+
+type cpuRange struct {
+	first uint64
+	last  uint64
+}
+
+// CPUListIntersectionCount counts CPUs common to all lists without expanding ranges.
+func CPUListIntersectionCount(lists ...string) (uint64, error) {
+	var common []cpuRange
+	for index, list := range lists {
+		ranges, err := parseCPURanges(list)
+		if err != nil {
+			return 0, err
+		}
+		if index == 0 {
+			common = ranges
+			continue
+		}
+		intersection := make([]cpuRange, 0, len(common)+len(ranges))
+		for left, right := 0, 0; left < len(common) && right < len(ranges); {
+			first := max(common[left].first, ranges[right].first)
+			last := min(common[left].last, ranges[right].last)
+			if first <= last {
+				intersection = append(intersection, cpuRange{first: first, last: last})
+			}
+			if common[left].last < ranges[right].last {
+				left++
+			} else {
+				right++
+			}
+		}
+		common = intersection
+	}
+	var count uint64
+	for _, interval := range common {
+		width := interval.last - interval.first
+		if width == math.MaxUint64 || count > math.MaxUint64-(width+1) {
+			return 0, errors.New("cpu count overflow")
+		}
+		count += width + 1
+	}
+	return count, nil
+}
+
+func parseCPURanges(list string) ([]cpuRange, error) {
+	list = strings.TrimSpace(list)
+	if list == "" {
+		return nil, nil
+	}
+	items := strings.Split(list, ",")
+	ranges := make([]cpuRange, 0, len(items))
+	for _, item := range items {
+		if item == "" {
+			return nil, fmt.Errorf("invalid CPU list %q", list)
+		}
+		first, last, err := parseCPURange(item)
+		if err != nil {
+			return nil, err
+		}
+		ranges = append(ranges, cpuRange{first: first, last: last})
+	}
+	slices.SortFunc(ranges, func(a, b cpuRange) int { return cmp.Compare(a.first, b.first) })
+	merged := ranges[:1]
+	for _, interval := range ranges[1:] {
+		previous := &merged[len(merged)-1]
+		if interval.first <= previous.last || (previous.last != math.MaxUint64 && interval.first == previous.last+1) {
+			previous.last = max(previous.last, interval.last)
+		} else {
+			merged = append(merged, interval)
+		}
+	}
+	return merged, nil
 }
 
 // MaxOnlineCPU returns the highest CPU ID in a Linux online CPU list.

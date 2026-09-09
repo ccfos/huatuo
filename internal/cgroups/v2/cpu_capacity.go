@@ -1,4 +1,4 @@
-// Copyright 2025, 2026 The HuaTuo Authors
+// Copyright 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,29 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stats
+package v2
 
-// All members are measured in microseconds
-type CpuUsage struct {
-	Usage  uint64
-	User   uint64
-	System uint64
-}
+import (
+	"huatuo-bamai/internal/cgroups/capacity"
+	"huatuo-bamai/internal/cgroups/paths"
+	"huatuo-bamai/internal/cgroups/stats"
+)
 
-type CpuQuota struct {
-	Quota             uint64
-	Period            uint64
-	EffectiveCPUCount uint64
-}
-
-// CpuCapacity is the CPU ceiling observable within the mounted hierarchy.
-// ConfigID identifies its configuration, not an exclusive CPU allocation.
-type CpuCapacity struct {
-	Cores    float64
-	ConfigID [32]byte
-}
-
-type MemoryUsage struct {
-	Usage      uint64
-	MaxLimited uint64
+func (c *CgroupV2) CpuCapacity(path, onlineCPUs string) (*stats.CpuCapacity, error) {
+	return capacity.ReadV2(paths.RootfsDefaultPath, path, onlineCPUs)
 }

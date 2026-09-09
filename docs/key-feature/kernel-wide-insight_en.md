@@ -69,6 +69,13 @@ huatuo_bamai_softirq_latency{cpuid="1",host="hostname",region="dev",type="NET_TX
 
 Metrics showing CPU usage on hosts and containers (Prometheus format):
 
+Container utilization is normalized by the effective CPU capacity described
+below. The first observation only establishes a baseline. After an observed
+quota, period, CPU-set or cgroup identity change, a counter reset, or a read
+failure, utilization is omitted until a new stable interval of at least one
+second is available. The collector does not replay the previous percentage or
+substitute zero for an invalid interval. Valid quota bursts can exceed 100%.
+
 ```bash
 # HELP huatuo_bamai_cpu_util_sys cpu sys for the host
 # TYPE huatuo_bamai_cpu_util_sys gauge
@@ -104,6 +111,20 @@ huatuo_bamai_cpu_util_container_usr{container_host="coredns-855c4dd65d-8v5kg",co
 
 Container CPU resource configuration:
 
+`cpu_util_container_cores` is the visible CPU capacity ceiling, not the raw
+leaf quota: it is bounded by online CPUs, the effective CPU set, and every
+visible ancestor's quota divided by that ancestor's own period. For example,
+an unlimited leaf with 32 allowed CPUs under a two-CPU parent reports two
+cores. The parent's quota is shared with siblings, not reserved for each leaf.
+
+The existing metric name and labels are retained; installations with tighter
+ancestor limits will observe smaller `cores` and correspondingly higher
+normalized utilization. Raw cgroup quota/period reads are unchanged. Ancestors
+hidden by the cgroup mount or namespace cannot be included. Polling can detect
+changes between observed configurations, but not a change and reversal entirely
+between observations. The legacy v1 reader retains the existing assumption
+that CPU, CPU accounting and cpuset controllers use the same relative path.
+
 ```bash
 # HELP huatuo_bamai_cpu_util_container_cores cpu core number for the containers
 # TYPE huatuo_bamai_cpu_util_container_cores gauge
@@ -112,7 +133,7 @@ huatuo_bamai_cpu_util_container_cores{container_host="coredns-855c4dd65d-8v5kg",
 
 |Metric|Description|Unit|Target|Labels|
 |---|---|---|---|---|
-|cpu_util_container_cores| Number of CPU cores|cores| Container | (same as above) |
+|cpu_util_container_cores| Visible CPU capacity ceiling after ancestor quota and CPU-set limits|cores| Container | (same as above) |
 
 ### Contention
 

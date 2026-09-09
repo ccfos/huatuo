@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -64,6 +64,8 @@ type Cgroup interface {
 	CpuStatRaw(path string) (map[string]uint64, error)
 	// CpuQuotaAndPeriod cgroup quota and period
 	CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error)
+	// CpuCapacity bounds online CPUs by cpuset and visible ancestor quotas.
+	CpuCapacity(path, onlineCPUs string) (*stats.CpuCapacity, error)
 	// MemoryStatRaw memory.stat
 	MemoryStatRaw(path string) (map[string]uint64, error)
 	// MemoryEventRaw memory.stat
