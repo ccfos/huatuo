@@ -19,6 +19,8 @@ public final class TestProfilerJavaMemory {
     private TestProfilerJavaMemory() {}
 
     public static void main(String[] args) {
+        System.out.println("ready");
+        System.out.flush();
         while (true) {
             allocateHotMethod();
         }
