@@ -109,6 +109,11 @@ type ClientInterface interface {
 	// GetReadiness request
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// UpdateConfigWithBody request with any body
+	UpdateConfigWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateConfig(ctx context.Context, body UpdateConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetContainer request
 	GetContainer(ctx context.Context, containerID ContainerID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -143,6 +148,30 @@ func (c *Client) GetOpenAPI(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateConfigWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateConfigRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateConfig(ctx context.Context, body UpdateConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateConfigRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +316,46 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewUpdateConfigRequest calls the generic UpdateConfig builder with application/json body
+func NewUpdateConfigRequest(server string, body UpdateConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateConfigRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewUpdateConfigRequestWithBody generates requests for UpdateConfig with any type of body
+func NewUpdateConfigRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/config")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -522,6 +591,11 @@ type ClientWithResponsesInterface interface {
 	// GetReadinessWithResponse request
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
 
+	// UpdateConfigWithBodyWithResponse request with any body
+	UpdateConfigWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateConfigResponse, error)
+
+	UpdateConfigWithResponse(ctx context.Context, body UpdateConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateConfigResponse, error)
+
 	// GetContainerWithResponse request
 	GetContainerWithResponse(ctx context.Context, containerID ContainerID, reqEditors ...RequestEditorFn) (*GetContainerResponse, error)
 
@@ -595,6 +669,41 @@ func (r GetReadinessResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetReadinessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthenticated
+	JSON413      *RequestTooLarge
+	JSON415      *UnsupportedMediaType
+	JSON429      *TooManyRequests
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateConfigResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -795,6 +904,23 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 	return ParseGetReadinessResponse(rsp)
 }
 
+// UpdateConfigWithBodyWithResponse request with arbitrary body returning *UpdateConfigResponse
+func (c *ClientWithResponses) UpdateConfigWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateConfigResponse, error) {
+	rsp, err := c.UpdateConfigWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateConfigWithResponse(ctx context.Context, body UpdateConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateConfigResponse, error) {
+	rsp, err := c.UpdateConfig(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateConfigResponse(rsp)
+}
+
 // GetContainerWithResponse request returning *GetContainerResponse
 func (c *ClientWithResponses) GetContainerWithResponse(ctx context.Context, containerID ContainerID, reqEditors ...RequestEditorFn) (*GetContainerResponse, error) {
 	rsp, err := c.GetContainer(ctx, containerID, reqEditors...)
@@ -893,6 +1019,67 @@ func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error
 	response := &GetReadinessResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseUpdateConfigResponse parses an HTTP response from a UpdateConfigWithResponse call
+func ParseUpdateConfigResponse(rsp *http.Response) (*UpdateConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest RequestTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest TooManyRequests
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil

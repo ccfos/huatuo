@@ -39,6 +39,9 @@ type ServerInterface interface {
 
 	// (GET /readyz)
 	GetReadiness(c *gin.Context)
+	// Atomically update and persist Node Agent configuration.
+	// (PUT /v1/config)
+	UpdateConfig(c *gin.Context)
 
 	// (GET /v1/containers/{container_id})
 	GetContainer(c *gin.Context, containerID ContainerID)
@@ -89,6 +92,21 @@ func (siw *ServerInterfaceWrapper) GetReadiness(c *gin.Context) {
 	}
 
 	siw.Handler.GetReadiness(c)
+}
+
+// UpdateConfig operation middleware
+func (siw *ServerInterfaceWrapper) UpdateConfig(c *gin.Context) {
+
+	c.Set(string(BearerAuthScopes), []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.UpdateConfig(c)
 }
 
 // GetContainer operation middleware
@@ -229,6 +247,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 
 	router.GET(options.BaseURL+"/openapi.json", wrapper.GetOpenAPI)
 	router.GET(options.BaseURL+"/readyz", wrapper.GetReadiness)
+	router.PUT(options.BaseURL+"/v1/config", wrapper.UpdateConfig)
 	router.GET(options.BaseURL+"/v1/containers/:container_id", wrapper.GetContainer)
 	router.POST(options.BaseURL+"/v1/events/watch", wrapper.WatchEvents)
 	router.POST(options.BaseURL+"/v1/operations", wrapper.StartOperation)
@@ -301,6 +320,109 @@ type GetReadiness204Response struct {
 func (response GetReadiness204Response) VisitGetReadinessResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
+}
+
+type UpdateConfigRequestObject struct {
+	Body *UpdateConfigJSONRequestBody
+}
+
+type UpdateConfigResponseObject interface {
+	VisitUpdateConfigResponse(w http.ResponseWriter) error
+}
+
+type UpdateConfig204Response struct {
+}
+
+func (response UpdateConfig204Response) VisitUpdateConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type UpdateConfig400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response UpdateConfig400JSONResponse) VisitUpdateConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateConfig401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response UpdateConfig401JSONResponse) VisitUpdateConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateConfig413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response UpdateConfig413JSONResponse) VisitUpdateConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateConfig415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response UpdateConfig415JSONResponse) VisitUpdateConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateConfig429JSONResponse struct{ TooManyRequestsJSONResponse }
+
+func (response UpdateConfig429JSONResponse) VisitUpdateConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateConfig500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response UpdateConfig500JSONResponse) VisitUpdateConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type GetContainerRequestObject struct {
@@ -854,6 +976,9 @@ type StrictServerInterface interface {
 
 	// (GET /readyz)
 	GetReadiness(ctx context.Context, request GetReadinessRequestObject) (GetReadinessResponseObject, error)
+	// Atomically update and persist Node Agent configuration.
+	// (PUT /v1/config)
+	UpdateConfig(ctx context.Context, request UpdateConfigRequestObject) (UpdateConfigResponseObject, error)
 
 	// (GET /v1/containers/{container_id})
 	GetContainer(ctx context.Context, request GetContainerRequestObject) (GetContainerResponseObject, error)
@@ -969,6 +1094,37 @@ func (sh *strictHandler) GetReadiness(ctx *gin.Context) {
 		sh.options.HandlerErrorFunc(ctx, err)
 	} else if validResponse, ok := response.(GetReadinessResponseObject); ok {
 		if err := validResponse.VisitGetReadinessResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateConfig operation middleware
+func (sh *strictHandler) UpdateConfig(ctx *gin.Context) {
+	var request UpdateConfigRequestObject
+
+	var body UpdateConfigJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(ctx, err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateConfig(ctx, request.(UpdateConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateConfig")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(UpdateConfigResponseObject); ok {
+		if err := validResponse.VisitUpdateConfigResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {

@@ -24,6 +24,7 @@ import (
 
 	apiv1 "huatuo-bamai/apis/v1"
 	nodeapi "huatuo-bamai/apis/v1/node"
+	"huatuo-bamai/cmd/huatuo-bamai/config"
 	nodecloudevents "huatuo-bamai/internal/nodeagent/cloudevents"
 	"huatuo-bamai/internal/nodeagent/operation"
 	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
@@ -42,6 +43,7 @@ type NodeAPIHandler struct {
 	tracing           *nodetracing.Service
 	cloudEvents       *nodecloudevents.Service
 	keepAliveInterval time.Duration
+	updateConfig      func(map[string]any) error
 	containerByID     func(string) (*pod.Container, error)
 	openAPI           nodeapi.GetOpenAPI200JSONResponse
 }
@@ -187,6 +189,7 @@ func NewNodeAPIHandler(options *NodeAPIHandlerOptions) (*NodeAPIHandler, error) 
 		tracing:           options.TracingService,
 		cloudEvents:       options.CloudEventsService,
 		keepAliveInterval: options.EventStreamKeepAliveInterval,
+		updateConfig:      config.UpdateAndSync,
 		containerByID:     pod.ContainerByID,
 		openAPI:           specification,
 	}, nil

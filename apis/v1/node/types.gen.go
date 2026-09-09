@@ -293,6 +293,11 @@ type TracingOperationSpec struct {
 // TracingType defines model for TracingType.
 type TracingType string
 
+// UpdateConfigRequest defines model for UpdateConfigRequest.
+type UpdateConfigRequest struct {
+	Config map[string]json.RawMessage `json:"config"`
+}
+
 // WatchEvent defines model for WatchEvent.
 type WatchEvent struct {
 	Data            WatchEventData        `json:"data"`
@@ -381,6 +386,9 @@ type UnsupportedMediaType = externalRef0.ErrorResponse
 
 // bearerAuthContextKey is the context key for BearerAuth security scheme
 type bearerAuthContextKey string
+
+// UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
+type UpdateConfigJSONRequestBody = UpdateConfigRequest
 
 // WatchEventsJSONRequestBody defines body for WatchEvents for application/json ContentType.
 type WatchEventsJSONRequestBody = WatchEventsRequest

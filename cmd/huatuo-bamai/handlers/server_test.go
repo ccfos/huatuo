@@ -27,29 +27,7 @@ import (
 func TestNodeRouterTokenAuthentication(t *testing.T) {
 	nodeHandler := newTestNodeAPIHandler(t, time.Second)
 	nodeHandler.containerByID = func(string) (*pod.Container, error) { return nil, nil }
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Listen() error = %v", err)
-	}
-	addr := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatalf("Close() listener error = %v", err)
-	}
-
-	server, err := newHTTPServer(&ServerOptions{BearerToken: "node-secret"}, nodeHandler)
-	if err != nil {
-		t.Fatalf("newHTTPServer() error = %v", err)
-	}
-	if err := server.Start(addr); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	t.Cleanup(func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			t.Errorf("Shutdown() error = %v", err)
-		}
-	})
+	baseURL := startNodeAPIServer(t, nodeHandler)
 
 	tests := []struct {
 		name       string
@@ -83,12 +61,41 @@ func TestNodeRouterTokenAuthentication(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status := nodeRequestStatus(t, "http://"+addr+tt.path, tt.token)
+			status := nodeRequestStatus(t, baseURL+tt.path, tt.token)
 			if status != tt.wantStatus {
 				t.Fatalf("GET %s status = %d, want %d", tt.path, status, tt.wantStatus)
 			}
 		})
 	}
+}
+
+func startNodeAPIServer(t *testing.T, nodeHandler *NodeAPIHandler) string {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	addr := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Close() listener error = %v", err)
+	}
+
+	server, err := newHTTPServer(&ServerOptions{BearerToken: "node-secret"}, nodeHandler)
+	if err != nil {
+		t.Fatalf("newHTTPServer() error = %v", err)
+	}
+	if err := server.Start(addr); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			t.Errorf("Shutdown() error = %v", err)
+		}
+	})
+	return "http://" + addr
 }
 
 func nodeRequestStatus(t *testing.T, url, token string) int {

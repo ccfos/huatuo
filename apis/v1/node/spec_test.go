@@ -86,6 +86,7 @@ func TestRemovedNodeRoutesAreNotRegistered(t *testing.T) {
 	RegisterHandlers(router, NewStrictHandler(&unimplementedStrictServer{}, nil))
 
 	for _, path := range []string{
+		"/config",
 		"/healthz",
 		"/tasks",
 		"/tasks/job-1",
@@ -102,6 +103,13 @@ func TestRemovedNodeRoutesAreNotRegistered(t *testing.T) {
 }
 
 type unimplementedStrictServer struct{}
+
+func (*unimplementedStrictServer) UpdateConfig(
+	context.Context,
+	UpdateConfigRequestObject,
+) (UpdateConfigResponseObject, error) {
+	return nil, errNotImplemented
+}
 
 func (*unimplementedStrictServer) WatchEvents(
 	context.Context,

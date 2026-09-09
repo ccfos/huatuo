@@ -5,6 +5,7 @@ info:
 tags:
   - name: readiness
   - name: containers
+  - name: config
   - name: operations
   - name: events
 paths:
@@ -47,6 +48,34 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/ContainerNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/config:
+    put:
+      operationId: updateConfig
+      summary: Atomically update and persist Node Agent configuration.
+      tags: [config]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateConfigRequest'
+      responses:
+        '204':
+          description: Configuration updated and persisted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
   /v1/operations:
@@ -348,6 +377,19 @@ components:
       properties:
         data:
           $ref: '#/components/schemas/ContainerMetadata'
+    UpdateConfigRequest:
+      type: object
+      additionalProperties: false
+      required: [config]
+      properties:
+        config:
+          type: object
+          minProperties: 1
+          additionalProperties:
+            x-go-type: json.RawMessage
+            x-go-type-import:
+              path: encoding/json
+              name: json
     ProfilingType:
       type: string
       enum: [cpu, memory]

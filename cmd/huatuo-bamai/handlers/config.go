@@ -15,50 +15,32 @@
 package handlers
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
-	"net/http"
 
+	apiv1 "huatuo-bamai/apis/v1"
+	nodeapi "huatuo-bamai/apis/v1/node"
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 )
 
-type ConfigHandler struct {
-	Handlers []server.Route
-}
-
-type ConfigRequest struct {
-	Config map[string]json.RawMessage `json:"config"`
-}
-
-func NewConfigHandler() *ConfigHandler {
-	h := &ConfigHandler{}
-	h.Handlers = []server.Route{
-		{Method: http.MethodPut, Path: "/config", Handler: h.update},
-	}
-	return h
-}
-
-func (h *ConfigHandler) update(ctx *server.Context) error {
-	req := ConfigRequest{}
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
-	}
-
-	values := make(map[string]any, len(req.Config))
-	for key, value := range req.Config {
+// UpdateConfig applies one validated configuration batch and persists it.
+func (h *NodeAPIHandler) UpdateConfig(
+	_ context.Context,
+	request nodeapi.UpdateConfigRequestObject,
+) (nodeapi.UpdateConfigResponseObject, error) {
+	values := make(map[string]any, len(request.Body.Config))
+	for key, value := range request.Body.Config {
 		values[key] = value
 	}
-	if err := config.UpdateAndSync(values); err != nil {
+	if err := h.updateConfig(values); err != nil {
 		if errors.Is(err, config.ErrInvalidUpdate) {
-			return response.ErrInvalidRequest.WithMessage(err.Error())
+			return nil, response.NewAPIError(apiv1.ErrorCodeInvalidRequest, err.Error())
 		}
-		log.Errorf("failed to persist config: %v", err)
-		return response.ErrInternal.WithMessage("failed to persist config")
+		log.WithError(err).Error("failed to persist config")
+		return nil, response.ErrInternal.WithMessage("failed to persist config")
 	}
 
-	ctx.Status(http.StatusNoContent)
-	return nil
+	return nodeapi.UpdateConfig204Response{}, nil
 }

@@ -89,8 +89,6 @@ func newHTTPServer(opts *ServerOptions, nodeHandler *NodeAPIHandler) (*server.Se
 		),
 	})
 
-	s.MustRegisterRoutes("", NewConfigHandler().Handlers)
-
 	errorHandlers := s.StrictErrorHandlers()
 	strictHandler := nodeapi.NewStrictHandlerWithOptions(
 		nodeHandler,
