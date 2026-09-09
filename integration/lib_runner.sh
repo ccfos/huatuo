@@ -201,7 +201,13 @@ run_test_suite() {
 	local script group
 	runner_last_storage="" runner_failed=0
 	declare -ga runner_pids=() runner_workspaces=() runner_names=() runner_started=() runner_groups=()
-	if [[ ${runner_suite} == e2e ]]; then source "${ROOT_DIR}/e2e/lib.sh"; fi
+	if [[ ${runner_suite} == e2e ]]; then
+		source "${ROOT_DIR}/e2e/lib.sh"
+		if ! kernel_version_le 6 5; then
+			log_info "disabling sched-blame on unsupported kernel $(uname -r)"
+			HUATUO_BAMAI_ARGS_E2E+=("--disable-tracing" "sched-blame")
+		fi
+	fi
 	for script in "${scripts[@]}"; do
 		if [[ ${runner_suite} == integration ]]; then
 			case ${script##*/} in
