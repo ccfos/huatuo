@@ -75,13 +75,13 @@ func TestMemoryValueConvertedOnceAfterAggregation(t *testing.T) {
 
 	tests := []struct {
 		name string
-		mode profiling.MemoryMode
+		mode profiling.Mode
 		raw  int64
 		want int64
 	}{
-		{name: "physical alloc page", mode: profiling.MemoryModePhysicalAlloc, raw: 1, want: pageSize},
-		{name: "physical usage freed page", mode: profiling.MemoryModePhysicalUsage, raw: -1, want: -pageSize},
-		{name: "virtual alloc bytes", mode: profiling.MemoryModeVirtualAlloc, raw: 1234, want: 1234},
+		{name: "physical alloc page", mode: profiling.ModePhysicalAlloc, raw: 1, want: pageSize},
+		{name: "physical usage freed page", mode: profiling.ModePhysicalUsage, raw: -1, want: -pageSize},
+		{name: "virtual alloc bytes", mode: profiling.ModeVirtualAlloc, raw: 1234, want: 1234},
 	}
 
 	for _, tt := range tests {

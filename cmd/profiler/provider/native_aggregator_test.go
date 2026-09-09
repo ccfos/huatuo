@@ -211,7 +211,7 @@ func TestNativeAggregatorPhysicalMemoryFiltersAfterAggregation(t *testing.T) {
 
 	snapshot, err := aggregator.Snapshot(&pcontext.ProfilerContext{
 		Type:         profiling.TypeMemory,
-		MemoryMode:   profiling.MemoryModePhysicalUsage,
+		Mode:         profiling.ModePhysicalUsage,
 		OutputFormat: output.FormatRemote,
 	})
 	if err != nil {
