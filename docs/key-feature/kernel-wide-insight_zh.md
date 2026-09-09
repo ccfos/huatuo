@@ -68,6 +68,11 @@ huatuo_bamai_softirq_latency{cpuid="1",host="hostname",region="dev",type="NET_TX
 ### 资源利用率
 
 通过如下指标可以观测，物理机，容器的 CPU 资源使用情况，prometheus 指标格式：
+
+容器利用率按下文的有效 CPU 容量归一化。首次观测只建立基线；观测到 quota、period、
+CPU 集合或 cgroup 身份变化，以及计数器回退、读取失败后，需重新取得至少一秒的稳定区间，
+才输出利用率。无效区间不会重发旧百分比，也不会用零代替。合法的配额突发使用可能超过 100%。
+
 ```bash
 # HELP huatuo_bamai_cpu_util_sys cpu sys for the host
 # TYPE huatuo_bamai_cpu_util_sys gauge
@@ -102,6 +107,17 @@ huatuo_bamai_cpu_util_container_usr{container_host="coredns-855c4dd65d-8v5kg",co
 ### 资源配置
 
 通过如下指标可以了解容器 CPU 资源配置情况，prometheus 指标格式：
+
+`cpu_util_container_cores` 表示可见 CPU 容量上限，不是原始叶级 quota：它同时受在线 CPU、
+有效 CPU 集合，以及所有可见祖先各自的 quota/period 比值约束。例如，叶级 unlimited、
+允许使用 32 个 CPU，但父级只有两核预算时，报告两核。父级配额由兄弟 cgroup 共享，
+不代表为每个叶级独占预留的资源。
+
+指标名称和标签不变；祖先限制更紧的部署会看到更小的 `cores` 和相应提高的归一化利用率。
+原始 cgroup quota/period 读取接口不变。挂载或命名空间之外不可见的祖先无法计入；
+轮询也无法发现两次观测之间完整发生的“变更后又恢复”。v1 读取仍沿用原有约定：
+CPU、CPU accounting 和 cpuset 控制器使用相同的相对路径。
+
 ```bash
 # HELP huatuo_bamai_cpu_util_container_cores cpu core number for the containers
 # TYPE huatuo_bamai_cpu_util_container_cores gauge
@@ -110,7 +126,7 @@ huatuo_bamai_cpu_util_container_cores{container_host="coredns-855c4dd65d-8v5kg",
 
 |指标|意义|单位|对象| 标签 |
 |---|---|---|---|---|
-|cpu_util_container_cores| CPU 核心数|个| 容器 | container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|cpu_util_container_cores| 计入祖先配额和 CPU 集合限制后的可见 CPU 容量上限|个| 容器 | container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
 
 ### 资源争抢
 

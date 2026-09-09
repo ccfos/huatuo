@@ -105,3 +105,44 @@ func TestBoundCoresFallback(t *testing.T) {
 		t.Errorf("BoundCores() = %v, want 4", got)
 	}
 }
+
+func TestCPUListIntersectionCount(t *testing.T) {
+	tests := []struct {
+		name    string
+		lists   []string
+		want    uint64
+		wantErr bool
+	}{
+		{name: "no lists"},
+		{name: "offline members", lists: []string{"0-3", "2-5"}, want: 2},
+		{name: "disjoint", lists: []string{"0-3", "4-7"}},
+		{name: "sparse hierarchy", lists: []string{"0-7", "1-4,6", "2-3,6-7"}, want: 3},
+		{name: "unsorted overlapping", lists: []string{"3-5,0-3,2,7", "0-7"}, want: 7},
+		{name: "empty list", lists: []string{"0-3", "\n"}},
+		{name: "invalid after empty intersection", lists: []string{"0", "1", "bad"}, wantErr: true},
+		{name: "empty item", lists: []string{"0,,1"}, wantErr: true},
+		{name: "reverse range", lists: []string{"4-2"}, wantErr: true},
+		{name: "invalid end", lists: []string{"0-1-2"}, wantErr: true},
+		{name: "huge range stays compact", lists: []string{"0-18446744073709551615", "7-9"}, want: 3},
+		{name: "max endpoint", lists: []string{"18446744073709551614-18446744073709551615,18446744073709551615"}, want: 2},
+		{name: "unrepresentable count", lists: []string{"0-18446744073709551615"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := CPUListIntersectionCount(tt.lists...)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("CPUListIntersectionCount() error = %v, want error %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("CPUListIntersectionCount() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCPUListCount(t *testing.T) {
+	got, err := ParseCPUListCount("0-3,8,10-11\n")
+	if err != nil || got != 7 {
+		t.Fatalf("ParseCPUListCount() = %d, %v, want 7, nil", got, err)
+	}
+}

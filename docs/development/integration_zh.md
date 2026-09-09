@@ -72,3 +72,20 @@ integration/fixtures/expected_metrics/
 bash integration/run.sh
 ```
 当任意一个预期指标缺失或不匹配时，测试将失败。
+
+### 真实 cgroup CPU 容量测试
+
+`test_cpu_capacity.sh` 验证祖先与叶级配额、不同 period、cpuset 继承、resize
+配置变化以及两个兄弟 cgroup 共享的 CPU 预算。运行需要 Linux cgroup v2、Go，
+以及显式委派的可写目录，其 `cgroup.subtree_control` 已启用 `cpu` 和 `cpuset`：
+
+```bash
+HUATUO_CPU_CAPACITY_CGROUP_ROOT=/path/to/delegated/test-cgroup \
+  bash integration/run.sh test_cpu_capacity.sh
+```
+
+请使用专用测试环境，不要使用生产层级。测试不会替所传目录启用控制器或修改其
+限额，只在其下创建独占子树：总上限为 1 CPU，两个运行两秒的工作进程共享父级
+0.5 CPU 配额，结束后仅清理自建进程和 cgroup。前置条件不足会明确输出 `SKIP`，
+不代表验证通过；cpuset 只有一个 CPU 时仅跳过 cpuset resize 断言。collector
+跨配置区间的弃样行为由独立的假时钟 CPU 利用率单元测试验证。

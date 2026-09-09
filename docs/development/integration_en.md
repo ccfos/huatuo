@@ -81,3 +81,23 @@ New *.txt files are automatically picked up by the test.
 bash integration/run.sh
 ```
 The test fails if any expected metric is missing or mismatched.
+
+### Real cgroup CPU Capacity
+
+`test_cpu_capacity.sh` checks ancestor and leaf quotas, different periods,
+cpuset inheritance, resize configuration changes, and the CPU budget shared by
+two sibling cgroups. It requires Linux cgroup v2, Go, and an explicitly delegated
+writable directory with `cpu` and `cpuset` enabled in `cgroup.subtree_control`:
+
+```bash
+HUATUO_CPU_CAPACITY_CGROUP_ROOT=/path/to/delegated/test-cgroup \
+  bash integration/run.sh test_cpu_capacity.sh
+```
+
+Use a dedicated test environment, not a production hierarchy. The test does not
+enable controllers or change limits on the supplied directory. It creates an
+exclusive subtree capped at one CPU, runs two two-second workers under a shared
+half-CPU parent, then removes only its own processes and cgroups. Missing
+prerequisites produce an explicit `SKIP`, not a verified result. A single-CPU
+cpuset skips only the cpuset-resize assertion. Collector interval invalidation
+is covered separately by the fake-clock CPU utilization unit tests.
