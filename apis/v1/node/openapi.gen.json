@@ -1,6 +1,15 @@
 {
   "components": {
     "parameters": {
+      "ContainerID": {
+        "in": "path",
+        "name": "container_id",
+        "required": true,
+        "schema": {
+          "pattern": "^[0-9a-fA-F]{64}$",
+          "type": "string"
+        }
+      },
       "RequestID": {
         "in": "path",
         "name": "request_id",
@@ -31,6 +40,16 @@
           }
         },
         "description": "Request ID conflicts with another Operation kind."
+      },
+      "ContainerNotFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Container not found."
       },
       "ExecutionEnvironmentUnsupported": {
         "content": {
@@ -133,6 +152,39 @@
       }
     },
     "schemas": {
+      "ContainerMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "cgroup_css": {
+            "additionalProperties": {
+              "pattern": "^0x[0-9a-f]{16}$",
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "id": {
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "cgroup_css"
+        ],
+        "type": "object"
+      },
+      "ContainerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ContainerMetadata"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "Operation": {
         "additionalProperties": false,
         "properties": {
@@ -483,6 +535,41 @@
         ]
       }
     },
+    "/v1/containers/{container_id}": {
+      "get": {
+        "operationId": "getContainer",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContainerID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerResponse"
+                }
+              }
+            },
+            "description": "Container metadata."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/ContainerNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [],
+        "tags": [
+          "containers"
+        ]
+      }
+    },
     "/v1/operations": {
       "post": {
         "operationId": "startOperation",
@@ -652,10 +739,17 @@
       "name": "readiness"
     },
     {
+      "name": "containers"
+    },
+    {
       "name": "operations"
     }
   ],
   "x-error-codes": {
+    "container_not_found": {
+      "description": "The requested container does not exist.",
+      "httpStatus": 404
+    },
     "execution_environment_unsupported": {
       "description": "The node environment cannot execute the valid request.",
       "httpStatus": 422

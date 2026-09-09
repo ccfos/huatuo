@@ -398,17 +398,6 @@ huatuo_bamai_log_check() {
 	! grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 }
 
-huatuo_bamai_pod_count() {
-	local regex=$1
-	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_PODS_API}" \
-		| jq --arg re "$regex" '
-      [ .data[]
-        | select(.hostname != null)
-        | select(.hostname | test($re))
-      ] | length
-    ' 2> /dev/null || echo 0
-}
-
 # ----------------------------- metrics helpers --------------------------------
 
 # integration_huatuo_bamai_start [config_writer_func] [huatuo-bamai args...]

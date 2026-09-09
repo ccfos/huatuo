@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"huatuo-bamai/internal/pod"
 )
 
 func TestNodeRouterTokenAuthentication(t *testing.T) {
@@ -33,6 +35,7 @@ func TestNodeRouterTokenAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNodeAPIHandler() error = %v", err)
 	}
+	nodeHandler.containerByID = func(string) (*pod.Container, error) { return nil, nil }
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen() error = %v", err)
@@ -64,6 +67,11 @@ func TestNodeRouterTokenAuthentication(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "public readiness", path: "/readyz", wantStatus: http.StatusNoContent},
+		{
+			name:       "public container metadata",
+			path:       "/v1/containers/" + testContainerID,
+			wantStatus: http.StatusNotFound,
+		},
 		{
 			name:       "missing token",
 			path:       "/v1/operations/job-1",

@@ -192,6 +192,17 @@ func (e TracingType) Valid() bool {
 	}
 }
 
+// ContainerMetadata defines model for ContainerMetadata.
+type ContainerMetadata struct {
+	CgroupCSS map[string]string `json:"cgroup_css"`
+	ID        string            `json:"id"`
+}
+
+// ContainerResponse defines model for ContainerResponse.
+type ContainerResponse struct {
+	Data ContainerMetadata `json:"data"`
+}
+
 // Operation defines model for Operation.
 type Operation struct {
 	CreatedAt  time.Time          `json:"created_at"`
@@ -266,6 +277,9 @@ type TracingOperationSpec struct {
 // TracingType defines model for TracingType.
 type TracingType string
 
+// ContainerID defines model for ContainerID.
+type ContainerID = string
+
 // RequestID defines model for RequestID.
 type RequestID = string
 
@@ -274,6 +288,9 @@ type BadRequest = externalRef0.ErrorResponse
 
 // Conflict defines model for Conflict.
 type Conflict = externalRef0.ErrorResponse
+
+// ContainerNotFound defines model for ContainerNotFound.
+type ContainerNotFound = externalRef0.ErrorResponse
 
 // ExecutionEnvironmentUnsupported defines model for ExecutionEnvironmentUnsupported.
 type ExecutionEnvironmentUnsupported = externalRef0.ErrorResponse

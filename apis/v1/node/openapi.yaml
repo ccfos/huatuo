@@ -4,6 +4,7 @@ info:
   version: v1
 tags:
   - name: readiness
+  - name: containers
   - name: operations
 paths:
   /openapi.json:
@@ -27,6 +28,26 @@ paths:
       responses:
         '204':
           description: The Node Agent HTTP server is ready to accept requests.
+  /v1/containers/{container_id}:
+    get:
+      operationId: getContainer
+      tags: [containers]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ContainerID'
+      responses:
+        '200':
+          description: Container metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContainerResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/ContainerNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /v1/operations:
     post:
       operationId: startOperation
@@ -121,6 +142,9 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 x-error-codes:
+  container_not_found:
+    httpStatus: 404
+    description: The requested container does not exist.
   execution_environment_unsupported:
     httpStatus: 422
     description: The node environment cannot execute the valid request.
@@ -159,6 +183,13 @@ components:
     BearerAuth:
       $ref: '../components.yaml#/components/securitySchemes/BearerAuth'
   parameters:
+    ContainerID:
+      name: container_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F]{64}$'
     RequestID:
       name: request_id
       in: path
@@ -181,6 +212,12 @@ components:
           schema:
             type: string
             example: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    ContainerNotFound:
+      description: Container not found.
       content:
         application/json:
           schema:
@@ -240,6 +277,26 @@ components:
           schema:
             $ref: '../components.yaml#/components/schemas/ErrorResponse'
   schemas:
+    ContainerMetadata:
+      type: object
+      additionalProperties: false
+      required: [id, cgroup_css]
+      properties:
+        id:
+          type: string
+          pattern: '^[0-9a-fA-F]{64}$'
+        cgroup_css:
+          type: object
+          additionalProperties:
+            type: string
+            pattern: '^0x[0-9a-f]{16}$'
+    ContainerResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/ContainerMetadata'
     ProfilingType:
       type: string
       enum: [cpu, memory]

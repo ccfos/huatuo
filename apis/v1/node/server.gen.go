@@ -39,6 +39,9 @@ type ServerInterface interface {
 	// (GET /readyz)
 	GetReadiness(c *gin.Context)
 
+	// (GET /v1/containers/{container_id})
+	GetContainer(c *gin.Context, containerID ContainerID)
+
 	// (POST /v1/operations)
 	StartOperation(c *gin.Context)
 
@@ -82,6 +85,31 @@ func (siw *ServerInterfaceWrapper) GetReadiness(c *gin.Context) {
 	}
 
 	siw.Handler.GetReadiness(c)
+}
+
+// GetContainer operation middleware
+func (siw *ServerInterfaceWrapper) GetContainer(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "container_id" -------------
+	var containerID ContainerID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "container_id", c.Param("container_id"), &containerID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter container_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetContainer(c, containerID)
 }
 
 // StartOperation operation middleware
@@ -182,6 +210,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 
 	router.GET(options.BaseURL+"/openapi.json", wrapper.GetOpenAPI)
 	router.GET(options.BaseURL+"/readyz", wrapper.GetReadiness)
+	router.GET(options.BaseURL+"/v1/containers/:container_id", wrapper.GetContainer)
 	router.POST(options.BaseURL+"/v1/operations", wrapper.StartOperation)
 	router.GET(options.BaseURL+"/v1/operations/:request_id", wrapper.GetOperation)
 	router.POST(options.BaseURL+"/v1/operations/:request_id/stop", wrapper.StopOperation)
@@ -190,6 +219,8 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 type BadRequestJSONResponse externalRef0.ErrorResponse
 
 type ConflictJSONResponse externalRef0.ErrorResponse
+
+type ContainerNotFoundJSONResponse externalRef0.ErrorResponse
 
 type ExecutionEnvironmentUnsupportedJSONResponse externalRef0.ErrorResponse
 
@@ -250,6 +281,70 @@ type GetReadiness204Response struct {
 func (response GetReadiness204Response) VisitGetReadinessResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
+}
+
+type GetContainerRequestObject struct {
+	ContainerID ContainerID `json:"container_id"`
+}
+
+type GetContainerResponseObject interface {
+	VisitGetContainerResponse(w http.ResponseWriter) error
+}
+
+type GetContainer200JSONResponse ContainerResponse
+
+func (response GetContainer200JSONResponse) VisitGetContainerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetContainer400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetContainer400JSONResponse) VisitGetContainerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetContainer404JSONResponse struct{ ContainerNotFoundJSONResponse }
+
+func (response GetContainer404JSONResponse) VisitGetContainerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetContainer500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetContainer500JSONResponse) VisitGetContainerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type StartOperationRequestObject struct {
@@ -586,6 +681,9 @@ type StrictServerInterface interface {
 	// (GET /readyz)
 	GetReadiness(ctx context.Context, request GetReadinessRequestObject) (GetReadinessResponseObject, error)
 
+	// (GET /v1/containers/{container_id})
+	GetContainer(ctx context.Context, request GetContainerRequestObject) (GetContainerResponseObject, error)
+
 	// (POST /v1/operations)
 	StartOperation(ctx context.Context, request StartOperationRequestObject) (StartOperationResponseObject, error)
 
@@ -694,6 +792,32 @@ func (sh *strictHandler) GetReadiness(ctx *gin.Context) {
 		sh.options.HandlerErrorFunc(ctx, err)
 	} else if validResponse, ok := response.(GetReadinessResponseObject); ok {
 		if err := validResponse.VisitGetReadinessResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetContainer operation middleware
+func (sh *strictHandler) GetContainer(ctx *gin.Context, containerID ContainerID) {
+	var request GetContainerRequestObject
+
+	request.ContainerID = containerID
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetContainer(ctx, request.(GetContainerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetContainer")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetContainerResponseObject); ok {
+		if err := validResponse.VisitGetContainerResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {

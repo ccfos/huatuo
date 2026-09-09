@@ -76,8 +76,7 @@ func newHTTPServer(opts *ServerOptions, nodeHandler *NodeAPIHandler) (*server.Se
 		PublicPaths: []string{
 			"/openapi.json",
 			"/readyz",
-			// Profiler subprocesses still use this legacy local metadata route.
-			"/containers/json",
+			"/v1/containers/:container_id",
 		},
 		PromReg:     opts.PromReg,
 		VersionInfo: opts.VersionInfo,
@@ -87,7 +86,6 @@ func newHTTPServer(opts *ServerOptions, nodeHandler *NodeAPIHandler) (*server.Se
 		),
 	})
 
-	s.MustRegisterRoutes("", NewContainerHandler().Handlers)
 	s.MustRegisterRoutes("", NewConfigHandler().Handlers)
 	if opts.TracingStore != nil {
 		httpConfig := config.Get().HTTPServer

@@ -27,6 +27,7 @@ import (
 	"huatuo-bamai/internal/nodeagent/operation"
 	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
 	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
+	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
@@ -38,6 +39,7 @@ type NodeAPIHandler struct {
 	operationManager *operation.Manager
 	profiling        *nodeprofiling.Service
 	tracing          *nodetracing.Service
+	containerByID    func(string) (*pod.Container, error)
 	openAPI          nodeapi.GetOpenAPI200JSONResponse
 }
 
@@ -179,6 +181,7 @@ func NewNodeAPIHandler(
 		operationManager: operationManager,
 		profiling:        profilingService,
 		tracing:          tracingService,
+		containerByID:    pod.ContainerByID,
 		openAPI:          specification,
 	}, nil
 }

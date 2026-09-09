@@ -16,6 +16,7 @@ package provider
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -23,11 +24,12 @@ import (
 	"github.com/cilium/ebpf"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/nodeclient"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/profiler/bpfmap"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/utils/kernaddr"
 )
 
 func newNativeBPFConstants(pid int, cssAddr uint64, threadGroup bool) map[string]any {
@@ -56,7 +58,12 @@ func resolveContainerCgroupCss(pctx *pcontext.ProfilerContext, subsysName string
 	}
 
 	// Try API method first
-	cssAddr, err := resolveContainerCgroupCssByAPI(pctx.ServerAddress, pctx.ContainerID, subsysName)
+	cssAddr, err := resolveContainerCgroupCssByAPI(
+		pctx.Ctx,
+		pctx.ServerAddress,
+		pctx.ContainerID,
+		subsysName,
+	)
 	if err == nil {
 		return cssAddr, nil
 	}
@@ -73,17 +80,18 @@ func resolveContainerCgroupCss(pctx *pcontext.ProfilerContext, subsysName string
 }
 
 // resolveContainerCgroupCssByAPI attempts to get CSS address via huatuo-bamai API.
-func resolveContainerCgroupCssByAPI(serverAddr, containerID, subsysName string) (uint64, error) {
-	c, err := container.GetContainerByID(serverAddr, containerID)
+func resolveContainerCgroupCssByAPI(
+	ctx context.Context,
+	serverAddr string,
+	containerID string,
+	subsysName string,
+) (uint64, error) {
+	container, err := nodeclient.FetchContainer(ctx, serverAddr, containerID)
 	if err != nil {
 		return 0, fmt.Errorf("API call failed: %w", err)
 	}
 
-	if c == nil {
-		return 0, fmt.Errorf("container %q not found via API", containerID)
-	}
-
-	cssAddr, ok := c.CgroupCss[subsysName]
+	cssAddr, ok := kernaddr.Parse(container.CgroupCSS[subsysName])
 	if !ok {
 		return 0, fmt.Errorf("%s CSS not found in API response", subsysName)
 	}

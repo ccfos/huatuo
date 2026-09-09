@@ -26,9 +26,10 @@ import (
 	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/command/container"
 	flamegraphtui "huatuo-bamai/internal/flamegraph/tui"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/nodeclient"
+	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/internal/version"
 )
 
@@ -51,11 +52,19 @@ func mainAction(ctx *cli.Context) error {
 
 	var targetCssAddr uint64
 	if containerID := ctx.String("container-id"); containerID != "" {
-		c, err := container.GetContainerByID(ctx.String("huatuo-api-address"), containerID)
+		container, err := nodeclient.FetchContainer(
+			ctx.Context,
+			ctx.String("huatuo-api-address"),
+			containerID,
+		)
 		if err != nil {
-			return err
+			return fmt.Errorf("fetch container %q metadata: %w", containerID, err)
 		}
-		targetCssAddr = c.CgroupCss["cpu"]
+		var ok bool
+		targetCssAddr, ok = kernaddr.Parse(container.CgroupCSS["cpu"])
+		if !ok {
+			return fmt.Errorf("container %q has no CPU CSS address", containerID)
+		}
 	}
 
 	if err := bpf.Init(&bpf.Option{

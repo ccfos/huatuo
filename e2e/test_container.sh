@@ -19,6 +19,8 @@ set -euo pipefail
 source ${ROOT_DIR}/integration/lib.sh
 source ${ROOT_DIR}/e2e/lib.sh
 
+E2E_CONTAINER_IDS=()
+
 test_huatuo_bamai_default_container_exists() {
 	log_info "⬅️ test huatuo-bamai default container exists"
 
@@ -28,7 +30,8 @@ test_huatuo_bamai_default_container_exists() {
 		"${BUSINESS_DEFAULT_POD_COUNT}" \
 		"default pod exists in kubelet"
 
-	assert_huatuo_bamai_pod_count \
+	assert_huatuo_bamai_containers_present \
+		"${BUSINESS_POD_NS}" \
 		"${BUSINESS_DEFAULT_POD_NAME_REGEX}" \
 		"${BUSINESS_DEFAULT_POD_COUNT}" \
 		"default pod exists in huatuo-bamai"
@@ -38,8 +41,14 @@ test_huatuo_bamai_default_container_exists() {
 
 test_huatuo_bamai_e2e_container_create() {
 	log_info "⬅️ creating e2e test pods"
+	local -a stale_container_ids=()
 
 	# ensure clean
+	mapfile -t stale_container_ids < <(
+		kubelet_container_ids \
+			"${BUSINESS_POD_NS}" \
+			"${BUSINESS_E2E_TEST_POD_NAME_REGEX}"
+	)
 	k8s_delete_pod "${BUSINESS_POD_NS}" "${BUSINESS_E2E_TEST_POD_LABEL}" || true
 
 	assert_kubelet_pod_count \
@@ -48,10 +57,11 @@ test_huatuo_bamai_e2e_container_create() {
 		"0" \
 		"kubelet e2e pods cleaned"
 
-	assert_huatuo_bamai_pod_count \
-		"${BUSINESS_E2E_TEST_POD_NAME_REGEX}" \
-		"0" \
-		"huatuo-bamai e2e pods cleaned"
+	if [[ ${#stale_container_ids[@]} -gt 0 ]]; then
+		assert_huatuo_bamai_containers_absent \
+			"huatuo-bamai e2e containers cleaned" \
+			"${stale_container_ids[@]}"
+	fi
 
 	# create
 	k8s_create_pod \
@@ -67,10 +77,16 @@ test_huatuo_bamai_e2e_container_create() {
 		"${BUSINESS_E2E_TEST_POD_COUNT}" \
 		"kubelet e2e pods created"
 
-	assert_huatuo_bamai_pod_count \
+	assert_huatuo_bamai_containers_present \
+		"${BUSINESS_POD_NS}" \
 		"${BUSINESS_E2E_TEST_POD_NAME_REGEX}" \
 		"${BUSINESS_E2E_TEST_POD_COUNT}" \
 		"huatuo-bamai e2e pods created"
+	mapfile -t E2E_CONTAINER_IDS < <(
+		kubelet_container_ids \
+			"${BUSINESS_POD_NS}" \
+			"${BUSINESS_E2E_TEST_POD_NAME_REGEX}"
+	)
 
 	log_info "✅ test huatuo-bamai e2e container create ok"
 }
@@ -84,7 +100,8 @@ test_huatuo_bamai_e2e_container_delete() {
 		"${BUSINESS_E2E_TEST_POD_COUNT}" \
 		"kubelet e2e pods exist before delete"
 
-	assert_huatuo_bamai_pod_count \
+	assert_huatuo_bamai_containers_present \
+		"${BUSINESS_POD_NS}" \
 		"${BUSINESS_E2E_TEST_POD_NAME_REGEX}" \
 		"${BUSINESS_E2E_TEST_POD_COUNT}" \
 		"huatuo-bamai e2e pods exist before delete"
@@ -97,10 +114,9 @@ test_huatuo_bamai_e2e_container_delete() {
 		"0" \
 		"kubelet e2e pods deleted"
 
-	assert_huatuo_bamai_pod_count \
-		"${BUSINESS_E2E_TEST_POD_NAME_REGEX}" \
-		"0" \
-		"huatuo-bamai e2e pods deleted"
+	assert_huatuo_bamai_containers_absent \
+		"huatuo-bamai e2e containers deleted" \
+		"${E2E_CONTAINER_IDS[@]}"
 
 	log_info "✅ test huatuo-bamai e2e container delete ok"
 }

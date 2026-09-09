@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package nodeclient adapts the generated Node API client for Apiserver use.
+// Package nodeclient adapts the generated Node API client for Huatuo components.
 package nodeclient
 
 import (

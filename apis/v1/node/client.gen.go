@@ -109,6 +109,9 @@ type ClientInterface interface {
 	// GetReadiness request
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetContainer request
+	GetContainer(ctx context.Context, containerID ContainerID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// StartOperationWithBody request with any body
 	StartOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -135,6 +138,18 @@ func (c *Client) GetOpenAPI(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetContainer(ctx context.Context, containerID ContainerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetContainerRequest(c.Server, containerID)
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +245,40 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/readyz")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetContainerRequest generates requests for GetContainer
+func NewGetContainerRequest(server string, containerID ContainerID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "container_id", containerID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/containers/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -404,6 +453,9 @@ type ClientWithResponsesInterface interface {
 	// GetReadinessWithResponse request
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
 
+	// GetContainerWithResponse request
+	GetContainerWithResponse(ctx context.Context, containerID ContainerID, reqEditors ...RequestEditorFn) (*GetContainerResponse, error)
+
 	// StartOperationWithBodyWithResponse request with any body
 	StartOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartOperationResponse, error)
 
@@ -469,6 +521,39 @@ func (r GetReadinessResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetReadinessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetContainerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ContainerResponse
+	JSON400      *BadRequest
+	JSON404      *ContainerNotFound
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r GetContainerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetContainerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetContainerResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -601,6 +686,15 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 	return ParseGetReadinessResponse(rsp)
 }
 
+// GetContainerWithResponse request returning *GetContainerResponse
+func (c *ClientWithResponses) GetContainerWithResponse(ctx context.Context, containerID ContainerID, reqEditors ...RequestEditorFn) (*GetContainerResponse, error) {
+	rsp, err := c.GetContainer(ctx, containerID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetContainerResponse(rsp)
+}
+
 // StartOperationWithBodyWithResponse request with arbitrary body returning *StartOperationResponse
 func (c *ClientWithResponses) StartOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartOperationResponse, error) {
 	rsp, err := c.StartOperationWithBody(ctx, contentType, body, reqEditors...)
@@ -673,6 +767,53 @@ func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error
 	response := &GetReadinessResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetContainerResponse parses an HTTP response from a GetContainerWithResponse call
+func ParseGetContainerResponse(rsp *http.Response) (*GetContainerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetContainerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ContainerResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ContainerNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil

@@ -69,6 +69,10 @@ func TestNodeHTTPStatusForErrorCode(t *testing.T) {
 	if status != http.StatusBadRequest || !ok {
 		t.Errorf("HTTPStatusForErrorCode(invalid_request) = (%d, %t), want (400, true)", status, ok)
 	}
+	status, ok = HTTPStatusForErrorCode(ErrorCodeContainerNotFound)
+	if status != http.StatusNotFound || !ok {
+		t.Errorf("HTTPStatusForErrorCode(container_not_found) = (%d, %t), want (404, true)", status, ok)
+	}
 }
 
 func TestRemovedNodeRoutesAreNotRegistered(t *testing.T) {
@@ -94,6 +98,13 @@ func TestRemovedNodeRoutesAreNotRegistered(t *testing.T) {
 }
 
 type unimplementedStrictServer struct{}
+
+func (*unimplementedStrictServer) GetContainer(
+	context.Context,
+	GetContainerRequestObject,
+) (GetContainerResponseObject, error) {
+	return nil, errNotImplemented
+}
 
 func (*unimplementedStrictServer) StartOperation(
 	context.Context,

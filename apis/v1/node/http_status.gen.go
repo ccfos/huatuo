@@ -25,6 +25,8 @@ func HTTPStatusForErrorCode(code apiv1.ErrorCode) (int, bool) {
 	}
 
 	switch code {
+	case ErrorCodeContainerNotFound:
+		return 404, true
 	case ErrorCodeExecutionEnvironmentUnsupported:
 		return 422, true
 	case ErrorCodeExecutionFailed:
