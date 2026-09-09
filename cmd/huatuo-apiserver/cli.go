@@ -16,12 +16,12 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/internal/version"
 
 	"github.com/urfave/cli/v2"
@@ -120,12 +120,12 @@ func resolveOptionDir(dir string) (string, error) {
 		return dir, nil
 	}
 
-	runningDir, err := executil.RunningDir()
+	executable, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve %s dir: %w", cliFlagConfigDir, err)
 	}
 
-	return filepath.Join(runningDir, "../", dir), nil
+	return filepath.Join(filepath.Dir(executable), "../", dir), nil
 }
 
 func configureRuntime(opts *Options) error {

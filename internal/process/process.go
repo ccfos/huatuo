@@ -17,8 +17,13 @@ package process
 import (
 	"fmt"
 	"io/fs"
+	"os"
+	"runtime"
+	"strconv"
 
 	"huatuo-bamai/internal/procfs"
+
+	"golang.org/x/sys/unix"
 )
 
 // Executable returns pid's executable path.
@@ -52,4 +57,41 @@ func PPID(pid int) (int, error) {
 	}
 
 	return stat.PPID, nil
+}
+
+// CommandLine returns at most 128 bytes of pid's null-delimited command line
+// with null bytes replaced by spaces.
+func CommandLine(pid int) (string, error) {
+	data, err := os.ReadFile(procfs.Path(strconv.Itoa(pid), "cmdline"))
+	if err != nil {
+		return "", err
+	}
+
+	if len(data) > 128 {
+		data = data[:128]
+	}
+	for i := range data {
+		if data[i] == 0 {
+			data[i] = ' '
+		}
+	}
+
+	return string(data), nil
+}
+
+// Hostname returns the hostname from pid's UTS namespace.
+func Hostname(pid int) (string, error) {
+	fd, err := os.Open(procfs.Path(strconv.Itoa(pid), "ns/uts"))
+	if err != nil {
+		return "", err
+	}
+	defer fd.Close()
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if err := unix.Setns(int(fd.Fd()), unix.CLONE_NEWUTS); err != nil {
+		return "", err
+	}
+	return os.Hostname()
 }

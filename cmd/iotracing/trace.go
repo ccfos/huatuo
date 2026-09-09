@@ -28,9 +28,9 @@ import (
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/process"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -113,7 +113,7 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 			continue
 		}
 
-		hostname, _ := executil.HostnameByPid(event.TGID)
+		hostname, _ := process.Hostname(int(event.TGID))
 
 		ring[head] = types.IOScheduleEvent{
 			Comm:              bytesutil.ToStr(event.Comm[:]),

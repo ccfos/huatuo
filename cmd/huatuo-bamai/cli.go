@@ -24,7 +24,6 @@ import (
 	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/internal/version"
 
 	"github.com/urfave/cli/v2"
@@ -190,12 +189,12 @@ func resolveOptionDir(ctx *cli.Context, name string) (string, error) {
 		return dir, nil
 	}
 
-	runningDir, err := executil.RunningDir()
+	executable, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve %s dir: %w", name, err)
 	}
 
-	return filepath.Join(runningDir, "../", dir), nil
+	return filepath.Join(filepath.Dir(executable), "../", dir), nil
 }
 
 // configureRuntime applies process-global side effects derived from Options:
