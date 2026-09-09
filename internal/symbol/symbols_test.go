@@ -15,8 +15,13 @@
 package symbol
 
 import (
+	"bytes"
+	"compress/zlib"
 	"debug/elf"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,8 +29,22 @@ import (
 	"strings"
 	"testing"
 
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
 )
+
+func captureSymbolLogs(t *testing.T, level string) *bytes.Buffer {
+	t.Helper()
+	originalLevel := log.GetLevel()
+	var output bytes.Buffer
+	log.SetOutput(&output)
+	log.SetLevel(level)
+	t.Cleanup(func() {
+		log.SetOutput(os.Stdout)
+		log.SetLevel(originalLevel.String())
+	})
+	return &output
+}
 
 func writeKallsymsFixture(t *testing.T, lines []string) string {
 	t.Helper()
@@ -111,9 +130,11 @@ func TestSymbolsResolve(t *testing.T) {
 		key      uint64
 		wantName string
 	}{
-		{name: "kernel-style-size-zero-resolves-any-offset", key: 0x1800, wantName: "kernel_sched_tick"},
+		{name: "zero-size-symbol-does-not-cover-higher-offset", key: 0x1800, wantName: ""},
+		{name: "zero-size-symbol-matches-its-address", key: 0x1000, wantName: "kernel_sched_tick"},
 		{name: "user-style-in-range-resolves", key: 0x20ff, wantName: "user_func_malloc"},
 		{name: "user-style-end-exclusive", key: 0x2100, wantName: ""},
+		{name: "user-style-overflowing-end-does-not-wrap", key: math.MaxUint64, wantName: ""},
 		{name: "below-first-symbol", key: 0x0500, wantName: ""},
 	}
 
@@ -472,7 +493,10 @@ func TestElfSymbols(t *testing.T) {
 	}
 	defer elfFile.Close()
 
-	got := elfSymbols(elfFile)
+	got, err := elfSymbols(elfFile, DefaultELFSymbolLimits())
+	if err != nil {
+		t.Fatalf("elfSymbols(%q): %v", executablePath, err)
+	}
 	if len(got) == 0 {
 		t.Errorf("elfSymbols(%q): got 0 symbols, want >0", executablePath)
 	}
@@ -483,25 +507,734 @@ func TestElfSymbols(t *testing.T) {
 	}
 }
 
-func TestDemangleSymbolName(t *testing.T) {
-	tests := []struct {
-		name string
-		want string
-	}{
-		{
-			name: "_ZN5doris6Thread16supervise_threadEPv",
-			want: "doris::Thread::supervise_thread(void*)",
-		},
-		{name: "malloc", want: "malloc"},
-		{name: "_ZN5doris_invalid", want: "_ZN5doris_invalid"},
+type elf64SymbolTableFixture struct {
+	typ              elf.SectionType
+	stringTable      []byte
+	nameOffsets      []uint32
+	symbolTypes      []elf.SymType
+	symbolValues     []uint64
+	symbolSizes      []uint64
+	compressed       bool
+	legacyCompressed bool
+}
+
+func alignUp(value, alignment int) int {
+	return (value + alignment - 1) &^ (alignment - 1)
+}
+
+func encodeELFStruct(t *testing.T, value any) []byte {
+	t.Helper()
+	var encoded bytes.Buffer
+	if err := binary.Write(&encoded, binary.LittleEndian, value); err != nil {
+		t.Fatalf("binary.Write(%T): %v", value, err)
+	}
+	return encoded.Bytes()
+}
+
+func newELF64SymbolFixture(t *testing.T, tables ...elf64SymbolTableFixture) *elf.File {
+	t.Helper()
+	f, err := elf.NewFile(bytes.NewReader(elf64SymbolImage(t, tables...)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
+}
+
+func elf64SymbolImage(t *testing.T, tables ...elf64SymbolTableFixture) []byte {
+	t.Helper()
+	type encodedTable struct {
+		fixture             elf64SymbolTableFixture
+		stringsOffset       int
+		symbolsOffset       int
+		encodedSymbols      []byte
+		stringsSectionIndex uint32
+		encodedStrings      []byte
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := demangleSymbolName(tt.name); got != tt.want {
-				t.Errorf("demangleSymbolName(%q): got %q, want %q", tt.name, got, tt.want)
+	headerSize := binary.Size(elf.Header64{})
+	sectionSize := binary.Size(elf.Section64{})
+	offset := headerSize
+	encodedTables := make([]encodedTable, 0, len(tables))
+	for tableIndex := range tables {
+		table := &tables[tableIndex]
+		if len(table.stringTable) == 0 || table.stringTable[0] != 0 {
+			t.Fatal("ELF fixture string table must begin with NUL")
+		}
+		if len(table.symbolTypes) != 0 && len(table.symbolTypes) != len(table.nameOffsets) {
+			t.Fatal("ELF fixture symbol types must match name offsets")
+		}
+		encodedStrings := table.stringTable
+		if table.compressed || table.legacyCompressed {
+			var compressed bytes.Buffer
+			writer := zlib.NewWriter(&compressed)
+			if _, err := writer.Write(table.stringTable); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			encodedStrings = append(encodeELFStruct(t, elf.Chdr64{Type: uint32(elf.COMPRESS_ZLIB), Size: uint64(len(table.stringTable)), Addralign: 1}), compressed.Bytes()...)
+			if table.legacyCompressed {
+				encodedStrings = append([]byte("ZLIB"), binary.BigEndian.AppendUint64(nil, uint64(len(table.stringTable)))...)
+				encodedStrings = append(encodedStrings, compressed.Bytes()...)
+			}
+		}
+		stringsOffset := offset
+		offset = alignUp(offset+len(encodedStrings), 8)
+
+		var symbols bytes.Buffer
+		if err := binary.Write(&symbols, binary.LittleEndian, elf.Sym64{}); err != nil {
+			t.Fatalf("binary.Write(null symbol): %v", err)
+		}
+		for symbolIndex, nameOffset := range table.nameOffsets {
+			symbolType := elf.STT_FUNC
+			if len(table.symbolTypes) != 0 {
+				symbolType = table.symbolTypes[symbolIndex]
+			}
+			sym := elf.Sym64{
+				Name:  nameOffset,
+				Info:  byte(symbolType),
+				Shndx: 1,
+				Value: 0x1000 + uint64(symbolIndex)*0x10,
+				Size:  0x10,
+			}
+			if len(table.symbolValues) > 0 {
+				sym.Value = table.symbolValues[symbolIndex]
+			}
+			if len(table.symbolSizes) > 0 {
+				sym.Size = table.symbolSizes[symbolIndex]
+			}
+			if err := binary.Write(&symbols, binary.LittleEndian, sym); err != nil {
+				t.Fatalf("binary.Write(symbol): %v", err)
+			}
+		}
+		symbolsOffset := offset
+		offset = alignUp(offset+symbols.Len(), 8)
+		encodedTables = append(encodedTables, encodedTable{
+			fixture:             *table,
+			stringsOffset:       stringsOffset,
+			symbolsOffset:       symbolsOffset,
+			encodedSymbols:      symbols.Bytes(),
+			encodedStrings:      encodedStrings,
+			stringsSectionIndex: uint32(1 + tableIndex*2),
+		})
+	}
+
+	sectionHeadersOffset := offset
+	sectionCount := 1 + len(encodedTables)*2
+	image := make([]byte, sectionHeadersOffset+sectionCount*sectionSize)
+	ident := [elf.EI_NIDENT]byte{}
+	copy(ident[:], elf.ELFMAG)
+	ident[elf.EI_CLASS] = byte(elf.ELFCLASS64)
+	ident[elf.EI_DATA] = byte(elf.ELFDATA2LSB)
+	ident[elf.EI_VERSION] = byte(elf.EV_CURRENT)
+	header := elf.Header64{
+		Ident:     ident,
+		Type:      uint16(elf.ET_REL),
+		Machine:   uint16(elf.EM_X86_64),
+		Version:   uint32(elf.EV_CURRENT),
+		Shoff:     uint64(sectionHeadersOffset),
+		Ehsize:    uint16(headerSize),
+		Shentsize: uint16(sectionSize),
+		Shnum:     uint16(sectionCount),
+	}
+	copy(image, encodeELFStruct(t, header))
+
+	for tableIndex := range encodedTables {
+		table := &encodedTables[tableIndex]
+		copy(image[table.stringsOffset:], table.encodedStrings)
+		copy(image[table.symbolsOffset:], table.encodedSymbols)
+		stringsHeader := elf.Section64{
+			Type:      uint32(elf.SHT_STRTAB),
+			Off:       uint64(table.stringsOffset),
+			Size:      uint64(len(table.encodedStrings)),
+			Addralign: 1,
+		}
+		if table.fixture.compressed {
+			stringsHeader.Flags = uint64(elf.SHF_COMPRESSED)
+		}
+		symbolsHeader := elf.Section64{
+			Type:      uint32(table.fixture.typ),
+			Off:       uint64(table.symbolsOffset),
+			Size:      uint64(len(table.encodedSymbols)),
+			Link:      table.stringsSectionIndex,
+			Addralign: 8,
+			Entsize:   elf.Sym64Size,
+		}
+		stringsHeaderOffset := sectionHeadersOffset + (1+tableIndex*2)*sectionSize
+		symbolsHeaderOffset := stringsHeaderOffset + sectionSize
+		copy(image[stringsHeaderOffset:], encodeELFStruct(t, stringsHeader))
+		copy(image[symbolsHeaderOffset:], encodeELFStruct(t, symbolsHeader))
+	}
+
+	return image
+}
+
+func newELF32SymbolFixture(t *testing.T, stringTable []byte, nameOffset uint32) *elf.File {
+	t.Helper()
+	headerSize := binary.Size(elf.Header32{})
+	sectionSize := binary.Size(elf.Section32{})
+	stringsOffset := headerSize
+	symbolsOffset := alignUp(stringsOffset+len(stringTable), 4)
+	symbols := append(encodeELFStruct(t, elf.Sym32{}), encodeELFStruct(t, elf.Sym32{
+		Name:  nameOffset,
+		Info:  byte(elf.STT_FUNC),
+		Shndx: 1,
+		Value: 0x1000,
+		Size:  0x10,
+	})...)
+	sectionHeadersOffset := alignUp(symbolsOffset+len(symbols), 4)
+	image := make([]byte, sectionHeadersOffset+3*sectionSize)
+
+	ident := [elf.EI_NIDENT]byte{}
+	copy(ident[:], elf.ELFMAG)
+	ident[elf.EI_CLASS] = byte(elf.ELFCLASS32)
+	ident[elf.EI_DATA] = byte(elf.ELFDATA2LSB)
+	ident[elf.EI_VERSION] = byte(elf.EV_CURRENT)
+	header := elf.Header32{
+		Ident:     ident,
+		Type:      uint16(elf.ET_REL),
+		Machine:   uint16(elf.EM_386),
+		Version:   uint32(elf.EV_CURRENT),
+		Shoff:     uint32(sectionHeadersOffset),
+		Ehsize:    uint16(headerSize),
+		Shentsize: uint16(sectionSize),
+		Shnum:     3,
+	}
+	copy(image, encodeELFStruct(t, header))
+	copy(image[stringsOffset:], stringTable)
+	copy(image[symbolsOffset:], symbols)
+	copy(image[sectionHeadersOffset+sectionSize:], encodeELFStruct(t, elf.Section32{
+		Type:      uint32(elf.SHT_STRTAB),
+		Off:       uint32(stringsOffset),
+		Size:      uint32(len(stringTable)),
+		Addralign: 1,
+	}))
+	copy(image[sectionHeadersOffset+2*sectionSize:], encodeELFStruct(t, elf.Section32{
+		Type:      uint32(elf.SHT_SYMTAB),
+		Off:       uint32(symbolsOffset),
+		Size:      uint32(len(symbols)),
+		Link:      1,
+		Addralign: 4,
+		Entsize:   elf.Sym32Size,
+	}))
+
+	f, err := elf.NewFile(bytes.NewReader(image))
+	if err != nil {
+		t.Fatalf("elf.NewFile(real ELF32 fixture): %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
+}
+
+func TestElfSymbolsParsesRealELF32(t *testing.T) {
+	f := newELF32SymbolFixture(t, []byte("\x00func32\x00"), 1)
+	limits := ELFSymbolLimits{MaxMetadataBytes: 1024, MaxSymbolCount: 1, MaxNameBytes: 32}
+
+	got, err := elfSymbols(f, limits)
+	if err != nil {
+		t.Fatalf("elfSymbols(real ELF32): %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "func32" || got[0].Addr != 0x1000 || got[0].Size != 0x10 {
+		t.Fatalf("elfSymbols(real ELF32): got %v, want func32 at 0x1000", got)
+	}
+}
+
+func TestElfSymbolsBoundsExpandedNamesInRealELF(t *testing.T) {
+	const (
+		nameSize    = 64 << 10
+		symbolCount = 512
+	)
+	longName := strings.Repeat("x", nameSize)
+	stringTable := append([]byte{0}, longName...)
+	stringTable = append(stringTable, 0)
+	nameOffsets := make([]uint32, symbolCount)
+	for i := range nameOffsets {
+		nameOffsets[i] = 1
+	}
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: stringTable,
+		nameOffsets: nameOffsets,
+	})
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 1 << 20,
+		MaxSymbolCount:   symbolCount,
+		MaxNameBytes:     nameSize,
+	}
+
+	state := newELFSymbolParseState(limits)
+	got, err := state.parseSource(f, elfSymbolTable{name: "symtab", typ: elf.SHT_SYMTAB})
+	if err != nil {
+		t.Fatalf("parseSource(real repeated-name ELF): %v", err)
+	}
+	if len(got) != symbolCount {
+		t.Fatalf("parseSource(real repeated-name ELF): got %d symbols, want %d", len(got), symbolCount)
+	}
+	if state.nameBytes != nameSize {
+		t.Fatalf("parseSource(real repeated-name ELF): counted %d expanded name bytes, want %d", state.nameBytes, nameSize)
+	}
+}
+
+func TestELFSymbolParseDoesNotRetainUnchargedIndexOnNameFailure(t *testing.T) {
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: []byte{0, 0},
+		nameOffsets: []uint32{2},
+	})
+	state := newELFSymbolParseState(DefaultELFSymbolLimits())
+	if _, err := state.parseSource(f, elfSymbolTable{name: "symtab", typ: elf.SHT_SYMTAB}, 0x1000); err == nil {
+		t.Fatal("parseSource: expected invalid symbol-name offset error")
+	}
+	if len(state.indexes) != 0 {
+		t.Fatalf("parseSource retained %d index entries after failed materialization", len(state.indexes))
+	}
+}
+
+func TestELFNameFailureLeavesBudgetForFallback(t *testing.T) {
+	f := newELF64SymbolFixture(t,
+		elf64SymbolTableFixture{typ: elf.SHT_SYMTAB, stringTable: []byte{0}, nameOffsets: []uint32{2}},
+		elf64SymbolTableFixture{typ: elf.SHT_DYNSYM, stringTable: []byte("\x00fallback\x00"), nameOffsets: []uint32{1}},
+	)
+	limits := DefaultELFSymbolLimits()
+	limits.MaxMetadataBytes = 2 * elf.Sym64Size
+	limits.MaxSymbolCount = 1
+	state := newELFSymbolParseState(limits)
+	got, err := elfSymbolsForPCsWithState(f, []uint64{0x1001}, state)
+	if err == nil || got.resolve(0x1001) != "fallback" {
+		t.Fatalf("fallback after malformed name: got %v, err %v", got, err)
+	}
+	if len(state.indexes) != 1 || state.symbolCount != 1 || state.metadataBytes != 2*elf.Sym64Size {
+		t.Fatalf("retained uncharged state: indexes=%d symbols=%d bytes=%d", len(state.indexes), state.symbolCount, state.metadataBytes)
+	}
+}
+
+func TestElfSymbolsRejectsDistinctExpandedNamesInRealELF(t *testing.T) {
+	const nameSize = 32 << 10
+	firstName := strings.Repeat("a", nameSize)
+	secondName := strings.Repeat("b", nameSize)
+	stringTable := append([]byte{0}, firstName...)
+	stringTable = append(stringTable, 0)
+	secondOffset := uint32(len(stringTable))
+	stringTable = append(stringTable, secondName...)
+	stringTable = append(stringTable, 0)
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: stringTable,
+		nameOffsets: []uint32{1, secondOffset},
+	})
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 1 << 20,
+		MaxSymbolCount:   2,
+		MaxNameBytes:     nameSize,
+	}
+
+	got, err := elfSymbols(f, limits)
+	if !errors.Is(err, errELFSymbolLimit) {
+		t.Fatalf("elfSymbols(real expanded-name ELF): got error %v, want errELFSymbolLimit", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("elfSymbols(real expanded-name ELF): got %d symbols from rejected source, want 0", len(got))
+	}
+}
+
+func TestElfSymbolsFiltersBeforeCopyingNamesInRealELF(t *testing.T) {
+	const ignoredNameSize = 64 << 10
+	ignoredName := strings.Repeat("x", ignoredNameSize)
+	stringTable := append([]byte{0}, ignoredName...)
+	stringTable = append(stringTable, 0)
+	functionOffset := uint32(len(stringTable))
+	stringTable = append(stringTable, "kept\x00"...)
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: stringTable,
+		nameOffsets: []uint32{1, functionOffset},
+		symbolTypes: []elf.SymType{elf.STT_OBJECT, elf.STT_FUNC},
+	})
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 1 << 20,
+		MaxSymbolCount:   2,
+		MaxNameBytes:     uint64(len("kept")),
+	}
+
+	got, err := elfSymbols(f, limits)
+	if err != nil {
+		t.Fatalf("elfSymbols(real filtered-name ELF): %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "kept" {
+		t.Fatalf("elfSymbols(real filtered-name ELF): got %v, want one kept function", got)
+	}
+}
+
+func TestElfSymbolsForPCsDoesNotMaterializeLargeStringTable(t *testing.T) {
+	const ignoredNameSize = 8 << 20
+	stringTable := append([]byte{0}, bytes.Repeat([]byte{'x'}, ignoredNameSize)...)
+	stringTable = append(stringTable, 0)
+	targetOffset := uint32(len(stringTable))
+	stringTable = append(stringTable, "target\x00"...)
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: stringTable,
+		nameOffsets: []uint32{1, targetOffset},
+	})
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 9 << 20,
+		MaxSymbolCount:   2,
+		MaxNameBytes:     32,
+		MaxNameLength:    16,
+	}
+
+	benchmark := testing.Benchmark(func(b *testing.B) {
+		for range b.N {
+			got, err := elfSymbolsForPCs(f, []uint64{0x1011}, limits)
+			if err != nil || len(got) != 1 || got[0].Name != "target" {
+				b.Fatalf("elfSymbolsForPCs: got %v, err %v; want target", got, err)
+			}
+		}
+	})
+	t.Logf("address-driven parse: %d bytes/op for an 8 MiB string table", benchmark.AllocedBytesPerOp())
+	if allocated := benchmark.AllocedBytesPerOp(); allocated >= 1<<20 {
+		t.Fatalf("address-driven parse allocated %d bytes/op for an 8 MiB string table; want < 1 MiB", allocated)
+	}
+}
+
+func TestElfSymbolsForPCsLimitsSingleName(t *testing.T) {
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: []byte("\x00name-too-long\x00"),
+		nameOffsets: []uint32{1},
+	})
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 1024,
+		MaxSymbolCount:   1,
+		MaxNameBytes:     64,
+		MaxNameLength:    4,
+	}
+	got, err := elfSymbolsForPCs(f, []uint64{0x1001}, limits)
+	if !errors.Is(err, errELFSymbolLimit) || len(got) != 0 {
+		t.Fatalf("single-name limit: got %v, err %v; want no symbols and errELFSymbolLimit", got, err)
+	}
+}
+
+func TestElfSymbolsForPCsReusesNameBudgetAcrossCalls(t *testing.T) {
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: []byte("\x00target\x00"),
+		nameOffsets: []uint32{1, 1},
+	})
+	state := newELFSymbolParseState(ELFSymbolLimits{
+		MaxMetadataBytes: 1024,
+		MaxSymbolCount:   2,
+		MaxNameBytes:     uint64(len("target")),
+		MaxNameLength:    32,
+	})
+	for _, pc := range []uint64{0x1001, 0x1011} {
+		got, err := elfSymbolsForPCsWithState(f, []uint64{pc}, state)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("elfSymbolsForPCsWithState(%#x): got %v, err %v; want one symbol", pc, got, err)
+		}
+	}
+}
+
+func TestElfSymbolsForPCsPrefersSymtabAndFallsBackForUnresolvedPCs(t *testing.T) {
+	f := newELF64SymbolFixture(t,
+		elf64SymbolTableFixture{
+			typ:         elf.SHT_DYNSYM,
+			stringTable: []byte("\x00dynamic\x00"),
+			nameOffsets: []uint32{1},
+		},
+		elf64SymbolTableFixture{
+			typ:         elf.SHT_SYMTAB,
+			stringTable: []byte("\x00static\x00"),
+			nameOffsets: []uint32{1},
+		},
+	)
+	got, err := elfSymbolsForPCs(f, []uint64{0x1001}, DefaultELFSymbolLimits())
+	if err != nil || len(got) != 1 || got[0].Name != "static" {
+		t.Fatalf("elfSymbolsForPCs: got %v, err %v; want symtab symbol", got, err)
+	}
+}
+
+func TestElfSymbolsForPCsDoesNotLogMissingSourceAtInfo(t *testing.T) {
+	output := captureSymbolLogs(t, "info")
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: []byte("\x00target\x00"),
+		nameOffsets: []uint32{1},
+	})
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 1024,
+		MaxSymbolCount:   1,
+		MaxNameBytes:     32,
+		MaxNameLength:    16,
+	}
+
+	got, err := elfSymbolsForPCs(f, []uint64{0x1001}, limits)
+	if err != nil || len(got) != 1 || got[0].Name != "target" {
+		t.Fatalf("elfSymbolsForPCs: got %v, err %v; want target", got, err)
+	}
+	if strings.Contains(output.String(), "dynsym not available") {
+		t.Fatalf("missing optional dynsym logged at info: %s", output.String())
+	}
+}
+
+func TestELFSymbolSourcesKeepOverlappingPCDecisions(t *testing.T) {
+	for _, dynamicStart := range []uint64{0x1000, 0x1008} {
+		t.Run(fmt.Sprintf("%x", dynamicStart), func(t *testing.T) {
+			f := newELF64SymbolFixture(t,
+				elf64SymbolTableFixture{typ: elf.SHT_SYMTAB, stringTable: []byte("\x00static\x00"), nameOffsets: []uint32{1}},
+				elf64SymbolTableFixture{typ: elf.SHT_DYNSYM, stringTable: []byte("\x00dynamic\x00"), nameOffsets: []uint32{1}, symbolValues: []uint64{dynamicStart}, symbolSizes: []uint64{0x30}},
+			)
+			pcs := []uint64{0x1009, 0x1020}
+			got, err := elfSymbolsForPCs(f, pcs, DefaultELFSymbolLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.resolve(pcs[0]) != "static" || got.resolve(pcs[1]) != "dynamic" {
+				t.Fatalf("source decisions: got %q, %q", got.resolve(pcs[0]), got.resolve(pcs[1]))
 			}
 		})
+	}
+}
+
+func TestELFCompressedStringWorkIsCumulative(t *testing.T) {
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ: elf.SHT_SYMTAB, compressed: true,
+		stringTable: append(make([]byte, 100), []byte("first\x00second\x00")...),
+		nameOffsets: []uint32{100, 106},
+	})
+	limits := DefaultELFSymbolLimits()
+	limits.MaxMetadataBytes = 3*elf.Sym64Size + 113
+	tiny := limits
+	tiny.MaxMetadataBytes = 80
+	if _, err := newELFSymbolParseState(tiny).parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1011); !errors.Is(err, errELFSymbolLimit) {
+		t.Fatalf("name near end with tiny decompression budget: %v", err)
+	}
+	state := newELFSymbolParseState(limits)
+	if _, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1001); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1011); !errors.Is(err, errELFSymbolLimit) {
+		t.Fatalf("second decompression: got %v, want limit error", err)
+	}
+	if state.metadataBytes != limits.MaxMetadataBytes {
+		t.Fatal("decompression exceeded cumulative budget")
+	}
+	// A cached name does not require another decompression.
+	if _, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1002); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestELFFullTableCompressedBudget(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {
+			for _, shortBy := range []uint64{0, 1} {
+				stringTable := []byte("\x00target\x00")
+				image := elf64SymbolImage(t,
+					elf64SymbolTableFixture{
+						typ: elf.SHT_SYMTAB, compressed: !legacy, legacyCompressed: legacy,
+						stringTable: stringTable, nameOffsets: []uint32{1, 1},
+					},
+					elf64SymbolTableFixture{
+						typ:         elf.SHT_DYNSYM,
+						stringTable: []byte("\x00.zdebug_str\x00"), nameOffsets: []uint32{1},
+					},
+				)
+				if legacy {
+					var header elf.Header64
+					if err := binary.Read(bytes.NewReader(image), binary.LittleEndian, &header); err != nil {
+						t.Fatal(err)
+					}
+					header.Shstrndx = 3
+					copy(image, encodeELFStruct(t, header))
+					binary.LittleEndian.PutUint32(image[header.Shoff+uint64(header.Shentsize):], 1)
+				}
+				f, err := elf.NewFile(bytes.NewReader(image))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { f.Close() })
+				limits := DefaultELFSymbolLimits()
+				limits.MaxMetadataBytes = 3*elf.Sym64Size + uint64(len(stringTable)) - shortBy
+				state := newELFSymbolParseState(limits)
+				got, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB})
+				if shortBy != 0 {
+					if !errors.Is(err, errELFSymbolLimit) || len(got) != 0 {
+						t.Fatalf("short budget: got %v, err %v", got, err)
+					}
+					continue
+				}
+				if err != nil || len(got) != 2 || got[0].Name != "target" || got[1].Name != "target" {
+					t.Fatalf("exact budget: got %v, err %v", got, err)
+				}
+				if state.metadataBytes != limits.MaxMetadataBytes {
+					t.Fatalf("charged %d bytes, want %d", state.metadataBytes, limits.MaxMetadataBytes)
+				}
+				if _, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}); err != nil {
+					t.Fatalf("cached full-table parse: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestELFLegacyCompressedStringOffsetsAndBudget(t *testing.T) {
+	const nameOffset = 4096
+	stringsData := append(make([]byte, nameOffset), []byte("target\x00")...)
+	image := elf64SymbolImage(t,
+		elf64SymbolTableFixture{
+			typ: elf.SHT_SYMTAB, legacyCompressed: true,
+			stringTable: stringsData, nameOffsets: []uint32{nameOffset},
+		},
+		elf64SymbolTableFixture{
+			typ:         elf.SHT_DYNSYM,
+			stringTable: []byte("\x00.zdebug_str\x00"), nameOffsets: []uint32{1},
+		},
+	)
+	var header elf.Header64
+	if err := binary.Read(bytes.NewReader(image), binary.LittleEndian, &header); err != nil {
+		t.Fatal(err)
+	}
+	header.Shstrndx = 3
+	copy(image, encodeELFStruct(t, header))
+	binary.LittleEndian.PutUint32(image[header.Shoff+uint64(header.Shentsize):], 1)
+	for _, budgetDelta := range []uint64{0, 1} {
+		f, err := elf.NewFile(bytes.NewReader(image))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { f.Close() })
+		if f.Sections[1].Size >= nameOffset {
+			t.Fatal("fixture name offset must exceed compressed size")
+		}
+		limits := DefaultELFSymbolLimits()
+		limits.MaxMetadataBytes = 2*elf.Sym64Size + uint64(len(stringsData)) - budgetDelta
+		state := newELFSymbolParseState(limits)
+		got, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1001)
+		if budgetDelta != 0 {
+			if !errors.Is(err, errELFSymbolLimit) || len(got) != 0 {
+				t.Fatalf("insufficient shared budget: got %v, err %v", got, err)
+			}
+			continue
+		}
+		if err != nil || len(got) != 1 || got[0].Name != "target" {
+			t.Fatalf("legacy expanded offset: got %v, err %v", got, err)
+		}
+		if state.metadataBytes != limits.MaxMetadataBytes {
+			t.Fatalf("shared budget: got %d, want %d", state.metadataBytes, limits.MaxMetadataBytes)
+		}
+		if _, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1002); err != nil {
+			t.Fatalf("cached legacy name: %v", err)
+		}
+	}
+}
+
+func TestELFPCResultCacheIsBoundedAcrossBatches(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wide-symbol.elf")
+	image := elf64SymbolImage(t, elf64SymbolTableFixture{typ: elf.SHT_SYMTAB, stringTable: []byte("\x00wide\x00"), nameOffsets: []uint32{1}, symbolSizes: []uint64{256}})
+	if err := os.WriteFile(path, image, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	limits := DefaultELFSymbolLimits()
+	limits.MaxSymbolCount = 2
+	resolver := NewUsymResolver(WithELFSymbolLimits(limits))
+	cache := &elfSymbolCache{}
+	for pc := uint64(0x1000); pc < 0x1040; pc++ {
+		miss := pc + 0x10000
+		got, err := resolver.resolveELFPCs(path, cache, []uint64{pc, miss})
+		if err != nil || got[pc] != "wide" || got[miss] != "" {
+			t.Fatalf("batch at %x: got %v, err %v", pc, got, err)
+		}
+		if len(cache.namesByELFPC) > 2 {
+			t.Fatal("PC cache exceeds hard cap")
+		}
+		if _, retained := cache.namesByELFPC[miss]; retained {
+			t.Fatal("cache retains a miss")
+		}
+	}
+}
+
+func BenchmarkELFCandidateLookup(b *testing.B) {
+	index := make([]elfSymbolCandidate, 10000)
+	for i := range index {
+		index[i] = elfSymbolCandidate{value: uint64(i) * 16, size: 16}
+	}
+	pcs := []uint64{17, 801, 80001, 159985}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if len(selectELFSymbolCandidates(index, pcs)) != len(pcs) {
+			b.Fatal("missing candidate")
+		}
+	}
+}
+
+func TestElfSymbolsForPCsEmptyPCsReturnsEmpty(t *testing.T) {
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: []byte("\x00target\x00"),
+		nameOffsets: []uint32{1},
+	})
+
+	got, err := elfSymbolsForPCs(f, nil, DefaultELFSymbolLimits())
+	if err != nil {
+		t.Fatalf("elfSymbolsForPCs: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("elfSymbolsForPCs(nil): got %d symbols, want 0", len(got))
+	}
+}
+
+func TestElfSymbolsSkipsOversizedRealSourceAndKeepsFallback(t *testing.T) {
+	oversizedStrings := append([]byte{0}, bytes.Repeat([]byte{'x'}, 4096)...)
+	oversizedStrings = append(oversizedStrings, 0)
+	f := newELF64SymbolFixture(t,
+		elf64SymbolTableFixture{
+			typ:         elf.SHT_DYNSYM,
+			stringTable: oversizedStrings,
+			nameOffsets: []uint32{1},
+		},
+		elf64SymbolTableFixture{
+			typ:         elf.SHT_SYMTAB,
+			stringTable: []byte("\x00fallback\x00"),
+			nameOffsets: []uint32{1},
+		},
+	)
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 1024,
+		MaxSymbolCount:   2,
+		MaxNameBytes:     1024,
+	}
+
+	got, err := elfSymbols(f, limits)
+	if !errors.Is(err, errELFSymbolLimit) {
+		t.Fatalf("elfSymbols(real fallback ELF): got error %v, want errELFSymbolLimit", err)
+	}
+	if len(got) != 1 || got[0].Name != "fallback" {
+		t.Fatalf("elfSymbols(real fallback ELF): got %v, want one fallback symbol", got)
+	}
+}
+
+func TestElfSymbolsLimitsRealSymbolCount(t *testing.T) {
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: []byte("\x00func\x00"),
+		nameOffsets: []uint32{1, 1, 1},
+	})
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 1024,
+		MaxSymbolCount:   2,
+		MaxNameBytes:     1024,
+	}
+
+	got, err := elfSymbols(f, limits)
+	if !errors.Is(err, errELFSymbolLimit) {
+		t.Fatalf("elfSymbols(real symbol-count ELF): got error %v, want errELFSymbolLimit", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("elfSymbols(real symbol-count ELF): got %d symbols, want 0", len(got))
 	}
 }
 
