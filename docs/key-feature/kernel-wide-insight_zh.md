@@ -1192,6 +1192,10 @@ huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
 
 ### 队列
 
+Q2C 和 D2C 分别统计已完成的 bio 阶段：本阶段时间戳可用且延迟至少为 20ms 即计数。
+另一阶段低于阈值或缺少时间戳不会抑制本阶段，因此两者总数可能不同。创建磁盘 map 项时，
+触发创建的当前完成事件也会计入；若 map 已满且该磁盘项不存在，则无法记录该磁盘样本。
+
 这些指标都会自动带上公共标签 `host` 和 `region`。其中容器维度指标还会固定带上
 `container_host`、`container_name`、`container_type`、`container_level`、`container_hostnamespace` 标签。
 
