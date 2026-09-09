@@ -686,6 +686,38 @@ main;handleRequest;writeResponse 172
 
 Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote` depends on the HUATUO toolstream Unix socket, requires a non-empty `--tracer-id`, and should not be selected for standalone offline use.
 
+#### Native profile time windows
+
+Native remote profiles carry the aggregation window in the existing pprof
+metadata. `TimeNanos` is the window start (Unix nanoseconds), and `DurationNanos`
+is its elapsed duration, not the configured `--duration` or `--aggr-interval`.
+The first window begins when the aggregation pipeline starts; subsequent
+windows begin at the previous successful snapshot boundary. The final boundary
+is fixed when the pipeline stops accepting records, before draining its queue
+or waiting for an upload. An early stop therefore produces a partial final
+window instead of a full configured interval.
+
+Snapshot data and its time window are frozen together. Upload delays and
+retries do not move that window. While a failed upload is pending, the next
+active window can grow beyond `--aggr-interval`; a failed snapshot retains its
+original start. `started_timestamp` in storage follows the profile timestamp,
+while `uploaded_timestamp` remains a separate storage/upload timestamp.
+
+These are **aggregation observation windows**, not precise per-event kernel
+timestamps. Providers deliver batches asynchronously, and pipeline startup and
+shutdown surround provider initialization and cleanup. Thus a window may
+include setup/teardown time or records collected earlier than their aggregation
+boundary. This metadata does not recover missing batches, flush additional
+kernel events on cancellation, or promise exact event-time attribution.
+
+Native on-CPU, off-CPU, allocation and lock profiles use interval durations.
+Native `physical_usage` remains a point-in-time view of observed retained
+allocations: its timestamp is the aggregation cutoff and its duration is zero;
+it is not a complete RSS snapshot. Java/Python metadata and local folded/SVG
+output are unchanged. Sample values and units are unchanged: CPU counts are
+scaled by the sampling period once, while off-CPU nanoseconds and memory bytes
+are not scaled by the profile duration.
+
 ### 7. Reproducing Integration Test Examples
 
 The repository's integration tests provide executable end-to-end examples. Each test creates a target process, runs profiler, and verifies the expected call stack in the output:

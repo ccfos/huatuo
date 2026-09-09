@@ -1,0 +1,56 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package profiler
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestCollectionWindow(t *testing.T) {
+	start := time.Unix(1_700_000_000, 123)
+	tests := []struct {
+		name     string
+		window   CollectionWindow
+		duration time.Duration
+		wantErr  string
+	}{
+		{name: "unknown", wantErr: "start is required"},
+		{name: "missing start", window: CollectionWindow{End: start}, wantErr: "start is required"},
+		{name: "missing end", window: CollectionWindow{Start: start}, wantErr: "end is required"},
+		{name: "reversed", window: CollectionWindow{Start: start, End: start.Add(-time.Nanosecond)}, wantErr: "end precedes start"},
+		{name: "snapshot", window: CollectionWindow{Start: start, End: start}},
+		{name: "interval", window: CollectionWindow{Start: start, End: start.Add(17*time.Second + 41*time.Nanosecond)}, duration: 17*time.Second + 41*time.Nanosecond},
+	}
+	for index := range tests {
+		tt := &tests[index]
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.window.Validate()
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := tt.window.Duration(); got != tt.duration {
+				t.Fatalf("Duration() = %s, want %s", got, tt.duration)
+			}
+		})
+	}
+}

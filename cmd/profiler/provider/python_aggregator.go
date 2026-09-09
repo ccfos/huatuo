@@ -107,7 +107,7 @@ func normalizePythonOutput(pid int, raw string) string {
 	return normalized.String()
 }
 
-func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
+func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext, _ profiler.CollectionWindow) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

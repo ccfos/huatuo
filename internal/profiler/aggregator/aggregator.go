@@ -15,6 +15,7 @@
 package aggregator
 
 import (
+	"huatuo-bamai/internal/profiler"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
 )
@@ -30,9 +31,13 @@ type Aggregator interface {
 	Aggregate(rec any)
 
 	// Snapshot returns the pprof profile data for upload backends.
+	// Window bounds pipeline aggregation, not individual source events.
+	// Providers may use these bounds or retain their source-specific timing.
+	// The result must remain valid after subsequent Aggregate and Reset calls:
+	// the pipeline retains it for retries while collecting the next window.
 	// For raw/flamegraph/svg output, returns nil — the pipeline reads
 	// the output formatter directly via OutputFormatter.
-	Snapshot(pctx *pcontext.ProfilerContext) (any, error)
+	Snapshot(pctx *pcontext.ProfilerContext, window profiler.CollectionWindow) (any, error)
 
 	// Reset clears accumulated state for the next cycle.
 	Reset()

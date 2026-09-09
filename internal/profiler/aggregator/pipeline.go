@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler"
 	profctx "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/randomid"
 )
@@ -49,11 +50,23 @@ type Pipeline struct {
 
 	pctx *profctx.ProfilerContext
 	aggr Aggregator
+	// Snapshot and Reset must exclude Aggregate as one operation. Uploads
+	// happen outside this lock so a slow receiver cannot block consumption.
+	aggregationMu sync.Mutex
+	// Only the export worker advances windowStart, together with a successful
+	// snapshot. Transport latency must not change the frozen profile window.
+	windowStart time.Time
+	now         func() time.Time
+	// Only the export worker owns pending. Keep one failed window instead of
+	// taking more snapshots while the receiver is unavailable.
+	pending any
 	// A channel blocks idle consumers; RingBuffer.Poll spins on timeout checks
 	// and spends CPU in runtime.nanotime and scheduler operations. The mutex
 	// makes stopping atomic with respect to accepting a record.
 	queue        chan any
 	enqueueMutex sync.RWMutex
+	// Protected by enqueueMutex so no snapshot can end after accepting stops.
+	stoppedAt time.Time
 }
 
 // NewPipeline initializes the data pipeline.
@@ -71,6 +84,7 @@ func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
 		aggrInterval: aggrInterval,
 		stopCh:       make(chan struct{}),
 		doneCh:       make(chan struct{}),
+		now:          time.Now,
 	}
 }
 
@@ -89,14 +103,16 @@ func resolveTracerID(configured string, allocate func() (string, error)) string 
 // Start launches the aggregation worker and periodic export schedule once.
 // It is a no-op after Stop starts; Pipeline instances are not restartable.
 func (p *Pipeline) Start() {
+	p.enqueueMutex.Lock()
+	defer p.enqueueMutex.Unlock()
+
 	if !p.state.CompareAndSwap(pipelineStateIdle, pipelineStateRunning) {
 		return
 	}
 
-	p.wg.Add(1)
+	p.windowStart = p.now()
+	p.wg.Add(2)
 	go p.runDequeueAndAggregate()
-
-	p.wg.Add(1)
 	go p.runAggregateSnapshot()
 }
 
@@ -150,18 +166,24 @@ func (p *Pipeline) runDequeueAndAggregate() {
 	for {
 		select {
 		case rec := <-p.queue:
-			p.aggr.Aggregate(rec)
+			p.aggregate(rec)
 		case <-p.stopCh:
 			for {
 				select {
 				case rec := <-p.queue:
-					p.aggr.Aggregate(rec)
+					p.aggregate(rec)
 				default:
 					return
 				}
 			}
 		}
 	}
+}
+
+func (p *Pipeline) aggregate(rec any) {
+	p.aggregationMu.Lock()
+	defer p.aggregationMu.Unlock()
+	p.aggr.Aggregate(rec)
 }
 
 // Stop signals the pipeline to terminate and waits for all goroutines to exit.
@@ -175,6 +197,7 @@ func (p *Pipeline) Stop() {
 
 		if p.state.CompareAndSwap(state, pipelineStateStopped) {
 			p.enqueueMutex.Lock()
+			p.stoppedAt = p.now()
 			close(p.stopCh)
 			p.enqueueMutex.Unlock()
 			p.wg.Wait()
@@ -206,21 +229,7 @@ func (p *Pipeline) logAggregateExportError(err error) {
 
 func (p *Pipeline) aggregateAndSnapshot(ctx context.Context, final bool) error {
 	if p.pctx.OutputFormat.IsUpload() {
-		data, err := p.aggr.Snapshot(p.pctx)
-		if err != nil {
-			return fmt.Errorf("aggregate snapshot: %w", err)
-		}
-
-		if data == nil {
-			return nil
-		}
-
-		if err := p.saveProfilingDocument(ctx, data); err != nil {
-			return fmt.Errorf("upload profiling document: %w", err)
-		}
-
-		p.aggr.Reset()
-		return nil
+		return p.uploadSnapshot(ctx, final, p.saveProfilingDocument)
 	}
 
 	if !final {
@@ -249,5 +258,64 @@ func (p *Pipeline) aggregateAndSnapshot(ctx context.Context, final bool) error {
 
 	p.aggr.Reset()
 
+	return nil
+}
+
+func (p *Pipeline) uploadSnapshot(ctx context.Context, final bool, send func(context.Context, any) error) error {
+	if p.pending != nil {
+		if err := p.sendPending(ctx, send); err != nil {
+			return err
+		}
+		if !final {
+			return nil
+		}
+		// Stop has drained the queue. After retrying the previous window, also
+		// export the samples accepted while that window was pending.
+	}
+
+	p.aggregationMu.Lock()
+	end, stopped := p.snapshotEnd()
+	if stopped && !final {
+		// A ready ticker can win over stopCh. Leave the last window intact
+		// until the consumer has drained every record accepted before Stop.
+		p.aggregationMu.Unlock()
+		return nil
+	}
+	window := profiler.CollectionWindow{Start: p.windowStart, End: end}
+	data, err := p.aggr.Snapshot(p.pctx, window)
+	if err == nil {
+		p.windowStart = end
+		if data != nil {
+			p.aggr.Reset()
+			p.pending = data
+		}
+	}
+	p.aggregationMu.Unlock()
+
+	if err != nil {
+		return fmt.Errorf("aggregate snapshot: %w", err)
+	}
+	if p.pending == nil {
+		return nil
+	}
+	return p.sendPending(ctx, send)
+}
+
+func (p *Pipeline) snapshotEnd() (time.Time, bool) {
+	p.enqueueMutex.RLock()
+	defer p.enqueueMutex.RUnlock()
+	select {
+	case <-p.stopCh:
+		return p.stoppedAt, true
+	default:
+		return p.now(), false
+	}
+}
+
+func (p *Pipeline) sendPending(ctx context.Context, send func(context.Context, any) error) error {
+	if err := send(ctx, p.pending); err != nil {
+		return fmt.Errorf("upload profiling document: %w", err)
+	}
+	p.pending = nil
 	return nil
 }

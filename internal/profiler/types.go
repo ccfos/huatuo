@@ -59,6 +59,8 @@ type ParseInput struct {
 type ParseOption struct {
 	// SampleRate is only used for CPU sample.
 	SampleRate int64
+	// Duration describes the collection interval; zero leaves it unspecified.
+	Duration time.Duration
 }
 
 // TreeItem is the item in the tree.
