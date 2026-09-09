@@ -15,6 +15,8 @@
 package provider
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"runtime"
 	"slices"
@@ -22,6 +24,7 @@ import (
 	"testing"
 
 	"huatuo-bamai/internal/profiler"
+	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
 	"huatuo-bamai/pkg/profiling"
@@ -226,6 +229,126 @@ func TestNativeAggregatorPhysicalMemoryFiltersAfterAggregation(t *testing.T) {
 	}
 }
 
+func TestNativeAggregatorSnapshotSurvivesResetAndNewSamples(t *testing.T) {
+	tests := []struct {
+		name        string
+		typ         profiling.Type
+		cpuMode     profiling.CPUMode
+		memoryMode  profiling.MemoryMode
+		profileType string
+		scale       int64
+	}{
+		{
+			name:        "on-CPU samples become nanoseconds",
+			typ:         profiling.TypeCPU,
+			cpuMode:     profiling.CPUModeOnCPU,
+			profileType: profiler.ProfileTypeCpuSample,
+			scale:       10_000_000,
+		},
+		{
+			name:        "off-CPU nanoseconds stay unchanged",
+			typ:         profiling.TypeCPU,
+			cpuMode:     profiling.CPUModeOffCPU,
+			profileType: profiler.ProfileTypeOffCpuSample,
+			scale:       1,
+		},
+		{
+			name:        "virtual allocation bytes stay unchanged",
+			typ:         profiling.TypeMemory,
+			memoryMode:  profiling.MemoryModeVirtualAlloc,
+			profileType: profiler.ProfileTypeMemSample,
+			scale:       1,
+		},
+		{
+			name:        "physical allocation bytes stay unchanged",
+			typ:         profiling.TypeMemory,
+			memoryMode:  profiling.MemoryModePhysicalAlloc,
+			profileType: profiler.ProfileTypeMemSample,
+			scale:       1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pctx := &pcontext.ProfilerContext{
+				Type:         tt.typ,
+				CPUMode:      tt.cpuMode,
+				MemoryMode:   tt.memoryMode,
+				Freq:         100,
+				OutputFormat: output.FormatRemote,
+			}
+			aggr, err := newNativeAggregator(pctx)
+			if err != nil {
+				t.Fatalf("newNativeAggregator() error = %v", err)
+			}
+			takeSnapshot := func() *profiler.ProfileData {
+				t.Helper()
+				snapshot, err := aggr.Snapshot(pctx)
+				if err != nil {
+					t.Fatalf("Snapshot() error = %v", err)
+				}
+				data, ok := snapshot.(*profiler.ProfileData)
+				if !ok {
+					t.Fatalf("Snapshot() type = %T, want *profiler.ProfileData", snapshot)
+				}
+				if data.ProfileType != tt.profileType {
+					t.Fatalf("ProfileType = %q, want %q", data.ProfileType, tt.profileType)
+				}
+				return data
+			}
+			sample := stackSample{
+				Process:    processKey{PID: 12, Comm: "app"},
+				StackTrace: symbolizedStackTrace{UserFrames: []string{"main", "original"}},
+				Value:      3,
+			}
+			aggr.Aggregate(&sample)
+			pending := takeSnapshot()
+			if len(pending.Profile.Sample) != 1 ||
+				!slices.Equal(pending.Profile.Sample[0].Value, []int64{3 * tt.scale}) {
+				t.Fatalf("pending samples = %v, want one sample with value %d", pending.Profile.Sample, 3*tt.scale)
+			}
+			before, err := pending.Profile.MarshalVT()
+			if err != nil {
+				t.Fatalf("marshal pending profile: %v", err)
+			}
+
+			aggr.Reset()
+			// A pending profile must stay independent even when the interner reuses IDs.
+			aggr.Aggregate(&stackSample{
+				Process:    sample.Process,
+				StackTrace: symbolizedStackTrace{UserFrames: []string{"main", "new"}},
+				Value:      7,
+			})
+			sample.Value = 5
+			aggr.Aggregate(&sample)
+			next := takeSnapshot()
+			var values []int64
+			for _, sample := range next.Profile.Sample {
+				if len(sample.Value) != 1 {
+					t.Fatalf("next sample values = %v, want one value", sample.Value)
+				}
+				values = append(values, sample.Value[0])
+			}
+			slices.Sort(values)
+			if want := []int64{5 * tt.scale, 7 * tt.scale}; !slices.Equal(values, want) {
+				t.Fatalf("next sample values = %v, want %v", values, want)
+			}
+			for _, frame := range []string{"original", "new"} {
+				if !slices.Contains(next.Profile.StringTable, frame) {
+					t.Errorf("next profile is missing frame %q", frame)
+				}
+			}
+			after, err := pending.Profile.MarshalVT()
+			if err != nil {
+				t.Fatalf("marshal pending profile after reset: %v", err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("pending profile changed after resetting and aggregating the next window")
+			}
+		})
+	}
+}
+
 func TestSymbolizedStackTraceAppendToPreservesFrameNames(t *testing.T) {
 	trace := symbolizedStackTrace{
 		UserFrames:   []string{"generic::<[u8; 7]>", "main"},
@@ -400,6 +523,84 @@ func BenchmarkNativeAggregatorAggregate(b *testing.B) {
 			runtime.KeepAlive(aggregator)
 		}
 	})
+}
+
+const nativePipelineBenchmarkBatchSize = 1024
+
+type nativePipelineBenchmarkAggregator struct {
+	*nativeAggregator
+	batchDone chan struct{}
+	records   int
+}
+
+func (a *nativePipelineBenchmarkAggregator) Aggregate(rec any) {
+	a.nativeAggregator.Aggregate(rec)
+	a.records++
+	if a.records%nativePipelineBenchmarkBatchSize == 0 {
+		a.batchDone <- struct{}{}
+	}
+}
+
+func (*nativePipelineBenchmarkAggregator) Snapshot(*pcontext.ProfilerContext) (any, error) {
+	// Export would measure serialization and storage instead of the queue hot path.
+	return nil, nil
+}
+
+func BenchmarkNativeAggregatorPipeline(b *testing.B) {
+	for _, depth := range []int{5, 32, 64} {
+		b.Run(fmt.Sprintf("repeated/user=%d/batch=%d", depth, nativePipelineBenchmarkBatchSize), func(b *testing.B) {
+			pctx := &pcontext.ProfilerContext{
+				Ctx:          context.Background(),
+				Type:         profiling.TypeCPU,
+				CPUMode:      profiling.CPUModeOnCPU,
+				Freq:         99,
+				TracerID:     "native-pipeline-benchmark",
+				OutputFormat: output.FormatRemote,
+				IsOneShotAgg: true,
+			}
+			native, err := newNativeAggregator(pctx)
+			if err != nil {
+				b.Fatalf("newNativeAggregator() error = %v", err)
+			}
+			aggr := &nativePipelineBenchmarkAggregator{
+				nativeAggregator: native,
+				batchDone:        make(chan struct{}, 1),
+			}
+			pipe := aggregator.NewPipeline(pctx, aggr)
+			pipe.Start()
+			b.Cleanup(pipe.Stop)
+			sample := &stackSample{
+				Process: processKey{PID: 123, Comm: "worker"},
+				StackTrace: symbolizedStackTrace{
+					UserFrames: benchmarkStackFrames("user", depth),
+				},
+				Value: 1,
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				for range nativePipelineBenchmarkBatchSize {
+					pipe.Enqueue(sample)
+				}
+				// Bound outstanding records below queue capacity and time their consumption.
+				<-aggr.batchDone
+			}
+			pipe.Stop()
+			want := b.N * nativePipelineBenchmarkBatchSize
+			if aggr.records != want {
+				b.Fatalf("consumed records = %d, want %d", aggr.records, want)
+			}
+			if len(native.stackSamples) != 1 {
+				b.Fatalf("stack records = %d, want 1", len(native.stackSamples))
+			}
+			for _, value := range native.stackSamples {
+				if value != int64(want) {
+					b.Fatalf("aggregated value = %d, want %d", value, want)
+				}
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(want), "ns/record")
+		})
+	}
 }
 
 func benchmarkStackFrames(prefix string, depth int) []string {
