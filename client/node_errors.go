@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nodeclient
+package client
 
 import (
 	"fmt"
@@ -21,27 +21,27 @@ import (
 )
 
 const (
-	// ErrorCodeClientInvalidArgument identifies a request rejected before dispatch.
-	ErrorCodeClientInvalidArgument apiv1.ErrorCode = "client_invalid_argument"
-	// ErrorCodeClientProtocol identifies a response that violates the Node API contract.
-	ErrorCodeClientProtocol apiv1.ErrorCode = "client_protocol"
-	// ErrorCodeClientTransport identifies a failure to complete HTTP transport handling.
-	ErrorCodeClientTransport apiv1.ErrorCode = "client_transport"
+	// NodeErrorCodeInvalidArgument identifies a request rejected before dispatch.
+	NodeErrorCodeInvalidArgument apiv1.ErrorCode = "client_invalid_argument"
+	// NodeErrorCodeProtocol identifies a response that violates the Node API contract.
+	NodeErrorCodeProtocol apiv1.ErrorCode = "client_protocol"
+	// NodeErrorCodeTransport identifies a failure to complete HTTP transport handling.
+	NodeErrorCodeTransport apiv1.ErrorCode = "client_transport"
 )
 
-// Error describes either a Node API error response or a client-side failure.
-type Error struct {
+// NodeError describes either a Node API error response or a client-side failure.
+type NodeError struct {
 	StatusCode int
 	Code       apiv1.ErrorCode
 	Message    string
 }
 
 // Error formats the stable error without exposing response bodies.
-func (e *Error) Error() string {
+func (e *NodeError) Error() string {
 	if e == nil {
 		return "node client error"
 	}
-	if isClientErrorCode(e.Code) {
+	if isNodeClientErrorCode(e.Code) {
 		if e.StatusCode == 0 {
 			return fmt.Sprintf("node client %s: %s", e.Code, e.Message)
 		}
@@ -55,17 +55,17 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("node API returned HTTP %d %s: %s", e.StatusCode, e.Code, e.Message)
 }
 
-func isClientErrorCode(code apiv1.ErrorCode) bool {
+func isNodeClientErrorCode(code apiv1.ErrorCode) bool {
 	switch code {
-	case ErrorCodeClientInvalidArgument,
-		ErrorCodeClientProtocol,
-		ErrorCodeClientTransport:
+	case NodeErrorCodeInvalidArgument,
+		NodeErrorCodeProtocol,
+		NodeErrorCodeTransport:
 		return true
 	default:
 		return false
 	}
 }
 
-func wrapError(nodeErr *Error, cause error) error {
+func wrapNodeError(nodeErr *NodeError, cause error) error {
 	return fmt.Errorf("%w: %w", nodeErr, cause)
 }

@@ -22,7 +22,7 @@ import (
 	"time"
 
 	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/internal/nodeclient"
+	"huatuo-bamai/client"
 )
 
 func TestRuntimeStartOperationReturnsContextCancellation(t *testing.T) {
@@ -52,8 +52,8 @@ func TestRuntimeStartOperationClassifiesRequestBuildError(t *testing.T) {
 	)
 
 	_, err := runtime.startOperation(t.Context())
-	var nodeErr *nodeclient.Error
-	if !errors.As(err, &nodeErr) || nodeErr.Code != nodeclient.ErrorCodeClientInvalidArgument {
+	var nodeErr *client.NodeError
+	if !errors.As(err, &nodeErr) || nodeErr.Code != client.NodeErrorCodeInvalidArgument {
 		t.Fatalf("startOperation() error = %v, want client_invalid_argument", err)
 	}
 }

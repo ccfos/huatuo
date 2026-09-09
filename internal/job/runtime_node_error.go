@@ -21,7 +21,7 @@ import (
 
 	apiv1 "huatuo-bamai/apis/v1"
 	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/internal/nodeclient"
+	"huatuo-bamai/client"
 )
 
 // reconcileJobWithError keeps failure transitions independent of the Node
@@ -36,10 +36,10 @@ func (r *runtime) reconcileJobWithError(
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return false, ctxErr
 	}
-	var nodeErr *nodeclient.Error
+	var nodeErr *client.NodeError
 	if !errors.As(err, &nodeErr) || nodeErr == nil {
 		return false, fmt.Errorf(
-			"reconcile Node error for Job %q: expected *nodeclient.Error: %w",
+			"reconcile Node error for Job %q: expected *client.NodeError: %w",
 			r.id,
 			err,
 		)
@@ -71,7 +71,7 @@ func (r *runtime) reconcileJobWithError(
 		} else {
 			setTerminal(updated, &TerminalResult{Outcome: OutcomeUnknown}, now)
 		}
-	case nodeclient.ErrorCodeClientInvalidArgument,
+	case client.NodeErrorCodeInvalidArgument,
 		apiv1.ErrorCodeInvalidRequest,
 		nodeapi.ErrorCodeRequestIDConflict:
 		setTerminal(updated, &TerminalResult{
@@ -79,13 +79,13 @@ func (r *runtime) reconcileJobWithError(
 			Reason:  FailureReasonInvalidNodeRequest,
 			Message: nodeErr.Message,
 		}, now)
-	case nodeclient.ErrorCodeClientProtocol:
+	case client.NodeErrorCodeProtocol:
 		setTerminal(updated, &TerminalResult{
 			Outcome: OutcomeFailed,
 			Reason:  FailureReasonProtocolError,
 			Message: "Node response violated the Operation protocol",
 		}, now)
-	case nodeclient.ErrorCodeClientTransport,
+	case client.NodeErrorCodeTransport,
 		apiv1.ErrorCodeInternal,
 		apiv1.ErrorCodeServiceUnavailable:
 		nodeUnavailable = true

@@ -19,12 +19,12 @@ import (
 	"fmt"
 	"time"
 
+	"huatuo-bamai/client"
 	"huatuo-bamai/internal/job"
-	"huatuo-bamai/internal/nodeclient"
 )
 
 func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
-	client, err := nodeclient.New(&nodeclient.Config{
+	nodeClient, err := client.NewNode(&client.NodeConfig{
 		Port:        d.opts.Config.Agent.HTTPPort,
 		BearerToken: d.opts.Config.Agent.Auth.BearerToken,
 		Observe:     d.agentObserver,
@@ -33,7 +33,7 @@ func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) err
 		return nil, fmt.Errorf("initialize Node client: %w", err)
 	}
 	controller := d.opts.Config.Jobs.Controller
-	manager, err := job.NewManager(ctx, client, &job.ManagerConfig{
+	manager, err := job.NewManager(ctx, nodeClient, &job.ManagerConfig{
 		StoreDSN: d.opts.Config.Jobs.StoreDSN,
 		ProfilingPolicy: job.Policy{
 			MaxJobsPerHost: d.opts.Config.Jobs.Profiling.MaxConcurrentPerHost,

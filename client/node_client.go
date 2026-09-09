@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package nodeclient adapts the generated Node API client for Huatuo components.
-package nodeclient
+package client
 
 import (
 	"context"
@@ -29,21 +28,21 @@ import (
 	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
-const defaultRequestTimeout = 10 * time.Second
+const defaultNodeRequestTimeout = 10 * time.Second
 
-// RequestObserver records one completed Node API call.
-type RequestObserver func(operation string, duration time.Duration, err error)
+// NodeRequestObserver records one completed Node API call.
+type NodeRequestObserver func(operation string, duration time.Duration, err error)
 
-// Config contains process-local Node client dependencies and policy.
-type Config struct {
+// NodeConfig contains process-local Node client dependencies and policy.
+type NodeConfig struct {
 	HTTPClient     *http.Client
 	Port           int
 	BearerToken    string
 	RequestTimeout time.Duration
-	Observe        RequestObserver
+	Observe        NodeRequestObserver
 }
 
-func (c *Config) validate() error {
+func (c *NodeConfig) validate() error {
 	if c == nil {
 		return errors.New("create Node client: config is required")
 	}
@@ -62,23 +61,23 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// Client sends one generated Node API request per method call.
-type Client struct {
+// NodeClient sends one generated Node API request per method call.
+type NodeClient struct {
 	httpClient     *http.Client
 	port           int
 	bearerToken    string
 	requestTimeout time.Duration
-	observe        RequestObserver
+	observe        NodeRequestObserver
 }
 
-// New validates and snapshots Node client configuration.
-func New(config *Config) (*Client, error) {
+// NewNode validates and snapshots Node client configuration.
+func NewNode(config *NodeConfig) (*NodeClient, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
 	requestTimeout := config.RequestTimeout
 	if requestTimeout == 0 {
-		requestTimeout = defaultRequestTimeout
+		requestTimeout = defaultNodeRequestTimeout
 	}
 	httpClient := config.HTTPClient
 	if httpClient == nil {
@@ -91,7 +90,7 @@ func New(config *Config) (*Client, error) {
 	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	return &Client{
+	return &NodeClient{
 		httpClient:     httpClient,
 		port:           config.Port,
 		bearerToken:    config.BearerToken,
@@ -100,15 +99,15 @@ func New(config *Config) (*Client, error) {
 	}, nil
 }
 
-type sendRequest func(context.Context, *nodeapi.Client) (*http.Response, error)
+type sendNodeRequest func(context.Context, *nodeapi.Client) (*http.Response, error)
 
-func (c *Client) execute(
+func (c *NodeClient) executeOperation(
 	ctx context.Context,
 	host string,
 	operationName string,
 	requestID string,
-	successMode successResponseMode,
-	send sendRequest,
+	successMode nodeSuccessResponseMode,
+	send sendNodeRequest,
 ) (result *nodeapi.Operation, returnedErr error) {
 	// Start and Stop are not safely retryable when the response is lost.
 	startedAt := time.Now()
@@ -127,15 +126,15 @@ func (c *Client) execute(
 
 	response, err := send(requestCtx, generated)
 	if err != nil {
-		return nil, wrapError(&Error{
-			Code:    ErrorCodeClientTransport,
+		return nil, wrapNodeError(&NodeError{
+			Code:    NodeErrorCodeTransport,
 			Message: operationName + " Node API request",
 		}, err)
 	}
-	return parseOperationResponse(response, requestID, successMode)
+	return parseNodeOperationResponse(response, requestID, successMode)
 }
 
-func (c *Client) generatedClient(host string) (*nodeapi.Client, error) {
+func (c *NodeClient) generatedClient(host string) (*nodeapi.Client, error) {
 	serverURL := (&url.URL{
 		Scheme: "http",
 		Host:   net.JoinHostPort(host, strconv.Itoa(c.port)),

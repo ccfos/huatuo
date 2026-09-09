@@ -22,7 +22,7 @@ import (
 	"time"
 
 	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/internal/nodeclient"
+	"huatuo-bamai/client"
 	"huatuo-bamai/pkg/observation"
 	"huatuo-bamai/pkg/profiling"
 
@@ -266,18 +266,18 @@ func TestManagerCreateClassifiesInvalidRequest(t *testing.T) {
 
 func TestManagerCreateTreatsEachRequestAsIndependent(t *testing.T) {
 	release := make(chan struct{})
-	client := &stubNodeClient{startOperation: func(
+	nodeClient := &stubNodeClient{startOperation: func(
 		context.Context,
 		string,
 		*nodeapi.StartOperationRequest,
 	) (*nodeapi.Operation, error) {
 		<-release
-		return nil, &nodeclient.Error{
-			Code:    nodeclient.ErrorCodeClientTransport,
+		return nil, &client.NodeError{
+			Code:    client.NodeErrorCodeTransport,
 			Message: "Node unavailable",
 		}
 	}}
-	manager := testManager(newMemoryStore(), client)
+	manager := testManager(newMemoryStore(), nodeClient)
 
 	first, err := manager.Create(t.Context(), testCreateRequest())
 	if err != nil {

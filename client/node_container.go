@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nodeclient
+package client
 
 import (
 	"context"
@@ -22,8 +22,8 @@ import (
 	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
-// FetchContainer fetches public container metadata from huatuo-bamai.
-func FetchContainer(
+// FetchNodeContainer fetches public container metadata from huatuo-bamai.
+func FetchNodeContainer(
 	ctx context.Context,
 	serverAddr string,
 	containerID string,
@@ -40,20 +40,20 @@ func FetchContainer(
 		}),
 	)
 	if err != nil {
-		return nil, wrapError(&Error{
-			Code:    ErrorCodeClientInvalidArgument,
+		return nil, wrapNodeError(&NodeError{
+			Code:    NodeErrorCodeInvalidArgument,
 			Message: "create container metadata client",
 		}, err)
 	}
 
-	requestCtx, cancel := context.WithTimeout(ctx, defaultRequestTimeout)
+	requestCtx, cancel := context.WithTimeout(ctx, defaultNodeRequestTimeout)
 	defer cancel()
 	response, err := generated.GetContainer(requestCtx, containerID)
 	if err != nil {
-		return nil, wrapError(&Error{
-			Code:    ErrorCodeClientTransport,
+		return nil, wrapNodeError(&NodeError{
+			Code:    NodeErrorCodeTransport,
 			Message: "get container metadata",
 		}, err)
 	}
-	return parseContainerResponse(response, containerID)
+	return parseNodeContainerResponse(response, containerID)
 }

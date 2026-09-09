@@ -91,6 +91,23 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
 - **注意**
   请勿将 latest 标签的镜像部署至生产环境，此为开发测试分支。请使用正式发版的镜像或二进制文件。
 
+## Go 客户端
+
+对外提供的 Go 客户端位于 `client/`。Node 客户端文件使用 `node_` 前缀。
+
+```go
+package main
+
+import "huatuo-bamai/client"
+
+func newNodeClient() (*client.NodeClient, error) {
+    return client.NewNode(&client.NodeConfig{
+        Port:        19704,
+        BearerToken: "node-token",
+    })
+}
+```
+
 ## 内核版本
 
 支持 4.18 及之后的所有内核版本。以下为主要测试过的内核与操作系统发行版。

@@ -12,32 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nodeclient
+package client_test
 
 import (
-	"errors"
 	"fmt"
-	"net/http"
-	"strings"
-	"testing"
+
+	"huatuo-bamai/client"
 )
 
-func TestParseContainerResponseRejectsMismatchedID(t *testing.T) {
-	response := jsonResponse(
-		http.StatusOK,
-		fmt.Sprintf(
-			`{"data":{"id":%q,"cgroup_css":{}}}`,
-			strings.Repeat("b", 64),
-		),
-	)
-	defer response.Body.Close()
+func ExampleNewNode() {
+	nodeClient, err := client.NewNode(&client.NodeConfig{
+		Port:        19704,
+		BearerToken: "node-token",
+	})
+	fmt.Println(nodeClient != nil, err)
 
-	_, err := parseContainerResponse(response, testContainerID)
-	var nodeErr *Error
-	if !errors.As(err, &nodeErr) {
-		t.Fatalf("parseContainerResponse() error = %v, want *Error", err)
-	}
-	if nodeErr.Code != ErrorCodeClientProtocol {
-		t.Fatalf("Node client error = %+v", nodeErr)
-	}
+	// Output: true <nil>
 }

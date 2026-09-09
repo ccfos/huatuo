@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nodeclient
+package client
 
 import (
 	"encoding/json"
@@ -25,21 +25,21 @@ import (
 )
 
 const (
-	maxSuccessBodyBytes = 1 << 20
-	maxErrorBodyBytes   = 8 << 10
+	maxNodeSuccessBodyBytes = 1 << 20
+	maxNodeErrorBodyBytes   = 8 << 10
 )
 
-func readResponseBody(response *http.Response, limit int64) ([]byte, error) {
+func readNodeResponseBody(response *http.Response, limit int64) ([]byte, error) {
 	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return nil, wrapError(&Error{
+		return nil, wrapNodeError(&NodeError{
 			StatusCode: response.StatusCode,
-			Code:       ErrorCodeClientTransport,
+			Code:       NodeErrorCodeTransport,
 			Message:    "read Node API response",
 		}, err)
 	}
 	if int64(len(body)) > limit {
-		return nil, newProtocolError(
+		return nil, newNodeProtocolError(
 			response.StatusCode,
 			fmt.Sprintf("Node API response exceeds %d bytes", limit),
 		)
@@ -47,18 +47,18 @@ func readResponseBody(response *http.Response, limit int64) ([]byte, error) {
 	return body, nil
 }
 
-func parseError(statusCode int, body []byte) error {
+func parseNodeError(statusCode int, body []byte) error {
 	var envelope apiv1.ErrorResponse
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return wrapProtocolError(statusCode, "decode Node API error response", err)
+		return wrapNodeProtocolError(statusCode, "decode Node API error response", err)
 	}
 	code := envelope.Error.Code
 	expectedStatus, ok := nodeapi.HTTPStatusForErrorCode(code)
 	if !ok {
-		return newProtocolError(statusCode, fmt.Sprintf("unknown Node error code %q", code))
+		return newNodeProtocolError(statusCode, fmt.Sprintf("unknown Node error code %q", code))
 	}
 	if expectedStatus != statusCode {
-		return newProtocolError(
+		return newNodeProtocolError(
 			statusCode,
 			fmt.Sprintf(
 				"Node error code %q requires HTTP %d",
@@ -68,26 +68,26 @@ func parseError(statusCode int, body []byte) error {
 		)
 	}
 	if envelope.Error.Message == "" {
-		return newProtocolError(
+		return newNodeProtocolError(
 			statusCode,
 			fmt.Sprintf("Node error code %q has an empty message", code),
 		)
 	}
-	return &Error{
+	return &NodeError{
 		StatusCode: statusCode,
 		Code:       code,
 		Message:    envelope.Error.Message,
 	}
 }
 
-func newProtocolError(statusCode int, message string) *Error {
-	return &Error{
+func newNodeProtocolError(statusCode int, message string) *NodeError {
+	return &NodeError{
 		StatusCode: statusCode,
-		Code:       ErrorCodeClientProtocol,
+		Code:       NodeErrorCodeProtocol,
 		Message:    message,
 	}
 }
 
-func wrapProtocolError(statusCode int, message string, cause error) error {
-	return wrapError(newProtocolError(statusCode, message), cause)
+func wrapNodeProtocolError(statusCode int, message string, cause error) error {
+	return wrapNodeError(newNodeProtocolError(statusCode, message), cause)
 }

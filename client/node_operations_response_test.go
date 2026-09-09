@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nodeclient
+package client
 
 import (
 	"errors"
@@ -24,14 +24,14 @@ import (
 	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
-type closeErrorBody struct {
+type nodeCloseErrorBody struct {
 	io.Reader
 	err error
 }
 
-func (b closeErrorBody) Close() error { return b.err }
+func (b nodeCloseErrorBody) Close() error { return b.err }
 
-func operationJSON(requestID, status string) string {
+func nodeOperationJSON(requestID, status string) string {
 	if status == "completed" || status == "failed" || status == "stopped" {
 		return fmt.Sprintf(
 			`{"data":{"created_at":"2026-08-24T12:00:00Z",`+
@@ -49,43 +49,43 @@ func operationJSON(requestID, status string) string {
 	)
 }
 
-func TestParseOperationResponseRejectsProtocolViolations(t *testing.T) {
+func TestParseNodeOperationResponseRejectsProtocolViolations(t *testing.T) {
 	tests := []struct {
 		name        string
 		statusCode  int
 		body        string
-		successMode successResponseMode
+		successMode nodeSuccessResponseMode
 	}{
 		{
 			name:        "accepted get response",
 			statusCode:  http.StatusAccepted,
-			body:        operationJSON("job-1", "pending"),
-			successMode: successResponseOK,
+			body:        nodeOperationJSON("job-1", "pending"),
+			successMode: nodeSuccessResponseOK,
 		},
 		{
 			name:       "mismatched response ID",
 			statusCode: http.StatusOK,
-			body:       operationJSON("other-job", "running"),
+			body:       nodeOperationJSON("other-job", "running"),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			response := jsonResponse(tt.statusCode, tt.body)
+			response := nodeJSONResponse(tt.statusCode, tt.body)
 			defer response.Body.Close()
 
-			_, err := parseOperationResponse(response, "job-1", tt.successMode)
-			var nodeErr *Error
+			_, err := parseNodeOperationResponse(response, "job-1", tt.successMode)
+			var nodeErr *NodeError
 			if !errors.As(err, &nodeErr) {
-				t.Fatalf("parseOperationResponse() error = %v, want *Error", err)
+				t.Fatalf("parseNodeOperationResponse() error = %v, want *NodeError", err)
 			}
-			if nodeErr.Code != ErrorCodeClientProtocol || nodeErr.StatusCode != tt.statusCode {
+			if nodeErr.Code != NodeErrorCodeProtocol || nodeErr.StatusCode != tt.statusCode {
 				t.Fatalf("Node client error = %+v", nodeErr)
 			}
 		})
 	}
 }
 
-func TestParseOperationResponseUsesBodyInsteadOfContentType(t *testing.T) {
+func TestParseNodeOperationResponseUsesBodyInsteadOfContentType(t *testing.T) {
 	for _, test := range []struct {
 		name        string
 		contentType string
@@ -94,16 +94,16 @@ func TestParseOperationResponseUsesBodyInsteadOfContentType(t *testing.T) {
 		{name: "inaccurate", contentType: "text/plain"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			response := jsonResponse(http.StatusOK, operationJSON("job-1", "pending"))
+			response := nodeJSONResponse(http.StatusOK, nodeOperationJSON("job-1", "pending"))
 			response.Header.Set("Content-Type", test.contentType)
 
-			operation, err := parseOperationResponse(response, "job-1", successResponseOK)
+			operation, err := parseNodeOperationResponse(response, "job-1", nodeSuccessResponseOK)
 			if err != nil {
-				t.Fatalf("parseOperationResponse() error = %v", err)
+				t.Fatalf("parseNodeOperationResponse() error = %v", err)
 			}
 			if operation.RequestID != "job-1" {
 				t.Fatalf(
-					"parseOperationResponse() request ID = %q, want %q",
+					"parseNodeOperationResponse() request ID = %q, want %q",
 					operation.RequestID,
 					"job-1",
 				)
@@ -112,20 +112,20 @@ func TestParseOperationResponseUsesBodyInsteadOfContentType(t *testing.T) {
 	}
 }
 
-func TestParseOperationResponseParsesTerminalOperation(t *testing.T) {
-	response := jsonResponse(http.StatusOK, operationJSON("job-1", "completed"))
-	response.Body = closeErrorBody{
+func TestParseNodeOperationResponseParsesTerminalOperation(t *testing.T) {
+	response := nodeJSONResponse(http.StatusOK, nodeOperationJSON("job-1", "completed"))
+	response.Body = nodeCloseErrorBody{
 		Reader: response.Body,
 		err:    errors.New("close response body"),
 	}
 
-	operation, err := parseOperationResponse(response, "job-1", successResponseOK)
+	operation, err := parseNodeOperationResponse(response, "job-1", nodeSuccessResponseOK)
 	if err != nil {
-		t.Fatalf("parseOperationResponse() error = %v", err)
+		t.Fatalf("parseNodeOperationResponse() error = %v", err)
 	}
 	if operation.Status != nodeapi.OperationStatusTerminal {
 		t.Fatalf(
-			"parseOperationResponse() status = %q, want %q",
+			"parseNodeOperationResponse() status = %q, want %q",
 			operation.Status,
 			nodeapi.OperationStatusTerminal,
 		)

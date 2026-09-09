@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nodeclient
+package client
 
 import (
 	"errors"
@@ -25,11 +25,11 @@ import (
 	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
-const testContainerID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const nodeTestContainerID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-func TestFetchContainer(t *testing.T) {
+func TestFetchNodeContainer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/v1/containers/"+testContainerID {
+		if request.URL.Path != "/v1/containers/"+nodeTestContainerID {
 			t.Errorf("request path = %q", request.URL.Path)
 		}
 		if authorization := request.Header.Get("Authorization"); authorization != "" {
@@ -39,28 +39,28 @@ func TestFetchContainer(t *testing.T) {
 		_, _ = fmt.Fprintf(
 			w,
 			`{"data":{"id":%q,"cgroup_css":{"cpu":"0xffff888012345678"}}}`,
-			testContainerID,
+			nodeTestContainerID,
 		)
 	}))
 	defer server.Close()
 
-	metadata, err := FetchContainer(
+	metadata, err := FetchNodeContainer(
 		t.Context(),
 		strings.TrimPrefix(server.URL, "http://"),
-		testContainerID,
+		nodeTestContainerID,
 	)
 	if err != nil {
-		t.Fatalf("FetchContainer() error = %v", err)
+		t.Fatalf("FetchNodeContainer() error = %v", err)
 	}
-	if metadata.ID != testContainerID {
-		t.Errorf("FetchContainer() ID = %q, want %q", metadata.ID, testContainerID)
+	if metadata.ID != nodeTestContainerID {
+		t.Errorf("FetchNodeContainer() ID = %q, want %q", metadata.ID, nodeTestContainerID)
 	}
 	if got := metadata.CgroupCSS["cpu"]; got != "0xffff888012345678" {
-		t.Errorf("FetchContainer() CPU CSS = %q", got)
+		t.Errorf("FetchNodeContainer() CPU CSS = %q", got)
 	}
 }
 
-func TestFetchContainerReturnsAPIError(t *testing.T) {
+func TestFetchNodeContainerReturnsAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -71,17 +71,17 @@ func TestFetchContainerReturnsAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := FetchContainer(
+	_, err := FetchNodeContainer(
 		t.Context(),
 		strings.TrimPrefix(server.URL, "http://"),
-		testContainerID,
+		nodeTestContainerID,
 	)
-	var nodeErr *Error
+	var nodeErr *NodeError
 	if !errors.As(err, &nodeErr) {
-		t.Fatalf("FetchContainer() error = %v, want *Error", err)
+		t.Fatalf("FetchNodeContainer() error = %v, want *NodeError", err)
 	}
 	if nodeErr.Code != nodeapi.ErrorCodeContainerNotFound ||
 		nodeErr.StatusCode != http.StatusNotFound {
-		t.Errorf("FetchContainer() error = %+v", nodeErr)
+		t.Errorf("FetchNodeContainer() error = %+v", nodeErr)
 	}
 }

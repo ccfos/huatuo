@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nodeclient
+package client
 
 import (
 	"encoding/json"
@@ -22,31 +22,31 @@ import (
 	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
-func parseContainerResponse(
+func parseNodeContainerResponse(
 	response *http.Response,
 	containerID string,
 ) (*nodeapi.ContainerMetadata, error) {
 	defer response.Body.Close()
 
-	limit := int64(maxErrorBodyBytes)
+	limit := int64(maxNodeErrorBodyBytes)
 	if response.StatusCode == http.StatusOK {
-		limit = maxSuccessBodyBytes
+		limit = maxNodeSuccessBodyBytes
 	}
-	body, err := readResponseBody(response, limit)
+	body, err := readNodeResponseBody(response, limit)
 	if err != nil {
 		return nil, err
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, parseError(response.StatusCode, body)
+		return nil, parseNodeError(response.StatusCode, body)
 	}
 
 	var envelope nodeapi.ContainerResponse
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, wrapProtocolError(response.StatusCode, "decode container response", err)
+		return nil, wrapNodeProtocolError(response.StatusCode, "decode container response", err)
 	}
 	metadata := envelope.Data
 	if metadata.ID != containerID {
-		return nil, newProtocolError(
+		return nil, newNodeProtocolError(
 			response.StatusCode,
 			fmt.Sprintf("response container ID %q does not match %q", metadata.ID, containerID),
 		)

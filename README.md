@@ -84,6 +84,22 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
   Do not deploy images with the latest tag to production environments, as this is a development and testing image. Use a formal release image or binary.
 
+## Go Client
+
+The public Go client is in `client/`. Node client files use the `node_` prefix.
+
+```go
+package main
+
+import "huatuo-bamai/client"
+
+func newNodeClient() (*client.NodeClient, error) {
+    return client.NewNode(&client.NodeConfig{
+        Port:        19704,
+        BearerToken: "node-token",
+    })
+}
+```
 
 ## Kernel Versions
 

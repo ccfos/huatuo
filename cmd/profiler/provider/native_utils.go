@@ -23,9 +23,9 @@ import (
 
 	"github.com/cilium/ebpf"
 
+	"huatuo-bamai/client"
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/nodeclient"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/profiler/bpfmap"
 	pcontext "huatuo-bamai/internal/profiler/context"
@@ -86,7 +86,7 @@ func resolveContainerCgroupCssByAPI(
 	containerID string,
 	subsysName string,
 ) (uint64, error) {
-	container, err := nodeclient.FetchContainer(ctx, serverAddr, containerID)
+	container, err := client.FetchNodeContainer(ctx, serverAddr, containerID)
 	if err != nil {
 		return 0, fmt.Errorf("API call failed: %w", err)
 	}

@@ -25,10 +25,10 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/sys/unix"
 
+	"huatuo-bamai/client"
 	"huatuo-bamai/internal/bpf"
 	flamegraphtui "huatuo-bamai/internal/flamegraph/tui"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/nodeclient"
 	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/internal/version"
 )
@@ -52,7 +52,7 @@ func mainAction(ctx *cli.Context) error {
 
 	var targetCssAddr uint64
 	if containerID := ctx.String("container-id"); containerID != "" {
-		container, err := nodeclient.FetchContainer(
+		container, err := client.FetchNodeContainer(
 			ctx.Context,
 			ctx.String("huatuo-api-address"),
 			containerID,

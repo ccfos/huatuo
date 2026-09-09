@@ -21,7 +21,7 @@ import (
 
 	apiv1 "huatuo-bamai/apis/v1"
 	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/internal/nodeclient"
+	"huatuo-bamai/client"
 )
 
 func TestRuntimeDistinguishesUnknownAndLostOperations(t *testing.T) {
@@ -55,7 +55,7 @@ func TestRuntimeDistinguishesUnknownAndLostOperations(t *testing.T) {
 			manager := testManager(store, &stubNodeClient{})
 			setManagerNow(manager, func() time.Time { return now.Add(time.Second) })
 			runtime := testRuntime(manager, pendingJob)
-			nodeErr := &nodeclient.Error{
+			nodeErr := &client.NodeError{
 				StatusCode: 404,
 				Code:       nodeapi.ErrorCodeOperationNotFound,
 				Message:    "operation not found",
@@ -94,7 +94,7 @@ func TestRuntimeReconcileJobWithErrorClassifiesErrors(t *testing.T) {
 	}{
 		{
 			name: "start capacity failure",
-			err: &nodeclient.Error{
+			err: &client.NodeError{
 				StatusCode: 429,
 				Code:       nodeapi.ErrorCodeOperationLimitExceeded,
 				Message:    "profiling capacity exhausted",
@@ -105,7 +105,7 @@ func TestRuntimeReconcileJobWithErrorClassifiesErrors(t *testing.T) {
 		},
 		{
 			name: "execution start failure",
-			err: &nodeclient.Error{
+			err: &client.NodeError{
 				StatusCode: 500,
 				Code:       nodeapi.ErrorCodeExecutionStartFailed,
 				Message:    "invalid operation state",
@@ -116,15 +116,15 @@ func TestRuntimeReconcileJobWithErrorClassifiesErrors(t *testing.T) {
 		},
 		{
 			name:         "client protocol error",
-			err:          &nodeclient.Error{Code: nodeclient.ErrorCodeClientProtocol},
+			err:          &client.NodeError{Code: client.NodeErrorCodeProtocol},
 			wantTerminal: true,
 			wantStatus:   StatusTerminal,
 			wantReason:   FailureReasonProtocolError,
 		},
 		{
 			name: "client invalid argument",
-			err: &nodeclient.Error{
-				Code:    nodeclient.ErrorCodeClientInvalidArgument,
+			err: &client.NodeError{
+				Code:    client.NodeErrorCodeInvalidArgument,
 				Message: "invalid Node host",
 			},
 			wantTerminal: true,
@@ -133,13 +133,13 @@ func TestRuntimeReconcileJobWithErrorClassifiesErrors(t *testing.T) {
 		},
 		{
 			name:                    "client transport error",
-			err:                     &nodeclient.Error{Code: nodeclient.ErrorCodeClientTransport},
+			err:                     &client.NodeError{Code: client.NodeErrorCodeTransport},
 			wantStatus:              StatusPending,
 			wantUnavailableDeadline: true,
 		},
 		{
 			name: "node unavailable",
-			err: &nodeclient.Error{
+			err: &client.NodeError{
 				StatusCode: 503,
 				Code:       apiv1.ErrorCodeServiceUnavailable,
 				Message:    "service unavailable",
@@ -149,7 +149,7 @@ func TestRuntimeReconcileJobWithErrorClassifiesErrors(t *testing.T) {
 		},
 		{
 			name: "execution failure",
-			err: &nodeclient.Error{
+			err: &client.NodeError{
 				StatusCode: 500,
 				Code:       nodeapi.ErrorCodeExecutionFailed,
 				Message:    "executor failed",

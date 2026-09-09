@@ -23,9 +23,9 @@ import (
 	"syscall"
 	"time"
 
+	"huatuo-bamai/client"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/nodeclient"
 	"huatuo-bamai/internal/pidfile"
 	"huatuo-bamai/internal/profiling/publication"
 	profilequery "huatuo-bamai/internal/profiling/query"
@@ -85,7 +85,7 @@ type Daemon struct {
 	profileStorage      *profilingstore.Store
 	profileQueryService *profilequery.ProfileQueryService
 	publications        *publication.Store
-	agentObserver       nodeclient.RequestObserver
+	agentObserver       client.NodeRequestObserver
 	apiServer           *server.Server
 	steps               []daemonStep
 }

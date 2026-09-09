@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nodeclient
+package client
 
 import (
 	"errors"
@@ -23,7 +23,7 @@ import (
 	"testing/iotest"
 )
 
-func jsonResponse(status int, body string) *http.Response {
+func nodeJSONResponse(status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -33,41 +33,41 @@ func jsonResponse(status int, body string) *http.Response {
 
 func TestReadResponseBodyClassifiesReadFailureAsTransportError(t *testing.T) {
 	readErr := errors.New("read response body")
-	response := jsonResponse(http.StatusOK, "")
+	response := nodeJSONResponse(http.StatusOK, "")
 	response.Body = io.NopCloser(io.MultiReader(
 		strings.NewReader("{"),
 		iotest.ErrReader(readErr),
 	))
 	defer response.Body.Close()
 
-	_, err := readResponseBody(response, maxSuccessBodyBytes)
-	var nodeErr *Error
+	_, err := readNodeResponseBody(response, maxNodeSuccessBodyBytes)
+	var nodeErr *NodeError
 	if !errors.As(err, &nodeErr) {
-		t.Fatalf("readResponseBody() error = %v, want *Error", err)
+		t.Fatalf("readNodeResponseBody() error = %v, want *NodeError", err)
 	}
-	if nodeErr.Code != ErrorCodeClientTransport || nodeErr.StatusCode != http.StatusOK {
+	if nodeErr.Code != NodeErrorCodeTransport || nodeErr.StatusCode != http.StatusOK {
 		t.Fatalf("Node client error = %+v", nodeErr)
 	}
 	if !errors.Is(err, readErr) {
-		t.Fatalf("readResponseBody() error = %v, want read error", err)
+		t.Fatalf("readNodeResponseBody() error = %v, want read error", err)
 	}
 }
 
 func TestReadResponseBodyClassifiesOversizedBodyAsProtocolError(t *testing.T) {
-	response := jsonResponse(http.StatusOK, strings.Repeat("x", maxSuccessBodyBytes+1))
+	response := nodeJSONResponse(http.StatusOK, strings.Repeat("x", maxNodeSuccessBodyBytes+1))
 	defer response.Body.Close()
 
-	_, err := readResponseBody(response, maxSuccessBodyBytes)
-	var nodeErr *Error
+	_, err := readNodeResponseBody(response, maxNodeSuccessBodyBytes)
+	var nodeErr *NodeError
 	if !errors.As(err, &nodeErr) {
-		t.Fatalf("readResponseBody() error = %v, want *Error", err)
+		t.Fatalf("readNodeResponseBody() error = %v, want *NodeError", err)
 	}
-	if nodeErr.Code != ErrorCodeClientProtocol || nodeErr.StatusCode != http.StatusOK {
+	if nodeErr.Code != NodeErrorCodeProtocol || nodeErr.StatusCode != http.StatusOK {
 		t.Fatalf("Node client error = %+v", nodeErr)
 	}
 }
 
-func TestParseErrorRejectsProtocolViolations(t *testing.T) {
+func TestParseNodeErrorRejectsProtocolViolations(t *testing.T) {
 	tests := []struct {
 		name       string
 		statusCode int
@@ -86,12 +86,12 @@ func TestParseErrorRejectsProtocolViolations(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := parseError(tt.statusCode, []byte(tt.body))
-			var nodeErr *Error
+			err := parseNodeError(tt.statusCode, []byte(tt.body))
+			var nodeErr *NodeError
 			if !errors.As(err, &nodeErr) {
-				t.Fatalf("parseError() error = %v, want *Error", err)
+				t.Fatalf("parseNodeError() error = %v, want *NodeError", err)
 			}
-			if nodeErr.Code != ErrorCodeClientProtocol || nodeErr.StatusCode != tt.statusCode {
+			if nodeErr.Code != NodeErrorCodeProtocol || nodeErr.StatusCode != tt.statusCode {
 				t.Fatalf("Node client error = %+v", nodeErr)
 			}
 		})

@@ -21,7 +21,7 @@ import (
 	"time"
 
 	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/internal/nodeclient"
+	"huatuo-bamai/client"
 )
 
 func (r *runtime) startOperation(ctx context.Context) (*nodeapi.Operation, error) {
@@ -31,8 +31,8 @@ func (r *runtime) startOperation(ctx context.Context) (*nodeapi.Operation, error
 	}
 	request, err := buildStartOperationRequest(job)
 	if err != nil {
-		return nil, &nodeclient.Error{
-			Code:    nodeclient.ErrorCodeClientInvalidArgument,
+		return nil, &client.NodeError{
+			Code:    client.NodeErrorCodeInvalidArgument,
 			Message: fmt.Sprintf("build Node Operation start request: %v", err),
 		}
 	}

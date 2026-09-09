@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nodeclient
+package client
 
 import (
 	"context"
@@ -22,23 +22,23 @@ import (
 )
 
 // StartOperation sends one unified Node Operation start request.
-func (c *Client) StartOperation(
+func (c *NodeClient) StartOperation(
 	ctx context.Context,
 	host string,
 	request *nodeapi.StartOperationRequest,
 ) (*nodeapi.Operation, error) {
 	if request == nil {
-		return nil, &Error{
-			Code:    ErrorCodeClientInvalidArgument,
+		return nil, &NodeError{
+			Code:    NodeErrorCodeInvalidArgument,
 			Message: "operation request is required",
 		}
 	}
-	return c.execute(
+	return c.executeOperation(
 		ctx,
 		host,
 		"operation.start",
 		request.RequestID,
-		successResponseOKOrAccepted,
+		nodeSuccessResponseOKOrAccepted,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.StartOperation(ctx, *request)
 		},
@@ -46,17 +46,17 @@ func (c *Client) StartOperation(
 }
 
 // GetOperation sends one unified Node Operation get request.
-func (c *Client) GetOperation(
+func (c *NodeClient) GetOperation(
 	ctx context.Context,
 	host string,
 	requestID string,
 ) (*nodeapi.Operation, error) {
-	return c.execute(
+	return c.executeOperation(
 		ctx,
 		host,
 		"operation.get",
 		requestID,
-		successResponseOK,
+		nodeSuccessResponseOK,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.GetOperation(ctx, requestID)
 		},
@@ -64,17 +64,17 @@ func (c *Client) GetOperation(
 }
 
 // StopOperation sends one unified Node Operation stop request.
-func (c *Client) StopOperation(
+func (c *NodeClient) StopOperation(
 	ctx context.Context,
 	host string,
 	requestID string,
 ) (*nodeapi.Operation, error) {
-	return c.execute(
+	return c.executeOperation(
 		ctx,
 		host,
 		"operation.stop",
 		requestID,
-		successResponseOKOrAccepted,
+		nodeSuccessResponseOKOrAccepted,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.StopOperation(ctx, requestID)
 		},
