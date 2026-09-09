@@ -49,15 +49,12 @@ func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error)
 	args := []string{
 		"--bpf-path",
 		filepath.Join(internalconfig.CoreBpfDir, "perf.o"),
+		"--duration",
+		strconv.FormatInt(int64(request.duration/time.Second), 10),
 	}
 	if request.containerID != "" {
 		args = append(args, "--container-id", request.containerID)
 	}
-	args = append(
-		args,
-		"--duration",
-		strconv.FormatInt(int64(request.duration/time.Second), 10),
-	)
 
 	process, err := exec.New(exec.Spec{
 		Path:           filepath.Join(internalconfig.CoreBinDir, "perf"),
