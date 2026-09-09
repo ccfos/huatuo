@@ -39,6 +39,7 @@ readonly APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
 readonly PROFILE_CREATE_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/create-profile.json"
 readonly PROFILE_STATUS_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json"
 readonly PROFILE_RAW_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profiles-raw.json"
+readonly PROFILE_LIST_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profiles-list.json"
 
 TARGET_PID=""
 PROFILE_ID=""
@@ -50,11 +51,13 @@ cleanup() {
 trap cleanup EXIT
 
 assert_profile_lifecycle() {
+	local curl_status=0
+	local status
+
 	wait_until 10 1 continuous_profile_status_is \
 		"${PROFILE_ID}" running "${PROFILE_STATUS_RESPONSE}" \
 		|| fatal "profile did not enter running state"
 
-	local status
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
 		-o "${HUATUO_BAMAI_TEST_TMPDIR}/forbidden.json" -w '%{http_code}' \
 		-H "Authorization: Bearer ${OTHER_API_TOKEN}" \
@@ -83,11 +86,26 @@ assert_profile_lifecycle() {
 	# Stack frame ordering is covered by lower-level profiler tests; this test
 	# verifies only the API, Job lifecycle, transport, and storage contract.
 
-	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiling?limit=1&offset=0" \
-		| jq -e --arg id "${PROFILE_ID}" \
-			'.data.total >= 1 and .data.items[0].request_id == $id' \
-			> /dev/null || fatal "profile list did not return the completed Job"
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${PROFILE_LIST_RESPONSE}" \
+		-w '%{http_code}' -H "Authorization: Bearer ${API_TOKEN}" \
+		"${APISERVER_ADDR}/v1/profiling?limit=1&offset=0") || curl_status=$?
+	if [[ -r "${PROFILE_LIST_RESPONSE}" ]]; then
+		log_info "list profiles response: $(< "${PROFILE_LIST_RESPONSE}")"
+	else
+		log_error "list profiles response file missing: ${PROFILE_LIST_RESPONSE}"
+	fi
+	((curl_status == 0)) \
+		|| fatal "list profiles request failed with curl status ${curl_status}"
+	assert_eq "${status}" "200" "list completed profiles" \
+		|| fatal "list completed profiles status ${status}, want 200"
+	jq -e --arg id "${PROFILE_ID}" \
+		'.data.limit == 1
+			and .data.offset == 0
+			and .data.has_more == false
+			and (.data.items | length) == 1
+			and .data.items[0].request_id == $id' \
+		"${PROFILE_LIST_RESPONSE}" > /dev/null \
+		|| fatal "profile list did not return the completed Job"
 }
 
 continuous_profiling_start_stack
