@@ -28,7 +28,6 @@ import (
 	profilerexec "huatuo-bamai/internal/profiler/exec"
 	profilerprocess "huatuo-bamai/internal/profiler/process"
 	"huatuo-bamai/internal/profiler/registry"
-	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/profiling"
 )
 
@@ -131,20 +130,25 @@ func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids [
 	var errorMessages []string
 
 	for i := range cmdResults {
-		cmdRes := &cmdResults[i]
-		targetPid := cmdRes.Pid
+		cmdRes := cmdResults[i]
+		targetPid := cmdRes.PID
 
-		if !cmdRes.Success {
+		if !cmdRes.Succeeded() {
 			errorMessages = append(errorMessages,
-				fmt.Sprintf("PID[%d] sampling failed: %v, stderr: %q", targetPid, cmdRes.CmdErr, string(cmdRes.Stderr)))
+				fmt.Sprintf(
+					"PID[%d] sampling failed: %v, diagnostics: %q",
+					targetPid,
+					cmdRes.Err,
+					string(cmdRes.Diagnostics),
+				))
 
 			continue
 		}
 
-		if len(cmdRes.Stdout) > 0 {
+		if len(cmdRes.Output) > 0 {
 			enqueue(profiler.SampleOutput{
 				PID:    targetPid,
-				Output: string(cmdRes.Stdout),
+				Output: string(cmdRes.Output),
 			})
 		}
 	}
@@ -156,12 +160,18 @@ func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids [
 	return nil
 }
 
-func runPySpy(ctx context.Context, pids []int, dur, freq int, pyspyPath string) []executil.CmdResult {
+func runPySpy(
+	ctx context.Context,
+	pids []int,
+	dur int,
+	freq int,
+	pyspyPath string,
+) []*profilerexec.Result {
 	pyspyBin := filepath.Join(pyspyPath, "py-spy")
 	durStr := strconv.Itoa(dur)
 	freqStr := strconv.Itoa(freq)
 
-	return profilerexec.ExecCmds(ctx, pids, pyspyBin, func(pid int) []string {
+	return profilerexec.Run(ctx, pids, pyspyBin, func(pid int) []string {
 		return buildPySpyArgs(pid, durStr, freqStr)
 	})
 }

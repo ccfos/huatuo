@@ -15,119 +15,164 @@
 package exec
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
+	"time"
 
+	managedexec "huatuo-bamai/internal/exec"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/executil"
 )
 
-// ExecCmds executes one profiler command for every process concurrently.
-func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid int) []string) []executil.CmdResult {
-	var wg sync.WaitGroup
-	resCh := make(chan executil.CmdResult, len(pids))
+const (
+	profilerOutputLimit             = 16 << 20
+	asyncProfilerStopGracePeriod    = time.Second
+	asyncProfilerStopCommandTimeout = 5 * time.Second
+)
+
+// Run executes one profiler command for every process concurrently.
+func Run(
+	ctx context.Context,
+	pids []int,
+	path string,
+	argsForPID func(pid int) []string,
+) []*Result {
+	var waitGroup sync.WaitGroup
+	results := make(chan *Result, len(pids))
 
 	for _, pid := range pids {
-		wg.Add(1)
+		waitGroup.Add(1)
 		go func(pid int) {
-			defer wg.Done()
+			defer waitGroup.Done()
 
-			args := argsFn(pid)
-			if filepath.Base(binPath) == "asprof" {
-				resCh <- execAsprofCmd(ctx, pid, binPath, args...)
+			args := argsForPID(pid)
+			if filepath.Base(path) == "asprof" {
+				results <- runAsyncProfiler(ctx, pid, path, args)
 				return
 			}
-			resCh <- executil.ExecCmd(ctx, pid, binPath, args...)
+			results <- runCommand(ctx, pid, &managedexec.Spec{
+				Path:           path,
+				Args:           args,
+				MaxOutputBytes: profilerOutputLimit,
+			})
 		}(pid)
 	}
 
-	wg.Wait()
-	close(resCh)
+	waitGroup.Wait()
+	close(results)
 
-	results := make([]executil.CmdResult, 0, len(pids))
-	for result := range resCh {
-		results = append(results, result)
+	collected := make([]*Result, 0, len(pids))
+	for result := range results {
+		collected = append(collected, result)
 	}
-	return results
+	return collected
 }
 
-func execAsprofCmd(ctx context.Context, pid int, binPath string, args ...string) executil.CmdResult {
-	cmdArgs := formatCmd(binPath, args)
-	log.Debugf("executing command: %s", cmdArgs)
+func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) *Result {
+	result := &Result{PID: pid, Command: formatCommand(path, args)}
+	log.Debugf("executing command: %s", result.Command)
 
-	cmd := exec.CommandContext(ctx, binPath, args...)
-	cmd.Env = os.Environ()
-	cmd.Stdin = os.Stdin
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
-
-	if err := cmd.Start(); err != nil {
-		return executil.CmdResult{
-			Pid:     pid,
-			Cmd:     cmdArgs,
-			Stderr:  stderrBuf.Bytes(),
-			Success: false,
-			CmdErr:  err,
-		}
+	process, err := managedexec.New(managedexec.Spec{Path: path, Args: args})
+	if err != nil {
+		result.Err = err
+		return result
+	}
+	if err := process.Start(ctx); err != nil {
+		result.Err = err
+		return result
 	}
 
-	done := make(chan error, 1)
+	waitDone := make(chan error, 1)
 	go func() {
-		done <- cmd.Wait()
+		waitDone <- process.Wait()
+	}()
+	select {
+	case result.Err = <-waitDone:
+		result.Diagnostics = combinedOutput(process)
+		return result
+	case <-ctx.Done():
+	}
+
+	processStopCtx, cancelProcessStop := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		asyncProfilerStopGracePeriod,
+	)
+	processStopDone := make(chan error, 1)
+	go func() {
+		processStopDone <- process.Stop(processStopCtx)
 	}()
 
-	select {
-	case <-ctx.Done():
-		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-			log.Warnf("kill process group %d: %v", cmd.Process.Pid, err)
-		}
-
-		cmdErr := StopProfiler(binPath, pid)
-		<-done
-		if cmdErr != nil {
-			stderrBuf.WriteString("\n[Error stopping profiler]: " + cmdErr.Error())
-		}
-
-		log.Debugf("command stopped: command=%q error=%v", cmdArgs, cmdErr)
-		return executil.CmdResult{
-			Pid:     pid,
-			Cmd:     cmdArgs,
-			Stdout:  stdoutBuf.Bytes(),
-			Stderr:  stderrBuf.Bytes(),
-			Success: cmdErr == nil,
-			CmdErr:  cmdErr,
-		}
-	case err := <-done:
-		return executil.CmdResult{
-			Pid:     pid,
-			Cmd:     cmdArgs,
-			Stdout:  stdoutBuf.Bytes(),
-			Stderr:  stderrBuf.Bytes(),
-			Success: err == nil,
-			CmdErr:  err,
-		}
+	stopCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		asyncProfilerStopCommandTimeout,
+	)
+	stopProfilerErr := StopAsyncProfiler(stopCtx, path, pid)
+	cancel()
+	processStopErr := <-processStopDone
+	cancelProcessStop()
+	waitErr := <-waitDone
+	if errors.Is(waitErr, managedexec.ErrStopped) {
+		waitErr = nil
 	}
+	result.Err = errors.Join(stopProfilerErr, processStopErr, waitErr)
+	result.Diagnostics = combinedOutput(process)
+	if result.Err != nil {
+		result.Diagnostics = append(
+			result.Diagnostics,
+			[]byte("\n[Error stopping profiler]: "+result.Err.Error())...,
+		)
+	}
+	return result
 }
 
-func StopProfiler(asprofPath string, pid int) error {
+func runCommand(
+	ctx context.Context,
+	pid int,
+	spec *managedexec.Spec,
+) *Result {
+	result := &Result{
+		PID:     pid,
+		Command: formatCommand(spec.Path, spec.Args),
+	}
+	log.Debugf("executing command: %s", result.Command)
+
+	process, err := managedexec.New(*spec)
+	if err != nil {
+		result.Err = err
+		return result
+	}
+	result.Err = process.Run(ctx)
+	result.Output = process.Output()
+	result.Diagnostics = process.Err()
+	return result
+}
+
+func combinedOutput(process *managedexec.Process) []byte {
+	output := process.Output()
+	stderr := process.Err()
+	if len(output) == 0 {
+		return stderr
+	}
+	if len(stderr) > 0 {
+		output = append(append(output, '\n'), stderr...)
+	}
+	return output
+}
+
+func formatCommand(path string, args []string) string {
+	return path + " " + strings.Join(args, " ")
+}
+
+// StopAsyncProfiler asks the injected agent in one target JVM to stop.
+func StopAsyncProfiler(ctx context.Context, asprofPath string, pid int) error {
 	args := []string{"--libpath", "/tmp/libasyncProfiler.so", "stop", strconv.Itoa(pid)}
-	log.Debugf("executing command: %s", formatCmd(asprofPath, args))
-	cmd := exec.Command(asprofPath, args...)
-	_, err := cmd.CombinedOutput()
-	return err
-}
-
-func formatCmd(binPath string, args []string) string {
-	return binPath + " " + strings.Join(args, " ")
+	result := runCommand(ctx, pid, &managedexec.Spec{
+		Path:            asprofPath,
+		Args:            args,
+		StopGracePeriod: asyncProfilerStopGracePeriod,
+	})
+	return Verify([]*Result{result})
 }

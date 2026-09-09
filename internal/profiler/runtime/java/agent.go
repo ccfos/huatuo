@@ -31,7 +31,6 @@ import (
 	profilerexec "huatuo-bamai/internal/profiler/exec"
 	profilerprocess "huatuo-bamai/internal/profiler/process"
 	"huatuo-bamai/internal/randomid"
-	"huatuo-bamai/internal/utils/executil"
 
 	"golang.org/x/sys/unix"
 )
@@ -140,19 +139,19 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 
 	asprofBin := asprofPath(opt.ToolPath)
 	startCtx, cancel := context.WithTimeout(ctx, asprofCommandTimeout)
-	cmdResults := profilerexec.ExecCmds(startCtx, opt.Pids, asprofBin, func(pid int) []string {
+	cmdResults := profilerexec.Run(startCtx, opt.Pids, asprofBin, func(pid int) []string {
 		return argsByPID[pid]
 	})
 	startCtxErr := startCtx.Err()
 	cancel()
 
 	for _, result := range cmdResults {
-		if result.Success {
-			opt.activePIDs[result.Pid] = true
+		if result.Succeeded() {
+			opt.activePIDs[result.PID] = true
 		}
 	}
 
-	verifyErr := executil.VerifyResults(cmdResults)
+	verifyErr := profilerexec.Verify(cmdResults)
 	if startCtxErr != nil || verifyErr != nil {
 		cleanupErr := stopActiveAsprofProcesses(ctx, opt)
 		return nil, errors.Join(
@@ -259,7 +258,7 @@ func stopActiveAsprofProcesses(ctx context.Context, opt *AsprofSamplingOption) e
 	defer cancel()
 
 	activePIDs := opt.activePIDList()
-	results := profilerexec.ExecCmds(stopCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
+	results := profilerexec.Run(stopCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
 		return []string{
 			"stop",
 			"--libpath", "/tmp/libasyncProfiler.so",
@@ -276,7 +275,7 @@ func stopActiveAsprofProcesses(ctx context.Context, opt *AsprofSamplingOption) e
 	}
 
 	return errors.Join(
-		executil.VerifyResults(results),
+		profilerexec.Verify(results),
 		errors.Join(cleanupErrs...),
 	)
 }
@@ -291,10 +290,10 @@ func (opt *AsprofSamplingOption) activePIDList() []int {
 	return pids
 }
 
-func (opt *AsprofSamplingOption) markStopped(results []executil.CmdResult) {
+func (opt *AsprofSamplingOption) markStopped(results []*profilerexec.Result) {
 	for _, result := range results {
-		if result.Success {
-			opt.activePIDs[result.Pid] = false
+		if result.Succeeded() {
+			opt.activePIDs[result.PID] = false
 		}
 	}
 }
