@@ -132,7 +132,7 @@ func (c *Client) execute(
 			Message: operationName + " Node API request",
 		}, err)
 	}
-	return parseResponse(response, requestID, successMode)
+	return parseOperationResponse(response, requestID, successMode)
 }
 
 func (c *Client) generatedClient(host string) (*nodeapi.Client, error) {

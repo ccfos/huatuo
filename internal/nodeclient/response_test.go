@@ -16,22 +16,12 @@ package nodeclient
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"testing/iotest"
-
-	nodeapi "huatuo-bamai/apis/v1/node"
 )
-
-type closeErrorBody struct {
-	io.Reader
-	err error
-}
-
-func (b closeErrorBody) Close() error { return b.err }
 
 func jsonResponse(status int, body string) *http.Response {
 	return &http.Response{
@@ -41,42 +31,48 @@ func jsonResponse(status int, body string) *http.Response {
 	}
 }
 
-func operationJSON(requestID, status string) string {
-	if status == "completed" || status == "failed" || status == "stopped" {
-		return fmt.Sprintf(
-			`{"data":{"created_at":"2026-08-24T12:00:00Z",`+
-				`"request_id":%q,"kind":"profiling","status":"terminal",`+
-				`"terminal":{"outcome":%q}}}`,
-			requestID,
-			status,
-		)
+func TestReadResponseBodyClassifiesReadFailureAsTransportError(t *testing.T) {
+	readErr := errors.New("read response body")
+	response := jsonResponse(http.StatusOK, "")
+	response.Body = io.NopCloser(io.MultiReader(
+		strings.NewReader("{"),
+		iotest.ErrReader(readErr),
+	))
+	defer response.Body.Close()
+
+	_, err := readResponseBody(response, maxSuccessBodyBytes)
+	var nodeErr *Error
+	if !errors.As(err, &nodeErr) {
+		t.Fatalf("readResponseBody() error = %v, want *Error", err)
 	}
-	return fmt.Sprintf(
-		`{"data":{"created_at":"2026-08-24T12:00:00Z",`+
-			`"request_id":%q,"kind":"profiling","status":%q}}`,
-		requestID,
-		status,
-	)
+	if nodeErr.Code != ErrorCodeClientTransport || nodeErr.StatusCode != http.StatusOK {
+		t.Fatalf("Node client error = %+v", nodeErr)
+	}
+	if !errors.Is(err, readErr) {
+		t.Fatalf("readResponseBody() error = %v, want read error", err)
+	}
 }
 
-func TestParseResponseRejectsProtocolViolations(t *testing.T) {
+func TestReadResponseBodyClassifiesOversizedBodyAsProtocolError(t *testing.T) {
+	response := jsonResponse(http.StatusOK, strings.Repeat("x", maxSuccessBodyBytes+1))
+	defer response.Body.Close()
+
+	_, err := readResponseBody(response, maxSuccessBodyBytes)
+	var nodeErr *Error
+	if !errors.As(err, &nodeErr) {
+		t.Fatalf("readResponseBody() error = %v, want *Error", err)
+	}
+	if nodeErr.Code != ErrorCodeClientProtocol || nodeErr.StatusCode != http.StatusOK {
+		t.Fatalf("Node client error = %+v", nodeErr)
+	}
+}
+
+func TestParseErrorRejectsProtocolViolations(t *testing.T) {
 	tests := []struct {
-		name        string
-		statusCode  int
-		body        string
-		successMode successResponseMode
+		name       string
+		statusCode int
+		body       string
 	}{
-		{
-			name:        "accepted get response",
-			statusCode:  http.StatusAccepted,
-			body:        operationJSON("job-1", "pending"),
-			successMode: successResponseOK,
-		},
-		{
-			name:       "mismatched response ID",
-			statusCode: http.StatusOK,
-			body:       operationJSON("other-job", "running"),
-		},
 		{
 			name:       "status and error code mismatch",
 			statusCode: http.StatusInternalServerError,
@@ -90,95 +86,14 @@ func TestParseResponseRejectsProtocolViolations(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			response := jsonResponse(tt.statusCode, tt.body)
-			defer response.Body.Close()
-			_, err := parseResponse(response, "job-1", tt.successMode)
+			err := parseError(tt.statusCode, []byte(tt.body))
 			var nodeErr *Error
 			if !errors.As(err, &nodeErr) {
-				t.Fatalf("parseResponse() error = %v, want *Error", err)
+				t.Fatalf("parseError() error = %v, want *Error", err)
 			}
 			if nodeErr.Code != ErrorCodeClientProtocol || nodeErr.StatusCode != tt.statusCode {
 				t.Fatalf("Node client error = %+v", nodeErr)
 			}
 		})
-	}
-}
-
-func TestParseResponseUsesBodyInsteadOfContentType(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		contentType string
-	}{
-		{name: "missing", contentType: ""},
-		{name: "inaccurate", contentType: "text/plain"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			response := jsonResponse(http.StatusOK, operationJSON("job-1", "pending"))
-			response.Header.Set("Content-Type", test.contentType)
-
-			operation, err := parseResponse(response, "job-1", successResponseOK)
-			if err != nil {
-				t.Fatalf("parseResponse() error = %v", err)
-			}
-			if operation.RequestID != "job-1" {
-				t.Fatalf("parseResponse() request ID = %q, want %q", operation.RequestID, "job-1")
-			}
-		})
-	}
-}
-
-func TestParseResponseIgnoresBodyCloseFailure(t *testing.T) {
-	closeErr := errors.New("close response body")
-	response := jsonResponse(http.StatusOK, operationJSON("job-1", "completed"))
-	response.Body = closeErrorBody{
-		Reader: response.Body,
-		err:    closeErr,
-	}
-
-	operation, err := parseResponse(response, "job-1", successResponseOK)
-	if err != nil {
-		t.Fatalf("parseResponse() error = %v", err)
-	}
-	if operation.Status != nodeapi.OperationStatusTerminal {
-		t.Fatalf(
-			"parseResponse() status = %q, want %q",
-			operation.Status,
-			nodeapi.OperationStatusTerminal,
-		)
-	}
-}
-
-func TestParseResponseClassifiesBodyReadFailureAsTransportError(t *testing.T) {
-	readErr := errors.New("read response body")
-	response := jsonResponse(http.StatusOK, operationJSON("job-1", "completed"))
-	response.Body = io.NopCloser(io.MultiReader(
-		strings.NewReader("{"),
-		iotest.ErrReader(readErr),
-	))
-
-	_, err := parseResponse(response, "job-1", successResponseOK)
-	var nodeErr *Error
-	if !errors.As(err, &nodeErr) {
-		t.Fatalf("parseResponse() error = %v, want *Error", err)
-	}
-	if nodeErr.Code != ErrorCodeClientTransport || nodeErr.StatusCode != http.StatusOK {
-		t.Fatalf("Node client error = %+v", nodeErr)
-	}
-	if !errors.Is(err, readErr) {
-		t.Fatalf("parseResponse() error = %v, want read error", err)
-	}
-}
-
-func TestParseResponseClassifiesOversizedBodyAsProtocolError(t *testing.T) {
-	response := jsonResponse(http.StatusOK, strings.Repeat("x", maxSuccessBodyBytes+1))
-	defer response.Body.Close()
-
-	_, err := parseResponse(response, "job-1", successResponseOK)
-	var nodeErr *Error
-	if !errors.As(err, &nodeErr) {
-		t.Fatalf("parseResponse() error = %v, want *Error", err)
-	}
-	if nodeErr.Code != ErrorCodeClientProtocol || nodeErr.StatusCode != http.StatusOK {
-		t.Fatalf("Node client error = %+v", nodeErr)
 	}
 }
