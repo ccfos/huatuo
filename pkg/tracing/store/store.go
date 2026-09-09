@@ -134,6 +134,11 @@ func closeBackends(ctx context.Context, backends []*storage.Store[*Document]) er
 
 // Save publishes and asynchronously persists one tracing document.
 func (s *Store) Save(document *Document) error {
+	return s.SaveContext(context.Background(), document)
+}
+
+// SaveContext publishes and asynchronously persists one tracing document.
+func (s *Store) SaveContext(ctx context.Context, document *Document) error {
 	if s == nil {
 		return errors.New("tracing store is required")
 	}
@@ -147,7 +152,7 @@ func (s *Store) Save(document *Document) error {
 	s.hub.Notify(document)
 	var errs []error
 	for _, backend := range s.backends {
-		if err := backend.Save(context.Background(), document, driver.SaveOptions{}); err != nil {
+		if err := backend.Save(ctx, document, driver.SaveOptions{}); err != nil {
 			errs = append(errs, fmt.Errorf("save tracing document to %q: %w", backend.Name, err))
 		}
 	}
