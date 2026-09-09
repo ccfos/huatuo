@@ -30,6 +30,8 @@ type Aggregator interface {
 	Aggregate(rec any)
 
 	// Snapshot returns the pprof profile data for upload backends.
+	// The result must remain valid after subsequent Aggregate and Reset calls:
+	// the pipeline retains it for retries while collecting the next window.
 	// For raw/flamegraph/svg output, returns nil — the pipeline reads
 	// the output formatter directly via OutputFormatter.
 	Snapshot(pctx *pcontext.ProfilerContext) (any, error)
