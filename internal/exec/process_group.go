@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build linux
-
 package exec
 
 import (
@@ -22,12 +20,11 @@ import (
 	"syscall"
 )
 
-func configureCommand(cmd *osexec.Cmd) error {
+func configureCommand(cmd *osexec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid:   true,
 		Pdeathsig: syscall.SIGKILL,
 	}
-	return nil
 }
 
 func gracefulStopProcessGroup(pid int) error {

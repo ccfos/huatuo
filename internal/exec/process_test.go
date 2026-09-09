@@ -18,11 +18,9 @@ package exec
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	osexec "os/exec"
 	"os/signal"
@@ -40,16 +38,7 @@ const (
 	helperReady    = "helper-ready"
 )
 
-var (
-	errTestSignal = errors.New("test signal failed")
-	errTestWriter = errors.New("test writer failed")
-)
-
-type failingWriter struct{}
-
-func (failingWriter) Write(_ []byte) (int, error) {
-	return 0, errTestWriter
-}
+var errTestSignal = errors.New("test signal failed")
 
 func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
 	tests := []struct {
@@ -92,6 +81,16 @@ func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
 			spec:    Spec{Path: "/bin/true", Env: []string{"=value"}},
 			wantErr: "environment entry 0 must use a non-empty KEY=VALUE form",
 		},
+		{
+			name:    "negative stop grace period",
+			spec:    Spec{Path: "/bin/true", StopGracePeriod: -time.Second},
+			wantErr: "stop grace period must not be negative",
+		},
+		{
+			name:    "negative output limit",
+			spec:    Spec{Path: "/bin/true", MaxOutputBytes: -1},
+			wantErr: "maximum output bytes must not be negative",
+		},
 	}
 
 	for _, test := range tests {
@@ -116,6 +115,12 @@ func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
 	}
 	if process.spec.Env[0] != "KEY=value" {
 		t.Errorf("snapshotted environment = %q, want KEY=value", process.spec.Env[0])
+	}
+	if process.spec.StopGracePeriod != defaultStopGracePeriod {
+		t.Errorf("StopGracePeriod = %s, want %s", process.spec.StopGracePeriod, defaultStopGracePeriod)
+	}
+	if process.spec.MaxOutputBytes != defaultMaxOutputBytes {
+		t.Errorf("MaxOutputBytes = %d, want %d", process.spec.MaxOutputBytes, defaultMaxOutputBytes)
 	}
 	emptyEnvProcess, err := New(Spec{Path: "/bin/true", Env: []string{}})
 	if err != nil {
@@ -176,7 +181,7 @@ func TestProcessZeroValueReturnsInitializationError(t *testing.T) {
 		{
 			name: "run",
 			call: func(process *Process) error {
-				return process.Run(context.Background(), time.Second)
+				return process.Run(context.Background())
 			},
 		},
 	}
@@ -191,37 +196,16 @@ func TestProcessZeroValueReturnsInitializationError(t *testing.T) {
 	}
 
 	var process Process
-	if got := process.OutputTail(); got != "" {
-		t.Errorf("OutputTail() = %q, want empty output", got)
+	if got := process.Output(); len(got) != 0 {
+		t.Errorf("Output() = %q, want empty output", got)
 	}
-}
-
-func TestTailBufferKeepsNewestBytes(t *testing.T) {
-	var buffer tailBuffer
-	first := strings.Repeat("a", diagnosticOutputLimit-2)
-	if _, err := buffer.Write([]byte(first)); err != nil {
-		t.Fatalf("Write() error = %v", err)
-	}
-	if _, err := buffer.Write([]byte("bcde")); err != nil {
-		t.Fatalf("Write() overflow error = %v", err)
-	}
-	want := first[2:] + "bcde"
-	if got := buffer.String(); got != want {
-		t.Errorf("String() length = %d, want %d; suffix = %q", len(got), len(want), got[len(got)-8:])
-	}
-
-	oversized := strings.Repeat("x", diagnosticOutputLimit) + "tail"
-	if _, err := buffer.Write([]byte(oversized)); err != nil {
-		t.Fatalf("Write() oversized error = %v", err)
-	}
-	want = oversized[len(oversized)-diagnosticOutputLimit:]
-	if got := buffer.String(); got != want {
-		t.Errorf("String() after oversized write length = %d, want %d", len(got), len(want))
+	if got := process.Err(); len(got) != 0 {
+		t.Errorf("Err() = %q, want empty output", got)
 	}
 }
 
 func TestProcessStartRejectsCanceledContextAndRetry(t *testing.T) {
-	process := newHelperProcess(t, "output", nil)
+	process := newHelperProcess(t, "output")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -239,7 +223,7 @@ func TestProcessStartRejectsCanceledContextAndRetry(t *testing.T) {
 }
 
 func TestProcessWaitDuringCanceledStartReturnsStartError(t *testing.T) {
-	process := newHelperProcess(t, "output", nil)
+	process := newHelperProcess(t, "output")
 	realForceStop := process.forceStop
 	forceStarted := make(chan struct{})
 	releaseForce := make(chan struct{})
@@ -287,7 +271,7 @@ func TestProcessWaitDuringCanceledStartReturnsStartError(t *testing.T) {
 }
 
 func TestProcessCanceledStartDoesNotWaitAfterForceStopFailure(t *testing.T) {
-	process := newHelperProcess(t, "ignore-term", nil)
+	process := newHelperProcess(t, "ignore-term")
 	realForceStop := process.forceStop
 	t.Cleanup(func() {
 		process.forceStop = realForceStop
@@ -320,53 +304,64 @@ func TestProcessCanceledStartDoesNotWaitAfterForceStopFailure(t *testing.T) {
 	}
 }
 
-func TestProcessCapturesFixedDiagnosticTail(t *testing.T) {
-	process := newHelperProcess(t, "large-output", nil)
+func TestProcessReportsOutputOverflowAfterReaping(t *testing.T) {
+	process := newHelperProcessWithSpec(t, "large-output", &Spec{MaxOutputBytes: 1024})
+	startProcess(t, process)
+	err := process.Wait()
+	if err == nil || !strings.Contains(err.Error(), "stdout exceeds 1024 bytes") {
+		t.Fatalf("Wait() error = %v, want stdout limit error", err)
+	}
+
+	payload := largeOutputPayload()
+	want := payload[:1024]
+	if got := string(process.Output()); got != want {
+		t.Errorf("Output() length = %d, want %d", len(got), len(want))
+	}
+}
+
+func TestProcessRetainsFixedErrorTail(t *testing.T) {
+	process := newHelperProcess(t, "large-error")
 	startProcess(t, process)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("Wait() error = %v", err)
 	}
 
 	payload := largeOutputPayload()
-	want := payload[len(payload)-diagnosticOutputLimit:]
-	if got := process.OutputTail(); got != want {
-		t.Errorf("OutputTail() length = %d, want %d", len(got), len(want))
+	want := payload[len(payload)-maxErrorOutputBytes:]
+	if got := string(process.Err()); got != want {
+		t.Errorf("Err() length = %d, want %d", len(got), len(want))
 	}
 }
 
-func TestProcessSeparatesStdoutFromDiagnostics(t *testing.T) {
-	var stdout bytes.Buffer
-	process := newHelperProcess(t, "split-output", &stdout)
+func TestProcessSeparatesOutputFromError(t *testing.T) {
+	process := newHelperProcess(t, "split-output")
 	startProcess(t, process)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("Wait() error = %v", err)
 	}
-	if got := stdout.String(); got != "payload" {
-		t.Errorf("stdout = %q, want payload", got)
+	if got := string(process.Output()); got != "payload" {
+		t.Errorf("Output() = %q, want payload", got)
 	}
-	if got := process.OutputTail(); got != "diagnostic" {
-		t.Errorf("OutputTail() = %q, want diagnostic", got)
+	if got := string(process.Err()); got != "diagnostic" {
+		t.Errorf("Err() = %q, want diagnostic", got)
 	}
 }
 
-func TestProcessCapturesStdoutAndStderrAsDiagnostics(t *testing.T) {
-	process := newHelperProcess(t, "combined-output", nil)
+func TestProcessOutputAndErrorReturnCopies(t *testing.T) {
+	process := newHelperProcess(t, "split-output")
 	startProcess(t, process)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("Wait() error = %v", err)
 	}
-	output := process.OutputTail()
-	if !strings.Contains(output, "stdout-diagnostic") ||
-		!strings.Contains(output, "stderr-diagnostic") {
-		t.Errorf("OutputTail() = %q, want stdout and stderr", output)
+	output := process.Output()
+	stderr := process.Err()
+	output[0] = 'x'
+	stderr[0] = 'x'
+	if got := string(process.Output()); got != "payload" {
+		t.Errorf("Output() after caller mutation = %q, want payload", got)
 	}
-}
-
-func TestProcessReportsStdoutWriterFailure(t *testing.T) {
-	process := newHelperProcess(t, "output", failingWriter{})
-	startProcess(t, process)
-	if err := process.Wait(); !errors.Is(err, errTestWriter) {
-		t.Fatalf("Wait() error = %v, want writer failure", err)
+	if got := string(process.Err()); got != "diagnostic" {
+		t.Errorf("Err() after caller mutation = %q, want diagnostic", got)
 	}
 }
 
@@ -374,11 +369,9 @@ func TestProcessInheritsEnvironment(t *testing.T) {
 	t.Setenv(helperModeEnv, "print-env")
 	t.Setenv(helperValueEnv, "inherited")
 
-	var stdout bytes.Buffer
 	process, err := New(Spec{
-		Path:   os.Args[0],
-		Args:   []string{"-test.run=^TestExecHelperProcess$"},
-		Stdout: &stdout,
+		Path: os.Args[0],
+		Args: []string{"-test.run=^TestExecHelperProcess$"},
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -387,13 +380,13 @@ func TestProcessInheritsEnvironment(t *testing.T) {
 	if err := process.Wait(); err != nil {
 		t.Fatalf("Wait() error = %v", err)
 	}
-	if got := stdout.String(); got != "inherited" {
+	if got := string(process.Output()); got != "inherited" {
 		t.Errorf("stdout = %q, want inherited environment value", got)
 	}
 }
 
 func TestProcessReportsExecutionFailure(t *testing.T) {
-	process := newHelperProcess(t, "fail", nil)
+	process := newHelperProcess(t, "fail")
 	startProcess(t, process)
 
 	err := process.Wait()
@@ -406,13 +399,13 @@ func TestProcessReportsExecutionFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "exit status") {
 		t.Errorf("Wait() error = %v, want exit status", err)
 	}
-	if got := process.OutputTail(); got != "helper failed" {
-		t.Errorf("OutputTail() = %q, want failure diagnostic", got)
+	if got := string(process.Err()); got != "helper failed" {
+		t.Errorf("Err() = %q, want failure diagnostic", got)
 	}
 }
 
 func TestProcessGracefulStopAndRepeatedStop(t *testing.T) {
-	process := newHelperProcess(t, "graceful", nil)
+	process := newHelperProcess(t, "graceful")
 	startProcess(t, process)
 	waitForOutput(t, process, helperReady)
 
@@ -437,13 +430,13 @@ func TestProcessGracefulStopAndRepeatedStop(t *testing.T) {
 	if err := process.Wait(); err != nil {
 		t.Errorf("Wait() error = %v, want nil for graceful exit", err)
 	}
-	if !strings.Contains(process.OutputTail(), "helper-terminated") {
-		t.Errorf("OutputTail() = %q, want graceful termination marker", process.OutputTail())
+	if !strings.Contains(string(process.Output()), "helper-terminated") {
+		t.Errorf("Output() = %q, want graceful termination marker", process.Output())
 	}
 }
 
 func TestProcessStopEscalatesToForce(t *testing.T) {
-	process := newHelperProcess(t, "ignore-term", nil)
+	process := newHelperProcess(t, "ignore-term")
 	startProcess(t, process)
 	waitForOutput(t, process, helperReady)
 
@@ -458,10 +451,10 @@ func TestProcessStopEscalatesToForce(t *testing.T) {
 }
 
 func TestProcessStopTerminatesProcessGroup(t *testing.T) {
-	process := newHelperProcess(t, "process-group", nil)
+	process := newHelperProcess(t, "process-group")
 	startProcess(t, process)
 	waitForOutput(t, process, helperReady)
-	childPID := childPIDFromOutput(t, process.OutputTail())
+	childPID := childPIDFromOutput(t, string(process.Output()))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -475,7 +468,7 @@ func TestProcessStopTerminatesProcessGroup(t *testing.T) {
 }
 
 func TestProcessStopAfterExitIsSuccessful(t *testing.T) {
-	process := newHelperProcess(t, "output", nil)
+	process := newHelperProcess(t, "output")
 	startProcess(t, process)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("Wait() error = %v", err)
@@ -491,7 +484,7 @@ func TestProcessStopAfterExitIsSuccessful(t *testing.T) {
 }
 
 func TestProcessConcurrentWaitReturnsSameResult(t *testing.T) {
-	process := newHelperProcess(t, "fail", nil)
+	process := newHelperProcess(t, "fail")
 	startProcess(t, process)
 
 	results := make(chan error, 4)
@@ -513,7 +506,7 @@ func TestProcessConcurrentWaitReturnsSameResult(t *testing.T) {
 }
 
 func TestProcessStartContextDoesNotOwnLifetime(t *testing.T) {
-	process := newHelperProcess(t, "graceful", nil)
+	process := newHelperProcess(t, "graceful")
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := process.Start(ctx); err != nil {
 		cancel()
@@ -533,32 +526,21 @@ func TestProcessStartContextDoesNotOwnLifetime(t *testing.T) {
 }
 
 func TestProcessRunWaitsForNaturalExit(t *testing.T) {
-	process := newHelperProcess(t, "output", nil)
-	if err := process.Run(context.Background(), time.Second); err != nil {
+	process := newHelperProcess(t, "output")
+	if err := process.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := process.OutputTail(); got != "output" {
-		t.Errorf("OutputTail() = %q, want output", got)
-	}
-}
-
-func TestProcessRunRejectsInvalidGracePeriodWithoutStarting(t *testing.T) {
-	process := newHelperProcess(t, "output", nil)
-	if err := process.Run(context.Background(), 0); err == nil ||
-		!strings.Contains(err.Error(), "grace period must be greater than zero") {
-		t.Fatalf("Run() error = %v, want invalid grace period", err)
-	}
-	if err := process.Run(context.Background(), time.Second); err != nil {
-		t.Fatalf("second Run() error = %v", err)
+	if got := string(process.Output()); got != "output" {
+		t.Errorf("Output() = %q, want output", got)
 	}
 }
 
 func TestProcessRunStopsAfterCancellation(t *testing.T) {
-	process := newHelperProcess(t, "graceful", nil)
+	process := newHelperProcess(t, "graceful")
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		result <- process.Run(ctx, 3*time.Second)
+		result <- process.Run(ctx)
 	}()
 	waitForOutput(t, process, helperReady)
 	cancel()
@@ -573,11 +555,13 @@ func TestProcessRunStopsAfterCancellation(t *testing.T) {
 }
 
 func TestProcessRunEscalatesAfterGracePeriod(t *testing.T) {
-	process := newHelperProcess(t, "ignore-term", nil)
+	process := newHelperProcessWithSpec(t, "ignore-term", &Spec{
+		StopGracePeriod: 50 * time.Millisecond,
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		result <- process.Run(ctx, 50*time.Millisecond)
+		result <- process.Run(ctx)
 	}()
 	waitForOutput(t, process, helperReady)
 	cancel()
@@ -604,13 +588,12 @@ func TestExecHelperProcess(t *testing.T) {
 	case "large-output":
 		_, _ = fmt.Fprint(os.Stdout, largeOutputPayload())
 		os.Exit(0)
+	case "large-error":
+		_, _ = fmt.Fprint(os.Stderr, largeOutputPayload())
+		os.Exit(0)
 	case "split-output":
 		_, _ = fmt.Fprint(os.Stdout, "payload")
 		_, _ = fmt.Fprint(os.Stderr, "diagnostic")
-		os.Exit(0)
-	case "combined-output":
-		_, _ = fmt.Fprint(os.Stdout, "stdout-diagnostic")
-		_, _ = fmt.Fprint(os.Stderr, "stderr-diagnostic")
 		os.Exit(0)
 	case "print-env":
 		_, _ = fmt.Fprint(os.Stdout, os.Getenv(helperValueEnv))
@@ -670,15 +653,19 @@ func largeOutputPayload() string {
 	return strings.Repeat("0123456789", 7000)
 }
 
-func newHelperProcess(t *testing.T, mode string, stdout io.Writer) *Process {
+func newHelperProcess(t *testing.T, mode string) *Process {
+	t.Helper()
+	return newHelperProcessWithSpec(t, mode, &Spec{})
+}
+
+func newHelperProcessWithSpec(t *testing.T, mode string, source *Spec) *Process {
 	t.Helper()
 	env := append(os.Environ(), helperModeEnv+"="+mode)
-	process, err := New(Spec{
-		Path:   os.Args[0],
-		Args:   []string{"-test.run=^TestExecHelperProcess$"},
-		Env:    env,
-		Stdout: stdout,
-	})
+	spec := *source
+	spec.Path = os.Args[0]
+	spec.Args = []string{"-test.run=^TestExecHelperProcess$"}
+	spec.Env = env
+	process, err := New(spec)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -709,7 +696,7 @@ func startProcess(t *testing.T, process *Process) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := process.Start(ctx); err != nil {
-		t.Fatalf("Start() error = %v; output=%q", err, process.OutputTail())
+		t.Fatalf("Start() error = %v; output=%q; stderr=%q", err, process.Output(), process.Err())
 	}
 }
 
@@ -720,13 +707,13 @@ func waitForOutput(t *testing.T, process *Process, marker string) {
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
 	for {
-		if strings.Contains(process.OutputTail(), marker) {
+		if strings.Contains(string(process.Output()), marker) {
 			return
 		}
 		select {
 		case <-ticker.C:
 		case <-timer.C:
-			t.Fatalf("timed out waiting for output %q; output=%q", marker, process.OutputTail())
+			t.Fatalf("timed out waiting for output %q; output=%q", marker, process.Output())
 		}
 	}
 }

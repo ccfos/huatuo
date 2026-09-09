@@ -14,13 +14,61 @@
 
 package exec
 
-import "sync"
+import (
+	"slices"
+	"sync"
+)
 
-const diagnosticOutputLimit = 64 << 10
+const maxErrorOutputBytes = 64 << 10
+
+type outputBuffer struct {
+	mu       sync.Mutex
+	limit    int
+	data     []byte
+	exceeded bool
+}
+
+func newOutputBuffer(limit int) outputBuffer {
+	return outputBuffer{limit: limit}
+}
+
+func (b *outputBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	written := len(data)
+	remaining := b.limit - len(b.data)
+	if remaining <= 0 {
+		b.exceeded = b.exceeded || written > 0
+		return written, nil
+	}
+	if written > remaining {
+		b.data = append(b.data, data[:remaining]...)
+		b.exceeded = true
+		return written, nil
+	}
+	b.data = append(b.data, data...)
+	return written, nil
+}
+
+func (b *outputBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return slices.Clone(b.data)
+}
+
+func (b *outputBuffer) Exceeded() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.exceeded
+}
 
 type tailBuffer struct {
-	mu   sync.Mutex
-	data []byte
+	mu    sync.Mutex
+	data  []byte
+	start int
 }
 
 func (b *tailBuffer) Write(data []byte) (int, error) {
@@ -28,23 +76,47 @@ func (b *tailBuffer) Write(data []byte) (int, error) {
 	defer b.mu.Unlock()
 
 	written := len(data)
-	if written >= diagnosticOutputLimit {
-		b.data = append(b.data[:0], data[written-diagnosticOutputLimit:]...)
+	if written == 0 {
+		return 0, nil
+	}
+	if written >= maxErrorOutputBytes {
+		if cap(b.data) < maxErrorOutputBytes {
+			b.data = make([]byte, maxErrorOutputBytes)
+		} else {
+			b.data = b.data[:maxErrorOutputBytes]
+		}
+		copy(b.data, data[written-maxErrorOutputBytes:])
+		b.start = 0
 		return written, nil
 	}
 
-	overflow := len(b.data) + written - diagnosticOutputLimit
-	if overflow > 0 {
-		copy(b.data, b.data[overflow:])
-		b.data = b.data[:len(b.data)-overflow]
+	if len(b.data) < maxErrorOutputBytes {
+		remaining := maxErrorOutputBytes - len(b.data)
+		if written <= remaining {
+			b.data = append(b.data, data...)
+			return written, nil
+		}
+		b.data = append(b.data, data[:remaining]...)
+		data = data[remaining:]
 	}
-	b.data = append(b.data, data...)
+
+	first := min(len(data), maxErrorOutputBytes-b.start)
+	copy(b.data[b.start:], data[:first])
+	copy(b.data, data[first:])
+	b.start = (b.start + len(data)) % maxErrorOutputBytes
 	return written, nil
 }
 
-func (b *tailBuffer) String() string {
+func (b *tailBuffer) Bytes() []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	return string(b.data)
+	if len(b.data) < maxErrorOutputBytes || b.start == 0 {
+		return slices.Clone(b.data)
+	}
+
+	data := make([]byte, len(b.data))
+	offset := copy(data, b.data[b.start:])
+	copy(data[offset:], b.data[:b.start])
+	return data
 }

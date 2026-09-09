@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	osexec "os/exec"
 	"slices"
 	"strings"
@@ -32,20 +31,29 @@ var ErrStopped = errors.New("exec: command stopped")
 
 var errProcessNotInitialized = errors.New("process is not initialized")
 
+const (
+	defaultStopGracePeriod = 5 * time.Second
+	defaultMaxOutputBytes  = 64 << 10
+)
+
 // Spec describes one external command invocation.
 type Spec struct {
 	Path string
 	Args []string
 	// Env replaces the child environment. A nil Env inherits the parent environment.
 	Env []string
-	// Stdout receives standard output. A nil Stdout retains it as diagnostic output.
-	Stdout io.Writer
+	// StopGracePeriod controls when Run escalates from SIGTERM to SIGKILL.
+	// A zero value uses five seconds.
+	StopGracePeriod time.Duration
+	// MaxOutputBytes limits retained standard output. A zero value uses 64 KiB.
+	MaxOutputBytes int
 }
 
 type processState uint8
 
 const (
-	processStateNew processState = iota
+	processStateInvalid processState = iota
+	processStateNew
 	processStateStarting
 	processStateRunning
 	processStateExited
@@ -56,18 +64,17 @@ const (
 // restarted; methods on its zero value return an initialization error.
 type Process struct {
 	spec   Spec
-	output tailBuffer
+	output outputBuffer
+	stderr tailBuffer
 
 	mu              sync.Mutex
 	state           processState
-	cmd             *osexec.Cmd
+	pid             int
 	startDone       chan struct{}
 	startErr        error
 	waitDone        chan struct{}
 	waitErr         error
-	isReaped        bool
 	isStopRequested bool
-	isStopStarted   bool
 	stopDone        chan struct{}
 	stopErr         error
 	startCommand    func(*osexec.Cmd) error
@@ -76,37 +83,42 @@ type Process struct {
 
 // New validates and snapshots a command specification without starting it.
 func New(spec Spec) (*Process, error) { //nolint:gocritic // Spec is at the project's 80-byte value limit.
-	if err := validateSpec(&spec); err != nil {
+	if err := spec.validate(); err != nil {
 		return nil, fmt.Errorf("new command: %w", err)
+	}
+	if spec.StopGracePeriod == 0 {
+		spec.StopGracePeriod = defaultStopGracePeriod
+	}
+	if spec.MaxOutputBytes == 0 {
+		spec.MaxOutputBytes = defaultMaxOutputBytes
 	}
 
 	spec.Args = slices.Clone(spec.Args)
 	spec.Env = slices.Clone(spec.Env)
 	return &Process{
-		spec:      spec,
-		startDone: make(chan struct{}),
-		waitDone:  make(chan struct{}),
-		stopDone:  make(chan struct{}),
-		startCommand: func(cmd *osexec.Cmd) error {
-			return cmd.Start()
-		},
-		forceStop: forceStopProcessGroup,
+		spec:         spec,
+		output:       newOutputBuffer(spec.MaxOutputBytes),
+		state:        processStateNew,
+		startDone:    make(chan struct{}),
+		waitDone:     make(chan struct{}),
+		startCommand: (*osexec.Cmd).Start,
+		forceStop:    forceStopProcessGroup,
 	}, nil
 }
 
-func validateSpec(spec *Spec) error {
-	if strings.TrimSpace(spec.Path) == "" {
+func (s *Spec) validate() error {
+	if strings.TrimSpace(s.Path) == "" {
 		return errors.New("command path must not be empty")
 	}
-	if strings.IndexByte(spec.Path, 0) >= 0 {
-		return fmt.Errorf("command path %q contains a null byte", spec.Path)
+	if strings.IndexByte(s.Path, 0) >= 0 {
+		return fmt.Errorf("command path %q contains a null byte", s.Path)
 	}
-	for index, arg := range spec.Args {
+	for index, arg := range s.Args {
 		if strings.IndexByte(arg, 0) >= 0 {
 			return fmt.Errorf("command argument %d contains a null byte", index)
 		}
 	}
-	for index, value := range spec.Env {
+	for index, value := range s.Env {
 		if strings.IndexByte(value, 0) >= 0 {
 			return fmt.Errorf("command environment entry %d contains a null byte", index)
 		}
@@ -116,6 +128,12 @@ func validateSpec(spec *Spec) error {
 				index,
 			)
 		}
+	}
+	if s.StopGracePeriod < 0 {
+		return errors.New("stop grace period must not be negative")
+	}
+	if s.MaxOutputBytes < 0 {
+		return errors.New("maximum output bytes must not be negative")
 	}
 	return nil
 }
@@ -129,7 +147,7 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 
 	p.mu.Lock()
-	if !p.isInitialized() {
+	if p.state == processStateInvalid {
 		p.mu.Unlock()
 		return fmt.Errorf("start command: %w", errProcessNotInitialized)
 	}
@@ -145,23 +163,17 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 
 	cmd := osexec.Command(p.spec.Path, p.spec.Args...)
-	cmd.Env = slices.Clone(p.spec.Env)
-	if p.spec.Stdout == nil {
-		cmd.Stdout = &p.output
-	} else {
-		cmd.Stdout = p.spec.Stdout
-	}
-	cmd.Stderr = &p.output
+	cmd.Env = p.spec.Env
+	cmd.Stdout = &p.output
+	cmd.Stderr = &p.stderr
 
-	if err := configureCommand(cmd); err != nil {
-		return p.failStart(fmt.Errorf("configure command %q: %w", p.spec.Path, err))
-	}
+	configureCommand(cmd)
 	if err := p.startCommand(cmd); err != nil {
 		return p.failStart(fmt.Errorf("start command %q: %w", p.spec.Path, err))
 	}
 
 	p.mu.Lock()
-	p.cmd = cmd
+	p.pid = cmd.Process.Pid
 	launchErr := ctx.Err()
 	if launchErr != nil {
 		p.isStopRequested = true
@@ -177,30 +189,27 @@ func (p *Process) Start(ctx context.Context) error {
 		return nil
 	}
 
-	killErr := p.forceStop(cmd.Process.Pid)
-	if processGroupMissing(killErr) {
-		killErr = nil
-	}
-	if killErr == nil {
-		<-p.waitDone
-	}
+	forceErr := p.forceStopAndWait(cmd.Process.Pid, p.waitDone)
 
 	p.mu.Lock()
 	var waitErr error
-	if killErr == nil && !errors.Is(p.waitErr, ErrStopped) {
+	if forceErr == nil && !errors.Is(p.waitErr, ErrStopped) {
 		waitErr = p.waitErr
 	}
 	p.startErr = errors.Join(
 		fmt.Errorf("start command %q: %w", p.spec.Path, launchErr),
-		wrapSignalError("force stop", p.spec.Path, killErr),
+		forceErr,
 		waitErr,
 	)
-	if killErr == nil {
+	if forceErr == nil {
 		p.state = processStateStartFailed
-	} else if p.isReaped {
-		p.state = processStateExited
 	} else {
-		p.state = processStateRunning
+		select {
+		case <-p.waitDone:
+			p.state = processStateExited
+		default:
+			p.state = processStateRunning
+		}
 	}
 	close(p.startDone)
 	startErr := p.startErr
@@ -229,7 +238,6 @@ func (p *Process) reap(cmd *osexec.Cmd) {
 		err = fmt.Errorf("wait for command %q: %w", p.spec.Path, err)
 	}
 	p.waitErr = err
-	p.isReaped = true
 	if p.state == processStateRunning {
 		p.state = processStateExited
 	}
@@ -242,7 +250,7 @@ func (p *Process) reap(cmd *osexec.Cmd) {
 func (p *Process) Wait() error {
 	for {
 		p.mu.Lock()
-		if !p.isInitialized() {
+		if p.state == processStateInvalid {
 			p.mu.Unlock()
 			return fmt.Errorf("wait for command: %w", errProcessNotInitialized)
 		}
@@ -271,12 +279,27 @@ func (p *Process) Wait() error {
 }
 
 func (p *Process) waitResult() error {
+	return errors.Join(p.processResult(), p.outputError())
+}
+
+func (p *Process) processResult() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.startErr != nil {
 		return p.startErr
 	}
 	return p.waitErr
+}
+
+func (p *Process) outputError() error {
+	if !p.output.Exceeded() {
+		return nil
+	}
+	return fmt.Errorf(
+		"command %q stdout exceeds %d bytes",
+		p.spec.Path,
+		p.spec.MaxOutputBytes,
+	)
 }
 
 // Stop sends SIGTERM to the process group and waits until ctx expires before
@@ -287,7 +310,7 @@ func (p *Process) Stop(ctx context.Context) error {
 	}
 
 	p.mu.Lock()
-	if !p.isInitialized() {
+	if p.state == processStateInvalid {
 		p.mu.Unlock()
 		return fmt.Errorf("stop command: %w", errProcessNotInitialized)
 	}
@@ -299,7 +322,7 @@ func (p *Process) Stop(ctx context.Context) error {
 		p.mu.Unlock()
 		return nil
 	}
-	if p.isStopStarted {
+	if p.stopDone != nil {
 		done := p.stopDone
 		p.mu.Unlock()
 		select {
@@ -313,9 +336,9 @@ func (p *Process) Stop(ctx context.Context) error {
 		}
 	}
 
-	p.isStopStarted = true
 	p.isStopRequested = true
-	pid := p.cmd.Process.Pid
+	p.stopDone = make(chan struct{})
+	pid := p.pid
 	waitDone := p.waitDone
 	p.mu.Unlock()
 
@@ -335,17 +358,13 @@ func (p *Process) stopProcessGroup(ctx context.Context, pid int, waitDone <-chan
 		return nil
 	}
 	if gracefulErr != nil {
-		forceErr := p.forceStop(pid)
-		if processGroupMissing(forceErr) {
-			forceErr = nil
-		}
+		forceErr := p.forceStopAndWait(pid, waitDone)
 		if forceErr != nil {
 			return errors.Join(
 				wrapSignalError("gracefully stop", p.spec.Path, gracefulErr),
-				wrapSignalError("force stop", p.spec.Path, forceErr),
+				forceErr,
 			)
 		}
-		<-waitDone
 		return nil
 	}
 
@@ -353,16 +372,20 @@ func (p *Process) stopProcessGroup(ctx context.Context, pid int, waitDone <-chan
 	case <-waitDone:
 		return nil
 	case <-ctx.Done():
-		forceErr := p.forceStop(pid)
-		if processGroupMissing(forceErr) {
-			forceErr = nil
-		}
-		if forceErr != nil {
-			return wrapSignalError("force stop", p.spec.Path, forceErr)
-		}
-		<-waitDone
-		return nil
+		return p.forceStopAndWait(pid, waitDone)
 	}
+}
+
+func (p *Process) forceStopAndWait(pid int, waitDone <-chan struct{}) error {
+	err := p.forceStop(pid)
+	if processGroupMissing(err) {
+		err = nil
+	}
+	if err != nil {
+		return wrapSignalError("force stop", p.spec.Path, err)
+	}
+	<-waitDone
+	return nil
 }
 
 func wrapSignalError(action, path string, err error) error {
@@ -372,19 +395,11 @@ func wrapSignalError(action, path string, err error) error {
 	return fmt.Errorf("%s command %q process group: %w", action, path, err)
 }
 
-func (p *Process) isInitialized() bool {
-	return p.startDone != nil && p.waitDone != nil && p.stopDone != nil &&
-		p.startCommand != nil && p.forceStop != nil
-}
-
 // Run starts the command and waits for it. If ctx is canceled after launch,
-// stopGracePeriod controls when Stop escalates from SIGTERM to SIGKILL.
-func (p *Process) Run(ctx context.Context, stopGracePeriod time.Duration) error {
+// Spec.StopGracePeriod controls when Stop escalates from SIGTERM to SIGKILL.
+func (p *Process) Run(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("run command %q: context must not be nil", p.spec.Path)
-	}
-	if stopGracePeriod <= 0 {
-		return fmt.Errorf("run command %q: stop grace period must be greater than zero", p.spec.Path)
 	}
 	if err := p.Start(ctx); err != nil {
 		return err
@@ -400,10 +415,14 @@ func (p *Process) Run(ctx context.Context, stopGracePeriod time.Duration) error 
 		default:
 		}
 
-		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopGracePeriod)
+		stopCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			p.spec.StopGracePeriod,
+		)
 		stopErr := p.Stop(stopCtx)
 		cancel()
-		waitErr := p.Wait()
+		<-p.waitDone
+		waitErr := p.processResult()
 		if errors.Is(waitErr, ErrStopped) {
 			waitErr = nil
 		}
@@ -411,12 +430,17 @@ func (p *Process) Run(ctx context.Context, stopGracePeriod time.Duration) error 
 			fmt.Errorf("run command %q: %w", p.spec.Path, ctx.Err()),
 			stopErr,
 			waitErr,
+			p.outputError(),
 		)
 	}
 }
 
-// OutputTail returns the newest retained stderr and, when Spec.Stdout is nil,
-// stdout. At most 64 KiB is retained.
-func (p *Process) OutputTail() string {
-	return p.output.String()
+// Output returns a copy of the retained standard output.
+func (p *Process) Output() []byte {
+	return p.output.Bytes()
+}
+
+// Err returns a copy of the newest 64 KiB written to standard error.
+func (p *Process) Err() []byte {
+	return p.stderr.Bytes()
 }
