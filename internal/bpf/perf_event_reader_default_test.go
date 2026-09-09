@@ -138,6 +138,47 @@ func TestPerfEventReader_ReadInto_And_Close_ProgTest(t *testing.T) {
 	require.NoError(t, r.Close())
 }
 
+func TestPerfEventRawReader_Flush_ProgTest(t *testing.T) {
+	requireBPFPermission(t)
+
+	events := perfEventArray(t)
+	reader, err := newPerfEventRawReader(
+		t.Context(),
+		events,
+		PerfEventReaderOptions{
+			PerCPUBufferBytes: 4097,
+			WatermarkBytes:    4096,
+		},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	require.Equal(t, 8192, reader.PerCPUBufferSize())
+
+	const sampleSize = 8
+	prog := outputSamplesProg(t, events, sampleSize)
+	ret, _, err := prog.Test(emptyBpfContext)
+	if errors.Is(err, ebpf.ErrNotSupported) {
+		t.Skipf("skipping: ebpf not supported: %v", err)
+	}
+	require.NoError(t, err)
+	require.Zero(t, ret)
+
+	require.NoError(t, reader.Flush())
+	var record PerfEventRawRecord
+	require.NoError(t, reader.ReadRawInto(&record))
+	require.GreaterOrEqual(t, len(record.RawSample), sampleSize)
+	require.Equal(t, byte(sampleSize), record.RawSample[0])
+	require.Equal(t, byte(0), record.RawSample[1])
+	require.Zero(t, record.LostSamples)
+	require.GreaterOrEqual(t, record.RemainingBytes, 0)
+	require.Equal(
+		t,
+		perfEventHeaderSize+perfEventRawSizeFieldSize+len(record.RawSample),
+		record.PerfRecordSize,
+	)
+	require.ErrorIs(t, reader.ReadRawInto(&record), ErrPerfEventReaderFlushed)
+}
+
 func newTestPerfEventReader(t *testing.T, ctx context.Context) PerfEventReader {
 	t.Helper()
 

@@ -44,6 +44,26 @@ func TestDefaultBPFMapOperationsRejectUnknownMap(t *testing.T) {
 			expected: `bpf: map not found: name "missing"`,
 		},
 		{
+			name: "raw event pipe",
+			run: func(t *testing.T) error {
+				_, err := b.RawEventPipe(t.Context(), 42, PerfEventReaderOptions{})
+				return err
+			},
+			expected: "bpf: map not found: id 42",
+		},
+		{
+			name: "raw event pipe by name",
+			run: func(t *testing.T) error {
+				_, err := b.RawEventPipeByName(
+					t.Context(),
+					"missing",
+					PerfEventReaderOptions{},
+				)
+				return err
+			},
+			expected: `bpf: map not found: name "missing"`,
+		},
+		{
 			name: "attach and event pipe",
 			run: func(t *testing.T) error {
 				_, err := b.AttachAndEventPipe(t.Context(), "missing", 4096)

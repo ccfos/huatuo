@@ -414,6 +414,64 @@ func (b *defaultBPF) EventPipeByName(ctx context.Context, mapName string, perCPU
 	return reader, nil
 }
 
+// RawEventPipe gets an optioned event-pipe for variable-size raw records.
+func (b *defaultBPF) RawEventPipe(
+	ctx context.Context,
+	mapID uint32,
+	opts PerfEventReaderOptions,
+) (PerfEventRawReader, error) {
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
+	m, err := b.mapByID(mapID)
+	if err != nil {
+		return nil, err
+	}
+
+	reader, err := newPerfEventRawReader(ctx, m, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	log.WithField("map_id", mapID).
+		WithField("requested_per_cpu_buffer_bytes", opts.PerCPUBufferBytes).
+		WithField("effective_per_cpu_buffer_bytes", reader.PerCPUBufferSize()).
+		WithField("watermark_bytes", opts.WatermarkBytes).
+		Debug("created raw BPF event pipe")
+	return reader, nil
+}
+
+// RawEventPipeByName gets an optioned raw event-pipe by map name.
+func (b *defaultBPF) RawEventPipeByName(
+	ctx context.Context,
+	mapName string,
+	opts PerfEventReaderOptions,
+) (PerfEventRawReader, error) {
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
+	m, err := b.mapByName(mapName)
+	if err != nil {
+		return nil, err
+	}
+
+	reader, err := newPerfEventRawReader(ctx, m, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	log.WithField("map_name", mapName).
+		WithField("requested_per_cpu_buffer_bytes", opts.PerCPUBufferBytes).
+		WithField("effective_per_cpu_buffer_bytes", reader.PerCPUBufferSize()).
+		WithField("watermark_bytes", opts.WatermarkBytes).
+		Debug("created raw BPF event pipe")
+	return reader, nil
+}
+
 // AttachAndEventPipe attaches and event-pipe and returns a PerfEventReader.
 func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error) {
 	if err := b.acquireWriteLock(); err != nil {
