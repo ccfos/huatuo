@@ -294,8 +294,9 @@ func (b *defaultBPF) Info() (*Info, error) {
 	// maps
 	for id, m := range b.mapsByID {
 		info.MapsInfo = append(info.MapsInfo, MapInfo{
-			ID:   id,
-			Name: m.name,
+			ID:        id,
+			Name:      m.name,
+			ValueSize: m.handle.ValueSize(),
 		})
 	}
 

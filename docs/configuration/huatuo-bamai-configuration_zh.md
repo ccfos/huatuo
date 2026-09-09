@@ -676,7 +676,50 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
   **说明**：控制输出数据量，避免单次事件产生过多诊断信息。
 
-#### 7.6 已知问题过滤（IssuesList）
+#### 7.6 SchedBlame CPU 竞争归因
+
+SchedBlame 估算所选容器 CPU cgroup 的外部 CPU 竞争。当当前一秒的竞争比例
+超过该目标基于历史数据计算的自适应阈值时，生成
+`sched-blame-external` 事件。
+
+```toml
+[AutoTracing.SchedBlame]
+    # TargetContainerScope = "normal"
+    # TargetQos = []
+    # HighlightContainer = ""
+    # SliceDropPercent = 0
+    # ExternalAnomalyK = 1.0
+    # SliceBatchSize = 128
+    # PerfEventPerCPUBufferBytes = 524288
+    # PerfEventWatermarkBytes = 8192
+    # PerfEventQueueRecords = 8192
+    # PollIntervalMs = 100
+    # ExternalRatioDebugFile = ""
+```
+
+- **TargetContainerScope**：`normal` 仅选择普通业务容器，`all` 选择所有已发现
+  的容器。默认 `normal`。
+- **TargetQos**：可选的候选容器 QoS 过滤器。值不区分大小写，可使用
+  `guaranteed`、`burstable` 或 `besteffort`；空列表接受全部 QoS。默认 `[]`。
+- **HighlightContainer**：可选的容器 hostname、完整容器 ID 或唯一 ID 前缀，
+  用于输出该目标的调试日志、比例 CSV 和 irmas 对比。默认为空。
+- **SliceDropPercent**：传输前随机丢弃的已完成调度时间片百分比。有效范围
+  `0..99`，默认 `0`。
+- **ExternalAnomalyK**：应用于目标历史 P99 外部竞争比例的非负倍数。默认
+  `1.0`。
+- **SliceBatchSize**：每个 perf 记录最多包含的时间片数。有效范围 `1..128`，
+  默认 `128`。
+- **PerfEventPerCPUBufferBytes**：每个 CPU 请求的 perf ring 数据容量。默认
+  `524288`。
+- **PerfEventWatermarkBytes**：reader 唤醒水位，必须为正数且小于实际每 CPU
+  ring 容量。默认 `8192`。
+- **PerfEventQueueRecords**：共享的已解码记录队列容量。默认 `8192`。
+- **PollIntervalMs**：执行有界队列排空和评估检查的间隔。有效范围
+  `1..1000`，默认 `100`。
+- **ExternalRatioDebugFile**：可选的 CSV 路径，用于记录每个目标每秒的比例
+  诊断数据。默认为空。
+
+#### 7.7 已知问题过滤（IssuesList）
 
 ```bash
 # Autotracing configuration.

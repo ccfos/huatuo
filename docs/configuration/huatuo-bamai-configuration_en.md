@@ -680,7 +680,53 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
   Default: 10.
 
-#### 7.6 Known Issue Filtering (IssuesList)
+#### 7.6 SchedBlame CPU Contention Attribution
+
+SchedBlame estimates external CPU contention for selected container CPU
+cgroups and emits `sched-blame-external` events when the current one-second
+ratio exceeds the target's adaptive historical threshold.
+
+```toml
+[AutoTracing.SchedBlame]
+    # TargetContainerScope = "normal"
+    # TargetQos = []
+    # HighlightContainer = ""
+    # SliceDropPercent = 0
+    # ExternalAnomalyK = 1.0
+    # SliceBatchSize = 128
+    # PerfEventPerCPUBufferBytes = 524288
+    # PerfEventWatermarkBytes = 8192
+    # PerfEventQueueRecords = 8192
+    # PollIntervalMs = 100
+    # ExternalRatioDebugFile = ""
+```
+
+- **TargetContainerScope**: `normal` selects normal application containers;
+  `all` selects every discovered container. Default `normal`.
+- **TargetQos**: Optional candidate QoS filter. Values are case-insensitive
+  `guaranteed`, `burstable`, or `besteffort`; an empty list accepts all QoS
+  classes. Default `[]`.
+- **HighlightContainer**: Optional hostname, full container ID, or unique ID
+  prefix for one target's debug log, ratio CSV, and irmas comparison. Default
+  empty.
+- **SliceDropPercent**: Percentage of completed scheduler slices discarded
+  before transport. Valid range `0..99`; default `0`.
+- **ExternalAnomalyK**: Nonnegative multiplier applied to the target's
+  historical P99 external-contention ratio. Default `1.0`.
+- **SliceBatchSize**: Maximum slices per perf record. Valid range `1..128`;
+  default `128`.
+- **PerfEventPerCPUBufferBytes**: Requested perf-ring data capacity per CPU.
+  Default `524288`.
+- **PerfEventWatermarkBytes**: Positive reader wakeup watermark, smaller than
+  the effective per-CPU ring capacity. Default `8192`.
+- **PerfEventQueueRecords**: Shared decoded-record queue capacity. Default
+  `8192`.
+- **PollIntervalMs**: Interval for bounded queue draining and evaluation
+  checks. Valid range `1..1000`; default `100`.
+- **ExternalRatioDebugFile**: Optional CSV path for per-target one-second
+  ratio diagnostics. Default empty.
+
+#### 7.7 Known Issue Filtering (IssuesList)
 
 ```bash
 # Autotracing configuration.
