@@ -152,8 +152,34 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
   Node 环境不满足要求时拒绝请求且不创建 Operation。
 
 生成的 Node API 通过 `GET /openapi.json` 提供协议文档。Profiling、Tracing 的
-Start、Get、Stop 路由及 `POST /v1/events/watch` 必须携带服务 Bearer Token；
-`/readyz`、指标、版本和 OpenAPI 文档保持公开。
+Start、Get、Stop 路由、`POST /v1/events/watch` 及 `PUT /v1/config` 必须携带
+服务 Bearer Token；`/readyz`、指标、版本和 OpenAPI 文档保持公开。
+
+#### 5.1 通过 Node API 更新配置
+
+`PUT /v1/config` 接收一个非空的 `config` 对象。键名使用与 TOML 结构一致的
+点分路径，值保留 JSON 类型：
+
+```bash
+curl -i -X PUT 'http://127.0.0.1:19704/v1/config' \
+  -H 'Authorization: Bearer REPLACE_WITH_RANDOM_HEX' \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "config": {
+      "BlackList": ["dropwatch", "netdev_hw"],
+      "Runtime.CPULimitCores": 1.5,
+      "Runtime.MemoryLimitMiB": 1024
+    }
+  }'
+```
+
+更新成功返回 `204 No Content`。Node Agent 先校验完整的候选配置，再原子替换
+配置文件，最后发布新的内存快照。校验或持久化失败时，当前快照保持不变。
+未知键、无效值类型和空更新对象返回 `400 Bad Request`。
+
+动态读取配置的组件无需重启即可观察到新快照。HTTP 监听与鉴权、存储初始化、
+cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 `huatuo-bamai` 后
+才能生效。
 
 事件流配置控制 `POST /v1/events/watch`。达到
 `MaxEventStreamClients` 后，新连接返回 HTTP 429。

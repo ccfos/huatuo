@@ -153,9 +153,39 @@ to bytes only when the cgroup limit is applied.
   reject that request without creating an operation.
 
 The generated Node API exposes its contract at `GET /openapi.json`. Profiling
-and Tracing Start, Get, and Stop routes and `POST /v1/events/watch` require the
-service bearer token. `/readyz`, metrics, version, and the OpenAPI document
-remain public.
+and Tracing Start, Get, and Stop routes, `POST /v1/events/watch`, and
+`PUT /v1/config` require the service bearer token. `/readyz`, metrics, version,
+and the OpenAPI document remain public.
+
+#### 5.1 Update Configuration through the Node API
+
+`PUT /v1/config` accepts one non-empty `config` object. Keys use the same
+dot-separated paths as the TOML structure, while values retain their JSON
+types:
+
+```bash
+curl -i -X PUT 'http://127.0.0.1:19704/v1/config' \
+  -H 'Authorization: Bearer REPLACE_WITH_RANDOM_HEX' \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "config": {
+      "BlackList": ["dropwatch", "netdev_hw"],
+      "Runtime.CPULimitCores": 1.5,
+      "Runtime.MemoryLimitMiB": 1024
+    }
+  }'
+```
+
+A successful update returns `204 No Content`. The Node Agent validates the
+complete candidate configuration, atomically replaces the configuration file,
+and only then publishes the new in-memory snapshot. Validation or persistence
+failure leaves the current snapshot unchanged. Unknown keys, invalid value
+types, and empty update objects return `400 Bad Request`.
+
+Components that read configuration dynamically can observe the new snapshot
+without a restart. Settings consumed during startup, including the HTTP
+listener and authentication, storage initialization, and cgroup setup, are
+persisted but take effect only after restarting `huatuo-bamai`.
 
 The event stream settings control `POST /v1/events/watch`. When
 `MaxEventStreamClients` is reached, new streams receive HTTP 429.
