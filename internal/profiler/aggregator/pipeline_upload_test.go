@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"huatuo-bamai/internal/profiler"
 	profctx "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
 )
@@ -57,7 +58,7 @@ func (a *uploadTestAggregator) Aggregate(rec any) {
 	}
 }
 
-func (a *uploadTestAggregator) Snapshot(*profctx.ProfilerContext) (any, error) {
+func (a *uploadTestAggregator) Snapshot(*profctx.ProfilerContext, profiler.CollectionWindow) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.snapshots++
@@ -79,6 +80,7 @@ func (*uploadTestAggregator) OutputFormatter() output.Formatter { return nil }
 func startUploadConsumer(t *testing.T, a Aggregator) *Pipeline {
 	t.Helper()
 	p := NewPipeline(&profctx.ProfilerContext{Ctx: t.Context()}, a)
+	p.windowStart = p.now()
 	// Drive export explicitly so the test does not depend on ticker timing.
 	p.wg.Add(1)
 	go p.runDequeueAndAggregate()
@@ -156,8 +158,8 @@ func (a *snapshotBoundaryAggregator) Aggregate(rec any) {
 	a.uploadTestAggregator.Aggregate(rec)
 }
 
-func (a *snapshotBoundaryAggregator) Snapshot(pctx *profctx.ProfilerContext) (any, error) {
-	data, err := a.uploadTestAggregator.Snapshot(pctx)
+func (a *snapshotBoundaryAggregator) Snapshot(pctx *profctx.ProfilerContext, window profiler.CollectionWindow) (any, error) {
+	data, err := a.uploadTestAggregator.Snapshot(pctx, window)
 	a.checkExclusion()
 	// The provider has released its own lock, exposing the Snapshot/Reset gap.
 	a.afterSnapshot()
@@ -172,6 +174,7 @@ func (a *snapshotBoundaryAggregator) Reset() {
 func TestPipelineUploadSnapshotAndResetExcludeAggregation(t *testing.T) {
 	a := &snapshotBoundaryAggregator{uploadTestAggregator: newUploadTestAggregator()}
 	p := NewPipeline(&profctx.ProfilerContext{Ctx: t.Context()}, a)
+	p.windowStart = p.now()
 	// A completed send proves the consumer has received the concurrent record.
 	p.queue = make(chan any)
 	a.checkExclusion = func() {
@@ -346,8 +349,12 @@ func TestPipelineUploadSnapshotFailureDoesNotReset(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a := NewMockAggregator(t)
 			pctx := &profctx.ProfilerContext{}
-			a.On("Snapshot", pctx).Return(nil, snapshotErr).Once()
 			p := NewPipeline(pctx, a)
+			start := time.Unix(100, 0)
+			end := start.Add(time.Second)
+			p.windowStart = start
+			p.now = func() time.Time { return end }
+			a.On("Snapshot", pctx, profiler.CollectionWindow{Start: start, End: end}).Return(nil, snapshotErr).Once()
 			err := p.uploadSnapshot(t.Context(), false, func(context.Context, any) error {
 				t.Error("upload called without a snapshot")
 				return nil

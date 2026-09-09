@@ -58,6 +58,9 @@ func ParseTree(startTime time.Time, profileType string, data []*TreeItem, opt *P
 	if len(profileTypes) != 5 {
 		return nil, fmt.Errorf("invalid profile type: %q", profileType)
 	}
+	if opt != nil && opt.Duration < 0 {
+		return nil, fmt.Errorf("profile duration must not be negative: %s", opt.Duration)
+	}
 
 	tree := ptree.New()
 
@@ -72,6 +75,9 @@ func ParseTree(startTime time.Time, profileType string, data []*TreeItem, opt *P
 		StartTime:  startTime,
 		PeriodType: profileTypes[3],
 		PeriodUnit: profileTypes[4],
+	}
+	if opt != nil {
+		mdata.Duration = opt.Duration
 	}
 
 	scale := uint64(1)

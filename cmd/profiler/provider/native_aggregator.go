@@ -23,7 +23,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
@@ -128,18 +127,21 @@ func (a *nativeAggregator) Aggregate(rec any) {
 	}
 }
 
-func (a *nativeAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
+func (a *nativeAggregator) Snapshot(pctx *pcontext.ProfilerContext, window profiler.CollectionWindow) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if !pctx.OutputFormat.IsUpload() {
 		return nil, nil
 	}
+	if err := window.Validate(); err != nil {
+		return nil, err
+	}
 
 	if pctx.Type == profiling.TypeLock {
-		return a.snapshotLockProfile(pctx)
+		return a.snapshotLockProfile(pctx, window)
 	}
-	return a.snapshotCpuMemProfile(pctx)
+	return a.snapshotCpuMemProfile(pctx, window)
 }
 
 func (a *nativeAggregator) Reset() {
@@ -174,7 +176,7 @@ func (a *nativeAggregator) buildLockFolded() {
 	}
 }
 
-func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext) (any, error) {
+func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext, window profiler.CollectionWindow) (any, error) {
 	if len(a.stackSamples) == 0 {
 		return nil, nil
 	}
@@ -201,10 +203,10 @@ func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext)
 		tree = append(tree, item)
 	}
 
-	return buildPprofData(pctx, tree)
+	return buildPprofData(pctx, tree, window)
 }
 
-func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (any, error) {
+func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext, window profiler.CollectionWindow) (any, error) {
 	if len(a.lockSamples) == 0 {
 		return nil, nil
 	}
@@ -214,7 +216,7 @@ func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (
 		prefixes, value := lockPrefixFrames(rec)
 		tree = append(tree, buildTreeItem(prefixes, rec.StackTrace, value))
 	}
-	return buildPprofData(pctx, tree)
+	return buildPprofData(pctx, tree, window)
 }
 
 func makeLockSampleKey(sample *lockSample) string {
@@ -305,13 +307,20 @@ func buildTreeItem(prefixes []string, trace symbolizedStackTrace, value uint64) 
 }
 
 // buildPprofData constructs pprof (pyroscope-compatible) profile data.
-func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (*profiler.ProfileData, error) {
+func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem, window profiler.CollectionWindow) (*profiler.ProfileData, error) {
 	opt, sampleType, err := profileTypeOptions(pctx)
 	if err != nil {
 		return nil, err
 	}
 
-	data, err := profiler.ParseTree(time.Now(), sampleType, tree, opt)
+	start := window.Start
+	opt.Duration = window.Duration()
+	if pctx.Type == profiling.TypeMemory && pctx.Mode == profiling.ModePhysicalUsage {
+		// Net retained bytes describe the state at the observation cutoff.
+		start = window.End
+		opt.Duration = 0
+	}
+	data, err := profiler.ParseTree(start, sampleType, tree, opt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse tree: %w", err)
 	}

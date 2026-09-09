@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"time"
 
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
@@ -29,6 +30,11 @@ import (
 	"huatuo-bamai/internal/profiler/output"
 	"huatuo-bamai/pkg/profiling"
 )
+
+func nativeTestCollectionWindow() profiler.CollectionWindow {
+	start := time.Unix(1_700_000_000, 123)
+	return profiler.CollectionWindow{Start: start, End: start.Add(3 * time.Second)}
+}
 
 func TestNativeAggregatorAggregatesLockTime(t *testing.T) {
 	aggregator := &nativeAggregator{
@@ -174,7 +180,7 @@ func TestNativeAggregatorSnapshotResolvesStackTraceIDs(t *testing.T) {
 	snapshot, err := aggregator.Snapshot(&pcontext.ProfilerContext{
 		Type:         profiling.TypeMemory,
 		OutputFormat: output.FormatRemote,
-	})
+	}, nativeTestCollectionWindow())
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
@@ -216,7 +222,7 @@ func TestNativeAggregatorPhysicalMemoryFiltersAfterAggregation(t *testing.T) {
 		Type:         profiling.TypeMemory,
 		Mode:         profiling.ModePhysicalUsage,
 		OutputFormat: output.FormatRemote,
-	})
+	}, nativeTestCollectionWindow())
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
@@ -281,7 +287,7 @@ func TestNativeAggregatorSnapshotSurvivesResetAndNewSamples(t *testing.T) {
 			}
 			takeSnapshot := func() *profiler.ProfileData {
 				t.Helper()
-				snapshot, err := aggr.Snapshot(pctx)
+				snapshot, err := aggr.Snapshot(pctx, nativeTestCollectionWindow())
 				if err != nil {
 					t.Fatalf("Snapshot() error = %v", err)
 				}
@@ -539,7 +545,7 @@ func (a *nativePipelineBenchmarkAggregator) Aggregate(rec any) {
 	}
 }
 
-func (*nativePipelineBenchmarkAggregator) Snapshot(*pcontext.ProfilerContext) (any, error) {
+func (*nativePipelineBenchmarkAggregator) Snapshot(*pcontext.ProfilerContext, profiler.CollectionWindow) (any, error) {
 	// Export would measure serialization and storage instead of the queue hot path.
 	return nil, nil
 }

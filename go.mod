@@ -20,6 +20,7 @@ require (
 	github.com/godbus/dbus/v5 v5.0.6
 	github.com/google/cadvisor v0.50.0
 	github.com/google/go-cmp v0.7.0
+	github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e
 	github.com/google/uuid v1.6.0
 	github.com/gopacket/gopacket v1.2.0
 	github.com/grafana/grafana-plugin-sdk-go v0.251.0
@@ -117,7 +118,6 @@ require (
 	github.com/google/btree v1.1.2 // indirect
 	github.com/google/flatbuffers v23.5.26+incompatible // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
-	github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/grafana/dskit v0.0.0-20231221015914-de83901bf4d6 // indirect
 	github.com/grafana/regexp v0.0.0-20240518133315-a468a5bfb3bc // indirect

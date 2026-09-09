@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,8 +43,8 @@ type toolstreamUploadAggregator struct {
 	snapshotReady chan struct{}
 }
 
-func (a *toolstreamUploadAggregator) Snapshot(pctx *profctx.ProfilerContext) (any, error) {
-	snapshot, err := a.uploadTestAggregator.Snapshot(pctx)
+func (a *toolstreamUploadAggregator) Snapshot(pctx *profctx.ProfilerContext, window profiler.CollectionWindow) (any, error) {
+	snapshot, err := a.uploadTestAggregator.Snapshot(pctx, window)
 	if err != nil || snapshot == nil {
 		return nil, err
 	}
@@ -55,7 +56,9 @@ func (a *toolstreamUploadAggregator) Snapshot(pctx *profctx.ProfilerContext) (an
 			Value: uint64(value),
 		})
 	}
-	data, err := profiler.ParseTree(time.Unix(1, 0), profiler.ProfileTypeCpuSample, items, nil)
+	data, err := profiler.ParseTree(window.Start, profiler.ProfileTypeCpuSample, items, &profiler.ParseOption{
+		Duration: window.End.Sub(window.Start),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +108,13 @@ func TestPipelineToolstreamUploadPreservesConcurrentSamples(t *testing.T) {
 		snapshotReady:        make(chan struct{}, 2),
 	}
 	p := startUploadConsumer(t, a)
+	startedAt := time.Unix(1788912345, 123456789)
+	firstEnd := startedAt.Add(10 * time.Second)
+	secondEnd := firstEnd.Add(10*time.Second + 123*time.Nanosecond)
+	var now atomic.Int64
+	now.Store(firstEnd.UnixNano())
+	p.now = func() time.Time { return time.Unix(0, now.Load()) }
+	p.windowStart = startedAt
 	p.pctx.OutputFormat = output.FormatRemote
 	p.pctx.ToolstreamClient = client
 	p.Enqueue(uploadSample{stack: "existing", value: 3})
@@ -161,6 +171,7 @@ func TestPipelineToolstreamUploadPreservesConcurrentSamples(t *testing.T) {
 	}()
 	waitUploadSignal(t, a.snapshotReady)
 	waitUploadSignal(t, sending)
+	now.Store(firstEnd.Add(7 * time.Second).UnixNano())
 	for _, sample := range []uploadSample{{stack: "existing", value: 5}, {stack: "new", value: 7}} {
 		p.Enqueue(sample)
 		waitUploadSignal(t, a.aggregated)
@@ -175,8 +186,11 @@ func TestPipelineToolstreamUploadPreservesConcurrentSamples(t *testing.T) {
 	if err := <-uploadErr; err != nil {
 		t.Fatalf("first toolstream upload: %v", err)
 	}
-	assertToolstreamUploadProfile(t, received, map[string]int64{"existing": 3})
+	assertToolstreamUploadProfile(t, received, map[string]int64{"existing": 3}, profiler.CollectionWindow{
+		Start: startedAt, End: firstEnd,
+	})
 
+	now.Store(secondEnd.UnixNano())
 	secondUploadDone = make(chan struct{})
 	go func() {
 		defer close(secondUploadDone)
@@ -186,7 +200,9 @@ func TestPipelineToolstreamUploadPreservesConcurrentSamples(t *testing.T) {
 	if err := <-uploadErr; err != nil {
 		t.Fatalf("second toolstream upload: %v", err)
 	}
-	assertToolstreamUploadProfile(t, received, map[string]int64{"existing": 5, "new": 7})
+	assertToolstreamUploadProfile(t, received, map[string]int64{"existing": 5, "new": 7}, profiler.CollectionWindow{
+		Start: firstEnd, End: secondEnd,
+	})
 	waitUploadSignal(t, receiverDone)
 	if got := p.overflowCount.Load(); got != 0 {
 		t.Fatalf("queue overflow = %d, want 0", got)
@@ -240,7 +256,7 @@ func readToolstreamUploadProfile(decoder *capnp.Decoder) (*types.ProfilingWindow
 	return &event, nil
 }
 
-func assertToolstreamUploadProfile(t *testing.T, received <-chan toolstreamProfileResult, want map[string]int64) {
+func assertToolstreamUploadProfile(t *testing.T, received <-chan toolstreamProfileResult, want map[string]int64, window profiler.CollectionWindow) {
 	t.Helper()
 	var result toolstreamProfileResult
 	select {
@@ -252,6 +268,10 @@ func assertToolstreamUploadProfile(t *testing.T, received <-chan toolstreamProfi
 		t.Fatalf("receive toolstream profile: %v", result.err)
 	}
 	profile := result.data.Profile
+	if profile.TimeNanos != window.Start.UnixNano() || profile.DurationNanos != window.End.Sub(window.Start).Nanoseconds() {
+		t.Fatalf("toolstream window = (%d, %d), want (%d, %d)", profile.TimeNanos, profile.DurationNanos,
+			window.Start.UnixNano(), window.End.Sub(window.Start).Nanoseconds())
+	}
 	functions := make(map[uint64]string, len(profile.Function))
 	for _, function := range profile.Function {
 		if function.Name < 0 || function.Name >= int64(len(profile.StringTable)) {

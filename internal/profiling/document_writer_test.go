@@ -17,7 +17,9 @@ package profiling
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,6 +123,111 @@ func TestDocumentWriterPersistsNonJobSessionAsynchronously(t *testing.T) {
 			backend.syncWrites,
 			backend.asyncWrites,
 		)
+	}
+}
+
+func TestDocumentWriterWindowRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		expected bool
+		duration int64
+	}{
+		{name: "operation window", expected: true, duration: 2375000123},
+		{name: "standalone window", duration: 10000000123},
+		{name: "snapshot without duration", expected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writer, backend := newPersistentDocumentWriter(t)
+			sockPath := filepath.Join(t.TempDir(), "profile.sock")
+			server, err := toolstream.NewServer(sockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = server.Close() })
+			const taskID = "collection-window-test"
+			if tc.expected {
+				if err := server.ExpectSession(types.ProfilingToolName, taskID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			arrived := make(chan struct{})
+			release := make(chan struct{})
+			written := make(chan error, 1)
+			var releaseOnce sync.Once
+			releaseWriter := func() { releaseOnce.Do(func() { close(release) }) }
+			t.Cleanup(releaseWriter)
+			toolstream.Register(server, types.ProfilingToolName, func(session *toolstream.Session, window *types.ProfilingWindow) error {
+				close(arrived)
+				<-release
+				err := writer.Write(session, window)
+				written <- err
+				return err
+			})
+			if err := server.Start(); err != nil {
+				t.Fatal(err)
+			}
+			client, err := toolstream.NewClient(toolstream.ClientOptions{
+				SockPath: sockPath, ToolName: types.ProfilingToolName, Version: "test", TaskID: taskID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = client.Close() })
+			window := validProfilingWindow()
+			window.Profile.TimeNanos = 1788912345123456789
+			window.Profile.DurationNanos = tc.duration
+			if err := client.Send(window); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-arrived:
+			case <-time.After(5 * time.Second):
+				t.Fatal("timed out receiving profiling window")
+			}
+			if err := client.End(); err != nil {
+				t.Fatal(err)
+			}
+			// Persistence starts only after receipt, independently of collection time.
+			releasedAt := time.Now().UTC()
+			releaseWriter()
+			select {
+			case err := <-written:
+				if err != nil {
+					t.Fatalf("write received window: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("timed out persisting profiling window")
+			}
+			if tc.expected {
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				if err := server.AwaitSession(ctx, types.ProfilingToolName, taskID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var stored profilingstore.Document
+			if err := json.Unmarshal(backend.lastRecord.Data, &stored); err != nil {
+				t.Fatal(err)
+			}
+			profile := stored.ProfileData.Profile
+			if profile.TimeNanos != window.Profile.TimeNanos || profile.DurationNanos != tc.duration {
+				t.Fatalf("stored collection window = (%d, %d), want (%d, %d)",
+					profile.TimeNanos, profile.DurationNanos, window.Profile.TimeNanos, tc.duration)
+			}
+			startedAt := time.Unix(0, window.Profile.TimeNanos).UTC()
+			if stored.StartedTimestamp == nil || !stored.StartedTimestamp.Equal(startedAt) {
+				t.Fatalf("stored start = %v, want %v", stored.StartedTimestamp, startedAt)
+			}
+			if got := backend.lastRecord.Fields[types.DocumentFieldStartedTimestamp]; got != startedAt {
+				t.Fatalf("indexed start = %v, want %v", got, startedAt)
+			}
+			if stored.UploadedTimestamp.Before(releasedAt) || stored.UploadedTimestamp.After(time.Now().UTC()) {
+				t.Fatalf("upload timestamp %v is outside the persistence interval starting %v", stored.UploadedTimestamp, releasedAt)
+			}
+			if (backend.syncWrites == 1) != tc.expected || backend.syncWrites+backend.asyncWrites != 1 {
+				t.Fatalf("writes = (sync=%d, async=%d), expected session = %v", backend.syncWrites, backend.asyncWrites, tc.expected)
+			}
+		})
 	}
 }
 

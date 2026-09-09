@@ -85,7 +85,7 @@ func (a *javaAggregator) Aggregate(rec any) {
 	}
 }
 
-func (a *javaAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
+func (a *javaAggregator) Snapshot(pctx *pcontext.ProfilerContext, _ profiler.CollectionWindow) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
