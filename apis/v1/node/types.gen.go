@@ -24,6 +24,7 @@ import (
 	externalRef0 "huatuo-bamai/apis/v1"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 const (
@@ -192,6 +193,21 @@ func (e TracingType) Valid() bool {
 	}
 }
 
+// Defines values for WatchEventSpecVersion.
+const (
+	WatchEventSpecVersion10 WatchEventSpecVersion = "1.0"
+)
+
+// Valid indicates whether the value is a known member of the WatchEventSpecVersion enum.
+func (e WatchEventSpecVersion) Valid() bool {
+	switch e {
+	case WatchEventSpecVersion10:
+		return true
+	default:
+		return false
+	}
+}
+
 // ContainerMetadata defines model for ContainerMetadata.
 type ContainerMetadata struct {
 	CgroupCSS map[string]string `json:"cgroup_css"`
@@ -277,6 +293,50 @@ type TracingOperationSpec struct {
 // TracingType defines model for TracingType.
 type TracingType string
 
+// WatchEvent defines model for WatchEvent.
+type WatchEvent struct {
+	Data            WatchEventData        `json:"data"`
+	DataContentType string                `json:"datacontenttype"`
+	ID              openapi_types.UUID    `json:"id"`
+	Source          string                `json:"source"`
+	SpecVersion     WatchEventSpecVersion `json:"specversion"`
+	Time            time.Time             `json:"time"`
+	Type            string                `json:"type"`
+}
+
+// WatchEventData defines model for WatchEventData.
+type WatchEventData struct {
+	ContainerHostNamespace *string   `json:"container_host_namespace,omitempty"`
+	ContainerHostname      *string   `json:"container_hostname,omitempty"`
+	ContainerID            *string   `json:"container_id,omitempty"`
+	ContainerQos           *string   `json:"container_qos,omitempty"`
+	ContainerType          *string   `json:"container_type,omitempty"`
+	Hostname               string    `json:"hostname"`
+	ObservedTimestamp      time.Time `json:"observed_timestamp"`
+	Region                 string    `json:"region"`
+	TracerID               *string   `json:"tracer_id,omitempty"`
+	TracerName             *string   `json:"tracer_name,omitempty"`
+	TracerRunType          *string   `json:"tracer_run_type,omitempty"`
+}
+
+// WatchEventFilters defines model for WatchEventFilters.
+type WatchEventFilters struct {
+	ContainerHostNamespace *string `json:"container_host_namespace,omitempty"`
+	ContainerHostname      *string `json:"container_hostname,omitempty"`
+	ContainerQos           *string `json:"container_qos,omitempty"`
+	Hostname               *string `json:"hostname,omitempty"`
+	Region                 *string `json:"region,omitempty"`
+	TracerName             *string `json:"tracer_name,omitempty"`
+}
+
+// WatchEventSpecVersion defines model for WatchEventSpecVersion.
+type WatchEventSpecVersion string
+
+// WatchEventsRequest defines model for WatchEventsRequest.
+type WatchEventsRequest struct {
+	Filters *WatchEventFilters `json:"filters,omitempty"`
+}
+
 // ContainerID defines model for ContainerID.
 type ContainerID = string
 
@@ -321,6 +381,9 @@ type UnsupportedMediaType = externalRef0.ErrorResponse
 
 // bearerAuthContextKey is the context key for BearerAuth security scheme
 type bearerAuthContextKey string
+
+// WatchEventsJSONRequestBody defines body for WatchEvents for application/json ContentType.
+type WatchEventsJSONRequestBody = WatchEventsRequest
 
 // StartOperationJSONRequestBody defines body for StartOperation for application/json ContentType.
 type StartOperationJSONRequestBody = StartOperationRequest

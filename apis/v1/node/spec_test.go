@@ -73,6 +73,10 @@ func TestNodeHTTPStatusForErrorCode(t *testing.T) {
 	if status != http.StatusNotFound || !ok {
 		t.Errorf("HTTPStatusForErrorCode(container_not_found) = (%d, %t), want (404, true)", status, ok)
 	}
+	status, ok = HTTPStatusForErrorCode(ErrorCodeEventStreamLimitExceeded)
+	if status != http.StatusTooManyRequests || !ok {
+		t.Errorf("HTTPStatusForErrorCode(event_stream_limit_exceeded) = (%d, %t), want (429, true)", status, ok)
+	}
 }
 
 func TestRemovedNodeRoutesAreNotRegistered(t *testing.T) {
@@ -98,6 +102,13 @@ func TestRemovedNodeRoutesAreNotRegistered(t *testing.T) {
 }
 
 type unimplementedStrictServer struct{}
+
+func (*unimplementedStrictServer) WatchEvents(
+	context.Context,
+	WatchEventsRequestObject,
+) (WatchEventsResponseObject, error) {
+	return nil, errNotImplemented
+}
 
 func (*unimplementedStrictServer) GetContainer(
 	context.Context,

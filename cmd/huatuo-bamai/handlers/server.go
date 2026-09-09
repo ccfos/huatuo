@@ -16,16 +16,16 @@ package handlers
 
 import (
 	"fmt"
+	"time"
 
 	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/cmd/huatuo-bamai/config"
+	nodecloudevents "huatuo-bamai/internal/nodeagent/cloudevents"
 	"huatuo-bamai/internal/nodeagent/operation"
 	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
 	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
-	tracingstore "huatuo-bamai/pkg/tracing/store"
 
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -33,23 +33,26 @@ import (
 
 // ServerOptions groups the dependencies required to start the HTTP server.
 type ServerOptions struct {
-	Addr             string
-	BearerToken      string
-	OperationManager *operation.Manager
-	ProfilingService *nodeprofiling.Service
-	TracingService   *nodetracing.Service
-	TracingStore     *tracingstore.Store
-	PromReg          *prometheus.Registry
-	VersionInfo      *version.Info
+	Addr              string
+	BearerToken       string
+	OperationManager  *operation.Manager
+	ProfilingService  *nodeprofiling.Service
+	TracingService    *nodetracing.Service
+	CloudEvents       *nodecloudevents.Service
+	KeepAliveInterval time.Duration
+	PromReg           *prometheus.Registry
+	VersionInfo       *version.Info
 }
 
 // Start starts the HTTP server with all handlers registered.
 func Start(opts *ServerOptions) (*server.Server, error) {
-	nodeHandler, err := NewNodeAPIHandler(
-		opts.OperationManager,
-		opts.ProfilingService,
-		opts.TracingService,
-	)
+	nodeHandler, err := NewNodeAPIHandler(&NodeAPIHandlerOptions{
+		OperationManager:             opts.OperationManager,
+		ProfilingService:             opts.ProfilingService,
+		TracingService:               opts.TracingService,
+		CloudEventsService:           opts.CloudEvents,
+		EventStreamKeepAliveInterval: opts.KeepAliveInterval,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -87,17 +90,6 @@ func newHTTPServer(opts *ServerOptions, nodeHandler *NodeAPIHandler) (*server.Se
 	})
 
 	s.MustRegisterRoutes("", NewConfigHandler().Handlers)
-	if opts.TracingStore != nil {
-		httpConfig := config.Get().HTTPServer
-		s.MustRegisterRoutes(
-			"/v1/events",
-			NewEventsHandler(
-				opts.TracingStore,
-				httpConfig.MaxEventStreamClients,
-				httpConfig.EventStreamKeepAliveIntervalSeconds,
-			).Handlers,
-		)
-	}
 
 	errorHandlers := s.StrictErrorHandlers()
 	strictHandler := nodeapi.NewStrictHandlerWithOptions(

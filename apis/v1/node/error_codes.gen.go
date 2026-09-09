@@ -20,6 +20,7 @@ import apiv1 "huatuo-bamai/apis/v1"
 
 const (
 	ErrorCodeContainerNotFound               apiv1.ErrorCode = "container_not_found"
+	ErrorCodeEventStreamLimitExceeded        apiv1.ErrorCode = "event_stream_limit_exceeded"
 	ErrorCodeExecutionEnvironmentUnsupported apiv1.ErrorCode = "execution_environment_unsupported"
 	ErrorCodeExecutionFailed                 apiv1.ErrorCode = "execution_failed"
 	ErrorCodeExecutionStartFailed            apiv1.ErrorCode = "execution_start_failed"

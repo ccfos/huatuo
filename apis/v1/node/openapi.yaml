@@ -6,6 +6,7 @@ tags:
   - name: readiness
   - name: containers
   - name: operations
+  - name: events
 paths:
   /openapi.json:
     get:
@@ -141,10 +142,60 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /v1/events/watch:
+    post:
+      operationId: watchEvents
+      summary: Stream matching Node events as Server-Sent Events.
+      tags: [events]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WatchEventsRequest'
+      responses:
+        '200':
+          description: |
+            Server-Sent Events stream. Each data field contains one serialized
+            CloudEvents 1.0 event. Comment fields are connection heartbeats.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-cache
+            Connection:
+              schema:
+                type: string
+                example: keep-alive
+            X-Accel-Buffering:
+              schema:
+                type: string
+                example: 'no'
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/WatchEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
 x-error-codes:
   container_not_found:
     httpStatus: 404
     description: The requested container does not exist.
+  event_stream_limit_exceeded:
+    httpStatus: 429
+    description: The node has no capacity for another event stream.
   execution_environment_unsupported:
     httpStatus: 422
     description: The node environment cannot execute the valid request.
@@ -253,7 +304,7 @@ components:
           schema:
             $ref: '../components.yaml#/components/schemas/ErrorResponse'
     TooManyRequests:
-      description: Operation capacity exceeded.
+      description: Node service capacity exceeded.
       content:
         application/json:
           schema:
@@ -436,6 +487,83 @@ components:
           oneOf:
             - $ref: '#/components/schemas/ProfilingOperationSpec'
             - $ref: '#/components/schemas/TracingOperationSpec'
+    WatchEventsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        filters:
+          $ref: '#/components/schemas/WatchEventFilters'
+    WatchEventFilters:
+      type: object
+      additionalProperties: false
+      properties:
+        tracer_name:
+          type: string
+        hostname:
+          type: string
+        container_hostname:
+          type: string
+        container_host_namespace:
+          type: string
+        container_qos:
+          type: string
+        region:
+          type: string
+    WatchEvent:
+      type: object
+      additionalProperties: false
+      required: [specversion, id, source, type, datacontenttype, time, data]
+      properties:
+        specversion:
+          $ref: '#/components/schemas/WatchEventSpecVersion'
+          x-go-name: SpecVersion
+        id:
+          type: string
+          format: uuid
+        source:
+          type: string
+        type:
+          type: string
+        datacontenttype:
+          type: string
+          x-go-name: DataContentType
+        time:
+          type: string
+          format: date-time
+        data:
+          $ref: '#/components/schemas/WatchEventData'
+    WatchEventSpecVersion:
+      type: string
+      enum: ['1.0']
+      x-enum-varnames: [WatchEventSpecVersion10]
+    WatchEventData:
+      type: object
+      additionalProperties: false
+      required: [hostname, region, observed_timestamp]
+      properties:
+        hostname:
+          type: string
+        region:
+          type: string
+        observed_timestamp:
+          type: string
+          format: date-time
+        container_id:
+          type: string
+        container_hostname:
+          type: string
+        container_host_namespace:
+          type: string
+        container_type:
+          type: string
+        container_qos:
+          type: string
+        tracer_name:
+          type: string
+        tracer_id:
+          type: string
+        tracer_run_type:
+          type: string
     OperationResponse:
       type: object
       additionalProperties: false

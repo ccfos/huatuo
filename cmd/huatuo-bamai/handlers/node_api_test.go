@@ -97,22 +97,81 @@ func newTestNodeServices(
 	return profilingService, tracingService
 }
 
+func newTestNodeAPIHandler(t *testing.T, keepAliveInterval time.Duration) *NodeAPIHandler {
+	t.Helper()
+	manager := newTestOperationManager(t)
+	profilingService, tracingService := newTestNodeServices(t, manager)
+	handler, err := NewNodeAPIHandler(&NodeAPIHandlerOptions{
+		OperationManager:             manager,
+		ProfilingService:             profilingService,
+		TracingService:               tracingService,
+		CloudEventsService:           newTestCloudEventsService(t, 1),
+		EventStreamKeepAliveInterval: keepAliveInterval,
+	})
+	if err != nil {
+		t.Fatalf("NewNodeAPIHandler() error = %v", err)
+	}
+	return handler
+}
+
 func TestNewNodeAPIHandlerRequiresDependencies(t *testing.T) {
 	manager := newTestOperationManager(t)
 	profilingService, tracingService := newTestNodeServices(t, manager)
+	cloudEventsService := newTestCloudEventsService(t, 1)
 	tests := []struct {
-		name      string
-		manager   *operation.Manager
-		profiling *nodeprofiling.Service
-		tracing   *nodetracing.Service
+		name    string
+		options *NodeAPIHandlerOptions
 	}{
-		{name: "missing operation manager", profiling: profilingService, tracing: tracingService},
-		{name: "missing profiling service", manager: manager, tracing: tracingService},
-		{name: "missing tracing service", manager: manager, profiling: profilingService},
+		{name: "missing options"},
+		{
+			name: "missing operation manager",
+			options: &NodeAPIHandlerOptions{
+				ProfilingService:             profilingService,
+				TracingService:               tracingService,
+				CloudEventsService:           cloudEventsService,
+				EventStreamKeepAliveInterval: time.Second,
+			},
+		},
+		{
+			name: "missing profiling service",
+			options: &NodeAPIHandlerOptions{
+				OperationManager:             manager,
+				TracingService:               tracingService,
+				CloudEventsService:           cloudEventsService,
+				EventStreamKeepAliveInterval: time.Second,
+			},
+		},
+		{
+			name: "missing tracing service",
+			options: &NodeAPIHandlerOptions{
+				OperationManager:             manager,
+				ProfilingService:             profilingService,
+				CloudEventsService:           cloudEventsService,
+				EventStreamKeepAliveInterval: time.Second,
+			},
+		},
+		{
+			name: "missing cloud events service",
+			options: &NodeAPIHandlerOptions{
+				OperationManager:             manager,
+				ProfilingService:             profilingService,
+				TracingService:               tracingService,
+				EventStreamKeepAliveInterval: time.Second,
+			},
+		},
+		{
+			name: "invalid keepalive interval",
+			options: &NodeAPIHandlerOptions{
+				OperationManager:   manager,
+				ProfilingService:   profilingService,
+				TracingService:     tracingService,
+				CloudEventsService: cloudEventsService,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := NewNodeAPIHandler(tt.manager, tt.profiling, tt.tracing); err == nil {
+			if _, err := NewNodeAPIHandler(tt.options); err == nil {
 				t.Fatal("NewNodeAPIHandler() error = nil")
 			}
 		})
@@ -120,16 +179,7 @@ func TestNewNodeAPIHandlerRequiresDependencies(t *testing.T) {
 }
 
 func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
-	manager := newTestOperationManager(t)
-	profilingService, tracingService := newTestNodeServices(t, manager)
-	handler, err := NewNodeAPIHandler(
-		manager,
-		profilingService,
-		tracingService,
-	)
-	if err != nil {
-		t.Fatalf("NewNodeAPIHandler() error = %v", err)
-	}
+	handler := newTestNodeAPIHandler(t, time.Second)
 	body := &nodeapi.StartOperationJSONRequestBody{
 		RequestID:       "job-1",
 		DurationSeconds: 60,
@@ -167,16 +217,7 @@ func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 }
 
 func TestStartOperationTracingReportsNotImplemented(t *testing.T) {
-	manager := newTestOperationManager(t)
-	profilingService, tracingService := newTestNodeServices(t, manager)
-	handler, err := NewNodeAPIHandler(
-		manager,
-		profilingService,
-		tracingService,
-	)
-	if err != nil {
-		t.Fatalf("NewNodeAPIHandler() error = %v", err)
-	}
+	handler := newTestNodeAPIHandler(t, time.Second)
 	body := &nodeapi.StartOperationJSONRequestBody{
 		RequestID:       "job-1",
 		DurationSeconds: 60,
@@ -188,7 +229,7 @@ func TestStartOperationTracingReportsNotImplemented(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set tracing spec: %v", err)
 	}
-	_, err = handler.StartOperation(t.Context(), nodeapi.StartOperationRequestObject{Body: body})
+	_, err := handler.StartOperation(t.Context(), nodeapi.StartOperationRequestObject{Body: body})
 	var apiErr *response.APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != nodeapi.ErrorCodeServiceNotImplemented {
 		t.Fatalf("StartOperation() error = %v", err)
@@ -196,13 +237,8 @@ func TestStartOperationTracingReportsNotImplemented(t *testing.T) {
 }
 
 func TestStartOperationRejectsDurationOverflow(t *testing.T) {
-	manager := newTestOperationManager(t)
-	profilingService, tracingService := newTestNodeServices(t, manager)
-	handler, err := NewNodeAPIHandler(manager, profilingService, tracingService)
-	if err != nil {
-		t.Fatalf("NewNodeAPIHandler() error = %v", err)
-	}
-	_, err = handler.StartOperation(t.Context(), nodeapi.StartOperationRequestObject{
+	handler := newTestNodeAPIHandler(t, time.Second)
+	_, err := handler.StartOperation(t.Context(), nodeapi.StartOperationRequestObject{
 		Body: &nodeapi.StartOperationJSONRequestBody{
 			Kind:            nodeapi.OperationKindProfiling,
 			DurationSeconds: int64(^uint64(0) >> 1),

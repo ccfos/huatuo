@@ -112,6 +112,11 @@ type ClientInterface interface {
 	// GetContainer request
 	GetContainer(ctx context.Context, containerID ContainerID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// WatchEventsWithBody request with any body
+	WatchEventsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	WatchEvents(ctx context.Context, body WatchEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// StartOperationWithBody request with any body
 	StartOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -150,6 +155,30 @@ func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn
 
 func (c *Client) GetContainer(ctx context.Context, containerID ContainerID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetContainerRequest(c.Server, containerID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) WatchEventsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWatchEventsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) WatchEvents(ctx context.Context, body WatchEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWatchEventsRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -292,6 +321,46 @@ func NewGetContainerRequest(server string, containerID ContainerID) (*http.Reque
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewWatchEventsRequest calls the generic WatchEvents builder with application/json body
+func NewWatchEventsRequest(server string, body WatchEventsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewWatchEventsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewWatchEventsRequestWithBody generates requests for WatchEvents with any type of body
+func NewWatchEventsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/events/watch")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -456,6 +525,11 @@ type ClientWithResponsesInterface interface {
 	// GetContainerWithResponse request
 	GetContainerWithResponse(ctx context.Context, containerID ContainerID, reqEditors ...RequestEditorFn) (*GetContainerResponse, error)
 
+	// WatchEventsWithBodyWithResponse request with any body
+	WatchEventsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WatchEventsResponse, error)
+
+	WatchEventsWithResponse(ctx context.Context, body WatchEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*WatchEventsResponse, error)
+
 	// StartOperationWithBodyWithResponse request with any body
 	StartOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartOperationResponse, error)
 
@@ -554,6 +628,41 @@ func (r GetContainerResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetContainerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type WatchEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthenticated
+	JSON413      *RequestTooLarge
+	JSON415      *UnsupportedMediaType
+	JSON429      *TooManyRequests
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r WatchEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r WatchEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r WatchEventsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -695,6 +804,23 @@ func (c *ClientWithResponses) GetContainerWithResponse(ctx context.Context, cont
 	return ParseGetContainerResponse(rsp)
 }
 
+// WatchEventsWithBodyWithResponse request with arbitrary body returning *WatchEventsResponse
+func (c *ClientWithResponses) WatchEventsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WatchEventsResponse, error) {
+	rsp, err := c.WatchEventsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWatchEventsResponse(rsp)
+}
+
+func (c *ClientWithResponses) WatchEventsWithResponse(ctx context.Context, body WatchEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*WatchEventsResponse, error) {
+	rsp, err := c.WatchEvents(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWatchEventsResponse(rsp)
+}
+
 // StartOperationWithBodyWithResponse request with arbitrary body returning *StartOperationResponse
 func (c *ClientWithResponses) StartOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartOperationResponse, error) {
 	rsp, err := c.StartOperationWithBody(ctx, contentType, body, reqEditors...)
@@ -806,6 +932,67 @@ func ParseGetContainerResponse(rsp *http.Response) (*GetContainerResponse, error
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseWatchEventsResponse parses an HTTP response from a WatchEventsWithResponse call
+func ParseWatchEventsResponse(rsp *http.Response) (*WatchEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &WatchEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest RequestTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest TooManyRequests
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

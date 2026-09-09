@@ -24,6 +24,7 @@ import (
 
 	apiv1 "huatuo-bamai/apis/v1"
 	nodeapi "huatuo-bamai/apis/v1/node"
+	nodecloudevents "huatuo-bamai/internal/nodeagent/cloudevents"
 	"huatuo-bamai/internal/nodeagent/operation"
 	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
 	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
@@ -36,11 +37,22 @@ import (
 
 // NodeAPIHandler implements the generated Node Agent Strict Server.
 type NodeAPIHandler struct {
-	operationManager *operation.Manager
-	profiling        *nodeprofiling.Service
-	tracing          *nodetracing.Service
-	containerByID    func(string) (*pod.Container, error)
-	openAPI          nodeapi.GetOpenAPI200JSONResponse
+	operationManager  *operation.Manager
+	profiling         *nodeprofiling.Service
+	tracing           *nodetracing.Service
+	cloudEvents       *nodecloudevents.Service
+	keepAliveInterval time.Duration
+	containerByID     func(string) (*pod.Container, error)
+	openAPI           nodeapi.GetOpenAPI200JSONResponse
+}
+
+// NodeAPIHandlerOptions groups the services required by the Node API adapter.
+type NodeAPIHandlerOptions struct {
+	OperationManager             *operation.Manager
+	ProfilingService             *nodeprofiling.Service
+	TracingService               *nodetracing.Service
+	CloudEventsService           *nodecloudevents.Service
+	EventStreamKeepAliveInterval time.Duration
 }
 
 // StartOperation starts or resolves an idempotent Node Operation.
@@ -161,16 +173,8 @@ func (h *NodeAPIHandler) StopOperation(
 }
 
 // NewNodeAPIHandler constructs a generated-protocol adapter.
-func NewNodeAPIHandler(
-	operationManager *operation.Manager,
-	profilingService *nodeprofiling.Service,
-	tracingService *nodetracing.Service,
-) (*NodeAPIHandler, error) {
-	if err := validateNewNodeAPIHandlerArgs(
-		operationManager,
-		profilingService,
-		tracingService,
-	); err != nil {
+func NewNodeAPIHandler(options *NodeAPIHandlerOptions) (*NodeAPIHandler, error) {
+	if err := validateNodeAPIHandlerOptions(options); err != nil {
 		return nil, err
 	}
 	var specification map[string]any
@@ -178,27 +182,34 @@ func NewNodeAPIHandler(
 		return nil, fmt.Errorf("create Node API handler: decode bundled OpenAPI: %w", err)
 	}
 	return &NodeAPIHandler{
-		operationManager: operationManager,
-		profiling:        profilingService,
-		tracing:          tracingService,
-		containerByID:    pod.ContainerByID,
-		openAPI:          specification,
+		operationManager:  options.OperationManager,
+		profiling:         options.ProfilingService,
+		tracing:           options.TracingService,
+		cloudEvents:       options.CloudEventsService,
+		keepAliveInterval: options.EventStreamKeepAliveInterval,
+		containerByID:     pod.ContainerByID,
+		openAPI:           specification,
 	}, nil
 }
 
-func validateNewNodeAPIHandlerArgs(
-	operationManager *operation.Manager,
-	profilingService *nodeprofiling.Service,
-	tracingService *nodetracing.Service,
-) error {
-	if operationManager == nil {
+func validateNodeAPIHandlerOptions(options *NodeAPIHandlerOptions) error {
+	if options == nil {
+		return errors.New("create Node API handler: options are required")
+	}
+	if options.OperationManager == nil {
 		return errors.New("create Node API handler: operation manager is required")
 	}
-	if profilingService == nil {
+	if options.ProfilingService == nil {
 		return errors.New("create Node API handler: profiling service is required")
 	}
-	if tracingService == nil {
+	if options.TracingService == nil {
 		return errors.New("create Node API handler: tracing service is required")
+	}
+	if options.CloudEventsService == nil {
+		return errors.New("create Node API handler: cloud events service is required")
+	}
+	if options.EventStreamKeepAliveInterval <= 0 {
+		return errors.New("create Node API handler: event stream keepalive interval must be positive")
 	}
 	return nil
 }
@@ -265,10 +276,13 @@ func operationTerminal(snapshot *operation.Operation) *nodeapi.OperationTerminal
 
 func nodeAPIError(err error) error {
 	switch {
-	case errors.Is(err, nodeprofiling.ErrInvalidRequest),
+	case errors.Is(err, nodecloudevents.ErrInvalidFilters),
+		errors.Is(err, nodeprofiling.ErrInvalidRequest),
 		errors.Is(err, nodetracing.ErrInvalidRequest),
 		errors.Is(err, operation.ErrInvalidRequest):
 		return response.NewAPIError(apiv1.ErrorCodeInvalidRequest, err.Error())
+	case errors.Is(err, nodecloudevents.ErrLimitExceeded):
+		return response.NewAPIError(nodeapi.ErrorCodeEventStreamLimitExceeded, "event stream capacity is exhausted")
 	case errors.Is(err, nodeprofiling.ErrEnvironmentUnsupported):
 		return response.NewAPIError(nodeapi.ErrorCodeExecutionEnvironmentUnsupported, err.Error())
 	case errors.Is(err, nodetracing.ErrNotImplemented):

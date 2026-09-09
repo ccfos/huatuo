@@ -24,6 +24,7 @@ import (
 	"huatuo-bamai/cmd/huatuo-bamai/handlers"
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/document"
+	nodecloudevents "huatuo-bamai/internal/nodeagent/cloudevents"
 	"huatuo-bamai/internal/profiling"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/tracing"
@@ -88,15 +89,23 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 
 func startHandlers(d *Daemon) (func(context.Context) error, error) {
 	httpConfig := config.Get().HTTPServer
+	cloudEventsService, err := nodecloudevents.New(
+		d.tracingStore,
+		httpConfig.MaxEventStreamClients,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("initialize cloud events: %w", err)
+	}
 	runningServer, err := handlers.Start(&handlers.ServerOptions{
-		Addr:             httpConfig.ListenAddress,
-		BearerToken:      httpConfig.Auth.BearerToken,
-		OperationManager: d.operationManager,
-		ProfilingService: d.profilingService,
-		TracingService:   d.tracingService,
-		TracingStore:     d.tracingStore,
-		PromReg:          d.metrics,
-		VersionInfo:      &d.opts.VersionInfo,
+		Addr:              httpConfig.ListenAddress,
+		BearerToken:       httpConfig.Auth.BearerToken,
+		OperationManager:  d.operationManager,
+		ProfilingService:  d.profilingService,
+		TracingService:    d.tracingService,
+		CloudEvents:       cloudEventsService,
+		KeepAliveInterval: time.Duration(httpConfig.EventStreamKeepAliveIntervalSeconds) * time.Second,
+		PromReg:           d.metrics,
+		VersionInfo:       &d.opts.VersionInfo,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start handlers: %w", err)

@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	externalRef0 "huatuo-bamai/apis/v1"
@@ -41,6 +42,9 @@ type ServerInterface interface {
 
 	// (GET /v1/containers/{container_id})
 	GetContainer(c *gin.Context, containerID ContainerID)
+	// Stream matching Node events as Server-Sent Events.
+	// (POST /v1/events/watch)
+	WatchEvents(c *gin.Context)
 
 	// (POST /v1/operations)
 	StartOperation(c *gin.Context)
@@ -110,6 +114,21 @@ func (siw *ServerInterfaceWrapper) GetContainer(c *gin.Context) {
 	}
 
 	siw.Handler.GetContainer(c, containerID)
+}
+
+// WatchEvents operation middleware
+func (siw *ServerInterfaceWrapper) WatchEvents(c *gin.Context) {
+
+	c.Set(string(BearerAuthScopes), []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.WatchEvents(c)
 }
 
 // StartOperation operation middleware
@@ -211,6 +230,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/openapi.json", wrapper.GetOpenAPI)
 	router.GET(options.BaseURL+"/readyz", wrapper.GetReadiness)
 	router.GET(options.BaseURL+"/v1/containers/:container_id", wrapper.GetContainer)
+	router.POST(options.BaseURL+"/v1/events/watch", wrapper.WatchEvents)
 	router.POST(options.BaseURL+"/v1/operations", wrapper.StartOperation)
 	router.GET(options.BaseURL+"/v1/operations/:request_id", wrapper.GetOperation)
 	router.POST(options.BaseURL+"/v1/operations/:request_id/stop", wrapper.StopOperation)
@@ -336,6 +356,160 @@ func (response GetContainer404JSONResponse) VisitGetContainerResponse(w http.Res
 type GetContainer500JSONResponse struct{ InternalErrorJSONResponse }
 
 func (response GetContainer500JSONResponse) VisitGetContainerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type WatchEventsRequestObject struct {
+	Body *WatchEventsJSONRequestBody
+}
+
+type WatchEventsResponseObject interface {
+	VisitWatchEventsResponse(w http.ResponseWriter) error
+}
+
+type WatchEvents200ResponseHeaders struct {
+	CacheControl    *string
+	Connection      *string
+	XAccelBuffering *string
+}
+
+type WatchEvents200TextEventStreamResponse struct {
+	Body          io.Reader
+	Headers       WatchEvents200ResponseHeaders
+	ContentLength int64
+}
+
+func (response WatchEvents200TextEventStreamResponse) VisitWatchEventsResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	if response.Headers.Connection != nil {
+		w.Header().Set("Connection", fmt.Sprint(*response.Headers.Connection))
+	}
+	if response.Headers.XAccelBuffering != nil {
+		w.Header().Set("X-Accel-Buffering", fmt.Sprint(*response.Headers.XAccelBuffering))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		// If w doesn't support flushing, fall back to io.Copy.
+		_, err := io.Copy(w, response.Body)
+		return err
+	}
+	// text/event-stream messages are typically small; use a
+	// modest buffer and flush after each chunk so clients see
+	// events immediately instead of waiting on OS buffering.
+	buf := make([]byte, 4096)
+	for {
+		n, err := response.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+			flusher.Flush()
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+type WatchEvents400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response WatchEvents400JSONResponse) VisitWatchEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type WatchEvents401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response WatchEvents401JSONResponse) VisitWatchEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type WatchEvents413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response WatchEvents413JSONResponse) VisitWatchEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type WatchEvents415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response WatchEvents415JSONResponse) VisitWatchEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type WatchEvents429JSONResponse struct{ TooManyRequestsJSONResponse }
+
+func (response WatchEvents429JSONResponse) VisitWatchEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type WatchEvents500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response WatchEvents500JSONResponse) VisitWatchEventsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -683,6 +857,9 @@ type StrictServerInterface interface {
 
 	// (GET /v1/containers/{container_id})
 	GetContainer(ctx context.Context, request GetContainerRequestObject) (GetContainerResponseObject, error)
+	// Stream matching Node events as Server-Sent Events.
+	// (POST /v1/events/watch)
+	WatchEvents(ctx context.Context, request WatchEventsRequestObject) (WatchEventsResponseObject, error)
 
 	// (POST /v1/operations)
 	StartOperation(ctx context.Context, request StartOperationRequestObject) (StartOperationResponseObject, error)
@@ -818,6 +995,37 @@ func (sh *strictHandler) GetContainer(ctx *gin.Context, containerID ContainerID)
 		sh.options.HandlerErrorFunc(ctx, err)
 	} else if validResponse, ok := response.(GetContainerResponseObject); ok {
 		if err := validResponse.VisitGetContainerResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// WatchEvents operation middleware
+func (sh *strictHandler) WatchEvents(ctx *gin.Context) {
+	var request WatchEventsRequestObject
+
+	var body WatchEventsJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(ctx, err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.WatchEvents(ctx, request.(WatchEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "WatchEvents")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(WatchEventsResponseObject); ok {
+		if err := validResponse.VisitWatchEventsResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {

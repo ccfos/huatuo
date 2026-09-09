@@ -15,129 +15,98 @@
 package handlers
 
 import (
-	"sync"
-	"sync/atomic"
+	"bytes"
+	"context"
+	"errors"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 
+	apiv1 "huatuo-bamai/apis/v1"
+	nodeapi "huatuo-bamai/apis/v1/node"
+	nodecloudevents "huatuo-bamai/internal/nodeagent/cloudevents"
+	"huatuo-bamai/internal/server/response"
 	tracingstore "huatuo-bamai/pkg/tracing/store"
-	"huatuo-bamai/pkg/types"
-
-	"github.com/stretchr/testify/require"
 )
 
-func TestEventsHandler_AcquireClientConcurrent(t *testing.T) {
+func TestWatchEventsRejectsInvalidFilter(t *testing.T) {
+	handler := newTestNodeAPIHandler(t, time.Second)
+	invalidPattern := "[invalid"
+	_, err := handler.WatchEvents(t.Context(), nodeapi.WatchEventsRequestObject{
+		Body: &nodeapi.WatchEventsJSONRequestBody{
+			Filters: &nodeapi.WatchEventFilters{TracerName: &invalidPattern},
+		},
+	})
+	var apiErr *response.APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != apiv1.ErrorCodeInvalidRequest {
+		t.Fatalf("WatchEvents() error = %v, want invalid_request", err)
+	}
+}
+
+func TestWatchEventsWritesHeartbeat(t *testing.T) {
+	handler := newTestNodeAPIHandler(t, time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
+	stream, err := handler.WatchEvents(ctx, nodeapi.WatchEventsRequestObject{
+		Body: &nodeapi.WatchEventsJSONRequestBody{},
+	})
+	if err != nil {
+		t.Fatalf("WatchEvents() error = %v", err)
+	}
+	writer := &cancelingResponseWriter{header: make(http.Header), cancel: cancel}
+	if err := stream.VisitWatchEventsResponse(writer); err != nil {
+		t.Fatalf("VisitWatchEventsResponse() error = %v", err)
+	}
+
+	if writer.status != http.StatusOK {
+		t.Errorf("status = %d, want 200", writer.status)
+	}
+	if got := writer.header.Get("Content-Type"); got != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", got)
+	}
+	if got := writer.header.Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", got)
+	}
+	if got := writer.header.Get("X-Accel-Buffering"); got != "no" {
+		t.Errorf("X-Accel-Buffering = %q, want no", got)
+	}
+	if got := writer.body.String(); !strings.Contains(got, ": ping\n") {
+		t.Errorf("body = %q, want heartbeat", got)
+	}
+}
+
+type cancelingResponseWriter struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+	cancel context.CancelFunc
+}
+
+func (w *cancelingResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *cancelingResponseWriter) Write(data []byte) (int, error) {
+	return w.body.Write(data)
+}
+
+func (w *cancelingResponseWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *cancelingResponseWriter) Flush() {
+	w.cancel()
+}
+
+func newTestCloudEventsService(t *testing.T, maxSubscriptions int) *nodecloudevents.Service {
+	t.Helper()
 	store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{})
-	require.NoError(t, err)
-	h := NewEventsHandler(store, 1, 30)
-	start := make(chan struct{})
-	var acquired atomic.Int32
-	var wg sync.WaitGroup
-
-	for i := 0; i < 64; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			if h.tryAcquirePermit() {
-				acquired.Add(1)
-			}
-		}()
+	if err != nil {
+		t.Fatalf("tracingstore.NewFromConfig() error = %v", err)
 	}
-
-	close(start)
-	wg.Wait()
-
-	require.Equal(t, int32(1), acquired.Load())
-	require.Equal(t, int32(1), h.activeClients.Load())
-
-	h.releasePermit()
-	require.Equal(t, int32(0), h.activeClients.Load())
-}
-
-// --- WatchFilters.matcher() ---
-
-func TestWatchFilters_Matcher_Empty(t *testing.T) {
-	wf := WatchFilters{}
-	m, err := wf.matcher()
-
-	require.NoError(t, err)
-	require.NotNil(t, m)
-	// empty matcher matches everything
-	require.True(t, m.Match(testTracingDocument(&types.Document{TracerName: "any"})))
-}
-
-func TestWatchFilters_Matcher_ValidPattern(t *testing.T) {
-	wf := WatchFilters{TracerName: "^cpu$"}
-	m, err := wf.matcher()
-
-	require.NoError(t, err)
-	require.True(t, m.Match(testTracingDocument(&types.Document{TracerName: "cpu"})))
-	require.False(t, m.Match(testTracingDocument(&types.Document{TracerName: "mem"})))
-}
-
-func TestWatchFilters_Matcher_InvalidPattern(t *testing.T) {
-	wf := WatchFilters{TracerName: "[invalid"}
-	_, err := wf.matcher()
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "tracer_name")
-}
-
-func TestWatchFilters_Matcher_AllFields(t *testing.T) {
-	wf := WatchFilters{
-		TracerName:             "cpu",
-		Hostname:               "node-1",
-		ContainerHostname:      "app",
-		ContainerHostNamespace: "prod",
-		Region:                 "cn",
+	service, err := nodecloudevents.New(store, maxSubscriptions)
+	if err != nil {
+		t.Fatalf("cloudevents.New() error = %v", err)
 	}
-	m, err := wf.matcher()
-
-	require.NoError(t, err)
-
-	match := testTracingDocument(&types.Document{
-		TracerName:             "cpu",
-		Hostname:               "node-1",
-		ContainerHostname:      "app-123",
-		ContainerHostNamespace: "prod-ns",
-		Region:                 "cn-north",
-	})
-	require.True(t, m.Match(match))
-
-	noMatch := testTracingDocument(&types.Document{
-		TracerName:             "mem",
-		Hostname:               "node-1",
-		ContainerHostname:      "app-123",
-		ContainerHostNamespace: "prod-ns",
-		Region:                 "cn-north",
-	})
-	require.False(t, m.Match(noMatch))
-}
-
-func TestWatchFilters_Matcher_HostnameFilter(t *testing.T) {
-	wf := WatchFilters{Hostname: "^node-[0-9]+$"}
-	m, _ := wf.matcher()
-
-	require.True(t, m.Match(testTracingDocument(&types.Document{Hostname: "node-42"})))
-	require.False(t, m.Match(testTracingDocument(&types.Document{Hostname: "worker-1"})))
-}
-
-func TestWatchFilters_Matcher_ContainerHostnameFilter(t *testing.T) {
-	wf := WatchFilters{ContainerHostname: "^app-.*"}
-	m, _ := wf.matcher()
-
-	require.True(t, m.Match(testTracingDocument(&types.Document{ContainerHostname: "app-123"})))
-	require.False(t, m.Match(testTracingDocument(&types.Document{ContainerHostname: "db-456"})))
-}
-
-func TestWatchFilters_Matcher_RegionFilter(t *testing.T) {
-	wf := WatchFilters{Region: "^cn"}
-	m, _ := wf.matcher()
-
-	require.True(t, m.Match(testTracingDocument(&types.Document{Region: "cn-north"})))
-	require.False(t, m.Match(testTracingDocument(&types.Document{Region: "us-east"})))
-}
-
-func testTracingDocument(document *types.Document) *tracingstore.Document {
-	return &tracingstore.Document{Document: *document}
+	return service
 }

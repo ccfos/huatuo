@@ -25,16 +25,7 @@ import (
 )
 
 func TestNodeRouterTokenAuthentication(t *testing.T) {
-	manager := newTestOperationManager(t)
-	profilingService, tracingService := newTestNodeServices(t, manager)
-	nodeHandler, err := NewNodeAPIHandler(
-		manager,
-		profilingService,
-		tracingService,
-	)
-	if err != nil {
-		t.Fatalf("NewNodeAPIHandler() error = %v", err)
-	}
+	nodeHandler := newTestNodeAPIHandler(t, time.Second)
 	nodeHandler.containerByID = func(string) (*pod.Container, error) { return nil, nil }
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
