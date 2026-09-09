@@ -183,7 +183,7 @@ compose-dev-down:
 	@$(COMPOSE_DEV) down --remove-orphans --volumes
 	@docker image rm huatuo/huatuo-bamai:dev || true
 
-check: $(BPF_BUILD_STAMP)
+check: vendor $(BPF_BUILD_STAMP)
 	@$(check-openapi)
 	@set -eu; $(generate-non-openapi)
 	@set -eu; $(format-sources)
