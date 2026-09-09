@@ -120,10 +120,10 @@ The project supports kernel version 4.18 and later. The following kernel and OS 
 
 For more information, visit [https://docs.huatuo.tech](https://docs.huatuo.tech/)
 
-## Community Co-Building
+## Co-Building
 
 - ❇️ We welcome all users, developers, companies, and organizations to use Huatuo, report bugs, submit feature requests, share best practices, and help us build a professional and vibrant open-source community.
-- ❤️ HUATUO Contributors
+- ❤️ Contributors
 <a href="https://github.com/ccfos/huatuo/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
 </a>

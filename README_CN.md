@@ -130,7 +130,7 @@ func newNodeClient() (*client.NodeClient, error) {
 
 ## 社区共建
 - ❇️ 真诚欢迎每一位用户、开发者、公司以及组织，使用华佗监控、积极反馈 Bug、提交功能需求、分享最佳实践，共建专业、活跃的华佗开源社区。
-- ❤️ 华佗贡献者
+- ❤️ 贡献者
 <a href="https://github.com/ccfos/huatuo/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
 </a>
