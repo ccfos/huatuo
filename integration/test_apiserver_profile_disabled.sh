@@ -97,7 +97,8 @@ integration_huatuo_apiserver_start write_apiserver_without_profile_storage_confi
 	--log-debug
 assert_profile_routes_require_authentication
 assert_profile_api_without_storage \
-	"/v1/profiling" '.data.total == 0 and (.data.items | length) == 0' \
+	"/v1/profiling" \
+	'.data.limit == 100 and .data.offset == 0 and .data.has_more == false and (.data.items | length) == 0' \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/profile-list.json"
 assert_profile_api_without_storage \
 	"/v1/profiling/capabilities" '(.data.items | length) > 0' \
