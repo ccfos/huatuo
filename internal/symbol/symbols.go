@@ -421,7 +421,7 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable
 	state.symbolCount += symbolCount
 	state.nameBytes += nameBytes
 	state.metadataSections[sectionID] = struct{}{}
-	if len(pcs) == 0 {
+	if len(pcs) == 0 && !isCompressedELFSection(stringsSection) {
 		state.metadataSections[stringsID] = struct{}{}
 	}
 	if cachedNames == nil {
@@ -477,7 +477,8 @@ func (state *elfSymbolParseState) checkSymbolLimits(f *elf.File, section, string
 
 	var metadataBytes uint64
 	metadataSections := []*elf.Section{section}
-	if allSymbols {
+	// Compressed strings are charged per uncached read, not reserved here.
+	if allSymbols && !isCompressedELFSection(stringsSection) {
 		metadataSections = append(metadataSections, stringsSection)
 	}
 	for _, candidate := range metadataSections {

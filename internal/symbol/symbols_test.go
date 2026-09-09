@@ -1027,6 +1027,59 @@ func TestELFCompressedStringWorkIsCumulative(t *testing.T) {
 	}
 }
 
+func TestELFFullTableCompressedBudget(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {
+			for _, shortBy := range []uint64{0, 1} {
+				stringTable := []byte("\x00target\x00")
+				image := elf64SymbolImage(t,
+					elf64SymbolTableFixture{
+						typ: elf.SHT_SYMTAB, compressed: !legacy, legacyCompressed: legacy,
+						stringTable: stringTable, nameOffsets: []uint32{1, 1},
+					},
+					elf64SymbolTableFixture{
+						typ:         elf.SHT_DYNSYM,
+						stringTable: []byte("\x00.zdebug_str\x00"), nameOffsets: []uint32{1},
+					},
+				)
+				if legacy {
+					var header elf.Header64
+					if err := binary.Read(bytes.NewReader(image), binary.LittleEndian, &header); err != nil {
+						t.Fatal(err)
+					}
+					header.Shstrndx = 3
+					copy(image, encodeELFStruct(t, header))
+					binary.LittleEndian.PutUint32(image[header.Shoff+uint64(header.Shentsize):], 1)
+				}
+				f, err := elf.NewFile(bytes.NewReader(image))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { f.Close() })
+				limits := DefaultELFSymbolLimits()
+				limits.MaxMetadataBytes = 3*elf.Sym64Size + uint64(len(stringTable)) - shortBy
+				state := newELFSymbolParseState(limits)
+				got, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB})
+				if shortBy != 0 {
+					if !errors.Is(err, errELFSymbolLimit) || len(got) != 0 {
+						t.Fatalf("short budget: got %v, err %v", got, err)
+					}
+					continue
+				}
+				if err != nil || len(got) != 2 || got[0].Name != "target" || got[1].Name != "target" {
+					t.Fatalf("exact budget: got %v, err %v", got, err)
+				}
+				if state.metadataBytes != limits.MaxMetadataBytes {
+					t.Fatalf("charged %d bytes, want %d", state.metadataBytes, limits.MaxMetadataBytes)
+				}
+				if _, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}); err != nil {
+					t.Fatalf("cached full-table parse: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestELFLegacyCompressedStringOffsetsAndBudget(t *testing.T) {
 	const nameOffset = 4096
 	stringsData := append(make([]byte, nameOffset), []byte("target\x00")...)
