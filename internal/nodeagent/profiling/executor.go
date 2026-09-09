@@ -19,21 +19,21 @@ import (
 	"errors"
 	"fmt"
 
-	"huatuo-bamai/internal/nodeagent/command"
+	"huatuo-bamai/internal/exec"
 	"huatuo-bamai/internal/nodeagent/operation"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/types"
 )
 
 type executor struct {
-	process   *command.Process
+	process   *exec.Process
 	stream    *toolstream.Server
 	publisher ResultPublisher
 	requestID string
 }
 
 func newExecutor(
-	process *command.Process,
+	process *exec.Process,
 	stream *toolstream.Server,
 	publisher ResultPublisher,
 	requestID string,
@@ -59,7 +59,7 @@ func (e *executor) Start(ctx context.Context) error {
 
 func (e *executor) Wait() error {
 	err := e.process.Wait()
-	if errors.Is(err, command.ErrStopped) {
+	if errors.Is(err, exec.ErrStopped) {
 		return errors.Join(operation.ErrStopped, err)
 	}
 	if err != nil {
@@ -97,9 +97,15 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) er
 }
 
 func (e *executor) withOutput(action string, err error) error {
-	output := e.process.OutputTail()
-	if output == "" {
+	output := e.process.Output()
+	if stderr := e.process.Err(); len(stderr) > 0 {
+		if len(output) > 0 {
+			output = append(output, '\n')
+		}
+		output = append(output, stderr...)
+	}
+	if len(output) == 0 {
 		return fmt.Errorf("%s: %w", action, err)
 	}
-	return fmt.Errorf("%s: %w; output tail: %s", action, err, output)
+	return fmt.Errorf("%s: %w; output: %s", action, err, output)
 }

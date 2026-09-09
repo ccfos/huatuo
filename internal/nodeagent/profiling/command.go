@@ -18,12 +18,12 @@ import (
 	"strconv"
 	"time"
 
-	"huatuo-bamai/internal/nodeagent/command"
+	"huatuo-bamai/internal/exec"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
 )
 
-func buildCommand(request *StartRequest, config *Config) (command.Spec, error) {
+func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
 	durationSeconds := int64(request.Duration / time.Second)
 	aggregationInterval := min(config.AggregationInterval, request.Duration)
 	if request.Spec.Language == profilingdomain.LanguagePython {
@@ -62,9 +62,9 @@ func buildCommand(request *StartRequest, config *Config) (command.Spec, error) {
 		args = append(args, "--tool-path", config.PythonToolPath)
 	}
 
-	return command.Spec{
-		Path:        config.ProfilerPath,
-		Args:        args,
-		OutputLimit: config.CommandOutputLimitBytes,
+	return exec.Spec{
+		Path:           config.ProfilerPath,
+		Args:           args,
+		MaxOutputBytes: config.CommandOutputLimitBytes,
 	}, nil
 }

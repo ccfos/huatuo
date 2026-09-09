@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/nodeagent/command"
+	"huatuo-bamai/internal/exec"
 	"huatuo-bamai/internal/nodeagent/operation"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/observation"
@@ -104,7 +104,7 @@ func (s *Service) Start(
 	if err != nil {
 		return nil, false, err
 	}
-	process, err := command.New(commandSpec)
+	process, err := exec.New(commandSpec)
 	if err != nil {
 		return nil, false, fmt.Errorf("%w: build profiler process: %w", ErrInvalidRequest, err)
 	}

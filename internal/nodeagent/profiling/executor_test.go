@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"huatuo-bamai/internal/nodeagent/command"
+	"huatuo-bamai/internal/exec"
 	"huatuo-bamai/internal/nodeagent/operation"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/types"
@@ -39,12 +39,11 @@ func TestExecutorClearsExpectedSessionWhenProcessStartFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("toolstream.NewServer() error = %v", err)
 	}
-	process, err := command.New(command.Spec{
-		Path:        filepath.Join(t.TempDir(), "missing-profiler"),
-		OutputLimit: 1024,
+	process, err := exec.New(exec.Spec{
+		Path: filepath.Join(t.TempDir(), "missing-profiler"),
 	})
 	if err != nil {
-		t.Fatalf("command.New() error = %v", err)
+		t.Fatalf("exec.New() error = %v", err)
 	}
 	publisher := &fakeResultPublisher{}
 	executor := newExecutor(process, stream, publisher, "job-1")
@@ -66,9 +65,9 @@ func TestExecutorFinalizeDiscardCancelsSessionWithoutPublishing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("toolstream.NewServer() error = %v", err)
 	}
-	process, err := command.New(command.Spec{Path: "/bin/true", OutputLimit: 1024})
+	process, err := exec.New(exec.Spec{Path: "/bin/true"})
 	if err != nil {
-		t.Fatalf("command.New() error = %v", err)
+		t.Fatalf("exec.New() error = %v", err)
 	}
 	publisher := &fakeResultPublisher{}
 	executor := newExecutor(process, stream, publisher, "job-1")

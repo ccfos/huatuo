@@ -84,8 +84,8 @@ func TestBuildCommandUsesTypedRequestWithoutShellExpansion(t *testing.T) {
 	if spec.Path != config.ProfilerPath || !slices.Equal(spec.Args, want) {
 		t.Fatalf("command spec = %+v, want args %q", spec, want)
 	}
-	if spec.OutputLimit != config.CommandOutputLimitBytes {
-		t.Fatalf("OutputLimit = %d", spec.OutputLimit)
+	if spec.MaxOutputBytes != config.CommandOutputLimitBytes {
+		t.Fatalf("MaxOutputBytes = %d", spec.MaxOutputBytes)
 	}
 }
 
