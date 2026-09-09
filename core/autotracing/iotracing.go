@@ -449,11 +449,18 @@ func (i *ioTracing) Start(ctx context.Context) error {
 	}
 	if err := process.Run(ctx); err != nil {
 		pendingReasons.Delete(taskID)
-		if ctx.Err() != nil {
+		if errors.Is(err, exec.ErrStopFailed) {
+			stopErr := process.Stop(ctx)
+			if stopErr == nil {
+				log.Info("iotracing stopped")
+				return nil
+			}
+			err = errors.Join(err, fmt.Errorf("retry stop iotracing: %w", stopErr))
+		} else if ctx.Err() != nil {
 			log.Info("iotracing stopped")
 			return nil
 		}
-		if stderr := process.Err(); len(stderr) > 0 {
+		if stderr := process.Stderr(); len(stderr) > 0 {
 			return fmt.Errorf("run iotracing: %w; stderr: %s", err, stderr)
 		}
 		return fmt.Errorf("run iotracing: %w", err)

@@ -31,12 +31,13 @@ func TestRunPerfCommand(t *testing.T) {
 	})
 
 	tests := []struct {
-		name        string
-		script      string
-		request     perfRequest
-		wantOutput  []string
-		wantError   string
-		wantMissing string
+		name             string
+		script           string
+		request          perfRequest
+		wantOutput       []string
+		wantError        string
+		wantMissing      string
+		wantErrorMissing string
 	}{
 		{
 			name:   "system wide",
@@ -74,7 +75,7 @@ exit 0
 		{
 			name: "failed command truncates diagnostics",
 			script: `#!/bin/sh
-head -c 5000 /dev/zero | tr '\000' x
+head -c 5000 /dev/zero | tr '\000' x >&2
 exit 2
 `,
 			request: perfRequest{
@@ -82,6 +83,19 @@ exit 2
 				containerID: "0123456789ab",
 			},
 			wantError: "(truncated)",
+		},
+		{
+			name: "failed command uses stderr diagnostics",
+			script: `#!/bin/sh
+printf 'partial result'
+printf 'perf failed' >&2
+exit 2
+`,
+			request: perfRequest{
+				duration: time.Second,
+			},
+			wantError:        "perf failed",
+			wantErrorMissing: "partial result",
 		},
 	}
 
@@ -104,6 +118,14 @@ exit 2
 			if tt.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 					t.Fatalf("runPerfCommand() error = %v, want contain %q", err, tt.wantError)
+				}
+				if tt.wantErrorMissing != "" &&
+					strings.Contains(err.Error(), tt.wantErrorMissing) {
+					t.Fatalf(
+						"runPerfCommand() error = %v, want exclude %q",
+						err,
+						tt.wantErrorMissing,
+					)
 				}
 				return
 			}

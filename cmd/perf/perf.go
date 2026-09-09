@@ -171,7 +171,7 @@ func main() {
 	})
 
 	if err := app.Run(os.Args); err != nil {
-		fmt.Printf("perf: %v\n", err)
+		fmt.Fprintf(os.Stderr, "perf: %v\n", err)
 		os.Exit(1)
 	}
 }

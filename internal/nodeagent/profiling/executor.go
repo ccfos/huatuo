@@ -97,8 +97,8 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) er
 }
 
 func (e *executor) withOutput(action string, err error) error {
-	output := e.process.Output()
-	if stderr := e.process.Err(); len(stderr) > 0 {
+	output := e.process.Stdout()
+	if stderr := e.process.Stderr(); len(stderr) > 0 {
 		if len(output) > 0 {
 			output = append(output, '\n')
 		}

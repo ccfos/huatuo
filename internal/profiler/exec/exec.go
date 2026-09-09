@@ -145,14 +145,14 @@ func runCommand(
 		return result
 	}
 	result.Err = process.Run(ctx)
-	result.Output = process.Output()
-	result.Diagnostics = process.Err()
+	result.Output = process.Stdout()
+	result.Diagnostics = process.Stderr()
 	return result
 }
 
 func combinedOutput(process *managedexec.Process) []byte {
-	output := process.Output()
-	stderr := process.Err()
+	output := process.Stdout()
+	stderr := process.Stderr()
 	if len(output) == 0 {
 		return stderr
 	}

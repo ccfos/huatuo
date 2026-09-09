@@ -29,6 +29,9 @@ import (
 // ErrStopped reports that Stop terminated the command with a signal.
 var ErrStopped = errors.New("exec: command stopped")
 
+// ErrStopFailed reports that context-triggered process termination failed.
+var ErrStopFailed = errors.New("exec: stop failed")
+
 var errProcessNotInitialized = errors.New("process is not initialized")
 
 const (
@@ -60,6 +63,12 @@ const (
 	processStateStartFailed
 )
 
+// Closing done publishes the immutable error to every waiter.
+type lifecycleResult struct {
+	done chan struct{}
+	err  error
+}
+
 // Process owns one command lifecycle. It must be created with New and cannot be
 // restarted; methods on its zero value return an initialization error.
 type Process struct {
@@ -70,13 +79,10 @@ type Process struct {
 	mu              sync.Mutex
 	state           processState
 	pid             int
-	startDone       chan struct{}
-	startErr        error
-	waitDone        chan struct{}
-	waitErr         error
+	start           lifecycleResult
+	wait            lifecycleResult
 	isStopRequested bool
-	stopDone        chan struct{}
-	stopErr         error
+	stopAttempt     *lifecycleResult
 	startCommand    func(*osexec.Cmd) error
 	forceStop       func(int) error
 }
@@ -99,8 +105,8 @@ func New(spec Spec) (*Process, error) { //nolint:gocritic // Spec is at the proj
 		spec:         spec,
 		output:       newOutputBuffer(spec.MaxOutputBytes),
 		state:        processStateNew,
-		startDone:    make(chan struct{}),
-		waitDone:     make(chan struct{}),
+		start:        lifecycleResult{done: make(chan struct{})},
+		wait:         lifecycleResult{done: make(chan struct{})},
 		startCommand: (*osexec.Cmd).Start,
 		forceStop:    forceStopProcessGroup,
 	}, nil
@@ -181,22 +187,25 @@ func (p *Process) Start(ctx context.Context) error {
 	go p.reap(cmd)
 	if launchErr == nil {
 		p.state = processStateRunning
-		close(p.startDone)
+		close(p.start.done)
 	}
 	p.mu.Unlock()
 
 	if launchErr == nil {
 		return nil
 	}
+	return p.finishCanceledStart(launchErr, cmd.Process.Pid)
+}
 
-	forceErr := p.forceStopAndWait(cmd.Process.Pid, p.waitDone)
+func (p *Process) finishCanceledStart(launchErr error, pid int) error {
+	forceErr := wrapStopFailure(p.forceStopAndWait(pid, p.wait.done))
 
 	p.mu.Lock()
 	var waitErr error
-	if forceErr == nil && !errors.Is(p.waitErr, ErrStopped) {
-		waitErr = p.waitErr
+	if forceErr == nil && !errors.Is(p.wait.err, ErrStopped) {
+		waitErr = p.wait.err
 	}
-	p.startErr = errors.Join(
+	p.start.err = errors.Join(
 		fmt.Errorf("start command %q: %w", p.spec.Path, launchErr),
 		forceErr,
 		waitErr,
@@ -205,14 +214,14 @@ func (p *Process) Start(ctx context.Context) error {
 		p.state = processStateStartFailed
 	} else {
 		select {
-		case <-p.waitDone:
+		case <-p.wait.done:
 			p.state = processStateExited
 		default:
 			p.state = processStateRunning
 		}
 	}
-	close(p.startDone)
-	startErr := p.startErr
+	close(p.start.done)
+	startErr := p.start.err
 	p.mu.Unlock()
 	return startErr
 }
@@ -220,10 +229,10 @@ func (p *Process) Start(ctx context.Context) error {
 func (p *Process) failStart(err error) error {
 	p.mu.Lock()
 	p.state = processStateStartFailed
-	p.startErr = err
-	p.waitErr = err
-	close(p.startDone)
-	close(p.waitDone)
+	p.start.err = err
+	p.wait.err = err
+	close(p.start.done)
+	close(p.wait.done)
 	p.mu.Unlock()
 	return err
 }
@@ -237,11 +246,11 @@ func (p *Process) reap(cmd *osexec.Cmd) {
 	} else if err != nil {
 		err = fmt.Errorf("wait for command %q: %w", p.spec.Path, err)
 	}
-	p.waitErr = err
+	p.wait.err = err
 	if p.state == processStateRunning {
 		p.state = processStateExited
 	}
-	close(p.waitDone)
+	close(p.wait.done)
 	p.mu.Unlock()
 }
 
@@ -259,15 +268,15 @@ func (p *Process) Wait() error {
 			p.mu.Unlock()
 			return fmt.Errorf("wait for command %q: process has not been started", p.spec.Path)
 		case processStateStarting:
-			done := p.startDone
+			done := p.start.done
 			p.mu.Unlock()
 			<-done
 		case processStateStartFailed:
-			err := p.startErr
+			err := p.start.err
 			p.mu.Unlock()
 			return err
 		case processStateRunning, processStateExited:
-			done := p.waitDone
+			done := p.wait.done
 			p.mu.Unlock()
 			<-done
 			return p.waitResult()
@@ -285,10 +294,10 @@ func (p *Process) waitResult() error {
 func (p *Process) processResult() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.startErr != nil {
-		return p.startErr
+	if p.start.err != nil {
+		return p.start.err
 	}
-	return p.waitErr
+	return p.wait.err
 }
 
 func (p *Process) outputError() error {
@@ -322,33 +331,42 @@ func (p *Process) Stop(ctx context.Context) error {
 		p.mu.Unlock()
 		return nil
 	}
-	if p.stopDone != nil {
-		done := p.stopDone
-		p.mu.Unlock()
+	if attempt := p.stopAttempt; attempt != nil {
 		select {
-		case <-done:
-			p.mu.Lock()
-			err := p.stopErr
+		case <-attempt.done:
+			if attempt.err == nil {
+				p.mu.Unlock()
+				return nil
+			}
+		default:
 			p.mu.Unlock()
-			return err
-		case <-ctx.Done():
-			return fmt.Errorf("wait for command %q stop: %w", p.spec.Path, ctx.Err())
+			return p.waitForStopAttempt(ctx, attempt)
 		}
 	}
 
 	p.isStopRequested = true
-	p.stopDone = make(chan struct{})
+	attempt := &lifecycleResult{done: make(chan struct{})}
+	p.stopAttempt = attempt
 	pid := p.pid
-	waitDone := p.waitDone
+	waitDone := p.wait.done
 	p.mu.Unlock()
 
 	err := p.stopProcessGroup(ctx, pid, waitDone)
 
 	p.mu.Lock()
-	p.stopErr = err
-	close(p.stopDone)
+	attempt.err = err
+	close(attempt.done)
 	p.mu.Unlock()
 	return err
+}
+
+func (p *Process) waitForStopAttempt(ctx context.Context, attempt *lifecycleResult) error {
+	select {
+	case <-attempt.done:
+		return attempt.err
+	case <-ctx.Done():
+		return fmt.Errorf("wait for command %q stop: %w", p.spec.Path, ctx.Err())
+	}
 }
 
 func (p *Process) stopProcessGroup(ctx context.Context, pid int, waitDone <-chan struct{}) error {
@@ -395,6 +413,13 @@ func wrapSignalError(action, path string, err error) error {
 	return fmt.Errorf("%s command %q process group: %w", action, path, err)
 }
 
+func wrapStopFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrStopFailed, err)
+}
+
 // Run starts the command and waits for it. If ctx is canceled after launch,
 // Spec.StopGracePeriod controls when Stop escalates from SIGTERM to SIGKILL.
 func (p *Process) Run(ctx context.Context) error {
@@ -406,11 +431,11 @@ func (p *Process) Run(ctx context.Context) error {
 	}
 
 	select {
-	case <-p.waitDone:
+	case <-p.wait.done:
 		return p.waitResult()
 	case <-ctx.Done():
 		select {
-		case <-p.waitDone:
+		case <-p.wait.done:
 			return p.waitResult()
 		default:
 		}
@@ -419,28 +444,34 @@ func (p *Process) Run(ctx context.Context) error {
 			context.WithoutCancel(ctx),
 			p.spec.StopGracePeriod,
 		)
-		stopErr := p.Stop(stopCtx)
+		stopErr := wrapStopFailure(p.Stop(stopCtx))
 		cancel()
-		<-p.waitDone
+		runErr := fmt.Errorf("run command %q: %w", p.spec.Path, ctx.Err())
+		if stopErr != nil {
+			return errors.Join(
+				runErr,
+				stopErr,
+				p.outputError(),
+			)
+		}
 		waitErr := p.processResult()
 		if errors.Is(waitErr, ErrStopped) {
 			waitErr = nil
 		}
 		return errors.Join(
-			fmt.Errorf("run command %q: %w", p.spec.Path, ctx.Err()),
-			stopErr,
+			runErr,
 			waitErr,
 			p.outputError(),
 		)
 	}
 }
 
-// Output returns a copy of the retained standard output.
-func (p *Process) Output() []byte {
+// Stdout returns a copy of the retained standard output.
+func (p *Process) Stdout() []byte {
 	return p.output.Bytes()
 }
 
-// Err returns a copy of the newest 64 KiB written to standard error.
-func (p *Process) Err() []byte {
+// Stderr returns a copy of the newest 64 KiB written to standard error.
+func (p *Process) Stderr() []byte {
 	return p.stderr.Bytes()
 }

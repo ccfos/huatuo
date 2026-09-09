@@ -24,6 +24,7 @@
 package hccn
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -40,6 +41,7 @@ var hccnSemaphore = make(chan struct{}, 32)
 const (
 	hccnTool           = "/usr/local/Ascend/driver/tools/hccn_tool"
 	maxHCCNOutputBytes = 1024 * 1024
+	maxHCCNErrorBytes  = 4096
 )
 
 func getInfoFromHccnTool(args ...string) (string, error) {
@@ -67,13 +69,45 @@ func runHCCNCommand(ctx context.Context, tool string, args ...string) (string, e
 		return "", fmt.Errorf("build hccn_tool command: %w", err)
 	}
 	if err := process.Run(ctx); err != nil {
-		if stderr := process.Err(); len(stderr) > 0 {
-			return "", fmt.Errorf("hccn_tool %v failed: %w; stderr: %s", args, err, stderr)
-		}
-		return "", fmt.Errorf("hccn_tool %v failed: %w", args, err)
+		return "", hccnCommandError(
+			args,
+			process.Stdout(),
+			process.Stderr(),
+			err,
+		)
 	}
 
-	return string(process.Output()), nil
+	return string(process.Stdout()), nil
+}
+
+func hccnCommandError(args []string, stdout, stderr []byte, err error) error {
+	stdout = bytes.TrimSpace(stdout)
+	stderr = bytes.TrimSpace(stderr)
+	isTruncated := len(stdout)+len(stderr) > maxHCCNErrorBytes
+	if len(stderr) >= maxHCCNErrorBytes {
+		stderr = stderr[len(stderr)-maxHCCNErrorBytes:]
+		stdout = nil
+	} else if isTruncated {
+		stdout = stdout[:maxHCCNErrorBytes-len(stderr)]
+	}
+
+	errorOutput := ""
+	if len(stdout) > 0 {
+		errorOutput = "stdout=" + strconv.Quote(string(stdout))
+	}
+	if len(stderr) > 0 {
+		if errorOutput != "" {
+			errorOutput += "; "
+		}
+		errorOutput += "stderr=" + strconv.Quote(string(stderr))
+	}
+	if errorOutput == "" {
+		return fmt.Errorf("hccn_tool %v failed: %w", args, err)
+	}
+	if isTruncated {
+		errorOutput += " (truncated)"
+	}
+	return fmt.Errorf("hccn_tool %v failed: %w; %s", args, err, errorOutput)
 }
 
 // GetLinkStatus returns the link status ("UP" or "DOWN") for the given phyID.

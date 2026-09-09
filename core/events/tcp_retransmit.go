@@ -81,10 +81,21 @@ func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
 		return fmt.Errorf("create %s process: %w", tcpSharkToolName, err)
 	}
 	if err := process.Run(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, exec.ErrStopFailed) {
+			stopErr := process.Stop(ctx)
+			if stopErr == nil && errors.Is(err, context.Canceled) {
+				return nil
+			}
+			if stopErr != nil {
+				err = errors.Join(
+					err,
+					fmt.Errorf("retry stop %s: %w", tcpSharkToolName, stopErr),
+				)
+			}
+		} else if errors.Is(err, context.Canceled) {
 			return nil
 		}
-		if stderr := process.Err(); len(stderr) > 0 {
+		if stderr := process.Stderr(); len(stderr) > 0 {
 			return fmt.Errorf("run %s: %w; stderr: %s", tcpSharkToolName, err, stderr)
 		}
 		return fmt.Errorf("run %s: %w", tcpSharkToolName, err)

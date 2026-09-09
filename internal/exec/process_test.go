@@ -196,11 +196,11 @@ func TestProcessZeroValueReturnsInitializationError(t *testing.T) {
 	}
 
 	var process Process
-	if got := process.Output(); len(got) != 0 {
-		t.Errorf("Output() = %q, want empty output", got)
+	if got := process.Stdout(); len(got) != 0 {
+		t.Errorf("Stdout() = %q, want empty output", got)
 	}
-	if got := process.Err(); len(got) != 0 {
-		t.Errorf("Err() = %q, want empty output", got)
+	if got := process.Stderr(); len(got) != 0 {
+		t.Errorf("Stderr() = %q, want empty output", got)
 	}
 }
 
@@ -292,6 +292,9 @@ func TestProcessCanceledStartDoesNotWaitAfterForceStopFailure(t *testing.T) {
 	if !errors.Is(err, errTestSignal) {
 		t.Errorf("Start() error = %v, want force-stop failure", err)
 	}
+	if !errors.Is(err, ErrStopFailed) {
+		t.Errorf("Start() error = %v, want ErrStopFailed", err)
+	}
 
 	process.forceStop = realForceStop
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -314,8 +317,8 @@ func TestProcessReportsOutputOverflowAfterReaping(t *testing.T) {
 
 	payload := largeOutputPayload()
 	want := payload[:1024]
-	if got := string(process.Output()); got != want {
-		t.Errorf("Output() length = %d, want %d", len(got), len(want))
+	if got := string(process.Stdout()); got != want {
+		t.Errorf("Stdout() length = %d, want %d", len(got), len(want))
 	}
 }
 
@@ -328,40 +331,40 @@ func TestProcessRetainsFixedErrorTail(t *testing.T) {
 
 	payload := largeOutputPayload()
 	want := payload[len(payload)-maxErrorOutputBytes:]
-	if got := string(process.Err()); got != want {
-		t.Errorf("Err() length = %d, want %d", len(got), len(want))
+	if got := string(process.Stderr()); got != want {
+		t.Errorf("Stderr() length = %d, want %d", len(got), len(want))
 	}
 }
 
-func TestProcessSeparatesOutputFromError(t *testing.T) {
+func TestProcessSeparatesStdoutFromStderr(t *testing.T) {
 	process := newHelperProcess(t, "split-output")
 	startProcess(t, process)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("Wait() error = %v", err)
 	}
-	if got := string(process.Output()); got != "payload" {
-		t.Errorf("Output() = %q, want payload", got)
+	if got := string(process.Stdout()); got != "payload" {
+		t.Errorf("Stdout() = %q, want payload", got)
 	}
-	if got := string(process.Err()); got != "diagnostic" {
-		t.Errorf("Err() = %q, want diagnostic", got)
+	if got := string(process.Stderr()); got != "diagnostic" {
+		t.Errorf("Stderr() = %q, want diagnostic", got)
 	}
 }
 
-func TestProcessOutputAndErrorReturnCopies(t *testing.T) {
+func TestProcessStdoutAndStderrReturnCopies(t *testing.T) {
 	process := newHelperProcess(t, "split-output")
 	startProcess(t, process)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("Wait() error = %v", err)
 	}
-	output := process.Output()
-	stderr := process.Err()
+	output := process.Stdout()
+	stderr := process.Stderr()
 	output[0] = 'x'
 	stderr[0] = 'x'
-	if got := string(process.Output()); got != "payload" {
-		t.Errorf("Output() after caller mutation = %q, want payload", got)
+	if got := string(process.Stdout()); got != "payload" {
+		t.Errorf("Stdout() after caller mutation = %q, want payload", got)
 	}
-	if got := string(process.Err()); got != "diagnostic" {
-		t.Errorf("Err() after caller mutation = %q, want diagnostic", got)
+	if got := string(process.Stderr()); got != "diagnostic" {
+		t.Errorf("Stderr() after caller mutation = %q, want diagnostic", got)
 	}
 }
 
@@ -380,7 +383,7 @@ func TestProcessInheritsEnvironment(t *testing.T) {
 	if err := process.Wait(); err != nil {
 		t.Fatalf("Wait() error = %v", err)
 	}
-	if got := string(process.Output()); got != "inherited" {
+	if got := string(process.Stdout()); got != "inherited" {
 		t.Errorf("stdout = %q, want inherited environment value", got)
 	}
 }
@@ -399,15 +402,15 @@ func TestProcessReportsExecutionFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "exit status") {
 		t.Errorf("Wait() error = %v, want exit status", err)
 	}
-	if got := string(process.Err()); got != "helper failed" {
-		t.Errorf("Err() = %q, want failure diagnostic", got)
+	if got := string(process.Stderr()); got != "helper failed" {
+		t.Errorf("Stderr() = %q, want failure diagnostic", got)
 	}
 }
 
 func TestProcessGracefulStopAndRepeatedStop(t *testing.T) {
 	process := newHelperProcess(t, "graceful")
 	startProcess(t, process)
-	waitForOutput(t, process, helperReady)
+	waitForStdout(t, process, helperReady)
 
 	var waitGroup sync.WaitGroup
 	stopResults := make(chan error, 2)
@@ -430,15 +433,15 @@ func TestProcessGracefulStopAndRepeatedStop(t *testing.T) {
 	if err := process.Wait(); err != nil {
 		t.Errorf("Wait() error = %v, want nil for graceful exit", err)
 	}
-	if !strings.Contains(string(process.Output()), "helper-terminated") {
-		t.Errorf("Output() = %q, want graceful termination marker", process.Output())
+	if !strings.Contains(string(process.Stdout()), "helper-terminated") {
+		t.Errorf("Stdout() = %q, want graceful termination marker", process.Stdout())
 	}
 }
 
 func TestProcessStopEscalatesToForce(t *testing.T) {
 	process := newHelperProcess(t, "ignore-term")
 	startProcess(t, process)
-	waitForOutput(t, process, helperReady)
+	waitForStdout(t, process, helperReady)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -453,8 +456,8 @@ func TestProcessStopEscalatesToForce(t *testing.T) {
 func TestProcessStopTerminatesProcessGroup(t *testing.T) {
 	process := newHelperProcess(t, "process-group")
 	startProcess(t, process)
-	waitForOutput(t, process, helperReady)
-	childPID := childPIDFromOutput(t, string(process.Output()))
+	waitForStdout(t, process, helperReady)
+	childPID := childPIDFromStdout(t, string(process.Stdout()))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -513,7 +516,7 @@ func TestProcessStartContextDoesNotOwnLifetime(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 	cancel()
-	waitForOutput(t, process, helperReady)
+	waitForStdout(t, process, helperReady)
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer stopCancel()
@@ -530,8 +533,8 @@ func TestProcessRunWaitsForNaturalExit(t *testing.T) {
 	if err := process.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := string(process.Output()); got != "output" {
-		t.Errorf("Output() = %q, want output", got)
+	if got := string(process.Stdout()); got != "output" {
+		t.Errorf("Stdout() = %q, want output", got)
 	}
 }
 
@@ -542,12 +545,15 @@ func TestProcessRunStopsAfterCancellation(t *testing.T) {
 	go func() {
 		result <- process.Run(ctx)
 	}()
-	waitForOutput(t, process, helperReady)
+	waitForStdout(t, process, helperReady)
 	cancel()
 
 	err := receiveError(t, result)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+	if errors.Is(err, ErrStopFailed) {
+		t.Fatalf("Run() error = %v, do not want ErrStopFailed", err)
 	}
 	if err := process.Wait(); err != nil {
 		t.Errorf("Wait() error = %v, want graceful exit", err)
@@ -563,12 +569,59 @@ func TestProcessRunEscalatesAfterGracePeriod(t *testing.T) {
 	go func() {
 		result <- process.Run(ctx)
 	}()
-	waitForOutput(t, process, helperReady)
+	waitForStdout(t, process, helperReady)
 	cancel()
 
 	err := receiveError(t, result)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+	if errors.Is(err, ErrStopFailed) {
+		t.Fatalf("Run() error = %v, do not want ErrStopFailed", err)
+	}
+	if err := process.Wait(); !errors.Is(err, ErrStopped) {
+		t.Errorf("Wait() error = %v, want ErrStopped", err)
+	}
+}
+
+func TestProcessRunReturnsAfterStopFailureAndAllowsRetry(t *testing.T) {
+	process := newHelperProcessWithSpec(t, "ignore-term", &Spec{
+		StopGracePeriod: 50 * time.Millisecond,
+	})
+	realForceStop := process.forceStop
+	forceCalled := make(chan struct{})
+	process.forceStop = func(_ int) error {
+		close(forceCalled)
+		return errTestSignal
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- process.Run(ctx)
+	}()
+	waitForStdout(t, process, helperReady)
+	cancel()
+	select {
+	case <-forceCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for failed force stop")
+	}
+	process.forceStop = realForceStop
+
+	err := receiveError(t, result)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Run() error = %v, want context.Canceled", err)
+	}
+	if !errors.Is(err, errTestSignal) {
+		t.Errorf("Run() error = %v, want force-stop failure", err)
+	}
+	if !errors.Is(err, ErrStopFailed) {
+		t.Errorf("Run() error = %v, want ErrStopFailed", err)
+	}
+
+	if err := process.Stop(ctx); err != nil {
+		t.Fatalf("retry Stop() error = %v", err)
 	}
 	if err := process.Wait(); !errors.Is(err, ErrStopped) {
 		t.Errorf("Wait() error = %v, want ErrStopped", err)
@@ -696,24 +749,24 @@ func startProcess(t *testing.T, process *Process) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := process.Start(ctx); err != nil {
-		t.Fatalf("Start() error = %v; output=%q; stderr=%q", err, process.Output(), process.Err())
+		t.Fatalf("Start() error = %v; output=%q; stderr=%q", err, process.Stdout(), process.Stderr())
 	}
 }
 
-func waitForOutput(t *testing.T, process *Process, marker string) {
+func waitForStdout(t *testing.T, process *Process, marker string) {
 	t.Helper()
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
 	for {
-		if strings.Contains(string(process.Output()), marker) {
+		if strings.Contains(string(process.Stdout()), marker) {
 			return
 		}
 		select {
 		case <-ticker.C:
 		case <-timer.C:
-			t.Fatalf("timed out waiting for output %q; output=%q", marker, process.Output())
+			t.Fatalf("timed out waiting for output %q; output=%q", marker, process.Stdout())
 		}
 	}
 }
@@ -729,7 +782,7 @@ func receiveError(t *testing.T, result <-chan error) error {
 	}
 }
 
-func childPIDFromOutput(t *testing.T, output string) int {
+func childPIDFromStdout(t *testing.T, output string) int {
 	t.Helper()
 	index := strings.Index(output, "child=")
 	if index < 0 {
