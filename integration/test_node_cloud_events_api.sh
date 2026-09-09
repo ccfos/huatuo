@@ -21,8 +21,11 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 
 readonly EVENT_API_TOKEN="integration-node-token"
-readonly EVENT_CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
+readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
+readonly EVENT_STREAM_CURL_TIMEOUT=(--connect-timeout 2 --max-time 10)
 event_stream_pid=""
+event_capacity_status=""
+event_capacity_curl_status=0
 
 command -v curl > /dev/null || skip "curl command is not installed"
 command -v jq > /dev/null || skip "jq command is not installed"
@@ -38,13 +41,17 @@ HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 export HUATUO_BAMAI_ADDR HUATUO_BAMAI_METRICS_API
 
 cleanup() {
-	if [[ -n "${event_stream_pid}" ]]; then
-		kill "${event_stream_pid}" 2> /dev/null || true
-		wait "${event_stream_pid}" 2> /dev/null || true
-	fi
+	stop_event_stream
 	huatuo_bamai_stop
 }
 trap cleanup EXIT
+
+stop_event_stream() {
+	[[ -n "${event_stream_pid}" ]] || return 0
+	kill "${event_stream_pid}" 2> /dev/null || true
+	wait "${event_stream_pid}" 2> /dev/null || true
+	event_stream_pid=""
+}
 
 write_event_api_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
@@ -60,23 +67,36 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
 EOF
 }
 
+report_response() {
+	local label=$1 response_file=$2 error_file=$3
+	if [[ -r "${response_file}" ]]; then
+		log_info "${label} response: $(< "${response_file}")"
+	else
+		log_error "${label} response file missing: ${response_file}"
+	fi
+	if [[ -s "${error_file}" ]]; then
+		log_error "${label} curl error: $(< "${error_file}")"
+	fi
+}
+
 assert_error_response() {
 	local label=$1 content_type=$2 request_body=$3 expected_status=$4 expected_code=$5
 	local authenticated=$6
 	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/${label}.json"
+	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/${label}.curl-error"
 	local curl_status=0 status
 	local auth_args=()
 	if [[ "${authenticated}" == "true" ]]; then
 		auth_args=(-H "Authorization: Bearer ${EVENT_API_TOKEN}")
 	fi
 
-	status=$(curl -sS "${EVENT_CURL_TIMEOUT[@]}" -o "${response_file}" \
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" \
 		-w '%{http_code}' -X POST \
 		-H "Content-Type: ${content_type}" "${auth_args[@]}" \
 		"${HUATUO_BAMAI_ADDR}/v1/events/watch" \
-		-d "${request_body}") || curl_status=$?
+		-d "${request_body}" 2> "${error_file}") || curl_status=$?
+	report_response "${label}" "${response_file}" "${error_file}"
 	if [[ ${curl_status} -ne 0 ]]; then
-		log_error "${label} response: $(< "${response_file}")"
 		fatal "${label}: curl exited ${curl_status}"
 	fi
 	assert_eq "${status}" "${expected_status}" "${label} status" \
@@ -88,9 +108,15 @@ assert_error_response() {
 
 assert_openapi_contract() {
 	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/node-openapi.json"
-	curl -sSf "${EVENT_CURL_TIMEOUT[@]}" \
+	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/node-openapi.curl-error"
+	local curl_status=0 status
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
 		"${HUATUO_BAMAI_ADDR}/openapi.json" -o "${response_file}" \
-		|| fatal "GET /openapi.json failed"
+		-w '%{http_code}' 2> "${error_file}") || curl_status=$?
+	if [[ ${curl_status} -ne 0 || "${status}" != "200" ]]; then
+		report_response "GET /openapi.json" "${response_file}" "${error_file}"
+		fatal "GET /openapi.json: curl exited ${curl_status}, status ${status:-unavailable}"
+	fi
 	jq -e '
         .paths["/v1/events/watch"].post.responses["200"]
             .content["text/event-stream"]
@@ -98,40 +124,65 @@ assert_openapi_contract() {
 		|| fatal "Node OpenAPI omitted the CloudEvents SSE contract"
 }
 
-assert_event_stream_heartbeat() {
-	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/event-stream.body"
-	local headers_file="${HUATUO_BAMAI_TEST_TMPDIR}/event-stream.headers"
-	local status_file="${HUATUO_BAMAI_TEST_TMPDIR}/event-stream.status"
-	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/event-stream.error"
-	local curl_status=0 status
+assert_response_header() {
+	local headers_file=$1 name=$2 expected=$3
+	grep -qi "^${name}: ${expected}"$'\r$' "${headers_file}" \
+		|| fatal "event stream ${name} header is not ${expected}"
+}
 
-	curl -sS -N "${EVENT_CURL_TIMEOUT[@]}" -D "${headers_file}" \
+event_stream_capacity_is_released() {
+	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/event-capacity.body"
+	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/event-capacity.curl-error"
+	event_capacity_curl_status=0
+	event_capacity_status=$(curl -sS -N "${CURL_TIMEOUT[@]}" \
 		-o "${response_file}" -w '%{http_code}' -X POST \
 		-H "Authorization: Bearer ${EVENT_API_TOKEN}" \
 		-H 'Content-Type: application/json' \
 		-H 'Accept: text/event-stream' \
 		"${HUATUO_BAMAI_ADDR}/v1/events/watch" \
 		-d '{"filters":{"tracer_name":"^integration-never$"}}' \
-		> "${status_file}" 2> "${error_file}" &
+		2> "${error_file}") || event_capacity_curl_status=$?
+
+	[[ "${event_capacity_status}" == "200" && ${event_capacity_curl_status} -eq 28 ]]
+}
+
+assert_event_stream_heartbeat() {
+	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/event-stream.body"
+	local headers_file="${HUATUO_BAMAI_TEST_TMPDIR}/event-stream.headers"
+	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/event-stream.error"
+
+	curl -sS -N "${EVENT_STREAM_CURL_TIMEOUT[@]}" -D "${headers_file}" \
+		-o "${response_file}" -X POST \
+		-H "Authorization: Bearer ${EVENT_API_TOKEN}" \
+		-H 'Content-Type: application/json' \
+		-H 'Accept: text/event-stream' \
+		"${HUATUO_BAMAI_ADDR}/v1/events/watch" \
+		-d '{"filters":{"tracer_name":"^integration-never$"}}' \
+		2> "${error_file}" &
 	event_stream_pid=$!
 	wait_until 3 0.1 grep -qi '^HTTP/1.1 200' "${headers_file}" \
-		|| fatal "event stream did not open: $(< "${error_file}")"
+		|| {
+			report_response "event stream" "${response_file}" "${error_file}"
+			fatal "event stream did not open"
+		}
+	assert_response_header "${headers_file}" Content-Type text/event-stream
+	assert_response_header "${headers_file}" Cache-Control no-cache
+	assert_response_header "${headers_file}" Connection keep-alive
+	assert_response_header "${headers_file}" X-Accel-Buffering no
 
 	assert_error_response stream-limit application/json '{}' \
 		429 event_stream_limit_exceeded true
 
-	wait "${event_stream_pid}" || curl_status=$?
-	event_stream_pid=""
-	if [[ ${curl_status} -ne 28 ]]; then
-		fatal "event stream curl exited ${curl_status}, expected timeout exit 28"
-	fi
-	status=$(< "${status_file}")
-	assert_eq "${status}" "200" "event stream status" \
-		|| fatal "event stream returned status ${status}, expected 200"
-	grep -qi '^Content-Type: text/event-stream' "${headers_file}" \
-		|| fatal "event stream returned an invalid content type"
-	grep -q '^: ping$' "${response_file}" \
+	wait_until 3 0.1 grep -q '^: ping$' "${response_file}" \
 		|| fatal "event stream did not emit a heartbeat"
+	stop_event_stream
+
+	wait_until 6 0.1 event_stream_capacity_is_released || {
+		report_response "event stream capacity probe" \
+			"${HUATUO_BAMAI_TEST_TMPDIR}/event-capacity.body" \
+			"${HUATUO_BAMAI_TEST_TMPDIR}/event-capacity.curl-error"
+		fatal "event stream capacity was not released: curl exited ${event_capacity_curl_status}, status ${event_capacity_status:-unavailable}"
+	}
 }
 
 integration_huatuo_bamai_start write_event_api_config
