@@ -67,18 +67,6 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
 EOF
 }
 
-report_response() {
-	local label=$1 response_file=$2 error_file=$3
-	if [[ -r "${response_file}" ]]; then
-		log_info "${label} response: $(< "${response_file}")"
-	else
-		log_error "${label} response file missing: ${response_file}"
-	fi
-	if [[ -s "${error_file}" ]]; then
-		log_error "${label} curl error: $(< "${error_file}")"
-	fi
-}
-
 assert_error_response() {
 	local label=$1 content_type=$2 request_body=$3 expected_status=$4 expected_code=$5
 	local authenticated=$6
@@ -95,7 +83,7 @@ assert_error_response() {
 		-H "Content-Type: ${content_type}" "${auth_args[@]}" \
 		"${HUATUO_BAMAI_ADDR}/v1/events/watch" \
 		-d "${request_body}" 2> "${error_file}") || curl_status=$?
-	report_response "${label}" "${response_file}" "${error_file}"
+	report_http_response "${label}" "${response_file}" "${error_file}"
 	if [[ ${curl_status} -ne 0 ]]; then
 		fatal "${label}: curl exited ${curl_status}"
 	fi
@@ -114,7 +102,7 @@ assert_openapi_contract() {
 		"${HUATUO_BAMAI_ADDR}/openapi.json" -o "${response_file}" \
 		-w '%{http_code}' 2> "${error_file}") || curl_status=$?
 	if [[ ${curl_status} -ne 0 || "${status}" != "200" ]]; then
-		report_response "GET /openapi.json" "${response_file}" "${error_file}"
+		report_http_response "GET /openapi.json" "${response_file}" "${error_file}"
 		fatal "GET /openapi.json: curl exited ${curl_status}, status ${status:-unavailable}"
 	fi
 	jq -e '
@@ -162,7 +150,7 @@ assert_event_stream_heartbeat() {
 	event_stream_pid=$!
 	wait_until 3 0.1 grep -qi '^HTTP/1.1 200' "${headers_file}" \
 		|| {
-			report_response "event stream" "${response_file}" "${error_file}"
+			report_http_response "event stream" "${response_file}" "${error_file}"
 			fatal "event stream did not open"
 		}
 	assert_response_header "${headers_file}" Content-Type text/event-stream
@@ -178,7 +166,7 @@ assert_event_stream_heartbeat() {
 	stop_event_stream
 
 	wait_until 6 0.1 event_stream_capacity_is_released || {
-		report_response "event stream capacity probe" \
+		report_http_response "event stream capacity probe" \
 			"${HUATUO_BAMAI_TEST_TMPDIR}/event-capacity.body" \
 			"${HUATUO_BAMAI_TEST_TMPDIR}/event-capacity.curl-error"
 		fatal "event stream capacity was not released: curl exited ${event_capacity_curl_status}, status ${event_capacity_status:-unavailable}"

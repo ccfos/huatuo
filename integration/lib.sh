@@ -34,6 +34,18 @@ skip() {
 	exit 0
 }
 
+report_http_response() {
+	local label=$1 response_file=$2 error_file=$3
+	if [[ -r "${response_file}" ]]; then
+		log_info "${label} response: $(< "${response_file}")"
+	else
+		log_error "${label} response file missing: ${response_file}"
+	fi
+	if [[ -s "${error_file}" ]]; then
+		log_error "${label} curl error: $(< "${error_file}")"
+	fi
+}
+
 # --------------------------------- utils ------------------------------------
 
 require_python3() {
