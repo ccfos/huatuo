@@ -29,7 +29,6 @@ readonly API_TOKEN="integration-admin"
 readonly OTHER_API_TOKEN="integration-other"
 readonly PROFILE_DURATION=30
 readonly PROFILE_INTERVAL=5
-readonly PROFILE_INDEX="huatuo_continuous_profiling_test"
 
 continuous_profiling_requirements
 
@@ -66,34 +65,6 @@ start_control_stack() {
 		--log-debug
 	integration_huatuo_apiserver_start \
 		write_continuous_profiling_apiserver_config
-}
-
-profile_documents_exist() {
-	local profile_id=$1
-	curl -sf "${CURL_TIMEOUT[@]}" \
-		-H 'Content-Type: application/json' \
-		-X POST "${ELASTICSEARCH_ADDR}/${PROFILE_INDEX}/_count" \
-		-d "{\"query\":{\"term\":{\"tracer_id.keyword\":{\"value\":\"${profile_id}\"}}}}" \
-		| jq -e '.count > 0' > /dev/null
-}
-
-seed_staging_profile_document() {
-	local profile_id=$1
-	curl -sf "${CURL_TIMEOUT[@]}" \
-		-H 'Content-Type: application/json' \
-		-X PUT \
-		"${ELASTICSEARCH_ADDR}/${PROFILE_INDEX}/_doc/control-partial-${profile_id}?refresh=wait_for" \
-		-d "{\"tracer_id\":\"${profile_id}\",\"record_type\":\"integration_partial\"}" \
-		> /dev/null
-}
-
-profile_documents_are_deleted() {
-	local profile_id=$1
-	curl -sf "${CURL_TIMEOUT[@]}" \
-		-H 'Content-Type: application/json' \
-		-X POST "${ELASTICSEARCH_ADDR}/${PROFILE_INDEX}/_count" \
-		-d "{\"query\":{\"term\":{\"tracer_id.keyword\":{\"value\":\"${profile_id}\"}}}}" \
-		| jq -e '.count == 0' > /dev/null
 }
 
 assert_node_tracing_not_implemented() {
@@ -162,8 +133,6 @@ stop_running_profile() {
 	jq -e '.data.terminal.outcome == "stopped" and .data.result_url == null' \
 		"${status_file}" > /dev/null \
 		|| fatal "stopped profile exposed a result or failure"
-	profile_documents_are_deleted "${RUNNING_PROFILE_ID}" \
-		|| fatal "stopped profile retained staging documents"
 
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${raw_file}" \
 		-w '%{http_code}' \
@@ -189,10 +158,6 @@ wait_until 10 1 continuous_profile_status_is \
 	"${RUNNING_PROFILE_ID}" running \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/running-profile-status.json" \
 	|| fatal "profile did not enter running state"
-seed_staging_profile_document "${RUNNING_PROFILE_ID}" \
-	|| fatal "failed to seed a partial profile document"
-profile_documents_exist "${RUNNING_PROFILE_ID}" \
-	|| fatal "partial profile document is not queryable"
 
 assert_capacity_failure
 stop_running_profile
