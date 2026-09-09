@@ -153,8 +153,9 @@ to bytes only when the cgroup limit is applied.
   reject that request without creating an operation.
 
 The generated Node API exposes its contract at `GET /openapi.json`. Profiling
-and Tracing Start, Get, and Stop routes require the service bearer token.
-`/readyz`, metrics, version, and the OpenAPI document remain public.
+and Tracing Start, Get, and Stop routes and `POST /v1/events/watch` require the
+service bearer token. `/readyz`, metrics, version, and the OpenAPI document
+remain public.
 
 The event stream settings control `POST /v1/events/watch`. When
 `MaxEventStreamClients` is reached, new streams receive HTTP 429.

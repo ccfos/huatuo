@@ -169,6 +169,7 @@ POST /v1/events/watch
 #### 3.2 Request Headers
 
 ```http
+Authorization: Bearer <node-token>
 Content-Type: application/json
 ```
 
@@ -181,6 +182,7 @@ Content-Type: application/json
     "hostname": "<regex>",
     "container_hostname": "<regex>",
     "container_host_namespace": "<regex>",
+    "container_qos": "<regex>",
     "region": "<regex>"
   }
 }
@@ -194,6 +196,7 @@ Content-Type: application/json
 | `hostname` | string | No | Filter by node hostname; supports regular expressions |
 | `container_hostname` | string | No | Filter by container hostname; supports regular expressions |
 | `container_host_namespace` | string | No | Filter by container namespace; supports regular expressions |
+| `container_qos` | string | No | Filter by container QoS; supports regular expressions |
 | `region` | string | No | Filter by region; supports regular expressions |
 
 - All filter fields are optional. Omitting or leaving a field empty matches all values.
@@ -245,6 +248,7 @@ Configure the event stream controls under `[HTTPServer]`:
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -256,6 +260,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -267,6 +272,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -283,6 +289,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -298,16 +305,16 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ---
 
-### 6. Go Client Example
+### 6. Generated Go Client Example
 
-The following example shows how to subscribe to the `events/watch` endpoint in a Go program and consume CloudEvents in real time.
+`POST /v1/events/watch` is part of the Node OpenAPI contract. The generated
+client supplies the request and event types used below.
 
 ```go
 package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -316,47 +323,31 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
-// WatchRequest is the request body sent to /v1/events/watch.
-type WatchRequest struct {
-	Filters WatchFilters `json:"filters"`
-}
-
-type WatchFilters struct {
-	TracerName             string `json:"tracer_name,omitempty"`
-	Hostname               string `json:"hostname,omitempty"`
-	ContainerHostname      string `json:"container_hostname,omitempty"`
-	ContainerHostNamespace string `json:"container_host_namespace,omitempty"`
-	Region                 string `json:"region,omitempty"`
-}
-
-// WatchEvent is the CloudEvents 1.0 envelope pushed by HUATUO.
-type WatchEvent struct {
-	SpecVersion     string          `json:"specversion"`
-	ID              string          `json:"id"`
-	Source          string          `json:"source"`
-	Type            string          `json:"type"`
-	DataContentType string          `json:"datacontenttype"`
-	Time            string          `json:"time"`
-	Data            json.RawMessage `json:"data"`
-}
-
-func watchEvents(ctx context.Context, endpoint string, filters WatchFilters) error {
-	reqBody, err := json.Marshal(WatchRequest{Filters: filters})
+func watchEvents(
+	ctx context.Context,
+	baseURL string,
+	token string,
+	filters nodeapi.WatchEventFilters,
+) error {
+	client, err := nodeapi.NewClient(
+		baseURL,
+		nodeapi.WithHTTPClient(&http.Client{}),
+		nodeapi.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
+			request.Header.Set("Authorization", "Bearer "+token)
+			request.Header.Set("Accept", "text/event-stream")
+			return nil
+		}),
+	)
 	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
+		return fmt.Errorf("create Node API client: %w", err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-
-	client := &http.Client{Timeout: 0} // no timeout for SSE long-lived connections
-	resp, err := client.Do(req)
+	resp, err := client.WatchEvents(ctx, nodeapi.WatchEventsJSONRequestBody{
+		Filters: &filters,
+	})
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -381,14 +372,19 @@ func watchEvents(ctx context.Context, endpoint string, filters WatchFilters) err
 			continue
 		}
 
-		var event WatchEvent
+		var event nodeapi.WatchEvent
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			slog.Warn("parse event", "err", err)
 			continue
 		}
 
-		fmt.Printf("[%s] source=%s id=%s\n", event.Time, event.Source, event.ID)
-		fmt.Printf("  data: %s\n", event.Data)
+		fmt.Printf(
+			"[%s] source=%s id=%s\n",
+			event.Time.Format(time.RFC3339Nano),
+			event.Source,
+			event.ID.String(),
+		)
+		fmt.Printf("  data: %+v\n", event.Data)
 	}
 
 	return scanner.Err()
@@ -398,8 +394,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	err := watchEvents(ctx, "http://192.168.1.10:19704/v1/events/watch", WatchFilters{
-		TracerName: "oom|hungtask|softlockup",
+	tracerName := "oom|hungtask|softlockup"
+	err := watchEvents(ctx, "http://192.168.1.10:19704", "node-token", nodeapi.WatchEventFilters{
+		TracerName: &tracerName,
 	})
 	if err != nil {
 		slog.Error("watch events", "err", err)
@@ -408,40 +405,27 @@ func main() {
 }
 ```
 
-#### 6.1 Using the Official pkg/types Package (Recommended)
+#### 6.1 Streaming Client Selection
 
-If your project shares the same Go module as HUATUO, use the official types directly:
-
-```go
-import pkgtypes "huatuo-bamai/pkg/types"
-
-var event pkgtypes.WatchEvent
-if err := json.Unmarshal([]byte(data), &event); err != nil { ... }
-
-// WatchEvent.Data is json.RawMessage (deferred parsing); a second unmarshal is required to access typed fields
-dataBytes, err := json.Marshal(event.Data)
-if err != nil {
-    slog.Warn("marshal event data", "err", err)
-    return
-}
-var payload pkgtypes.WatchEventData
-if err := json.Unmarshal(dataBytes, &payload); err != nil {
-    slog.Warn("unmarshal event data", "err", err)
-    return
-}
-fmt.Println("tracer:", payload.TracerName)
-fmt.Println("observed_timestamp:", payload.ObservedTimestamp)
-```
+Use the generated `Client.WatchEvents` method, which returns the raw
+`http.Response`. Do not use `ClientWithResponses.WatchEventsWithResponse` for
+this endpoint: that helper reads the body to EOF, while an SSE stream normally
+remains open until its context is canceled.
 
 #### 6.2 Reconnection
 
 In production, network interruptions or service restarts will drop the connection. Use exponential backoff to reconnect:
 
 ```go
-func watchWithRetry(ctx context.Context, endpoint string, filters WatchFilters) {
+func watchWithRetry(
+	ctx context.Context,
+	baseURL string,
+	token string,
+	filters nodeapi.WatchEventFilters,
+) {
 	backoff := time.Second
 	for {
-		if err := watchEvents(ctx, endpoint, filters); err != nil {
+		if err := watchEvents(ctx, baseURL, token, filters); err != nil {
 			if ctx.Err() != nil {
 				return
 			}

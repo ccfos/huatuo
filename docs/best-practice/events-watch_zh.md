@@ -169,6 +169,7 @@ POST /v1/events/watch
 #### 3.2 请求头
 
 ```http
+Authorization: Bearer <node-token>
 Content-Type: application/json
 ```
 
@@ -181,6 +182,7 @@ Content-Type: application/json
     "hostname": "<regex>",
     "container_hostname": "<regex>",
     "container_host_namespace": "<regex>",
+    "container_qos": "<regex>",
     "region": "<regex>"
   }
 }
@@ -194,6 +196,7 @@ Content-Type: application/json
 | `hostname`                 | string | 否     | 按节点主机名过滤，支持正则表达式               |
 | `container_hostname`       | string | 否     | 按容器主机名过滤，支持正则表达式               |
 | `container_host_namespace` | string | 否     | 按容器命名空间过滤，支持正则表达式             |
+| `container_qos`            | string | 否     | 按容器 QoS 过滤，支持正则表达式                |
 | `region`                   | string | 否     | 按地域过滤，支持正则表达式                     |
 
 - 所有过滤字段均为可选；省略或留空表示匹配所有值。
@@ -245,6 +248,7 @@ data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/oom",...}\n\n
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -256,6 +260,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -267,6 +272,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -283,6 +289,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -298,16 +305,16 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ---
 
-### 6. Go 编程调用示例
+### 6. 生成的 Go 客户端示例
 
-以下示例展示如何在 Go 程序中订阅 `events/watch` 接口，实时消费 CloudEvents 事件。
+`POST /v1/events/watch` 已纳入 Node OpenAPI 契约。以下示例直接使用生成的
+请求类型、事件类型和客户端。
 
 ```go
 package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -316,47 +323,31 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
-// WatchRequest 是发送给 /v1/events/watch 的请求体。
-type WatchRequest struct {
-	Filters WatchFilters `json:"filters"`
-}
-
-type WatchFilters struct {
-	TracerName             string `json:"tracer_name,omitempty"`
-	Hostname               string `json:"hostname,omitempty"`
-	ContainerHostname      string `json:"container_hostname,omitempty"`
-	ContainerHostNamespace string `json:"container_host_namespace,omitempty"`
-	Region                 string `json:"region,omitempty"`
-}
-
-// WatchEvent 是华佗推送的 CloudEvents 1.0 信封。
-type WatchEvent struct {
-	SpecVersion     string          `json:"specversion"`
-	ID              string          `json:"id"`
-	Source          string          `json:"source"`
-	Type            string          `json:"type"`
-	DataContentType string          `json:"datacontenttype"`
-	Time            string          `json:"time"`
-	Data            json.RawMessage `json:"data"`
-}
-
-func watchEvents(ctx context.Context, endpoint string, filters WatchFilters) error {
-	reqBody, err := json.Marshal(WatchRequest{Filters: filters})
+func watchEvents(
+	ctx context.Context,
+	baseURL string,
+	token string,
+	filters nodeapi.WatchEventFilters,
+) error {
+	client, err := nodeapi.NewClient(
+		baseURL,
+		nodeapi.WithHTTPClient(&http.Client{}),
+		nodeapi.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
+			request.Header.Set("Authorization", "Bearer "+token)
+			request.Header.Set("Accept", "text/event-stream")
+			return nil
+		}),
+	)
 	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
+		return fmt.Errorf("create Node API client: %w", err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-
-	client := &http.Client{Timeout: 0} // SSE 长连接，不设超时
-	resp, err := client.Do(req)
+	resp, err := client.WatchEvents(ctx, nodeapi.WatchEventsJSONRequestBody{
+		Filters: &filters,
+	})
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -381,14 +372,19 @@ func watchEvents(ctx context.Context, endpoint string, filters WatchFilters) err
 			continue
 		}
 
-		var event WatchEvent
+		var event nodeapi.WatchEvent
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			slog.Warn("parse event", "err", err)
 			continue
 		}
 
-		fmt.Printf("[%s] source=%s id=%s\n", event.Time, event.Source, event.ID)
-		fmt.Printf("  data: %s\n", event.Data)
+		fmt.Printf(
+			"[%s] source=%s id=%s\n",
+			event.Time.Format(time.RFC3339Nano),
+			event.Source,
+			event.ID.String(),
+		)
+		fmt.Printf("  data: %+v\n", event.Data)
 	}
 
 	return scanner.Err()
@@ -398,8 +394,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	err := watchEvents(ctx, "http://192.168.1.10:19704/v1/events/watch", WatchFilters{
-		TracerName: "oom|hungtask|softlockup",
+	tracerName := "oom|hungtask|softlockup"
+	err := watchEvents(ctx, "http://192.168.1.10:19704", "node-token", nodeapi.WatchEventFilters{
+		TracerName: &tracerName,
 	})
 	if err != nil {
 		slog.Error("watch events", "err", err)
@@ -408,40 +405,26 @@ func main() {
 }
 ```
 
-#### 6.1 使用 pkg/types 官方包（推荐）
+#### 6.1 流式客户端选择
 
-如果你的项目与华佗在同一 Go module，可直接引用官方类型：
-
-```go
-import pkgtypes "huatuo-bamai/pkg/types"
-
-var event pkgtypes.WatchEvent
-if err := json.Unmarshal([]byte(data), &event); err != nil { ... }
-
-// WatchEvent.Data 是 json.RawMessage（延迟解析），需二次反序列化才能访问具体字段
-dataBytes, err := json.Marshal(event.Data)
-if err != nil {
-    slog.Warn("marshal event data", "err", err)
-    return
-}
-var payload pkgtypes.WatchEventData
-if err := json.Unmarshal(dataBytes, &payload); err != nil {
-    slog.Warn("unmarshal event data", "err", err)
-    return
-}
-fmt.Println("tracer:", payload.TracerName)
-fmt.Println("observed_timestamp:", payload.ObservedTimestamp)
-```
+应使用生成的 `Client.WatchEvents` 方法直接获取 `http.Response`。不要对该接口使用
+`ClientWithResponses.WatchEventsWithResponse`：后者会读取响应体直到 EOF，而 SSE
+连接通常会持续到调用方取消 context。
 
 #### 6.2 重连机制建议
 
 生产环境中，网络抖动或服务重启会导致连接断开，建议加入指数退避重连逻辑：
 
 ```go
-func watchWithRetry(ctx context.Context, endpoint string, filters WatchFilters) {
+func watchWithRetry(
+	ctx context.Context,
+	baseURL string,
+	token string,
+	filters nodeapi.WatchEventFilters,
+) {
 	backoff := time.Second
 	for {
-		if err := watchEvents(ctx, endpoint, filters); err != nil {
+		if err := watchEvents(ctx, baseURL, token, filters); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
