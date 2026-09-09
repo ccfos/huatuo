@@ -63,8 +63,25 @@ go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
 ```
 
 #### 3.2 编译
+
 ```bash
 $ make
+```
+
+默认构建会下载与当前构建架构匹配的固定版本 Linux glibc Memray 包。
+该包包含 CPython 3.7 到 3.14 的运行时，不要求本机安装 Python 解释器或
+Memray 编译依赖。
+
+如果只需下载并安装 Memray 包，运行：
+
+```bash
+make prep-memray-bundle
+```
+
+如需使用已经下载的发布包，可以显式指定文件路径：
+
+```bash
+MEMRAY_BUNDLE_ARCHIVE=/path/to/memray-huatuo.tar.gz make prep-memray-bundle
 ```
 
 ### 4. BPF 调试编译

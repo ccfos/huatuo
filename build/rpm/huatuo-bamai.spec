@@ -3,6 +3,8 @@ Version: 2.1.0
 Release: 3%{?dist}
 Summary: Huatuo is a cloud-native operating system observability project
 
+%global memray_bundle_version 1.19.1-1
+
 # Disable debug package and build-id generation
 %global debug_package %{nil}
 %global _build_id_links none
@@ -14,6 +16,7 @@ License: APLv2
 Source0: https://github.com/ccfos/huatuo/archive/tags/tags/v%{version}.tar.gz
 Source1: huatuo-bamai.service
 Source2: grafana-example.zip
+Source3: https://github.com/hao-lee/memray/releases/download/huatuo-bundle-v%{memray_bundle_version}/memray-huatuo-%{memray_bundle_version}-linux-glibc-%{_target_cpu}.tar.gz
 
 # Support multiple architectures
 ExclusiveArch: x86_64 aarch64
@@ -31,6 +34,7 @@ BuildRequires: unzip
 # Runtime dependencies
 Requires: systemd
 Requires: glibc >= 2.17
+Requires: gdb
 Requires(post): systemd
 Requires(preun): systemd
 Requires(postun): systemd
@@ -44,7 +48,8 @@ network behavior, and resource utilization using eBPF technology.
 %setup -q -n huatuo-%{version}
 
 %build
-# Build from source
+MEMRAY_BUNDLE_ARCHITECTURE="%{_target_cpu}" \
+MEMRAY_BUNDLE_ARCHIVE="%{SOURCE3}" \
 make
 
 %check
@@ -68,7 +73,7 @@ file _output/bin/huatuo-bamai | grep -q "%{_target_cpu}" || {
 }
 
 # Check if required directories exist
-for dir in _output/conf _output/bpf; do
+for dir in _output/conf _output/bpf _output/tools/memray/runtimes; do
     if [ ! -d "$dir" ]; then
         echo "ERROR: Required directory $dir not found"
         exit 1
@@ -96,7 +101,8 @@ sed -i 's/"http:\/\/127.0.0.1:9200"/""/' _output/conf/huatuo-bamai.conf
 
 # Install main application to /opt
 mkdir -p %{buildroot}/opt/huatuo-bamai
-cp -r _output/bin _output/conf _output/bpf LICENSE %{buildroot}/opt/huatuo-bamai/
+cp -r _output/bin _output/conf _output/bpf _output/tools LICENSE \
+    %{buildroot}/opt/huatuo-bamai/
 
 # Install grafana-example directory (extract from zip)
 mkdir -p %{buildroot}/opt/huatuo-bamai/grafana-example
@@ -134,6 +140,7 @@ rm -rf %{buildroot}
 /opt/huatuo-bamai/bin/
 /opt/huatuo-bamai/conf/
 /opt/huatuo-bamai/bpf/
+/opt/huatuo-bamai/tools/
 /opt/huatuo-bamai/grafana-example/
 /usr/local/bin/huatuo-bamai
 /etc/systemd/system/huatuo-bamai.service

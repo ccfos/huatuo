@@ -29,7 +29,7 @@ type CreateProfilingJobRequest struct {
 	ProfilingType   string `json:"type"`              // cpu or memory
 	BinaryMatchPath string `json:"binary_match_path"` // executable path used to match target processes
 	Language        string `json:"language"`          // programming language of the target process
-	MemoryMode      string `json:"memory_mode"`       // memory profiling mode
+	MemoryMode      string `json:"memory_mode"`       // memory mode; omitted for Python
 	DurationSeconds int    `json:"duration_seconds"`  // profiling duration in seconds
 	ContainerID     string `json:"container_id"`      // container ID
 	Hostname        string `json:"hostname"`          // host name

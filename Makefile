@@ -26,6 +26,17 @@ APP_CMD_DIR := cmd
 APP_CMD_OUTPUT := _output
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
 APP_CMD_BIN_TARGETS := $(patsubst %,$(APP_CMD_OUTPUT)/bin/%,$(notdir $(APP_CMD_SUBDIRS)))
+MEMRAY_BUNDLE_OUTPUT := $(ROOT_DIR)/$(APP_CMD_OUTPUT)/tools/memray
+MEMRAY_BUNDLE_FETCH_SCRIPT := $(ROOT_DIR)/build/fetch-memray-bundle.sh
+MEMRAY_BUNDLE_ENABLED ?= 1
+
+ifeq ($(MEMRAY_BUNDLE_ENABLED),1)
+MEMRAY_ALL_TARGET := prep-memray-bundle
+else ifeq ($(MEMRAY_BUNDLE_ENABLED),0)
+MEMRAY_ALL_TARGET :=
+else
+$(error MEMRAY_BUNDLE_ENABLED must be 0 or 1)
+endif
 
 GO_BUILD_FLAGS := CGO_ENABLED=1 go build -tags "netgo osusergo" -gcflags=all="-N -l"
 GO_BUILD_LDFLAGS := \
@@ -68,10 +79,13 @@ COMPOSE_DEV := docker compose \
 
 BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
 
-all: build sync
+all: build sync $(MEMRAY_ALL_TARGET)
 
 build-nostatic:
 	@$(MAKE) BUILD_MODE=nostatic all
+
+prep-memray-bundle:
+	@bash $(MEMRAY_BUNDLE_FETCH_SCRIPT) "$(MEMRAY_BUNDLE_OUTPUT)"
 
 bpf-build: $(BPF_BUILD_STAMP)
 $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
@@ -158,4 +172,4 @@ integration: all
 e2e: all
 	@bash e2e/run.sh
 
-.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: all build-nostatic prep-memray-bundle bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

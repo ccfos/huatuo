@@ -104,7 +104,7 @@ function prapre_test_env() {
 		local -a apt_get=(sudo apt-get -o DPkg::Lock::Timeout=300)
 		packages=(
 			# basic
-			"make" "libbpf-dev" "clang" "git" "gcc" "jq" "capnproto"
+			"make" "libbpf-dev" "clang" "curl" "git" "gcc" "jq" "capnproto"
 			# tcpshark retransmit integration test deps
 			"iptables" "iproute2" "python3"
 		)

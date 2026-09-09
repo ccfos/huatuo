@@ -39,7 +39,13 @@ type Style struct {
 	XMargin       float32
 	FramesYOffset int
 	FrameHeight   int
+	ValueUnit     string
 }
+
+const (
+	ValueUnitSamples = "samples"
+	ValueUnitBytes   = "bytes"
+)
 
 // Color returns a deterministic warm color for the given frame name.
 func (s Style) Color(name string) string {
@@ -61,6 +67,14 @@ var DefaultStyle = Style{
 	XMargin:       10,
 	FramesYOffset: 12 * 3,
 	FrameHeight:   16,
+	ValueUnit:     ValueUnitSamples,
+}
+
+func (s Style) valueUnit() string {
+	if s.ValueUnit == "" {
+		return ValueUnitSamples
+	}
+	return s.ValueUnit
 }
 
 // errWriter wraps an io.Writer and accumulates the first write error,
@@ -146,7 +160,13 @@ func (r *renderer) DrawFrame(root frame, ew *errWriter) {
 }
 
 func (r *renderer) drawFrame(f frame, ew *errWriter) {
-	title := fmt.Sprintf("%s (%d samples, %.2f%%)", f.Name, f.SampleCount, f.SamplePercent)
+	title := fmt.Sprintf(
+		"%s (%d %s, %.2f%%)",
+		f.Name,
+		f.SampleCount,
+		r.style.valueUnit(),
+		f.SamplePercent,
+	)
 	color := r.style.Color(f.Name)
 
 	usableWidth := float32(r.style.ImageWidth) - r.style.XMargin*2

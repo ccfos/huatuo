@@ -29,7 +29,16 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "memory-mode",
-		Usage: "Memory mode; Java: object_alloc|object_usage; native: virtual_alloc|physical_alloc|physical_usage",
+		Usage: "Memory mode; Java: object_alloc|object_usage; native: virtual_alloc|physical_alloc|physical_usage; omit for Python",
+	},
+	&cli.StringFlag{
+		Name:  "python-memory-stack",
+		Usage: "Python memory stack mode: python|hybrid|native",
+		Value: "python",
+	},
+	&cli.BoolFlag{
+		Name:  "python-memory-merge-threads",
+		Usage: "Merge Python memory samples from all threads",
 	},
 	&cli.StringFlag{
 		Name:    "pid",
@@ -141,7 +150,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "tool-path",
-		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
+		Usage: "Profiling tool root; Java and Python CPU require it; Python memory defaults to the bundled Memray runtime",
 	},
 	&cli.StringFlag{
 		Name:  "binary-match-path",

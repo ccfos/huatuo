@@ -47,6 +47,11 @@ func New() *Formatter {
 
 func (f *Formatter) Name() string { return "flamegraph" }
 
+// SetValueUnit lets event-driven profiles override the default sample label.
+func (f *Formatter) SetValueUnit(unit string) {
+	f.style.ValueUnit = unit
+}
+
 func (f *Formatter) Write(w io.Writer) error {
 	return RenderStyle(f.toStacks(), w, f.style)
 }

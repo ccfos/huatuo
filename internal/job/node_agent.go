@@ -118,8 +118,21 @@ func (c *HTTPNodeAgent) StartTaskContext(
 	defer func() { c.observeRequest("start", startedAt, returnedErr) }()
 	taskArgs := *args
 	taskArgs.ContainerID = container
-	if taskArgs.TracerName == "profiler" && !hasNonEmptyFlag(taskArgs.TracerArgs, "--tracer-id") {
-		return "", errors.New("profiling task requires a non-empty --tracer-id")
+	taskArgs.TracerArgs = append([]string(nil), args.TracerArgs...)
+	if taskArgs.TracerName == "profiler" {
+		if !hasNonEmptyFlag(taskArgs.TracerArgs, "--tracer-id") {
+			return "", errors.New("profiling task requires a non-empty --tracer-id")
+		}
+		if !hasNonEmptyFlag(taskArgs.TracerArgs, "--pid") &&
+			!hasNonEmptyFlag(taskArgs.TracerArgs, "--container-id") {
+			if taskArgs.ContainerID == "" {
+				return "", errors.New("profiling task requires a container ID or PID target")
+			}
+			taskArgs.TracerArgs = append(
+				taskArgs.TracerArgs,
+				"--container-id", taskArgs.ContainerID,
+			)
+		}
 	}
 	requestBodyBytes, err := json.Marshal(startTaskRequest{
 		RequestID:         taskArgs.RequestID,
