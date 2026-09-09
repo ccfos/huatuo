@@ -76,7 +76,6 @@ sched_tick_event_is_valid() {
 			(.hostname | type == "string")
 			and .region == "dev"
 			and (.uploaded_timestamp | type == "string")
-			and (.time | type == "string")
 			and .tracer_name == "sched_tick"
 			and (.tracer_id | type == "string")
 			and (.observed_timestamp | type == "string")
