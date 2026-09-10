@@ -132,7 +132,7 @@ function prapre_test_env() {
 		;;
 	esac
 
-	which mockery || go install github.com/vektra/mockery/v2@latest
+	which mockery || go install github.com/vektra/mockery/v2@v2.53.6
 	which capnpc-go || go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
 	which shfmt || go install mvdan.cc/sh/v3/cmd/shfmt@v3.11.0
 
