@@ -25,7 +25,6 @@ import (
 
 func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
 	nodeClient, err := client.NewNode(&client.NodeConfig{
-		Port:        d.opts.Config.Agent.HTTPPort,
 		BearerToken: d.opts.Config.Agent.Auth.BearerToken,
 		Observe:     d.agentObserver,
 	})
@@ -33,28 +32,32 @@ func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) err
 		return nil, fmt.Errorf("initialize Node client: %w", err)
 	}
 	controller := d.opts.Config.Jobs.Controller
-	manager, err := job.NewManager(ctx, nodeClient, &job.ManagerConfig{
-		StoreDSN: d.opts.Config.Jobs.StoreDSN,
-		ProfilingPolicy: job.Policy{
-			MaxJobsPerHost: d.opts.Config.Jobs.Profiling.MaxConcurrentPerHost,
-			MaxTotalJobs:   d.opts.Config.Jobs.Profiling.MaxConcurrent,
+	manager, err := job.NewManager(
+		ctx,
+		newNodeOperationClient(nodeClient, d.opts.Config.Agent.HTTPPort),
+		&job.ManagerConfig{
+			StoreDSN: d.opts.Config.Jobs.StoreDSN,
+			ProfilingPolicy: job.Policy{
+				MaxJobsPerHost: d.opts.Config.Jobs.Profiling.MaxConcurrentPerHost,
+				MaxTotalJobs:   d.opts.Config.Jobs.Profiling.MaxConcurrent,
+			},
+			TracingPolicy: job.Policy{
+				MaxJobsPerHost: d.opts.Config.Jobs.Tracing.MaxConcurrentPerHost,
+				MaxTotalJobs:   d.opts.Config.Jobs.Tracing.MaxConcurrent,
+			},
+			StatusPollInterval: time.Duration(
+				controller.StatusPollIntervalSeconds,
+			) * time.Second,
+			PendingTimeout: time.Duration(controller.PendingTimeoutSeconds) * time.Second,
+			CompletionGracePeriod: time.Duration(
+				controller.CompletionGracePeriodSeconds,
+			) * time.Second,
+			NodeUnavailableGracePeriod: time.Duration(
+				controller.NodeUnavailableGracePeriodSeconds,
+			) * time.Second,
+			JobRetentionPeriod: time.Duration(controller.JobRetentionPeriodHours) * time.Hour,
 		},
-		TracingPolicy: job.Policy{
-			MaxJobsPerHost: d.opts.Config.Jobs.Tracing.MaxConcurrentPerHost,
-			MaxTotalJobs:   d.opts.Config.Jobs.Tracing.MaxConcurrent,
-		},
-		StatusPollInterval: time.Duration(
-			controller.StatusPollIntervalSeconds,
-		) * time.Second,
-		PendingTimeout: time.Duration(controller.PendingTimeoutSeconds) * time.Second,
-		CompletionGracePeriod: time.Duration(
-			controller.CompletionGracePeriodSeconds,
-		) * time.Second,
-		NodeUnavailableGracePeriod: time.Duration(
-			controller.NodeUnavailableGracePeriodSeconds,
-		) * time.Second,
-		JobRetentionPeriod: time.Duration(controller.JobRetentionPeriodHours) * time.Hour,
-	})
+	)
 	if err != nil {
 		return nil, fmt.Errorf("initialize job manager: %w", err)
 	}

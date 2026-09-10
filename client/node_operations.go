@@ -17,14 +17,19 @@ package client
 import (
 	"context"
 	"net/http"
+	"time"
 
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
+// sendNodeOperationRequest adapts generated Operation methods with different
+// arguments to the shared request execution lifecycle.
+type sendNodeOperationRequest func(context.Context, *nodeapi.Client) (*http.Response, error)
+
 // StartOperation sends one unified Node Operation start request.
 func (c *NodeClient) StartOperation(
 	ctx context.Context,
-	host string,
+	address NodeAddress,
 	request *nodeapi.StartOperationRequest,
 ) (*nodeapi.Operation, error) {
 	if request == nil {
@@ -35,7 +40,7 @@ func (c *NodeClient) StartOperation(
 	}
 	return c.executeOperation(
 		ctx,
-		host,
+		address,
 		"operation.start",
 		request.RequestID,
 		nodeSuccessResponseOKOrAccepted,
@@ -48,12 +53,12 @@ func (c *NodeClient) StartOperation(
 // GetOperation sends one unified Node Operation get request.
 func (c *NodeClient) GetOperation(
 	ctx context.Context,
-	host string,
+	address NodeAddress,
 	requestID string,
 ) (*nodeapi.Operation, error) {
 	return c.executeOperation(
 		ctx,
-		host,
+		address,
 		"operation.get",
 		requestID,
 		nodeSuccessResponseOK,
@@ -66,12 +71,12 @@ func (c *NodeClient) GetOperation(
 // StopOperation sends one unified Node Operation stop request.
 func (c *NodeClient) StopOperation(
 	ctx context.Context,
-	host string,
+	address NodeAddress,
 	requestID string,
 ) (*nodeapi.Operation, error) {
 	return c.executeOperation(
 		ctx,
-		host,
+		address,
 		"operation.stop",
 		requestID,
 		nodeSuccessResponseOKOrAccepted,
@@ -79,4 +84,42 @@ func (c *NodeClient) StopOperation(
 			return generated.StopOperation(ctx, requestID)
 		},
 	)
+}
+
+func (c *NodeClient) executeOperation(
+	ctx context.Context,
+	address NodeAddress,
+	operationName string,
+	requestID string,
+	successMode nodeSuccessResponseMode,
+	send sendNodeOperationRequest,
+) (result *nodeapi.Operation, returnedErr error) {
+	serverURL, err := address.serverURL()
+	if err != nil {
+		return nil, err
+	}
+
+	// Start and Stop are not safely retryable when the response is lost.
+	startedAt := time.Now()
+	defer func() {
+		if c.observe != nil {
+			c.observe(operationName, time.Since(startedAt), returnedErr)
+		}
+	}()
+
+	generated, err := c.generatedClient(serverURL)
+	if err != nil {
+		return nil, err
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
+	defer cancel()
+
+	response, err := send(requestCtx, generated)
+	if err != nil {
+		return nil, wrapNodeError(&NodeError{
+			Code:    NodeErrorCodeTransport,
+			Message: operationName + " Node API request",
+		}, err)
+	}
+	return parseNodeOperationResponse(response, requestID, successMode)
 }

@@ -17,11 +17,7 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net"
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -30,13 +26,22 @@ import (
 
 const defaultNodeRequestTimeout = 10 * time.Second
 
-// NodeRequestObserver records one completed Node API call.
+// NodeRequestObserver observes one NodeClient request after response parsing and
+// error classification. The duration includes generated-client setup, transport,
+// and response parsing, but excludes the observer itself. The error is the same
+// value returned to the caller.
+//
+// NodeClient invokes the observer synchronously and may invoke it concurrently.
+// Implementations must return promptly and be safe for concurrent use. NodeClient
+// does not recover observer panics. A nil observer disables observation. Argument
+// validation that rejects a call before request execution does not invoke it.
 type NodeRequestObserver func(operation string, duration time.Duration, err error)
 
-// NodeConfig contains process-local Node client dependencies and policy.
+// NodeConfig contains process-local Node client dependencies and policy. Target
+// addresses are supplied per request so one client can contact multiple Node
+// Agents. The bearer token may be empty when only public endpoints are called.
 type NodeConfig struct {
 	HTTPClient     *http.Client
-	Port           int
 	BearerToken    string
 	RequestTimeout time.Duration
 	Observe        NodeRequestObserver
@@ -46,14 +51,8 @@ func (c *NodeConfig) validate() error {
 	if c == nil {
 		return errors.New("create Node client: config is required")
 	}
-	if c.BearerToken == "" {
-		return errors.New("create Node client: bearer token is required")
-	}
 	if strings.ContainsAny(c.BearerToken, " \t\r\n") {
 		return errors.New("create Node client: bearer token must not contain whitespace")
-	}
-	if c.Port < 1 || c.Port > 65535 {
-		return fmt.Errorf("create Node client: port %d is outside 1..65535", c.Port)
 	}
 	if c.RequestTimeout < 0 {
 		return errors.New("create Node client: request timeout must not be negative")
@@ -64,7 +63,6 @@ func (c *NodeConfig) validate() error {
 // NodeClient sends one generated Node API request per method call.
 type NodeClient struct {
 	httpClient     *http.Client
-	port           int
 	bearerToken    string
 	requestTimeout time.Duration
 	observe        NodeRequestObserver
@@ -92,59 +90,24 @@ func NewNode(config *NodeConfig) (*NodeClient, error) {
 	}
 	return &NodeClient{
 		httpClient:     httpClient,
-		port:           config.Port,
 		bearerToken:    config.BearerToken,
 		requestTimeout: requestTimeout,
 		observe:        config.Observe,
 	}, nil
 }
 
-type sendNodeRequest func(context.Context, *nodeapi.Client) (*http.Response, error)
-
-func (c *NodeClient) executeOperation(
-	ctx context.Context,
-	host string,
-	operationName string,
-	requestID string,
-	successMode nodeSuccessResponseMode,
-	send sendNodeRequest,
-) (result *nodeapi.Operation, returnedErr error) {
-	// Start and Stop are not safely retryable when the response is lost.
-	startedAt := time.Now()
-	defer func() {
-		if c.observe != nil {
-			c.observe(operationName, time.Since(startedAt), returnedErr)
-		}
-	}()
-
-	generated, err := c.generatedClient(host)
-	if err != nil {
-		return nil, err
-	}
-	requestCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
-	defer cancel()
-
-	response, err := send(requestCtx, generated)
-	if err != nil {
-		return nil, wrapNodeError(&NodeError{
-			Code:    NodeErrorCodeTransport,
-			Message: operationName + " Node API request",
-		}, err)
-	}
-	return parseNodeOperationResponse(response, requestID, successMode)
-}
-
-func (c *NodeClient) generatedClient(host string) (*nodeapi.Client, error) {
-	serverURL := (&url.URL{
-		Scheme: "http",
-		Host:   net.JoinHostPort(host, strconv.Itoa(c.port)),
-	}).String()
-	return nodeapi.NewClient(
-		serverURL,
+func (c *NodeClient) generatedClient(serverURL string) (*nodeapi.Client, error) {
+	options := []nodeapi.ClientOption{
 		nodeapi.WithHTTPClient(c.httpClient),
-		nodeapi.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
+	}
+	if c.bearerToken != "" {
+		options = append(options, nodeapi.WithRequestEditorFn(func(
+			_ context.Context,
+			request *http.Request,
+		) error {
 			request.Header.Set("Authorization", "Bearer "+c.bearerToken)
 			return nil
-		}),
-	)
+		}))
+	}
+	return nodeapi.NewClient(serverURL, options...)
 }

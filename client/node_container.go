@@ -16,43 +16,41 @@ package client
 
 import (
 	"context"
-	"net/http"
-	"net/url"
+	"time"
 
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
-// FetchNodeContainer fetches public container metadata from huatuo-bamai.
-func FetchNodeContainer(
+// FetchContainer fetches public container metadata from a Node Agent.
+func (c *NodeClient) FetchContainer(
 	ctx context.Context,
-	serverAddr string,
+	address NodeAddress,
 	containerID string,
-) (*nodeapi.ContainerMetadata, error) {
-	generated, err := nodeapi.NewClient(
-		(&url.URL{
-			Scheme: "http",
-			Host:   serverAddr,
-		}).String(),
-		nodeapi.WithHTTPClient(&http.Client{
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}),
-	)
+) (metadata *nodeapi.ContainerMetadata, returnedErr error) {
+	serverURL, err := address.serverURL()
 	if err != nil {
-		return nil, wrapNodeError(&NodeError{
-			Code:    NodeErrorCodeInvalidArgument,
-			Message: "create container metadata client",
-		}, err)
+		return nil, err
 	}
 
-	requestCtx, cancel := context.WithTimeout(ctx, defaultNodeRequestTimeout)
+	startedAt := time.Now()
+	defer func() {
+		if c.observe != nil {
+			c.observe("container.fetch", time.Since(startedAt), returnedErr)
+		}
+	}()
+
+	generated, err := c.generatedClient(serverURL)
+	if err != nil {
+		return nil, err
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancel()
 	response, err := generated.GetContainer(requestCtx, containerID)
 	if err != nil {
 		return nil, wrapNodeError(&NodeError{
 			Code:    NodeErrorCodeTransport,
-			Message: "get container metadata",
+			Message: "fetch container metadata",
 		}, err)
 	}
 	return parseNodeContainerResponse(response, containerID)

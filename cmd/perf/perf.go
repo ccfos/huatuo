@@ -52,9 +52,14 @@ func mainAction(ctx *cli.Context) error {
 
 	var targetCssAddr uint64
 	if containerID := ctx.String("container-id"); containerID != "" {
-		container, err := client.FetchNodeContainer(
+		serverAddress := ctx.String("huatuo-api-address")
+		nodeClient, err := client.NewNode(&client.NodeConfig{})
+		if err != nil {
+			return fmt.Errorf("initialize node client: %w", err)
+		}
+		container, err := nodeClient.FetchContainer(
 			ctx.Context,
-			ctx.String("huatuo-api-address"),
+			client.NodeAddress{HostPort: serverAddress},
 			containerID,
 		)
 		if err != nil {

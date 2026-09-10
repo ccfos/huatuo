@@ -13,4 +13,9 @@
 // limitations under the License.
 
 // Package client provides Go clients for Huatuo HTTP APIs.
+//
+// Node clients use OpenAPI-generated types and request builders so the wire
+// contract remains owned by the API specification. The higher-level clients own
+// transport policy, bounded response handling, stable errors, and protocol
+// invariants required by callers.
 package client

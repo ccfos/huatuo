@@ -86,9 +86,17 @@ func resolveContainerCgroupCssByAPI(
 	containerID string,
 	subsysName string,
 ) (uint64, error) {
-	container, err := client.FetchNodeContainer(ctx, serverAddr, containerID)
+	nodeClient, err := client.NewNode(&client.NodeConfig{})
 	if err != nil {
-		return 0, fmt.Errorf("API call failed: %w", err)
+		return 0, fmt.Errorf("initialize node client: %w", err)
+	}
+	container, err := nodeClient.FetchContainer(
+		ctx,
+		client.NodeAddress{HostPort: serverAddr},
+		containerID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("fetch container metadata: %w", err)
 	}
 
 	cssAddr, ok := kernaddr.Parse(container.CgroupCSS[subsysName])

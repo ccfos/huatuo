@@ -15,6 +15,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -37,15 +38,11 @@ func TestNewNodeRejectsInvalidConfig(t *testing.T) {
 		config *NodeConfig
 	}{
 		{name: "nil config"},
-		{name: "empty token", config: &NodeConfig{}},
 		{name: "token whitespace", config: &NodeConfig{BearerToken: "secret token"}},
-		{name: "missing port", config: &NodeConfig{BearerToken: "secret"}},
-		{name: "invalid port", config: &NodeConfig{BearerToken: "secret", Port: 70000}},
 		{
 			name: "negative timeout",
 			config: &NodeConfig{
 				BearerToken:    "secret",
-				Port:           19704,
 				RequestTimeout: -time.Second,
 			},
 		},
@@ -59,13 +56,29 @@ func TestNewNodeRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestNewNodeAcceptsConfigWithoutBearerToken(t *testing.T) {
+	if _, err := NewNode(&NodeConfig{}); err != nil {
+		t.Fatalf("NewNode() error = %v", err)
+	}
+}
+
 func TestStartOperationRejectsNilRequest(t *testing.T) {
-	client, err := NewNode(&NodeConfig{BearerToken: "secret", Port: 19704})
+	var observed bool
+	client, err := NewNode(&NodeConfig{
+		BearerToken: "secret",
+		Observe: func(string, time.Duration, error) {
+			observed = true
+		},
+	})
 	if err != nil {
 		t.Fatalf("NewNode() error = %v", err)
 	}
 
-	_, err = client.StartOperation(t.Context(), "node-1", nil)
+	_, err = client.StartOperation(
+		t.Context(),
+		NodeAddress{HostPort: "node-1:19704"},
+		nil,
+	)
 	var nodeErr *NodeError
 	if !errors.As(err, &nodeErr) {
 		t.Fatalf("StartOperation() error = %v, want *NodeError", err)
@@ -73,13 +86,103 @@ func TestStartOperationRejectsNilRequest(t *testing.T) {
 	if nodeErr.Code != NodeErrorCodeInvalidArgument || nodeErr.StatusCode != 0 {
 		t.Fatalf("Node client error = %+v", nodeErr)
 	}
+	if observed {
+		t.Fatal("observer called for request rejected before execution")
+	}
+}
+
+func TestNodeClientRejectsInvalidAddressBeforeExecution(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(context.Context, *NodeClient) error
+	}{
+		{
+			name: "start operation",
+			call: func(ctx context.Context, client *NodeClient) error {
+				_, err := client.StartOperation(
+					ctx,
+					NodeAddress{HostPort: "node-1"},
+					&nodeapi.StartOperationRequest{},
+				)
+				return err
+			},
+		},
+		{
+			name: "get operation",
+			call: func(ctx context.Context, client *NodeClient) error {
+				_, err := client.GetOperation(
+					ctx,
+					NodeAddress{HostPort: "node-1"},
+					"job-1",
+				)
+				return err
+			},
+		},
+		{
+			name: "stop operation",
+			call: func(ctx context.Context, client *NodeClient) error {
+				_, err := client.StopOperation(
+					ctx,
+					NodeAddress{HostPort: "node-1"},
+					"job-1",
+				)
+				return err
+			},
+		},
+		{
+			name: "fetch container",
+			call: func(ctx context.Context, client *NodeClient) error {
+				_, err := client.FetchContainer(
+					ctx,
+					NodeAddress{HostPort: "node-1"},
+					nodeTestContainerID,
+				)
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				requestCount  int
+				observerCount int
+			)
+			client, err := NewNode(&NodeConfig{
+				Observe: func(string, time.Duration, error) {
+					observerCount++
+				},
+				HTTPClient: &http.Client{Transport: nodeRoundTripFunc(func(*http.Request) (*http.Response, error) {
+					requestCount++
+					return nil, errors.New("unexpected request")
+				})},
+			})
+			if err != nil {
+				t.Fatalf("NewNode() error = %v", err)
+			}
+
+			err = tt.call(t.Context(), client)
+			var nodeErr *NodeError
+			if !errors.As(err, &nodeErr) {
+				t.Fatalf("Node client error = %v, want *NodeError", err)
+			}
+			if nodeErr.Code != NodeErrorCodeInvalidArgument || nodeErr.StatusCode != 0 {
+				t.Fatalf("Node client error = %+v", nodeErr)
+			}
+			if requestCount != 0 || observerCount != 0 {
+				t.Fatalf(
+					"request count = %d, observer count = %d, want both zero",
+					requestCount,
+					observerCount,
+				)
+			}
+		})
+	}
 }
 
 func TestStartOperationSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 	var observedName string
 	client, err := NewNode(&NodeConfig{
 		BearerToken: "node-secret",
-		Port:        21970,
 		Observe: func(name string, _ time.Duration, err error) {
 			if err != nil {
 				t.Errorf("observer error = %v", err)
@@ -87,7 +190,7 @@ func TestStartOperationSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 			observedName = name
 		},
 		HTTPClient: &http.Client{Transport: nodeRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-			if request.Method != http.MethodPost || request.URL.String() != "http://node-1:21970/v1/operations" {
+			if request.Method != http.MethodPost || request.URL.String() != "https://node-1:21970/v1/operations" {
 				t.Fatalf("request = %s %s", request.Method, request.URL)
 			}
 			if got := request.Header.Get("Authorization"); got != "Bearer node-secret" {
@@ -118,7 +221,11 @@ func TestStartOperationSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set profiling spec: %v", err)
 	}
-	got, err := client.StartOperation(t.Context(), "node-1", request)
+	got, err := client.StartOperation(
+		t.Context(),
+		NodeAddress{HostPort: "node-1:21970", Scheme: "https"},
+		request,
+	)
 	if err != nil {
 		t.Fatalf("StartOperation() error = %v", err)
 	}
@@ -133,7 +240,6 @@ func TestStartOperationSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 func TestGetOperationReturnsStableNodeError(t *testing.T) {
 	client, err := NewNode(&NodeConfig{
 		BearerToken: "node-secret",
-		Port:        19704,
 		HTTPClient: &http.Client{Transport: nodeRoundTripFunc(func(*http.Request) (*http.Response, error) {
 			return nodeJSONResponse(
 				http.StatusNotFound,
@@ -145,7 +251,11 @@ func TestGetOperationReturnsStableNodeError(t *testing.T) {
 		t.Fatalf("NewNode() error = %v", err)
 	}
 
-	_, err = client.GetOperation(t.Context(), "node-1", "job-1")
+	_, err = client.GetOperation(
+		t.Context(),
+		NodeAddress{HostPort: "node-1:19704"},
+		"job-1",
+	)
 	var nodeErr *NodeError
 	if !errors.As(err, &nodeErr) {
 		t.Fatalf("GetOperation() error = %v, want *NodeError", err)
@@ -156,11 +266,41 @@ func TestGetOperationReturnsStableNodeError(t *testing.T) {
 	}
 }
 
+func TestNodeClientObserverReceivesReturnedError(t *testing.T) {
+	var observedErr error
+	client, err := NewNode(&NodeConfig{
+		BearerToken: "node-secret",
+		Observe: func(_ string, _ time.Duration, err error) {
+			observedErr = err
+		},
+		HTTPClient: &http.Client{Transport: nodeRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nodeJSONResponse(
+				http.StatusOK,
+				nodeOperationJSON("other-job", "running"),
+			), nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewNode() error = %v", err)
+	}
+
+	_, returnedErr := client.GetOperation(
+		t.Context(),
+		NodeAddress{HostPort: "node-1:19704"},
+		"job-1",
+	)
+	if returnedErr == nil {
+		t.Fatal("GetOperation() error = nil")
+	}
+	if !errors.Is(observedErr, returnedErr) {
+		t.Fatalf("observer error = %v, want returned error %v", observedErr, returnedErr)
+	}
+}
+
 func TestNodeClientKeepsNoResponseTransportErrorDistinct(t *testing.T) {
 	transportErr := errors.New("connection reset before response")
 	client, err := NewNode(&NodeConfig{
 		BearerToken: "node-secret",
-		Port:        19704,
 		HTTPClient: &http.Client{Transport: nodeRoundTripFunc(func(*http.Request) (*http.Response, error) {
 			return nil, transportErr
 		})},
@@ -169,7 +309,11 @@ func TestNodeClientKeepsNoResponseTransportErrorDistinct(t *testing.T) {
 		t.Fatalf("NewNode() error = %v", err)
 	}
 
-	_, err = client.GetOperation(t.Context(), "node-1", "job-1")
+	_, err = client.GetOperation(
+		t.Context(),
+		NodeAddress{HostPort: "node-1:19704"},
+		"job-1",
+	)
 	if !errors.Is(err, transportErr) {
 		t.Fatalf("GetOperation() error = %v, want transport error", err)
 	}

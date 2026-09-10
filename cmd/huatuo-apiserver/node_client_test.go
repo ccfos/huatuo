@@ -12,36 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package client_test
+package main
 
 import (
-	"context"
-	"fmt"
+	"testing"
 
 	"github.com/ccfos/huatuo/client"
 )
 
-func ExampleNewNode() {
-	nodeClient, err := client.NewNode(&client.NodeConfig{
-		BearerToken: "node-token",
-	})
-	fmt.Println(nodeClient != nil, err)
-
-	// Output: true <nil>
-}
-
-func ExampleNodeClient_FetchContainer() {
-	nodeClient, err := client.NewNode(&client.NodeConfig{})
-	if err != nil {
-		return
+func TestNodeOperationClientAddress(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		want client.NodeAddress
+	}{
+		{
+			name: "hostname",
+			host: "node-1",
+			want: client.NodeAddress{HostPort: "node-1:19704"},
+		},
+		{
+			name: "IPv6",
+			host: "2001:db8::1",
+			want: client.NodeAddress{HostPort: "[2001:db8::1]:19704"},
+		},
 	}
-
-	_, err = nodeClient.FetchContainer(
-		context.Background(),
-		client.NodeAddress{HostPort: "node-1:19704"},
-		"container-id",
-	)
-	if err != nil {
-		fmt.Println(err)
+	nodeClient := newNodeOperationClient(nil, 19704)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nodeClient.address(tt.host); got != tt.want {
+				t.Fatalf("address() = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
