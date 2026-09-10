@@ -26,6 +26,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestNativeCPUReadDataLoopRequiresStart(t *testing.T) {
+	err := (&cpuNativeProfiler{}).ReadDataLoop(t.Context(), func(any) {})
+	require.EqualError(t, err, "native CPU event readers are not initialized; call Start before ReadDataLoop")
+}
+
 func TestNativeCPUStartRejectsUnsupportedMode(t *testing.T) {
 	pctx := &pcontext.ProfilerContext{
 		PIDs: []int{123},

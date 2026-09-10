@@ -48,6 +48,7 @@ func init() {
 
 type cpuNativeProfiler struct {
 	bpf                bpf.BPF
+	ringCtx            *ringBufferContext
 	dbg                *bpf.BpfDbg
 	offCPUMode         bool
 	offCPUStatsEnabled bool
@@ -61,7 +62,14 @@ func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 	if p.offCPUStatsEnabled {
 		logOffCPUBPFStats(p.bpf)
 	}
-	return closeBPF(p.bpf)
+	if p.ringCtx != nil {
+		p.ringCtx.Close()
+		p.ringCtx = nil
+	}
+
+	err := closeBPF(p.bpf)
+	p.bpf = nil
+	return err
 }
 
 func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
@@ -117,6 +125,23 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		}
 	}
 
+	var ringCtx *ringBufferContext
+	if offCPU {
+		ringCtx, err = newSingleRingBufferContext(b, pctx.Ctx, 4096*257)
+	} else {
+		ringCtx, err = newRingBufferContext(b, pctx.Ctx, 4096*257, false)
+	}
+	if err != nil {
+		readerErr := fmt.Errorf("create native CPU %s event readers: %w", pctx.Mode, err)
+		if closeErr := b.Close(); closeErr != nil {
+			return errors.Join(
+				readerErr,
+				fmt.Errorf("close BPF after reader creation failure: %w", closeErr),
+			)
+		}
+		return readerErr
+	}
+
 	var attachErr error
 	if offCPU {
 		attachErr = b.AttachWithOptions(nativeOffCPUAttachOptions())
@@ -124,6 +149,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		attachErr = attachNativeOnCPU(b.AttachWithOptions, pctx)
 	}
 	if attachErr != nil {
+		ringCtx.Close()
 		attachErr = fmt.Errorf("attach native CPU %s probes: %w", pctx.Mode, attachErr)
 		if closeErr := b.Close(); closeErr != nil {
 			return errors.Join(
@@ -135,6 +161,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	p.bpf = b
+	p.ringCtx = ringCtx
 	p.dbg = dbg
 	p.offCPUMode = offCPU
 	p.offCPUStatsEnabled = offCPU && pctx.OffCPUStatsEnabled
@@ -191,8 +218,9 @@ func nativeOnCPUAttachOptions(
 }
 
 func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	log.Info("data reading loop started")
-	defer log.Info("data reading loop ended")
+	if p.ringCtx == nil {
+		return errors.New("native CPU event readers are not initialized; call Start before ReadDataLoop")
+	}
 
 	stopDbg, err := p.dbg.StartDebugEventLoop(ctx, p.bpf, "dbg_native_cpu_dbg_events")
 	if err != nil {
@@ -207,12 +235,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 }
 
 func (p *cpuNativeProfiler) readOnCPUDataLoop(ctx context.Context, enqueue func(any)) error {
-	// Initialize ring buffer context once, reuse throughout the profiling loop
-	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257, false)
-	if err != nil {
-		return err
-	}
-	defer ringCtx.Close()
+	ringCtx := p.ringCtx
 
 	ticker := time.NewTicker(drainInterval)
 	defer ticker.Stop()

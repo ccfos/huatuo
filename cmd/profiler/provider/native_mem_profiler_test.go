@@ -24,6 +24,13 @@ import (
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
+func TestNativeMemoryReadDataLoopRequiresStart(t *testing.T) {
+	err := (&memNativeProfiler{}).ReadDataLoop(t.Context(), func(any) {})
+	if err == nil || err.Error() != "native memory event readers are not initialized; call Start before ReadDataLoop" {
+		t.Fatalf("ReadDataLoop() error = %v, want uninitialized-reader error", err)
+	}
+}
+
 type memoryPipelineBPFStub struct {
 	bpf.BPF
 	state [3]uint64

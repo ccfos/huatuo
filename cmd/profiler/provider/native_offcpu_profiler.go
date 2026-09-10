@@ -136,11 +136,7 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(
 	ctx context.Context,
 	enqueue func(any),
 ) error {
-	ringCtx, err := newSingleRingBufferContext(p.bpf, ctx, 4096*257)
-	if err != nil {
-		return err
-	}
-	defer ringCtx.Close()
+	ringCtx := p.ringCtx
 
 	for {
 		batch, err := ringCtx.readerA.ReadBatch(func() any { return &abi.ProfilerOffCPUEvent{} })

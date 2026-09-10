@@ -52,7 +52,8 @@ type physicalUsageAttachConfig struct {
 }
 
 type memNativeProfiler struct {
-	bpf bpf.BPF
+	bpf     bpf.BPF
+	ringCtx *ringBufferContext
 
 	internalMode profiling.Mode
 	probability  uint
@@ -88,7 +89,14 @@ func (p *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 }
 
 func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
-	return closeBPF(p.bpf)
+	if p.ringCtx != nil {
+		p.ringCtx.Close()
+		p.ringCtx = nil
+	}
+
+	err := closeBPF(p.bpf)
+	p.bpf = nil
+	return err
 }
 
 func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
@@ -133,7 +141,21 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
 
+	needsFallback := p.internalMode == profiling.ModePhysicalUsage
+	ringCtx, err := newRingBufferContext(b, pctx.Ctx, 4096*257, needsFallback)
+	if err != nil {
+		readerErr := fmt.Errorf("create native memory event readers: %w", err)
+		if closeErr := b.Close(); closeErr != nil {
+			return errors.Join(
+				readerErr,
+				fmt.Errorf("close BPF after reader creation failure: %w", closeErr),
+			)
+		}
+		return readerErr
+	}
+
 	if err := b.AttachWithOptions(cfg.AttachOpts); err != nil {
+		ringCtx.Close()
 		if cerr := b.Close(); cerr != nil {
 			log.Warn("closing eBPF after attach failure", "error", cerr)
 		}
@@ -142,6 +164,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	p.bpf = b
+	p.ringCtx = ringCtx
 	log.Info("eBPF attached")
 
 	return nil
@@ -256,19 +279,10 @@ func newPhysicalUsageAttachConfig() (physicalUsageAttachConfig, error) {
 }
 
 func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	log.Info("data reading loop started")
-	defer log.Info("data reading loop ended")
-
-	// Determine if fallback is needed based on profiling mode
-	// Retained mode (physical_usage) needs fallback, others don't
-	needsFallback := p.internalMode == profiling.ModePhysicalUsage
-
-	// Initialize ring buffer context once, reuse throughout the profiling loop
-	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257, needsFallback)
-	if err != nil {
-		return err
+	ringCtx := p.ringCtx
+	if ringCtx == nil {
+		return errors.New("native memory event readers are not initialized; call Start before ReadDataLoop")
 	}
-	defer ringCtx.Close()
 
 	ticker := time.NewTicker(drainInterval)
 	defer ticker.Stop()

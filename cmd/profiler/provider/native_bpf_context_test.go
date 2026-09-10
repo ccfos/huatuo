@@ -77,6 +77,7 @@ func TestCloseBPF(t *testing.T) {
 type frozenRingReaderStub struct {
 	batches []bpf.PerfEventBatch
 	reads   int
+	closed  bool
 }
 
 func (*frozenRingReaderStub) ReadInto(any) error {
@@ -93,8 +94,48 @@ func (r *frozenRingReaderStub) ReadBatch(func() any) (bpf.PerfEventBatch, error)
 	return batch, nil
 }
 
-func (*frozenRingReaderStub) Close() error {
+func (r *frozenRingReaderStub) Close() error {
+	r.closed = true
 	return nil
+}
+
+func TestNativeProfilerStopClosesReadersAndBPF(t *testing.T) {
+	tests := []struct {
+		name string
+		stop func(*ringBufferContext, *closeBPFStub) error
+	}{
+		{
+			name: "memory",
+			stop: func(ringCtx *ringBufferContext, obj *closeBPFStub) error {
+				return (&memNativeProfiler{bpf: obj, ringCtx: ringCtx}).Stop(nil)
+			},
+		},
+		{
+			name: "CPU",
+			stop: func(ringCtx *ringBufferContext, obj *closeBPFStub) error {
+				return (&cpuNativeProfiler{bpf: obj, ringCtx: ringCtx}).Stop(nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			readerA := &frozenRingReaderStub{}
+			readerB := &frozenRingReaderStub{}
+			obj := &closeBPFStub{}
+			ringCtx := &ringBufferContext{readerA: readerA, readerB: readerB}
+
+			if err := tt.stop(ringCtx, obj); err != nil {
+				t.Fatalf("Stop() error = %v, want nil", err)
+			}
+			if !readerA.closed || !readerB.closed {
+				t.Fatalf("Stop() closed readers = (%t, %t), want (true, true)", readerA.closed, readerB.closed)
+			}
+			if !obj.closed {
+				t.Fatal("Stop() did not close BPF")
+			}
+		})
+	}
 }
 
 type frozenRingBPFStub struct {

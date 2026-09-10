@@ -38,8 +38,9 @@ type ProfilerMeta struct {
 
 // Profiler is the sampling lifecycle. Aggregator ownership stays with Profile
 // so streaming (eBPF, async-profiler tail) and one-shot (py-spy) providers
-// share one shape; ReadDataLoop returns when ctx is canceled or sampling
-// completes naturally, and its error surfaces through Profile.
+// share one shape. Streaming providers initialize their event inputs in Start,
+// so ReadDataLoop only consumes data. ReadDataLoop returns when ctx is canceled
+// or sampling completes naturally, and its error surfaces through Profile.
 type Profiler interface {
 	Start(pctx *pcontext.ProfilerContext) error
 	ReadDataLoop(ctx context.Context, enqueue func(any)) error
@@ -95,6 +96,9 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	go func() {
 		loopDone <- p.Impl.ReadDataLoop(pctx.Ctx, pipe.Enqueue)
 	}()
+	// Native integration tests use this exact message as the barrier before
+	// releasing target workloads. Do not remove, rename, or move this log.
+	log.Info("data reading loop started")
 
 	var deadline <-chan time.Time
 
@@ -130,6 +134,7 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	if !looped {
 		loopErr = <-loopDone
 	}
+	log.Info("data reading loop ended")
 
 	if stopErr := p.Impl.Stop(pctx); stopErr != nil {
 		log.Errorf("profiler stop: %v", stopErr)

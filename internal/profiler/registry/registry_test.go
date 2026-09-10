@@ -15,10 +15,13 @@
 package registry
 
 import (
+	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
@@ -109,5 +112,34 @@ func TestGetUnknownImplementation(t *testing.T) {
 
 	if _, err := Get("unknown", profiling.TypeCPU); err == nil {
 		t.Fatal(`Get("unknown", "cpu") error = nil, want non-nil`)
+	}
+}
+
+func TestProfileLogsDataReadingLoopLifecycleOnce(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stdout) })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	pctx := &pcontext.ProfilerContext{
+		Ctx:          ctx,
+		Cancel:       cancel,
+		OutputFormat: output.FormatRemote,
+	}
+	if err := Profile(pctx, newMeta(profiling.ImplementationNative, profiling.TypeCPU)); err != nil {
+		t.Fatalf("Profile() error = %v, want nil", err)
+	}
+
+	const started = "data reading loop started"
+	const ended = "data reading loop ended"
+	output := logs.String()
+	if got := strings.Count(output, started); got != 1 {
+		t.Fatalf("%q log count = %d, want 1; logs: %s", started, got, output)
+	}
+	if got := strings.Count(output, ended); got != 1 {
+		t.Fatalf("%q log count = %d, want 1; logs: %s", ended, got, output)
+	}
+	if strings.Index(output, started) > strings.Index(output, ended) {
+		t.Fatalf("data loop lifecycle logs out of order: %s", output)
 	}
 }
