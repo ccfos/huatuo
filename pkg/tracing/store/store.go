@@ -34,6 +34,7 @@ type Store struct {
 // Config contains optional persistence backend settings.
 type Config struct {
 	Elasticsearch *ElasticsearchConfig
+	Kafka         *KafkaConfig
 	LocalFile     *LocalFileConfig
 }
 
@@ -52,9 +53,19 @@ type LocalFileConfig struct {
 	MaxRotatedFiles int
 }
 
+// KafkaConfig contains Kafka backend settings.
+type KafkaConfig struct {
+	Brokers  []string
+	Topic    string
+	ClientID string
+}
+
 func (c Config) validate() error {
 	if c.Elasticsearch != nil && len(c.Elasticsearch.Addresses) == 0 {
 		return errors.New("tracing store: Elasticsearch addresses are required")
+	}
+	if c.Kafka != nil && len(c.Kafka.Brokers) == 0 {
+		return errors.New("tracing store: Kafka brokers are required")
 	}
 	if c.LocalFile == nil {
 		return nil
@@ -112,6 +123,20 @@ func NewFromConfig(
 		}, Collection, mapper{})
 		if err != nil {
 			return nil, fmt.Errorf("new tracing document store (localfile): %w", err)
+		}
+		backends = append(backends, backend)
+	}
+
+	if config.Kafka != nil {
+		backendConfig := config.Kafka
+		backend, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
+			Driver:        "kafka",
+			KafkaBrokers:  backendConfig.Brokers,
+			KafkaTopic:    backendConfig.Topic,
+			KafkaClientID: backendConfig.ClientID,
+		}, Collection, mapper{})
+		if err != nil {
+			return nil, fmt.Errorf("new tracing document store (Kafka): %w", err)
 		}
 		backends = append(backends, backend)
 	}
