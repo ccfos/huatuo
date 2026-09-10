@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"syscall"
@@ -41,11 +42,12 @@ type Handle struct {
 
 // Lock takes an exclusive, non-blocking flock on the pid file for name.
 // If another live process already holds the lock, the returned error
-// embeds its recorded pid.
+// embeds its recorded pid. The pid is written only after the flock is
+// held, so a rejected Lock leaves the running instance's record intact.
 func Lock(name string) (*Handle, error) {
 	p := path(name)
 
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +66,7 @@ func Lock(name string) (*Handle, error) {
 		return nil, err
 	}
 
-	if _, err := fmt.Fprintf(f, "%d", os.Getpid()); err != nil {
+	if err := writePID(f); err != nil {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 		_ = os.Remove(p)
@@ -73,6 +75,21 @@ func Lock(name string) (*Handle, error) {
 	}
 
 	return &Handle{file: f, path: p}, nil
+}
+
+// writePID replaces the pid file content with the current process id. It runs
+// with the flock already held: truncating before the flock would erase the pid
+// recorded by a running instance.
+func writePID(f *os.File) error {
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+
+	_, err := fmt.Fprintf(f, "%d", os.Getpid())
+	return err
 }
 
 // Unlock unlocks, closes, and removes the pid file. Calling Unlock more
