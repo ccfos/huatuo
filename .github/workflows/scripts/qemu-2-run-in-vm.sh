@@ -132,12 +132,9 @@ function prapre_test_env() {
 		;;
 	esac
 
-	# These pins must stay compatible with GOLANG_VERSION above and move
-	# together with it: newer releases (shfmt v3.13.1+, mockery v2.53.7+)
-	# raise their minimum Go past 1.24.0, which would fail the install.
 	which mockery || go install github.com/vektra/mockery/v2@v2.53.6
 	which capnpc-go || go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
-	which shfmt || go install mvdan.cc/sh/v3/cmd/shfmt@v3.12.0
+	which shfmt || go install mvdan.cc/sh/v3/cmd/shfmt@latest
 
 	git config --global --add safe.directory /mnt/host
 }
