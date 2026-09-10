@@ -33,6 +33,8 @@ func setupPodManager(d *Daemon) (func(context.Context) error, error) {
 		PodReadOnlyPort:   config.Get().Pod.KubeletReadOnlyPort,
 		PodAuthorizedPort: config.Get().Pod.KubeletAuthorizedPort,
 		PodClientCertPath: config.Get().Pod.KubeletClientCertPath,
+		PodCABundle:       config.Get().Pod.KubeletCABundle,
+		PodTLSInsecure:    config.Get().Pod.KubeletTLSInsecure,
 		DockerAPIVersion:  config.Get().Pod.DockerAPIVersion,
 	}
 

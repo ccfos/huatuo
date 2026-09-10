@@ -30,6 +30,7 @@ import (
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/utils/netutil"
+	"huatuo-bamai/internal/utils/tlsutil"
 
 	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
@@ -82,6 +83,8 @@ type ManagerCtx struct {
 	PodReadOnlyPort   uint32
 	PodAuthorizedPort uint32
 	PodClientCertPath string
+	PodCABundle       string
+	PodTLSInsecure    bool
 	DockerAPIVersion  string
 
 	// this is used internally.
@@ -117,18 +120,35 @@ func kubeletPodListAuthorizationRequest(ctx *ManagerCtx) (*http.Client, error) {
 			ctx.podClientCertPath, ctx.podClientCertKey, err)
 	}
 
+	tlsCfg, err := kubeletTLSConfig(&cert, ctx.PodCABundle, ctx.PodTLSInsecure)
+	if err != nil {
+		return nil, err
+	}
+
 	client := &http.Client{
-		Timeout: kubeletReqTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				Certificates:       []tls.Certificate{cert},
-				InsecureSkipVerify: true, // #nosec G402
-			},
-		},
+		Timeout:   kubeletReqTimeout,
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 
 	_, err = kubeletPodListDoRequest(client, kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort))
 	return client, err
+}
+
+// kubeletTLSConfig builds the TLS config for the authorized kubelet client.
+// Server verification is on by default: the kubelet serving certificate is
+// signed by the cluster CA, so point the CA bundle at it. A man in the
+// middle on an unverified connection can feed a fake pod list and poison
+// container attribution, so treat PodTLSInsecure as a last resort.
+func kubeletTLSConfig(cert *tls.Certificate, caBundle string, insecure bool) (*tls.Config, error) {
+	cfg := &tls.Config{
+		Certificates:       []tls.Certificate{*cert},
+		InsecureSkipVerify: insecure, //nolint:gosec // opt-in via config
+	}
+
+	if err := tlsutil.AppendCABundle(cfg, caBundle); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 func kubeletPodListPortCacheUpdate(ctx *ManagerCtx) error {

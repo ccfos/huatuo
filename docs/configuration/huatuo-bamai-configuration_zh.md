@@ -1152,6 +1152,8 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 #
 [Pod]
 	KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
+	KubeletCABundle = "/etc/kubernetes/pki/ca.crt"
+	KubeletTLSInsecure = false
 ```
 
 - **KubeletReadOnlyPort**：kubelet 只读端口。
@@ -1171,6 +1173,21 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
   支持格式："/path/to/xxx-kubelet-client.crt,/path/to/xxx-kubelet-client.key" 或单文件 PEM 格式。 
 
   **说明**：参考 Kubernetes 证书最佳实践，用于 HTTPS 端口的 mTLS 认证。在裸金属或非 Kubernetes 环境中可通过将两个端口设为 0 来禁用 Pod 获取功能。
+
+- **KubeletCABundle**：用于校验 kubelet 服务端证书的 PEM 格式 CA 证书文件路径。
+
+  无默认值。
+
+  **说明**：kubelet 服务端证书通常由集群 CA 签发（如
+  /etc/kubernetes/pki/ca.crt）。默认开启校验；未配置 CA bundle 时
+  HTTPS 回退会因证书校验失败而不可用。
+
+- **KubeletTLSInsecure**：关闭 kubelet HTTPS 地址的 TLS 服务端证书校验。
+
+  默认值为 false（开启校验）。
+
+  **说明**：不校验时中间人可以伪造 Pod 列表并污染容器归属信息，建议
+  优先配置 **KubeletCABundle** 而不是关闭校验。
 
 ### 11. 命令行参数
 

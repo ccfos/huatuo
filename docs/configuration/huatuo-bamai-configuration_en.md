@@ -1149,6 +1149,8 @@ This section configures how to fetch Pod information from kubelet to enable cont
 #
 [Pod]
 	KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
+	KubeletCABundle = "/etc/kubernetes/pki/ca.crt"
+	KubeletTLSInsecure = false
 ```
 
 - **KubeletReadOnlyPort**: Kubelet read-only port.
@@ -1162,6 +1164,22 @@ This section configures how to fetch Pod information from kubelet to enable cont
 - **KubeletClientCertPath**: Path to kubelet client certificate and private key. Supports comma-separated files or single PEM file.
 
   **Description**: Used for mTLS authentication on the HTTPS port. In non-Kubernetes (bare-metal) environments, set both ports to 0 to disable Pod fetching.
+
+- **KubeletCABundle**: Path to PEM-encoded CA certificates used to verify the kubelet serving certificate.
+
+  No default value.
+
+  **Description**: The kubelet serving certificate is normally signed by the
+  cluster CA (e.g. /etc/kubernetes/pki/ca.crt). Verification is enabled by
+  default; without a CA bundle the HTTPS fallback fails with a certificate
+  error.
+
+- **KubeletTLSInsecure**: Disable kubelet TLS server certificate verification.
+
+  Default value is `false` (verification enabled).
+
+  **Description**: On an unverified connection a man in the middle can feed a
+  fake pod list and poison container attribution, so prefer **KubeletCABundle**.
 
 ### 11. CLI Flags
 

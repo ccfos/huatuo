@@ -92,7 +92,14 @@ type PodConfig struct {
 	KubeletReadOnlyPort   uint32 `default:"10255"`
 	KubeletAuthorizedPort uint32 `default:"10250"`
 	KubeletClientCertPath string
-	DockerAPIVersion      string `default:"1.24"`
+	// KubeletCABundle optionally points at PEM-encoded CA certificates used
+	// to verify the kubelet serving certificate (usually the cluster CA).
+	KubeletCABundle string
+	// KubeletTLSInsecure disables kubelet TLS server verification. The
+	// kubelet serving certificate is signed by the cluster CA; point
+	// KubeletCABundle at it instead of disabling verification.
+	KubeletTLSInsecure bool   `default:"false"`
+	DockerAPIVersion   string `default:"1.24"`
 }
 
 // Config is the global huatuo-bamai configuration.
