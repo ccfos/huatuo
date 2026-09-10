@@ -41,7 +41,12 @@ func (e *NodeError) Error() string {
 	if e == nil {
 		return "node client error"
 	}
-	if isNodeClientErrorCode(e.Code) {
+	// Client-owned codes describe local processing failures even when an HTTP
+	// response supplied a status code; server codes describe Node API failures.
+	switch e.Code {
+	case NodeErrorCodeInvalidArgument,
+		NodeErrorCodeProtocol,
+		NodeErrorCodeTransport:
 		if e.StatusCode == 0 {
 			return fmt.Sprintf("node client %s: %s", e.Code, e.Message)
 		}
@@ -53,17 +58,6 @@ func (e *NodeError) Error() string {
 		)
 	}
 	return fmt.Sprintf("node API returned HTTP %d %s: %s", e.StatusCode, e.Code, e.Message)
-}
-
-func isNodeClientErrorCode(code apiv1.ErrorCode) bool {
-	switch code {
-	case NodeErrorCodeInvalidArgument,
-		NodeErrorCodeProtocol,
-		NodeErrorCodeTransport:
-		return true
-	default:
-		return false
-	}
 }
 
 func wrapNodeError(nodeErr *NodeError, cause error) error {
