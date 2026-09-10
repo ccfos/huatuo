@@ -185,9 +185,9 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 | `tcp_end_seq` | uint32 | SKB 事件使用 `TCP_SKB_CB(skb)->end_seq`；字段可用时 SYN-ACK 使用 request `snt_isn + 1`；TLP 中省略。 |
 | `tcp_flags` | string | 渲染后的 TCP flag 集合，如 `SYN|ACK`、`ACK|PSH`；SKB 事件来自 `TCP_SKB_CB(skb)->tcp_flags`，SYN-ACK 事件由事件类型派生，TLP 事件中省略。 |
 | `skb_addr` | string | 十六进制重传队列 SKB 指针；SYN-ACK 和 TLP 事件中不存在。 |
-| `drop_location` | string | local 关联结果：`host_software` 或 `unknown`；shutdown 时原样输出的 pending 重传会省略该字段，见 §5。 |
+| `drop_location` | string | local 关联结果：`host_software` 或 `unknown`，见 §5。 |
 | `correlation_reasons` | string array | no-match 保持 `unknown` 的稳定、机器可读原因。 |
-| `dropwatch_perf_status` | object | no-match 定型时最新的 embedded dropwatch 累计 `perf_lost` / `rate_limited`；状态 map 读取失败时省略。 |
+| `dropwatch_perf_status` | object | no-match 定型时最新的 embedded dropwatch 累计 `perf_lost`、`lost_samples` 和 `rate_limited`；状态 map 读取失败时省略。 |
 | `drop_stack` | string | 匹配到的 drop 调用栈；未匹配的栈不做符号化。 |
 | `source` | string | 事件来源。独立运行 tcpshark 时为 `tools`，由 huatuo-bamai 启动时为 `events`。 |
 
@@ -205,16 +205,16 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 
 #### 3.1 文本输出格式
 
-文本输出保留面向终端的可读布局，同时覆盖与 JSON 相同的事件变量。带 `omitempty` 的变量仅在非零或非空时显示，字符串值不添加 JSON 引号或转义。为兼容原文本格式，`state`、`skb`、`seq`、`end`、`ack`、`flags`、`ca` 和 `retrans` 分别对应 JSON 中的 `tcp_state`、`skb_addr`、`tcp_seq`、`tcp_end_seq`、`tcp_ack_seq`、`tcp_flags`、`ca_state` 和 `icsk_retransmits`。
+文本输出保留面向终端的可读布局，同时覆盖与 JSON 相同的事件变量。可选变量仅在非零或非空时显示，字符串值不添加 JSON 引号或转义。为兼容原文本格式，`state`、`skb`、`seq`、`end`、`ack`、`flags`、`ca`、`retrans` 和 `reason` 分别对应 JSON 中的 `tcp_state`、`skb_addr`、`tcp_seq`、`tcp_end_seq`、`tcp_ack_seq`、`tcp_flags`、`ca_state`、`icsk_retransmits` 和 `correlation_reasons`。
 
 ```text
-<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [ktime_ns=<N>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [correlation_reasons=<REASON,...>] [dropwatch_perf_lost=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
+<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> ktime_ns=<N> [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [reason=<REASON,...>] [dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
 ```
 
 示例：
 
 ```text
-2026-07-23T02:14:40.304775546Z [data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 state=ESTABLISHED event_type=tcp_retransmit_skb skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 ack=948393597 flags=ACK|PSH pid=1420 comm=kube-apiserver ca=4 retrans=4 icsk_pending=0 net_namespace_inum=4026531992
+2026-07-23T02:14:40.304775546Z [data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 state=ESTABLISHED event_type=tcp_retransmit_skb ktime_ns=123456789 skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 ack=948393597 flags=ACK|PSH pid=1420 comm=kube-apiserver ca=4 retrans=4 icsk_pending=0 net_namespace_inum=4026531992
 ```
 
 示例中的 `pid` 和 `comm` 表示 hook 运行时的执行上下文；工作负载归属应使用 `container_id` 和 socket 元数据判断。
@@ -341,10 +341,9 @@ sequenceDiagram
 无法规范化的 drop 记录和从有界缓存中淘汰的 drop 候选不再产生重传级原因。没有找到严格匹配时，结果仍为 `unknown` 并包含 `no_matching_drop`。
 
 采集结束或任一 worker 失败时，不再读取 dropwatch perf ring 中尚未交给关联器的
-尾部记录。关联器中仍在等待的重传按 deadline 顺序原样输出，不附加
-`drop_location`、`correlation_reasons`、`dropwatch_perf_status` 或 `drop_stack`。
-因此 shutdown pending 不会生成 `no_matching_drop`，即使未读取的尾部 drop 原本
-可以与其匹配。
+尾部记录。关联器中仍在等待的重传按 deadline 顺序通过正常 no-match 路径定型，
+输出 `drop_location=unknown`、`no_matching_drop`、其他适用原因和当时可读取的
+`dropwatch_perf_status`。未读取的尾部 drop 原本仍可能与 shutdown 结果匹配。
 
 #### 5.3 Dropwatch Perf Status
 
@@ -353,10 +352,11 @@ sequenceDiagram
 | 字段 | 含义 |
 |------|------|
 | `perf_lost` | 本次 embedded dropwatch perf 输入的累计丢失；不包含 tcpshark 或其他 perf stream。 |
+| `lost_samples` | 用户态 reader 从 `PERF_RECORD_LOST` 记录累计的丢失样本数。 |
 | `rate_limited` | 本次 embedded dropwatch 被限速拒绝的累计事件数。 |
 
-两个 counter 绑定当前 BPF load；重新加载时归零。正常运行时已经定型的 no-match
-不会在 reload 后继续复用；shutdown pending 不读取该状态。
+这些 counter 绑定当前 BPF load；重新加载时归零。正常运行或 shutdown 时已经
+定型的 no-match 不会在 reload 后继续复用。
 
 #### 5.4 使用条件与排查方式
 
@@ -367,7 +367,7 @@ sequenceDiagram
 | `unknown` 且包含 `no_matching_drop` | 100ms 内没有严格候选；结合其他原因判断，必要时扩大采集范围。 |
 | `unknown` 且包含 `cross_netns_candidate` | 单独检查该 namespace；跨 namespace 证据不会提升为正向匹配。 |
 | `unknown` 且包含 `startup_history_incomplete` | no-match 无法排除 embedded source ready 之前的软件丢包。 |
-| `drop_location` 不存在 | `off` 模式，或 local 模式 shutdown 时原样交付的 pending 重传。 |
+| `drop_location` 不存在 | `off` 模式。 |
 
 huatuo-bamai 会向 local 关联的两个输入传入同一个规范化 `EventTracing.TCPRetransmit.Filter`。采集范围一致可以避免两个 source 观察不同流量，但在缺少可靠因果起点边界时，no-match 仍不能成为确定结论。
 

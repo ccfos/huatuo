@@ -15,6 +15,7 @@
 package main
 
 import (
+	"net/netip"
 	"slices"
 	"testing"
 	"time"
@@ -448,10 +449,7 @@ func testFlowKey(sourcePort, destinationPort uint16) flowKey {
 	sourceAddress, _ := parseAddress("10.0.0.1")
 	destinationAddress, _ := parseAddress("10.0.0.2")
 	return flowKey{
-		source: endpoint{address: sourceAddress, port: sourcePort},
-		destination: endpoint{
-			address: destinationAddress,
-			port:    destinationPort,
-		},
+		source:      netip.AddrPortFrom(sourceAddress, sourcePort),
+		destination: netip.AddrPortFrom(destinationAddress, destinationPort),
 	}
 }

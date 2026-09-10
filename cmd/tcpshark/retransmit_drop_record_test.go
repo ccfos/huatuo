@@ -76,10 +76,10 @@ func TestDropEventFromRecordUsesIPLengthForSequenceSpan(t *testing.T) {
 					test.wantEndSequence,
 				)
 			}
-			if event.flow.source.address.Is6() != test.wantIPv6 {
+			if event.flow.source.Addr().Is6() != test.wantIPv6 {
 				t.Fatalf(
 					"source address = %s, want IPv6 %t",
-					event.flow.source.address,
+					event.flow.source.Addr(),
 					test.wantIPv6,
 				)
 			}
@@ -122,7 +122,7 @@ func TestDropEventFromRecordParseErrorKeepsScalars(t *testing.T) {
 		event.namespace != (namespaceID{cookie: 200}) {
 		t.Fatalf("scalar event = %+v", event)
 	}
-	if event.flow.source.address.IsValid() || event.flow.destination.address.IsValid() {
+	if event.flow.source.Addr().IsValid() || event.flow.destination.Addr().IsValid() {
 		t.Fatalf("flow = %+v, want invalid zero value", event.flow)
 	}
 }

@@ -19,8 +19,8 @@ weight: 7
 no-match 不能证明问题位于网络或硬件。drop 可能发生在采集启动前、另一个
 network namespace，或记录虽送达但缺少 TCP 匹配字段。
 
-shutdown 时仍在等待的 retransmit 不形成关联结果，而是保持关联字段为空并原样
-交付；它既不是 `host_software`，也不会被改写为 `unknown`。
+shutdown 时仍在等待的 retransmit 会通过正常 no-match 路径定型为 `unknown`，
+并带上适用原因和最新可用的 perf 状态。
 
 ## 2. 三种运行场景
 
@@ -176,14 +176,14 @@ reader、embedded dropwatch reader 和关联循环。所有 worker 共享同一�
 1. 取消共享 `groupCtx`；
 2. 两个 `ReadInto` reader 和关联循环退出；
 3. 不再读取 dropwatch perf ring 中尚未交给关联器的记录；
-4. 按 deadline 顺序取出 waiting retransmit，并直接写入 output；
+4. 按 deadline 顺序取出 waiting retransmit，通过正常 no-match 路径定型并写入
+   output；
 5. 等全部 worker 退出后，依次 detach embedded source、关闭 reader 和 object；
 6. 最后关闭 output。
 
-shutdown pending 不调用正常 no-match 定型路径，不读取 perf 状态，也不附加
-`drop_location`、`correlation_reasons`、`dropwatch_perf_status` 或 `drop_stack`。
-因此尾部 drop 可能丢失，原本可以匹配的重传也会以未附加关联结论的原始事件
-交付。这是关闭边界上明确接受的取舍。
+shutdown pending 输出 `drop_location=unknown`、`no_matching_drop`、其他适用原因
+和最新可用的 `dropwatch_perf_status`。尾部 drop 仍可能丢失，因此原本可以匹配的
+重传也可能被定型为 `unknown`。这是关闭边界上明确接受的取舍。
 
 ## 9. 文件职责
 

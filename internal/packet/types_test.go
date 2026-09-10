@@ -131,6 +131,39 @@ func TestPacketJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPacketJSONRoundTripPreservesTCPFlags(t *testing.T) {
+	want := &Packet{
+		Label: "IPv4/TCP",
+		IPv4: &IPv4{
+			Version: 4,
+			IHL:     5,
+			Length:  41,
+			Saddr:   net.IPv4(10, 0, 0, 1),
+			Daddr:   net.IPv4(10, 0, 0, 2),
+		},
+		TCP: &TCP{
+			Sport:      1234,
+			Dport:      80,
+			DataOffset: 5,
+			Flags:      "SYN|FIN",
+			RawFlags:   TCPFlagSYN | TCPFlagFIN,
+		},
+	}
+
+	encoded, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got Packet
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if rendered := got.String(); !strings.Contains(rendered, "[SYN|FIN]") {
+		t.Fatalf("String() = %q, want flags", rendered)
+	}
+}
+
 // TestPacketJSONMACWireFormat pins MAC fields to the canonical
 // "aa:bb:cc:dd:ee:ff" literal on the JSON wire. Regression guard: if the
 // field types ever revert to net.HardwareAddr (or any []byte alias without
@@ -291,7 +324,10 @@ func TestPacketString(t *testing.T) {
 				Label: "IPv4/TCP",
 				Ether: &Ether{Saddr: mac("aa:bb:cc:dd:ee:ff"), Daddr: mac("11:22:33:44:55:66"), Type: "IPv4"},
 				IPv4:  &IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
-				TCP:   &TCP{Sport: 1234, Dport: 80, RawFlags: TCPFlagSYN, SkState: "ESTABLISHED"},
+				TCP: &TCP{
+					Sport: 1234, Dport: 80, Flags: "SYN",
+					RawFlags: TCPFlagSYN, SkState: "ESTABLISHED",
+				},
 			},
 			wantParts: []string{
 				"IPv4/TCP", "10.0.0.1:1234", "10.0.0.2:80", "[SYN]",

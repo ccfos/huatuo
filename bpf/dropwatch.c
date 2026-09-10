@@ -214,9 +214,8 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 	/* skb->protocol is __be16 on every supported kernel. */
 	skb_protocol = bpf_ntohs(BPF_CORE_READ(skb, protocol));
 
-	if (bpf_ratelimited_in_map_rc(ctx, dropwatch)) {
+	if (bpf_ratelimited_in_map_rc(ctx, dropwatch))
 		return 0;
-	}
 
 	data = bpf_map_lookup_elem(&dropwatch_stackmap, &stackmap_key);
 	if (!data)
@@ -268,9 +267,8 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 
 	output_ret = bpf_perf_event_output_counted(ctx, &perf_events,
 						   &bpf_perf_out_dropwatch,
-						   COMPAT_BPF_F_CURRENT_CPU,
 						   data, sizeof(*data));
-	if (output_ret >= 0 && source == DROPWATCH_DROP_SOURCE_HARDWARE) {
+	if (output_ret == 0 && source == DROPWATCH_DROP_SOURCE_HARDWARE) {
 		u64 skb_addr = data->meta.skb_addr;
 		u64 reported_at = data->meta.ktime_ns;
 
