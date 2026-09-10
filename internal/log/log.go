@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,13 +20,17 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 )
 
 var logger *logrus.Logger
 
-const rfc3339NanoFixed = "2006-01-02T15:04:05.000000000Z07:00"
+const (
+	modulePath       = "github.com/ccfos/huatuo"
+	rfc3339NanoFixed = "2006-01-02T15:04:05.000000000Z07:00"
+)
 
 func init() {
 	logger = logrus.New()
@@ -54,7 +58,7 @@ func newLogrusEntry(callerSkip int) *logrus.Entry {
 		line = 1
 	} else {
 		file = filepath.Base(file)
-		function = runtime.FuncForPC(pc).Name()
+		function = strings.TrimPrefix(runtime.FuncForPC(pc).Name(), modulePath+"/")
 	}
 
 	return logger.WithFields(logrus.Fields{

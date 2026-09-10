@@ -103,6 +103,12 @@ func TestOutput(t *testing.T) {
 			t.Errorf("expected %q to be logged", msg)
 		}
 	}
+	if strings.Contains(output, modulePath+"/") {
+		t.Errorf("expected module path to be omitted from function, got %q", output)
+	}
+	if !strings.Contains(output, `func="internal/log.TestOutput"`) {
+		t.Errorf("expected module-relative function, got %q", output)
+	}
 }
 
 // Test WithError behavior (errors)
