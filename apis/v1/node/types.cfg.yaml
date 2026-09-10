@@ -2,7 +2,7 @@ package: node
 generate:
   models: true
 import-mapping:
-  ../components.yaml: huatuo-bamai/apis/v1
+  ../components.yaml: github.com/ccfos/huatuo/apis/v1
 output-options:
   skip-prune: true
   name-normalizer: ToCamelCaseWithInitialisms

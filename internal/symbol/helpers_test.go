@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"testing"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 func setupTempProcRoot(t *testing.T) string {

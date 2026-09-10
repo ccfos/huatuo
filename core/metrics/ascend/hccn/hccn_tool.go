@@ -32,7 +32,7 @@ import (
 	"strings"
 	"time"
 
-	managedexec "huatuo-bamai/internal/exec"
+	managedexec "github.com/ccfos/huatuo/internal/exec"
 )
 
 // hccnSemaphore limits total concurrent hccn_tool processes across all devices.

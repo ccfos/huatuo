@@ -19,7 +19,7 @@ import (
 	"sync"
 	"testing"
 
-	pkgtypes "huatuo-bamai/pkg/types"
+	pkgtypes "github.com/ccfos/huatuo/pkg/types"
 )
 
 func resetRegisterState() {

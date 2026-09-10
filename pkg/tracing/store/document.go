@@ -18,7 +18,7 @@ package store
 import (
 	"errors"
 
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // Document is one heterogeneous tracing event persisted by the Node agent.

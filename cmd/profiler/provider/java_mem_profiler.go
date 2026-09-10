@@ -19,11 +19,11 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/profiler/aggregator"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/registry"
-	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/registry"
+	javaruntime "github.com/ccfos/huatuo/internal/profiler/runtime/java"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 const (

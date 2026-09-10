@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	hostprocess "huatuo-bamai/internal/process"
+	hostprocess "github.com/ccfos/huatuo/internal/process"
 
 	ptree "github.com/grafana/pyroscope/pkg/og/storage/tree"
 	"github.com/shirou/gopsutil/process"

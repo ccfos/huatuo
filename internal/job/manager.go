@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 
 	"github.com/google/uuid"
 )

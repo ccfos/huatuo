@@ -24,12 +24,12 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/packet"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/kernaddr"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/internal/utils/kernaddr"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const tcpFlagsSynAck = tcpFlagSYN | tcpFlagACK

@@ -20,9 +20,9 @@ import (
 	"path/filepath"
 	"slices"
 
-	"huatuo-bamai/internal/process"
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/utils/fileutil"
+	"github.com/ccfos/huatuo/internal/process"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/utils/fileutil"
 )
 
 type elfCache struct {

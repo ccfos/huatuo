@@ -18,9 +18,9 @@ import (
 	"strconv"
 	"time"
 
-	"huatuo-bamai/internal/exec"
-	"huatuo-bamai/pkg/observation"
-	profilingdomain "huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/pkg/observation"
+	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {

@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/storage/driver"
-	storagesqlite "huatuo-bamai/internal/storage/sqlite"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	storagesqlite "github.com/ccfos/huatuo/internal/storage/sqlite"
 )
 
 type backendTestEntity struct {

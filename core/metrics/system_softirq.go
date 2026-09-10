@@ -22,10 +22,10 @@ import (
 	"fmt"
 	"strconv"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/internal/utils/cpuutil"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
+	"github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/tklauser/numcpus"
 )

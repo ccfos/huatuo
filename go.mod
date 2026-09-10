@@ -1,4 +1,4 @@
-module huatuo-bamai
+module github.com/ccfos/huatuo
 
 go 1.24.3
 

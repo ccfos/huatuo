@@ -15,8 +15,8 @@
 package server
 
 import (
-	"huatuo-bamai/internal/server/response"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/version"
 )
 
 func newVersionHandler(info *version.Info) ErrHandlerContextFunc {

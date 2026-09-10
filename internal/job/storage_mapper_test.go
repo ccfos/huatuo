@@ -17,7 +17,7 @@ package job
 import (
 	"testing"
 
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 func TestRecordMapperRejectsUnsupportedSchemaVersion(t *testing.T) {

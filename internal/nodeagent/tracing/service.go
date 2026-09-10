@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/nodeagent/operation"
-	"huatuo-bamai/pkg/observation"
-	tracingdomain "huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/nodeagent/operation"
+	"github.com/ccfos/huatuo/pkg/observation"
+	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
 
 var (

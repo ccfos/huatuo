@@ -20,9 +20,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/procfs/blockdevice"
-	metricpkg "huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
+	metricpkg "github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"

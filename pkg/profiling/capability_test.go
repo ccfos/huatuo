@@ -20,7 +20,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"huatuo-bamai/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 func TestCapabilities(t *testing.T) {

@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	managedexec "huatuo-bamai/internal/exec"
-	"huatuo-bamai/internal/log"
+	managedexec "github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 const (

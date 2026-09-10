@@ -21,11 +21,11 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/exec"
-	"huatuo-bamai/internal/nodeagent/operation"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/pkg/observation"
-	profilingdomain "huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/nodeagent/operation"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/observation"
+	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
 var (

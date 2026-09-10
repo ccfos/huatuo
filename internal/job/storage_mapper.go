@@ -21,8 +21,8 @@ import (
 	"strconv"
 	"time"
 
-	"huatuo-bamai/internal/storage/driver"
-	"huatuo-bamai/pkg/observation"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 const currentStorageSchemaVersion = 1

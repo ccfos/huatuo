@@ -21,7 +21,7 @@ import (
 	"os"
 	"strings"
 
-	"huatuo-bamai/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf"
 )
 
 // attachAndEventPipe attaches all programs found in the BPF object and

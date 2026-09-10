@@ -19,7 +19,7 @@ import (
 	"sync"
 	"testing"
 
-	testutils "huatuo-bamai/internal/testing"
+	testutils "github.com/ccfos/huatuo/internal/testing"
 )
 
 func TestConfigCloneDoesNotShareMutableReferences(t *testing.T) {

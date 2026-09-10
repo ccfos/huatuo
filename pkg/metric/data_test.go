@@ -19,7 +19,7 @@ import (
 	"sync"
 	"testing"
 
-	"huatuo-bamai/internal/pod"
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 func TestDefaultHostnameAndRegion(t *testing.T) {

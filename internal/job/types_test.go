@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func TestCloneJobDoesNotAliasNestedState(t *testing.T) {

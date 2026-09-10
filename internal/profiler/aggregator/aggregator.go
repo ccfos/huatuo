@@ -15,8 +15,8 @@
 package aggregator
 
 import (
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/output"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 //go:generate mockery --name=Aggregator --dir=. --filename=mock_aggregator_test.go --inpackage --case=underscore

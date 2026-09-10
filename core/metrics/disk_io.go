@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"sync"
 
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/procfs/blockdevice"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 const (

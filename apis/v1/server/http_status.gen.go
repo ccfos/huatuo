@@ -16,7 +16,7 @@
 
 package server
 
-import apiv1 "huatuo-bamai/apis/v1"
+import apiv1 "github.com/ccfos/huatuo/apis/v1"
 
 // HTTPStatusForErrorCode returns the default request-level HTTP status.
 func HTTPStatusForErrorCode(code apiv1.ErrorCode) (int, bool) {

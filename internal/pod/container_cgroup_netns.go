@@ -15,8 +15,8 @@
 package pod
 
 import (
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 // ContainerCgroupNetNamespace contains the identifiers used to resolve an event's container.

@@ -19,9 +19,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"huatuo-bamai/internal/process"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/process"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func blockDevName(major, minor uint32) string {

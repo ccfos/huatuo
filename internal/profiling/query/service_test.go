@@ -17,7 +17,7 @@ package query
 import (
 	"testing"
 
-	profilingstore "huatuo-bamai/pkg/profiling/store"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
 	"github.com/prometheus/prometheus/model/labels"
 )

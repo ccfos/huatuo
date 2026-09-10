@@ -15,7 +15,7 @@
 package types
 
 import (
-	"huatuo-bamai/internal/packet"
+	"github.com/ccfos/huatuo/internal/packet"
 )
 
 // DropWatchTracing is the canonical JSON schema for a dropwatch event,

@@ -21,11 +21,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/internal/nodeagent/operation"
-	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
-	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
-	"huatuo-bamai/internal/toolstream"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/nodeagent/operation"
+	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
+	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
+	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
 func startOperations(d *Daemon) (func(context.Context) error, error) {

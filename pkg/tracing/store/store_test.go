@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/storage"
-	"huatuo-bamai/internal/storage/driver"
-	"huatuo-bamai/internal/watch"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/storage"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/watch"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type testBackend struct {

@@ -26,8 +26,8 @@ import (
 	"time"
 	"unsafe"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 )
 
 const (

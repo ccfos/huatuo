@@ -23,11 +23,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"huatuo-bamai/core/autotracing"
-	"huatuo-bamai/core/events"
-	collector "huatuo-bamai/core/metrics"
-	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/internal/matcher"
+	"github.com/ccfos/huatuo/core/autotracing"
+	"github.com/ccfos/huatuo/core/events"
+	collector "github.com/ccfos/huatuo/core/metrics"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/matcher"
 )
 
 // LogConfig controls process logging.

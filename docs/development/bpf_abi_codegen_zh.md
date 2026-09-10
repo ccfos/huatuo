@@ -125,7 +125,7 @@ internal/bpf/abi/sample_types_generated.go
 Go 代码直接引用生成类型：
 
 ```go
-import "huatuo-bamai/internal/bpf/abi"
+import "github.com/ccfos/huatuo/internal/bpf/abi"
 
 var event abi.SampleEvent
 if err := reader.ReadInto(&event); err != nil {

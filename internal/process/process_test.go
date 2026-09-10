@@ -26,7 +26,7 @@ import (
 	"syscall"
 	"testing"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 func TestExecutable(t *testing.T) {

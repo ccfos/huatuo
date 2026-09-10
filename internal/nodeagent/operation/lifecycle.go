@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 const (

@@ -24,7 +24,7 @@ import (
 
 	capnp "capnproto.org/go/capnp/v3"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 // Server accepts connections and dispatches ChunkMsg events to a caller-supplied handler.

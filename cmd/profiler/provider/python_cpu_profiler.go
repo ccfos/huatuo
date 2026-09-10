@@ -21,14 +21,14 @@ import (
 	"strconv"
 	"strings"
 
-	"huatuo-bamai/internal/process"
-	"huatuo-bamai/internal/profiler"
-	"huatuo-bamai/internal/profiler/aggregator"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	profilerexec "huatuo-bamai/internal/profiler/exec"
-	profilerprocess "huatuo-bamai/internal/profiler/process"
-	"huatuo-bamai/internal/profiler/registry"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/process"
+	"github.com/ccfos/huatuo/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	profilerexec "github.com/ccfos/huatuo/internal/profiler/exec"
+	profilerprocess "github.com/ccfos/huatuo/internal/profiler/process"
+	"github.com/ccfos/huatuo/internal/profiler/registry"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 type pythonCPUProfiler struct {

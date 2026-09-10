@@ -24,7 +24,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/gin-gonic/gin"
 
-	apiv1 "huatuo-bamai/apis/v1"
+	apiv1 "github.com/ccfos/huatuo/apis/v1"
 )
 
 func TestOpenAPIJSON(t *testing.T) {

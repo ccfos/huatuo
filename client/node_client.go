@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	nodeapi "huatuo-bamai/apis/v1/node"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
 const defaultNodeRequestTimeout = 10 * time.Second

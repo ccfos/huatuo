@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
 )
 
 type cpuUsageCgroup struct {

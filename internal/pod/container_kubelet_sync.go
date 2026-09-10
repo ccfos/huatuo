@@ -28,8 +28,8 @@ import (
 	"syscall"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/netutil"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/utils/netutil"
 
 	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"

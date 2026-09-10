@@ -19,9 +19,9 @@ import (
 	"reflect"
 	"testing"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 type memoryPipelineBPFStub struct {

@@ -21,7 +21,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"huatuo-bamai/internal/packet"
+	"github.com/ccfos/huatuo/internal/packet"
 )
 
 // TestDropWatchTracingRoundTrip verifies the layered Packet survives a JSON

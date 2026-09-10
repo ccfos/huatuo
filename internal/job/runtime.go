@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/internal/log"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 type runtimePolicy struct {

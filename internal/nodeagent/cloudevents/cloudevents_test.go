@@ -21,9 +21,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"huatuo-bamai/internal/timeutil"
-	tracingstore "huatuo-bamai/pkg/tracing/store"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestDocumentToWatchEvent(t *testing.T) {

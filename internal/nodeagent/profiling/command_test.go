@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/pkg/observation"
-	profilingdomain "huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/observation"
+	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func testProfilingConfig(t *testing.T) *Config {

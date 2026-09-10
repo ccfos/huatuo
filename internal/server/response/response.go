@@ -18,7 +18,7 @@ import (
 	"errors"
 	"net/http"
 
-	v1 "huatuo-bamai/apis/v1"
+	v1 "github.com/ccfos/huatuo/apis/v1"
 )
 
 // HTTPStatusMapper resolves an API error code to its request-level status.

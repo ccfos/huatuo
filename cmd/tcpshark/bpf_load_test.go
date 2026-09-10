@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"huatuo-bamai/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf"
 )
 
 func TestLoadRetransmitBPFReturnsReadError(t *testing.T) {

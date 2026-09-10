@@ -16,7 +16,7 @@
 
 package node
 
-import apiv1 "huatuo-bamai/apis/v1"
+import apiv1 "github.com/ccfos/huatuo/apis/v1"
 
 const (
 	ErrorCodeContainerNotFound               apiv1.ErrorCode = "container_not_found"

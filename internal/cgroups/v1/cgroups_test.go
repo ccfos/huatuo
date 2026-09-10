@@ -19,8 +19,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"huatuo-bamai/internal/cgroups/paths"
-	"huatuo-bamai/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 )
 
 func TestCpuUsageReadsCPUAcctSubsystem(t *testing.T) {

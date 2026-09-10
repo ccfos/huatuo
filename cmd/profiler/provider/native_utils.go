@@ -23,13 +23,13 @@ import (
 
 	"github.com/cilium/ebpf"
 
-	"huatuo-bamai/client"
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/profiler/bpfmap"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/utils/kernaddr"
+	"github.com/ccfos/huatuo/client"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/profiler/bpfmap"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 )
 
 func newNativeBPFConstants(pid int, cssAddr uint64, threadGroup bool) map[string]any {

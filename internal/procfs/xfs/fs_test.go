@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 
 	"github.com/prometheus/procfs/xfs"
 	"github.com/stretchr/testify/assert"

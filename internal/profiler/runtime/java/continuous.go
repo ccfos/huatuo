@@ -25,9 +25,9 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler"
-	profilerexec "huatuo-bamai/internal/profiler/exec"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiler"
+	profilerexec "github.com/ccfos/huatuo/internal/profiler/exec"
 )
 
 const (

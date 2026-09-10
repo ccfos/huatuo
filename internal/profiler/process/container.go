@@ -23,9 +23,9 @@ import (
 	"strings"
 	"syscall"
 
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 // ExecutableFilter identifies processes by executable name and path.

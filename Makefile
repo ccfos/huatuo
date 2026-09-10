@@ -136,7 +136,7 @@ define check-openapi
 endef
 
 define format-sources
-	goimports -w -local huatuo-bamai $(GO_FORMAT_FILES); \
+	goimports -w -local github.com/ccfos/huatuo $(GO_FORMAT_FILES); \
 	gofumpt -l -w $(GO_FORMAT_FILES); \
 	gofmt -w -r 'interface{} -> any' $(GO_FORMAT_FILES); \
 	find . -name "*.sh" $(FIND_EXCLUDE_PATHS) \

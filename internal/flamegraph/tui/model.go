@@ -21,7 +21,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"huatuo-bamai/internal/flamegraph"
+	"github.com/ccfos/huatuo/internal/flamegraph"
 )
 
 const (

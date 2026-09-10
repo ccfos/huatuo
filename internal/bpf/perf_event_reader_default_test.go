@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	testutils "huatuo-bamai/internal/testing"
-	"huatuo-bamai/pkg/types"
+	testutils "github.com/ccfos/huatuo/internal/testing"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"

@@ -22,10 +22,10 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/auth"
-	"huatuo-bamai/internal/job"
-	"huatuo-bamai/pkg/observation"
-	tracingdomain "huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/job"
+	"github.com/ccfos/huatuo/pkg/observation"
+	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
 
 const defaultPageSize = 100

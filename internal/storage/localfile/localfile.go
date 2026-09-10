@@ -25,9 +25,9 @@ import (
 	"path"
 	"sync"
 
-	"huatuo-bamai/internal/filerotate"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/filerotate"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 // Storage appends records to local files. It is bound to one collection by Init.

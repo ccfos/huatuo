@@ -17,7 +17,7 @@ package events
 import (
 	"testing"
 
-	"huatuo-bamai/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 )
 
 func TestSchedTickStackAddrs(t *testing.T) {

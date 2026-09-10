@@ -22,7 +22,7 @@ import (
 	"syscall"
 	"time"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 // containerIDRegexp matches a 12-64 character hex container ID.

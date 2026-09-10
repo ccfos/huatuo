@@ -17,9 +17,9 @@ package provider
 import (
 	"testing"
 
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/output"
-	"huatuo-bamai/pkg/profiling"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func TestJavaParseOptionsKeepsProfilerNames(t *testing.T) {

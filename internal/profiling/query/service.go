@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	profilingstore "huatuo-bamai/pkg/profiling/store"
+	"github.com/ccfos/huatuo/internal/log"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"

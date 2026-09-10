@@ -25,12 +25,12 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/client"
-	"huatuo-bamai/internal/bpf"
-	flamegraphtui "huatuo-bamai/internal/flamegraph/tui"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/kernaddr"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/client"
+	"github.com/ccfos/huatuo/internal/bpf"
+	flamegraphtui "github.com/ccfos/huatuo/internal/flamegraph/tui"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/utils/kernaddr"
+	"github.com/ccfos/huatuo/internal/version"
 )
 
 const perfToolName = "perf"

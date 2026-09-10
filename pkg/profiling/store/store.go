@@ -20,10 +20,10 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/storage"
-	"huatuo-bamai/internal/storage/driver"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/storage"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const (

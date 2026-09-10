@@ -21,8 +21,7 @@ import (
 	"encoding/json"
 	"time"
 
-	externalRef0 "huatuo-bamai/apis/v1"
-
+	externalRef0 "github.com/ccfos/huatuo/apis/v1"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )

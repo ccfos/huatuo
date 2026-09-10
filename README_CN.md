@@ -98,7 +98,7 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
 ```go
 package main
 
-import "huatuo-bamai/client"
+import "github.com/ccfos/huatuo/client"
 
 func newNodeClient() (*client.NodeClient, error) {
     return client.NewNode(&client.NodeConfig{

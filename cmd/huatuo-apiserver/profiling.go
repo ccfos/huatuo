@@ -19,12 +19,12 @@ import (
 	"errors"
 	"fmt"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiling/publication"
-	profilequery "huatuo-bamai/internal/profiling/query"
-	"huatuo-bamai/internal/storage/driver"
-	"huatuo-bamai/internal/strutil"
-	profilingstore "huatuo-bamai/pkg/profiling/store"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiling/publication"
+	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/strutil"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 )
 
 func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Context) error, error) {

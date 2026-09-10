@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 type testProcess struct {

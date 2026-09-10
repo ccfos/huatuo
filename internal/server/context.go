@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"huatuo-bamai/internal/server/response"
+	"github.com/ccfos/huatuo/internal/server/response"
 
 	httpGin "github.com/gin-gonic/gin"
 	httpBinding "github.com/gin-gonic/gin/binding"

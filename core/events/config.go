@@ -20,7 +20,7 @@ import (
 	"slices"
 	"sync/atomic"
 
-	"huatuo-bamai/internal/matcher"
+	"github.com/ccfos/huatuo/internal/matcher"
 )
 
 // Config holds event tracing configuration.

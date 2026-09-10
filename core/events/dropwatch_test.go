@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	internalconfig "huatuo-bamai/internal/config"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
 )
 
 func TestDropWatchStartTreatsCancellationAsExpectedStop(t *testing.T) {

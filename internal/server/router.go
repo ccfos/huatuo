@@ -15,7 +15,7 @@
 package server
 
 import (
-	"huatuo-bamai/internal/server/response"
+	"github.com/ccfos/huatuo/internal/server/response"
 
 	httpGin "github.com/gin-gonic/gin"
 )

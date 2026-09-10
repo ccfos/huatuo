@@ -24,13 +24,13 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"huatuo-bamai/core/metrics/metax/sml"
-	"huatuo-bamai/core/metrics/metax/sml/device"
-	"huatuo-bamai/core/metrics/metax/sml/gpu"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/core/metrics/metax/sml"
+	"github.com/ccfos/huatuo/core/metrics/metax/sml/device"
+	"github.com/ccfos/huatuo/core/metrics/metax/sml/gpu"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func init() {

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"slices"
 
-	"huatuo-bamai/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 type Type string

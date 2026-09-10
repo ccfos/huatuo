@@ -21,7 +21,7 @@ import (
 	"sort"
 	"strings"
 
-	"huatuo-bamai/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 // Formatter writes folded-stack output.

@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"net/http"
 
-	nodeapi "huatuo-bamai/apis/v1/node"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
 type nodeSuccessResponseMode uint8

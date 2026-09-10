@@ -18,9 +18,9 @@ import (
 	"context"
 	"fmt"
 
-	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/internal/server/response"
-	"huatuo-bamai/internal/utils/kernaddr"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 )
 
 // GetContainer returns the metadata needed to target a container.

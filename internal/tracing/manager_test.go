@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	pkgtypes "huatuo-bamai/pkg/types"
+	pkgtypes "github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestNewManager(t *testing.T) {

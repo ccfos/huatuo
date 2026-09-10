@@ -23,13 +23,13 @@ import (
 	"strings"
 	"sync"
 
-	"huatuo-bamai/internal/profiler/output"
-	_ "huatuo-bamai/internal/profiler/output/flamegraph"
-	_ "huatuo-bamai/internal/profiler/output/raw"
-	psignal "huatuo-bamai/internal/profiler/signal"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/pkg/profiling"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/profiler/output"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
+	psignal "github.com/ccfos/huatuo/internal/profiler/signal"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/urfave/cli/v2"
 )

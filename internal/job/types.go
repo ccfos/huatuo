@@ -17,9 +17,9 @@ package job
 import (
 	"time"
 
-	"huatuo-bamai/pkg/observation"
-	"huatuo-bamai/pkg/profiling"
-	tracingdomain "huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/profiling"
+	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
 
 // Kind identifies the service that owns a persistent Job.

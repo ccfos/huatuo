@@ -25,9 +25,9 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type errWriter struct{ err error }

@@ -18,10 +18,10 @@ import (
 	"context"
 	"fmt"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
-	"huatuo-bamai/internal/server"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
+	"github.com/ccfos/huatuo/internal/server"
 )
 
 func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {

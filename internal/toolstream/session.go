@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 
-	"huatuo-bamai/internal/toolstream/transport"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
 )
 
 type sessionKey [2]string

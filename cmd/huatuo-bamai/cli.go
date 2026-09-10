@@ -19,12 +19,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/internal/bpf"
-	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/bpf"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/version"
 
 	"github.com/urfave/cli/v2"
 )

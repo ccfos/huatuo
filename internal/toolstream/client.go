@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"huatuo-bamai/internal/toolstream/transport"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
 )
 
 // ClientOptions configures a Client connection.

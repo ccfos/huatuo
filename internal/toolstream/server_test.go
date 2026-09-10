@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
 type testEvent struct {

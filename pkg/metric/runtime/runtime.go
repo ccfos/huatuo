@@ -21,7 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 // RegisterCollector registers the standard process and Go runtime

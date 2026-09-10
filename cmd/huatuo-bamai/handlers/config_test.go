@@ -26,10 +26,10 @@ import (
 	"testing"
 	"time"
 
-	apiv1 "huatuo-bamai/apis/v1"
-	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/internal/server/response"
+	apiv1 "github.com/ccfos/huatuo/apis/v1"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/server/response"
 )
 
 func TestUpdateConfigUpdatesTypedValues(t *testing.T) {

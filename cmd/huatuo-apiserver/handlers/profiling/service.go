@@ -23,12 +23,12 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/auth"
-	"huatuo-bamai/internal/job"
-	"huatuo-bamai/internal/profiling/publication"
-	"huatuo-bamai/pkg/observation"
-	profilingdomain "huatuo-bamai/pkg/profiling"
-	profilingstore "huatuo-bamai/pkg/profiling/store"
+	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/job"
+	"github.com/ccfos/huatuo/internal/profiling/publication"
+	"github.com/ccfos/huatuo/pkg/observation"
+	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )

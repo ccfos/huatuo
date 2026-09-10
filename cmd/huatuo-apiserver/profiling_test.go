@@ -17,7 +17,7 @@ package main
 import (
 	"testing"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
 )
 
 func TestSetupProfileQueryServiceSkipsDisabledStorage(t *testing.T) {

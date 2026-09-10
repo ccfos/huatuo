@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	apiv1 "huatuo-bamai/apis/v1"
-	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/client"
+	apiv1 "github.com/ccfos/huatuo/apis/v1"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/client"
 )
 
 func TestRuntimeDistinguishesUnknownAndLostOperations(t *testing.T) {

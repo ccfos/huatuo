@@ -19,9 +19,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"huatuo-bamai/internal/timeutil"
-	tracingstore "huatuo-bamai/pkg/tracing/store"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func documentToWatchEvent(document *tracingstore.Document) types.WatchEvent {

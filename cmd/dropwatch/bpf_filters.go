@@ -21,7 +21,7 @@ import (
 	"net"
 	"strings"
 
-	"huatuo-bamai/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf"
 )
 
 const (

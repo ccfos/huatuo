@@ -21,10 +21,10 @@ import (
 	"syscall"
 	"unsafe"
 
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/procfs/sysfs"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/procfs/sysfs"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"

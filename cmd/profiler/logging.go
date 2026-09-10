@@ -22,8 +22,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/internal/filerotate"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/filerotate"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 const (

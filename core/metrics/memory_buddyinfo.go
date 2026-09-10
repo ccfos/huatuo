@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 type buddyInfoCollector struct {

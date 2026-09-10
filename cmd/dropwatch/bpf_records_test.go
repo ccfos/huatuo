@@ -19,8 +19,8 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
 func TestDropwatchPacketEventParse(t *testing.T) {

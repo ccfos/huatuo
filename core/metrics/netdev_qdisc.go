@@ -20,10 +20,10 @@ package collector
 import (
 	"fmt"
 
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/qdisc"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/qdisc"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 type qdiscCollector struct {

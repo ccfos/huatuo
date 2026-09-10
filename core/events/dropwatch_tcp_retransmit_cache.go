@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/packet"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type dropwatchTCPRetransmitCacheEntry struct {

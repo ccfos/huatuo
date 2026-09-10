@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	"huatuo-bamai/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf"
 )
 
 type iolatencyBPFStub struct {

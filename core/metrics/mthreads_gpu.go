@@ -26,11 +26,11 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"huatuo-bamai/core/metrics/mthreads/mtml"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/core/metrics/mthreads/mtml"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func init() {

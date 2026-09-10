@@ -23,8 +23,8 @@ import (
 	"strconv"
 	"time"
 
-	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/internal/exec"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/exec"
 )
 
 const (

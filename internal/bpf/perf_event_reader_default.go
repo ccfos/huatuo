@@ -22,7 +22,7 @@ import (
 	"os"
 	"time"
 
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/perf"

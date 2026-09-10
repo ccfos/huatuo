@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"sync"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/toolstream/transport"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
 )
 
 // Session carries per-connection metadata from the Connect handshake.

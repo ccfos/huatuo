@@ -21,9 +21,9 @@ import (
 
 	"github.com/rs/xid"
 
-	"huatuo-bamai/internal/document"
-	tracingstore "huatuo-bamai/pkg/tracing/store"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/document"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // WriteRequest carries one heterogeneous tracing event.

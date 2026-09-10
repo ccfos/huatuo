@@ -17,7 +17,7 @@ package sysfs
 import (
 	"path/filepath"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 
 	"github.com/prometheus/procfs/sysfs"
 )

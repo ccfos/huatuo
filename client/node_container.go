@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"net/url"
 
-	nodeapi "huatuo-bamai/apis/v1/node"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
 // FetchNodeContainer fetches public container metadata from huatuo-bamai.

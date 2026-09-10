@@ -23,7 +23,7 @@ import (
 	"sync"
 	"testing"
 
-	"huatuo-bamai/core/metrics/mthreads/mtml"
+	"github.com/ccfos/huatuo/core/metrics/mthreads/mtml"
 )
 
 // --- pure-function tests ----------------------------------------------------

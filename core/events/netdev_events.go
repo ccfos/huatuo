@@ -20,12 +20,12 @@ import (
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/linkstatus"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/linkstatus"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"

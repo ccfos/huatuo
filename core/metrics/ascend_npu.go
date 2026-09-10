@@ -26,13 +26,13 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"huatuo-bamai/core/metrics/ascend/dcmi"
-	"huatuo-bamai/core/metrics/ascend/hccn"
-	"huatuo-bamai/core/metrics/ascend/pcie"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/core/metrics/ascend/dcmi"
+	"github.com/ccfos/huatuo/core/metrics/ascend/hccn"
+	"github.com/ccfos/huatuo/core/metrics/ascend/pcie"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func init() {

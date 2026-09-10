@@ -28,7 +28,7 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 
 	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"

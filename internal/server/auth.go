@@ -17,8 +17,8 @@ package server
 import (
 	"errors"
 
-	authn "huatuo-bamai/internal/auth"
-	"huatuo-bamai/internal/server/response"
+	authn "github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/server/response"
 )
 
 type (

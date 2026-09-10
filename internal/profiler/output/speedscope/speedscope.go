@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"huatuo-bamai/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 type speedscopeFile struct {

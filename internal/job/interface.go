@@ -18,7 +18,7 @@ import (
 	"context"
 	"time"
 
-	nodeapi "huatuo-bamai/apis/v1/node"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
 // Store persists Job snapshots and atomic state transitions.

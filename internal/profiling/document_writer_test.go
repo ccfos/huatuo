@@ -21,12 +21,12 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/document"
-	"huatuo-bamai/internal/storage/driver"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/toolstream/transport"
-	profilingstore "huatuo-bamai/pkg/profiling/store"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )

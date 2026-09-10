@@ -16,7 +16,7 @@
 
 package server
 
-import apiv1 "huatuo-bamai/apis/v1"
+import apiv1 "github.com/ccfos/huatuo/apis/v1"
 
 const (
 	ErrorCodeExecutionCapacityExceeded apiv1.ErrorCode = "execution_capacity_exceeded"

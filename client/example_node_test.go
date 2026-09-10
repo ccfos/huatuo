@@ -17,7 +17,7 @@ package client_test
 import (
 	"fmt"
 
-	"huatuo-bamai/client"
+	"github.com/ccfos/huatuo/client"
 )
 
 func ExampleNewNode() {

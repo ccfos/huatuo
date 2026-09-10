@@ -19,9 +19,9 @@ import (
 	"errors"
 	"testing"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/profiler/bpfmap"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/profiler/bpfmap"
 )
 
 type closeBPFStub struct {

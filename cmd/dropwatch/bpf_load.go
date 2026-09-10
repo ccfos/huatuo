@@ -19,8 +19,8 @@ import (
 	"os"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/pcapfilter"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/pcapfilter"
 )
 
 const hardwareDropSection = "raw_tracepoint/devlink_trap_report"

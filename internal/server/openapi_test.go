@@ -22,8 +22,8 @@ import (
 	"strings"
 	"testing"
 
-	serverapi "huatuo-bamai/apis/v1/server"
-	"huatuo-bamai/internal/server/response"
+	serverapi "github.com/ccfos/huatuo/apis/v1/server"
+	"github.com/ccfos/huatuo/internal/server/response"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/routers/legacy"

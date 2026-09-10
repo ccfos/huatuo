@@ -21,7 +21,7 @@ import (
 	"io"
 	"strings"
 
-	"huatuo-bamai/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 // Options configures the dump output.

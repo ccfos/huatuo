@@ -17,7 +17,7 @@ package main
 import (
 	"fmt"
 
-	"huatuo-bamai/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf"
 )
 
 // initBpfManager prepares shared BPF resources for native profilers. The

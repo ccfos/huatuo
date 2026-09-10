@@ -19,8 +19,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestRetransmitClassification(t *testing.T) {

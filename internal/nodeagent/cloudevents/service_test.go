@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	tracingstore "huatuo-bamai/pkg/tracing/store"
-	"huatuo-bamai/pkg/types"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestNewRequiresValidDependencies(t *testing.T) {

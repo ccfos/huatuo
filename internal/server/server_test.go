@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
-	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/internal/server/response"
-	"huatuo-bamai/internal/version"
+	v1 "github.com/ccfos/huatuo/apis/v1"
+	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/version"
 
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"

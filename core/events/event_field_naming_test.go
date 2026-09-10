@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestEventJSONFieldNames(t *testing.T) {

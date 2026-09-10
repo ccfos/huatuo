@@ -21,14 +21,14 @@ import (
 	"path"
 	"strconv"
 
-	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/internal/exec"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/timeutil"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/internal/utils/kernaddr"
-	"huatuo-bamai/pkg/types"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/kernaddr"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type tcpRetransmitTracing struct{}

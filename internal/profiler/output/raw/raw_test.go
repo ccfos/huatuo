@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"testing"
 
-	"huatuo-bamai/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 func TestFormatterAdd_RemovesBalancedStack(t *testing.T) {

@@ -17,7 +17,7 @@ package client
 import (
 	"fmt"
 
-	apiv1 "huatuo-bamai/apis/v1"
+	apiv1 "github.com/ccfos/huatuo/apis/v1"
 )
 
 const (

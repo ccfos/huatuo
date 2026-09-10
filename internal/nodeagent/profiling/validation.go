@@ -20,9 +20,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/pkg/observation"
-	profilingdomain "huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/pkg/observation"
+	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func validateConfig(config *Config) error {

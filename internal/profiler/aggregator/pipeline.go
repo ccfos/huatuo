@@ -21,9 +21,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	profctx "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/randomid"
+	"github.com/ccfos/huatuo/internal/log"
+	profctx "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/randomid"
 )
 
 const pipelineQueueCapacity = 65536

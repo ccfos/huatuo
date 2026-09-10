@@ -17,7 +17,7 @@ package provider
 import (
 	"fmt"
 
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func validateNativePIDs(profileType string, pids []int) error {

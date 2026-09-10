@@ -24,12 +24,12 @@ import (
 	"testing"
 	"time"
 
-	apiv1 "huatuo-bamai/apis/v1"
-	nodeapi "huatuo-bamai/apis/v1/node"
-	nodecloudevents "huatuo-bamai/internal/nodeagent/cloudevents"
-	"huatuo-bamai/internal/server/response"
-	tracingstore "huatuo-bamai/pkg/tracing/store"
-	"huatuo-bamai/pkg/types"
+	apiv1 "github.com/ccfos/huatuo/apis/v1"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
+	"github.com/ccfos/huatuo/internal/server/response"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestWatchEventsRejectsInvalidFilter(t *testing.T) {

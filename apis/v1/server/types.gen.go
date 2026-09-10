@@ -20,8 +20,7 @@ package server
 import (
 	"time"
 
-	externalRef0 "huatuo-bamai/apis/v1"
-
+	externalRef0 "github.com/ccfos/huatuo/apis/v1"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 

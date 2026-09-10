@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
-	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/client"
-	"huatuo-bamai/pkg/observation"
-	"huatuo-bamai/pkg/profiling"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/client"
+	"github.com/ccfos/huatuo/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/profiling"
 
 	"github.com/google/uuid"
 )

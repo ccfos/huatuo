@@ -21,9 +21,9 @@ import (
 	"errors"
 	"fmt"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 func init() {

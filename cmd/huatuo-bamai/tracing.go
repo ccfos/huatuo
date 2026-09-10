@@ -20,15 +20,15 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/cmd/huatuo-bamai/handlers"
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/document"
-	nodecloudevents "huatuo-bamai/internal/nodeagent/cloudevents"
-	"huatuo-bamai/internal/profiling"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/handlers"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/document"
+	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
+	"github.com/ccfos/huatuo/internal/profiling"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const defaultHTTPDrainTimeout = 5 * time.Second

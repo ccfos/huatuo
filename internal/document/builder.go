@@ -21,8 +21,8 @@ import (
 	"os"
 	"time"
 
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const defaultHostname = "huatuo-dev"

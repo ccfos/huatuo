@@ -26,7 +26,7 @@ import (
 	"strings"
 	"sync"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"

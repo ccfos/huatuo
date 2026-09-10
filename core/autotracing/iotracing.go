@@ -24,14 +24,14 @@ import (
 	"sync"
 	"time"
 
-	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/internal/exec"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/procfs/blockdevice"
-	"huatuo-bamai/internal/randomid"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/types"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
+	"github.com/ccfos/huatuo/internal/randomid"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const (

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"slices"
 
-	"huatuo-bamai/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 // Type identifies an on-demand tracing capability.

@@ -17,7 +17,7 @@ package events
 import (
 	"fmt"
 
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type TCPRetransmitDropCausal uint8

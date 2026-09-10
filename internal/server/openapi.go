@@ -20,9 +20,9 @@ import (
 	"net/http"
 	"strings"
 
-	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/server/response"
+	v1 "github.com/ccfos/huatuo/apis/v1"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/server/response"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"

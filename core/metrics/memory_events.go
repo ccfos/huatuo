@@ -17,12 +17,12 @@ package collector
 import (
 	"fmt"
 
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/matcher"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/matcher"
 
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 type memEventsCollector struct {

@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/client"
-	"huatuo-bamai/internal/job"
+	"github.com/ccfos/huatuo/client"
+	"github.com/ccfos/huatuo/internal/job"
 )
 
 func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) error, error) {

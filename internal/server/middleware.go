@@ -21,10 +21,10 @@ import (
 	"sync"
 	"time"
 
-	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/internal/auth"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/server/response"
+	v1 "github.com/ccfos/huatuo/apis/v1"
+	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/server/response"
 
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"

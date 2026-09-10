@@ -273,7 +273,7 @@ func generateCodes(current *catalog) ([]byte, error) {
 		output.WriteString("// ErrorCode identifies a stable API error.\n")
 		output.WriteString("type ErrorCode string\n\n")
 	} else {
-		output.WriteString("import apiv1 \"huatuo-bamai/apis/v1\"\n\n")
+		output.WriteString("import apiv1 \"github.com/ccfos/huatuo/apis/v1\"\n\n")
 	}
 
 	output.WriteString("const (\n")
@@ -300,7 +300,7 @@ func generateHTTPStatuses(current *catalog) ([]byte, error) {
 	output.WriteString(generatedHeader)
 	fmt.Fprintf(&output, "package %s\n\n", current.packageName)
 	if current.name != "common" {
-		output.WriteString("import apiv1 \"huatuo-bamai/apis/v1\"\n\n")
+		output.WriteString("import apiv1 \"github.com/ccfos/huatuo/apis/v1\"\n\n")
 	}
 
 	codeType := "ErrorCode"

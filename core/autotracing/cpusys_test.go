@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 type failingCPUStatReader struct {

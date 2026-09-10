@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 package cpuutil
 
-import "huatuo-bamai/internal/utils/bytesutil"
+import "github.com/ccfos/huatuo/internal/utils/bytesutil"
 
 func uint32ToBytes(args ...uint32) []byte {
 	var result []byte

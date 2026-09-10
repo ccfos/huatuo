@@ -20,7 +20,7 @@ import (
 	"sync"
 	"testing"
 
-	testutils "huatuo-bamai/internal/testing"
+	testutils "github.com/ccfos/huatuo/internal/testing"
 )
 
 func TestConfigValidate(t *testing.T) {

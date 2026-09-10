@@ -19,15 +19,15 @@ import (
 	"errors"
 	"fmt"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/internal/document"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiling/publication"
-	"huatuo-bamai/internal/storage/driver"
-	"huatuo-bamai/internal/strutil"
-	"huatuo-bamai/internal/tracing"
-	profilingstore "huatuo-bamai/pkg/profiling/store"
-	tracingstore "huatuo-bamai/pkg/tracing/store"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiling/publication"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/strutil"
+	"github.com/ccfos/huatuo/internal/tracing"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 )
 
 func setupStorage(d *Daemon) (func(context.Context) error, error) {

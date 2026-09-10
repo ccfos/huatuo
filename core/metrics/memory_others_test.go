@@ -20,10 +20,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"huatuo-bamai/internal/cgroups/paths"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // setCgroupRootfs points the cgroup rootfs at a temp dir containing an empty

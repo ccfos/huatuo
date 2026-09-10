@@ -21,7 +21,7 @@ import (
 	"reflect"
 	"testing"
 
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 type testEntity struct {

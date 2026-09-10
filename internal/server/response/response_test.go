@@ -20,9 +20,9 @@ import (
 	"reflect"
 	"testing"
 
-	v1 "huatuo-bamai/apis/v1"
-	nodeapi "huatuo-bamai/apis/v1/node"
-	serverapi "huatuo-bamai/apis/v1/server"
+	v1 "github.com/ccfos/huatuo/apis/v1"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	serverapi "github.com/ccfos/huatuo/apis/v1/server"
 )
 
 type testResponseWriter struct {

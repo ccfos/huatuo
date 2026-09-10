@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/job"
-	"huatuo-bamai/pkg/observation"
-	profilingdomain "huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/job"
+	"github.com/ccfos/huatuo/pkg/observation"
+	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func TestValidateCreateInput(t *testing.T) {

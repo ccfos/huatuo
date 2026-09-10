@@ -20,11 +20,11 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 func init() {

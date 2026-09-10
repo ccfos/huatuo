@@ -21,10 +21,10 @@ import (
 	"strconv"
 	"testing"
 
-	"huatuo-bamai/internal/profiler"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/output"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/profiler"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func TestNativeAggregatorAggregatesLockTime(t *testing.T) {

@@ -91,7 +91,7 @@ The public Go client is in `client/`. Node client files use the `node_` prefix.
 ```go
 package main
 
-import "huatuo-bamai/client"
+import "github.com/ccfos/huatuo/client"
 
 func newNodeClient() (*client.NodeClient, error) {
     return client.NewNode(&client.NodeConfig{

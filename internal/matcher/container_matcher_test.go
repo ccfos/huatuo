@@ -17,7 +17,7 @@ package matcher
 import (
 	"testing"
 
-	"huatuo-bamai/internal/pod"
+	"github.com/ccfos/huatuo/internal/pod"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

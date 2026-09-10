@@ -34,8 +34,8 @@ import (
 	esget "github.com/elastic/go-elasticsearch/v8/typedapi/core/get"
 	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 const (

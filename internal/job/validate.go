@@ -20,9 +20,9 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/pkg/observation"
-	"huatuo-bamai/pkg/profiling"
-	tracingdomain "huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/profiling"
+	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
 
 const maxJobPageSize = 1000

@@ -19,7 +19,7 @@ import (
 
 	"github.com/prometheus/procfs/xfs"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 type (

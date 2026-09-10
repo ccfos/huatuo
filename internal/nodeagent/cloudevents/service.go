@@ -23,9 +23,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"huatuo-bamai/internal/matcher"
-	tracingstore "huatuo-bamai/pkg/tracing/store"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/matcher"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 var (

@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/pkg/observation"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func TestValidateManagerConfigRequiresBothServicePolicies(t *testing.T) {

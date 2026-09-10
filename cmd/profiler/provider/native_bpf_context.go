@@ -20,12 +20,12 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler/bpfmap"
-	"huatuo-bamai/internal/symbol"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiler/bpfmap"
+	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // drainInterval paces ring-buffer reads. The BPF program writes events to ring A

@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"time"
 
-	apiv1 "huatuo-bamai/apis/v1"
-	nodeapi "huatuo-bamai/apis/v1/node"
+	apiv1 "github.com/ccfos/huatuo/apis/v1"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
 func buildStartOperationRequest(job *Job) (*nodeapi.StartOperationRequest, error) {

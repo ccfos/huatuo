@@ -23,10 +23,10 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/cgroups/stats"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/utils/cpuutil"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 )
 
 type stubContainerCPUReader struct {

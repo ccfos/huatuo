@@ -17,7 +17,7 @@ package response
 import (
 	"fmt"
 
-	v1 "huatuo-bamai/apis/v1"
+	v1 "github.com/ccfos/huatuo/apis/v1"
 )
 
 // APIError represents a standardized API error.

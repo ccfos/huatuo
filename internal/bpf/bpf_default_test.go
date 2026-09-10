@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	testutils "huatuo-bamai/internal/testing"
+	testutils "github.com/ccfos/huatuo/internal/testing"
 
 	"github.com/cilium/ebpf"
 	"github.com/stretchr/testify/assert"

@@ -17,7 +17,7 @@ package job
 import (
 	"errors"
 
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 var (

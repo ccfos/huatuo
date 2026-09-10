@@ -18,9 +18,9 @@ import (
 	"errors"
 	"testing"
 
-	"huatuo-bamai/internal/bpf"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/bpf"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/pkg/profiling"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"

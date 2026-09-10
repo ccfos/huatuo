@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestBuilderBuildsSharedMetadata(t *testing.T) {

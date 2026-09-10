@@ -21,8 +21,8 @@ import (
 	"slices"
 	"sync"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const (

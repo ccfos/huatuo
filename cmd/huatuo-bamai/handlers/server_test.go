@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/pod"
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 func TestNodeRouterTokenAuthentication(t *testing.T) {

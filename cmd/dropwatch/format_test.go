@@ -21,9 +21,9 @@ import (
 	"net"
 	"testing"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/packet"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // errWriter always fails Write with the configured error. Used to verify that

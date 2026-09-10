@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"huatuo-bamai/internal/toolstream/transport"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
 )
 
 func TestDispatchProcessesDataBeforeCompletingExpectedSession(t *testing.T) {

@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/procfs/blockdevice"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/toolstream/transport"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestHandleIotracingEventReturnsPendingResult(t *testing.T) {

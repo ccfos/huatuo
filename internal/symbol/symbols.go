@@ -27,9 +27,9 @@ import (
 
 	"github.com/ianlancetaylor/demangle"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/process"
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/process"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 type outType uint8

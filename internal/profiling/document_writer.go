@@ -20,10 +20,10 @@ import (
 	"errors"
 	"time"
 
-	"huatuo-bamai/internal/document"
-	"huatuo-bamai/internal/toolstream"
-	profilingstore "huatuo-bamai/pkg/profiling/store"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // DocumentWriter persists profiling documents received over Toolstream.

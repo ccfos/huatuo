@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 
 	"github.com/urfave/cli/v2"
 )

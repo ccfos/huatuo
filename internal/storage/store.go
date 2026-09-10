@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 // Store is a generic, backend-agnostic CRUD abstraction; a Mapper[T] handles

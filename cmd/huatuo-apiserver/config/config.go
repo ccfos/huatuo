@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	internalconfig "huatuo-bamai/internal/config"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
 )
 
 // LogConfig controls process logging.

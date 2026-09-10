@@ -21,7 +21,7 @@ import (
 	"strings"
 	"sync"
 
-	"huatuo-bamai/core/metrics/mthreads/dl"
+	"github.com/ccfos/huatuo/core/metrics/mthreads/dl"
 
 	"github.com/ebitengine/purego"
 )

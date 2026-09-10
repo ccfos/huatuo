@@ -19,8 +19,8 @@ import (
 	"context"
 	"fmt"
 
-	"huatuo-bamai/core/metrics/metax/sml/device"
-	"huatuo-bamai/core/metrics/metax/sml/gpu"
+	"github.com/ccfos/huatuo/core/metrics/metax/sml/device"
+	"github.com/ccfos/huatuo/core/metrics/metax/sml/gpu"
 )
 
 // getSDKVersion returns the SDK version

@@ -19,8 +19,8 @@ import (
 	"strconv"
 	"time"
 
-	"huatuo-bamai/internal/job"
-	"huatuo-bamai/pkg/metric/runtime"
+	"github.com/ccfos/huatuo/internal/job"
+	"github.com/ccfos/huatuo/pkg/metric/runtime"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

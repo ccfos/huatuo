@@ -21,7 +21,7 @@ import (
 	"runtime"
 	"strconv"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 
 	"golang.org/x/sys/unix"
 )

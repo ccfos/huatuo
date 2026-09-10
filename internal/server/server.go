@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/server/response"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/version"
 
 	"github.com/gin-contrib/pprof"
 	httpGin "github.com/gin-gonic/gin"

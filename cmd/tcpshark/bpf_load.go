@@ -21,8 +21,8 @@ import (
 	"os"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/pcapfilter"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/pcapfilter"
 )
 
 func loadRetransmitBPF(

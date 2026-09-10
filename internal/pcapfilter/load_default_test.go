@@ -22,8 +22,8 @@ import (
 	"os"
 	"testing"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/log"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"

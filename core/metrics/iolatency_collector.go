@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"strconv"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 func (c *iolatencyTracing) Update() ([]*metric.Data, error) {

@@ -19,10 +19,10 @@ import (
 	"strings"
 	"testing"
 
-	"huatuo-bamai/internal/profiler/aggregator"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/output"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 // fakeProfiler satisfies Profiler with no behavior. Registry tests exercise

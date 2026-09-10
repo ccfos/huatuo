@@ -21,9 +21,9 @@ import (
 	"io"
 	"time"
 
-	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/internal/log"
-	nodecloudevents "huatuo-bamai/internal/nodeagent/cloudevents"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/internal/log"
+	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
 )
 
 // WatchEvents opens a filtered CloudEvents subscription.

@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	internalconfig "huatuo-bamai/internal/config"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
 )
 
 func TestRunPerfCommand(t *testing.T) {

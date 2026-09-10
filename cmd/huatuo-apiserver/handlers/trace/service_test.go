@@ -19,8 +19,8 @@ import (
 	"strings"
 	"testing"
 
-	"huatuo-bamai/pkg/observation"
-	tracingdomain "huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/pkg/observation"
+	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
 
 func TestValidateCreateInput(t *testing.T) {

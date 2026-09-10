@@ -17,8 +17,8 @@ package store
 import (
 	"encoding/json"
 
-	"huatuo-bamai/internal/storage/driver"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const (

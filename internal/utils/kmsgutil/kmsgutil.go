@@ -23,7 +23,7 @@ import (
 	"syscall"
 	"time"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 // GetAllCPUsBT gets backtrace from all cpus

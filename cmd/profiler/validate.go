@@ -23,9 +23,9 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/internal/pod"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/pod"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func runBefore(ctx *cli.Context) error {

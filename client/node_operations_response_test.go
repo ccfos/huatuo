@@ -21,7 +21,7 @@ import (
 	"net/http"
 	"testing"
 
-	nodeapi "huatuo-bamai/apis/v1/node"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
 type nodeCloseErrorBody struct {

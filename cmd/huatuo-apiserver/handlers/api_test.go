@@ -20,13 +20,13 @@ import (
 	"testing"
 	"time"
 
-	apiv1 "huatuo-bamai/apis/v1"
-	serverapi "huatuo-bamai/apis/v1/server"
-	profilinghandler "huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
-	"huatuo-bamai/internal/job"
-	"huatuo-bamai/internal/server/response"
-	"huatuo-bamai/pkg/observation"
-	tracingdomain "huatuo-bamai/pkg/tracing"
+	apiv1 "github.com/ccfos/huatuo/apis/v1"
+	serverapi "github.com/ccfos/huatuo/apis/v1/server"
+	profilinghandler "github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
+	"github.com/ccfos/huatuo/internal/job"
+	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/pkg/observation"
+	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )

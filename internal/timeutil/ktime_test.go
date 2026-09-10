@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 func TestKtimeToTime(t *testing.T) {

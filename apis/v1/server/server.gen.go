@@ -25,8 +25,7 @@ import (
 	"io"
 	"net/http"
 
-	externalRef0 "huatuo-bamai/apis/v1"
-
+	externalRef0 "github.com/ccfos/huatuo/apis/v1"
 	"github.com/gin-gonic/gin"
 	"github.com/oapi-codegen/runtime"
 )

@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"huatuo-bamai/internal/tracing"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/vishvananda/netlink"
 )

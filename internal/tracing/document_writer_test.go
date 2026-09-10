@@ -18,8 +18,8 @@ import (
 	"strings"
 	"testing"
 
-	"huatuo-bamai/internal/document"
-	tracingstore "huatuo-bamai/pkg/tracing/store"
+	"github.com/ccfos/huatuo/internal/document"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 )
 
 func TestEnableDocumentWriterRequiresDependencies(t *testing.T) {

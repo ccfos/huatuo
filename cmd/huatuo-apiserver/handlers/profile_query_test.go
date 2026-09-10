@@ -20,10 +20,10 @@ import (
 	"errors"
 	"testing"
 
-	serverapi "huatuo-bamai/apis/v1/server"
-	"huatuo-bamai/internal/auth"
-	profilequery "huatuo-bamai/internal/profiling/query"
-	"huatuo-bamai/internal/server/response"
+	serverapi "github.com/ccfos/huatuo/apis/v1/server"
+	"github.com/ccfos/huatuo/internal/auth"
+	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
+	"github.com/ccfos/huatuo/internal/server/response"
 
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"

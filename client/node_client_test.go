@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	nodeapi "huatuo-bamai/apis/v1/node"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
 type nodeRoundTripFunc func(*http.Request) (*http.Response, error)

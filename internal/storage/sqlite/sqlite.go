@@ -24,7 +24,7 @@ import (
 	"errors"
 	"fmt"
 
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 // Storage stores records in SQLite. It is bound to one table by Init.
