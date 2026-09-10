@@ -140,6 +140,16 @@ func TestNodeClientRejectsInvalidAddressBeforeExecution(t *testing.T) {
 				return err
 			},
 		},
+		{
+			name: "update config",
+			call: func(ctx context.Context, client *NodeClient) error {
+				return client.UpdateConfig(
+					ctx,
+					NodeAddress{HostPort: "node-1"},
+					testNodeConfigUpdate(),
+				)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

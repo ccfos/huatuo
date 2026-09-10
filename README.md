@@ -91,13 +91,26 @@ The public Go client is in `client/`. Node client files use the `node_` prefix.
 ```go
 package main
 
-import "github.com/ccfos/huatuo/client"
+import (
+	"context"
+	"encoding/json"
 
-func newNodeClient() (*client.NodeClient, error) {
-    return client.NewNode(&client.NodeConfig{
-        Port:        19704,
-        BearerToken: "node-token",
-    })
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/client"
+)
+
+func updateNodeConfig(ctx context.Context, address client.NodeAddress) error {
+	nodeClient, err := client.NewNode(&client.NodeConfig{
+		BearerToken: "node-token",
+	})
+	if err != nil {
+		return err
+	}
+	return nodeClient.UpdateConfig(ctx, address, &nodeapi.UpdateConfigRequest{
+		Config: map[string]json.RawMessage{
+			"Runtime.CPULimitCores": json.RawMessage("1.5"),
+		},
+	})
 }
 ```
 

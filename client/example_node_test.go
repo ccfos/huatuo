@@ -16,8 +16,10 @@ package client_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 	"github.com/ccfos/huatuo/client"
 )
 
@@ -28,6 +30,27 @@ func ExampleNewNode() {
 	fmt.Println(nodeClient != nil, err)
 
 	// Output: true <nil>
+}
+
+func ExampleNodeClient_UpdateConfig() {
+	nodeClient, err := client.NewNode(&client.NodeConfig{
+		BearerToken: "node-token",
+	})
+	if err != nil {
+		return
+	}
+
+	if err := nodeClient.UpdateConfig(
+		context.Background(),
+		client.NodeAddress{HostPort: "node-1:19704"},
+		&nodeapi.UpdateConfigRequest{
+			Config: map[string]json.RawMessage{
+				"Runtime.CPULimitCores": json.RawMessage("1.5"),
+			},
+		},
+	); err != nil {
+		fmt.Println(err)
+	}
 }
 
 func ExampleNodeClient_FetchContainer() {
