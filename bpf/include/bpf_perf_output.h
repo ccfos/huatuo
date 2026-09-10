@@ -18,6 +18,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "abi/bpf_perf_output_types.h"
+#include "bpf_common.h"
 
 // BPF_PERF_OUTPUT_IN_MAP declares the per-CPU stats map that counts events
 // that bpf_perf_event_output failed to deliver. Update the counter with
@@ -38,10 +39,11 @@
 // keep acting on success or failure.
 static __always_inline long
 bpf_perf_event_output_counted(void *ctx, void *perf_map, void *stats_map,
-			      u64 flags, void *data, u64 size)
+			      void *data, u64 size)
 {
 	u32 key = 0;
-	long ret = bpf_perf_event_output(ctx, perf_map, flags, data, size);
+	long ret = bpf_perf_event_output(ctx, perf_map,
+					 COMPAT_BPF_F_CURRENT_CPU, data, size);
 	if (ret < 0) {
 		struct bpf_perf_output_stats *stats =
 			bpf_map_lookup_elem(stats_map, &key);

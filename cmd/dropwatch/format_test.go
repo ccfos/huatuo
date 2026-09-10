@@ -67,6 +67,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 				Dport:    443,
 				Seq:      123,
 				AckSeq:   456,
+				Flags:    "ACK|PSH",
 				RawFlags: packet.TCPFlagACK | packet.TCPFlagPSH,
 				Window:   4096,
 				SkState:  "ESTABLISHED",

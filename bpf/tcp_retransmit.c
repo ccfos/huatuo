@@ -16,61 +16,20 @@
 
 #define TCP_WIRE_FLAGS_SYNACK 0x12
 
-struct retransmit_filter_tcp_header {
-	__be16 source;
-	__be16 dest;
-	__be32 seq;
-	__be32 ack_seq;
-	u8 data_offset;
-	u8 flags;
-	__be16 window;
-	__sum16 check;
-	__be16 urg_ptr;
-};
-
-struct retransmit_filter_ipv4_header {
-	u8 version_ihl;
-	u8 tos;
-	__be16 total_len;
-	__be16 id;
-	__be16 frag_off;
-	u8 ttl;
-	u8 protocol;
-	__sum16 check;
-	__be32 saddr;
-	__be32 daddr;
-};
-
-struct retransmit_filter_ipv6_header {
-	__be32 version_class_flow;
-	__be16 payload_len;
-	u8 nexthdr;
-	u8 hop_limit;
-	struct in6_addr saddr;
-	struct in6_addr daddr;
-};
-
 struct retransmit_filter_ipv4_packet {
-	struct retransmit_filter_ipv4_header ip;
-	struct retransmit_filter_tcp_header tcp;
+	struct iphdr ip;
+	struct tcphdr tcp;
 };
 
 struct retransmit_filter_ipv6_packet {
-	struct retransmit_filter_ipv6_header ip;
-	struct retransmit_filter_tcp_header tcp;
+	struct ipv6hdr ip;
+	struct tcphdr tcp;
 };
 
 union retransmit_filter_packet {
 	struct retransmit_filter_ipv4_packet v4;
 	struct retransmit_filter_ipv6_packet v6;
 };
-
-_Static_assert(sizeof(struct retransmit_filter_tcp_header) == 20,
-	       "synthetic TCP header must match the wire layout");
-_Static_assert(sizeof(struct retransmit_filter_ipv4_packet) == 40,
-	       "synthetic IPv4/TCP packet must contain two minimum headers");
-_Static_assert(sizeof(struct retransmit_filter_ipv6_packet) == 60,
-	       "synthetic IPv6/TCP packet must contain two minimum headers");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -254,15 +213,23 @@ read_retransmit_synack_tcp_fields(struct tcp_retransmit_event *ev,
 }
 
 static __always_inline void
-fill_retransmit_filter_tcp(struct retransmit_filter_tcp_header *tcp,
+fill_retransmit_filter_tcp(struct tcphdr *tcp,
 			   const struct tcp_retransmit_event *ev)
 {
+	/* Event scalars are host-order; the filter consumes a wire-order view. */
 	tcp->source = bpf_htons(ev->sport);
 	tcp->dest = bpf_htons(ev->dport);
 	tcp->seq = bpf_htonl(ev->tcp_seq);
 	tcp->ack_seq = bpf_htonl(ev->tcp_ack);
-	tcp->data_offset = 5 << 4;
-	tcp->flags = ev->tcp_flags;
+	tcp->doff = 5;
+	tcp->fin = !!(ev->tcp_flags & 0x01);
+	tcp->syn = !!(ev->tcp_flags & 0x02);
+	tcp->rst = !!(ev->tcp_flags & 0x04);
+	tcp->psh = !!(ev->tcp_flags & 0x08);
+	tcp->ack = !!(ev->tcp_flags & 0x10);
+	tcp->urg = !!(ev->tcp_flags & 0x20);
+	tcp->ece = !!(ev->tcp_flags & 0x40);
+	tcp->cwr = !!(ev->tcp_flags & 0x80);
 }
 
 static __always_inline bool
@@ -284,8 +251,9 @@ retransmit_filter_pass(void *ctx, const struct tcp_retransmit_event *ev)
 	union retransmit_filter_packet packet = {};
 
 	if (ev->family == AF_INET) {
-		packet.v4.ip.version_ihl = (4 << 4) | 5;
-		packet.v4.ip.total_len = bpf_htons(sizeof(packet.v4));
+		packet.v4.ip.version = 4;
+		packet.v4.ip.ihl = 5;
+		packet.v4.ip.tot_len = bpf_htons(sizeof(packet.v4));
 		packet.v4.ip.ttl = 64;
 		packet.v4.ip.protocol = IPPROTO_TCP;
 		__builtin_memcpy(&packet.v4.ip.saddr, ev->saddr,
@@ -311,8 +279,9 @@ retransmit_filter_pass(void *ctx, const struct tcp_retransmit_event *ev)
 
 		/* Keep the raw AF_INET6 event intact; only its filter view is IPv4. */
 		if (source_is_mapped) {
-			packet.v4.ip.version_ihl = (4 << 4) | 5;
-			packet.v4.ip.total_len = bpf_htons(sizeof(packet.v4));
+			packet.v4.ip.version = 4;
+			packet.v4.ip.ihl = 5;
+			packet.v4.ip.tot_len = bpf_htons(sizeof(packet.v4));
 			packet.v4.ip.ttl = 64;
 			packet.v4.ip.protocol = IPPROTO_TCP;
 			__builtin_memcpy(&packet.v4.ip.saddr, &ev->saddr[12],
@@ -325,7 +294,7 @@ retransmit_filter_pass(void *ctx, const struct tcp_retransmit_event *ev)
 				(void *)&packet.v4 + sizeof(packet.v4));
 		}
 
-		packet.v6.ip.version_class_flow = bpf_htonl(6U << 28);
+		packet.v6.ip.version = 6;
 		packet.v6.ip.payload_len = bpf_htons(sizeof(packet.v6.tcp));
 		packet.v6.ip.nexthdr = IPPROTO_TCP;
 		packet.v6.ip.hop_limit = 64;

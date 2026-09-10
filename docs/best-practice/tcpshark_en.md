@@ -188,9 +188,9 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 | `tcp_end_seq` | uint32 | `TCP_SKB_CB(skb)->end_seq` for SKB events; request `snt_isn + 1` for SYN-ACK when available; omitted for TLP. |
 | `tcp_flags` | string | Rendered TCP flag set such as `SYN|ACK` or `ACK|PSH`; SKB events use `TCP_SKB_CB(skb)->tcp_flags`, SYN-ACK events derive it from the event type, and TLP events omit it. |
 | `skb_addr` | string | Retransmission-queue SKB pointer in hex; absent for SYN-ACK and TLP events. |
-| `drop_location` | string | Local correlation result: `host_software` or `unknown`; pending retransmissions emitted unchanged during shutdown omit this field; see §5. |
+| `drop_location` | string | Local correlation result: `host_software` or `unknown`; see §5. |
 | `correlation_reasons` | string array | Stable machine-readable reasons why a no-match remains `unknown`. |
-| `dropwatch_perf_status` | object | Latest cumulative embedded-dropwatch `perf_lost` / `rate_limited` counters for a no-match; omitted when the status map cannot be read. |
+| `dropwatch_perf_status` | object | Latest cumulative embedded-dropwatch `perf_lost`, `lost_samples`, and `rate_limited` counters for a no-match; omitted when the status map cannot be read. |
 | `drop_stack` | string | Matched drop stack; unmatched stacks are not symbolized. |
 | `source` | string | Event source. It is `tools` when tcpshark runs standalone and `events` when huatuo-bamai launches it. |
 
@@ -208,16 +208,16 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 
 #### 3.1 Text Output Format
 
-Text retains its terminal-friendly layout while covering the same event variables as JSON. Variables tagged with `omitempty` appear only when non-zero or non-empty, and string values are not JSON-quoted or escaped. For compatibility with the original text format, `state`, `skb`, `seq`, `end`, `ack`, `flags`, `ca`, and `retrans` correspond to the JSON fields `tcp_state`, `skb_addr`, `tcp_seq`, `tcp_end_seq`, `tcp_ack_seq`, `tcp_flags`, `ca_state`, and `icsk_retransmits`, respectively.
+Text retains its terminal-friendly layout while covering the same event variables as JSON. Optional variables appear only when non-zero or non-empty, and string values are not JSON-quoted or escaped. For compatibility with the original text format, `state`, `skb`, `seq`, `end`, `ack`, `flags`, `ca`, `retrans`, and `reason` correspond to the JSON fields `tcp_state`, `skb_addr`, `tcp_seq`, `tcp_end_seq`, `tcp_ack_seq`, `tcp_flags`, `ca_state`, `icsk_retransmits`, and `correlation_reasons`, respectively.
 
 ```text
-<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [ktime_ns=<N>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [correlation_reasons=<REASON,...>] [dropwatch_perf_lost=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
+<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> ktime_ns=<N> [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [reason=<REASON,...>] [dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
 ```
 
 Example:
 
 ```text
-2026-07-23T02:14:40.304775546Z [data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 state=ESTABLISHED event_type=tcp_retransmit_skb skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 ack=948393597 flags=ACK|PSH pid=1420 comm=kube-apiserver ca=4 retrans=4 icsk_pending=0 net_namespace_inum=4026531992
+2026-07-23T02:14:40.304775546Z [data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 state=ESTABLISHED event_type=tcp_retransmit_skb ktime_ns=123456789 skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 ack=948393597 flags=ACK|PSH pid=1420 comm=kube-apiserver ca=4 retrans=4 icsk_pending=0 net_namespace_inum=4026531992
 ```
 
 The `pid` and `comm` in this example describe the execution context in which the hook ran; use `container_id` and socket metadata for workload attribution.
@@ -343,10 +343,10 @@ Drop records that cannot be normalized and drop candidates evicted from the boun
 
 When collection ends or any worker fails, tcpshark does not read dropwatch
 records still queued in the perf ring. Retransmissions already waiting in the
-correlator are emitted unchanged in deadline order, without `drop_location`,
-`correlation_reasons`, `dropwatch_perf_status`, or `drop_stack`. Shutdown
-pending events therefore do not receive `no_matching_drop`, even if an unread
-tail drop could otherwise have matched them.
+correlator are finalized in deadline order through the normal no-match path:
+they receive `drop_location=unknown`, `no_matching_drop`, any other applicable
+reasons, and the latest available `dropwatch_perf_status`. An unread tail drop
+could otherwise have matched a shutdown result.
 
 #### 5.3 Dropwatch Perf Status
 
@@ -355,11 +355,12 @@ Every no-match reports the latest available counters:
 | Field | Meaning |
 |-------|---------|
 | `perf_lost` | Cumulative losses from this embedded dropwatch perf input. It does not include tcpshark or unrelated perf streams. |
+| `lost_samples` | Cumulative samples reported by reader-side `PERF_RECORD_LOST` records. |
 | `rate_limited` | Cumulative events rejected by this embedded dropwatch rate limiter. |
 
-Both loss counters describe the current BPF load and reset when the object is
-loaded again. No-matches finalized during normal operation are not reused after
-reload; shutdown pending events do not read this status.
+These counters describe the current BPF load and reset when the object is
+loaded again. No-matches finalized during normal operation or shutdown are not
+reused after reload.
 
 #### 5.4 Requirements and Troubleshooting
 
@@ -370,7 +371,7 @@ reload; shutdown pending events do not read this status.
 | `unknown` with `no_matching_drop` | No strict candidate arrived within 100 ms; inspect the other reasons and capture a wider traffic scope if needed. |
 | `unknown` with `cross_netns_candidate` | Inspect the named namespace independently; cross-namespace evidence is never promoted to a positive match. |
 | `unknown` with `startup_history_incomplete` | A no-match cannot exclude a software drop that occurred before the embedded source became ready. |
-| `drop_location` absent | Expected in `off` mode or for a pending retransmission emitted unchanged during local-mode shutdown. |
+| `drop_location` absent | Expected in `off` mode. |
 
 huatuo-bamai passes one normalized `EventTracing.TCPRetransmit.Filter` value to both local-correlation inputs. Keeping those scopes identical prevents the two sources from observing different traffic, but it does not make a no-match conclusive without a reliable causal-start boundary.
 

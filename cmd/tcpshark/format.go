@@ -55,10 +55,8 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 	line = append(line, ev.TCPState...)
 	line = append(line, " event_type="...)
 	line = append(line, ev.EventType...)
-	if ev.KtimeNS != 0 {
-		line = append(line, " ktime_ns="...)
-		line = strconv.AppendUint(line, ev.KtimeNS, 10)
-	}
+	line = append(line, " ktime_ns="...)
+	line = strconv.AppendUint(line, ev.KtimeNS, 10)
 	if ev.EventType == "tcp_retransmit_synack" {
 		line = append(line, " [SYNACK]"...)
 	}
@@ -117,7 +115,7 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 		line = append(line, ev.DropLocation...)
 	}
 	if len(ev.CorrelationReasons) != 0 {
-		line = append(line, " correlation_reasons="...)
+		line = append(line, " reason="...)
 		for i, reason := range ev.CorrelationReasons {
 			if i != 0 {
 				line = append(line, ',')

@@ -190,14 +190,14 @@ func testDropEvent(
 		ktimeNS:   ktimeNS,
 		namespace: namespaceID{cookie: 1, inode: 2},
 		flow: flowKey{
-			source: endpoint{
-				address: netip.MustParseAddr(sourceAddress),
-				port:    sourcePort,
-			},
-			destination: endpoint{
-				address: netip.MustParseAddr(destinationAddress),
-				port:    destinationPort,
-			},
+			source: netip.AddrPortFrom(
+				netip.MustParseAddr(sourceAddress),
+				sourcePort,
+			),
+			destination: netip.AddrPortFrom(
+				netip.MustParseAddr(destinationAddress),
+				destinationPort,
+			),
 		},
 		sequence:    sequence,
 		endSequence: endSequence,

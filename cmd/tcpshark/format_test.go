@@ -405,7 +405,7 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 	for _, want := range []string{
 		"ktime_ns=8",
 		"drop_location=unknown",
-		"correlation_reasons=startup_history_incomplete,perf_events_lost",
+		"reason=startup_history_incomplete,perf_events_lost",
 		"dropwatch_perf_lost=2",
 		"dropwatch_lost_samples=4",
 		"dropwatch_rate_limited=3",
@@ -504,7 +504,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 			},
 			want: "2026-07-23T02:14:40Z " +
 				"[data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 " +
-				"state=ESTABLISHED event_type=tcp_retransmit_skb " +
+				"state=ESTABLISHED event_type=tcp_retransmit_skb ktime_ns=0 " +
 				"seq=0 ack=0 pid=0 comm= ca=0 retrans=0 icsk_pending=0\n",
 		},
 	}

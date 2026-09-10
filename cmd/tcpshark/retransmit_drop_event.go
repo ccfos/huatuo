@@ -39,14 +39,9 @@ const (
 	retransmitMatchSYNACK
 )
 
-type endpoint struct {
-	address netip.Addr
-	port    uint16
-}
-
 type flowKey struct {
-	source      endpoint
-	destination endpoint
+	source      netip.AddrPort
+	destination netip.AddrPort
 }
 
 type namespaceID struct {
@@ -101,14 +96,8 @@ func retransmitEntryFromEvent(event *types.TCPRetransmitTracing) (retransmitEntr
 
 	return retransmitEntry{
 		flow: flowKey{
-			source: endpoint{
-				address: source,
-				port:    event.TCPSport,
-			},
-			destination: endpoint{
-				address: destination,
-				port:    event.TCPDport,
-			},
+			source:      netip.AddrPortFrom(source, event.TCPSport),
+			destination: netip.AddrPortFrom(destination, event.TCPDport),
 		},
 		namespace: namespaceID{
 			cookie: event.NetNamespaceCookie,
@@ -177,27 +166,15 @@ func flowFromPacket(layers *packet.Packet) (flowKey, bool) {
 	}
 
 	return flowKey{
-		source: endpoint{
-			address: source,
-			port:    layers.TCP.Sport,
-		},
-		destination: endpoint{
-			address: destination,
-			port:    layers.TCP.Dport,
-		},
+		source:      netip.AddrPortFrom(source, layers.TCP.Sport),
+		destination: netip.AddrPortFrom(destination, layers.TCP.Dport),
 	}, true
 }
 
 func reverseFlow(flow flowKey) flowKey {
 	return flowKey{
-		source: endpoint{
-			address: flow.destination.address,
-			port:    flow.destination.port,
-		},
-		destination: endpoint{
-			address: flow.source.address,
-			port:    flow.source.port,
-		},
+		source:      flow.destination,
+		destination: flow.source,
 	}
 }
 

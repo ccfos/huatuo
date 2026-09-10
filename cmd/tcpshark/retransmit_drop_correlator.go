@@ -102,8 +102,8 @@ func (c *retransmitDropCorrelator) processDrop(
 	results := c.settleExpiredRetransmits(receivedAt)
 
 	hasNamespace := event.namespace.cookie != 0 || event.namespace.inode != 0
-	hasFlow := event.flow.source.address.IsValid() &&
-		event.flow.destination.address.IsValid()
+	hasFlow := event.flow.source.Addr().IsValid() &&
+		event.flow.destination.Addr().IsValid()
 	if !hasNamespace || !hasFlow {
 		return results, nil
 	}

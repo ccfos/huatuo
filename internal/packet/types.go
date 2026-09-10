@@ -238,7 +238,7 @@ func (p *Packet) String() string {
 		switch {
 		case p.TCP != nil:
 			fmt.Fprintf(&b, " [%s] seq=%d ack=%d win=%d",
-				TCPFlagStrings[p.TCP.RawFlags], p.TCP.Seq, p.TCP.AckSeq, p.TCP.Window)
+				p.TCP.Flags, p.TCP.Seq, p.TCP.AckSeq, p.TCP.Window)
 
 			if p.TCP.SkState != "" {
 				fmt.Fprintf(&b, " sk=%s", p.TCP.SkState)
