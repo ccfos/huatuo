@@ -24,10 +24,10 @@ import (
 
 	"github.com/ccfos/huatuo/internal/filerotate"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 const (
-	rfc3339NanoFixed  = "2006-01-02T15:04:05.000000000Z07:00"
 	profilerLogPrefix = "profiler"
 	loggingCloserKey  = "profiler-logging-closer"
 )
@@ -69,7 +69,7 @@ func setupLogging(opts loggingOptions) (io.Closer, error) {
 			DisableColors:   true,
 			ForceQuote:      true,
 			FullTimestamp:   true,
-			TimestampFormat: rfc3339NanoFixed,
+			TimestampFormat: timeutil.Layout,
 			DisableSorting:  false,
 		},
 	})

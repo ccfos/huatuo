@@ -24,6 +24,8 @@ import (
 	"testing"
 
 	"github.com/sirupsen/logrus"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 // Test SetLevel and GetLevel behavior (valid, invalid, case-insensitive)
@@ -341,7 +343,7 @@ func TestSetFormatter(t *testing.T) {
 			DisableColors:   true,
 			ForceQuote:      true,
 			FullTimestamp:   true,
-			TimestampFormat: rfc3339NanoFixed,
+			TimestampFormat: timeutil.Layout,
 			DisableSorting:  false,
 		})
 	}()

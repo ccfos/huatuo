@@ -23,14 +23,13 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 var logger *logrus.Logger
 
-const (
-	modulePath       = "github.com/ccfos/huatuo"
-	rfc3339NanoFixed = "2006-01-02T15:04:05.000000000Z07:00"
-)
+const modulePath = "github.com/ccfos/huatuo"
 
 func init() {
 	logger = logrus.New()
@@ -39,7 +38,7 @@ func init() {
 		DisableColors:   true,
 		ForceQuote:      true,
 		FullTimestamp:   true,
-		TimestampFormat: rfc3339NanoFixed,
+		TimestampFormat: timeutil.Layout,
 		DisableSorting:  false,
 	})
 
