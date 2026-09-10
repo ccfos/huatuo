@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ import (
 	_ "huatuo-bamai/internal/profiler/output/raw"
 	psignal "huatuo-bamai/internal/profiler/signal"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/internal/utils/cpuutil"
 	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/types"
 
@@ -214,8 +216,28 @@ func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*too
 	return client, nil
 }
 
+// onlineCPUIDs reads the sysfs online CPU list; overridable in tests. The
+// result is nil when the list is unavailable.
+var onlineCPUIDs = func() []int {
+	ids, err := cpuutil.OnlineCPUIDs(cpuutil.SystemCPUOnlinePath)
+	if err != nil || len(ids) == 0 {
+		return nil
+	}
+	return ids
+}
+
+// parseCPUIDList validates --cpuid against the sysfs online CPU list:
+// hotplug leaves holes, so an ID inside the online range can still be
+// offline, and profiling an offline CPU fails perf_event_open. When sysfs
+// is unavailable the usable CPU count bounds the IDs.
 func parseCPUIDList(s string) ([]int, error) {
+	onlineIDs := onlineCPUIDs()
+
 	numCPU := runtime.NumCPU()
+	if onlineIDs != nil {
+		numCPU = onlineIDs[len(onlineIDs)-1] + 1
+	}
+
 	var cpuIDs []int
 	seen := make(map[int]bool)
 
@@ -274,6 +296,15 @@ func parseCPUIDList(s string) ([]int, error) {
 
 	if len(cpuIDs) == 0 {
 		return nil, fmt.Errorf("cpuid list is empty")
+	}
+
+	if onlineIDs != nil {
+		for _, id := range cpuIDs {
+			if !slices.Contains(onlineIDs, id) {
+				return nil, fmt.Errorf("cpuid %d is not online (online: %s)",
+					id, cpuutil.FormatCPUList(onlineIDs))
+			}
+		}
 	}
 
 	return cpuIDs, nil

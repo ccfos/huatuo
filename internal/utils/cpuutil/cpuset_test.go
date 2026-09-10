@@ -19,6 +19,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -103,5 +104,77 @@ func TestBoundCoresFallback(t *testing.T) {
 	}
 	if got != 4 {
 		t.Errorf("BoundCores() = %v, want 4", got)
+	}
+}
+
+func TestOnlineCPUIDs(t *testing.T) {
+	tests := []struct {
+		name         string
+		content      string
+		want         []int
+		wantErr      bool
+		wantParseErr bool
+	}{
+		{name: "sparse ranges", content: "0-3,8-9\n", want: []int{0, 1, 2, 3, 8, 9}},
+		{name: "single", content: "7\n", want: []int{7}},
+		{name: "unsorted input", content: "8,0-1\n", want: []int{8, 0, 1}},
+		{name: "invalid range", content: "3-1\n", wantErr: true},
+		{name: "invalid range end", content: "1-x\n", wantErr: true, wantParseErr: true},
+		{name: "trailing comma", content: "0,\n", wantErr: true},
+		{name: "empty", content: "\n", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "online")
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := OnlineCPUIDs(path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("OnlineCPUIDs() error = nil, want error")
+				}
+				var parseErr *strconv.NumError
+				if tt.wantParseErr && !errors.As(err, &parseErr) {
+					t.Errorf("OnlineCPUIDs() error = %v, want *strconv.NumError", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("OnlineCPUIDs() error = %v", err)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("OnlineCPUIDs() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOnlineCPUIDsMissingFile(t *testing.T) {
+	if _, err := OnlineCPUIDs(filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Fatal("OnlineCPUIDs() error = nil, want error")
+	}
+}
+
+func TestFormatCPUList(t *testing.T) {
+	tests := []struct {
+		name string
+		ids  []int
+		want string
+	}{
+		{name: "sparse", ids: []int{0, 1, 2, 3, 8, 9}, want: "0-3,8-9"},
+		{name: "single", ids: []int{7}, want: "7"},
+		{name: "unmerged pairs", ids: []int{0, 2, 4}, want: "0,2,4"},
+		{name: "empty", ids: nil, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FormatCPUList(tt.ids); got != tt.want {
+				t.Errorf("FormatCPUList(%v) = %q, want %q", tt.ids, got, tt.want)
+			}
+		})
 	}
 }

@@ -16,6 +16,7 @@ package bpf
 
 import (
 	"errors"
+	"runtime"
 	"testing"
 
 	"github.com/cilium/ebpf"
@@ -289,5 +290,29 @@ func skipPerfEventIfNotAvailable(t *testing.T, err error) {
 	t.Helper()
 	if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.ENOENT) {
 		t.Skipf("skipping: perf event unavailable in this environment: %v", err)
+	}
+}
+
+func TestDefaultPerfCPUIDsHonorOnlineList(t *testing.T) {
+	orig := onlineCPUIDs
+	defer func() { onlineCPUIDs = orig }()
+	onlineCPUIDs = func() ([]int, error) {
+		return []int{0, 1, 2, 8, 9}, nil
+	}
+
+	require.Equal(t, []int{0, 1, 2, 8, 9}, defaultPerfCPUIDs())
+}
+
+func TestDefaultPerfCPUIDsFallbackToNumCPU(t *testing.T) {
+	orig := onlineCPUIDs
+	defer func() { onlineCPUIDs = orig }()
+	onlineCPUIDs = func() ([]int, error) {
+		return nil, errors.New("sysfs unavailable")
+	}
+
+	got := defaultPerfCPUIDs()
+	require.Len(t, got, runtime.NumCPU())
+	for cpuID := range got {
+		require.Equal(t, cpuID, got[cpuID])
 	}
 }

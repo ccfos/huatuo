@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,7 @@ import (
 
 	"huatuo-bamai/internal/pod"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/utils/cpuutil"
 	"huatuo-bamai/pkg/profiling"
 )
 
@@ -385,8 +387,38 @@ func validateAggregationWindow(duration, interval int) error {
 	return nil
 }
 
+// onlineCPUIDs reads the sysfs online CPU list; overridable in tests. The
+// result is nil when the list is unavailable.
+var onlineCPUIDs = func() []int {
+	ids, err := cpuutil.OnlineCPUIDs(cpuutil.SystemCPUOnlinePath)
+	if err != nil || len(ids) == 0 {
+		return nil
+	}
+	return ids
+}
+
+// parseCPUIDs validates --cpuid against the sysfs online CPU list: hotplug
+// leaves holes, so an ID inside the online range can still be offline, and
+// profiling an offline CPU fails perf_event_open. When sysfs is unavailable
+// the usable CPU count bounds the IDs.
 func parseCPUIDs(s string) ([]int, error) {
-	return parseCPUIDsWithLimit(s, runtime.NumCPU())
+	onlineIDs := onlineCPUIDs()
+	if onlineIDs == nil {
+		return parseCPUIDsWithLimit(s, runtime.NumCPU())
+	}
+
+	cpuIDs, err := parseCPUIDsWithLimit(s, onlineIDs[len(onlineIDs)-1]+1)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, id := range cpuIDs {
+		if !slices.Contains(onlineIDs, id) {
+			return nil, fmt.Errorf("cpuid %d is not online (online: %s)",
+				id, cpuutil.FormatCPUList(onlineIDs))
+		}
+	}
+	return cpuIDs, nil
 }
 
 func parseCPUIDsWithLimit(s string, numCPU int) ([]int, error) {

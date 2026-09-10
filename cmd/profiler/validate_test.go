@@ -450,7 +450,13 @@ func newValidationCLIContext(t *testing.T, args ...string) *cli.Context {
 func TestParseCPUIDs(t *testing.T) {
 	numCPU := runtime.NumCPU()
 
+	// Stub sysfs off so the NumCPU fallback bound is exercised the same
+	// way on hosts with and without hotplug holes.
 	t.Run("out of range based on numCPU", func(t *testing.T) {
+		orig := onlineCPUIDs
+		defer func() { onlineCPUIDs = orig }()
+		onlineCPUIDs = func() []int { return nil }
+
 		_, err := parseCPUIDs(strconv.Itoa(numCPU))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "out of range")
@@ -616,4 +622,43 @@ func TestValidatePythonProfileOptions(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestParseCPUIDsHonorOnlineCPUList(t *testing.T) {
+	orig := onlineCPUIDs
+	defer func() { onlineCPUIDs = orig }()
+	// Sparse online set with a hole: 4-7 are offline but inside the
+	// 0-9 range, 8-9 are online above runtime.NumCPU().
+	onlineCPUIDs = func() []int { return []int{0, 1, 2, 3, 8, 9} }
+
+	got, err := parseCPUIDs("8,9")
+	require.NoError(t, err)
+	assert.Equal(t, []int{8, 9}, got)
+
+	_, err = parseCPUIDs("4")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cpuid 4 is not online (online: 0-3,8-9)")
+
+	_, err = parseCPUIDs("4-7")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cpuid 4 is not online")
+
+	_, err = parseCPUIDs("10")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "out of range")
+}
+
+func TestParseCPUIDsFallbackToNumCPUWhenSysfsUnavailable(t *testing.T) {
+	orig := onlineCPUIDs
+	defer func() { onlineCPUIDs = orig }()
+	onlineCPUIDs = func() []int { return nil }
+
+	highest := strconv.Itoa(runtime.NumCPU() - 1)
+	got, err := parseCPUIDs(highest)
+	require.NoError(t, err)
+	assert.Equal(t, []int{runtime.NumCPU() - 1}, got)
+
+	_, err = parseCPUIDs(strconv.Itoa(runtime.NumCPU()))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "out of range")
 }
