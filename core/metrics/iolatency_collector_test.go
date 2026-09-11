@@ -60,3 +60,23 @@ func TestIOLatencyUpdateReturnsContainerCollectionError(t *testing.T) {
 		t.Fatalf("Update() returned %d metrics, want 0", len(metrics))
 	}
 }
+
+func TestAppendBlkdiskZoneMetricsSkipsZeroBuckets(t *testing.T) {
+	var zones [blkLatencyZone]uint64
+	zones[0] = 10
+	zones[2] = 5
+
+	metrics := appendBlkdiskZoneMetrics(nil, "8:0", zones, "blkdisk_q2c", "the disk q2c latency")
+	if len(metrics) != 2 {
+		t.Fatalf("metric count = %d, want 2", len(metrics))
+	}
+	if got := metrics[0].Labels()["zone"]; got != "0" {
+		t.Fatalf("first zone = %q, want 0", got)
+	}
+	if got := metrics[1].Labels()["zone"]; got != "2" {
+		t.Fatalf("second zone = %q, want 2", got)
+	}
+	if got := metrics[0].Labels()["disk"]; got != "8:0" {
+		t.Fatalf("disk label = %q, want 8:0", got)
+	}
+}
