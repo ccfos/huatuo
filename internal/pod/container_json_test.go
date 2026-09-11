@@ -145,3 +145,11 @@ func TestContainerJSONUnknownValues(t *testing.T) {
 		t.Errorf("container qos = %v, want unknown", qos)
 	}
 }
+
+func TestContainerTypeStringUnknownFallback(t *testing.T) {
+	for _, typ := range []ContainerType{0, ContainerTypeUnknown + 1, ContainerType(1 << 20)} {
+		if got, want := typ.String(), "unknown"; got != want {
+			t.Fatalf("ContainerType(%d).String() = %q, want %q", typ, got, want)
+		}
+	}
+}
