@@ -51,14 +51,21 @@ func newMemoryVmStat() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *memoryVmStat) Update() ([]*metric.Data, error) {
-	container, err := c.containerVmstat()
+	return collectMemoryVmstat(c.containerVmstat, c.hostVmstat)
+}
+
+func collectMemoryVmstat(
+	containerCollector func() ([]*metric.Data, error),
+	hostCollector func() ([]*metric.Data, error),
+) ([]*metric.Data, error) {
+	container, err := containerCollector()
 	if err != nil {
 		return nil, err
 	}
 
-	host, err := c.hostVmstat()
+	host, err := hostCollector()
 	if err != nil {
-		return container, nil
+		return container, err
 	}
 
 	return append(container, host...), nil
