@@ -23,21 +23,21 @@ import (
 )
 
 type tcpRetransmitClassification struct {
-	valid  bool
-	phase  types.TCPRetransmitPhase
-	reason types.TCPRetransmitReason
+	isPreset bool
+	phase    types.TCPRetransmitPhase
+	reason   types.TCPRetransmitReason
 }
 
 var retransmitEventClassifications = [...]tcpRetransmitClassification{
 	abi.TCPRetransmitEventSynack: {
-		valid:  true,
-		phase:  types.TCPRetransmitPhaseConnect,
-		reason: types.TCPRetransmitReasonRTO,
+		isPreset: true,
+		phase:    types.TCPRetransmitPhaseConnect,
+		reason:   types.TCPRetransmitReasonRTO,
 	},
 	abi.TCPRetransmitEventTlp: {
-		valid:  true,
-		phase:  types.TCPRetransmitPhaseData,
-		reason: types.TCPRetransmitReasonTLP,
+		isPreset: true,
+		phase:    types.TCPRetransmitPhaseData,
+		reason:   types.TCPRetransmitReasonTLP,
 	},
 }
 
@@ -45,7 +45,7 @@ func classifyRetransmit(ev *abi.TCPRetransmitEvent) tcpRetransmitClassification 
 	eventType := abi.TCPRetransmitEventType(ev.EventType)
 	if eventType < abi.TCPRetransmitEventTlp+1 {
 		classification := retransmitEventClassifications[eventType]
-		if classification.valid {
+		if classification.isPreset {
 			return classification
 		}
 	}

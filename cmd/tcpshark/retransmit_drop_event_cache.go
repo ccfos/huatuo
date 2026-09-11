@@ -126,7 +126,7 @@ func (c *dropwatchCandidates) selectDropForFlow(
 	drops := c.byFlow[flow]
 	for dropIndex := len(drops) - 1; dropIndex >= 0; dropIndex-- {
 		drop := drops[dropIndex]
-		if !dropMatchesRetransmit(drop.event, retransmit) {
+		if !dropMatchesRetransmitIgnoringNetNS(drop.event, retransmit) {
 			continue
 		}
 		if !sameNamespace(drop.event.namespace, retransmit.namespace) {
@@ -257,7 +257,7 @@ func (q *retransmitWaitQueue) takeMatchingRetransmit(
 		if !receivedAt.Before(waiting.deadline) {
 			continue
 		}
-		if !dropMatchesRetransmit(drop, &waiting.match) {
+		if !dropMatchesRetransmitIgnoringNetNS(drop, &waiting.match) {
 			continue
 		}
 		if !sameNamespace(drop.namespace, waiting.match.namespace) {

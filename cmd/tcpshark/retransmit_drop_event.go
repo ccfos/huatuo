@@ -69,7 +69,7 @@ type retransmitEntry struct {
 	kernelObservedNS uint64
 	sequence         uint32
 	endSequence      uint32
-	hasSequence      bool
+	hasSequenceRange bool
 	ackSequence      uint32
 	kind             retransmitMatchKind
 }
@@ -92,7 +92,7 @@ func retransmitEntryFromEvent(event *types.TCPRetransmitTracing) (retransmitEntr
 
 	hasEndSequence := event.EventType == tcpRetransmitSKBEventType ||
 		event.EventType == tcpRetransmitSYNACKEventType
-	hasSequence := hasEndSequence && tcpSequenceBefore(event.TCPSeq, event.TCPEndSeq)
+	hasSequenceRange := hasEndSequence && tcpSequenceBefore(event.TCPSeq, event.TCPEndSeq)
 
 	return retransmitEntry{
 		flow: flowKey{
@@ -106,7 +106,7 @@ func retransmitEntryFromEvent(event *types.TCPRetransmitTracing) (retransmitEntr
 		kernelObservedNS: event.KernelObservedNS,
 		sequence:         event.TCPSeq,
 		endSequence:      event.TCPEndSeq,
-		hasSequence:      hasSequence,
+		hasSequenceRange: hasSequenceRange,
 		ackSequence:      event.TCPAckSeq,
 		kind:             retransmitMatchKindFromEvent(event),
 	}, true
@@ -194,7 +194,7 @@ func addressFromIP(ip net.IP) (netip.Addr, bool) {
 	return address.Unmap(), true
 }
 
-func dropMatchesRetransmit(drop *dropEvent, retransmit *retransmitEntry) bool {
+func dropMatchesRetransmitIgnoringNetNS(drop *dropEvent, retransmit *retransmitEntry) bool {
 	if !dropWithinRetransmitAge(drop, retransmit) {
 		return false
 	}
@@ -216,7 +216,7 @@ func dropWithinRetransmitAge(drop *dropEvent, retransmit *retransmitEntry) bool 
 func outboundSegmentMatches(drop *dropEvent, retransmit *retransmitEntry) bool {
 	return drop.tcpFlags&packet.TCPFlagRST == 0 &&
 		retransmit.kind != retransmitMatchUnsupported &&
-		drop.sequence != drop.endSequence && retransmit.hasSequence &&
+		drop.sequence != drop.endSequence && retransmit.hasSequenceRange &&
 		tcpSequenceRangesOverlap(
 			drop.sequence,
 			drop.endSequence,
@@ -228,7 +228,7 @@ func outboundSegmentMatches(drop *dropEvent, retransmit *retransmitEntry) bool {
 func inboundACKMatches(drop *dropEvent, retransmit *retransmitEntry) bool {
 	if drop.tcpFlags&packet.TCPFlagACK == 0 ||
 		drop.tcpFlags&packet.TCPFlagRST != 0 ||
-		!retransmit.hasSequence {
+		!retransmit.hasSequenceRange {
 		return false
 	}
 

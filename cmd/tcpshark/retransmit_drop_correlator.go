@@ -60,7 +60,7 @@ func (c *retransmitDropCorrelator) processRetransmit(
 	resetCorrelationOutput(event)
 
 	match, ok := retransmitEntryFromEvent(event)
-	if !ok || match.kind == retransmitMatchUnsupported || !match.hasSequence {
+	if !ok || match.kind == retransmitMatchUnsupported || !match.hasSequenceRange {
 		return append(results, c.noMatchResult(
 			event,
 			false,
