@@ -220,6 +220,16 @@ func (c *iolatencyTracing) updateContainerBlkDisk(b bpf.BPF) error {
 		}
 	}
 
-	c.latestContainers = containers
+	c.latestContainers = trackContainersWithBlkioCSS(containers)
 	return nil
+}
+
+func trackContainersWithBlkioCSS(containers map[string]*pod.Container) map[string]*pod.Container {
+	tracked := make(map[string]*pod.Container, len(containers))
+	for id, container := range containers {
+		if _, ok := container.CgroupCss[subsystem.SubsystemBlkIO]; ok {
+			tracked[id] = container
+		}
+	}
+	return tracked
 }
