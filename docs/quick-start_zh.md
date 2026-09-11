@@ -14,7 +14,7 @@ weight: 1
 
 - [Events, AutoTracing 大盘（持续完善）](http://console.huatuo.tech/d/autotracing-event)
 
-    ![autotrcing-event demo diagram​](/docs/img/quickstart-autotrcing-event.png)
+    ![autotracing-event demo diagram​](/docs/img/quickstart-autotracing-event.png)
 
 - [宿主机 Metrics 大盘（持续完善）](http://console.huatuo.tech/d/metrics-host)
 
