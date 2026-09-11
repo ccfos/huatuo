@@ -59,9 +59,9 @@ All events provide default values and are operational without any configuration.
 | ------------------------ | ---------- | ----------------- | ----------------- |
 | `sched_tick` | kprobe | Scheduler tick interval >= threshold (default 10ms) | System stalls, network latency, scheduling delays |
 | `softlockup` | kprobe | CPU unable to schedule for extended time (~1 second) | Soft lockup, response anomalies |
-| `hungtask` | kprobe | D-state process task hang | Transient mass D-state processes, IO blocking |
+| `hungtask` | raw tracepoint; tracepoint fallback (host only) | D-state process task hang | Transient mass D-state processes, IO blocking |
 | `oom` | kprobe | OOM Killer triggered | Container/host memory exhaustion |
-| `memory_reclaim_events` | kprobe | Container process direct reclaim time > threshold (default 900ms) | Business stalls caused by memory pressure |
+| `memory_reclaim_events` | kprobe | Direct reclaim time > threshold (default 900ms); known containers emit container events; unresolved events use the host stream | Business stalls caused by memory pressure |
 | `ras` | tracepoint | CPU/MEM/PCIe hardware errors | Hardware fault detection |
 | `dropwatch` | tracepoint | Kernel network stack packet drop | Business jitter caused by protocol stack drops |
 | `tcp_retransmit` | tracepoint; optional kprobe for TLP | TCP retransmission or Tail Loss Probe | TCP loss, reordering, congestion, and latency diagnosis |
@@ -344,6 +344,8 @@ All event records include the following common fields:
 
 ### 6. hungtask
 
+`hungtask_container_total` attributes events using the blocked task's cgroup identity captured at the raw tracepoint; matched traces carry `ContainerID`. It does not resolve a potentially reused TID later in userspace. Missing container metadata or unsupported identity capture leaves events in the host total only. Container counting is independent of trace-save backoff. CPU and blocked-task stack snapshots remain system-wide. See [HungTask metrics](kernel-wide-insight_en.md#hungtask) for hierarchy matching, fallback and accounting details.
+
 **Description** Detects hungtask events. Captures the kernel stacks of all processes in D state (uninterruptible sleep) and NMI backtrace for all CPUs to preserve the fault scene. A backoff strategy is applied: the reporting interval increases from 10 minutes up to a maximum of 3 hours during an event storm. A hungtask occurrence counter metric is also maintained. Note: some Linux distributions (e.g., Fedora 42) disable hungtask detection by default, in which case this observer will not start.
 
 **Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
@@ -370,7 +372,31 @@ All event records include the following common fields:
 
 ### 7. memory_reclaim_events
 
-**Description** Detects direct memory reclaim events for container processes. Triggered when the direct reclaim time of the same process within 1 second exceeds the configured threshold (default 900ms). Records the reclaim duration, process, and container information. **Note: this observer only records events for container processes; host process events are filtered out.**
+**Description** Detects direct memory reclaim events for host and container processes. Triggered when the direct reclaim time of the same process within 1 second exceeds the configured threshold (default 900ms). Records the reclaim duration, process, and container information. Events without a resolved container are retained in the host stream.
+
+Slow direct-reclaim events without a resolved container are retained in the
+host event stream whenever `memory_reclaim_events` is enabled. Existing `try_to_free_pages` entry/return probes, duration threshold,
+event name (`memory_reclaim`) and container output are unchanged.
+
+An empty container ID does **not** prove that the reclaiming process is a host
+service: bare-metal tasks and unresolved container tasks are both retained with
+`container_attribution="unresolved"`. Known containers still produce a single
+container event, not a duplicate host event. This is not kswapd tracing or an
+aggregate reclaim counter. Container discovery failures cannot suppress the
+host stream. Attribution uses the existing refresh policy: cache hits have a five-second TTL, while misses retry at most
+once per second. New containers may initially be unresolved until discovery
+and a cache refresh succeed; repeated host events cannot force a refresh storm.
+
+No new BPF probes or maps. Additional cost is event serialization/storage for
+previously discarded events; keep the existing duration threshold.
+
+Validation on the 5.10 test VM: the current-source BPF object loads and both
+existing probes attach. A labeled fixture verifies host-stream serialization
+and SQLite persistence. These are separate checks, not a real reclaim event
+delivery test. Global direct-reclaim pressure has not been generated: imposing
+a limit on one cgroup does not equivalently exercise `try_to_free_pages`.
+Run the opt-in attach test with `HUATUO_TRIGGER_BPF_DIR`; the persistence test
+requires only the `integration` build tag.
 
 **Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
 
@@ -393,6 +419,7 @@ All event records include the following common fields:
 - **pid**: PID of the triggering process
 - **tid**: TID of the triggering thread
 - **reclaim_duration_ns**: Direct reclaim duration (nanoseconds)
+- **container_attribution**: Optional; `unresolved` for host-stream events without a resolved container
 
 ### 8. ras
 
@@ -523,8 +550,8 @@ HUATUO's anomalous event observation is built on eBPF technology. Event data is 
 graph TB
     subgraph "Linux Kernel"
         direction TB
-        K1["kprobe hooks\n(sched_tick / softlockup / hungtask\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
-        K2["tracepoint hooks\n(ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
+        K1["kprobe hooks\n(sched_tick / softlockup\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
+        K2["raw tracepoint / tracepoint hooks\n(hungtask: raw tracepoint,\n tracepoint fallback, host only\n ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
         K3["netlink subscription\n(netdev_events: RTM_NEWLINK)"]
         K4["kprobe hooks\n(netdev_bonding_lacp: 802.3ad)"]
         PEB["Perf Event Ring Buffer\n(8192 pages)"]

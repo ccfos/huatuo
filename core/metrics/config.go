@@ -15,8 +15,11 @@
 package collector
 
 import (
+	"fmt"
+	"math"
 	"slices"
 	"sync/atomic"
+	"time"
 )
 
 // Config holds metric collector configuration used by the package at runtime.
@@ -31,6 +34,10 @@ type Config struct {
 		EnableHealth bool `default:"true"`
 		EnablePCIe   bool `default:"false"`
 		EnableMTLink bool `default:"false"`
+	}
+
+	Loadavg struct {
+		Interval int64 `default:"15"`
 	}
 
 	NetdevStats struct {
@@ -87,6 +94,16 @@ func Set(c *Config) {
 
 func configSnapshot() *Config {
 	return currentConfig.Load()
+}
+
+// Validate rejects invalid sampling intervals before configuration is published.
+func (c *Config) Validate() error {
+	// The three-interval expiry must also fit in time.Duration.
+	const maxIntervalSeconds = math.MaxInt64 / int64(time.Second) / 3
+	if c.Loadavg.Interval < 0 || c.Loadavg.Interval > maxIntervalSeconds {
+		return fmt.Errorf("loadavg interval must be between 0 and %d seconds (0 uses the default)", maxIntervalSeconds)
+	}
+	return nil
 }
 
 // Clone returns a deep copy suitable for immutable publication.

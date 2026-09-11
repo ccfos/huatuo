@@ -110,7 +110,11 @@ huatuo_bamai_cpu_util_container_cores{container_host="coredns-855c4dd65d-8v5kg",
 
 |指标|意义|单位|对象| 标签 |
 |---|---|---|---|---|
-|cpu_util_container_cores| CPU 核心数|个| 容器 | container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|cpu_util_container_cores| quota、有效 cpuset 和主机核数共同约束的 CPU 容量，可为小数|个| 容器 | container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+
+容器核数表示可用容量，不表示独占物理核心数；两端保留原有利用率口径和指标名。
+
+`cpu_util` 和 `memory_vmstat` 在采集期间分别保留主机与容器的可用数据：容器发现失败不阻断主机指标，主机读取失败不丢弃已采集的容器指标。失败会返回采集管理器，标记该采集器本次采集失败，同时输出可用的部分指标；不会将失败项伪造成零。此行为不改变采集器初始化依赖，也不改变单个容器读取失败时记录日志并跳过的既有策略。
 
 ### 资源争抢
 
@@ -184,8 +188,23 @@ huatuo_bamai_loadavg_container_nr_uninterruptible{container_host="coredns-855c4d
 |loadavg_load1|系统过去 1 分钟的平均负载|计数|物理机| host, region ||
 |loadavg_load5|系统过去 5 分钟的平均负载|计数|物理机| host, region ||
 |loadavg_load15|系统过去 15 分钟的平均负载|计数|物理机| host, region ||
-|loadavg_container_container_nr_running|容器中运行的任务数量|计数|容器| host, region | 只支持 cgroup v1|
-|loadavg_container_container_nr_uninterruptible|容器中不可中断任务的数量|计数|容器| host, region |只支持 cgroup v1|
+|loadavg_nr_running|主机当前正在运行或等待 CPU 的任务数|计数|物理机| host, region |读取 `/proc/stat` 的 `procs_running`|
+|loadavg_nr_uninterruptible|主机参与负载计算的不可中断任务数|计数|物理机| host, region |共享 BPF task iterator|
+|loadavg_container_nr_running|容器中运行或等待 CPU 的任务数量|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |支持 cgroup v1/v2|
+|loadavg_container_nr_uninterruptible|容器中不可中断任务的数量|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |支持 cgroup v1/v2|
+|loadavg_container_load1|容器 1 分钟 R+D 平均负载估算|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2，可配置 EMA 采样间隔，默认 15 秒|
+|loadavg_container_load5|容器 5 分钟 R+D 平均负载估算|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2，可配置 EMA 采样间隔，默认 15 秒|
+|loadavg_container_load15|容器 15 分钟 R+D 平均负载估算|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2，可配置 EMA 采样间隔，默认 15 秒|
+
+`nr_running` 是瞬时 Gauge，不是 `load1/5/15` 平均负载，也不是 CPU 利用率。主机包含容器任务，不能与容器值相加；容器采用非递归采样，不包含子 cgroup。主机数据依赖采集器可见的宿主机 procfs，不要求启用 cgroup；读取失败或字段缺失时不补零，且不影响已有 load average 和容器采集。
+
+容器 R/D 与平均负载由 `loadavg` 生命周期按 `MetricCollector.Loadavg.Interval` 秒采样（默认 15 秒，0 使用默认值），独立于 Prometheus 抓取和 dload 自动追踪。v1 复用 netlink，v2 复用共享 BPF task iterator。平均负载按实际采样间隔计算 `L += (R+D-L) * (1-exp(-dt/τ))`，τ 为 60/300/900 秒；首次采样只建立基线，之后从零预热。它是用户态估算，不等同于主机内核 loadavg，也不按 CPU 配额归一化。容器消失、采样缺失或间隔超过三倍采样周期（默认 45 秒）时清理/重置该容器历史，不以零填充失败；超过三倍采样周期的缓存不导出。暂停或重启 loadavg 会重置平均负载，已有主机 loadavg 不变。Dload 仍使用独立的 `AutoTracing.Dload.Interval`（默认 10 秒）；iterator 仅合并 100ms 内符合条件的请求，不保证每次采样都复用。
+
+主机 `loadavg_nr_uninterruptible` 随 `loadavg` 组件启用。它复用 dload 的共享 BPF task iterator，按 loadavg 配置的周期（默认 15 秒）统计全主机参与负载计算的 D 状态任务（排除 `TASK_NOLOAD`/`TASK_FROZEN`），包括非容器任务，不是简单相加容器指标，也不使用 `/proc/stat` 的 `procs_blocked`。在 cgroup v2 上在同一次遍历中汇总；主机统计不受 cgroup v1/v2 模式限制，但需要内核 BTF、BPF task iterator 和主机 PID namespace。不支持时省略该指标，不扫描 `/proc` 任务目录兜底；已有主机 loadavg 和 v1 容器指标不受影响。它是遍历期间的采样值，不是所有任务的原子快照。
+
+cgroup v2 容器负载指标随 `loadavg` 组件启用，每次采样与主机 D 状态统计共用一次宿主机全部任务遍历。它依赖可读的内核 BTF 和 BPF `task` iterator，统计仅包含直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。内核不支持时仍会输出基于 procfs 的物理机负载指标，省略依赖 iterator 的指标且只记录一次告警，不会将宿主机 procfs 采集判为失败；确定的不支持结果会被缓存，后续不会反复尝试加载 BPF 程序。
+
+Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机 PID namespace 时，cgroup v2 容器指标会作为不支持而省略，不会输出有误导性的全零数据。
 
 ## 内存系统
 
@@ -206,11 +225,22 @@ huatuo_bamai_memory_reclaim_container_directstall{container_host="coredns-855c4d
 
 |指标|意义|单位|对象|取值| 标签 |
 |---|---|---|---|---|---|
-|memory_free_allocpages_stall|系统在分配内存页过程中的耗时计数| 纳秒|物理机| eBPF | host, region|
-|memory_free_compaction_stall|系统在规整内存页过程中的耗时计数| 纳秒|物理机| eBPF | host, region|
-|memory_reclaim_container_directstall|容器直接内存事件次数| 计数| 容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_allocpages_stall|全局直接回收累计耗时| 毫秒|物理机| eBPF | host, region|
+|memory_free_compaction_stall|直接内存规整累计耗时| 毫秒|物理机| eBPF | host, region|
+|memory_free_container_allocpages_stall|容器任务参与全局直接回收的累计耗时| 毫秒|容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_compaction_stall|容器任务参与直接内存规整的累计耗时| 毫秒|容器| eBPF | 同上|
+|memory_reclaim_directstall|整台主机 memcg 限额回收累计次数| 计数| 物理机| eBPF | host, region|
+|memory_reclaim_container_directstall|容器任务触发 memcg 限额回收累计次数| 计数| 容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 
-> **注意**：`memory_others_container_directstall_time`、`memory_others_container_asyncreclaim_time`、`memory_others_container_local_direct_reclaim_time` 指标读取的是滴滴云定制内核提供的 memory cgroup 扩展接口（`memory.directstall_stat`、`memory.asynreclaim_stat`、`memory.local_direct_reclaim_time`）。主线内核及常见发行版内核不提供这些接口，因此这些指标不会输出，属预期行为，无需额外加载内核模块。在标准内核上观测容器直接回收（direct reclaim）行为，请使用上表基于 eBPF 实现的 `memory_reclaim_container_directstall`。
+主机两项原本就导出毫秒，本次仅修正文档，不改名称、数值缩放或 Gauge 类型。容器两项在操作入口记录 memory CSS，复用现有 cgroup v1/v2 容器发现能力；表示任务承受的全局直接回收/规整耗时，不是为该容器回收了多少内存，也不是 memcg 限额回收次数 `memory_reclaim_container_directstall`。主机总量包含未归属容器的任务，不能和容器指标相加。
+
+仅为存在 BPF 记录且能匹配已发现普通容器的 cgroup 导出，不为缺失容器补零；容器发现或容器 map 读取失败时仍导出主机值并报告错误。计时表与容器累计表各限制 10240 条 LRU 记录，压力下可能丢失计时或淘汰累计值，BPF 重载也会归零，分析增量需处理重置。除既有回收 tracepoint、规整 kprobe 外，容器采集使用 `cgroup_mkdir` raw tracepoint 清理复用的 CSS 地址。所有数值为采集期间累计值，并非机器启动以来的绝对累计。
+
+启动时若完整 BPF 对象加载或挂载失败，释放原对象后仅重试一次主机模式：关闭容器 cgroup 读取与计数，移除 `cgroup_mkdir` 程序，保留原有两项主机耗时指标并记录降级告警；不导出容器零值，不调整默认过滤配置。主机模式仍要求可用的 BPF/BTF、回收 tracepoint 和规整 kprobe，不能绕过这些基础依赖；主机模式也失败则报告启动错误。
+
+> **注意**：`memory_others_container_directstall_time`、`memory_others_container_asyncreclaim_time`、`memory_others_container_local_direct_reclaim_time` 指标读取的是厂商定制内核提供的 memory cgroup 扩展接口（`memory.directstall_stat`、`memory.asynreclaim_stat`、`memory.local_direct_reclaim_time`）。主线内核及常见发行版内核不提供这些接口，因此这些指标不会输出，属预期行为，无需额外加载内核模块。在标准内核上观测容器直接回收（direct reclaim）行为，请使用上表基于 eBPF 实现的 `memory_reclaim_container_directstall`。
+
+`memory_reclaim_directstall` 与容器计数共用 `mm_vmscan_memcg_reclaim_begin`，均排除 kswapd；在容器 CSS 匹配前累加 per-CPU 主机计数，采集时求和。它覆盖整台主机上的 memcg 回收（包括未被发现为普通容器的 cgroup），不是容器指标求和，也不是全局直接回收次数或耗时；没有 memcg 回收时为零。主机计数不受容器删除或容器计数表容量影响，BPF 重载归零。沿用 Gauge 类型及现有挂点要求，不新增探针、不调整默认过滤配置；主机和容器采集失败相互隔离，失败的一侧不伪造零值。
 
 ### 资源状态
 
@@ -1300,7 +1330,14 @@ huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
 
 |指标|意义|单位|对象|取值| 标签 |
 |---|---|---|---|---|---|
-|hungtask_total|系统 hungtask 事件计数|计数|物理机|BPF|
+|hungtask_total|系统 hungtask 事件计数（包含容器与未归属任务）|计数|物理机|BPF|host, region|
+|hungtask_container_total|已归属容器的阻塞任务事件计数|计数|容器|BPF + cgroup 文件句柄|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+容器归属通过 `sched_process_hang` raw tracepoint，在事件时刻读取目标阻塞任务（不是 `khungtaskd`）的 cgroup 身份。cgroup v1/Hybrid 使用 CPU 层级，v2 使用统一层级；携带最近的最多 16 层非根 cgroup 完整 kernfs ID（含代次），与已发现普通容器的 cgroup 文件句柄匹配，优先归属最近容器，支持容器子 cgroup。复用现有 cgroup ID 读取路径，不再事后查询 `/proc/<tid>/cgroup`，避免任务退出、TID 复用和后续迁移改变归属。
+
+容器元数据消失、文件句柄不可读、身份读取失败，或容器根超出 16 层范围且无法匹配时，只保留主机总计，缺失容器不补零。raw tracepoint 加载或挂载失败时，清理后重试原有普通 tracepoint，仅采集主机事件并告警；不回退到可能误归属的 TID 查询。主机路径本身仍需要原有 BPF/BTF 和 hungtask tracepoint 支持。事件身份更精确不代表容器元数据发现一定成功，诊断堆栈仍是主机范围。
+
+两项均保留 Counter 语义，计数发生在追踪退避之前；追踪仍沿用主机级退避和全机栈快照，已匹配的记录附带 `ContainerID`，不表示栈已按容器过滤。容器指标使用生命周期内累计计数，成功发现容器退出后清理，进程重启归零。发现故障不丢主机指标，也不清空已累计的容器状态。主机与容器计数不能相加，重复上报同一阻塞线程仍按多次事件计数。
 
 
 ## GPU

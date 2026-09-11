@@ -33,10 +33,11 @@ type memoryReclaimTracing struct{}
 
 // MemoryReclaimTracingData is the full data structure.
 type MemoryReclaimTracingData struct {
-	PID               uint32 `json:"pid"`
-	TID               uint32 `json:"tid"`
-	Comm              string `json:"comm"`
-	ReclaimDurationNS uint64 `json:"reclaim_duration_ns"`
+	PID                  uint32 `json:"pid"`
+	TID                  uint32 `json:"tid"`
+	Comm                 string `json:"comm"`
+	ReclaimDurationNS    uint64 `json:"reclaim_duration_ns"`
+	ContainerAttribution string `json:"container_attribution,omitempty"`
 }
 
 func init() {
@@ -52,6 +53,40 @@ func newMemoryReclaim() (*tracing.EventTracingAttr, error) {
 }
 
 const cssCacheTTL = 5 * time.Second
+
+// Retry misses sooner than the TTL without rediscovering containers for every
+// unresolved host event. The output scope must not change attribution refresh.
+const reclaimCacheMissRetry = time.Second
+
+type reclaimContainerCache struct {
+	containers  map[uint64]*pod.Container
+	refreshedAt time.Time
+	attemptedAt time.Time
+}
+
+func (c *reclaimContainerCache) lookup(
+	css uint64, now time.Time,
+	refresh func() (map[uint64]*pod.Container, error),
+) (*pod.Container, error) {
+	expired := c.refreshedAt.IsZero() || now.Sub(c.refreshedAt) > cssCacheTTL
+	container := c.containers[css]
+	if !expired && (container != nil || now.Sub(c.attemptedAt) < reclaimCacheMissRetry) {
+		return container, nil
+	}
+	c.attemptedAt = now
+	containers, err := refresh()
+	if err != nil {
+		if expired {
+			// Do not attribute through an expired cache after discovery fails.
+			c.containers = nil
+			c.refreshedAt = now
+		}
+		return nil, err
+	}
+	c.containers = containers
+	c.refreshedAt = now
+	return containers[css], nil
+}
 
 // Start detect work, load bpf and wait data form perfevent
 //
@@ -77,19 +112,14 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 
 	b.DetachOnContextDone(childCtx, cancel)
 
-	var (
-		cssToContainer map[uint64]*pod.Container
-		cacheTime      time.Time
-	)
+	var cache reclaimContainerCache
 
-	refreshContainerCache := func() error {
+	refreshContainerCache := func() (map[uint64]*pod.Container, error) {
 		containers, err := pod.Containers()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		cssToContainer = pod.BuildCssContainers(containers, subsystem.SubsystemCPU)
-		cacheTime = time.Now()
-		return nil
+		return pod.BuildCssContainers(containers, subsystem.SubsystemCPU), nil
 	}
 
 	for {
@@ -106,41 +136,25 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
 
-			if cssToContainer == nil || time.Since(cacheTime) > cssCacheTTL {
-				if err := refreshContainerCache(); err != nil {
-					log.Errorf("refresh container cache: %v", err)
-					continue
-				}
+			container, err := cache.lookup(data.CPUCSSAddr, time.Now(), refreshContainerCache)
+			if err != nil {
+				log.Errorf("refresh container cache: %v", err)
 			}
-
-			container := cssToContainer[data.CPUCSSAddr]
-			if container == nil {
-				if err := refreshContainerCache(); err != nil {
-					log.Errorf("refresh container cache: %v", err)
-					continue
-				}
-				container = cssToContainer[data.CPUCSSAddr]
-				if container == nil {
-					// We only care about the container and nothing else.
-					// Though it may be unfair, that's just how life is.
-					//
-					// -- Tonghao Zhang, tonghao@bamaicloud.com
-					continue
-				}
-			}
+			containerID, attribution := reclaimEventTarget(container)
 
 			// save storage
 			tracingData := &MemoryReclaimTracingData{
-				PID:               data.TGID,
-				TID:               data.TID,
-				Comm:              bytesutil.ToStr(data.Comm[:]),
-				ReclaimDurationNS: data.ReclaimDurationNS,
+				PID:                  data.TGID,
+				TID:                  data.TID,
+				Comm:                 bytesutil.ToStr(data.Comm[:]),
+				ReclaimDurationNS:    data.ReclaimDurationNS,
+				ContainerAttribution: attribution,
 			}
 
 			log.Infof("memory_reclaim saves storage: %+v", tracingData)
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "memory_reclaim",
-				ContainerID:       container.ID,
+				ContainerID:       containerID,
 				ObservedTimestamp: time.Now().UTC(),
 				TracerData:        tracingData,
 			}); err != nil {
@@ -148,4 +162,12 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func reclaimEventTarget(container *pod.Container) (string, string) {
+	if container != nil {
+		return container.ID, ""
+	}
+	// A cache miss does not prove that the task is outside a container.
+	return "", "unresolved"
 }

@@ -667,6 +667,122 @@
           ],
           "title": "Container CPU Throttle",
           "type": "timeseries"
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "ops"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 53,
+          "title": "Container Hung Task Events",
+          "description": "Received hung task events attributed at event time, before trace backoff. Repeated reports count separately. Missing containers are omitted; counts reset on agent restart.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "rate(huatuo_bamai_hungtask_container_total{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}[5m])",
+              "legendFormat": "Events/s {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 55
+          }
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 54,
+          "title": "Estimated Container Load Average",
+          "description": "Userspace R+D EMA estimates sampled at MetricCollector.Loadavg.Interval (seconds; default 15), not normalized by CPU quota. cgroup v1 uses netlink; v2 requires host PID visibility, kernel BTF and the BPF task iterator. Missing or stale samples are omitted; history resets on restart or long gaps.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_loadavg_container_load1{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}",
+              "legendFormat": "1 min {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_loadavg_container_load5{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}",
+              "legendFormat": "5 min {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "B",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_loadavg_container_load15{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}",
+              "legendFormat": "15 min {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "C",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 63
+          }
         }
       ],
       "targets": [
@@ -1402,6 +1518,64 @@
           ],
           "title": "Host kswapd Reclaim Volume (Cumulative)",
           "type": "timeseries"
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 52,
+          "title": "Cumulative Reclaim and Compaction Stall Time",
+          "description": "Cumulative task stall time in global direct reclaim and compaction, exported as Gauges. Not memcg limit reclaim counts. BPF reload or LRU eviction can reset totals; missing records are omitted.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_memory_free_container_allocpages_stall{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}",
+              "legendFormat": "Direct reclaim {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_memory_free_container_compaction_stall{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}",
+              "legendFormat": "Compaction {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "B",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 74
+          }
         }
       ],
       "targets": [

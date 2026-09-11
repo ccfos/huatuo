@@ -112,7 +112,11 @@ huatuo_bamai_cpu_util_container_cores{container_host="coredns-855c4dd65d-8v5kg",
 
 |Metric|Description|Unit|Target|Labels|
 |---|---|---|---|---|
-|cpu_util_container_cores| Number of CPU cores|cores| Container | (same as above) |
+|cpu_util_container_cores| CPU capacity bounded by quota, effective cpuset, and host cores; may be fractional|cores| Container | container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+
+Container cores represent available capacity, not exclusively assigned physical cores. Existing utilization semantics and metric names are unchanged.
+
+During collection, `cpu_util` and `memory_vmstat` retain available host and container data independently: container discovery failures do not block host metrics, and host read failures do not discard collected container metrics. Errors reach the collector manager, marking the scrape unsuccessful while still emitting partial data; failed metrics are not fabricated as zeros. Collector initialization dependencies and the existing log-and-skip policy for individual container read failures are unchanged.
 
 ### Contention
 
@@ -185,13 +189,28 @@ huatuo_bamai_loadavg_container_nr_running{container_host="coredns-855c4dd65d-8v5
 huatuo_bamai_loadavg_container_nr_uninterruptible{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
 ```
 
-|Metric|Description|Unit|Target|Labels|
+|Metric|Description|Unit|Target|Labels|Notes|
 |---|---|---|---|---|---|
 |loadavg_load1|1-minute system load average|count|Host| host, region ||
 |loadavg_load5|5-minute system load average|count|Host| host, region ||
 |loadavg_load15|15-minute system load average|count|Host| host, region ||
-|loadavg_container_container_nr_running|Number of running tasks in container|count|Container| host, region |cgroup v1 only|
-|loadavg_container_container_nr_uninterruptible|Number of uninterruptible tasks in container|count|Container| host, region |cgroup v1 only|
+|loadavg_nr_running|Instantaneous running or runnable host tasks|count|Host| host, region |`procs_running` from `/proc/stat`|
+|loadavg_nr_uninterruptible|Host uninterruptible tasks contributing to load|count|Host| host, region |Shared BPF task iterator|
+|loadavg_container_nr_running|Running or runnable container tasks|count|Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1 and v2|
+|loadavg_container_nr_uninterruptible|Uninterruptible container tasks|count|Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1 and v2|
+|loadavg_container_load1|Estimated 1-minute container R+D load average|count|Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2, configurable EMA sampling (default: 15 seconds)|
+|loadavg_container_load5|Estimated 5-minute container R+D load average|count|Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2, configurable EMA sampling (default: 15 seconds)|
+|loadavg_container_load15|Estimated 15-minute container R+D load average|count|Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2, configurable EMA sampling (default: 15 seconds)|
+
+`nr_running` is an instantaneous Gauge, not a `load1/5/15` average or CPU utilization. Host counts include container tasks; do not add the scopes. Container sampling is non-recursive and excludes child cgroups. Host collection requires host procfs visibility, not cgroups. Read failures or missing fields emit no synthetic zero and do not suppress existing load averages or container data.
+
+The `loadavg` lifecycle samples container R/D and averages every `MetricCollector.Loadavg.Interval` seconds (default: 15; 0 uses the default), independently of Prometheus scrapes and dload profiling. It reuses v1 netlink or the shared v2 BPF task iterator. Averages use actual elapsed time: `L += (R+D-L) * (1-exp(-dt/τ))`, with τ = 60/300/900 seconds. The first sample establishes a baseline; subsequent samples warm up from zero. These userspace estimates are not kernel host loadavg and are not normalized by CPU quota. Disappeared/failed containers lose their history; gaps over three sampling intervals (45 seconds by default) reset it. Failures are not sampled as zero, and caches older than three intervals are omitted. Stopping or restarting loadavg resets averages without changing host loadavg. Dload retains its independent `AutoTracing.Dload.Interval` (default: 10 seconds); the iterator only coalesces eligible requests within 100ms, not every sample.
+
+Host `loadavg_nr_uninterruptible` is collected whenever the `loadavg` component is enabled. It reuses dload's shared BPF task iterator at the configured loadavg interval (default: 15 seconds) to count host D-state tasks contributing to load, excluding `TASK_NOLOAD`/`TASK_FROZEN`. It includes non-container tasks, is not a sum of container metrics, and does not use `/proc/stat`'s `procs_blocked`. On cgroup v2, container statistics share the same traversal. Host collection works independently of cgroup v1/v2 mode but requires kernel BTF, the BPF task iterator and the host PID namespace. Unsupported systems omit the metric without a procfs task-scan fallback; existing host loadavg and v1 container metrics remain available. Counts are sampled during traversal, not an atomic snapshot of all tasks.
+
+Container load metrics on cgroup v2 run whenever the `loadavg` component is enabled; each sample shares a full-host task walk with host D-state collection. They require readable kernel BTF and the BPF `task` iterator and count only tasks directly attached to each requested cgroup, not descendants. On unsupported kernels, procfs host load metrics remain available, iterator-dependent metrics are omitted without failing host procfs collection, and one warning is logged. A conclusive unsupported result is cached so Huatuo does not repeatedly try to load the BPF program.
+
+Kubernetes deployments must run Huatuo with `hostPID: true`. Without host PID namespace visibility, cgroup v2 container metrics are omitted as unsupported instead of exporting misleading zeros.
 
 ## Memory System
 
@@ -213,11 +232,22 @@ huatuo_bamai_memory_reclaim_container_directstall{container_host="coredns-855c4d
 
 |Metric|Description|Unit|Target|Source|Labels|
 |---|---|---|---|---|---|
-|memory_free_allocpages_stall|Time stalled waiting for page allocation| nanoseconds|Host| eBPF | host, region|
-|memory_free_compaction_stall|Time stalled in memory compaction| nanoseconds|Host| eBPF | host, region|
-|memory_reclaim_container_directstall|Number of direct reclaim events in container| count| Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_allocpages_stall|Cumulative global direct reclaim stall time| milliseconds|Host| eBPF | host, region|
+|memory_free_compaction_stall|Cumulative direct memory compaction stall time| milliseconds|Host| eBPF | host, region|
+|memory_free_container_allocpages_stall|Container task time in global direct reclaim| milliseconds|Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_compaction_stall|Container task time in direct compaction| milliseconds|Container| eBPF | same container labels|
+|memory_reclaim_directstall|Cumulative host-wide memcg limit reclaim events| count| Host| eBPF | host, region|
+|memory_reclaim_container_directstall|Cumulative memcg limit reclaim events triggered by container tasks| count| Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 
-> **Note**: The `memory_others_container_directstall_time`, `memory_others_container_asyncreclaim_time`, and `memory_others_container_local_direct_reclaim_time` metrics read memory cgroup extension interfaces provided by the Didi Cloud custom kernel (`memory.directstall_stat`, `memory.asynreclaim_stat`, `memory.local_direct_reclaim_time`). Mainline and common distribution kernels do not expose these interfaces, so these metrics are simply not emitted there — this is expected, and no extra kernel module can provide them. To observe container direct reclaim behavior on standard kernels, use the eBPF-based `memory_reclaim_container_directstall` listed above.
+Host values already used milliseconds; only the documented unit changes, not names, scaling or Gauge types. Container stalls are attributed to the task's memory CSS at operation entry using existing cgroup v1/v2 discovery. They measure time suffered by tasks in global reclaim/compaction, not memory reclaimed for that cgroup or memcg limit reclaim counts. Host totals include unassigned tasks; do not add host and container values.
+
+Only BPF records matching discovered normal containers are exported; absent records are not zero-filled. Container discovery/map failures retain host values and report an error. Timing and container aggregate LRU maps are each bounded to 10240 entries: pressure can lose timings or evict aggregates, and BPF reload resets values. Handle resets when computing deltas. In addition to the existing reclaim tracepoints and compaction kprobes, container collection uses the `cgroup_mkdir` raw tracepoint to clear reused CSS addresses. Values accumulate during collection, not necessarily from host boot.
+
+If loading or attaching the full BPF object fails at startup, Huatuo cleans it up and retries once in host-only mode: container cgroup reads and accounting are disabled, and the `cgroup_mkdir` program is removed. The original two host stall metrics remain available with a fallback warning; container zeros are not fabricated and default filters are unchanged. Host-only mode still requires BPF/BTF, reclaim tracepoints and compaction kprobes; it cannot bypass these prerequisites. Failure of the host-only retry is reported as a startup error.
+
+> **Note**: The `memory_others_container_directstall_time`, `memory_others_container_asyncreclaim_time`, and `memory_others_container_local_direct_reclaim_time` metrics read memory cgroup extension interfaces provided by a vendor-custom kernel (`memory.directstall_stat`, `memory.asynreclaim_stat`, `memory.local_direct_reclaim_time`). Mainline and common distribution kernels do not expose these interfaces, so these metrics are simply not emitted there — this is expected, and no extra kernel module can provide them. To observe container direct reclaim behavior on standard kernels, use the eBPF-based `memory_reclaim_container_directstall` listed above.
+
+`memory_reclaim_directstall` shares `mm_vmscan_memcg_reclaim_begin` and the kswapd exclusion with the container count. A per-CPU host count is incremented before CSS attribution and summed at collection. It includes cgroups not discovered as normal containers, rather than summing exported container metrics. It is neither a global direct reclaim count nor a duration; without memcg reclaim events it remains zero. Container deletion and container map capacity do not affect the host count; BPF reload resets it. The Gauge type, existing hook requirements and default filters are unchanged, with no additional probes. Host and container collection failures are isolated; failed reads do not emit fabricated zeros.
 
 ### State
 
@@ -1220,7 +1250,14 @@ huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
 
 |Metric|Description|Unit|Target|Source|Labels|
 |---|---|---|---|---|---|
-|hungtask_total|Count of hung task events|count|Host|BPF|
+|hungtask_total|Hung task events including container and unassigned tasks|count|Host|BPF|host, region|
+|hungtask_container_total|Events attributed to blocked container tasks|count|Container|BPF + cgroup file handles|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+Container attribution snapshots the blocked task's cgroup identity at the `sched_process_hang` raw tracepoint, rather than using the detecting `khungtaskd`. cgroup v1/Hybrid uses the CPU hierarchy; v2 uses the unified hierarchy. Up to 16 non-root ancestors carry full kernfs IDs including generations and are matched against discovered normal containers' cgroup file handles, choosing the nearest matching container. This supports descendant cgroups without a later `/proc/<tid>/cgroup` lookup, so task exit, TID reuse and subsequent migration do not change the recorded identity.
+
+Missing metadata, unreadable handles, failed identity reads or an unmatched container beyond the 16-level limit leave events in the host total only. If raw tracepoint loading or attachment fails, the collector retries the original tracepoint with host-only counting and a warning; it does not fall back to TID lookup. The host path still requires the original BPF/BTF and hungtask tracepoint support. Event-time identity does not guarantee successful container discovery.
+
+Both metrics are Counters updated before trace backoff. Tracing keeps host-wide backoff and system-wide stack snapshots; matched records carry `ContainerID`, without filtering stacks to that container. Container counts last for the observed container lifetime, are removed after successful discovery confirms exit, and reset on agent restart. Discovery failure retains the host metric and cached container counts. Do not add host and container counts; repeated reports for the same blocked task are separate events.
 
 
 ## GPU

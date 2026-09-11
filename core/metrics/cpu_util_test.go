@@ -15,11 +15,13 @@
 package collector
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 type cpuUsageCgroup struct {
@@ -29,6 +31,17 @@ type cpuUsageCgroup struct {
 
 func (c *cpuUsageCgroup) CpuUsage(string) (*stats.CpuUsage, error) {
 	return &c.usage, nil
+}
+
+func TestCPUUtilCollectorFailureIsolation(t *testing.T) {
+	discoveryErr := errors.New("kubelet unavailable")
+	c := cpuUtilCollector{cgroup: &cpuUsageCgroup{}, numCores: 8}
+	metrics, err := c.update(func() (map[string]*pod.Container, error) {
+		return nil, discoveryErr
+	})
+	if !errors.Is(err, discoveryErr) || len(metrics) != 3 {
+		t.Fatalf("container discovery failure lost host metrics: metrics=%v err=%v", metrics, err)
+	}
 }
 
 func TestCPUUtilCollectorUpdateDataCacheCounterRegression(t *testing.T) {

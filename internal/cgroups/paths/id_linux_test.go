@@ -12,19 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef __BPF_ABI_HUNGTASK_H__
-#define __BPF_ABI_HUNGTASK_H__
+package paths
 
-#include "bpf_abi.h"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
-struct hungtask_event {
-	u32 tid;
-	u8 comm[COMPAT_TASK_COMM_LEN];
-	u32 cgroup_count;
-	/* Nearest first, excluding the hierarchy root; bounded event/stack size. */
-	u64 cgroup_ids[16];
-};
-
-BPF_ABI_EXPORT(hungtask_event);
-
-#endif /* __BPF_ABI_HUNGTASK_H__ */
+func TestKernfsIDSymlink(t *testing.T) {
+	root := os.Getenv("HUATUO_KERNFS_TEST_PATH")
+	if root == "" {
+		t.Skip("set HUATUO_KERNFS_TEST_PATH to a cgroup directory")
+	}
+	want, err := KernfsID(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "cgroup")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	got, err := KernfsID(alias)
+	if err != nil || got != want || got == 0 {
+		t.Fatalf("ID=%d, want %d, err=%v", got, want, err)
+	}
+}
