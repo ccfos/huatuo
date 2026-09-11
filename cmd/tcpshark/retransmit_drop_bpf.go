@@ -181,13 +181,13 @@ func (s *dropwatchSource) readPerfStatus() (types.DropwatchPerfStatus, error) {
 				err,
 			)
 		}
-		if math.MaxUint64-status.PerfLost < cpuStatus.Lost {
+		if math.MaxUint64-status.PerfLost < cpuStatus.ErrorCounter {
 			return types.DropwatchPerfStatus{}, fmt.Errorf(
 				"decode embedded dropwatch BPF map %q: perf_lost overflow",
 				embeddedPerfStatusMapName,
 			)
 		}
-		status.PerfLost += cpuStatus.Lost
+		status.PerfLost += cpuStatus.ErrorCounter
 	}
 
 	raw, err = s.object.ReadMap(s.rateLimitStateMap, key)

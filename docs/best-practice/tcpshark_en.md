@@ -175,7 +175,7 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 | `tcp_dport` | uint16 | Destination port. |
 | `tcp_state` | string | TCP socket state, such as `ESTABLISHED`, `SYN_SENT`, or `NEW_SYN_RECV`. |
 | `phase` | string | Classifier output: `connect`, `data`, or `close`. |
-| `tcp_reason` | string | Classifier output: `RTO`, `fast_retransmit`, `reorder_prone_fast`, `TLP`, or `unknown`. |
+| `tcp_reason` | string | Classifier output: `RTO`, `fast_retransmit`, `TLP`, or `unknown`. |
 | `event_type` | string | `tcp_retransmit_skb`, `tcp_retransmit_synack`, or `tcp_send_loss_probe`. |
 | `ktime_ns` | uint64 | Kernel monotonic timestamp used by local correlation; it is not wall-clock time. |
 | `ca_state` | uint8 | Congestion-control state: 0=Open, 1=Disorder, 2=CWR, 3=Recovery, 4=Loss. |
@@ -287,7 +287,7 @@ The complete phase mapping is:
 | `tcp_retransmit_synack` | `RTO` | Fixed userspace label for the SYN-ACK retry timer path. |
 | `tcp_send_loss_probe` | `TLP` | Fixed userspace label for the optional Tail Loss Probe hook. |
 | `tcp_retransmit_skb`, `ca_state=4` (Loss) | `RTO` | The socket is in TCP_CA_Loss. |
-| `tcp_retransmit_skb`, `ca_state=3` (Recovery) | `fast_retransmit` or `reorder_prone_fast` | Recovery-path retransmission; the reorder-prone label is selected when cumulative reorder history exists. |
+| `tcp_retransmit_skb`, `ca_state=3` (Recovery) | `fast_retransmit` | Recovery-path retransmission. |
 | `tcp_retransmit_skb`, `ca_state=0..2`, connect/close phase | `RTO` | Phase-based fallback used by the current classifier. |
 | `tcp_retransmit_skb`, `ca_state=0..2`, data phase | `unknown` | The available snapshots are insufficient to assign another label. |
 
@@ -295,7 +295,6 @@ The classifier observes socket state at the hook and cannot reconstruct the comp
 
 #### 4.4 Reorder Heuristic
 
-The reorder-prone label is selected when either `reord_seen` or `dsack_dups` is non-zero. Once a flow has reorder history, subsequent Recovery-state SKB events can be labeled `reorder_prone_fast`. This is a flow-level heuristic, not proof that the current retransmission was caused by reordering.
 
 #### 4.5 Operational Guidance
 
@@ -305,7 +304,6 @@ No event type is unconditionally safe to discard. Prefer rate, ratio, and servic
 |---------|------------------|----------|
 | `tcp_reason=RTO` | High | Investigate sustained or service-correlated increases; RTO normally has greater latency impact than Recovery-path retransmission. |
 | `tcp_reason=fast_retransmit` | Medium | Correlate with loss, congestion, and SACK/RACK behavior. |
-| `tcp_reason=reorder_prone_fast` | Context dependent | The flow has prior reorder history, but the current event is not proven spurious; inspect latency and counter growth. |
 | `tcp_reason=TLP` | Context dependent | Optional signal only; confirm that TLP collection was deliberately enabled before using it in alerting. |
 | `event_type=tcp_retransmit_synack` | Usually low per isolated retry | Repeated events can indicate handshake reachability, host egress, firewall, or client/network problems. |
 

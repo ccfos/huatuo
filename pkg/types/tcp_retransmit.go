@@ -42,7 +42,6 @@ type TCPRetransmitReason uint8
 const (
 	TCPRetransmitReasonRTO TCPRetransmitReason = iota
 	TCPRetransmitReasonFast
-	TCPRetransmitReasonReorderProneFast
 	TCPRetransmitReasonTLP
 	TCPRetransmitReasonSpurious
 	TCPRetransmitReasonUnknown
@@ -54,8 +53,6 @@ func (r TCPRetransmitReason) String() string {
 		return "RTO"
 	case TCPRetransmitReasonFast:
 		return "fast_retransmit"
-	case TCPRetransmitReasonReorderProneFast:
-		return "reorder_prone_fast"
 	case TCPRetransmitReasonTLP:
 		return "TLP"
 	case TCPRetransmitReasonSpurious:
@@ -91,7 +88,6 @@ const (
 type TCPRetransmitTracing struct {
 	ObservedTimestamp   string `json:"observed_timestamp,omitempty"`
 	KtimeNS             uint64 `json:"ktime_ns,omitempty"`
-	TCPReason           string `json:"tcp_reason"` // "RTO", "fast_retransmit", "reorder_prone_fast", "TLP", "spurious", "unknown"
 	Source              string `json:"source,omitempty"`
 	Comm                string `json:"comm"`
 	PID                 uint64 `json:"pid"`
@@ -107,7 +103,8 @@ type TCPRetransmitTracing struct {
 	// flag set, e.g. "ACK|PSH". For tcp_retransmit_synack, tcp_flags is
 	// derived from the event type. For tcp_send_loss_probe, tcp_seq/tcp_ack_seq
 	// contain snd_nxt/snd_una and the remaining TCP metadata is unavailable.
-	TCPState  string `json:"tcp_state"` // e.g. "ESTABLISHED", "SYN_SENT", "SYN_RECV"
+	TCPReason string `json:"tcp_reason"` // "RTO", "fast_retransmit", "TLP", "unknown"
+	TCPState  string `json:"tcp_state"`  // e.g. "ESTABLISHED", "SYN_SENT", "SYN_RECV"
 	TCPSaddr  string `json:"tcp_saddr"`
 	TCPDaddr  string `json:"tcp_daddr"`
 	TCPSport  uint16 `json:"tcp_sport"`

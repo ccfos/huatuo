@@ -31,7 +31,7 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 			ev: &TCPRetransmitTracing{
 				ObservedTimestamp:   "2026-07-08T09:19:52.042035335Z",
 				KtimeNS:             123456789,
-				TCPReason:           "reorder_prone_fast",
+				TCPReason:           "fast_retransmit",
 				Source:              "events",
 				Comm:                "kube-apiserver",
 				PID:                 1234,
@@ -233,7 +233,6 @@ func TestTCPRetransmitReasonString(t *testing.T) {
 	}{
 		{name: "rto", reason: TCPRetransmitReasonRTO, want: "RTO"},
 		{name: "fast", reason: TCPRetransmitReasonFast, want: "fast_retransmit"},
-		{name: "reorder prone", reason: TCPRetransmitReasonReorderProneFast, want: "reorder_prone_fast"},
 		{name: "tlp", reason: TCPRetransmitReasonTLP, want: "TLP"},
 		{name: "spurious", reason: TCPRetransmitReasonSpurious, want: "spurious"},
 		{name: "unknown", reason: TCPRetransmitReasonUnknown, want: "unknown"},

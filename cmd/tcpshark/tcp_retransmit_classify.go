@@ -80,9 +80,6 @@ func classifySKBReason(
 	case abi.TCPRetransmitCaLoss:
 		return types.TCPRetransmitReasonRTO
 	case abi.TCPRetransmitCaRecovery:
-		if ev.ReordSeen != 0 || ev.DsackDups != 0 {
-			return types.TCPRetransmitReasonReorderProneFast
-		}
 		return types.TCPRetransmitReasonFast
 	default:
 		if phase == types.TCPRetransmitPhaseConnect ||

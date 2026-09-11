@@ -107,24 +107,6 @@ func TestRetransmitClassification(t *testing.T) {
 		},
 
 		{
-			name:       "Fast retrans + reord_seen>0 -> reorder_prone_fast",
-			skState:    unix.BPF_TCP_ESTABLISHED,
-			tcpFlags:   packet.TCPFlagACK,
-			caState:    abi.TCPRetransmitCaRecovery,
-			reordSeen:  1,
-			wantPhase:  types.TCPRetransmitPhaseData,
-			wantReason: types.TCPRetransmitReasonReorderProneFast,
-		},
-		{
-			name:       "Fast retrans + dsack_dups>0 -> reorder_prone_fast",
-			skState:    unix.BPF_TCP_ESTABLISHED,
-			tcpFlags:   packet.TCPFlagACK,
-			caState:    abi.TCPRetransmitCaRecovery,
-			dsackDups:  2,
-			wantPhase:  types.TCPRetransmitPhaseData,
-			wantReason: types.TCPRetransmitReasonReorderProneFast,
-		},
-		{
 			name:       "RTO + reorder fields (irrelevant for RTO)",
 			skState:    unix.BPF_TCP_ESTABLISHED,
 			tcpFlags:   packet.TCPFlagACK,
