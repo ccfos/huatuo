@@ -78,7 +78,7 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
   ![](/docs/img/quickstart-components.png)  
   
-  ![](/docs/img/quickstart-autotrcing-event.png)
+  ![](/docs/img/quickstart-autotracing-event.png)
 
 - **NOTE**
 
