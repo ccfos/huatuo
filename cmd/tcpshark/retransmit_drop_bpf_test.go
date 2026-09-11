@@ -124,8 +124,8 @@ func TestDropwatchSourceReadPerfStatus(t *testing.T) {
 	object := &dropwatchSourceBPFStub{
 		perfRaw: encodeDropwatchPerfStats(
 			t,
-			abi.BPFPerfOutputStats{Lost: 1},
-			abi.BPFPerfOutputStats{Lost: 3},
+			abi.BPFPerfOutputStats{ErrorCounter: 1},
+			abi.BPFPerfOutputStats{ErrorCounter: 3},
 		),
 		rateRaw: encodeBPFRatelimitEvent(t, 6),
 	}
@@ -145,7 +145,7 @@ func TestDropwatchSourceReadPerfStatus(t *testing.T) {
 
 	object.perfRaw = encodeDropwatchPerfStats(
 		t,
-		abi.BPFPerfOutputStats{Lost: 3},
+		abi.BPFPerfOutputStats{ErrorCounter: 3},
 	)
 	if _, err := source.readPerfStatus(); err == nil ||
 		!containsErrorText(err, "perf_lost regressed") {
@@ -154,7 +154,7 @@ func TestDropwatchSourceReadPerfStatus(t *testing.T) {
 
 	object.perfRaw = encodeDropwatchPerfStats(
 		t,
-		abi.BPFPerfOutputStats{Lost: 4},
+		abi.BPFPerfOutputStats{ErrorCounter: 4},
 	)
 	object.rateRaw = encodeBPFRatelimitEvent(t, 5)
 	if _, err := source.readPerfStatus(); err == nil ||
@@ -182,8 +182,8 @@ func TestDropwatchSourceRejectsInvalidPerfStatus(t *testing.T) {
 			name: "perf lost overflow",
 			perfRaw: encodeDropwatchPerfStats(
 				t,
-				abi.BPFPerfOutputStats{Lost: math.MaxUint64},
-				abi.BPFPerfOutputStats{Lost: 1},
+				abi.BPFPerfOutputStats{ErrorCounter: math.MaxUint64},
+				abi.BPFPerfOutputStats{ErrorCounter: 1},
 			),
 			wantError: "perf_lost overflow",
 		},

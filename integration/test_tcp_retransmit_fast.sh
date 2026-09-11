@@ -111,17 +111,15 @@ PORT_COUNT=${PORT_COUNT:-0}
 
 FAST_COUNT=$(grep -c '"tcp_reason":"fast_retransmit"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 FAST_COUNT=${FAST_COUNT:-0}
-REORDER_FAST=$(grep -c '"tcp_reason":"reorder_prone_fast"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
-REORDER_FAST=${REORDER_FAST:-0}
 RECOVERY=$(grep -c '"ca_state":3' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 RECOVERY=${RECOVERY:-0}
 RTO_COUNT=$(grep -c '"tcp_reason":"RTO"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 RTO_COUNT=${RTO_COUNT:-0}
 
 log_info "captured retransmit events: raw=${RAW_COUNT}, tcp_sport=${TEST_PORT}: ${PORT_COUNT}"
-log_info "fast_retransmit: ${FAST_COUNT}, reorder_prone_fast: ${REORDER_FAST}, ca_state=3: ${RECOVERY}, RTO: ${RTO_COUNT}"
+log_info "fast_retransmit: ${FAST_COUNT}, ca_state=3: ${RECOVERY}, RTO: ${RTO_COUNT}"
 
-if ((FAST_COUNT >= 1)) || ((REORDER_FAST >= 1)); then
+if ((FAST_COUNT >= 1)); then
 	log_info "PASS: fast_retransmit events detected with ca_state=Recovery"
 elif ((RECOVERY >= 1)); then
 	log_warn "PARTIAL: Recovery events found but not classified as fast_retransmit"

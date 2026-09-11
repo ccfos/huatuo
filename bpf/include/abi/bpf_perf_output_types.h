@@ -18,7 +18,7 @@
 #include "bpf_abi.h"
 
 struct bpf_perf_output_stats {
-	u64 lost;
+	u64 error_counter;
 };
 
 BPF_ABI_EXPORT(bpf_perf_output_stats);

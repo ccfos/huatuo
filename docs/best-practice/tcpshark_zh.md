@@ -172,7 +172,7 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 | `tcp_dport` | uint16 | 目的端口。 |
 | `tcp_state` | string | TCP socket 状态，如 `ESTABLISHED`、`SYN_SENT` 或 `NEW_SYN_RECV`。 |
 | `phase` | string | 分类结果：`connect`、`data` 或 `close`。 |
-| `tcp_reason` | string | 分类结果：`RTO`、`fast_retransmit`、`reorder_prone_fast`、`TLP` 或 `unknown`。 |
+| `tcp_reason` | string | 分类结果：`RTO`、`fast_retransmit`、`TLP` 或 `unknown`。 |
 | `event_type` | string | `tcp_retransmit_skb`、`tcp_retransmit_synack` 或 `tcp_send_loss_probe`。 |
 | `ktime_ns` | uint64 | local 关联使用的内核单调时间戳，不是墙上时间。 |
 | `ca_state` | uint8 | 拥塞控制状态：0=Open、1=Disorder、2=CWR、3=Recovery、4=Loss。 |
@@ -283,7 +283,7 @@ sequenceDiagram
 | `tcp_retransmit_synack` | `RTO` | SYN-ACK 重试定时器路径的固定用户态标签。 |
 | `tcp_send_loss_probe` | `TLP` | 可选 Tail Loss Probe hook 的固定用户态标签。 |
 | `tcp_retransmit_skb`，`ca_state=4`（Loss） | `RTO` | socket 当前处于 TCP_CA_Loss。 |
-| `tcp_retransmit_skb`，`ca_state=3`（Recovery） | `fast_retransmit` 或 `reorder_prone_fast` | Recovery 路径重传；存在累计乱序历史时使用 reorder-prone 标签。 |
+| `tcp_retransmit_skb`，`ca_state=3`（Recovery） | `fast_retransmit` | Recovery 路径重传。 |
 | `tcp_retransmit_skb`，`ca_state=0..2`，connect/close 阶段 | `RTO` | 当前分类器使用的阶段回退结果。 |
 | `tcp_retransmit_skb`，`ca_state=0..2`，data 阶段 | `unknown` | 当前快照不足以生成其他标签。 |
 
@@ -291,7 +291,6 @@ sequenceDiagram
 
 #### 4.4 乱序启发式判断
 
-当 `reord_seen` 或 `dsack_dups` 任一累计计数器非零时，分类器会选择乱序倾向标签。连接一旦出现过乱序历史，后续 Recovery 状态的 SKB 事件就可能标记为 `reorder_prone_fast`。这是连接级启发式判断，不能证明当前重传由乱序触发。
 
 #### 4.5 运维解读
 
@@ -301,7 +300,6 @@ sequenceDiagram
 |------|------------|------|
 | `tcp_reason=RTO` | 高 | 排查持续增长或与服务异常相关的 RTO；它通常比 Recovery 路径重传带来更大延迟影响。 |
 | `tcp_reason=fast_retransmit` | 中 | 结合丢包、拥塞及 SACK/RACK 行为分析。 |
-| `tcp_reason=reorder_prone_fast` | 视上下文而定 | 连接存在乱序历史，但不能证明当前事件是伪重传；应检查延迟和计数器增长。 |
 | `tcp_reason=TLP` | 视上下文而定 | 这是可选信号；用于告警前应确认已主动开启 TLP 采集。 |
 | `event_type=tcp_retransmit_synack` | 单次通常较低 | 重复出现可能意味着握手可达性、主机出口、防火墙、客户端或网络问题。 |
 

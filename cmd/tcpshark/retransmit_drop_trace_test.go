@@ -452,7 +452,7 @@ func newTraceTestDropwatchSource(
 		object: &dropwatchSourceBPFStub{
 			perfRaw: encodeDropwatchPerfStats(
 				t,
-				abi.BPFPerfOutputStats{Lost: status.PerfLost},
+				abi.BPFPerfOutputStats{ErrorCounter: status.PerfLost},
 			),
 			rateRaw: encodeBPFRatelimitEvent(t, status.RateLimited),
 		},
