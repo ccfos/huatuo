@@ -174,6 +174,16 @@ func (c *Config) Validate() error {
 	if err := matcher.ValidateClassifications(c.AutoTracing.IssuesList); err != nil {
 		return fmt.Errorf("validating autotracing issues list: %w", err)
 	}
+	// The autotracing sections are validated before publish/persist so
+	// invalid values are never acknowledged. An unconfigured (all-zero)
+	// section is only permitted when its tracer is blacklisted, i.e. when
+	// the top-level validator can prove the factory never runs; otherwise
+	// the next start would fail in the factory on the persisted values.
+	if !slices.Contains(c.BlackList, "irq_tracing") {
+		if err := c.AutoTracing.Validate(); err != nil {
+			return fmt.Errorf("validating autotracing config: %w", err)
+		}
+	}
 	if err := c.EventTracing.Validate(); err != nil {
 		return fmt.Errorf("validating event tracing config: %w", err)
 	}
