@@ -39,6 +39,10 @@ type cpuStat struct {
 	waitPercent float64
 
 	lastUpdate time.Time
+	// availability remembers which series the last successful sample
+	// exposed. A sub-second scrape reuses it instead of dropping every
+	// metric for the container.
+	availability cpuStatAvailability
 }
 
 type cpuStatAvailability struct {
@@ -135,7 +139,11 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 
 	now := time.Now()
 	if now.Sub(cpu.lastUpdate) < time.Second {
-		return availability, nil
+		// wait_sum deltas need a >=1s window, but a faster scrape must
+		// still export the last-known series. Returning an empty
+		// availability here made every cpu_stat metric vanish for the
+		// container on that scrape.
+		return cpu.availability, nil
 	}
 
 	raw, err := c.cgroup.CpuStatRaw(container.CgroupPath)
@@ -151,17 +159,20 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 	stat, availability := newCPUStatSample(raw, usage.Usage*1000, now)
 	if !availability.waitPercent {
 		stat.lastUpdate = time.Time{}
+		stat.availability = availability
 		*cpu = stat
 		return availability, nil
 	}
 
 	if cpu.lastUpdate.IsZero() {
 		availability.waitPercent = false
+		stat.availability = availability
 		*cpu = stat
 		return availability, nil
 	}
 
 	stat.waitPercent, availability.waitPercent = calculateWaitPercent(&stat, cpu)
+	stat.availability = availability
 
 	*cpu = stat
 	return availability, nil
