@@ -67,6 +67,16 @@ var latencyStageNames = []string{
 	"RX_STAGE_USERCOPY",
 }
 
+// latencyStageInfo maps a kernel-provided stage index to its name and
+// configured threshold. Unknown stages (struct drift, corrupted samples)
+// must not panic the agent.
+func latencyStageInfo(stage int, thresholds []uint64) (string, uint64, bool) {
+	if stage < 0 || stage >= len(latencyStageNames) || stage >= len(thresholds) {
+		return "", 0, false
+	}
+	return latencyStageNames[stage], thresholds[stage], true
+}
+
 func init() {
 	tracing.RegisterEventTracing("net_rx_latency", newNetRcvLat)
 }
@@ -162,9 +172,13 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			latencyStage := latencyStageNames[pd.LatencyStage]
+			latencyStage, latencyThresholdMS, okStage :=
+				latencyStageInfo(int(pd.LatencyStage), latencyThresholds)
+			if !okStage {
+				log.Warnf("net_rx_latency: unknown latency stage %d, skip event", pd.LatencyStage)
+				continue
+			}
 			latencyMS := float64(pd.LatencyNS) / 1000 / 1000
-			latencyThresholdMS := latencyThresholds[pd.LatencyStage]
 			state := packet.TCPStateName(pd.TCPState)
 			saddr, daddr := netutil.Inetv4Ntop(pd.TCPSaddr).String(), netutil.Inetv4Ntop(pd.TCPDaddr).String()
 			sport, dport := netutil.Ntohs(pd.TCPSport), netutil.Ntohs(pd.TCPDport)
