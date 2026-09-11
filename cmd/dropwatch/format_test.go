@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -115,6 +116,37 @@ func TestFormatHardwareEvent(t *testing.T) {
 	}
 	if got.DropLocation != "" {
 		t.Errorf("DropLocation = %q, want empty", got.DropLocation)
+	}
+}
+
+func TestJSONWriterPreservesKernelTime(t *testing.T) {
+	const ktimeNS uint64 = 12_345_678_901_234_567
+	for _, source := range []abi.DropwatchDropSource{
+		abi.DropwatchDropSourceSoftware,
+		abi.DropwatchDropSourceHardware,
+	} {
+		t.Run(dropSourceName(source), func(t *testing.T) {
+			var record abi.DropwatchPacketEvent
+			record.Meta.KernelObservedNS = ktimeNS
+			record.Meta.DropSource = uint32(source)
+			var output bytes.Buffer
+			event, err := formatEvent(&record, nil, "tools")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := (&jsonWriter{w: &output}).Write(event); err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				KtimeNS uint64 `json:"ktime_ns"`
+			}
+			if err := json.Unmarshal(output.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.KtimeNS != ktimeNS {
+				t.Fatalf("ktime_ns = %d, want %d", got.KtimeNS, ktimeNS)
+			}
+		})
 	}
 }
 

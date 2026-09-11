@@ -26,6 +26,7 @@ set -exuo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
+command -v jq > /dev/null 2>&1 || skip "jq command is not installed"
 bpf_tool_setup dropwatch net_dropwatch
 readonly RATE=1
 readonly DURATION=10
@@ -49,7 +50,7 @@ log_info "dropwatch: rate=${RATE}/s, duration=${DURATION}s, target=${TARGET_IP}:
 	--filter "udp and port ${TARGET_PORT}" \
 	--max-events-per-second "${RATE}" \
 	--duration "${DURATION}" \
-	--output text \
+	--output json \
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
 DROPWATCH_PID=$!
 
@@ -66,10 +67,17 @@ timeout "${DURATION}" bash -c "
 		printf x >/dev/udp/${TARGET_IP}/${TARGET_PORT}
 	done
 " > /dev/null 2>&1 || true
-wait "${DROPWATCH_PID}" || true
+if ! wait "${DROPWATCH_PID}"; then
+	DROPWATCH_PID=""
+	fatal "dropwatch failed while tracing rate-limited drops"
+fi
 DROPWATCH_PID=""
 
-events=$(grep -c "IPv4/UDP" "${TOOL_OUT}" || true)
+events=$(jq -s '[.[] | select(.layers.label == "IPv4/UDP")] | length' "${TOOL_OUT}")
+jq -e -s 'length > 0 and all(.[];
+	(.ktime_ns | type == "number") and .ktime_ns > 0)' "${TOOL_OUT}" > /dev/null \
+	|| fatal "dropwatch events are missing kernel timestamps"
+jq -c -s '.[0] | {ktime_ns, drop_source, drop_reason, layers}' "${TOOL_OUT}"
 # Event lines are emitted on stdout; structured logs, including rate-limit
 # warnings, are emitted on stderr.
 warns=$(grep -h "rate limit hit" "${TOOL_OUT}" "${TOOL_ERR}" 2> /dev/null | wc -l || true)
@@ -80,3 +88,4 @@ log_info "events=${events} (cap=${EXPECTED_MAX}), rate-limit warnings=${warns}"
 # drop UDP packets to a closed loopback port, so keep both assertions explicit.
 ((events <= EXPECTED_MAX)) || fatal "events ${events} exceed cap ${EXPECTED_MAX}"
 ((warns >= 1)) || fatal "expected at least one rate-limit warning under flood"
+assert_log_has_no_failure "${TOOL_ERR}" "dropwatch"

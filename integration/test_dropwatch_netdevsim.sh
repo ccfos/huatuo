@@ -110,6 +110,7 @@ hardware_event_ready() {
 	jq -e -s --arg trap "${TRAP_NAME}" --arg group "${TRAP_GROUP}" --arg dev "${NETDEV}" '
     any(.[];
       .drop_source == "hardware" and
+      (.ktime_ns | type == "number") and .ktime_ns > 0 and
       .drop_reason == $trap and
       .drop_reason_group == $group and
       .drop_location == null and
@@ -117,7 +118,7 @@ hardware_event_ready() {
       .netdev_ifindex > 0 and
       (.packet_skb_addr | startswith("0x")) and
       .packet_eth_proto == "0x800" and
-      .packet_len > 0 and
+      .packet_len_bytes > 0 and
       .layers.label == "IPv4/UDP" and
       .layers.ipv4.saddr == "192.0.2.1" and
       .layers.ipv4.daddr == "198.51.100.1")

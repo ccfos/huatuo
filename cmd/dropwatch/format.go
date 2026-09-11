@@ -173,6 +173,7 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType stri
 	}
 
 	return &types.DropWatchTracing{
+		KtimeNS:                 ev.Meta.KernelObservedNS,
 		ObservedTimestamp:       observedTimestamp,
 		KernelObservedTimestamp: &kernelObservedTimestamp,
 		DropSource:              dropSource,
