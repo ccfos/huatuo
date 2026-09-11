@@ -115,20 +115,20 @@ func newCPUStatSample(raw map[string]uint64, cpuTotal uint64, now time.Time) (cp
 	burstTime, burstTimeOK := durationNanoseconds(raw, "burst_time", "burst_usec")
 
 	return cpuStat{
-		nrThrottled:   nrThrottled,
-		throttledTime: throttledTime,
-		waitSum:       waitSum,
-		nrBursts:      nrBursts,
-		burstTime:     burstTime,
-		cpuTotal:      cpuTotal,
-		lastUpdate:    now,
-	}, cpuStatAvailability{
-		waitPercent:   waitSumOK,
-		nrThrottled:   nrThrottledOK,
-		throttledTime: throttledTimeOK,
-		nrBursts:      nrBurstsOK,
-		burstTime:     burstTimeOK,
-	}
+			nrThrottled:   nrThrottled,
+			throttledTime: throttledTime,
+			waitSum:       waitSum,
+			nrBursts:      nrBursts,
+			burstTime:     burstTime,
+			cpuTotal:      cpuTotal,
+			lastUpdate:    now,
+		}, cpuStatAvailability{
+			waitPercent:   waitSumOK,
+			nrThrottled:   nrThrottledOK,
+			throttledTime: throttledTimeOK,
+			nrBursts:      nrBurstsOK,
+			burstTime:     burstTimeOK,
+		}
 }
 
 func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Container) (cpuStatAvailability, error) {
