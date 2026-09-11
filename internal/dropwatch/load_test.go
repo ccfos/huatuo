@@ -12,9 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package dropwatch
 
-const (
-	dropSourceSoftware = "software"
-	dropSourceHardware = "hardware"
-)
+import "testing"
+
+func TestResolveHardwareEnabledDisabled(t *testing.T) {
+	enabled, err := resolveHardwareEnabled(HardwareDisabled)
+	if err != nil || enabled {
+		t.Fatalf("disabled hardware mode = %v, %v; want false, nil", enabled, err)
+	}
+}

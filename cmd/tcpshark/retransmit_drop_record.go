@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/packet"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
@@ -121,18 +122,7 @@ func dropEventFromRecord(record *abi.DropwatchPacketEvent) (*dropEvent, error) {
 		copy(event.stackPCs[:depth], record.Stack[:depth])
 	}
 
-	rawLength := record.PktHdr.RawLen
-	if rawLength > packet.RawCapacity {
-		rawLength = packet.RawCapacity
-	}
-	header := packet.Hdr{
-		EthProto:  record.PktHdr.EthProto,
-		RawLen:    uint8(rawLength),
-		HasEthHdr: uint8(record.PktHdr.HasEthHdr),
-		SkState:   uint8(record.PktHdr.SkState),
-		Raw:       record.PktHdr.Raw,
-	}
-	layers, parseErr := packet.Parse(&header)
+	layers, parseErr := dropwatch.DecodePacket(record)
 	if parseErr != nil {
 		return event, fmt.Errorf("parse dropwatch packet: %w", parseErr)
 	}

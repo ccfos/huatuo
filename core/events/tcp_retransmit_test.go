@@ -23,7 +23,7 @@ import (
 )
 
 func TestHandleTCPRetransmitEventPreservesCorrelationResult(t *testing.T) {
-	perfStatus := &types.DropwatchPerfStatus{PerfLost: 1}
+	perfStatus := &types.DropwatchStatus{PerfLost: 1}
 	event := &types.TCPRetransmitTracing{
 		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 10, 8, 0, 0, 0, time.UTC)},
 		ContainerID:       "container-id",

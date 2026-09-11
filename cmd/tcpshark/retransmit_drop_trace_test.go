@@ -24,7 +24,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/packet"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -49,10 +48,10 @@ func (s *retransmitDropWriterStub) close() error {
 	return nil
 }
 
-func TestEventSourceErrorCancelsSiblingWorkers(t *testing.T) {
+func TestEventReaderErrorCancelsSiblingWorkers(t *testing.T) {
 	group, groupCtx := errgroup.WithContext(t.Context())
 	sourceErr := errors.New("source failed")
-	events := startEventSource[int](group, func(chan<- int) error {
+	events := startEventReader[int](group, func(chan<- int) error {
 		return sourceErr
 	})
 	siblingStopped := make(chan struct{})
@@ -82,14 +81,14 @@ func TestRetransmitDropCancellationFinalizesPendingEvents(t *testing.T) {
 	retransmitEvents := make(chan *types.TCPRetransmitTracing)
 	dropwatchEvents := make(chan *dropEvent)
 	sink := &retransmitDropWriterStub{}
-	source := newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{})
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
 	done := make(chan error, 1)
 	go func() {
-		done <- runRetransmitWithDrop(ctx, &retransmitDropSession{
-			retransmitEvents: retransmitEvents,
-			dropwatchEvents:  dropwatchEvents,
-			dropwatchSource:  source,
-			sink:             sink,
+		done <- runRetransmitDropCorrelation(ctx, &retransmitDropSession{
+			retransmitEvents:    retransmitEvents,
+			dropwatchEvents:     dropwatchEvents,
+			readDropwatchStatus: source.ReadStatus,
+			sink:                sink,
 		})
 	}()
 
@@ -106,13 +105,13 @@ func TestRetransmitDropCancellationFinalizesPendingEvents(t *testing.T) {
 	retransmit.CorrelationReasons = []types.CorrelationReason{
 		types.CorrelationReasonNoMatchingDrop,
 	}
-	retransmit.DropwatchPerfStatus = &types.DropwatchPerfStatus{PerfLost: 1}
+	retransmit.DropwatchPerfStatus = &types.DropwatchStatus{PerfLost: 1}
 	retransmit.DropStack = "stale"
 	retransmitEvents <- retransmit
 	cancel()
 
 	if err := <-done; err != nil {
-		t.Fatalf("runRetransmitWithDrop() error = %v", err)
+		t.Fatalf("runRetransmitDropCorrelation() error = %v", err)
 	}
 	if len(sink.events) != 1 || sink.events[0] != retransmit {
 		t.Fatalf("events = %+v, want pending retransmission exactly once", sink.events)
@@ -130,14 +129,14 @@ func TestRetransmitDropCancellationSettlesCrossNetNSCandidate(t *testing.T) {
 	retransmitEvents := make(chan *types.TCPRetransmitTracing)
 	dropwatchEvents := make(chan *dropEvent)
 	sink := &retransmitDropWriterStub{}
-	source := newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{})
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
 	done := make(chan error, 1)
 	go func() {
-		done <- runRetransmitWithDrop(ctx, &retransmitDropSession{
-			retransmitEvents: retransmitEvents,
-			dropwatchEvents:  dropwatchEvents,
-			dropwatchSource:  source,
-			sink:             sink,
+		done <- runRetransmitDropCorrelation(ctx, &retransmitDropSession{
+			retransmitEvents:    retransmitEvents,
+			dropwatchEvents:     dropwatchEvents,
+			readDropwatchStatus: source.ReadStatus,
+			sink:                sink,
 		})
 	}()
 
@@ -168,7 +167,7 @@ func TestRetransmitDropCancellationSettlesCrossNetNSCandidate(t *testing.T) {
 	cancel()
 
 	if err := <-done; err != nil {
-		t.Fatalf("runRetransmitWithDrop() error = %v", err)
+		t.Fatalf("runRetransmitDropCorrelation() error = %v", err)
 	}
 	if len(sink.events) != 1 || sink.events[0] != retransmit {
 		t.Fatalf("events = %+v, want pending retransmission exactly once", sink.events)
@@ -189,15 +188,15 @@ func TestRetransmitDropWritesPendingBeforeOutputClose(t *testing.T) {
 	retransmitEvents := make(chan *types.TCPRetransmitTracing)
 	dropwatchEvents := make(chan *dropEvent)
 	sink := &retransmitDropWriterStub{}
-	source := newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{})
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
 	done := make(chan error, 1)
 	go func() {
 		done <- runRetransmitOutputSession(func() error {
-			return runRetransmitWithDrop(ctx, &retransmitDropSession{
-				retransmitEvents: retransmitEvents,
-				dropwatchEvents:  dropwatchEvents,
-				dropwatchSource:  source,
-				sink:             sink,
+			return runRetransmitDropCorrelation(ctx, &retransmitDropSession{
+				retransmitEvents:    retransmitEvents,
+				dropwatchEvents:     dropwatchEvents,
+				readDropwatchStatus: source.ReadStatus,
+				sink:                sink,
 			})
 		}, sink.close)
 	}()
@@ -227,14 +226,14 @@ func TestRetransmitDropDeferredSettlePropagatesWriteError(t *testing.T) {
 	retransmitEvents := make(chan *types.TCPRetransmitTracing)
 	dropwatchEvents := make(chan *dropEvent)
 	sink := &retransmitDropWriterStub{err: writeErr}
-	source := newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{})
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
 	done := make(chan error, 1)
 	go func() {
-		done <- runRetransmitWithDrop(ctx, &retransmitDropSession{
-			retransmitEvents: retransmitEvents,
-			dropwatchEvents:  dropwatchEvents,
-			dropwatchSource:  source,
-			sink:             sink,
+		done <- runRetransmitDropCorrelation(ctx, &retransmitDropSession{
+			retransmitEvents:    retransmitEvents,
+			dropwatchEvents:     dropwatchEvents,
+			readDropwatchStatus: source.ReadStatus,
+			sink:                sink,
 		})
 	}()
 
@@ -250,7 +249,7 @@ func TestRetransmitDropDeferredSettlePropagatesWriteError(t *testing.T) {
 	cancel()
 
 	if err := <-done; !errors.Is(err, writeErr) {
-		t.Fatalf("runRetransmitWithDrop() error = %v, want %v", err, writeErr)
+		t.Fatalf("runRetransmitDropCorrelation() error = %v, want %v", err, writeErr)
 	}
 }
 
@@ -282,14 +281,14 @@ func TestRetransmitDropRejectsUnexpectedSourceClosure(t *testing.T) {
 			dropwatchEvents := make(chan *dropEvent)
 			test.closeSource(retransmitEvents, dropwatchEvents)
 
-			err := runRetransmitWithDrop(t.Context(), &retransmitDropSession{
-				retransmitEvents: retransmitEvents,
-				dropwatchEvents:  dropwatchEvents,
-				dropwatchSource:  newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{}),
-				sink:             &retransmitDropWriterStub{},
+			err := runRetransmitDropCorrelation(t.Context(), &retransmitDropSession{
+				retransmitEvents:    retransmitEvents,
+				dropwatchEvents:     dropwatchEvents,
+				readDropwatchStatus: newTraceTestDropwatchStatus(t, types.DropwatchStatus{}).ReadStatus,
+				sink:                &retransmitDropWriterStub{},
 			})
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("runRetransmitWithDrop() error = %v, want %q", err, test.wantError)
+				t.Fatalf("runRetransmitDropCorrelation() error = %v, want %q", err, test.wantError)
 			}
 		})
 	}
@@ -298,10 +297,10 @@ func TestRetransmitDropRejectsUnexpectedSourceClosure(t *testing.T) {
 func TestEmitRetransmitDropResultsPreservesErrors(t *testing.T) {
 	writeErr := errors.New("write failed")
 	statusErr := errors.New("status failed")
-	source := newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{})
-	source.object.(*dropwatchSourceBPFStub).readErr = statusErr
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
+	source.readErr = statusErr
 	err := emitRetransmitDropResults(
-		source,
+		source.ReadStatus,
 		&retransmitDropWriterStub{err: writeErr},
 		[]retransmitDropResult{{
 			retransmit: &types.TCPRetransmitTracing{},
@@ -313,9 +312,9 @@ func TestEmitRetransmitDropResultsPreservesErrors(t *testing.T) {
 	if !errors.Is(err, statusErr) {
 		t.Fatalf("emit error = %v, want %v", err, statusErr)
 	}
-	source.object.(*dropwatchSourceBPFStub).readErr = nil
+	source.readErr = nil
 	if err := emitRetransmitDropResults(
-		source,
+		source.ReadStatus,
 		&retransmitDropWriterStub{},
 		[]retransmitDropResult{{}},
 	); err == nil {
@@ -323,9 +322,9 @@ func TestEmitRetransmitDropResultsPreservesErrors(t *testing.T) {
 	}
 }
 
-func TestEmitRetransmitDropResultsReadsPerfStatusOncePerBatch(t *testing.T) {
-	source := newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{})
-	object := source.object.(*dropwatchSourceBPFStub)
+func TestEmitRetransmitDropResultsReadsDropwatchStatusOncePerBatch(t *testing.T) {
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
+	object := source
 	results := []retransmitDropResult{
 		{
 			retransmit: &types.TCPRetransmitTracing{},
@@ -341,30 +340,29 @@ func TestEmitRetransmitDropResultsReadsPerfStatusOncePerBatch(t *testing.T) {
 		},
 	}
 	if err := emitRetransmitDropResults(
-		source,
+		source.ReadStatus,
 		&retransmitDropWriterStub{},
 		results,
 	); err != nil {
 		t.Fatalf("emitRetransmitDropResults() error = %v", err)
 	}
-	// readPerfStatus reads two maps (perf stats and rate-limit state) once
-	// per batch, not once per result.
-	if object.readCalls != 2 {
-		t.Fatalf("perf status reads = %d, want 2", object.readCalls)
+	// Status is queried once per batch, not once per result.
+	if object.readCalls != 1 {
+		t.Fatalf("perf status reads = %d, want 1", object.readCalls)
 	}
 }
 
-func TestEmitMatchedRetransmitDoesNotReadPerfStatus(t *testing.T) {
+func TestEmitMatchedRetransmitDoesNotReadDropwatchStatus(t *testing.T) {
 	statusErr := errors.New("unexpected status read")
-	source := newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{})
-	object := source.object.(*dropwatchSourceBPFStub)
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
+	object := source
 	object.readErr = statusErr
 	result := retransmitDropResult{
 		retransmit: &types.TCPRetransmitTracing{},
 		drop:       &dropEvent{},
 	}
 	if err := emitRetransmitDropResults(
-		source,
+		source.ReadStatus,
 		&retransmitDropWriterStub{},
 		[]retransmitDropResult{result},
 	); err != nil {
@@ -375,13 +373,13 @@ func TestEmitMatchedRetransmitDoesNotReadPerfStatus(t *testing.T) {
 	}
 }
 
-func TestEmitRetransmitDropResultsUsesLatestPerfStatus(t *testing.T) {
+func TestEmitRetransmitDropResultsUsesLatestDropwatchStatus(t *testing.T) {
 	correlator := newTestRetransmitDropCorrelator(t, 1)
 	event := &types.TCPRetransmitTracing{
 		KernelObservedNS: uint64(maxDropToRetransmitAge) + 1,
 	}
 	result := correlator.noMatchResult(event, false)
-	source := newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{
 		PerfLost:    2,
 		LostSamples: 5,
 		RateLimited: 3,
@@ -389,7 +387,7 @@ func TestEmitRetransmitDropResultsUsesLatestPerfStatus(t *testing.T) {
 	sink := &retransmitDropWriterStub{}
 
 	if err := emitRetransmitDropResults(
-		source,
+		source.ReadStatus,
 		sink,
 		[]retransmitDropResult{result},
 	); err != nil {
@@ -411,10 +409,10 @@ func TestEmitRetransmitDropResultsUsesLatestPerfStatus(t *testing.T) {
 	}
 }
 
-func TestEmitRetransmitDropResultsWritesOnceWhenPerfStatusFails(t *testing.T) {
+func TestEmitRetransmitDropResultsWritesOnceWhenDropwatchStatusFails(t *testing.T) {
 	statusErr := errors.New("status unavailable")
-	source := newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{})
-	source.object.(*dropwatchSourceBPFStub).readErr = statusErr
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
+	source.readErr = statusErr
 	event := &types.TCPRetransmitTracing{}
 	result := retransmitDropResult{
 		retransmit: event,
@@ -425,7 +423,7 @@ func TestEmitRetransmitDropResultsWritesOnceWhenPerfStatusFails(t *testing.T) {
 	sink := &retransmitDropWriterStub{}
 
 	err := emitRetransmitDropResults(
-		source,
+		source.ReadStatus,
 		sink,
 		[]retransmitDropResult{result},
 	)
@@ -443,23 +441,18 @@ func TestEmitRetransmitDropResultsWritesOnceWhenPerfStatusFails(t *testing.T) {
 	}
 }
 
-func newTraceTestDropwatchSource(
-	t *testing.T,
-	status types.DropwatchPerfStatus,
-) *dropwatchSource {
+type dropwatchStatusStub struct {
+	status    types.DropwatchStatus
+	readErr   error
+	readCalls int
+}
+
+func (s *dropwatchStatusStub) ReadStatus() (types.DropwatchStatus, error) {
+	s.readCalls++
+	return s.status, s.readErr
+}
+
+func newTraceTestDropwatchStatus(t *testing.T, status types.DropwatchStatus) *dropwatchStatusStub {
 	t.Helper()
-	source := &dropwatchSource{
-		object: &dropwatchSourceBPFStub{
-			perfRaw: encodeDropwatchPerfStats(
-				t,
-				abi.BPFPerfOutputStats{ErrorCounter: status.PerfLost},
-			),
-			rateRaw: encodeBPFRatelimitEvent(t, status.RateLimited),
-		},
-		reader:            &dropwatchSourceReaderStub{},
-		perfStatusMap:     testDropwatchPerfStatusMapID,
-		rateLimitStateMap: testDropwatchRateLimitMapID,
-	}
-	source.lostSamples.Store(status.LostSamples)
-	return source
+	return &dropwatchStatusStub{status: status}
 }

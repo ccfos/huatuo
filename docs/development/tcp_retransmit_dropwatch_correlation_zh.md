@@ -140,10 +140,10 @@ reason；没有找到严格匹配时仍以 `no_matching_drop` 输出 `unknown`�
   计数设施 `bpf_perf_output.h`），BPF 在 `bpf_perf_event_output` 负返回时
   +1（如当前 CPU 未 attach reader）。
 - `lost_samples`：用户态从 `PERF_RECORD_LOST` 累计的 ring buffer 溢出数，只在
-  reader 运行期间可见，且随下一条成功事件滞后送达。
+  reader 运行期间可见，处理丢失记录后即可通过 ReadStatus 查询。
 - `rate_limited`：限流状态 map `bpf_rlimit_dropwatch` 的 `total_missed`。
 
-用户态汇总所有 CPU 的 perf_lost，并拒绝计数回退或加法溢出。该状态只说明
+用户态汇总所有 CPU 的 perf_lost，每次返回当前快照，不检查计数回退或 uint64 加法溢出。该状态只说明
 证据完整性，不会把 no-match 提升为确定性网络分类。旧的 active epoch、
 旧的双 slot、inflight、frontier 和 drain 水位机制已删除。
 
@@ -165,11 +165,20 @@ software drop 会先消费可能存在的 hardware dedup marker，避免被拒�
 
 ## 8. Shutdown
 
-`tcpshark` 使用一个 `errgroup.WithContext` 管理 rate-limit reader、retransmit
-reader、embedded dropwatch reader 和关联循环。所有 worker 共享同一个
+`tcpshark` 使用一个 `errgroup.WithContext` 管理 retransmit rate-limit reader、
+retransmit reader、embedded dropwatch reader 和关联循环。所有命令 worker 共享同一个
 `groupCtx`；任一 worker 返回错误后取消其余 worker，`Wait` 返回首个 worker
 错误。资源关闭错误由各 owner 使用 `errors.Join` 合并，不再为 shutdown 维护私有
 错误聚合 group。
+
+`internal/dropwatch.Tracer` 持有 dropwatch 的 object、reader 和限流告警 worker。
+实例 context 派生自 `groupCtx`；限流告警失败会取消实例读取，具体错误由 `Close`
+返回。`ReadInto` 在读取前检查关闭和取消原因；进入底层读取后原样返回读取结果，
+不再以随后发生的关闭或取消覆盖结果。`ReadStatus` 在 context 取消后仍可读取最终计数。
+`Close` 先取消实例、
+detach 并关闭事件与告警 reader，再等待告警 worker 退出，最后释放 object；
+关闭告警 reader 会唤醒空闲读取，无需等待轮询期限。
+状态类型为 `types.DropwatchStatus`，JSON 名称保持不变。
 
 正常结束或 worker 失败时：
 
@@ -190,9 +199,8 @@ shutdown pending 输出 `drop_location=unknown`、`no_matching_drop`、其他适
 ```text
 cmd/tcpshark/
 ├── trace.go                         # 基础模式分流与 output owner
-├── bpf_load.go                      # 两个 filtered BPF object 的共享加载
+├── bpf_load.go                      # retransmit BPF 加载和 attach 策略
 ├── retransmit_drop_trace.go         # 双流事件循环、timer、shutdown
-├── retransmit_drop_bpf.go           # embedded dropwatch source 与 perf 状态
 ├── retransmit_drop_correlator.go    # 双流协调与定案
 ├── retransmit_drop_event.go         # 匹配领域类型及输入规范化
 ├── retransmit_drop_event_cache.go   # drop 候选与待匹配重传缓存
@@ -201,5 +209,22 @@ cmd/tcpshark/
 └── format.go                        # text/JSON 输出
 ```
 
-实现位于唯一生产调用方 `cmd/tcpshark`；不再通过 `internal/netcorrelate` 暴露
-一个仓库内没有第二个使用者的抽象。
+关联实现继续位于唯一生产调用方 `cmd/tcpshark`。两个命令共享的采集实现位于：
+
+```text
+internal/dropwatch/
+├── config.go    # Config、HardwareMode 和配置校验
+├── tracer.go    # Tracer API、newTracer 资源接管、回滚及 worker 生命周期
+├── load.go      # loadBPF、attachBPF：加载、map/reader 准备及探针挂载
+├── netdev.go    # 设备过滤与 map 配置
+├── status.go    # ReadStatus：输出失败、ring 丢失和限流计数
+└── decode.go    # DecodePacket：ABI header 适配及 packet.Parse
+```
+
+`Open(ctx, *Config)` 返回具体的 `*Tracer`。每个实例只能有一个 `ReadInto`
+调用者；状态读取和关闭允许并发，但同一实例的 `Close` 必须由资源所有者串行调用。
+首次关闭返回清理错误；后续调用返回 nil，不重试清理，也不重复返回首次错误。
+调用方拥有全局 BPF 初始化和关闭，且必须在最终
+结算后关闭 Tracer。`DecodePacket` 的返回值不借用原始 record 内存。
+符号化和 `DropWatchTracing` 展示转换仍位于 standalone 命令，TCP 关联直接保留
+ABI 中的 KernelObservedNS、namespace 和 stack PC。没有新增通用 BPF 消费循环接口。

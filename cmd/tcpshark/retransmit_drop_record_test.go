@@ -164,6 +164,18 @@ func newIPv4DropwatchTCPRecord(
 	return record
 }
 
+func BenchmarkDropEvidenceDecode(b *testing.B) {
+	record := newIPv4DropwatchTCPRecord(1500)
+	record.Meta.KernelObservedNS = 100
+	record.Meta.NetNamespaceCookie = 1
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := dropEventFromRecord(record); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func newIPv6DropwatchTCPRecord(
 	ipPayloadLength uint16,
 ) *abi.DropwatchPacketEvent {

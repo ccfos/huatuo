@@ -64,7 +64,7 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 					CorrelationReasonStartupHistoryIncomplete,
 					CorrelationReasonPerfEventsLost,
 				},
-				DropwatchPerfStatus: &DropwatchPerfStatus{
+				DropwatchPerfStatus: &DropwatchStatus{
 					PerfLost:    1,
 					RateLimited: 2,
 				},

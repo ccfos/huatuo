@@ -24,19 +24,22 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
+	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type retransmitDropSession struct {
-	retransmitEvents <-chan *types.TCPRetransmitTracing
-	dropwatchEvents  <-chan *dropEvent
-	dropwatchSource  *dropwatchSource
-	sink             writer
+	retransmitEvents    <-chan *types.TCPRetransmitTracing
+	dropwatchEvents     <-chan *dropEvent
+	readDropwatchStatus func() (types.DropwatchStatus, error)
+	sink                writer
 }
 
-func runRetransmitWithDrop(
+func runRetransmitDropCorrelation(
 	ctx context.Context,
 	session *retransmitDropSession,
 ) (returnErr error) {
@@ -52,19 +55,19 @@ func runRetransmitWithDrop(
 		returnErr = errors.Join(
 			returnErr,
 			emitRetransmitDropResults(
-				session.dropwatchSource,
+				session.readDropwatchStatus,
 				session.sink,
 				correlator.settleAllRetransmits(),
 			),
 		)
 	}()
 
-	// resetRetransmitTimer replaces this initial schedule before timer.C is observed.
+	// resetCorrelationTimer replaces this initial schedule before timer.C is observed.
 	timer := time.NewTimer(retransmitDropWaitDuration)
 	defer timer.Stop()
 
 	for {
-		timerChannel := resetRetransmitTimer(timer, correlator)
+		timerChannel := resetCorrelationTimer(timer, correlator)
 		select {
 		case retransmit, isOpen := <-session.retransmitEvents:
 			if !isOpen {
@@ -81,7 +84,7 @@ func runRetransmitWithDrop(
 				return err
 			}
 			if err := emitRetransmitDropResults(
-				session.dropwatchSource,
+				session.readDropwatchStatus,
 				session.sink,
 				results,
 			); err != nil {
@@ -99,7 +102,7 @@ func runRetransmitWithDrop(
 				return err
 			}
 			if err := emitRetransmitDropResults(
-				session.dropwatchSource,
+				session.readDropwatchStatus,
 				session.sink,
 				results,
 			); err != nil {
@@ -108,7 +111,7 @@ func runRetransmitWithDrop(
 		case now := <-timerChannel:
 			results := correlator.settleExpiredRetransmits(now)
 			if err := emitRetransmitDropResults(
-				session.dropwatchSource,
+				session.readDropwatchStatus,
 				session.sink,
 				results,
 			); err != nil {
@@ -120,13 +123,13 @@ func runRetransmitWithDrop(
 	}
 }
 
-func startRetransmitSource(
+func startRetransmitReader(
 	group *errgroup.Group,
 	ctx context.Context,
 	reader bpf.PerfEventReader,
 	sourceType string,
 ) <-chan *types.TCPRetransmitTracing {
-	return startEventSource(
+	return startEventReader(
 		group,
 		func(events chan<- *types.TCPRetransmitTracing) error {
 			return readRetransmitEvents(
@@ -145,20 +148,20 @@ func startRetransmitSource(
 	)
 }
 
-func startDropwatchSource(
+func startDropwatchReader(
 	group *errgroup.Group,
 	ctx context.Context,
-	source *dropwatchSource,
+	tracer *dropwatch.Tracer,
 ) <-chan *dropEvent {
-	return startEventSource(
+	return startEventReader(
 		group,
 		func(events chan<- *dropEvent) error {
-			return source.readEvents(ctx, events)
+			return readDropwatchEvents(ctx, tracer.ReadInto, events)
 		},
 	)
 }
 
-func startEventSource[T any](
+func startEventReader[T any](
 	group *errgroup.Group,
 	read func(chan<- T) error,
 ) <-chan T {
@@ -170,7 +173,7 @@ func startEventSource[T any](
 	return events
 }
 
-func resetRetransmitTimer(
+func resetCorrelationTimer(
 	timer *time.Timer,
 	correlator *retransmitDropCorrelator,
 ) <-chan time.Time {
@@ -198,22 +201,22 @@ func stopAndDrainTimer(timer *time.Timer) {
 }
 
 func emitRetransmitDropResults(
-	source *dropwatchSource,
+	readStatus func() (types.DropwatchStatus, error),
 	sink writer,
 	results []retransmitDropResult,
 ) error {
-	needsPerfStatus := false
+	needsDropwatchStatus := false
 	for resultIndex := range results {
 		if results[resultIndex].drop == nil {
-			needsPerfStatus = true
+			needsDropwatchStatus = true
 			break
 		}
 	}
 
-	var status types.DropwatchPerfStatus
+	var status types.DropwatchStatus
 	var statusErr error
-	if needsPerfStatus {
-		status, statusErr = source.readPerfStatus()
+	if needsDropwatchStatus {
+		status, statusErr = readStatus()
 	}
 
 	for resultIndex := range results {
@@ -231,7 +234,7 @@ func emitRetransmitDropResults(
 				result.correlationReasons...,
 			)
 			result.retransmit.DropStack = ""
-			lostSamples := source.lostSamples.Load()
+			lostSamples := status.LostSamples
 			if statusErr != nil {
 				result.retransmit.DropwatchPerfStatus = nil
 				result.retransmit.CorrelationReasons = append(
@@ -239,7 +242,7 @@ func emitRetransmitDropResults(
 					types.CorrelationReasonDropwatchPerfStatusUnavailable,
 				)
 			} else {
-				result.retransmit.DropwatchPerfStatus = &types.DropwatchPerfStatus{
+				result.retransmit.DropwatchPerfStatus = &types.DropwatchStatus{
 					PerfLost:    status.PerfLost,
 					LostSamples: lostSamples,
 					RateLimited: status.RateLimited,
@@ -272,4 +275,39 @@ func emitRetransmitDropResults(
 		}
 	}
 	return statusErr
+}
+
+func readDropwatchEvents(
+	ctx context.Context,
+	read func(*abi.DropwatchPacketEvent) error,
+	events chan<- *dropEvent,
+) error {
+	var record abi.DropwatchPacketEvent
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err := read(&record); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+				log.WithError(err).Warn("dropwatch perf event samples lost")
+				continue
+			}
+			return fmt.Errorf("read dropwatch event: %w", err)
+		}
+		event, parseErr := dropEventFromRecord(&record)
+		if parseErr != nil {
+			if event == nil {
+				return parseErr
+			}
+			log.WithError(parseErr).Debug("parse embedded dropwatch packet")
+		}
+		select {
+		case events <- event:
+		case <-ctx.Done():
+			return nil
+		}
+	}
 }

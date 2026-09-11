@@ -26,6 +26,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -128,14 +129,14 @@ func runRetransmit(ctx context.Context, options *retransmitOptions) (returnErr e
 
 	return runRetransmitOutputSession(
 		func() error {
-			var dropSource *dropwatchSource
+			var dropTracer *dropwatch.Tracer
 			if options.isDropwatchEnabled {
-				dropSource, err = openDropwatchSource(
-					groupCtx,
-					filepath.Join(options.bpfPathDir, "net_dropwatch.o"),
-					options.filterExpression,
-					options.maxEventsPerSecond,
-				)
+				dropTracer, err = dropwatch.Open(groupCtx, &dropwatch.Config{
+					BPFPath:            filepath.Join(options.bpfPathDir, "net_dropwatch.o"),
+					FilterExpression:   options.filterExpression,
+					MaxEventsPerSecond: options.maxEventsPerSecond,
+					HardwareMode:       dropwatch.HardwareDisabled,
+				})
 				if err != nil {
 					return err
 				}
@@ -148,25 +149,25 @@ func runRetransmit(ctx context.Context, options *retransmitOptions) (returnErr e
 			}
 
 			if options.isDropwatchEnabled {
-				retransmitEvents := startRetransmitSource(
+				retransmitEvents := startRetransmitReader(
 					group,
 					groupCtx,
 					reader,
 					options.sourceType,
 				)
-				dropwatchEvents := startDropwatchSource(
+				dropwatchEvents := startDropwatchReader(
 					group,
 					groupCtx,
-					dropSource,
+					dropTracer,
 				)
 				group.Go(func() error {
-					return runRetransmitWithDrop(
+					return runRetransmitDropCorrelation(
 						groupCtx,
 						&retransmitDropSession{
-							retransmitEvents: retransmitEvents,
-							dropwatchEvents:  dropwatchEvents,
-							dropwatchSource:  dropSource,
-							sink:             sink,
+							retransmitEvents:    retransmitEvents,
+							dropwatchEvents:     dropwatchEvents,
+							readDropwatchStatus: dropTracer.ReadStatus,
+							sink:                sink,
 						},
 					)
 				})
@@ -182,11 +183,11 @@ func runRetransmit(ctx context.Context, options *retransmitOptions) (returnErr e
 			}
 
 			workerErr := group.Wait()
-			if dropSource == nil {
+			if dropTracer == nil {
 				return workerErr
 			}
 
-			closeErr := dropSource.close()
+			closeErr := dropTracer.Close()
 			if closeErr != nil {
 				closeErr = fmt.Errorf("close embedded dropwatch source: %w", closeErr)
 			}

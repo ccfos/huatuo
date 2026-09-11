@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package dropwatch
 
 import (
 	"encoding/binary"
@@ -25,20 +25,20 @@ import (
 )
 
 const (
-	netdevFilterModeDisabled uint32 = iota
-	netdevFilterModeAllow
-	netdevFilterModeDeny
+	netdevModeDisabled uint32 = iota
+	netdevModeAllow
+	netdevModeDeny
 )
 
 const netdevFilterModeMap = "skb_filter_dev_map"
 
-type netdevFilterOptions struct {
+type netdevOptions struct {
 	mode      uint32
 	ifindexes []uint32
 }
 
-func configureNetdevFilter(b bpf.BPF, options netdevFilterOptions) error {
-	if options.mode == netdevFilterModeDisabled {
+func applyNetdevOptions(b bpf.BPF, options netdevOptions) error {
+	if options.mode == netdevModeDisabled {
 		return nil
 	}
 	mapID := b.MapIDByName(netdevFilterModeMap)
@@ -55,34 +55,34 @@ func configureNetdevFilter(b bpf.BPF, options netdevFilterOptions) error {
 	return b.WriteMapItems(mapID, items)
 }
 
-func parseNetdevFilterOptions(device, excluded string) (netdevFilterOptions, error) {
+func resolveNetdevOptions(included, excluded []string) (netdevOptions, error) {
 	var (
-		list string
+		list []string
 		mode uint32
 	)
 	switch {
-	case device != "":
-		list, mode = device, netdevFilterModeAllow
-	case excluded != "":
-		list, mode = excluded, netdevFilterModeDeny
+	case len(included) != 0:
+		list, mode = included, netdevModeAllow
+	case len(excluded) != 0:
+		list, mode = excluded, netdevModeDeny
 	default:
-		return netdevFilterOptions{mode: netdevFilterModeDisabled}, nil
+		return netdevOptions{mode: netdevModeDisabled}, nil
 	}
 
 	var ifindexes []uint32
-	for _, name := range strings.Split(list, ",") {
+	for _, name := range list {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
 		iface, err := net.InterfaceByName(name)
 		if err != nil {
-			return netdevFilterOptions{}, fmt.Errorf("device %q: %w", name, err)
+			return netdevOptions{}, fmt.Errorf("device %q: %w", name, err)
 		}
 		ifindexes = append(ifindexes, uint32(iface.Index))
 	}
 	if len(ifindexes) == 0 {
-		return netdevFilterOptions{}, errors.New("no valid interfaces specified")
+		return netdevOptions{}, errors.New("no valid interfaces specified")
 	}
-	return netdevFilterOptions{mode: mode, ifindexes: ifindexes}, nil
+	return netdevOptions{mode: mode, ifindexes: ifindexes}, nil
 }

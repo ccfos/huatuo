@@ -22,9 +22,9 @@ import (
 	"strings"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/linkstatus"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/packet"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
@@ -150,15 +150,7 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType stri
 	if err != nil {
 		return nil, fmt.Errorf("convert dropwatch kernel observation time: %w", err)
 	}
-	pkt := packet.Hdr{
-		EthProto:  ev.PktHdr.EthProto,
-		RawLen:    uint8(ev.PktHdr.RawLen),
-		HasEthHdr: uint8(ev.PktHdr.HasEthHdr),
-		SkState:   uint8(ev.PktHdr.SkState),
-		Raw:       ev.PktHdr.Raw,
-	}
-
-	p, err := packet.Parse(&pkt)
+	p, err := dropwatch.DecodePacket(ev)
 	if err != nil {
 		log.WithError(err).Debug("parse dropwatch packet")
 	}
