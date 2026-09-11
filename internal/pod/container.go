@@ -58,6 +58,10 @@ type Container struct {
 }
 
 func (c *Container) String() string {
+	if c == nil {
+		return "<nil>"
+	}
+
 	return fmt.Sprintf("%s:%s/%s/%s:%s/%s", c.ID, c.Hostname, c.Name, c.Type, c.Qos, c.IPAddress)
 }
 
