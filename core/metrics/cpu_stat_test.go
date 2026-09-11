@@ -219,7 +219,9 @@ func TestCPUStatUpdateDataCacheRetainsAvailabilityOnSubSecondScrape(t *testing.T
 			usage: stats.CpuUsage{Usage: 1000},
 		},
 	}
-	cache := &cpuStat{lastUpdate: time.Now().Add(-2 * time.Second)}
+	// Fresh life-resource cache has a zero lastUpdate; only then is
+	// wait_sum_percent suppressed until a delta window exists.
+	cache := &cpuStat{}
 
 	first, err := collector.updateDataCache(cache, container)
 	if err != nil {
