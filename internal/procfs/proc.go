@@ -18,6 +18,9 @@ import "github.com/prometheus/procfs"
 
 type Proc = procfs.Proc
 
+// NetDevLine is one line of /proc/[pid]/net/dev for a single interface.
+type NetDevLine = procfs.NetDevLine
+
 func Self() (procfs.Proc, error) {
 	fs, err := NewFS(defaultProcMountPoint)
 	if err != nil {
