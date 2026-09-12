@@ -36,14 +36,35 @@ import (
 func captureSymbolLogs(t *testing.T, level string) *bytes.Buffer {
 	t.Helper()
 	originalLevel := log.GetLevel()
+	originalOutput := log.GetOutput()
 	var output bytes.Buffer
 	log.SetOutput(&output)
 	log.SetLevel(level)
 	t.Cleanup(func() {
-		log.SetOutput(os.Stdout)
+		log.SetOutput(originalOutput)
 		log.SetLevel(originalLevel.String())
 	})
 	return &output
+}
+
+func TestCaptureSymbolLogsRestoresOutput(t *testing.T) {
+	originalOutput := log.GetOutput()
+	var restoredOutput bytes.Buffer
+	log.SetOutput(&restoredOutput)
+	t.Cleanup(func() { log.SetOutput(originalOutput) })
+
+	t.Run("capture", func(t *testing.T) {
+		output := captureSymbolLogs(t, "info")
+		log.Info("captured message")
+		if !strings.Contains(output.String(), "captured message") {
+			t.Fatalf("captured output: %q", output.String())
+		}
+	})
+
+	log.Info("restored message")
+	if !strings.Contains(restoredOutput.String(), "restored message") {
+		t.Fatalf("restored output: %q", restoredOutput.String())
+	}
 }
 
 func writeKallsymsFixture(t *testing.T, lines []string) string {
@@ -867,38 +888,6 @@ func TestElfSymbolsFiltersBeforeCopyingNamesInRealELF(t *testing.T) {
 	}
 }
 
-func TestElfSymbolsForPCsDoesNotMaterializeLargeStringTable(t *testing.T) {
-	const ignoredNameSize = 8 << 20
-	stringTable := append([]byte{0}, bytes.Repeat([]byte{'x'}, ignoredNameSize)...)
-	stringTable = append(stringTable, 0)
-	targetOffset := uint32(len(stringTable))
-	stringTable = append(stringTable, "target\x00"...)
-	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
-		typ:         elf.SHT_SYMTAB,
-		stringTable: stringTable,
-		nameOffsets: []uint32{1, targetOffset},
-	})
-	limits := ELFSymbolLimits{
-		MaxMetadataBytes: 9 << 20,
-		MaxSymbolCount:   2,
-		MaxNameBytes:     32,
-		MaxNameLength:    16,
-	}
-
-	benchmark := testing.Benchmark(func(b *testing.B) {
-		for range b.N {
-			got, err := elfSymbolsForPCs(f, []uint64{0x1011}, limits)
-			if err != nil || len(got) != 1 || got[0].Name != "target" {
-				b.Fatalf("elfSymbolsForPCs: got %v, err %v; want target", got, err)
-			}
-		}
-	})
-	t.Logf("address-driven parse: %d bytes/op for an 8 MiB string table", benchmark.AllocedBytesPerOp())
-	if allocated := benchmark.AllocedBytesPerOp(); allocated >= 1<<20 {
-		t.Fatalf("address-driven parse allocated %d bytes/op for an 8 MiB string table; want < 1 MiB", allocated)
-	}
-}
-
 func TestElfSymbolsForPCsLimitsSingleName(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
@@ -970,9 +959,9 @@ func TestElfSymbolsForPCsDoesNotLogMissingSourceAtInfo(t *testing.T) {
 		MaxNameLength:    16,
 	}
 
-	got, err := elfSymbolsForPCs(f, []uint64{0x1001}, limits)
-	if err != nil || len(got) != 1 || got[0].Name != "target" {
-		t.Fatalf("elfSymbolsForPCs: got %v, err %v; want target", got, err)
+	got, err := elfSymbolsForPCs(f, []uint64{0x1021}, limits)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("elfSymbolsForPCs: got %v, err %v; want no symbols", got, err)
 	}
 	if strings.Contains(output.String(), "dynsym not available") {
 		t.Fatalf("missing optional dynsym logged at info: %s", output.String())

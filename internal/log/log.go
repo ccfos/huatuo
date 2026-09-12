@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025-2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -82,6 +82,11 @@ func GetLevel() logrus.Level {
 // SetOutput sets the standard logger output.
 func SetOutput(out io.Writer) {
 	logger.SetOutput(out)
+}
+
+// GetOutput returns the standard logger output.
+func GetOutput() io.Writer {
+	return logger.Out
 }
 
 // SetFormatter sets the standard logger formatter.
