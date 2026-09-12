@@ -1044,3 +1044,22 @@ func TestStoreTerms(t *testing.T) {
 		})
 	}
 }
+
+func TestNewStoreUsesSingleIndexSnapshot(t *testing.T) {
+	mapper := newTestMapper()
+	backend := &testBackend{}
+
+	store, err := NewStore(t.Context(), "jobs", backend, "jobs", mapper)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if store == nil {
+		t.Fatal("NewStore() returned nil store")
+	}
+	if mapper.indexesCalls != 1 {
+		t.Fatalf("mapper.Indexes() calls = %d, want 1", mapper.indexesCalls)
+	}
+	if !reflect.DeepEqual(backend.indexes, mapper.indexes) {
+		t.Fatalf("backend indexes = %v, want %v", backend.indexes, mapper.indexes)
+	}
+}

@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
@@ -233,4 +234,34 @@ func jobIDs(jobs []*Job) []string {
 		ids[i] = job.ID
 	}
 	return ids
+}
+
+func TestValidateQuerySortRejectsLoneDescendingField(t *testing.T) {
+	err := validateQuerySort(&Query{Sort: "-"})
+	if !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("validateQuerySort() error = %v, want ErrInvalidQuery", err)
+	}
+}
+
+func TestBuildStorageQueryFiltersByID(t *testing.T) {
+	query, err := buildStorageQuery(&Query{ID: "job-store-alpha"})
+	if err != nil {
+		t.Fatalf("buildStorageQuery() error = %v", err)
+	}
+	var found bool
+	for _, filter := range query.Filters {
+		if filter.Field != "id" {
+			continue
+		}
+		found = true
+		if filter.Op != driver.OpEq {
+			t.Fatalf("id filter op = %v, want %v", filter.Op, driver.OpEq)
+		}
+		if filter.Value != "job-store-alpha" {
+			t.Fatalf("id filter value = %v, want %q", filter.Value, "job-store-alpha")
+		}
+	}
+	if !found {
+		t.Fatalf("buildStorageQuery() filters = %v, want an id filter", query.Filters)
+	}
 }
