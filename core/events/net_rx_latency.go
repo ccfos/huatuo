@@ -172,8 +172,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			latencyStage, latencyThresholdMS, okStage :=
-				latencyStageInfo(int(pd.LatencyStage), latencyThresholds)
+			latencyStage, latencyThresholdMS, okStage := latencyStageInfo(int(pd.LatencyStage), latencyThresholds)
 			if !okStage {
 				log.Warnf("net_rx_latency: unknown latency stage %d, skip event", pd.LatencyStage)
 				continue
