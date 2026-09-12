@@ -224,3 +224,17 @@ func TestUpdateLoad(t *testing.T) {
 		t.Fatalf("loadAvg = %v, want %v", info.loadAvg, expectedLoadAvg)
 	}
 }
+
+func TestNewDloadUsesConfiguredSamplingInterval(t *testing.T) {
+	config := &Config{}
+	config.Dload.Interval = 7
+	config.Dload.IntervalTracing = 30
+	Set(config)
+	attr, err := newDload()
+	if err != nil {
+		t.Fatalf("newDload() error = %v", err)
+	}
+	if attr.Interval != 7 {
+		t.Fatalf("newDload() interval = %d, want 7", attr.Interval)
+	}
+}
