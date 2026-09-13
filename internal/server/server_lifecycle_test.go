@@ -167,6 +167,78 @@ func TestServerRejectsOperationsWhileStopping(t *testing.T) {
 	}
 }
 
+func TestServerShutdownForceClosesActiveConnectionsOnDeadline(t *testing.T) {
+	srv := NewServer(nil)
+	handlerStarted := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	handlerDone := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-releaseHandler:
+		default:
+			close(releaseHandler)
+		}
+	})
+
+	srv.MustRegisterRoutes("", []Route{{
+		Method: http.MethodGet,
+		Path:   "/block",
+		Handler: func(ctx *Context) error {
+			close(handlerStarted)
+			select {
+			case <-releaseHandler:
+			case <-ctx.Request().Context().Done():
+			}
+			close(handlerDone)
+			ctx.Status(http.StatusNoContent)
+			return nil
+		},
+	}})
+
+	if err := srv.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	addr := testServerAddr(t, srv)
+
+	requestDone := make(chan error, 1)
+	go func() {
+		response, err := http.Get("http://" + addr + "/block")
+		if err != nil {
+			requestDone <- err
+			return
+		}
+		requestDone <- response.Body.Close()
+	}()
+
+	select {
+	case <-handlerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("request handler did not start")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := srv.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown() error = %v, want context.Canceled", err)
+	}
+
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("active connection was not force-closed after Shutdown deadline")
+	}
+
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("request goroutine did not exit after force-close")
+	}
+
+	if err := srv.Shutdown(context.Background()); err != nil {
+		t.Fatalf("second Shutdown() error = %v, want nil", err)
+	}
+}
+
 func testServerAddr(t *testing.T, srv *Server) string {
 	t.Helper()
 	srv.mu.Lock()
