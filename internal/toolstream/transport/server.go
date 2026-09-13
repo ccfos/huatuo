@@ -32,9 +32,13 @@ type Server struct {
 	mutex       sync.Mutex
 	waitGroup   sync.WaitGroup
 	connections map[net.Conn]struct{}
+	closed      bool
 	listener    net.Listener
 	handler     func(*Session, ChunkMsg)
 	cancel      context.CancelFunc
+	// acceptHook is a test seam invoked between Accept and connection
+	// registration; production code leaves it nil.
+	acceptHook func()
 }
 
 // Serve starts accepting connections from l in the background.
@@ -73,7 +77,21 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			continue
 		}
 
+		if s.acceptHook != nil {
+			s.acceptHook()
+		}
+
+		// Register and check closed under one lock: either Close() sees the
+		// connection in its snapshot and closes it, or the accept loop sees
+		// closed and discards the connection. Otherwise a connection accepted
+		// while Close() is running escapes both, leaving its handler stuck in
+		// a read forever and Close() blocked in waitGroup.Wait().
 		s.mutex.Lock()
+		if s.closed {
+			s.mutex.Unlock()
+			_ = conn.Close()
+			return
+		}
 		s.connections[conn] = struct{}{}
 		s.mutex.Unlock()
 
@@ -99,6 +117,10 @@ func (s *Server) acceptLoop(ctx context.Context) {
 }
 
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
+	if ctx.Err() != nil {
+		return
+	}
+
 	frameDecoder := capnp.NewDecoder(conn)
 
 	firstMsg, err := frameDecoder.Decode()
@@ -229,8 +251,12 @@ func (s *Server) Close() error {
 		errs = append(errs, err)
 	}
 
-	// snapshot under lock, close outside to avoid holding the lock during I/O
+	// snapshot under lock, close outside to avoid holding the lock during I/O.
+	// Setting closed in the same critical section makes a connection accepted
+	// concurrently with Close() either enter this snapshot or be discarded by
+	// the accept loop; it can never escape both.
 	s.mutex.Lock()
+	s.closed = true
 	conns := make([]net.Conn, 0, len(s.connections))
 
 	for c := range s.connections {
