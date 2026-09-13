@@ -48,7 +48,8 @@ type Spec struct {
 	// StopGracePeriod controls when Run escalates from SIGTERM to SIGKILL.
 	// A zero value uses five seconds.
 	StopGracePeriod time.Duration
-	// MaxOutputBytes limits retained standard output. A zero value uses 64 KiB.
+	// MaxOutputBytes limits retained standard output and stops the command once
+	// it writes more than that. A zero value uses 64 KiB.
 	MaxOutputBytes int
 }
 
@@ -82,6 +83,7 @@ type Process struct {
 	start           lifecycleResult
 	wait            lifecycleResult
 	isStopRequested bool
+	isOutputLimit   bool
 	stopAttempt     *lifecycleResult
 	startCommand    func(*osexec.Cmd) error
 	forceStop       func(int) error
@@ -192,6 +194,7 @@ func (p *Process) Start(ctx context.Context) error {
 	p.mu.Unlock()
 
 	if launchErr == nil {
+		p.output.setOnExceed(func() { go p.stopOnOutputLimit() })
 		return nil
 	}
 	return p.finishCanceledStart(launchErr, cmd.Process.Pid)
@@ -241,7 +244,11 @@ func (p *Process) reap(cmd *osexec.Cmd) {
 	err := cmd.Wait()
 
 	p.mu.Lock()
-	if p.isStopRequested && isStoppedExit(err) {
+	if p.isOutputLimit && isStoppedExit(err) {
+		// The retained-output limit, not the child, explains why the command
+		// ended; outputError reports it to every waiter.
+		err = nil
+	} else if p.isStopRequested && isStoppedExit(err) {
 		err = fmt.Errorf("%w: command %q exited after a stop signal: %w", ErrStopped, p.spec.Path, err)
 	} else if err != nil {
 		err = fmt.Errorf("wait for command %q: %w", p.spec.Path, err)
@@ -358,6 +365,28 @@ func (p *Process) Stop(ctx context.Context) error {
 	close(attempt.done)
 	p.mu.Unlock()
 	return err
+}
+
+// stopOnOutputLimit stops a command that has written more than the retained
+// output limit. Overflow is not a reason to keep the command running: it can no
+// longer contribute retained output, and waiting for it to exit on its own would
+// hold the caller until the child decides to stop. The stop is best effort: the
+// limit error reaches every waiter through outputError even if the child cannot
+// be signaled.
+func (p *Process) stopOnOutputLimit() {
+	p.mu.Lock()
+	if p.isOutputLimit {
+		p.mu.Unlock()
+		return
+	}
+	p.isOutputLimit = true
+	gracePeriod := p.spec.StopGracePeriod
+	p.mu.Unlock()
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), gracePeriod)
+	defer cancel()
+
+	_ = p.Stop(stopCtx)
 }
 
 func (p *Process) waitForStopAttempt(ctx context.Context, attempt *lifecycleResult) error {

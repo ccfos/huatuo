@@ -322,6 +322,23 @@ func TestProcessReportsOutputOverflowAfterReaping(t *testing.T) {
 	}
 }
 
+func TestProcessStopsCommandThatExceedsOutputLimit(t *testing.T) {
+	process := newHelperProcessWithSpec(t, "noisy-then-sleep", &Spec{MaxOutputBytes: 1024})
+	startProcess(t, process)
+
+	waited := make(chan error, 1)
+	go func() { waited <- process.Wait() }()
+
+	select {
+	case err := <-waited:
+		if err == nil || !strings.Contains(err.Error(), "stdout exceeds 1024 bytes") {
+			t.Fatalf("Wait() error = %v, want stdout limit error", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait() did not return: the command kept running after passing the output limit")
+	}
+}
+
 func TestProcessRetainsFixedErrorTail(t *testing.T) {
 	process := newHelperProcess(t, "large-error")
 	startProcess(t, process)
@@ -643,6 +660,13 @@ func TestExecHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "large-error":
 		_, _ = fmt.Fprint(os.Stderr, largeOutputPayload())
+		os.Exit(0)
+	case "noisy-then-sleep":
+		// A command that overflows its output limit and then stops producing
+		// output while it stays alive. It only exits when it is stopped.
+		_, _ = fmt.Fprint(os.Stdout, largeOutputPayload())
+		_, _ = fmt.Fprintln(os.Stdout, "sleeping")
+		time.Sleep(time.Hour)
 		os.Exit(0)
 	case "split-output":
 		_, _ = fmt.Fprint(os.Stdout, "payload")
