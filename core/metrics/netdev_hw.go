@@ -45,6 +45,9 @@ type netdevHw struct {
 	ifaceList             map[string]*ethtool.DrvInfo
 	sysNetPath            string
 	mutex                 sync.Mutex
+	// interfaceByIndex is a seam for tests; production code uses
+	// net.InterfaceByIndex.
+	interfaceByIndex func(int) (*net.Interface, error)
 }
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/netdev_hw.c -o $BPF_DIR/netdev_hw.o
@@ -96,6 +99,7 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 			ifaceList:             ifaceList,
 			ifaceSwDroppedCounter: ifaceSwCounter,
 			sysNetPath:            sysfs.Path("class/net"),
+			interfaceByIndex:      net.InterfaceByIndex,
 		},
 		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
@@ -118,26 +122,33 @@ func (netdev *netdevHw) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
+	return netdev.collectData(), nil
+}
+
+// collectData builds one sample per tracked interface. A failed sysfs read
+// skips the interface instead of exporting zero: the metric is a counter,
+// and a fabricated reset makes Prometheus rate() report a phantom spike.
+func (netdev *netdevHw) collectData() []*metric.Data {
 	data := []*metric.Data{}
 	for iface, drv := range netdev.ifaceList {
-		counters := map[string]uint64{
-			"rx_dropped":       0,
-			"rx_missed_errors": 0,
+		rxDropped, err := netdev.readSysNetclassStat(iface, "rx_dropped")
+		if err != nil {
+			log.Debugf("skip %s sample: read rx_dropped: %v", iface, err)
+			continue
+		}
+		rxMissed, err := netdev.readSysNetclassStat(iface, "rx_missed_errors")
+		if err != nil {
+			log.Debugf("skip %s sample: read rx_missed_errors: %v", iface, err)
+			continue
 		}
 
-		for name := range counters {
-			counters[name], _ = netdev.readSysNetclassStat(iface, name)
-		}
-
-		count := counters["rx_missed_errors"]
+		count := rxMissed
 		// 1. No packet loss
 		// 2. rx_missed_errors of the driver is not used.
 		if count == 0 {
 			// hardware drop = rx_dropped - software_drops
-			if sw, ok := netdev.ifaceSwDroppedCounter[iface]; ok {
-				if counters["rx_dropped"] >= sw {
-					count = counters["rx_dropped"] - sw
-				}
+			if sw, ok := netdev.ifaceSwDroppedCounter[iface]; ok && rxDropped >= sw {
+				count = rxDropped - sw
 			}
 		}
 
@@ -148,7 +159,7 @@ func (netdev *netdevHw) Update() ([]*metric.Data, error) {
 		))
 	}
 
-	return data, nil
+	return data
 }
 
 func (netdev *netdevHw) readSysNetclassStat(iface, stat string) (uint64, error) {
@@ -167,6 +178,12 @@ func (netdev *netdevHw) updateIfaceSwDroppedStat(object bpf.BPF) error {
 		return err
 	}
 
+	return netdev.applySwDroppedItems(items)
+}
+
+// applySwDroppedItems consumes one dumped rx_sw_dropped_stats map item per
+// call slice entry, keyed by ifindex.
+func (netdev *netdevHw) applySwDroppedItems(items []bpf.MapItem) error {
 	for _, v := range items {
 		var (
 			ifidx   uint32
@@ -180,9 +197,13 @@ func (netdev *netdevHw) updateIfaceSwDroppedStat(object bpf.BPF) error {
 			return fmt.Errorf("read map value: %w", err)
 		}
 
-		ifi, err := net.InterfaceByIndex(int(ifidx))
+		ifi, err := netdev.interfaceByIndex(int(ifidx))
 		if err != nil {
-			return err
+			// The interface may have been removed while its key is still
+			// in the BPF map; skip it so one stale key cannot abort the
+			// whole scrape.
+			log.Debugf("[rx_sw_dropped_stats] skip ifindex %d: %v", ifidx, err)
+			continue
 		}
 
 		// iface can be dynamically added while huatuo is running.
