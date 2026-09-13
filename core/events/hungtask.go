@@ -47,7 +47,6 @@ type HungTaskTracerData struct {
 }
 
 type hungTaskTracing struct {
-	data            []*metric.Data
 	backoff         *backoff.Backoff
 	nextAllowedTime time.Time
 }
@@ -67,9 +66,6 @@ func newHungTask() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: &hungTaskTracing{
-			data: []*metric.Data{
-				metric.NewCounterData("total", 0, "hungtask counter", nil),
-			},
 			backoff: bo,
 		},
 		Interval: 10,
@@ -79,9 +75,12 @@ func newHungTask() (*tracing.EventTracingAttr, error) {
 
 var hungtaskCounter int64
 
+// Update returns freshly built data: doCollect reads Data.Value outside the
+// collector mutex, so cached Data would race with the next scrape's Update.
 func (c *hungTaskTracing) Update() ([]*metric.Data, error) {
-	c.data[0].Value = float64(atomic.LoadInt64(&hungtaskCounter))
-	return c.data, nil
+	return []*metric.Data{
+		metric.NewCounterData("total", float64(atomic.LoadInt64(&hungtaskCounter)), "hungtask counter", nil),
+	}, nil
 }
 
 func (c *hungTaskTracing) Start(ctx context.Context) error {

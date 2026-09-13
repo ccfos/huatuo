@@ -43,7 +43,6 @@ type SoftLockupTracerData struct {
 }
 
 type softLockupTracing struct {
-	data            []*metric.Data
 	backoff         *backoff.Backoff
 	nextAllowedTime time.Time
 }
@@ -58,9 +57,6 @@ func newSoftLockup() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: &softLockupTracing{
-			data: []*metric.Data{
-				metric.NewCounterData("total", 0, "softlockup counter", nil),
-			},
 			backoff: bo,
 		},
 		Interval: 10,
@@ -70,9 +66,12 @@ func newSoftLockup() (*tracing.EventTracingAttr, error) {
 
 var softlockupCounter int64
 
+// Update returns freshly built data: doCollect reads Data.Value outside the
+// collector mutex, so cached Data would race with the next scrape's Update.
 func (c *softLockupTracing) Update() ([]*metric.Data, error) {
-	c.data[0].Value = float64(atomic.LoadInt64(&softlockupCounter))
-	return c.data, nil
+	return []*metric.Data{
+		metric.NewCounterData("total", float64(atomic.LoadInt64(&softlockupCounter)), "softlockup counter", nil),
+	}, nil
 }
 
 func (c *softLockupTracing) Start(ctx context.Context) error {
