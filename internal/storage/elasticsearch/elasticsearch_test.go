@@ -28,6 +28,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/elastic/go-elasticsearch/v8/esapi"
+
 	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
@@ -1406,5 +1408,175 @@ func TestNewBackendRequiresIndex(t *testing.T) {
 	_, err := NewBackend(&Config{})
 	if err == nil || err.Error() != "elasticsearch backend: index is required" {
 		t.Fatalf("NewBackend() error = %v", err)
+	}
+}
+
+// failingReader returns a fixed error from Read, standing in for a response
+// body that fails part-way through.
+type failingReader struct{ err error }
+
+func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
+
+func newResponseForTest(status int, body string) *esapi.Response {
+	return &esapi.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+// TestReadBounded covers the helper that keeps an oversized body out of memory:
+// a body at the limit is returned whole, and a body past it is cut at the limit
+// and reported as truncated rather than read to the end.
+func TestReadBounded(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		limit         int64
+		wantData      string
+		wantTruncated bool
+	}{
+		{name: "below limit", body: "abc", limit: 8, wantData: "abc"},
+		{name: "exactly at limit", body: "abcdefgh", limit: 8, wantData: "abcdefgh"},
+		{name: "one byte over limit", body: "abcdefghi", limit: 8, wantData: "abcdefgh", wantTruncated: true},
+		{name: "far over limit", body: strings.Repeat("x", 4096), limit: 8, wantData: "xxxxxxxx", wantTruncated: true},
+		{name: "empty body", body: "", limit: 8, wantData: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, truncated, err := readBounded(strings.NewReader(tt.body), tt.limit)
+			if err != nil {
+				t.Fatalf("readBounded() error = %v", err)
+			}
+			if truncated != tt.wantTruncated {
+				t.Fatalf("truncated = %v, want %v", truncated, tt.wantTruncated)
+			}
+			if string(data) != tt.wantData {
+				t.Fatalf("data = %q, want %q", data, tt.wantData)
+			}
+		})
+	}
+}
+
+func TestReadBoundedPropagatesReadError(t *testing.T) {
+	wantErr := errors.New("connection reset")
+	if _, _, err := readBounded(failingReader{err: wantErr}, 8); !errors.Is(err, wantErr) {
+		t.Fatalf("readBounded() error = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+func TestDecodeBoundedPropagatesReadError(t *testing.T) {
+	wantErr := errors.New("connection reset")
+
+	var payload map[string]any
+	if err := decodeBounded(failingReader{err: wantErr}, &payload); !errors.Is(err, wantErr) {
+		t.Fatalf("decodeBounded() error = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+// TestResponseErrorBoundsPreview verifies that diagnostics keep a short error
+// body verbatim, truncate and mark a long one, and still surface a body read
+// failure.
+func TestResponseErrorBoundsPreview(t *testing.T) {
+	const (
+		action = "query documents"
+		target = "huatuo_bamai"
+	)
+
+	t.Run("short body is reported verbatim", func(t *testing.T) {
+		body := `{"error":"index_not_found_exception"}`
+		err := responseError(action, target, newResponseForTest(http.StatusInternalServerError, body))
+		want := "elasticsearch " + action + " " + target + ": status 500: " + body
+		if err.Error() != want {
+			t.Fatalf("error = %q, want %q", err.Error(), want)
+		}
+	})
+
+	t.Run("oversized body is truncated and marked", func(t *testing.T) {
+		body := strings.Repeat("!", int(maxErrorPreviewBytes)*4)
+		err := responseError(action, target, newResponseForTest(http.StatusInternalServerError, body))
+
+		if !strings.HasSuffix(err.Error(), truncatedMarker) {
+			t.Fatalf("error = %q, want suffix %q", err.Error(), truncatedMarker)
+		}
+		if got := strings.Count(err.Error(), "!"); got != int(maxErrorPreviewBytes) {
+			t.Fatalf("error retained %d body bytes, want %d", got, maxErrorPreviewBytes)
+		}
+	})
+
+	t.Run("read failure is preserved", func(t *testing.T) {
+		wantErr := errors.New("connection reset")
+		res := &esapi.Response{
+			StatusCode: http.StatusInternalServerError,
+			Body:       io.NopCloser(failingReader{err: wantErr}),
+		}
+		if err := responseError(action, target, res); !errors.Is(err, wantErr) {
+			t.Fatalf("error = %v, want it to wrap %v", err, wantErr)
+		}
+	})
+}
+
+// TestElasticsearchBackendRejectsOversizedResponse verifies that a successful
+// response larger than maxResponseBodyBytes is refused instead of decoded, so a
+// misrouted or malfunctioning endpoint cannot grow the agent's heap.
+func TestElasticsearchBackendRejectsOversizedResponse(t *testing.T) {
+	// The body is valid JSON that simply carries an oversized padding field. It
+	// therefore decodes without error when the whole body is read, which is what
+	// makes this a regression test: before the limit existed the response was
+	// accepted and materialized in full, and only afterwards is it refused.
+	const (
+		prefix = `{"hits":{"hits":[],"padding":"`
+		suffix = `"}}`
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Elastic-Product", "Elasticsearch")
+
+		if strings.Trim(r.URL.Path, "/") == "" {
+			_, _ = w.Write([]byte(`{"name":"mock-es","version":{"number":"7.17.0"}}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		written, err := w.Write([]byte(prefix))
+		if err != nil {
+			return
+		}
+
+		chunk := strings.Repeat("x", 4096)
+		for int64(written) <= maxResponseBodyBytes {
+			n, err := w.Write([]byte(chunk))
+			written += n
+			if err != nil {
+				// The client stopped reading once it had enough to reject the
+				// response, which is the behavior under test.
+				return
+			}
+		}
+
+		_, _ = w.Write([]byte(suffix))
+	}))
+	defer server.Close()
+
+	backend, err := NewBackend(&Config{
+		Addresses: []string{server.URL},
+		Index:     "huatuo_bamai",
+	})
+	if err != nil {
+		t.Fatalf("NewBackend() returned error: %v", err)
+	}
+	defer func() {
+		if err := backend.Close(t.Context()); err != nil {
+			t.Errorf("Close() returned error: %v", err)
+		}
+	}()
+
+	_, err = backend.Query(t.Context(), driver.Query{Limit: 1})
+	if err == nil {
+		t.Fatal("Query() error = nil, want a response body limit error")
+	}
+	if !strings.Contains(err.Error(), "response body exceeds") {
+		t.Fatalf("Query() error = %v, want it to mention the response body limit", err)
 	}
 }

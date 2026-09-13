@@ -41,6 +41,22 @@ import (
 const (
 	defaultQuerySize = 10000
 
+	// maxResponseBodyBytes bounds a successful response body before it is
+	// decoded. A query returns at most defaultQuerySize hits, so this leaves
+	// roughly 6.5 KiB per hit and no legitimate response reaches it, while an
+	// endpoint that streams without end is rejected instead of growing the
+	// agent's heap without bound. HTTP timeouts bound elapsed time, not bytes.
+	maxResponseBodyBytes = 64 << 20
+
+	// maxErrorPreviewBytes bounds the response body retained for diagnostics.
+	// Elasticsearch error documents are small JSON objects, so a longer body is
+	// truncated and marked rather than copied into the error's text in full.
+	maxErrorPreviewBytes = 4 << 10
+
+	// truncatedMarker is appended to a preview that hit maxErrorPreviewBytes, so
+	// a partial diagnostic is never mistaken for the whole response.
+	truncatedMarker = " ... (truncated)"
+
 	// Bulk indexer tuning. 5MB / 1s matches the upstream defaults and is a
 	// safe starting point for ES/OpenSearch single-node and small clusters.
 	// Adjust if write rate or per-event size drifts significantly.
@@ -214,7 +230,7 @@ func (s *Storage) Get(ctx context.Context, id string) (rec driver.Record, err er
 	}
 
 	var payload esget.Response
-	if err = json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	if err = decodeBounded(res.Body, &payload); err != nil {
 		return rec, fmt.Errorf("elasticsearch backend get %s/%s: decode: %w", s.index, id, err)
 	}
 	if !payload.Found {
@@ -277,7 +293,7 @@ func (s *Storage) DeleteByQuery(ctx context.Context, query driver.DeleteQuery) (
 	}
 
 	var payload esdeletebyquery.Response
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	if err := decodeBounded(res.Body, &payload); err != nil {
 		return 0, fmt.Errorf(
 			"elasticsearch backend delete by query %s: decode: %w",
 			s.index,
@@ -322,7 +338,7 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 	}
 
 	var payload essearch.Response
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	if err := decodeBounded(res.Body, &payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend query %s: decode: %w", s.index, err)
 	}
 	records := make([]driver.Record, 0, len(payload.Hits.Hits))
@@ -358,7 +374,7 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	}
 
 	var payload escount.Response
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	if err := decodeBounded(res.Body, &payload); err != nil {
 		return 0, fmt.Errorf("elasticsearch backend count %s: decode: %w", s.index, err)
 	}
 	return payload.Count, nil
@@ -385,7 +401,7 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	}
 
 	var payload valuesResponse
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	if err := decodeBounded(res.Body, &payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: decode: %w", s.index, field, err)
 	}
 	result := make([]string, 0, len(payload.Aggregations.Terms.Buckets))
@@ -395,10 +411,40 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	return result, nil
 }
 
+// readBounded reads at most limit bytes of body. It reports truncated when the
+// body was longer, in which case the returned data is the first limit bytes and
+// the remainder is left unread, so an oversized body is never held in memory.
+func readBounded(body io.Reader, limit int64) (data []byte, truncated bool, err error) {
+	data, err = io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) > limit {
+		return data[:limit], true, nil
+	}
+	return data, false, nil
+}
+
+// decodeBounded decodes a successful response body under maxResponseBodyBytes.
+func decodeBounded(body io.Reader, target any) error {
+	data, truncated, err := readBounded(body, maxResponseBodyBytes)
+	if err != nil {
+		return fmt.Errorf("read response body: %w", err)
+	}
+	if truncated {
+		return fmt.Errorf("response body exceeds %d bytes", maxResponseBodyBytes)
+	}
+	return json.Unmarshal(data, target)
+}
+
 func responseError(action, target string, res *esapi.Response) error {
-	body, err := io.ReadAll(res.Body)
+	body, truncated, err := readBounded(res.Body, maxErrorPreviewBytes)
 	if err != nil {
 		return fmt.Errorf("elasticsearch %s %s: status %d: read body: %w", action, target, res.StatusCode, err)
 	}
-	return fmt.Errorf("elasticsearch %s %s: status %d: %s", action, target, res.StatusCode, strings.TrimSpace(string(body)))
+	preview := strings.TrimSpace(string(body))
+	if truncated {
+		preview += truncatedMarker
+	}
+	return fmt.Errorf("elasticsearch %s %s: status %d: %s", action, target, res.StatusCode, preview)
 }
