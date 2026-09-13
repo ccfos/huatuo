@@ -69,6 +69,12 @@ func hostMemorySnapshot() (*OOMMemorySnapshot, error) {
 }
 
 func cgroupMemorySnapshot(cgroup cgroups.Cgroup, container *pod.Container) (*OOMCgroupMemorySnapshot, error) {
+	if cgroup == nil {
+		// NewManager can fail (e.g. cgroupfs unavailable or unsupported
+		// mode); the collector then degrades to snapshot-less OOM events.
+		return nil, fmt.Errorf("cgroup manager is unavailable")
+	}
+
 	snapshot := &OOMCgroupMemorySnapshot{
 		Path: container.CgroupPath,
 	}
