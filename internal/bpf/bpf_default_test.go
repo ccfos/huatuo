@@ -787,6 +787,34 @@ func TestDefaultBPF_OperationsAfterClose(t *testing.T) {
 			},
 		},
 		{
+			name: "raw event pipe",
+			run: func() error {
+				_, err := b.RawEventPipe(
+					t.Context(),
+					mapID,
+					PerfEventReaderOptions{
+						PerCPUBufferBytes: 4096,
+						WatermarkBytes:    1,
+					},
+				)
+				return err
+			},
+		},
+		{
+			name: "raw event pipe by name",
+			run: func() error {
+				_, err := b.RawEventPipeByName(
+					t.Context(),
+					"counter_map",
+					PerfEventReaderOptions{
+						PerCPUBufferBytes: 4096,
+						WatermarkBytes:    1,
+					},
+				)
+				return err
+			},
+		},
+		{
 			name: "attach and event pipe",
 			run: func() error {
 				_, err := b.AttachAndEventPipe(t.Context(), "counter_map", 1)

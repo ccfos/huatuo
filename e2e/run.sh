@@ -28,6 +28,25 @@ _e2e_cleanup() {
 }
 trap "_e2e_cleanup" EXIT
 
+SCHED_BLAME_RATIO_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/sched-blame-ratios.csv"
+export SCHED_BLAME_RATIO_FILE
+e2e_config_dir="${HUATUO_BAMAI_TEST_TMPDIR}/conf"
+mkdir -p "${e2e_config_dir}"
+cp "${ROOT_DIR}/_output/conf/huatuo-bamai.conf" \
+	"${e2e_config_dir}/huatuo-bamai.conf"
+sed -i \
+	-e 's/# TargetContainerScope = "normal"/TargetContainerScope = "all"/' \
+	-e "s|# HighlightContainer = \"\"|HighlightContainer = \"${BUSINESS_DEFAULT_POD_NAME}\"|" \
+	-e "s|# ExternalRatioDebugFile = \"\"|ExternalRatioDebugFile = \"${SCHED_BLAME_RATIO_FILE}\"|" \
+	"${e2e_config_dir}/huatuo-bamai.conf"
+HUATUO_BAMAI_ARGS_E2E=(
+	"--config-dir" "${e2e_config_dir}"
+	"--config" "huatuo-bamai.conf"
+	"--region" "e2e"
+	"--disable-storage"
+	"--log-debug"
+)
+
 huatuo_bamai_start "${HUATUO_BAMAI_ARGS_E2E[@]}"
 
 # auto run all test_*.sh scripts in the e2e
