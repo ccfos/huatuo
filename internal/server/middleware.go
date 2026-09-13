@@ -15,6 +15,7 @@
 package server
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -113,7 +114,8 @@ func newHTTPMetricsMiddleware(reg prometheus.Registerer) httpGin.HandlerFunc {
 		Help:      "API request duration by route and method.",
 		Buckets:   prometheus.DefBuckets,
 	}, []string{"route", "method"})
-	reg.MustRegister(requests, duration)
+	requests = registerOrReuseCounterVec(reg, requests)
+	duration = registerOrReuseHistogramVec(reg, duration)
 
 	return func(ctx *httpGin.Context) {
 		startedAt := time.Now()
@@ -126,6 +128,36 @@ func newHTTPMetricsMiddleware(reg prometheus.Registerer) httpGin.HandlerFunc {
 		requests.WithLabelValues(route, ctx.Request.Method, status).Inc()
 		duration.WithLabelValues(route, ctx.Request.Method).Observe(time.Since(startedAt).Seconds())
 	}
+}
+
+func registerOrReuseCounterVec(reg prometheus.Registerer, vec *prometheus.CounterVec) *prometheus.CounterVec {
+	if err := reg.Register(vec); err != nil {
+		var alreadyRegistered prometheus.AlreadyRegisteredError
+		if !errors.As(err, &alreadyRegistered) {
+			panic(err)
+		}
+		existing, ok := alreadyRegistered.ExistingCollector.(*prometheus.CounterVec)
+		if !ok {
+			panic(err)
+		}
+		return existing
+	}
+	return vec
+}
+
+func registerOrReuseHistogramVec(reg prometheus.Registerer, vec *prometheus.HistogramVec) *prometheus.HistogramVec {
+	if err := reg.Register(vec); err != nil {
+		var alreadyRegistered prometheus.AlreadyRegisteredError
+		if !errors.As(err, &alreadyRegistered) {
+			panic(err)
+		}
+		existing, ok := alreadyRegistered.ExistingCollector.(*prometheus.HistogramVec)
+		if !ok {
+			panic(err)
+		}
+		return existing
+	}
+	return vec
 }
 
 // a middleware for global rate limiting.
