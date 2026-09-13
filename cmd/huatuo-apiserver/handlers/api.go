@@ -77,7 +77,7 @@ var _ serverapi.StrictServerInterface = (*APIHandler)(nil)
 func NewAPIHandler(
 	profilingService *profilinghandler.Service,
 	tracingService *tracehandler.Service,
-	profileQuery profileQueryService,
+	profileQuery *profilequery.ProfileQueryService,
 ) (*APIHandler, error) {
 	if profilingService == nil {
 		return nil, errors.New("create Server API handler: Profiling service is required")
@@ -89,10 +89,17 @@ func NewAPIHandler(
 	if err := json.Unmarshal(serverapi.OpenAPIJSON(), &specification); err != nil {
 		return nil, fmt.Errorf("create Server API handler: decode bundled OpenAPI: %w", err)
 	}
+	// A nil *ProfileQueryService assigned to the profileQueryService field
+	// yields a non-nil interface value, so compare the concrete pointer
+	// before storing; otherwise the availability guard never fires.
+	var query profileQueryService
+	if profileQuery != nil {
+		query = profileQuery
+	}
 	return &APIHandler{
 		profiling:    profilingService,
 		tracing:      tracingService,
-		profileQuery: profileQuery,
+		profileQuery: query,
 		openAPI:      specification,
 	}, nil
 }
