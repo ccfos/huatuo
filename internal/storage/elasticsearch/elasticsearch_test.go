@@ -319,6 +319,9 @@ func (m *mockElasticsearchServer) handleTermsSearch(w http.ResponseWriter, body 
 	termsAggregation, _ := aggs["terms"].(map[string]any)
 	termsConfig, _ := termsAggregation["terms"].(map[string]any)
 	fieldName := stringValue(termsConfig["field"])
+	// Dynamic text mappings expose values under the .keyword subfield, so
+	// aggregate on the base field like real Elasticsearch would.
+	fieldName = strings.TrimSuffix(fieldName, ".keyword")
 
 	counts := make(map[string]int)
 	for _, doc := range docs {
@@ -1349,6 +1352,61 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 		if terms[index] != expectedTerm {
 			t.Errorf("Terms()[%d]=%q, want %q", index, terms[index], expectedTerm)
 		}
+	}
+}
+
+// TestBuildValuesRequestAggregatesKeywordSubfield pins the terms aggregation
+// to the dynamic keyword subfield: stock Elasticsearch maps document string
+// fields as text plus a keyword subfield and rejects terms aggregations on
+// the text field itself with "Fielddata is disabled".
+func TestBuildValuesRequestAggregatesKeywordSubfield(t *testing.T) {
+	testCases := []struct {
+		name     string
+		field    string
+		wantAgg  string
+		wantSize int
+	}{
+		{
+			name:     "document field gets keyword subfield",
+			field:    "profile_data.profile_type",
+			wantAgg:  "profile_data.profile_type.keyword",
+			wantSize: 10,
+		},
+		{
+			name:     "explicit keyword name passes through",
+			field:    "tracer_id.keyword",
+			wantAgg:  "tracer_id.keyword",
+			wantSize: 7,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body, err := buildValuesRequest(testCase.field, driver.Query{}, testCase.wantSize)
+			if err != nil {
+				t.Fatalf("buildValuesRequest() error = %v", err)
+			}
+
+			var payload struct {
+				Aggs map[string]struct {
+					Terms struct {
+						Field string `json:"field"`
+						Size  int    `json:"size"`
+					} `json:"terms"`
+				} `json:"aggs"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+
+			terms := payload.Aggs["terms"].Terms
+			if terms.Field != testCase.wantAgg {
+				t.Fatalf("aggregation field = %q, want %q", terms.Field, testCase.wantAgg)
+			}
+			if terms.Size != testCase.wantSize {
+				t.Fatalf("aggregation size = %d, want %d", terms.Size, testCase.wantSize)
+			}
+		})
 	}
 }
 
