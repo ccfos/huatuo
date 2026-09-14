@@ -145,6 +145,7 @@ func TestSymbolsResolve(t *testing.T) {
 	table := symbols{
 		{Addr: 0x1000, Size: 0, Name: "kernel_sched_tick"},
 		{Addr: 0x2000, Size: 0x100, Name: "user_func_malloc"},
+		{Addr: math.MaxUint64 - 0x100, Size: 0x200, Name: "overflowing_func"},
 	}
 	tests := []struct {
 		name     string
@@ -155,7 +156,7 @@ func TestSymbolsResolve(t *testing.T) {
 		{name: "zero-size-symbol-matches-its-address", key: 0x1000, wantName: "kernel_sched_tick"},
 		{name: "user-style-in-range-resolves", key: 0x20ff, wantName: "user_func_malloc"},
 		{name: "user-style-end-exclusive", key: 0x2100, wantName: ""},
-		{name: "user-style-overflowing-end-does-not-wrap", key: math.MaxUint64, wantName: ""},
+		{name: "overflowing-symbol-end-does-not-wrap", key: math.MaxUint64, wantName: ""},
 		{name: "below-first-symbol", key: 0x0500, wantName: ""},
 	}
 
@@ -531,12 +532,36 @@ func TestElfSymbols(t *testing.T) {
 type elf64SymbolTableFixture struct {
 	typ              elf.SectionType
 	stringTable      []byte
-	nameOffsets      []uint32
-	symbolTypes      []elf.SymType
-	symbolValues     []uint64
-	symbolSizes      []uint64
+	symbols          []elf64SymbolFixture
 	compressed       bool
 	legacyCompressed bool
+}
+
+type elf64SymbolFixture struct {
+	nameOffset uint32
+	typ        elf.SymType
+	value      uint64
+	size       uint64
+}
+
+func elf64Function(nameOffset uint32) elf64SymbolFixture {
+	return elf64SymbolFixture{nameOffset: nameOffset, typ: elf.STT_FUNC, size: 0x10}
+}
+
+func elf64Functions(nameOffsets ...uint32) []elf64SymbolFixture {
+	symbols := make([]elf64SymbolFixture, 0, len(nameOffsets))
+	for _, nameOffset := range nameOffsets {
+		symbols = append(symbols, elf64Function(nameOffset))
+	}
+	return symbols
+}
+
+func elf64FunctionAt(nameOffset uint32, value, size uint64) elf64SymbolFixture {
+	return elf64SymbolFixture{nameOffset: nameOffset, typ: elf.STT_FUNC, value: value, size: size}
+}
+
+func elf64Object(nameOffset uint32) elf64SymbolFixture {
+	return elf64SymbolFixture{nameOffset: nameOffset, typ: elf.STT_OBJECT}
 }
 
 func alignUp(value, alignment int) int {
@@ -554,12 +579,40 @@ func encodeELFStruct(t *testing.T, value any) []byte {
 
 func newELF64SymbolFixture(t *testing.T, tables ...elf64SymbolTableFixture) *elf.File {
 	t.Helper()
-	f, err := elf.NewFile(bytes.NewReader(elf64SymbolImage(t, tables...)))
+	return newELF64SymbolFile(t, elf64SymbolImage(t, tables...))
+}
+
+func newLegacyELF64SymbolFixture(t *testing.T, tables ...elf64SymbolTableFixture) *elf.File {
+	t.Helper()
+	image := elf64SymbolImage(t, tables...)
+	var header elf.Header64
+	if err := binary.Read(bytes.NewReader(image), binary.LittleEndian, &header); err != nil {
+		t.Fatal(err)
+	}
+	// Reuse the second table's strings as the section-name table so the first
+	// table is recognized as a legacy .zdebug string table.
+	header.Shstrndx = 3
+	copy(image, encodeELFStruct(t, header))
+	binary.LittleEndian.PutUint32(image[header.Shoff+uint64(header.Shentsize):], 1)
+	return newELF64SymbolFile(t, image)
+}
+
+func newELF64SymbolFile(t *testing.T, image []byte) *elf.File {
+	t.Helper()
+	f, err := elf.NewFile(bytes.NewReader(image))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = f.Close() })
 	return f
+}
+
+func elf64LegacyNameTable() elf64SymbolTableFixture {
+	return elf64SymbolTableFixture{
+		typ:         elf.SHT_DYNSYM,
+		stringTable: []byte("\x00.zdebug_str\x00"),
+		symbols:     elf64Functions(1),
+	}
 }
 
 func elf64SymbolImage(t *testing.T, tables ...elf64SymbolTableFixture) []byte {
@@ -581,9 +634,6 @@ func elf64SymbolImage(t *testing.T, tables ...elf64SymbolTableFixture) []byte {
 		table := &tables[tableIndex]
 		if len(table.stringTable) == 0 || table.stringTable[0] != 0 {
 			t.Fatal("ELF fixture string table must begin with NUL")
-		}
-		if len(table.symbolTypes) != 0 && len(table.symbolTypes) != len(table.nameOffsets) {
-			t.Fatal("ELF fixture symbol types must match name offsets")
 		}
 		encodedStrings := table.stringTable
 		if table.compressed || table.legacyCompressed {
@@ -608,23 +658,16 @@ func elf64SymbolImage(t *testing.T, tables ...elf64SymbolTableFixture) []byte {
 		if err := binary.Write(&symbols, binary.LittleEndian, elf.Sym64{}); err != nil {
 			t.Fatalf("binary.Write(null symbol): %v", err)
 		}
-		for symbolIndex, nameOffset := range table.nameOffsets {
-			symbolType := elf.STT_FUNC
-			if len(table.symbolTypes) != 0 {
-				symbolType = table.symbolTypes[symbolIndex]
-			}
+		for symbolIndex, fixture := range table.symbols {
 			sym := elf.Sym64{
-				Name:  nameOffset,
-				Info:  byte(symbolType),
+				Name:  fixture.nameOffset,
+				Info:  byte(fixture.typ),
 				Shndx: 1,
-				Value: 0x1000 + uint64(symbolIndex)*0x10,
-				Size:  0x10,
+				Value: fixture.value,
+				Size:  fixture.size,
 			}
-			if len(table.symbolValues) > 0 {
-				sym.Value = table.symbolValues[symbolIndex]
-			}
-			if len(table.symbolSizes) > 0 {
-				sym.Size = table.symbolSizes[symbolIndex]
+			if sym.Value == 0 {
+				sym.Value = 0x1000 + uint64(symbolIndex)*0x10
 			}
 			if err := binary.Write(&symbols, binary.LittleEndian, sym); err != nil {
 				t.Fatalf("binary.Write(symbol): %v", err)
@@ -770,14 +813,14 @@ func TestElfSymbolsBoundsExpandedNamesInRealELF(t *testing.T) {
 	longName := strings.Repeat("x", nameSize)
 	stringTable := append([]byte{0}, longName...)
 	stringTable = append(stringTable, 0)
-	nameOffsets := make([]uint32, symbolCount)
-	for i := range nameOffsets {
-		nameOffsets[i] = 1
+	symbols := make([]elf64SymbolFixture, symbolCount)
+	for i := range symbols {
+		symbols[i] = elf64Function(1)
 	}
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
 		stringTable: stringTable,
-		nameOffsets: nameOffsets,
+		symbols:     symbols,
 	})
 	limits := ELFSymbolLimits{
 		MaxMetadataBytes: 1 << 20,
@@ -802,7 +845,7 @@ func TestELFSymbolParseDoesNotRetainUnchargedIndexOnNameFailure(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
 		stringTable: []byte{0, 0},
-		nameOffsets: []uint32{2},
+		symbols:     elf64Functions(2),
 	})
 	state := newELFSymbolParseState(DefaultELFSymbolLimits())
 	if _, err := state.parseSource(f, elfSymbolTable{name: "symtab", typ: elf.SHT_SYMTAB}, 0x1000); err == nil {
@@ -815,8 +858,8 @@ func TestELFSymbolParseDoesNotRetainUnchargedIndexOnNameFailure(t *testing.T) {
 
 func TestELFNameFailureLeavesBudgetForFallback(t *testing.T) {
 	f := newELF64SymbolFixture(t,
-		elf64SymbolTableFixture{typ: elf.SHT_SYMTAB, stringTable: []byte{0}, nameOffsets: []uint32{2}},
-		elf64SymbolTableFixture{typ: elf.SHT_DYNSYM, stringTable: []byte("\x00fallback\x00"), nameOffsets: []uint32{1}},
+		elf64SymbolTableFixture{typ: elf.SHT_SYMTAB, stringTable: []byte{0}, symbols: elf64Functions(2)},
+		elf64SymbolTableFixture{typ: elf.SHT_DYNSYM, stringTable: []byte("\x00fallback\x00"), symbols: elf64Functions(1)},
 	)
 	limits := DefaultELFSymbolLimits()
 	limits.MaxMetadataBytes = 2 * elf.Sym64Size
@@ -843,7 +886,7 @@ func TestElfSymbolsRejectsDistinctExpandedNamesInRealELF(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
 		stringTable: stringTable,
-		nameOffsets: []uint32{1, secondOffset},
+		symbols:     elf64Functions(1, secondOffset),
 	})
 	limits := ELFSymbolLimits{
 		MaxMetadataBytes: 1 << 20,
@@ -870,8 +913,7 @@ func TestElfSymbolsFiltersBeforeCopyingNamesInRealELF(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
 		stringTable: stringTable,
-		nameOffsets: []uint32{1, functionOffset},
-		symbolTypes: []elf.SymType{elf.STT_OBJECT, elf.STT_FUNC},
+		symbols:     []elf64SymbolFixture{elf64Object(1), elf64Function(functionOffset)},
 	})
 	limits := ELFSymbolLimits{
 		MaxMetadataBytes: 1 << 20,
@@ -892,7 +934,7 @@ func TestElfSymbolsForPCsLimitsSingleName(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
 		stringTable: []byte("\x00name-too-long\x00"),
-		nameOffsets: []uint32{1},
+		symbols:     elf64Functions(1),
 	})
 	limits := ELFSymbolLimits{
 		MaxMetadataBytes: 1024,
@@ -910,7 +952,7 @@ func TestElfSymbolsForPCsReusesNameBudgetAcrossCalls(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
 		stringTable: []byte("\x00target\x00"),
-		nameOffsets: []uint32{1, 1},
+		symbols:     elf64Functions(1, 1),
 	})
 	state := newELFSymbolParseState(ELFSymbolLimits{
 		MaxMetadataBytes: 1024,
@@ -931,12 +973,12 @@ func TestElfSymbolsForPCsPrefersSymtabAndFallsBackForUnresolvedPCs(t *testing.T)
 		elf64SymbolTableFixture{
 			typ:         elf.SHT_DYNSYM,
 			stringTable: []byte("\x00dynamic\x00"),
-			nameOffsets: []uint32{1},
+			symbols:     elf64Functions(1),
 		},
 		elf64SymbolTableFixture{
 			typ:         elf.SHT_SYMTAB,
 			stringTable: []byte("\x00static\x00"),
-			nameOffsets: []uint32{1},
+			symbols:     elf64Functions(1),
 		},
 	)
 	got, err := elfSymbolsForPCs(f, []uint64{0x1001}, DefaultELFSymbolLimits())
@@ -950,7 +992,7 @@ func TestElfSymbolsForPCsDoesNotLogMissingSourceAtInfo(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
 		stringTable: []byte("\x00target\x00"),
-		nameOffsets: []uint32{1},
+		symbols:     elf64Functions(1),
 	})
 	limits := ELFSymbolLimits{
 		MaxMetadataBytes: 1024,
@@ -963,6 +1005,8 @@ func TestElfSymbolsForPCsDoesNotLogMissingSourceAtInfo(t *testing.T) {
 	if err != nil || len(got) != 0 {
 		t.Fatalf("elfSymbolsForPCs: got %v, err %v; want no symbols", got, err)
 	}
+	// A missing optional dynsym is normal for stripped binaries, so it must not
+	// add an info-level log after the result has already established the miss.
 	if strings.Contains(output.String(), "dynsym not available") {
 		t.Fatalf("missing optional dynsym logged at info: %s", output.String())
 	}
@@ -972,8 +1016,8 @@ func TestELFSymbolSourcesKeepOverlappingPCDecisions(t *testing.T) {
 	for _, dynamicStart := range []uint64{0x1000, 0x1008} {
 		t.Run(fmt.Sprintf("%x", dynamicStart), func(t *testing.T) {
 			f := newELF64SymbolFixture(t,
-				elf64SymbolTableFixture{typ: elf.SHT_SYMTAB, stringTable: []byte("\x00static\x00"), nameOffsets: []uint32{1}},
-				elf64SymbolTableFixture{typ: elf.SHT_DYNSYM, stringTable: []byte("\x00dynamic\x00"), nameOffsets: []uint32{1}, symbolValues: []uint64{dynamicStart}, symbolSizes: []uint64{0x30}},
+				elf64SymbolTableFixture{typ: elf.SHT_SYMTAB, stringTable: []byte("\x00static\x00"), symbols: elf64Functions(1)},
+				elf64SymbolTableFixture{typ: elf.SHT_DYNSYM, stringTable: []byte("\x00dynamic\x00"), symbols: []elf64SymbolFixture{elf64FunctionAt(1, dynamicStart, 0x30)}},
 			)
 			pcs := []uint64{0x1009, 0x1020}
 			got, err := elfSymbolsForPCs(f, pcs, DefaultELFSymbolLimits())
@@ -991,7 +1035,7 @@ func TestELFCompressedStringWorkIsCumulative(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ: elf.SHT_SYMTAB, compressed: true,
 		stringTable: append(make([]byte, 100), []byte("first\x00second\x00")...),
-		nameOffsets: []uint32{100, 106},
+		symbols:     elf64Functions(100, 106),
 	})
 	limits := DefaultELFSymbolLimits()
 	limits.MaxMetadataBytes = 3*elf.Sym64Size + 113
@@ -1021,30 +1065,19 @@ func TestELFFullTableCompressedBudget(t *testing.T) {
 		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {
 			for _, shortBy := range []uint64{0, 1} {
 				stringTable := []byte("\x00target\x00")
-				image := elf64SymbolImage(t,
-					elf64SymbolTableFixture{
-						typ: elf.SHT_SYMTAB, compressed: !legacy, legacyCompressed: legacy,
-						stringTable: stringTable, nameOffsets: []uint32{1, 1},
-					},
-					elf64SymbolTableFixture{
-						typ:         elf.SHT_DYNSYM,
-						stringTable: []byte("\x00.zdebug_str\x00"), nameOffsets: []uint32{1},
-					},
-				)
+				table := elf64SymbolTableFixture{
+					typ:              elf.SHT_SYMTAB,
+					stringTable:      stringTable,
+					symbols:          elf64Functions(1, 1),
+					compressed:       !legacy,
+					legacyCompressed: legacy,
+				}
+				var f *elf.File
 				if legacy {
-					var header elf.Header64
-					if err := binary.Read(bytes.NewReader(image), binary.LittleEndian, &header); err != nil {
-						t.Fatal(err)
-					}
-					header.Shstrndx = 3
-					copy(image, encodeELFStruct(t, header))
-					binary.LittleEndian.PutUint32(image[header.Shoff+uint64(header.Shentsize):], 1)
+					f = newLegacyELF64SymbolFixture(t, table, elf64LegacyNameTable())
+				} else {
+					f = newELF64SymbolFixture(t, table)
 				}
-				f, err := elf.NewFile(bytes.NewReader(image))
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { f.Close() })
 				limits := DefaultELFSymbolLimits()
 				limits.MaxMetadataBytes = 3*elf.Sym64Size + uint64(len(stringTable)) - shortBy
 				state := newELFSymbolParseState(limits)
@@ -1072,32 +1105,17 @@ func TestELFFullTableCompressedBudget(t *testing.T) {
 func TestELFLegacyCompressedStringOffsetsAndBudget(t *testing.T) {
 	const nameOffset = 4096
 	stringsData := append(make([]byte, nameOffset), []byte("target\x00")...)
-	image := elf64SymbolImage(t,
+	f := newLegacyELF64SymbolFixture(t,
 		elf64SymbolTableFixture{
 			typ: elf.SHT_SYMTAB, legacyCompressed: true,
-			stringTable: stringsData, nameOffsets: []uint32{nameOffset},
+			stringTable: stringsData, symbols: elf64Functions(nameOffset),
 		},
-		elf64SymbolTableFixture{
-			typ:         elf.SHT_DYNSYM,
-			stringTable: []byte("\x00.zdebug_str\x00"), nameOffsets: []uint32{1},
-		},
+		elf64LegacyNameTable(),
 	)
-	var header elf.Header64
-	if err := binary.Read(bytes.NewReader(image), binary.LittleEndian, &header); err != nil {
-		t.Fatal(err)
+	if f.Sections[1].Size >= nameOffset {
+		t.Fatal("fixture name offset must exceed compressed size")
 	}
-	header.Shstrndx = 3
-	copy(image, encodeELFStruct(t, header))
-	binary.LittleEndian.PutUint32(image[header.Shoff+uint64(header.Shentsize):], 1)
 	for _, budgetDelta := range []uint64{0, 1} {
-		f, err := elf.NewFile(bytes.NewReader(image))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { f.Close() })
-		if f.Sections[1].Size >= nameOffset {
-			t.Fatal("fixture name offset must exceed compressed size")
-		}
 		limits := DefaultELFSymbolLimits()
 		limits.MaxMetadataBytes = 2*elf.Sym64Size + uint64(len(stringsData)) - budgetDelta
 		state := newELFSymbolParseState(limits)
@@ -1122,7 +1140,7 @@ func TestELFLegacyCompressedStringOffsetsAndBudget(t *testing.T) {
 
 func TestELFPCResultCacheIsBoundedAcrossBatches(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "wide-symbol.elf")
-	image := elf64SymbolImage(t, elf64SymbolTableFixture{typ: elf.SHT_SYMTAB, stringTable: []byte("\x00wide\x00"), nameOffsets: []uint32{1}, symbolSizes: []uint64{256}})
+	image := elf64SymbolImage(t, elf64SymbolTableFixture{typ: elf.SHT_SYMTAB, stringTable: []byte("\x00wide\x00"), symbols: []elf64SymbolFixture{elf64FunctionAt(1, 0x1000, 256)}})
 	if err := os.WriteFile(path, image, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1164,7 +1182,7 @@ func TestElfSymbolsForPCsEmptyPCsReturnsEmpty(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
 		stringTable: []byte("\x00target\x00"),
-		nameOffsets: []uint32{1},
+		symbols:     elf64Functions(1),
 	})
 
 	got, err := elfSymbolsForPCs(f, nil, DefaultELFSymbolLimits())
@@ -1183,12 +1201,12 @@ func TestElfSymbolsSkipsOversizedRealSourceAndKeepsFallback(t *testing.T) {
 		elf64SymbolTableFixture{
 			typ:         elf.SHT_DYNSYM,
 			stringTable: oversizedStrings,
-			nameOffsets: []uint32{1},
+			symbols:     elf64Functions(1),
 		},
 		elf64SymbolTableFixture{
 			typ:         elf.SHT_SYMTAB,
 			stringTable: []byte("\x00fallback\x00"),
-			nameOffsets: []uint32{1},
+			symbols:     elf64Functions(1),
 		},
 	)
 	limits := ELFSymbolLimits{
@@ -1210,7 +1228,7 @@ func TestElfSymbolsLimitsRealSymbolCount(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
 		stringTable: []byte("\x00func\x00"),
-		nameOffsets: []uint32{1, 1, 1},
+		symbols:     elf64Functions(1, 1, 1),
 	})
 	limits := ELFSymbolLimits{
 		MaxMetadataBytes: 1024,
