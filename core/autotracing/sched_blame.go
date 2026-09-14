@@ -1377,6 +1377,7 @@ type schedBlameRunner struct {
 	lastPerfRecordsLost            uint64
 	ratioDebugWriter               *schedBlameExternalRatioDebugWriter
 	superMonitorSampler            *schedBlameSuperMonitorSampler
+	resolveLiveContainers          schedBlameLiveContainersResolver
 
 	lastDebugStats                      time.Time
 	lastDebugPerfSubmissionFailures     uint64
@@ -1594,6 +1595,7 @@ func (runner *schedBlameRunner) evaluate(now time.Time) error {
 		superMonitorSamples,
 		runner.uploader,
 		&runner.config,
+		runner.resolveLiveContainers,
 	)
 	runner.lastEvaluation = now
 	return err
