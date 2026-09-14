@@ -236,9 +236,15 @@ func (state *schedBlameState) evaluateExternalContentionRatios() []schedBlameExt
 		nil,
 		nil,
 		&config,
+		nil,
 	)
 	return events
 }
+
+type schedBlameLiveContainersResolver func() (
+	map[uint64]string,
+	map[string]*pod.Container,
+)
 
 func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 	occurredAt time.Time,
@@ -246,6 +252,7 @@ func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 	superMonitorSamples map[uint64]schedBlameSuperMonitorSample,
 	uploader *schedBlameUploader,
 	config *schedBlameRuntimeConfig,
+	resolveLiveContainers schedBlameLiveContainersResolver,
 ) ([]schedBlameExternalEvent, error) {
 	var scratch [schedBlameExternalContentionRatioHistorySize]float64
 	externalAnomalyK := config.externalAnomalyK
@@ -256,7 +263,7 @@ func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 			state.activeTargetCount())
 	}
 	var liveCSS map[uint64]string
-	var liveContainers map[string]*pod.Container
+	var liveContainerByID map[string]*pod.Container
 	for targetIndex := range state.targets {
 		if !state.activeTargetBitmap.contains(targetIndex) {
 			continue
@@ -336,14 +343,17 @@ func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 			externalEvents = append(externalEvents, externalEvent)
 			if uploader != nil {
 				if liveCSS == nil {
-					liveCSS, liveContainers = schedBlameLiveContainers()
+					if resolveLiveContainers == nil {
+						resolveLiveContainers = schedBlameLiveContainers
+					}
+					liveCSS, liveContainerByID = resolveLiveContainers()
 				}
 				emitted = state.enqueueExternalEvent(
 					&externalEvent,
 					occurredAt,
 					uploader,
 					liveCSS,
-					liveContainers,
+					liveContainerByID,
 					config.sliceDropPercent,
 				)
 			}
