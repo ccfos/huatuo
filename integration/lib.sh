@@ -407,6 +407,7 @@ huatuo_bamai_metrics() {
 
 # Reject error/panic keywords in the log.
 huatuo_bamai_log_check() {
+	sed -E "s/(${HUATUO_BAMAI_MATCH_KEYWORDS})/\x1b[31m\1\x1b[0m/gI" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 	! grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 }
 
