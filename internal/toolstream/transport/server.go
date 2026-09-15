@@ -29,24 +29,33 @@ import (
 
 // Server accepts connections and dispatches ChunkMsg events to a caller-supplied handler.
 type Server struct {
-	mutex       sync.Mutex
-	waitGroup   sync.WaitGroup
-	connections map[net.Conn]struct{}
-	listener    net.Listener
-	handler     func(*Session, ChunkMsg)
-	cancel      context.CancelFunc
+	mutex        sync.Mutex
+	waitGroup    sync.WaitGroup
+	connections  map[net.Conn]struct{}
+	listener     net.Listener
+	handler      func(*Session, ChunkMsg)
+	onDisconnect func(*Session, bool)
+	cancel       context.CancelFunc
 }
 
 // Serve starts accepting connections from l in the background.
 func Serve(l net.Listener, handler func(*Session, ChunkMsg)) (*Server, error) {
+	return ServeWithDisconnect(l, handler, nil)
+}
+
+// ServeWithDisconnect is Serve with an optional callback invoked after a
+// connection ends. The bool reports whether the client sent the protocol end
+// frame before the connection dropped.
+func ServeWithDisconnect(l net.Listener, handler func(*Session, ChunkMsg), onDisconnect func(*Session, bool)) (*Server, error) {
 	if l == nil {
 		return nil, fmt.Errorf("transport: listener must not be nil")
 	}
 
 	srv := &Server{
-		listener:    l,
-		connections: make(map[net.Conn]struct{}),
-		handler:     handler,
+		listener:     l,
+		connections:  make(map[net.Conn]struct{}),
+		handler:      handler,
+		onDisconnect: onDisconnect,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -128,6 +137,13 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	defer log.Infof("disconnected tool=%s task_id=%s",
 		sess.ToolName, sess.TaskID)
 
+	sawEnd := false
+	defer func() {
+		if s.onDisconnect != nil {
+			s.onDisconnect(sess, sawEnd)
+		}
+	}()
+
 	for {
 		if ctx.Err() != nil {
 			return
@@ -151,6 +167,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		s.handler(sess, chunk)
 
 		if chunk.End {
+			sawEnd = true
 			return
 		}
 	}
