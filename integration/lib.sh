@@ -418,7 +418,9 @@ huatuo_bamai_metrics() {
 
 # Reject error/panic keywords in the log.
 huatuo_bamai_log_check() {
-	! grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	if grep -nE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2; then
+		return 1
+	fi
 }
 
 # ----------------------------- metrics helpers --------------------------------

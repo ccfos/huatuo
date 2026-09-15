@@ -23,8 +23,10 @@ source "${ROOT_DIR}/e2e/lib.sh"
 _e2e_cleanup() {
 	local code=$?
 	[[ $code -eq 0 ]] && sleep 10 # wait more logs to be collected
-	e2e_test_teardown "$code" || true
-	exit $code
+	if ! e2e_test_teardown "$code"; then
+		code=1
+	fi
+	exit "$code"
 }
 trap "_e2e_cleanup" EXIT
 
