@@ -28,7 +28,7 @@ readonly ES_PASSWORD="huatuo-integration"
 readonly API_TOKEN="integration-admin"
 readonly OTHER_API_TOKEN="integration-other"
 readonly PROFILE_DURATION=30
-readonly PROFILE_INTERVAL=5
+readonly PROFILE_INTERVAL=10
 
 continuous_profiling_requirements
 
