@@ -32,6 +32,7 @@ k8s_create_pod() {
 		kubectl run "${name}-${i}" \
 			-n ${ns} \
 			--image=${image} \
+			--image-pull-policy=Never \
 			--restart=Never \
 			-l ${label} \
 			-- sleep infinity
