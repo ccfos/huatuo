@@ -15,6 +15,7 @@
 package server
 
 import (
+	"container/list"
 	"net"
 	"net/http"
 	"strconv"
@@ -130,13 +131,7 @@ func newHTTPMetricsMiddleware(reg prometheus.Registerer) httpGin.HandlerFunc {
 
 // a middleware for global rate limiting.
 func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
-	type limiterEntry struct {
-		limiter  *rate.Limiter
-		lastSeen time.Time
-	}
-	var mu sync.Mutex
-	limiters := make(map[string]limiterEntry)
-	var requests uint64
+	limiters := newClientLimiters(r, burst)
 	return func(c *httpGin.Context) {
 		key := internalContext(c).UserID
 		if key == "" {
@@ -145,25 +140,7 @@ func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
 				key = host
 			}
 		}
-		now := time.Now()
-		mu.Lock()
-		entry, exists := limiters[key]
-		if !exists {
-			entry.limiter = rate.NewLimiter(r, burst)
-		}
-		entry.lastSeen = now
-		limiters[key] = entry
-		requests++
-		if requests%1000 == 0 {
-			for client, candidate := range limiters {
-				if now.Sub(candidate.lastSeen) > 10*time.Minute {
-					delete(limiters, client)
-				}
-			}
-		}
-		allowed := entry.limiter.Allow()
-		mu.Unlock()
-		if !allowed {
+		if !limiters.allow(key, time.Now()) {
 			ctx := internalContext(c)
 			response.ErrorWithCode(
 				ctx,
@@ -175,5 +152,93 @@ func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
 			return
 		}
 		c.Next()
+	}
+}
+
+const (
+	// limiterPruneInterval controls how often idle client limiters are
+	// pruned; pruning walks the LRU list from the oldest side only.
+	limiterPruneInterval = 1000
+	// limiterIdleTTL is how long an unused limiter is kept.
+	limiterIdleTTL = 10 * time.Minute
+	// maxLimiters caps tracked clients so source-address churn cannot grow
+	// the map without bound.
+	maxLimiters = 10000
+)
+
+type limiterEntry struct {
+	key      string
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+// clientLimiters tracks per-client rate limiters. Entries are LRU-ordered:
+// when the map is full the least recently seen client is evicted, and idle
+// entries are pruned from the oldest side every limiterPruneInterval
+// requests.
+type clientLimiters struct {
+	mu       sync.Mutex
+	limit    rate.Limit
+	burst    int
+	entries  map[string]*list.Element
+	order    *list.List // front = most recently seen
+	requests uint64
+}
+
+func newClientLimiters(limit rate.Limit, burst int) *clientLimiters {
+	return &clientLimiters{
+		limit:   limit,
+		burst:   burst,
+		entries: make(map[string]*list.Element),
+		order:   list.New(),
+	}
+}
+
+func (c *clientLimiters) allow(key string, now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.requests++
+	if c.requests%limiterPruneInterval == 0 {
+		c.pruneLocked(now)
+	}
+
+	if el, ok := c.entries[key]; ok {
+		entry := el.Value.(*limiterEntry)
+		entry.lastSeen = now
+		c.order.MoveToFront(el)
+		return entry.limiter.Allow()
+	}
+
+	entry := &limiterEntry{
+		key:      key,
+		limiter:  rate.NewLimiter(c.limit, c.burst),
+		lastSeen: now,
+	}
+	c.entries[key] = c.order.PushFront(entry)
+	if len(c.entries) > maxLimiters {
+		c.evictOldestLocked()
+	}
+
+	return entry.limiter.Allow()
+}
+
+func (c *clientLimiters) evictOldestLocked() {
+	el := c.order.Back()
+	if el == nil {
+		return
+	}
+	entry := c.order.Remove(el).(*limiterEntry)
+	delete(c.entries, entry.key)
+}
+
+func (c *clientLimiters) pruneLocked(now time.Time) {
+	for c.order.Len() > 0 {
+		entry := c.order.Back().Value.(*limiterEntry)
+		if now.Sub(entry.lastSeen) <= limiterIdleTTL {
+			return
+		}
+		c.order.Remove(c.order.Back())
+		delete(c.entries, entry.key)
 	}
 }
