@@ -16,8 +16,6 @@
 
 set -euo pipefail
 
-export TEST_LOG_TAG="E2E TEST"
-
 source ${ROOT_DIR}/integration/lib.sh
 
 # k8s

@@ -34,8 +34,7 @@ S_ADDR="10.99.1.1"
 C_ADDR="10.99.1.2"
 
 if ! iptables -m connbytes -h 2>&1 | grep -q connbytes; then
-	log_info "SKIP: iptables connbytes module not available on this kernel"
-	exit 0
+	skip "iptables connbytes module not available on this kernel"
 fi
 
 require_python3

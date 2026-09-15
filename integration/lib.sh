@@ -18,19 +18,30 @@ set -euo pipefail
 
 # --------------------------------- log --------------------------------------
 
-TEST_LOG_TAG=${TEST_LOG_TAG:-"INTEGRATION TEST"}
+TEST_LOG_TAG=${TEST_LOG_TAG:-INTEGRATION}
 
-log_info() { echo "[${TEST_LOG_TAG}] $*"; }
-log_warn() { echo "[${TEST_LOG_TAG}][WARN] $*" >&2; }
-log_error() { echo "[${TEST_LOG_TAG}][ERROR] $*" >&2; }
+log_info() {
+	printf '[%s][%s] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*"
+}
+log_warn() {
+	printf '[%s][%s][WARN] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
+}
+log_error() {
+	printf '[%s][%s][ERROR] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
+}
 fatal() {
-	echo "[${TEST_LOG_TAG}][FAIL] $*" >&2
+	printf '[%s][%s][FAIL] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
 	exit 1
 }
 
 # skip exits 0 so the harness treats it as success without false confidence.
 skip() {
-	echo "[${TEST_LOG_TAG}][SKIP] $*"
+	printf '[%s][%s][SKIP] ⏭️ %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*"
 	exit 0
 }
 
@@ -418,7 +429,9 @@ huatuo_bamai_metrics() {
 
 # Reject error/panic keywords in the log.
 huatuo_bamai_log_check() {
-	if grep -nE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2; then
+	if grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"; then
+		sed -E "s/(${HUATUO_BAMAI_MATCH_KEYWORDS})/\x1b[1;31m\1\x1b[0m/gI" \
+			"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2
 		return 1
 	fi
 }

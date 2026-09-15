@@ -16,6 +16,7 @@
 
 set -euo pipefail
 
+export TEST_LOG_TAG=E2E
 source "./integration/env.sh"
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/e2e/lib.sh"
