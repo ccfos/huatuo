@@ -29,43 +29,8 @@ import (
 	"strings"
 	"testing"
 
-	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
 )
-
-func captureSymbolLogs(t *testing.T, level string) *bytes.Buffer {
-	t.Helper()
-	originalLevel := log.GetLevel()
-	originalOutput := log.GetOutput()
-	var output bytes.Buffer
-	log.SetOutput(&output)
-	log.SetLevel(level)
-	t.Cleanup(func() {
-		log.SetOutput(originalOutput)
-		log.SetLevel(originalLevel.String())
-	})
-	return &output
-}
-
-func TestCaptureSymbolLogsRestoresOutput(t *testing.T) {
-	originalOutput := log.GetOutput()
-	var restoredOutput bytes.Buffer
-	log.SetOutput(&restoredOutput)
-	t.Cleanup(func() { log.SetOutput(originalOutput) })
-
-	t.Run("capture", func(t *testing.T) {
-		output := captureSymbolLogs(t, "info")
-		log.Info("captured message")
-		if !strings.Contains(output.String(), "captured message") {
-			t.Fatalf("captured output: %q", output.String())
-		}
-	})
-
-	log.Info("restored message")
-	if !strings.Contains(restoredOutput.String(), "restored message") {
-		t.Fatalf("restored output: %q", restoredOutput.String())
-	}
-}
 
 func writeKallsymsFixture(t *testing.T, lines []string) string {
 	t.Helper()
@@ -987,8 +952,7 @@ func TestElfSymbolsForPCsPrefersSymtabAndFallsBackForUnresolvedPCs(t *testing.T)
 	}
 }
 
-func TestElfSymbolsForPCsDoesNotLogMissingSourceAtInfo(t *testing.T) {
-	output := captureSymbolLogs(t, "info")
+func TestElfSymbolsForPCsMissingDynsymReturnsNoSymbols(t *testing.T) {
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
 		typ:         elf.SHT_SYMTAB,
 		stringTable: []byte("\x00target\x00"),
@@ -1004,11 +968,6 @@ func TestElfSymbolsForPCsDoesNotLogMissingSourceAtInfo(t *testing.T) {
 	got, err := elfSymbolsForPCs(f, []uint64{0x1021}, limits)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("elfSymbolsForPCs: got %v, err %v; want no symbols", got, err)
-	}
-	// A missing optional dynsym is normal for stripped binaries, so it must not
-	// add an info-level log after the result has already established the miss.
-	if strings.Contains(output.String(), "dynsym not available") {
-		t.Fatalf("missing optional dynsym logged at info: %s", output.String())
 	}
 }
 

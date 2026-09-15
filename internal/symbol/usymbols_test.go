@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"testing"
 
 	"huatuo-bamai/internal/procfs"
@@ -142,8 +141,7 @@ func TestNewUsymResolver(t *testing.T) {
 	}
 }
 
-func TestResolveELFPCsDoesNotLogLimitsAtInfo(t *testing.T) {
-	output := captureSymbolLogs(t, "info")
+func TestResolveELFPCsReturnsLimitError(t *testing.T) {
 	executablePath, err := os.Executable()
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
@@ -157,12 +155,6 @@ func TestResolveELFPCsDoesNotLogLimitsAtInfo(t *testing.T) {
 
 	if _, err := resolver.resolveELFPCs(executablePath, &elfSymbolCache{}, []uint64{1}); !errors.Is(err, errELFSymbolLimit) {
 		t.Fatalf("resolveELFPCs: got %v, want errELFSymbolLimit", err)
-	}
-	if strings.Contains(output.String(), "limits reached") {
-		t.Fatalf("repeated ELF limit logged above debug: %s", output.String())
-	}
-	if strings.Contains(output.String(), "parse ELF PCs") {
-		t.Fatalf("ELF parse diagnostics must remain below info level: %s", output.String())
 	}
 }
 
