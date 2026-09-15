@@ -19,8 +19,8 @@ import (
 	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
-//go:generate mockery --name=Aggregator --dir=. --filename=mock_aggregator_test.go --inpackage --case=underscore
-//go:generate mockery --name=Formatter --dir=../output --filename=mock_formatter_test.go --output=. --outpkg=aggregator --case=underscore
+//go:generate mockery --config /dev/null --name=Aggregator --dir=. --filename=mock_aggregator_test.go --inpackage --case=underscore
+//go:generate mockery --config /dev/null --name=Formatter --dir=../output --filename=mock_formatter_test.go --output=. --outpkg=aggregator --case=underscore
 
 // Aggregator absorbs profiler records into language-specific aggregated
 // state and exports the result on demand. Each profiler language provides
