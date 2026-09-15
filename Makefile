@@ -164,6 +164,9 @@ build: $(APP_CMD_BIN_TARGETS)
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
 	@cp *.conf $(APP_CMD_OUTPUT)/conf/
 
+install-tools:
+	@build/install-tools.sh
+
 $(APP_CMD_BIN_TARGETS): gen-build $(GO_SRCS)
 $(APP_CMD_OUTPUT)/bin/%:
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
@@ -214,4 +217,4 @@ integration: build
 e2e: build
 	@bash e2e/run.sh
 
-.PHONY: build gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: build install-tools gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
