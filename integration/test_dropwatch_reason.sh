@@ -52,9 +52,11 @@ bpf_tool_setup dropwatch
 DROPWATCH_PID=$!
 sleep 0.5
 
-for ((packet = 0; packet < 100; packet++)); do
-	printf x > "/dev/udp/${TARGET_IP}/${TARGET_PORT}" 2> /dev/null || true
-done
+timeout 2 bash -c "
+	while :; do
+		printf x > /dev/udp/${TARGET_IP}/${TARGET_PORT}
+	done
+" 2> /dev/null || true
 
 if ! wait "${DROPWATCH_PID}"; then
 	DROPWATCH_PID=""
