@@ -66,6 +66,21 @@ func TestValidateResolvedPIDs(t *testing.T) {
 	require.EqualError(t, validateResolvedPIDs("Java", nil), "start Java profiler: no target processes found")
 }
 
+func TestHasExecutablePrefix(t *testing.T) {
+	tests := map[string]bool{
+		"python3.12":         true,
+		"platform-python3.6": true,
+		"java":               false,
+		"my-python":          false,
+	}
+	for name, want := range tests {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, want, hasExecutablePrefix(name, "python"))
+		})
+	}
+	require.False(t, hasExecutablePrefix("platform-java", "java"))
+}
+
 func TestValidateToolFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tool")

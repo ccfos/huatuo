@@ -85,7 +85,7 @@ func validateProcessExecutables(profilerName, executablePrefix string, pids []in
 		if err != nil {
 			return err
 		}
-		if !strings.HasPrefix(filepath.Base(path), executablePrefix) {
+		if !hasExecutablePrefix(filepath.Base(path), executablePrefix) {
 			return fmt.Errorf(
 				"%s PID %d executable %q, want prefix %q",
 				profilerName,
@@ -96,4 +96,12 @@ func validateProcessExecutables(profilerName, executablePrefix string, pids []in
 		}
 	}
 	return nil
+}
+
+func hasExecutablePrefix(name, prefix string) bool {
+	if strings.HasPrefix(name, prefix) {
+		return true
+	}
+	// RHEL 8 names its system Python executable platform-python.
+	return prefix == "python" && strings.HasPrefix(name, "platform-python")
 }
