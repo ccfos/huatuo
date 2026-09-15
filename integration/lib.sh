@@ -83,7 +83,7 @@ allocate_available_port() {
 	local attempt port
 	for ((attempt = 0; attempt < 20; attempt++)); do
 		port=$((20000 + RANDOM % 20001))
-		if ! ss -H -ltn | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
+		if ! ss -H -tan | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
 			echo "${port}"
 			return 0
 		fi
