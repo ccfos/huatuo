@@ -61,8 +61,10 @@ java \
 	> "${WORK_DIR}/beta.out" 2> "${WORK_DIR}/beta.err" &
 PROFILER_TARGET_PID1=$!
 
-kill -0 "${PROFILER_TARGET_PID0}" 2> /dev/null || fatal "alpha fixture exited immediately"
-kill -0 "${PROFILER_TARGET_PID1}" 2> /dev/null || fatal "beta fixture exited immediately"
+wait_until 30 1 grep -qx ready "${WORK_DIR}/alpha.out" \
+	|| fatal "alpha fixture did not become ready"
+wait_until 30 1 grep -qx ready "${WORK_DIR}/beta.out" \
+	|| fatal "beta fixture did not become ready"
 
 log_info "profiling Java pids=${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1}"
 if ! "${TOOL_BIN}" \
