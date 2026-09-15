@@ -2,9 +2,10 @@ name: OS Distro QEMU Test
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   # start VMs and test in them
@@ -17,68 +18,73 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # amd64
           - arch: amd64
             os: ubuntu26.04
             runner: ubuntu-24.04
-            vm_name: "huatuo-os-distro-test-vm-ubuntu26.04"
-            vm_mac: "4A:6F:6C:69:6E:20"
-            vm_ip: "192.168.122.100"
+            image: huatuo/os-distro-test:ubuntu26.04.amd64-20260915032000-8d05de220887-fae8fc715bea6500-efbbd69167ddaa34
           - arch: amd64
             os: ubuntu24.04
             runner: ubuntu-24.04
-            vm_name: "huatuo-os-distro-test-vm-ubuntu24.04"
-            vm_mac: "4A:6F:6C:69:6E:20"
-            vm_ip: "192.168.122.100"
+            image: huatuo/os-distro-test:ubuntu24.04.amd64-20260915032000-8d05de220887-fcedeb44fa774175-efbbd69167ddaa34
           - arch: amd64
             os: ubuntu22.04
             runner: ubuntu-24.04
-            vm_name: "huatuo-os-distro-test-vm-ubuntu22.04"
-            vm_mac: "4A:6F:6C:69:6E:20"
-            vm_ip: "192.168.122.100"
+            image: huatuo/os-distro-test:ubuntu22.04.amd64-20260915032000-8d05de220887-9548f93344760678-efbbd69167ddaa34
           - arch: amd64
             os: ubuntu20.04
             runner: ubuntu-24.04
-            vm_name: "huatuo-os-distro-test-vm-ubuntu20.04"
-            vm_mac: "4A:6F:6C:69:6E:20"
-            vm_ip: "192.168.122.100"
-
-        #   # arm64 (too slow)
-        #   - arch: arm64
-        #     os: ubuntu24.04
-        #     runner: ubuntu-22.04-arm
-        #   - arch: arm64
-        #     os: ubuntu22.04
-        #     runner: ubuntu-22.04-arm
+            image: huatuo/os-distro-test:ubuntu20.04.amd64-20260915032000-8d05de220887-763a29a10e27ccf1-efbbd69167ddaa34
+          - arch: amd64
+            os: debian12
+            runner: ubuntu-24.04
+            image: huatuo/os-distro-test:debian12.amd64-20260915032000-8d05de220887-1c1844affc9ec324-efbbd69167ddaa34
+          - arch: amd64
+            os: debian13
+            runner: ubuntu-24.04
+            image: huatuo/os-distro-test:debian13.amd64-20260915032000-8d05de220887-8fc205ebdce62ea0-efbbd69167ddaa34
+          - arch: amd64
+            os: rocky8
+            runner: ubuntu-24.04
+            image: huatuo/os-distro-test:rocky8.amd64-20260915032000-8d05de220887-a80018bc4ab22aa3-efbbd69167ddaa34
+          - arch: amd64
+            os: rocky9
+            runner: ubuntu-24.04
+            image: huatuo/os-distro-test:rocky9.amd64-20260915032000-8d05de220887-b7a56faa7fc2bf5c-efbbd69167ddaa34
+          - arch: amd64
+            os: fedora44
+            runner: ubuntu-24.04
+            image: huatuo/os-distro-test:fedora44.amd64-20260915032000-8d05de220887-6f8e78db95104a60-efbbd69167ddaa34
+          - arch: amd64
+            os: openeuler22.03
+            runner: ubuntu-24.04
+            image: huatuo/os-distro-test:openeuler22.03.amd64-20260915032000-8d05de220887-3c601405ed9199bb-efbbd69167ddaa34
+          - arch: amd64
+            os: openeuler24.03
+            runner: ubuntu-24.04
+            image: huatuo/os-distro-test:openeuler24.03.amd64-20260915032000-8d05de220887-64101e9d1a712c78-efbbd69167ddaa34
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        if: ${{ env.ACT_RUN != 'true' }}
-        uses: docker/setup-buildx-action@v3.3.0
-
       - name: Host Init
         run: |
-          .github/workflows/scripts/qemu-0-host-init.sh ${{ matrix.arch }} ${{ matrix.os }}
+          .github/workflows/scripts/qemu-0-host-init.sh "${{ matrix.arch }}"
 
       - name: Start VM
         timeout-minutes: 30
+        env:
+          VM_IMAGE_REF: ${{ matrix.image }}
         run: |
-          .github/workflows/scripts/qemu-1-start-vm.sh ${{ matrix.arch }} ${{ matrix.os }} ${{ matrix.vm_name }} ${{ matrix.vm_mac }} ${{ matrix.vm_ip }}
+          .github/workflows/scripts/qemu-1-start-vm.sh \
+            "${{ matrix.arch }}" "${{ matrix.os }}"
 
       - name: Run in VM
         timeout-minutes: 120
         run: |
-          ssh \
-          -i ${HOME}/.ssh/id_ed25519_vm \
-          -o StrictHostKeyChecking=no \
-          -o UserKnownHostsFile=/dev/null \
-          root@${{ matrix.vm_ip }} "bash -s -- ${{ matrix.arch }} ${{ matrix.os }}" \
-          < .github/workflows/scripts/qemu-2-run-in-vm.sh
+          .github/workflows/scripts/qemu-2-run-in-vm.sh
 
       - name: Cleanup VM
-        if: success()
+        if: always()
         run: |
-          .github/workflows/scripts/qemu-3-cleanup.sh ${{ matrix.vm_name }} ${{ matrix.vm_mac }} ${{ matrix.vm_ip }}
+          .github/workflows/scripts/qemu-3-cleanup.sh

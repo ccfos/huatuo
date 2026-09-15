@@ -1,154 +1,87 @@
 #!/usr/bin/env bash
-set -xeuo pipefail
+#
+# Copyright 2026 The HuaTuo Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 
-ARCH=${1:-amd64}
-OS_DISTRO=${2:-ubuntu24.04}
-GOLANG_VERSION="1.24.0"
+# Purpose: Stream the repository-owned guest test script into the running VM.
+# Caller: GitHub workflow os-distro-qemu-test.yml, as the qemu-2 step; qemu-local-test.sh locally.
+# Environment:
+# - VM_ENV_FILE: Required qemu-1 environment file containing VM connection state.
+# - VM_PROXY_HOST: Optional host proxy address; requires VM_PROXY_PORT.
+# - VM_PROXY_PORT: Optional host proxy port; requires VM_PROXY_HOST.
+# Parameters:
+# - None.
+# Examples:
+# - VM_ENV_FILE=/tmp/run/vm.env qemu-2-run-in-vm.sh
 
-COMMAMND_DEPS=(
-	"go"
-	"make"
-	"clang"
-	"gcc"
-	"git"
-	"jq"
-	"kubectl"
-	"curl"
-	"wget"
-	"python3"
+set -euo pipefail
+
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)
+source "$ROOT_DIR/.github/workflows/scripts/vm-test/logging.sh"
+trap 'vm_phase_result qemu-2 "$?"' EXIT
+(($# == 0)) || {
+	vm_log_error 'usage: qemu-2-run-in-vm.sh'
+	exit 2
+}
+: "${VM_ENV_FILE:?VM_ENV_FILE is required; run qemu-1-start-vm.sh first}"
+[[ -f "$VM_ENV_FILE" && ! -L "$VM_ENV_FILE" ]] || {
+	vm_log_error "qemu-2: vm.env is missing or unsafe: $VM_ENV_FILE"
+	exit 1
+}
+# vm.env is emitted by the checksum-verified packaged runner.
+source "$VM_ENV_FILE"
+
+proxy_host=${VM_PROXY_HOST:-}
+proxy_port=${VM_PROXY_PORT:-}
+proxy_guest_port=11008
+if [[ -n "$proxy_host" || -n "$proxy_port" ]]; then
+	[[ -n "$proxy_host" && -n "$proxy_port" ]] || {
+		vm_log_error 'qemu-2: VM_PROXY_HOST and VM_PROXY_PORT must be set together'
+		exit 2
+	}
+	[[ "$proxy_host" =~ ^[A-Za-z0-9.-]+$ ]] || {
+		vm_log_error "qemu-2: invalid VM_PROXY_HOST: $proxy_host"
+		exit 2
+	}
+	[[ "$proxy_port" =~ ^[0-9]{1,5}$ ]] || {
+		vm_log_error "qemu-2: invalid VM_PROXY_PORT: $proxy_port"
+		exit 2
+	}
+	proxy_port=$((10#$proxy_port))
+	((proxy_port >= 1 && proxy_port <= 65535)) || {
+		vm_log_error "qemu-2: invalid VM_PROXY_PORT: $proxy_port"
+		exit 2
+	}
+	if ! timeout 2 bash -c 'exec 3<>"/dev/tcp/$1/$2"' \
+		_ "$proxy_host" "$proxy_port" 2> /dev/null; then
+		vm_log_error "qemu-2: configured proxy is not reachable: ${proxy_host}:${proxy_port}"
+		exit 1
+	fi
+fi
+ssh_opts=(
+	-i "$VM_SSH_KEY"
+	-o BatchMode=yes
+	-o ExitOnForwardFailure=yes
+	-o StrictHostKeyChecking=no
+	-o UserKnownHostsFile=/dev/null
 )
+if [[ -n "$proxy_port" ]]; then
+	ssh_opts+=(-R "${proxy_guest_port}:${proxy_host}:${proxy_port}")
+fi
 
-function check_command_deps() {
-	local ok=1
-	for cmd in "${COMMAMND_DEPS[@]}"; do
-		if ! command -v "$cmd" &> /dev/null; then
-			echo "⚠️ $cmd not found"
-			ok=0
-		fi
-	done
-
-	[ $ok -eq 1 ] || exit 1
-}
-
-function print_sys_info() {
-	# sys info
-	uname -a
-	if [ -f /etc/os-release ]; then
-		cat /etc/os-release
-	fi
-
-	echo "$PATH" | tr ':' '\n' | awk '{printf "  %s\n", $0}'
-	env | sort
-
-	lscpu || true
-
-	free -h
-
-	ip addr show || true
-	ip route show || true
-
-	df -h
-
-	# tool chains
-	go version || true
-	go env || true
-
-	docker version || true
-	sudo docker info || true
-	crictl version || true
-
-	kubectl get pods -A || true
-	crictl images || true
-	systemctl status kubelet || true
-	ps -ef | grep kubelet | grep -v grep || true
-
-	curl -k --cert /var/lib/kubelet/pki/kubelet-client-current.pem \
-		--key /var/lib/kubelet/pki/kubelet-client-current.pem \
-		--header "Content-Type: application/json" \
-		'https://127.0.0.1:10250/pods/' || true
-}
-
-function install_golang() {
-	local GOLANG_URL="https://mirrors.aliyun.com/golang/go${GOLANG_VERSION}.linux-${ARCH}.tar.gz"
-	local GOLANG_TAR="go${GOLANG_VERSION}.linux-${ARCH}.tar.gz"
-
-	local need_install=1
-
-	if command -v go > /dev/null 2>&1; then
-		local goversion
-		goversion=$(go version | awk '{print $3}' | sed 's/^go//')
-		[[ "$goversion" == "$GOLANG_VERSION" ]] && need_install=0
-	fi
-
-	if [[ $need_install -eq 1 ]]; then
-		echo "installing go ${GOLANG_VERSION}..."
-
-		wget -q -O "$GOLANG_TAR" "$GOLANG_URL"
-		rm -rf /usr/local/go
-		tar -C /usr/local -xzf "$GOLANG_TAR"
-		rm -f "$GOLANG_TAR"
-	else
-		echo "go ${GOLANG_VERSION} already installed"
-	fi
-
-	export PATH="/usr/local/go/bin:${PATH}"                      # golang
-	export PATH="$(/usr/local/go/bin/go env GOPATH)/bin:${PATH}" # installed tools
-
-	go env -w GOPROXY=https://goproxy.cn,direct
-}
-
-function prapre_test_env() {
-	case $OS_DISTRO in
-	ubuntu*)
-		# dpkg uses POSIX locks, so let apt wait for the lock itself.
-		local -a apt_get=(sudo apt-get -o DPkg::Lock::Timeout=300)
-		packages=(
-			# basic
-			"make" "libbpf-dev" "clang" "git" "gcc" "jq" "capnproto"
-			# tcpshark retransmit integration test deps
-			"iptables" "iproute2" "python3"
-		)
-		missing_packages=()
-
-		for pkg in "${packages[@]}"; do
-			if dpkg --status "$pkg" &> /dev/null; then
-				echo "$pkg is already installed."
-			else
-				echo "$pkg is missing."
-				missing_packages+=("$pkg")
-			fi
-		done
-
-		if [ "${#missing_packages[@]}" -gt 0 ]; then
-			echo "installing missing packages: ${missing_packages[*]}"
-			"${apt_get[@]}" update
-			"${apt_get[@]}" install -y "${missing_packages[@]}"
-		fi
-		# Ubuntu 20.04 Default clang-10 Has a CO-RE Relocation Bug (Fixed in LLVM 12 / D87153) — Use clang-12 Instead
-		if [[ "$OS_DISTRO" == "ubuntu20.04" ]]; then
-			"${apt_get[@]}" install -y clang-12
-			sudo ln -sf /usr/bin/clang-12 /usr/local/bin/clang
-		fi
-		;;
-	esac
-
-	which mockery || go install github.com/vektra/mockery/v2@v2.53.6
-	which capnpc-go || go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
-	which shfmt || go install mvdan.cc/sh/v3/cmd/shfmt@v3.11.0
-
-	git config --global --add safe.directory /mnt/host
-}
-
-print_sys_info
-install_golang
-prapre_test_env
-check_command_deps
-
-cd /mnt/host && pwd
-ls -alh /mnt/host
-
-echo -e "\n\n⬅️ test..."
-
-make test
-
-echo -e "✅ test ok."
+# The streamed script owns all guest setup and test commands; qemu-2 only provides transport.
+vm_log "running guest tests on $VM_IP"
+ssh "${ssh_opts[@]}" "root@$VM_IP" bash -s \
+	< "$ROOT_DIR/.github/workflows/scripts/vm-test/run-in-vm.sh"
