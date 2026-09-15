@@ -137,16 +137,18 @@ func newRasTracing() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-// hasRasTracepoint reports whether the running kernel exposes the ras:*
-// tracepoint family. Without it, CO-RE relocations against
-// trace_event_raw_mc_event resolve to a poisoned helper id and BPF load
-// fails at the verifier — common on stripped VM kernels (e.g. OrbStack).
+// hasRasTracepoint reports whether the running kernel exposes the tracepoints
+// required by the RAS BPF object. Without them, loading or attaching fails on
+// stripped VM kernels.
 func hasRasTracepoint() bool {
-	for _, p := range []string{
-		"/sys/kernel/tracing/events/ras",
-		"/sys/kernel/debug/tracing/events/ras",
+	for _, root := range []string{
+		"/sys/kernel/tracing/events",
+		"/sys/kernel/debug/tracing/events",
 	} {
-		if _, err := os.Stat(p); err == nil {
+		if _, err := os.Stat(root + "/ras"); err != nil {
+			continue
+		}
+		if _, err := os.Stat(root + "/mce/mce_record"); err == nil {
 			return true
 		}
 	}
