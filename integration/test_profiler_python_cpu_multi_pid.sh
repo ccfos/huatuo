@@ -43,6 +43,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+py_spy_supports_target() {
+	timeout 2 "${PYSPY_BIN}" dump --pid "${PROFILER_PARENT_PID}" \
+		> "${WORK_DIR}/py-spy-probe.out" 2> "${WORK_DIR}/py-spy-probe.err"
+}
+
 python3 "${FIXTURE}" parent "${PROFILER_PROFILER_CHILD_PID_FILE}" \
 	> "${WORK_DIR}/parent.out" 2> "${WORK_DIR}/parent.err" &
 PROFILER_PARENT_PID=$!
@@ -57,6 +62,9 @@ PROFILER_INDEPENDENT_PID=$!
 kill -0 "${PROFILER_PARENT_PID}" || fatal "Python parent exited immediately"
 kill -0 "${PROFILER_CHILD_PID}" || fatal "Python child exited immediately"
 kill -0 "${PROFILER_INDEPENDENT_PID}" || fatal "independent Python process exited immediately"
+
+wait_until 5 1 py_spy_supports_target \
+	|| skip "py-spy does not support $(python3 --version 2>&1)"
 
 log_info "profiling Python pids=${PROFILER_PARENT_PID},${PROFILER_CHILD_PID},${PROFILER_INDEPENDENT_PID}"
 if ! "${TOOL_BIN}" \
