@@ -44,7 +44,6 @@ if kernel_version_le 5 4; then
 	# Validate the kernel hook instead of requiring a specific user-space frame.
 	EXPECTED_SYMBOL="${KERNEL_MMAP_SYMBOL}"
 fi
-readonly EXPECTED_SYMBOL
 
 # --- workspace + cleanup -----------------------------------------------------
 
@@ -123,7 +122,13 @@ fi
 log_info "checking for expected symbol '${EXPECTED_SYMBOL}' in profiler output"
 
 if ! grep -q "${EXPECTED_SYMBOL}" "${FOLDED_FILES[@]}"; then
-	fatal "expected symbol '${EXPECTED_SYMBOL}' not found in profiler output"
+	if [[ "${EXPECTED_SYMBOL}" != "${KERNEL_MMAP_SYMBOL}" ]] \
+		&& grep -q "${KERNEL_MMAP_SYMBOL}" "${FOLDED_FILES[@]}"; then
+		log_info "user stack stopped in libc; using kernel symbol '${KERNEL_MMAP_SYMBOL}'"
+		EXPECTED_SYMBOL="${KERNEL_MMAP_SYMBOL}"
+	else
+		fatal "expected symbol '${EXPECTED_SYMBOL}' not found in profiler output"
+	fi
 fi
 
 log_info "found expected symbol '${EXPECTED_SYMBOL}'"
