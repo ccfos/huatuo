@@ -26,18 +26,57 @@ import (
 )
 
 type testBackend struct {
-	saved []driver.Record
+	saved       []driver.Record
+	saveContext context.Context
 }
 
 func (*testBackend) Init(context.Context, string, []driver.Index) error { return nil }
 
 func (b *testBackend) Save(
-	_ context.Context,
+	ctx context.Context,
 	record driver.Record,
 	_ driver.SaveOptions,
 ) error {
 	b.saved = append(b.saved, record)
+	b.saveContext = ctx
 	return nil
+}
+
+func TestStoreSaveContextPropagatesContext(t *testing.T) {
+	backend := &testBackend{}
+	persistence, err := storage.NewStore[*Document](
+		t.Context(),
+		"memory",
+		backend,
+		Collection,
+		mapper{},
+	)
+	if err != nil {
+		t.Fatalf("storage.NewStore() error = %v", err)
+	}
+	store := &Store{
+		backends: []*storage.Store[*Document]{persistence},
+		hub:      watch.NewHub[*Document](),
+	}
+	type contextKey struct{}
+	ctx := context.WithValue(t.Context(), contextKey{}, "value")
+	observedTimestamp := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
+	document := &Document{
+		Document: types.Document{
+			Hostname:          "node-1",
+			TracerID:          "trace-1",
+			TracerRunType:     types.TracerRunTypeEvent,
+			ObservedTimestamp: &observedTimestamp,
+		},
+		TracerData: map[string]any{"value": float64(1)},
+	}
+
+	if err := store.SaveContext(ctx, document); err != nil {
+		t.Fatalf("Store.SaveContext() error = %v", err)
+	}
+	if backend.saveContext != ctx {
+		t.Fatal("storage backend did not receive the caller context")
+	}
 }
 
 func (*testBackend) Get(context.Context, string) (driver.Record, error) {

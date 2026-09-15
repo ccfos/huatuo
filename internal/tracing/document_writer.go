@@ -15,6 +15,7 @@
 package tracing
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"time"
@@ -63,6 +64,11 @@ func DisableDocumentWriter() {
 
 // Save enriches and publishes tracing data when the process-wide writer is enabled.
 func Save(request *WriteRequest) error {
+	return SaveContext(context.Background(), request)
+}
+
+// SaveContext enriches and publishes tracing data with caller cancellation.
+func SaveContext(ctx context.Context, request *WriteRequest) error {
 	current := configuredWriter.Load()
 	if current == nil {
 		return nil
@@ -89,7 +95,7 @@ func Save(request *WriteRequest) error {
 	if err != nil {
 		return err
 	}
-	return current.store.Save(&tracingstore.Document{
+	return current.store.SaveContext(ctx, &tracingstore.Document{
 		Document:   metadata,
 		TracerData: request.TracerData,
 	})

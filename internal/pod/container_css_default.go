@@ -175,9 +175,13 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader) 
 
 				switch data.Operation {
 				case abi.CgroupCSSOperationUpdate:
-					_ = cgroupUpdateOrCreateCssData(&data)
+					if err := cgroupUpdateOrCreateCssData(&data); err == nil {
+						notifyContainerLifecycle()
+					}
 				case abi.CgroupCSSOperationRemove:
-					_ = cgroupDeleteCssData(&data)
+					if err := cgroupDeleteCssData(&data); err == nil {
+						notifyContainerLifecycle()
+					}
 				default:
 					log.Errorf("unsupported cgroup CSS operation: %+v", data)
 				}

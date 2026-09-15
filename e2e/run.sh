@@ -28,6 +28,11 @@ _e2e_cleanup() {
 }
 trap "_e2e_cleanup" EXIT
 
+if ! kernel_version_le 6 5; then
+	log_info "disabling sched-blame on unsupported kernel $(uname -r)"
+	HUATUO_BAMAI_ARGS_E2E+=("--disable-tracing" "sched-blame")
+fi
+
 huatuo_bamai_start "${HUATUO_BAMAI_ARGS_E2E[@]}"
 
 # auto run all test_*.sh scripts in the e2e

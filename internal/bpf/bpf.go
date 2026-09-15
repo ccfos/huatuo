@@ -56,6 +56,12 @@ type BPF interface {
 	// EventPipeByName gets event-pipe by the mapName and returns a PerfEventReader.
 	EventPipeByName(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error)
 
+	// RawEventPipe gets an optioned event-pipe for variable-size raw records.
+	RawEventPipe(ctx context.Context, mapID uint32, opts PerfEventReaderOptions) (PerfEventRawReader, error)
+
+	// RawEventPipeByName gets an optioned raw event-pipe by map name.
+	RawEventPipeByName(ctx context.Context, mapName string, opts PerfEventReaderOptions) (PerfEventRawReader, error)
+
 	// AttachAndEventPipe attaches and event-pipe and returns a PerfEventReader.
 	AttachAndEventPipe(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error)
 
