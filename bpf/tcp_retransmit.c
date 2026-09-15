@@ -315,10 +315,10 @@ retransmit_filter_pass(void *ctx, const struct tcp_retransmit_event *ev)
 }
 
 SEC("tracepoint/tcp/tcp_retransmit_skb")
-int retrans_skb(struct trace_event_raw_tcp_event_sk_skb_compat *ctx)
+int retrans_skb(void *ctx)
 {
-	struct sk_buff *skb = (struct sk_buff *)ctx->skbaddr;
-	struct sock *sk = (struct sock *)ctx->skaddr;
+	struct sk_buff *skb = (struct sk_buff *)tracepoint_arg(ctx, 0);
+	struct sock *sk = (struct sock *)tracepoint_arg(ctx, 1);
 
 	if (!skb || !sk)
 		return 0;
@@ -326,7 +326,6 @@ int retrans_skb(struct trace_event_raw_tcp_event_sk_skb_compat *ctx)
 	struct tcp_retransmit_event ev = {};
 
 	init_retransmit_event(&ev, TCP_RETRANSMIT_EVENT_SKB);
-
 	ev.skb_addr = (u64)(unsigned long)skb;
 	fill_retransmit_event_from_sk(&ev, sk);
 

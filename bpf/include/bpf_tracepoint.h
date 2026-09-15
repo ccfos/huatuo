@@ -1,15 +1,17 @@
 #ifndef __BPF_TRACEPOINT_H__
 #define __BPF_TRACEPOINT_H__
 
-/*
- * Linux 7.0 renamed the tcp_retransmit_skb BTF context type, so CO-RE
- * cannot resolve the old name. Use a local layout to avoid that relocation.
- */
-struct trace_event_raw_tcp_event_sk_skb_compat {
-	struct trace_entry ent;
-	const void *skbaddr;
-	const void *skaddr;
-};
+/* Vendor kernels can append fields to trace_entry, shifting tracepoint args. */
+static __always_inline const void *tracepoint_arg(const void *ctx, u32 index)
+{
+	u32 offset = bpf_core_type_size(struct trace_entry);
+	const void *arg = NULL;
+
+	offset = (offset + sizeof(void *) - 1) & ~(sizeof(void *) - 1);
+	bpf_probe_read_kernel(&arg, sizeof(arg),
+			      (const char *)ctx + offset + index * sizeof(void *));
+	return arg;
+}
 
 /*
  * hungtask: trace_event_raw_sched_process_hang::comm changed from a
