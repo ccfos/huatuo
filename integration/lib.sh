@@ -114,12 +114,17 @@ wait_until() {
 	if (($# > 0)); then
 		invocation+=" $*"
 	fi
-	local end=$(($(date +%s) + timeout))
+	local start end now elapsed
+	start=$(date +%s)
+	end=$((start + timeout))
 	local attempt=0
 
-	while [ "$(date +%s)" -lt "$end" ]; do
+	while true; do
+		now=$(date +%s)
+		((now < end)) || break
 		attempt=$((attempt + 1))
-		log_info "wait attempt #${attempt}: [${invocation}]"
+		elapsed=$((now - start))
+		log_info "wait attempt #${attempt} (${elapsed}s/${timeout}s): [${invocation}]"
 		if "$func" "$@"; then
 			return 0
 		fi

@@ -64,7 +64,7 @@ run_profile_case() {
 		-cp "${WORK_DIR}" TestProfilerJavaMemory \
 		> "${out_dir}/java.out" 2> "${out_dir}/java.err" &
 	PROFILER_TARGET_PID=$!
-	wait_until 10 1 java_fixture_is_ready \
+	wait_until 10 0.1 java_fixture_is_ready \
 		"${PROFILER_TARGET_PID}" "${out_dir}/java.out" \
 		|| fatal "Java memory fixture did not become ready for mode=${mode}"
 
