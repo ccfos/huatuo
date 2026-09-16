@@ -253,7 +253,7 @@ func (r *UsymResolver) resolveELFPCs(path string, cache *elfSymbolCache, pcs []u
 	if len(unresolved) == 0 {
 		return result, nil
 	}
-	f, err := elf.Open(path)
+	f, err := openBoundedELF(path, r.elfSymbolLimits.MaxMetadataBytes)
 	if err != nil {
 		return result, fmt.Errorf("open ELF %q: %w", path, err)
 	}
@@ -261,7 +261,7 @@ func (r *UsymResolver) resolveELFPCs(path string, cache *elfSymbolCache, pcs []u
 	if cache.state == nil {
 		cache.state = newELFSymbolParseState(r.elfSymbolLimits)
 	}
-	syms, err := elfSymbolsForPCsWithState(f, unresolved, cache.state)
+	syms, err := elfSymbolsForPCsWithState(f.File, unresolved, cache.state)
 	if err != nil {
 		log.Debugf("symbol: parse ELF PCs for %q: %v", path, err)
 	}
@@ -316,7 +316,7 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*executableCache, error) {
 		return cache, nil
 	}
 
-	f, err := elf.Open(path)
+	f, err := openBoundedELF(path, r.elfSymbolLimits.MaxMetadataBytes)
 	if err != nil {
 		return nil, fmt.Errorf("elf.Open %q: %w", path, err)
 	}
@@ -374,7 +374,7 @@ func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*elfSymbolCache
 		return cache, nil
 	}
 
-	f, err := elf.Open(libPath)
+	f, err := openBoundedELF(libPath, r.elfSymbolLimits.MaxMetadataBytes)
 	if err != nil {
 		return nil, fmt.Errorf("elf.Open %q: %w", libPath, err)
 	}

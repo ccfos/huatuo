@@ -50,6 +50,7 @@ var errELFSymbolLimit = errors.New("ELF symbol resource limit exceeded")
 
 // ELFSymbolLimits bounds resources used while parsing one ELF.
 // MaxMetadataBytes covers symbol metadata and cumulative string decompression.
+// The same limit separately bounds transient ELF opening metadata.
 // MaxSymbolCount also caps retained exact-PC results.
 type ELFSymbolLimits struct {
 	MaxMetadataBytes uint64
