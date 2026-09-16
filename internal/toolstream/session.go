@@ -81,14 +81,28 @@ func (s *Server) AwaitSession(ctx context.Context, toolName, taskID string) erro
 }
 
 // CancelSession drops a session expectation that cannot reach a clean end.
+// Waiters blocked in AwaitSession are woken with an error so they do not
+// hang until their context expires.
 func (s *Server) CancelSession(toolName, taskID string) {
 	if s == nil {
 		return
 	}
 	key := sessionKey{toolName, taskID}
 	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	expected := s.sessions[key]
+	if expected == nil {
+		return
+	}
 	delete(s.sessions, key)
-	s.sessionsMu.Unlock()
+	if expected.closed {
+		return
+	}
+	expected.closed = true
+	if expected.err == nil {
+		expected.err = fmt.Errorf("toolstream: session %s/%s cancelled", toolName, taskID)
+	}
+	close(expected.done)
 }
 
 func (s *Server) isExpectedSession(session *transport.Session) bool {
