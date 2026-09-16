@@ -20,6 +20,9 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # Secrets are unavailable on pull_request runs from forks, so the deploy
+    # path must not start there. Same-repo PRs and pushes to main still sync.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: checkout huatuo
         uses: actions/checkout@v4
