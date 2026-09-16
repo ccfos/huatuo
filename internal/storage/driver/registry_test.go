@@ -123,12 +123,24 @@ func TestNewBackend(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		config   Config
+		config   *Config
 		validate func(*testing.T, Backend, error)
 	}{
 		{
+			name:   "nil config",
+			config: nil,
+			validate: func(t *testing.T, backend Backend, err error) {
+				if backend != nil {
+					t.Errorf("NewBackend() backend = %#v, want nil", backend)
+				}
+				if err == nil {
+					t.Errorf("NewBackend() error = nil, want error")
+				}
+			},
+		},
+		{
 			name:   "empty driver",
-			config: Config{},
+			config: &Config{},
 			validate: func(t *testing.T, backend Backend, err error) {
 				if backend != nil {
 					t.Errorf("NewBackend() backend = %#v, want nil", backend)
@@ -140,7 +152,7 @@ func TestNewBackend(t *testing.T) {
 		},
 		{
 			name: "driver not registered",
-			config: Config{
+			config: &Config{
 				Driver: "sqlite",
 			},
 			validate: func(t *testing.T, backend Backend, err error) {
@@ -154,7 +166,7 @@ func TestNewBackend(t *testing.T) {
 		},
 		{
 			name: "nil factory",
-			config: Config{
+			config: &Config{
 				Driver: "nil_factory",
 			},
 			validate: func(t *testing.T, backend Backend, err error) {
@@ -168,7 +180,7 @@ func TestNewBackend(t *testing.T) {
 		},
 		{
 			name: "driver registered",
-			config: Config{
+			config: &Config{
 				Driver:    "memory",
 				SQLiteDSN: "memory://jobs",
 			},
@@ -183,7 +195,7 @@ func TestNewBackend(t *testing.T) {
 		},
 		{
 			name: "factory returns error",
-			config: Config{
+			config: &Config{
 				Driver:    "memory",
 				SQLiteDSN: "return-error",
 			},
@@ -200,7 +212,7 @@ func TestNewBackend(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			backend, err := NewBackend(&tc.config)
+			backend, err := NewBackend(tc.config)
 			tc.validate(t, backend, err)
 		})
 	}
