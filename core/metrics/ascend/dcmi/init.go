@@ -15,12 +15,25 @@
 
 package dcmi
 
+import (
+	"errors"
+	"fmt"
+)
+
 // DcInit loads and initializes the Ascend DCMI library.
 func DcInit() error {
 	if err := libdcmi.load(); err != nil {
 		return err
 	}
-	return checkReturnCode("dcmi_init", dcmiInit())
+	if err := checkReturnCode("dcmi_init", dcmiInit()); err != nil {
+		// load() already took a library reference. Roll it back so a failed
+		// native init does not leave libdcmi.so open with a positive count.
+		if closeErr := libdcmi.close(); closeErr != nil {
+			return errors.Join(err, fmt.Errorf("release dcmi library after init failure: %w", closeErr))
+		}
+		return err
+	}
+	return nil
 }
 
 // DcShutDown shuts down the Ascend DCMI library.
