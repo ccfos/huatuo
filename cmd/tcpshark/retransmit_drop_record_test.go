@@ -24,7 +24,7 @@ import (
 
 func TestDropEventFromRecord(t *testing.T) {
 	record := newIPv4DropwatchTCPRecord(40)
-	record.Meta.KtimeNS = 100
+	record.Meta.KernelObservedNS = 100
 	record.Meta.NetNamespaceCookie = 200
 	record.Meta.NetNamespaceInum = 300
 	record.StackSize = 16
@@ -34,7 +34,7 @@ func TestDropEventFromRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dropEventFromRecord() error = %v", err)
 	}
-	if event.ktimeNS != 100 ||
+	if event.kernelObservedNS != 100 ||
 		event.namespace != (namespaceID{cookie: 200, inode: 300}) {
 		t.Fatalf("scalar mapping = %+v", event)
 	}
@@ -63,7 +63,7 @@ func TestDropEventFromRecordUsesIPLengthForSequenceSpan(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			test.record.Meta.KtimeNS = 1
+			test.record.Meta.KernelObservedNS = 1
 			test.record.Meta.NetNamespaceCookie = 1
 			event, err := dropEventFromRecord(test.record)
 			if err != nil {
@@ -91,7 +91,7 @@ func TestDropEventFromRecordUsesRawFlags(t *testing.T) {
 	const flags = packet.TCPFlagSYN | packet.TCPFlagFIN
 
 	record := newIPv4DropwatchTCPRecord(50)
-	record.Meta.KtimeNS = 1
+	record.Meta.KernelObservedNS = 1
 	record.Meta.NetNamespaceCookie = 1
 	record.PktHdr.Raw[33] = flags
 
@@ -110,7 +110,7 @@ func TestDropEventFromRecordUsesRawFlags(t *testing.T) {
 
 func TestDropEventFromRecordParseErrorKeepsScalars(t *testing.T) {
 	record := &abi.DropwatchPacketEvent{}
-	record.Meta.KtimeNS = 100
+	record.Meta.KernelObservedNS = 100
 	record.Meta.NetNamespaceCookie = 200
 	record.PktHdr.RawLen = 1
 
@@ -118,7 +118,7 @@ func TestDropEventFromRecordParseErrorKeepsScalars(t *testing.T) {
 	if err == nil {
 		t.Fatal("dropEventFromRecord() error = nil, want parse error")
 	}
-	if event == nil || event.ktimeNS != 100 ||
+	if event == nil || event.kernelObservedNS != 100 ||
 		event.namespace != (namespaceID{cookie: 200}) {
 		t.Fatalf("scalar event = %+v", event)
 	}
@@ -134,7 +134,7 @@ func TestDropEventFromRecordRejectsNil(t *testing.T) {
 	}
 }
 
-func TestDropEventFromRecordRejectsZeroKtime(t *testing.T) {
+func TestDropEventFromRecordRejectsZeroKernelObservation(t *testing.T) {
 	record := newIPv4DropwatchTCPRecord(40)
 
 	event, err := dropEventFromRecord(record)

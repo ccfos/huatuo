@@ -499,3 +499,13 @@ Replacing per-event Index API calls with a buffered BulkIndexer + auto-retry add
 <img src="/img/contact-weixin.png" alt="WeChat QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+### Kernel observation time
+
+Event documents can include a top-level `kernel_observed_timestamp` containing
+a UTC date-time. `observed_timestamp` is userspace observation time, and
+`uploaded_timestamp` is storage write time. These fields do not fill one
+another. Older documents and events without kernel timestamps omit the new
+field; historical data is not migrated automatically. The raw
+`kernel_observed_ns` stays in process for correlation and is not
+written to new documents.

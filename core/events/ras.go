@@ -96,11 +96,11 @@ type rasEvent = abi.RASEvent
 
 // RasTracingData is the structured record persisted by tracing.Save.
 type RasTracingData struct {
-	Device            string `json:"dev"`
-	Event             string `json:"event"`
-	ErrType           string `json:"type"`
-	Info              string `json:"info"`
-	observedTimestamp time.Time
+	Device                  string `json:"dev"`
+	Event                   string `json:"event"`
+	ErrType                 string `json:"type"`
+	Info                    string `json:"info"`
+	kernelObservedTimestamp time.Time
 }
 
 const defaultThrEventBackoff = 30 * time.Minute
@@ -359,16 +359,16 @@ func newRasTracingData[T any](ev *rasEvent, device, event, errType string, info 
 	if err != nil {
 		return nil, fmt.Errorf("marshal %s info: %w", event, err)
 	}
-	observedAt, err := timeutil.KtimeToTime(ev.KtimeNS)
+	observedAt, err := timeutil.MonotonicToTime(ev.KernelObservedNS)
 	if err != nil {
 		return nil, fmt.Errorf("convert %s event time: %w", event, err)
 	}
 	return &RasTracingData{
-		Device:            device,
-		Event:             event,
-		ErrType:           errType,
-		Info:              string(b),
-		observedTimestamp: observedAt.UTC(),
+		Device:                  device,
+		Event:                   event,
+		ErrType:                 errType,
+		Info:                    string(b),
+		kernelObservedTimestamp: observedAt.UTC(),
 	}, nil
 }
 
@@ -681,6 +681,8 @@ func (ras *rasTracing) rasEventLoop(ctx context.Context, reader bpf.PerfEventRea
 				return fmt.Errorf("read ras event: %w", err)
 			}
 
+			observedTimestamp := time.Now().UTC()
+
 			if int(ev.Type) < maxNumHWErrTypes {
 				ras.counts[ev.Type].Add(1)
 			}
@@ -700,9 +702,10 @@ func (ras *rasTracing) rasEventLoop(ctx context.Context, reader bpf.PerfEventRea
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:        "ras",
-				ObservedTimestamp: tracerData.observedTimestamp,
-				TracerData:        tracerData,
+				TracerName:              "ras",
+				ObservedTimestamp:       observedTimestamp,
+				KernelObservedTimestamp: tracerData.kernelObservedTimestamp,
+				TracerData:              tracerData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

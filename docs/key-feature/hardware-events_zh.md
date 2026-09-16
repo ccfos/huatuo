@@ -176,7 +176,8 @@ graph TB
         "region": "xxx",
         "uploaded_timestamp": "2026-05-11T16:58:47.328548319+08:00",
         "tracer_name": "ras",
-        "observed_timestamp": "2026-05-11T08:58:47.328548319Z",
+        "observed_timestamp": "2026-05-11T08:58:47.329Z",
+        "kernel_observed_timestamp": "2026-05-11T08:58:47.328548319Z",
         "tracer_type": "event",
         "tracer_data": {
             "dev": "MEM",
@@ -192,7 +193,8 @@ graph TB
     | `Device`    | 发生错误的硬件部件标识（如 `CPU/MEM`、`MEM`、`ACPI`、`PCIe 0000:01:00.0`） |
     | `Event`     | 事件子类型（`MCE`、`EDAC`、`APIC`、`AER`） |
     | `ErrType`   | 错误严重级别（见下表）                                       |
-    | `ObservedTimestamp` | 硬件错误发生时的 UTC 时间                              |
+    | `ObservedTimestamp` | 用户态观测事件的 UTC 时间                              |
+    | `KernelObservedTimestamp` | 内核观测事件的 UTC 时间（Document 顶层字段） |
     | `Info`      | 具体事件的详细字段                                           |
 
     | 错误类型        | 含义                         | 典型来源                                              |

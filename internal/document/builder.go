@@ -29,12 +29,13 @@ const defaultHostname = "huatuo-dev"
 
 // Input contains fields supplied by an observation producer.
 type Input struct {
-	TracerName        string
-	TracerID          string
-	ContainerID       string
-	StartedTimestamp  time.Time
-	ObservedTimestamp time.Time
-	TracerRunType     string
+	TracerName              string
+	TracerID                string
+	ContainerID             string
+	StartedTimestamp        time.Time
+	ObservedTimestamp       time.Time
+	KernelObservedTimestamp time.Time
+	TracerRunType           string
 }
 
 // Builder enriches observation metadata with Node and container fields.
@@ -74,6 +75,10 @@ func (b *Builder) Build(input *Input) (types.Document, error) {
 	if !input.ObservedTimestamp.IsZero() {
 		observedTimestamp := input.ObservedTimestamp.UTC()
 		metadata.ObservedTimestamp = &observedTimestamp
+	}
+	if !input.KernelObservedTimestamp.IsZero() {
+		kernelObservedTimestamp := input.KernelObservedTimestamp.UTC()
+		metadata.KernelObservedTimestamp = &kernelObservedTimestamp
 	}
 	if input.ContainerID == "" {
 		return metadata, nil

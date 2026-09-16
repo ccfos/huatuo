@@ -86,8 +86,10 @@ const (
 
 // TCPRetransmitTracing is the canonical JSON schema for a TCP retransmission event.
 type TCPRetransmitTracing struct {
-	ObservedTimestamp   string `json:"observed_timestamp,omitempty"`
-	KtimeNS             uint64 `json:"ktime_ns,omitempty"`
+	KernelObservedTimestamp string `json:"kernel_observed_timestamp,omitempty"`
+	ObservedTimestamp       string `json:"observed_timestamp,omitempty"`
+	// Internal correlation uses the raw clock; documents expose UTC instead.
+	KernelObservedNS    uint64 `json:"-"`
 	Source              string `json:"source,omitempty"`
 	Comm                string `json:"comm"`
 	PID                 uint64 `json:"pid"`

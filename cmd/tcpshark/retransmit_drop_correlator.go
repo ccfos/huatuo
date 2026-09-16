@@ -32,20 +32,20 @@ type retransmitDropResult struct {
 type retransmitDropCorrelator struct {
 	drops                   dropwatchCandidates
 	waitingRetransmits      retransmitWaitQueue
-	readyFromKtimeNS        uint64
+	readyFromMonotonicNS    uint64
 	nextWaitingRetransmitID uint64
 }
 
 func newRetransmitDropCorrelator(
-	readyFromKtimeNS uint64,
+	readyFromMonotonicNS uint64,
 ) (*retransmitDropCorrelator, error) {
-	if readyFromKtimeNS == 0 {
-		return nil, fmt.Errorf("create retransmit drop correlator: ready ktime must be non-zero")
+	if readyFromMonotonicNS == 0 {
+		return nil, fmt.Errorf("create retransmit drop correlator: ready monotonic timestamp must be non-zero")
 	}
 	return &retransmitDropCorrelator{
-		drops:              newDropwatchCandidates(dropwatchCandidateCapacity),
-		waitingRetransmits: newRetransmitWaitQueue(retransmitWaitCapacity),
-		readyFromKtimeNS:   readyFromKtimeNS,
+		drops:                newDropwatchCandidates(dropwatchCandidateCapacity),
+		waitingRetransmits:   newRetransmitWaitQueue(retransmitWaitCapacity),
+		readyFromMonotonicNS: readyFromMonotonicNS,
 	}, nil
 }
 
@@ -173,7 +173,7 @@ func (c *retransmitDropCorrelator) correlationReasons(
 	hasCrossNetNSCandidate bool,
 	extraReasons []types.CorrelationReason,
 ) []types.CorrelationReason {
-	hasIncompleteStartup := c.startupHistoryIncomplete(event.KtimeNS)
+	hasIncompleteStartup := c.startupHistoryIncomplete(event.KernelObservedNS)
 	reasonCount := 1 + len(extraReasons)
 	if hasIncompleteStartup {
 		reasonCount++
@@ -193,11 +193,11 @@ func (c *retransmitDropCorrelator) correlationReasons(
 	return append(reasons, extraReasons...)
 }
 
-func (c *retransmitDropCorrelator) startupHistoryIncomplete(ktimeNS uint64) bool {
-	if ktimeNS < c.readyFromKtimeNS {
+func (c *retransmitDropCorrelator) startupHistoryIncomplete(kernelObservedNS uint64) bool {
+	if kernelObservedNS < c.readyFromMonotonicNS {
 		return true
 	}
-	return ktimeNS-c.readyFromKtimeNS < uint64(maxDropToRetransmitAge)
+	return kernelObservedNS-c.readyFromMonotonicNS < uint64(maxDropToRetransmitAge)
 }
 
 func matchedRetransmitDropResult(

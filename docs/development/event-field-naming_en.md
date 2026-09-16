@@ -13,8 +13,8 @@ conventions of each layer. The same name must not represent different concepts.
 
 | Layer | Rule | Example |
 | --- | --- | --- |
-| BPF C | Names reflect the original kernel semantics and units | `tgid`, `ktime_ns` |
-| Go | MixedCaps; initialisms remain uppercase | `TGID`, `KtimeNS` |
+| BPF C | Names reflect the original kernel semantics and units | `tgid`, `kernel_observed_ns` |
+| Go | MixedCaps; initialisms remain uppercase | `TGID`, `KernelObservedNS` |
 | JSON | Use user-facing statistical semantics | `pid`, `observed_timestamp` |
 | CLI flags | Lowercase kebab case | `--pid`, `--cpuid` |
 | CLI text and headers | Use standard uppercase initialisms | `PID`, `CPU`, `COMM` |
@@ -33,8 +33,9 @@ conventions of each layer. The same name must not represent different concepts.
 
 | Concept | Definition | BPF C | Go | JSON |
 | --- | --- | --- | --- | --- |
-| BPF monotonic time | Value returned by `bpf_ktime_get_ns()` | `ktime_ns` | `KtimeNS` | Use `ktime_ns` only for diagnostics |
-| Observation time | Userspace-normalized UTC time | Not applicable | `ObservedTimestamp` | `observed_timestamp` |
+| Raw kernel observation time | `CLOCK_MONOTONIC` nanoseconds, excluding system suspend | `kernel_observed_ns` | `KernelObservedNS` | Internal correlation only; not serialized |
+| Kernel observation time | Raw monotonic timestamp converted to UTC | Not applicable | `KernelObservedTimestamp` | `kernel_observed_timestamp` |
+| Userspace observation time | UTC time when the event producer observes the event in userspace | Not applicable | `ObservedTimestamp` | `observed_timestamp` |
 | Unix nanosecond time | Unix time in nanoseconds | `timestamp_ns` | `TimestampNS` | `timestamp_ns` |
 | Nanosecond duration | Difference between two time points | `<name>_ns` | `<Name>NS` | `<name>_ns` |
 | Nanosecond threshold | Duration corresponding to a trigger condition | `<name>_threshold_ns` | `<Name>ThresholdNS` | `<name>_threshold_ns` |
@@ -55,3 +56,28 @@ conventions of each layer. The same name must not represent different concepts.
 Kernel terms `inum` and `ifindex` remain single words in Go. Do not split them
 into `INum` or `IfIndex`. User-facing Go and JSON fields expand `netns` to
 `NetNamespace` and `net_namespace`.
+
+## Observation times and compatibility
+
+`kernel_observed_timestamp`, `observed_timestamp`, and `uploaded_timestamp`
+represent kernel observation, userspace observation, and storage write time.
+Kernel observation means the hook execution time, which may differ from the
+onset of a physical hardware error or network fault.
+
+Document stores UTC timestamps at the top level and excludes
+`kernel_observed_ns`. Producers without kernel timestamps and older
+documents omit `kernel_observed_timestamp`; userspace or upload timestamps must
+not fill it. Historical RAS documents used `observed_timestamp` for kernel
+observation, so their userspace observation time cannot be reconstructed.
+
+New tcpshark JSON/text output replaces `ktime_ns` with
+`kernel_observed_timestamp`. Upgrade tools and Agent together. Existing
+documents are not rewritten or backfilled. Conversion requires the same host,
+boot, and host time namespace. Historical events spanning a realtime clock
+step or system suspend cannot be mapped exactly to UTC from monotonic time alone.
+
+UTC conversion caches the monotonic-to-realtime offset. The first call one hour
+after the last successful sample refreshes it; ordinary calls do not extend
+its lifetime. Sampling failures are returned and retried on the next call.
+Realtime clock steps and system suspend do not trigger an early refresh; the
+offset is updated on the first call after the cache expires.

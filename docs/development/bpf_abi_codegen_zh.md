@@ -59,7 +59,7 @@ struct sample_detail {
 };
 
 struct sample_event {
-	u64 ktime_ns;
+	u64 kernel_observed_ns;
 	struct sample_detail detail;
 	u32 tgid;
 	u8 kind;
@@ -97,7 +97,7 @@ ABI 头文件依赖 `u8`、`u16` 等基础类型，应在 `vmlinux.h` 和项目�
 ```c
 struct sample_event event = {};
 
-event.ktime_ns = bpf_ktime_get_ns();
+event.kernel_observed_ns = bpf_ktime_get_ns();
 event.tgid = bpf_get_current_pid_tgid() >> 32;
 event.kind = kind;
 
@@ -159,7 +159,7 @@ if err := reader.ReadInto(&event); err != nil {
 - 同名结构体出现在多个 BPF 对象中时，字段、偏移和大小必须完全一致。
 
 C 名称按下划线转换为 Go 导出名称，例如 `sample_event` 转换为
-`SampleEvent`，`ktime_ns` 转换为 `KtimeNS`。字段语义和跨层命名遵循
+`SampleEvent`，`kernel_observed_ns` 转换为 `KernelObservedNS`。字段语义和跨层命名遵循
 [事件字段命名规范](event-field-naming_zh.md)。避免使用会映射为相同 Go 名称的
 C 名称，例如 `sample_id` 和 `sample_i_d`。
 

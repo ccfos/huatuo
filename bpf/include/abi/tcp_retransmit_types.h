@@ -33,7 +33,8 @@ enum tcp_retransmit_ca_state {
 };
 
 struct tcp_retransmit_event {
-	u64 ktime_ns;
+	/* Host CLOCK_MONOTONIC at observation; excludes system suspend. */
+	u64 kernel_observed_ns;
 	u64 tgid_pid;
 	u64 memcg_css_addr;
 	u64 skb_addr;

@@ -148,8 +148,8 @@ func (d *dropCandidate) isPreferredOver(other *dropCandidate) bool {
 	if other == nil {
 		return true
 	}
-	if d.event.ktimeNS != other.event.ktimeNS {
-		return d.event.ktimeNS > other.event.ktimeNS
+	if d.event.kernelObservedNS != other.event.kernelObservedNS {
+		return d.event.kernelObservedNS > other.event.kernelObservedNS
 	}
 	return d.id > other.id
 }

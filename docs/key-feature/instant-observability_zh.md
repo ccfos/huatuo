@@ -432,7 +432,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 - **dev**：发生错误的硬件设备（如 `CPU/MEM`、`PCIe 0000:3b:00.0`）
 - **event**：错误类型（`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`）
 - **type**：错误严重程度（`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`）
-- **observed_timestamp**：顶层字段，表示硬件错误发生时的 UTC 时间
+- **observed_timestamp**：顶层字段，表示用户态观测事件的 UTC 时间；`kernel_observed_timestamp` 表示内核观测事件的 UTC 时间
 - **info**：JSON 格式的详细错误信息，内容因 event 类型不同而不同
 
 ### 9. netdev_events 网络设备

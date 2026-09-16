@@ -23,6 +23,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -37,7 +38,12 @@ var retransmitEventTypeNames = map[abi.TCPRetransmitEventType]string{
 func retransmitEventFromRecord(
 	record *abi.TCPRetransmitEvent,
 	sourceType string,
-) *types.TCPRetransmitTracing {
+) (*types.TCPRetransmitTracing, error) {
+	observedTimestamp := time.Now().UTC()
+	kernelObservedTimestamp, err := timeutil.MonotonicToTime(record.KernelObservedNS)
+	if err != nil {
+		return nil, fmt.Errorf("convert TCP retransmit kernel observation time: %w", err)
+	}
 	rawEventType := abi.TCPRetransmitEventType(record.EventType)
 	tcpFlagsRaw := record.TCPFlags
 	if rawEventType == abi.TCPRetransmitEventSynack {
@@ -61,34 +67,35 @@ func retransmitEventFromRecord(
 	}
 
 	return &types.TCPRetransmitTracing{
-		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
-		KtimeNS:             record.KtimeNS,
-		TCPReason:           classification.reason.String(),
-		Source:              sourceType,
-		Comm:                bytesutil.ToStr(record.Comm[:]),
-		PID:                 record.TGIDPID >> 32,
-		MemoryCgroupCSSAddr: kernaddr.Format(record.MemcgCSSAddr),
-		NetNamespaceCookie:  record.NetNamespaceCookie,
-		NetNamespaceInum:    record.NetNamespaceInum,
-		TCPState:            packet.TCPStateName(uint8(record.State)),
-		TCPSaddr:            sourceAddress,
-		TCPDaddr:            destinationAddress,
-		TCPSport:            record.Sport,
-		TCPDport:            record.Dport,
-		TCPSeq:              record.TCPSeq,
-		TCPAckSeq:           record.TCPAck,
-		TCPEndSeq:           record.TCPEndSeq,
-		TCPFlags:            packet.TCPFlagStrings[tcpFlagsRaw],
-		TCPFlagsRaw:         tcpFlagsRaw,
-		Phase:               classification.phase.String(),
-		EventType:           eventType,
-		CaState:             record.CaState,
-		IcskRetransmits:     record.IcskRetransmits,
-		IcskPending:         record.IcskPending,
-		ReordSeen:           record.ReordSeen,
-		DsackDups:           record.DsackDups,
-		SkbAddr:             kernaddr.Format(record.SKBAddr),
-	}
+		ObservedTimestamp:       observedTimestamp.Format(time.RFC3339Nano),
+		KernelObservedTimestamp: kernelObservedTimestamp.Format(time.RFC3339Nano),
+		KernelObservedNS:        record.KernelObservedNS,
+		TCPReason:               classification.reason.String(),
+		Source:                  sourceType,
+		Comm:                    bytesutil.ToStr(record.Comm[:]),
+		PID:                     record.TGIDPID >> 32,
+		MemoryCgroupCSSAddr:     kernaddr.Format(record.MemcgCSSAddr),
+		NetNamespaceCookie:      record.NetNamespaceCookie,
+		NetNamespaceInum:        record.NetNamespaceInum,
+		TCPState:                packet.TCPStateName(uint8(record.State)),
+		TCPSaddr:                sourceAddress,
+		TCPDaddr:                destinationAddress,
+		TCPSport:                record.Sport,
+		TCPDport:                record.Dport,
+		TCPSeq:                  record.TCPSeq,
+		TCPAckSeq:               record.TCPAck,
+		TCPEndSeq:               record.TCPEndSeq,
+		TCPFlags:                packet.TCPFlagStrings[tcpFlagsRaw],
+		TCPFlagsRaw:             tcpFlagsRaw,
+		Phase:                   classification.phase.String(),
+		EventType:               eventType,
+		CaState:                 record.CaState,
+		IcskRetransmits:         record.IcskRetransmits,
+		IcskPending:             record.IcskPending,
+		ReordSeen:               record.ReordSeen,
+		DsackDups:               record.DsackDups,
+		SkbAddr:                 kernaddr.Format(record.SKBAddr),
+	}, nil
 }
 
 // dropEventFromRecord leaves flow invalid when packet evidence cannot be
@@ -98,12 +105,12 @@ func dropEventFromRecord(record *abi.DropwatchPacketEvent) (*dropEvent, error) {
 	if record == nil {
 		return nil, fmt.Errorf("convert dropwatch perf record: nil record")
 	}
-	if record.Meta.KtimeNS == 0 {
-		return nil, fmt.Errorf("convert dropwatch perf record: zero ktime")
+	if record.Meta.KernelObservedNS == 0 {
+		return nil, fmt.Errorf("convert dropwatch perf record: zero kernel observation timestamp")
 	}
 
 	event := &dropEvent{
-		ktimeNS: record.Meta.KtimeNS,
+		kernelObservedNS: record.Meta.KernelObservedNS,
 		namespace: namespaceID{
 			cookie: record.Meta.NetNamespaceCookie,
 			inode:  record.Meta.NetNamespaceInum,

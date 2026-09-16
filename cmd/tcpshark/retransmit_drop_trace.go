@@ -40,11 +40,11 @@ func runRetransmitWithDrop(
 	ctx context.Context,
 	session *retransmitDropSession,
 ) (returnErr error) {
-	readyFromKtimeNS, err := timeutil.MonotonicNowNS()
+	readyFromMonotonicNS, err := timeutil.MonotonicNowNS()
 	if err != nil {
-		return fmt.Errorf("read embedded dropwatch ready ktime: %w", err)
+		return fmt.Errorf("read embedded dropwatch ready monotonic timestamp: %w", err)
 	}
-	correlator, err := newRetransmitDropCorrelator(readyFromKtimeNS)
+	correlator, err := newRetransmitDropCorrelator(readyFromMonotonicNS)
 	if err != nil {
 		return err
 	}

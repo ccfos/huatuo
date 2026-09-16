@@ -50,8 +50,8 @@ type namespaceID struct {
 }
 
 type dropEvent struct {
-	ktimeNS   uint64
-	namespace namespaceID
+	kernelObservedNS uint64
+	namespace        namespaceID
 
 	flow        flowKey
 	sequence    uint32
@@ -64,20 +64,20 @@ type dropEvent struct {
 }
 
 type retransmitEntry struct {
-	flow        flowKey
-	namespace   namespaceID
-	ktimeNS     uint64
-	sequence    uint32
-	endSequence uint32
-	hasSequence bool
-	ackSequence uint32
-	kind        retransmitMatchKind
+	flow             flowKey
+	namespace        namespaceID
+	kernelObservedNS uint64
+	sequence         uint32
+	endSequence      uint32
+	hasSequence      bool
+	ackSequence      uint32
+	kind             retransmitMatchKind
 }
 
 func retransmitEntryFromEvent(event *types.TCPRetransmitTracing) (retransmitEntry, bool) {
 	hasNamespace := event != nil &&
 		(event.NetNamespaceCookie != 0 || event.NetNamespaceInum != 0)
-	if event == nil || event.KtimeNS == 0 || !hasNamespace {
+	if event == nil || event.KernelObservedNS == 0 || !hasNamespace {
 		return retransmitEntry{}, false
 	}
 
@@ -103,12 +103,12 @@ func retransmitEntryFromEvent(event *types.TCPRetransmitTracing) (retransmitEntr
 			cookie: event.NetNamespaceCookie,
 			inode:  event.NetNamespaceInum,
 		},
-		ktimeNS:     event.KtimeNS,
-		sequence:    event.TCPSeq,
-		endSequence: event.TCPEndSeq,
-		hasSequence: hasSequence,
-		ackSequence: event.TCPAckSeq,
-		kind:        retransmitMatchKindFromEvent(event),
+		kernelObservedNS: event.KernelObservedNS,
+		sequence:         event.TCPSeq,
+		endSequence:      event.TCPEndSeq,
+		hasSequence:      hasSequence,
+		ackSequence:      event.TCPAckSeq,
+		kind:             retransmitMatchKindFromEvent(event),
 	}, true
 }
 
@@ -206,10 +206,10 @@ func dropMatchesRetransmit(drop *dropEvent, retransmit *retransmitEntry) bool {
 }
 
 func dropWithinRetransmitAge(drop *dropEvent, retransmit *retransmitEntry) bool {
-	if drop.ktimeNS > retransmit.ktimeNS {
+	if drop.kernelObservedNS > retransmit.kernelObservedNS {
 		return false
 	}
-	ageNS := retransmit.ktimeNS - drop.ktimeNS
+	ageNS := retransmit.kernelObservedNS - drop.kernelObservedNS
 	return ageNS <= uint64(maxDropToRetransmitAge)
 }
 

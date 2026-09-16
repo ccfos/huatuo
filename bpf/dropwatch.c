@@ -221,7 +221,7 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 	if (!data)
 		return 0;
 
-	data->meta.ktime_ns = event_ktime;
+	data->meta.kernel_observed_ns = event_ktime;
 	data->meta.tgid_pid = bpf_get_current_pid_tgid();
 	bpf_get_current_comm(&data->meta.comm, sizeof(data->meta.comm));
 	data->meta.skb_addr = (u64)(unsigned long)skb;
@@ -270,7 +270,7 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 						   data, sizeof(*data));
 	if (output_ret == 0 && source == DROPWATCH_DROP_SOURCE_HARDWARE) {
 		u64 skb_addr = data->meta.skb_addr;
-		u64 reported_at = data->meta.ktime_ns;
+		u64 reported_at = data->meta.kernel_observed_ns;
 
 		bpf_map_update_elem(&dropwatch_hardware_skb, &skb_addr,
 				    &reported_at, COMPAT_BPF_ANY);

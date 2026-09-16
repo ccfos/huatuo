@@ -16,6 +16,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -157,5 +158,61 @@ func TestMapperKeepsCommonFieldsFlat(t *testing.T) {
 	}
 	if decoded.Hostname != "node-1" || decoded.TracerID != "trace-1" {
 		t.Fatalf("decoded document = %+v", decoded)
+	}
+}
+
+func TestMapperKernelObservationRoundTrip(t *testing.T) {
+	observed := time.Date(2026, 9, 15, 2, 0, 1, 0, time.UTC)
+	kernel := observed.Add(-time.Second)
+	for _, available := range []bool{false, true} {
+		name := "legacy document"
+		if available {
+			name = "kernel observation present"
+		}
+		t.Run(name, func(t *testing.T) {
+			doc := &Document{Document: types.Document{
+				TracerRunType:     types.TracerRunTypeEvent,
+				ObservedTimestamp: &observed,
+				UploadedTimestamp: observed.Add(time.Second),
+			}}
+			if available {
+				doc.KernelObservedTimestamp = &kernel
+			}
+			m := mapper{}
+			data, err := m.Encode(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatal(err)
+			}
+			_, present := raw[types.DocumentFieldKernelObservedTimestamp]
+			if present != available {
+				t.Fatalf("kernel timestamp presence = %v", present)
+			}
+			fields, err := m.Fields(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, indexed := fields[types.DocumentFieldKernelObservedTimestamp]
+			if indexed != available {
+				t.Fatalf("kernel index presence = %v", indexed)
+			}
+			got, err := m.Decode(driver.Record{Data: data})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.ObservedTimestamp.Equal(observed) {
+				t.Fatal("userspace timestamp changed")
+			}
+			if available {
+				if got.KernelObservedTimestamp == nil || !got.KernelObservedTimestamp.Equal(kernel) {
+					t.Fatalf("kernel timestamp = %v", got.KernelObservedTimestamp)
+				}
+			} else if got.KernelObservedTimestamp != nil {
+				t.Fatal("legacy document gained a kernel timestamp")
+			}
+		})
 	}
 }

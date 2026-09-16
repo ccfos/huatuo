@@ -237,6 +237,7 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 | Field                    | Type     | Description                                                   |
 | ------------------------ | -------- | ------------------------------------------------------------- |
 | `observed_timestamp`     | string   | UTC userspace receive/format time (RFC3339Nano), not the kernel hook timestamp |
+| `kernel_observed_timestamp` | string | UTC kernel observation time (RFC3339Nano), converted from the raw monotonic clock. |
 | `type`                   | string   | Reserved TCP type; currently unset (`1` common, `2` SYN flood, `3`/`4` listen overflow) |
 | `drop_source`            | string   | Drop source: `software` for the kernel network stack or `hardware` for a devlink DROP trap |
 | `drop_reason`            | string   | `SKB_DROP_REASON_*` for software drops; if kernel BTF resolution fails, dropwatch logs a warning and falls back to the numeric value. For hardware drops, this is the devlink trap name |

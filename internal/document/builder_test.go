@@ -55,3 +55,37 @@ func TestNilBuilderIsRejected(t *testing.T) {
 		t.Fatal("Builder.Build() error = nil")
 	}
 }
+
+func TestBuilderKeepsObservationClocksSeparate(t *testing.T) {
+	observed := time.Date(2026, 9, 15, 10, 0, 1, 0, time.FixedZone("CST", 8*60*60))
+	kernel := observed.Add(-time.Second)
+	builder := &Builder{region: "test", hostname: "node"}
+	for _, available := range []bool{false, true} {
+		name := "without kernel observation"
+		if available {
+			name = "with kernel observation"
+		}
+		t.Run(name, func(t *testing.T) {
+			input := &Input{ObservedTimestamp: observed, TracerRunType: types.TracerRunTypeEvent}
+			if available {
+				input.KernelObservedTimestamp = kernel
+			}
+			got, err := builder.Build(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.ObservedTimestamp == nil || !got.ObservedTimestamp.Equal(observed) || got.ObservedTimestamp.Location() != time.UTC {
+				t.Fatalf("userspace timestamp = %v", got.ObservedTimestamp)
+			}
+			if !available {
+				if got.KernelObservedTimestamp != nil {
+					t.Fatal("missing kernel timestamp was synthesized")
+				}
+				return
+			}
+			if got.KernelObservedTimestamp == nil || !got.KernelObservedTimestamp.Equal(kernel) || got.KernelObservedTimestamp.Location() != time.UTC {
+				t.Fatalf("kernel timestamp = %v", got.KernelObservedTimestamp)
+			}
+		})
+	}
+}

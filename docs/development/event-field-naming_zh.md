@@ -12,8 +12,8 @@ weight: 31
 
 | 层 | 规则 | 示例 |
 | --- | --- | --- |
-| BPF C | 名称体现内核原始语义和单位 | `tgid`、`ktime_ns` |
-| Go | MixedCaps；缩写保持全大写 | `TGID`、`KtimeNS` |
+| BPF C | 名称体现内核原始语义和单位 | `tgid`、`kernel_observed_ns` |
+| Go | MixedCaps；缩写保持全大写 | `TGID`、`KernelObservedNS` |
 | JSON | 使用面向用户的统计语义 | `pid`、`observed_timestamp` |
 | CLI 参数 | 小写短横线 | `--pid`、`--cpuid` |
 | CLI 文本和表头 | 使用标准大写缩写 | `PID`、`CPU`、`COMM` |
@@ -32,8 +32,9 @@ weight: 31
 
 | 概念 | 定义 | BPF C | Go | JSON |
 | --- | --- | --- | --- | --- |
-| BPF 单调时间 | `bpf_ktime_get_ns()`| `ktime_ns` | `KtimeNS` | 仅诊断场景使用 `ktime_ns` |
-| 观测时间 | 用户态规范化后的 UTC 时间 | 不适用 | `ObservedTimestamp` | `observed_timestamp` |
+| 内核观测原始时间 | `CLOCK_MONOTONIC` 纳秒读数，不含系统挂起时间 | `kernel_observed_ns` | `KernelObservedNS` | 不序列化，仅用于内部关联 |
+| 内核观测时间 | 原始单调时间转换后的 UTC 时间 | 不适用 | `KernelObservedTimestamp` | `kernel_observed_timestamp` |
+| 用户态观测时间 | 事件生产者在用户态观测事件的 UTC 时间 | 不适用 | `ObservedTimestamp` | `observed_timestamp` |
 | Unix 纳秒时间 | Unix 纳秒时间 | `timestamp_ns` | `TimestampNS` | `timestamp_ns` |
 | 纳秒时长 | 两个时间点的差值 | `<name>_ns` | `<Name>NS` | `<name>_ns` |
 | 纳秒阈值 | 触发条件对应的时长 | `<name>_threshold_ns` | `<Name>ThresholdNS` | `<name>_threshold_ns` |
@@ -54,3 +55,23 @@ weight: 31
 内核术语 `inum` 和 `ifindex` 在 Go 中保持一个单词，不拆成 `INum` 或
 `IfIndex`。面向用户的 Go 和 JSON 字段将 `netns` 展开为
 `NetNamespace` 和 `net_namespace`。
+
+## 观测时间与兼容性
+
+`kernel_observed_timestamp`、`observed_timestamp` 和 `uploaded_timestamp`
+分别表示内核观测、用户态观测和存储写入时刻。内核观测表示 hook 执行时刻，
+不保证等同于物理硬件错误或网络故障开始的时刻。
+
+Document 顶层保存 UTC 时间，不保存 `kernel_observed_ns`。
+没有内核时间的生产者及旧文档省略 `kernel_observed_timestamp`，不得用
+用户态时间或写入时间补填。历史 RAS 文档的 `observed_timestamp` 曾表示
+内核观测时刻，不能据此推算历史用户态观测时刻。
+
+新版 tcpshark JSON/文本以 `kernel_observed_timestamp` 取代原来的 `ktime_ns`。
+工具和 Agent 应一起升级；旧文档保持原样，不自动回填或重写。
+单调时钟与 UTC 的转换要求相同主机、同一次启动及主机时间命名空间。
+跨越校时跳变或系统挂起的历史事件，仅凭单调时间不能精确恢复 UTC。
+
+UTC 转换缓存单调时钟到实时钟的偏移：距上次成功采样满 1 小时后，由下一次
+调用刷新，普通调用不延长缓存期限。采样失败返回错误，下次调用重试。
+系统校时跳变或挂起不会提前触发刷新，偏移会在缓存到期后的下一次调用更新。

@@ -214,7 +214,7 @@ func TestDropwatchSourceReadEvents(t *testing.T) {
 	defer cancel()
 
 	record := newIPv4DropwatchTCPRecord(40)
-	record.Meta.KtimeNS = 10
+	record.Meta.KernelObservedNS = 10
 	record.Meta.NetNamespaceCookie = 1
 	reader := &dropwatchSourceReaderStub{
 		records: []*abi.DropwatchPacketEvent{record},
@@ -234,7 +234,7 @@ func TestDropwatchSourceReadEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readEvents() error = %v", err)
 	}
-	if event.ktimeNS != 10 || event.flow != testFlowKey(12345, 80) ||
+	if event.kernelObservedNS != 10 || event.flow != testFlowKey(12345, 80) ||
 		event.sequence != 123 || event.endSequence != 123 {
 		t.Fatalf("event = %+v", event)
 	}

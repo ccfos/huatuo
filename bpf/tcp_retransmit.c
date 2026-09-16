@@ -45,7 +45,7 @@ static __always_inline void init_retransmit_event(struct tcp_retransmit_event *e
 						  u8 event_type)
 {
 	ev->event_type = event_type;
-	ev->ktime_ns = bpf_ktime_get_ns();
+	ev->kernel_observed_ns = bpf_ktime_get_ns();
 	ev->tgid_pid = bpf_get_current_pid_tgid();
 	bpf_get_current_comm(&ev->comm, sizeof(ev->comm));
 }

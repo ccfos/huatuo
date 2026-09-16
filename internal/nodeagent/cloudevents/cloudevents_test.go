@@ -71,3 +71,20 @@ func newTestDocument(tracerName, runType string) *tracingstore.Document {
 		TracerRunType:     runType,
 	}}
 }
+
+func TestWatchEventSeparatesKernelObservation(t *testing.T) {
+	doc := newTestDocument("tcp_retransmit", types.TracerRunTypeEvent)
+	kernel := doc.ObservedTimestamp.Add(-time.Second)
+	doc.KernelObservedTimestamp = &kernel
+	event := documentToWatchEvent(doc)
+	data, ok := event.Data.(types.WatchEventData)
+	if !ok {
+		t.Fatalf("unexpected payload %T", event.Data)
+	}
+	if data.KernelObservedTimestamp != timeutil.FormatUTC(kernel) {
+		t.Fatalf("kernel timestamp = %q", data.KernelObservedTimestamp)
+	}
+	if data.ObservedTimestamp != timeutil.FormatUTC(*doc.ObservedTimestamp) || event.Time != data.ObservedTimestamp {
+		t.Fatal("userspace observation time changed")
+	}
+}

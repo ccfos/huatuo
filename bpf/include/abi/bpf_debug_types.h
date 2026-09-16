@@ -26,7 +26,8 @@ struct bpf_debug_event {
 	u32 pad0;
 	u8 msg[BPF_DEBUG_MSG_LEN];
 	u64 args[4];
-	u64 ktime_ns;
+	/* Host CLOCK_MONOTONIC at observation; excludes system suspend. */
+	u64 kernel_observed_ns;
 };
 
 BPF_ABI_EXPORT(bpf_debug_event);

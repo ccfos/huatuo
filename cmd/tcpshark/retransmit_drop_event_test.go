@@ -175,7 +175,7 @@ func TestRetransmitEntryRejectsInvalidAddressPair(t *testing.T) {
 
 func testDropEvent(
 	t *testing.T,
-	ktimeNS uint64,
+	kernelObservedNS uint64,
 	sourceAddress,
 	destinationAddress string,
 	sourcePort,
@@ -187,8 +187,8 @@ func testDropEvent(
 ) *dropEvent {
 	t.Helper()
 	return &dropEvent{
-		ktimeNS:   ktimeNS,
-		namespace: namespaceID{cookie: 1, inode: 2},
+		kernelObservedNS: kernelObservedNS,
+		namespace:        namespaceID{cookie: 1, inode: 2},
 		flow: flowKey{
 			source: netip.AddrPortFrom(
 				netip.MustParseAddr(sourceAddress),
@@ -207,7 +207,7 @@ func testDropEvent(
 }
 
 func testRetransmitEvent(
-	ktimeNS uint64,
+	kernelObservedNS uint64,
 	sourceAddress,
 	destinationAddress string,
 	sourcePort,
@@ -216,7 +216,7 @@ func testRetransmitEvent(
 	endSequence uint32,
 ) *types.TCPRetransmitTracing {
 	return &types.TCPRetransmitTracing{
-		KtimeNS:            ktimeNS,
+		KernelObservedNS:   kernelObservedNS,
 		NetNamespaceCookie: 1,
 		NetNamespaceInum:   2,
 		TCPSaddr:           sourceAddress,

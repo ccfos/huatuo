@@ -116,11 +116,11 @@ func TestRetransmitDropCorrelatorWaitDeadline(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			const readyKtimeNS = uint64(1)
-			correlator := newTestRetransmitDropCorrelator(t, readyKtimeNS)
+			const readyMonotonicNS = uint64(1)
+			correlator := newTestRetransmitDropCorrelator(t, readyMonotonicNS)
 			now := time.Unix(20, 0)
 			event := testRetransmitEvent(
-				readyKtimeNS+uint64(maxDropToRetransmitAge),
+				readyMonotonicNS+uint64(maxDropToRetransmitAge),
 				"10.0.0.1",
 				"10.0.0.2",
 				1000,
@@ -151,30 +151,30 @@ func TestRetransmitDropCorrelatorWaitDeadline(t *testing.T) {
 }
 
 func TestRetransmitDropCorrelatorReasons(t *testing.T) {
-	const readyKtimeNS = uint64(100)
+	const readyMonotonicNS = uint64(100)
 	tests := []struct {
-		name       string
-		ktimeNS    uint64
-		prepare    func(*testing.T, *retransmitDropCorrelator)
-		wantReason types.CorrelationReason
-		wantAbsent types.CorrelationReason
+		name             string
+		kernelObservedNS uint64
+		prepare          func(*testing.T, *retransmitDropCorrelator)
+		wantReason       types.CorrelationReason
+		wantAbsent       types.CorrelationReason
 	}{
 		{
-			name:       "startup history before horizon",
-			ktimeNS:    readyKtimeNS + uint64(maxDropToRetransmitAge) - 1,
-			wantReason: types.CorrelationReasonStartupHistoryIncomplete,
+			name:             "startup history before horizon",
+			kernelObservedNS: readyMonotonicNS + uint64(maxDropToRetransmitAge) - 1,
+			wantReason:       types.CorrelationReasonStartupHistoryIncomplete,
 		},
 		{
-			name:       "startup history recovers at horizon",
-			ktimeNS:    readyKtimeNS + uint64(maxDropToRetransmitAge),
-			wantAbsent: types.CorrelationReasonStartupHistoryIncomplete,
+			name:             "startup history recovers at horizon",
+			kernelObservedNS: readyMonotonicNS + uint64(maxDropToRetransmitAge),
+			wantAbsent:       types.CorrelationReasonStartupHistoryIncomplete,
 		},
 		{
-			name:    "unusable drop has no dedicated reason",
-			ktimeNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
+			name:             "unusable drop has no dedicated reason",
+			kernelObservedNS: readyMonotonicNS + uint64(maxDropToRetransmitAge),
 			prepare: func(t *testing.T, c *retransmitDropCorrelator) {
 				_, err := c.processDrop(&dropEvent{
-					ktimeNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
+					kernelObservedNS: readyMonotonicNS + uint64(maxDropToRetransmitAge),
 				}, time.Unix(1, 0))
 				if err != nil {
 					t.Fatalf("processDrop() error = %v", err)
@@ -183,18 +183,18 @@ func TestRetransmitDropCorrelatorReasons(t *testing.T) {
 			wantAbsent: types.CorrelationReason("drop_evidence_unusable"),
 		},
 		{
-			name:    "evicted drop has no dedicated reason",
-			ktimeNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
+			name:             "evicted drop has no dedicated reason",
+			kernelObservedNS: readyMonotonicNS + uint64(maxDropToRetransmitAge),
 			prepare: func(t *testing.T, c *retransmitDropCorrelator) {
 				c.drops.capacity = 1
 				now := time.Unix(1, 0)
 				for sequence := range uint32(2) {
 					_, err := c.processDrop(&dropEvent{
-						ktimeNS:     readyKtimeNS + uint64(sequence),
-						namespace:   namespaceID{cookie: 1},
-						flow:        testFlowKey(1000, 80),
-						sequence:    sequence,
-						endSequence: sequence + 1,
+						kernelObservedNS: readyMonotonicNS + uint64(sequence),
+						namespace:        namespaceID{cookie: 1},
+						flow:             testFlowKey(1000, 80),
+						sequence:         sequence,
+						endSequence:      sequence + 1,
 					}, now.Add(time.Duration(sequence)))
 					if err != nil {
 						t.Fatalf("processDrop() error = %v", err)
@@ -207,11 +207,11 @@ func TestRetransmitDropCorrelatorReasons(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			correlator := newTestRetransmitDropCorrelator(t, readyKtimeNS)
+			correlator := newTestRetransmitDropCorrelator(t, readyMonotonicNS)
 			if test.prepare != nil {
 				test.prepare(t, correlator)
 			}
-			event := &types.TCPRetransmitTracing{KtimeNS: test.ktimeNS}
+			event := &types.TCPRetransmitTracing{KernelObservedNS: test.kernelObservedNS}
 			result := correlator.noMatchResult(event, false)
 			if test.wantReason != "" && !hasResultCorrelationReason(result, test.wantReason) {
 				t.Fatalf("reasons = %v, want %q", result.correlationReasons, test.wantReason)
@@ -421,10 +421,10 @@ func TestRetransmitDropCorrelatorSettlesBeforeCapacityCheck(t *testing.T) {
 
 func newTestRetransmitDropCorrelator(
 	t *testing.T,
-	readyFromKtimeNS uint64,
+	readyFromMonotonicNS uint64,
 ) *retransmitDropCorrelator {
 	t.Helper()
-	correlator, err := newRetransmitDropCorrelator(readyFromKtimeNS)
+	correlator, err := newRetransmitDropCorrelator(readyFromMonotonicNS)
 	if err != nil {
 		t.Fatalf("newRetransmitDropCorrelator() error = %v", err)
 	}

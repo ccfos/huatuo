@@ -41,8 +41,8 @@ dropwatch 与 retransmit 使用不同 perf reader，事件还可能来自不同 
 用户态接收顺序不等于内核发生顺序：
 
 ```text
-CPU 2: drop       ktime=180，暂留在 dropwatch ring
-CPU 0: retransmit ktime=200，先到达用户态
+CPU 2: drop       monotonic_ns=180，暂留在 dropwatch ring
+CPU 0: retransmit monotonic_ns=200，先到达用户态
 用户态: retransmit(200) -> drop(180)
 ```
 
@@ -56,11 +56,11 @@ maxDropToRetransmitAge     = time.Second
 - 100ms 是用户态送达乱序预算。retransmit 先到时进入等待队列，到期仍未匹配则
   输出 `unknown`。处理任一新事件前先结算已经到期的记录；timer 只负责唤醒，
   不决定 deadline 语义。
-- 1s 是因果候选年龄，使用 BPF `ktime_ns` 判断。候选必须满足：
+- 1s 是因果候选年龄，使用 BPF `kernel_observed_ns` 判断。候选必须满足：
 
 ```text
-drop.ktime_ns <= retransmit.ktime_ns
-retransmit.ktime_ns - drop.ktime_ns <= 1s
+drop.kernel_observed_ns <= retransmit.kernel_observed_ns
+retransmit.kernel_observed_ns - drop.kernel_observed_ns <= 1s
 ```
 
 `observed_timestamp` 是用户态墙上时间，受调度和系统时间调整影响，不参与匹配。
@@ -94,7 +94,7 @@ type dropwatchCandidates struct {
 ```
 
 `byAge` 按用户态接收顺序支持 O(1) 容量淘汰和过期清理；`byFlow` 定位候选。
-容量为 4096。容量顺序不用于因果判断，因果判断始终使用 `ktime_ns`。
+容量为 4096。容量顺序不用于因果判断，因果判断始终使用 `kernel_observed_ns`。
 
 ## 5. 严格匹配
 
@@ -108,7 +108,7 @@ type dropwatchCandidates struct {
 反向 ACK 候选使用反向四元组，并要求 ACK 覆盖重传 sequence end。SYN 与
 SYN-ACK 使用各自更严格的 ACK/SYN 条件。
 
-多个候选先选最大的 `drop.ktime_ns`；时间相同时选较新的内部 ID。严格匹配后
+多个候选先选最大的 `drop.kernel_observed_ns`；时间相同时选较新的内部 ID。严格匹配后
 立即从 age 和 flow 两个索引删除，只能消费一次。除 namespace 外均满足的候选
 只记录 `cross_netns_candidate`，不会输出 `host_software`。
 
@@ -145,7 +145,7 @@ reason；没有找到严格匹配时仍以 `no_matching_drop` 输出 `unknown`�
 
 用户态汇总所有 CPU 的 perf_lost，并拒绝计数回退或加法溢出。该状态只说明
 证据完整性，不会把 no-match 提升为确定性网络分类。旧的 active epoch、
-双 slot、inflight、frontier 和 `DrainedThroughKtimeNS` 已删除。
+旧的双 slot、inflight、frontier 和 drain 水位机制已删除。
 
 关联侧根据 IPv4 total length 或 IPv6 payload length 计算 TCP sequence span。
 GSO/offload 下 IP header 长度可能无法覆盖完整 skb；当前不据此扩大匹配范围。

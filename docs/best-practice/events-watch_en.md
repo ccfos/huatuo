@@ -123,7 +123,8 @@ The `data` field contains the standard HUATUO event record:
 |---|---|---|
 | `hostname` | string | Node hostname |
 | `region` | string | Region where the node is located |
-| `observed_timestamp` | string | Kernel event timestamp (Tracer collection time) |
+| `observed_timestamp` | string | UTC time when the event producer observed the event in userspace |
+| `kernel_observed_timestamp` | string | Optional UTC time when the kernel observed the event |
 | `tracer_name` | string | Name of the tracer that triggered the event (see the event list below) |
 | `tracer_id` | string | Unique ID of this event instance |
 | `tracer_run_type` | string | Collection mode: `auto` (triggered automatically) or `manual` |

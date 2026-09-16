@@ -61,7 +61,7 @@ struct sample_detail {
 };
 
 struct sample_event {
-	u64 ktime_ns;
+	u64 kernel_observed_ns;
 	struct sample_detail detail;
 	u32 tgid;
 	u8 kind;
@@ -101,7 +101,7 @@ Use the ABI structure directly when emitting a perf event:
 ```c
 struct sample_event event = {};
 
-event.ktime_ns = bpf_ktime_get_ns();
+event.kernel_observed_ns = bpf_ktime_get_ns();
 event.tgid = bpf_get_current_pid_tgid() >> 32;
 event.kind = kind;
 
@@ -166,8 +166,8 @@ Layout requirements:
   fields, offsets, and size must match exactly.
 
 C names are converted to exported Go names by splitting on underscores. For
-example, `sample_event` becomes `SampleEvent`, and `ktime_ns` becomes
-`KtimeNS`. Field semantics and cross-layer names follow
+example, `sample_event` becomes `SampleEvent`, and `kernel_observed_ns` becomes
+`KernelObservedNS`. Field semantics and cross-layer names follow
 [Event Field Naming](event-field-naming_en.md). Avoid C names that map to the
 same Go name, such as `sample_id` and `sample_i_d`.
 

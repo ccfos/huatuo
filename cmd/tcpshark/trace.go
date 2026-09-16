@@ -243,7 +243,11 @@ func readRetransmitEvents(
 		"TCP retransmit",
 		nil,
 		func(record *abi.TCPRetransmitEvent) error {
-			return consume(retransmitEventFromRecord(record, sourceType))
+			event, err := retransmitEventFromRecord(record, sourceType)
+			if err != nil {
+				return err
+			}
+			return consume(event)
 		},
 	)
 }

@@ -432,7 +432,7 @@ All event records include the following common fields:
 - **dev**: Hardware device where the error occurred (e.g., `CPU/MEM`, `PCIe 0000:3b:00.0`)
 - **event**: Error type (`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`)
 - **type**: Error severity (`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`)
-- **observed_timestamp**: Top-level UTC time when the hardware error occurred
+- **observed_timestamp**: Top-level UTC userspace observation time; `kernel_observed_timestamp` records UTC kernel observation time
 - **info**: JSON-formatted detailed error information; content varies by event type
 
 ### 9. netdev_events

@@ -32,6 +32,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+command -v jq > /dev/null 2>&1 || skip "jq command is not installed"
 command -v bpftool > /dev/null 2>&1 || skip "bpftool command is not installed"
 [[ -r "${KERNEL_BTF}" ]] || skip "kernel BTF is not readable: ${KERNEL_BTF}"
 
@@ -47,7 +48,7 @@ bpf_tool_setup dropwatch
 	--bpf-path "${TOOL_BPF}" \
 	--filter "udp and port ${TARGET_PORT}" \
 	--duration 3 \
-	--output text \
+	--output json \
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
 DROPWATCH_PID=$!
 sleep 0.5
@@ -65,6 +66,7 @@ fi
 DROPWATCH_PID=""
 
 assert_log_has_no_failure "${TOOL_ERR}" "dropwatch"
-grep -q "IPv4/UDP.* reason=SKB_DROP_REASON_" "${TOOL_OUT}" \
+assert_kernel_observation_timestamps "${TOOL_OUT}"
+jq -e -s 'any(.[]; .drop_reason | startswith("SKB_DROP_REASON_"))' "${TOOL_OUT}" > /dev/null \
 	|| fatal "dropwatch did not resolve a symbolic SKB_DROP_REASON_ value"
 log_info "dropwatch resolved a symbolic software drop reason"

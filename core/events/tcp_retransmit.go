@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/exec"
@@ -142,12 +143,21 @@ func handleTCPRetransmitEvent(_ *toolstream.Session, ev *types.TCPRetransmitTrac
 	if err != nil {
 		return fmt.Errorf("parse tcp retransmit observed timestamp: %w", err)
 	}
+	var kernelObservedTimestamp time.Time
+	if ev.KernelObservedTimestamp != "" {
+		kernelObservedTimestamp, err = timeutil.Parse(ev.KernelObservedTimestamp)
+		if err != nil {
+			return fmt.Errorf("parse tcp retransmit kernel observed timestamp: %w", err)
+		}
+	}
 	tracerData := *ev
 	tracerData.ObservedTimestamp = ""
+	tracerData.KernelObservedTimestamp = ""
 	return tracing.Save(&tracing.WriteRequest{
-		TracerName:        tcpRetransmitTracerName,
-		ContainerID:       ev.ContainerID,
-		ObservedTimestamp: observedTimestamp,
-		TracerData:        &tracerData,
+		TracerName:              tcpRetransmitTracerName,
+		ContainerID:             ev.ContainerID,
+		ObservedTimestamp:       observedTimestamp,
+		KernelObservedTimestamp: kernelObservedTimestamp,
+		TracerData:              &tracerData,
 	})
 }

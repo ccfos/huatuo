@@ -67,8 +67,9 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := &DropWatchTracing{
-				ObservedTimestamp: "2026-06-13T00:00:00Z",
-				Layers:            tc.pkt,
+				ObservedTimestamp:       "2026-06-13T00:00:00Z",
+				KernelObservedTimestamp: "2026-06-12T23:59:59Z",
+				Layers:                  tc.pkt,
 			}
 
 			b, err := json.Marshal(ev)

@@ -20,6 +20,9 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/packet"
@@ -95,7 +98,10 @@ func TestFormatHardwareEvent(t *testing.T) {
 	copy(ev.Meta.TrapName[:], "ingress_vlan_filter")
 	copy(ev.Meta.TrapGroupName[:], "l2_drops")
 
-	got := formatEvent(&ev, nil, "tools")
+	got, err := formatEvent(&ev, nil, "tools")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.DropSource != dropSourceHardware {
 		t.Errorf("DropSource = %q, want %q", got.DropSource, dropSourceHardware)
 	}
@@ -168,12 +174,13 @@ func TestWritersRejectShortWrites(t *testing.T) {
 
 func BenchmarkTextWriter(b *testing.B) {
 	event := &types.DropWatchTracing{
-		ObservedTimestamp: "2026-08-04T01:02:03.456789Z",
-		DropSource:        dropSourceHardware,
-		DropReason:        "ingress_vlan_filter",
-		DropReasonGroup:   "l2_drops",
-		PacketLenBytes:    1500,
-		NetdevName:        "eth0",
+		ObservedTimestamp:       "2026-08-04T01:02:03.456789Z",
+		KernelObservedTimestamp: "2026-08-04T01:02:03.456Z",
+		DropSource:              dropSourceHardware,
+		DropReason:              "ingress_vlan_filter",
+		DropReasonGroup:         "l2_drops",
+		PacketLenBytes:          1500,
+		NetdevName:              "eth0",
 	}
 	w := &textWriter{w: io.Discard}
 
@@ -182,5 +189,33 @@ func BenchmarkTextWriter(b *testing.B) {
 		if err := w.Write(event); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestKernelObservationUsesEventTime(t *testing.T) {
+	monotonicNS, err := timeutil.MonotonicNowNS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if monotonicNS < uint64(time.Second) {
+		t.Skip("host has been up for less than one second")
+	}
+	record := abi.DropwatchPacketEvent{}
+	record.Meta.KernelObservedNS = monotonicNS - uint64(time.Second)
+	event, err := formatEvent(&record, nil, "tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kernel, err := time.Parse(time.RFC3339Nano, event.KernelObservedTimestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed, err := time.Parse(time.RFC3339Nano, event.ObservedTimestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	age := observed.Sub(kernel)
+	if age < 900*time.Millisecond || age > 2*time.Second {
+		t.Fatalf("kernel-to-userspace delay = %v, expected about one second", age)
 	}
 }

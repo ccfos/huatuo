@@ -27,28 +27,29 @@ import (
 // terminology and keeps the field distinct from the `Packet*` BPF-metadata
 // prefix family above.
 type DropWatchTracing struct {
-	ObservedTimestamp   string         `json:"observed_timestamp,omitempty"`
-	Type                string         `json:"type,omitempty"`
-	DropSource          string         `json:"drop_source"`
-	DropReason          string         `json:"drop_reason"`
-	DropReasonGroup     string         `json:"drop_reason_group,omitempty"`
-	DropLocation        string         `json:"drop_location,omitempty"`
-	Source              string         `json:"source,omitempty"`
-	Comm                string         `json:"comm"`
-	PID                 uint64         `json:"pid"`
-	ContainerID         string         `json:"container_id,omitempty"`
-	MemoryCgroupCSSAddr string         `json:"memory_cgroup_css_addr"`
-	NetNamespaceCookie  uint64         `json:"net_namespace_cookie"`
-	NetNamespaceInum    uint32         `json:"net_namespace_inum"`
-	NetdevName          string         `json:"netdev_name"`
-	NetdevIfindex       uint32         `json:"netdev_ifindex"`
-	NetdevQueueMapping  uint32         `json:"netdev_queue_mapping"`
-	NetdevLinkStatus    []string       `json:"netdev_linkstatus"`
-	PacketSkbAddr       string         `json:"packet_skb_addr,omitempty"`
-	PacketEthProto      string         `json:"packet_eth_proto"`
-	PacketLenBytes      uint32         `json:"packet_len_bytes"`
-	Layers              *packet.Packet `json:"layers,omitempty"`
-	Stack               string         `json:"stack"`
+	KernelObservedTimestamp string         `json:"kernel_observed_timestamp,omitempty"`
+	ObservedTimestamp       string         `json:"observed_timestamp,omitempty"`
+	Type                    string         `json:"type,omitempty"`
+	DropSource              string         `json:"drop_source"`
+	DropReason              string         `json:"drop_reason"`
+	DropReasonGroup         string         `json:"drop_reason_group,omitempty"`
+	DropLocation            string         `json:"drop_location,omitempty"`
+	Source                  string         `json:"source,omitempty"`
+	Comm                    string         `json:"comm"`
+	PID                     uint64         `json:"pid"`
+	ContainerID             string         `json:"container_id,omitempty"`
+	MemoryCgroupCSSAddr     string         `json:"memory_cgroup_css_addr"`
+	NetNamespaceCookie      uint64         `json:"net_namespace_cookie"`
+	NetNamespaceInum        uint32         `json:"net_namespace_inum"`
+	NetdevName              string         `json:"netdev_name"`
+	NetdevIfindex           uint32         `json:"netdev_ifindex"`
+	NetdevQueueMapping      uint32         `json:"netdev_queue_mapping"`
+	NetdevLinkStatus        []string       `json:"netdev_linkstatus"`
+	PacketSkbAddr           string         `json:"packet_skb_addr,omitempty"`
+	PacketEthProto          string         `json:"packet_eth_proto"`
+	PacketLenBytes          uint32         `json:"packet_len_bytes"`
+	Layers                  *packet.Packet `json:"layers,omitempty"`
+	Stack                   string         `json:"stack"`
 }
 
 // DropwatchPerfStatus reports cumulative diagnostic counters for the embedded

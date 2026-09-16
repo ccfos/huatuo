@@ -29,34 +29,34 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 		{
 			name: "full event",
 			ev: &TCPRetransmitTracing{
-				ObservedTimestamp:   "2026-07-08T09:19:52.042035335Z",
-				KtimeNS:             123456789,
-				TCPReason:           "fast_retransmit",
-				Source:              "events",
-				Comm:                "kube-apiserver",
-				PID:                 1234,
-				ContainerID:         "abc123",
-				MemoryCgroupCSSAddr: "0xffff888012345678",
-				NetNamespaceCookie:  0x2000,
-				NetNamespaceInum:    4026531992,
-				TCPSaddr:            "10.0.0.1",
-				TCPDaddr:            "10.0.0.2",
-				TCPSport:            6443,
-				TCPDport:            58244,
-				TCPState:            "ESTABLISHED",
-				Phase:               "data",
-				EventType:           "tcp_retransmit_skb",
-				CaState:             3,
-				IcskRetransmits:     0,
-				IcskPending:         6,
-				ReordSeen:           10,
-				DsackDups:           2,
-				TCPSeq:              123456,
-				TCPAckSeq:           789012,
-				TCPEndSeq:           123999,
-				TCPFlags:            "ACK|FIN",
-				SkbAddr:             "0xffff888012345678",
-				DropLocation:        "unknown",
+				ObservedTimestamp:       "2026-07-08T09:19:52.042035335Z",
+				KernelObservedTimestamp: "2026-07-08T09:19:52Z",
+				TCPReason:               "fast_retransmit",
+				Source:                  "events",
+				Comm:                    "kube-apiserver",
+				PID:                     1234,
+				ContainerID:             "abc123",
+				MemoryCgroupCSSAddr:     "0xffff888012345678",
+				NetNamespaceCookie:      0x2000,
+				NetNamespaceInum:        4026531992,
+				TCPSaddr:                "10.0.0.1",
+				TCPDaddr:                "10.0.0.2",
+				TCPSport:                6443,
+				TCPDport:                58244,
+				TCPState:                "ESTABLISHED",
+				Phase:                   "data",
+				EventType:               "tcp_retransmit_skb",
+				CaState:                 3,
+				IcskRetransmits:         0,
+				IcskPending:             6,
+				ReordSeen:               10,
+				DsackDups:               2,
+				TCPSeq:                  123456,
+				TCPAckSeq:               789012,
+				TCPEndSeq:               123999,
+				TCPFlags:                "ACK|FIN",
+				SkbAddr:                 "0xffff888012345678",
+				DropLocation:            "unknown",
 				CorrelationReasons: []CorrelationReason{
 					CorrelationReasonStartupHistoryIncomplete,
 					CorrelationReasonPerfEventsLost,
@@ -186,7 +186,7 @@ func TestTCPRetransmitTracingOmitEmpty(t *testing.T) {
 	}
 
 	omitFields := []string{
-		"ktime_ns",
+		"kernel_observed_ns", "kernel_observed_timestamp",
 		"container_id", "memory_cgroup_css_addr", "net_namespace_cookie", "net_namespace_inum",
 		"reord_seen", "dsack_dups", "tcp_end_seq", "tcp_flags",
 		"skb_addr", "drop_location", "correlation_reasons",
@@ -246,5 +246,29 @@ func TestTCPRetransmitReasonString(t *testing.T) {
 				t.Errorf("TCPRetransmitReason(%d).String() = %q, want %q", tt.reason, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTCPRetransmitJSONExcludesMonotonicClock(t *testing.T) {
+	event := TCPRetransmitTracing{
+		ObservedTimestamp:       "2026-09-15T02:00:01Z",
+		KernelObservedTimestamp: "2026-09-15T02:00:00Z",
+		KernelObservedNS:        123456789,
+	}
+	data, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["kernel_observed_timestamp"] != event.KernelObservedTimestamp {
+		t.Fatalf("JSON = %s", data)
+	}
+	for _, field := range []string{"ktime_ns", "kernel_observed_ns"} {
+		if _, ok := raw[field]; ok {
+			t.Fatalf("internal clock %q leaked into JSON", field)
+		}
 	}
 }

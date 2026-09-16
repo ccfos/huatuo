@@ -123,7 +123,8 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 |----------------------------|------|---------------------------------------------|
 | `hostname`                 | string | 节点主机名                                  |
 | `region`                   | string | 节点所在地域                                |
-| `observed_timestamp`       | string | 内核事件发生时间（Tracer 采集时间）          |
+| `observed_timestamp`       | string | 事件生产者在用户态观测事件的 UTC 时间          |
+| `kernel_observed_timestamp` | string | 可选；内核观测事件的 UTC 时间 |
 | `tracer_name`              | string | 触发事件的采集器名称（见下文内核事件列表）   |
 | `tracer_id`                | string | 事件实例唯一 ID                             |
 | `tracer_run_type`          | string | 采集模式，`auto`（自动触发）或 `manual`     |

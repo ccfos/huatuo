@@ -48,9 +48,9 @@ func TestDropwatchCandidatesCapacityBoundary(t *testing.T) {
 	flow := testFlowKey(1000, 80)
 	for dropIndex := 0; dropIndex <= dropwatchCandidateCapacity; dropIndex++ {
 		event := &dropEvent{
-			flow:      flow,
-			ktimeNS:   uint64(dropIndex + 1),
-			namespace: namespaceID{cookie: 1},
+			flow:             flow,
+			kernelObservedNS: uint64(dropIndex + 1),
+			namespace:        namespaceID{cookie: 1},
 		}
 		candidates.storeDrop(event, now)
 	}
@@ -64,8 +64,8 @@ func TestDropwatchCandidatesCapacityBoundary(t *testing.T) {
 		)
 	}
 	oldest := candidates.byAge.Front().Value.(*dropCandidate)
-	if oldest.event.ktimeNS != 2 {
-		t.Fatalf("oldest retained ktime = %d, want 2", oldest.event.ktimeNS)
+	if oldest.event.kernelObservedNS != 2 {
+		t.Fatalf("oldest retained kernel observation timestamp = %d, want 2", oldest.event.kernelObservedNS)
 	}
 }
 
@@ -168,29 +168,29 @@ func TestDropwatchCandidatesTakeMatchingDropBothFlowDirections(t *testing.T) {
 }
 
 func TestDropwatchCandidatesTakeMatchingDropEnforcesCausalAge(t *testing.T) {
-	const dropKtimeNS = uint64(time.Second)
+	const dropKernelObservedNS = uint64(time.Second)
 	tests := []struct {
-		name            string
-		retransmitKtime uint64
-		shouldMatch     bool
+		name                  string
+		retransmitMonotonicNS uint64
+		shouldMatch           bool
 	}{
 		{
-			name:            "younger than maximum age",
-			retransmitKtime: dropKtimeNS + uint64(maxDropToRetransmitAge) - 1,
-			shouldMatch:     true,
+			name:                  "younger than maximum age",
+			retransmitMonotonicNS: dropKernelObservedNS + uint64(maxDropToRetransmitAge) - 1,
+			shouldMatch:           true,
 		},
 		{
-			name:            "exact maximum age",
-			retransmitKtime: dropKtimeNS + uint64(maxDropToRetransmitAge),
-			shouldMatch:     true,
+			name:                  "exact maximum age",
+			retransmitMonotonicNS: dropKernelObservedNS + uint64(maxDropToRetransmitAge),
+			shouldMatch:           true,
 		},
 		{
-			name:            "older than maximum age",
-			retransmitKtime: dropKtimeNS + uint64(maxDropToRetransmitAge) + 1,
+			name:                  "older than maximum age",
+			retransmitMonotonicNS: dropKernelObservedNS + uint64(maxDropToRetransmitAge) + 1,
 		},
 		{
-			name:            "drop occurs after retransmit",
-			retransmitKtime: dropKtimeNS - 1,
+			name:                  "drop occurs after retransmit",
+			retransmitMonotonicNS: dropKernelObservedNS - 1,
 		},
 	}
 
@@ -200,7 +200,7 @@ func TestDropwatchCandidatesTakeMatchingDropEnforcesCausalAge(t *testing.T) {
 			candidates := newDropwatchCandidates(dropwatchCandidateCapacity)
 			drop := testDropEvent(
 				t,
-				dropKtimeNS,
+				dropKernelObservedNS,
 				"10.0.0.1",
 				"10.0.0.2",
 				1000,
@@ -212,7 +212,7 @@ func TestDropwatchCandidatesTakeMatchingDropEnforcesCausalAge(t *testing.T) {
 			)
 			candidates.storeDrop(drop, now)
 			retransmit, ok := retransmitEntryFromEvent(testRetransmitEvent(
-				test.retransmitKtime,
+				test.retransmitMonotonicNS,
 				"10.0.0.1",
 				"10.0.0.2",
 				1000,
@@ -278,7 +278,7 @@ func TestDropwatchCandidatesTakeMatchingDropRetainsCrossNetNSCandidate(t *testin
 	}
 }
 
-func TestDropwatchCandidatesTakeMatchingDropSelectsLatestKtimeThenID(t *testing.T) {
+func TestDropwatchCandidatesTakeMatchingDropSelectsLatestKernelObservationThenID(t *testing.T) {
 	now := time.Unix(1, 0)
 	candidates := newDropwatchCandidates(dropwatchCandidateCapacity)
 	drops := []*dropEvent{

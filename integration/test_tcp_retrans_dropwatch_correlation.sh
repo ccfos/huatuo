@@ -148,5 +148,6 @@ corr_tcpshark_pid=""
 ((tcpshark_status == 0)) \
 	|| fatal "tcpshark exited with status ${tcpshark_status}"
 
+assert_kernel_observation_timestamps "${CORR_MATCHED_EVENT}"
 assert_log_has_no_failure "${CORR_ERROR}" "tcpshark"
 log_info "correlated event: $(< "${CORR_MATCHED_EVENT}")"

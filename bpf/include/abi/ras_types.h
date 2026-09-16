@@ -22,7 +22,8 @@
 struct ras_event {
 	u32 type;
 	u32 pad0;
-	u64 ktime_ns;
+	/* Host CLOCK_MONOTONIC at observation; excludes system suspend. */
+	u64 kernel_observed_ns;
 	u8 info[RAS_EVENT_INFO_SIZE];
 };
 

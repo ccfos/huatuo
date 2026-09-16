@@ -22,6 +22,9 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 
 	"golang.org/x/sys/unix"
 
@@ -67,7 +70,7 @@ func TestFormatEventSkbAddr(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
+			event := mustRetransmitEvent(t, &abi.TCPRetransmitEvent{
 				SKBAddr:   tt.skbAddr,
 				EventType: uint8(abi.TCPRetransmitEventSKB),
 				Family:    unix.AF_INET,
@@ -120,7 +123,7 @@ func TestFormatEventMemoryCgroupCSSAddr(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
+			event := mustRetransmitEvent(t, &abi.TCPRetransmitEvent{
 				MemcgCSSAddr: tt.addr,
 				EventType:    uint8(abi.TCPRetransmitEventSKB),
 				Family:       unix.AF_INET,
@@ -152,7 +155,7 @@ func TestFormatEventMemoryCgroupCSSAddr(t *testing.T) {
 func TestFormatEventNetNamespaceIDs(t *testing.T) {
 	t.Parallel()
 
-	event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
+	event := mustRetransmitEvent(t, &abi.TCPRetransmitEvent{
 		NetNamespaceCookie: 0x2000,
 		NetNamespaceInum:   4026531992,
 		EventType:          uint8(abi.TCPRetransmitEventSKB),
@@ -184,7 +187,7 @@ func TestFormatEventNetNamespaceIDs(t *testing.T) {
 func TestFormatEventSource(t *testing.T) {
 	t.Parallel()
 
-	event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
+	event := mustRetransmitEvent(t, &abi.TCPRetransmitEvent{
 		EventType: uint8(abi.TCPRetransmitEventSKB),
 		Family:    unix.AF_INET,
 	}, toolstream.SourceTypeTool)
@@ -224,7 +227,7 @@ func TestFormatEventTCPFlags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := retransmitEventFromRecord(tt.ev, toolstream.SourceTypeTool)
+			event := mustRetransmitEvent(t, tt.ev, toolstream.SourceTypeTool)
 			if event.TCPFlags != tt.want {
 				t.Fatalf("TCPFlags = %q, want %q", event.TCPFlags, tt.want)
 			}
@@ -247,7 +250,7 @@ func TestFormatEventTCPFlags(t *testing.T) {
 func TestFormatEventTLP(t *testing.T) {
 	t.Parallel()
 
-	event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
+	event := mustRetransmitEvent(t, &abi.TCPRetransmitEvent{
 		EventType: uint8(abi.TCPRetransmitEventTlp),
 		Family:    unix.AF_INET,
 		TCPSeq:    123,
@@ -309,7 +312,7 @@ func TestFormatEventAddresses(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := retransmitEventFromRecord(tt.ev, toolstream.SourceTypeTool)
+			event := mustRetransmitEvent(t, tt.ev, toolstream.SourceTypeTool)
 			if event.TCPSaddr != tt.wantSaddr {
 				t.Fatalf("TCPSaddr = %q, want %q", event.TCPSaddr, tt.wantSaddr)
 			}
@@ -320,17 +323,17 @@ func TestFormatEventAddresses(t *testing.T) {
 	}
 }
 
-func TestFormatEventKtime(t *testing.T) {
+func TestFormatEventKernelObservation(t *testing.T) {
 	t.Parallel()
 
-	event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
-		KtimeNS:   42,
-		EventType: uint8(abi.TCPRetransmitEventSKB),
-		Family:    unix.AF_INET,
-		TCPFlags:  0x18,
+	event := mustRetransmitEvent(t, &abi.TCPRetransmitEvent{
+		KernelObservedNS: 42,
+		EventType:        uint8(abi.TCPRetransmitEventSKB),
+		Family:           unix.AF_INET,
+		TCPFlags:         0x18,
 	}, toolstream.SourceTypeTool)
-	if event.KtimeNS != 42 {
-		t.Fatalf("KtimeNS = %d, want 42", event.KtimeNS)
+	if event.KernelObservedNS != 42 {
+		t.Fatalf("KernelObservedNS = %d, want 42", event.KernelObservedNS)
 	}
 	if event.TCPFlagsRaw != 0x18 {
 		t.Fatalf("TCPFlagsRaw = 0x%02x, want 0x18", event.TCPFlagsRaw)
@@ -386,9 +389,10 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 
 	var output bytes.Buffer
 	event := &types.TCPRetransmitTracing{
-		ObservedTimestamp: "now",
-		KtimeNS:           8,
-		DropLocation:      "unknown",
+		ObservedTimestamp:       "now",
+		KernelObservedNS:        8,
+		KernelObservedTimestamp: "2026-07-23T02:14:40Z",
+		DropLocation:            "unknown",
 		CorrelationReasons: []types.CorrelationReason{
 			types.CorrelationReasonStartupHistoryIncomplete,
 			types.CorrelationReasonPerfEventsLost,
@@ -403,7 +407,7 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 		t.Fatalf("Write() error = %v", err)
 	}
 	for _, want := range []string{
-		"ktime_ns=8",
+		"kernel_observed_timestamp=2026-07-23T02:14:40Z",
 		"drop_location=unknown",
 		"reason=startup_history_incomplete,perf_events_lost",
 		"dropwatch_perf_lost=2",
@@ -450,38 +454,39 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 		{
 			name: "full event",
 			ev: &types.TCPRetransmitTracing{
-				ObservedTimestamp:   "2026-07-23T02:14:40.304775546Z",
-				KtimeNS:             123456789,
-				TCPReason:           "RTO",
-				Source:              toolstream.SourceTypeTool,
-				Comm:                "worker thread",
-				PID:                 1420,
-				ContainerID:         "container-1",
-				MemoryCgroupCSSAddr: "0xffff888012345678",
-				NetNamespaceCookie:  2,
-				NetNamespaceInum:    4026531992,
-				TCPState:            "ESTABLISHED",
-				TCPSaddr:            "127.0.0.1",
-				TCPDaddr:            "127.0.0.1",
-				TCPSport:            19996,
-				TCPDport:            42128,
-				Phase:               "data",
-				EventType:           "tcp_retransmit_skb",
-				CaState:             4,
-				IcskRetransmits:     4,
-				IcskPending:         1,
-				ReordSeen:           2,
-				DsackDups:           3,
-				TCPSeq:              3154974646,
-				TCPAckSeq:           948393597,
-				TCPEndSeq:           3154991030,
-				TCPFlags:            "ACK|PSH",
-				SkbAddr:             "0xffff931c14fdf800",
-				DropLocation:        "host_software",
+				ObservedTimestamp:       "2026-07-23T02:14:40.304775546Z",
+				KernelObservedNS:        123456789,
+				KernelObservedTimestamp: "2026-07-23T02:14:40Z",
+				TCPReason:               "RTO",
+				Source:                  toolstream.SourceTypeTool,
+				Comm:                    "worker thread",
+				PID:                     1420,
+				ContainerID:             "container-1",
+				MemoryCgroupCSSAddr:     "0xffff888012345678",
+				NetNamespaceCookie:      2,
+				NetNamespaceInum:        4026531992,
+				TCPState:                "ESTABLISHED",
+				TCPSaddr:                "127.0.0.1",
+				TCPDaddr:                "127.0.0.1",
+				TCPSport:                19996,
+				TCPDport:                42128,
+				Phase:                   "data",
+				EventType:               "tcp_retransmit_skb",
+				CaState:                 4,
+				IcskRetransmits:         4,
+				IcskPending:             1,
+				ReordSeen:               2,
+				DsackDups:               3,
+				TCPSeq:                  3154974646,
+				TCPAckSeq:               948393597,
+				TCPEndSeq:               3154991030,
+				TCPFlags:                "ACK|PSH",
+				SkbAddr:                 "0xffff931c14fdf800",
+				DropLocation:            "host_software",
 			},
 			want: "2026-07-23T02:14:40.304775546Z " +
 				"[data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 " +
-				"state=ESTABLISHED event_type=tcp_retransmit_skb ktime_ns=123456789 " +
+				"state=ESTABLISHED event_type=tcp_retransmit_skb kernel_observed_timestamp=2026-07-23T02:14:40Z " +
 				"skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 " +
 				"ack=948393597 flags=ACK|PSH pid=1420 comm=worker thread " +
 				"ca=4 retrans=4 icsk_pending=1 reord_seen=2 dsack_dups=3 " +
@@ -504,7 +509,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 			},
 			want: "2026-07-23T02:14:40Z " +
 				"[data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 " +
-				"state=ESTABLISHED event_type=tcp_retransmit_skb ktime_ns=0 " +
+				"state=ESTABLISHED event_type=tcp_retransmit_skb " +
 				"seq=0 ack=0 pid=0 comm= ca=0 retrans=0 icsk_pending=0\n",
 		},
 	}
@@ -696,7 +701,7 @@ func TestFormatEventHandlesUnknownABIValues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := retransmitEventFromRecord(&tt.event, toolstream.SourceTypeTool)
+			event := mustRetransmitEvent(t, &tt.event, toolstream.SourceTypeTool)
 			if event.EventType != tt.wantEventType {
 				t.Fatalf("EventType = %q, want %q", event.EventType, tt.wantEventType)
 			}
@@ -708,6 +713,15 @@ func TestFormatEventHandlesUnknownABIValues(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mustRetransmitEvent(t *testing.T, record *abi.TCPRetransmitEvent, source string) *types.TCPRetransmitTracing {
+	t.Helper()
+	event, err := retransmitEventFromRecord(record, source)
+	if err != nil {
+		t.Fatalf("retransmitEventFromRecord() error = %v", err)
+	}
+	return event
 }
 
 func BenchmarkTextWriter(b *testing.B) {
@@ -723,18 +737,27 @@ func BenchmarkTextWriter(b *testing.B) {
 }
 
 func BenchmarkFormatEvent(b *testing.B) {
+	monotonicNS, err := timeutil.MonotonicNowNS()
+	if err != nil {
+		b.Fatal(err)
+	}
 	event := abi.TCPRetransmitEvent{
-		EventType: uint8(abi.TCPRetransmitEventSKB),
-		State:     unix.BPF_TCP_ESTABLISHED,
-		TCPFlags:  packet.TCPFlagACK,
-		CaState:   uint8(abi.TCPRetransmitCaRecovery),
-		Family:    unix.AF_INET,
+		KernelObservedNS: monotonicNS,
+		EventType:        uint8(abi.TCPRetransmitEventSKB),
+		State:            unix.BPF_TCP_ESTABLISHED,
+		TCPFlags:         packet.TCPFlagACK,
+		CaState:          uint8(abi.TCPRetransmitCaRecovery),
+		Family:           unix.AF_INET,
 	}
 
 	b.ReportAllocs()
 	var formatted *types.TCPRetransmitTracing
 	for b.Loop() {
-		formatted = retransmitEventFromRecord(&event, toolstream.SourceTypeTool)
+		var err error
+		formatted, err = retransmitEventFromRecord(&event, toolstream.SourceTypeTool)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 	_ = formatted
 }
@@ -753,32 +776,60 @@ func BenchmarkJSONWriter(b *testing.B) {
 
 func benchmarkEvent() *types.TCPRetransmitTracing {
 	return &types.TCPRetransmitTracing{
-		ObservedTimestamp:   "2026-07-23T02:14:40.304775546Z",
-		TCPReason:           "RTO",
-		Source:              toolstream.SourceTypeTool,
-		Comm:                "worker",
-		PID:                 1420,
-		ContainerID:         "container-1",
-		MemoryCgroupCSSAddr: "0xffff888012345678",
-		NetNamespaceCookie:  2,
-		NetNamespaceInum:    4026531992,
-		TCPState:            "ESTABLISHED",
-		TCPSaddr:            "127.0.0.1",
-		TCPDaddr:            "127.0.0.1",
-		TCPSport:            19996,
-		TCPDport:            42128,
-		Phase:               "data",
-		EventType:           "tcp_retransmit_skb",
-		CaState:             4,
-		IcskRetransmits:     4,
-		IcskPending:         1,
-		ReordSeen:           2,
-		DsackDups:           3,
-		TCPSeq:              3154974646,
-		TCPAckSeq:           948393597,
-		TCPEndSeq:           3154991030,
-		TCPFlags:            "ACK|PSH",
-		SkbAddr:             "0xffff931c14fdf800",
-		DropLocation:        "host_software",
+		ObservedTimestamp:       "2026-07-23T02:14:40.304775546Z",
+		KernelObservedTimestamp: "2026-07-23T02:14:40.304Z",
+		TCPReason:               "RTO",
+		Source:                  toolstream.SourceTypeTool,
+		Comm:                    "worker",
+		PID:                     1420,
+		ContainerID:             "container-1",
+		MemoryCgroupCSSAddr:     "0xffff888012345678",
+		NetNamespaceCookie:      2,
+		NetNamespaceInum:        4026531992,
+		TCPState:                "ESTABLISHED",
+		TCPSaddr:                "127.0.0.1",
+		TCPDaddr:                "127.0.0.1",
+		TCPSport:                19996,
+		TCPDport:                42128,
+		Phase:                   "data",
+		EventType:               "tcp_retransmit_skb",
+		CaState:                 4,
+		IcskRetransmits:         4,
+		IcskPending:             1,
+		ReordSeen:               2,
+		DsackDups:               3,
+		TCPSeq:                  3154974646,
+		TCPAckSeq:               948393597,
+		TCPEndSeq:               3154991030,
+		TCPFlags:                "ACK|PSH",
+		SkbAddr:                 "0xffff931c14fdf800",
+		DropLocation:            "host_software",
+	}
+}
+
+func TestKernelObservationUsesEventTime(t *testing.T) {
+	monotonicNS, err := timeutil.MonotonicNowNS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if monotonicNS < uint64(time.Second) {
+		t.Skip("host has been up for less than one second")
+	}
+	record := abi.TCPRetransmitEvent{KernelObservedNS: monotonicNS - uint64(time.Second)}
+	event, err := retransmitEventFromRecord(&record, "tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kernel, err := time.Parse(time.RFC3339Nano, event.KernelObservedTimestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed, err := time.Parse(time.RFC3339Nano, event.ObservedTimestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	age := observed.Sub(kernel)
+	if age < 900*time.Millisecond || age > 2*time.Second {
+		t.Fatalf("kernel-to-userspace delay = %v, expected about one second", age)
 	}
 }

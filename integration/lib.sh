@@ -512,3 +512,24 @@ check_metrics() {
 		done
 	fi
 }
+
+# Both clocks must survive BPF decoding and JSON output without exposing host uptime.
+assert_kernel_observation_timestamps() {
+	local events_file=$1
+	jq -e -s '
+		def utc_seconds:
+			if type == "string" and test("Z$") then
+				sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601
+			else error("expected UTC timestamp") end;
+		length > 0 and all(.[];
+			(has("ktime_ns") | not)
+			and (has("kernel_observed_ns") | not)
+			and ((.observed_timestamp | utc_seconds) as $observed
+				| (.kernel_observed_timestamp | utc_seconds) as $kernel
+				| $kernel <= $observed + 1
+				and $observed - $kernel < 60
+				and (now - $observed | fabs) < 120))
+	' "${events_file}" > /dev/null \
+		|| fatal "invalid kernel/userspace observation timestamps: ${events_file}"
+	log_info "event with UTC observation timestamps: $(head -n 1 "${events_file}")"
+}

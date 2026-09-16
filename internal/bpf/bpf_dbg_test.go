@@ -36,9 +36,9 @@ func TestBpfDbgEventSize(t *testing.T) {
 
 func TestBpfDbgEventRoundTrip(t *testing.T) {
 	e := bpf.BpfDbgEvent{
-		KtimeNS:  123456789,
-		FileLine: 42,
-		Args:     [4]uint64{1, 2, 3, 4},
+		KernelObservedNS: 123456789,
+		FileLine:         42,
+		Args:             [4]uint64{1, 2, 3, 4},
 	}
 	copy(e.FileName[:], "foo.c\x00")
 	copy(e.Msg[:], "hello world\x00")
@@ -55,7 +55,7 @@ func TestBpfDbgEventRoundTrip(t *testing.T) {
 	if err := binary.Read(bytes.NewReader(buf.Bytes()), binary.NativeEndian, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.KtimeNS != e.KtimeNS || decoded.FileName != e.FileName ||
+	if decoded.KernelObservedNS != e.KernelObservedNS || decoded.FileName != e.FileName ||
 		decoded.FileLine != e.FileLine || decoded.Args != e.Args {
 		t.Fatalf("round-trip mismatch: %+v != %+v", decoded, e)
 	}

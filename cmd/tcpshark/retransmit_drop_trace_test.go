@@ -378,7 +378,7 @@ func TestEmitMatchedRetransmitDoesNotReadPerfStatus(t *testing.T) {
 func TestEmitRetransmitDropResultsUsesLatestPerfStatus(t *testing.T) {
 	correlator := newTestRetransmitDropCorrelator(t, 1)
 	event := &types.TCPRetransmitTracing{
-		KtimeNS: uint64(maxDropToRetransmitAge) + 1,
+		KernelObservedNS: uint64(maxDropToRetransmitAge) + 1,
 	}
 	result := correlator.noMatchResult(event, false)
 	source := newTraceTestDropwatchSource(t, types.DropwatchPerfStatus{
