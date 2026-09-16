@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -19,11 +19,11 @@ import (
 	"errors"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
 type txqueueTracingData struct {
@@ -58,7 +58,7 @@ func (c *txqueueTimeout) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "perf_events", 8192)
+	reader, err := b.AttachAndEventPipe(childCtx, "perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return err
 	}
@@ -88,9 +88,9 @@ func (c *txqueueTimeout) Start(ctx context.Context) error {
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: "netdev_txqueue_timeout",
-				TracerTime: time.Now(),
-				TracerData: data,
+				TracerName:        "netdev_txqueue_timeout",
+				ObservedTimestamp: time.Now().UTC(),
+				TracerData:        data,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

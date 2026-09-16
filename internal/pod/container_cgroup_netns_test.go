@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 )
 
 func TestContainerIDByCgroupNetNamespace(t *testing.T) {

@@ -72,7 +72,7 @@ $ make
 Set `BPF_DEBUG=1` to pass `-DDEBUG_BPF` to clang and compile the debug code into the BPF object:
 
 ```bash
-$ make BPF_DEBUG=1            # Or build only the BPF objects: make BPF_DEBUG=1 bpf-build
+$ make BPF_DEBUG=1     # Or regenerate artifacts only: make BPF_DEBUG=1 gen-build
 ```
 
 See [Debugging](development/debugging_en.md) for trace points, runtime switches,

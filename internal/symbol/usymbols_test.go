@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"testing"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 func copyCurrentExecutable(t *testing.T, destinationPath string) {

@@ -19,37 +19,45 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/job"
+	"github.com/ccfos/huatuo/client"
+	"github.com/ccfos/huatuo/internal/job"
 )
 
 func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
-	nodeAgent := job.NewHTTPNodeAgent(job.HTTPNodeAgentConfig{
-		Port:           d.opts.Config.Agent.HTTPPort,
-		RequestTimeout: time.Duration(d.opts.Config.Agent.RequestTimeoutSeconds) * time.Second,
-		Observe:        d.agentObserver,
+	nodeClient, err := client.NewNode(&client.NodeConfig{
+		BearerToken: d.opts.Config.Agent.Auth.BearerToken,
+		Observe:     d.agentObserver,
 	})
-	profilingPolicy := job.TypePolicy{
-		Group:          "profiling",
-		MaxJobsPerHost: d.opts.Config.Jobs.Profiling.MaxConcurrentPerHost,
-		MaxTotalJobs:   d.opts.Config.Jobs.Profiling.MaxConcurrent,
+	if err != nil {
+		return nil, fmt.Errorf("initialize Node client: %w", err)
 	}
-	tracingPolicy := job.TypePolicy{
-		Group:          "tracing",
-		MaxJobsPerHost: d.opts.Config.Jobs.Tracing.MaxConcurrentPerHost,
-		MaxTotalJobs:   d.opts.Config.Jobs.Tracing.MaxConcurrent,
-	}
-	manager, err := job.NewManager(ctx, nodeAgent, job.ManagerConfig{
-		StoreDSN: d.opts.Config.Jobs.StoreDSN,
-		StatusPollInterval: time.Duration(
-			d.opts.Config.Agent.StatusPollingIntervalSeconds,
-		) * time.Second,
-		MaxConsecutivePollErrors: d.opts.Config.Agent.MaxConsecutiveStatusPollingErrors,
-		TypePolicies: map[job.JobType]job.TypePolicy{
-			job.JobTypeProfilingCPU:    profilingPolicy,
-			job.JobTypeProfilingMemory: profilingPolicy,
-			job.JobTypeTracing:         tracingPolicy,
+	controller := d.opts.Config.Jobs.Controller
+	manager, err := job.NewManager(
+		ctx,
+		newNodeOperationClient(nodeClient, d.opts.Config.Agent.HTTPPort),
+		&job.ManagerConfig{
+			StoreDSN: d.opts.Config.Jobs.StoreDSN,
+			ProfilingPolicy: job.Policy{
+				MaxJobsPerHost: d.opts.Config.Jobs.Profiling.MaxConcurrentPerHost,
+				MaxTotalJobs:   d.opts.Config.Jobs.Profiling.MaxConcurrent,
+			},
+			TracingPolicy: job.Policy{
+				MaxJobsPerHost: d.opts.Config.Jobs.Tracing.MaxConcurrentPerHost,
+				MaxTotalJobs:   d.opts.Config.Jobs.Tracing.MaxConcurrent,
+			},
+			StatusPollInterval: time.Duration(
+				controller.StatusPollIntervalSeconds,
+			) * time.Second,
+			PendingTimeout: time.Duration(controller.PendingTimeoutSeconds) * time.Second,
+			CompletionGracePeriod: time.Duration(
+				controller.CompletionGracePeriodSeconds,
+			) * time.Second,
+			NodeUnavailableGracePeriod: time.Duration(
+				controller.NodeUnavailableGracePeriodSeconds,
+			) * time.Second,
+			JobRetentionPeriod: time.Duration(controller.JobRetentionPeriodHours) * time.Hour,
 		},
-	})
+	)
 	if err != nil {
 		return nil, fmt.Errorf("initialize job manager: %w", err)
 	}
@@ -57,6 +65,6 @@ func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) err
 	d.jobManager = manager
 	d.metrics.MustRegister(newJobManagerCollector(manager))
 	return func(ctx context.Context) error {
-		return manager.ShutdownContext(ctx)
+		return manager.Shutdown(ctx)
 	}, nil
 }

@@ -152,11 +152,10 @@ graph TB
     {
         "hostname": "hostname",
         "region": "dev",
-        "uploaded_time": "2026-03-05T18:28:39.153438921+08:00",
-        "time": "2026-03-05 18:28:39.153 +0800",
+        "uploaded_timestamp": "2026-03-05T18:28:39.153438921+08:00",
         "tracer_name": "netdev_event",
-        "tracer_time": "2026-03-05 18:28:39.153 +0800",
-        "tracer_type": "auto",
+        "observed_timestamp": "2026-03-05T18:28:39.153+08:00",
+        "tracer_type": "event",
         "tracer_data": {
             "ifname": "eth0",
             "index": 2,
@@ -177,16 +176,14 @@ graph TB
     {
         "hostname": "localhost",
         "region": "xxx",
-        "uploaded_time": "2026-05-11T16:58:47.328548319+08:00",
-        "time": "2026-05-11 16:58:47.328 +0800",
+        "uploaded_timestamp": "2026-05-11T16:58:47.328548319+08:00",
         "tracer_name": "ras",
-        "tracer_time": "2026-05-11 16:58:47.328 +0800",
-        "tracer_type": "auto",
+        "observed_timestamp": "2026-05-11T08:58:47.328548319Z",
+        "tracer_type": "event",
         "tracer_data": {
             "dev": "MEM",
             "event": "EDAC",
             "type": "Corrected",
-            "observed_timestamp": "2026-05-11T08:58:47.328548319Z",
             "info": "{\"err_count\":0,\"err_type\":\"Corrected\",\"err_msg\":\"memory read error\",\"label\":\"CPU_SrcID#0_Ha#0_Chan#0_DIMM#0\",\"mc_index\":0,\"top_layer\":0,\"mid_layer\":0,\"low_layer\":-1,\"addr\":7860269056,\"grain\":128,\"syndrome\":0,\"driver\":\" area:DRAM err_code:0000:009f socket:0 ha:0 channel_mask:1 rank:0\"}"
         }
     }

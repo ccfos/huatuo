@@ -34,6 +34,18 @@ skip() {
 	exit 0
 }
 
+report_http_response() {
+	local label=$1 response_file=$2 error_file=$3
+	if [[ -r "${response_file}" ]]; then
+		log_info "${label} response: $(< "${response_file}")"
+	else
+		log_error "${label} response file missing: ${response_file}"
+	fi
+	if [[ -s "${error_file}" ]]; then
+		log_error "${label} curl error: $(< "${error_file}")"
+	fi
+}
+
 # --------------------------------- utils ------------------------------------
 
 require_python3() {
@@ -230,6 +242,12 @@ stop_by_pid() {
 	kill -KILL "${pid}" 2> /dev/null || true
 }
 
+stop_and_wait_by_pid() {
+	local pid=$1 timeout=${2:-10}
+	stop_by_pid "${pid}" "${timeout}"
+	wait "${pid}"
+}
+
 # ------------------------- virtualization detection -------------------------
 
 # Returns 0 when running inside a container.
@@ -339,7 +357,7 @@ huatuo_apiserver_ready() {
 		return 1
 	fi
 
-	curl -sf "${CURL_TIMEOUT[@]}" "${APISERVER_ADDR}/healthz" > /dev/null
+	curl -sf "${CURL_TIMEOUT[@]}" "${APISERVER_ADDR}/readyz" > /dev/null
 }
 
 huatuo_apiserver_stop() {
@@ -396,17 +414,6 @@ huatuo_bamai_metrics() {
 # Reject error/panic keywords in the log.
 huatuo_bamai_log_check() {
 	! grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
-}
-
-huatuo_bamai_pod_count() {
-	local regex=$1
-	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_PODS_API}" \
-		| jq --arg re "$regex" '
-      [ .data[]
-        | select(.hostname != null)
-        | select(.hostname | test($re))
-      ] | length
-    ' 2> /dev/null || echo 0
 }
 
 # ----------------------------- metrics helpers --------------------------------

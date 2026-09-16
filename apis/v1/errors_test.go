@@ -21,17 +21,48 @@ import (
 
 func TestErrorResponseJSON(t *testing.T) {
 	response := ErrorResponse{Error: Error{
-		Code:    ErrorCodeProfilingDisabled,
-		Message: "profiling is disabled",
+		Code:    ErrorCodeInvalidRequest,
+		Message: "request is invalid",
 	}}
 
 	got, err := json.Marshal(response)
 	if err != nil {
 		t.Fatalf("marshal error response: %v", err)
 	}
-	want := `{"error":{"code":"profiling_disabled","message":"profiling is disabled"}}`
+	want := `{"error":{"code":"invalid_request","message":"request is invalid"}}`
 	if string(got) != want {
 		t.Errorf("error response = %s, want %s", got, want)
+	}
+}
+
+func TestHTTPStatusForErrorCode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		code       ErrorCode
+		wantStatus int
+		wantOK     bool
+	}{
+		{code: ErrorCodeInvalidRequest, wantStatus: 400, wantOK: true},
+		{code: ErrorCodeRouteNotFound, wantStatus: 404, wantOK: true},
+		{code: ErrorCodeMethodNotAllowed, wantStatus: 405, wantOK: true},
+		{code: ErrorCodeRequestTooLarge, wantStatus: 413, wantOK: true},
+		{code: ErrorCodeServiceUnavailable, wantStatus: 503, wantOK: true},
+		{code: ErrorCode("future_error")},
+	}
+
+	for _, tt := range tests {
+		status, ok := HTTPStatusForErrorCode(tt.code)
+		if status != tt.wantStatus || ok != tt.wantOK {
+			t.Errorf(
+				"HTTPStatusForErrorCode(%q) = (%d, %t), want (%d, %t)",
+				tt.code,
+				status,
+				ok,
+				tt.wantStatus,
+				tt.wantOK,
+			)
+		}
 	}
 }
 

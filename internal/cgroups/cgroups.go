@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"huatuo-bamai/internal/cgroups/paths"
-	"huatuo-bamai/internal/cgroups/stats"
-	v1 "huatuo-bamai/internal/cgroups/v1"
-	v2 "huatuo-bamai/internal/cgroups/v2"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	v1 "github.com/ccfos/huatuo/internal/cgroups/v1"
+	v2 "github.com/ccfos/huatuo/internal/cgroups/v2"
 
 	extcgroups "github.com/containerd/cgroups/v3"
 	"github.com/opencontainers/runtime-spec/specs-go"

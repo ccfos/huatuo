@@ -86,7 +86,7 @@ All event records include the following common fields:
 
 - **hostname**: Physical host hostname
 - **region**: Availability zone of the physical host
-- **uploaded_time**: Data upload timestamp
+- **uploaded_timestamp**: Data upload timestamp
 - **container_id**: Container ID if the event is associated with a container
 - **container_hostname**: Container hostname if the event is associated with a container
 - **container_host_namespace**: Kubernetes namespace of the container
@@ -94,8 +94,8 @@ All event records include the following common fields:
 - **container_qos**: Container QoS level
 - **tracer_name**: Event name (e.g., `cpusys`, `memburst`)
 - **tracer_id**: Tracing session ID
-- **tracer_time**: Time when the tracing was triggered
-- **tracer_type**: Trigger type (manual or automatic)
+- **started_timestamp**: Time when the tracing was triggered
+- **tracer_type**: Observation kind; automatic tracing records use `autotracing`
 - **tracer_data**: Event-specific private data (see individual event descriptions below)
 
 ### 1. cpusys

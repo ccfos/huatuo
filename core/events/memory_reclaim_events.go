@@ -20,13 +20,13 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
 type memoryReclaimTracing struct{}
@@ -69,7 +69,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "reclaim_perf_events", 8192)
+	reader, err := b.AttachAndEventPipe(childCtx, "reclaim_perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return err
 	}
@@ -139,10 +139,10 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 
 			log.Infof("memory_reclaim saves storage: %+v", tracingData)
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:  "memory_reclaim",
-				ContainerID: container.ID,
-				TracerTime:  time.Now(),
-				TracerData:  tracingData,
+				TracerName:        "memory_reclaim",
+				ContainerID:       container.ID,
+				ObservedTimestamp: time.Now().UTC(),
+				TracerData:        tracingData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

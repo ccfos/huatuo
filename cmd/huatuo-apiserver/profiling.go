@@ -16,10 +16,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler/service"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiling/publication"
+	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/strutil"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 )
 
 func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
@@ -28,17 +33,39 @@ func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Cont
 		return nil, nil
 	}
 
-	esConfig := &service.ElasticSearchConfig{
-		Address:  d.opts.Config.Elasticsearch.Address,
-		Username: d.opts.Config.Elasticsearch.Username,
-		Password: d.opts.Config.Elasticsearch.Password,
-		Index:    d.opts.Config.Elasticsearch.Index,
-	}
-	profileQueryService, err := service.NewService(ctx, esConfig)
+	profileStorage, err := profilingstore.NewFromConfig(
+		ctx,
+		profilingstore.Config{
+			Addresses: strutil.SplitCommaList(d.opts.Config.Elasticsearch.Address),
+			Username:  d.opts.Config.Elasticsearch.Username,
+			Password:  d.opts.Config.Elasticsearch.Password,
+			Index:     d.opts.Config.Elasticsearch.Index,
+		},
+	)
 	if err != nil {
-		return nil, fmt.Errorf("initialize profile query service: %w", err)
+		return nil, fmt.Errorf("initialize profile storage: %w", err)
 	}
+	profileQueryService, err := profilequery.NewProfileQueryService(profileStorage)
+	if err != nil {
+		_ = profileStorage.Close(ctx)
+		return nil, err
+	}
+	publicationStore, err := publication.NewFromConfig(ctx, &driver.Config{
+		Driver:      "elasticsearch",
+		ESAddresses: strutil.SplitCommaList(d.opts.Config.Elasticsearch.Address),
+		ESUsername:  d.opts.Config.Elasticsearch.Username,
+		ESPassword:  d.opts.Config.Elasticsearch.Password,
+		ESIndex:     d.opts.Config.Elasticsearch.Index,
+	})
+	if err != nil {
+		_ = profileStorage.Close(ctx)
+		return nil, fmt.Errorf("initialize profiling publication Store: %w", err)
+	}
+	d.profileStorage = profileStorage
 	d.profileQueryService = profileQueryService
+	d.publications = publicationStore
 
-	return profileQueryService.Close, nil
+	return func(ctx context.Context) error {
+		return errors.Join(profileStorage.Close(ctx), publicationStore.Close(ctx))
+	}, nil
 }

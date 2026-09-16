@@ -15,116 +15,182 @@
 package job
 
 import (
-	"encoding/json"
 	"time"
+
+	"github.com/ccfos/huatuo/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/profiling"
+	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
 
-type JobStatus string
-
-// JobType identifies the operation executed by an agent job.
-type JobType string
+// Kind identifies the service that owns a persistent Job.
+type Kind string
 
 const (
-	AgentStatusCompleted = "completed"
-	AgentStatusFailed    = "failed"
-	AgentStatusPending   = "pending"
-	AgentStatusRunning   = "running"
-	AgentStatusNotExist  = "not_exist"
+	KindProfiling Kind = "profiling"
+	KindTracing   Kind = "tracing"
 )
+
+// Status identifies a user-facing persistent Job state.
+type Status string
 
 const (
-	// JobTypeProfilingCPU identifies CPU profiling jobs.
-	JobTypeProfilingCPU JobType = "profiling_cpu"
-	// JobTypeProfilingMemory identifies memory profiling jobs.
-	JobTypeProfilingMemory JobType = "profiling_memory"
-	// JobTypeTracing identifies tracing jobs.
-	JobTypeTracing JobType = "tracing"
+	StatusPending  Status = "pending"
+	StatusRunning  Status = "running"
+	StatusStopping Status = "stopping"
+	StatusTerminal Status = "terminal"
 )
+
+// Outcome identifies the result of a terminal Job.
+type Outcome string
 
 const (
-	JobStatusPending   JobStatus = "pending"
-	JobStatusRunning   JobStatus = "running"
-	JobStatusCompleted JobStatus = "completed"
-	JobStatusFailed    JobStatus = "failed"
-	JobStatusStopped   JobStatus = "stopped"
-	JobStatusTimeout   JobStatus = "timeout"
+	OutcomeCompleted Outcome = "completed"
+	OutcomeFailed    Outcome = "failed"
+	OutcomeStopped   Outcome = "stopped"
+	OutcomeUnknown   Outcome = "unknown"
 )
 
-// Result represents the result of a job
-type Result struct {
-	URL   string `json:"url"`
-	Error string `json:"error"`
+// FailureReason classifies a failed Job independently of Node errors.
+type FailureReason string
+
+const (
+	FailureReasonExecutionStartFailed      FailureReason = "execution_start_failed"
+	FailureReasonExecutionCapacityExceeded FailureReason = "execution_capacity_exceeded"
+	FailureReasonStartTimeout              FailureReason = "start_timeout"
+	FailureReasonExecutionFailed           FailureReason = "execution_failed"
+	FailureReasonExecutionTimedOut         FailureReason = "execution_timed_out"
+	FailureReasonStopTimeout               FailureReason = "stop_timeout"
+	FailureReasonNodeUnavailable           FailureReason = "node_unavailable"
+	FailureReasonOperationLost             FailureReason = "operation_lost"
+	FailureReasonInvalidNodeRequest        FailureReason = "invalid_node_request"
+	FailureReasonProtocolError             FailureReason = "protocol_error"
+)
+
+// StopReason records why Apiserver requested asynchronous Node termination.
+type StopReason string
+
+const (
+	StopReasonUser             StopReason = "user_requested"
+	StopReasonStartTimeout     StopReason = "start_timeout"
+	StopReasonExecutionTimeout StopReason = "execution_timeout"
+)
+
+// TerminalResult is the stable result of a terminal Job.
+type TerminalResult struct {
+	Outcome Outcome       `json:"outcome"`
+	Reason  FailureReason `json:"reason,omitempty"`
+	Message string        `json:"message,omitempty"`
 }
 
-// AgentTaskRequest represents the request body for creating an agent task.
-type AgentTaskRequest struct {
-	RequestID         string   `json:"request_id,omitempty" binding:"omitempty"`        // Idempotency key assigned by the control plane
-	TracerName        string   `json:"tracer_name" binding:"required"`                  // Name of the tracer, required field
-	TraceTimeout      int      `json:"trace_timeout" binding:"required,number,lt=3600"` // Timeout in seconds, must be less than 3600s(1 hours)
-	Interval          int      `json:"interval" binding:"omitempty,number,lt=3600"`     // Interval in seconds, must be less than 3600s(1 hours)
-	Duration          int      `json:"duration" binding:"omitempty,number,lt=86400"`    // Duration in seconds, must be less than 86400s(24 hours)
-	DataType          string   `json:"data_type" binding:"required"`                    // Type of data to be handled, required field
-	ContainerID       string   `json:"container_id" binding:"omitempty"`                // ID of the container, optional field
-	ContainerHostname string   `json:"container_hostname" binding:"omitempty"`          // Hostname of the container, optional field
-	TracerArgs        []string `json:"tracer_args" binding:"omitempty"`                 // Additional arguments for the tracer, optional field
+// Spec is a small discriminated union of service-owned Job parameters.
+type Spec struct {
+	Profiling *profiling.Spec     `json:"profiling,omitempty"`
+	Tracing   *tracingdomain.Spec `json:"tracing,omitempty"`
 }
 
-// CreateJobRequest holds parameters for creating a new job
-type CreateJobRequest struct {
-	UserID      string
-	ContainerID string
-	Hostname    string
-	Type        JobType
-	AgentTask   *AgentTaskRequest
-	PrivateData json.RawMessage
-}
-
-// Job represents a job
+// Job is the persistent Apiserver lifecycle for one Node request ID.
 type Job struct {
-	Type         JobType          `json:"type"`
-	ID           string           `json:"id"`
-	Username     string           `json:"username"`
-	UserID       string           `json:"user_id"`
-	ContainerID  string           `json:"container_id"`
-	Hostname     string           `json:"hostname"`
-	AgentTaskID  string           `json:"agent_task_id"`
-	Status       JobStatus        `json:"status"`
-	ErrorMessage string           `json:"error_message,omitempty"`
-	Duration     int              `json:"duration"`
-	TraceTimeout int              `json:"trace_timeout"`
-	CreatedAt    time.Time        `json:"created_at"`
-	FinishedAt   time.Time        `json:"finished_at"`
-	AgentTask    AgentTaskRequest `json:"agent_task"`
-	Result       Result           `json:"result,omitempty"`
+	ID          string
+	Kind        Kind
+	UserID      string
+	Hostname    string
+	Duration    time.Duration
+	Scope       observation.Scope
+	ContainerID string
+	Spec        Spec
 
-	UpdatedAt time.Time `json:"-"`
-	stopCh    chan struct{}
+	Status    Status
+	Terminal  *TerminalResult
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	StartedAt time.Time
+	EndedAt   time.Time
 
-	PrivateData json.RawMessage `json:"-"`
+	PendingDeadline         time.Time
+	ExecutionDeadline       time.Time
+	NodeUnavailableDeadline time.Time
+	StopDeadline            time.Time
+	StopReason              StopReason
+
+	revision int64
 }
 
-// JobQuery defines filters for searching jobs
-type JobQuery struct {
+// CreateRequest contains one independently created user request.
+type CreateRequest struct {
+	UserID      string
+	Hostname    string
+	Duration    time.Duration
+	Scope       observation.Scope
+	ContainerID string
+	Spec        Spec
+}
+
+// Query filters persistent Jobs through derived storage indexes.
+type Query struct {
 	ID          string
 	UserID      string
 	IsAdmin     bool
 	ContainerID string
 	Hostname    string
-	Status      string
-	Statuses    []JobStatus
-	Types       []JobType
+	Statuses    []Status
+	Kinds       []Kind
+	Subtypes    []string
 	Sort        string
 	Limit       int
 	Offset      int
 }
 
-// JobPage contains one page of jobs and the total number of matching records.
-type JobPage struct {
-	Items []*Job
-	Total int64
+// Page contains one Job page and whether another page is available.
+type Page struct {
+	Items   []*Job
+	HasMore bool
 }
 
-// JobCleanupQuery defines parameters for cleaning up old jobs
-type JobCleanupQuery struct {
-	BeforeTime time.Time
+func (s Spec) kind() Kind {
+	switch {
+	case s.Profiling != nil && s.Tracing == nil:
+		return KindProfiling
+	case s.Tracing != nil && s.Profiling == nil:
+		return KindTracing
+	default:
+		return ""
+	}
+}
+
+func (s Spec) subtype(kind Kind) string {
+	switch kind {
+	case KindProfiling:
+		if s.Profiling != nil {
+			return string(s.Profiling.Type)
+		}
+	case KindTracing:
+		if s.Tracing != nil {
+			return string(s.Tracing.Type)
+		}
+	}
+	return ""
+}
+
+func cloneJob(source *Job) *Job {
+	if source == nil {
+		return nil
+	}
+	cloned := *source
+	if source.Spec.Profiling != nil {
+		profilingSpec := *source.Spec.Profiling
+		cloned.Spec.Profiling = &profilingSpec
+	}
+	if source.Spec.Tracing != nil {
+		tracingSpec := *source.Spec.Tracing
+		cloned.Spec.Tracing = &tracingSpec
+	}
+	if source.Terminal != nil {
+		terminal := *source.Terminal
+		cloned.Terminal = &terminal
+	}
+	return &cloned
+}
+
+func isTerminal(status Status) bool {
+	return status == StatusTerminal
 }

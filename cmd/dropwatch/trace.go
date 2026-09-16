@@ -23,9 +23,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 type dropwatchOptions struct {
@@ -110,7 +110,7 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 		}()
 	}
 
-	reader, err := bpfObj.AttachAndEventPipe(groupCtx, "perf_events", 8192)
+	reader, err := bpfObj.AttachAndEventPipe(groupCtx, "perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return fmt.Errorf("attach BPF programs: %w", err)
 	}

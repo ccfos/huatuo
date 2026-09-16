@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"huatuo-bamai/internal/process"
+	"github.com/ccfos/huatuo/internal/process"
 )
 
 func validateResolvedPIDs(profilerName string, pids []int) error {

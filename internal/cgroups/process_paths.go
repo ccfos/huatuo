@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 // ProcessPaths contains the cgroup membership paths reported for a process.

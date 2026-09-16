@@ -20,16 +20,16 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"time"
 
-	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/utils/executil"
-	"huatuo-bamai/internal/utils/kernaddr"
-	"huatuo-bamai/pkg/tracing"
-	"huatuo-bamai/pkg/types"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/kernaddr"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type dropWatchTracing struct{}
@@ -59,12 +59,29 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 		"--source-types", toolstream.SourceTypeEvent,
 	}
 
-	result := executil.ExecCmd(ctx, 0, path.Join(internalconfig.CoreBinDir, "dropwatch"), args...)
-	if errors.Is(result.CmdErr, context.Canceled) {
-		return nil
+	process, err := exec.New(exec.Spec{
+		Path: path.Join(internalconfig.CoreBinDir, "dropwatch"),
+		Args: args,
+	})
+	if err != nil {
+		return fmt.Errorf("create dropwatch process: %w", err)
 	}
-	if result.CmdErr != nil {
-		return fmt.Errorf("run dropwatch: %w", executil.VerifyResults([]executil.CmdResult{result}))
+	if err := process.Run(ctx); err != nil {
+		if errors.Is(err, exec.ErrStopFailed) {
+			stopErr := process.Stop(ctx)
+			if stopErr == nil && errors.Is(err, context.Canceled) {
+				return nil
+			}
+			if stopErr != nil {
+				err = errors.Join(err, fmt.Errorf("retry stop dropwatch: %w", stopErr))
+			}
+		} else if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		if stderr := process.Stderr(); len(stderr) > 0 {
+			return fmt.Errorf("run dropwatch: %w; stderr: %s", err, stderr)
+		}
+		return fmt.Errorf("run dropwatch: %w", err)
 	}
 	return nil
 }
@@ -82,13 +99,17 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 		})
 	}
 
-	globalDropwatchTCPRetransmitCache.add(ev)
-
+	observedTimestamp, err := timeutil.Parse(ev.ObservedTimestamp)
+	if err != nil {
+		return fmt.Errorf("parse dropwatch observed timestamp: %w", err)
+	}
+	tracerData := *ev
+	tracerData.ObservedTimestamp = ""
 	return tracing.Save(&tracing.WriteRequest{
-		TracerName:  "dropwatch",
-		ContainerID: ev.ContainerID,
-		TracerTime:  time.Now(),
-		TracerData:  ev,
+		TracerName:        "dropwatch",
+		ContainerID:       ev.ContainerID,
+		ObservedTimestamp: observedTimestamp,
+		TracerData:        &tracerData,
 	})
 }
 

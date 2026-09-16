@@ -22,10 +22,10 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/version"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o

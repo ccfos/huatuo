@@ -20,8 +20,8 @@ import (
 	"strconv"
 	"strings"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"

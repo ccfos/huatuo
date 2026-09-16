@@ -26,12 +26,12 @@ import (
 	"syscall"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/symbol"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/executil"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/process"
+	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // runTrace loads the BPF object, attaches probes for cfg.durationSecond
@@ -113,7 +113,7 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 			continue
 		}
 
-		hostname, _ := executil.HostnameByPid(event.TGID)
+		hostname, _ := process.Hostname(int(event.TGID))
 
 		ring[head] = types.IOScheduleEvent{
 			Comm:              bytesutil.ToStr(event.Comm[:]),

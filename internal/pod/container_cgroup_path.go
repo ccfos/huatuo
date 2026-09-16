@@ -21,7 +21,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"huatuo-bamai/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups"
 )
 
 const (

@@ -23,8 +23,8 @@ import (
 
 	"github.com/cilium/ebpf"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 // Indices into profiler_state_map. The BPF program owns the layout; userspace

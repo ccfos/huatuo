@@ -30,7 +30,7 @@ WORKDIR /go/huatuo-bamai
 ENV GOCACHE=/root/.cache/go-build
 COPY . .
 RUN --mount=type=cache,target=${GOCACHE} \
-    make all && \
+    make build && \
     cp -a _output /tmp/huatuo-bamai
 
 FROM alpine:3.22.0 AS dev-runtime

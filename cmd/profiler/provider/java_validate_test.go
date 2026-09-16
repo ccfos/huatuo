@@ -21,7 +21,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func TestValidateJavaFrequency(t *testing.T) {
@@ -43,11 +43,11 @@ func TestValidateJavaToolPath(t *testing.T) {
 }
 
 func TestValidateJavaMemoryMode(t *testing.T) {
-	args, err := validateJavaMemoryMode(profiling.MemoryModeObjectAlloc)
+	args, err := validateJavaMemoryMode(profiling.ModeObjectAlloc)
 	require.NoError(t, err)
 	require.Empty(t, args)
 
-	args, err = validateJavaMemoryMode(profiling.MemoryModeObjectUsage)
+	args, err = validateJavaMemoryMode(profiling.ModeObjectUsage)
 	require.NoError(t, err)
 	require.Equal(t, []string{"--live"}, args)
 

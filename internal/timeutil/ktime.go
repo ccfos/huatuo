@@ -28,6 +28,15 @@ var (
 	errOffsetOnce     error
 )
 
+// MonotonicNowNS returns the clock used by bpf_ktime_get_ns().
+func MonotonicNowNS() (uint64, error) {
+	var ts unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err != nil {
+		return 0, fmt.Errorf("clock_gettime MONOTONIC: %w", err)
+	}
+	return uint64(unix.TimespecToNsec(ts)), nil
+}
+
 // KtimeToTime converts a bpf_ktime_get_ns() nanosecond value to a
 // wall-clock time.Time in UTC. The monotonic-to-realtime offset is
 // sampled once on first call and cached for the process lifetime.

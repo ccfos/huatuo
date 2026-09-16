@@ -21,7 +21,7 @@ import (
 	"sort"
 	"strings"
 
-	"huatuo-bamai/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 // Formatter writes folded-stack output.
@@ -46,7 +46,7 @@ func (f *Formatter) Add(s *output.Sample) error {
 	if len(s.Frames) == 0 {
 		return nil
 	}
-	key := strings.Join(s.Frames, ";")
+	key := foldedStackKey(s.Frames)
 	f.counts[key] += s.Count
 	if f.counts[key] == 0 {
 		// Zero-count stacks have no visual weight and make empty profiles appear non-empty.
@@ -54,6 +54,47 @@ func (f *Formatter) Add(s *output.Sample) error {
 		delete(f.counts, key)
 	}
 	return nil
+}
+
+func foldedStackKey(frames []string) string {
+	if len(frames) == 0 {
+		return ""
+	}
+
+	length := len(frames) - 1
+	for _, frame := range frames {
+		length += len(frame)
+	}
+
+	var key strings.Builder
+	key.Grow(length)
+	for index, frame := range frames {
+		if index > 0 {
+			key.WriteByte(';')
+		}
+		writeFoldedFrame(&key, frame)
+	}
+	return key.String()
+}
+
+func writeFoldedFrame(key *strings.Builder, frame string) {
+	start := 0
+	for index := range len(frame) {
+		var replacement byte
+		switch frame[index] {
+		case ';':
+			replacement = ':'
+		case '\r', '\n':
+			replacement = ' '
+		default:
+			continue
+		}
+
+		key.WriteString(frame[start:index])
+		key.WriteByte(replacement)
+		start = index + 1
+	}
+	key.WriteString(frame[start:])
 }
 
 func (f *Formatter) Write(w io.Writer) error {

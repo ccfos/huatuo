@@ -19,10 +19,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/pcapfilter"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/pcapfilter"
 )
 
 func loadRetransmitBPF(
@@ -30,17 +32,33 @@ func loadRetransmitBPF(
 	filterExpr string,
 	bpfLimiter *bpf.RateLimiter,
 ) (bpf.BPF, error) {
-	bpfBytes, err := os.ReadFile(bpfPath)
-	if err != nil {
-		return nil, fmt.Errorf("read bpf: %w", err)
-	}
-
-	bpfName := fmt.Sprintf("tcp_retransmit_%d.o", time.Now().UnixNano())
-	return pcapfilter.Load(
-		bpfName,
-		bpfBytes,
+	return loadFilteredBPFObject(
+		bpfPath,
 		filterExpr,
 		bpfLimiter.Constants(nil),
+	)
+}
+
+func loadFilteredBPFObject(
+	bpfPath string,
+	filterExpr string,
+	constants map[string]any,
+	excludedSections ...string,
+) (bpf.BPF, error) {
+	bpfBytes, err := os.ReadFile(bpfPath)
+	if err != nil {
+		return nil, fmt.Errorf("read bpf object %q: %w", bpfPath, err)
+	}
+
+	baseName := filepath.Base(bpfPath)
+	objectName := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	instanceName := fmt.Sprintf("%s_%d.o", objectName, time.Now().UnixNano())
+	return pcapfilter.Load(
+		instanceName,
+		bpfBytes,
+		filterExpr,
+		constants,
+		excludedSections...,
 	)
 }
 
@@ -49,7 +67,7 @@ func attachRetransmitPrograms(
 	bpfObj bpf.BPF,
 	isTLPEnabled bool,
 ) (bpf.PerfEventReader, error) {
-	reader, err := bpfObj.EventPipeByName(ctx, "perf_events", 8192)
+	reader, err := bpfObj.EventPipeByName(ctx, "perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return nil, fmt.Errorf("open event pipe: %w", err)
 	}

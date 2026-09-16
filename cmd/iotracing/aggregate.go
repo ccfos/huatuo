@@ -19,9 +19,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/executil"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/process"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func blockDevName(major, minor uint32) string {
@@ -92,7 +92,7 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 		})
 	}
 
-	cmdline, err := executil.ProcNameByPid(g.PID)
+	cmdline, err := process.CommandLine(int(g.PID))
 	if err != nil {
 		cmdline = comm
 	}
@@ -107,7 +107,7 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 		TotalFiles:        fileStats,
 		TotalFileCount:    uint64(len(g.Files)),
 	}
-	out.ContainerHostname, _ = executil.HostnameByPid(g.PID)
+	out.ContainerHostname, _ = process.Hostname(int(g.PID))
 
 	return out
 }

@@ -20,28 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseMemoryMode(t *testing.T) {
-	for _, mode := range allMemoryModes() {
-		parsed, err := ParseMemoryMode(string(mode))
-		require.NoError(t, err)
-		require.Equal(t, mode, parsed)
-	}
-
-	_, err := ParseMemoryMode("unknown")
-	require.EqualError(t, err, `unsupported memory mode "unknown"`)
-}
-
-func TestParseCPUMode(t *testing.T) {
-	for _, mode := range []CPUMode{CPUModeOnCPU, CPUModeOffCPU} {
-		got, err := ParseCPUMode(string(mode))
-		require.NoError(t, err)
-		require.Equal(t, mode, got)
-	}
-	mode, err := ParseCPUMode("sleep")
-	require.Equal(t, CPUModeUnknown, mode)
-	require.EqualError(t, err, `unsupported CPU mode "sleep"`)
-}
-
 func TestParseOffCPUPhase(t *testing.T) {
 	for _, phase := range []OffCPUPhase{OffCPUPhaseAll, OffCPUPhaseBlocked, OffCPUPhaseRunqueue} {
 		got, err := ParseOffCPUPhase(string(phase))
@@ -53,12 +31,12 @@ func TestParseOffCPUPhase(t *testing.T) {
 	require.EqualError(t, err, `unsupported off-CPU phase "wait"`)
 }
 
-func allMemoryModes() []MemoryMode {
-	return []MemoryMode{
-		MemoryModeObjectAlloc,
-		MemoryModeObjectUsage,
-		MemoryModeVirtualAlloc,
-		MemoryModePhysicalAlloc,
-		MemoryModePhysicalUsage,
+func allMemoryModes() []Mode {
+	return []Mode{
+		ModeObjectAlloc,
+		ModeObjectUsage,
+		ModeVirtualAlloc,
+		ModePhysicalAlloc,
+		ModePhysicalUsage,
 	}
 }

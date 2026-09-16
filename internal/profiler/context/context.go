@@ -23,13 +23,13 @@ import (
 	"strings"
 	"sync"
 
-	"huatuo-bamai/internal/profiler"
-	"huatuo-bamai/internal/profiler/output"
-	_ "huatuo-bamai/internal/profiler/output/flamegraph"
-	_ "huatuo-bamai/internal/profiler/output/raw"
-	psignal "huatuo-bamai/internal/profiler/signal"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/profiler/output"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
+	psignal "github.com/ccfos/huatuo/internal/profiler/signal"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/urfave/cli/v2"
 )
@@ -58,8 +58,7 @@ type ProfilerContext struct {
 	ThreadGroup               bool
 	ToolPath                  string
 	LogBpfDebug               bool
-	MemoryMode                profiling.MemoryMode
-	CPUMode                   profiling.CPUMode
+	Mode                      profiling.Mode
 	OffCPUPhase               profiling.OffCPUPhase
 	OffCPUMinDurationUS       uint64
 	OffCPUStatsEnabled        bool
@@ -68,11 +67,6 @@ type ProfilerContext struct {
 	TracerID string
 
 	ToolstreamClient *toolstream.Client
-}
-
-type TracerData struct {
-	MetricData any                   `json:"metric_data,omitempty"`
-	FlameData  *profiler.ProfileData `json:"flamedata"`
 }
 
 func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, error) {
@@ -142,18 +136,13 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	if err != nil {
 		return nil, err
 	}
-	mode := profiling.MemoryModeUnknown
-	if cliCtx.String("memory-mode") != "" {
-		mode, err = profiling.ParseMemoryMode(cliCtx.String("memory-mode"))
-		if err != nil {
-			return nil, err
-		}
+	modeValue := cliCtx.String("cpu-mode")
+	if typ == profiling.TypeMemory {
+		modeValue = cliCtx.String("memory-mode")
+	} else if modeValue == "" {
+		modeValue = string(profiling.ModeOnCPU)
 	}
-	cpuModeValue := cliCtx.String("cpu-mode")
-	if cpuModeValue == "" {
-		cpuModeValue = string(profiling.CPUModeOnCPU)
-	}
-	cpuMode, err := profiling.ParseCPUMode(cpuModeValue)
+	mode, err := profiling.ParseMode(modeValue)
 	if err != nil {
 		return nil, err
 	}
@@ -188,8 +177,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		LogBpfDebug:               cliCtx.Bool("log-bpf-debug"),
 		OutputPath:                cliCtx.String("output-path"),
 		OutputFormat:              outputFormat,
-		MemoryMode:                mode,
-		CPUMode:                   cpuMode,
+		Mode:                      mode,
 		OffCPUPhase:               offCPUPhase,
 		OffCPUMinDurationUS:       cliCtx.Uint64("offcpu-min-duration-us"),
 		OffCPUStatsEnabled:        cliCtx.Bool("offcpu-stats"),
@@ -215,7 +203,7 @@ func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*too
 
 	client, err := toolstream.NewClient(toolstream.ClientOptions{
 		SockPath: sockPath,
-		ToolName: "profiler",
+		ToolName: types.ProfilingToolName,
 		Version:  "1",
 		TaskID:   cliCtx.String("tracer-id"),
 	})

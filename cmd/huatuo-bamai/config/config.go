@@ -23,11 +23,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"huatuo-bamai/core/autotracing"
-	"huatuo-bamai/core/events"
-	collector "huatuo-bamai/core/metrics"
-	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/internal/matcher"
+	"github.com/ccfos/huatuo/core/autotracing"
+	"github.com/ccfos/huatuo/core/events"
+	collector "github.com/ccfos/huatuo/core/metrics"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/matcher"
 )
 
 // LogConfig controls process logging.
@@ -43,11 +43,17 @@ type RuntimeConfig struct {
 	MemoryLimitMiB       int64   `default:"2048"`
 }
 
+// HTTPServerAuthConfig controls service authentication at the Node API boundary.
+type HTTPServerAuthConfig struct {
+	BearerToken string
+}
+
 // HTTPServerConfig controls the Agent HTTP server.
 type HTTPServerConfig struct {
 	ListenAddress                       string `default:":19704"`
 	MaxEventStreamClients               int    `default:"100"`
 	EventStreamKeepAliveIntervalSeconds int    `default:"30"`
+	Auth                                HTTPServerAuthConfig
 }
 
 // LocalFileConfig controls local tracing data retention.
@@ -63,9 +69,22 @@ type StorageConfig struct {
 	LocalFile     LocalFileConfig
 }
 
-// TasksConfig controls locally running tracing tasks.
-type TasksConfig struct {
-	MaxConcurrent int `default:"10"`
+// OperationsConfig controls the shared Node operation lifecycle.
+type OperationsConfig struct {
+	MaxConcurrent                  int `default:"10"`
+	LaunchTimeoutSeconds           int `default:"10"`
+	StopGracePeriodSeconds         int `default:"5"`
+	FinalizationTimeoutSeconds     int `default:"30"`
+	TerminalRetentionPeriodSeconds int `default:"600"`
+}
+
+// ProfilingConfig controls Node-local profiler execution.
+type ProfilingConfig struct {
+	AggregationIntervalSeconds int `default:"10"`
+	MaxConcurrentProcesses     int `default:"10"`
+	CommandOutputLimitBytes    int `default:"65536"`
+	JavaToolPath               string
+	PythonToolPath             string
 }
 
 // PodConfig controls Pod metadata discovery.
@@ -84,7 +103,8 @@ type Config struct {
 	Runtime    RuntimeConfig
 	HTTPServer HTTPServerConfig
 	Storage    StorageConfig
-	Tasks      TasksConfig
+	Operations OperationsConfig
+	Profiling  ProfilingConfig
 
 	Pod PodConfig
 
@@ -139,8 +159,11 @@ func (c *Config) Validate() error {
 	if err := c.HTTPServer.Validate(); err != nil {
 		return fmt.Errorf("validating HTTP server config: %w", err)
 	}
-	if err := c.Tasks.Validate(); err != nil {
-		return fmt.Errorf("validating tasks config: %w", err)
+	if err := c.Operations.Validate(); err != nil {
+		return fmt.Errorf("validating operations config: %w", err)
+	}
+	if err := c.Profiling.Validate(); err != nil {
+		return fmt.Errorf("validating profiling config: %w", err)
 	}
 	if err := c.Storage.Validate(); err != nil {
 		return fmt.Errorf("validating storage config: %w", err)
@@ -192,13 +215,47 @@ func (c HTTPServerConfig) Validate() error {
 	if c.EventStreamKeepAliveIntervalSeconds <= 0 {
 		return errors.New("event stream keepalive interval must be greater than zero seconds")
 	}
+	if strings.TrimSpace(c.Auth.BearerToken) == "" {
+		return errors.New("auth bearer token is required")
+	}
+	if strings.ContainsAny(c.Auth.BearerToken, " \t\r\n") {
+		return errors.New("auth bearer token must not contain whitespace")
+	}
 	return nil
 }
 
-// Validate rejects invalid task concurrency.
-func (c TasksConfig) Validate() error {
+// Validate rejects invalid operation lifecycle settings.
+func (c OperationsConfig) Validate() error {
 	if c.MaxConcurrent <= 0 {
-		return errors.New("maximum concurrent tasks must be greater than zero")
+		return errors.New("maximum concurrent operations must be greater than zero")
+	}
+	values := []struct {
+		name  string
+		value int
+	}{
+		{name: "launch timeout", value: c.LaunchTimeoutSeconds},
+		{name: "stop grace period", value: c.StopGracePeriodSeconds},
+		{name: "finalization timeout", value: c.FinalizationTimeoutSeconds},
+		{name: "terminal retention period", value: c.TerminalRetentionPeriodSeconds},
+	}
+	for _, item := range values {
+		if item.value <= 0 {
+			return fmt.Errorf("%s must be greater than zero seconds", item.name)
+		}
+	}
+	return nil
+}
+
+// Validate rejects invalid profiler execution settings.
+func (c ProfilingConfig) Validate() error {
+	if c.AggregationIntervalSeconds <= 0 {
+		return errors.New("aggregation interval must be greater than zero seconds")
+	}
+	if c.MaxConcurrentProcesses < 0 {
+		return errors.New("maximum concurrent profiler processes must not be negative")
+	}
+	if c.CommandOutputLimitBytes <= 0 {
+		return errors.New("command output limit must be greater than zero bytes")
 	}
 	return nil
 }

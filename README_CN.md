@@ -86,10 +86,40 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
     </small>
     </div>
 
-    ![](/docs/img/quickstart-autotrcing-event.png)
+    ![](/docs/img/quickstart-autotracing-event.png)
 
 - **注意**
   请勿将 latest 标签的镜像部署至生产环境，此为开发测试分支。请使用正式发版的镜像或二进制文件。
+
+## Go 客户端
+
+对外提供的 Go 客户端位于 `client/`。Node 客户端文件使用 `node_` 前缀。
+
+```go
+package main
+
+import (
+	"context"
+	"encoding/json"
+
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/client"
+)
+
+func updateNodeConfig(ctx context.Context, address client.NodeAddress) error {
+	nodeClient, err := client.NewNode(&client.NodeConfig{
+		BearerToken: "node-token",
+	})
+	if err != nil {
+		return err
+	}
+	return nodeClient.UpdateConfig(ctx, address, &nodeapi.UpdateConfigRequest{
+		Config: map[string]json.RawMessage{
+			"Runtime.CPULimitCores": json.RawMessage("1.5"),
+		},
+	})
+}
+```
 
 ## 内核版本
 
@@ -113,7 +143,7 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
 
 ## 社区共建
 - ❇️ 真诚欢迎每一位用户、开发者、公司以及组织，使用华佗监控、积极反馈 Bug、提交功能需求、分享最佳实践，共建专业、活跃的华佗开源社区。
-- ❤️ 华佗贡献者
+- ❤️ 贡献者
 <a href="https://github.com/ccfos/huatuo/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
 </a>

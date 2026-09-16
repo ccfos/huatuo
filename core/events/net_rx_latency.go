@@ -23,16 +23,16 @@ import (
 	"syscall"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/packet"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/timeutil"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/netutil"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/internal/utils/netutil"
 
 	"golang.org/x/sys/unix"
 )
@@ -124,7 +124,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "net_recv_lat_event_map", 8192)
+	reader, err := b.AttachAndEventPipe(childCtx, "net_recv_lat_event_map", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return err
 	}
@@ -206,10 +206,10 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 
 			// save storage
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:  "net_rx_latency",
-				ContainerID: containerID,
-				TracerTime:  time.Now(),
-				TracerData:  tracerData,
+				TracerName:        "net_rx_latency",
+				ContainerID:       containerID,
+				ObservedTimestamp: time.Now().UTC(),
+				TracerData:        tracerData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

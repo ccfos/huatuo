@@ -141,6 +141,8 @@ func NewClient(path, toolName, version, taskID string) (*Client, error) {
 
 	c := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
 	if err := c.handshake(toolName, version, taskID); err != nil {
+		// The caller never sees the connection, so it must not leak.
+		_ = conn.Close()
 		return nil, fmt.Errorf("transport: send connect: %w", err)
 	}
 

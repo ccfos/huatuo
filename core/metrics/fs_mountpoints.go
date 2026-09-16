@@ -17,10 +17,10 @@ package collector
 import (
 	"fmt"
 
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 type mountPointCollector struct{}

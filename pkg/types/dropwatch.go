@@ -15,7 +15,7 @@
 package types
 
 import (
-	"huatuo-bamai/internal/packet"
+	"github.com/ccfos/huatuo/internal/packet"
 )
 
 // DropWatchTracing is the canonical JSON schema for a dropwatch event,
@@ -27,7 +27,7 @@ import (
 // terminology and keeps the field distinct from the `Packet*` BPF-metadata
 // prefix family above.
 type DropWatchTracing struct {
-	ObservedTimestamp   string         `json:"observed_timestamp"`
+	ObservedTimestamp   string         `json:"observed_timestamp,omitempty"`
 	Type                string         `json:"type,omitempty"`
 	DropSource          string         `json:"drop_source"`
 	DropReason          string         `json:"drop_reason"`
@@ -49,4 +49,20 @@ type DropWatchTracing struct {
 	PacketLenBytes      uint32         `json:"packet_len_bytes"`
 	Layers              *packet.Packet `json:"layers,omitempty"`
 	Stack               string         `json:"stack"`
+}
+
+// DropwatchPerfStatus reports cumulative diagnostic counters for the embedded
+// dropwatch source.
+type DropwatchPerfStatus struct {
+	// PerfLost counts dropwatch events that the kernel failed to write to the
+	// perf stream (bpf_perf_event_output returned a negative error, e.g. no
+	// reader attached for the current CPU).
+	PerfLost uint64 `json:"perf_lost"`
+	// LostSamples counts perf ring buffer overflows reported by the reader as
+	// PERF_RECORD_LOST records. It is only observable while the reader is
+	// running and is delivered with the next successful event.
+	LostSamples uint64 `json:"lost_samples,omitempty"`
+	// RateLimited counts dropwatch events rejected by the rate limiter, read
+	// from the limiter state map's total_missed counter.
+	RateLimited uint64 `json:"rate_limited"`
 }

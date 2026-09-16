@@ -13,7 +13,7 @@ weight: 1
 This section helps you quickly explore the frontend capabilities. You can directly access [demo station](http://console.huatuo.tech), such as viewing exception event overviews, exception event context information, metric curves, etc. (Account: huatuo passwd: huatuo1024).
 
 - [Events, AutoTracing Dashboard（improvements in progress）](http://console.huatuo.tech/d/autotracing-event)
-  ![autotrcing-event demo diagram​](/docs/img/quickstart-autotrcing-event.png)
+  ![autotracing-event demo diagram​](/docs/img/quickstart-autotracing-event.png)
 
 - [Host Metrics Dashboard（improvements in progress）](http://console.huatuo.tech/d/metrics-host)
   ![metrics-host demo diagram](/docs/img/quickstart-metrics-host.png)

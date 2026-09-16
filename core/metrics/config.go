@@ -27,6 +27,12 @@ type Config struct {
 		EnableHCCN bool `default:"false"`
 	}
 
+	Mthreads struct {
+		EnableHealth bool `default:"true"`
+		EnablePCIe   bool `default:"false"`
+		EnableMTLink bool `default:"false"`
+	}
+
 	NetdevStats struct {
 		EnableNetlink  bool `default:"false"`
 		DeviceExcluded string

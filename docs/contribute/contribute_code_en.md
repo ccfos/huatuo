@@ -51,9 +51,8 @@ git remote add upstream https://github.com/ccfos/huatuo.git
 ### Build
 
 ```bash
-make all          # Build everything (BPF + Go)
-make bpf-build    # Build only BPF programs
-make build        # Build only Go binaries
+make build        # Build BPF programs and Go binaries
+make gen-build    # Regenerate BPF and generated Go artifacts
 make docker-build # Build Docker image
 ```
 

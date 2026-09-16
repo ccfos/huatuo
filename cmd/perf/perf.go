@@ -25,11 +25,12 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/command/container"
-	flamegraphtui "huatuo-bamai/internal/flamegraph/tui"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/client"
+	"github.com/ccfos/huatuo/internal/bpf"
+	flamegraphtui "github.com/ccfos/huatuo/internal/flamegraph/tui"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/utils/kernaddr"
+	"github.com/ccfos/huatuo/internal/version"
 )
 
 const perfToolName = "perf"
@@ -51,11 +52,24 @@ func mainAction(ctx *cli.Context) error {
 
 	var targetCssAddr uint64
 	if containerID := ctx.String("container-id"); containerID != "" {
-		c, err := container.GetContainerByID(ctx.String("huatuo-api-address"), containerID)
+		serverAddress := ctx.String("huatuo-api-address")
+		nodeClient, err := client.NewNode(&client.NodeConfig{})
 		if err != nil {
-			return err
+			return fmt.Errorf("initialize node client: %w", err)
 		}
-		targetCssAddr = c.CgroupCss["cpu"]
+		container, err := nodeClient.FetchContainer(
+			ctx.Context,
+			client.NodeAddress{HostPort: serverAddress},
+			containerID,
+		)
+		if err != nil {
+			return fmt.Errorf("fetch container %q metadata: %w", containerID, err)
+		}
+		var ok bool
+		targetCssAddr, ok = kernaddr.Parse(container.CgroupCSS["cpu"])
+		if !ok {
+			return fmt.Errorf("container %q has no CPU CSS address", containerID)
+		}
 	}
 
 	if err := bpf.Init(&bpf.Option{
@@ -162,7 +176,7 @@ func main() {
 	})
 
 	if err := app.Run(os.Args); err != nil {
-		fmt.Printf("perf: %v\n", err)
+		fmt.Fprintf(os.Stderr, "perf: %v\n", err)
 		os.Exit(1)
 	}
 }

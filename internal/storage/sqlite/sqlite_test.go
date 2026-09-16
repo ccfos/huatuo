@@ -15,6 +15,7 @@
 package sqlite_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -22,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/storage/driver"
-	storagesqlite "huatuo-bamai/internal/storage/sqlite"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	storagesqlite "github.com/ccfos/huatuo/internal/storage/sqlite"
 )
 
 type backendTestEntity struct {
@@ -66,7 +67,7 @@ func seedSQLiteRecords(t *testing.T, backend *storagesqlite.Storage, records []d
 	t.Helper()
 
 	for _, rec := range records {
-		if err := backend.Save(t.Context(), rec); err != nil {
+		if err := backend.Save(t.Context(), rec, driver.SaveOptions{}); err != nil {
 			t.Errorf("backend Save(%q) returned error: %v", rec.ID, err)
 		}
 	}
@@ -105,7 +106,7 @@ func TestSQLiteBackendCRUD(t *testing.T) {
 		},
 	}
 
-	if err := backend.Save(t.Context(), record); err != nil {
+	if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
 		t.Errorf("backend Save() returned error: %v", err)
 		return
 	}
@@ -135,7 +136,51 @@ func TestSQLiteBackendCRUD(t *testing.T) {
 	}
 }
 
-func TestSQLiteBackendCreateRejectsDuplicateID(t *testing.T) {
+func TestSQLiteBackendDeleteByQuery(t *testing.T) {
+	backend := newSQLiteBackendForTest(t)
+	if backend == nil {
+		return
+	}
+	if err := backend.Init(t.Context(), "jobs", sqliteIndexes()); err != nil {
+		t.Fatalf("backend Init() error = %v", err)
+	}
+	seedSQLiteRecords(t, backend, []driver.Record{
+		{ID: "running-1", Data: []byte(`{}`), Fields: map[string]any{"status": "running"}},
+		{ID: "running-2", Data: []byte(`{}`), Fields: map[string]any{"status": "running"}},
+		{ID: "completed", Data: []byte(`{}`), Fields: map[string]any{"status": "completed"}},
+	})
+
+	filter := driver.Filter{Field: "status", Op: driver.OpEq, Value: "running"}
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{filter},
+		Limit:   1,
+	})
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteByQuery(limit 1) = (%d, %v), want (1, nil)", deleted, err)
+	}
+	remaining, err := backend.Count(t.Context(), driver.Query{Filters: []driver.Filter{filter}})
+	if err != nil || remaining != 1 {
+		t.Fatalf("Count() = (%d, %v), want (1, nil)", remaining, err)
+	}
+
+	deleted, err = backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{filter},
+	})
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteByQuery(unbounded) = (%d, %v), want (1, nil)", deleted, err)
+	}
+	if _, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{}); !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("DeleteByQuery(empty) error = %v, want ErrInvalidQuery", err)
+	}
+	if _, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{filter},
+		Limit:   -1,
+	}); !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("DeleteByQuery(negative limit) error = %v, want ErrInvalidQuery", err)
+	}
+}
+
+func TestSQLiteBackendSaveCreateOnlyRejectsDuplicateID(t *testing.T) {
 	backend := newSQLiteBackendForTest(t)
 	if backend == nil {
 		return
@@ -145,11 +190,53 @@ func TestSQLiteBackendCreateRejectsDuplicateID(t *testing.T) {
 	}
 
 	record := driver.Record{ID: "job-duplicate", Data: []byte(`{"status":"pending"}`)}
-	if err := backend.Create(t.Context(), record); err != nil {
-		t.Fatalf("first Create() error = %v", err)
+	options := driver.SaveOptions{Mode: driver.SaveModeCreateOnly}
+	if err := backend.Save(t.Context(), record, options); err != nil {
+		t.Fatalf("first Save() error = %v", err)
 	}
-	if err := backend.Create(t.Context(), record); !errors.Is(err, driver.ErrAlreadyExists) {
-		t.Fatalf("second Create() error = %v, want ErrAlreadyExists", err)
+	if err := backend.Save(t.Context(), record, options); !errors.Is(err, driver.ErrAlreadyExists) {
+		t.Fatalf("second Save() error = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestSQLiteBackendConditionalSave(t *testing.T) {
+	backend := newSQLiteBackendForTest(t)
+	if backend == nil {
+		return
+	}
+	if err := backend.Init(t.Context(), "jobs", []driver.Index{{Field: "revision"}}); err != nil {
+		t.Fatalf("backend Init() error = %v", err)
+	}
+
+	record := driver.Record{
+		ID:     "job-1",
+		Data:   []byte(`{"status":"pending"}`),
+		Fields: map[string]any{"revision": int64(1)},
+	}
+	if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+	record.Data = []byte(`{"status":"running"}`)
+	record.Fields["revision"] = int64(2)
+	options := driver.SaveOptions{
+		Mode: driver.SaveModeConditional,
+		Conditions: []driver.Filter{
+			{Field: "revision", Op: driver.OpEq, Value: int64(1)},
+		},
+	}
+	if err := backend.Save(t.Context(), record, options); err != nil {
+		t.Fatalf("conditional Save() error = %v", err)
+	}
+	if err := backend.Save(t.Context(), record, options); !errors.Is(err, driver.ErrConflict) {
+		t.Fatalf("stale Save() error = %v, want ErrConflict", err)
+	}
+
+	stored, err := backend.Get(t.Context(), record.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if !bytes.Equal(stored.Data, record.Data) || stored.Fields["revision"] != json.Number("2") {
+		t.Fatalf("Get() record = %#v, want revision 2 running record", stored)
 	}
 }
 

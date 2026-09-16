@@ -19,25 +19,18 @@ import (
 	"slices"
 )
 
-type MemoryMode string
+// Mode selects the profiling strategy for a type and language combination.
+type Mode string
 
 const (
-	MemoryModeUnknown       MemoryMode = ""
-	MemoryModeObjectAlloc   MemoryMode = "object_alloc"
-	MemoryModeObjectUsage   MemoryMode = "object_usage"
-	MemoryModeVirtualAlloc  MemoryMode = "virtual_alloc"
-	MemoryModePhysicalAlloc MemoryMode = "physical_alloc"
-	MemoryModePhysicalUsage MemoryMode = "physical_usage"
-)
-
-// CPUMode selects whether native CPU profiling samples running tasks or
-// attributes time spent descheduled to the stack that caused the deschedule.
-type CPUMode string
-
-const (
-	CPUModeUnknown CPUMode = ""
-	CPUModeOnCPU   CPUMode = "oncpu"
-	CPUModeOffCPU  CPUMode = "offcpu"
+	ModeUnknown       Mode = ""
+	ModeObjectAlloc   Mode = "object_alloc"
+	ModeObjectUsage   Mode = "object_usage"
+	ModeVirtualAlloc  Mode = "virtual_alloc"
+	ModePhysicalAlloc Mode = "physical_alloc"
+	ModePhysicalUsage Mode = "physical_usage"
+	ModeOnCPU         Mode = "oncpu"
+	ModeOffCPU        Mode = "offcpu"
 )
 
 // OffCPUPhase selects which part of a deschedule interval is accumulated.
@@ -50,22 +43,16 @@ const (
 	OffCPUPhaseRunqueue OffCPUPhase = "runqueue"
 )
 
-func ParseMemoryMode(value string) (MemoryMode, error) {
-	mode := MemoryMode(value)
-	for _, capability := range capabilities {
-		if slices.Contains(capability.MemoryModes, mode) {
+// ParseMode parses a public profiling mode value.
+func ParseMode(value string) (Mode, error) {
+	mode := Mode(value)
+	for i := range capabilities {
+		capability := &capabilities[i]
+		if slices.Contains(capability.Modes, mode) {
 			return mode, nil
 		}
 	}
-	return MemoryModeUnknown, fmt.Errorf("unsupported memory mode %q", value)
-}
-
-func ParseCPUMode(value string) (CPUMode, error) {
-	mode := CPUMode(value)
-	if mode == CPUModeOnCPU || mode == CPUModeOffCPU {
-		return mode, nil
-	}
-	return CPUModeUnknown, fmt.Errorf("unsupported CPU mode %q", value)
+	return ModeUnknown, fmt.Errorf("unsupported profiling mode %q", value)
 }
 
 func ParseOffCPUPhase(value string) (OffCPUPhase, error) {

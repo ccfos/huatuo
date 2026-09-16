@@ -14,21 +14,31 @@
 
 package job
 
-import "context"
+import (
+	"context"
+	"time"
 
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+)
+
+// Store persists Job snapshots and atomic state transitions.
 type Store interface {
 	Get(ctx context.Context, jobID string) (*Job, error)
 	Create(ctx context.Context, job *Job) error
-	Save(ctx context.Context, job *Job) error
-	Delete(ctx context.Context, jobID string) error
-	List(ctx context.Context, query *JobQuery) ([]*Job, error)
-	Count(ctx context.Context, query *JobQuery) (int64, error)
-	Close(ctx context.Context) error
+	Save(ctx context.Context, job *Job) (*Job, error)
+	List(ctx context.Context, query *Query) ([]*Job, error)
+	DeleteTerminalBefore(ctx context.Context, endedBefore time.Time, limit int) (int64, error)
+	Ping(ctx context.Context) error
+	Close() error
 }
 
-// NodeAgent interface for communicating with the huatuo-bamai agent
-type NodeAgent interface {
-	StartTaskContext(ctx context.Context, host, container string, request *AgentTaskRequest) (string, error)
-	StopTaskContext(ctx context.Context, host, taskID string, force bool) error
-	GetTaskStatusContext(ctx context.Context, host, taskID string) (string, *Result, error)
+// NodeClient controls typed Node Operations without owning Job state.
+type NodeClient interface {
+	StartOperation(
+		ctx context.Context,
+		host string,
+		request *nodeapi.StartOperationRequest,
+	) (*nodeapi.Operation, error)
+	GetOperation(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
+	StopOperation(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
 }

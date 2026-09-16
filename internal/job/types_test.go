@@ -15,54 +15,28 @@
 package job
 
 import (
-	"encoding/json"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
-func TestStandardizedJobJSONFields(t *testing.T) {
-	tests := []struct {
-		name   string
-		value  any
-		fields []string
-	}{
-		{
-			name:   "agent task request",
-			value:  AgentTaskRequest{},
-			fields: []string{"tracer_args"},
-		},
-		{
-			name:  "job",
-			value: Job{ErrorMessage: "failed"},
-			fields: []string{
-				"id",
-				"username",
-				"container_id",
-				"hostname",
-				"agent_task_id",
-				"error_message",
-				"trace_timeout",
-				"agent_task",
-				"result",
-			},
-		},
+func TestCloneJobDoesNotAliasNestedState(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	source := testJob("job-1", StatusTerminal, now)
+	source.Terminal = &TerminalResult{
+		Outcome: OutcomeFailed,
+		Reason:  FailureReasonExecutionFailed,
+		Message: "failed",
 	}
+	cloned := cloneJob(source)
+	cloned.Spec.Profiling.Mode = profiling.ModeOffCPU
+	cloned.Terminal.Message = "changed"
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			payload, err := json.Marshal(tt.value)
-			if err != nil {
-				t.Fatalf("json.Marshal() error=%v", err)
-			}
-
-			var decoded map[string]any
-			if err := json.Unmarshal(payload, &decoded); err != nil {
-				t.Fatalf("json.Unmarshal() error=%v", err)
-			}
-			for _, field := range tt.fields {
-				if _, ok := decoded[field]; !ok {
-					t.Errorf("JSON field %q is missing", field)
-				}
-			}
-		})
+	if source.Spec.Profiling.Mode != profiling.ModeOnCPU {
+		t.Fatalf("source profiling mode = %q", source.Spec.Profiling.Mode)
+	}
+	if source.Terminal.Message != "failed" {
+		t.Fatalf("source terminal message = %q", source.Terminal.Message)
 	}
 }

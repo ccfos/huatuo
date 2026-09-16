@@ -21,9 +21,9 @@ import (
 	"strconv"
 	"strings"
 
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 var oomHostMemInfoKeys = map[string]bool{

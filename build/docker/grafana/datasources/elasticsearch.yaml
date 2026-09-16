@@ -45,7 +45,7 @@ datasources:
     # <map> Fields to convert to JSON and store in jsonData.
     jsonData:
       index: 'huatuo_bamai*'
-      timeField: 'uploaded_time'
+      timeField: 'uploaded_timestamp'
     # <map> Fields to encrypt before storing in jsonData.
     secureJsonData:
       # <string> Defines the CA cert, client cert, and

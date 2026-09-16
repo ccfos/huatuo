@@ -49,7 +49,7 @@ expect_marker() {
 
 # Names track BPF_DEBUG=1 / BPF_DEBUG=0 (the user-facing knob), not the
 # internal -DDEBUG_BPF macro, so reading the assertions below matches how
-# a developer would invoke `make bpf-build BPF_DEBUG=...`.
+# a developer would invoke `make gen-build BPF_DEBUG=...`.
 OBJ_WITH_DEBUG="${WORK_DIR}/bpf_debug_on.o"
 OBJ_WITHOUT_DEBUG="${WORK_DIR}/bpf_debug_off.o"
 

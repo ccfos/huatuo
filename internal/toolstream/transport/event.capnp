@@ -2,7 +2,7 @@
 
 using Go = import "/go.capnp";
 $Go.package("transport");
-$Go.import("huatuo-bamai/internal/toolstream/transport");
+$Go.import("github.com/ccfos/huatuo/internal/toolstream/transport");
 
 # First frame sent by a client; carries connection-level metadata.
 struct ConnectRequest {

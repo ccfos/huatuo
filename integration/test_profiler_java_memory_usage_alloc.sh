@@ -44,6 +44,14 @@ trap cleanup EXIT
 
 javac -d "${WORK_DIR}" "${FIXTURE_SRC}"
 
+java_fixture_is_ready() {
+	local pid=$1
+	local output_file=$2
+
+	kill -0 "${pid}" 2> /dev/null \
+		&& grep -qx 'ready' "${output_file}"
+}
+
 run_profile_case() {
 	local mode=$1
 	local out_dir="${WORK_DIR}/${mode}"
@@ -56,8 +64,9 @@ run_profile_case() {
 		-cp "${WORK_DIR}" TestProfilerJavaMemory \
 		> "${out_dir}/java.out" 2> "${out_dir}/java.err" &
 	PROFILER_TARGET_PID=$!
-	kill -0 "${PROFILER_TARGET_PID}" 2> /dev/null \
-		|| fatal "Java memory fixture exited immediately for mode=${mode}"
+	wait_until 10 1 java_fixture_is_ready \
+		"${PROFILER_TARGET_PID}" "${out_dir}/java.out" \
+		|| fatal "Java memory fixture did not become ready for mode=${mode}"
 
 	log_info "running Java memory profiler mode=${mode} pid=${PROFILER_TARGET_PID}"
 	if ! "${TOOL_BIN}" \

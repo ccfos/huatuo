@@ -14,28 +14,13 @@
 
 package v1
 
-// ErrorCode identifies an API error independently of its human-readable message.
-type ErrorCode string
-
+// Deprecated compatibility codes remain until the legacy handlers migrate to
+// the generated Server and Node contracts.
 const (
-	ErrorCodeInvalidRequest    ErrorCode = "invalid_request"
-	ErrorCodeUnauthorized      ErrorCode = "unauthorized"
-	ErrorCodeForbidden         ErrorCode = "forbidden"
+	ErrorCodeUnauthorized      ErrorCode = ErrorCodeUnauthenticated
+	ErrorCodeForbidden         ErrorCode = ErrorCodePermissionDenied
 	ErrorCodeNotFound          ErrorCode = "not_found"
 	ErrorCodeConflict          ErrorCode = "conflict"
 	ErrorCodeRateLimited       ErrorCode = "rate_limited"
-	ErrorCodeInternal          ErrorCode = "internal_error"
 	ErrorCodeProfilingDisabled ErrorCode = "profiling_disabled"
 )
-
-// Error describes an API error returned over the wire.
-type Error struct {
-	Code    ErrorCode `json:"code"`
-	Message string    `json:"message"`
-}
-
-// ErrorResponse is the error response envelope. It remains separate from Error
-// so request-level metadata can be added without changing the error payload.
-type ErrorResponse struct {
-	Error Error `json:"error"`
-}

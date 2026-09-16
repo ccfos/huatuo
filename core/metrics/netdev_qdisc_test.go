@@ -22,8 +22,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"huatuo-bamai/internal/qdisc"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/qdisc"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 func TestQdiscCollectorUpdate(t *testing.T) {

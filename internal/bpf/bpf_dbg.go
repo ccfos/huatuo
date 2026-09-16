@@ -19,9 +19,9 @@ import (
 	"errors"
 	"fmt"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 const (

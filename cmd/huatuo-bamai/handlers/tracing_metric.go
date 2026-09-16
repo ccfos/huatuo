@@ -15,8 +15,8 @@
 package handlers
 
 import (
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 var tracingStatusCollector = &tracingHitCollector{}

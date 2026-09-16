@@ -17,6 +17,8 @@ package profiling
 import (
 	"fmt"
 	"slices"
+
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 type Type string
@@ -48,46 +50,77 @@ const (
 	ImplementationPython  Implementation = "python"
 )
 
-type capability struct {
-	Language       Language
-	Implementation Implementation
-	Types          []Type
-	CPUModes       []CPUMode
-	MemoryModes    []MemoryMode
+// Capability describes one supported profiling type and language combination.
+type Capability struct {
+	Type                Type
+	Language            Language
+	Modes               []Mode
+	SupportsBinaryMatch bool
+	SupportedScopes     []observation.Scope
+
+	implementation Implementation
 }
 
-var capabilities = []capability{
-	newNativeCapability(LanguageC),
-	newNativeCapability(LanguageCPP),
-	newNativeCapability(LanguageGo),
+var capabilities = []Capability{
+	newNativeCapability(LanguageC, TypeCPU),
+	newNativeCapability(LanguageCPP, TypeCPU),
+	newNativeCapability(LanguageGo, TypeCPU),
 	{
-		Language:       LanguageJava,
-		Implementation: ImplementationJava,
-		Types:          []Type{TypeCPU, TypeMemory},
-		CPUModes:       []CPUMode{CPUModeOnCPU},
-		MemoryModes:    []MemoryMode{MemoryModeObjectAlloc, MemoryModeObjectUsage},
+		Type:                TypeCPU,
+		Language:            LanguageJava,
+		Modes:               []Mode{ModeOnCPU},
+		SupportsBinaryMatch: true,
+		SupportedScopes:     []observation.Scope{observation.ScopeContainer},
+		implementation:      ImplementationJava,
 	},
 	{
-		Language:       LanguagePython,
-		Implementation: ImplementationPython,
-		Types:          []Type{TypeCPU},
-		CPUModes:       []CPUMode{CPUModeOnCPU},
-		MemoryModes:    []MemoryMode{},
+		Type:                TypeCPU,
+		Language:            LanguagePython,
+		Modes:               []Mode{ModeOnCPU},
+		SupportsBinaryMatch: true,
+		SupportedScopes:     []observation.Scope{observation.ScopeContainer},
+		implementation:      ImplementationPython,
+	},
+	newNativeCapability(LanguageC, TypeMemory),
+	newNativeCapability(LanguageCPP, TypeMemory),
+	newNativeCapability(LanguageGo, TypeMemory),
+	{
+		Type:            TypeMemory,
+		Language:        LanguageJava,
+		Modes:           []Mode{ModeObjectAlloc, ModeObjectUsage},
+		SupportedScopes: []observation.Scope{observation.ScopeContainer},
+		implementation:  ImplementationJava,
 	},
 }
 
-func newNativeCapability(language Language) capability {
-	return capability{
-		Language:       language,
-		Implementation: ImplementationNative,
-		Types:          []Type{TypeCPU, TypeMemory},
-		CPUModes:       []CPUMode{CPUModeOnCPU, CPUModeOffCPU},
-		MemoryModes: []MemoryMode{
-			MemoryModeVirtualAlloc,
-			MemoryModePhysicalAlloc,
-			MemoryModePhysicalUsage,
-		},
+func newNativeCapability(language Language, typ Type) Capability {
+	modes := []Mode{ModeOnCPU, ModeOffCPU}
+	scopes := []observation.Scope{observation.ScopeHost, observation.ScopeContainer}
+	if typ == TypeMemory {
+		modes = []Mode{
+			ModeVirtualAlloc,
+			ModePhysicalAlloc,
+			ModePhysicalUsage,
+		}
+		scopes = []observation.Scope{observation.ScopeContainer}
 	}
+
+	return Capability{
+		Type:            typ,
+		Language:        language,
+		Modes:           modes,
+		SupportedScopes: scopes,
+		implementation:  ImplementationNative,
+	}
+}
+
+// Capabilities returns the static product capabilities in stable order.
+func Capabilities() []Capability {
+	result := make([]Capability, len(capabilities))
+	for i := range capabilities {
+		result[i] = cloneCapability(&capabilities[i])
+	}
+	return result
 }
 
 func ParseType(value string) (Type, error) {
@@ -100,7 +133,8 @@ func ParseType(value string) (Type, error) {
 
 func ParseLanguage(value string) (Language, error) {
 	language := Language(value)
-	for _, capability := range capabilities {
+	for i := range capabilities {
+		capability := &capabilities[i]
 		if capability.Language == language {
 			return language, nil
 		}
@@ -109,54 +143,53 @@ func ParseLanguage(value string) (Language, error) {
 }
 
 func IsSupported(language Language, typ Type) bool {
-	capability, ok := capabilityFor(language)
-	return ok && slices.Contains(capability.Types, typ)
+	_, ok := capabilityFor(language, typ)
+	return ok
 }
 
-func SupportsMemoryMode(language Language, mode MemoryMode) bool {
-	capability, ok := capabilityFor(language)
-	return ok && slices.Contains(capability.MemoryModes, mode)
+// SupportsMode reports whether a profiling capability supports a mode.
+func SupportsMode(language Language, typ Type, mode Mode) bool {
+	capability, ok := capabilityFor(language, typ)
+	return ok && slices.Contains(capability.Modes, mode)
 }
 
-func LanguagesFor(typ Type) []Language {
-	languages := make([]Language, 0, len(capabilities))
-	for _, capability := range capabilities {
-		if slices.Contains(capability.Types, typ) {
-			languages = append(languages, capability.Language)
-		}
-	}
-	return languages
+// SupportsScope reports whether a profiling combination can observe a scope.
+func SupportsScope(language Language, typ Type, scope observation.Scope) bool {
+	capability, ok := capabilityFor(language, typ)
+	return ok && slices.Contains(capability.SupportedScopes, scope)
 }
 
-func MemoryModesFor(language Language) []MemoryMode {
-	capability, ok := capabilityFor(language)
+// ModesFor returns the modes supported by one profiling capability.
+func ModesFor(language Language, typ Type) []Mode {
+	capability, ok := capabilityFor(language, typ)
 	if !ok {
-		return []MemoryMode{}
+		return nil
 	}
-	return slices.Clone(capability.MemoryModes)
+	return slices.Clone(capability.Modes)
 }
 
-func CPUModesFor(language Language) []CPUMode {
-	capability, ok := capabilityFor(language)
-	if !ok {
-		return []CPUMode{}
-	}
-	return slices.Clone(capability.CPUModes)
-}
-
-func ImplementationFor(language Language) (Implementation, bool) {
-	capability, ok := capabilityFor(language)
+// ImplementationFor returns the implementation for one supported capability.
+func ImplementationFor(language Language, typ Type) (Implementation, bool) {
+	capability, ok := capabilityFor(language, typ)
 	if !ok {
 		return ImplementationUnknown, false
 	}
-	return capability.Implementation, true
+	return capability.implementation, true
 }
 
-func capabilityFor(language Language) (capability, bool) {
-	for _, capability := range capabilities {
-		if capability.Language == language {
+func capabilityFor(language Language, typ Type) (*Capability, bool) {
+	for i := range capabilities {
+		capability := &capabilities[i]
+		if capability.Language == language && capability.Type == typ {
 			return capability, true
 		}
 	}
-	return capability{}, false
+	return nil, false
+}
+
+func cloneCapability(capability *Capability) Capability {
+	result := *capability
+	result.Modes = slices.Clone(capability.Modes)
+	result.SupportedScopes = slices.Clone(capability.SupportedScopes)
+	return result
 }

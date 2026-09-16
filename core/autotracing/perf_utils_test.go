@@ -21,22 +21,23 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/pkg/tracing"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
 )
 
 func TestRunPerfCommand(t *testing.T) {
-	originalTaskBinDir := tracing.TaskBinDir
+	originalCoreBinDir := internalconfig.CoreBinDir
 	t.Cleanup(func() {
-		tracing.TaskBinDir = originalTaskBinDir
+		internalconfig.CoreBinDir = originalCoreBinDir
 	})
 
 	tests := []struct {
-		name        string
-		script      string
-		request     perfRequest
-		wantOutput  []string
-		wantError   string
-		wantMissing string
+		name             string
+		script           string
+		request          perfRequest
+		wantOutput       []string
+		wantError        string
+		wantMissing      string
+		wantErrorMissing string
 	}{
 		{
 			name:   "system wide",
@@ -74,7 +75,7 @@ exit 0
 		{
 			name: "failed command truncates diagnostics",
 			script: `#!/bin/sh
-head -c 5000 /dev/zero | tr '\000' x
+head -c 5000 /dev/zero | tr '\000' x >&2
 exit 2
 `,
 			request: perfRequest{
@@ -83,20 +84,33 @@ exit 2
 			},
 			wantError: "(truncated)",
 		},
+		{
+			name: "failed command uses stderr diagnostics",
+			script: `#!/bin/sh
+printf 'partial result'
+printf 'perf failed' >&2
+exit 2
+`,
+			request: perfRequest{
+				duration: time.Second,
+			},
+			wantError:        "perf failed",
+			wantErrorMissing: "partial result",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			taskBinDir := t.TempDir()
-			tracing.TaskBinDir = taskBinDir
+			coreBinDir := t.TempDir()
+			internalconfig.CoreBinDir = coreBinDir
 			if err := os.WriteFile(
-				filepath.Join(taskBinDir, "perf"),
+				filepath.Join(coreBinDir, "perf"),
 				[]byte(tt.script),
 				0o600,
 			); err != nil {
 				t.Fatalf("os.WriteFile() error = %v", err)
 			}
-			if err := os.Chmod(filepath.Join(taskBinDir, "perf"), 0o700); err != nil {
+			if err := os.Chmod(filepath.Join(coreBinDir, "perf"), 0o700); err != nil {
 				t.Fatalf("os.Chmod() error = %v", err)
 			}
 
@@ -104,6 +118,14 @@ exit 2
 			if tt.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 					t.Fatalf("runPerfCommand() error = %v, want contain %q", err, tt.wantError)
+				}
+				if tt.wantErrorMissing != "" &&
+					strings.Contains(err.Error(), tt.wantErrorMissing) {
+					t.Fatalf(
+						"runPerfCommand() error = %v, want exclude %q",
+						err,
+						tt.wantErrorMissing,
+					)
 				}
 				return
 			}

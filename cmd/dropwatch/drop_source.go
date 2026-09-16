@@ -14,7 +14,7 @@
 
 package main
 
-import "huatuo-bamai/internal/bpf"
+import "github.com/ccfos/huatuo/internal/bpf"
 
 const (
 	dropSourceSoftware = "software"

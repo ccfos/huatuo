@@ -22,12 +22,12 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/pkg/profiling"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_offcpu_profiler.c -o $BPF_DIR/native_offcpu_profiler.o
@@ -39,7 +39,7 @@ const (
 )
 
 type offCPUStackKey struct {
-	Stack    stackIDPair
+	Stack    rawStackIDs
 	Category string
 }
 
@@ -136,27 +136,25 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(
 	ctx context.Context,
 	enqueue func(any),
 ) error {
-	ringCtx, err := newSingleRingBufferContext(p.bpf, ctx, 4096*257)
-	if err != nil {
-		return err
-	}
-	defer ringCtx.Close()
+	ringCtx := p.ringCtx
 
 	for {
 		batch, err := ringCtx.readerA.ReadBatch(func() any { return &abi.ProfilerOffCPUEvent{} })
-		ringCtx.aggregateOffCPUBatch(batch, enqueue)
+		ringCtx.aggregateOffCPUBatch(batch.Events, enqueue)
+
+		if batch.LostSamples != 0 {
+			log.Warnf("off-CPU perf event samples lost: %d", batch.LostSamples)
+		}
 
 		if err != nil {
-			var lostErr *bpf.PerfEventSamplesLostError
-			if errors.As(err, &lostErr) {
-				log.Warnf("off-CPU perf event samples lost: %d", lostErr.Count)
-			}
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
+
+			return fmt.Errorf("read off-CPU perf event batch: %w", err)
 		}
 
-		if len(batch) == 0 {
+		if len(batch.Events) == 0 {
 			select {
 			case <-ctx.Done():
 				return nil
@@ -188,7 +186,7 @@ func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any))
 		}
 		stack := offCPUStackKey{
 			Category: offCPUCategory(event.Kind),
-			Stack: stackIDPair{
+			Stack: rawStackIDs{
 				KernelStackID: event.Base.Kernstack,
 				UserStackID:   event.Base.Userstack,
 			},
@@ -202,11 +200,20 @@ func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any))
 	for process, stacks := range countsByProcess {
 		for stack, duration := range stacks {
 			enqueue(&stackSample{
-				Process:     process,
-				UserStack:   r.resolveUserStack(r.stackMapAID, stack.Stack.UserStackID, process.PID),
-				KernelStack: r.resolveKernelStack(r.stackMapAID, stack.Stack.KernelStackID),
-				Value:       duration,
-				Category:    stack.Category,
+				Process: process,
+				StackTrace: symbolizedStackTrace{
+					UserFrames: r.resolveUserStack(
+						r.stackMapAID,
+						stack.Stack.UserStackID,
+						process.PID,
+					),
+					KernelFrames: r.resolveKernelStack(
+						r.stackMapAID,
+						stack.Stack.KernelStackID,
+					),
+				},
+				Value:    duration,
+				Category: stack.Category,
 			})
 		}
 	}

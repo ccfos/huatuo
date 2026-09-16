@@ -19,11 +19,12 @@
 #include <unistd.h>
 
 #define KEEP_FRAME __attribute__((noinline, noclone))
-#define PAGE_SIZE_BYTES 4096
 #define PAGES_PER_ITERATION 64
 #define ITERATIONS 300
+#define ITERATION_DELAY_US 10000
 
 static volatile unsigned long sink;
+static size_t page_size;
 
 static void wait_for_start_signal(void) {
 	sigset_t set;
@@ -47,18 +48,23 @@ static void wait_for_start_signal(void) {
 }
 
 static KEEP_FRAME void test_physical_usage_touch_pages(char *buf, size_t size) {
-	for (size_t offset = 0; offset < size; offset += PAGE_SIZE_BYTES) {
-		buf[offset] = (char)(offset / PAGE_SIZE_BYTES);
+	for (size_t offset = 0; offset < size; offset += page_size) {
+		buf[offset] = (char)(offset / page_size);
 		sink += (unsigned long)buf[offset];
 	}
 }
 
 static KEEP_FRAME void test_physical_usage_alloc_free_loop(void) {
-	const size_t size = PAGE_SIZE_BYTES * PAGES_PER_ITERATION;
+	const size_t size = page_size * PAGES_PER_ITERATION;
 	char *buf = mmap(NULL, size, PROT_READ | PROT_WRITE,
 			 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (buf == MAP_FAILED) {
 		perror("mmap");
+		exit(1);
+	}
+	/* Keep the expected page count independent of transparent huge pages. */
+	if (madvise(buf, size, MADV_NOHUGEPAGE) != 0) {
+		perror("madvise");
 		exit(1);
 	}
 
@@ -71,13 +77,22 @@ static KEEP_FRAME void test_physical_usage_alloc_free_loop(void) {
 }
 
 int main(void) {
+	long configured_page_size = sysconf(_SC_PAGESIZE);
+	if (configured_page_size <= 0) {
+		perror("sysconf");
+		return 1;
+	}
+	page_size = (size_t)configured_page_size;
+
 	wait_for_start_signal();
 
 	for (int i = 0; i < ITERATIONS; i++) {
 		test_physical_usage_alloc_free_loop();
-		usleep(2000);
+		/* Keep proc mappings available while the profiler drains and symbolizes. */
+		usleep(ITERATION_DELAY_US);
 	}
 
-	fprintf(stderr, "actual_pages=%d\n", ITERATIONS * PAGES_PER_ITERATION);
+	fprintf(stderr, "actual_allocated_bytes=%zu\n",
+		page_size * ITERATIONS * PAGES_PER_ITERATION);
 	return 0;
 }

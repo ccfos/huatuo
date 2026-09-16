@@ -22,12 +22,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 type mockElasticsearchDocument struct {
@@ -42,6 +43,7 @@ type mockElasticsearchServer struct {
 	createIndexBodies []map[string]any
 	searchBodies      []map[string]any
 	countBodies       []map[string]any
+	deleteResponse    map[string]any
 	server            *httptest.Server
 }
 
@@ -81,6 +83,8 @@ func newMockElasticsearchServer() *mockElasticsearchServer {
 			mockServer.handleSearch(w, r, parts[0])
 		case len(parts) == 2 && parts[1] == "_count":
 			mockServer.handleCount(w, r, parts[0])
+		case len(parts) == 2 && parts[1] == "_delete_by_query":
+			mockServer.handleDeleteByQuery(w, r, parts[0])
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"route not found"}`))
@@ -146,6 +150,13 @@ func (m *mockElasticsearchServer) handleSaveDocument(w http.ResponseWriter, r *h
 	if _, ok := m.indexes[index]; !ok {
 		m.indexes[index] = make(map[string]mockElasticsearchDocument)
 	}
+	if r.URL.Query().Get("op_type") == "create" {
+		if _, ok := m.indexes[index][id]; ok {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"type":"version_conflict_engine_exception"}}`))
+			return
+		}
+	}
 	m.indexes[index][id] = mockElasticsearchDocument{
 		ID:     id,
 		Source: cloneRawMessage(raw),
@@ -159,7 +170,7 @@ func (m *mockElasticsearchServer) handleSaveDocument(w http.ResponseWriter, r *h
 // handleBulk consumes NDJSON bulk requests. Only `index` actions are supported
 // since that is all the production Save path emits. Each accepted item is
 // stored under the index from either the action line or the URL path.
-func (m *mockElasticsearchServer) handleBulk(w http.ResponseWriter, r *http.Request, defaultIndex string) {
+func (m *mockElasticsearchServer) handleBulk(w http.ResponseWriter, r *http.Request, requestIndex string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -187,7 +198,7 @@ func (m *mockElasticsearchServer) handleBulk(w http.ResponseWriter, r *http.Requ
 		}
 		idx := act.Index.Index
 		if idx == "" {
-			idx = defaultIndex
+			idx = requestIndex
 		}
 		id := act.Index.ID
 
@@ -271,6 +282,10 @@ func (m *mockElasticsearchServer) handleSearch(w http.ResponseWriter, r *http.Re
 	defer m.mu.Unlock()
 
 	m.searchBodies = append(m.searchBodies, body)
+	if _, ok := m.indexes[index]; !ok {
+		writeMissingIndex(w, index)
+		return
+	}
 	if body["aggs"] != nil {
 		docs := m.matchDocumentsLocked(index, body["query"])
 		m.handleTermsSearch(w, body, docs)
@@ -365,10 +380,66 @@ func (m *mockElasticsearchServer) handleCount(w http.ResponseWriter, r *http.Req
 	defer m.mu.Unlock()
 
 	m.countBodies = append(m.countBodies, body)
+	if _, ok := m.indexes[index]; !ok {
+		writeMissingIndex(w, index)
+		return
+	}
 	docs := m.queryDocumentsLocked(index, body)
 
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{"count": len(docs)})
+}
+
+func (m *mockElasticsearchServer) handleDeleteByQuery(
+	w http.ResponseWriter,
+	r *http.Request,
+	index string,
+) {
+	var body map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.indexes[index]; !ok {
+		writeMissingIndex(w, index)
+		return
+	}
+	documents := m.matchDocumentsLocked(index, body["query"])
+	if value := r.URL.Query().Get("max_docs"); value != "" {
+		limit, err := strconv.Atoi(value)
+		if err != nil {
+			http.Error(w, "invalid max_docs", http.StatusBadRequest)
+			return
+		}
+		if limit < len(documents) {
+			documents = documents[:limit]
+		}
+	}
+	for _, document := range documents {
+		delete(m.indexes[index], document.ID)
+	}
+	response := map[string]any{
+		"deleted":   len(documents),
+		"failures":  []any{},
+		"timed_out": false,
+	}
+	if m.deleteResponse != nil {
+		response = m.deleteResponse
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func writeMissingIndex(w http.ResponseWriter, index string) {
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{
+			"type":  "index_not_found_exception",
+			"index": index,
+		},
+		"status": http.StatusNotFound,
+	})
 }
 
 func (m *mockElasticsearchServer) queryDocumentsLocked(index string, body map[string]any) []mockElasticsearchDocument {
@@ -424,7 +495,10 @@ func matchesQuery(doc mockElasticsearchDocument, rawQuery any) bool {
 	if !ok {
 		return true
 	}
+	return matchesBoolQuery(doc, boolQuery)
+}
 
+func matchesBoolQuery(doc mockElasticsearchDocument, boolQuery map[string]any) bool {
 	for _, clause := range toAnySlice(boolQuery["filter"]) {
 		if !matchesClause(doc, clause) {
 			return false
@@ -435,14 +509,28 @@ func matchesQuery(doc mockElasticsearchDocument, rawQuery any) bool {
 			return false
 		}
 	}
+	shouldClauses := toAnySlice(boolQuery["should"])
+	minimumShouldMatch := intFromAny(boolQuery["minimum_should_match"])
+	if minimumShouldMatch == 0 && len(shouldClauses) > 0 {
+		minimumShouldMatch = 1
+	}
+	matchedShould := 0
+	for _, clause := range shouldClauses {
+		if matchesClause(doc, clause) {
+			matchedShould++
+		}
+	}
 
-	return true
+	return matchedShould >= minimumShouldMatch
 }
 
 func matchesClause(doc mockElasticsearchDocument, rawClause any) bool {
 	clause, ok := rawClause.(map[string]any)
 	if !ok {
 		return false
+	}
+	if boolQuery, ok := clause["bool"].(map[string]any); ok {
+		return matchesBoolQuery(doc, boolQuery)
 	}
 
 	if rawTerm, ok := clause["term"].(map[string]any); ok {
@@ -547,6 +635,9 @@ func applySorts(docs []mockElasticsearchDocument, rawSort any) {
 }
 
 func fieldValue(doc mockElasticsearchDocument, path string) any {
+	if basePath, ok := strings.CutSuffix(path, ".keyword"); ok {
+		return doc.Fields[basePath]
+	}
 	return doc.Fields[path]
 }
 
@@ -801,6 +892,105 @@ func TestBuildSearchRequest(t *testing.T) {
 	}
 }
 
+func TestBuildExactStringClauseUsesKeywordFallback(t *testing.T) {
+	tests := []struct {
+		name       string
+		filter     driver.Filter
+		queryType  string
+		wantNegate bool
+	}{
+		{
+			name: "equal",
+			filter: driver.Filter{
+				Field: "tracer_id",
+				Op:    driver.OpEq,
+				Value: "id-profile-1",
+			},
+			queryType: "term",
+		},
+		{
+			name: "not equal",
+			filter: driver.Filter{
+				Field: "tracer_id",
+				Op:    driver.OpNe,
+				Value: "id-profile-1",
+			},
+			queryType:  "term",
+			wantNegate: true,
+		},
+		{
+			name: "in",
+			filter: driver.Filter{
+				Field: "tracer_id",
+				Op:    driver.OpIn,
+				Value: []string{"id-profile-1", "id-profile-2"},
+			},
+			queryType: "terms",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clause, negate, err := buildClause(test.filter)
+			if err != nil {
+				t.Fatalf("buildClause() error = %v", err)
+			}
+			if negate != test.wantNegate {
+				t.Fatalf("buildClause() negate = %t, want %t", negate, test.wantNegate)
+			}
+
+			raw, err := json.Marshal(clause)
+			if err != nil {
+				t.Fatalf("json.Marshal() error = %v", err)
+			}
+			body := decodeJSONMap(t, raw)
+			boolQuery, _ := body["bool"].(map[string]any)
+			shouldClauses := toAnySlice(boolQuery["should"])
+			if intFromAny(boolQuery["minimum_should_match"]) != 1 || len(shouldClauses) != 2 {
+				t.Fatalf("exact fallback bool = %#v, want two required alternatives", boolQuery)
+			}
+
+			fields := make(map[string]bool, len(shouldClauses))
+			for _, rawClause := range shouldClauses {
+				query, _ := rawClause.(map[string]any)
+				fieldQuery, _ := query[test.queryType].(map[string]any)
+				for field := range fieldQuery {
+					fields[field] = true
+				}
+			}
+			if !fields["tracer_id"] || !fields["tracer_id.keyword"] {
+				t.Fatalf("exact fallback fields = %v, want raw and keyword", fields)
+			}
+		})
+	}
+}
+
+func TestBuildDeleteByQueryRequest(t *testing.T) {
+	if _, err := buildDeleteByQueryRequest(driver.DeleteQuery{}); !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("buildDeleteByQueryRequest(empty) error = %v, want ErrInvalidQuery", err)
+	}
+
+	body, err := buildDeleteByQueryRequest(driver.DeleteQuery{Filters: []driver.Filter{
+		{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"},
+	}})
+	if err != nil {
+		t.Fatalf("buildDeleteByQueryRequest() error = %v", err)
+	}
+	query, _ := decodeJSONMap(t, body)["query"].(map[string]any)
+	boolQuery, _ := query["bool"].(map[string]any)
+	if len(toAnySlice(boolQuery["filter"])) != 1 {
+		t.Fatalf("delete filter = %#v, want one clause", boolQuery["filter"])
+	}
+
+	_, err = buildDeleteByQueryRequest(driver.DeleteQuery{
+		Filters: []driver.Filter{{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"}},
+		Limit:   -1,
+	})
+	if !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("buildDeleteByQueryRequest(negative limit) error = %v, want ErrInvalidQuery", err)
+	}
+}
+
 // TestElasticsearchBackendCRUD covers ES backend initialization and basic CRUD: verifies index creation, document save, lookup by ID, delete of existing and missing documents match the unified storage layer contract.
 func TestElasticsearchBackendCRUD(t *testing.T) {
 	server := newMockElasticsearchServer()
@@ -834,7 +1024,7 @@ func TestElasticsearchBackendCRUD(t *testing.T) {
 		},
 	}
 
-	if err := backend.Save(t.Context(), record); err != nil {
+	if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
 		t.Errorf("Save() returned error: %v", err)
 	}
 	flushBackend(t, backend)
@@ -858,6 +1048,146 @@ func TestElasticsearchBackendCRUD(t *testing.T) {
 
 	if err := backend.Delete(t.Context(), "job-es-missing"); err != nil {
 		t.Errorf("Delete() for missing id returned error: %v", err)
+	}
+}
+
+func TestElasticsearchBackendSaveCreateOnlyRejectsDuplicateID(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+	record := driver.Record{ID: "job-1", Data: []byte(`{"status":"pending"}`)}
+	options := driver.SaveOptions{
+		Mode:              driver.SaveModeCreateOnly,
+		WaitForVisibility: true,
+	}
+	if err := backend.Save(t.Context(), record, options); err != nil {
+		t.Fatalf("first Save() error = %v", err)
+	}
+	if err := backend.Save(t.Context(), record, options); !errors.Is(err, driver.ErrAlreadyExists) {
+		t.Fatalf("second Save() error = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestElasticsearchBackendDeleteByQuery(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+	for _, record := range []driver.Record{
+		{ID: "profile-1", Data: []byte(`{"tracer_id":"job-1"}`)},
+		{ID: "profile-2", Data: []byte(`{"tracer_id":"job-1"}`)},
+		{ID: "profile-3", Data: []byte(`{"tracer_id":"job-2"}`)},
+	} {
+		if err := backend.Save(
+			t.Context(),
+			record,
+			driver.SaveOptions{WaitForVisibility: true},
+		); err != nil {
+			t.Fatalf("Save(%q) error = %v", record.ID, err)
+		}
+	}
+
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{Filters: []driver.Filter{
+		{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"},
+	}})
+	if err != nil {
+		t.Fatalf("DeleteByQuery() error = %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("DeleteByQuery() deleted = %d, want 2", deleted)
+	}
+	if _, err := backend.Get(t.Context(), "profile-1"); !errors.Is(err, driver.ErrNotFound) {
+		t.Fatalf("Get(deleted) error = %v, want ErrNotFound", err)
+	}
+	if _, err := backend.Get(t.Context(), "profile-3"); err != nil {
+		t.Fatalf("Get(retained) error = %v", err)
+	}
+}
+
+func TestElasticsearchBackendDeleteByQueryLimit(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+	for _, id := range []string{"profile-1", "profile-2", "profile-3"} {
+		if err := backend.Save(
+			t.Context(),
+			driver.Record{ID: id, Data: []byte(`{"tracer_id":"job-1"}`)},
+			driver.SaveOptions{WaitForVisibility: true},
+		); err != nil {
+			t.Fatalf("Save(%q) error = %v", id, err)
+		}
+	}
+
+	filter := driver.Filter{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"}
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{filter},
+		Limit:   1,
+	})
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteByQuery() = (%d, %v), want (1, nil)", deleted, err)
+	}
+	remaining, err := backend.Count(t.Context(), driver.Query{Filters: []driver.Filter{filter}})
+	if err != nil || remaining != 2 {
+		t.Fatalf("Count() = (%d, %v), want (2, nil)", remaining, err)
+	}
+}
+
+func TestElasticsearchBackendDeleteByQueryReportsPartialDeletion(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+	server.deleteResponse = map[string]any{
+		"deleted":   2,
+		"failures":  []any{map[string]any{}},
+		"timed_out": false,
+	}
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+	if err := backend.Save(
+		t.Context(),
+		driver.Record{ID: "profile-1", Data: []byte(`{"tracer_id":"job-1"}`)},
+		driver.SaveOptions{WaitForVisibility: true},
+	); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"}},
+	})
+	if err == nil || deleted != 2 {
+		t.Fatalf("DeleteByQuery() = (%d, %v), want (2, non-nil error)", deleted, err)
+	}
+}
+
+func TestElasticsearchBackendMissingIndexIsEmpty(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+
+	records, err := backend.Query(t.Context(), driver.Query{})
+	if err != nil || len(records) != 0 {
+		t.Fatalf("Query() = (%v, %v), want empty result", records, err)
+	}
+	count, err := backend.Count(t.Context(), driver.Query{})
+	if err != nil || count != 0 {
+		t.Fatalf("Count() = (%d, %v), want (0, nil)", count, err)
+	}
+	values, err := backend.Values(t.Context(), "status", driver.Query{}, 10)
+	if err != nil || len(values) != 0 {
+		t.Fatalf("Values() = (%v, %v), want empty result", values, err)
+	}
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{{Field: "status", Op: driver.OpEq, Value: "staging"}},
+	})
+	if err != nil || deleted != 0 {
+		t.Fatalf("DeleteByQuery() = (%d, %v), want (0, nil)", deleted, err)
 	}
 }
 
@@ -898,7 +1228,7 @@ func TestElasticsearchBackendQuery(t *testing.T) {
 	}
 
 	for _, record := range records {
-		if err := backend.Save(t.Context(), record); err != nil {
+		if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
 			t.Errorf("Save(%q) returned error: %v", record.ID, err)
 		}
 	}
@@ -988,7 +1318,7 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 	}
 
 	for _, record := range records {
-		if err := backend.Save(t.Context(), record); err != nil {
+		if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
 			t.Errorf("Save(%q) returned error: %v", record.ID, err)
 		}
 	}
@@ -1039,7 +1369,10 @@ func TestNewBackend_WithoutProductHeader(t *testing.T) {
 	server := newMockServerWithoutProductHeader()
 	defer server.Close()
 
-	backend, err := NewBackend(&Config{Addresses: []string{server.URL}})
+	backend, err := NewBackend(&Config{
+		Addresses: []string{server.URL},
+		Index:     "huatuo_bamai",
+	})
 	if err != nil {
 		t.Fatalf("NewBackend() returned error: %v", err)
 	}
@@ -1057,11 +1390,21 @@ func TestNewBackend_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := NewBackend(&Config{Addresses: []string{server.URL}})
+	_, err := NewBackend(&Config{
+		Addresses: []string{server.URL},
+		Index:     "huatuo_bamai",
+	})
 	if err == nil {
 		t.Fatal("NewBackend() expected error, got nil")
 	}
 	if !strings.Contains(err.Error(), "elasticsearch client info") {
 		t.Errorf("error = %q, want to contain \"elasticsearch client info\"", err.Error())
+	}
+}
+
+func TestNewBackendRequiresIndex(t *testing.T) {
+	_, err := NewBackend(&Config{})
+	if err == nil || err.Error() != "elasticsearch backend: index is required" {
+		t.Fatalf("NewBackend() error = %v", err)
 	}
 }

@@ -23,12 +23,12 @@ weight: 4
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
+BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]
 ```
 
 - **BlackList**：全局追踪与指标黑名单。
 
-  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]`，即全局禁用网络设备硬件层（netdev_hw）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标和 TCP 重传追踪。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪及其丢包关联缓存时移除 `tcp_retransmit`。
+  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`，即全局禁用网络设备硬件层（netdev_hw）、队列调度统计（netdev_qdisc）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标、TCP 重传追踪和摩尔线程 GPU 监控。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪时移除 `tcp_retransmit`；需要启用摩尔线程 GPU 指标采集时移除 `mthreads_gpu`（要求已安装 MTML 库）。local 关联不依赖 standalone `dropwatch` tracer。
 
   **说明**：添加黑名单项可有效降低资源消耗，尤其在特定硬件环境中；支持数组格式，可根据实际业务扩展。
 
@@ -92,7 +92,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 配置始终以文档标明的单位保存，仅在应用 cgroup 限制时将内存转换为字节。
 
-### 5. HTTP 服务与任务
+### 5. HTTP 服务与按需 Operation
 
 ```toml
 # HTTP server configuration.
@@ -119,17 +119,67 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
     # MaxEventStreamClients = 100
     # EventStreamKeepAliveIntervalSeconds = 30
 
-# Locally running tracing tasks.
-[Tasks]
-    # - MaxConcurrent
-    # Maximum number of concurrent tasks.
-    # Default: 10
-    #
+[HTTPServer.Auth]
+    # huatuo-apiserver 调用 Node API 时使用的必填服务凭证。
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
+
+# Profiling 和 Tracing 共用的生命周期策略。
+[Operations]
     # MaxConcurrent = 10
+    # LaunchTimeoutSeconds = 10
+    # StopGracePeriodSeconds = 5
+    # FinalizationTimeoutSeconds = 30
+    # TerminalRetentionPeriodSeconds = 600
+
+# Node 本地 Profiling 执行配置。
+[Profiling]
+    # AggregationIntervalSeconds = 10
+    # MaxConcurrentProcesses = 10
+    # CommandOutputLimitBytes = 65536
+    # JavaToolPath = "/opt/async-profiler"
+    # PythonToolPath = "/opt/py-spy"
+
 ```
 
 - **ListenAddress** 使用 `host:port` 格式，主机为空时监听所有接口。
-- **MaxConcurrent** 限制本机同时运行的追踪任务数量。
+- **HTTPServer.Auth.BearerToken** 必填，并且必须与 huatuo-apiserver 独立配置的
+  Node 凭证一致；部署前必须替换示例值。
+- **Operations.MaxConcurrent** 是 Profiling、Tracing 共用的进程级上限；容量用尽时
+  直接拒绝新 Operation，不在 Node 排队。
+- 四个 Operation 时间参数分别限制进程启动、优雅停止、结果收尾和终态保留，不能
+  合并为一个通用 timeout。
+- **Profiling.JavaToolPath** 和 **Profiling.PythonToolPath** 只在请求相应语言时需要；
+  Node 环境不满足要求时拒绝请求且不创建 Operation。
+
+生成的 Node API 通过 `GET /openapi.json` 提供协议文档。Profiling、Tracing 的
+Start、Get、Stop 路由、`POST /v1/events/watch` 及 `PUT /v1/config` 必须携带
+服务 Bearer Token；`/readyz`、指标、版本和 OpenAPI 文档保持公开。
+
+#### 5.1 通过 Node API 更新配置
+
+`PUT /v1/config` 接收一个非空的 `config` 对象。键名使用与 TOML 结构一致的
+点分路径，值保留 JSON 类型：
+
+```bash
+curl -i -X PUT 'http://127.0.0.1:19704/v1/config' \
+  -H 'Authorization: Bearer REPLACE_WITH_RANDOM_HEX' \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "config": {
+      "BlackList": ["dropwatch", "netdev_hw"],
+      "Runtime.CPULimitCores": 1.5,
+      "Runtime.MemoryLimitMiB": 1024
+    }
+  }'
+```
+
+更新成功返回 `204 No Content`。Node Agent 先校验完整的候选配置，再原子替换
+配置文件，最后发布新的内存快照。校验或持久化失败时，当前快照保持不变。
+未知键、无效值类型和空更新对象返回 `400 Bad Request`。
+
+动态读取配置的组件无需重启即可观察到新快照。HTTP 监听与鉴权、存储初始化、
+cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 `huatuo-bamai` 后
+才能生效。
 
 事件流配置控制 `POST /v1/events/watch`。达到
 `MaxEventStreamClients` 后，新连接返回 HTTP 429。
@@ -772,7 +822,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 ```toml
 [EventTracing.Dropwatch]
-    # tcpdump 风格过滤表达式，转发给 dropwatch --filter。
+    # standalone dropwatch 使用的 filter。
     # 默认值："tcp"
     Filter = "tcp"
 
@@ -786,7 +836,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
     ExcludeContainers = []
 ```
 
-- **Filter**：传给 `dropwatch --filter` 的 tcpdump 风格报文过滤表达式，在事件输出前由 BPF 程序执行。
+- **Filter**：只传给 standalone dropwatch 的 tcpdump 风格过滤表达式。TCP 重传关联的两个输入统一使用 `TCPRetransmit.Filter`。
 
   默认值：`"tcp"`。
 
@@ -802,28 +852,30 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 ```bash
 [EventTracing.TCPRetransmit]
-    # Forwarded to tcpshark --filter.
-    # Only tcp_retransmit_skb events are filtered.
-    # Default: ""
+    # 重传过滤条件；local 关联会把它应用到两个输入。
+    # 默认值：空（关闭关联时不传参数，开启关联时使用 "tcp"）。
     Filter = ""
 
     # Forwarded as tcpshark --enable-tlp. Default: false.
     EnableTLP = false
+
+    # Run tcpshark with an embedded dropwatch source. Default: false.
+    EnableDropwatchCorrelation = false
 
     # Forwarded as tcpshark --max-events-per-second.
     # Default: 100; 0 disables rate limiting.
     MaxEventsPerSecond = 100
 ```
 
-- **Filter**：传给 `tcpshark --filter` 的 tcpdump 风格过滤表达式。
-
-  默认空字符串。仅过滤 `tcp_retransmit_skb` 事件。
-
 - **EnableTLP**：是否采集 `tcp_send_loss_probe` 事件。
 
   默认 false。
 
-- **MaxEventsPerSecond**：BPF 侧每秒最多输出的 TCP 重传事件数。
+- **Filter**：两种模式都使用的 TCP 重传过滤条件。开启 local 关联后，两个 tcpshark 输入统一使用规范化后的表达式，空值回退为 `tcp`；关闭关联时，空值不传 `--filter`。`Dropwatch.Filter` 保持独立，只控制 standalone dropwatch。
+
+- **EnableDropwatchCorrelation**：是否让 tcpshark 加载私有 dropwatch source 并在本地完成重传结果定型，默认 false。必须从 `BlackList` 移除 `tcp_retransmit`；standalone `dropwatch` 可以继续位于黑名单中。重传最多等待 100ms，候选 drop 的内核单调时间必须早于重传且相差不超过 1s。同 netns 的严格匹配输出 `host_software`；所有 no-match 都输出 `unknown` 及稳定的 `correlation_reasons`。
+
+- **MaxEventsPerSecond**：BPF 侧每秒最多输出的 TCP 重传事件数。关联模式还会给 embedded dropwatch 配置一个数值相同但独立的 limiter，因此 `100` 表示两条输入各自最多 100 条/秒。
 
   默认 100，设置为 0 表示不限速。超限时 `tcpshark` 会输出 `rate limit hit` 日志。
 
@@ -1022,6 +1074,53 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 - **MountPointsIncluded**：采集挂载点统计的路径正则。默认示例含 /、/home、/boot。
 
   **说明**：用于监控关键文件系统使用情况。
+
+#### 9.7 摩尔线程 GPU 指标
+
+```bash
+# MetricCollector.Mthreads
+#
+# 通过 MTML（摩尔线程管理库）共享库采集摩尔线程 GPU 指标。
+# 库文件在启动时通过系统动态链接器按 SONAME 顺序自动发现
+# （libmtml.so.2，然后 libmtml.so），无需硬编码路径。
+#
+# 从 BlackList 中移除 "mthreads_gpu" 以启用此采集器。
+#
+# - EnableHealth
+# 启用健康指标：温度、功耗、利用率、时钟、风扇、pstate、VPU。
+# 默认值：true
+#
+# - EnablePCIe
+# 启用 PCIe 链路指标：当前速率/宽度和重放计数器。
+# 默认值：false
+#
+# - EnableMTLink
+# 启用 MtLink 互连指标：每链路状态和带宽。
+# 默认值：false
+#
+[MetricCollector.Mthreads]
+    # EnableHealth = true
+    # EnablePCIe = false
+    # EnableMTLink = false
+```
+
+- **EnableHealth**：控制健康相关指标的采集。
+
+  默认值：true。启用后采集：GPU/内存温度（`gpu_temperature_celsius`、`memory_temperature_celsius`）、功耗及限制（`device_power_watts`、`gpu_power_limit_watts`、`gpu_power_default_limit_watts`）、GPU/内存利用率（`gpu_utilization_percent`、`memory_utilization_percent`）、时钟频率（`gpu_clock_mhz`、`gpu_max_clock_mhz`、`memory_clock_mhz`、`memory_max_clock_mhz`）、电压（`gpu_voltage_volts`）、内存容量（`memory_total_bytes`、`memory_used_bytes`）、风扇转速（`fan_rpm`、`fan_speed_percent`）、性能状态（`gpu_pstate`）以及 VPU 指标（`vpu_utilization_percent`、`vpu_encoder_utilization_percent`、`vpu_decoder_utilization_percent`、`vpu_clock_mhz`）。
+
+- **EnablePCIe**：控制 PCIe 链路指标的采集。
+
+  默认值：false。启用后采集：当前 PCIe 链路速率和宽度（`pcie_link_speed_gt_per_sec`、`pcie_link_width_lanes`）、最大能力值（`pcie_link_max_speed_gt_per_sec`、`pcie_link_max_width_lanes`）以及重放计数器（`pcie_replay_total`）。
+
+- **EnableMTLink**：控制 MtLink 互连指标的采集。
+
+  默认值：false。启用后采集：设备级静态规格（每链路带宽 `mtlink_link_bandwidth_gb_s` 和链路数 `mtlink_link_count`）以及每链路状态（`mtlink_state`）。
+
+**库发现机制**：启动时，采集器通过系统动态链接器（遵循 `LD_LIBRARY_PATH` 和 `/etc/ld.so.cache`）依次搜索 `libmtml.so.2` 和 `libmtml.so`。如果未找到库文件，采集器记录警告并在进程生命周期内保持禁用状态。库发现仅在启动时执行；更改 `LD_LIBRARY_PATH` 或安装新的 MTML 版本需要重启。
+
+**热更新语义**：`EnableHealth`、`EnablePCIe`、`EnableMTLink` 在每次 scrape 时从最新配置快照中读取，因此切换这些开关后下一个 Prometheus scrape 即可生效，无需重启 `huatuo-bamai`。`false → true → false` 的转换会在每次变更后的下一个 scrape 上按预期发布或停止发布对应的指标组。
+
+注意：在进程已经启动且因 `libmtml.so` 缺失导致采集器被禁用的情况下，要启用该采集器（即把 `mthreads_gpu` 从 `BlackList` 中移除）需要重启进程。采集器工厂只在初始化时运行，运行时即使库被加载成功也不会注册新的采集器。
 
 ### 10. Pod 配置
 

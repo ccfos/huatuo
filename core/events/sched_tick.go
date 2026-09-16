@@ -22,13 +22,13 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/symbol"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/pkg/tracing"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/sched_tick.c -o $BPF_DIR/sched_tick.o
@@ -92,7 +92,7 @@ func (*schedTickTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.EventPipeByName(childCtx, "sched_tick_events", 8192)
+	reader, err := b.EventPipeByName(childCtx, "sched_tick_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return types.ErrNotSupported
@@ -150,8 +150,8 @@ func (*schedTickTracing) Start(ctx context.Context) error {
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: schedTickTracerName,
-				TracerTime: time.Now(),
+				TracerName:        schedTickTracerName,
+				ObservedTimestamp: time.Now().UTC(),
 				TracerData: &SchedTickTracingData{
 					TickIntervalNS:          data.TickIntervalNS,
 					TickIntervalThresholdNS: tickIntervalThresholdNS,

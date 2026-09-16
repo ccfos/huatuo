@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	httpGin "github.com/gin-gonic/gin"
+
+	authn "github.com/ccfos/huatuo/internal/auth"
 )
 
 func TestAuthServiceAuthenticate(t *testing.T) {
@@ -287,6 +289,79 @@ func TestNewAuthMiddleware(t *testing.T) {
 	}
 }
 
+func TestNewTokenAuthMiddleware(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+	authenticator := authn.NewTokenAuthenticator([]string{"node-secret"})
+	tests := []struct {
+		name           string
+		path           string
+		authHeader     string
+		wantStatus     int
+		wantHandlerRun bool
+	}{
+		{
+			name:           "public path",
+			path:           "/readyz",
+			wantStatus:     http.StatusNoContent,
+			wantHandlerRun: true,
+		},
+		{
+			name:       "missing bearer token",
+			path:       "/v1/operations/job-1",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "invalid bearer token",
+			path:       "/v1/operations/job-1",
+			authHeader: "Bearer other-secret",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "valid bearer token",
+			path:           "/v1/operations/job-1",
+			authHeader:     "Bearer node-secret",
+			wantStatus:     http.StatusNoContent,
+			wantHandlerRun: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := httpGin.New()
+			var handlerRan bool
+			var principalFound bool
+			middleware := wrapHandler(newTokenAuthMiddleware(
+				authenticator,
+				[]string{"/readyz"},
+			))
+			handler := wrapHandler(func(ctx *Context) {
+				handlerRan = true
+				_, principalFound = authn.PrincipalFromContext(ctx.Request().Context())
+				ctx.Status(http.StatusNoContent)
+			})
+			engine.GET("/readyz", middleware, handler)
+			engine.GET("/v1/operations/:id", middleware, handler)
+
+			request := httptest.NewRequest(http.MethodGet, tt.path, http.NoBody)
+			if tt.authHeader != "" {
+				request.Header.Set("Authorization", tt.authHeader)
+			}
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, request)
+
+			if recorder.Code != tt.wantStatus {
+				t.Errorf("response status = %d, want %d", recorder.Code, tt.wantStatus)
+			}
+			if handlerRan != tt.wantHandlerRun {
+				t.Errorf("handler executed = %v, want %v", handlerRan, tt.wantHandlerRun)
+			}
+			if principalFound {
+				t.Error("token authentication stored a Principal")
+			}
+		})
+	}
+}
+
 func TestNewAuthMiddlewarePublicRecursiveWildcardBoundary(t *testing.T) {
 	httpGin.SetMode(httpGin.TestMode)
 	svc := newTestAuthService()
@@ -346,6 +421,68 @@ func TestNewAuthMiddlewarePublicRecursiveWildcardBoundary(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestNewAuthMiddlewareStoresPrincipalInRequestContext(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+	service := newTestAuthService()
+	engine := httpGin.New()
+
+	var got authn.Principal
+	var found bool
+	engine.GET(
+		"/v1/tasks/:taskID",
+		wrapHandler(NewAuthMiddleware(service)),
+		wrapHandler(func(ctx *Context) {
+			got, found = authn.PrincipalFromContext(ctx.Request().Context())
+			ctx.Status(http.StatusNoContent)
+		}),
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/tasks/task-2026", http.NoBody)
+	request.Header.Set("Authorization", "Bearer viewer-secret")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if !found {
+		t.Fatal("request context has no authenticated principal")
+	}
+	if got.ID != "viewer-2026" {
+		t.Errorf("principal ID = %q, want %q", got.ID, "viewer-2026")
+	}
+}
+
+func TestNewAuthMiddlewareExposesPrincipalThroughGinContext(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+	service := newTestAuthService()
+	engine := httpGin.New()
+	engine.ContextWithFallback = true
+
+	var got authn.Principal
+	var found bool
+	engine.GET(
+		"/v1/tasks/:taskID",
+		wrapHandler(NewAuthMiddleware(service)),
+		func(ctx *httpGin.Context) {
+			got, found = authn.PrincipalFromContext(ctx)
+			ctx.Status(http.StatusNoContent)
+		},
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/tasks/task-2026", http.NoBody)
+	request.Header.Set("Authorization", "Bearer viewer-secret")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if !found || got.ID != "viewer-2026" {
+		t.Fatalf("principal = %+v, found = %t", got, found)
 	}
 }
 

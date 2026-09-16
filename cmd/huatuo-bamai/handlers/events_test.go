@@ -15,122 +15,159 @@
 package handlers
 
 import (
-	"sync"
-	"sync/atomic"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 
-	"huatuo-bamai/pkg/tracing"
-
-	"github.com/stretchr/testify/require"
+	apiv1 "github.com/ccfos/huatuo/apis/v1"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
+	"github.com/ccfos/huatuo/internal/server/response"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
-func TestEventsHandler_AcquireClientConcurrent(t *testing.T) {
-	h := NewEventsHandler(1, 0)
-	start := make(chan struct{})
-	var acquired atomic.Int32
-	var wg sync.WaitGroup
+func TestWatchEventsRejectsInvalidFilter(t *testing.T) {
+	handler := newTestNodeAPIHandler(t, time.Second)
+	invalidPattern := "[invalid"
+	_, err := handler.WatchEvents(t.Context(), nodeapi.WatchEventsRequestObject{
+		Body: &nodeapi.WatchEventsJSONRequestBody{
+			Filters: &nodeapi.WatchEventFilters{TracerName: &invalidPattern},
+		},
+	})
+	var apiErr *response.APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != apiv1.ErrorCodeInvalidRequest {
+		t.Fatalf("WatchEvents() error = %v, want invalid_request", err)
+	}
+}
 
-	for i := 0; i < 64; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			if h.tryAcquirePermit() {
-				acquired.Add(1)
-			}
-		}()
+func TestWatchEventsWritesHeartbeat(t *testing.T) {
+	handler := newTestNodeAPIHandler(t, time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
+	stream, err := handler.WatchEvents(ctx, nodeapi.WatchEventsRequestObject{
+		Body: &nodeapi.WatchEventsJSONRequestBody{},
+	})
+	if err != nil {
+		t.Fatalf("WatchEvents() error = %v", err)
+	}
+	writer := &cancelingResponseWriter{header: make(http.Header), cancel: cancel}
+	if err := stream.VisitWatchEventsResponse(writer); err != nil {
+		t.Fatalf("VisitWatchEventsResponse() error = %v", err)
 	}
 
-	close(start)
-	wg.Wait()
-
-	require.Equal(t, int32(1), acquired.Load())
-	require.Equal(t, int32(1), h.activeClients.Load())
-
-	h.releasePermit()
-	require.Equal(t, int32(0), h.activeClients.Load())
-}
-
-// --- WatchFilters.matcher() ---
-
-func TestWatchFilters_Matcher_Empty(t *testing.T) {
-	wf := WatchFilters{}
-	m, err := wf.matcher()
-
-	require.NoError(t, err)
-	require.NotNil(t, m)
-	// empty matcher matches everything
-	require.True(t, m.Match(&tracing.Document{TracerName: "any"}))
-}
-
-func TestWatchFilters_Matcher_ValidPattern(t *testing.T) {
-	wf := WatchFilters{TracerName: "^cpu$"}
-	m, err := wf.matcher()
-
-	require.NoError(t, err)
-	require.True(t, m.Match(&tracing.Document{TracerName: "cpu"}))
-	require.False(t, m.Match(&tracing.Document{TracerName: "mem"}))
-}
-
-func TestWatchFilters_Matcher_InvalidPattern(t *testing.T) {
-	wf := WatchFilters{TracerName: "[invalid"}
-	_, err := wf.matcher()
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "tracer_name")
-}
-
-func TestWatchFilters_Matcher_AllFields(t *testing.T) {
-	wf := WatchFilters{
-		TracerName:             "cpu",
-		Hostname:               "node-1",
-		ContainerHostname:      "app",
-		ContainerHostNamespace: "prod",
-		Region:                 "cn",
+	if writer.status != http.StatusOK {
+		t.Errorf("status = %d, want 200", writer.status)
 	}
-	m, err := wf.matcher()
-
-	require.NoError(t, err)
-
-	match := &tracing.Document{
-		TracerName:             "cpu",
-		Hostname:               "node-1",
-		ContainerHostname:      "app-123",
-		ContainerHostNamespace: "prod-ns",
-		Region:                 "cn-north",
+	if got := writer.header.Get("Content-Type"); got != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", got)
 	}
-	require.True(t, m.Match(match))
-
-	noMatch := &tracing.Document{
-		TracerName:             "mem",
-		Hostname:               "node-1",
-		ContainerHostname:      "app-123",
-		ContainerHostNamespace: "prod-ns",
-		Region:                 "cn-north",
+	if got := writer.header.Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", got)
 	}
-	require.False(t, m.Match(noMatch))
+	if got := writer.header.Get("X-Accel-Buffering"); got != "no" {
+		t.Errorf("X-Accel-Buffering = %q, want no", got)
+	}
+	if got := writer.body.String(); !strings.Contains(got, ": ping\n") {
+		t.Errorf("body = %q, want heartbeat", got)
+	}
 }
 
-func TestWatchFilters_Matcher_HostnameFilter(t *testing.T) {
-	wf := WatchFilters{Hostname: "^node-[0-9]+$"}
-	m, _ := wf.matcher()
+func TestWatchEventsWritesCloudEvent(t *testing.T) {
+	store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{})
+	if err != nil {
+		t.Fatalf("tracingstore.NewFromConfig() error = %v", err)
+	}
+	cloudEvents, err := nodecloudevents.New(store, 1)
+	if err != nil {
+		t.Fatalf("cloudevents.New() error = %v", err)
+	}
+	handler := &NodeAPIHandler{
+		cloudEvents:       cloudEvents,
+		keepAliveInterval: time.Hour,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stream, err := handler.WatchEvents(ctx, nodeapi.WatchEventsRequestObject{
+		Body: &nodeapi.WatchEventsJSONRequestBody{},
+	})
+	if err != nil {
+		t.Fatalf("WatchEvents() error = %v", err)
+	}
 
-	require.True(t, m.Match(&tracing.Document{Hostname: "node-42"}))
-	require.False(t, m.Match(&tracing.Document{Hostname: "worker-1"}))
+	observedTimestamp := time.Unix(1_700_000_000, 0).UTC()
+	if err := store.Save(&tracingstore.Document{Document: types.Document{
+		Hostname:          "node-1",
+		Region:            "cn",
+		ObservedTimestamp: &observedTimestamp,
+		TracerName:        "cpu",
+		TracerRunType:     types.TracerRunTypeEvent,
+	}}); err != nil {
+		t.Fatalf("Store.Save() error = %v", err)
+	}
+
+	writer := &cancelingResponseWriter{header: make(http.Header), cancel: cancel}
+	if err := stream.VisitWatchEventsResponse(writer); err != nil {
+		t.Fatalf("VisitWatchEventsResponse() error = %v", err)
+	}
+	payload, ok := strings.CutPrefix(
+		strings.TrimSuffix(writer.body.String(), "\n\n"),
+		"data: ",
+	)
+	if !ok {
+		t.Fatalf("body = %q, want an SSE data field", writer.body.String())
+	}
+	var event nodeapi.WatchEvent
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		t.Fatalf("unmarshal CloudEvent: %v", err)
+	}
+	if event.SpecVersion != nodeapi.WatchEventSpecVersion10 ||
+		event.Type != "tech.huatuo.kernel.event" ||
+		event.DataContentType != "application/json" {
+		t.Errorf("CloudEvent envelope = %+v", event)
+	}
+	if event.Data.Hostname != "node-1" || event.Data.TracerName == nil ||
+		*event.Data.TracerName != "cpu" {
+		t.Errorf("CloudEvent data = %+v", event.Data)
+	}
 }
 
-func TestWatchFilters_Matcher_ContainerHostnameFilter(t *testing.T) {
-	wf := WatchFilters{ContainerHostname: "^app-.*"}
-	m, _ := wf.matcher()
-
-	require.True(t, m.Match(&tracing.Document{ContainerHostname: "app-123"}))
-	require.False(t, m.Match(&tracing.Document{ContainerHostname: "db-456"}))
+type cancelingResponseWriter struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+	cancel context.CancelFunc
 }
 
-func TestWatchFilters_Matcher_RegionFilter(t *testing.T) {
-	wf := WatchFilters{Region: "^cn"}
-	m, _ := wf.matcher()
+func (w *cancelingResponseWriter) Header() http.Header {
+	return w.header
+}
 
-	require.True(t, m.Match(&tracing.Document{Region: "cn-north"}))
-	require.False(t, m.Match(&tracing.Document{Region: "us-east"}))
+func (w *cancelingResponseWriter) Write(data []byte) (int, error) {
+	return w.body.Write(data)
+}
+
+func (w *cancelingResponseWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *cancelingResponseWriter) Flush() {
+	w.cancel()
+}
+
+func newTestCloudEventsService(t *testing.T, maxSubscriptions int) *nodecloudevents.Service {
+	t.Helper()
+	store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{})
+	if err != nil {
+		t.Fatalf("tracingstore.NewFromConfig() error = %v", err)
+	}
+	service, err := nodecloudevents.New(store, maxSubscriptions)
+	if err != nil {
+		t.Fatalf("cloudevents.New() error = %v", err)
+	}
+	return service
 }

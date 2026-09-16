@@ -15,64 +15,30 @@
 package server
 
 import (
-	"fmt"
-	"net/http"
-	"strings"
-	"sync"
+	"errors"
 
-	"huatuo-bamai/internal/server/response"
+	authn "github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/server/response"
 )
 
-// Permission represents a permission string.
-type Permission string
+type (
+	Permission = authn.Permission
+	User       = authn.Principal
+	UserConfig = authn.UserConfig
+)
 
-// User represents a user with permissions.
-type User struct {
-	ID          string
-	Permissions []Permission
-	IsAdmin     bool
-}
-
-// UserConfig represents a user configuration for initialization.
-type UserConfig struct {
-	ID          string
-	BearerToken string
-	Permissions []string
-	IsAdmin     bool
-}
-
-// authService handles authentication and authorization.
 type authService struct {
-	usersByToken sync.Map
+	service *authn.Service
 }
 
-// NewService creates a new auth authService.
+// NewAuthService creates a compatibility adapter for the HTTP server.
 func NewAuthService(users []UserConfig) *authService {
-	s := &authService{usersByToken: sync.Map{}}
-
-	for _, cfgUser := range users {
-		permissions := make([]Permission, 0, len(cfgUser.Permissions))
-		for _, p := range cfgUser.Permissions {
-			permissions = append(permissions, Permission(p))
-		}
-
-		s.usersByToken.Store(cfgUser.BearerToken, User{
-			ID:          cfgUser.ID,
-			Permissions: permissions,
-			IsAdmin:     cfgUser.IsAdmin,
-		})
-	}
-
-	return s
+	return &authService{service: authn.NewService(users)}
 }
 
 // Authenticate returns the principal associated with a bearer token.
 func (s *authService) Authenticate(token string) (User, bool) {
-	value, exists := s.usersByToken.Load(token)
-	if !exists {
-		return User{}, false
-	}
-	return value.(User), true
+	return s.service.Authenticate(token)
 }
 
 // Validate validates if a user has access to a specific path.
@@ -83,78 +49,12 @@ func (s *authService) Validate(user User, request ...string) error {
 	} else if len(request) >= 2 {
 		method, path = request[0], request[1]
 	}
-	// Admin has access to everything
-	if user.IsAdmin {
-		return nil
-	}
-
-	// Check if user has permission for this path
-	for _, perm := range user.Permissions {
-		permissionMethod, permissionPath := splitPermission(string(perm))
-		if (permissionMethod == "" || permissionMethod == method) && s.matchesPath(permissionPath, path) {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("user does not have permission to access %s %s", method, path)
-}
-
-func splitPermission(permission string) (string, string) {
-	parts := strings.Fields(permission)
-	if len(parts) == 2 {
-		return strings.ToUpper(parts[0]), parts[1]
-	}
-	return "", permission
+	return s.service.Authorize(user, method, path)
 }
 
 // matchesPath performs simple path matching, supporting basic wildcards and path parameters.
 func (s *authService) matchesPath(permission, path string) bool {
-	if permission == path {
-		return true
-	}
-	return s.matchesSegments(permission, path)
-}
-
-// matchesSegments matches by path segments.
-func (s *authService) matchesSegments(permission, path string) bool {
-	permSegments := strings.Split(strings.Trim(permission, "/"), "/")
-	pathSegments := strings.Split(strings.Trim(path, "/"), "/")
-
-	memo := make(map[[2]int]bool)
-	visited := make(map[[2]int]bool)
-
-	var match func(int, int) bool
-	match = func(permissionIndex, pathIndex int) bool {
-		pos := [2]int{permissionIndex, pathIndex}
-		if visited[pos] {
-			return memo[pos]
-		}
-		visited[pos] = true
-
-		matched := false
-		switch {
-		case permissionIndex == len(permSegments):
-			matched = pathIndex == len(pathSegments)
-		case permSegments[permissionIndex] == "**":
-			// Recursive wildcards represent descendants, so they consume at
-			// least one complete segment. This preserves the documented need
-			// for a separate permission for the collection path itself.
-			matched = pathIndex < len(pathSegments) &&
-				(match(permissionIndex+1, pathIndex+1) ||
-					match(permissionIndex, pathIndex+1))
-		case pathIndex < len(pathSegments):
-			permissionSegment := permSegments[permissionIndex]
-			matched = (permissionSegment == pathSegments[pathIndex] ||
-				permissionSegment == "*" ||
-				strings.HasPrefix(permissionSegment, ":")) &&
-				match(permissionIndex+1, pathIndex+1)
-		}
-
-		memo[pos] = matched
-		return matched
-	}
-
-	return match(0, 0)
+	return authn.MatchesPath(permission, path)
 }
 
 // NewAuthMiddleware returns a HandlerContextFunc that validates requests using the given authService.
@@ -173,47 +73,72 @@ func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFun
 			return
 		}
 
-		token := bearerToken(ctx.Request().Header.Get("Authorization"))
-		if token == "" {
-			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "missing bearer token")
-			ctx.Abort()
-			return
-		}
-		user, exists := svc.Authenticate(token)
-		if !exists {
-			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "invalid bearer token")
-			ctx.Abort()
+		user, err := svc.service.AuthenticateBearer(ctx.Request().Header.Get("Authorization"))
+		if err != nil {
+			rejectBearerToken(ctx, err)
 			return
 		}
 		if matchesAnyPath(svc, adminPaths, path) && !user.IsAdmin {
-			response.ErrorWithCode(ctx, http.StatusForbidden, response.ErrForbidden.Code, "administrator permission required")
+			response.ErrorWithCode(
+				ctx,
+				ctx.ErrorStatusMapper(),
+				response.ErrForbidden.Code,
+				authn.ErrAdministratorRequired.Error(),
+			)
 			ctx.Abort()
 			return
 		}
 		if err := svc.Validate(user, ctx.Request().Method, path); err != nil {
-			response.ErrorWithCode(ctx, http.StatusForbidden, response.ErrForbidden.Code, err.Error())
+			response.ErrorWithCode(
+				ctx,
+				ctx.ErrorStatusMapper(),
+				response.ErrForbidden.Code,
+				err.Error(),
+			)
 			ctx.Abort()
 			return
 		}
 		ctx.UserID = user.ID
 		ctx.IsAdmin = user.IsAdmin
+		ctx.c.Request = ctx.c.Request.WithContext(authn.WithPrincipal(ctx.Request().Context(), user))
 		ctx.Next()
 	}
 }
 
-func bearerToken(header string) string {
-	scheme, token, found := strings.Cut(strings.TrimSpace(header), " ")
-	if !found || !strings.EqualFold(scheme, "Bearer") {
-		return ""
+func newTokenAuthMiddleware(
+	authenticator *authn.TokenAuthenticator,
+	publicPaths []string,
+) HandlerContextFunc {
+	return func(ctx *Context) {
+		if authn.MatchesAnyPath(publicPaths, ctx.Request().URL.Path) {
+			ctx.Next()
+			return
+		}
+		if err := authenticator.AuthenticateBearer(
+			ctx.Request().Header.Get("Authorization"),
+		); err != nil {
+			rejectBearerToken(ctx, err)
+			return
+		}
+		ctx.Next()
 	}
-	return strings.TrimSpace(token)
 }
 
-func matchesAnyPath(svc *authService, patterns []string, path string) bool {
-	for _, pattern := range patterns {
-		if svc.matchesPath(pattern, path) {
-			return true
-		}
+func rejectBearerToken(ctx *Context, err error) {
+	ctx.Header("WWW-Authenticate", "Bearer")
+	message := authn.ErrInvalidBearerToken.Error()
+	if errors.Is(err, authn.ErrMissingBearerToken) {
+		message = authn.ErrMissingBearerToken.Error()
 	}
-	return false
+	response.ErrorWithCode(
+		ctx,
+		ctx.ErrorStatusMapper(),
+		response.ErrUnauthorized.Code,
+		message,
+	)
+	ctx.Abort()
+}
+
+func matchesAnyPath(_ *authService, patterns []string, path string) bool {
+	return authn.MatchesAnyPath(patterns, path)
 }

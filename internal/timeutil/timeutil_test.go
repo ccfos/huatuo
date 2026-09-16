@@ -21,7 +21,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"huatuo-bamai/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 const layoutLen = 30 // "2006-01-02T15:04:05.000000000Z"

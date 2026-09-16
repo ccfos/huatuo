@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"net"
 
-	serverpprof "huatuo-bamai/internal/server/pprof"
+	serverpprof "github.com/ccfos/huatuo/internal/server/pprof"
 )
 
 const profilerPprofAddress = ":6000"

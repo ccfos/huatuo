@@ -19,7 +19,7 @@ import (
 	"runtime"
 	"sync"
 
-	"huatuo-bamai/core/metrics/ascend/dl"
+	"github.com/ccfos/huatuo/core/metrics/ascend/dl"
 
 	"github.com/ebitengine/purego"
 )

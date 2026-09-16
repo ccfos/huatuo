@@ -1,0 +1,94 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package store
+
+import (
+	"encoding/json"
+
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/pkg/types"
+)
+
+const (
+	// Collection is the storage collection for tracing documents.
+	Collection = "tracing_documents"
+
+	// fieldRecordID mirrors tracer_id for compatibility with existing queries.
+	fieldRecordID = "record_id"
+)
+
+type mapper struct{}
+
+func (mapper) ID(document *Document) string {
+	return document.TracerID
+}
+
+func (mapper) Encode(document *Document) ([]byte, error) {
+	return json.Marshal(document)
+}
+
+func (mapper) Decode(record driver.Record) (*Document, error) {
+	var document Document
+	if err := json.Unmarshal(record.Data, &document); err != nil {
+		return nil, err
+	}
+	if err := document.validate(); err != nil {
+		return nil, err
+	}
+	return &document, nil
+}
+
+func (mapper) Fields(document *Document) (map[string]any, error) {
+	fields := map[string]any{
+		fieldRecordID:                             document.TracerID,
+		types.DocumentFieldHostname:               document.Hostname,
+		types.DocumentFieldRegion:                 document.Region,
+		types.DocumentFieldUploadedTimestamp:      document.UploadedTimestamp,
+		types.DocumentFieldContainerID:            document.ContainerID,
+		types.DocumentFieldContainerHostname:      document.ContainerHostname,
+		types.DocumentFieldContainerHostNamespace: document.ContainerHostNamespace,
+		types.DocumentFieldContainerType:          document.ContainerType,
+		types.DocumentFieldContainerQoS:           document.ContainerQoS,
+		types.DocumentFieldTracerName:             document.TracerName,
+		types.DocumentFieldTracerID:               document.TracerID,
+		types.DocumentFieldTracerType:             document.TracerRunType,
+	}
+	if document.StartedTimestamp != nil {
+		fields[types.DocumentFieldStartedTimestamp] = *document.StartedTimestamp
+	}
+	if document.ObservedTimestamp != nil {
+		fields[types.DocumentFieldObservedTimestamp] = *document.ObservedTimestamp
+	}
+	return fields, nil
+}
+
+func (mapper) Indexes() []driver.Index {
+	return []driver.Index{
+		{Field: fieldRecordID},
+		{Field: types.DocumentFieldHostname},
+		{Field: types.DocumentFieldRegion},
+		{Field: types.DocumentFieldUploadedTimestamp},
+		{Field: types.DocumentFieldStartedTimestamp},
+		{Field: types.DocumentFieldObservedTimestamp},
+		{Field: types.DocumentFieldContainerID},
+		{Field: types.DocumentFieldContainerHostname},
+		{Field: types.DocumentFieldContainerHostNamespace},
+		{Field: types.DocumentFieldContainerType},
+		{Field: types.DocumentFieldContainerQoS},
+		{Field: types.DocumentFieldTracerName},
+		{Field: types.DocumentFieldTracerID},
+		{Field: types.DocumentFieldTracerType},
+	}
+}

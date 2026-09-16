@@ -17,7 +17,7 @@ package main
 import (
 	"testing"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
 )
 
 func TestSetupProfileQueryServiceSkipsDisabledStorage(t *testing.T) {
@@ -34,5 +34,8 @@ func TestSetupProfileQueryServiceSkipsDisabledStorage(t *testing.T) {
 	}
 	if daemon.profileQueryService != nil {
 		t.Error("profileQueryService is initialized when storage is disabled")
+	}
+	if daemon.profileStorage != nil {
+		t.Error("profileStorage is initialized when storage is disabled")
 	}
 }

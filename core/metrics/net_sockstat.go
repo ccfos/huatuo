@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,14 +24,16 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 type sockstatCollector struct{}
+
+var defaultHostPageSize = os.Getpagesize()
 
 func init() {
 	tracing.RegisterEventTracing("sockstat", newSockstatCollector)
@@ -149,7 +151,7 @@ func (c *sockstatCollector) procStatMetrics(container *pod.Container) ([]*metric
 		// Also export mem_bytes values for sockets which have a mem value
 		// stored in pages.
 		if p.Mem != nil {
-			v := *p.Mem * 4096
+			v := *p.Mem * defaultHostPageSize
 			pairs = append(pairs, ssPair{
 				name: "mem_bytes",
 				v:    &v,

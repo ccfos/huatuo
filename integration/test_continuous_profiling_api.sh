@@ -15,8 +15,8 @@
 # limitations under the License.
 
 # Verify the complete native CPU continuous-profiling path: apiserver creates
-# a bamai task, profiler uploads multiple windows through toolstream, and the
-# apiserver reads the stored profiles back from Elasticsearch.
+# a bamai Operation, profiler uploads multiple windows through Toolstream, and
+# the apiserver reads the stored profiles back from Elasticsearch.
 
 set -euo pipefail
 
@@ -39,6 +39,7 @@ readonly APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
 readonly PROFILE_CREATE_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/create-profile.json"
 readonly PROFILE_STATUS_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json"
 readonly PROFILE_RAW_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profiles-raw.json"
+readonly PROFILE_LIST_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profiles-list.json"
 
 TARGET_PID=""
 PROFILE_ID=""
@@ -50,24 +51,19 @@ cleanup() {
 trap cleanup EXIT
 
 assert_profile_lifecycle() {
+	local curl_status=0
+	local status
+
 	wait_until 10 1 continuous_profile_status_is \
 		"${PROFILE_ID}" running "${PROFILE_STATUS_RESPONSE}" \
 		|| fatal "profile did not enter running state"
 
-	local status
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
 		-o "${HUATUO_BAMAI_TEST_TMPDIR}/forbidden.json" -w '%{http_code}' \
 		-H "Authorization: Bearer ${OTHER_API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}")
+		"${APISERVER_ADDR}/v1/profiling/${PROFILE_ID}")
 	assert_eq "${status}" "403" "non-owner profile access" \
 		|| fatal "profile was visible to a non-owner"
-
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
-		-o "${HUATUO_BAMAI_TEST_TMPDIR}/delete-running.json" -w '%{http_code}' \
-		-X DELETE -H "Authorization: Bearer ${API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}")
-	assert_eq "${status}" "409" "delete running profile" \
-		|| fatal "running profile deletion did not return conflict"
 
 	wait_until 60 2 continuous_profile_status_is \
 		"${PROFILE_ID}" completed "${PROFILE_STATUS_RESPONSE}" \
@@ -75,9 +71,10 @@ assert_profile_lifecycle() {
 	jq -e --argjson duration "${PROFILE_DURATION}" \
 		'.data.duration_seconds == $duration
 			and .data.created_at != null
-			and .data.finished_at != null
+			and .data.ended_at != null
 			and .data.result_url != null
-			and .data.status_reason == null
+			and .data.terminal.outcome == "completed"
+			and .data.terminal.reason == null
 			and (.data | has("agent_task_id") | not)
 			and (.data | has("tracer_args") | not)' \
 		"${PROFILE_STATUS_RESPONSE}" > /dev/null \
@@ -87,25 +84,36 @@ assert_profile_lifecycle() {
 		"${PROFILE_ID}" "${PROFILE_RAW_RESPONSE}" \
 		|| fatal "profiling windows were not stored: ${CONTINUOUS_PROFILE_DIAGNOSTIC}"
 	# Stack frame ordering is covered by lower-level profiler tests; this test
-	# verifies only the API, task lifecycle, transport, and storage contract.
+	# verifies only the API, Job lifecycle, transport, and storage contract.
 
-	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiles?type=cpu&hostname=127.0.0.1&status=completed&limit=1&offset=0&sort=-created_at" \
-		| jq -e --arg id "${PROFILE_ID}" '.data.total >= 1 and .data.items[0].id == $id' \
-			> /dev/null || fatal "profile list filters did not return the completed task"
-
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o /dev/null -w '%{http_code}' -X DELETE \
-		-H "Authorization: Bearer ${API_TOKEN}" "${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}")
-	assert_eq "${status}" "204" "delete completed profile" \
-		|| fatal "completed profile deletion failed"
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${PROFILE_LIST_RESPONSE}" \
+		-w '%{http_code}' -H "Authorization: Bearer ${API_TOKEN}" \
+		"${APISERVER_ADDR}/v1/profiling?limit=1&offset=0") || curl_status=$?
+	if [[ -r "${PROFILE_LIST_RESPONSE}" ]]; then
+		log_info "list profiles response: $(< "${PROFILE_LIST_RESPONSE}")"
+	else
+		log_error "list profiles response file missing: ${PROFILE_LIST_RESPONSE}"
+	fi
+	((curl_status == 0)) \
+		|| fatal "list profiles request failed with curl status ${curl_status}"
+	assert_eq "${status}" "200" "list completed profiles" \
+		|| fatal "list completed profiles status ${status}, want 200"
+	jq -e --arg id "${PROFILE_ID}" \
+		'.data.limit == 1
+			and .data.offset == 0
+			and .data.has_more == false
+			and (.data.items | length) == 1
+			and .data.items[0].request_id == $id' \
+		"${PROFILE_LIST_RESPONSE}" > /dev/null \
+		|| fatal "profile list did not return the completed Job"
 }
 
 continuous_profiling_start_stack
 
 continuous_profiling_start_native_cpu_fixture TARGET_PID
 continuous_profile_create_cpu "${PROFILE_CREATE_RESPONSE}" "${PROFILE_DURATION}"
-PROFILE_ID=$(jq -er '.data.id' "${PROFILE_CREATE_RESPONSE}") \
-	|| fatal "profile creation response has no task ID"
+PROFILE_ID=$(jq -er '.data.request_id' "${PROFILE_CREATE_RESPONSE}") \
+	|| fatal "profile creation response has no Job request ID"
 assert_profile_lifecycle
 assert_log_has_no_failure \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"

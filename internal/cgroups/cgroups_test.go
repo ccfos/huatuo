@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/cgroups/paths"
-	v2 "huatuo-bamai/internal/cgroups/v2"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	v2 "github.com/ccfos/huatuo/internal/cgroups/v2"
 
 	"github.com/opencontainers/runtime-spec/specs-go"
 )

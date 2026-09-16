@@ -54,7 +54,6 @@
         "y": 0
       },
       "id": 153,
-      "panels": [],
       "targets": [
         {
           "datasource": {
@@ -65,7 +64,8 @@
         }
       ],
       "title": "Overview",
-      "type": "row"
+      "type": "row",
+      "panels": []
     },
     {
       "datasource": {
@@ -130,7 +130,7 @@
           "alias": "cpusys",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -150,13 +150,13 @@
           ],
           "query": "tracer_name:cpusys AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "cpuidle",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -177,13 +177,13 @@
           ],
           "query": "tracer_name:cpuidle AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "B",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "loadavg",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -204,13 +204,13 @@
           ],
           "query": "tracer_name:dload AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "C",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "reclaim",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -231,13 +231,13 @@
           ],
           "query": "tracer_name:memory_reclaim_events AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "D",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "oom",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -258,13 +258,13 @@
           ],
           "query": "tracer_name:oom AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "E",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "memburst",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -285,13 +285,13 @@
           ],
           "query": "tracer_name:memburst AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "F",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "iotracing",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -312,13 +312,13 @@
           ],
           "query": "tracer_name:iotracing AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "G",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "dropwatch",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -339,13 +339,13 @@
           ],
           "query": "tracer_name:dropwatch AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "H",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "net_rx_latency",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -366,13 +366,13 @@
           ],
           "query": "tracer_name:net_rx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "I",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "netdev down",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -393,13 +393,13 @@
           ],
           "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*down*",
           "refId": "J",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "lacp",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -420,13 +420,13 @@
           ],
           "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev_bonding_lacp",
           "refId": "K",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "sched_tick",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -447,13 +447,13 @@
           ],
           "query": "tracer_name:sched_tick AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "L",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "softlockup",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -474,13 +474,13 @@
           ],
           "query": "tracer_name:softlockup AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "M",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "hungtask",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -501,13 +501,13 @@
           ],
           "query": "tracer_name:hungtask AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "N",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "ras",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -528,13 +528,13 @@
           ],
           "query": "tracer_name:ras AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "O",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         },
         {
           "alias": "waitrate",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -555,7 +555,7 @@
           ],
           "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "P",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "Events",
@@ -567,7 +567,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -592,8 +592,7 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -654,7 +653,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -674,7 +673,7 @@
           ],
           "query": "region.keyword:$region AND hostname.keyword:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR tracer_name:oom \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch \nOR tracer_name:net_rx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:sched_tick \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "Timeline",
@@ -686,7 +685,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -711,8 +710,7 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -775,7 +773,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -795,7 +793,7 @@
           ],
           "query": "tracer_name:cpusys AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "cpusys",
@@ -807,7 +805,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -832,8 +830,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "started_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -895,7 +893,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -915,7 +913,7 @@
           ],
           "query": "tracer_name:sched_tick AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "sched_tick",
@@ -927,7 +925,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -952,8 +950,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -1015,7 +1013,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -1035,7 +1033,7 @@
           ],
           "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND (\n  (tracer_name:netdev AND tracer_data.linkstatus:*down*)\n  OR tracer_name:netdev_bonding_lacp\n)",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "netdev down",
@@ -1095,7 +1093,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -1115,7 +1113,7 @@
           ],
           "query": "tracer_name:cpuidle AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "cpuidle",
@@ -1127,7 +1125,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -1152,8 +1150,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "started_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -1215,7 +1213,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -1235,7 +1233,7 @@
           ],
           "query": "tracer_name:dload AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "container loadavg",
@@ -1247,7 +1245,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -1272,8 +1270,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "started_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -1335,7 +1333,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -1355,7 +1353,7 @@
           ],
           "query": "tracer_name:net_rx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "net rx latency",
@@ -1367,7 +1365,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -1392,8 +1390,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -1455,7 +1453,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -1475,7 +1473,7 @@
           ],
           "query": "tracer_name:softlockup AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "softlockup",
@@ -1487,7 +1485,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -1512,8 +1510,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -1575,7 +1573,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -1595,7 +1593,7 @@
           ],
           "query": "tracer_name:ras AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "ras",
@@ -1607,7 +1605,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -1632,8 +1630,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -1695,7 +1693,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -1715,7 +1713,7 @@
           ],
           "query": "tracer_name:iotracing AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "iotracing",
@@ -1727,7 +1725,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -1752,8 +1750,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "started_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -1815,7 +1813,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -1835,7 +1833,7 @@
           ],
           "query": "tracer_name:oom AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "oom",
@@ -1847,7 +1845,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -1872,8 +1870,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -1935,7 +1933,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -1955,7 +1953,7 @@
           ],
           "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "waitrate",
@@ -1967,7 +1965,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -1992,8 +1990,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -2055,7 +2053,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -2075,7 +2073,7 @@
           ],
           "query": "tracer_name:null AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "null",
@@ -2087,7 +2085,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -2112,8 +2110,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -2175,7 +2173,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -2195,7 +2193,7 @@
           ],
           "query": "tracer_name:hungtask AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "hungtask",
@@ -2207,7 +2205,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -2232,8 +2230,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -2295,7 +2293,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -2315,7 +2313,7 @@
           ],
           "query": "tracer_name:memory_reclaim_events AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "reclaim",
@@ -2327,7 +2325,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -2352,8 +2350,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -2415,7 +2413,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -2435,7 +2433,7 @@
           ],
           "query": "tracer_name:dropwatch AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "dropwatch",
@@ -2447,7 +2445,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -2472,8 +2470,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -2535,7 +2533,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -2555,7 +2553,7 @@
           ],
           "query": "tracer_name:memburst AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "memburst",
@@ -2567,7 +2565,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -2592,8 +2590,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "started_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -2655,7 +2653,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -2675,7 +2673,7 @@
           ],
           "query": "tracer_name:netdev_txqueue_timeout AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "TX queue timeout",
@@ -2687,7 +2685,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -2712,8 +2710,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -2775,7 +2773,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -2795,7 +2793,7 @@
           ],
           "query": "tracer_name:null AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "null",
@@ -2807,7 +2805,7 @@
               "_id": true,
               "_index": true,
               "_type": true,
-              "uploaded_time": true
+              "uploaded_timestamp": true
             },
             "indexByName": {
               "_id": 2,
@@ -2832,8 +2830,8 @@
               "tracer_data.systhreshold": 21,
               "tracer_data.userthreshold": 22,
               "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
+              "observed_timestamp": 0,
+              "uploaded_timestamp": 1
             },
             "renameByName": {}
           }
@@ -2875,6 +2873,17 @@
         "y": 20
       },
       "id": 112,
+      "targets": [
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "refId": "A"
+        }
+      ],
+      "title": "🐳 CPU",
+      "type": "row",
       "panels": [
         {
           "gridPos": {
@@ -2970,7 +2979,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -2990,7 +2999,7 @@
               ],
               "query": "tracer_name:cpusys AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -3002,7 +3011,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -3027,8 +3036,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "started_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -3118,7 +3127,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -3138,7 +3147,7 @@
               ],
               "query": "tracer_name:cpusys AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -3150,7 +3159,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -3175,8 +3184,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "started_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -3293,7 +3302,7 @@
               ],
               "query": "tracer_name:cpusys AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -3345,7 +3354,7 @@
                   "tracer_data.timingdata.symbolize_to_tree_ms": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -3387,9 +3396,9 @@
                   "tracer_data.timingdata.symbolize_to_pprof_ms": 39,
                   "tracer_data.timingdata.symbolize_to_tree_ms": 40,
                   "tracer_name": 12,
-                  "tracer_time": 0,
+                  "started_timestamp": 0,
                   "tracer_type": 17,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "_id": "Click to view flame graph",
@@ -3505,7 +3514,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -3525,7 +3534,7 @@
               ],
               "query": "tracer_name:cpuidle AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -3537,7 +3546,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -3562,8 +3571,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "started_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -3656,7 +3665,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -3676,7 +3685,7 @@
               ],
               "query": "tracer_name:cpuidle AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -3688,7 +3697,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -3713,8 +3722,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "started_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -3855,7 +3864,7 @@
               ],
               "query": "tracer_name:cpuidle AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -3921,7 +3930,7 @@
                   "tracer_data.userthreshold": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -3981,9 +3990,9 @@
                   "tracer_data.usagethreshold": 29,
                   "tracer_data.userthreshold": 19,
                   "tracer_name": 21,
-                  "tracer_time": 0,
+                  "started_timestamp": 0,
                   "tracer_type": 30,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "_id": "Click to view flame graph",
@@ -4114,7 +4123,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -4134,7 +4143,7 @@
               ],
               "query": "tracer_name:dload AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -4146,7 +4155,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -4171,8 +4180,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "started_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -4262,7 +4271,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -4282,7 +4291,7 @@
               ],
               "query": "tracer_name:dload AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -4294,7 +4303,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -4319,8 +4328,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "started_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -4396,7 +4405,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "tracer_time"
+                  "options": "started_timestamp"
                 },
                 "properties": [
                   {
@@ -4428,7 +4437,7 @@
             "sortBy": [
               {
                 "desc": true,
-                "displayName": "tracer_time"
+                "displayName": "started_timestamp"
               }
             ]
           },
@@ -4452,7 +4461,7 @@
               ],
               "query": "tracer_name:dload AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -4471,7 +4480,7 @@
                   "sort": true,
                   "time": true,
                   "tracer_data.in_known_list": false,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -4501,9 +4510,9 @@
                   "tracer_data.stack": 26,
                   "tracer_data.threshold": 27,
                   "tracer_name": 14,
-                  "tracer_time": 0,
+                  "started_timestamp": 0,
                   "tracer_type": 28,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.dload_avg": "dload_avg",
@@ -4617,7 +4626,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -4637,7 +4646,7 @@
               ],
               "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -4649,7 +4658,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -4674,8 +4683,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -4765,7 +4774,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -4785,7 +4794,7 @@
               ],
               "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -4797,7 +4806,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -4822,8 +4831,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -4912,7 +4921,7 @@
               ],
               "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -4932,7 +4941,7 @@
                   "time": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -4959,9 +4968,9 @@
                   "tracer_data.std": 23,
                   "tracer_data.warn_type": 24,
                   "tracer_name": 14,
-                  "tracer_time": 0,
+                  "observed_timestamp": 0,
                   "tracer_type": 25,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.curr_slope": "curr_slope",
@@ -4978,18 +4987,7 @@
           ],
           "type": "table"
         }
-      ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "refId": "A"
-        }
-      ],
-      "title": "🐳 CPU",
-      "type": "row"
+      ]
     },
     {
       "collapsed": true,
@@ -5004,6 +5002,17 @@
         "y": 21
       },
       "id": 23,
+      "targets": [
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "refId": "A"
+        }
+      ],
+      "title": "🐳 Memory",
+      "type": "row",
       "panels": [
         {
           "gridPos": {
@@ -5099,7 +5108,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -5119,7 +5128,7 @@
               ],
               "query": "tracer_name:memory_reclaim_events AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -5131,7 +5140,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -5156,8 +5165,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -5247,7 +5256,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -5267,7 +5276,7 @@
               ],
               "query": "tracer_name:memory_reclaim_events AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -5279,7 +5288,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -5304,8 +5313,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -5345,7 +5354,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "tracer_time"
+                  "options": "observed_timestamp"
                 },
                 "properties": [
                   {
@@ -5429,7 +5438,7 @@
               ],
               "query": "tracer_name:memory_reclaim_events AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -5451,7 +5460,7 @@
                   "time": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -5474,9 +5483,9 @@
                   "tracer_data.pid": 16,
                   "tracer_data.tid": 18,
                   "tracer_name": 14,
-                  "tracer_time": 0,
+                  "observed_timestamp": 0,
                   "tracer_type": 21,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.comm": "comm",
@@ -5583,7 +5592,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -5603,7 +5612,7 @@
               ],
               "query": "tracer_name:oom AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -5615,7 +5624,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -5640,8 +5649,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -5731,7 +5740,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -5751,7 +5760,7 @@
               ],
               "query": "tracer_name:oom AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -5763,7 +5772,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -5788,8 +5797,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -5885,7 +5894,7 @@
               ],
               "query": "tracer_name:oom AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -5908,7 +5917,7 @@
                   "tracer_data.victim_memcg_css": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -5932,9 +5941,9 @@
                   "tracer_data.victim_pid": 21,
                   "tracer_data.victim_process_name": 20,
                   "tracer_name": 11,
-                  "tracer_time": 0,
+                  "observed_timestamp": 0,
                   "tracer_type": 22,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.trigger_container_hostname": "trigger_container_hostname",
@@ -6047,7 +6056,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -6067,7 +6076,7 @@
               ],
               "query": "tracer_name:memburst AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -6079,7 +6088,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -6104,8 +6113,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "started_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -6195,7 +6204,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -6215,7 +6224,7 @@
               ],
               "query": "tracer_name:memburst AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -6227,7 +6236,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -6252,8 +6261,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "started_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -6356,7 +6365,7 @@
               ],
               "query": "tracer_name:memburst AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -6375,7 +6384,7 @@
                   "sort": true,
                   "time": true,
                   "tracer_name": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -6390,9 +6399,9 @@
                   "time": 10,
                   "tracer_data.top_memory_usage": 12,
                   "tracer_name": 11,
-                  "tracer_time": 0,
+                  "started_timestamp": 0,
                   "tracer_type": 13,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.top_memory_usage": "top_memory_usage"
@@ -6402,18 +6411,7 @@
           ],
           "type": "table"
         }
-      ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "refId": "A"
-        }
-      ],
-      "title": "🐳 Memory",
-      "type": "row"
+      ]
     },
     {
       "collapsed": true,
@@ -6428,6 +6426,17 @@
         "y": 22
       },
       "id": 31,
+      "targets": [
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "refId": "A"
+        }
+      ],
+      "title": "🐳 IO",
+      "type": "row",
       "panels": [
         {
           "gridPos": {
@@ -6524,7 +6533,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -6544,7 +6553,7 @@
               ],
               "query": "tracer_name:iotracing AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -6556,7 +6565,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -6581,8 +6590,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "started_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -6672,7 +6681,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -6692,7 +6701,7 @@
               ],
               "query": "tracer_name:iotracing AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -6704,7 +6713,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -6729,8 +6738,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "started_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -6774,7 +6783,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "tracer_time"
+                  "options": "started_timestamp"
                 },
                 "properties": [
                   {
@@ -6861,7 +6870,7 @@
               ],
               "query": "tracer_name:iotracing AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -6880,7 +6889,7 @@
                   "time": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -6906,9 +6915,9 @@
                   "tracer_data.status.write_iowait": 22,
                   "tracer_data.triger_type": 23,
                   "tracer_name": 11,
-                  "tracer_time": 0,
+                  "started_timestamp": 0,
                   "tracer_type": 24,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.pdata": "pdata",
@@ -6928,18 +6937,7 @@
           ],
           "type": "table"
         }
-      ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "refId": "A"
-        }
-      ],
-      "title": "🐳 IO",
-      "type": "row"
+      ]
     },
     {
       "collapsed": true,
@@ -6954,6 +6952,17 @@
         "y": 23
       },
       "id": 27,
+      "targets": [
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "refId": "A"
+        }
+      ],
+      "title": "🐳 Networking",
+      "type": "row",
       "panels": [
         {
           "gridPos": {
@@ -7050,7 +7059,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -7070,7 +7079,7 @@
               ],
               "query": "tracer_name:dropwatch AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -7082,7 +7091,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -7107,8 +7116,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -7201,7 +7210,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -7221,7 +7230,7 @@
               ],
               "query": "tracer_name:dropwatch AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -7233,7 +7242,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -7258,8 +7267,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -7363,7 +7372,7 @@
               ],
               "query": "tracer_name:dropwatch AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -7387,7 +7396,7 @@
                   "tracer_data.stack": false,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -7417,9 +7426,9 @@
                   "tracer_data.state": 22,
                   "tracer_data.type": 12,
                   "tracer_name": 11,
-                  "tracer_time": 0,
+                  "observed_timestamp": 0,
                   "tracer_type": 28,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.comm": "comm",
@@ -7537,7 +7546,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -7557,7 +7566,7 @@
               ],
               "query": "tracer_name:net_rx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -7569,7 +7578,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -7594,8 +7603,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -7685,7 +7694,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -7706,7 +7715,7 @@
               ],
               "query": "tracer_name:net_rx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -7718,7 +7727,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -7743,8 +7752,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -7840,7 +7849,7 @@
               ],
               "query": "tracer_name:net_rx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -7860,7 +7869,7 @@
                   "time": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -7892,9 +7901,9 @@
                   "tracer_data.tcp_sport": 22,
                   "tracer_data.tcp_state": 24,
                   "tracer_name": 15,
-                  "tracer_time": 0,
+                  "observed_timestamp": 0,
                   "tracer_type": 29,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "_id": "",
@@ -8015,7 +8024,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -8035,7 +8044,7 @@
               ],
               "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*carrierdown*",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -8127,7 +8136,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -8147,7 +8156,7 @@
               ],
               "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*carrierdown*",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -8240,7 +8249,7 @@
               ],
               "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*carrierdown*",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -8257,9 +8266,9 @@
                   "sort": true,
                   "time": true,
                   "tracer_name": true,
-                  "tracer_time": false,
+                  "observed_timestamp": false,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 1,
@@ -8278,9 +8287,9 @@
                   "tracer_data.mac": 14,
                   "tracer_data.start": 15,
                   "tracer_name": 16,
-                  "tracer_time": 6,
+                  "observed_timestamp": 6,
                   "tracer_type": 17,
-                  "uploaded_time": 0
+                  "uploaded_timestamp": 0
                 },
                 "renameByName": {
                   "tracer_data.ifname": "ifname",
@@ -8389,7 +8398,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -8409,7 +8418,7 @@
               ],
               "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*admindown*",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -8501,7 +8510,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -8521,7 +8530,7 @@
               ],
               "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*admindown*",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -8608,7 +8617,7 @@
               ],
               "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*admindown*",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -8625,7 +8634,7 @@
                   "sort": true,
                   "time": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 1,
@@ -8644,9 +8653,9 @@
                   "tracer_data.mac": 14,
                   "tracer_data.start": 15,
                   "tracer_name": 16,
-                  "tracer_time": 6,
+                  "observed_timestamp": 6,
                   "tracer_type": 17,
-                  "uploaded_time": 0
+                  "uploaded_timestamp": 0
                 },
                 "renameByName": {
                   "tracer_data.ifname": "ifname",
@@ -8755,7 +8764,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -8775,7 +8784,7 @@
               ],
               "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev_bonding_lacp",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -8867,7 +8876,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -8887,7 +8896,7 @@
               ],
               "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev_bonding_lacp",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -8992,7 +9001,7 @@
               ],
               "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev_bonding_lacp",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -9008,9 +9017,9 @@
                   "highlight": true,
                   "sort": true,
                   "tracer_name": true,
-                  "tracer_time": true,
+                  "observed_timestamp": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 1,
@@ -9025,9 +9034,9 @@
                   "time": 9,
                   "tracer_data.content": 10,
                   "tracer_name": 11,
-                  "tracer_time": 12,
+                  "observed_timestamp": 12,
                   "tracer_type": 13,
-                  "uploaded_time": 0
+                  "uploaded_timestamp": 0
                 },
                 "renameByName": {
                   "tracer_data.content": "content"
@@ -9037,18 +9046,7 @@
           ],
           "type": "table"
         }
-      ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "refId": "A"
-        }
-      ],
-      "title": "🐳 Networking",
-      "type": "row"
+      ]
     },
     {
       "collapsed": true,
@@ -9063,6 +9061,17 @@
         "y": 24
       },
       "id": 39,
+      "targets": [
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "refId": "A"
+        }
+      ],
+      "title": "🐳 System",
+      "type": "row",
       "panels": [
         {
           "gridPos": {
@@ -9159,7 +9168,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -9179,7 +9188,7 @@
               ],
               "query": "tracer_name:sched_tick AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -9191,7 +9200,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -9216,8 +9225,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -9307,7 +9316,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -9327,7 +9336,7 @@
               ],
               "query": "tracer_name:sched_tick AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -9339,7 +9348,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -9364,8 +9373,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -9453,7 +9462,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "tracer_time"
+                  "options": "observed_timestamp"
                 },
                 "properties": [
                   {
@@ -9497,7 +9506,7 @@
             "sortBy": [
               {
                 "desc": false,
-                "displayName": "tracer_time"
+                "displayName": "observed_timestamp"
               }
             ]
           },
@@ -9521,7 +9530,7 @@
               ],
               "query": "tracer_name:sched_tick AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -9541,7 +9550,7 @@
                   "time": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -9561,9 +9570,9 @@
                   "tracer_data.stack": 18,
                   "tracer_data.tick_interval_threshold_ns": 15,
                   "tracer_name": 11,
-                  "tracer_time": 0,
+                  "observed_timestamp": 0,
                   "tracer_type": 19,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.comm": "comm",
@@ -9672,7 +9681,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -9692,7 +9701,7 @@
               ],
               "query": "tracer_name:softlockup AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -9704,7 +9713,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -9729,8 +9738,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -9820,7 +9829,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -9840,7 +9849,7 @@
               ],
               "query": "tracer_name:softlockup AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -9852,7 +9861,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -9877,8 +9886,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -9986,7 +9995,7 @@
               ],
               "query": "tracer_name:softlockup AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -10005,7 +10014,7 @@
                   "time": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -10023,9 +10032,9 @@
                   "tracer_data.cpus_stack": 14,
                   "tracer_data.tid": 15,
                   "tracer_name": 11,
-                  "tracer_time": 0,
+                  "observed_timestamp": 0,
                   "tracer_type": 16,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.blocked_processes_stack": "blocked_processes_stack",
@@ -10132,7 +10141,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -10152,7 +10161,7 @@
               ],
               "query": "tracer_name:hungtask AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -10164,7 +10173,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -10189,8 +10198,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -10280,7 +10289,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -10300,7 +10309,7 @@
               ],
               "query": "tracer_name:hungtask AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -10312,7 +10321,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -10337,8 +10346,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -10446,7 +10455,7 @@
               ],
               "query": "tracer_name:hungtask AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -10465,7 +10474,7 @@
                   "time": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -10483,9 +10492,9 @@
                   "tracer_data.cpus_stack": 14,
                   "tracer_data.pid": 15,
                   "tracer_name": 11,
-                  "tracer_time": 0,
+                  "observed_timestamp": 0,
                   "tracer_type": 16,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.blocked_processes_stack": "blocked_processes_stack",
@@ -10592,7 +10601,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -10612,7 +10621,7 @@
               ],
               "query": "tracer_name:ras AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -10624,7 +10633,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -10649,8 +10658,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -10740,7 +10749,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -10760,7 +10769,7 @@
               ],
               "query": "tracer_name:ras AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -10772,7 +10781,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -10798,8 +10807,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -10907,7 +10916,7 @@
               ],
               "query": "tracer_name:ras AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -10926,7 +10935,7 @@
                   "time": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -10943,11 +10952,10 @@
                   "tracer_data.type": 14,
                   "tracer_data.event": 15,
                   "tracer_data.info": 16,
-                  "tracer_data.observed_timestamp": 17,
+                  "observed_timestamp": 0,
                   "tracer_name": 11,
-                  "tracer_time": 0,
                   "tracer_type": 12,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.blocked_processes_stack": "blocked_processes_stack",
@@ -10958,7 +10966,7 @@
                   "tracer_data.event": "event",
                   "tracer_data.info": "info",
                   "tracer_data.pid": "pid",
-                  "tracer_data.observed_timestamp": "observed_timestamp"
+                  "observed_timestamp": "observed_timestamp"
                 }
               }
             }
@@ -11059,7 +11067,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -11079,7 +11087,7 @@
               ],
               "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "count",
@@ -11091,7 +11099,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -11116,8 +11124,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -11207,7 +11215,7 @@
               "alias": "",
               "bucketAggs": [
                 {
-                  "field": "uploaded_time",
+                  "field": "uploaded_timestamp",
                   "id": "2",
                   "settings": {
                     "interval": "auto"
@@ -11227,7 +11235,7 @@
               ],
               "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "time series",
@@ -11239,7 +11247,7 @@
                   "_id": true,
                   "_index": true,
                   "_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -11265,8 +11273,8 @@
                   "tracer_data.systhreshold": 21,
                   "tracer_data.userthreshold": 22,
                   "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
+                  "observed_timestamp": 0,
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {}
               }
@@ -11374,7 +11382,7 @@
               ],
               "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
-              "timeField": "uploaded_time"
+              "timeField": "uploaded_timestamp"
             }
           ],
           "title": "details",
@@ -11393,7 +11401,7 @@
                   "time": true,
                   "tracer_name": true,
                   "tracer_type": true,
-                  "uploaded_time": true
+                  "uploaded_timestamp": true
                 },
                 "indexByName": {
                   "_id": 2,
@@ -11420,9 +11428,9 @@
                   "tracer_data.std": 24,
                   "tracer_data.warn_type": 25,
                   "tracer_name": 11,
-                  "tracer_time": 0,
+                  "observed_timestamp": 0,
                   "tracer_type": 12,
-                  "uploaded_time": 1
+                  "uploaded_timestamp": 1
                 },
                 "renameByName": {
                   "tracer_data.blocked_processes_stack": "blocked_processes_stack",
@@ -11443,18 +11451,7 @@
           ],
           "type": "table"
         }
-      ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "refId": "A"
-        }
-      ],
-      "title": "🐳 System",
-      "type": "row"
+      ]
     }
   ],
   "refresh": "",

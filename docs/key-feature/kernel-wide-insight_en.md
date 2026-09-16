@@ -1254,3 +1254,48 @@ huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
 |metax_gpu_dpm_performance_level|GPU DPM performance level.|-|gpu, die, ip|sml.GetDieDPMPerformanceLevel|
 |metax_gpu_ecc_memory_errors_total|GPU ECC memory errors count.|count|gpu, die, memory_type, error_type|sml.GetDieECCMemoryInfo|
 |metax_gpu_ecc_memory_retired_pages_total|GPU ECC memory retired pages count.|count|gpu, die|sml.GetDieECCMemoryInfo|
+
+- Moore Threads (MThreads)
+
+MThreads GPU monitoring via the MTML (Moore Threads Management Library). The library is discovered automatically at startup using SONAME search (`libmtml.so.2` then `libmtml.so`) through the system dynamic linker. Static device info is cached and only rebuilt on re-init; dynamic metrics are collected on every scrape.
+
+Configuration: remove `mthreads_gpu` from `BlackList` to enable. Metric groups are controlled by `[MetricCollector.Mthreads]` toggles (`EnableHealth`, `EnablePCIe`, `EnableMTLink`).
+
+|Metric|Description|Unit|Labels|Source|
+|----|---|---|---|---|
+|huatuo_bamai_mthreads_gpu_library_info|MTML library info.|-|version|mtml.LibraryVersion|
+|huatuo_bamai_mthreads_gpu_device_info|GPU info.|-|gpu, name, brand, serial|mtml.Device.Name/Brand/SerialNumber|
+|huatuo_bamai_mthreads_gpu_device_pci_info|GPU PCI info.|-|gpu, sbdf|mtml.Device.PciSbdf|
+|huatuo_bamai_mthreads_gpu_device_spec|GPU spec.|-|gpu, cores|mtml.Device.GpuCores|
+|huatuo_bamai_mthreads_gpu_device_bios_version|GPU BIOS version.|-|gpu, bios|mtml.Device.BiosVersion|
+|huatuo_bamai_mthreads_gpu_device_musa_capability|GPU MUSA compute capability.|-|gpu, musa_capability|mtml.Device.MusaComputeCapability|
+|huatuo_bamai_mthreads_gpu_memory_info|GPU memory info.|-|gpu, type, vendor, bus_width|mtml.Device.InitMemory|
+|huatuo_bamai_mthreads_gpu_pcie_link_max_speed_gt_per_sec|GPU PCIe max link speed in GT/s (hardware capability).|GT/s|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_pcie_link_max_width_lanes|GPU PCIe max link width in lanes (hardware capability).|lanes|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_device_power_watts|GPU device power in watts.|W|gpu|mtml.Device.PowerUsage|
+|huatuo_bamai_mthreads_gpu_gpu_temperature_celsius|GPU temperature.|°C|gpu|mtml.Gpu.Temperature|
+|huatuo_bamai_mthreads_gpu_memory_temperature_celsius|GPU memory temperature.|°C|gpu|mtml.Memory.Temperature|
+|huatuo_bamai_mthreads_gpu_gpu_utilization_percent|GPU utilization (0-100).|%|gpu|mtml.Gpu.Utilization|
+|huatuo_bamai_mthreads_gpu_memory_utilization_percent|GPU memory utilization (0-100).|%|gpu|mtml.Memory.Utilization|
+|huatuo_bamai_mthreads_gpu_memory_total_bytes|Total GPU memory in bytes.|bytes|gpu|mtml.Memory.Total|
+|huatuo_bamai_mthreads_gpu_memory_used_bytes|Used GPU memory in bytes.|bytes|gpu|mtml.Memory.Used|
+|huatuo_bamai_mthreads_gpu_gpu_clock_mhz|GPU clock in MHz.|MHz|gpu|mtml.Gpu.Clock|
+|huatuo_bamai_mthreads_gpu_gpu_max_clock_mhz|GPU max clock in MHz.|MHz|gpu|mtml.Gpu.MaxClock|
+|huatuo_bamai_mthreads_gpu_memory_clock_mhz|GPU memory clock in MHz.|MHz|gpu|mtml.Memory.Clock|
+|huatuo_bamai_mthreads_gpu_memory_max_clock_mhz|GPU memory max clock in MHz.|MHz|gpu|mtml.Memory.MaxClock|
+|huatuo_bamai_mthreads_gpu_gpu_voltage_volts|GPU voltage in volts.|V|gpu|mtml.Gpu.Voltage|
+|huatuo_bamai_mthreads_gpu_gpu_power_limit_watts|GPU enforced power limit in watts.|W|gpu|mtml.Gpu.EnforcedPowerLimit|
+|huatuo_bamai_mthreads_gpu_gpu_power_default_limit_watts|GPU default power management limit in watts.|W|gpu|mtml.Gpu.PowerManagementDefaultLimit|
+|huatuo_bamai_mthreads_gpu_fan_rpm|GPU fan speed in RPM.|RPM|gpu, fan|mtml.Device.FanRpm|
+|huatuo_bamai_mthreads_gpu_fan_speed_percent|GPU fan speed percent.|%|gpu, fan|mtml.Device.FanSpeed|
+|huatuo_bamai_mthreads_gpu_gpu_pstate|GPU performance state (0=P0).|-|gpu|mtml.Device.PerformanceState|
+|huatuo_bamai_mthreads_gpu_vpu_utilization_percent|GPU VPU utilization (0-100).|%|gpu|mtml.Vpu.Utilization|
+|huatuo_bamai_mthreads_gpu_vpu_encoder_utilization_percent|GPU VPU encoder utilization (0-100).|%|gpu|mtml.Vpu.Utilization|
+|huatuo_bamai_mthreads_gpu_vpu_decoder_utilization_percent|GPU VPU decoder utilization (0-100).|%|gpu|mtml.Vpu.Utilization|
+|huatuo_bamai_mthreads_gpu_vpu_clock_mhz|GPU VPU clock in MHz.|MHz|gpu|mtml.Vpu.Clock|
+|huatuo_bamai_mthreads_gpu_pcie_link_speed_gt_per_sec|GPU PCIe current link speed in GT/s.|GT/s|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_pcie_link_width_lanes|GPU PCIe current link width in lanes.|lanes|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_pcie_replay_total|GPU PCIe replay counter.|count|gpu|mtml.Device.PcieReplayCounter|
+|huatuo_bamai_mthreads_gpu_mtlink_state|GPU MtLink state (0=DOWN,1=UP,2=DOWNGRADE).|-|gpu, link|mtml.Device.MtLinkState|
+|huatuo_bamai_mthreads_gpu_mtlink_link_bandwidth_gb_s|GPU MtLink per-link max bandwidth (device static spec, not live throughput).|GB/s|gpu|mtml.Device.MtLinkSpec|
+|huatuo_bamai_mthreads_gpu_mtlink_link_count|GPU MtLink max number of supported links (device static spec).|links|gpu|mtml.Device.MtLinkSpec|

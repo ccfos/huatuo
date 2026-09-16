@@ -17,7 +17,7 @@ package dev
 import (
 	"path/filepath"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 // DefaultPath returns the default dev path, e.g. "/dev".

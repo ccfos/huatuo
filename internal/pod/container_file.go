@@ -24,7 +24,7 @@ import (
 
 	dockertypes "github.com/docker/docker/api/types"
 
-	"huatuo-bamai/internal/pidfile"
+	"github.com/ccfos/huatuo/internal/pidfile"
 )
 
 const (

@@ -25,16 +25,19 @@ import (
 
 type udsListener struct {
 	net.Listener
-	path string
+	path     string
+	fileInfo os.FileInfo
 }
 
 func (l *udsListener) Close() error {
-	err := l.Listener.Close()
-	_ = os.Remove(l.path)
-	return err
+	closeErr := l.Listener.Close()
+	removeErr := removeSocketIfSame(l.path, l.fileInfo)
+	return errors.Join(closeErr, removeErr)
 }
 
-// ListenUDS binds a Unix socket at path.
+// ListenUDS binds a Unix socket at path. The parent directory must not be
+// writable by untrusted users because permission changes and removal are
+// pathname-based operations.
 func ListenUDS(path string) (net.Listener, error) {
 	if err := prepareSocketPath(path); err != nil {
 		return nil, err
@@ -44,7 +47,11 @@ func ListenUDS(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("transport: listen %s: %w", path, err)
 	}
-
+	if unixListener, ok := l.(*net.UnixListener); ok {
+		// Own unlinking below so Close cannot delete a path that has been
+		// replaced since this listener was bound.
+		unixListener.SetUnlinkOnClose(false)
+	}
 	// chmod is the security boundary for who can connect; if it fails the socket
 	// would silently keep the umask-derived permissions, so refuse to expose it.
 	if err := os.Chmod(path, 0o660); err != nil {
@@ -52,8 +59,31 @@ func ListenUDS(path string) (net.Listener, error) {
 		_ = os.Remove(path)
 		return nil, fmt.Errorf("transport: chmod %s: %w", path, err)
 	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		_ = l.Close()
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("transport: inspect bound socket %s: %w", path, err)
+	}
 
-	return &udsListener{Listener: l, path: path}, nil
+	return &udsListener{Listener: l, path: path, fileInfo: info}, nil
+}
+
+func removeSocketIfSame(path string, expected os.FileInfo) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("transport: inspect socket before removal %s: %w", path, err)
+	}
+	if !os.SameFile(expected, info) {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("transport: remove socket %s: %w", path, err)
+	}
+	return nil
 }
 
 func prepareSocketPath(path string) error {
@@ -73,15 +103,12 @@ func prepareSocketPath(path string) error {
 		_ = conn.Close()
 		return fmt.Errorf("transport: socket already has an active listener: %s", path)
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
 	if !errors.Is(err, syscall.ECONNREFUSED) {
 		return fmt.Errorf("transport: probe existing socket %s: %w", path, err)
 	}
 
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("transport: remove stale socket %s: %w", path, err)
+	if err := removeSocketIfSame(path, info); err != nil {
+		return err
 	}
 	return nil
 }

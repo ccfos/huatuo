@@ -22,7 +22,7 @@ import (
 	"runtime"
 	"testing"
 
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 // TestBackendSave covers the localfile backend save behavior: verifies that fields.tracer_name is used as the filename and JSON content is pretty-printed before writing.
@@ -36,7 +36,7 @@ func TestBackendSave(t *testing.T) {
 		Fields: map[string]any{
 			"tracer_name": "kernel_sched_tick",
 		},
-	})
+	}, driver.SaveOptions{})
 	if err != nil {
 		t.Errorf("Backend.Save() returned error: %v", err)
 		return
@@ -86,7 +86,7 @@ func TestBackendSaveMkdirAllError(t *testing.T) {
 		Fields: map[string]any{
 			"tracer_name": "permtest",
 		},
-	})
+	}, driver.SaveOptions{})
 	if err == nil {
 		t.Errorf("Save() error=nil, want permission denied error")
 	}
@@ -107,7 +107,7 @@ func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 		Fields: map[string]any{
 			"tracer_name": tracerName,
 		},
-	})
+	}, driver.SaveOptions{})
 	if err != nil {
 		t.Fatalf("Save() = %v, want nil", err)
 	}
@@ -122,7 +122,7 @@ func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 	}
 }
 
-// TestBackendUnsupportedOperations covers operations not supported by the localfile backend: Get, Delete, Query, Count, and Terms all return ErrUnsupported.
+// TestBackendUnsupportedOperations covers operations not supported by the localfile backend: Get, Delete, DeleteByQuery, Query, Count, and Terms all return ErrUnsupported.
 func TestBackendUnsupportedOperations(t *testing.T) {
 	dir := t.TempDir()
 	backend := NewBackend(dir, 1024, 3)
@@ -132,6 +132,9 @@ func TestBackendUnsupportedOperations(t *testing.T) {
 	}
 	if err := backend.Delete(t.Context(), "trace-20260424"); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.Delete() error = %v, want ErrUnsupported", err)
+	}
+	if _, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{}); !errors.Is(err, driver.ErrUnsupported) {
+		t.Errorf("Backend.DeleteByQuery() error = %v, want ErrUnsupported", err)
 	}
 	if _, err := backend.Query(t.Context(), driver.Query{}); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.Query() error = %v, want ErrUnsupported", err)

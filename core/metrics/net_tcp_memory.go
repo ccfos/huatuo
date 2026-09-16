@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"io/fs"
 
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type tcpMemory struct{}
@@ -76,7 +76,7 @@ func parseTcpMemory() (*tcpMemoryStat, error) {
 		if p.Mem != nil {
 			return &tcpMemoryStat{
 				memoryPages: float64(*p.Mem),
-				memoryBytes: float64(*p.Mem * 4096),
+				memoryBytes: float64(*p.Mem) * float64(defaultHostPageSize),
 				memoryLimit: float64(values[2]), // tcpMemLimit
 			}, nil
 		}

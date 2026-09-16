@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"strings"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 // IsInContainer reports whether pid has a recognized container cgroup path.

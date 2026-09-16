@@ -17,8 +17,8 @@ package main
 import (
 	"strings"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
 // iocbDirect mirrors the kernel IOCB_DIRECT flag in iocb.ki_flags;

@@ -90,7 +90,8 @@ type Frame struct {
 
 // Sample is the common profiling data unit.
 type Sample struct {
-	// Frames is the call stack, outermost (caller) first.
+	// Frames is the call stack, outermost (caller) first. Frame names are raw;
+	// formatters apply any escaping or normalization required by their format.
 	Frames []string
 
 	// FrameDetails carries optional file/line metadata parallel to Frames.

@@ -22,14 +22,14 @@ import (
 	"os"
 	"time"
 
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/cgroups/paths"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/pkg/tracing"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	cadvisorV1 "github.com/google/cadvisor/info/v1"
 	"github.com/google/cadvisor/utils/cpuload/netlink"
@@ -202,6 +202,7 @@ func (d *dloadTracing) buildAndSave(
 	container *containerDloadInfo,
 	loadStats cadvisorV1.LoadStats,
 ) error {
+	startedTimestamp := time.Now().UTC()
 	cgroupPath := container.cgroupName
 	containerID := container.container.ID
 
@@ -241,11 +242,11 @@ func (d *dloadTracing) buildAndSave(
 	data.KnownIssue = knownIssue
 
 	if err := tracing.Save(&tracing.WriteRequest{
-		TracerName:    "dload",
-		ContainerID:   containerID,
-		TracerTime:    time.Now(),
-		TracerData:    data,
-		TracerRunType: tracing.TracerRunTypeAutotracing,
+		TracerName:       "dload",
+		ContainerID:      containerID,
+		StartedTimestamp: startedTimestamp,
+		TracerData:       data,
+		TracerRunType:    types.TracerRunTypeAutotracing,
 	}); err != nil {
 		return fmt.Errorf("save dload trace: %w", err)
 	}

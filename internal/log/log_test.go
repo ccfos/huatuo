@@ -24,6 +24,8 @@ import (
 	"testing"
 
 	"github.com/sirupsen/logrus"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 // Test SetLevel and GetLevel behavior (valid, invalid, case-insensitive)
@@ -102,6 +104,12 @@ func TestOutput(t *testing.T) {
 		if !strings.Contains(output, msg) {
 			t.Errorf("expected %q to be logged", msg)
 		}
+	}
+	if strings.Contains(output, modulePath+"/") {
+		t.Errorf("expected module path to be omitted from function, got %q", output)
+	}
+	if !strings.Contains(output, `func="internal/log.TestOutput"`) {
+		t.Errorf("expected module-relative function, got %q", output)
 	}
 }
 
@@ -335,7 +343,7 @@ func TestSetFormatter(t *testing.T) {
 			DisableColors:   true,
 			ForceQuote:      true,
 			FullTimestamp:   true,
-			TimestampFormat: rfc3339NanoFixed,
+			TimestampFormat: timeutil.Layout,
 			DisableSorting:  false,
 		})
 	}()

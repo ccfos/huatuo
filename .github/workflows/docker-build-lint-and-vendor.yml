@@ -36,7 +36,6 @@ jobs:
             huatuo-dev:latest \
             sh -xec '
               git config --global --add safe.directory /workspace
-              make bpf-build
               make build
               make --trace check
               make vendor

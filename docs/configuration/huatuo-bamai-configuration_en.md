@@ -23,12 +23,12 @@ The configuration file uses **TOML** format and includes multiple sections such 
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
+BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]
 ```
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
-  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]`, which disables tracing and metrics for the network device hardware layer, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, and TCP retransmission tracing. Remove `diskio` to enable disk I/O metrics or `tcp_retransmit` to enable TCP retransmission tracing and its drop-correlation cache. Supports arrays; extend as needed.
+  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, and Moore Threads GPU. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, or `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
 
 ### 3. Logging
 
@@ -90,7 +90,7 @@ Huatuo does not create its own cgroup by default. This section applies only when
 The configured values remain in their documented units. Memory is converted
 to bytes only when the cgroup limit is applied.
 
-### 5. HTTP Server and Tasks
+### 5. HTTP Server and On-demand Operations
 
 ```toml
 # HTTP server configuration.
@@ -117,18 +117,75 @@ to bytes only when the cgroup limit is applied.
     # MaxEventStreamClients = 100
     # EventStreamKeepAliveIntervalSeconds = 30
 
-# Locally running tracing tasks.
-[Tasks]
-    # - MaxConcurrent
-    # Maximum number of concurrent tasks.
-    # Default: 10
-    #
+[HTTPServer.Auth]
+    # Required service credential used by huatuo-apiserver.
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
+
+# Shared lifecycle policy for Profiling and Tracing operations.
+[Operations]
     # MaxConcurrent = 10
+    # LaunchTimeoutSeconds = 10
+    # StopGracePeriodSeconds = 5
+    # FinalizationTimeoutSeconds = 30
+    # TerminalRetentionPeriodSeconds = 600
+
+# Node-local profiler execution settings.
+[Profiling]
+    # AggregationIntervalSeconds = 10
+    # MaxConcurrentProcesses = 10
+    # CommandOutputLimitBytes = 65536
+    # JavaToolPath = "/opt/async-profiler"
+    # PythonToolPath = "/opt/py-spy"
+
 ```
 
 - **ListenAddress** uses `host:port` form. An empty host listens on all
   interfaces.
-- **MaxConcurrent** limits locally running tracing tasks.
+- **HTTPServer.Auth.BearerToken** is required and must match the independent
+  Node credential configured for huatuo-apiserver. Replace the example value
+  before deployment.
+- **Operations.MaxConcurrent** is one process-wide limit shared by Profiling
+  and Tracing. New operations are rejected instead of queued when it is full.
+- The four operation time settings independently limit process launch,
+  graceful stop, result finalization, and terminal-state retention.
+- **Profiling.JavaToolPath** and **Profiling.PythonToolPath** are optional until
+  their corresponding language is requested. Unsupported node environments
+  reject that request without creating an operation.
+
+The generated Node API exposes its contract at `GET /openapi.json`. Profiling
+and Tracing Start, Get, and Stop routes, `POST /v1/events/watch`, and
+`PUT /v1/config` require the service bearer token. `/readyz`, metrics, version,
+and the OpenAPI document remain public.
+
+#### 5.1 Update Configuration through the Node API
+
+`PUT /v1/config` accepts one non-empty `config` object. Keys use the same
+dot-separated paths as the TOML structure, while values retain their JSON
+types:
+
+```bash
+curl -i -X PUT 'http://127.0.0.1:19704/v1/config' \
+  -H 'Authorization: Bearer REPLACE_WITH_RANDOM_HEX' \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "config": {
+      "BlackList": ["dropwatch", "netdev_hw"],
+      "Runtime.CPULimitCores": 1.5,
+      "Runtime.MemoryLimitMiB": 1024
+    }
+  }'
+```
+
+A successful update returns `204 No Content`. The Node Agent validates the
+complete candidate configuration, atomically replaces the configuration file,
+and only then publishes the new in-memory snapshot. Validation or persistence
+failure leaves the current snapshot unchanged. Unknown keys, invalid value
+types, and empty update objects return `400 Bad Request`.
+
+Components that read configuration dynamically can observe the new snapshot
+without a restart. Settings consumed during startup, including the HTTP
+listener and authentication, storage initialization, and cgroup setup, are
+persisted but take effect only after restarting `huatuo-bamai`.
 
 The event stream settings control `POST /v1/events/watch`. When
 `MaxEventStreamClients` is reached, new streams receive HTTP 429.
@@ -773,7 +830,7 @@ This section captures key kernel events and latency, including scheduler tick in
 
 ```toml
 [EventTracing.Dropwatch]
-    # tcpdump-style filter expression, forwarded to dropwatch --filter.
+    # Filter for standalone dropwatch.
     # Default: "tcp"
     Filter = "tcp"
 
@@ -787,7 +844,7 @@ This section captures key kernel events and latency, including scheduler tick in
     ExcludeContainers = []
 ```
 
-- **Filter**: tcpdump-style packet filter passed to `dropwatch --filter` and applied by the BPF program before events are emitted.
+- **Filter**: tcpdump-style packet filter passed only to standalone dropwatch. TCP retransmission correlation uses `TCPRetransmit.Filter` for both of its inputs.
 
   Default: `"tcp"`.
 
@@ -803,28 +860,30 @@ This section captures key kernel events and latency, including scheduler tick in
 
 ```bash
 [EventTracing.TCPRetransmit]
-    # Forwarded to tcpshark --filter.
-    # Applies only to tcp_retransmit_skb events.
-    # Default: ""
+    # Retransmission filter. Local correlation applies it to both inputs.
+    # Default: empty (no flag when disabled; "tcp" when enabled).
     Filter = ""
 
     # Forwarded as tcpshark --enable-tlp. Default: false.
     EnableTLP = false
+
+    # Run tcpshark with an embedded dropwatch source. Default: false.
+    EnableDropwatchCorrelation = false
 
     # Forwarded as tcpshark --max-events-per-second.
     # Default: 100; 0 disables rate limiting.
     MaxEventsPerSecond = 100
 ```
 
-- **Filter**: tcpdump-style filter expression passed to `tcpshark --filter`.
-
-  Default: empty string. It applies only to `tcp_retransmit_skb` events.
-
 - **EnableTLP**: Whether to collect `tcp_send_loss_probe` events.
 
   Default: false.
 
-- **MaxEventsPerSecond**: Maximum TCP retransmission events emitted by BPF per second.
+- **Filter**: Tcpdump-style retransmission filter used in both modes. Local correlation applies the normalized expression to both tcpshark inputs and defaults an empty value to `tcp`. When correlation is disabled, an empty value passes no `--filter` flag. `Dropwatch.Filter` independently controls standalone dropwatch.
+
+- **EnableDropwatchCorrelation**: Whether tcpshark should load a private dropwatch source and finalize retransmissions locally. The default is false. `tcp_retransmit` must be removed from `BlackList`; standalone `dropwatch` may remain blacklisted. Retransmissions wait up to 100 ms for delayed delivery, and candidate drops must precede them by no more than one second in kernel monotonic time. A strict same-namespace match reports `host_software`; every no-match reports `unknown` with stable `correlation_reasons`.
+
+- **MaxEventsPerSecond**: Maximum TCP retransmission events emitted by BPF per second. Correlation mode gives embedded dropwatch an independent limiter with the same value, so `100` permits up to 100 events/s on each input.
 
   Default: 100. Set to 0 for unlimited output. When the limit is exceeded, `tcpshark` logs `rate limit hit`.
 
@@ -1011,6 +1070,54 @@ This section defines collection rules for various system and network metrics. Al
 - **Included / Excluded**: Same as above.
 
 - **MountPointsIncluded**: Regex for mount points to collect. Default includes /, /home, /boot.
+
+#### 9.7 Moore Threads GPU Metrics
+
+```bash
+# MetricCollector.Mthreads
+#
+# Moore Threads GPU metric collection via the MTML (Moore Threads Management
+# Library) shared library. The library is discovered automatically at startup
+# using SONAME search (libmtml.so.2, then libmtml.so) through the system
+# dynamic linker; no hardcoded path is required.
+#
+# Remove "mthreads_gpu" from BlackList to enable this collector.
+#
+# - EnableHealth
+# Enable health metrics: temperature, power, utilization, clocks, fans, pstate, VPU.
+# Default: true
+#
+# - EnablePCIe
+# Enable PCIe link metrics: current speed/width and replay counter.
+# Default: false
+#
+# - EnableMTLink
+# Enable MtLink interconnect metrics: per-link state and bandwidth.
+# Default: false
+#
+[MetricCollector.Mthreads]
+    # EnableHealth = true
+    # EnablePCIe = false
+    # EnableMTLink = false
+```
+
+- **EnableHealth**: Controls collection of health-related metrics.
+
+  Default: true. When enabled, collects: GPU/memory temperature (`gpu_temperature_celsius`, `memory_temperature_celsius`), power usage and limits (`device_power_watts`, `gpu_power_limit_watts`, `gpu_power_default_limit_watts`), GPU/memory utilization (`gpu_utilization_percent`, `memory_utilization_percent`), clock frequencies (`gpu_clock_mhz`, `gpu_max_clock_mhz`, `memory_clock_mhz`, `memory_max_clock_mhz`), voltage (`gpu_voltage_volts`), memory capacity (`memory_total_bytes`, `memory_used_bytes`), fan speed (`fan_rpm`, `fan_speed_percent`), performance state (`gpu_pstate`), and VPU metrics (`vpu_utilization_percent`, `vpu_encoder_utilization_percent`, `vpu_decoder_utilization_percent`, `vpu_clock_mhz`).
+
+- **EnablePCIe**: Controls collection of PCIe link metrics.
+
+  Default: false. When enabled, collects: current PCIe link speed and width (`pcie_link_speed_gt_per_sec`, `pcie_link_width_lanes`), max capability (`pcie_link_max_speed_gt_per_sec`, `pcie_link_max_width_lanes`), and replay counter (`pcie_replay_total`).
+
+- **EnableMTLink**: Controls collection of MtLink interconnect metrics.
+
+  Default: false. When enabled, collects: device-level static specs (per-link bandwidth `mtlink_link_bandwidth_gb_s` and link count `mtlink_link_count`) and per-link state (`mtlink_state`).
+
+**Library discovery**: At startup, the collector searches for `libmtml.so.2` then `libmtml.so` via the system dynamic linker (respecting `LD_LIBRARY_PATH` and `/etc/ld.so.cache`). If no library is found, the collector logs a warning and is disabled for the lifetime of the process. Library discovery is performed only at startup: changing `LD_LIBRARY_PATH` or installing a new MTML version also requires a restart.
+
+**Hot-reload semantics**: `EnableHealth`, `EnablePCIe`, and `EnableMTLink` are read from the latest config snapshot on every scrape, so toggling them takes effect on the next Prometheus scrape without restarting `huatuo-bamai`. A `false → true → false` transition emits and suppresses the corresponding metric groups on the next scrape after each change.
+
+Note: enabling the collector itself (i.e. removing `mthreads_gpu` from `BlackList` after the process has already started with the collector disabled because `libmtml.so` was missing at startup) requires a restart. The collector factory runs only during initialization, so a successful late library load will not register a new collector.
 
 ### 10. Pod
 

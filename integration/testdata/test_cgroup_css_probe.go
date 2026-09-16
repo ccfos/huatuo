@@ -26,13 +26,12 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 )
 
 const (
 	eventMap     = "cgroup_perf_events"
-	eventBuffer  = 8192
 	eventTimeout = 10 * time.Second
 	syncObject   = "cgroup_css_sync.o"
 	eventsObject = "cgroup_css_events.o"
@@ -105,7 +104,7 @@ func collectSyncEvent(cfg config, encoder *json.Encoder) (retErr error) {
 	}
 	defer func() { retErr = errors.Join(retErr, object.Close()) }()
 
-	reader, err := object.EventPipeByName(ctx, eventMap, eventBuffer)
+	reader, err := object.EventPipeByName(ctx, eventMap, bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return fmt.Errorf("open %s event pipe: %w", syncObject, err)
 	}
@@ -143,7 +142,7 @@ func collectLifecycleEvents(cfg config, encoder *json.Encoder) (retErr error) {
 	}
 	defer func() { retErr = errors.Join(retErr, object.Close()) }()
 
-	reader, err := object.AttachAndEventPipe(ctx, eventMap, eventBuffer)
+	reader, err := object.AttachAndEventPipe(ctx, eventMap, bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return fmt.Errorf("attach %s: %w", eventsObject, err)
 	}

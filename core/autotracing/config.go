@@ -18,7 +18,7 @@ import (
 	"slices"
 	"sync/atomic"
 
-	"huatuo-bamai/internal/matcher"
+	"github.com/ccfos/huatuo/internal/matcher"
 )
 
 // ContainerFilterConfig is the serializable form of a container filter.

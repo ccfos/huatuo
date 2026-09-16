@@ -15,19 +15,10 @@
 package driver
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"time"
 )
-
-// WithContext returns a non-nil context, falling back to context.Background().
-func WithContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
-}
 
 // NormalizeValue converts time.Time to its canonical storage string; all other
 // types pass through unchanged.

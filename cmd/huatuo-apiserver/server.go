@@ -16,30 +16,24 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
-	"huatuo-bamai/internal/server"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
+	"github.com/ccfos/huatuo/internal/server"
 )
 
 func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {
-	var profileQueryService profiling.ProfileQueryService
-	if d.profileQueryService != nil {
-		profileQueryService = d.profileQueryService
-	}
-
 	runningServer, err := handlers.Start(&handlers.ServerOptions{
-		Addr:           d.opts.Config.APIServer.ListenAddress,
-		PromReg:        d.metrics,
-		JobManager:     d.jobManager,
-		ProfileService: profileQueryService,
+		Addr:                d.opts.Config.APIServer.ListenAddress,
+		PromReg:             d.metrics,
+		JobManager:          d.jobManager,
+		ProfileStorage:      d.profileStorage,
+		ProfileQueryService: d.profileQueryService,
+		ProfilePublications: d.publications,
 		ProfilingConfig: profiling.Config{
-			AggregationIntervalSeconds:     d.opts.Config.Profiling.AggregationIntervalSeconds,
-			MaxConcurrentProfilerProcesses: d.opts.Config.Profiling.MaxConcurrentProfilerProcesses,
-			DashboardBaseURL:               d.opts.Config.Profiling.DashboardBaseURL,
+			DashboardBaseURL: d.opts.Config.Profiling.DashboardBaseURL,
 		},
 		AuthUsers:   authUsers(d.opts.Config.Auth.Users),
 		EnablePProf: d.opts.EnablePProf,
@@ -47,13 +41,6 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 		RateLimit: &server.RateLimitConfig{
 			RequestsPerSecond: d.opts.Config.APIServer.RateLimit.RequestsPerSecond,
 			Burst:             d.opts.Config.APIServer.RateLimit.Burst,
-		},
-		Ready: func(ctx context.Context) error {
-			err := d.jobManager.Ready(ctx)
-			if d.profileQueryService == nil {
-				return err
-			}
-			return errors.Join(err, d.profileQueryService.Ready(ctx))
 		},
 	})
 	if err != nil {

@@ -21,9 +21,10 @@ import (
 	"sync"
 	"time"
 
-	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/server/response"
+	v1 "github.com/ccfos/huatuo/apis/v1"
+	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/server/response"
 
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -32,20 +33,27 @@ import (
 
 func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 	chain := []httpGin.HandlerFunc{
-		middlewareContext(),
+		middlewareContext(cfg.ErrorStatusMapper),
 		maxBodyBytesMiddleware(cfg.MaxBodyBytes),
 		requestLogMiddleware(),
-		httpGin.Recovery(),
+		newRecoveryMiddleware(cfg.ErrorStatusMapper),
 	}
 	if cfg.PromReg != nil {
 		chain = append(chain, newHTTPMetricsMiddleware(cfg.PromReg))
 	}
-	if cfg.RequireAuth || len(cfg.AuthUsers) > 0 {
-		authService := NewAuthService(cfg.AuthUsers)
-		publicPaths := append(
-			[]string{"/healthz", "/readyz", "/metrics", "/version"},
-			cfg.PublicPaths...,
+	publicPaths := append(
+		[]string{"/metrics", "/version"},
+		cfg.PublicPaths...,
+	)
+	if len(cfg.AuthTokens) > 0 {
+		authenticator := auth.NewTokenAuthenticator(cfg.AuthTokens)
+		chain = append(
+			chain,
+			wrapHandler(newTokenAuthMiddleware(authenticator, publicPaths)),
 		)
+	}
+	if len(cfg.AuthUsers) > 0 {
+		authService := NewAuthService(cfg.AuthUsers)
 		adminPaths := append(
 			[]string{"/debug/pprof", "/debug/pprof/**"},
 			cfg.AdminPaths...,
@@ -62,6 +70,12 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 		))
 	}
 	return chain
+}
+
+func newRecoveryMiddleware(statusMapper response.HTTPStatusMapper) httpGin.HandlerFunc {
+	return httpGin.CustomRecovery(func(ctx *httpGin.Context, _ any) {
+		writeGinError(ctx, response.ErrInternal, statusMapper)
+	})
 }
 
 func maxBodyBytesMiddleware(limit int64) httpGin.HandlerFunc {
@@ -153,7 +167,7 @@ func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
 			ctx := internalContext(c)
 			response.ErrorWithCode(
 				ctx,
-				http.StatusTooManyRequests,
+				ctx.ErrorStatusMapper(),
 				v1.ErrorCodeRateLimited,
 				"too many requests",
 			)

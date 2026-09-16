@@ -26,6 +26,7 @@ readonly PROFILER_DURATION=6
 readonly PROFILER_AGGR_INTERVAL=2
 readonly PROFILER_READY_TIMEOUT=15
 readonly PROFILER_READY_INTERVAL=1
+readonly PHYSICAL_MARKER_SYMBOL="test_physical_usage_touch_pages"
 
 if kprobe_available folio_add_new_anon_rmap && kprobe_available folio_remove_rmap_ptes; then
 	log_info "using folio rmap kprobes"
@@ -106,12 +107,37 @@ folded_line_count() {
 	echo "${count}"
 }
 
+folded_value_sum() {
+	local dir=$1 symbol=$2
+	local sum=0
+	local file
+
+	while IFS= read -r file; do
+		sum=$((sum + $(awk -v symbol="${symbol}" \
+			'index($0, symbol) { sum += $NF } END { printf "%.0f\n", sum + 0 }' "${file}")))
+	done < <(find "${dir}" -maxdepth 1 -name 'perf_*.folded' -type f)
+
+	echo "${sum}"
+}
+
 compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
 
 ALLOC_DIR="${WORK_DIR}/physical_alloc"
 run_profile_case physical_alloc "${ALLOC_DIR}"
-ALLOC_LINES=$(folded_line_count "${ALLOC_DIR}")
-[[ "${ALLOC_LINES}" -gt 0 ]] || fatal "physical_alloc captured no folded output"
+ALLOC_CAPTURED_BYTES=$(folded_value_sum "${ALLOC_DIR}" "${PHYSICAL_MARKER_SYMBOL}")
+[[ "${ALLOC_CAPTURED_BYTES}" -gt 0 ]] \
+	|| fatal "physical_alloc captured no bytes for ${PHYSICAL_MARKER_SYMBOL}"
+
+ALLOC_EXPECTED_BYTES=$(awk -F= '/^actual_allocated_bytes=/{value=$2} END {print value}' \
+	"${ALLOC_DIR}/fixture.err")
+[[ "${ALLOC_EXPECTED_BYTES}" =~ ^[0-9]+$ ]] \
+	|| fatal "physical_alloc fixture did not report actual_allocated_bytes"
+
+if [[ "${ALLOC_CAPTURED_BYTES}" -ne "${ALLOC_EXPECTED_BYTES}" ]]; then
+	log_error "physical_alloc captured ${ALLOC_CAPTURED_BYTES} bytes; expected ${ALLOC_EXPECTED_BYTES}"
+	fatal "physical_alloc byte conversion verification failed"
+fi
+log_info "physical_alloc captured ${ALLOC_CAPTURED_BYTES} bytes without overcounting"
 
 USAGE_DIR="${WORK_DIR}/physical_usage"
 run_profile_case physical_usage "${USAGE_DIR}"

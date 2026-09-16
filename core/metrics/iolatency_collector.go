@@ -15,13 +15,14 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/pkg/metric"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 func (c *iolatencyTracing) Update() ([]*metric.Data, error) {
@@ -31,14 +32,10 @@ func (c *iolatencyTracing) Update() ([]*metric.Data, error) {
 	}
 	defer lease.Release()
 
-	containers, _ := c.fetchContainerIOlatency(lease.BPF)
+	containers, containerErr := c.fetchContainerIOlatency(lease.BPF)
+	blkio, blkioErr := c.fetchBlkDiskIOlatency(lease.BPF)
 
-	blkio, err := c.fetchBlkDiskIOlatency(lease.BPF)
-	if err != nil {
-		return containers, err
-	}
-
-	return append(containers, blkio...), nil
+	return append(containers, blkio...), errors.Join(containerErr, blkioErr)
 }
 
 func (c *iolatencyTracing) fetchContainerIOlatency(object bpf.BPF) ([]*metric.Data, error) {

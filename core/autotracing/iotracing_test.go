@@ -16,16 +16,14 @@ package autotracing
 
 import (
 	"context"
-	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/procfs/blockdevice"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/toolstream/transport"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestHandleIotracingEventReturnsPendingResult(t *testing.T) {
@@ -147,64 +145,6 @@ func TestWaitForSnapshotTimeouts(t *testing.T) {
 			t.Fatalf("waitForSnapshot() error = %v", err)
 		}
 	})
-}
-
-func TestKillIOTracingProcessAndWait(t *testing.T) {
-	stopErr := errors.New("permission denied")
-	tests := []struct {
-		name          string
-		killErr       error
-		done          <-chan error
-		timeout       time.Duration
-		expectedError string
-	}{
-		{
-			name:    "killed",
-			done:    completedProcess(),
-			timeout: time.Second,
-		},
-		{
-			name:    "already exited",
-			killErr: os.ErrProcessDone,
-			done:    completedProcess(),
-			timeout: time.Second,
-		},
-		{
-			name:          "kill failed",
-			killErr:       stopErr,
-			done:          make(chan error),
-			timeout:       time.Second,
-			expectedError: stopErr.Error(),
-		},
-		{
-			name:          "stop timed out",
-			done:          make(chan error),
-			timeout:       time.Millisecond,
-			expectedError: "timed out waiting for iotracing to stop",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			process := &processKillerStub{err: test.killErr}
-
-			err := killIOTracingProcessAndWait(process, test.done, test.timeout)
-			if test.expectedError == "" {
-				if err != nil {
-					t.Fatalf("killIOTracingProcessAndWait() error = %v", err)
-				}
-			} else if err == nil || !strings.Contains(err.Error(), test.expectedError) {
-				t.Fatalf(
-					"killIOTracingProcessAndWait() error = %v, want substring %q",
-					err,
-					test.expectedError,
-				)
-			}
-			if !process.isKilled {
-				t.Fatal("killIOTracingProcessAndWait() did not kill the process")
-			}
-		})
-	}
 }
 
 func TestNewIOTracer(t *testing.T) {
@@ -331,20 +271,4 @@ func validIOTracingConfig() *Config {
 	config.IOTracing.MaxProcDump = 10
 	config.IOTracing.MaxFilesPerProcDump = 5
 	return config
-}
-
-type processKillerStub struct {
-	err      error
-	isKilled bool
-}
-
-func (p *processKillerStub) Kill() error {
-	p.isKilled = true
-	return p.err
-}
-
-func completedProcess() <-chan error {
-	done := make(chan error, 1)
-	done <- nil
-	return done
 }

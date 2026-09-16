@@ -21,9 +21,9 @@ import (
 	"net"
 	"testing"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/packet"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // errWriter always fails Write with the configured error. Used to verify that
@@ -63,13 +63,14 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 				Daddr: net.IPv4(10, 0, 0, 2),
 			},
 			TCP: &packet.TCP{
-				Sport:   12345,
-				Dport:   443,
-				Seq:     123,
-				AckSeq:  456,
-				Flags:   "ACK|PSH",
-				Window:  4096,
-				SkState: "ESTABLISHED",
+				Sport:    12345,
+				Dport:    443,
+				Seq:      123,
+				AckSeq:   456,
+				Flags:    "ACK|PSH",
+				RawFlags: packet.TCPFlagACK | packet.TCPFlagPSH,
+				Window:   4096,
+				SkState:  "ESTABLISHED",
 			},
 		},
 	})

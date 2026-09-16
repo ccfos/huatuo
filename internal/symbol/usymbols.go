@@ -21,10 +21,10 @@ import (
 	"slices"
 	"strings"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/process"
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/utils/fileutil"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/process"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/utils/fileutil"
 )
 
 type executableCache struct {

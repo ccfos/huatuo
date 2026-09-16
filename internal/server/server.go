@@ -23,7 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/version"
 
 	"github.com/gin-contrib/pprof"
 	httpGin "github.com/gin-gonic/gin"
@@ -44,12 +45,11 @@ type Config struct {
 	EnablePProf       bool
 	RateLimit         *RateLimitConfig
 	EnableRetry       bool
-	RequireAuth       bool
+	AuthTokens        []string
 	AuthUsers         []UserConfig
 	PublicPaths       []string
 	AdminPaths        []string
 	PromReg           *prometheus.Registry
-	Group             string
 	VersionInfo       *version.Info
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
@@ -57,7 +57,7 @@ type Config struct {
 	IdleTimeout       time.Duration
 	MaxHeaderBytes    int
 	MaxBodyBytes      int64
-	Ready             func(context.Context) error
+	ErrorStatusMapper response.HTTPStatusMapper
 }
 
 // RateLimitConfig enables per-client rate limiting.
@@ -173,13 +173,38 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	shutdownErr := execution.shutdown(ctx)
 	serveResult := execution.wait(ctx)
+	if shutdownErr != nil && ctx.Err() != nil {
+		return errors.Join(shutdownErr, serveResult)
+	}
 
+	s.finishExecution(execution)
+	return errors.Join(shutdownErr, serveResult)
+}
+
+// Close forcefully closes active HTTP connections after graceful draining fails.
+func (s *Server) Close() error {
 	s.mu.Lock()
-	s.activeExecution = nil
-	s.state = serverStateStopped
+	execution := s.activeExecution
+	if execution == nil {
+		s.mu.Unlock()
+		return nil
+	}
+	s.state = serverStateStopping
 	s.mu.Unlock()
 
-	return errors.Join(shutdownErr, serveResult)
+	closeErr := execution.httpServer.Close()
+	<-execution.done
+	s.finishExecution(execution)
+	return errors.Join(closeErr, execution.result)
+}
+
+func (s *Server) finishExecution(execution *serveExecution) {
+	s.mu.Lock()
+	if s.activeExecution == execution {
+		s.activeExecution = nil
+		s.state = serverStateStopped
+	}
+	s.mu.Unlock()
 }
 
 // Done is closed when the serving goroutine exits.
@@ -219,15 +244,23 @@ func NewServer(cfg *Config) *Server {
 		promRegistry: effectiveConfig.PromReg,
 		config:       effectiveConfig,
 	}
+	// Generated strict handlers pass gin.Context as context.Context. Fallback
+	// preserves authentication and cancellation stored on the HTTP request.
+	s.engine.ContextWithFallback = true
 
 	s.engine.Use(buildMiddlewareChain(&effectiveConfig)...)
+	s.engine.HandleMethodNotAllowed = true
+	s.engine.NoRoute(func(ctx *httpGin.Context) {
+		writeGinError(ctx, response.ErrRouteNotFound, effectiveConfig.ErrorStatusMapper)
+	})
+	s.engine.NoMethod(func(ctx *httpGin.Context) {
+		writeGinError(ctx, response.ErrMethodNotAllowed, effectiveConfig.ErrorStatusMapper)
+	})
 	if effectiveConfig.EnablePProf {
 		pprof.Register(s.engine)
 	}
-	s.rootGroup = NewRoot(s.engine, effectiveConfig.Group)
+	s.rootGroup = NewRoot(s.engine, "")
 	s.MustRegisterRoutes("", []Route{
-		{Method: http.MethodGet, Path: "/healthz", Handler: s.healthzHandler()},
-		{Method: http.MethodGet, Path: "/readyz", Handler: s.readyzHandler()},
 		{Method: http.MethodGet, Path: "/metrics", Handler: s.metricsHandler()},
 	})
 	if effectiveConfig.VersionInfo != nil {
@@ -260,6 +293,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.MaxBodyBytes <= 0 {
 		c.MaxBodyBytes = defaultMaxBodyBytes
+	}
+	if c.ErrorStatusMapper == nil {
+		c.ErrorStatusMapper = response.LegacyHTTPStatusForErrorCode
 	}
 }
 

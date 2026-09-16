@@ -1,5 +1,7 @@
 ROOT_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 
+.DEFAULT_GOAL := build
+
 BPF_DIR := $(ROOT_DIR)/bpf
 BPF_COMPILE := $(ROOT_DIR)/build/clang.sh
 BPF_INCLUDE := "-I$(BPF_DIR)/include"
@@ -46,17 +48,24 @@ GO_SRCS := $(shell find . -name "*.go" \
 	! -name "*_test.go" \
 	$(FIND_EXCLUDE_PATHS)) \
 	go.mod go.sum
+GO_FORMAT_FILES := $(shell find . -name '*.go' \
+	! -name '*.capnp.go' \
+	! -name '*.gen.go' \
+	! -name 'mock_*_test.go' \
+	$(FIND_EXCLUDE_PATHS))
 
 BUILD_MODE ?= static
 
 IMAGE_TAG := latest
 
-ifeq ($(BUILD_MODE),nostatic)
+ifeq ($(BUILD_MODE),static)
+GO_BUILD_IMPL := $(GO_BUILD_STATIC)
+IMAGE_REPO := huatuo/huatuo-bamai-static
+else ifeq ($(BUILD_MODE),nostatic)
 GO_BUILD_IMPL := $(GO_BUILD_NOSTATIC)
 IMAGE_REPO := huatuo/huatuo-bamai
 else
-GO_BUILD_IMPL := $(GO_BUILD_STATIC)
-IMAGE_REPO := huatuo/huatuo-bamai-static
+$(error unsupported BUILD_MODE=$(BUILD_MODE); use static or nostatic)
 endif
 
 IMAGE := $(IMAGE_REPO):$(IMAGE_TAG)
@@ -66,15 +75,78 @@ COMPOSE_DEV := docker compose \
 	-f $(ROOT_DIR)/build/docker/docker-compose.yml \
 	-f $(ROOT_DIR)/build/docker/docker-compose.dev.yml
 
-BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
+BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp-$(BPF_DEBUG)
 
-all: build sync
+OPENAPI_COMMON_SPEC := apis/v1/components.yaml
+OPENAPI_SERVER_SPEC := apis/v1/server/openapi.yaml
+OPENAPI_NODE_SPEC := apis/v1/node/openapi.yaml
+OPENAPI_CODEGEN := go run -mod=mod github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
+OPENAPI_CODEGEN_JOBS := \
+	apis/v1/types.cfg.yaml:apis/v1/types.gen.go:$(OPENAPI_COMMON_SPEC) \
+	apis/v1/server/types.cfg.yaml:apis/v1/server/types.gen.go:$(OPENAPI_SERVER_SPEC) \
+	apis/v1/server/client.cfg.yaml:apis/v1/server/client.gen.go:$(OPENAPI_SERVER_SPEC) \
+	apis/v1/server/server.cfg.yaml:apis/v1/server/server.gen.go:$(OPENAPI_SERVER_SPEC) \
+	apis/v1/node/types.cfg.yaml:apis/v1/node/types.gen.go:$(OPENAPI_NODE_SPEC) \
+	apis/v1/node/client.cfg.yaml:apis/v1/node/client.gen.go:$(OPENAPI_NODE_SPEC) \
+	apis/v1/node/server.cfg.yaml:apis/v1/node/server.gen.go:$(OPENAPI_NODE_SPEC)
+OPENAPI_CODEGEN_FILES := $(foreach job,$(OPENAPI_CODEGEN_JOBS),$(word 2,$(subst :, ,$(job))))
+OPENAPI_DERIVED_FILES := \
+	apis/v1/error_codes.gen.go \
+	apis/v1/http_status.gen.go \
+	apis/v1/server/error_codes.gen.go \
+	apis/v1/server/http_status.gen.go \
+	apis/v1/server/openapi.gen.json \
+	apis/v1/node/error_codes.gen.go \
+	apis/v1/node/http_status.gen.go \
+	apis/v1/node/openapi.gen.json
+OPENAPI_GENERATED_FILES := $(OPENAPI_CODEGEN_FILES) $(OPENAPI_DERIVED_FILES)
 
-build-nostatic:
-	@$(MAKE) BUILD_MODE=nostatic all
+define generate-openapi
+	output_root="$(1)"; \
+	for job in $(OPENAPI_CODEGEN_JOBS); do \
+		config=$${job%%:*}; \
+		remainder=$${job#*:}; \
+		output=$${remainder%%:*}; \
+		spec=$${remainder#*:}; \
+		mkdir -p "$$output_root/$$(dirname "$$output")"; \
+		$(OPENAPI_CODEGEN) -config "$$config" \
+			-o "$$output_root/$$output" "$$spec"; \
+	done; \
+	go run ./build/openapi/errorcodes -spec-root . -output-root "$$output_root"; \
+	go run ./build/openapi/bundle -spec-root . -output-root "$$output_root"
+endef
 
-bpf-build: $(BPF_BUILD_STAMP)
+define generate-non-openapi
+	go run ./build/bpfabi-tool; \
+	go generate -run "mockery.*" -x ./...; \
+	go generate -run "capnp.*" ./...
+endef
+
+define check-openapi
+	set -eu; \
+	api_tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$api_tmp"' EXIT; \
+	$(call generate-openapi,$$api_tmp); \
+	for api_file in $(OPENAPI_GENERATED_FILES); do \
+		if ! diff -u "$$api_file" "$$api_tmp/$$api_file"; then \
+			echo "generated file is stale: $$api_file; run 'make gen-build'" >&2; \
+			exit 1; \
+		fi; \
+	done
+endef
+
+define format-sources
+	goimports -w -local github.com/ccfos/huatuo $(GO_FORMAT_FILES); \
+	gofumpt -l -w $(GO_FORMAT_FILES); \
+	gofmt -w -r 'interface{} -> any' $(GO_FORMAT_FILES); \
+	find . -name "*.sh" $(FIND_EXCLUDE_PATHS) \
+		-exec shfmt -i 0 -bn -sr -w {} \;
+endef
+
+
 $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
+	@mkdir -p $(APP_CMD_OUTPUT)
+	@rm -f $(APP_CMD_OUTPUT)/.bpf-build-stamp*
 	@find . -name "*.go" \
 		$(FIND_EXCLUDE_PATHS) \
 		-exec grep -l "^[[:space:]]*//go:generate.*BPF_COMPILE" {} \; | \
@@ -85,14 +157,13 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			export BPF_INCLUDE=$(BPF_INCLUDE); \
 			export BPF_EXTRA_CFLAGS="$(BPF_EXTRA_CFLAGS)"; \
 			go generate {}'
-	@mkdir -p $(APP_CMD_OUTPUT) && touch $@
+	@touch $@
 
-sync: bpf-build
+build: $(APP_CMD_BIN_TARGETS)
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
 	@cp *.conf $(APP_CMD_OUTPUT)/conf/
 
-build: $(APP_CMD_BIN_TARGETS)
 $(APP_CMD_BIN_TARGETS): gen-build $(GO_SRCS)
 $(APP_CMD_OUTPUT)/bin/%:
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
@@ -112,39 +183,24 @@ compose-dev-down:
 	@$(COMPOSE_DEV) down --remove-orphans --volumes
 	@docker image rm huatuo/huatuo-bamai:dev || true
 
-check: import-fmt golangci-lint
+check: vendor $(BPF_BUILD_STAMP)
+	@$(check-openapi)
+	@set -eu; $(generate-non-openapi)
+	@set -eu; $(format-sources)
+	@golangci-lint run -v ./... --timeout=5m --config .golangci.yaml
 	@git diff --exit-code
 
-import-fmt:
-	$(eval GO_FILES := $(shell find . -name '*.go' \
-		! -name '*.capnp.go' \
-		! -name 'mock_*_test.go' \
-		$(FIND_EXCLUDE_PATHS)))
-	@goimports -w -local huatuo-bamai $(GO_FILES)
-	@# golang and shell fmt
-	@gofumpt -l -w $(GO_FILES);
-	@gofmt -w -r 'interface{} -> any' $(GO_FILES)
-	@find . -name "*.sh" \
-		$(FIND_EXCLUDE_PATHS) \
-		-exec shfmt -i 0 -bn -sr -w {} \;
-
-golangci-lint: gen-build
-	@# gen-build ensures mock/capnp files exist for typecheck to resolve imports.
-	@golangci-lint run -v ./... --timeout=5m --config .golangci.yaml
-
 vendor:
-	@go mod tidy; go mod verify; go mod vendor
+	@set -eu; go mod tidy; go mod verify; go mod vendor
 
 clean:
-	@rm -rf _output
+	@rm -rf $(OPENAPI_GENERATED_FILES) $(APP_CMD_OUTPUT)
 	@find . \( -name "*.o" -o -name "mock_*.go" -o -name "*.capnp.go" \) \
-		$(FIND_EXCLUDE_PATHS) \
-		-delete
+		$(FIND_EXCLUDE_PATHS) -delete
 
-gen-build: bpf-build
-	@go run ./build/bpfabi-tool
-	@go generate -run "mockery.*" -x ./...
-	@go generate -run "capnp.*" ./...
+gen-build: $(BPF_BUILD_STAMP)
+	@set -eu; $(call generate-openapi,.)
+	@set -eu; $(generate-non-openapi)
 
 test: unit integration e2e
 
@@ -152,10 +208,10 @@ unit: gen-build
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
-integration: all
+integration: build
 	@bash integration/run.sh
 
-e2e: all
+e2e: build
 	@bash e2e/run.sh
 
-.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: build gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

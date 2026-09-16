@@ -24,13 +24,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/kmsgutil"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/internal/utils/kmsgutil"
+	"github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/cloudflare/backoff"
 )
@@ -94,7 +94,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "hungtask_perf_events", 8192)
+	reader, err := b.AttachAndEventPipe(childCtx, "hungtask_perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return err
 	}
@@ -136,8 +136,8 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: "hungtask",
-				TracerTime: time.Now(),
+				TracerName:        "hungtask",
+				ObservedTimestamp: time.Now().UTC(),
 				TracerData: &HungTaskTracerData{
 					TID:                   data.TID,
 					Comm:                  bytesutil.ToStr(data.Comm[:]),

@@ -20,7 +20,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"huatuo-bamai/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf"
 )
 
 // expectedSize mirrors struct bpf_dbg_event:

@@ -1,0 +1,106 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package client
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+)
+
+type nodeSuccessResponseMode uint8
+
+const (
+	nodeSuccessResponseOK nodeSuccessResponseMode = iota
+	nodeSuccessResponseOKOrAccepted
+)
+
+func parseNodeOperationResponse(
+	response *http.Response,
+	requestID string,
+	successMode nodeSuccessResponseMode,
+) (*nodeapi.Operation, error) {
+	defer response.Body.Close()
+
+	limit := int64(maxNodeErrorBodyBytes)
+	if response.StatusCode == http.StatusOK ||
+		successMode == nodeSuccessResponseOKOrAccepted && response.StatusCode == http.StatusAccepted {
+		limit = maxNodeSuccessBodyBytes
+	}
+	body, err := readNodeResponseBody(response, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	switch response.StatusCode {
+	case http.StatusOK:
+		return parseNodeOperation(response.StatusCode, body, requestID)
+	case http.StatusAccepted:
+		if successMode == nodeSuccessResponseOKOrAccepted {
+			return parseNodeOperation(response.StatusCode, body, requestID)
+		}
+		return nil, newNodeProtocolError(response.StatusCode, "unexpected HTTP 202 success response")
+	default:
+		return nil, parseNodeError(response.StatusCode, body)
+	}
+}
+
+func parseNodeOperation(statusCode int, body []byte, requestID string) (*nodeapi.Operation, error) {
+	var envelope nodeapi.OperationResponse
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, wrapNodeProtocolError(statusCode, "decode operation response", err)
+	}
+	operation := envelope.Data
+	if err := validateNodeOperation(statusCode, &operation, requestID); err != nil {
+		return nil, err
+	}
+	return &operation, nil
+}
+
+func validateNodeOperation(statusCode int, operation *nodeapi.Operation, requestID string) error {
+	if operation.RequestID != requestID {
+		return newNodeProtocolError(
+			statusCode,
+			fmt.Sprintf(
+				"response request ID %q does not match %q",
+				operation.RequestID,
+				requestID,
+			),
+		)
+	}
+	if !operation.Status.Valid() {
+		return newNodeProtocolError(
+			statusCode,
+			fmt.Sprintf("unsupported operation status %q", operation.Status),
+		)
+	}
+	if operation.Status == nodeapi.OperationStatusTerminal {
+		if operation.Terminal == nil || !operation.Terminal.Outcome.Valid() {
+			return newNodeProtocolError(statusCode, "terminal operation has an invalid outcome")
+		}
+		if operation.Terminal.Outcome == nodeapi.OperationOutcomeFailed &&
+			(operation.Terminal.Reason == nil || *operation.Terminal.Reason == "") {
+			return newNodeProtocolError(statusCode, "failed operation has no reason")
+		}
+	} else if operation.Terminal != nil {
+		return newNodeProtocolError(
+			statusCode,
+			fmt.Sprintf("operation status %q contains terminal details", operation.Status),
+		)
+	}
+	return nil
+}

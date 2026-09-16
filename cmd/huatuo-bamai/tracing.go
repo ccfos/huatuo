@@ -16,14 +16,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/cmd/huatuo-bamai/handlers"
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/handlers"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/document"
+	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
+	"github.com/ccfos/huatuo/internal/profiling"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/types"
 )
+
+const defaultHTTPDrainTimeout = 5 * time.Second
 
 func setupBPF(_ *Daemon) (func(context.Context) error, error) {
 	if err := bpf.Init(&bpf.Option{}); err != nil {
@@ -36,15 +44,26 @@ func setupBPF(_ *Daemon) (func(context.Context) error, error) {
 	}, nil
 }
 
-func startToolstream(_ *Daemon) (func(context.Context) error, error) {
+func startToolstream(d *Daemon) (func(context.Context) error, error) {
 	srv, err := toolstream.NewServerDefault()
 	if err != nil {
 		return nil, fmt.Errorf("start: %w", err)
+	}
+	if d.profileStore != nil {
+		documentWriter, err := profiling.NewDocumentWriter(
+			d.profileStore,
+			document.New(d.opts.Region),
+		)
+		if err != nil {
+			return nil, err
+		}
+		toolstream.Register(srv, types.ProfilingToolName, documentWriter.Write)
 	}
 
 	if err := srv.Start(); err != nil {
 		return nil, fmt.Errorf("start: %w", err)
 	}
+	d.toolstreamServer = srv
 
 	return func(context.Context) error { return srv.Close() }, nil
 }
@@ -59,30 +78,53 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 		return nil, fmt.Errorf("start tracing manager: %w", err)
 	}
 
-	d.tracer = mgr
-	// Stop collectors first, then drain bulk-buffered writes before BPF teardown.
+	handlers.SetTracingManager(mgr)
 	return func(ctx context.Context) error {
 		if err := mgr.Close(ctx); err != nil {
 			return fmt.Errorf("stop: %w", err)
-		}
-		if err := tracing.CloseStores(ctx); err != nil {
-			return fmt.Errorf("close stores: %w", err)
 		}
 		return nil
 	}, nil
 }
 
 func startHandlers(d *Daemon) (func(context.Context) error, error) {
-	runningServer, err := handlers.Start(handlers.ServerOptions{
-		Addr:           config.Get().HTTPServer.ListenAddress,
-		TracingManager: d.tracer,
-		PromReg:        d.metrics,
-		VersionInfo:    &d.opts.VersionInfo,
+	httpConfig := config.Get().HTTPServer
+	cloudEventsService, err := nodecloudevents.New(
+		d.tracingStore,
+		httpConfig.MaxEventStreamClients,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("initialize cloud events: %w", err)
+	}
+	runningServer, err := handlers.Start(&handlers.ServerOptions{
+		Addr:              httpConfig.ListenAddress,
+		BearerToken:       httpConfig.Auth.BearerToken,
+		OperationManager:  d.operationManager,
+		ProfilingService:  d.profilingService,
+		TracingService:    d.tracingService,
+		CloudEvents:       cloudEventsService,
+		KeepAliveInterval: time.Duration(httpConfig.EventStreamKeepAliveIntervalSeconds) * time.Second,
+		PromReg:           d.metrics,
+		VersionInfo:       &d.opts.VersionInfo,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start handlers: %w", err)
 	}
 	d.apiServer = runningServer
 
-	return runningServer.Shutdown, nil
+	return func(ctx context.Context) error {
+		// Admission closes before the listener so in-flight Start requests cannot
+		// register work after shutdown begins.
+		d.operationManager.BeginShutdown()
+		drainCtx, cancel := context.WithTimeout(ctx, defaultHTTPDrainTimeout)
+		drainErr := runningServer.Shutdown(drainCtx)
+		cancel()
+		if drainErr == nil {
+			return nil
+		}
+		return errors.Join(
+			fmt.Errorf("drain HTTP server: %w", drainErr),
+			runningServer.Close(),
+		)
+	}, nil
 }

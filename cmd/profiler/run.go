@@ -21,17 +21,17 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/internal/log"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/registry"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/log"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/registry"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) (returnErr error) {
 	typ := profiling.Type(cliCtx.String("type"))
 	lang := profiling.Language(cliCtx.String("language"))
 
-	implementation, ok := profiling.ImplementationFor(lang)
+	implementation, ok := profiling.ImplementationFor(lang, typ)
 	if !ok {
 		return fmt.Errorf("no profiling implementation for language %q", lang)
 	}

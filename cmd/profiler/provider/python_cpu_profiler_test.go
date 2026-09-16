@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	pcontext "huatuo-bamai/internal/profiler/context"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 
 	"github.com/stretchr/testify/require"
 )

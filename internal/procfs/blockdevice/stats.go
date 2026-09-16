@@ -17,7 +17,7 @@ package blockdevice
 import (
 	"github.com/prometheus/procfs/blockdevice"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 type (

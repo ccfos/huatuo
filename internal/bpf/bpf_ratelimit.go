@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 const rateLimitEventBufferSize = 64

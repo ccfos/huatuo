@@ -20,8 +20,8 @@ import (
 	"io"
 	"os"
 
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // writer is the single sink for an iotracing run's snapshot.

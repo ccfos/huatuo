@@ -22,12 +22,12 @@ import (
 	"math"
 	"strconv"
 
-	"huatuo-bamai/internal/cgroups/paths"
-	"huatuo-bamai/internal/cgroups/pids"
-	"huatuo-bamai/internal/cgroups/stats"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/utils/cpuutil"
-	"huatuo-bamai/internal/utils/parseutil"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	"github.com/ccfos/huatuo/internal/cgroups/pids"
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
+	"github.com/ccfos/huatuo/internal/utils/parseutil"
 
 	extv2 "github.com/containerd/cgroups/v3/cgroup2"
 	systemdDbus "github.com/coreos/go-systemd/v22/dbus"

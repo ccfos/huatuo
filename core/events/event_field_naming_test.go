@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestEventJSONFieldNames(t *testing.T) {
@@ -80,8 +80,8 @@ func TestEventJSONFieldNames(t *testing.T) {
 		},
 		{
 			name:     "ras",
-			value:    RasTracingData{ObservedTimestamp: "2026-08-20T00:00:00Z"},
-			expected: []string{"observed_timestamp"},
+			value:    RasTracingData{Device: "cpu"},
+			expected: []string{"dev"},
 		},
 	}
 

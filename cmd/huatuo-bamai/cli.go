@@ -19,13 +19,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/utils/executil"
-	"huatuo-bamai/internal/version"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/bpf"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/version"
 
 	"github.com/urfave/cli/v2"
 )
@@ -190,12 +189,12 @@ func resolveOptionDir(ctx *cli.Context, name string) (string, error) {
 		return dir, nil
 	}
 
-	runningDir, err := executil.RunningDir()
+	executable, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve %s dir: %w", name, err)
 	}
 
-	return filepath.Join(runningDir, "../", dir), nil
+	return filepath.Join(filepath.Dir(executable), "../", dir), nil
 }
 
 // configureRuntime applies process-global side effects derived from Options:
@@ -203,7 +202,7 @@ func resolveOptionDir(ctx *cli.Context, name string) (string, error) {
 // Runs once from app.Before so subsequent code can read config.Get() freely.
 func configureRuntime(opts *Options) error {
 	bpf.DefaultObjDir = opts.BPFObjDir
-	tracing.TaskBinDir = opts.ToolBinDir
+	internalconfig.CoreBinDir = opts.ToolBinDir
 
 	if err := config.Load(filepath.Join(opts.ConfigDir, opts.ConfigFile)); err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -250,7 +249,7 @@ func configureRuntime(opts *Options) error {
 
 	log.Debugf("resolved dirs: %s=%q %s=%q %s=%q",
 		cliFlagBPFObjDir, bpf.DefaultObjDir,
-		cliFlagToolBinDir, tracing.TaskBinDir,
+		cliFlagToolBinDir, internalconfig.CoreBinDir,
 		cliFlagConfigDir, opts.ConfigDir)
 
 	return nil

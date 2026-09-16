@@ -66,6 +66,20 @@ kubelet_pod_count() {
         ' 2> /dev/null || echo 0
 }
 
+kubelet_container_ids() {
+	local ns=$1
+	local regex=$2
+	kubelet_pods_json \
+		| jq -r --arg ns "$ns" --arg re "$regex" '
+        .items[]
+        | select(.metadata.namespace == $ns)
+        | select(.metadata.name | test($re))
+        | select(.status.phase == "Running")
+        | .status.containerStatuses[]?.containerID // empty
+        | sub("^[^:]+://"; "")
+      ' 2> /dev/null
+}
+
 assert_kubelet_pod_count() {
 	local ns=$1 regex=$2 expect=$3 desc=${4:-"kubelet pod count"}
 
@@ -86,23 +100,51 @@ assert_kubelet_pod_count() {
 	fi
 }
 
-assert_huatuo_bamai_pod_count() {
-	local regex=$1 expect=$2 desc=${3:-"huatuo-bamai pod count"}
-	_assert() {
-		local actual
-		actual="$(huatuo_bamai_pod_count "$regex")"
-		assert_eq "$actual" "$expect" "$desc"
-	}
+huatuo_bamai_containers_present() {
+	local ns=$1 regex=$2 expect=$3
+	local -a container_ids=()
+	local container_id
 
-	if ! wait_until \
+	mapfile -t container_ids < <(kubelet_container_ids "$ns" "$regex")
+	[[ ${#container_ids[@]} -eq ${expect} ]] || return 1
+	for container_id in "${container_ids[@]}"; do
+		curl -sf "${CURL_TIMEOUT[@]}" \
+			"${HUATUO_BAMAI_ADDR}/v1/containers/${container_id}" \
+			| jq -e --arg id "${container_id}" '.data.id == $id' > /dev/null \
+			|| return 1
+	done
+}
+
+assert_huatuo_bamai_containers_present() {
+	local ns=$1 regex=$2 expect=$3 desc=${4:-"huatuo-bamai containers present"}
+
+	wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		_assert; then
-		# wait timeout, dump pods from huatuo-bamai
-		curl "${CURL_TIMEOUT[@]}" ${HUATUO_BAMAI_PODS_API}
+		huatuo_bamai_containers_present "$ns" "$regex" "$expect" \
+		|| fatal "${desc}: matching container metadata did not become available"
+}
 
-		fatal "❌ wait timeout, huatuo-bamai pod count not expected"
-	fi
+huatuo_bamai_containers_absent() {
+	local container_id status
+	for container_id in "$@"; do
+		status=$(curl -sS "${CURL_TIMEOUT[@]}" \
+			-o /dev/null -w '%{http_code}' \
+			"${HUATUO_BAMAI_ADDR}/v1/containers/${container_id}") \
+			|| return 1
+		[[ ${status} == "404" ]] || return 1
+	done
+}
+
+assert_huatuo_bamai_containers_absent() {
+	local desc=$1
+	shift
+
+	wait_until \
+		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
+		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
+		huatuo_bamai_containers_absent "$@" \
+		|| fatal "${desc}: stale container metadata remained available"
 }
 
 e2e_test_teardown() {

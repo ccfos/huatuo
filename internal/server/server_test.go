@@ -15,16 +15,16 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/version"
+	v1 "github.com/ccfos/huatuo/apis/v1"
+	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/version"
 
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -97,41 +97,119 @@ func TestNewServerDoesNotModifyConfig(t *testing.T) {
 	}
 }
 
-func TestNewServerRegistersHealthzRoute(t *testing.T) {
-	s := NewServer(nil)
+func TestNewServerUsesConfiguredErrorStatusMapper(t *testing.T) {
+	const customCode v1.ErrorCode = "custom_conflict"
+	mapper := func(code v1.ErrorCode) (int, bool) {
+		return http.StatusConflict, code == customCode
+	}
+	s := NewServer(&Config{ErrorStatusMapper: mapper})
+	s.MustRegisterRoutes("", []Route{{
+		Method: http.MethodGet,
+		Path:   "/custom-error",
+		Handler: func(*Context) error {
+			return response.NewAPIError(customCode, "custom conflict")
+		},
+	}})
 
-	request := httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody)
+	request := httptest.NewRequest(http.MethodGet, "/custom-error", http.NoBody)
 	recorder := httptest.NewRecorder()
-
 	s.engine.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusNoContent {
-		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
+	if recorder.Code != http.StatusConflict {
+		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusConflict)
 	}
-	if recorder.Body.Len() != 0 {
-		t.Errorf("response body = %q, want empty body", recorder.Body.String())
+	if !strings.Contains(
+		recorder.Body.String(),
+		`"error":{"code":"custom_conflict","message":"custom conflict"}`,
+	) {
+		t.Errorf("response body = %q, want custom error", recorder.Body.String())
 	}
 }
 
-func TestNewServerReadinessRoute(t *testing.T) {
+func TestNewServerDoesNotRegisterProbeRoutes(t *testing.T) {
+	s := NewServer(nil)
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		request := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		recorder := httptest.NewRecorder()
+		s.engine.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want %d", path, recorder.Code, http.StatusNotFound)
+		}
+	}
+}
+
+func TestNewServerWritesRoutingErrors(t *testing.T) {
+	s := NewServer(nil)
 	tests := []struct {
 		name       string
-		ready      func(context.Context) error
+		method     string
+		target     string
 		wantStatus int
+		wantCode   string
 	}{
-		{name: "ready", ready: func(context.Context) error { return nil }, wantStatus: http.StatusNoContent},
-		{name: "not ready", ready: func(context.Context) error { return errors.New("store unavailable") }, wantStatus: http.StatusServiceUnavailable},
+		{
+			name:       "route not found",
+			method:     http.MethodGet,
+			target:     "/missing",
+			wantStatus: http.StatusNotFound,
+			wantCode:   "route_not_found",
+		},
+		{
+			name:       "method not allowed",
+			method:     http.MethodPost,
+			target:     "/metrics",
+			wantStatus: http.StatusMethodNotAllowed,
+			wantCode:   "method_not_allowed",
+		},
 	}
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			s := NewServer(&Config{Ready: test.ready})
-			request := httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody)
+			request := httptest.NewRequest(test.method, test.target, http.NoBody)
 			recorder := httptest.NewRecorder()
 			s.engine.ServeHTTP(recorder, request)
+
 			if recorder.Code != test.wantStatus {
 				t.Errorf("response status = %d, want %d", recorder.Code, test.wantStatus)
 			}
+			if !strings.Contains(recorder.Body.String(), `"code":"`+test.wantCode+`"`) {
+				t.Errorf("response body = %q, want code %q", recorder.Body.String(), test.wantCode)
+			}
+			if test.wantStatus == http.StatusMethodNotAllowed {
+				if got := recorder.Header().Get("Allow"); got != http.MethodGet {
+					t.Errorf("Allow header = %q, want %q", got, http.MethodGet)
+				}
+			}
 		})
+	}
+}
+
+func TestNewServerRecoversPanicAsJSONError(t *testing.T) {
+	s := NewServer(nil)
+	s.MustRegisterRoutes("", []Route{{
+		Method: http.MethodGet,
+		Path:   "/panic",
+		Handler: func(*Context) error {
+			panic("private panic detail")
+		},
+	}})
+
+	request := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
+	recorder := httptest.NewRecorder()
+	s.engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(
+		recorder.Body.String(),
+		`"error":{"code":"internal_error","message":"internal error"}`,
+	) {
+		t.Errorf("response body = %q, want internal error", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "private panic detail") {
+		t.Errorf("response body = %q, exposed panic detail", recorder.Body.String())
 	}
 }
 
@@ -170,7 +248,6 @@ func TestNewServerRegistersVersionRoute(t *testing.T) {
 
 func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
 	srv := NewServer(&Config{
-		RequireAuth: true,
 		EnablePProf: true,
 		AdminPaths:  []string{"/v1/profiles/flamegraph/**"},
 		AuthUsers: []UserConfig{
@@ -320,26 +397,8 @@ func TestNewServerRateLimit(t *testing.T) {
 	}
 }
 
-func TestServerGroupReturnsConfiguredRootGroup(t *testing.T) {
-	s := NewServer(&Config{Group: "/v1"})
-
-	s.Group().GET("/status", func(ctx *Context) error {
-		ctx.Status(http.StatusNoContent)
-		return nil
-	})
-
-	request := httptest.NewRequest(http.MethodGet, "/v1/status", http.NoBody)
-	recorder := httptest.NewRecorder()
-
-	s.engine.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusNoContent {
-		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
-	}
-}
-
 func TestServerMustRegisterRoutes(t *testing.T) {
-	s := NewServer(&Config{Group: "/api"})
+	s := NewServer(nil)
 	s.MustRegisterRoutes("/tasks", []Route{
 		{
 			Method: MethodAny,
@@ -409,47 +468,47 @@ func TestServerMustRegisterRoutes(t *testing.T) {
 		{
 			name:         "any-route",
 			method:       http.MethodOptions,
-			target:       "/api/tasks/disabled",
+			target:       "/tasks/disabled",
 			wantStatus:   http.StatusServiceUnavailable,
 			wantBodyPart: `"method":"OPTIONS"`,
 		},
 		{
 			name:       "extension-method-route",
 			method:     "PROPFIND",
-			target:     "/api/tasks/extended",
+			target:     "/tasks/extended",
 			wantStatus: http.StatusNoContent,
 		},
 		{
 			name:         "get-route",
 			method:       http.MethodGet,
-			target:       "/api/tasks/status",
+			target:       "/tasks/status",
 			wantStatus:   http.StatusOK,
 			wantBodyPart: `"method":"GET"`,
 		},
 		{
 			name:         "post-route",
 			method:       http.MethodPost,
-			target:       "/api/tasks",
+			target:       "/tasks",
 			wantStatus:   http.StatusCreated,
 			wantBodyPart: `"method":"POST"`,
 		},
 		{
 			name:       "delete-route",
 			method:     http.MethodDelete,
-			target:     "/api/tasks/task-20250226",
+			target:     "/tasks/task-20250226",
 			wantStatus: http.StatusNoContent,
 		},
 		{
 			name:         "put-route",
 			method:       http.MethodPut,
-			target:       "/api/tasks/task-20250226",
+			target:       "/tasks/task-20250226",
 			wantStatus:   http.StatusAccepted,
 			wantBodyPart: `"method":"PUT"`,
 		},
 		{
 			name:         "patch-route",
 			method:       http.MethodPatch,
-			target:       "/api/tasks/task-20250226",
+			target:       "/tasks/task-20250226",
 			wantStatus:   http.StatusOK,
 			wantBodyPart: `"method":"PATCH"`,
 		},

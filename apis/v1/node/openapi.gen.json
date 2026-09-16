@@ -1,0 +1,1076 @@
+{
+  "components": {
+    "parameters": {
+      "ContainerID": {
+        "in": "path",
+        "name": "container_id",
+        "required": true,
+        "schema": {
+          "pattern": "^[0-9a-fA-F]{64}$",
+          "type": "string"
+        }
+      },
+      "RequestID": {
+        "in": "path",
+        "name": "request_id",
+        "required": true,
+        "schema": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Invalid request."
+      },
+      "Conflict": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Request ID conflicts with another Operation kind."
+      },
+      "ContainerNotFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Container not found."
+      },
+      "ExecutionEnvironmentUnsupported": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Node environment cannot execute the request."
+      },
+      "InternalError": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Internal request processing failed."
+      },
+      "NotFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Operation not found."
+      },
+      "NotImplemented": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Service executor is not implemented."
+      },
+      "RequestTooLarge": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Request body is too large."
+      },
+      "ServiceUnavailable": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Service is unavailable."
+      },
+      "TooManyRequests": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Node service capacity exceeded."
+      },
+      "Unauthenticated": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Authentication failed.",
+        "headers": {
+          "WWW-Authenticate": {
+            "required": true,
+            "schema": {
+              "example": "Bearer",
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Request content type is unsupported."
+      }
+    },
+    "schemas": {
+      "ContainerMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "cgroup_css": {
+            "additionalProperties": {
+              "pattern": "^0x[0-9a-f]{16}$",
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "id": {
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "cgroup_css"
+        ],
+        "type": "object"
+      },
+      "ContainerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ContainerMetadata"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "Operation": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OperationKind"
+          },
+          "request_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OperationStatus"
+          },
+          "terminal": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OperationTerminal"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "request_id",
+          "kind",
+          "status",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "OperationKind": {
+        "enum": [
+          "profiling",
+          "tracing"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "OperationKindProfiling",
+          "OperationKindTracing"
+        ]
+      },
+      "OperationOutcome": {
+        "enum": [
+          "completed",
+          "failed",
+          "stopped"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "OperationOutcomeCompleted",
+          "OperationOutcomeFailed",
+          "OperationOutcomeStopped"
+        ]
+      },
+      "OperationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Operation"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "OperationStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "stopping",
+          "terminal"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "OperationStatusPending",
+          "OperationStatusRunning",
+          "OperationStatusStopping",
+          "OperationStatusTerminal"
+        ]
+      },
+      "OperationTerminal": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/OperationOutcome"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "ProfilingLanguage": {
+        "enum": [
+          "c",
+          "c++",
+          "go",
+          "java",
+          "python"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ProfilingLanguageC",
+          "ProfilingLanguageCPP",
+          "ProfilingLanguageGo",
+          "ProfilingLanguageJava",
+          "ProfilingLanguagePython"
+        ]
+      },
+      "ProfilingMode": {
+        "enum": [
+          "oncpu",
+          "offcpu",
+          "object_alloc",
+          "object_usage",
+          "virtual_alloc",
+          "physical_alloc",
+          "physical_usage"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ProfilingModeOnCPU",
+          "ProfilingModeOffCPU",
+          "ProfilingModeObjectAlloc",
+          "ProfilingModeObjectUsage",
+          "ProfilingModeVirtualAlloc",
+          "ProfilingModePhysicalAlloc",
+          "ProfilingModePhysicalUsage"
+        ]
+      },
+      "ProfilingOperationSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "binary_match_path": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "language": {
+            "$ref": "#/components/schemas/ProfilingLanguage"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ProfilingMode"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ProfilingType"
+          }
+        },
+        "required": [
+          "type",
+          "language",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "ProfilingType": {
+        "enum": [
+          "cpu",
+          "memory"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ProfilingTypeCPU",
+          "ProfilingTypeMemory"
+        ]
+      },
+      "StartOperationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "container_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "duration_seconds": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OperationKind"
+          },
+          "request_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
+          },
+          "spec": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProfilingOperationSpec"
+              },
+              {
+                "$ref": "#/components/schemas/TracingOperationSpec"
+              }
+            ]
+          }
+        },
+        "required": [
+          "request_id",
+          "duration_seconds",
+          "scope",
+          "kind",
+          "spec"
+        ],
+        "type": "object"
+      },
+      "TracingOperationSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/TracingType"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "TracingType": {
+        "enum": [
+          "networking_drop",
+          "io_tracing",
+          "tcp_retransmit"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "TracingTypeNetworkingDrop",
+          "TracingTypeIO",
+          "TracingTypeTCPRetransmit"
+        ]
+      },
+      "UpdateConfigRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "additionalProperties": {
+              "x-go-type": "json.RawMessage",
+              "x-go-type-import": {
+                "name": "json",
+                "path": "encoding/json"
+              }
+            },
+            "minProperties": 1,
+            "type": "object"
+          }
+        },
+        "required": [
+          "config"
+        ],
+        "type": "object"
+      },
+      "WatchEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WatchEventData"
+          },
+          "datacontenttype": {
+            "type": "string",
+            "x-go-name": "DataContentType"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "specversion": {
+            "$ref": "#/components/schemas/WatchEventSpecVersion",
+            "x-go-name": "SpecVersion"
+          },
+          "time": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "specversion",
+          "id",
+          "source",
+          "type",
+          "datacontenttype",
+          "time",
+          "data"
+        ],
+        "type": "object"
+      },
+      "WatchEventData": {
+        "additionalProperties": false,
+        "properties": {
+          "container_host_namespace": {
+            "type": "string"
+          },
+          "container_hostname": {
+            "type": "string"
+          },
+          "container_id": {
+            "type": "string"
+          },
+          "container_qos": {
+            "type": "string"
+          },
+          "container_type": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "observed_timestamp": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "tracer_id": {
+            "type": "string"
+          },
+          "tracer_name": {
+            "type": "string"
+          },
+          "tracer_run_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hostname",
+          "region",
+          "observed_timestamp"
+        ],
+        "type": "object"
+      },
+      "WatchEventFilters": {
+        "additionalProperties": false,
+        "properties": {
+          "container_host_namespace": {
+            "type": "string"
+          },
+          "container_hostname": {
+            "type": "string"
+          },
+          "container_qos": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "tracer_name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "WatchEventSpecVersion": {
+        "enum": [
+          "1.0"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "WatchEventSpecVersion10"
+        ]
+      },
+      "WatchEventsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "filters": {
+            "$ref": "#/components/schemas/WatchEventFilters"
+          }
+        },
+        "type": "object"
+      },
+      "apis_v1_components_Error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/apis_v1_components_ErrorCode"
+          },
+          "message": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "apis_v1_components_ErrorCode": {
+        "description": "Stable machine-readable error code.",
+        "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "apis_v1_components_ErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/apis_v1_components_Error"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "apis_v1_components_ObservationScope": {
+        "description": "Boundary observed by an on-demand operation.",
+        "enum": [
+          "host",
+          "container"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ObservationScopeHost",
+          "ObservationScopeContainer"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "$ref": "#/components/securitySchemes/apis_v1_components_BearerAuth"
+      },
+      "apis_v1_components_BearerAuth": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Huatuo Node Agent API",
+    "version": "v1"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenAPI",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bundled OpenAPI document."
+          }
+        },
+        "security": [],
+        "summary": "Return the bundled Node Agent OpenAPI document."
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "getReadiness",
+        "responses": {
+          "204": {
+            "description": "The Node Agent HTTP server is ready to accept requests."
+          }
+        },
+        "security": [],
+        "tags": [
+          "readiness"
+        ]
+      }
+    },
+    "/v1/config": {
+      "put": {
+        "operationId": "updateConfig",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Configuration updated and persisted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Atomically update and persist Node Agent configuration.",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/v1/containers/{container_id}": {
+      "get": {
+        "operationId": "getContainer",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContainerID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerResponse"
+                }
+              }
+            },
+            "description": "Container metadata."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/ContainerNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [],
+        "tags": [
+          "containers"
+        ]
+      }
+    },
+    "/v1/events/watch": {
+      "post": {
+        "operationId": "watchEvents",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchEventsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchEvent"
+                }
+              }
+            },
+            "description": "Server-Sent Events stream. Each data field contains one serialized\nCloudEvents 1.0 event. Comment fields are connection heartbeats.\n",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "example": "no-cache",
+                  "type": "string"
+                }
+              },
+              "Connection": {
+                "schema": {
+                  "example": "keep-alive",
+                  "type": "string"
+                }
+              },
+              "X-Accel-Buffering": {
+                "schema": {
+                  "example": "no",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Stream matching Node events as Server-Sent Events.",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/v1/operations": {
+      "post": {
+        "operationId": "startOperation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Existing idempotent Operation."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "New Operation accepted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/ExecutionEnvironmentUnsupported"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/v1/operations/{request_id}": {
+      "get": {
+        "operationId": "getOperation",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Operation."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "operations"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ]
+    },
+    "/v1/operations/{request_id}/stop": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ],
+      "post": {
+        "operationId": "stopOperation",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Operation already stopping or terminal."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Operation stop accepted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "operations"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "readiness"
+    },
+    {
+      "name": "containers"
+    },
+    {
+      "name": "config"
+    },
+    {
+      "name": "operations"
+    },
+    {
+      "name": "events"
+    }
+  ],
+  "x-error-codes": {
+    "container_not_found": {
+      "description": "The requested container does not exist.",
+      "httpStatus": 404
+    },
+    "event_stream_limit_exceeded": {
+      "description": "The node has no capacity for another event stream.",
+      "httpStatus": 429
+    },
+    "execution_environment_unsupported": {
+      "description": "The node environment cannot execute the valid request.",
+      "httpStatus": 422
+    },
+    "execution_failed": {
+      "description": "The execution failed.",
+      "httpStatus": 500
+    },
+    "execution_start_failed": {
+      "description": "The execution could not be started.",
+      "httpStatus": 500
+    },
+    "execution_stop_failed": {
+      "description": "The Operation executor could not be stopped.",
+      "httpStatus": 500
+    },
+    "finalization_failed": {
+      "description": "The Operation result finalization failed.",
+      "httpStatus": 500
+    },
+    "finalization_timeout": {
+      "description": "The Operation result finalization exceeded its deadline.",
+      "httpStatus": 500
+    },
+    "launch_timeout": {
+      "description": "The Operation executor did not launch before its deadline.",
+      "httpStatus": 500
+    },
+    "operation_limit_exceeded": {
+      "description": "The node has no capacity for another Operation.",
+      "httpStatus": 429
+    },
+    "operation_not_found": {
+      "description": "The requested Operation does not exist.",
+      "httpStatus": 404
+    },
+    "request_id_conflict": {
+      "description": "The request ID belongs to another Operation kind.",
+      "httpStatus": 409
+    },
+    "service_not_implemented": {
+      "description": "The service protocol exists but has no executor.",
+      "httpStatus": 501
+    }
+  }
+}

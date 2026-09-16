@@ -18,18 +18,23 @@ import (
 	"errors"
 	"testing"
 
-	"huatuo-bamai/internal/bpf"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/bpf"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/pkg/profiling"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
 
+func TestNativeCPUReadDataLoopRequiresStart(t *testing.T) {
+	err := (&cpuNativeProfiler{}).ReadDataLoop(t.Context(), func(any) {})
+	require.EqualError(t, err, "native CPU event readers are not initialized; call Start before ReadDataLoop")
+}
+
 func TestNativeCPUStartRejectsUnsupportedMode(t *testing.T) {
 	pctx := &pcontext.ProfilerContext{
-		PIDs:    []int{123},
-		CPUMode: profiling.CPUMode("invalid"),
+		PIDs: []int{123},
+		Mode: profiling.Mode("invalid"),
 	}
 
 	err := (&cpuNativeProfiler{}).Start(pctx)

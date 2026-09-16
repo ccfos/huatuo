@@ -219,9 +219,6 @@ sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp and port 443" --duration
 # Forward events to a running huatuo-bamai instance
 sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
 
-# Use jq to filter and show only RST packets
-sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | jq 'select(.layers.tcp.flags == "RST")'
-
 # Capture 10 seconds of JSON output, excluding events whose stack contains ip_finish_output
 sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'select(.stack | test("ip_finish_output") | not)'
 
@@ -258,7 +255,7 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 | `netdev_linkstatus`      | []string | Network device link status flags                              |
 | `packet_skb_addr`        | string   | SKB address (hexadecimal, omitempty)                         |
 | `packet_eth_proto`       | string   | Raw EtherType (hexadecimal, e.g. `0x0800`)                   |
-| `packet_len_bytes`       | uint32   | Packet length in bytes                                        |
+| `packet_len_bytes`       | uint32   | Kernel `skb->len` snapshot; it is an SKB logical length and may differ from the on-wire frame length |
 | `layers`                 | object   | Layered protocol parse result; missing layers are omitted      |
 | `stack`                  | string   | Kernel call stack (newline-separated)                         |
 
@@ -272,7 +269,7 @@ For hardware events, `stack` is the kernel call stack at which the driver report
 | `layers.ether` | L2 fields when a real Ethernet header is present: `saddr`, `daddr`, `type`, `len`; `len` is non-zero only for IEEE 802.3 framing |
 | `layers.ipv4`  | IPv4 fields: `version`, `ihl`, `tos`, `len`, `id`, `flags`, `frag_offset`, `ttl`, `protocol`, `checksum`, `saddr`, `daddr` |
 | `layers.ipv6`  | IPv6 fields: `version`, `traffic_class`, `flow_label`, `len`, `next_header`, `hop_limit`, `saddr`, `daddr`  |
-| `layers.tcp`   | TCP fields: `sport`, `dport`, `seq`, `ack_seq`, `data_offset`, `flags`, `window`, `checksum`, `urgent`, `sk_state` |
+| `layers.tcp`   | TCP fields: `sport`, `dport`, `seq`, `ack_seq`, `data_offset`, `window`, `checksum`, `urgent`, `sk_state` |
 | `layers.udp`   | UDP fields: `sport`, `dport`, `len`, `checksum`                                                         |
 | `layers.icmp`  | ICMP/ICMPv6 fields: `type`, `code`, `checksum`, `id`, `seq`                                             |
 | `layers.arp`   | ARP fields: `addr_type`, `protocol`, `hw_address_size`, `prot_address_size`, `operation`, `sender_mac`, `sender_ip`, `target_mac`, `target_ip` |
@@ -299,14 +296,20 @@ dropwatch \
     IssuesList = []
 
 [EventTracing.Dropwatch]
-    # tcpdump filter expression, forwarded to dropwatch --filter.
+    # Tcpdump filter for standalone dropwatch.
     # Default: "tcp"
     Filter = "tcp"
 
     # Forwarded to dropwatch --max-events-per-second.
     # Default: 100
     MaxEventsPerSecond = 100
+
+[EventTracing.TCPRetransmit]
+    # Run tcpshark with a private embedded dropwatch source.
+    EnableDropwatchCorrelation = false
 ```
+
+Standalone dropwatch always emits raw `DropWatchTracing` events. Local TCP retransmission correlation loads a separate `dropwatch.o`, uses `EventTracing.TCPRetransmit.Filter` for both inputs, and emits only finalized `TCPRetransmitTracing` results. The two modes may run together; embedded drops are never stored as duplicate raw events.
 
 #### 4.2 Noise Filtering
 

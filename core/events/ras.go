@@ -25,13 +25,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/timeutil"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/cloudflare/backoff"
 )
@@ -99,8 +99,8 @@ type RasTracingData struct {
 	Device            string `json:"dev"`
 	Event             string `json:"event"`
 	ErrType           string `json:"type"`
-	ObservedTimestamp string `json:"observed_timestamp"`
 	Info              string `json:"info"`
+	observedTimestamp time.Time
 }
 
 const defaultThrEventBackoff = 30 * time.Minute
@@ -365,8 +365,8 @@ func newRasTracingData[T any](ev *rasEvent, device, event, errType string, info 
 		Device:            device,
 		Event:             event,
 		ErrType:           errType,
-		ObservedTimestamp: observedAt.UTC().Format(time.RFC3339Nano),
 		Info:              string(b),
+		observedTimestamp: observedAt.UTC(),
 	}, nil
 }
 
@@ -651,7 +651,7 @@ func (ras *rasTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "ras_event_map", 8192)
+	reader, err := b.AttachAndEventPipe(childCtx, "ras_event_map", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return fmt.Errorf("attach ras event pipe: %w", err)
 	}
@@ -698,9 +698,9 @@ func (ras *rasTracing) rasEventLoop(ctx context.Context, reader bpf.PerfEventRea
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: "ras",
-				TracerTime: time.Now(),
-				TracerData: tracerData,
+				TracerName:        "ras",
+				ObservedTimestamp: tracerData.observedTimestamp,
+				TracerData:        tracerData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

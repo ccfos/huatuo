@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	profctx "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/output"
+	profctx "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 func TestNewPipeline_DoesNotMutateContext(t *testing.T) {

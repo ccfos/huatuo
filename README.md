@@ -78,12 +78,41 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
   ![](/docs/img/quickstart-components.png)  
   
-  ![](/docs/img/quickstart-autotrcing-event.png)
+  ![](/docs/img/quickstart-autotracing-event.png)
 
 - **NOTE**
 
   Do not deploy images with the latest tag to production environments, as this is a development and testing image. Use a formal release image or binary.
 
+## Go Client
+
+The public Go client is in `client/`. Node client files use the `node_` prefix.
+
+```go
+package main
+
+import (
+	"context"
+	"encoding/json"
+
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/client"
+)
+
+func updateNodeConfig(ctx context.Context, address client.NodeAddress) error {
+	nodeClient, err := client.NewNode(&client.NodeConfig{
+		BearerToken: "node-token",
+	})
+	if err != nil {
+		return err
+	}
+	return nodeClient.UpdateConfig(ctx, address, &nodeapi.UpdateConfigRequest{
+		Config: map[string]json.RawMessage{
+			"Runtime.CPULimitCores": json.RawMessage("1.5"),
+		},
+	})
+}
+```
 
 ## Kernel Versions
 
@@ -104,10 +133,10 @@ The project supports kernel version 4.18 and later. The following kernel and OS 
 
 For more information, visit [https://docs.huatuo.tech](https://docs.huatuo.tech/)
 
-## Community Co-Building
+## Co-Building
 
 - ❇️ We welcome all users, developers, companies, and organizations to use Huatuo, report bugs, submit feature requests, share best practices, and help us build a professional and vibrant open-source community.
-- ❤️ HUATUO Contributors
+- ❤️ Contributors
 <a href="https://github.com/ccfos/huatuo/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
 </a>

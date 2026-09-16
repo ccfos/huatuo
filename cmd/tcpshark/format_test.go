@@ -25,9 +25,10 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type errWriter struct{ err error }
@@ -66,7 +67,7 @@ func TestFormatEventSkbAddr(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := formatEvent(&abi.TCPRetransmitEvent{
+			event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
 				SKBAddr:   tt.skbAddr,
 				EventType: uint8(abi.TCPRetransmitEventSKB),
 				Family:    unix.AF_INET,
@@ -119,7 +120,7 @@ func TestFormatEventMemoryCgroupCSSAddr(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := formatEvent(&abi.TCPRetransmitEvent{
+			event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
 				MemcgCSSAddr: tt.addr,
 				EventType:    uint8(abi.TCPRetransmitEventSKB),
 				Family:       unix.AF_INET,
@@ -151,7 +152,7 @@ func TestFormatEventMemoryCgroupCSSAddr(t *testing.T) {
 func TestFormatEventNetNamespaceIDs(t *testing.T) {
 	t.Parallel()
 
-	event := formatEvent(&abi.TCPRetransmitEvent{
+	event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
 		NetNamespaceCookie: 0x2000,
 		NetNamespaceInum:   4026531992,
 		EventType:          uint8(abi.TCPRetransmitEventSKB),
@@ -183,7 +184,7 @@ func TestFormatEventNetNamespaceIDs(t *testing.T) {
 func TestFormatEventSource(t *testing.T) {
 	t.Parallel()
 
-	event := formatEvent(&abi.TCPRetransmitEvent{
+	event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
 		EventType: uint8(abi.TCPRetransmitEventSKB),
 		Family:    unix.AF_INET,
 	}, toolstream.SourceTypeTool)
@@ -223,7 +224,7 @@ func TestFormatEventTCPFlags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := formatEvent(tt.ev, toolstream.SourceTypeTool)
+			event := retransmitEventFromRecord(tt.ev, toolstream.SourceTypeTool)
 			if event.TCPFlags != tt.want {
 				t.Fatalf("TCPFlags = %q, want %q", event.TCPFlags, tt.want)
 			}
@@ -246,7 +247,7 @@ func TestFormatEventTCPFlags(t *testing.T) {
 func TestFormatEventTLP(t *testing.T) {
 	t.Parallel()
 
-	event := formatEvent(&abi.TCPRetransmitEvent{
+	event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
 		EventType: uint8(abi.TCPRetransmitEventTlp),
 		Family:    unix.AF_INET,
 		TCPSeq:    123,
@@ -308,7 +309,7 @@ func TestFormatEventAddresses(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := formatEvent(tt.ev, toolstream.SourceTypeTool)
+			event := retransmitEventFromRecord(tt.ev, toolstream.SourceTypeTool)
 			if event.TCPSaddr != tt.wantSaddr {
 				t.Fatalf("TCPSaddr = %q, want %q", event.TCPSaddr, tt.wantSaddr)
 			}
@@ -316,6 +317,23 @@ func TestFormatEventAddresses(t *testing.T) {
 				t.Fatalf("TCPDaddr = %q, want %q", event.TCPDaddr, tt.wantDaddr)
 			}
 		})
+	}
+}
+
+func TestFormatEventKtime(t *testing.T) {
+	t.Parallel()
+
+	event := retransmitEventFromRecord(&abi.TCPRetransmitEvent{
+		KtimeNS:   42,
+		EventType: uint8(abi.TCPRetransmitEventSKB),
+		Family:    unix.AF_INET,
+		TCPFlags:  0x18,
+	}, toolstream.SourceTypeTool)
+	if event.KtimeNS != 42 {
+		t.Fatalf("KtimeNS = %d, want 42", event.KtimeNS)
+	}
+	if event.TCPFlagsRaw != 0x18 {
+		t.Fatalf("TCPFlagsRaw = 0x%02x, want 0x18", event.TCPFlagsRaw)
 	}
 }
 
@@ -363,6 +381,64 @@ func TestTextWriterFormatsTCPFlags(t *testing.T) {
 	}
 }
 
+func TestTextWriterFormatsCorrelation(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	event := &types.TCPRetransmitTracing{
+		ObservedTimestamp: "now",
+		KtimeNS:           8,
+		DropLocation:      "unknown",
+		CorrelationReasons: []types.CorrelationReason{
+			types.CorrelationReasonStartupHistoryIncomplete,
+			types.CorrelationReasonPerfEventsLost,
+		},
+		DropwatchPerfStatus: &types.DropwatchPerfStatus{
+			PerfLost:    2,
+			LostSamples: 4,
+			RateLimited: 3,
+		},
+	}
+	if err := (&textWriter{w: &output}).Write(event); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	for _, want := range []string{
+		"ktime_ns=8",
+		"drop_location=unknown",
+		"reason=startup_history_incomplete,perf_events_lost",
+		"dropwatch_perf_lost=2",
+		"dropwatch_lost_samples=4",
+		"dropwatch_rate_limited=3",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("output = %q, want %q", output.String(), want)
+		}
+	}
+}
+
+func TestTextWriterFormatsMatchedDropStack(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	event := &types.TCPRetransmitTracing{
+		ObservedTimestamp: "now",
+		DropLocation:      "host_software",
+		DropStack:         "first\nsecond",
+	}
+	if err := (&textWriter{w: &output}).Write(event); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	for _, want := range []string{
+		"drop_location=host_software",
+		"\t#0   first\n",
+		"\t#1   second\n",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("output = %q, want %q", output.String(), want)
+		}
+	}
+}
+
 func TestTextWriterFormatsAllEventFields(t *testing.T) {
 	t.Parallel()
 
@@ -375,6 +451,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 			name: "full event",
 			ev: &types.TCPRetransmitTracing{
 				ObservedTimestamp:   "2026-07-23T02:14:40.304775546Z",
+				KtimeNS:             123456789,
 				TCPReason:           "RTO",
 				Source:              toolstream.SourceTypeTool,
 				Comm:                "worker thread",
@@ -404,7 +481,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 			},
 			want: "2026-07-23T02:14:40.304775546Z " +
 				"[data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 " +
-				"state=ESTABLISHED event_type=tcp_retransmit_skb " +
+				"state=ESTABLISHED event_type=tcp_retransmit_skb ktime_ns=123456789 " +
 				"skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 " +
 				"ack=948393597 flags=ACK|PSH pid=1420 comm=worker thread " +
 				"ca=4 retrans=4 icsk_pending=1 reord_seen=2 dsack_dups=3 " +
@@ -427,7 +504,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 			},
 			want: "2026-07-23T02:14:40Z " +
 				"[data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 " +
-				"state=ESTABLISHED event_type=tcp_retransmit_skb " +
+				"state=ESTABLISHED event_type=tcp_retransmit_skb ktime_ns=0 " +
 				"seq=0 ack=0 pid=0 comm= ca=0 retrans=0 icsk_pending=0\n",
 		},
 	}
@@ -619,7 +696,7 @@ func TestFormatEventHandlesUnknownABIValues(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := formatEvent(&tt.event, toolstream.SourceTypeTool)
+			event := retransmitEventFromRecord(&tt.event, toolstream.SourceTypeTool)
 			if event.EventType != tt.wantEventType {
 				t.Fatalf("EventType = %q, want %q", event.EventType, tt.wantEventType)
 			}
@@ -649,7 +726,7 @@ func BenchmarkFormatEvent(b *testing.B) {
 	event := abi.TCPRetransmitEvent{
 		EventType: uint8(abi.TCPRetransmitEventSKB),
 		State:     unix.BPF_TCP_ESTABLISHED,
-		TCPFlags:  tcpFlagACK,
+		TCPFlags:  packet.TCPFlagACK,
 		CaState:   uint8(abi.TCPRetransmitCaRecovery),
 		Family:    unix.AF_INET,
 	}
@@ -657,7 +734,7 @@ func BenchmarkFormatEvent(b *testing.B) {
 	b.ReportAllocs()
 	var formatted *types.TCPRetransmitTracing
 	for b.Loop() {
-		formatted = formatEvent(&event, toolstream.SourceTypeTool)
+		formatted = retransmitEventFromRecord(&event, toolstream.SourceTypeTool)
 	}
 	_ = formatted
 }

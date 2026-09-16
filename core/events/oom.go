@@ -21,16 +21,16 @@ import (
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/kernaddr"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/internal/utils/kernaddr"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/oom.c -o $BPF_DIR/oom.o
@@ -118,7 +118,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "oom_perf_events", 8192)
+	reader, err := b.AttachAndEventPipe(childCtx, "oom_perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return err
 	}
@@ -158,10 +158,10 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			mutex.Unlock()
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:  "oom",
-				TracerTime:  time.Now(),
-				TracerData:  oomData,
-				ContainerID: oomData.Victim.ContainerID,
+				TracerName:        "oom",
+				ObservedTimestamp: time.Now().UTC(),
+				TracerData:        oomData,
+				ContainerID:       oomData.Victim.ContainerID,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

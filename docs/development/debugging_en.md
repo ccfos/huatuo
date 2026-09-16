@@ -67,10 +67,10 @@ Set `BPF_DEBUG=1` to pass `-DDEBUG_BPF` to Clang:
 make BPF_DEBUG=1
 ```
 
-To rebuild only the BPF objects:
+To regenerate build artifacts without rebuilding binaries:
 
 ```bash
-make BPF_DEBUG=1 bpf-build
+make BPF_DEBUG=1 gen-build
 ```
 
 `BPF_DEBUG=0` is the default. In that mode the macros expand to no-ops, and the

@@ -19,116 +19,149 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 func TestCapabilities(t *testing.T) {
-	nativeModes := []MemoryMode{
-		MemoryModeVirtualAlloc,
-		MemoryModePhysicalAlloc,
-		MemoryModePhysicalUsage,
+	nativeModes := []Mode{
+		ModeVirtualAlloc,
+		ModePhysicalAlloc,
+		ModePhysicalUsage,
 	}
 	tests := []struct {
 		language       Language
 		implementation Implementation
 		types          []Type
-		cpuModes       []CPUMode
-		memoryModes    []MemoryMode
+		cpuModes       []Mode
+		memoryModes    []Mode
 	}{
 		{
 			LanguageC,
 			ImplementationNative,
 			[]Type{TypeCPU, TypeMemory},
-			[]CPUMode{CPUModeOnCPU, CPUModeOffCPU},
+			[]Mode{ModeOnCPU, ModeOffCPU},
 			nativeModes,
 		},
 		{
 			LanguageCPP,
 			ImplementationNative,
 			[]Type{TypeCPU, TypeMemory},
-			[]CPUMode{CPUModeOnCPU, CPUModeOffCPU},
+			[]Mode{ModeOnCPU, ModeOffCPU},
 			nativeModes,
 		},
 		{
 			LanguageGo,
 			ImplementationNative,
 			[]Type{TypeCPU, TypeMemory},
-			[]CPUMode{CPUModeOnCPU, CPUModeOffCPU},
+			[]Mode{ModeOnCPU, ModeOffCPU},
 			nativeModes,
 		},
 		{
 			LanguageJava,
 			ImplementationJava,
 			[]Type{TypeCPU, TypeMemory},
-			[]CPUMode{CPUModeOnCPU},
-			[]MemoryMode{MemoryModeObjectAlloc, MemoryModeObjectUsage},
+			[]Mode{ModeOnCPU},
+			[]Mode{ModeObjectAlloc, ModeObjectUsage},
 		},
 		{
 			LanguagePython,
 			ImplementationPython,
 			[]Type{TypeCPU},
-			[]CPUMode{CPUModeOnCPU},
-			[]MemoryMode{},
+			[]Mode{ModeOnCPU},
+			nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.language), func(t *testing.T) {
-			implementation, ok := ImplementationFor(tt.language)
-			require.True(t, ok)
-			require.Equal(t, tt.implementation, implementation)
-
 			for _, typ := range []Type{TypeCPU, TypeMemory, TypeLock} {
-				require.Equal(t, slices.Contains(tt.types, typ), IsSupported(tt.language, typ))
+				supported := slices.Contains(tt.types, typ)
+				require.Equal(t, supported, IsSupported(tt.language, typ))
+
+				implementation, ok := ImplementationFor(tt.language, typ)
+				require.Equal(t, supported, ok)
+				if supported {
+					require.Equal(t, tt.implementation, implementation)
+				}
 			}
-			require.Equal(t, tt.cpuModes, CPUModesFor(tt.language))
-			require.Equal(t, tt.memoryModes, MemoryModesFor(tt.language))
+			require.Equal(t, tt.cpuModes, ModesFor(tt.language, TypeCPU))
+			memoryModes := ModesFor(tt.language, TypeMemory)
+			require.Equal(t, tt.memoryModes, memoryModes)
 			for _, mode := range allMemoryModes() {
 				require.Equal(
 					t,
 					slices.Contains(tt.memoryModes, mode),
-					SupportsMemoryMode(tt.language, mode),
+					SupportsMode(tt.language, TypeMemory, mode),
 				)
 			}
 		})
 	}
-
-	require.Equal(
-		t,
-		[]Language{LanguageC, LanguageCPP, LanguageGo, LanguageJava, LanguagePython},
-		LanguagesFor(TypeCPU),
-	)
-	require.Equal(
-		t,
-		[]Language{LanguageC, LanguageCPP, LanguageGo, LanguageJava},
-		LanguagesFor(TypeMemory),
-	)
-	require.Empty(t, LanguagesFor(TypeLock))
 }
 
-func TestMemoryModesForReturnsCopy(t *testing.T) {
-	modes := MemoryModesFor(LanguageJava)
-	modes[0] = MemoryModePhysicalUsage
+func TestModesForReturnsCopy(t *testing.T) {
+	modes := ModesFor(LanguageJava, TypeMemory)
+	modes[0] = ModePhysicalUsage
 
-	require.Equal(t, MemoryModeObjectAlloc, MemoryModesFor(LanguageJava)[0])
-}
-
-func TestCPUModesForReturnsCopy(t *testing.T) {
-	modes := CPUModesFor(LanguageGo)
-	modes[0] = CPUModeUnknown
-
-	require.Equal(t, CPUModeOnCPU, CPUModesFor(LanguageGo)[0])
+	require.Equal(t, ModeObjectAlloc, ModesFor(LanguageJava, TypeMemory)[0])
 }
 
 func TestCapabilityDefinitionsAreUnique(t *testing.T) {
-	languages := map[Language]bool{}
-	for _, capability := range capabilities {
+	keys := map[struct {
+		typ      Type
+		language Language
+	}]bool{}
+	for i := range capabilities {
+		capability := &capabilities[i]
+		key := struct {
+			typ      Type
+			language Language
+		}{typ: capability.Type, language: capability.Language}
+
+		require.NotEqual(t, TypeUnknown, capability.Type)
 		require.NotEqual(t, LanguageUnknown, capability.Language)
-		require.NotEqual(t, ImplementationUnknown, capability.Implementation)
-		require.False(t, languages[capability.Language], "duplicate language %q", capability.Language)
-		languages[capability.Language] = true
-		require.Equal(t, len(capability.Types), len(unique(capability.Types)))
-		require.Equal(t, len(capability.CPUModes), len(unique(capability.CPUModes)))
-		require.Equal(t, len(capability.MemoryModes), len(unique(capability.MemoryModes)))
+		require.NotEqual(t, ImplementationUnknown, capability.implementation)
+		require.False(t, keys[key], "duplicate capability %q/%q", capability.Type, capability.Language)
+		keys[key] = true
+		require.NotEmpty(t, capability.Modes)
+		require.NotEmpty(t, capability.SupportedScopes)
+		require.Equal(t, len(capability.Modes), len(unique(capability.Modes)))
+		require.Equal(t, len(capability.SupportedScopes), len(unique(capability.SupportedScopes)))
+	}
+}
+
+func TestCapabilitiesReturnsDeepCopy(t *testing.T) {
+	got := Capabilities()
+	require.NotEmpty(t, got)
+
+	got[0].Type = TypeMemory
+	got[0].Modes[0] = Mode("changed")
+	got[0].SupportedScopes[0] = "changed"
+
+	fresh := Capabilities()
+	require.Equal(t, TypeCPU, fresh[0].Type)
+	require.Equal(t, ModeOnCPU, fresh[0].Modes[0])
+	require.Equal(t, "host", string(fresh[0].SupportedScopes[0]))
+}
+
+func TestCapabilitiesExposeSupportedScopeAndBinaryMatch(t *testing.T) {
+	containerOnly := []observation.Scope{observation.ScopeContainer}
+	hostAndContainer := []observation.Scope{observation.ScopeHost, observation.ScopeContainer}
+
+	for _, capability := range Capabilities() {
+		switch {
+		case capability.Type == TypeCPU && capability.implementation == ImplementationNative:
+			require.Equal(t, hostAndContainer, capability.SupportedScopes)
+			require.False(t, capability.SupportsBinaryMatch)
+		case capability.Type == TypeCPU:
+			require.Equal(t, containerOnly, capability.SupportedScopes)
+			require.True(t, capability.SupportsBinaryMatch)
+		case capability.Type == TypeMemory:
+			require.Equal(t, containerOnly, capability.SupportedScopes)
+			require.False(t, capability.SupportsBinaryMatch)
+		default:
+			t.Fatalf("unexpected capability type %q", capability.Type)
+		}
 	}
 }
 
@@ -151,6 +184,22 @@ func TestParsers(t *testing.T) {
 	}
 	_, err := ParseLanguage("rust")
 	require.EqualError(t, err, `unsupported language "rust"`)
+
+	for _, mode := range []Mode{
+		ModeOnCPU,
+		ModeOffCPU,
+		ModeObjectAlloc,
+		ModeObjectUsage,
+		ModeVirtualAlloc,
+		ModePhysicalAlloc,
+		ModePhysicalUsage,
+	} {
+		parsed, err := ParseMode(string(mode))
+		require.NoError(t, err)
+		require.Equal(t, mode, parsed)
+	}
+	_, err = ParseMode("wall_clock")
+	require.EqualError(t, err, `unsupported profiling mode "wall_clock"`)
 }
 
 func TestParseTypeRejectsLegacyMemoryValue(t *testing.T) {

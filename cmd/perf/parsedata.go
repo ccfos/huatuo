@@ -23,10 +23,10 @@ import (
 	"sort"
 	"strconv"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/flamegraph"
-	"huatuo-bamai/internal/symbol"
-	"huatuo-bamai/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/flamegraph"
+	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 
 	ingestv1 "github.com/grafana/pyroscope/api/gen/proto/go/ingester/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"

@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiler"
 )
 
 func TestCollapsedFileCollectorConsumesEachFileOnce(t *testing.T) {

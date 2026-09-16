@@ -27,7 +27,6 @@ docker run -it --rm --privileged --network host \
 	-v ${WORKSPACE_DIR}:/workspace -w /workspace huatuo/huatuo-dev:latest \
 	sh -xec '
 	git config --global --add safe.directory /workspace
-	make bpf-build
 	make build
 	make --trace check
 	make vendor
