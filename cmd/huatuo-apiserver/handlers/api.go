@@ -617,6 +617,9 @@ func invokeProfileQuery[Request, Result proto.Message](
 ) ([]byte, error) {
 	data, err := io.ReadAll(body)
 	if err != nil {
+		if classified := response.ClassifyBindingError(err); classified != err {
+			return nil, classified
+		}
 		return nil, response.ErrInvalidRequest.WithMessage("read protobuf request: " + err.Error())
 	}
 	if err := proto.Unmarshal(data, request); err != nil {

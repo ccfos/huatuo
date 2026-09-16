@@ -136,9 +136,11 @@ func requestValidationError(err error) *response.APIError {
 		return apiError
 	}
 
-	var maxBytesError *http.MaxBytesError
-	if errors.As(err, &maxBytesError) {
-		return response.ErrRequestTooLarge
+	if classified := response.ClassifyBindingError(err); classified != err {
+		var tooLarge *response.APIError
+		if errors.As(classified, &tooLarge) {
+			return tooLarge
+		}
 	}
 
 	converted := openapi3filter.ConvertErrors(err)

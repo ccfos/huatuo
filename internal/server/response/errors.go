@@ -15,7 +15,9 @@
 package response
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 
 	v1 "github.com/ccfos/huatuo/apis/v1"
 )
@@ -120,4 +122,20 @@ func (e *APIError) WithMessage(message string) *APIError {
 		Code:    e.Code,
 		Message: message,
 	}
+}
+
+// ClassifyBindingError maps http.MaxBytesReader failures to ErrRequestTooLarge
+// so oversized bodies return HTTP 413 instead of a generic 400. Other errors
+// (malformed syntax, validation, semantic failures) pass through unchanged.
+func ClassifyBindingError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var maxBytesError *http.MaxBytesError
+	if errors.As(err, &maxBytesError) {
+		return ErrRequestTooLarge.WithMessage(fmt.Sprintf(
+			"request body exceeds %d bytes", maxBytesError.Limit,
+		))
+	}
+	return err
 }
