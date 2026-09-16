@@ -17,6 +17,8 @@ package aggregator
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -200,4 +202,77 @@ func TestPipelineAggregateAndExport_EmptyFormatter(t *testing.T) {
 	}
 
 	aggr.AssertNotCalled(t, "Reset")
+}
+
+func TestPipelineStop_ReturnsFinalExportError(t *testing.T) {
+	aggr := NewMockAggregator(t)
+	aggr.On("OutputFormatter").Return(nil).Once()
+
+	p := NewPipeline(&profctx.ProfilerContext{
+		Ctx:          t.Context(),
+		OutputFormat: output.FormatCollapsed,
+	}, aggr)
+
+	p.Start()
+	err := p.Stop()
+	if err == nil {
+		t.Fatal("Stop returned nil, want final export error")
+	}
+	if !strings.Contains(err.Error(), "output formatter is nil") {
+		t.Fatalf("Stop error = %v, want nil-formatter export failure", err)
+	}
+}
+
+func TestPipelineStop_SuccessfulFinalExport(t *testing.T) {
+	formatter := NewFormatter(t)
+	formatter.On("IsEmpty").Return(true).Once()
+
+	aggr := NewMockAggregator(t)
+	aggr.On("OutputFormatter").Return(formatter).Once()
+
+	p := NewPipeline(&profctx.ProfilerContext{
+		Ctx:          t.Context(),
+		OutputFormat: output.FormatCollapsed,
+		OutputPath:   t.TempDir(),
+	}, aggr)
+
+	p.Start()
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
+}
+
+func TestPipelineStop_ConcurrentCallersShareResult(t *testing.T) {
+	aggr := NewMockAggregator(t)
+	aggr.On("OutputFormatter").Return(nil).Once()
+
+	p := NewPipeline(&profctx.ProfilerContext{
+		Ctx:          t.Context(),
+		OutputFormat: output.FormatCollapsed,
+	}, aggr)
+	p.Start()
+
+	const callers = 4
+	errs := make([]error, callers)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs[i] = p.Stop()
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if errs[0] == nil {
+		t.Fatal("Stop returned nil, want final export error")
+	}
+	for i := 1; i < callers; i++ {
+		if !errors.Is(errs[i], errs[0]) && errs[i].Error() != errs[0].Error() {
+			t.Fatalf("Stop caller %d error = %v, want %v", i, errs[i], errs[0])
+		}
+	}
 }
