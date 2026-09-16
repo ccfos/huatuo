@@ -118,16 +118,25 @@ func updateNodeConfig(ctx context.Context, address client.NodeAddress) error {
 
 The project supports kernel version 4.18 and later. The following kernel and OS distribution are primarily tested.
 
-| HUATUO | Kernel Version | OS Distribution                               |
-| :----- | :------------- | :-------------------------------------------- |
-| 1.0.0  | 4.18.x         | CentOS 8.x                                    |
-| 1.0.0  | 5.4.x          | OpenCloudOS V8/Ubuntu 20.04                   |
-| 1.0.0  | 5.10.x         | OpenEuler 22.03/Anolis OS 8.10                |
-| 1.0.0  | 5.15.x         | Ubuntu 22.04                                  |
-| 1.0.0  | 6.6.x          | OpenEuler 24.03/Anolis OS 23.3/OpenCloudOS V9 |
-| 1.0.0  | 6.8.x          | Ubuntu 24.04                                  |
-| 1.0.0  | 6.14.x         | Fedora 42                                     |
-| 2.3.0  | 7.0.x          | Ubuntu 26.04                                  |
+| HUATUO | Kernel | OS |
+| :--- | :--- | :--- |
+| 1.0.0 | 4.18.x | CentOS 8.x |
+| 2.4.0 | 4.18.x | Rocky Linux 8.10 |
+| 1.0.0 | 5.4.x | OpenCloudOS V8 |
+| 1.0.0 | 5.4.x | Ubuntu 20.04.6 LTS |
+| 1.0.0 | 5.10.x | Anolis OS 8.10 |
+| 1.0.0 | 5.10.x | openEuler 22.03 LTS-SP4 |
+| 2.4.0 | 5.14.x | Rocky Linux 9.8 |
+| 1.0.0 | 5.15.x | Ubuntu 22.04.5 LTS |
+| 2.4.0 | 6.1.x | Debian 12 (bookworm) |
+| 1.0.0 | 6.6.x | Anolis OS 23.3 |
+| 1.0.0 | 6.6.x | OpenCloudOS V9 |
+| 1.0.0 | 6.6.x | openEuler 24.03 LTS-SP4 |
+| 1.0.0 | 6.8.x | Ubuntu 24.04.4 LTS |
+| 2.4.0 | 6.12.x | Debian 13 (trixie) |
+| 1.0.0 | 6.14.x | Fedora 42 |
+| 2.4.0 | 6.19.x | Fedora Linux 44 |
+| 2.3.0 | 7.0.x | Ubuntu 26.04 LTS |
 
 ## Documentation
 
