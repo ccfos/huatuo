@@ -65,6 +65,10 @@ type Config struct {
 		MceThrBackoff int64 `default:"1800"`
 	}
 
+	MthreadsXid struct {
+		ReportLevel MthreadsXidLevel `default:"warning"`
+	}
+
 	IssuesList [][]string
 }
 
@@ -91,6 +95,12 @@ func (c *Config) Validate() error {
 	}
 	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
 		return fmt.Errorf("validating issues list: %w", err)
+	}
+	if level := c.MthreadsXid.ReportLevel; level != "" &&
+		level != mthreadsXidLevelNotify &&
+		level != mthreadsXidLevelWarning &&
+		level != mthreadsXidLevelFatal {
+		return fmt.Errorf("mthreads_xid report level %q invalid", level)
 	}
 
 	return nil
