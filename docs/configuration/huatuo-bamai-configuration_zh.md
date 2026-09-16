@@ -950,7 +950,25 @@ InitPid 读取实际 memory cgroup 路径并保存；路径暂不可用或通知
 
   **说明**：THR 事件由 CPU 本地 APIC 阈值中断触发，在硬件出现纠正性错误时可能以极高频率产生。该冷却时间用于防止存储系统被大量重复记录淹没，同时保证关键事件仍能被捕获。调低该值可获得更实时的事件记录，但需注意存储压力；在错误频发的环境中建议适当调高。
 
-#### 8.8 已知问题过滤（IssuesList）
+#### 8.8 摩尔线程 GPU 事件追踪（EventTracing.MthreadsGPU）
+
+```bash
+# mthreads_gpu
+#
+# Moore Threads GPU XID error event tracing.
+[EventTracing.MthreadsGPU]
+    # MthreadsXidLevel = ""
+```
+
+- **MthreadsXidLevel**：XID 错误报告的最低严重级别。
+
+  可选值：`""`（禁用）、`"notify"`、`"warning"`、`"fatal"`。
+
+  默认值：`""`（禁用）。
+
+  **说明**：控制哪些 XID 错误事件被报告。设置此选项以启用摩尔线程 GPU 的 XID 错误追踪。低于指定严重级别的 XID 错误将被过滤掉。要启用此功能，请确保 `mthreads_xid` 从全局 `BlackList`（如果存在）中移除，并将此字段设置为有效的严重级别之一（`"notify"`、`"warning"`、`"fatal"`）。此外，主机上必须安装 MUSA 驱动。该功能每秒轮询 `/proc/driver/musa/gpu*/event_report` 文件以捕获 XID 错误事件。每个 XID 事件包含详细信息，包括 UUID、XID ID、严重级别、作用域、PCI BDF、进程 ID 和附加上下文信息。
+
+#### 8.9 已知问题过滤（IssuesList）
 
 ```bash
 # Linux kernel event tracing configuration.
