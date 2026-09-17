@@ -274,8 +274,8 @@ func TestClassifyBindingError(t *testing.T) {
 
 	t.Run("direct MaxBytesError", func(t *testing.T) {
 		err := ClassifyBindingError(&http.MaxBytesError{Limit: 64})
-		apiErr, ok := err.(*APIError)
-		if !ok {
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
 			t.Fatalf("ClassifyBindingError(MaxBytesError) type = %T, want *APIError", err)
 		}
 		if apiErr.Code != v1.ErrorCodeRequestTooLarge {
@@ -290,8 +290,8 @@ func TestClassifyBindingError(t *testing.T) {
 	t.Run("wrapped MaxBytesError", func(t *testing.T) {
 		wrapped := fmt.Errorf("bind body: %w", &http.MaxBytesError{Limit: 128})
 		err := ClassifyBindingError(wrapped)
-		apiErr, ok := err.(*APIError)
-		if !ok {
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
 			t.Fatalf("ClassifyBindingError(wrapped) type = %T, want *APIError", err)
 		}
 		const want = "request body exceeds 128 bytes"
@@ -302,7 +302,7 @@ func TestClassifyBindingError(t *testing.T) {
 
 	t.Run("other errors pass through", func(t *testing.T) {
 		original := errors.New("unexpected EOF")
-		if got := ClassifyBindingError(original); got != original {
+		if got := ClassifyBindingError(original); !errors.Is(got, original) {
 			t.Fatalf("ClassifyBindingError(EOF) = %v, want original error", got)
 		}
 	})

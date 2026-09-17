@@ -136,7 +136,7 @@ func requestValidationError(err error) *response.APIError {
 		return apiError
 	}
 
-	if classified := response.ClassifyBindingError(err); classified != err {
+	if classified := response.ClassifyBindingError(err); classified != nil {
 		var tooLarge *response.APIError
 		if errors.As(classified, &tooLarge) {
 			return tooLarge
