@@ -62,6 +62,14 @@ jobs:
             os: openeuler24.03
             runner: ubuntu-24.04
             image: huatuo/os-distro-test:openeuler24.03.amd64-20260915032000-8d05de220887-64101e9d1a712c78-efbbd69167ddaa34
+          - arch: amd64
+            os: anolis8.10
+            runner: ubuntu-24.04
+            image: huatuo/os-distro-test:anolis8.10.amd64-20260915032000-f449e1ab76e5-a5153e73d65abc41-efbbd69167ddaa34
+          - arch: amd64
+            os: opencloudos9
+            runner: ubuntu-24.04
+            image: huatuo/os-distro-test:opencloudos9.amd64-20260915032000-f449e1ab76e5-cf94cf60daa13e63-efbbd69167ddaa34
 
     steps:
       - name: Checkout

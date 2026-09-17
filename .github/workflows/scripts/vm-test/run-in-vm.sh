@@ -88,7 +88,7 @@ install_test_dependencies() {
 		apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends \
 			"${missing_packages[@]}"
 		;;
-	*fedora* | *rhel* | *centos* | *rocky* | *openeuler*)
+	*fedora* | *rhel* | *centos* | *rocky* | *openeuler* | *anolis* | *opencloudos*)
 		for package in "${rpm_packages[@]}"; do
 			rpm -q "$package" > /dev/null 2>&1 || missing_packages+=("$package")
 		done
