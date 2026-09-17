@@ -100,7 +100,7 @@ func (s *Server) CancelSession(toolName, taskID string) {
 	}
 	expected.closed = true
 	if expected.err == nil {
-		expected.err = fmt.Errorf("toolstream: session %s/%s cancelled", toolName, taskID)
+		expected.err = fmt.Errorf("toolstream: session %s/%s canceled", toolName, taskID)
 	}
 	close(expected.done)
 }

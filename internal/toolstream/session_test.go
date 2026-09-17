@@ -134,15 +134,15 @@ func TestCancelSessionWakesBlockedAwait(t *testing.T) {
 		waitErr <- server.AwaitSession(t.Context(), "profiler", "job-1")
 	}()
 
-	// Allow the waiter to reach select on session.done before cancelling.
+	// Allow the waiter to reach select on session.done before canceling.
 	// A blocked waiter would previously hang until the test context expired.
 	time.Sleep(20 * time.Millisecond)
 	server.CancelSession("profiler", "job-1")
 
 	select {
 	case err := <-waitErr:
-		if err == nil || !strings.Contains(err.Error(), "cancelled") {
-			t.Fatalf("AwaitSession() error = %v, want cancelled session error", err)
+		if err == nil || !strings.Contains(err.Error(), "canceled") {
+			t.Fatalf("AwaitSession() error = %v, want canceled session error", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("AwaitSession() still blocked after CancelSession")
