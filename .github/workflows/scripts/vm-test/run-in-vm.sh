@@ -51,17 +51,19 @@ print_sys_info() {
 }
 
 configure_proxy() {
-	local proxy_port=11008
+	local guest_hostname guest_ip proxy_port=11008
 	if ! timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/$1' _ "$proxy_port" 2> /dev/null; then
 		return
 	fi
+	guest_hostname=$(hostname)
+	guest_ip=$(ip -4 route get 1.1.1.1 | awk '{for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}')
 	export http_proxy="http://127.0.0.1:${proxy_port}"
 	export https_proxy="$http_proxy"
 	export HTTP_PROXY="$http_proxy"
 	export HTTPS_PROXY="$http_proxy"
 	export all_proxy="socks5://127.0.0.1:${proxy_port}"
 	export ALL_PROXY="$all_proxy"
-	export no_proxy='127.0.0.1,localhost,10.96.0.0/12,10.244.0.0/16,.svc,.cluster.local'
+	export no_proxy="127.0.0.1,localhost,${guest_ip},${guest_hostname},10.96.0.0/12,10.244.0.0/16,.svc,.cluster.local"
 	export NO_PROXY="$no_proxy"
 }
 
