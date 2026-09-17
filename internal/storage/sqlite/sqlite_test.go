@@ -25,6 +25,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	storagesqlite "github.com/ccfos/huatuo/internal/storage/sqlite"
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 type backendTestEntity struct {
@@ -431,5 +432,62 @@ func TestSQLiteBackendTerms(t *testing.T) {
 	}
 	if len(limitedTerms) != 1 {
 		t.Errorf("backend Terms() limited count = %d, want 1", len(limitedTerms))
+	}
+}
+
+func TestSQLiteTimestampIndexFormat(t *testing.T) {
+	backend := newSQLiteBackendForTest(t)
+	if backend == nil {
+		t.Fatal("SQLite backend unavailable")
+	}
+	if err := backend.Init(t.Context(), "timestamps", []driver.Index{{Field: "observed_timestamp"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Adjacent nanoseconds must remain distinct even within the same millisecond.
+	first := time.Date(2026, 9, 17, 8, 0, 0, 123456789, time.FixedZone("local", 8*60*60))
+	second, third := first.Add(time.Nanosecond), first.Add(2*time.Nanosecond)
+	seedSQLiteRecords(t, backend, []driver.Record{
+		{ID: "first", Data: []byte(`{}`), Fields: map[string]any{"observed_timestamp": first}},
+		{ID: "second", Data: []byte(`{}`), Fields: map[string]any{"observed_timestamp": timeutil.Timestamp{Time: second}}},
+		{ID: "third", Data: []byte(`{}`), Fields: map[string]any{"observed_timestamp": "2026-09-17T00:00:00.123456791Z"}},
+	})
+	record, err := backend.Get(t.Context(), "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := record.Fields["observed_timestamp"]; got != "2026-09-17T00:00:00.123456789Z" {
+		t.Fatalf("stored timestamp = %v", got)
+	}
+	for _, test := range []struct {
+		name  string
+		op    driver.Op
+		value any
+		want  []string
+	}{
+		{"equal", driver.OpEq, second, []string{"second"}},
+		{"equal timestamp", driver.OpEq, timeutil.Timestamp{Time: second}, []string{"second"}},
+		{"in timestamps", driver.OpIn, []timeutil.Timestamp{{Time: first}, {Time: third}}, []string{"first", "third"}},
+		{"range timestamp", driver.OpGt, timeutil.Timestamp{Time: first}, []string{"second", "third"}},
+		{"equal formatted", driver.OpEq, "2026-09-17T00:00:00.123456790Z", []string{"second"}},
+		{"in", driver.OpIn, []time.Time{first, third}, []string{"first", "third"}},
+		{"greater", driver.OpGt, first, []string{"second", "third"}},
+		{"greater equal", driver.OpGte, second, []string{"second", "third"}},
+		{"less", driver.OpLt, second, []string{"first"}},
+		{"less equal", driver.OpLte, second, []string{"first", "second"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			records, err := backend.Query(t.Context(), driver.Query{Filters: []driver.Filter{{Field: "observed_timestamp", Op: test.op, Value: test.value}}, Sorts: []driver.Sort{{Field: "observed_timestamp"}}, Limit: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(records) != len(test.want) {
+				t.Fatalf("records=%d, want %d", len(records), len(test.want))
+			}
+			for i, id := range test.want {
+				if records[i].ID != id {
+					t.Fatalf("record %d=%s, want %s", i, records[i].ID, id)
+				}
+			}
+		})
 	}
 }

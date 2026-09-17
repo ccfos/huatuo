@@ -23,6 +23,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -173,14 +174,14 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 		query.Filters = append(query.Filters, driver.Filter{
 			Field: types.DocumentFieldUploadedTimestamp,
 			Op:    driver.OpGte,
-			Value: filter.StartTime.UTC().Format(time.RFC3339Nano),
+			Value: timeutil.FormatUTC(filter.StartTime),
 		})
 	}
 	if !filter.EndTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
 			Field: types.DocumentFieldUploadedTimestamp,
 			Op:    driver.OpLte,
-			Value: filter.EndTime.UTC().Format(time.RFC3339Nano),
+			Value: timeutil.FormatUTC(filter.EndTime),
 		})
 	}
 	if filter.TracerID != "" || filter.ID != "" {

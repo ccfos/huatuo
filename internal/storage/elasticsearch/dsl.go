@@ -218,7 +218,6 @@ func buildClause(filter driver.Filter) (types.Query, bool, error) {
 }
 
 func buildExactTermClause(field string, value any) types.Query {
-	value = driver.NormalizeValue(value)
 	primary := types.Query{
 		Term: map[string]types.TermQuery{field: {Value: value}},
 	}
@@ -261,7 +260,7 @@ func containsString(values []any) bool {
 }
 
 func buildRangeClause(filter driver.Filter) (types.RangeQuery, error) {
-	if s, ok := driver.NormalizeValue(filter.Value).(string); ok {
+	if s, ok := filter.Value.(string); ok {
 		return buildDateRangeClause(filter.Op, s)
 	}
 	f, ok := asFloat64(filter.Value)

@@ -180,7 +180,7 @@ func buildWhereSQL(filters []driver.Filter) (string, []any, error) {
 			placeholders := make([]string, len(inValues))
 			for i, value := range inValues {
 				placeholders[i] = "?"
-				args = append(args, value)
+				args = append(args, driver.NormalizeValue(value))
 			}
 			clauses = append(clauses, fmt.Sprintf("%s IN (%s)", fieldExpr, strings.Join(placeholders, ", ")))
 		} else {

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 type mockElasticsearchDocument struct {
@@ -814,7 +815,7 @@ func TestBuildSearchRequest(t *testing.T) {
 				Filters: []driver.Filter{
 					{Field: "status", Op: driver.OpEq, Value: "running"},
 					{Field: "priority", Op: driver.OpGt, Value: 5},
-					{Field: "created_at", Op: driver.OpLte, Value: baseTime},
+					{Field: "created_at", Op: driver.OpLte, Value: timeutil.FormatUTC(baseTime)},
 					{Field: "user_id", Op: driver.OpIn, Value: []string{"user-alpha", "user-beta"}},
 				},
 				Sorts: []driver.Sort{
@@ -1305,15 +1306,15 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 	records := []driver.Record{
 		{
 			ID:   "profile-alpha",
-			Data: []byte(`{"tracer_id":"profile-alpha","hostname":"huatuo-dev","profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds","time":"2026-04-09 12:00:00.000 +0000"}`),
+			Data: []byte(`{"tracer_id":"profile-alpha","hostname":"huatuo-dev","profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds","time":"2026-04-09T12:00:00.000000000Z"}`),
 		},
 		{
 			ID:   "profile-beta",
-			Data: []byte(`{"tracer_id":"profile-beta","hostname":"huatuo-dev","profile_type":"process_mem:alloc_objects:count:space:bytes","time":"2026-04-09 12:02:00.000 +0000"}`),
+			Data: []byte(`{"tracer_id":"profile-beta","hostname":"huatuo-dev","profile_type":"process_mem:alloc_objects:count:space:bytes","time":"2026-04-09T12:02:00.000000000Z"}`),
 		},
 		{
 			ID:   "profile-gamma",
-			Data: []byte(`{"tracer_id":"profile-gamma","hostname":"huatuo-dev","profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds","time":"2026-04-09 12:03:00.000 +0000"}`),
+			Data: []byte(`{"tracer_id":"profile-gamma","hostname":"huatuo-dev","profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds","time":"2026-04-09T12:03:00.000000000Z"}`),
 		},
 	}
 
@@ -1327,7 +1328,7 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 	terms, err := backend.Values(t.Context(), "profile_type", driver.Query{
 		Filters: []driver.Filter{
 			{Field: "hostname", Op: driver.OpEq, Value: "huatuo-dev"},
-			{Field: "time", Op: driver.OpGte, Value: baseTime.Add(-time.Minute)},
+			{Field: "time", Op: driver.OpGte, Value: timeutil.FormatUTC(baseTime.Add(-time.Minute))},
 		},
 	}, 10)
 	if err != nil {

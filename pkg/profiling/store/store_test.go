@@ -232,3 +232,15 @@ func validDocument() *Document {
 		},
 	}
 }
+
+func TestBuildAggregationQueryTimestampFormat(t *testing.T) {
+	start := time.Date(2026, 9, 17, 8, 0, 0, 123000000, time.FixedZone("local", 8*60*60))
+	query := buildAggregationQuery(&Filter{StartTime: start, EndTime: start.Add(time.Second)})
+	want := []driver.Filter{
+		{Field: types.DocumentFieldUploadedTimestamp, Op: driver.OpGte, Value: "2026-09-17T00:00:00.123000000Z"},
+		{Field: types.DocumentFieldUploadedTimestamp, Op: driver.OpLte, Value: "2026-09-17T00:00:01.123000000Z"},
+	}
+	if !reflect.DeepEqual(query.Filters, want) {
+		t.Fatalf("filters = %#v, want %#v", query.Filters, want)
+	}
+}
