@@ -66,10 +66,15 @@ struct profiler_fork_stats_t {
 	u64 root_exited;
 };
 
+/*
+ * Keep the map preallocated: the sampling programs run from perf_event
+ * contexts and older kernels reject a non-preallocated hash map there with
+ * "perf_event programs can only use preallocated hash map".  Capacity is
+ * rewritten at load time instead (one entry while fork tracking is off).
+ */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 65536);
-	__uint(map_flags, COMPAT_BPF_F_NO_PREALLOC);
 	__type(key, u32);
 	__type(value, struct profiler_fork_pid_t);
 } fork_pid_map SEC(".maps");

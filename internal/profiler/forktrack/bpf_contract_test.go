@@ -34,7 +34,6 @@ func TestBPFContractContainsLifecycleHooksAndMaps(t *testing.T) {
 		`} fork_pid_map SEC(".maps")`,
 		`} fork_stats SEC(".maps")`,
 		`} fork_rate_map SEC(".maps")`,
-		`COMPAT_BPF_F_NO_PREALLOC`,
 		`child_tgid = BPF_CORE_READ(child_task, tgid)`,
 		`live = BPF_CORE_READ(task, signal, live.counter)`,
 		`old_pid = ctx->old_pid`,
@@ -42,6 +41,16 @@ func TestBPFContractContainsLifecycleHooksAndMaps(t *testing.T) {
 		if !strings.Contains(header, required) {
 			t.Errorf("bpf_profiler.h is missing %q", required)
 		}
+	}
+}
+
+func TestBPFContractKeepsPerfEventUsedMapsPreallocated(t *testing.T) {
+	header := readProfilerHeader(t)
+	// Sampling programs run from perf_event contexts, and older kernels
+	// reject a non-preallocated hash map there, so fork_pid_map must keep
+	// hash map preallocation enabled and rely on load-time resizing.
+	if strings.Contains(header, "COMPAT_BPF_F_NO_PREALLOC") {
+		t.Error("fork_pid_map must not disable hash map preallocation")
 	}
 }
 
