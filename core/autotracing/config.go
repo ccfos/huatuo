@@ -15,6 +15,7 @@
 package autotracing
 
 import (
+	"fmt"
 	"slices"
 	"sync/atomic"
 
@@ -45,6 +46,24 @@ type MemBurstConfig struct {
 	IntervalTracing     int `default:"1800"`
 	SlidingWindowLength int `default:"60"`
 	DumpProcessMaxNum   int `default:"10"`
+}
+
+// IRQTracingConfig holds irq spike tracing configuration.
+type IRQTracingConfig struct {
+	Interval              int64 `default:"2"`
+	RunTracingToolTimeout int64 `default:"3"`
+	IntervalTracing       int64 `default:"300"`
+	// Spike rule: fires when >= SpikeMinCPUs cpus simultaneously rise by
+	// >= SpikeAbsDeltaThreshold percentage points and >=
+	// SpikeRelIncreasePct% relatively.
+	SpikeMinCPUs           int   `default:"3"`
+	SpikeAbsDeltaThreshold int64 `default:"20"`
+	SpikeRelIncreasePct    int64 `default:"30"`
+	// Sustained rule: fires when a single cpu's irq+softirq util stays
+	// >= SustainedUtilThreshold for SustainedConsecutiveIntervals
+	// consecutive samples.
+	SustainedConsecutiveIntervals int64 `default:"10"`
+	SustainedUtilThreshold        int64 `default:"80"`
 }
 
 // Config holds autotracing configuration.
@@ -87,6 +106,8 @@ type Config struct {
 		MaxFilesPerProcDump   int    `default:"5"`
 	}
 
+	IrqTracing IRQTracingConfig
+
 	MemoryBurst MemBurstConfig
 
 	// IssuesList for known issue filtering
@@ -107,6 +128,28 @@ func Set(c *Config) {
 
 func configSnapshot() *Config {
 	return currentConfig.Load()
+}
+
+// Validate rejects invalid autotracing settings. cmd/huatuo-bamai/config calls
+// it inside the atomic Load/UpdateAndSync validation transaction so invalid
+// values are never acknowledged, published, or persisted; the tracer factories
+// re-check their own sections at construction time as defense in depth.
+//
+// Validation is unconditional: an all-zero section is invalid too, because a
+// persisted zero config makes the next daemon start fail in the factory. The
+// top-level validator may skip this check when it can prove the tracer is
+// blacklisted (its factory never runs), which is the only sanctioned way to
+// leave a section unconfigured.
+func (c *Config) Validate() error {
+	if c == nil {
+		return nil
+	}
+
+	if err := validateIrqTracingConfig(c.IrqTracing); err != nil {
+		return fmt.Errorf("irq tracing: %w", err)
+	}
+
+	return nil
 }
 
 // Clone returns a deep copy suitable for immutable publication.
