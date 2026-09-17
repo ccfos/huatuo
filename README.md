@@ -50,7 +50,7 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
 ## Big Picture
 
-![](/docs/img/hardware-errors-huatuo-framework.png)
+![](/docs/img/huatuo-arch-vendor.svg)
 
 ## Ecosystem
 

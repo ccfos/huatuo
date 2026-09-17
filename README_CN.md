@@ -50,7 +50,7 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
 
 ## 整体大图
 
-![](/docs/img/hardware-errors-huatuo-framework.png)
+![](/docs/img/huatuo-arch-vendor.svg)
 
 ## 开源生态
 
