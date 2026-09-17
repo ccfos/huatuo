@@ -1,4 +1,4 @@
-// Fixture for integration/test_bpf_debug_macro.sh. Compiled twice via
+// Fixture for integration/test_basic_bpf_debug_macro.sh. Compiled twice via
 // build/clang.sh — once with -DDEBUG_BPF, once without — to verify that
 // bpf/include/bpf_dbg.h gates code emission as documented. Not referenced
 // by any //go:generate, so the main build never sees it.

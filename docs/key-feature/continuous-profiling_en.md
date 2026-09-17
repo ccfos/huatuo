@@ -698,8 +698,8 @@ sudo ./integration/run.sh test_profiler_native_cpu.sh
 sudo ./integration/run.sh test_profiler_native_cpu_offcpu.sh
 
 # Native virtual and physical memory
-sudo ./integration/run.sh test_profiler_native_mem_virtual_alloc.sh
-sudo ./integration/run.sh test_profiler_native_mem_physical_usage.sh
+sudo ./integration/run.sh test_profiler_native_memory_virtual_alloc.sh
+sudo ./integration/run.sh test_profiler_native_memory_physical_usage.sh
 
 # Java CPU and memory
 sudo ./integration/run.sh test_profiler_java_cpu_multi_pid.sh
