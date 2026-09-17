@@ -6,70 +6,69 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      os:
+        description: >-
+          Comma-separated distros; empty runs all. Available: ubuntu26.04,
+          ubuntu24.04, ubuntu22.04, ubuntu20.04, debian12, debian13, rocky8,
+          rocky9, fedora44, openeuler22.03, openeuler24.03, anolis8.10,
+          opencloudos9
+        required: false
+        default: ''
 
 jobs:
+  # Build the target matrix: all distros by default, or a selected subset.
+  distro-matrix:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+    steps:
+      - name: Build matrix
+        id: build
+        env:
+          INPUT_OS: ${{ github.event.inputs.os }}
+        run: |
+          distros='[
+            {"arch": "amd64", "os": "ubuntu26.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu26.04.amd64-20260915032000-8d05de220887-fae8fc715bea6500-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "ubuntu24.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu24.04.amd64-20260915032000-8d05de220887-fcedeb44fa774175-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "ubuntu22.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu22.04.amd64-20260915032000-8d05de220887-9548f93344760678-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "ubuntu20.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu20.04.amd64-20260915032000-8d05de220887-763a29a10e27ccf1-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "debian12", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:debian12.amd64-20260915032000-8d05de220887-1c1844affc9ec324-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "debian13", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:debian13.amd64-20260915032000-8d05de220887-8fc205ebdce62ea0-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "rocky8", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:rocky8.amd64-20260915032000-8d05de220887-a80018bc4ab22aa3-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "rocky9", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:rocky9.amd64-20260915032000-8d05de220887-b7a56faa7fc2bf5c-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "fedora44", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:fedora44.amd64-20260915032000-8d05de220887-6f8e78db95104a60-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "openeuler22.03", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:openeuler22.03.amd64-20260915032000-8d05de220887-3c601405ed9199bb-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "openeuler24.03", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:openeuler24.03.amd64-20260915032000-8d05de220887-64101e9d1a712c78-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "anolis8.10", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:anolis8.10.amd64-20260915032000-f449e1ab76e5-a5153e73d65abc41-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "opencloudos9", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:opencloudos9.amd64-20260915032000-f449e1ab76e5-cf94cf60daa13e63-efbbd69167ddaa34"}
+          ]'
+          matrix=$(jq -cn \
+            --arg selected "$INPUT_OS" \
+            --argjson distros "${distros?}" '
+            def chunks: split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))
+              | map(select(length > 0));
+            ($selected | chunks) as $selected_distros
+            | ($selected_distros | length == 0 or any(. == "all")) as $all_selected
+            | [ $distros[] | select($all_selected or (.os as $os | $selected_distros | any(. == $os))) ]
+            | {include: .}
+          ')
+          if [ "$(jq '.include | length' <<< "$matrix")" -eq 0 ]; then
+            echo "Invalid os input: $INPUT_OS" >&2
+            exit 1
+          fi
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
   # start VMs and test in them
   qemu-vm:
     name: Test in VM (${{ matrix.arch }} ${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
+    needs: distro-matrix
     env:
       ACT_RUN: false
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            os: ubuntu26.04
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:ubuntu26.04.amd64-20260915032000-8d05de220887-fae8fc715bea6500-efbbd69167ddaa34
-          - arch: amd64
-            os: ubuntu24.04
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:ubuntu24.04.amd64-20260915032000-8d05de220887-fcedeb44fa774175-efbbd69167ddaa34
-          - arch: amd64
-            os: ubuntu22.04
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:ubuntu22.04.amd64-20260915032000-8d05de220887-9548f93344760678-efbbd69167ddaa34
-          - arch: amd64
-            os: ubuntu20.04
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:ubuntu20.04.amd64-20260915032000-8d05de220887-763a29a10e27ccf1-efbbd69167ddaa34
-          - arch: amd64
-            os: debian12
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:debian12.amd64-20260915032000-8d05de220887-1c1844affc9ec324-efbbd69167ddaa34
-          - arch: amd64
-            os: debian13
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:debian13.amd64-20260915032000-8d05de220887-8fc205ebdce62ea0-efbbd69167ddaa34
-          - arch: amd64
-            os: rocky8
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:rocky8.amd64-20260915032000-8d05de220887-a80018bc4ab22aa3-efbbd69167ddaa34
-          - arch: amd64
-            os: rocky9
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:rocky9.amd64-20260915032000-8d05de220887-b7a56faa7fc2bf5c-efbbd69167ddaa34
-          - arch: amd64
-            os: fedora44
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:fedora44.amd64-20260915032000-8d05de220887-6f8e78db95104a60-efbbd69167ddaa34
-          - arch: amd64
-            os: openeuler22.03
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:openeuler22.03.amd64-20260915032000-8d05de220887-3c601405ed9199bb-efbbd69167ddaa34
-          - arch: amd64
-            os: openeuler24.03
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:openeuler24.03.amd64-20260915032000-8d05de220887-64101e9d1a712c78-efbbd69167ddaa34
-          - arch: amd64
-            os: anolis8.10
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:anolis8.10.amd64-20260915032000-f449e1ab76e5-a5153e73d65abc41-efbbd69167ddaa34
-          - arch: amd64
-            os: opencloudos9
-            runner: ubuntu-24.04
-            image: huatuo/os-distro-test:opencloudos9.amd64-20260915032000-f449e1ab76e5-cf94cf60daa13e63-efbbd69167ddaa34
+      matrix: ${{ fromJson(needs.distro-matrix.outputs.matrix) }}
 
     steps:
       - name: Checkout
