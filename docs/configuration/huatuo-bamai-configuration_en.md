@@ -440,7 +440,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
   Default: no rules, all containers monitored.
 
-#### 7.2 CPUSys Automatic Tracing — Sudden High System CPU on Host
+#### 7.2 CPUSys Automatic Tracing — Host CPU Bursts
 
 ```bash
 # cpusys
@@ -470,9 +470,13 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 #
 # NOTE:
 # Profiling triggers when:
-# SysThreshold AND DeltaSysThreshold are exceeded.
+# Both thresholds of any trigger are exceeded (system, user or total).
 #
 [AutoTracing.CPUSys]
+	# UserThreshold = 0
+	# DeltaUserThreshold = 0
+	# UsageThreshold = 0
+	# DeltaUsageThreshold = 0
 	# SysThreshold = 45
 	# DeltaSysThreshold = 20
 	# Interval = 10
@@ -498,9 +502,24 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
   Default: 10s.
 
-**Trigger Logic**: Tracing is triggered when both SysThreshold and DeltaSysThreshold are satisfied.
+| Optional key | Default | Scope and behavior |
+| --- | --- | --- |
+| `UserThreshold` | `0` (%) | Zero disables the user trigger; a positive value enables it. User CPU percentage must exceed this value. |
+| `DeltaUserThreshold` | `0` (percentage points) | User CPU increase over the previous interval must also exceed this value. |
+| `UsageThreshold` | `0` (%) | Zero disables the total trigger; a positive value enables it. Executing CPU percentage must exceed this value. |
+| `DeltaUsageThreshold` | `0` (percentage points) | Executing CPU increase over the previous interval must also exceed this value. |
 
-#### 7.3 Dload AutoTracing — D-State Task Profiling for Containers
+**Trigger logic and prerequisites**: `cpusys` must be enabled, host `/proc/stat`
+must be readable, and the existing system-wide perf capture must be available
+with the required privileges. Each trigger requires both its percentage
+and positive increase to exceed the corresponding thresholds. Any matching
+trigger can start the shared capture; all three share `IntervalTracing` and do
+not launch duplicate captures for simultaneous crossings. Percentages include
+container work and use aggregate host CPU time, not container quotas. Omitted
+user/total settings preserve system-only triggering. All four new thresholds
+must be in [0, 100]. Example opt-in pairs (usage/delta): user 75/45, total 90/55.
+
+#### 7.3 Dload AutoTracing — Container and Host D-State Profiling
 
 ```bash
 # dload
@@ -508,7 +527,8 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 # linux tasks D state profiling for containers.
 #
 # - ThresholdLoad
-# Load average threshold. When exceeded, D-state profiling triggers.
+# One-minute EMA threshold for the number of D-state tasks. Profiling triggers
+# when this value is exceeded.
 # Default: 5
 #
 # - Interval
@@ -520,15 +540,33 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 # performance impact.
 # Default: 1800s
 #
+# Cgroup v2 and host dload use a shared BPF task iterator that walks all
+# host tasks once per sample. Kubernetes deployments require hostPID: true.
+#
 [AutoTracing.Dload]
+	# HostThresholdLoad = 5
 	# ThresholdLoad = 5
 	# Interval = 10
 	# IntervalTracing = 1800
 ```
 
-- **ThresholdLoad**: System load average (loadavg) threshold for containers.
+- **Host trigger**: Runs independently and includes container threads; it is
+  not a host-services-only count.
+  Requires `dload` to be enabled, readable kernel BTF, BPF `task` iterator support,
+  BPF privileges and host PID visibility (`hostPID: true` in Kubernetes).
+  Works on cgroup v1 and v2. Unsupported iterator kernels cannot provide
+  the host trigger; the existing v1 container netlink path remains available.
 
-  Default: 5. Triggers D-state (uninterruptible sleep) task profiling when loadavg reaches this value.
+- **HostThresholdLoad**: Host D-state task count's one-minute EMA threshold.
+  Default: `5`. A value above the threshold triggers
+  host stack capture, subject to a separate host cooldown using `IntervalTracing`.
+  Reuses `Interval` (default 10 seconds); it is not the R+D `/proc/loadavg` value
+  and is independent of `MetricCollector.Loadavg.Interval`.
+
+- **ThresholdLoad**: One-minute EMA threshold for the number of uninterruptible
+  (D-state) tasks in a container.
+
+  Default: 5. Profiling triggers when the D-state task EMA exceeds this value.
 
 - **Interval**: Monitoring interval.
 
@@ -537,6 +575,11 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 - **IntervalTracing**: Minimum time between consecutive tracings.
 
   Default: 1800s (30 minutes).
+
+- **Cgroup v2**: Uses the shared BPF task iterator. Cgroup v1 keeps its netlink
+  path. The v2 implementation requires
+  readable kernel BTF and the BPF `task` iterator and counts only tasks directly
+  attached to each requested cgroup, not tasks in descendant cgroups.
 
 #### 7.4 IOTracing AutoTracing — Container IO Performance Profiling
 
@@ -634,8 +677,7 @@ This module detects sudden memory usage spikes on the host and automatically cap
 # Default: 100%
 #
 # - DeltaAnonThreshold
-# Growth percentage threshold for anonymous memory. 100% means, e.g.,
-# anon memory increased from 200MB to 400MB.
+# Anonymous LRU usage as a percentage of host MemTotal or the container limit.
 # Default: 70%
 #
 # - IntervalTracing
@@ -656,11 +698,26 @@ This module detects sudden memory usage spikes on the host and automatically cap
 	# DumpProcessMaxNum = 10
 ```
 
+- **Container detection**: Independently detects anonymous-memory bursts for
+  discovered normal containers alongside host detection.
+  Requires `memburst` to be enabled, container discovery, readable cgroup v1/v2
+  memory counters and limits, and access to `cgroup.procs` and process RSS for
+  snapshots. No new BPF probes are needed. Reads v1
+  `total_active_anon + total_inactive_anon` or v2 `active_anon + inactive_anon`,
+  not total cgroup usage.
+  Each container has its own window and cooldown, reusing the settings below.
+  At defaults, usage must at least double over the retained window and reach
+  70% of the effective memory limit capped at host MemTotal (unlimited containers
+  use MemTotal). Triggers capture the container's RSS-ranked processes and emit
+  `memburst` with its container ID; they do not require a host burst.
+
 - **DeltaMemoryBurst**: Memory usage burst growth percentage threshold.
 
   Default: 100%.
 
-- **DeltaAnonThreshold**: Anonymous memory burst growth percentage threshold.
+- **DeltaAnonThreshold**: Anonymous LRU usage threshold as a percentage of host
+  MemTotal, or of the effective limit described above for containers; not a
+  growth percentage.
 
   Default: 70%.
 
@@ -672,9 +729,9 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
   Default: 1800s.
 
-- **SlidingWindowLength**: Sliding window length (seconds).
+- **SlidingWindowLength**: Number of retained samples, not seconds.
 
-  Default: 60s.
+  Default: 60. At `Interval = 10`, oldest and newest samples span 590 seconds.
 
 - **DumpProcessMaxNum**: Maximum processes to dump on trigger.
 
@@ -741,6 +798,18 @@ This section captures key kernel events and latency, including scheduler tick in
 [EventTracing.MemoryReclaim]
 	# BlockedThreshold = 900000000
 ```
+
+- **Host output**: Retains slow direct-reclaim events without a resolved container
+  in the host stream. Requires the `memory_reclaim_events` collector
+  and its existing `try_to_free_pages` entry/return probes to be available and
+  attachable; no additional probe or cgroup-version-specific switch is needed.
+  Keeps the `memory_reclaim` event name and the same `BlockedThreshold`.
+  Empty container IDs are marked
+  `container_attribution="unresolved"`: this includes host tasks and unresolved
+  containers, not proven host-only attribution. Known containers still emit one
+  container event, without a host duplicate. This does not trace kswapd or add an
+  aggregate metric; it adds event output/storage for previously dropped
+  events.
 
 - **BlockedThreshold**: Memory reclaim blocking time threshold (nanoseconds).
 
@@ -943,6 +1012,20 @@ This section defines collection rules for various system and network metrics. Al
 ```bash
 # Metric Collector
 [MetricCollector]
+	# Cgroup v2 container load and host D-state metrics share a BPF task iterator
+	# that walks all host tasks per background sample (default: 15 seconds).
+	# Unsupported kernels retain procfs host load and v1 container metrics.
+	# Kubernetes deployments must run with hostPID: true.
+	[MetricCollector.Loadavg]
+		# Sampling interval in seconds; 0 uses the default of 15.
+		# Controls container load and host D-state sampling, not
+		# host /proc/loadavg scrapes or AutoTracing.Dload.Interval (default: 10).
+		# Interval = 15
+		# Host D-state tasks contributing to load are sampled every
+		# Interval seconds. Requires host PID visibility, kernel BTF and the BPF
+		# task iterator; works on cgroup v1/v2. Shares the v2 traversal.
+		# Unsupported systems omit this metric without a procfs fallback.
+
 	# Netdev statistic
 	#
 	# - EnableNetlink

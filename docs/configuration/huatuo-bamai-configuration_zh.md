@@ -428,7 +428,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
   默认无规则，监控所有容器。
 
-#### 7.2 CPUSys 自动追踪 — 宿主机突发高系统 CPU 使用场景
+#### 7.2 CPUSys 自动追踪 — 宿主机 CPU 突增
 
 ```bash
 # cpusys
@@ -458,9 +458,13 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 #
 # NOTE:
 # Running this performance tool, when:
-# SysThreshold and DeltaSysThreshold are true.
+# Both thresholds of any trigger are exceeded (system, user or total).
 #
 [AutoTracing.CPUSys]
+	# UserThreshold = 0
+	# DeltaUserThreshold = 0
+	# UsageThreshold = 0
+	# DeltaUsageThreshold = 0
 	# SysThreshold = 45
 	# DeltaSysThreshold = 20
 	# Interval = 10
@@ -484,9 +488,21 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
 - **RunTracingToolTimeout**：单次追踪执行超时时间（秒）。默认 10s。
 
-**触发逻辑**：当 SysThreshold 与 DeltaSysThreshold 同时满足时触发。
+| 可选配置项 | 默认值 | 范围与行为 |
+| --- | --- | --- |
+| `UserThreshold` | `0`（%） | 0 关闭 user 触发，正值启用；用户态使用率须超过此值。 |
+| `DeltaUserThreshold` | `0`（百分点） | 用户态使用率相较上一采样区间的增幅也须超过此值。 |
+| `UsageThreshold` | `0`（%） | 0 关闭 total 触发，正值启用；实际执行 CPU 使用率须超过此值。 |
+| `DeltaUsageThreshold` | `0`（百分点） | 实际执行 CPU 使用率相较上一采样区间的增幅也须超过此值。 |
 
-#### 7.3 Dload 自动追踪 — 容器 D 状态任务剖析
+**触发逻辑与前提**：须启用 `cpusys`、可读取主机 `/proc/stat`，且现有整机 perf
+采集工具及其所需权限可用。每种触发条件都要求使用率与正向增幅同时超过对应阈值，
+任意一种命中即可触发。三种条件共用采集流程与 `IntervalTracing` 冷却时间，
+同时命中不会重复采集。使用率按整机 CPU 时间计算，包含容器工作量，不按容器配额归一化。
+未配置 user/total 时，保持原有仅 system 触发的行为。四个新增阈值均须在 [0, 100] 范围内。
+显式启用示例（使用率/增幅）：user 75/45，total 90/55。
+
+#### 7.3 Dload 自动追踪 — 容器与主机 D 状态任务剖析
 
 ```bash
 # dload
@@ -494,8 +510,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 # linux tasks D state profiling for containers.
 #
 # - ThresholdLoad
-# The loadavg threshold value, when reaching this threshold, dload profiling
-# is triggered.
+# 容器 D 状态任务数量的一分钟 EMA 阈值，超过该值时触发 dload 剖析。
 # Default: 5
 #
 # - Interval
@@ -507,15 +522,30 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 # damage to the system.
 # Default: 1800s
 #
+# cgroup v2 与主机 dload 共用 BPF task iterator，每次采样遍历宿主机全部任务。
+# Kubernetes 部署必须设置 hostPID: true。
+#
 [AutoTracing.Dload]
+	# HostThresholdLoad = 5
 	# ThresholdLoad = 5
 	# Interval = 10
 	# IntervalTracing = 1800
 ```
 
-- **ThresholdLoad**：容器的系统负载平均值（loadavg）阈值。
+- **主机触发**：随 `dload` 启用，独立检测整机 D 状态负载。包含容器线程，
+  不代表仅统计物理机服务。要求启用 `dload`、内核 BTF 可读、支持 BPF `task` iterator、
+  具备 BPF 权限及主机 PID 可见性（Kubernetes 设置 `hostPID: true`）。支持 cgroup v1/v2，
+  内核不支持 iterator 时无法提供主机触发，
+  原有 v1 容器 netlink 路径仍可使用。
 
-  默认 5。 当 loadavg 达到该值时，触发 D 状态（不可中断睡眠）任务剖析。
+- **HostThresholdLoad**：整机 D 状态任务数量的一分钟 EMA 阈值，默认 `5`，
+  超过阈值触发主机堆栈采集，主机独立维护冷却状态，
+  冷却时长使用 `IntervalTracing`。复用 `Interval`（默认 10 秒）采样，
+  不是 `/proc/loadavg` 的 R+D 负载，也不受 `MetricCollector.Loadavg.Interval` 控制。
+
+- **ThresholdLoad**：容器不可中断睡眠（D 状态）任务数量的一分钟 EMA 阈值。
+
+  默认 5。当 D 状态任务 EMA 超过该值时触发剖析。
 
   **说明**：用于诊断容器中大量进程进入 D 状态的场景。
 
@@ -526,6 +556,9 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 - **IntervalTracing**：连续运行间隔（秒）。
 
   默认 1800s（30 分钟）。 两次自动追踪之间的最小间隔，防止频繁执行对系统造成压力。
+
+- **Cgroup v2**：随 `dload` 启用，cgroup v1 保持 netlink 路径。v2 实现要求内核 BTF 可读并支持 BPF `task` iterator；统计仅包含
+  直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。
 
 #### 7.4 IOTracing 自动追踪 — 容器 IO 性能剖析
 
@@ -624,8 +657,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 # Default: 100%
 #
 # - DeltaAnonThreshold
-# A certain percentage of anon memory burst used. 100% that means, e.g.,
-# anon memory used increased from 200MB to 400MB.
+# Anonymous LRU usage as a percentage of host MemTotal or the container limit.
 # Default: 70%
 #
 # - IntervalTracing
@@ -646,15 +678,26 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 	# DumpProcessMaxNum = 10
 ```
 
+- **容器检测**：随 `memburst` 启用，对已发现的普通容器独立检测匿名内存突增。
+  保留原主机检测。要求启用 `memburst`、容器发现可用、可读取 cgroup v1/v2
+  内存统计与限制，以及快照所需的 `cgroup.procs` 和进程 RSS；不新增 BPF 探针。
+  v1 读取 `total_active_anon + total_inactive_anon`，v2 读取
+  `active_anon + inactive_anon`，不是 cgroup 总内存使用量。各容器独立维护窗口和
+  冷却状态，复用下列配置。默认要求窗口内用量至少翻倍，且达到有效内存上限的 70%；
+  有效上限不超过主机 MemTotal，无限制容器使用 MemTotal。
+  触发后采集容器内按 RSS 排序的进程快照，输出携带容器 ID 的 `memburst`，
+  不需要主机同时发生内存突增。
+
 - **DeltaMemoryBurst**：内存使用量突发增长百分比阈值。
 
   默认 100%。 表示内存使用量在采样窗口内增长的比例（例如从 200MB 增长到 400MB 即 100%）。达到该阈值时可能触发内存突发追踪。 
 
   **说明**：用于捕获整体内存使用量的急剧上升场景。
 
-- **DeltaAnonThreshold**：匿名页内存突发增长百分比阈值。
+- **DeltaAnonThreshold**：匿名 LRU 用量占主机 MemTotal 或上述容器有效上限的比例阈值，
+  不是增长比例。
 
-  默认 70%。 匿名内存（anonymous memory）增长比例阈值，匿名页是内存压力诊断的重要指标。 
+  默认 70%。与 `DeltaMemoryBurst` 增长条件同时满足时才触发。
 
   **说明**：重点监控易导致 OOM 或 swap 的匿名内存突发。
 
@@ -675,6 +718,9 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
   默认 10。 当内存突发事件触发时，最多转储多少个相关进程的详细信息（包括内存占用、调用栈等）。
 
   **说明**：控制输出数据量，避免单次事件产生过多诊断信息。
+
+- **SlidingWindowLength**：保留的采样点数，不是秒数，默认 `60`。
+  `Interval = 10` 时，最早与最新采样点相隔 590 秒。
 
 #### 7.6 已知问题过滤（IssuesList）
 
@@ -733,6 +779,15 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 [EventTracing.MemoryReclaim]
 	# BlockedThreshold = 900000000
 ```
+
+- **主机输出**：将未解析出容器归属的慢速直接回收事件保留在主机事件流。
+  要求启用 `memory_reclaim_events` 采集器，且现有 `try_to_free_pages` 入口/返回探针
+  可用并能挂载；不新增探针，也没有额外的 cgroup 版本开关。
+  沿用 `memory_reclaim` 事件名和 `BlockedThreshold`。
+  空容器 ID 标记为 `container_attribution="unresolved"`，可能是主机任务，
+  也可能是归属未解析的容器任务，不能认为已确认属于物理机服务。
+  已知容器仍只输出一条容器事件，不重复输出主机事件。此路径不采集 kswapd，
+  也不增加聚合指标；新增开销是原先丢弃事件的输出与存储。
 
 - **BlockedThreshold**：内存回收阻塞时间阈值（纳秒）。默认 900000000 ns（900ms）。 当单个进程因内存回收（reclaim）被阻塞超过该时间时，向用户态上报事件并捕获上下文。 说明：内存回收阻塞是导致进程卡顿的常见原因，尤其在内存紧张的云原生环境中。
 
@@ -935,6 +990,18 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 ```bash
 # Metric Collector
 [MetricCollector]
+	# cgroup v2 容器负载与主机 D 状态指标共用 BPF task iterator，默认每 15 秒
+	# 遍历宿主机全部任务。不支持时仍保留宿主机 loadavg 和 cgroup v1 容器指标。
+	# Kubernetes 部署必须设置 hostPID: true。
+	[MetricCollector.Loadavg]
+		# 后台采样间隔，单位秒；0 使用默认值 15。
+		# 控制容器负载及主机 D 状态采样，不影响主机 /proc/loadavg 抓取，
+		# 也不影响 AutoTracing.Dload.Interval（默认 10 秒）。
+		# Interval = 15
+		# 开启主机参与负载计算的 D 状态任务计数，每 Interval 秒采样。
+		# 适用于 cgroup v1/v2，需要主机 PID 可见性、内核 BTF 和 BPF
+		# task iterator，与 v2 容器统计共用遍历；不支持时省略指标。
+
 	# Netdev statistic
 	#
 	# - EnableNetlink
