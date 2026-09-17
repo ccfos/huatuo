@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"syscall"
@@ -45,7 +46,7 @@ type Handle struct {
 func Lock(name string) (*Handle, error) {
 	p := path(name)
 
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -60,6 +61,21 @@ func Lock(name string) (*Handle, error) {
 
 			return nil, fmt.Errorf("already running: %s pid=%s", p, bytes.TrimSpace(pid))
 		}
+
+		return nil, err
+	}
+
+	if err := f.Truncate(0); err != nil {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+		_ = os.Remove(p)
+
+		return nil, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+		_ = os.Remove(p)
 
 		return nil, err
 	}
