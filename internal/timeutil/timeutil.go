@@ -14,9 +14,9 @@
 
 // Package timeutil defines the canonical time format used everywhere
 // in the project: storage records, wire protocols, log lines, file
-// names. Every serialization boundary must go through FormatUTC; every
-// parser must go through Parse. Direct use of time.Format/time.Parse
-// in business code is forbidden by lint.
+// names. Use FormatUTC for strings and Timestamp for JSON fields. Parse
+// normalizes string input to UTC; Timestamp accepts RFC3339 through time.Time.
+// Direct use of time.Format/time.Parse in business code is forbidden by lint.
 package timeutil
 
 import "time"
