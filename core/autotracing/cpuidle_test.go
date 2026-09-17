@@ -26,6 +26,7 @@ import (
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/stats"
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 )
 
@@ -594,7 +595,7 @@ func TestSaveCPUIdleTraceRejectsInvalidPerfOutput(t *testing.T) {
 	tracer := &cpuIdleTracing{}
 	err := tracer.saveCPUIdleTrace(
 		&containerCPUState{},
-		time.Unix(100, 0),
+		timeutil.Timestamp{Time: time.Unix(100, 0)},
 		[]byte("not-json"),
 	)
 	if err == nil || !strings.Contains(err.Error(), "decode container perf output") {

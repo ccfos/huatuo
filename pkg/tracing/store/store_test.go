@@ -22,6 +22,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/watch"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -87,7 +88,7 @@ func TestStoreSavesAndPublishesTracingDocument(t *testing.T) {
 			Hostname:          "node-1",
 			TracerID:          "trace-1",
 			TracerRunType:     types.TracerRunTypeEvent,
-			ObservedTimestamp: &observedTimestamp,
+			ObservedTimestamp: &timeutil.Timestamp{Time: observedTimestamp},
 		},
 		TracerData: map[string]any{"value": float64(1)},
 	}
@@ -143,8 +144,8 @@ func TestMapperKeepsCommonFieldsFlat(t *testing.T) {
 			Hostname:          "node-1",
 			TracerID:          "trace-1",
 			TracerRunType:     types.TracerRunTypeEvent,
-			UploadedTimestamp: time.Date(2026, 8, 28, 2, 0, 1, 0, time.UTC),
-			ObservedTimestamp: &observedTimestamp,
+			UploadedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 8, 28, 2, 0, 1, 0, time.UTC)},
+			ObservedTimestamp: &timeutil.Timestamp{Time: observedTimestamp},
 		},
 		TracerData: map[string]any{"kind": "drop"},
 	}
@@ -172,11 +173,11 @@ func TestMapperKernelObservationRoundTrip(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			doc := &Document{Document: types.Document{
 				TracerRunType:     types.TracerRunTypeEvent,
-				ObservedTimestamp: &observed,
-				UploadedTimestamp: observed.Add(time.Second),
+				ObservedTimestamp: &timeutil.Timestamp{Time: observed},
+				UploadedTimestamp: timeutil.Timestamp{Time: observed.Add(time.Second)},
 			}}
 			if available {
-				doc.KernelObservedTimestamp = &kernel
+				doc.KernelObservedTimestamp = &timeutil.Timestamp{Time: kernel}
 			}
 			m := mapper{}
 			data, err := m.Encode(doc)

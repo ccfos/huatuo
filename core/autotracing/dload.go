@@ -28,6 +28,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/matcher"
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/types"
 
@@ -202,7 +203,7 @@ func (d *dloadTracing) buildAndSave(
 	container *containerDloadInfo,
 	loadStats cadvisorV1.LoadStats,
 ) error {
-	startedTimestamp := time.Now().UTC()
+	startedTimestamp := timeutil.Now()
 	cgroupPath := container.cgroupName
 	containerID := container.container.ID
 

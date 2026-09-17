@@ -17,6 +17,9 @@ package types
 import (
 	"encoding/json"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -29,8 +32,8 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 		{
 			name: "full event",
 			ev: &TCPRetransmitTracing{
-				ObservedTimestamp:       "2026-07-08T09:19:52.042035335Z",
-				KernelObservedTimestamp: "2026-07-08T09:19:52Z",
+				ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 7, 8, 9, 19, 52, 42035335, time.UTC)},
+				KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 7, 8, 9, 19, 52, 0, time.UTC)},
 				TCPReason:               "fast_retransmit",
 				Source:                  "events",
 				Comm:                    "kube-apiserver",
@@ -71,7 +74,7 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 		{
 			name: "minimal event",
 			ev: &TCPRetransmitTracing{
-				ObservedTimestamp: "2026-07-08T00:00:00Z",
+				ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)},
 				TCPReason:         "RTO",
 				TCPSaddr:          "::",
 				TCPDaddr:          "::",
@@ -85,7 +88,7 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 		{
 			name: "synack zero sequence",
 			ev: &TCPRetransmitTracing{
-				ObservedTimestamp: "2026-07-08T00:00:00Z",
+				ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)},
 				TCPReason:         "RTO",
 				TCPSaddr:          "10.0.0.1",
 				TCPDaddr:          "10.0.0.2",
@@ -99,7 +102,7 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 		{
 			name: "tlp event",
 			ev: &TCPRetransmitTracing{
-				ObservedTimestamp: "2026-07-08T00:00:00Z",
+				ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)},
 				TCPReason:         "TLP",
 				TCPSaddr:          "10.0.0.1",
 				TCPDaddr:          "10.0.0.2",
@@ -135,7 +138,7 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 
 func TestTCPRetransmitTracingOmitEmpty(t *testing.T) {
 	ev := &TCPRetransmitTracing{
-		ObservedTimestamp: "2026-07-08T00:00:00Z",
+		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)},
 		TCPReason:         "RTO",
 		TCPSaddr:          "10.0.0.1",
 		TCPDaddr:          "10.0.0.2",
@@ -251,8 +254,8 @@ func TestTCPRetransmitReasonString(t *testing.T) {
 
 func TestTCPRetransmitJSONExcludesMonotonicClock(t *testing.T) {
 	event := TCPRetransmitTracing{
-		ObservedTimestamp:       "2026-09-15T02:00:01Z",
-		KernelObservedTimestamp: "2026-09-15T02:00:00Z",
+		ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 9, 15, 2, 0, 1, 0, time.UTC)},
+		KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 9, 15, 2, 0, 0, 0, time.UTC)},
 		KernelObservedNS:        123456789,
 	}
 	data, err := json.Marshal(event)
@@ -263,7 +266,7 @@ func TestTCPRetransmitJSONExcludesMonotonicClock(t *testing.T) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if raw["kernel_observed_timestamp"] != event.KernelObservedTimestamp {
+	if raw["kernel_observed_timestamp"] != event.KernelObservedTimestamp.FormatUTC() {
 		t.Fatalf("JSON = %s", data)
 	}
 	for _, field := range []string{"ktime_ns", "kernel_observed_ns"} {

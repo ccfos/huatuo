@@ -17,7 +17,8 @@ package types
 import (
 	"errors"
 	"fmt"
-	"time"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 const (
@@ -63,12 +64,12 @@ const (
 //
 // TracerRunType determines which producer-owned timestamp is required.
 type Document struct {
-	Hostname                string     `json:"hostname"`
-	Region                  string     `json:"region"`
-	UploadedTimestamp       time.Time  `json:"uploaded_timestamp"`
-	StartedTimestamp        *time.Time `json:"started_timestamp,omitempty"`
-	ObservedTimestamp       *time.Time `json:"observed_timestamp,omitempty"`
-	KernelObservedTimestamp *time.Time `json:"kernel_observed_timestamp,omitempty"`
+	Hostname                string              `json:"hostname"`
+	Region                  string              `json:"region"`
+	UploadedTimestamp       timeutil.Timestamp  `json:"uploaded_timestamp"`
+	StartedTimestamp        *timeutil.Timestamp `json:"started_timestamp,omitempty"`
+	ObservedTimestamp       *timeutil.Timestamp `json:"observed_timestamp,omitempty"`
+	KernelObservedTimestamp *timeutil.Timestamp `json:"kernel_observed_timestamp,omitempty"`
 
 	ContainerID            string `json:"container_id,omitempty"`
 	ContainerHostname      string `json:"container_hostname,omitempty"`

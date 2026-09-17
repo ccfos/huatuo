@@ -20,12 +20,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -151,7 +151,7 @@ func (*schedTickTracing) Start(ctx context.Context) error {
 
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        schedTickTracerName,
-				ObservedTimestamp: time.Now().UTC(),
+				ObservedTimestamp: timeutil.Now(),
 				TracerData: &SchedTickTracingData{
 					TickIntervalNS:          data.TickIntervalNS,
 					TickIntervalThresholdNS: tickIntervalThresholdNS,

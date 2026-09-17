@@ -58,18 +58,30 @@ func MonotonicNowNS() (uint64, error) {
 	return uint64(unix.TimespecToNsec(ts)), nil
 }
 
-// MonotonicToTime converts a host CLOCK_MONOTONIC timestamp to UTC. The offset
+// KtimeToTime converts a host CLOCK_MONOTONIC timestamp to UTC. The offset
 // is refreshed on demand one hour after the last successful refresh.
 // Historical events spanning a clock step or suspend cannot be reconstructed
 // exactly from a monotonic timestamp alone.
 // The caller must supply a valid kernel timestamp whose value and converted
 // Unix nanoseconds fit in int64; this hot path does not check for overflow.
-func MonotonicToTime(monotonicNS uint64) (time.Time, error) {
+func KtimeToTime(monotonicNS uint64) (time.Time, error) {
 	offset, err := realtimeOffsetCache.loadOrRefresh(time.Now, MonoToRealOffset)
 	if err != nil {
 		return time.Time{}, err
 	}
 	return time.Unix(0, int64(monotonicNS)+offset).UTC(), nil
+}
+
+// KtimeToTimestamp converts KernelObservedNS from bpf_ktime_get_ns() to a UTC
+// Timestamp. The input is host CLOCK_MONOTONIC nanoseconds, not Unix nanoseconds.
+// It shares KtimeToTime's offset cache, range requirements, and clock-step
+// limitations.
+func KtimeToTimestamp(kernelObservedNS uint64) (Timestamp, error) {
+	t, err := KtimeToTime(kernelObservedNS)
+	if err != nil {
+		return Timestamp{}, err
+	}
+	return Timestamp{Time: t}, nil
 }
 
 // MonoToRealOffset brackets a CLOCK_MONOTONIC read between two

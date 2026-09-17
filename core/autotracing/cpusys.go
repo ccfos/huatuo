@@ -29,6 +29,7 @@ import (
 	"github.com/ccfos/huatuo/internal/flamegraph"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -235,7 +236,7 @@ func (c *cpuSysTracing) shouldTrace(state cpuSysState, sampledAt time.Time) bool
 }
 
 func (c *cpuSysTracing) saveCPUSysTrace(
-	traceTime time.Time,
+	traceTime timeutil.Timestamp,
 	state cpuSysState,
 	flameData []byte,
 ) error {
@@ -285,7 +286,7 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			traceTime := time.Now()
+			traceTime := timeutil.Now()
 			log.WithField("cpu_system_percent", state.systemPercent).
 				WithField("cpu_system_delta", state.systemPercentDelta).
 				WithField("duration_seconds", int64(c.perfDuration/time.Second)).
@@ -300,7 +301,7 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 			if err := c.saveCPUSysTrace(traceTime, state, flameData); err != nil {
 				return err
 			}
-			c.lastTraceAt = traceTime
+			c.lastTraceAt = traceTime.Time
 		}
 	}
 }

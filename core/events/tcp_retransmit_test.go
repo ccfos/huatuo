@@ -16,14 +16,16 @@ package events
 
 import (
 	"testing"
+	"time"
 
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestHandleTCPRetransmitEventPreservesCorrelationResult(t *testing.T) {
 	perfStatus := &types.DropwatchPerfStatus{PerfLost: 1}
 	event := &types.TCPRetransmitTracing{
-		ObservedTimestamp: "2026-09-10T08:00:00Z",
+		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 10, 8, 0, 0, 0, time.UTC)},
 		ContainerID:       "container-id",
 		DropLocation:      "unknown",
 		CorrelationReasons: []types.CorrelationReason{

@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/exec"
@@ -100,24 +99,20 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 		})
 	}
 
-	observedTimestamp, err := timeutil.Parse(ev.ObservedTimestamp)
-	if err != nil {
-		return fmt.Errorf("parse dropwatch observed timestamp: %w", err)
+	if ev.ObservedTimestamp.IsZero() {
+		return errors.New("dropwatch observed timestamp is required")
 	}
-	var kernelObservedTimestamp time.Time
-	if ev.KernelObservedTimestamp != "" {
-		kernelObservedTimestamp, err = timeutil.Parse(ev.KernelObservedTimestamp)
-		if err != nil {
-			return fmt.Errorf("parse dropwatch kernel observed timestamp: %w", err)
-		}
+	var kernelObservedTimestamp timeutil.Timestamp
+	if ev.KernelObservedTimestamp != nil {
+		kernelObservedTimestamp = *ev.KernelObservedTimestamp
 	}
 	tracerData := *ev
-	tracerData.ObservedTimestamp = ""
-	tracerData.KernelObservedTimestamp = ""
+	tracerData.ObservedTimestamp = timeutil.Timestamp{}
+	tracerData.KernelObservedTimestamp = nil
 	return tracing.Save(&tracing.WriteRequest{
 		TracerName:              "dropwatch",
 		ContainerID:             ev.ContainerID,
-		ObservedTimestamp:       observedTimestamp,
+		ObservedTimestamp:       ev.ObservedTimestamp,
 		KernelObservedTimestamp: kernelObservedTimestamp,
 		TracerData:              &tracerData,
 	})

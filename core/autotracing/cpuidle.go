@@ -28,6 +28,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/matcher"
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -395,7 +396,7 @@ func (c *cpuIdleTracing) selectTraceTarget(sampledAt time.Time) *containerCPUSta
 
 func (c *cpuIdleTracing) saveCPUIdleTrace(
 	state *containerCPUState,
-	traceTime time.Time,
+	traceTime timeutil.Timestamp,
 	flameData []byte,
 ) error {
 	tracerData := cpuIdleTracingData{
@@ -452,7 +453,7 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			traceTime := time.Now()
+			traceTime := timeutil.Now()
 			log.WithField("container_id", traceTarget.containerID).
 				WithField("cgroup_path", traceTarget.cgroupPath).
 				WithField("cpu_percent", traceTarget.currentPercent).
@@ -470,7 +471,7 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 			if err := c.saveCPUIdleTrace(traceTarget, traceTime, flameData); err != nil {
 				return err
 			}
-			traceTarget.lastTraceAt = traceTime
+			traceTarget.lastTraceAt = traceTime.Time
 		}
 	}
 }

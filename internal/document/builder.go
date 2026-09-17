@@ -19,9 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -32,9 +32,9 @@ type Input struct {
 	TracerName              string
 	TracerID                string
 	ContainerID             string
-	StartedTimestamp        time.Time
-	ObservedTimestamp       time.Time
-	KernelObservedTimestamp time.Time
+	StartedTimestamp        timeutil.Timestamp
+	ObservedTimestamp       timeutil.Timestamp
+	KernelObservedTimestamp timeutil.Timestamp
 	TracerRunType           string
 }
 
@@ -69,15 +69,15 @@ func (b *Builder) Build(input *Input) (types.Document, error) {
 		TracerRunType: input.TracerRunType,
 	}
 	if !input.StartedTimestamp.IsZero() {
-		startedTimestamp := input.StartedTimestamp.UTC()
+		startedTimestamp := input.StartedTimestamp
 		metadata.StartedTimestamp = &startedTimestamp
 	}
 	if !input.ObservedTimestamp.IsZero() {
-		observedTimestamp := input.ObservedTimestamp.UTC()
+		observedTimestamp := input.ObservedTimestamp
 		metadata.ObservedTimestamp = &observedTimestamp
 	}
 	if !input.KernelObservedTimestamp.IsZero() {
-		kernelObservedTimestamp := input.KernelObservedTimestamp.UTC()
+		kernelObservedTimestamp := input.KernelObservedTimestamp
 		metadata.KernelObservedTimestamp = &kernelObservedTimestamp
 	}
 	if input.ContainerID == "" {

@@ -20,7 +20,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/linkstatus"
@@ -43,10 +42,10 @@ type textWriter struct{ w io.Writer }
 
 func (s *textWriter) Write(ev *types.DropWatchTracing) error {
 	line := make([]byte, 0, 256)
-	line = append(line, ev.ObservedTimestamp...)
-	if ev.KernelObservedTimestamp != "" {
+	line = append(line, ev.ObservedTimestamp.FormatUTC()...)
+	if ev.KernelObservedTimestamp != nil {
 		line = append(line, " kernel_observed_timestamp="...)
-		line = append(line, ev.KernelObservedTimestamp...)
+		line = append(line, ev.KernelObservedTimestamp.FormatUTC()...)
 	}
 	line = append(line, ' ')
 	line = append(line, ev.Layers.String()...)
@@ -146,8 +145,8 @@ func newWriter(output io.Writer, options *writerOptions) (writer, func() error, 
 }
 
 func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType string) (*types.DropWatchTracing, error) {
-	observedTimestamp := time.Now().UTC()
-	kernelObservedTimestamp, err := timeutil.MonotonicToTime(ev.Meta.KernelObservedNS)
+	observedTimestamp := timeutil.Now()
+	kernelObservedTimestamp, err := timeutil.KtimeToTimestamp(ev.Meta.KernelObservedNS)
 	if err != nil {
 		return nil, fmt.Errorf("convert dropwatch kernel observation time: %w", err)
 	}
@@ -174,8 +173,8 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType stri
 	}
 
 	return &types.DropWatchTracing{
-		ObservedTimestamp:       observedTimestamp.Format(time.RFC3339Nano),
-		KernelObservedTimestamp: kernelObservedTimestamp.Format(time.RFC3339Nano),
+		ObservedTimestamp:       observedTimestamp,
+		KernelObservedTimestamp: &kernelObservedTimestamp,
 		DropSource:              dropSource,
 		DropReason:              dropReason,
 		DropReasonGroup:         bytesutil.ToStr(ev.Meta.TrapGroupName[:]),

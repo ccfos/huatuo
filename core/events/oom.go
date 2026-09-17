@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
@@ -27,6 +26,7 @@ import (
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
@@ -159,7 +159,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "oom",
-				ObservedTimestamp: time.Now().UTC(),
+				ObservedTimestamp: timeutil.Now(),
 				TracerData:        oomData,
 				ContainerID:       oomData.Victim.ContainerID,
 			}); err != nil {

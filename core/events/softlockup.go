@@ -24,6 +24,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 	"github.com/ccfos/huatuo/internal/utils/kmsgutil"
@@ -123,7 +124,7 @@ func (c *softLockupTracing) Start(ctx context.Context) error {
 
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "softlockup",
-				ObservedTimestamp: time.Now().UTC(),
+				ObservedTimestamp: timeutil.Now(),
 				TracerData: &SoftLockupTracerData{
 					CPU:       data.CPU,
 					PID:       data.TGID,

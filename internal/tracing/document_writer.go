@@ -17,7 +17,8 @@ package tracing
 import (
 	"errors"
 	"sync/atomic"
-	"time"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 
 	"github.com/rs/xid"
 
@@ -31,9 +32,9 @@ type WriteRequest struct {
 	TracerName              string
 	TracerID                string
 	ContainerID             string
-	StartedTimestamp        time.Time
-	ObservedTimestamp       time.Time
-	KernelObservedTimestamp time.Time
+	StartedTimestamp        timeutil.Timestamp
+	ObservedTimestamp       timeutil.Timestamp
+	KernelObservedTimestamp timeutil.Timestamp
 	TracerData              any
 	TracerRunType           string
 }

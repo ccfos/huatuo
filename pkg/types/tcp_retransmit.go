@@ -14,6 +14,8 @@
 
 package types
 
+import "github.com/ccfos/huatuo/internal/timeutil"
+
 // TCPRetransmitPhase is the connection state-machine stage for a TCP retransmission.
 type TCPRetransmitPhase uint8
 
@@ -86,8 +88,8 @@ const (
 
 // TCPRetransmitTracing is the canonical JSON schema for a TCP retransmission event.
 type TCPRetransmitTracing struct {
-	KernelObservedTimestamp string `json:"kernel_observed_timestamp,omitempty"`
-	ObservedTimestamp       string `json:"observed_timestamp,omitempty"`
+	KernelObservedTimestamp *timeutil.Timestamp `json:"kernel_observed_timestamp,omitempty"`
+	ObservedTimestamp       timeutil.Timestamp  `json:"observed_timestamp,omitzero"`
 	// Internal correlation uses the raw clock; documents expose UTC instead.
 	KernelObservedNS    uint64 `json:"-"`
 	Source              string `json:"source,omitempty"`

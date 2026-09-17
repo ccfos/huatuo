@@ -100,7 +100,7 @@ type RasTracingData struct {
 	Event                   string `json:"event"`
 	ErrType                 string `json:"type"`
 	Info                    string `json:"info"`
-	kernelObservedTimestamp time.Time
+	kernelObservedTimestamp timeutil.Timestamp
 }
 
 const defaultThrEventBackoff = 30 * time.Minute
@@ -359,7 +359,7 @@ func newRasTracingData[T any](ev *rasEvent, device, event, errType string, info 
 	if err != nil {
 		return nil, fmt.Errorf("marshal %s info: %w", event, err)
 	}
-	observedAt, err := timeutil.MonotonicToTime(ev.KernelObservedNS)
+	observedAt, err := timeutil.KtimeToTimestamp(ev.KernelObservedNS)
 	if err != nil {
 		return nil, fmt.Errorf("convert %s event time: %w", event, err)
 	}
@@ -368,7 +368,7 @@ func newRasTracingData[T any](ev *rasEvent, device, event, errType string, info 
 		Event:                   event,
 		ErrType:                 errType,
 		Info:                    string(b),
-		kernelObservedTimestamp: observedAt.UTC(),
+		kernelObservedTimestamp: observedAt,
 	}, nil
 }
 
@@ -681,7 +681,7 @@ func (ras *rasTracing) rasEventLoop(ctx context.Context, reader bpf.PerfEventRea
 				return fmt.Errorf("read ras event: %w", err)
 			}
 
-			observedTimestamp := time.Now().UTC()
+			observedTimestamp := timeutil.Now()
 
 			if int(ev.Type) < maxNumHWErrTypes {
 				ras.counts[ev.Type].Add(1)

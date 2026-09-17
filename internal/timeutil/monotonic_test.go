@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-func TestMonotonicToTimeOffsets(t *testing.T) {
+func TestKtimeToTimeOffsets(t *testing.T) {
 	// Keep clock sampling out of the arithmetic boundary cases.
 	realtimeOffsetCache.mu.Lock()
 	offsetNS, refreshedAt := realtimeOffsetCache.offsetNS, realtimeOffsetCache.refreshedAt
@@ -52,7 +52,7 @@ func TestMonotonicToTimeOffsets(t *testing.T) {
 			realtimeOffsetCache.offsetNS = tt.offset
 			realtimeOffsetCache.refreshedAt = time.Now()
 			realtimeOffsetCache.mu.Unlock()
-			got, err := MonotonicToTime(tt.monotonicNS)
+			got, err := KtimeToTime(tt.monotonicNS)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -63,14 +63,27 @@ func TestMonotonicToTimeOffsets(t *testing.T) {
 	}
 }
 
-func BenchmarkMonotonicToTime(b *testing.B) {
+func BenchmarkKtimeToTime(b *testing.B) {
 	monotonicNS, err := MonotonicNowNS()
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, err := MonotonicToTime(monotonicNS); err != nil {
+		if _, err := KtimeToTime(monotonicNS); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkKtimeToTimestamp(b *testing.B) {
+	monotonicNS, err := MonotonicNowNS()
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := KtimeToTimestamp(monotonicNS); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -17,7 +17,6 @@ package main
 import (
 	"fmt"
 	"net"
-	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -39,8 +38,8 @@ func retransmitEventFromRecord(
 	record *abi.TCPRetransmitEvent,
 	sourceType string,
 ) (*types.TCPRetransmitTracing, error) {
-	observedTimestamp := time.Now().UTC()
-	kernelObservedTimestamp, err := timeutil.MonotonicToTime(record.KernelObservedNS)
+	observedTimestamp := timeutil.Now()
+	kernelObservedTimestamp, err := timeutil.KtimeToTimestamp(record.KernelObservedNS)
 	if err != nil {
 		return nil, fmt.Errorf("convert TCP retransmit kernel observation time: %w", err)
 	}
@@ -67,8 +66,8 @@ func retransmitEventFromRecord(
 	}
 
 	return &types.TCPRetransmitTracing{
-		ObservedTimestamp:       observedTimestamp.Format(time.RFC3339Nano),
-		KernelObservedTimestamp: kernelObservedTimestamp.Format(time.RFC3339Nano),
+		ObservedTimestamp:       observedTimestamp,
+		KernelObservedTimestamp: &kernelObservedTimestamp,
 		KernelObservedNS:        record.KernelObservedNS,
 		TCPReason:               classification.reason.String(),
 		Source:                  sourceType,

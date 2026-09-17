@@ -254,7 +254,7 @@ func (s *Store) prepareDocument(document *Document) error {
 		return errors.New("profile storage is not initialized")
 	}
 	if document != nil {
-		document.UploadedTimestamp = time.Now().UTC()
+		document.UploadedTimestamp = timeutil.Now()
 	}
 	return nil
 }

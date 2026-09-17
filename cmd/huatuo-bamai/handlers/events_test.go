@@ -28,6 +28,7 @@ import (
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
 	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -104,8 +105,8 @@ func TestWatchEventsWritesCloudEvent(t *testing.T) {
 	if err := store.Save(&tracingstore.Document{Document: types.Document{
 		Hostname:                "node-1",
 		Region:                  "cn",
-		ObservedTimestamp:       &observedTimestamp,
-		KernelObservedTimestamp: &kernelObservedTimestamp,
+		ObservedTimestamp:       &timeutil.Timestamp{Time: observedTimestamp},
+		KernelObservedTimestamp: &timeutil.Timestamp{Time: kernelObservedTimestamp},
 		TracerName:              "cpu",
 		TracerRunType:           types.TracerRunTypeEvent,
 	}}); err != nil {

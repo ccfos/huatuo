@@ -17,11 +17,11 @@ package events
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
@@ -89,7 +89,7 @@ func (c *txqueueTimeout) Start(ctx context.Context) error {
 
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "netdev_txqueue_timeout",
-				ObservedTimestamp: time.Now().UTC(),
+				ObservedTimestamp: timeutil.Now(),
 				TracerData:        data,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)

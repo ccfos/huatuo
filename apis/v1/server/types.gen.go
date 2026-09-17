@@ -21,6 +21,7 @@ import (
 	"time"
 
 	externalRef0 "github.com/ccfos/huatuo/apis/v1"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
@@ -309,8 +310,12 @@ type RawProfile struct {
 	Profile           interface{} `json:"profile"`
 	ProfileType       string      `json:"profile_type"`
 	Region            string      `json:"region"`
-	StartedTimestamp  time.Time   `json:"started_timestamp"`
-	UploadedTimestamp time.Time   `json:"uploaded_timestamp"`
+
+	// StartedTimestamp UTC timestamp emitted with nine fractional digits.
+	StartedTimestamp timeutil.Timestamp `json:"started_timestamp"`
+
+	// UploadedTimestamp UTC timestamp emitted with nine fractional digits.
+	UploadedTimestamp timeutil.Timestamp `json:"uploaded_timestamp"`
 }
 
 // RawProfilePage defines model for RawProfilePage.

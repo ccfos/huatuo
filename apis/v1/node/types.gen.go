@@ -317,10 +317,10 @@ type WatchEventData struct {
 	ContainerType          *string `json:"container_type,omitempty"`
 	Hostname               string  `json:"hostname"`
 
-	// KernelObservedTimestamp UTC time when the kernel observed the event, when available.
+	// KernelObservedTimestamp UTC time when the kernel observed the event, when available, emitted with nine fractional digits.
 	KernelObservedTimestamp *time.Time `json:"kernel_observed_timestamp,omitempty"`
 
-	// ObservedTimestamp UTC time when the event producer observed the event in userspace.
+	// ObservedTimestamp UTC time when the event producer observed the event in userspace, emitted with nine fractional digits.
 	ObservedTimestamp time.Time `json:"observed_timestamp"`
 	Region            string    `json:"region"`
 	TracerID          *string   `json:"tracer_id,omitempty"`

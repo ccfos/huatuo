@@ -18,6 +18,9 @@ import (
 	"encoding/json"
 	"net"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -67,8 +70,8 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := &DropWatchTracing{
-				ObservedTimestamp:       "2026-06-13T00:00:00Z",
-				KernelObservedTimestamp: "2026-06-12T23:59:59Z",
+				ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)},
+				KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 6, 12, 23, 59, 59, 0, time.UTC)},
 				Layers:                  tc.pkt,
 			}
 
@@ -90,7 +93,7 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 }
 
 func TestDropWatchTracingNilLayers(t *testing.T) {
-	src := &DropWatchTracing{ObservedTimestamp: "2026-06-13T00:00:00Z"}
+	src := &DropWatchTracing{ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)}}
 
 	b, err := json.Marshal(src)
 	if err != nil {

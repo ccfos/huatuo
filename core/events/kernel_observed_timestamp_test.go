@@ -49,15 +49,19 @@ func TestToolEventsPersistSeparateObservationTimes(t *testing.T) {
 		send func(string) error
 	}{
 		{name: "tcp retransmit", send: func(timestamp string) error {
-			return handleTCPRetransmitEvent(nil, &types.TCPRetransmitTracing{
-				ObservedTimestamp: observed, KernelObservedTimestamp: timestamp,
-				KernelObservedNS: 12345,
-			})
+			var event types.TCPRetransmitTracing
+			if err := json.Unmarshal([]byte(`{"observed_timestamp":"`+observed+`","kernel_observed_timestamp":"`+timestamp+`"}`), &event); err != nil {
+				return err
+			}
+			event.KernelObservedNS = 12345
+			return handleTCPRetransmitEvent(nil, &event)
 		}},
 		{name: "dropwatch", send: func(timestamp string) error {
-			return handleDropwatchEvent(nil, &types.DropWatchTracing{
-				ObservedTimestamp: observed, KernelObservedTimestamp: timestamp,
-			})
+			var event types.DropWatchTracing
+			if err := json.Unmarshal([]byte(`{"observed_timestamp":"`+observed+`","kernel_observed_timestamp":"`+timestamp+`"}`), &event); err != nil {
+				return err
+			}
+			return handleDropwatchEvent(nil, &event)
 		}},
 	}
 	for _, tt := range tests {
@@ -107,7 +111,16 @@ func TestRASKernelObservationTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if delta := before.Sub(data.kernelObservedTimestamp); delta < -time.Second || delta > time.Second {
+	if delta := before.Sub(data.kernelObservedTimestamp.Time); delta < -time.Second || delta > time.Second {
 		t.Fatalf("converted RAS time differs by %v", delta)
+	}
+}
+
+func TestToolEventsRequireObservationTime(t *testing.T) {
+	if err := handleDropwatchEvent(nil, &types.DropWatchTracing{}); err == nil {
+		t.Fatal("dropwatch event without observation time accepted")
+	}
+	if err := handleTCPRetransmitEvent(nil, &types.TCPRetransmitTracing{}); err == nil {
+		t.Fatal("TCP retransmit event without observation time accepted")
 	}
 }

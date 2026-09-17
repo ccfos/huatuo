@@ -19,16 +19,15 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/ccfos/huatuo/internal/timeutil"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func documentToWatchEvent(document *tracingstore.Document) types.WatchEvent {
-	observedTimestamp := timeutil.FormatUTC(*document.ObservedTimestamp)
+	observedTimestamp := document.ObservedTimestamp.FormatUTC()
 	var kernelObservedTimestamp string
 	if document.KernelObservedTimestamp != nil {
-		kernelObservedTimestamp = timeutil.FormatUTC(*document.KernelObservedTimestamp)
+		kernelObservedTimestamp = document.KernelObservedTimestamp.FormatUTC()
 	}
 	return types.WatchEvent{
 		SpecVersion:     "1.0",

@@ -22,10 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/timeutil"
-
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -49,7 +48,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 	w := &textWriter{w: &output}
 
 	err := w.Write(&types.DropWatchTracing{
-		ObservedTimestamp: "2026-08-04T01:02:03.456789Z",
+		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 8, 4, 1, 2, 3, 456789000, time.UTC)},
 		DropSource:        dropSourceSoftware,
 		DropReason:        "SKB_DROP_REASON_TCP_CSUM",
 		DropLocation:      "0xffffffff81000000",
@@ -81,7 +80,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 
-	want := "2026-08-04T01:02:03.456789Z " +
+	want := "2026-08-04T01:02:03.456789000Z " +
 		"IPv4/TCP 10.0.0.1:12345 > 10.0.0.2:443 [ACK|PSH] seq=123 ack=456 win=4096 sk=ESTABLISHED " +
 		"reason=SKB_DROP_REASON_TCP_CSUM drop_source=software drop_location=0xffffffff81000000 " +
 		"len=1500 dev=eth0 pid=1420[worker thread] " +
@@ -124,7 +123,7 @@ func TestTextWriterCombinesHardwareReasonGroup(t *testing.T) {
 	w := &textWriter{w: &output}
 
 	err := w.Write(&types.DropWatchTracing{
-		ObservedTimestamp: "now",
+		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
 		DropSource:        dropSourceHardware,
 		DropReason:        "ingress_vlan_filter",
 		DropReasonGroup:   "l2_drops",
@@ -142,7 +141,7 @@ func TestTextWriterPropagatesIOError(t *testing.T) {
 	w := &textWriter{w: errWriter{err: boom}}
 
 	err := w.Write(&types.DropWatchTracing{
-		ObservedTimestamp: "now",
+		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
 		NetdevName:        "eth0",
 	})
 	if !errors.Is(err, boom) {
@@ -154,7 +153,7 @@ func TestJSONWriterPropagatesIOError(t *testing.T) {
 	boom := errors.New("boom")
 	w := &jsonWriter{w: errWriter{err: boom}}
 
-	err := w.Write(&types.DropWatchTracing{ObservedTimestamp: "now"})
+	err := w.Write(&types.DropWatchTracing{ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)}})
 	if !errors.Is(err, boom) {
 		t.Fatalf("got %v, want %v", err, boom)
 	}
@@ -163,7 +162,7 @@ func TestJSONWriterPropagatesIOError(t *testing.T) {
 func TestWritersRejectShortWrites(t *testing.T) {
 	t.Parallel()
 
-	event := &types.DropWatchTracing{ObservedTimestamp: "now"}
+	event := &types.DropWatchTracing{ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)}}
 	if err := (&textWriter{w: shortWriter{}}).Write(event); !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("text writer error = %v, want %v", err, io.ErrShortWrite)
 	}
@@ -174,8 +173,8 @@ func TestWritersRejectShortWrites(t *testing.T) {
 
 func BenchmarkTextWriter(b *testing.B) {
 	event := &types.DropWatchTracing{
-		ObservedTimestamp:       "2026-08-04T01:02:03.456789Z",
-		KernelObservedTimestamp: "2026-08-04T01:02:03.456Z",
+		ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 8, 4, 1, 2, 3, 456789000, time.UTC)},
+		KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 8, 4, 1, 2, 3, 456000000, time.UTC)},
 		DropSource:              dropSourceHardware,
 		DropReason:              "ingress_vlan_filter",
 		DropReasonGroup:         "l2_drops",
@@ -206,14 +205,11 @@ func TestKernelObservationUsesEventTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kernel, err := time.Parse(time.RFC3339Nano, event.KernelObservedTimestamp)
-	if err != nil {
-		t.Fatal(err)
+	if event.KernelObservedTimestamp == nil {
+		t.Fatal("kernel observation timestamp is missing")
 	}
-	observed, err := time.Parse(time.RFC3339Nano, event.ObservedTimestamp)
-	if err != nil {
-		t.Fatal(err)
-	}
+	kernel := event.KernelObservedTimestamp.Time
+	observed := event.ObservedTimestamp
 	age := observed.Sub(kernel)
 	if age < 900*time.Millisecond || age > 2*time.Second {
 		t.Fatalf("kernel-to-userspace delay = %v, expected about one second", age)

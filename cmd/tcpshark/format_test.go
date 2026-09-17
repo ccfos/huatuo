@@ -351,7 +351,7 @@ func TestTextWriterFormatsTCPFlags(t *testing.T) {
 		{
 			name: "skb flags",
 			ev: &types.TCPRetransmitTracing{
-				ObservedTimestamp: "now",
+				ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
 				TCPFlags:          "ACK|PSH",
 			},
 			want: " flags=ACK|PSH ",
@@ -359,7 +359,7 @@ func TestTextWriterFormatsTCPFlags(t *testing.T) {
 		{
 			name: "synack flags",
 			ev: &types.TCPRetransmitTracing{
-				ObservedTimestamp: "now",
+				ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
 				EventType:         "tcp_retransmit_synack",
 				TCPFlags:          "SYN|ACK",
 			},
@@ -389,9 +389,9 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 
 	var output bytes.Buffer
 	event := &types.TCPRetransmitTracing{
-		ObservedTimestamp:       "now",
+		ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
 		KernelObservedNS:        8,
-		KernelObservedTimestamp: "2026-07-23T02:14:40Z",
+		KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 7, 23, 2, 14, 40, 0, time.UTC)},
 		DropLocation:            "unknown",
 		CorrelationReasons: []types.CorrelationReason{
 			types.CorrelationReasonStartupHistoryIncomplete,
@@ -407,7 +407,7 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 		t.Fatalf("Write() error = %v", err)
 	}
 	for _, want := range []string{
-		"kernel_observed_timestamp=2026-07-23T02:14:40Z",
+		"kernel_observed_timestamp=2026-07-23T02:14:40.000000000Z",
 		"drop_location=unknown",
 		"reason=startup_history_incomplete,perf_events_lost",
 		"dropwatch_perf_lost=2",
@@ -425,7 +425,7 @@ func TestTextWriterFormatsMatchedDropStack(t *testing.T) {
 
 	var output bytes.Buffer
 	event := &types.TCPRetransmitTracing{
-		ObservedTimestamp: "now",
+		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
 		DropLocation:      "host_software",
 		DropStack:         "first\nsecond",
 	}
@@ -454,9 +454,9 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 		{
 			name: "full event",
 			ev: &types.TCPRetransmitTracing{
-				ObservedTimestamp:       "2026-07-23T02:14:40.304775546Z",
+				ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 7, 23, 2, 14, 40, 304775546, time.UTC)},
 				KernelObservedNS:        123456789,
-				KernelObservedTimestamp: "2026-07-23T02:14:40Z",
+				KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 7, 23, 2, 14, 40, 0, time.UTC)},
 				TCPReason:               "RTO",
 				Source:                  toolstream.SourceTypeTool,
 				Comm:                    "worker thread",
@@ -486,7 +486,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 			},
 			want: "2026-07-23T02:14:40.304775546Z " +
 				"[data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 " +
-				"state=ESTABLISHED event_type=tcp_retransmit_skb kernel_observed_timestamp=2026-07-23T02:14:40Z " +
+				"state=ESTABLISHED event_type=tcp_retransmit_skb kernel_observed_timestamp=2026-07-23T02:14:40.000000000Z " +
 				"skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 " +
 				"ack=948393597 flags=ACK|PSH pid=1420 comm=worker thread " +
 				"ca=4 retrans=4 icsk_pending=1 reord_seen=2 dsack_dups=3 " +
@@ -497,7 +497,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 		{
 			name: "omitempty fields",
 			ev: &types.TCPRetransmitTracing{
-				ObservedTimestamp: "2026-07-23T02:14:40Z",
+				ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 7, 23, 2, 14, 40, 0, time.UTC)},
 				TCPReason:         "RTO",
 				TCPState:          "ESTABLISHED",
 				TCPSaddr:          "127.0.0.1",
@@ -507,7 +507,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 				Phase:             "data",
 				EventType:         "tcp_retransmit_skb",
 			},
-			want: "2026-07-23T02:14:40Z " +
+			want: "2026-07-23T02:14:40.000000000Z " +
 				"[data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 " +
 				"state=ESTABLISHED event_type=tcp_retransmit_skb " +
 				"seq=0 ack=0 pid=0 comm= ca=0 retrans=0 icsk_pending=0\n",
@@ -535,7 +535,7 @@ func TestTextWriterPropagatesIOError(t *testing.T) {
 	boom := errors.New("boom")
 	w := &textWriter{w: errWriter{err: boom}}
 
-	err := w.Write(&types.TCPRetransmitTracing{ObservedTimestamp: "now"})
+	err := w.Write(&types.TCPRetransmitTracing{ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)}})
 	if !errors.Is(err, boom) {
 		t.Fatalf("Write() error = %v, want %v", err, boom)
 	}
@@ -547,7 +547,7 @@ func TestJSONWriterPropagatesIOError(t *testing.T) {
 	boom := errors.New("boom")
 	w := &jsonWriter{w: errWriter{err: boom}}
 
-	err := w.Write(&types.TCPRetransmitTracing{ObservedTimestamp: "now"})
+	err := w.Write(&types.TCPRetransmitTracing{ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)}})
 	if !errors.Is(err, boom) {
 		t.Fatalf("Write() error = %v, want %v", err, boom)
 	}
@@ -556,7 +556,7 @@ func TestJSONWriterPropagatesIOError(t *testing.T) {
 func TestWritersDetectShortWrites(t *testing.T) {
 	t.Parallel()
 
-	event := &types.TCPRetransmitTracing{ObservedTimestamp: "now"}
+	event := &types.TCPRetransmitTracing{ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)}}
 	writers := []writer{
 		&textWriter{w: shortWriter{}},
 		&jsonWriter{w: shortWriter{}},
@@ -574,7 +574,7 @@ func TestJSONWriterWritesNDJSON(t *testing.T) {
 	var output bytes.Buffer
 	w := &jsonWriter{w: &output}
 	event := &types.TCPRetransmitTracing{
-		ObservedTimestamp: "2026-08-05T00:00:00Z",
+		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)},
 		TCPReason:         "RTO",
 	}
 	if err := w.Write(event); err != nil {
@@ -589,8 +589,8 @@ func TestJSONWriterWritesNDJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSuffix(encoded, "\n")), &got); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if got.ObservedTimestamp != event.ObservedTimestamp || got.TCPReason != event.TCPReason {
-		t.Fatalf("decoded event = %+v, want timestamp %q and reason %q", got, event.ObservedTimestamp, event.TCPReason)
+	if !got.ObservedTimestamp.Equal(event.ObservedTimestamp.Time) || got.TCPReason != event.TCPReason {
+		t.Fatalf("decoded event = %+v, want timestamp %q and reason %q", got, event.ObservedTimestamp.FormatUTC(), event.TCPReason)
 	}
 }
 
@@ -776,8 +776,8 @@ func BenchmarkJSONWriter(b *testing.B) {
 
 func benchmarkEvent() *types.TCPRetransmitTracing {
 	return &types.TCPRetransmitTracing{
-		ObservedTimestamp:       "2026-07-23T02:14:40.304775546Z",
-		KernelObservedTimestamp: "2026-07-23T02:14:40.304Z",
+		ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 7, 23, 2, 14, 40, 304775546, time.UTC)},
+		KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 7, 23, 2, 14, 40, 304000000, time.UTC)},
 		TCPReason:               "RTO",
 		Source:                  toolstream.SourceTypeTool,
 		Comm:                    "worker",
@@ -820,14 +820,11 @@ func TestKernelObservationUsesEventTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kernel, err := time.Parse(time.RFC3339Nano, event.KernelObservedTimestamp)
-	if err != nil {
-		t.Fatal(err)
+	if event.KernelObservedTimestamp == nil {
+		t.Fatal("kernel observation timestamp is missing")
 	}
-	observed, err := time.Parse(time.RFC3339Nano, event.ObservedTimestamp)
-	if err != nil {
-		t.Fatal(err)
-	}
+	kernel := event.KernelObservedTimestamp.Time
+	observed := event.ObservedTimestamp
 	age := observed.Sub(kernel)
 	if age < 900*time.Millisecond || age > 2*time.Second {
 		t.Fatalf("kernel-to-userspace delay = %v, expected about one second", age)

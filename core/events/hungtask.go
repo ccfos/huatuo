@@ -27,6 +27,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 	"github.com/ccfos/huatuo/internal/utils/kmsgutil"
@@ -137,7 +138,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "hungtask",
-				ObservedTimestamp: time.Now().UTC(),
+				ObservedTimestamp: timeutil.Now(),
 				TracerData: &HungTaskTracerData{
 					TID:                   data.TID,
 					Comm:                  bytesutil.ToStr(data.Comm[:]),

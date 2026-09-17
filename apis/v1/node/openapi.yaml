@@ -590,11 +590,11 @@ components:
         observed_timestamp:
           type: string
           format: date-time
-          description: UTC time when the event producer observed the event in userspace.
+          description: UTC time when the event producer observed the event in userspace, emitted with nine fractional digits.
         kernel_observed_timestamp:
           type: string
           format: date-time
-          description: UTC time when the kernel observed the event, when available.
+          description: UTC time when the kernel observed the event, when available, emitted with nine fractional digits.
         container_id:
           type: string
         container_hostname:

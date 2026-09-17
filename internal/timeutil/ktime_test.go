@@ -36,13 +36,13 @@ func TestMonotonicNowNS(t *testing.T) {
 	require.LessOrEqual(t, got, uint64(unix.TimespecToNsec(after)))
 }
 
-func TestMonotonicToTime(t *testing.T) {
+func TestKtimeToTime(t *testing.T) {
 	var ts unix.Timespec
 	require.NoError(t, unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts))
 	ktimeNs := uint64(unix.TimespecToNsec(ts))
 
 	now := time.Now().UTC()
-	got, err := timeutil.MonotonicToTime(ktimeNs)
+	got, err := timeutil.KtimeToTime(ktimeNs)
 	require.NoError(t, err)
 
 	diff := now.Sub(got)

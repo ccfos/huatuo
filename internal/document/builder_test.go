@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -27,7 +28,7 @@ func TestBuilderBuildsSharedMetadata(t *testing.T) {
 	document, err := builder.Build(&Input{
 		TracerName:       "profiler",
 		TracerID:         "job-1",
-		StartedTimestamp: startedTimestamp,
+		StartedTimestamp: timeutil.Timestamp{Time: startedTimestamp},
 		TracerRunType:    types.TracerRunTypeProfiling,
 	})
 	if err != nil {
@@ -42,8 +43,11 @@ func TestBuilderBuildsSharedMetadata(t *testing.T) {
 	if document.StartedTimestamp == nil {
 		t.Fatal("document started timestamp is nil")
 	}
-	if want := startedTimestamp.UTC(); !document.StartedTimestamp.Equal(want) {
-		t.Fatalf("document started timestamp = %v, want %v", document.StartedTimestamp, want)
+	if !document.StartedTimestamp.Equal(startedTimestamp) {
+		t.Fatalf("document started timestamp = %v, want %v", document.StartedTimestamp, startedTimestamp)
+	}
+	if got := document.StartedTimestamp.FormatUTC(); got != "2026-08-28T02:30:00.000000000Z" {
+		t.Fatalf("started timestamp output = %q", got)
 	}
 	if !document.UploadedTimestamp.IsZero() {
 		t.Fatalf("document uploaded timestamp = %v, want zero", document.UploadedTimestamp)
@@ -66,16 +70,19 @@ func TestBuilderKeepsObservationClocksSeparate(t *testing.T) {
 			name = "with kernel observation"
 		}
 		t.Run(name, func(t *testing.T) {
-			input := &Input{ObservedTimestamp: observed, TracerRunType: types.TracerRunTypeEvent}
+			input := &Input{ObservedTimestamp: timeutil.Timestamp{Time: observed}, TracerRunType: types.TracerRunTypeEvent}
 			if available {
-				input.KernelObservedTimestamp = kernel
+				input.KernelObservedTimestamp = timeutil.Timestamp{Time: kernel}
 			}
 			got, err := builder.Build(input)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.ObservedTimestamp == nil || !got.ObservedTimestamp.Equal(observed) || got.ObservedTimestamp.Location() != time.UTC {
+			if got.ObservedTimestamp == nil || !got.ObservedTimestamp.Equal(observed) {
 				t.Fatalf("userspace timestamp = %v", got.ObservedTimestamp)
+			}
+			if output := got.ObservedTimestamp.FormatUTC(); output != "2026-09-15T02:00:01.000000000Z" {
+				t.Fatalf("userspace timestamp output = %q", output)
 			}
 			if !available {
 				if got.KernelObservedTimestamp != nil {
@@ -83,8 +90,11 @@ func TestBuilderKeepsObservationClocksSeparate(t *testing.T) {
 				}
 				return
 			}
-			if got.KernelObservedTimestamp == nil || !got.KernelObservedTimestamp.Equal(kernel) || got.KernelObservedTimestamp.Location() != time.UTC {
+			if got.KernelObservedTimestamp == nil || !got.KernelObservedTimestamp.Equal(kernel) {
 				t.Fatalf("kernel timestamp = %v", got.KernelObservedTimestamp)
+			}
+			if output := got.KernelObservedTimestamp.FormatUTC(); output != "2026-09-15T02:00:00.000000000Z" {
+				t.Fatalf("kernel timestamp output = %q", output)
 			}
 		})
 	}
