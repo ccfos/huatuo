@@ -498,3 +498,62 @@ func (t bodyReadErrorTransport) RoundTrip(_ *http.Request) (*http.Response, erro
 		)),
 	}, nil
 }
+
+func TestIsRuningPodRequiresRunningContainerStatuses(t *testing.T) {
+	runningPod := func() *corev1.Pod {
+		return &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "app"}},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name: "app",
+						State: corev1.ContainerState{
+							Running: &corev1.ContainerStateRunning{},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name string
+		pod  *corev1.Pod
+		want bool
+	}{
+		{
+			name: "missing status for spec container",
+			pod: func() *corev1.Pod {
+				pod := runningPod()
+				pod.Status.ContainerStatuses = nil
+				return pod
+			}(),
+			want: false,
+		},
+		{
+			name: "container is not running",
+			pod: func() *corev1.Pod {
+				pod := runningPod()
+				pod.Status.ContainerStatuses[0].State.Running = nil
+				return pod
+			}(),
+			want: false,
+		},
+		{
+			name: "all containers running",
+			pod:  runningPod(),
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRuningPod(tt.pod); got != tt.want {
+				t.Fatalf("isRuningPod() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}

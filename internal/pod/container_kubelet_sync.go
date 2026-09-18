@@ -264,7 +264,12 @@ func kubeletSyncContainers() error {
 		}
 
 		for _, c := range m {
-			containerStatus := c[1].(*corev1.ContainerStatus)
+			container := c[0].(*corev1.Container)
+			containerStatus, ok := c[1].(*corev1.ContainerStatus)
+			if !ok || containerStatus == nil {
+				log.Warnf("pod %s has no running status for container %s, skipping", pod.Name, container.Name)
+				continue
+			}
 			containerID, err := parseContainerIDInPodStatus(containerStatus.ContainerID)
 			if err != nil {
 				log.Warnf("failed to parse container id %s in pod %s status: %v", containerStatus.ContainerID, pod.Name, err)
@@ -272,7 +277,7 @@ func kubeletSyncContainers() error {
 			}
 
 			newContainers[containerID] = &containerInfo{
-				container:       c[0].(*corev1.Container),
+				container:       container,
 				containerStatus: containerStatus,
 				pod:             pod,
 			}
@@ -564,6 +569,10 @@ func isRuningPod(pod *corev1.Pod) bool {
 	// At least one container is still running, or is in the process of starting or
 	// restarting.
 	if pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+
+	if len(pod.Status.ContainerStatuses) != len(pod.Spec.Containers) {
 		return false
 	}
 
