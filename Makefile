@@ -197,7 +197,8 @@ vendor:
 	@set -eu; go mod tidy; go mod verify; go mod vendor
 
 clean:
-	@rm -rf $(OPENAPI_GENERATED_FILES) $(APP_CMD_OUTPUT)
+	# Keep tracked OpenAPI artifacts: Go builds embed the specs and check compares them.
+	@rm -rf $(APP_CMD_OUTPUT)
 	@find . \( -name "*.o" -o -name "mock_*.go" -o -name "*.capnp.go" \) \
 		$(FIND_EXCLUDE_PATHS) -delete
 
