@@ -21,6 +21,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 
 #define KEEP_FRAME __attribute__((noinline, noclone))
 
@@ -36,8 +37,9 @@ static volatile unsigned long sink;
 
 // Marker function for symbol matching in profiler output
 static KEEP_FRAME void *test_mmap_allocator(size_t size) {
-	void *p = mmap(NULL, size, PROT_READ | PROT_WRITE,
-		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	// Avoid libc mmap wrappers that may break the frame-pointer chain.
+	void *p = (void *)syscall(SYS_mmap, NULL, size, PROT_READ | PROT_WRITE,
+				 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (p == MAP_FAILED) {
 		fprintf(stderr, "failed to mmap %zu bytes\n", size);
 		exit(1);
