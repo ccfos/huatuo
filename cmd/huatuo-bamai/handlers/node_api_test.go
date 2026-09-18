@@ -270,8 +270,26 @@ func TestOperationResponseMapsFailureReason(t *testing.T) {
 	}
 }
 
+func TestSecondsDurationRejectsNonPositive(t *testing.T) {
+	for _, seconds := range []int64{-1, 0} {
+		if _, err := secondsDuration(seconds); err == nil {
+			t.Fatalf("secondsDuration(%d) error = nil", seconds)
+		}
+	}
+}
+
 func TestSecondsDurationRejectsOverflow(t *testing.T) {
 	if _, err := secondsDuration(int64(^uint64(0) >> 1)); err == nil {
 		t.Fatal("secondsDuration(MaxInt64) error = nil")
+	}
+}
+
+func TestSecondsDurationAcceptsPositive(t *testing.T) {
+	duration, err := secondsDuration(60)
+	if err != nil {
+		t.Fatalf("secondsDuration(60) error = %v", err)
+	}
+	if duration != time.Minute {
+		t.Fatalf("secondsDuration(60) = %v, want %v", duration, time.Minute)
 	}
 }
