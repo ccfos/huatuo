@@ -47,8 +47,6 @@ start_sched_tick_test() {
 		--log-debug
 }
 
-[[ $EUID -eq 0 ]] || skip "requires root"
-
 command -v jq > /dev/null || skip "jq command is not installed"
 command -v taskset > /dev/null || skip "taskset command is not installed"
 taskset -c 0 true > /dev/null 2>&1 \

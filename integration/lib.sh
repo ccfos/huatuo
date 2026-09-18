@@ -221,7 +221,6 @@ bpf_tool_setup() {
 	TOOL_BIN="${ROOT_DIR}/_output/bin/${binary_name}"
 	TOOL_BPF="${ROOT_DIR}/_output/bpf/${bpf_name}.o"
 
-	[[ $EUID -eq 0 ]] || fatal "requires root (BPF requires CAP_BPF/CAP_SYS_ADMIN)"
 	[[ -x ${TOOL_BIN} ]] || fatal "missing ${binary_name} binary: ${TOOL_BIN}"
 	[[ -r ${TOOL_BPF} ]] || fatal "missing ${bpf_name} bpf object: ${TOOL_BPF}"
 

@@ -38,7 +38,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[[ $EUID -eq 0 ]] || skip "requires root"
 command -v go > /dev/null || skip "go command is not installed"
 command -v clang > /dev/null || skip "clang command is not installed"
 [[ -x "${ROOT_DIR}/build/clang.sh" ]] \

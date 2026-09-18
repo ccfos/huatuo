@@ -27,8 +27,6 @@ source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 source "${ROOT_DIR}/integration/lib_namespace.sh"
 
-[[ $EUID -eq 0 ]] || skip "requires root"
-
 SERVER_IP="10.200.1.2"
 CLIENT_IP="10.200.1.1"
 TEST_PORT=19876
