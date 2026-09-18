@@ -929,6 +929,58 @@ This section captures key kernel events and latency, including scheduler tick in
 
   Example: `IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
 
+#### 8.9 Before-OOM Runtime Memory Snapshots
+
+`before_oom_memsnap` is enabled by default. Set `Enabled = false` and restart
+huatuo-bamai to disable it, or add it to the global `BlackList`.
+This feature attempts a Go, HotSpot, or CPython snapshot
+after a container memory-pressure notification; completion before OOM is not
+guaranteed. Candidates are ranked by an approximate kernel OOM score.
+
+```toml
+[EventTracing.BeforeOOMMemsnap]
+    Enabled = true
+    # ThresholdPercent = 90
+    # CooldownSeconds = 300
+    # GoTimeoutMS = 100
+    # JavaTimeoutMS = 2000
+    # PythonTimeoutMS = 2000
+    # TopK = 10
+```
+
+Commented values are defaults.
+
+| Parameter | Meaning |
+|-----------|---------|
+| Enabled | Enable snapshots; defaults to `true`; changes require a restart |
+| ThresholdPercent | Required memory usage-to-limit percentage, from 1 to 100 |
+| CooldownSeconds | Global cooldown after a successful or failed capture; must be positive |
+| GoTimeoutMS / JavaTimeoutMS / PythonTimeoutMS | Cooperative provider capture budget for each language, in milliseconds; must be positive |
+| TopK | Maximum requested ranked entries, from 1 to 100; final JSON is trimmed to at most 512 KiB |
+
+Runtime detection has a separate fixed one-second budget. Persistence is not
+included in the capture budget. Timeouts cannot interrupt synchronous reads
+already executing, so they do not bound the total operation time.
+
+**Trigger conditions:**
+
+- **Cgroup v1**: Registers the memory threshold corresponding to
+  `ThresholdPercent` through `cgroup.event_control`.
+- **Cgroup v2**: Watches increases in the `high` counter of
+  `memory.events.local` (falling back to `memory.events` when absent), then
+  checks `memory.current / memory.max` against the configured percentage.
+  Initial discovery only establishes a counter baseline. This feature does
+  not set `memory.high`; when it is `max`, no high event occurs, and
+  `memory.max` notifications are not used as a fallback.
+
+Container changes reuse shared CSS notifications without carrying full paths.
+The OOM watcher resolves and saves the actual memory cgroup path through the
+container init PID in its own processing loop. Unavailable paths or lost
+notifications use deferred directory-scan recovery; pressure triggers may be
+missed before monitoring is restored.
+
+See section 14 for deployment limitations and output lookup.
+
 ### 9. Metric Collector
 
 This section defines collection rules for various system and network metrics. All `Included`/`Excluded` fields share the same filter logic (regex):
@@ -1218,3 +1270,78 @@ Specific rules:
 By properly configuring huatuo-bamai.conf, you can fully leverage HUATUO’s capabilities in kernel-level anomaly detection and intelligent tracing, significantly improving observability and troubleshooting efficiency in cloud-native systems.
 
 If you need deeper customization for a specific scenario, feel free to provide more details about your environment.
+
+### 14. Before-OOM Snapshot Deployment and Troubleshooting
+
+#### 14.1 Requirements and Limitations
+
+- Requires Linux, memory cgroup v1/v2, host PID/procfs/cgroup views,
+  kubelet metadata, kernel BTF, and BPF load/attach permissions.
+- Requires target-memory read permission (usually `CAP_SYS_PTRACE`),
+  procfs/cgroup access, and v1 `cgroup.event_control` write access.
+  Yama, SELinux, or AppArmor may block access.
+- Selects only direct cgroup members, excluding `oom_score_adj = -1000`.
+  Selection is skipped above 4096 PIDs, 64 KiB of PID data, or a one-second budget.
+- Discovery is capped at 8192 directories and 4096 container watches.
+  Lifecycle loss or registration failure triggers a delayed rescan
+  (about one second, up to three attempts per round); normal operation does
+  not scan periodically. Warnings indicate possible coverage gaps.
+  Recovery cannot replay missed pressure events.
+- Failed identity checks or missing container metadata prevent capture or saving.
+
+This table describes experimental implementation coverage, not validation of
+every listed version:
+
+| Runtime | Experimental coverage | Main limitations |
+|---------|-----------------------|------------------|
+| Go | Go 1.18–1.26, 64-bit ELF | Instruction recovery for stripped executables is x86-64 only |
+| Java | Java 8+, little-endian 64-bit ELF HotSpot, G1 GC | Requires recognizable VMStruct/VMType metadata |
+| Python | CPython 3.8–3.14, little-endian 64-bit ELF | Requires discoverable `_PyRuntime` and recognizable version/layout |
+
+Recorded manual validation: x86-64 Linux, cgroup v1 (legacy/hybrid), Go 1.24.0.
+Verify pressure-triggered, non-empty snapshots in your environment;
+skipped tests and `unavailable` results do not prove compatibility.
+
+#### 14.2 Output and Troubleshooting
+
+Info logs record watcher state and each capture stage's start, end, duration,
+and result. Locate attempts by container/PID and correlate stages by `capture_id`.
+If a stage starts but does not finish, inspect bamai's
+`/debug/pprof/goroutine?debug=2` with appropriate authorization for the blocked stack.
+No logs alone do not prove that monitoring has stopped.
+
+`tracer_data.process_memory` reads `/proc/<pid>/status` once per attempt,
+including C/C++ processes. Runtime snapshot failures do not discard this summary;
+target identity changes or cancellation discard the result.
+It provides no PSS, mapping rankings, or allocation stacks.
+
+| Field (bytes) | Source / meaning |
+|------|--------|
+| `virtual_bytes` | VmSize, virtual address space, not physical memory usage |
+| `rss_bytes` | VmRSS, resident memory |
+| `rss_anon_bytes` | RssAnon, anonymous resident memory |
+| `rss_file_bytes` | RssFile, file-backed resident memory |
+| `rss_shmem_bytes` | RssShmem, shared resident memory |
+| `swap_bytes` | VmSwap, swapped private anonymous memory, excluding shmem swap |
+| `page_table_bytes` | VmPTE, page-table memory |
+
+Missing/invalid fields are omitted, not zero-filled: status is `partial`,
+or `unavailable` with `reason` if nothing can be read.
+Values are approximate, not an OOM-time snapshot or proof of a leak.
+The selected process may not be the eventual OOM victim.
+
+Results use the existing `[Storage]` configuration (section 6); no separate
+storage setup is needed. The LocalFile filename is `before_oom_memsnap`.
+Query `tracing_documents` with `tracer_name = before_oom_memsnap` and
+`tracer_type = event`.
+
+Inspect `tracer_data.snapshot.status` (`complete`, `partial`,
+`unavailable`, or `failed`) together with `reason`, `runtime_version`,
+`duration_ms`, and `output_truncated`.
+
+| Problem | Checks |
+|---------|--------|
+| No output | Enable and restart; check BlackList; see section 8.9 for v2 trigger conditions |
+| Event without a candidate | Check direct cgroup membership, OOM-kill eligibility, and enumeration limits |
+| `unavailable` / `failed` | Check runtime/layout restrictions, access permissions, container metadata, and target exit; inspect `reason` |
+| Event stops after resource exhaustion | Check `RLIMIT_NOFILE`, `fs.inotify.max_user_watches`, and `fs.inotify.max_user_instances`; adjust and restart; this stop does not stop other events |
