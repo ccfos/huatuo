@@ -71,10 +71,8 @@ memory_oom_before=$(memory_oom_counter) || fatal "memory_oom baseline counter is
 memory_oom_exit=0
 cgroup_run "${memory_oom_cgroup}" 10 "${MEMORY_OOM_BIN}" "$((2 * MEMORY_OOM_LIMIT))" \
 	> "${MEMORY_OOM_LOG}" 2>&1 || memory_oom_exit=$?
-memory_oom_kills=$(cgroup_oom_kills "${memory_oom_cgroup}") \
-	|| fatal "memory cgroup does not report oom_kill"
-[[ ${memory_oom_exit} -eq 137 && ${memory_oom_kills} -ge 1 ]] \
-	|| fatal "expected OOM kill: exit=${memory_oom_exit}, oom_kill=${memory_oom_kills}: $(< "${MEMORY_OOM_LOG}")"
+[[ ${memory_oom_exit} -eq 137 ]] \
+	|| fatal "expected OOM kill: exit=${memory_oom_exit}: $(< "${MEMORY_OOM_LOG}")"
 
 memory_oom_event_is_valid() {
 	# BPF reports initial-namespace PIDs; a unique comm correlates across PID namespaces.

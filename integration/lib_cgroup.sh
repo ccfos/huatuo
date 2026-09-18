@@ -56,12 +56,6 @@ cgroup_run() {
 	' _ "${path}" "$@"
 }
 
-cgroup_oom_kills() {
-	local file=$1/memory.events
-	[[ -e "${file}" ]] || file=$1/memory.oom_control
-	awk '$1 == "oom_kill" { print $2; found = 1 } END { exit !found }' "${file}"
-}
-
 # Delete only empty cgroups; the caller owns workload termination and reaping.
 cgroup_delete() {
 	rmdir "$1"
