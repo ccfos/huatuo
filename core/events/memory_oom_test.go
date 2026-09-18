@@ -24,7 +24,7 @@ func TestMemoryOOMBlacklist(t *testing.T) {
 	// Disable every event so registry validation does not initialize kernel collectors.
 	blacklist := []string{
 		"dropwatch", "hungtask", "memory_oom", "memory_reclaim_events",
-		"net_rx_latency", "netdev_bonding_lacp", "netdev_events",
+		"net_rx_latency", "net_tx_latency", "netdev_bonding_lacp", "netdev_events",
 		"netdev_txqueue_timeout", "ras", "sched_tick", "softlockup", "tcp_retransmit",
 	}
 	registered, err := tracing.NewRegister(blacklist)
