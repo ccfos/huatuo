@@ -104,6 +104,9 @@ write_net_tx_latency_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "dropwatch", "net_rx_latency"]
 
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
 [EventTracing.NetTxLatency]
     Sendmsg2Qdisc = 1
     Qdisc2DevXmit = 1
