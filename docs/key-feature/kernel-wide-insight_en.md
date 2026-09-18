@@ -1111,6 +1111,13 @@ The current version exposes both host-level and container-level metrics.
 
 ### Queue
 
+Q2C and D2C count completed bio stages independently when their timestamps are
+available and their latency is at least 20 ms. A stage below this threshold or
+with a missing timestamp does not suppress the other stage, so the two totals
+can differ. Creating a disk map entry also counts the completion that triggered
+its creation; if the map is full and no entry exists, that disk sample cannot
+be recorded.
+
 These metrics always include the common labels `host` and `region`. Container
 metrics also always include `container_host`, `container_name`,
 `container_type`, `container_level`, and `container_hostnamespace`.
