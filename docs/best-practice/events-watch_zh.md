@@ -27,7 +27,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 内核事件是自愈决策的第一手信号源。订阅 `events/watch` 后，自愈控制器可在事件发生的瞬间触发处置动作，而不必等待监控系统的告警流转：
 
-- **OOM 自愈**：收到 `oom` 事件后，立即对触发容器执行扩容、重启或流量摘除，将服务中断时间从分钟级压缩到秒级。
+- **OOM 自愈**：收到 `memory_oom` 事件后，立即对触发容器执行扩容、重启或流量摘除，将服务中断时间从分钟级压缩到秒级。
 - **Hung Task 自愈**：收到 `hungtask` 事件后，自动隔离节点并驱逐 Pod，防止级联阻塞蔓延至整个集群。
 - **网络故障自愈**：收到 `netdev_txqueue_timeout` 或 `netdev_bonding_lacp` 事件后，触发网卡重置或流量切换，实现分钟级网络链路自愈。
 - **I/O 风暴自愈**：收到 `iotracing` 事件后，结合 cgroup blkio 限速策略动态降低问题容器的磁盘 I/O 配额，保护同节点其他服务。
@@ -36,14 +36,14 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 将华佗内核事件接入可观测性平台，补齐应用指标和日志之外的内核视角：
 
-- **事件时间线关联**：将 `softlockup`、`oom` 等内核事件叠加到 Grafana 时间线上，与应用错误率、延迟曲线精确对齐，快速定位根因。
+- **事件时间线关联**：将 `softlockup`、`memory_oom` 等内核事件叠加到 Grafana 时间线上，与应用错误率、延迟曲线精确对齐，快速定位根因。
 - **异常驱动告警**：以内核事件替代固定阈值告警，降低误报率。例如收到 `ras` 硬件错误事件时直接触发高优告警，而不依赖 CPU 错误率超阈值。
 - **容量与稳定性分析**：长期订阅 `memburst`、`dload` 等 AutoTracing 事件，建立节点稳定性基线，为容量规划提供内核级依据。
 - **多维下钻**：事件中携带容器 ID、命名空间、地域等上下文，告警链接可直接下钻到对应的 Pod、Node、Region 视图。
 
 ### 安全审计与合规
 
-- **异常行为检测**：`oom`、`hungtask`、`softlockup` 等事件若在非业务高峰期集中出现，可能指示资源滥用或恶意负载，触发安全审查流程。
+- **异常行为检测**：`memory_oom`、`hungtask`、`softlockup` 等事件若在非业务高峰期集中出现，可能指示资源滥用或恶意负载，触发安全审查流程。
 - **事件留存与追溯**：将 CloudEvents 事件流写入消息队列（Kafka、Pulsar）或对象存储，满足等保合规对系统异常事件留存的要求。
 
 ### 混沌工程与压测验证
@@ -97,7 +97,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 {
   "specversion": "1.0",
   "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "source": "/huatuo/node-1/oom",
+  "source": "/huatuo/node-1/memory_oom",
   "type": "tech.huatuo.kernel.event",
   "datacontenttype": "application/json",
   "time": "2026-05-18T10:23:45.123456789Z",
@@ -105,7 +105,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
     "hostname": "node-1",
     "region": "cn-beijing",
     "observed_timestamp": "2026-05-18T10:23:45Z",
-    "tracer_name": "oom",
+    "tracer_name": "memory_oom",
     "tracer_id": "abc123",
     "tracer_run_type": "auto",
     "container_id": "d3f1a2b4c5e6",
@@ -140,7 +140,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 | `tracer_name`              | 说明                                           |
 |--------------------------|-----------------------------------------------|
-| `oom`                    | 内存不足（OOM Killer）触发事件                  |
+| `memory_oom`                    | 内存不足（OOM Killer）触发事件                  |
 | `hungtask`               | 内核任务长时间 D 状态（Hung Task）检测          |
 | `softlockup`             | CPU 软锁死（Soft Lockup）检测                  |
 | `ras`                    | 硬件可靠性（RAS）错误，如 ECC 内存错误         |
@@ -209,7 +209,7 @@ Content-Type: application/json
 连接建立后，服务端以 SSE 格式持续推送事件：
 
 ```text
-data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/oom",...}\n\n
+data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom",...}\n\n
 ```
 
 服务端还会定期发送心跳注释行以保持连接：
@@ -266,7 +266,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
   -H "Connection: keep-alive" \
-  -d '{"filters": {"tracer_name": "^oom$"}}'
+  -d '{"filters": {"tracer_name": "^memory_oom$"}}'
 ```
 
 #### 5.3 订阅指定节点的网络类事件
@@ -395,7 +395,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	tracerName := "oom|hungtask|softlockup"
+	tracerName := "memory_oom|hungtask|softlockup"
 	err := watchEvents(ctx, "http://192.168.1.10:19704", "node-token", nodeapi.WatchEventFilters{
 		TracerName: &tracerName,
 	})
@@ -504,7 +504,7 @@ sequenceDiagram
     EW-->>C: 200 OK (Content-Type: text/event-stream)
 
     loop SSE 长连接持续推送
-        K->>T: 内核事件触发（oom / hungtask / softlockup ...）
+        K->>T: 内核事件触发（memory_oom / hungtask / softlockup ...）
         T->>EW: 上报原始事件
         EW->>EW: 过滤器匹配
         alt 匹配成功

@@ -27,7 +27,7 @@ Kernel event subscription surfaces OS-level anomaly signals directly to higher-l
 
 Kernel events are the primary signal source for self-healing decisions. After subscribing to `events/watch`, a healing controller can trigger remediation the moment an event occurs, without waiting for an alert to propagate through a monitoring pipeline:
 
-- **OOM self-healing**: On receiving an `oom` event, immediately scale, restart, or drain traffic from the triggering container. Reduces service interruption from minutes to seconds.
+- **OOM self-healing**: On receiving a `memory_oom` event, immediately scale, restart, or drain traffic from the triggering container. Reduces service interruption from minutes to seconds.
 - **Hung task self-healing**: On receiving a `hungtask` event, automatically cordon the node and evict Pods to prevent cascading blockage from spreading across the cluster.
 - **Network fault self-healing**: On receiving a `netdev_txqueue_timeout` or `netdev_bonding_lacp` event, trigger a NIC reset or traffic failover to restore the network link within minutes.
 - **I/O storm self-healing**: On receiving an `iotracing` event, dynamically throttle the affected container's disk I/O quota via cgroup blkio to protect co-located services on the same node.
@@ -36,14 +36,14 @@ Kernel events are the primary signal source for self-healing decisions. After su
 
 Integrating HUATUO kernel events into an observability platform adds a kernel-level perspective beyond application metrics and logs:
 
-- **Event timeline correlation**: Overlay `softlockup`, `oom`, and other kernel events onto Grafana timelines, aligning them precisely with application error rates and latency curves for root-cause analysis.
+- **Event timeline correlation**: Overlay `softlockup`, `memory_oom`, and other kernel events onto Grafana timelines, aligning them precisely with application error rates and latency curves for root-cause analysis.
 - **Anomaly-driven alerting**: Replace fixed-threshold alerts with kernel events to reduce false positives. For example, a `ras` hardware error event triggers a high-priority alert directly, without relying on a CPU error rate crossing a threshold.
 - **Capacity and stability analysis**: Subscribe to `memburst`, `dload`, and other AutoTracing events over time to establish a node stability baseline and provide kernel-level data for capacity planning.
 - **Multi-dimensional drill-down**: Events carry container ID, namespace, region, and other context fields. Alert links can drill down directly to the corresponding Pod, Node, or Region view.
 
 ### Security Auditing and Compliance
 
-- **Anomalous behavior detection**: A cluster of `oom`, `hungtask`, or `softlockup` events outside business peak hours may indicate resource abuse or a malicious workload, triggering a security review workflow.
+- **Anomalous behavior detection**: A cluster of `memory_oom`, `hungtask`, or `softlockup` events outside business peak hours may indicate resource abuse or a malicious workload, triggering a security review workflow.
 - **Event retention and traceability**: Write the CloudEvents stream to a message queue (Kafka, Pulsar) or object storage to satisfy the event retention requirements of security compliance frameworks.
 
 ### Chaos Engineering and Load Testing
@@ -97,7 +97,7 @@ The `data` field contains the standard HUATUO event record:
 {
   "specversion": "1.0",
   "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "source": "/huatuo/node-1/oom",
+  "source": "/huatuo/node-1/memory_oom",
   "type": "tech.huatuo.kernel.event",
   "datacontenttype": "application/json",
   "time": "2026-05-18T10:23:45.123456789Z",
@@ -105,7 +105,7 @@ The `data` field contains the standard HUATUO event record:
     "hostname": "node-1",
     "region": "cn-beijing",
     "observed_timestamp": "2026-05-18T10:23:45Z",
-    "tracer_name": "oom",
+    "tracer_name": "memory_oom",
     "tracer_id": "abc123",
     "tracer_run_type": "auto",
     "container_id": "d3f1a2b4c5e6",
@@ -140,7 +140,7 @@ The `data` field contains the standard HUATUO event record:
 
 | `tracer_name` | Description |
 |---|---|
-| `oom` | Out-of-memory (OOM Killer) triggered event |
+| `memory_oom` | Out-of-memory (OOM Killer) triggered event |
 | `hungtask` | Kernel task stuck in D state (Hung Task) detection |
 | `softlockup` | CPU soft lockup detection |
 | `ras` | Hardware reliability (RAS) errors, such as ECC memory errors |
@@ -209,7 +209,7 @@ Content-Type: application/json
 After the connection is established, the server continuously pushes events in SSE format:
 
 ```text
-data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/oom",...}\n\n
+data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom",...}\n\n
 ```
 
 The server also sends periodic heartbeat comment lines to keep the connection alive:
@@ -266,7 +266,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
   -H "Connection: keep-alive" \
-  -d '{"filters": {"tracer_name": "^oom$"}}'
+  -d '{"filters": {"tracer_name": "^memory_oom$"}}'
 ```
 
 #### 5.3 Subscribe to Network Events on a Specific Node
@@ -395,7 +395,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	tracerName := "oom|hungtask|softlockup"
+	tracerName := "memory_oom|hungtask|softlockup"
 	err := watchEvents(ctx, "http://192.168.1.10:19704", "node-token", nodeapi.WatchEventFilters{
 		TracerName: &tracerName,
 	})
@@ -505,7 +505,7 @@ sequenceDiagram
     EW-->>C: 200 OK (Content-Type: text/event-stream)
 
     loop SSE long-lived connection
-        K->>T: Kernel event triggered (oom / hungtask / softlockup ...)
+        K->>T: Kernel event triggered (memory_oom / hungtask / softlockup ...)
         T->>EW: Report raw event
         EW->>EW: Apply filter
         alt Filter matched
