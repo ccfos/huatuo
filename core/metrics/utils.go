@@ -16,6 +16,9 @@ package collector
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/binary"
+	"fmt"
 	"os"
 )
 
@@ -36,4 +39,12 @@ func CountLines(path string) (int64, error) {
 	}
 
 	return count, scanner.Err()
+}
+
+func decodeBPFMapData(data []byte, target any) error {
+	size := binary.Size(target)
+	if size < 0 || len(data) != size {
+		return fmt.Errorf("data size %d, want %d", len(data), size)
+	}
+	return binary.Read(bytes.NewReader(data), binary.LittleEndian, target)
 }
