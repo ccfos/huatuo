@@ -26,8 +26,13 @@ readonly TARGET_IP="127.0.0.99"
 readonly TARGET_PORT=9998
 
 DROPWATCH_PID=""
+TRAFFIC_PID=""
 
 cleanup() {
+	if [[ -n "${TRAFFIC_PID}" ]]; then
+		kill "${TRAFFIC_PID}" 2> /dev/null || true
+		wait "${TRAFFIC_PID}" 2> /dev/null || true
+	fi
 	[[ -n "${DROPWATCH_PID}" ]] && stop_by_pid "${DROPWATCH_PID}" 2 || true
 }
 trap cleanup EXIT
@@ -51,19 +56,25 @@ bpf_tool_setup dropwatch net_dropwatch
 	--output json \
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
 DROPWATCH_PID=$!
-sleep 0.5
 
-timeout 2 bash -c "
-	while :; do
-		printf x > /dev/udp/${TARGET_IP}/${TARGET_PORT}
+(
+	while kill -0 "${DROPWATCH_PID}" 2> /dev/null; do
+		printf x > "/dev/udp/${TARGET_IP}/${TARGET_PORT}" 2> /dev/null || true
+		sleep 0.05
 	done
-" 2> /dev/null || true
+) &
+TRAFFIC_PID=$!
 
 if ! wait "${DROPWATCH_PID}"; then
 	DROPWATCH_PID=""
 	fatal "dropwatch failed while tracing software drops"
 fi
 DROPWATCH_PID=""
+if ! wait "${TRAFFIC_PID}"; then
+	TRAFFIC_PID=""
+	fatal "drop-reason traffic generator failed"
+fi
+TRAFFIC_PID=""
 
 assert_log_has_no_failure "${TOOL_ERR}" "dropwatch"
 assert_kernel_observation_timestamps "${TOOL_OUT}"
