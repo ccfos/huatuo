@@ -68,7 +68,7 @@ func appFlags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:  cliFlagBPFPathDir,
-			Usage: "directory containing tcp_retransmit.o and dropwatch.o",
+			Usage: "directory containing tcp_retransmit.o and net_dropwatch.o",
 		},
 		&cli.BoolFlag{
 			Name:  cliFlagWithDropwatch,

@@ -20,7 +20,7 @@ import (
 	"github.com/cilium/ebpf/btf"
 )
 
-// Must match SKB_DROP_REASON_NOT_SUPPORTED in bpf/dropwatch.c.
+// Must match SKB_DROP_REASON_NOT_SUPPORTED in bpf/net_dropwatch.c.
 const skbDropReasonNotSupported int32 = -1
 
 type dropReason map[uint32]string

@@ -21,10 +21,10 @@ import (
 	"strings"
 )
 
-// RawCapacity is the size of the raw packet buffer, matching PKT_RAW_LEN in bpf/dropwatch.c.
+// RawCapacity is the size of the raw packet buffer, matching PKT_RAW_LEN in bpf/net_dropwatch.c.
 const RawCapacity = 120
 
-// Hdr mirrors struct packet_hdr in bpf/dropwatch.c.
+// Hdr mirrors struct packet_hdr in bpf/net_dropwatch.c.
 type Hdr struct {
 	EthProto  uint16
 	RawLen    uint8

@@ -188,7 +188,7 @@ sudo devlink trap show <bus/device>
 sudo devlink trap set <bus/device> trap <trap-name> action trap
 
 # 4. Start dropwatch and display only hardware drops
-sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | \
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --output json 2>/dev/null | \
   jq -c 'select(.drop_source == "hardware")'
 ```
 
@@ -202,28 +202,28 @@ This capability collects only packets that the driver reports through `DEVLINK_T
 
 ```bash
 # Text output, monitor TCP drops on all devices
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp"
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp"
 
 # Monitor drops on eth0 only
-sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device eth0 --output json
 
 # Exclude loopback
-sudo dropwatch --bpf-path bpf/dropwatch.o --device-excluded lo --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device-excluded lo --output json
 
 # Combine device and protocol filters
-sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --filter "tcp and port 443" --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device eth0 --filter "tcp and port 443" --output json
 
 # Capture for 60 seconds and exit
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp and port 443" --duration 60 --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp and port 443" --duration 60 --output json
 
 # Forward events to a running huatuo-bamai instance
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
 
 # Capture 10 seconds of JSON output, excluding events whose stack contains ip_finish_output
-sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'select(.stack | test("ip_finish_output") | not)'
+sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -c 'select(.stack | test("ip_finish_output") | not)'
 
 # Capture 10 seconds of JSON output, printing all fields except stack
-sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'del(.stack)'
+sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -c 'del(.stack)'
 ```
 
 `jq -c` compresses each matching event into a single-line JSON, convenient for saving as NDJSON or further pipe processing. `test("ip_finish_output")` checks whether `stack` matches the regex; `not` negates the result, so the command above excludes stacks containing `ip_finish_output`. Remove `| not` to keep only those containing `ip_finish_output`. `del(.stack)` removes the `stack` field from the jq output, useful for viewing just the timestamp, device, process, `packet_*` metadata, and `layers` protocol fields. For userspace call-stack filtering before storage, configure `EventTracing.IssuesList` in huatuo-bamai (see Section 4).
@@ -283,7 +283,7 @@ huatuo-bamai launches `dropwatch` as a subprocess and uses `--output-storage` to
 
 ```bash
 dropwatch \
-  --bpf-path <CoreBpfDir>/dropwatch.o \
+  --bpf-path <CoreBpfDir>/net_dropwatch.o \
   --output-storage /var/run/huatuo-toolstream.sock \
   --filter "tcp"
 ```
@@ -310,7 +310,7 @@ dropwatch \
     EnableDropwatchCorrelation = false
 ```
 
-Standalone dropwatch always emits raw `DropWatchTracing` events. Local TCP retransmission correlation loads a separate `dropwatch.o`, uses `EventTracing.TCPRetransmit.Filter` for both inputs, and emits only finalized `TCPRetransmitTracing` results. The two modes may run together; embedded drops are never stored as duplicate raw events.
+Standalone dropwatch always emits raw `DropWatchTracing` events. Local TCP retransmission correlation loads a separate `net_dropwatch.o`, uses `EventTracing.TCPRetransmit.Filter` for both inputs, and emits only finalized `TCPRetransmitTracing` results. The two modes may run together; embedded drops are never stored as duplicate raw events.
 
 #### 4.2 Noise Filtering
 

@@ -52,7 +52,7 @@ func newDropWatch() (*tracing.EventTracingAttr, error) {
 func (c *dropWatchTracing) Start(ctx context.Context) error {
 	cfg := configSnapshot()
 	args := []string{
-		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "dropwatch.o"),
+		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "net_dropwatch.o"),
 		"--output-storage", toolstream.DefaultSockPath,
 		"--filter", cfg.Dropwatch.Filter,
 		"--max-events-per-second", strconv.FormatUint(cfg.Dropwatch.MaxEventsPerSecond, 10),

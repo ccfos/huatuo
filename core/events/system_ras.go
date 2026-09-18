@@ -36,9 +36,9 @@ import (
 	"github.com/cloudflare/backoff"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/ras.c -o $BPF_DIR/ras.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/system_ras.c -o $BPF_DIR/system_ras.o
 
-// Hardware error type identifiers — must stay in sync with bpf/ras.c.
+// Hardware error type identifiers — must stay in sync with bpf/system_ras.c.
 const (
 	HW_ERR_MCE       = 0
 	HW_ERR_EDAC      = 1

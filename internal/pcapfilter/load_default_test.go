@@ -91,7 +91,7 @@ func TestApply(t *testing.T) {
 		t.Skip("Skipping: requires root")
 	}
 
-	origELF, err := os.ReadFile("../../bpf/dropwatch.o")
+	origELF, err := os.ReadFile("../../bpf/net_dropwatch.o")
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}

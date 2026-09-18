@@ -47,7 +47,7 @@ done
 tracepoint_available devlink devlink_trap_report \
 	|| skip "devlink/devlink_trap_report tracepoint is not available"
 
-bpf_tool_setup dropwatch
+bpf_tool_setup dropwatch net_dropwatch
 modprobe netdevsim > "${TOOL_WORK_DIR}/modprobe.out" 2> "${TOOL_WORK_DIR}/modprobe.err" \
 	|| skip "netdevsim kernel module is unavailable"
 [[ -w "${NETDEVSIM_BUS}/new_device" ]] || skip "netdevsim new_device is not writable"

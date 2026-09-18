@@ -132,7 +132,7 @@ func runRetransmit(ctx context.Context, options *retransmitOptions) (returnErr e
 			if options.isDropwatchEnabled {
 				dropSource, err = openDropwatchSource(
 					groupCtx,
-					filepath.Join(options.bpfPathDir, "dropwatch.o"),
+					filepath.Join(options.bpfPathDir, "net_dropwatch.o"),
 					options.filterExpression,
 					options.maxEventsPerSecond,
 				)

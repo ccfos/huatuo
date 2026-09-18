@@ -189,7 +189,7 @@ sudo devlink trap show <bus/device>
 sudo devlink trap set <bus/device> trap <trap-name> action trap
 
 # 4. 启动 dropwatch，并只查看硬件丢包
-sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | \
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --output json 2>/dev/null | \
   jq -c 'select(.drop_source == "hardware")'
 ```
 
@@ -203,28 +203,28 @@ sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | \
 
 ```bash
 # 文本格式输出，监控所有设备的 TCP 丢包
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp"
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp"
 
 # 只监控 eth0 上的丢包
-sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device eth0 --output json
 
 # 排除 loopback
-sudo dropwatch --bpf-path bpf/dropwatch.o --device-excluded lo --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device-excluded lo --output json
 
 # 设备过滤与协议过滤组合
-sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --filter "tcp and port 443" --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device eth0 --filter "tcp and port 443" --output json
 
 # 抓取 60 秒后退出
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp and port 443" --duration 60 --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp and port 443" --duration 60 --output json
 
 # 将事件转发给正在运行的 huatuo-bamai 实例
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
 
 # 采集 10 秒 JSON 输出，并排除调用栈包含 ip_finish_output 的事件
-sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'select(.stack | test("ip_finish_output") | not)'
+sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -c 'select(.stack | test("ip_finish_output") | not)'
 
 # 采集 10 秒 JSON 输出，只打印除 stack 之外的字段
-sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'del(.stack)'
+sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -c 'del(.stack)'
 ```
 
 `jq -c` 会把每条匹配事件压缩成单行 JSON，便于保存为 NDJSON 或继续用管道处理。`test("ip_finish_output")` 判断 `stack` 是否匹配该正则，`not` 会把结果取反，因此上面的命令会排除包含 `ip_finish_output` 的调用栈；去掉 `| not` 后，就是只保留包含 `ip_finish_output` 的事件。`del(.stack)` 只从 jq 输出中删除 `stack` 字段，适合只查看时间、设备、进程、`packet_*` 元数据和 `layers` 协议字段。如需在存储前由用户态按调用栈过滤，可通过 huatuo-bamai 配置 `EventTracing.IssuesList` 实现（参见第 4 节）。
@@ -284,7 +284,7 @@ huatuo-bamai 以子进程形式启动 `dropwatch`，并通过 `--output-storage`
 
 ```bash
 dropwatch \
-  --bpf-path <CoreBpfDir>/dropwatch.o \
+  --bpf-path <CoreBpfDir>/net_dropwatch.o \
   --output-storage /var/run/huatuo-toolstream.sock \
   --filter "tcp"
 ```
@@ -311,7 +311,7 @@ dropwatch \
     EnableDropwatchCorrelation = false
 ```
 
-standalone dropwatch 始终输出 raw `DropWatchTracing`。TCP 重传 local 关联会加载另一份 `dropwatch.o`，两个输入统一使用 `EventTracing.TCPRetransmit.Filter`，并且只输出定型后的 `TCPRetransmitTracing` 结果。两种模式可以并行；embedded drop 不会重复保存成 raw event。
+standalone dropwatch 始终输出 raw `DropWatchTracing`。TCP 重传 local 关联会加载另一份 `net_dropwatch.o`，两个输入统一使用 `EventTracing.TCPRetransmit.Filter`，并且只输出定型后的 `TCPRetransmitTracing` 结果。两种模式可以并行；embedded drop 不会重复保存成 raw event。
 
 #### 4.2 噪声过滤
 

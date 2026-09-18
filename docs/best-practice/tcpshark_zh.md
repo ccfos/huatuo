@@ -56,7 +56,7 @@ tcpshark --mode retransmit [flags]
 | `--mode retransmit` | 必填 | 选择 TCP 重传追踪模式。 |
 | `--enable-tlp`、`--tlp` | 关闭 | 同时挂载 `tcp_send_loss_probe` 并输出 TLP 事件。 |
 | `--bpf-path <path>` | 非关联模式必填 | 单个 `tcp_retransmit.o` 文件路径。 |
-| `--bpf-path-dir <dir>` | 关联模式必填 | 同时包含 `tcp_retransmit.o` 和 `dropwatch.o` 的目录。 |
+| `--bpf-path-dir <dir>` | 关联模式必填 | 同时包含 `tcp_retransmit.o` 和 `net_dropwatch.o` 的目录。 |
 | `--with-dropwatch` | 关闭 | 加载 embedded dropwatch 并与重传关联。 |
 | `--filter <expr>` | （无） | 三个重传 hook 共用的 L3 兼容 tcpdump 风格过滤器；local 模式下也与 embedded dropwatch 共用，见 §2。 |
 | `--duration <n>` | 0 | 运行 N 秒后退出（0 表示持续运行直至 Ctrl-C）。 |

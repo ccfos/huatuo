@@ -26,7 +26,7 @@ set -exuo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-bpf_tool_setup dropwatch
+bpf_tool_setup dropwatch net_dropwatch
 readonly RATE=1
 readonly DURATION=10
 readonly TARGET_IP="127.0.0.99"

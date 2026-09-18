@@ -360,7 +360,7 @@ func TestAppRejectsInvalidFlags(t *testing.T) {
 		},
 		{
 			name:      "removed dropwatch path",
-			args:      []string{"--dropwatch-bpf-path", "dropwatch.o"},
+			args:      []string{"--dropwatch-bpf-path", "net_dropwatch.o"},
 			wantError: "flag provided but not defined",
 		},
 		{

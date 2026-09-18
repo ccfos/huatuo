@@ -18,9 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -36,56 +33,50 @@ import (
 	"github.com/cloudflare/backoff"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/hungtask.c -o $BPF_DIR/hungtask.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/system_softlockup.c -o $BPF_DIR/system_softlockup.o
 
-// HungTaskTracerData is the full data structure.
-type HungTaskTracerData struct {
-	TID                   uint32 `json:"tid"`
-	Comm                  string `json:"comm"`
-	CPUsStack             string `json:"cpus_stack"`
-	BlockedProcessesStack string `json:"blocked_processes_stack"`
-	HungTaskTimeoutSecs   int    `json:"hung_task_timeout_secs"`
+// TracerData is the full data structure.
+type SoftLockupTracerData struct {
+	CPU       uint32 `json:"cpu"`
+	PID       uint32 `json:"pid"`
+	Comm      string `json:"comm"`
+	CPUsStack string `json:"cpus_stack"`
 }
 
-type hungTaskTracing struct {
+type softLockupTracing struct {
 	data            []*metric.Data
 	backoff         *backoff.Backoff
 	nextAllowedTime time.Time
 }
 
 func init() {
-	// OS such as Fedora-42 may disable this feature.
-	if hungTaskTimeout() < 0 {
-		return
-	}
-
-	tracing.RegisterEventTracing("hungtask", newHungTask)
+	tracing.RegisterEventTracing("softlockup", newSoftLockup)
 }
 
-func newHungTask() (*tracing.EventTracingAttr, error) {
+func newSoftLockup() (*tracing.EventTracingAttr, error) {
 	bo := backoff.NewWithoutJitter(3*time.Hour, 10*time.Minute)
 	bo.SetDecay(1 * time.Hour)
 
 	return &tracing.EventTracingAttr{
-		TracingData: &hungTaskTracing{
+		TracingData: &softLockupTracing{
 			data: []*metric.Data{
-				metric.NewCounterData("total", 0, "hungtask counter", nil),
+				metric.NewCounterData("total", 0, "softlockup counter", nil),
 			},
 			backoff: bo,
 		},
 		Interval: 10,
-		Flag:     tracing.FlagMetric | tracing.FlagTracing,
+		Flag:     tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }
 
-var hungtaskCounter int64
+var softlockupCounter int64
 
-func (c *hungTaskTracing) Update() ([]*metric.Data, error) {
-	c.data[0].Value = float64(atomic.LoadInt64(&hungtaskCounter))
+func (c *softLockupTracing) Update() ([]*metric.Data, error) {
+	c.data[0].Value = float64(atomic.LoadInt64(&softlockupCounter))
 	return c.data, nil
 }
 
-func (c *hungTaskTracing) Start(ctx context.Context) error {
+func (c *softLockupTracing) Start(ctx context.Context) error {
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
@@ -95,7 +86,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "hungtask_perf_events", bpf.DefaultPerfEventBufferBytes)
+	reader, err := b.AttachAndEventPipe(childCtx, "softlockup_perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return err
 	}
@@ -108,16 +99,16 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var data abi.HungtaskEvent
+			var data abi.SoftlockupEvent
 			if err := reader.ReadInto(&data); err != nil {
 				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
 					log.WithError(err).Warn("lost BPF perf event samples")
 					continue
 				}
-				return fmt.Errorf("hungtask ReadFromPerfEvent: %w", err)
+				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
 
-			atomic.AddInt64(&hungtaskCounter, 1)
+			atomic.AddInt64(&softlockupCounter, 1)
 
 			now := time.Now()
 			if now.Before(c.nextAllowedTime) {
@@ -126,46 +117,23 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 
 			c.nextAllowedTime = now.Add(c.backoff.Duration())
 
-			cpusBT, err := kmsgutil.GetAllCPUsBT()
+			bt, err := kmsgutil.GetAllCPUsBT()
 			if err != nil {
-				cpusBT = err.Error()
-			}
-
-			blockedProcessesBT, err := kmsgutil.GetBlockedProcessesBT()
-			if err != nil {
-				blockedProcessesBT = err.Error()
+				bt = err.Error()
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:        "hungtask",
+				TracerName:        "softlockup",
 				ObservedTimestamp: timeutil.Now(),
-				TracerData: &HungTaskTracerData{
-					TID:                   data.TID,
-					Comm:                  bytesutil.ToStr(data.Comm[:]),
-					CPUsStack:             cpusBT,
-					BlockedProcessesStack: blockedProcessesBT,
-					HungTaskTimeoutSecs:   hungTaskTimeout(),
+				TracerData: &SoftLockupTracerData{
+					CPU:       data.CPU,
+					PID:       data.TGID,
+					Comm:      bytesutil.ToStr(data.Comm[:]),
+					CPUsStack: bt,
 				},
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}
 		}
 	}
-}
-
-// returns the kernel hung_task_timeout_secs value.
-// Returns -1 when the kernel does not support hung task detection
-// (CONFIG_DETECT_HUNG_TASK=n), 0 means admin disabled it,
-// and the timeout > 0 in seconds means it works.
-func hungTaskTimeout() int {
-	sysctl := "/proc/sys/kernel/hung_task_timeout_secs"
-	data, err := os.ReadFile(sysctl)
-	if err != nil {
-		return -1
-	}
-	val, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		return -1
-	}
-	return val
 }

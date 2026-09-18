@@ -56,7 +56,7 @@ tcpshark --mode retransmit [flags]
 | `--mode retransmit` | required | Select TCP retransmission tracing mode. |
 | `--enable-tlp`, `--tlp` | disabled | Also attach `tcp_send_loss_probe` and emit TLP events. |
 | `--bpf-path <path>` | required without correlation | Path to one `tcp_retransmit.o` file. |
-| `--bpf-path-dir <dir>` | required with correlation | Directory containing `tcp_retransmit.o` and `dropwatch.o`. |
+| `--bpf-path-dir <dir>` | required with correlation | Directory containing `tcp_retransmit.o` and `net_dropwatch.o`. |
 | `--with-dropwatch` | disabled | Load embedded dropwatch and correlate it with retransmissions. |
 | `--filter <expr>` | (none) | L3-compatible tcpdump-style filter for all retransmit hooks; also shared with embedded dropwatch in local mode; see §2. |
 | `--duration <n>` | 0 | Stop after N seconds (0 = run until Ctrl-C). |

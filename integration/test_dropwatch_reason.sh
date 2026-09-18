@@ -43,7 +43,7 @@ bpftool btf dump file "${KERNEL_BTF}" format raw \
 grep -Eq "ENUM(64)? 'skb_drop_reason'" "${btf_dump}" \
 	|| skip "kernel BTF does not expose skb_drop_reason"
 
-bpf_tool_setup dropwatch
+bpf_tool_setup dropwatch net_dropwatch
 "${TOOL_BIN}" \
 	--bpf-path "${TOOL_BPF}" \
 	--filter "udp and port ${TARGET_PORT}" \

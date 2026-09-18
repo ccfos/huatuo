@@ -26,7 +26,7 @@ shutdown 时仍在等待的 retransmit 会通过正常 no-match 路径定型为 
 
 1. `tcpshark --bpf-path <tcp_retransmit.o>` 只采集并直接输出重传。
 2. `tcpshark --with-dropwatch --bpf-path-dir <dir>` 在一个进程内加载
-   `tcp_retransmit.o` 与 `dropwatch.o`，统一持有两条 perf 输入、timer、输出和关闭。
+   `tcp_retransmit.o` 与 `net_dropwatch.o`，统一持有两条 perf 输入、timer、输出和关闭。
 3. huatuo-bamai 的 standalone dropwatch 仍由 `cmd/dropwatch` 独立运行，只输出
    raw `DropWatchTracing`，与 embedded source 不共享状态。
 
