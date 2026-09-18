@@ -16,8 +16,10 @@ package flamegraph
 
 import (
 	"bytes"
+	"encoding/xml"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestRenderStyleKeepsSymbolsOutOfJavaScript(t *testing.T) {
@@ -38,5 +40,23 @@ func TestRenderStyleKeepsSymbolsOutOfJavaScript(t *testing.T) {
 	if !strings.Contains(content, `data-title="`) ||
 		!strings.Contains(content, "&lt;script&gt;alert(2)&lt;/script&gt;") {
 		t.Fatalf("SVG does not preserve the escaped symbol as data: %s", content)
+	}
+}
+
+func TestRenderStyleKeepsTruncatedSymbolsValidUTF8(t *testing.T) {
+	symbol := strings.Repeat("中", 200)
+	var output bytes.Buffer
+	if err := RenderStyle([]Stack{{
+		Names:   []string{"root", symbol},
+		Samples: 1,
+	}}, &output, DefaultStyle); err != nil {
+		t.Fatalf("RenderStyle() error = %v", err)
+	}
+
+	if !utf8.Valid(output.Bytes()) {
+		t.Fatal("RenderStyle() emitted invalid UTF-8 after truncating a symbol")
+	}
+	if err := xml.Unmarshal(output.Bytes(), new(any)); err != nil {
+		t.Fatalf("RenderStyle() emitted invalid XML: %v", err)
 	}
 }
