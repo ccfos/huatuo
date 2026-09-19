@@ -25,6 +25,7 @@ readonly DOCKERFILE_CHECK_RELEASE="${ROOT_DIR}/Dockerfile"
 readonly DOCKERFILE_CHECK_DEVEL="${ROOT_DIR}/Dockerfile.devel"
 readonly DOCKERFILE_CHECK_OUTLINE="${HUATUO_BAMAI_TEST_TMPDIR}/dockerfile-outline.txt"
 readonly DOCKERFILE_CHECK_TARGETS="${HUATUO_BAMAI_TEST_TMPDIR}/dockerfile-devel-targets.txt"
+readonly DOCKERFILE_CHECK_CONFIG="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.conf"
 
 command -v docker > /dev/null || skip "docker command is not installed"
 docker info > /dev/null 2>&1 || skip "docker daemon is unavailable"
@@ -39,6 +40,28 @@ docker build --call=outline \
 grep -Eq '^BUILD_MODE[[:space:]]+static([[:space:]]|$)' \
 	"${DOCKERFILE_CHECK_OUTLINE}" \
 	|| fatal "release Dockerfile BUILD_MODE default must be static"
+
+log_info "checking release config transformation"
+grep -Fq 's/^\([[:space:]]*\)# Address = .*/\1Address=""/' \
+	"${DOCKERFILE_CHECK_RELEASE}" \
+	|| fatal "release Dockerfile must only uncomment the Elasticsearch address"
+sed -e 's/^\([[:space:]]*\)# Address = .*/\1Address=""/' \
+	"${ROOT_DIR}/huatuo-bamai.conf" > "${DOCKERFILE_CHECK_CONFIG}"
+awk '
+	/^\[Storage\]$/ { in_storage = 1; next }
+	/^\[/ { in_storage = 0 }
+	in_storage && /^[[:space:]]*Address[[:space:]]*=/ { exit 1 }
+' "${DOCKERFILE_CHECK_CONFIG}" \
+	|| fatal "release config must not contain Storage.Address"
+awk '
+	/^\[Storage.Elasticsearch\]$/ { in_elasticsearch = 1; next }
+	/^\[/ { in_elasticsearch = 0 }
+	in_elasticsearch && /^[[:space:]]*Address[[:space:]]*=[[:space:]]*""$/ {
+		found = 1
+	}
+	END { exit !found }
+' "${DOCKERFILE_CHECK_CONFIG}" \
+	|| fatal "release config must disable the Elasticsearch address"
 
 log_info "checking release Dockerfile static target"
 docker build --call=check \
