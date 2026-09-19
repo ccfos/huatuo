@@ -79,7 +79,7 @@ func (l *library) load() (rerr error) {
 	// Register all symbols after successful loading.
 	if err := registerSmlLibSymbols(l.dl.Handle()); err != nil {
 		if closeErr := l.dl.Close(); closeErr != nil {
-			return fmt.Errorf("register SML symbols: %w; close library: %v", err, closeErr)
+			return fmt.Errorf("register SML symbols: %w; close library: %w", err, closeErr)
 		}
 		return fmt.Errorf("register SML symbols: %w", err)
 	}

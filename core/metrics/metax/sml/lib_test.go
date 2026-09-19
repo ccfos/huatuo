@@ -23,8 +23,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ccfos/huatuo/core/metrics/metax/dl"
 	"github.com/ebitengine/purego"
+
+	"github.com/ccfos/huatuo/core/metrics/metax/dl"
 )
 
 func TestLibraryLoadReturnsErrorForIncompleteSMLLibrary(t *testing.T) {
