@@ -16,8 +16,10 @@ package profiling
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/exec"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
@@ -58,6 +60,56 @@ func TestExecutorClearsExpectedSessionWhenProcessStartFails(t *testing.T) {
 		t.Fatalf("ExpectSession() after failed Start error = %v", err)
 	}
 	stream.CancelSession(types.ProfilingToolName, "job-1")
+}
+
+// The publish finalize path blocks in AwaitSession while the lifecycle decides
+// to discard the result, so the discard has to wake that waiter immediately
+// instead of letting it run into the finalization timeout.
+func TestExecutorFinalizeDiscardWakesBlockedAwaitSession(t *testing.T) {
+	stream, err := toolstream.NewServer(filepath.Join(t.TempDir(), "toolstream.sock"))
+	if err != nil {
+		t.Fatalf("toolstream.NewServer() error = %v", err)
+	}
+	process, err := exec.New(exec.Spec{Path: "/bin/true"})
+	if err != nil {
+		t.Fatalf("exec.New() error = %v", err)
+	}
+	publisher := &fakeResultPublisher{}
+	executor := newExecutor(process, stream, publisher, "job-1")
+	if err := stream.ExpectSession(types.ProfilingToolName, "job-1"); err != nil {
+		t.Fatalf("ExpectSession() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	awaitErr := make(chan error, 1)
+	go func() {
+		awaitErr <- stream.AwaitSession(ctx, types.ProfilingToolName, "job-1")
+	}()
+	// Let the waiter reach the select before the discard; a late AwaitSession
+	// would report an unexpected session instead of exercising the wakeup.
+	time.Sleep(100 * time.Millisecond)
+
+	start := time.Now()
+	if err := executor.Finalize(t.Context(), operation.FinalizeDiscard); err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	if publisher.publishCalls != 0 {
+		t.Fatalf("Publish() calls = %d, want 0", publisher.publishCalls)
+	}
+
+	select {
+	case err := <-awaitErr:
+		if !errors.Is(err, toolstream.ErrSessionCanceled) {
+			t.Fatalf("AwaitSession() error = %v, want toolstream.ErrSessionCanceled", err)
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Fatalf("AwaitSession() woke after %v, want an immediate wakeup", elapsed)
+		}
+	case <-ctx.Done():
+		t.Fatal("AwaitSession() stayed blocked after FinalizeDiscard")
+	}
 }
 
 func TestExecutorFinalizeDiscardCancelsSessionWithoutPublishing(t *testing.T) {
