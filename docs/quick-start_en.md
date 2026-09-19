@@ -74,12 +74,12 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 #### 3.3 Configuration
 - Container Information Configuration
 
-    HUATUO obtains POD/container information by calling the kubelet interface. Configure the access interface and certificates according to your actual environment. Empty configuration "" indicates disabling this functionality.
+    HUATUO obtains POD/container information by calling the kubelet interface. Configure the access ports and certificate according to your actual environment. Set `KubeletReadOnlyPort = 0` and `KubeletAuthorizedPort = 0` to disable this feature.
     ```yml
       [Pod]
-        KubeletPodListURL = "http://127.0.0.1:10255/pods"
-        KubeletPodListHTTPSURL = "https://127.0.0.1:10250/pods"
-        KubeletPodClientCertPath = "/var/lib/kubelet/pki/kubelet-client-current.pem"
+        KubeletReadOnlyPort = 10255
+        KubeletAuthorizedPort = 10250
+        KubeletClientCertPath = "/var/lib/kubelet/pki/kubelet-client-current.pem"
     ```
 
 - Storage Configuration
