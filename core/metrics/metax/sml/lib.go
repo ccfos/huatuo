@@ -16,6 +16,7 @@
 package sml
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 
@@ -76,7 +77,12 @@ func (l *library) load() (rerr error) {
 	}
 
 	// Register all symbols after successful loading.
-	l.registerSmlLibSymbols(l.dl.Handle())
+	if err := registerSmlLibSymbols(l.dl.Handle()); err != nil {
+		if closeErr := l.dl.Close(); closeErr != nil {
+			return fmt.Errorf("register SML symbols: %w; close library: %v", err, closeErr)
+		}
+		return fmt.Errorf("register SML symbols: %w", err)
+	}
 
 	return nil
 }
@@ -95,30 +101,44 @@ func (l *library) close() (rerr error) {
 	return l.dl.Close()
 }
 
-// registerSmlLibSymbols registers all required SML symbols
-// from the loaded shared library.
-func (l *library) registerSmlLibSymbols(handle uintptr) {
-	purego.RegisterLibFunc(&mxSmlInit, handle, "mxSmlInit")
-	purego.RegisterLibFunc(&mxSmlGetErrorString, handle, "mxSmlGetErrorString")
-	purego.RegisterLibFunc(&mxSmlGetMacaVersion, handle, "mxSmlGetMacaVersion")
-	purego.RegisterLibFunc(&mxSmlGetDeviceCount, handle, "mxSmlGetDeviceCount")
-	purego.RegisterLibFunc(&mxSmlGetPfDeviceCount, handle, "mxSmlGetPfDeviceCount")
-	purego.RegisterLibFunc(&mxSmlGetDeviceInfo, handle, "mxSmlGetDeviceInfo")
-	purego.RegisterLibFunc(&mxSmlGetDeviceDieCount, handle, "mxSmlGetDeviceDieCount")
-	purego.RegisterLibFunc(&mxSmlGetDeviceVersion, handle, "mxSmlGetDeviceVersion")
-	purego.RegisterLibFunc(&mxSmlGetBoardPowerInfo, handle, "mxSmlGetBoardPowerInfo")
-	purego.RegisterLibFunc(&mxSmlGetPcieInfo, handle, "mxSmlGetPcieInfo")
-	purego.RegisterLibFunc(&mxSmlGetPcieThroughput, handle, "mxSmlGetPcieThroughput")
-	purego.RegisterLibFunc(&mxSmlGetMetaXLinkInfo_v2, handle, "mxSmlGetMetaXLinkInfo_v2")
-	purego.RegisterLibFunc(&mxSmlGetMetaXLinkBandwidth, handle, "mxSmlGetMetaXLinkBandwidth")
-	purego.RegisterLibFunc(&mxSmlGetMetaXLinkTrafficStat, handle, "mxSmlGetMetaXLinkTrafficStat")
-	purego.RegisterLibFunc(&mxSmlGetMetaXLinkAer, handle, "mxSmlGetMetaXLinkAer")
-	purego.RegisterLibFunc(&mxSmlGetDieUnavailableReason, handle, "mxSmlGetDieUnavailableReason")
-	purego.RegisterLibFunc(&mxSmlGetDieTemperatureInfo, handle, "mxSmlGetDieTemperatureInfo")
-	purego.RegisterLibFunc(&mxSmlGetDieIpUsage, handle, "mxSmlGetDieIpUsage")
-	purego.RegisterLibFunc(&mxSmlGetDieMemoryInfo, handle, "mxSmlGetDieMemoryInfo")
-	purego.RegisterLibFunc(&mxSmlGetDieClocks, handle, "mxSmlGetDieClocks")
-	purego.RegisterLibFunc(&mxSmlGetDieCurrentClocksThrottleReason, handle, "mxSmlGetDieCurrentClocksThrottleReason")
-	purego.RegisterLibFunc(&mxSmlGetCurrentDieDpmIpPerfLevel, handle, "mxSmlGetCurrentDieDpmIpPerfLevel")
-	purego.RegisterLibFunc(&mxSmlGetDieTotalEccErrors, handle, "mxSmlGetDieTotalEccErrors")
+// registerSmlLibSymbols registers all required SML symbols from the loaded
+// shared library. Missing symbols are returned to the caller so an unsupported
+// SML version disables only the MetaX collector instead of panicking the agent.
+func registerSmlLibSymbols(handle uintptr) error {
+	registrations := []struct {
+		function any
+		name     string
+	}{
+		{&mxSmlInit, "mxSmlInit"},
+		{&mxSmlGetErrorString, "mxSmlGetErrorString"},
+		{&mxSmlGetMacaVersion, "mxSmlGetMacaVersion"},
+		{&mxSmlGetDeviceCount, "mxSmlGetDeviceCount"},
+		{&mxSmlGetPfDeviceCount, "mxSmlGetPfDeviceCount"},
+		{&mxSmlGetDeviceInfo, "mxSmlGetDeviceInfo"},
+		{&mxSmlGetDeviceDieCount, "mxSmlGetDeviceDieCount"},
+		{&mxSmlGetDeviceVersion, "mxSmlGetDeviceVersion"},
+		{&mxSmlGetBoardPowerInfo, "mxSmlGetBoardPowerInfo"},
+		{&mxSmlGetPcieInfo, "mxSmlGetPcieInfo"},
+		{&mxSmlGetPcieThroughput, "mxSmlGetPcieThroughput"},
+		{&mxSmlGetMetaXLinkInfo_v2, "mxSmlGetMetaXLinkInfo_v2"},
+		{&mxSmlGetMetaXLinkBandwidth, "mxSmlGetMetaXLinkBandwidth"},
+		{&mxSmlGetMetaXLinkTrafficStat, "mxSmlGetMetaXLinkTrafficStat"},
+		{&mxSmlGetMetaXLinkAer, "mxSmlGetMetaXLinkAer"},
+		{&mxSmlGetDieUnavailableReason, "mxSmlGetDieUnavailableReason"},
+		{&mxSmlGetDieTemperatureInfo, "mxSmlGetDieTemperatureInfo"},
+		{&mxSmlGetDieIpUsage, "mxSmlGetDieIpUsage"},
+		{&mxSmlGetDieMemoryInfo, "mxSmlGetDieMemoryInfo"},
+		{&mxSmlGetDieClocks, "mxSmlGetDieClocks"},
+		{&mxSmlGetDieCurrentClocksThrottleReason, "mxSmlGetDieCurrentClocksThrottleReason"},
+		{&mxSmlGetCurrentDieDpmIpPerfLevel, "mxSmlGetCurrentDieDpmIpPerfLevel"},
+		{&mxSmlGetDieTotalEccErrors, "mxSmlGetDieTotalEccErrors"},
+	}
+	for _, registration := range registrations {
+		symbol, err := purego.Dlsym(handle, registration.name)
+		if err != nil {
+			return fmt.Errorf("required symbol %s not found: %w", registration.name, err)
+		}
+		purego.RegisterFunc(registration.function, symbol)
+	}
+	return nil
 }
