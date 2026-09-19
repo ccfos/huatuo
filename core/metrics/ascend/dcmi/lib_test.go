@@ -19,8 +19,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ccfos/huatuo/core/metrics/ascend/dl"
 	"github.com/ebitengine/purego"
+
+	"github.com/ccfos/huatuo/core/metrics/ascend/dl"
 )
 
 // TestLoadMissingSymbolsReturnsErrorAndCloses verifies that a library which
