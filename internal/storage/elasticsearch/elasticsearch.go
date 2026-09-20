@@ -325,6 +325,12 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend query %s: decode: %w", s.index, err)
 	}
+	if payload.TimedOut {
+		return nil, fmt.Errorf("elasticsearch backend query %s timed out", s.index)
+	}
+	if payload.Shards_.Failed != 0 {
+		return nil, fmt.Errorf("elasticsearch backend query %s returned %d failed shards", s.index, payload.Shards_.Failed)
+	}
 	records := make([]driver.Record, 0, len(payload.Hits.Hits))
 	for i := range payload.Hits.Hits {
 		hit := &payload.Hits.Hits[i]
