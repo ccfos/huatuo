@@ -15,6 +15,8 @@
 package autotracing
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 	"sync/atomic"
 
@@ -63,6 +65,10 @@ type Config struct {
 	}
 
 	CPUSys struct {
+		UserThreshold         int64 `default:"0"`
+		UsageThreshold        int64 `default:"0"`
+		DeltaUserThreshold    int64 `default:"0"`
+		DeltaUsageThreshold   int64 `default:"0"`
 		SysThreshold          int64 `default:"45"`
 		DeltaSysThreshold     int64 `default:"20"`
 		Interval              int64 `default:"10"`
@@ -71,10 +77,11 @@ type Config struct {
 	}
 
 	Dload struct {
-		ThresholdLoad   int64 `default:"5"`
-		Interval        int64 `default:"10"`
-		IntervalTracing int64 `default:"1800"`
-		EnableDebug     bool  `default:"false"`
+		HostThresholdLoad int64 `default:"5"`
+		ThresholdLoad     int64 `default:"5"`
+		Interval          int64 `default:"10"`
+		IntervalTracing   int64 `default:"1800"`
+		EnableDebug       bool  `default:"false"`
 	}
 
 	IOTracing struct {
@@ -107,6 +114,38 @@ func Set(c *Config) {
 
 func configSnapshot() *Config {
 	return currentConfig.Load()
+}
+
+// Validate rejects invalid host tracing thresholds before publication.
+func (c *Config) Validate() error {
+	if err := c.validateCPUSysAdditionalThresholds(); err != nil {
+		return err
+	}
+	return c.validateDloadHostThreshold()
+}
+
+func (c *Config) validateCPUSysAdditionalThresholds() error {
+	for _, threshold := range []struct {
+		name  string
+		value int64
+	}{
+		{"UserThreshold", c.CPUSys.UserThreshold},
+		{"DeltaUserThreshold", c.CPUSys.DeltaUserThreshold},
+		{"UsageThreshold", c.CPUSys.UsageThreshold},
+		{"DeltaUsageThreshold", c.CPUSys.DeltaUsageThreshold},
+	} {
+		if err := validateCPUPercentage(threshold.value); err != nil {
+			return fmt.Errorf("CPUSys.%s: %w", threshold.name, err)
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateDloadHostThreshold() error {
+	if c.Dload.HostThresholdLoad < 0 {
+		return errors.New("dload host threshold must be non-negative")
+	}
+	return nil
 }
 
 // Clone returns a deep copy suitable for immutable publication.
