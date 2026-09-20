@@ -42,7 +42,8 @@ func (*Provider) Capture(ctx context.Context,
 			return memsnap.Unavailable(err.Error()), nil
 		}
 		return memsnap.Failed(
-			"external HotSpot heap scan failed: " + err.Error()), nil
+			"external HotSpot heap scan failed: " + err.Error(),
+		), nil
 	}
 	if snapshot == nil {
 		return memsnap.Failed("Java external heap reader returned a nil snapshot"), nil

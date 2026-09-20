@@ -473,7 +473,8 @@ func (c *scanner) baseSize(objectHead []byte, typeInfo typeInfo) uint64 {
 		return alignUp(size, 8)
 	}
 	items := int64(c.image.order.Uint64(
-		objectHead[sizeOffset : sizeOffset+8]))
+		objectHead[sizeOffset : sizeOffset+8],
+	))
 	if items < 0 {
 		items = -items
 	}
@@ -599,7 +600,8 @@ func (c *scanner) objectItems(objectHead []byte) (int64, bool) {
 		return 0, false
 	}
 	items := int64(c.image.order.Uint64(
-		objectHead[sizeOffset : sizeOffset+8]))
+		objectHead[sizeOffset : sizeOffset+8],
+	))
 	return items, items >= 0
 }
 

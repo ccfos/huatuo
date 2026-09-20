@@ -76,12 +76,14 @@ func groupRegions(regions []region, metadata *vmMeta) (heapRegions, error) {
 	}
 	if taggedRegions != 0 && taggedRegions != len(regions) {
 		return heapRegions{}, unsupportedHotSpot(
-			"humongous region tags are present on only part of the heap")
+			"humongous region tags are present on only part of the heap",
+		)
 	}
 	tagsComplete := startsOK && continuesOK && taggedRegions == len(regions)
 	if !tagsComplete && !jdk8SpanningRegions(metadata) {
 		return heapRegions{}, unsupportedHotSpot(
-			"humongous region tags are incomplete outside the JDK 8 spanning layout")
+			"humongous region tags are incomplete outside the JDK 8 spanning layout",
+		)
 	}
 	tagsAvailable := tagsComplete
 	result := heapRegions{ordinary: make([]region, 0, len(regions))}
@@ -93,7 +95,8 @@ func groupRegions(regions []region, metadata *vmMeta) (heapRegions, error) {
 			current.capacity > minimumCapacity
 		if tagsAvailable && int64(current.tag) == continues {
 			return heapRegions{}, unsupportedHotSpot(
-				"orphan humongous continuation region")
+				"orphan humongous continuation region",
+			)
 		}
 		if !spanningRegion && (!tagsAvailable || int64(current.tag) != starts) {
 			result.ordinary = append(result.ordinary, current)
@@ -280,7 +283,8 @@ func readRegionsFromHeap(memory processMemory, metadata *vmMeta,
 		}
 		for offset := uint64(0); offset < count; offset++ {
 			regionAddress := binary.LittleEndian.Uint64(
-				pointers[offset*8 : offset*8+8])
+				pointers[offset*8 : offset*8+8],
+			)
 			if regionAddress == 0 {
 				continue
 			}
@@ -323,7 +327,8 @@ func readRegionsFromHeap(memory processMemory, metadata *vmMeta,
 				capacity > maxJavaObjectBytes {
 				return nil, unsupportedHotSpot(fmt.Sprintf(
 					"region %d boundaries are invalid: bottom=%#x top=%#x end=%#x",
-					record.index, bottom, top, end))
+					record.index, bottom, top, end,
+				))
 			}
 			if minimumRegionCapacity == 0 || capacity < minimumRegionCapacity {
 				minimumRegionCapacity = capacity
@@ -645,7 +650,8 @@ func scanWindows(memory processMemory, regions []region,
 	for begin := 0; begin < len(windows); {
 		if err := memory.check(); err != nil {
 			return fmt.Sprintf(
-				"used-byte-weighted HotSpot sampling stopped: %v", err)
+				"used-byte-weighted HotSpot sampling stopped: %v", err,
+			)
 		}
 		end := readBatchEnd(begin, len(windows))
 		if end <= begin {
@@ -674,13 +680,15 @@ func scanWindows(memory processMemory, regions []region,
 		if err := memory.check(); err != nil {
 			return fmt.Sprintf(
 				"used-byte-weighted HotSpot sampling stopped before process_vm_readv: %v",
-				err)
+				err,
+			)
 		}
 		read, readErr := unix.ProcessVMReadv(memory.pid, local, remote, 0)
 		if err := memory.check(); err != nil {
 			return fmt.Sprintf(
 				"used-byte-weighted HotSpot sampling stopped after process_vm_readv: %v",
-				err)
+				err,
+			)
 		}
 		remaining := read
 		completed := 0

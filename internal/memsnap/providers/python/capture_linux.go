@@ -139,7 +139,8 @@ func (c *scanner) response() *memsnap.Snapshot {
 	reason := c.partial
 	if c.skippedObjects != 0 {
 		classificationReason := fmt.Sprintf(
-			"%d GC-tracked objects could not be classified", c.skippedObjects)
+			"%d GC-tracked objects could not be classified", c.skippedObjects,
+		)
 		if reason == "" {
 			reason = classificationReason
 		} else {
@@ -236,7 +237,8 @@ func (c *scanner) fixedInterpreters(runtimeRaw []byte) (
 		return nil, errors.New("CPython interpreter head is unavailable")
 	}
 	address := c.image.order.Uint64(
-		runtimeRaw[headOffset : headOffset+8])
+		runtimeRaw[headOffset : headOffset+8],
+	)
 	if !plausiblePtr(address) {
 		return nil, errors.New("CPython interpreter head is invalid")
 	}
@@ -258,7 +260,8 @@ func (c *scanner) debugInterpreters(runtimeRaw []byte) (
 	if packedVersion == 0 || int(packedVersion>>24) != c.image.version.major ||
 		int((packedVersion>>16)&0xff) != c.image.version.minor {
 		return nil, unsupportedRuntime(
-			"CPython debug offsets version does not match Py_Version")
+			"CPython debug offsets version does not match Py_Version",
+		)
 	}
 	if read(debugFreeThreaded) != 0 {
 		return nil, fmt.Errorf("%w: free-threaded builds are unsupported",

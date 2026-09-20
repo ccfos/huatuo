@@ -158,7 +158,8 @@ func (r *reader) capture(ctx context.Context,
 	byteOrder := target.byteOrder
 	snapshot := &snapshot{RuntimeVersion: target.version}
 	scanDeadline, hasScanDeadline := memsnap.DeadlineWithReserve(
-		ctx, scanReserve)
+		ctx, scanReserve,
+	)
 	var word [8]byte
 	if rateAddress := target.rateAddress(); rateAddress != 0 {
 		readErr := memory.readInto(rateAddress, word[:])
@@ -213,7 +214,8 @@ func (r *reader) capture(ctx context.Context,
 					return nil, fmt.Errorf("read mbucket header %#x: %w", current, readErr)
 				}
 				snapshot.PartialReason = fmt.Sprintf(
-					"mbucket header read failed after %d buckets", visitedBuckets)
+					"mbucket header read failed after %d buckets", visitedBuckets,
+				)
 				stop = true
 				break
 			}
@@ -248,7 +250,8 @@ func (r *reader) capture(ctx context.Context,
 			aggregates, &aggregateTotals, &aggregateKeyBytes, snapshot, workspace) {
 			appendPartialReason(snapshot, fmt.Sprintf(
 				"aggregate stack-key memory limit %d bytes reached",
-				maxAggregateKeyBytes))
+				maxAggregateKeyBytes,
+			))
 			stop = true
 		}
 		if stop {
@@ -294,7 +297,8 @@ func (r *reader) capture(ctx context.Context,
 	for _, candidate := range candidates {
 		if symbolizer != nil && ctx.Err() != nil {
 			appendPartialReason(snapshot, fmt.Sprintf(
-				"symbolization unavailable: %v", ctx.Err()))
+				"symbolization unavailable: %v", ctx.Err(),
+			))
 			symbolizer = nil
 		}
 		stack := resolveStack([]byte(candidate.key), byteOrder, symbolizer)
@@ -340,7 +344,8 @@ func readBucketBatch(memory processMemory, buckets []bucketRead, order binary.By
 			continue
 		}
 		buckets[index].objects, buckets[index].bytes = scaleHeapSample(
-			clampUint64(objects), clampUint64(bytes), sampleRate)
+			clampUint64(objects), clampUint64(bytes), sampleRate,
+		)
 		stackStart := index * maxStackDepth * 8
 		stackRaw := workspace.stackRaw[stackStart : stackStart+buckets[index].stackDepth*8]
 		stackRanges = append(stackRanges, remoteRange{

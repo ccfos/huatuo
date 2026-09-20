@@ -94,7 +94,8 @@ func discoverVM(ctx context.Context, procRoot string, pid int) (*vmImage, error)
 		}
 		if len(readable) >= maxProcMapEntries {
 			return nil, unsupportedHotSpot(
-				"readable mapping count exceeds safety limit")
+				"readable mapping count exceeds safety limit",
+			)
 		}
 		readable = append(readable, addressRange{
 			start: mapping.Start, end: mapping.End,
@@ -141,7 +142,8 @@ func discoverVM(ctx context.Context, procRoot string, pid int) (*vmImage, error)
 		})
 	if err != nil {
 		return nil, unsupportedHotSpot(
-			"libjvm.so dynamic symbols are unavailable")
+			"libjvm.so dynamic symbols are unavailable",
+		)
 	}
 	symbols := make(map[string]uint64, len(dynamicSymbols))
 	for _, symbol := range dynamicSymbols {

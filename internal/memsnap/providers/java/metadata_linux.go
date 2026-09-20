@@ -131,7 +131,8 @@ func (m *vmMeta) validate() error {
 		if value < minimum || value > maximum {
 			return unsupportedHotSpot(fmt.Sprintf(
 				"constant %s=%d is outside [%d,%d]",
-				name, value, minimum, maximum))
+				name, value, minimum, maximum,
+			))
 		}
 		return nil
 	}
@@ -157,12 +158,14 @@ func (m *vmMeta) validate() error {
 	slowBit := m.constants["Klass::_lh_instance_slow_path_bit"]
 	if slowBit <= 0 || uint64(slowBit)&(uint64(slowBit)-1) != 0 {
 		return unsupportedHotSpot(
-			"Klass slow-path bit is not a positive power of two")
+			"Klass slow-path bit is not a positive power of two",
+		)
 	}
 	if value, ok := m.constants["arrayOopDesc_length_offset_in_bytes"]; ok &&
 		(value < 8 || value > 256) {
 		return unsupportedHotSpot(
-			"array length offset is outside the supported range")
+			"array length offset is outside the supported range",
+		)
 	}
 	return nil
 }
@@ -276,12 +279,14 @@ func validateOffsets(offsets map[string]uint64, stride int,
 		offset, ok := offsets[field.name]
 		if !ok {
 			return unsupportedHotSpot(
-				"metadata offset " + field.name + " is unavailable")
+				"metadata offset " + field.name + " is unavailable",
+			)
 		}
 		if offset > uint64(stride) || offset+uint64(field.width) > uint64(stride) {
 			return unsupportedHotSpot(fmt.Sprintf(
 				"metadata offset %s=%d with width %d exceeds stride %d",
-				field.name, offset, field.width, stride))
+				field.name, offset, field.width, stride,
+			))
 		}
 	}
 	return nil
@@ -318,7 +323,8 @@ func (m *vmMeta) loadStructs(memory processMemory) error {
 	}); err != nil {
 		return err
 	}
-	return walkTable(memory, "VMStruct", basePointer, stride,
+	return walkTable(
+		memory, "VMStruct", basePointer, stride,
 		func(entry []byte) (bool, error) {
 			typePointer := binary.LittleEndian.Uint64(entry[offsets["TypeName"]:])
 			if typePointer == 0 {
@@ -381,7 +387,8 @@ func (m *vmMeta) loadTypes(memory processMemory) error {
 	}); err != nil {
 		return err
 	}
-	return walkTable(memory, "VMType", basePointer, stride,
+	return walkTable(
+		memory, "VMType", basePointer, stride,
 		func(entry []byte) (bool, error) {
 			namePointer := binary.LittleEndian.Uint64(entry[offsets["TypeName"]:])
 			if namePointer == 0 {
@@ -436,7 +443,8 @@ func (m *vmMeta) loadConstants(memory processMemory) error {
 		valueOffset+4 > uint64(strideBytes) {
 		return unsupportedHotSpot("constant value offset exceeds stride")
 	}
-	return walkTable(memory, "VMIntConstant", basePointer, stride,
+	return walkTable(
+		memory, "VMIntConstant", basePointer, stride,
 		func(entry []byte) (bool, error) {
 			namePointer := binary.LittleEndian.Uint64(entry[nameOffset:])
 			if namePointer == 0 {
@@ -531,7 +539,8 @@ func (m *vmMeta) loadRuntimeConfig(memory processMemory) error {
 	if alignment < defaultObjectAlignment || alignment > maxObjectAlignment ||
 		alignment&(alignment-1) != 0 {
 		return unsupportedHotSpot(fmt.Sprintf(
-			"ObjectAlignmentInBytes=%d is unsupported", alignment))
+			"ObjectAlignmentInBytes=%d is unsupported", alignment,
+		))
 	}
 	m.objectAlignment = alignment
 	return nil

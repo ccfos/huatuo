@@ -51,7 +51,8 @@ func capture(ctx context.Context,
 		return nil, errors.New("HotSpot external scan limits are invalid")
 	}
 	scanDeadline, hasDeadline := memsnap.DeadlineWithReserve(
-		ctx, resultBuildReserve)
+		ctx, resultBuildReserve,
+	)
 	memory := processMemory{
 		pid: readPID, ctx: ctx, deadline: scanDeadline, hasDeadline: hasDeadline,
 	}
@@ -132,7 +133,8 @@ func capture(ctx context.Context,
 			}
 			return nil, fmt.Errorf(
 				"external HotSpot scan found no valid Java objects; first rejected candidate: %w",
-				firstInvalidReason)
+				firstInvalidReason,
+			)
 		}
 	}
 	objects := make([]memsnap.ObjectAggregate, 0, len(aggregates))
@@ -247,7 +249,8 @@ func scanOrdinary(memory processMemory, metadata *vmMeta, regions []region,
 			}
 			for _, sample := range batch {
 				statistics.ordinarySampledBytes = memsnap.SaturatingAdd(
-					statistics.ordinarySampledBytes, uint64(len(sample.raw)))
+					statistics.ordinarySampledBytes, uint64(len(sample.raw)),
+				)
 				scanKnownWindow(sample, classes, encoding, metadata,
 					mirrorOopSizeOffset, statistics.ordinary)
 			}
@@ -281,12 +284,14 @@ func finishStatus(snapshot *memsnap.Snapshot, failedHumongousGroups int,
 	if failedHumongousGroups != 0 {
 		appendPartial(snapshot, fmt.Sprintf(
 			"%d HotSpot humongous object groups could not be validated",
-			failedHumongousGroups))
+			failedHumongousGroups,
+		))
 	}
 	if ordinarySampled < ordinaryUsed {
 		appendPartial(snapshot, fmt.Sprintf(
 			"bounded HotSpot sample scanned %d of %d ordinary used bytes; ordinary values are estimates",
-			ordinarySampled, ordinaryUsed))
+			ordinarySampled, ordinaryUsed,
+		))
 	}
 	appendPartial(snapshot,
 		"external HotSpot scan ran concurrently with the target VM")

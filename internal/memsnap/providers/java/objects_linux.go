@@ -160,7 +160,8 @@ func readKlassBatch(memory processMemory, metadata *vmMeta,
 			headers = append(headers, klassHeader{
 				address: validAddresses[index], namePointer: namePointer,
 				layout: int32(binary.LittleEndian.Uint32(
-					raw[layoutField.offset-firstOffset:])),
+					raw[layoutField.offset-firstOffset:],
+				)),
 			})
 		}
 	}
@@ -262,7 +263,8 @@ func objectSize(raw []byte, klass *klass,
 				return 0, errors.New("HotSpot class mirror size field is unavailable")
 			}
 			words := binary.LittleEndian.Uint32(
-				raw[mirrorOopSizeOffset : mirrorOopSizeOffset+4])
+				raw[mirrorOopSizeOffset : mirrorOopSizeOffset+4],
+			)
 			if words == 0 {
 				return 0, errors.New("HotSpot class mirror size is zero")
 			}
@@ -387,7 +389,8 @@ func pointerEncoding(memory processMemory, metadata *vmMeta) (ptrEncoding, error
 		"Universe::_narrow_klass._shift")
 	if !baseField.isStatic || !shiftField.isStatic {
 		return ptrEncoding{}, unsupportedHotSpot(
-			"compressed Klass pointer metadata is unavailable")
+			"compressed Klass pointer metadata is unavailable",
+		)
 	}
 	base, err := memory.uint64(baseField.address)
 	if err != nil {
@@ -396,7 +399,8 @@ func pointerEncoding(memory processMemory, metadata *vmMeta) (ptrEncoding, error
 	shift, err := memory.uint32(shiftField.address)
 	if err != nil || shift > 16 {
 		return ptrEncoding{}, unsupportedHotSpot(
-			"compressed Klass shift is invalid")
+			"compressed Klass shift is invalid",
+		)
 	}
 	encoding.klassBase = base
 	encoding.klassShift = uint(shift)

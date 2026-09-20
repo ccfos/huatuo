@@ -324,7 +324,8 @@ func inspectModule(ctx context.Context, path string, maps []memsnap.ProcMap,
 	defer file.Close()
 	if file.Class != elf.ELFCLASS64 || file.ByteOrder != binary.LittleEndian {
 		return image{}, unsupportedRuntime(
-			"CPython external reader requires little-endian ELF64")
+			"CPython external reader requires little-endian ELF64",
+		)
 	}
 	// Keep the synchronous OOM path focused on the observability symbols
 	// that are actually consumed. Building an index for every ELF symbol costs
@@ -368,7 +369,8 @@ func inspectModule(ctx context.Context, path string, maps []memsnap.ProcMap,
 		}
 		if runtimeVersion.major != 3 {
 			return image{}, unsupportedRuntime(
-				fmt.Sprintf("unexpected Py_Version %#x", packed))
+				fmt.Sprintf("unexpected Py_Version %#x", packed),
+			)
 		}
 	} else {
 		runtimeVersion, err = versionFromModulePath(path)
