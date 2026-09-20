@@ -70,7 +70,7 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 		MaxConcurrentProcesses:  cfg.Profiling.MaxConcurrentProcesses,
 		CommandOutputLimitBytes: cfg.Profiling.CommandOutputLimitBytes,
 		ToolstreamServer:        d.toolstreamServer,
-		ResultPublisher:         profilingResultPublisher(d.publications),
+		ResultPublisher:         toResultPublisher(d.publications),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create profiling operation service: %w", err)
@@ -87,7 +87,8 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 	return manager.Shutdown, nil
 }
 
-func profilingResultPublisher(store *publication.Store) nodeprofiling.ResultPublisher {
+// toResultPublisher preserves a nil interface so storage availability checks work.
+func toResultPublisher(store *publication.Store) nodeprofiling.ResultPublisher {
 	if store == nil {
 		return nil
 	}
