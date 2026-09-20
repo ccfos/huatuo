@@ -132,17 +132,29 @@ func kubeletPodListAuthorizationRequest(ctx *ManagerCtx) (*http.Client, error) {
 }
 
 func kubeletPodListPortCacheUpdate(ctx *ManagerCtx) error {
-	if client, err := kubeletPodListHttpRequest(ctx); err == nil {
+	client, readOnlyErr := kubeletPodListHttpRequest(ctx)
+	if readOnlyErr == nil {
 		kubeletPodListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
 		kubeletPodListClient = client
 		kubeletPodListRunningEnabled = true
 		return nil
 	}
 
+	// The HTTPS fallback needs a client certificate. When none is configured,
+	// the fallback can only fail (tls.LoadX509KeyPair("", "") returns ENOENT),
+	// which would mask the original read-only error and stop InitManager from
+	// recognizing a transient ECONNREFUSED. Return the read-only error as-is so
+	// InitManager can classify it and arm the 30-minute retry.
+	if ctx.podClientCertPath == "" {
+		return readOnlyErr
+	}
+
 	// try to fallback https.
-	client, err := kubeletPodListAuthorizationRequest(ctx)
-	if err != nil {
-		return fmt.Errorf("podlist https: %w", err)
+	client, httpsErr := kubeletPodListAuthorizationRequest(ctx)
+	if httpsErr != nil {
+		// Preserve the read-only error so a transient ECONNREFUSED stays
+		// detectable through errors.Is even when the HTTPS fallback also fails.
+		return errors.Join(readOnlyErr, fmt.Errorf("podlist https: %w", httpsErr))
 	}
 
 	// update https instance cache
