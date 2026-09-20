@@ -30,8 +30,8 @@ import (
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/stats"
-	"github.com/ccfos/huatuo/internal/memsnap"
-	"github.com/ccfos/huatuo/internal/memsnap/collector"
+	"github.com/ccfos/huatuo/internal/memsnapshot"
+	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
 )
@@ -59,7 +59,7 @@ func TestBeforeOOMStopJoinsWatcherBeforeRestart(t *testing.T) {
 		writeMemoryEventsForTest(t, filepath.Join(directory, name), "0")
 	}
 	cfg := &BeforeOOMConfig{ThresholdPercent: 90}
-	snapshot := &beforeOOMMemsnap{}
+	snapshot := &beforeOOMMemsnapshot{}
 	for iteration := 0; iteration < 2; iteration++ {
 		t.Run(strconv.Itoa(iteration), func(t *testing.T) {
 			backend := &blockingMemoryCgroup{entered: make(chan struct{}), release: make(chan struct{})}
@@ -134,18 +134,18 @@ func TestBeforeOOMRevalidatesContainerBeforePersistence(t *testing.T) {
 	for _, changed := range []bool{false, true} {
 		t.Run(strconv.FormatBool(changed), func(t *testing.T) {
 			path, saved := "/original", false
-			identity := memsnap.ProcessIdentity{TGID: 42, StartTimeTicks: 100}
+			identity := memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}
 			result := &collector.Result{
-				Identity: identity, Language: memsnap.LanguageGo,
+				Identity: identity, Language: memsnapshot.LanguageGo,
 				CaptureTime:   time.Now().UTC(),
-				Snapshot:      &memsnap.Snapshot{Status: memsnap.StatusComplete},
-				ProcessMemory: &memsnap.ProcessMemory{Status: memsnap.StatusComplete},
+				Snapshot:      &memsnapshot.Snapshot{Status: memsnapshot.StatusComplete},
+				ProcessMemory: &memsnapshot.ProcessMemory{Status: memsnapshot.StatusComplete},
 			}
 			ops := &beforeOOMOps{
 				selectVictim: func(context.Context, string, uint64) (victimCandidate, error) {
 					return victimCandidate{pid: 42, identity: identity}, nil
 				},
-				validate: func(_ context.Context, path string, actual memsnap.ProcessIdentity) error {
+				validate: func(_ context.Context, path string, actual memsnapshot.ProcessIdentity) error {
 					if path != "/original" || actual != identity {
 						t.Fatal("selected identity or cgroup was replaced")
 					}
@@ -177,7 +177,7 @@ func TestBeforeOOMRevalidatesContainerBeforePersistence(t *testing.T) {
 					return nil
 				},
 			}
-			err := (&beforeOOMMemsnap{captureOps: ops}).captureCandidate(t.Context(),
+			err := (&beforeOOMMemsnapshot{captureOps: ops}).captureCandidate(t.Context(),
 				&BeforeOOMConfig{
 					TopK: 10, GoTimeoutMS: 100,
 					JavaTimeoutMS: 2000, PythonTimeoutMS: 2000,

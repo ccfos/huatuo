@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/matcher"
-	"github.com/ccfos/huatuo/internal/memsnap"
+	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
 // BeforeOOMConfig controls event-driven runtime snapshots for
@@ -142,9 +142,9 @@ func validateBeforeOOMConfig(cfg *BeforeOOMConfig) error {
 				duration.value)
 		}
 	}
-	if cfg.TopK <= 0 || cfg.TopK > memsnap.MaxTopK {
+	if cfg.TopK <= 0 || cfg.TopK > memsnapshot.MaxTopK {
 		return fmt.Errorf("snapshot top-K must be in [1, %d], got %d",
-			memsnap.MaxTopK, cfg.TopK)
+			memsnapshot.MaxTopK, cfg.TopK)
 	}
 	return nil
 }

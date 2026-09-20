@@ -25,7 +25,7 @@ import (
 	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/memsnap"
+	"github.com/ccfos/huatuo/internal/memsnapshot"
 	testutils "github.com/ccfos/huatuo/internal/testing"
 )
 
@@ -127,7 +127,7 @@ func TestBeforeOOMConfigRejectsOverflowAndUnboundedTopK(t *testing.T) {
 				maximum := int64(1<<63-1) / int64(time.Millisecond)
 				cfg.GoTimeoutMS = int(maximum + 1)
 			case "top-K":
-				cfg.TopK = memsnap.MaxTopK + 1
+				cfg.TopK = memsnapshot.MaxTopK + 1
 			}
 			if err := validateBeforeOOMConfig(&cfg); err == nil {
 				t.Fatalf("unbounded %s accepted", field)

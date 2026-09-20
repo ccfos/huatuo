@@ -35,8 +35,8 @@ import (
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/memsnap"
-	"github.com/ccfos/huatuo/internal/memsnap/collector"
+	"github.com/ccfos/huatuo/internal/memsnapshot"
+	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/timeutil"
@@ -84,7 +84,7 @@ func handleWatchError(ctx context.Context, err error) error {
 	return nil
 }
 
-type beforeOOMMemsnap struct {
+type beforeOOMMemsnapshot struct {
 	captureOps  *beforeOOMOps
 	cgroup      cgroups.Cgroup
 	lastAttempt time.Time
@@ -99,7 +99,7 @@ type memcgCandidate struct {
 }
 
 type victimCandidate struct {
-	identity    memsnap.ProcessIdentity
+	identity    memsnapshot.ProcessIdentity
 	pid         int
 	comm        string
 	oomScoreAdj int
@@ -108,36 +108,36 @@ type victimCandidate struct {
 }
 
 type beforeOOMData struct {
-	CgroupPath         string                 `json:"cgroup_path"`
-	MemoryCurrent      uint64                 `json:"memory_current"`
-	MemoryMax          uint64                 `json:"memory_max"`
-	MemoryUsagePercent float64                `json:"memory_usage_percent"`
-	VictimPID          int                    `json:"victim_pid"`
-	VictimProcessName  string                 `json:"victim_process_name"`
-	VictimOOMScoreAdj  int                    `json:"victim_oom_score_adj"`
-	Language           memsnap.Language       `json:"language"`
-	Snapshot           *memsnap.Snapshot      `json:"snapshot"`
-	ProcessMemory      *memsnap.ProcessMemory `json:"process_memory"`
+	CgroupPath         string                     `json:"cgroup_path"`
+	MemoryCurrent      uint64                     `json:"memory_current"`
+	MemoryMax          uint64                     `json:"memory_max"`
+	MemoryUsagePercent float64                    `json:"memory_usage_percent"`
+	VictimPID          int                        `json:"victim_pid"`
+	VictimProcessName  string                     `json:"victim_process_name"`
+	VictimOOMScoreAdj  int                        `json:"victim_oom_score_adj"`
+	Language           memsnapshot.Language       `json:"language"`
+	Snapshot           *memsnapshot.Snapshot      `json:"snapshot"`
+	ProcessMemory      *memsnapshot.ProcessMemory `json:"process_memory"`
 }
 
 func init() {
-	tracing.RegisterEventTracing(beforeOOMTracer, newBeforeOOMMemsnap)
+	tracing.RegisterEventTracing(beforeOOMTracer, newBeforeOOMMemsnapshot)
 }
 
 // The registry calls this factory once; enabling a disabled tracer requires restart.
-func newBeforeOOMMemsnap() (*tracing.EventTracingAttr, error) {
+func newBeforeOOMMemsnapshot() (*tracing.EventTracingAttr, error) {
 	if !configSnapshot().BeforeOOMMemsnap.Enabled {
 		return nil, types.ErrNotSupported
 	}
 
 	return &tracing.EventTracingAttr{
-		TracingData: &beforeOOMMemsnap{},
+		TracingData: &beforeOOMMemsnapshot{},
 		Interval:    5,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
 
-func (s *beforeOOMMemsnap) Start(ctx context.Context) (retErr error) {
+func (s *beforeOOMMemsnapshot) Start(ctx context.Context) (retErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil
 	}
@@ -165,7 +165,7 @@ func (s *beforeOOMMemsnap) Start(ctx context.Context) (retErr error) {
 	return handleWatchError(ctx, s.watchAndCapture(ctx, &cfg, watcher))
 }
 
-func (s *beforeOOMMemsnap) watchAndCapture(ctx context.Context,
+func (s *beforeOOMMemsnapshot) watchAndCapture(ctx context.Context,
 	cfg *BeforeOOMConfig, watcher *pressureWatcher,
 ) error {
 	watchCtx, cancel := context.WithCancel(ctx)
@@ -215,14 +215,14 @@ func (s *beforeOOMMemsnap) watchAndCapture(ctx context.Context,
 	}
 }
 
-func (s *beforeOOMMemsnap) captureAllowed(cfg *BeforeOOMConfig,
+func (s *beforeOOMMemsnapshot) captureAllowed(cfg *BeforeOOMConfig,
 	now time.Time,
 ) bool {
 	cooldown := time.Duration(cfg.CooldownSeconds) * time.Second
 	return s.lastAttempt.IsZero() || now.Sub(s.lastAttempt) >= cooldown
 }
 
-func (s *beforeOOMMemsnap) bestCaptureCandidate(ctx context.Context,
+func (s *beforeOOMMemsnapshot) bestCaptureCandidate(ctx context.Context,
 	cfg *BeforeOOMConfig, events <-chan memoryPressureEvent,
 	first memoryPressureEvent,
 ) (memcgCandidate, bool, error) {
@@ -245,7 +245,7 @@ func (s *beforeOOMMemsnap) bestCaptureCandidate(ctx context.Context,
 	}
 }
 
-func (s *beforeOOMMemsnap) highestPressureCandidate(cfg *BeforeOOMConfig,
+func (s *beforeOOMMemsnapshot) highestPressureCandidate(cfg *BeforeOOMConfig,
 	events map[string]memoryPressureEvent,
 ) (memcgCandidate, bool, error) {
 	var selected memcgCandidate
@@ -285,7 +285,7 @@ func higherPressure(candidate, selected memcgCandidate) bool {
 	return candidate.cgroupPath < selected.cgroupPath
 }
 
-func (s *beforeOOMMemsnap) pressureCandidate(
+func (s *beforeOOMMemsnapshot) pressureCandidate(
 	event memoryPressureEvent,
 ) (memcgCandidate, bool, error) {
 	usage, err := s.cgroup.MemoryUsage(event.cgroupPath)
@@ -303,13 +303,13 @@ func (s *beforeOOMMemsnap) pressureCandidate(
 
 type beforeOOMOps struct {
 	selectVictim  func(context.Context, string, uint64) (victimCandidate, error)
-	validate      func(context.Context, string, memsnap.ProcessIdentity) error
+	validate      func(context.Context, string, memsnapshot.ProcessIdentity) error
 	collect       func(context.Context, int, collector.Options) (*collector.Result, error)
 	save          func(*tracing.WriteRequest) error
 	containerPath func(string) (string, error)
 }
 
-func (s *beforeOOMMemsnap) captureCandidate(ctx context.Context,
+func (s *beforeOOMMemsnapshot) captureCandidate(ctx context.Context,
 	cfg *BeforeOOMConfig, candidate *memcgCandidate,
 ) (retErr error) {
 	started := time.Now()
@@ -349,7 +349,7 @@ func (s *beforeOOMMemsnap) captureCandidate(ctx context.Context,
 		GoTimeout:        time.Duration(cfg.GoTimeoutMS) * time.Millisecond,
 		JavaTimeout:      time.Duration(cfg.JavaTimeoutMS) * time.Millisecond,
 		PythonTimeout:    time.Duration(cfg.PythonTimeoutMS) * time.Millisecond,
-		CheckTarget: func(checkCtx context.Context, identity memsnap.ProcessIdentity) error {
+		CheckTarget: func(checkCtx context.Context, identity memsnapshot.ProcessIdentity) error {
 			return ops.validate(checkCtx, candidate.cgroupPath, identity)
 		},
 		Save: func(saveCtx context.Context, result *collector.Result) error {
@@ -426,7 +426,7 @@ func selectVictim(ctx context.Context, cgroupPath string, memoryMax uint64) (vic
 	return selectVictimFromProcs(func(visit func(int) error) error {
 		return scanMemcgProcs(ctx, cgroupPath, visit)
 	}, func(pid int) (victimCandidate, error) {
-		identity, err := memsnap.ReadIdentity(pid)
+		identity, err := memsnapshot.ReadIdentity(pid)
 		if err != nil {
 			return victimCandidate{}, fmt.Errorf("read identity: %w", err)
 		}
@@ -442,7 +442,7 @@ func selectVictim(ctx context.Context, cgroupPath string, memoryMax uint64) (vic
 		if err != nil {
 			return victimCandidate{}, err
 		}
-		current, err := memsnap.ReadIdentity(pid)
+		current, err := memsnapshot.ReadIdentity(pid)
 		if err != nil {
 			return victimCandidate{}, fmt.Errorf("recheck identity: %w", err)
 		}
@@ -484,7 +484,7 @@ func selectVictimFromProcs(scan func(func(int) error) error,
 	return selected, nil
 }
 
-func validateVictim(ctx context.Context, cgroupPath string, identity memsnap.ProcessIdentity) error {
+func validateVictim(ctx context.Context, cgroupPath string, identity memsnapshot.ProcessIdentity) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -498,7 +498,7 @@ func validateVictim(ctx context.Context, cgroupPath string, identity memsnap.Pro
 	if !found {
 		return errors.New("victim is no longer in the triggering memory cgroup")
 	}
-	return memsnap.ValidateIdentity("/proc", identity)
+	return memsnapshot.ValidateIdentity("/proc", identity)
 }
 
 func readVictimCandidate(proc procfs.Proc, oomScoreAdjRaw []byte,
