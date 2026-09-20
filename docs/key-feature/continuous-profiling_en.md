@@ -150,6 +150,23 @@ Steps:
 
 For more profiling dimensions, see the Profiling API section below.
 
+### 6. Flamegraph Selector Rules
+
+The Grafana flame graph panel queries `/v1/profiling/flamegraph/...` with a
+Prometheus-style label selector. The query layer accepts `id`, `region`,
+`hostname`, `container_id`, `container_hostname`, and `__profile_type__`, and
+each label supports a single equality condition:
+
+- `{hostname="node-01"}` selects one host, while `hostname="*"`,
+  `hostname="all"`, and `hostname=""` mean "all values" and are ignored
+- `{hostname="host-a",hostname="host-b"}` is rejected with `400`, and the error
+  message reports both values, because one query cannot select two hosts at once
+- Repeating the same condition, for example
+  `{hostname="host-a",hostname="host-a"}`, is accepted and behaves like a single
+  condition
+
+Operators other than `=` are rejected with `400` as well.
+
 ## 🌐 Profiling API
 
 huatuo-apiserver exposes `/v1/profiling` for creating, observing, and stopping

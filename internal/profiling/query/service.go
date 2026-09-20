@@ -77,13 +77,16 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		return nil, errors.Join(ErrInvalidQuery, fmt.Errorf("parse matchers: %w", err))
 	}
 
+	// Contradictory matchers must not reach the store, where only the last
+	// value of a label would survive.
+	matcherSet := newProfileMatcherSet(filter)
 	for _, label := range labels {
 		// skip empty or "All"
 		if label.Value == "" || label.Value == "all" || label.Value == "All" || label.Value == "*" {
 			continue
 		}
 
-		if err := applyProfileMatcher(filter, label); err != nil {
+		if err := matcherSet.apply(label); err != nil {
 			return nil, err
 		}
 	}
@@ -226,6 +229,48 @@ func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher)
 	return nil
 }
 
+// profileMatcherSet resolves label matchers into one store filter.
+//
+// A store filter keeps a single value per label, so applying matchers one by one
+// makes the last value win: {hostname="host-a",hostname="host-b"} would silently
+// select host-b. Remembering the value each label was already resolved to turns
+// that contradiction into an explicit error instead of a query that matches
+// hosts the caller never asked for.
+type profileMatcherSet struct {
+	filter  *profilingstore.Filter
+	applied map[string]string
+}
+
+// newProfileMatcherSet returns an empty matcher set bound to filter.
+func newProfileMatcherSet(filter *profilingstore.Filter) *profileMatcherSet {
+	return &profileMatcherSet{
+		filter:  filter,
+		applied: make(map[string]string, 4),
+	}
+}
+
+// apply resolves one matcher into the bound filter.
+//
+// Repeating a label with the same value is accepted because the resulting
+// filter is identical. Repeating a label with another value is rejected: the
+// filter cannot express the intersection of two equalities, and keeping either
+// one of them would change the query without telling the caller.
+func (s *profileMatcherSet) apply(matcher *labels.Matcher) error {
+	previous, seen := s.applied[matcher.Name]
+	if seen && previous != matcher.Value {
+		return fmt.Errorf(
+			"%w: label %q is selected with conflicting values %q and %q",
+			ErrInvalidQuery, matcher.Name, previous, matcher.Value,
+		)
+	}
+
+	if err := applyProfileMatcher(s.filter, matcher); err != nil {
+		return err
+	}
+	s.applied[matcher.Name] = matcher.Value
+	return nil
+}
+
 func profileString(table []string, index int64) (string, bool) {
 	if index < 0 || index >= int64(len(table)) {
 		return "", false
@@ -306,9 +351,12 @@ func (s *ProfileQueryService) LabelValues(ctx context.Context, req *typesv1.Labe
 
 	// filter: ProfileType
 	profileTypePresent := false
+	// Aggregation queries use the same single-value filter, so conflicting
+	// matchers are rejected here as well.
+	matcherSet := newProfileMatcherSet(filter)
 	for _, ms := range matchers {
 		for _, m := range ms {
-			if err := applyProfileMatcher(filter, m); err != nil {
+			if err := matcherSet.apply(m); err != nil {
 				return nil, err
 			}
 			if m.Name == "__profile_type__" {
