@@ -107,8 +107,9 @@ func TestMapperDecodeRejectsIncompleteDocument(t *testing.T) {
 
 func TestBuildProfileAggregationQueryPreservesTargetMatchers(t *testing.T) {
 	query := buildAggregationQuery(&Filter{
-		ContainerID:       "containerd://4df60fc5",
-		ContainerHostname: "checkout-api-7b9f6d8c4f-k2x7m",
+		ContainerID:            "containerd://4df60fc5",
+		ContainerHostname:      "checkout-api-7b9f6d8c4f-k2x7m",
+		ContainerHostNamespace: "team-a",
 	})
 	want := []driver.Filter{
 		{
@@ -120,6 +121,11 @@ func TestBuildProfileAggregationQueryPreservesTargetMatchers(t *testing.T) {
 			Field: types.DocumentFieldContainerHostname + ".keyword",
 			Op:    driver.OpEq,
 			Value: "checkout-api-7b9f6d8c4f-k2x7m",
+		},
+		{
+			Field: types.DocumentFieldContainerHostNamespace + ".keyword",
+			Op:    driver.OpEq,
+			Value: "team-a",
 		},
 	}
 
