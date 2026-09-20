@@ -683,20 +683,66 @@ components:
           type: string
           minLength: 1
     ProfilingJob:
-      allOf:
-        - $ref: '#/components/schemas/Job'
-        - type: object
-          additionalProperties: false
-          required: [type, language, mode]
-          properties:
-            type:
-              $ref: '#/components/schemas/ProfilingType'
-            language:
-              $ref: '#/components/schemas/ProfilingLanguage'
-            mode:
-              $ref: '#/components/schemas/ProfilingMode'
-            binary_match_path:
-              type: string
+      type: object
+      additionalProperties: false
+      required:
+        - request_id
+        - hostname
+        - duration_seconds
+        - scope
+        - status
+        - created_at
+        - updated_at
+        - type
+        - language
+        - mode
+      properties:
+        request_id:
+          type: string
+          minLength: 1
+        hostname:
+          type: string
+          minLength: 1
+        duration_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        scope:
+          $ref: '../components.yaml#/components/schemas/ObservationScope'
+        container_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        terminal:
+          allOf:
+            - $ref: '#/components/schemas/JobTerminal'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        result_url:
+          type: string
+          format: uri
+          nullable: true
+        type:
+          $ref: '#/components/schemas/ProfilingType'
+        language:
+          $ref: '#/components/schemas/ProfilingLanguage'
+        mode:
+          $ref: '#/components/schemas/ProfilingMode'
+        binary_match_path:
+          type: string
     CreateTracingJobRequest:
       type: object
       additionalProperties: false
@@ -717,14 +763,58 @@ components:
         type:
           $ref: '#/components/schemas/TracingType'
     TracingJob:
-      allOf:
-        - $ref: '#/components/schemas/Job'
-        - type: object
-          additionalProperties: false
-          required: [type]
-          properties:
-            type:
-              $ref: '#/components/schemas/TracingType'
+      type: object
+      additionalProperties: false
+      required:
+        - request_id
+        - hostname
+        - duration_seconds
+        - scope
+        - status
+        - created_at
+        - updated_at
+        - type
+      properties:
+        request_id:
+          type: string
+          minLength: 1
+        hostname:
+          type: string
+          minLength: 1
+        duration_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        scope:
+          $ref: '../components.yaml#/components/schemas/ObservationScope'
+        container_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        terminal:
+          allOf:
+            - $ref: '#/components/schemas/JobTerminal'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        result_url:
+          type: string
+          format: uri
+          nullable: true
+        type:
+          $ref: '#/components/schemas/TracingType'
     Job:
       type: object
       additionalProperties: false
