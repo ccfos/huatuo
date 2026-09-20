@@ -75,10 +75,17 @@ func run(ctx context.Context, pid int, options Options,
 ) (result *Result, retErr error) {
 	started := time.Now()
 	stage := "validate_target"
-	log.Infof("memsnapshot started: pid=%d capture_id=%d stage=%s", pid, started.UnixNano(), stage)
+	log.WithField("pid", pid).
+		WithField("capture_id", started.UnixNano()).
+		WithField("stage", stage).
+		Info("memsnapshot started")
 	defer func() {
-		log.Infof("memsnapshot finished: pid=%d capture_id=%d stage=%s elapsed=%s error=%v",
-			pid, started.UnixNano(), stage, time.Since(started), retErr)
+		log.WithField("pid", pid).
+			WithField("capture_id", started.UnixNano()).
+			WithField("stage", stage).
+			WithField("elapsed_ms", time.Since(started).Milliseconds()).
+			WithError(retErr).
+			Info("memsnapshot finished")
 	}()
 	if err := options.defaults(); err != nil {
 		return nil, err
@@ -121,21 +128,34 @@ func run(ctx context.Context, pid int, options Options,
 	// Capture before runtime detection so unsupported runtimes retain diagnostics.
 	stage = "process_memory"
 	phaseStarted := time.Now()
-	log.Infof("memsnapshot process memory started: pid=%d capture_id=%d", pid, started.UnixNano())
+	log.WithField("pid", pid).
+		WithField("capture_id", started.UnixNano()).
+		Info("memsnapshot process memory started")
 	processMemory := readProcessMemory(pid)
-	log.Infof("memsnapshot process memory finished: pid=%d capture_id=%d elapsed=%s status=%s reason=%q",
-		pid, started.UnixNano(), time.Since(phaseStarted), processMemory.Status, processMemory.Reason)
+	log.WithField("pid", pid).
+		WithField("capture_id", started.UnixNano()).
+		WithField("elapsed_ms", time.Since(phaseStarted).Milliseconds()).
+		WithField("status", processMemory.Status).
+		WithField("reason", processMemory.Reason).
+		Info("memsnapshot process memory finished")
 	stage = "detect_language"
 	phaseStarted = time.Now()
-	log.Infof("memsnapshot language detection started: pid=%d capture_id=%d timeout=%s", pid, started.UnixNano(), options.DetectionTimeout)
+	log.WithField("pid", pid).
+		WithField("capture_id", started.UnixNano()).
+		WithField("timeout_ms", options.DetectionTimeout.Milliseconds()).
+		Info("memsnapshot language detection started")
 	detectionCtx, cancelDetection := context.WithTimeout(ctx, options.DetectionTimeout)
 	language, detectionErr := detect(detectionCtx, pid)
 	if err := detectionCtx.Err(); err != nil {
 		detectionErr = err
 	}
 	cancelDetection()
-	log.Infof("memsnapshot language detection finished: pid=%d capture_id=%d elapsed=%s language=%s error=%v",
-		pid, started.UnixNano(), time.Since(phaseStarted), language, detectionErr)
+	log.WithField("pid", pid).
+		WithField("capture_id", started.UnixNano()).
+		WithField("elapsed_ms", time.Since(phaseStarted).Milliseconds()).
+		WithField("language", language).
+		WithError(detectionErr).
+		Info("memsnapshot language detection finished")
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -155,8 +175,12 @@ func run(ctx context.Context, pid int, options Options,
 		captureCtx, cancelCapture := context.WithTimeout(ctx, options.captureTimeout(language))
 		captureStarted := time.Now()
 		stage = "runtime_capture"
-		log.Infof("memsnapshot runtime capture started: pid=%d capture_id=%d language=%s timeout=%s top_k=%d",
-			pid, started.UnixNano(), language, options.captureTimeout(language), options.TopK)
+		log.WithField("pid", pid).
+			WithField("capture_id", started.UnixNano()).
+			WithField("language", language).
+			WithField("timeout_ms", options.captureTimeout(language).Milliseconds()).
+			WithField("top_k", options.TopK).
+			Info("memsnapshot runtime capture started")
 		snapshot, err = captureProvider(captureCtx, provider(language), memsnapshot.Request{
 			SamplingSeed: seed, Identity: identity, TopK: options.TopK,
 		})
@@ -168,8 +192,13 @@ func run(ctx context.Context, pid int, options Options,
 			snapshot = memsnapshot.Failed("capture victim runtime: " + err.Error())
 		}
 		cancelCapture()
-		log.Infof("memsnapshot runtime capture finished: pid=%d capture_id=%d language=%s elapsed=%s status=%s reason=%q",
-			pid, started.UnixNano(), language, time.Since(captureStarted), snapshot.Status, snapshot.Reason)
+		log.WithField("pid", pid).
+			WithField("capture_id", started.UnixNano()).
+			WithField("language", language).
+			WithField("elapsed_ms", time.Since(captureStarted).Milliseconds()).
+			WithField("status", snapshot.Status).
+			WithField("reason", snapshot.Reason).
+			Info("memsnapshot runtime capture finished")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -197,9 +226,16 @@ func run(ctx context.Context, pid int, options Options,
 	if options.Save != nil {
 		stage = "save"
 		phaseStarted = time.Now()
-		log.Infof("memsnapshot save started: pid=%d capture_id=%d snapshot_status=%s", pid, started.UnixNano(), snapshot.Status)
+		log.WithField("pid", pid).
+			WithField("capture_id", started.UnixNano()).
+			WithField("snapshot_status", snapshot.Status).
+			Info("memsnapshot save started")
 		err := options.Save(ctx, result)
-		log.Infof("memsnapshot save finished: pid=%d capture_id=%d elapsed=%s error=%v", pid, started.UnixNano(), time.Since(phaseStarted), err)
+		log.WithField("pid", pid).
+			WithField("capture_id", started.UnixNano()).
+			WithField("elapsed_ms", time.Since(phaseStarted).Milliseconds()).
+			WithError(err).
+			Info("memsnapshot save finished")
 		if err != nil {
 			return result, err
 		}

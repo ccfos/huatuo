@@ -84,10 +84,17 @@ func (s *beforeOOMMemsnapshot) Start(ctx context.Context) (retErr error) {
 		return nil
 	}
 	cfg := configSnapshot().BeforeOOMMemsnap
-	log.Infof("before-OOM watcher starting: threshold_percent=%d cooldown_seconds=%d top_k=%d go_timeout_ms=%d java_timeout_ms=%d python_timeout_ms=%d",
-		cfg.ThresholdPercent, cfg.CooldownSeconds, cfg.TopK, cfg.GoTimeoutMS, cfg.JavaTimeoutMS, cfg.PythonTimeoutMS)
+	log.WithField("threshold_percent", cfg.ThresholdPercent).
+		WithField("cooldown_seconds", cfg.CooldownSeconds).
+		WithField("top_k", cfg.TopK).
+		WithField("go_timeout_ms", cfg.GoTimeoutMS).
+		WithField("java_timeout_ms", cfg.JavaTimeoutMS).
+		WithField("python_timeout_ms", cfg.PythonTimeoutMS).
+		Info("before-OOM watcher starting")
 	defer func() {
-		log.Infof("before-OOM watcher stopped: error=%v context_error=%v", retErr, ctx.Err())
+		log.WithError(retErr).
+			WithField("context_error", ctx.Err()).
+			Info("before-OOM watcher stopped")
 	}()
 	if err := validateBeforeOOMConfig(&cfg); err != nil {
 		return fmt.Errorf("invalid before-OOM memory snapshot config: %w", err)
@@ -103,7 +110,8 @@ func (s *beforeOOMMemsnapshot) Start(ctx context.Context) (retErr error) {
 	if err != nil {
 		return handleWatchError(ctx, err)
 	}
-	log.Infof("before-OOM watcher initialized: cgroup_mode=%v", cgroups.CgroupMode())
+	log.WithField("cgroup_mode", cgroups.CgroupMode()).
+		Info("before-OOM watcher initialized")
 	return handleWatchError(ctx, s.watchAndCapture(ctx, &cfg, watcher))
 }
 
@@ -137,7 +145,8 @@ func (s *beforeOOMMemsnapshot) watchAndCapture(ctx context.Context,
 				if errors.Is(err, context.Canceled) {
 					return nil
 				}
-				log.Debugf("before-OOM pressure event skipped: %v", err)
+				log.WithError(err).
+					Debug("before-OOM pressure event skipped")
 				continue
 			}
 			if !ok {
@@ -150,8 +159,9 @@ func (s *beforeOOMMemsnapshot) watchAndCapture(ctx context.Context,
 			// Every completed attempt consumes the same node-wide cooldown.
 			s.lastAttempt = time.Now()
 			if err != nil {
-				log.Warnf("before-OOM memory snapshot skipped for cgroup %q: %v",
-					candidate.cgroupPath, err)
+				log.WithField("cgroup", candidate.cgroupPath).
+					WithError(err).
+					Warn("before-OOM memory snapshot skipped")
 			}
 		}
 	}
@@ -255,11 +265,19 @@ func (s *beforeOOMMemsnapshot) captureCandidate(ctx context.Context,
 	cfg *BeforeOOMConfig, candidate *memcgCandidate,
 ) (retErr error) {
 	started := time.Now()
-	log.Infof("before-OOM capture started: container=%s cgroup=%q usage_bytes=%d limit_bytes=%d usage_percent=%.2f threshold_percent=%d",
-		candidate.containerID, candidate.cgroupPath, candidate.current, candidate.max, candidate.ratio*100, cfg.ThresholdPercent)
+	log.WithField("container", candidate.containerID).
+		WithField("cgroup", candidate.cgroupPath).
+		WithField("usage_bytes", candidate.current).
+		WithField("limit_bytes", candidate.max).
+		WithField("usage_percent", candidate.ratio*100).
+		WithField("threshold_percent", cfg.ThresholdPercent).
+		Info("before-OOM capture started")
 	defer func() {
-		log.Infof("before-OOM capture finished: container=%s cgroup=%q elapsed=%s error=%v",
-			candidate.containerID, candidate.cgroupPath, time.Since(started), retErr)
+		log.WithField("container", candidate.containerID).
+			WithField("cgroup", candidate.cgroupPath).
+			WithField("elapsed_ms", time.Since(started).Milliseconds()).
+			WithError(retErr).
+			Info("before-OOM capture finished")
 	}()
 	ops := s.captureOps
 	if ops == nil {
@@ -277,11 +295,17 @@ func (s *beforeOOMMemsnapshot) captureCandidate(ctx context.Context,
 	}
 	selectionCtx, cancelSelection := context.WithTimeout(ctx, victimSelectionTimeout)
 	selectionStarted := time.Now()
-	log.Infof("before-OOM victim selection started: container=%s timeout=%s", candidate.containerID, victimSelectionTimeout)
+	log.WithField("container", candidate.containerID).
+		WithField("timeout_ms", victimSelectionTimeout.Milliseconds()).
+		Info("before-OOM victim selection started")
 	victim, err := ops.selectVictim(selectionCtx, candidate.cgroupPath, candidate.max)
 	cancelSelection()
-	log.Infof("before-OOM victim selection finished: container=%s pid=%d start_time_ticks=%d elapsed=%s error=%v",
-		candidate.containerID, victim.pid, victim.identity.StartTimeTicks, time.Since(selectionStarted), err)
+	log.WithField("container", candidate.containerID).
+		WithField("pid", victim.pid).
+		WithField("start_time_ticks", victim.identity.StartTimeTicks).
+		WithField("elapsed_ms", time.Since(selectionStarted).Milliseconds()).
+		WithError(err).
+		Info("before-OOM victim selection finished")
 	if err != nil {
 		return fmt.Errorf("select victim: %w", err)
 	}

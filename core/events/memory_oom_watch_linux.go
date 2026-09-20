@@ -46,8 +46,8 @@ func handleWatchError(ctx context.Context, err error) error {
 	if !isResourceExhaustion(err) {
 		return err
 	}
-	log.Errorf("before-OOM memory snapshot stopped after resource exhaustion; "+
-		"increase process FD/inotify limits and restart huatuo-bamai to re-enable it: %v", err)
+	log.WithError(err).
+		Error("before-OOM memory snapshot stopped after resource exhaustion; increase process FD/inotify limits and restart huatuo-bamai to re-enable it")
 	// Keep Start blocked until shutdown so the generic event runner does not
 	// repeatedly rebuild and rescan the whole cgroup tree.
 	<-ctx.Done()
@@ -439,8 +439,9 @@ func (w *pressureWatcher) handleInotify(ctx context.Context,
 					// Keep the v2 watch and the last observed counter. A later
 					// memory.events modification retries the read and catches the
 					// cumulative high-counter increase.
-					log.Debugf("memory pressure watch for cgroup %q retained after read error: %v",
-						cgroupPath, handleErr)
+					log.WithField("cgroup", cgroupPath).
+						WithError(handleErr).
+						Debug("memory pressure watch retained after read error")
 					continue
 				}
 				if err := w.recoverV1Watch(cgroupPath, handleErr); err != nil {
@@ -523,7 +524,9 @@ func (w *pressureWatcher) handleInotifyOverflow(ctx context.Context,
 				w.removeCgroup(cgroupPath)
 			} else {
 				// A failed read must not erase an existing cumulative baseline.
-				log.Debugf("restore v2 pressure watch for cgroup %q: %v", cgroupPath, err)
+				log.WithField("cgroup", cgroupPath).
+					WithError(err).
+					Debug("restore v2 pressure watch")
 			}
 			continue
 		}
@@ -587,8 +590,9 @@ func (w *pressureWatcher) recoverV1Watch(cgroupPath string, cause error) error {
 	}
 	w.removeEventFD(entry)
 	if err := w.rearmV1Threshold(entry); err == nil {
-		log.Debugf("memory pressure watch for cgroup %q restored after error: %v",
-			cgroupPath, cause)
+		log.WithField("cgroup", cgroupPath).
+			WithError(cause).
+			Debug("memory pressure watch restored after error")
 		return nil
 	} else {
 		w.removeCgroup(cgroupPath)
@@ -645,7 +649,8 @@ func signalEventFD(fd int) {
 			continue
 		}
 		if err != nil && err != unix.EAGAIN {
-			log.Debugf("signal memory watcher control eventfd: %v", err)
+			log.WithError(err).
+				Debug("signal memory watcher control eventfd")
 		}
 		return
 	}

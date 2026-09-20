@@ -92,7 +92,7 @@ func (w *pressureWatcher) requestRecovery() {
 	w.recoveryRequested = true
 	if w.recoveryDue.IsZero() {
 		w.recoveryDue = time.Now().Add(time.Second)
-		log.Infof("before-OOM cgroup recovery scheduled: lifecycle loss or registration not ready")
+		log.Info("before-OOM cgroup recovery scheduled: lifecycle loss or registration not ready")
 	}
 }
 
@@ -101,8 +101,12 @@ func (w *pressureWatcher) recoverWatches(ctx context.Context, events chan<- memo
 	w.recoveryAttempts++
 	started := time.Now()
 	err := w.refreshFromCgroupTree(ctx, events)
-	log.Infof("before-OOM cgroup recovery finished: attempt=%d watches=%d elapsed=%s retry=%t error=%v",
-		w.recoveryAttempts, len(w.cgroups), time.Since(started), w.recoveryRequested, err)
+	log.WithField("attempt", w.recoveryAttempts).
+		WithField("watches", len(w.cgroups)).
+		WithField("elapsed_ms", time.Since(started).Milliseconds()).
+		WithField("retry", w.recoveryRequested).
+		WithError(err).
+		Info("before-OOM cgroup recovery finished")
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -114,7 +118,8 @@ func (w *pressureWatcher) recoverWatches(ctx context.Context, events chan<- memo
 			w.recoveryDue = time.Now().Add(time.Second)
 			return nil
 		}
-		log.Warnf("before-OOM cgroup recovery exhausted; some containers may remain unmonitored: %v", err)
+		log.WithError(err).
+			Warn("before-OOM cgroup recovery exhausted; some containers may remain unmonitored")
 	}
 	w.recoveryDue = time.Time{}
 	w.recoveryRequested = false
@@ -161,7 +166,8 @@ func (w *pressureWatcher) refreshFromCgroupTree(ctx context.Context,
 
 func (w *pressureWatcher) reportWatchLimit() {
 	if !w.limitReported {
-		log.Warnf("%v; additional cgroups may not be monitored", errCgroupWatchLimit)
+		log.WithError(errCgroupWatchLimit).
+			Warn("additional cgroups may not be monitored")
 		w.limitReported = true
 	}
 }
@@ -385,7 +391,9 @@ func (w *pressureWatcher) handleCgroupChange(ctx context.Context,
 		cgroupPath, err = w.containerPath(id)
 		if err != nil {
 			if w.recoveryDue.IsZero() {
-				log.Infof("before-OOM cgroup path lookup deferred: container=%s error=%v", id, err)
+				log.WithField("container", id).
+					WithError(err).
+					Info("before-OOM cgroup path lookup deferred")
 			}
 			w.requestRecovery()
 			return nil
