@@ -86,17 +86,21 @@ func TestDiscoverPIDRejectsPIESymbolOverflow(t *testing.T) {
 			}
 			data := bytes.Clone(raw)
 			file.ByteOrder.PutUint64(data[valueOffsets[test.symbol]:], test.value)
-			for name, contents := range map[string][]byte{"exe": data, "stat": stat} {
+			for name, contents := range map[string][]byte{"fixture": data, "stat": stat} {
 				if err := os.WriteFile(filepath.Join(pidDir, name), contents, 0o600); err != nil {
 					t.Fatal(err)
 				}
+			}
+			fixturePath := filepath.Join(pidDir, "fixture")
+			if err := os.Symlink(fixturePath, filepath.Join(pidDir, "exe")); err != nil {
+				t.Fatal(err)
 			}
 			exeStat, err := os.Stat(filepath.Join(pidDir, "exe"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			maps := fmt.Sprintf("%x-%x r-xp %08x 00:00 %d /fixture\n",
-				loadVaddr+bias, loadVaddr+bias+0x1000, loadOffset, exeStat.Sys().(*syscall.Stat_t).Ino)
+			maps := fmt.Sprintf("%x-%x r-xp %08x 00:00 %d %s\n",
+				loadVaddr+bias, loadVaddr+bias+0x1000, loadOffset, exeStat.Sys().(*syscall.Stat_t).Ino, fixturePath)
 			if err := os.WriteFile(filepath.Join(pidDir, "maps"), []byte(maps), 0o600); err != nil {
 				t.Fatal(err)
 			}

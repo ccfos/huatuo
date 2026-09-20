@@ -281,7 +281,7 @@ func ReadELFSymbols(ctx context.Context, file *elf.File, typ elf.SectionType,
 
 // FindELFLoadBias tries load segments in ELF order because the first segment
 // may not have a matching process mapping.
-func FindELFLoadBias(file *elf.File, mappings []ProcMap, inode uint64) (uint64, error) {
+func FindELFLoadBias(file *elf.File, mappings []ProcMap, target *ProcMap) (uint64, error) {
 	pageSize := uint64(os.Getpagesize())
 	for _, program := range file.Progs {
 		if program.Type != elf.PT_LOAD {
@@ -289,7 +289,7 @@ func FindELFLoadBias(file *elf.File, mappings []ProcMap, inode uint64) (uint64, 
 		}
 		loadOffset := program.Off &^ (pageSize - 1)
 		loadAddress := program.Vaddr &^ (pageSize - 1)
-		if bias, err := FindLoadBias(mappings, inode, loadOffset, loadAddress); err == nil {
+		if bias, err := FindLoadBias(mappings, target, loadOffset, loadAddress); err == nil {
 			return bias, nil
 		}
 	}

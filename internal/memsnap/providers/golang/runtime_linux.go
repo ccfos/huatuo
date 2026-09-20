@@ -128,7 +128,11 @@ func inspectPID(ctx context.Context, procRoot string, pid int) (target, error) {
 		if mapsErr != nil {
 			return target{}, mapsErr
 		}
-		loadBias, err = memsnap.FindLoadBias(mappings, inode, info.loadOffset,
+		mapping, err := executableMapping(exePath, inode, mappings)
+		if err != nil {
+			return target{}, err
+		}
+		loadBias, err = memsnap.FindLoadBias(mappings, mapping, info.loadOffset,
 			info.loadVaddr)
 		if err != nil {
 			return target{}, err
@@ -152,6 +156,30 @@ func inspectPID(ctx context.Context, procRoot string, pid int) (target, error) {
 		byteOrder:   info.byteOrder,
 		symbolTable: info.symbolTable,
 	}, nil
+}
+
+// Use the executable pathname and inode to select its maps identity. Device
+// numbers come from maps because Btrfs may report a different device in stat.
+func executableMapping(exePath string, inode uint64, mappings []memsnap.ProcMap) (*memsnap.ProcMap, error) {
+	path, err := os.Readlink(exePath)
+	if err != nil {
+		return nil, fmt.Errorf("read executable path: %w", err)
+	}
+	var selected *memsnap.ProcMap
+	for index := range mappings {
+		mapping := &mappings[index]
+		if mapping.Inode != inode || mapping.Path != path {
+			continue
+		}
+		if selected != nil && (mapping.DevMajor != selected.DevMajor || mapping.DevMinor != selected.DevMinor) {
+			return nil, errors.New("executable maps identity is ambiguous")
+		}
+		selected = mapping
+	}
+	if selected == nil {
+		return nil, errors.New("executable mapping not found")
+	}
+	return selected, nil
 }
 
 func executableInode(file *os.File) (uint64, error) {

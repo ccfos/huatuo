@@ -35,6 +35,13 @@ import (
 )
 
 func TestCaptureLiveGoProcess(t *testing.T) {
+	for _, mode := range []string{"exe", "pie"} {
+		t.Run(mode, func(t *testing.T) { captureLiveGoProcess(t, mode) })
+	}
+}
+
+func captureLiveGoProcess(t *testing.T, mode string) {
+	t.Helper()
 	directory := t.TempDir()
 	source := filepath.Join(directory, "heap.go")
 	if err := os.WriteFile(source, []byte(`
@@ -67,7 +74,7 @@ func main() {
 	buildCtx, cancelBuild := context.WithTimeout(t.Context(), time.Minute)
 	defer cancelBuild()
 	if output, err := exec.CommandContext(buildCtx, "go", "build",
-		"-o", executable, source).CombinedOutput(); err != nil {
+		"-buildmode="+mode, "-o", executable, source).CombinedOutput(); err != nil {
 		t.Fatalf("compile Go fixture: %v: %s", err, output)
 	}
 

@@ -39,3 +39,26 @@ func TestProcessIdentity(t *testing.T) {
 		t.Fatal("changed process identity was accepted")
 	}
 }
+
+func TestFindLoadBiasMappingIdentity(t *testing.T) {
+	target := ProcMap{Inode: 42, DevMajor: 8, DevMinor: 3}
+	maps := []ProcMap{
+		{Inode: 42, DevMajor: 9, DevMinor: 3, Start: 0x100000},
+		{Inode: 42, DevMajor: 8, DevMinor: 2, Start: 0x200000},
+		{Inode: 41, DevMajor: 8, DevMinor: 3, Start: 0x300000},
+		{Inode: 42, DevMajor: 8, DevMinor: 3, Start: 0x80000000},
+	}
+	bias, err := FindLoadBias(maps, &target, 0, 0x1000)
+	if err != nil || bias != 0x7ffff000 {
+		t.Fatalf("bias = %#x, %v; want %#x", bias, err, uint64(0x7ffff000))
+	}
+	if _, err := FindLoadBias(maps[:3], &target, 0, 0); err == nil {
+		t.Fatal("accepted an unrelated mapping with a colliding inode")
+	}
+	if _, err := FindLoadBias(maps, &target, 0x1000, 0); err == nil {
+		t.Fatal("accepted a mapping with the wrong offset")
+	}
+	if _, err := FindLoadBias(maps, &target, 0, 0x90000000); err == nil {
+		t.Fatal("accepted an underflowing relocation")
+	}
+}

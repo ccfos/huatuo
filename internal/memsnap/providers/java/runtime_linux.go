@@ -131,7 +131,7 @@ func discoverVM(ctx context.Context, procRoot string, pid int) (*vmImage, error)
 		return nil, fmt.Errorf("%w: unsupported ELF class or byte order",
 			errHotSpotUnavailable)
 	}
-	loadBias, err := memsnap.FindELFLoadBias(file, mappings, selectedMap.Inode)
+	loadBias, err := memsnap.FindELFLoadBias(file, mappings, &selectedMap)
 	if err != nil {
 		return nil, fmt.Errorf("%w: cannot determine libjvm.so load bias",
 			errHotSpotUnavailable)

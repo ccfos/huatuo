@@ -414,7 +414,7 @@ func loadBias(file *elf.File, maps []memsnap.ProcMap) (uint64, error) {
 	if len(maps) == 0 {
 		return 0, errors.New("CPython module has no process mappings")
 	}
-	bias, err := memsnap.FindELFLoadBias(file, maps, maps[0].Inode)
+	bias, err := memsnap.FindELFLoadBias(file, maps, &maps[0])
 	if err != nil {
 		return 0, errors.New("cannot determine CPython module load bias")
 	}
