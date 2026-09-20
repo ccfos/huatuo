@@ -115,6 +115,12 @@ func main() {
 // than a required CI gate. It exercises a real HotSpot process when a supported
 // JDK is already available and otherwise skips without installing one.
 func TestCaptureLiveHotSpotProcess(t *testing.T) {
+	t.Run("arrays", func(t *testing.T) { captureLiveHotSpotProcess(t, false) })
+	t.Run("finalizable", func(t *testing.T) { captureLiveHotSpotProcess(t, true) })
+}
+
+func captureLiveHotSpotProcess(t *testing.T, finalizable bool) {
+	t.Helper()
 	javaPath, javaErr := exec.LookPath("java")
 	javacPath, javacErr := exec.LookPath("javac")
 	if javaErr != nil || javacErr != nil {
@@ -129,10 +135,14 @@ import java.util.List;
 
 public class HeapFixture {
     private static final List<Object> OBJECTS = new ArrayList<>();
+    static class FinalizablePayload {
+        long a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p;
+        protected void finalize() { a = 1; }
+    }
 
     public static void main(String[] args) throws Exception {
         for (int i = 0; i < 200000; i++) {
-            OBJECTS.add(new byte[128]);
+            OBJECTS.add(args.length > 0 ? new FinalizablePayload() : new byte[128]);
         }
         System.out.println("ready");
         Thread.sleep(60000);
@@ -151,7 +161,17 @@ public class HeapFixture {
 		"-XX:-UseCompactObjectHeaders", "-version").Run() == nil {
 		javaArgs = append(javaArgs, "-XX:-UseCompactObjectHeaders")
 	}
+	if finalizable {
+		if output, err := exec.CommandContext(t.Context(), javaPath,
+			"-XX:-RegisterFinalizersAtInit", "-version").CombinedOutput(); err != nil {
+			t.Skipf("JVM does not support slow finalizer allocation: %v: %s", err, output)
+		}
+		javaArgs = append(javaArgs, "-XX:-RegisterFinalizersAtInit")
+	}
 	javaArgs = append(javaArgs, "-cp", directory, "HeapFixture")
+	if finalizable {
+		javaArgs = append(javaArgs, "finalizable")
+	}
 	fixtureCtx, stopFixture := context.WithTimeout(t.Context(), time.Minute)
 	defer stopFixture()
 	command := exec.CommandContext(fixtureCtx, javaPath, javaArgs...)
@@ -189,6 +209,14 @@ public class HeapFixture {
 	}
 	if snapshot.RuntimeVersion == "" || len(snapshot.Entries) == 0 {
 		t.Fatalf("live HotSpot snapshot has no runtime data: %+v", snapshot)
+	}
+	if finalizable {
+		for _, entry := range snapshot.Entries {
+			if strings.Contains(entry.Name, "FinalizablePayload") && entry.Bytes > 0 && entry.Objects > 0 {
+				return
+			}
+		}
+		t.Fatalf("retained finalizable payloads are missing: %+v", snapshot)
 	}
 }
 

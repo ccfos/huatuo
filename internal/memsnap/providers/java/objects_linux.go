@@ -254,11 +254,9 @@ func objectSize(raw []byte, klass *klass,
 	layout := klass.layoutHelper
 	if layout > 0 {
 		slowBit := uint32(metadata.constants["Klass::_lh_instance_slow_path_bit"])
-		if uint32(layout)&slowBit != 0 {
-			if klass.name != "java/lang/Class" {
-				return 0, fmt.Errorf("unsupported HotSpot slow-path instance %s",
-					klass.name)
-			}
+		// Slow allocation also applies to ordinary fixed-size classes, such as
+		// finalizable instances. Only Class mirrors store their size in the object.
+		if uint32(layout)&slowBit != 0 && klass.name == "java/lang/Class" {
 			if mirrorOopSizeOffset <= 0 || mirrorOopSizeOffset+4 > len(raw) {
 				return 0, errors.New("HotSpot class mirror size field is unavailable")
 			}
@@ -307,11 +305,11 @@ func humongousObjectSize(memory processMemory, objectAddress uint64,
 	layout := class.layoutHelper
 	if layout > 0 {
 		slowBit := uint32(metadata.constants["Klass::_lh_instance_slow_path_bit"])
-		if uint32(layout)&slowBit == 0 {
+		if uint32(layout)&slowBit == 0 || class.name != "java/lang/Class" {
 			return objectSize(raw, class, metadata, mirrorOopSizeOffset,
 				objectHeaderBytes)
 		}
-		if class.name != "java/lang/Class" || mirrorOopSizeOffset <= 0 {
+		if mirrorOopSizeOffset <= 0 {
 			return 0, errors.New("HotSpot class mirror size field is unavailable")
 		}
 		address, ok := checkedAdd(objectAddress, uint64(mirrorOopSizeOffset))
