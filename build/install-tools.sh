@@ -64,11 +64,10 @@ printf '%s  %s\n' "$ASYNC_PROFILER_SHA256" "$ASYNC_PROFILER_ARCHIVE" \
 printf '%s  %s\n' "$PY_SPY_SHA256" "$PY_SPY_WHEEL" \
 	| sha256sum --check --strict -
 
-mkdir -p "$WORK_DIR/tools/async-profiler"
+mkdir -p "$WORK_DIR/tools" "$(dirname "$TOOLS_DIR")"
 tar -xzf "$ASYNC_PROFILER_ARCHIVE" --strip-components=1 \
-	-C "$WORK_DIR/tools/async-profiler"
-mkdir -p "$WORK_DIR/tools/py-spy" "$(dirname "$TOOLS_DIR")"
-python3 - "$PY_SPY_WHEEL" "$WORK_DIR/tools/py-spy/py-spy" << 'PY'
+	-C "$WORK_DIR/tools"
+python3 - "$PY_SPY_WHEEL" "$WORK_DIR/tools/py-spy" << 'PY'
 import pathlib
 import sys
 import zipfile
@@ -79,13 +78,13 @@ with zipfile.ZipFile(sys.argv[1]) as wheel:
         raise SystemExit("py-spy executable is missing or ambiguous in release wheel")
     pathlib.Path(sys.argv[2]).write_bytes(wheel.read(matches[0]))
 PY
-chmod 0755 "$WORK_DIR/tools/py-spy/py-spy"
-[[ -x "$WORK_DIR/tools/async-profiler/bin/asprof" ]] \
+chmod 0755 "$WORK_DIR/tools/py-spy"
+[[ -x "$WORK_DIR/tools/bin/asprof" ]] \
 	|| {
 		echo "async-profiler archive has no bin/asprof" >&2
 		exit 1
 	}
-[[ -f "$WORK_DIR/tools/async-profiler/lib/libasyncProfiler.so" ]] \
+[[ -f "$WORK_DIR/tools/lib/libasyncProfiler.so" ]] \
 	|| {
 		echo "async-profiler archive has no lib/libasyncProfiler.so" >&2
 		exit 1

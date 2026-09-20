@@ -16,10 +16,6 @@ package provider
 
 import "fmt"
 
-func validatePythonToolPath(toolPath string) error {
-	return validateToolFile("Python", toolPath, "py-spy", true)
-}
-
 func validatePythonAggregationWindow(duration, interval int) error {
 	if duration != interval {
 		return fmt.Errorf(

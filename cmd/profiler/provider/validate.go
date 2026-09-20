@@ -16,7 +16,6 @@ package provider
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -59,24 +58,6 @@ func validateMaxProfilerProcesses(profilerName string, pids []int, maximum int) 
 		maximum,
 		len(pids),
 	)
-}
-
-func validateToolFile(profilerName, toolPath, relativePath string, executable bool) error {
-	path := filepath.Join(toolPath, relativePath)
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("start %s profiler: required tool %q is unavailable: %w", profilerName, path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("start %s profiler: required tool %q is not a regular file", profilerName, path)
-	}
-	if executable && info.Mode().Perm()&0o111 == 0 {
-		return fmt.Errorf("start %s profiler: required tool %q is not executable", profilerName, path)
-	}
-	if !executable && info.Mode().Perm()&0o444 == 0 {
-		return fmt.Errorf("start %s profiler: required tool %q is not readable", profilerName, path)
-	}
-	return nil
 }
 
 func validateProcessExecutables(profilerName, executablePrefix string, pids []int) error {

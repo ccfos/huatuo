@@ -23,6 +23,7 @@ import (
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/registry"
 	javaruntime "github.com/ccfos/huatuo/internal/profiler/runtime/java"
+	"github.com/ccfos/huatuo/internal/profiler/toolpath"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -52,7 +53,7 @@ func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggr
 }
 
 func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if err := validateJavaToolPath(pctx.ToolPath); err != nil {
+	if err := toolpath.Validate(profiling.LanguageJava, pctx.ToolDir); err != nil {
 		return err
 	}
 
@@ -89,7 +90,7 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	for _, pid := range pids {
-		if err := javaruntime.PrepareJavaAgent(pid, pctx.ToolPath); err != nil {
+		if err := javaruntime.PrepareJavaAgent(pid, pctx.ToolDir); err != nil {
 			return fmt.Errorf("prepare Java agent for PID %d: %w", pid, err)
 		}
 	}
@@ -104,7 +105,7 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	opt := &javaruntime.AsprofSamplingOption{
 		Pids:          pids,
-		ToolPath:      pctx.ToolPath,
+		ToolPath:      pctx.ToolDir,
 		BaseArgs:      baseArgs,
 		OutFilePrefix: "mem",
 		AggrInterval:  javaAggregationInterval(pctx),

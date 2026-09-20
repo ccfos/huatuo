@@ -18,9 +18,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/profiler/toolpath"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
@@ -93,24 +93,8 @@ func validateEnvironment(request *StartRequest, config *Config) error {
 		}
 	}
 
-	switch request.Spec.Language {
-	case profilingdomain.LanguageJava:
-		if config.JavaToolPath == "" {
-			return fmt.Errorf("%w: Java tool path is not configured", ErrEnvironmentUnsupported)
-		}
-		if err := validateExecutable(filepath.Join(config.JavaToolPath, "bin", "asprof")); err != nil {
-			return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
-		}
-		if err := validateRegularFile(filepath.Join(config.JavaToolPath, "lib", "libasyncProfiler.so")); err != nil {
-			return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
-		}
-	case profilingdomain.LanguagePython:
-		if config.PythonToolPath == "" {
-			return fmt.Errorf("%w: Python tool path is not configured", ErrEnvironmentUnsupported)
-		}
-		if err := validateExecutable(filepath.Join(config.PythonToolPath, "py-spy")); err != nil {
-			return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
-		}
+	if err := toolpath.Validate(request.Spec.Language, config.ToolDir); err != nil {
+		return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
 	}
 	return nil
 }
@@ -125,17 +109,6 @@ func validateExecutable(path string) error {
 	}
 	if info.Mode().Perm()&0o111 == 0 {
 		return fmt.Errorf("executable %q has no execute permission", path)
-	}
-	return nil
-}
-
-func validateRegularFile(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("file %q is unavailable: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("file %q is not a regular file", path)
 	}
 	return nil
 }

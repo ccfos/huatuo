@@ -134,8 +134,7 @@ to bytes only when the cgroup limit is applied.
     # AggregationIntervalSeconds = 10
     # MaxConcurrentProcesses = 10
     # CommandOutputLimitBytes = 65536
-    # JavaToolPath = "/opt/async-profiler"
-    # PythonToolPath = "/opt/py-spy"
+    # ToolDir = "/opt/huatuo/tools"
 
 ```
 
@@ -148,9 +147,12 @@ to bytes only when the cgroup limit is applied.
   and Tracing. New operations are rejected instead of queued when it is full.
 - The four operation time settings independently limit process launch,
   graceful stop, result finalization, and terminal-state retention.
-- **Profiling.JavaToolPath** and **Profiling.PythonToolPath** are optional until
-  their corresponding language is requested. Unsupported node environments
-  reject that request without creating an operation.
+- **Profiling.ToolDir** is the shared external tool root, passed unchanged as
+  profiler `--tool-path`. Java requires `bin/asprof` and
+  `lib/libasyncProfiler.so` beneath this root; Python requires
+  `py-spy`. Only the requested language's tools are checked. Native profiling
+  does not require this setting. Unsupported node environments reject the request
+  without creating an operation.
 
 The generated Node API exposes its contract at `GET /openapi.json`. Profiling
 and Tracing Start, Get, and Stop routes, `POST /v1/events/watch`, and

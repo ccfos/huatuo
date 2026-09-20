@@ -15,8 +15,6 @@
 package provider
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
@@ -30,14 +28,6 @@ func TestResolvePythonPidsExplicitTargets(t *testing.T) {
 	pids, err := resolvePythonPids(pctx)
 	require.NoError(t, err)
 	require.Equal(t, []int{123, 456}, pids)
-}
-
-func TestValidatePythonToolPath(t *testing.T) {
-	dir := t.TempDir()
-	pyspy := filepath.Join(dir, "py-spy")
-	require.NoError(t, os.WriteFile(pyspy, []byte("tool"), 0o600))
-	require.NoError(t, os.Chmod(pyspy, 0o700))
-	require.NoError(t, validatePythonToolPath(dir))
 }
 
 func TestPythonRootPids(t *testing.T) {

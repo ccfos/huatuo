@@ -27,13 +27,6 @@ func validateJavaFrequency(freq int) error {
 	return nil
 }
 
-func validateJavaToolPath(toolPath string) error {
-	if err := validateToolFile("Java", toolPath, "bin/asprof", true); err != nil {
-		return err
-	}
-	return validateToolFile("Java", toolPath, "lib/libasyncProfiler.so", false)
-}
-
 func validateJavaMemoryMode(mode profiling.Mode) ([]string, error) {
 	switch mode {
 	case profiling.ModeObjectAlloc:

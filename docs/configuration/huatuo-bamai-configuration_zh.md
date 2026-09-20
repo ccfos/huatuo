@@ -136,8 +136,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
     # AggregationIntervalSeconds = 10
     # MaxConcurrentProcesses = 10
     # CommandOutputLimitBytes = 65536
-    # JavaToolPath = "/opt/async-profiler"
-    # PythonToolPath = "/opt/py-spy"
+    # ToolDir = "/opt/huatuo/tools"
 
 ```
 
@@ -148,8 +147,11 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
   直接拒绝新 Operation，不在 Node 排队。
 - 四个 Operation 时间参数分别限制进程启动、优雅停止、结果收尾和终态保留，不能
   合并为一个通用 timeout。
-- **Profiling.JavaToolPath** 和 **Profiling.PythonToolPath** 只在请求相应语言时需要；
-  Node 环境不满足要求时拒绝请求且不创建 Operation。
+- **Profiling.ToolDir** 是外部采样工具的统一根目录，原样传给 profiler 的
+  `--tool-path`。Java 使用该目录下的 `bin/asprof` 和
+  `lib/libasyncProfiler.so`，Python 使用 `py-spy`。
+  只检查请求语言所需的工具；原生采集不需要此配置。Node 环境不满足要求时
+  拒绝请求且不创建 Operation。
 
 生成的 Node API 通过 `GET /openapi.json` 提供协议文档。Profiling、Tracing 的
 Start、Get、Stop 路由、`POST /v1/events/watch` 及 `PUT /v1/config` 必须携带

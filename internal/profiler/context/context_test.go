@@ -29,6 +29,7 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	set.String("language", "c", "")
 	set.String("output-format", "collapsed", "")
 	set.String("tracer-id", "trace-123", "")
+	set.String("tool-path", "/opt/huatuo/tools", "")
 	set.Bool("offcpu-stats", false, "")
 	set.Bool("require-hardware-pmu", false, "")
 	if err := set.Parse([]string{"--offcpu-stats", "--require-hardware-pmu"}); err != nil {
@@ -39,6 +40,9 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	pctx, err := NewProfilerContext(cliCtx, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("NewProfilerContext() error = %v", err)
+	}
+	if pctx.ToolDir != "/opt/huatuo/tools" {
+		t.Fatalf("ToolDir = %q, want shared tool root", pctx.ToolDir)
 	}
 	if pctx.TracerID != "trace-123" {
 		t.Fatalf("TracerID = %q, want trace-123", pctx.TracerID)

@@ -454,7 +454,7 @@ C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU
 make build
 ```
 
-生成的命令位于 `_output/bin/profiler`。原生采集依赖 Linux eBPF、perf event 和仓库构建出的 BPF 对象，通常需要 root 权限，并要求 `kernel.perf_event_paranoid` 允许采样。Java 需要 async-profiler，`--tool-path` 指向包含 `bin/asprof` 和 `lib/libasyncProfiler.so` 的目录。Python 需要 py-spy，`--tool-path` 指向包含可执行文件 `py-spy` 的目录。
+生成的命令位于 `_output/bin/profiler`。原生采集依赖 Linux eBPF、perf event 和仓库构建出的 BPF 对象，通常需要 root 权限，并要求 `kernel.perf_event_paranoid` 允许采样。Java 需要 async-profiler，`--tool-path` 指向统一工具根目录，其中包含 `bin/asprof` 和 `lib/libasyncProfiler.so`。Python 使用同一根目录下的 `py-spy`。
 
 查看当前版本的完整帮助：
 
@@ -492,7 +492,7 @@ sudo _output/bin/profiler \
 | `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg` 或 `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | 远端上传使用的 Unix socket |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
-| `--tool-path` | 无 | Java、Python | 第三方采集工具根目录，必填 |
+| `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
 | `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
 | `--tracer-id` | 空；本地输出时内部生成 | 全部；`remote` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
@@ -608,7 +608,7 @@ _output/bin/profiler \
   --type cpu \
   --language java \
   --pid 12345,12346 \
-  --tool-path /opt/async-profiler \
+  --tool-path /opt/huatuo/tools \
   --max-concurrent-procs 2 \
   --duration 30 \
   --aggr-interval 10 \
@@ -630,7 +630,7 @@ _output/bin/profiler \
   --language java \
   --memory-mode object_usage \
   --pid 12345 \
-  --tool-path /opt/async-profiler \
+  --tool-path /opt/huatuo/tools \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
@@ -641,14 +641,14 @@ _output/bin/profiler \
 
 ### 5. Python 观测
 
-Python 当前仅支持 CPU 观测。`--aggr-interval` 必须与 `--duration` 相等，即一次采集只生成一个聚合窗口。`--tool-path` 指向包含 `py-spy` 的目录。
+Python 当前仅支持 CPU 观测。`--aggr-interval` 必须与 `--duration` 相等，即一次采集只生成一个聚合窗口。`--tool-path` 指向包含 `py-spy` 的统一工具根目录。
 
 ```bash
 _output/bin/profiler \
   --type cpu \
   --language python \
   --pid 12345,12346 \
-  --tool-path /opt/py-spy \
+  --tool-path /opt/huatuo/tools \
   --max-concurrent-procs 2 \
   --duration 30 \
   --aggr-interval 30 \

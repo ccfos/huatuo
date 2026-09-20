@@ -30,10 +30,10 @@ readonly PROFILER_AGGR_INTERVAL=5
 command -v java > /dev/null || skip "java is not installed"
 command -v javac > /dev/null || skip "javac is not installed"
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -x "${JAVA_PROFILER_TOOL_PATH}/bin/asprof" ]] \
-	|| skip "asprof missing: ${JAVA_PROFILER_TOOL_PATH}/bin/asprof"
-[[ -r "${JAVA_PROFILER_TOOL_PATH}/lib/libasyncProfiler.so" ]] \
-	|| skip "async-profiler library missing: ${JAVA_PROFILER_TOOL_PATH}/lib/libasyncProfiler.so"
+[[ -x "${PROFILER_TOOL_DIR}/bin/asprof" ]] \
+	|| skip "asprof missing: ${PROFILER_TOOL_DIR}/bin/asprof"
+[[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
+	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-java-multi.XXXXXX")
 PROFILER_STDOUT="${WORK_DIR}/profiler.out"
@@ -71,7 +71,7 @@ if ! "${TOOL_BIN}" \
 	--type cpu \
 	--language java \
 	--pid "${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1}" \
-	--tool-path "${JAVA_PROFILER_TOOL_PATH}" \
+	--tool-path "${PROFILER_TOOL_DIR}" \
 	--duration "${PROFILER_DURATION}" \
 	--freq "${PROFILER_FREQ}" \
 	--aggr-interval "${PROFILER_AGGR_INTERVAL}" \

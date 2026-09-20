@@ -141,7 +141,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "tool-path",
-		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
+		Usage: "Tool directory containing bin/asprof and lib/libasyncProfiler.so for Java, or py-spy for Python",
 	},
 	&cli.StringFlag{
 		Name:  "binary-match-path",

@@ -128,16 +128,17 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 
 		return nil
 
-	case profiling.LanguageJava:
-		if ctx.String("tool-path") == "" {
+	case profiling.LanguageJava, profiling.LanguagePython:
+		toolDir := ctx.String("tool-path")
+		if toolDir == "" {
 			return fmt.Errorf("language=%s requires --tool-path", lang)
 		}
-
-		return validateExactlyOneTarget(ctx)
-
-	case profiling.LanguagePython:
-		if err := ensurePythonToolPath(ctx); err != nil {
-			return err
+		info, err := os.Stat(toolDir)
+		if err != nil {
+			return fmt.Errorf("profiling tool directory %q is unavailable: %w", toolDir, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("profiling tool path %q must be a directory", toolDir)
 		}
 		return validateExactlyOneTarget(ctx)
 
@@ -164,13 +165,6 @@ func validatePythonProfileOptions(lang profiling.Language, typ profiling.Type, d
 		)
 	}
 	return nil
-}
-
-func ensurePythonToolPath(ctx *cli.Context) error {
-	if ctx.String("tool-path") != "" {
-		return nil
-	}
-	return fmt.Errorf("language=python requires --tool-path")
 }
 
 func validateExactlyOneTarget(ctx *cli.Context) error {
@@ -229,17 +223,6 @@ func validateCommonOptions(ctx *cli.Context) error {
 
 	if err := validateAggregationWindow(ctx.Int("duration"), ctx.Int("aggr-interval")); err != nil {
 		return err
-	}
-
-	if toolPath := ctx.String("tool-path"); toolPath != "" {
-		info, err := os.Stat(toolPath)
-		if err != nil {
-			return fmt.Errorf("tool-path does not exist: %s", toolPath)
-		}
-
-		if !info.IsDir() {
-			return fmt.Errorf("tool-path must be a directory: %s", toolPath)
-		}
 	}
 
 	if ctx.String("output-format") == "remote" && ctx.String("output-storage") == "" {

@@ -15,9 +15,6 @@
 package provider
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -79,23 +76,4 @@ func TestHasExecutablePrefix(t *testing.T) {
 		})
 	}
 	require.False(t, hasExecutablePrefix("platform-java", "java"))
-}
-
-func TestValidateToolFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "tool")
-	require.NoError(t, os.WriteFile(path, []byte("tool"), 0o600))
-	require.EqualError(
-		t,
-		validateToolFile("Python", dir, "tool", true),
-		fmt.Sprintf("start Python profiler: required tool %q is not executable", path),
-	)
-	require.NoError(t, os.Chmod(path, 0o755))
-	require.NoError(t, validateToolFile("Python", dir, "tool", true))
-	require.NoError(t, os.Chmod(path, 0o000))
-	require.EqualError(
-		t,
-		validateToolFile("Java", dir, "tool", false),
-		fmt.Sprintf("start Java profiler: required tool %q is not readable", path),
-	)
 }

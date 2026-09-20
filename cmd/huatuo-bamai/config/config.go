@@ -83,8 +83,8 @@ type ProfilingConfig struct {
 	AggregationIntervalSeconds int `default:"10"`
 	MaxConcurrentProcesses     int `default:"10"`
 	CommandOutputLimitBytes    int `default:"65536"`
-	JavaToolPath               string
-	PythonToolPath             string
+	// ToolDir is the shared root of external profiling tools.
+	ToolDir string
 }
 
 // PodConfig controls Pod metadata discovery.

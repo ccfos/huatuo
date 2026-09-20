@@ -63,6 +63,9 @@ EventStreamKeepAliveIntervalSeconds = 15
 [Operations]
 MaxConcurrent = 7
 
+[Profiling]
+ToolDir = "/opt/huatuo/tools"
+
 [Storage.LocalFile]
 Path = "records"
 RotationSizeMiB = 64
@@ -117,6 +120,9 @@ ExcludedOnContainer = "writeback"
 		Get().HTTPServer.MaxEventStreamClients != 25 ||
 		Get().HTTPServer.EventStreamKeepAliveIntervalSeconds != 15 {
 		t.Errorf("HTTPServer = %+v, want overrides", Get().HTTPServer)
+	}
+	if Get().Profiling.ToolDir != "/opt/huatuo/tools" {
+		t.Errorf("Profiling.ToolDir = %q, want /opt/huatuo/tools", Get().Profiling.ToolDir)
 	}
 	if Get().Operations.MaxConcurrent != 7 {
 		t.Errorf("Operations.MaxConcurrent = %d, want 7", Get().Operations.MaxConcurrent)

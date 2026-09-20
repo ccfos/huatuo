@@ -63,8 +63,7 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 		ProfilerPath:         filepath.Join(d.opts.ToolBinDir, "profiler"),
 		ToolstreamSocketPath: toolstream.DefaultSockPath,
 		NodeAPIAddress:       nodeAPIAddress,
-		JavaToolPath:         cfg.Profiling.JavaToolPath,
-		PythonToolPath:       cfg.Profiling.PythonToolPath,
+		ToolDir:              cfg.Profiling.ToolDir,
 		AggregationInterval: time.Duration(cfg.Profiling.AggregationIntervalSeconds) *
 			time.Second,
 		MaxConcurrentProcesses:  cfg.Profiling.MaxConcurrentProcesses,

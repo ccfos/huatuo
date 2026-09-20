@@ -28,6 +28,7 @@ import (
 	profilerexec "github.com/ccfos/huatuo/internal/profiler/exec"
 	profilerprocess "github.com/ccfos/huatuo/internal/profiler/process"
 	"github.com/ccfos/huatuo/internal/profiler/registry"
+	"github.com/ccfos/huatuo/internal/profiler/toolpath"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -57,7 +58,7 @@ func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 }
 
 func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if err := validatePythonToolPath(pctx.ToolPath); err != nil {
+	if err := toolpath.Validate(profiling.LanguagePython, pctx.ToolDir); err != nil {
 		return err
 	}
 	if err := validatePythonAggregationWindow(pctx.Duration, pctx.AggrInterval); err != nil {
@@ -66,7 +67,7 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	p.duration = pctx.Duration
 	p.freq = pctx.Freq
-	p.toolPath = pctx.ToolPath
+	p.toolPath = pctx.ToolDir
 
 	pids, err := resolvePythonPids(pctx)
 	if err != nil {

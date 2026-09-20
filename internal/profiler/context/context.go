@@ -56,7 +56,7 @@ type ProfilerContext struct {
 	Language                  profiling.Language
 	ExecPath                  string
 	ThreadGroup               bool
-	ToolPath                  string
+	ToolDir                   string
 	LogBpfDebug               bool
 	Mode                      profiling.Mode
 	OffCPUPhase               profiling.OffCPUPhase
@@ -173,7 +173,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		ContainerID:               cliCtx.String("container-id"),
 		ExecPath:                  cliCtx.String("binary-match-path"),
 		ThreadGroup:               cliCtx.Bool("thread-group"),
-		ToolPath:                  cliCtx.String("tool-path"),
+		ToolDir:                   cliCtx.String("tool-path"),
 		LogBpfDebug:               cliCtx.Bool("log-bpf-debug"),
 		OutputPath:                cliCtx.String("output-path"),
 		OutputFormat:              outputFormat,

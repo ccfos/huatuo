@@ -26,7 +26,7 @@ readonly FIXTURE="${ROOT_DIR}/integration/testdata/test_profiler_python_cpu.py"
 readonly PROFILER_DURATION=10
 
 command -v python3 > /dev/null || skip "python3 is not installed"
-readonly PYSPY_BIN="${PYTHON_PROFILER_TOOL_PATH}/py-spy"
+readonly PYSPY_BIN="${PROFILER_TOOL_DIR}/py-spy"
 [[ -x "${PYSPY_BIN}" ]] || skip "py-spy missing: ${PYSPY_BIN}"
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
 
@@ -71,7 +71,7 @@ if ! "${TOOL_BIN}" \
 	--type cpu \
 	--language python \
 	--pid "${PROFILER_PARENT_PID},${PROFILER_CHILD_PID},${PROFILER_INDEPENDENT_PID}" \
-	--tool-path "${PYTHON_PROFILER_TOOL_PATH}" \
+	--tool-path "${PROFILER_TOOL_DIR}" \
 	--max-concurrent-procs 2 \
 	--duration "${PROFILER_DURATION}" \
 	--aggr-interval "${PROFILER_DURATION}" \
