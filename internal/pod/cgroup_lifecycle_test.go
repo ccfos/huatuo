@@ -26,6 +26,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
 func TestCgroupSubsystemInitializationRetries(t *testing.T) {
@@ -124,20 +125,20 @@ func TestMemoryCgroupNotifications(t *testing.T) {
 	id := strings.Repeat("a", 64)
 	data := containerCssPerfEvent{CgroupRoot: 7, Operation: abi.CgroupCSSOperationUpdate}
 	copy(data.KnodeName[:], "cri-containerd-"+id+".scope")
-	publishMemoryCgroupChange(&data)
+	publishMemoryCgroupChange(&data, extractContainerID(bytesutil.ToStr(data.KnodeName[:])))
 	if got := <-s.Changes(); got.ContainerID != id || got.Removed {
 		t.Fatalf("create = %+v", got)
 	}
 	data.Operation = abi.CgroupCSSOperationRemove
-	publishMemoryCgroupChange(&data)
+	publishMemoryCgroupChange(&data, extractContainerID(bytesutil.ToStr(data.KnodeName[:])))
 	if got := <-s.Changes(); got.ContainerID != id || !got.Removed {
 		t.Fatalf("remove = %+v", got)
 	}
 	data.CgroupRoot = 8
-	publishMemoryCgroupChange(&data)
+	publishMemoryCgroupChange(&data, extractContainerID(bytesutil.ToStr(data.KnodeName[:])))
 	data.CgroupRoot = 7
 	data.KnodeName[0] = 0
-	publishMemoryCgroupChange(&data)
+	publishMemoryCgroupChange(&data, extractContainerID(bytesutil.ToStr(data.KnodeName[:])))
 	if len(s.changes) != 0 {
 		t.Fatal("published a non-memory or unidentified event")
 	}
@@ -148,7 +149,7 @@ func TestMemoryCgroupQueueFullDoesNotBlock(t *testing.T) {
 	data := containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate}
 	copy(data.KnodeName[:], strings.Repeat("a", 64))
 	for i := 0; i < cgroupChangeQueueSize+1; i++ {
-		publishMemoryCgroupChange(&data)
+		publishMemoryCgroupChange(&data, extractContainerID(bytesutil.ToStr(data.KnodeName[:])))
 	}
 	if len(s.changes) != cgroupChangeQueueSize {
 		t.Fatal("unexpected queue size")
@@ -175,7 +176,24 @@ func BenchmarkMemoryCgroupNotification(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		publishMemoryCgroupChange(&data)
+		publishMemoryCgroupChange(&data, extractContainerID(bytesutil.ToStr(data.KnodeName[:])))
+		<-s.changes
+	}
+}
+
+// BenchmarkMemoryCgroupDispatch includes both consumers of a lifecycle update.
+// Empty CSS entries isolate notification and ID parsing from cache allocations.
+func BenchmarkMemoryCgroupDispatch(b *testing.B) {
+	s := lifecycleTestSubscriber(b, 0)
+	data := containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate}
+	copy(data.KnodeName[:], strings.Repeat("a", 64))
+	b.ReportAllocs()
+	for b.Loop() {
+		id := extractContainerID(bytesutil.ToStr(data.KnodeName[:]))
+		publishMemoryCgroupChange(&data, id)
+		if err := cgroupUpdateOrCreateCssData(&data, id); err != nil {
+			b.Fatal(err)
+		}
 		<-s.changes
 	}
 }

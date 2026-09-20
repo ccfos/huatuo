@@ -99,9 +99,7 @@ func cgroupListCssDataByKnode(containerID string) []*containerCssMetaData {
 	return res
 }
 
-func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent) error {
-	knodeName := bytesutil.ToStr(data.KnodeName[:])
-	containerID := extractContainerID(knodeName)
+func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent, containerID string) error {
 	if containerID == "" {
 		return fmt.Errorf("knode name is not containterID")
 	}
@@ -128,9 +126,7 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent) error {
 	return nil
 }
 
-func cgroupDeleteCssData(data *containerCssPerfEvent) error {
-	knodeName := bytesutil.ToStr(data.KnodeName[:])
-	containerID := extractContainerID(knodeName)
+func cgroupDeleteCssData(data *containerCssPerfEvent, containerID string) error {
 	if containerID == "" {
 		return fmt.Errorf("knode name is not containterID")
 	}
@@ -175,18 +171,20 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, 
 					return
 				}
 
+				// Parse once: lifecycle notifications and the CSS cache share the ID.
+				containerID := extractContainerID(bytesutil.ToStr(data.KnodeName[:]))
 				// Cache discovery is not a container creation notification.
 				if lifecycle {
-					publishMemoryCgroupChange(&data)
+					publishMemoryCgroupChange(&data, containerID)
 				}
 
 				log.Debugf("sync container css data: %+v", &data)
 
 				switch data.Operation {
 				case abi.CgroupCSSOperationUpdate:
-					_ = cgroupUpdateOrCreateCssData(&data)
+					_ = cgroupUpdateOrCreateCssData(&data, containerID)
 				case abi.CgroupCSSOperationRemove:
-					_ = cgroupDeleteCssData(&data)
+					_ = cgroupDeleteCssData(&data, containerID)
 				default:
 					log.Errorf("unsupported cgroup CSS operation: %+v", data)
 				}

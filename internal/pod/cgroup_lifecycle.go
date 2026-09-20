@@ -26,7 +26,6 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/procfs"
-	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
 const cgroupChangeQueueSize = 256
@@ -156,7 +155,7 @@ func memoryCgroupHierarchy() (int32, error) {
 	return 0, fmt.Errorf("memory controller has no active cgroup v1 hierarchy")
 }
 
-func publishMemoryCgroupChange(data *containerCssPerfEvent) {
+func publishMemoryCgroupChange(data *containerCssPerfEvent, id string) {
 	if data.Operation != abi.CgroupCSSOperationUpdate && data.Operation != abi.CgroupCSSOperationRemove {
 		return
 	}
@@ -165,7 +164,6 @@ func publishMemoryCgroupChange(data *containerCssPerfEvent) {
 	if len(memoryCgroupSubscribers) == 0 {
 		return
 	}
-	id := extractContainerID(bytesutil.ToStr(data.KnodeName[:]))
 	if id == "" {
 		return
 	}
