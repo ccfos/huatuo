@@ -99,10 +99,8 @@ type allocationTotals struct {
 }
 
 func (m processMemory) readInto(address uint64, data []byte) error {
-	if m.ctx != nil {
-		if err := m.ctx.Err(); err != nil {
-			return err
-		}
+	if err := m.ctx.Err(); err != nil {
+		return err
 	}
 	if len(data) == 0 || len(data) > maxProcessReadBytes || address == 0 {
 		return errors.New("process memory read range is invalid")
@@ -118,10 +116,8 @@ func (m processMemory) readInto(address uint64, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if m.ctx != nil {
-		if err := m.ctx.Err(); err != nil {
-			return err
-		}
+	if err := m.ctx.Err(); err != nil {
+		return err
 	}
 	if read != len(data) {
 		return fmt.Errorf("short process memory read: got %d, want %d", read,
@@ -408,13 +404,11 @@ func (workspace *batchWorkspace) readProcessRanges(memory processMemory,
 		total += len(rangeToRead.data)
 	}
 	if valid && total <= maxProcessReadBytes {
-		if memory.ctx != nil {
-			if err := memory.ctx.Err(); err != nil {
-				return readable
-			}
+		if err := memory.ctx.Err(); err != nil {
+			return readable
 		}
 		read, err := unix.ProcessVMReadv(memory.pid, local, remote, 0)
-		if memory.ctx != nil && memory.ctx.Err() != nil {
+		if memory.ctx.Err() != nil {
 			return readable
 		}
 		if err == nil && read == total {

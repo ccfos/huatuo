@@ -63,10 +63,8 @@ func (m *processMemory) readInto(address uint64, destination []byte) error {
 	if err := validateRead(address, size); err != nil {
 		return err
 	}
-	if m.ctx != nil {
-		if err := m.ctx.Err(); err != nil {
-			return err
-		}
+	if err := m.ctx.Err(); err != nil {
+		return err
 	}
 	local := [1]unix.Iovec{{Base: &destination[0], Len: uint64(size)}}
 	remote := [1]unix.RemoteIovec{{Base: uintptr(address), Len: size}}
@@ -74,10 +72,8 @@ func (m *processMemory) readInto(address uint64, destination []byte) error {
 	if err != nil {
 		return err
 	}
-	if m.ctx != nil {
-		if err := m.ctx.Err(); err != nil {
-			return err
-		}
+	if err := m.ctx.Err(); err != nil {
+		return err
 	}
 	if read != size {
 		return fmt.Errorf("short CPython process memory read: got %d, want %d",

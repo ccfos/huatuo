@@ -60,9 +60,6 @@ func DetectLanguage(ctx context.Context, pid int) (Language, error) {
 }
 
 func detectLanguage(ctx context.Context, exePath, mapsPath string) (Language, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return LanguageUnknown, err
 	}

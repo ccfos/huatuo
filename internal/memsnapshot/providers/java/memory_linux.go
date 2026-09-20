@@ -44,10 +44,8 @@ type memoryRange struct {
 }
 
 func (m processMemory) check() error {
-	if m.ctx != nil {
-		if err := m.ctx.Err(); err != nil {
-			return err
-		}
+	if err := m.ctx.Err(); err != nil {
+		return err
 	}
 	if memsnapshot.DeadlineReached(m.deadline, m.hasDeadline) {
 		return context.DeadlineExceeded

@@ -115,9 +115,6 @@ func ReadProcMaps(path string) ([]ProcMap, error) {
 func ReadProcMapsContext(ctx context.Context, path string,
 	maxEntries int,
 ) ([]ProcMap, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if maxEntries <= 0 {
 		return nil, errors.New("process maps entry limit must be positive")
 	}
