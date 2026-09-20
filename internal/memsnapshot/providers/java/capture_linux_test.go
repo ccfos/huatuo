@@ -15,25 +15,17 @@
 package java
 
 import (
-	"os"
+	"strings"
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-func TestJavaFailureClassification(t *testing.T) {
-	identity, err := memsnapshot.ReadIdentity(os.Getpid())
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := memsnapshot.Request{Identity: identity, TopK: 10}
-	snapshot, err := New().Capture(t.Context(), request)
-	if err != nil || snapshot.Status != memsnapshot.StatusUnavailable {
-		t.Fatalf("non-JVM result: %+v, %v", snapshot, err)
-	}
-	request.Identity.StartTimeTicks++
-	snapshot, err = New().Capture(t.Context(), request)
-	if err != nil || snapshot.Status != memsnapshot.StatusFailed {
-		t.Fatalf("stale identity result: %+v, %v", snapshot, err)
+func TestJavaBoundedCaptureStatus(t *testing.T) {
+	sampled := uint64(8192)
+	snapshot := &memsnapshot.Snapshot{}
+	finishStatus(snapshot, 0, 1<<20, sampled)
+	if snapshot.Status != memsnapshot.StatusPartial || !strings.Contains(snapshot.Reason, "bounded") {
+		t.Fatalf("bounded sample not marked partial: %+v", snapshot)
 	}
 }

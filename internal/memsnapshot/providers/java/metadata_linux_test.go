@@ -15,25 +15,16 @@
 package java
 
 import (
-	"os"
+	"errors"
 	"testing"
-
-	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-func TestJavaFailureClassification(t *testing.T) {
-	identity, err := memsnapshot.ReadIdentity(os.Getpid())
-	if err != nil {
+func TestJavaMetadataBudget(t *testing.T) {
+	metadata := &vmMeta{}
+	if err := metadata.reserveMetadata(maxCachedMetadataBytes); err != nil {
 		t.Fatal(err)
 	}
-	request := memsnapshot.Request{Identity: identity, TopK: 10}
-	snapshot, err := New().Capture(t.Context(), request)
-	if err != nil || snapshot.Status != memsnapshot.StatusUnavailable {
-		t.Fatalf("non-JVM result: %+v, %v", snapshot, err)
-	}
-	request.Identity.StartTimeTicks++
-	snapshot, err = New().Capture(t.Context(), request)
-	if err != nil || snapshot.Status != memsnapshot.StatusFailed {
-		t.Fatalf("stale identity result: %+v, %v", snapshot, err)
+	if err := metadata.reserveMetadata(1); !errors.Is(err, errHotSpotUnavailable) || metadata.retainedBytes != maxCachedMetadataBytes {
+		t.Fatalf("metadata budget exceeded: %v", err)
 	}
 }

@@ -58,3 +58,23 @@ func TestObjectSizeSlowAllocation(t *testing.T) {
 		})
 	}
 }
+
+func TestJavaArrayDecoding(t *testing.T) {
+	metadata := &vmMeta{constants: map[string]int64{
+		"HeapRegionType::StartsHumongousTag":    12,
+		"HeapRegionType::ContinuesHumongousTag": 13,
+		"Klass::_lh_header_size_shift":          16,
+		"Klass::_lh_header_size_mask":           255,
+		"Klass::_lh_log2_element_size_mask":     255,
+	}}
+	raw := make([]byte, 24)
+	binary.LittleEndian.PutUint32(raw[12:], 3)
+	layout := uint32(0x80000000 | 16<<16 | 2)
+	size, err := objectSize(raw, &klass{layoutHelper: int32(layout)}, metadata, 0, 12)
+	if err != nil || size != 32 {
+		t.Fatalf("array size: %d, %v", size, err)
+	}
+	if _, err := objectSize(raw[:12], &klass{layoutHelper: int32(layout)}, metadata, 0, 12); err == nil {
+		t.Fatal("truncated array header accepted")
+	}
+}
