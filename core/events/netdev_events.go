@@ -39,6 +39,8 @@ type netdevInfo struct {
 	firmwareVersion string
 }
 
+const netdevEventsTracerName = "netdev_events"
+
 type netdevTracing struct {
 	name                  string
 	linkUpdateCh          chan netlink.LinkUpdate
@@ -62,7 +64,7 @@ type netdevEventData struct {
 }
 
 func init() {
-	tracing.RegisterEventTracing("netdev_events", newNetdevTracing)
+	tracing.RegisterEventTracing(netdevEventsTracerName, newNetdevTracing)
 }
 
 func newNetdevTracing() (*tracing.EventTracingAttr, error) {
@@ -75,7 +77,7 @@ func newNetdevTracing() (*tracing.EventTracingAttr, error) {
 		TracingData: &netdevTracing{
 			netdevInfoStore:       make(map[string]*netdevInfo),
 			linkStatusEventCounts: initMap,
-			name:                  "netdev_events",
+			name:                  netdevEventsTracerName,
 		},
 		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
