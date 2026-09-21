@@ -72,7 +72,7 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	}
 
 	// labels
-	labels, err := parser.ParseMetricSelector(req.LabelSelector)
+	matchers, err := parser.ParseMetricSelector(req.LabelSelector)
 	if err != nil {
 		return nil, errors.Join(ErrInvalidQuery, fmt.Errorf("parse matchers: %w", err))
 	}
@@ -80,7 +80,7 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	// Contradictory matchers must not reach the store, where only the last
 	// value of a label would survive.
 	matcherSet := newProfileMatcherSet(filter)
-	for _, label := range labels {
+	for _, label := range matchers {
 		// Reject non-equality operators before the wildcard skip below,
 		// otherwise a matcher like hostname!="*" would be silently ignored
 		// instead of failing the documented equality-only rule.
