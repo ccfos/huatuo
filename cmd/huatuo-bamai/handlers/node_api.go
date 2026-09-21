@@ -234,6 +234,9 @@ func (h *NodeAPIHandler) GetOpenAPI(
 }
 
 func secondsDuration(seconds int64) (time.Duration, error) {
+	if seconds <= 0 {
+		return 0, errors.New("duration seconds must be positive")
+	}
 	if seconds > math.MaxInt64/int64(time.Second) {
 		return 0, errors.New("duration seconds exceed the supported range")
 	}
