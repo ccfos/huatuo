@@ -81,6 +81,12 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	// value of a label would survive.
 	matcherSet := newProfileMatcherSet(filter)
 	for _, label := range labels {
+		// Reject non-equality operators before the wildcard skip below,
+		// otherwise a matcher like hostname!="*" would be silently ignored
+		// instead of failing the documented equality-only rule.
+		if label.Type != labels.MatchEqual {
+			return nil, fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, label.Name)
+		}
 		// skip empty or "All"
 		if label.Value == "" || label.Value == "all" || label.Value == "All" || label.Value == "*" {
 			continue
@@ -256,6 +262,9 @@ func newProfileMatcherSet(filter *profilingstore.Filter) *profileMatcherSet {
 // filter cannot express the intersection of two equalities, and keeping either
 // one of them would change the query without telling the caller.
 func (s *profileMatcherSet) apply(matcher *labels.Matcher) error {
+	if matcher.Type != labels.MatchEqual {
+		return fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, matcher.Name)
+	}
 	previous, seen := s.applied[matcher.Name]
 	if seen && previous != matcher.Value {
 		return fmt.Errorf(

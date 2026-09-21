@@ -311,6 +311,32 @@ func TestSelectMergeStacktracesSkipsWildcardValue(t *testing.T) {
 	}
 }
 
+// Non-equality operators must be rejected even when the value happens to be
+// the wildcard "*", which the validation loop would otherwise skip.
+func TestSelectMergeStacktracesRejectsNonEqualityMatcher(t *testing.T) {
+	service := newQueryServiceWithoutStorage(t)
+
+	for _, selector := range []string{
+		`{hostname!="*"}`,
+		`{hostname=~"host-.*"}`,
+	} {
+		t.Run(selector, func(t *testing.T) {
+			_, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
+				ProfileTypeID: "cpu:samples:cpu:nanoseconds:nanoseconds",
+				LabelSelector: selector,
+				Start:         1_000,
+				End:           2_000,
+			})
+			if !errors.Is(err, ErrInvalidQuery) {
+				t.Fatalf("SelectMergeStacktraces() error = %v, want ErrInvalidQuery", err)
+			}
+			if !strings.Contains(err.Error(), "only supports equality") {
+				t.Errorf("SelectMergeStacktraces() error = %v, want an equality-only error", err)
+			}
+		})
+	}
+}
+
 // LabelValues feeds the same single-value aggregation filter, so a conflicting
 // selector must be rejected there as well.
 func TestLabelValuesRejectsConflictingMatchers(t *testing.T) {
