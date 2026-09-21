@@ -465,7 +465,7 @@ func findEthertypeComparisons(insns []cbpf.Instruction) []bool {
 			if ins.Dst == cbpf.RegX {
 				pending = append(pending, index+1)
 			}
-		case cbpf.StoreScratch, cbpf.TAX:
+		case cbpf.LoadMemShift, cbpf.StoreScratch, cbpf.TAX:
 			pending = append(pending, index+1)
 		}
 	}

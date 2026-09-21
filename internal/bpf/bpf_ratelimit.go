@@ -131,10 +131,9 @@ func (r *RateLimiter) CloseEventPipe() error {
 	if r.reader == nil {
 		return nil
 	}
-	err := r.reader.Close()
-	r.reader = nil
-	if err != nil {
+	if err := r.reader.Close(); err != nil {
 		return fmt.Errorf("%s: close rate-limit event pipe: %w", r.name, err)
 	}
+	r.reader = nil
 	return nil
 }
