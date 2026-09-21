@@ -1,0 +1,12 @@
+# TYPE huatuo_bamai_memory_numa_numa_hit_pages_total counter
+huatuo_bamai_memory_numa_numa_hit_pages_total{host="huatuo-dev",node="0",region="dev"} 1000
+# TYPE huatuo_bamai_memory_numa_numa_miss_pages_total counter
+huatuo_bamai_memory_numa_numa_miss_pages_total{host="huatuo-dev",node="0",region="dev"} 12
+# TYPE huatuo_bamai_memory_numa_numa_foreign_pages_total counter
+huatuo_bamai_memory_numa_numa_foreign_pages_total{host="huatuo-dev",node="0",region="dev"} 34
+# TYPE huatuo_bamai_memory_numa_interleave_hit_pages_total counter
+huatuo_bamai_memory_numa_interleave_hit_pages_total{host="huatuo-dev",node="0",region="dev"} 56
+# TYPE huatuo_bamai_memory_numa_local_node_pages_total counter
+huatuo_bamai_memory_numa_local_node_pages_total{host="huatuo-dev",node="0",region="dev"} 900
+# TYPE huatuo_bamai_memory_numa_other_node_pages_total counter
+huatuo_bamai_memory_numa_other_node_pages_total{host="huatuo-dev",node="0",region="dev"} 112
