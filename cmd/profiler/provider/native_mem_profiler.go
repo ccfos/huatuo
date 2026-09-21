@@ -214,6 +214,7 @@ func newNativeMemoryBPFLoadConfig(internalMode profiling.Mode, pid int, cssAddr 
 		}
 
 		constants["profiler_sampling_prob"] = uint8(probability)
+		constants["profiler_folio_npages"] = attachOpt.Symbol == symbolFolioAddNewAnonRmap
 		return &nativeMemoryBPFLoadConfig{
 			ObjectFile: "native_physical_alloc.o",
 			Constants:  constants,
