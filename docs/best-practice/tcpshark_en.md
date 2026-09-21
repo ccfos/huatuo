@@ -39,7 +39,7 @@ Align TCP retransmission events with application latency, error-rate, and throug
 
 ### 4. Locating Packet Loss with dropwatch Correlation
 
-Run tcpshark in local correlation mode to correlate retransmissions with packet drops in the same process. Matching checks the network namespace, tuple direction, TCP sequence or ACK evidence, and kernel monotonic ordering. A strict match identifies an observed host software drop. A no-match remains `unknown` because source readiness does not establish that the retransmission's earlier causal history was observed.
+Run tcpshark in local correlation mode to correlate retransmissions with packet drops in the same process. Matching checks the network namespace, tuple direction, TCP sequence or ACK evidence, and kernel monotonic ordering. A strict match identifies an observed drop, with its software or hardware source taken from the record. A no-match remains `unknown` because source readiness does not establish that the retransmission's earlier causal history was observed.
 
 ---
 
@@ -59,6 +59,8 @@ tcpshark --mode retransmit [flags]
 | `--bpf-path-dir <dir>` | required with correlation | Directory containing `tcp_retransmit.o` and `net_dropwatch.o`. |
 | `--with-dropwatch` | disabled | Load embedded dropwatch and correlate it with retransmissions. |
 | `--filter <expr>` | (none) | L3-compatible tcpdump-style filter for all retransmit hooks; also shared with embedded dropwatch in local mode; see §2. |
+| `--device <names>` | (none) | Comma-separated interface allowlist, as in dropwatch; filters only embedded dropwatch and requires `--with-dropwatch`. |
+| `--device-excluded <names>` | (none) | Interface denylist, mutually exclusive with `--device`; requires `--with-dropwatch`. |
 | `--duration <n>` | 0 | Stop after N seconds (0 = run until Ctrl-C). |
 | `--max-events-per-second <n>` | 0 | BPF-side event rate limit; 0 means unlimited. |
 | `--output <json\|text>` | `text` | Output format; ignored when `--output-storage` is set. |
@@ -188,7 +190,10 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 | `tcp_end_seq` | uint32 | `TCP_SKB_CB(skb)->end_seq` for SKB events; request `snt_isn + 1` for SYN-ACK when available; omitted for TLP. |
 | `tcp_flags` | string | Rendered TCP flag set such as `SYN|ACK` or `ACK|PSH`; SKB events use `TCP_SKB_CB(skb)->tcp_flags`, SYN-ACK events derive it from the event type, and TLP events omit it. |
 | `skb_addr` | string | Retransmission-queue SKB pointer in hex; absent for SYN-ACK and TLP events. |
-| `drop_location` | string | Local correlation result: `host_software` or `unknown`; see §5. |
+| `drop_location` | string | Correlation classification: `software`, `hardware`, or `unknown`. Equals `drop_source` for a match; unlike the dropwatch field, it is not a kernel address. |
+| `drop_source` | string | Matched drop source: `software` or `hardware`; an unrecognized ABI source is `unknown`. Omitted on no-match. |
+| `drop_reason` | string | Same as dropwatch: a BTF-resolved `SKB_DROP_REASON_*` name for software, a decimal value if unresolved, or `NOT_SUPPORTED` on older kernels. Hardware drops use the devlink trap name. |
+| `drop_reason_group` | string | Devlink trap group, such as `l2_drops`, for aggregating hardware reasons. Omitted for software drops and no-matches. |
 | `correlation_reasons` | string array | Stable machine-readable reasons why a no-match remains `unknown`. |
 | `drop_perf_status` | object | Latest cumulative embedded-dropwatch `perf_lost`, `lost_samples`, and `rate_limited` counters for a no-match; omitted when the status map cannot be read. |
 | `drop_stack` | string | Matched drop stack; unmatched stacks are not symbolized. |
@@ -211,7 +216,7 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 Text retains its terminal-friendly layout while covering the same event variables as JSON. Optional variables appear only when non-zero or non-empty, and string values are not JSON-quoted or escaped. For compatibility with the original text format, `state`, `skb`, `seq`, `end`, `ack`, `flags`, `ca`, `retrans`, and `reason` correspond to the JSON fields `tcp_state`, `skb_addr`, `tcp_seq`, `tcp_end_seq`, `tcp_ack_seq`, `tcp_flags`, `ca_state`, `icsk_retransmits`, and `correlation_reasons`, respectively.
 
 ```text
-<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [kernel_observed_timestamp=<UTC>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [reason=<REASON,...>] [dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
+<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [kernel_observed_timestamp=<UTC>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [drop_source=<SOURCE>] [drop_reason=<REASON>] [drop_reason_group=<GROUP>] [reason=<REASON,...>] [dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
 ```
 
 Example:
@@ -315,12 +320,29 @@ When building alerts, aggregate by service or connection and compare against tra
 
 With `--with-dropwatch`, one tcpshark process owns both perf inputs. A retransmission waits up to 100 ms for a delayed dropwatch delivery. A candidate drop must precede the retransmission by no more than one second in kernel monotonic time. The embedded source never emits raw drop documents; separately enabled standalone dropwatch remains an independent raw-event stream.
 
+Like standalone dropwatch, the embedded source automatically detects and enables devlink DROP trap capture (`HardwareAuto`). No additional hardware flag is needed. If the tracepoint is unavailable, it logs a warning and continues software capture. Visibility depends on driver reporting; see the [dropwatch hardware requirements](/docs/best-practice/dropwatch_en.md).
+
+`--device`, `--device-excluded`, `--filter`, and `--max-events-per-second` use the same names as dropwatch. The interface allowlist or denylist limits only embedded dropwatch, covering both software and hardware events. The allowlist rejects records without device information; the denylist permits them. Retransmissions still use the shared L3 filter, so device filtering can reduce available drop evidence.
+
+Matched output retains `drop_source`, `drop_reason`, and the hardware `drop_reason_group`. `drop_reason` describes the observed drop, `tcp_reason` classifies the retransmission trigger, and `correlation_reasons` explains correlation limitations. The BTF reason table loads once per session. A load failure logs a warning and falls back to numeric software reasons; hardware trap decoding remains available.
+
+```bash
+# Use the same interface and traffic options as dropwatch to inspect matched hardware drops
+sudo tcpshark --mode retransmit --with-dropwatch --bpf-path-dir bpf \
+  --device eth0 --filter "tcp and port 443" --output json \
+  | jq -c 'select(.drop_source == "hardware")'
+```
+
+Hardware drops must meet the same namespace, TCP, and time constraints. Missing namespace or TCP evidence leaves a retransmission unmatched; no-match does not establish hardware loss. A hardware `drop_stack` is the driver's trap-reporting kernel stack, not a location inside the ASIC.
+
+An unrecognized ABI source produces `unknown` for both `drop_source` and `drop_location`, even when packet evidence matches. The source is never inferred from a reason or stack.
+
 #### 5.1 Correlation Results
 
 | Result | Required evidence | Output |
 |--------|-------------------|--------|
-| Outbound segment match | Same network namespace, family, direction, tuple, monotonic ordering, and overlapping SYN/data/FIN sequence range. | `host_software` with `drop_stack`. |
-| Reverse ACK match | Reverse tuple in the same namespace, ACK flag set, monotonic ordering, and ACK covering the retransmitted sequence end. | `host_software` with `drop_stack`. |
+| Outbound segment match | Same network namespace, family, direction, tuple, monotonic ordering, and overlapping SYN/data/FIN sequence range. | `software` / `hardware` according to source, with the drop reason and `drop_stack`. |
+| Reverse ACK match | Reverse tuple in the same namespace, ACK flag set, monotonic ordering, and ACK covering the retransmitted sequence end. | `software` / `hardware` according to source, with the drop reason and `drop_stack`. |
 | No strict match | Negative evidence is not conclusive because source startup does not cover earlier causal history. Other coverage failures are listed separately. | `unknown` with `correlation_reasons` and `drop_perf_status`. |
 
 There is no tuple-only, SKB-pointer-only, cross-namespace, or ambiguous positive match. A drop that satisfies every check except namespace is reported as `cross_netns_candidate`, not matched. A matched drop is consumed once, while later drops on the same connection remain available. Stack symbolization runs only after a match.
@@ -364,11 +386,12 @@ reused after reload.
 
 | Observation | Checks |
 |-------------|--------|
-| `host_software` | Inspect the matched stack together with tuple, direction, sequence, and namespace evidence. |
+| `software` | Inspect `drop_reason` and the matched stack with tuple, direction, sequence, and namespace evidence. |
+| `hardware` | Check the trap group, trap name, and driver documentation; the match remains a correlation based on packet evidence. |
 | `unknown` with loss counters | Narrow the shared filter, increase perf capacity, or adjust the embedded dropwatch rate limit, then capture again. |
 | `unknown` with `no_matching_drop` | No strict candidate arrived within 100 ms; inspect the other reasons and capture a wider traffic scope if needed. |
 | `unknown` with `cross_netns_candidate` | Inspect the named namespace independently; cross-namespace evidence is never promoted to a positive match. |
-| `unknown` with `startup_history_incomplete` | A no-match cannot exclude a software drop that occurred before the embedded source became ready. |
+| `unknown` with `startup_history_incomplete` | A no-match cannot exclude a software or hardware drop that occurred before the embedded source became ready. |
 | `drop_location` absent | Expected in `off` mode. |
 
 huatuo-bamai passes one normalized `EventTracing.TCPRetransmit.Filter` value to both local-correlation inputs. Keeping those scopes identical prevents the two sources from observing different traffic, but it does not make a no-match conclusive without a reliable causal-start boundary.

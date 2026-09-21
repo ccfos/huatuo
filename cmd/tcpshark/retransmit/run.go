@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ccfos/huatuo/internal/dropwatch"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 // Run owns tracing, event workers and output finalization until the session
@@ -52,6 +53,14 @@ func Run(ctx context.Context, cfg *RunConfig) (returnErr error) {
 		}
 	}()
 
+	var reasonNames dropwatch.ReasonNames
+	if cfg.Dropwatch != nil {
+		reasonNames, err = dropwatch.LoadReasonNames()
+		if err != nil {
+			log.WithError(err).Warn("kernel drop-reason names unavailable; using numeric drop reasons")
+		}
+	}
+
 	group, groupCtx := errgroup.WithContext(ctx)
 	retransmitTracer, err := Open(groupCtx, &cfg.Tracing)
 	if err != nil {
@@ -76,6 +85,9 @@ func Run(ctx context.Context, cfg *RunConfig) (returnErr error) {
 			returnErr = errors.Join(returnErr, fmt.Errorf("close embedded dropwatch source: %w", err))
 		}
 	}()
+	if cfg.Dropwatch.HardwareMode == dropwatch.HardwareAuto && !dropTracer.HardwareEnabled() {
+		log.Warn("devlink trap tracepoint unsupported; hardware drop tracing disabled")
+	}
 
 	retransmitEvents := make(chan *retransmitEvent)
 	dropwatchEvents := make(chan *dropEvent)
@@ -85,7 +97,7 @@ func Run(ctx context.Context, cfg *RunConfig) (returnErr error) {
 	})
 	group.Go(func() error {
 		defer close(dropwatchEvents)
-		return readDropwatchEvents(groupCtx, dropTracer.ReadInto, dropwatchEvents)
+		return readDropwatchEvents(groupCtx, dropTracer.ReadInto, reasonNames, dropwatchEvents)
 	})
 	group.Go(func() error {
 		return runRetransmitDropCorrelation(groupCtx, &retransmitDropSession{

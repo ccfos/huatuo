@@ -114,7 +114,7 @@ func retransmitAddresses(record *abi.TCPRetransmitEvent) (netip.Addr, netip.Addr
 // dropEventFromRecord leaves flow invalid when packet evidence cannot be
 // normalized. The correlator can then record the delivery without carrying a
 // separate validity flag or overstating coverage.
-func dropEventFromRecord(record *abi.DropwatchPacketEvent) (*dropEvent, error) {
+func dropEventFromRecord(record *abi.DropwatchPacketEvent, names dropwatch.ReasonNames) (*dropEvent, error) {
 	if record == nil {
 		return nil, fmt.Errorf("convert dropwatch perf record: nil record")
 	}
@@ -124,6 +124,7 @@ func dropEventFromRecord(record *abi.DropwatchPacketEvent) (*dropEvent, error) {
 
 	event := &dropEvent{
 		kernelObservedNS: record.Meta.KernelObservedNS,
+		metadata:         dropwatch.ResolveMetadata(&record.Meta, names),
 		namespace: namespaceID{
 			cookie: record.Meta.NetNamespaceCookie,
 			inode:  record.Meta.NetNamespaceInum,

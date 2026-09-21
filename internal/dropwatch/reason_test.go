@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package dropwatch
 
 import "testing"
 
-func TestDropReasonNamesResolve(t *testing.T) {
-	names := dropReason{
+func TestReasonNamesResolve(t *testing.T) {
+	names := ReasonNames{
 		0: "SKB_DROP_REASON_NOT_SPECIFIED",
 		1: "SKB_DROP_REASON_NO_SOCKET",
 		3: "SKB_DROP_REASON_TCP_CSUM",
@@ -44,8 +44,8 @@ func TestDropReasonNamesResolve(t *testing.T) {
 	}
 }
 
-func TestDropReasonNamesNilResolve(t *testing.T) {
-	var names dropReason
+func TestReasonNamesNilResolve(t *testing.T) {
+	var names ReasonNames
 
 	tests := []struct {
 		name  string

@@ -127,14 +127,14 @@ func TestTextWriterFormatsMatchedDropStack(t *testing.T) {
 	var output bytes.Buffer
 	event := &types.TCPRetransmitTracing{
 		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
-		DropLocation:      "host_software",
+		DropLocation:      "software",
 		DropStack:         "first\nsecond",
 	}
 	if err := (&textWriter{w: &output}).Write(event); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
 	for _, want := range []string{
-		"drop_location=host_software",
+		"drop_location=software",
 		"\t#0   first\n",
 		"\t#1   second\n",
 	} {
@@ -183,7 +183,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 				TCPEndSeq:               3154991030,
 				TCPFlags:                "ACK|PSH",
 				SkbAddr:                 "0xffff931c14fdf800",
-				DropLocation:            "host_software",
+				DropLocation:            "software",
 			},
 			want: "2026-07-23T02:14:40.304775546Z " +
 				"[data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 " +
@@ -192,7 +192,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 				"ack=948393597 flags=ACK|PSH pid=1420 comm=worker thread " +
 				"ca=4 retrans=4 icsk_pending=1 reord_seen=2 dsack_dups=3 " +
 				"container_id=container-1 memory_cgroup_css_addr=0xffff888012345678 net_namespace_cookie=2 " +
-				"net_namespace_inum=4026531992 drop_location=host_software " +
+				"net_namespace_inum=4026531992 drop_location=software " +
 				"source=tools\n",
 		},
 		{
@@ -421,6 +421,33 @@ func benchmarkEvent() *types.TCPRetransmitTracing {
 		TCPEndSeq:               3154991030,
 		TCPFlags:                "ACK|PSH",
 		SkbAddr:                 "0xffff931c14fdf800",
-		DropLocation:            "host_software",
+		DropLocation:            "software",
+	}
+}
+
+func TestWritersPreserveDropMetadata(t *testing.T) {
+	event := &types.TCPRetransmitTracing{
+		DropLocation: "hardware", DropSource: "hardware",
+		DropReason: "ingress_vlan_filter", DropReasonGroup: "l2_drops",
+	}
+	var output bytes.Buffer
+	if err := (&textWriter{w: &output}).Write(event); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"drop_source=hardware", "drop_reason=ingress_vlan_filter", "drop_reason_group=l2_drops"} {
+		if !strings.Contains(output.String(), field) {
+			t.Errorf("text output lacks %q: %s", field, output.String())
+		}
+	}
+	output.Reset()
+	if err := (&jsonWriter{w: &output}).Write(event); err != nil {
+		t.Fatal(err)
+	}
+	var got types.TCPRetransmitTracing
+	if err := json.Unmarshal(output.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.DropSource != event.DropSource || got.DropReason != event.DropReason || got.DropReasonGroup != event.DropReasonGroup {
+		t.Fatalf("JSON drop metadata = %+v", got)
 	}
 }

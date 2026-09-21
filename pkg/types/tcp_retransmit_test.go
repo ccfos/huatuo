@@ -72,6 +72,14 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 			},
 		},
 		{
+			name: "matched software drop",
+			ev:   &TCPRetransmitTracing{DropSource: "software", DropReason: "SKB_DROP_REASON_TCP_CSUM", DropLocation: "software"},
+		},
+		{
+			name: "matched hardware drop",
+			ev:   &TCPRetransmitTracing{DropSource: "hardware", DropReason: "ingress_vlan_filter", DropReasonGroup: "l2_drops", DropLocation: "hardware"},
+		},
+		{
 			name: "minimal event",
 			ev: &TCPRetransmitTracing{
 				ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)},
@@ -192,7 +200,7 @@ func TestTCPRetransmitTracingOmitEmpty(t *testing.T) {
 		"kernel_observed_ns", "kernel_observed_timestamp",
 		"container_id", "memory_cgroup_css_addr", "net_namespace_cookie", "net_namespace_inum",
 		"reord_seen", "dsack_dups", "tcp_end_seq", "tcp_flags",
-		"skb_addr", "drop_location", "correlation_reasons",
+		"skb_addr", "drop_location", "drop_source", "drop_reason", "drop_reason_group", "correlation_reasons",
 		"drop_perf_status", "drop_stack", "source",
 	}
 	for _, f := range omitFields {

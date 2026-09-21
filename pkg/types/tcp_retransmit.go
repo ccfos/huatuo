@@ -144,6 +144,13 @@ type TCPRetransmitTracing struct {
 	SkbAddr string `json:"skb_addr,omitempty"` // the sk_buff pointer being retransmitted
 
 	// Correlation with dropwatch.
+	// DropSource, DropReason and DropReasonGroup describe the matched drop
+	// using the same semantics as DropWatchTracing. They are absent on no-match.
+	DropSource      string `json:"drop_source,omitempty"`
+	DropReason      string `json:"drop_reason,omitempty"`
+	DropReasonGroup string `json:"drop_reason_group,omitempty"`
+	// DropLocation uses DropSource for matches and "unknown" for no-match.
+	// Unlike DropWatchTracing, it is a classification rather than an address.
 	DropLocation       string              `json:"drop_location,omitempty"`
 	DropPerfStatus     *DropwatchStatus    `json:"drop_perf_status,omitempty"`
 	DropStack          string              `json:"drop_stack,omitempty"`

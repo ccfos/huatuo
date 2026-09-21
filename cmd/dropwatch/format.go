@@ -144,7 +144,7 @@ func newWriter(output io.Writer, options *writerOptions) (writer, func() error, 
 	}
 }
 
-func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType string) (*types.DropWatchTracing, error) {
+func formatEvent(ev *abi.DropwatchPacketEvent, names dropwatch.ReasonNames, sourceType string) (*types.DropWatchTracing, error) {
 	observedTimestamp := timeutil.Now()
 	kernelObservedTimestamp, err := timeutil.KtimeToTimestamp(ev.Meta.KernelObservedNS)
 	if err != nil {
@@ -157,20 +157,15 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType stri
 
 	frames := symbol.KsymStackStrs(ev.Stack[:], symbol.KsymStackMaxDepth)
 	stackStr := strings.Join(frames, "\n")
-	dropSourceValue := abi.DropwatchDropSource(ev.Meta.DropSource)
-	dropSource := dropSourceName(dropSourceValue)
-	dropReason := names.Resolve(ev.Meta.DropReason)
-	if dropSourceValue == abi.DropwatchDropSourceHardware {
-		dropReason = bytesutil.ToStr(ev.Meta.TrapName[:])
-	}
+	metadata := dropwatch.ResolveMetadata(&ev.Meta, names)
 
 	return &types.DropWatchTracing{
 		KtimeNS:                 ev.Meta.KernelObservedNS,
 		ObservedTimestamp:       observedTimestamp,
 		KernelObservedTimestamp: &kernelObservedTimestamp,
-		DropSource:              dropSource,
-		DropReason:              dropReason,
-		DropReasonGroup:         bytesutil.ToStr(ev.Meta.TrapGroupName[:]),
+		DropSource:              metadata.Source,
+		DropReason:              metadata.Reason,
+		DropReasonGroup:         metadata.ReasonGroup,
 		DropLocation:            kernaddr.Format(ev.Meta.DropLocation),
 		Comm:                    bytesutil.ToStr(ev.Meta.Comm[:]),
 		PID:                     ev.Meta.TGIDPID >> 32,
@@ -188,15 +183,4 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType stri
 		Stack:                   stackStr,
 		Source:                  sourceType,
 	}, nil
-}
-
-func dropSourceName(source abi.DropwatchDropSource) string {
-	switch source {
-	case abi.DropwatchDropSourceSoftware:
-		return dropSourceSoftware
-	case abi.DropwatchDropSourceHardware:
-		return dropSourceHardware
-	default:
-		return "unknown"
-	}
 }

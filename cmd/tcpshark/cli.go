@@ -36,6 +36,8 @@ const (
 	cliFlagBPFPathDir         = "bpf-path-dir"
 	cliFlagWithDropwatch      = "with-dropwatch"
 	cliFlagFilter             = "filter"
+	cliFlagDevice             = "device"
+	cliFlagDeviceExcluded     = "device-excluded"
 	cliFlagDuration           = "duration"
 	cliFlagOutput             = "output"
 	cliFlagOutputStorage      = "output-storage"
@@ -82,6 +84,16 @@ func appFlags() []cli.Flag {
 		&cli.IntFlag{
 			Name:  cliFlagDuration,
 			Usage: "run for N seconds then exit (0=forever)",
+		},
+		&cli.StringFlag{
+			Name: cliFlagDevice,
+			Usage: "whitelist dropwatch interfaces, comma-separated; SKBs without a net_device are dropped " +
+				"(requires --with-dropwatch)",
+		},
+		&cli.StringFlag{
+			Name: cliFlagDeviceExcluded,
+			Usage: "blacklist dropwatch interfaces, comma-separated; SKBs without a net_device pass " +
+				"(requires --with-dropwatch)",
 		},
 		&cli.Uint64Flag{
 			Name: cliFlagMaxEventsPerSecond,
@@ -139,6 +151,14 @@ func validateFlags(c *cli.Context) error {
 	}
 	if taskID := c.String(cliFlagTaskID); taskID != "" && outputStorage == "" {
 		return errors.New("--task-id requires --output-storage")
+	}
+	device := c.String(cliFlagDevice)
+	deviceExcluded := c.String(cliFlagDeviceExcluded)
+	if device != "" && deviceExcluded != "" {
+		return errors.New("--device and --device-excluded are mutually exclusive")
+	}
+	if (device != "" || deviceExcluded != "") && !c.Bool(cliFlagWithDropwatch) {
+		return errors.New("--device and --device-excluded require --with-dropwatch")
 	}
 	bpfPath := strings.TrimSpace(c.String(cliFlagBPFPath))
 	bpfPathDir := strings.TrimSpace(c.String(cliFlagBPFPathDir))
@@ -210,7 +230,13 @@ func resolveRunOptions(c *cli.Context, version string) runOptions {
 			BPFPath:            filepath.Join(directory, "net_dropwatch.o"),
 			FilterExpression:   cfg.Tracing.FilterExpression,
 			MaxEventsPerSecond: cfg.Tracing.MaxEventsPerSecond,
-			HardwareMode:       dropwatch.HardwareDisabled,
+			HardwareMode:       dropwatch.HardwareAuto,
+		}
+		if device := c.String(cliFlagDevice); device != "" {
+			cfg.Dropwatch.IncludeDevices = strings.Split(device, ",")
+		}
+		if deviceExcluded := c.String(cliFlagDeviceExcluded); deviceExcluded != "" {
+			cfg.Dropwatch.ExcludeDevices = strings.Split(deviceExcluded, ",")
 		}
 	}
 	return runOptions{

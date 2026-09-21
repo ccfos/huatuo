@@ -65,7 +65,11 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 				)
 			}
 		} else {
-			event.DropLocation = "host_software"
+			metadata := &result.drop.metadata
+			event.DropSource = metadata.Source
+			event.DropReason = metadata.Reason
+			event.DropReasonGroup = metadata.ReasonGroup
+			event.DropLocation = metadata.Source
 			if result.drop.stackDepth != 0 {
 				frames := symbol.KsymStackStrs(
 					result.drop.stackPCs[:result.drop.stackDepth],

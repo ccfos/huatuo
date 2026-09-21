@@ -13,8 +13,9 @@ weight: 7
 
 | 结果 | 含义 |
 | --- | --- |
-| `host_software` | 找到满足全部严格条件且尚未被消费的 host software drop。 |
-| `unknown` | 没有严格正向证据；`correlation_reasons` 说明限制。 |
+| `software` | 找到满足全部严格条件且尚未被消费的 host software drop。 |
+| `hardware` | 找到满足相同严格条件的 devlink DROP trap 记录。 |
+| `unknown` | 未找到严格匹配，或匹配记录的来源枚举未知；no-match 的 `correlation_reasons` 说明限制。 |
 
 no-match 不能证明问题位于网络或硬件。drop 可能发生在采集启动前、另一个
 network namespace，或记录虽送达但缺少 TCP 匹配字段。
@@ -34,6 +35,21 @@ shutdown 时仍在等待的 retransmit 会通过正常 no-match 路径定型为 
 `EventTracing.TCPRetransmit.Filter`；空值规范化为 `tcp`，同一表达式传给两个
 BPF 对象。依赖 Ethernet 地址、无法在 synthetic L3 输入上等价执行的表达式会在
 启动前被拒绝。`EventTracing.Dropwatch.Filter` 只控制 standalone dropwatch。
+
+两个命令都使用 `HardwareAuto` 自动检测 devlink trap 支持。tracepoint 不可用时
+输出 warning 并继续软件采集；可用时只接收驱动上报的 DROP trap。
+`--device` / `--device-excluded` 与独立 dropwatch 同名、互斥，只过滤 embedded
+source 的软件及硬件记录，要求 `--with-dropwatch`。重传输入仍使用共同的 L3 filter。
+
+丢包来源和原因由 `internal/dropwatch.ResolveMetadata` 统一解析。软件 reason
+从每会话一次加载的 BTF 表查找；未知值为十进制数字，旧内核不支持为
+`NOT_SUPPORTED`。硬件 reason 和 group 分别来自 trap 名称与分组，不查软件
+reason 表。reader 保留独立的来源和 reason 字符串，不借用可复用的 ABI buffer。
+成功匹配后输出 `drop_source`、`drop_reason`、`drop_reason_group`；no-match
+省略这些字段，继续输出关联限制原因。`drop_location` 在匹配时直接使用
+`drop_source`，未匹配时为 `unknown`；它表示关联分类，不同于独立 dropwatch
+的内核地址。未知来源不根据 reason 或 stack 推断。
+硬件记录缺少 namespace 或 TCP 匹配字段时无法建立严格匹配。
 
 ## 3. 两条时间约束
 
@@ -134,7 +150,7 @@ SYN-ACK 使用各自更严格的 ACK/SYN 条件。
 drop 后到时，选择插入序号最小的严格匹配重传，同时扫描其余候选以记录跨
 namespace 证据。严格匹配后立即从 deadline 和 flow 两个索引删除，只能消费一次。
 除 namespace 外均满足的候选只记录 `cross_netns_candidate`，不会输出
-`host_software`。
+`software` 或 `hardware`。
 
 ## 6. Unknown 原因
 
@@ -280,7 +296,7 @@ Tracer 关闭及输出结束。配置失败、取消与运行失败均释放已�
 run.go 统一创建 channel、启动读取 worker，并由发送方关闭 channel；
 读取函数不启动 goroutine，不使用消费回调或借用事件合同。
 最终输出时才构造 TCPRetransmitTracing；ObservedTimestamp 使用原读取时间，
-不使用关联结束时间。ABI、输出字段、SYNACK flags 补全和匹配规则保持不变。
+不使用关联结束时间。ABI、SYNACK flags 补全和匹配规则保持不变。
 
 `cmd/tcpshark/retransmit` 不提供 Go `internal` 导入限制；约定仅由 tcpshark
 使用，不反向依赖命令层。两个命令共享的采集实现位于：
@@ -292,6 +308,8 @@ internal/dropwatch/
 ├── load.go      # loadBPF、attachBPF：加载、map/reader 准备及探针挂载
 ├── netdev.go    # 设备过滤与 map 配置
 ├── status.go    # ReadStatus：输出失败、ring 丢失和限流计数
+├── reason.go    # LoadReasonNames：内核 BTF reason 表和数字回退
+├── metadata.go  # ResolveMetadata：来源、软件 reason、硬件 trap/group
 └── decode.go    # DecodePacket：ABI header 适配及 packet.Parse
 ```
 
@@ -301,4 +319,4 @@ internal/dropwatch/
 调用方拥有全局 BPF 初始化和关闭，且必须在最终
 结算后关闭 Tracer。`DecodePacket` 的返回值不借用原始 record 内存。
 符号化和 `DropWatchTracing` 展示转换仍位于 standalone 命令，TCP 关联直接保留
-ABI 中的 KernelObservedNS、namespace 和 stack PC。没有新增通用 BPF 消费循环接口。
+ABI 中的 KernelObservedNS、namespace、stack PC 和已解析的丢包来源及原因。没有新增通用 BPF 消费循环接口。

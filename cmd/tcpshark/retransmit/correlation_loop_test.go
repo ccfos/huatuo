@@ -163,7 +163,7 @@ func TestRetransmitDropStatusErrorStopsAfterMatchedOutput(t *testing.T) {
 		t.Fatalf("correlation loop error = %v, want %v", err, statusErr)
 	}
 	if len(sink.events) != 1 || sink.events[0].KernelObservedNS != retransmit.record.KernelObservedNS ||
-		sink.events[0].DropLocation != "host_software" {
+		sink.events[0].DropLocation != "software" {
 		t.Fatalf("events = %+v, want matched retransmission exactly once", sink.events)
 	}
 	if source.readCalls != 1 {

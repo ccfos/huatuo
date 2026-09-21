@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/packet"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -50,7 +51,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 
 	err := w.Write(&types.DropWatchTracing{
 		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 8, 4, 1, 2, 3, 456789000, time.UTC)},
-		DropSource:        dropSourceSoftware,
+		DropSource:        dropwatch.SourceSoftware,
 		DropReason:        "SKB_DROP_REASON_TCP_CSUM",
 		DropLocation:      "0xffffffff81000000",
 		Source:            "tools",
@@ -102,8 +103,8 @@ func TestFormatHardwareEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DropSource != dropSourceHardware {
-		t.Errorf("DropSource = %q, want %q", got.DropSource, dropSourceHardware)
+	if got.DropSource != dropwatch.SourceHardware {
+		t.Errorf("DropSource = %q, want %q", got.DropSource, dropwatch.SourceHardware)
 	}
 	if got.DropReason != "ingress_vlan_filter" {
 		t.Errorf("DropReason = %q, want ingress_vlan_filter", got.DropReason)
@@ -125,7 +126,7 @@ func TestJSONWriterPreservesKernelTime(t *testing.T) {
 		abi.DropwatchDropSourceSoftware,
 		abi.DropwatchDropSourceHardware,
 	} {
-		t.Run(dropSourceName(source), func(t *testing.T) {
+		t.Run(dropwatch.ResolveMetadata(&abi.DropwatchPacketMeta{DropSource: uint32(source)}, nil).Source, func(t *testing.T) {
 			var record abi.DropwatchPacketEvent
 			record.Meta.KernelObservedNS = ktimeNS
 			record.Meta.DropSource = uint32(source)
@@ -156,7 +157,7 @@ func TestTextWriterCombinesHardwareReasonGroup(t *testing.T) {
 
 	err := w.Write(&types.DropWatchTracing{
 		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
-		DropSource:        dropSourceHardware,
+		DropSource:        dropwatch.SourceHardware,
 		DropReason:        "ingress_vlan_filter",
 		DropReasonGroup:   "l2_drops",
 	})
@@ -207,7 +208,7 @@ func BenchmarkTextWriter(b *testing.B) {
 	event := &types.DropWatchTracing{
 		ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 8, 4, 1, 2, 3, 456789000, time.UTC)},
 		KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 8, 4, 1, 2, 3, 456000000, time.UTC)},
-		DropSource:              dropSourceHardware,
+		DropSource:              dropwatch.SourceHardware,
 		DropReason:              "ingress_vlan_filter",
 		DropReasonGroup:         "l2_drops",
 		PacketLenBytes:          1500,
@@ -245,5 +246,19 @@ func TestKernelObservationUsesEventTime(t *testing.T) {
 	age := observed.Sub(kernel)
 	if age < 900*time.Millisecond || age > 2*time.Second {
 		t.Fatalf("kernel-to-userspace delay = %v, expected about one second", age)
+	}
+}
+
+func TestFormatSoftwareReason(t *testing.T) {
+	record := abi.DropwatchPacketEvent{}
+	record.Meta.DropSource = uint32(abi.DropwatchDropSourceSoftware)
+	record.Meta.DropReason = 5
+	names := dropwatch.ReasonNames{5: "SKB_DROP_REASON_TCP_CSUM"}
+	got, err := formatEvent(&record, names, "tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DropSource != "software" || got.DropReason != "SKB_DROP_REASON_TCP_CSUM" || got.DropReasonGroup != "" {
+		t.Fatalf("software drop = %+v", got)
 	}
 }

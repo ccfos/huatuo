@@ -119,7 +119,7 @@ type benchmarkCorrelationWriter struct {
 }
 
 func (w *benchmarkCorrelationWriter) Write(event *types.TCPRetransmitTracing) error {
-	if event.DropLocation != "host_software" {
+	if event.DropLocation != "software" {
 		return fmt.Errorf("expected matched output, got %q", event.DropLocation)
 	}
 	if err := w.output.Write(event); err != nil {
@@ -161,7 +161,7 @@ func BenchmarkAsyncCorrelation(b *testing.B) {
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-		}, drops)
+		}, nil, drops)
 	})
 	sink := &benchmarkCorrelationWriter{output: &jsonWriter{w: io.Discard}, delivered: make(chan struct{})}
 	group.Go(func() error {

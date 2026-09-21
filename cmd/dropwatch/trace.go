@@ -44,7 +44,7 @@ type dropwatchOptions struct {
 }
 
 func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error) {
-	names, err := NewDropReason()
+	names, err := dropwatch.LoadReasonNames()
 	if err != nil {
 		log.WithError(err).Warn("kernel drop-reason names unavailable; using numeric drop reasons")
 	}
@@ -112,7 +112,7 @@ func streamDropwatchEvents(
 	ctx context.Context,
 	tracer *dropwatch.Tracer,
 	sink writer,
-	names dropReason,
+	names dropwatch.ReasonNames,
 	sourceType string,
 ) error {
 	for {

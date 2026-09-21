@@ -38,7 +38,7 @@ func TestDropEventFromRecord(t *testing.T) {
 	record.StackSize = 16
 	record.Stack[0], record.Stack[1] = 0x1000, 0x2000
 
-	event, err := dropEventFromRecord(record)
+	event, err := dropEventFromRecord(record, nil)
 	if err != nil {
 		t.Fatalf("dropEventFromRecord() error = %v", err)
 	}
@@ -73,7 +73,7 @@ func TestDropEventFromRecordUsesIPLengthForSequenceSpan(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			test.record.Meta.KernelObservedNS = 1
 			test.record.Meta.NetNamespaceCookie = 1
-			event, err := dropEventFromRecord(test.record)
+			event, err := dropEventFromRecord(test.record, nil)
 			if err != nil {
 				t.Fatalf("dropEventFromRecord() error = %v", err)
 			}
@@ -103,7 +103,7 @@ func TestDropEventFromRecordUsesRawFlags(t *testing.T) {
 	record.Meta.NetNamespaceCookie = 1
 	record.PktHdr.Raw[33] = flags
 
-	event, err := dropEventFromRecord(record)
+	event, err := dropEventFromRecord(record, nil)
 	if err != nil {
 		t.Fatalf("dropEventFromRecord() error = %v", err)
 	}
@@ -122,7 +122,7 @@ func TestDropEventFromRecordParseErrorKeepsScalars(t *testing.T) {
 	record.Meta.NetNamespaceCookie = 200
 	record.PktHdr.RawLen = 1
 
-	event, err := dropEventFromRecord(record)
+	event, err := dropEventFromRecord(record, nil)
 	if err == nil {
 		t.Fatal("dropEventFromRecord() error = nil, want parse error")
 	}
@@ -136,16 +136,16 @@ func TestDropEventFromRecordParseErrorKeepsScalars(t *testing.T) {
 }
 
 func TestDropEventFromRecordRejectsNil(t *testing.T) {
-	event, err := dropEventFromRecord(nil)
+	event, err := dropEventFromRecord(nil, nil)
 	if err == nil || event != nil {
-		t.Fatalf("dropEventFromRecord(nil) = (%+v, %v), want nil and error", event, err)
+		t.Fatalf("dropEventFromRecord(nil, nil) = (%+v, %v), want nil and error", event, err)
 	}
 }
 
 func TestDropEventFromRecordRejectsZeroKtime(t *testing.T) {
 	record := newIPv4DropwatchTCPRecord(40)
 
-	event, err := dropEventFromRecord(record)
+	event, err := dropEventFromRecord(record, nil)
 	if err == nil || event != nil {
 		t.Fatalf("dropEventFromRecord() = (%+v, %v), want nil and error", event, err)
 	}
@@ -155,6 +155,7 @@ func newIPv4DropwatchTCPRecord(
 	ipTotalLength uint16,
 ) *abi.DropwatchPacketEvent {
 	record := &abi.DropwatchPacketEvent{}
+	record.Meta.DropSource = uint32(abi.DropwatchDropSourceSoftware)
 	record.PktHdr.EthProto = 0x0800
 	record.PktHdr.RawLen = 40
 	record.PktHdr.PacketLenBytes = uint32(ipTotalLength)
@@ -178,7 +179,7 @@ func BenchmarkDropEvidenceDecode(b *testing.B) {
 	record.Meta.NetNamespaceCookie = 1
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, err := dropEventFromRecord(record); err != nil {
+		if _, err := dropEventFromRecord(record, nil); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -188,6 +189,7 @@ func newIPv6DropwatchTCPRecord(
 	ipPayloadLength uint16,
 ) *abi.DropwatchPacketEvent {
 	record := &abi.DropwatchPacketEvent{}
+	record.Meta.DropSource = uint32(abi.DropwatchDropSourceSoftware)
 	record.PktHdr.EthProto = 0x86dd
 	record.PktHdr.RawLen = 60
 	record.PktHdr.PacketLenBytes = uint32(ipPayloadLength) + 40
@@ -212,7 +214,7 @@ func TestTracingPreservesCaptureTimeAndOwnsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.DropLocation = "host_software"
+	first.DropLocation = "software"
 	second, err := event.tracing("tools")
 	if err != nil {
 		t.Fatal(err)

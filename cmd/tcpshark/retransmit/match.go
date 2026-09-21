@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/packet"
 	"github.com/ccfos/huatuo/internal/symbol"
 )
@@ -48,6 +49,7 @@ type namespaceID struct {
 type dropEvent struct {
 	kernelObservedNS uint64
 	namespace        namespaceID
+	metadata         dropwatch.Metadata
 
 	flow        flowKey
 	sequence    uint32

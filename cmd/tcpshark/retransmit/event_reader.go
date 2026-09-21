@@ -22,6 +22,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/log"
 )
 
@@ -101,6 +102,7 @@ func readRetransmitEvents(
 func readDropwatchEvents(
 	ctx context.Context,
 	read func(*abi.DropwatchPacketEvent) error,
+	names dropwatch.ReasonNames,
 	events chan<- *dropEvent,
 ) error {
 	var record abi.DropwatchPacketEvent
@@ -118,7 +120,7 @@ func readDropwatchEvents(
 			}
 			return fmt.Errorf("read dropwatch event: %w", err)
 		}
-		event, parseErr := dropEventFromRecord(&record)
+		event, parseErr := dropEventFromRecord(&record, names)
 		if parseErr != nil {
 			if event == nil {
 				return parseErr

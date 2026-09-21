@@ -15,11 +15,15 @@
 package retransmit
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -35,15 +39,15 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 	}{
 		{
 			name:         "matched",
-			drop:         &dropEvent{},
+			drop:         &dropEvent{metadata: dropwatch.Metadata{Source: dropwatch.SourceSoftware}},
 			status:       types.DropwatchStatus{PerfLost: 2},
-			wantLocation: "host_software",
+			wantLocation: "software",
 		},
 		{
 			name:         "matched with unavailable status",
-			drop:         &dropEvent{},
+			drop:         &dropEvent{metadata: dropwatch.Metadata{Source: dropwatch.SourceSoftware}},
 			readErr:      statusErr,
-			wantLocation: "host_software",
+			wantLocation: "software",
 		},
 		{
 			name:         "unmatched",
@@ -331,4 +335,106 @@ func (s *dropwatchStatusStub) ReadStatus() (types.DropwatchStatus, error) {
 func newTraceTestDropwatchStatus(t *testing.T, status types.DropwatchStatus) *dropwatchStatusStub {
 	t.Helper()
 	return &dropwatchStatusStub{status: status}
+}
+
+// ABI records pass through decoding, both arrival orders, matching and JSON.
+// The kernel capture paths are exercised by the dropwatch integration tests.
+func TestCorrelationPreservesDropMetadata(t *testing.T) {
+	tests := []struct {
+		name         string
+		source       abi.DropwatchDropSource
+		reason       uint32
+		namespace    uint64
+		wantSource   string
+		wantReason   string
+		wantGroup    string
+		wantLocation string
+	}{
+		{
+			name: "software", source: abi.DropwatchDropSourceSoftware, reason: 5, namespace: 1,
+			wantSource: "software", wantReason: "SKB_DROP_REASON_TCP_CSUM", wantLocation: "software",
+		},
+		{
+			name: "unknown reason", source: abi.DropwatchDropSourceSoftware, reason: 999, namespace: 1,
+			wantSource: "software", wantReason: "999", wantLocation: "software",
+		},
+		{
+			name: "unsupported kernel", source: abi.DropwatchDropSourceSoftware, reason: ^uint32(0), namespace: 1,
+			wantSource: "software", wantReason: "NOT_SUPPORTED", wantLocation: "software",
+		},
+		{
+			name: "hardware", source: abi.DropwatchDropSourceHardware, namespace: 1,
+			wantSource: "hardware", wantReason: "ingress_vlan_filter", wantGroup: "l2_drops", wantLocation: "hardware",
+		},
+		{
+			name: "unknown source", source: abi.DropwatchDropSourceUnknown, reason: 999, namespace: 1,
+			wantSource: "unknown", wantReason: "999", wantLocation: "unknown",
+		},
+		{
+			name: "hardware across namespaces", source: abi.DropwatchDropSourceHardware, namespace: 2,
+			wantLocation: "unknown",
+		},
+		{
+			name: "hardware missing namespace", source: abi.DropwatchDropSourceHardware,
+			wantLocation: "unknown",
+		},
+	}
+	for i := range tests {
+		test := &tests[i]
+		t.Run(test.name, func(t *testing.T) {
+			for _, order := range []string{"drop first", "retransmit first"} {
+				t.Run(order, func(t *testing.T) {
+					record := newIPv4DropwatchTCPRecord(140)
+					record.Meta.KernelObservedNS = uint64(2 * time.Second)
+					record.Meta.NetNamespaceCookie = test.namespace
+					record.Meta.DropSource = uint32(test.source)
+					record.Meta.DropReason = test.reason
+					copy(record.Meta.TrapName[:], "ingress_vlan_filter")
+					copy(record.Meta.TrapGroupName[:], "l2_drops")
+					drop, err := dropEventFromRecord(record, dropwatch.ReasonNames{5: "SKB_DROP_REASON_TCP_CSUM"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					// The perf reader reuses the complete record before output.
+					*record = abi.DropwatchPacketEvent{}
+					retransmit := testRetransmitEvent(uint64(2*time.Second)+1, "10.0.0.1", "10.0.0.2", 12345, 80, 123, 223)
+					correlator := newTestEventCorrelator(t, 1)
+					now := time.Unix(10, 0)
+					var results []correlationResult
+					if order == "drop first" {
+						results = append(results, correlator.processDropEvent(drop, now)...)
+						results = append(results, correlator.processRetransmitEvent(retransmit, now)...)
+					} else {
+						results = append(results, correlator.processRetransmitEvent(retransmit, now)...)
+						results = append(results, correlator.processDropEvent(drop, now)...)
+					}
+					results = append(results, correlator.settleAllRetransmits()...)
+					var output bytes.Buffer
+					session := retransmitDropSession{
+						readDropwatchStatus: (&dropwatchStatusStub{}).ReadStatus,
+						sink:                &jsonWriter{w: &output},
+					}
+					if err := session.emitResults(results); err != nil {
+						t.Fatal(err)
+					}
+					var event types.TCPRetransmitTracing
+					if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+						t.Fatal(err)
+					}
+					if event.DropSource != test.wantSource || event.DropReason != test.wantReason ||
+						event.DropReasonGroup != test.wantGroup || event.DropLocation != test.wantLocation {
+						t.Fatalf("drop output = (%q, %q, %q, %q), want (%q, %q, %q, %q)",
+							event.DropSource, event.DropReason, event.DropReasonGroup, event.DropLocation,
+							test.wantSource, test.wantReason, test.wantGroup, test.wantLocation)
+					}
+					if test.namespace != 1 && !hasCorrelationReason(&event, types.CorrelationReasonNoMatchingDrop) {
+						t.Fatalf("unmatched hardware event lacks no-match reason: %+v", event)
+					}
+					if test.namespace == 1 && len(event.CorrelationReasons) != 0 {
+						t.Fatalf("matched drop has correlation reasons: %v", event.CorrelationReasons)
+					}
+				})
+			}
+		})
+	}
 }

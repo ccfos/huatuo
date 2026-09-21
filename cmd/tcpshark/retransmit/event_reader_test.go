@@ -229,7 +229,7 @@ func TestDropwatchReadEvents(t *testing.T) {
 	}
 	events := make(chan *dropEvent)
 	done := make(chan error, 1)
-	go func() { done <- readDropwatchEvents(ctx, read, events) }()
+	go func() { done <- readDropwatchEvents(ctx, read, nil, events) }()
 	event := <-events
 	cancel()
 	if err := <-done; err != nil {
@@ -247,7 +247,7 @@ func TestDropwatchReadCancellation(t *testing.T) {
 		t.Fatal("read called after cancellation")
 		return errors.New("unexpected read")
 	}
-	if err := readDropwatchEvents(ctx, read, make(chan *dropEvent)); err != nil {
+	if err := readDropwatchEvents(ctx, read, nil, make(chan *dropEvent)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -255,7 +255,7 @@ func TestDropwatchReadCancellation(t *testing.T) {
 func TestDropwatchReadError(t *testing.T) {
 	readErr := errors.New("reader failed")
 	read := func(*abi.DropwatchPacketEvent) error { return readErr }
-	if err := readDropwatchEvents(t.Context(), read, make(chan *dropEvent)); !errors.Is(err, readErr) {
+	if err := readDropwatchEvents(t.Context(), read, nil, make(chan *dropEvent)); !errors.Is(err, readErr) {
 		t.Fatalf("readDropwatchEvents() = %v, want %v", err, readErr)
 	}
 }

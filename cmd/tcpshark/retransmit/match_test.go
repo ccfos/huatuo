@@ -23,6 +23,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/packet"
 )
 
@@ -157,6 +158,7 @@ func testDropEvent(
 	t.Helper()
 	return &dropEvent{
 		kernelObservedNS: kernelObservedNS,
+		metadata:         dropwatch.Metadata{Source: dropwatch.SourceSoftware},
 		namespace:        namespaceID{cookie: 1, inode: 2},
 		flow: flowKey{
 			source: netip.AddrPortFrom(

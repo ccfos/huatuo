@@ -122,6 +122,18 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 		line = append(line, " drop_location="...)
 		line = append(line, ev.DropLocation...)
 	}
+	if ev.DropSource != "" {
+		line = append(line, " drop_source="...)
+		line = append(line, ev.DropSource...)
+	}
+	if ev.DropReason != "" {
+		line = append(line, " drop_reason="...)
+		line = append(line, ev.DropReason...)
+	}
+	if ev.DropReasonGroup != "" {
+		line = append(line, " drop_reason_group="...)
+		line = append(line, ev.DropReasonGroup...)
+	}
 	if len(ev.CorrelationReasons) != 0 {
 		line = append(line, " reason="...)
 		for i, reason := range ev.CorrelationReasons {

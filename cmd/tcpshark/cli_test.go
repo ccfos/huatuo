@@ -529,8 +529,49 @@ func TestResolveRunOptions(t *testing.T) {
 			if cfg.Dropwatch != nil && (cfg.Dropwatch.BPFPath != "/objects/net_dropwatch.o" ||
 				cfg.Dropwatch.FilterExpression != cfg.Tracing.FilterExpression ||
 				cfg.Dropwatch.MaxEventsPerSecond != cfg.Tracing.MaxEventsPerSecond ||
-				cfg.Dropwatch.HardwareMode != dropwatch.HardwareDisabled) {
+				cfg.Dropwatch.HardwareMode != dropwatch.HardwareAuto) {
 				t.Fatalf("dropwatch config = %+v", cfg.Dropwatch)
+			}
+		})
+	}
+}
+
+func TestDropwatchDeviceFlags(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		include   []string
+		exclude   []string
+		wantError string
+	}{
+		{name: "include devices", args: []string{"--with-dropwatch", "--bpf-path-dir", "bpf", "--device", "eth0,eth1"}, include: []string{"eth0", "eth1"}},
+		{name: "exclude devices", args: []string{"--with-dropwatch", "--bpf-path-dir", "bpf", "--device-excluded", "lo,eth2"}, exclude: []string{"lo", "eth2"}},
+		{name: "mutually exclusive", args: []string{"--with-dropwatch", "--bpf-path-dir", "bpf", "--device", "eth0", "--device-excluded", "lo"}, wantError: "--device and --device-excluded are mutually exclusive"},
+		{name: "include requires dropwatch", args: []string{"--bpf-path", "unused.o", "--device", "eth0"}, wantError: "require --with-dropwatch"},
+		{name: "exclude requires dropwatch", args: []string{"--bpf-path", "unused.o", "--device-excluded", "lo"}, wantError: "require --with-dropwatch"},
+	}
+	for i := range tests {
+		test := &tests[i]
+		t.Run(test.name, func(t *testing.T) {
+			var cfg *dropwatch.Config
+			app := newTestApp(func(c *cli.Context) error {
+				cfg = resolveRunOptions(c, "test").retransmit.Dropwatch
+				return nil
+			})
+			args := append([]string{"tcpshark", "--mode", "retransmit"}, test.args...)
+			err := app.Run(args)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("Run() = %v, want containing %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg == nil || !slices.Equal(cfg.IncludeDevices, test.include) ||
+				!slices.Equal(cfg.ExcludeDevices, test.exclude) || cfg.HardwareMode != dropwatch.HardwareAuto {
+				t.Fatalf("dropwatch config = %+v", cfg)
 			}
 		})
 	}

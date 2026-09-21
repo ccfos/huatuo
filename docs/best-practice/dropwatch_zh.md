@@ -199,6 +199,8 @@ sudo dropwatch --bpf-path bpf/net_dropwatch.o --output json 2>/dev/null | \
 
 `--filter`、`--device`、`--device-excluded` 和 `--max-events-per-second` 同时作用于软件与硬件事件。文本输出将硬件原因表示为 `reason=<group>/<trap> drop_source=hardware`；JSON 输出使用独立的 `drop_reason_group`、`drop_reason` 和 `drop_source` 字段。
 
+`tcpshark --with-dropwatch` 复用相同的来源分类和 reason 解析，也自动启用可用的硬件采集；成功关联时保留相同的 `drop_source`、`drop_reason` 和 `drop_reason_group`。参见 [重传关联说明](/docs/best-practice/tcpshark_zh.md)。
+
 #### 常用命令
 
 ```bash

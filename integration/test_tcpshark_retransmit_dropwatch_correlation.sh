@@ -15,7 +15,7 @@
 # limitations under the License.
 
 # Verify that tcpshark correlates a TCP data retransmission with the local
-# software drop that caused it and reports the drop stack in the same event.
+# software drop and preserves its source, reason and stack in the same event.
 
 set -euo pipefail
 
@@ -89,7 +89,9 @@ correlated_event_ready() {
 		| select(.phase == "data")
 		| select(.tcp_saddr == $server and .tcp_daddr == $client)
 		| select(.tcp_sport == $port)
-		| select(.drop_location == "host_software")
+		| select(.drop_location == "software" and .drop_source == "software")
+		| select((.drop_reason | type) == "string" and (.drop_reason | length) > 0)
+		| select(.drop_reason_group == null)
 		| select((.drop_stack | type) == "string" and (.drop_stack | length) > 0))
 	' "${CORR_OUTPUT}" > "${CORR_MATCHED_EVENT}" 2> /dev/null
 }
@@ -109,6 +111,7 @@ corr_netem_active=true
 "${CORR_TCPSHARK_BIN}" \
 	--mode retransmit \
 	--with-dropwatch \
+	--device-excluded lo \
 	--bpf-path-dir "${CORR_BPF_DIR}" \
 	--filter "tcp and port ${CORR_PORT}" \
 	--duration 20 \
