@@ -24,6 +24,7 @@ import (
 	"syscall"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
+	hostprocess "github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
@@ -130,7 +131,7 @@ func findProcesses(pids []int32, procFS procfs.FS, filter ExecutableFilter) (map
 			continue
 		}
 		// The kernel's unlinked-file marker does not change executable identity.
-		resolvedExecutable = strings.TrimSuffix(resolvedExecutable, " (deleted)")
+		resolvedExecutable = hostprocess.TrimUnlinkedExecutable(resolvedExecutable)
 
 		if !filter.matchesName(filepath.Base(resolvedExecutable)) {
 			continue

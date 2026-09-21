@@ -60,6 +60,74 @@ func TestExecutableMissing(t *testing.T) {
 	}
 }
 
+func TestTrimUnlinkedExecutable(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "/usr/bin/python3.10", want: "/usr/bin/python3.10"},
+		{path: "/usr/bin/python3.10 (deleted)", want: "/usr/bin/python3.10"},
+		{path: "/opt/python (deleted)/bin/python", want: "/opt/python (deleted)/bin/python"},
+		{path: "/tmp/python (deleted) (deleted)", want: "/tmp/python (deleted)"},
+		{path: "/usr/bin/python3.10 (deleted) ", want: "/usr/bin/python3.10 (deleted) "},
+	}
+
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			if got := TrimUnlinkedExecutable(test.path); got != test.want {
+				t.Errorf("TrimUnlinkedExecutable(%q) = %q, want %q", test.path, got, test.want)
+			}
+		})
+	}
+}
+
+func TestExecutableName(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{name: "plain executable", target: "/usr/bin/java", want: "java"},
+		{name: "unlinked python", target: "/usr/bin/python3.10 (deleted)", want: "python3.10"},
+		{name: "unlinked platform python", target: "/usr/libexec/platform-python3.6 (deleted)", want: "platform-python3.6"},
+		{name: "unrelated executable", target: "/usr/bin/ruby3.1 (deleted)", want: "ruby3.1"},
+		{name: "marker outside the basename", target: "/opt/(deleted)/python3", want: "python3"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tmpRoot := setProcRoot(t)
+			procPath := filepath.Join(tmpRoot, "proc", "100")
+			if err := os.MkdirAll(procPath, 0o755); err != nil {
+				t.Fatalf("MkdirAll(%q) error = %v", procPath, err)
+			}
+			if err := os.Symlink(test.target, filepath.Join(procPath, "exe")); err != nil {
+				t.Fatalf("Symlink(%q) error = %v", test.target, err)
+			}
+
+			got, err := ExecutableName(100)
+			if err != nil {
+				t.Fatalf("ExecutableName(100) error = %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("ExecutableName(100) = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestExecutableNameMissing(t *testing.T) {
+	tmpRoot := setProcRoot(t)
+	procPath := filepath.Join(tmpRoot, "proc", "100")
+	if err := os.MkdirAll(procPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procPath, err)
+	}
+
+	if _, err := ExecutableName(100); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("ExecutableName(100) error = %v, want fs.ErrNotExist", err)
+	}
+}
+
 func TestPPID(t *testing.T) {
 	tmpRoot := setProcRoot(t)
 	procPath := filepath.Join(tmpRoot, "proc", "100")

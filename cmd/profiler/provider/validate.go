@@ -39,7 +39,13 @@ func validateExpectedExecPath(pids []int, execPath string) error {
 		if err != nil {
 			return err
 		}
-		if actualPath != execPath {
+		// A running executable that was unlinked or replaced in place keeps
+		// its path but gains the kernel's " (deleted)" marker. The marker
+		// describes the file, not the process, so trim it from both sides
+		// before deciding whether the target is still the requested binary.
+		actual := process.TrimUnlinkedExecutable(actualPath)
+		expected := process.TrimUnlinkedExecutable(execPath)
+		if actual != expected {
 			return fmt.Errorf("PID %d executable %q, want %q", pid, actualPath, execPath)
 		}
 	}
@@ -81,16 +87,18 @@ func validateToolFile(profilerName, toolPath, relativePath string, executable bo
 
 func validateProcessExecutables(profilerName, executablePrefix string, pids []int) error {
 	for _, pid := range pids {
-		path, err := process.Executable(pid)
+		// ExecutableName drops the kernel's unlinked marker, so a target whose
+		// binary was replaced in place is still recognized as its runtime.
+		name, err := process.ExecutableName(pid)
 		if err != nil {
 			return err
 		}
-		if !hasExecutablePrefix(filepath.Base(path), executablePrefix) {
+		if !hasExecutablePrefix(name, executablePrefix) {
 			return fmt.Errorf(
-				"%s PID %d executable %q, want prefix %q",
+				"%s PID %d executable name %q, want prefix %q",
 				profilerName,
 				pid,
-				path,
+				name,
 				executablePrefix,
 			)
 		}
@@ -98,6 +106,9 @@ func validateProcessExecutables(profilerName, executablePrefix string, pids []in
 	return nil
 }
 
+// hasExecutablePrefix reports whether name is the executable of the requested
+// runtime. Callers pass a basename from process.ExecutableName, which already
+// removed the kernel's unlinked marker.
 func hasExecutablePrefix(name, prefix string) bool {
 	if strings.HasPrefix(name, prefix) {
 		return true

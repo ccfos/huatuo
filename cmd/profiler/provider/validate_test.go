@@ -18,7 +18,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+
+	"github.com/ccfos/huatuo/internal/procfs"
 
 	"github.com/stretchr/testify/require"
 )
@@ -97,5 +100,94 @@ func TestValidateToolFile(t *testing.T) {
 		t,
 		validateToolFile("Java", dir, "tool", false),
 		fmt.Sprintf("start Java profiler: required tool %q is not readable", path),
+	)
+}
+
+// newTestProcFS redirects the procfs mount point to a temporary directory, so
+// executable lookups do not depend on the host process table.
+func newTestProcFS(t *testing.T) string {
+	t.Helper()
+
+	tmpRoot := t.TempDir()
+	originalPrefix := filepath.Dir(procfs.DefaultPath())
+	procfs.RootPrefix(tmpRoot)
+	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
+
+	procPath := filepath.Join(tmpRoot, "proc")
+	if err := os.MkdirAll(procPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procPath, err)
+	}
+
+	return procPath
+}
+
+// writeTestExecutable creates the fake /proc/<pid>/exe link used by the
+// executable checks.
+func writeTestExecutable(t *testing.T, procPath string, pid int, target string) {
+	t.Helper()
+
+	processPath := filepath.Join(procPath, strconv.Itoa(pid))
+	if err := os.MkdirAll(processPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", processPath, err)
+	}
+	if err := os.Symlink(target, filepath.Join(processPath, "exe")); err != nil {
+		t.Fatalf("Symlink(%q) error = %v", target, err)
+	}
+}
+
+func TestValidateProcessExecutablesAcceptsUnlinkedExecutable(t *testing.T) {
+	tests := []struct {
+		name   string
+		prof   string
+		prefix string
+		target string
+	}{
+		{name: "python", prof: "Python", prefix: "python", target: "/usr/bin/python3.10"},
+		{name: "unlinked python", prof: "Python", prefix: "python", target: "/usr/bin/python3.10 (deleted)"},
+		{name: "unlinked platform python", prof: "Python", prefix: "python", target: "/usr/libexec/platform-python3.6 (deleted)"},
+		{name: "unlinked java", prof: "Java", prefix: "java", target: "/usr/lib/jvm/java-17-openjdk/bin/java (deleted)"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			procPath := newTestProcFS(t)
+			writeTestExecutable(t, procPath, 100, test.target)
+
+			require.NoError(t, validateProcessExecutables(test.prof, test.prefix, []int{100}))
+		})
+	}
+}
+
+func TestValidateProcessExecutablesRejectsUnexpectedExecutable(t *testing.T) {
+	procPath := newTestProcFS(t)
+	writeTestExecutable(t, procPath, 100, "/usr/bin/ruby3.1 (deleted)")
+
+	require.EqualError(
+		t,
+		validateProcessExecutables("Python", "python", []int{100}),
+		`Python PID 100 executable name "ruby3.1", want prefix "python"`,
+	)
+}
+
+func TestValidateExpectedExecPath(t *testing.T) {
+	procPath := newTestProcFS(t)
+	writeTestExecutable(t, procPath, 100, "/usr/bin/python3.10 (deleted)")
+
+	// An in-place upgrade unlinks the running image, so the interpreter keeps
+	// running while procfs reports the marker. The requested path still points
+	// at that binary and must be accepted.
+	require.NoError(t, validateExpectedExecPath([]int{100}, "/usr/bin/python3.10"))
+	require.NoError(t, validateExpectedExecPath([]int{100}, "/usr/bin/python3.10 (deleted)"))
+	require.NoError(t, validateExpectedExecPath([]int{100}, ""))
+}
+
+func TestValidateExpectedExecPathRejectsOtherExecutable(t *testing.T) {
+	procPath := newTestProcFS(t)
+	writeTestExecutable(t, procPath, 100, "/usr/bin/python3.11 (deleted)")
+
+	require.EqualError(
+		t,
+		validateExpectedExecPath([]int{100}, "/usr/bin/python3.10"),
+		`PID 100 executable "/usr/bin/python3.11 (deleted)", want "/usr/bin/python3.10"`,
 	)
 }
