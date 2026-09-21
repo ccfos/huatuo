@@ -97,6 +97,137 @@ func TestIOControlAttachRetries(t *testing.T) {
 	})
 }
 
+func TestIOControlDeviceHookSelection(t *testing.T) {
+	const rootEnv = "HUATUO_TEST_IO_SYMBOL_ROOT"
+	const symbolEnv = "HUATUO_TEST_IO_SYMBOL_NAME"
+	const stateEnv = "HUATUO_TEST_IO_SYMBOL_STATE"
+	if root := os.Getenv(rootEnv); root != "" {
+		originalPrefix := filepath.Dir(procfs.DefaultPath())
+		procfs.RootPrefix(root)
+		t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
+		want := []bpf.AttachOption{
+			{ProgramName: "io_control_device_removed", Symbol: "del_gendisk"},
+			{ProgramName: "io_control_device_changed", Symbol: "blk_register_queue"},
+		}
+		if name := os.Getenv(symbolEnv); name != "" {
+			want = append(want, bpf.AttachOption{ProgramName: "io_control_disk_added", Symbol: name})
+		}
+		for _, test := range []struct {
+			name   string
+			attach func(bpf.BPF) error
+		}{
+			{name: "blk_throtl", attach: attachBlkThrotlHooks},
+			{name: "iocost", attach: attachIOCostPrograms},
+			{name: "iolatency", attach: attachIOLatencyHooks},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				object := &fakeIOLatencyAttacher{}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				state := os.Getenv(stateEnv)
+				attempts := 0
+				err := retryIOControlAttach(ctx, time.Millisecond, func() error {
+					attempts++
+					if state == "recover" && attempts == 2 {
+						content := "ffffffff81001000 t " + os.Getenv(symbolEnv) + "\n"
+						path := filepath.Join(root, "proc", "kallsyms")
+						require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+					}
+					err := test.attach(object)
+					if state != "" && attempts == 1 {
+						require.ErrorIs(t, err, os.ErrNotExist)
+						require.Empty(t, object.attached)
+						if state == "cancel" {
+							cancel()
+						}
+					}
+					return err
+				})
+				switch state {
+				case "exhaust":
+					require.ErrorIs(t, err, os.ErrNotExist)
+					require.NotErrorIs(t, err, types.ErrNotSupported)
+					require.Equal(t, 3, attempts)
+					require.Empty(t, object.attached)
+					return
+				case "cancel":
+					require.ErrorIs(t, err, context.Canceled)
+					require.Equal(t, 1, attempts)
+					require.Empty(t, object.attached)
+					return
+				}
+				require.NoError(t, err)
+				wantAttempts := 1
+				if state == "recover" {
+					wantAttempts = 2
+				}
+				require.Equal(t, wantAttempts, attempts)
+				require.Len(t, object.attached, 1)
+				topology := []bpf.AttachOption{}
+				for _, option := range object.options {
+					if strings.HasPrefix(option.ProgramName, "io_control_") {
+						topology = append(topology, option)
+					}
+				}
+				require.ElementsMatch(t, want, topology)
+			})
+		}
+		return
+	}
+
+	// Successful symbol loading is process-local. Isolate fixtures without
+	// adding a production cache-reset hook; all BPF attachments are fakes.
+	for _, test := range []struct {
+		name   string
+		symbol string
+		state  string
+	}{
+		{name: "optional symbol absent"},
+		{name: "legacy publication", symbol: "device_add_disk_no_queue_reg"},
+		{name: "safe publication", symbol: "device_add_disk_no_queue_reg_safe"},
+		{name: "legacy lookup recovers", symbol: "device_add_disk_no_queue_reg", state: "recover"},
+		{name: "safe lookup recovers", symbol: "device_add_disk_no_queue_reg_safe", state: "recover"},
+		{name: "lookup fails persistently", state: "exhaust"},
+		{name: "lookup retry canceled", state: "cancel"},
+	} {
+		for _, module := range []string{"blk_throtl", "iocost", "iolatency"} {
+			t.Run(test.name+"/"+module, func(t *testing.T) {
+				root := t.TempDir()
+				directory := filepath.Join(root, "proc")
+				require.NoError(t, os.MkdirAll(directory, 0o755))
+				content := ""
+				if test.symbol != "" {
+					content = "ffffffff81001000 t " + test.symbol + "\n"
+				}
+				if test.state == "" {
+					require.NoError(t, os.WriteFile(filepath.Join(directory, "kallsyms"), []byte(content), 0o600))
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(
+					ctx,
+					os.Args[0],
+					"-test.run=^TestIOControlDeviceHookSelection$/^"+module+"$",
+					"-test.v",
+				)
+				cmd.Env = append(
+					os.Environ(),
+					rootEnv+"="+root,
+					symbolEnv+"="+test.symbol,
+					stateEnv+"="+test.state,
+				)
+				output, err := cmd.CombinedOutput()
+				require.NoError(
+					t,
+					err,
+					"%s",
+					output,
+				)
+			})
+		}
+	}
+}
+
 type ioControlDeviceBPF struct {
 	bpf.BPF
 	mapID uint32
