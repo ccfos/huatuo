@@ -52,7 +52,8 @@ func loadBPF(cfg *Config, deviceMode uint32, limiter *bpf.RateLimiter, hardwareE
 	}
 
 	return pcap.Load(
-		fmt.Sprintf("dropwatch_%d.o", time.Now().UnixNano()), objectBytes,
+		fmt.Sprintf("dropwatch_%d.o", time.Now().UnixNano()),
+		objectBytes,
 		cfg.FilterExpression,
 		limiter.Constants(map[string]any{"filter_dev_mode": deviceMode}),
 		excludedSections...,
