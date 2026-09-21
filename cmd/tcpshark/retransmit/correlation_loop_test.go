@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package retransmit
 
 import (
 	"context"
@@ -48,11 +48,93 @@ func (s *retransmitDropWriterStub) close() error {
 	return nil
 }
 
-func TestEventReaderErrorCancelsSiblingWorkers(t *testing.T) {
+func TestRetransmitDropTimerRearmsAfterMatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	retransmits := make(chan *retransmitEvent)
+	drops := make(chan *dropEvent)
+	outputs := make(chan *types.TCPRetransmitTracing)
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		return runRetransmitDropCorrelation(groupCtx, &retransmitDropSession{
+			retransmitEvents:    retransmits,
+			dropwatchEvents:     drops,
+			readDropwatchStatus: source.ReadStatus,
+			sink: testEventWriter(func(event *types.TCPRetransmitTracing) error {
+				select {
+				case outputs <- event:
+				case <-groupCtx.Done():
+				}
+				return nil
+			}),
+		})
+	})
+	t.Cleanup(func() {
+		cancel()
+		if err := group.Wait(); err != nil {
+			t.Errorf("correlation loop: %v", err)
+		}
+	})
+
+	first := testRetransmitEvent(uint64(time.Second)+1, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+	select {
+	case retransmits <- first:
+	case <-ctx.Done():
+		t.Fatal("correlation loop did not accept retransmission")
+	}
+	drop := testDropEvent(t, uint64(time.Second), "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200, 0, packet.TCPFlagACK)
+	select {
+	case drops <- drop:
+	case <-ctx.Done():
+		t.Fatal("correlation loop did not accept drop")
+	}
+	select {
+	case event := <-outputs:
+		if hasCorrelationReason(event, types.CorrelationReasonNoMatchingDrop) {
+			t.Fatal("first retransmission did not match drop")
+		}
+	case <-ctx.Done():
+		t.Fatal("matched retransmission was not emitted")
+	}
+
+	// Leave the queue empty beyond the old deadline before rearming the timer.
+	select {
+	case event := <-outputs:
+		t.Fatalf("unexpected output with empty queue: %+v", event)
+	case <-time.After(2 * retransmitRetentionDuration):
+	}
+	second := testRetransmitEvent(uint64(2*time.Second), "10.0.0.1", "10.0.0.2", 1001, 80, 100, 200)
+	start := time.Now()
+	select {
+	case retransmits <- second:
+	case <-ctx.Done():
+		t.Fatal("correlation loop did not accept second retransmission")
+	}
+	select {
+	case event := <-outputs:
+		if event.KernelObservedNS != second.record.KernelObservedNS ||
+			!hasCorrelationReason(event, types.CorrelationReasonNoMatchingDrop) {
+			t.Fatalf("timeout output = %+v, want unmatched second retransmission", event)
+		}
+		if elapsed := time.Since(start); elapsed < retransmitRetentionDuration {
+			t.Fatalf("retransmission expired after %s, before its deadline", elapsed)
+		}
+	case <-ctx.Done():
+		t.Fatal("pending retransmission did not expire without further input")
+	}
+}
+
+func TestRetransmitReaderErrorCancelsSiblingWorkers(t *testing.T) {
 	group, groupCtx := errgroup.WithContext(t.Context())
 	sourceErr := errors.New("source failed")
-	events := startEventReader[int](group, func(chan<- int) error {
+	reader := &retransmitReaderStub{read: func(any) error {
 		return sourceErr
+	}}
+	events := make(chan *retransmitEvent)
+	group.Go(func() error {
+		defer close(events)
+		return readRetransmitEvents(groupCtx, reader.readInto, events)
 	})
 	siblingStopped := make(chan struct{})
 	group.Go(func() error {
@@ -75,10 +157,42 @@ func TestEventReaderErrorCancelsSiblingWorkers(t *testing.T) {
 	}
 }
 
+func TestRetransmitReaderCancelsPendingSend(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	group, groupCtx := errgroup.WithContext(ctx)
+	read := make(chan struct{})
+	reader := &retransmitReaderStub{read: func(any) error {
+		close(read)
+		return nil
+	}}
+	events := make(chan *retransmitEvent)
+	group.Go(func() error {
+		defer close(events)
+		return readRetransmitEvents(groupCtx, reader.readInto, events)
+	})
+	<-read
+	// No receiver is available; cancellation must allow the sender to exit.
+	cancel()
+	done := make(chan error, 1)
+	go func() { done <- group.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reader did not stop after cancellation")
+	}
+	if _, open := <-events; open {
+		t.Fatal("reader left event channel open")
+	}
+}
+
 func TestRetransmitDropCancellationFinalizesPendingEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	retransmitEvents := make(chan *types.TCPRetransmitTracing)
+	retransmitEvents := make(chan *retransmitEvent)
 	dropwatchEvents := make(chan *dropEvent)
 	sink := &retransmitDropWriterStub{}
 	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
@@ -101,24 +215,18 @@ func TestRetransmitDropCancellationFinalizesPendingEvents(t *testing.T) {
 		100,
 		200,
 	)
-	retransmit.DropLocation = "stale"
-	retransmit.CorrelationReasons = []types.CorrelationReason{
-		types.CorrelationReasonNoMatchingDrop,
-	}
-	retransmit.DropwatchPerfStatus = &types.DropwatchStatus{PerfLost: 1}
-	retransmit.DropStack = "stale"
 	retransmitEvents <- retransmit
 	cancel()
 
 	if err := <-done; err != nil {
 		t.Fatalf("runRetransmitDropCorrelation() error = %v", err)
 	}
-	if len(sink.events) != 1 || sink.events[0] != retransmit {
+	if len(sink.events) != 1 || sink.events[0].KernelObservedNS != retransmit.record.KernelObservedNS {
 		t.Fatalf("events = %+v, want pending retransmission exactly once", sink.events)
 	}
-	if retransmit.DropLocation != "unknown" ||
-		!hasCorrelationReason(retransmit, types.CorrelationReasonNoMatchingDrop) ||
-		retransmit.DropwatchPerfStatus == nil || retransmit.DropStack != "" {
+	if sink.events[0].DropLocation != "unknown" ||
+		!hasCorrelationReason(sink.events[0], types.CorrelationReasonNoMatchingDrop) ||
+		sink.events[0].DropwatchPerfStatus == nil || sink.events[0].DropStack != "" {
 		t.Fatalf("finalized retransmission = %+v, want unknown no-match result", retransmit)
 	}
 }
@@ -126,7 +234,7 @@ func TestRetransmitDropCancellationFinalizesPendingEvents(t *testing.T) {
 func TestRetransmitDropCancellationSettlesCrossNetNSCandidate(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	retransmitEvents := make(chan *types.TCPRetransmitTracing)
+	retransmitEvents := make(chan *retransmitEvent)
 	dropwatchEvents := make(chan *dropEvent)
 	sink := &retransmitDropWriterStub{}
 	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
@@ -169,15 +277,15 @@ func TestRetransmitDropCancellationSettlesCrossNetNSCandidate(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("runRetransmitDropCorrelation() error = %v", err)
 	}
-	if len(sink.events) != 1 || sink.events[0] != retransmit {
+	if len(sink.events) != 1 || sink.events[0].KernelObservedNS != retransmit.record.KernelObservedNS {
 		t.Fatalf("events = %+v, want pending retransmission exactly once", sink.events)
 	}
 	for _, reason := range []types.CorrelationReason{
 		types.CorrelationReasonNoMatchingDrop,
 		types.CorrelationReasonCrossNetNSCandidate,
 	} {
-		if !hasCorrelationReason(retransmit, reason) {
-			t.Fatalf("finalized reasons = %v, want %q", retransmit.CorrelationReasons, reason)
+		if !hasCorrelationReason(sink.events[0], reason) {
+			t.Fatalf("finalized reasons = %v, want %q", sink.events[0].CorrelationReasons, reason)
 		}
 	}
 }
@@ -185,20 +293,18 @@ func TestRetransmitDropCancellationSettlesCrossNetNSCandidate(t *testing.T) {
 func TestRetransmitDropWritesPendingBeforeOutputClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	retransmitEvents := make(chan *types.TCPRetransmitTracing)
+	retransmitEvents := make(chan *retransmitEvent)
 	dropwatchEvents := make(chan *dropEvent)
 	sink := &retransmitDropWriterStub{}
 	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
 	done := make(chan error, 1)
 	go func() {
-		done <- runRetransmitOutputSession(func() error {
-			return runRetransmitDropCorrelation(ctx, &retransmitDropSession{
-				retransmitEvents:    retransmitEvents,
-				dropwatchEvents:     dropwatchEvents,
-				readDropwatchStatus: source.ReadStatus,
-				sink:                sink,
-			})
-		}, sink.close)
+		done <- runRetransmitDropCorrelation(ctx, &retransmitDropSession{
+			retransmitEvents:    retransmitEvents,
+			dropwatchEvents:     dropwatchEvents,
+			readDropwatchStatus: source.ReadStatus,
+			sink:                sink,
+		})
 	}()
 
 	retransmitEvents <- testRetransmitEvent(
@@ -212,7 +318,10 @@ func TestRetransmitDropWritesPendingBeforeOutputClose(t *testing.T) {
 	)
 	cancel()
 	if err := <-done; err != nil {
-		t.Fatalf("runRetransmitOutputSession() error = %v", err)
+		t.Fatalf("runRetransmitDropCorrelation() error = %v", err)
+	}
+	if err := sink.close(); err != nil {
+		t.Fatal(err)
 	}
 	if want := []string{"write", "output_close"}; !slices.Equal(sink.operations, want) {
 		t.Fatalf("operations = %v, want %v", sink.operations, want)
@@ -223,7 +332,7 @@ func TestRetransmitDropDeferredSettlePropagatesWriteError(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	writeErr := errors.New("write failed")
-	retransmitEvents := make(chan *types.TCPRetransmitTracing)
+	retransmitEvents := make(chan *retransmitEvent)
 	dropwatchEvents := make(chan *dropEvent)
 	sink := &retransmitDropWriterStub{err: writeErr}
 	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
@@ -256,19 +365,19 @@ func TestRetransmitDropDeferredSettlePropagatesWriteError(t *testing.T) {
 func TestRetransmitDropRejectsUnexpectedSourceClosure(t *testing.T) {
 	tests := []struct {
 		name        string
-		closeSource func(chan *types.TCPRetransmitTracing, chan *dropEvent)
+		closeSource func(chan *retransmitEvent, chan *dropEvent)
 		wantError   string
 	}{
 		{
 			name: "retransmit source",
-			closeSource: func(retransmits chan *types.TCPRetransmitTracing, _ chan *dropEvent) {
+			closeSource: func(retransmits chan *retransmitEvent, _ chan *dropEvent) {
 				close(retransmits)
 			},
 			wantError: "TCP retransmit event source closed unexpectedly",
 		},
 		{
 			name: "dropwatch source",
-			closeSource: func(_ chan *types.TCPRetransmitTracing, drops chan *dropEvent) {
+			closeSource: func(_ chan *retransmitEvent, drops chan *dropEvent) {
 				close(drops)
 			},
 			wantError: "embedded dropwatch event source closed unexpectedly",
@@ -277,7 +386,7 @@ func TestRetransmitDropRejectsUnexpectedSourceClosure(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			retransmitEvents := make(chan *types.TCPRetransmitTracing)
+			retransmitEvents := make(chan *retransmitEvent)
 			dropwatchEvents := make(chan *dropEvent)
 			test.closeSource(retransmitEvents, dropwatchEvents)
 
@@ -292,167 +401,4 @@ func TestRetransmitDropRejectsUnexpectedSourceClosure(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestEmitRetransmitDropResultsPreservesErrors(t *testing.T) {
-	writeErr := errors.New("write failed")
-	statusErr := errors.New("status failed")
-	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
-	source.readErr = statusErr
-	err := emitRetransmitDropResults(
-		source.ReadStatus,
-		&retransmitDropWriterStub{err: writeErr},
-		[]retransmitDropResult{{
-			retransmit: &types.TCPRetransmitTracing{},
-		}},
-	)
-	if !errors.Is(err, writeErr) {
-		t.Fatalf("emit error = %v, want %v", err, writeErr)
-	}
-	if !errors.Is(err, statusErr) {
-		t.Fatalf("emit error = %v, want %v", err, statusErr)
-	}
-	source.readErr = nil
-	if err := emitRetransmitDropResults(
-		source.ReadStatus,
-		&retransmitDropWriterStub{},
-		[]retransmitDropResult{{}},
-	); err == nil {
-		t.Fatal("nil retransmission error = nil")
-	}
-}
-
-func TestEmitRetransmitDropResultsReadsDropwatchStatusOncePerBatch(t *testing.T) {
-	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
-	object := source
-	results := []retransmitDropResult{
-		{
-			retransmit: &types.TCPRetransmitTracing{},
-			correlationReasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-			},
-		},
-		{
-			retransmit: &types.TCPRetransmitTracing{},
-			correlationReasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-			},
-		},
-	}
-	if err := emitRetransmitDropResults(
-		source.ReadStatus,
-		&retransmitDropWriterStub{},
-		results,
-	); err != nil {
-		t.Fatalf("emitRetransmitDropResults() error = %v", err)
-	}
-	// Status is queried once per batch, not once per result.
-	if object.readCalls != 1 {
-		t.Fatalf("perf status reads = %d, want 1", object.readCalls)
-	}
-}
-
-func TestEmitMatchedRetransmitDoesNotReadDropwatchStatus(t *testing.T) {
-	statusErr := errors.New("unexpected status read")
-	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
-	object := source
-	object.readErr = statusErr
-	result := retransmitDropResult{
-		retransmit: &types.TCPRetransmitTracing{},
-		drop:       &dropEvent{},
-	}
-	if err := emitRetransmitDropResults(
-		source.ReadStatus,
-		&retransmitDropWriterStub{},
-		[]retransmitDropResult{result},
-	); err != nil {
-		t.Fatalf("emitRetransmitDropResults() error = %v", err)
-	}
-	if object.readCalls != 0 {
-		t.Fatalf("perf status reads = %d, want 0", object.readCalls)
-	}
-}
-
-func TestEmitRetransmitDropResultsUsesLatestDropwatchStatus(t *testing.T) {
-	correlator := newTestRetransmitDropCorrelator(t, 1)
-	event := &types.TCPRetransmitTracing{
-		KernelObservedNS: uint64(maxDropToRetransmitAge) + 1,
-	}
-	result := correlator.noMatchResult(event, false)
-	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{
-		PerfLost:    2,
-		LostSamples: 5,
-		RateLimited: 3,
-	})
-	sink := &retransmitDropWriterStub{}
-
-	if err := emitRetransmitDropResults(
-		source.ReadStatus,
-		sink,
-		[]retransmitDropResult{result},
-	); err != nil {
-		t.Fatalf("emitRetransmitDropResults() error = %v", err)
-	}
-	if len(sink.events) != 1 || event.DropwatchPerfStatus == nil ||
-		event.DropwatchPerfStatus.PerfLost != 2 ||
-		event.DropwatchPerfStatus.LostSamples != 5 ||
-		event.DropwatchPerfStatus.RateLimited != 3 {
-		t.Fatalf("emitted event = %+v, want latest perf status", event)
-	}
-	for _, reason := range []types.CorrelationReason{
-		types.CorrelationReasonPerfEventsLost,
-		types.CorrelationReasonDropRateLimited,
-	} {
-		if !hasCorrelationReason(event, reason) {
-			t.Fatalf("reasons = %v, want %q", event.CorrelationReasons, reason)
-		}
-	}
-}
-
-func TestEmitRetransmitDropResultsWritesOnceWhenDropwatchStatusFails(t *testing.T) {
-	statusErr := errors.New("status unavailable")
-	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
-	source.readErr = statusErr
-	event := &types.TCPRetransmitTracing{}
-	result := retransmitDropResult{
-		retransmit: event,
-		correlationReasons: []types.CorrelationReason{
-			types.CorrelationReasonNoMatchingDrop,
-		},
-	}
-	sink := &retransmitDropWriterStub{}
-
-	err := emitRetransmitDropResults(
-		source.ReadStatus,
-		sink,
-		[]retransmitDropResult{result},
-	)
-	if !errors.Is(err, statusErr) {
-		t.Fatalf("emit error = %v, want %v", err, statusErr)
-	}
-	if len(sink.events) != 1 || sink.events[0] != event {
-		t.Fatalf("events = %+v, want event exactly once", sink.events)
-	}
-	if event.DropwatchPerfStatus != nil || !hasCorrelationReason(
-		event,
-		types.CorrelationReasonDropwatchPerfStatusUnavailable,
-	) {
-		t.Fatalf("emitted event = %+v, want unavailable status reason", event)
-	}
-}
-
-type dropwatchStatusStub struct {
-	status    types.DropwatchStatus
-	readErr   error
-	readCalls int
-}
-
-func (s *dropwatchStatusStub) ReadStatus() (types.DropwatchStatus, error) {
-	s.readCalls++
-	return s.status, s.readErr
-}
-
-func newTraceTestDropwatchStatus(t *testing.T, status types.DropwatchStatus) *dropwatchStatusStub {
-	t.Helper()
-	return &dropwatchStatusStub{status: status}
 }

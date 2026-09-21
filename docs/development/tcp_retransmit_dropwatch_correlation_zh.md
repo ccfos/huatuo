@@ -49,7 +49,7 @@ CPU 0: retransmit monotonic_ns=200，先到达用户态
 实现使用两个不同维度的窗口：
 
 ```go
-retransmitDropWaitDuration = 100 * time.Millisecond
+retransmitRetentionDuration = 100 * time.Millisecond
 maxDropToRetransmitAge     = time.Second
 ```
 
@@ -69,32 +69,54 @@ retransmit.kernel_observed_ns - drop.kernel_observed_ns <= 1s
 
 ## 4. 有界状态
 
-等待中的 retransmit 使用：
+等待中的 retransmit 与尚未匹配的 drop 共用包内泛型存储 `store[T]`，分别持有
+独立实例。容器只负责容量、TTL、flow 索引和删除；严格匹配与结果定型由关联器负责。
 
 ```go
-type retransmitWaitQueue struct {
-    capacity   int
-    byDeadline list.List
-    byFlow     map[flowKey][]*waitingRetransmit
+type storeEntry[T any] struct {
+    value    T
+    flow     *flowKey
+    deadline time.Time
+    sequence uint64
+    node     *list.Element
+}
+
+type store[T any] struct {
+    byDeadline   list.List
+    byFlow       map[flowKey][]*storeEntry[T]
+    capacity     int
+    ttl          time.Duration
+    nextSequence uint64
 }
 ```
 
-`byDeadline.Front()` 是最早到期记录，`byFlow` 只扫描相关正向或反向 flow。
-容量为 1024，满时最早 deadline 的记录以
-`retransmit_wait_capacity_exceeded` 定案。
+| 实例 | 存储值 | 容量 | TTL |
+| --- | --- | --- | --- |
+| `retransmitStore` | `waitingRetransmit`，内联在 entry 中 | 1024 | 100ms |
+| `dropStore` | `*dropEvent` | 4096 | 1s + 100ms |
 
-尚未匹配的 drop 使用：
+`waitingRetransmit` 只包含原始事件、匹配字段和跨 namespace 候选标记；
+不再持有链表节点、deadline 或独立 ID。drop 也无需额外的缓存包装类型。
+链表的 `Element.Value` 与 flow 桶引用同一个 `*storeEntry[T]`，entry 的 `node`
+指回所属链表元素。entry 引用业务数据中不再修改的 flow，避免重复保存地址。
+删除会同时解除两个索引的引用，并清空 flow 切片尾部；
+最后一个条目移除后删除空桶。
 
-```go
-type dropwatchCandidates struct {
-    capacity int
-    byAge    list.List
-    byFlow   map[flowKey][]*dropCandidate
-}
-```
+flow 索引按两个 `AddrPort` 的规范顺序建键，正反向只占一个桶；原始方向仍保留
+在业务数据中，供严格匹配使用。namespace 不进入索引键，保证跨 namespace
+的相似候选仍能生成限制原因。匹配扫描与切片删除为 O(k)，k 是该 flow 的候选数；
+定位最早 deadline 与链表摘除为 O(1)。
 
-`byAge` 按用户态接收顺序支持 O(1) 容量淘汰和过期清理；`byFlow` 定位候选。
-容量为 4096。容量顺序不用于因果判断，因果判断始终使用 `kernel_observed_ns`。
+每个实例的 TTL 固定，关联循环传入单调不减的处理时间，因此链表插入顺序也是
+deadline 顺序。链表用于到期清理和容量淘汰，不向业务暴露 FIFO 消费接口。
+等待容量满时，最早 deadline 的记录以 `retransmit_wait_capacity_exceeded`
+定型；drop 容量满时直接淘汰最早 deadline 的候选。因果判断仍使用 `kernel_observed_ns`。
+
+两个 reader 通过无缓冲 channel 交付事件，容器只由单个关联循环访问，无锁、
+无独立清理 goroutine。一个 timer 始终取两个实例的最早 deadline，因此仅有
+drop 缓存、没有等待重传时也会按期清理。每次输入和 timer 唤醒均先清理到期项，
+再匹配、检查容量；`now >= deadline` 即为过期。100ms 是匹配截止时间，
+同步输出的阻塞仍可能延迟实际清理和结果送达。
 
 ## 5. 严格匹配
 
@@ -108,9 +130,11 @@ type dropwatchCandidates struct {
 反向 ACK 候选使用反向四元组，并要求 ACK 覆盖重传 sequence end。SYN 与
 SYN-ACK 使用各自更严格的 ACK/SYN 条件。
 
-多个候选先选最大的 `drop.kernel_observed_ns`；时间相同时选较新的内部 ID。严格匹配后
-立即从 age 和 flow 两个索引删除，只能消费一次。除 namespace 外均满足的候选
-只记录 `cross_netns_candidate`，不会输出 `host_software`。
+多个 drop 候选先选最大的 `drop.kernel_observed_ns`；时间相同时选较大的插入序号。
+drop 后到时，选择插入序号最小的严格匹配重传，同时扫描其余候选以记录跨
+namespace 证据。严格匹配后立即从 deadline 和 flow 两个索引删除，只能消费一次。
+除 namespace 外均满足的候选只记录 `cross_netns_candidate`，不会输出
+`host_software`。
 
 ## 6. Unknown 原因
 
@@ -187,8 +211,9 @@ detach 并关闭事件与告警 reader，再等待告警 worker 退出，最后�
 3. 不再读取 dropwatch perf ring 中尚未交给关联器的记录；
 4. 按 deadline 顺序取出 waiting retransmit，通过正常 no-match 路径定型并写入
    output；
-5. 等全部 worker 退出后，依次 detach embedded source、关闭 reader 和 object；
-6. 最后关闭 output。
+5. 等全部 worker 退出后，关闭 dropwatch 与 retransmit Tracer，收集内部告警
+   worker 和资源释放错误；
+6. 最后结束 socket output；调用者传入的 io.Writer 不由会话关闭。
 
 shutdown pending 输出 `drop_location=unknown`、`no_matching_drop`、其他适用原因
 和最新可用的 `dropwatch_perf_status`。尾部 drop 仍可能丢失，因此原本可以匹配的
@@ -198,18 +223,59 @@ shutdown pending 输出 `drop_location=unknown`、`no_matching_drop`、其他适
 
 ```text
 cmd/tcpshark/
-├── trace.go                         # 基础模式分流与 output owner
-├── bpf_load.go                      # retransmit BPF 加载和 attach 策略
-├── retransmit_drop_trace.go         # 双流事件循环、timer、shutdown
-├── retransmit_drop_correlator.go    # 双流协调与定案
-├── retransmit_drop_event.go         # 匹配领域类型及输入规范化
-├── retransmit_drop_event_cache.go   # drop 候选与待匹配重传缓存
-├── retransmit_drop_record.go        # 两种 BPF ABI record 转换
-├── tcp_retransmit_classify.go       # 与 dropwatch 无关的 TCP 分类
-└── format.go                        # text/JSON 输出
+├── main.go                         # 信号、版本、CLI 入口
+├── cli.go                          # 参数校验、路径与 filter 规范化
+├── run.go                          # 全局 BPF 生命周期、超时、功能分派
+└── retransmit/                     # 重传功能包
+    ├── config.go                   # Config、RunConfig
+    ├── run.go                      # Run：资源组合、执行和清理
+    ├── tracer.go                   # Open、ReadInto、Close 和限流 worker
+    ├── bpf_load.go                 # loadBPF、attachBPF 和探针选择
+    ├── event_reader.go             # 双流读取、转换和 channel 交付
+    ├── correlation_loop.go         # select、timer、退出结算
+    ├── correlation.go              # 关联状态机、过期结算
+    ├── correlation_match.go        # 候选选择、消费与跨 namespace 证据
+    ├── match.go                    # 匹配类型、namespace/flow/sequence/ktime
+    ├── store.go                    # 条目存储、flow 索引、容量与过期管理
+    ├── event.go                    # 两类 ABI record 转换
+    ├── classify.go                 # 重传分类
+    ├── correlation_output.go       # 状态补全、符号解析、关联输出字段
+    └── output.go                   # text、JSON、socket 输出
 ```
 
-关联实现继续位于唯一生产调用方 `cmd/tcpshark`。两个命令共享的采集实现位于：
+顶层通过 `retransmit.Run(ctx, *RunConfig)` 运行重传功能，不操作 ABI record、
+channel、关联 timer 或状态统计。CLI 负责参数校验、路径与 filter 规范化，再构造运行配置。
+RunConfig.Tracing 是采集配置，
+Dropwatch 为 nil 时直接读取并输出；非 nil 时使用两个读取 worker 和单个关联
+循环。关联能力是重传功能的组合，不是通用采集框架。
+
+Run 在 attach 探针之前建立输出，返回前完成全部会话 worker 等待、最终结算、
+Tracer 关闭及输出结束。配置失败、取消与运行失败均释放已取得资源。
+关闭时不保证排空内核缓冲区。普通模式不创建关联 channel 或 timer。
+
+`retransmit.Tracer` 仍只拥有重传 BPF 对象、reader 和限流告警 worker；
+事件转换、分类、关联及输出属于同包的功能会话，不进入 Tracer。
+`Open` 失败会回滚全部已获取资源；会话 context 取消后仍需调用
+`Close`。限流 worker 失败会取消采集，原始错误同时由 `Close` 保留。
+`ReadInto` 已开始读取后直接保留底层结果，不再检查关闭或取消状态。
+`Close` 可以打断读取，但调用者必须串行调用 `Close`。
+进程级 `bpf.Init/Shutdown` 和运行超时由命令层统一管理。
+
+关联器在处理每个输入和 timer 时统一清理过期候选，缓存不重复执行过期检查。
+关联器只返回匹配证据和原因，不修改输出字段；correlation_output.go 统一构造最终输出，
+仍保持每批按需读取一次 dropwatch 状态、仅对匹配 drop 解析符号。
+内部重传事件只保留 ABI record 和读取成功时的 observedAt；等待队列不保存
+完整的展示对象。匹配直接从 ABI 地址构造 netip 地址，使用 ABI 事件枚举，
+不经过字符串转换。IPv4-mapped IPv6 仍归一化为 IPv4。
+单事件读取统一处理丢失重试和读取时间；普通模式复用事件并同步输出，
+关联模式直接读取到独立事件后发送，避免覆盖等待中的数据。
+run.go 统一创建 channel、启动读取 worker，并由发送方关闭 channel；
+读取函数不启动 goroutine，不使用消费回调或借用事件合同。
+最终输出时才构造 TCPRetransmitTracing；ObservedTimestamp 使用原读取时间，
+不使用关联结束时间。ABI、输出字段、SYNACK flags 补全和匹配规则保持不变。
+
+`cmd/tcpshark/retransmit` 不提供 Go `internal` 导入限制；约定仅由 tcpshark
+使用，不反向依赖命令层。两个命令共享的采集实现位于：
 
 ```text
 internal/dropwatch/

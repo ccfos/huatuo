@@ -17,11 +17,14 @@ package main
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/ccfos/huatuo/cmd/tcpshark/retransmit"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/pcapfilter"
 	"github.com/ccfos/huatuo/internal/toolstream"
 )
@@ -43,9 +46,6 @@ const (
 
 const (
 	modeRetransmit = "retransmit"
-
-	outputText = "text"
-	outputJSON = "json"
 
 	maxDurationSeconds = int64(1<<63-1) / int64(time.Second)
 )
@@ -90,7 +90,7 @@ func appFlags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:  cliFlagOutput,
-			Value: outputText,
+			Value: retransmit.OutputText,
 			Usage: "output format: json or text; ignored when --output-storage is set",
 		},
 		&cli.StringFlag{
@@ -119,7 +119,7 @@ func validateFlags(c *cli.Context) error {
 	if duration := c.Int(cliFlagDuration); duration < 0 || int64(duration) > maxDurationSeconds {
 		return fmt.Errorf("invalid --duration %d; want 0..%d seconds", duration, maxDurationSeconds)
 	}
-	if outputFormat := c.String(cliFlagOutput); outputFormat != outputJSON && outputFormat != outputText {
+	if outputFormat := c.String(cliFlagOutput); outputFormat != retransmit.OutputJSON && outputFormat != retransmit.OutputText {
 		return fmt.Errorf("invalid --output %q; want json or text", outputFormat)
 	}
 	if taskID := c.String(cliFlagTaskID); taskID != "" && c.String(cliFlagOutputStorage) == "" {
@@ -142,7 +142,7 @@ func validateFlags(c *cli.Context) error {
 			return fmt.Errorf("--bpf-path is required without --with-dropwatch")
 		}
 	}
-	if filter := effectiveFilter(c); filter != "" {
+	if filter := resolveFilterExpression(c); filter != "" {
 		if err := pcapfilter.ValidateL3Compatible(filter); err != nil {
 			if errors.Is(err, pcapfilter.ErrL3IncompatibleFilter) {
 				return errors.New(
@@ -172,10 +172,45 @@ func validateFlags(c *cli.Context) error {
 
 // Embedded correlation uses one normalized expression so both probes observe the
 // same traffic scope. An explicit TCP default avoids unrelated drop events.
-func effectiveFilter(c *cli.Context) string {
+func resolveFilterExpression(c *cli.Context) string {
 	filter := strings.TrimSpace(c.String(cliFlagFilter))
 	if filter == "" && c.Bool(cliFlagWithDropwatch) {
 		return "tcp"
 	}
 	return filter
+}
+
+// resolveRunOptions consumes validated flags so feature code does not need
+// to interpret CLI path combinations or filter defaults.
+func resolveRunOptions(c *cli.Context, version string) runOptions {
+	cfg := retransmit.RunConfig{
+		Tracing: retransmit.Config{
+			BPFPath:            strings.TrimSpace(c.String(cliFlagBPFPath)),
+			FilterExpression:   resolveFilterExpression(c),
+			MaxEventsPerSecond: c.Uint64(cliFlagMaxEventsPerSecond),
+			TLPEnabled:         c.Bool(cliFlagEnableTLP),
+		},
+		SourceType:    c.String(cliFlagSourceTypes),
+		Output:        c.App.Writer,
+		OutputFormat:  c.String(cliFlagOutput),
+		OutputStorage: c.String(cliFlagOutputStorage),
+		ToolName:      tcpSharkToolName,
+		Version:       version,
+		TaskID:        c.String(cliFlagTaskID),
+	}
+	if c.Bool(cliFlagWithDropwatch) {
+		directory := strings.TrimSpace(c.String(cliFlagBPFPathDir))
+		cfg.Tracing.BPFPath = filepath.Join(directory, "tcp_retransmit.o")
+		cfg.Dropwatch = &dropwatch.Config{
+			BPFPath:            filepath.Join(directory, "net_dropwatch.o"),
+			FilterExpression:   cfg.Tracing.FilterExpression,
+			MaxEventsPerSecond: cfg.Tracing.MaxEventsPerSecond,
+			HardwareMode:       dropwatch.HardwareDisabled,
+		}
+	}
+	return runOptions{
+		mode:            c.String(cliFlagMode),
+		durationSeconds: c.Int(cliFlagDuration),
+		retransmit:      cfg,
+	}
 }

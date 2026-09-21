@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package retransmit
 
 import (
 	"errors"
@@ -24,25 +24,25 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 )
 
-func TestLoadRetransmitBPFReturnsReadError(t *testing.T) {
+func TestLoadBPFReturnsReadError(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "missing.o")
-	_, err := loadRetransmitBPF(
+	_, err := loadBPF(
 		path,
 		"",
 		bpf.NewRateLimiter("tcp_retransmit", 0),
 	)
 	if err == nil || !strings.Contains(err.Error(), "read bpf") {
-		t.Fatalf("loadRetransmitBPF() error = %v, want read bpf error", err)
+		t.Fatalf("loadBPF() error = %v, want read bpf error", err)
 	}
 	var pathErr *os.PathError
 	if !errors.As(err, &pathErr) {
-		t.Fatalf("loadRetransmitBPF() error = %v, want *os.PathError", err)
+		t.Fatalf("loadBPF() error = %v, want *os.PathError", err)
 	}
 }
 
-func TestRetransmitAttachOptions(t *testing.T) {
+func TestAttachOptions(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -76,7 +76,7 @@ func TestRetransmitAttachOptions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			options := retransmitAttachOptions(tt.isTLPEnabled)
+			options := attachOptions(tt.isTLPEnabled)
 			if len(options) != len(tt.wantPrograms) {
 				t.Fatalf("attach option count = %d, want %d", len(options), len(tt.wantPrograms))
 			}

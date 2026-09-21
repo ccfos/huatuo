@@ -12,23 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package retransmit
 
 import (
 	"net"
 	"net/netip"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/packet"
 	"github.com/ccfos/huatuo/internal/symbol"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
-const (
-	tcpRetransmitSKBEventType    = "tcp_retransmit_skb"
-	tcpRetransmitSYNACKEventType = "tcp_retransmit_synack"
-	maxDropToRetransmitAge       = time.Second
-)
+const maxDropToRetransmitAge = time.Second
 
 type retransmitMatchKind uint8
 
@@ -74,60 +70,50 @@ type retransmitEntry struct {
 	kind             retransmitMatchKind
 }
 
-func retransmitEntryFromEvent(event *types.TCPRetransmitTracing) (retransmitEntry, bool) {
-	hasNamespace := event != nil &&
-		(event.NetNamespaceCookie != 0 || event.NetNamespaceInum != 0)
-	if event == nil || event.KernelObservedNS == 0 || !hasNamespace {
+func retransmitEntryFromEvent(event *retransmitEvent) (retransmitEntry, bool) {
+	record := &event.record
+	if record.KernelObservedNS == 0 || (record.NetNamespaceCookie == 0 && record.NetNamespaceInum == 0) {
 		return retransmitEntry{}, false
 	}
 
-	source, ok := parseAddress(event.TCPSaddr)
-	if !ok {
-		return retransmitEntry{}, false
-	}
-	destination, ok := parseAddress(event.TCPDaddr)
-	if !ok || source.Is4() != destination.Is4() {
+	source, destination := retransmitAddresses(record)
+	if !source.IsValid() || source.Is4() != destination.Is4() {
 		return retransmitEntry{}, false
 	}
 
-	hasEndSequence := event.EventType == tcpRetransmitSKBEventType ||
-		event.EventType == tcpRetransmitSYNACKEventType
-	hasSequenceRange := hasEndSequence && tcpSequenceBefore(event.TCPSeq, event.TCPEndSeq)
-
+	eventType := abi.TCPRetransmitEventType(record.EventType)
+	hasEndSequence := eventType == abi.TCPRetransmitEventSKB || eventType == abi.TCPRetransmitEventSynack
 	return retransmitEntry{
 		flow: flowKey{
-			source:      netip.AddrPortFrom(source, event.TCPSport),
-			destination: netip.AddrPortFrom(destination, event.TCPDport),
+			source:      netip.AddrPortFrom(source, record.Sport),
+			destination: netip.AddrPortFrom(destination, record.Dport),
 		},
-		namespace: namespaceID{
-			cookie: event.NetNamespaceCookie,
-			inode:  event.NetNamespaceInum,
-		},
-		kernelObservedNS: event.KernelObservedNS,
-		sequence:         event.TCPSeq,
-		endSequence:      event.TCPEndSeq,
-		hasSequenceRange: hasSequenceRange,
-		ackSequence:      event.TCPAckSeq,
-		kind:             retransmitMatchKindFromEvent(event),
+		namespace:        namespaceID{cookie: record.NetNamespaceCookie, inode: record.NetNamespaceInum},
+		kernelObservedNS: record.KernelObservedNS,
+		sequence:         record.TCPSeq,
+		endSequence:      record.TCPEndSeq,
+		hasSequenceRange: hasEndSequence && tcpSequenceBefore(record.TCPSeq, record.TCPEndSeq),
+		ackSequence:      record.TCPAck,
+		kind:             retransmitMatchKindFromRecord(record),
 	}, true
 }
 
-func retransmitMatchKindFromEvent(event *types.TCPRetransmitTracing) retransmitMatchKind {
-	flags := event.TCPFlagsRaw
-	hasSYN := flags&packet.TCPFlagSYN != 0
-	hasACK := flags&packet.TCPFlagACK != 0
-	hasRST := flags&packet.TCPFlagRST != 0
-
-	switch event.EventType {
-	case tcpRetransmitSYNACKEventType:
-		if hasSYN && hasACK && !hasRST {
-			return retransmitMatchSYNACK
+func retransmitMatchKindFromRecord(record *abi.TCPRetransmitEvent) retransmitMatchKind {
+	switch abi.TCPRetransmitEventType(record.EventType) {
+	case abi.TCPRetransmitEventSynack:
+		// This hook has no skb flags; the ABI kind supplies SYN|ACK semantics.
+		return retransmitMatchSYNACK
+	case abi.TCPRetransmitEventSKB:
+		flags := record.TCPFlags
+		if flags&packet.TCPFlagRST != 0 {
+			return retransmitMatchUnsupported
 		}
-	case tcpRetransmitSKBEventType:
+		hasSYN := flags&packet.TCPFlagSYN != 0
+		hasACK := flags&packet.TCPFlagACK != 0
 		switch {
-		case hasSYN && !hasACK && !hasRST:
+		case hasSYN && !hasACK:
 			return retransmitMatchSYN
-		case !hasSYN && hasACK && !hasRST:
+		case !hasSYN && hasACK:
 			return retransmitMatchData
 		}
 	}
@@ -178,12 +164,11 @@ func reverseFlow(flow flowKey) flowKey {
 	}
 }
 
-func parseAddress(value string) (netip.Addr, bool) {
-	address, err := netip.ParseAddr(value)
-	if err != nil {
-		return netip.Addr{}, false
+func canonicalFlow(flow flowKey) flowKey {
+	if flow.source.Compare(flow.destination) > 0 {
+		return reverseFlow(flow)
 	}
-	return address.Unmap(), true
+	return flow
 }
 
 func addressFromIP(ip net.IP) (netip.Addr, bool) {
@@ -194,7 +179,8 @@ func addressFromIP(ip net.IP) (netip.Addr, bool) {
 	return address.Unmap(), true
 }
 
-func dropMatchesRetransmitIgnoringNetNS(drop *dropEvent, retransmit *retransmitEntry) bool {
+// Namespace is checked separately to retain cross-namespace evidence.
+func isDropCandidateForRetransmit(drop *dropEvent, retransmit *retransmitEntry) bool {
 	if !dropWithinRetransmitAge(drop, retransmit) {
 		return false
 	}
@@ -249,7 +235,7 @@ func inboundACKMatches(drop *dropEvent, retransmit *retransmitEntry) bool {
 	}
 }
 
-func sameNamespace(first, second namespaceID) bool {
+func isSameNetNamespace(first, second namespaceID) bool {
 	if first.cookie != 0 && second.cookie != 0 {
 		return first.cookie == second.cookie
 	}

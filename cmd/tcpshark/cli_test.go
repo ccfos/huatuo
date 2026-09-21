@@ -23,6 +23,8 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/ccfos/huatuo/cmd/tcpshark/retransmit"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
@@ -227,7 +229,7 @@ func TestAppBPFPathAndFilterValidation(t *testing.T) {
 	}
 }
 
-func TestEffectiveFilter(t *testing.T) {
+func TestResolveFilterExpression(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -257,7 +259,7 @@ func TestEffectiveFilter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var got string
 			app := newTestApp(func(c *cli.Context) error {
-				got = effectiveFilter(c)
+				got = resolveFilterExpression(c)
 				return nil
 			})
 			args := []string{"tcpshark", "--mode", "retransmit"}
@@ -269,7 +271,7 @@ func TestEffectiveFilter(t *testing.T) {
 				t.Fatalf("Run() error = %v", err)
 			}
 			if got != tt.want {
-				t.Fatalf("effectiveFilter() = %q, want %q", got, tt.want)
+				t.Fatalf("resolveFilterExpression() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -417,5 +419,76 @@ func newTestApp(action cli.ActionFunc) *cli.App {
 		Before:    validateFlags,
 		Writer:    io.Discard,
 		ErrWriter: io.Discard,
+	}
+}
+
+func TestResolveRunOptions(t *testing.T) {
+	tests := []struct {
+		name          string
+		args          []string
+		wantPath      string
+		wantFilter    string
+		wantDropwatch bool
+	}{
+		{
+			name:     "retransmit only",
+			args:     []string{"--bpf-path", "/objects/tcp_retransmit.o"},
+			wantPath: "/objects/tcp_retransmit.o",
+		},
+		{
+			name:          "correlation default filter",
+			args:          []string{"--with-dropwatch", "--bpf-path-dir", "/objects"},
+			wantPath:      "/objects/tcp_retransmit.o",
+			wantFilter:    "tcp",
+			wantDropwatch: true,
+		},
+		{
+			name:          "correlation explicit filter",
+			args:          []string{"--with-dropwatch", "--bpf-path-dir", "/objects", "--filter", " tcp port 80 "},
+			wantPath:      "/objects/tcp_retransmit.o",
+			wantFilter:    "tcp port 80",
+			wantDropwatch: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var options runOptions
+			var output bytes.Buffer
+			app := newTestApp(func(c *cli.Context) error {
+				options = resolveRunOptions(c, "test-version")
+				return nil
+			})
+			app.Writer = &output
+			args := []string{
+				"tcpshark", "--mode", "retransmit", "--enable-tlp",
+				"--duration", "8", "--max-events-per-second", "12", "--output", "json",
+			}
+			args = append(args, test.args...)
+			if err := app.Run(args); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &options.retransmit
+			if options.mode != modeRetransmit || options.durationSeconds != 8 {
+				t.Fatalf("run options = %+v", options)
+			}
+			if cfg.Tracing.BPFPath != test.wantPath || cfg.Tracing.FilterExpression != test.wantFilter ||
+				cfg.Tracing.MaxEventsPerSecond != 12 || !cfg.Tracing.TLPEnabled {
+				t.Fatalf("tracing config = %+v", cfg.Tracing)
+			}
+			if cfg.Output != &output || cfg.OutputFormat != retransmit.OutputJSON ||
+				cfg.ToolName != tcpSharkToolName || cfg.Version != "test-version" ||
+				cfg.SourceType != toolstream.SourceTypeTool {
+				t.Fatalf("session config = %+v", cfg)
+			}
+			if (cfg.Dropwatch != nil) != test.wantDropwatch {
+				t.Fatalf("dropwatch config = %+v, enabled = %t", cfg.Dropwatch, test.wantDropwatch)
+			}
+			if cfg.Dropwatch != nil && (cfg.Dropwatch.BPFPath != "/objects/net_dropwatch.o" ||
+				cfg.Dropwatch.FilterExpression != cfg.Tracing.FilterExpression ||
+				cfg.Dropwatch.MaxEventsPerSecond != cfg.Tracing.MaxEventsPerSecond ||
+				cfg.Dropwatch.HardwareMode != dropwatch.HardwareDisabled) {
+				t.Fatalf("dropwatch config = %+v", cfg.Dropwatch)
+			}
+		})
 	}
 }

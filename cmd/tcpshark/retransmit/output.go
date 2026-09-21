@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package retransmit
 
 import (
 	"encoding/json"
@@ -26,6 +26,12 @@ import (
 )
 
 const textEventBufferSize = 512
+
+// Supported local output formats. Socket output takes precedence.
+const (
+	OutputText = "text"
+	OutputJSON = "json"
+)
 
 // writer is the single write destination for a tcpshark session.
 type writer interface {
@@ -199,9 +205,9 @@ func newWriter(output io.Writer, options *writerOptions) (writer, func() error, 
 	}
 
 	switch options.outputFormat {
-	case outputJSON:
+	case OutputJSON:
 		return &jsonWriter{w: output}, func() error { return nil }, nil
-	case outputText:
+	case OutputText:
 		return &textWriter{w: output}, func() error { return nil }, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported output %q", options.outputFormat)

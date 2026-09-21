@@ -12,15 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package retransmit
 
 import (
 	"net"
 	"net/netip"
 	"testing"
+	"time"
 
+	"golang.org/x/sys/unix"
+
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/packet"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestDropAndRetransmitEntriesUseSameFlowKey(t *testing.T) {
@@ -86,14 +89,11 @@ func TestDropAndRetransmitEntriesUseSameFlowKey(t *testing.T) {
 	}
 }
 
-func TestParseAddressUnmapsIPv4(t *testing.T) {
-	address, ok := parseAddress("::ffff:192.0.2.1")
-	if !ok {
-		t.Fatal("parseAddress() = false")
-	}
-	want := netip.MustParseAddr("192.0.2.1")
-	if address != want || !address.Is4() {
-		t.Fatalf("parseAddress() = %v, want unmapped %v", address, want)
+func TestRetransmitAddressesUnmapIPv4(t *testing.T) {
+	event := testRetransmitEvent(10, "::ffff:192.0.2.1", "::ffff:198.51.100.2", 1000, 80, 100, 200)
+	source, destination := retransmitAddresses(&event.record)
+	if source != netip.MustParseAddr("192.0.2.1") || destination != netip.MustParseAddr("198.51.100.2") {
+		t.Fatalf("addresses = %v, %v; want unmapped IPv4", source, destination)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestFlowFromPacketRejectsMappedIPv4InIPv6Layer(t *testing.T) {
 	}
 }
 
-func TestRetransmitEntryUsesRawFlags(t *testing.T) {
+func TestRetransmitEntryUsesABIFlags(t *testing.T) {
 	event := testRetransmitEvent(
 		10,
 		"10.0.0.1",
@@ -120,8 +120,7 @@ func TestRetransmitEntryUsesRawFlags(t *testing.T) {
 		100,
 		200,
 	)
-	event.TCPFlags = "SYN"
-	event.TCPFlagsRaw = packet.TCPFlagACK
+	event.record.TCPFlags = packet.TCPFlagACK
 
 	entry, ok := retransmitEntryFromEvent(event)
 	if !ok {
@@ -133,43 +132,13 @@ func TestRetransmitEntryUsesRawFlags(t *testing.T) {
 }
 
 func TestRetransmitEntryRejectsInvalidAddressPair(t *testing.T) {
-	tests := []struct {
-		name               string
-		sourceAddress      string
-		destinationAddress string
-	}{
-		{
-			name:               "invalid source address",
-			sourceAddress:      "invalid",
-			destinationAddress: "10.0.0.2",
-		},
-		{
-			name:               "invalid destination address",
-			sourceAddress:      "10.0.0.1",
-			destinationAddress: "invalid",
-		},
-		{
-			name:               "mixed address families",
-			sourceAddress:      "10.0.0.1",
-			destinationAddress: "2001:db8::2",
-		},
+	event := testRetransmitEvent(10, "10.0.0.1", "2001:db8::2", 1000, 80, 100, 200)
+	if _, ok := retransmitEntryFromEvent(event); ok {
+		t.Fatal("accepted mixed mapped IPv4 and IPv6 addresses")
 	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			event := testRetransmitEvent(
-				10,
-				test.sourceAddress,
-				test.destinationAddress,
-				1000,
-				80,
-				100,
-				200,
-			)
-			if _, ok := retransmitEntryFromEvent(event); ok {
-				t.Fatal("retransmitEntryFromEvent() accepted invalid address pair")
-			}
-		})
+	event.record.Family = 0
+	if _, ok := retransmitEntryFromEvent(event); ok {
+		t.Fatal("accepted unknown address family")
 	}
 }
 
@@ -206,6 +175,32 @@ func testDropEvent(
 	}
 }
 
+func TestRetransmitMatchKindUsesABI(t *testing.T) {
+	tests := []struct {
+		name  string
+		kind  abi.TCPRetransmitEventType
+		flags uint8
+		want  retransmitMatchKind
+	}{
+		{"syn", abi.TCPRetransmitEventSKB, packet.TCPFlagSYN, retransmitMatchSYN},
+		{"data", abi.TCPRetransmitEventSKB, packet.TCPFlagACK, retransmitMatchData},
+		{"fin", abi.TCPRetransmitEventSKB, packet.TCPFlagACK | packet.TCPFlagFIN, retransmitMatchData},
+		{"reset", abi.TCPRetransmitEventSKB, packet.TCPFlagACK | packet.TCPFlagRST, retransmitMatchUnsupported},
+		{"synack hook", abi.TCPRetransmitEventSynack, 0, retransmitMatchSYNACK},
+		{"synack ignores skb flags", abi.TCPRetransmitEventSynack, packet.TCPFlagRST, retransmitMatchSYNACK},
+		{"probe", abi.TCPRetransmitEventTlp, packet.TCPFlagACK, retransmitMatchUnsupported},
+		{"unknown", abi.TCPRetransmitEventType(255), packet.TCPFlagACK, retransmitMatchUnsupported},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := abi.TCPRetransmitEvent{EventType: uint8(test.kind), TCPFlags: test.flags}
+			if got := retransmitMatchKindFromRecord(&record); got != test.want {
+				t.Fatalf("match kind = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func testRetransmitEvent(
 	kernelObservedNS uint64,
 	sourceAddress,
@@ -214,19 +209,24 @@ func testRetransmitEvent(
 	destinationPort uint16,
 	sequence,
 	endSequence uint32,
-) *types.TCPRetransmitTracing {
-	return &types.TCPRetransmitTracing{
+) *retransmitEvent {
+	source := netip.MustParseAddr(sourceAddress)
+	destination := netip.MustParseAddr(destinationAddress)
+	record := abi.TCPRetransmitEvent{
 		KernelObservedNS:   kernelObservedNS,
-		NetNamespaceCookie: 1,
-		NetNamespaceInum:   2,
-		TCPSaddr:           sourceAddress,
-		TCPDaddr:           destinationAddress,
-		TCPSport:           sourcePort,
-		TCPDport:           destinationPort,
-		TCPSeq:             sequence,
-		TCPEndSeq:          endSequence,
-		EventType:          tcpRetransmitSKBEventType,
-		TCPFlags:           packet.TCPFlagStrings[packet.TCPFlagACK],
-		TCPFlagsRaw:        packet.TCPFlagACK,
+		NetNamespaceCookie: 1, NetNamespaceInum: 2,
+		Saddr: source.As16(), Daddr: destination.As16(),
+		Family: unix.AF_INET6,
+		Sport:  sourcePort, Dport: destinationPort,
+		TCPSeq: sequence, TCPEndSeq: endSequence,
+		EventType: uint8(abi.TCPRetransmitEventSKB),
+		TCPFlags:  packet.TCPFlagACK,
 	}
+	if source.Is4() && destination.Is4() {
+		record.Family = unix.AF_INET
+		sourceBytes, destinationBytes := source.As4(), destination.As4()
+		copy(record.Saddr[:], sourceBytes[:])
+		copy(record.Daddr[:], destinationBytes[:])
+	}
+	return &retransmitEvent{record: record, observedAt: time.Unix(10, 0)}
 }

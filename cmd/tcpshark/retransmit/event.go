@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package retransmit
 
 import (
 	"fmt"
-	"net"
+	"net/netip"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -29,17 +30,21 @@ import (
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
+// retransmitEvent holds the capture data until output; it does not retain a
+// formatted tracing record. Channel delivery transfers an independent copy.
+type retransmitEvent struct {
+	record     abi.TCPRetransmitEvent
+	observedAt time.Time
+}
+
 var retransmitEventTypeNames = map[abi.TCPRetransmitEventType]string{
-	abi.TCPRetransmitEventSKB:    tcpRetransmitSKBEventType,
-	abi.TCPRetransmitEventSynack: tcpRetransmitSYNACKEventType,
+	abi.TCPRetransmitEventSKB:    "tcp_retransmit_skb",
+	abi.TCPRetransmitEventSynack: "tcp_retransmit_synack",
 	abi.TCPRetransmitEventTlp:    "tcp_send_loss_probe",
 }
 
-func retransmitEventFromRecord(
-	record *abi.TCPRetransmitEvent,
-	sourceType string,
-) (*types.TCPRetransmitTracing, error) {
-	observedTimestamp := timeutil.Now()
+func (e *retransmitEvent) tracing(sourceType string) (*types.TCPRetransmitTracing, error) {
+	record := &e.record
 	kernelObservedTimestamp, err := timeutil.KtimeToTimestamp(record.KernelObservedNS)
 	if err != nil {
 		return nil, fmt.Errorf("convert TCP retransmit kernel observation time: %w", err)
@@ -57,17 +62,14 @@ func retransmitEventFromRecord(
 	}
 
 	var sourceAddress, destinationAddress string
-	switch record.Family {
-	case unix.AF_INET:
-		sourceAddress = net.IP(record.Saddr[:net.IPv4len]).String()
-		destinationAddress = net.IP(record.Daddr[:net.IPv4len]).String()
-	case unix.AF_INET6:
-		sourceAddress = net.IP(record.Saddr[:]).String()
-		destinationAddress = net.IP(record.Daddr[:]).String()
+	source, destination := retransmitAddresses(record)
+	if source.IsValid() {
+		sourceAddress = source.String()
+		destinationAddress = destination.String()
 	}
 
 	return &types.TCPRetransmitTracing{
-		ObservedTimestamp:       observedTimestamp,
+		ObservedTimestamp:       timeutil.Timestamp{Time: e.observedAt},
 		KernelObservedTimestamp: &kernelObservedTimestamp,
 		KernelObservedNS:        record.KernelObservedNS,
 		TCPReason:               classification.reason.String(),
@@ -96,6 +98,17 @@ func retransmitEventFromRecord(
 		DsackDups:               record.DsackDups,
 		SkbAddr:                 kernaddr.Format(record.SKBAddr),
 	}, nil
+}
+
+func retransmitAddresses(record *abi.TCPRetransmitEvent) (netip.Addr, netip.Addr) {
+	switch record.Family {
+	case unix.AF_INET:
+		return netip.AddrFrom4([4]byte(record.Saddr[:4])), netip.AddrFrom4([4]byte(record.Daddr[:4]))
+	case unix.AF_INET6:
+		return netip.AddrFrom16(record.Saddr).Unmap(), netip.AddrFrom16(record.Daddr).Unmap()
+	default:
+		return netip.Addr{}, netip.Addr{}
+	}
 }
 
 // dropEventFromRecord leaves flow invalid when packet evidence cannot be

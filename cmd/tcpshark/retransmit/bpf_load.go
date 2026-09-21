@@ -12,11 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package retransmit
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,26 +22,15 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
-	"github.com/ccfos/huatuo/internal/pcapfilter"
+	pcap "github.com/ccfos/huatuo/internal/pcapfilter"
 )
 
-func loadRetransmitBPF(
+const perfEventMapName = "perf_events"
+
+func loadBPF(
 	bpfPath string,
 	filterExpr string,
 	bpfLimiter *bpf.RateLimiter,
-) (bpf.BPF, error) {
-	return loadFilteredBPFObject(
-		bpfPath,
-		filterExpr,
-		bpfLimiter.Constants(nil),
-	)
-}
-
-func loadFilteredBPFObject(
-	bpfPath string,
-	filterExpr string,
-	constants map[string]any,
-	excludedSections ...string,
 ) (bpf.BPF, error) {
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
@@ -52,40 +39,35 @@ func loadFilteredBPFObject(
 
 	baseName := filepath.Base(bpfPath)
 	objectName := strings.TrimSuffix(baseName, filepath.Ext(baseName))
-	instanceName := fmt.Sprintf("%s_%d.o", objectName, time.Now().UnixNano())
-	return pcapfilter.Load(
-		instanceName,
+	return pcap.Load(
+		fmt.Sprintf("%s_%d.o", objectName, time.Now().UnixNano()),
 		bpfBytes,
 		filterExpr,
-		constants,
-		excludedSections...,
+		bpfLimiter.Constants(nil),
 	)
 }
 
-func attachRetransmitPrograms(
-	ctx context.Context,
-	bpfObj bpf.BPF,
-	isTLPEnabled bool,
-) (bpf.PerfEventReader, error) {
-	reader, err := bpfObj.EventPipeByName(ctx, "perf_events", bpf.DefaultPerfEventBufferBytes)
-	if err != nil {
-		return nil, fmt.Errorf("open event pipe: %w", err)
-	}
-
-	if err := bpfObj.AttachWithOptions(retransmitAttachOptions(isTLPEnabled)); err != nil {
-		attachErr := fmt.Errorf("attach programs: %w", err)
-		if closeErr := reader.Close(); closeErr != nil {
-			return nil, errors.Join(
-				attachErr,
-				fmt.Errorf("close event pipe: %w", closeErr),
-			)
+func (t *Tracer) attachBPF(isTLPEnabled bool) error {
+	if t.limiter.Enabled() {
+		if err := t.limiter.OpenEventPipe(t.ctx, t.bpf); err != nil {
+			return err
 		}
-		return nil, attachErr
 	}
-	return reader, nil
+	reader, err := t.bpf.EventPipeByName(t.ctx, perfEventMapName, bpf.DefaultPerfEventBufferBytes)
+	if err != nil {
+		return fmt.Errorf("open event pipe: %w", err)
+	}
+	t.reader = reader
+	if err := t.ctx.Err(); err != nil {
+		return err
+	}
+	if err := t.bpf.AttachWithOptions(attachOptions(isTLPEnabled)); err != nil {
+		return fmt.Errorf("attach programs: %w", err)
+	}
+	return nil
 }
 
-func retransmitAttachOptions(isTLPEnabled bool) []bpf.AttachOption {
+func attachOptions(isTLPEnabled bool) []bpf.AttachOption {
 	options := []bpf.AttachOption{
 		{
 			ProgramName: "retrans_skb",
