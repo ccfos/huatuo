@@ -1,14 +1,17 @@
 # IO 监测
 
-IO 监测包含磁盘性能指标、blk-throttle 排队等待，以及事件驱动的设备健康
-监测。`iotracing` 从 `/proc/diskstats` 计算磁盘指标；`blk_throtl` 统计
-throttle 等待；
+IO 监测包含磁盘性能指标、IO 延时与大小分布、blk-throttle 排队
+等待，以及事件驱动的设备健康监测。`iotracing` 从 `/proc/diskstats` 计算
+磁盘指标；`iolatency` 统计 block IO 生命周期；`blk_throtl` 统计 throttle 等待；
 `iocost` 统计预算不足造成的等待；`io_health` 记录设备异常并采集健康证据。
 
 ## 配置
 
 `io_health` 默认启用。关闭时向现有 `BlackList` 添加 `io_health` 并重启，
 即可关闭健康事件、取证及对应指标，不影响 `iotracing`。
+
+交付配置默认将 `iolatency` 放入全局 `BlackList`；从列表移除并重启后才会
+加载 block IO 跟踪程序。
 
 `blk_throtl` 默认启用并采集 blk-throttle 被限速的 IO 数量和平均等待时间。
 仅可通过将 `blk_throtl` 加入全局 `BlackList` 并重启来关闭。
@@ -36,6 +39,78 @@ throttle 等待；
 
 指标只覆盖整盘和支持的逻辑设备，不包含分区及 loop、ram、zram、fd 等伪
 设备。
+
+## IO 延时与大小分布
+
+统计下发到 SCSI/SAS、NVMe 磁盘的读写 IO，覆盖 Q（入队）、G（request
+起始时间）、D（下发）和 C（request 完成）。
+C 使用 `block_rq_complete` 的完成字节数结算完整 bio；部分完成的 bio
+保留到下一次完成。全部采集探针必须挂载成功；完成统计只处理
+有本次入队记录的 bio。D→C 使用 request 的内核时间，Q 相关区间使用
+bio 的入队时间。
+
+request clone 撤销时，在 `blk_rq_unprep_clone` 释放 bio 前清理其起点记录，
+已记录的入队样本保留，撤销不产生完成样本。正常完成后的空链直接返回。
+
+A（remap）作为目标设备的 Q。同一 bio 在同一整盘上多次产生 Q/A 时，
+入队大小只计一次，Q 相关延时从最后一次 Q/A 计时。
+
+| 阶段 | 指标后缀 |
+| --- | --- |
+| Q→G | `q2g_seconds_bucket` |
+| Q→D | `q2d_seconds_bucket` |
+| D→C | `d2c_seconds_bucket` |
+
+IO 大小统计：
+
+| 采集点 | 指标后缀 | 含义 |
+| --- | --- | --- |
+| Q | `queued_io_size_bytes_bucket` | 入队 bio 大小 |
+| C | `issued_io_size_bytes_bucket` | 已完成 request 最后一次下发的大小 |
+
+宿主机指标使用 `huatuo_bamai_iolatency_` 前缀，并带 `device`、
+`operation`（`read` 或 `write`）和 `le` 标签。容器指标使用
+`huatuo_bamai_iolatency_container_` 前缀，并沿用标准容器标签。
+
+这些指标是相邻两次成功采集之间的 Gauge bucket。首次采集只建立基线，
+宿主机计数读取失败时保留 session 和基线；建立基线后新出现的宿主机统计项从零开始计算。
+容器发现不影响启动或宿主机采集，无需运行 kubelet。容器查询、计数读取失败或标签无效时，
+宿主机指标和基线正常推进，不输出对应容器指标；关联恢复后先建立容器基线，不补发缺失区间。
+freeze 读取失败只缺少本轮 freeze 指标，不阻断直方图。
+`le` 在单个样本内累计，`+Inf` 是该指标在区间内的样本
+总数。不输出 `_sum` 或 `_count`。共享的宿主机指标
+`huatuo_bamai_iolatency_interval_start_timestamp_seconds` 和
+`huatuo_bamai_iolatency_interval_end_timestamp_seconds` 给出真实区间边界，
+仅带 `region` 和 `host` 标签。
+
+Grafana 直接将 Gauge bucket 展示为 Heatmap，并在详情中显示区间起止时间、
+时长、总量和互斥桶。查询不需要 `rate()` 或 `increase()`。原有
+`huatuo_bamai_iolatency_blkdisk_freeze` Counter 保持不变。
+
+被 merge 的 bio 通过 request 的 bio 列表在 C 点结算。G 使用内核保存的
+`request.start_time_ns`，D 使用最后一次下发的 `request.io_start_time_ns`。
+Q→D 包含重排等待，D→C 从最后一次下发计时。启动时检查各目标盘的
+`iostats` 和请求时间统计，任一未开启则初始化失败并说明设备。NVMe multipath 统计实际下发请求的路径盘，跳过上层 head。每轮采集采用 Update 进入时已确认的磁盘配置，期间发现的变化在后台复查后对后续采集生效，切换附近一个周期允许少记或不准。仅暂停不满足条件的磁盘；恢复配置后重新统计，其他磁盘不受影响。
+零字节 pure flush 被过滤，带数据的 read/write 请求正常统计。
+
+启动依赖可读的内核 BTF 和完整的 `bpf_htab` 结构。采用 `bpf_mem_alloc`
+时停止 IOLatency；BTF 读取、解析或结构查找失败时，记录具体原因并停止。
+其他采集模块不受此检查影响。
+
+单次最多遍历 512 个 bio，起点表最多保存 10,240 条记录。
+map 写入或删除遇到 `-EBUSY` 时跳过该操作并继续采集。
+容器计数分配或清理失败不停止 Host，未归属样本仍包含在宿主机总量中。
+遍历超限或 bio 起点记账错误会停止采集并记录原因，排查后重启 Huatuo 恢复。
+
+允许漏事件留下部分阶段样本和起点记录，后续 Q/A 重新初始化记录。
+缺少起点或时间倒置的区间被忽略；地址复用仍可能产生正值错样。
+启动时发现软件 blk-crypto fallback 已初始化，会记录 warning 并跳过本特性。
+用户态负载用例及误差边界见 [采集方案](iolatency-design.md)。
+
+request 最终完成时记录一次下发大小，设备和操作类型取自 request。
+容器归属取本次完成的首个剩余 bio 的 blkcg；
+4.18 内核可能合并不同 blkcg 的 bio，因此容器
+`issued` 分布为近似值，宿主机分布不受影响。
 
 ## blk-throttle 排队等待
 

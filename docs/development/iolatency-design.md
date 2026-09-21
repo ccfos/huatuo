@@ -1,0 +1,139 @@
+# IOLatency 底层磁盘采集方案
+
+本文描述底层磁盘直方图的采集流程与误差边界。
+
+## 统计范围
+
+统计实际下发到企业级 SCSI/SAS、NVMe 磁盘的读写 IO，输出 Q→G、Q→D、D→C 延时直方图，以及入队 bio 大小、下发 request 大小分布。
+
+计时从交给底层盘开始，到底层 request 完成。DM/MD 上层处理时间、上层原 bio 的完成回调、PMEM 和旧式 ISA bounce 不在统计范围内。目标设备筛选应覆盖所有创建 bio 状态的入口。
+
+## 启动条件
+
+C（`block_rq_complete`）是必需探针。通过 `queue_attr_show` 探针，逐盘读取 `queue/iostats`，同时取得该盘内核请求统计状态：
+
+- G 要求 `iostats=1`，使用 `request.start_time_ns`。
+- D 要求请求时间统计已启用，使用 `request.io_start_time_ns`。检查 `q->stats` 的 accounting 状态和 callback 链表，按内核设置 `QUEUE_FLAG_STATS` 的条件判断，不依赖标志位号、debugfs 或配置文件。
+- 任一目标盘缺少 G 或 D 条件，IOLatency 初始化失败并说明设备和原因。运行期间新增磁盘或配置变化后重新检查；不满足条件时仅暂停该盘并记录原因，配置恢复后重新登记。
+- 通过检查后再读一次 sysfs，由 BPF 在内核持有磁盘引用期间创建 Host 和 freeze 条目；检查完成后清除探测请求。冻结计数由 `blk_mq_freeze_queue` 探针更新。
+- 探测请求按盘名保存，只响应该盘的 `iostats` 属性读取。同盘其他进程的读取也可完成探测；重复登记保留已有计数。请求替换或删除后，已进入探针继续持有旧请求值，不会改写后续请求。
+
+全部采集探针（Q、bio-remap、request-remap、split、C、clone 撤销和 queue freeze）及磁盘登记、释放、配置变化探针必须挂载成功，保证普通 IO、重映射及拆分路径均被覆盖；accounting 只能启用的内核不挂载不存在的关闭函数。参数探测或挂载失败时，终止本次启动并释放 BPF 对象。C 只结算有效入队记录，复用 Q/A 保存的容器归属；D→C 使用 request 的内核时间。
+
+运行环境需提供可读的 `/sys/kernel/btf/vmlinux`。加载 BPF 对象前，通过 `elems`、`extra_elems`、`n_buckets` 成员识别普通 HASH 的 `bpf_htab`；同名记录逐个检查，任一个含有 `bpf_mem_alloc` 类型成员时，停止 IOLatency 并报告成员名。BTF 读取或解析失败、普通 HASH 结构缺失时，也停止启动并记录原因。其他采集模块不受此检查影响。
+
+## Q/A 起点
+
+沿用 blktrace 的事件：Q 为 `block_bio_queue`，A 为 `block_bio_remap` 或 `block_rq_remap`。
+
+- 分区到所属整盘的地址换算不记 A；DM/MD 跨设备 remap 以目标盘记录 bio 起点，目标为分区时同样保留。request remap 的目标设备取自 request，为其 bio 链记录起点。
+- 后续产生底层盘 Q 时，用 Q 时间覆盖起点；没有后续 Q 时保留 A 时间。
+- 同一 bio、同一整盘多次 Q/A，取最后时间，queued-size 只记录一次；切换整盘时建立该盘的新记录。
+- 每次 Q/A 更新起点、设备和容器归属；queued-size 仍按上述规则去重。bio 状态只保存 Q 时间、blkcg 和整盘设备号，共 24 字节。
+- Q/A 共用已有起点字段，不增加等待 Q 或标记是否见过 Q 的状态。
+
+```text
+DM/MD 完成映射 → 底层盘 A → 底层盘 Q（可能没有）→ D → C
+                    └──────── 起点取最后一次 Q/A ────────┘
+```
+
+重提交 bio 不保证再次产生 Q：块层通过 bio 的 `BIO_TRACE_COMPLETION` 标志避免重复 Q，切换设备并不必然清除该标志。A 用于提供这类路径的底层盘起点。
+
+## 中间阶段
+
+- Q/A、C 按 `gendisk *` 查询 Host 计数项，直接使用条目中的 major:minor。每个 request 读取一次 `start_time_ns`、`io_start_time_ns`、实际设备和操作类型，供所有已完成 bio 复用。
+- G 为内核记录的 request 起始时间，同一 request 合并的 bio 共用 G；后合并且 Q 晚于 G 的 bio 不产生 Q→G 样本。
+- D 为最后一次下发的内核时间。Q→D 包含此前重排和重新下发前的等待，D→C 从最后一次 D 计时；各区间在 C 点结算一次。
+- 内核使用 plug 缓存时间时，沿用该时间精度；零值或时间倒置只省略对应区间。
+- request 最终完成时，按 `stats_sectors << 9` 记录最后一次下发的大小，归属本次完成的首个剩余 bio；部分完成不重复记录大小。
+
+## 完成与清理
+
+正常完成使用 raw `block_rq_complete`，在内核推进 bio 链之前，根据本次完成的 `nr_bytes` 遍历：
+
+1. 完整完成的 bio 有有效入队记录时，复制并删除状态，再用副本结算样本；缺失起点记录时直接跳过。
+2. 只完成部分数据的 bio 保留状态，等待后续完成。
+3. C 表示底层 request 的完成事件，不等待上层回调返回。
+
+request clone 撤销时，通过 `blk_rq_unprep_clone` 在释放 bio 前删除状态；保留已经产生的入队样本，撤销不产生完成和下发大小样本。
+
+单次遍历容量设为 512 个 bio，起点表容量为 10,240 项。超出容量或发生不可继续记账的错误时，BPF 记录原因；用户态在下次采集检查到错误后丢弃该区间并卸载探针。卸载前的 IO 继续按正常路径处理，停采检查集中在用户态采集边界。
+
+## 容器归属
+
+Host 计数独立于容器发现和容器计数表。容器查询、计数读取、分配或清理失败，
+以及标签无效时，Host 正常推进，未归属样本仍包含在宿主机总量中。
+容器关联恢复后先建立基线，不补发缺失区间。freeze 读取失败只影响 freeze 指标。
+
+## 磁盘登记与退出
+
+登记时按整盘名称 `sd*`、`nvme*` 筛选；NVMe 只登记 `q->mq_ops` 非空的请求队列，跳过仅转发 bio 的 multipath head。随后检查时间戳配置。Host 表按 `gendisk *` 保存设备号、退休标记和读写计数；IO 探针通过 Host 表判断是否采集，公开指标使用整盘设备名。启动时检查已有磁盘；`blk_register_queue` 成功返回后，通过 perf reader 通知用户态检查并登记新盘。
+
+`queue_attr_store` 成功返回、统计 callback 增删和 accounting 开关变化时，同样触发逐盘复查。检查实际 `iostats` 和请求时间统计状态；关闭 WBT 限速本身不等于关闭请求时间统计。配置不再满足要求时，仅暂停该盘的延时和 IO 大小统计，丢弃过渡区间并清理对应计数；恢复后重新登记。freeze 不依赖请求时间戳，保持累计和输出。事件只合并唤醒扫描，不保存内核对象指针。状态表的变化序号随常规采集读取，补偿丢失的通知；复查失败由后续通知触发重试。
+
+本轮磁盘配置以 Update 进入时已确认的状态为准；采集中发现的变化由后台复查，结果在后续 Update 生效。配置切换附近一个采集周期允许少记或不准。
+
+`disk_release` 入口直接删除该盘的 freeze 条目，并标记已有 Host 条目退休；延时统计处于暂停状态时也回收 freeze。Q/C 继续按原路径记账，用户态在 Update 中丢弃该设备号本轮全部 Host、容器延时及 IO 大小数据，并清除对应 baseline。随后先删除 Host 入口，再删除容器计数；后续 Q/C 查不到 Host 时直接返回。容器计数首次建表后复查准入，清除与退休清理交错产生的条目。
+
+清理失败保留该盘的重试记录，其他盘正常采集。清理完成后重新扫描，新盘从零开始记账；已登记且复用相同设备号的替换盘一起清零。接受热插拔过渡区间少记，该过程由当前 session 完成。
+
+Host 和 freeze 表使用非预分配 HASH，删除后的节点由 RCU 保留到已进入的探针退出；启动时检查分配器支持条件。
+
+## 漏事件与误差边界
+
+接受部分 IO 只产生入队大小样本，缺少 C 样本并留下起点记录。进入 request 前的异常结束、完成探针漏执行，以及主线 raw tracepoint 的同程序嵌套跳过，均按此边界处理；已经产生的样本保留。
+
+- 已有记录按上述阶段规则覆盖，缺少阶段或时间倒置本身不触发停采。
+- hash map 更新或删除返回 `-EBUSY` 时，跳过本次操作并继续采集；由此产生的漏样和残留按同一边界处理。中断内重试无法解除被打断写者的保护，因此不在探针中重试。起点表的其他 helper 错误仍停止采集；容器计数表错误只影响容器归属。
+- 计时先检查起点存在且终点晚于起点，再做减法，避免 `u64` 下溢；无效区间单独丢弃，其他有效区间正常记账。
+- 以 bio 地址关联阶段。旧 C 缺失且新 IO 的 Q/A 也未记录时，地址复用可能将旧起点与新终点配对；即使时间差为正，也可能形成错误的长延时样本。接受这类错样。
+- 正常 C 和 clone 撤销路径负责回收，残留记录允许由后续 Q/A 覆盖。当前按残留规模不会持续增长的假设推进，保留既定容量上限和满表错误处理。
+
+后续测试验证残留是否随反复施压持续增长，并检查错样频率及其对长延时分布的影响。“少量”是当前接受目标，实际程度以测试结果确认。
+
+## 用户态 IO 用例
+
+真实内核挂载用例 `TestIOLatencyArgumentProbeKernel` 设置 `TEST_INTEGRATION=true` 后运行。额外指定 `TEST_IOLATENCY_CONFIG_DISK=sdb` 可在空闲测试盘上关闭、恢复 `iostats`，验证事件通知、单盘暂停及重新登记；测试结束恢复原设置。
+
+[user-io.fio](../../integration/iolatency/user-io.fio) 从用户态读写测试文件，由正常块层路径产生 bio 和 request。用例覆盖以下负载：
+
+| 场景 | 用户态负载 | 验证重点 |
+| --- | --- | --- |
+| 基本读写 | 4 KiB direct IO，深度 1 | 可用阶段产生样本，完成后回收状态 |
+| 大 IO | 4 MiB direct 顺序读写，深度 16 | 实际发生的拆分和完成处理 |
+| 小 IO 合并 | 连续小 IO，深度 256，批量提交 | 合并后的实际 bio 链长度及完整遍历 |
+| 文件回写 | 4 KiB buffered write，结束时 fsync | 用户写入经回写线程下发后的阶段记录 |
+| 并发读写 | 4 个任务，各深度 64，读写混合 | 并发完成时的样本、错误状态和残留变化 |
+
+在测试盘的文件系统中创建独立目录。下例准备 128 MiB 文件，并重复三轮负载；准备和每轮分别限制为 45 秒、60 秒，总命令超时预算 225 秒。
+
+```sh
+set -e
+IOLATENCY_TEST_DIR=$(mktemp -d /path/to/test-mount/iolatency.XXXXXX)
+export IOLATENCY_TEST_DIR
+export IOLATENCY_MERGE_BS=4k
+timeout 45s fio --name=prepare --filename="$IOLATENCY_TEST_DIR/data.bin" \
+  --rw=write --bs=1m --size=128m --ioengine=psync --direct=1 --end_fsync=1
+for round in 1 2 3; do
+  timeout 60s fio integration/iolatency/user-io.fio --output-format=json \
+    --output="$IOLATENCY_TEST_DIR/round-$round.json"
+done
+```
+
+文件系统和设备支持 512 B direct IO 时，可将 `IOLATENCY_MERGE_BS` 设为 `512` 运行合并组。相同用例分别在 SCSI/SAS、NVMe，以及已有 DM/MD 映射上的测试目录执行，检查指标归属到实际下发设备。
+
+执行时配合只读观测记录实际 request 的 bio 链长度、拆分/合并事件及采集结果。长链用例须实际观察到超过 128 个 bio 的 request，并确认在 512 容量内正常记账；未形成长链时记为该场景未覆盖。大 IO 的字节数、fio 完成次数均不能代替这一证据。
+
+每轮正常 IO 排空后记录起点表残留及各阶段样本，比较三轮的增长趋势和长延时分布；允许已约定的残留和错样。用例超时、采集停用或容量错误应明确报告。负载文件负责产生 IO，链长和指标验收需在实际执行时一并采集。
+
+## 软件加密启动检查
+
+启动时检查软件 blk-crypto fallback：
+
+- 确认运行内核未编入该功能，正常启用采集。
+- 已编入时，解析 `tfms_inited` 数据符号地址，通过临时 BPF 读取完整数组并检查读取返回值；任一项为 true，跳过本直方图特性并 warning，随后卸载临时探针。
+- 成功读取且所有项为 false，正常启用采集；符号或内存读取失败明确报告检查失败，不当作未启用。
+- 不区分读写；接受曾启用后停用仍被排除，启动后才启用的情况不作动态处理。
+- 支持判断依据实际配置、符号和接口能力，不依据内核版本号，也不通过 BTF 获取函数参数。
+
+2026-09-14 已在 OEVM（5.10）和 OETEST（4.18）验证 BPF 可以读取内核数据变量。两台运行内核均没有该 fallback 实现，因此尚未验证真实 `tfms_inited` 数组的启用和未启用两种状态。
