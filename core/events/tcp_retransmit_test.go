@@ -31,8 +31,8 @@ func TestHandleTCPRetransmitEventPreservesCorrelationResult(t *testing.T) {
 		CorrelationReasons: []types.CorrelationReason{
 			types.CorrelationReasonStartupHistoryIncomplete,
 		},
-		DropwatchPerfStatus: perfStatus,
-		DropStack:           "kfree_skb/1",
+		DropPerfStatus: perfStatus,
+		DropStack:      "kfree_skb/1",
 	}
 	if err := handleTCPRetransmitEvent(nil, event); err != nil {
 		t.Fatal(err)
@@ -40,8 +40,8 @@ func TestHandleTCPRetransmitEventPreservesCorrelationResult(t *testing.T) {
 	if event.DropLocation != "unknown" {
 		t.Fatalf("DropLocation = %q, want finalized result unchanged", event.DropLocation)
 	}
-	if event.DropwatchPerfStatus != perfStatus {
-		t.Fatal("DropwatchPerfStatus changed while saving finalized result")
+	if event.DropPerfStatus != perfStatus {
+		t.Fatal("DropPerfStatus changed while saving finalized result")
 	}
 	if len(event.CorrelationReasons) != 1 ||
 		event.CorrelationReasons[0] != types.CorrelationReasonStartupHistoryIncomplete {

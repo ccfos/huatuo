@@ -219,7 +219,7 @@ detach 并关闭事件与告警 reader，再等待告警 worker 退出，最后�
 6. 最后结束 socket output；调用者传入的 io.Writer 不由会话关闭。
 
 shutdown pending 输出 `drop_location=unknown`、`no_matching_drop`、其他适用原因
-和最新可用的 `dropwatch_perf_status`。尾部 drop 仍可能丢失，因此原本可以匹配的
+和最新可用的 `drop_perf_status`。尾部 drop 仍可能丢失，因此原本可以匹配的
 重传也可能被定型为 `unknown`。这是关闭边界上明确接受的取舍。
 
 ## 9. 文件职责

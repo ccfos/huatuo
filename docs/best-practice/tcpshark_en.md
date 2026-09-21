@@ -190,7 +190,7 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 | `skb_addr` | string | Retransmission-queue SKB pointer in hex; absent for SYN-ACK and TLP events. |
 | `drop_location` | string | Local correlation result: `host_software` or `unknown`; see §5. |
 | `correlation_reasons` | string array | Stable machine-readable reasons why a no-match remains `unknown`. |
-| `dropwatch_perf_status` | object | Latest cumulative embedded-dropwatch `perf_lost`, `lost_samples`, and `rate_limited` counters for a no-match; omitted when the status map cannot be read. |
+| `drop_perf_status` | object | Latest cumulative embedded-dropwatch `perf_lost`, `lost_samples`, and `rate_limited` counters for a no-match; omitted when the status map cannot be read. |
 | `drop_stack` | string | Matched drop stack; unmatched stacks are not symbolized. |
 | `source` | string | Event source. It is `tools` when tcpshark runs standalone and `events` when huatuo-bamai launches it. |
 
@@ -321,7 +321,7 @@ With `--with-dropwatch`, one tcpshark process owns both perf inputs. A retransmi
 |--------|-------------------|--------|
 | Outbound segment match | Same network namespace, family, direction, tuple, monotonic ordering, and overlapping SYN/data/FIN sequence range. | `host_software` with `drop_stack`. |
 | Reverse ACK match | Reverse tuple in the same namespace, ACK flag set, monotonic ordering, and ACK covering the retransmitted sequence end. | `host_software` with `drop_stack`. |
-| No strict match | Negative evidence is not conclusive because source startup does not cover earlier causal history. Other coverage failures are listed separately. | `unknown` with `correlation_reasons` and `dropwatch_perf_status`. |
+| No strict match | Negative evidence is not conclusive because source startup does not cover earlier causal history. Other coverage failures are listed separately. | `unknown` with `correlation_reasons` and `drop_perf_status`. |
 
 There is no tuple-only, SKB-pointer-only, cross-namespace, or ambiguous positive match. A drop that satisfies every check except namespace is reported as `cross_netns_candidate`, not matched. A matched drop is consumed once, while later drops on the same connection remain available. Stack symbolization runs only after a match.
 
@@ -335,7 +335,7 @@ There is no tuple-only, SKB-pointer-only, cross-namespace, or ambiguous positive
 | `perf_events_lost` / `drop_rate_limited` | Evidence was lost before userspace or rejected by the embedded rate limiter. |
 | `retransmit_wait_capacity_exceeded` | The bounded retransmission wait queue reached capacity. |
 | `unsupported_retransmission` | The retransmission lacks the event type, namespace, time, or sequence evidence required for strict matching. |
-| `dropwatch_perf_status_unavailable` | The latest embedded perf counters could not be read; the no-match is still emitted once without `dropwatch_perf_status`. |
+| `dropwatch_perf_status_unavailable` | The latest embedded perf counters could not be read; the no-match is still emitted once without `drop_perf_status`. |
 
 Drop records that cannot be normalized and drop candidates evicted from the bounded cache do not add per-retransmission reasons. If no strict match is found, the result remains `unknown` with `no_matching_drop`.
 
@@ -343,7 +343,7 @@ When collection ends or any worker fails, tcpshark does not read dropwatch
 records still queued in the perf ring. Retransmissions already waiting in the
 correlator are finalized in deadline order through the normal no-match path:
 they receive `drop_location=unknown`, `no_matching_drop`, any other applicable
-reasons, and the latest available `dropwatch_perf_status`. An unread tail drop
+reasons, and the latest available `drop_perf_status`. An unread tail drop
 could otherwise have matched a shutdown result.
 
 #### 5.3 Dropwatch Perf Status

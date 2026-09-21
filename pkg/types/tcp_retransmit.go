@@ -144,8 +144,8 @@ type TCPRetransmitTracing struct {
 	SkbAddr string `json:"skb_addr,omitempty"` // the sk_buff pointer being retransmitted
 
 	// Correlation with dropwatch.
-	DropLocation        string              `json:"drop_location,omitempty"`
-	CorrelationReasons  []CorrelationReason `json:"correlation_reasons,omitempty"`
-	DropwatchPerfStatus *DropwatchStatus    `json:"dropwatch_perf_status,omitempty"`
-	DropStack           string              `json:"drop_stack,omitempty"`
+	DropLocation       string              `json:"drop_location,omitempty"`
+	DropPerfStatus     *DropwatchStatus    `json:"drop_perf_status,omitempty"`
+	DropStack          string              `json:"drop_stack,omitempty"`
+	CorrelationReasons []CorrelationReason `json:"correlation_reasons,omitempty"`
 }

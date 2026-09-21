@@ -64,7 +64,7 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 					CorrelationReasonStartupHistoryIncomplete,
 					CorrelationReasonPerfEventsLost,
 				},
-				DropwatchPerfStatus: &DropwatchStatus{
+				DropPerfStatus: &DropwatchStatus{
 					PerfLost:    1,
 					RateLimited: 2,
 				},
@@ -193,7 +193,7 @@ func TestTCPRetransmitTracingOmitEmpty(t *testing.T) {
 		"container_id", "memory_cgroup_css_addr", "net_namespace_cookie", "net_namespace_inum",
 		"reord_seen", "dsack_dups", "tcp_end_seq", "tcp_flags",
 		"skb_addr", "drop_location", "correlation_reasons",
-		"dropwatch_perf_status", "drop_stack", "source",
+		"drop_perf_status", "drop_stack", "source",
 	}
 	for _, f := range omitFields {
 		if _, ok := raw[f]; ok {

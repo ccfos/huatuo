@@ -43,7 +43,7 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 			)
 			if statusErr == nil {
 				statusCopy := status
-				event.DropwatchPerfStatus = &statusCopy
+				event.DropPerfStatus = &statusCopy
 			}
 			if statusErr != nil {
 				event.CorrelationReasons = append(

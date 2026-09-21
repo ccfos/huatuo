@@ -272,7 +272,7 @@ func TestRetransmitDropCancellationFinalizesPendingEvents(t *testing.T) {
 	}
 	if sink.events[0].DropLocation != "unknown" ||
 		!hasCorrelationReason(sink.events[0], types.CorrelationReasonNoMatchingDrop) ||
-		sink.events[0].DropwatchPerfStatus == nil || sink.events[0].DropStack != "" {
+		sink.events[0].DropPerfStatus == nil || sink.events[0].DropStack != "" {
 		t.Fatalf("finalized retransmission = %+v, want unknown no-match result", retransmit)
 	}
 }

@@ -98,7 +98,7 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 			types.CorrelationReasonStartupHistoryIncomplete,
 			types.CorrelationReasonPerfEventsLost,
 		},
-		DropwatchPerfStatus: &types.DropwatchStatus{
+		DropPerfStatus: &types.DropwatchStatus{
 			PerfLost:    2,
 			LostSamples: 4,
 			RateLimited: 3,

@@ -139,15 +139,15 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 				t.Fatalf("reasons = %v, want %v", event.CorrelationReasons, test.wantReasons)
 			}
 			if test.drop != nil {
-				if event.DropwatchPerfStatus != nil || event.CorrelationReasons != nil {
+				if event.DropPerfStatus != nil || event.CorrelationReasons != nil {
 					t.Fatalf("matched event retained no-match fields: %+v", event)
 				}
 			} else if test.readErr != nil {
-				if event.DropwatchPerfStatus != nil {
+				if event.DropPerfStatus != nil {
 					t.Fatalf("unavailable status result = %+v", event)
 				}
-			} else if event.DropwatchPerfStatus == nil || *event.DropwatchPerfStatus != test.status {
-				t.Fatalf("status = %+v, want %+v", event.DropwatchPerfStatus, test.status)
+			} else if event.DropPerfStatus == nil || *event.DropPerfStatus != test.status {
+				t.Fatalf("status = %+v, want %+v", event.DropPerfStatus, test.status)
 			}
 			if len(reasons) != 1 || reasons[0] != types.CorrelationReasonNoMatchingDrop {
 				t.Fatalf("result reasons were mutated: %v", reasons)
@@ -211,12 +211,12 @@ func TestEmitResultsReadsDropwatchStatusOncePerBatch(t *testing.T) {
 		t.Fatalf("events = %d, want %d", len(sink.events), len(results))
 	}
 	first, second := sink.events[0], sink.events[1]
-	if first.DropwatchPerfStatus == nil || second.DropwatchPerfStatus == nil {
+	if first.DropPerfStatus == nil || second.DropPerfStatus == nil {
 		t.Fatal("batch output is missing status snapshots")
 	}
-	first.DropwatchPerfStatus.PerfLost = 1
-	if *second.DropwatchPerfStatus != source.status {
-		t.Fatalf("mutating one output changed another status snapshot: %+v", second.DropwatchPerfStatus)
+	first.DropPerfStatus.PerfLost = 1
+	if *second.DropPerfStatus != source.status {
+		t.Fatalf("mutating one output changed another status snapshot: %+v", second.DropPerfStatus)
 	}
 }
 
@@ -264,10 +264,10 @@ func TestEmitResultsUsesLatestDropwatchStatus(t *testing.T) {
 		t.Fatalf("events = %d, want 1", len(sink.events))
 	}
 	event := sink.events[0]
-	if event.DropwatchPerfStatus == nil ||
-		event.DropwatchPerfStatus.PerfLost != 2 ||
-		event.DropwatchPerfStatus.LostSamples != 5 ||
-		event.DropwatchPerfStatus.RateLimited != 3 {
+	if event.DropPerfStatus == nil ||
+		event.DropPerfStatus.PerfLost != 2 ||
+		event.DropPerfStatus.LostSamples != 5 ||
+		event.DropPerfStatus.RateLimited != 3 {
 		t.Fatalf("emitted event = %+v, want latest perf status", event)
 	}
 	for _, reason := range []types.CorrelationReason{
@@ -309,7 +309,7 @@ func TestEmitResultsWritesOnceWhenDropwatchStatusFails(t *testing.T) {
 		t.Fatalf("events = %+v, want event exactly once", sink.events)
 	}
 	event := sink.events[0]
-	if event.DropwatchPerfStatus != nil || !hasCorrelationReason(
+	if event.DropPerfStatus != nil || !hasCorrelationReason(
 		event,
 		types.CorrelationReasonDropwatchPerfStatusUnavailable,
 	) {

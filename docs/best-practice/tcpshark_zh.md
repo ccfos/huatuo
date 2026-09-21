@@ -187,7 +187,7 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 | `skb_addr` | string | 十六进制重传队列 SKB 指针；SYN-ACK 和 TLP 事件中不存在。 |
 | `drop_location` | string | local 关联结果：`host_software` 或 `unknown`，见 §5。 |
 | `correlation_reasons` | string array | no-match 保持 `unknown` 的稳定、机器可读原因。 |
-| `dropwatch_perf_status` | object | no-match 定型时最新的 embedded dropwatch 累计 `perf_lost`、`lost_samples` 和 `rate_limited`；状态 map 读取失败时省略。 |
+| `drop_perf_status` | object | no-match 定型时最新的 embedded dropwatch 累计 `perf_lost`、`lost_samples` 和 `rate_limited`；状态 map 读取失败时省略。 |
 | `drop_stack` | string | 匹配到的 drop 调用栈；未匹配的栈不做符号化。 |
 | `source` | string | 事件来源。独立运行 tcpshark 时为 `tools`，由 huatuo-bamai 启动时为 `events`。 |
 
@@ -320,7 +320,7 @@ sequenceDiagram
 |------|----------------|------|
 | 出方向 segment 匹配 | network namespace、地址族、方向、四元组、单调时间顺序相同，且 SYN/data/FIN sequence range 重叠。 | `host_software` 和 `drop_stack`。 |
 | 反方向 ACK 匹配 | 相同 namespace 中的反向四元组、ACK flag、单调时间顺序，且 ACK 覆盖重传 sequence end。 | `host_software` 和 `drop_stack`。 |
-| 无严格匹配 | source 启动时间不能覆盖更早的因果历史，负向证据不完整；其他 coverage 缺口由原因字段区分。 | `unknown`、`correlation_reasons` 和 `dropwatch_perf_status`。 |
+| 无严格匹配 | source 启动时间不能覆盖更早的因果历史，负向证据不完整；其他 coverage 缺口由原因字段区分。 | `unknown`、`correlation_reasons` 和 `drop_perf_status`。 |
 
 不存在仅四元组、仅 SKB pointer、跨 namespace 或 ambiguous 的正向匹配。除 namespace 外满足 tuple、时间和 sequence 条件的证据只输出 `cross_netns_candidate`，不会正向匹配。匹配到的 drop 只消费一次，同一连接的后续 drop 仍可继续匹配。只有成功匹配后才做调用栈符号化。
 
@@ -334,14 +334,14 @@ sequenceDiagram
 | `perf_events_lost` / `drop_rate_limited` | 证据在到达用户态前丢失，或被 embedded 限速器拒绝。 |
 | `retransmit_wait_capacity_exceeded` | 有界重传等待队列已满。 |
 | `unsupported_retransmission` | 重传缺少严格匹配需要的事件类型、namespace、时间或 sequence 证据。 |
-| `dropwatch_perf_status_unavailable` | 无法读取最新 embedded perf 计数；no-match 仍只输出一次，但不带 `dropwatch_perf_status`。 |
+| `dropwatch_perf_status_unavailable` | 无法读取最新 embedded perf 计数；no-match 仍只输出一次，但不带 `drop_perf_status`。 |
 
 无法规范化的 drop 记录和从有界缓存中淘汰的 drop 候选不再产生重传级原因。没有找到严格匹配时，结果仍为 `unknown` 并包含 `no_matching_drop`。
 
 采集结束或任一 worker 失败时，不再读取 dropwatch perf ring 中尚未交给关联器的
 尾部记录。关联器中仍在等待的重传按 deadline 顺序通过正常 no-match 路径定型，
 输出 `drop_location=unknown`、`no_matching_drop`、其他适用原因和当时可读取的
-`dropwatch_perf_status`。未读取的尾部 drop 原本仍可能与 shutdown 结果匹配。
+`drop_perf_status`。未读取的尾部 drop 原本仍可能与 shutdown 结果匹配。
 
 #### 5.3 Dropwatch Perf Status
 

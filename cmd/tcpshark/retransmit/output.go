@@ -131,7 +131,7 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 			line = append(line, reason...)
 		}
 	}
-	if status := ev.DropwatchPerfStatus; status != nil {
+	if status := ev.DropPerfStatus; status != nil {
 		line = append(line, " dropwatch_perf_lost="...)
 		line = strconv.AppendUint(line, status.PerfLost, 10)
 		line = append(line, " dropwatch_lost_samples="...)
