@@ -119,27 +119,42 @@ func validateFlags(c *cli.Context) error {
 	if duration := c.Int(cliFlagDuration); duration < 0 || int64(duration) > maxDurationSeconds {
 		return fmt.Errorf("invalid --duration %d; want 0..%d seconds", duration, maxDurationSeconds)
 	}
-	if outputFormat := c.String(cliFlagOutput); outputFormat != retransmit.OutputJSON && outputFormat != retransmit.OutputText {
-		return fmt.Errorf("invalid --output %q; want json or text", outputFormat)
+	switch sourceType := c.String(cliFlagSourceTypes); sourceType {
+	case toolstream.SourceTypeEvent, toolstream.SourceTypeTool:
+	default:
+		return fmt.Errorf(
+			"invalid --source-types %q; want %q or %q",
+			sourceType,
+			toolstream.SourceTypeTool,
+			toolstream.SourceTypeEvent,
+		)
 	}
-	if taskID := c.String(cliFlagTaskID); taskID != "" && c.String(cliFlagOutputStorage) == "" {
-		return fmt.Errorf("--task-id requires --output-storage")
+	outputStorage := c.String(cliFlagOutputStorage)
+	if outputStorage == "" {
+		switch output := c.String(cliFlagOutput); output {
+		case retransmit.OutputJSON, retransmit.OutputText:
+		default:
+			return fmt.Errorf("invalid --output %q; want json or text", output)
+		}
+	}
+	if taskID := c.String(cliFlagTaskID); taskID != "" && outputStorage == "" {
+		return errors.New("--task-id requires --output-storage")
 	}
 	bpfPath := strings.TrimSpace(c.String(cliFlagBPFPath))
 	bpfPathDir := strings.TrimSpace(c.String(cliFlagBPFPathDir))
 	if c.Bool(cliFlagWithDropwatch) {
 		if bpfPath != "" {
-			return fmt.Errorf("--bpf-path cannot be used with --with-dropwatch; use --bpf-path-dir")
+			return errors.New("--bpf-path cannot be used with --with-dropwatch; use --bpf-path-dir")
 		}
 		if bpfPathDir == "" {
-			return fmt.Errorf("--bpf-path-dir is required with --with-dropwatch")
+			return errors.New("--bpf-path-dir is required with --with-dropwatch")
 		}
 	} else {
 		if bpfPathDir != "" {
-			return fmt.Errorf("--bpf-path-dir requires --with-dropwatch")
+			return errors.New("--bpf-path-dir requires --with-dropwatch")
 		}
 		if bpfPath == "" {
-			return fmt.Errorf("--bpf-path is required without --with-dropwatch")
+			return errors.New("--bpf-path is required without --with-dropwatch")
 		}
 	}
 	if filter := resolveFilterExpression(c); filter != "" {
@@ -152,17 +167,7 @@ func validateFlags(c *cli.Context) error {
 			return fmt.Errorf("invalid --filter for synthetic retransmit packet: %w", err)
 		}
 	}
-	switch sourceType := c.String(cliFlagSourceTypes); sourceType {
-	case toolstream.SourceTypeEvent, toolstream.SourceTypeTool:
-	default:
-		return fmt.Errorf(
-			"invalid --source-types %q; want %q or %q",
-			sourceType,
-			toolstream.SourceTypeTool,
-			toolstream.SourceTypeEvent,
-		)
-	}
-	if c.IsSet(cliFlagOutput) && c.String(cliFlagOutputStorage) != "" {
+	if c.IsSet(cliFlagOutput) && outputStorage != "" {
 		if _, err := fmt.Fprintln(c.App.ErrWriter, "warning: --output is ignored because --output-storage is set"); err != nil {
 			return fmt.Errorf("write warning: %w", err)
 		}

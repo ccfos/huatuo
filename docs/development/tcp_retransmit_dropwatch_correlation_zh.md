@@ -244,7 +244,9 @@ cmd/tcpshark/
 ```
 
 顶层通过 `retransmit.Run(ctx, *RunConfig)` 运行重传功能，不操作 ABI record、
-channel、关联 timer 或状态统计。CLI 负责参数校验、路径与 filter 规范化，再构造运行配置。
+channel、关联 timer 或状态统计。CLI 先校验标量及参数组合，再编译检查 filter。
+设置非空 `--output-storage` 时不校验 `--output` 的值；若显式指定后者，
+向 stderr 提示其被忽略。未设置 storage 时仅接受 json 或 text。
 RunConfig.Tracing 是采集配置，
 Dropwatch 为 nil 时直接读取并输出；非 nil 时使用两个读取 worker 和单个关联
 循环。关联能力是重传功能的组合，不是通用采集框架。

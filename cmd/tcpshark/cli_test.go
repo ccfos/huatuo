@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -336,6 +337,21 @@ func TestAppRejectsInvalidFlags(t *testing.T) {
 			wantError: "invalid --duration -1",
 		},
 		{
+			name:      "blank bpf path",
+			args:      []string{"--bpf-path", " \t "},
+			wantError: "--bpf-path is required",
+		},
+		{
+			name:      "blank bpf directory",
+			args:      []string{"--bpf-path", "", "--with-dropwatch", "--bpf-path-dir", " \t "},
+			wantError: "--bpf-path-dir is required",
+		},
+		{
+			name:      "source validated before filter compilation",
+			args:      []string{"--source-types", "unknown", "--filter", "("},
+			wantError: "invalid --source-types",
+		},
+		{
 			name:      "task id without storage",
 			args:      []string{"--task-id", "task-1"},
 			wantError: "--task-id requires --output-storage",
@@ -387,27 +403,54 @@ func TestAppRejectsInvalidFlags(t *testing.T) {
 }
 
 func TestAppWritesOutputStorageWarningToStderr(t *testing.T) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	app := newTestApp(func(_ *cli.Context) error { return nil })
-	app.Writer = &stdout
-	app.ErrWriter = &stderr
+	for _, output := range []string{"json", "yaml", ""} {
+		t.Run(output, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			app := newTestApp(func(_ *cli.Context) error { return nil })
+			app.Writer = &stdout
+			app.ErrWriter = &stderr
 
-	err := app.Run([]string{
-		"tcpshark",
-		"--mode", "retransmit",
-		"--bpf-path", "unused.o",
-		"--output", "json",
-		"--output-storage", "/tmp/unused.sock",
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+			err := app.Run([]string{
+				"tcpshark",
+				"--mode", "retransmit",
+				"--bpf-path", "unused.o",
+				"--output", output,
+				"--output-storage", "/tmp/unused.sock",
+			})
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if got := stdout.String(); got != "" {
+				t.Fatalf("stdout = %q, want empty", got)
+			}
+			if got := stderr.String(); got != "warning: --output is ignored because --output-storage is set\n" {
+				t.Fatalf("stderr = %q, want output warning", got)
+			}
+		})
 	}
-	if got := stdout.String(); got != "" {
-		t.Fatalf("stdout = %q, want empty", got)
+}
+
+func TestAppDurationUpperBound(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("duration bound exceeds the platform int range")
 	}
-	if got := stderr.String(); got != "warning: --output is ignored because --output-storage is set\n" {
-		t.Fatalf("stderr = %q, want output warning", got)
+	for _, seconds := range []int64{maxDurationSeconds, maxDurationSeconds + 1} {
+		t.Run(strconv.FormatInt(seconds, 10), func(t *testing.T) {
+			called := false
+			app := newTestApp(func(_ *cli.Context) error { called = true; return nil })
+			err := app.Run([]string{
+				"tcpshark", "--mode", "retransmit", "--bpf-path", "unused.o",
+				"--duration", strconv.FormatInt(seconds, 10),
+			})
+			if seconds == maxDurationSeconds {
+				if err != nil || !called {
+					t.Fatalf("maximum duration: called=%t, error=%v", called, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "invalid --duration") || called {
+				t.Fatalf("overflow duration: called=%t, error=%v", called, err)
+			}
+		})
 	}
 }
 
