@@ -15,18 +15,17 @@
 package collector
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"time"
+	"sync"
 
 	"github.com/ccfos/huatuo/internal/bpf"
-	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/tracing"
-	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func init() {
@@ -44,182 +43,143 @@ func newIolatency() (*tracing.EventTracingAttr, error) {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iolatency_tracing.c -o $BPF_DIR/iolatency_tracing.o
 
 const (
-	blkContainerLatencyMap = "blkcg_map"
-	blkDiskLatencyMap      = "blkdisk_map"
-	blkLatencyZone         = 6
+	blkDiskBucketMap        = "blkdisk_lat_map"
+	blkContainerBucketMap   = "blkcg_lat_map"
+	ioLatencyProbeResultMap = "io_latency_probe_result"
+	ioLatencyBucketCount    = 17
+	ioLatencyStageCount     = 3
+	ioSizeBucketCount       = 6
 )
 
-// BlkDiskEntry stores disk latency histogram buckets and freeze counts.
-type BlkDiskEntry struct {
-	Disk     uint64
-	Major    uint32
-	Minor    uint32
-	FreezeNr uint64
-	Q2CZone  [blkLatencyZone]uint64
-	D2CZone  [blkLatencyZone]uint64
+type ioLatencyHostKey struct {
+	Major     uint32
+	Minor     uint32
+	Operation uint32
 }
 
-// BlkgqEntry stores cgroup latency histogram buckets
-type BlkgqEntry struct {
-	Blkgq   uint64
-	Disk    uint64
-	Major   uint32
-	Minor   uint32
-	Q2CZone [blkLatencyZone]uint64
-	D2CZone [blkLatencyZone]uint64
+type ioLatencyContainerKey struct {
+	Blkcg     uint64
+	Serial    uint64
+	Major     uint32
+	Minor     uint32
+	Operation uint32
+	Kind      uint32
+}
+
+type ioLatencyCounters struct {
+	Buckets    [ioLatencyStageCount][ioLatencyBucketCount]uint64
+	QueuedSize [ioSizeBucketCount]uint64
+	IssuedSize [ioSizeBucketCount]uint64
+}
+
+type ioLatencyDiskCounters struct {
+	Major    uint32
+	Minor    uint32
+	Counters [2]ioLatencyCounters
+	SCSI     uint64
+}
+
+type ioLatencySession struct {
+	object   bpf.BPF
+	previous *ioLatencySnapshot
+	cancel   context.CancelCauseFunc
+	devices  map[[2]uint32]string
 }
 
 type iolatencyTracing struct {
-	latestContainers map[string]*pod.Container
-	bpfObject        bpf.Reference
+	mu      sync.Mutex
+	session *ioLatencySession
 }
 
 func (c *iolatencyTracing) Start(ctx context.Context) (retErr error) {
-	object, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
+	constants, err := loadIOLatencyKernelConstants()
+	if err != nil {
+		log.Warnf("iolatency: startup kernel check: %v", err)
+		return err
+	}
+	var arguments map[string]any
+	if err := retryIOControlAttach(ctx, ioControlAttachRetryInterval, func() error {
+		arguments, err = loadIOLatencyTracepointArguments()
+		return err
+	}); err != nil {
+		if errors.Is(err, types.ErrNotSupported) {
+			log.Warnf("iolatency: tracepoint ABI unavailable: %v", err)
+		}
+		return fmt.Errorf("%w: %w", types.ErrTracingStopped, err)
+	}
+	for name, argument := range arguments {
+		constants[name] = argument
+	}
+	constants["io_latency_containers_enabled"] = pod.ContainerSyncEnabled()
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), constants)
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
+	defer b.Close()
 
-	// commit 1e1a9cecfab3 ("block: force noio scope in blk_mq_freeze_queue")
-	// made blk_mq_freeze_queue a static inline wrapper in v6.15; the
-	// attachable symbol is blk_mq_freeze_queue_nomemsave. The first arg
-	// (struct request_queue *) is unchanged, so BPF logic stays the same.
-	freezeQueueSym := "blk_mq_freeze_queue"
-	if !bpf.HasKprobeFunction(freezeQueueSym) {
-		freezeQueueSym = "blk_mq_freeze_queue_nomemsave"
-	}
-
-	if err := object.AttachWithOptions([]bpf.AttachOption{
-		{ProgramName: "kprobe_start_request", Symbol: "blk_mq_start_request"},
-		{ProgramName: "kprobe_done_bio", Symbol: "__rq_qos_done_bio"},
-		{ProgramName: "kprobe_freeze_queue", Symbol: freezeQueueSym},
-	}); err != nil {
-		return errors.Join(err, object.Close())
-	}
-	if err := c.bpfObject.Publish(object); err != nil {
-		return errors.Join(err, object.Close())
-	}
+	childCtx, cancel := context.WithCancelCause(ctx)
 	defer func() {
-		retErr = errors.Join(retErr, c.bpfObject.UnPublish())
+		if cause := context.Cause(childCtx); errors.Is(cause, types.ErrTracingStopped) {
+			retErr = cause
+		}
+		cancel(nil)
 	}()
-
-	childCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	object.DetachOnContextDone(childCtx, cancel)
-
-	ticker := time.NewTicker(20 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-childCtx.Done():
-			return nil
-		case <-ticker.C:
-			if err := c.updateContainerBlkDisk(object); err != nil {
-				return err
-			}
+	session := &ioLatencySession{
+		object:   b,
+		cancel:   cancel,
+		previous: &ioLatencySnapshot{},
+	}
+	if err := retryIOControlAttach(childCtx, ioControlAttachRetryInterval, func() error {
+		return attachIOLatencyHooks(b)
+	}); err != nil {
+		if errors.Is(err, types.ErrNotSupported) {
+			log.Warnf("iolatency: required hooks unavailable: %v", err)
 		}
+		return fmt.Errorf("%w: %w", types.ErrTracingStopped, err)
 	}
-}
-
-func (c *iolatencyTracing) dumpBlkdiskLatency(object bpf.BPF) ([]BlkDiskEntry, error) {
-	var latencyData []BlkDiskEntry
-
-	disks, err := object.DumpMapByName(blkDiskLatencyMap)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, disk := range disks {
-		var info BlkDiskEntry
-
-		buf := bytes.NewReader(disk.Value)
-		if err := binary.Read(buf, binary.LittleEndian, &info); err != nil {
-			return nil, err
-		}
-
-		latencyData = append(latencyData, info)
-	}
-
-	return latencyData, nil
-}
-
-func (c *iolatencyTracing) dumpContainerLatency(object bpf.BPF) ([]BlkgqEntry, error) {
-	var latencyData []BlkgqEntry
-
-	containersData, err := object.DumpMapByName(blkContainerLatencyMap)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, data := range containersData {
-		var blkcg BlkgqEntry
-
-		buf := bytes.NewReader(data.Value)
-		if err := binary.Read(buf, binary.LittleEndian, &blkcg); err != nil {
-			return nil, err
-		}
-
-		latencyData = append(latencyData, blkcg)
-	}
-
-	return latencyData, nil
-}
-
-func (c *iolatencyTracing) updateContainerBlkDisk(b bpf.BPF) error {
-	containers, err := pod.Containers()
-	if err != nil {
+	if err := session.discoverDisks(procfs.DefaultPathByType("sys")); err != nil {
+		log.Warnf("iolatency: startup queue check: %v", err)
 		return err
 	}
-
-	var newContainers []*pod.Container
-
-	for id, container := range containers {
-		if _, exists := c.latestContainers[id]; !exists {
-			newContainers = append(newContainers, container)
-		} else {
-			delete(c.latestContainers, id)
-		}
+	if err := b.Detach("probe_queue_stats"); err != nil {
+		return fmt.Errorf("detach completed iolatency disk probe: %w", err)
 	}
 
-	// delete the containers which may be deleted.
-	var deletedContainersKeys [][]byte
+	c.mu.Lock()
+	c.session = session
+	c.mu.Unlock()
+	defer c.withdrawSession()
 
-	for _, container := range c.latestContainers {
-		if blkcg, ok := container.CgroupCss[subsystem.SubsystemBlkIO]; ok {
-			deletedContainersKeys = append(deletedContainersKeys,
-				bytesutil.ToBytes(blkcg))
-		}
-	}
+	<-childCtx.Done()
+	return nil
+}
 
-	mapId := b.MapIDByName(blkContainerLatencyMap)
-	if len(deletedContainersKeys) > 0 {
-		if err := b.DeleteMapItems(mapId, deletedContainersKeys); err != nil {
-			return err
-		}
-	}
+func (c *iolatencyTracing) withdrawSession() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.session = nil
+}
 
-	var items []bpf.MapItem
-	for _, container := range newContainers {
-		blkcg, ok := container.CgroupCss[subsystem.SubsystemBlkIO]
-		if !ok {
-			continue
-		}
-
-		entry := &BlkgqEntry{Blkgq: blkcg}
-		items = append(items, bpf.MapItem{
-			Key:   bytesutil.ToBytes(blkcg),
-			Value: bytesutil.ToBytes(entry),
+func attachIOLatencyHooks(object bpf.BPF) error {
+	options := append(ioControlDeviceHooks(),
+		bpf.AttachOption{
+			ProgramName: "probe_queue_stats",
+			Symbol:      "queue_attr_show",
+		},
+		bpf.AttachOption{
+			ProgramName: "io_latency_css_released", Symbol: "blkcg_css_free",
+		},
+	)
+	// Every selected hook is required; Start closes a partial attachment before
+	// publishing a session.
+	for _, definition := range ioLatencyTracepoints {
+		options = append(options, bpf.AttachOption{
+			ProgramName: definition.program,
+			Symbol:      definition.symbol,
 		})
 	}
-
-	if len(items) > 0 {
-		if err := b.WriteMapItems(mapId, items); err != nil {
-			return err
-		}
+	if err := object.AttachWithOptions(options); err != nil {
+		return fmt.Errorf("attach iolatency hooks: %w", err)
 	}
-
-	c.latestContainers = containers
 	return nil
 }
