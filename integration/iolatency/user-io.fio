@@ -1,0 +1,89 @@
+# Copyright 2026 The HuaTuo Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Issue file I/O through userspace to exercise block splitting, merging,
+# writeback, and concurrent completion. Actual bio-chain coverage must be
+# observed on the target kernel; request bytes alone do not establish it.
+# Prepare data.bin and set IOLATENCY_TEST_DIR / IOLATENCY_MERGE_BS as described
+# in docs/development/iolatency-design.md. Each job group runs for 5 seconds.
+
+[global]
+directory=${IOLATENCY_TEST_DIR}
+filename=data.bin
+allow_file_create=0
+size=128m
+ioengine=libaio
+direct=1
+iodepth=1
+time_based=1
+runtime=5
+stonewall=1
+group_reporting=1
+exitall_on_error=1
+
+# Baseline: single-flight direct reads and writes.
+[direct-write]
+rw=write
+bs=4k
+
+[direct-read]
+rw=read
+bs=4k
+
+# Large userspace I/O exercises splits imposed by the device queue limits.
+[large-write]
+rw=write
+bs=4m
+iodepth=16
+
+[large-read]
+rw=read
+bs=4m
+iodepth=16
+
+# Sequential batches encourage adjacent bios to merge into a request.
+# Use 4k normally, or 512 on a filesystem/device supporting 512-byte direct I/O.
+[merge-write]
+rw=write
+bs=${IOLATENCY_MERGE_BS}
+iodepth=256
+iodepth_batch_submit=256
+iodepth_batch_complete_min=1
+iodepth_batch_complete_max=256
+
+[merge-read]
+rw=read
+bs=${IOLATENCY_MERGE_BS}
+iodepth=256
+iodepth_batch_submit=256
+iodepth_batch_complete_min=1
+iodepth_batch_complete_max=256
+
+# Flush buffered writes before advancing to the next group.
+[writeback]
+rw=write
+bs=4k
+ioengine=psync
+direct=0
+end_fsync=1
+
+# Four disjoint file regions provide concurrent read/write completion traffic.
+[concurrent-read-write]
+rw=randrw
+rwmixread=70
+bs=4k
+iodepth=64
+numjobs=4
+size=32m
+offset_increment=32m

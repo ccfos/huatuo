@@ -91,6 +91,64 @@ func TestKsymbolSearchAddrNotFound(t *testing.T) {
 	}
 }
 
+// Startup consumers need current module text and data addresses, independently
+// of the cached symbol table used to format stack traces.
+func TestKsymbolSearchAddresses(t *testing.T) {
+	resetKernelSymbolFixture(t, []string{
+		"ffffffff81001000 T core_function",
+		"ffffffff82001000 b tfms_inited",
+		"ffffffffc0001000 t sd_open [sd_mod]",
+		"ffffffffc0001000 t sd_open [sd_mod]",
+	})
+	want := map[string]uint64{
+		"core_function": 0xffffffff81001000,
+		"tfms_inited":   0xffffffff82001000,
+		"sd_open":       0xffffffffc0001000,
+	}
+	got, err := KsymbolSearchAddresses("core_function", "tfms_inited", "sd_open", "missing")
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("addresses = %#v, %v; want %#v", got, err, want)
+	}
+
+	resetKernelSymbolFixture(t, []string{"ffffffffc0002000 t sd_open [sd_mod]"})
+	got, err = KsymbolSearchAddresses("sd_open")
+	if err != nil || got["sd_open"] != 0xffffffffc0002000 {
+		t.Fatalf("reloaded module address = %#v, %v", got, err)
+	}
+}
+
+func TestKsymbolSearchAddressesRejectsInvalidData(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{
+			name: "hidden data address", want: "zero address",
+			lines: []string{"0000000000000000 b target"},
+		},
+		{
+			name: "ambiguous module identity", want: "ambiguous",
+			lines: []string{
+				"ffffffff81001000 T target",
+				"ffffffffc0001000 t target [vendor_module]",
+			},
+		},
+		{
+			name: "malformed input", want: "malformed",
+			lines: []string{"not a kallsyms entry"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resetKernelSymbolFixture(t, test.lines)
+			_, err := KsymbolSearchAddresses("target")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v; want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestKsymbolSearchProfile(t *testing.T) {
 	resetKernelSymbolFixture(t, []string{
 		"ffffffff81001000 T blk_throtl_bio",
