@@ -70,3 +70,41 @@ func TestNewMemOthersCollectorSupported(t *testing.T) {
 		t.Fatalf("newMemOthersCollector() attr = %+v, want metric collector", attr)
 	}
 }
+
+func TestParseValueWithKeyReportsMissingKey(t *testing.T) {
+	memDir := setCgroupRootfs(t)
+	podDir := filepath.Join(memDir, "pod-1")
+	if err := os.MkdirAll(podDir, 0o755); err != nil {
+		t.Fatalf("create pod cgroup dir: %v", err)
+	}
+
+	file := "memory.directstall_stat"
+	if err := os.WriteFile(filepath.Join(podDir, file), []byte("other_key 42\n"), 0o600); err != nil {
+		t.Fatalf("create %s: %v", file, err)
+	}
+
+	if _, err := parseValueWithKey("pod-1", file, "directstall_time"); err == nil {
+		t.Fatal("parseValueWithKey() error = nil, want missing-key error")
+	}
+}
+
+func TestParseValueWithKeyReturnsPresentValue(t *testing.T) {
+	memDir := setCgroupRootfs(t)
+	podDir := filepath.Join(memDir, "pod-1")
+	if err := os.MkdirAll(podDir, 0o755); err != nil {
+		t.Fatalf("create pod cgroup dir: %v", err)
+	}
+
+	file := "memory.directstall_stat"
+	if err := os.WriteFile(filepath.Join(podDir, file), []byte("directstall_time 123\n"), 0o600); err != nil {
+		t.Fatalf("create %s: %v", file, err)
+	}
+
+	value, err := parseValueWithKey("pod-1", file, "directstall_time")
+	if err != nil {
+		t.Fatalf("parseValueWithKey() error = %v, want nil", err)
+	}
+	if value != 123 {
+		t.Fatalf("parseValueWithKey() = %d, want 123", value)
+	}
+}

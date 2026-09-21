@@ -95,7 +95,12 @@ func parseValueWithKey(cgroupPath, cgroupFile, key string) (uint64, error) {
 		return 0, err
 	}
 
-	return raw[key], nil
+	value, ok := raw[key]
+	if !ok {
+		return 0, fmt.Errorf("key %q not found in %s", key, filePath)
+	}
+
+	return value, nil
 }
 
 func (c *memOthersCollector) Update() ([]*metric.Data, error) {
