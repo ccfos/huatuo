@@ -1,0 +1,6 @@
+# TYPE huatuo_bamai_bonding_slaves gauge
+huatuo_bamai_bonding_slaves{host="huatuo-dev",master="bond0",region="dev"} 2
+huatuo_bamai_bonding_slaves_up{host="huatuo-dev",master="bond0",region="dev"} 1
+huatuo_bamai_bonding_slave_up{host="huatuo-dev",master="bond0",region="dev",slave="eth1"} 0
+# TYPE huatuo_bamai_bonding_slave_link_failures_total counter
+huatuo_bamai_bonding_slave_link_failures_total{host="huatuo-dev",master="bond0",region="dev",slave="eth1"} 5
