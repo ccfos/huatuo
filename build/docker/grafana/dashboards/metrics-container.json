@@ -269,16 +269,33 @@
           }
         },
         {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "Field": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "Total": {
+                "aggregations": [
+                  "sum"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
           "id": "organize",
           "options": {
             "excludeByName": {},
             "renameByName": {
               "Field": "Latency Range",
-              "Total": "IO Count"
+              "Total (sum)": "IO Count"
             },
             "indexByName": {
               "Field": 0,
-              "Total": 1
+              "Total (sum)": 1
             }
           }
         }
@@ -420,16 +437,33 @@
           }
         },
         {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "Field": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "Total": {
+                "aggregations": [
+                  "sum"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        },
+        {
           "id": "organize",
           "options": {
             "excludeByName": {},
             "renameByName": {
               "Field": "Size Range",
-              "Total": "IO Count"
+              "Total (sum)": "IO Count"
             },
             "indexByName": {
               "Field": 0,
-              "Total": 1
+              "Total (sum)": 1
             }
           }
         }

@@ -242,6 +242,7 @@ The `data` field contains a standard HUATUO event record:
 | `cpusys` | Abnormal system-mode CPU utilization (triggered by AutoTracing) |
 | `dload` | Abnormal system load (triggered by AutoTracing) |
 | `iotracing` | Abnormal I/O latency (triggered by AutoTracing) |
+| `io_health` | Block, NVMe, SCSI, and MD health events |
 | `memburst` | Memory usage bursts (triggered by AutoTracing) |
 
 ## Go Client
