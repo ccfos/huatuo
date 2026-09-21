@@ -53,3 +53,6 @@ $ docker compose --project-directory ./build/docker up
 ```
 
 > Docker Compose 安装方法请参阅 https://docs.docker.com/compose/install/linux/。
+
+Compose 自动安装 IO 周期总览使用的 Business Charts（`volkovlabs-echarts-panel`）；
+使用已有 Grafana 实例时，需自行安装该插件。

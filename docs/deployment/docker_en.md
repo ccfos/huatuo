@@ -55,3 +55,6 @@ $ docker compose --project-directory ./build/docker up
 ```
 
 For installation instructions, see https://docs.docker.com/compose/install/linux/.
+
+Compose installs Business Charts (`volkovlabs-echarts-panel`) for the IO
+interval overview. Install this plugin when using an existing Grafana instance.
