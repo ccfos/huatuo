@@ -69,18 +69,12 @@ func (r TCPRetransmitReason) String() string {
 type CorrelationReason string
 
 const (
-	CorrelationReasonNoMatchingDrop           CorrelationReason = "no_matching_drop"
-	CorrelationReasonCrossNetNSCandidate      CorrelationReason = "cross_netns_candidate"
-	CorrelationReasonStartupHistoryIncomplete CorrelationReason = "startup_history_incomplete"
-	// Deprecated: retained for source compatibility; tcpshark no longer emits it.
-	CorrelationReasonDropEvidenceUnusable CorrelationReason = "drop_evidence_unusable"
-	CorrelationReasonPerfEventsLost       CorrelationReason = "perf_events_lost"
-	CorrelationReasonDropRateLimited      CorrelationReason = "drop_rate_limited"
-	// Deprecated: retained for source compatibility; tcpshark no longer emits it.
-	CorrelationReasonDropEvidenceEvicted       CorrelationReason = "drop_evidence_evicted"
+	CorrelationReasonNoMatchingDrop            CorrelationReason = "no_matching_drop"
+	CorrelationReasonCrossNetNSCandidate       CorrelationReason = "cross_netns_candidate"
+	CorrelationReasonStartupHistoryIncomplete  CorrelationReason = "startup_history_incomplete"
+	CorrelationReasonPerfEventsLost            CorrelationReason = "perf_events_lost"
+	CorrelationReasonDropRateLimited           CorrelationReason = "drop_rate_limited"
 	CorrelationReasonUnsupportedRetransmission CorrelationReason = "unsupported_retransmission"
-	// Deprecated: retained for source compatibility; tcpshark no longer emits it.
-	CorrelationReasonDropwatchInputInactive CorrelationReason = "dropwatch_input_inactive"
 	// #nosec G101 -- Public diagnostic, not a credential.
 	CorrelationReasonDropwatchPerfStatusUnavailable CorrelationReason = "dropwatch_perf_status_unavailable"
 	CorrelationReasonRetransmitWaitCapacityExceeded CorrelationReason = "retransmit_wait_capacity_exceeded"

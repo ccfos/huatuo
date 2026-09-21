@@ -169,8 +169,6 @@ namespace 证据。严格匹配后立即从 deadline 和 flow 两个索引删除
 
 无法规范化的 drop 与候选容量淘汰不再按重传维护 evidence 区间，也不产生专用
 reason；没有找到严格匹配时仍以 `no_matching_drop` 输出 `unknown`。
-公开 Go 常量 `CorrelationReasonDropwatchInputInactive` 仅为 source compatibility
-保留并标记为 deprecated，tcpshark 不再生成 `dropwatch_input_inactive`。
 
 ## 7. Perf 状态
 

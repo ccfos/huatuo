@@ -287,18 +287,20 @@ func TestEventCorrelatorReasons(t *testing.T) {
 		name             string
 		kernelObservedNS uint64
 		prepare          func(*testing.T, *eventCorrelator)
-		wantReason       types.CorrelationReason
-		wantAbsent       types.CorrelationReason
+		wantReasons      []types.CorrelationReason
 	}{
 		{
 			name:             "startup history before horizon",
 			kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge) - 1,
-			wantReason:       types.CorrelationReasonStartupHistoryIncomplete,
+			wantReasons: []types.CorrelationReason{
+				types.CorrelationReasonNoMatchingDrop,
+				types.CorrelationReasonStartupHistoryIncomplete,
+			},
 		},
 		{
 			name:             "startup history recovers at horizon",
 			kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
-			wantAbsent:       types.CorrelationReasonStartupHistoryIncomplete,
+			wantReasons:      []types.CorrelationReason{types.CorrelationReasonNoMatchingDrop},
 		},
 		{
 			name:             "unusable drop has no dedicated reason",
@@ -308,7 +310,7 @@ func TestEventCorrelatorReasons(t *testing.T) {
 					kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
 				}, time.Unix(1, 0))
 			},
-			wantAbsent: types.CorrelationReason("drop_evidence_unusable"),
+			wantReasons: []types.CorrelationReason{types.CorrelationReasonNoMatchingDrop},
 		},
 		{
 			name:             "evicted drop has no dedicated reason",
@@ -326,7 +328,7 @@ func TestEventCorrelatorReasons(t *testing.T) {
 					}, now.Add(time.Duration(sequence)))
 				}
 			},
-			wantAbsent: types.CorrelationReason("drop_evidence_evicted"),
+			wantReasons: []types.CorrelationReason{types.CorrelationReasonNoMatchingDrop},
 		},
 	}
 
@@ -338,11 +340,8 @@ func TestEventCorrelatorReasons(t *testing.T) {
 			}
 			event := &retransmitEvent{record: abi.TCPRetransmitEvent{KernelObservedNS: test.kernelObservedNS}}
 			result := correlator.noMatchResult(event, false)
-			if test.wantReason != "" && !hasResultCorrelationReason(result, test.wantReason) {
-				t.Fatalf("reasons = %v, want %q", result.reasons, test.wantReason)
-			}
-			if test.wantAbsent != "" && hasResultCorrelationReason(result, test.wantAbsent) {
-				t.Fatalf("reasons = %v, do not want %q", result.reasons, test.wantAbsent)
+			if !slices.Equal(result.reasons, test.wantReasons) {
+				t.Fatalf("reasons = %v, want %v", result.reasons, test.wantReasons)
 			}
 		})
 	}
