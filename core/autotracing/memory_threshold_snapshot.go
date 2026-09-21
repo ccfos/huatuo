@@ -102,12 +102,11 @@ func (s *memoryThresholdSnapshot) Start(ctx context.Context) (retErr error) {
 		}
 		s.cgroup = cgroup
 	}
-	watcher, err := newPressureWatcher(s.cgroup, cfg.ThresholdPercent)
+	watcher, err := newPressureWatcher(cfg.ThresholdPercent)
 	if err != nil {
 		return handleWatchError(ctx, err)
 	}
-	log.WithField("cgroup_mode", cgroups.CgroupMode()).
-		Info("memory threshold snapshot watcher initialized")
+	log.Info("memory threshold snapshot watcher initialized")
 	return handleWatchError(ctx, s.watchAndCapture(ctx, config, watcher))
 }
 
@@ -205,7 +204,7 @@ func (s *memoryThresholdSnapshot) highestPressureCandidate(config *Config,
 			lastErr = err
 			continue
 		}
-		if !ok || candidate.containerID == "" || isUnlimitedLimit(candidate.max) {
+		if !ok || candidate.containerID == "" || cgroups.IsMemoryLimitUnlimited(candidate.max) {
 			continue
 		}
 		candidate.ratio = float64(candidate.current) / float64(candidate.max)

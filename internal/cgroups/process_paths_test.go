@@ -113,3 +113,24 @@ func BenchmarkParseProcessPaths(b *testing.B) {
 		}
 	}
 }
+
+func TestProcessPathsPathForMemory(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		paths *ProcessPaths
+		want  string
+	}{
+		{name: "nil"},
+		{name: "missing", paths: &ProcessPaths{Controllers: map[string]string{"cpu": "/cpu"}}},
+		{name: "v1", paths: &ProcessPaths{Controllers: map[string]string{"memory": "/memory"}}, want: "/memory"},
+		{name: "v2", paths: &ProcessPaths{Unified: "/unified"}, want: "/unified"},
+		{name: "hybrid", paths: &ProcessPaths{Unified: "/unified", Controllers: map[string]string{"memory": "/memory"}}, want: "/memory"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.paths.PathForMemory()
+			if got != tt.want || (err != nil) != (tt.want == "") {
+				t.Fatalf("PathForMemory = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}

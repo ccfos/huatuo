@@ -28,7 +28,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
-	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 )
@@ -54,23 +53,15 @@ func knownContainerCgroupPath(id string) (string, error) {
 	if container == nil {
 		return "", fmt.Errorf("container %q is no longer known", id)
 	}
-	return memcgPathForPID(container.InitPid, cgroups.CgroupMode())
+	return memcgPathForPID(container.InitPid)
 }
 
-func memcgPathForPID(initPID int, mode cgroups.Mode) (string, error) {
+func memcgPathForPID(initPID int) (string, error) {
 	paths, err := cgroups.PathsForPID(initPID)
 	if err != nil {
 		return "", err
 	}
-	// CPU and memory controllers can use different parents on v1.
-	path := paths.Controllers["memory"]
-	if mode == cgroups.Unified {
-		path = paths.Unified
-	}
-	if path == "" {
-		return "", fmt.Errorf("container init pid %d has no memory cgroup path", initPID)
-	}
-	return path, nil
+	return paths.PathForMemory()
 }
 
 func validateContainerCgroup(id, path string, lookup func(string) (string, error)) error {
@@ -96,11 +87,11 @@ func (w *pressureWatcher) requestRecovery() {
 	}
 }
 
-func (w *pressureWatcher) recoverWatches(ctx context.Context, events chan<- memoryPressureEvent) error {
+func (w *pressureWatcher) recoverWatches(ctx context.Context) error {
 	w.recoveryRequested = false
 	w.recoveryAttempts++
 	started := time.Now()
-	err := w.refreshFromCgroupTree(ctx, events)
+	err := w.refreshFromCgroupTree(ctx)
 	log.WithField("attempt", w.recoveryAttempts).
 		WithField("watches", len(w.cgroups)).
 		WithField("elapsed_ms", time.Since(started).Milliseconds()).
@@ -127,16 +118,13 @@ func (w *pressureWatcher) recoverWatches(ctx context.Context, events chan<- memo
 	return nil
 }
 
-func (w *pressureWatcher) refreshFromCgroupTree(ctx context.Context,
-	events chan<- memoryPressureEvent,
-) error {
+func (w *pressureWatcher) refreshFromCgroupTree(ctx context.Context) error {
 	desired := make(map[string]string)
-	err := w.walkCgroupTree(ctx, w.root, func(containerID, cgroupPath string) error {
-		if previous, exists := desired[containerID]; exists && previous != cgroupPath {
-			// Do not let directory enumeration order choose an identity.
+	err := w.walkCgroupTree(ctx, w.root, func(containerID, path string) error {
+		if previous, exists := desired[containerID]; exists && previous != path {
 			desired[containerID] = ""
 		} else {
-			desired[containerID] = cgroupPath
+			desired[containerID] = path
 		}
 		return nil
 	})
@@ -147,19 +135,12 @@ func (w *pressureWatcher) refreshFromCgroupTree(ctx context.Context,
 	if incomplete {
 		w.reportWatchLimit()
 	}
-	addedPaths, err := w.reconcile(desired, !incomplete)
-	if errors.Is(err, errCgroupWatchLimit) {
-		w.reportWatchLimit()
-	} else if err != nil {
-		return err
-	}
-	if w.mode == cgroups.Unified {
-		return nil
-	}
-	for _, cgroupPath := range addedPaths {
-		if err := w.emitPressure(ctx, events, cgroupPath); err != nil {
-			return err
+	if err := w.reconcile(ctx, desired, !incomplete); err != nil {
+		if errors.Is(err, errCgroupWatchLimit) {
+			w.reportWatchLimit()
+			return nil
 		}
+		return err
 	}
 	return nil
 }
@@ -286,152 +267,100 @@ func relativeCgroupPath(root, fullPath string) (string, error) {
 	return "/" + filepath.ToSlash(relativePath), nil
 }
 
-func (w *pressureWatcher) reconcile(desired map[string]string, complete bool) ([]string, error) {
-	var addedPaths []string
-	// Unseen entries are not deleted when discovery did not finish.
+func (w *pressureWatcher) reconcile(ctx context.Context, desired map[string]string, complete bool) error {
+	// A partial discovery cannot establish that unseen containers disappeared.
 	if complete {
-		for cgroupPath, entry := range w.cgroups {
-			if desiredPath, ok := desired[entry.containerID]; !ok || desiredPath != cgroupPath {
-				w.removeCgroup(cgroupPath)
+		for path, entry := range w.cgroups {
+			if wanted, ok := desired[entry.containerID]; !ok || wanted != path {
+				if err := w.removeCgroup(ctx, path); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	for containerID, cgroupPath := range desired {
-		if containerID == "" || cgroupPath == "" {
+	for containerID, path := range desired {
+		if containerID == "" || path == "" {
 			continue
 		}
-		added, err := w.watchContainer(containerID, cgroupPath)
-		if err != nil {
+		if err := w.watchContainer(ctx, containerID, path); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				w.requestRecovery()
 				continue
 			}
-			if !complete && errors.Is(err, errCgroupWatchLimit) {
-				return addedPaths, err
-			}
-			return nil, err
-		}
-		if added {
-			addedPaths = append(addedPaths, cgroupPath)
+			return err
 		}
 	}
-	return addedPaths, nil
-}
-
-func (w *pressureWatcher) watchContainer(containerID,
-	cgroupPath string,
-) (bool, error) {
-	if oldPath, ok := w.cgroupPathForContainer(containerID); ok {
-		if oldPath == cgroupPath {
-			info, err := os.Lstat(w.memcgDir(cgroupPath))
-			if err != nil {
-				return false, err
-			}
-			old := w.cgroups[oldPath]
-			if old.identity != nil && os.SameFile(old.identity, info) {
-				return false, nil
-			}
-			w.removeCgroup(oldPath)
-		} else {
-			if _, err := os.Stat(w.memcgDir(oldPath)); !errors.Is(err, os.ErrNotExist) {
-				return false, nil
-			}
-			w.removeCgroup(oldPath)
-		}
-	}
-	if entry, ok := w.cgroups[cgroupPath]; ok {
-		entry.containerID = containerID
-		return false, nil
-	}
-	return true, w.addCgroup(containerID, cgroupPath)
-}
-
-func (w *pressureWatcher) cgroupPathForContainer(containerID string) (string, bool) {
-	for cgroupPath, entry := range w.cgroups {
-		if entry.containerID == containerID {
-			return cgroupPath, true
-		}
-	}
-	return "", false
-}
-
-func (w *pressureWatcher) handleCgroupChanges(ctx context.Context,
-	events chan<- memoryPressureEvent,
-) error {
-	// Bound each batch so lifecycle churn cannot starve pressure notifications.
-	for i := 0; i < 256; i++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case change := <-w.changes:
-			if err := w.handleCgroupChange(ctx, events, change); err != nil {
-				return err
-			}
-		default:
-			return nil
-		}
-	}
-	signalEventFD(w.controlFD)
 	return nil
 }
 
-func (w *pressureWatcher) handleCgroupChange(ctx context.Context,
-	events chan<- memoryPressureEvent, change pod.MemoryCgroupChange,
-) error {
+func (w *pressureWatcher) watchContainer(ctx context.Context, containerID, path string) error {
+	if oldPath, ok := w.cgroupPathForContainer(containerID); ok {
+		if oldPath != path {
+			if _, err := os.Stat(w.memcgDir(oldPath)); !errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			if err := w.removeCgroup(ctx, oldPath); err != nil {
+				return err
+			}
+		}
+	}
+	info, err := os.Lstat(w.memcgDir(path))
+	if err != nil {
+		return err
+	}
+	if old := w.cgroups[path]; old != nil {
+		if os.SameFile(old.identity, info) {
+			return nil
+		}
+		if err := w.removeCgroup(ctx, path); err != nil {
+			return err
+		}
+	}
+	return w.addCgroup(ctx, containerID, path)
+}
+
+func (w *pressureWatcher) handleCgroupChange(ctx context.Context, change pod.MemoryCgroupChange) error {
 	id := change.ContainerID
 	if pod.ValidateContainerID(id) != nil {
 		return nil
 	}
-	cgroupPath, known := w.cgroupPathForContainer(id)
+	path, known := w.cgroupPathForContainer(id)
 	if change.Removed && !known {
 		return nil
 	}
 	if !change.Removed {
 		var err error
-		cgroupPath, err = w.containerPath(id)
+		path, err = w.containerPath(id)
 		if err != nil {
-			if w.recoveryDue.IsZero() {
-				log.WithField("container", id).
-					WithError(err).
-					Info("memory threshold snapshot cgroup path lookup deferred")
-			}
 			w.requestRecovery()
 			return nil
 		}
 	}
-	if !strings.HasPrefix(cgroupPath, "/") || filepath.Clean(cgroupPath) != cgroupPath ||
-		parseContainerID(filepath.Base(cgroupPath)) != id {
+	if !strings.HasPrefix(path, "/") || filepath.Clean(path) != path || parseContainerID(filepath.Base(path)) != id {
 		w.requestRecovery()
 		return nil
 	}
-	// Startup discovery stops at container boundaries; apply the same rule here.
-	for parent := filepath.Dir(cgroupPath); parent != "/"; parent = filepath.Dir(parent) {
+	for parent := filepath.Dir(path); parent != "/"; parent = filepath.Dir(parent) {
 		if parseContainerID(filepath.Base(parent)) != "" {
 			return nil
 		}
 	}
-	// Runtime resolution is authoritative even while the old directory exists.
-	if oldPath, ok := w.cgroupPathForContainer(id); !change.Removed && ok && oldPath != cgroupPath {
-		if err := w.addCgroup(id, cgroupPath); err != nil {
+	// The runtime's new path is authoritative even while the old one exists.
+	if oldPath, ok := w.cgroupPathForContainer(id); !change.Removed && ok && oldPath != path {
+		if err := w.addCgroup(ctx, id, path); err != nil {
 			if isResourceExhaustion(err) {
 				return err
 			}
 			w.requestRecovery()
-			if errors.Is(err, errCgroupWatchLimit) {
-				w.reportWatchLimit()
-				return nil
-			}
 			return nil
 		}
-		w.removeCgroup(oldPath)
-		if w.mode != cgroups.Unified {
-			return w.emitPressure(ctx, events, cgroupPath)
-		}
-		return nil
+		return w.removeCgroup(ctx, oldPath)
 	}
-	err := w.updateCgroupPath(ctx, events, id, cgroupPath)
+	err := w.watchContainer(ctx, id, path)
 	if errors.Is(err, os.ErrNotExist) {
-		w.removeCgroup(cgroupPath)
+		if removeErr := w.removeCgroup(ctx, path); removeErr != nil {
+			return removeErr
+		}
 		if !change.Removed {
 			w.requestRecovery()
 		}
@@ -444,58 +373,8 @@ func (w *pressureWatcher) handleCgroupChange(ctx context.Context,
 	return err
 }
 
-func (w *pressureWatcher) updateCgroupPath(ctx context.Context,
-	events chan<- memoryPressureEvent, id, cgroupPath string,
-) error {
-	info, err := os.Lstat(w.memcgDir(cgroupPath))
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return nil
-	}
-	// Consult this path's current inode: queued deletes/creates can arrive after
-	// a replacement, including notifications from different per-CPU buffers.
-	if old := w.cgroups[cgroupPath]; old != nil {
-		if old.identity != nil && os.SameFile(old.identity, info) {
-			return nil
-		}
-		w.removeCgroup(cgroupPath)
-	}
-	added, err := w.watchContainer(id, cgroupPath)
-	if err != nil {
-		return err
-	}
-	if added && w.mode != cgroups.Unified {
-		return w.emitPressure(ctx, events, cgroupPath)
-	}
-	return nil
-}
-
 func pathWithin(parent, path string) bool {
 	relative, err := filepath.Rel(parent, path)
 	return err == nil && relative != ".." &&
 		!strings.HasPrefix(relative, ".."+string(filepath.Separator))
-}
-
-func memoryCgroupRoot(mode cgroups.Mode) (string, error) {
-	var root string
-	switch mode {
-	case cgroups.Legacy, cgroups.Hybrid:
-		root = cgroups.RootFsFilePath(subsystem.SubsystemMemory)
-	case cgroups.Unified:
-		root = cgroups.RootfsDefaultPath()
-	default:
-		return "", fmt.Errorf("unsupported cgroup mode %d", mode)
-	}
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve memory cgroup root %q: %w", root, err)
-	}
-	return realRoot, nil
-}
-
-func (w *pressureWatcher) memcgDir(cgroupPath string) string {
-	cleanPath := strings.TrimPrefix(filepath.Clean("/"+cgroupPath), "/")
-	return filepath.Join(w.root, cleanPath)
 }

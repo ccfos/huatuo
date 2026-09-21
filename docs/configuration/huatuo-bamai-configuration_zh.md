@@ -711,11 +711,15 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 **触发条件：**
 
 - **cgroup v1**：通过 `cgroup.event_control` 注册 `ThresholdPercent` 对应的内存阈值。
-- **cgroup v2**：监听 `memory.events.local` 的 `high` 计数增长
+- **cgroup v2**：监听 `memory.events.local` 的 `high` 或 `max` 计数增长
   （文件不存在时使用 `memory.events`），再检查
-  `memory.current / memory.max` 是否达到配置比例。初次发现只建立计数基线。
-  本功能不设置 `memory.high`；为 `max` 时不会触发，也不会改用
-  `memory.max` 通知。
+  `memory.current / memory.max` 是否达到配置比例。
+  本功能不设置 `memory.high`；为 `max` 时仍可由硬限制的 `max` 计数触发检查。
+  该通知发生较晚，不能保证恰好在配置百分比处检测，也不能保证在 OOM 前完成抓取。
+
+两种版本均在注册完成后和硬限制变化时检查水位。一个 watcher 管理所有目标，
+不进行周期采样。同一目标的重复通知会合并，不逐次统计跨越，也不提供水位恢复通知。
+抓取前会重新检查当前水位和目标身份。
 
 容器增删复用共享 CSS 通知，不携带完整路径。快照 watcher 在自身处理循环中通过
 InitPid 读取实际 memory cgroup 路径并保存；路径暂不可用或通知丢失时，

@@ -32,6 +32,20 @@ type ProcessPaths struct {
 	Controllers map[string]string
 }
 
+// PathForMemory returns the memory-controller membership, including on hybrid hosts.
+func (p *ProcessPaths) PathForMemory() (string, error) {
+	if p == nil {
+		return "", fmt.Errorf("nil process paths")
+	}
+	if path := p.Controllers["memory"]; path != "" {
+		return path, nil
+	}
+	if p.Unified != "" {
+		return p.Unified, nil
+	}
+	return "", fmt.Errorf("process memory cgroup path not found")
+}
+
 // PathsForPID reads the kernel cgroup membership of pid.
 func PathsForPID(pid int) (*ProcessPaths, error) {
 	if pid <= 0 {

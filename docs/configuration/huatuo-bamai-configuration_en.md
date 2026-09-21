@@ -718,12 +718,17 @@ already executing, so they do not bound the total operation time.
 
 - **Cgroup v1**: Registers the memory threshold corresponding to
   `ThresholdPercent` through `cgroup.event_control`.
-- **Cgroup v2**: Watches increases in the `high` counter of
+- **Cgroup v2**: Watches increases in the `high` or `max` counters of
   `memory.events.local` (falling back to `memory.events` when absent), then
   checks `memory.current / memory.max` against the configured percentage.
-  Initial discovery only establishes a counter baseline. This feature does
-  not set `memory.high`; when it is `max`, no high event occurs, and
-  `memory.max` notifications are not used as a fallback.
+  This feature does not set `memory.high`. When it is `max`, the hard-limit
+  `max` counter can still trigger a check. This is a late notification and
+  does not guarantee detection at the configured percentage or before OOM.
+
+Both versions check usage once after registration and when the hard limit
+changes. One watcher manages all targets without periodic sampling. Repeated
+notifications for a target are coalesced; they do not count every crossing or
+report recovery below the threshold. Capture rechecks current usage and identity.
 
 Container changes reuse shared CSS notifications without carrying full paths.
 The snapshot watcher resolves and saves the actual memory cgroup path through the

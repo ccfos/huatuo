@@ -29,8 +29,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
-	"github.com/ccfos/huatuo/internal/cgroups/paths"
-	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
@@ -177,15 +175,11 @@ func scanMemcgProcs(ctx context.Context, cgroupPath string, visit func(int) erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	var directory string
-	switch mode := cgroups.CgroupMode(); mode {
-	case cgroups.Legacy, cgroups.Hybrid:
-		directory = paths.Path(subsystem.SubsystemMemory, cgroupPath)
-	case cgroups.Unified:
-		directory = paths.Path(cgroupPath)
-	default:
-		return fmt.Errorf("unsupported cgroup mode %d", mode)
+	root, err := cgroups.MemoryRoot()
+	if err != nil {
+		return err
 	}
+	directory := filepath.Join(root, cgroupPath)
 	file, err := os.Open(filepath.Join(directory, "cgroup.procs"))
 	if err != nil {
 		return err

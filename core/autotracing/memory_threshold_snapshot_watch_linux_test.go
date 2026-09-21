@@ -22,34 +22,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/pod"
 )
 
-func TestMemoryCgroupLifecycleWakesEpoll(t *testing.T) {
-	root := t.TempDir()
-	create := func(letter string) string {
-		t.Helper()
-		p := "/" + strings.Repeat(letter, 64)
-		dir := filepath.Join(root, p)
-		if err := os.Mkdir(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		for _, name := range []string{"memory.limit_in_bytes", "memory.usage_in_bytes", "cgroup.event_control"} {
-			writeMemoryEventsForTest(t, filepath.Join(dir, name), "0")
-		}
-		return p
-	}
-	first := create("a")
-	w, err := openPressureWatcher(
-		&lifecycleMemoryCgroup{},
-		90,
-		cgroups.Legacy,
-		root,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestMemoryCgroupLifecycleWakesWatcher(t *testing.T) {
+	w := newTestPressureWatcher(t)
+	first := "/" + strings.Repeat("a", 64)
+	createMemoryCgroupForTest(t, w.root, first, 95)
 	changes := make(chan pod.MemoryCgroupChange, 1)
 	w.changes = changes
 	w.containerPath = func(id string) (string, error) { return "/" + id, nil }
@@ -62,7 +41,7 @@ func TestMemoryCgroupLifecycleWakesEpoll(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(3 * time.Second):
 			t.Error("watcher did not stop")
 		}
 	})
@@ -73,13 +52,92 @@ func TestMemoryCgroupLifecycleWakesEpoll(t *testing.T) {
 			if got.cgroupPath != want {
 				t.Fatalf("pressure = %+v, want %s", got, want)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(3 * time.Second):
 			t.Fatal("watcher was not woken")
 		}
 	}
-	waitPressure(first) // Initial enumeration has completed before adding B.
-	second := create("b")
+	waitPressure(first)
+	second := "/" + strings.Repeat("b", 64)
+	createMemoryCgroupForTest(t, w.root, second, 95)
 	changes <- pod.MemoryCgroupChange{ContainerID: filepath.Base(second)}
-	signalEventFD(w.controlFD)
 	waitPressure(second)
+}
+
+func TestMemorySnapshotSlowConsumerDoesNotBlockLifecycle(t *testing.T) {
+	w := newTestPressureWatcher(t)
+	first, second := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	createMemoryCgroupForTest(t, w.root, "/"+first, 95)
+	createMemoryCgroupForTest(t, w.root, "/"+second, 95)
+	changes := make(chan pod.MemoryCgroupChange, 1)
+	resolved := make(chan string, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	w.changes = changes
+	w.containerPath = func(id string) (string, error) {
+		select {
+		case resolved <- id:
+			return "/" + id, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	events, done := w.Run(ctx)
+	defer cancel()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	// Leave the output full while exercising registration and removal.
+	for len(events) == 0 {
+		select {
+		case <-ctx.Done():
+			t.Fatal("initial pressure was not delivered")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	third, fourth := strings.Repeat("c", 64), strings.Repeat("d", 64)
+	for _, id := range []string{third, fourth} {
+		createMemoryCgroupForTest(t, w.root, "/"+id, 95)
+		select {
+		case changes <- pod.MemoryCgroupChange{ContainerID: id}:
+		case <-ctx.Done():
+			t.Fatal("slow consumer blocked lifecycle submission")
+		}
+		select {
+		case got := <-resolved:
+			if got != id {
+				t.Fatalf("resolved container = %s, want %s", got, id)
+			}
+		case <-ctx.Done():
+			t.Fatal("slow consumer blocked container registration")
+		}
+		if id == third {
+			if err := os.RemoveAll(w.memcgDir("/" + first)); err != nil {
+				t.Fatal(err)
+			}
+			changes <- pod.MemoryCgroupChange{ContainerID: first, Removed: true}
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if w.cgroups["/"+third] == nil || w.cgroups["/"+first] != nil {
+		t.Fatal("slow consumer prevented lifecycle reconciliation")
+	}
+}
+
+func TestMemorySnapshotIgnoresRetiredTarget(t *testing.T) {
+	w := newTestPressureWatcher(t)
+	path := "/" + strings.Repeat("a", 64)
+	createMemoryCgroupForTest(t, w.root, path, 95)
+	if err := w.addCgroup(t.Context(), filepath.Base(path), path); err != nil {
+		t.Fatal(err)
+	}
+	waitMemoryPressureForTest(t, w, path)
+	if err := w.removeCgroup(t.Context(), path); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.pending) != 0 {
+		t.Fatal("retired target retained unread pressure")
+	}
 }

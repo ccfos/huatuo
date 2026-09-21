@@ -18,19 +18,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"golang.org/x/sys/unix"
-
-	"github.com/ccfos/huatuo/internal/cgroups"
-	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/cgroups/memorywatch"
 	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
@@ -38,19 +33,6 @@ import (
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
-
-// Block discovery so cancellation cannot race past the cleanup assertion.
-type blockingMemoryCgroup struct {
-	cgroups.Cgroup
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (c *blockingMemoryCgroup) MemoryUsage(string) (*stats.MemoryUsage, error) {
-	close(c.entered)
-	<-c.release
-	return &stats.MemoryUsage{MaxLimited: 1 << 20}, nil
-}
 
 func TestNewMemoryThresholdSnapshot(t *testing.T) {
 	previous := configSnapshot()
@@ -86,80 +68,38 @@ func TestMemoryThresholdSnapshotBlacklist(t *testing.T) {
 }
 
 func TestMemoryThresholdSnapshotStopJoinsWatcherBeforeRestart(t *testing.T) {
-	root := t.TempDir()
-	directory := filepath.Join(root, strings.Repeat("a", 64))
-	if err := os.Mkdir(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"memory.limit_in_bytes", "memory.usage_in_bytes", "cgroup.event_control"} {
-		writeMemoryEventsForTest(t, filepath.Join(directory, name), "0")
-	}
 	cfg := &Config{}
 	cfg.MemoryThresholdSnapshot.ThresholdPercent = 90
 	snapshot := &memoryThresholdSnapshot{}
 	for iteration := 0; iteration < 2; iteration++ {
 		t.Run(strconv.Itoa(iteration), func(t *testing.T) {
-			backend := &blockingMemoryCgroup{entered: make(chan struct{}), release: make(chan struct{})}
-			release := sync.OnceFunc(func() { close(backend.release) })
-			watcher, err := openPressureWatcher(
-				backend,
-				cfg.MemoryThresholdSnapshot.ThresholdPercent,
-				cgroups.Legacy,
-				root,
-			)
+			before, err := os.ReadDir("/proc/self/fd")
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Ordinary files exercise v1 FD registration without changing host cgroups.
-			watcher.root, watcher.mode = root, cgroups.Legacy
-			fds := []int{watcher.epollFD, watcher.inotifyFD, watcher.controlFD}
+			watcher := newTestPressureWatcher(t)
+			createMemoryCgroupForTest(t, watcher.root, "/"+strings.Repeat("a", 64), 0)
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)
-			go func() {
-				done <- snapshot.watchAndCapture(ctx, cfg, watcher)
-				close(done)
-			}()
-			t.Cleanup(func() {
-				cancel()
-				release()
-				select {
-				case <-done:
-				case <-time.After(time.Second):
-					t.Error("watcher did not stop")
-				}
-			})
-			select {
-			case <-backend.entered:
-			case <-time.After(time.Second):
-				t.Fatal("watcher did not start discovery")
-			}
+			go func() { done <- snapshot.watchAndCapture(ctx, cfg, watcher) }()
 			cancel()
-			select {
-			case err := <-done:
-				t.Fatalf("tracer returned before watcher cleanup: %v", err)
-			case <-time.After(20 * time.Millisecond):
-			}
-			release()
 			select {
 			case err := <-done:
 				if err != nil {
 					t.Fatal(err)
 				}
-			case <-time.After(time.Second):
-				t.Fatal("tracer did not stop after releasing discovery")
+			case <-time.After(3 * time.Second):
+				t.Fatal("snapshot did not join watcher")
 			}
-			control, err := os.ReadFile(filepath.Join(directory, "cgroup.event_control"))
+			if _, err := watcher.watcher.Add(t.Context(), "/"); !errors.Is(err, memorywatch.ErrClosed) {
+				t.Fatalf("watcher remains active after stop: %v", err)
+			}
+			after, err := os.ReadDir("/proc/self/fd")
 			if err != nil {
 				t.Fatal(err)
 			}
-			var pressureFD int
-			if _, err := fmt.Sscanf(string(control), "%d", &pressureFD); err != nil {
-				t.Fatal(err)
-			}
-			for _, fd := range append(fds, pressureFD) {
-				if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); !errors.Is(err, unix.EBADF) {
-					t.Errorf("FD %d remains open after stop: %v", fd, err)
-				}
+			if len(after) != len(before) {
+				t.Fatalf("open FD count changed from %d to %d", len(before), len(after))
 			}
 		})
 	}
