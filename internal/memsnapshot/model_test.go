@@ -54,19 +54,19 @@ func TestLimitOutputDropsEntriesToEncodedLimit(t *testing.T) {
 	for index := range stack {
 		stack[index] = frame
 	}
-	entries := make([]Entry, MaxTopK)
+	entries := make([]Entry, MaxMemoryObjectEntries)
 	for index := range entries {
 		entries[index] = Entry{Name: "entry", Stack: append([]string(nil), stack...)}
 	}
 	snapshot := &Snapshot{Status: StatusComplete, Entries: entries}
-	if err := LimitOutput(snapshot, MaxTopK); err != nil {
+	if err := LimitOutput(snapshot, MaxMemoryObjectEntries); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(raw) > MaxSnapshotBytes || len(snapshot.Entries) >= MaxTopK ||
+	if len(raw) > MaxSnapshotBytes || len(snapshot.Entries) >= MaxMemoryObjectEntries ||
 		!snapshot.OutputTruncated {
 		t.Fatalf("bounded snapshot bytes=%d entries=%d truncated=%v",
 			len(raw), len(snapshot.Entries), snapshot.OutputTruncated)

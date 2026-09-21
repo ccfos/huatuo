@@ -129,7 +129,7 @@ func TestMemoryThresholdSnapshotConfigRejectsOverflowAndUnboundedEntries(t *test
 				maximum := int64(1<<63-1) / int64(time.Second)
 				cfg.RunTracingToolTimeout = int(maximum + 1)
 			case "entries":
-				cfg.MaxMemoryObjectEntries = memsnapshot.MaxTopK + 1
+				cfg.MaxMemoryObjectEntries = memsnapshot.MaxMemoryObjectEntries + 1
 			}
 			if err := validateMemoryThresholdSnapshotConfig(config); err == nil {
 				t.Fatalf("unbounded %s accepted", field)

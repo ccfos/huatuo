@@ -303,8 +303,8 @@ func (o *Options) defaults() error {
 	if o.TopK == 0 {
 		o.TopK = 10
 	}
-	if o.TopK < 1 || o.TopK > memsnapshot.MaxTopK {
-		return fmt.Errorf("snapshot top-K must be in [1, %d], got %d", memsnapshot.MaxTopK, o.TopK)
+	if o.TopK < 1 || o.TopK > memsnapshot.MaxMemoryObjectEntries {
+		return fmt.Errorf("snapshot top-K must be in [1, %d], got %d", memsnapshot.MaxMemoryObjectEntries, o.TopK)
 	}
 	for _, budget := range []struct {
 		name     string

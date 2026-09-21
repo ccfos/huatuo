@@ -24,8 +24,8 @@ import (
 )
 
 const (
-	// MaxTopK bounds provider work before the final encoded-size limit is applied.
-	MaxTopK = 100
+	// MaxMemoryObjectEntries bounds provider work before the final encoded-size limit is applied.
+	MaxMemoryObjectEntries = 100
 	// MaxSnapshotBytes leaves storage metadata headroom around the embedded snapshot.
 	MaxSnapshotBytes = 512 << 10
 
@@ -157,8 +157,8 @@ func LimitOutput(snapshot *Snapshot, topK int) error {
 	if snapshot == nil {
 		return nil
 	}
-	if topK <= 0 || topK > MaxTopK {
-		return fmt.Errorf("snapshot top-K must be in [1, %d], got %d", MaxTopK, topK)
+	if topK <= 0 || topK > MaxMemoryObjectEntries {
+		return fmt.Errorf("snapshot top-K must be in [1, %d], got %d", MaxMemoryObjectEntries, topK)
 	}
 
 	var truncated bool

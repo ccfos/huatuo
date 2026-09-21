@@ -153,9 +153,9 @@ func validateMemoryThresholdSnapshotConfig(config *Config) error {
 				duration.value)
 		}
 	}
-	if cfg.MaxMemoryObjectEntries <= 0 || cfg.MaxMemoryObjectEntries > memsnapshot.MaxTopK {
+	if cfg.MaxMemoryObjectEntries <= 0 || cfg.MaxMemoryObjectEntries > memsnapshot.MaxMemoryObjectEntries {
 		return fmt.Errorf("snapshot maximum memory object entries must be in [1, %d], got %d",
-			memsnapshot.MaxTopK, cfg.MaxMemoryObjectEntries)
+			memsnapshot.MaxMemoryObjectEntries, cfg.MaxMemoryObjectEntries)
 	}
 	return nil
 }
