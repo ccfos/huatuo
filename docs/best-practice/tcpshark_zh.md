@@ -345,7 +345,8 @@ sequenceDiagram
 
 #### 5.3 Dropwatch Perf Status
 
-每个 no-match 都会输出当时可读取的最新计数：
+每个非空输出批次在写出前读取一次状态，包括全部匹配的批次。
+只有 no-match 事件输出当时可读取的最新计数：
 
 | 字段 | 含义 |
 |------|------|
@@ -355,6 +356,9 @@ sequenceDiagram
 
 这些 counter 绑定当前 BPF load；重新加载时归零。正常运行或 shutdown 时已经
 定型的 no-match 不会在 reload 后继续复用。
+
+状态读取失败时，先尝试输出本批事件，再返回错误并结束采集；写出失败则停止该批次。
+已匹配事件仍保持 `host_software`，不附加状态快照或状态不可用原因。
 
 #### 5.4 使用条件与排查方式
 

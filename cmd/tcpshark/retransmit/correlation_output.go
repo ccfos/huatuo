@@ -24,28 +24,13 @@ import (
 )
 
 func (s *retransmitDropSession) emitResults(results []correlationResult) error {
-	needsDropwatchStatus := false
-	for resultIndex := range results {
-		if results[resultIndex].drop == nil {
-			needsDropwatchStatus = true
-			break
-		}
+	if len(results) == 0 {
+		return nil
 	}
-
-	var status types.DropwatchStatus
-	var statusErr error
-	if needsDropwatchStatus {
-		status, statusErr = s.readDropwatchStatus()
-	}
+	status, statusErr := s.readDropwatchStatus()
 
 	for resultIndex := range results {
 		result := &results[resultIndex]
-		if result.retransmit == nil {
-			return errors.Join(
-				statusErr,
-				errors.New("emit retransmit drop result: nil TCP retransmission"),
-			)
-		}
 		event, err := result.retransmit.tracing(s.sourceType)
 		if err != nil {
 			return errors.Join(statusErr, err)
@@ -56,26 +41,24 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 				[]types.CorrelationReason(nil),
 				result.reasons...,
 			)
-			lostSamples := status.LostSamples
+			if statusErr == nil {
+				statusCopy := status
+				event.DropwatchPerfStatus = &statusCopy
+			}
 			if statusErr != nil {
 				event.CorrelationReasons = append(
 					event.CorrelationReasons,
 					types.CorrelationReasonDropwatchPerfStatusUnavailable,
 				)
-			} else {
-				event.DropwatchPerfStatus = &types.DropwatchStatus{
-					PerfLost:    status.PerfLost,
-					LostSamples: lostSamples,
-					RateLimited: status.RateLimited,
-				}
-				if status.RateLimited != 0 {
-					event.CorrelationReasons = append(
-						event.CorrelationReasons,
-						types.CorrelationReasonDropRateLimited,
-					)
-				}
 			}
-			if status.PerfLost != 0 || lostSamples != 0 {
+			// ReadStatus zeroes unavailable map counters and preserves reader loss.
+			if status.RateLimited != 0 {
+				event.CorrelationReasons = append(
+					event.CorrelationReasons,
+					types.CorrelationReasonDropRateLimited,
+				)
+			}
+			if status.PerfLost != 0 || status.LostSamples != 0 {
 				event.CorrelationReasons = append(
 					event.CorrelationReasons,
 					types.CorrelationReasonPerfEventsLost,

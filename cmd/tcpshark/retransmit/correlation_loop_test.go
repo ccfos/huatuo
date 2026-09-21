@@ -125,6 +125,52 @@ func TestRetransmitDropTimerRearmsAfterMatch(t *testing.T) {
 	}
 }
 
+func TestRetransmitDropStatusErrorStopsAfterMatchedOutput(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	retransmits := make(chan *retransmitEvent)
+	drops := make(chan *dropEvent)
+	statusErr := errors.New("status unavailable")
+	source := &dropwatchStatusStub{readErr: statusErr}
+	sink := &retransmitDropWriterStub{}
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		return runRetransmitDropCorrelation(groupCtx, &retransmitDropSession{
+			retransmitEvents:    retransmits,
+			dropwatchEvents:     drops,
+			readDropwatchStatus: source.ReadStatus,
+			sink:                sink,
+		})
+	})
+	t.Cleanup(func() {
+		cancel()
+		_ = group.Wait()
+	})
+
+	drop := testDropEvent(t, uint64(time.Second), "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200, 0, packet.TCPFlagACK)
+	select {
+	case drops <- drop:
+	case <-groupCtx.Done():
+		t.Fatal("correlation loop did not accept drop")
+	}
+	retransmit := testRetransmitEvent(uint64(time.Second)+1, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+	select {
+	case retransmits <- retransmit:
+	case <-groupCtx.Done():
+		t.Fatal("correlation loop stopped before accepting retransmission")
+	}
+
+	if err := group.Wait(); !errors.Is(err, statusErr) {
+		t.Fatalf("correlation loop error = %v, want %v", err, statusErr)
+	}
+	if len(sink.events) != 1 || sink.events[0].KernelObservedNS != retransmit.record.KernelObservedNS ||
+		sink.events[0].DropLocation != "host_software" {
+		t.Fatalf("events = %+v, want matched retransmission exactly once", sink.events)
+	}
+	if source.readCalls != 1 {
+		t.Fatalf("status reads = %d, want 1", source.readCalls)
+	}
+}
+
 func TestRetransmitReaderErrorCancelsSiblingWorkers(t *testing.T) {
 	group, groupCtx := errgroup.WithContext(t.Context())
 	sourceErr := errors.New("source failed")
