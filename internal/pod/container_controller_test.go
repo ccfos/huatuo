@@ -51,6 +51,9 @@ func TestSynchronizedContainersQueryBoundaries(t *testing.T) {
 	previous := containerView
 	containerView = newContainerStore()
 	t.Cleanup(func() { containerView = previous })
+	if ContainerSyncEnabled() {
+		t.Fatal("disabled container source reported enabled")
+	}
 	if got, err := SynchronizedContainers(); err != nil || len(got) != 0 {
 		t.Fatalf("disabled view = %v, %v", got, err)
 	}
@@ -88,6 +91,9 @@ func TestSynchronizedContainersQueryBoundaries(t *testing.T) {
 
 	queryErr = errors.New("kubelet query failed")
 	refresh()
+	if !ContainerSyncEnabled() {
+		t.Fatal("unavailable container source reported disabled")
+	}
 	if got, err := SynchronizedContainers(); got != nil || !errors.Is(err, queryErr) {
 		t.Fatalf("failed strict view = %v, %v", got, err)
 	}

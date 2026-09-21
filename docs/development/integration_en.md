@@ -112,6 +112,32 @@ so callers can pass an initialized PID variable without checking it first.
 Clear the variable after waiting; use `|| true` in best-effort cleanup and
 assert the exit status when it is part of the test contract.
 
+### IO tests
+
+`make integration` includes IO latency and size statistics, blk-throttle and
+IOCOST waits, device and cgroup lifecycles, and health events.
+
+Run as root on a dedicated Linux test host with BPF/BTF support. Cases create
+and clean up temporary virtual devices and cgroups. Run IOCOST alone with
+`sudo bash integration/run.sh test_iocost.sh`; `TEST_IOCOST_MODE` selects
+`functional`, `lifecycle`, `faults`, `pressure`, or `compat` (default: `all`).
+
+IO tests prefer disks created with `scsi_debug`. If it is unavailable,
+they use an eligible existing SCSI/NVMe/virtio disk for read-only checks, or skip
+those checks when none is available. Configuration changes and device deletion use
+only test-owned disks. Metric checks start their own Huatuo daemon.
+
+IO health verifies health events and evidence on a live Linux kernel.
+Real NVMe/SCSI evidence commands require an explicit dedicated test device:
+
+```bash
+sudo env TEST_IO_CONFIRM_NON_SYSTEM=1 TEST_NVME_DEVICE=nvme0 \
+  bash integration/run.sh test_io_kernel.sh
+```
+
+For SCSI, use `TEST_SCSI_DEVICE=sdb`. These cases require `nvme-cli` and
+`smartmontools`, respectively.
+
 ### Network Namespace Helpers
 
 Network tests can source `integration/lib_namespace.sh` after `lib.sh`:
