@@ -23,7 +23,7 @@ import (
 func TestMemoryEventsBlacklist(t *testing.T) {
 	// Disable every event so registry validation does not initialize kernel collectors.
 	blacklist := []string{
-		"dropwatch", "hungtask", "memory_oom_kill", "memory_threshold_snapshot", "memory_reclaim_events",
+		"dropwatch", "hungtask", "memory_oom_kill", "memory_reclaim_events",
 		"net_rx_latency", "netdev_bonding_lacp", "netdev_events",
 		"netdev_txqueue_timeout", "ras", "sched_tick", "softlockup", "tcp_retransmit",
 	}
@@ -35,12 +35,10 @@ func TestMemoryEventsBlacklist(t *testing.T) {
 		t.Fatalf("registered events = %v, want none", registered)
 	}
 	status := tracing.EventTracingStatus()
-	for _, name := range []string{"memory_oom_kill", "memory_threshold_snapshot"} {
-		if got := status[name]; got != "disabled" {
-			t.Errorf("%s status = %q, want disabled", name, got)
-		}
+	if got := status["memory_oom_kill"]; got != "disabled" {
+		t.Errorf("memory_oom_kill status = %q, want disabled", got)
 	}
-	for _, name := range []string{"oom", "memory_oom", "before_oom_memsnap"} {
+	for _, name := range []string{"oom", "memory_oom"} {
 		if _, ok := status[name]; ok {
 			t.Errorf("legacy %s tracer is still registered", name)
 		}

@@ -15,10 +15,13 @@
 package autotracing
 
 import (
+	"fmt"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
 // ContainerFilterConfig is the serializable form of a container filter.
@@ -89,6 +92,13 @@ type Config struct {
 
 	MemoryBurst MemBurstConfig
 
+	MemoryThresholdSnapshot struct {
+		ThresholdPercent       int `default:"90"`
+		IntervalTracing        int `default:"300"`
+		RunTracingToolTimeout  int `default:"2"`
+		MaxMemoryObjectEntries int `default:"10"`
+	}
+
 	// IssuesList for known issue filtering
 	IssuesList [][]string
 }
@@ -107,6 +117,47 @@ func Set(c *Config) {
 
 func configSnapshot() *Config {
 	return currentConfig.Load()
+}
+
+// Validate rejects invalid autotracing settings.
+func (c *Config) Validate() error {
+	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
+		return fmt.Errorf("validating issues list: %w", err)
+	}
+	if err := validateMemoryThresholdSnapshotConfig(c); err != nil {
+		return fmt.Errorf("validating memory threshold snapshot: %w", err)
+	}
+	return nil
+}
+
+func validateMemoryThresholdSnapshotConfig(config *Config) error {
+	const maxTimeDuration = time.Duration(1<<63 - 1)
+
+	cfg := &config.MemoryThresholdSnapshot
+	if cfg.ThresholdPercent <= 0 || cfg.ThresholdPercent > 100 {
+		return fmt.Errorf("threshold percent must be in [1, 100], got %d",
+			cfg.ThresholdPercent)
+	}
+	for _, duration := range []struct {
+		name  string
+		value int
+	}{
+		{"tracing interval seconds", cfg.IntervalTracing},
+		{"tracing tool timeout seconds", cfg.RunTracingToolTimeout},
+	} {
+		if duration.value <= 0 {
+			return fmt.Errorf("%s must be positive", duration.name)
+		}
+		if uint64(duration.value) > uint64(maxTimeDuration)/uint64(time.Second) {
+			return fmt.Errorf("%s overflows time.Duration: %d", duration.name,
+				duration.value)
+		}
+	}
+	if cfg.MaxMemoryObjectEntries <= 0 || cfg.MaxMemoryObjectEntries > memsnapshot.MaxTopK {
+		return fmt.Errorf("snapshot maximum memory object entries must be in [1, %d], got %d",
+			memsnapshot.MaxTopK, cfg.MaxMemoryObjectEntries)
+	}
+	return nil
 }
 
 // Clone returns a deep copy suitable for immutable publication.

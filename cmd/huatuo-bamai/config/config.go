@@ -27,7 +27,6 @@ import (
 	"github.com/ccfos/huatuo/core/events"
 	collector "github.com/ccfos/huatuo/core/metrics"
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/matcher"
 )
 
 // LogConfig controls process logging.
@@ -171,8 +170,8 @@ func (c *Config) Validate() error {
 	if err := c.Pod.Validate(); err != nil {
 		return fmt.Errorf("validating pod config: %w", err)
 	}
-	if err := matcher.ValidateClassifications(c.AutoTracing.IssuesList); err != nil {
-		return fmt.Errorf("validating autotracing issues list: %w", err)
+	if err := c.AutoTracing.Validate(); err != nil {
+		return fmt.Errorf("validating autotracing config: %w", err)
 	}
 	if err := c.EventTracing.Validate(); err != nil {
 		return fmt.Errorf("validating event tracing config: %w", err)

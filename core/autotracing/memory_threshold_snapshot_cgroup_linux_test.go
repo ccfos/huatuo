@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package events
+package autotracing
 
 import (
 	"os"
@@ -34,7 +34,12 @@ func writeMemoryEventsForTest(t *testing.T, path, contents string) {
 
 func TestMemoryCgroupRecovery(t *testing.T) {
 	root := t.TempDir()
-	w, err := openPressureWatcher(nil, &MemoryThresholdSnapshotConfig{}, cgroups.Unified, root)
+	w, err := openPressureWatcher(
+		nil,
+		90,
+		cgroups.Unified,
+		root,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +103,12 @@ func TestMemoryCgroupRecovery(t *testing.T) {
 // delete from an old incarnation arrives after a new one was created.
 func TestMemoryCgroupLifecycleTargetsCurrentPath(t *testing.T) {
 	root := t.TempDir()
-	w, err := openPressureWatcher(nil, &MemoryThresholdSnapshotConfig{}, cgroups.Unified, root)
+	w, err := openPressureWatcher(
+		nil,
+		90,
+		cgroups.Unified,
+		root,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +190,12 @@ func TestMemoryCgroupLifecycleTargetsCurrentPath(t *testing.T) {
 
 func TestMemoryCgroupMovedWithOldPathPresent(t *testing.T) {
 	root := t.TempDir()
-	w, err := openPressureWatcher(nil, &MemoryThresholdSnapshotConfig{}, cgroups.Unified, root)
+	w, err := openPressureWatcher(
+		nil,
+		90,
+		cgroups.Unified,
+		root,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

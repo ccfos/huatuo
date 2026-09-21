@@ -89,6 +89,12 @@ EnableTLP = true
 EnableDropwatchCorrelation = true
 MaxEventsPerSecond = 42
 
+[AutoTracing.MemoryThresholdSnapshot]
+ThresholdPercent = 85
+IntervalTracing = 60
+RunTracingToolTimeout = 3
+MaxMemoryObjectEntries = 7
+
 [MetricCollector.Vmstat]
 IncludedOnHost = "pgscan_direct"
 ExcludedOnHost = "total"
@@ -173,6 +179,19 @@ ExcludedOnContainer = "writeback"
 	if Get().EventTracing.TCPRetransmit.MaxEventsPerSecond != 42 {
 		t.Errorf("unexpected TCPRetransmit.MaxEventsPerSecond: %d", Get().EventTracing.TCPRetransmit.MaxEventsPerSecond)
 	}
+	snapshot := Get().AutoTracing.MemoryThresholdSnapshot
+	if snapshot.ThresholdPercent != 85 {
+		t.Errorf("MemoryThresholdSnapshot.ThresholdPercent = %d, want 85", snapshot.ThresholdPercent)
+	}
+	if snapshot.IntervalTracing != 60 {
+		t.Errorf("MemoryThresholdSnapshot.IntervalTracing = %d, want 60", snapshot.IntervalTracing)
+	}
+	if snapshot.RunTracingToolTimeout != 3 {
+		t.Errorf("MemoryThresholdSnapshot.RunTracingToolTimeout = %d, want 3", snapshot.RunTracingToolTimeout)
+	}
+	if snapshot.MaxMemoryObjectEntries != 7 {
+		t.Errorf("MemoryThresholdSnapshot.MaxMemoryObjectEntries = %d, want 7", snapshot.MaxMemoryObjectEntries)
+	}
 	if Get().Storage.Elasticsearch.Enabled() {
 		t.Error("Elasticsearch is enabled without connection settings")
 	}
@@ -196,6 +215,19 @@ func TestLoadRepositoryConfig(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "huatuo-bamai.conf")
 	if err := Load(path); err != nil {
 		t.Fatalf("Load(%q) error = %v", path, err)
+	}
+	snapshot := Get().AutoTracing.MemoryThresholdSnapshot
+	if snapshot.ThresholdPercent != 90 {
+		t.Errorf("MemoryThresholdSnapshot.ThresholdPercent = %d, want default 90", snapshot.ThresholdPercent)
+	}
+	if snapshot.IntervalTracing != 300 {
+		t.Errorf("MemoryThresholdSnapshot.IntervalTracing = %d, want default 300", snapshot.IntervalTracing)
+	}
+	if snapshot.RunTracingToolTimeout != 2 {
+		t.Errorf("MemoryThresholdSnapshot.RunTracingToolTimeout = %d, want default 2", snapshot.RunTracingToolTimeout)
+	}
+	if snapshot.MaxMemoryObjectEntries != 10 {
+		t.Errorf("MemoryThresholdSnapshot.MaxMemoryObjectEntries = %d, want default 10", snapshot.MaxMemoryObjectEntries)
 	}
 }
 
@@ -246,6 +278,34 @@ func TestLoadRejectsLegacyKeys(t *testing.T) {
 		{
 			name:     "local file rotation size",
 			contents: "[Storage.LocalFile]\nRotationSize = 100",
+		},
+		{
+			name:     "memory threshold snapshot",
+			contents: "[EventTracing.BeforeOOMMemsnap]\nEnabled = false",
+		},
+		{
+			name:     "event tracing memory threshold snapshot",
+			contents: "[EventTracing.MemoryThresholdSnapshot]\nThresholdPercent = 90",
+		},
+		{
+			name:     "snapshot enablement",
+			contents: "[AutoTracing.MemoryThresholdSnapshot]\nEnabled = false",
+		},
+		{
+			name:     "snapshot go timeout",
+			contents: "[AutoTracing.MemoryThresholdSnapshot]\nGoTimeoutMS = 100",
+		},
+		{
+			name:     "snapshot java timeout",
+			contents: "[AutoTracing.MemoryThresholdSnapshot]\nJavaTimeoutMS = 2000",
+		},
+		{
+			name:     "snapshot python timeout",
+			contents: "[AutoTracing.MemoryThresholdSnapshot]\nPythonTimeoutMS = 2000",
+		},
+		{
+			name:     "snapshot top k",
+			contents: "[AutoTracing.MemoryThresholdSnapshot]\nTopK = 10",
 		},
 	}
 
@@ -319,7 +379,7 @@ func TestConfigValidate(t *testing.T) {
 			mutate: func(cfg *Config) {
 				cfg.AutoTracing.IssuesList = [][]string{{"broken", "["}}
 			},
-			wantErr: "validating autotracing issues list",
+			wantErr: "validating autotracing config: validating issues list",
 		},
 		{
 			name: "invalid scheduler tick threshold",
@@ -403,11 +463,15 @@ ExcludedOnContainer = "writeback"
 	}
 
 	if err := UpdateAndSync(map[string]any{
-		"BlackList":                                  []string{"netdev_hw", "metax_gpu"},
-		"AutoTracing.IssuesList":                     [][]string{{"cpuidle", "perf"}},
-		"EventTracing.IssuesList":                    [][]string{{"dropwatch", "kfree_skb"}},
-		"MetricCollector.Vmstat.IncludedOnHost":      "pgsteal_direct",
-		"MetricCollector.Vmstat.IncludedOnContainer": "workingset_refault_file",
+		"BlackList":               []string{"netdev_hw", "metax_gpu"},
+		"AutoTracing.IssuesList":  [][]string{{"cpuidle", "perf"}},
+		"EventTracing.IssuesList": [][]string{{"dropwatch", "kfree_skb"}},
+		"AutoTracing.MemoryThresholdSnapshot.ThresholdPercent":       85,
+		"AutoTracing.MemoryThresholdSnapshot.IntervalTracing":        60,
+		"AutoTracing.MemoryThresholdSnapshot.RunTracingToolTimeout":  3,
+		"AutoTracing.MemoryThresholdSnapshot.MaxMemoryObjectEntries": 7,
+		"MetricCollector.Vmstat.IncludedOnHost":                      "pgsteal_direct",
+		"MetricCollector.Vmstat.IncludedOnContainer":                 "workingset_refault_file",
 	}); err != nil {
 		t.Fatalf("UpdateAndSync returned error: %v", err)
 	}
@@ -431,6 +495,19 @@ ExcludedOnContainer = "writeback"
 	if len(Get().EventTracing.IssuesList) != 1 || len(Get().EventTracing.IssuesList[0]) != 2 || Get().EventTracing.IssuesList[0][0] != "dropwatch" {
 		t.Errorf("unexpected EventTracing.IssuesList after reload: %#v", Get().EventTracing.IssuesList)
 	}
+	snapshot := Get().AutoTracing.MemoryThresholdSnapshot
+	if snapshot.ThresholdPercent != 85 {
+		t.Errorf("MemoryThresholdSnapshot.ThresholdPercent after reload = %d, want 85", snapshot.ThresholdPercent)
+	}
+	if snapshot.IntervalTracing != 60 {
+		t.Errorf("MemoryThresholdSnapshot.IntervalTracing after reload = %d, want 60", snapshot.IntervalTracing)
+	}
+	if snapshot.RunTracingToolTimeout != 3 {
+		t.Errorf("MemoryThresholdSnapshot.RunTracingToolTimeout after reload = %d, want 3", snapshot.RunTracingToolTimeout)
+	}
+	if snapshot.MaxMemoryObjectEntries != 7 {
+		t.Errorf("MemoryThresholdSnapshot.MaxMemoryObjectEntries after reload = %d, want 7", snapshot.MaxMemoryObjectEntries)
+	}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -447,6 +524,12 @@ ExcludedOnContainer = "writeback"
 	}
 	if !strings.Contains(string(raw), "MemoryLimitMiB = 2048") {
 		t.Errorf("synced config should preserve the public memory unit, got %s", string(raw))
+	}
+	if !strings.Contains(string(raw), "[AutoTracing.MemoryThresholdSnapshot]") {
+		t.Error("synced config omitted AutoTracing.MemoryThresholdSnapshot")
+	}
+	if strings.Contains(string(raw), "BeforeOOMMemsnap") {
+		t.Error("synced config contains the old memory threshold snapshot key")
 	}
 }
 

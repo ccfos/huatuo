@@ -682,7 +682,58 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
   Default: 10.
 
-#### 7.6 Known Issue Filtering (IssuesList)
+#### 7.6 Memory Threshold Runtime Snapshots
+
+`memory_threshold_snapshot` is enabled by default. Add it to the global `BlackList`
+and restart huatuo-bamai to disable it.
+This feature attempts a Go, HotSpot, or CPython snapshot
+after a container memory-pressure notification; completion before OOM is not
+guaranteed. Candidates are ranked by an approximate kernel OOM score.
+
+The persisted `victim_pid`, `victim_process_name`, and `victim_oom_score_adj`
+fields describe the process selected for snapshot capture.
+
+```toml
+[AutoTracing.MemoryThresholdSnapshot]
+    # ThresholdPercent = 90
+    # IntervalTracing = 300
+    # RunTracingToolTimeout = 2
+    # MaxMemoryObjectEntries = 10
+```
+
+Commented values are defaults.
+
+| Parameter | Meaning |
+|-----------|---------|
+| ThresholdPercent | Required memory usage-to-limit percentage, from 1 to 100 |
+| IntervalTracing | Node-wide minimum interval after a successful or failed capture attempt, in seconds; defaults to 300 and must be positive |
+| RunTracingToolTimeout | Cooperative capture timeout shared by Go, Java, and Python, in seconds; defaults to 2 and must be positive |
+| MaxMemoryObjectEntries | Maximum number of ranked memory object entries in a snapshot, from 1 to 100; defaults to 10; final JSON is trimmed to at most 512 KiB |
+
+Runtime detection has a separate fixed one-second budget. Persistence is not
+included in the capture budget. Timeouts cannot interrupt synchronous reads
+already executing, so they do not bound the total operation time.
+
+**Trigger conditions:**
+
+- **Cgroup v1**: Registers the memory threshold corresponding to
+  `ThresholdPercent` through `cgroup.event_control`.
+- **Cgroup v2**: Watches increases in the `high` counter of
+  `memory.events.local` (falling back to `memory.events` when absent), then
+  checks `memory.current / memory.max` against the configured percentage.
+  Initial discovery only establishes a counter baseline. This feature does
+  not set `memory.high`; when it is `max`, no high event occurs, and
+  `memory.max` notifications are not used as a fallback.
+
+Container changes reuse shared CSS notifications without carrying full paths.
+The snapshot watcher resolves and saves the actual memory cgroup path through the
+container init PID in its own processing loop. Unavailable paths or lost
+notifications use deferred directory-scan recovery; pressure triggers may be
+missed before monitoring is restored.
+
+See section 14 for deployment limitations and output lookup.
+
+#### 7.7 Known Issue Filtering (IssuesList)
 
 ```bash
 # Autotracing configuration.
@@ -930,66 +981,6 @@ This section captures key kernel events and latency, including scheduler tick in
   For `net_rx_latency`, each regex is matched against the generated event title. For `dropwatch`, it is matched against the newline-joined kernel call stack. A match causes the event to be discarded; the configured name identifies the rule but is not added to the saved event.
 
   Example: `IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
-
-#### 8.9 Memory Threshold Runtime Snapshots
-
-`memory_threshold_snapshot` is enabled by default. Set `Enabled = false` and restart
-huatuo-bamai to disable it, or add it to the global `BlackList`.
-This feature attempts a Go, HotSpot, or CPython snapshot
-after a container memory-pressure notification; completion before OOM is not
-guaranteed. Candidates are ranked by an approximate kernel OOM score.
-
-The event was previously named `before_oom_memsnap`. Update global `BlackList`
-entries, event filters, and alerts to `memory_threshold_snapshot`. Historical
-events retain their original name; queries spanning the rename must match both.
-The configuration section remains `[EventTracing.BeforeOOMMemsnap]` so existing
-settings continue to apply. The persisted `victim_pid`, `victim_process_name`,
-and `victim_oom_score_adj` fields also keep their names for compatibility; they
-identify the capture target, not a confirmed OOM victim.
-
-```toml
-[EventTracing.BeforeOOMMemsnap]
-    Enabled = true
-    # ThresholdPercent = 90
-    # CooldownSeconds = 300
-    # GoTimeoutMS = 100
-    # JavaTimeoutMS = 2000
-    # PythonTimeoutMS = 2000
-    # TopK = 10
-```
-
-Commented values are defaults.
-
-| Parameter | Meaning |
-|-----------|---------|
-| Enabled | Enable snapshots; defaults to `true`; changes require a restart |
-| ThresholdPercent | Required memory usage-to-limit percentage, from 1 to 100 |
-| CooldownSeconds | Global cooldown after a successful or failed capture; must be positive |
-| GoTimeoutMS / JavaTimeoutMS / PythonTimeoutMS | Cooperative provider capture budget for each language, in milliseconds; must be positive |
-| TopK | Maximum requested ranked entries, from 1 to 100; final JSON is trimmed to at most 512 KiB |
-
-Runtime detection has a separate fixed one-second budget. Persistence is not
-included in the capture budget. Timeouts cannot interrupt synchronous reads
-already executing, so they do not bound the total operation time.
-
-**Trigger conditions:**
-
-- **Cgroup v1**: Registers the memory threshold corresponding to
-  `ThresholdPercent` through `cgroup.event_control`.
-- **Cgroup v2**: Watches increases in the `high` counter of
-  `memory.events.local` (falling back to `memory.events` when absent), then
-  checks `memory.current / memory.max` against the configured percentage.
-  Initial discovery only establishes a counter baseline. This feature does
-  not set `memory.high`; when it is `max`, no high event occurs, and
-  `memory.max` notifications are not used as a fallback.
-
-Container changes reuse shared CSS notifications without carrying full paths.
-The OOM watcher resolves and saves the actual memory cgroup path through the
-container init PID in its own processing loop. Unavailable paths or lost
-notifications use deferred directory-scan recovery; pressure triggers may be
-missed before monitoring is restored.
-
-See section 14 for deployment limitations and output lookup.
 
 ### 9. Metric Collector
 
@@ -1343,7 +1334,10 @@ The selected process may not be the eventual OOM victim.
 Results use the existing `[Storage]` configuration (section 6); no separate
 storage setup is needed. The LocalFile filename is `memory_threshold_snapshot`.
 Query `tracing_documents` with `tracer_name = memory_threshold_snapshot` and
-`tracer_type = event`.
+`tracer_type = autotracing`.
+
+`started_timestamp` records when the capture attempt starts;
+`observed_timestamp` records the collector's snapshot capture time.
 
 Inspect `tracer_data.snapshot.status` (`complete`, `partial`,
 `unavailable`, or `failed`) together with `reason`, `runtime_version`,
@@ -1351,7 +1345,7 @@ Inspect `tracer_data.snapshot.status` (`complete`, `partial`,
 
 | Problem | Checks |
 |---------|--------|
-| No output | Enable and restart; check BlackList; see section 8.9 for v2 trigger conditions |
+| No output | Enable and restart; check BlackList; see section 7.6 for v2 trigger conditions |
 | Event without a candidate | Check direct cgroup membership, OOM-kill eligibility, and enumeration limits |
 | `unavailable` / `failed` | Check runtime/layout restrictions, access permissions, container metadata, and target exit; inspect `reason` |
 | Event stops after resource exhaustion | Check `RLIMIT_NOFILE`, `fs.inotify.max_user_watches`, and `fs.inotify.max_user_instances`; adjust and restart; this stop does not stop other events |

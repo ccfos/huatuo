@@ -16,11 +16,127 @@ package autotracing
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/ccfos/huatuo/internal/memsnapshot"
 	testutils "github.com/ccfos/huatuo/internal/testing"
 )
+
+func TestConfigValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		configure func(*Config)
+		wantError string
+	}{
+		{
+			name: "valid config",
+		},
+		{
+			name: "invalid issues list",
+			configure: func(cfg *Config) {
+				cfg.IssuesList = [][]string{{"missing-expression"}}
+			},
+			wantError: "validating issues list",
+		},
+		{
+			name: "zero snapshot tracing interval",
+			configure: func(cfg *Config) {
+				cfg.MemoryThresholdSnapshot.IntervalTracing = 0
+			},
+			wantError: "tracing interval seconds must be positive",
+		},
+		{
+			name: "negative snapshot tracing interval",
+			configure: func(cfg *Config) {
+				cfg.MemoryThresholdSnapshot.IntervalTracing = -1
+			},
+			wantError: "tracing interval seconds must be positive",
+		},
+		{
+			name: "zero snapshot tracing tool timeout",
+			configure: func(cfg *Config) {
+				cfg.MemoryThresholdSnapshot.RunTracingToolTimeout = 0
+			},
+			wantError: "tracing tool timeout seconds must be positive",
+		},
+		{
+			name: "negative snapshot tracing tool timeout",
+			configure: func(cfg *Config) {
+				cfg.MemoryThresholdSnapshot.RunTracingToolTimeout = -1
+			},
+			wantError: "tracing tool timeout seconds must be positive",
+		},
+		{
+			name: "zero snapshot maximum memory object entries",
+			configure: func(cfg *Config) {
+				cfg.MemoryThresholdSnapshot.MaxMemoryObjectEntries = 0
+			},
+			wantError: "snapshot maximum memory object entries must be in [1, 100]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{}
+			cfg.MemoryThresholdSnapshot.ThresholdPercent = 90
+			cfg.MemoryThresholdSnapshot.IntervalTracing = 300
+			cfg.MemoryThresholdSnapshot.RunTracingToolTimeout = 2
+			cfg.MemoryThresholdSnapshot.MaxMemoryObjectEntries = 10
+			if tt.configure != nil {
+				tt.configure(cfg)
+			}
+
+			err := cfg.Validate()
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Validate() error = %v, want contain %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestMemoryThresholdSnapshotConfigRejectsOverflowAndUnboundedEntries(t *testing.T) {
+	for _, field := range []string{"interval", "tracing timeout", "entries"} {
+		t.Run(field, func(t *testing.T) {
+			config := &Config{}
+			cfg := &config.MemoryThresholdSnapshot
+			cfg.ThresholdPercent = 90
+			cfg.IntervalTracing = 300
+			cfg.RunTracingToolTimeout = 2
+			cfg.MaxMemoryObjectEntries = 10
+			if err := validateMemoryThresholdSnapshotConfig(config); err != nil {
+				t.Fatal(err)
+			}
+			if field != "entries" && strconv.IntSize != 64 {
+				t.Skip("duration overflow requires 64-bit int")
+			}
+			switch field {
+			case "interval":
+				maximum := int64(1<<63-1) / int64(time.Second)
+				cfg.IntervalTracing = int(maximum + 1)
+			case "tracing timeout":
+				maximum := int64(1<<63-1) / int64(time.Second)
+				cfg.RunTracingToolTimeout = int(maximum + 1)
+			case "entries":
+				cfg.MaxMemoryObjectEntries = memsnapshot.MaxTopK + 1
+			}
+			if err := validateMemoryThresholdSnapshotConfig(config); err == nil {
+				t.Fatalf("unbounded %s accepted", field)
+			}
+		})
+	}
+}
 
 func TestConfigCloneDoesNotShareMutableReferences(t *testing.T) {
 	source := &Config{}

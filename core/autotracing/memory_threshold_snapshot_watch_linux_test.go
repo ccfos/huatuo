@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package events
+package autotracing
 
 import (
 	"context"
@@ -41,7 +41,12 @@ func TestMemoryCgroupLifecycleWakesEpoll(t *testing.T) {
 		return p
 	}
 	first := create("a")
-	w, err := openPressureWatcher(&lifecycleMemoryCgroup{}, &MemoryThresholdSnapshotConfig{ThresholdPercent: 90}, cgroups.Legacy, root)
+	w, err := openPressureWatcher(
+		&lifecycleMemoryCgroup{},
+		90,
+		cgroups.Legacy,
+		root,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

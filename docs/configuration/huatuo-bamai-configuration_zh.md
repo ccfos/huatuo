@@ -678,7 +678,52 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
   **说明**：控制输出数据量，避免单次事件产生过多诊断信息。
 
-#### 7.6 已知问题过滤（IssuesList）
+#### 7.6 内存阈值运行时快照
+
+`memory_threshold_snapshot` 默认开启；将该自动追踪加入全局 `BlackList`
+并重启 huatuo-bamai，即可关闭。
+该功能在容器内存压力通知后尝试采集 Go、HotSpot 或 CPython
+运行时快照，不保证在 OOM 前完成。候选进程按近似内核 OOM 分数选择。
+
+持久化字段 `victim_pid`、`victim_process_name` 和 `victim_oom_score_adj`
+描述本次快照选中的采集进程。
+
+```toml
+[AutoTracing.MemoryThresholdSnapshot]
+    # ThresholdPercent = 90
+    # IntervalTracing = 300
+    # RunTracingToolTimeout = 2
+    # MaxMemoryObjectEntries = 10
+```
+
+注释中的数值为默认值。
+
+| 参数 | 含义 |
+|------|------|
+| ThresholdPercent | 采集要求的内存使用量与限额比例，范围 1–100 |
+| IntervalTracing | 成功或失败采集尝试完成后的节点级最小间隔，单位秒，默认 300，必须为正数 |
+| RunTracingToolTimeout | Go、Java、Python 统一使用的协作式采集超时时间，单位秒，默认 2，必须为正数 |
+| MaxMemoryObjectEntries | 单次快照最多保留的内存对象排序条目数，范围 1–100，默认 10；最终 JSON 上限为 512 KiB，超限会裁剪 |
+
+运行时识别另有固定的 1 秒预算，保存时间不计入采集预算。
+超时不能中断正在执行的同步读取，因此不是整个操作的耗时上限。
+
+**触发条件：**
+
+- **cgroup v1**：通过 `cgroup.event_control` 注册 `ThresholdPercent` 对应的内存阈值。
+- **cgroup v2**：监听 `memory.events.local` 的 `high` 计数增长
+  （文件不存在时使用 `memory.events`），再检查
+  `memory.current / memory.max` 是否达到配置比例。初次发现只建立计数基线。
+  本功能不设置 `memory.high`；为 `max` 时不会触发，也不会改用
+  `memory.max` 通知。
+
+容器增删复用共享 CSS 通知，不携带完整路径。快照 watcher 在自身处理循环中通过
+InitPid 读取实际 memory cgroup 路径并保存；路径暂不可用或通知丢失时，
+复用延迟目录扫描恢复监听。恢复前可能漏掉内存压力触发。
+
+部署限制和结果查询见第 14 节。
+
+#### 7.7 已知问题过滤（IssuesList）
 
 ```bash
 # Autotracing configuration.
@@ -922,58 +967,6 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
   对 `net_rx_latency`，正则匹配生成的事件标题；对 `dropwatch`，正则匹配以换行符连接的内核调用栈。匹配后事件会被丢弃；配置的名称只用于标识规则，不会写入已保存事件。
 
   示例：`IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
-
-#### 8.9 内存阈值运行时快照
-
-`memory_threshold_snapshot` 默认开启；设置 `Enabled = false` 并重启
-huatuo-bamai，或将该事件加入全局 `BlackList`，即可关闭。
-该功能在容器内存压力通知后尝试采集 Go、HotSpot 或 CPython
-运行时快照，不保证在 OOM 前完成。候选进程按近似内核 OOM 分数选择。
-
-该事件此前名为 `before_oom_memsnap`，全局 `BlackList`、事件过滤器和告警需更新为
-`memory_threshold_snapshot`。历史事件保留原名称，跨版本查询需匹配新旧两个名称。
-配置节仍为 `[EventTracing.BeforeOOMMemsnap]`，确保现有配置继续生效。
-持久化字段 `victim_pid`、`victim_process_name` 和 `victim_oom_score_adj` 也保留原名称以兼容
-现有消费者；它们表示采集目标，不代表已被 OOM killer 终止的进程。
-
-```toml
-[EventTracing.BeforeOOMMemsnap]
-    Enabled = true
-    # ThresholdPercent = 90
-    # CooldownSeconds = 300
-    # GoTimeoutMS = 100
-    # JavaTimeoutMS = 2000
-    # PythonTimeoutMS = 2000
-    # TopK = 10
-```
-
-注释中的数值为默认值。
-
-| 参数 | 含义 |
-|------|------|
-| Enabled | 是否启用，默认 `true`；修改后需重启 |
-| ThresholdPercent | 采集要求的内存使用量与限额比例，范围 1–100 |
-| CooldownSeconds | 成功或失败采集后的全局冷却时间，必须为正数 |
-| GoTimeoutMS / JavaTimeoutMS / PythonTimeoutMS | 对应语言 provider 的协作式采集预算，单位毫秒，必须为正数 |
-| TopK | 最多请求的排序条目数，范围 1–100；最终 JSON 上限为 512 KiB，超限会裁剪 |
-
-运行时识别另有固定的 1 秒预算，保存时间不计入采集预算。
-超时不能中断正在执行的同步读取，因此不是整个操作的耗时上限。
-
-**触发条件：**
-
-- **cgroup v1**：通过 `cgroup.event_control` 注册 `ThresholdPercent` 对应的内存阈值。
-- **cgroup v2**：监听 `memory.events.local` 的 `high` 计数增长
-  （文件不存在时使用 `memory.events`），再检查
-  `memory.current / memory.max` 是否达到配置比例。初次发现只建立计数基线。
-  本功能不设置 `memory.high`；为 `max` 时不会触发，也不会改用
-  `memory.max` 通知。
-
-容器增删复用共享 CSS 通知，不携带完整路径。OOM 在自己的处理线程中通过
-InitPid 读取实际 memory cgroup 路径并保存；路径暂不可用或通知丢失时，
-复用延迟目录扫描恢复监听。恢复前可能漏掉内存压力触发。
-
-部署限制和结果查询见第 14 节。
 
 ### 9. 指标采集器配置
 
@@ -1331,7 +1324,10 @@ Info 日志记录监听状态，以及采集各阶段的开始、结束、耗时
 
 结果沿用现有 `[Storage]` 配置，见第 6 节，无需另配存储。
 LocalFile 文件名为 `memory_threshold_snapshot`；在 `tracing_documents` 中可按
-`tracer_name = memory_threshold_snapshot`、`tracer_type = event` 查询。
+`tracer_name = memory_threshold_snapshot`、`tracer_type = autotracing` 查询。
+
+`started_timestamp` 记录采集尝试的开始时间，
+`observed_timestamp` 记录采集器给出的快照采集时间。
 
 查看 `tracer_data.snapshot.status`（`complete`、`partial`、
 `unavailable`、`failed`），结合 `reason`、`runtime_version`、
@@ -1339,7 +1335,7 @@ LocalFile 文件名为 `memory_threshold_snapshot`；在 `tracing_documents` 中
 
 | 问题 | 检查项 |
 |------|--------|
-| 没有输出 | 是否启用并重启、是否被 BlackList 禁用；v2 触发条件见 8.9 |
+| 没有输出 | 是否启用并重启、是否被 BlackList 禁用；v2 触发条件见 7.6 |
 | 有事件但没有候选进程 | 进程是否直接属于该 cgroup、是否允许 OOM kill、是否超过枚举限制 |
 | `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `reason` |
 | 资源耗尽后事件停止 | 检查 `RLIMIT_NOFILE`、`fs.inotify.max_user_watches`、`fs.inotify.max_user_instances`，调整后重启；其他事件不受此停止影响 |

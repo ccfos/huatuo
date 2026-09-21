@@ -127,6 +127,14 @@ assert_persisted_config() {
 		|| fatal "persisted config omitted the CPULimitCores update"
 	grep -Fq 'MemoryLimitMiB = 1024' "${config_file}" \
 		|| fatal "persisted config omitted the MemoryLimitMiB update"
+	grep -Fq '[AutoTracing.MemoryThresholdSnapshot]' "${config_file}" \
+		|| fatal "persisted config omitted the memory snapshot section"
+	grep -Fq 'IntervalTracing = 60' "${config_file}" \
+		|| fatal "persisted config omitted the snapshot tracing interval update"
+	grep -Fq 'RunTracingToolTimeout = 3' "${config_file}" \
+		|| fatal "persisted config omitted the snapshot tracing tool timeout update"
+	grep -Fq 'MaxMemoryObjectEntries = 7' "${config_file}" \
+		|| fatal "persisted config omitted the snapshot maximum memory object entries update"
 }
 
 integration_huatuo_bamai_start write_config_api_config
@@ -139,11 +147,24 @@ assert_config_error empty-config /v1/config application/json \
 	'{"config":{}}' 400 invalid_request true
 assert_config_error unknown-key /v1/config application/json \
 	'{"config":{"NotExist":1}}' 400 invalid_request true
+assert_config_error invalid-tracing-interval /v1/config application/json \
+	'{"config":{"AutoTracing.MemoryThresholdSnapshot.IntervalTracing":0}}' 400 invalid_request true
+assert_config_error invalid-tracing-tool-timeout /v1/config application/json \
+	'{"config":{"AutoTracing.MemoryThresholdSnapshot.RunTracingToolTimeout":0}}' 400 invalid_request true
+assert_config_error invalid-max-memory-object-entries /v1/config application/json \
+	'{"config":{"AutoTracing.MemoryThresholdSnapshot.MaxMemoryObjectEntries":101}}' 400 invalid_request true
 assert_config_error legacy-route /config application/json \
 	'{"config":{"Runtime.MemoryLimitMiB":1024}}' 404 route_not_found true
 
 request_config_api update-config /v1/config application/json \
-	'{"config":{"BlackList":["dropwatch","netdev_hw"],"Runtime.CPULimitCores":1.5,"Runtime.MemoryLimitMiB":1024}}' true
+	'{"config":{
+        "BlackList":["dropwatch","netdev_hw"],
+        "Runtime.CPULimitCores":1.5,
+        "Runtime.MemoryLimitMiB":1024,
+        "AutoTracing.MemoryThresholdSnapshot.IntervalTracing":60,
+        "AutoTracing.MemoryThresholdSnapshot.RunTracingToolTimeout":3,
+        "AutoTracing.MemoryThresholdSnapshot.MaxMemoryObjectEntries":7
+    }}' true
 if [[ ${config_curl_status} -ne 0 ]]; then
 	fatal "update-config: curl exited ${config_curl_status}"
 fi

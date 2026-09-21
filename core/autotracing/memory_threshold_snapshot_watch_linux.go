@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package events
+package autotracing
 
 import (
 	"context"
@@ -70,13 +70,13 @@ type memoryPressureEvent struct {
 }
 
 type pressureWatcher struct {
-	cgroup    cgroups.Cgroup
-	cfg       *MemoryThresholdSnapshotConfig
-	mode      cgroups.Mode
-	root      string
-	epollFD   int
-	inotifyFD int
-	controlFD int
+	cgroup           cgroups.Cgroup
+	thresholdPercent int
+	mode             cgroups.Mode
+	root             string
+	epollFD          int
+	inotifyFD        int
+	controlFD        int
 
 	cgroups           map[string]*watchedCgroup
 	pressureFDs       map[int]string
@@ -90,9 +90,7 @@ type pressureWatcher struct {
 	recoveryAttempts  int
 }
 
-func newPressureWatcher(cgroup cgroups.Cgroup,
-	cfg *MemoryThresholdSnapshotConfig,
-) (*pressureWatcher, error) {
+func newPressureWatcher(cgroup cgroups.Cgroup, thresholdPercent int) (*pressureWatcher, error) {
 	mode := cgroups.CgroupMode()
 	if mode != cgroups.Legacy && mode != cgroups.Hybrid && mode != cgroups.Unified {
 		return nil, fmt.Errorf("unsupported cgroup mode %d", mode)
@@ -102,7 +100,12 @@ func newPressureWatcher(cgroup cgroups.Cgroup,
 		return nil, err
 	}
 
-	w, err := openPressureWatcher(cgroup, cfg, mode, root)
+	w, err := openPressureWatcher(
+		cgroup,
+		thresholdPercent,
+		mode,
+		root,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -115,8 +118,11 @@ func newPressureWatcher(cgroup cgroups.Cgroup,
 	return w, nil
 }
 
-func openPressureWatcher(cgroup cgroups.Cgroup, cfg *MemoryThresholdSnapshotConfig,
-	mode cgroups.Mode, root string,
+func openPressureWatcher(
+	cgroup cgroups.Cgroup,
+	thresholdPercent int,
+	mode cgroups.Mode,
+	root string,
 ) (*pressureWatcher, error) {
 	epollFD, err := unix.EpollCreate1(unix.EPOLL_CLOEXEC)
 	if err != nil {
@@ -143,7 +149,7 @@ func openPressureWatcher(cgroup cgroups.Cgroup, cfg *MemoryThresholdSnapshotConf
 		}
 	}
 	return &pressureWatcher{
-		cgroup: cgroup, cfg: cfg, mode: mode, root: root,
+		cgroup: cgroup, thresholdPercent: thresholdPercent, mode: mode, root: root,
 		epollFD: epollFD, inotifyFD: inotifyFD, controlFD: controlFD,
 		cgroups:        make(map[string]*watchedCgroup),
 		pressureFDs:    make(map[int]string),
@@ -314,7 +320,7 @@ func (w *pressureWatcher) rearmV1Threshold(entry *watchedCgroup) error {
 		w.removeEventFD(entry)
 		return nil
 	}
-	threshold := percentOfLimit(usage.MaxLimited, w.cfg.ThresholdPercent)
+	threshold := percentOfLimit(usage.MaxLimited, w.thresholdPercent)
 	fd, err := registerV1Threshold(directory, threshold)
 	if err != nil {
 		return err

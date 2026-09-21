@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package events
+package autotracing
 
 import (
 	"context"
@@ -68,12 +68,7 @@ func init() {
 	tracing.RegisterEventTracing(memoryThresholdSnapshotTracer, newMemoryThresholdSnapshot)
 }
 
-// The registry calls this factory once; enabling a disabled tracer requires restart.
 func newMemoryThresholdSnapshot() (*tracing.EventTracingAttr, error) {
-	if !configSnapshot().BeforeOOMMemsnap.Enabled {
-		return nil, types.ErrNotSupported
-	}
-
 	return &tracing.EventTracingAttr{
 		TracingData: &memoryThresholdSnapshot{},
 		Interval:    5,
@@ -85,20 +80,19 @@ func (s *memoryThresholdSnapshot) Start(ctx context.Context) (retErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil
 	}
-	cfg := configSnapshot().BeforeOOMMemsnap
+	config := configSnapshot()
+	cfg := &config.MemoryThresholdSnapshot
 	log.WithField("threshold_percent", cfg.ThresholdPercent).
-		WithField("cooldown_seconds", cfg.CooldownSeconds).
-		WithField("top_k", cfg.TopK).
-		WithField("go_timeout_ms", cfg.GoTimeoutMS).
-		WithField("java_timeout_ms", cfg.JavaTimeoutMS).
-		WithField("python_timeout_ms", cfg.PythonTimeoutMS).
+		WithField("interval_tracing_seconds", cfg.IntervalTracing).
+		WithField("max_memory_object_entries", cfg.MaxMemoryObjectEntries).
+		WithField("run_tracing_tool_timeout_seconds", cfg.RunTracingToolTimeout).
 		Info("memory threshold snapshot watcher starting")
 	defer func() {
 		log.WithError(retErr).
 			WithField("context_error", ctx.Err()).
 			Info("memory threshold snapshot watcher stopped")
 	}()
-	if err := validateMemoryThresholdSnapshotConfig(&cfg); err != nil {
+	if err := validateMemoryThresholdSnapshotConfig(config); err != nil {
 		return fmt.Errorf("invalid memory threshold snapshot config: %w", err)
 	}
 	if s.cgroup == nil {
@@ -108,17 +102,17 @@ func (s *memoryThresholdSnapshot) Start(ctx context.Context) (retErr error) {
 		}
 		s.cgroup = cgroup
 	}
-	watcher, err := newPressureWatcher(s.cgroup, &cfg)
+	watcher, err := newPressureWatcher(s.cgroup, cfg.ThresholdPercent)
 	if err != nil {
 		return handleWatchError(ctx, err)
 	}
 	log.WithField("cgroup_mode", cgroups.CgroupMode()).
 		Info("memory threshold snapshot watcher initialized")
-	return handleWatchError(ctx, s.watchAndCapture(ctx, &cfg, watcher))
+	return handleWatchError(ctx, s.watchAndCapture(ctx, config, watcher))
 }
 
 func (s *memoryThresholdSnapshot) watchAndCapture(ctx context.Context,
-	cfg *MemoryThresholdSnapshotConfig, watcher *pressureWatcher,
+	config *Config, watcher *pressureWatcher,
 ) error {
 	watchCtx, cancel := context.WithCancel(ctx)
 	events, watcherDone := watcher.Run(watchCtx)
@@ -139,10 +133,10 @@ func (s *memoryThresholdSnapshot) watchAndCapture(ctx context.Context,
 				return <-watcherDone
 			}
 			now := time.Now()
-			if !s.captureAllowed(cfg, now) {
+			if !s.captureAllowed(config, now) {
 				continue
 			}
-			candidate, ok, err := s.bestCaptureCandidate(ctx, cfg, events, event)
+			candidate, ok, err := s.bestCaptureCandidate(ctx, config, events, event)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					return nil
@@ -154,11 +148,11 @@ func (s *memoryThresholdSnapshot) watchAndCapture(ctx context.Context,
 			if !ok {
 				continue
 			}
-			err = s.captureCandidate(ctx, cfg, &candidate)
+			err = s.captureCandidate(ctx, config, &candidate)
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
-			// Every completed attempt consumes the same node-wide cooldown.
+			// Every completed attempt starts the same node-wide tracing interval.
 			s.lastAttempt = time.Now()
 			if err != nil {
 				log.WithField("cgroup", candidate.cgroupPath).
@@ -169,15 +163,15 @@ func (s *memoryThresholdSnapshot) watchAndCapture(ctx context.Context,
 	}
 }
 
-func (s *memoryThresholdSnapshot) captureAllowed(cfg *MemoryThresholdSnapshotConfig,
+func (s *memoryThresholdSnapshot) captureAllowed(config *Config,
 	now time.Time,
 ) bool {
-	cooldown := time.Duration(cfg.CooldownSeconds) * time.Second
-	return s.lastAttempt.IsZero() || now.Sub(s.lastAttempt) >= cooldown
+	interval := time.Duration(config.MemoryThresholdSnapshot.IntervalTracing) * time.Second
+	return s.lastAttempt.IsZero() || now.Sub(s.lastAttempt) >= interval
 }
 
 func (s *memoryThresholdSnapshot) bestCaptureCandidate(ctx context.Context,
-	cfg *MemoryThresholdSnapshotConfig, events <-chan memoryPressureEvent,
+	config *Config, events <-chan memoryPressureEvent,
 	first memoryPressureEvent,
 ) (memcgCandidate, bool, error) {
 	pending := map[string]memoryPressureEvent{first.cgroupPath: first}
@@ -190,16 +184,16 @@ func (s *memoryThresholdSnapshot) bestCaptureCandidate(ctx context.Context,
 			return memcgCandidate{}, false, ctx.Err()
 		case event, ok := <-events:
 			if !ok {
-				return s.highestPressureCandidate(cfg, pending)
+				return s.highestPressureCandidate(config, pending)
 			}
 			pending[event.cgroupPath] = event
 		case <-timer.C:
-			return s.highestPressureCandidate(cfg, pending)
+			return s.highestPressureCandidate(config, pending)
 		}
 	}
 }
 
-func (s *memoryThresholdSnapshot) highestPressureCandidate(cfg *MemoryThresholdSnapshotConfig,
+func (s *memoryThresholdSnapshot) highestPressureCandidate(config *Config,
 	events map[string]memoryPressureEvent,
 ) (memcgCandidate, bool, error) {
 	var selected memcgCandidate
@@ -215,7 +209,7 @@ func (s *memoryThresholdSnapshot) highestPressureCandidate(cfg *MemoryThresholdS
 			continue
 		}
 		candidate.ratio = float64(candidate.current) / float64(candidate.max)
-		if candidate.ratio < float64(cfg.ThresholdPercent)/100 {
+		if candidate.ratio < float64(config.MemoryThresholdSnapshot.ThresholdPercent)/100 {
 			continue
 		}
 		if !found || higherPressure(candidate, selected) {
@@ -264,8 +258,9 @@ type memoryThresholdSnapshotOps struct {
 }
 
 func (s *memoryThresholdSnapshot) captureCandidate(ctx context.Context,
-	cfg *MemoryThresholdSnapshotConfig, candidate *memcgCandidate,
+	config *Config, candidate *memcgCandidate,
 ) (retErr error) {
+	cfg := &config.MemoryThresholdSnapshot
 	started := time.Now()
 	log.WithField("container", candidate.containerID).
 		WithField("cgroup", candidate.cgroupPath).
@@ -311,12 +306,13 @@ func (s *memoryThresholdSnapshot) captureCandidate(ctx context.Context,
 	if err != nil {
 		return fmt.Errorf("select target: %w", err)
 	}
+	captureTimeout := time.Duration(cfg.RunTracingToolTimeout) * time.Second
 	_, err = ops.collect(ctx, target.pid, collector.Options{
 		ExpectedIdentity: &target.identity,
-		TopK:             cfg.TopK,
-		GoTimeout:        time.Duration(cfg.GoTimeoutMS) * time.Millisecond,
-		JavaTimeout:      time.Duration(cfg.JavaTimeoutMS) * time.Millisecond,
-		PythonTimeout:    time.Duration(cfg.PythonTimeoutMS) * time.Millisecond,
+		TopK:             cfg.MaxMemoryObjectEntries,
+		GoTimeout:        captureTimeout,
+		JavaTimeout:      captureTimeout,
+		PythonTimeout:    captureTimeout,
 		CheckTarget: func(checkCtx context.Context, identity memsnapshot.ProcessIdentity) error {
 			return ops.validate(checkCtx, candidate.cgroupPath, identity)
 		},
@@ -329,6 +325,8 @@ func (s *memoryThresholdSnapshot) captureCandidate(ctx context.Context,
 			}
 			return ops.save(&tracing.WriteRequest{
 				TracerName: memoryThresholdSnapshotTracer, ContainerID: candidate.containerID,
+				TracerRunType:     types.TracerRunTypeAutotracing,
+				StartedTimestamp:  timeutil.Timestamp{Time: started.UTC()},
 				ObservedTimestamp: timeutil.Timestamp{Time: result.CaptureTime},
 				TracerData: &memoryThresholdSnapshotData{
 					CgroupPath:    candidate.cgroupPath,
