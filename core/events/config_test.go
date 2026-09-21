@@ -58,7 +58,7 @@ func TestConfigValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{BeforeOOMMemsnap: BeforeOOMConfig{
+			cfg := &Config{BeforeOOMMemsnap: MemoryThresholdSnapshotConfig{
 				ThresholdPercent: 90, CooldownSeconds: 300,
 				GoTimeoutMS:     100,
 				JavaTimeoutMS:   2000,
@@ -104,16 +104,16 @@ func TestSetPublishesIndependentConfig(t *testing.T) {
 	}
 }
 
-func TestBeforeOOMConfigRejectsOverflowAndUnboundedTopK(t *testing.T) {
+func TestMemoryThresholdSnapshotConfigRejectsOverflowAndUnboundedTopK(t *testing.T) {
 	for _, field := range []string{"seconds", "milliseconds", "top-K"} {
 		t.Run(field, func(t *testing.T) {
-			cfg := BeforeOOMConfig{
+			cfg := MemoryThresholdSnapshotConfig{
 				ThresholdPercent: 90, CooldownSeconds: 300,
 				GoTimeoutMS:     100,
 				JavaTimeoutMS:   2000,
 				PythonTimeoutMS: 2000, TopK: 10,
 			}
-			if err := validateBeforeOOMConfig(&cfg); err != nil {
+			if err := validateMemoryThresholdSnapshotConfig(&cfg); err != nil {
 				t.Fatal(err)
 			}
 			if field != "top-K" && strconv.IntSize != 64 {
@@ -129,7 +129,7 @@ func TestBeforeOOMConfigRejectsOverflowAndUnboundedTopK(t *testing.T) {
 			case "top-K":
 				cfg.TopK = memsnapshot.MaxTopK + 1
 			}
-			if err := validateBeforeOOMConfig(&cfg); err == nil {
+			if err := validateMemoryThresholdSnapshotConfig(&cfg); err == nil {
 				t.Fatalf("unbounded %s accepted", field)
 			}
 		})

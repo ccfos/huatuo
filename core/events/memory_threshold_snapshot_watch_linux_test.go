@@ -41,7 +41,7 @@ func TestMemoryCgroupLifecycleWakesEpoll(t *testing.T) {
 		return p
 	}
 	first := create("a")
-	w, err := openPressureWatcher(&lifecycleMemoryCgroup{}, &BeforeOOMConfig{ThresholdPercent: 90}, cgroups.Legacy, root)
+	w, err := openPressureWatcher(&lifecycleMemoryCgroup{}, &MemoryThresholdSnapshotConfig{ThresholdPercent: 90}, cgroups.Legacy, root)
 	if err != nil {
 		t.Fatal(err)
 	}

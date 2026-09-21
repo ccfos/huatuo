@@ -44,7 +44,7 @@ var containerCgroupIDRegexp = regexp.MustCompile(
 	`^(?:([0-9a-f]{64})|(?:cri-containerd-|docker-|crio-)([0-9a-f]{64})\.scope)$`,
 )
 
-var errCgroupWatchLimit = errors.New("before-OOM cgroup discovery/watch safety limit reached")
+var errCgroupWatchLimit = errors.New("memory threshold snapshot cgroup discovery/watch safety limit reached")
 
 func knownContainerCgroupPath(id string) (string, error) {
 	container, err := pod.ContainerByID(id)
@@ -75,7 +75,7 @@ func memcgPathForPID(initPID int, mode cgroups.Mode) (string, error) {
 
 func validateContainerCgroup(id, path string, lookup func(string) (string, error)) error {
 	if lookup == nil {
-		return errors.New("before-OOM container path lookup is unavailable")
+		return errors.New("memory threshold snapshot container path lookup is unavailable")
 	}
 	known, err := lookup(id)
 	if err != nil {
@@ -92,7 +92,7 @@ func (w *pressureWatcher) requestRecovery() {
 	w.recoveryRequested = true
 	if w.recoveryDue.IsZero() {
 		w.recoveryDue = time.Now().Add(time.Second)
-		log.Info("before-OOM cgroup recovery scheduled: lifecycle loss or registration not ready")
+		log.Info("memory threshold snapshot cgroup recovery scheduled: lifecycle loss or registration not ready")
 	}
 }
 
@@ -106,7 +106,7 @@ func (w *pressureWatcher) recoverWatches(ctx context.Context, events chan<- memo
 		WithField("elapsed_ms", time.Since(started).Milliseconds()).
 		WithField("retry", w.recoveryRequested).
 		WithError(err).
-		Info("before-OOM cgroup recovery finished")
+		Info("memory threshold snapshot cgroup recovery finished")
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -119,7 +119,7 @@ func (w *pressureWatcher) recoverWatches(ctx context.Context, events chan<- memo
 			return nil
 		}
 		log.WithError(err).
-			Warn("before-OOM cgroup recovery exhausted; some containers may remain unmonitored")
+			Warn("memory threshold snapshot cgroup recovery exhausted; some containers may remain unmonitored")
 	}
 	w.recoveryDue = time.Time{}
 	w.recoveryRequested = false
@@ -142,7 +142,7 @@ func (w *pressureWatcher) refreshFromCgroupTree(ctx context.Context,
 	})
 	incomplete := errors.Is(err, errCgroupWatchLimit)
 	if err != nil && !incomplete {
-		return fmt.Errorf("discover before-OOM cgroups: %w", err)
+		return fmt.Errorf("discover memory threshold snapshot cgroups: %w", err)
 	}
 	if incomplete {
 		w.reportWatchLimit()
@@ -393,7 +393,7 @@ func (w *pressureWatcher) handleCgroupChange(ctx context.Context,
 			if w.recoveryDue.IsZero() {
 				log.WithField("container", id).
 					WithError(err).
-					Info("before-OOM cgroup path lookup deferred")
+					Info("memory threshold snapshot cgroup path lookup deferred")
 			}
 			w.requestRecovery()
 			return nil

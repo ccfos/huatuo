@@ -923,12 +923,18 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
   示例：`IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
 
-#### 8.9 OOM 前运行时内存快照
+#### 8.9 内存阈值运行时快照
 
-`before_oom_memsnap` 默认开启；设置 `Enabled = false` 并重启
+`memory_threshold_snapshot` 默认开启；设置 `Enabled = false` 并重启
 huatuo-bamai，或将该事件加入全局 `BlackList`，即可关闭。
 该功能在容器内存压力通知后尝试采集 Go、HotSpot 或 CPython
 运行时快照，不保证在 OOM 前完成。候选进程按近似内核 OOM 分数选择。
+
+该事件此前名为 `before_oom_memsnap`，全局 `BlackList`、事件过滤器和告警需更新为
+`memory_threshold_snapshot`。历史事件保留原名称，跨版本查询需匹配新旧两个名称。
+配置节仍为 `[EventTracing.BeforeOOMMemsnap]`，确保现有配置继续生效。
+持久化字段 `victim_pid`、`victim_process_name` 和 `victim_oom_score_adj` 也保留原名称以兼容
+现有消费者；它们表示采集目标，不代表已被 OOM killer 终止的进程。
 
 ```toml
 [EventTracing.BeforeOOMMemsnap]
@@ -1272,7 +1278,7 @@ huatuo-bamai --region <region> [选项]
 
 通过合理配置 huatuo-bamai.conf，可充分发挥 HUATUO 在内核级异常检测与智能追踪方面的优势，有效提升云原生系统的可观测性和故障诊断效率。如需针对特定场景的深度定制，欢迎提供更多环境细节进一步讨论。
 
-### 14. OOM 前内存快照部署与排障
+### 14. 内存阈值快照部署与排障
 
 #### 14.1 部署条件与限制
 
@@ -1324,8 +1330,8 @@ Info 日志记录监听状态，以及采集各阶段的开始、结束、耗时
 候选进程不保证是最终 OOM victim。
 
 结果沿用现有 `[Storage]` 配置，见第 6 节，无需另配存储。
-LocalFile 文件名为 `before_oom_memsnap`；在 `tracing_documents` 中可按
-`tracer_name = before_oom_memsnap`、`tracer_type = event` 查询。
+LocalFile 文件名为 `memory_threshold_snapshot`；在 `tracing_documents` 中可按
+`tracer_name = memory_threshold_snapshot`、`tracer_type = event` 查询。
 
 查看 `tracer_data.snapshot.status`（`complete`、`partial`、
 `unavailable`、`failed`），结合 `reason`、`runtime_version`、

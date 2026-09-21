@@ -931,13 +931,21 @@ This section captures key kernel events and latency, including scheduler tick in
 
   Example: `IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
 
-#### 8.9 Before-OOM Runtime Memory Snapshots
+#### 8.9 Memory Threshold Runtime Snapshots
 
-`before_oom_memsnap` is enabled by default. Set `Enabled = false` and restart
+`memory_threshold_snapshot` is enabled by default. Set `Enabled = false` and restart
 huatuo-bamai to disable it, or add it to the global `BlackList`.
 This feature attempts a Go, HotSpot, or CPython snapshot
 after a container memory-pressure notification; completion before OOM is not
 guaranteed. Candidates are ranked by an approximate kernel OOM score.
+
+The event was previously named `before_oom_memsnap`. Update global `BlackList`
+entries, event filters, and alerts to `memory_threshold_snapshot`. Historical
+events retain their original name; queries spanning the rename must match both.
+The configuration section remains `[EventTracing.BeforeOOMMemsnap]` so existing
+settings continue to apply. The persisted `victim_pid`, `victim_process_name`,
+and `victim_oom_score_adj` fields also keep their names for compatibility; they
+identify the capture target, not a confirmed OOM victim.
 
 ```toml
 [EventTracing.BeforeOOMMemsnap]
@@ -1273,7 +1281,7 @@ By properly configuring huatuo-bamai.conf, you can fully leverage HUATUO’s cap
 
 If you need deeper customization for a specific scenario, feel free to provide more details about your environment.
 
-### 14. Before-OOM Snapshot Deployment and Troubleshooting
+### 14. Memory Threshold Snapshot Deployment and Troubleshooting
 
 #### 14.1 Requirements and Limitations
 
@@ -1333,8 +1341,8 @@ Values are approximate, not an OOM-time snapshot or proof of a leak.
 The selected process may not be the eventual OOM victim.
 
 Results use the existing `[Storage]` configuration (section 6); no separate
-storage setup is needed. The LocalFile filename is `before_oom_memsnap`.
-Query `tracing_documents` with `tracer_name = before_oom_memsnap` and
+storage setup is needed. The LocalFile filename is `memory_threshold_snapshot`.
+Query `tracing_documents` with `tracer_name = memory_threshold_snapshot` and
 `tracer_type = event`.
 
 Inspect `tracer_data.snapshot.status` (`complete`, `partial`,

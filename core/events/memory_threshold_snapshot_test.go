@@ -48,7 +48,7 @@ func (c *blockingMemoryCgroup) MemoryUsage(string) (*stats.MemoryUsage, error) {
 	return &stats.MemoryUsage{MaxLimited: 1 << 20}, nil
 }
 
-func TestBeforeOOMStopJoinsWatcherBeforeRestart(t *testing.T) {
+func TestMemoryThresholdSnapshotStopJoinsWatcherBeforeRestart(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, strings.Repeat("a", 64))
 	if err := os.Mkdir(directory, 0o700); err != nil {
@@ -57,8 +57,8 @@ func TestBeforeOOMStopJoinsWatcherBeforeRestart(t *testing.T) {
 	for _, name := range []string{"memory.limit_in_bytes", "memory.usage_in_bytes", "cgroup.event_control"} {
 		writeMemoryEventsForTest(t, filepath.Join(directory, name), "0")
 	}
-	cfg := &BeforeOOMConfig{ThresholdPercent: 90}
-	snapshot := &beforeOOMMemsnapshot{}
+	cfg := &MemoryThresholdSnapshotConfig{ThresholdPercent: 90}
+	snapshot := &memoryThresholdSnapshot{}
 	for iteration := 0; iteration < 2; iteration++ {
 		t.Run(strconv.Itoa(iteration), func(t *testing.T) {
 			backend := &blockingMemoryCgroup{entered: make(chan struct{}), release: make(chan struct{})}
@@ -122,7 +122,7 @@ func TestBeforeOOMStopJoinsWatcherBeforeRestart(t *testing.T) {
 	}
 }
 
-func TestBeforeOOMRevalidatesContainerBeforePersistence(t *testing.T) {
+func TestMemoryThresholdSnapshotRevalidatesContainerBeforePersistence(t *testing.T) {
 	for _, changed := range []bool{false, true} {
 		t.Run(strconv.FormatBool(changed), func(t *testing.T) {
 			path, saved := "/original", false
@@ -133,9 +133,9 @@ func TestBeforeOOMRevalidatesContainerBeforePersistence(t *testing.T) {
 				Snapshot:      &memsnapshot.Snapshot{Status: memsnapshot.StatusComplete},
 				ProcessMemory: &memsnapshot.ProcessMemory{Status: memsnapshot.StatusComplete},
 			}
-			ops := &beforeOOMOps{
-				selectVictim: func(context.Context, string, uint64) (victimCandidate, error) {
-					return victimCandidate{pid: 42, identity: identity}, nil
+			ops := &memoryThresholdSnapshotOps{
+				selectTarget: func(context.Context, string, uint64) (targetCandidate, error) {
+					return targetCandidate{pid: 42, identity: identity}, nil
 				},
 				validate: func(_ context.Context, path string, actual memsnapshot.ProcessIdentity) error {
 					if path != "/original" || actual != identity {
@@ -160,7 +160,10 @@ func TestBeforeOOMRevalidatesContainerBeforePersistence(t *testing.T) {
 				},
 				save: func(req *tracing.WriteRequest) error {
 					saved = true
-					data := req.TracerData.(*beforeOOMData)
+					if req.TracerName != "memory_threshold_snapshot" {
+						t.Fatalf("tracer name = %q", req.TracerName)
+					}
+					data := req.TracerData.(*memoryThresholdSnapshotData)
 					if data.Snapshot != result.Snapshot || data.Language != result.Language ||
 						data.ProcessMemory != result.ProcessMemory ||
 						!req.ObservedTimestamp.Equal(result.CaptureTime) {
@@ -169,8 +172,8 @@ func TestBeforeOOMRevalidatesContainerBeforePersistence(t *testing.T) {
 					return nil
 				},
 			}
-			err := (&beforeOOMMemsnapshot{captureOps: ops}).captureCandidate(t.Context(),
-				&BeforeOOMConfig{
+			err := (&memoryThresholdSnapshot{captureOps: ops}).captureCandidate(t.Context(),
+				&MemoryThresholdSnapshotConfig{
 					TopK: 10, GoTimeoutMS: 100,
 					JavaTimeoutMS: 2000, PythonTimeoutMS: 2000,
 				},

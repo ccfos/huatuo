@@ -36,13 +36,13 @@ import (
 )
 
 const (
-	maxVictimPIDs      = 4096
-	maxVictimListBytes = 64 << 10
+	maxTargetPIDs      = 4096
+	maxTargetListBytes = 64 << 10
 )
 
-var errNotOOMCandidate = errors.New("process is no longer an OOM candidate")
+var errNotSnapshotTarget = errors.New("process is no longer eligible for a memory snapshot")
 
-type victimCandidate struct {
+type targetCandidate struct {
 	identity    memsnapshot.ProcessIdentity
 	pid         int
 	comm        string
@@ -51,51 +51,51 @@ type victimCandidate struct {
 	score       float64
 }
 
-func selectVictim(ctx context.Context, cgroupPath string, memoryMax uint64) (victimCandidate, error) {
+func selectTarget(ctx context.Context, cgroupPath string, memoryMax uint64) (targetCandidate, error) {
 	procFS, err := procfs.NewDefaultFS()
 	if err != nil {
-		return victimCandidate{}, fmt.Errorf("open procfs: %w", err)
+		return targetCandidate{}, fmt.Errorf("open procfs: %w", err)
 	}
-	return selectVictimFromProcs(func(visit func(int) error) error {
+	return selectTargetFromProcs(func(visit func(int) error) error {
 		return scanMemcgProcs(ctx, cgroupPath, visit)
-	}, func(pid int) (victimCandidate, error) {
+	}, func(pid int) (targetCandidate, error) {
 		identity, err := memsnapshot.ReadIdentity(pid)
 		if err != nil {
-			return victimCandidate{}, fmt.Errorf("read identity: %w", err)
+			return targetCandidate{}, fmt.Errorf("read identity: %w", err)
 		}
 		proc, err := procFS.Proc(pid)
 		if err != nil {
-			return victimCandidate{}, fmt.Errorf("open proc: %w", err)
+			return targetCandidate{}, fmt.Errorf("open proc: %w", err)
 		}
 		oomScoreAdjRaw, err := os.ReadFile(procfs.Path(strconv.Itoa(pid), "oom_score_adj"))
 		if err != nil {
-			return victimCandidate{}, fmt.Errorf("read oom_score_adj: %w", err)
+			return targetCandidate{}, fmt.Errorf("read oom_score_adj: %w", err)
 		}
-		candidate, err := readVictimCandidate(proc, oomScoreAdjRaw, memoryMax)
+		candidate, err := readTargetCandidate(proc, oomScoreAdjRaw, memoryMax)
 		if err != nil {
-			return victimCandidate{}, err
+			return targetCandidate{}, err
 		}
 		current, err := memsnapshot.ReadIdentity(pid)
 		if err != nil {
-			return victimCandidate{}, fmt.Errorf("recheck identity: %w", err)
+			return targetCandidate{}, fmt.Errorf("recheck identity: %w", err)
 		}
 		if current != identity {
-			return victimCandidate{}, errNotOOMCandidate
+			return targetCandidate{}, errNotSnapshotTarget
 		}
 		candidate.identity = identity
 		return candidate, nil
 	})
 }
 
-func selectVictimFromProcs(scan func(func(int) error) error,
-	read func(int) (victimCandidate, error),
-) (victimCandidate, error) {
-	var selected victimCandidate
+func selectTargetFromProcs(scan func(func(int) error) error,
+	read func(int) (targetCandidate, error),
+) (targetCandidate, error) {
+	var selected targetCandidate
 	found := false
 	err := scan(func(pid int) error {
 		candidate, err := read(pid)
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, unix.ESRCH) ||
-			errors.Is(err, errNotOOMCandidate) {
+			errors.Is(err, errNotSnapshotTarget) {
 			return nil
 		}
 		if err != nil {
@@ -109,15 +109,15 @@ func selectVictimFromProcs(scan func(func(int) error) error,
 	})
 	if err != nil {
 		// Failed reads and enumeration must not select a winner from a partial view.
-		return victimCandidate{}, fmt.Errorf("enumerate cgroup processes: %w", err)
+		return targetCandidate{}, fmt.Errorf("enumerate cgroup processes: %w", err)
 	}
 	if !found {
-		return victimCandidate{}, errors.New("cgroup has no OOM-killable process")
+		return targetCandidate{}, errors.New("cgroup has no OOM-killable process")
 	}
 	return selected, nil
 }
 
-func validateVictim(ctx context.Context, cgroupPath string, identity memsnapshot.ProcessIdentity) error {
+func validateTarget(ctx context.Context, cgroupPath string, identity memsnapshot.ProcessIdentity) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -129,34 +129,34 @@ func validateVictim(ctx context.Context, cgroupPath string, identity memsnapshot
 		return err
 	}
 	if !found {
-		return errors.New("victim is no longer in the triggering memory cgroup")
+		return errors.New("target is no longer in the triggering memory cgroup")
 	}
 	return memsnapshot.ValidateIdentity("/proc", identity)
 }
 
-func readVictimCandidate(proc procfs.Proc, oomScoreAdjRaw []byte,
+func readTargetCandidate(proc procfs.Proc, oomScoreAdjRaw []byte,
 	memoryMax uint64,
-) (victimCandidate, error) {
+) (targetCandidate, error) {
 	status, err := proc.NewStatus()
 	if err != nil {
-		return victimCandidate{}, fmt.Errorf("read status: %w", err)
+		return targetCandidate{}, fmt.Errorf("read status: %w", err)
 	}
 	oomScoreAdj, err := strconv.Atoi(strings.TrimSpace(string(oomScoreAdjRaw)))
 	if err != nil {
-		return victimCandidate{}, fmt.Errorf("parse oom_score_adj: %w", err)
+		return targetCandidate{}, fmt.Errorf("parse oom_score_adj: %w", err)
 	}
 	if oomScoreAdj < -1000 || oomScoreAdj > 1000 {
-		return victimCandidate{}, fmt.Errorf("oom_score_adj out of range: %d", oomScoreAdj)
+		return targetCandidate{}, fmt.Errorf("oom_score_adj out of range: %d", oomScoreAdj)
 	}
 	if oomScoreAdj == -1000 {
-		return victimCandidate{}, errNotOOMCandidate
+		return targetCandidate{}, errNotSnapshotTarget
 	}
 	memoryBytes := oomMemoryBytes(status.VmRSS, status.VmSwap, status.VmPTE)
 	score := float64(memoryBytes) + float64(oomScoreAdj)*float64(memoryMax)/1000
 	if score < 0 {
 		score = 0
 	}
-	return victimCandidate{
+	return targetCandidate{
 		pid: proc.PID, comm: status.Name, oomScoreAdj: oomScoreAdj,
 		memoryBytes: memoryBytes, score: score,
 	}, nil
@@ -191,11 +191,11 @@ func scanMemcgProcs(ctx context.Context, cgroupPath string, visit func(int) erro
 		return err
 	}
 	defer file.Close()
-	return scanVictimPIDs(ctx, file, visit)
+	return scanTargetPIDs(ctx, file, visit)
 }
 
-func scanVictimPIDs(ctx context.Context, reader io.Reader, visit func(int) error) error {
-	limited := &io.LimitedReader{R: reader, N: maxVictimListBytes + 1}
+func scanTargetPIDs(ctx context.Context, reader io.Reader, visit func(int) error) error {
+	limited := &io.LimitedReader{R: reader, N: maxTargetListBytes + 1}
 	scanner := bufio.NewScanner(limited)
 	scanner.Buffer(make([]byte, 1024), 64)
 	count := 0
@@ -207,7 +207,7 @@ func scanVictimPIDs(ctx context.Context, reader io.Reader, visit func(int) error
 			break
 		}
 		count++
-		if count > maxVictimPIDs || limited.N == 0 {
+		if count > maxTargetPIDs || limited.N == 0 {
 			return errors.New("cgroup process enumeration exceeds safety budget")
 		}
 		pid, err := strconv.Atoi(scanner.Text())

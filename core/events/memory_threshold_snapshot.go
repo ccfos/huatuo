@@ -30,13 +30,13 @@ import (
 )
 
 const (
-	beforeOOMTracer        = "before_oom_memsnap"
-	arbitrationDelay       = 20 * time.Millisecond
-	victimSelectionTimeout = time.Second
+	memoryThresholdSnapshotTracer = "memory_threshold_snapshot"
+	arbitrationDelay              = 20 * time.Millisecond
+	targetSelectionTimeout        = time.Second
 )
 
-type beforeOOMMemsnapshot struct {
-	captureOps  *beforeOOMOps
+type memoryThresholdSnapshot struct {
+	captureOps  *memoryThresholdSnapshotOps
 	cgroup      cgroups.Cgroup
 	lastAttempt time.Time
 }
@@ -49,7 +49,9 @@ type memcgCandidate struct {
 	ratio       float64
 }
 
-type beforeOOMData struct {
+// Victim fields retain their persisted JSON names for existing consumers.
+// They describe the selected capture target, which may never be killed.
+type memoryThresholdSnapshotData struct {
 	CgroupPath         string                     `json:"cgroup_path"`
 	MemoryCurrent      uint64                     `json:"memory_current"`
 	MemoryMax          uint64                     `json:"memory_max"`
@@ -63,23 +65,23 @@ type beforeOOMData struct {
 }
 
 func init() {
-	tracing.RegisterEventTracing(beforeOOMTracer, newBeforeOOMMemsnapshot)
+	tracing.RegisterEventTracing(memoryThresholdSnapshotTracer, newMemoryThresholdSnapshot)
 }
 
 // The registry calls this factory once; enabling a disabled tracer requires restart.
-func newBeforeOOMMemsnapshot() (*tracing.EventTracingAttr, error) {
+func newMemoryThresholdSnapshot() (*tracing.EventTracingAttr, error) {
 	if !configSnapshot().BeforeOOMMemsnap.Enabled {
 		return nil, types.ErrNotSupported
 	}
 
 	return &tracing.EventTracingAttr{
-		TracingData: &beforeOOMMemsnapshot{},
+		TracingData: &memoryThresholdSnapshot{},
 		Interval:    5,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
 
-func (s *beforeOOMMemsnapshot) Start(ctx context.Context) (retErr error) {
+func (s *memoryThresholdSnapshot) Start(ctx context.Context) (retErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil
 	}
@@ -90,14 +92,14 @@ func (s *beforeOOMMemsnapshot) Start(ctx context.Context) (retErr error) {
 		WithField("go_timeout_ms", cfg.GoTimeoutMS).
 		WithField("java_timeout_ms", cfg.JavaTimeoutMS).
 		WithField("python_timeout_ms", cfg.PythonTimeoutMS).
-		Info("before-OOM watcher starting")
+		Info("memory threshold snapshot watcher starting")
 	defer func() {
 		log.WithError(retErr).
 			WithField("context_error", ctx.Err()).
-			Info("before-OOM watcher stopped")
+			Info("memory threshold snapshot watcher stopped")
 	}()
-	if err := validateBeforeOOMConfig(&cfg); err != nil {
-		return fmt.Errorf("invalid before-OOM memory snapshot config: %w", err)
+	if err := validateMemoryThresholdSnapshotConfig(&cfg); err != nil {
+		return fmt.Errorf("invalid memory threshold snapshot config: %w", err)
 	}
 	if s.cgroup == nil {
 		cgroup, err := cgroups.NewManager()
@@ -111,12 +113,12 @@ func (s *beforeOOMMemsnapshot) Start(ctx context.Context) (retErr error) {
 		return handleWatchError(ctx, err)
 	}
 	log.WithField("cgroup_mode", cgroups.CgroupMode()).
-		Info("before-OOM watcher initialized")
+		Info("memory threshold snapshot watcher initialized")
 	return handleWatchError(ctx, s.watchAndCapture(ctx, &cfg, watcher))
 }
 
-func (s *beforeOOMMemsnapshot) watchAndCapture(ctx context.Context,
-	cfg *BeforeOOMConfig, watcher *pressureWatcher,
+func (s *memoryThresholdSnapshot) watchAndCapture(ctx context.Context,
+	cfg *MemoryThresholdSnapshotConfig, watcher *pressureWatcher,
 ) error {
 	watchCtx, cancel := context.WithCancel(ctx)
 	events, watcherDone := watcher.Run(watchCtx)
@@ -146,7 +148,7 @@ func (s *beforeOOMMemsnapshot) watchAndCapture(ctx context.Context,
 					return nil
 				}
 				log.WithError(err).
-					Debug("before-OOM pressure event skipped")
+					Debug("memory threshold snapshot pressure event skipped")
 				continue
 			}
 			if !ok {
@@ -161,21 +163,21 @@ func (s *beforeOOMMemsnapshot) watchAndCapture(ctx context.Context,
 			if err != nil {
 				log.WithField("cgroup", candidate.cgroupPath).
 					WithError(err).
-					Warn("before-OOM memory snapshot skipped")
+					Warn("memory threshold snapshot skipped")
 			}
 		}
 	}
 }
 
-func (s *beforeOOMMemsnapshot) captureAllowed(cfg *BeforeOOMConfig,
+func (s *memoryThresholdSnapshot) captureAllowed(cfg *MemoryThresholdSnapshotConfig,
 	now time.Time,
 ) bool {
 	cooldown := time.Duration(cfg.CooldownSeconds) * time.Second
 	return s.lastAttempt.IsZero() || now.Sub(s.lastAttempt) >= cooldown
 }
 
-func (s *beforeOOMMemsnapshot) bestCaptureCandidate(ctx context.Context,
-	cfg *BeforeOOMConfig, events <-chan memoryPressureEvent,
+func (s *memoryThresholdSnapshot) bestCaptureCandidate(ctx context.Context,
+	cfg *MemoryThresholdSnapshotConfig, events <-chan memoryPressureEvent,
 	first memoryPressureEvent,
 ) (memcgCandidate, bool, error) {
 	pending := map[string]memoryPressureEvent{first.cgroupPath: first}
@@ -197,7 +199,7 @@ func (s *beforeOOMMemsnapshot) bestCaptureCandidate(ctx context.Context,
 	}
 }
 
-func (s *beforeOOMMemsnapshot) highestPressureCandidate(cfg *BeforeOOMConfig,
+func (s *memoryThresholdSnapshot) highestPressureCandidate(cfg *MemoryThresholdSnapshotConfig,
 	events map[string]memoryPressureEvent,
 ) (memcgCandidate, bool, error) {
 	var selected memcgCandidate
@@ -237,7 +239,7 @@ func higherPressure(candidate, selected memcgCandidate) bool {
 	return candidate.cgroupPath < selected.cgroupPath
 }
 
-func (s *beforeOOMMemsnapshot) pressureCandidate(
+func (s *memoryThresholdSnapshot) pressureCandidate(
 	event memoryPressureEvent,
 ) (memcgCandidate, bool, error) {
 	usage, err := s.cgroup.MemoryUsage(event.cgroupPath)
@@ -253,16 +255,16 @@ func (s *beforeOOMMemsnapshot) pressureCandidate(
 	}, true, nil
 }
 
-type beforeOOMOps struct {
-	selectVictim  func(context.Context, string, uint64) (victimCandidate, error)
+type memoryThresholdSnapshotOps struct {
+	selectTarget  func(context.Context, string, uint64) (targetCandidate, error)
 	validate      func(context.Context, string, memsnapshot.ProcessIdentity) error
 	collect       func(context.Context, int, collector.Options) (*collector.Result, error)
 	save          func(*tracing.WriteRequest) error
 	containerPath func(string) (string, error)
 }
 
-func (s *beforeOOMMemsnapshot) captureCandidate(ctx context.Context,
-	cfg *BeforeOOMConfig, candidate *memcgCandidate,
+func (s *memoryThresholdSnapshot) captureCandidate(ctx context.Context,
+	cfg *MemoryThresholdSnapshotConfig, candidate *memcgCandidate,
 ) (retErr error) {
 	started := time.Now()
 	log.WithField("container", candidate.containerID).
@@ -271,18 +273,18 @@ func (s *beforeOOMMemsnapshot) captureCandidate(ctx context.Context,
 		WithField("limit_bytes", candidate.max).
 		WithField("usage_percent", candidate.ratio*100).
 		WithField("threshold_percent", cfg.ThresholdPercent).
-		Info("before-OOM capture started")
+		Info("memory threshold snapshot capture started")
 	defer func() {
 		log.WithField("container", candidate.containerID).
 			WithField("cgroup", candidate.cgroupPath).
 			WithField("elapsed_ms", time.Since(started).Milliseconds()).
 			WithError(retErr).
-			Info("before-OOM capture finished")
+			Info("memory threshold snapshot capture finished")
 	}()
 	ops := s.captureOps
 	if ops == nil {
-		ops = &beforeOOMOps{
-			selectVictim: selectVictim, validate: validateVictim,
+		ops = &memoryThresholdSnapshotOps{
+			selectTarget: selectTarget, validate: validateTarget,
 			collect: collector.Run,
 			save:    tracing.Save, containerPath: knownContainerCgroupPath,
 		}
@@ -293,24 +295,24 @@ func (s *beforeOOMMemsnapshot) captureCandidate(ctx context.Context,
 	if err := validateContainer(); err != nil {
 		return err
 	}
-	selectionCtx, cancelSelection := context.WithTimeout(ctx, victimSelectionTimeout)
+	selectionCtx, cancelSelection := context.WithTimeout(ctx, targetSelectionTimeout)
 	selectionStarted := time.Now()
 	log.WithField("container", candidate.containerID).
-		WithField("timeout_ms", victimSelectionTimeout.Milliseconds()).
-		Info("before-OOM victim selection started")
-	victim, err := ops.selectVictim(selectionCtx, candidate.cgroupPath, candidate.max)
+		WithField("timeout_ms", targetSelectionTimeout.Milliseconds()).
+		Info("memory threshold snapshot target selection started")
+	target, err := ops.selectTarget(selectionCtx, candidate.cgroupPath, candidate.max)
 	cancelSelection()
 	log.WithField("container", candidate.containerID).
-		WithField("pid", victim.pid).
-		WithField("start_time_ticks", victim.identity.StartTimeTicks).
+		WithField("pid", target.pid).
+		WithField("start_time_ticks", target.identity.StartTimeTicks).
 		WithField("elapsed_ms", time.Since(selectionStarted).Milliseconds()).
 		WithError(err).
-		Info("before-OOM victim selection finished")
+		Info("memory threshold snapshot target selection finished")
 	if err != nil {
-		return fmt.Errorf("select victim: %w", err)
+		return fmt.Errorf("select target: %w", err)
 	}
-	_, err = ops.collect(ctx, victim.pid, collector.Options{
-		ExpectedIdentity: &victim.identity,
+	_, err = ops.collect(ctx, target.pid, collector.Options{
+		ExpectedIdentity: &target.identity,
 		TopK:             cfg.TopK,
 		GoTimeout:        time.Duration(cfg.GoTimeoutMS) * time.Millisecond,
 		JavaTimeout:      time.Duration(cfg.JavaTimeoutMS) * time.Millisecond,
@@ -326,14 +328,14 @@ func (s *beforeOOMMemsnapshot) captureCandidate(ctx context.Context,
 				return err
 			}
 			return ops.save(&tracing.WriteRequest{
-				TracerName: beforeOOMTracer, ContainerID: candidate.containerID,
+				TracerName: memoryThresholdSnapshotTracer, ContainerID: candidate.containerID,
 				ObservedTimestamp: timeutil.Timestamp{Time: result.CaptureTime},
-				TracerData: &beforeOOMData{
+				TracerData: &memoryThresholdSnapshotData{
 					CgroupPath:    candidate.cgroupPath,
 					MemoryCurrent: candidate.current, MemoryMax: candidate.max,
 					MemoryUsagePercent: candidate.ratio * 100,
-					VictimPID:          victim.pid, VictimProcessName: victim.comm,
-					VictimOOMScoreAdj: victim.oomScoreAdj, Language: result.Language,
+					VictimPID:          target.pid, VictimProcessName: target.comm,
+					VictimOOMScoreAdj: target.oomScoreAdj, Language: result.Language,
 					Snapshot: result.Snapshot, ProcessMemory: result.ProcessMemory,
 				},
 			})

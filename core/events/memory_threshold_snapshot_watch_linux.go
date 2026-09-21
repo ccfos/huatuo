@@ -47,7 +47,7 @@ func handleWatchError(ctx context.Context, err error) error {
 		return err
 	}
 	log.WithError(err).
-		Error("before-OOM memory snapshot stopped after resource exhaustion; increase process FD/inotify limits and restart huatuo-bamai to re-enable it")
+		Error("memory threshold snapshot stopped after resource exhaustion; increase process FD/inotify limits and restart huatuo-bamai to re-enable it")
 	// Keep Start blocked until shutdown so the generic event runner does not
 	// repeatedly rebuild and rescan the whole cgroup tree.
 	<-ctx.Done()
@@ -71,7 +71,7 @@ type memoryPressureEvent struct {
 
 type pressureWatcher struct {
 	cgroup    cgroups.Cgroup
-	cfg       *BeforeOOMConfig
+	cfg       *MemoryThresholdSnapshotConfig
 	mode      cgroups.Mode
 	root      string
 	epollFD   int
@@ -91,7 +91,7 @@ type pressureWatcher struct {
 }
 
 func newPressureWatcher(cgroup cgroups.Cgroup,
-	cfg *BeforeOOMConfig,
+	cfg *MemoryThresholdSnapshotConfig,
 ) (*pressureWatcher, error) {
 	mode := cgroups.CgroupMode()
 	if mode != cgroups.Legacy && mode != cgroups.Hybrid && mode != cgroups.Unified {
@@ -115,7 +115,7 @@ func newPressureWatcher(cgroup cgroups.Cgroup,
 	return w, nil
 }
 
-func openPressureWatcher(cgroup cgroups.Cgroup, cfg *BeforeOOMConfig,
+func openPressureWatcher(cgroup cgroups.Cgroup, cfg *MemoryThresholdSnapshotConfig,
 	mode cgroups.Mode, root string,
 ) (*pressureWatcher, error) {
 	epollFD, err := unix.EpollCreate1(unix.EPOLL_CLOEXEC)

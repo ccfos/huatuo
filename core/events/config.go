@@ -26,9 +26,9 @@ import (
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-// BeforeOOMConfig controls event-driven runtime snapshots for
+// MemoryThresholdSnapshotConfig controls event-driven runtime snapshots for
 // container cgroups approaching their memory limit.
-type BeforeOOMConfig struct {
+type MemoryThresholdSnapshotConfig struct {
 	// Enabled changes require a restart; the tracing registry initializes once.
 	Enabled          bool `default:"true"`
 	ThresholdPercent int  `default:"90"`
@@ -81,7 +81,8 @@ type Config struct {
 		MceThrBackoff int64 `default:"1800"`
 	}
 
-	BeforeOOMMemsnap BeforeOOMConfig
+	// Keep the configuration key so existing enablement and limits still apply.
+	BeforeOOMMemsnap MemoryThresholdSnapshotConfig
 
 	IssuesList [][]string
 }
@@ -110,14 +111,14 @@ func (c *Config) Validate() error {
 	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
 		return fmt.Errorf("validating issues list: %w", err)
 	}
-	if err := validateBeforeOOMConfig(&c.BeforeOOMMemsnap); err != nil {
-		return fmt.Errorf("validating before-OOM memory snapshot: %w", err)
+	if err := validateMemoryThresholdSnapshotConfig(&c.BeforeOOMMemsnap); err != nil {
+		return fmt.Errorf("validating memory threshold snapshot: %w", err)
 	}
 
 	return nil
 }
 
-func validateBeforeOOMConfig(cfg *BeforeOOMConfig) error {
+func validateMemoryThresholdSnapshotConfig(cfg *MemoryThresholdSnapshotConfig) error {
 	const maxTimeDuration = time.Duration(1<<63 - 1)
 
 	if cfg.ThresholdPercent <= 0 || cfg.ThresholdPercent > 100 {
