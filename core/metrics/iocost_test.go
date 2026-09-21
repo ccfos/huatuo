@@ -136,7 +136,7 @@ int main(int argc, char **argv)
 
 func TestIOCostDiagnosticFixtureFiltering(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..",
-		"integration", "testdata", "iocost_tracing_test.c"))
+		"integration", "testdata", "test_iocost_tracing.c"))
 	require.NoError(t, err)
 	source := string(data)
 	program := `
@@ -3028,7 +3028,7 @@ func loadIOCostDiagnosticObjectSpec(t *testing.T) *ebpf.CollectionSpec {
 	object := filepath.Join(t.TempDir(), ioCostDiagnosticObjectName)
 	command := exec.CommandContext(t.Context(), filepath.Join(root, "build", "clang.sh"),
 		"-I", filepath.Join(root, "bpf", "include"),
-		"-s", filepath.Join(root, "integration", "testdata", "iocost_tracing_test.c"),
+		"-s", filepath.Join(root, "integration", "testdata", "test_iocost_tracing.c"),
 		"-o", object)
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)

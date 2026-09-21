@@ -40,13 +40,14 @@ fi
 	|| skip 'IOCOST qualification requires writable io.cost or blkio.cost interfaces'
 require_commands go flock
 cd "${ROOT_DIR}"
-mkdir -p /run/huatuo-iocost-test _output/test-bpf
+mkdir -p /run/huatuo-iocost-test
 exec 9> /run/huatuo-iocost-test/runner.lock
 flock -n 9 || fatal 'another IOCOST qualification is running'
 
 "${ROOT_DIR}/build/clang.sh" -I "${ROOT_DIR}/bpf/include" \
-	-s "${ROOT_DIR}/integration/testdata/iocost_tracing_test.c" \
-	-o "${ROOT_DIR}/_output/test-bpf/iocost_tracing_test.o"
+	-s "${ROOT_DIR}/integration/testdata/test_iocost_tracing.c" \
+	-o "${HUATUO_BAMAI_TEST_TMPDIR}/iocost_tracing_test.o"
+export TEST_IOCOST_DIAGNOSTIC_OBJECT="${HUATUO_BAMAI_TEST_TMPDIR}/iocost_tracing_test.o"
 export TEST_INTEGRATION=true
 results_file="${HUATUO_BAMAI_TEST_TMPDIR}/iocost-results.log"
 test_binary="${HUATUO_BAMAI_TEST_TMPDIR}/iocost-kernel.test"
