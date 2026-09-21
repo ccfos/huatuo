@@ -20,7 +20,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"sync"
@@ -32,6 +35,9 @@ import (
 
 // Storage appends records to local files. It is bound to one collection by Init.
 type Storage struct {
+	lifecycle    sync.RWMutex
+	closed       bool
+	closeErr     error
 	lock         sync.Mutex
 	files        map[string]io.Writer
 	writerCache  sync.Map
@@ -69,6 +75,11 @@ func (b *Storage) Save(
 	rec driver.Record,
 	options driver.SaveOptions,
 ) error {
+	b.lifecycle.RLock()
+	defer b.lifecycle.RUnlock()
+	if b.closed {
+		return fs.ErrClosed
+	}
 	if options.Mode != driver.SaveModeUpsert || len(options.Conditions) != 0 {
 		return driver.ErrUnsupportedOp
 	}
@@ -114,10 +125,24 @@ func (b *Storage) Values(context.Context, string, driver.Query, int) ([]string, 
 	return nil, driver.ErrUnsupported
 }
 
-// Close is a no-op: the file rotator flushes on each Write, so there is
-// nothing buffered to drain at shutdown.
+// Close joins active saves and releases the cached file rotators.
 func (b *Storage) Close(_ context.Context) error {
-	return nil
+	b.lifecycle.Lock()
+	defer b.lifecycle.Unlock()
+	if b.closed {
+		return b.closeErr
+	}
+	b.closed = true
+	// Rotators reopen on Write, so saves must remain excluded after shutdown.
+	b.writerCache.Range(func(key, value any) bool {
+		if err := value.(io.Closer).Close(); err != nil {
+			b.closeErr = errors.Join(b.closeErr, fmt.Errorf("close localfile %s: %w", key, err))
+		}
+		return true
+	})
+	b.writerCache.Clear()
+	clear(b.files)
+	return b.closeErr
 }
 
 func (b *Storage) newFileWriter(filename string) io.Writer {
