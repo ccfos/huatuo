@@ -48,7 +48,6 @@ const ioCostKernelCgroupRoot = "/sys/fs/cgroup"
 
 type ioCostKernelFixture struct {
 	ctx             context.Context
-	root            string
 	cgroupRoot      string
 	controlPrefix   string
 	directory       string
@@ -142,7 +141,7 @@ func requireIOCostKernel(t *testing.T) *ioCostKernelFixture {
 	bpf.DefaultObjDir = filepath.Join(root, "bpf")
 	t.Cleanup(func() { bpf.DefaultObjDir = oldDir; bpf.Shutdown() })
 	ctx := ioControlKernelContext(t)
-	f.ctx, f.root = ctx, root
+	f.ctx = ctx
 	f.check(t)
 	f.directory, err = os.MkdirTemp("/var/tmp", "huatuo-iocost-")
 	require.NoError(t, err)
@@ -364,7 +363,7 @@ func (f *ioCostKernelFixture) start(t *testing.T, constants map[string]any) *ioC
 			for name, value := range constants {
 				values[name] = value
 			}
-			spec, err := ebpf.LoadCollectionSpec(filepath.Join(f.root, "_output/test-bpf/iocost_tracing_test.o"))
+			spec, err := ebpf.LoadCollectionSpec(os.Getenv("TEST_IOCOST_DIAGNOSTIC_OBJECT"))
 			if err != nil {
 				return nil, err
 			}
