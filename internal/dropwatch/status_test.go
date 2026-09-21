@@ -33,12 +33,13 @@ const (
 
 type tracerBPFStub struct {
 	bpf.BPF
-	perfRaw    []byte
-	rateRaw    []byte
-	readErr    error
-	detachErr  error
-	closeErr   error
-	operations []string
+	perfRaw     []byte
+	rateRaw     []byte
+	readErr     error
+	rateReadErr error
+	detachErr   error
+	closeErr    error
+	operations  []string
 }
 
 func (s *tracerBPFStub) MapIDByName(name string) uint32 {
@@ -62,6 +63,9 @@ func (s *tracerBPFStub) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 	case testDropwatchPerfStatusMapID:
 		return slices.Clone(s.perfRaw), nil
 	case testDropwatchRateLimitMapID:
+		if s.rateReadErr != nil {
+			return nil, s.rateReadErr
+		}
 		return slices.Clone(s.rateRaw), nil
 	}
 	return nil, errors.New("unexpected map read")
@@ -153,38 +157,61 @@ func TestTracerReadStatus(t *testing.T) {
 	}
 }
 
-func TestTracerRejectsInvalidPerfStatus(t *testing.T) {
+func TestTracerReadStatusClearsMapCountersOnError(t *testing.T) {
 	readErr := errors.New("read failed")
+	perfRaw := encodeDropwatchPerfStats(t, abi.BPFPerfOutputStats{ErrorCounter: 4})
 	tests := []struct {
-		name      string
-		perfRaw   []byte
-		rateRaw   []byte
-		readErr   error
-		wantError string
+		name        string
+		perfRaw     []byte
+		rateRaw     []byte
+		readErr     error
+		rateReadErr error
+		isClosed    bool
+		wantError   string
 	}{
-		{name: "empty", wantError: "value size 0"},
+		{name: "closed", isClosed: true, wantError: bpf.ErrClosed.Error()},
+		{name: "empty perf value", wantError: "value size 0"},
 		{
-			name:      "partial value",
+			name:      "partial perf value",
 			perfRaw:   make([]byte, abi.BPFPerfOutputStatsSize-1),
 			wantError: "value size 7",
 		},
-		{name: "map read", readErr: readErr, wantError: "read failed"},
+		{name: "perf map read", readErr: readErr, wantError: "read failed"},
+		{
+			name:        "rate limit map read after perf count",
+			perfRaw:     perfRaw,
+			rateReadErr: readErr,
+			wantError:   "read failed",
+		},
+		{
+			name:      "partial rate limit value after perf count",
+			perfRaw:   perfRaw,
+			rateRaw:   encodeBPFRatelimitEvent(t, 6)[:abi.BPFRatelimitEventSize-1],
+			wantError: "decode dropwatch BPF map",
+		},
 	}
 
-	for _, test := range tests {
+	for testIndex := range tests {
+		test := &tests[testIndex]
 		t.Run(test.name, func(t *testing.T) {
 			source := &Tracer{
 				bpf: &tracerBPFStub{
-					perfRaw: test.perfRaw,
-					rateRaw: test.rateRaw,
-					readErr: test.readErr,
+					perfRaw:     test.perfRaw,
+					rateRaw:     test.rateRaw,
+					readErr:     test.readErr,
+					rateReadErr: test.rateReadErr,
 				},
 				perfStatusMap:     testDropwatchPerfStatusMapID,
 				rateLimitStateMap: testDropwatchRateLimitMapID,
 			}
-			_, err := source.ReadStatus()
+			source.isClosed.Store(test.isClosed)
+			source.lostSamples.Store(7)
+			status, err := source.ReadStatus()
 			if err == nil || !containsErrorText(err, test.wantError) {
 				t.Fatalf("ReadStatus() error = %v, want containing %q", err, test.wantError)
+			}
+			if status.PerfLost != 0 || status.RateLimited != 0 || status.LostSamples != 7 {
+				t.Fatalf("status = %+v, want perf_lost=0 rate_limited=0 lost_samples=7", status)
 			}
 		})
 	}

@@ -31,7 +31,8 @@ const (
 // ReadStatus reads cumulative counters without resetting them. Map and reader
 // counters are sampled separately, not as an atomic snapshot. It may run
 // concurrently with ReadInto and remains available after context cancellation.
-// On error, only LostSamples remains valid; map counters are unavailable.
+// On error, PerfLost and RateLimited are zeroed because their values are
+// unavailable; LostSamples remains valid.
 func (s *Tracer) ReadStatus() (status types.DropwatchStatus, returnErr error) {
 	defer func() { status.LostSamples = s.lostSamples.Load() }()
 	if s.isClosed.Load() {
@@ -76,7 +77,7 @@ func (s *Tracer) ReadStatus() (status types.DropwatchStatus, returnErr error) {
 			err,
 		)
 	}
-	status.RateLimited = state.TotalMissed
 
+	status.RateLimited = state.TotalMissed
 	return status, nil
 }

@@ -167,6 +167,9 @@ reason；没有找到严格匹配时仍以 `no_matching_drop` 输出 `unknown`�
   reader 运行期间可见，处理丢失记录后即可通过 ReadStatus 查询。
 - `rate_limited`：限流状态 map `bpf_rlimit_dropwatch` 的 `total_missed`。
 
+`ReadStatus` 出错时保证 `PerfLost`、`RateLimited` 为零，`LostSamples` 仍有效。
+此时 map 计数的零值表示不可用；输出侧保留状态不可用原因，不附加完整状态快照。
+
 用户态汇总所有 CPU 的 perf_lost，每次返回当前快照，不检查计数回退或 uint64 加法溢出。该状态只说明
 证据完整性，不会把 no-match 提升为确定性网络分类。旧的 active epoch、
 旧的双 slot、inflight、frontier 和 drain 水位机制已删除。
