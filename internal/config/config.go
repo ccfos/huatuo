@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -135,6 +136,12 @@ func Set(cfg any, key string, val any) error {
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(decoded.Interface()); err != nil {
+			return fmt.Errorf("decoding config field %q as %s: %w", key, c.Type(), err)
+		}
+		if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+			if err == nil {
+				err = errors.New("multiple JSON values")
+			}
 			return fmt.Errorf("decoding config field %q as %s: %w", key, c.Type(), err)
 		}
 		c.Set(decoded.Elem())
