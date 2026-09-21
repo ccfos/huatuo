@@ -33,7 +33,7 @@ import (
 	"github.com/ccfos/huatuo/pkg/metric"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_oom.c -o $BPF_DIR/memory_oom.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_oom_kill.c -o $BPF_DIR/memory_oom_kill.o
 
 type OOMActor struct {
 	MemoryCgroupCSSAddr string                   `json:"memory_cgroup_css_addr"`
@@ -66,7 +66,7 @@ var (
 )
 
 func init() {
-	tracing.RegisterEventTracing("memory_oom", newOOMCollector)
+	tracing.RegisterEventTracing("memory_oom_kill", newOOMCollector)
 }
 
 func newOOMCollector() (*tracing.EventTracingAttr, error) {
@@ -158,7 +158,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			mutex.Unlock()
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:        "memory_oom",
+				TracerName:        "memory_oom_kill",
 				ObservedTimestamp: timeutil.Now(),
 				TracerData:        oomData,
 				ContainerID:       oomData.Victim.ContainerID,

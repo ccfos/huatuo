@@ -38,7 +38,7 @@ always-on observation. Data is written to Elasticsearch and local files and
 can also produce Prometheus metrics. Built-in events include:
 
 - Scheduler tick interval anomalies (`sched_tick`).
-- Abnormal memory allocation (`memory_oom`).
+- Abnormal memory allocation (`memory_oom_kill`).
 - Soft lockups (`softlockup`).
 - D-state processes (`hungtask`).
 - Memory reclaim (`memory_reclaim_events`).

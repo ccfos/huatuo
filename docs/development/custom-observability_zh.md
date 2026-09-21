@@ -35,7 +35,7 @@ Event 常态监听内核事件或阈值条件，在异常发生时保存内核�
 同步生成 Prometheus 指标。内置事件包括：
 
 - 调度 tick 间隔异常 `sched_tick`。
-- 内存异常分配 `memory_oom`。
+- 内存异常分配 `memory_oom_kill`。
 - 软锁定 `softlockup`。
 - D 状态进程 `hungtask`。
 - 内存回收 `memory_reclaim_events`。

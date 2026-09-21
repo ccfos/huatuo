@@ -19,11 +19,11 @@ HUATUO uses eBPF technology to observe anomalous events in real time across core
 
 Compared to traditional kernel log (dmesg/syslog) collection, eBPF-based event observation reduces the risk of data loss from log buffer overflow; it can capture transient anomalies that never appear in kernel logs (such as excessive scheduler tick intervals); and it provides container-level event correlation for precise root-cause analysis in cloud-native environments.
 
-Twelve event types are continuously observed, covering CPU scheduling health (sched_tick, softlockup, hungtask), memory pressure (memory_oom, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
+Twelve event types are continuously observed, covering CPU scheduling health (sched_tick, softlockup, hungtask), memory pressure (memory_oom_kill, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
 
 ## 🎯 Use Cases
 
-**Kubernetes Container Memory Fault Diagnosis**: In scenarios where containers frequently restart due to OOM, the memory_oom event records both the process killed by the OOM Killer (victim) and the process that triggered the OOM (trigger), including their memcg cgroup pointers and container IDs. Combined with time-series data, this enables fast root-cause analysis of containers involved in memory contention, reducing the time spent manually reviewing container logs.
+**Kubernetes Container Memory Fault Diagnosis**: In scenarios where containers frequently restart due to OOM, the memory_oom_kill event records both the process killed by the OOM Killer (victim) and the process that triggered the OOM (trigger), including their memcg cgroup pointers and container IDs. Combined with time-series data, this enables fast root-cause analysis of containers involved in memory contention, reducing the time spent manually reviewing container logs.
 
 **AI Training Cluster Hardware Fault Detection**: On GPU training servers, the ras event continuously collects MCE (Machine Check Exception), EDAC memory controller errors, and PCIe AER (Advanced Error Reporting) errors, classifying them by severity (Corrected / UncorrectedRecoverable / UncorrectedFatal). This enables early detection of hardware aging or single-point failures before training jobs are interrupted, reducing training task losses caused by hardware faults.
 
@@ -60,7 +60,7 @@ All events provide default values and are operational without any configuration.
 | `sched_tick` | kprobe | Scheduler tick interval >= threshold (default 10ms) | System stalls, network latency, scheduling delays |
 | `softlockup` | kprobe | CPU unable to schedule for extended time (~1 second) | Soft lockup, response anomalies |
 | `hungtask` | kprobe | D-state process task hang | Transient mass D-state processes, IO blocking |
-| `memory_oom` | kprobe | OOM Killer triggered | Container/host memory exhaustion |
+| `memory_oom_kill` | kprobe | OOM Killer triggered | Container/host memory exhaustion |
 | `memory_reclaim_events` | kprobe | Container process direct reclaim time > threshold (default 900ms) | Business stalls caused by memory pressure |
 | `ras` | tracepoint | CPU/MEM/PCIe hardware errors | Hardware fault detection |
 | `dropwatch` | tracepoint | Kernel network stack packet drop | Business jitter caused by protocol stack drops |
@@ -84,7 +84,7 @@ All event records include the following common fields:
 - **container_host_namespace**: Kubernetes namespace of the container if the event is associated with a container
 - **container_type**: Container type, e.g., `normal` for regular containers, `sidecar` for sidecar containers
 - **container_qos**: Container QoS level
-- **tracer_name**: Event name (e.g., `sched_tick`, `memory_oom`)
+- **tracer_name**: Event name (e.g., `sched_tick`, `memory_oom_kill`)
 - **tracer_id**: Tracing ID for this event
 - **observed_timestamp**: Time when the tracing was triggered
 - **tracer_type**: Observation kind; instant event records use `event`
@@ -243,9 +243,9 @@ All event records include the following common fields:
 - **net_namespace_inum**: Network namespace inum
 - **packet_len_bytes**: Packet length (bytes)
 
-### 4. memory_oom
+### 4. memory_oom_kill
 
-The OOM tracer was renamed from `oom` to `memory_oom`. Update blacklist entries, event filters, and alert/dashboard queries. Its metric prefix changes from `huatuo_bamai_oom_` to `huatuo_bamai_memory_oom_`. Previously stored events retain `tracer_name: "oom"`; queries spanning the rename must match both names.
+The OOM kill tracer is named `memory_oom_kill` (previously `memory_oom`, and earlier `oom`). Update blacklist entries, event filters, and alert queries. Its metric prefix is now `huatuo_bamai_memory_oom_kill_`, replacing `huatuo_bamai_memory_oom_` and the earlier `huatuo_bamai_oom_`; update metric dashboards and recording rules too. Previously stored events keep their original names. Queries spanning these versions must match all three names; the bundled event dashboard does so.
 
 **Description** Detects OOM (Out of Memory) events on the host or inside containers. Records information about the process killed by the OOM Killer (victim) and the process that triggered the OOM (trigger), along with the corresponding container and memory cgroup details, providing a complete fault snapshot. Host-level and per-container OOM count metrics are also maintained.
 
@@ -525,7 +525,7 @@ HUATUO's anomalous event observation is built on eBPF technology. Event data is 
 graph TB
     subgraph "Linux Kernel"
         direction TB
-        K1["kprobe hooks\n(sched_tick / softlockup / hungtask\n memory_oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
+        K1["kprobe hooks\n(sched_tick / softlockup / hungtask\n memory_oom_kill / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
         K2["tracepoint hooks\n(ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
         K3["netlink subscription\n(netdev_events: RTM_NEWLINK)"]
         K4["kprobe hooks\n(netdev_bonding_lacp: 802.3ad)"]

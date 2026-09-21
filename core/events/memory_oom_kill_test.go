@@ -20,10 +20,10 @@ import (
 	"github.com/ccfos/huatuo/internal/tracing"
 )
 
-func TestMemoryOOMBlacklist(t *testing.T) {
+func TestMemoryOOMKillBlacklist(t *testing.T) {
 	// Disable every event so registry validation does not initialize kernel collectors.
 	blacklist := []string{
-		"dropwatch", "hungtask", "memory_oom", "memory_reclaim_events",
+		"dropwatch", "hungtask", "memory_oom_kill", "memory_reclaim_events",
 		"net_rx_latency", "netdev_bonding_lacp", "netdev_events",
 		"netdev_txqueue_timeout", "ras", "sched_tick", "softlockup", "tcp_retransmit",
 	}
@@ -35,10 +35,12 @@ func TestMemoryOOMBlacklist(t *testing.T) {
 		t.Fatalf("registered events = %v, want none", registered)
 	}
 	status := tracing.EventTracingStatus()
-	if got := status["memory_oom"]; got != "disabled" {
-		t.Errorf("memory_oom status = %q, want disabled", got)
+	if got := status["memory_oom_kill"]; got != "disabled" {
+		t.Errorf("memory_oom_kill status = %q, want disabled", got)
 	}
-	if _, ok := status["oom"]; ok {
-		t.Error("legacy oom tracer is still registered")
+	for _, name := range []string{"oom", "memory_oom"} {
+		if _, ok := status[name]; ok {
+			t.Errorf("legacy %s tracer is still registered", name)
+		}
 	}
 }

@@ -234,7 +234,7 @@
           "timeField": "uploaded_timestamp"
         },
         {
-          "alias": "memory_oom",
+          "alias": "memory_oom_kill",
           "bucketAggs": [
             {
               "field": "uploaded_timestamp",
@@ -256,7 +256,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:memory_oom AND region.keyword:$region AND hostname.keyword:$hostname",
+          "query": "(tracer_name:memory_oom_kill OR tracer_name:memory_oom OR tracer_name:oom) AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "E",
           "timeField": "uploaded_timestamp"
         },
@@ -671,7 +671,7 @@
               "type": "count"
             }
           ],
-          "query": "region.keyword:$region AND hostname.keyword:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR tracer_name:memory_oom \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch \nOR tracer_name:net_rx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:sched_tick \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
+          "query": "region.keyword:$region AND hostname.keyword:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR (tracer_name:memory_oom_kill OR tracer_name:memory_oom OR tracer_name:oom) \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch \nOR tracer_name:net_rx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:sched_tick \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
           "refId": "A",
           "timeField": "uploaded_timestamp"
         }
@@ -1831,12 +1831,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:memory_oom AND region.keyword:$region AND hostname.keyword:$hostname",
+          "query": "(tracer_name:memory_oom_kill OR tracer_name:memory_oom OR tracer_name:oom) AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_timestamp"
         }
       ],
-      "title": "memory_oom",
+      "title": "memory_oom_kill",
       "transformations": [
         {
           "id": "organize",
@@ -5512,7 +5512,7 @@
               "showLineNumbers": false,
               "showMiniMap": false
             },
-            "content": "<div style=\"\n  margin: 15px 0 10px 0; \n  padding-top: 4px; \n  border-top: 3px solid #39A7BB; /* 固定为 huatuo 主题色 */\n\">\n  <h3 style=\"\n    margin: 8px 0 0 0; \n    font-size: 15px; \n    font-weight: 700; \n    color: var(--text-primary);\n    display: flex;\n    align-items: center;\n  \">\n    <span style=\"\n      display: inline-block; \n      width: 8px; \n      height: 8px; \n      background-color: #39A7BB; \n      border-radius: 50%; \n      margin-right: 10px;\n    \"></span>\n    memory_oom\n  </h3>\n</div>",
+            "content": "<div style=\"\n  margin: 15px 0 10px 0; \n  padding-top: 4px; \n  border-top: 3px solid #39A7BB; /* 固定为 huatuo 主题色 */\n\">\n  <h3 style=\"\n    margin: 8px 0 0 0; \n    font-size: 15px; \n    font-weight: 700; \n    color: var(--text-primary);\n    display: flex;\n    align-items: center;\n  \">\n    <span style=\"\n      display: inline-block; \n      width: 8px; \n      height: 8px; \n      background-color: #39A7BB; \n      border-radius: 50%; \n      margin-right: 10px;\n    \"></span>\n    memory_oom_kill\n  </h3>\n</div>",
             "mode": "html"
           },
           "pluginVersion": "9.5.21",
@@ -5533,7 +5533,7 @@
               "showLineNumbers": false,
               "showMiniMap": false
             },
-            "content": "## memory_oom (Event)\n\nDetects Out-Of-Memory (OOM) events on the host or within containers.\n\nFocuses on memory exhaustion issues and provides detailed fault snapshots for analysis.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- OOM event detected on host or container",
+            "content": "## memory_oom_kill (Event)\n\nDetects Out-Of-Memory (OOM) events on the host or within containers.\n\nFocuses on memory exhaustion issues and provides detailed fault snapshots for analysis.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- OOM event detected on host or container",
             "mode": "markdown"
           },
           "pluginVersion": "9.5.21",
@@ -5610,7 +5610,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:memory_oom AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "(tracer_name:memory_oom_kill OR tracer_name:memory_oom OR tracer_name:oom) AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_timestamp"
             }
@@ -5758,7 +5758,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:memory_oom AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "(tracer_name:memory_oom_kill OR tracer_name:memory_oom OR tracer_name:oom) AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_timestamp"
             }
@@ -5892,7 +5892,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:memory_oom AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "(tracer_name:memory_oom_kill OR tracer_name:memory_oom OR tracer_name:oom) AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_timestamp"
             }
