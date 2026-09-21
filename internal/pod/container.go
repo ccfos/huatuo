@@ -130,6 +130,13 @@ func Containers() (map[string]*Container, error) {
 	return containersByTypeQos(ContainerTypeAll, ContainerQosLevelMin)
 }
 
+// ContainerSyncEnabled reports discovery configuration, not source health.
+func ContainerSyncEnabled() bool {
+	containerView.mu.RLock()
+	defer containerView.mu.RUnlock()
+	return containerView.isActive
+}
+
 // SynchronizedContainers reads the current committed view and its source health
 // together. Disabled discovery returns an empty view; query failures retain the
 // cache for ordinary consumers but are returned to interval collectors.

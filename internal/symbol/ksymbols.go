@@ -86,6 +86,50 @@ func KsymbolSearchAddr(name string) (uint64, error) {
 	return 0, fmt.Errorf("symbol %q not found in %q", name, procfs.Path("kallsyms"))
 }
 
+// KsymbolSearchAddresses reads current kernel and module symbol addresses,
+// including data. Missing names are omitted; hidden or ambiguous addresses
+// fail the lookup so callers cannot mistake unavailable symbols for absence.
+func KsymbolSearchAddresses(names ...string) (map[string]uint64, error) {
+	addresses := make(map[string]uint64, len(names))
+	for _, name := range names {
+		addresses[name] = 0
+	}
+	path := procfs.Path("kallsyms")
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %q: %w", path, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for lineNumber := 1; scanner.Scan(); lineNumber++ {
+		entry, err := parseKallsymsEntry(scanner.Text())
+		if err != nil {
+			return nil, fmt.Errorf("malformed kallsyms line %d: %w", lineNumber, err)
+		}
+		previous, requested := addresses[entry.name]
+		if !requested {
+			continue
+		}
+		if entry.addr == 0 {
+			return nil, fmt.Errorf("kernel symbol %q has zero address in %q", entry.name, path)
+		}
+		if previous != 0 && previous != entry.addr {
+			return nil, fmt.Errorf("kernel symbol %q is ambiguous in %q", entry.name, path)
+		}
+		addresses[entry.name] = entry.addr
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan %q: %w", path, err)
+	}
+	for name, address := range addresses {
+		if address == 0 {
+			delete(addresses, name)
+		}
+	}
+	return addresses, nil
+}
+
 // KsymbolSearchProfile resolves address-only and range targets in one scan.
 // Module symbols and non-text symbols do not delimit kernel text ranges.
 func KsymbolSearchProfile(
