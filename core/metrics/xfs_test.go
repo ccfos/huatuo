@@ -76,6 +76,60 @@ func TestXFSData(t *testing.T) {
 	}
 }
 
+const testXFSStats = `extent_alloc 100 1000 50 500
+ig 500 400 100 10 20 30 40
+buf 100 200 300 30 40 50 60 70 80
+push_ail 1 5 3 4 5 6 7 8 9 10
+`
+
+// TestXFSUpdate exercises the full Update() path: resolving the sysfs XFS
+// directory, parsing per-filesystem stats, and emitting the counters.
+func TestXFSUpdate(t *testing.T) {
+	root := t.TempDir()
+
+	// Gate file for newXFS: /proc/fs/xfs/stat.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "proc", "fs", "xfs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "proc", "fs", "xfs", "stat"), []byte(""), 0o600))
+
+	// Per-filesystem stats: /sys/fs/xfs/sda1/stats/stats.
+	statsDir := filepath.Join(root, "sys", "fs", "xfs", "sda1", "stats")
+	require.NoError(t, os.MkdirAll(statsDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(statsDir, "stats"), []byte(testXFSStats), 0o600))
+
+	originalPrefix := filepath.Dir(procfs.DefaultPath())
+	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
+	procfs.RootPrefix(root)
+
+	attr, err := newXFS()
+	require.NoError(t, err)
+	require.NotNil(t, attr)
+
+	c, ok := attr.TracingData.(*xfsCollector)
+	require.True(t, ok)
+
+	data, err := c.Update()
+	require.NoError(t, err)
+	require.Len(t, data, 7)
+
+	want := map[string]float64{
+		"alloc_blocks_total":      1000,
+		"alloc_extents_total":     100,
+		"inode_attempts_total":    500,
+		"inode_missed_total":      10,
+		"buf_locked_waited_total": 30,
+		"buf_busy_locked_total":   40,
+		"log_space_sleep_total":   5,
+	}
+
+	for _, d := range data {
+		value, ok := want[d.Name()]
+		require.Truef(t, ok, "unexpected metric %q", d.Name())
+
+		assert.Equal(t, value, d.Value)
+		assert.Equal(t, "sda1", d.Labels()["device"])
+	}
+}
+
 func TestNewXFSNotSupported(t *testing.T) {
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
 	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
