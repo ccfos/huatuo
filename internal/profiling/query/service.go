@@ -218,6 +218,8 @@ func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher)
 		filter.ContainerID = matcher.Value
 	case "container_hostname":
 		filter.ContainerHostname = matcher.Value
+	case "container_host_namespace":
+		filter.ContainerHostNamespace = matcher.Value
 	case "__profile_type__":
 		filter.ProfileType = matcher.Value
 	default:

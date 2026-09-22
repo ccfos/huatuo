@@ -34,6 +34,18 @@ func TestApplyProfileMatcherRegion(t *testing.T) {
 	}
 }
 
+func TestApplyProfileMatcherContainerHostNamespace(t *testing.T) {
+	filter := &profilingstore.Filter{}
+	matcher := &labels.Matcher{Name: "container_host_namespace", Value: "team-a", Type: labels.MatchEqual}
+
+	if err := applyProfileMatcher(filter, matcher); err != nil {
+		t.Fatalf("applyProfileMatcher() error = %v", err)
+	}
+	if filter.ContainerHostNamespace != "team-a" {
+		t.Errorf("filter.ContainerHostNamespace = %q, want %q", filter.ContainerHostNamespace, "team-a")
+	}
+}
+
 func TestApplyProfileMatcherRejectsUnknownLabel(t *testing.T) {
 	filter := &profilingstore.Filter{}
 	matcher := &labels.Matcher{Name: "unknown", Value: "x", Type: labels.MatchEqual}
