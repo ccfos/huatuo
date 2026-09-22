@@ -24,6 +24,7 @@ const (
 	ErrorCodeInvalidRequest       ErrorCode = "invalid_request"
 	ErrorCodeMethodNotAllowed     ErrorCode = "method_not_allowed"
 	ErrorCodePermissionDenied     ErrorCode = "permission_denied"
+	ErrorCodeRateLimited          ErrorCode = "rate_limited"
 	ErrorCodeRequestTooLarge      ErrorCode = "request_too_large"
 	ErrorCodeRouteNotFound        ErrorCode = "route_not_found"
 	ErrorCodeServiceUnavailable   ErrorCode = "service_unavailable"

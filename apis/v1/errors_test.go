@@ -47,6 +47,7 @@ func TestHTTPStatusForErrorCode(t *testing.T) {
 		{code: ErrorCodeRouteNotFound, wantStatus: 404, wantOK: true},
 		{code: ErrorCodeMethodNotAllowed, wantStatus: 405, wantOK: true},
 		{code: ErrorCodeRequestTooLarge, wantStatus: 413, wantOK: true},
+		{code: ErrorCodeRateLimited, wantStatus: 429, wantOK: true},
 		{code: ErrorCodeServiceUnavailable, wantStatus: 503, wantOK: true},
 		{code: ErrorCode("future_error")},
 	}
