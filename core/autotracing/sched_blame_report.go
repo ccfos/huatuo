@@ -40,23 +40,20 @@ const (
 )
 
 type SchedBlameExternalData struct {
-	TargetContainerID                  string  `json:"target_container_id"`
-	TargetContainerName                string  `json:"target_container_name"`
-	IntervalSecs                       int     `json:"interval_secs"`
-	SliceDropPercent                   uint32  `json:"slice_drop_percent"`
-	CurrentExternalContentionPercent   float64 `json:"current_external_contention_percent"`
-	HistoricalP99Percent               float64 `json:"historical_p99_percent"`
-	ExternalAnomalyK                   float64 `json:"external_anomaly_k"`
-	ExternalContentionThresholdPercent float64 `json:"external_contention_threshold_percent"`
-	TargetRuntimeNs                    uint64  `json:"target_runtime_ns"`
-	InternalContentionNs               uint64  `json:"internal_contention_ns"`
-	ExternalContentionNs               uint64  `json:"external_contention_ns"`
-	ThrottledTimeNs                    uint64  `json:"throttled_time_ns"`
-	// EstimatedTotalWaitNs is SchedBlame's unweighted analog of the custom
-	// kernel's task-weighted hierarchy_wait_sum counter.
-	EstimatedTotalWaitNs   uint64                             `json:"estimated_total_wait_ns"`
-	EstimatedTotalDemandNs uint64                             `json:"estimated_total_demand_ns"`
-	TopExternalCompetitors []schedBlameExternalCompetitorItem `json:"top_external_competitors"`
+	TargetContainerID                  string                             `json:"target_container_id"`
+	TargetContainerName                string                             `json:"target_container_name"`
+	IntervalSecs                       int                                `json:"interval_secs"`
+	SliceDropPercent                   uint32                             `json:"slice_drop_percent"`
+	CurrentExternalContentionPercent   float64                            `json:"current_external_contention_percent"`
+	CurrentInternalContentionPercent   *float64                           `json:"current_internal_contention_percent"`
+	HistoricalP99Percent               float64                            `json:"historical_p99_percent"`
+	ExternalAnomalyK                   float64                            `json:"external_anomaly_k"`
+	ExternalContentionThresholdPercent float64                            `json:"external_contention_threshold_percent"`
+	TargetRuntimeNs                    uint64                             `json:"target_runtime_ns"`
+	InternalContentionNs               uint64                             `json:"internal_contention_ns"`
+	ExternalContentionNs               uint64                             `json:"external_contention_ns"`
+	ThrottledTimeNs                    uint64                             `json:"throttled_time_ns"`
+	TopExternalCompetitors             []schedBlameExternalCompetitorItem `json:"top_external_competitors"`
 }
 
 type schedBlameExternalCompetitorItem struct {
@@ -100,6 +97,8 @@ type schedBlameExternalCompetitorCharge struct {
 type schedBlameExternalEvent struct {
 	targetIndex                      uint8
 	currentExternalContentionRatio   float64
+	currentInternalContentionRatio   float64
+	internalSampleValid              bool
 	historicalP99                    float64
 	externalAnomalyK                 float64
 	externalContentionRatioThreshold float64
@@ -107,8 +106,6 @@ type schedBlameExternalEvent struct {
 	internalContentionNs             uint64
 	externalContentionNs             uint64
 	throttledTimeNs                  uint64
-	estimatedTotalWaitNs             uint64
-	estimatedTotalDemandNs           uint64
 	externalCompetitors              []schedBlameExternalCompetitorCharge
 }
 
@@ -145,10 +142,10 @@ func (state *schedBlameState) logExternalContentionRatio(
 	config *schedBlameRuntimeConfig,
 	targetIndex int,
 	runtime, internal, external, throttled uint64,
-	current, historicalP99, threshold float64,
+	currentExternal, currentInternal, historicalP99, threshold float64,
 	externalAnomalyK float64,
 	historySamples int,
-	sampleValid, ready, emitted bool,
+	externalSampleValid, internalSampleValid, ready, emitted bool,
 	superMonitorSample *schedBlameSuperMonitorSample,
 ) {
 	if !config.highlightConfigured() ||
@@ -161,18 +158,18 @@ func (state *schedBlameState) logExternalContentionRatio(
 		cssID = fmt.Sprintf("%d", target.cssID)
 	}
 	superMonitorFields := schedBlameSuperMonitorLogFields(superMonitorSample)
-	estimatedTotalWait := internal + external + throttled
-	estimatedTotalDemand := runtime + estimatedTotalWait
 	log.Debugf(
-		"sched-blame: external ratio highlight container=%s id=%s dense_id=%d css_id=%s %s sample_valid=%t history_samples=%d current_percent=%s p99_percent=%s k=%.3f threshold_percent=%s runtime_ns=%d internal_contention_ns=%d external_contention_ns=%d throttled_time_ns=%d estimated_total_wait_ns=%d estimated_total_demand_ns=%d ready=%t emitted=%t",
+		"sched-blame: external ratio highlight container=%s id=%s dense_id=%d css_id=%s %s external_sample_valid=%t internal_sample_valid=%t current_external_percent=%s current_internal_percent=%s history_samples=%d p99_percent=%s k=%.3f threshold_percent=%s runtime_ns=%d internal_contention_ns=%d external_contention_ns=%d throttled_time_ns=%d ready=%t emitted=%t",
 		target.name,
 		schedBlameShortID(target.containerID),
 		targetIndex,
 		cssID,
 		superMonitorFields,
-		sampleValid,
+		externalSampleValid,
+		internalSampleValid,
+		schedBlameRatioLogValue(currentExternal, externalSampleValid),
+		schedBlameRatioLogValue(currentInternal, internalSampleValid),
 		historySamples,
-		schedBlameRatioLogValue(current, sampleValid),
 		schedBlameRatioLogValue(historicalP99, ready),
 		externalAnomalyK,
 		schedBlameRatioLogValue(threshold, ready),
@@ -180,8 +177,6 @@ func (state *schedBlameState) logExternalContentionRatio(
 		internal,
 		external,
 		throttled,
-		estimatedTotalWait,
-		estimatedTotalDemand,
 		ready,
 		emitted,
 	)
@@ -275,54 +270,23 @@ func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 		internal := state.internalContentionNsByTarget[targetIndex]
 		external := state.externalContentionNsByTarget[targetIndex]
 		throttled := state.throttledTimeNsByTarget[targetIndex]
-		estimatedTotalWait := internal + external + throttled
-		estimatedTotalDemand := runtime + estimatedTotalWait
+		externalDemand := runtime + external
 		history := &state.externalContentionRatioHistory[targetIndex]
 		historicalP99, ready := history.p99(&scratch)
 		externalContentionRatioThreshold := historicalP99 * externalAnomalyK
-		// A ratio of zero is valid as long as the target had demand.
-		if estimatedTotalDemand == 0 {
-			state.logExternalContentionRatio(
-				config,
-				targetIndex,
-				runtime,
-				internal,
-				external,
-				throttled,
-				0,
-				historicalP99,
-				externalContentionRatioThreshold,
-				externalAnomalyK,
-				history.count,
-				false,
-				ready,
-				false,
-				&superMonitorSample,
-			)
-			if debugWriter != nil {
-				debugSamples = append(debugSamples,
-					state.newExternalRatioDebugSample(
-						targetIndex,
-						runtime,
-						internal,
-						external,
-						throttled,
-						0,
-						historicalP99,
-						externalContentionRatioThreshold,
-						externalAnomalyK,
-						history.count,
-						false,
-						ready,
-						false,
-						&superMonitorSample,
-					),
-				)
-			}
-			continue
+		externalSampleValid := externalDemand != 0
+		internalSampleValid := runtime != 0
+		currentExternalContentionRatio := 0.0
+		currentInternalContentionRatio := 0.0
+		if externalSampleValid {
+			currentExternalContentionRatio = float64(external) /
+				float64(externalDemand)
 		}
-		currentExternalContentionRatio := float64(external) / float64(estimatedTotalDemand)
-		breached := ready && historicalP99 > 0 &&
+		if internalSampleValid {
+			currentInternalContentionRatio = float64(internal) /
+				float64(runtime)
+		}
+		breached := externalSampleValid && ready && historicalP99 > 0 &&
 			currentExternalContentionRatio > externalContentionRatioThreshold
 		emitted := false
 		var externalEvent schedBlameExternalEvent
@@ -330,6 +294,8 @@ func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 			externalEvent = schedBlameExternalEvent{
 				targetIndex:                      uint8(targetIndex),
 				currentExternalContentionRatio:   currentExternalContentionRatio,
+				currentInternalContentionRatio:   currentInternalContentionRatio,
+				internalSampleValid:              internalSampleValid,
 				historicalP99:                    historicalP99,
 				externalAnomalyK:                 externalAnomalyK,
 				externalContentionRatioThreshold: externalContentionRatioThreshold,
@@ -337,8 +303,6 @@ func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 				internalContentionNs:             internal,
 				externalContentionNs:             external,
 				throttledTimeNs:                  throttled,
-				estimatedTotalWaitNs:             estimatedTotalWait,
-				estimatedTotalDemandNs:           estimatedTotalDemand,
 				externalCompetitors:              state.topExternalCompetitors(targetIndex),
 			}
 			externalEvents = append(externalEvents, externalEvent)
@@ -367,11 +331,13 @@ func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 			external,
 			throttled,
 			currentExternalContentionRatio,
+			currentInternalContentionRatio,
 			historicalP99,
 			externalContentionRatioThreshold,
 			externalAnomalyK,
 			history.count,
-			true,
+			externalSampleValid,
+			internalSampleValid,
 			ready,
 			emitted,
 			&superMonitorSample,
@@ -385,19 +351,23 @@ func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 					external,
 					throttled,
 					currentExternalContentionRatio,
+					currentInternalContentionRatio,
 					historicalP99,
 					externalContentionRatioThreshold,
 					externalAnomalyK,
 					history.count,
-					true,
+					externalSampleValid,
+					internalSampleValid,
 					ready,
 					emitted,
 					&superMonitorSample,
 				),
 			)
 		}
-		// The current second must not influence its own threshold.
-		history.add(currentExternalContentionRatio)
+		if externalSampleValid {
+			// The current second must not influence its own threshold.
+			history.add(currentExternalContentionRatio)
+		}
 	}
 	var debugWriteErr error
 	if debugWriter != nil && len(debugSamples) != 0 {
@@ -563,6 +533,13 @@ func (state *schedBlameState) enqueueExternalEvent(
 			ChargeNs:      competitor.chargeNs,
 		})
 	}
+	var currentInternalContentionPercent *float64
+	if externalEvent.internalSampleValid {
+		value := schedBlameRatioToPercent(
+			externalEvent.currentInternalContentionRatio,
+		)
+		currentInternalContentionPercent = &value
+	}
 	payload := &SchedBlameExternalData{
 		TargetContainerID:   schedBlameShortID(target.containerID),
 		TargetContainerName: target.name,
@@ -571,6 +548,7 @@ func (state *schedBlameState) enqueueExternalEvent(
 		CurrentExternalContentionPercent: schedBlameRatioToPercent(
 			externalEvent.currentExternalContentionRatio,
 		),
+		CurrentInternalContentionPercent: currentInternalContentionPercent,
 		HistoricalP99Percent: schedBlameRatioToPercent(
 			externalEvent.historicalP99,
 		),
@@ -582,8 +560,6 @@ func (state *schedBlameState) enqueueExternalEvent(
 		InternalContentionNs:   externalEvent.internalContentionNs,
 		ExternalContentionNs:   externalEvent.externalContentionNs,
 		ThrottledTimeNs:        externalEvent.throttledTimeNs,
-		EstimatedTotalWaitNs:   externalEvent.estimatedTotalWaitNs,
-		EstimatedTotalDemandNs: externalEvent.estimatedTotalDemandNs,
 		TopExternalCompetitors: items,
 	}
 	return uploader.enqueue(schedBlameUpload{
