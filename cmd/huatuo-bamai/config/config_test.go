@@ -86,7 +86,7 @@ ExcludedContainerQos = ["bestEffort"]
 [EventTracing.TCPRetransmit]
 Filter = "dst port 443"
 EnableTLP = true
-EnableDropwatchCorrelation = true
+EnableDropwatch = true
 MaxEventsPerSecond = 42
 
 [AutoTracing.MemoryThresholdSnapshot]
@@ -173,8 +173,8 @@ ExcludedOnContainer = "writeback"
 	if !Get().EventTracing.TCPRetransmit.EnableTLP {
 		t.Errorf("TCPRetransmit.EnableTLP should be true")
 	}
-	if !Get().EventTracing.TCPRetransmit.EnableDropwatchCorrelation {
-		t.Errorf("TCPRetransmit.EnableDropwatchCorrelation should be true")
+	if !Get().EventTracing.TCPRetransmit.EnableDropwatch {
+		t.Errorf("TCPRetransmit.EnableDropwatch should be true")
 	}
 	if Get().EventTracing.TCPRetransmit.MaxEventsPerSecond != 42 {
 		t.Errorf("unexpected TCPRetransmit.MaxEventsPerSecond: %d", Get().EventTracing.TCPRetransmit.MaxEventsPerSecond)

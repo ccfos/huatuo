@@ -310,7 +310,7 @@ dropwatch \
 
 [EventTracing.TCPRetransmit]
     # Run tcpshark with a private embedded dropwatch source.
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 ```
 
 Standalone dropwatch always emits raw `DropWatchTracing` events. Local TCP retransmission correlation loads a separate `net_dropwatch.o`, uses `EventTracing.TCPRetransmit.Filter` for both inputs, and emits only finalized `TCPRetransmitTracing` results. The two modes may run together; embedded drops are never stored as duplicate raw events.

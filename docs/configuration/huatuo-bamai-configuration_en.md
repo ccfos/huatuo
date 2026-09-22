@@ -926,7 +926,7 @@ This section captures key kernel events and latency, including scheduler tick in
     EnableTLP = false
 
     # Run tcpshark with an embedded dropwatch source. Default: false.
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 
     # Forwarded as tcpshark --max-events-per-second.
     # Default: 100; 0 disables rate limiting.
@@ -939,7 +939,7 @@ This section captures key kernel events and latency, including scheduler tick in
 
 - **Filter**: Tcpdump-style retransmission filter used in both modes. Local correlation applies the normalized expression to both tcpshark inputs and defaults an empty value to `tcp`. When correlation is disabled, an empty value passes no `--filter` flag. `Dropwatch.Filter` independently controls standalone dropwatch.
 
-- **EnableDropwatchCorrelation**: Whether tcpshark should load a private dropwatch source and finalize retransmissions locally. The default is false. `tcp_retransmit` must be removed from `BlackList`; standalone `dropwatch` may remain blacklisted. Retransmissions wait up to 100 ms for delayed delivery, and candidate drops must precede them by no more than one second in kernel monotonic time. The embedded source automatically detects and enables devlink DROP traps. A strict same-namespace match reports `software` or `hardware` according to source, with the same `drop_source`, `drop_reason`, and hardware `drop_reason_group` semantics as dropwatch; every finalized event has one `correlation_reason` (`matched`, `unsupported`, `warmup`, `wait_timeout`, `queue_full`, or `interrupted`). `warmup` applies only to expired waits whose retransmit timestamp predates source readiness; retransmissions at or after readiness receive `wait_timeout` on expiry, and other termination paths retain their own reasons. Unmatched events report `drop_location=unknown` with the namespace diagnostic and dropwatch counters, including map-counter availability.
+- **EnableDropwatch**: Whether tcpshark should load a private dropwatch source and finalize retransmissions locally. The default is false. `tcp_retransmit` must be removed from `BlackList`; standalone `dropwatch` may remain blacklisted. Retransmissions wait up to 100 ms for delayed delivery, and candidate drops must precede them by no more than one second in kernel monotonic time. The embedded source automatically detects and enables devlink DROP traps. A strict same-namespace match reports `software` or `hardware` according to source, with the same `drop_source`, `drop_reason`, and hardware `drop_reason_group` semantics as dropwatch; every finalized event has one `correlation_reason` (`matched`, `unsupported`, `warmup`, `wait_timeout`, `queue_full`, or `interrupted`). `warmup` applies only to expired waits whose retransmit timestamp predates source readiness; retransmissions at or after readiness receive `wait_timeout` on expiry, and other termination paths retain their own reasons. Unmatched events report `drop_location=unknown` with the namespace diagnostic and dropwatch counters, including map-counter availability.
 
 - **MaxEventsPerSecond**: Maximum TCP retransmission events emitted by BPF per second. Correlation mode gives embedded dropwatch an independent limiter with the same value, so `100` permits up to 100 events/s on each input.
 

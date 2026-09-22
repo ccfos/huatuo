@@ -311,7 +311,7 @@ dropwatch \
 
 [EventTracing.TCPRetransmit]
     # 使用 tcpshark 私有的 embedded dropwatch source。
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 ```
 
 standalone dropwatch 始终输出 raw `DropWatchTracing`。TCP 重传 local 关联会加载另一份 `net_dropwatch.o`，两个输入统一使用 `EventTracing.TCPRetransmit.Filter`，并且只输出定型后的 `TCPRetransmitTracing` 结果。两种模式可以并行；embedded drop 不会重复保存成 raw event。

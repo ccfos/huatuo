@@ -13,7 +13,7 @@ weight: 50
 
 - Added `tcpshark --with-dropwatch --bpf-path-dir <dir>` to correlate TCP
   retransmissions with an embedded dropwatch source using one shared filter.
-- Added `EventTracing.TCPRetransmit.EnableDropwatchCorrelation` for the
+- Added `EventTracing.TCPRetransmit.EnableDropwatch` for the
   huatuo-bamai tcpshark child.
 - Added a single `correlation_reason` for every finalized local correlation,
   including `warmup` for expired waits whose retransmission predates source readiness,

@@ -120,7 +120,7 @@ tcpshark 与 dropwatch 使用相同的 `--output-storage` 和 toolstream 流程�
     EnableTLP = false
 
     # 使用 embedded dropwatch；默认 false。
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 
     # 传给 tcpshark --max-events-per-second；默认 100，0 表示不限速。
     MaxEventsPerSecond = 100

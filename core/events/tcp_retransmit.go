@@ -56,7 +56,7 @@ func newTCPRetransmit() (*tracing.EventTracingAttr, error) {
 }
 
 func validateTCPRetransmitFilter(config *Config) error {
-	if !config.TCPRetransmit.EnableDropwatchCorrelation {
+	if !config.TCPRetransmit.EnableDropwatch {
 		return nil
 	}
 	if err := pcapfilter.ValidateL3Compatible(effectiveTCPRetransmitFilter(config)); err != nil {
@@ -108,7 +108,7 @@ func tcpRetransmitArgs(config *Config) []string {
 		"--max-events-per-second", strconv.FormatUint(config.TCPRetransmit.MaxEventsPerSecond, 10),
 		"--source-types", toolstream.SourceTypeEvent,
 	}
-	if config.TCPRetransmit.EnableDropwatchCorrelation {
+	if config.TCPRetransmit.EnableDropwatch {
 		args = append(
 			args,
 			"--with-dropwatch",

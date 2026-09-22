@@ -51,10 +51,10 @@ type Config struct {
 	}
 
 	TCPRetransmit struct {
-		Filter                     string `default:""`
-		EnableTLP                  bool   `default:"false"`
-		EnableDropwatchCorrelation bool   `default:"false"`
-		MaxEventsPerSecond         uint64 `default:"100"`
+		Filter             string `default:""`
+		EnableTLP          bool   `default:"false"`
+		EnableDropwatch    bool   `default:"false"`
+		MaxEventsPerSecond uint64 `default:"100"`
 	}
 
 	Netdev struct {
@@ -125,7 +125,7 @@ func (c *Config) Clone() *Config {
 
 func effectiveTCPRetransmitFilter(config *Config) string {
 	filter := strings.TrimSpace(config.TCPRetransmit.Filter)
-	if filter == "" && config.TCPRetransmit.EnableDropwatchCorrelation {
+	if filter == "" && config.TCPRetransmit.EnableDropwatch {
 		return "tcp"
 	}
 	return filter

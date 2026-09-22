@@ -142,7 +142,7 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
 [EventTracing.TCPRetransmit]
     Filter = "${TCP_RETRANS_FILTER}"
     EnableTLP = false
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 
 [Storage.LocalFile]
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"

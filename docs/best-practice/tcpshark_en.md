@@ -120,7 +120,7 @@ tcpshark uses the same `--output-storage` and toolstream flow as dropwatch. For 
     EnableTLP = false
 
     # Run tcpshark with an embedded dropwatch source. Default: false.
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 
     # Forwarded as tcpshark --max-events-per-second. Default: 100; 0 disables it.
     MaxEventsPerSecond = 100
