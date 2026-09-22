@@ -274,8 +274,11 @@ func TestSchedBlamePipelineIntegration(t *testing.T) {
 
 	payload, ok := request.TracerData.(*SchedBlameExternalData)
 	require.True(t, ok)
-	assert.InDelta(t, 600.0/1100.0*100.0,
+	assert.InDelta(t, 600.0/900.0*100.0,
 		payload.CurrentExternalContentionPercent, 1e-9)
+	require.NotNil(t, payload.CurrentInternalContentionPercent)
+	assert.InDelta(t, 100.0/300.0*100.0,
+		*payload.CurrentInternalContentionPercent, 1e-9)
 	assert.InDelta(t, 10.0, payload.HistoricalP99Percent, 1e-9)
 	assert.Equal(t, 2.0, payload.ExternalAnomalyK)
 	assert.InDelta(t, 20.0,
@@ -284,8 +287,6 @@ func TestSchedBlamePipelineIntegration(t *testing.T) {
 	assert.Equal(t, uint64(100), payload.InternalContentionNs)
 	assert.Equal(t, uint64(600), payload.ExternalContentionNs)
 	assert.Equal(t, uint64(100), payload.ThrottledTimeNs)
-	assert.Equal(t, uint64(800), payload.EstimatedTotalWaitNs)
-	assert.Equal(t, uint64(1100), payload.EstimatedTotalDemandNs)
 	require.Len(t, payload.TopExternalCompetitors, 1)
 	assert.Equal(t, schedBlameShortID(competitorContainerID),
 		payload.TopExternalCompetitors[0].ContainerID)
@@ -323,20 +324,21 @@ func TestSchedBlamePipelineIntegration(t *testing.T) {
 	assert.Equal(t, schedBlameRatioDebugHeader, records[0])
 	last := records[len(records)-1]
 	assert.Equal(t, "true", last[5])
-	assert.InDelta(t, 600.0/1100.0*100.0,
-		mustParseSchedBlameIntegrationFloat(t, last[7]), 1e-9)
-	assert.Equal(t, "10", last[8])
-	assert.Equal(t, "2", last[9])
-	assert.Equal(t, "20", last[10])
-	assert.Equal(t, "60", last[11])
-	assert.Equal(t, "true", last[12])
-	assert.Equal(t, "true", last[13])
-	assert.Equal(t, "300", last[14])
-	assert.Equal(t, "100", last[15])
-	assert.Equal(t, "600", last[16])
+	assert.Equal(t, "true", last[6])
+	assert.InDelta(t, 600.0/900.0*100.0,
+		mustParseSchedBlameIntegrationFloat(t, last[8]), 1e-9)
+	assert.InDelta(t, 100.0/300.0*100.0,
+		mustParseSchedBlameIntegrationFloat(t, last[9]), 1e-9)
+	assert.Equal(t, "10", last[10])
+	assert.Equal(t, "2", last[11])
+	assert.Equal(t, "20", last[12])
+	assert.Equal(t, "60", last[13])
+	assert.Equal(t, "true", last[14])
+	assert.Equal(t, "true", last[15])
+	assert.Equal(t, "300", last[16])
 	assert.Equal(t, "100", last[17])
-	assert.Equal(t, "800", last[18])
-	assert.Equal(t, "1100", last[19])
+	assert.Equal(t, "600", last[18])
+	assert.Equal(t, "100", last[19])
 
 	const finalCSSID = 2048
 	rawReader.pushSample(encodeSchedBlameIdentityForTest(schedBlameIdentity{

@@ -33,9 +33,11 @@ var schedBlameRatioDebugHeader = []string{
 	"target_container_id",
 	"target_container_name",
 	"target_css_id",
-	"sample_valid",
+	"external_sample_valid",
+	"internal_sample_valid",
 	"supermonitor_waitrate_percent",
 	"current_external_contention_percent",
+	"current_internal_contention_percent",
 	"historical_p99_percent",
 	"external_anomaly_k",
 	"external_contention_threshold_percent",
@@ -46,8 +48,6 @@ var schedBlameRatioDebugHeader = []string{
 	"internal_contention_ns",
 	"external_contention_ns",
 	"throttled_time_ns",
-	"estimated_total_wait_ns",
-	"estimated_total_demand_ns",
 }
 
 type schedBlameExternalRatioDebugSample struct {
@@ -56,8 +56,10 @@ type schedBlameExternalRatioDebugSample struct {
 	cssKnown             bool
 	containerID          string
 	containerName        string
-	sampleValid          bool
-	currentRatio         float64
+	externalSampleValid  bool
+	internalSampleValid  bool
+	currentExternalRatio float64
+	currentInternalRatio float64
 	historicalP99        float64
 	externalAnomalyK     float64
 	threshold            float64
@@ -161,13 +163,18 @@ func (writer *schedBlameExternalRatioDebugWriter) writeBatch(
 			sample.containerID,
 			sample.containerName,
 			cssID,
-			strconv.FormatBool(sample.sampleValid),
+			strconv.FormatBool(sample.externalSampleValid),
+			strconv.FormatBool(sample.internalSampleValid),
 			schedBlameSuperMonitorDebugField(
 				&sample.superMonitorSample,
 			),
 			schedBlameOptionalPercent(
-				sample.currentRatio,
-				sample.sampleValid,
+				sample.currentExternalRatio,
+				sample.externalSampleValid,
+			),
+			schedBlameOptionalPercent(
+				sample.currentInternalRatio,
+				sample.internalSampleValid,
 			),
 			schedBlameOptionalPercent(
 				sample.historicalP99,
@@ -185,19 +192,6 @@ func (writer *schedBlameExternalRatioDebugWriter) writeBatch(
 			strconv.FormatUint(sample.internalContentionNs, 10),
 			strconv.FormatUint(sample.externalContentionNs, 10),
 			strconv.FormatUint(sample.throttledTimeNs, 10),
-			strconv.FormatUint(
-				sample.internalContentionNs+
-					sample.externalContentionNs+
-					sample.throttledTimeNs,
-				10,
-			),
-			strconv.FormatUint(
-				sample.targetRuntimeNs+
-					sample.internalContentionNs+
-					sample.externalContentionNs+
-					sample.throttledTimeNs,
-				10,
-			),
 		}
 		if err := writer.csv.Write(row); err != nil {
 			return err
@@ -215,10 +209,10 @@ func (writer *schedBlameExternalRatioDebugWriter) close() error {
 func (state *schedBlameState) newExternalRatioDebugSample(
 	targetIndex int,
 	runtime, internal, external, throttled uint64,
-	current, historicalP99, threshold float64,
+	currentExternal, currentInternal, historicalP99, threshold float64,
 	externalAnomalyK float64,
 	historySamples int,
-	sampleValid, ready, emitted bool,
+	externalSampleValid, internalSampleValid, ready, emitted bool,
 	superMonitorSample *schedBlameSuperMonitorSample,
 ) schedBlameExternalRatioDebugSample {
 	target := state.targets[targetIndex]
@@ -228,8 +222,10 @@ func (state *schedBlameState) newExternalRatioDebugSample(
 		cssKnown:             target.cssKnown,
 		containerID:          target.containerID,
 		containerName:        target.name,
-		sampleValid:          sampleValid,
-		currentRatio:         current,
+		externalSampleValid:  externalSampleValid,
+		internalSampleValid:  internalSampleValid,
+		currentExternalRatio: currentExternal,
+		currentInternalRatio: currentInternal,
 		historicalP99:        historicalP99,
 		externalAnomalyK:     externalAnomalyK,
 		threshold:            threshold,
