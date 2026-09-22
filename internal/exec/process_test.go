@@ -24,12 +24,15 @@ import (
 	"os"
 	osexec "os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/prometheus/procfs"
 )
 
 const (
@@ -670,9 +673,372 @@ func TestExecHelperProcess(t *testing.T) {
 	case "process-group":
 		runProcessGroupHelper()
 		os.Exit(0)
+	case "leader-first", "leader-exits":
+		runLeaderFirstHelper(mode == "leader-exits")
+		os.Exit(0)
+	case "slow-graceful":
+		termCh := make(chan os.Signal, 1)
+		signal.Notify(termCh, syscall.SIGTERM)
+		_, _ = fmt.Fprintln(os.Stdout, helperReady)
+		<-termCh
+		time.Sleep(150 * time.Millisecond)
+		if err := os.WriteFile(os.Getenv(helperValueEnv), []byte("cleaned"), 0o600); err != nil {
+			os.Exit(8)
+		}
+		os.Exit(0)
 	default:
 		_, _ = fmt.Fprintf(os.Stderr, "unknown helper mode %q", mode)
 		os.Exit(2)
+	}
+}
+
+func runLeaderFirstHelper(exitImmediately bool) {
+	termCh := make(chan os.Signal, 1)
+	signal.Notify(termCh, syscall.SIGTERM)
+	mode := "ignore-term"
+	if os.Getenv(helperValueEnv) != "" {
+		mode = "slow-graceful"
+	}
+	child := osexec.Command(os.Args[0], "-test.run=^TestExecHelperProcess$")
+	child.Env = append(os.Environ(), helperModeEnv+"="+mode)
+	stdout, err := child.StdoutPipe()
+	if err != nil {
+		os.Exit(3)
+	}
+	if err := child.Start(); err != nil {
+		os.Exit(4)
+	}
+	scanner := bufio.NewScanner(stdout)
+	if !scanner.Scan() || scanner.Text() != helperReady {
+		_ = child.Process.Kill()
+		os.Exit(5)
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "%s child=%d\n", helperReady, child.Process.Pid)
+	if !exitImmediately {
+		<-termCh
+	}
+}
+
+func TestProcessStopKillsChildAfterLeaderExit(t *testing.T) {
+	process, child := startLeaderFirstProcess(t, "leader-first")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	if err := process.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("Stop returned before the ignoring child exhausted its grace period")
+	}
+	if err := process.Wait(); err != nil {
+		t.Fatalf("leader exited normally: %v", err)
+	}
+	assertProcessNotRunning(t, child)
+}
+
+func TestProcessStopPreservesChildGracePeriod(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "cleanup")
+	t.Setenv(helperValueEnv, marker)
+	process, _ := startLeaderFirstProcess(t, "leader-first")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := process.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("child did not finish cleanup: %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("Stop did not return after graceful child exit")
+	}
+}
+
+func TestProcessWaitDoesNotRetainGroupOnNaturalExit(t *testing.T) {
+	process, _ := startLeaderFirstProcess(t, "leader-exits")
+	done := make(chan error, 1)
+	go func() { done <- process.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Wait did not return after natural leader exit")
+	}
+}
+
+func TestProcessNaturalExitDoesNotInspectGroup(t *testing.T) {
+	process := newHelperProcess(t, "output")
+	process.groupRunning = func(_ int) (bool, error) {
+		return false, errTestSignal
+	}
+	if err := process.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	process.forceStop = func(_ int) error { return errTestSignal }
+	if err := process.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() after natural exit: %v", err)
+	}
+}
+
+func TestProcessStopAfterLeaderExitWithInheritedOutput(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		script string
+	}{
+		{name: "stdout", script: "sleep 30 2>/dev/null &"},
+		{name: "stderr", script: "sleep 30 >/dev/null &"},
+		{name: "both", script: "sleep 30 &"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			process, err := New(Spec{Path: "/bin/sh", Args: []string{"-c", tt.script}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			startProcess(t, process)
+			t.Cleanup(func() {
+				_ = syscall.Kill(-process.pid, syscall.SIGKILL)
+				_ = process.Wait()
+			})
+			select {
+			case <-process.leaderExited:
+			case <-time.After(2 * time.Second):
+				t.Fatal("shell did not exit")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- process.Stop(ctx) }()
+			if err := receiveError(t, done); err != nil {
+				t.Fatalf("Stop() after leader exit: %v", err)
+			}
+			if err := process.Wait(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestProcessStartFailureClosesOutputPipes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-command")
+	startMissing := func() {
+		t.Helper()
+		process, err := New(Spec{Path: path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := process.Start(context.Background()); err == nil {
+			t.Fatal("Start() unexpectedly succeeded")
+		}
+		if err := process.Wait(); err == nil {
+			t.Fatal("Wait() did not report the launch failure")
+		}
+	}
+	// Initialize runtime poll descriptors before counting owned pipe FDs.
+	startMissing()
+	before, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 20 {
+		startMissing()
+	}
+	after, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("file descriptors after failed starts = %d, before = %d", len(after), len(before))
+	}
+}
+
+func TestProcessWaitDrainsOutputAfterLeaderExit(t *testing.T) {
+	process, err := New(Spec{
+		Path: "/bin/sh",
+		Args: []string{"-c", "(sleep 0.05; printf child-output; printf child-error >&2) &"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := process.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(process.Stdout()); got != "child-output" {
+		t.Errorf("Stdout() = %q, want child-output", got)
+	}
+	if got := string(process.Stderr()); got != "child-error" {
+		t.Errorf("Stderr() = %q, want child-error", got)
+	}
+}
+
+func TestProcessConcurrentStopWaitsForChildren(t *testing.T) {
+	process, child := startLeaderFirstProcess(t, "leader-first")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 2)
+	for range 2 {
+		go func() { done <- process.Stop(ctx) }()
+	}
+	for range 2 {
+		// A concurrent waiter may observe its own deadline before the shared
+		// stop finishes. It must not report success with a running child.
+		err := receiveError(t, done)
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatal(err)
+		}
+		if err == nil {
+			assertProcessNotRunning(t, child)
+		}
+	}
+	if err := process.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	assertProcessNotRunning(t, child)
+}
+
+func TestProcessStopRetriesAfterLeaderExit(t *testing.T) {
+	process, child := startLeaderFirstProcess(t, "leader-first")
+	forceStop := process.forceStop
+	process.forceStop = func(_ int) error { return errTestSignal }
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	if err := process.Stop(ctx); !errors.Is(err, errTestSignal) {
+		t.Fatalf("Stop() error = %v, want force-stop failure", err)
+	}
+	process.forceStop = forceStop
+	if err := process.Stop(ctx); err != nil {
+		t.Fatalf("retry Stop(): %v", err)
+	}
+	assertProcessNotRunning(t, child)
+}
+
+func startLeaderFirstProcess(t *testing.T, mode string) (*Process, int) {
+	t.Helper()
+	process := newHelperProcess(t, mode)
+	startProcess(t, process)
+	t.Cleanup(func() { _ = syscall.Kill(-process.pid, syscall.SIGKILL) })
+	waitForStdout(t, process, helperReady)
+	return process, childPIDFromStdout(t, string(process.Stdout()))
+}
+
+func assertProcessNotRunning(t *testing.T, pid int) {
+	t.Helper()
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(data)[strings.LastIndexByte(string(data), ')')+1:])
+	if len(fields) == 0 || (fields[0] != "Z" && fields[0] != "X") {
+		t.Fatalf("child %d is still running: %s", pid, data)
+	}
+}
+
+func TestProcessGroupRunning(t *testing.T) {
+	data, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(data)[strings.LastIndexByte(string(data), ')')+1:])
+	pgid, err := syscall.Getpgid(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name       string
+		state      string
+		group      int
+		threads    int
+		wantActive bool
+	}{
+		{name: "sleeping child", state: "S", group: pgid, threads: 1, wantActive: true},
+		{name: "unreaped zombie", state: "Z", group: pgid, threads: 1},
+		{name: "dead process", state: "X", group: pgid, threads: 1},
+		{name: "changed group", state: "S", group: pgid + 1, threads: 1},
+		{name: "zombie leader with live threads", state: "Z", group: pgid, threads: 2, wantActive: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, strconv.Itoa(os.Getpid()))
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			fields[0] = tt.state
+			fields[2] = strconv.Itoa(tt.group)
+			fields[17] = strconv.Itoa(tt.threads)
+			stat := strconv.Itoa(os.Getpid()) + " (helper) " + strings.Join(fields, " ")
+			if err := os.WriteFile(filepath.Join(path, "stat"), []byte(stat), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			fs, err := procfs.NewFS(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, err := processGroupHasRunningMembers(fs, pgid)
+			if err != nil || active != tt.wantActive {
+				t.Fatalf("processGroupRunning() = %v, %v; want %v, nil", active, err, tt.wantActive)
+			}
+		})
+	}
+}
+
+func TestProcessInspectionFailureCompletesWait(t *testing.T) {
+	process, _ := startLeaderFirstProcess(t, "leader-first")
+	process.groupRunning = func(_ int) (bool, error) {
+		return false, errTestSignal
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := process.Stop(ctx); !errors.Is(err, errTestSignal) {
+		t.Fatalf("Stop() error = %v, want inspection failure", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- process.Wait() }()
+	if err := receiveError(t, done); !errors.Is(err, errTestSignal) {
+		t.Fatalf("Wait() error = %v, want inspection failure", err)
+	}
+	if err := process.Stop(ctx); !errors.Is(err, errTestSignal) {
+		t.Fatalf("repeat Stop() error = %v, want terminal cleanup failure", err)
+	}
+}
+
+func TestProcessInspectionAndKillFailureUnblocksOutputWait(t *testing.T) {
+	process, err := New(Spec{
+		Path: "/bin/sh",
+		Args: []string{"-c", "trap '' TERM; sleep 30 & echo ready"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	process.groupRunning = func(_ int) (bool, error) { return false, errTestSignal }
+	killErr := errors.New("injected force-stop error")
+	process.forceStop = func(_ int) error { return killErr }
+	startProcess(t, process)
+	t.Cleanup(func() {
+		_ = syscall.Kill(-process.pid, syscall.SIGKILL)
+		_ = process.Wait()
+	})
+	waitForStdout(t, process, "ready")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := process.Stop(ctx); !errors.Is(err, errTestSignal) || !errors.Is(err, killErr) {
+		t.Fatalf("Stop() error = %v, want inspection and kill failures", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- process.Wait() }()
+	if err := receiveError(t, done); !errors.Is(err, errTestSignal) || !errors.Is(err, killErr) {
+		t.Fatalf("Wait() error = %v, want inspection and kill failures", err)
+	}
+	process.forceStop = func(_ int) error {
+		t.Error("must not signal a released group")
+		return nil
+	}
+	if err := process.Stop(ctx); !errors.Is(err, killErr) {
+		t.Fatalf("repeat Stop() error = %v, want terminal failure", err)
 	}
 }
 
