@@ -54,6 +54,12 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 			readErr: statusErr, wantLocation: "software",
 		},
 		{name: "unmatched", reason: types.CorrelationWaitTimeout, wantLocation: "unknown"},
+		{name: "warmup", reason: types.CorrelationWarmup, wantLocation: "unknown"},
+		{
+			name: "warmup with partial status", reason: types.CorrelationWarmup,
+			status: types.DropwatchStatus{LostSamples: 5}, readErr: statusErr, wantLocation: "unknown",
+			netNamespace: true,
+		},
 		{
 			name: "namespace matched without packet match", reason: types.CorrelationWaitTimeout,
 			wantLocation: "unknown", netNamespace: true,
@@ -105,8 +111,7 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 			session := &retransmitDropSession{readDropwatchStatus: source.ReadStatus, sink: sink, sourceType: "tools"}
 			result := correlationResult{
 				retransmit: input, drop: test.drop, reason: test.reason,
-				isStartupHistoryIncomplete: test.reason != types.CorrelationMatched,
-				netNamespace:               test.reason == types.CorrelationMatched || test.netNamespace,
+				netNamespace: test.reason == types.CorrelationMatched || test.netNamespace,
 			}
 			err := session.emitResults([]correlationResult{result})
 			if !errors.Is(err, test.readErr) {
@@ -119,8 +124,7 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 			if event.DropLocation != test.wantLocation || event.DropStack != "" || event.CorrelationReason != test.reason {
 				t.Fatalf("emitted event = %+v, want location=%q reason=%q", event, test.wantLocation, test.reason)
 			}
-			if event.IsStartupHistoryIncomplete != result.isStartupHistoryIncomplete ||
-				event.NetNamespace != result.netNamespace {
+			if event.NetNamespace != result.netNamespace {
 				t.Fatalf("diagnostics changed during output: %+v", event)
 			}
 			if test.reason == types.CorrelationMatched {
@@ -145,6 +149,7 @@ func TestEmitResultsRejectsInvalidCorrelationResult(t *testing.T) {
 		{name: "unknown reason", reason: "unexpected", wantError: "invalid reason"},
 		{name: "matched without drop", reason: types.CorrelationMatched, wantError: "requires a drop"},
 		{name: "unsupported with drop", reason: types.CorrelationUnsupported, drop: &dropEvent{}, wantError: "cannot include a drop"},
+		{name: "warmup with drop", reason: types.CorrelationWarmup, drop: &dropEvent{}, wantError: "cannot include a drop"},
 		{name: "timeout with drop", reason: types.CorrelationWaitTimeout, drop: &dropEvent{}, wantError: "cannot include a drop"},
 		{name: "queue full with drop", reason: types.CorrelationQueueFull, drop: &dropEvent{}, wantError: "cannot include a drop"},
 		{name: "interrupted with drop", reason: types.CorrelationInterrupted, drop: &dropEvent{}, wantError: "cannot include a drop"},

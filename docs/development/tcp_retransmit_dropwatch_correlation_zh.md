@@ -20,8 +20,8 @@ weight: 7
 no-match 不能证明问题位于网络或硬件。drop 可能发生在采集启动前、另一个
 network namespace，或记录虽送达但缺少 TCP 匹配字段。
 
-shutdown 使用同一个时间点处理等待项：已到期项为 `wait_timeout`，未到期项为
-`interrupted`。两者均输出 `drop_location=unknown` 和独立诊断信息。
+shutdown 使用同一个时间点处理等待项：已到期项为 `warmup` 或 `wait_timeout`，未到期项为
+`interrupted`。这些未匹配结果均输出 `drop_location=unknown` 和独立诊断信息。
 
 ## 2. 三种运行场景
 
@@ -165,22 +165,26 @@ namespace 匹配状态。严格匹配后立即从 deadline 和 flow 两个索引
 |---------|---------|------|
 | `CorrelationMatched` | `matched` | 严格匹配成功，包括来源为 unknown 的 drop。 |
 | `CorrelationUnsupported` | `unsupported` | 当前规则无法处理该重传，不进入等待队列。 |
-| `CorrelationWaitTimeout` | `wait_timeout` | 等待到期仍未匹配。 |
+| `CorrelationWarmup` | `warmup` | 等待到期仍未匹配，重传发生时间早于 source ready。 |
+| `CorrelationWaitTimeout` | `wait_timeout` | 等待到期仍未匹配，重传发生时间等于或晚于 source ready。 |
 | `CorrelationQueueFull` | `queue_full` | 该重传因等待队列已满，在到期前被淘汰。 |
 | `CorrelationInterrupted` | `interrupted` | 关联循环退出，未到期的等待被提前中断。 |
 
 各结束分支直接赋值 `correlationResult.reason`。输出侧使用该枚举判定结果，并校验
-`matched` 必须带 drop，其他四种终态不能带 drop；空值、未知值或矛盾组合返回错误。
+`matched` 必须带 drop，其他五种终态不能带 drop；空值、未知值或矛盾组合返回错误。
 关闭关联时省略输出字段；启用关联后所有已定型事件都包含一个有效终态。
 单值字段替代原原因数组，工具端和接收端同步迁移。
 
-关联结果独立保留两个诊断标记：
+等待到期时，按重传的内核时间选择终态：早于 source ready 时为 `warmup`，
+等于或晚于 ready 时为 `wait_timeout`，包括 ready 后不足 1s 的情况。
+drop 到重传的 1s 上限只用于候选匹配，不参与预热判定。用户态处理延迟
+不会改变分类。该判定仅在到期分支执行，严格匹配、
+不支持、队列淘汰和提前中断保留各自原因。预热不阻止匹配，也不提前结束等待。
 
-- `startup_history_incomplete`：未匹配重传早于 source ready，或距 ready 不足 1s；
-- `matched_net_namespace`：同一 flow 下观测到相同 namespace 的 drop，
-  独立于报文和时间条件；不能替代 `correlation_reason=matched`。
+`matched_net_namespace` 保留为独立诊断标记：同一 flow 下观测到相同 namespace
+的 drop，独立于报文和时间条件；不能替代 `correlation_reason=matched`。
 
-这些标记可与限流、丢失计数并存，不改变唯一终态。无法规范化的 drop 与 drop
+该标记可与限流、丢失计数并存，不改变唯一终态。无法规范化的 drop 与 drop
 缓存容量淘汰不会直接结束重传等待，也不会生成重传级原因。
 
 ## 7. Perf 状态
@@ -247,7 +251,7 @@ detach 并关闭事件与告警 reader，再等待告警 worker 退出，最后�
    worker 和资源释放错误；
 6. 最后结束 socket output；调用者传入的 io.Writer 不由会话关闭。
 
-shutdown 已到期项输出 `wait_timeout`，未到期项输出 `interrupted`，两者均保留
+shutdown 已到期项输出 `warmup` 或 `wait_timeout`，未到期项输出 `interrupted`，均保留
 `drop_location=unknown`、诊断标记和 perf 状态。已匹配或已淘汰的事件不会重复定型。
 尾部 drop 仍可能丢失，因此原本可以匹配的重传也可能被提前结束。
 

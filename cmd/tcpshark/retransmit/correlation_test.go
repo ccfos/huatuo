@@ -87,14 +87,17 @@ func TestEventCorrelatorMatchesEitherArrivalOrder(t *testing.T) {
 	tests := []struct {
 		name             string
 		dropArrivesFirst bool
+		readyKtimeNS     uint64
 	}{
-		{name: "drop arrives first", dropArrivesFirst: true},
-		{name: "retransmit arrives first"},
+		{name: "drop arrives first", dropArrivesFirst: true, readyKtimeNS: 1},
+		{name: "retransmit arrives first", readyKtimeNS: 1},
+		{name: "drop arrives first before readiness", dropArrivesFirst: true, readyKtimeNS: uint64(time.Second) + 2},
+		{name: "retransmit arrives first before readiness", readyKtimeNS: uint64(time.Second) + 2},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			correlator := newTestEventCorrelator(t, 1)
+			correlator := newTestEventCorrelator(t, test.readyKtimeNS)
 			now := time.Unix(10, 0)
 			drop := testDropEvent(
 				t,
@@ -277,21 +280,25 @@ func TestEventCorrelatorWaitDeadline(t *testing.T) {
 	}
 }
 
-func TestEventCorrelatorUnmatchedDiagnostics(t *testing.T) {
+func TestEventCorrelatorExpiredResults(t *testing.T) {
 	const readyKtimeNS = uint64(100)
 	tests := []struct {
-		name                  string
-		kernelObservedNS      uint64
-		prepare               func(*eventCorrelator, time.Time)
-		wantIncompleteHistory bool
-		wantMatchedNamespace  bool
+		name                 string
+		kernelObservedNS     uint64
+		prepare              func(*eventCorrelator, time.Time)
+		wantReason           types.CorrelationReason
+		wantMatchedNamespace bool
 	}{
-		{name: "before startup", kernelObservedNS: readyKtimeNS - 1, wantIncompleteHistory: true},
-		{name: "before history horizon", kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge) - 1, wantIncompleteHistory: true},
-		{name: "at history horizon", kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge)},
+		{name: "before readiness", kernelObservedNS: readyKtimeNS - 1, wantReason: types.CorrelationWarmup},
+		{name: "at readiness", kernelObservedNS: readyKtimeNS, wantReason: types.CorrelationWaitTimeout},
+		{name: "after readiness", kernelObservedNS: readyKtimeNS + 1, wantReason: types.CorrelationWaitTimeout},
+		{name: "within first second", kernelObservedNS: readyKtimeNS + uint64(time.Second) - 1, wantReason: types.CorrelationWaitTimeout},
+		{name: "at one second", kernelObservedNS: readyKtimeNS + uint64(time.Second), wantReason: types.CorrelationWaitTimeout},
+		{name: "after one second", kernelObservedNS: readyKtimeNS + uint64(time.Second) + 1, wantReason: types.CorrelationWaitTimeout},
 		{
 			name:             "unusable drop does not change outcome",
 			kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
+			wantReason:       types.CorrelationWaitTimeout,
 			prepare: func(c *eventCorrelator, now time.Time) {
 				c.processDropEvent(&dropEvent{kernelObservedNS: readyKtimeNS}, now)
 			},
@@ -300,6 +307,7 @@ func TestEventCorrelatorUnmatchedDiagnostics(t *testing.T) {
 			name:                 "drop cache eviction does not change outcome",
 			kernelObservedNS:     readyKtimeNS + uint64(maxDropToRetransmitAge),
 			wantMatchedNamespace: true,
+			wantReason:           types.CorrelationWaitTimeout,
 			prepare: func(c *eventCorrelator, now time.Time) {
 				c.dropStore.capacity = 1
 				for sequence := range uint32(2) {
@@ -325,15 +333,26 @@ func TestEventCorrelatorUnmatchedDiagnostics(t *testing.T) {
 				t.Fatalf("results = %+v, want pending event", results)
 			}
 			results := correlator.expireRetransmitPendingEvents(now.Add(retransmitRetentionDuration))
-			if len(results) != 1 || results[0].reason != types.CorrelationWaitTimeout || results[0].drop != nil {
-				t.Fatalf("results = %+v, want wait_timeout", results)
+			if len(results) != 1 || results[0].reason != test.wantReason || results[0].drop != nil {
+				t.Fatalf("results = %+v, want %q", results, test.wantReason)
 			}
-			if results[0].isStartupHistoryIncomplete != test.wantIncompleteHistory ||
-				results[0].netNamespace != test.wantMatchedNamespace {
-				t.Fatalf("diagnostics = %+v, want incomplete history=%t and matched namespace=%t",
-					results[0], test.wantIncompleteHistory, test.wantMatchedNamespace)
+			if results[0].netNamespace != test.wantMatchedNamespace {
+				t.Fatalf("diagnostics = %+v, want matched namespace=%t", results[0], test.wantMatchedNamespace)
 			}
 		})
+	}
+}
+
+func TestEventCorrelatorWarmupUsesKernelTime(t *testing.T) {
+	const ready = uint64(time.Second)
+	correlator := newTestEventCorrelator(t, ready)
+	now := time.Unix(1, 0)
+	event := testRetransmitEvent(ready-1, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+	correlator.processRetransmitEvent(event, now)
+	// Processing long after the wait deadline does not extend the observed past.
+	results := correlator.expireRetransmitPendingEvents(now.Add(10 * time.Second))
+	if len(results) != 1 || results[0].reason != types.CorrelationWarmup || results[0].drop != nil {
+		t.Fatalf("results = %+v, want warmup despite delayed processing", results)
 	}
 }
 
@@ -349,15 +368,14 @@ func TestEventCorrelatorRejectsUnsupportedRetransmit(t *testing.T) {
 		{name: "reset segment", mutate: func(e *abi.TCPRetransmitEvent) { e.TCPFlags = packet.TCPFlagRST }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			correlator := newTestEventCorrelator(t, 1)
+			correlator := newTestEventCorrelator(t, 3)
 			event := testRetransmitEvent(2, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
 			test.mutate(&event.record)
 			now := time.Unix(1, 0)
 			results := correlator.processRetransmitEvent(event, now)
 			if len(results) != 1 || results[0].retransmit != event ||
-				results[0].reason != types.CorrelationUnsupported || results[0].drop != nil ||
-				!results[0].isStartupHistoryIncomplete {
-				t.Fatalf("results = %+v, want unsupported with incomplete startup history", results)
+				results[0].reason != types.CorrelationUnsupported || results[0].drop != nil {
+				t.Fatalf("results = %+v, want unsupported even during warmup", results)
 			}
 			if remaining := correlator.drainRetransmits(now); len(remaining) != 0 {
 				t.Fatalf("unsupported retransmit was also queued: %+v", remaining)
@@ -367,19 +385,23 @@ func TestEventCorrelatorRejectsUnsupportedRetransmit(t *testing.T) {
 }
 
 func TestEventCorrelatorDrainDeadline(t *testing.T) {
+	const readyKtimeNS = uint64(100)
 	for _, test := range []struct {
-		name    string
-		elapsed time.Duration
-		want    types.CorrelationReason
+		name             string
+		elapsed          time.Duration
+		want             types.CorrelationReason
+		kernelObservedNS uint64
 	}{
-		{name: "before deadline", elapsed: retransmitRetentionDuration - time.Nanosecond, want: types.CorrelationInterrupted},
-		{name: "at deadline", elapsed: retransmitRetentionDuration, want: types.CorrelationWaitTimeout},
-		{name: "after deadline", elapsed: retransmitRetentionDuration + time.Nanosecond, want: types.CorrelationWaitTimeout},
+		{name: "before deadline", elapsed: retransmitRetentionDuration - time.Nanosecond, want: types.CorrelationInterrupted, kernelObservedNS: readyKtimeNS - 1},
+		{name: "at deadline before readiness", elapsed: retransmitRetentionDuration, want: types.CorrelationWarmup, kernelObservedNS: readyKtimeNS - 1},
+		{name: "at deadline at readiness", elapsed: retransmitRetentionDuration, want: types.CorrelationWaitTimeout, kernelObservedNS: readyKtimeNS},
+		{name: "after deadline before readiness", elapsed: retransmitRetentionDuration + time.Nanosecond, want: types.CorrelationWarmup, kernelObservedNS: readyKtimeNS - 1},
+		{name: "after deadline at readiness", elapsed: retransmitRetentionDuration + time.Nanosecond, want: types.CorrelationWaitTimeout, kernelObservedNS: readyKtimeNS},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			correlator := newTestEventCorrelator(t, 1)
+			correlator := newTestEventCorrelator(t, readyKtimeNS)
 			now := time.Unix(1, 0)
-			event := testRetransmitEvent(2, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+			event := testRetransmitEvent(test.kernelObservedNS, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
 			correlator.processRetransmitEvent(event, now)
 			results := correlator.drainRetransmits(now.Add(test.elapsed))
 			if len(results) != 1 || results[0].reason != test.want || results[0].drop != nil {
@@ -510,22 +532,22 @@ func TestEventCorrelatorNetNamespace(t *testing.T) {
 	}
 }
 
-func TestEventCorrelatorFinalizesWithConcurrentDiagnostics(t *testing.T) {
+func TestEventCorrelatorWarmupPreservesFinalizationReason(t *testing.T) {
 	for _, reason := range []types.CorrelationReason{
-		types.CorrelationWaitTimeout, types.CorrelationQueueFull, types.CorrelationInterrupted,
+		types.CorrelationWarmup, types.CorrelationQueueFull, types.CorrelationInterrupted,
 	} {
 		t.Run(string(reason), func(t *testing.T) {
 			const ready = uint64(2 * time.Second)
 			correlator := newTestEventCorrelator(t, ready)
 			correlator.retransmitStore.capacity = 1
 			now := time.Unix(1, 0)
-			event := testRetransmitEvent(ready+1, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+			event := testRetransmitEvent(ready-1, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
 			correlator.processRetransmitEvent(event, now)
-			drop := testDropEvent(t, ready, "10.0.0.1", "10.0.0.2", 1000, 80, 300, 400, 0, packet.TCPFlagACK)
+			drop := testDropEvent(t, ready-2, "10.0.0.1", "10.0.0.2", 1000, 80, 300, 400, 0, packet.TCPFlagACK)
 			correlator.processDropEvent(drop, now)
 			var results []correlationResult
 			switch reason {
-			case types.CorrelationWaitTimeout:
+			case types.CorrelationWarmup:
 				results = correlator.expireRetransmitPendingEvents(now.Add(retransmitRetentionDuration))
 			case types.CorrelationQueueFull:
 				next := testRetransmitEvent(ready+2, "10.0.0.1", "10.0.0.2", 1001, 80, 100, 200)
@@ -536,8 +558,8 @@ func TestEventCorrelatorFinalizesWithConcurrentDiagnostics(t *testing.T) {
 			if len(results) != 1 || results[0].retransmit != event || results[0].reason != reason || results[0].drop != nil {
 				t.Fatalf("results = %+v, want original event finalized as %q", results, reason)
 			}
-			if !results[0].isStartupHistoryIncomplete || !results[0].netNamespace {
-				t.Fatalf("result = %+v, want both diagnostics retained", results[0])
+			if !results[0].netNamespace {
+				t.Fatalf("result = %+v, want namespace match retained", results[0])
 			}
 		})
 	}

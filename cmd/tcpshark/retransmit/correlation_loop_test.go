@@ -104,7 +104,7 @@ func TestRetransmitDropTimerRearmsAfterMatch(t *testing.T) {
 		t.Fatalf("unexpected output with empty queue: %+v", event)
 	case <-time.After(2 * retransmitRetentionDuration):
 	}
-	second := testRetransmitEvent(uint64(2*time.Second), "10.0.0.1", "10.0.0.2", 1001, 80, 100, 200)
+	second := testRetransmitEvent(2, "10.0.0.1", "10.0.0.2", 1001, 80, 100, 200)
 	start := time.Now()
 	select {
 	case retransmits <- second:
@@ -114,7 +114,7 @@ func TestRetransmitDropTimerRearmsAfterMatch(t *testing.T) {
 	select {
 	case event := <-outputs:
 		if event.KernelObservedNS != second.record.KernelObservedNS ||
-			event.CorrelationReason != types.CorrelationWaitTimeout {
+			event.CorrelationReason != types.CorrelationWarmup {
 			t.Fatalf("timeout output = %+v, want unmatched second retransmission", event)
 		}
 		if elapsed := time.Since(start); elapsed < retransmitRetentionDuration {

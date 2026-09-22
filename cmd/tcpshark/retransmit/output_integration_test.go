@@ -63,14 +63,15 @@ func TestSocketWriterPreservesCorrelationResult(t *testing.T) {
 	})
 	for _, event := range []*types.TCPRetransmitTracing{
 		{
-			CorrelationReason: types.CorrelationWaitTimeout, DropLocation: "unknown",
-			IsStartupHistoryIncomplete: true, NetNamespace: true,
+			CorrelationReason: types.CorrelationWarmup, DropLocation: "unknown",
+			NetNamespace:   true,
 			DropPerfStatus: &types.DropwatchStatus{HasMapCounters: true, PerfLost: 2, LostSamples: 3, RateLimited: 4},
 		},
 		{
 			CorrelationReason: types.CorrelationInterrupted, DropLocation: "unknown",
 			DropPerfStatus: &types.DropwatchStatus{LostSamples: 3},
 		},
+		{CorrelationReason: types.CorrelationWaitTimeout, DropLocation: "unknown"},
 		{CorrelationReason: types.CorrelationQueueFull, DropLocation: "unknown"},
 		{CorrelationReason: types.CorrelationUnsupported, DropLocation: "unknown"},
 		{

@@ -85,18 +85,17 @@ func TestTextWriterFormatsTCPFlags(t *testing.T) {
 	}
 }
 
-func TestTextWriterFormatsCorrelation(t *testing.T) {
+func TestTextWriterFormatsWarmup(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
 	event := &types.TCPRetransmitTracing{
-		ObservedTimestamp:          timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
-		KernelObservedTimestamp:    &timeutil.Timestamp{Time: time.Date(2026, 7, 23, 2, 14, 40, 0, time.UTC)},
-		KernelObservedNS:           8,
-		DropLocation:               "unknown",
-		CorrelationReason:          types.CorrelationWaitTimeout,
-		IsStartupHistoryIncomplete: true,
-		NetNamespace:               true,
+		ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
+		KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 7, 23, 2, 14, 40, 0, time.UTC)},
+		KernelObservedNS:        8,
+		DropLocation:            "unknown",
+		CorrelationReason:       types.CorrelationWarmup,
+		NetNamespace:            true,
 		DropPerfStatus: &types.DropwatchStatus{
 			HasMapCounters: true,
 			PerfLost:       2,
@@ -107,11 +106,13 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 	if err := (&textWriter{w: &output}).Write(event); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
+	if strings.Contains(output.String(), "startup_history_incomplete") {
+		t.Fatalf("obsolete startup diagnostic in output: %s", output.String())
+	}
 	for _, want := range []string{
 		"kernel_observed_timestamp=2026-07-23T02:14:40.000000000Z",
 		"drop_location=unknown",
-		"reason=wait_timeout",
-		"startup_history_incomplete=true",
+		"reason=warmup",
 		"matched_net_namespace=true",
 		"dropwatch_map_counters_available=true",
 		"dropwatch_perf_lost=2",

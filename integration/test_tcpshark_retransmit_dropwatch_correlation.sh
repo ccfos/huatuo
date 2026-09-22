@@ -158,8 +158,9 @@ assert_log_has_no_failure "${CORR_ERROR}" "tcpshark"
 jq -s -e '
 	length > 0 and all(.[];
 		.correlation_reason as $reason
-		| (["matched", "unsupported", "wait_timeout", "queue_full", "interrupted"] | index($reason)) != null
+		| (["matched", "unsupported", "warmup", "wait_timeout", "queue_full", "interrupted"] | index($reason)) != null
 		and (has("correlation_reasons") | not)
+		and (has("startup_history_incomplete") | not)
 		and (has("cross_netns_candidate") | not)
 		and (.matched_net_namespace == null or .matched_net_namespace == true)
 		and if $reason == "matched" then

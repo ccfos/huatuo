@@ -73,7 +73,9 @@ const (
 	CorrelationMatched CorrelationReason = "matched"
 	// CorrelationUnsupported includes missing fields required by the matching rules.
 	CorrelationUnsupported CorrelationReason = "unsupported"
-	// CorrelationWaitTimeout applies only when the full wait deadline has elapsed.
+	// CorrelationWarmup applies to expired waits for retransmissions before source readiness.
+	CorrelationWarmup CorrelationReason = "warmup"
+	// CorrelationWaitTimeout applies to expired waits for retransmissions at or after source readiness.
 	CorrelationWaitTimeout CorrelationReason = "wait_timeout"
 	// CorrelationQueueFull applies to a waiting retransmit evicted before its deadline.
 	CorrelationQueueFull CorrelationReason = "queue_full"
@@ -150,8 +152,6 @@ type TCPRetransmitTracing struct {
 	DropPerfStatus    *DropwatchStatus  `json:"drop_perf_status,omitempty"`
 	DropStack         string            `json:"drop_stack,omitempty"`
 	CorrelationReason CorrelationReason `json:"correlation_reason,omitempty"`
-	// Diagnostics do not change the terminal correlation outcome.
-	IsStartupHistoryIncomplete bool `json:"startup_history_incomplete,omitempty"`
 	// NetNamespace records a same-flow drop in the same namespace,
 	// independently of packet and time checks. False means no match was observed.
 	NetNamespace bool `json:"matched_net_namespace,omitempty"`

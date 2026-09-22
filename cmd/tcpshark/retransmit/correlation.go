@@ -36,11 +36,10 @@ type waitingRetransmit struct {
 }
 
 type correlationResult struct {
-	retransmit                 *retransmitEvent
-	drop                       *dropEvent
-	reason                     types.CorrelationReason
-	isStartupHistoryIncomplete bool
-	netNamespace               bool
+	retransmit   *retransmitEvent
+	drop         *dropEvent
+	reason       types.CorrelationReason
+	netNamespace bool
 }
 
 type eventCorrelator struct {
@@ -73,9 +72,8 @@ func (c *eventCorrelator) processRetransmitEvent(
 	entry, ok := retransmitEntryFromEvent(event)
 	if !ok || entry.kind == retransmitMatchUnsupported || !entry.hasSequenceRange {
 		return append(readyResults, correlationResult{
-			retransmit:                 event,
-			reason:                     types.CorrelationUnsupported,
-			isStartupHistoryIncomplete: c.startupHistoryIncomplete(event.record.KernelObservedNS),
+			retransmit: event,
+			reason:     types.CorrelationUnsupported,
 		})
 	}
 
@@ -99,10 +97,9 @@ func (c *eventCorrelator) processRetransmitEvent(
 		return readyResults
 	}
 	return append(readyResults, correlationResult{
-		retransmit:                 evicted.value.event,
-		reason:                     types.CorrelationQueueFull,
-		isStartupHistoryIncomplete: c.startupHistoryIncomplete(evicted.value.event.record.KernelObservedNS),
-		netNamespace:               evicted.value.netNamespace,
+		retransmit:   evicted.value.event,
+		reason:       types.CorrelationQueueFull,
+		netNamespace: evicted.value.netNamespace,
 	})
 }
 
@@ -148,11 +145,16 @@ func (c *eventCorrelator) expireRetransmitPendingEvents(
 		if waiting == nil {
 			return results
 		}
+		reason := types.CorrelationWaitTimeout
+		kernelObservedNS := waiting.value.event.record.KernelObservedNS
+		// Use event time so delayed delivery cannot change startup classification.
+		if kernelObservedNS < c.readyFromMonotonicNS {
+			reason = types.CorrelationWarmup
+		}
 		results = append(results, correlationResult{
-			retransmit:                 waiting.value.event,
-			reason:                     types.CorrelationWaitTimeout,
-			isStartupHistoryIncomplete: c.startupHistoryIncomplete(waiting.value.event.record.KernelObservedNS),
-			netNamespace:               waiting.value.netNamespace,
+			retransmit:   waiting.value.event,
+			reason:       reason,
+			netNamespace: waiting.value.netNamespace,
 		})
 	}
 }
@@ -163,10 +165,9 @@ func (c *eventCorrelator) drainRetransmits(now time.Time) []correlationResult {
 	results := c.expireRetransmitPendingEvents(now)
 	for _, waiting := range c.retransmitStore.drain() {
 		results = append(results, correlationResult{
-			retransmit:                 waiting.value.event,
-			reason:                     types.CorrelationInterrupted,
-			isStartupHistoryIncomplete: c.startupHistoryIncomplete(waiting.value.event.record.KernelObservedNS),
-			netNamespace:               waiting.value.netNamespace,
+			retransmit:   waiting.value.event,
+			reason:       types.CorrelationInterrupted,
+			netNamespace: waiting.value.netNamespace,
 		})
 	}
 	return results
@@ -179,11 +180,4 @@ func (c *eventCorrelator) nextDeadline() (time.Time, bool) {
 		return dropDeadline, true
 	}
 	return waitingDeadline, hasWaiting
-}
-
-func (c *eventCorrelator) startupHistoryIncomplete(kernelObservedNS uint64) bool {
-	if kernelObservedNS < c.readyFromMonotonicNS {
-		return true
-	}
-	return kernelObservedNS-c.readyFromMonotonicNS < uint64(maxDropToRetransmitAge)
 }

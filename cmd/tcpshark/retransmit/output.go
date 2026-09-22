@@ -138,9 +138,6 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 		line = append(line, " reason="...)
 		line = append(line, ev.CorrelationReason...)
 	}
-	if ev.IsStartupHistoryIncomplete {
-		line = append(line, " startup_history_incomplete=true"...)
-	}
 	if ev.NetNamespace {
 		line = append(line, " matched_net_namespace=true"...)
 	}

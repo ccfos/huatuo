@@ -56,7 +56,7 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 				)
 				event.DropStack = strings.Join(frames, "\n")
 			}
-		case types.CorrelationUnsupported, types.CorrelationWaitTimeout,
+		case types.CorrelationUnsupported, types.CorrelationWarmup, types.CorrelationWaitTimeout,
 			types.CorrelationQueueFull, types.CorrelationInterrupted:
 			if result.drop != nil {
 				return errors.Join(statusErr, fmt.Errorf(
@@ -64,7 +64,6 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 				))
 			}
 			event.DropLocation = "unknown"
-			event.IsStartupHistoryIncomplete = result.isStartupHistoryIncomplete
 			statusCopy := status
 			event.DropPerfStatus = &statusCopy
 		default:

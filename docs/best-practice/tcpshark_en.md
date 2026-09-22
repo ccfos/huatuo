@@ -194,8 +194,7 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 | `drop_source` | string | Matched drop source: `software` or `hardware`; an unrecognized ABI source is `unknown`. Omitted on no-match. |
 | `drop_reason` | string | Same as dropwatch: a BTF-resolved `SKB_DROP_REASON_*` name for software, a decimal value if unresolved, or `NOT_SUPPORTED` on older kernels. Hardware drops use the devlink trap name. |
 | `drop_reason_group` | string | Devlink trap group, such as `l2_drops`, for aggregating hardware reasons. Omitted for software drops and no-matches. |
-| `correlation_reason` | string | One terminal outcome: `matched`, `unsupported`, `wait_timeout`, `queue_full`, or `interrupted`. Omitted when correlation is disabled. |
-| `startup_history_incomplete` | bool | The retransmission predates source readiness or falls within its first second. Reported only when true for an unmatched result. |
+| `correlation_reason` | string | One terminal outcome: `matched`, `unsupported`, `warmup`, `wait_timeout`, `queue_full`, or `interrupted`. Omitted when correlation is disabled. |
 | `matched_net_namespace` | bool | A drop on the same TCP flow was observed in the same namespace, independently of packet and time checks. Always true for a strict match; omitted when false. |
 | `drop_perf_status` | object | Cumulative embedded-dropwatch counters for an unmatched result. `map_counters_available` identifies valid map counters; reader `lost_samples` remains valid on map errors. |
 | `drop_stack` | string | Matched drop stack; unmatched stacks are not symbolized. |
@@ -218,7 +217,7 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 Text retains its terminal-friendly layout while covering the same event variables as JSON. Optional variables appear only when non-zero or non-empty, and string values are not JSON-quoted or escaped. For compatibility with the original text format, `state`, `skb`, `seq`, `end`, `ack`, `flags`, `ca`, `retrans`, and `reason` correspond to the JSON fields `tcp_state`, `skb_addr`, `tcp_seq`, `tcp_end_seq`, `tcp_ack_seq`, `tcp_flags`, `ca_state`, `icsk_retransmits`, and `correlation_reason`, respectively.
 
 ```text
-<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [kernel_observed_timestamp=<UTC>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [drop_source=<SOURCE>] [drop_reason=<REASON>] [drop_reason_group=<GROUP>] [reason=<REASON>] [startup_history_incomplete=true] [matched_net_namespace=true] [dropwatch_map_counters_available=<true|false> dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
+<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [kernel_observed_timestamp=<UTC>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [drop_source=<SOURCE>] [drop_reason=<REASON>] [drop_reason_group=<GROUP>] [reason=<REASON>] [matched_net_namespace=true] [dropwatch_map_counters_available=<true|false> dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
 ```
 
 Example:
@@ -357,15 +356,18 @@ Each finalized event has exactly one `correlation_reason`:
 |-------|---------|
 | `matched` | Strict drop evidence matched the retransmission, including matches whose drop source is unknown. |
 | `unsupported` | The event lacks the type, namespace, time, or sequence evidence required by the matching rules. |
-| `wait_timeout` | The 100 ms wait elapsed without a strict match. This is a correlation wait, not TCP's RTO. |
+| `warmup` | The 100 ms wait elapsed without a strict match, and the retransmission predates embedded-source readiness. |
+| `wait_timeout` | The 100 ms wait elapsed without a strict match, and the retransmission occurred at or after embedded-source readiness. This is a correlation wait, not TCP's RTO. |
 | `queue_full` | The bounded retransmission wait queue evicted this event before its deadline. |
 | `interrupted` | The correlation loop exited before this event's wait deadline. This includes normal shutdown and failures. |
 
-Expired entries are finalized before matching or checking capacity. Shutdown uses one time snapshot: expired waits receive `wait_timeout`; remaining waits receive `interrupted`. Each event is finalized once and removed from the queue. Drop records rejected during decoding or evicted from the drop cache do not directly finalize a retransmission.
+Expired entries are finalized before matching or checking capacity. Shutdown uses one time snapshot: expired waits receive `warmup` or `wait_timeout`; remaining waits receive `interrupted`. Each event is finalized once and removed from the queue. Drop records rejected during decoding or evicted from the drop cache do not directly finalize a retransmission.
 
 The scalar field replaces the previous reason array; update tcpshark and its receiver together. Text output uses `reason=<value>`. Correlation-disabled output omits the field.
 
-`startup_history_incomplete` and `matched_net_namespace` are independent boolean diagnostics. Startup history is reported only for unmatched results; namespace matches are reported for both matched and unmatched results. They can coexist with loss counters without changing the terminal reason. Startup history is incomplete when the retransmission predates embedded-source readiness or occurs less than one second after it.
+`warmup` is selected only for an expired wait when the retransmission's kernel timestamp predates embedded-source readiness. Retransmissions at or after readiness receive `wait_timeout` on expiry, including those within the first second. The one-second drop-to-retransmit limit constrains candidate matching; it does not define warmup. Processing delays do not change this classification. Strict matches, unsupported events, queue evictions, and early interruptions retain their own reasons. The outcome describes observation timing; it does not prove why a drop failed to match.
+
+`matched_net_namespace` remains an independent boolean diagnostic for both matched and unmatched results. It can coexist with loss counters without changing the terminal reason.
 
 At shutdown, tcpshark stops reading dropwatch records still in the perf ring. An unread tail drop could otherwise have matched an interrupted retransmission.
 
@@ -395,7 +397,7 @@ Counters belong to this dropwatch instance and reset on reload. They are sampled
 | `correlation_reason=queue_full` | The waiting queue reached capacity; narrow the capture scope. |
 | `correlation_reason=interrupted` | Inspect the collection stop or error; the wait ended early. |
 | `matched_net_namespace=true` with an unmatched reason | A same-flow drop was observed in the same namespace. Check packet and time eligibility; the flag alone does not establish correlation. |
-| `startup_history_incomplete=true` | A no-match cannot exclude a software or hardware drop that occurred before the embedded source became ready. |
+| `correlation_reason=warmup` | The wait expired for a retransmission that predates source readiness. Capture later retransmissions; this result cannot exclude a drop before source readiness. |
 | `drop_location` absent | Expected in `off` mode. |
 
 huatuo-bamai passes one normalized `EventTracing.TCPRetransmit.Filter` value to both local-correlation inputs. Keeping those scopes identical prevents the two sources from observing different traffic, but it does not make a no-match conclusive without a reliable causal-start boundary.
