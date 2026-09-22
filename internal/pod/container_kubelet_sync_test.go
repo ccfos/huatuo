@@ -21,10 +21,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/iotest"
 
@@ -320,6 +322,39 @@ func TestHTTPDoRequestWarnsWhenResponseExceedsLimit(t *testing.T) {
 	}
 	if count := strings.Count(output, "rejecting oversized kubelet response"); count != 1 {
 		t.Errorf("warning count=%d, want 1; output=%q", count, output)
+	}
+}
+
+// TestKubeletPodListPortCacheUpdatePreservesConnectionRefused reproduces the
+// empty-KubeletClientCertPath case: when the read-only port refuses the
+// connection, the HTTPS fallback (which needs a client certificate) must not
+// mask the original ECONNREFUSED. Otherwise InitManager takes the fatal branch
+// instead of arming the 30-minute retry.
+func TestKubeletPodListPortCacheUpdatePreservesConnectionRefused(t *testing.T) {
+	// Reserve an ephemeral port and close it immediately so the subsequent
+	// dial to the read-only endpoint is refused.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error=%v", err)
+	}
+	port := uint32(ln.Addr().(*net.TCPAddr).Port)
+	if err := ln.Close(); err != nil {
+		t.Fatalf("ln.Close() error=%v", err)
+	}
+
+	// Default configuration: empty KubeletClientCertPath (and therefore empty
+	// internal podClientCertPath).
+	ctx := &ManagerCtx{
+		PodReadOnlyPort:   port,
+		PodAuthorizedPort: port,
+	}
+
+	err = kubeletPodListPortCacheUpdate(ctx)
+	if err == nil {
+		t.Fatal("kubeletPodListPortCacheUpdate() error=nil, want non-nil")
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("errors.Is(kubeletPodListPortCacheUpdate() error, syscall.ECONNREFUSED)=false, want true; error=%v", err)
 	}
 }
 
