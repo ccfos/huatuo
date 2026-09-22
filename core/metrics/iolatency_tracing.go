@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,12 +18,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
@@ -138,6 +138,12 @@ func (c *iolatencyTracing) Start(ctx context.Context) (retErr error) {
 	}
 	defer b.Close()
 
+	gc, err := newIOLatencyGC(b)
+	if err != nil {
+		return fmt.Errorf("initialize iolatency bio GC: %w", err)
+	}
+	defer gc.close()
+
 	childCtx, cancel := context.WithCancelCause(ctx)
 	defer func() {
 		if cause := context.Cause(childCtx); errors.Is(cause, types.ErrTracingStopped) {
@@ -184,6 +190,8 @@ func (c *iolatencyTracing) Start(ctx context.Context) (retErr error) {
 
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
+	gcTicker := time.NewTicker(ioLatencyGCInterval)
+	defer gcTicker.Stop()
 
 	for {
 		select {
@@ -195,6 +203,12 @@ func (c *iolatencyTracing) Start(ctx context.Context) (retErr error) {
 			c.mu.Unlock()
 			if err != nil {
 				log.Warnf("iolatency: refresh disks: %v; retrying on the next notification", err)
+			}
+		case <-gcTicker.C:
+			// Run on the session goroutine so cancellation stops reclamation
+			// before its handles and the tracing object are closed.
+			if err := gc.sweep(childCtx); err != nil && childCtx.Err() == nil {
+				log.Warnf("iolatency: reclaim inactive bio cache: %v", err)
 			}
 		case <-ticker.C:
 			err := session.updateContainerBlkDisk(pod.SynchronizedContainers)

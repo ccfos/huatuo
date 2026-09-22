@@ -6,6 +6,7 @@
 
 #include "bpf_blkio.h"
 #include "bpf_common.h"
+#include "bpf_iolatency_cache.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -17,7 +18,6 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define IO_LATENCY_COMPLETION_CHUNK_COUNT \
 	((IO_LATENCY_REQUEST_SCAN_BUDGET - 1 + IO_LATENCY_COMPLETION_CHUNK_BIOS - 1) / \
 	 IO_LATENCY_COMPLETION_CHUNK_BIOS)
-#define IO_LATENCY_BIO_STATES 10240
 #define IO_LATENCY_DISKS 128
 #define IO_LATENCY_CONTAINER_CSS 2048
 #define IO_LATENCY_OPERATIONS 2
@@ -27,8 +27,6 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define IO_LATENCY_CHAIN_OVERFLOW 1
 #define IO_LATENCY_STATE_INSERT_FAILED 2
 #define IO_LATENCY_STATE_DELETE_FAILED 5
-#define IO_LATENCY_ENOENT 2
-#define IO_LATENCY_EBUSY 16
 #define IO_LATENCY_EFAULT 14
 #define IO_LATENCY_EEXIST 17
 
@@ -81,13 +79,6 @@ struct {
 	__uint(max_entries, IO_LATENCY_CONTAINER_CSS);
 } blkcg_map SEC(".maps");
 
-struct bio_latency_state {
-	u64 queue_ns;
-	u64 blkcg;
-	u32 major;
-	u32 minor;
-};
-
 struct latency_counters {
 	u64 q2d[IO_LATENCY_BUCKETS];
 	u64 d2c[IO_LATENCY_BUCKETS];
@@ -114,12 +105,13 @@ struct container_latency_key {
 	u32 pad;
 };
 
+/* Contended starts and failed cache insertions use preallocated storage. */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, u64);
 	__type(value, struct bio_latency_state);
 	__uint(max_entries, IO_LATENCY_BIO_STATES);
-} bio_latency_map SEC(".maps");
+} bio_fallback_map SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -152,6 +144,83 @@ static __noinline void io_latency_fail(u32 reason, int error)
 	if (status)
 		*status = ((u64)reason << 32) | (u32)error;
 }
+
+static __always_inline struct bio_latency_state *io_latency_begin_bio(
+	u64 key, u32 **gate, bool *temporary)
+{
+	struct bio_latency_state *previous;
+	struct bio_latency_state *fallback;
+
+	*gate = NULL;
+	*temporary = false;
+	previous = bpf_map_lookup_elem(&bio_latency_map, &key);
+	/* An active owner cannot be deleted by GC. Keep A followed by Q on
+	 * this owner even while GC rejects an older inactive candidate.
+	 */
+	if (previous && previous->queue_ns)
+		return previous;
+	fallback = bpf_map_lookup_elem(&bio_fallback_map, &key);
+	if (fallback) {
+		*temporary = true;
+		return fallback;
+	}
+	if (!previous)
+		return NULL;
+	*gate = io_latency_try_gate(previous);
+	if (!*gate || *(volatile u32 *)&previous->deleted) {
+		io_latency_release_gate(*gate);
+		*gate = NULL;
+		*temporary = true;
+		return NULL;
+	}
+	return previous;
+}
+
+static __always_inline void io_latency_write_bio(
+	u64 key, const struct bio_latency_state *next,
+	struct bio_latency_state *previous, u32 *gate, bool temporary)
+{
+	int ret;
+
+	if (previous) {
+		/* Inactive time and protection belong to the cache node, not the IO. */
+		__builtin_memcpy(previous, next,
+				 __builtin_offsetof(struct bio_latency_state, inactive_ns));
+		io_latency_release_gate(gate);
+		return;
+	}
+	if (!temporary) {
+		ret = bpf_map_update_elem(&bio_latency_map, &key, next,
+					 COMPAT_BPF_NOEXIST);
+		io_latency_release_gate(gate);
+		if (!ret)
+			return;
+	}
+	/* Cache admission is optional; the fallback owns uncached in-flight IO. */
+	ret = bpf_map_update_elem(&bio_fallback_map, &key, next,
+				 COMPAT_BPF_ANY);
+	if (ret)
+		io_latency_fail(IO_LATENCY_STATE_INSERT_FAILED, ret);
+}
+
+static __always_inline void io_latency_forget_bio(u64 key, u64 now)
+{
+	struct bio_latency_state *state;
+	int ret;
+
+	state = bpf_map_lookup_elem(&bio_latency_map, &key);
+	if (state && state->queue_ns) {
+		state->inactive_ns = now;
+		asm volatile("" ::: "memory");
+		*(volatile u64 *)&state->queue_ns = 0;
+		return;
+	}
+	ret = bpf_map_delete_elem(&bio_fallback_map, &key);
+	if (ret && ret != -IO_LATENCY_ENOENT)
+		io_latency_fail(IO_LATENCY_STATE_DELETE_FAILED, ret);
+}
+
+/* End inactive cache storage. */
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -403,9 +472,10 @@ static __noinline u32 queue_bio_latency(
 	struct host_latency_counters *counters;
 	struct latency_counters *host;
 	struct latency_counters *container;
+	u32 *gate;
+	bool temporary;
 	u64 bytes;
 	u64 key;
-	int ret;
 
 	if (operation != REQ_OP_READ && operation != REQ_OP_WRITE)
 		return 0;
@@ -418,14 +488,14 @@ static __noinline u32 queue_bio_latency(
 	key = (u64)bio;
 	bytes = BPF_CORE_READ(bio, bi_iter.bi_size);
 	if (!bytes) {
-		bpf_map_delete_elem(&bio_latency_map, &key);
+		io_latency_forget_bio(key, now);
 		return 0;
 	}
 	if (io_latency_containers_enabled) {
 		state.blkcg = (u64)BPF_CORE_READ(bio, bi_blkg, blkcg);
 		series.blkcg = state.blkcg;
 	}
-	previous = bpf_map_lookup_elem(&bio_latency_map, &key);
+	previous = io_latency_begin_bio(key, &gate, &temporary);
 	if (!previous || !previous->queue_ns ||
 	    previous->major != state.major || previous->minor != state.minor) {
 		container = lookup_container_counters(&series, disk);
@@ -433,14 +503,7 @@ static __noinline u32 queue_bio_latency(
 				IO_SIZE_POINT_QUEUE, bytes);
 	}
 	/* Q/A restarts every phase; size deduplication does not retain old time. */
-	if (previous) {
-		*previous = state;
-		return bytes;
-	}
-	ret = bpf_map_update_elem(&bio_latency_map, &key, &state,
-				  COMPAT_BPF_ANY);
-	if (ret)
-		io_latency_fail(IO_LATENCY_STATE_INSERT_FAILED, ret);
+	io_latency_write_bio(key, &state, previous, gate, temporary);
 	return bytes;
 }
 
@@ -559,11 +622,13 @@ int trace_bio_split(struct bpf_raw_tracepoint_args *ctx)
 		ctx, block_split_bio_arg);
 	struct bio_latency_state initial = {};
 	struct bio_latency_state *parent;
+	struct bio_latency_state *previous;
 	struct host_latency_counters *host;
 	struct gendisk *disk;
+	u32 *gate;
+	bool temporary;
 	u64 parent_key, key;
 	u32 operation;
-	int ret;
 
 	if (!bio)
 		return 0;
@@ -573,6 +638,8 @@ int trace_bio_split(struct bpf_raw_tracepoint_args *ctx)
 		return 0;
 	parent_key = (u64)BPF_CORE_READ(bio, bi_private);
 	parent = bpf_map_lookup_elem(&bio_latency_map, &parent_key);
+	if (!parent || !parent->queue_ns)
+		parent = bpf_map_lookup_elem(&bio_fallback_map, &parent_key);
 	if (!parent || !parent->queue_ns)
 		return 0;
 	operation = BPF_CORE_READ(bio, bi_opf) & REQ_OP_MASK;
@@ -587,10 +654,8 @@ int trace_bio_split(struct bpf_raw_tracepoint_args *ctx)
 	if (io_latency_containers_enabled)
 		initial.blkcg = (u64)BPF_CORE_READ(bio, bi_blkg, blkcg);
 	key = (u64)bio;
-	ret = bpf_map_update_elem(&bio_latency_map, &key, &initial,
-				  COMPAT_BPF_ANY);
-	if (ret)
-		io_latency_fail(IO_LATENCY_STATE_INSERT_FAILED, ret);
+	previous = io_latency_begin_bio(key, &gate, &temporary);
+	io_latency_write_bio(key, &initial, previous, gate, temporary);
 	return 0;
 }
 
@@ -611,28 +676,50 @@ struct request_completion {
 };
 
 /*
- * C accounts only bios with Q/A state, reusing their saved owner. Missing
- * completions may retain state until a later Q/A overwrites it; positive
- * stale pairs remain an accepted sampling error. Each interval checks
- * time ordering.
+ * C accounts only bios with active Q/A state, reusing their saved owner.
+ * Missing or inactive entries contribute no completion samples. Missing
+ * completions may retain active state until a later Q/A overwrites it;
+ * positive stale pairs remain an accepted sampling error. Each interval
+ * checks time ordering.
  */
-/* Return scalar start data to the accounting frame so map-pointer states
- * do not multiply throughout the histogram calls in the 512-bio walk.
+/* Return scalar start data to the accounting frame. Map-pointer alternatives
+ * otherwise multiply older verifier states throughout the histogram calls.
  */
-static __noinline bool read_completed_bio(u64 key,
+static __noinline bool read_completed_bio(u64 key, u64 now,
 	struct bio_latency_state *completed)
 {
 	struct bio_latency_state *state;
+	u64 queue_ns;
 	int ret;
 
 	state = bpf_map_lookup_elem(&bio_latency_map, &key);
 	asm goto("if %0 != 0 goto %l[queued]" : : "r"(state) : : queued);
-	return false;
+	goto fallback;
 queued:
-	*completed = *state;
-	ret = bpf_map_delete_elem(&bio_latency_map, &key);
+	queue_ns = state->queue_ns;
+	asm goto("if %0 != 0 goto %l[active]" : : "r"(queue_ns) : : active);
+fallback:
+	state = bpf_map_lookup_elem(&bio_fallback_map, &key);
+	asm goto("if %0 != 0 goto %l[temporary_queued]" : : "r"(state) : : temporary_queued);
+	return false;
+temporary_queued:
+	queue_ns = state->queue_ns;
+	asm goto("if %0 != 0 goto %l[temporary_active]" : : "r"(queue_ns) : : temporary_active);
+	return false;
+temporary_active:
+	__builtin_memcpy(completed, state,
+			 __builtin_offsetof(struct bio_latency_state, inactive_ns));
+	ret = bpf_map_delete_elem(&bio_fallback_map, &key);
 	if (ret && ret != -IO_LATENCY_ENOENT)
 		io_latency_fail(IO_LATENCY_STATE_DELETE_FAILED, ret);
+	return true;
+active:
+	/* Accounting owns this copy; GC may reclaim the inactive map value. */
+	__builtin_memcpy(completed, state,
+			 __builtin_offsetof(struct bio_latency_state, inactive_ns));
+	state->inactive_ns = now;
+	asm volatile("" ::: "memory");
+	*(volatile u64 *)&state->queue_ns = 0;
 	return true;
 }
 
@@ -648,7 +735,7 @@ static __noinline void complete_bio_latency(
 	u32 d2c_bucket = completion->d2c_bucket;
 	bool found;
 
-	found = read_completed_bio(key, &state);
+	found = read_completed_bio(key, completion->now, &state);
 	asm goto("if %0 != 0 goto %l[active]" : : "r"(found) : : active);
 	return;
 active:
@@ -827,19 +914,15 @@ int kprobe_unprep_clone(struct pt_regs *ctx)
 {
 	struct request *req = (struct request *)PT_REGS_PARM1_CORE(ctx);
 	struct bio *bio = BPF_CORE_READ(req, bio);
+	u64 now;
 
 	if (!bio)
 		return 0;
+	now = bpf_ktime_get_ns();
 	for (int i = 0; i < IO_LATENCY_REQUEST_SCAN_BUDGET && bio; i++) {
 		u64 key = (u64)bio;
-		int ret = bpf_map_delete_elem(&bio_latency_map, &key);
 
-		/* A clone released before an observed D may have no start record. */
-		if (ret && ret != -IO_LATENCY_ENOENT &&
-		    ret != -IO_LATENCY_EBUSY) {
-			io_latency_fail(IO_LATENCY_STATE_DELETE_FAILED, ret);
-			return 0;
-		}
+		io_latency_forget_bio(key, now);
 		bio = BPF_CORE_READ(bio, bi_next);
 	}
 	if (bio)

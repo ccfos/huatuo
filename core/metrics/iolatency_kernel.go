@@ -81,8 +81,8 @@ func loadIOLatencyKernelConstants() (map[string]any, bool, error) {
 	}, addresses["blk_stat_disable_accounting"] != 0, nil
 }
 
-// Q/C may still access a disk counter after userspace removes its key.
-// Deletion must defer node reuse until that RCU reader exits.
+// C may still read an inactive node after GC removes its key. The cache
+// requires deletion to defer node reuse until that RCU reader exits.
 // bpf_mem_alloc-backed HASH maps reuse nodes immediately and are excluded.
 func checkIOLatencyHashAllocator(spec *btf.Spec) error {
 	member, err := ioControlHashAllocatorMember(spec)
@@ -202,9 +202,7 @@ func readIOLatencyCryptoProbe(object bpf.BPF) error {
 	}}); err != nil {
 		return fmt.Errorf("attach blk-crypto data probe: %w", err)
 	}
-	// The map-read syscall also triggers sys_enter on the BPF host. The
-	// remote backend's request handling produces host syscalls as well, so
-	// the probe is independent of the daemon's PID or namespace.
+	// The map-read syscall also triggers sys_enter on the BPF host.
 	value, err := object.ReadMap(object.MapIDByName("io_latency_crypto_map"), make([]byte, 4))
 	if err != nil {
 		return fmt.Errorf("read blk-crypto probe result: %w", err)

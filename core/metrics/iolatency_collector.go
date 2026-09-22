@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,10 +16,10 @@ package collector
 
 import (
 	"fmt"
-	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"path/filepath"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/procfs"
@@ -192,12 +192,12 @@ func (s *ioLatencySession) checkHealth() error {
 	case 1:
 		reason = "request bio list exceeds the 512-entry scan budget"
 	case 2:
-		reason = "bio_latency_map insertion failed"
+		reason = "bio_fallback_map insertion failed"
 		if errno == -int32(unix.E2BIG) {
-			reason = "bio_latency_map capacity exhausted (10240 entries)"
+			reason = "bio_fallback_map capacity exhausted (10240 entries)"
 		}
 	case 5:
-		reason = "bio_latency_map deletion failed"
+		reason = "bio_fallback_map deletion failed"
 	default:
 		reason = fmt.Sprintf("unknown BPF failure %d", code)
 	}
