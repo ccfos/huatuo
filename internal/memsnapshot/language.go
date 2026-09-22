@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 // Language identifies a process runtime.
@@ -98,7 +100,7 @@ func detectLanguage(ctx context.Context, exePath, mapsPath string) (Language, er
 	}
 	java := false
 	for _, mapping := range mappings {
-		java = java || strings.HasSuffix(strings.TrimSuffix(mapping.Path, " (deleted)"), "/libjvm.so")
+		java = java || strings.HasSuffix(procfs.TrimDeletedSuffix(mapping.Path), "/libjvm.so")
 	}
 	python, err := elfLinksPython(ctx, executable)
 	if err != nil {
@@ -117,6 +119,7 @@ func detectLanguage(ctx context.Context, exePath, mapsPath string) (Language, er
 }
 
 func languageFromExecutable(executable string) Language {
+	executable = procfs.TrimDeletedSuffix(executable)
 	switch {
 	case executable == "java":
 		return LanguageJava
