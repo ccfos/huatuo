@@ -646,6 +646,8 @@ func TestSchedBlameEvaluatesExternalRatioAgainstPreviousHistory(t *testing.T) {
 	require.Len(t, externalEvents, 1)
 	assert.Equal(t, 0.5,
 		externalEvents[0].currentExternalContentionRatio)
+	assert.Zero(t, externalEvents[0].currentInternalContentionRatio)
+	assert.True(t, externalEvents[0].internalSampleValid)
 	assert.InDelta(t, 0.1, externalEvents[0].historicalP99, 1e-9)
 	assert.Equal(t, defaultSchedBlameExternalAnomalyK,
 		externalEvents[0].externalAnomalyK)
@@ -655,10 +657,6 @@ func TestSchedBlameEvaluatesExternalRatioAgainstPreviousHistory(t *testing.T) {
 	assert.Zero(t, externalEvents[0].internalContentionNs)
 	assert.Equal(t, uint64(1_000), externalEvents[0].externalContentionNs)
 	assert.Zero(t, externalEvents[0].throttledTimeNs)
-	assert.Equal(t, uint64(1_000),
-		externalEvents[0].estimatedTotalWaitNs)
-	assert.Equal(t, uint64(2_000),
-		externalEvents[0].estimatedTotalDemandNs)
 	require.Len(t, externalEvents[0].externalCompetitors, 1)
 	assert.Equal(t, uint64(competitorCgid),
 		externalEvents[0].externalCompetitors[0].cgid)
@@ -674,38 +672,53 @@ func TestSchedBlameEvaluatesExternalRatioAgainstPreviousHistory(t *testing.T) {
 	assert.Zero(t, state.externalChargeNsMatrix[chargeIndex])
 }
 
-func TestSchedBlameExternalRatioIncludesAllDemandComponents(t *testing.T) {
+func TestSchedBlameContentionRatiosUseIndependentDenominators(t *testing.T) {
 	state := newSchedBlameStateForTest(0, 0x100)
 	history := &state.externalContentionRatioHistory[schedBlameHighlightIndex]
 	for range schedBlameExternalMinimumSamples {
 		history.add(0.1)
 	}
 	state.runtimeNsByTarget[schedBlameHighlightIndex] = 1_000
-	state.internalContentionNsByTarget[schedBlameHighlightIndex] = 2_000
+	state.internalContentionNsByTarget[schedBlameHighlightIndex] = 500
 	state.externalContentionNsByTarget[schedBlameHighlightIndex] = 3_000
 	state.throttledTimeNsByTarget[schedBlameHighlightIndex] = 4_000
 
 	events := state.evaluateExternalContentionRatios()
 
 	require.Len(t, events, 1)
-	assert.Equal(t, 0.3, events[0].currentExternalContentionRatio)
-	assert.Equal(t, uint64(2_000), events[0].internalContentionNs)
+	assert.Equal(t, 0.75, events[0].currentExternalContentionRatio)
+	assert.Equal(t, 0.5, events[0].currentInternalContentionRatio)
+	assert.True(t, events[0].internalSampleValid)
+	assert.Equal(t, uint64(500), events[0].internalContentionNs)
 	assert.Equal(t, uint64(4_000), events[0].throttledTimeNs)
-	assert.Equal(t, uint64(9_000),
-		events[0].estimatedTotalWaitNs)
-	assert.Equal(t, uint64(10_000), events[0].estimatedTotalDemandNs)
 }
 
-func TestSchedBlameThrottleOnlyIntervalIsValid(t *testing.T) {
+func TestSchedBlameThrottleOnlyIntervalHasNoContentionSample(t *testing.T) {
 	state := newSchedBlameStateForTest(0, 0x100)
 	state.throttledTimeNsByTarget[schedBlameHighlightIndex] = 1_000
 
 	assert.Empty(t, state.evaluateExternalContentionRatios())
 	history := &state.externalContentionRatioHistory[schedBlameHighlightIndex]
-	assert.Equal(t, 1, history.count)
-	assert.Zero(t, history.values[0])
+	assert.Zero(t, history.count)
 	assert.Zero(t,
 		state.throttledTimeNsByTarget[schedBlameHighlightIndex])
+}
+
+func TestSchedBlameExternalRatioCanBeValidWithoutRuntime(t *testing.T) {
+	state := newSchedBlameStateForTest(0, 0x100)
+	history := &state.externalContentionRatioHistory[schedBlameHighlightIndex]
+	for range schedBlameExternalMinimumSamples {
+		history.add(0.1)
+	}
+	state.externalContentionNsByTarget[schedBlameHighlightIndex] = 1_000
+
+	events := state.evaluateExternalContentionRatios()
+
+	require.Len(t, events, 1)
+	assert.Equal(t, 1.0, events[0].currentExternalContentionRatio)
+	assert.False(t, events[0].internalSampleValid)
+	assert.Zero(t, events[0].currentInternalContentionRatio)
+	assert.Equal(t, schedBlameExternalMinimumSamples+1, history.count)
 }
 
 func TestSchedBlameSkipsExternalEventWhenP99IsZero(t *testing.T) {
@@ -779,14 +792,13 @@ func TestSchedBlameExternalDataJSONNames(t *testing.T) {
 	var fields map[string]any
 	require.NoError(t, json.Unmarshal(raw, &fields))
 	assert.Contains(t, fields, "current_external_contention_percent")
+	assert.Contains(t, fields, "current_internal_contention_percent")
 	assert.Contains(t, fields, "historical_p99_percent")
 	assert.Contains(t, fields, "external_anomaly_k")
 	assert.Contains(t, fields, "external_contention_threshold_percent")
 	assert.Contains(t, fields, "slice_drop_percent")
 	assert.Contains(t, fields, "internal_contention_ns")
 	assert.Contains(t, fields, "throttled_time_ns")
-	assert.Contains(t, fields, "estimated_total_wait_ns")
-	assert.Contains(t, fields, "estimated_total_demand_ns")
 	assert.Contains(t, fields, "top_external_competitors")
 	assert.NotContains(t, fields, "estimated_hierarchical_wait_ns")
 	assert.NotContains(t, fields, "event_drop_percent")
@@ -813,6 +825,8 @@ func TestSchedBlameExternalDataUsesPercentages(t *testing.T) {
 		&schedBlameExternalEvent{
 			targetIndex:                      schedBlameHighlightIndex,
 			currentExternalContentionRatio:   0.75,
+			currentInternalContentionRatio:   0.5,
+			internalSampleValid:              true,
 			historicalP99:                    0.4,
 			externalAnomalyK:                 1.25,
 			externalContentionRatioThreshold: 0.5,
@@ -820,8 +834,6 @@ func TestSchedBlameExternalDataUsesPercentages(t *testing.T) {
 			internalContentionNs:             200,
 			externalContentionNs:             300,
 			throttledTimeNs:                  400,
-			estimatedTotalWaitNs:             900,
-			estimatedTotalDemandNs:           1_000,
 		},
 		time.Now(),
 		uploader,
@@ -834,6 +846,8 @@ func TestSchedBlameExternalDataUsesPercentages(t *testing.T) {
 	data, ok := upload.request.TracerData.(*SchedBlameExternalData)
 	require.True(t, ok)
 	assert.Equal(t, 75.0, data.CurrentExternalContentionPercent)
+	require.NotNil(t, data.CurrentInternalContentionPercent)
+	assert.Equal(t, 50.0, *data.CurrentInternalContentionPercent)
 	assert.Equal(t, 40.0, data.HistoricalP99Percent)
 	assert.Equal(t, 1.25, data.ExternalAnomalyK)
 	assert.Equal(t, 50.0, data.ExternalContentionThresholdPercent)
@@ -842,8 +856,22 @@ func TestSchedBlameExternalDataUsesPercentages(t *testing.T) {
 	assert.Equal(t, uint64(200), data.InternalContentionNs)
 	assert.Equal(t, uint64(300), data.ExternalContentionNs)
 	assert.Equal(t, uint64(400), data.ThrottledTimeNs)
-	assert.Equal(t, uint64(900), data.EstimatedTotalWaitNs)
-	assert.Equal(t, uint64(1_000), data.EstimatedTotalDemandNs)
+
+	assert.True(t, state.enqueueExternalEvent(
+		&schedBlameExternalEvent{
+			targetIndex:                    schedBlameHighlightIndex,
+			currentExternalContentionRatio: 1,
+		},
+		time.Now(),
+		uploader,
+		nil,
+		nil,
+		0,
+	))
+	upload = <-uploader.queue
+	data, ok = upload.request.TracerData.(*SchedBlameExternalData)
+	require.True(t, ok)
+	assert.Nil(t, data.CurrentInternalContentionPercent)
 }
 
 func TestSchedBlameExternalContentionRatioHistoryP99(t *testing.T) {
@@ -1204,8 +1232,10 @@ func TestSchedBlameExternalRatioDebugWriter(t *testing.T) {
 					cssKnown:             true,
 					containerID:          "container-a",
 					containerName:        "workload-a",
-					sampleValid:          true,
-					currentRatio:         0.25,
+					externalSampleValid:  true,
+					internalSampleValid:  true,
+					currentExternalRatio: 0.25,
+					currentInternalRatio: 0.5,
 					historicalP99:        0.1,
 					externalAnomalyK:     2,
 					threshold:            0.2,
@@ -1253,26 +1283,28 @@ func TestSchedBlameExternalRatioDebugWriter(t *testing.T) {
 	assert.Equal(t, "3", records[1][1])
 	assert.Equal(t, "10", records[1][4])
 	assert.Equal(t, "true", records[1][5])
-	assert.Equal(t, "43.75", records[1][6])
-	assert.Equal(t, "25", records[1][7])
-	assert.Equal(t, "10", records[1][8])
-	assert.Equal(t, "2", records[1][9])
-	assert.Equal(t, "20", records[1][10])
-	assert.Equal(t, "60", records[1][11])
-	assert.Equal(t, "true", records[1][12])
-	assert.Equal(t, "true", records[1][13])
-	assert.Equal(t, "300", records[1][14])
-	assert.Equal(t, "50", records[1][15])
-	assert.Equal(t, "100", records[1][16])
-	assert.Equal(t, "25", records[1][17])
-	assert.Equal(t, "175", records[1][18])
-	assert.Equal(t, "475", records[1][19])
+	assert.Equal(t, "true", records[1][6])
+	assert.Equal(t, "43.75", records[1][7])
+	assert.Equal(t, "25", records[1][8])
+	assert.Equal(t, "50", records[1][9])
+	assert.Equal(t, "10", records[1][10])
+	assert.Equal(t, "2", records[1][11])
+	assert.Equal(t, "20", records[1][12])
+	assert.Equal(t, "60", records[1][13])
+	assert.Equal(t, "true", records[1][14])
+	assert.Equal(t, "true", records[1][15])
+	assert.Equal(t, "300", records[1][16])
+	assert.Equal(t, "50", records[1][17])
+	assert.Equal(t, "100", records[1][18])
+	assert.Equal(t, "25", records[1][19])
 	assert.Equal(t, "false", records[2][5])
-	assert.Empty(t, records[2][6])
+	assert.Equal(t, "false", records[2][6])
 	assert.Empty(t, records[2][7])
 	assert.Empty(t, records[2][8])
-	assert.Equal(t, "2", records[2][9])
+	assert.Empty(t, records[2][9])
 	assert.Empty(t, records[2][10])
+	assert.Equal(t, "2", records[2][11])
+	assert.Empty(t, records[2][12])
 }
 
 func TestSchedBlameRatioDebugWriteFailureStopsEvaluation(t *testing.T) {
