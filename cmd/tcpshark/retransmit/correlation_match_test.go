@@ -249,18 +249,18 @@ func TestCorrelatorMatchAndRemoveRetransmitSelectsOldestArrival(t *testing.T) {
 	}
 	drop := testDropEvent(t, uint64(time.Second), "10.0.0.2", "10.0.0.1", 80, 1000, 900, 900, 200, packet.TCPFlagACK)
 	results := correlator.processDropEvent(drop, now.Add(time.Millisecond))
-	if len(results) != 1 || results[0].retransmit != first || results[0].drop != drop {
+	if len(results) != 1 || results[0].retransmit != first ||
+		results[0].reason != types.CorrelationMatched || results[0].drop != drop {
 		t.Fatalf("reverse ACK match = %v, want oldest arrival", results)
 	}
 	results = correlator.expireRetransmitPendingEvents(now.Add(retransmitRetentionDuration + time.Millisecond))
 	if len(results) != 2 || results[0].retransmit != second || results[1].retransmit != crossNetNS {
 		t.Fatalf("unmatched results = %v, want remaining retransmissions", results)
 	}
-	if hasResultCorrelationReason(results[0], types.CorrelationReasonCrossNetNSCandidate) ||
-		!hasResultCorrelationReason(results[1], types.CorrelationReasonCrossNetNSCandidate) {
+	if results[0].hasCrossNetNSCandidate || !results[1].hasCrossNetNSCandidate {
 		t.Fatal("matching stopped before recording cross-namespace evidence for later waiters")
 	}
-	if len(correlator.settleAllRetransmits()) != 0 {
+	if len(correlator.drainRetransmits(now.Add(retransmitRetentionDuration+time.Millisecond))) != 0 {
 		t.Fatal("matched or expired retransmission was finalized twice")
 	}
 }

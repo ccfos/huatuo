@@ -15,13 +15,13 @@ weight: 7
 | --- | --- |
 | `software` | 找到满足全部严格条件且尚未被消费的 host software drop。 |
 | `hardware` | 找到满足相同严格条件的 devlink DROP trap 记录。 |
-| `unknown` | 未找到严格匹配，或匹配记录的来源枚举未知；no-match 的 `correlation_reasons` 说明限制。 |
+| `unknown` | 未找到严格匹配，或匹配记录的来源枚举未知；`correlation_reason` 明确区分已匹配与未匹配终态。 |
 
 no-match 不能证明问题位于网络或硬件。drop 可能发生在采集启动前、另一个
 network namespace，或记录虽送达但缺少 TCP 匹配字段。
 
-shutdown 时仍在等待的 retransmit 会通过正常 no-match 路径定型为 `unknown`，
-并带上适用原因和最新可用的 perf 状态。
+shutdown 使用同一个时间点处理等待项：已到期项为 `wait_timeout`，未到期项为
+`interrupted`。两者均输出 `drop_location=unknown` 和独立诊断信息。
 
 ## 2. 三种运行场景
 
@@ -46,7 +46,7 @@ source 的软件及硬件记录，要求 `--with-dropwatch`。重传输入仍使
 `NOT_SUPPORTED`。硬件 reason 和 group 分别来自 trap 名称与分组，不查软件
 reason 表。reader 保留独立的来源和 reason 字符串，不借用可复用的 ABI buffer。
 成功匹配后输出 `drop_source`、`drop_reason`、`drop_reason_group`；no-match
-省略这些字段，继续输出关联限制原因。`drop_location` 在匹配时直接使用
+省略这些字段，输出唯一关联结束原因和独立诊断。`drop_location` 在匹配时直接使用
 `drop_source`，未匹配时为 `unknown`；它表示关联分类，不同于独立 dropwatch
 的内核地址。未知来源不根据 reason 或 stack 推断。
 硬件记录缺少 namespace 或 TCP 匹配字段时无法建立严格匹配。
@@ -120,12 +120,12 @@ type store[T any] struct {
 
 flow 索引按两个 `AddrPort` 的规范顺序建键，正反向只占一个桶；原始方向仍保留
 在业务数据中，供严格匹配使用。namespace 不进入索引键，保证跨 namespace
-的相似候选仍能生成限制原因。匹配扫描与切片删除为 O(k)，k 是该 flow 的候选数；
+的相似候选仍能设置诊断标记。匹配扫描与切片删除为 O(k)，k 是该 flow 的候选数；
 定位最早 deadline 与链表摘除为 O(1)。
 
 每个实例的 TTL 固定，关联循环传入单调不减的处理时间，因此链表插入顺序也是
 deadline 顺序。链表用于到期清理和容量淘汰，不向业务暴露 FIFO 消费接口。
-等待容量满时，最早 deadline 的记录以 `retransmit_wait_capacity_exceeded`
+等待容量满时，最早 deadline 的记录以 `queue_full`
 定型；drop 容量满时直接淘汰最早 deadline 的候选。因果判断仍使用 `kernel_observed_ns`。
 
 两个 reader 通过无缓冲 channel 交付事件，容器只由单个关联循环访问，无锁、
@@ -149,26 +149,33 @@ SYN-ACK 使用各自更严格的 ACK/SYN 条件。
 多个 drop 候选先选最大的 `drop.kernel_observed_ns`；时间相同时选较大的插入序号。
 drop 后到时，选择插入序号最小的严格匹配重传，同时扫描其余候选以记录跨
 namespace 证据。严格匹配后立即从 deadline 和 flow 两个索引删除，只能消费一次。
-除 namespace 外均满足的候选只记录 `cross_netns_candidate`，不会输出
-`software` 或 `hardware`。
+除 namespace 外均满足的候选只设置 `hasCrossNetNSCandidate`；
+它不会建立正向匹配，未匹配输出保留对应布尔诊断字段。
 
-## 6. Unknown 原因
+## 6. 互斥的关联终态
 
-原因可以同时出现：
+`types.CorrelationReason` 为 string 类型；每次关联只输出一个 `correlation_reason`：
 
-| 原因 | 含义 |
-| --- | --- |
-| `no_matching_drop` | 100ms 到期时没有严格候选。 |
-| `startup_history_incomplete` | 重传距离 embedded source ready 不足 1s，或早于 ready。 |
-| `cross_netns_candidate` | tuple、时间和 sequence 匹配，但 namespace 不同。 |
-| `perf_events_lost` | embedded dropwatch 无法把部分事件写入 perf（`perf_lost` 或 ring buffer 溢出）。 |
-| `drop_rate_limited` | embedded dropwatch limiter 拒绝了部分事件。 |
-| `retransmit_wait_capacity_exceeded` | 重传等待队列已满。 |
-| `unsupported_retransmission` | 重传缺少严格匹配所需字段或类型。 |
-| `dropwatch_perf_status_unavailable` | no-match 输出前无法读取最新 perf 状态。 |
+| Go 常量 | JSON 值 | 含义 |
+|---------|---------|------|
+| `CorrelationMatched` | `matched` | 严格匹配成功，包括来源为 unknown 的 drop。 |
+| `CorrelationUnsupported` | `unsupported` | 当前规则无法处理该重传，不进入等待队列。 |
+| `CorrelationWaitTimeout` | `wait_timeout` | 等待到期仍未匹配。 |
+| `CorrelationQueueFull` | `queue_full` | 该重传因等待队列已满，在到期前被淘汰。 |
+| `CorrelationInterrupted` | `interrupted` | 关联循环退出，未到期的等待被提前中断。 |
 
-无法规范化的 drop 与候选容量淘汰不再按重传维护 evidence 区间，也不产生专用
-reason；没有找到严格匹配时仍以 `no_matching_drop` 输出 `unknown`。
+各结束分支直接赋值 `correlationResult.reason`。输出侧使用该枚举判定结果，并校验
+`matched` 必须带 drop，其他四种终态不能带 drop；空值、未知值或矛盾组合返回错误。
+关闭关联时省略输出字段；启用关联后所有已定型事件都包含一个有效终态。
+单值字段替代原原因数组，工具端和接收端同步迁移。
+
+未匹配结果独立保留两个诊断标记：
+
+- `startup_history_incomplete`：重传早于 source ready，或距 ready 不足 1s；
+- `cross_netns_candidate`：候选通过报文和时间检查，但 namespace 不同。
+
+这些标记可与限流、丢失计数并存，不改变唯一终态。无法规范化的 drop 与 drop
+缓存容量淘汰不会直接结束重传等待，也不会生成重传级原因。
 
 ## 7. Perf 状态
 
@@ -181,8 +188,10 @@ reason；没有找到严格匹配时仍以 `no_matching_drop` 输出 `unknown`�
   reader 运行期间可见，处理丢失记录后即可通过 ReadStatus 查询。
 - `rate_limited`：限流状态 map `bpf_rlimit_dropwatch` 的 `total_missed`。
 
-`ReadStatus` 出错时保证 `PerfLost`、`RateLimited` 为零，`LostSamples` 仍有效。
-此时 map 计数的零值表示不可用；输出侧保留状态不可用原因，不附加完整状态快照。
+`ReadStatus` 成功时设置 `HasMapCounters=true`，JSON 为
+`map_counters_available=true`。出错时该标记为 false，`PerfLost`、`RateLimited`
+为零，表示不可用而非没有丢失或限流；`LostSamples` 仍有效，输出保留该快照。
+这些值为实例累计计数，map 和 reader 分别采样，不能推断某条重传未匹配的根因。
 
 用户态汇总所有 CPU 的 perf_lost，每次返回当前快照，不检查计数回退或 uint64 加法溢出。该状态只说明
 证据完整性，不会把 no-match 提升为确定性网络分类。旧的 active epoch、
@@ -219,22 +228,22 @@ retransmit reader、embedded dropwatch reader 和关联循环。所有命令 wor
 `Close` 先取消实例、
 detach 并关闭事件与告警 reader，再等待告警 worker 退出，最后释放 object；
 关闭告警 reader 会唤醒空闲读取，无需等待轮询期限。
-状态类型为 `types.DropwatchStatus`，JSON 名称保持不变。
+状态类型为 `types.DropwatchStatus`，输出字段为 `drop_perf_status`，包含 map 计数可用性标记。
 
 正常结束或 worker 失败时：
 
 1. 取消共享 `groupCtx`；
 2. 两个 `ReadInto` reader 和关联循环退出；
 3. 不再读取 dropwatch perf ring 中尚未交给关联器的记录；
-4. 按 deadline 顺序取出 waiting retransmit，通过正常 no-match 路径定型并写入
-   output；
+4. 调用 `drainRetransmits(now)`，以同一时间先结算到期项，再清空未到期项，
+   按 deadline 顺序写入 output；
 5. 等全部 worker 退出后，关闭 dropwatch 与 retransmit Tracer，收集内部告警
    worker 和资源释放错误；
 6. 最后结束 socket output；调用者传入的 io.Writer 不由会话关闭。
 
-shutdown pending 输出 `drop_location=unknown`、`no_matching_drop`、其他适用原因
-和最新可用的 `drop_perf_status`。尾部 drop 仍可能丢失，因此原本可以匹配的
-重传也可能被定型为 `unknown`。这是关闭边界上明确接受的取舍。
+shutdown 已到期项输出 `wait_timeout`，未到期项输出 `interrupted`，两者均保留
+`drop_location=unknown`、诊断标记和 perf 状态。已匹配或已淘汰的事件不会重复定型。
+尾部 drop 仍可能丢失，因此原本可以匹配的重传也可能被提前结束。
 
 ## 9. 文件职责
 
@@ -281,11 +290,11 @@ Tracer 关闭及输出结束。配置失败、取消与运行失败均释放已�
 进程级 `bpf.Init/Shutdown` 和运行超时由命令层统一管理。
 
 关联器在处理每个输入和 timer 时统一清理过期候选，缓存不重复执行过期检查。
-关联器只返回匹配证据和原因，不修改输出字段；correlation_output.go 统一构造最终输出，
+关联器返回匹配证据、单值终态和诊断标记，不修改输出字段；correlation_output.go 统一构造最终输出，
 每个非空输出批次在入口读取一次 dropwatch 状态，空批次不读取；仅对匹配 drop 解析符号。
 即使本批全部匹配也读取状态，读取失败时仍写出本批事件，再返回状态错误；
 若写出失败则停止本批输出，并合并写出错误与状态错误。只有 no-match 事件携带
-状态快照或对应的不可用原因，匹配事件不附加这些字段。
+状态快照与诊断标记；读取失败也保留有效的 reader 计数，匹配事件不附加这些字段。
 内部重传事件只保留 ABI record 和读取成功时的 observedAt；等待队列不保存
 完整的展示对象。匹配直接从 ABI 地址构造 netip 地址，使用 ABI 事件枚举，
 不经过字符串转换。IPv4-mapped IPv6 仍归一化为 IPv4。

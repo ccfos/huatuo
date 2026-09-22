@@ -119,7 +119,7 @@ type benchmarkCorrelationWriter struct {
 }
 
 func (w *benchmarkCorrelationWriter) Write(event *types.TCPRetransmitTracing) error {
-	if event.DropLocation != "software" {
+	if event.CorrelationReason != types.CorrelationMatched || event.DropLocation != "software" {
 		return fmt.Errorf("expected matched output, got %q", event.DropLocation)
 	}
 	if err := w.output.Write(event); err != nil {
@@ -167,7 +167,7 @@ func BenchmarkAsyncCorrelation(b *testing.B) {
 	group.Go(func() error {
 		return runRetransmitDropCorrelation(ctx, &retransmitDropSession{
 			retransmitEvents: retransmits, dropwatchEvents: drops,
-			readDropwatchStatus: func() (types.DropwatchStatus, error) { return types.DropwatchStatus{}, nil },
+			readDropwatchStatus: func() (types.DropwatchStatus, error) { return types.DropwatchStatus{HasMapCounters: true}, nil },
 			sink:                sink, sourceType: "tools",
 		})
 	})
@@ -203,5 +203,44 @@ func BenchmarkAsyncCorrelation(b *testing.B) {
 		case <-ctx.Done():
 			b.Fatal("correlation stopped")
 		}
+	}
+}
+
+func BenchmarkUnmatchedRetransmit(b *testing.B) {
+	for _, mode := range []string{"unsupported", "expired", "capacity", "drain"} {
+		b.Run(mode, func(b *testing.B) {
+			correlator, err := newEventCorrelator()
+			if err != nil {
+				b.Fatal(err)
+			}
+			correlator.readyFromMonotonicNS = 1
+			correlator.retransmitStore.capacity = 1
+			event := testRetransmitEvent(uint64(maxDropToRetransmitAge)+1, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+			now := time.Unix(10, 0)
+			if mode == "unsupported" {
+				event.record.Family = 0
+			}
+			if mode == "capacity" {
+				correlator.processRetransmitEvent(event, now)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				var results []correlationResult
+				switch mode {
+				case "unsupported", "capacity":
+					results = correlator.processRetransmitEvent(event, now)
+				case "expired":
+					correlator.processRetransmitEvent(event, now)
+					now = now.Add(retransmitRetentionDuration)
+					results = correlator.expireRetransmitPendingEvents(now)
+				case "drain":
+					correlator.processRetransmitEvent(event, now)
+					results = correlator.drainRetransmits(now)
+				}
+				if len(results) != 1 || results[0].retransmit != event || results[0].drop != nil || results[0].reason == "" {
+					b.Fatal("missing finalized unmatched retransmission")
+				}
+			}
+		})
 	}
 }

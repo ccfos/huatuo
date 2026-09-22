@@ -32,52 +32,58 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 		{
 			name: "full event",
 			ev: &TCPRetransmitTracing{
-				ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 7, 8, 9, 19, 52, 42035335, time.UTC)},
-				KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 7, 8, 9, 19, 52, 0, time.UTC)},
-				TCPReason:               "fast_retransmit",
-				Source:                  "events",
-				Comm:                    "kube-apiserver",
-				PID:                     1234,
-				ContainerID:             "abc123",
-				MemoryCgroupCSSAddr:     "0xffff888012345678",
-				NetNamespaceCookie:      0x2000,
-				NetNamespaceInum:        4026531992,
-				TCPSaddr:                "10.0.0.1",
-				TCPDaddr:                "10.0.0.2",
-				TCPSport:                6443,
-				TCPDport:                58244,
-				TCPState:                "ESTABLISHED",
-				Phase:                   "data",
-				EventType:               "tcp_retransmit_skb",
-				CaState:                 3,
-				IcskRetransmits:         0,
-				IcskPending:             6,
-				ReordSeen:               10,
-				DsackDups:               2,
-				TCPSeq:                  123456,
-				TCPAckSeq:               789012,
-				TCPEndSeq:               123999,
-				TCPFlags:                "ACK|FIN",
-				SkbAddr:                 "0xffff888012345678",
-				DropLocation:            "unknown",
-				CorrelationReasons: []CorrelationReason{
-					CorrelationReasonStartupHistoryIncomplete,
-					CorrelationReasonPerfEventsLost,
-				},
+				ObservedTimestamp:          timeutil.Timestamp{Time: time.Date(2026, 7, 8, 9, 19, 52, 42035335, time.UTC)},
+				KernelObservedTimestamp:    &timeutil.Timestamp{Time: time.Date(2026, 7, 8, 9, 19, 52, 0, time.UTC)},
+				TCPReason:                  "fast_retransmit",
+				Source:                     "events",
+				Comm:                       "kube-apiserver",
+				PID:                        1234,
+				ContainerID:                "abc123",
+				MemoryCgroupCSSAddr:        "0xffff888012345678",
+				NetNamespaceCookie:         0x2000,
+				NetNamespaceInum:           4026531992,
+				TCPSaddr:                   "10.0.0.1",
+				TCPDaddr:                   "10.0.0.2",
+				TCPSport:                   6443,
+				TCPDport:                   58244,
+				TCPState:                   "ESTABLISHED",
+				Phase:                      "data",
+				EventType:                  "tcp_retransmit_skb",
+				CaState:                    3,
+				IcskRetransmits:            0,
+				IcskPending:                6,
+				ReordSeen:                  10,
+				DsackDups:                  2,
+				TCPSeq:                     123456,
+				TCPAckSeq:                  789012,
+				TCPEndSeq:                  123999,
+				TCPFlags:                   "ACK|FIN",
+				SkbAddr:                    "0xffff888012345678",
+				DropLocation:               "unknown",
+				CorrelationReason:          CorrelationWaitTimeout,
+				IsStartupHistoryIncomplete: true,
+				HasCrossNetNSCandidate:     true,
 				DropPerfStatus: &DropwatchStatus{
-					PerfLost:    1,
-					RateLimited: 2,
+					HasMapCounters: true,
+					PerfLost:       1,
+					RateLimited:    2,
 				},
 				DropStack: "kfree_skb_reason+0x1",
 			},
 		},
 		{
 			name: "matched software drop",
-			ev:   &TCPRetransmitTracing{DropSource: "software", DropReason: "SKB_DROP_REASON_TCP_CSUM", DropLocation: "software"},
+			ev: &TCPRetransmitTracing{
+				CorrelationReason: CorrelationMatched,
+				DropSource:        "software", DropReason: "SKB_DROP_REASON_TCP_CSUM", DropLocation: "software",
+			},
 		},
 		{
 			name: "matched hardware drop",
-			ev:   &TCPRetransmitTracing{DropSource: "hardware", DropReason: "ingress_vlan_filter", DropReasonGroup: "l2_drops", DropLocation: "hardware"},
+			ev: &TCPRetransmitTracing{
+				CorrelationReason: CorrelationMatched,
+				DropSource:        "hardware", DropReason: "ingress_vlan_filter", DropReasonGroup: "l2_drops", DropLocation: "hardware",
+			},
 		},
 		{
 			name: "minimal event",
@@ -200,13 +206,76 @@ func TestTCPRetransmitTracingOmitEmpty(t *testing.T) {
 		"kernel_observed_ns", "kernel_observed_timestamp",
 		"container_id", "memory_cgroup_css_addr", "net_namespace_cookie", "net_namespace_inum",
 		"reord_seen", "dsack_dups", "tcp_end_seq", "tcp_flags",
-		"skb_addr", "drop_location", "drop_source", "drop_reason", "drop_reason_group", "correlation_reasons",
+		"skb_addr", "drop_location", "drop_source", "drop_reason", "drop_reason_group", "correlation_reason",
+		"startup_history_incomplete", "cross_netns_candidate",
 		"drop_perf_status", "drop_stack", "source",
 	}
 	for _, f := range omitFields {
 		if _, ok := raw[f]; ok {
 			t.Errorf("omitempty field %q should be absent, got %v", f, raw[f])
 		}
+	}
+}
+
+func TestTCPRetransmitCorrelationJSON(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		reason CorrelationReason
+		want   string
+	}{
+		{name: "disabled"},
+		{name: "matched", reason: CorrelationMatched, want: "matched"},
+		{name: "unsupported", reason: CorrelationUnsupported, want: "unsupported"},
+		{name: "timeout", reason: CorrelationWaitTimeout, want: "wait_timeout"},
+		{name: "capacity", reason: CorrelationQueueFull, want: "queue_full"},
+		{name: "interrupted", reason: CorrelationInterrupted, want: "interrupted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			event := TCPRetransmitTracing{CorrelationReason: test.reason}
+			encoded, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := fields["correlation_reasons"]; ok {
+				t.Fatal("obsolete correlation reason array is present")
+			}
+			got, exists := fields["correlation_reason"]
+			if test.want == "" {
+				if exists {
+					t.Fatalf("disabled correlation has reason %v", got)
+				}
+			} else if got != test.want {
+				t.Fatalf("correlation_reason = %v, want string %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestTCPRetransmitPartialDropStatusJSON(t *testing.T) {
+	event := TCPRetransmitTracing{
+		CorrelationReason:          CorrelationWaitTimeout,
+		IsStartupHistoryIncomplete: true,
+		HasCrossNetNSCandidate:     true,
+		DropPerfStatus:             &DropwatchStatus{LostSamples: 5},
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["startup_history_incomplete"] != true || fields["cross_netns_candidate"] != true {
+		t.Fatalf("diagnostics = %s, want both boolean flags", encoded)
+	}
+	status, ok := fields["drop_perf_status"].(map[string]any)
+	if !ok || status["map_counters_available"] != false || status["lost_samples"] != float64(5) {
+		t.Fatalf("partial status = %s, want unavailable maps and five lost reader samples", encoded)
 	}
 }
 

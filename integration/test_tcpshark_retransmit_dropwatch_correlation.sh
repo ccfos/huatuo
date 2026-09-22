@@ -89,6 +89,7 @@ correlated_event_ready() {
 		| select(.phase == "data")
 		| select(.tcp_saddr == $server and .tcp_daddr == $client)
 		| select(.tcp_sport == $port)
+		| select(.correlation_reason == "matched")
 		| select(.drop_location == "software" and .drop_source == "software")
 		| select((.drop_reason | type) == "string" and (.drop_reason | length) > 0)
 		| select(.drop_reason_group == null)
@@ -153,4 +154,18 @@ corr_tcpshark_pid=""
 
 assert_kernel_observation_timestamps "${CORR_MATCHED_EVENT}"
 assert_log_has_no_failure "${CORR_ERROR}" "tcpshark"
+jq -s -e '
+	length > 0 and all(.[];
+		.correlation_reason as $reason
+		| (["matched", "unsupported", "wait_timeout", "queue_full", "interrupted"] | index($reason)) != null
+		and (has("correlation_reasons") | not)
+		and if $reason == "matched" then
+			(.drop_source | type) == "string" and .drop_location == .drop_source
+			and .drop_perf_status == null
+		else
+			.drop_location == "unknown" and .drop_source == null
+			and (.drop_perf_status.map_counters_available | type) == "boolean"
+		end)
+' "${CORR_OUTPUT}" > /dev/null \
+	|| fatal "tcpshark output violates the single correlation reason contract"
 log_info "correlated event: $(< "${CORR_MATCHED_EVENT}")"

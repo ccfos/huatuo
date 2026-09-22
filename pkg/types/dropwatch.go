@@ -58,6 +58,9 @@ type DropWatchTracing struct {
 
 // DropwatchStatus reports cumulative diagnostic counters for one dropwatch instance.
 type DropwatchStatus struct {
+	// HasMapCounters distinguishes unavailable map counters from observed zeros.
+	// LostSamples remains valid regardless of this flag.
+	HasMapCounters bool `json:"map_counters_available"`
 	// PerfLost counts dropwatch events that the kernel failed to write to the
 	// perf stream (bpf_perf_event_output returned a negative error, e.g. no
 	// reader attached for the current CPU).

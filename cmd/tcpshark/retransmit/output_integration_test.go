@@ -27,7 +27,7 @@ import (
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-func TestSocketWriterPreservesDropMetadata(t *testing.T) {
+func TestSocketWriterPreservesCorrelationResult(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	socketPath := t.TempDir() + "/events.sock"
@@ -62,9 +62,26 @@ func TestSocketWriterPreservesDropMetadata(t *testing.T) {
 		}
 	})
 	for _, event := range []*types.TCPRetransmitTracing{
-		{DropLocation: "unknown", DropPerfStatus: &types.DropwatchStatus{PerfLost: 2, LostSamples: 3, RateLimited: 4}},
-		{DropLocation: "software", DropSource: "software", DropReason: "SKB_DROP_REASON_TCP_CSUM"},
-		{DropLocation: "hardware", DropSource: "hardware", DropReason: "ingress_vlan_filter", DropReasonGroup: "l2_drops"},
+		{
+			CorrelationReason: types.CorrelationWaitTimeout, DropLocation: "unknown",
+			IsStartupHistoryIncomplete: true, HasCrossNetNSCandidate: true,
+			DropPerfStatus: &types.DropwatchStatus{HasMapCounters: true, PerfLost: 2, LostSamples: 3, RateLimited: 4},
+		},
+		{
+			CorrelationReason: types.CorrelationInterrupted, DropLocation: "unknown",
+			DropPerfStatus: &types.DropwatchStatus{LostSamples: 3},
+		},
+		{CorrelationReason: types.CorrelationQueueFull, DropLocation: "unknown"},
+		{CorrelationReason: types.CorrelationUnsupported, DropLocation: "unknown"},
+		{
+			CorrelationReason: types.CorrelationMatched, DropLocation: "software",
+			DropSource: "software", DropReason: "SKB_DROP_REASON_TCP_CSUM",
+		},
+		{
+			CorrelationReason: types.CorrelationMatched, DropLocation: "hardware",
+			DropSource: "hardware", DropReason: "ingress_vlan_filter", DropReasonGroup: "l2_drops",
+		},
+		{CorrelationReason: types.CorrelationMatched, DropLocation: "unknown", DropSource: "unknown"},
 	} {
 		if err := sink.Write(event); err != nil {
 			t.Fatal(err)

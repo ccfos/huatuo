@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,130 +31,130 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 	statusErr := errors.New("status unavailable")
 	tests := []struct {
 		name         string
+		reason       types.CorrelationReason
 		drop         *dropEvent
 		status       types.DropwatchStatus
 		readErr      error
 		wantLocation string
-		wantReasons  []types.CorrelationReason
 	}{
 		{
-			name:         "matched",
-			drop:         &dropEvent{metadata: dropwatch.Metadata{Source: dropwatch.SourceSoftware}},
-			status:       types.DropwatchStatus{PerfLost: 2},
-			wantLocation: "software",
+			name: "matched", reason: types.CorrelationMatched,
+			drop:   &dropEvent{metadata: dropwatch.Metadata{Source: dropwatch.SourceSoftware}},
+			status: types.DropwatchStatus{PerfLost: 2}, wantLocation: "software",
 		},
 		{
-			name:         "matched with unavailable status",
-			drop:         &dropEvent{metadata: dropwatch.Metadata{Source: dropwatch.SourceSoftware}},
-			readErr:      statusErr,
-			wantLocation: "software",
-		},
-		{
-			name:         "unmatched",
+			name: "matched unknown source", reason: types.CorrelationMatched,
+			drop:         &dropEvent{metadata: dropwatch.Metadata{Source: dropwatch.SourceUnknown}},
 			wantLocation: "unknown",
-			wantReasons:  []types.CorrelationReason{types.CorrelationReasonNoMatchingDrop},
 		},
 		{
-			name:         "perf output lost",
-			status:       types.DropwatchStatus{PerfLost: 2},
-			wantLocation: "unknown",
-			wantReasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-				types.CorrelationReasonPerfEventsLost,
-			},
+			name: "matched with unavailable status", reason: types.CorrelationMatched,
+			drop:    &dropEvent{metadata: dropwatch.Metadata{Source: dropwatch.SourceSoftware}},
+			readErr: statusErr, wantLocation: "software",
+		},
+		{name: "unmatched", reason: types.CorrelationWaitTimeout, wantLocation: "unknown"},
+		{
+			name: "perf output lost", reason: types.CorrelationWaitTimeout,
+			status: types.DropwatchStatus{PerfLost: 2}, wantLocation: "unknown",
 		},
 		{
-			name:         "reader samples lost",
-			status:       types.DropwatchStatus{LostSamples: 5},
-			wantLocation: "unknown",
-			wantReasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-				types.CorrelationReasonPerfEventsLost,
-			},
+			name: "reader samples lost", reason: types.CorrelationWaitTimeout,
+			status: types.DropwatchStatus{LostSamples: 5}, wantLocation: "unknown",
 		},
 		{
-			name:         "rate limited",
-			status:       types.DropwatchStatus{RateLimited: 3},
-			wantLocation: "unknown",
-			wantReasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-				types.CorrelationReasonDropRateLimited,
-			},
+			name: "rate limited", reason: types.CorrelationWaitTimeout,
+			status: types.DropwatchStatus{RateLimited: 3}, wantLocation: "unknown",
 		},
 		{
-			name:         "all counters available",
-			status:       types.DropwatchStatus{PerfLost: 2, LostSamples: 5, RateLimited: 3},
-			wantLocation: "unknown",
-			wantReasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-				types.CorrelationReasonDropRateLimited,
-				types.CorrelationReasonPerfEventsLost,
-			},
+			name: "all counters available", reason: types.CorrelationWaitTimeout,
+			status: types.DropwatchStatus{PerfLost: 2, LostSamples: 5, RateLimited: 3}, wantLocation: "unknown",
 		},
 		{
-			name:         "map counters unavailable",
-			readErr:      statusErr,
-			wantLocation: "unknown",
-			wantReasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-				types.CorrelationReasonDropwatchPerfStatusUnavailable,
-			},
+			name: "map counters unavailable", reason: types.CorrelationWaitTimeout,
+			readErr: statusErr, wantLocation: "unknown",
 		},
 		{
-			name:         "reader loss with unavailable map counters",
-			status:       types.DropwatchStatus{LostSamples: 5},
-			readErr:      statusErr,
-			wantLocation: "unknown",
-			wantReasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-				types.CorrelationReasonDropwatchPerfStatusUnavailable,
-				types.CorrelationReasonPerfEventsLost,
-			},
+			name: "reader loss with unavailable map counters", reason: types.CorrelationWaitTimeout,
+			status: types.DropwatchStatus{LostSamples: 5}, readErr: statusErr, wantLocation: "unknown",
+		},
+		{
+			name: "unsupported with loss and rate limiting", reason: types.CorrelationUnsupported,
+			status: types.DropwatchStatus{PerfLost: 2, LostSamples: 5, RateLimited: 3}, wantLocation: "unknown",
+		},
+		{
+			name: "queue full with loss and rate limiting", reason: types.CorrelationQueueFull,
+			status: types.DropwatchStatus{PerfLost: 2, LostSamples: 5, RateLimited: 3}, wantLocation: "unknown",
+		},
+		{
+			name: "interrupted with unavailable counters", reason: types.CorrelationInterrupted,
+			status: types.DropwatchStatus{LostSamples: 5}, readErr: statusErr, wantLocation: "unknown",
 		},
 	}
-	for _, test := range tests {
+	for testIndex := range tests {
+		test := &tests[testIndex]
 		t.Run(test.name, func(t *testing.T) {
 			input := &retransmitEvent{record: abi.TCPRetransmitEvent{KernelObservedNS: 42}}
-			reasons := []types.CorrelationReason{types.CorrelationReasonNoMatchingDrop}
-			status := &dropwatchStatusStub{status: test.status, readErr: test.readErr}
+			test.status.HasMapCounters = test.readErr == nil
+			source := &dropwatchStatusStub{status: test.status, readErr: test.readErr}
 			sink := &retransmitDropWriterStub{}
-			session := &retransmitDropSession{
-				readDropwatchStatus: status.ReadStatus,
-				sink:                sink,
-				sourceType:          "tools",
+			session := &retransmitDropSession{readDropwatchStatus: source.ReadStatus, sink: sink, sourceType: "tools"}
+			result := correlationResult{
+				retransmit: input, drop: test.drop, reason: test.reason,
+				isStartupHistoryIncomplete: test.reason != types.CorrelationMatched,
+				hasCrossNetNSCandidate:     test.reason != types.CorrelationMatched,
 			}
-			err := session.emitResults([]correlationResult{{
-				retransmit: input, drop: test.drop, reasons: reasons,
-			}})
+			err := session.emitResults([]correlationResult{result})
 			if !errors.Is(err, test.readErr) {
 				t.Fatalf("emit error = %v, want %v", err, test.readErr)
 			}
-			if len(sink.events) != 1 {
-				t.Fatalf("events = %d, want 1", len(sink.events))
-			}
-			if status.readCalls != 1 {
-				t.Fatalf("status reads = %d, want 1", status.readCalls)
+			if len(sink.events) != 1 || source.readCalls != 1 {
+				t.Fatalf("events = %d, reads = %d, want one each", len(sink.events), source.readCalls)
 			}
 			event := sink.events[0]
-			if event.DropLocation != test.wantLocation || event.DropStack != "" {
-				t.Fatalf("emitted event = %+v", event)
+			if event.DropLocation != test.wantLocation || event.DropStack != "" || event.CorrelationReason != test.reason {
+				t.Fatalf("emitted event = %+v, want location=%q reason=%q", event, test.wantLocation, test.reason)
 			}
-			if !slices.Equal(event.CorrelationReasons, test.wantReasons) {
-				t.Fatalf("reasons = %v, want %v", event.CorrelationReasons, test.wantReasons)
+			if event.IsStartupHistoryIncomplete != result.isStartupHistoryIncomplete ||
+				event.HasCrossNetNSCandidate != result.hasCrossNetNSCandidate {
+				t.Fatalf("diagnostics changed during output: %+v", event)
 			}
-			if test.drop != nil {
-				if event.DropPerfStatus != nil || event.CorrelationReasons != nil {
-					t.Fatalf("matched event retained no-match fields: %+v", event)
-				}
-			} else if test.readErr != nil {
+			if test.reason == types.CorrelationMatched {
 				if event.DropPerfStatus != nil {
-					t.Fatalf("unavailable status result = %+v", event)
+					t.Fatalf("matched event retained unmatched diagnostics: %+v", event)
 				}
 			} else if event.DropPerfStatus == nil || *event.DropPerfStatus != test.status {
 				t.Fatalf("status = %+v, want %+v", event.DropPerfStatus, test.status)
 			}
-			if len(reasons) != 1 || reasons[0] != types.CorrelationReasonNoMatchingDrop {
-				t.Fatalf("result reasons were mutated: %v", reasons)
+		})
+	}
+}
+
+func TestEmitResultsRejectsInvalidCorrelationResult(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		reason    types.CorrelationReason
+		drop      *dropEvent
+		wantError string
+	}{
+		{name: "missing reason", wantError: "invalid reason"},
+		{name: "unknown reason", reason: "unexpected", wantError: "invalid reason"},
+		{name: "matched without drop", reason: types.CorrelationMatched, wantError: "requires a drop"},
+		{name: "unsupported with drop", reason: types.CorrelationUnsupported, drop: &dropEvent{}, wantError: "cannot include a drop"},
+		{name: "timeout with drop", reason: types.CorrelationWaitTimeout, drop: &dropEvent{}, wantError: "cannot include a drop"},
+		{name: "queue full with drop", reason: types.CorrelationQueueFull, drop: &dropEvent{}, wantError: "cannot include a drop"},
+		{name: "interrupted with drop", reason: types.CorrelationInterrupted, drop: &dropEvent{}, wantError: "cannot include a drop"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			statusErr := errors.New("status unavailable")
+			source := &dropwatchStatusStub{readErr: statusErr}
+			sink := &retransmitDropWriterStub{}
+			session := retransmitDropSession{readDropwatchStatus: source.ReadStatus, sink: sink}
+			err := session.emitResults([]correlationResult{{retransmit: &retransmitEvent{}, drop: test.drop, reason: test.reason}})
+			if err == nil || !strings.Contains(err.Error(), test.wantError) || !errors.Is(err, statusErr) {
+				t.Fatalf("emit error = %v, want %q and status error", err, test.wantError)
+			}
+			if len(sink.events) != 0 {
+				t.Fatalf("invalid result reached output: %+v", sink.events)
 			}
 		})
 	}
@@ -165,6 +165,7 @@ func TestEmitResultsPreservesErrors(t *testing.T) {
 	statusErr := errors.New("status failed")
 	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
 	source.readErr = statusErr
+	source.status.HasMapCounters = false
 	session := &retransmitDropSession{
 		readDropwatchStatus: source.ReadStatus,
 		sink:                &retransmitDropWriterStub{err: writeErr},
@@ -172,6 +173,7 @@ func TestEmitResultsPreservesErrors(t *testing.T) {
 	}
 	err := session.emitResults([]correlationResult{{
 		retransmit: &retransmitEvent{},
+		reason:     types.CorrelationWaitTimeout,
 	}})
 	if !errors.Is(err, writeErr) {
 		t.Fatalf("emit error = %v, want %v", err, writeErr)
@@ -188,15 +190,11 @@ func TestEmitResultsReadsDropwatchStatusOncePerBatch(t *testing.T) {
 	results := []correlationResult{
 		{
 			retransmit: &retransmitEvent{},
-			reasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-			},
+			reason:     types.CorrelationWaitTimeout,
 		},
 		{
 			retransmit: &retransmitEvent{},
-			reasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-			},
+			reason:     types.CorrelationWaitTimeout,
 		},
 	}
 	session := &retransmitDropSession{
@@ -243,9 +241,11 @@ func TestEmitResultsSkipsEmptyBatch(t *testing.T) {
 }
 
 func TestEmitResultsUsesLatestDropwatchStatus(t *testing.T) {
-	correlator := newTestEventCorrelator(t, 1)
 	input := &retransmitEvent{record: abi.TCPRetransmitEvent{KernelObservedNS: uint64(maxDropToRetransmitAge) + 1}}
-	result := correlator.noMatchResult(input, false)
+	result := correlationResult{
+		retransmit: input,
+		reason:     types.CorrelationWaitTimeout,
+	}
 	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{
 		PerfLost:    2,
 		LostSamples: 5,
@@ -274,13 +274,8 @@ func TestEmitResultsUsesLatestDropwatchStatus(t *testing.T) {
 		event.DropPerfStatus.RateLimited != 3 {
 		t.Fatalf("emitted event = %+v, want latest perf status", event)
 	}
-	for _, reason := range []types.CorrelationReason{
-		types.CorrelationReasonPerfEventsLost,
-		types.CorrelationReasonDropRateLimited,
-	} {
-		if !hasCorrelationReason(event, reason) {
-			t.Fatalf("reasons = %v, want %q", event.CorrelationReasons, reason)
-		}
+	if event.CorrelationReason != types.CorrelationWaitTimeout || !event.DropPerfStatus.HasMapCounters {
+		t.Fatalf("emitted event = %+v, want wait_timeout with available map counters", event)
 	}
 }
 
@@ -288,12 +283,11 @@ func TestEmitResultsWritesOnceWhenDropwatchStatusFails(t *testing.T) {
 	statusErr := errors.New("status unavailable")
 	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
 	source.readErr = statusErr
+	source.status.HasMapCounters = false
 	input := &retransmitEvent{record: abi.TCPRetransmitEvent{KernelObservedNS: 42}}
 	result := correlationResult{
 		retransmit: input,
-		reasons: []types.CorrelationReason{
-			types.CorrelationReasonNoMatchingDrop,
-		},
+		reason:     types.CorrelationWaitTimeout,
 	}
 	sink := &retransmitDropWriterStub{}
 
@@ -313,11 +307,9 @@ func TestEmitResultsWritesOnceWhenDropwatchStatusFails(t *testing.T) {
 		t.Fatalf("events = %+v, want event exactly once", sink.events)
 	}
 	event := sink.events[0]
-	if event.DropPerfStatus != nil || !hasCorrelationReason(
-		event,
-		types.CorrelationReasonDropwatchPerfStatusUnavailable,
-	) {
-		t.Fatalf("emitted event = %+v, want unavailable status reason", event)
+	if event.DropPerfStatus == nil || event.DropPerfStatus.HasMapCounters ||
+		event.CorrelationReason != types.CorrelationWaitTimeout {
+		t.Fatalf("emitted event = %+v, want wait_timeout with unavailable map counters", event)
 	}
 }
 
@@ -334,6 +326,7 @@ func (s *dropwatchStatusStub) ReadStatus() (types.DropwatchStatus, error) {
 
 func newTraceTestDropwatchStatus(t *testing.T, status types.DropwatchStatus) *dropwatchStatusStub {
 	t.Helper()
+	status.HasMapCounters = true
 	return &dropwatchStatusStub{status: status}
 }
 
@@ -408,10 +401,10 @@ func TestCorrelationPreservesDropMetadata(t *testing.T) {
 						results = append(results, correlator.processRetransmitEvent(retransmit, now)...)
 						results = append(results, correlator.processDropEvent(drop, now)...)
 					}
-					results = append(results, correlator.settleAllRetransmits()...)
+					results = append(results, correlator.drainRetransmits(now)...)
 					var output bytes.Buffer
 					session := retransmitDropSession{
-						readDropwatchStatus: (&dropwatchStatusStub{}).ReadStatus,
+						readDropwatchStatus: newTraceTestDropwatchStatus(t, types.DropwatchStatus{}).ReadStatus,
 						sink:                &jsonWriter{w: &output},
 					}
 					if err := session.emitResults(results); err != nil {
@@ -427,11 +420,11 @@ func TestCorrelationPreservesDropMetadata(t *testing.T) {
 							event.DropSource, event.DropReason, event.DropReasonGroup, event.DropLocation,
 							test.wantSource, test.wantReason, test.wantGroup, test.wantLocation)
 					}
-					if test.namespace != 1 && !hasCorrelationReason(&event, types.CorrelationReasonNoMatchingDrop) {
-						t.Fatalf("unmatched hardware event lacks no-match reason: %+v", event)
+					if test.namespace != 1 && event.CorrelationReason != types.CorrelationInterrupted {
+						t.Fatalf("unmatched hardware event lacks interruption reason: %+v", event)
 					}
-					if test.namespace == 1 && len(event.CorrelationReasons) != 0 {
-						t.Fatalf("matched drop has correlation reasons: %v", event.CorrelationReasons)
+					if test.namespace == 1 && event.CorrelationReason != types.CorrelationMatched {
+						t.Fatalf("matched drop has reason %q", event.CorrelationReason)
 					}
 				})
 			}

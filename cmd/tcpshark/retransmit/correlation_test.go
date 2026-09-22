@@ -16,7 +16,6 @@ package retransmit
 
 import (
 	"net/netip"
-	"slices"
 	"testing"
 	"time"
 
@@ -143,8 +142,8 @@ func TestEventCorrelatorMatchesEitherArrivalOrder(t *testing.T) {
 				)
 			}
 
-			if len(results) != 1 || results[0].drop != drop ||
-				results[0].retransmit != retransmit {
+			if len(results) != 1 || results[0].reason != types.CorrelationMatched ||
+				results[0].drop != drop || results[0].retransmit != retransmit {
 				t.Fatalf("result = %+v, want one matched retransmission", results)
 			}
 			if correlator.retransmitStore.byDeadline.Len() != 0 {
@@ -271,83 +270,126 @@ func TestEventCorrelatorWaitDeadline(t *testing.T) {
 			if len(results) != test.wantResults {
 				t.Fatalf("expired results = %d, want %d", len(results), test.wantResults)
 			}
-			if test.wantResults == 1 && !hasResultCorrelationReason(
-				results[0],
-				types.CorrelationReasonNoMatchingDrop,
-			) {
-				t.Fatalf("reasons = %v, want no_matching_drop", results[0].reasons)
+			if test.wantResults == 1 && results[0].reason != types.CorrelationWaitTimeout {
+				t.Fatalf("reason = %v, want wait_timeout", results[0].reason)
 			}
 		})
 	}
 }
 
-func TestEventCorrelatorReasons(t *testing.T) {
+func TestEventCorrelatorUnmatchedDiagnostics(t *testing.T) {
 	const readyKtimeNS = uint64(100)
 	tests := []struct {
-		name             string
-		kernelObservedNS uint64
-		prepare          func(*testing.T, *eventCorrelator)
-		wantReasons      []types.CorrelationReason
+		name                  string
+		kernelObservedNS      uint64
+		prepare               func(*eventCorrelator, time.Time)
+		wantIncompleteHistory bool
 	}{
+		{name: "before startup", kernelObservedNS: readyKtimeNS - 1, wantIncompleteHistory: true},
+		{name: "before history horizon", kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge) - 1, wantIncompleteHistory: true},
+		{name: "at history horizon", kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge)},
 		{
-			name:             "startup history before horizon",
-			kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge) - 1,
-			wantReasons: []types.CorrelationReason{
-				types.CorrelationReasonNoMatchingDrop,
-				types.CorrelationReasonStartupHistoryIncomplete,
+			name:             "unusable drop does not change outcome",
+			kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
+			prepare: func(c *eventCorrelator, now time.Time) {
+				c.processDropEvent(&dropEvent{kernelObservedNS: readyKtimeNS}, now)
 			},
 		},
 		{
-			name:             "startup history recovers at horizon",
+			name:             "drop cache eviction does not change outcome",
 			kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
-			wantReasons:      []types.CorrelationReason{types.CorrelationReasonNoMatchingDrop},
-		},
-		{
-			name:             "unusable drop has no dedicated reason",
-			kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
-			prepare: func(t *testing.T, c *eventCorrelator) {
-				c.processDropEvent(&dropEvent{
-					kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
-				}, time.Unix(1, 0))
-			},
-			wantReasons: []types.CorrelationReason{types.CorrelationReasonNoMatchingDrop},
-		},
-		{
-			name:             "evicted drop has no dedicated reason",
-			kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
-			prepare: func(t *testing.T, c *eventCorrelator) {
+			prepare: func(c *eventCorrelator, now time.Time) {
 				c.dropStore.capacity = 1
-				now := time.Unix(1, 0)
 				for sequence := range uint32(2) {
 					c.processDropEvent(&dropEvent{
 						kernelObservedNS: readyKtimeNS + uint64(sequence),
 						namespace:        namespaceID{cookie: 1},
 						flow:             testFlowKey(1000, 80),
-						sequence:         sequence,
-						endSequence:      sequence + 1,
-					}, now.Add(time.Duration(sequence)))
+						sequence:         sequence, endSequence: sequence + 1,
+					}, now)
 				}
 			},
-			wantReasons: []types.CorrelationReason{types.CorrelationReasonNoMatchingDrop},
 		},
 	}
-
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			correlator := newTestEventCorrelator(t, readyKtimeNS)
+			now := time.Unix(1, 0)
 			if test.prepare != nil {
-				test.prepare(t, correlator)
+				test.prepare(correlator, now)
 			}
-			event := &retransmitEvent{record: abi.TCPRetransmitEvent{KernelObservedNS: test.kernelObservedNS}}
-			result := correlator.noMatchResult(event, false)
-			if !slices.Equal(result.reasons, test.wantReasons) {
-				t.Fatalf("reasons = %v, want %v", result.reasons, test.wantReasons)
+			event := testRetransmitEvent(test.kernelObservedNS, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+			if results := correlator.processRetransmitEvent(event, now); len(results) != 0 {
+				t.Fatalf("results = %+v, want pending event", results)
+			}
+			results := correlator.expireRetransmitPendingEvents(now.Add(retransmitRetentionDuration))
+			if len(results) != 1 || results[0].reason != types.CorrelationWaitTimeout || results[0].drop != nil {
+				t.Fatalf("results = %+v, want wait_timeout", results)
+			}
+			if results[0].isStartupHistoryIncomplete != test.wantIncompleteHistory || results[0].hasCrossNetNSCandidate {
+				t.Fatalf("diagnostics = %+v, want incomplete history=%t and no cross-namespace candidate",
+					results[0], test.wantIncompleteHistory)
 			}
 		})
 	}
 }
 
-func TestEventCorrelatorSettleAllRetransmits(t *testing.T) {
+func TestEventCorrelatorRejectsUnsupportedRetransmit(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*abi.TCPRetransmitEvent)
+	}{
+		{name: "missing timestamp", mutate: func(e *abi.TCPRetransmitEvent) { e.KernelObservedNS = 0 }},
+		{name: "missing namespace", mutate: func(e *abi.TCPRetransmitEvent) { e.NetNamespaceCookie = 0; e.NetNamespaceInum = 0 }},
+		{name: "unsupported family", mutate: func(e *abi.TCPRetransmitEvent) { e.Family = 0 }},
+		{name: "empty sequence range", mutate: func(e *abi.TCPRetransmitEvent) { e.TCPEndSeq = e.TCPSeq }},
+		{name: "reset segment", mutate: func(e *abi.TCPRetransmitEvent) { e.TCPFlags = packet.TCPFlagRST }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			correlator := newTestEventCorrelator(t, 1)
+			event := testRetransmitEvent(2, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+			test.mutate(&event.record)
+			now := time.Unix(1, 0)
+			results := correlator.processRetransmitEvent(event, now)
+			if len(results) != 1 || results[0].retransmit != event ||
+				results[0].reason != types.CorrelationUnsupported || results[0].drop != nil ||
+				!results[0].isStartupHistoryIncomplete {
+				t.Fatalf("results = %+v, want unsupported with incomplete startup history", results)
+			}
+			if remaining := correlator.drainRetransmits(now); len(remaining) != 0 {
+				t.Fatalf("unsupported retransmit was also queued: %+v", remaining)
+			}
+		})
+	}
+}
+
+func TestEventCorrelatorDrainDeadline(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		elapsed time.Duration
+		want    types.CorrelationReason
+	}{
+		{name: "before deadline", elapsed: retransmitRetentionDuration - time.Nanosecond, want: types.CorrelationInterrupted},
+		{name: "at deadline", elapsed: retransmitRetentionDuration, want: types.CorrelationWaitTimeout},
+		{name: "after deadline", elapsed: retransmitRetentionDuration + time.Nanosecond, want: types.CorrelationWaitTimeout},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			correlator := newTestEventCorrelator(t, 1)
+			now := time.Unix(1, 0)
+			event := testRetransmitEvent(2, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+			correlator.processRetransmitEvent(event, now)
+			results := correlator.drainRetransmits(now.Add(test.elapsed))
+			if len(results) != 1 || results[0].reason != test.want || results[0].drop != nil {
+				t.Fatalf("drained = %+v, want %q", results, test.want)
+			}
+			if remaining := correlator.drainRetransmits(now.Add(time.Second)); len(remaining) != 0 {
+				t.Fatalf("drained twice: %+v", remaining)
+			}
+		})
+	}
+}
+
+func TestEventCorrelatorDrainRetransmits(t *testing.T) {
 	correlator := newTestEventCorrelator(t, 1)
 	correlator.retransmitStore.capacity = 2
 	now := time.Unix(30, 0)
@@ -366,26 +408,24 @@ func TestEventCorrelatorSettleAllRetransmits(t *testing.T) {
 		emitted = append(emitted, results...)
 	}
 	if len(emitted) != 1 || emitted[0].retransmit != events[0] ||
-		!hasResultCorrelationReason(
-			emitted[0],
-			types.CorrelationReasonRetransmitWaitCapacityExceeded,
-		) {
+		emitted[0].reason != types.CorrelationQueueFull {
 		t.Fatalf("capacity results = %+v, want first event with capacity reason", emitted)
 	}
 
-	settled := correlator.settleAllRetransmits()
+	stopTime := now.Add(retransmitRetentionDuration + time.Nanosecond)
+	settled := correlator.drainRetransmits(stopTime)
 	if len(settled) != 2 ||
 		settled[0].retransmit != events[1] || settled[1].retransmit != events[2] {
 		t.Fatalf("settled events = %+v, want remaining events in deadline order", settled)
 	}
+	wantReasons := []types.CorrelationReason{types.CorrelationWaitTimeout, types.CorrelationInterrupted}
 	for resultIndex, result := range settled {
-		if !hasResultCorrelationReason(result, types.CorrelationReasonNoMatchingDrop) {
-			t.Fatalf("settled result %d reasons = %v, want no_matching_drop",
-				resultIndex, result.reasons)
+		if result.reason != wantReasons[resultIndex] || result.drop != nil {
+			t.Fatalf("drained result %d = %+v, want %q", resultIndex, result, wantReasons[resultIndex])
 		}
 	}
-	if again := correlator.settleAllRetransmits(); len(again) != 0 {
-		t.Fatalf("second settle returned %d events, want 0", len(again))
+	if again := correlator.drainRetransmits(stopTime); len(again) != 0 {
+		t.Fatalf("second drain returned %d events, want 0", len(again))
 	}
 	if correlator.retransmitStore.byDeadline.Len() != 0 ||
 		len(correlator.retransmitStore.byFlow) != 0 {
@@ -432,11 +472,43 @@ func TestEventCorrelatorReportsCrossNetNSCandidate(t *testing.T) {
 		t.Fatalf("processDrop() = %v, want retained candidate", results)
 	}
 	results := correlator.expireRetransmitPendingEvents(now.Add(retransmitRetentionDuration))
-	if len(results) != 1 || !hasResultCorrelationReason(
-		results[0],
-		types.CorrelationReasonCrossNetNSCandidate,
-	) {
+	if len(results) != 1 || results[0].reason != types.CorrelationWaitTimeout ||
+		!results[0].hasCrossNetNSCandidate {
 		t.Fatalf("expired result = %+v, want cross_netns_candidate", results)
+	}
+}
+
+func TestEventCorrelatorFinalizesWithConcurrentDiagnostics(t *testing.T) {
+	for _, reason := range []types.CorrelationReason{
+		types.CorrelationWaitTimeout, types.CorrelationQueueFull, types.CorrelationInterrupted,
+	} {
+		t.Run(string(reason), func(t *testing.T) {
+			const ready = uint64(2 * time.Second)
+			correlator := newTestEventCorrelator(t, ready)
+			correlator.retransmitStore.capacity = 1
+			now := time.Unix(1, 0)
+			event := testRetransmitEvent(ready+1, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+			correlator.processRetransmitEvent(event, now)
+			drop := testDropEvent(t, ready, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200, 0, packet.TCPFlagACK)
+			drop.namespace.cookie = 2
+			correlator.processDropEvent(drop, now)
+			var results []correlationResult
+			switch reason {
+			case types.CorrelationWaitTimeout:
+				results = correlator.expireRetransmitPendingEvents(now.Add(retransmitRetentionDuration))
+			case types.CorrelationQueueFull:
+				next := testRetransmitEvent(ready+2, "10.0.0.1", "10.0.0.2", 1001, 80, 100, 200)
+				results = correlator.processRetransmitEvent(next, now)
+			case types.CorrelationInterrupted:
+				results = correlator.drainRetransmits(now)
+			}
+			if len(results) != 1 || results[0].retransmit != event || results[0].reason != reason || results[0].drop != nil {
+				t.Fatalf("results = %+v, want original event finalized as %q", results, reason)
+			}
+			if !results[0].isStartupHistoryIncomplete || !results[0].hasCrossNetNSCandidate {
+				t.Fatalf("result = %+v, want both diagnostics retained", results[0])
+			}
+		})
 	}
 }
 
@@ -483,14 +555,14 @@ func TestEventCorrelatorSettlesBeforeCurrentDrop(t *testing.T) {
 			if len(results) != 1 {
 				t.Fatalf("processDrop() = %v, want one result", results)
 			}
-			if test.wantMatch && results[0].drop != drop {
+			if test.wantMatch && (results[0].reason != types.CorrelationMatched || results[0].drop != drop) {
 				t.Fatalf("result = %+v, want match", results[0])
 			}
 			if !test.wantMatch && (results[0].drop != nil ||
-				!hasResultCorrelationReason(results[0], types.CorrelationReasonNoMatchingDrop)) {
+				results[0].reason != types.CorrelationWaitTimeout) {
 				t.Fatalf("result = %+v, want expired no-match", results[0])
 			}
-			if !test.wantMatch && len(correlator.settleAllRetransmits()) != 0 {
+			if !test.wantMatch && len(correlator.drainRetransmits(now)) != 0 {
 				t.Fatal("shutdown returned the expired retransmission again")
 			}
 		})
@@ -529,11 +601,8 @@ func TestEventCorrelatorSettlesBeforeCapacityCheck(t *testing.T) {
 	if len(results) != 1 || results[0].retransmit != first {
 		t.Fatalf("second processRetransmit() = %v, want expired first", results)
 	}
-	if hasResultCorrelationReason(
-		results[0],
-		types.CorrelationReasonRetransmitWaitCapacityExceeded,
-	) {
-		t.Fatalf("reasons = %v, do not want capacity eviction", results[0].reasons)
+	if results[0].reason != types.CorrelationWaitTimeout {
+		t.Fatalf("reason = %v, want wait_timeout", results[0].reason)
 	}
 	if correlator.retransmitStore.byDeadline.Len() != 1 {
 		t.Fatalf("waiting retransmits = %d, want second only", correlator.retransmitStore.byDeadline.Len())
@@ -597,20 +666,6 @@ func newTestEventCorrelator(
 	}
 	correlator.readyFromMonotonicNS = readyFromMonotonicNS
 	return correlator
-}
-
-func hasCorrelationReason(
-	event *types.TCPRetransmitTracing,
-	reason types.CorrelationReason,
-) bool {
-	return slices.Contains(event.CorrelationReasons, reason)
-}
-
-func hasResultCorrelationReason(
-	result correlationResult,
-	reason types.CorrelationReason,
-) bool {
-	return slices.Contains(result.reasons, reason)
 }
 
 func testFlowKey(sourcePort, destinationPort uint16) flowKey {

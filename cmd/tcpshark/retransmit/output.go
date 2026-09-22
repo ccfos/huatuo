@@ -134,16 +134,19 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 		line = append(line, " drop_reason_group="...)
 		line = append(line, ev.DropReasonGroup...)
 	}
-	if len(ev.CorrelationReasons) != 0 {
+	if ev.CorrelationReason != "" {
 		line = append(line, " reason="...)
-		for i, reason := range ev.CorrelationReasons {
-			if i != 0 {
-				line = append(line, ',')
-			}
-			line = append(line, reason...)
-		}
+		line = append(line, ev.CorrelationReason...)
+	}
+	if ev.IsStartupHistoryIncomplete {
+		line = append(line, " startup_history_incomplete=true"...)
+	}
+	if ev.HasCrossNetNSCandidate {
+		line = append(line, " cross_netns_candidate=true"...)
 	}
 	if status := ev.DropPerfStatus; status != nil {
+		line = append(line, " dropwatch_map_counters_available="...)
+		line = strconv.AppendBool(line, status.HasMapCounters)
 		line = append(line, " dropwatch_perf_lost="...)
 		line = strconv.AppendUint(line, status.PerfLost, 10)
 		line = append(line, " dropwatch_lost_samples="...)

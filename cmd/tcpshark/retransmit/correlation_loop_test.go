@@ -91,7 +91,7 @@ func TestRetransmitDropTimerRearmsAfterMatch(t *testing.T) {
 	}
 	select {
 	case event := <-outputs:
-		if hasCorrelationReason(event, types.CorrelationReasonNoMatchingDrop) {
+		if event.CorrelationReason != types.CorrelationMatched {
 			t.Fatal("first retransmission did not match drop")
 		}
 	case <-ctx.Done():
@@ -114,7 +114,7 @@ func TestRetransmitDropTimerRearmsAfterMatch(t *testing.T) {
 	select {
 	case event := <-outputs:
 		if event.KernelObservedNS != second.record.KernelObservedNS ||
-			!hasCorrelationReason(event, types.CorrelationReasonNoMatchingDrop) {
+			event.CorrelationReason != types.CorrelationWaitTimeout {
 			t.Fatalf("timeout output = %+v, want unmatched second retransmission", event)
 		}
 		if elapsed := time.Since(start); elapsed < retransmitRetentionDuration {
@@ -163,7 +163,7 @@ func TestRetransmitDropStatusErrorStopsAfterMatchedOutput(t *testing.T) {
 		t.Fatalf("correlation loop error = %v, want %v", err, statusErr)
 	}
 	if len(sink.events) != 1 || sink.events[0].KernelObservedNS != retransmit.record.KernelObservedNS ||
-		sink.events[0].DropLocation != "software" {
+		sink.events[0].DropLocation != "software" || sink.events[0].CorrelationReason != types.CorrelationMatched {
 		t.Fatalf("events = %+v, want matched retransmission exactly once", sink.events)
 	}
 	if source.readCalls != 1 {
@@ -271,7 +271,7 @@ func TestRetransmitDropCancellationFinalizesPendingEvents(t *testing.T) {
 		t.Fatalf("events = %+v, want pending retransmission exactly once", sink.events)
 	}
 	if sink.events[0].DropLocation != "unknown" ||
-		!hasCorrelationReason(sink.events[0], types.CorrelationReasonNoMatchingDrop) ||
+		sink.events[0].CorrelationReason != types.CorrelationInterrupted ||
 		sink.events[0].DropPerfStatus == nil || sink.events[0].DropStack != "" {
 		t.Fatalf("finalized retransmission = %+v, want unknown no-match result", retransmit)
 	}
@@ -326,13 +326,8 @@ func TestRetransmitDropCancellationSettlesCrossNetNSCandidate(t *testing.T) {
 	if len(sink.events) != 1 || sink.events[0].KernelObservedNS != retransmit.record.KernelObservedNS {
 		t.Fatalf("events = %+v, want pending retransmission exactly once", sink.events)
 	}
-	for _, reason := range []types.CorrelationReason{
-		types.CorrelationReasonNoMatchingDrop,
-		types.CorrelationReasonCrossNetNSCandidate,
-	} {
-		if !hasCorrelationReason(sink.events[0], reason) {
-			t.Fatalf("finalized reasons = %v, want %q", sink.events[0].CorrelationReasons, reason)
-		}
+	if sink.events[0].CorrelationReason != types.CorrelationInterrupted || !sink.events[0].HasCrossNetNSCandidate {
+		t.Fatalf("finalized event = %+v, want interruption with cross-namespace diagnostic", sink.events[0])
 	}
 }
 

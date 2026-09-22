@@ -64,20 +64,21 @@ func (r TCPRetransmitReason) String() string {
 	}
 }
 
-// CorrelationReason explains why local dropwatch evidence cannot establish a
-// conclusive no-match for a TCP retransmission.
+// CorrelationReason identifies the terminal outcome of one local drop correlation.
+// The empty value means correlation was not enabled, never a finalized outcome.
 type CorrelationReason string
 
 const (
-	CorrelationReasonNoMatchingDrop            CorrelationReason = "no_matching_drop"
-	CorrelationReasonCrossNetNSCandidate       CorrelationReason = "cross_netns_candidate"
-	CorrelationReasonStartupHistoryIncomplete  CorrelationReason = "startup_history_incomplete"
-	CorrelationReasonPerfEventsLost            CorrelationReason = "perf_events_lost"
-	CorrelationReasonDropRateLimited           CorrelationReason = "drop_rate_limited"
-	CorrelationReasonUnsupportedRetransmission CorrelationReason = "unsupported_retransmission"
-	// #nosec G101 -- Public diagnostic, not a credential.
-	CorrelationReasonDropwatchPerfStatusUnavailable CorrelationReason = "dropwatch_perf_status_unavailable"
-	CorrelationReasonRetransmitWaitCapacityExceeded CorrelationReason = "retransmit_wait_capacity_exceeded"
+	// CorrelationMatched requires strict packet evidence, even if its drop source is unknown.
+	CorrelationMatched CorrelationReason = "matched"
+	// CorrelationUnsupported includes missing fields required by the matching rules.
+	CorrelationUnsupported CorrelationReason = "unsupported"
+	// CorrelationWaitTimeout applies only when the full wait deadline has elapsed.
+	CorrelationWaitTimeout CorrelationReason = "wait_timeout"
+	// CorrelationQueueFull applies to a waiting retransmit evicted before its deadline.
+	CorrelationQueueFull CorrelationReason = "queue_full"
+	// CorrelationInterrupted applies to an unexpired wait when the correlation loop exits.
+	CorrelationInterrupted CorrelationReason = "interrupted"
 )
 
 // TCPRetransmitTracing is the canonical JSON schema for a TCP retransmission event.
@@ -145,8 +146,11 @@ type TCPRetransmitTracing struct {
 	DropReasonGroup string `json:"drop_reason_group,omitempty"`
 	// DropLocation uses DropSource for matches and "unknown" for no-match.
 	// Unlike DropWatchTracing, it is a classification rather than an address.
-	DropLocation       string              `json:"drop_location,omitempty"`
-	DropPerfStatus     *DropwatchStatus    `json:"drop_perf_status,omitempty"`
-	DropStack          string              `json:"drop_stack,omitempty"`
-	CorrelationReasons []CorrelationReason `json:"correlation_reasons,omitempty"`
+	DropLocation      string            `json:"drop_location,omitempty"`
+	DropPerfStatus    *DropwatchStatus  `json:"drop_perf_status,omitempty"`
+	DropStack         string            `json:"drop_stack,omitempty"`
+	CorrelationReason CorrelationReason `json:"correlation_reason,omitempty"`
+	// Diagnostics describe limits of unmatched evidence without changing the outcome.
+	IsStartupHistoryIncomplete bool `json:"startup_history_incomplete,omitempty"`
+	HasCrossNetNSCandidate     bool `json:"cross_netns_candidate,omitempty"`
 }

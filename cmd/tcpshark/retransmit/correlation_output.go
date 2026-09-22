@@ -35,36 +35,14 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 		if err != nil {
 			return errors.Join(statusErr, err)
 		}
-		if result.drop == nil {
-			event.DropLocation = "unknown"
-			event.CorrelationReasons = append(
-				[]types.CorrelationReason(nil),
-				result.reasons...,
-			)
-			if statusErr == nil {
-				statusCopy := status
-				event.DropPerfStatus = &statusCopy
+		event.CorrelationReason = result.reason
+		switch result.reason {
+		case types.CorrelationMatched:
+			if result.drop == nil {
+				return errors.Join(statusErr, fmt.Errorf(
+					"correlation result %d: reason %q requires a drop", resultIndex, result.reason,
+				))
 			}
-			if statusErr != nil {
-				event.CorrelationReasons = append(
-					event.CorrelationReasons,
-					types.CorrelationReasonDropwatchPerfStatusUnavailable,
-				)
-			}
-			// ReadStatus zeroes unavailable map counters and preserves reader loss.
-			if status.RateLimited != 0 {
-				event.CorrelationReasons = append(
-					event.CorrelationReasons,
-					types.CorrelationReasonDropRateLimited,
-				)
-			}
-			if status.PerfLost != 0 || status.LostSamples != 0 {
-				event.CorrelationReasons = append(
-					event.CorrelationReasons,
-					types.CorrelationReasonPerfEventsLost,
-				)
-			}
-		} else {
 			metadata := &result.drop.metadata
 			event.DropSource = metadata.Source
 			event.DropReason = metadata.Reason
@@ -77,6 +55,22 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 				)
 				event.DropStack = strings.Join(frames, "\n")
 			}
+		case types.CorrelationUnsupported, types.CorrelationWaitTimeout,
+			types.CorrelationQueueFull, types.CorrelationInterrupted:
+			if result.drop != nil {
+				return errors.Join(statusErr, fmt.Errorf(
+					"correlation result %d: reason %q cannot include a drop", resultIndex, result.reason,
+				))
+			}
+			event.DropLocation = "unknown"
+			event.IsStartupHistoryIncomplete = result.isStartupHistoryIncomplete
+			event.HasCrossNetNSCandidate = result.hasCrossNetNSCandidate
+			statusCopy := status
+			event.DropPerfStatus = &statusCopy
+		default:
+			return errors.Join(statusErr, fmt.Errorf(
+				"correlation result %d: invalid reason %q", resultIndex, result.reason,
+			))
 		}
 		if err := s.sink.Write(event); err != nil {
 			return errors.Join(

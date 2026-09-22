@@ -90,18 +90,18 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 
 	var output bytes.Buffer
 	event := &types.TCPRetransmitTracing{
-		ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
-		KernelObservedNS:        8,
-		KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 7, 23, 2, 14, 40, 0, time.UTC)},
-		DropLocation:            "unknown",
-		CorrelationReasons: []types.CorrelationReason{
-			types.CorrelationReasonStartupHistoryIncomplete,
-			types.CorrelationReasonPerfEventsLost,
-		},
+		ObservedTimestamp:          timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
+		KernelObservedTimestamp:    &timeutil.Timestamp{Time: time.Date(2026, 7, 23, 2, 14, 40, 0, time.UTC)},
+		KernelObservedNS:           8,
+		DropLocation:               "unknown",
+		CorrelationReason:          types.CorrelationWaitTimeout,
+		IsStartupHistoryIncomplete: true,
+		HasCrossNetNSCandidate:     true,
 		DropPerfStatus: &types.DropwatchStatus{
-			PerfLost:    2,
-			LostSamples: 4,
-			RateLimited: 3,
+			HasMapCounters: true,
+			PerfLost:       2,
+			LostSamples:    4,
+			RateLimited:    3,
 		},
 	}
 	if err := (&textWriter{w: &output}).Write(event); err != nil {
@@ -110,7 +110,10 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 	for _, want := range []string{
 		"kernel_observed_timestamp=2026-07-23T02:14:40.000000000Z",
 		"drop_location=unknown",
-		"reason=startup_history_incomplete,perf_events_lost",
+		"reason=wait_timeout",
+		"startup_history_incomplete=true",
+		"cross_netns_candidate=true",
+		"dropwatch_map_counters_available=true",
 		"dropwatch_perf_lost=2",
 		"dropwatch_lost_samples=4",
 		"dropwatch_rate_limited=3",
@@ -128,6 +131,7 @@ func TestTextWriterFormatsMatchedDropStack(t *testing.T) {
 	event := &types.TCPRetransmitTracing{
 		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
 		DropLocation:      "software",
+		CorrelationReason: types.CorrelationMatched,
 		DropStack:         "first\nsecond",
 	}
 	if err := (&textWriter{w: &output}).Write(event); err != nil {
@@ -135,11 +139,28 @@ func TestTextWriterFormatsMatchedDropStack(t *testing.T) {
 	}
 	for _, want := range []string{
 		"drop_location=software",
+		"reason=matched",
 		"\t#0   first\n",
 		"\t#1   second\n",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("output = %q, want %q", output.String(), want)
+		}
+	}
+}
+
+func TestTextWriterFormatsUnavailableMapCounters(t *testing.T) {
+	var output bytes.Buffer
+	event := &types.TCPRetransmitTracing{
+		CorrelationReason: types.CorrelationInterrupted,
+		DropPerfStatus:    &types.DropwatchStatus{LostSamples: 5},
+	}
+	if err := (&textWriter{w: &output}).Write(event); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"reason=interrupted", "dropwatch_map_counters_available=false", "dropwatch_lost_samples=5"} {
+		if !strings.Contains(output.String(), field) {
+			t.Errorf("text output lacks %q: %s", field, output.String())
 		}
 	}
 }

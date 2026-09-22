@@ -23,16 +23,16 @@ import (
 )
 
 func TestHandleTCPRetransmitEventPreservesCorrelationResult(t *testing.T) {
-	perfStatus := &types.DropwatchStatus{PerfLost: 1}
+	perfStatus := &types.DropwatchStatus{HasMapCounters: true, PerfLost: 1}
 	event := &types.TCPRetransmitTracing{
-		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 10, 8, 0, 0, 0, time.UTC)},
-		ContainerID:       "container-id",
-		DropLocation:      "unknown",
-		CorrelationReasons: []types.CorrelationReason{
-			types.CorrelationReasonStartupHistoryIncomplete,
-		},
-		DropPerfStatus: perfStatus,
-		DropStack:      "kfree_skb/1",
+		ObservedTimestamp:          timeutil.Timestamp{Time: time.Date(2026, 9, 10, 8, 0, 0, 0, time.UTC)},
+		ContainerID:                "container-id",
+		DropLocation:               "unknown",
+		CorrelationReason:          types.CorrelationWaitTimeout,
+		IsStartupHistoryIncomplete: true,
+		HasCrossNetNSCandidate:     true,
+		DropPerfStatus:             perfStatus,
+		DropStack:                  "kfree_skb/1",
 	}
 	if err := handleTCPRetransmitEvent(nil, event); err != nil {
 		t.Fatal(err)
@@ -43,9 +43,9 @@ func TestHandleTCPRetransmitEventPreservesCorrelationResult(t *testing.T) {
 	if event.DropPerfStatus != perfStatus {
 		t.Fatal("DropPerfStatus changed while saving finalized result")
 	}
-	if len(event.CorrelationReasons) != 1 ||
-		event.CorrelationReasons[0] != types.CorrelationReasonStartupHistoryIncomplete {
-		t.Fatalf("CorrelationReasons = %v, want finalized reasons unchanged", event.CorrelationReasons)
+	if event.CorrelationReason != types.CorrelationWaitTimeout ||
+		!event.IsStartupHistoryIncomplete || !event.HasCrossNetNSCandidate {
+		t.Fatalf("correlation fields changed while saving finalized result: %+v", event)
 	}
 	if event.DropStack != "kfree_skb/1" {
 		t.Fatalf("DropStack = %q, want finalized stack unchanged", event.DropStack)

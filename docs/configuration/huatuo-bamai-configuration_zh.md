@@ -924,7 +924,7 @@ InitPid 读取实际 memory cgroup 路径并保存；路径暂不可用或通知
 
 - **Filter**：两种模式都使用的 TCP 重传过滤条件。开启 local 关联后，两个 tcpshark 输入统一使用规范化后的表达式，空值回退为 `tcp`；关闭关联时，空值不传 `--filter`。`Dropwatch.Filter` 保持独立，只控制 standalone dropwatch。
 
-- **EnableDropwatchCorrelation**：是否让 tcpshark 加载私有 dropwatch source 并在本地完成重传结果定型，默认 false。必须从 `BlackList` 移除 `tcp_retransmit`；standalone `dropwatch` 可以继续位于黑名单中。重传最多等待 100ms，候选 drop 的内核单调时间必须早于重传且相差不超过 1s。embedded source 自动检测并启用 devlink DROP trap。同 netns 的严格匹配按来源输出 `software` 或 `hardware`，附带与 dropwatch 一致的 `drop_source`、`drop_reason` 和硬件 `drop_reason_group`；所有 no-match 都输出 `unknown` 及稳定的 `correlation_reasons`。
+- **EnableDropwatchCorrelation**：是否让 tcpshark 加载私有 dropwatch source 并在本地完成重传结果定型，默认 false。必须从 `BlackList` 移除 `tcp_retransmit`；standalone `dropwatch` 可以继续位于黑名单中。重传最多等待 100ms，候选 drop 的内核单调时间必须早于重传且相差不超过 1s。embedded source 自动检测并启用 devlink DROP trap。同 netns 的严格匹配按来源输出 `software` 或 `hardware`，附带与 dropwatch 一致的 `drop_source`、`drop_reason` 和硬件 `drop_reason_group`；每条已定型事件输出唯一的 `correlation_reason`（`matched`、`unsupported`、`wait_timeout`、`queue_full` 或 `interrupted`）；未匹配事件输出 `drop_location=unknown`，并保留独立诊断标记、dropwatch 计数及 map 计数可用性。
 
 - **MaxEventsPerSecond**：BPF 侧每秒最多输出的 TCP 重传事件数。关联模式还会给 embedded dropwatch 配置一个数值相同但独立的 limiter，因此 `100` 表示两条输入各自最多 100 条/秒。
 

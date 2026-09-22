@@ -142,7 +142,7 @@ func TestTracerReadStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadStatus() error = %v", err)
 	}
-	if status.PerfLost != 4 || status.RateLimited != 6 {
+	if !status.HasMapCounters || status.PerfLost != 4 || status.RateLimited != 6 {
 		t.Fatalf("status = %+v, want perf_lost=4 rate_limited=6", status)
 	}
 
@@ -152,7 +152,7 @@ func TestTracerReadStatus(t *testing.T) {
 	)
 	object.rateRaw = encodeBPFRatelimitEvent(t, 5)
 	status, err = source.ReadStatus()
-	if err != nil || status.PerfLost != 3 || status.RateLimited != 5 {
+	if err != nil || !status.HasMapCounters || status.PerfLost != 3 || status.RateLimited != 5 {
 		t.Fatalf("current snapshot = %+v, %v; want perf_lost=3 rate_limited=5, nil", status, err)
 	}
 }
@@ -210,7 +210,7 @@ func TestTracerReadStatusClearsMapCountersOnError(t *testing.T) {
 			if err == nil || !containsErrorText(err, test.wantError) {
 				t.Fatalf("ReadStatus() error = %v, want containing %q", err, test.wantError)
 			}
-			if status.PerfLost != 0 || status.RateLimited != 0 || status.LostSamples != 7 {
+			if status.HasMapCounters || status.PerfLost != 0 || status.RateLimited != 0 || status.LostSamples != 7 {
 				t.Fatalf("status = %+v, want perf_lost=0 rate_limited=0 lost_samples=7", status)
 			}
 		})
@@ -259,7 +259,7 @@ func TestTracerReadStatusRateLimitSize(t *testing.T) {
 		tracer.lostSamples.Store(7)
 		status, err := tracer.ReadStatus()
 		wantError := size < abi.BPFRatelimitEventSize
-		if (err != nil) != wantError || status.LostSamples != 7 {
+		if (err != nil) != wantError || status.HasMapCounters == wantError || status.LostSamples != 7 {
 			t.Fatalf("size %d: status=%+v error=%v, want lost_samples=7 error present=%v", size, status, err, wantError)
 		}
 	}

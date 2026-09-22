@@ -36,9 +36,11 @@ type waitingRetransmit struct {
 }
 
 type correlationResult struct {
-	retransmit *retransmitEvent
-	drop       *dropEvent
-	reasons    []types.CorrelationReason
+	retransmit                 *retransmitEvent
+	drop                       *dropEvent
+	reason                     types.CorrelationReason
+	isStartupHistoryIncomplete bool
+	hasCrossNetNSCandidate     bool
 }
 
 type eventCorrelator struct {
@@ -70,16 +72,18 @@ func (c *eventCorrelator) processRetransmitEvent(
 
 	entry, ok := retransmitEntryFromEvent(event)
 	if !ok || entry.kind == retransmitMatchUnsupported || !entry.hasSequenceRange {
-		return append(readyResults, c.noMatchResult(
-			event,
-			false,
-			types.CorrelationReasonUnsupportedRetransmission,
-		))
+		return append(readyResults, correlationResult{
+			retransmit:                 event,
+			reason:                     types.CorrelationUnsupported,
+			isStartupHistoryIncomplete: c.startupHistoryIncomplete(event.record.KernelObservedNS),
+		})
 	}
 
 	drop, hasCrossNetNSCandidate := c.matchAndRemoveDrop(&entry)
 	if drop != nil {
-		return append(readyResults, correlationResult{retransmit: event, drop: drop})
+		return append(readyResults, correlationResult{
+			retransmit: event, drop: drop, reason: types.CorrelationMatched,
+		})
 	}
 
 	waiting := &storeEntry[waitingRetransmit]{
@@ -93,11 +97,12 @@ func (c *eventCorrelator) processRetransmitEvent(
 	if evicted == nil {
 		return readyResults
 	}
-	return append(readyResults, c.noMatchResult(
-		evicted.value.event,
-		evicted.value.hasCrossNetNSCandidate,
-		types.CorrelationReasonRetransmitWaitCapacityExceeded,
-	))
+	return append(readyResults, correlationResult{
+		retransmit:                 evicted.value.event,
+		reason:                     types.CorrelationQueueFull,
+		isStartupHistoryIncomplete: c.startupHistoryIncomplete(evicted.value.event.record.KernelObservedNS),
+		hasCrossNetNSCandidate:     evicted.value.hasCrossNetNSCandidate,
+	})
 }
 
 // processDropEvent requires a non-nil event.
@@ -118,7 +123,7 @@ func (c *eventCorrelator) processDropEvent(
 	if waiting != nil {
 		return append(
 			readyResults,
-			correlationResult{retransmit: waiting.event, drop: event},
+			correlationResult{retransmit: waiting.event, drop: event, reason: types.CorrelationMatched},
 		)
 	}
 
@@ -139,23 +144,26 @@ func (c *eventCorrelator) expireRetransmitPendingEvents(
 		if waiting == nil {
 			return results
 		}
-		results = append(results, c.noMatchResult(
-			waiting.value.event,
-			waiting.value.hasCrossNetNSCandidate,
-		))
+		results = append(results, correlationResult{
+			retransmit:                 waiting.value.event,
+			reason:                     types.CorrelationWaitTimeout,
+			isStartupHistoryIncomplete: c.startupHistoryIncomplete(waiting.value.event.record.KernelObservedNS),
+			hasCrossNetNSCandidate:     waiting.value.hasCrossNetNSCandidate,
+		})
 	}
 }
 
-// settleAllRetransmits drains every waiting retransmit regardless of its
-// deadline, finalizing each through the standard no-match path so shutdown
-// persists the same correlation output as a normal timeout.
-func (c *eventCorrelator) settleAllRetransmits() []correlationResult {
-	var results []correlationResult
+// Expire against the same shutdown time before interrupting remaining waiters;
+// a delayed timer must not turn an elapsed wait into an interruption.
+func (c *eventCorrelator) drainRetransmits(now time.Time) []correlationResult {
+	results := c.expireRetransmitPendingEvents(now)
 	for _, waiting := range c.retransmitStore.drain() {
-		results = append(results, c.noMatchResult(
-			waiting.value.event,
-			waiting.value.hasCrossNetNSCandidate,
-		))
+		results = append(results, correlationResult{
+			retransmit:                 waiting.value.event,
+			reason:                     types.CorrelationInterrupted,
+			isStartupHistoryIncomplete: c.startupHistoryIncomplete(waiting.value.event.record.KernelObservedNS),
+			hasCrossNetNSCandidate:     waiting.value.hasCrossNetNSCandidate,
+		})
 	}
 	return results
 }
@@ -167,46 +175,6 @@ func (c *eventCorrelator) nextDeadline() (time.Time, bool) {
 		return dropDeadline, true
 	}
 	return waitingDeadline, hasWaiting
-}
-
-func (c *eventCorrelator) noMatchResult(
-	event *retransmitEvent,
-	hasCrossNetNSCandidate bool,
-	extraReasons ...types.CorrelationReason,
-) correlationResult {
-	return correlationResult{
-		retransmit: event,
-		reasons: c.correlationReasons(
-			event,
-			hasCrossNetNSCandidate,
-			extraReasons,
-		),
-	}
-}
-
-func (c *eventCorrelator) correlationReasons(
-	event *retransmitEvent,
-	hasCrossNetNSCandidate bool,
-	extraReasons []types.CorrelationReason,
-) []types.CorrelationReason {
-	hasIncompleteStartup := c.startupHistoryIncomplete(event.record.KernelObservedNS)
-	reasonCount := 1 + len(extraReasons)
-	if hasIncompleteStartup {
-		reasonCount++
-	}
-	if hasCrossNetNSCandidate {
-		reasonCount++
-	}
-
-	reasons := make([]types.CorrelationReason, 0, reasonCount)
-	reasons = append(reasons, types.CorrelationReasonNoMatchingDrop)
-	if hasIncompleteStartup {
-		reasons = append(reasons, types.CorrelationReasonStartupHistoryIncomplete)
-	}
-	if hasCrossNetNSCandidate {
-		reasons = append(reasons, types.CorrelationReasonCrossNetNSCandidate)
-	}
-	return append(reasons, extraReasons...)
 }
 
 func (c *eventCorrelator) startupHistoryIncomplete(kernelObservedNS uint64) bool {

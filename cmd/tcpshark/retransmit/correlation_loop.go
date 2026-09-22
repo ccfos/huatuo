@@ -41,7 +41,7 @@ func runRetransmitDropCorrelation(
 	defer func() {
 		returnErr = errors.Join(
 			returnErr,
-			session.emitResults(correlator.settleAllRetransmits()),
+			session.emitResults(correlator.drainRetransmits(time.Now())),
 		)
 	}()
 
