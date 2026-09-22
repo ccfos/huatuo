@@ -238,6 +238,9 @@ func profileString(table []string, index int64) (string, bool) {
 //	request: querierv1.ProfileTypesRequest
 //	response: querierv1.ProfileTypesResponse
 func (s *ProfileQueryService) ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request is required", ErrInvalidQuery)
+	}
 	filter := &profilingstore.Filter{
 		StartTime: time.UnixMilli(req.Start),
 		EndTime:   time.UnixMilli(req.End),
@@ -290,6 +293,9 @@ func (s *ProfileQueryService) LabelNames(context.Context, *typesv1.LabelNamesReq
 //	request: typesv1.LabelValuesRequest
 //	response: typesv1.LabelValuesResponse
 func (s *ProfileQueryService) LabelValues(ctx context.Context, req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request is required", ErrInvalidQuery)
+	}
 	filter := &profilingstore.Filter{
 		StartTime: time.UnixMilli(req.Start),
 		EndTime:   time.UnixMilli(req.End),
