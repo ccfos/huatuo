@@ -30,7 +30,7 @@ func TestHandleTCPRetransmitEventPreservesCorrelationResult(t *testing.T) {
 		DropLocation:               "unknown",
 		CorrelationReason:          types.CorrelationWaitTimeout,
 		IsStartupHistoryIncomplete: true,
-		HasCrossNetNSCandidate:     true,
+		NetNamespace:               true,
 		DropPerfStatus:             perfStatus,
 		DropStack:                  "kfree_skb/1",
 	}
@@ -44,7 +44,7 @@ func TestHandleTCPRetransmitEventPreservesCorrelationResult(t *testing.T) {
 		t.Fatal("DropPerfStatus changed while saving finalized result")
 	}
 	if event.CorrelationReason != types.CorrelationWaitTimeout ||
-		!event.IsStartupHistoryIncomplete || !event.HasCrossNetNSCandidate {
+		!event.IsStartupHistoryIncomplete || !event.NetNamespace {
 		t.Fatalf("correlation fields changed while saving finalized result: %+v", event)
 	}
 	if event.DropStack != "kfree_skb/1" {

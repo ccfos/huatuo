@@ -16,7 +16,7 @@ weight: 50
 - Added `EventTracing.TCPRetransmit.EnableDropwatchCorrelation` for the
   huatuo-bamai tcpshark child.
 - Added a single `correlation_reason` for every finalized local correlation,
-  with separate startup-history and cross-namespace diagnostics.
+  with separate startup-history and namespace-match diagnostics.
 
 ### Changed
 

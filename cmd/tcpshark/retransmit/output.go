@@ -141,8 +141,8 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 	if ev.IsStartupHistoryIncomplete {
 		line = append(line, " startup_history_incomplete=true"...)
 	}
-	if ev.HasCrossNetNSCandidate {
-		line = append(line, " cross_netns_candidate=true"...)
+	if ev.NetNamespace {
+		line = append(line, " matched_net_namespace=true"...)
 	}
 	if status := ev.DropPerfStatus; status != nil {
 		line = append(line, " dropwatch_map_counters_available="...)

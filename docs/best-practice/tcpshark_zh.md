@@ -193,7 +193,7 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 | `drop_reason_group` | string | devlink trap 分组，如 `l2_drops`，用于聚合硬件丢包原因；软件丢包和未匹配事件省略。 |
 | `correlation_reason` | string | 唯一终态：`matched`、`unsupported`、`wait_timeout`、`queue_full` 或 `interrupted`；未启用关联时省略。 |
 | `startup_history_incomplete` | bool | 重传早于 source ready，或距 ready 不足 1s；仅在未匹配且值为 true 时输出。 |
-| `cross_netns_candidate` | bool | 候选满足报文和时间条件，但位于另一个 namespace；仅在未匹配且值为 true 时输出。 |
+| `matched_net_namespace` | bool | 同一 TCP flow 下观测到相同 namespace 的 drop，独立于报文和时间检查。严格匹配时必为 true；false 时省略。 |
 | `drop_perf_status` | object | 未匹配事件的 embedded dropwatch 累计计数；`map_counters_available` 标记 map 计数是否可用，读取失败时仍保留有效的 reader `lost_samples`。 |
 | `drop_stack` | string | 匹配到的 drop 调用栈；未匹配的栈不做符号化。 |
 | `source` | string | 事件来源。独立运行 tcpshark 时为 `tools`，由 huatuo-bamai 启动时为 `events`。 |
@@ -215,7 +215,7 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 文本输出保留面向终端的可读布局，同时覆盖与 JSON 相同的事件变量。可选变量仅在非零或非空时显示，字符串值不添加 JSON 引号或转义。为兼容原文本格式，`state`、`skb`、`seq`、`end`、`ack`、`flags`、`ca`、`retrans` 和 `reason` 分别对应 JSON 中的 `tcp_state`、`skb_addr`、`tcp_seq`、`tcp_end_seq`、`tcp_ack_seq`、`tcp_flags`、`ca_state`、`icsk_retransmits` 和 `correlation_reason`。
 
 ```text
-<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [kernel_observed_timestamp=<UTC>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [drop_source=<SOURCE>] [drop_reason=<REASON>] [drop_reason_group=<GROUP>] [reason=<REASON>] [startup_history_incomplete=true] [cross_netns_candidate=true] [dropwatch_map_counters_available=<true|false> dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
+<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [kernel_observed_timestamp=<UTC>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [drop_source=<SOURCE>] [drop_reason=<REASON>] [drop_reason_group=<GROUP>] [reason=<REASON>] [startup_history_incomplete=true] [matched_net_namespace=true] [dropwatch_map_counters_available=<true|false> dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
 ```
 
 示例：
@@ -346,7 +346,7 @@ sudo tcpshark --mode retransmit --with-dropwatch --bpf-path-dir bpf \
 | 反方向 ACK 匹配 | 相同 namespace 中的反向四元组、ACK flag、单调时间顺序，且 ACK 覆盖重传 sequence end。 | 输出 `correlation_reason=matched`，以及丢包来源、原因和 `drop_stack`。 |
 | 无严格匹配 | 缺少本地证据不能证明实际丢包位置。 | `drop_location=unknown`、唯一的 `correlation_reason` 和独立诊断信息。 |
 
-不存在仅四元组、仅 SKB pointer、跨 namespace 或 ambiguous 的正向匹配。除 namespace 外满足 tuple、时间和 sequence 条件的证据仅在未匹配结果中设置布尔诊断字段 `cross_netns_candidate`。匹配到的 drop 只消费一次，同一连接的后续 drop 仍可继续匹配。只有成功匹配后才做调用栈符号化。
+不存在仅四元组、仅 SKB pointer、跨 namespace 或 ambiguous 的正向匹配。`matched_net_namespace` 在报文和时间检查前记录同一 flow（任一方向）下相同 namespace 的 drop。该值为 true 不代表严格匹配成功，完整关联仍以 `correlation_reason=matched` 为准。false 或字段缺省表示尚未观测到 namespace 匹配，不代表已确认 namespace 不同。匹配到的 drop 只消费一次，同一连接的后续 drop 仍可继续匹配。只有成功匹配后才做调用栈符号化。
 
 #### 5.2 关联终态
 
@@ -364,7 +364,7 @@ sudo tcpshark --mode retransmit --with-dropwatch --bpf-path-dir bpf \
 
 单值字段替代原原因数组，tcpshark 与接收端需要配套更新。文本输出使用 `reason=<值>`；未启用关联时省略该字段。
 
-`startup_history_incomplete`、`cross_netns_candidate` 是独立的布尔诊断字段，可以与丢失计数同时存在，但不会改变终态原因。重传早于 embedded source ready，或距 ready 不足 1s 时，启动历史标记为不完整。
+`startup_history_incomplete`、`matched_net_namespace` 是独立的布尔诊断字段，可以与丢失计数同时存在，但不会改变终态原因。启动历史标记仅用于未匹配结果；namespace 匹配标记同时用于已匹配和未匹配结果。重传早于 embedded source ready，或距 ready 不足 1s 时，启动历史标记为不完整。
 
 退出时不再读取 dropwatch perf ring 中尚未交给关联器的记录；未读取的尾部 drop 原本仍可能与被中断的重传匹配。
 
@@ -393,7 +393,7 @@ sudo tcpshark --mode retransmit --with-dropwatch --bpf-path-dir bpf \
 | `correlation_reason=wait_timeout` | 100ms 内没有严格候选；结合诊断标记和计数排查。 |
 | `correlation_reason=queue_full` | 等待队列已满，收紧采集范围。 |
 | `correlation_reason=interrupted` | 检查采集停止或错误，关联等待被提前结束。 |
-| `cross_netns_candidate=true` | 单独检查该 namespace；跨 namespace 证据不会提升为正向匹配。 |
+| `matched_net_namespace=true`，但关联未匹配 | 同一 flow 下已观测到相同 namespace 的 drop，继续检查报文和时间条件；该标记本身不构成完整关联。 |
 | `startup_history_incomplete=true` | no-match 无法排除 embedded source ready 之前的软件或硬件丢包。 |
 | `drop_location` 不存在 | `off` 模式。 |
 

@@ -78,12 +78,12 @@ func TestCorrelatorMatchAndRemoveDropBothFlowDirections(t *testing.T) {
 			if !ok {
 				t.Fatal("retransmitEntryFromEvent() = false")
 			}
-			got, hasCrossNetNSCandidate := correlator.matchAndRemoveDrop(&match)
-			if got != test.drop || hasCrossNetNSCandidate {
+			got, netNamespace := correlator.matchAndRemoveDrop(&match)
+			if got != test.drop || !netNamespace {
 				t.Fatalf(
-					"matchAndRemoveDrop() = (%p, %t), want (%p, false)",
+					"matchAndRemoveDrop() = (%p, %t), want (%p, true)",
 					got,
-					hasCrossNetNSCandidate,
+					netNamespace,
 					test.drop,
 				)
 			}
@@ -147,15 +147,18 @@ func TestCorrelatorMatchAndRemoveDropEnforcesCausalAge(t *testing.T) {
 			if !ok {
 				t.Fatal("retransmitEntryFromEvent() = false")
 			}
-			got, _ := correlator.matchAndRemoveDrop(&retransmit)
+			got, netNamespace := correlator.matchAndRemoveDrop(&retransmit)
 			if (got != nil) != test.shouldMatch {
 				t.Fatalf("matchAndRemoveDrop() = %p, should match = %t", got, test.shouldMatch)
+			}
+			if !netNamespace {
+				t.Fatal("time eligibility changed the namespace match")
 			}
 		})
 	}
 }
 
-func TestCorrelatorMatchAndRemoveDropRetainsCrossNetNSCandidate(t *testing.T) {
+func TestCorrelatorMatchAndRemoveDropRetainsOtherNetNamespace(t *testing.T) {
 	now := time.Unix(1, 0)
 	correlator := newTestEventCorrelator(t, 1)
 	drop := testDropEvent(
@@ -186,9 +189,9 @@ func TestCorrelatorMatchAndRemoveDropRetainsCrossNetNSCandidate(t *testing.T) {
 	if !ok {
 		t.Fatal("retransmitEntryFromEvent() = false")
 	}
-	got, hasCrossNetNSCandidate := correlator.matchAndRemoveDrop(&retransmit)
-	if got != nil || !hasCrossNetNSCandidate {
-		t.Fatalf("cross-netns match = (%p, %t), want (nil, true)", got, hasCrossNetNSCandidate)
+	got, netNamespace := correlator.matchAndRemoveDrop(&retransmit)
+	if got != nil || netNamespace {
+		t.Fatalf("cross-netns match = (%p, %t), want (nil, false)", got, netNamespace)
 	}
 
 	retransmitEvent.record.NetNamespaceCookie = 1
@@ -196,9 +199,9 @@ func TestCorrelatorMatchAndRemoveDropRetainsCrossNetNSCandidate(t *testing.T) {
 	if !ok {
 		t.Fatal("retransmitEntryFromEvent() = false")
 	}
-	got, _ = correlator.matchAndRemoveDrop(&retransmit)
-	if got != drop {
-		t.Fatalf("same-netns match = %p, want %p", got, drop)
+	got, netNamespace = correlator.matchAndRemoveDrop(&retransmit)
+	if got != drop || !netNamespace {
+		t.Fatalf("same-netns match = (%p, %t), want (%p, true)", got, netNamespace, drop)
 	}
 }
 
@@ -250,15 +253,15 @@ func TestCorrelatorMatchAndRemoveRetransmitSelectsOldestArrival(t *testing.T) {
 	drop := testDropEvent(t, uint64(time.Second), "10.0.0.2", "10.0.0.1", 80, 1000, 900, 900, 200, packet.TCPFlagACK)
 	results := correlator.processDropEvent(drop, now.Add(time.Millisecond))
 	if len(results) != 1 || results[0].retransmit != first ||
-		results[0].reason != types.CorrelationMatched || results[0].drop != drop {
+		results[0].reason != types.CorrelationMatched || results[0].drop != drop || !results[0].netNamespace {
 		t.Fatalf("reverse ACK match = %v, want oldest arrival", results)
 	}
 	results = correlator.expireRetransmitPendingEvents(now.Add(retransmitRetentionDuration + time.Millisecond))
 	if len(results) != 2 || results[0].retransmit != second || results[1].retransmit != crossNetNS {
 		t.Fatalf("unmatched results = %v, want remaining retransmissions", results)
 	}
-	if results[0].hasCrossNetNSCandidate || !results[1].hasCrossNetNSCandidate {
-		t.Fatal("matching stopped before recording cross-namespace evidence for later waiters")
+	if !results[0].netNamespace || results[1].netNamespace {
+		t.Fatal("later waiters did not retain their namespace match results")
 	}
 	if len(correlator.drainRetransmits(now.Add(retransmitRetentionDuration+time.Millisecond))) != 0 {
 		t.Fatal("matched or expired retransmission was finalized twice")

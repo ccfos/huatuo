@@ -150,7 +150,9 @@ type TCPRetransmitTracing struct {
 	DropPerfStatus    *DropwatchStatus  `json:"drop_perf_status,omitempty"`
 	DropStack         string            `json:"drop_stack,omitempty"`
 	CorrelationReason CorrelationReason `json:"correlation_reason,omitempty"`
-	// Diagnostics describe limits of unmatched evidence without changing the outcome.
+	// Diagnostics do not change the terminal correlation outcome.
 	IsStartupHistoryIncomplete bool `json:"startup_history_incomplete,omitempty"`
-	HasCrossNetNSCandidate     bool `json:"cross_netns_candidate,omitempty"`
+	// NetNamespace records a same-flow drop in the same namespace,
+	// independently of packet and time checks. False means no match was observed.
+	NetNamespace bool `json:"matched_net_namespace,omitempty"`
 }

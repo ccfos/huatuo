@@ -90,6 +90,7 @@ correlated_event_ready() {
 		| select(.tcp_saddr == $server and .tcp_daddr == $client)
 		| select(.tcp_sport == $port)
 		| select(.correlation_reason == "matched")
+		| select(.matched_net_namespace == true)
 		| select(.drop_location == "software" and .drop_source == "software")
 		| select((.drop_reason | type) == "string" and (.drop_reason | length) > 0)
 		| select(.drop_reason_group == null)
@@ -159,8 +160,11 @@ jq -s -e '
 		.correlation_reason as $reason
 		| (["matched", "unsupported", "wait_timeout", "queue_full", "interrupted"] | index($reason)) != null
 		and (has("correlation_reasons") | not)
+		and (has("cross_netns_candidate") | not)
+		and (.matched_net_namespace == null or .matched_net_namespace == true)
 		and if $reason == "matched" then
 			(.drop_source | type) == "string" and .drop_location == .drop_source
+			and .matched_net_namespace == true
 			and .drop_perf_status == null
 		else
 			.drop_location == "unknown" and .drop_source == null

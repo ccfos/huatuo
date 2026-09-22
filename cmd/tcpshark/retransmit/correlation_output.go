@@ -36,6 +36,7 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 			return errors.Join(statusErr, err)
 		}
 		event.CorrelationReason = result.reason
+		event.NetNamespace = result.netNamespace
 		switch result.reason {
 		case types.CorrelationMatched:
 			if result.drop == nil {
@@ -64,7 +65,6 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 			}
 			event.DropLocation = "unknown"
 			event.IsStartupHistoryIncomplete = result.isStartupHistoryIncomplete
-			event.HasCrossNetNSCandidate = result.hasCrossNetNSCandidate
 			statusCopy := status
 			event.DropPerfStatus = &statusCopy
 		default:

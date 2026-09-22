@@ -277,7 +277,7 @@ func TestRetransmitDropCancellationFinalizesPendingEvents(t *testing.T) {
 	}
 }
 
-func TestRetransmitDropCancellationSettlesCrossNetNSCandidate(t *testing.T) {
+func TestRetransmitDropCancellationRetainsNetNamespace(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	retransmitEvents := make(chan *retransmitEvent)
@@ -311,12 +311,11 @@ func TestRetransmitDropCancellationSettlesCrossNetNSCandidate(t *testing.T) {
 		"10.0.0.2",
 		1000,
 		80,
-		100,
-		200,
+		300,
+		400,
 		0,
 		packet.TCPFlagACK,
 	)
-	drop.namespace.cookie = 2
 	dropwatchEvents <- drop
 	cancel()
 
@@ -326,8 +325,8 @@ func TestRetransmitDropCancellationSettlesCrossNetNSCandidate(t *testing.T) {
 	if len(sink.events) != 1 || sink.events[0].KernelObservedNS != retransmit.record.KernelObservedNS {
 		t.Fatalf("events = %+v, want pending retransmission exactly once", sink.events)
 	}
-	if sink.events[0].CorrelationReason != types.CorrelationInterrupted || !sink.events[0].HasCrossNetNSCandidate {
-		t.Fatalf("finalized event = %+v, want interruption with cross-namespace diagnostic", sink.events[0])
+	if sink.events[0].CorrelationReason != types.CorrelationInterrupted || !sink.events[0].NetNamespace {
+		t.Fatalf("finalized event = %+v, want interruption with a namespace match", sink.events[0])
 	}
 }
 

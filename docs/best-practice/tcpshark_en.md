@@ -196,7 +196,7 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 | `drop_reason_group` | string | Devlink trap group, such as `l2_drops`, for aggregating hardware reasons. Omitted for software drops and no-matches. |
 | `correlation_reason` | string | One terminal outcome: `matched`, `unsupported`, `wait_timeout`, `queue_full`, or `interrupted`. Omitted when correlation is disabled. |
 | `startup_history_incomplete` | bool | The retransmission predates source readiness or falls within its first second. Reported only when true for an unmatched result. |
-| `cross_netns_candidate` | bool | A candidate passed the packet and time checks but belonged to another namespace. Reported only when true for an unmatched result. |
+| `matched_net_namespace` | bool | A drop on the same TCP flow was observed in the same namespace, independently of packet and time checks. Always true for a strict match; omitted when false. |
 | `drop_perf_status` | object | Cumulative embedded-dropwatch counters for an unmatched result. `map_counters_available` identifies valid map counters; reader `lost_samples` remains valid on map errors. |
 | `drop_stack` | string | Matched drop stack; unmatched stacks are not symbolized. |
 | `source` | string | Event source. It is `tools` when tcpshark runs standalone and `events` when huatuo-bamai launches it. |
@@ -218,7 +218,7 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 Text retains its terminal-friendly layout while covering the same event variables as JSON. Optional variables appear only when non-zero or non-empty, and string values are not JSON-quoted or escaped. For compatibility with the original text format, `state`, `skb`, `seq`, `end`, `ack`, `flags`, `ca`, `retrans`, and `reason` correspond to the JSON fields `tcp_state`, `skb_addr`, `tcp_seq`, `tcp_end_seq`, `tcp_ack_seq`, `tcp_flags`, `ca_state`, `icsk_retransmits`, and `correlation_reason`, respectively.
 
 ```text
-<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [kernel_observed_timestamp=<UTC>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [drop_source=<SOURCE>] [drop_reason=<REASON>] [drop_reason_group=<GROUP>] [reason=<REASON>] [startup_history_incomplete=true] [cross_netns_candidate=true] [dropwatch_map_counters_available=<true|false> dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
+<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [kernel_observed_timestamp=<UTC>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [drop_source=<SOURCE>] [drop_reason=<REASON>] [drop_reason_group=<GROUP>] [reason=<REASON>] [startup_history_incomplete=true] [matched_net_namespace=true] [dropwatch_map_counters_available=<true|false> dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
 ```
 
 Example:
@@ -347,7 +347,7 @@ An unrecognized ABI source produces `unknown` for both `drop_source` and `drop_l
 | Reverse ACK match | Reverse tuple in the same namespace, ACK flag set, monotonic ordering, and ACK covering the retransmitted sequence end. | `correlation_reason=matched`, with the drop source, reason, and `drop_stack`. |
 | No strict match | Missing local evidence does not establish where the packet was lost. | `drop_location=unknown`, one terminal `correlation_reason`, and independent diagnostics. |
 
-There is no tuple-only, SKB-pointer-only, cross-namespace, or ambiguous positive match. A drop that satisfies every check except namespace sets the boolean `cross_netns_candidate` diagnostic on an unmatched result. A matched drop is consumed once, while later drops on the same connection remain available. Stack symbolization runs only after a match.
+There is no tuple-only, SKB-pointer-only, cross-namespace, or ambiguous positive match. The `matched_net_namespace` diagnostic records a same-namespace drop on the same flow in either direction before packet and time checks. It can be true without a strict match; `correlation_reason=matched` remains the indication of full correlation. A false or absent flag means no namespace match was observed, not that a different namespace was confirmed. A matched drop is consumed once, while later drops on the same connection remain available. Stack symbolization runs only after a match.
 
 #### 5.2 Correlation Outcome
 
@@ -365,7 +365,7 @@ Expired entries are finalized before matching or checking capacity. Shutdown use
 
 The scalar field replaces the previous reason array; update tcpshark and its receiver together. Text output uses `reason=<value>`. Correlation-disabled output omits the field.
 
-`startup_history_incomplete` and `cross_netns_candidate` are independent boolean diagnostics. They can coexist with loss counters without changing the terminal reason. Startup history is incomplete when the retransmission predates embedded-source readiness or occurs less than one second after it.
+`startup_history_incomplete` and `matched_net_namespace` are independent boolean diagnostics. Startup history is reported only for unmatched results; namespace matches are reported for both matched and unmatched results. They can coexist with loss counters without changing the terminal reason. Startup history is incomplete when the retransmission predates embedded-source readiness or occurs less than one second after it.
 
 At shutdown, tcpshark stops reading dropwatch records still in the perf ring. An unread tail drop could otherwise have matched an interrupted retransmission.
 
@@ -394,7 +394,7 @@ Counters belong to this dropwatch instance and reset on reload. They are sampled
 | `correlation_reason=wait_timeout` | No strict candidate arrived within 100 ms; inspect the diagnostic flags and counters. |
 | `correlation_reason=queue_full` | The waiting queue reached capacity; narrow the capture scope. |
 | `correlation_reason=interrupted` | Inspect the collection stop or error; the wait ended early. |
-| `cross_netns_candidate=true` | Inspect the other namespace independently; cross-namespace evidence is never promoted to a positive match. |
+| `matched_net_namespace=true` with an unmatched reason | A same-flow drop was observed in the same namespace. Check packet and time eligibility; the flag alone does not establish correlation. |
 | `startup_history_incomplete=true` | A no-match cannot exclude a software or hardware drop that occurred before the embedded source became ready. |
 | `drop_location` absent | Expected in `off` mode. |
 

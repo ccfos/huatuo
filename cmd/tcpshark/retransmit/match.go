@@ -181,7 +181,7 @@ func addressFromIP(ip net.IP) (netip.Addr, bool) {
 	return address.Unmap(), true
 }
 
-// Namespace is checked separately to retain cross-namespace evidence.
+// Namespace matches are recorded separately from packet and time eligibility.
 func isDropCandidateForRetransmit(drop *dropEvent, retransmit *retransmitEntry) bool {
 	if !dropWithinRetransmitAge(drop, retransmit) {
 		return false

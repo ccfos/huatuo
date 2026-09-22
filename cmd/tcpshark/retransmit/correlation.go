@@ -30,9 +30,9 @@ const (
 )
 
 type waitingRetransmit struct {
-	event                  *retransmitEvent
-	matchFields            retransmitEntry
-	hasCrossNetNSCandidate bool
+	event        *retransmitEvent
+	matchFields  retransmitEntry
+	netNamespace bool
 }
 
 type correlationResult struct {
@@ -40,7 +40,7 @@ type correlationResult struct {
 	drop                       *dropEvent
 	reason                     types.CorrelationReason
 	isStartupHistoryIncomplete bool
-	hasCrossNetNSCandidate     bool
+	netNamespace               bool
 }
 
 type eventCorrelator struct {
@@ -79,18 +79,19 @@ func (c *eventCorrelator) processRetransmitEvent(
 		})
 	}
 
-	drop, hasCrossNetNSCandidate := c.matchAndRemoveDrop(&entry)
+	drop, netNamespace := c.matchAndRemoveDrop(&entry)
 	if drop != nil {
 		return append(readyResults, correlationResult{
 			retransmit: event, drop: drop, reason: types.CorrelationMatched,
+			netNamespace: netNamespace,
 		})
 	}
 
 	waiting := &storeEntry[waitingRetransmit]{
 		value: waitingRetransmit{
-			event:                  event,
-			matchFields:            entry,
-			hasCrossNetNSCandidate: hasCrossNetNSCandidate,
+			event:        event,
+			matchFields:  entry,
+			netNamespace: netNamespace,
 		},
 	}
 	evicted := c.retransmitStore.add(waiting, &waiting.value.matchFields.flow, now)
@@ -101,7 +102,7 @@ func (c *eventCorrelator) processRetransmitEvent(
 		retransmit:                 evicted.value.event,
 		reason:                     types.CorrelationQueueFull,
 		isStartupHistoryIncomplete: c.startupHistoryIncomplete(evicted.value.event.record.KernelObservedNS),
-		hasCrossNetNSCandidate:     evicted.value.hasCrossNetNSCandidate,
+		netNamespace:               evicted.value.netNamespace,
 	})
 }
 
@@ -123,7 +124,10 @@ func (c *eventCorrelator) processDropEvent(
 	if waiting != nil {
 		return append(
 			readyResults,
-			correlationResult{retransmit: waiting.event, drop: event, reason: types.CorrelationMatched},
+			correlationResult{
+				retransmit: waiting.event, drop: event, reason: types.CorrelationMatched,
+				netNamespace: waiting.netNamespace,
+			},
 		)
 	}
 
@@ -148,7 +152,7 @@ func (c *eventCorrelator) expireRetransmitPendingEvents(
 			retransmit:                 waiting.value.event,
 			reason:                     types.CorrelationWaitTimeout,
 			isStartupHistoryIncomplete: c.startupHistoryIncomplete(waiting.value.event.record.KernelObservedNS),
-			hasCrossNetNSCandidate:     waiting.value.hasCrossNetNSCandidate,
+			netNamespace:               waiting.value.netNamespace,
 		})
 	}
 }
@@ -162,7 +166,7 @@ func (c *eventCorrelator) drainRetransmits(now time.Time) []correlationResult {
 			retransmit:                 waiting.value.event,
 			reason:                     types.CorrelationInterrupted,
 			isStartupHistoryIncomplete: c.startupHistoryIncomplete(waiting.value.event.record.KernelObservedNS),
-			hasCrossNetNSCandidate:     waiting.value.hasCrossNetNSCandidate,
+			netNamespace:               waiting.value.netNamespace,
 		})
 	}
 	return results

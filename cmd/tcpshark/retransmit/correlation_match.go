@@ -17,14 +17,14 @@ package retransmit
 // Matching requires expireRetransmitPendingEvents to have established the time boundary.
 func (c *eventCorrelator) matchAndRemoveDrop(retransmit *retransmitEntry) (*dropEvent, bool) {
 	var best *storeEntry[*dropEvent]
-	var hasCrossNetNSCandidate bool
+	var netNamespace bool
 	for _, candidate := range c.dropStore.entriesForFlow(retransmit.flow) {
 		drop := candidate.value
-		if !isDropCandidateForRetransmit(drop, retransmit) {
+		if !isSameNetNamespace(drop.namespace, retransmit.namespace) {
 			continue
 		}
-		if !isSameNetNamespace(drop.namespace, retransmit.namespace) {
-			hasCrossNetNSCandidate = true
+		netNamespace = true
+		if !isDropCandidateForRetransmit(drop, retransmit) {
 			continue
 		}
 		if best == nil || drop.kernelObservedNS > best.value.kernelObservedNS ||
@@ -33,24 +33,23 @@ func (c *eventCorrelator) matchAndRemoveDrop(retransmit *retransmitEntry) (*drop
 		}
 	}
 	if best == nil {
-		return nil, hasCrossNetNSCandidate
+		return nil, netNamespace
 	}
-	return c.dropStore.remove(best).value, hasCrossNetNSCandidate
+	return c.dropStore.remove(best).value, netNamespace
 }
 
 func (c *eventCorrelator) matchAndRemoveRetransmit(drop *dropEvent) *waitingRetransmit {
 	var best *storeEntry[waitingRetransmit]
 	for _, candidate := range c.retransmitStore.entriesForFlow(drop.flow) {
 		waiting := &candidate.value
+		if !isSameNetNamespace(drop.namespace, waiting.matchFields.namespace) {
+			continue
+		}
+		waiting.netNamespace = true
 		if !isDropCandidateForRetransmit(drop, &waiting.matchFields) {
 			continue
 		}
-		if !isSameNetNamespace(drop.namespace, waiting.matchFields.namespace) {
-			waiting.hasCrossNetNSCandidate = true
-			continue
-		}
-		// Every eligible waiter needs cross-namespace evidence, including those
-		// following a strict match in the bucket.
+		// Scan the whole bucket so later waiters retain namespace matches too.
 		if best == nil || candidate.sequence < best.sequence {
 			best = candidate
 		}

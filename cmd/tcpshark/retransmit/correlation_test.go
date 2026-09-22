@@ -143,7 +143,7 @@ func TestEventCorrelatorMatchesEitherArrivalOrder(t *testing.T) {
 			}
 
 			if len(results) != 1 || results[0].reason != types.CorrelationMatched ||
-				results[0].drop != drop || results[0].retransmit != retransmit {
+				results[0].drop != drop || results[0].retransmit != retransmit || !results[0].netNamespace {
 				t.Fatalf("result = %+v, want one matched retransmission", results)
 			}
 			if correlator.retransmitStore.byDeadline.Len() != 0 {
@@ -284,6 +284,7 @@ func TestEventCorrelatorUnmatchedDiagnostics(t *testing.T) {
 		kernelObservedNS      uint64
 		prepare               func(*eventCorrelator, time.Time)
 		wantIncompleteHistory bool
+		wantMatchedNamespace  bool
 	}{
 		{name: "before startup", kernelObservedNS: readyKtimeNS - 1, wantIncompleteHistory: true},
 		{name: "before history horizon", kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge) - 1, wantIncompleteHistory: true},
@@ -296,8 +297,9 @@ func TestEventCorrelatorUnmatchedDiagnostics(t *testing.T) {
 			},
 		},
 		{
-			name:             "drop cache eviction does not change outcome",
-			kernelObservedNS: readyKtimeNS + uint64(maxDropToRetransmitAge),
+			name:                 "drop cache eviction does not change outcome",
+			kernelObservedNS:     readyKtimeNS + uint64(maxDropToRetransmitAge),
+			wantMatchedNamespace: true,
 			prepare: func(c *eventCorrelator, now time.Time) {
 				c.dropStore.capacity = 1
 				for sequence := range uint32(2) {
@@ -326,9 +328,10 @@ func TestEventCorrelatorUnmatchedDiagnostics(t *testing.T) {
 			if len(results) != 1 || results[0].reason != types.CorrelationWaitTimeout || results[0].drop != nil {
 				t.Fatalf("results = %+v, want wait_timeout", results)
 			}
-			if results[0].isStartupHistoryIncomplete != test.wantIncompleteHistory || results[0].hasCrossNetNSCandidate {
-				t.Fatalf("diagnostics = %+v, want incomplete history=%t and no cross-namespace candidate",
-					results[0], test.wantIncompleteHistory)
+			if results[0].isStartupHistoryIncomplete != test.wantIncompleteHistory ||
+				results[0].netNamespace != test.wantMatchedNamespace {
+				t.Fatalf("diagnostics = %+v, want incomplete history=%t and matched namespace=%t",
+					results[0], test.wantIncompleteHistory, test.wantMatchedNamespace)
 			}
 		})
 	}
@@ -437,44 +440,73 @@ func TestEventCorrelatorDrainRetransmits(t *testing.T) {
 	}
 }
 
-func TestEventCorrelatorReportsCrossNetNSCandidate(t *testing.T) {
-	correlator := newTestEventCorrelator(t, 1)
-	now := time.Unix(40, 0)
-	retransmit := testRetransmitEvent(
-		uint64(time.Second)+1,
-		"10.0.0.1",
-		"10.0.0.2",
-		1000,
-		80,
-		100,
-		200,
-	)
-	if results := correlator.processRetransmitEvent(
-		retransmit,
-		now,
-	); len(results) != 0 {
-		t.Fatalf("processRetransmit() = %v, want pending", results)
+func TestEventCorrelatorNetNamespace(t *testing.T) {
+	const retransmitKtime = uint64(2 * time.Second)
+	newDrop := func(cookie uint64) *dropEvent {
+		drop := testDropEvent(t, retransmitKtime-1, "10.0.0.1", "10.0.0.2", 1000, 80, 300, 400, 0, packet.TCPFlagACK)
+		drop.namespace.cookie = cookie
+		return drop
 	}
-	drop := testDropEvent(
-		t,
-		uint64(time.Second),
-		"10.0.0.1",
-		"10.0.0.2",
-		1000,
-		80,
-		100,
-		200,
-		0,
-		packet.TCPFlagACK,
-	)
-	drop.namespace.cookie = 2
-	if results := correlator.processDropEvent(drop, now); len(results) != 0 {
-		t.Fatalf("processDrop() = %v, want retained candidate", results)
-	}
-	results := correlator.expireRetransmitPendingEvents(now.Add(retransmitRetentionDuration))
-	if len(results) != 1 || results[0].reason != types.CorrelationWaitTimeout ||
-		!results[0].hasCrossNetNSCandidate {
-		t.Fatalf("expired result = %+v, want cross_netns_candidate", results)
+	otherFlow := newDrop(1)
+	otherFlow.flow = testFlowKey(1001, 80)
+	otherNamespace := newDrop(2)
+	otherNamespace.sequence, otherNamespace.endSequence = 100, 200
+	unknownNamespace := newDrop(0)
+	unknownNamespace.namespace = namespaceID{}
+	oldDrop := newDrop(1)
+	oldDrop.kernelObservedNS = retransmitKtime - uint64(maxDropToRetransmitAge) - 1
+	futureDrop := newDrop(1)
+	futureDrop.kernelObservedNS = retransmitKtime + 1
+	reverseACK := testDropEvent(t, retransmitKtime-1, "10.0.0.2", "10.0.0.1", 80, 1000, 900, 900, 100, packet.TCPFlagACK)
+
+	for _, dropFirst := range []bool{true, false} {
+		order := "retransmit first"
+		if dropFirst {
+			order = "drop first"
+		}
+		t.Run(order, func(t *testing.T) {
+			for _, test := range []struct {
+				name  string
+				drops []*dropEvent
+				want  bool
+			}{
+				{name: "no candidate"},
+				{name: "different flow", drops: []*dropEvent{otherFlow}},
+				{name: "different namespace", drops: []*dropEvent{otherNamespace}},
+				{name: "unknown namespace", drops: []*dropEvent{unknownNamespace}},
+				{name: "inode fallback", drops: []*dropEvent{newDrop(0)}, want: true},
+				{name: "sequence mismatch", drops: []*dropEvent{newDrop(1)}, want: true},
+				{name: "drop too old", drops: []*dropEvent{oldDrop}, want: true},
+				{name: "future drop", drops: []*dropEvent{futureDrop}, want: true},
+				{name: "reverse ACK does not cover range", drops: []*dropEvent{reverseACK}, want: true},
+				{name: "same then different namespace", drops: []*dropEvent{newDrop(1), otherNamespace}, want: true},
+				{name: "different then same namespace", drops: []*dropEvent{otherNamespace, newDrop(1)}, want: true},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					correlator := newTestEventCorrelator(t, 1)
+					now := time.Unix(40, 0)
+					retransmit := testRetransmitEvent(retransmitKtime, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
+					var results []correlationResult
+					if !dropFirst {
+						results = append(results, correlator.processRetransmitEvent(retransmit, now)...)
+					}
+					for _, drop := range test.drops {
+						results = append(results, correlator.processDropEvent(drop, now)...)
+					}
+					if dropFirst {
+						results = append(results, correlator.processRetransmitEvent(retransmit, now)...)
+					}
+					if len(results) != 0 {
+						t.Fatalf("namespace check finalized retransmit: %+v", results)
+					}
+					results = correlator.expireRetransmitPendingEvents(now.Add(retransmitRetentionDuration))
+					if len(results) != 1 || results[0].reason != types.CorrelationWaitTimeout ||
+						results[0].drop != nil || results[0].netNamespace != test.want {
+						t.Fatalf("expired results = %+v, want wait_timeout and matched namespace=%t", results, test.want)
+					}
+				})
+			}
+		})
 	}
 }
 
@@ -489,8 +521,7 @@ func TestEventCorrelatorFinalizesWithConcurrentDiagnostics(t *testing.T) {
 			now := time.Unix(1, 0)
 			event := testRetransmitEvent(ready+1, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200)
 			correlator.processRetransmitEvent(event, now)
-			drop := testDropEvent(t, ready, "10.0.0.1", "10.0.0.2", 1000, 80, 100, 200, 0, packet.TCPFlagACK)
-			drop.namespace.cookie = 2
+			drop := testDropEvent(t, ready, "10.0.0.1", "10.0.0.2", 1000, 80, 300, 400, 0, packet.TCPFlagACK)
 			correlator.processDropEvent(drop, now)
 			var results []correlationResult
 			switch reason {
@@ -505,7 +536,7 @@ func TestEventCorrelatorFinalizesWithConcurrentDiagnostics(t *testing.T) {
 			if len(results) != 1 || results[0].retransmit != event || results[0].reason != reason || results[0].drop != nil {
 				t.Fatalf("results = %+v, want original event finalized as %q", results, reason)
 			}
-			if !results[0].isStartupHistoryIncomplete || !results[0].hasCrossNetNSCandidate {
+			if !results[0].isStartupHistoryIncomplete || !results[0].netNamespace {
 				t.Fatalf("result = %+v, want both diagnostics retained", results[0])
 			}
 		})

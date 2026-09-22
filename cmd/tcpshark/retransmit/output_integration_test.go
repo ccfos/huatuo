@@ -64,7 +64,7 @@ func TestSocketWriterPreservesCorrelationResult(t *testing.T) {
 	for _, event := range []*types.TCPRetransmitTracing{
 		{
 			CorrelationReason: types.CorrelationWaitTimeout, DropLocation: "unknown",
-			IsStartupHistoryIncomplete: true, HasCrossNetNSCandidate: true,
+			IsStartupHistoryIncomplete: true, NetNamespace: true,
 			DropPerfStatus: &types.DropwatchStatus{HasMapCounters: true, PerfLost: 2, LostSamples: 3, RateLimited: 4},
 		},
 		{
@@ -75,13 +75,18 @@ func TestSocketWriterPreservesCorrelationResult(t *testing.T) {
 		{CorrelationReason: types.CorrelationUnsupported, DropLocation: "unknown"},
 		{
 			CorrelationReason: types.CorrelationMatched, DropLocation: "software",
-			DropSource: "software", DropReason: "SKB_DROP_REASON_TCP_CSUM",
+			NetNamespace: true,
+			DropSource:   "software", DropReason: "SKB_DROP_REASON_TCP_CSUM",
 		},
 		{
 			CorrelationReason: types.CorrelationMatched, DropLocation: "hardware",
-			DropSource: "hardware", DropReason: "ingress_vlan_filter", DropReasonGroup: "l2_drops",
+			NetNamespace: true,
+			DropSource:   "hardware", DropReason: "ingress_vlan_filter", DropReasonGroup: "l2_drops",
 		},
-		{CorrelationReason: types.CorrelationMatched, DropLocation: "unknown", DropSource: "unknown"},
+		{
+			CorrelationReason: types.CorrelationMatched, DropLocation: "unknown", DropSource: "unknown",
+			NetNamespace: true,
+		},
 	} {
 		if err := sink.Write(event); err != nil {
 			t.Fatal(err)

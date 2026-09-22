@@ -96,7 +96,7 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 		DropLocation:               "unknown",
 		CorrelationReason:          types.CorrelationWaitTimeout,
 		IsStartupHistoryIncomplete: true,
-		HasCrossNetNSCandidate:     true,
+		NetNamespace:               true,
 		DropPerfStatus: &types.DropwatchStatus{
 			HasMapCounters: true,
 			PerfLost:       2,
@@ -112,7 +112,7 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 		"drop_location=unknown",
 		"reason=wait_timeout",
 		"startup_history_incomplete=true",
-		"cross_netns_candidate=true",
+		"matched_net_namespace=true",
 		"dropwatch_map_counters_available=true",
 		"dropwatch_perf_lost=2",
 		"dropwatch_lost_samples=4",
@@ -132,6 +132,7 @@ func TestTextWriterFormatsMatchedDropStack(t *testing.T) {
 		ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)},
 		DropLocation:      "software",
 		CorrelationReason: types.CorrelationMatched,
+		NetNamespace:      true,
 		DropStack:         "first\nsecond",
 	}
 	if err := (&textWriter{w: &output}).Write(event); err != nil {
@@ -140,6 +141,7 @@ func TestTextWriterFormatsMatchedDropStack(t *testing.T) {
 	for _, want := range []string{
 		"drop_location=software",
 		"reason=matched",
+		"matched_net_namespace=true",
 		"\t#0   first\n",
 		"\t#1   second\n",
 	} {
@@ -162,6 +164,9 @@ func TestTextWriterFormatsUnavailableMapCounters(t *testing.T) {
 		if !strings.Contains(output.String(), field) {
 			t.Errorf("text output lacks %q: %s", field, output.String())
 		}
+	}
+	if strings.Contains(output.String(), "matched_net_namespace=") {
+		t.Fatalf("false namespace match should be omitted: %s", output.String())
 	}
 }
 

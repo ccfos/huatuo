@@ -36,6 +36,7 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 		status       types.DropwatchStatus
 		readErr      error
 		wantLocation string
+		netNamespace bool
 	}{
 		{
 			name: "matched", reason: types.CorrelationMatched,
@@ -53,6 +54,10 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 			readErr: statusErr, wantLocation: "software",
 		},
 		{name: "unmatched", reason: types.CorrelationWaitTimeout, wantLocation: "unknown"},
+		{
+			name: "namespace matched without packet match", reason: types.CorrelationWaitTimeout,
+			wantLocation: "unknown", netNamespace: true,
+		},
 		{
 			name: "perf output lost", reason: types.CorrelationWaitTimeout,
 			status: types.DropwatchStatus{PerfLost: 2}, wantLocation: "unknown",
@@ -101,7 +106,7 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 			result := correlationResult{
 				retransmit: input, drop: test.drop, reason: test.reason,
 				isStartupHistoryIncomplete: test.reason != types.CorrelationMatched,
-				hasCrossNetNSCandidate:     test.reason != types.CorrelationMatched,
+				netNamespace:               test.reason == types.CorrelationMatched || test.netNamespace,
 			}
 			err := session.emitResults([]correlationResult{result})
 			if !errors.Is(err, test.readErr) {
@@ -115,7 +120,7 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 				t.Fatalf("emitted event = %+v, want location=%q reason=%q", event, test.wantLocation, test.reason)
 			}
 			if event.IsStartupHistoryIncomplete != result.isStartupHistoryIncomplete ||
-				event.HasCrossNetNSCandidate != result.hasCrossNetNSCandidate {
+				event.NetNamespace != result.netNamespace {
 				t.Fatalf("diagnostics changed during output: %+v", event)
 			}
 			if test.reason == types.CorrelationMatched {
@@ -425,6 +430,9 @@ func TestCorrelationPreservesDropMetadata(t *testing.T) {
 					}
 					if test.namespace == 1 && event.CorrelationReason != types.CorrelationMatched {
 						t.Fatalf("matched drop has reason %q", event.CorrelationReason)
+					}
+					if event.NetNamespace != (test.namespace == 1) {
+						t.Fatalf("matched namespace = %t, want %t", event.NetNamespace, test.namespace == 1)
 					}
 				})
 			}

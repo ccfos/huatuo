@@ -62,7 +62,7 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 				DropLocation:               "unknown",
 				CorrelationReason:          CorrelationWaitTimeout,
 				IsStartupHistoryIncomplete: true,
-				HasCrossNetNSCandidate:     true,
+				NetNamespace:               true,
 				DropPerfStatus: &DropwatchStatus{
 					HasMapCounters: true,
 					PerfLost:       1,
@@ -207,7 +207,7 @@ func TestTCPRetransmitTracingOmitEmpty(t *testing.T) {
 		"container_id", "memory_cgroup_css_addr", "net_namespace_cookie", "net_namespace_inum",
 		"reord_seen", "dsack_dups", "tcp_end_seq", "tcp_flags",
 		"skb_addr", "drop_location", "drop_source", "drop_reason", "drop_reason_group", "correlation_reason",
-		"startup_history_incomplete", "cross_netns_candidate",
+		"startup_history_incomplete", "matched_net_namespace",
 		"drop_perf_status", "drop_stack", "source",
 	}
 	for _, f := range omitFields {
@@ -231,7 +231,10 @@ func TestTCPRetransmitCorrelationJSON(t *testing.T) {
 		{name: "interrupted", reason: CorrelationInterrupted, want: "interrupted"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			event := TCPRetransmitTracing{CorrelationReason: test.reason}
+			event := TCPRetransmitTracing{
+				CorrelationReason: test.reason,
+				NetNamespace:      test.reason == CorrelationMatched,
+			}
 			encoded, err := json.Marshal(event)
 			if err != nil {
 				t.Fatal(err)
@@ -242,6 +245,13 @@ func TestTCPRetransmitCorrelationJSON(t *testing.T) {
 			}
 			if _, ok := fields["correlation_reasons"]; ok {
 				t.Fatal("obsolete correlation reason array is present")
+			}
+			if _, ok := fields["cross_netns_candidate"]; ok {
+				t.Fatal("obsolete cross-namespace diagnostic is present")
+			}
+			matched, exists := fields["matched_net_namespace"]
+			if exists != event.NetNamespace || (exists && matched != true) {
+				t.Fatalf("namespace diagnostic = %v, want present only when true", matched)
 			}
 			got, exists := fields["correlation_reason"]
 			if test.want == "" {
@@ -259,7 +269,7 @@ func TestTCPRetransmitPartialDropStatusJSON(t *testing.T) {
 	event := TCPRetransmitTracing{
 		CorrelationReason:          CorrelationWaitTimeout,
 		IsStartupHistoryIncomplete: true,
-		HasCrossNetNSCandidate:     true,
+		NetNamespace:               true,
 		DropPerfStatus:             &DropwatchStatus{LostSamples: 5},
 	}
 	encoded, err := json.Marshal(event)
@@ -270,7 +280,7 @@ func TestTCPRetransmitPartialDropStatusJSON(t *testing.T) {
 	if err := json.Unmarshal(encoded, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if fields["startup_history_incomplete"] != true || fields["cross_netns_candidate"] != true {
+	if fields["startup_history_incomplete"] != true || fields["matched_net_namespace"] != true {
 		t.Fatalf("diagnostics = %s, want both boolean flags", encoded)
 	}
 	status, ok := fields["drop_perf_status"].(map[string]any)

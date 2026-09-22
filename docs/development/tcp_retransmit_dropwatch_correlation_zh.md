@@ -147,10 +147,15 @@ drop 缓存、没有等待重传时也会按期清理。每次输入和 timer �
 SYN-ACK 使用各自更严格的 ACK/SYN 条件。
 
 多个 drop 候选先选最大的 `drop.kernel_observed_ns`；时间相同时选较大的插入序号。
-drop 后到时，选择插入序号最小的严格匹配重传，同时扫描其余候选以记录跨
-namespace 证据。严格匹配后立即从 deadline 和 flow 两个索引删除，只能消费一次。
-除 namespace 外均满足的候选只设置 `hasCrossNetNSCandidate`；
-它不会建立正向匹配，未匹配输出保留对应布尔诊断字段。
+drop 后到时，选择插入序号最小的严格匹配重传，同时扫描其余候选以记录各重传的
+namespace 匹配状态。严格匹配后立即从 deadline 和 flow 两个索引删除，只能消费一次。
+正向 segment 和反向 ACK 共用 flow 索引，先检查 namespace，再检查报文和时间条件。
+同一 flow 下出现相同 namespace 的 drop 时，将 `netNamespace` 置为 true；
+即使时间或 sequence 不满足严格匹配条件，该标记也会保留，后续不匹配候选不会清除它。
+严格匹配的结果必定为 true。无候选、只有其他 namespace 或 namespace 无法比较时，
+该值为 false，表示未观测到匹配，不能据此断定 namespace 不同。
+输出通过 `NetNamespace` 保留该状态，JSON 和文本字段为
+`matched_net_namespace`，false 时省略。
 
 ## 6. 互斥的关联终态
 
@@ -169,10 +174,11 @@ namespace 证据。严格匹配后立即从 deadline 和 flow 两个索引删除
 关闭关联时省略输出字段；启用关联后所有已定型事件都包含一个有效终态。
 单值字段替代原原因数组，工具端和接收端同步迁移。
 
-未匹配结果独立保留两个诊断标记：
+关联结果独立保留两个诊断标记：
 
-- `startup_history_incomplete`：重传早于 source ready，或距 ready 不足 1s；
-- `cross_netns_candidate`：候选通过报文和时间检查，但 namespace 不同。
+- `startup_history_incomplete`：未匹配重传早于 source ready，或距 ready 不足 1s；
+- `matched_net_namespace`：同一 flow 下观测到相同 namespace 的 drop，
+  独立于报文和时间条件；不能替代 `correlation_reason=matched`。
 
 这些标记可与限流、丢失计数并存，不改变唯一终态。无法规范化的 drop 与 drop
 缓存容量淘汰不会直接结束重传等待，也不会生成重传级原因。
@@ -260,7 +266,7 @@ cmd/tcpshark/
     ├── event_reader.go             # 双流读取、转换和 channel 交付
     ├── correlation_loop.go         # select、timer、退出结算
     ├── correlation.go              # 关联状态机、过期结算
-    ├── correlation_match.go        # 候选选择、消费与跨 namespace 证据
+    ├── correlation_match.go        # 候选选择、消费与 namespace 匹配状态
     ├── match.go                    # 匹配类型、namespace/flow/sequence/ktime
     ├── store.go                    # 条目存储、flow 索引、容量与过期管理
     ├── event.go                    # 两类 ABI record 转换
