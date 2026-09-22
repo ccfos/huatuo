@@ -157,10 +157,14 @@ Prometheus-style label selector. The query layer accepts `id`, `region`,
 `hostname`, `container_id`, `container_hostname`, and `__profile_type__`, and
 each label supports a single equality condition:
 
-- `{hostname="node-01"}` selects one host, while `hostname="*"`,
-  `hostname="all"`, and `hostname=""` mean "all values" and are ignored
-- `{hostname="host-a",hostname="host-b"}` is rejected with `400`, and the error
-  message reports both values, because one query cannot select two hosts at once
+- `{hostname="node-01"}` selects one host. The wildcard forms `hostname="*"`,
+  `hostname="all"`, and `hostname=""` only drop the hostname restriction: the
+  query is accepted when another concrete selector (for example `id` or
+  `container_id`) remains, and rejected with `400` when no concrete `id`,
+  `hostname`, `container_id`, or `container_hostname` is left.
+- Contradictory duplicate matchers such as
+  `{hostname="host-a",hostname="host-b"}` are rejected with `400`, and the error
+  message reports both values.
 - Repeating the same condition, for example
   `{hostname="host-a",hostname="host-a"}`, is accepted and behaves like a single
   condition
