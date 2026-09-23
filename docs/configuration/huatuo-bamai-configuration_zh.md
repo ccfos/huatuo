@@ -836,6 +836,8 @@ InitPid 读取实际 memory cgroup 路径并保存；路径暂不可用或通知
 
   默认 115ms。 例如 skb_copy_datagram_iovec 等函数的延迟监控。
 
+以上三个延迟阈值均须为正整数毫秒，换算成纳秒后须在 `uint64` 范围内。
+
 - **ExcludedContainerQos**：排除的容器 QoS 级别，黑名单模式。
 
   默认 [""]。 不监控指定 QoS 级别的容器网络接收延迟（对应 Kubernetes Pod QoS：Guaranteed、Burstable、BestEffort，大小写不敏感）。
