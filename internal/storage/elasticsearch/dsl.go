@@ -44,6 +44,8 @@ type (
 		Aggs  map[string]termsAggBody `json:"aggs"`
 	}
 	valuesResponse struct {
+		TimedOut     bool                  `json:"timed_out"`
+		Shards       types.ShardStatistics `json:"_shards"`
 		Aggregations struct {
 			Terms struct {
 				Buckets []struct {

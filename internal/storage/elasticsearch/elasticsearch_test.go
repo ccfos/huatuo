@@ -1409,3 +1409,87 @@ func TestNewBackendRequiresIndex(t *testing.T) {
 		t.Fatalf("NewBackend() error = %v", err)
 	}
 }
+
+func TestElasticsearchBackendRejectsIncompleteCountAndValues(t *testing.T) {
+	tests := []struct {
+		name      string
+		path      string
+		response  string
+		wantError bool
+	}{
+		{
+			name:     "complete count",
+			path:     "_count",
+			response: `{"count":5,"_shards":{"total":2,"successful":2,"failed":0}}`,
+		},
+		{
+			name:      "failed count shard",
+			path:      "_count",
+			response:  `{"count":3,"_shards":{"total":2,"successful":1,"failed":1}}`,
+			wantError: true,
+		},
+		{
+			name:     "complete values",
+			path:     "_search",
+			response: `{"timed_out":false,"_shards":{"total":2,"successful":2,"failed":0},"aggregations":{"terms":{"buckets":[{"key":"alpha"}]}}}`,
+		},
+		{
+			name:      "timed out values",
+			path:      "_search",
+			response:  `{"timed_out":true,"_shards":{"total":2,"successful":2,"failed":0},"aggregations":{"terms":{"buckets":[{"key":"alpha"}]}}}`,
+			wantError: true,
+		},
+		{
+			name:      "failed values shard",
+			path:      "_search",
+			response:  `{"timed_out":false,"_shards":{"total":2,"successful":1,"failed":1},"aggregations":{"terms":{"buckets":[{"key":"alpha"}]}}}`,
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/" {
+					_, _ = io.WriteString(w, `{"name":"mock-es","version":{"number":"8.17.1"}}`)
+					return
+				}
+				if r.URL.Path != "/test/"+tt.path {
+					t.Errorf("request path = %q, want /test/%s", r.URL.Path, tt.path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				_, _ = io.WriteString(w, tt.response)
+			}))
+			defer server.Close()
+
+			backend, err := NewBackend(&Config{Addresses: []string{server.URL}, Index: "test"})
+			if err != nil {
+				t.Fatalf("NewBackend() error = %v", err)
+			}
+			defer func() { _ = backend.Close(t.Context()) }()
+
+			if tt.path == "_count" {
+				count, err := backend.Count(t.Context(), driver.Query{})
+				if tt.wantError {
+					if err == nil || count != 0 {
+						t.Fatalf("Count() = (%d, %v), want (0, error)", count, err)
+					}
+				} else if err != nil || count != 5 {
+					t.Fatalf("Count() = (%d, %v), want (5, nil)", count, err)
+				}
+				return
+			}
+
+			values, err := backend.Values(t.Context(), "status", driver.Query{}, 10)
+			if tt.wantError {
+				if err == nil || values != nil {
+					t.Fatalf("Values() = (%v, %v), want (nil, error)", values, err)
+				}
+			} else if err != nil || len(values) != 1 || values[0] != "alpha" {
+				t.Fatalf("Values() = (%v, %v), want ([alpha], nil)", values, err)
+			}
+		})
+	}
+}
