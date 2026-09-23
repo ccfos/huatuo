@@ -21,9 +21,30 @@ import (
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
-// iocbDirect mirrors the kernel IOCB_DIRECT flag in iocb.ki_flags;
-// captured by the BPF program into bpfFilesystemIO.Flags.
-const iocbDirect = 1 << 2
+// IOCB_DIRECT bit in iocb.ki_flags, captured by the BPF program into
+// bpfFilesystemIO.Flags. Its value is kernel-version dependent:
+//
+//	< 5.10:  1 << 2  (include/linux/fs.h v4.19:298, v5.4:311, v5.9:315)
+//	>= 5.10: 1 << 17 (include/linux/fs.h v5.10:314, v6.1:333, v6.6:334)
+//
+// v5.10 rewrote the IOCB_* flags as aliases of RWF_*: bit 2 became IOCB_SYNC
+// (= RWF_SYNC, 0x4), which buffered O_SYNC writes set, while the real
+// IOCB_DIRECT moved to bit 17.
+const (
+	iocbDirectLegacy = 1 << 2
+	iocbDirectModern = 1 << 17
+)
+
+// iocbDirectBit returns the iocb.ki_flags bit that marks direct IO for the
+// given kernel version. Testing the wrong bit inverts direct-vs-buffered
+// attribution on >= 5.10: a buffered O_SYNC write (bit 2) is mislabelled
+// direct, and a real O_DIRECT write (bit 17) is missed.
+func iocbDirectBit(major, minor int) uint32 {
+	if major > 5 || (major == 5 && minor >= 10) {
+		return iocbDirectModern
+	}
+	return iocbDirectLegacy
+}
 
 // bpfBlockLatency mirrors the per-IO latency aggregate written by the BPF
 // program; field order matches the C struct so binary.Read works.
@@ -55,9 +76,12 @@ type bpfFilesystemIO struct {
 
 type bpfScheduleDelay = abi.IotracingScheduleDelayEvent
 
-// IsDirect reports whether the IO bypassed the page cache.
-func (r *bpfFilesystemIO) IsDirect() bool {
-	return r.Ino == 0 || r.Flags&iocbDirect != 0
+// IsDirect reports whether the IO bypassed the page cache. directBit is the
+// kernel-version-specific IOCB_DIRECT bit from iocbDirectBit. The Ino == 0
+// branch covers direct IO seen on the block path, where user pages carry no
+// address_space and therefore no inode.
+func (r *bpfFilesystemIO) IsDirect(directBit uint32) bool {
+	return r.Ino == 0 || r.Flags&directBit != 0
 }
 
 // PathName reconstructs the absolute file path from the BPF dentry walk.
