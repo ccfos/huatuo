@@ -1064,15 +1064,9 @@ huatuo_bamai_sockstat_container_FRAG_memory{container_host="coredns-855c4dd65d-8
 # HELP huatuo_bamai_sockstat_container_RAW_inuse Number of RAW sockets in state inuse.
 # TYPE huatuo_bamai_sockstat_container_RAW_inuse gauge
 huatuo_bamai_sockstat_container_RAW_inuse{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_sockstat_container_TCP_alloc Number of TCP sockets in state alloc.
-# TYPE huatuo_bamai_sockstat_container_TCP_alloc gauge
-huatuo_bamai_sockstat_container_TCP_alloc{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 171
 # HELP huatuo_bamai_sockstat_container_TCP_inuse Number of TCP sockets in state inuse.
 # TYPE huatuo_bamai_sockstat_container_TCP_inuse gauge
 huatuo_bamai_sockstat_container_TCP_inuse{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1
-# HELP huatuo_bamai_sockstat_container_TCP_orphan Number of TCP sockets in state orphan.
-# TYPE huatuo_bamai_sockstat_container_TCP_orphan gauge
-huatuo_bamai_sockstat_container_TCP_orphan{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
 # HELP huatuo_bamai_sockstat_container_TCP_tw Number of TCP sockets in state tw.
 # TYPE huatuo_bamai_sockstat_container_TCP_tw gauge
 huatuo_bamai_sockstat_container_TCP_tw{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 75
@@ -1094,9 +1088,9 @@ huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
 |---|---|---|---|---|
 |sockstat_sockets_used|Total number of sockets currently in use on the system|count|Host||
 |sockstat_TCP_inuse|Number of TCP sockets in active connection states|count|Host, Container||
-|sockstat_TCP_orphan|Number of TCP sockets without an owning process|count|Host, Container||
+|sockstat_TCP_orphan|Number of TCP sockets without an owning process. The kernel counts this globally, so the value read inside a container is still the host-wide count|count|Host||
 |sockstat_TCP_tw|Number of TCP sockets currently in TIME_WAIT state|count|Host, Container||
-|sockstat_TCP_alloc|Total number of allocated TCP socket objects|count|Host, Container||
+|sockstat_TCP_alloc|Total number of allocated TCP socket objects. The kernel counts this globally, so the value read inside a container is still the host-wide count|count|Host||
 |sockstat_TCP_mem|Number of memory pages currently used by TCP sockets|count|Host||
 
 ## IO

@@ -164,9 +164,18 @@ func (c *sockstatCollector) procStatMetrics(container *pod.Container) ([]*metric
 				continue
 			}
 
-			// mem, mem_bytes are only for `Host` environment.
-			if container != nil && (pair.name == "mem" || pair.name == "mem_bytes") {
-				continue
+			// mem, mem_bytes, alloc and orphan are only for `Host` environment.
+			// The kernel maintains them as host-global counters (see
+			// sockstat_seq_show in net/ipv4/proc.c: proto_memory_allocated,
+			// tcp_sockets_allocated, tcp_orphan_count), so the value read
+			// through a container PID is still the host-wide count; exporting
+			// it per container misattributes host state and double-counts when
+			// the series are summed across containers.
+			if container != nil {
+				switch pair.name {
+				case "mem", "mem_bytes", "alloc", "orphan":
+					continue
+				}
 			}
 
 			if container != nil {
