@@ -40,6 +40,60 @@ type acpiInfo struct {
 	RawData  string `json:"raw_data"`
 }
 
+// mceInfo mirrors the JSON payload emitted for an x86 MCE event.
+type mceInfo struct {
+	MCGCap    uint64 `json:"mcg_cpu_cap"`
+	MCGStatus uint64 `json:"mcg_msr_status"`
+	Status    uint64 `json:"banks_msr_status"`
+	Addr      uint64 `json:"banks_msr_addr"`
+	Misc      uint64 `json:"banks_msr_misc"`
+	Synd      uint64 `json:"mca_synd_msr"`
+	IPID      uint64 `json:"mca_ipid_msr"`
+	IP        uint64 `json:"instr_pointer"`
+	TSC       uint64 `json:"tsc_timestamp"`
+	WallTime  uint64 `json:"walltime"`
+	CPU       uint32 `json:"cpu"`
+	CPUID     uint32 `json:"cpuid"`
+	APICID    uint32 `json:"apicid"`
+	SocketID  uint32 `json:"socketid"`
+	CS        uint8  `json:"code_seg"`
+	Bank      uint8  `json:"bank"`
+	CPUVendor uint8  `json:"cpuvendor"`
+}
+
+// edacInfo mirrors the JSON payload emitted for an EDAC mc_event.
+type edacInfo struct {
+	ErrCount uint16 `json:"err_count"`
+	ErrType  string `json:"err_type"`
+	Msg      string `json:"err_msg"`
+	Label    string `json:"label"`
+	MCIndex  uint8  `json:"mc_index"`
+	TopLayer int8   `json:"top_layer"`
+	MidLayer int8   `json:"mid_layer"`
+	LowLayer int8   `json:"low_layer"`
+	Addr     uint64 `json:"addr"`
+	Grain    uint64 `json:"grain"`
+	Syndrome uint64 `json:"syndrome"`
+	Driver   string `json:"driver"`
+}
+
+// aerInfo mirrors the JSON payload emitted for a PCIe AER event.
+type aerInfo struct {
+	DevName   string `json:"dev_name"`
+	ErrType   string `json:"err_type"`
+	ErrReason string `json:"err_reason"`
+	TLPHeader string `json:"tlp_header"`
+}
+
+// armInfo mirrors the JSON payload emitted for an ARM GHES processor event.
+type armInfo struct {
+	MPIDR         string `json:"mpidr"`
+	MIDR          string `json:"midr"`
+	RunningState  string `json:"running_state"`
+	PSCIState     string `json:"psci_state"`
+	AffinityLevel string `json:"affinity_level"`
+}
+
 // rasEventWithInfo builds a rasEvent whose Info field carries the raw
 // tracepoint record, with a valid kernel timestamp so the builders under test
 // can convert it.
@@ -81,6 +135,48 @@ func acpiEventWithDyn(t *testing.T, sev uint8, fruTxtOffset, recordLen, bufOffse
 	return rasEventWithInfo(t, HW_ERR_ACPI_GHES, info)
 }
 
+// edacEventWithDyn builds an HW_ERR_EDAC record. The fixed portion is 60
+// bytes: Pad(8) | err_type(4) | msg_offset(4) | label_offset(4) | err_count(2)
+// | mc_index(1) | layers(3) | reserve(6) | addr(8) | grain(1) | reserve(7) |
+// syndrome(8) | driver_offset(4). dyn is the captured dynamic area; it cannot
+// exceed the DETAIL_INFO_SIZE_EDAC-byte window the BPF probe copies.
+func edacEventWithDyn(t *testing.T, errType, msgOffset, labelOffset, driverOffset uint32, dyn []byte) *rasEvent {
+	t.Helper()
+
+	if len(dyn) > DETAIL_INFO_SIZE_EDAC {
+		t.Fatalf("dynamic area is %d bytes, the probe captures only %d", len(dyn), DETAIL_INFO_SIZE_EDAC)
+	}
+
+	info := make([]byte, RAS_PERFEVENT_INFO_SIZE)
+	binary.LittleEndian.PutUint32(info[8:], errType)
+	binary.LittleEndian.PutUint32(info[12:], msgOffset)
+	binary.LittleEndian.PutUint32(info[16:], labelOffset)
+	binary.LittleEndian.PutUint32(info[56:], driverOffset)
+	copy(info[60:], dyn)
+
+	return rasEventWithInfo(t, HW_ERR_EDAC, info)
+}
+
+// aerEventWithDyn builds an HW_ERR_PCIE_AER record. The fixed portion is 36
+// bytes: Pad(8) | dev_name_offset(4) | status(4) | severity(1) |
+// tlp_header_valid(1) | pattern(2) | tlp_header(16). dyn is the captured
+// dynamic area; it cannot exceed the DETAIL_INFO_SIZE_AER-byte window.
+func aerEventWithDyn(t *testing.T, devNameOffset, status uint32, severity uint8, dyn []byte) *rasEvent {
+	t.Helper()
+
+	if len(dyn) > DETAIL_INFO_SIZE_AER {
+		t.Fatalf("dynamic area is %d bytes, the probe captures only %d", len(dyn), DETAIL_INFO_SIZE_AER)
+	}
+
+	info := make([]byte, RAS_PERFEVENT_INFO_SIZE)
+	binary.LittleEndian.PutUint32(info[8:], devNameOffset)
+	binary.LittleEndian.PutUint32(info[12:], status)
+	info[16] = severity
+	copy(info[36:], dyn)
+
+	return rasEventWithInfo(t, HW_ERR_PCIE_AER, info)
+}
+
 // decodeAcpiInfo unmarshals the structured Info payload of an ACPI event.
 func decodeAcpiInfo(t *testing.T, data *RasTracingData) acpiInfo {
 	t.Helper()
@@ -88,6 +184,39 @@ func decodeAcpiInfo(t *testing.T, data *RasTracingData) acpiInfo {
 	var info acpiInfo
 	if err := json.Unmarshal([]byte(data.Info), &info); err != nil {
 		t.Fatalf("decode ACPI info %q: %v", data.Info, err)
+	}
+	return info
+}
+
+// decodeEdacInfo unmarshals the structured Info payload of an EDAC event.
+func decodeEdacInfo(t *testing.T, data *RasTracingData) edacInfo {
+	t.Helper()
+
+	var info edacInfo
+	if err := json.Unmarshal([]byte(data.Info), &info); err != nil {
+		t.Fatalf("decode EDAC info %q: %v", data.Info, err)
+	}
+	return info
+}
+
+// decodeAerInfo unmarshals the structured Info payload of a PCIe AER event.
+func decodeAerInfo(t *testing.T, data *RasTracingData) aerInfo {
+	t.Helper()
+
+	var info aerInfo
+	if err := json.Unmarshal([]byte(data.Info), &info); err != nil {
+		t.Fatalf("decode AER info %q: %v", data.Info, err)
+	}
+	return info
+}
+
+// decodeArmInfo unmarshals the structured Info payload of an ARM GHES event.
+func decodeArmInfo(t *testing.T, data *RasTracingData) armInfo {
+	t.Helper()
+
+	var info armInfo
+	if err := json.Unmarshal([]byte(data.Info), &info); err != nil {
+		t.Fatalf("decode ARM info %q: %v", data.Info, err)
 	}
 	return info
 }
@@ -167,6 +296,53 @@ func TestCstringClampsOffset(t *testing.T) {
 	}
 }
 
+// TestRasMceTracerDataDecodesHostileStatus locks the MCE error-class mapping
+// for hostile status bitfields. MCE records carry no dynamic elements, so the
+// only kernel-supplied value that influences decoding is the MCi_STATUS
+// bitfield: bit 44 (deferred) and bit 61 (uncorrectable) decide the reported
+// class, and the all-ones record must decode as the deferred class instead of
+// producing a bogus value.
+func TestRasMceTracerDataDecodesHostileStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		fill     byte
+		wantType string
+	}{
+		{name: "zeroed record", fill: 0x00, wantType: ErrTypeCorrected},
+		{name: "all ones record", fill: 0xff, wantType: ErrTypeUncorrectedDeferred},
+	}
+
+	for i := range tests {
+		tt := tests[i]
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			info := make([]byte, RAS_PERFEVENT_INFO_SIZE)
+			for i := range info {
+				info[i] = tt.fill
+			}
+
+			got, err := buildRasMceTracerData(rasEventWithInfo(t, HW_ERR_MCE, info))
+			if err != nil {
+				t.Fatalf("buildRasMceTracerData() error = %v", err)
+			}
+			if got.ErrType != tt.wantType {
+				t.Errorf("type = %q, want %q", got.ErrType, tt.wantType)
+			}
+
+			var payload mceInfo
+			if err := json.Unmarshal([]byte(got.Info), &payload); err != nil {
+				t.Fatalf("decode MCE info %q: %v", got.Info, err)
+			}
+			if tt.fill == 0xff && payload.Status != ^uint64(0) {
+				t.Errorf("banks_msr_status = %#x, want all ones", payload.Status)
+			}
+		})
+	}
+}
+
 func TestRasAcpiTracerDataTruncatesOversizedDynamicWindow(t *testing.T) {
 	t.Parallel()
 
@@ -227,6 +403,115 @@ func TestRasAcpiTracerDataTruncatesOversizedDynamicWindow(t *testing.T) {
 	}
 }
 
+// TestRasEdacTracerDataClampsDescriptors drives the EDAC builder with
+// kernel-supplied __data_loc descriptors pointing before, at and past the
+// captured window. The three descriptors (error message, DIMM label, driver
+// detail) all resolve through cstring(), so an out-of-window offset must
+// decode to an empty string instead of panicking the RAS event loop.
+func TestRasEdacTracerDataClampsDescriptors(t *testing.T) {
+	t.Parallel()
+
+	// The dynamic area starts after the 60-byte fixed portion. Layout:
+	// "mem-row-hammered\x00" (17) | "CPU0_DIMM_A1\x00" (13) |
+	// "sb_edac\x00" (8) | two junk bytes.
+	const edacBase = uint32(60)
+	dyn := append(append(
+		append([]byte("mem-row-hammered\x00"), []byte("CPU0_DIMM_A1\x00")...),
+		[]byte("sb_edac\x00")...), 0xa1, 0xb2)
+
+	tests := []struct {
+		name         string
+		errType      uint32
+		msgOffset    uint32
+		labelOffset  uint32
+		driverOffset uint32
+		wantType     string
+		wantMsg      string
+		wantLabel    string
+		wantDriver   string
+	}{
+		{name: "well formed", errType: 0x04, msgOffset: edacBase, labelOffset: edacBase + 17, driverOffset: edacBase + 30, wantType: ErrTypeInfo, wantMsg: "mem-row-hammered", wantLabel: "CPU0_DIMM_A1", wantDriver: "sb_edac"},
+		{name: "offsets past window", errType: 0x04, msgOffset: 0xffff, labelOffset: 0xffff, driverOffset: 0xffff, wantType: ErrTypeInfo, wantMsg: "", wantLabel: "", wantDriver: ""},
+		{name: "offsets below base", errType: 0x04, msgOffset: 8, labelOffset: 8, driverOffset: 8, wantType: ErrTypeInfo, wantMsg: "", wantLabel: "", wantDriver: ""},
+		{name: "offsets at end of window", errType: 0x04, msgOffset: edacBase + uint32(len(dyn)), labelOffset: edacBase + uint32(len(dyn)), driverOffset: edacBase + uint32(len(dyn)), wantType: ErrTypeInfo, wantMsg: "", wantLabel: "", wantDriver: ""},
+		{name: "driver offset past window", errType: 0x04, msgOffset: edacBase, labelOffset: edacBase + 17, driverOffset: 0xffff, wantType: ErrTypeInfo, wantMsg: "mem-row-hammered", wantLabel: "CPU0_DIMM_A1", wantDriver: ""},
+		{name: "unknown err type", errType: 0xff, msgOffset: edacBase, labelOffset: edacBase + 17, driverOffset: edacBase + 30, wantType: ErrTypeUnknown, wantMsg: "mem-row-hammered", wantLabel: "CPU0_DIMM_A1", wantDriver: "sb_edac"},
+	}
+
+	for i := range tests {
+		tt := tests[i]
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := buildRasEdacTracerData(edacEventWithDyn(t, tt.errType, tt.msgOffset, tt.labelOffset, tt.driverOffset, dyn))
+			if err != nil {
+				t.Fatalf("buildRasEdacTracerData() error = %v", err)
+			}
+			if got.ErrType != tt.wantType {
+				t.Errorf("type = %q, want %q", got.ErrType, tt.wantType)
+			}
+
+			info := decodeEdacInfo(t, got)
+			if info.Msg != tt.wantMsg {
+				t.Errorf("err_msg = %q, want %q", info.Msg, tt.wantMsg)
+			}
+			if info.Label != tt.wantLabel {
+				t.Errorf("label = %q, want %q", info.Label, tt.wantLabel)
+			}
+			if info.Driver != tt.wantDriver {
+				t.Errorf("driver = %q, want %q", info.Driver, tt.wantDriver)
+			}
+		})
+	}
+}
+
+// TestRasAerTracerDataClampsDevNameOffset drives the PCIe AER builder with
+// kernel-supplied dev_name offsets pointing before, at and past the captured
+// window. DevNameOffset is the only dynamic descriptor of the record, so an
+// out-of-window offset must decode to an empty device name instead of
+// panicking the RAS event loop.
+func TestRasAerTracerDataClampsDevNameOffset(t *testing.T) {
+	t.Parallel()
+
+	// The dynamic area starts after the 36-byte fixed portion.
+	const aerBase = uint32(36)
+	dyn := []byte("0000:03:00.0\x00")
+
+	tests := []struct {
+		name        string
+		devOffset   uint32
+		severity    uint8
+		wantType    string
+		wantDevName string
+	}{
+		{name: "well formed", devOffset: aerBase, severity: 2, wantType: ErrTypeCorrected, wantDevName: "0000:03:00.0"},
+		{name: "offset past window", devOffset: 0xffff, severity: 2, wantType: ErrTypeCorrected, wantDevName: ""},
+		{name: "offset below base", devOffset: 8, severity: 2, wantType: ErrTypeCorrected, wantDevName: ""},
+		{name: "offset at end of window", devOffset: aerBase + uint32(len(dyn)), severity: 2, wantType: ErrTypeCorrected, wantDevName: ""},
+		{name: "unknown severity", devOffset: aerBase, severity: 0xff, wantType: ErrTypeUnknown, wantDevName: "0000:03:00.0"},
+	}
+
+	for i := range tests {
+		tt := tests[i]
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := buildRasAerTracerData(aerEventWithDyn(t, tt.devOffset, 0, tt.severity, dyn))
+			if err != nil {
+				t.Fatalf("buildRasAerTracerData() error = %v", err)
+			}
+			if got.ErrType != tt.wantType {
+				t.Errorf("type = %q, want %q", got.ErrType, tt.wantType)
+			}
+
+			info := decodeAerInfo(t, got)
+			if info.DevName != tt.wantDevName {
+				t.Errorf("dev_name = %q, want %q", info.DevName, tt.wantDevName)
+			}
+		})
+	}
+}
+
 // TestDispatchRasTracerDataToleratesHostileRecords drives every hardware error
 // builder with records whose offsets and lengths may point anywhere: an
 // all-zero record (the probe zeroes fields a tracepoint does not fill) and an
@@ -272,5 +557,53 @@ func TestDispatchRasTracerDataRejectsUnknownType(t *testing.T) {
 	info := make([]byte, RAS_PERFEVENT_INFO_SIZE)
 	if _, err := dispatchRasTracerData(rasEventWithInfo(t, maxNumHWErrTypes, info)); err == nil {
 		t.Fatal("unsupported hardware error type accepted")
+	}
+}
+
+// TestRasArmGhesTracerDataDecodesHostileFields locks the decoding of ARM GHES
+// optional CPER fields for hostile inputs. ARM records are a fixed layout
+// without dynamic elements; the kernel fills fields it could not capture with
+// all-ones, which must render as N/A instead of a bogus value. The zeroed
+// record pins the stopped-state rendering.
+func TestRasArmGhesTracerDataDecodesHostileFields(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		fill              byte
+		wantRunningState  string
+		wantPSCIState     string
+		wantAffinityLevel string
+	}{
+		{name: "zeroed record", fill: 0x00, wantRunningState: "stopped", wantPSCIState: "0x0", wantAffinityLevel: "0"},
+		{name: "all ones record", fill: 0xff, wantRunningState: "N/A", wantPSCIState: "N/A", wantAffinityLevel: "N/A"},
+	}
+
+	for i := range tests {
+		tt := tests[i]
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			info := make([]byte, RAS_PERFEVENT_INFO_SIZE)
+			for i := range info {
+				info[i] = tt.fill
+			}
+
+			got, err := buildRasArmGhesTracerData(rasEventWithInfo(t, HW_ERR_ARM_GHES, info))
+			if err != nil {
+				t.Fatalf("buildRasArmGhesTracerData() error = %v", err)
+			}
+
+			payload := decodeArmInfo(t, got)
+			if payload.RunningState != tt.wantRunningState {
+				t.Errorf("running_state = %q, want %q", payload.RunningState, tt.wantRunningState)
+			}
+			if payload.PSCIState != tt.wantPSCIState {
+				t.Errorf("psci_state = %q, want %q", payload.PSCIState, tt.wantPSCIState)
+			}
+			if payload.AffinityLevel != tt.wantAffinityLevel {
+				t.Errorf("affinity_level = %q, want %q", payload.AffinityLevel, tt.wantAffinityLevel)
+			}
+		})
 	}
 }
