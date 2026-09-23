@@ -733,7 +733,41 @@ missed before monitoring is restored.
 
 See section 14 for deployment limitations and output lookup.
 
-#### 7.7 Known Issue Filtering (IssuesList)
+#### 7.7 IRQTracing AutoTracing
+
+This module detects abnormal irq+softirq utilization on one CPU and invokes
+`irqtracing` to collect softirq source and victim stacks.
+
+```bash
+[AutoTracing.IRQTracing]
+    Interval = 2
+    RunTracingToolTimeout = 3
+    IntervalTracing = 300
+    MaxEventsPerSecond = 1000
+    MinCPUs = 3
+    DeltaUsageThreshold = 20
+    RelativeIncreaseThreshold = 30
+    SustainedIntervals = 10
+    UsageThreshold = 80
+```
+
+- **Interval**: Sampling interval for per-CPU irq+softirq utilization from
+  `/proc/stat`. Default: 2s.
+- **RunTracingToolTimeout**: Duration of one `irqtracing` collection. Default:
+  3s.
+- **IntervalTracing**: Minimum interval between triggers. Default: 300s.
+- **MaxEventsPerSecond**: Combined source and victim stack-sample limit per
+  second on the traced CPU. Default: 1000. The daemon divides it as evenly as
+  possible between `softirq_raise` and `softirq_entry`; the default is 500
+  events/s per stream. The value must be between 2 and 8589934590.
+- **MinCPUs**, **DeltaUsageThreshold**, and **RelativeIncreaseThreshold**:
+  Configure the multi-CPU irq+softirq spike rule. The two thresholds are the
+  increase in percentage points and the increase relative to the previous
+  sample, respectively.
+- **SustainedIntervals** and **UsageThreshold**: Configure the consecutive
+  sample count and utilization threshold for the single-CPU sustained rule.
+
+#### 7.8 Known Issue Filtering (IssuesList)
 
 ```bash
 # Autotracing configuration.

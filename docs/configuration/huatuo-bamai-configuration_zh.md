@@ -723,7 +723,37 @@ InitPid 读取实际 memory cgroup 路径并保存；路径暂不可用或通知
 
 部署限制和结果查询见第 14 节。
 
-#### 7.7 已知问题过滤（IssuesList）
+#### 7.7 IRQTracing 自动追踪
+
+该模块检测单个 CPU 的 irq+softirq 利用率异常，并调用 `irqtracing` 采集
+softirq source 和 victim 调用栈。
+
+```bash
+[AutoTracing.IRQTracing]
+    Interval = 2
+    RunTracingToolTimeout = 3
+    IntervalTracing = 300
+    MaxEventsPerSecond = 1000
+    MinCPUs = 3
+    DeltaUsageThreshold = 20
+    RelativeIncreaseThreshold = 30
+    SustainedIntervals = 10
+    UsageThreshold = 80
+```
+
+- **Interval**：`/proc/stat` 中每 CPU irq+softirq 利用率的采样间隔，默认 2s。
+- **RunTracingToolTimeout**：单次 `irqtracing` 采集时长，默认 3s。
+- **IntervalTracing**：两次触发之间的最小间隔，默认 300s。
+- **MaxEventsPerSecond**：在被跟踪 CPU 上每秒采集的 source 和 victim 栈
+  样本总上限，默认 1000。守护进程将额度尽量均分给 `softirq_raise` 和
+  `softirq_entry`；默认每条流 500/s。该值必须在 2 到 8589934590 之间。
+- **MinCPUs**、**DeltaUsageThreshold** 和 **RelativeIncreaseThreshold**：
+  控制多 CPU irq+softirq 利用率突增规则；两个阈值分别表示利用率增加的
+  百分点和相对上一采样值的增长百分比。
+- **SustainedIntervals** 和 **UsageThreshold**：控制单 CPU
+  irq+softirq 持续高利用率规则的连续采样次数和利用率阈值。
+
+#### 7.8 已知问题过滤（IssuesList）
 
 ```bash
 # Autotracing configuration.

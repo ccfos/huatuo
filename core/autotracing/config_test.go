@@ -83,7 +83,7 @@ func TestConfigValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{}
+			cfg := &Config{IRQTracing: validIRQTracingConfig()}
 			cfg.MemoryThresholdSnapshot.ThresholdPercent = 90
 			cfg.MemoryThresholdSnapshot.IntervalTracing = 300
 			cfg.MemoryThresholdSnapshot.RunTracingToolTimeout = 2

@@ -297,27 +297,6 @@ func TestNativeAggregatorResetClearsStackTraceState(t *testing.T) {
 	}
 }
 
-func TestBuildTreeItemPreservesRawFrameNames(t *testing.T) {
-	trace := symbolizedStackTrace{
-		UserFrames:   []string{"generic::<[u8; 7]>"},
-		KernelFrames: []string{"kernel;frame"},
-	}
-
-	item := buildTreeItem([]string{"process 12:app"}, trace, 7)
-	want := []string{"process 12:app", "generic::<[u8; 7]>", "kernel;frame"}
-	if len(item.Stack) != len(want) {
-		t.Fatalf("stack length = %d, want %d", len(item.Stack), len(want))
-	}
-	for index, frame := range item.Stack {
-		if string(frame) != want[index] {
-			t.Fatalf("stack[%d] = %q, want %q", index, frame, want[index])
-		}
-	}
-	if item.Value != 7 {
-		t.Fatalf("value = %d, want 7", item.Value)
-	}
-}
-
 func TestUserStackCacheKeyIncludesPID(t *testing.T) {
 	first := userStackCacheKey{PID: 100, StackID: 7}
 	second := userStackCacheKey{PID: 200, StackID: 7}

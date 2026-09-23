@@ -50,6 +50,24 @@ type MemBurstConfig struct {
 	DumpProcessMaxNum   int `default:"10"`
 }
 
+// IRQTracingConfig holds irq spike tracing configuration.
+type IRQTracingConfig struct {
+	Interval              int64  `default:"2"`
+	RunTracingToolTimeout int64  `default:"3"`
+	IntervalTracing       int64  `default:"300"`
+	MaxEventsPerSecond    uint64 `default:"1000"`
+	// Spike rule: fires when >= MinCPUs cpus simultaneously rise by
+	// >= DeltaUsageThreshold percentage points and >=
+	// RelativeIncreaseThreshold% relative to the previous sample.
+	MinCPUs                   int   `default:"3"`
+	DeltaUsageThreshold       int64 `default:"20"`
+	RelativeIncreaseThreshold int64 `default:"30"`
+	// Sustained rule: fires when a single cpu's irq+softirq util stays
+	// >= UsageThreshold for SustainedIntervals consecutive samples.
+	SustainedIntervals int64 `default:"10"`
+	UsageThreshold     int64 `default:"80"`
+}
+
 // Config holds autotracing configuration.
 type Config struct {
 	CPUIdle struct {
@@ -90,6 +108,8 @@ type Config struct {
 		MaxFilesPerProcDump   int    `default:"5"`
 	}
 
+	IRQTracing IRQTracingConfig
+
 	MemoryBurst MemBurstConfig
 
 	MemoryThresholdSnapshot struct {
@@ -126,6 +146,9 @@ func (c *Config) Validate() error {
 	}
 	if err := validateMemoryThresholdSnapshotConfig(c); err != nil {
 		return fmt.Errorf("validating memory threshold snapshot: %w", err)
+	}
+	if err := validateIRQTracingConfig(c.IRQTracing); err != nil {
+		return fmt.Errorf("irq tracing: %w", err)
 	}
 	return nil
 }

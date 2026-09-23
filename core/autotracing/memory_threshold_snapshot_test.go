@@ -68,7 +68,7 @@ func TestNewMemoryThresholdSnapshot(t *testing.T) {
 
 func TestMemoryThresholdSnapshotBlacklist(t *testing.T) {
 	// Disable all autotracers so this test only exercises registration.
-	blacklist := []string{"cpuidle", "cpusys", "dload", "iotracing", "memburst", "memory_threshold_snapshot"}
+	blacklist := []string{"cpuidle", "cpusys", "dload", "iotracing", "irqtracing", "memburst", "memory_threshold_snapshot"}
 	registered, err := tracing.NewRegister(blacklist)
 	if err != nil {
 		t.Fatalf("initialize blacklisted autotracers: %v", err)
