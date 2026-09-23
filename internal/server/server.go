@@ -99,13 +99,14 @@ func (e *serveExecution) wait(ctx context.Context) error {
 
 // Server is an HTTP server instance.
 type Server struct {
-	engine          *httpGin.Engine
-	promRegistry    *prometheus.Registry
-	rootGroup       *routerGroup
-	mu              sync.Mutex
-	state           serverState
-	activeExecution *serveExecution
-	config          Config
+	engine             *httpGin.Engine
+	promRegistry       *prometheus.Registry
+	rootGroup          *routerGroup
+	mu                 sync.Mutex
+	state              serverState
+	activeExecution    *serveExecution
+	completedExecution *serveExecution
+	config             Config
 }
 
 // Start binds addr before returning and serves requests in the background.
@@ -142,6 +143,7 @@ func (s *Server) Start(addr string) error {
 	}
 	s.state = serverStateRunning
 	s.activeExecution = execution
+	s.completedExecution = nil
 	s.mu.Unlock()
 
 	go func() {
@@ -149,8 +151,15 @@ func (s *Server) Start(addr string) error {
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
+		s.mu.Lock()
 		execution.result = err
+		if s.state == serverStateRunning && s.activeExecution == execution {
+			s.state = serverStateStopped
+			s.activeExecution = nil
+			s.completedExecution = execution
+		}
 		close(execution.done)
+		s.mu.Unlock()
 	}()
 
 	return nil
@@ -211,16 +220,22 @@ func (s *Server) finishExecution(execution *serveExecution) {
 func (s *Server) Done() <-chan struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.activeExecution == nil {
-		return nil
+	if s.activeExecution != nil {
+		return s.activeExecution.done
 	}
-	return s.activeExecution.done
+	if s.completedExecution != nil {
+		return s.completedExecution.done
+	}
+	return nil
 }
 
 // Wait returns the serving result or the context error.
 func (s *Server) Wait(ctx context.Context) error {
 	s.mu.Lock()
 	execution := s.activeExecution
+	if execution == nil {
+		execution = s.completedExecution
+	}
 	s.mu.Unlock()
 
 	if execution == nil {

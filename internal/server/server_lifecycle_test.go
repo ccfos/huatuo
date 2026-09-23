@@ -57,6 +57,46 @@ func TestServerShutdownReleasesListener(t *testing.T) {
 	_ = listener.Close()
 }
 
+func TestServerRestartsAfterUnexpectedListenerClose(t *testing.T) {
+	srv := NewServer(nil)
+	if err := srv.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+
+	srv.mu.Lock()
+	listener := srv.activeExecution.listener
+	srv.mu.Unlock()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("listener.Close() error = %v", err)
+	}
+	if err := srv.Wait(t.Context()); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Wait() error = %v, want %v", err, net.ErrClosed)
+	}
+	if done := srv.Done(); done == nil {
+		t.Fatal("Done() = nil after listener failure")
+	} else {
+		select {
+		case <-done:
+		default:
+			t.Fatal("Done() is not closed after listener failure")
+		}
+	}
+
+	srv.mu.Lock()
+	state, execution := srv.state, srv.activeExecution
+	srv.mu.Unlock()
+	if state != serverStateStopped || execution != nil {
+		t.Fatalf("state = %v, activeExecution = %p, want stopped and nil", state, execution)
+	}
+	if err := srv.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("restart after listener failure error = %v", err)
+	}
+	if err := srv.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown() after restart error = %v", err)
+	}
+}
+
 func TestServerServesPProfOnAPIListener(t *testing.T) {
 	srv := NewServer(&Config{EnablePProf: true})
 	if err := srv.Start("127.0.0.1:0"); err != nil {
