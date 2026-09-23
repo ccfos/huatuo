@@ -22,7 +22,7 @@ import (
 // kernelVersion returns the running kernel's major and minor version, or
 // (0, 0) if it cannot be determined. (0, 0) resolves to the legacy
 // IOCB_DIRECT bit (iocbDirectBit), matching the repo's default 4.18 target,
-// so a failure to parse the version falls back to pre-fix behaviour rather
+// so a failure to parse the version falls back to pre-fix behavior rather
 // than mislabelling IO on an unknown kernel.
 func kernelVersion() (major, minor int) {
 	var uts syscall.Utsname
