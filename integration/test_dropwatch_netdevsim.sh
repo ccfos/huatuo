@@ -110,7 +110,7 @@ hardware_event_ready() {
 	jq -e -s --arg trap "${TRAP_NAME}" --arg group "${TRAP_GROUP}" --arg dev "${NETDEV}" '
     any(.[];
       .drop_source == "hardware" and
-      (.ktime_ns | type == "number") and .ktime_ns > 0 and
+      (.kernel_observed_timestamp | type == "string") and (.kernel_observed_timestamp | length > 0) and
       .drop_reason == $trap and
       .drop_reason_group == $group and
       .drop_location == null and

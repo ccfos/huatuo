@@ -120,7 +120,7 @@ func TestFormatHardwareEvent(t *testing.T) {
 	}
 }
 
-func TestJSONWriterPreservesKernelTime(t *testing.T) {
+func TestJSONWriterOmitsKernelMonotonicTime(t *testing.T) {
 	const ktimeNS uint64 = 12_345_678_901_234_567
 	for _, source := range []abi.DropwatchDropSource{
 		abi.DropwatchDropSourceSoftware,
@@ -138,14 +138,15 @@ func TestJSONWriterPreservesKernelTime(t *testing.T) {
 			if err := (&jsonWriter{w: &output}).Write(event); err != nil {
 				t.Fatal(err)
 			}
-			var got struct {
-				KtimeNS uint64 `json:"ktime_ns"`
-			}
-			if err := json.Unmarshal(output.Bytes(), &got); err != nil {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(output.Bytes(), &fields); err != nil {
 				t.Fatal(err)
 			}
-			if got.KtimeNS != ktimeNS {
-				t.Fatalf("ktime_ns = %d, want %d", got.KtimeNS, ktimeNS)
+			if _, exists := fields["ktime_ns"]; exists {
+				t.Fatal("raw monotonic ktime_ns must not be exposed in JSON output")
+			}
+			if _, exists := fields["kernel_observed_timestamp"]; !exists {
+				t.Fatal("kernel_observed_timestamp must be emitted as the UTC equivalent")
 			}
 		})
 	}
