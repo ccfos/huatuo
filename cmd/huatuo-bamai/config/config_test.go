@@ -15,6 +15,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -395,6 +396,13 @@ func TestConfigValidate(t *testing.T) {
 			},
 			wantErr: "validating event tracing config: validating issues list",
 		},
+		{
+			name: "invalid metric collector regex",
+			mutate: func(cfg *Config) {
+				cfg.MetricCollector.Netstat.Included = "["
+			},
+			wantErr: `validating metric collector config: invalid pattern "[" for Netstat.Included`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -418,6 +426,18 @@ IssuesList = [["broken", "["]]
 	if err == nil || !strings.Contains(err.Error(),
 		`rule 0 "broken" has invalid regular expression "["`) {
 		t.Fatalf("Load() error = %v, want actionable expression error", err)
+	}
+}
+
+func TestLoadRejectsInvalidMetricCollectorRegex(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[MetricCollector.Netstat]
+Included = "["
+`)
+	err := Load(path)
+	if err == nil || !strings.Contains(err.Error(),
+		`invalid pattern "[" for Netstat.Included`) {
+		t.Fatalf("Load() error = %v, want actionable pattern error", err)
 	}
 }
 
@@ -546,6 +566,40 @@ func TestUpdateRollsBackInvalidBatch(t *testing.T) {
 	}
 	if Get() != before {
 		t.Fatal("Update() published a partial config")
+	}
+}
+
+func TestUpdateAndSyncRejectsInvalidMetricCollectorRegex(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[MetricCollector.Netstat]
+Included = "^Tcp_"
+`)
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config file: %v", err)
+	}
+
+	err = UpdateAndSync(map[string]any{
+		"MetricCollector.Netstat.Excluded":      "^TcpExt_",
+		"MetricCollector.MemoryEvents.Included": "[",
+	})
+	if !errors.Is(err, ErrInvalidUpdate) ||
+		!strings.Contains(err.Error(), `invalid pattern "[" for MemoryEvents.Included`) {
+		t.Fatalf("UpdateAndSync() error = %v, want ErrInvalidUpdate naming the field", err)
+	}
+
+	if got := Get().MetricCollector.Netstat.Excluded; got != "" {
+		t.Errorf("rejected update changed the snapshot: Netstat.Excluded = %q, want empty", got)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("re-read config file: %v", err)
+	}
+	if !bytes.Equal(original, updated) {
+		t.Error("rejected update rewrote the config file")
 	}
 }
 
