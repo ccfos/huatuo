@@ -117,12 +117,14 @@ func validateFlags(c *cli.Context) error {
 // filter map is a separate return because it crosses the BPF ABI; keeping
 // it out of ioConfig avoids accidental mutation by the data layer.
 func loadConfig(c *cli.Context) (ioConfig, map[string]any, error) {
+	major, minor := kernelVersion()
 	cfg := ioConfig{
 		maxStack:           c.Uint64(cliFlagMaxStack),
 		maxProcess:         c.Uint64(cliFlagMaxProcess),
 		maxFilesPerProcess: c.Uint64(cliFlagMaxFilesPerPid),
 		scheduleThreshold:  c.Uint64(cliFlagSchedThreshold),
 		durationSecond:     c.Uint64(cliFlagDuration),
+		iocbDirectBit:      iocbDirectBit(major, minor),
 	}
 
 	if cfg.durationSecond == 0 {
