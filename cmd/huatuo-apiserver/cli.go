@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,8 +135,9 @@ func configureRuntime(opts *Options) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	opts.Config = cfg
-	if dsn := cfg.Jobs.StoreDSN; !filepath.IsAbs(dsn) && !strings.HasPrefix(dsn, "file:") {
-		cfg.Jobs.StoreDSN = filepath.Join(opts.ConfigDir, dsn)
+	cfg.Jobs.StoreDSN, err = resolveJobStoreDSN(opts.ConfigDir, cfg.Jobs.StoreDSN)
+	if err != nil {
+		return err
 	}
 
 	switch {
@@ -149,4 +151,38 @@ func configureRuntime(opts *Options) error {
 	}
 
 	return nil
+}
+
+func resolveJobStoreDSN(configDir, dsn string) (string, error) {
+	if !strings.HasPrefix(dsn, "file:") {
+		if filepath.IsAbs(dsn) {
+			return dsn, nil
+		}
+		return filepath.Join(configDir, dsn), nil
+	}
+
+	uri, err := url.Parse(dsn)
+	if err != nil {
+		return "", fmt.Errorf("parse job store URI: %w", err)
+	}
+	if uri.Opaque == "" || uri.Opaque == ":memory:" || uri.Query().Get("mode") == "memory" {
+		return dsn, nil
+	}
+	path, err := url.PathUnescape(uri.Opaque)
+	if err != nil {
+		return "", fmt.Errorf("decode job store URI path: %w", err)
+	}
+	if filepath.IsAbs(filepath.FromSlash(path)) {
+		return dsn, nil
+	}
+	absolutePath, err := filepath.Abs(filepath.Join(configDir, filepath.FromSlash(path)))
+	if err != nil {
+		return "", fmt.Errorf("resolve job store URI path: %w", err)
+	}
+	uri.Opaque = ""
+	uri.Path = filepath.ToSlash(absolutePath)
+	if volume := filepath.VolumeName(absolutePath); len(volume) == 2 && volume[1] == ':' {
+		uri.Path = "/" + uri.Path
+	}
+	return uri.String(), nil
 }

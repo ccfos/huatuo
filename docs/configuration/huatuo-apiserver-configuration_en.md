@@ -142,7 +142,8 @@ and are not user configurable.
 ```
 
 `StoreDSN` is the SQLite data source for durable job state. Relative paths are
-resolved from the configuration directory.
+resolved from the configuration directory. Relative `file:` URIs, such as
+`file:jobs.db?mode=rwc`, use the same base; absolute and in-memory URIs do not.
 
 Profiling and tracing use the same quota model but retain independent values.
 Their resource cost and expected concurrency differ, so a shared limit would
