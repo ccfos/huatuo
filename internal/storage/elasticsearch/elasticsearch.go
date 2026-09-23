@@ -361,6 +361,9 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 		return 0, fmt.Errorf("elasticsearch backend count %s: decode: %w", s.index, err)
 	}
+	if payload.Shards_.Failed > 0 {
+		return 0, fmt.Errorf("elasticsearch backend count %s failed on %d shards", s.index, payload.Shards_.Failed)
+	}
 	return payload.Count, nil
 }
 
@@ -387,6 +390,12 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	var payload valuesResponse
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: decode: %w", s.index, field, err)
+	}
+	if payload.TimedOut {
+		return nil, fmt.Errorf("elasticsearch backend terms %s/%s timed out", s.index, field)
+	}
+	if payload.Shards.Failed > 0 {
+		return nil, fmt.Errorf("elasticsearch backend terms %s/%s failed on %d shards", s.index, field, payload.Shards.Failed)
 	}
 	result := make([]string, 0, len(payload.Aggregations.Terms.Buckets))
 	for _, bucket := range payload.Aggregations.Terms.Buckets {
