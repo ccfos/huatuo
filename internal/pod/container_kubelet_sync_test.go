@@ -374,6 +374,65 @@ func TestKubeletResponseLimitCoversDenseNodeStressProfiles(t *testing.T) {
 	}
 }
 
+func TestKubeletSyncContainersKeepsRunningContainerInMixedPod(t *testing.T) {
+	const (
+		runningID = "aaaaaaaaaaaa"
+		waitingID = "bbbbbbbbbbbb"
+	)
+	podList := corev1.PodList{Items: []corev1.Pod{{
+		ObjectMeta: metav1.ObjectMeta{Name: "mixed-pod"},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{Name: "healthy"}, {Name: "restarting"},
+		}},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "healthy", ContainerID: "containerd://" + runningID,
+					State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+				},
+				{
+					Name: "restarting", ContainerID: "containerd://" + waitingID,
+					State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+				},
+			},
+		},
+	}}}
+	if isRuningPod(&podList.Items[0]) {
+		t.Fatal("mixed pod fixture unexpectedly passes the all-running predicate")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if err := json.NewEncoder(w).Encode(podList); err != nil {
+			t.Errorf("encode pod list: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	previousEnabled, previousURL, previousClient := kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient
+	previousContainers, previousProvider := containers, currContainerProvider
+	t.Cleanup(func() {
+		kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = previousEnabled, previousURL, previousClient
+		containers, currContainerProvider = previousContainers, previousProvider
+	})
+	kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = true, srv.URL, srv.Client()
+	currContainerProvider = containerProviderContainerd
+	healthy := &Container{ID: runningID}
+	containers = map[string]*Container{
+		runningID: healthy,
+		waitingID: {ID: waitingID},
+	}
+
+	if err := kubeletSyncContainers(); err != nil {
+		t.Fatalf("kubeletSyncContainers() error = %v", err)
+	}
+	if got := containers[runningID]; got != healthy {
+		t.Errorf("running container = %p, want preserved %p", got, healthy)
+	}
+	if _, ok := containers[waitingID]; ok {
+		t.Error("waiting container remained in cache")
+	}
+}
+
 func denseNodeProofPod(
 	containers int,
 	initContainers int,

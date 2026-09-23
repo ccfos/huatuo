@@ -246,7 +246,7 @@ func kubeletSyncContainers() error {
 	for i := range podList.Items {
 		pod := &podList.Items[i]
 
-		if !isRuningPod(pod) {
+		if pod.Status.Phase != corev1.PodRunning {
 			continue
 		}
 
@@ -265,6 +265,9 @@ func kubeletSyncContainers() error {
 
 		for _, c := range m {
 			containerStatus := c[1].(*corev1.ContainerStatus)
+			if containerStatus.State.Running == nil {
+				continue
+			}
 			containerID, err := parseContainerIDInPodStatus(containerStatus.ContainerID)
 			if err != nil {
 				log.Warnf("failed to parse container id %s in pod %s status: %v", containerStatus.ContainerID, pod.Name, err)
