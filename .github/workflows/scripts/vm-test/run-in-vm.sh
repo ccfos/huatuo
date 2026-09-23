@@ -69,9 +69,13 @@ configure_proxy() {
 
 install_test_dependencies() {
 	local os_id os_like package_manager package
-	local -a deb_packages=(curl gdb)
-	local -a rpm_packages=(curl gdb)
+	local -a deb_packages=(curl gdb build-essential libelf-dev kmod "linux-headers-$(uname -r)")
+	local -a rpm_packages=(
+		curl gdb gcc make elfutils-libelf-devel kmod kernel-headers
+		"kernel-devel-$(uname -r)"
+	)
 	local -a missing_packages=()
+	local -a package_options=()
 
 	# Add temporary dependencies here until the VM image includes them.
 	source /etc/os-release
@@ -103,7 +107,19 @@ install_test_dependencies() {
 			vm_log_error "no RPM package manager found for $ID"
 			return 1
 		fi
-		"$package_manager" install -y "${missing_packages[@]}"
+		# Rocky's EPEL repository is unrelated to kernel module builds and its
+		# mirror metadata is less reliable than the base repositories.
+		if [[ "$os_id" == rocky ]]; then
+			package_options+=(--disablerepo='epel*')
+		fi
+		# openEuler publishes kernel-devel in its binary OS repositories.
+		if [[ "$os_id" == openeuler ]]; then
+			package_options+=(
+				--disablerepo=EPOL --disablerepo=debuginfo --disablerepo=source
+				--disablerepo=update-source
+			)
+		fi
+		"$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"
 		;;
 	*)
 		vm_log_error "unsupported guest package family: ID=$ID ID_LIKE=${ID_LIKE:-}"
