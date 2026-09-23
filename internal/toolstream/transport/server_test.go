@@ -397,3 +397,17 @@ func TestClientRoundTrip(t *testing.T) {
 		t.Errorf("second chunk End=false want true")
 	}
 }
+
+func TestServeRejectsNilHandler(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer l.Close()
+
+	srv, err := Serve(l, nil)
+	if err == nil {
+		_ = srv.Close()
+		t.Fatal("Serve accepted a nil handler")
+	}
+}
