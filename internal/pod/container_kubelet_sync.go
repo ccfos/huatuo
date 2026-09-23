@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -49,6 +50,9 @@ var (
 	kubeletPodListClient            *http.Client
 	kubeletTimeTicker               *time.Ticker
 	kubeletDoneCancel               context.CancelFunc
+	kubeletRetryDone                chan struct{}
+	kubeletManagerMu                sync.Mutex
+	kubeletPodListMu                sync.RWMutex
 	kubeletPodCgroupDriver          = "cgroupfs"
 	kubeletRuntimeEndpoint          = "unix:///run/containerd/containerd.sock"
 	kubeletOversizedResponseWarning = &rate.Sometimes{
@@ -133,9 +137,11 @@ func kubeletPodListAuthorizationRequest(ctx *ManagerCtx) (*http.Client, error) {
 
 func kubeletPodListPortCacheUpdate(ctx *ManagerCtx) error {
 	if client, err := kubeletPodListHttpRequest(ctx); err == nil {
+		kubeletPodListMu.Lock()
 		kubeletPodListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
 		kubeletPodListClient = client
 		kubeletPodListRunningEnabled = true
+		kubeletPodListMu.Unlock()
 		return nil
 	}
 
@@ -146,13 +152,19 @@ func kubeletPodListPortCacheUpdate(ctx *ManagerCtx) error {
 	}
 
 	// update https instance cache
+	kubeletPodListMu.Lock()
 	kubeletPodListClient = client
 	kubeletPodListURL = kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort)
 	kubeletPodListRunningEnabled = true
+	kubeletPodListMu.Unlock()
 	return nil
 }
 
 func InitManager(ctx *ManagerCtx) error {
+	kubeletManagerMu.Lock()
+	defer kubeletManagerMu.Unlock()
+	releaseManagerLocked()
+
 	dockerAPIVersion = ctx.DockerAPIVersion
 
 	if ctx.PodReadOnlyPort == 0 && ctx.PodAuthorizedPort == 0 {
@@ -193,7 +205,9 @@ func InitManager(ctx *ManagerCtx) error {
 
 	kubeletDoneCancel = cancel
 	kubeletTimeTicker = time.NewTicker(30 * time.Minute)
-	go func(doneCtx context.Context, t *time.Ticker) {
+	kubeletRetryDone = make(chan struct{})
+	go func(doneCtx context.Context, t *time.Ticker, done chan struct{}) {
+		defer close(done)
 		for {
 			select {
 			case <-t.C:
@@ -210,12 +224,18 @@ func InitManager(ctx *ManagerCtx) error {
 				return
 			}
 		}
-	}(doneCtx, kubeletTimeTicker)
+	}(doneCtx, kubeletTimeTicker, kubeletRetryDone)
 
 	return nil
 }
 
 func ReleaseManager() {
+	kubeletManagerMu.Lock()
+	defer kubeletManagerMu.Unlock()
+	releaseManagerLocked()
+}
+
+func releaseManagerLocked() {
 	if kubeletTimeTicker != nil {
 		kubeletTimeTicker.Stop()
 		kubeletTimeTicker = nil
@@ -225,6 +245,16 @@ func ReleaseManager() {
 		kubeletDoneCancel()
 		kubeletDoneCancel = nil
 	}
+	// A retry already inside its request can repopulate the cache after cancellation.
+	if kubeletRetryDone != nil {
+		<-kubeletRetryDone
+		kubeletRetryDone = nil
+	}
+	kubeletPodListMu.Lock()
+	kubeletPodListRunningEnabled = false
+	kubeletPodListClient = nil
+	kubeletPodListURL = ""
+	kubeletPodListMu.Unlock()
 	containerCgroupCssRelease()
 }
 
@@ -306,11 +336,14 @@ func kubeletSyncContainers() error {
 }
 
 func kubeletGetPodList() (corev1.PodList, error) {
-	if !kubeletPodListRunningEnabled {
+	kubeletPodListMu.RLock()
+	enabled, client, url := kubeletPodListRunningEnabled, kubeletPodListClient, kubeletPodListURL
+	kubeletPodListMu.RUnlock()
+	if !enabled {
 		return corev1.PodList{}, fmt.Errorf("kubelet not running")
 	}
 
-	return kubeletPodListDoRequest(kubeletPodListClient, kubeletPodListURL)
+	return kubeletPodListDoRequest(client, url)
 }
 
 func kubeletPodListDoRequest(client *http.Client, kubeletPodListURL string) (corev1.PodList, error) {
@@ -625,8 +658,11 @@ func kubeletConfigCacheMustUpdate(ctx *ManagerCtx) error {
 			kubeletPodCgroupDriver, kubeletRuntimeEndpoint)
 	}()
 
+	kubeletPodListMu.RLock()
+	client := kubeletPodListClient
+	kubeletPodListMu.RUnlock()
 	config, err = kubeletConfigDoRequest(
-		kubeletPodListClient,
+		client,
 		kubeletConfigAuthorizedURL(ctx.PodAuthorizedPort),
 	)
 	if err == nil {

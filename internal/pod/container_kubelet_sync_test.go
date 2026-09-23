@@ -17,6 +17,7 @@ package pod
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,8 +26,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/iotest"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
 
@@ -55,6 +58,127 @@ func TestHTTPDoRequestPropagatesBodyReadError(t *testing.T) {
 	wantError := fmt.Sprintf("http: %s, read body: %v", requestURL, wantReadErr)
 	if err.Error() != wantError {
 		t.Errorf("httpDoRequest(%q) error = %q, want %q", requestURL, err, wantError)
+	}
+}
+
+func TestReleaseManagerClearsKubeletPodListCache(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = io.WriteString(w, `{ "items": [] }`)
+	}))
+	defer srv.Close()
+
+	previousEnabled, previousURL, previousClient := kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient
+	t.Cleanup(func() {
+		kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = previousEnabled, previousURL, previousClient
+	})
+	kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = true, srv.URL, srv.Client()
+	if _, err := kubeletGetPodList(); err != nil {
+		t.Fatalf("kubeletGetPodList() before release: %v", err)
+	}
+
+	ReleaseManager()
+	if kubeletPodListRunningEnabled || kubeletPodListClient != nil || kubeletPodListURL != "" {
+		t.Fatalf("released cache = (%t, %p, %q), want disabled and empty",
+			kubeletPodListRunningEnabled, kubeletPodListClient, kubeletPodListURL)
+	}
+	if _, err := kubeletGetPodList(); err == nil {
+		t.Fatal("kubeletGetPodList() after release succeeded, want disabled error")
+	}
+	if got := requests.Load(); got != 1 {
+		t.Errorf("kubelet requests after release = %d, want 1", got)
+	}
+
+	if err := InitManager(&ManagerCtx{}); err != nil {
+		t.Fatalf("InitManager() with disabled ports: %v", err)
+	}
+	if _, err := kubeletGetPodList(); err == nil {
+		t.Fatal("kubeletGetPodList() after disabled reinit succeeded")
+	}
+	if got := requests.Load(); got != 1 {
+		t.Errorf("kubelet requests after disabled reinit = %d, want 1", got)
+	}
+}
+
+func TestInitManagerDisabledClearsPreviousKubeletCache(t *testing.T) {
+	previousEnabled, previousURL, previousClient := kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient
+	t.Cleanup(func() {
+		kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = previousEnabled, previousURL, previousClient
+	})
+	kubeletPodListRunningEnabled = true
+	kubeletPodListURL = "http://old-kubelet.invalid/pods"
+	kubeletPodListClient = &http.Client{}
+
+	if err := InitManager(&ManagerCtx{}); err != nil {
+		t.Fatalf("InitManager() with disabled ports: %v", err)
+	}
+	if kubeletPodListRunningEnabled || kubeletPodListClient != nil || kubeletPodListURL != "" {
+		t.Fatalf("disabled cache = (%t, %p, %q), want disabled and empty",
+			kubeletPodListRunningEnabled, kubeletPodListClient, kubeletPodListURL)
+	}
+	if _, err := kubeletGetPodList(); err == nil {
+		t.Fatal("kubeletGetPodList() after disabled reinit succeeded")
+	}
+}
+
+func TestReleaseManagerWaitsForKubeletRetry(t *testing.T) {
+	previousTicker, previousCancel, previousDone := kubeletTimeTicker, kubeletDoneCancel, kubeletRetryDone
+	previousEnabled, previousURL, previousClient := kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient
+	t.Cleanup(func() {
+		kubeletTimeTicker, kubeletDoneCancel, kubeletRetryDone = previousTicker, previousCancel, previousDone
+		kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = previousEnabled, previousURL, previousClient
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	kubeletDoneCancel = cancel
+	kubeletTimeTicker = time.NewTicker(time.Hour)
+	retryDone := make(chan struct{})
+	kubeletRetryDone = retryDone
+	cancelled := make(chan struct{})
+	allowExit := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(cancelled)
+		<-allowExit
+		kubeletPodListMu.Lock()
+		kubeletPodListRunningEnabled = true
+		kubeletPodListURL = "http://late-kubelet.invalid/pods"
+		kubeletPodListClient = &http.Client{}
+		kubeletPodListMu.Unlock()
+		close(retryDone)
+	}()
+	released := make(chan struct{})
+	go func() {
+		ReleaseManager()
+		close(released)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-allowExit:
+		default:
+			close(allowExit)
+		}
+		<-released
+	}()
+
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("ReleaseManager did not cancel the retry")
+	}
+	select {
+	case <-released:
+		t.Fatal("ReleaseManager returned before the retry exited")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(allowExit)
+	<-released
+	if kubeletRetryDone != nil || kubeletDoneCancel != nil || kubeletTimeTicker != nil {
+		t.Fatal("ReleaseManager retained retry state")
+	}
+	if kubeletPodListRunningEnabled || kubeletPodListClient != nil || kubeletPodListURL != "" {
+		t.Fatal("ReleaseManager retained a late retry's kubelet cache")
 	}
 }
 
