@@ -35,6 +35,7 @@ type Server struct {
 	listener    net.Listener
 	handler     func(*Session, ChunkMsg)
 	cancel      context.CancelFunc
+	closing     bool
 }
 
 // Serve starts accepting connections from l in the background.
@@ -74,10 +75,15 @@ func (s *Server) acceptLoop(ctx context.Context) {
 		}
 
 		s.mutex.Lock()
-		s.connections[conn] = struct{}{}
-		s.mutex.Unlock()
+		if s.closing {
+			s.mutex.Unlock()
+			_ = conn.Close()
+			return
+		}
 
+		s.connections[conn] = struct{}{}
 		s.waitGroup.Add(1)
+		s.mutex.Unlock()
 
 		go func() {
 			defer func() {
@@ -224,6 +230,10 @@ func (s *Server) Close() error {
 	}
 
 	var errs []error
+
+	s.mutex.Lock()
+	s.closing = true
+	s.mutex.Unlock()
 
 	if err := s.listener.Close(); err != nil {
 		errs = append(errs, err)
