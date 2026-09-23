@@ -246,7 +246,7 @@ func kubeletSyncContainers() error {
 	for i := range podList.Items {
 		pod := &podList.Items[i]
 
-		if !isRuningPod(pod) {
+		if pod.Status.Phase != corev1.PodRunning {
 			continue
 		}
 
@@ -265,6 +265,9 @@ func kubeletSyncContainers() error {
 
 		for _, c := range m {
 			containerStatus := c[1].(*corev1.ContainerStatus)
+			if containerStatus.State.Running == nil {
+				continue
+			}
 			containerID, err := parseContainerIDInPodStatus(containerStatus.ContainerID)
 			if err != nil {
 				log.Warnf("failed to parse container id %s in pod %s status: %v", containerStatus.ContainerID, pod.Name, err)
@@ -557,25 +560,6 @@ func parseContainerIDInPodStatus(data string) (string, error) {
 
 func parseContainerIPAddress(pod *corev1.Pod) string {
 	return pod.Status.PodIP
-}
-
-func isRuningPod(pod *corev1.Pod) bool {
-	// The Pod has been bound to a node, and all of the containers have been created.
-	// At least one container is still running, or is in the process of starting or
-	// restarting.
-	if pod.Status.Phase != corev1.PodRunning {
-		return false
-	}
-
-	// all containers are running.
-	for i := range pod.Status.ContainerStatuses {
-		containerStatus := &pod.Status.ContainerStatuses[i]
-		if containerStatus.State.Running == nil {
-			return false
-		}
-	}
-
-	return true
 }
 
 func kubeletConfigFileDefault() (kubeletConfiguration, error) {
