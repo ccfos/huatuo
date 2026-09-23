@@ -33,3 +33,9 @@ weight: 50
 - Shutdown now finalizes pending local results inside tcpshark before the child
   exits. Embedded drops remain private; standalone dropwatch raw output is
   unchanged.
+- Container-scoped sockstat metrics no longer include `TCP_alloc` and
+  `TCP_orphan`. The kernel maintains both as host-global counters, so the
+  values read through a container PID described the whole host, and summing
+  the per-container series double-counted them. Host-scoped series are
+  unchanged; dashboards referencing the removed container series need to be
+  updated.
