@@ -398,9 +398,6 @@ func TestKubeletSyncContainersKeepsRunningContainerInMixedPod(t *testing.T) {
 			},
 		},
 	}}}
-	if isRuningPod(&podList.Items[0]) {
-		t.Fatal("mixed pod fixture unexpectedly passes the all-running predicate")
-	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if err := json.NewEncoder(w).Encode(podList); err != nil {
 			t.Errorf("encode pod list: %v", err)

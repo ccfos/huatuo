@@ -562,25 +562,6 @@ func parseContainerIPAddress(pod *corev1.Pod) string {
 	return pod.Status.PodIP
 }
 
-func isRuningPod(pod *corev1.Pod) bool {
-	// The Pod has been bound to a node, and all of the containers have been created.
-	// At least one container is still running, or is in the process of starting or
-	// restarting.
-	if pod.Status.Phase != corev1.PodRunning {
-		return false
-	}
-
-	// all containers are running.
-	for i := range pod.Status.ContainerStatuses {
-		containerStatus := &pod.Status.ContainerStatuses[i]
-		if containerStatus.State.Running == nil {
-			return false
-		}
-	}
-
-	return true
-}
-
 func kubeletConfigFileDefault() (kubeletConfiguration, error) {
 	empty := kubeletConfiguration{}
 
