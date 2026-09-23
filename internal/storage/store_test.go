@@ -37,6 +37,7 @@ type testMapper struct {
 	id           string
 	encodeErr    error
 	decodeErr    error
+	decodeValue  testEntity
 	fieldsErr    error
 	indexesCalls int
 	decoded      []driver.Record
@@ -59,7 +60,7 @@ func (m *testMapper) Encode(v testEntity) ([]byte, error) {
 func (m *testMapper) Decode(record driver.Record) (testEntity, error) {
 	m.decoded = append(m.decoded, record)
 	if m.decodeErr != nil {
-		return testEntity{}, m.decodeErr
+		return m.decodeValue, m.decodeErr
 	}
 
 	var entity testEntity
@@ -541,6 +542,7 @@ func TestStoreSave(t *testing.T) {
 // TestStoreGet covers the Get path: verifies decodable record found, record not found returns false, backend read failure, and decode failure.
 func TestStoreGet(t *testing.T) {
 	getErr := errors.New("get failed")
+	decodeErr := errors.New("decode failed")
 
 	cases := []struct {
 		name     string
@@ -599,8 +601,8 @@ func TestStoreGet(t *testing.T) {
 				},
 			},
 			validate: func(t *testing.T, entity testEntity, err error) {
-				if err == nil {
-					t.Errorf("Get() error = nil, want non-nil")
+				if !errors.Is(err, driver.ErrDecodeFailed) || !errors.Is(err, decodeErr) {
+					t.Errorf("Get() error = %v, want ErrDecodeFailed wrapping mapper error", err)
 				}
 				if entity != (testEntity{}) {
 					t.Errorf("Get() entity = %#v, want zero value", entity)
@@ -613,7 +615,8 @@ func TestStoreGet(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mapper := newTestMapper()
 			if tc.name == "decode error" {
-				mapper.decodeErr = errors.New("decode failed")
+				mapper.decodeErr = decodeErr
+				mapper.decodeValue = testEntity{ID: "partial"}
 			}
 
 			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, "jobs", mapper)

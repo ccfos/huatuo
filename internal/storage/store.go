@@ -125,7 +125,12 @@ func (s *Store[T]) Get(ctx context.Context, id string) (T, error) {
 		var zero T
 		return zero, err
 	}
-	return s.mapper.Decode(rec)
+	value, err := s.mapper.Decode(rec)
+	if err != nil {
+		var zero T
+		return zero, fmt.Errorf("%w: %w", driver.ErrDecodeFailed, err)
+	}
+	return value, nil
 }
 
 // Delete removes an object from storage by ID.
