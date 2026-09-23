@@ -75,9 +75,9 @@ DROPWATCH_PID=""
 
 events=$(jq -s '[.[] | select(.layers.label == "IPv4/UDP")] | length' "${TOOL_OUT}")
 jq -e -s 'length > 0 and all(.[];
-	(.ktime_ns | type == "number") and .ktime_ns > 0)' "${TOOL_OUT}" > /dev/null \
+	(.kernel_observed_timestamp | type == "string") and (.kernel_observed_timestamp | length > 0))' "${TOOL_OUT}" > /dev/null \
 	|| fatal "dropwatch events are missing kernel timestamps"
-jq -c -s '.[0] | {ktime_ns, drop_source, drop_reason, layers}' "${TOOL_OUT}"
+jq -c -s '.[0] | {kernel_observed_timestamp, drop_source, drop_reason, layers}' "${TOOL_OUT}"
 # Event lines are emitted on stdout; structured logs, including rate-limit
 # warnings, are emitted on stderr.
 warns=$(grep -h "rate limit hit" "${TOOL_OUT}" "${TOOL_ERR}" 2> /dev/null | wc -l || true)

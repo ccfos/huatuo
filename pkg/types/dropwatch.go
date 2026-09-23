@@ -28,9 +28,6 @@ import (
 // terminology and keeps the field distinct from the `Packet*` BPF-metadata
 // prefix family above.
 type DropWatchTracing struct {
-	// KtimeNS is the kernel monotonic event time in nanoseconds, comparable
-	// only within the same host boot. Zero means unavailable in older events.
-	KtimeNS                 uint64              `json:"ktime_ns,omitempty"`
 	KernelObservedTimestamp *timeutil.Timestamp `json:"kernel_observed_timestamp,omitempty"`
 	ObservedTimestamp       timeutil.Timestamp  `json:"observed_timestamp,omitzero"`
 	Type                    string              `json:"type,omitempty"`

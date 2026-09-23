@@ -70,7 +70,6 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := &DropWatchTracing{
-				KtimeNS:                 12_345_678_901_234_567,
 				ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)},
 				KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 6, 12, 23, 59, 59, 0, time.UTC)},
 				Layers:                  tc.pkt,
@@ -89,20 +88,20 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 			if diff := cmp.Diff(tc.pkt, got.Layers); diff != "" {
 				t.Errorf("Layers mismatch (-want +got):\n%s", diff)
 			}
-			if got.KtimeNS != ev.KtimeNS {
-				t.Errorf("KtimeNS = %d, want %d", got.KtimeNS, ev.KtimeNS)
-			}
 		})
 	}
 }
 
-func TestDropWatchTracingLegacyKernelTime(t *testing.T) {
-	var event DropWatchTracing
-	if err := json.Unmarshal([]byte(`{"observed_timestamp":"2026-06-13T00:00:00Z"}`), &event); err != nil {
+func TestDropWatchTracingOmitsKernelMonotonicTime(t *testing.T) {
+	// Legacy documents may still carry ktime_ns; decoding must ignore it.
+	var legacy DropWatchTracing
+	if err := json.Unmarshal([]byte(`{"ktime_ns":12345,"observed_timestamp":"2026-06-13T00:00:00Z"}`), &legacy); err != nil {
 		t.Fatal(err)
 	}
-	if event.KtimeNS != 0 {
-		t.Fatalf("legacy KtimeNS = %d, want 0", event.KtimeNS)
+
+	event := DropWatchTracing{
+		ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)},
+		KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 6, 12, 23, 59, 59, 0, time.UTC)},
 	}
 	encoded, err := json.Marshal(&event)
 	if err != nil {
@@ -113,7 +112,10 @@ func TestDropWatchTracingLegacyKernelTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, exists := fields["ktime_ns"]; exists {
-		t.Fatal("zero ktime_ns must be omitted")
+		t.Fatal("dropwatch events must not expose raw monotonic ktime_ns")
+	}
+	if _, exists := fields["kernel_observed_timestamp"]; !exists {
+		t.Fatal("dropwatch events must expose kernel_observed_timestamp")
 	}
 }
 
