@@ -251,7 +251,7 @@ type profileMatcherSet struct {
 func newProfileMatcherSet(filter *profilingstore.Filter) *profileMatcherSet {
 	return &profileMatcherSet{
 		filter:  filter,
-		applied: make(map[string]string, 4),
+		applied: make(map[string]string),
 	}
 }
 
