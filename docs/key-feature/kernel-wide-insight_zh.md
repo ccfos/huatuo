@@ -1146,15 +1146,9 @@ huatuo_bamai_sockstat_container_FRAG_memory{container_host="coredns-855c4dd65d-8
 # HELP huatuo_bamai_sockstat_container_RAW_inuse Number of RAW sockets in state inuse.
 # TYPE huatuo_bamai_sockstat_container_RAW_inuse gauge
 huatuo_bamai_sockstat_container_RAW_inuse{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_sockstat_container_TCP_alloc Number of TCP sockets in state alloc.
-# TYPE huatuo_bamai_sockstat_container_TCP_alloc gauge
-huatuo_bamai_sockstat_container_TCP_alloc{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 171
 # HELP huatuo_bamai_sockstat_container_TCP_inuse Number of TCP sockets in state inuse.
 # TYPE huatuo_bamai_sockstat_container_TCP_inuse gauge
 huatuo_bamai_sockstat_container_TCP_inuse{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1
-# HELP huatuo_bamai_sockstat_container_TCP_orphan Number of TCP sockets in state orphan.
-# TYPE huatuo_bamai_sockstat_container_TCP_orphan gauge
-huatuo_bamai_sockstat_container_TCP_orphan{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
 # HELP huatuo_bamai_sockstat_container_TCP_tw Number of TCP sockets in state tw.
 # TYPE huatuo_bamai_sockstat_container_TCP_tw gauge
 huatuo_bamai_sockstat_container_TCP_tw{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 75
@@ -1176,9 +1170,9 @@ huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
 |---|---|---|---|---|
 |sockstat_sockets_used|系统层面当前正在使用的 socket 描述符总数|计数|系统||
 |sockstat_TCP_inuse|当前处于 TCP 连接状态（如 ESTABLISHED、LISTEN 等，除 TIME_WAIT 外）的 socket 数量|计数|宿主，容器||
-|sockstat_TCP_orphan|通常表示应用已关闭但 TCP 连接仍未结束|计数|宿主，容器||
+|sockstat_TCP_orphan|通常表示应用已关闭但 TCP 连接仍未结束。内核按主机全局统计，容器内读取到的也是宿主值|计数|系统||
 |sockstat_TCP_tw|当前处于 TIME_WAIT 状态的 TCP socket 数量|计数|宿主，容器||
-|sockstat_TCP_alloc|当前已分配的 TCP socket 对象总数|计数|宿主，容器||
+|sockstat_TCP_alloc|当前已分配的 TCP socket 对象总数。内核按主机全局统计，容器内读取到的也是宿主值|计数|系统||
 |sockstat_TCP_mem|TCP 套接字当前占用的内核内存页数|内存页|系统||
 |sockstat_UDP_inuse|当前已绑定了本地端口的 UDP socket 数量|计数|宿主，容器||
 
