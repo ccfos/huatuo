@@ -249,6 +249,7 @@ change job ownership because tokens are never used as principal IDs.
 ```
 
 - `DashboardBaseURL` is optional and must use HTTP or HTTPS when configured.
+  Do not include a query or fragment; result URLs add job-specific parameters.
   Result-capable jobs omit a dashboard URL when it is empty.
 
 Profiler execution and aggregation settings are Node-local configuration.
