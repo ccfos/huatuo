@@ -33,7 +33,7 @@ HUATUO monitors Linux kernel hardware error events with zero instrumentation ove
 
 HUATUO observes the kernel's MCE, EDAC, ACPI GHES, and PCIe AER subsystems via eBPF. When an eBPF tracepoint fires, the raw event is written to a BPF Perf Event Buffer. A user-space process reads the event, parses the struct fields, generates a structured record, and persists it locally or to a remote store. The overall architecture is shown below:
 
-![](/img/hardware-errors-huatuo-framework.png)
+![](/docs/img/hardware-errors-huatuo-framework.png)
 
 
 ### RAS Architecture
