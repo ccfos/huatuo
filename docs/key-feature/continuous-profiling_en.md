@@ -502,7 +502,8 @@ sudo _output/bin/profiler \
 | `--binary-match-path` | None | Java, Python | Executable path used to match target processes |
 | `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address used to resolve container metadata |
 | `--tracer-id` | Empty; generated internally for local output | All; required for `remote` | Stable profiling task ID used by toolstream and remote storage |
-| `--enable-pprof` | `false` | Profiler itself | Expose Go pprof endpoints for the profiler process on `:6000` |
+| `--enable-pprof` | `false` | Profiler itself | Expose Go pprof endpoints for the profiler process |
+| `--pprof-address` | `127.0.0.1:6000` | Profiler itself | Listen address for the pprof server; loopback by default — bind a non-loopback address only when remote access is intended |
 | `--version-format` | `text` | Version query | Output format for `--version`: `text`, `json`, or `short` |
 | `--help`, `-h` | - | All | Display command help |
 | `--version`, `-v` | - | All | Display version and build information |
