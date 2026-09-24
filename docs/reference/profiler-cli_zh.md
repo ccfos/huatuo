@@ -28,7 +28,8 @@ weight: 6
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
 | `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
 | `--task-id` | 空；本地输出时内部生成 | 全部；`remote-store` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
-| `--enable-pprof` | `false` | 工具自身 | 在 `:6000` 暴露 profiler 进程自身的 Go pprof 接口 |
+| `--enable-pprof` | `false` | 工具自身 | 在 `--pprof-address` 指定的地址上暴露 profiler 进程自身的 Go pprof 接口 |
+| `--pprof-address` | `127.0.0.1:6000` | 工具自身 | `--enable-pprof` 所启用 pprof 服务的监听地址；默认仅监听回环地址，只有确实需要远程访问时才改为非回环地址 |
 | `--version-format` | `text` | 版本查询 | `--version` 的输出格式：`text`、`json` 或 `short` |
 | `--help`, `-h` | - | 全部 | 显示命令帮助 |
 | `--version`, `-v` | - | 全部 | 显示版本与构建信息 |
