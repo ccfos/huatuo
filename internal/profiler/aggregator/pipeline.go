@@ -47,6 +47,12 @@ type Pipeline struct {
 	aggrInterval  time.Duration
 	overflowCount atomic.Int64
 
+	// finalExportErr records the terminal aggregation/export result so Stop
+	// can return it. Periodic snapshot failures are logged only.
+	finalExportErr atomic.Value
+	stopOnce       sync.Once
+	stopErr        error
+
 	pctx *profctx.ProfilerContext
 	aggr Aggregator
 	// A channel blocks idle consumers; RingBuffer.Poll spins on timeout checks
@@ -114,7 +120,7 @@ func (p *Pipeline) runAggregateSnapshot() {
 			snapshotCtx = context.WithoutCancel(snapshotCtx)
 		}
 		if err := p.aggregateAndSnapshot(snapshotCtx, true); err != nil {
-			p.logAggregateExportError(err)
+			p.recordFinalExportError(err)
 		}
 
 		return
@@ -133,7 +139,7 @@ func (p *Pipeline) runAggregateSnapshot() {
 			// all records accepted before shutdown.
 			<-p.doneCh
 			if err := p.aggregateAndSnapshot(p.pctx.Ctx, true); err != nil {
-				p.logAggregateExportError(err)
+				p.recordFinalExportError(err)
 			}
 
 			return
@@ -165,22 +171,30 @@ func (p *Pipeline) runDequeueAndAggregate() {
 }
 
 // Stop signals the pipeline to terminate and waits for all goroutines to exit.
-// Calls after the first one are no-ops. A stopped Pipeline cannot be restarted.
-func (p *Pipeline) Stop() {
-	for {
-		state := p.state.Load()
-		if state == pipelineStateStopped {
-			return
-		}
+// It returns the final export error, if any. Concurrent and repeated callers
+// wait for the same shutdown completion and observe the same result.
+// A stopped Pipeline cannot be restarted.
+func (p *Pipeline) Stop() error {
+	p.stopOnce.Do(func() {
+		for {
+			state := p.state.Load()
+			if state == pipelineStateStopped {
+				break
+			}
 
-		if p.state.CompareAndSwap(state, pipelineStateStopped) {
-			p.enqueueMutex.Lock()
-			close(p.stopCh)
-			p.enqueueMutex.Unlock()
-			p.wg.Wait()
-			return
+			if p.state.CompareAndSwap(state, pipelineStateStopped) {
+				p.enqueueMutex.Lock()
+				close(p.stopCh)
+				p.enqueueMutex.Unlock()
+				break
+			}
 		}
-	}
+		p.wg.Wait()
+		if err, ok := p.finalExportErr.Load().(error); ok {
+			p.stopErr = err
+		}
+	})
+	return p.stopErr
 }
 
 // Enqueue offers a record into the aggregation queue for async processing.
@@ -202,6 +216,14 @@ func (p *Pipeline) Enqueue(data any) {
 
 func (p *Pipeline) logAggregateExportError(err error) {
 	log.WithError(err).WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed")
+}
+
+// recordFinalExportError logs the terminal export failure and stores it for
+// Stop. Periodic snapshot failures keep the log-only path so later ticks can
+// still succeed.
+func (p *Pipeline) recordFinalExportError(err error) {
+	p.logAggregateExportError(err)
+	p.finalExportErr.Store(err)
 }
 
 func (p *Pipeline) aggregateAndSnapshot(ctx context.Context, final bool) error {

@@ -16,6 +16,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -86,10 +87,10 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	log.Info("aggregator started")
 
 	if err := p.Impl.Start(pctx); err != nil {
-		pipe.Stop()
+		exportErr := pipe.Stop()
 		pctx.Cancel()
 
-		return fmt.Errorf("start profiler: %w", err)
+		return errors.Join(fmt.Errorf("start profiler: %w", err), exportErr)
 	}
 
 	loopDone := make(chan error, 1)
@@ -140,11 +141,13 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 		log.Errorf("profiler stop: %v", stopErr)
 	}
 
-	pipe.Stop()
+	exportErr := pipe.Stop()
 
 	if err == nil && loopErr != nil {
 		err = loopErr
 	}
 
-	return err
+	// Surface a failed final export even when sampling itself succeeded so
+	// scripted callers can treat a missing artifact as a non-zero exit.
+	return errors.Join(err, exportErr)
 }
