@@ -16,7 +16,8 @@
 
 // test_net_rx_tracing loads net_rx_latency through the real loaders with
 // nanosecond thresholds and reports the latency stage of every event it
-// receives.
+// receives. stdout carries a ready marker once the object is attached, one JSON
+// line per event, and a summary line last.
 //
 // The thresholds are a fixture concern only: production configuration cannot
 // express them, and they exist so a test can assert which stage arrives
@@ -92,14 +93,24 @@ type eventRecord struct {
 	EntryPoint string `json:"entry_point"`
 }
 
+// readyMarker is printed once the object is attached: a caller that measures
+// the hook must start its traffic after the attach, not while the loader is
+// still probing the kernel.
+type readyMarker struct {
+	Ready      bool   `json:"ready"`
+	Mode       string `json:"mode"`
+	EntryPoint string `json:"entry_point"`
+}
+
 // summary is the last line the fixture prints; the script reads it.
 type summary struct {
-	Summary    bool     `json:"summary"`
-	EntryPoint string   `json:"entry_point"`
-	Mode       string   `json:"mode"`
-	Events     int      `json:"events"`
-	Duplicates int      `json:"duplicates"`
-	Stages     []string `json:"stages"`
+	Summary     bool     `json:"summary"`
+	EntryPoint  string   `json:"entry_point"`
+	Mode        string   `json:"mode"`
+	Events      int      `json:"events"`
+	Duplicates  int      `json:"duplicates"`
+	LostSamples uint64   `json:"lost_samples"`
+	Stages      []string `json:"stages"`
 }
 
 func main() {
@@ -166,27 +177,38 @@ func run() error {
 		return fmt.Errorf("mode %s requires the kprobe entry point, kernel selected %s", cfg.mode, entryPoint)
 	}
 
-	events, duplicates, stages, err := collectEvents(reader, entryPoint, cfg)
+	// The hooks are attached by now: announce it before the traffic a caller
+	// may be timing arrives.
+	if err := json.NewEncoder(os.Stdout).Encode(readyMarker{
+		Ready:      true,
+		Mode:       cfg.mode,
+		EntryPoint: entryPoint,
+	}); err != nil {
+		return fmt.Errorf("write ready marker: %w", err)
+	}
+
+	observed, err := collectEvents(reader, entryPoint, cfg)
 	if err != nil {
 		return err
 	}
 
 	if err := json.NewEncoder(os.Stdout).Encode(summary{
-		Summary:    true,
-		EntryPoint: entryPoint,
-		Mode:       cfg.mode,
-		Events:     events,
-		Duplicates: duplicates,
-		Stages:     stages,
+		Summary:     true,
+		EntryPoint:  entryPoint,
+		Mode:        cfg.mode,
+		Events:      observed.events,
+		Duplicates:  observed.duplicates,
+		LostSamples: observed.lost,
+		Stages:      observed.stages,
 	}); err != nil {
 		return fmt.Errorf("write summary: %w", err)
 	}
 
-	if events == 0 {
+	if observed.events == 0 {
 		return fmt.Errorf("no net_rx_latency event arrived within %s", cfg.timeout)
 	}
-	if duplicates != 0 {
-		return fmt.Errorf("%d events repeated a packet, expected one per hook", duplicates)
+	if observed.duplicates != 0 {
+		return fmt.Errorf("%d events repeated a packet, expected one per hook", observed.duplicates)
 	}
 
 	return nil
@@ -264,46 +286,54 @@ func selectedEntryPoint(object bpf.BPF) (string, error) {
 	return "", errors.New("object holds no tcp_v4_rcv entry point")
 }
 
+// collection is what one fixture run observed.
+type collection struct {
+	events     int
+	duplicates int
+	lost       uint64
+	stages     []string
+}
+
 // collectEvents prints every event and counts the ones that repeat a packet.
 func collectEvents(
 	reader bpf.PerfEventReader,
 	entryPoint string,
 	cfg config,
-) (int, int, []string, error) {
+) (collection, error) {
 	deadline := time.Now().Add(cfg.timeout)
 	encoder := json.NewEncoder(os.Stdout)
 
 	var (
-		events     int
-		duplicates int
-		stages     []string
-		seenStage  = make(map[string]bool)
-		seenEvent  = make(map[string]bool)
+		observed  collection
+		seenStage = make(map[string]bool)
+		seenEvent = make(map[string]bool)
 	)
 
-	for events < cfg.maxEvents && time.Now().Before(deadline) {
+	for observed.events < cfg.maxEvents && time.Now().Before(deadline) {
 		// ReadBatch returns what has arrived within a fixed window, so the
 		// fixture stays responsive when no event arrives at all.
 		batch, err := reader.ReadBatch(func() any { return new(abi.NetRXLatencyEvent) })
 		if err != nil {
-			return 0, 0, nil, fmt.Errorf("read perf events: %w", err)
+			return collection{}, fmt.Errorf("read perf events: %w", err)
 		}
+
+		observed.lost += batch.LostSamples
 
 		for _, raw := range batch.Events {
 			event, ok := raw.(*abi.NetRXLatencyEvent)
 			if !ok {
-				return 0, 0, nil, fmt.Errorf("unexpected event type %T", raw)
+				return collection{}, fmt.Errorf("unexpected event type %T", raw)
 			}
 
-			if err := recordEvent(encoder, event, entryPoint, seenStage, seenEvent, &stages, &duplicates); err != nil {
-				return 0, 0, nil, err
+			if err := recordEvent(encoder, event, entryPoint, seenStage, seenEvent, &observed); err != nil {
+				return collection{}, err
 			}
 
-			events++
+			observed.events++
 		}
 	}
 
-	return events, duplicates, stages, nil
+	return observed, nil
 }
 
 // recordEvent prints one event and tracks the stages and repeated packets seen
@@ -314,8 +344,7 @@ func recordEvent(
 	entryPoint string,
 	seenStage map[string]bool,
 	seenEvent map[string]bool,
-	stages *[]string,
-	duplicates *int,
+	observed *collection,
 ) error {
 	if int(event.LatencyStage) >= len(stageNames) {
 		return fmt.Errorf("unknown latency stage %d", event.LatencyStage)
@@ -324,7 +353,7 @@ func recordEvent(
 	stage := stageNames[event.LatencyStage]
 	if !seenStage[stage] {
 		seenStage[stage] = true
-		*stages = append(*stages, stage)
+		observed.stages = append(observed.stages, stage)
 	}
 
 	// One hook produces one event per packet: a repeated key means the hook
@@ -333,7 +362,7 @@ func recordEvent(
 		stage, event.TCPSeq, netutil.Ntohs(event.TCPSport), netutil.Ntohs(event.TCPDport), event.LatencyNS)
 	duplicate := seenEvent[key]
 	if duplicate {
-		*duplicates++
+		observed.duplicates++
 	}
 	seenEvent[key] = true
 
