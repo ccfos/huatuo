@@ -19,6 +19,11 @@
 // receives. stdout carries a ready marker once the object is attached, one JSON
 // line per event, and a summary line last.
 //
+// Modes: auto loads the object carrying both entry points and lets the loader
+// choose, kprobe loads the kprobe-only object, and fentry demands the fentry
+// entry point by attempting it alone - it exits 3 when the kernel cannot attach
+// it, which is how a caller learns the capability without a version guess.
+//
 // The thresholds are a fixture concern only: production configuration cannot
 // express them, and they exist so a test can assert which stage arrives
 // instead of waiting for a latency that may never exceed the production
@@ -37,6 +42,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/utils/netutil"
 
 	"golang.org/x/sys/unix"
@@ -46,7 +52,9 @@ const (
 	// modeAuto loads the object that carries both entry points and lets the
 	// kernel decide.
 	modeAuto = "auto"
-	// modeFentry is modeAuto plus a demand that fentry was selected.
+	// modeFentry demands the fentry entry point: it attempts fentry alone, so
+	// a kernel that cannot attach it exits with exitUnsupported instead of
+	// quietly falling back.
 	modeFentry = "fentry"
 	// modeKprobe loads the kprobe-only object, which is the path kernels
 	// without fentry support take.
@@ -56,13 +64,20 @@ const (
 	kprobeObject = "net_rx_latency.o"
 	fentryObject = "net_rx_latency_fentry.o"
 
-	kprobeProgram = "tcp_v4_rcv_prog"
-	fentryProgram = "tcp_v4_rcv_fentry_prog"
+	kprobeProgram   = "tcp_v4_rcv_prog"
+	fentryProgram   = "tcp_v4_rcv_fentry_prog"
+	tracingTarget   = "tcp_v4_rcv"
+	exitUnsupported = 3
 
 	// fixtureThresholdNS is low enough that every packet with a timestamp
 	// passes the latency check.
 	fixtureThresholdNS = 1
 )
+
+// errEntryPointUnsupported reports that the kernel cannot attach the entry
+// point this mode demands. It is a capability answer, not a broken test, so it
+// exits with its own status.
+var errEntryPointUnsupported = errors.New("the kernel cannot attach this tracing entry point")
 
 var stageNames = []string{
 	"RX_STAGE_NETIF",
@@ -116,14 +131,29 @@ type summary struct {
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "net_rx_tracing: %v\n", err)
+		if errors.Is(err, errEntryPointUnsupported) {
+			os.Exit(exitUnsupported)
+		}
+
 		os.Exit(1)
 	}
+}
+
+// tracingPairs describes the hook this fixture exercises.
+func tracingPairs() []bpf.TracingVariantPair {
+	return []bpf.TracingVariantPair{{
+		Kprobe: kprobeProgram,
+		Fentry: fentryProgram,
+		Target: tracingTarget,
+	}}
 }
 
 func run() error {
 	cfg := config{}
 	flag.StringVar(&cfg.bpfDir, "bpf-dir", "_output/bpf", "directory holding the BPF objects")
-	flag.StringVar(&cfg.mode, "mode", modeAuto, "auto, fentry or kprobe")
+	flag.StringVar(&cfg.mode, "mode", modeAuto,
+		"auto lets the loader pick an entry point, fentry and kprobe demand one; "+
+			fmt.Sprintf("fentry exits %d when the kernel cannot attach it", exitUnsupported))
 	flag.DurationVar(&cfg.timeout, "timeout", 10*time.Second, "how long to wait for events")
 	flag.IntVar(&cfg.maxEvents, "events", 512, "stop after this many events")
 	flag.Int64Var(&cfg.thresholdNS, "threshold-ns", fixtureThresholdNS, "latency threshold in nanoseconds")
@@ -207,9 +237,6 @@ func run() error {
 	if observed.events == 0 {
 		return fmt.Errorf("no net_rx_latency event arrived within %s", cfg.timeout)
 	}
-	if observed.duplicates != 0 {
-		return fmt.Errorf("%d events repeated a packet, expected one per hook", observed.duplicates)
-	}
 
 	return nil
 }
@@ -235,8 +262,16 @@ func enableSkbTimestamp() (int, error) {
 // object is already attached and the reader already created: the fixture must
 // not attach again.
 func startTracing(ctx context.Context, cfg config) (bpf.BPF, bpf.PerfEventReader, error) {
+	// The object compares skb->tstamp with the monotonic clock and adds this
+	// offset for realtime timestamps, so a zero offset drops every packet the
+	// kernel stamped with the wall clock. The daemon reads the same value.
+	monoWallOffset, err := timeutil.MonoToRealOffset()
+	if err != nil {
+		return nil, nil, fmt.Errorf("read monotonic to realtime offset: %w", err)
+	}
+
 	consts := map[string]any{
-		"mono_wall_offset":      int64(0),
+		"mono_wall_offset":      monoWallOffset,
 		"rxlat_thresh_netif":    cfg.thresholdNS,
 		"rxlat_thresh_tcpv4":    cfg.thresholdNS,
 		"rxlat_thresh_usercopy": cfg.thresholdNS,
@@ -256,34 +291,69 @@ func startTracing(ctx context.Context, cfg config) (bpf.BPF, bpf.PerfEventReader
 		return object, reader, nil
 	}
 
+	if cfg.mode == modeFentry {
+		// This mode is the capability probe: it loads the fentry entry point
+		// alone, so its failure is the kernel's answer rather than something a
+		// fallback hid. Anything that is not a missing capability stays an
+		// ordinary failure with its own error.
+		object, reader, err := bpf.LoadAttachAndEventPipeForEntryPoint(
+			ctx,
+			fentryObject,
+			consts,
+			tracingPairs(),
+			fentryProgram,
+			eventMap,
+			bpf.DefaultPerfEventBufferBytes,
+		)
+		if err != nil {
+			if bpf.IsTracingTargetUnsupported(err) {
+				return nil, nil, fmt.Errorf("%w: %w", errEntryPointUnsupported, err)
+			}
+
+			return nil, nil, err
+		}
+
+		return object, reader, nil
+	}
+
 	return bpf.LoadAttachAndEventPipeWithFallback(
 		ctx,
 		fentryObject,
 		consts,
-		[]bpf.TracingVariantPair{{
-			Kprobe: kprobeProgram,
-			Fentry: fentryProgram,
-			Target: "tcp_v4_rcv",
-		}},
+		tracingPairs(),
 		eventMap,
 		bpf.DefaultPerfEventBufferBytes,
 	)
 }
 
 // selectedEntryPoint reports which entry point of tcp_v4_rcv the object holds.
+//
+// Exactly one is the contract: two entry points in one object means the hook
+// would be attached twice, which no run of this fixture may accept, so the
+// count is checked here rather than assumed from the names.
 func selectedEntryPoint(object bpf.BPF) (string, error) {
 	info, err := object.Info()
 	if err != nil {
 		return "", err
 	}
 
+	var entryPoints []string
+
 	for _, program := range info.ProgramsInfo {
 		if program.Name == kprobeProgram || program.Name == fentryProgram {
-			return program.Name, nil
+			entryPoints = append(entryPoints, program.Name)
 		}
 	}
 
-	return "", errors.New("object holds no tcp_v4_rcv entry point")
+	switch len(entryPoints) {
+	case 1:
+		return entryPoints[0], nil
+	case 0:
+		return "", errors.New("object holds no tcp_v4_rcv entry point")
+	default:
+		return "", fmt.Errorf("object holds %d tcp_v4_rcv entry points %v, want exactly one",
+			len(entryPoints), entryPoints)
+	}
 }
 
 // collection is what one fixture run observed.
@@ -356,10 +426,14 @@ func recordEvent(
 		observed.stages = append(observed.stages, stage)
 	}
 
-	// One hook produces one event per packet: a repeated key means the hook
-	// was attached twice.
-	key := fmt.Sprintf("%s/%d/%d/%d/%d",
-		stage, event.TCPSeq, netutil.Ntohs(event.TCPSport), netutil.Ntohs(event.TCPDport), event.LatencyNS)
+	// Duplicates are a diagnostic, not a verdict: a retransmission or a
+	// repeated ACK can legitimately reuse a sequence number, and the object
+	// rate-limits its events. The measured latency stays out of the key, so
+	// two hooks reporting the same packet are more likely to collide, but the
+	// proof that a hook is attached once is the entry point count, not this
+	// counter.
+	key := fmt.Sprintf("%s/%d/%d/%d",
+		stage, event.TCPSeq, netutil.Ntohs(event.TCPSport), netutil.Ntohs(event.TCPDport))
 	duplicate := seenEvent[key]
 	if duplicate {
 		observed.duplicates++
