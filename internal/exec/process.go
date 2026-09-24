@@ -19,6 +19,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	osexec "os/exec"
 	"slices"
 	"strings"
@@ -76,15 +78,26 @@ type Process struct {
 	output outputBuffer
 	stderr tailBuffer
 
-	mu              sync.Mutex
-	state           processState
-	pid             int
-	start           lifecycleResult
-	wait            lifecycleResult
-	isStopRequested bool
-	stopAttempt     *lifecycleResult
-	startCommand    func(*osexec.Cmd) error
-	forceStop       func(int) error
+	mu           sync.Mutex
+	state        processState
+	pid          int
+	start        lifecycleResult
+	wait         lifecycleResult
+	stopAttempt  *lifecycleResult
+	startCommand func(*osexec.Cmd) error
+	forceStop    func(int) error
+
+	groupMu sync.Mutex
+	// groupMu serializes the first stop signal with the reaper's decision
+	// to release the leader. A failed signal can be retried while retained.
+	groupReleased   bool
+	groupStopping   bool
+	leaderExited    chan struct{}
+	releaseLeader   chan struct{}
+	leaderErr       error
+	groupRunning    func(int) (bool, error)
+	groupCleanupErr error
+	outputReaders   [2]*os.File
 }
 
 // New validates and snapshots a command specification without starting it.
@@ -102,13 +115,16 @@ func New(spec Spec) (*Process, error) { //nolint:gocritic // Spec is at the proj
 	spec.Args = slices.Clone(spec.Args)
 	spec.Env = slices.Clone(spec.Env)
 	return &Process{
-		spec:         spec,
-		output:       newOutputBuffer(spec.MaxOutputBytes),
-		state:        processStateNew,
-		start:        lifecycleResult{done: make(chan struct{})},
-		wait:         lifecycleResult{done: make(chan struct{})},
-		startCommand: (*osexec.Cmd).Start,
-		forceStop:    forceStopProcessGroup,
+		spec:          spec,
+		output:        newOutputBuffer(spec.MaxOutputBytes),
+		state:         processStateNew,
+		start:         lifecycleResult{done: make(chan struct{})},
+		wait:          lifecycleResult{done: make(chan struct{})},
+		startCommand:  (*osexec.Cmd).Start,
+		forceStop:     forceStopProcessGroup,
+		leaderExited:  make(chan struct{}),
+		releaseLeader: make(chan struct{}),
+		groupRunning:  processGroupRunning,
 	}, nil
 }
 
@@ -170,11 +186,10 @@ func (p *Process) Start(ctx context.Context) error {
 
 	cmd := osexec.Command(p.spec.Path, p.spec.Args...)
 	cmd.Env = p.spec.Env
-	cmd.Stdout = &p.output
-	cmd.Stderr = &p.stderr
 
 	configureCommand(cmd)
-	if err := p.startCommand(cmd); err != nil {
+	outputDone, err := p.startWithOutput(cmd)
+	if err != nil {
 		return p.failStart(fmt.Errorf("start command %q: %w", p.spec.Path, err))
 	}
 
@@ -182,9 +197,10 @@ func (p *Process) Start(ctx context.Context) error {
 	p.pid = cmd.Process.Pid
 	launchErr := ctx.Err()
 	if launchErr != nil {
-		p.isStopRequested = true
+		// A canceled launch owns cleanup before its reaper can run.
+		p.groupStopping = true
 	}
-	go p.reap(cmd)
+	go p.reap(cmd, outputDone)
 	if launchErr == nil {
 		p.state = processStateRunning
 		close(p.start.done)
@@ -195,6 +211,41 @@ func (p *Process) Start(ctx context.Context) error {
 		return nil
 	}
 	return p.finishCanceledStart(launchErr, cmd.Process.Pid)
+}
+
+func (p *Process) startWithOutput(cmd *osexec.Cmd) (<-chan error, error) {
+	stdout, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("create stdout pipe: %w", err)
+	}
+	defer func() { _ = stdoutWriter.Close() }()
+	stderr, stderrWriter, err := os.Pipe()
+	if err != nil {
+		_ = stdout.Close()
+		return nil, fmt.Errorf("create stderr pipe: %w", err)
+	}
+	defer func() { _ = stderrWriter.Close() }()
+
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
+	if err := p.startCommand(cmd); err != nil {
+		_ = stdout.Close()
+		_ = stderr.Close()
+		return nil, err
+	}
+	// Own the readers so output completion can be observed before cmd.Wait
+	// releases the leader's PID. Descendants may still hold either pipe open.
+	done := make(chan error, 2)
+	p.outputReaders = [2]*os.File{stdout, stderr}
+	go copyCommandOutput(&p.output, stdout, done)
+	go copyCommandOutput(&p.stderr, stderr, done)
+	return done, nil
+}
+
+func copyCommandOutput(dst io.Writer, src *os.File, done chan<- error) {
+	_, err := io.Copy(dst, src)
+	_ = src.Close()
+	done <- err
 }
 
 func (p *Process) finishCanceledStart(launchErr error, pid int) error {
@@ -237,16 +288,39 @@ func (p *Process) failStart(err error) error {
 	return err
 }
 
-func (p *Process) reap(cmd *osexec.Cmd) {
+func (p *Process) reap(cmd *osexec.Cmd, outputDone <-chan error) {
+	leaderErr := waitForLeader(cmd.Process.Pid)
+	p.groupMu.Lock()
+	p.leaderErr = leaderErr
+	if leaderErr != nil {
+		p.groupReleased = true
+	}
+	close(p.leaderExited)
+	p.groupMu.Unlock()
+
+	outputErr := errors.Join(<-outputDone, <-outputDone)
+	p.groupMu.Lock()
+	stopping := p.groupStopping
+	retain := stopping && leaderErr == nil
+	if !retain {
+		p.groupReleased = true
+	}
+	p.groupMu.Unlock()
+	if retain {
+		<-p.releaseLeader
+	}
+	p.groupMu.Lock()
+	cleanupErr := p.groupCleanupErr
+	p.groupMu.Unlock()
 	err := cmd.Wait()
 
 	p.mu.Lock()
-	if p.isStopRequested && isStoppedExit(err) {
+	if stopping && isStoppedExit(err) {
 		err = fmt.Errorf("%w: command %q exited after a stop signal: %w", ErrStopped, p.spec.Path, err)
 	} else if err != nil {
 		err = fmt.Errorf("wait for command %q: %w", p.spec.Path, err)
 	}
-	p.wait.err = err
+	p.wait.err = errors.Join(err, leaderErr, outputErr, cleanupErr)
 	if p.state == processStateRunning {
 		p.state = processStateExited
 	}
@@ -254,8 +328,9 @@ func (p *Process) reap(cmd *osexec.Cmd) {
 	p.mu.Unlock()
 }
 
-// Wait waits for an in-progress Start and then for the command reaper. Multiple
-// callers receive the same stored result.
+// Wait waits for an in-progress Start and then for the command reaper. If Stop
+// has claimed the group, reaping waits for cleanup or a terminal cleanup error.
+// Multiple callers receive the same stored result.
 func (p *Process) Wait() error {
 	for {
 		p.mu.Lock()
@@ -327,7 +402,7 @@ func (p *Process) Stop(ctx context.Context) error {
 	case processStateNew, processStateStarting:
 		p.mu.Unlock()
 		return fmt.Errorf("stop command %q: process has not been started", p.spec.Path)
-	case processStateStartFailed, processStateExited:
+	case processStateStartFailed:
 		p.mu.Unlock()
 		return nil
 	}
@@ -343,8 +418,14 @@ func (p *Process) Stop(ctx context.Context) error {
 			return p.waitForStopAttempt(ctx, attempt)
 		}
 	}
+	if p.state == processStateExited {
+		p.mu.Unlock()
+		p.groupMu.Lock()
+		err := p.groupCleanupErr
+		p.groupMu.Unlock()
+		return err
+	}
 
-	p.isStopRequested = true
 	attempt := &lifecycleResult{done: make(chan struct{})}
 	p.stopAttempt = attempt
 	pid := p.pid
@@ -370,10 +451,9 @@ func (p *Process) waitForStopAttempt(ctx context.Context, attempt *lifecycleResu
 }
 
 func (p *Process) stopProcessGroup(ctx context.Context, pid int, waitDone <-chan struct{}) error {
-	gracefulErr := gracefulStopProcessGroup(pid)
+	gracefulErr := p.signalProcessGroup(pid, gracefulStopProcessGroup)
 	if processGroupMissing(gracefulErr) {
-		<-waitDone
-		return nil
+		gracefulErr = nil
 	}
 	if gracefulErr != nil {
 		forceErr := p.forceStopAndWait(pid, waitDone)
@@ -386,24 +466,95 @@ func (p *Process) stopProcessGroup(ctx context.Context, pid int, waitDone <-chan
 		return nil
 	}
 
-	select {
-	case <-waitDone:
-		return nil
-	case <-ctx.Done():
+	if err := p.waitForStoppedGroup(ctx, pid); err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		return p.forceStopAndWait(pid, waitDone)
 	}
+	<-waitDone
+	return nil
 }
 
 func (p *Process) forceStopAndWait(pid int, waitDone <-chan struct{}) error {
-	err := p.forceStop(pid)
+	err := p.signalProcessGroup(pid, p.forceStop)
 	if processGroupMissing(err) {
 		err = nil
 	}
 	if err != nil {
 		return wrapSignalError("force stop", p.spec.Path, err)
 	}
+	if err := p.waitForStoppedGroup(context.Background(), pid); err != nil {
+		return err
+	}
 	<-waitDone
 	return nil
+}
+
+func (p *Process) signalProcessGroup(pid int, signal func(int) error) error {
+	p.groupMu.Lock()
+	defer p.groupMu.Unlock()
+	if p.groupReleased {
+		return p.groupCleanupErr
+	}
+	p.groupStopping = true
+	return signal(pid)
+}
+
+func (p *Process) waitForStoppedGroup(ctx context.Context, pid int) error {
+	select {
+	case <-p.leaderExited:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	p.groupMu.Lock()
+	released, err := p.groupReleased, p.leaderErr
+	p.groupMu.Unlock()
+	if err != nil {
+		return err
+	}
+	if released {
+		return nil
+	}
+	for {
+		running, err := p.groupRunning(pid)
+		if err != nil {
+			return p.failGroupCleanup(pid, err)
+		}
+		if !running {
+			p.groupMu.Lock()
+			p.groupReleased = true
+			close(p.releaseLeader)
+			p.groupMu.Unlock()
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func (p *Process) failGroupCleanup(pid int, inspectErr error) error {
+	p.groupMu.Lock()
+	defer p.groupMu.Unlock()
+	// Inspection cannot prove completion. Make one last stop attempt while
+	// the leader still pins the group, then report failure to both callers.
+	killErr := p.forceStop(pid)
+	if processGroupMissing(killErr) {
+		killErr = nil
+	}
+	p.groupCleanupErr = errors.Join(
+		fmt.Errorf("inspect process group %d: %w", pid, inspectErr),
+		wrapSignalError("force stop", p.spec.Path, killErr),
+	)
+	for _, reader := range p.outputReaders {
+		_ = reader.Close()
+	}
+	p.groupReleased = true
+	close(p.releaseLeader)
+	return p.groupCleanupErr
 }
 
 func wrapSignalError(action, path string, err error) error {
