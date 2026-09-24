@@ -589,6 +589,132 @@ func TestDefaultBPF_DetachOnContextDone(t *testing.T) {
 	b.DetachOnContextDone(ctx, cancel)
 }
 
+var (
+	errInjectedClone = errors.New("injected clone failure")
+	errInjectedClose = errors.New("injected close failure")
+)
+
+// injectedHandles runs the production handle operations but fails the n-th
+// program clone, which leaves the loader holding handles it cloned earlier -
+// the state that leaks when the failed load does not release them.
+type injectedHandles struct {
+	kernelHandleOps
+
+	failCloneAt int
+	closeErr    error
+
+	programClones  int
+	closedMaps     []*ebpf.Map
+	closedPrograms []*ebpf.Program
+}
+
+func (h *injectedHandles) cloneProgram(p *ebpf.Program) (*ebpf.Program, error) {
+	h.programClones++
+	if h.failCloneAt > 0 && h.programClones == h.failCloneAt {
+		return nil, errInjectedClone
+	}
+
+	return h.kernelHandleOps.cloneProgram(p)
+}
+
+func (h *injectedHandles) closeMap(m *ebpf.Map) error {
+	h.closedMaps = append(h.closedMaps, m)
+
+	return errors.Join(h.kernelHandleOps.closeMap(m), h.closeErr)
+}
+
+func (h *injectedHandles) closeProgram(p *ebpf.Program) error {
+	h.closedPrograms = append(h.closedPrograms, p)
+
+	return errors.Join(h.kernelHandleOps.closeProgram(p), h.closeErr)
+}
+
+func loadMinimalSpec(t *testing.T) *ebpf.CollectionSpec {
+	t.Helper()
+
+	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(loadMinimalObjBytes(t)))
+	require.NoError(t, err)
+	require.NotEmpty(t, spec.Maps)
+	require.Greater(t, len(spec.Programs), 1)
+
+	return spec
+}
+
+// TestLoadBPFFromCollectionSpec_PartialCloneCleanup covers the handles cloned
+// before a load fails: they are not reachable through the returned object, and
+// coll.Close does not release them, so the loader has to.
+func TestLoadBPFFromCollectionSpec_PartialCloneCleanup(t *testing.T) {
+	tests := []struct {
+		name      string
+		closeErr  error
+		wantClose bool
+		wantErrs  []error
+	}{
+		{
+			name:      "releases the handles cloned so far",
+			wantClose: true,
+			wantErrs:  []error{errInjectedClone},
+		},
+		{
+			name:      "reports a failing release next to the load error",
+			closeErr:  errInjectedClose,
+			wantClose: true,
+			wantErrs:  []error{errInjectedClone, errInjectedClose},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requireBPFPermission(t)
+
+			spec := loadMinimalSpec(t)
+			handles := &injectedHandles{failCloneAt: 2, closeErr: tt.closeErr}
+
+			obj, err := loadBPFFromCollectionSpecWithHandles("test_minimal.elf", spec, nil, handles)
+			if errors.Is(err, ebpf.ErrNotSupported) {
+				t.Skipf("skipping: ebpf not supported: %v", err)
+			}
+			require.Error(t, err)
+			require.Nil(t, obj)
+
+			for _, wantErr := range tt.wantErrs {
+				require.ErrorIs(t, err, wantErr)
+			}
+
+			// Every map and the first program were cloned before the failure,
+			// and each clone was released exactly once.
+			require.Equal(t, 2, handles.programClones, "clones attempted before the failure")
+			require.Len(t, handles.closedPrograms, 1)
+			require.Len(t, handles.closedMaps, len(spec.Maps))
+		})
+	}
+}
+
+// TestLoadBPFFromCollectionSpec_HandsOverClones checks the success path keeps
+// owning the clones: nothing is released during the load, and Close releases
+// everything exactly once.
+func TestLoadBPFFromCollectionSpec_HandsOverClones(t *testing.T) {
+	requireBPFPermission(t)
+
+	spec := loadMinimalSpec(t)
+	handles := &injectedHandles{}
+
+	obj, err := loadBPFFromCollectionSpecWithHandles("test_minimal.elf", spec, nil, handles)
+	if errors.Is(err, ebpf.ErrNotSupported) {
+		t.Skipf("skipping: ebpf not supported: %v", err)
+	}
+	require.NoError(t, err)
+	require.Empty(t, handles.closedMaps)
+	require.Empty(t, handles.closedPrograms)
+
+	info, err := obj.Info()
+	require.NoError(t, err)
+	require.Len(t, info.MapsInfo, len(spec.Maps))
+	require.Len(t, info.ProgramsInfo, len(spec.Programs))
+
+	require.NoError(t, obj.Close())
+}
+
 func loadMinimalObjBytes(t *testing.T) []byte {
 	t.Helper()
 
