@@ -304,6 +304,14 @@ idle timeout; 15–60 seconds is typical.
 
   **Description**: Oldest files are automatically deleted once the limit is reached, controlling disk usage.
 
+- **Shutdown behavior**: Local file writers are opened lazily, one per tracer,
+  and are closed during process shutdown.
+
+  **Description**: Each open writer holds one file descriptor. The backend
+  closes every writer when the process exits and rejects later writes with
+  `storage: localfile backend closed`; records written before shutdown are
+  already flushed to disk.
+
 ### 7. Automatic Tracing
 
 The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.
