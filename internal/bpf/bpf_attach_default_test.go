@@ -16,6 +16,7 @@ package bpf
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cilium/ebpf"
@@ -226,6 +227,194 @@ func TestParseRawTracepointAttachOptions(t *testing.T) {
 	}
 }
 
+// tracingTestProgram is a loaded fentry program as the loader builds it.
+func tracingTestProgram() *loadedProgram {
+	return &loadedProgram{
+		name:          "tcp_v4_rcv_fentry_prog",
+		programType:   ebpf.Tracing,
+		sectionName:   "fentry/tcp_v4_rcv",
+		sectionPrefix: "fentry",
+		attachTo:      "tcp_v4_rcv",
+		handle:        new(ebpf.Program),
+		links:         make(map[string]link.Link),
+	}
+}
+
+func TestParseTracingAttachOptions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		mutate       func(*loadedProgram)
+		symbol       string
+		wantType     ebpf.AttachType
+		wantErr      bool
+		wantMismatch bool
+	}{
+		{
+			name:     "fentry without symbol",
+			wantType: ebpf.AttachTraceFEntry,
+		},
+		{
+			name:     "fentry with matching symbol",
+			symbol:   "tcp_v4_rcv",
+			wantType: ebpf.AttachTraceFEntry,
+		},
+		{
+			name: "fexit",
+			mutate: func(p *loadedProgram) {
+				p.sectionName = "fexit/tcp_v4_rcv"
+				p.sectionPrefix = "fexit"
+			},
+			wantType: ebpf.AttachTraceFExit,
+		},
+		{
+			name:         "symbol for another target",
+			symbol:       "udp_rcv",
+			wantErr:      true,
+			wantMismatch: true,
+		},
+		{
+			// A program whose loaded target is unknown cannot be checked, so
+			// naming a symbol is refused rather than trusted.
+			name:         "symbol when the program has no loaded target",
+			mutate:       func(p *loadedProgram) { p.attachTo = "" },
+			symbol:       "tcp_v4_rcv",
+			wantErr:      true,
+			wantMismatch: true,
+		},
+		{
+			name: "unsupported section",
+			mutate: func(p *loadedProgram) {
+				p.sectionName = "fmod_ret/tcp_v4_rcv"
+				p.sectionPrefix = "fmod_ret"
+			},
+			wantErr: true,
+		},
+		{
+			name: "sleepable section",
+			mutate: func(p *loadedProgram) {
+				p.sectionName = "fentry.s/tcp_v4_rcv"
+				p.sectionPrefix = "fentry.s"
+			},
+			wantErr: true,
+		},
+		{
+			name:    "not a tracing program",
+			mutate:  func(p *loadedProgram) { p.programType = ebpf.Kprobe },
+			wantErr: true,
+		},
+		{
+			name:    "no program handle",
+			mutate:  func(p *loadedProgram) { p.handle = nil },
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			program := tracingTestProgram()
+			if tt.mutate != nil {
+				tt.mutate(program)
+			}
+
+			opts, err := parseTracingAttachOptions(program, tt.symbol)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr %t", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				if tt.wantMismatch != errors.Is(err, errTracingTargetMismatch) {
+					t.Errorf("error = %v, want mismatch %t", err, tt.wantMismatch)
+				}
+				return
+			}
+
+			if opts.program != program {
+				t.Error("parseTracingAttachOptions() did not preserve program")
+			}
+			if opts.attachType != tt.wantType {
+				t.Errorf("attach type = %s, want %s", opts.attachType, tt.wantType)
+			}
+		})
+	}
+}
+
+func TestAttachDispatchesTracingPrograms(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		program     *loadedProgram
+		wantTargets string
+	}{
+		{
+			name: "fentry without a handle fails in the parse step",
+			program: &loadedProgram{
+				name:          "tcp_v4_rcv_fentry_prog",
+				programType:   ebpf.Tracing,
+				sectionName:   "fentry/tcp_v4_rcv",
+				sectionPrefix: "fentry",
+				attachTo:      "tcp_v4_rcv",
+				links:         make(map[string]link.Link),
+			},
+			wantTargets: "no handle",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			b := &defaultBPF{
+				programsByID:     map[uint32]*loadedProgram{1: tt.program},
+				programIDsByName: map[string]uint32{tt.program.name: 1},
+			}
+
+			err := b.Attach()
+			if err == nil {
+				t.Fatal("Attach() error = nil, want non-nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantTargets) {
+				t.Errorf("Attach() error = %v, want it to mention %q", err, tt.wantTargets)
+			}
+			if strings.Contains(err.Error(), "unsupported BPF program type") {
+				t.Errorf("Attach() treated a tracing program as unsupported: %v", err)
+			}
+
+			err = b.AttachWithOptions([]AttachOption{{ProgramName: tt.program.name}})
+			if err == nil {
+				t.Fatal("AttachWithOptions() error = nil, want non-nil")
+			}
+			if strings.Contains(err.Error(), "unsupported BPF program type") {
+				t.Errorf("AttachWithOptions() treated a tracing program as unsupported: %v", err)
+			}
+		})
+	}
+}
+
+func TestAttachWithOptionsRejectsTracingTargetMismatch(t *testing.T) {
+	t.Parallel()
+
+	program := tracingTestProgram()
+	b := &defaultBPF{
+		programsByID:     map[uint32]*loadedProgram{1: program},
+		programIDsByName: map[string]uint32{program.name: 1},
+	}
+
+	err := b.AttachWithOptions([]AttachOption{{
+		ProgramName: program.name,
+		Symbol:      "udp_rcv",
+	}})
+	if !errors.Is(err, errTracingTargetMismatch) {
+		t.Fatalf("error = %v, want %v", err, errTracingTargetMismatch)
+	}
+	if len(program.links) != 0 {
+		t.Errorf("links = %d, want 0 after a rejected attach", len(program.links))
+	}
+}
+
 func TestDuplicateAttachErrors(t *testing.T) {
 	t.Parallel()
 
@@ -271,6 +460,23 @@ func TestDuplicateAttachErrors(t *testing.T) {
 			run: func() error {
 				b := &defaultBPF{perfEvent: new(perfEventAttach)}
 				return b.attachPerfEvent(new(perfEventOption))
+			},
+		},
+		{
+			name: "tracing",
+			run: func() error {
+				program := &loadedProgram{
+					name:          "tcp_v4_rcv_fentry_prog",
+					programType:   ebpf.Tracing,
+					sectionName:   "fentry/tcp_v4_rcv",
+					sectionPrefix: "fentry",
+					attachTo:      "tcp_v4_rcv",
+					links:         map[string]link.Link{"fentry/tcp_v4_rcv": nil},
+				}
+				return new(defaultBPF).attachTracing(tracingAttachOptions{
+					program:    program,
+					attachType: ebpf.AttachTraceFEntry,
+				})
 			},
 		},
 	}

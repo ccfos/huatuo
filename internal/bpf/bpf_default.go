@@ -58,8 +58,11 @@ type loadedProgram struct {
 	programType   ebpf.ProgramType
 	sectionName   string
 	sectionPrefix string
-	handle        *ebpf.Program
-	links         map[string]link.Link
+	// attachTo is the kernel symbol recorded at load time. Tracing programs
+	// are pinned to it by the kernel, so it also names the attach target.
+	attachTo string
+	handle   *ebpf.Program
+	links    map[string]link.Link
 }
 
 // defaultBPF holds loaded BPF maps and programs.
@@ -200,6 +203,7 @@ func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 			programType:   spec.Type,
 			sectionName:   spec.SectionName,
 			sectionPrefix: strings.SplitN(spec.SectionName, "/", 2)[0],
+			attachTo:      spec.AttachTo,
 			handle:        cloned,
 			links:         make(map[string]link.Link),
 		}
