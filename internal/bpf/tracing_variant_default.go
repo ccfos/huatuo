@@ -405,14 +405,24 @@ func LoadAttachAndEventPipeWithFallback(
 		return nil, nil, err
 	}
 
-	// The selected entry point is what an operator has to check when a tracer
-	// behaves differently on different kernels, so it is reported at load.
+	logTracingSelection(bpfName, pairs, selection)
+
+	return object, reader, nil
+}
+
+// logTracingSelection reports the entry point an object was loaded with. The
+// selected mechanism is what an operator has to check when a tracer behaves
+// differently on different kernels, so it is reported at load.
+//
+// The reason belongs on this line: a kernel the probe rules out selects kprobe
+// without an attempt and never reaches the fallback warning, so this is the
+// only place that decision is explained.
+func logTracingSelection(bpfName string, pairs []TracingVariantPair, selection tracingSelection) {
 	log.WithField("bpf", bpfName).
 		WithField("mode", string(selection.Mode)).
 		WithField("hooks", tracingPairTargets(pairs)).
+		WithField("reason", selection.Reason).
 		Info("loaded BPF with a selected tracing entry point")
-
-	return object, reader, nil
 }
 
 // loadAttachAndEventPipe loads one pruned spec copy, creates the event pipe
