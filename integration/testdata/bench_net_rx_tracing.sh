@@ -27,8 +27,15 @@
 # The rate and the CPU percentage are divided by the generator's own traffic
 # window, not by the wall clock span of the round: starting the interpreter can
 # take seconds on a loaded machine, and a denominator that includes them reports
-# the load, not the hook. The raw CPU seconds are reported next to the
+# the load, not the hook. The CPU counters are read by that same process at the
+# two ends of the window it timed, so the numerator and the denominator cover
+# one interval instead of two. The raw CPU seconds are reported next to the
 # percentage, because they are the column a noisy host disturbs least.
+#
+# The fixture is stopped after the generator returns, so its collection window
+# always covers the whole measured interval; its own timeout is a fault bound
+# only. A fixture that reached that bound, or exited before the traffic ended,
+# leaves the tail of the traffic unmeasured, and that round is invalid.
 #
 # The generator sends TCP SYNs to a closed port of the peer namespace, which is
 # what keeps the packet rate high enough to see a per-packet hook: the slow TCP
@@ -81,6 +88,10 @@ readonly ROUNDS=${ROUNDS:-5}
 readonly ROUND_SECONDS=${ROUND_SECONDS:-10}
 readonly WARMUP_ROUNDS=${WARMUP_ROUNDS:-1}
 readonly FIXTURE_EVENTS=5000000
+# The fixture's own timeout is only there to bound a fault: the round stops it
+# after the traffic, long before this bound, and a fixture that reached it
+# covered a window that ended inside the traffic.
+readonly FIXTURE_FAULT_SECONDS=$((ROUND_SECONDS + 60))
 
 readonly MODE_BASELINE="none"
 readonly MODES=("kprobe" "fentry")
@@ -136,10 +147,22 @@ import socket
 import sys
 import time
 
+
+def cpu_counters():
+    # Busy excludes idle and iowait; the hook runs in softirq context, so that
+    # column moves first when the entry point gets more expensive. /proc/stat is
+    # the host's, also from inside a network namespace.
+    with open('/proc/stat') as stat:
+        fields = stat.readline().split()
+    return (int(fields[1]) + int(fields[2]) + int(fields[3])
+            + int(fields[6]) + int(fields[7]) + int(fields[8]), int(fields[7]))
+
+
 target = (sys.argv[1], int(sys.argv[2]))
 duration = float(sys.argv[3])
 
 sent = 0
+busy_before, softirq_before = cpu_counters()
 start = time.monotonic()
 end = start + duration
 while time.monotonic() < end:
@@ -152,21 +175,16 @@ while time.monotonic() < end:
     sock.close()
     sent += 1
 
-# The traffic window, not the interpreter's start-up: the counters are read
-# around the process, but a rate or a CPU percentage divided by a window that
-# includes three seconds of start-up reports the machine's load, not the hook's.
-print(sent, time.monotonic() - start)
+# The window this process measured, not the caller's: the CPU counters bracket
+# exactly the interval the duration covers, so a rate or a CPU percentage never
+# divides a wider numerator by a narrower denominator because the interpreter
+# started, or because entering the namespace took time.
+print(sent, time.monotonic() - start,
+      busy_before, softirq_before, busy_after, softirq_after)
 PY
 }
 
 # ------------------------------- measurement --------------------------------
-
-# read_cpu_counters prints "<busy jiffies> <softirq jiffies>" for all CPUs.
-# Busy excludes idle and iowait; the hook runs in softirq context, so that
-# column moves first when the entry point gets more expensive.
-read_cpu_counters() {
-	awk '/^cpu / { printf "%d %d\n", $2 + $3 + $4 + $7 + $8 + $9, $8 }' /proc/stat
-}
 
 # veth_peer_rx_packets counts what the generator's peer received, which is the
 # only traffic the hook can see: without a packet there, the round measures the
@@ -207,44 +225,53 @@ run_round() {
 	local lost="-"
 	local pair_events="-"
 	local pair_tcpv4="-"
+	local timeout_hit="-"
 	local rx_before rx_after received
 	local busy0 softirq0 busy1 softirq1 syns elapsed
 	local status=0
 	local invalid=0
+	local early_exit=0
 
 	if [[ "${mode}" != "${MODE_BASELINE}" ]]; then
-		# The timeout bounds the fixture's own collection window, so it only
-		# has to outlast the traffic: two seconds of grace, no idle tail.
+		# The timeout is a fault bound, not the collection window: the round
+		# stops the fixture after the traffic instead, so the window always
+		# covers what is measured.
 		"${FIXTURE_BIN}" \
 			-bpf-dir "${ROOT_DIR}/_output/bpf" \
 			-mode "${mode}" \
-			-timeout "$((ROUND_SECONDS + 2))s" \
+			-timeout "${FIXTURE_FAULT_SECONDS}s" \
 			-events "${FIXTURE_EVENTS}" \
 			> "${out}" 2> "${err}" &
 		FIXTURE_PID=$!
 		wait_for_attach "${out}" "${FIXTURE_PID}" "${mode}"
 	fi
 
-	# Only the generator's window is measured: nothing else runs in it.
-	read -r busy0 softirq0 <<< "$(read_cpu_counters)"
 	rx_before=$(veth_peer_rx_packets)
 
 	# The generator belongs in the client namespace: the peer address is only
-	# routable from there.
-	read -r syns elapsed <<< "$(ip netns exec "${TCP_NS_CLIENT}" \
+	# routable from there. It reports its own window, so the traffic, the
+	# duration and the two CPU counter readings cover one interval.
+	read -r syns elapsed busy0 softirq0 busy1 softirq1 <<< "$(ip netns exec "${TCP_NS_CLIENT}" \
 		python3 "${GENERATOR}" "${TCP_NS_SERVER_ADDR}" "${BENCH_PORT}" "${ROUND_SECONDS}")"
 
-	read -r busy1 softirq1 <<< "$(read_cpu_counters)"
 	rx_after=$(veth_peer_rx_packets)
 	received=$((rx_after - rx_before))
 
 	if [[ "${mode}" != "${MODE_BASELINE}" ]]; then
-		wait "${FIXTURE_PID}" || status=$?
+		# The traffic is over, so the fixture is stopped now: what it collected
+		# up to this point covered the measured window. A fixture that is
+		# already gone stopped on its own, which leaves the tail of the traffic
+		# unmeasured whichever way it ended.
+		if kill -0 "${FIXTURE_PID}" 2> /dev/null; then
+			stop_and_wait_by_pid "${FIXTURE_PID}" 10 || status=$?
+		else
+			early_exit=1
+			wait "${FIXTURE_PID}" || status=$?
+		fi
 		FIXTURE_PID=""
 	fi
 
-	# elapsed is the generator's own window; the counters above bracket it a
-	# little wider, which is why the round also records the raw clock span.
+	# A window of zero cannot produce a rate or a percentage.
 	[[ "${elapsed}" != "0.000" ]] || fatal "round ${label} measured no elapsed time"
 
 	if [[ "${mode}" != "${MODE_BASELINE}" ]]; then
@@ -252,6 +279,7 @@ run_round() {
 		events=$(jq -r 'select(.summary == true) | .events' "${out}")
 		duplicates=$(jq -r 'select(.summary == true) | .duplicates' "${out}")
 		lost=$(jq -r 'select(.summary == true) | .lost_samples' "${out}")
+		timeout_hit=$(jq -r 'select(.summary == true) | .timeout' "${out}" | tail -1)
 		pair_events=$(jq -s \
 			--arg saddr "${TCP_NS_CLIENT_ADDR}" --arg daddr "${TCP_NS_SERVER_ADDR}" \
 			'[.[] | select(.summary != true) | select(.ready != true)
@@ -302,6 +330,17 @@ run_round() {
 
 	if [[ "${status}" -ne 0 ]]; then
 		log_warn "round ${label} fixture exited with ${status}"
+		invalid=1
+	fi
+	if [[ "${early_exit}" -ne 0 ]]; then
+		log_warn "round ${label} (${mode}): the fixture exited before the traffic ended, its window does not cover the round"
+		invalid=1
+	fi
+	# The fixture reports whether its own deadline ended the collection. A
+	# fixture this round stopped reports false; anything else means its window
+	# ended inside the traffic, so the tail was not measured.
+	if [[ "${timeout_hit}" != "false" ]]; then
+		log_warn "round ${label} (${mode}): the fixture did not cover the whole window (timeout=${timeout_hit:-missing})"
 		invalid=1
 	fi
 	if [[ "${events}" == "0" ]]; then
