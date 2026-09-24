@@ -447,6 +447,148 @@ func TestLoadAttachAndEventPipeAttachesAndCreatesReader(t *testing.T) {
 	require.NoError(t, reader.Close())
 }
 
+// pilotEntryPointObject points DefaultObjDir at the pilot object built with
+// both entry points and returns its name and spec. The spec is the caller's
+// baseline: nothing in the load path may modify it.
+func pilotEntryPointObject(t *testing.T) (string, *ebpf.CollectionSpec) {
+	t.Helper()
+
+	objDir := filepath.Join("..", "..", "bpf")
+	objName := "net_rx_latency_fentry.o"
+	if _, err := os.Stat(filepath.Join(objDir, objName)); err != nil {
+		t.Skipf("skipping: %v (run 'make gen-build' first)", err)
+	}
+
+	old := DefaultObjDir
+	DefaultObjDir = objDir
+	t.Cleanup(func() { DefaultObjDir = old })
+
+	spec, err := loadCollectionSpec(objName)
+	require.NoError(t, err)
+
+	return objName, spec
+}
+
+// pilotObjectCounts counts the loaded programs and their links.
+func pilotObjectCounts(t *testing.T, object BPF) (map[string]bool, int) {
+	t.Helper()
+
+	inner, ok := object.(*defaultBPF)
+	require.True(t, ok, "expected *defaultBPF, got %T", object)
+
+	loaded := make(map[string]bool, len(inner.programsByID))
+	links := 0
+
+	for _, program := range inner.programsByID {
+		loaded[program.name] = true
+		links += len(program.links)
+	}
+
+	return loaded, links
+}
+
+func skipUnsupportedLoad(t *testing.T, err error) {
+	t.Helper()
+
+	if errors.Is(err, ebpf.ErrNotSupported) ||
+		errors.Is(err, unix.EPERM) ||
+		errors.Is(err, unix.EACCES) {
+		t.Skipf("skipping: %v", err)
+	}
+}
+
+// TestLoadAttachAndEventPipeWithFallbackSelectsPilotEntryPoint loads the pilot
+// object against the running kernel and checks the invariants that hold on
+// every kernel: exactly one tcp_v4_rcv entry point is loaded, the tracepoints
+// survive the selection, and the object comes back attached.
+func TestLoadAttachAndEventPipeWithFallbackSelectsPilotEntryPoint(t *testing.T) {
+	requireBPFPermission(t)
+
+	objName, _ := pilotEntryPointObject(t)
+
+	object, reader, err := LoadAttachAndEventPipeWithFallback(
+		t.Context(),
+		objName,
+		pilotObjectConstants(),
+		[]TracingVariantPair{testTracingPair()},
+		"net_recv_lat_event_map",
+		DefaultPerfEventBufferBytes,
+	)
+	if err != nil {
+		skipUnsupportedLoad(t, err)
+		t.Fatalf("LoadAttachAndEventPipeWithFallback() error = %v, want nil", err)
+	}
+
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = object.Close()
+	})
+
+	loaded, links := pilotObjectCounts(t, object)
+	require.NotEqual(t, loaded[testFentryProgram], loaded[testKprobeProgram],
+		"exactly one entry point must be loaded")
+	require.True(t, loaded["netif_receive_skb_prog"], "tracepoint programs must survive the selection")
+	require.True(t, loaded["skb_copy_datagram_iovec_prog"], "tracepoint programs must survive the selection")
+	require.Positive(t, links, "the returned object must already be attached")
+
+	// The selection must agree with what the kernel reports for the target.
+	wantFentry := probeFentryTarget(testVariantTarget) == nil
+	if loaded[testFentryProgram] != wantFentry {
+		t.Errorf("fentry loaded = %t, want %t for this kernel", loaded[testFentryProgram], wantFentry)
+	}
+
+	t.Logf("kernel selected the kprobe entry point: %t", loaded[testKprobeProgram])
+}
+
+// TestLoadTracingVariantForcesKprobeEntryPoint exercises the fallback that
+// kernels without fentry support take, on a kernel that does support it.
+func TestLoadTracingVariantForcesKprobeEntryPoint(t *testing.T) {
+	requireBPFPermission(t)
+
+	objName, spec := pilotEntryPointObject(t)
+	attempt := func(ctx context.Context, spec *ebpf.CollectionSpec) (BPF, PerfEventReader, error) {
+		return loadAttachAndEventPipe(
+			ctx, objName, spec, pilotObjectConstants(), "net_recv_lat_event_map", DefaultPerfEventBufferBytes,
+		)
+	}
+
+	object, reader, selection, err := loadTracingVariantWithFallback(
+		t.Context(),
+		spec,
+		[]TracingVariantPair{testTracingPair()},
+		probeResult(errTracingTargetUnsupported),
+		attempt,
+	)
+	if err != nil {
+		skipUnsupportedLoad(t, err)
+		t.Fatalf("loadTracingVariantWithFallback() error = %v, want nil", err)
+	}
+
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = object.Close()
+	})
+
+	require.Equal(t, tracingModeKprobe, selection.Mode)
+	require.NotEmpty(t, selection.Reason, "the fallback reason must be reported")
+
+	loaded, links := pilotObjectCounts(t, object)
+	require.True(t, loaded[testKprobeProgram], "the kprobe entry point must be loaded")
+	require.False(t, loaded[testFentryProgram], "the fentry entry point must not be loaded")
+	require.Positive(t, links, "the returned object must already be attached")
+}
+
+// pilotObjectConstants are the constants the tracer rewrites, with the values
+// the integration test configuration uses.
+func pilotObjectConstants() map[string]any {
+	return map[string]any{
+		"mono_wall_offset":      int64(0),
+		"rxlat_thresh_netif":    int64(5 * 1000 * 1000),
+		"rxlat_thresh_tcpv4":    int64(10 * 1000 * 1000),
+		"rxlat_thresh_usercopy": int64(115 * 1000 * 1000),
+	}
+}
+
 // TestLoadAttachAndEventPipeWithFallbackRejectsUnknownPair checks that a pair
 // which the object does not carry stops the load instead of guessing an entry
 // point.
