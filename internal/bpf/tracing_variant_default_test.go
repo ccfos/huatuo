@@ -951,8 +951,19 @@ func TestClassifyTracingLoadFailure(t *testing.T) {
 	var (
 		errUnknownType = fmt.Errorf("program tcp_v4_rcv_fentry_prog: load program: %w", unix.EINVAL)
 		errTooBig      = fmt.Errorf("program tcp_v4_rcv_fentry_prog: load program: %w", unix.E2BIG)
-		errVerifier    = fmt.Errorf("program tcp_v4_rcv_fentry_prog: load program: %w", unix.EINVAL)
 		errPermission  = fmt.Errorf("program tcp_v4_rcv_fentry_prog: load program: %w", unix.EPERM)
+
+		// Every load failure reaches the classifier wrapped in a VerifierError:
+		// a kernel that refuses the load before the verifier leaves the log
+		// empty, a verifier rejection fills it. Both are EINVAL.
+		errBeforeVerifier = fmt.Errorf("program tcp_v4_rcv_fentry_prog: load program: %w",
+			&ebpf.VerifierError{Cause: unix.EINVAL})
+		errVerifierRejected = fmt.Errorf("program tcp_v4_rcv_fentry_prog: %w", &ebpf.VerifierError{
+			Cause: unix.EINVAL,
+			Log:   []string{"0: (b7) r0 = 0", "R1 invalid mem access 'scalar'"},
+		})
+		errWithCleanup = markTracingCleanupFailure(errors.Join(
+			errUnknownType, errors.New("close perf event reader: bad file descriptor")))
 	)
 
 	tests := []struct {
@@ -978,9 +989,20 @@ func TestClassifyTracingLoadFailure(t *testing.T) {
 			probeErr: ebpf.ErrNotSupported,
 		},
 		{
-			name:         "a verifier rejection is an ordinary failure",
-			err:          errVerifier,
-			probeErr:     nil,
+			name:     "a load the kernel refused before the verifier is the same verdict",
+			err:      errBeforeVerifier,
+			probeErr: ebpf.ErrNotSupported,
+		},
+		{
+			name:         "a verifier rejection outranks a probe that says unsupported",
+			err:          errVerifierRejected,
+			probeErr:     ebpf.ErrNotSupported,
+			wantUnmarked: true,
+		},
+		{
+			name:         "a cleanup failure outranks the capability verdict",
+			err:          errWithCleanup,
+			probeErr:     ebpf.ErrNotSupported,
 			wantUnmarked: true,
 		},
 		{
