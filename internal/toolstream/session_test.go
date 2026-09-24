@@ -19,6 +19,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/toolstream/transport"
 )
@@ -116,5 +117,53 @@ func TestAwaitSessionCancellationRemovesExpectation(t *testing.T) {
 	}
 	if err := server.ExpectSession("profiler", "job-1"); err != nil {
 		t.Fatalf("ExpectSession() after cancellation error = %v", err)
+	}
+}
+
+func TestOnTransportDisconnectWithoutEndCompletesExpectedSession(t *testing.T) {
+	server, err := NewServer(t.TempDir() + "/toolstream.sock")
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	if err := server.ExpectSession("profiler", "job-1"); err != nil {
+		t.Fatalf("ExpectSession() error = %v", err)
+	}
+
+	server.onTransportDisconnect(&transport.Session{
+		ToolName: "profiler",
+		TaskID:   "job-1",
+	}, false)
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	err = server.AwaitSession(ctx, "profiler", "job-1")
+	if err == nil || !strings.Contains(err.Error(), "connection closed before end frame") {
+		t.Fatalf("AwaitSession() error = %v, want connection-closed error", err)
+	}
+	if err := server.ExpectSession("profiler", "job-1"); err != nil {
+		t.Fatalf("ExpectSession() after disconnect error = %v", err)
+	}
+}
+
+func TestOnTransportDisconnectWithEndDoesNotFailSession(t *testing.T) {
+	server, err := NewServer(t.TempDir() + "/toolstream.sock")
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	if err := server.ExpectSession("profiler", "job-1"); err != nil {
+		t.Fatalf("ExpectSession() error = %v", err)
+	}
+	server.dispatch(&transport.Session{
+		ToolName: "profiler",
+		TaskID:   "job-1",
+	}, transport.ChunkMsg{End: true})
+
+	server.onTransportDisconnect(&transport.Session{
+		ToolName: "profiler",
+		TaskID:   "job-1",
+	}, true)
+
+	if err := server.AwaitSession(t.Context(), "profiler", "job-1"); err != nil {
+		t.Fatalf("AwaitSession() error = %v", err)
 	}
 }
