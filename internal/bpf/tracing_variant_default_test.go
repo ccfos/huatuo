@@ -28,6 +28,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/features"
+	"github.com/cilium/ebpf/link"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
@@ -873,4 +874,75 @@ func TestLoadTracingVariantWithFallbackRejectsInvalidInput(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stuckLink is a link the kernel refuses to close, which is the state a link
+// is in when detaching it fails. The embedded interface carries the methods
+// this test never calls; only Close is part of the behaviour under test.
+type stuckLink struct {
+	link.Link
+
+	err error
+}
+
+func (l *stuckLink) Close() error { return l.err }
+
+// TestAttachFailureStopsTheTracingFallback covers the attach half of the crash
+// window: a program is attached, the next one fails to attach, and the link of
+// the attached program cannot be closed. The failure must reach the caller as
+// an unreleased attempt, because the coordinator loading the kprobe entry point
+// over a live fentry link is the double attach this change exists to prevent.
+func TestAttachFailureStopsTheTracingFallback(t *testing.T) {
+	t.Parallel()
+
+	// The program already carries a link, so this is an attach that failed
+	// after a successful one. A tracing program without a handle fails in the
+	// parse step, before anything reaches the kernel.
+	attached := &loadedProgram{
+		name:          testFentryProgram,
+		programType:   ebpf.Tracing,
+		sectionName:   "fentry/" + testVariantTarget,
+		sectionPrefix: "fentry",
+		attachTo:      testVariantTarget,
+		links: map[string]link.Link{
+			testVariantTarget: &stuckLink{err: errInjectedClose},
+		},
+	}
+
+	object := &defaultBPF{
+		programsByID:     map[uint32]*loadedProgram{1: attached},
+		programIDsByName: map[string]uint32{attached.name: 1},
+	}
+
+	err := object.Attach()
+	require.Error(t, err, "attaching a program without a handle must fail")
+	require.ErrorIs(t, err, errInjectedClose, "the detach error must survive")
+	require.True(t, isTracingCleanupFailure(err),
+		"an attach that could not release a link must be marked: %v", err)
+
+	// The link is still attached, so it must still be known. Close() has to
+	// report it instead of returning success over a live hook.
+	require.Contains(t, attached.links, testVariantTarget,
+		"a link that would not close must stay tracked")
+	require.ErrorIs(t, object.Close(), errInjectedClose,
+		"Close() must report the link it could not detach")
+
+	// The coordinator sees exactly this error and must not retry over it.
+	attempts := 0
+	attempt := func(context.Context, *ebpf.CollectionSpec) (BPF, PerfEventReader, error) {
+		attempts++
+
+		return nil, nil, err
+	}
+
+	_, _, _, fallbackErr := loadTracingVariantWithFallback(
+		t.Context(),
+		newTracingTestSpec(),
+		[]TracingVariantPair{testTracingPair()},
+		probeResult(nil),
+		attempt,
+	)
+	require.Error(t, fallbackErr)
+	require.Equal(t, 1, attempts,
+		"the fallback must not run while a link may still be attached")
 }
