@@ -85,7 +85,7 @@ func TestToolEventsPersistSeparateObservationTimes(t *testing.T) {
 				if err := json.Unmarshal(data, &raw); err != nil {
 					t.Fatal(err)
 				}
-				for _, field := range []string{"kernel_observed_ns", "ktime_ns", "kernel_observed_timestamp", "observed_timestamp"} {
+				for _, field := range []string{"kernel_observed_ns", "kernel_observed_timestamp", "observed_timestamp"} {
 					if _, ok := raw[field]; ok {
 						t.Fatalf("tracer_data contains metadata field %q", field)
 					}

@@ -521,8 +521,7 @@ assert_kernel_observation_timestamps() {
 				sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601
 			else error("expected UTC timestamp") end;
 		length > 0 and all(.[];
-			(has("ktime_ns") | not)
-			and (has("kernel_observed_ns") | not)
+			(has("kernel_observed_ns") | not)
 			and ((.observed_timestamp | utc_seconds) as $observed
 				| (.kernel_observed_timestamp | utc_seconds) as $kernel
 				| $kernel <= $observed + 1

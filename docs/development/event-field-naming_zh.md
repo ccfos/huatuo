@@ -67,7 +67,7 @@ Document 顶层保存 UTC 时间，不保存 `kernel_observed_ns`。
 用户态时间或写入时间补填。历史 RAS 文档的 `observed_timestamp` 曾表示
 内核观测时刻，不能据此推算历史用户态观测时刻。
 
-新版 tcpshark JSON/文本以 `kernel_observed_timestamp` 取代原来的 `ktime_ns`。
+tcpshark 和 dropwatch 的 JSON/文本输出使用 `kernel_observed_timestamp` 表示内核观测时间。
 工具和 Agent 应一起升级；旧文档保持原样，不自动回填或重写。
 单调时钟与 UTC 的转换要求相同主机、同一次启动及主机时间命名空间。
 跨越校时跳变或系统挂起的历史事件，仅凭单调时间不能精确恢复 UTC。

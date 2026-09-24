@@ -70,8 +70,8 @@ documents omit `kernel_observed_timestamp`; userspace or upload timestamps must
 not fill it. Historical RAS documents used `observed_timestamp` for kernel
 observation, so their userspace observation time cannot be reconstructed.
 
-New tcpshark JSON/text output replaces `ktime_ns` with
-`kernel_observed_timestamp`. Upgrade tools and Agent together. Existing
+tcpshark and dropwatch use `kernel_observed_timestamp` for kernel observation
+time in JSON and text output. Upgrade tools and Agent together. Existing
 documents are not rewritten or backfilled. Conversion requires the same host,
 boot, and host time namespace. Historical events spanning a realtime clock
 step or system suspend cannot be mapped exactly to UTC from monotonic time alone.

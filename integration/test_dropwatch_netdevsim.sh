@@ -110,7 +110,6 @@ hardware_event_ready() {
 	jq -e -s --arg trap "${TRAP_NAME}" --arg group "${TRAP_GROUP}" --arg dev "${NETDEV}" '
     any(.[];
       .drop_source == "hardware" and
-      (.ktime_ns | type == "number") and .ktime_ns > 0 and
       .drop_reason == $trap and
       .drop_reason_group == $group and
       .drop_location == null and
@@ -134,5 +133,6 @@ if ! wait "${DROPWATCH_PID}"; then
 fi
 DROPWATCH_PID=""
 
+assert_kernel_observation_timestamps "${TOOL_OUT}"
 assert_log_has_no_failure "${TOOL_ERR}" "dropwatch"
 log_info "dropwatch captured netdevsim hardware trap: ${TRAP_GROUP}/${TRAP_NAME} on ${NETDEV}"
