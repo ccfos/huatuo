@@ -32,6 +32,16 @@
 # means a more expensive hook shows up as CPU, not as fewer packets; that is why
 # both columns are reported.
 #
+# The generator runs inside the client namespace, where the peer address is
+# reachable. From the host namespace the target sits behind the default route
+# and the connects time out, so the counters would climb while no packet ever
+# reached the hook.
+#
+# A round only counts when the traffic provably arrived: the peer's veth must
+# have received packets and the fixture must have reported an RX_STAGE_TCPV4
+# event for the measured address pair. Anything less and the round is reported
+# as invalid instead of being averaged into the comparison.
+#
 # The object rate-limits its events (BPF_RATELIMIT, 100 per second), so the
 # fixture reports about 100 events per second no matter how many packets pass:
 # that is production behaviour and it keeps the userspace cost equal across the
@@ -148,6 +158,14 @@ read_cpu_counters() {
 	awk '/^cpu / { printf "%d %d\n", $2 + $3 + $4 + $7 + $8 + $9, $8 }' /proc/stat
 }
 
+# veth_peer_rx_packets counts what the generator's peer received, which is the
+# only traffic the hook can see: without a packet there, the round measures the
+# generator instead of the entry point.
+veth_peer_rx_packets() {
+	ip netns exec "${TCP_NS_SERVER}" \
+		cat "/sys/class/net/${TCP_NS_VETH_SERVER}/statistics/rx_packets"
+}
+
 # wait_for_attach waits for the fixture's ready marker, so the measured window
 # never overlaps the load and probe phase.
 wait_for_attach() {
@@ -178,8 +196,11 @@ run_round() {
 	local duplicates="-"
 	local lost="-"
 	local pair_events="-"
+	local pair_tcpv4="-"
+	local rx_before rx_after received
 	local busy0 softirq0 busy1 softirq1 syns start end elapsed
 	local status=0
+	local invalid=0
 
 	if [[ "${mode}" != "${MODE_BASELINE}" ]]; then
 		# The timeout bounds the fixture's own collection window, so it only
@@ -196,12 +217,18 @@ run_round() {
 
 	# Only the generator's window is measured: nothing else runs in it.
 	read -r busy0 softirq0 <<< "$(read_cpu_counters)"
+	rx_before=$(veth_peer_rx_packets)
 	start=$(date +%s.%N)
 
-	syns=$(python3 "${GENERATOR}" "${TCP_NS_SERVER_ADDR}" "${BENCH_PORT}" "${ROUND_SECONDS}")
+	# The generator belongs in the client namespace: the peer address is only
+	# routable from there.
+	syns=$(ip netns exec "${TCP_NS_CLIENT}" \
+		python3 "${GENERATOR}" "${TCP_NS_SERVER_ADDR}" "${BENCH_PORT}" "${ROUND_SECONDS}")
 
 	end=$(date +%s.%N)
 	read -r busy1 softirq1 <<< "$(read_cpu_counters)"
+	rx_after=$(veth_peer_rx_packets)
+	received=$((rx_after - rx_before))
 
 	if [[ "${mode}" != "${MODE_BASELINE}" ]]; then
 		wait "${FIXTURE_PID}" || status=$?
@@ -221,6 +248,13 @@ run_round() {
 			'[.[] | select(.summary != true) | select(.ready != true)
 				| select((.saddr == $saddr and .daddr == $daddr) or (.saddr == $daddr and .daddr == $saddr))]
 			 | length' "${out}")
+		# The stage matters: the TCPV4 event is the one the migrated hook
+		# produces, so only it proves the measured entry point saw the traffic.
+		pair_tcpv4=$(jq -s \
+			--arg saddr "${TCP_NS_CLIENT_ADDR}" --arg daddr "${TCP_NS_SERVER_ADDR}" \
+			'[.[] | select(.summary != true) | select(.ready != true) | select(.stage == "RX_STAGE_TCPV4")
+				| select((.saddr == $saddr and .daddr == $daddr) or (.saddr == $daddr and .daddr == $saddr))]
+			 | length' "${out}")
 	fi
 
 	local row
@@ -229,41 +263,59 @@ run_round() {
 		-v syns="${syns}" -v busy0="${busy0}" -v busy1="${busy1}" \
 		-v softirq0="${softirq0}" -v softirq1="${softirq1}" \
 		-v events="${events}" -v pair_events="${pair_events}" \
+		-v pair_tcpv4="${pair_tcpv4}" -v received="${received}" \
 		-v duplicates="${duplicates}" -v lost="${lost}" \
 		-v entry_point="${entry_point}" -v clock="${clock_ticks}" \
 		'BEGIN {
 			cpu = (busy1 - busy0) / clock
 			soft = (softirq1 - softirq0) / clock
-			printf "%s\t%s\t%s\t%s\t%.0f\t%.3f\t%.2f\t%.3f\t%.2f\t%s\t%s\t%s\t%s\t%s",
-				label, mode, elapsed, syns, syns / elapsed,
+			printf "%s\t%s\t%s\t%s\t%.0f\t%s\t%.3f\t%.2f\t%.3f\t%.2f\t%s\t%s\t%s\t%s\t%s\t%s",
+				label, mode, elapsed, syns, syns / elapsed, received,
 				cpu, 100 * cpu / elapsed, soft, 100 * soft / elapsed,
-				events, pair_events, duplicates, lost, entry_point
+				events, pair_events, pair_tcpv4, duplicates, lost, entry_point
 		}')
 
 	printf '%s\n' "${row}" >> "${RESULTS}"
-	log_info "round ${label}: mode=${mode} entry_point=${entry_point} syns=${syns} syns/s=$(cut -f5 <<< "${row}") cpu_percent=$(cut -f7 <<< "${row}") softirq_percent=$(cut -f9 <<< "${row}") events=${events} pair_events=${pair_events} duplicates=${duplicates} lost=${lost}"
+	log_info "round ${label}: mode=${mode} entry_point=${entry_point} syns=${syns} syns/s=$(cut -f5 <<< "${row}") received=$(cut -f6 <<< "${row}") cpu_percent=$(cut -f8 <<< "${row}") softirq_percent=$(cut -f10 <<< "${row}") events=${events} pair_tcpv4=${pair_tcpv4} duplicates=${duplicates} lost=${lost}"
+
+	# Whatever the mode, the traffic has to have crossed the pair: a round where
+	# it did not measures the generator, not the hook.
+	if [[ "${received}" -le 0 ]]; then
+		log_warn "round ${label} (${mode}): the peer received no packet, the generator never reached it"
+		invalid=1
+	fi
 
 	# The baseline round attaches nothing, so it has no event counters to
 	# judge; its only job is the traffic and CPU reference.
-	[[ "${mode}" == "${MODE_BASELINE}" ]] && return 0
+	if [[ "${mode}" == "${MODE_BASELINE}" ]]; then
+		return "${invalid}"
+	fi
 
 	if [[ "${status}" -ne 0 ]]; then
 		log_warn "round ${label} fixture exited with ${status}"
-		return 1
-	fi
-	if [[ "${duplicates}" != "0" ]]; then
-		log_warn "round ${label} reported ${duplicates} repeated packets; one hook must produce one event per packet"
-		return 1
+		invalid=1
 	fi
 	if [[ "${events}" == "0" ]]; then
 		log_warn "round ${label} reported no event; the probe was attached but saw no packet"
-		return 1
+		invalid=1
+	fi
+	if [[ "${pair_tcpv4}" == "0" ]]; then
+		log_warn "round ${label} reported no RX_STAGE_TCPV4 event for ${TCP_NS_CLIENT_ADDR} <-> ${TCP_NS_SERVER_ADDR}; this round cannot be compared"
+		invalid=1
+	fi
+
+	# Repeated packets are a diagnostic: two connections can reuse a client port
+	# and an initial sequence number, and the object rate-limits its events.
+	# The entry point count of the loaded object is what rules out a double
+	# attach, not this counter.
+	if [[ "${duplicates}" != "0" ]]; then
+		log_warn "round ${label} repeated ${duplicates} packet keys; check the raw events, this counter cannot tell a retransmit from a double attach"
 	fi
 	if [[ "${lost}" != "0" ]]; then
 		log_warn "round ${label} lost ${lost} samples; do not compare this round's CPU against a round that lost none"
 	fi
 
-	return 0
+	return "${invalid}"
 }
 
 # summarize prints mean/min/max per mode from the results file.
@@ -279,31 +331,32 @@ summarize() {
 			if (!(m in rmin) || $5 < rmin[m]) rmin[m] = $5
 			if ($5 > rmax[m]) rmax[m] = $5
 
-			cpu[m] += $7
-			if (!(m in cmin) || $7 < cmin[m]) cmin[m] = $7
-			if ($7 > cmax[m]) cmax[m] = $7
+			cpu[m] += $8
+			if (!(m in cmin) || $8 < cmin[m]) cmin[m] = $8
+			if ($8 > cmax[m]) cmax[m] = $8
 
-			soft[m] += $9
-			if (!(m in smin) || $9 < smin[m]) smin[m] = $9
-			if ($9 > smax[m]) smax[m] = $9
+			soft[m] += $10
+			if (!(m in smin) || $10 < smin[m]) smin[m] = $10
+			if ($10 > smax[m]) smax[m] = $10
 
-			events[m] += $10
-			pair[m] += $11
-			duplicates[m] += $12
-			lost[m] += $13
+			events[m] += $11
+			pair[m] += $12
+			pairtcpv4[m] += $13
+			duplicates[m] += $14
+			lost[m] += $15
 		}
 		END {
-			printf "%-9s %6s %19s %21s %21s %10s %10s %7s %7s\n",
+			printf "%-9s %6s %19s %21s %21s %10s %10s %9s %7s %7s\n",
 				"mode", "rounds", "syns/s mean[min-max]", "cpu% mean[min-max]",
-				"softirq% mean[min-max]", "events", "pair_events", "dupes", "lost"
+				"softirq% mean[min-max]", "events", "pair_events", "pair_tcpv4", "dupes", "lost"
 			for (i = 1; i <= n; i++) {
 				m = order[i]
-				printf "%-9s %6d %8.0f[%.0f-%.0f] %8.2f[%.2f-%.2f] %8.2f[%.2f-%.2f] %10d %10d %7d %7d\n",
+				printf "%-9s %6d %8.0f[%.0f-%.0f] %8.2f[%.2f-%.2f] %8.2f[%.2f-%.2f] %10d %10d %9d %7d %7d\n",
 					m, rounds[m],
 					rate[m] / rounds[m], rmin[m], rmax[m],
 					cpu[m] / rounds[m], cmin[m], cmax[m],
 					soft[m] / rounds[m], smin[m], smax[m],
-					events[m], pair[m], duplicates[m], lost[m]
+					events[m], pair[m], pairtcpv4[m], duplicates[m], lost[m]
 			}
 		}
 	' "${RESULTS}"
@@ -320,7 +373,7 @@ sleep 0.5
 compile_go_fixture
 write_generator
 
-printf 'label\tmode\telapsed_s\tsyns\tsyns_per_sec\tcpu_s\tcpu_percent\tsoftirq_s\tsoftirq_percent\tevents\tpair_events\tduplicates\tlost_samples\tentry_point\n' \
+printf 'label\tmode\telapsed_s\tsyns\tsyns_per_sec\treceived\tcpu_s\tcpu_percent\tsoftirq_s\tsoftirq_percent\tevents\tpair_events\tpair_tcpv4\tevents_duplicates\tlost_samples\tentry_point\n' \
 	> "${RESULTS}"
 
 failed=0
@@ -348,7 +401,8 @@ log_info "raw rounds: ${RESULTS}"
 log_info "raw events: ${WORK_DIR}/*.json, logs: ${WORK_DIR}/*.err"
 
 if [[ "${failed}" -ne 0 ]]; then
-	log_error "at least one round failed or reported wrong events; the counters above are incomplete"
+	log_error "at least one round saw no packet or no TCPV4 event for the measured pair;"
+	log_error "its counters are in the table above but the comparison is not usable"
 	exit 1
 fi
 
