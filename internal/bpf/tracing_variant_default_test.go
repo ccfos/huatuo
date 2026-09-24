@@ -102,9 +102,7 @@ func probeResult(err error) tracingProbe {
 
 // staticReader is a PerfEventReader stub; the selection logic only moves the
 // reader around.
-type staticReader struct {
-	closed bool
-}
+type staticReader struct{}
 
 func (r *staticReader) ReadInto(any) error { return nil }
 
@@ -112,10 +110,7 @@ func (r *staticReader) ReadBatch(func() any) (PerfEventBatch, error) {
 	return PerfEventBatch{}, nil
 }
 
-func (r *staticReader) Close() error {
-	r.closed = true
-	return nil
-}
+func (r *staticReader) Close() error { return nil }
 
 // recordedAttempt records the spec of every attempt and returns the configured
 // outcome.
@@ -878,7 +873,7 @@ func TestLoadTracingVariantWithFallbackRejectsInvalidInput(t *testing.T) {
 
 // stuckLink is a link the kernel refuses to close, which is the state a link
 // is in when detaching it fails. The embedded interface carries the methods
-// this test never calls; only Close is part of the behaviour under test.
+// this test never calls; only Close is part of the behavior under test.
 type stuckLink struct {
 	link.Link
 
