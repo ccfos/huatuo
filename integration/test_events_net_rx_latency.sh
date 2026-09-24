@@ -58,25 +58,31 @@ integration_huatuo_bamai_start \
 # fallback carries the reason it happened.
 assert_tracing_entry_point() {
 	local log="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
-	local selected
+	local selection selected reason
 
 	grep -q 'msg="loaded BPF with a selected tracing entry point"' "${log}" \
 		|| fatal "the daemon did not report the selected tracing entry point"
 
-	selected=$(grep 'msg="loaded BPF with a selected tracing entry point"' "${log}" \
-		| tail -1 | grep -o 'mode="[a-z]*"' | tr -d '"' | cut -d= -f2)
+	selection=$(grep 'msg="loaded BPF with a selected tracing entry point"' "${log}" | tail -1)
+	selected=$(grep -o 'mode="[a-z]*"' <<< "${selection}" | tr -d '"' | cut -d= -f2)
+	reason=$(grep -o 'reason="[^"]*"' <<< "${selection}" | tr -d '"' | cut -d= -f2)
 
 	case "${selected}" in
 	fentry)
 		log_info "net_rx_latency selected the fentry entry point (tcp_v4_rcv_fentry_prog)"
 		;;
 	kprobe)
-		# A fallback is legitimate, an unexplained one is not.
-		grep -q 'msg="attached kprobe entry point after fentry fallback"' "${log}" \
-			|| fatal "net_rx_latency loaded kprobe without reporting that fentry was unavailable"
-		grep -q 'reason="' "${log}" \
-			|| fatal "net_rx_latency reported the kprobe fallback without a reason"
-		log_info "net_rx_latency fell back to the kprobe entry point (tcp_v4_rcv_prog) with a reason"
+		# Both kprobe paths have to say why they are kprobe, and they are
+		# different paths: a kernel the probe rules out selects kprobe without
+		# an attempt, a kernel whose fentry attempt failed falls back to it.
+		# Which one happens is the kernel's decision, so neither is predicted.
+		[[ -n "${reason}" ]] \
+			|| fatal "net_rx_latency selected the kprobe entry point without a reason"
+		if grep -q 'msg="attached kprobe entry point after fentry fallback"' "${log}"; then
+			log_info "net_rx_latency fell back to the kprobe entry point (tcp_v4_rcv_prog): ${reason}"
+		else
+			log_info "net_rx_latency selected the kprobe entry point without an fentry attempt: ${reason}"
+		fi
 		;;
 	*)
 		fatal "net_rx_latency reported an unknown entry point: ${selected:-none}"
