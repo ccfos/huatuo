@@ -645,10 +645,11 @@ func loadMinimalSpec(t *testing.T) *ebpf.CollectionSpec {
 // coll.Close does not release them, so the loader has to.
 func TestLoadBPFFromCollectionSpec_PartialCloneCleanup(t *testing.T) {
 	tests := []struct {
-		name      string
-		closeErr  error
-		wantClose bool
-		wantErrs  []error
+		name       string
+		closeErr   error
+		wantClose  bool
+		wantErrs   []error
+		wantMarked bool
 	}{
 		{
 			name:      "releases the handles cloned so far",
@@ -656,10 +657,11 @@ func TestLoadBPFFromCollectionSpec_PartialCloneCleanup(t *testing.T) {
 			wantErrs:  []error{errInjectedClone},
 		},
 		{
-			name:      "reports a failing release next to the load error",
-			closeErr:  errInjectedClose,
-			wantClose: true,
-			wantErrs:  []error{errInjectedClone, errInjectedClose},
+			name:       "reports a failing release next to the load error",
+			closeErr:   errInjectedClose,
+			wantClose:  true,
+			wantErrs:   []error{errInjectedClone, errInjectedClose},
+			wantMarked: true,
 		},
 	}
 
@@ -681,6 +683,11 @@ func TestLoadBPFFromCollectionSpec_PartialCloneCleanup(t *testing.T) {
 				require.ErrorIs(t, err, wantErr)
 			}
 
+			// A release that failed leaves handles behind, so the error carries
+			// the mark that forbids a retry; a clean release must not.
+			require.Equal(t, tt.wantMarked, isTracingCleanupFailure(err),
+				"cleanup failure mark = %t, want %t", isTracingCleanupFailure(err), tt.wantMarked)
+
 			// Every map and the first program were cloned before the failure,
 			// and each clone was released exactly once.
 			require.Equal(t, 2, handles.programClones, "clones attempted before the failure")
@@ -688,6 +695,44 @@ func TestLoadBPFFromCollectionSpec_PartialCloneCleanup(t *testing.T) {
 			require.Len(t, handles.closedMaps, len(spec.Maps))
 		})
 	}
+}
+
+// TestPartialCloneCleanupStopsTheTracingFallback covers the chain from the
+// loader to the fallback coordinator: a load that could not release the handles
+// it cloned must not be retried with the other entry point, and both the load
+// error and the release error must survive into the returned error.
+func TestPartialCloneCleanupStopsTheTracingFallback(t *testing.T) {
+	requireBPFPermission(t)
+
+	spec := loadMinimalSpec(t)
+	handles := &injectedHandles{failCloneAt: 2, closeErr: errInjectedClose}
+
+	_, loadErr := loadBPFFromCollectionSpecWithHandles("test_minimal.elf", spec, nil, handles)
+	if errors.Is(loadErr, ebpf.ErrNotSupported) {
+		t.Skipf("skipping: ebpf not supported: %v", loadErr)
+	}
+	require.Error(t, loadErr)
+	require.True(t, isTracingCleanupFailure(loadErr), "a failing release must be marked: %v", loadErr)
+
+	// The coordinator sees exactly this error, produced by the real loader.
+	attempts := 0
+	attempt := func(context.Context, *ebpf.CollectionSpec) (BPF, PerfEventReader, error) {
+		attempts++
+
+		return nil, nil, loadErr
+	}
+
+	_, _, _, err := loadTracingVariantWithFallback(
+		t.Context(),
+		newTracingTestSpec(),
+		[]TracingVariantPair{testTracingPair()},
+		probeResult(nil),
+		attempt,
+	)
+	require.Error(t, err)
+	require.Equal(t, 1, attempts, "the fallback must not run over handles that were not released")
+	require.ErrorIs(t, err, errInjectedClone, "the load error must survive")
+	require.ErrorIs(t, err, errInjectedClose, "the release error must survive")
 }
 
 // TestLoadBPFFromCollectionSpec_HandsOverClones checks the success path keeps
