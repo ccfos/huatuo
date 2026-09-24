@@ -67,6 +67,9 @@ var latencyStageNames = []string{
 	"RX_STAGE_USERCOPY",
 }
 
+// netRxLatencyEventMap is the perf event map both BPF builds submit to.
+const netRxLatencyEventMap = "net_recv_lat_event_map"
+
 func init() {
 	tracing.RegisterEventTracing("net_rx_latency", newNetRcvLat)
 }
@@ -115,19 +118,16 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 		"rxlat_thresh_tcpv4":    rxlatThreshTcpv4 * 1000 * 1000,
 		"rxlat_thresh_usercopy": rxlatThreshUsercopy * 1000 * 1000,
 	}
-	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), args)
+	childCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// The object name still comes from this file: ThisBpfOBJ() resolves the
+	// caller's file, and the adapter appends the variant suffix.
+	b, reader, err := startNetRxLatencyBPF(childCtx, bpf.ThisBpfOBJ(), args)
 	if err != nil {
 		return err
 	}
 	defer b.Close()
-
-	childCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	reader, err := b.AttachAndEventPipe(childCtx, "net_recv_lat_event_map", bpf.DefaultPerfEventBufferBytes)
-	if err != nil {
-		return err
-	}
 	defer reader.Close()
 
 	b.DetachOnContextDone(childCtx, cancel)
