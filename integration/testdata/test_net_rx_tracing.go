@@ -45,6 +45,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/utils/netutil"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"golang.org/x/sys/unix"
 )
@@ -402,9 +403,13 @@ func collectEvents(
 		}
 
 		// ReadBatch returns what has arrived within a fixed window, so the
-		// fixture stays responsive when no event arrives at all.
+		// fixture stays responsive when no event arrives at all. A stop request
+		// can land inside that window, and the reader then reports the
+		// cancellation together with the events it had already read: the
+		// summary has to count them, so the batch is kept and only a real read
+		// error fails the run.
 		batch, err := reader.ReadBatch(func() any { return new(abi.NetRXLatencyEvent) })
-		if err != nil {
+		if err != nil && !errors.Is(err, types.ErrExitByCancelCtx) {
 			return collection{}, fmt.Errorf("read perf events: %w", err)
 		}
 
@@ -421,6 +426,13 @@ func collectEvents(
 			}
 
 			observed.events++
+		}
+
+		if err != nil {
+			// The stop request ended the window inside this read. The events it
+			// carried are counted above, so the caller sees what the fixture
+			// covered instead of a fixture that died without a summary.
+			break
 		}
 	}
 
