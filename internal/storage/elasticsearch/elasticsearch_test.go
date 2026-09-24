@@ -1409,3 +1409,61 @@ func TestNewBackendRequiresIndex(t *testing.T) {
 		t.Fatalf("NewBackend() error = %v", err)
 	}
 }
+
+func TestElasticsearchBackendQueryRejectsPartialResults(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		timedOut  bool
+		failed    int
+		wantError string
+	}{
+		{"complete", false, 0, ""},
+		{"timeout", true, 0, "timed out"},
+		{"failed shard", false, 1, "failed shards"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Elastic-Product", "Elasticsearch")
+				if r.URL.Path == "/" {
+					_, _ = io.WriteString(w, `{"version":{"number":"8.0.0"}}`)
+					return
+				}
+				if r.URL.Path != "/profiles/_search" {
+					t.Errorf("unexpected request: %s", r.URL.Path)
+				}
+				payload := map[string]any{
+					"took": 1, "timed_out": tc.timedOut,
+					"_shards": map[string]any{
+						"total": 2, "successful": 2 - tc.failed, "skipped": 0, "failed": tc.failed,
+					},
+					"hits": map[string]any{
+						"total": map[string]any{"value": 1, "relation": "eq"},
+						"hits": []any{map[string]any{
+							"_index": "profiles", "_id": "one", "_source": map[string]any{"value": 1},
+						}},
+					},
+				}
+				if err := json.NewEncoder(w).Encode(payload); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			client, err := newCompatClient([]string{server.URL}, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			backend := &Storage{transport: client, index: "profiles"}
+			records, err := backend.Query(t.Context(), driver.Query{})
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) || len(records) != 0 {
+					t.Fatalf("Query() = (%v, %v), want no records and error containing %q", records, err, tc.wantError)
+				}
+				return
+			}
+			if err != nil || len(records) != 1 || records[0].ID != "one" {
+				t.Fatalf("Query() = (%v, %v), want one record", records, err)
+			}
+		})
+	}
+}
