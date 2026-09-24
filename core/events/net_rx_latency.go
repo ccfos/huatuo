@@ -37,6 +37,7 @@ import (
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/net_rx_latency.c -o $BPF_DIR/net_rx_latency.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/net_rx_latency_fentry.c -o $BPF_DIR/net_rx_latency_fentry.o
 
 type netRecvLatTracing struct{}
 
