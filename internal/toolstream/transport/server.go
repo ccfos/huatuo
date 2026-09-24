@@ -42,6 +42,9 @@ func Serve(l net.Listener, handler func(*Session, ChunkMsg)) (*Server, error) {
 	if l == nil {
 		return nil, fmt.Errorf("transport: listener must not be nil")
 	}
+	if handler == nil {
+		return nil, fmt.Errorf("transport: handler must not be nil")
+	}
 
 	srv := &Server{
 		listener:    l,
