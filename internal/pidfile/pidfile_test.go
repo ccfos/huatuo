@@ -79,6 +79,10 @@ func TestLock_AlreadyLocked(t *testing.T) {
 	_, err = Lock(name)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already running")
+
+	data, err := os.ReadFile(path(name))
+	require.NoError(t, err)
+	assert.Equal(t, strconv.Itoa(os.Getpid()), string(data))
 }
 
 func TestUnlock_RemovesFile(t *testing.T) {
