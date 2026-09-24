@@ -162,8 +162,13 @@ target = (sys.argv[1], int(sys.argv[2]))
 duration = float(sys.argv[3])
 
 sent = 0
-busy_before, softirq_before = cpu_counters()
 start = time.monotonic()
+# The counters are read inside the timed window, and the duration is read after
+# them, so the counter interval sits strictly inside the interval the duration
+# covers and the residue of the two /proc/stat reads can only shrink the
+# numerator. The opposite order would let the same residue inflate a
+# percentage.
+busy_before, softirq_before = cpu_counters()
 end = start + duration
 while time.monotonic() < end:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -175,12 +180,13 @@ while time.monotonic() < end:
     sock.close()
     sent += 1
 
-# The window this process measured, not the caller's: the CPU counters bracket
-# exactly the interval the duration covers, so a rate or a CPU percentage never
-# divides a wider numerator by a narrower denominator because the interpreter
-# started, or because entering the namespace took time.
-print(sent, time.monotonic() - start,
-      busy_before, softirq_before, busy_after, softirq_after)
+busy_after, softirq_after = cpu_counters()
+
+# The window this process measured, not the caller's: a rate or a CPU
+# percentage can never divide a wider numerator by a narrower denominator
+# because the interpreter started, or because entering the namespace took time.
+elapsed = time.monotonic() - start
+print(sent, elapsed, busy_before, softirq_before, busy_after, softirq_after)
 PY
 }
 
