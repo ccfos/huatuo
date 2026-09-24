@@ -15,10 +15,14 @@
 package query
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
+	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
+	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	"github.com/prometheus/prometheus/model/labels"
 )
 
@@ -52,5 +56,23 @@ func TestProfileStringRejectsInvalidIndex(t *testing.T) {
 		if got, ok := profileString(table, index); ok || got != "" {
 			t.Errorf("profileString(%d)=(%q,%t), want empty,false", index, got, ok)
 		}
+	}
+}
+
+func TestProfileTypesRejectsNilRequest(t *testing.T) {
+	service := &ProfileQueryService{}
+
+	_, err := service.ProfileTypes(context.Background(), (*querierv1.ProfileTypesRequest)(nil))
+	if !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("ProfileTypes(nil) error = %v, want ErrInvalidQuery", err)
+	}
+}
+
+func TestLabelValuesRejectsNilRequest(t *testing.T) {
+	service := &ProfileQueryService{}
+
+	_, err := service.LabelValues(context.Background(), (*typesv1.LabelValuesRequest)(nil))
+	if !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("LabelValues(nil) error = %v, want ErrInvalidQuery", err)
 	}
 }
