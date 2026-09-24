@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -395,5 +396,62 @@ func TestClientRoundTrip(t *testing.T) {
 	}
 	if !got[1].End {
 		t.Errorf("second chunk End=false want true")
+	}
+}
+
+type singleConnListener struct {
+	conn net.Conn
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	if l.conn == nil {
+		return nil, net.ErrClosed
+	}
+
+	conn := l.conn
+	l.conn = nil
+	return conn, nil
+}
+
+func (l *singleConnListener) Close() error {
+	return nil
+}
+
+func (l *singleConnListener) Addr() net.Addr {
+	return dummyAddr("test")
+}
+
+type dummyAddr string
+
+func (a dummyAddr) Network() string { return string(a) }
+func (a dummyAddr) String() string  { return string(a) }
+
+func TestAcceptLoopRejectsConnectionsAfterShutdown(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	srv := &Server{
+		listener:    &singleConnListener{conn: serverConn},
+		connections: make(map[net.Conn]struct{}),
+		closing:     true,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		srv.acceptLoop(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("acceptLoop did not stop after rejecting a late connection")
+	}
+
+	if _, err := clientConn.Write([]byte("probe")); err == nil {
+		t.Fatal("late connection remained open after shutdown")
 	}
 }
