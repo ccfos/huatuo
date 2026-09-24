@@ -19,6 +19,7 @@ package bpf
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/features"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
@@ -211,7 +213,8 @@ func TestPruneTracingVariantsKeepsSelectedEntryPoint(t *testing.T) {
 			t.Parallel()
 
 			spec := newTracingTestSpec()
-			if err := pruneTracingVariants(spec, []TracingVariantPair{testTracingPair()}, tt.mode); err != nil {
+			pairs := []TracingVariantPair{testTracingPair()}
+			if err := pruneTracingVariants(spec, pairs, tracingVariantKeep(pairs, tt.mode)); err != nil {
 				t.Fatalf("pruneTracingVariants() error = %v", err)
 			}
 
@@ -264,7 +267,8 @@ func TestPruneTracingVariantsRejectsInvalidPairs(t *testing.T) {
 			t.Parallel()
 
 			spec := newTracingTestSpec()
-			if err := pruneTracingVariants(spec, []TracingVariantPair{tt.pair}, tracingModeFentry); err == nil {
+			pairs := []TracingVariantPair{tt.pair}
+			if err := pruneTracingVariants(spec, pairs, tracingVariantKeep(pairs, tracingModeFentry)); err == nil {
 				t.Fatal("pruneTracingVariants() error = nil, want non-nil")
 			}
 		})
@@ -469,18 +473,22 @@ func pilotEntryPointObject(t *testing.T) (string, *ebpf.CollectionSpec) {
 	return objName, spec
 }
 
-// pilotObjectCounts counts the loaded programs and their links.
-func pilotObjectCounts(t *testing.T, object BPF) (map[string]bool, int) {
+// pilotObjectCounts maps every loaded program to the number of links it holds,
+// plus their total. A program is loaded when its key is present, so a caller
+// can require both the program and the exact number of links on it: a hook that
+// carries two links is attached twice. After Close the object no longer tracks
+// any program, which is how a caller checks that it released its resources.
+func pilotObjectCounts(t *testing.T, object BPF) (map[string]int, int) {
 	t.Helper()
 
 	inner, ok := object.(*defaultBPF)
 	require.True(t, ok, "expected *defaultBPF, got %T", object)
 
-	loaded := make(map[string]bool, len(inner.programsByID))
+	loaded := make(map[string]int, len(inner.programsByID))
 	links := 0
 
 	for _, program := range inner.programsByID {
-		loaded[program.name] = true
+		loaded[program.name] = len(program.links)
 		links += len(program.links)
 	}
 
@@ -527,17 +535,31 @@ func TestLoadAttachAndEventPipeWithFallbackSelectsPilotEntryPoint(t *testing.T) 
 	loaded, links := pilotObjectCounts(t, object)
 	require.NotEqual(t, loaded[testFentryProgram], loaded[testKprobeProgram],
 		"exactly one entry point must be loaded")
-	require.True(t, loaded["netif_receive_skb_prog"], "tracepoint programs must survive the selection")
-	require.True(t, loaded["skb_copy_datagram_iovec_prog"], "tracepoint programs must survive the selection")
+
+	// One hook, one link: two links on the loaded entry point would mean the
+	// same function is traced twice.
+	selected := testFentryProgram
+	if _, ok := loaded[testKprobeProgram]; ok {
+		selected = testKprobeProgram
+	}
+	require.Equal(t, 1, loaded[selected], "the selected entry point must carry exactly one link")
+
+	// The pilot object keeps its two tracepoints, each attached once.
+	require.Equal(t, 1, loaded["netif_receive_skb_prog"], "tracepoint programs must survive the selection")
+	require.Equal(t, 1, loaded["skb_copy_datagram_iovec_prog"], "tracepoint programs must survive the selection")
 	require.Positive(t, links, "the returned object must already be attached")
 
-	// The selection must agree with what the kernel reports for the target.
-	wantFentry := probeFentryTarget(testVariantTarget) == nil
-	if loaded[testFentryProgram] != wantFentry {
-		t.Errorf("fentry loaded = %t, want %t for this kernel", loaded[testFentryProgram], wantFentry)
+	// A successful probe does not promise a successful attach, so the
+	// expectation comes from the attempt itself: fentry must be selected
+	// exactly when loading it alone works on this kernel.
+	wantFentry := fentryLoadSupported(t, objName)
+	_, loadedFentry := loaded[testFentryProgram]
+	if loadedFentry != wantFentry {
+		t.Errorf("fentry loaded = %t, want %t for this kernel", loadedFentry, wantFentry)
 	}
 
-	t.Logf("kernel selected the kprobe entry point: %t", loaded[testKprobeProgram])
+	_, loadedKprobe := loaded[testKprobeProgram]
+	t.Logf("kernel selected the kprobe entry point: %t", loadedKprobe)
 }
 
 // TestLoadTracingVariantForcesKprobeEntryPoint exercises the fallback that
@@ -573,9 +595,182 @@ func TestLoadTracingVariantForcesKprobeEntryPoint(t *testing.T) {
 	require.NotEmpty(t, selection.Reason, "the fallback reason must be reported")
 
 	loaded, links := pilotObjectCounts(t, object)
-	require.True(t, loaded[testKprobeProgram], "the kprobe entry point must be loaded")
-	require.False(t, loaded[testFentryProgram], "the fentry entry point must not be loaded")
+	require.Equal(t, 1, loaded[testKprobeProgram], "the kprobe entry point must carry exactly one link")
+	require.NotContains(t, loaded, testFentryProgram, "the fentry entry point must not be loaded")
+	require.Equal(t, 1, loaded["netif_receive_skb_prog"], "tracepoint programs must survive the selection")
+	require.Equal(t, 1, loaded["skb_copy_datagram_iovec_prog"], "tracepoint programs must survive the selection")
 	require.Positive(t, links, "the returned object must already be attached")
+}
+
+// fentryLoadSupported attempts the fentry entry point on its own and reports
+// whether this kernel can attach it.
+//
+// The attempt is the verdict, not a probe: a probe succeeding does not promise
+// a successful attach, and a failure that is not a missing kernel capability
+// fails the test rather than being reported as "this kernel cannot".
+func fentryLoadSupported(t *testing.T, objName string) bool {
+	t.Helper()
+
+	object, reader, err := LoadAttachAndEventPipeForEntryPoint(
+		t.Context(),
+		objName,
+		pilotObjectConstants(),
+		[]TracingVariantPair{testTracingPair()},
+		testFentryProgram,
+		"net_recv_lat_event_map",
+		DefaultPerfEventBufferBytes,
+	)
+	if err == nil {
+		// Release the probe object at once: it must not stay attached while the
+		// object under test is live.
+		require.NoError(t, reader.Close(), "closing the probe reader must succeed")
+		require.NoError(t, object.Close(), "releasing the probe object must succeed")
+
+		return true
+	}
+
+	if IsTracingTargetUnsupported(err) {
+		return false
+	}
+
+	skipUnsupportedLoad(t, err)
+	t.Fatalf("the fentry entry point failed for a reason that is not a missing capability: %v", err)
+
+	return false
+}
+
+// TestIsTracingTargetUnsupported keeps the capability verdict narrow: only a
+// target the kernel cannot support at all may be reported as such, so that a
+// permission or resource failure is never remembered as a missing capability.
+func TestIsTracingTargetUnsupported(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "target missing from the kernel BTF", err: errTracingTargetUnsupported, want: true},
+		{name: "wrapped target verdict", err: fmt.Errorf("load: %w", errTracingTargetUnsupported), want: true},
+		{name: "kernel refuses the program type", err: fmt.Errorf("load program: %w", ebpf.ErrNotSupported), want: true},
+		{name: "permission failure", err: fmt.Errorf("create tracing link: %w", unix.EPERM)},
+		{name: "resource failure", err: errors.New("cannot allocate memory")},
+		{name: "no error", err: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.want, IsTracingTargetUnsupported(tt.err))
+		})
+	}
+}
+
+// TestIsPairedEntryPoint guards the name a caller may ask for: a program that
+// belongs to no pair would prune both entry points and load an object whose
+// hook is silently missing.
+func TestIsPairedEntryPoint(t *testing.T) {
+	t.Parallel()
+
+	pairs := []TracingVariantPair{testTracingPair()}
+	require.True(t, isPairedEntryPoint(pairs, testKprobeProgram))
+	require.True(t, isPairedEntryPoint(pairs, testFentryProgram))
+	require.False(t, isPairedEntryPoint(pairs, "netif_receive_skb_prog"))
+	require.False(t, isPairedEntryPoint(pairs, ""))
+	require.False(t, isPairedEntryPoint(nil, testFentryProgram))
+}
+
+// TestProbeFentryTargetReportsMissingTarget pins the one verdict the probe
+// reaches on its own: a function the kernel BTF does not carry.
+func TestProbeFentryTargetReportsMissingTarget(t *testing.T) {
+	t.Parallel()
+
+	err := probeFentryTarget("")
+	require.Error(t, err)
+	require.True(t, IsTracingTargetUnsupported(err), "an empty target is unusable: %v", err)
+
+	if err := features.HaveProgramType(ebpf.Tracing); err != nil {
+		t.Skipf("skipping: the kernel offers no tracing program type: %v", err)
+	}
+
+	// probeFentryTarget reads the kernel BTF itself, so a name no kernel
+	// defines must come back as a target verdict, not as a diagnostic.
+	err = probeFentryTarget("huatuo_no_such_target_function")
+	require.Error(t, err)
+	require.True(t, IsTracingTargetUnsupported(err), "a missing function is a target verdict: %v", err)
+	require.Contains(t, err.Error(), "kernel BTF", "the verdict must name the BTF lookup: %v", err)
+}
+
+// TestLoadAttachAndEventPipeForEntryPointAttemptsOnlyRequestedProgram loads each
+// entry point alone against the running kernel: the object must carry that
+// program with exactly one link, must not carry its twin, and must come back
+// attached.
+func TestLoadAttachAndEventPipeForEntryPointAttemptsOnlyRequestedProgram(t *testing.T) {
+	requireBPFPermission(t)
+
+	tests := []struct {
+		name    string
+		program string
+		dropped string
+	}{
+		{name: "kprobe alone", program: testKprobeProgram, dropped: testFentryProgram},
+		{name: "fentry alone", program: testFentryProgram, dropped: testKprobeProgram},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objName, _ := pilotEntryPointObject(t)
+
+			object, reader, err := LoadAttachAndEventPipeForEntryPoint(
+				t.Context(),
+				objName,
+				pilotObjectConstants(),
+				[]TracingVariantPair{testTracingPair()},
+				tt.program,
+				"net_recv_lat_event_map",
+				DefaultPerfEventBufferBytes,
+			)
+			if err != nil {
+				skipUnsupportedLoad(t, err)
+				t.Fatalf("LoadAttachAndEventPipeForEntryPoint(%q) error = %v, want nil", tt.program, err)
+			}
+
+			loaded, _ := pilotObjectCounts(t, object)
+			require.Equal(t, 1, loaded[tt.program], "the requested entry point must carry exactly one link")
+			require.NotContains(t, loaded, tt.dropped, "the other entry point must not be loaded")
+			require.Equal(t, 1, loaded["netif_receive_skb_prog"], "tracepoint programs must survive")
+			require.Equal(t, 1, loaded["skb_copy_datagram_iovec_prog"], "tracepoint programs must survive")
+
+			require.NoError(t, reader.Close(), "closing the reader must succeed")
+			require.NoError(t, object.Close(), "closing the object must succeed")
+
+			// A closed object tracks no program and holds no link, so a
+			// tracer that reloads cannot inherit a stale attachment.
+			released, links := pilotObjectCounts(t, object)
+			require.Empty(t, released, "a closed object must not track programs")
+			require.Zero(t, links, "a closed object must hold no link")
+		})
+	}
+}
+
+// TestLoadAttachAndEventPipeForEntryPointRejectsUnknownProgram checks that a
+// name belonging to no pair stops the load before pruning can delete the hook.
+func TestLoadAttachAndEventPipeForEntryPointRejectsUnknownProgram(t *testing.T) {
+	requireBPFPermission(t)
+
+	objName, _ := pilotEntryPointObject(t)
+
+	_, _, err := LoadAttachAndEventPipeForEntryPoint(
+		t.Context(),
+		objName,
+		pilotObjectConstants(),
+		[]TracingVariantPair{testTracingPair()},
+		"netif_receive_skb_prog",
+		"net_recv_lat_event_map",
+		DefaultPerfEventBufferBytes,
+	)
+	require.Error(t, err)
 }
 
 // pilotObjectConstants are the constants the tracer rewrites, with the values

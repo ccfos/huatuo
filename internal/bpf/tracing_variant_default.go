@@ -83,6 +83,16 @@ func tracingPairTargets(pairs []TracingVariantPair) []string {
 // unable to attach an fentry program to a target.
 var errTracingTargetUnsupported = errors.New("bpf: fentry target unsupported")
 
+// IsTracingTargetUnsupported reports whether err says the kernel cannot support
+// the entry point at all: the target is missing from the kernel BTF, or the
+// kernel does not offer the tracing program type this build needs.
+//
+// It is false for permission, resource and verifier failures, so a caller does
+// not mistake a temporary or environmental failure for a missing capability.
+func IsTracingTargetUnsupported(err error) bool {
+	return errors.Is(err, errTracingTargetUnsupported) || errors.Is(err, ebpf.ErrNotSupported)
+}
+
 // tracingProbe reports whether the kernel can attach an fentry program to
 // target.
 //
@@ -167,20 +177,17 @@ func releaseAfterFailure(attemptErr error, closers ...io.Closer) error {
 // target.
 //
 // The kernel BTF lookup is the authoritative check: fentry programs are only
-// loadable for functions present in the kernel BTF. The program type probe is
-// a fast path for kernels that do not support tracing programs at all; it
-// probes an unrelated target, so its failure must not be read as a verdict
-// about target.
+// loadable for functions present in the kernel BTF, so a target the BTF does
+// not carry can never be attached. The program type probe is a diagnostic
+// instead, for the reason tracingProbe documents: it drives the shared bpf_init
+// target and maps any EINVAL it sees to "unsupported", which says nothing about
+// target. Its failure keeps the real load of target as the judge.
 func probeFentryTarget(target string) error {
 	if target == "" {
 		return fmt.Errorf("%w: empty target", errTracingTargetUnsupported)
 	}
 
 	if err := features.HaveProgramType(ebpf.Tracing); err != nil {
-		if errors.Is(err, ebpf.ErrNotSupported) {
-			return fmt.Errorf("%w: %s: %w", errTracingTargetUnsupported, target, err)
-		}
-
 		return fmt.Errorf("probe tracing program type: %w", err)
 	}
 
@@ -235,24 +242,39 @@ func validateTracingVariantPair(spec *ebpf.CollectionSpec, pair TracingVariantPa
 	return nil
 }
 
-// pruneTracingVariants removes the entry points that mode does not select.
-// Every other program (tracepoints, unrelated hooks) is kept untouched so the
-// object keeps its ABI and its event stream.
+// tracingVariantKeep names the entry points of pairs that mode loads.
+func tracingVariantKeep(pairs []TracingVariantPair, mode tracingMode) map[string]bool {
+	keep := make(map[string]bool, len(pairs))
+
+	for _, pair := range pairs {
+		if mode == tracingModeKprobe {
+			keep[pair.Kprobe] = true
+			continue
+		}
+
+		keep[pair.Fentry] = true
+	}
+
+	return keep
+}
+
+// pruneTracingVariants removes every paired entry point that keep does not
+// name. Every other program (tracepoints, unrelated hooks) is kept untouched so
+// the object keeps its ABI and its event stream.
 //
 // spec must be a private copy: pruning happens before the collection is
 // loaded, because a single unsupported program makes the whole load fail.
-func pruneTracingVariants(spec *ebpf.CollectionSpec, pairs []TracingVariantPair, mode tracingMode) error {
+func pruneTracingVariants(spec *ebpf.CollectionSpec, pairs []TracingVariantPair, keep map[string]bool) error {
 	for _, pair := range pairs {
 		if err := validateTracingVariantPair(spec, pair); err != nil {
 			return err
 		}
 
-		unselected := pair.Kprobe
-		if mode == tracingModeKprobe {
-			unselected = pair.Fentry
+		for _, name := range []string{pair.Kprobe, pair.Fentry} {
+			if !keep[name] {
+				delete(spec.Programs, name)
+			}
 		}
-
-		delete(spec.Programs, unselected)
 	}
 
 	return nil
@@ -449,9 +471,64 @@ func loadTracingVariantAttempt(
 ) (BPF, PerfEventReader, error) {
 	spec := pristine.Copy()
 
-	if err := pruneTracingVariants(spec, pairs, selection.Mode); err != nil {
+	if err := pruneTracingVariants(spec, pairs, tracingVariantKeep(pairs, selection.Mode)); err != nil {
 		return nil, nil, err
 	}
 
 	return attempt(ctx, spec)
+}
+
+// LoadAttachAndEventPipeForEntryPoint loads bpfName from the default object
+// directory with only the paired entry point named by entryPoint, creates the
+// event pipe for mapName and attaches the collection.
+//
+// It never falls back to the other entry point of a pair, so the error it
+// returns is the reason that entry point could not be used:
+// IsTracingTargetUnsupported separates a kernel that cannot support it from a
+// permission, resource or verifier failure. Callers that want a tracer which
+// keeps running on every kernel want LoadAttachAndEventPipeWithFallback; this
+// one answers what the running kernel actually supports.
+func LoadAttachAndEventPipeForEntryPoint(
+	ctx context.Context,
+	bpfName string,
+	consts map[string]any,
+	pairs []TracingVariantPair,
+	entryPoint string,
+	mapName string,
+	perCPUBufSize uint32,
+) (BPF, PerfEventReader, error) {
+	if err := validateName(bpfName); err != nil {
+		return nil, nil, err
+	}
+	if mapName == "" {
+		return nil, nil, errors.New("bpf: empty event map name")
+	}
+	if !isPairedEntryPoint(pairs, entryPoint) {
+		return nil, nil, fmt.Errorf("bpf: program %q is not an entry point of any pair", entryPoint)
+	}
+
+	pristine, err := loadCollectionSpec(bpfName)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	spec := pristine.Copy()
+	if err := pruneTracingVariants(spec, pairs, map[string]bool{entryPoint: true}); err != nil {
+		return nil, nil, err
+	}
+
+	return loadAttachAndEventPipe(ctx, bpfName, spec, consts, mapName, perCPUBufSize)
+}
+
+// isPairedEntryPoint reports whether entryPoint is one of the two entry points
+// of a pair. An unknown name would prune the whole pair and load an object
+// whose hook is silently missing.
+func isPairedEntryPoint(pairs []TracingVariantPair, entryPoint string) bool {
+	for _, pair := range pairs {
+		if entryPoint == pair.Kprobe || entryPoint == pair.Fentry {
+			return true
+		}
+	}
+
+	return false
 }
