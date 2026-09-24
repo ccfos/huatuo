@@ -157,6 +157,16 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 | `iotracing`              | I/O 延迟异常（AutoTracing 自动触发）           |
 | `memburst`               | 内存突增异常（AutoTracing 自动触发）           |
 
+#### 2.1 net_rx_latency 的 tcp_v4_rcv 挂钩
+
+`net_rx_latency` 的 `tcp_v4_rcv`（TCPV4 阶段）挂钩在内核支持 fentry 时使用
+fentry，不支持时自动回退到 kprobe：启动时按内核能力二选一，同一挂钩只会挂载
+一个，fentry 失败时也只重试一次。事件算法、上报字段、阈值过滤和配置项都没有
+变化，也不需要新增开关。节点日志中的
+`loaded BPF with a selected tracing entry point` 会记录本次实际选择的挂钩
+（`mode=fentry` 或 `mode=kprobe`）与目标函数。目前只迁移了这一个挂钩，其余
+挂钩的挂载方式保持不变。
+
 ---
 
 ### 3. POST 请求说明
