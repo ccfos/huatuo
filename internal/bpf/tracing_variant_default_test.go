@@ -1020,3 +1020,69 @@ func TestClassifyTracingLoadFailure(t *testing.T) {
 		})
 	}
 }
+
+// TestClassifyEntryPointLoadFailure covers the same verdict for a load that
+// names one entry point: only the fentry side can be read as a missing kernel
+// capability, because the program type probe describes the tracing program type
+// and says nothing about a kprobe load that failed the same way.
+func TestClassifyEntryPointLoadFailure(t *testing.T) {
+	t.Parallel()
+
+	var (
+		errFentryEINVAL = fmt.Errorf("program %s: load program: %w", testFentryProgram, unix.EINVAL)
+		errKprobeEINVAL = fmt.Errorf("program %s: load program: %w", testKprobeProgram, unix.EINVAL)
+	)
+
+	tests := []struct {
+		name         string
+		err          error
+		entryPoint   string
+		probeErr     error
+		wantUnmarked bool
+	}{
+		{
+			name:       "the fentry entry point a kernel without the program type rejects",
+			err:        errFentryEINVAL,
+			entryPoint: testFentryProgram,
+			probeErr:   ebpf.ErrNotSupported,
+		},
+		{
+			name:         "a kprobe failure keeps the meaning it already had",
+			err:          errKprobeEINVAL,
+			entryPoint:   testKprobeProgram,
+			probeErr:     ebpf.ErrNotSupported,
+			wantUnmarked: true,
+		},
+		{
+			name:         "the fentry entry point of a kernel that knows the program type",
+			err:          errFentryEINVAL,
+			entryPoint:   testFentryProgram,
+			probeErr:     nil,
+			wantUnmarked: true,
+		},
+		{
+			name:         "an entry point of no pair stays a load error",
+			err:          errFentryEINVAL,
+			entryPoint:   "tcp_v4_rcv_unpaired_prog",
+			probeErr:     ebpf.ErrNotSupported,
+			wantUnmarked: true,
+		},
+	}
+
+	pairs := []TracingVariantPair{testTracingPair()}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			probe := func() error { return tt.probeErr }
+
+			got := classifyEntryPointLoadFailure(tt.err, pairs, tt.entryPoint, probe)
+
+			require.ErrorIs(t, got, tt.err)
+			require.Equal(t, tt.wantUnmarked, !IsTracingTargetUnsupported(got),
+				"IsTracingTargetUnsupported(%v) = %t, want unmarked %t",
+				got, !tt.wantUnmarked, tt.wantUnmarked)
+		})
+	}
+}

@@ -563,7 +563,42 @@ func LoadAttachAndEventPipeForEntryPoint(
 		return nil, nil, err
 	}
 
-	return loadAttachAndEventPipe(ctx, bpfName, spec, consts, mapName, perCPUBufSize)
+	object, reader, err := loadAttachAndEventPipe(ctx, bpfName, spec, consts, mapName, perCPUBufSize)
+	if err != nil {
+		return nil, nil, classifyEntryPointLoadFailure(err, pairs, entryPoint, tracingProgramTypeSupported)
+	}
+
+	return object, reader, nil
+}
+
+// classifyEntryPointLoadFailure interprets a single-entry-point load failure so
+// the error answers what IsTracingTargetUnsupported promises about it.
+//
+// Only the fentry side of a pair can be read as a missing kernel capability:
+// the program type probe describes the tracing program type, so a kprobe load
+// that failed with the same errno keeps the meaning it already had.
+func classifyEntryPointLoadFailure(
+	err error,
+	pairs []TracingVariantPair,
+	entryPoint string,
+	programTypeSupported func() error,
+) error {
+	if !isFentryEntryPoint(pairs, entryPoint) {
+		return err
+	}
+
+	return classifyTracingLoadFailure(err, programTypeSupported)
+}
+
+// isFentryEntryPoint reports whether entryPoint is the fentry side of a pair.
+func isFentryEntryPoint(pairs []TracingVariantPair, entryPoint string) bool {
+	for _, pair := range pairs {
+		if entryPoint == pair.Fentry {
+			return true
+		}
+	}
+
+	return false
 }
 
 // isPairedEntryPoint reports whether entryPoint is one of the two entry points
