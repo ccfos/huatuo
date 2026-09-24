@@ -14,12 +14,20 @@
 
 // Package localfile implements a storage backend that appends records to local
 // files with rotation support.
+//
+// Writers are opened lazily, one per tracer name, and shared by every
+// concurrent Save for that name. The backend is a process-wide singleton
+// reached from one goroutine per toolstream connection, so all writer
+// bookkeeping is guarded by a single lock and Close drains those writers at
+// shutdown.
 package localfile
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -32,13 +40,24 @@ import (
 
 // Storage appends records to local files. It is bound to one collection by Init.
 type Storage struct {
-	lock         sync.Mutex
-	files        map[string]io.Writer
-	writerCache  sync.Map
+	// mu guards writers and closed. Every access to writers must happen while
+	// holding mu: Save runs on one goroutine per toolstream connection, and an
+	// unsynchronized map read that races with a map write makes the Go runtime
+	// abort the whole agent process with "concurrent map read and map write".
+	mu      sync.RWMutex
+	writers map[string]io.WriteCloser
+	closed  bool
+
 	path         string
 	rotationSize int
 	maxRotation  int
 }
+
+// ErrClosed is returned by Save once the backend has been closed. lumberjack
+// silently reopens a closed file on the next Write, so returning an error is
+// the only way to surface that a record would otherwise be written after
+// shutdown.
+var ErrClosed = errors.New("storage: localfile backend closed")
 
 var _ driver.Backend = (*Storage)(nil)
 
@@ -56,7 +75,7 @@ func NewBackend(path string, rotationSize, maxRotation int) *Storage {
 		path:         path,
 		rotationSize: rotationSize,
 		maxRotation:  maxRotation,
-		files:        make(map[string]io.Writer),
+		writers:      make(map[string]io.WriteCloser),
 	}
 }
 
@@ -114,36 +133,64 @@ func (b *Storage) Values(context.Context, string, driver.Query, int) ([]string, 
 	return nil, driver.ErrUnsupported
 }
 
-// Close is a no-op: the file rotator flushes on each Write, so there is
-// nothing buffered to drain at shutdown.
+// Close closes every rotator opened by this backend and marks the backend
+// closed, so a later Save reports ErrClosed instead of appending to a file the
+// backend no longer tracks. Every rotator holds an open lumberjack file
+// descriptor, so skipping this would leak descriptors for the lifetime of the
+// process.
+//
+// Close is idempotent: shutdown paths such as pkg/tracing/store close the same
+// backend more than once and must not report an error on the second call.
 func (b *Storage) Close(_ context.Context) error {
-	return nil
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.closed {
+		return nil
+	}
+	b.closed = true
+
+	errs := make([]error, 0, len(b.writers))
+	for name, w := range b.writers {
+		if err := w.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close localfile writer %q: %w", name, err))
+		}
+	}
+	// Drop the drained rotators so nothing can reach a closed writer if the
+	// backend is used again by mistake.
+	clear(b.writers)
+	return errors.Join(errs...)
 }
 
-func (b *Storage) newFileWriter(filename string) io.Writer {
-	fp := path.Join(b.path, filename)
-
-	fileWriter, ok := b.writerCache.Load(fp)
-	if !ok {
-		fileWriter = filerotate.NewFileRotator(fp, b.maxRotation, b.rotationSize)
-		b.writerCache.Store(fp, fileWriter)
+// writerByName returns the rotator for name, creating it on first use.
+//
+// The fast path takes only the read lock so Saves for different tracer names do
+// not serialize, but it must still hold a lock: an unlocked read of the writers
+// map races with the insert below and crashes the process. The write lock is
+// taken only on a cache miss, where the double-check keeps the common case from
+// opening the same file twice.
+func (b *Storage) writerByName(name string) (io.WriteCloser, error) {
+	b.mu.RLock()
+	w, ok := b.writers[name]
+	closed := b.closed
+	b.mu.RUnlock()
+	if ok {
+		return w, nil
+	}
+	if closed {
+		return nil, ErrClosed
 	}
 
-	b.files[filename] = fileWriter.(io.Writer)
-	return b.files[filename]
-}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-func (b *Storage) writerByName(name string) (io.Writer, error) {
-	if fileWriter, ok := b.files[name]; ok {
-		return fileWriter, nil
+	// Re-check under the write lock: another goroutine may have created the
+	// rotator while this one waited, and Close may have run in the meantime.
+	if existing, ok := b.writers[name]; ok {
+		return existing, nil
 	}
-
-	b.lock.Lock()
-	defer b.lock.Unlock()
-
-	// Double-check after acquiring lock
-	if fileWriter, ok := b.files[name]; ok {
-		return fileWriter, nil
+	if b.closed {
+		return nil, ErrClosed
 	}
 
 	if _, err := os.Stat(b.path); os.IsNotExist(err) {
@@ -152,7 +199,9 @@ func (b *Storage) writerByName(name string) (io.Writer, error) {
 		}
 	}
 
-	return b.newFileWriter(name), nil
+	w = filerotate.NewFileRotator(path.Join(b.path, name), b.maxRotation, b.rotationSize)
+	b.writers[name] = w
+	return w, nil
 }
 
 func tracerFilename(rec driver.Record) string {
