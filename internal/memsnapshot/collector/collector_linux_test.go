@@ -27,66 +27,85 @@ import (
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-func testOptions(t *testing.T) Options {
+func processIdentityForTest(t *testing.T) memsnapshot.ProcessIdentity {
 	t.Helper()
 	identity, err := memsnapshot.ReadIdentity(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Options{ExpectedIdentity: &identity}
+	return identity
 }
 
-func testRun(ctx context.Context, options Options, provider memsnapshot.Provider) (*Result, error) {
-	return run(ctx, os.Getpid(), options,
+func captureForTest(ctx context.Context, identity memsnapshot.ProcessIdentity, options Options,
+	provider memsnapshot.Provider,
+) (*Result, error) {
+	return capture(ctx, identity, options,
 		func(context.Context, int) (memsnapshot.Language, error) { return memsnapshot.LanguageGo, nil },
 		func(memsnapshot.Language) memsnapshot.Provider { return provider })
 }
 
-func TestRunRejectsChangedTarget(t *testing.T) {
-	reason := errors.New("victim validation failed")
+func TestCaptureRejectsChangedProcess(t *testing.T) {
+	reason := errors.New("process binding changed")
 	for _, failAt := range []int{0, 1, 2, 3} {
 		t.Run(fmt.Sprintf("validation-%d", failAt), func(t *testing.T) {
-			options := testOptions(t)
-			checks, captures, saves := 0, 0, 0
-			options.CheckTarget = func(_ context.Context, identity memsnapshot.ProcessIdentity) error {
-				if identity != *options.ExpectedIdentity {
-					t.Fatal("selected identity or cgroup was replaced")
+			identity := processIdentityForTest(t)
+			checks, captures := 0, 0
+			options := Options{CheckTarget: func(_ context.Context, actual memsnapshot.ProcessIdentity) error {
+				if actual != identity {
+					t.Fatal("selected identity was replaced")
 				}
 				checks++
 				if checks == failAt {
 					return reason
 				}
 				return nil
-			}
+			}}
 			provider := providerFunc(func(context.Context, memsnapshot.Request) (*memsnapshot.Snapshot, error) {
 				captures++
 				return &memsnapshot.Snapshot{Status: memsnapshot.StatusComplete}, nil
 			})
-			options.Save = func(context.Context, *Result) error { saves++; return nil }
 			if failAt == 0 {
-				options.ExpectedIdentity.StartTimeTicks++
-				if _, err := Run(t.Context(), os.Getpid(), options); err == nil || checks != 0 || saves != 0 {
-					t.Fatalf("stale identity accepted: checks=%d saves=%d err=%v", checks, saves, err)
+				identity.StartTimeTicks++
+				result, err := Capture(t.Context(), identity, options)
+				if err == nil || result != nil || checks != 0 {
+					t.Fatalf("stale identity accepted: result=%+v checks=%d err=%v", result, checks, err)
 				}
 				return
 			}
-			_, err := testRun(t.Context(), options, provider)
-			if !errors.Is(err, reason) || checks != failAt ||
-				saves != 0 || (failAt <= 2 && captures != 0) || (failAt == 3 && captures != 1) {
-				t.Fatalf("checks=%d captures=%d saves=%d err=%v", checks, captures, saves, err)
+			result, err := captureForTest(t.Context(), identity, options, provider)
+			if !errors.Is(err, reason) || result != nil || checks != failAt ||
+				(failAt <= 2 && captures != 0) || (failAt == 3 && captures != 1) {
+				t.Fatalf("result=%+v checks=%d captures=%d err=%v", result, checks, captures, err)
 			}
 		})
 	}
 }
 
-func TestRunFailurePersistenceAndShutdown(t *testing.T) {
+func TestCaptureRequiresProcessIdentity(t *testing.T) {
+	for _, identity := range []memsnapshot.ProcessIdentity{
+		{},
+		{TGID: os.Getpid()},
+		{TGID: -1, StartTimeTicks: 100},
+	} {
+		checks := 0
+		result, err := Capture(t.Context(), identity, Options{
+			CheckTarget: func(context.Context, memsnapshot.ProcessIdentity) error { checks++; return nil },
+		})
+		if err == nil || result != nil || checks != 0 {
+			t.Fatalf("invalid identity %+v accepted: result=%+v checks=%d err=%v", identity, result, checks, err)
+		}
+	}
+}
+
+func TestCaptureFailureAndShutdown(t *testing.T) {
 	for _, stage := range []string{"panic", "late timeout", "shutdown"} {
 		t.Run(stage, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			options := testOptions(t)
+			identity := processIdentityForTest(t)
+			options := Options{}
 			if stage == "late timeout" {
-				options.GoTimeout = time.Millisecond
+				options.CaptureTimeout = time.Millisecond
 			}
 			captured := false
 			provider := providerFunc(func(ctx context.Context, _ memsnapshot.Request) (*memsnapshot.Snapshot, error) {
@@ -102,44 +121,40 @@ func TestRunFailurePersistenceAndShutdown(t *testing.T) {
 				// A provider returning success must not override cancellation.
 				return &memsnapshot.Snapshot{Status: memsnapshot.StatusComplete}, nil
 			})
-			saves := 0
-			options.Save = func(_ context.Context, result *Result) error {
-				saves++
-				if result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
-					t.Fatal("runtime failure discarded process memory")
-				}
-				snapshot := result.Snapshot
-				if snapshot.Status != memsnapshot.StatusFailed || snapshot.Reason == "" {
-					t.Fatalf("failure artifact = %+v", snapshot)
-				}
-				if stage == "panic" && !strings.Contains(snapshot.Reason, "broken reader") {
-					t.Fatalf("missing panic reason: %+v", snapshot)
-				}
-				if stage == "late timeout" && !strings.Contains(snapshot.Reason, "deadline exceeded") {
-					t.Fatalf("missing deadline reason: %+v", snapshot)
-				}
-				return nil
-			}
-			_, err := testRun(ctx, options, provider)
+			result, err := captureForTest(ctx, identity, options, provider)
 			if !captured {
 				t.Fatal("provider was not called")
 			}
 			if stage == "shutdown" {
-				if saves != 0 || !errors.Is(err, context.Canceled) {
-					t.Fatalf("saves=%d err=%v", saves, err)
+				if result != nil || !errors.Is(err, context.Canceled) {
+					t.Fatalf("result=%+v err=%v", result, err)
 				}
-			} else if saves != 1 || err != nil {
-				t.Fatalf("saves=%d err=%v", saves, err)
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
+				t.Fatal("runtime failure discarded process memory")
+			}
+			snapshot := result.Snapshot
+			if snapshot.Status != memsnapshot.StatusFailed || snapshot.Reason == "" {
+				t.Fatalf("failure artifact = %+v", snapshot)
+			}
+			if stage == "panic" && !strings.Contains(snapshot.Reason, "broken reader") {
+				t.Fatalf("missing panic reason: %+v", snapshot)
+			}
+			if stage == "late timeout" && !strings.Contains(snapshot.Reason, "deadline exceeded") {
+				t.Fatalf("missing deadline reason: %+v", snapshot)
 			}
 		})
 	}
 }
 
-func TestRunBoundsBeforePersistence(t *testing.T) {
-	options := testOptions(t)
+func TestCaptureBoundsOutput(t *testing.T) {
+	identity := processIdentityForTest(t)
 	provider := providerFunc(func(_ context.Context, req memsnapshot.Request) (*memsnapshot.Snapshot, error) {
-		if req.Identity != *options.ExpectedIdentity ||
-			req.TopK != 1 || req.SamplingSeed == 0 {
+		if req.Identity != identity || req.TopK != 1 || req.SamplingSeed == 0 {
 			t.Fatalf("capture request = %+v", req)
 		}
 		return &memsnapshot.Snapshot{
@@ -147,25 +162,57 @@ func TestRunBoundsBeforePersistence(t *testing.T) {
 			Entries: []memsnapshot.Entry{{Name: "first"}, {Name: "second"}},
 		}, nil
 	})
-	saves := 0
-	options.Save = func(_ context.Context, result *Result) error {
-		saves++
-		snapshot := result.Snapshot
-		if snapshot.Status != memsnapshot.StatusComplete || snapshot.DurationMS == 0 ||
-			!snapshot.OutputTruncated || len(snapshot.Entries) != 1 || snapshot.Entries[0].Name != "first" {
-			t.Fatalf("saved snapshot = %+v", snapshot)
+	result, err := captureForTest(t.Context(), identity, Options{TopK: 1}, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := result.Snapshot
+	if result.Identity != identity || result.CaptureTime.IsZero() || result.SamplingSeed == 0 ||
+		snapshot.Status != memsnapshot.StatusComplete || snapshot.DurationMS == 0 ||
+		!snapshot.OutputTruncated || len(snapshot.Entries) != 1 || snapshot.Entries[0].Name != "first" {
+		t.Fatalf("bounded result = %+v, snapshot = %+v", result, snapshot)
+	}
+}
+
+func TestCaptureRejectsInvalidOptions(t *testing.T) {
+	identity := processIdentityForTest(t)
+	for _, options := range []Options{
+		{TopK: -1},
+		{TopK: memsnapshot.MaxMemoryObjectEntries + 1},
+		{DetectionTimeout: -time.Second},
+		{CaptureTimeout: -time.Second},
+	} {
+		result, err := Capture(t.Context(), identity, options)
+		if err == nil || result != nil {
+			t.Fatalf("invalid options %+v accepted: result=%+v err=%v", options, result, err)
 		}
-		return nil
 	}
-	options.TopK = 1
-	_, err := testRun(t.Context(), options, provider)
-	if err != nil || saves != 1 {
-		t.Fatalf("saves=%d err=%v", saves, err)
-	}
-	options.Save = nil
-	result, err := testRun(t.Context(), options, provider)
-	if err != nil || result == nil || len(result.Snapshot.Entries) != 1 || saves != 1 {
-		t.Fatalf("capture without persistence: result=%+v saves=%d err=%v", result, saves, err)
+}
+
+func TestCaptureUsesRuntimeIndependentBudget(t *testing.T) {
+	identity := processIdentityForTest(t)
+	for _, language := range []memsnapshot.Language{memsnapshot.LanguageGo, memsnapshot.LanguageJava, memsnapshot.LanguagePython} {
+		t.Run(string(language), func(t *testing.T) {
+			provider := providerFunc(func(ctx context.Context, _ memsnapshot.Request) (*memsnapshot.Snapshot, error) {
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) > time.Millisecond {
+					t.Fatal("provider did not receive capture budget")
+				}
+				<-ctx.Done()
+				return nil, ctx.Err()
+			})
+			result, err := capture(t.Context(), identity, Options{CaptureTimeout: time.Millisecond},
+				func(context.Context, int) (memsnapshot.Language, error) { return language, nil },
+				func(actual memsnapshot.Language) memsnapshot.Provider {
+					if actual != language {
+						t.Fatalf("provider language = %q, want %q", actual, language)
+					}
+					return provider
+				})
+			if err != nil || result == nil || result.Snapshot.Status != memsnapshot.StatusFailed {
+				t.Fatalf("timed out capture: result=%+v err=%v", result, err)
+			}
+		})
 	}
 }
 
@@ -188,20 +235,17 @@ func TestProcessMemory(t *testing.T) {
 	}
 }
 
-func TestRunKeepsProcessMemoryWithoutRuntime(t *testing.T) {
+func TestCaptureKeepsProcessMemoryWithoutRuntime(t *testing.T) {
+	identity := processIdentityForTest(t)
 	for _, detectionErr := range []error{nil, errors.New("detection failed")} {
-		options := testOptions(t)
-		options.Save = func(_ context.Context, result *Result) error {
-			if result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
-				t.Fatal("missing process memory in persisted result")
-			}
-			return nil
-		}
-		result, err := run(t.Context(), os.Getpid(), options,
+		result, err := capture(t.Context(), identity, Options{},
 			func(context.Context, int) (memsnapshot.Language, error) { return "", detectionErr },
 			func(memsnapshot.Language) memsnapshot.Provider { return nil })
 		if err != nil {
 			t.Fatal(err)
+		}
+		if result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
+			t.Fatal("missing process memory in returned result")
 		}
 		want := memsnapshot.StatusUnavailable
 		if detectionErr != nil {

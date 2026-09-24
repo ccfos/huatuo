@@ -29,9 +29,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
-	goprovider "github.com/ccfos/huatuo/internal/memsnapshot/providers/golang"
-	javaprovider "github.com/ccfos/huatuo/internal/memsnapshot/providers/java"
-	pythonprovider "github.com/ccfos/huatuo/internal/memsnapshot/providers/python"
+	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
 )
 
 func TestCaptureLiveGoProcess(t *testing.T) {
@@ -103,12 +101,17 @@ func main() {
 	}
 	captureCtx, cancelCapture := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelCapture()
-	snapshot, err := goprovider.New().Capture(captureCtx, memsnapshot.Request{
-		Identity: identity, SamplingSeed: 1, TopK: 10,
+	result, err := collector.Capture(captureCtx, identity, collector.Options{
+		TopK: 10, CaptureTimeout: 10 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result.Identity != identity || result.Language != memsnapshot.LanguageGo ||
+		result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
+		t.Fatalf("live Go collector result = %+v", result)
+	}
+	snapshot := result.Snapshot
 	if snapshot.Status != memsnapshot.StatusComplete && snapshot.Status != memsnapshot.StatusPartial {
 		t.Fatalf("live Go snapshot status = %q, reason = %q",
 			snapshot.Status, snapshot.Reason)
@@ -204,12 +207,17 @@ public class HeapFixture {
 	}
 	captureCtx, cancelCapture := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancelCapture()
-	snapshot, err := javaprovider.New().Capture(captureCtx, memsnapshot.Request{
-		Identity: identity, SamplingSeed: 1, TopK: 10,
+	result, err := collector.Capture(captureCtx, identity, collector.Options{
+		TopK: 10, CaptureTimeout: 15 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result.Identity != identity || result.Language != memsnapshot.LanguageJava ||
+		result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
+		t.Fatalf("live Java collector result = %+v", result)
+	}
+	snapshot := result.Snapshot
 	if snapshot.Status != memsnapshot.StatusComplete && snapshot.Status != memsnapshot.StatusPartial {
 		t.Fatalf("live HotSpot snapshot status = %q, reason = %q",
 			snapshot.Status, snapshot.Reason)
@@ -342,12 +350,17 @@ time.sleep(60)
 	}
 	captureCtx, cancelCapture := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelCapture()
-	snapshot, err := pythonprovider.New().Capture(captureCtx, memsnapshot.Request{
-		Identity: identity, SamplingSeed: 1, TopK: 10,
+	result, err := collector.Capture(captureCtx, identity, collector.Options{
+		TopK: 10, CaptureTimeout: 10 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result.Identity != identity || result.Language != memsnapshot.LanguagePython ||
+		result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
+		t.Fatalf("live Python collector result = %+v", result)
+	}
+	snapshot := result.Snapshot
 	// The live test is optional because distro Python builds do not expose a
 	// uniform discovery ABI. In particular, some builds export _PyRuntime but
 	// expose neither Py_Version nor a versioned libpython mapping. The provider

@@ -28,72 +28,97 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 const (
-	maxTargetPIDs      = 4096
-	maxTargetListBytes = 64 << 10
+	maxCgroupProcesses        = 4096
+	maxCgroupProcessListBytes = 64 << 10
 )
 
-var errNotSnapshotTarget = errors.New("process is no longer eligible for a memory snapshot")
+var (
+	errProcessNotEligible     = errors.New("process is no longer eligible for a memory snapshot")
+	errNoSnapshotProcess      = errors.New("cgroup has no OOM-killable process")
+	errInvalidSnapshotProcess = errors.New("memory snapshot process binding is no longer valid")
+)
 
-type targetCandidate struct {
+type selectedProcess struct {
 	identity    memsnapshot.ProcessIdentity
-	pid         int
 	comm        string
 	oomScoreAdj int
+}
+
+type processCandidate struct {
+	process     selectedProcess
 	memoryBytes uint64
 	score       float64
 }
 
-func selectTarget(ctx context.Context, cgroupPath string, memoryMax uint64) (targetCandidate, error) {
-	procFS, err := procfs.NewDefaultFS()
-	if err != nil {
-		return targetCandidate{}, fmt.Errorf("open procfs: %w", err)
-	}
-	return selectTargetFromProcs(func(visit func(int) error) error {
-		return scanMemcgProcs(ctx, cgroupPath, visit)
-	}, func(pid int) (targetCandidate, error) {
-		identity, err := memsnapshot.ReadIdentity(pid)
-		if err != nil {
-			return targetCandidate{}, fmt.Errorf("read identity: %w", err)
-		}
-		proc, err := procFS.Proc(pid)
-		if err != nil {
-			return targetCandidate{}, fmt.Errorf("open proc: %w", err)
-		}
-		oomScoreAdjRaw, err := os.ReadFile(procfs.Path(strconv.Itoa(pid), "oom_score_adj"))
-		if err != nil {
-			return targetCandidate{}, fmt.Errorf("read oom_score_adj: %w", err)
-		}
-		candidate, err := readTargetCandidate(proc, oomScoreAdjRaw, memoryMax)
-		if err != nil {
-			return targetCandidate{}, err
-		}
-		current, err := memsnapshot.ReadIdentity(pid)
-		if err != nil {
-			return targetCandidate{}, fmt.Errorf("recheck identity: %w", err)
-		}
-		if current != identity {
-			return targetCandidate{}, errNotSnapshotTarget
-		}
-		candidate.identity = identity
-		return candidate, nil
-	})
+// procRoot must describe the same PID namespace used by the memory collector.
+type processSelector struct {
+	source   *cgroupSource
+	procRoot string
 }
 
-func selectTargetFromProcs(scan func(func(int) error) error,
-	read func(int) (targetCandidate, error),
-) (targetCandidate, error) {
-	var selected targetCandidate
+// Select returns a process only after bounded enumeration and final validation.
+// Membership and identity may change again after it returns.
+func (s *processSelector) Select(ctx context.Context, group cgroupRef, memoryLimitBytes uint64) (selectedProcess, error) {
+	if err := ctx.Err(); err != nil {
+		return selectedProcess{}, err
+	}
+	procFS, err := procfs.NewFS(s.procRoot)
+	if err != nil {
+		return selectedProcess{}, fmt.Errorf("open procfs: %w", err)
+	}
+	process, err := selectProcessFromProcs(func(visit func(int) error) error {
+		return s.scanProcesses(ctx, group, visit)
+	}, func(pid int) (processCandidate, error) {
+		proc, err := procFS.Proc(pid)
+		if err != nil {
+			return processCandidate{}, fmt.Errorf("open proc: %w", err)
+		}
+		stat, err := proc.Stat()
+		if err != nil {
+			return processCandidate{}, fmt.Errorf("read identity: %w", err)
+		}
+		oomScoreAdjRaw, err := os.ReadFile(filepath.Join(s.procRoot, strconv.Itoa(pid), "oom_score_adj"))
+		if err != nil {
+			return processCandidate{}, fmt.Errorf("read oom_score_adj: %w", err)
+		}
+		candidate, err := readProcessCandidate(proc, oomScoreAdjRaw, memoryLimitBytes)
+		if err != nil {
+			return processCandidate{}, err
+		}
+		current, err := proc.Stat()
+		if err != nil {
+			return processCandidate{}, fmt.Errorf("recheck identity: %w", err)
+		}
+		if stat.Starttime == 0 || current.Starttime != stat.Starttime {
+			return processCandidate{}, errProcessNotEligible
+		}
+		candidate.process.identity = memsnapshot.ProcessIdentity{TGID: pid, StartTimeTicks: stat.Starttime}
+		return candidate, nil
+	})
+	if err != nil {
+		return selectedProcess{}, err
+	}
+	if err := s.Validate(ctx, group, process.identity); err != nil {
+		return selectedProcess{}, err
+	}
+
+	return process, nil
+}
+
+func selectProcessFromProcs(scan func(func(int) error) error,
+	read func(int) (processCandidate, error),
+) (selectedProcess, error) {
+	var selected processCandidate
 	found := false
 	err := scan(func(pid int) error {
 		candidate, err := read(pid)
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, unix.ESRCH) ||
-			errors.Is(err, errNotSnapshotTarget) {
+			errors.Is(err, errProcessNotEligible) {
 			return nil
 		}
 		if err != nil {
@@ -107,55 +132,59 @@ func selectTargetFromProcs(scan func(func(int) error) error,
 	})
 	if err != nil {
 		// Failed reads and enumeration must not select a winner from a partial view.
-		return targetCandidate{}, fmt.Errorf("enumerate cgroup processes: %w", err)
+		return selectedProcess{}, fmt.Errorf("enumerate cgroup processes: %w", err)
 	}
 	if !found {
-		return targetCandidate{}, errors.New("cgroup has no OOM-killable process")
+		return selectedProcess{}, errNoSnapshotProcess
 	}
-	return selected, nil
+	return selected.process, nil
 }
 
-func validateTarget(ctx context.Context, cgroupPath string, identity memsnapshot.ProcessIdentity) error {
+func (s *processSelector) Validate(ctx context.Context, group cgroupRef, identity memsnapshot.ProcessIdentity) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	found := false
-	if err := scanMemcgProcs(ctx, cgroupPath, func(pid int) error {
+	if err := s.scanProcesses(ctx, group, func(pid int) error {
 		found = found || pid == identity.TGID
 		return nil
 	}); err != nil {
 		return err
 	}
 	if !found {
-		return errors.New("target is no longer in the triggering memory cgroup")
+		return fmt.Errorf("%w: process %d left memory cgroup %q", errInvalidSnapshotProcess, identity.TGID, group.Path)
 	}
-	return memsnapshot.ValidateIdentity("/proc", identity)
+	if err := memsnapshot.ValidateIdentity(s.procRoot, identity); err != nil {
+		return fmt.Errorf("%w: %w", errInvalidSnapshotProcess, err)
+	}
+
+	return ctx.Err()
 }
 
-func readTargetCandidate(proc procfs.Proc, oomScoreAdjRaw []byte,
-	memoryMax uint64,
-) (targetCandidate, error) {
+func readProcessCandidate(proc procfs.Proc, oomScoreAdjRaw []byte,
+	memoryLimitBytes uint64,
+) (processCandidate, error) {
 	status, err := proc.NewStatus()
 	if err != nil {
-		return targetCandidate{}, fmt.Errorf("read status: %w", err)
+		return processCandidate{}, fmt.Errorf("read status: %w", err)
 	}
 	oomScoreAdj, err := strconv.Atoi(strings.TrimSpace(string(oomScoreAdjRaw)))
 	if err != nil {
-		return targetCandidate{}, fmt.Errorf("parse oom_score_adj: %w", err)
+		return processCandidate{}, fmt.Errorf("parse oom_score_adj: %w", err)
 	}
 	if oomScoreAdj < -1000 || oomScoreAdj > 1000 {
-		return targetCandidate{}, fmt.Errorf("oom_score_adj out of range: %d", oomScoreAdj)
+		return processCandidate{}, fmt.Errorf("oom_score_adj out of range: %d", oomScoreAdj)
 	}
 	if oomScoreAdj == -1000 {
-		return targetCandidate{}, errNotSnapshotTarget
+		return processCandidate{}, errProcessNotEligible
 	}
 	memoryBytes := oomMemoryBytes(status.VmRSS, status.VmSwap, status.VmPTE)
-	score := float64(memoryBytes) + float64(oomScoreAdj)*float64(memoryMax)/1000
+	score := float64(memoryBytes) + float64(oomScoreAdj)*float64(memoryLimitBytes)/1000
 	if score < 0 {
 		score = 0
 	}
-	return targetCandidate{
-		pid: proc.PID, comm: status.Name, oomScoreAdj: oomScoreAdj,
+	return processCandidate{
+		process:     selectedProcess{comm: status.Name, oomScoreAdj: oomScoreAdj},
 		memoryBytes: memoryBytes, score: score,
 	}, nil
 }
@@ -171,25 +200,28 @@ func oomMemoryBytes(values ...uint64) uint64 {
 	return total
 }
 
-func scanMemcgProcs(ctx context.Context, cgroupPath string, visit func(int) error) error {
-	if err := ctx.Err(); err != nil {
-		return err
+func (s *processSelector) scanProcesses(ctx context.Context, group cgroupRef, visit func(int) error) error {
+	if err := s.source.Validate(ctx, group); err != nil {
+		return fmt.Errorf("%w: %w", errInvalidSnapshotProcess, err)
 	}
-	root, err := cgroups.MemoryRoot()
-	if err != nil {
-		return err
-	}
-	directory := filepath.Join(root, cgroupPath)
+	directory := s.source.memcgDir(group.Path)
 	file, err := os.Open(filepath.Join(directory, "cgroup.procs"))
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	return scanTargetPIDs(ctx, file, visit)
+	if err := scanProcessPIDs(ctx, file, visit); err != nil {
+		return err
+	}
+	if err := s.source.Validate(ctx, group); err != nil {
+		return fmt.Errorf("%w: %w", errInvalidSnapshotProcess, err)
+	}
+
+	return nil
 }
 
-func scanTargetPIDs(ctx context.Context, reader io.Reader, visit func(int) error) error {
-	limited := &io.LimitedReader{R: reader, N: maxTargetListBytes + 1}
+func scanProcessPIDs(ctx context.Context, reader io.Reader, visit func(int) error) error {
+	limited := &io.LimitedReader{R: reader, N: maxCgroupProcessListBytes + 1}
 	scanner := bufio.NewScanner(limited)
 	scanner.Buffer(make([]byte, 1024), 64)
 	count := 0
@@ -201,7 +233,7 @@ func scanTargetPIDs(ctx context.Context, reader io.Reader, visit func(int) error
 			break
 		}
 		count++
-		if count > maxTargetPIDs || limited.N == 0 {
+		if count > maxCgroupProcesses || limited.N == 0 {
 			return errors.New("cgroup process enumeration exceeds safety budget")
 		}
 		pid, err := strconv.Atoi(scanner.Text())

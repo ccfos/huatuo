@@ -1330,6 +1330,8 @@ If you need deeper customization for a specific scenario, feel free to provide m
   or backfilling. Resource recovery or a full view does not re-register the same
   instance, so pressure monitoring may remain unavailable for that instance.
 - Failed identity checks or missing container metadata prevent capture or saving.
+- Process selection and capture both use `/proc` in Huatuo's PID namespace.
+  Changing `--procfs-prefix` does not redirect memory snapshot reads.
 
 This table describes experimental implementation coverage, not validation of
 every listed version:
@@ -1346,8 +1348,9 @@ skipped tests and `unavailable` results do not prove compatibility.
 
 #### 14.2 Output and Troubleshooting
 
-Info logs record watcher state and each capture stage's start, end, duration,
-and result. Locate attempts by container/PID and correlate stages by `capture_id`.
+Info logs record watcher state, capture attempts, and collector stages.
+Process selection and persistence details use Debug logs. Locate attempts by
+container/PID and correlate collector stages by `capture_id`.
 If a stage starts but does not finish, inspect bamai's
 `/debug/pprof/goroutine?debug=2` with appropriate authorization for the blocked stack.
 No logs alone do not prove that monitoring has stopped.

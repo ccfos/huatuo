@@ -38,18 +38,12 @@ import (
 type Options struct {
 	TopK             int
 	DetectionTimeout time.Duration
-	GoTimeout        time.Duration
-	JavaTimeout      time.Duration
-	PythonTimeout    time.Duration
+	CaptureTimeout   time.Duration
 
-	// ExpectedIdentity binds collection to a process selected earlier.
-	ExpectedIdentity *memsnapshot.ProcessIdentity
 	// CheckTarget adds caller-specific checks before detection, dispatch and
-	// returning/saving the result. Identity checks remain owned by Run.
+	// returning the result. It must not persist data or mutate the target.
+	// Identity checks remain owned by Capture.
 	CheckTarget func(context.Context, memsnapshot.ProcessIdentity) error
-	// Save is optional and synchronous. It receives the bounded result only
-	// after final target validation; storage metadata belongs to the caller.
-	Save func(context.Context, *Result) error
 }
 
 // Result carries runtime data without event or container metadata.
@@ -62,17 +56,18 @@ type Result struct {
 	ProcessMemory *memsnapshot.ProcessMemory
 }
 
-// Run identifies and captures pid, then optionally saves the result.
+// Capture binds memory collection to an already selected process identity.
 // Detection/provider failures become failed snapshots. Invalid targets,
-// cancellation, invalid options and persistence failures return errors.
-func Run(ctx context.Context, pid int, options Options) (*Result, error) {
-	return run(ctx, pid, options, memsnapshot.DetectLanguage, newProvider)
+// cancellation and invalid options return errors without a result.
+func Capture(ctx context.Context, identity memsnapshot.ProcessIdentity, options Options) (*Result, error) {
+	return capture(ctx, identity, options, memsnapshot.DetectLanguage, newProvider)
 }
 
-func run(ctx context.Context, pid int, options Options,
+func capture(ctx context.Context, identity memsnapshot.ProcessIdentity, options Options,
 	detect func(context.Context, int) (memsnapshot.Language, error),
 	provider func(memsnapshot.Language) memsnapshot.Provider,
 ) (result *Result, retErr error) {
+	pid := identity.TGID
 	started := time.Now()
 	stage := "validate_target"
 	log.WithField("pid", pid).
@@ -92,13 +87,6 @@ func run(ctx context.Context, pid int, options Options,
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
-	}
-	identity, err := memsnapshot.ReadIdentity(pid)
-	if err != nil {
-		return nil, err
-	}
-	if options.ExpectedIdentity != nil && identity != *options.ExpectedIdentity {
-		return nil, errors.New("selected process identity changed")
 	}
 	validate := func() error {
 		if err := ctx.Err(); err != nil {
@@ -172,15 +160,16 @@ func run(ctx context.Context, pid int, options Options,
 		if err := validate(); err != nil {
 			return nil, fmt.Errorf("validate process before capture: %w", err)
 		}
-		captureCtx, cancelCapture := context.WithTimeout(ctx, options.captureTimeout(language))
+		captureCtx, cancelCapture := context.WithTimeout(ctx, options.CaptureTimeout)
 		captureStarted := time.Now()
 		stage = "runtime_capture"
 		log.WithField("pid", pid).
 			WithField("capture_id", started.UnixNano()).
 			WithField("language", language).
-			WithField("timeout_ms", options.captureTimeout(language).Milliseconds()).
+			WithField("timeout_ms", options.CaptureTimeout.Milliseconds()).
 			WithField("top_k", options.TopK).
 			Info("memsnapshot runtime capture started")
+		var err error
 		snapshot, err = captureProvider(captureCtx, provider(language), memsnapshot.Request{
 			SamplingSeed: seed, Identity: identity, TopK: options.TopK,
 		})
@@ -215,30 +204,13 @@ func run(ctx context.Context, pid int, options Options,
 			return nil, err
 		}
 	}
-	stage = "validate_before_save"
+	stage = "validate_before_return"
 	if err := validate(); err != nil {
-		return nil, fmt.Errorf("validate process before persistence: %w", err)
+		return nil, fmt.Errorf("validate process before returning snapshot: %w", err)
 	}
 	result = &Result{
 		Identity: identity, Language: language, CaptureTime: now,
 		SamplingSeed: seed, Snapshot: snapshot, ProcessMemory: processMemory,
-	}
-	if options.Save != nil {
-		stage = "save"
-		phaseStarted = time.Now()
-		log.WithField("pid", pid).
-			WithField("capture_id", started.UnixNano()).
-			WithField("snapshot_status", snapshot.Status).
-			Info("memsnapshot save started")
-		err := options.Save(ctx, result)
-		log.WithField("pid", pid).
-			WithField("capture_id", started.UnixNano()).
-			WithField("elapsed_ms", time.Since(phaseStarted).Milliseconds()).
-			WithError(err).
-			Info("memsnapshot save finished")
-		if err != nil {
-			return result, err
-		}
 	}
 	stage = "done"
 	return result, nil
@@ -312,9 +284,7 @@ func (o *Options) defaults() error {
 		fallback time.Duration
 	}{
 		{"detection", &o.DetectionTimeout, time.Second},
-		{"Go", &o.GoTimeout, 100 * time.Millisecond},
-		{"Java", &o.JavaTimeout, 2 * time.Second},
-		{"Python", &o.PythonTimeout, 2 * time.Second},
+		{"capture", &o.CaptureTimeout, 2 * time.Second},
 	} {
 		if *budget.value < 0 {
 			return fmt.Errorf("%s timeout must not be negative", budget.name)
@@ -324,17 +294,6 @@ func (o *Options) defaults() error {
 		}
 	}
 	return nil
-}
-
-func (o *Options) captureTimeout(language memsnapshot.Language) time.Duration {
-	switch language {
-	case memsnapshot.LanguageJava:
-		return o.JavaTimeout
-	case memsnapshot.LanguagePython:
-		return o.PythonTimeout
-	default:
-		return o.GoTimeout
-	}
 }
 
 func newProvider(language memsnapshot.Language) memsnapshot.Provider {

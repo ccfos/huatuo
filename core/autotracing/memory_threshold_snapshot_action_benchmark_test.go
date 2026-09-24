@@ -25,7 +25,9 @@ import (
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/stats"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/memsnapshot"
 	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
+	"github.com/ccfos/huatuo/internal/tracing"
 )
 
 // An empty batch isolates submission, context lifetime and completion from I/O.
@@ -84,12 +86,13 @@ func BenchmarkMemorySnapshotActionBatch(b *testing.B) {
 			batch.source = source
 			batch.ops = &actionBatchOps{
 				validateContainer: validateActionContainerForTest,
-				validate:          validateActionProcessForTest,
-				selectTarget: func(context.Context, string, uint64) (targetCandidate, error) {
-					return targetCandidate{pid: 42}, nil
+				validateProcess:   validateActionProcessForTest,
+				save:              func(*tracing.WriteRequest) error { return nil },
+				selectProcess: func(context.Context, cgroupRef, uint64) (selectedProcess, error) {
+					return selectedProcess{identity: memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}}, nil
 				},
-				collect: func(context.Context, int, collector.Options) (*collector.Result, error) {
-					return nil, nil
+				captureProcessMemory: func(context.Context, memsnapshot.ProcessIdentity, collector.Options) (*collector.Result, error) {
+					return &collector.Result{CaptureTime: time.Now()}, nil
 				},
 			}
 			b.ReportAllocs()
