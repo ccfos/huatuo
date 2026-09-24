@@ -24,6 +24,12 @@
 # configuration, and the measured window starts only after the fixture reports
 # the attach, so the load and probe phase is outside every round.
 #
+# The rate and the CPU percentage are divided by the generator's own traffic
+# window, not by the wall clock span of the round: starting the interpreter can
+# take seconds on a loaded machine, and a denominator that includes them reports
+# the load, not the hook. The raw CPU seconds are reported next to the
+# percentage, because they are the column a noisy host disturbs least.
+#
 # The generator sends TCP SYNs to a closed port of the peer namespace, which is
 # what keeps the packet rate high enough to see a per-packet hook: the slow TCP
 # server fixture serializes on purpose and cannot drive one. Every SYN enters
@@ -134,7 +140,8 @@ target = (sys.argv[1], int(sys.argv[2]))
 duration = float(sys.argv[3])
 
 sent = 0
-end = time.monotonic() + duration
+start = time.monotonic()
+end = start + duration
 while time.monotonic() < end:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setblocking(False)
@@ -145,7 +152,10 @@ while time.monotonic() < end:
     sock.close()
     sent += 1
 
-print(sent)
+# The traffic window, not the interpreter's start-up: the counters are read
+# around the process, but a rate or a CPU percentage divided by a window that
+# includes three seconds of start-up reports the machine's load, not the hook's.
+print(sent, time.monotonic() - start)
 PY
 }
 
@@ -198,7 +208,7 @@ run_round() {
 	local pair_events="-"
 	local pair_tcpv4="-"
 	local rx_before rx_after received
-	local busy0 softirq0 busy1 softirq1 syns start end elapsed
+	local busy0 softirq0 busy1 softirq1 syns elapsed
 	local status=0
 	local invalid=0
 
@@ -218,14 +228,12 @@ run_round() {
 	# Only the generator's window is measured: nothing else runs in it.
 	read -r busy0 softirq0 <<< "$(read_cpu_counters)"
 	rx_before=$(veth_peer_rx_packets)
-	start=$(date +%s.%N)
 
 	# The generator belongs in the client namespace: the peer address is only
 	# routable from there.
-	syns=$(ip netns exec "${TCP_NS_CLIENT}" \
-		python3 "${GENERATOR}" "${TCP_NS_SERVER_ADDR}" "${BENCH_PORT}" "${ROUND_SECONDS}")
+	read -r syns elapsed <<< "$(ip netns exec "${TCP_NS_CLIENT}" \
+		python3 "${GENERATOR}" "${TCP_NS_SERVER_ADDR}" "${BENCH_PORT}" "${ROUND_SECONDS}")"
 
-	end=$(date +%s.%N)
 	read -r busy1 softirq1 <<< "$(read_cpu_counters)"
 	rx_after=$(veth_peer_rx_packets)
 	received=$((rx_after - rx_before))
@@ -235,7 +243,8 @@ run_round() {
 		FIXTURE_PID=""
 	fi
 
-	elapsed=$(awk -v a="${start}" -v b="${end}" 'BEGIN { printf "%.3f", b - a }')
+	# elapsed is the generator's own window; the counters above bracket it a
+	# little wider, which is why the round also records the raw clock span.
 	[[ "${elapsed}" != "0.000" ]] || fatal "round ${label} measured no elapsed time"
 
 	if [[ "${mode}" != "${MODE_BASELINE}" ]]; then
@@ -318,10 +327,13 @@ run_round() {
 	return "${invalid}"
 }
 
-# summarize prints mean/min/max per mode from the results file.
+# summarize prints mean/min/max per mode from the measured rounds. Warm-up
+# rounds stay in the results file as raw data but are not averaged: they are
+# there to reach a steady state, not to be reported.
 summarize() {
 	awk -F'\t' '
 		NR == 1 { next }
+		$1 ~ /^warmup/ { next }
 		{
 			m = $2
 			if (!(m in seen)) { seen[m] = 1; order[++n] = m }
@@ -330,6 +342,8 @@ summarize() {
 			rate[m] += $5
 			if (!(m in rmin) || $5 < rmin[m]) rmin[m] = $5
 			if ($5 > rmax[m]) rmax[m] = $5
+
+			cpusec[m] += $7
 
 			cpu[m] += $8
 			if (!(m in cmin) || $8 < cmin[m]) cmin[m] = $8
@@ -346,14 +360,15 @@ summarize() {
 			lost[m] += $15
 		}
 		END {
-			printf "%-9s %6s %19s %21s %21s %10s %10s %9s %7s %7s\n",
-				"mode", "rounds", "syns/s mean[min-max]", "cpu% mean[min-max]",
+			printf "%-9s %6s %18s %9s %21s %21s %10s %10s %9s %7s %7s\n",
+				"mode", "rounds", "syns/s mean[min-max]", "cpu_s mean", "cpu% mean[min-max]",
 				"softirq% mean[min-max]", "events", "pair_events", "pair_tcpv4", "dupes", "lost"
 			for (i = 1; i <= n; i++) {
 				m = order[i]
-				printf "%-9s %6d %8.0f[%.0f-%.0f] %8.2f[%.2f-%.2f] %8.2f[%.2f-%.2f] %10d %10d %9d %7d %7d\n",
+				printf "%-9s %6d %8.0f[%.0f-%.0f] %9.2f %8.2f[%.2f-%.2f] %8.2f[%.2f-%.2f] %10d %10d %9d %7d %7d\n",
 					m, rounds[m],
 					rate[m] / rounds[m], rmin[m], rmax[m],
+					cpusec[m] / rounds[m],
 					cpu[m] / rounds[m], cmin[m], cmax[m],
 					soft[m] / rounds[m], smin[m], smax[m],
 					events[m], pair[m], pairtcpv4[m], duplicates[m], lost[m]
