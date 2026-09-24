@@ -730,11 +730,29 @@ changes. One watcher manages all targets without periodic sampling. Repeated
 notifications for a target are coalesced; they do not count every crossing or
 report recovery below the threshold. Capture rechecks current usage and identity.
 
-Container changes reuse shared CSS notifications without carrying full paths.
-The snapshot watcher resolves and saves the actual memory cgroup path through the
-container init PID in its own processing loop. Unavailable paths or lost
-notifications use deferred directory-scan recovery; pressure triggers may be
-missed before monitoring is restored.
+This feature requires the pod manager. It actively maintains the container view
+from shared CSS lifecycle hints and supplies an initial view followed by events
+with instance generations, init PIDs, and memory cgroup paths. The snapshot module
+no longer scans the cgroup tree. Subscription overflow recovers from a complete
+pod view; synchronization failure suspends capture and never implies deletion.
+
+Running ordinary containers and restartable init sidecars are monitored;
+ephemeral debug containers and ordinary init containers are excluded. Ordinary
+registration errors and target capacity exhaustion are logged and the directory
+instance is skipped. Invalidated registrations are removed without automatic
+retries or backfilling. Repeated events, full views, and container generation changes
+do not restore a failed watch. A replacement directory, a new tracking lifetime
+after the previous container departs, or a huatuo-bamai restart allows a new attempt.
+Fatal errors such as host resource exhaustion still stop the current watcher.
+Each monitored container must have its own memory cgroup directory. A watch
+and its capture observations bind directly to one container instance. If registration
+returns a watch already owned by another container, the feature stops, cancels capture,
+and releases its watches. Correct the cgroup isolation and restart huatuo-bamai;
+the feature does not retry this conflict. Directory replacement invalidates the old
+registration through the watcher's removal notification.
+Before capture and saving, the feature verifies the container generation and live
+binding, directory identity, and selected process identity and cgroup membership.
+Recorded memory usage and limits belong to that container's cgroup.
 
 See section 14 for deployment limitations and output lookup.
 
@@ -1306,11 +1324,11 @@ If you need deeper customization for a specific scenario, feel free to provide m
   Yama, SELinux, or AppArmor may block access.
 - Selects only direct cgroup members, excluding `oom_score_adj = -1000`.
   Selection is skipped above 4096 PIDs, 64 KiB of PID data, or a one-second budget.
-- Discovery is capped at 8192 directories and 4096 container watches.
-  Lifecycle loss or registration failure triggers a delayed rescan
-  (about one second, up to three attempts per round); normal operation does
-  not scan periodically. Warnings indicate possible coverage gaps.
-  Recovery cannot replay missed pressure events.
+- At most 4096 containers are watched. Targets come from pod events without
+  scanning the cgroup tree. Ordinary registration errors and capacity exhaustion
+  are logged and skipped; invalidated registrations are removed without retries
+  or backfilling. Resource recovery or a full view does not re-register the same
+  instance, so pressure monitoring may remain unavailable for that instance.
 - Failed identity checks or missing container metadata prevent capture or saving.
 
 This table describes experimental implementation coverage, not validation of

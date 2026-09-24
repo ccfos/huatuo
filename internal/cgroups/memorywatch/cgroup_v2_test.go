@@ -25,7 +25,7 @@ import (
 func TestWatcherV2NativeCountersAndLimit(t *testing.T) {
 	w, f := newWatchFixture(t, cgroups.Unified, 4)
 	f.create(t, "/a", 80, 100)
-	id, err := w.Add(t.Context(), "/a")
+	id, err := w.Add(t.Context(), "/a", f.stat(t, "/a"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestWatcherV2NativeCountersAndLimit(t *testing.T) {
 func TestWatcherFailedReadRetainsCounterBaseline(t *testing.T) {
 	w, f := newWatchFixture(t, cgroups.Unified, 2)
 	f.create(t, "/a", 80, 100)
-	if _, err := w.Add(t.Context(), "/a"); err != nil {
+	if _, err := w.Add(t.Context(), "/a", f.stat(t, "/a")); err != nil {
 		t.Fatal(err)
 	}
 	f.write(t, "/a", "memory.current", "invalid")

@@ -16,22 +16,21 @@ package autotracing
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/cgroups/memorywatch"
-	"github.com/ccfos/huatuo/internal/document"
-	"github.com/ccfos/huatuo/internal/memsnapshot"
-	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
+	"golang.org/x/sys/unix"
+
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
-	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestNewMemoryThresholdSnapshot(t *testing.T) {
@@ -67,21 +66,120 @@ func TestMemoryThresholdSnapshotBlacklist(t *testing.T) {
 	}
 }
 
+func TestMemorySnapshotWatchErrorPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		wait bool
+	}{
+		{name: "nil"},
+		{name: "target limit", err: errMemoryWatchLimit},
+		{name: "closed", err: errMemoryWatchClosed},
+		{name: "permission", err: os.ErrPermission},
+		{name: "canceled", err: context.Canceled},
+		{name: "resource exhaustion", err: unix.EMFILE, wait: true},
+		{name: "kernel event overflow", err: errMemoryWatchEventOverflow, wait: true},
+		{name: "container registration conflict", err: errCgroupRegistrationConflict, wait: true},
+		{name: "conflict during cancellation", err: errors.Join(context.Canceled, errCgroupRegistrationConflict), wait: true},
+		{name: "joined cancellation", err: errors.Join(context.Canceled, unix.ENOSPC), wait: true},
+		{name: "limit and resource failure", err: errors.Join(errMemoryWatchLimit, unix.EMFILE), wait: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- handleWatchError(ctx, test.err) }()
+			if test.wait {
+				select {
+				case err := <-done:
+					t.Fatalf("persistent failure allowed an immediate restart: %v", err)
+				case <-time.After(10 * time.Millisecond):
+				}
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if test.wait {
+					if err != nil {
+						t.Fatalf("stopping after persistent failure = %v", err)
+					}
+				} else if !errors.Is(err, test.err) {
+					t.Fatalf("returned error = %v, want %v", err, test.err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("watch error policy did not return")
+			}
+		})
+	}
+}
+
+// Keep the real producer initializing: these tests need the subscription
+// lifecycle, without requiring a kubelet, container runtime or CSS probes.
+func newContainerSubscriptionForTest(t *testing.T) *pod.ContainerSubscription {
+	t.Helper()
+	started := make(chan struct{})
+	signal := sync.OnceFunc(func() { close(started) })
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		signal()
+		<-request.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+	port := uint32(server.Listener.Addr().(*net.TCPAddr).Port)
+	if err := pod.InitManager(&pod.ManagerCtx{PodReadOnlyPort: port}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pod.ReleaseManager)
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("container producer did not begin initialization")
+	}
+	subscription, err := pod.SubscribeContainers(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(subscription.Close)
+	return subscription
+}
+
+func runMemorySnapshotForTest(t *testing.T, snapshot *memoryThresholdSnapshot,
+	config *Config, source *cgroupSource, tracker *cgroupTracker, subscription *pod.ContainerSubscription,
+) (context.CancelFunc, <-chan error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- snapshot.mainAction(ctx, config, source, tracker.watcher, tracker, subscription)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("snapshot did not stop")
+		}
+	})
+	return cancel, done
+}
+
 func TestMemoryThresholdSnapshotStopJoinsWatcherBeforeRestart(t *testing.T) {
 	cfg := &Config{}
 	cfg.MemoryThresholdSnapshot.ThresholdPercent = 90
 	snapshot := &memoryThresholdSnapshot{}
 	for iteration := 0; iteration < 2; iteration++ {
 		t.Run(strconv.Itoa(iteration), func(t *testing.T) {
+			subscription := newContainerSubscriptionForTest(t)
 			before, err := os.ReadDir("/proc/self/fd")
 			if err != nil {
 				t.Fatal(err)
 			}
-			watcher := newTestPressureWatcher(t)
-			createMemoryCgroupForTest(t, watcher.root, "/"+strings.Repeat("a", 64), 0)
-			ctx, cancel := context.WithCancel(t.Context())
-			done := make(chan error, 1)
-			go func() { done <- snapshot.watchAndCapture(ctx, cfg, watcher) }()
+			tracker, source := newTestCgroupTracker(t)
+			createMemoryCgroupForTest(t, source.root, "/"+strings.Repeat("a", 64), 0)
+			cancel, done := runMemorySnapshotForTest(t, snapshot, cfg, source, tracker, subscription)
 			cancel()
 			select {
 			case err := <-done:
@@ -91,7 +189,7 @@ func TestMemoryThresholdSnapshotStopJoinsWatcherBeforeRestart(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("snapshot did not join watcher")
 			}
-			if _, err := watcher.watcher.Add(t.Context(), "/"); !errors.Is(err, memorywatch.ErrClosed) {
+			if _, err := tracker.watcher.ProcessEvents(t.Context()); !errors.Is(err, errMemoryWatchClosed) {
 				t.Fatalf("watcher remains active after stop: %v", err)
 			}
 			after, err := os.ReadDir("/proc/self/fd")
@@ -105,134 +203,71 @@ func TestMemoryThresholdSnapshotStopJoinsWatcherBeforeRestart(t *testing.T) {
 	}
 }
 
-func TestMemoryThresholdSnapshotRevalidatesContainerBeforePersistence(t *testing.T) {
-	for _, changed := range []bool{false, true} {
-		t.Run(strconv.FormatBool(changed), func(t *testing.T) {
-			outputDir := t.TempDir()
-			store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{
-				LocalFile: &tracingstore.LocalFileConfig{
-					Path: outputDir, RotationSizeMiB: 1, MaxRotatedFiles: 1,
-				},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := store.Close(t.Context()); err != nil {
-					t.Error(err)
-				}
-			})
-			if err := tracing.EnableDocumentWriter(store, document.New("test")); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(tracing.DisableDocumentWriter)
+func TestMemorySnapshotChecksWatchFailureBeforeLifecycle(t *testing.T) {
+	tracker, source := newTestCgroupTracker(t)
+	subscription := newContainerSubscriptionForTest(t)
+	subscription.Close()
+	if err := tracker.watcher.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err := (&memoryThresholdSnapshot{}).mainAction(t.Context(), &Config{}, source, tracker.watcher, tracker, subscription)
+	if !errors.Is(err, errMemoryWatchClosed) {
+		t.Fatalf("terminal watch failure lost: %v", err)
+	}
+}
 
-			path, saved := "/original", false
-			identity := memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}
-			result := &collector.Result{
-				Identity: identity, Language: memsnapshot.LanguageGo,
-				Snapshot:      &memsnapshot.Snapshot{Status: memsnapshot.StatusComplete},
-				ProcessMemory: &memsnapshot.ProcessMemory{Status: memsnapshot.StatusComplete},
-			}
-			ops := &memoryThresholdSnapshotOps{
-				selectTarget: func(context.Context, string, uint64) (targetCandidate, error) {
-					return targetCandidate{pid: 42, identity: identity}, nil
-				},
-				validate: func(_ context.Context, path string, actual memsnapshot.ProcessIdentity) error {
-					if path != "/original" || actual != identity {
-						t.Fatal("selected identity or cgroup was replaced")
-					}
-					return nil
-				},
-				containerPath: func(string) (string, error) { return path, nil },
-				collect: func(ctx context.Context, pid int, options collector.Options) (*collector.Result, error) {
-					if pid != 42 || *options.ExpectedIdentity != identity {
-						t.Fatalf("collector options = %+v, pid = %d", options, pid)
-					}
-					if options.TopK != 7 {
-						t.Fatalf("collector maximum memory object entries = %d, want 7", options.TopK)
-					}
-					for _, timeout := range []time.Duration{
-						options.GoTimeout, options.JavaTimeout, options.PythonTimeout,
-					} {
-						if timeout != 3*time.Second {
-							t.Fatalf("collector capture timeout = %s, want 3s", timeout)
-						}
-					}
-					if err := options.CheckTarget(ctx, identity); err != nil {
-						return nil, err
-					}
-					result.CaptureTime = time.Now().UTC()
-					if changed {
-						path = "/replacement"
-					}
-					return result, options.Save(ctx, result)
-				},
-				save: func(req *tracing.WriteRequest) error {
-					saved = true
-					if req.TracerName != "memory_threshold_snapshot" {
-						t.Fatalf("tracer name = %q", req.TracerName)
-					}
-					data := req.TracerData.(*memoryThresholdSnapshotData)
-					if data.Snapshot != result.Snapshot || data.Language != result.Language ||
-						data.ProcessMemory != result.ProcessMemory ||
-						!req.ObservedTimestamp.Equal(result.CaptureTime) {
-						t.Fatalf("saved result = %+v", data)
-					}
-					return tracing.Save(req)
-				},
-			}
-			cfg := &Config{}
-			cfg.MemoryThresholdSnapshot.MaxMemoryObjectEntries = 7
-			cfg.MemoryThresholdSnapshot.RunTracingToolTimeout = 3
-			before := time.Now().UTC()
-			err = (&memoryThresholdSnapshot{captureOps: ops}).captureCandidate(
-				t.Context(), cfg, &memcgCandidate{cgroupPath: "/original"},
-			)
-			if changed && (err == nil || saved) {
-				t.Fatalf("changed container path persisted: error=%v saved=%v", err, saved)
-			}
-			if !changed && (err != nil || !saved) {
-				t.Fatalf("unchanged container not persisted: error=%v saved=%v", err, saved)
-			}
-			if err := store.Close(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			raw, err := os.ReadFile(filepath.Join(outputDir, memoryThresholdSnapshotTracer))
-			if changed {
-				if !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("changed container snapshot exists: error=%v data=%s", err, raw)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			var persisted struct {
-				types.Document
-				TracerData memoryThresholdSnapshotData `json:"tracer_data"`
-			}
-			if err := json.Unmarshal(raw, &persisted); err != nil {
-				t.Fatal(err)
-			}
-			if err := persisted.Validate(); err != nil {
-				t.Fatalf("persisted document is invalid: %v", err)
-			}
-			if persisted.TracerRunType != types.TracerRunTypeAutotracing {
-				t.Fatalf("tracer type = %q, want autotracing", persisted.TracerRunType)
-			}
-			if persisted.StartedTimestamp == nil || persisted.StartedTimestamp.Before(before) ||
-				persisted.StartedTimestamp.After(result.CaptureTime) {
-				t.Fatalf("started timestamp = %v, want between %s and %s",
-					persisted.StartedTimestamp, before, result.CaptureTime)
-			}
-			if persisted.ObservedTimestamp == nil || !persisted.ObservedTimestamp.Equal(result.CaptureTime) {
-				t.Fatalf("observed timestamp = %v, want %s", persisted.ObservedTimestamp, result.CaptureTime)
-			}
-			if persisted.TracerName != memoryThresholdSnapshotTracer || persisted.TracerData.VictimPID != 42 ||
-				persisted.TracerData.Snapshot == nil || persisted.TracerData.Snapshot.Status != memsnapshot.StatusComplete {
-				t.Fatalf("persisted snapshot = %+v", persisted)
-			}
-		})
+func TestMemorySnapshotSubscriptionClosurePreservesCooldown(t *testing.T) {
+	tracker, source := newTestCgroupTracker(t)
+	subscription := newContainerSubscriptionForTest(t)
+	previous := time.Now()
+	snapshot := &memoryThresholdSnapshot{lastAttempt: previous}
+	cfg := &Config{}
+	cfg.MemoryThresholdSnapshot.IntervalTracing = 300
+	_, done := runMemorySnapshotForTest(t, snapshot, cfg, source, tracker, subscription)
+	subscription.Close()
+	select {
+	case err := <-done:
+		if !errors.Is(err, pod.ErrContainerSubscriptionClosed) {
+			t.Fatalf("subscription closure = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("subscription closure did not stop the snapshot")
+	}
+	if !snapshot.lastAttempt.Equal(previous) {
+		t.Fatal("subscription closure changed cooldown")
+	}
+}
+
+func TestMemorySnapshotUnavailableViewSuppressesCapture(t *testing.T) {
+	tracker, source := newTestCgroupTracker(t)
+	path := "/" + strings.Repeat("a", 64)
+	createMemoryCgroupForTest(t, source.root, path, 95)
+	if err := addMemoryCgroupForTest(t, tracker, path); err != nil {
+		t.Fatal(err)
+	}
+	id := tracker.containers[containerRefForTest(path).Key.ID].registrationID
+	if _, err := tracker.ProcessMemoryEvents(t.Context(), []memoryWatchEvent{
+		{Kind: memoryThresholdObserved, TargetID: id},
+	}, memoryEventOptions{AcceptPending: true}); err != nil {
+		t.Fatal(err)
+	}
+	subscription := newContainerSubscriptionForTest(t)
+	ops, selected := newActionBatchOpsForTest(t)
+	cfg := &Config{}
+	cfg.MemoryThresholdSnapshot.ThresholdPercent = 90
+	cancel, done := runMemorySnapshotForTest(t, &memoryThresholdSnapshot{captureOps: ops}, cfg, source, tracker, subscription)
+	select {
+	case path := <-selected:
+		t.Fatalf("unavailable container view admitted capture for %s", path)
+	case <-time.After(3 * arbitrationDelay):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("unavailable snapshot did not stop")
 	}
 }

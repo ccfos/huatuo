@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,52 +15,39 @@
 package pod
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"testing"
 )
 
-func TestContainersMutexProtectsMap(t *testing.T) {
-	// Verify that containersMapLock is an RWMutex, ensuring the global containers
-	// map is protected against concurrent read/write access.
-	// The original code used a plain sync.Mutex (updatedLock) that was only
-	// acquired in containersByTypeQos, leaving kubeletSyncContainers' writes
-	// unprotected. This test documents that containersMapLock must be an RWMutex.
-	var mu sync.RWMutex
-
-	// Simulate concurrent read and write scenarios
+func TestContainerViewConcurrentCommitDrainAndClose(t *testing.T) {
+	store := newTestContainerStore()
 	var wg sync.WaitGroup
-
-	// Writers: simulate kubeletSyncContainers writing to the map
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			mu.Lock()
-			defer mu.Unlock()
-			// Simulate: containers["id"] = &Container{}
+			for j := 0; j < 100; j++ {
+				ctx, cancel := context.WithCancel(t.Context())
+				s, err := store.subscribe(ctx)
+				if err != nil {
+					t.Error(err)
+					cancel()
+					return
+				}
+				_, _ = s.DrainEvents()
+				cancel()
+				s.Close()
+			}
 		}()
 	}
-
-	// Readers: simulate Containers() iterating the map
 	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			mu.RLock()
-			defer mu.RUnlock()
-			// Simulate: for range containers { ... }
-		}()
+		record := containerRecordForTest(fmt.Sprintf("%064x", i))
+		store.commit(map[string]*containerRecord{record.ref.Key.ID: record}, nil)
 	}
-
 	wg.Wait()
-	// If we reach here without deadlock or panic, the mutex pattern works.
-}
-
-func TestContainersMutexTypeIsRWMutex(t *testing.T) {
-	// Verify that containersMapLock is sync.RWMutex, not sync.Mutex.
-	// This ensures the type was changed from the original Mutex to RWMutex
-	// to support concurrent reads while writes are serialized.
-	// If this test fails to compile, containersMapLock was changed back to Mutex.
-	_ = containersMapLock.RLock
-	_ = containersMapLock.RUnlock
+	if len(store.subscribers) != 0 {
+		t.Fatal("closed subscriptions retained")
+	}
 }

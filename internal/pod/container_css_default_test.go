@@ -15,11 +15,18 @@
 package pod
 
 import (
+	"context"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 
 	"github.com/cilium/ebpf/btf"
 )
@@ -174,5 +181,94 @@ func TestResolveCgroupFilesystemPathRejectsMissingNotificationFile(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), filepath.Join(cgroupPath, cgroupv2NotifyFile)) {
 		t.Fatalf("resolveCgroupFilesystemPath() error = %q, want notification path", err)
+	}
+}
+
+func TestCgroupSubsystemInitializationRetries(t *testing.T) {
+	oldIDs, oldLoader := cgroupCssID2SubSysNameMap, cgroupSubSysLoader
+	t.Cleanup(func() { cgroupCssID2SubSysNameMap, cgroupSubSysLoader = oldIDs, oldLoader })
+	cgroupCssID2SubSysNameMap = nil
+	calls := 0
+	cgroupSubSysLoader = func() error {
+		calls++
+		if calls == 1 {
+			return errors.New("temporary BTF failure")
+		}
+		cgroupCssID2SubSysNameMap = map[int]string{0: "memory"}
+		return nil
+	}
+	if cgroupInitSubSysIDs() == nil || cgroupInitSubSysIDs() != nil || cgroupInitSubSysIDs() != nil || calls != 2 {
+		t.Fatalf("initialization did not retry failure and cache success: calls=%d", calls)
+	}
+}
+
+type lifecycleReaderTest struct {
+	bpf.PerfEventReader
+	event  *containerCssPerfEvent
+	closed chan struct{}
+	once   sync.Once
+	fail   bool
+}
+
+func (r *lifecycleReaderTest) ReadInto(dst any) error {
+	if r.fail {
+		return errors.New("reader failed")
+	}
+	if r.event != nil {
+		*dst.(*containerCssPerfEvent) = *r.event
+		r.event = nil
+		return nil
+	}
+	<-r.closed
+	return context.Canceled
+}
+
+func (r *lifecycleReaderTest) Close() error {
+	r.once.Do(func() { close(r.closed) })
+	return nil
+}
+
+func TestCgroupReaderRecoversAndStops(t *testing.T) {
+	controller := newContainerController(newTestContainerStore())
+	containerManagerMu.Lock()
+	previous := containerManager
+	containerManager = controller
+	containerManagerMu.Unlock()
+	t.Cleanup(func() { containerManagerMu.Lock(); containerManager = previous; containerManagerMu.Unlock() })
+	id := strings.Repeat("a", 64)
+	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate}
+	copy(event.KnodeName[:], id)
+	first := &lifecycleReaderTest{closed: make(chan struct{}), fail: true}
+	next := &lifecycleReaderTest{closed: make(chan struct{}), event: event}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		superviseCgroupCssEventLoop(ctx, first, func() (bpf.PerfEventReader, error) { return next, nil })
+	}()
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case <-controller.wake:
+		case <-timeout:
+			t.Fatal("reader did not recover")
+		}
+		controller.mu.Lock()
+		_, received := controller.hints[id]
+		full := controller.full
+		controller.mu.Unlock()
+		if received {
+			if !full {
+				t.Fatal("reconnection did not request full view")
+			}
+			break
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reader did not stop")
 	}
 }
