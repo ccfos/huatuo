@@ -237,7 +237,7 @@ func loadBPFFromCollectionSpecWithHandles(
 		// caller never receives the failed defaultBPF, so the handles cloned
 		// so far have to be released here. Keep the original error and report
 		// a failing release alongside it instead of hiding either.
-		return nil, errors.Join(err, b.closeClonedHandles(handles))
+		return nil, b.closeClonedHandlesAfterFailure(handles, err)
 	}
 
 	b.mapIDsByName = make(map[string]uint32, len(b.mapsByID))
@@ -258,6 +258,23 @@ func loadBPFFromCollectionSpecWithHandles(
 	// auto clean
 	runtime.SetFinalizer(b, (*defaultBPF).Close)
 	return b, nil
+}
+
+// closeClonedHandlesAfterFailure releases the handles a failed load cloned and
+// joins the load error with the release error.
+//
+// A release that fails is marked with the attempt-cleanup contract the tracing
+// loaders share: an attempt that could not let go of its handles must not be
+// retried, because the next attempt would run next to handles that are still
+// attached. The mark is defined next to that contract, in
+// tracing_variant_default.go.
+func (b *defaultBPF) closeClonedHandlesAfterFailure(handles kernelHandles, loadErr error) error {
+	releaseErr := b.closeClonedHandles(handles)
+	if releaseErr == nil {
+		return loadErr
+	}
+
+	return markTracingCleanupFailure(errors.Join(loadErr, releaseErr))
 }
 
 // cloneHandles takes ownership of the maps and programs of a freshly loaded
