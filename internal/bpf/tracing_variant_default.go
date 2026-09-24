@@ -28,6 +28,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/btf"
 	"github.com/cilium/ebpf/features"
+	"golang.org/x/sys/unix"
 )
 
 // tracingMode names the entry point selected for a hook that ships both a
@@ -148,6 +149,36 @@ func isTracingCleanupFailure(err error) bool {
 	var cleanupErr *tracingCleanupError
 
 	return errors.As(err, &cleanupErr)
+}
+
+// tracingProgramTypeSupported reports whether the running kernel knows the
+// tracing program type. It drives the shared bpf_init target, so it can only
+// interpret a load that already failed; it never decides on its own.
+func tracingProgramTypeSupported() error {
+	return features.HaveProgramType(ebpf.Tracing)
+}
+
+// classifyTracingLoadFailure turns "this kernel has no tracing entry point" into
+// the missing-capability verdict, from an error a real load returned.
+//
+// A kernel that does not know the tracing program type rejects the load before
+// the verifier with EINVAL, and one that does not know the whole load attribute
+// with E2BIG - the two signals the shared bpf_init probe reads as unsupported.
+// A verifier rejection of this program is an EINVAL as well, so the probe
+// decides which one this is: with the program type available, the failure stays
+// what it was, an ordinary load error.
+func classifyTracingLoadFailure(err error, programTypeSupported func() error) error {
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.E2BIG) {
+		return err
+	}
+	if !errors.Is(programTypeSupported(), ebpf.ErrNotSupported) {
+		return err
+	}
+
+	return fmt.Errorf("%w: %w", errTracingTargetUnsupported, err)
 }
 
 // releaseAfterFailure joins attemptErr with the errors observed while closing
@@ -339,6 +370,11 @@ func loadTracingVariantWithFallback(
 	object, reader, err := loadTracingVariantAttempt(ctx, pristine, pairs, selection, attempt)
 	if err == nil {
 		return object, reader, selection, nil
+	}
+	if mode == tracingModeFentry {
+		// A kernel without the tracing entry point rejects the fentry load
+		// itself; the error then says so instead of reading as a plain failure.
+		err = classifyTracingLoadFailure(err, tracingProgramTypeSupported)
 	}
 	if mode != tracingModeFentry || isTracingCleanupFailure(err) {
 		return nil, nil, tracingSelection{}, err
