@@ -123,7 +123,7 @@ func TestDiskIOStatsCollector_Update(t *testing.T) {
 
 	metrics, err := collector.Update()
 	require.NoError(t, err)
-	require.Len(t, metrics, 14)
+	require.Len(t, metrics, 18)
 
 	require.NoError(t, os.WriteFile(
 		filepath.Join(procDir, "stat"),
@@ -133,7 +133,7 @@ func TestDiskIOStatsCollector_Update(t *testing.T) {
 
 	metrics, err = collector.Update()
 	require.NoError(t, err)
-	require.Len(t, metrics, 15)
+	require.Len(t, metrics, 19)
 	assert.Equal(t, 2, countMetricValue(metrics, 50))
 }
 
@@ -163,7 +163,7 @@ func TestNewDiskIO_UsesProcfsPrefixWithoutSysfs(t *testing.T) {
 
 	metrics, err := collector.Update()
 	require.NoError(t, err)
-	assert.Len(t, metrics, 14)
+	assert.Len(t, metrics, 18)
 }
 
 func TestDiskIOStatsCollector_CollectDiskstats(t *testing.T) {
@@ -171,11 +171,11 @@ func TestDiskIOStatsCollector_CollectDiskstats(t *testing.T) {
 
 	metrics, err := collector.collectDiskstats()
 	require.NoError(t, err)
-	require.Len(t, metrics, 14)
+	require.Len(t, metrics, 18)
 
 	assert.ElementsMatch(t, []float64{
-		1000, 2000, 25_600_000, 40_960_000, 3, 6, 50,
-		800, 1500, 20_480_000, 30_720_000, 2, 4, 30,
+		1000, 2000, 25_600_000, 40_960_000, 3, 6, 50, 9, 15,
+		800, 1500, 20_480_000, 30_720_000, 2, 4, 30, 6, 10,
 	}, metricValues(metrics))
 }
 
@@ -184,7 +184,7 @@ func TestDiskIOStatsCollector_MetricContract(t *testing.T) {
 
 	metrics, err := collector.collectDiskstats()
 	require.NoError(t, err)
-	require.Len(t, metrics, 14)
+	require.Len(t, metrics, 18)
 
 	expected := []struct {
 		name       string
@@ -197,6 +197,8 @@ func TestDiskIOStatsCollector_MetricContract(t *testing.T) {
 		{name: "read_time_seconds_total", metricType: metricpkg.MetricTypeCounter},
 		{name: "write_time_seconds_total", metricType: metricpkg.MetricTypeCounter},
 		{name: "io_in_progress", metricType: metricpkg.MetricTypeGauge},
+		{name: "io_time_seconds_total", metricType: metricpkg.MetricTypeCounter},
+		{name: "io_time_weighted_seconds_total", metricType: metricpkg.MetricTypeCounter},
 	}
 	for i := range expected {
 		assert.Equal(t, expected[i].name, metrics[i].Name())
@@ -233,9 +235,9 @@ func TestDiskIOStatsCollector_CollectDiskstats_ZeroTicks(t *testing.T) {
 
 	metrics, err := collector.collectDiskstats()
 	require.NoError(t, err)
-	require.Len(t, metrics, 7)
+	require.Len(t, metrics, 9)
 
-	assert.Equal(t, 3, countMetricValue(metrics, 0))
+	assert.Equal(t, 5, countMetricValue(metrics, 0))
 }
 
 func TestDiskIOStatsCollector_CollectIOWait(t *testing.T) {
@@ -349,7 +351,7 @@ func TestDiskIOStatsCollector_Update_PropagatesErrors(t *testing.T) {
 			name:            "stat failure",
 			remove:          []string{"stat"},
 			errContain:      []string{"collect iowait"},
-			wantMetricCount: 14,
+			wantMetricCount: 18,
 		},
 		{
 			name:       "both failures",
@@ -384,5 +386,28 @@ func BenchmarkDiskIOStatsCollector_CollectDiskstats(b *testing.B) {
 		if _, err := collector.collectDiskstats(); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestDiskIOStatsCollector_BusyAndWeightedTime(t *testing.T) {
+	// Millisecond precision must survive conversion, independently of read/write time.
+	collector, procDir := newTestCollector(t, "8 0 sda 1 0 2 3 4 0 5 6 0 1251 2502\n", testStat)
+	for _, sample := range []struct {
+		ticks          string
+		busy, weighted float64
+	}{
+		{"1251 2502", 1.251, 2.502},
+		{"2251 5502", 2.251, 5.502},
+		{"0 0", 0, 0}, // Kernel counters reset when the device is reattached.
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"), []byte("8 0 sda 1 0 2 3 4 0 5 6 0 "+sample.ticks+"\n"), 0o600))
+		metrics, err := collector.collectDiskstats()
+		require.NoError(t, err)
+		values := make(map[string]float64)
+		for _, m := range metrics {
+			values[m.Name()] = m.Value
+		}
+		assert.Equal(t, sample.busy, values["io_time_seconds_total"])
+		assert.Equal(t, sample.weighted, values["io_time_weighted_seconds_total"])
 	}
 }
