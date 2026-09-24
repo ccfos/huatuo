@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 const (
@@ -230,12 +231,12 @@ func runtimeModules(procRoot string, pid int,
 	limitReached := false
 	executablePath := filepath.Join(procRoot, strconv.Itoa(pid), "exe")
 	executableTarget, _ := os.Readlink(executablePath)
-	executableTarget = strings.TrimSuffix(executableTarget, " (deleted)")
+	executableTarget = procfs.TrimDeletedSuffix(executableTarget)
 	for _, mapping := range maps {
 		if mapping.Inode == 0 || mapping.Path == "" || strings.HasPrefix(mapping.Path, "[") {
 			continue
 		}
-		path := strings.TrimSuffix(mapping.Path, " (deleted)")
+		path := procfs.TrimDeletedSuffix(mapping.Path)
 		isExecutable := executableTarget != "" && path == executableTarget
 		isLibPython := strings.HasPrefix(strings.ToLower(filepath.Base(path)),
 			"libpython")
