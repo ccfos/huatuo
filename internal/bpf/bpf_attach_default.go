@@ -48,6 +48,31 @@ type rawTracepointAttachOptions struct {
 	linkOptions link.RawTracepointOptions
 }
 
+type tracingAttachOptions struct {
+	program    *loadedProgram
+	attachType ebpf.AttachType
+}
+
+// errTracingTargetMismatch rejects an attach that names a function other than
+// the one the tracing program was loaded against.
+var errTracingTargetMismatch = errors.New("bpf: tracing target mismatch")
+
+// tracingAttachType returns the attach type the kernel expects at link time
+// for the section a tracing program was loaded from. Only fentry and fexit are
+// mapped: other tracing sections carry semantics this loader does not
+// implement, so they stay rejected instead of being attached with a guessed
+// attach type.
+func tracingAttachType(sectionPrefix string) (ebpf.AttachType, bool) {
+	switch sectionPrefix {
+	case "fentry":
+		return ebpf.AttachTraceFEntry, true
+	case "fexit":
+		return ebpf.AttachTraceFExit, true
+	default:
+		return ebpf.AttachNone, false
+	}
+}
+
 func parseSectionSymbol(sectionName string) (string, error) {
 	parts := strings.SplitN(sectionName, "/", 2)
 	if len(parts) != 2 || parts[1] == "" {
@@ -143,6 +168,48 @@ func parseRawTracepointAttachOptions(
 	}, nil
 }
 
+// parseTracingAttachOptions resolves the attach type of a tracing program.
+//
+// The kernel pins the program to the function it was loaded against, so the
+// attach target cannot be changed here. A symbol that disagrees with the
+// loaded one is therefore an error instead of a silent retarget.
+func parseTracingAttachOptions(
+	program *loadedProgram,
+	symbol string,
+) (tracingAttachOptions, error) {
+	if program.programType != ebpf.Tracing {
+		return tracingAttachOptions{}, fmt.Errorf(
+			"program %q is %s, not a tracing program",
+			program.name,
+			program.programType,
+		)
+	}
+
+	attachType, ok := tracingAttachType(program.sectionPrefix)
+	if !ok {
+		return tracingAttachOptions{}, fmt.Errorf(
+			"unsupported tracing section %q",
+			program.sectionName,
+		)
+	}
+
+	if symbol != "" && symbol != program.attachTo {
+		return tracingAttachOptions{}, fmt.Errorf(
+			"%w: program %q was loaded against %q, not %q",
+			errTracingTargetMismatch,
+			program.name,
+			program.attachTo,
+			symbol,
+		)
+	}
+
+	if program.handle == nil {
+		return tracingAttachOptions{}, fmt.Errorf("program %q has no handle", program.name)
+	}
+
+	return tracingAttachOptions{program: program, attachType: attachType}, nil
+}
+
 func parsePerfEventAttachOptions(
 	program *loadedProgram,
 	samplePeriod uint64,
@@ -185,12 +252,7 @@ func (b *defaultBPF) AttachWithOptions(opts []AttachOption) error {
 
 func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 	defer func() {
-		if err != nil { // detach all programs when error.
-			if detachErr := b.detach(); detachErr != nil {
-				log.WithError(detachErr).WithField("bpf", b.name).
-					Warn("failed to detach BPF after attach failure")
-			}
-		}
+		err = b.markUnreleasedAttachFailure(err)
 	}()
 
 	for _, opt := range opts {
@@ -230,6 +292,14 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 			if err = b.attachRawTracepoint(attachOpts); err != nil {
 				return err
 			}
+		case ebpf.Tracing:
+			attachOpts, parseErr := parseTracingAttachOptions(program, opt.Symbol)
+			if parseErr != nil {
+				return parseErr
+			}
+			if err = b.attachTracing(attachOpts); err != nil {
+				return err
+			}
 		case ebpf.PerfEvent:
 			attachOpts, parseErr := parsePerfEventAttachOptions(
 				program,
@@ -265,12 +335,7 @@ func (b *defaultBPF) Attach() error {
 
 func (b *defaultBPF) attach() (err error) {
 	defer func() {
-		if err != nil { // detach all programs when error.
-			if detachErr := b.detach(); detachErr != nil {
-				log.WithError(detachErr).WithField("bpf", b.name).
-					Warn("failed to detach BPF after attach failure")
-			}
-		}
+		err = b.markUnreleasedAttachFailure(err)
 	}()
 
 	for _, program := range b.programsByID {
@@ -314,6 +379,16 @@ func (b *defaultBPF) attach() (err error) {
 				return fmt.Errorf("parse BPF section %q: %w", program.sectionName, parseErr)
 			}
 			if err = b.attachRawTracepoint(attachOpts); err != nil {
+				return err
+			}
+		case ebpf.Tracing:
+			// The attach target comes from the section the program was
+			// loaded from, so no symbol is needed here.
+			attachOpts, parseErr := parseTracingAttachOptions(program, "")
+			if parseErr != nil {
+				return fmt.Errorf("parse BPF section %q: %w", program.sectionName, parseErr)
+			}
+			if err = b.attachTracing(attachOpts); err != nil {
 				return err
 			}
 		default:
@@ -391,6 +466,31 @@ func (b *defaultBPF) attachRawTracepoint(opts rawTracepointAttachOptions) error 
 	return nil
 }
 
+// attachTracing attaches an fentry/fexit program through its BTF id. The
+// program already carries the target, so the link only needs the attach type
+// the kernel recorded for the section.
+func (b *defaultBPF) attachTracing(opts tracingAttachOptions) error {
+	linkKey := fmt.Sprintf("%s/%s", opts.program.sectionPrefix, opts.program.attachTo)
+	if _, ok := opts.program.links[linkKey]; ok {
+		return fmt.Errorf("%w: %s %q", ErrDuplicateAttach, opts.program.sectionPrefix, linkKey)
+	}
+
+	l, err := link.AttachTracing(link.TracingOptions{
+		Program:    opts.program.handle,
+		AttachType: opts.attachType,
+	})
+	if err != nil {
+		return fmt.Errorf("attach %s %q: %w", opts.attachType, opts.program.attachTo, err)
+	}
+
+	opts.program.links[linkKey] = l
+	log.WithField("attach_type", opts.attachType.String()).
+		WithField("target", opts.program.attachTo).
+		WithField("link_count", len(opts.program.links)).
+		Debug("attached BPF tracing program")
+	return nil
+}
+
 func (b *defaultBPF) attachPerfEvent(opt *perfEventOption) error {
 	if b.perfEvent != nil {
 		return fmt.Errorf("%w: perf event", ErrDuplicateAttach)
@@ -426,23 +526,50 @@ func (b *defaultBPF) Detach() error {
 	return b.detach()
 }
 
+// markUnreleasedAttachFailure detaches what a failed attach left behind and
+// marks the error when that release fails: a link that would not close is
+// still attached, so the caller must not read this as a clean failure and load
+// the other entry point over it.
+func (b *defaultBPF) markUnreleasedAttachFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	detachErr := b.detach()
+	if detachErr == nil {
+		return err
+	}
+
+	log.WithError(detachErr).WithField("bpf", b.name).
+		Warn("failed to detach BPF after attach failure")
+
+	return markTracingCleanupFailure(errors.Join(err, detachErr))
+}
+
 func (b *defaultBPF) detach() error {
 	var detachErrs []error
 
 	for _, program := range b.programsByID {
+		// A link that would not close is still attached, so it stays in the
+		// map: clearing it would hide a live hook from Close() and let the
+		// caller attach the other entry point over it.
+		remaining := make(map[string]link.Link, len(program.links))
+
 		for linkKey, l := range program.links {
-			if l != nil {
-				if err := l.Close(); err != nil {
-					detachErrs = append(detachErrs, fmt.Errorf(
-						"detach link %q from program %q: %w",
-						linkKey,
-						program.name,
-						err,
-					))
-				}
+			if l == nil {
+				continue
+			}
+			if err := l.Close(); err != nil {
+				detachErrs = append(detachErrs, fmt.Errorf(
+					"detach link %q from program %q: %w",
+					linkKey,
+					program.name,
+					err,
+				))
+				remaining[linkKey] = l
 			}
 		}
-		program.links = make(map[string]link.Link)
+		program.links = remaining
 	}
 
 	if b.perfEvent != nil {
