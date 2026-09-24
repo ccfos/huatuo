@@ -252,12 +252,7 @@ func (b *defaultBPF) AttachWithOptions(opts []AttachOption) error {
 
 func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 	defer func() {
-		if err != nil { // detach all programs when error.
-			if detachErr := b.detach(); detachErr != nil {
-				log.WithError(detachErr).WithField("bpf", b.name).
-					Warn("failed to detach BPF after attach failure")
-			}
-		}
+		err = b.markUnreleasedAttachFailure(err)
 	}()
 
 	for _, opt := range opts {
@@ -340,12 +335,7 @@ func (b *defaultBPF) Attach() error {
 
 func (b *defaultBPF) attach() (err error) {
 	defer func() {
-		if err != nil { // detach all programs when error.
-			if detachErr := b.detach(); detachErr != nil {
-				log.WithError(detachErr).WithField("bpf", b.name).
-					Warn("failed to detach BPF after attach failure")
-			}
-		}
+		err = b.markUnreleasedAttachFailure(err)
 	}()
 
 	for _, program := range b.programsByID {
@@ -536,23 +526,50 @@ func (b *defaultBPF) Detach() error {
 	return b.detach()
 }
 
+// markUnreleasedAttachFailure detaches what a failed attach left behind and
+// marks the error when that release fails: a link that would not close is
+// still attached, so the caller must not read this as a clean failure and load
+// the other entry point over it.
+func (b *defaultBPF) markUnreleasedAttachFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	detachErr := b.detach()
+	if detachErr == nil {
+		return err
+	}
+
+	log.WithError(detachErr).WithField("bpf", b.name).
+		Warn("failed to detach BPF after attach failure")
+
+	return markTracingCleanupFailure(errors.Join(err, detachErr))
+}
+
 func (b *defaultBPF) detach() error {
 	var detachErrs []error
 
 	for _, program := range b.programsByID {
+		// A link that would not close is still attached, so it stays in the
+		// map: clearing it would hide a live hook from Close() and let the
+		// caller attach the other entry point over it.
+		remaining := make(map[string]link.Link, len(program.links))
+
 		for linkKey, l := range program.links {
-			if l != nil {
-				if err := l.Close(); err != nil {
-					detachErrs = append(detachErrs, fmt.Errorf(
-						"detach link %q from program %q: %w",
-						linkKey,
-						program.name,
-						err,
-					))
-				}
+			if l == nil {
+				continue
+			}
+			if err := l.Close(); err != nil {
+				detachErrs = append(detachErrs, fmt.Errorf(
+					"detach link %q from program %q: %w",
+					linkKey,
+					program.name,
+					err,
+				))
+				remaining[linkKey] = l
 			}
 		}
-		program.links = make(map[string]link.Link)
+		program.links = remaining
 	}
 
 	if b.perfEvent != nil {
