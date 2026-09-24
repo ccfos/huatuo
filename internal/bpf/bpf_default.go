@@ -119,12 +119,34 @@ func LoadBPF(bpfName string, consts map[string]any) (BPF, error) {
 
 // loadBPFFromReader loads the BPF object from reader.
 func loadBPFFromReader(bpfName string, rd io.ReaderAt, consts map[string]any) (BPF, error) {
+	specs, err := collectionSpecFromReader(bpfName, rd)
+	if err != nil {
+		return nil, err
+	}
+
+	return loadBPFFromCollectionSpec(bpfName, specs, consts)
+}
+
+// loadCollectionSpec reads the collection spec of bpfName from the default
+// object directory without loading it into the kernel. Callers that select
+// programs before loading need the spec untouched.
+func loadCollectionSpec(bpfName string) (*ebpf.CollectionSpec, error) {
+	f, err := os.Open(filepath.Join(DefaultObjDir, bpfName))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	return collectionSpecFromReader(bpfName, f)
+}
+
+func collectionSpecFromReader(bpfName string, rd io.ReaderAt) (*ebpf.CollectionSpec, error) {
 	specs, err := ebpf.LoadCollectionSpecFromReader(rd)
 	if err != nil {
 		return nil, fmt.Errorf("parse BPF object %q: %w", bpfName, err)
 	}
 
-	return loadBPFFromCollectionSpec(bpfName, specs, consts)
+	return specs, nil
 }
 
 // kernelHandles are the kernel operations the loader performs on a freshly

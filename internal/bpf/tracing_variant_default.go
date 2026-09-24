@@ -343,6 +343,99 @@ func loadTracingVariantWithFallback(
 	return object, reader, fallback, nil
 }
 
+// LoadAttachAndEventPipeWithFallback loads bpfName from the default object
+// directory, selects one entry point per explicitly paired hook, creates the
+// event pipe for mapName and attaches the collection.
+//
+// It returns an object that is already attached and a reader that is already
+// reading, so the caller must neither attach nor create the event pipe again.
+// Every attempt loads its own copy of the object's spec, so an unsupported
+// entry point is never loaded, and the fentry attempt is retried once with the
+// kprobe entry point when it fails.
+func LoadAttachAndEventPipeWithFallback(
+	ctx context.Context,
+	bpfName string,
+	consts map[string]any,
+	pairs []TracingVariantPair,
+	mapName string,
+	perCPUBufSize uint32,
+) (BPF, PerfEventReader, error) {
+	if err := validateName(bpfName); err != nil {
+		return nil, nil, err
+	}
+	if mapName == "" {
+		return nil, nil, errors.New("bpf: empty event map name")
+	}
+
+	pristine, err := loadCollectionSpec(bpfName)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	attempt := func(ctx context.Context, spec *ebpf.CollectionSpec) (BPF, PerfEventReader, error) {
+		return loadAttachAndEventPipe(ctx, bpfName, spec, consts, mapName, perCPUBufSize)
+	}
+
+	object, reader, selection, err := loadTracingVariantWithFallback(
+		ctx, pristine, pairs, probeFentryTarget, attempt,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	log.WithField("bpf", bpfName).
+		WithField("mode", string(selection.Mode)).
+		WithField("hooks", tracingPairTargets(pairs)).
+		Debug("loaded BPF with a selected tracing entry point")
+
+	return object, reader, nil
+}
+
+// loadAttachAndEventPipe loads one pruned spec copy, creates the event pipe
+// reader and attaches the collection.
+//
+// The reader is created before the attach, exactly like AttachAndEventPipe, so
+// events emitted while attaching are buffered instead of lost. Everything
+// created here is released before an error is returned; a failing release is
+// marked so the caller does not retry over handles that may still be attached.
+func loadAttachAndEventPipe(
+	ctx context.Context,
+	bpfName string,
+	spec *ebpf.CollectionSpec,
+	consts map[string]any,
+	mapName string,
+	perCPUBufSize uint32,
+) (BPF, PerfEventReader, error) {
+	object, err := loadBPFFromCollectionSpec(bpfName, spec, consts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	inner, ok := object.(*defaultBPF)
+	if !ok {
+		return nil, nil, releaseAfterFailure(
+			fmt.Errorf("loader returned %T, want *defaultBPF", object),
+			object,
+		)
+	}
+
+	m, err := inner.mapByName(mapName)
+	if err != nil {
+		return nil, nil, releaseAfterFailure(err, object)
+	}
+
+	reader, err := newPerfEventReader(ctx, m, int(perCPUBufSize))
+	if err != nil {
+		return nil, nil, releaseAfterFailure(err, object)
+	}
+
+	if err := object.Attach(); err != nil {
+		return nil, nil, releaseAfterFailure(err, reader, object)
+	}
+
+	return object, reader, nil
+}
+
 // loadTracingVariantAttempt runs a single attempt against a private copy of
 // pristine, pruned to the entry points selection picks.
 func loadTracingVariantAttempt(
