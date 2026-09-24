@@ -56,11 +56,22 @@ integration_huatuo_bamai_start \
 # the tracing variant test proves that with a real attempt. This checks that the
 # daemon reported a decision, that it is one of the two entry points, and that a
 # fallback carries the reason it happened.
+#
+# The daemon answers on its metrics endpoint before its tracers load, and a
+# fallback loads the object twice, so the decision can be reported after startup:
+# the line is waited for, not read once, or a slow attach reads as a daemon that
+# never reported anything.
+tracing_selection_logged() {
+	grep -q 'msg="loaded BPF with a selected tracing entry point"' \
+		"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+}
+
 assert_tracing_entry_point() {
 	local log="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 	local selection selected reason
 
-	grep -q 'msg="loaded BPF with a selected tracing entry point"' "${log}" \
+	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" "${WAIT_HUATUO_BAMAI_INTERVAL}" \
+		tracing_selection_logged \
 		|| fatal "the daemon did not report the selected tracing entry point"
 
 	selection=$(grep 'msg="loaded BPF with a selected tracing entry point"' "${log}" | tail -1)
