@@ -19,10 +19,15 @@ package bpf
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cilium/ebpf"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -400,6 +405,82 @@ func TestLoadTracingVariantWithFallback(t *testing.T) {
 				t.Error("the caller's collection spec was modified")
 			}
 		})
+	}
+}
+
+// TestLoadAttachAndEventPipeAttachesAndCreatesReader checks the pilot helper's
+// contract against a real kernel: the returned object is already attached and
+// the reader already exists, so the caller must not attach again.
+func TestLoadAttachAndEventPipeAttachesAndCreatesReader(t *testing.T) {
+	requireBPFPermission(t)
+
+	spec := loadMinimalSpec(t)
+
+	object, reader, err := loadAttachAndEventPipe(
+		t.Context(), "test_minimal.elf", spec, nil, "events", 4096,
+	)
+	if err != nil {
+		if errors.Is(err, ebpf.ErrNotSupported) ||
+			errors.Is(err, unix.EPERM) ||
+			errors.Is(err, unix.EACCES) {
+			t.Skipf("skipping: %v", err)
+		}
+		t.Fatalf("loadAttachAndEventPipe() error = %v, want nil", err)
+	}
+
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = object.Close()
+	})
+
+	inner, ok := object.(*defaultBPF)
+	require.True(t, ok, "expected *defaultBPF, got %T", object)
+
+	links := 0
+	for _, program := range inner.programsByID {
+		links += len(program.links)
+	}
+	require.Positive(t, links, "the returned object must already be attached")
+
+	// The reader is live and closing it must not disturb the object.
+	require.NoError(t, reader.Close())
+	require.NoError(t, reader.Close())
+}
+
+// TestLoadAttachAndEventPipeWithFallbackRejectsUnknownPair checks that a pair
+// which the object does not carry stops the load instead of guessing an entry
+// point.
+func TestLoadAttachAndEventPipeWithFallbackRejectsUnknownPair(t *testing.T) {
+	objBytes := loadMinimalObjBytes(t)
+
+	old := DefaultObjDir
+	DefaultObjDir = t.TempDir()
+	t.Cleanup(func() { DefaultObjDir = old })
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(DefaultObjDir, "test_minimal.elf"), objBytes, 0o600,
+	))
+
+	object, reader, err := LoadAttachAndEventPipeWithFallback(
+		t.Context(),
+		"test_minimal.elf",
+		nil,
+		[]TracingVariantPair{{
+			Kprobe: "test_kprobe",
+			Fentry: "test_fentry",
+			Target: "sys_openat",
+		}},
+		"events",
+		4096,
+	)
+	if err == nil {
+		t.Fatal("error = nil, want the missing fentry program to be reported")
+	}
+	if object != nil || reader != nil {
+		t.Error("failed load returned an object or reader, want nil")
+	}
+	if strings.Contains(err.Error(), "unsupported BPF program type") {
+		t.Errorf("error = %v, want a pairing error", err)
 	}
 }
 
