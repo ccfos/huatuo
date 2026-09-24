@@ -134,8 +134,18 @@ func ReadProcMapsContext(ctx context.Context, path string,
 			}
 		}
 		line := scanner.Text()
-		fields := strings.Fields(line)
-		if len(fields) < 5 {
+		// Split only the metadata; whitespace inside the pathname is significant.
+		var fields [5]string
+		for i := range fields {
+			line = strings.TrimLeft(line, " \t")
+			end := strings.IndexAny(line, " \t")
+			if end < 0 {
+				fields[i], line = line, ""
+			} else {
+				fields[i], line = line[:end], line[end:]
+			}
+		}
+		if fields[4] == "" {
 			continue
 		}
 		device := strings.SplitN(fields[3], ":", 2)
@@ -156,10 +166,7 @@ func ReadProcMapsContext(ctx context.Context, path string,
 			offsetErr != nil || inodeErr != nil || majorErr != nil || minorErr != nil {
 			continue
 		}
-		mappedPath := ""
-		if len(fields) > 5 {
-			mappedPath = strings.Join(fields[5:], " ")
-		}
+		mappedPath := strings.TrimLeft(line, " \t")
 		result = append(result, ProcMap{
 			Start: start, End: end, Offset: offset, Inode: inode,
 			DevMajor: uint32(major), DevMinor: uint32(minor),
