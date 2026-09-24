@@ -15,6 +15,29 @@ on:
           opencloudos9
         required: false
         default: ''
+      debug_mode:
+        description: Debug VM
+        type: choice
+        required: false
+        default: After test on failure
+        options:
+          - Disabled
+          - Before test
+          - After test on failure
+          - After test always
+      debug_timeout_minutes:
+        description: Retention time (minutes, max 180)
+        type: choice
+        required: false
+        default: '90'
+        options:
+          - '15'
+          - '30'
+          - '60'
+          - '90'
+          - '120'
+          - '150'
+          - '180'
 
 jobs:
   # Build the target matrix: all distros by default, or a selected subset.
@@ -63,6 +86,7 @@ jobs:
   qemu-vm:
     name: Test in VM (${{ matrix.arch }} ${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 300
     needs: distro-matrix
     env:
       ACT_RUN: false
@@ -79,17 +103,72 @@ jobs:
           .github/workflows/scripts/qemu-0-host-init.sh "${{ matrix.arch }}"
 
       - name: Start VM
-        timeout-minutes: 30
+        id: start-vm
+        timeout-minutes: 20
         env:
           VM_IMAGE_REF: ${{ matrix.image }}
         run: |
           .github/workflows/scripts/qemu-1-start-vm.sh \
             "${{ matrix.arch }}" "${{ matrix.os }}"
 
+      - name: Start pre-test debug session
+        id: upterm-before
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.debug_mode == 'Before test' &&
+          steps.start-vm.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: owenthereal/action-upterm@v1
+        with:
+          detached: true
+          limit-access-to-actor: true
+          wait-timeout-minutes: 1
+
+      - name: Debug VM before test
+        if: steps.upterm-before.outcome == 'success'
+        timeout-minutes: 180
+        env:
+          DEBUG_TIMEOUT_MINUTES: ${{ inputs.debug_timeout_minutes }}
+          UPTERM_SSH_COMMAND: ${{ steps.upterm-before.outputs.ssh-command }}
+        run: |
+          bash .github/workflows/scripts/qemu-debug-vm.sh
+
       - name: Run in VM
-        timeout-minutes: 120
+        id: run-in-vm
+        timeout-minutes: 90
         run: |
           .github/workflows/scripts/qemu-2-run-in-vm.sh
+
+      - name: Start post-test debug session
+        id: upterm-after
+        if: >-
+          always() &&
+          github.event_name == 'workflow_dispatch' &&
+          steps.start-vm.outcome == 'success' &&
+          (
+            inputs.debug_mode == 'After test always' ||
+            (
+              inputs.debug_mode == 'After test on failure' &&
+              steps.run-in-vm.outcome == 'failure'
+            )
+          )
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: owenthereal/action-upterm@v1
+        with:
+          detached: true
+          limit-access-to-actor: true
+          wait-timeout-minutes: 1
+
+      - name: Debug VM after test
+        if: always() && steps.upterm-after.outcome == 'success'
+        timeout-minutes: 180
+        env:
+          DEBUG_TIMEOUT_MINUTES: ${{ inputs.debug_timeout_minutes }}
+          UPTERM_SSH_COMMAND: ${{ steps.upterm-after.outputs.ssh-command }}
+        run: |
+          bash .github/workflows/scripts/qemu-debug-vm.sh
 
       - name: Cleanup VM
         if: always()
