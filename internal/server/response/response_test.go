@@ -16,6 +16,7 @@ package response
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
@@ -262,4 +263,47 @@ func TestChainHTTPStatusMappers(t *testing.T) {
 	if ok || status != 0 {
 		t.Errorf("unknown status = %d/%v, want 0/false", status, ok)
 	}
+}
+
+func TestClassifyBindingError(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		if got := ClassifyBindingError(nil); got != nil {
+			t.Fatalf("ClassifyBindingError(nil) = %v, want nil", got)
+		}
+	})
+
+	t.Run("direct MaxBytesError", func(t *testing.T) {
+		err := ClassifyBindingError(&http.MaxBytesError{Limit: 64})
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("ClassifyBindingError(MaxBytesError) type = %T, want *APIError", err)
+		}
+		if apiErr.Code != v1.ErrorCodeRequestTooLarge {
+			t.Fatalf("code = %q, want %q", apiErr.Code, v1.ErrorCodeRequestTooLarge)
+		}
+		const want = "request body exceeds 64 bytes"
+		if apiErr.Message != want {
+			t.Fatalf("message = %q, want %q", apiErr.Message, want)
+		}
+	})
+
+	t.Run("wrapped MaxBytesError", func(t *testing.T) {
+		wrapped := fmt.Errorf("bind body: %w", &http.MaxBytesError{Limit: 128})
+		err := ClassifyBindingError(wrapped)
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("ClassifyBindingError(wrapped) type = %T, want *APIError", err)
+		}
+		const want = "request body exceeds 128 bytes"
+		if apiErr.Message != want {
+			t.Fatalf("message = %q, want %q", apiErr.Message, want)
+		}
+	})
+
+	t.Run("other errors pass through", func(t *testing.T) {
+		original := errors.New("unexpected EOF")
+		if got := ClassifyBindingError(original); !errors.Is(got, original) {
+			t.Fatalf("ClassifyBindingError(EOF) = %v, want original error", got)
+		}
+	})
 }
