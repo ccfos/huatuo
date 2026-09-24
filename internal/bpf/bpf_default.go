@@ -155,12 +155,12 @@ func collectionSpecFromReader(bpfName string, rd io.ReaderAt) (*ebpf.CollectionS
 // partly cloned collection can be exercised without a kernel failing on
 // demand.
 type kernelHandles interface {
-	mapID(*ebpf.Map) (uint32, error)
-	cloneMap(*ebpf.Map) (*ebpf.Map, error)
-	closeMap(*ebpf.Map) error
-	programID(*ebpf.Program) (uint32, error)
-	cloneProgram(*ebpf.Program) (*ebpf.Program, error)
-	closeProgram(*ebpf.Program) error
+	mapID(m *ebpf.Map) (uint32, error)
+	cloneMap(m *ebpf.Map) (*ebpf.Map, error)
+	closeMap(m *ebpf.Map) error
+	programID(p *ebpf.Program) (uint32, error)
+	cloneProgram(p *ebpf.Program) (*ebpf.Program, error)
+	closeProgram(p *ebpf.Program) error
 }
 
 // kernelHandleOps is the production kernelHandles implementation.
