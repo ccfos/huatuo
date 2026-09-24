@@ -941,3 +941,82 @@ func TestAttachFailureStopsTheTracingFallback(t *testing.T) {
 	require.Equal(t, 1, attempts,
 		"the fallback must not run while a link may still be attached")
 }
+
+// TestClassifyTracingLoadFailure covers the verdict a failed tracing load
+// carries: the kernel saying it does not know the program type is a missing
+// capability, everything else stays the load error it was.
+func TestClassifyTracingLoadFailure(t *testing.T) {
+	t.Parallel()
+
+	var (
+		errUnknownType = fmt.Errorf("program tcp_v4_rcv_fentry_prog: load program: %w", unix.EINVAL)
+		errTooBig      = fmt.Errorf("program tcp_v4_rcv_fentry_prog: load program: %w", unix.E2BIG)
+		errVerifier    = fmt.Errorf("program tcp_v4_rcv_fentry_prog: load program: %w", unix.EINVAL)
+		errPermission  = fmt.Errorf("program tcp_v4_rcv_fentry_prog: load program: %w", unix.EPERM)
+	)
+
+	tests := []struct {
+		name         string
+		err          error
+		probeErr     error
+		wantUnmarked bool
+	}{
+		{
+			name:         "no error stays no error",
+			err:          nil,
+			probeErr:     ebpf.ErrNotSupported,
+			wantUnmarked: true,
+		},
+		{
+			name:     "a kernel without the program type cannot support the target",
+			err:      errUnknownType,
+			probeErr: ebpf.ErrNotSupported,
+		},
+		{
+			name:     "an attribute the kernel does not know is the same verdict",
+			err:      errTooBig,
+			probeErr: ebpf.ErrNotSupported,
+		},
+		{
+			name:         "a verifier rejection is an ordinary failure",
+			err:          errVerifier,
+			probeErr:     nil,
+			wantUnmarked: true,
+		},
+		{
+			name:         "a permission failure is an ordinary failure",
+			err:          errPermission,
+			probeErr:     ebpf.ErrNotSupported,
+			wantUnmarked: true,
+		},
+		{
+			name:         "a probe that cannot answer keeps the load error",
+			err:          errUnknownType,
+			probeErr:     errProbeTransient,
+			wantUnmarked: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			probe := func() error { return tt.probeErr }
+
+			got := classifyTracingLoadFailure(tt.err, probe)
+
+			if tt.err == nil {
+				require.NoError(t, got)
+
+				return
+			}
+
+			// The load error itself must survive either way: the verdict is
+			// added to it, never a replacement for it.
+			require.ErrorIs(t, got, tt.err)
+			require.Equal(t, tt.wantUnmarked, !IsTracingTargetUnsupported(got),
+				"IsTracingTargetUnsupported(%v) = %t, want unmarked %t",
+				got, !tt.wantUnmarked, tt.wantUnmarked)
+		})
+	}
+}
