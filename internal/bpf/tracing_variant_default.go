@@ -164,12 +164,20 @@ func tracingProgramTypeSupported() error {
 // A kernel that does not know the tracing program type rejects the load before
 // the verifier with EINVAL, and one that does not know the whole load attribute
 // with E2BIG - the two signals the shared bpf_init probe reads as unsupported.
-// A verifier rejection of this program is an EINVAL as well, so the probe
-// decides which one this is: with the program type available, the failure stays
-// what it was, an ordinary load error.
+// Two failures outrank that verdict, because neither leaves the load itself as
+// the evidence, and the caller may turn this error into a capability answer:
+//
+//   - a verifier rejection carries the verifier's own log. It is an EINVAL as
+//     well, and a program the verifier refused says nothing about whether the
+//     kernel has the entry point.
+//   - a cleanup failure means an earlier attempt may still be attached, so what
+//     the kernel supports is not what this error is about.
 func classifyTracingLoadFailure(err error, programTypeSupported func() error) error {
 	if err == nil {
 		return nil
+	}
+	if isTracingCleanupFailure(err) || hasVerifierLog(err) {
+		return err
 	}
 	if !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.E2BIG) {
 		return err
@@ -179,6 +187,22 @@ func classifyTracingLoadFailure(err error, programTypeSupported func() error) er
 	}
 
 	return fmt.Errorf("%w: %w", errTracingTargetUnsupported, err)
+}
+
+// hasVerifierLog reports whether err carries the verifier's own output.
+//
+// A load failure arrives wrapped in a VerifierError either way, so the type
+// alone says nothing: the log is the evidence. A kernel that refuses the load
+// before the verifier - an unknown program type, or an attribute it does not
+// know - leaves the log empty, the same distinction the loader makes when it
+// reads an EPERM with an empty log as "this happened before the verifier".
+func hasVerifierLog(err error) bool {
+	var verifierErr *ebpf.VerifierError
+	if !errors.As(err, &verifierErr) {
+		return false
+	}
+
+	return len(verifierErr.Log) > 0
 }
 
 // releaseAfterFailure joins attemptErr with the errors observed while closing
