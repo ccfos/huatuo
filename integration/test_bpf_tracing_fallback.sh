@@ -162,7 +162,27 @@ run_fixture() {
 	log_info "mode ${mode}: entry_point=${entry_point} tcpv4_events=${tcpv4_events} duplicates=${duplicates}"
 }
 
+# A stop request during a read is the other half of the window this fixture
+# reports: without the events that read already had, the summary disappears
+# exactly when a caller that measured traffic needs it. Covered here, next to
+# the fixture it belongs to, with a reader that cancels on demand.
+run_collect_tests() {
+	local test_log="${WORK_DIR}/collect.log"
+
+	mkdir -p "${GO_CACHE_DIR}" "${GO_TMP_DIR}"
+	log_info "testing the collection window: cancel during a read"
+	GOCACHE="${GO_CACHE_DIR}" \
+		GOTMPDIR="${GO_TMP_DIR}" \
+		go test -mod=vendor -tags=integration -count=1 -v \
+		-run '^TestCollectEvents' \
+		"${ROOT_DIR}/integration/testdata/test_net_rx_tracing.go" \
+		"${ROOT_DIR}/integration/testdata/test_net_rx_tracing_collect_test.go" \
+		> "${test_log}" 2>&1 \
+		|| fatal "the collection window tests failed:"$'\n'"$(< "${test_log}")"
+}
+
 compile_go_fixture
+run_collect_tests
 
 # The kprobe-only object never carries an fentry program: this is the path
 # kernels without fentry support take, and it must keep working.
