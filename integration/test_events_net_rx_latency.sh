@@ -48,6 +48,32 @@ integration_huatuo_bamai_start \
 	--procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
 	--disable-kubelet
 
+# The tcp_v4_rcv hook has an fentry and a kprobe entry point. The daemon must
+# report which one it selected, and the selection must match the running
+# kernel, otherwise the tracer silently stopped covering that hook.
+assert_tracing_entry_point() {
+	local log="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	local want_entry_point="kprobe"
+	local want_program="tcp_v4_rcv_prog"
+
+	if [[ -r /sys/kernel/btf/vmlinux ]] && ! kernel_version_le 5 4; then
+		want_entry_point="fentry"
+		want_program="tcp_v4_rcv_fentry_prog"
+	fi
+
+	grep -q 'msg="loaded BPF with a selected tracing entry point"' "${log}" \
+		|| fatal "the daemon did not report the selected tracing entry point"
+
+	local selected
+	selected=$(grep -o 'mode="[a-z_]*"' "${log}" | tail -1 | tr -d '"' | cut -d= -f2)
+	[[ "${selected}" == "${want_entry_point}" ]] \
+		|| fatal "net_rx_latency selected the ${selected} entry point, want ${want_entry_point}"
+
+	log_info "net_rx_latency selected the ${want_entry_point} entry point (${want_program}) for tcp_v4_rcv"
+}
+
+assert_tracing_entry_point
+
 SLOW_TCP_SERVER="${WORK_DIR}/slow-tcp-server"
 compile_user_fixture \
 	"${ROOT_DIR}/integration/testdata/test_net_rx_latency_user.c" \

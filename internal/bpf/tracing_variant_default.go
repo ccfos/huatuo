@@ -383,10 +383,12 @@ func LoadAttachAndEventPipeWithFallback(
 		return nil, nil, err
 	}
 
+	// The selected entry point is what an operator has to check when a tracer
+	// behaves differently on different kernels, so it is reported at load.
 	log.WithField("bpf", bpfName).
 		WithField("mode", string(selection.Mode)).
 		WithField("hooks", tracingPairTargets(pairs)).
-		Debug("loaded BPF with a selected tracing entry point")
+		Info("loaded BPF with a selected tracing entry point")
 
 	return object, reader, nil
 }
