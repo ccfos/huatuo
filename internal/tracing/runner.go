@@ -18,6 +18,7 @@ package tracing
 import (
 	"context"
 	"errors"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -76,6 +77,16 @@ func (r *eventRunner) start(ctx context.Context) error {
 func (r *eventRunner) run(ctx context.Context, done chan<- struct{}) {
 	log.WithField("tracer", r.name).Info("tracer started")
 	defer r.finish(done)
+	// Recover from tracer panics so a single misbehaving tracer cannot
+	// crash the entire daemon. finish(done) still runs to close the done
+	// channel and unblock any stop() waiting on this goroutine.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.WithField("tracer", r.name).
+				WithField("stack", string(debug.Stack())).
+				Errorf("tracer panicked: %v", recovered)
+		}
+	}()
 	for {
 		err := r.starter.Start(ctx)
 		r.incrementRunCount()
