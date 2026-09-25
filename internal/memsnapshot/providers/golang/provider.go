@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
@@ -57,27 +56,34 @@ func New() *Provider {
 	return &Provider{reader: newReader("")}
 }
 
-// Capture reads the victim Go heap and reduces it to allocation-site entries.
-func (p *Provider) Capture(ctx context.Context,
+// Snapshot reads the victim Go heap and reduces it to allocation-site entries.
+// Unavailable or partial data is a snapshot; fatal read failures and cancellation
+// return an error without a snapshot.
+func (p *Provider) Snapshot(ctx context.Context,
 	request memsnapshot.Request,
 ) (*memsnapshot.Snapshot, error) {
-	snapshot, err := p.reader.capture(ctx, request.Identity, request.TopK)
-	return captureResult(snapshot, err), nil
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	snapshot, err := p.reader.snapshot(ctx, request.Identity, request.TopK)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+
+	return snapshotResult(snapshot, err)
 }
 
-func captureResult(snapshot *snapshot, err error) *memsnapshot.Snapshot {
+func snapshotResult(snapshot *snapshot, err error) (*memsnapshot.Snapshot, error) {
 	if errors.Is(err, errUnsupportedRuntime) ||
 		errors.Is(err, errMBucketsSymbolNotFound) {
-		return memsnapshot.Unavailable(err.Error())
+		return memsnapshot.Unavailable(err.Error()), nil
 	}
 	if err != nil {
-		return memsnapshot.Failed(fmt.Sprintf("read Go runtime mbuckets: %v", err))
+		return nil, fmt.Errorf("read Go runtime mbuckets: %w", err)
 	}
-	result, err := resultFromSnapshot(snapshot)
-	if err != nil {
-		return memsnapshot.Failed(err.Error())
-	}
-	return result
+
+	return resultFromSnapshot(snapshot)
 }
 
 func resultFromSnapshot(snapshot *snapshot) (*memsnapshot.Snapshot, error) {
@@ -132,18 +138,4 @@ func allocationSiteName(stack []string) string {
 		}
 	}
 	return stack[0]
-}
-
-func clampUint64(value uint64) int64 {
-	if value > math.MaxInt64 {
-		return math.MaxInt64
-	}
-	return int64(value)
-}
-
-func saturatedInt64Add(left, right int64) int64 {
-	if right > 0 && left > math.MaxInt64-right {
-		return math.MaxInt64
-	}
-	return left + right
 }

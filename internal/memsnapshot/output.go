@@ -15,20 +15,17 @@
 package memsnapshot
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 )
 
 const (
 	// MaxMemoryObjectEntries bounds provider work before the final encoded-size limit is applied.
 	MaxMemoryObjectEntries = 100
 	// MaxSnapshotBytes leaves storage metadata headroom around the embedded snapshot.
-	MaxSnapshotBytes = 512 << 10
-
+	MaxSnapshotBytes       = 512 << 10
 	maxRuntimeVersionBytes = 256
 	maxReasonBytes         = 4 << 10
 	maxEntryKindBytes      = 64
@@ -36,121 +33,6 @@ const (
 	maxStackFrames         = 64
 	maxStackFrameBytes     = 1 << 10
 )
-
-// ProcessIdentity prevents reading a different process after PID reuse.
-type ProcessIdentity struct {
-	TGID           int    `json:"tgid"`
-	StartTimeTicks uint64 `json:"start_time_ticks"`
-}
-
-// Request contains the identity and bounds needed while reading a process.
-type Request struct {
-	Identity     ProcessIdentity `json:"identity"`
-	SamplingSeed uint64          `json:"sampling_seed"`
-	TopK         int             `json:"top_k"`
-}
-
-// Provider reads one managed runtime. Providers return a finished Snapshot;
-// the collector adds capture duration and applies the output bounds.
-type Provider interface {
-	Capture(ctx context.Context, request Request) (*Snapshot, error)
-}
-
-// DeadlineWithReserve leaves time for reducing already-read data.
-func DeadlineWithReserve(ctx context.Context,
-	reserve time.Duration,
-) (time.Time, bool) {
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return time.Time{}, false
-	}
-	return deadline.Add(-reserve), true
-}
-
-func DeadlineReached(deadline time.Time, enabled bool) bool {
-	return enabled && !time.Now().Before(deadline)
-}
-
-type Status string
-
-const (
-	StatusComplete    Status = "complete"
-	StatusPartial     Status = "partial"
-	StatusUnavailable Status = "unavailable"
-	StatusFailed      Status = "failed"
-)
-
-// ObjectAggregate is the internal representation used by Java and Python
-// readers before they are converted to the single public Entry shape.
-type ObjectAggregate struct {
-	TypeName     string
-	Count        uint64
-	ShallowBytes uint64
-	AverageBytes float64
-}
-
-// Entry is the only histogram record emitted in production JSON.
-type Entry struct {
-	Kind         string   `json:"kind"`
-	Name         string   `json:"name"`
-	Bytes        uint64   `json:"bytes"`
-	Objects      uint64   `json:"objects"`
-	AverageBytes float64  `json:"average_bytes,omitempty"`
-	Stack        []string `json:"stack,omitempty"`
-}
-
-// Snapshot is embedded directly into tracer_data.
-type Snapshot struct {
-	RuntimeVersion  string  `json:"runtime_version,omitempty"`
-	Status          Status  `json:"status"`
-	Reason          string  `json:"reason,omitempty"`
-	DurationMS      uint64  `json:"duration_ms"`
-	OutputTruncated bool    `json:"output_truncated,omitempty"`
-	Entries         []Entry `json:"entries,omitempty"`
-}
-
-// ProcessMemory is a language-independent /proc/<pid>/status sample.
-// Nil counters are unavailable, not measured zeros. All counters are bytes.
-type ProcessMemory struct {
-	Status         Status  `json:"status"`
-	Reason         string  `json:"reason,omitempty"`
-	VirtualBytes   *uint64 `json:"virtual_bytes,omitempty"`
-	RSSBytes       *uint64 `json:"rss_bytes,omitempty"`
-	RSSAnonBytes   *uint64 `json:"rss_anon_bytes,omitempty"`
-	RSSFileBytes   *uint64 `json:"rss_file_bytes,omitempty"`
-	RSSShmemBytes  *uint64 `json:"rss_shmem_bytes,omitempty"`
-	SwapBytes      *uint64 `json:"swap_bytes,omitempty"`
-	PageTableBytes *uint64 `json:"page_table_bytes,omitempty"`
-}
-
-func Unavailable(reason string) *Snapshot {
-	return &Snapshot{Status: StatusUnavailable, Reason: reason}
-}
-
-func Failed(reason string) *Snapshot {
-	return &Snapshot{Status: StatusFailed, Reason: reason}
-}
-
-// SaturatingAdd keeps aggregate counters from wrapping when their sum
-// exceeds the uint64 range.
-func SaturatingAdd(left, right uint64) uint64 {
-	if ^uint64(0)-left < right {
-		return ^uint64(0)
-	}
-	return left + right
-}
-
-func EntriesFromObjects(objects []ObjectAggregate) []Entry {
-	entries := make([]Entry, 0, len(objects))
-	for index := range objects {
-		object := &objects[index]
-		entries = append(entries, Entry{
-			Kind: "object_type", Name: object.TypeName, Bytes: object.ShallowBytes,
-			Objects: object.Count, AverageBytes: object.AverageBytes,
-		})
-	}
-	return entries
-}
 
 // LimitOutput bounds both provider-ranked entries and their encoded payload.
 func LimitOutput(snapshot *Snapshot, topK int) error {

@@ -12,39 +12,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package golang
+package python
 
 import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
 func TestSnapshotResult(t *testing.T) {
-	readErr := fmt.Errorf("read profile: %w", os.ErrPermission)
+	readErr := fmt.Errorf("read object: %w", os.ErrPermission)
 	for _, test := range []struct {
 		name       string
-		input      *snapshot
+		input      *memsnapshot.Snapshot
 		readErr    error
 		wantStatus memsnapshot.Status
 	}{
 		{
-			name: "complete", input: &snapshot{RateKnown: true, SampleRate: 1},
+			name: "complete", input: &memsnapshot.Snapshot{Status: memsnapshot.StatusComplete},
 			wantStatus: memsnapshot.StatusComplete,
 		},
 		{
-			name: "partial", input: &snapshot{RateKnown: true, SampleRate: 1, PartialReason: "read budget reached"},
+			name: "partial", input: &memsnapshot.Snapshot{
+				Status: memsnapshot.StatusPartial, Reason: "read budget reached",
+			},
 			wantStatus: memsnapshot.StatusPartial,
 		},
 		{
-			name: "unsupported runtime", readErr: fmt.Errorf("discover: %w", errUnsupportedRuntime),
-			wantStatus: memsnapshot.StatusUnavailable,
-		},
-		{
-			name: "missing profile symbols", readErr: errMBucketsSymbolNotFound,
+			name: "unsupported runtime", readErr: unsupportedRuntime("unknown layout"),
 			wantStatus: memsnapshot.StatusUnavailable,
 		},
 		{name: "read failure", readErr: readErr},
@@ -68,6 +68,23 @@ func TestSnapshotResult(t *testing.T) {
 				t.Fatal("degraded capture has no reason")
 			}
 		})
+	}
+}
+
+func TestSnapshotErrorBoundsPreserveCause(t *testing.T) {
+	cause := &os.PathError{
+		Op: "read", Path: strings.Repeat("界", maxReasonBytes), Err: os.ErrPermission,
+	}
+	result, err := snapshotResult(nil, cause)
+	if result != nil || !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("capture = %+v, %v, want no snapshot and permission error", result, err)
+	}
+	var pathErr *os.PathError
+	if !errors.As(err, &pathErr) || pathErr != cause {
+		t.Fatalf("capture error lost path details: %v", err)
+	}
+	if len(err.Error()) > maxReasonBytes || !utf8.ValidString(err.Error()) {
+		t.Fatalf("invalid bounded error: %q", err.Error())
 	}
 }
 

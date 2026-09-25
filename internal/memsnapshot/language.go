@@ -47,35 +47,26 @@ var pythonExecutablePattern = regexp.MustCompile(`^python(\d+(\.\d+)?)?$`)
 // checks the executable for readable Go build information, then the executable
 // basename, then the mapped runtime libraries.
 //
-// Cancellation is cooperative because the procfs and ELF APIs expose only
-// synchronous Read and ReadAt calls. The deadline is therefore a cooperative
-// stop budget, not a wall-clock upper bound. It cannot preempt a syscall that
-// has entered the kernel, and that syscall may block without a time bound. The
-// readers below check the context both before and after each call, so once the
-// in-flight call returns, cancellation prevents subsequent parsing I/O from
-// starting. A hard bound would require isolating reads in a separately managed
-// process.
-func DetectLanguage(ctx context.Context, pid int) (Language, error) {
-	return detectLanguage(ctx, procPath(pid, "exe"), procPath(pid, "maps"))
+// Reads are synchronous; callers can check cancellation and elapsed time only
+// after detection returns.
+func DetectLanguage(pid int) (Language, error) {
+	return detectLanguage(procPath(pid, "exe"), procPath(pid, "maps"))
 }
 
-func detectLanguage(ctx context.Context, exePath, mapsPath string) (Language, error) {
-	if err := ctx.Err(); err != nil {
-		return LanguageUnknown, err
-	}
+func detectLanguage(exePath, mapsPath string) (Language, error) {
 	exeFile, err := os.Open(exePath)
 	if err != nil {
 		return LanguageUnknown, fmt.Errorf("open executable: %w", err)
 	}
 	defer exeFile.Close()
-	executable, err := ReadELFMetadata(ctx, exeFile)
+	executable, err := ReadELFMetadata(context.Background(), exeFile)
 	if err != nil {
 		return LanguageUnknown, fmt.Errorf("inspect executable ELF: %w", err)
 	}
 	// Inspect only the fixed Go build-info magic, never target-sized strings.
 	if section := executable.Section(".go.buildinfo"); section != nil && section.Size >= 14 {
 		var magic [14]byte
-		if _, err := (contextReaderAt{ctx: ctx, reader: exeFile}).ReadAt(magic[:], int64(section.Offset)); err != nil {
+		if _, err := exeFile.ReadAt(magic[:], int64(section.Offset)); err != nil {
 			return LanguageUnknown, fmt.Errorf("read Go build information: %w", err)
 		}
 		if bytes.Equal(magic[:], []byte("\xff Go buildinf:")) {
@@ -86,13 +77,10 @@ func detectLanguage(ctx context.Context, exePath, mapsPath string) (Language, er
 	if err != nil {
 		return LanguageUnknown, fmt.Errorf("read executable link: %w", err)
 	}
-	if err := ctx.Err(); err != nil {
-		return LanguageUnknown, err
-	}
 	if detected := languageFromExecutable(filepath.Base(name)); detected != LanguageUnknown {
 		return detected, nil
 	}
-	mappings, err := ReadProcMapsContext(ctx, mapsPath, 4096)
+	mappings, err := ReadProcMapsContext(context.Background(), mapsPath, 4096)
 	if err != nil {
 		return LanguageUnknown, fmt.Errorf("inspect runtime maps: %w", err)
 	}
@@ -100,7 +88,7 @@ func detectLanguage(ctx context.Context, exePath, mapsPath string) (Language, er
 	for _, mapping := range mappings {
 		java = java || strings.HasSuffix(strings.TrimSuffix(mapping.Path, " (deleted)"), "/libjvm.so")
 	}
-	python, err := elfLinksPython(ctx, executable)
+	python, err := elfLinksPython(executable)
 	if err != nil {
 		return LanguageUnknown, fmt.Errorf("inspect executable dependencies: %w", err)
 	}
@@ -155,10 +143,10 @@ func procPath(pid int, name string) string {
 
 // Read only bounded dynamic metadata, without DynString's potentially repeated
 // string allocations from attacker-controlled DT_NEEDED entries.
-func elfLinksPython(ctx context.Context, file *elf.File) (bool, error) {
+func elfLinksPython(file *elf.File) (bool, error) {
 	dynamic := file.SectionByType(elf.SHT_DYNAMIC)
 	if dynamic == nil {
-		return false, ctx.Err()
+		return false, nil
 	}
 	if strings.HasPrefix(dynamic.Name, ".zdebug") || dynamic.Flags&elf.SHF_COMPRESSED != 0 || dynamic.Size > 64<<10 || dynamic.Link == 0 || uint64(dynamic.Link) >= uint64(len(file.Sections)) {
 		return false, fmt.Errorf("ELF dynamic table exceeds detection budget or has invalid link")
@@ -184,9 +172,6 @@ func elfLinksPython(ctx context.Context, file *elf.File) (bool, error) {
 	}
 	found := false
 	for offset := 0; offset < len(data); offset += entrySize {
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
 		var tag, value uint64
 		if entrySize == 16 {
 			tag, value = file.ByteOrder.Uint64(data[offset:]), file.ByteOrder.Uint64(data[offset+8:])
@@ -212,5 +197,5 @@ func elfLinksPython(ctx context.Context, file *elf.File) (bool, error) {
 		}
 		found = found || bytes.Contains(name[:end], []byte("libpython3"))
 	}
-	return found, ctx.Err()
+	return found, nil
 }

@@ -49,27 +49,50 @@ func New() *Provider {
 	return &Provider{reader: newReader("")}
 }
 
-// Capture counts CPython objects currently tracked by the cyclic garbage
+// Snapshot counts CPython objects currently tracked by the cyclic garbage
 // collector and reduces them to type aggregates.
-func (p *Provider) Capture(ctx context.Context,
+// Unavailable or partial data is a snapshot; fatal read failures and cancellation
+// return an error without a snapshot.
+func (p *Provider) Snapshot(ctx context.Context,
 	request memsnapshot.Request,
 ) (*memsnapshot.Snapshot, error) {
-	response, err := p.reader.capture(ctx, request)
-	return captureResult(response, err), nil
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	snapshot, err := p.reader.snapshot(ctx, request)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+
+	return snapshotResult(snapshot, err)
 }
 
-func captureResult(response *memsnapshot.Snapshot, err error) *memsnapshot.Snapshot {
+func snapshotResult(snapshot *memsnapshot.Snapshot, err error) (*memsnapshot.Snapshot, error) {
 	if errors.Is(err, errUnsupportedRuntime) {
-		return memsnapshot.Unavailable(boundedReason(err.Error()))
+		return memsnapshot.Unavailable(boundedReason(err.Error())), nil
 	}
 	if err != nil {
-		return memsnapshot.Failed(boundedReason(err.Error()))
+		return nil, boundedError{cause: err}
 	}
-	if response == nil {
-		return memsnapshot.Failed("Python external census returned a nil response")
+	if snapshot == nil {
+		return nil, errors.New("Python external census returned a nil response")
 	}
-	response.Reason = boundedReason(response.Reason)
-	return response
+	snapshot.Reason = boundedReason(snapshot.Reason)
+	return snapshot, nil
+}
+
+// boundedError preserves the reader's cause without expanding persisted diagnostics.
+type boundedError struct {
+	cause error
+}
+
+func (e boundedError) Error() string {
+	return boundedReason(e.cause.Error())
+}
+
+func (e boundedError) Unwrap() error {
+	return e.cause
 }
 
 func boundedReason(reason string) string {

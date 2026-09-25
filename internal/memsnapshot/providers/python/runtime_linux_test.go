@@ -19,6 +19,7 @@ import (
 	"context"
 	"debug/elf"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -105,13 +106,13 @@ func TestInspectModuleSymbolOverflow(t *testing.T) {
 
 func TestDiscoverRuntimeSymbolErrors(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		offset uint64
-		status memsnapshot.Status
-		reason string
+		name      string
+		offset    uint64
+		wantError bool
+		reason    string
 	}{
-		{"read failure", 4096, memsnapshot.StatusFailed, "EOF"},
-		{"no runtime symbol", 256, memsnapshot.StatusUnavailable, "no mapped module exports _PyRuntime"},
+		{"read failure", 4096, true, "EOF"},
+		{"no runtime symbol", 256, false, "no mapped module exports _PyRuntime"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Only the symbol table varies, so failures must survive runtime discovery.
@@ -154,16 +155,21 @@ func TestDiscoverRuntimeSymbolErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err := discoverRuntime(context.Background(), procRoot, 42, nil)
-			result := captureResult(nil, err)
-			if result.Status != tc.status || !strings.Contains(result.Reason, tc.reason) {
-				t.Fatalf("status=%q reason=%q, want %q containing %q",
-					result.Status, result.Reason, tc.status, tc.reason)
+			result, snapshotErr := snapshotResult(nil, err)
+			if tc.wantError {
+				if result != nil || snapshotErr == nil || !errors.Is(snapshotErr, err) ||
+					!strings.Contains(snapshotErr.Error(), tc.reason) {
+					t.Fatalf("capture = %+v, %v, want discovery error containing %q", result, snapshotErr, tc.reason)
+				}
+				return
+			}
+			if snapshotErr != nil || result == nil || result.Status != memsnapshot.StatusUnavailable ||
+				!strings.Contains(result.Reason, tc.reason) {
+				t.Fatalf("capture = %+v, %v, want unavailable containing %q", result, snapshotErr, tc.reason)
 			}
 		})
 	}
 }
-
-type sparseMemory map[uint64]byte
 
 type countingMemory struct {
 	memoryReader
@@ -173,29 +179,4 @@ type countingMemory struct {
 func (m *countingMemory) read(address uint64, size int) ([]byte, error) {
 	m.reads[address]++
 	return m.memoryReader.read(address, size)
-}
-
-func (m sparseMemory) read(address uint64, size int) ([]byte, error) {
-	result := make([]byte, size)
-	_ = m.readInto(address, result)
-	return result, nil
-}
-
-func (m sparseMemory) readInto(address uint64, destination []byte) error {
-	for offset := range destination {
-		destination[offset] = m[address+uint64(offset)]
-	}
-	return nil
-}
-
-func (m sparseMemory) put(address uint64, data []byte) {
-	for offset, value := range data {
-		m[address+uint64(offset)] = value
-	}
-}
-
-func (m sparseMemory) put32(address uint64, value uint32) {
-	raw := make([]byte, 4)
-	binary.LittleEndian.PutUint32(raw, value)
-	m.put(address, raw)
 }

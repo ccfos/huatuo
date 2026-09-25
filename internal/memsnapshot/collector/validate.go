@@ -12,20 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package java
+package collector
 
 import (
-	"strings"
-	"testing"
+	"errors"
+	"fmt"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-func TestJavaBoundedCaptureStatus(t *testing.T) {
-	sampled := uint64(8192)
-	snapshot := &memsnapshot.Snapshot{}
-	finishStatus(snapshot, 0, 1<<20, sampled)
-	if snapshot.Status != memsnapshot.StatusPartial || !strings.Contains(snapshot.Reason, "bounded") {
-		t.Fatalf("bounded sample not marked partial: %+v", snapshot)
+func (o *Options) setDefaults() {
+	if o.TopK == 0 {
+		o.TopK = 10
 	}
+	if o.SnapshotTimeout == 0 {
+		o.SnapshotTimeout = 2 * time.Second
+	}
+}
+
+func (o Options) validate() error {
+	if o.TopK < 1 || o.TopK > memsnapshot.MaxMemoryObjectEntries {
+		return fmt.Errorf("snapshot top-K must be in [1, %d], got %d", memsnapshot.MaxMemoryObjectEntries, o.TopK)
+	}
+	if o.SnapshotTimeout < 0 {
+		return errors.New("capture timeout must not be negative")
+	}
+	return nil
 }

@@ -68,7 +68,7 @@ func newActionRunner(ctx context.Context, config *Config, source *cgroupSource,
 		selector := &processSelector{source: source, procRoot: "/proc"}
 		ops = &actionBatchOps{
 			selectProcess: selector.Select, validateProcess: selector.Validate,
-			captureProcessMemory: collector.Capture, save: tracing.Save,
+			snapshotProcessMemory: collector.Snapshot, save: tracing.Save,
 			validateContainer: pod.ValidateContainerRef,
 		}
 	}
@@ -248,7 +248,7 @@ func (b *actionBatch) Run() time.Time {
 	if c.ratio < float64(b.config.MemoryThresholdSnapshot.ThresholdPercent)/100 {
 		return time.Time{}
 	}
-	err = b.captureCandidate(ctx, c)
+	err = b.snapshotCandidate(ctx, c)
 	if errors.Is(err, context.Canceled) {
 		return time.Time{}
 	}
@@ -305,14 +305,14 @@ func (b *actionBatch) rankCgroupTargets(ctx context.Context) ([]memcgCandidate, 
 }
 
 type actionBatchOps struct {
-	selectProcess        func(context.Context, cgroupRef, uint64) (selectedProcess, error)
-	validateContainer    func(pod.ContainerRef) error
-	validateProcess      func(context.Context, cgroupRef, memsnapshot.ProcessIdentity) error
-	captureProcessMemory func(context.Context, memsnapshot.ProcessIdentity, collector.Options) (*collector.Result, error)
-	save                 func(*tracing.WriteRequest) error
+	selectProcess         func(context.Context, cgroupRef, uint64) (selectedProcess, error)
+	validateContainer     func(pod.ContainerRef) error
+	validateProcess       func(context.Context, cgroupRef, memsnapshot.ProcessIdentity) error
+	snapshotProcessMemory func(context.Context, memsnapshot.ProcessIdentity, collector.Options) (*collector.Result, error)
+	save                  func(*tracing.WriteRequest) error
 }
 
-func (b *actionBatch) captureCandidate(ctx context.Context, candidate *memcgCandidate) (retErr error) {
+func (b *actionBatch) snapshotCandidate(ctx context.Context, candidate *memcgCandidate) (retErr error) {
 	cfg := &b.config.MemoryThresholdSnapshot
 	observation := candidate.observation
 	started := time.Now()
@@ -359,10 +359,12 @@ func (b *actionBatch) captureCandidate(ctx context.Context, candidate *memcgCand
 		}
 		return ops.validateProcess(checkCtx, observation.Cgroup, identity)
 	}
-	result, err := ops.captureProcessMemory(ctx, process.identity, collector.Options{
-		TopK:           cfg.MaxMemoryObjectEntries,
-		CaptureTimeout: time.Duration(cfg.RunTracingToolTimeout) * time.Second,
-		CheckTarget:    checkTarget,
+	if err := checkTarget(ctx, process.identity); err != nil {
+		return fmt.Errorf("validate process before capture: %w", err)
+	}
+	result, err := ops.snapshotProcessMemory(ctx, process.identity, collector.Options{
+		TopK:            cfg.MaxMemoryObjectEntries,
+		SnapshotTimeout: time.Duration(cfg.RunTracingToolTimeout) * time.Second,
 	})
 	if err != nil {
 		return fmt.Errorf("capture process memory: %w", err)
@@ -389,7 +391,7 @@ func (b *actionBatch) saveSnapshot(candidate *memcgCandidate, process selectedPr
 		ContainerID:       observation.Container.Key.ID,
 		TracerRunType:     types.TracerRunTypeAutotracing,
 		StartedTimestamp:  timeutil.Timestamp{Time: started.UTC()},
-		ObservedTimestamp: timeutil.Timestamp{Time: result.CaptureTime},
+		ObservedTimestamp: timeutil.Timestamp{Time: result.SnapshotTime},
 		TracerData: &memoryThresholdSnapshotData{
 			CgroupPath:         observation.Cgroup.Path,
 			MemoryCurrent:      candidate.current,

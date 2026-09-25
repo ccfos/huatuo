@@ -32,13 +32,13 @@ import (
 	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
 )
 
-func TestCaptureLiveGoProcess(t *testing.T) {
+func TestSnapshotLiveGoProcess(t *testing.T) {
 	for _, mode := range []string{"exe", "pie"} {
-		t.Run(mode, func(t *testing.T) { captureLiveGoProcess(t, mode) })
+		t.Run(mode, func(t *testing.T) { snapshotLiveGoProcess(t, mode) })
 	}
 }
 
-func captureLiveGoProcess(t *testing.T, mode string) {
+func snapshotLiveGoProcess(t *testing.T, mode string) {
 	t.Helper()
 	directory := t.TempDir()
 	source := filepath.Join(directory, "heap.go")
@@ -99,10 +99,10 @@ func main() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captureCtx, cancelCapture := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancelCapture()
-	result, err := collector.Capture(captureCtx, identity, collector.Options{
-		TopK: 10, CaptureTimeout: 10 * time.Second,
+	snapshotCtx, cancelSnapshot := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancelSnapshot()
+	result, err := collector.Snapshot(snapshotCtx, identity, collector.Options{
+		TopK: 10, SnapshotTimeout: 10 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,17 +119,30 @@ func main() {
 	if snapshot.RuntimeVersion == "" || len(snapshot.Entries) == 0 {
 		t.Fatalf("live Go snapshot has no runtime data: %+v", snapshot)
 	}
+
+	t.Run("exit before detection", func(t *testing.T) {
+		// Selection can succeed before the process exits and removes its procfs files.
+		stopFixture()
+		_ = command.Wait()
+		result, err := collector.Snapshot(t.Context(), identity, collector.Options{})
+		if result != nil || !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("exited process snapshot = %+v, %v; want no result and missing process error", result, err)
+		}
+		if !strings.Contains(err.Error(), "detect process runtime:") {
+			t.Fatalf("missing detection error context: %v", err)
+		}
+	})
 }
 
-// TestCaptureLiveHotSpotProcess is an optional environment validation rather
+// TestSnapshotLiveHotSpotProcess is an optional environment validation rather
 // than a required CI gate. It exercises a real HotSpot process when a supported
 // JDK is already available and otherwise skips without installing one.
-func TestCaptureLiveHotSpotProcess(t *testing.T) {
-	t.Run("arrays", func(t *testing.T) { captureLiveHotSpotProcess(t, false) })
-	t.Run("finalizable", func(t *testing.T) { captureLiveHotSpotProcess(t, true) })
+func TestSnapshotLiveHotSpotProcess(t *testing.T) {
+	t.Run("arrays", func(t *testing.T) { snapshotLiveHotSpotProcess(t, false) })
+	t.Run("finalizable", func(t *testing.T) { snapshotLiveHotSpotProcess(t, true) })
 }
 
-func captureLiveHotSpotProcess(t *testing.T, finalizable bool) {
+func snapshotLiveHotSpotProcess(t *testing.T, finalizable bool) {
 	t.Helper()
 	javaPath, javaErr := exec.LookPath("java")
 	javacPath, javacErr := exec.LookPath("javac")
@@ -205,10 +218,10 @@ public class HeapFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captureCtx, cancelCapture := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancelCapture()
-	result, err := collector.Capture(captureCtx, identity, collector.Options{
-		TopK: 10, CaptureTimeout: 15 * time.Second,
+	snapshotCtx, cancelSnapshot := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancelSnapshot()
+	result, err := collector.Snapshot(snapshotCtx, identity, collector.Options{
+		TopK: 10, SnapshotTimeout: 15 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -312,7 +325,7 @@ func parseJavaMajor(version string) (int, error) {
 	return major, nil
 }
 
-func TestCaptureLiveCPythonProcess(t *testing.T) {
+func TestSnapshotLiveCPythonProcess(t *testing.T) {
 	pythonPath, err := exec.LookPath("python3")
 	if err != nil {
 		skipMissingRuntime(t, "python3 is not installed")
@@ -348,10 +361,10 @@ time.sleep(60)
 	if err != nil {
 		t.Fatal(err)
 	}
-	captureCtx, cancelCapture := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancelCapture()
-	result, err := collector.Capture(captureCtx, identity, collector.Options{
-		TopK: 10, CaptureTimeout: 10 * time.Second,
+	snapshotCtx, cancelSnapshot := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancelSnapshot()
+	result, err := collector.Snapshot(snapshotCtx, identity, collector.Options{
+		TopK: 10, SnapshotTimeout: 10 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)

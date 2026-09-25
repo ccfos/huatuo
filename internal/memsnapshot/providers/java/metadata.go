@@ -22,6 +22,7 @@ import (
 
 const (
 	maxCachedMetadataBytes = 8 << 20
+	maxCachedKlasses       = 65_536
 	defaultObjectAlignment = 8
 	maxObjectAlignment     = 256
 )
@@ -628,4 +629,28 @@ func (m *vmMeta) runtimeFlagAddresses(memory processMemory,
 		}
 	}
 	return found, nil
+}
+
+func firstStruct(metadata *vmMeta, names ...string) vmStruct {
+	for _, name := range names {
+		if field, ok := metadata.structs[name]; ok {
+			return field
+		}
+	}
+	return vmStruct{}
+}
+
+func inheritedStruct(metadata *vmMeta, typeName, fieldName string) vmStruct {
+	for depth := 0; typeName != "" && depth < 16; depth++ {
+		if field, ok := metadata.structs[typeName+"::"+fieldName]; ok {
+			return field
+		}
+		// JDK 11's VMType table omits the G1ContiguousSpace to Space link,
+		// although the C++ layout still embeds Space at offset zero.
+		if typeName == "G1ContiguousSpace" && fieldName == "_bottom" {
+			return metadata.structs["Space::_bottom"]
+		}
+		typeName = metadata.types[typeName].superclass
+	}
+	return vmStruct{}
 }

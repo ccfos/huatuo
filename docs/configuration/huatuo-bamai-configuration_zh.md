@@ -705,7 +705,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 | RunTracingToolTimeout | Go、Java、Python 统一使用的协作式采集超时时间，单位秒，默认 2，必须为正数 |
 | MaxMemoryObjectEntries | 单次快照最多保留的内存对象排序条目数，范围 1–100，默认 10；最终 JSON 上限为 512 KiB，超限会裁剪 |
 
-运行时识别另有固定的 1 秒预算，保存时间不计入采集预算。
+运行时识别和保存时间不计入采集预算，运行时识别没有独立超时限制。
 超时不能中断正在执行的同步读取，因此不是整个操作的耗时上限。
 
 **触发条件：**
@@ -1365,14 +1365,16 @@ huatuo-bamai --region <region> [选项]
 
 #### 14.2 输出与排障
 
-Info 日志记录监听状态、采集尝试及 collector 内部阶段。
+Info 日志记录监听状态和采集尝试。
 进程选择和保存细节记录在 Debug 日志中。
-按容器/PID 找到采集记录，用 `capture_id` 关联 collector 内部阶段。
-若只有开始而没有结束，使用 bamai 的 `/debug/pprof/goroutine?debug=2`
+按容器/cgroup 找到采集记录，通过进程选择日志确定 PID；
+运行时诊断查看已保存快照的状态和原因字段。
+若采集只有开始而没有结束，使用 bamai 的 `/debug/pprof/goroutine?debug=2`
 （需相应权限）确认阻塞栈；没有日志不代表监听已停止。
 
-`tracer_data.process_memory` 每次触发读取一次 `/proc/<pid>/status`，
-也适用于 C/C++。运行时快照失败不影响已取得的摘要；
+`tracer_data.process_memory` 在运行时探测无错误返回后读取一次 `/proc/<pid>/status`，
+也适用于 C/C++ 等未识别的运行时。provider 失败会生成 `failed` 快照并保留已取得的摘要。
+探测或输出处理出错时不保存结果，错误原因查看采集日志；
 身份变化或任务取消时丢弃结果。不提供 PSS、映射排名或分配调用栈。
 
 | 字段（字节） | 来源 / 含义 |
@@ -1399,6 +1401,9 @@ LocalFile 文件名为 `memory_threshold_snapshot`；在 `tracing_documents` 中
 查看 `tracer_data.snapshot.status`（`complete`、`partial`、
 `unavailable`、`failed`），结合 `reason`、`runtime_version`、
 `duration_ms` 和 `output_truncated` 判断结果。
+
+`duration_ms` 统计 provider 阶段耗时，向上取整为毫秒；成功、失败及超时快照
+使用相同口径，不包含运行时探测、进程内存摘要读取、输出处理和保存时间。
 
 | 问题 | 检查项 |
 |------|--------|

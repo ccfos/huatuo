@@ -31,7 +31,7 @@ const (
 )
 
 type memoryThresholdSnapshot struct {
-	captureOps  *actionBatchOps
+	snapshotOps *actionBatchOps
 	lastAttempt time.Time
 }
 
@@ -107,7 +107,7 @@ func (s *memoryThresholdSnapshot) mainAction(ctx context.Context,
 		}
 		retErr = errors.Join(retErr, watcher.Close())
 	}()
-	actions := newActionRunner(ctx, config, source, s.captureOps, &s.lastAttempt)
+	actions := newActionRunner(ctx, config, source, s.snapshotOps, &s.lastAttempt)
 	arbitration := time.NewTimer(time.Hour)
 	arbitration.Stop()
 	defer func() {

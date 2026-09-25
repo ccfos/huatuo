@@ -12,28 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package java
+package collector
 
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-func TestJavaFailureClassification(t *testing.T) {
+func processIdentityForTest(t *testing.T) memsnapshot.ProcessIdentity {
+	t.Helper()
 	identity, err := memsnapshot.ReadIdentity(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := memsnapshot.Request{Identity: identity, TopK: 10}
-	snapshot, err := New().Capture(t.Context(), request)
-	if err != nil || snapshot.Status != memsnapshot.StatusUnavailable {
-		t.Fatalf("non-JVM result: %+v, %v", snapshot, err)
-	}
-	request.Identity.StartTimeTicks++
-	snapshot, err = New().Capture(t.Context(), request)
-	if err != nil || snapshot.Status != memsnapshot.StatusFailed {
-		t.Fatalf("stale identity result: %+v, %v", snapshot, err)
+	return identity
+}
+
+func TestSnapshotRejectsInvalidOptions(t *testing.T) {
+	identity := processIdentityForTest(t)
+	for _, options := range []Options{
+		{TopK: -1},
+		{TopK: memsnapshot.MaxMemoryObjectEntries + 1},
+		{SnapshotTimeout: -time.Second},
+	} {
+		result, err := Snapshot(t.Context(), identity, options)
+		if err == nil || result != nil {
+			t.Fatalf("invalid options %+v accepted: result=%+v err=%v", options, result, err)
+		}
 	}
 }

@@ -341,3 +341,21 @@ func (s *symbolizer) resolve(runtimePC uint64) string {
 	}
 	return function.Name
 }
+
+func resolveStack(stack []byte, order binary.ByteOrder,
+	symbolizer *symbolizer,
+) []string {
+	resolved := make([]string, 0, len(stack)/8)
+	for offset := 0; offset < len(stack); offset += 8 {
+		pc := order.Uint64(stack[offset : offset+8])
+		if pc == 0 {
+			break
+		}
+		name := symbolizer.resolve(pc)
+		if name == "" {
+			name = fmt.Sprintf("0x%x", pc)
+		}
+		resolved = append(resolved, name)
+	}
+	return resolved
+}

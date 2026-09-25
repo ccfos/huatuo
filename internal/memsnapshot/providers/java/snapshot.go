@@ -24,25 +24,17 @@ import (
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-const (
-	// Leave time to reduce the copied sample into the final histogram.
-	resultBuildReserve = 15 * time.Millisecond
-)
+// Leave time to reduce the copied sample into the final histogram.
+const resultBuildReserve = 15 * time.Millisecond
 
 var errHotSpotUnavailable = errors.New("HotSpot external heap scan is unsupported")
-
-type sampleStats struct {
-	ordinarySampledBytes uint64
-	ordinary             map[uint64]classSample
-	humongous            map[uint64]classSample
-}
 
 func unsupportedHotSpot(reason string) error {
 	return fmt.Errorf("%w: %s", errHotSpotUnavailable, reason)
 }
 
-// Capture samples the running HotSpot heap and reduces it to type aggregates.
-func capture(ctx context.Context,
+// snapshot samples the running HotSpot heap and reduces it to type aggregates.
+func snapshot(ctx context.Context,
 	identity memsnapshot.ProcessIdentity, maxEntries int,
 	samplingNonce uint64,
 ) (*memsnapshot.Snapshot, error) {

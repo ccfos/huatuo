@@ -710,8 +710,8 @@ Commented values are defaults.
 | RunTracingToolTimeout | Cooperative capture timeout shared by Go, Java, and Python, in seconds; defaults to 2 and must be positive |
 | MaxMemoryObjectEntries | Maximum number of ranked memory object entries in a snapshot, from 1 to 100; defaults to 10; final JSON is trimmed to at most 512 KiB |
 
-Runtime detection has a separate fixed one-second budget. Persistence is not
-included in the capture budget. Timeouts cannot interrupt synchronous reads
+Runtime detection and persistence are not included in the capture budget.
+Runtime detection has no separate timeout. Timeouts cannot interrupt synchronous reads
 already executing, so they do not bound the total operation time.
 
 **Trigger conditions:**
@@ -1382,16 +1382,19 @@ skipped tests and `unavailable` results do not prove compatibility.
 
 #### 14.2 Output and Troubleshooting
 
-Info logs record watcher state, capture attempts, and collector stages.
+Info logs record watcher state and capture attempts.
 Process selection and persistence details use Debug logs. Locate attempts by
-container/PID and correlate collector stages by `capture_id`.
-If a stage starts but does not finish, inspect bamai's
+container/cgroup and use process-selection logs to identify the PID. Inspect
+stored snapshot status and reason fields for runtime diagnostics.
+If a capture attempt starts but does not finish, inspect bamai's
 `/debug/pprof/goroutine?debug=2` with appropriate authorization for the blocked stack.
 No logs alone do not prove that monitoring has stopped.
 
-`tracer_data.process_memory` reads `/proc/<pid>/status` once per attempt,
-including C/C++ processes. Runtime snapshot failures do not discard this summary;
-target identity changes or cancellation discard the result.
+`tracer_data.process_memory` reads `/proc/<pid>/status` once after runtime detection
+returns without error, including for unrecognized runtimes such as C/C++.
+Provider failures produce a `failed` snapshot and retain this summary.
+Detection or output-processing errors prevent persistence; inspect the capture
+attempt logs for the error. Target identity changes or cancellation discard the result.
 It provides no PSS, mapping rankings, or allocation stacks.
 
 | Field (bytes) | Source / meaning |
@@ -1420,6 +1423,10 @@ Query `tracing_documents` with `tracer_name = memory_threshold_snapshot` and
 Inspect `tracer_data.snapshot.status` (`complete`, `partial`,
 `unavailable`, or `failed`) together with `reason`, `runtime_version`,
 `duration_ms`, and `output_truncated`.
+
+`duration_ms` measures the provider stage, rounded up to milliseconds, for both
+successful and failed snapshots, including timeouts. It excludes runtime
+detection, process memory summary reads, output processing, and persistence.
 
 | Problem | Checks |
 |---------|--------|
