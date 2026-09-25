@@ -414,34 +414,87 @@
         "type": "object"
       },
       "ProfilingJob": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/Job"
+        "additionalProperties": false,
+        "properties": {
+          "binary_match_path": {
+            "type": "string"
           },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "binary_match_path": {
-                "type": "string"
-              },
-              "language": {
-                "$ref": "#/components/schemas/ProfilingLanguage"
-              },
-              "mode": {
-                "$ref": "#/components/schemas/ProfilingMode"
-              },
-              "type": {
-                "$ref": "#/components/schemas/ProfilingType"
+          "container_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "hostname": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "language": {
+            "$ref": "#/components/schemas/ProfilingLanguage"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ProfilingMode"
+          },
+          "request_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "result_url": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
+          },
+          "started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "terminal": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobTerminal"
               }
-            },
-            "required": [
-              "type",
-              "language",
-              "mode"
             ],
-            "type": "object"
+            "nullable": true
+          },
+          "type": {
+            "$ref": "#/components/schemas/ProfilingType"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
           }
-        ]
+        },
+        "required": [
+          "request_id",
+          "hostname",
+          "duration_seconds",
+          "scope",
+          "status",
+          "created_at",
+          "updated_at",
+          "type",
+          "language",
+          "mode"
+        ],
+        "type": "object"
       },
       "ProfilingJobListResponse": {
         "additionalProperties": false,
@@ -684,23 +737,76 @@
         "type": "object"
       },
       "TracingJob": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/Job"
+        "additionalProperties": false,
+        "properties": {
+          "container_id": {
+            "type": "string"
           },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "type": {
-                "$ref": "#/components/schemas/TracingType"
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "hostname": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "request_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "result_url": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
+          },
+          "started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "terminal": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobTerminal"
               }
-            },
-            "required": [
-              "type"
             ],
-            "type": "object"
+            "nullable": true
+          },
+          "type": {
+            "$ref": "#/components/schemas/TracingType"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
           }
-        ]
+        },
+        "required": [
+          "request_id",
+          "hostname",
+          "duration_seconds",
+          "scope",
+          "status",
+          "created_at",
+          "updated_at",
+          "type"
+        ],
+        "type": "object"
       },
       "TracingJobListResponse": {
         "additionalProperties": false,
