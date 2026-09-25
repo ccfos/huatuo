@@ -147,9 +147,21 @@ func buildValuesRequest(field string, q driver.Query, size int) ([]byte, error) 
 	body := valuesBody{
 		Size:  0,
 		Query: query,
-		Aggs:  map[string]termsAggBody{"terms": {Terms: termsAgg{Field: field, Size: size}}},
+		Aggs: map[string]termsAggBody{
+			"terms": {Terms: termsAgg{Field: aggregationField(field), Size: size}},
+		},
 	}
 	return json.Marshal(body)
+}
+
+// aggregationField targets the dynamic keyword subfield so terms
+// aggregations work on dynamically mapped text fields, mirroring the
+// exact-term query fallback; explicit .keyword names pass through.
+func aggregationField(field string) string {
+	if strings.HasSuffix(field, ".keyword") {
+		return field
+	}
+	return field + ".keyword"
 }
 
 func buildQuery(filters []driver.Filter) (*types.Query, error) {
