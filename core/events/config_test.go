@@ -232,6 +232,13 @@ func TestNewTCPRetransmitRejectsL2LocalFilter(t *testing.T) {
 }
 
 func TestTCPRetransmitArgsDropwatchCorrelation(t *testing.T) {
+	// Pin CoreBpfDir to a known sentinel so the assertions below exercise the
+	// argument derivation instead of comparing the global against itself.
+	const sentinelBpfDir = "/tmp/huatuo-test-bpf-dir"
+	oldBpfDir := internalconfig.CoreBpfDir
+	internalconfig.CoreBpfDir = sentinelBpfDir
+	t.Cleanup(func() { internalconfig.CoreBpfDir = oldBpfDir })
+
 	for _, enabled := range []bool{false, true} {
 		config := &Config{}
 		config.TCPRetransmit.Filter = "tcp and port 443"
@@ -242,14 +249,14 @@ func TestTCPRetransmitArgsDropwatchCorrelation(t *testing.T) {
 			t.Fatalf("enabled=%t: --with-dropwatch present = %t", enabled, got)
 		}
 		if enabled {
-			if got := flagArgument(t, args, "--bpf-path-dir"); got != internalconfig.CoreBpfDir {
-				t.Fatalf("--bpf-path-dir = %q, want %q", got, internalconfig.CoreBpfDir)
+			if got := flagArgument(t, args, "--bpf-path-dir"); got != sentinelBpfDir {
+				t.Fatalf("--bpf-path-dir = %q, want %q", got, sentinelBpfDir)
 			}
 			if slices.Contains(args, "--bpf-path") {
 				t.Fatalf("correlation args contain --bpf-path: %v", args)
 			}
 		} else {
-			wantPath := path.Join(internalconfig.CoreBpfDir, "tcp_retransmit.o")
+			wantPath := path.Join(sentinelBpfDir, "tcp_retransmit.o")
 			if got := flagArgument(t, args, "--bpf-path"); got != wantPath {
 				t.Fatalf("--bpf-path = %q, want %q", got, wantPath)
 			}
