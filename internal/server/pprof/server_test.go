@@ -86,3 +86,21 @@ func TestStartRejectsNilListener(t *testing.T) {
 		t.Fatalf("Start() error=%v, want nil listener error", err)
 	}
 }
+
+func TestStartAcceptsNilContext(t *testing.T) {
+	t.Parallel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for pprof server: %v", err)
+	}
+	server, err := Start(nil, listener) //nolint:staticcheck // intentional nil-context regression test
+	if err != nil {
+		t.Fatalf("Start(nil, listener) error=%v", err)
+	}
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Errorf("close pprof server: %v", err)
+		}
+	})
+}
