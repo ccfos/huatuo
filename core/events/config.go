@@ -17,6 +17,7 @@ package events
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -92,6 +93,18 @@ func configSnapshot() *Config {
 func (c *Config) Validate() error {
 	if c.SchedTick.IntervalThreshold == 0 {
 		return errors.New("scheduler tick interval threshold must be greater than zero")
+	}
+	for _, threshold := range []struct {
+		name  string
+		value uint64
+	}{
+		{"Driver2NetRx", c.NetRxLatency.Driver2NetRx},
+		{"Driver2TCP", c.NetRxLatency.Driver2TCP},
+		{"Driver2Userspace", c.NetRxLatency.Driver2Userspace},
+	} {
+		if threshold.value == 0 || threshold.value > math.MaxUint64/1_000_000 {
+			return fmt.Errorf("NetRxLatency.%s must be positive and fit in nanoseconds", threshold.name)
+		}
 	}
 	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
 		return fmt.Errorf("validating issues list: %w", err)

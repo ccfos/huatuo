@@ -16,6 +16,7 @@ package events
 
 import (
 	"fmt"
+	"math"
 	"path"
 	"slices"
 	"strings"
@@ -45,6 +46,48 @@ func TestConfigValidate(t *testing.T) {
 			wantError: "scheduler tick interval threshold must be greater than zero",
 		},
 		{
+			name: "zero driver to net receive threshold",
+			configure: func(cfg *Config) {
+				cfg.NetRxLatency.Driver2NetRx = 0
+			},
+			wantError: "Driver2NetRx",
+		},
+		{
+			name: "zero driver to TCP threshold",
+			configure: func(cfg *Config) {
+				cfg.NetRxLatency.Driver2TCP = 0
+			},
+			wantError: "Driver2TCP",
+		},
+		{
+			name: "zero driver to userspace threshold",
+			configure: func(cfg *Config) {
+				cfg.NetRxLatency.Driver2Userspace = 0
+			},
+			wantError: "Driver2Userspace",
+		},
+		{
+			name: "driver to net receive threshold overflows nanoseconds",
+			configure: func(cfg *Config) {
+				cfg.NetRxLatency.Driver2NetRx = math.MaxUint64/1_000_000 + 1
+			},
+			wantError: "Driver2NetRx",
+		},
+		{
+			name: "driver to TCP threshold overflows nanoseconds",
+			configure: func(cfg *Config) {
+				cfg.NetRxLatency.Driver2TCP = math.MaxUint64/1_000_000 + 1
+			},
+			wantError: "Driver2TCP",
+		},
+		{
+			name: "driver to userspace threshold overflows nanoseconds",
+			configure: func(cfg *Config) {
+				cfg.NetRxLatency.Driver2Userspace = math.MaxUint64/1_000_000 + 1
+			},
+			wantError: "Driver2Userspace",
+		},
+		{
 			name: "invalid issues list",
 			configure: func(cfg *Config) {
 				cfg.IssuesList = [][]string{{"missing-expression"}}
@@ -57,6 +100,9 @@ func TestConfigValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{}
 			cfg.SchedTick.IntervalThreshold = 1
+			cfg.NetRxLatency.Driver2NetRx = 5
+			cfg.NetRxLatency.Driver2TCP = 10
+			cfg.NetRxLatency.Driver2Userspace = 115
 			if tt.configure != nil {
 				tt.configure(cfg)
 			}
