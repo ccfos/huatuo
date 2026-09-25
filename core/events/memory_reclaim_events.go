@@ -30,6 +30,8 @@ import (
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
+const memoryReclaimTracerName = "memory_reclaim_events"
+
 type memoryReclaimTracing struct{}
 
 // MemoryReclaimTracingData is the full data structure.
@@ -41,7 +43,7 @@ type MemoryReclaimTracingData struct {
 }
 
 func init() {
-	tracing.RegisterEventTracing("memory_reclaim_events", newMemoryReclaim)
+	tracing.RegisterEventTracing(memoryReclaimTracerName, newMemoryReclaim)
 }
 
 func newMemoryReclaim() (*tracing.EventTracingAttr, error) {
@@ -140,7 +142,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 
 			log.Infof("memory_reclaim saves storage: %+v", tracingData)
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:        "memory_reclaim",
+				TracerName:        memoryReclaimTracerName,
 				ContainerID:       container.ID,
 				ObservedTimestamp: timeutil.Now(),
 				TracerData:        tracingData,
