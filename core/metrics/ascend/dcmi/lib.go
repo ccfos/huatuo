@@ -16,6 +16,7 @@
 package dcmi
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 
@@ -75,8 +76,15 @@ func (l *library) load() (rerr error) {
 		return err
 	}
 
-	// Register all symbols after successful loading.
-	l.registerDcmiLibSymbols(l.dl.Handle())
+	// Register all symbols after successful loading. A missing symbol means
+	// the loaded library's exported symbol set changed (e.g. after a
+	// CANN/driver upgrade); return an error so the collector is disabled
+	// instead of panicking, and close the handle so a failed registration
+	// does not leak the dlopen reference.
+	if err := l.registerDcmiLibSymbols(l.dl.Handle()); err != nil {
+		_ = l.dl.Close()
+		return err
+	}
 
 	return nil
 }
@@ -95,22 +103,37 @@ func (l *library) close() (rerr error) {
 	return l.dl.Close()
 }
 
-// registerDcmiLibSymbols registers all required DCMI symbols
-// from the loaded shared library.
-func (l *library) registerDcmiLibSymbols(handle uintptr) {
-	purego.RegisterLibFunc(&dcmiInit, handle, "dcmi_init")
-	purego.RegisterLibFunc(&dcGetDeviceHealth, handle, "dcmi_get_device_health")
-	purego.RegisterLibFunc(&dcGetCardList, handle, "dcmi_get_card_list")
-	purego.RegisterLibFunc(&dcGetDeviceNumInCard, handle, "dcmi_get_device_num_in_card")
-	purego.RegisterLibFunc(&dcGetDevicePowerInfo, handle, "dcmi_get_device_power_info")
-	purego.RegisterLibFunc(&dcGetDeviceTemperature, handle, "dcmi_get_device_temperature")
-	purego.RegisterLibFunc(&dcGetDeviceVoltage, handle, "dcmi_get_device_voltage")
-	purego.RegisterLibFunc(&dcGetDeviceUtilizationRate, handle, "dcmi_get_device_utilization_rate")
-	purego.RegisterLibFunc(&dcGetDeviceFrequency, handle, "dcmi_get_device_frequency")
-	purego.RegisterLibFunc(&dcGetDeviceNetWorkHealth, handle, "dcmi_get_device_network_health")
-	purego.RegisterLibFunc(&dcGetDeviceHbmInfo, handle, "dcmi_get_device_hbm_info")
-	purego.RegisterLibFunc(&dcGetDeviceEccInfo, handle, "dcmi_get_device_ecc_info")
-	purego.RegisterLibFunc(&dcGetDevicePcieInfoV2, handle, "dcmi_get_device_pcie_info_v2")
-	purego.RegisterLibFunc(&dcGetDeviceLogicID, handle, "dcmi_get_device_logic_id")
-	purego.RegisterLibFunc(&dcGetPhysicIDFromLogicID, handle, "dcmi_get_device_phyid_from_logicid")
+// registerDcmiLibSymbols resolves and registers all required DCMI symbols
+// from the loaded shared library. It returns an error if any required symbol
+// is missing, so a library whose exported symbol set changed (e.g. after a
+// CANN/driver upgrade) disables the collector instead of panicking.
+func (l *library) registerDcmiLibSymbols(handle uintptr) error {
+	symbols := []struct {
+		name string
+		dst  any
+	}{
+		{"dcmi_init", &dcmiInit},
+		{"dcmi_get_device_health", &dcGetDeviceHealth},
+		{"dcmi_get_card_list", &dcGetCardList},
+		{"dcmi_get_device_num_in_card", &dcGetDeviceNumInCard},
+		{"dcmi_get_device_power_info", &dcGetDevicePowerInfo},
+		{"dcmi_get_device_temperature", &dcGetDeviceTemperature},
+		{"dcmi_get_device_voltage", &dcGetDeviceVoltage},
+		{"dcmi_get_device_utilization_rate", &dcGetDeviceUtilizationRate},
+		{"dcmi_get_device_frequency", &dcGetDeviceFrequency},
+		{"dcmi_get_device_network_health", &dcGetDeviceNetWorkHealth},
+		{"dcmi_get_device_hbm_info", &dcGetDeviceHbmInfo},
+		{"dcmi_get_device_ecc_info", &dcGetDeviceEccInfo},
+		{"dcmi_get_device_pcie_info_v2", &dcGetDevicePcieInfoV2},
+		{"dcmi_get_device_logic_id", &dcGetDeviceLogicID},
+		{"dcmi_get_device_phyid_from_logicid", &dcGetPhysicIDFromLogicID},
+	}
+	for _, s := range symbols {
+		sym, err := purego.Dlsym(handle, s.name)
+		if err != nil {
+			return fmt.Errorf("dcmi: required symbol %s not found: %w", s.name, err)
+		}
+		purego.RegisterFunc(s.dst, sym)
+	}
+	return nil
 }
