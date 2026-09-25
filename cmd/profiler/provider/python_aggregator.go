@@ -92,6 +92,11 @@ func (a *pythonAggregator) Aggregate(rec any) {
 func normalizePythonOutput(pid int, raw string) string {
 	var normalized strings.Builder
 	for _, line := range strings.Split(raw, "\n") {
+		// py-spy writes status to stdout alongside raw stacks. Its error count
+		// can otherwise be mistaken for a sample count.
+		if strings.HasPrefix(strings.TrimSpace(line), "py-spy>") {
+			continue
+		}
 		stack, count, ok := parseCollapsedLine(line)
 		if !ok || count <= 0 {
 			continue
