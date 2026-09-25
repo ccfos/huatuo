@@ -239,7 +239,7 @@ This occurs when the dashboard JSON references a datasource UID that does not ex
 ### Elasticsearch index is empty
 
 - Verify Elasticsearch is reachable: `curl -u elastic:<password> http://<host>:9200/_cat/indices`
-- Check huatuo-bamai config `[Storage.ES]` section has correct `Address`, `Username`, `Password`
+- Check huatuo-bamai config `[Storage.Elasticsearch]` section has correct `Address`, `Username`, `Password`
 - Default index name is `huatuo_bamai`
 
 ### "socket path already exists" on startup
