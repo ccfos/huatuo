@@ -15,8 +15,12 @@
 package symbol
 
 import (
+	"bytes"
 	"debug/elf"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -105,15 +109,18 @@ func TestSymbolsResolve(t *testing.T) {
 	table := symbols{
 		{Addr: 0x1000, Size: 0, Name: "kernel_sched_tick"},
 		{Addr: 0x2000, Size: 0x100, Name: "user_func_malloc"},
+		{Addr: math.MaxUint64 - 0x100, Size: 0x200, Name: "overflowing_func"},
 	}
 	tests := []struct {
 		name     string
 		key      uint64
 		wantName string
 	}{
-		{name: "kernel-style-size-zero-resolves-any-offset", key: 0x1800, wantName: "kernel_sched_tick"},
+		{name: "zero-size-symbol-does-not-cover-higher-offset", key: 0x1800, wantName: ""},
+		{name: "zero-size-symbol-matches-its-address", key: 0x1000, wantName: "kernel_sched_tick"},
 		{name: "user-style-in-range-resolves", key: 0x20ff, wantName: "user_func_malloc"},
 		{name: "user-style-end-exclusive", key: 0x2100, wantName: ""},
+		{name: "overflowing-symbol-end-does-not-wrap", key: math.MaxUint64, wantName: ""},
 		{name: "below-first-symbol", key: 0x0500, wantName: ""},
 	}
 
@@ -461,48 +468,250 @@ func TestScanKallsymsNotFound(t *testing.T) {
 	}
 }
 
-func TestElfSymbols(t *testing.T) {
-	executablePath, err := os.Executable()
-	if err != nil {
-		t.Fatalf("os.Executable: %v", err)
-	}
-	elfFile, err := elf.Open(executablePath)
-	if err != nil {
-		t.Fatalf("elf.Open(%q): %v", executablePath, err)
-	}
-	defer elfFile.Close()
-
-	got := elfSymbols(elfFile)
-	if len(got) == 0 {
-		t.Errorf("elfSymbols(%q): got 0 symbols, want >0", executablePath)
-	}
-	for index := 1; index < len(got); index++ {
-		if got[index-1].Addr > got[index].Addr {
-			t.Errorf("elfSymbols sort order: got[%d]=0x%x > got[%d]=0x%x", index-1, got[index-1].Addr, index, got[index].Addr)
-		}
-	}
-}
-
-func TestDemangleSymbolName(t *testing.T) {
-	tests := []struct {
-		name string
-		want string
+func TestELFSymbolNameBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		secondOffset uint32
+		firstType    elf.SymType
+		nameLimit    uint64
+		batches      [][]uint64
+		want         []string
+		wantLimit    bool
 	}{
-		{
-			name: "_ZN5doris6Thread16supervise_threadEPv",
-			want: "doris::Thread::supervise_thread(void*)",
-		},
-		{name: "malloc", want: "malloc"},
-		{name: "_ZN5doris_invalid", want: "_ZN5doris_invalid"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := demangleSymbolName(tt.name); got != tt.want {
-				t.Errorf("demangleSymbolName(%q): got %q, want %q", tt.name, got, tt.want)
+		{"shared-offset", 1, elf.STT_FUNC, 16, [][]uint64{{0x1001, 0x1011}}, []string{"target", "target"}, false},
+		{"distinct-offsets", 8, elf.STT_FUNC, 16, [][]uint64{{0x1001, 0x1011}}, nil, true},
+		{"filtered-symbol", 8, elf.STT_OBJECT, 16, [][]uint64{{0x1001, 0x1011}}, []string{"", "otherx"}, false},
+		{"single-name-too-long", 1, elf.STT_FUNC, 5, [][]uint64{{0x1001}}, nil, true},
+		{"shared-across-calls", 1, elf.STT_FUNC, 16, [][]uint64{{0x1001}, {0x1011}}, []string{"target", "target"}, false},
+		{"distinct-across-calls", 8, elf.STT_FUNC, 16, [][]uint64{{0x1001}, {0x1011}}, []string{"target"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			image := readELFFixture(t, "symbols64.elf")
+			f := openELFFixture(t, image)
+			offset := f.SectionByType(elf.SHT_SYMTAB).Offset + elf.Sym64Size
+			image[offset+4] = byte(tc.firstType)
+			binary.LittleEndian.PutUint32(image[offset+elf.Sym64Size:], tc.secondOffset)
+			f.SectionByType(elf.SHT_DYNSYM).Type = elf.SHT_NULL
+			limits := DefaultELFSymbolLimits()
+			limits.MaxNameBytes = uint64(len("target"))
+			limits.MaxNameLength = tc.nameLimit
+			state := newELFSymbolParseState(limits)
+			var names []string
+			for i, pcs := range tc.batches {
+				got, err := elfSymbolsForPCsWithState(f, pcs, state)
+				if tc.wantLimit && i == len(tc.batches)-1 {
+					if !errors.Is(err, errELFSymbolLimit) || len(got) != 0 {
+						t.Fatalf("got %v, %v; want rejected source", got, err)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, pc := range pcs {
+					names = append(names, got.resolve(pc))
+				}
+			}
+			if !slices.Equal(names, tc.want) {
+				t.Fatalf("got %v, want %v", names, tc.want)
+			}
+			if state.nameBytes > limits.MaxNameBytes {
+				t.Fatal("name budget exceeded")
+			}
+			if len(names) > 0 && state.nameBytes != uint64(len("target")) {
+				t.Fatalf("charged %d bytes, want one distinct name", state.nameBytes)
 			}
 		})
 	}
+}
+
+func TestELFSymbolSources(t *testing.T) {
+	t.Run("empty-PCs", func(t *testing.T) {
+		got, err := elfSymbolsForPCsWithState(nil, nil, nil)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("got %v, %v", got, err)
+		}
+	})
+	for _, tc := range []struct {
+		name           string
+		dynamicStart   uint64
+		missingDynamic bool
+		pcs            []uint64
+		want           []string
+	}{
+		{"prefer-symtab", 0x1000, false, []uint64{0x1009}, []string{"target"}},
+		{"same-start-fallback", 0x1000, false, []uint64{0x1009, 0x1020}, []string{"target", "dynamic"}},
+		{"overlap-fallback", 0x1008, false, []uint64{0x1009, 0x1020}, []string{"target", "dynamic"}},
+		{"missing-dynsym", 0, true, []uint64{0x1020}, []string{""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			image := readELFFixture(t, "symbols64.elf")
+			f := openELFFixture(t, image)
+			dynamic := f.SectionByType(elf.SHT_DYNSYM)
+			if tc.missingDynamic {
+				dynamic.Type = elf.SHT_NULL
+			} else {
+				binary.LittleEndian.PutUint64(image[dynamic.Offset+elf.Sym64Size+8:], tc.dynamicStart)
+			}
+			got, err := elfSymbolsForPCsWithState(f, tc.pcs, newELFSymbolParseState(DefaultELFSymbolLimits()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, pc := range tc.pcs {
+				if got.resolve(pc) != tc.want[i] {
+					t.Fatalf("PC %#x: got %q, want %q", pc, got.resolve(pc), tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestELFSymbolIndexNotCachedOnNameFailure(t *testing.T) {
+	image := readELFFixture(t, "symbols64.elf")
+	f := openELFFixture(t, image)
+	section := f.SectionByType(elf.SHT_SYMTAB)
+	binary.LittleEndian.PutUint32(image[section.Offset+elf.Sym64Size:], math.MaxUint32)
+	state := newELFSymbolParseState(DefaultELFSymbolLimits())
+	if _, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1001); err == nil {
+		t.Fatal("expected invalid name offset")
+	}
+	if len(state.indexes) != 0 || state.symbolCount != 0 || state.metadataBytes != 0 {
+		t.Fatal("failed source retained an index or its metadata reservation")
+	}
+}
+
+func TestELFNameFailureLeavesBudgetForFallback(t *testing.T) {
+	image := readELFFixture(t, "symbols64.elf")
+	f := openELFFixture(t, image)
+	section := f.SectionByType(elf.SHT_SYMTAB)
+	binary.LittleEndian.PutUint32(image[section.Offset+elf.Sym64Size:], math.MaxUint32)
+	limits := DefaultELFSymbolLimits()
+	limits.MaxMetadataBytes = section.Size
+	limits.MaxSymbolAndCacheCount = 2
+	state := newELFSymbolParseState(limits)
+	got, err := elfSymbolsForPCsWithState(f, []uint64{0x1001}, state)
+	if err == nil || got.resolve(0x1001) != "dynamic" {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if len(state.indexes) != 1 || state.symbolCount != 1 || state.metadataBytes != 2*elf.Sym64Size {
+		t.Fatalf("incorrect fallback accounting: indexes=%d symbols=%d bytes=%d", len(state.indexes), state.symbolCount, state.metadataBytes)
+	}
+}
+
+func TestELFSymbolCountLimit(t *testing.T) {
+	f := openELFFixture(t, readELFFixture(t, "symbols64.elf"))
+	limits := DefaultELFSymbolLimits()
+	limits.MaxSymbolAndCacheCount = 1
+	got, err := newELFSymbolParseState(limits).parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1001)
+	if !errors.Is(err, errELFSymbolLimit) || len(got) != 0 {
+		t.Fatalf("got %v, %v", got, err)
+	}
+}
+
+func TestELFSymbol32(t *testing.T) {
+	f := openELFFixture(t, readELFFixture(t, "symbols32.elf"))
+	got, err := elfSymbolsForPCsWithState(f, []uint64{0x1001}, newELFSymbolParseState(DefaultELFSymbolLimits()))
+	if err != nil || got.resolve(0x1001) != "target" {
+		t.Fatalf("got %v, %v", got, err)
+	}
+}
+
+func TestELFCompressedBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name, file string
+		shortBy    uint64
+	}{
+		{"modern-exact", "compressed64.elf", 0},
+		{"modern-short", "compressed64.elf", 1},
+		{"legacy-exact", "legacy64.elf", 0},
+		{"legacy-short", "legacy64.elf", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := openELFFixture(t, readELFFixture(t, tc.file))
+			stringsSection := f.Sections[f.SectionByType(elf.SHT_SYMTAB).Link]
+			stringsSection.Open()
+			limits := DefaultELFSymbolLimits()
+			limits.MaxMetadataBytes = f.SectionByType(elf.SHT_SYMTAB).Size + stringsSection.Size - tc.shortBy
+			state := newELFSymbolParseState(limits)
+			got, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1001)
+			if tc.shortBy != 0 {
+				if !errors.Is(err, errELFSymbolLimit) || len(got) != 0 {
+					t.Fatalf("got %v, %v", got, err)
+				}
+				return
+			}
+			if err != nil || got.resolve(0x1001) != "target" {
+				t.Fatalf("got %v, %v", got, err)
+			}
+			if state.metadataBytes != limits.MaxMetadataBytes {
+				t.Fatal("incorrect exact-budget accounting")
+			}
+			// A new name in a later batch requires a second decompression.
+			if _, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1011); !errors.Is(err, errELFSymbolLimit) {
+				t.Fatalf("second decompression: %v", err)
+			}
+		})
+	}
+}
+
+func TestELFLegacyCompressedStringOffset(t *testing.T) {
+	f := openELFFixture(t, readELFFixture(t, "legacy64.elf"))
+	const nameOffset = 4096
+	if f.Sections[1].Size >= nameOffset {
+		t.Fatal("fixture must place name beyond compressed data")
+	}
+	got, err := newELFSymbolParseState(DefaultELFSymbolLimits()).parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1001)
+	if err != nil || got.resolve(0x1001) != "target" {
+		t.Fatalf("got %v, %v", got, err)
+	}
+}
+
+func TestELFPCResultCacheIsBoundedAcrossBatches(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "symbols.elf")
+	if err := os.WriteFile(path, readELFFixture(t, "symbols64.elf"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	limits := DefaultELFSymbolLimits()
+	limits.MaxSymbolAndCacheCount = 2
+	resolver := NewUsymResolver(WithELFSymbolLimits(limits))
+	cache := &elfSymbolCache{}
+	for _, pc := range []uint64{0x1001, 0x1002, 0x1003} {
+		const miss = 0x10000
+		got, err := resolver.resolveELFPCs(path, cache, []uint64{pc, miss})
+		// A miss probes dynsym, which cannot fit alongside the cached symtab.
+		if !errors.Is(err, errELFSymbolLimit) || got[pc] != "target" || got[miss] != "" {
+			t.Fatalf("PC %#x: got %v, %v", pc, got, err)
+		}
+		if len(cache.namesByELFPC) > 2 {
+			t.Fatal("PC cache exceeds cap")
+		}
+		if _, ok := cache.namesByELFPC[miss]; ok {
+			t.Fatal("cache retained a miss")
+		}
+	}
+	if len(cache.namesByELFPC) != 2 {
+		t.Fatal("cache did not fill to limit")
+	}
+}
+
+// The image stays writable so each test can patch only its relevant ELF field.
+func readELFFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	image, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return image
+}
+
+func openELFFixture(t *testing.T, image []byte) *elf.File {
+	t.Helper()
+	f, err := elf.NewFile(bytes.NewReader(image))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
 }
 
 func TestIsLibPath(t *testing.T) {
