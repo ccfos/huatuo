@@ -42,23 +42,15 @@ function orig_load(e, attr) {
 	e.removeAttribute("_orig_"+attr);
 }
 
-function g_to_text(e) {
-	var text = find_child(e, "title").firstChild.nodeValue;
-	return (text)
-}
-
 function g_to_func(e) {
-	var func = g_to_text(e);
-	if (func != null)
-		func = func.replace(/ .*/, "");
-	return (func);
+	return e.getAttribute("data-name");
 }
 
 function update_text(e) {
 	var r = find_child(e, "rect");
 	var t = find_child(e, "text");
 	var w = parseFloat(r.attributes["width"].value) -3;
-	var txt = find_child(e, "title").textContent.replace(/\([^(]*\)/,"");
+	var txt = g_to_func(e);
 	t.attributes["x"].value = parseFloat(r.attributes["x"].value) +3;
 	
 	// Smaller than this size won't fit anything
