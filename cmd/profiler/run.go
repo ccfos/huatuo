@@ -60,17 +60,18 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) (returnErr error) {
 	}
 
 	if cliCtx.Bool("enable-pprof") {
-		server, err := startPprofServer(pctx.Ctx, profilerPprofAddress)
+		address := cliCtx.String("pprof-address")
+		server, err := startPprofServer(pctx.Ctx, address)
 		if err != nil {
 			return err
 		}
 		defer func() {
 			if err := server.Close(); err != nil {
-				log.Errorf("close pprof server on %s: %v", profilerPprofAddress, err)
+				log.Errorf("close pprof server on %s: %v", address, err)
 			}
 		}()
 
-		log.Infof("pprof server started on %s", profilerPprofAddress)
+		log.Infof("pprof server started on %s", address)
 	}
 
 	meta, err := registry.Get(implementation, typ)

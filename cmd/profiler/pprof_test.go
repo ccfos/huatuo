@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
 )
@@ -71,5 +72,42 @@ func TestEnablePprofFlag(t *testing.T) {
 				t.Fatalf("enable-pprof=%t, want %t", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPprofAddressFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "defaults to loopback",
+			want: profilerPprofAddressDefault,
+		},
+		{
+			name: "explicit address overrides default",
+			args: []string{"--pprof-address", "0.0.0.0:6000"},
+			want: "0.0.0.0:6000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := newValidationCLIContext(t, tt.args...)
+			if got := ctx.String("pprof-address"); got != tt.want {
+				t.Fatalf("pprof-address=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPprofAddressDefaultIsLoopback(t *testing.T) {
+	host, _, err := net.SplitHostPort(profilerPprofAddressDefault)
+	if err != nil {
+		t.Fatalf("split default pprof address %q: %v", profilerPprofAddressDefault, err)
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		t.Fatalf("default pprof address %q binds host %q, which is not loopback", profilerPprofAddressDefault, host)
 	}
 }
