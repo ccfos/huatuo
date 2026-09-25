@@ -16,7 +16,6 @@ package symbol
 
 import (
 	"debug/elf"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -134,27 +133,10 @@ func TestNewUsymResolver(t *testing.T) {
 		t.Errorf("NewUsymResolver(): got limits %+v, want defaults %+v", resolver.elfSymbolLimits, DefaultELFSymbolLimits())
 	}
 
-	customLimits := ELFSymbolLimits{MaxMetadataBytes: 1024, MaxSymbolCount: 32, MaxNameBytes: 512}
+	customLimits := ELFSymbolLimits{MaxMetadataBytes: 1024, MaxSymbolAndCacheCount: 32, MaxNameBytes: 512}
 	configured := NewUsymResolver(WithELFSymbolLimits(customLimits))
 	if configured.elfSymbolLimits != customLimits {
 		t.Errorf("NewUsymResolver(WithELFSymbolLimits): got %+v, want %+v", configured.elfSymbolLimits, customLimits)
-	}
-}
-
-func TestResolveELFPCsReturnsLimitError(t *testing.T) {
-	executablePath, err := os.Executable()
-	if err != nil {
-		t.Fatalf("os.Executable: %v", err)
-	}
-	resolver := NewUsymResolver(WithELFSymbolLimits(ELFSymbolLimits{
-		MaxMetadataBytes: 16 << 20,
-		MaxSymbolCount:   0,
-		MaxNameBytes:     1024,
-		MaxNameLength:    1024,
-	}))
-
-	if _, err := resolver.resolveELFPCs(executablePath, &elfSymbolCache{}, []uint64{1}); !errors.Is(err, errELFSymbolLimit) {
-		t.Fatalf("resolveELFPCs: got %v, want errELFSymbolLimit", err)
 	}
 }
 

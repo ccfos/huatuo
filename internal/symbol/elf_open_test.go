@@ -27,26 +27,35 @@ func TestResolverBoundsELFOpening(t *testing.T) {
 	const budget = 4096
 	for _, kind := range []string{"raw-names", "compressed-names", "extended-sections", "extended-programs"} {
 		t.Run(kind, func(t *testing.T) {
-			image := elf64SymbolImage(t, elf64SymbolTableFixture{
-				typ: elf.SHT_SYMTAB, stringTable: make([]byte, budget),
-				compressed: kind == "compressed-names",
-			})
+			file := "symbols64.elf"
+			if kind == "compressed-names" {
+				file = "compressed64.elf"
+			}
+			image := readELFFixture(t, file)
 			var header elf.Header64
 			if err := binary.Read(bytes.NewReader(image), binary.LittleEndian, &header); err != nil {
 				t.Fatal(err)
 			}
 			header.Shstrndx = 1
 			switch kind {
+			case "raw-names":
+				names := elf.Section64{Type: uint32(elf.SHT_STRTAB), Off: uint64(len(image)), Size: budget}
+				encoded, _ := binary.Append(nil, binary.LittleEndian, names)
+				copy(image[header.Shoff+uint64(header.Shentsize):], encoded)
+				image = append(image, make([]byte, budget)...)
 			case "extended-sections":
 				header.Shnum = 0
-				copy(image[header.Shoff:], encodeELFStruct(t, elf.Section64{Size: uint64(elf.SHN_LORESERVE)}))
+				encoded, _ := binary.Append(nil, binary.LittleEndian, elf.Section64{Size: uint64(elf.SHN_LORESERVE)})
+				copy(image[header.Shoff:], encoded)
 			case "extended-programs":
 				header.Phnum = 0xffff
 				header.Phentsize = uint16(binary.Size(elf.Prog64{}))
 				// A small Info must not hide debug/elf's raw program count.
-				copy(image[header.Shoff:], encodeELFStruct(t, elf.Section64{Info: 1}))
+				encoded, _ := binary.Append(nil, binary.LittleEndian, elf.Section64{Info: 1})
+				copy(image[header.Shoff:], encoded)
 			}
-			copy(image, encodeELFStruct(t, header))
+			encoded, _ := binary.Append(nil, binary.LittleEndian, header)
+			copy(image, encoded)
 			for _, entry := range []string{"executable", "library", "resolve"} {
 				t.Run(entry, func(t *testing.T) {
 					resolver, pid, _, _ := setupMainElfResolverFixture(t)
@@ -80,17 +89,21 @@ func TestResolverBoundsELFOpening(t *testing.T) {
 
 func TestPreflightELFNameBudget(t *testing.T) {
 	for _, compressed := range []bool{false, true} {
-		image := elf64SymbolImage(t, elf64SymbolTableFixture{
-			typ: elf.SHT_SYMTAB, stringTable: []byte("\x00names\x00"), compressed: compressed,
-		})
+		file := "symbols64.elf"
+		if compressed {
+			file = "compressed64.elf"
+		}
+		image := readELFFixture(t, file)
+		namesSize := openELFFixture(t, image).Sections[1].Size
 		var header elf.Header64
 		if err := binary.Read(bytes.NewReader(image), binary.LittleEndian, &header); err != nil {
 			t.Fatal(err)
 		}
 		header.Shstrndx = 1
-		copy(image, encodeELFStruct(t, header))
+		encoded, _ := binary.Append(nil, binary.LittleEndian, header)
+		copy(image, encoded)
 		budget := uint64(header.Shnum)*(uint64(header.Shentsize)+elfHeaderMemoryAllowance) +
-			uint64(header.Shnum+1)*uint64(len("\x00names\x00"))
+			uint64(header.Shnum+1)*namesSize
 		if err := preflightELF(bytes.NewReader(image), uint64(len(image)), budget); err != nil {
 			t.Fatalf("compressed=%v: exact budget: %v", compressed, err)
 		}

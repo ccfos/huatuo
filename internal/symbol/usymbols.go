@@ -272,7 +272,7 @@ func (r *UsymResolver) resolveELFPCs(path string, cache *elfSymbolCache, pcs []u
 		result[sym.Addr] = sym.Name
 		// Full caches still return this batch's results, but retain neither
 		// misses nor additional entries beyond the per-ELF symbol budget.
-		if sym.Name != "" && uint64(len(cache.namesByELFPC)) < r.elfSymbolLimits.MaxSymbolCount {
+		if sym.Name != "" && uint64(len(cache.namesByELFPC)) < r.elfSymbolLimits.MaxSymbolAndCacheCount {
 			cache.namesByELFPC[sym.Addr] = sym.Name
 		}
 	}

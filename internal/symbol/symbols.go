@@ -51,21 +51,21 @@ var errELFSymbolLimit = errors.New("ELF symbol resource limit exceeded")
 // ELFSymbolLimits bounds resources used while parsing one ELF.
 // MaxMetadataBytes covers symbol metadata and cumulative string decompression.
 // The same limit separately bounds transient ELF opening metadata.
-// MaxSymbolCount also caps retained exact-PC results.
+// MaxSymbolAndCacheCount also caps retained exact-PC results.
 type ELFSymbolLimits struct {
-	MaxMetadataBytes uint64
-	MaxSymbolCount   uint64
-	MaxNameBytes     uint64
-	MaxNameLength    uint64
+	MaxMetadataBytes       uint64
+	MaxSymbolAndCacheCount uint64
+	MaxNameBytes           uint64
+	MaxNameLength          uint64
 }
 
 // DefaultELFSymbolLimits returns the default per-ELF symbol parsing limits.
 func DefaultELFSymbolLimits() ELFSymbolLimits {
 	return ELFSymbolLimits{
-		MaxMetadataBytes: 16 << 20,
-		MaxSymbolCount:   500_000,
-		MaxNameBytes:     16 << 20,
-		MaxNameLength:    1 << 20,
+		MaxMetadataBytes:       16 << 20,
+		MaxSymbolAndCacheCount: 500_000,
+		MaxNameBytes:           16 << 20,
+		MaxNameLength:          1 << 20,
 	}
 }
 
@@ -292,39 +292,7 @@ type elfSymbolCandidate struct {
 	size       uint64
 }
 
-// elfSymbols is retained for synthetic and full-table tests; production
-// resolution uses elfSymbolsForPCs to materialize only requested names.
-// It extracts all STT_FUNC entries from .dynsym and .symtab. Version
-// metadata is intentionally not parsed because the resolver only consumes the
-// symbol name, address, and size.
-func elfSymbols(f *elf.File, limits ELFSymbolLimits) (symbols, error) {
-	return elfSymbolsFromSources(f, elfSymbolTables[:], limits)
-}
-
-func elfSymbolsFromSources(f *elf.File, sources []elfSymbolTable, limits ELFSymbolLimits) (symbols, error) {
-	syms := symbols{}
-	state := newELFSymbolParseState(limits)
-	var parseErrors []error
-	for _, source := range sources {
-		sourceSymbols, err := state.parseSource(f, source)
-		if err != nil {
-			if !errors.Is(err, elf.ErrNoSymbols) {
-				parseErrors = append(parseErrors, fmt.Errorf("%s: %w", source.name, err))
-			}
-			continue
-		}
-		syms = append(syms, sourceSymbols...)
-	}
-	syms.sort()
-	return syms, errors.Join(parseErrors...)
-}
-
-// elfSymbolsForPCs scans bounded symbol metadata but materializes names only
-// for the symbols that cover the requested ELF-relative PCs.
-func elfSymbolsForPCs(f *elf.File, pcs []uint64, limits ELFSymbolLimits) (symbols, error) {
-	return elfSymbolsForPCsWithState(f, pcs, newELFSymbolParseState(limits))
-}
-
+// elfSymbolsForPCsWithState materializes requested names within the cache lifetime budget.
 func elfSymbolsForPCsWithState(f *elf.File, pcs []uint64, state *elfSymbolParseState) (symbols, error) {
 	if len(pcs) == 0 {
 		return nil, nil
@@ -378,7 +346,7 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable
 
 	// Open updates legacy .zdebug sizes before budget checks and cache keys.
 	stringsSection.Open()
-	symbolSize, metadataBytes, symbolCount, err := state.checkSymbolLimits(f, section, stringsSection, len(pcs) == 0)
+	symbolSize, metadataBytes, symbolCount, err := state.checkSymbolLimits(f, section)
 	if err != nil {
 		return nil, err
 	}
@@ -401,10 +369,7 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable
 		index = buildELFSymbolIndex(f, data, symbolSize)
 	}
 
-	candidates := index
-	if len(pcs) > 0 {
-		candidates = selectELFSymbolCandidates(index, pcs)
-	}
+	candidates := selectELFSymbolCandidates(index, pcs)
 	// Reserve pending metadata so decompression shares the same total budget.
 	state.metadataBytes += metadataBytes
 	result, nameBytes, pendingNamesByOffset, err := materializeELFSymbolCandidates(stringsSection, candidates, state)
@@ -422,9 +387,6 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable
 	state.symbolCount += symbolCount
 	state.nameBytes += nameBytes
 	state.metadataSections[sectionID] = struct{}{}
-	if len(pcs) == 0 && !isCompressedELFSection(stringsSection) {
-		state.metadataSections[stringsID] = struct{}{}
-	}
 	if cachedNames == nil {
 		cachedNames = make(map[uint32]string, len(pendingNamesByOffset))
 		state.names[stringsID] = cachedNames
@@ -450,7 +412,7 @@ func elfSymbolTableSections(f *elf.File, source elfSymbolTable) (*elf.Section, *
 	return section, stringsSection, nil
 }
 
-func (state *elfSymbolParseState) checkSymbolLimits(f *elf.File, section, stringsSection *elf.Section, allSymbols bool) (uint64, uint64, uint64, error) {
+func (state *elfSymbolParseState) checkSymbolLimits(f *elf.File, section *elf.Section) (uint64, uint64, uint64, error) {
 	var symbolSize uint64
 	switch f.Class {
 	case elf.ELFCLASS32:
@@ -471,26 +433,18 @@ func (state *elfSymbolParseState) checkSymbolLimits(f *elf.File, section, string
 	if _, loaded := state.metadataSections[sectionID]; loaded {
 		symbolsAlreadyCounted = true
 	}
-	if !symbolsAlreadyCounted && (state.symbolCount > state.limits.MaxSymbolCount || symbolCount > state.limits.MaxSymbolCount-state.symbolCount) {
-		remainingSymbols := state.limits.MaxSymbolCount - min(state.symbolCount, state.limits.MaxSymbolCount)
+	if !symbolsAlreadyCounted && (state.symbolCount > state.limits.MaxSymbolAndCacheCount || symbolCount > state.limits.MaxSymbolAndCacheCount-state.symbolCount) {
+		remainingSymbols := state.limits.MaxSymbolAndCacheCount - min(state.symbolCount, state.limits.MaxSymbolAndCacheCount)
 		return 0, 0, 0, fmt.Errorf("%w: %d symbols exceed the remaining limit of %d", errELFSymbolLimit, symbolCount, remainingSymbols)
 	}
 
 	var metadataBytes uint64
-	metadataSections := []*elf.Section{section}
-	// Compressed strings are charged per uncached read, not reserved here.
-	if allSymbols && !isCompressedELFSection(stringsSection) {
-		metadataSections = append(metadataSections, stringsSection)
-	}
-	for _, candidate := range metadataSections {
-		if _, loaded := state.metadataSections[sectionKey(candidate)]; loaded {
-			continue
-		}
-		remainingMetadata := state.limits.MaxMetadataBytes - state.metadataBytes - metadataBytes
-		if candidate.Size > remainingMetadata {
+	if !symbolsAlreadyCounted {
+		remainingMetadata := state.limits.MaxMetadataBytes - state.metadataBytes
+		if section.Size > remainingMetadata {
 			return 0, 0, 0, fmt.Errorf("%w: metadata exceeds the remaining %d-byte limit", errELFSymbolLimit, remainingMetadata)
 		}
-		metadataBytes += candidate.Size
+		metadataBytes = section.Size
 	}
 
 	if symbolsAlreadyCounted {
