@@ -14,6 +14,7 @@ License: APLv2
 Source0: https://github.com/ccfos/huatuo/archive/tags/tags/v%{version}.tar.gz
 Source1: huatuo-bamai.service
 Source2: grafana-example.zip
+Source3: huatuo-apiserver.service
 
 # Support multiple architectures
 ExclusiveArch: x86_64 aarch64
@@ -112,6 +113,9 @@ mkdir -p %{buildroot}/etc/systemd/system
 # Install default service file
 install -m 644 %{SOURCE1} %{buildroot}/etc/systemd/system/huatuo-bamai.service
 
+# Install the API server service file
+install -m 644 %{SOURCE3} %{buildroot}/etc/systemd/system/huatuo-apiserver.service
+
 # Create template service file for multiple regions
 sed 's/--region example/--region %i/g' %{SOURCE1} > %{buildroot}/etc/systemd/system/huatuo-bamai@.service
 
@@ -138,6 +142,7 @@ rm -rf %{buildroot}
 /usr/local/bin/huatuo-bamai
 /etc/systemd/system/huatuo-bamai.service
 /etc/systemd/system/huatuo-bamai@.service
+/etc/systemd/system/huatuo-apiserver.service
 /etc/huatuo-bamai/huatuo-bamai.conf
 %dir /var/log/huatuo-bamai
 %dir /var/lib/huatuo-bamai
@@ -145,16 +150,19 @@ rm -rf %{buildroot}
 
 %post
 %systemd_post huatuo-bamai.service
+%systemd_post huatuo-apiserver.service
 # Enable default service but don't start it automatically
 systemctl enable huatuo-bamai.service >/dev/null 2>&1 || :
 echo "Service installed. Usage examples:"
 echo "  Single instance: systemctl start huatuo-bamai"
 echo "  Multiple regions: systemctl start huatuo-bamai@region1"
+echo "  API server: systemctl enable --now huatuo-apiserver"
 echo "  Configure region in: /etc/huatuo-bamai/huatuo-bamai.conf"
 echo "Architecture: %{_target_cpu}"
 
 %preun
 %systemd_preun huatuo-bamai.service
+%systemd_preun huatuo-apiserver.service
 if [ $1 -eq 0 ]; then
     # Stop any running template instances
     systemctl stop 'huatuo-bamai@*.service' >/dev/null 2>&1 || :
@@ -164,8 +172,10 @@ fi
 if [ $1 -eq 0 ]; then
     # Complete removal - stop and disable services
     systemctl stop huatuo-bamai.service >/dev/null 2>&1 || :
+    systemctl stop huatuo-apiserver.service >/dev/null 2>&1 || :
     systemctl stop 'huatuo-bamai@*.service' >/dev/null 2>&1 || :
     systemctl disable huatuo-bamai.service >/dev/null 2>&1 || :
+    systemctl disable huatuo-apiserver.service >/dev/null 2>&1 || :
     systemctl daemon-reload >/dev/null 2>&1 || :
 else
     # Upgrade - restart service if it was running
