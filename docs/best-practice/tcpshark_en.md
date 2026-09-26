@@ -321,6 +321,8 @@ When building alerts, aggregate by service or connection and compare against tra
 
 With `--with-dropwatch`, one tcpshark process owns both perf inputs. A retransmission waits up to 100 ms for a delayed dropwatch delivery. A candidate drop must precede the retransmission by no more than one second in kernel monotonic time. The embedded source never emits raw drop documents; separately enabled standalone dropwatch remains an independent raw-event stream.
 
+For the limitations around out-of-order reads across the two perf streams, the 100 ms arrival window, the one-second causal window, and negative evidence, see [Challenges of TCP Retransmission and dropwatch Correlation](/docs/development/tcp_retransmit_dropwatch_correlation_en.md).
+
 Like standalone dropwatch, the embedded source automatically detects and enables devlink DROP trap capture (`HardwareAuto`). No additional hardware flag is needed. If the tracepoint is unavailable, it logs a warning and continues software capture. Visibility depends on driver reporting; see the [dropwatch hardware requirements](/docs/best-practice/dropwatch_en.md).
 
 `--device`, `--device-excluded`, `--filter`, and `--max-events-per-second` use the same names as dropwatch. The interface allowlist or denylist limits only embedded dropwatch, covering both software and hardware events. The allowlist rejects records without device information; the denylist permits them. Retransmissions still use the shared L3 filter, so device filtering can reduce available drop evidence.
