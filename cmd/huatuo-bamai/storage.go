@@ -107,6 +107,13 @@ func initStorage(
 			MaxRotatedFiles: cfg.Storage.LocalFile.MaxRotatedFiles,
 		}
 	}
+	if cfg.Storage.Kafka.Enabled() {
+		tracingConfig.Kafka = &tracingstore.KafkaConfig{
+			Brokers:  strutil.SplitCommaList(cfg.Storage.Kafka.Brokers),
+			Topic:    cfg.Storage.Kafka.Topic,
+			ClientID: cfg.Storage.Kafka.ClientID,
+		}
+	}
 	initializedTracingStore, err := tracingstore.NewFromConfig(
 		context.Background(),
 		tracingConfig,

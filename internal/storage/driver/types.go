@@ -58,6 +58,10 @@ type Config struct {
 	ESUsername  string
 	ESPassword  string
 	ESIndex     string
+
+	KafkaBrokers  []string
+	KafkaTopic    string
+	KafkaClientID string
 }
 
 // Op is a storage query operator.
