@@ -16,6 +16,7 @@ package storage
 
 import (
 	// Register all built-in storage backends.
+	_ "github.com/ccfos/huatuo/internal/storage/clickhouse"
 	_ "github.com/ccfos/huatuo/internal/storage/elasticsearch"
 	_ "github.com/ccfos/huatuo/internal/storage/localfile"
 	_ "github.com/ccfos/huatuo/internal/storage/sqlite"
