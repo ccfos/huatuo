@@ -33,10 +33,11 @@ const (
 
 // Config contains the Elasticsearch settings used by profiling storage.
 type Config struct {
-	Addresses []string
-	Username  string
-	Password  string
-	Index     string
+	Addresses        []string
+	Username         string
+	Password         string
+	Index            string
+	ILMRetentionDays int
 }
 
 // Filter selects profiling aggregation windows.
@@ -60,13 +61,14 @@ type Store struct {
 }
 
 // NewFromConfig creates profiling storage backed by Elasticsearch.
-func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
+func NewFromConfig(ctx context.Context, config *Config) (*Store, error) {
 	profileStore, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
-		Driver:      "elasticsearch",
-		ESAddresses: config.Addresses,
-		ESUsername:  config.Username,
-		ESPassword:  config.Password,
-		ESIndex:     config.Index,
+		Driver:             "elasticsearch",
+		ESAddresses:        config.Addresses,
+		ESUsername:         config.Username,
+		ESPassword:         config.Password,
+		ESIndex:            config.Index,
+		ESILMRetentionDays: config.ILMRetentionDays,
 	}, Collection, mapper{})
 	if err != nil {
 		return nil, err
