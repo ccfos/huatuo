@@ -36,7 +36,7 @@ func TestToolEventsPersistSeparateObservationTimes(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if err := tracing.EnableDocumentWriter(store, document.New("test")); err != nil {
+	if err := tracing.EnableDocumentWriter(store, document.New("test", "")); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(tracing.DisableDocumentWriter)

@@ -31,7 +31,7 @@ func TestEnableDocumentWriterRequiresDependencies(t *testing.T) {
 	}{
 		{
 			name:      "missing store",
-			documents: document.New(""),
+			documents: document.New("", ""),
 			want:      "store is required",
 		},
 		{
@@ -58,7 +58,7 @@ func TestDisableDocumentWriter(t *testing.T) {
 	DisableDocumentWriter()
 	t.Cleanup(DisableDocumentWriter)
 
-	if err := EnableDocumentWriter(newTracingStore(t), document.New("")); err != nil {
+	if err := EnableDocumentWriter(newTracingStore(t), document.New("", "")); err != nil {
 		t.Fatalf("EnableDocumentWriter() error = %v", err)
 	}
 	if configuredWriter.Load() == nil {
