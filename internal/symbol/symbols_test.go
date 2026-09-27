@@ -820,6 +820,14 @@ func TestMatchXfsMount(t *testing.T) {
 			xfsMounts: []string{"/var/lib", "/"},
 			want:      "/var/lib",
 		},
+		{
+			// /proc/mounts lists the root mount first, and it prefixes every
+			// path, so the deepest match has to win.
+			name:      "deepest-mount-wins-over-earlier-root-mount",
+			path:      "/data/bin/app",
+			xfsMounts: []string{"/", "/data"},
+			want:      "/data",
+		},
 		{name: "root-mount-matches", path: "/usr/lib/libc.so", xfsMounts: []string{"/"}, want: "/"},
 		{name: "no-match", path: "/usr/lib/libc.so", xfsMounts: []string{"/var/lib"}, wantErr: true},
 	}
