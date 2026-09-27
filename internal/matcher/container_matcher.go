@@ -15,6 +15,8 @@
 package matcher
 
 import (
+	"fmt"
+
 	"github.com/ccfos/huatuo/internal/pod"
 )
 
@@ -44,8 +46,20 @@ func NewContainerMatcher(include, exclude []FieldSpec[*pod.Container]) (*Contain
 
 // NewContainerMatcherFromRules is a convenience wrapper that converts Rule slices
 // (each Rule carrying a Field name and a Pattern) into a ContainerMatcher.
+// Returns an error when a rule references a field without an extractor, so a
+// misspelled field fails at startup instead of silently inverting the filter
+// scope (an unknown include field never matches; an unknown exclude field with
+// a match-all pattern excludes everything).
 func NewContainerMatcherFromRules(include, exclude []*Rule) (*ContainerMatcher, error) {
-	return NewContainerMatcher(rulesAsContainerSpecs(include), rulesAsContainerSpecs(exclude))
+	includeSpecs, err := rulesAsContainerSpecs(include)
+	if err != nil {
+		return nil, fmt.Errorf("build include rules: %w", err)
+	}
+	excludeSpecs, err := rulesAsContainerSpecs(exclude)
+	if err != nil {
+		return nil, fmt.Errorf("build exclude rules: %w", err)
+	}
+	return NewContainerMatcher(includeSpecs, excludeSpecs)
 }
 
 // Match reports whether c passes the filter: present in the include set
@@ -59,30 +73,37 @@ func (cm *ContainerMatcher) Match(c *pod.Container) bool {
 }
 
 // rulesAsContainerSpecs converts rules with non-empty Field and Pattern into FieldSpecs.
-func rulesAsContainerSpecs(rules []*Rule) []FieldSpec[*pod.Container] {
+// It rejects a non-empty field without an extractor: the extractor for an unknown
+// field would always yield an empty string, so the pattern would compile and run
+// against "" instead of the intended container field.
+func rulesAsContainerSpecs(rules []*Rule) ([]FieldSpec[*pod.Container], error) {
 	specs := make([]FieldSpec[*pod.Container], 0, len(rules))
 	for _, r := range rules {
 		if r == nil || r.Field == "" || r.Pattern == "" {
 			continue
 		}
+		extract, ok := containerFieldExtractor(r.Field)
+		if !ok {
+			return nil, fmt.Errorf("unknown container matcher field %q", r.Field)
+		}
 		specs = append(specs, FieldSpec[*pod.Container]{
 			Name:    r.Field,
 			Pattern: r.Pattern,
-			Extract: containerFieldExtractor(r.Field),
+			Extract: extract,
 		})
 	}
-	return specs
+	return specs, nil
 }
 
-func containerFieldExtractor(field string) func(*pod.Container) string {
+func containerFieldExtractor(field string) (func(*pod.Container) string, bool) {
 	switch field {
 	case FieldTypeContainerHostNamespace:
-		return func(c *pod.Container) string { return c.LabelHostNamespace() }
+		return func(c *pod.Container) string { return c.LabelHostNamespace() }, true
 	case FieldTypeContainerHostname:
-		return func(c *pod.Container) string { return c.Hostname }
+		return func(c *pod.Container) string { return c.Hostname }, true
 	case FieldTypeContainerQos:
-		return func(c *pod.Container) string { return c.Qos.String() }
+		return func(c *pod.Container) string { return c.Qos.String() }, true
 	default:
-		return func(*pod.Container) string { return "" }
+		return nil, false
 	}
 }
