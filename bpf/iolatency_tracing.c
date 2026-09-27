@@ -182,26 +182,41 @@ blkdisk_latency_account(struct bio *bio, int q2c_index, int d2c_index)
 	struct disk_entry *disk_entry;
 
 	disk_entry = bpf_map_lookup_elem(&blkdisk_map, &disk);
-	if (disk_entry) {
-		__sync_fetch_and_add(&disk_entry->q2c_zone[q2c_index], 1);
-		__sync_fetch_and_add(&disk_entry->d2c_zone[d2c_index], 1);
-		return;
+	if (!disk_entry) {
+		/* gendisk.major, gendisk.first_minor */
+		u32 disk_dev[2];
+
+		bio_major_minor_numbers(bio, disk_dev);
+
+		struct disk_entry new_entry = {
+			.disk	  = (u64)disk,
+			.major	  = disk_dev[0],
+			.minor	  = disk_dev[1],
+			.q2c_zone = {},
+			.d2c_zone = {},
+		};
+
+		/*
+		 * Only create the entry, never replace it: this path runs on every
+		 * CPU that misses the lookup, and a replace would copy zeros over
+		 * the counters another CPU has already added to. Losing those
+		 * samples is permanent, the zones are exported as counters.
+		 */
+		bpf_map_update_elem(&blkdisk_map, &disk, &new_entry,
+				    COMPAT_BPF_NOEXIST);
+
+		/*
+		 * Re-read so this bio is accounted for as well: the update can
+		 * fail because another CPU created the entry first, and the
+		 * sample that triggered the create must not be dropped either way.
+		 */
+		disk_entry = bpf_map_lookup_elem(&blkdisk_map, &disk);
+		if (!disk_entry)
+			return;
 	}
 
-	/* gendisk.major, gendisk.first_minor */
-	u32 disk_dev[2];
-
-	bio_major_minor_numbers(bio, disk_dev);
-
-	struct disk_entry new_entry = {
-		.disk	  = (u64)disk,
-		.major	  = disk_dev[0],
-		.minor	  = disk_dev[1],
-		.q2c_zone = {},
-		.d2c_zone = {},
-	};
-
-	bpf_map_update_elem(&blkdisk_map, &disk, &new_entry, COMPAT_BPF_ANY);
+	__sync_fetch_and_add(&disk_entry->q2c_zone[q2c_index], 1);
+	__sync_fetch_and_add(&disk_entry->d2c_zone[d2c_index], 1);
 }
 
 SEC("kprobe/__rq_qos_done_bio")
