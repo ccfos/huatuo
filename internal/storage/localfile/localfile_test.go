@@ -16,6 +16,7 @@ package localfile
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -51,6 +52,58 @@ func TestBackendSave(t *testing.T) {
 	want := "{\n\t\"tracer_name\": \"kernel_sched_tick\"\n}\n"
 	if string(data) != want {
 		t.Errorf("saved content = %q, want %q", string(data), want)
+	}
+}
+
+// TestBackendSaveSeparatesRecords covers the record boundary contract: the
+// producers encode documents with json.Marshal, which emits no trailing
+// newline, so the backend has to terminate every record or consecutive
+// documents fuse into one unparseable stream.
+func TestBackendSaveSeparatesRecords(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+
+	ids := []string{"first", "second"}
+	for _, id := range ids {
+		data, err := json.Marshal(map[string]string{
+			"tracer_name": "kernel_sched_tick",
+			"tracer_id":   id,
+		})
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+
+		err = backend.Save(t.Context(), driver.Record{
+			ID:     id,
+			Data:   data,
+			Fields: map[string]any{"tracer_name": "kernel_sched_tick"},
+		}, driver.SaveOptions{})
+		if err != nil {
+			t.Fatalf("Backend.Save(%s) returned error: %v", id, err)
+		}
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "kernel_sched_tick"))
+	if err != nil {
+		t.Fatalf("os.ReadFile() returned error: %v", err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	for i, id := range ids {
+		document := map[string]string{}
+		if err := decoder.Decode(&document); err != nil {
+			t.Fatalf("record %d is not decodable: %v, content %q", i, err, content)
+		}
+		if document["tracer_id"] != id {
+			t.Errorf("record %d tracer_id = %q, want %q", i, document["tracer_id"], id)
+		}
+
+		// The next byte after a record must be the separator; without it the
+		// following document starts at the closing brace of this one and
+		// line-oriented consumers cannot split the file.
+		if offset := decoder.InputOffset(); offset < int64(len(content)) && content[offset] != '\n' {
+			t.Fatalf("record %d is not newline-separated: %q", i, content)
+		}
 	}
 }
 
@@ -93,17 +146,19 @@ func TestBackendSaveMkdirAllError(t *testing.T) {
 }
 
 // TestBackendSaveInvalidJSONFallback verifies that when JSON formatting
-// fails, Save falls back to writing raw data and logs a warning.
+// fails, Save falls back to writing raw data, terminated like any other
+// record, and logs a warning.
 func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 	dir := t.TempDir()
 	backend := NewBackend(dir, 1024, 3)
 
 	const tracerName = "badjson_test"
-	want := []byte("not valid json {")
+	raw := []byte("not valid json {")
+	want := []byte("not valid json {\n")
 
 	err := backend.Save(t.Context(), driver.Record{
 		ID:   "trace-badjson",
-		Data: want,
+		Data: raw,
 		Fields: map[string]any{
 			"tracer_name": tracerName,
 		},

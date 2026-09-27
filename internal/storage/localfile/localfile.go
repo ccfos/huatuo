@@ -86,7 +86,7 @@ func (b *Storage) Save(
 	if err != nil {
 		return err
 	}
-	_, err = w.Write(data)
+	_, err = w.Write(terminateRecord(data))
 	return err
 }
 
@@ -170,4 +170,20 @@ func formatDocumentJSON(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// terminateRecord appends the newline that separates records. Producers encode
+// with json.Marshal, which emits no trailing newline and json.Indent never adds
+// one, so without it consecutive documents fuse into one stream whose record
+// boundaries line-oriented consumers cannot recover. The raw fallback used for
+// unformattable data may already carry the newline.
+func terminateRecord(data []byte) []byte {
+	if len(data) == 0 || data[len(data)-1] == '\n' {
+		return data
+	}
+
+	terminated := make([]byte, len(data)+1)
+	copy(terminated, data)
+	terminated[len(data)] = '\n'
+	return terminated
 }
