@@ -23,7 +23,6 @@ import (
 	"context"
 	"debug/elf"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -40,6 +39,8 @@ const (
 	LanguageGo      Language = "go"
 	LanguagePython  Language = "python"
 )
+
+const maxDependencyStringTableBytes = 8 << 20
 
 var pythonExecutablePattern = regexp.MustCompile(`^python(\d+(\.\d+)?)?$`)
 
@@ -59,7 +60,7 @@ func detectLanguage(exePath, mapsPath string) (Language, error) {
 		return LanguageUnknown, fmt.Errorf("open executable: %w", err)
 	}
 	defer exeFile.Close()
-	executable, err := ReadELFMetadata(context.Background(), exeFile)
+	executable, err := elf.NewFile(exeFile)
 	if err != nil {
 		return LanguageUnknown, fmt.Errorf("inspect executable ELF: %w", err)
 	}
@@ -115,28 +116,6 @@ func languageFromExecutable(executable string) Language {
 	}
 }
 
-// These adapters provide cooperative cancellation around synchronous process
-// reads. A context cannot interrupt a Read or ReadAt syscall that has already
-// entered the kernel, so cancellation is checked both before and after every
-// call. The in-flight syscall may block without a time bound; after it returns,
-// no later read is started. This is intentionally not a hard per-syscall
-// deadline, which the io.Reader interfaces cannot provide.
-type contextReaderAt struct {
-	ctx    context.Context
-	reader io.ReaderAt
-}
-
-func (r contextReaderAt) ReadAt(p []byte, offset int64) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	n, err := r.reader.ReadAt(p, offset)
-	if ctxErr := r.ctx.Err(); ctxErr != nil {
-		return n, ctxErr
-	}
-	return n, err
-}
-
 func procPath(pid int, name string) string {
 	return fmt.Sprintf("/proc/%d/%s", pid, name)
 }
@@ -152,7 +131,7 @@ func elfLinksPython(file *elf.File) (bool, error) {
 		return false, fmt.Errorf("ELF dynamic table exceeds detection budget or has invalid link")
 	}
 	table := file.Sections[dynamic.Link]
-	if strings.HasPrefix(table.Name, ".zdebug") || table.Type != elf.SHT_STRTAB || table.Flags&elf.SHF_COMPRESSED != 0 || table.Size > maxDetectionELFBytes {
+	if strings.HasPrefix(table.Name, ".zdebug") || table.Type != elf.SHT_STRTAB || table.Flags&elf.SHF_COMPRESSED != 0 || table.Size > maxDependencyStringTableBytes {
 		return false, fmt.Errorf("ELF dependency string table is invalid or exceeds detection budget")
 	}
 	data, err := dynamic.Data()

@@ -1398,6 +1398,20 @@ LocalFile 文件名为 `memory_threshold_snapshot`；在 `tracing_documents` 中
 `started_timestamp` 记录采集尝试的开始时间，
 `observed_timestamp` 记录采集器给出的快照采集时间。
 
+Go 使用完整栈作为聚合键：Go 1.18–1.22 最多 32 帧，Go 1.23–1.26 最多 1024 帧；统一输出限制可将展示栈缩短到 64 帧，并设置 `output_truncated`。bucket 类型无效、栈或记录地址范围溢出、栈深度超过读取上限或 bucket 链表成环时，扫描以 `partial` 结束，重复 bucket 不会再次累计。
+
+扫描遇到导致 `partial` 的问题后停止遍历后续 bucket，保留此前及当前批次中已读取且聚合预算允许的有效样本，再计算 TopK。`reason` 只记录首次原因，收尾时不追加其他原因。
+
+任何 bucket 头、记录或栈读取失败（包括短读）都会使本次 Go 采集失败，丢弃所有运行时条目，包括此前批次的数据。采集器输出 `failed` 和读取错误，不逐区间重试。
+
+栈深度为 0 的样本不生成调用栈条目，也不会因空栈被标记为 `partial`。
+
+Go 快照要求采样率已知、采样已启用且 bucket 链表非空。采样率未知、采样已禁用或 bucket 链表为空时返回 `unavailable`，附带 `reason`，不返回条目。
+
+Go 采集在运行时读取、扫描、排序和条目生成阶段共用一个请求超时预算。
+超时后丢弃运行时条目，由采集器输出 `failed` 和超时原因，仍尝试读取进程内存摘要。
+取消采用协作方式，正在执行的系统调用或不支持取消的解析步骤可能在截止时间之后才结束。
+
 查看 `tracer_data.snapshot.status`（`complete`、`partial`、
 `unavailable`、`failed`），结合 `reason`、`runtime_version`、
 `duration_ms` 和 `output_truncated` 判断结果。

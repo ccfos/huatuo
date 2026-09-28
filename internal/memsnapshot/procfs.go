@@ -63,28 +63,6 @@ func ValidateProcessInstance(identity ProcessInstance) error {
 	return nil
 }
 
-// ParseProcStatStartTime handles spaces and parentheses in comm by parsing
-// fields only after the final ')' delimiter. starttime is proc field 22.
-func ParseProcStatStartTime(stat []byte) (uint64, error) {
-	closing := strings.LastIndexByte(string(stat), ')')
-	if closing < 0 || closing+1 >= len(stat) {
-		return 0, errors.New("process stat has no comm terminator")
-	}
-	fields := strings.Fields(string(stat[closing+1:]))
-	// The first suffix field is field 3 (state), so starttime is index 19.
-	if len(fields) <= 19 {
-		return 0, fmt.Errorf("process stat has %d suffix fields, need at least 20", len(fields))
-	}
-	starttime, err := strconv.ParseUint(fields[19], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse process starttime %q: %w", fields[19], err)
-	}
-	if starttime == 0 {
-		return 0, errors.New("process starttime must be greater than zero")
-	}
-	return starttime, nil
-}
-
 // ProcMap is the subset of one /proc/<pid>/maps entry used by runtime readers.
 type ProcMap struct {
 	DevMajor uint32

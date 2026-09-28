@@ -15,68 +15,52 @@
 package golang
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-func TestSnapshotResult(t *testing.T) {
-	readErr := fmt.Errorf("read profile: %w", os.ErrPermission)
-	for _, test := range []struct {
-		name       string
-		input      *snapshot
-		readErr    error
-		wantStatus memsnapshot.Status
-	}{
-		{
-			name: "complete", input: &snapshot{RateKnown: true, SampleRate: 1},
-			wantStatus: memsnapshot.StatusComplete,
-		},
-		{
-			name: "partial", input: &snapshot{RateKnown: true, SampleRate: 1, PartialReason: "read budget reached"},
-			wantStatus: memsnapshot.StatusPartial,
-		},
-		{
-			name: "unsupported runtime", readErr: fmt.Errorf("discover: %w", errUnsupportedRuntime),
-			wantStatus: memsnapshot.StatusUnavailable,
-		},
-		{
-			name: "missing profile symbols", readErr: errMBucketsSymbolNotFound,
-			wantStatus: memsnapshot.StatusUnavailable,
-		},
-		{name: "read failure", readErr: readErr},
-		{name: "reader returned no snapshot"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			result, err := snapshotResult(test.input, test.readErr)
-			if test.wantStatus == "" {
-				if result != nil || err == nil {
-					t.Fatalf("capture = %+v, %v, want no snapshot and an error", result, err)
-				}
-				if test.readErr != nil && !errors.Is(err, os.ErrPermission) {
-					t.Fatalf("capture error lost read cause: %v", err)
-				}
-				return
-			}
-			if err != nil || result == nil || result.Status != test.wantStatus {
-				t.Fatalf("capture = %+v, %v, want status %s", result, err, test.wantStatus)
-			}
-			if test.wantStatus != memsnapshot.StatusComplete && result.Reason == "" {
-				t.Fatal("degraded capture has no reason")
-			}
-		})
+func TestSnapshotReadFailure(t *testing.T) {
+	p := New()
+	result, err := p.Snapshot(t.Context(), memsnapshot.Request{
+		Process: memsnapshot.ProcessInstance{TGID: int(^uint32(0) >> 1), StartTimeTicks: 1}, TopK: 10,
+	})
+	if result != nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot = %+v, %v, want no snapshot and missing process", result, err)
 	}
 }
 
-func TestSnapshotReadFailure(t *testing.T) {
-	p := &Provider{reader: newReader(t.TempDir())}
-	result, err := p.Snapshot(t.Context(), memsnapshot.Request{
-		Process: memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 1}, TopK: 10,
-	})
-	if result != nil || !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("capture = %+v, %v, want no snapshot and missing process", result, err)
+func TestSnapshotCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	result, err := New().Snapshot(ctx, memsnapshot.Request{TopK: 1})
+	if result != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled snapshot = %+v, %v", result, err)
+	}
+}
+
+func TestSnapshotIdentityChanged(t *testing.T) {
+	identity, err := memsnapshot.ReadProcessInstance(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity.StartTimeTicks++
+	result, err := New().Snapshot(t.Context(), memsnapshot.Request{Process: identity, TopK: 1})
+	if result != nil || err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("identity mismatch: %+v %v", result, err)
+	}
+}
+
+func TestSnapshotDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(t.Context(), time.Unix(1, 0))
+	defer cancel()
+	result, err := New().Snapshot(ctx, memsnapshot.Request{TopK: 1})
+	if result != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired snapshot = %+v, %v", result, err)
 	}
 }

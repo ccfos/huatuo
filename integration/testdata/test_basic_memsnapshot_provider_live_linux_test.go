@@ -35,11 +35,15 @@ import (
 
 func TestSnapshotLiveGoProcess(t *testing.T) {
 	for _, mode := range []string{"exe", "pie"} {
-		t.Run(mode, func(t *testing.T) { snapshotLiveGoProcess(t, mode) })
+		for _, sampleRate := range []int{0, 1} {
+			t.Run(mode+"/rate="+strconv.Itoa(sampleRate), func(t *testing.T) {
+				snapshotLiveGoProcess(t, mode, sampleRate)
+			})
+		}
 	}
 }
 
-func snapshotLiveGoProcess(t *testing.T, mode string) {
+func snapshotLiveGoProcess(t *testing.T, mode string, sampleRate int) {
 	t.Helper()
 	directory := t.TempDir()
 	source := filepath.Join(directory, "heap.go")
@@ -48,13 +52,17 @@ package main
 
 import (
     "fmt"
+    "os"
     "runtime"
+    "strconv"
     "time"
 )
 
 func main() {
-    // Sample every allocation so this small fixture reliably has heap entries.
-    runtime.MemProfileRate = 1
+    rate, err := strconv.Atoi(os.Args[1])
+    if err != nil { panic(err) }
+    // Rate 1 makes the enabled case deterministic; rate 0 disables profiling.
+    runtime.MemProfileRate = rate
     payloads := make([][]byte, 8)
     for i := range payloads {
         payloads[i] = make([]byte, 128<<10)
@@ -79,7 +87,7 @@ func main() {
 
 	fixtureCtx, stopFixture := context.WithTimeout(t.Context(), time.Minute)
 	defer stopFixture()
-	command := exec.CommandContext(fixtureCtx, executable)
+	command := exec.CommandContext(fixtureCtx, executable, strconv.Itoa(sampleRate))
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -113,13 +121,40 @@ func main() {
 		t.Fatalf("live Go collector result = %+v", result)
 	}
 	snapshot := result.Snapshot
-	if snapshot.Status != memsnapshot.StatusComplete && snapshot.Status != memsnapshot.StatusPartial {
-		t.Fatalf("live Go snapshot status = %q, reason = %q",
-			snapshot.Status, snapshot.Reason)
+	if snapshot.RuntimeVersion == "" {
+		t.Fatalf("live Go snapshot has no runtime version: %+v", snapshot)
 	}
-	if snapshot.RuntimeVersion == "" || len(snapshot.Entries) == 0 {
-		t.Fatalf("live Go snapshot has no runtime data: %+v", snapshot)
+	if sampleRate == 0 {
+		if snapshot.Status != memsnapshot.StatusUnavailable ||
+			snapshot.Reason != "Go heap profiling is disabled by MemProfileRate=0" ||
+			len(snapshot.Entries) != 0 || snapshot.HasOmittedData {
+			t.Fatalf("disabled Go profiling snapshot = %+v", snapshot)
+		}
+	} else {
+		if snapshot.Status != memsnapshot.StatusComplete && snapshot.Status != memsnapshot.StatusPartial {
+			t.Fatalf("live Go snapshot status = %q, reason = %q",
+				snapshot.Status, snapshot.Reason)
+		}
+		if len(snapshot.Entries) == 0 {
+			t.Fatalf("live Go snapshot has no runtime data: %+v", snapshot)
+		}
 	}
+
+	t.Run("snapshot timeout", func(t *testing.T) {
+		result, err := collector.Snapshot(t.Context(), identity, collector.Options{
+			TopK: 10, SnapshotTimeout: time.Nanosecond,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Snapshot.Status != memsnapshot.StatusFailed || len(result.Snapshot.Entries) != 0 ||
+			!strings.Contains(result.Snapshot.Reason, context.DeadlineExceeded.Error()) {
+			t.Fatalf("timed-out Go snapshot = %+v", result.Snapshot)
+		}
+		if result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
+			t.Fatalf("timed-out Go snapshot lost process memory: %+v", result)
+		}
+	})
 
 	t.Run("exit before detection", func(t *testing.T) {
 		// Selection can succeed before the process exits and removes its procfs files.
@@ -392,6 +427,7 @@ time.sleep(60)
 	if snapshot.RuntimeVersion == "" || len(snapshot.Entries) == 0 {
 		t.Fatalf("live CPython snapshot has no runtime data: %+v", snapshot)
 	}
+
 	// Exercise the provider boundary directly so collector trimming cannot hide
 	// a provider that ignores TopK.
 	bounded, err := python.New().Snapshot(snapshotCtx, memsnapshot.Request{

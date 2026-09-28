@@ -16,22 +16,14 @@ package golang
 
 import (
 	"cmp"
-	"container/heap"
-	"encoding/binary"
+	"context"
 	"math"
 	"slices"
-
-	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-const (
-	memRecordBytes = 4 * 4 * 8
-	// Bound stable stack keys retained by the global aggregate map. Map and
-	// allocation metadata add overhead beyond this byte budget.
-	maxAggregateKeyBytes = 32 << 20
-)
-
-type minHeap []allocation
+// Bound stable stack keys retained by the global aggregate map. Map and
+// allocation metadata add overhead beyond this byte budget.
+const maxAggregateKeyBytes = 32 << 20
 
 type allocation struct {
 	key          string
@@ -46,99 +38,67 @@ type allocationTotals struct {
 	inuseObjects int64
 }
 
-func decodeInUse(raw []byte, order binary.ByteOrder) (uint64, uint64) {
-	var allocs, frees, allocBytes, freeBytes uint64
-	for base := 0; base < memRecordBytes; base += 32 {
-		allocs = memsnapshot.SaturatingAdd(allocs, order.Uint64(raw[base:base+8]))
-		frees = memsnapshot.SaturatingAdd(frees, order.Uint64(raw[base+8:base+16]))
-		allocBytes = memsnapshot.SaturatingAdd(allocBytes, order.Uint64(raw[base+16:base+24]))
-		freeBytes = memsnapshot.SaturatingAdd(freeBytes, order.Uint64(raw[base+24:base+32]))
-	}
-	return posDelta(allocs, frees),
-		posDelta(allocBytes, freeBytes)
+// stackAggregates owns stable stack keys and their accumulated sample weights.
+type stackAggregates struct {
+	indices  map[string]int
+	totals   []allocationTotals
+	keyBytes int
 }
 
-func posDelta(left, right uint64) uint64 {
-	if right > left {
-		return 0
-	}
-	return left - right
+func newStackAggr() *stackAggregates {
+	return &stackAggregates{indices: make(map[string]int)}
 }
 
-func stackPCPrefix(stack []byte, order binary.ByteOrder) []byte {
-	for offset := 0; offset < len(stack); offset += 8 {
-		if order.Uint64(stack[offset:offset+8]) == 0 {
-			return stack[:offset]
-		}
-	}
-	return stack
-}
-
-func aggregateAllocation(aggregates map[string]int, totals *[]allocationTotals,
-	stack []byte, objects, bytes int64, aggregateKeyBytes *int, maxKeyBytes int,
-) bool {
-	// The []byte-to-string conversion used only for map lookup does not allocate.
-	// Copy the stack once only when a new aggregate needs a stable key.
-	index, exists := aggregates[string(stack)]
+// addSample corrects each sample before merging stacks, because samples sharing
+// a stack can have different average allocation sizes. It returns false only
+// when retaining a new stack key would exceed the budget.
+func (a *stackAggregates) addSample(stack []byte, objects, bytes uint64, sampleRate int64) bool {
+	index, exists := a.indices[string(stack)]
 	if !exists {
-		if len(stack) > maxKeyBytes-*aggregateKeyBytes {
+		if len(stack) > maxAggregateKeyBytes-a.keyBytes {
 			return false
 		}
+		// Retained keys must outlive the reusable batch buffer.
 		key := string(stack)
-		index = len(*totals)
-		aggregates[key] = index
-		*totals = append(*totals, allocationTotals{})
-		*aggregateKeyBytes += len(key)
+		index = len(a.totals)
+		a.indices[key] = index
+		a.totals = append(a.totals, allocationTotals{})
+		a.keyBytes += len(key)
 	}
-	aggregate := &(*totals)[index]
-	aggregate.inuseObjects = saturatedInt64Add(aggregate.inuseObjects, objects)
-	aggregate.inuseBytes = saturatedInt64Add(aggregate.inuseBytes, bytes)
+
+	scaledObjects, scaledBytes := scaleHeapSample(int64(objects), int64(bytes), sampleRate)
+	total := &a.totals[index]
+	total.inuseObjects += scaledObjects
+	total.inuseBytes += scaledBytes
 	return true
 }
 
-func (h minHeap) Len() int { return len(h) }
-
-func (h minHeap) Less(i, j int) bool {
-	if h[i].inuseBytes == h[j].inuseBytes {
-		return h[i].key > h[j].key
-	}
-	return h[i].inuseBytes < h[j].inuseBytes
-}
-
-func (h minHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
-
-func (h *minHeap) Push(value any) { *h = append(*h, value.(allocation)) }
-
-func (h *minHeap) Pop() any {
-	old := *h
-	last := old[len(old)-1]
-	*h = old[:len(old)-1]
-	return last
-}
-
-func keepTop(candidates *minHeap, limit int,
-	candidate allocation,
-) {
-	if candidates.Len() < limit {
-		heap.Push(candidates, candidate)
-		return
-	}
-	worst := (*candidates)[0]
-	if candidate.inuseBytes < worst.inuseBytes ||
-		(candidate.inuseBytes == worst.inuseBytes && candidate.key >= worst.key) {
-		return
-	}
-	(*candidates)[0] = candidate
-	heap.Fix(candidates, 0)
-}
-
-func sortCandidates(candidates minHeap) {
-	slices.SortFunc(candidates, func(left, right allocation) int {
-		if byBytes := cmp.Compare(right.inuseBytes, left.inuseBytes); byBytes != 0 {
-			return byBytes
+// sortedAllocations returns all aggregates by descending byte count without
+// changing the aggregate state. Equal byte counts have no defined order.
+func (a *stackAggregates) sortedAllocations(ctx context.Context) ([]allocation, error) {
+	allocations := make([]allocation, 0, len(a.indices))
+	for key, index := range a.indices {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		return cmp.Compare(left.key, right.key)
+
+		total := a.totals[index]
+		allocations = append(allocations, allocation{
+			key: key, inuseBytes: total.inuseBytes, inuseObjects: total.inuseObjects,
+		})
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	slices.SortFunc(allocations, func(left, right allocation) int {
+		return cmp.Compare(right.inuseBytes, left.inuseBytes)
 	})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	return allocations, nil
 }
 
 // scaleHeapSample follows runtime/pprof's Poisson sampling correction.
@@ -151,34 +111,15 @@ func scaleHeapSample(count, size, rate int64) (int64, int64) {
 	}
 	averageSize := float64(size) / float64(count)
 	scale := 1 / (1 - math.Exp(-averageSize/float64(rate)))
-	return clampScaleToInt64(float64(count) * scale),
-		clampScaleToInt64(float64(size) * scale)
-}
 
-// clampScaleToInt64 saturates the scaled sample to int64. A victim configured
-// with an extreme runtime.MemProfileRate could otherwise overflow the float64
-// -> int64 conversion, which is implementation-defined and yields a negative
-// in-use value downstream.
-func clampScaleToInt64(value float64) int64 {
-	if value >= math.MaxInt64 {
-		return math.MaxInt64
+	// Clamp positive estimates before conversion: values >= 2^63, including
+	// +Inf, have implementation-dependent int64 results.
+	objects, bytes := int64(math.MaxInt64), int64(math.MaxInt64)
+	if scaled := float64(count) * scale; scaled < math.MaxInt64 {
+		objects = int64(scaled)
 	}
-	if value <= 0 {
-		return 0
+	if scaled := float64(size) * scale; scaled < math.MaxInt64 {
+		bytes = int64(scaled)
 	}
-	return int64(value)
-}
-
-func clampUint64(value uint64) int64 {
-	if value > math.MaxInt64 {
-		return math.MaxInt64
-	}
-	return int64(value)
-}
-
-func saturatedInt64Add(left, right int64) int64 {
-	if right > 0 && left > math.MaxInt64-right {
-		return math.MaxInt64
-	}
-	return left + right
+	return objects, bytes
 }

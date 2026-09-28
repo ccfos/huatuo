@@ -1420,6 +1420,22 @@ Query `tracing_documents` with `tracer_name = memory_threshold_snapshot` and
 `started_timestamp` records when the capture attempt starts;
 `observed_timestamp` records the collector's snapshot capture time.
 
+Go aggregates complete stack keys up to 32 frames for Go 1.18–1.22 and 1024 frames for Go 1.23–1.26; the shared output limit may shorten displayed stacks to 64 frames and sets `output_truncated`. An invalid bucket type, an overflowing stack or record address range, an excessive stack depth, or a cyclic bucket chain stops the scan with `partial`; repeated buckets are never counted twice.
+
+Once a scan becomes partial, it stops traversing further buckets and computes TopK from the valid samples retained from earlier batches and the current batch, within the aggregation budget. The `reason` records only the first cause; finishing the current batch does not append further causes.
+
+Any bucket header, record, or stack read failure, including a short read, fails the entire Go collection attempt and discards all runtime entries, including those from earlier batches. The collector reports `failed` with the read error; individual ranges are not retried.
+
+Samples with a stack depth of zero produce no allocation-site entry; an empty stack alone does not make the scan `partial`.
+
+Go snapshots require a known, enabled sampling rate and a nonempty bucket list. An unknown or disabled rate, or an empty bucket list, yields `unavailable` with a `reason` and no entries.
+
+Go collection uses a single request timeout across runtime reads, scanning,
+ranking, and entry construction. When it expires, runtime entries are discarded
+and the collector emits `failed` with a timeout reason; it still attempts to
+read the process memory summary. Cancellation is cooperative, so an in-flight
+system call or non-cancelable parsing step can finish after the deadline.
+
 Inspect `tracer_data.snapshot.status` (`complete`, `partial`,
 `unavailable`, or `failed`) together with `reason`, `runtime_version`,
 `duration_ms`, and `output_truncated`.

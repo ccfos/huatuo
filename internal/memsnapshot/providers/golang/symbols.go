@@ -19,49 +19,26 @@ import (
 	"debug/gosym"
 	"encoding/binary"
 	"fmt"
-	"os"
 
 	"github.com/ccfos/huatuo/internal/symbol"
-
-	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-// symbolizer resolves Go PCs from pclntab and remains usable after the
-// profiled process exits.
+// symbolizer only queries copied metadata; it remains usable after the target exits.
 type symbolizer struct {
 	table    *gosym.Table
 	loadBias uint64
 }
 
-// newSymbolizer loads Go symbol metadata from an executable. loadBias is
-// subtracted from runtime PCs for PIE binaries.
-func newSymbolizer(ctx context.Context, executable string, loadBias uint64,
-	table *gosym.Table,
-) (*symbolizer, error) {
-	if err := ctx.Err(); err != nil {
+func (r *processReader) buildSymbolizer(ctx context.Context) (*symbolizer, error) {
+	table, err := symbol.ReadGoTable(ctx, r.elfFile)
+	if err != nil {
 		return nil, err
 	}
-	if table != nil {
-		return &symbolizer{table: table, loadBias: loadBias}, nil
-	}
-	executableFile, err := os.Open(executable)
-	if err != nil {
-		return nil, fmt.Errorf("open executable %q: %w", executable, err)
-	}
-	defer executableFile.Close()
-	file, err := memsnapshot.ReadELFMetadata(ctx, executableFile)
-	if err != nil {
-		return nil, fmt.Errorf("read executable ELF %q: %w", executable, err)
-	}
-	defer file.Close()
 
-	table, err = symbol.ReadGoTable(ctx, file)
-	if err != nil {
-		return nil, fmt.Errorf("parse Go symbol table from %q: %w", executable, err)
-	}
-	return &symbolizer{table: table, loadBias: loadBias}, nil
+	return &symbolizer{table: table, loadBias: r.runtime.loadBias}, nil
 }
 
+// resolve resolves one runtime PC to a Go function name.
 func (s *symbolizer) resolve(runtimePC uint64) string {
 	if s == nil || s.table == nil || runtimePC <= s.loadBias {
 		return ""
@@ -75,16 +52,12 @@ func (s *symbolizer) resolve(runtimePC uint64) string {
 	return function.Name
 }
 
-func resolveStack(stack []byte, order binary.ByteOrder,
-	symbolizer *symbolizer,
-) []string {
+// A nil symbolizer preserves raw PCs so collected allocations remain available.
+func (s *symbolizer) resolveStack(stack []byte, order binary.ByteOrder) []string {
 	resolved := make([]string, 0, len(stack)/8)
 	for offset := 0; offset < len(stack); offset += 8 {
 		pc := order.Uint64(stack[offset : offset+8])
-		if pc == 0 {
-			break
-		}
-		name := symbolizer.resolve(pc)
+		name := s.resolve(pc)
 		if name == "" {
 			name = fmt.Sprintf("0x%x", pc)
 		}
