@@ -44,7 +44,7 @@ func TestContainerViewConcurrentCommitDrainAndClose(t *testing.T) {
 	}
 	for i := 0; i < 100; i++ {
 		record := containerRecordForTest(fmt.Sprintf("%064x", i))
-		store.commit(map[string]*containerRecord{record.ref.Key.ID: record}, nil)
+		store.commit(containerSnapshot{records: map[string]*containerRecord{record.ref.Key.ID: record}, isComplete: true}, nil)
 	}
 	wg.Wait()
 	if len(store.subscribers) != 0 {

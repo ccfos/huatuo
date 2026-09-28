@@ -52,7 +52,7 @@ func TestValidateContainerRefKernelAndRuntimeBindings(t *testing.T) {
 				t.Fatal(err)
 			}
 			records := map[string]*containerRecord{id: record}
-			containerView.commit(records, nil)
+			containerView.commit(containerSnapshot{records: records, isComplete: true}, nil)
 			ref := record.ref
 			info, err := MemoryCgroupDirectory(ref)
 			if err != nil || !os.SameFile(info, record.directory) {
@@ -73,15 +73,15 @@ func TestValidateContainerRefKernelAndRuntimeBindings(t *testing.T) {
 				} else {
 					updated.startTime++
 				}
-				containerView.commit(map[string]*containerRecord{id: &updated}, nil)
+				containerView.commit(containerSnapshot{records: map[string]*containerRecord{id: &updated}, isComplete: true}, nil)
 				if change != "generation" {
 					// Use the new reference to exercise live binding validation.
 					ref = updated.ref
 				}
 			case "deleted":
-				containerView.commit(nil, nil)
+				containerView.commit(containerSnapshot{isComplete: true}, nil)
 			case "unavailable":
-				containerView.commit(records, ErrContainersUnavailable)
+				containerView.commit(containerSnapshot{records: records}, ErrContainersUnavailable)
 			}
 			err = ValidateContainerRef(ref)
 			if (err == nil) != (change == "unchanged") {

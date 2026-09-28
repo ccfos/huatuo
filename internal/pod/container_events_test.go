@@ -51,12 +51,12 @@ func subscribeForTest(t testing.TB, store *containerStore) *ContainerSubscriptio
 func TestContainerSubscriptionFullAndIncrementalUpdates(t *testing.T) {
 	store := newTestContainerStore()
 	first := containerRecordForTest("first")
-	store.commit(map[string]*containerRecord{"first": first}, nil)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{"first": first}, isComplete: true}, nil)
 	sub := subscribeForTest(t, store)
 	// This change is covered by the initial full update, not also delivered as a delta.
 	second := containerRecordForTest("second")
 	records := map[string]*containerRecord{"first": first, "second": second}
-	store.commit(records, nil)
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
 	initial, err := sub.DrainEvents()
 	if err != nil || initial.Mode != ContainerUpdateFull || len(initial.Events) != 2 {
 		t.Fatalf("initial=%+v, %v", initial, err)
@@ -72,7 +72,7 @@ func TestContainerSubscriptionFullAndIncrementalUpdates(t *testing.T) {
 	revision := initial.Revision
 	borrowed := slices.Clone(initial.Events)
 	delete(records, "first")
-	store.commit(records, nil)
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
 	if !slices.Equal(initial.Events, borrowed) {
 		t.Fatal("producer mutated borrowed view")
 	}
@@ -81,12 +81,12 @@ func TestContainerSubscriptionFullAndIncrementalUpdates(t *testing.T) {
 		t.Fatalf("increment=%+v, %v", next, err)
 	}
 
-	store.commit(nil, errors.New("kubelet query failed"))
+	store.commit(containerSnapshot{}, errors.New("kubelet query failed"))
 	if _, err := sub.DrainEvents(); !errors.Is(err, ErrContainersUnavailable) {
 		t.Fatal(err)
 	}
 
-	store.commit(records, nil)
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
 	recovered, err := sub.DrainEvents()
 	if err != nil || recovered.Mode != ContainerUpdateFull || !slices.Equal(recovered.Events, []ContainerEvent{{Container: second.ref}}) {
 		t.Fatalf("recovered=%+v, %v", recovered, err)
@@ -99,16 +99,16 @@ func TestContainerSubscriptionFullAndIncrementalUpdates(t *testing.T) {
 func TestContainerSubscriptionOverflowRepairsLostDelete(t *testing.T) {
 	store := newTestContainerStore()
 	first := containerRecordForTest("first")
-	store.commit(map[string]*containerRecord{"first": first}, nil)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{"first": first}, isComplete: true}, nil)
 	slow, fast := subscribeForTest(t, store), subscribeForTest(t, store)
 	_, _ = slow.DrainEvents()
 	_, _ = fast.DrainEvents()
 	records := make(map[string]*containerRecord)
-	store.commit(records, nil)
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
 	for i := 0; i < containerEventQueueSize+1; i++ {
 		id := fmt.Sprint(i)
 		records[id] = containerRecordForTest(id)
-		store.commit(records, nil)
+		store.commit(containerSnapshot{records: records, isComplete: true}, nil)
 		update, err := fast.DrainEvents()
 		if err != nil || update.Mode != ContainerUpdateIncremental {
 			t.Fatal("slow consumer forced a full update on the fast consumer")
@@ -136,13 +136,13 @@ func TestContainerSubscriptionUnavailableIsNotEmpty(t *testing.T) {
 		t.Fatal("uninitialized view became an empty full update")
 	}
 	first := containerRecordForTest("first")
-	store.commit(map[string]*containerRecord{"first": first}, nil)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{"first": first}, isComplete: true}, nil)
 	_, _ = sub.DrainEvents()
-	store.commit(nil, errors.New("kubelet query failed"))
+	store.commit(containerSnapshot{}, errors.New("kubelet query failed"))
 	if update, err := sub.DrainEvents(); !errors.Is(err, ErrContainersUnavailable) || update.Mode != ContainerUpdateUnknown || len(store.records) != 1 {
 		t.Fatal("failed sync deleted containers")
 	}
-	store.commit(nil, nil)
+	store.commit(containerSnapshot{isComplete: true}, nil)
 	update, err := sub.DrainEvents()
 	if err != nil || update.Mode != ContainerUpdateFull || len(update.Events) != 0 {
 		t.Fatal("complete empty view did not produce a full update")
@@ -152,12 +152,12 @@ func TestContainerSubscriptionUnavailableIsNotEmpty(t *testing.T) {
 func TestContainerSubscriptionInstanceGeneration(t *testing.T) {
 	store := newTestContainerStore()
 	first := containerRecordForTest("first")
-	store.commit(map[string]*containerRecord{"first": first}, nil)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{"first": first}, isComplete: true}, nil)
 	sub := subscribeForTest(t, store)
 	_, _ = sub.DrainEvents()
 	metadata := containerRecordForTest("first")
 	metadata.container.Name = "new label"
-	store.commit(map[string]*containerRecord{"first": metadata}, nil)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{"first": metadata}, isComplete: true}, nil)
 	if metadata.ref.Key != first.ref.Key {
 		t.Fatal("metadata update changed generation")
 	}
@@ -166,7 +166,7 @@ func TestContainerSubscriptionInstanceGeneration(t *testing.T) {
 	}
 	replacement := containerRecordForTest("first")
 	replacement.startTime++
-	store.commit(map[string]*containerRecord{"first": replacement}, nil)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{"first": replacement}, isComplete: true}, nil)
 	update, err := sub.DrainEvents()
 	if err != nil || len(update.Events) != 2 || update.Events[0].Kind != ContainerDeleted || update.Events[1].Kind != ContainerCreated || replacement.ref.Key.Generation <= first.ref.Key.Generation {
 		t.Fatalf("replacement=%+v, %v", update, err)
@@ -180,7 +180,7 @@ func TestContainerSubscriptionBatchAndClose(t *testing.T) {
 		id := fmt.Sprint(i)
 		records[id] = containerRecordForTest(id)
 	}
-	store.commit(records, nil)
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
 	sub := subscribeForTest(t, store)
 	full, err := sub.DrainEvents()
 	if err != nil || full.Mode != ContainerUpdateFull || len(full.Events) != len(records) || cap(full.Events) != len(full.Events) {
@@ -188,7 +188,7 @@ func TestContainerSubscriptionBatchAndClose(t *testing.T) {
 	}
 
 	// A large full update must not raise the incremental batch limit.
-	store.commit(nil, nil)
+	store.commit(containerSnapshot{isComplete: true}, nil)
 	update, err := sub.DrainEvents()
 	if err != nil || update.Mode != ContainerUpdateIncremental || len(update.Events) != containerEventBatchSize || cap(update.Events) != len(update.Events) {
 		t.Fatal("unbounded batch")
@@ -235,8 +235,8 @@ func TestContainerQueriesPreserveHostCollectorCompatibility(t *testing.T) {
 	containerView = newTestContainerStore()
 	t.Cleanup(func() { containerView = previous })
 	record := containerRecordForTest("cached")
-	containerView.commit(map[string]*containerRecord{"cached": record}, nil)
-	containerView.commit(nil, errors.New("kubelet temporarily unavailable"))
+	containerView.commit(containerSnapshot{records: map[string]*containerRecord{"cached": record}, isComplete: true}, nil)
+	containerView.commit(containerSnapshot{}, errors.New("kubelet temporarily unavailable"))
 	cached, err := NormalContainers()
 	if err != nil || cached["cached"] != record.container {
 		t.Fatal("query lost last committed metadata")
@@ -271,7 +271,7 @@ func TestMemoryCgroupDirectoryPreservesPublishedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	record.directory = published
-	store.commit(map[string]*containerRecord{record.ref.Key.ID: record}, nil)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{record.ref.Key.ID: record}, isComplete: true}, nil)
 	if err := os.Rename(path, filepath.Join(directory, "old")); err != nil {
 		t.Fatal(err)
 	}
