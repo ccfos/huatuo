@@ -101,8 +101,6 @@ func LegacyHTTPStatusForErrorCode(code v1.ErrorCode) (int, bool) {
 		return http.StatusNotFound, true
 	case v1.ErrorCodeConflict:
 		return http.StatusConflict, true
-	case v1.ErrorCodeRateLimited:
-		return http.StatusTooManyRequests, true
 	case v1.ErrorCodeProfilingDisabled:
 		return http.StatusServiceUnavailable, true
 	default:
