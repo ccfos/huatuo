@@ -162,7 +162,10 @@ func collectedHeap(memory processMemory, metadata *vmMeta) (uint64, error) {
 		return 0, errors.New("HotSpot Universe heap pointer is unavailable")
 	}
 	heap, err := memory.uint64(heapField.address)
-	if err != nil || heap == 0 {
+	if err != nil {
+		return 0, fmt.Errorf("read HotSpot collected heap pointer: %w", err)
+	}
+	if heap == 0 {
 		return 0, errors.New("HotSpot collected heap pointer is invalid")
 	}
 	return heap, nil
@@ -207,12 +210,26 @@ func readRegionsFromHeap(memory processMemory, metadata *vmMeta,
 	}
 	baseField := metadata.structs["G1HeapRegionTable::_base"]
 	lengthField := metadata.structs["G1HeapRegionTable::_length"]
-	base, err := memory.uint64(table + baseField.offset)
-	if err != nil || base == 0 || base&7 != 0 {
+	baseAddress, valid := checkedAdd(table, baseField.offset)
+	if !valid {
+		return nil, unsupportedHotSpot("region table base address overflows")
+	}
+	base, err := memory.uint64(baseAddress)
+	if err != nil {
+		return nil, fmt.Errorf("read HotSpot region table base: %w", err)
+	}
+	if base == 0 || base&7 != 0 {
 		return nil, unsupportedHotSpot("region table base is invalid")
 	}
-	length, err := memory.uint64(table + lengthField.offset)
-	if err != nil || length == 0 || length > maxG1Regions {
+	lengthAddress, valid := checkedAdd(table, lengthField.offset)
+	if !valid {
+		return nil, unsupportedHotSpot("region table length address overflows")
+	}
+	length, err := memory.uint64(lengthAddress)
+	if err != nil {
+		return nil, fmt.Errorf("read HotSpot region table length: %w", err)
+	}
+	if length == 0 || length > maxG1Regions {
 		return nil, unsupportedHotSpot("region table length is invalid")
 	}
 	regionType := "G1HeapRegion"

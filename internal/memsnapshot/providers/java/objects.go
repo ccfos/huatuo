@@ -17,6 +17,7 @@ package java
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 )
 
 const maxJavaObjectBytes = 1 << 40
@@ -96,7 +97,10 @@ func humongousObjectSize(memory processMemory, objectAddress uint64,
 			return 0, errors.New("HotSpot class mirror size address overflows")
 		}
 		words, err := memory.uint32(address)
-		if err != nil || words == 0 {
+		if err != nil {
+			return 0, fmt.Errorf("read HotSpot class mirror size: %w", err)
+		}
+		if words == 0 {
 			return 0, errors.New("HotSpot class mirror size is unavailable")
 		}
 		return uint64(words) * uint64(metadata.constants["HeapWordSize"]), nil
@@ -114,7 +118,7 @@ func humongousObjectSize(memory processMemory, objectAddress uint64,
 	}
 	length, err := memory.uint32(address)
 	if err != nil {
-		return 0, errors.New("HotSpot array length is unavailable")
+		return 0, fmt.Errorf("read HotSpot array length: %w", err)
 	}
 	headerShift := uint(metadata.constants["Klass::_lh_header_size_shift"])
 	headerMask := uint32(metadata.constants["Klass::_lh_header_size_mask"])
@@ -174,7 +178,10 @@ func pointerEncoding(memory processMemory, metadata *vmMeta) (ptrEncoding, error
 		return ptrEncoding{}, err
 	}
 	shift, err := memory.uint32(shiftField.address)
-	if err != nil || shift > 16 {
+	if err != nil {
+		return ptrEncoding{}, fmt.Errorf("read HotSpot compressed Klass shift: %w", err)
+	}
+	if shift > 16 {
 		return ptrEncoding{}, unsupportedHotSpot(
 			"compressed Klass shift is invalid",
 		)
@@ -194,7 +201,10 @@ func mirrorSizeOffset(memory processMemory,
 		return 0, nil
 	}
 	value, err := memory.uint32(field.address)
-	if err != nil || value > 4096 {
+	if err != nil {
+		return 0, fmt.Errorf("read HotSpot class mirror size offset: %w", err)
+	}
+	if value > 4096 {
 		return 0, unsupportedHotSpot("class mirror size offset is invalid")
 	}
 	return int(value), nil

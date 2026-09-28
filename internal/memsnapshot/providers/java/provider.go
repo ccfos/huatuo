@@ -24,7 +24,7 @@ import (
 
 const procRoot = "/proc"
 
-// Provider captures a HotSpot heap snapshot through the external reader.
+// Provider reads a HotSpot heap snapshot through the external reader.
 type Provider struct{}
 
 // New builds the production Java snapshot provider.

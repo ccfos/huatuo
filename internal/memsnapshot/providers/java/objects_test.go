@@ -15,8 +15,15 @@
 package java
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
+	"os"
 	"testing"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestObjectSizeSlowAllocation(t *testing.T) {
@@ -76,5 +83,35 @@ func TestJavaArrayDecoding(t *testing.T) {
 	}
 	if _, err := objectSize(raw[:12], &klass{layoutHelper: int32(layout)}, metadata, 0, 12); err == nil {
 		t.Fatal("truncated array header accepted")
+	}
+}
+
+func TestObjectMetadataReadErrors(t *testing.T) {
+	data := mapTestMemory(t, 1)
+	base := uint64(uintptr(unsafe.Pointer(&data[0])))
+	memory := processMemory{pid: os.Getpid(), ctx: t.Context()}
+	metadata := &vmMeta{compressedKlass: true, structs: map[string]vmStruct{
+		"CompressedKlassPointers::_base":    {isStatic: true, address: base},
+		"CompressedKlassPointers::_shift":   {isStatic: true, address: 1},
+		"java_lang_Class::_oop_size_offset": {isStatic: true, address: 1},
+	}}
+	if _, err := pointerEncoding(memory, metadata); !errors.Is(err, unix.EFAULT) {
+		t.Fatalf("shift read lost cause: %v", err)
+	}
+	if _, err := mirrorSizeOffset(memory, metadata); !errors.Is(err, unix.EFAULT) {
+		t.Fatalf("mirror read lost cause: %v", err)
+	}
+	binary.LittleEndian.PutUint32(data, 4097)
+	metadata.structs["CompressedKlassPointers::_shift"] = vmStruct{isStatic: true, address: base}
+	metadata.structs["java_lang_Class::_oop_size_offset"] = vmStruct{isStatic: true, address: base}
+	if _, err := pointerEncoding(memory, metadata); !errors.Is(err, errHotSpotUnavailable) {
+		t.Fatalf("invalid shift = %v", err)
+	}
+	if _, err := mirrorSizeOffset(memory, metadata); !errors.Is(err, errHotSpotUnavailable) {
+		t.Fatalf("invalid mirror offset = %v", err)
+	}
+	memory.deadline, memory.hasDeadline = time.Unix(1, 0), true
+	if _, err := mirrorSizeOffset(memory, metadata); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("mirror deadline lost: %v", err)
 	}
 }

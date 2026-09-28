@@ -45,6 +45,6 @@ func TestSnapshotReadFailure(t *testing.T) {
 		Process: memsnapshot.ProcessInstance{TGID: missingPID, StartTimeTicks: 1}, TopK: 10,
 	})
 	if result != nil || !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("capture = %+v, %v, want no snapshot and missing process", result, err)
+		t.Fatalf("snapshot = %+v, %v, want no snapshot and missing process", result, err)
 	}
 }

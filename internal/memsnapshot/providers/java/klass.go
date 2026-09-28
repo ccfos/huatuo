@@ -53,7 +53,10 @@ func readKlass(memory processMemory, metadata *vmMeta,
 		return nil, err
 	}
 	namePointer, err := memory.uint64(nameAddress)
-	if err != nil || namePointer == 0 {
+	if err != nil {
+		return nil, fmt.Errorf("read HotSpot Klass name pointer: %w", err)
+	}
+	if namePointer == 0 {
 		return nil, errors.New("HotSpot Klass name is unavailable")
 	}
 	name, err := readSymbol(memory, metadata, namePointer)
@@ -189,7 +192,11 @@ func readSymbol(memory processMemory, metadata *vmMeta,
 	if !lengthOK || !bodyOK {
 		return "", errors.New("HotSpot Symbol layout is unavailable")
 	}
-	lengthRaw, err := memory.read(address+lengthField.offset, 2)
+	lengthAddress, valid := checkedAdd(address, lengthField.offset)
+	if !valid {
+		return "", errors.New("HotSpot Symbol length address overflows")
+	}
+	lengthRaw, err := memory.read(lengthAddress, 2)
 	if err != nil {
 		return "", err
 	}
@@ -197,7 +204,11 @@ func readSymbol(memory processMemory, metadata *vmMeta,
 	if length == 0 || length > maxHotSpotStringBytes {
 		return "", errors.New("HotSpot Symbol length is invalid")
 	}
-	raw, err := memory.read(address+bodyField.offset, int(length))
+	bodyAddress, valid := checkedAdd(address, bodyField.offset)
+	if !valid {
+		return "", errors.New("HotSpot Symbol body address overflows")
+	}
+	raw, err := memory.read(bodyAddress, int(length))
 	if err != nil {
 		return "", err
 	}
