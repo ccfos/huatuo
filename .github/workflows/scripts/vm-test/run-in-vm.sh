@@ -69,8 +69,8 @@ configure_proxy() {
 
 install_test_dependencies() {
 	local os_id os_like package_manager package
-	local -a deb_packages=(curl gdb)
-	local -a rpm_packages=(curl gdb)
+	local -a deb_packages=(curl gdb e2fsprogs)
+	local -a rpm_packages=(curl gdb e2fsprogs)
 	local -a missing_packages=()
 
 	# Add temporary dependencies here until the VM image includes them.
