@@ -26,13 +26,6 @@ struct block_device___7_0 {
 } __attribute__((preserve_access_index));
 
 /*
- * iotracing: iov_iter::data_source was renamed to ::iter_type on 7.0+.
- */
-struct iov_iter___7_0 {
-	u8 iter_type;
-} __attribute__((preserve_access_index));
-
-/*
  * iolatency_tracing: bio::bi_issue (struct bio_issue with packed
  * timestamp) was replaced by a plain bio::issue_time_ns on 7.0+.
  */
