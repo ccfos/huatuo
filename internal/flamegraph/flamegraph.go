@@ -56,9 +56,24 @@ type ProfileTree struct {
 	Nodes []*ProfileTree
 }
 
+
+// nameAt returns names[idx] when idx is in range, otherwise an empty name.
+// Stored flamebearer indices can be corrupt after a truncated write.
+func nameAt(names []string, idx int64) string {
+	if idx < 0 || idx >= int64(len(names)) {
+		return ""
+	}
+	return names[idx]
+}
+
 // LevelsToTree converts flamebearer format into a tree. This is needed to then convert it into nested set format
 func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 	if len(levels) == 0 {
+		return nil
+	}
+
+	// Guard truncated root level: each item spans ItemOffest slots.
+	if len(levels[0].Values) < ItemOffest {
 		return nil
 	}
 
@@ -67,7 +82,7 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 		Value: levels[0].Values[ValueOffest],
 		Self:  levels[0].Values[SelfOffest],
 		Level: 0,
-		Name:  names[levels[0].Values[NameOffest]],
+		Name:  nameAt(names, levels[0].Values[NameOffest]),
 	}
 
 	parentsStack := []*ProfileTree{tree}
@@ -93,7 +108,8 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 
 		// Cycle through bar in a level
 		for {
-			if itemIndex >= len(levels[currentLevel].Values) {
+			// Stop on a trailing partial item instead of reading past the end.
+			if itemIndex+ItemOffest > len(levels[currentLevel].Values) {
 				break
 			}
 
@@ -110,7 +126,7 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 					Value: itemValue,
 					Self:  selfValue,
 					Level: currentLevel,
-					Name:  names[levels[currentLevel].Values[itemIndex+NameOffest]],
+					Name:  nameAt(names, levels[currentLevel].Values[itemIndex+NameOffest]),
 				}
 				// Add to parent
 				currentParent.Nodes = append(currentParent.Nodes, treeItem)

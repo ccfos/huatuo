@@ -175,3 +175,51 @@ func TestEnumField(t *testing.T) {
 		t.Errorf("field.Len() = %d, want 3", f.Len())
 	}
 }
+
+func TestLevelsToTreeShortRootLevel(t *testing.T) {
+	// Root level with fewer than ItemOffest values must not panic.
+	tree := LevelsToTree([]*Level{{Values: []int64{0, 100}}}, []string{"root"})
+	if tree != nil {
+		t.Errorf("LevelsToTree(short root) = %v, want nil", tree)
+	}
+}
+
+func TestLevelsToTreeTruncatedTrailingItem(t *testing.T) {
+	// Second child has only 2 of 4 slots; skip it without panicking.
+	levels := []*Level{
+		{Values: []int64{0, 100, 0, 0}},
+		{Values: []int64{0, 60, 10, 1, 0, 40}},
+	}
+	names := []string{"root", "child"}
+	tree := LevelsToTree(levels, names)
+	if tree == nil {
+		t.Fatal("LevelsToTree() = nil, want non-nil")
+	}
+	if len(tree.Nodes) != 1 {
+		t.Fatalf("len(tree.Nodes) = %d, want 1", len(tree.Nodes))
+	}
+	if tree.Nodes[0].Name != "child" {
+		t.Errorf("child.Name = %q, want %q", tree.Nodes[0].Name, "child")
+	}
+}
+
+func TestLevelsToTreeNameIndexOutOfRange(t *testing.T) {
+	// Stored name index 99 is outside names; use empty name instead of panicking.
+	tree := LevelsToTree([]*Level{{Values: []int64{0, 100, 0, 99}}}, []string{"root"})
+	if tree == nil {
+		t.Fatal("LevelsToTree() = nil, want non-nil")
+	}
+	if tree.Name != "" {
+		t.Errorf("root.Name = %q, want empty", tree.Name)
+	}
+}
+
+func TestLevelsToTreeNegativeNameIndex(t *testing.T) {
+	tree := LevelsToTree([]*Level{{Values: []int64{0, 100, 0, -1}}}, []string{"root"})
+	if tree == nil {
+		t.Fatal("LevelsToTree() = nil, want non-nil")
+	}
+	if tree.Name != "" {
+		t.Errorf("root.Name = %q, want empty", tree.Name)
+	}
+}
