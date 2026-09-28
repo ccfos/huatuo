@@ -86,7 +86,7 @@ ExcludedContainerQos = ["bestEffort"]
 [EventTracing.TCPRetransmit]
 Filter = "dst port 443"
 EnableTLP = true
-EnableDropwatchCorrelation = true
+EnableDropwatch = true
 MaxEventsPerSecond = 42
 
 [AutoTracing.MemoryThresholdSnapshot]
@@ -173,8 +173,8 @@ ExcludedOnContainer = "writeback"
 	if !Get().EventTracing.TCPRetransmit.EnableTLP {
 		t.Errorf("TCPRetransmit.EnableTLP should be true")
 	}
-	if !Get().EventTracing.TCPRetransmit.EnableDropwatchCorrelation {
-		t.Errorf("TCPRetransmit.EnableDropwatchCorrelation should be true")
+	if !Get().EventTracing.TCPRetransmit.EnableDropwatch {
+		t.Errorf("TCPRetransmit.EnableDropwatch should be true")
 	}
 	if Get().EventTracing.TCPRetransmit.MaxEventsPerSecond != 42 {
 		t.Errorf("unexpected TCPRetransmit.MaxEventsPerSecond: %d", Get().EventTracing.TCPRetransmit.MaxEventsPerSecond)
@@ -428,6 +428,26 @@ func loadConfigDefaults(t *testing.T) *Config {
 		t.Fatalf("Load() error = %v", err)
 	}
 	return Get().Clone()
+}
+
+func TestIRQTracingRateLimitDefault(t *testing.T) {
+	cfg := loadConfigDefaults(t)
+	if got := cfg.AutoTracing.IRQTracing.MaxEventsPerSecond; got != 1000 {
+		t.Fatalf("AutoTracing.IRQTracing.MaxEventsPerSecond = %d, want 1000", got)
+	}
+}
+
+func TestIRQTracingConfigValidatedWhenBlacklisted(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+BlackList = ["irqtracing"]
+
+[AutoTracing.IRQTracing]
+    Interval = -1
+`)
+	err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "sampling interval") {
+		t.Fatalf("Load() error = %v, want invalid irq tracing interval", err)
+	}
 }
 
 func TestConfigCloneDoesNotShareMutableReferences(t *testing.T) {

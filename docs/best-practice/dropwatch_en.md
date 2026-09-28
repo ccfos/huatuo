@@ -198,6 +198,8 @@ This capability collects only packets that the driver reports through `DEVLINK_T
 
 `--filter`, `--device`, `--device-excluded`, and `--max-events-per-second` apply to both software and hardware events. Text output formats a hardware reason as `reason=<group>/<trap> drop_source=hardware`. JSON output uses the separate `drop_reason_group`, `drop_reason`, and `drop_source` fields.
 
+`tcpshark --with-dropwatch` shares source classification and reason resolution and automatically enables available hardware capture. A successful correlation preserves the same `drop_source`, `drop_reason`, and `drop_reason_group` semantics. See [retransmission correlation](/docs/best-practice/tcpshark_en.md).
+
 #### Examples
 
 ```bash
@@ -307,7 +309,7 @@ dropwatch \
 
 [EventTracing.TCPRetransmit]
     # Run tcpshark with a private embedded dropwatch source.
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 ```
 
 Standalone dropwatch always emits raw `DropWatchTracing` events. Local TCP retransmission correlation loads a separate `net_dropwatch.o`, uses `EventTracing.TCPRetransmit.Filter` for both inputs, and emits only finalized `TCPRetransmitTracing` results. The two modes may run together; embedded drops are never stored as duplicate raw events.

@@ -85,7 +85,6 @@ sched_tick_event_is_valid() {
 			and (.tracer_data.pid | type == "number")
 			and (.tracer_data.cpu | type == "number")
 			and (.tracer_data | has("now") | not)
-			and (.tracer_data | has("ktime_ns") | not)
 			and (.tracer_data | has("kernel_observed_ns") | not)
 			and (.tracer_data.stack | type == "string")
 			and (.tracer_data.stack | startswith("stack:\n"))

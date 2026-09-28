@@ -17,13 +17,14 @@ package java
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
 const procRoot = "/proc"
 
-// Provider captures a HotSpot heap snapshot through the external reader.
+// Provider reads a HotSpot heap snapshot through the external reader.
 type Provider struct{}
 
 // New builds the production Java snapshot provider.
@@ -31,22 +32,30 @@ func New() *Provider {
 	return new(Provider)
 }
 
-// Capture scans the victim HotSpot heap and reduces it to type aggregates.
-func (*Provider) Capture(ctx context.Context,
+// Snapshot scans the victim HotSpot heap and reduces it to type aggregates.
+// Unavailable or partial data is a snapshot; fatal read failures and cancellation
+// return an error without a snapshot.
+func (*Provider) Snapshot(ctx context.Context,
 	request memsnapshot.Request,
 ) (*memsnapshot.Snapshot, error) {
-	snapshot, err := capture(ctx, request.Identity, request.TopK,
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	snapshot, err := snapshot(ctx, request.Process, request.TopK,
 		request.SamplingSeed)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+
 	if err != nil {
 		if errors.Is(err, errHotSpotUnavailable) {
 			return memsnapshot.Unavailable(err.Error()), nil
 		}
-		return memsnapshot.Failed(
-			"external HotSpot heap scan failed: " + err.Error(),
-		), nil
+		return nil, fmt.Errorf("external HotSpot heap scan failed: %w", err)
 	}
 	if snapshot == nil {
-		return memsnapshot.Failed("Java external heap reader returned a nil snapshot"), nil
+		return nil, errors.New("Java external heap reader returned a nil snapshot")
 	}
 	return snapshot, nil
 }

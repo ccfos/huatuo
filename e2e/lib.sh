@@ -139,11 +139,19 @@ assert_huatuo_bamai_containers_absent() {
 	local desc=$1
 	shift
 
-	wait_until \
+	if ! wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		huatuo_bamai_containers_absent "$@" \
-		|| fatal "${desc}: stale container metadata remained available"
+		huatuo_bamai_containers_absent "$@"; then
+		local container_id
+		for container_id in "$@"; do
+			log_error "container deletion not confirmed: ${container_id}; current API response follows"
+			curl -sS "${CURL_TIMEOUT[@]}" -w '\nHTTP status: %{http_code}\n' \
+				"${HUATUO_BAMAI_ADDR}/v1/containers/${container_id}" >&2 \
+				|| log_error "container metadata request failed: ${container_id}"
+		done
+		fatal "${desc}: container API did not confirm deletion with HTTP 404"
+	fi
 }
 
 e2e_test_teardown() {

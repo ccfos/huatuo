@@ -117,7 +117,7 @@ hardware_event_ready() {
       .netdev_ifindex > 0 and
       (.packet_skb_addr | startswith("0x")) and
       .packet_eth_proto == "0x800" and
-      .packet_len > 0 and
+      .packet_len_bytes > 0 and
       .layers.label == "IPv4/UDP" and
       .layers.ipv4.saddr == "192.0.2.1" and
       .layers.ipv4.daddr == "198.51.100.1")
@@ -133,5 +133,6 @@ if ! wait "${DROPWATCH_PID}"; then
 fi
 DROPWATCH_PID=""
 
+assert_kernel_observation_timestamps "${TOOL_OUT}"
 assert_log_has_no_failure "${TOOL_ERR}" "dropwatch"
 log_info "dropwatch captured netdevsim hardware trap: ${TRAP_GROUP}/${TRAP_NAME} on ${NETDEV}"

@@ -20,8 +20,6 @@ import (
 	"sort"
 
 	"golang.org/x/sys/unix"
-
-	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
 const (
@@ -30,13 +28,6 @@ const (
 	maxKlassAttempts        = 1024
 	maxBatchKlassCandidates = 4096
 )
-
-type sampleWindow struct {
-	start     uint64
-	regionTop uint64
-	raw       []byte
-	size      uint64
-}
 
 func scanKnownWindow(sample sampleWindow, classes map[uint64]*klass,
 	encoding ptrEncoding,
@@ -148,35 +139,6 @@ func resolveBatchKlasses(memory processMemory, metadata *vmMeta,
 	return len(candidates), memory.check() == nil
 }
 
-func coprimeStride(size int, seed uint64) int {
-	if size <= 1 {
-		return 1
-	}
-	stride := int(seed%uint64(size-1)) + 1
-	for gcd(stride, size) != 1 {
-		stride++
-		if stride >= size {
-			stride = 1
-		}
-	}
-	return stride
-}
-
-func gcd(left, right int) int {
-	for right != 0 {
-		left, right = right, left%right
-	}
-	return left
-}
-
-func mixSampleSeed(value uint64) uint64 {
-	value ^= value >> 30
-	value *= 0xbf58476d1ce4e5b9
-	value ^= value >> 27
-	value *= 0x94d049bb133111eb
-	return value ^ (value >> 31)
-}
-
 // readBatchEnd bounds each fixed-size sample read to the process_vm_readv IOV
 // limit. The production 4 KiB windows stay below maxReadBytes at this limit.
 func readBatchEnd(begin, total int) int {
@@ -187,115 +149,18 @@ func readBatchEnd(begin, total int) int {
 	return end
 }
 
-// planWindows samples the concatenated ordinary used-byte ranges. Systematic
-// byte positions make a short tail window proportional to its real size rather
-// than giving it the same weight as a full window. A full budget still returns
-// every unique window exactly once.
-func planWindows(regions []region, seed, budget,
-	windowBytes uint64,
-) []sampleWindow {
-	if budget == 0 || windowBytes == 0 {
-		return nil
-	}
-	type weightedRegion struct {
-		region  region
-		byteEnd uint64
-	}
-	weighted := make([]weightedRegion, 0, len(regions))
-	var totalUsed, totalSlots uint64
-	for _, region := range regions {
-		if region.bottom == 0 || region.top <= region.bottom {
-			continue
-		}
-		used := region.top - region.bottom
-		slots := used / windowBytes
-		if used%windowBytes != 0 {
-			slots++
-		}
-		totalUsed = memsnapshot.SaturatingAdd(totalUsed, used)
-		totalSlots = memsnapshot.SaturatingAdd(totalSlots, slots)
-		weighted = append(weighted, weightedRegion{
-			region: region, byteEnd: totalUsed,
-		})
-	}
-	if totalUsed == 0 || totalSlots == 0 {
-		return nil
-	}
-	windowAt := func(point uint64) sampleWindow {
-		regionIndex := sort.Search(len(weighted), func(index int) bool {
-			return weighted[index].byteEnd > point
-		})
-		bytesBefore := uint64(0)
-		if regionIndex != 0 {
-			bytesBefore = weighted[regionIndex-1].byteEnd
-		}
-		region := weighted[regionIndex].region
-		offset := (point - bytesBefore) / windowBytes * windowBytes
-		return sampleWindow{
-			start:     region.bottom + offset,
-			regionTop: region.top,
-			size:      min(windowBytes, region.top-region.bottom-offset),
-		}
-	}
-	appendAll := func(result []sampleWindow) []sampleWindow {
-		for _, item := range weighted {
-			used := item.region.top - item.region.bottom
-			for offset := uint64(0); offset < used; offset += windowBytes {
-				start := item.region.bottom + offset
-				result = append(result, sampleWindow{
-					start: start, regionTop: item.region.top,
-					size: min(windowBytes, used-offset),
-				})
-			}
-		}
-		return result
-	}
-	windowCount := totalSlots
-	if budget < totalUsed {
-		windowCount = budget / windowBytes
-		if windowCount == 0 {
-			windowCount = 1
-		}
-		if windowCount > totalSlots {
-			windowCount = totalSlots
-		}
-	}
-	result := make([]sampleWindow, 0, int(windowCount))
-	if budget >= totalUsed {
-		result = appendAll(result)
-	} else {
-		// Partial budgets are window-aligned, so adjacent systematic points
-		// are at least one window apart and cannot select the same slot.
-		base, remainder := totalUsed/windowCount, totalUsed%windowCount
-		random := mixSampleSeed(seed) % totalUsed
-		randomBase, randomRemainder := random/windowCount, random%windowCount
-		for sequence := uint64(0); sequence < windowCount; sequence++ {
-			point := sequence*base + randomBase +
-				(sequence*remainder+randomRemainder)/windowCount
-			result = append(result, windowAt(point))
-		}
-	}
-	if len(result) <= 1 {
-		return result
-	}
-	ordered := make([]sampleWindow, len(result))
-	start := int(mixSampleSeed(seed^0x94d049bb133111eb) % uint64(len(result)))
-	stride := coprimeStride(len(result),
-		mixSampleSeed(seed^0x9e3779b97f4a7c15))
-	for index := range ordered {
-		ordered[index] = result[(start+index*stride)%len(result)]
-	}
-	return ordered
-}
-
 // scanWindows reads one bounded process_vm_readv batch and
 // hands it to the classifier before issuing the next batch. At most one batch
-// of victim heap bytes is retained at a time.
+// of victim heap bytes is retained at a time. The visitor borrows batch and raw
+// slices only until it returns; the next batch reuses their backing memory.
 func scanWindows(memory processMemory, regions []region,
 	seed, budget, windowBytes uint64,
 	visit func([]sampleWindow) bool,
 ) string {
 	windows := planWindows(regions, seed, budget, windowBytes)
+	var buffer []byte
+	local := make([]unix.Iovec, min(maxReadIOVs, len(windows)))
+	remote := make([]unix.RemoteIovec, len(local))
 	skipped := 0
 	var firstReadErr error
 	for begin := 0; begin < len(windows); {
@@ -313,19 +178,16 @@ func scanWindows(memory processMemory, regions []region,
 		for index := range batch {
 			batchBytes += int(batch[index].size)
 		}
-		buffer := make([]byte, batchBytes)
-		local := make([]unix.Iovec, 0, len(batch))
-		remote := make([]unix.RemoteIovec, 0, len(batch))
+		if cap(buffer) < batchBytes {
+			buffer = make([]byte, batchBytes)
+		}
+		buffer = buffer[:batchBytes]
 		offset := 0
 		for index := range batch {
 			length := int(batch[index].size)
 			batch[index].raw = buffer[offset : offset+length]
-			local = append(local, unix.Iovec{
-				Base: &batch[index].raw[0], Len: uint64(length),
-			})
-			remote = append(remote, unix.RemoteIovec{
-				Base: uintptr(batch[index].start), Len: length,
-			})
+			local[index] = unix.Iovec{Base: &batch[index].raw[0], Len: uint64(length)}
+			remote[index] = unix.RemoteIovec{Base: uintptr(batch[index].start), Len: length}
 			offset += length
 		}
 		if err := memory.check(); err != nil {
@@ -334,7 +196,7 @@ func scanWindows(memory processMemory, regions []region,
 				err,
 			)
 		}
-		read, readErr := unix.ProcessVMReadv(memory.pid, local, remote, 0)
+		read, readErr := unix.ProcessVMReadv(memory.pid, local[:len(batch)], remote[:len(batch)], 0)
 		if err := memory.check(); err != nil {
 			return fmt.Sprintf(
 				"used-byte-weighted HotSpot sampling stopped after process_vm_readv: %v",
