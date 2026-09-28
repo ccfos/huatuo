@@ -494,7 +494,12 @@ func pilotObjectCounts(t *testing.T, object BPF) (map[string]int, int) {
 func skipUnsupportedLoad(t *testing.T, err error) {
 	t.Helper()
 
-	if errors.Is(err, ebpf.ErrNotSupported) ||
+	// The runtime tests reuse the load path's own capability verdict, so a
+	// kernel that rejects the tracing program type skips the entry point
+	// instead of failing: a verifier rejection or a cleanup failure never
+	// carries that verdict and stays a test failure.
+	if IsTracingTargetUnsupported(err) ||
+		errors.Is(err, ebpf.ErrNotSupported) ||
 		errors.Is(err, unix.EPERM) ||
 		errors.Is(err, unix.EACCES) {
 		t.Skipf("skipping: %v", err)
