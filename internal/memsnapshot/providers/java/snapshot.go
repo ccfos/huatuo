@@ -140,7 +140,7 @@ func snapshot(ctx context.Context,
 	sortObjects(objects)
 	if len(objects) > maxEntries {
 		objects = objects[:maxEntries]
-		snapshot.OutputTruncated = true
+		snapshot.HasOmittedData = true
 	}
 	snapshot.Entries = memsnapshot.EntriesFromObjects(objects)
 	if err := memsnapshot.ValidateProcessInstance(identity); err != nil {

@@ -38,12 +38,12 @@ type sample struct {
 
 // snapshot contains the copied Go heap-profile metadata.
 type snapshot struct {
-	RuntimeVersion  string
-	SampleRate      int64
-	RateKnown       bool
-	Allocations     []sample
-	PartialReason   string
-	OutputTruncated bool
+	RuntimeVersion string
+	SampleRate     int64
+	RateKnown      bool
+	Allocations    []sample
+	PartialReason  string
+	HasOmittedData bool
 }
 
 // Provider captures a Go runtime heap snapshot through the external reader.
@@ -108,7 +108,7 @@ func resultFromSnapshot(snapshot *snapshot) (*memsnapshot.Snapshot, error) {
 	}
 	result := &memsnapshot.Snapshot{
 		RuntimeVersion: snapshot.RuntimeVersion, Status: status, Reason: reason,
-		OutputTruncated: snapshot.OutputTruncated,
+		HasOmittedData: snapshot.HasOmittedData,
 	}
 	result.Entries = make([]memsnapshot.Entry, 0, len(snapshot.Allocations))
 	for _, allocation := range snapshot.Allocations {

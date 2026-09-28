@@ -46,12 +46,12 @@ func LimitOutput(snapshot *Snapshot, topK int) error {
 	var truncated bool
 	snapshot.RuntimeVersion, truncated = limitString(snapshot.RuntimeVersion,
 		maxRuntimeVersionBytes)
-	snapshot.OutputTruncated = snapshot.OutputTruncated || truncated
+	snapshot.HasOmittedData = snapshot.HasOmittedData || truncated
 	snapshot.Reason, truncated = limitString(snapshot.Reason, maxReasonBytes)
-	snapshot.OutputTruncated = snapshot.OutputTruncated || truncated
+	snapshot.HasOmittedData = snapshot.HasOmittedData || truncated
 	if len(snapshot.Entries) > topK {
 		snapshot.Entries = snapshot.Entries[:topK]
-		snapshot.OutputTruncated = true
+		snapshot.HasOmittedData = true
 	}
 	// Own the retained prefix even when it was already within TopK. Providers
 	// may return a short view backed by a much larger allocation.
@@ -60,15 +60,15 @@ func LimitOutput(snapshot *Snapshot, topK int) error {
 		entry := &snapshot.Entries[index]
 		entry.Kind, truncated = limitString(entry.Kind, maxEntryKindBytes)
 		if truncated {
-			snapshot.OutputTruncated = true
+			snapshot.HasOmittedData = true
 		}
 		entry.Name, truncated = limitString(entry.Name, maxEntryNameBytes)
 		if truncated {
-			snapshot.OutputTruncated = true
+			snapshot.HasOmittedData = true
 		}
 		if len(entry.Stack) > maxStackFrames {
 			entry.Stack = entry.Stack[:maxStackFrames]
-			snapshot.OutputTruncated = true
+			snapshot.HasOmittedData = true
 		}
 		// Detach a retained stack prefix from provider-owned backing storage even
 		// when its length did not require truncation.
@@ -77,7 +77,7 @@ func LimitOutput(snapshot *Snapshot, topK int) error {
 			entry.Stack[frameIndex], truncated = limitString(entry.Stack[frameIndex],
 				maxStackFrameBytes)
 			if truncated {
-				snapshot.OutputTruncated = true
+				snapshot.HasOmittedData = true
 			}
 		}
 	}
@@ -99,7 +99,7 @@ func LimitOutput(snapshot *Snapshot, topK int) error {
 		return nil
 	}
 
-	snapshot.OutputTruncated = true
+	snapshot.HasOmittedData = true
 	baseSize, err = snapshotBaseSize(snapshot)
 	if err != nil {
 		return err

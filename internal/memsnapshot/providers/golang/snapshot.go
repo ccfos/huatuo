@@ -178,7 +178,7 @@ func (r *reader) snapshot(ctx context.Context,
 			"Go victim exited after mbucket scan; stacks are hexadecimal")
 	}
 	if len(aggregates) > maxEntries {
-		snapshot.OutputTruncated = true
+		snapshot.HasOmittedData = true
 	}
 	candidates := make(minHeap, 0, min(maxEntries, len(aggregates)))
 	for key, index := range aggregates {

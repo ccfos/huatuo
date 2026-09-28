@@ -49,12 +49,14 @@ type Entry struct {
 
 // Snapshot is embedded directly into tracer_data.
 type Snapshot struct {
-	RuntimeVersion  string  `json:"runtime_version,omitempty"`
-	Status          Status  `json:"status"`
-	Reason          string  `json:"reason,omitempty"`
-	DurationMS      uint64  `json:"duration_ms"`
-	OutputTruncated bool    `json:"output_truncated,omitempty"`
-	Entries         []Entry `json:"entries,omitempty"`
+	RuntimeVersion string `json:"runtime_version,omitempty"`
+	Status         Status `json:"status"`
+	// Reason describes the limitations or failure associated with Status.
+	Reason     string `json:"reason,omitempty"`
+	DurationMS uint64 `json:"duration_ms"`
+	// HasOmittedData reports content omitted or sanitized by output limits.
+	HasOmittedData bool    `json:"output_truncated,omitempty"`
+	Entries        []Entry `json:"entries,omitempty"`
 }
 
 // ProcessMemory is a language-independent /proc/<pid>/status sample.
