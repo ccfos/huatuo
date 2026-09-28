@@ -62,7 +62,7 @@ func TestProbedInterpreterDiscovery(t *testing.T) {
 				put64(head+8, head)
 				raw.put32(head+16, 700)
 			}
-			result, err := census.snapshot(t.Context())
+			result, err := census.snapshot(t.Context(), 10)
 			if test.wantError {
 				if err == nil || result != nil {
 					t.Fatalf("incomplete chain = %+v, %v; want no snapshot and error", result, err)

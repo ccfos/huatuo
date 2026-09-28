@@ -50,7 +50,7 @@ func New() *Provider {
 }
 
 // Snapshot counts CPython objects currently tracked by the cyclic garbage
-// collector and reduces them to type aggregates.
+// collector and returns at most request.TopK ranked type aggregates.
 // Unavailable or partial data is a snapshot; fatal read failures and cancellation
 // return an error without a snapshot.
 func (p *Provider) Snapshot(ctx context.Context,

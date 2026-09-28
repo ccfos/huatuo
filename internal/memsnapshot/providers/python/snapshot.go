@@ -16,6 +16,7 @@ package python
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -63,7 +64,10 @@ func newReader(procRoot string) *reader {
 func (r *reader) snapshot(ctx context.Context,
 	request memsnapshot.Request,
 ) (*memsnapshot.Snapshot, error) {
-	readTID := request.Process.TGID
+	if request.TopK <= 0 {
+		return nil, errors.New("CPython snapshot top-K must be positive")
+	}
+	readPID := request.Process.TGID
 	if err := memsnapshot.ValidateProcessInstance(request.Process); err != nil {
 		return nil, err
 	}
@@ -75,8 +79,8 @@ func (r *reader) snapshot(ctx context.Context,
 		readCtx, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
 	}
-	reader := newMemory(readTID, readCtx)
-	target, err := discoverRuntime(readCtx, r.procRoot, readTID, reader)
+	reader := newMemory(readPID, readCtx)
+	target, err := discoverRuntime(readCtx, r.procRoot, readPID, reader)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +88,7 @@ func (r *reader) snapshot(ctx context.Context,
 		return nil, err
 	}
 	census := newScanner(reader, &target, deadline)
-	snapshot, err := census.snapshot(ctx)
+	snapshot, err := census.snapshot(ctx, request.TopK)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +109,7 @@ func newScanner(memory memoryReader, image *image, deadline time.Time) *scanner 
 	}
 }
 
-func (c *scanner) snapshot(ctx context.Context) (*memsnapshot.Snapshot, error) {
+func (c *scanner) snapshot(ctx context.Context, topK int) (*memsnapshot.Snapshot, error) {
 	interpreters, err := c.findInterpreters()
 	if err != nil {
 		return nil, err
@@ -113,10 +117,10 @@ func (c *scanner) snapshot(ctx context.Context) (*memsnapshot.Snapshot, error) {
 
 	c.walkGC(ctx, interpreters)
 
-	return c.buildSnapshot(), nil
+	return c.buildSnapshot(topK), nil
 }
 
-func (c *scanner) buildSnapshot() *memsnapshot.Snapshot {
+func (c *scanner) buildSnapshot(topK int) *memsnapshot.Snapshot {
 	status := memsnapshot.StatusComplete
 	reason := c.partial
 	if c.skippedObjects != 0 {
@@ -136,7 +140,8 @@ func (c *scanner) buildSnapshot() *memsnapshot.Snapshot {
 		RuntimeVersion: c.image.version.String(), Status: status,
 		Reason: reason,
 	}
-	snapshot.Entries = c.entries()
+	snapshot.Entries = c.entries(topK)
+	snapshot.HasOmittedData = len(c.aggregates) > len(snapshot.Entries)
 	return snapshot
 }
 

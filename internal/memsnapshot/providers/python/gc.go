@@ -16,7 +16,6 @@ package python
 
 import (
 	"context"
-	"sort"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
@@ -184,29 +183,4 @@ func (c *scanner) addObject(address uint64, objectHead []byte) bool {
 	aggregate.Count++
 	aggregate.ShallowBytes = memsnapshot.SaturatingAdd(aggregate.ShallowBytes, objectSize)
 	return true
-}
-
-func (c *scanner) entries() []memsnapshot.Entry {
-	result := make([]memsnapshot.Entry, 0, len(c.aggregates))
-	for _, aggregate := range c.aggregates {
-		if aggregate.Count != 0 {
-			aggregate.AverageBytes = float64(aggregate.ShallowBytes) /
-				float64(aggregate.Count)
-		}
-		result = append(result, memsnapshot.Entry{
-			Kind: "gc_tracked_object_type", Name: aggregate.TypeName,
-			Bytes: aggregate.ShallowBytes, Objects: aggregate.Count,
-			AverageBytes: aggregate.AverageBytes,
-		})
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Bytes != result[j].Bytes {
-			return result[i].Bytes > result[j].Bytes
-		}
-		if result[i].Name != result[j].Name {
-			return result[i].Name < result[j].Name
-		}
-		return result[i].Objects > result[j].Objects
-	})
-	return result
 }

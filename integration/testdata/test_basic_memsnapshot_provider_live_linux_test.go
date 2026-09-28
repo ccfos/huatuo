@@ -30,6 +30,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
+	"github.com/ccfos/huatuo/internal/memsnapshot/providers/python"
 )
 
 func TestSnapshotLiveGoProcess(t *testing.T) {
@@ -390,6 +391,17 @@ time.sleep(60)
 	}
 	if snapshot.RuntimeVersion == "" || len(snapshot.Entries) == 0 {
 		t.Fatalf("live CPython snapshot has no runtime data: %+v", snapshot)
+	}
+	// Exercise the provider boundary directly so collector trimming cannot hide
+	// a provider that ignores TopK.
+	bounded, err := python.New().Snapshot(snapshotCtx, memsnapshot.Request{
+		Process: identity, TopK: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bounded.Entries) != 1 || !bounded.HasOmittedData {
+		t.Fatalf("live CPython provider did not apply TopK: %+v", bounded)
 	}
 }
 
