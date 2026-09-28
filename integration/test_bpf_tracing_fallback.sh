@@ -81,11 +81,25 @@ sleep 0.5
 generate_traffic() {
 	# --noproxy: an http_proxy in the environment sends curl to the proxy
 	# instead of the peer, which fails instantly and generates no packet at all.
-	for i in $(seq 1 5); do
-		ip netns exec "${TCP_NS_CLIENT}" curl -s --noproxy '*' \
+	#
+	# The requests spread over the collection window instead of arriving as one
+	# burst: the object rate-limits its events for the whole system, and on a
+	# busy host (etcd, apiserver) a burst races that budget in a single window
+	# and can lose all of it at once, which reads as an unobserved entry point.
+	# Requests landing in later windows still reach the hook whenever the host
+	# goes quiet between its own traffic. Every request is verified: a failed
+	# request is a traffic-generation failure and must not be reported as a
+	# missing BPF event.
+	local i body status
+	for i in $(seq 1 20); do
+		status=0
+		body=$(ip netns exec "${TCP_NS_CLIENT}" curl -s --noproxy '*' \
 			--connect-timeout 1 --max-time 2 \
-			"http://${TCP_NS_SERVER_ADDR}:${TEST_PORT}/" \
-			>> "${WORK_DIR}/curl.log" 2>&1 || true
+			"http://${TCP_NS_SERVER_ADDR}:${TEST_PORT}/") || status=$?
+		[[ ${status} -eq 0 && "${body}" == "OK" ]] || fatal "controlled request ${i} to ${TCP_NS_SERVER_ADDR}:${TEST_PORT} failed (rc=${status}, body=${body:-empty})"
+		if [[ ${i} -lt 20 ]]; then
+			sleep 0.6
+		fi
 	done
 }
 
@@ -117,9 +131,13 @@ run_fixture() {
 	local err="${WORK_DIR}/fixture-${mode}.err"
 
 	log_info "running fixture in mode ${mode}, expecting ${expected}"
+	# The paced traffic outlives the 512-event default: on a busy host that cap
+	# ends the window within seconds, before the last requests. The deadline,
+	# not the count, ends the collection now.
 	"${FIXTURE_BIN}" \
 		-bpf-dir "${ROOT_DIR}/_output/bpf" \
 		-mode "${mode}" \
+		-events 4096 \
 		-timeout "${EVENT_TIMEOUT}" \
 		> "${out}" 2> "${err}" &
 	local fixture_pid=$!
