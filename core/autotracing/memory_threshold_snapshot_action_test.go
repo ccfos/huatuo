@@ -78,7 +78,7 @@ func TestActionRunnerCancellation(t *testing.T) {
 			started := make(chan context.Context, 1)
 			release := make(chan struct{})
 			releaseSnapshot := sync.OnceFunc(func() { close(release) })
-			batch.ops.snapshotProcessMemory = func(ctx context.Context, _ memsnapshot.ProcessIdentity, _ collector.Options) (*collector.Result, error) {
+			batch.ops.snapshotProcessMemory = func(ctx context.Context, _ memsnapshot.ProcessInstance, _ collector.Options) (*collector.Result, error) {
 				started <- ctx
 				<-ctx.Done()
 				<-release
@@ -143,7 +143,7 @@ func TestActionRunnerCloseRetainsCompletedAttempt(t *testing.T) {
 			batch := newRunnerActionBatchForTest(t)
 			batch.config.MemoryThresholdSnapshot.IntervalTracing = 3600
 			started := make(chan context.Context, 1)
-			batch.ops.snapshotProcessMemory = func(ctx context.Context, _ memsnapshot.ProcessIdentity, _ collector.Options) (*collector.Result, error) {
+			batch.ops.snapshotProcessMemory = func(ctx context.Context, _ memsnapshot.ProcessInstance, _ collector.Options) (*collector.Result, error) {
 				started <- ctx
 				if canceled {
 					<-ctx.Done()
@@ -238,7 +238,7 @@ func TestActionRunnerMergedInvalidationsCancelSnapshot(t *testing.T) {
 			started := make(chan context.Context, 1)
 			release := make(chan struct{})
 			releaseSnapshot := sync.OnceFunc(func() { close(release) })
-			ops.snapshotProcessMemory = func(ctx context.Context, _ memsnapshot.ProcessIdentity, _ collector.Options) (*collector.Result, error) {
+			ops.snapshotProcessMemory = func(ctx context.Context, _ memsnapshot.ProcessInstance, _ collector.Options) (*collector.Result, error) {
 				started <- ctx
 				<-ctx.Done()
 				<-release
@@ -300,7 +300,7 @@ func TestActionRunnerRevalidatesSubmittedContainer(t *testing.T) {
 		}
 		return nil
 	}
-	batch.ops.snapshotProcessMemory = func(context.Context, memsnapshot.ProcessIdentity, collector.Options) (*collector.Result, error) {
+	batch.ops.snapshotProcessMemory = func(context.Context, memsnapshot.ProcessInstance, collector.Options) (*collector.Result, error) {
 		snapshotCalls++
 		return &collector.Result{SnapshotTime: time.Now()}, nil
 	}
@@ -372,7 +372,7 @@ func newRunnerActionBatchForTest(t *testing.T) actionBatch {
 		validateProcess:   validateActionProcessForTest,
 		save:              func(*tracing.WriteRequest) error { return nil },
 		selectProcess: func(context.Context, cgroupRef, uint64) (selectedProcess, error) {
-			return selectedProcess{identity: memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}}, nil
+			return selectedProcess{identity: memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 100}}, nil
 		},
 	}
 	return newActionBatch(t.Context(), config, source, []memoryEventObservation{
@@ -483,9 +483,9 @@ func TestActionBatchSnapshotsFirstAndLogsRemaining(t *testing.T) {
 			snapshotCalls := 0
 			batch.ops.selectProcess = func(_ context.Context, group cgroupRef, _ uint64) (selectedProcess, error) {
 				selected = append(selected, group.Path)
-				return selectedProcess{identity: memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}}, nil
+				return selectedProcess{identity: memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 100}}, nil
 			}
-			batch.ops.snapshotProcessMemory = func(context.Context, memsnapshot.ProcessIdentity, collector.Options) (*collector.Result, error) {
+			batch.ops.snapshotProcessMemory = func(context.Context, memsnapshot.ProcessInstance, collector.Options) (*collector.Result, error) {
 				snapshotCalls++
 				if failed {
 					return nil, errors.New("capture failed")
@@ -622,7 +622,7 @@ func TestActionBatchRevalidatesContainerBeforePersistence(t *testing.T) {
 			createMemoryCgroupForTest(t, source.root, original, 95)
 			target := cgroupRefForTest(t, source, original)
 			path, saved := original, false
-			identity := memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}
+			identity := memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 100}
 			rssBytes := uint64(4096)
 			result := &collector.Result{
 				Identity: identity, Language: memsnapshot.LanguageGo,
@@ -642,13 +642,13 @@ func TestActionBatchRevalidatesContainerBeforePersistence(t *testing.T) {
 				selectProcess: func(context.Context, cgroupRef, uint64) (selectedProcess, error) {
 					return selectedProcess{identity: identity}, nil
 				},
-				validateProcess: func(_ context.Context, group cgroupRef, actual memsnapshot.ProcessIdentity) error {
+				validateProcess: func(_ context.Context, group cgroupRef, actual memsnapshot.ProcessInstance) error {
 					if !group.SameInstance(target) || actual != identity {
 						t.Fatal("selected identity or cgroup was replaced")
 					}
 					return nil
 				},
-				snapshotProcessMemory: func(ctx context.Context, actual memsnapshot.ProcessIdentity, options collector.Options) (*collector.Result, error) {
+				snapshotProcessMemory: func(ctx context.Context, actual memsnapshot.ProcessInstance, options collector.Options) (*collector.Result, error) {
 					if actual != identity {
 						t.Fatalf("collector identity = %+v, want %+v", actual, identity)
 					}
@@ -753,12 +753,12 @@ func newActionBatchOpsForTest(t *testing.T) (*actionBatchOps, <-chan string) {
 		selectProcess: func(ctx context.Context, group cgroupRef, _ uint64) (selectedProcess, error) {
 			select {
 			case selected <- group.Path:
-				return selectedProcess{identity: memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}}, nil
+				return selectedProcess{identity: memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 100}}, nil
 			case <-ctx.Done():
 				return selectedProcess{}, ctx.Err()
 			}
 		},
-		snapshotProcessMemory: func(context.Context, memsnapshot.ProcessIdentity, collector.Options) (*collector.Result, error) {
+		snapshotProcessMemory: func(context.Context, memsnapshot.ProcessInstance, collector.Options) (*collector.Result, error) {
 			return &collector.Result{SnapshotTime: time.Now()}, nil
 		},
 	}
@@ -769,7 +769,7 @@ func validateActionContainerForTest(pod.ContainerRef) error {
 	return nil
 }
 
-func validateActionProcessForTest(context.Context, cgroupRef, memsnapshot.ProcessIdentity) error {
+func validateActionProcessForTest(context.Context, cgroupRef, memsnapshot.ProcessInstance) error {
 	return nil
 }
 
@@ -779,8 +779,8 @@ func TestActionBatchValidatesBoundContainerAndProcess(t *testing.T) {
 			batch := newRunnerActionBatchForTest(t)
 			observation := &batch.targets[1]
 			ref := observation.Container
-			identity := memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}
-			selector := &processSelector{source: batch.source, procRoot: t.TempDir()}
+			identity := memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 100}
+			selector := &processSelector{source: batch.source, procRoot: snapshotProcRootForTest(t)}
 			writeProcessForTest(t, selector.procRoot, identity, 100, 0)
 			members := filepath.Join(batch.source.memcgDir(observation.Cgroup.Path), "cgroup.procs")
 			writeMemoryEventsForTest(t, members, "42\n")
@@ -803,13 +803,13 @@ func TestActionBatchValidatesBoundContainerAndProcess(t *testing.T) {
 				}
 				return nil
 			}
-			batch.ops.validateProcess = func(ctx context.Context, group cgroupRef, actual memsnapshot.ProcessIdentity) error {
+			batch.ops.validateProcess = func(ctx context.Context, group cgroupRef, actual memsnapshot.ProcessInstance) error {
 				if !group.SameInstance(observation.Cgroup) || actual != identity {
 					t.Fatal("validation lost selected process identity or cgroup")
 				}
 				return selector.Validate(ctx, group, actual)
 			}
-			batch.ops.snapshotProcessMemory = func(ctx context.Context, actual memsnapshot.ProcessIdentity, options collector.Options) (*collector.Result, error) {
+			batch.ops.snapshotProcessMemory = func(ctx context.Context, actual memsnapshot.ProcessInstance, options collector.Options) (*collector.Result, error) {
 				if actual != identity {
 					t.Fatal("collector lost selected process identity")
 				}
@@ -861,7 +861,7 @@ func TestActionRunnerDirectoryReplacementCancelsSnapshot(t *testing.T) {
 	}
 	ops, _ := newActionBatchOpsForTest(t)
 	started := make(chan context.Context, 1)
-	ops.snapshotProcessMemory = func(ctx context.Context, _ memsnapshot.ProcessIdentity, _ collector.Options) (*collector.Result, error) {
+	ops.snapshotProcessMemory = func(ctx context.Context, _ memsnapshot.ProcessInstance, _ collector.Options) (*collector.Result, error) {
 		started <- ctx
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -898,7 +898,7 @@ func TestActionBatchSnapshotSequenceAndFailures(t *testing.T) {
 			observation := &batch.targets[1]
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			identity := memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}
+			identity := memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 100}
 			failure := errors.New("operation failed")
 			var calls []string
 			var selectionDone <-chan struct{}
@@ -921,7 +921,7 @@ func TestActionBatchSnapshotSequenceAndFailures(t *testing.T) {
 				}
 				return selectedProcess{identity: identity, comm: "worker", oomScoreAdj: 10}, nil
 			}
-			batch.ops.snapshotProcessMemory = func(snapshotCtx context.Context, actual memsnapshot.ProcessIdentity,
+			batch.ops.snapshotProcessMemory = func(snapshotCtx context.Context, actual memsnapshot.ProcessInstance,
 				_ collector.Options,
 			) (*collector.Result, error) {
 				calls = append(calls, "capture")

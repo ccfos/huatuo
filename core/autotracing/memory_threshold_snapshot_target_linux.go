@@ -44,7 +44,7 @@ var (
 )
 
 type selectedProcess struct {
-	identity    memsnapshot.ProcessIdentity
+	identity    memsnapshot.ProcessInstance
 	comm        string
 	oomScoreAdj int
 }
@@ -94,10 +94,10 @@ func (s *processSelector) Select(ctx context.Context, group cgroupRef, memoryLim
 		if err != nil {
 			return processCandidate{}, fmt.Errorf("recheck identity: %w", err)
 		}
-		if stat.Starttime == 0 || current.Starttime != stat.Starttime {
+		if current.Starttime != stat.Starttime {
 			return processCandidate{}, errProcessNotEligible
 		}
-		candidate.process.identity = memsnapshot.ProcessIdentity{TGID: pid, StartTimeTicks: stat.Starttime}
+		candidate.process.identity = memsnapshot.ProcessInstance{TGID: pid, StartTimeTicks: stat.Starttime}
 		return candidate, nil
 	})
 	if err != nil {
@@ -140,7 +140,7 @@ func selectProcessFromProcs(scan func(func(int) error) error,
 	return selected.process, nil
 }
 
-func (s *processSelector) Validate(ctx context.Context, group cgroupRef, identity memsnapshot.ProcessIdentity) error {
+func (s *processSelector) Validate(ctx context.Context, group cgroupRef, identity memsnapshot.ProcessInstance) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -154,7 +154,7 @@ func (s *processSelector) Validate(ctx context.Context, group cgroupRef, identit
 	if !found {
 		return fmt.Errorf("%w: process %d left memory cgroup %q", errInvalidSnapshotProcess, identity.TGID, group.Path)
 	}
-	if err := memsnapshot.ValidateIdentity(s.procRoot, identity); err != nil {
+	if err := memsnapshot.ValidateProcessInstance(identity); err != nil {
 		return fmt.Errorf("%w: %w", errInvalidSnapshotProcess, err)
 	}
 

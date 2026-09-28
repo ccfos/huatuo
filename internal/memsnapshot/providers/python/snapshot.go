@@ -63,8 +63,8 @@ func newReader(procRoot string) *reader {
 func (r *reader) snapshot(ctx context.Context,
 	request memsnapshot.Request,
 ) (*memsnapshot.Snapshot, error) {
-	readTID := request.Identity.TGID
-	if err := memsnapshot.ValidateIdentity(r.procRoot, request.Identity); err != nil {
+	readTID := request.Process.TGID
+	if err := memsnapshot.ValidateProcessInstance(request.Process); err != nil {
 		return nil, err
 	}
 	deadline, hasDeadline := memsnapshot.DeadlineWithReserve(ctx,
@@ -80,7 +80,7 @@ func (r *reader) snapshot(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if err := memsnapshot.ValidateIdentity(r.procRoot, request.Identity); err != nil {
+	if err := memsnapshot.ValidateProcessInstance(request.Process); err != nil {
 		return nil, err
 	}
 	census := newScanner(reader, &target, deadline)
@@ -88,7 +88,7 @@ func (r *reader) snapshot(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if err := memsnapshot.ValidateIdentity(r.procRoot, request.Identity); err != nil {
+	if err := memsnapshot.ValidateProcessInstance(request.Process); err != nil {
 		return nil, err
 	}
 	return snapshot, nil

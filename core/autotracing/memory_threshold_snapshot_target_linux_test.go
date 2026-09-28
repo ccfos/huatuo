@@ -28,6 +28,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 func newProcessSelectorForTest(t *testing.T) (*processSelector, cgroupRef) {
@@ -36,10 +37,10 @@ func newProcessSelectorForTest(t *testing.T) (*processSelector, cgroupRef) {
 	if err := os.Mkdir(source.memcgDir("/processes"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return &processSelector{source: source, procRoot: t.TempDir()}, cgroupRefForTest(t, source, "/processes")
+	return &processSelector{source: source, procRoot: snapshotProcRootForTest(t)}, cgroupRefForTest(t, source, "/processes")
 }
 
-func writeProcessForTest(t *testing.T, root string, identity memsnapshot.ProcessIdentity, rssKiB uint64, adj int) {
+func writeProcessForTest(t *testing.T, root string, identity memsnapshot.ProcessInstance, rssKiB uint64, adj int) {
 	t.Helper()
 	directory := filepath.Join(root, strconv.Itoa(identity.TGID))
 	if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -55,15 +56,16 @@ func writeProcessForTest(t *testing.T, root string, identity memsnapshot.Process
 
 func TestProcessSelectorSelect(t *testing.T) {
 	s, group := newProcessSelectorForTest(t)
-	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessIdentity{TGID: 11, StartTimeTicks: 100}, 100, 0)
-	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessIdentity{TGID: 22, StartTimeTicks: 200}, 200, 0)
-	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessIdentity{TGID: 33, StartTimeTicks: 300}, 300, -1000)
-	writeMemoryEventsForTest(t, filepath.Join(s.source.memcgDir(group.Path), "cgroup.procs"), "11\n22\n33\n44\n")
+	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 11, StartTimeTicks: 100}, 100, 0)
+	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 22, StartTimeTicks: 200}, 200, 0)
+	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 33, StartTimeTicks: 300}, 300, -1000)
+	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 55}, 1000, 0)
+	writeMemoryEventsForTest(t, filepath.Join(s.source.memcgDir(group.Path), "cgroup.procs"), "11\n22\n33\n44\n55\n")
 	process, err := s.Select(t.Context(), group, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := selectedProcess{identity: memsnapshot.ProcessIdentity{TGID: 22, StartTimeTicks: 200}, comm: "worker"}
+	want := selectedProcess{identity: memsnapshot.ProcessInstance{TGID: 55}, comm: "worker"}
 	if process != want {
 		t.Fatalf("selected process = %+v, want %+v", process, want)
 	}
@@ -86,7 +88,7 @@ func TestSelectProcessRequiresCompleteEnumeration(t *testing.T) {
 					return processCandidate{}, reason
 				}
 				return processCandidate{process: selectedProcess{
-					identity: memsnapshot.ProcessIdentity{TGID: pid, StartTimeTicks: 100},
+					identity: memsnapshot.ProcessInstance{TGID: pid, StartTimeTicks: 100},
 				}}, nil
 			})
 			if errors.Is(reason, failure) || errors.Is(reason, os.ErrPermission) {
@@ -105,7 +107,7 @@ func TestSelectProcessRequiresCompleteEnumeration(t *testing.T) {
 func TestProcessSelectorNoEligibleProcess(t *testing.T) {
 	for _, members := range []string{"", "11\n", "22\n"} {
 		s, group := newProcessSelectorForTest(t)
-		writeProcessForTest(t, s.procRoot, memsnapshot.ProcessIdentity{TGID: 11, StartTimeTicks: 100}, 100, -1000)
+		writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 11, StartTimeTicks: 100}, 100, -1000)
 		writeMemoryEventsForTest(t, filepath.Join(s.source.memcgDir(group.Path), "cgroup.procs"), members)
 		process, err := s.Select(t.Context(), group, 1<<20)
 		if !errors.Is(err, errNoSnapshotProcess) || process != (selectedProcess{}) {
@@ -118,7 +120,7 @@ func TestProcessSelectorRejectsStaleBinding(t *testing.T) {
 	for _, change := range []string{"unchanged", "moved", "reused", "directory replaced", "canceled", "deadline"} {
 		t.Run(change, func(t *testing.T) {
 			s, group := newProcessSelectorForTest(t)
-			identity := memsnapshot.ProcessIdentity{TGID: 11, StartTimeTicks: 100}
+			identity := memsnapshot.ProcessInstance{TGID: 11, StartTimeTicks: 100}
 			writeProcessForTest(t, s.procRoot, identity, 100, 0)
 			members := filepath.Join(s.source.memcgDir(group.Path), "cgroup.procs")
 			writeMemoryEventsForTest(t, members, "11\n")
@@ -130,7 +132,7 @@ func TestProcessSelectorRejectsStaleBinding(t *testing.T) {
 			case "moved":
 				writeMemoryEventsForTest(t, members, "22\n")
 			case "reused":
-				writeProcessForTest(t, s.procRoot, memsnapshot.ProcessIdentity{TGID: 11, StartTimeTicks: 101}, 100, 0)
+				writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 11, StartTimeTicks: 101}, 100, 0)
 			case "directory replaced":
 				if err := os.Rename(s.source.memcgDir(group.Path), s.source.memcgDir("/old")); err != nil {
 					t.Fatal(err)
@@ -199,4 +201,18 @@ func TestScanProcessPIDs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Keep selector reads and shared identity checks on the same default procfs mount.
+func snapshotProcRootForTest(t *testing.T) string {
+	t.Helper()
+	previous := filepath.Dir(procfs.DefaultPath())
+	root := t.TempDir()
+	procRoot := filepath.Join(root, "proc")
+	if err := os.Mkdir(procRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	procfs.RootPrefix(root)
+	t.Cleanup(func() { procfs.RootPrefix(previous) })
+	return procRoot
 }

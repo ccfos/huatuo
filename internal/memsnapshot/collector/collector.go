@@ -33,7 +33,7 @@ type Options struct {
 
 // Result carries runtime data without event or container metadata.
 type Result struct {
-	Identity      memsnapshot.ProcessIdentity
+	Identity      memsnapshot.ProcessInstance
 	Language      memsnapshot.Language
 	SnapshotTime  time.Time
 	Snapshot      *memsnapshot.Snapshot
@@ -44,7 +44,7 @@ type Result struct {
 // Callers must validate the identity before calling Snapshot.
 // Provider failures become failed snapshots. Detection and output-processing
 // failures, cancellation and invalid options return errors without a result.
-func Snapshot(ctx context.Context, identity memsnapshot.ProcessIdentity,
+func Snapshot(ctx context.Context, identity memsnapshot.ProcessInstance,
 	options Options,
 ) (*Result, error) {
 	pid := identity.TGID

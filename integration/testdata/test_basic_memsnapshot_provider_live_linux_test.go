@@ -95,7 +95,7 @@ func main() {
 		t.Fatal("Go fixture did not acknowledge readiness")
 	}
 
-	identity, err := memsnapshot.ReadIdentity(command.Process.Pid)
+	identity, err := memsnapshot.ReadProcessInstance(command.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ public class HeapFixture {
 		t.Fatal("HotSpot fixture did not acknowledge readiness")
 	}
 
-	identity, err := memsnapshot.ReadIdentity(command.Process.Pid)
+	identity, err := memsnapshot.ReadProcessInstance(command.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ time.sleep(60)
 		t.Fatal("CPython fixture did not acknowledge readiness")
 	}
 
-	identity, err := memsnapshot.ReadIdentity(command.Process.Pid)
+	identity, err := memsnapshot.ReadProcessInstance(command.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}

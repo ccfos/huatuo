@@ -22,9 +22,9 @@ import (
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-func processIdentityForTest(t *testing.T) memsnapshot.ProcessIdentity {
+func processInstanceForTest(t *testing.T) memsnapshot.ProcessInstance {
 	t.Helper()
-	identity, err := memsnapshot.ReadIdentity(os.Getpid())
+	identity, err := memsnapshot.ReadProcessInstance(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func processIdentityForTest(t *testing.T) memsnapshot.ProcessIdentity {
 }
 
 func TestSnapshotRejectsInvalidOptions(t *testing.T) {
-	identity := processIdentityForTest(t)
+	identity := processInstanceForTest(t)
 	for _, options := range []Options{
 		{TopK: -1},
 		{TopK: memsnapshot.MaxMemoryObjectEntries + 1},

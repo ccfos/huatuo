@@ -91,7 +91,7 @@ func TestSnapshotErrorBoundsPreserveCause(t *testing.T) {
 func TestSnapshotReadFailure(t *testing.T) {
 	p := &Provider{reader: newReader(t.TempDir())}
 	result, err := p.Snapshot(t.Context(), memsnapshot.Request{
-		Identity: memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 1}, TopK: 10,
+		Process: memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 1}, TopK: 10,
 	})
 	if result != nil || !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("capture = %+v, %v, want no snapshot and missing process", result, err)

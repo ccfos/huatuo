@@ -14,15 +14,16 @@
 
 package memsnapshot
 
-// ProcessIdentity prevents reading a different process after PID reuse.
-type ProcessIdentity struct {
+// ProcessInstance identifies a process lifetime by TGID and start time.
+// It distinguishes PID reuse, but does not detect exec within the same process.
+type ProcessInstance struct {
 	TGID           int    `json:"tgid"`
 	StartTimeTicks uint64 `json:"start_time_ticks"`
 }
 
-// Request contains the identity and bounds needed while reading a process.
+// Request selects a process instance and bounds its snapshot.
 type Request struct {
-	Identity     ProcessIdentity `json:"identity"`
+	Process      ProcessInstance `json:"identity"`
 	SamplingSeed uint64          `json:"sampling_seed"`
 	TopK         int             `json:"top_k"`
 }

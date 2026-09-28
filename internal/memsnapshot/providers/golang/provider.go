@@ -66,7 +66,7 @@ func (p *Provider) Snapshot(ctx context.Context,
 		return nil, err
 	}
 
-	snapshot, err := p.reader.snapshot(ctx, request.Identity, request.TopK)
+	snapshot, err := p.reader.snapshot(ctx, request.Process, request.TopK)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}

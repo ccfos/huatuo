@@ -42,7 +42,7 @@ func (*Provider) Snapshot(ctx context.Context,
 		return nil, err
 	}
 
-	snapshot, err := snapshot(ctx, request.Identity, request.TopK,
+	snapshot, err := snapshot(ctx, request.Process, request.TopK,
 		request.SamplingSeed)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr

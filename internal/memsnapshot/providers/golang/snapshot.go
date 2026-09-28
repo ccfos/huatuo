@@ -51,7 +51,7 @@ func newReader(procRoot string) *reader {
 // snapshot walks the victim's mbucket chains and reduces them to a bounded
 // allocation snapshot.
 func (r *reader) snapshot(ctx context.Context,
-	identity memsnapshot.ProcessIdentity, maxEntries int,
+	identity memsnapshot.ProcessInstance, maxEntries int,
 ) (*snapshot, error) {
 	readPID := identity.TGID
 	memory := processMemory{pid: readPID, ctx: ctx}
@@ -79,7 +79,7 @@ func (r *reader) snapshot(ctx context.Context,
 		}
 	}
 	if snapshot.RateKnown && snapshot.SampleRate <= 0 {
-		if err := memsnapshot.ValidateIdentity(r.procRoot, identity); err != nil {
+		if err := memsnapshot.ValidateProcessInstance(identity); err != nil {
 			return nil, err
 		}
 		return snapshot, nil
@@ -169,7 +169,7 @@ func (r *reader) snapshot(ctx context.Context,
 		}
 	}
 	victimExited := false
-	if err := memsnapshot.ValidateIdentity(r.procRoot, identity); err != nil {
+	if err := memsnapshot.ValidateProcessInstance(identity); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}

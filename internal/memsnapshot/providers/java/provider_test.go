@@ -23,16 +23,16 @@ import (
 )
 
 func TestJavaFailureClassification(t *testing.T) {
-	identity, err := memsnapshot.ReadIdentity(os.Getpid())
+	identity, err := memsnapshot.ReadProcessInstance(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := memsnapshot.Request{Identity: identity, TopK: 10}
+	request := memsnapshot.Request{Process: identity, TopK: 10}
 	snapshot, err := New().Snapshot(t.Context(), request)
 	if err != nil || snapshot == nil || snapshot.Status != memsnapshot.StatusUnavailable {
 		t.Fatalf("non-JVM result: %+v, %v", snapshot, err)
 	}
-	request.Identity.StartTimeTicks++
+	request.Process.StartTimeTicks++
 	snapshot, err = New().Snapshot(t.Context(), request)
 	if err == nil || snapshot != nil {
 		t.Fatalf("stale identity result: %+v, %v", snapshot, err)
@@ -42,7 +42,7 @@ func TestJavaFailureClassification(t *testing.T) {
 func TestSnapshotReadFailure(t *testing.T) {
 	missingPID := int(^uint(0) >> 1)
 	result, err := New().Snapshot(t.Context(), memsnapshot.Request{
-		Identity: memsnapshot.ProcessIdentity{TGID: missingPID, StartTimeTicks: 1}, TopK: 10,
+		Process: memsnapshot.ProcessInstance{TGID: missingPID, StartTimeTicks: 1}, TopK: 10,
 	})
 	if result != nil || !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("capture = %+v, %v, want no snapshot and missing process", result, err)

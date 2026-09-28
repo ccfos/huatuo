@@ -89,9 +89,9 @@ func BenchmarkMemorySnapshotActionBatch(b *testing.B) {
 				validateProcess:   validateActionProcessForTest,
 				save:              func(*tracing.WriteRequest) error { return nil },
 				selectProcess: func(context.Context, cgroupRef, uint64) (selectedProcess, error) {
-					return selectedProcess{identity: memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}}, nil
+					return selectedProcess{identity: memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 100}}, nil
 				},
-				snapshotProcessMemory: func(context.Context, memsnapshot.ProcessIdentity, collector.Options) (*collector.Result, error) {
+				snapshotProcessMemory: func(context.Context, memsnapshot.ProcessInstance, collector.Options) (*collector.Result, error) {
 					return &collector.Result{SnapshotTime: time.Now()}, nil
 				},
 			}

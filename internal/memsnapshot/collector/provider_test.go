@@ -95,7 +95,7 @@ func TestSnapshotProviderResult(t *testing.T) {
 			if test.name == "unsupported" {
 				p = nil
 			}
-			result := snapshotProvider(ctx, p, memsnapshot.ProcessIdentity{}, 0)
+			result := snapshotProvider(ctx, p, memsnapshot.ProcessInstance{}, 0)
 			if result == nil || result.Status != test.status || !strings.Contains(result.Reason, test.reason) {
 				t.Fatalf("snapshot = %+v; want status %s and reason containing %q", result, test.status, test.reason)
 			}
@@ -107,10 +107,10 @@ func TestSnapshotProviderResult(t *testing.T) {
 }
 
 func TestSnapshotProviderRequest(t *testing.T) {
-	identity := memsnapshot.ProcessIdentity{TGID: 42, StartTimeTicks: 100}
+	identity := memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 100}
 	want := &memsnapshot.Snapshot{Status: memsnapshot.StatusComplete}
 	p := providerFunc(func(_ context.Context, request memsnapshot.Request) (*memsnapshot.Snapshot, error) {
-		if request.Identity != identity || request.TopK != 7 {
+		if request.Process != identity || request.TopK != 7 {
 			t.Fatalf("provider request = %+v; want selected identity and top-K 7", request)
 		}
 		return want, nil

@@ -307,8 +307,8 @@ func (b *actionBatch) rankCgroupTargets(ctx context.Context) ([]memcgCandidate, 
 type actionBatchOps struct {
 	selectProcess         func(context.Context, cgroupRef, uint64) (selectedProcess, error)
 	validateContainer     func(pod.ContainerRef) error
-	validateProcess       func(context.Context, cgroupRef, memsnapshot.ProcessIdentity) error
-	snapshotProcessMemory func(context.Context, memsnapshot.ProcessIdentity, collector.Options) (*collector.Result, error)
+	validateProcess       func(context.Context, cgroupRef, memsnapshot.ProcessInstance) error
+	snapshotProcessMemory func(context.Context, memsnapshot.ProcessInstance, collector.Options) (*collector.Result, error)
 	save                  func(*tracing.WriteRequest) error
 }
 
@@ -350,7 +350,7 @@ func (b *actionBatch) snapshotCandidate(ctx context.Context, candidate *memcgCan
 		WithField("elapsed_ms", time.Since(selectionStarted).Milliseconds()).
 		Debug("memory threshold snapshot process selection finished")
 
-	checkTarget := func(checkCtx context.Context, identity memsnapshot.ProcessIdentity) error {
+	checkTarget := func(checkCtx context.Context, identity memsnapshot.ProcessInstance) error {
 		if err := checkCtx.Err(); err != nil {
 			return err
 		}

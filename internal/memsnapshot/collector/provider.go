@@ -50,7 +50,7 @@ func newProvider(language memsnapshot.Language) provider {
 // Normalize failures before recording duration so replacement snapshots retain
 // the provider-stage elapsed time. The caller handles parent cancellation.
 func snapshotProvider(ctx context.Context, p provider,
-	identity memsnapshot.ProcessIdentity, topK int,
+	identity memsnapshot.ProcessInstance, topK int,
 ) (snapshot *memsnapshot.Snapshot) {
 	started := time.Now()
 	defer func() {
@@ -71,7 +71,7 @@ func snapshotProvider(ctx context.Context, p provider,
 	}
 
 	request := memsnapshot.Request{
-		Identity: identity, TopK: topK, SamplingSeed: uint64(started.UnixNano()),
+		Process: identity, TopK: topK, SamplingSeed: uint64(started.UnixNano()),
 	}
 	snapshot, err := p.Snapshot(ctx, request)
 	if err != nil {

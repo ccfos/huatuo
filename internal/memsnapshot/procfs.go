@@ -21,9 +21,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 const (
@@ -32,40 +33,32 @@ const (
 	defaultMaxProcMaps = 1 << 18
 )
 
-// ReadIdentity reads the stable identity from /proc/<pid>/stat.
-func ReadIdentity(pid int) (ProcessIdentity, error) {
-	if pid <= 0 {
-		return ProcessIdentity{}, errors.New("pid must be greater than zero")
-	}
-	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+// ReadProcessInstance reads the process identity from the default procfs mount.
+// The raw start-time tick count is preserved, including zero.
+func ReadProcessInstance(pid int) (ProcessInstance, error) {
+	fs, err := procfs.NewDefaultFS()
 	if err != nil {
-		return ProcessIdentity{}, fmt.Errorf("read process stat: %w", err)
+		return ProcessInstance{}, fmt.Errorf("open procfs: %w", err)
 	}
-	starttime, err := ParseProcStatStartTime(stat)
+	process, err := fs.Proc(pid)
 	if err != nil {
-		return ProcessIdentity{}, err
+		return ProcessInstance{}, fmt.Errorf("open process %d: %w", pid, err)
 	}
-	identity := ProcessIdentity{TGID: pid, StartTimeTicks: starttime}
-	return identity, nil
+	stat, err := process.Stat()
+	if err != nil {
+		return ProcessInstance{}, fmt.Errorf("read process %d stat: %w", pid, err)
+	}
+	return ProcessInstance{TGID: pid, StartTimeTicks: stat.Starttime}, nil
 }
 
-// ValidateIdentity rejects an invalid identity or a reused PID.
-func ValidateIdentity(procRoot string, identity ProcessIdentity) error {
-	if identity.TGID <= 0 || identity.StartTimeTicks == 0 {
-		return errors.New("process identity is invalid")
-	}
-	stat, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(identity.TGID),
-		"stat"))
+// ValidateProcessInstance rejects an invalid identity or a reused PID.
+func ValidateProcessInstance(identity ProcessInstance) error {
+	current, err := ReadProcessInstance(identity.TGID)
 	if err != nil {
-		return fmt.Errorf("read process identity: %w", err)
+		return err
 	}
-	startTime, err := ParseProcStatStartTime(stat)
-	if err != nil {
-		return fmt.Errorf("parse process identity: %w", err)
-	}
-	if startTime != identity.StartTimeTicks {
-		return fmt.Errorf("process identity changed: start time %d, want %d",
-			startTime, identity.StartTimeTicks)
+	if current.StartTimeTicks != identity.StartTimeTicks {
+		return fmt.Errorf("process identity changed: start time %d, want %d", current.StartTimeTicks, identity.StartTimeTicks)
 	}
 	return nil
 }
