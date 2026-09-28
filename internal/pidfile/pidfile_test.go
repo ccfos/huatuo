@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,6 +80,11 @@ func TestLock_AlreadyLocked(t *testing.T) {
 	_, err = Lock(name)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already running")
+	assert.Contains(t, err.Error(), strconv.Itoa(os.Getpid()))
+
+	data, readErr := os.ReadFile(path(name))
+	require.NoError(t, readErr)
+	assert.Equal(t, strconv.Itoa(os.Getpid()), string(data))
 }
 
 func TestUnlock_RemovesFile(t *testing.T) {
@@ -103,6 +109,25 @@ func TestUnlock_Idempotent(t *testing.T) {
 
 	lk.Unlock()
 	lk.Unlock()
+}
+
+func TestCleanupFailedLockRemovesFileAndReleasesFlock(t *testing.T) {
+	redirectPidDir(t)
+
+	p := path("failed")
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o600)
+	require.NoError(t, err)
+	require.NoError(t, syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+
+	cleanupFailedLock(f, p)
+
+	_, err = os.Stat(p)
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	replacement, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o600)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = replacement.Close() })
+	require.NoError(t, syscall.Flock(int(replacement.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
 }
 
 // TestLock_HandleKeepsFlockAlive guards the bug that motivated the
