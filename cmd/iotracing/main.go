@@ -52,6 +52,10 @@ type ioConfig struct {
 	maxFilesPerProcess uint64
 	maxProcess         uint64
 	maxStack           uint64
+	// iocbDirectBit is the IOCB_DIRECT bit for the running kernel, chosen
+	// once at startup via iocbDirectBit (the value moves from bit 2 to bit
+	// 17 in kernel v5.10).
+	iocbDirectBit uint32
 }
 
 func main() {
