@@ -38,7 +38,7 @@ func unsupportedRuntime(reason string) error {
 // classify a process with no CPython runtime as unavailable rather than failed.
 var errNotCPythonModule = errors.New("module does not expose a CPython runtime")
 
-// Provider captures a CPython GC-tracked object census through the external
+// Provider reads a CPython GC-tracked object census through the external
 // reader.
 type Provider struct {
 	reader *reader
@@ -73,7 +73,7 @@ func snapshotResult(snapshot *memsnapshot.Snapshot, err error) (*memsnapshot.Sna
 		return memsnapshot.Unavailable(boundedReason(err.Error())), nil
 	}
 	if err != nil {
-		return nil, boundedError{cause: err}
+		return nil, boundedError{cause: err, reason: boundedReason(err.Error())}
 	}
 	if snapshot == nil {
 		return nil, errors.New("Python external census returned a nil response")
@@ -84,11 +84,12 @@ func snapshotResult(snapshot *memsnapshot.Snapshot, err error) (*memsnapshot.Sna
 
 // boundedError preserves the reader's cause without expanding persisted diagnostics.
 type boundedError struct {
-	cause error
+	cause  error
+	reason string
 }
 
 func (e boundedError) Error() string {
-	return boundedReason(e.cause.Error())
+	return e.reason
 }
 
 func (e boundedError) Unwrap() error {

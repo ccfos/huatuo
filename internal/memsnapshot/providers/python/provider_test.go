@@ -54,18 +54,18 @@ func TestSnapshotResult(t *testing.T) {
 			result, err := snapshotResult(test.input, test.readErr)
 			if test.wantStatus == "" {
 				if result != nil || err == nil {
-					t.Fatalf("capture = %+v, %v, want no snapshot and an error", result, err)
+					t.Fatalf("snapshot = %+v, %v, want no snapshot and an error", result, err)
 				}
 				if test.readErr != nil && !errors.Is(err, os.ErrPermission) {
-					t.Fatalf("capture error lost read cause: %v", err)
+					t.Fatalf("snapshot error lost read cause: %v", err)
 				}
 				return
 			}
 			if err != nil || result == nil || result.Status != test.wantStatus {
-				t.Fatalf("capture = %+v, %v, want status %s", result, err, test.wantStatus)
+				t.Fatalf("snapshot = %+v, %v, want status %s", result, err, test.wantStatus)
 			}
 			if test.wantStatus != memsnapshot.StatusComplete && result.Reason == "" {
-				t.Fatal("degraded capture has no reason")
+				t.Fatal("degraded snapshot has no reason")
 			}
 		})
 	}
@@ -77,11 +77,11 @@ func TestSnapshotErrorBoundsPreserveCause(t *testing.T) {
 	}
 	result, err := snapshotResult(nil, cause)
 	if result != nil || !errors.Is(err, os.ErrPermission) {
-		t.Fatalf("capture = %+v, %v, want no snapshot and permission error", result, err)
+		t.Fatalf("snapshot = %+v, %v, want no snapshot and permission error", result, err)
 	}
 	var pathErr *os.PathError
 	if !errors.As(err, &pathErr) || pathErr != cause {
-		t.Fatalf("capture error lost path details: %v", err)
+		t.Fatalf("snapshot error lost path details: %v", err)
 	}
 	if len(err.Error()) > maxReasonBytes || !utf8.ValidString(err.Error()) {
 		t.Fatalf("invalid bounded error: %q", err.Error())
@@ -94,6 +94,6 @@ func TestSnapshotReadFailure(t *testing.T) {
 		Process: memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 1}, TopK: 10,
 	})
 	if result != nil || !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("capture = %+v, %v, want no snapshot and missing process", result, err)
+		t.Fatalf("snapshot = %+v, %v, want no snapshot and missing process", result, err)
 	}
 }

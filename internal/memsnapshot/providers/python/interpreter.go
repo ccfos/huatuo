@@ -60,30 +60,44 @@ func (c *scanner) findInterpreters() ([]gcHeads, error) {
 	default:
 		return nil, unsupportedRuntime("CPython interpreter layout is unavailable")
 	}
-	seen := make(map[uint64]struct{})
+	// Zero marks a rejected probe; positive values identify confirmed list entries.
+	seen := make(map[uint64]int)
 	var result []gcHeads
 	probes := 0
 	for offset := 0; offset+8 <= len(runtimeRaw); offset += 8 {
 		candidate := c.image.order.Uint64(runtimeRaw[offset : offset+8])
-		for plausiblePtr(candidate) {
-			if _, ok := seen[candidate]; ok {
+		chainStart := len(result)
+		for candidate != 0 {
+			confirmed := len(result) > chainStart
+			if !plausiblePtr(candidate) {
+				if confirmed {
+					return nil, errors.New("CPython interpreter list contains an invalid pointer")
+				}
+				break
+			}
+			if position, ok := seen[candidate]; ok {
+				if confirmed && (position == 0 || position > chainStart) {
+					return nil, errors.New("CPython interpreter list contains an invalid or cyclic link")
+				}
 				break
 			}
 			if probes >= maxInterpreterProbes {
-				return nil, fmt.Errorf("CPython interpreter probing exceeds %d attempts",
-					maxInterpreterProbes)
+				return nil, fmt.Errorf("CPython interpreter probing exceeds %d attempts", maxInterpreterProbes)
 			}
 			if len(result) >= maxInterpreterCount {
-				return nil, fmt.Errorf("CPython interpreter list exceeds %d entries",
-					maxInterpreterCount)
+				return nil, fmt.Errorf("CPython interpreter list exceeds %d entries", maxInterpreterCount)
 			}
-			seen[candidate] = struct{}{}
+			seen[candidate] = 0
 			probes++
-			generation, next, generationErr := c.probeInterpreter(candidate)
-			if generationErr != nil {
+			generation, next, err := c.probeInterpreter(candidate)
+			if err != nil {
+				if confirmed {
+					return nil, fmt.Errorf("read CPython interpreter successor: %w", err)
+				}
 				break
 			}
 			result = append(result, generation)
+			seen[candidate] = len(result)
 			candidate = next
 		}
 	}

@@ -38,13 +38,6 @@ const (
 	maxELFSymbols          = 1 << 20
 )
 
-type version struct {
-	major      int
-	minor      int
-	micro      int
-	microKnown bool
-}
-
 type image struct {
 	version        version
 	runtimeAddress uint64
@@ -55,67 +48,6 @@ type image struct {
 type module struct {
 	hostPath string
 	maps     []memsnapshot.ProcMap
-}
-
-type interpreterLayout uint8
-
-const (
-	layoutUnknown interpreterLayout = iota
-	layoutRuntimeGC
-	layoutProbedList
-	layoutFixed
-	layoutDebugOffsets
-)
-
-type runtimeLayout struct {
-	interpreterMode     interpreterLayout
-	runtimeHeadOffset   uint64
-	interpreterGCOffset uint64
-	debugInterpreterGC  uint64
-	debugObjectType     uint64
-	debugTypeName       uint64
-	debugTypeFlags      uint64
-	objectTypeOffset    uint64
-	objectSizeOffset    uint64
-	typeNameOffset      uint64
-	typeFlagsOffset     uint64
-	unicodeDataOffset   uint64
-}
-
-var runtimeLayouts = map[int]runtimeLayout{
-	8: {
-		interpreterMode: layoutRuntimeGC, unicodeDataOffset: 48,
-	},
-	9: {
-		interpreterMode: layoutProbedList, unicodeDataOffset: 48,
-	},
-	10: {
-		interpreterMode: layoutProbedList, unicodeDataOffset: 48,
-	},
-	11: {
-		interpreterMode: layoutProbedList, unicodeDataOffset: 48,
-	},
-	12: {
-		interpreterMode: layoutFixed, runtimeHeadOffset: 40,
-		interpreterGCOffset: 112, unicodeDataOffset: 40,
-	},
-	13: {
-		interpreterMode:    layoutDebugOffsets,
-		debugInterpreterGC: 80, debugObjectType: 360,
-		debugTypeName: 376, debugTypeFlags: 392, unicodeDataOffset: 40,
-	},
-	14: {
-		interpreterMode:    layoutDebugOffsets,
-		debugInterpreterGC: 88, debugObjectType: 408,
-		debugTypeName: 424, debugTypeFlags: 440, unicodeDataOffset: 40,
-	},
-}
-
-func (v version) String() string {
-	if !v.microKnown {
-		return fmt.Sprintf("%d.%d.x", v.major, v.minor)
-	}
-	return fmt.Sprintf("%d.%d.%d", v.major, v.minor, v.micro)
 }
 
 func dynamicSymbols(ctx context.Context, file *elf.File, names ...string) (map[string]elf.Symbol, error) {
@@ -167,6 +99,7 @@ func discoverRuntime(ctx context.Context, procRoot string, pid int,
 	}
 	candidates, candidateWarning := runtimeModules(procRoot, pid, maps)
 	var failures []string
+	var causes []error
 	failureBytes := 0
 	failuresOmitted := false
 	appendFailure := func(reason string) {
@@ -203,9 +136,11 @@ func discoverRuntime(ctx context.Context, procRoot string, pid int,
 		if errors.Is(imageErr, errUnsupportedRuntime) {
 			return image{}, imageErr
 		}
+		causes = append(causes, imageErr)
 		appendFailure(imageErr.Error())
 	}
 	if candidateWarning != "" {
+		causes = append(causes, errors.New(candidateWarning))
 		appendFailure(candidateWarning)
 	}
 	if nonCPythonModules == len(candidates) && candidateWarning == "" {
@@ -220,7 +155,7 @@ func discoverRuntime(ctx context.Context, procRoot string, pid int,
 	if failuresOmitted {
 		reason += "; additional module failures omitted"
 	}
-	return image{}, fmt.Errorf("locate CPython _PyRuntime: %s", reason)
+	return image{}, boundedError{cause: errors.Join(causes...), reason: "locate CPython _PyRuntime: " + reason}
 }
 
 func runtimeModules(procRoot string, pid int,
@@ -228,7 +163,7 @@ func runtimeModules(procRoot string, pid int,
 ) ([]module, string) {
 	type moduleKey [2]string
 	byKey := make(map[moduleKey][]memsnapshot.ProcMap)
-	order := make([]moduleKey, 0)
+	var order []moduleKey
 	limitReached := false
 	executablePath := filepath.Join(procRoot, strconv.Itoa(pid), "exe")
 	executableTarget, _ := os.Readlink(executablePath)
@@ -319,7 +254,13 @@ func inspectModule(ctx context.Context, path string, maps []memsnapshot.ProcMap,
 		return image{}, err
 	}
 	defer moduleFile.Close()
-	file, err := memsnapshot.ReadELFMetadata(ctx, moduleFile)
+	if err := ctx.Err(); err != nil {
+		return image{}, err
+	}
+	file, err := elf.NewFile(moduleFile)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return image{}, ctxErr
+	}
 	if err != nil {
 		return image{}, err
 	}
@@ -421,17 +362,4 @@ func loadBias(file *elf.File, maps []memsnapshot.ProcMap) (uint64, error) {
 		return 0, errors.New("cannot determine CPython module load bias")
 	}
 	return bias, nil
-}
-
-func layoutFor(version version) (runtimeLayout, error) {
-	layout, ok := runtimeLayouts[version.minor]
-	if version.major != 3 || !ok {
-		return runtimeLayout{}, fmt.Errorf("%w: %s", errUnsupportedRuntime,
-			version.String())
-	}
-	layout.objectTypeOffset = pyObjectTypeOffset
-	layout.objectSizeOffset = pyObjectSizeOffset
-	layout.typeNameOffset = pyTypeNameOffset
-	layout.typeFlagsOffset = pyTypeFlagsOffset
-	return layout, nil
 }

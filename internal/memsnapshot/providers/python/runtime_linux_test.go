@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,15 +158,18 @@ func TestDiscoverRuntimeSymbolErrors(t *testing.T) {
 			_, err := discoverRuntime(context.Background(), procRoot, 42, nil)
 			result, snapshotErr := snapshotResult(nil, err)
 			if tc.wantError {
+				if !errors.Is(snapshotErr, io.EOF) {
+					t.Fatalf("original ELF read error lost: %v", snapshotErr)
+				}
 				if result != nil || snapshotErr == nil || !errors.Is(snapshotErr, err) ||
 					!strings.Contains(snapshotErr.Error(), tc.reason) {
-					t.Fatalf("capture = %+v, %v, want discovery error containing %q", result, snapshotErr, tc.reason)
+					t.Fatalf("snapshot = %+v, %v, want discovery error containing %q", result, snapshotErr, tc.reason)
 				}
 				return
 			}
 			if snapshotErr != nil || result == nil || result.Status != memsnapshot.StatusUnavailable ||
 				!strings.Contains(result.Reason, tc.reason) {
-				t.Fatalf("capture = %+v, %v, want unavailable containing %q", result, snapshotErr, tc.reason)
+				t.Fatalf("snapshot = %+v, %v, want unavailable containing %q", result, snapshotErr, tc.reason)
 			}
 		})
 	}
