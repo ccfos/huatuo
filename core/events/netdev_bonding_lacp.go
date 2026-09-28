@@ -33,6 +33,9 @@ import (
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/netdev_bonding_lacp.c -o $BPF_DIR/netdev_bonding_lacp.o
+
+const lacpTracerName = "netdev_bonding_lacp"
+
 type lacpTracing struct {
 	count uint64
 }
@@ -44,7 +47,7 @@ func init() {
 		return
 	}
 
-	tracing.RegisterEventTracing("netdev_bonding_lacp", newLACPTracing)
+	tracing.RegisterEventTracing(lacpTracerName, newLACPTracing)
 }
 
 func newLACPTracing() (*tracing.EventTracingAttr, error) {
@@ -104,7 +107,7 @@ func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
 
 			log.Debugf("bond info: %s", tracerData.Content)
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:        "lacp",
+				TracerName:        lacpTracerName,
 				ObservedTimestamp: timeutil.Now(),
 				TracerData:        tracerData,
 			}); err != nil {
