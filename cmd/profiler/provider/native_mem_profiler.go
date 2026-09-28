@@ -299,17 +299,18 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		sampleCountsByProcess, ring, err := ringCtx.drainFrozenRingBuffer(
 			func() any { return &abi.ProfilerEventBase{} },
 		)
+		// Aggregate before checking err: a failed drain still returns the
+		// samples it read, matching the off-CPU loop's partial-batch
+		// semantics.
+		if len(sampleCountsByProcess) > 0 {
+			ringCtx.aggregateStacksAndEnqueue(sampleCountsByProcess, ring, enqueue, p.convertValueToBytes)
+		}
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
 
-			log.Warn("drain failed", "error", err)
-			continue
-		}
-
-		if len(sampleCountsByProcess) > 0 {
-			ringCtx.aggregateStacksAndEnqueue(sampleCountsByProcess, ring, enqueue, p.convertValueToBytes)
+			return fmt.Errorf("drain memory perf event batches: %w", err)
 		}
 	}
 }

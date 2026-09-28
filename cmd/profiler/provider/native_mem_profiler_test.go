@@ -15,13 +15,17 @@
 package provider
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestNativeMemoryReadDataLoopRequiresStart(t *testing.T) {
@@ -468,5 +472,32 @@ func stubHasKprobeFunction(fn func(string) bool) func() {
 	hasKprobeFunction = fn
 	return func() {
 		hasKprobeFunction = old
+	}
+}
+
+func TestNativeMemoryReadDataLoopReturnsDrainErrors(t *testing.T) {
+	readErr := errors.New("read failed")
+	profiler := &memNativeProfiler{
+		ringCtx: newFrozenRingTestContext(&frozenRingReaderStub{err: readErr}),
+	}
+
+	// Bounded context: a loop that swallows the failure would idle until
+	// the deadline and return nil instead of the read error.
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	err := profiler.ReadDataLoop(ctx, func(any) {})
+	if !errors.Is(err, readErr) {
+		t.Fatalf("ReadDataLoop() error = %v, want wrap of %v", err, readErr)
+	}
+}
+
+func TestNativeMemoryReadDataLoopTreatsCancellationAsCleanShutdown(t *testing.T) {
+	profiler := &memNativeProfiler{
+		ringCtx: newFrozenRingTestContext(&frozenRingReaderStub{err: types.ErrExitByCancelCtx}),
+	}
+
+	if err := profiler.ReadDataLoop(t.Context(), func(any) {}); err != nil {
+		t.Fatalf("ReadDataLoop() error = %v, want nil", err)
 	}
 }

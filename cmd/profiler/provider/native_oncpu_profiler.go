@@ -251,17 +251,18 @@ func (p *cpuNativeProfiler) readOnCPUDataLoop(ctx context.Context, enqueue func(
 		sampleCountsByProcess, ring, err := ringCtx.drainFrozenRingBuffer(
 			func() any { return &abi.ProfilerOnCPUEvent{} },
 		)
+		// Aggregate before checking err: a failed drain still returns the
+		// samples it read, matching the off-CPU loop's partial-batch
+		// semantics.
+		if len(sampleCountsByProcess) > 0 {
+			ringCtx.aggregateStacksAndEnqueue(sampleCountsByProcess, ring, enqueue, nil)
+		}
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
 
-			log.Warnf("drain: %v", err)
-			continue
-		}
-
-		if len(sampleCountsByProcess) > 0 {
-			ringCtx.aggregateStacksAndEnqueue(sampleCountsByProcess, ring, enqueue, nil)
+			return fmt.Errorf("drain on-CPU perf event batches: %w", err)
 		}
 	}
 }

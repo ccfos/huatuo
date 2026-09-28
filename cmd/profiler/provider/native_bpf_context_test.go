@@ -76,8 +76,11 @@ func TestCloseBPF(t *testing.T) {
 
 type frozenRingReaderStub struct {
 	batches []bpf.PerfEventBatch
-	reads   int
-	closed  bool
+	// err is returned alongside every batch, mirroring ReadBatch's contract
+	// of pairing failures with the partial results it decoded.
+	err    error
+	reads  int
+	closed bool
 }
 
 func (*frozenRingReaderStub) ReadInto(any) error {
@@ -86,12 +89,12 @@ func (*frozenRingReaderStub) ReadInto(any) error {
 
 func (r *frozenRingReaderStub) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
 	if r.reads >= len(r.batches) {
-		return bpf.PerfEventBatch{}, nil
+		return bpf.PerfEventBatch{}, r.err
 	}
 
 	batch := r.batches[r.reads]
 	r.reads++
-	return batch, nil
+	return batch, r.err
 }
 
 func (r *frozenRingReaderStub) Close() error {
@@ -141,11 +144,17 @@ func TestNativeProfilerStopClosesReadersAndBPF(t *testing.T) {
 type frozenRingBPFStub struct {
 	bpf.BPF
 	values map[uint32]uint64
+	// readErrs fails ReadMap for specific keys, mirroring map I/O errors.
+	readErrs map[uint32]error
 }
 
 func (b *frozenRingBPFStub) ReadMap(_ uint32, key []byte) ([]byte, error) {
+	idx := binary.LittleEndian.Uint32(key)
+	if err := b.readErrs[idx]; err != nil {
+		return nil, err
+	}
 	value := make([]byte, 8)
-	binary.LittleEndian.PutUint64(value, b.values[binary.LittleEndian.Uint32(key)])
+	binary.LittleEndian.PutUint64(value, b.values[idx])
 	return value, nil
 }
 
@@ -206,5 +215,84 @@ func TestDrainFrozenRingBufferContinuesAfterSamplesLost(t *testing.T) {
 	}
 	if value := bpfStub.values[bpfmap.SampleCountAIdx]; value != 0 {
 		t.Fatalf("sample count after drain = %d, want 0", value)
+	}
+}
+
+// newFrozenRingTestContext builds a ringBufferContext backed by the shared map
+// stub, for exercising the data loops without a live BPF object. Both parities
+// serve the same reader so a drain that survives the first failure flips to a
+// valid readerB instead of a nil one.
+func newFrozenRingTestContext(reader bpf.PerfEventReader) *ringBufferContext {
+	return &ringBufferContext{
+		bpf: &frozenRingBPFStub{
+			values: map[uint32]uint64{
+				bpfmap.TransferCountIdx: 0,
+				bpfmap.SampleCountAIdx:  0,
+			},
+		},
+		readerA:            reader,
+		readerB:            reader,
+		transferStateMapID: 1,
+		stackMapAID:        2,
+		stackMapBID:        3,
+	}
+}
+
+func TestDrainFrozenRingBufferRetainsSamplesOnReadFailure(t *testing.T) {
+	readErr := errors.New("read failed")
+	first := &abi.ProfilerEventBase{
+		PIDTGID:   uint64(100) << 32,
+		Value:     3,
+		Kernstack: 1,
+		Userstack: -1,
+	}
+	reader := &frozenRingReaderStub{
+		batches: []bpf.PerfEventBatch{{Events: []any{first}}},
+		err:     readErr,
+	}
+	ringCtx := newFrozenRingTestContext(reader)
+	ringCtx.bpf.(*frozenRingBPFStub).values[bpfmap.SampleCountAIdx] = 1
+
+	got, _, err := ringCtx.drainFrozenRingBuffer(
+		func() any { return &abi.ProfilerEventBase{} },
+	)
+	if !errors.Is(err, readErr) {
+		t.Fatalf("drainFrozenRingBuffer() error = %v, want wrap of %v", err, readErr)
+	}
+
+	process := processKey{PID: 100}
+	stackIDs := rawStackIDs{KernelStackID: 1, UserStackID: -1}
+	if value := got[process][stackIDs]; value != 3 {
+		t.Fatalf("partial batch lost: aggregated value = %d, want 3", value)
+	}
+}
+
+func TestDrainFrozenRingBufferRetainsSamplesOnCountReadFailure(t *testing.T) {
+	countErr := errors.New("map read failed")
+	first := &abi.ProfilerEventBase{
+		PIDTGID:   uint64(100) << 32,
+		Value:     3,
+		Kernstack: 1,
+		Userstack: -1,
+	}
+	reader := &frozenRingReaderStub{
+		batches: []bpf.PerfEventBatch{{Events: []any{first}}},
+	}
+	ringCtx := newFrozenRingTestContext(reader)
+	stub := ringCtx.bpf.(*frozenRingBPFStub)
+	stub.values[bpfmap.SampleCountAIdx] = 5 // undelivered count forces the read-back
+	stub.readErrs = map[uint32]error{bpfmap.SampleCountAIdx: countErr}
+
+	got, _, err := ringCtx.drainFrozenRingBuffer(
+		func() any { return &abi.ProfilerEventBase{} },
+	)
+	if !errors.Is(err, countErr) {
+		t.Fatalf("drainFrozenRingBuffer() error = %v, want wrap of %v", err, countErr)
+	}
+
+	process := processKey{PID: 100}
+	stackIDs := rawStackIDs{KernelStackID: 1, UserStackID: -1}
+	if value := got[process][stackIDs]; value != 3 {
+		t.Fatalf("partial batch lost: aggregated value = %d, want 3", value)
 	}
 }
