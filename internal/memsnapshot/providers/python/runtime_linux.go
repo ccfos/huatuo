@@ -25,6 +25,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ccfos/huatuo/internal/symbol"
+
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
@@ -121,7 +123,7 @@ func dynamicSymbols(ctx context.Context, file *elf.File, names ...string) (map[s
 	for _, name := range names {
 		wanted[name] = struct{}{}
 	}
-	symbols, err := memsnapshot.ReadELFSymbols(ctx, file, elf.SHT_DYNSYM,
+	symbols, err := symbol.ReadELFSymbols(ctx, file, elf.SHT_DYNSYM,
 		maxELFMetadataBytes, maxELFSymbols, func(name string) bool {
 			_, ok := wanted[name]
 			return ok

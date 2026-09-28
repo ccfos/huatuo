@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 )
 
 const (
@@ -188,95 +187,6 @@ func (r *frozenELFHeaders) ReadAt(p []byte, offset int64) (int, error) {
 		p, offset, total = p[n:], offset+int64(n), total+n
 	}
 	return total, nil
-}
-
-// ReadELFSymbols reads only the requested symbols. It deliberately does not
-// decode GNU symbol versions: runtime address lookup does not use them.
-// Budgets cover raw tables, retained symbols, and repeated name scanning.
-func ReadELFSymbols(ctx context.Context, file *elf.File, typ elf.SectionType,
-	maxBytes, maxSymbols uint64, wanted func(string) bool,
-) ([]elf.Symbol, error) {
-	section := file.SectionByType(typ)
-	if section == nil {
-		return nil, elf.ErrNoSymbols
-	}
-	entrySize := uint64(elf.Sym64Size)
-	if file.Class == elf.ELFCLASS32 {
-		entrySize = elf.Sym32Size
-	} else if file.Class != elf.ELFCLASS64 {
-		return nil, fmt.Errorf("unsupported ELF symbol class")
-	}
-	if section.Size%entrySize != 0 || section.Size/entrySize > maxSymbols ||
-		section.Entsize != entrySize || int(section.Link) >= len(file.Sections) {
-		return nil, fmt.Errorf("invalid or oversized ELF symbol table")
-	}
-	names := file.Sections[section.Link]
-	if names.Type != elf.SHT_STRTAB {
-		return nil, fmt.Errorf("ELF symbols do not link to a string table")
-	}
-	remaining := maxBytes
-	for _, table := range []*elf.Section{section, names} {
-		if table.Flags&elf.SHF_COMPRESSED != 0 ||
-			strings.HasPrefix(table.Name, ".zdebug") || table.Size > remaining {
-			return nil, fmt.Errorf("ELF symbol tables exceed metadata budget or are compressed")
-		}
-		remaining -= table.Size
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	data, err := section.Data()
-	if err != nil {
-		return nil, err
-	}
-	stringsData, err := names.Data()
-	if err != nil {
-		return nil, err
-	}
-	var result []elf.Symbol
-	scanRemaining := maxBytes
-	for offset := entrySize; offset < uint64(len(data)); offset += entrySize {
-		if offset/entrySize%128 == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		raw := data[offset : offset+entrySize]
-		nameOffset := uint64(file.ByteOrder.Uint32(raw[:4]))
-		if nameOffset >= uint64(len(stringsData)) {
-			return nil, fmt.Errorf("invalid ELF symbol name offset")
-		}
-		window := stringsData[nameOffset:]
-		if len(window) > 4096 {
-			window = window[:4096]
-		}
-		length := bytes.IndexByte(window, 0)
-		if length < 0 || uint64(length+1) > scanRemaining {
-			return nil, fmt.Errorf("ELF symbol names exceed metadata budget")
-		}
-		scanRemaining -= uint64(length + 1)
-		name := string(window[:length])
-		if !wanted(name) {
-			continue
-		}
-		cost := uint64(length + 128)
-		if len(result) >= 4096 || cost > remaining {
-			return nil, fmt.Errorf("retained ELF symbols exceed metadata budget")
-		}
-		remaining -= cost
-		symbol := elf.Symbol{Name: name}
-		if file.Class == elf.ELFCLASS64 {
-			symbol.Info, symbol.Other = raw[4], raw[5]
-			symbol.Section = elf.SectionIndex(file.ByteOrder.Uint16(raw[6:8]))
-			symbol.Value, symbol.Size = file.ByteOrder.Uint64(raw[8:16]), file.ByteOrder.Uint64(raw[16:24])
-		} else {
-			symbol.Value, symbol.Size = uint64(file.ByteOrder.Uint32(raw[4:8])), uint64(file.ByteOrder.Uint32(raw[8:12]))
-			symbol.Info, symbol.Other = raw[12], raw[13]
-			symbol.Section = elf.SectionIndex(file.ByteOrder.Uint16(raw[14:16]))
-		}
-		result = append(result, symbol)
-	}
-	return result, ctx.Err()
 }
 
 // FindELFLoadBias tries load segments in ELF order because the first segment

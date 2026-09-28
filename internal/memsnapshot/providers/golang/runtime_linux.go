@@ -35,6 +35,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/ccfos/huatuo/internal/symbol"
+
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
@@ -214,7 +216,7 @@ func inspectExecutable(ctx context.Context, file *os.File) imageInfo {
 		if symbolTable != nil {
 			return symbolTable, nil
 		}
-		table, tableErr := newGoSymbolTable(ctx, elfFile)
+		table, tableErr := symbol.ReadGoTable(ctx, elfFile)
 		if tableErr == nil {
 			symbolTable = table
 		}
@@ -356,7 +358,7 @@ func lookupRuntimeSymbols(ctx context.Context, file *elf.File) runtimeSymbolAddr
 		return name == "runtime.mbuckets" || name == "runtime.MemProfileRate"
 	}
 	for _, typ := range []elf.SectionType{elf.SHT_SYMTAB, elf.SHT_DYNSYM} {
-		if symbols, err := memsnapshot.ReadELFSymbols(ctx, file, typ,
+		if symbols, err := symbol.ReadELFSymbols(ctx, file, typ,
 			maxELFMetadataBytes, maxELFSymbols, wanted); err == nil {
 			collect(symbols)
 		}

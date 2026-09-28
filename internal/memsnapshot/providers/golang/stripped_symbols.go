@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ccfos/huatuo/internal/symbol"
+
 	"golang.org/x/arch/x86/x86asm"
 )
 
@@ -48,7 +50,7 @@ func lookupStrippedMBuckets(file *elf.File, table *gosym.Table) (uint64, error) 
 	if size > maxMProfFlushCodeSize {
 		size = maxMProfFlushCodeSize
 	}
-	code, err := readVirtualRange(file, function.Entry, size)
+	code, err := symbol.ReadELFVirtualRange(file, function.Entry, size, maxELFMetadataBytes)
 	if err != nil {
 		return 0, fmt.Errorf("%w: read runtime.mProf_FlushLocked: %w",
 			errMBucketsSymbolNotFound, err)
@@ -83,7 +85,7 @@ func lookupStrippedRate(file *elf.File,
 		if size > maxMemProfileRateCodeSize {
 			size = maxMemProfileRateCodeSize
 		}
-		code, readErr := readVirtualRange(file, function.Entry, size)
+		code, readErr := symbol.ReadELFVirtualRange(file, function.Entry, size, maxELFMetadataBytes)
 		if readErr != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", name, readErr))
 			continue
@@ -166,7 +168,7 @@ func isInitialMemProfileRate(file *elf.File, address uint64) bool {
 	if !isWritableAddress(file, address) {
 		return false
 	}
-	data, err := readVirtualRange(file, address, 8)
+	data, err := symbol.ReadELFVirtualRange(file, address, 8, maxELFMetadataBytes)
 	return err == nil && file.ByteOrder.Uint64(data) == initialMemProfileRate
 }
 

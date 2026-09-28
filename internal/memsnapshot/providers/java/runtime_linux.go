@@ -28,6 +28,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ccfos/huatuo/internal/symbol"
+
 	"golang.org/x/sys/unix"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
@@ -136,7 +138,7 @@ func discoverVM(ctx context.Context, procRoot string, pid int) (*vmImage, error)
 		return nil, fmt.Errorf("%w: cannot determine libjvm.so load bias",
 			errHotSpotUnavailable)
 	}
-	dynamicSymbols, err := memsnapshot.ReadELFSymbols(ctx, file, elf.SHT_DYNSYM,
+	dynamicSymbols, err := symbol.ReadELFSymbols(ctx, file, elf.SHT_DYNSYM,
 		maxELFMetadataBytes, maxELFSymbols, func(name string) bool {
 			return strings.HasPrefix(name, "gHotSpotVM")
 		})
