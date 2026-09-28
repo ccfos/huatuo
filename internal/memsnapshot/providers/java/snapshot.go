@@ -36,7 +36,7 @@ func unsupportedHotSpot(reason string) error {
 // snapshot samples the running HotSpot heap and reduces it to type aggregates.
 func snapshot(ctx context.Context,
 	identity memsnapshot.ProcessInstance, maxEntries int,
-	samplingNonce uint64,
+	samplingSeed uint64,
 ) (*memsnapshot.Snapshot, error) {
 	readPID := identity.TGID
 	if readPID <= 0 || maxEntries <= 0 {
@@ -92,7 +92,7 @@ func snapshot(ctx context.Context,
 		metadata, heap.humongous, encoding, mirrorOopSizeOffset, classes,
 		statistics.humongous, snapshot)
 	scanOrdinary(memory, metadata, heap.ordinary, encoding, mirrorOopSizeOffset,
-		samplingNonce, heap.ordinaryUsed, classes, &statistics, snapshot)
+		samplingSeed, heap.ordinaryUsed, classes, &statistics, snapshot)
 	if metadata.klassLimitReached {
 		appendPartial(snapshot, "HotSpot Klass cache safety limit reached")
 	}
@@ -118,7 +118,7 @@ func snapshot(ctx context.Context,
 		}
 		if deadlineStopped || targetExited || metadata.klassLimitReached {
 			appendPartial(snapshot,
-				"no valid Java objects were classified before capture stopped")
+				"no valid Java objects were classified before snapshot stopped")
 		} else {
 			if firstInvalidReason == nil {
 				firstInvalidReason = errors.New("scan stopped before the first valid object")
