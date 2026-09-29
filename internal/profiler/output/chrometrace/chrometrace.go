@@ -18,6 +18,7 @@ package chrometrace
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"strconv"
 
 	"github.com/ccfos/huatuo/internal/profiler/output"
@@ -130,7 +131,7 @@ func counterEvent(s *output.Sample, ts float64) event {
 	args := make(map[string]any, len(s.Tags))
 
 	for k, v := range s.Tags {
-		if fv, err := strconv.ParseFloat(v, 64); err == nil {
+		if fv, err := strconv.ParseFloat(v, 64); err == nil && !math.IsNaN(fv) && !math.IsInf(fv, 0) {
 			args[k] = fv
 		} else {
 			args[k] = v
