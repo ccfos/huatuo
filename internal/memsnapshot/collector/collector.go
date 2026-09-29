@@ -71,11 +71,15 @@ func Snapshot(ctx context.Context, process memsnapshot.ProcessInstanceID,
 	if err := memsnapshot.LimitOutput(snapshot, options.MaxMemoryObjectEntries); err != nil {
 		return nil, fmt.Errorf("limit runtime snapshot output: %w", err)
 	}
+	processMemory := readProcessMemory(pid)
+	if err := memsnapshot.ValidateProcessInstanceID(process); err != nil {
+		return nil, fmt.Errorf("validate process after snapshot: %w", err)
+	}
 	return &Result{
 		Process:           process,
 		Language:          language,
 		SnapshotStartedAt: snapshotStartedAt,
 		Snapshot:          snapshot,
-		ProcessMemory:     readProcessMemory(pid),
+		ProcessMemory: processMemory,
 	}, nil
 }
