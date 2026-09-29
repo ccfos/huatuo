@@ -7,77 +7,43 @@ date: 2026-03-04
 weight: 5
 ---
 
-This integration test validates that **huatuo-bamai** can start correctly with mocked `/proc` and `/sys` filesystems and expose the expected **Prometheus metrics**.
+`integration/run.sh` runs the repository's `integration/test_*.sh` suite. It includes fixture-based metrics checks, API tests, and tests that exercise real BPF programs, process runtimes, cgroups, and network devices. The suite is not independent of the host kernel or hardware.
 
-The test runs the real `huatuo-bamai` binary and verifies the `/metrics`endpoint output without relying on the host kernel or hardware.
+### Prerequisites and build
 
-### What the Script Does
-The integration test performs the following steps:
+Run from the repository root on Linux. The runner requires **root (EUID 0)** and uses `unshare --uts --mount`, mounts, and BPF loading. Root inside a restricted container may still lack the required capabilities, including `CAP_SYS_ADMIN` and the kernel's BPF/perf permissions. Individual tests also check prerequisites such as kernel tracepoints, PMU access, installed runtimes, and helper commands.
 
-1. Generates a temporary `bamai.conf`
-2. Starts `huatuo-bamai` with mocked `procfs` and `sysfs`
-3. Waits for the Prometheus `/metrics` endpoint to become available
-4. Fetches all metrics from `/metrics`
-5. Verifies that all expected metrics exist
-6. Stops the service and cleans up resources
-
-If any expected metric is missing, the test fails.
-
-### How to Run
-Run the integration test from the project root:
+Build the binaries, BPF objects, and configuration artifacts before invoking the runner directly:
 
 ```bash
-bash integration/run.sh
+make build
+sudo bash integration/run.sh
 ```
 
-Pass a file name to run one integration test. The optional second argument is
-the repeat count and defaults to 1:
+Alternatively, `make integration` builds first and then invokes the same runner. Run it in a root environment with the build toolchain available; an unprivileged invocation can finish the build and then skip the entire test suite.
+
+### Select and repeat tests
+
+Without arguments, the runner executes all `integration/test_*.sh` files. Pass a file name (not a path) to select one test. The optional second argument is a positive repeat count, defaulting to 1:
 
 ```bash
-bash integration/run.sh test_metrics_exclude_filter.sh 10
+sudo bash integration/run.sh test_metrics.sh
+sudo bash integration/run.sh test_metrics_exclude_filter.sh 10
 ```
 
-or
-```bash
-make integration
-```
-#### On Failure
+### Interpret the result
 
-- The `huatuo-bamai` service metrics and logs are printed to stdout
-- The temporary working directory is kept for debugging
+- Without root, the runner prints `[INTEGRATION][SKIP] ... requires root` and exits **0 without running tests**.
+- Individual tests can also print a skip reason and exit 0 when a prerequisite is missing. The runner may subsequently print `passed` for that script. Inspect the test output for `SKIP`; a zero exit status or final success message alone does not prove every test executed.
+- A failing test stops the suite. The runner stops its services, prints diagnostic text artifacts, and retains the failing temporary workspace. Its path is included in the failure log.
+- Successful test workspaces are removed. The metrics fixture test prints the checked metric prefixes and matching metric lines.
 
-#### On Success
+### The metrics fixture test
 
-- Output the list of successfully validated metrics
+`test_metrics.sh` uses the real `huatuo-bamai` binary with mocked `/proc` and `/sys` data. It generates a temporary configuration, starts the service, waits for `/metrics`, and compares the response with the expected metric fixtures. This limits host dependence for those metric inputs; it does not remove the runner's namespace and privilege requirements or the prerequisites of other tests.
 
----
+To extend this test:
 
-### How to Add New Metrics Tests
-#### 1: Add or Update Fixture Data
-
-If the metric depends on /proc or /sys, add or update mock data under:
-```bash
-integration/fixtures/
-```
-
-The directory structure should match the real kernel filesystem layout.
-#### 2: Add Expected Metrics
-
-Create a new file under:
-```bash
-integration/fixtures/expected_metrics/
-├── cpu.txt
-├── memory.txt
-└── ...
-```
-
-Each non-empty, non-comment line represents one expected Prometheus metric line
-and must match the /metrics output exactly.
-
-New *.txt files are automatically picked up by the test.
-
-#### 3: Run the Test
-```bash
-bash integration/run.sh
-```
-The test fails if any expected metric is missing or mismatched.
+1. Add or update data under `integration/fixtures/`, preserving the kernel filesystem layout.
+2. Add expected metric lines to `integration/fixtures/expected_metrics/*.txt`. Non-empty, non-comment lines must be present in the `/metrics` output. New `.txt` files are picked up automatically.
+3. Rebuild after changing source code, then run `sudo bash integration/run.sh test_metrics.sh`. Missing or mismatched metrics fail the test.
