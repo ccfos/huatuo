@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package executil starts and manages operating-system processes.
+// Package executil starts and manages operating-system process groups.
 package executil
 
 import (
@@ -31,7 +31,7 @@ import (
 // ErrStopped reports that Stop terminated the command with a signal.
 var ErrStopped = errors.New("executil: command stopped")
 
-// ErrStopFailed reports that context-triggered process termination failed.
+// ErrStopFailed reports that process group termination failed.
 var ErrStopFailed = errors.New("executil: stop failed")
 
 var errProcessNotInitialized = errors.New("process is not initialized")
@@ -39,6 +39,7 @@ var errProcessNotInitialized = errors.New("process is not initialized")
 const (
 	defaultStopGracePeriod = 5 * time.Second
 	defaultMaxOutputBytes  = 64 << 10
+	outputDrainTimeout     = time.Second
 )
 
 // Spec describes one external command invocation.
@@ -67,6 +68,7 @@ func WithExtraFiles(files ...*os.File) Option {
 
 // WithStdout redirects standard output instead of retaining it for Stdout.
 // A nil writer preserves capture. The caller owns the writer until Wait returns.
+// Write must return promptly; the process cannot interrupt a blocked writer.
 func WithStdout(writer io.Writer) Option {
 	return func(process *Process) {
 		process.stdoutWriter = writer
@@ -75,6 +77,7 @@ func WithStdout(writer io.Writer) Option {
 
 // WithStderr redirects standard error instead of retaining it for Stderr.
 // A nil writer preserves capture. The caller owns the writer until Wait returns.
+// Write must return promptly; the process cannot interrupt a blocked writer.
 func WithStderr(writer io.Writer) Option {
 	return func(process *Process) {
 		process.stderrWriter = writer
@@ -98,8 +101,11 @@ type lifecycleResult struct {
 	err  error
 }
 
-// Process owns one command lifecycle. It must be created with New and cannot be
-// restarted; methods on its zero value return an initialization error.
+// Process owns one command lifecycle and its process group. The group leader's
+// exit ends the command lifetime; remaining group members are killed before the
+// leader is reaped. Children must finish their work before the leader exits.
+// Process must be created with New and cannot be restarted; methods on its zero
+// value return an initialization error.
 type Process struct {
 	spec         Spec
 	output       outputBuffer
@@ -113,6 +119,7 @@ type Process struct {
 	pid             int
 	start           lifecycleResult
 	wait            lifecycleResult
+	groupErr        error
 	isStopRequested bool
 	stopAttempt     *lifecycleResult
 	startCommand    func(*exec.Cmd) error
@@ -205,6 +212,8 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 
 	cmd := exec.Command(p.spec.Path, p.spec.Args...)
+	// Descendants outside our group may retain a pipe after the leader exits.
+	cmd.WaitDelay = outputDrainTimeout
 	cmd.Env = p.spec.Env
 	cmd.ExtraFiles = p.extraFiles
 	cmd.Stdout = &p.output
@@ -237,11 +246,11 @@ func (p *Process) Start(ctx context.Context) error {
 	if launchErr == nil {
 		return nil
 	}
-	return p.finishCanceledStart(launchErr, cmd.Process.Pid)
+	return p.finishCanceledStart(launchErr)
 }
 
-func (p *Process) finishCanceledStart(launchErr error, pid int) error {
-	forceErr := wrapStopFailure(p.forceStopAndWait(pid, p.wait.done))
+func (p *Process) finishCanceledStart(launchErr error) error {
+	forceErr := wrapStopFailure(p.forceStopAndWait(p.wait.done))
 
 	p.mu.Lock()
 	var waitErr error
@@ -281,10 +290,22 @@ func (p *Process) failStart(err error) error {
 }
 
 func (p *Process) reap(cmd *exec.Cmd) {
+	exitErr := waitForCommandExit(cmd.Process.Pid)
+	p.mu.Lock()
+	if exitErr != nil {
+		p.groupErr = wrapStopFailure(fmt.Errorf("observe command %q exit: %w", p.spec.Path, exitErr))
+	} else if err := p.forceStop(p.pid); err != nil && !processGroupMissing(err) {
+		p.groupErr = wrapStopFailure(wrapSignalError("clean up", p.spec.Path, err))
+	}
+	// WNOWAIT pins the leader PID through the final group signal. Retire it
+	// before Wait can release it for reuse; later Stop calls only read results.
+	p.pid = 0
+	p.mu.Unlock()
+
 	err := cmd.Wait()
 
 	p.mu.Lock()
-	if p.isStopRequested && isStoppedExit(err) {
+	if p.groupErr == nil && p.isStopRequested && isStoppedExit(err) {
 		err = fmt.Errorf("%w: command %q exited after a stop signal: %w", ErrStopped, p.spec.Path, err)
 	} else if err != nil {
 		err = fmt.Errorf("wait for command %q: %w", p.spec.Path, err)
@@ -298,7 +319,9 @@ func (p *Process) reap(cmd *exec.Cmd) {
 }
 
 // Wait waits for an in-progress Start and then for the command reaper. Multiple
-// callers receive the same stored result.
+// callers receive the same stored result. Inherited output pipes have one second
+// to close after the leader is reaped; an incomplete drain follows os/exec's
+// ErrWaitDelay semantics.
 func (p *Process) Wait() error {
 	for {
 		p.mu.Lock()
@@ -337,10 +360,16 @@ func (p *Process) waitResult() error {
 func (p *Process) processResult() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	err := p.wait.err
 	if p.start.err != nil {
-		return p.start.err
+		err = p.start.err
 	}
-	return p.wait.err
+	if p.groupErr == nil || errors.Is(err, p.groupErr) {
+		return err
+	}
+
+	return errors.Join(err, p.groupErr)
 }
 
 func (p *Process) outputError() error {
@@ -354,8 +383,9 @@ func (p *Process) outputError() error {
 	)
 }
 
-// Stop sends SIGTERM to the process group and waits until ctx expires before
-// escalating to SIGKILL. Process reaping remains internal to Process.
+// Stop sends SIGTERM to the process group. The leader's exit or ctx expiration
+// ends the grace period and escalates remaining group members to SIGKILL.
+// Reaping and bounded output draining remain internal to Process.
 func (p *Process) Stop(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("stop command %q: context must not be nil", p.spec.Path)
@@ -372,7 +402,7 @@ func (p *Process) Stop(ctx context.Context) error {
 		return fmt.Errorf("stop command %q: process has not been started", p.spec.Path)
 	case processStateStartFailed, processStateExited:
 		p.mu.Unlock()
-		return nil
+		return p.stopResult()
 	}
 	if attempt := p.stopAttempt; attempt != nil {
 		select {
@@ -390,11 +420,10 @@ func (p *Process) Stop(ctx context.Context) error {
 	p.isStopRequested = true
 	attempt := &lifecycleResult{done: make(chan struct{})}
 	p.stopAttempt = attempt
-	pid := p.pid
 	waitDone := p.wait.done
 	p.mu.Unlock()
 
-	err := p.stopProcessGroup(ctx, pid, waitDone)
+	err := p.stopProcessGroup(ctx, waitDone)
 
 	p.mu.Lock()
 	attempt.err = err
@@ -412,14 +441,14 @@ func (p *Process) waitForStopAttempt(ctx context.Context, attempt *lifecycleResu
 	}
 }
 
-func (p *Process) stopProcessGroup(ctx context.Context, pid int, waitDone <-chan struct{}) error {
-	gracefulErr := gracefulStopProcessGroup(pid)
+func (p *Process) stopProcessGroup(ctx context.Context, waitDone <-chan struct{}) error {
+	gracefulErr := p.signalProcessGroup(gracefulStopProcessGroup)
 	if processGroupMissing(gracefulErr) {
 		<-waitDone
-		return nil
+		return p.stopResult()
 	}
 	if gracefulErr != nil {
-		forceErr := p.forceStopAndWait(pid, waitDone)
+		forceErr := p.forceStopAndWait(waitDone)
 		if forceErr != nil {
 			return errors.Join(
 				wrapSignalError("gracefully stop", p.spec.Path, gracefulErr),
@@ -431,14 +460,14 @@ func (p *Process) stopProcessGroup(ctx context.Context, pid int, waitDone <-chan
 
 	select {
 	case <-waitDone:
-		return nil
+		return p.stopResult()
 	case <-ctx.Done():
-		return p.forceStopAndWait(pid, waitDone)
+		return p.forceStopAndWait(waitDone)
 	}
 }
 
-func (p *Process) forceStopAndWait(pid int, waitDone <-chan struct{}) error {
-	err := p.forceStop(pid)
+func (p *Process) forceStopAndWait(waitDone <-chan struct{}) error {
+	err := p.signalProcessGroup(p.forceStop)
 	if processGroupMissing(err) {
 		err = nil
 	}
@@ -446,7 +475,29 @@ func (p *Process) forceStopAndWait(pid int, waitDone <-chan struct{}) error {
 		return wrapSignalError("force stop", p.spec.Path, err)
 	}
 	<-waitDone
-	return nil
+	return p.stopResult()
+}
+
+func (p *Process) signalProcessGroup(signal func(int) error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.pid == 0 {
+		return nil
+	}
+
+	return signal(p.pid)
+}
+
+func (p *Process) stopResult() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if errors.Is(p.wait.err, exec.ErrWaitDelay) {
+		return errors.Join(p.groupErr, p.wait.err)
+	}
+
+	return p.groupErr
 }
 
 func wrapSignalError(action, path string, err error) error {
@@ -457,9 +508,13 @@ func wrapSignalError(action, path string, err error) error {
 }
 
 func wrapStopFailure(err error) error {
-	if err == nil {
-		return nil
+	if err == nil || errors.Is(err, ErrStopFailed) {
+		return err
 	}
+	if errors.Is(err, exec.ErrWaitDelay) {
+		return err
+	}
+
 	return fmt.Errorf("%w: %w", ErrStopFailed, err)
 }
 
