@@ -15,163 +15,151 @@
 package executil
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"fmt"
+	"io"
 	"os"
-	"os/exec"
-	"slices"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
-func TestMemfdSeparatesDataAndPreservesCallerFiles(t *testing.T) {
-	file, err := os.CreateTemp(t.TempDir(), "inherited")
+func TestNewRejectsNilMemfdArgumentBuilder(t *testing.T) {
+	_, err := New(Spec{Path: "/unused/command"}, WithMemfdOutput(4, nil))
+	if err == nil || !strings.Contains(err.Error(), "output argument builder must not be nil") {
+		t.Fatalf("New() error = %v, want nil argument builder error", err)
+	}
+}
+
+func TestMemfdOptionDefersCreationUntilStart(t *testing.T) {
+	calls := 0
+	option := WithMemfdOutput(4, func(string) []string {
+		calls++
+		return nil
+	})
+	first, err := New(Spec{Path: "/unused/command"}, option)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
-	args := make([]string, 0, 8)
-	spec := &Spec{Path: "/bin/sh", Args: args}
-	result, err := RunWithMemfd(t.Context(), spec, func(path string) []string {
-		if path != "/proc/self/fd/4" {
-			t.Errorf("output path = %q, want fd 4 after caller's fd 3", path)
-		}
-		return []string{"-c", `printf 'caller' >&3; printf 'data' >&4; printf 'status'; printf 'warning' >&2`}
-	}, 4, WithExtraFiles(file))
+	second, err := New(Spec{Path: "/unused/command"}, option)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(result.Data) != "data" || string(result.Stdout) != "status" || string(result.Stderr) != "warning" {
-		t.Fatalf("result = %#v", result)
+	if first.memfd == second.memfd {
+		t.Fatal("reused option shares file ownership across processes")
 	}
-	// Direct writes to fd 4 advance the shared offset; reading must start at zero.
-	if _, err := file.WriteString(" still open"); err != nil {
-		t.Fatalf("caller file was closed: %v", err)
+	if first.memfd.file != nil || second.memfd.file != nil || calls != 0 {
+		t.Fatal("New() allocated a file or invoked the argument builder")
 	}
-	data, err := os.ReadFile(file.Name())
-	if err != nil || string(data) != "caller still open" {
-		t.Fatalf("caller file = %q, error = %v", data, err)
-	}
-	if !slices.Equal(args[:cap(args)], make([]string, cap(args))) {
-		t.Fatal("caller argument backing array was modified")
-	}
-}
-
-func TestMemfdOutputBoundaries(t *testing.T) {
-	for _, size := range []int{0, 3, 4, 5} {
-		t.Run(strconv.Itoa(size), func(t *testing.T) {
-			result, err := RunWithMemfd(t.Context(), &Spec{Path: "/bin/sh"}, func(path string) []string {
-				return []string{"-c", `truncate -s "$1" "$2"`, "memfd-test", strconv.Itoa(size), path}
-			}, 4)
-			if size > 4 {
-				if err == nil || !strings.Contains(err.Error(), "memfd output exceeds 4 bytes") || len(result.Data) != 0 {
-					t.Fatalf("result = %#v, error = %v", result, err)
-				}
-				return
-			}
-			if err != nil || len(result.Data) != size {
-				t.Fatalf("data length = %d, error = %v, want %d bytes", len(result.Data), err, size)
-			}
-		})
-	}
-}
-
-func TestMemfdFailurePreservesDiagnostics(t *testing.T) {
-	result, err := RunWithMemfd(t.Context(), &Spec{Path: "/bin/sh"}, func(path string) []string {
-		return []string{"-c", `printf 'partial' > "$1"; printf 'status'; printf 'reason' >&2; exit 7`, "memfd-test", path}
-	}, 1024)
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 {
-		t.Fatalf("error = %v, want exit status 7", err)
-	}
-	if len(result.Data) != 0 || string(result.Stdout) != "status" || string(result.Stderr) != "reason" {
-		t.Fatalf("result = %#v", result)
-	}
-}
-
-func TestMemfdCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	ready := make(chan struct{})
-	go func() {
-		select {
-		case <-ready:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-	result, err := RunWithMemfd(ctx, &Spec{Path: "/bin/sh", StopGracePeriod: 50 * time.Millisecond}, func(path string) []string {
-		return []string{"-c", `printf 'partial' > "$1"; printf 'ready'; exec sleep 30`, "memfd-test", path}
-	}, 1024, WithStdout(memfdReadyWriter{ready: ready}))
-	if !errors.Is(err, context.Canceled) || len(result.Data) != 0 {
-		t.Fatalf("result = %#v, error = %v, want canceled without data", result, err)
-	}
-}
-
-type memfdReadyWriter struct{ ready chan struct{} }
-
-func (w memfdReadyWriter) Write(p []byte) (int, error) {
-	select {
-	case <-w.ready:
-	default:
-		close(w.ready)
-	}
-	return len(p), nil
-}
-
-func TestMemfdFailurePathsCloseFile(t *testing.T) {
-	countFiles := func() int {
-		t.Helper()
-		files, err := os.ReadDir("/proc/self/fd")
-		if err != nil {
-			t.Fatal(err)
-		}
-		count := 0
-		for _, file := range files {
-			target, err := os.Readlink("/proc/self/fd/" + file.Name())
-			if err == nil && strings.Contains(target, "memfd:huatuo-exec") {
-				count++
-			}
-		}
-		return count
-	}
-	before := countFiles()
-	for _, path := range []string{"", "/no/such/huatuo-command", "/bin/false", "/bin/true"} {
-		_, _ = RunWithMemfd(t.Context(), &Spec{Path: path}, func(string) []string { return nil }, 4)
-		if after := countFiles(); after != before {
-			t.Fatalf("path %q leaked memory file: before %d, after %d", path, before, after)
-		}
-	}
-}
-
-func TestMemfdInvalidInputs(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	spec := &Spec{Path: "/bin/true"}
-	args := func(string) []string { return nil }
-	tests := []struct {
-		ctx  context.Context
-		spec *Spec
-		args func(string) []string
-		max  int
-	}{
-		{nil, spec, args, 4},
-		{t.Context(), nil, args, 4},
-		{t.Context(), spec, nil, 4},
-		{t.Context(), spec, args, 0},
-		{t.Context(), spec, args, -1},
-		{ctx, spec, args, 4},
+	err = first.Start(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Start() error = %v, want context.Canceled", err)
 	}
-	for i := range tests {
-		t.Run(fmt.Sprint(i), func(t *testing.T) {
-			tt := &tests[i]
-			result, err := RunWithMemfd(tt.ctx, tt.spec, tt.args, tt.max)
-			if err == nil || result == nil || len(result.Data) != 0 {
-				t.Fatalf("result = %#v, error = %v", result, err)
+	if first.memfd.file != nil || calls != 0 {
+		t.Fatal("canceled Start() allocated a file or invoked the argument builder")
+	}
+	if err := first.Stop(t.Context()); err != nil {
+		t.Fatalf("Stop() after canceled Start() error = %v", err)
+	}
+}
+
+func TestStopPreservesMemfdAndGroupCleanupErrors(t *testing.T) {
+	closeErr := errors.New("close memfd failed")
+	groupErr := errors.New("terminate group failed")
+	for _, cleanupErr := range []error{nil, groupErr} {
+		name := "file only"
+		if cleanupErr != nil {
+			name = "file and process group"
+		}
+		t.Run(name, func(t *testing.T) {
+			process, err := New(Spec{Path: "/unused/command"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Publish failures without requiring an OS close or signal failure.
+			process.state = processStateExited
+			process.memfd = &memfdOutput{closeErr: closeErr}
+			process.groupErr = wrapStopFailure(cleanupErr)
+			close(process.start.done)
+			close(process.wait.done)
+			for range 2 {
+				err := process.Stop(t.Context())
+				if !errors.Is(err, closeErr) {
+					t.Fatalf("Stop() error = %v, want stored close error", err)
+				}
+				if errors.Is(err, ErrStopFailed) != (cleanupErr != nil) {
+					t.Fatalf("Stop() error = %v, incorrect process group failure classification", err)
+				}
+				if cleanupErr != nil && !errors.Is(err, cleanupErr) {
+					t.Fatalf("Stop() error = %v, want group cleanup error", err)
+				}
+			}
+			if err := process.Wait(); errors.Is(err, closeErr) {
+				t.Fatalf("Wait() included a later file close error: %v", err)
 			}
 		})
+	}
+}
+
+func TestNewRejectsNonPositiveMemfdLimit(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		_, err := New(Spec{Path: "/unused/command"}, WithMemfdOutput(limit, func(string) []string { return nil }))
+		if err == nil || !strings.Contains(err.Error(), "must be positive") {
+			t.Fatalf("New() with limit %d error = %v, want positive limit error", limit, err)
+		}
+	}
+}
+
+func TestReadMemfdOutput(t *testing.T) {
+	for _, data := range []string{"", "123", "1234", "12345"} {
+		t.Run(data, func(t *testing.T) {
+			reader := bytes.NewReader([]byte(data))
+			for range 2 {
+				got, err := readMemfdOutput(reader, int64(len(data)), 4)
+				if errors.Is(err, ErrOutputLimitExceeded) != (len(data) > 4) {
+					t.Fatalf("readMemfdOutput() error = %v for %d bytes", err, len(data))
+				}
+				if string(got) != data[:min(len(data), 4)] {
+					t.Fatalf("readMemfdOutput() = %q, want retained prefix", got)
+				}
+				if len(got) > 0 {
+					got[0] = 'x'
+				}
+			}
+		})
+	}
+}
+
+func TestReadMemfdOutputPreservesLimitAndReadErrors(t *testing.T) {
+	data, err := readMemfdOutput(bytes.NewReader([]byte("a")), 5, 4)
+	if string(data) != "a" || !errors.Is(err, ErrOutputLimitExceeded) || !errors.Is(err, io.EOF) {
+		t.Fatalf("readMemfdOutput() = (%q, %v), want partial data, limit and read errors", data, err)
+	}
+}
+
+func TestMemfdOutputRejectsUnavailableFile(t *testing.T) {
+	var zero Process
+	if _, err := zero.MemfdOutput(); !errors.Is(err, errProcessNotInitialized) {
+		t.Fatalf("zero Process.MemfdOutput() error = %v", err)
+	}
+	process, err := New(Spec{Path: "/unused/command"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := process.MemfdOutput(); err == nil {
+		t.Fatal("MemfdOutput() without WithMemfdOutput succeeded")
+	}
+	process.memfd = &memfdOutput{limit: 4}
+	for _, state := range []processState{processStateNew, processStateStarting, processStateExited} {
+		process.state = state
+		_, err := process.MemfdOutput()
+		if err == nil {
+			t.Fatalf("MemfdOutput() in state %d succeeded", state)
+		}
+		if state == processStateExited && !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("MemfdOutput() error = %v, want os.ErrClosed", err)
+		}
 	}
 }

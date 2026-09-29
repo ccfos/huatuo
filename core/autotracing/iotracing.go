@@ -449,7 +449,9 @@ func (i *ioTracing) Start(ctx context.Context) error {
 		pendingReasons.Delete(taskID)
 		return fmt.Errorf("build iotracing command: %w", err)
 	}
-	if err := process.Run(ctx); err != nil {
+	runErr := process.Run(ctx)
+	_, outputErr := process.Stdout()
+	if err := errors.Join(runErr, outputErr); err != nil {
 		pendingReasons.Delete(taskID)
 		if errors.Is(err, executil.ErrStopFailed) {
 			stopErr := process.Stop(ctx)

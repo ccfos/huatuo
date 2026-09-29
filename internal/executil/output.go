@@ -22,14 +22,10 @@ import (
 const maxErrorOutputBytes = 64 << 10
 
 type outputBuffer struct {
-	mu       sync.Mutex
-	limit    int
-	data     []byte
-	exceeded bool
-}
-
-func newOutputBuffer(limit int) outputBuffer {
-	return outputBuffer{limit: limit}
+	mu               sync.Mutex
+	limit            int
+	data             []byte
+	hasExceededLimit bool
 }
 
 func (b *outputBuffer) Write(data []byte) (int, error) {
@@ -39,30 +35,23 @@ func (b *outputBuffer) Write(data []byte) (int, error) {
 	written := len(data)
 	remaining := b.limit - len(b.data)
 	if remaining <= 0 {
-		b.exceeded = b.exceeded || written > 0
+		b.hasExceededLimit = b.hasExceededLimit || written > 0
 		return written, nil
 	}
 	if written > remaining {
 		b.data = append(b.data, data[:remaining]...)
-		b.exceeded = true
+		b.hasExceededLimit = true
 		return written, nil
 	}
 	b.data = append(b.data, data...)
 	return written, nil
 }
 
-func (b *outputBuffer) Bytes() []byte {
+// Snapshot keeps the retained prefix and its overflow flag consistent.
+func (b *outputBuffer) Snapshot() ([]byte, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-
-	return slices.Clone(b.data)
-}
-
-func (b *outputBuffer) Exceeded() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	return b.exceeded
+	return slices.Clone(b.data), b.hasExceededLimit
 }
 
 type tailBuffer struct {

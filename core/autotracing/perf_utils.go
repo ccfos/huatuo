@@ -65,10 +65,11 @@ func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error)
 		return nil, perfCommandError(request.containerID, nil, err)
 	}
 
-	if err := process.Run(ctx); err != nil {
+	runErr := process.Run(ctx)
+	output, outputErr := process.Stdout()
+	if err := errors.Join(runErr, outputErr); err != nil {
 		return nil, perfCommandError(request.containerID, process.Stderr(), err)
 	}
-	output := process.Stdout()
 	if len(bytes.TrimSpace(output)) == 0 {
 		return nil, perfCommandError(
 			request.containerID,

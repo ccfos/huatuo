@@ -528,7 +528,9 @@ func runIRQTracingProcess(ctx context.Context, args []string) error {
 		return fmt.Errorf("create irqtracing command: %w", err)
 	}
 
-	if err := process.Run(ctx); err != nil {
+	runErr := process.Run(ctx)
+	_, outputErr := process.Stdout()
+	if err := errors.Join(runErr, outputErr); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("irqtracing timed out: %w", err)
 		}

@@ -26,6 +26,7 @@ package hccn
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -68,16 +69,18 @@ func runHCCNCommand(ctx context.Context, tool string, args ...string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("build hccn_tool command: %w", err)
 	}
-	if err := process.Run(ctx); err != nil {
+	runErr := process.Run(ctx)
+	output, outputErr := process.Stdout()
+	if err := errors.Join(runErr, outputErr); err != nil {
 		return "", hccnCommandError(
 			args,
-			process.Stdout(),
+			output,
 			process.Stderr(),
 			err,
 		)
 	}
 
-	return string(process.Stdout()), nil
+	return string(output), nil
 }
 
 func hccnCommandError(args []string, stdout, stderr []byte, err error) error {

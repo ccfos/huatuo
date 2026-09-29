@@ -15,96 +15,111 @@
 package executil
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"slices"
+	"os/exec"
 	"strconv"
 
 	"golang.org/x/sys/unix"
 )
 
-// MemfdResult separates file data from a command's diagnostic output.
-type MemfdResult struct {
-	Data   []byte
-	Stdout []byte
-	Stderr []byte
+// WithMemfdOutput gives the command an inherited anonymous memory file for output.
+// maxBytes must be positive and bounds each read, not the child's file growth.
+// During Start, argsForOutput receives its child-visible /proc/self/fd path and
+// returns arguments to append to Spec.Args. It must be non-nil.
+// This does not redirect stdout or stderr. New allocates no file; Wait and Run
+// preserve it for MemfdOutput, and Stop closes it. Linux and /proc/self/fd are required.
+func WithMemfdOutput(maxBytes int, argsForOutput func(outputPath string) []string) Option {
+	return func(process *Process) {
+		process.memfd = &memfdOutput{limit: maxBytes, argsForOutput: argsForOutput}
+	}
 }
 
-// RunWithMemfd runs one command with an inherited anonymous memory file.
-// argsForOutput receives its child-visible path and appends arguments to Spec.Args.
-// The command must finish writing before it exits. Empty data is valid; data is
-// returned only on success. Standard output and error follow the usual options.
-// maxBytes must be positive and limits reading, not the child's file growth.
-// The memory file is closed before returning; other inherited files remain owned
-// by the caller. Linux 3.17+ and an accessible /proc/self/fd are required.
-func RunWithMemfd(
-	ctx context.Context,
-	spec *Spec,
-	argsForOutput func(outputPath string) []string,
-	maxBytes int,
-	options ...Option,
-) (result *MemfdResult, err error) {
-	result = &MemfdResult{}
-	if ctx == nil {
-		return result, errors.New("run with memfd: context must not be nil")
+// MemfdOutput copies the current file content from offset zero. Exceeding the
+// configured limit returns that many prefix bytes and ErrOutputLimitExceeded.
+// Read errors preserve any bytes already read and may accompany the limit error.
+// Wait first for complete output. The returned data remains valid after Stop;
+// subsequent reads after Stop return an error wrapping os.ErrClosed.
+// Reading requires WithMemfdOutput and a successfully completed Start.
+func (p *Process) MemfdOutput() ([]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.state == processStateInvalid {
+		return nil, fmt.Errorf("read command memfd output: %w", errProcessNotInitialized)
 	}
-	if spec == nil {
-		return result, errors.New("run with memfd: command specification must not be nil")
+	if p.memfd == nil {
+		return nil, fmt.Errorf("read command %q memfd output: WithMemfdOutput is not configured", p.spec.Path)
 	}
-	if argsForOutput == nil {
-		return result, errors.New("run with memfd: output argument builder must not be nil")
+	if p.state == processStateNew || p.state == processStateStarting {
+		return nil, fmt.Errorf("read command %q memfd output: process has not been started", p.spec.Path)
 	}
-	if maxBytes <= 0 {
-		return result, errors.New("run with memfd: maximum data bytes must be positive")
-	}
-	if err := ctx.Err(); err != nil {
-		return result, fmt.Errorf("run with memfd: %w", err)
+	if p.memfd.file == nil {
+		return nil, fmt.Errorf("read command %q memfd output: %w", p.spec.Path, os.ErrClosed)
 	}
 
-	fd, err := unix.MemfdCreate("huatuo-exec", unix.MFD_CLOEXEC)
+	// Serialize the entire read with close; expose no borrowed file descriptor.
+	info, err := p.memfd.file.Stat()
 	if err != nil {
-		return result, fmt.Errorf("create command output memfd: %w", err)
+		return nil, fmt.Errorf("stat command %q memfd output: %w", p.spec.Path, err)
 	}
-	file := os.NewFile(uintptr(fd), "huatuo-exec")
-	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("close command output memfd: %w", closeErr))
-			result.Data = nil
+	data, err := readMemfdOutput(p.memfd.file, info.Size(), p.memfd.limit)
+	if err != nil {
+		return data, fmt.Errorf("read command %q memfd output: %w", p.spec.Path, err)
+	}
+	return data, nil
+}
+
+func readMemfdOutput(reader io.ReaderAt, size int64, limit int) ([]byte, error) {
+	if size == 0 {
+		return nil, nil
+	}
+	var limitErr error
+	if size > int64(limit) {
+		limitErr = fmt.Errorf("%w: memfd output exceeds %d bytes", ErrOutputLimitExceeded, limit)
+	}
+	data := make([]byte, min(size, int64(limit)))
+	n, readErr := reader.ReadAt(data, 0)
+	return data[:n], errors.Join(limitErr, readErr)
+}
+
+type memfdOutput struct {
+	limit         int
+	argsForOutput func(string) []string
+	file          *os.File
+	closeErr      error
+}
+
+func (m *memfdOutput) prepare(cmd *exec.Cmd) error {
+	fd, err := unix.MemfdCreate("huatuo-executil", unix.MFD_CLOEXEC)
+	if err != nil {
+		return fmt.Errorf("create command output memfd: %w", err)
+	}
+	m.file = os.NewFile(uintptr(fd), "huatuo-executil")
+	outputPath := "/proc/self/fd/" + strconv.Itoa(3+len(cmd.ExtraFiles))
+	cmd.Args = append(cmd.Args, m.argsForOutput(outputPath)...)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, m.file)
+	return validateArgs(cmd.Args[1:])
+}
+
+// close is called under Process.mu, including after a failed start.
+func (m *memfdOutput) close() error {
+	if m.file != nil {
+		if err := m.file.Close(); err != nil {
+			m.closeErr = fmt.Errorf("close command output memfd: %w", err)
 		}
-	}()
+		m.file = nil
+	}
+	return m.closeErr
+}
 
-	options = append(slices.Clone(options), func(process *Process) {
-		outputPath := "/proc/self/fd/" + strconv.Itoa(3+len(process.extraFiles))
-		process.extraFiles = append(process.extraFiles, file)
-		process.spec.Args = slices.Concat(process.spec.Args, argsForOutput(outputPath))
-	})
-	process, err := New(*spec, options...)
-	if err != nil {
-		return result, err
+func (p *Process) closeMemfd() error {
+	if p.memfd == nil {
+		return nil
 	}
-	err = process.Run(ctx)
-	result.Stdout = process.Stdout()
-	result.Stderr = process.Stderr()
-	if err != nil {
-		return result, err
-	}
-
-	info, err := file.Stat()
-	if err != nil {
-		return result, fmt.Errorf("stat command output memfd: %w", err)
-	}
-	if info.Size() > int64(maxBytes) {
-		return result, fmt.Errorf("command %q memfd output exceeds %d bytes", spec.Path, maxBytes)
-	}
-
-	data := make([]byte, int(info.Size()))
-	if _, err := io.ReadFull(io.NewSectionReader(file, 0, info.Size()), data); err != nil {
-		return result, fmt.Errorf("read command output memfd: %w", err)
-	}
-	result.Data = data
-
-	return result, nil
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.memfd.close()
 }

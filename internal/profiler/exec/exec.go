@@ -53,31 +53,6 @@ func Run(
 	})
 }
 
-// RunWithMemfd collects each profiler's file output separately from its logs.
-// Options are shared across commands; supplied writers must support concurrent use.
-func RunWithMemfd(
-	ctx context.Context,
-	pids []int,
-	path string,
-	argsForPID func(pid int, outputPath string) []string,
-	options ...executil.Option,
-) []*Result {
-	return runForPIDs(pids, func(pid int) *Result {
-		result := &Result{PID: pid, Command: path}
-		output, err := executil.RunWithMemfd(ctx, &executil.Spec{Path: path},
-			func(outputPath string) []string {
-				args := argsForPID(pid, outputPath)
-				result.Command = formatCommand(path, args)
-				log.Debugf("executing command: %s", result.Command)
-				return args
-			}, profilerOutputLimit, options...)
-		result.Err = err
-		result.Output = output.Data
-		result.Diagnostics = output.Stderr
-		return result
-	})
-}
-
 func runForPIDs(pids []int, run func(pid int) *Result) []*Result {
 	var waitGroup sync.WaitGroup
 	results := make(chan *Result, len(pids))
@@ -121,7 +96,9 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 	}()
 	select {
 	case result.Err = <-waitDone:
-		result.Diagnostics = combinedOutput(process)
+		var outputErr error
+		result.Diagnostics, outputErr = combinedOutput(process)
+		result.Err = errors.Join(result.Err, outputErr)
 		return result
 	case <-ctx.Done():
 	}
@@ -148,7 +125,9 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 		waitErr = nil
 	}
 	result.Err = errors.Join(stopProfilerErr, processStopErr, waitErr)
-	result.Diagnostics = combinedOutput(process)
+	var outputErr error
+	result.Diagnostics, outputErr = combinedOutput(process)
+	result.Err = errors.Join(result.Err, outputErr)
 	if result.Err != nil {
 		result.Diagnostics = append(
 			result.Diagnostics,
@@ -174,22 +153,23 @@ func runCommand(
 		result.Err = err
 		return result
 	}
-	result.Err = process.Run(ctx)
-	result.Output = process.Stdout()
+	runErr := process.Run(ctx)
+	result.Output, err = process.Stdout()
+	result.Err = errors.Join(runErr, err)
 	result.Diagnostics = process.Stderr()
 	return result
 }
 
-func combinedOutput(process *executil.Process) []byte {
-	output := process.Stdout()
+func combinedOutput(process *executil.Process) ([]byte, error) {
+	output, err := process.Stdout()
 	stderr := process.Stderr()
 	if len(output) == 0 {
-		return stderr
+		return stderr, err
 	}
 	if len(stderr) > 0 {
 		output = append(append(output, '\n'), stderr...)
 	}
-	return output
+	return output, err
 }
 
 func formatCommand(path string, args []string) string {

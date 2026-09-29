@@ -24,6 +24,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/executil"
 )
 
 func TestFormatCommandIncludesExecutableAndArguments(t *testing.T) {
@@ -200,7 +202,7 @@ func TestRunWithMemfdEnforcesProfilerLimit(t *testing.T) {
 		t.Fatalf("RunWithMemfd() returned %d results, want 1", len(results))
 	}
 	result := results[0]
-	if result.Err == nil || !strings.Contains(result.Err.Error(), "memfd output exceeds") {
+	if !errors.Is(result.Err, executil.ErrOutputLimitExceeded) {
 		t.Fatalf("RunWithMemfd() error = %v, want size limit error", result.Err)
 	}
 	if len(result.Output) != 0 {

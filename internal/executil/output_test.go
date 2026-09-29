@@ -21,21 +21,21 @@ import (
 )
 
 func TestOutputBufferKeepsOldestBytesAndReportsOverflow(t *testing.T) {
-	buffer := newOutputBuffer(4)
+	buffer := outputBuffer{limit: 4}
 	if n, err := buffer.Write([]byte("12345")); err != nil || n != 5 {
 		t.Fatalf("Write() = (%d, %v), want (5, nil)", n, err)
 	}
-	if got := string(buffer.Bytes()); got != "1234" {
-		t.Errorf("Bytes() = %q, want 1234", got)
+	if data, _ := buffer.Snapshot(); string(data) != "1234" {
+		t.Errorf("Snapshot() = %q, want 1234", data)
 	}
-	if !buffer.Exceeded() {
-		t.Error("Exceeded() = false, want true")
+	if _, exceeded := buffer.Snapshot(); !exceeded {
+		t.Error("Snapshot() overflow = false, want true")
 	}
 
-	output := buffer.Bytes()
+	output, _ := buffer.Snapshot()
 	output[0] = 'x'
-	if got := string(buffer.Bytes()); got != "1234" {
-		t.Errorf("Bytes() after caller mutation = %q, want 1234", got)
+	if data, _ := buffer.Snapshot(); string(data) != "1234" {
+		t.Errorf("Snapshot() after caller mutation = %q, want 1234", data)
 	}
 }
 
@@ -69,6 +69,24 @@ func TestTailBufferKeepsNewestBytes(t *testing.T) {
 	output[0] = 'z'
 	if got := string(buffer.Bytes()); got != want {
 		t.Error("Bytes() exposed the retained error buffer")
+	}
+}
+
+func TestTailBufferWriteWrapsAtEnd(t *testing.T) {
+	var buffer tailBuffer
+	writes := []string{
+		strings.Repeat("a", maxErrorOutputBytes),
+		strings.Repeat("b", maxErrorOutputBytes-1),
+		"cd",
+	}
+	for _, data := range writes {
+		if n, err := buffer.Write([]byte(data)); err != nil || n != len(data) {
+			t.Fatalf("Write() = (%d, %v), want (%d, nil)", n, err, len(data))
+		}
+	}
+	want := strings.Repeat("b", maxErrorOutputBytes-2) + "cd"
+	if got := string(buffer.Bytes()); got != want {
+		t.Errorf("Bytes() after wrapped write must contain %d b bytes followed by cd", maxErrorOutputBytes-2)
 	}
 }
 
