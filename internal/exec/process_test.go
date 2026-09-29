@@ -18,6 +18,7 @@ package exec
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -347,6 +348,32 @@ func TestProcessSeparatesStdoutFromStderr(t *testing.T) {
 	}
 	if got := string(process.Stderr()); got != "diagnostic" {
 		t.Errorf("Stderr() = %q, want diagnostic", got)
+	}
+}
+
+func TestProcessRedirectsOutput(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	process := newHelperProcessWithSpec(t, "split-output", &Spec{}, WithStdout(&stdout), WithStderr(&stderr))
+	startProcess(t, process)
+	if err := process.Wait(); err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if stdout.String() != "payload" || stderr.String() != "diagnostic" {
+		t.Errorf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+	if len(process.Stdout()) != 0 || len(process.Stderr()) != 0 {
+		t.Error("redirected output was also retained")
+	}
+}
+
+func TestProcessNilWritersPreserveCapture(t *testing.T) {
+	process := newHelperProcessWithSpec(t, "split-output", &Spec{}, WithStdout(nil), WithStderr(nil))
+	startProcess(t, process)
+	if err := process.Wait(); err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if string(process.Stdout()) != "payload" || string(process.Stderr()) != "diagnostic" {
+		t.Errorf("stdout = %q, stderr = %q", process.Stdout(), process.Stderr())
 	}
 }
 
@@ -711,14 +738,14 @@ func newHelperProcess(t *testing.T, mode string) *Process {
 	return newHelperProcessWithSpec(t, mode, &Spec{})
 }
 
-func newHelperProcessWithSpec(t *testing.T, mode string, source *Spec) *Process {
+func newHelperProcessWithSpec(t *testing.T, mode string, source *Spec, options ...Option) *Process {
 	t.Helper()
 	env := append(os.Environ(), helperModeEnv+"="+mode)
 	spec := *source
 	spec.Path = os.Args[0]
 	spec.Args = []string{"-test.run=^TestExecHelperProcess$"}
 	spec.Env = env
-	process, err := New(spec)
+	process, err := New(spec, options...)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
