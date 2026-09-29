@@ -9,12 +9,13 @@ on:
     inputs:
       os:
         description: >-
-          Comma-separated distros; empty runs all. Available: ubuntu26.04,
-          ubuntu24.04, ubuntu22.04, ubuntu20.04, debian12, debian13, rocky8,
-          rocky9, fedora44, openeuler22.03, openeuler24.03, anolis8.10,
-          opencloudos9
-        required: false
-        default: ''
+          Enter comma-separated distro names. Use "all" to select every
+          supported distro. Available: ubuntu26.04, ubuntu24.04, ubuntu22.04,
+          ubuntu20.04, debian12, debian13, rocky8, rocky9, fedora44,
+          openeuler22.03, openeuler24.03, anolis8.10, opencloudos9
+        type: string
+        required: true
+        default: ubuntu24.04
       debug_mode:
         description: 'Debug VM: retain when'
         type: choice
@@ -42,6 +43,10 @@ on:
           - '300'
           - '330'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
 jobs:
   # Build the target matrix: all distros by default, or a selected subset.
   distro-matrix:
@@ -52,8 +57,16 @@ jobs:
       - name: Build matrix
         id: build
         env:
+          EVENT_NAME: ${{ github.event_name }}
           INPUT_OS: ${{ github.event.inputs.os }}
         run: |
+          if [[ "$EVENT_NAME" != "workflow_dispatch" ]]; then
+            INPUT_OS=all
+          elif [[ -z "${INPUT_OS//[[:space:]]/}" ]]; then
+            echo "os is required for manual runs" >&2
+            exit 1
+          fi
+
           distros='[
             {"arch": "amd64", "os": "ubuntu26.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu26.04.amd64-20260915032000-8d05de220887-fae8fc715bea6500-efbbd69167ddaa34"},
             {"arch": "amd64", "os": "ubuntu24.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu24.04.amd64-20260915032000-8d05de220887-fcedeb44fa774175-efbbd69167ddaa34"},
