@@ -26,10 +26,11 @@ import (
 
 func TestValidate(t *testing.T) {
 	tests := []struct {
-		name      string
-		language  profiling.Language
-		files     map[string]os.FileMode
-		wantError string
+		name                 string
+		language             profiling.Language
+		files                map[string]os.FileMode
+		wantError            string
+		requiresUnprivileged bool
 	}{
 		{
 			name: "java without python", language: profiling.LanguageJava,
@@ -62,6 +63,21 @@ func TestValidate(t *testing.T) {
 			wantError: "requires permission bits",
 		},
 		{
+			name: "python binary not executable by owner", language: profiling.LanguagePython,
+			files:                map[string]os.FileMode{"py-spy": 0o010},
+			wantError:            "cannot be accessed",
+			requiresUnprivileged: true,
+		},
+		{
+			name: "java library not readable by owner", language: profiling.LanguageJava,
+			files: map[string]os.FileMode{
+				"bin/asprof":              0o700,
+				"lib/libasyncProfiler.so": 0o040,
+			},
+			wantError:            "cannot be accessed",
+			requiresUnprivileged: true,
+		},
+		{
 			name: "python binary is a directory", language: profiling.LanguagePython,
 			files:     map[string]os.FileMode{"py-spy": os.ModeDir | 0o700},
 			wantError: "not a regular file",
@@ -77,6 +93,9 @@ func TestValidate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.requiresUnprivileged && os.Geteuid() == 0 {
+				t.Skip("root bypasses owner file permissions")
+			}
 			root := t.TempDir()
 			for name, mode := range tt.files {
 				path := filepath.Join(root, name)
