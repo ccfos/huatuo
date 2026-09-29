@@ -500,6 +500,16 @@ func skipUnsupportedLoad(t *testing.T, err error) {
 	// join. The one load that answers for a single entry point, the fentry
 	// subtest of TestLoadAttachAndEventPipeForEntryPointAttemptsOnlyRequested
 	// Program, skips on the verdict itself before calling this helper.
+	if isTracingCleanupFailure(err) || hasVerifierLog(err) {
+		return
+	}
+	// An environment error from one attempt cannot excuse another attempt's
+	// real failure. Capability-marked fentry loads also unwrap multiple errors;
+	// only the fentry-only test can interpret that verdict, before this helper.
+	var joined interface{ Unwrap() []error }
+	if errors.As(err, &joined) {
+		return
+	}
 	if errors.Is(err, ebpf.ErrNotSupported) ||
 		errors.Is(err, unix.EPERM) ||
 		errors.Is(err, unix.EACCES) {
@@ -543,19 +553,63 @@ func TestSkipUnsupportedLoadKeepsRealFallbackFailures(t *testing.T) {
 		},
 	}
 
+	fentryFailures := []struct {
+		name string
+		err  error
+	}{
+		{name: "classified unsupported", err: unsupportedFentry},
+		{name: "native unsupported", err: fmt.Errorf("attach fentry: %w", ebpf.ErrNotSupported)},
+		{name: "permission failure", err: fmt.Errorf("attach fentry: %w", unix.EPERM)},
+	}
+	for _, fentry := range fentryFailures {
+		for _, tt := range tests {
+			// These subtests are sequential so their skip verdict is settled.
+			var skipped bool
+			t.Run(fentry.name+"/"+tt.name, func(t *testing.T) {
+				defer func() { skipped = t.Skipped() }()
+				skipUnsupportedLoad(t, errors.Join(fentry.err, tt.fallback))
+			})
+			if skipped {
+				t.Errorf("%s must not mask a real %s as an environment skip", fentry.name, tt.name)
+			}
+		}
+	}
+}
+
+func TestSkipUnsupportedLoadKeepsSingleFailureMeaning(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		skip bool
+	}{
+		{name: "unsupported environment", err: ebpf.ErrNotSupported, skip: true},
+		{name: "permission denied", err: unix.EPERM, skip: true},
+		{name: "wrapped permission denied", err: fmt.Errorf("load: %w", unix.EACCES), skip: true},
+		{
+			name: "verifier access rejection",
+			err:  &ebpf.VerifierError{Cause: unix.EACCES, Log: []string{"R1 invalid mem access 'scalar'"}},
+		},
+		{name: "cleanup permission failure", err: markTracingCleanupFailure(unix.EPERM)},
+	}
 	for _, tt := range tests {
-		// The subtest stays sequential on purpose: t.Skipped() is only
-		// settled once it has returned, and the assertion below must see it.
 		var skipped bool
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() { skipped = t.Skipped() }()
-
-			skipUnsupportedLoad(t, errors.Join(unsupportedFentry, tt.fallback))
+			skipUnsupportedLoad(t, tt.err)
 		})
-		if skipped {
-			t.Errorf("a real %s must fail the test after a capability-marked fentry failure, not skip it", tt.name)
+		if skipped != tt.skip {
+			t.Errorf("the cause of %s changed meaning: skip = %t, want %t", tt.name, skipped, tt.skip)
 		}
 	}
+}
+
+func TestIsTracingTargetUnsupportedKeepsCleanupFailure(t *testing.T) {
+	loadErr := fmt.Errorf("attach fentry: %w", ebpf.ErrNotSupported)
+	require.True(t, IsTracingTargetUnsupported(loadErr), "a single unsupported entry point remains a capability verdict")
+	err := markTracingCleanupFailure(errors.Join(loadErr, errors.New("close link failed")))
+	require.False(t, IsTracingTargetUnsupported(err), "an unsupported entry point must not hide its cleanup failure")
+	classified := classifyTracingLoadFailure(unix.EINVAL, func() error { return ebpf.ErrNotSupported })
+	require.True(t, IsTracingTargetUnsupported(classified), "a kernel rejecting the tracing program type remains unsupported")
 }
 
 // TestLoadAttachAndEventPipeWithFallbackSelectsPilotEntryPoint loads the pilot
