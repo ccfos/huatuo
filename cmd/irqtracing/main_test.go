@@ -86,7 +86,8 @@ func TestValidateFlags(t *testing.T) {
 }
 
 func TestValidateFlagsWarnsWhenStorageOverridesOutput(t *testing.T) {
-	ctx := newOutputFlagContext(t,
+	ctx := newOutputFlagContext(
+		t,
 		"--output", "json",
 		"--output-storage", "/run/toolstream.sock",
 		"--task-id", "task-1",
@@ -103,7 +104,8 @@ func TestValidateFlagsWarnsWhenStorageOverridesOutput(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
-	ctx := newOutputFlagContext(t,
+	ctx := newOutputFlagContext(
+		t,
 		"--bpf-path", "/tmp/irqtracing.o",
 		"--target-cpu", "4",
 		"--duration", "5",

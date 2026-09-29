@@ -22,7 +22,7 @@ import (
 	"strconv"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/matcher"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/timeutil"
@@ -59,15 +59,17 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 		"--source-types", toolstream.SourceTypeEvent,
 	}
 
-	process, err := exec.New(exec.Spec{
+	process, err := executil.New(executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, "dropwatch"),
 		Args: args,
 	})
 	if err != nil {
 		return fmt.Errorf("create dropwatch process: %w", err)
 	}
-	if err := process.Run(ctx); err != nil {
-		if errors.Is(err, exec.ErrStopFailed) {
+	runErr := process.Run(ctx)
+	_, outputErr := process.Stdout()
+	if err := errors.Join(runErr, outputErr); err != nil {
+		if errors.Is(err, executil.ErrStopFailed) {
 			stopErr := process.Stop(ctx)
 			if stopErr == nil && errors.Is(err, context.Canceled) {
 				return nil

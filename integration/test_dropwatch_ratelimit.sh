@@ -26,7 +26,7 @@ set -exuo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-command -v jq > /dev/null 2>&1 || skip "jq command is not installed"
+require_commands jq
 bpf_tool_setup dropwatch net_dropwatch
 readonly RATE=1
 readonly DURATION=10

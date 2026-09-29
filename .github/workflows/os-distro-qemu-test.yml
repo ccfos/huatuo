@@ -9,14 +9,15 @@ on:
     inputs:
       os:
         description: >-
-          Comma-separated distros; empty runs all. Available: ubuntu26.04,
-          ubuntu24.04, ubuntu22.04, ubuntu20.04, debian12, debian13, rocky8,
-          rocky9, fedora44, openeuler22.03, openeuler24.03, anolis8.10,
-          opencloudos9
-        required: false
-        default: ''
+          Enter comma-separated distro names. Use "all" to select every
+          supported distro. Available: ubuntu26.04, ubuntu24.04, ubuntu22.04,
+          ubuntu20.04, debian12, debian13, rocky8, rocky9, fedora44,
+          openeuler22.03, openeuler24.03, anolis8.10, opencloudos9
+        type: string
+        required: true
+        default: ubuntu24.04
       debug_mode:
-        description: Debug VM
+        description: 'Debug VM: retain when'
         type: choice
         required: false
         default: After test on failure
@@ -26,7 +27,7 @@ on:
           - After test on failure
           - After test always
       debug_timeout_minutes:
-        description: Retention time (minutes, max 180)
+        description: 'Debug VM: retention (minutes)'
         type: choice
         required: false
         default: '90'
@@ -38,6 +39,13 @@ on:
           - '120'
           - '150'
           - '180'
+          - '240'
+          - '300'
+          - '330'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   # Build the target matrix: all distros by default, or a selected subset.
@@ -49,8 +57,16 @@ jobs:
       - name: Build matrix
         id: build
         env:
+          EVENT_NAME: ${{ github.event_name }}
           INPUT_OS: ${{ github.event.inputs.os }}
         run: |
+          if [[ "$EVENT_NAME" != "workflow_dispatch" ]]; then
+            INPUT_OS=all
+          elif [[ -z "${INPUT_OS//[[:space:]]/}" ]]; then
+            echo "os is required for manual runs" >&2
+            exit 1
+          fi
+
           distros='[
             {"arch": "amd64", "os": "ubuntu26.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu26.04.amd64-20260915032000-8d05de220887-fae8fc715bea6500-efbbd69167ddaa34"},
             {"arch": "amd64", "os": "ubuntu24.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu24.04.amd64-20260915032000-8d05de220887-fcedeb44fa774175-efbbd69167ddaa34"},
@@ -86,7 +102,7 @@ jobs:
   qemu-vm:
     name: Test in VM (${{ matrix.arch }} ${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 300
+    timeout-minutes: 360
     needs: distro-matrix
     env:
       ACT_RUN: false
@@ -111,23 +127,23 @@ jobs:
           .github/workflows/scripts/qemu-1-start-vm.sh \
             "${{ matrix.arch }}" "${{ matrix.os }}"
 
-      - name: Start pre-test debug session
+      - name: 'Debug VM: Start session before test'
         id: upterm-before
         if: >-
           github.event_name == 'workflow_dispatch' &&
           inputs.debug_mode == 'Before test' &&
           steps.start-vm.outcome == 'success'
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 5
         uses: owenthereal/action-upterm@v1
         with:
           detached: true
           limit-access-to-actor: true
           wait-timeout-minutes: 1
 
-      - name: Debug VM before test
+      - name: 'Debug VM: Retain before test'
         if: steps.upterm-before.outcome == 'success'
-        timeout-minutes: 180
+        timeout-minutes: 330
         env:
           DEBUG_TIMEOUT_MINUTES: ${{ inputs.debug_timeout_minutes }}
           UPTERM_SSH_COMMAND: ${{ steps.upterm-before.outputs.ssh-command }}
@@ -140,7 +156,7 @@ jobs:
         run: |
           .github/workflows/scripts/qemu-2-run-in-vm.sh
 
-      - name: Start post-test debug session
+      - name: 'Debug VM: Start session after test'
         id: upterm-after
         if: >-
           always() &&
@@ -154,16 +170,16 @@ jobs:
             )
           )
         continue-on-error: true
-        timeout-minutes: 10
+        timeout-minutes: 5
         uses: owenthereal/action-upterm@v1
         with:
           detached: true
           limit-access-to-actor: true
           wait-timeout-minutes: 1
 
-      - name: Debug VM after test
+      - name: 'Debug VM: Retain after test'
         if: always() && steps.upterm-after.outcome == 'success'
-        timeout-minutes: 180
+        timeout-minutes: 330
         env:
           DEBUG_TIMEOUT_MINUTES: ${{ inputs.debug_timeout_minutes }}
           UPTERM_SSH_COMMAND: ${{ steps.upterm-after.outputs.ssh-command }}

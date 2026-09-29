@@ -20,9 +20,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/executil"
 )
 
 func TestFormatCommandIncludesExecutableAndArguments(t *testing.T) {
@@ -157,5 +160,52 @@ printf 'tool warning' >&2
 			result.Diagnostics,
 			"tool warning",
 		)
+	}
+}
+
+func TestRunWithMemfdKeepsPIDOutputsSeparate(t *testing.T) {
+	results := RunWithMemfd(t.Context(), []int{123, 456}, "/bin/sh", func(pid int, outputPath string) []string {
+		return []string{
+			"-c", `printf 'process %s;work 3\n' "$1" > "$2"; printf 'status'; printf 'warning' >&2`,
+			"memfd-test", strconv.Itoa(pid), outputPath,
+		}
+	})
+	if len(results) != 2 {
+		t.Fatalf("RunWithMemfd() returned %d results, want 2", len(results))
+	}
+	seen := make(map[int]bool)
+	for _, result := range results {
+		if result.Err != nil {
+			t.Fatalf("RunWithMemfd() error = %v", result.Err)
+		}
+		if seen[result.PID] || (result.PID != 123 && result.PID != 456) {
+			t.Fatalf("unexpected or repeated PID %d", result.PID)
+		}
+		seen[result.PID] = true
+		want := fmt.Sprintf("process %d;work 3\n", result.PID)
+		if string(result.Output) != want || string(result.Diagnostics) != "warning" {
+			t.Errorf("PID %d: output = %q, diagnostics = %q", result.PID, result.Output, result.Diagnostics)
+		}
+		if !strings.Contains(result.Command, "/proc/self/fd/") {
+			t.Errorf("command = %q, want inherited output path", result.Command)
+		}
+	}
+}
+
+func TestRunWithMemfdEnforcesProfilerLimit(t *testing.T) {
+	results := RunWithMemfd(t.Context(), []int{123}, "/bin/sh", func(_ int, outputPath string) []string {
+		return []string{
+			"-c", `truncate -s "$1" "$2"`, "memfd-test", strconv.Itoa(profilerOutputLimit + 1), outputPath,
+		}
+	})
+	if len(results) != 1 {
+		t.Fatalf("RunWithMemfd() returned %d results, want 1", len(results))
+	}
+	result := results[0]
+	if !errors.Is(result.Err, executil.ErrOutputLimitExceeded) {
+		t.Fatalf("RunWithMemfd() error = %v, want size limit error", result.Err)
+	}
+	if len(result.Output) != 0 {
+		t.Errorf("oversized output length = %d, want 0", len(result.Output))
 	}
 }

@@ -225,7 +225,8 @@ func buildFlameGraph(b bpf.BPF, startedAt time.Time) (*profiler.ProfileData, []*
 	var items []*profiler.TreeItem
 	var err error
 
-	items, err = processStackMap(b, "source_counts", u, items,
+	items, err = processStackMap(
+		b, "source_counts", u, items,
 		func(key bpfabi.IrqtracingStackKey) string {
 			return fmt.Sprintf("source[%s,%s]", bytesutil.ToStr(key.Comm[:]), vecName(key.Vec))
 		},
@@ -235,7 +236,8 @@ func buildFlameGraph(b bpf.BPF, startedAt time.Time) (*profiler.ProfileData, []*
 		return nil, nil, err
 	}
 
-	items, err = processStackMap(b, "victim_counts", u, items,
+	items, err = processStackMap(
+		b, "victim_counts", u, items,
 		func(key bpfabi.IrqtracingStackKey) string {
 			return fmt.Sprintf("victim[%s(%d),%s]",
 				bytesutil.ToStr(key.Comm[:]), key.PID, vecName(key.Vec))
