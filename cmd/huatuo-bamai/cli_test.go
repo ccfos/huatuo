@@ -19,7 +19,30 @@ import (
 	"testing"
 
 	"github.com/urfave/cli/v2"
+
+	"github.com/ccfos/huatuo/internal/bpf"
 )
+
+func TestParseBPFAttachOverride(t *testing.T) {
+	want := bpf.AttachOverride{
+		ObjectName:  "memory_oom_kill.o",
+		ProgramName: "oom_kill_process",
+		Symbol:      "oom_kill_process_mock",
+	}
+	got, err := parseBPFAttachOverride("memory_oom_kill.o:oom_kill_process=oom_kill_process_mock")
+	if err != nil {
+		t.Fatalf("parseBPFAttachOverride() error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("parseBPFAttachOverride() = %+v, want %+v", got, want)
+	}
+
+	for _, value := range []string{"", "memory_oom_kill.o:oom_kill_process", "memory_oom_kill.o:=mock", ":oom_kill_process=mock"} {
+		if _, err := parseBPFAttachOverride(value); err == nil {
+			t.Errorf("parseBPFAttachOverride(%q) succeeded, want error", value)
+		}
+	}
+}
 
 func TestOptionsFromContextEnablesCgroup(t *testing.T) {
 	app := cli.NewApp()

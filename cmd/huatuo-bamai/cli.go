@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
 	"github.com/ccfos/huatuo/internal/bpf"
@@ -30,37 +31,39 @@ import (
 )
 
 const (
-	cliFlagConfig         = "config"
-	cliFlagConfigDir      = "config-dir"
-	cliFlagBPFObjDir      = "bpf-dir"
-	cliFlagToolBinDir     = "tools-bin-dir"
-	cliFlagRegion         = "region"
-	cliFlagEnableCgroup   = "enable-cgroup"
-	cliFlagDisableKubelet = "disable-kubelet"
-	cliFlagDisableStorage = "disable-storage"
-	cliFlagDisableTracing = "disable-tracing"
-	cliFlagLogDebug       = "log-debug"
-	cliFlagDryRun         = "dry-run"
-	cliFlagProcfsPrefix   = "procfs-prefix"
+	cliFlagConfig            = "config"
+	cliFlagConfigDir         = "config-dir"
+	cliFlagBPFObjDir         = "bpf-dir"
+	cliFlagToolBinDir        = "tools-bin-dir"
+	cliFlagRegion            = "region"
+	cliFlagEnableCgroup      = "enable-cgroup"
+	cliFlagDisableKubelet    = "disable-kubelet"
+	cliFlagDisableStorage    = "disable-storage"
+	cliFlagDisableTracing    = "disable-tracing"
+	cliFlagLogDebug          = "log-debug"
+	cliFlagDryRun            = "dry-run"
+	cliFlagProcfsPrefix      = "procfs-prefix"
+	cliFlagBPFAttachOverride = "bpf-attach-override"
 )
 
 // Options holds all CLI-derived configuration. Populated by FromContext
 // during app.Before so downstream code reads only from Options and stays
 // decoupled from the urfave/cli framework.
 type Options struct {
-	ConfigFile     string
-	ConfigDir      string
-	BPFObjDir      string
-	ToolBinDir     string
-	Region         string
-	EnableCgroup   bool
-	DisableKubelet bool
-	DisableStorage bool
-	DisableTracing []string
-	LogDebug       bool
-	DryRun         bool
-	ProcfsPrefix   string
-	VersionInfo    version.Info
+	ConfigFile         string
+	ConfigDir          string
+	BPFObjDir          string
+	ToolBinDir         string
+	Region             string
+	EnableCgroup       bool
+	DisableKubelet     bool
+	DisableStorage     bool
+	DisableTracing     []string
+	LogDebug           bool
+	DryRun             bool
+	ProcfsPrefix       string
+	BPFAttachOverrides []bpf.AttachOverride
+	VersionInfo        version.Info
 }
 
 func buildCommand(seed version.Seed) *cli.App {
@@ -146,6 +149,10 @@ func (o *Options) AddFlags(app *cli.App) {
 			Name:  cliFlagProcfsPrefix,
 			Usage: "procfs prefix for default mountpoint e.g. /proc /sys and /dev",
 		},
+		&cli.StringSliceFlag{
+			Name:  cliFlagBPFAttachOverride,
+			Usage: "testing only: attach object:program to another hook (object:program=symbol)",
+		},
 	}
 }
 
@@ -160,6 +167,14 @@ func (o *Options) FromContext(ctx *cli.Context) error {
 	o.LogDebug = ctx.Bool(cliFlagLogDebug)
 	o.DryRun = ctx.Bool(cliFlagDryRun)
 	o.ProcfsPrefix = ctx.String(cliFlagProcfsPrefix)
+	o.BPFAttachOverrides = nil
+	for _, value := range ctx.StringSlice(cliFlagBPFAttachOverride) {
+		override, err := parseBPFAttachOverride(value)
+		if err != nil {
+			return err
+		}
+		o.BPFAttachOverrides = append(o.BPFAttachOverrides, override)
+	}
 
 	var err error
 	if o.ConfigDir, err = resolveOptionDir(ctx, cliFlagConfigDir); err != nil {
@@ -173,6 +188,18 @@ func (o *Options) FromContext(ctx *cli.Context) error {
 	}
 
 	return nil
+}
+
+func parseBPFAttachOverride(value string) (bpf.AttachOverride, error) {
+	selector, symbol, ok := strings.Cut(value, "=")
+	if !ok || symbol == "" {
+		return bpf.AttachOverride{}, fmt.Errorf("invalid --%s %q: expected object:program=symbol", cliFlagBPFAttachOverride, value)
+	}
+	objectName, programName, ok := strings.Cut(selector, ":")
+	if !ok || objectName == "" || programName == "" {
+		return bpf.AttachOverride{}, fmt.Errorf("invalid --%s %q: expected object:program=symbol", cliFlagBPFAttachOverride, value)
+	}
+	return bpf.AttachOverride{ObjectName: objectName, ProgramName: programName, Symbol: symbol}, nil
 }
 
 // resolveOptionDir returns an absolute directory path for a path-like flag.

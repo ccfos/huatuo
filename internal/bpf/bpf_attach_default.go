@@ -280,6 +280,9 @@ func (b *defaultBPF) attach() (err error) {
 			if parseErr != nil {
 				return parseErr
 			}
+			if override := b.attachOverrides[program.name]; override != "" {
+				symbol = override
+			}
 			attachOpts, parseErr := parseTracepointAttachOptions(program, symbol)
 			if parseErr != nil {
 				return fmt.Errorf("parse BPF section %q: %w", program.sectionName, parseErr)
@@ -291,6 +294,9 @@ func (b *defaultBPF) attach() (err error) {
 			symbol, parseErr := parseSectionSymbol(program.sectionName)
 			if parseErr != nil {
 				return parseErr
+			}
+			if override := b.attachOverrides[program.name]; override != "" {
+				symbol = override
 			}
 			attachOpts, parseErr := parseKprobeAttachOptions(
 				program,
@@ -308,6 +314,9 @@ func (b *defaultBPF) attach() (err error) {
 			symbol, parseErr := parseSectionSymbol(program.sectionName)
 			if parseErr != nil {
 				return parseErr
+			}
+			if override := b.attachOverrides[program.name]; override != "" {
+				symbol = override
 			}
 			attachOpts, parseErr := parseRawTracepointAttachOptions(program, symbol)
 			if parseErr != nil {

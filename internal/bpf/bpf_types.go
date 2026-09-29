@@ -29,6 +29,14 @@ var (
 
 type Option struct {
 	KeepaliveTimeout int
+	AttachOverrides  []AttachOverride
+}
+
+// AttachOverride redirects one program in one BPF object to another hook.
+type AttachOverride struct {
+	ObjectName  string
+	ProgramName string
+	Symbol      string
 }
 
 // AttachOption is an option for attaching a program.

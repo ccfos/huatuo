@@ -37,16 +37,50 @@ import (
 
 var DefaultObjDir = "bpf"
 
+var configuredAttachOverrides struct {
+	sync.RWMutex
+	byObject map[string]map[string]string
+}
+
 // Init initializes package-level BPF resources.
-func Init(_ *Option) error {
-	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
+func Init(option *Option) error {
+	if err := unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
 		Cur: unix.RLIM_INFINITY,
 		Max: unix.RLIM_INFINITY,
-	})
+	}); err != nil {
+		return err
+	}
+
+	byObject := make(map[string]map[string]string)
+	if option != nil {
+		for _, override := range option.AttachOverrides {
+			if override.ObjectName == "" || override.ProgramName == "" || override.Symbol == "" {
+				return errors.New("BPF attach override requires object, program, and symbol")
+			}
+			programs := byObject[override.ObjectName]
+			if programs == nil {
+				programs = make(map[string]string)
+				byObject[override.ObjectName] = programs
+			}
+			if _, exists := programs[override.ProgramName]; exists {
+				return fmt.Errorf("duplicate BPF attach override for %s:%s", override.ObjectName, override.ProgramName)
+			}
+			programs[override.ProgramName] = override.Symbol
+		}
+	}
+
+	configuredAttachOverrides.Lock()
+	configuredAttachOverrides.byObject = byObject
+	configuredAttachOverrides.Unlock()
+	return nil
 }
 
 // Shutdown releases package-level BPF resources.
-func Shutdown() {}
+func Shutdown() {
+	configuredAttachOverrides.Lock()
+	configuredAttachOverrides.byObject = nil
+	configuredAttachOverrides.Unlock()
+}
 
 type loadedMap struct {
 	name   string
@@ -73,6 +107,7 @@ type defaultBPF struct {
 	programsByID     map[uint32]*loadedProgram
 	mapIDsByName     map[string]uint32
 	programIDsByName map[string]uint32
+	attachOverrides  map[string]string
 	perfEvent        *perfEventAttach
 	isClosed         bool
 }
@@ -125,6 +160,19 @@ func loadBPFFromReader(bpfName string, rd io.ReaderAt, consts map[string]any) (B
 }
 
 func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
+	configuredAttachOverrides.RLock()
+	configured := configuredAttachOverrides.byObject[bpfName]
+	attachOverrides := make(map[string]string, len(configured))
+	for programName, symbol := range configured {
+		attachOverrides[programName] = symbol
+	}
+	configuredAttachOverrides.RUnlock()
+	for programName := range attachOverrides {
+		if _, ok := specs.Programs[programName]; !ok {
+			return nil, fmt.Errorf("BPF attach override for object %q references unknown program %q", bpfName, programName)
+		}
+	}
+
 	// RewriteConstants
 	if consts != nil {
 		if err := specs.RewriteConstants(consts); err != nil {
@@ -140,9 +188,10 @@ func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 	defer coll.Close()
 
 	b := &defaultBPF{
-		name:         bpfName,
-		mapsByID:     make(map[uint32]loadedMap),
-		programsByID: make(map[uint32]*loadedProgram),
+		name:            bpfName,
+		mapsByID:        make(map[uint32]loadedMap),
+		programsByID:    make(map[uint32]*loadedProgram),
+		attachOverrides: attachOverrides,
 	}
 
 	// maps

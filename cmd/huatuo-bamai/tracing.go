@@ -33,8 +33,8 @@ import (
 
 const defaultHTTPDrainTimeout = 5 * time.Second
 
-func setupBPF(_ *Daemon) (func(context.Context) error, error) {
-	if err := bpf.Init(&bpf.Option{}); err != nil {
+func setupBPF(d *Daemon) (func(context.Context) error, error) {
+	if err := bpf.Init(&bpf.Option{AttachOverrides: d.opts.BPFAttachOverrides}); err != nil {
 		return nil, fmt.Errorf("init bpf: %w", err)
 	}
 
