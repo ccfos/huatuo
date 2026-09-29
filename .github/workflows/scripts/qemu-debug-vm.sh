@@ -9,8 +9,8 @@ set -euo pipefail
 : "${VM_SSH_KEY:?VM_SSH_KEY is required}"
 
 if ! [[ "$DEBUG_TIMEOUT_MINUTES" =~ ^[0-9]+$ ]] \
-	|| ((DEBUG_TIMEOUT_MINUTES < 1 || DEBUG_TIMEOUT_MINUTES > 180)); then
-	echo "Invalid debug timeout: $DEBUG_TIMEOUT_MINUTES (expected 1-180 minutes)" >&2
+	|| ((DEBUG_TIMEOUT_MINUTES < 1 || DEBUG_TIMEOUT_MINUTES > 330)); then
+	echo "Invalid debug timeout: $DEBUG_TIMEOUT_MINUTES (expected 1-330 minutes)" >&2
 	exit 1
 fi
 
