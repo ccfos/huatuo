@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxOutputInError = 4096
@@ -68,7 +69,11 @@ func outputForError(output []byte) string {
 	if len(trimmed) <= maxOutputInError {
 		return trimmed
 	}
-	return trimmed[:maxOutputInError] + "... (truncated)"
+	end := maxOutputInError
+	for !utf8.RuneStart(trimmed[end]) {
+		end--
+	}
+	return trimmed[:end] + "... (truncated)"
 }
 
 // Verify reports every failed profiler command with its target and diagnostics.
