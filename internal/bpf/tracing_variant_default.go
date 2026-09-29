@@ -91,6 +91,11 @@ var errTracingTargetUnsupported = errors.New("bpf: fentry target unsupported")
 // It is false for permission, resource and verifier failures, so a caller does
 // not mistake a temporary or environmental failure for a missing capability.
 func IsTracingTargetUnsupported(err error) bool {
+	// Failed cleanup or the verifier's own rejection is actionable even when
+	// an earlier error in the chain says the entry point is unsupported.
+	if isTracingCleanupFailure(err) || hasVerifierLog(err) {
+		return false
+	}
 	return errors.Is(err, errTracingTargetUnsupported) || errors.Is(err, ebpf.ErrNotSupported)
 }
 
