@@ -22,8 +22,8 @@ VM. No local VM setup is required.
 
 1. Open **Actions > OS Distro QEMU Test > Run workflow** in your fork.
 2. Select your branch.
-3. Enter one distribution in **os**, such as `ubuntu24.04`. An empty value
-   starts a VM for every supported distribution.
+3. Keep the default `ubuntu24.04`, enter comma-separated distributions, or
+   use `all` to select every supported distribution.
 4. Select when to retain the VM and the retention time under **Debug VM**.
 5. Run the workflow and open its `Test in VM` job.
 

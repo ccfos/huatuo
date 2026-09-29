@@ -22,8 +22,8 @@ weight: 6
 
 1. 在 fork 仓库中打开 **Actions > OS Distro QEMU Test > Run workflow**。
 2. 选择需要调试的分支。
-3. 在 **os** 中填写一个发行版，例如 `ubuntu24.04`。留空会为所有支持的
-   发行版分别启动虚拟机。
+3. 保留默认值 `ubuntu24.04`、填写以逗号分隔的多个发行版，或者使用 `all`
+   选择所有支持的发行版。
 4. 在 **Debug VM** 选项中选择保留虚拟机的时机和时长。
 5. 启动 workflow，并打开对应的 `Test in VM` job。
 
