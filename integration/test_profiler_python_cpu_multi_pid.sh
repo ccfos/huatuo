@@ -25,10 +25,9 @@ readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
 readonly FIXTURE="${ROOT_DIR}/integration/testdata/test_profiler_python_cpu.py"
 readonly PROFILER_DURATION=10
 
-command -v python3 > /dev/null || skip "python3 is not installed"
+require_commands python3
 readonly PYSPY_BIN="${PROFILER_TOOL_DIR}/py-spy"
-[[ -x "${PYSPY_BIN}" ]] || skip "py-spy missing: ${PYSPY_BIN}"
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
+require_commands "${PYSPY_BIN}"
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-python-multi.XXXXXX")
 PROFILER_PROFILER_CHILD_PID_FILE="${WORK_DIR}/child.pid"

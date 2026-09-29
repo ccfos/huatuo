@@ -26,7 +26,7 @@ readonly DOCKERFILE_CHECK_DEVEL="${ROOT_DIR}/Dockerfile.devel"
 readonly DOCKERFILE_CHECK_OUTLINE="${HUATUO_BAMAI_TEST_TMPDIR}/dockerfile-outline.txt"
 readonly DOCKERFILE_CHECK_TARGETS="${HUATUO_BAMAI_TEST_TMPDIR}/dockerfile-devel-targets.txt"
 
-command -v docker > /dev/null || skip "docker command is not installed"
+require_commands docker
 docker info > /dev/null 2>&1 || skip "docker daemon is unavailable"
 docker build --help | grep -q -- '--call' \
 	|| skip "docker build does not support --call; upgrade Docker Buildx"

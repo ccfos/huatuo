@@ -35,7 +35,7 @@ if ! iptables -m connbytes -h 2>&1 | grep -q connbytes; then
 	skip "iptables connbytes module not available on this kernel"
 fi
 
-require_python3
+require_commands python3
 
 cleanup() {
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true

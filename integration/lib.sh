@@ -38,11 +38,39 @@ fatal() {
 	exit 1
 }
 
-# skip exits 0 so the harness treats it as success without false confidence.
+# The runner reserves 77 for skipped cases; cleanup still runs through EXIT.
 skip() {
 	printf '[%s][%s][SKIP] ⏭️ %s\n' \
 		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*"
-	exit 0
+	exit 77
+}
+
+test_results_init() {
+	test_passed=0
+	test_skipped=0
+	test_failed=0
+}
+
+test_result_record() {
+	local name=$1 status=$2
+	case ${status} in
+	0)
+		test_passed=$((test_passed + 1))
+		log_info "PASS: ${name}"
+		;;
+	77)
+		test_skipped=$((test_skipped + 1))
+		log_info "SKIP: ${name}"
+		;;
+	*)
+		test_failed=$((test_failed + 1))
+		log_error "FAIL: ${name} (exit ${status})"
+		;;
+	esac
+}
+
+test_results_summary() {
+	log_info "summary: total=$((test_passed + test_skipped + test_failed)) passed=${test_passed} skipped=${test_skipped} failed=${test_failed}"
 }
 
 report_http_response() {
@@ -59,8 +87,26 @@ report_http_response() {
 
 # --------------------------------- utils ------------------------------------
 
-require_python3() {
-	command -v python3 > /dev/null 2>&1 || fatal "python3 not found"
+require_commands() {
+	local command
+	for command in "$@"; do
+		if [[ ${command} == */* ]]; then
+			[[ -f "${command}" && -x "${command}" ]] || skip "command is not executable: ${command}"
+		else
+			command -v "${command}" > /dev/null 2>&1 || skip "command is not installed: ${command}"
+		fi
+	done
+}
+
+require_readable() {
+	local path
+	for path in "$@"; do
+		[[ -r "${path}" ]] || skip "file is not readable: ${path}"
+	done
+}
+
+require_build_output() {
+	[[ -d "${ROOT_DIR}/_output" ]] || fatal "build output directory missing: ${ROOT_DIR}/_output; run make build"
 }
 
 assert_eq() {
@@ -183,6 +229,7 @@ tracepoint_available() {
 # compile_user_fixture <source> <output> [compiler flags...]
 # Keep stack frames observable so profiler fixtures produce stable call chains.
 compile_user_fixture() {
+	require_commands gcc
 	local source=$1
 	local output=$2
 	shift 2
@@ -197,6 +244,7 @@ compile_user_fixture() {
 
 # compile_bpf_fixture <source> <output> [extra_cflags]
 compile_bpf_fixture() {
+	require_commands clang "${ROOT_DIR}/build/clang.sh"
 	local source=$1
 	local output=$2
 	local extra_cflags=${3:-}
@@ -220,9 +268,6 @@ bpf_tool_setup() {
 	local work_prefix=${3:-${binary_name}}
 	TOOL_BIN="${ROOT_DIR}/_output/bin/${binary_name}"
 	TOOL_BPF="${ROOT_DIR}/_output/bpf/${bpf_name}.o"
-
-	[[ -x ${TOOL_BIN} ]] || fatal "missing ${binary_name} binary: ${TOOL_BIN}"
-	[[ -r ${TOOL_BPF} ]] || fatal "missing ${bpf_name} bpf object: ${TOOL_BPF}"
 
 	TOOL_WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${work_prefix}.XXXXXX")
 	TOOL_OUT="${TOOL_WORK_DIR}/${binary_name}.out"
@@ -311,8 +356,6 @@ is_virtual_machine() {
 # ----------------------------- huatuo-bamai ----------------------------------
 
 huatuo_bamai_start() {
-	[[ -x "${HUATUO_BAMAI_BIN}" ]] || fatal "huatuo-bamai binary not found: ${HUATUO_BAMAI_BIN}"
-
 	log_info "starting huatuo-bamai: $*"
 	"${HUATUO_BAMAI_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" 2>&1 &
 	local pid=$!
@@ -348,9 +391,6 @@ huatuo_bamai_stop() {
 # --------------------------- huatuo-apiserver -------------------------------
 
 huatuo_apiserver_start() {
-	[[ -x "${HUATUO_APISERVER_BIN}" ]] \
-		|| fatal "huatuo-apiserver binary not found: ${HUATUO_APISERVER_BIN}"
-
 	log_info "starting huatuo-apiserver: $*"
 	"${HUATUO_APISERVER_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" 2>&1 &
 	local pid=$!
@@ -410,16 +450,19 @@ integration_test_exit() {
 		return 1
 	fi
 
-	huatuo_apiserver_stop "${test_workspace}" || true
-	huatuo_bamai_stop "${test_workspace}" || true
+	local cleanup_status=0
+	huatuo_apiserver_stop "${test_workspace}" || cleanup_status=1
+	huatuo_bamai_stop "${test_workspace}" || cleanup_status=1
+	[[ ${cleanup_status} -eq 0 ]] || exit_code=1
 
-	if [[ ${exit_code} -eq 0 ]]; then
-		rm -rf -- "${test_workspace}"
+	if [[ ${exit_code} -eq 0 || ${exit_code} -eq 77 ]]; then
+		rm -rf -- "${test_workspace}" || return 1
 		return 0
 	fi
 
-	dump_text_files "${test_workspace}"
+	dump_text_files "${test_workspace}" || true
 	log_error "integration test failed with exit code ${exit_code}; artifacts preserved at ${test_workspace}"
+	return "${cleanup_status}"
 }
 
 huatuo_bamai_metrics() {

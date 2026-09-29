@@ -41,9 +41,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for command in devlink ip jq modprobe; do
-	command -v "${command}" > /dev/null 2>&1 || skip "${command} command is not installed"
-done
+require_commands devlink ip jq modprobe
 tracepoint_available devlink devlink_trap_report \
 	|| skip "devlink/devlink_trap_report tracepoint is not available"
 

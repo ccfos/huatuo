@@ -30,7 +30,7 @@ PAYLOAD_SIZE=262144 # 256 KB
 S_ADDR="10.99.4.1"
 C_ADDR="10.99.4.2"
 
-require_python3
+require_commands python3
 
 cleanup() {
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true

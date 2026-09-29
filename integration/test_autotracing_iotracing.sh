@@ -23,13 +23,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-command -v jq > /dev/null || skip "jq command is not installed"
-[[ -x "${HUATUO_BAMAI_BIN}" ]] \
-	|| fatal "huatuo-bamai binary missing: ${HUATUO_BAMAI_BIN}"
-[[ -x "${ROOT_DIR}/_output/bin/iotracing" ]] \
-	|| fatal "iotracing binary missing: ${ROOT_DIR}/_output/bin/iotracing"
-[[ -r "${ROOT_DIR}/_output/bpf/iotracing.o" ]] \
-	|| fatal "iotracing BPF object missing: ${ROOT_DIR}/_output/bpf/iotracing.o"
+require_commands jq
 
 readonly IOTRACING_FIXTURE_ROOT="${HUATUO_BAMAI_TEST_TMPDIR}/iotracing-fixture"
 readonly IOTRACING_DISKSTATS="${IOTRACING_FIXTURE_ROOT}/proc/diskstats"

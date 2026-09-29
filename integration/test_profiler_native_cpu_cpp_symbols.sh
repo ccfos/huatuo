@@ -21,7 +21,7 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-command -v clang > /dev/null || skip "clang command is not installed"
+require_commands clang
 is_container && skip "native CPU profiler requires the host PID namespace"
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-cpp-symbols
