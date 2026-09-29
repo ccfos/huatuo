@@ -31,7 +31,7 @@ HUATUO_APISERVER_BIN="${ROOT_DIR}/_output/bin/huatuo-apiserver"
 export HUATUO_APISERVER_BIN
 HUATUO_BAMAI_TEST_TMPDIR=$(mktemp -d /tmp/huatuo-test.XXXXXX)
 export HUATUO_BAMAI_TEST_TMPDIR
-HUATUO_BAMAI_MATCH_KEYWORDS="\"error\"|panic"
+HUATUO_BAMAI_MATCH_KEYWORDS='level="?(error|panic|fatal)"?|panic:'
 export HUATUO_BAMAI_MATCH_KEYWORDS
 HUATUO_BAMAI_TEST_FIXTURES="${ROOT_DIR}/integration/fixtures"
 export HUATUO_BAMAI_TEST_FIXTURES

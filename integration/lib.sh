@@ -426,7 +426,7 @@ huatuo_bamai_metrics() {
 	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}"
 }
 
-# Reject error/panic keywords in the log.
+# Reject error/panic/fatal levels and runtime panics in the log.
 huatuo_bamai_log_check() {
 	if grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"; then
 		sed -E "s/(${HUATUO_BAMAI_MATCH_KEYWORDS})/\x1b[1;31m\1\x1b[0m/gI" \
