@@ -46,6 +46,9 @@ var (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/perf.c -o $BPF_DIR/perf.o
 
 func mainAction(ctx *cli.Context) error {
+	if ctx.NArg() != 0 {
+		return fmt.Errorf("unexpected arguments: %q", ctx.Args().Slice())
+	}
 	bpfPath := ctx.String("bpf-path")
 	optPid := ctx.Uint64("pid")
 	optDuration := ctx.Int("duration")

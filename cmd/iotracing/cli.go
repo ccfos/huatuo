@@ -99,9 +99,14 @@ func appFlags() []cli.Flag {
 	}
 }
 
-// validateFlags rejects invalid --output values and the --output / --output-storage
-// conflict before the BPF stack is touched.
+// validateFlags rejects unsupported input before the BPF stack is touched.
 func validateFlags(c *cli.Context) error {
+	if c.NArg() != 0 {
+		return fmt.Errorf("unexpected arguments: %q", c.Args().Slice())
+	}
+	if c.String(cliFlagTaskID) != "" && c.String(cliFlagOutputStorage) == "" {
+		return errors.New("--task-id requires --output-storage")
+	}
 	if v := c.String(cliFlagOutput); v != outputJSON && v != outputText {
 		return fmt.Errorf("--output: invalid value %q, want json or text", v)
 	}
