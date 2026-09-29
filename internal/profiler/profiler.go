@@ -388,12 +388,28 @@ func extractPythonThreadNameFromPid(pid int) (string, error) {
 		return "", fmt.Errorf("empty cmdline for PID %d", pid)
 	}
 
-	// Extract main script，skip -u -m flags and etc.
-	for _, arg := range cmdline[1:] {
-		if !strings.HasPrefix(arg, "-") {
-			return arg, err
-		}
+	if threadName := pythonThreadName(cmdline); threadName != "" {
+		return threadName, nil
 	}
 
 	return "", fmt.Errorf("couldn't get python thread name")
+}
+
+func pythonThreadName(cmdline []string) string {
+	for i := 1; i < len(cmdline); i++ {
+		arg := cmdline[i]
+		switch arg {
+		case "-W", "-X", "--check-hash-based-pycs":
+			i++
+		case "-c", "-m":
+			if i+1 < len(cmdline) {
+				return cmdline[i+1]
+			}
+		default:
+			if !strings.HasPrefix(arg, "-") {
+				return arg
+			}
+		}
+	}
+	return ""
 }
