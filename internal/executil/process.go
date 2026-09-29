@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package exec starts and manages operating-system processes.
-package exec
+// Package executil starts and manages operating-system processes.
+package executil
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	osexec "os/exec"
+	"os/exec"
 	"slices"
 	"strings"
 	"sync"
@@ -29,10 +29,10 @@ import (
 )
 
 // ErrStopped reports that Stop terminated the command with a signal.
-var ErrStopped = errors.New("exec: command stopped")
+var ErrStopped = errors.New("executil: command stopped")
 
 // ErrStopFailed reports that context-triggered process termination failed.
-var ErrStopFailed = errors.New("exec: stop failed")
+var ErrStopFailed = errors.New("executil: stop failed")
 
 var errProcessNotInitialized = errors.New("process is not initialized")
 
@@ -115,7 +115,7 @@ type Process struct {
 	wait            lifecycleResult
 	isStopRequested bool
 	stopAttempt     *lifecycleResult
-	startCommand    func(*osexec.Cmd) error
+	startCommand    func(*exec.Cmd) error
 	forceStop       func(int) error
 }
 
@@ -142,7 +142,7 @@ func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // 
 	process.state = processStateNew
 	process.start = lifecycleResult{done: make(chan struct{})}
 	process.wait = lifecycleResult{done: make(chan struct{})}
-	process.startCommand = (*osexec.Cmd).Start
+	process.startCommand = (*exec.Cmd).Start
 	process.forceStop = forceStopProcessGroup
 
 	return process, nil
@@ -204,7 +204,7 @@ func (p *Process) Start(ctx context.Context) error {
 		return p.failStart(fmt.Errorf("start command %q: %w", p.spec.Path, err))
 	}
 
-	cmd := osexec.Command(p.spec.Path, p.spec.Args...)
+	cmd := exec.Command(p.spec.Path, p.spec.Args...)
 	cmd.Env = p.spec.Env
 	cmd.ExtraFiles = p.extraFiles
 	cmd.Stdout = &p.output
@@ -280,7 +280,7 @@ func (p *Process) failStart(err error) error {
 	return err
 }
 
-func (p *Process) reap(cmd *osexec.Cmd) {
+func (p *Process) reap(cmd *exec.Cmd) {
 	err := cmd.Wait()
 
 	p.mu.Lock()

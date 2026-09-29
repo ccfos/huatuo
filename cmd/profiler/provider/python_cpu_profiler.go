@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	managedexec "github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
@@ -180,7 +180,7 @@ func runPySpy(
 
 	return profilerexec.RunWithMemfd(ctx, pids, pyspyBin, func(pid int, outputPath string) []string {
 		return buildPySpyArgs(pid, durStr, freqStr, outputPath)
-	}, managedexec.WithStdout(io.Discard))
+	}, executil.WithStdout(io.Discard))
 }
 
 func buildPySpyArgs(pid int, duration, frequency, outputPath string) []string {

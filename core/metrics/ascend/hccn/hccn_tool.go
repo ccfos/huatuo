@@ -32,7 +32,7 @@ import (
 	"strings"
 	"time"
 
-	managedexec "github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 )
 
 // hccnSemaphore limits total concurrent hccn_tool processes across all devices.
@@ -55,7 +55,7 @@ func getInfoFromHccnTool(args ...string) (string, error) {
 }
 
 func runHCCNCommand(ctx context.Context, tool string, args ...string) (string, error) {
-	process, err := managedexec.New(managedexec.Spec{
+	process, err := executil.New(executil.Spec{
 		Path:            tool,
 		Args:            args,
 		StopGracePeriod: time.Second,

@@ -27,7 +27,7 @@ import (
 	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/profiler"
@@ -519,7 +519,7 @@ func runIRQTracingCLI(
 }
 
 func runIRQTracingProcess(ctx context.Context, args []string) error {
-	process, err := exec.New(exec.Spec{
+	process, err := executil.New(executil.Spec{
 		Path:           filepath.Join(internalconfig.CoreBinDir, irqTracingToolName),
 		Args:           args,
 		MaxOutputBytes: maxIRQTracingOutputBytes,

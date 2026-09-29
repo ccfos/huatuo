@@ -14,7 +14,7 @@
 
 //go:build linux
 
-package exec
+package executil
 
 import (
 	"bufio"
@@ -23,7 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	osexec "os/exec"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -706,7 +706,7 @@ func TestExecHelperProcess(t *testing.T) {
 func runProcessGroupHelper() {
 	termCh := make(chan os.Signal, 1)
 	signal.Notify(termCh, syscall.SIGTERM)
-	child := osexec.Command("/bin/sh", "-c", "trap 'exit 0' TERM; echo child-ready; while :; do sleep 10; done")
+	child := exec.Command("/bin/sh", "-c", "trap 'exit 0' TERM; echo child-ready; while :; do sleep 10; done")
 	stdout, err := child.StdoutPipe()
 	if err != nil {
 		os.Exit(3)
@@ -761,7 +761,7 @@ func newHelperProcessWithSpec(t *testing.T, mode string, source *Spec, options .
 func cancelContextAfterStart(process *Process) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	startCommand := process.startCommand
-	process.startCommand = func(cmd *osexec.Cmd) error {
+	process.startCommand = func(cmd *exec.Cmd) error {
 		err := startCommand(cmd)
 		if err == nil {
 			cancel()

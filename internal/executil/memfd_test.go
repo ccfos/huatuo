@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package exec
+package executil
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	osexec "os/exec"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -83,7 +83,7 @@ func TestMemfdFailurePreservesDiagnostics(t *testing.T) {
 	result, err := RunWithMemfd(t.Context(), &Spec{Path: "/bin/sh"}, func(path string) []string {
 		return []string{"-c", `printf 'partial' > "$1"; printf 'status'; printf 'reason' >&2; exit 7`, "memfd-test", path}
 	}, 1024)
-	var exitErr *osexec.ExitError
+	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 {
 		t.Fatalf("error = %v, want exit status 7", err)
 	}

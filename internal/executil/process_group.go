@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package exec
+package executil
 
 import (
 	"errors"
-	osexec "os/exec"
+	"os/exec"
 	"syscall"
 )
 
-func configureCommand(cmd *osexec.Cmd) {
+func configureCommand(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid:   true,
 		Pdeathsig: syscall.SIGKILL,
@@ -40,7 +40,7 @@ func processGroupMissing(err error) bool {
 }
 
 func isStoppedExit(err error) bool {
-	var exitErr *osexec.ExitError
+	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
 		return false
 	}

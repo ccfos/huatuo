@@ -18,12 +18,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
-func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
+func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) {
 	durationSeconds := int64(request.Duration / time.Second)
 	aggregationInterval := min(config.AggregationInterval, request.Duration)
 	if request.Spec.Language == profilingdomain.LanguagePython {
@@ -57,7 +57,7 @@ func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
 		args = append(args, "--binary-match-path", request.Spec.BinaryMatchPath)
 	}
 
-	return exec.Spec{
+	return executil.Spec{
 		Path:           config.ProfilerPath,
 		Args:           args,
 		MaxOutputBytes: config.CommandOutputLimitBytes,

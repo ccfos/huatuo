@@ -19,21 +19,21 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type executor struct {
-	process   *exec.Process
+	process   *executil.Process
 	stream    *toolstream.Server
 	publisher ResultPublisher
 	requestID string
 }
 
 func newExecutor(
-	process *exec.Process,
+	process *executil.Process,
 	stream *toolstream.Server,
 	publisher ResultPublisher,
 	requestID string,
@@ -59,7 +59,7 @@ func (e *executor) Start(ctx context.Context) error {
 
 func (e *executor) Wait() error {
 	err := e.process.Wait()
-	if errors.Is(err, exec.ErrStopped) {
+	if errors.Is(err, executil.ErrStopped) {
 		return errors.Join(operation.ErrStopped, err)
 	}
 	if err != nil {

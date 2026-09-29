@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	managedexec "github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/log"
 )
 
@@ -45,7 +45,7 @@ func Run(
 		if filepath.Base(path) == "asprof" {
 			return runAsyncProfiler(ctx, pid, path, args)
 		}
-		return runCommand(ctx, pid, &managedexec.Spec{
+		return runCommand(ctx, pid, &executil.Spec{
 			Path:           path,
 			Args:           args,
 			MaxOutputBytes: profilerOutputLimit,
@@ -60,11 +60,11 @@ func RunWithMemfd(
 	pids []int,
 	path string,
 	argsForPID func(pid int, outputPath string) []string,
-	options ...managedexec.Option,
+	options ...executil.Option,
 ) []*Result {
 	return runForPIDs(pids, func(pid int) *Result {
 		result := &Result{PID: pid, Command: path}
-		output, err := managedexec.RunWithMemfd(ctx, &managedexec.Spec{Path: path},
+		output, err := executil.RunWithMemfd(ctx, &executil.Spec{Path: path},
 			func(outputPath string) []string {
 				args := argsForPID(pid, outputPath)
 				result.Command = formatCommand(path, args)
@@ -105,7 +105,7 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 	result := &Result{PID: pid, Command: formatCommand(path, args)}
 	log.Debugf("executing command: %s", result.Command)
 
-	process, err := managedexec.New(managedexec.Spec{Path: path, Args: args})
+	process, err := executil.New(executil.Spec{Path: path, Args: args})
 	if err != nil {
 		result.Err = err
 		return result
@@ -144,7 +144,7 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 	processStopErr := <-processStopDone
 	cancelProcessStop()
 	waitErr := <-waitDone
-	if errors.Is(waitErr, managedexec.ErrStopped) {
+	if errors.Is(waitErr, executil.ErrStopped) {
 		waitErr = nil
 	}
 	result.Err = errors.Join(stopProfilerErr, processStopErr, waitErr)
@@ -161,7 +161,7 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 func runCommand(
 	ctx context.Context,
 	pid int,
-	spec *managedexec.Spec,
+	spec *executil.Spec,
 ) *Result {
 	result := &Result{
 		PID:     pid,
@@ -169,7 +169,7 @@ func runCommand(
 	}
 	log.Debugf("executing command: %s", result.Command)
 
-	process, err := managedexec.New(*spec)
+	process, err := executil.New(*spec)
 	if err != nil {
 		result.Err = err
 		return result
@@ -180,7 +180,7 @@ func runCommand(
 	return result
 }
 
-func combinedOutput(process *managedexec.Process) []byte {
+func combinedOutput(process *executil.Process) []byte {
 	output := process.Stdout()
 	stderr := process.Stderr()
 	if len(output) == 0 {
@@ -199,7 +199,7 @@ func formatCommand(path string, args []string) string {
 // StopAsyncProfiler asks the injected agent in one target JVM to stop.
 func StopAsyncProfiler(ctx context.Context, asprofPath string, pid int) error {
 	args := []string{"--libpath", "/tmp/libasyncProfiler.so", "stop", strconv.Itoa(pid)}
-	result := runCommand(ctx, pid, &managedexec.Spec{
+	result := runCommand(ctx, pid, &executil.Spec{
 		Path:            asprofPath,
 		Args:            args,
 		StopGracePeriod: asyncProfilerStopGracePeriod,
