@@ -25,36 +25,52 @@ import (
 	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
-// writeFolded persists the folded-stack data to a timestamped .folded file.
-func writeFolded(dir string, f output.Formatter) error {
-	file, err := createOutputFile(dir, "perf", ".folded")
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	if err := f.Write(file); err != nil {
-		return fmt.Errorf("failed to write folded data: %w", err)
-	}
-
-	log.WithField("path", file.Name()).Infof("profiling data written")
-
-	return nil
+// outputArtifact describes how a non-upload format is persisted on disk.
+// Collapsed stacks and stack dumps share the perf prefix but differ in
+// extension, so both parts stay together to keep routing explicit.
+type outputArtifact struct {
+	prefix string
+	ext    string
+	label  string
 }
 
-// writeFlameGraph persists the aggregated data as a flame graph SVG.
-func writeFlameGraph(dir string, f output.Formatter) error {
-	file, err := createOutputFile(dir, "flamegraph", ".svg")
+// outputArtifacts maps every file-backed format to its artifact naming.
+// Upload formats (remote) and reserved formats (pprof) have no entry, so
+// routing them here fails loudly instead of writing misleading data.
+var outputArtifacts = map[output.OutputFormat]outputArtifact{
+	output.FormatCollapsed:   {prefix: "perf", ext: ".folded", label: "folded data"},
+	output.FormatFlameGraph:  {prefix: "flamegraph", ext: ".svg", label: "flame graph"},
+	output.FormatSVG:         {prefix: "flamegraph", ext: ".svg", label: "flame graph"},
+	output.FormatSpeedscope:  {prefix: "speedscope", ext: ".json", label: "speedscope profile"},
+	output.FormatChromeTrace: {prefix: "chrometrace", ext: ".json", label: "chrome trace"},
+	output.FormatDump:        {prefix: "perf", ext: ".txt", label: "stack dump"},
+}
+
+// writeOutput persists the formatter output using the artifact naming that
+// matches the requested format. Filenames and log messages live in one place
+// so each format routes to a distinct, recognizable file.
+func writeOutput(dir string, format output.OutputFormat, f output.Formatter) error {
+	if format == "" {
+		// The zero value is documented as FormatCollapsed, matching NewFormatter.
+		format = output.FormatCollapsed
+	}
+
+	artifact, ok := outputArtifacts[format]
+	if !ok {
+		return fmt.Errorf("no output artifact registered for format %q", format)
+	}
+
+	file, err := createOutputFile(dir, artifact.prefix, artifact.ext)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
 	if err := f.Write(file); err != nil {
-		return fmt.Errorf("failed to render flame graph: %w", err)
+		return fmt.Errorf("failed to write %s: %w", artifact.label, err)
 	}
 
-	log.WithField("path", file.Name()).Infof("flame graph written")
+	log.WithField("path", file.Name()).Infof("%s written", artifact.label)
 
 	return nil
 }

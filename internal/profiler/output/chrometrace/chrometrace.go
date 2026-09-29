@@ -59,6 +59,10 @@ type Formatter struct {
 
 var _ output.Formatter = (*Formatter)(nil)
 
+func init() {
+	output.RegisterFormatter(output.FormatChromeTrace, func() output.Formatter { return New(0) })
+}
+
 // New creates a Formatter. Pass 0 for sampleRateHz to default to 100 Hz.
 func New(sampleRateHz float64) *Formatter {
 	if sampleRateHz <= 0 {

@@ -489,7 +489,7 @@ sudo _output/bin/profiler \
 | `--aggr-interval` | `10` | 全部 | 聚合周期，单位为秒，不得大于采集时长 |
 | `--freq`, `-F` | `99` | CPU | 每秒采样次数；Java 最大为 1000 |
 | `--output-path` | `.` | 本地输出 | 输出目录，不是输出文件名 |
-| `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg` 或 `remote` |
+| `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg`、`speedscope`、`chrometrace`、`dump` 或 `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | 远端上传使用的 Unix socket |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
 | `--tool-path` | 无 | Java、Python | 第三方采集工具根目录，必填 |
@@ -666,6 +666,9 @@ Python 不支持 `--type memory`。若需要 Python 内存分析，应使用独�
 | `collapsed` | `perf_<Unix 时间戳>.folded`；每行是以分号分隔的调用栈及末尾计数 | 用于脚本检索、结果比较，或交给其他火焰图工具二次渲染 |
 | `flamegraph` | `flamegraph_<Unix 时间戳>.svg`；内嵌交互脚本的 SVG | 默认的人工分析格式，可在浏览器中搜索、缩放和查看栈帧数值 |
 | `svg` | 与 `flamegraph` 相同的交互式 SVG | 兼容显式要求 SVG 的调用方；当前实现与 `flamegraph` 等价 |
+| `speedscope` | `speedscope_<Unix 时间戳>.json`；Speedscope 采样剖析 JSON | 便于在 speedscope.app 或其他兼容 Speedscope 的查看器中分享剖析结果 |
+| `chrometrace` | `chrometrace_<Unix 时间戳>.json`；Chrome Trace Event JSON | 可在 chrome://tracing 或 Perfetto 中查看各线程的时间线 |
+| `dump` | `perf_<Unix 时间戳>.txt`；可读的逐线程栈转储 | 需要在日志、工单或支持沟通中保留文本记录时使用 |
 | `remote` | 不生成本地火焰图，通过 Unix socket 上传 pprof 兼容数据 | 接入 HUATUO 存储链路时使用，不适合离线查看 |
 
 火焰图从下到上表示调用方向，矩形宽度表示该调用栈在当前观测维度中的累计值。不同类型的宽度含义不同：CPU 表示采样次数折算的 CPU 时间占比；内存模式表示相应的虚拟分配、物理分配、物理驻留、Java 对象分配或存活对象量。横向位置不表示时间先后。
@@ -678,6 +681,8 @@ main;handleRequest;writeResponse 172
 ```
 
 需要保留原始数据并支持后续使用不同配色或过滤规则重新渲染时，选择 `collapsed`。只需直接定位热点时，选择 `flamegraph`。`remote` 依赖 HUATUO toolstream Unix socket，要求提供非空的 `--tracer-id`，独立离线使用时不应选择该格式。
+
+需要在外部查看器中打开剖析结果时，可选择 `speedscope` 或 `chrometrace`；需要一份纯文本记录时，选择 `dump`。
 
 ### 7. 根据集成测试复现
 
