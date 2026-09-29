@@ -54,7 +54,7 @@ datasources:
       tlsClientCert: '...'
       tlsClientKey: '...'
       # <string> Sets the database password, if necessary.
-      password: huatuo-bamai
+      password: $ELASTIC_PASSWORD
     # <int> Sets the version. Used to compare versions when
     # updating. Ignored when creating a new data source.
     version: 1

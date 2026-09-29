@@ -29,6 +29,7 @@ services:
     container_name: grafana
     network_mode: host
     environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
       GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource ${INFINITY_DATA_SOURCE:-3.4.1}"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/autotracing-event.json
     volumes:
