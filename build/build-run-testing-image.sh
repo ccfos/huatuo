@@ -2,7 +2,7 @@
 #
 # Author: Tonghao Zhang <tonghao@bamaicloud.com>
 #
-# Copyright 2025 The HuaTuo Authors
+# Copyright 2025, 2026 The HuaTuo Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ set -ex
 
 docker build --no-cache --quiet --network host -t huatuo/huatuo-dev:latest \
 	-f ${WORKSPACE_DIR}/Dockerfile.devel ${WORKSPACE_DIR}
-docker run -it --rm --privileged --network host \
+docker run --rm --privileged --network host \
 	-v ${WORKSPACE_DIR}:/workspace -w /workspace huatuo/huatuo-dev:latest \
 	sh -xec '
 	git config --global --add safe.directory /workspace
