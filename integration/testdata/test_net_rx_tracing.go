@@ -37,6 +37,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
@@ -126,6 +127,11 @@ type summary struct {
 	Duplicates  int      `json:"duplicates"`
 	LostSamples uint64   `json:"lost_samples"`
 	Stages      []string `json:"stages"`
+	// Timeout reports that the collection window ended on its own deadline
+	// instead of on a stop request. A caller measuring traffic over that
+	// window must treat the round as uncovered: the entry point may have been
+	// detached before the traffic ended.
+	Timeout bool `json:"timeout"`
 }
 
 func main() {
@@ -186,8 +192,12 @@ func run() error {
 	}
 	defer unix.Close(timestampFD)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// A stop request ends the collection window and still prints the summary,
+	// so a caller that measures traffic through the window learns what the
+	// fixture covered. Without it the fixture is killed instead, and a caller
+	// that stopped it after its traffic cannot tell that from a crash.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, unix.SIGTERM)
+	defer stop()
 
 	object, reader, err := startTracing(ctx, cfg)
 	if err != nil {
@@ -217,7 +227,7 @@ func run() error {
 		return fmt.Errorf("write ready marker: %w", err)
 	}
 
-	observed, err := collectEvents(reader, entryPoint, cfg)
+	observed, err := collectEvents(ctx, reader, entryPoint, cfg)
 	if err != nil {
 		return err
 	}
@@ -230,6 +240,7 @@ func run() error {
 		Duplicates:  observed.duplicates,
 		LostSamples: observed.lost,
 		Stages:      observed.stages,
+		Timeout:     observed.timedOut,
 	}); err != nil {
 		return fmt.Errorf("write summary: %w", err)
 	}
@@ -362,10 +373,14 @@ type collection struct {
 	duplicates int
 	lost       uint64
 	stages     []string
+	timedOut   bool
 }
 
 // collectEvents prints every event and counts the ones that repeat a packet.
+// It collects until maxEvents, until the deadline of cfg.timeout, or until ctx
+// is cancelled by a stop request; only the deadline is reported as a timeout.
 func collectEvents(
+	ctx context.Context,
 	reader bpf.PerfEventReader,
 	entryPoint string,
 	cfg config,
@@ -379,7 +394,13 @@ func collectEvents(
 		seenEvent = make(map[string]bool)
 	)
 
-	for observed.events < cfg.maxEvents && time.Now().Before(deadline) {
+	for observed.events < cfg.maxEvents && ctx.Err() == nil {
+		if !time.Now().Before(deadline) {
+			observed.timedOut = true
+
+			break
+		}
+
 		// ReadBatch returns what has arrived within a fixed window, so the
 		// fixture stays responsive when no event arrives at all.
 		batch, err := reader.ReadBatch(func() any { return new(abi.NetRXLatencyEvent) })
