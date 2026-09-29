@@ -32,7 +32,10 @@ func TestAgentLibrarySessionsDoNotShareFiles(t *testing.T) {
 		if err := os.Mkdir(libDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(libDir, "libasyncProfiler.so"), []byte(contents), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(libDir, "libasyncProfiler.so"), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(libDir, "libasyncProfiler.so"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

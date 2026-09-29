@@ -108,7 +108,10 @@ fi
 trap 'exit 0' TERM
 while :; do sleep 1; done
 `, stopLibPath)
-	if err := os.WriteFile(asprofPath, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(asprofPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(asprofPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
