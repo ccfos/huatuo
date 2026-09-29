@@ -74,9 +74,9 @@ func TestCopyAgentLibPreservesSourceMode(t *testing.T) {
 			writeAgentSource(t, toolPath, want, tt.sourceMode)
 
 			targetDir := t.TempDir()
-			target := filepath.Join(targetDir, "libasyncProfiler.so")
+			target := filepath.Join(targetDir, "libasyncProfiler-first.so")
 
-			if err := copyAgentLib(toolPath, targetDir); err != nil {
+			if err := copyAgentLib(toolPath, targetDir, "first"); err != nil {
 				t.Fatalf("copyAgentLib() error=%v", err)
 			}
 
@@ -104,12 +104,12 @@ func TestCopyAgentLibReplacesSymlink(t *testing.T) {
 	writeFileWithMode(t, externalPath, externalContent, 0o600)
 
 	targetDir := t.TempDir()
-	targetPath := filepath.Join(targetDir, "libasyncProfiler.so")
+	targetPath := filepath.Join(targetDir, "libasyncProfiler-first.so")
 	if err := os.Symlink(externalPath, targetPath); err != nil {
 		t.Fatalf("Symlink(%q, %q) error=%v", externalPath, targetPath, err)
 	}
 
-	if err := copyAgentLib(toolPath, targetDir); err != nil {
+	if err := copyAgentLib(toolPath, targetDir, "first"); err != nil {
 		t.Fatalf("copyAgentLib() error=%v", err)
 	}
 
@@ -143,11 +143,11 @@ func TestCopyAgentLibRemovesTempFileAfterInstallFailure(t *testing.T) {
 	writeAgentSource(t, toolPath, []byte("async-profiler-agent"), 0o755)
 
 	targetDir := t.TempDir()
-	targetPath := filepath.Join(targetDir, "libasyncProfiler.so")
+	targetPath := filepath.Join(targetDir, "libasyncProfiler-first.so")
 	if err := os.Mkdir(targetPath, 0o755); err != nil {
 		t.Fatalf("Mkdir(%q) error=%v", targetPath, err)
 	}
-	if err := copyAgentLib(toolPath, targetDir); err == nil {
+	if err := copyAgentLib(toolPath, targetDir, "first"); err == nil {
 		t.Fatal("copyAgentLib() error=nil, want non-nil")
 	}
 	assertNoAgentTempFiles(t, targetDir)
@@ -169,7 +169,7 @@ func TestStartAsprofCallbackBuildsStartCommand(t *testing.T) {
 	args := startAsprofCallback(
 		profileOutFile,
 		[]string{
-			"--libpath", "/tmp/libasyncProfiler.so",
+			"--libpath", agentTargetPath("session123"),
 			"-e", "cpu",
 		},
 		"cpu",
@@ -179,7 +179,7 @@ func TestStartAsprofCallbackBuildsStartCommand(t *testing.T) {
 	)(999999999)
 	wantArgs := []string{
 		"start",
-		"--libpath", "/tmp/libasyncProfiler.so",
+		"--libpath", "/tmp/libasyncProfiler-session123.so",
 		"-e", "cpu",
 		"--loop", "10s",
 		"-o", "collapsed",
@@ -226,7 +226,7 @@ func TestStopWithOutputArgsBuildsCollapsedOutputCommand(t *testing.T) {
 	got := stopWithOutputArgs(1234, "session123", "mem", 4)
 	want := []string{
 		"stop",
-		"--libpath", "/tmp/libasyncProfiler.so",
+		"--libpath", "/tmp/libasyncProfiler-session123.so",
 		"-o", "collapsed",
 		"-f", "/tmp/huatuo-asprof-session123-mem-1234-4.collapsed",
 		"1234",
