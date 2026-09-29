@@ -22,6 +22,7 @@ import (
 	"strconv"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/dropcorrelation"
 	"github.com/ccfos/huatuo/internal/exec"
 	"github.com/ccfos/huatuo/internal/matcher"
 	"github.com/ccfos/huatuo/internal/pod"
@@ -98,10 +99,20 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 			NetNamespaceInum:    uint64(ev.NetNamespaceInum),
 		})
 	}
-
 	if ev.ObservedTimestamp.IsZero() {
 		return errors.New("dropwatch observed timestamp is required")
 	}
+	dropcorrelation.Default().ObserveKernel(dropcorrelation.KernelDrop{
+		Timestamp:   ev.ObservedTimestamp.Time,
+		Device:      ev.NetdevName,
+		IfIndex:     ev.NetdevIfindex,
+		Direction:   dropcorrelation.InferDirection(ev.Type, ev.DropReason, ev.Stack),
+		Reason:      ev.DropReason,
+		Stack:       ev.Stack,
+		ContainerID: ev.ContainerID,
+		Protocol:    ev.PacketEthProto,
+		PacketLen:   ev.PacketLenBytes,
+	})
 	var kernelObservedTimestamp timeutil.Timestamp
 	if ev.KernelObservedTimestamp != nil {
 		kernelObservedTimestamp = *ev.KernelObservedTimestamp
