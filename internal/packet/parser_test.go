@@ -252,6 +252,46 @@ func TestParseIPv4UDP(t *testing.T) {
 	}
 }
 
+func TestParseIPv6TCPAfterExtensionHeader(t *testing.T) {
+	for _, nextHeader := range []byte{0, 43, 60} {
+		pkt := Hdr{EthProto: 0x86dd, RawLen: 72}
+		pkt.Raw[0] = 0x60
+		binary.BigEndian.PutUint16(pkt.Raw[4:], 32)
+		pkt.Raw[6] = nextHeader
+		pkt.Raw[7] = 64
+		pkt.Raw[23] = 1
+		pkt.Raw[39] = 2
+
+		pkt.Raw[40] = 6
+		pkt.Raw[41] = 0
+
+		binary.BigEndian.PutUint16(pkt.Raw[48:], 12345)
+		binary.BigEndian.PutUint16(pkt.Raw[50:], 80)
+		pkt.Raw[60] = 0x50
+		pkt.Raw[61] = TCPFlagSYN
+		copy(pkt.Raw[68:], "data")
+
+		parsed, err := Parse(&pkt)
+		if err != nil {
+			t.Fatalf("Parse(next header %d) error = %v", nextHeader, err)
+		}
+		if parsed.TCP == nil {
+			t.Fatalf("Parse(next header %d) TCP = nil", nextHeader)
+		}
+		if parsed.Label != "IPv6/TCP" {
+			t.Fatalf("Parse(next header %d) label = %q, want IPv6/TCP", nextHeader, parsed.Label)
+		}
+		if span, ok := TCPSequenceSpan(parsed); !ok || span != 5 {
+			t.Fatalf(
+				"TCPSequenceSpan(next header %d) = (%d, %t), want (5, true)",
+				nextHeader,
+				span,
+				ok,
+			)
+		}
+	}
+}
+
 func TestParseARP(t *testing.T) {
 	pkt := Hdr{EthProto: 0x0806, RawLen: 28}
 	// ARP header: htype=1, ptype=0x0800, hlen=6, plen=4, op=1
