@@ -494,15 +494,67 @@ func pilotObjectCounts(t *testing.T, object BPF) (map[string]int, int) {
 func skipUnsupportedLoad(t *testing.T, err error) {
 	t.Helper()
 
-	// The runtime tests reuse the load path's own capability verdict, so a
-	// kernel that rejects the tracing program type skips the entry point
-	// instead of failing: a verifier rejection or a cleanup failure never
-	// carries that verdict and stays a test failure.
-	if IsTracingTargetUnsupported(err) ||
-		errors.Is(err, ebpf.ErrNotSupported) ||
+	// The capability verdict is deliberately not consulted here: a failed
+	// fallback load joins the classified fentry failure with the kprobe
+	// failure, and the kprobe side must keep its own meaning inside that
+	// join. The one load that answers for a single entry point, the fentry
+	// subtest of TestLoadAttachAndEventPipeForEntryPointAttemptsOnlyRequested
+	// Program, skips on the verdict itself before calling this helper.
+	if errors.Is(err, ebpf.ErrNotSupported) ||
 		errors.Is(err, unix.EPERM) ||
 		errors.Is(err, unix.EACCES) {
 		t.Skipf("skipping: %v", err)
+	}
+}
+
+// TestSkipUnsupportedLoadKeepsRealFallbackFailures pins what the runtime
+// fallback tests lean on: when the kprobe fallback fails too, the coordinator
+// joins the classified fentry failure with the kprobe failure, and that join
+// must not read as a missing capability. A verifier rejection, a resource
+// failure or a failed cleanup on the kprobe side stays a test failure.
+func TestSkipUnsupportedLoadKeepsRealFallbackFailures(t *testing.T) {
+	t.Parallel()
+
+	// The fentry side exactly as the coordinator sees it: a load the kernel
+	// refused before the verifier, classified into the capability verdict.
+	fentryLoadErr := fmt.Errorf("program %s: load program: %w", testFentryProgram, unix.EINVAL)
+	unsupportedFentry := classifyTracingLoadFailure(
+		fentryLoadErr, func() error { return ebpf.ErrNotSupported },
+	)
+
+	tests := []struct {
+		name     string
+		fallback error
+	}{
+		{
+			name: "kprobe verifier rejection",
+			fallback: &ebpf.VerifierError{
+				Cause: unix.EINVAL,
+				Log:   []string{"0: (b7) r0 = 0", "R1 invalid mem access 'scalar'"},
+			},
+		},
+		{
+			name:     "kprobe resource failure",
+			fallback: unix.ENOMEM,
+		},
+		{
+			name:     "kprobe cleanup failure",
+			fallback: markTracingCleanupFailure(errors.New("close perf event reader: bad file descriptor")),
+		},
+	}
+
+	for _, tt := range tests {
+		// The subtest stays sequential on purpose: t.Skipped() is only
+		// settled once it has returned, and the assertion below must see it.
+		var skipped bool
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() { skipped = t.Skipped() }()
+
+			skipUnsupportedLoad(t, errors.Join(unsupportedFentry, tt.fallback))
+		})
+		if skipped {
+			t.Errorf("a real %s must fail the test after a capability-marked fentry failure, not skip it", tt.name)
+		}
 	}
 }
 
@@ -733,6 +785,13 @@ func TestLoadAttachAndEventPipeForEntryPointAttemptsOnlyRequestedProgram(t *test
 				DefaultPerfEventBufferBytes,
 			)
 			if err != nil {
+				// The fentry attempt is this kernel's capability answer for the
+				// entry point it demanded, so a kernel without it skips the
+				// subtest. The kprobe subtest keeps every failure: its error is
+				// never classified as a capability verdict.
+				if tt.program == testFentryProgram && IsTracingTargetUnsupported(err) {
+					t.Skipf("skipping fentry: %v", err)
+				}
 				skipUnsupportedLoad(t, err)
 				t.Fatalf("LoadAttachAndEventPipeForEntryPoint(%q) error = %v, want nil", tt.program, err)
 			}
