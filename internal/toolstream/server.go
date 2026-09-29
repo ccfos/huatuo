@@ -16,6 +16,7 @@
 package toolstream
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -106,6 +107,10 @@ func Register[T any](
 	defer srv.handlersMu.Unlock()
 
 	srv.handlers[toolName] = func(sess *Session, payload []byte) error {
+		if bytes.Equal(bytes.TrimSpace(payload), []byte("null")) {
+			return fmt.Errorf("unmarshal for %s: null event", toolName)
+		}
+
 		var ev T
 		if err := json.Unmarshal(payload, &ev); err != nil {
 			return fmt.Errorf("unmarshal for %s: %w", toolName, err)
