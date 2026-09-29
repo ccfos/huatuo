@@ -67,7 +67,7 @@ func (c *qdiscCollector) Update() ([]*metric.Data, error) {
 	labels := map[string]string{"device": "", "kind": ""}
 	for i := range stats {
 		stat := &stats[i]
-		if !c.deviceMatcher.Match(stat.Netdev) || stat.Kind == "noqueue" || !stat.IsRoot() {
+		if stat.Netdev == "" || !c.deviceMatcher.Match(stat.Netdev) || stat.Kind == "noqueue" || !stat.IsRoot() {
 			continue
 		}
 
