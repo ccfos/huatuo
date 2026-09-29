@@ -51,7 +51,8 @@ type Pipeline struct {
 	aggr Aggregator
 	// A channel blocks idle consumers; RingBuffer.Poll spins on timeout checks
 	// and spends CPU in runtime.nanotime and scheduler operations. The mutex
-	// makes stopping atomic with respect to accepting a record.
+	// makes stopping atomic with respect to accepting a record and registering
+	// the worker lifetimes during startup.
 	queue        chan any
 	enqueueMutex sync.RWMutex
 }
@@ -89,14 +90,14 @@ func resolveTracerID(configured string, allocate func() (string, error)) string 
 // Start launches the aggregation worker and periodic export schedule once.
 // It is a no-op after Stop starts; Pipeline instances are not restartable.
 func (p *Pipeline) Start() {
+	p.enqueueMutex.Lock()
+	defer p.enqueueMutex.Unlock()
 	if !p.state.CompareAndSwap(pipelineStateIdle, pipelineStateRunning) {
 		return
 	}
 
-	p.wg.Add(1)
+	p.wg.Add(2)
 	go p.runDequeueAndAggregate()
-
-	p.wg.Add(1)
 	go p.runAggregateSnapshot()
 }
 
@@ -167,20 +168,14 @@ func (p *Pipeline) runDequeueAndAggregate() {
 // Stop signals the pipeline to terminate and waits for all goroutines to exit.
 // Calls after the first one are no-ops. A stopped Pipeline cannot be restarted.
 func (p *Pipeline) Stop() {
-	for {
-		state := p.state.Load()
-		if state == pipelineStateStopped {
-			return
-		}
-
-		if p.state.CompareAndSwap(state, pipelineStateStopped) {
-			p.enqueueMutex.Lock()
-			close(p.stopCh)
-			p.enqueueMutex.Unlock()
-			p.wg.Wait()
-			return
-		}
+	p.enqueueMutex.Lock()
+	if p.state.Swap(pipelineStateStopped) == pipelineStateStopped {
+		p.enqueueMutex.Unlock()
+		return
 	}
+	close(p.stopCh)
+	p.enqueueMutex.Unlock()
+	p.wg.Wait()
 }
 
 // Enqueue offers a record into the aggregation queue for async processing.
