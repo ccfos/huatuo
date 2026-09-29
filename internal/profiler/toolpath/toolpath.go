@@ -20,8 +20,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ccfos/huatuo/pkg/profiling"
 	"golang.org/x/sys/unix"
+
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 // Validate checks only the requested language's tools within directory.
