@@ -26,6 +26,7 @@ type outputBuffer struct {
 	limit    int
 	data     []byte
 	exceeded bool
+	onExceed func()
 }
 
 func newOutputBuffer(limit int) outputBuffer {
@@ -34,21 +35,46 @@ func newOutputBuffer(limit int) outputBuffer {
 
 func (b *outputBuffer) Write(data []byte) (int, error) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
 	written := len(data)
 	remaining := b.limit - len(b.data)
 	if remaining <= 0 {
 		b.exceeded = b.exceeded || written > 0
-		return written, nil
-	}
-	if written > remaining {
+	} else if written > remaining {
 		b.data = append(b.data, data[:remaining]...)
 		b.exceeded = true
-		return written, nil
+	} else {
+		b.data = append(b.data, data...)
 	}
-	b.data = append(b.data, data...)
+
+	// The first write past the limit hands the callback to the caller. It runs
+	// outside the lock: Write is called by the os/exec copier goroutine, so the
+	// callback must never wait on this buffer.
+	var onExceed func()
+	if b.exceeded && b.onExceed != nil {
+		onExceed = b.onExceed
+		b.onExceed = nil
+	}
+	b.mu.Unlock()
+
+	if onExceed != nil {
+		onExceed()
+	}
 	return written, nil
+}
+
+// setOnExceed registers the callback that runs once a write passes the retained
+// limit. A buffer that has already passed it runs the callback immediately, so a
+// command cannot overflow before the registration and escape it.
+func (b *outputBuffer) setOnExceed(onExceed func()) {
+	b.mu.Lock()
+	if b.exceeded {
+		b.mu.Unlock()
+		onExceed()
+		return
+	}
+	b.onExceed = onExceed
+	b.mu.Unlock()
 }
 
 func (b *outputBuffer) Bytes() []byte {
