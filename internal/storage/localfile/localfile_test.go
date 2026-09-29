@@ -122,6 +122,26 @@ func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 	}
 }
 
+func TestBackendSaveRejectsTracerNameOutsideStorageDirectory(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+
+	for _, tracerName := range []string{"../outside", "/tmp/outside", `..\outside`} {
+		t.Run(tracerName, func(t *testing.T) {
+			err := backend.Save(t.Context(), driver.Record{
+				ID:   "trace-invalid-name",
+				Data: []byte(`{"test":true}`),
+				Fields: map[string]any{
+					"tracer_name": tracerName,
+				},
+			}, driver.SaveOptions{})
+			if !errors.Is(err, driver.ErrInvalidField) {
+				t.Fatalf("Save() error = %v, want ErrInvalidField", err)
+			}
+		})
+	}
+}
+
 // TestBackendUnsupportedOperations covers operations not supported by the localfile backend: Get, Delete, DeleteByQuery, Query, Count, and Terms all return ErrUnsupported.
 func TestBackendUnsupportedOperations(t *testing.T) {
 	dir := t.TempDir()
