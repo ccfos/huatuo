@@ -8,10 +8,10 @@ set -euo pipefail
 : "${VM_IP:?VM_IP is required}"
 : "${VM_SSH_KEY:?VM_SSH_KEY is required}"
 
-if ! [[ "$DEBUG_TIMEOUT_MINUTES" =~ ^[0-9]+$ ]] ||
-  ((DEBUG_TIMEOUT_MINUTES < 1 || DEBUG_TIMEOUT_MINUTES > 180)); then
-  echo "Invalid debug timeout: $DEBUG_TIMEOUT_MINUTES (expected 1-180 minutes)" >&2
-  exit 1
+if ! [[ "$DEBUG_TIMEOUT_MINUTES" =~ ^[0-9]+$ ]] \
+	|| ((DEBUG_TIMEOUT_MINUTES < 1 || DEBUG_TIMEOUT_MINUTES > 330)); then
+	echo "Invalid debug timeout: $DEBUG_TIMEOUT_MINUTES (expected 1-330 minutes)" >&2
+	exit 1
 fi
 
 printf '\033[1m[STEP 1️⃣/3] Connect to Host(GitHub runner)\033[0m\n\n'
@@ -33,9 +33,9 @@ printf '\033[1;36m  $ cd "%s" && touch continue\033[0m\n' "$GITHUB_WORKSPACE"
 echo
 
 deadline=$((SECONDS + DEBUG_TIMEOUT_MINUTES * 60))
-while [[ ! -e /continue && ! -e "$GITHUB_WORKSPACE/continue" ]] &&
-  ((SECONDS < deadline)); do
-  sleep 3
+while [[ ! -e /continue && ! -e "$GITHUB_WORKSPACE/continue" ]] \
+	&& ((SECONDS < deadline)); do
+	sleep 3
 done
 
 # Ensure the detached Upterm action exits before its post step.
