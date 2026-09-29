@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"unicode/utf8"
 )
 
 type frame struct {
@@ -191,11 +192,23 @@ func (r *renderer) fitText(text string, width float32) string {
 		return ""
 	}
 
-	if len(text) < avail {
+	// Compare and cut on rune boundaries: a byte slice can split a multi-byte
+	// UTF-8 symbol and make the whole SVG invalid XML.
+	if utf8.RuneCountInString(text) < avail {
 		return html.EscapeString(text)
 	}
 
-	return html.EscapeString(text[:avail-2]) + ".."
+	cut := 0
+	n := 0
+	for i := range text {
+		if n == avail-2 {
+			cut = i
+			break
+		}
+		n++
+	}
+
+	return html.EscapeString(text[:cut]) + ".."
 }
 
 // RenderStyle writes a flame graph SVG for stacks using the given style.
