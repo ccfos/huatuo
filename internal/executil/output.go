@@ -33,17 +33,10 @@ func (b *outputBuffer) Write(data []byte) (int, error) {
 	defer b.mu.Unlock()
 
 	written := len(data)
-	remaining := b.limit - len(b.data)
-	if remaining <= 0 {
-		b.hasExceededLimit = b.hasExceededLimit || written > 0
-		return written, nil
-	}
-	if written > remaining {
-		b.data = append(b.data, data[:remaining]...)
-		b.hasExceededLimit = true
-		return written, nil
-	}
-	b.data = append(b.data, data...)
+	retained := min(written, b.limit-len(b.data))
+	b.data = append(b.data, data[:retained]...)
+	b.hasExceededLimit = b.hasExceededLimit || retained < written
+
 	return written, nil
 }
 
@@ -68,12 +61,14 @@ func (b *tailBuffer) Write(data []byte) (int, error) {
 	if written == 0 {
 		return 0, nil
 	}
+
 	if written >= maxErrorOutputBytes {
 		if cap(b.data) < maxErrorOutputBytes {
 			b.data = make([]byte, maxErrorOutputBytes)
 		} else {
 			b.data = b.data[:maxErrorOutputBytes]
 		}
+
 		copy(b.data, data[written-maxErrorOutputBytes:])
 		b.start = 0
 		return written, nil
@@ -85,6 +80,7 @@ func (b *tailBuffer) Write(data []byte) (int, error) {
 			b.data = append(b.data, data...)
 			return written, nil
 		}
+
 		b.data = append(b.data, data[:remaining]...)
 		data = data[remaining:]
 	}

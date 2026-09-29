@@ -90,24 +90,30 @@ func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+
 	args[0] = "mutated"
 	env[0] = "KEY=mutated"
 	if process.spec.Args[0] != "first" {
 		t.Errorf("snapshotted argument = %q, want first", process.spec.Args[0])
 	}
+
 	if process.spec.Env[0] != "KEY=value" {
 		t.Errorf("snapshotted environment = %q, want KEY=value", process.spec.Env[0])
 	}
+
 	if process.spec.StopGracePeriod != defaultStopGracePeriod {
 		t.Errorf("StopGracePeriod = %s, want %s", process.spec.StopGracePeriod, defaultStopGracePeriod)
 	}
+
 	if process.spec.MaxOutputBytes != defaultMaxOutputBytes {
 		t.Errorf("MaxOutputBytes = %d, want %d", process.spec.MaxOutputBytes, defaultMaxOutputBytes)
 	}
+
 	emptyEnvProcess, err := New(Spec{Path: "/bin/true", Env: []string{}})
 	if err != nil {
 		t.Fatalf("New() with empty environment error = %v", err)
 	}
+
 	if emptyEnvProcess.spec.Env == nil {
 		t.Error("New() changed an explicit empty environment to inherited environment")
 	}
@@ -118,9 +124,11 @@ func TestProcessRejectsWaitAndStopBeforeStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+
 	if err := process.Wait(); err == nil || !strings.Contains(err.Error(), "has not been started") {
 		t.Errorf("Wait() error = %v, want not-started error", err)
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := process.Stop(ctx); err == nil || !strings.Contains(err.Error(), "has not been started") {
@@ -172,6 +180,7 @@ func TestProcessZeroValueReturnsInitializationError(t *testing.T) {
 	if got, err := process.Stdout(); len(got) != 0 || !errors.Is(err, errProcessNotInitialized) {
 		t.Errorf("Stdout() = (%q, %v), want empty output and initialization error", got, err)
 	}
+
 	if got := process.Stderr(); len(got) != 0 {
 		t.Errorf("Stderr() = %q, want empty output", got)
 	}
@@ -182,6 +191,7 @@ func TestProcessStartRejectsCanceledContextAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
@@ -189,10 +199,12 @@ func TestProcessStartRejectsCanceledContextAndRetry(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Start() error = %v, want context.Canceled", err)
 	}
+
 	if err := process.Start(context.Background()); err == nil ||
 		!strings.Contains(err.Error(), "already been started") {
 		t.Fatalf("second Start() error = %v, want already-started error", err)
 	}
+
 	if err := process.Wait(); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Wait() error = %v, want context.Canceled", err)
 	}
@@ -205,6 +217,7 @@ func TestProcessWaitAndStopPreserveCleanupFailure(t *testing.T) {
 		if startErr != nil {
 			name = "canceled start"
 		}
+
 		t.Run(name, func(t *testing.T) {
 			process, err := New(Spec{Path: "/unused/command"})
 			if err != nil {
@@ -221,9 +234,11 @@ func TestProcessWaitAndStopPreserveCleanupFailure(t *testing.T) {
 				if !errors.Is(err, ErrStopFailed) || !errors.Is(err, cleanupErr) {
 					t.Fatalf("Wait() error = %v, want stored cleanup failure", err)
 				}
+
 				if startErr != nil && !errors.Is(err, startErr) {
 					t.Errorf("Wait() error = %v, want start failure", err)
 				}
+
 				if err := process.Stop(t.Context()); !errors.Is(err, cleanupErr) {
 					t.Errorf("Stop() error = %v, want stored cleanup failure", err)
 				}
@@ -239,6 +254,7 @@ func TestProcessStdoutReportsOutputLimit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if _, err := process.output.Write([]byte(output)); err != nil {
 				t.Fatal(err)
 			}
@@ -250,10 +266,12 @@ func TestProcessStdoutReportsOutputLimit(t *testing.T) {
 			if err := process.Wait(); err != nil {
 				t.Fatalf("Wait() reported an output size error: %v", err)
 			}
+
 			got, err := process.Stdout()
 			if errors.Is(err, ErrOutputLimitExceeded) != (len(output) > 4) {
 				t.Fatalf("Stdout() error = %v for %d bytes, incorrect limit classification", err, len(output))
 			}
+
 			if string(got) != output[:min(len(output), 4)] {
 				t.Errorf("Stdout() = %q, want retained output prefix", got)
 			}

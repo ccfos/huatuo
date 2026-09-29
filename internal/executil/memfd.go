@@ -50,12 +50,15 @@ func (p *Process) MemfdOutput() ([]byte, error) {
 	if p.state == processStateInvalid {
 		return nil, fmt.Errorf("read command memfd output: %w", errProcessNotInitialized)
 	}
+
 	if p.memfd == nil {
 		return nil, fmt.Errorf("read command %q memfd output: WithMemfdOutput is not configured", p.spec.Path)
 	}
+
 	if p.state == processStateNew || p.state == processStateStarting {
 		return nil, fmt.Errorf("read command %q memfd output: process has not been started", p.spec.Path)
 	}
+
 	if p.memfd.file == nil {
 		return nil, fmt.Errorf("read command %q memfd output: %w", p.spec.Path, os.ErrClosed)
 	}
@@ -65,10 +68,12 @@ func (p *Process) MemfdOutput() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stat command %q memfd output: %w", p.spec.Path, err)
 	}
+
 	data, err := readMemfdOutput(p.memfd.file, info.Size(), p.memfd.limit)
 	if err != nil {
 		return data, fmt.Errorf("read command %q memfd output: %w", p.spec.Path, err)
 	}
+
 	return data, nil
 }
 
@@ -76,10 +81,12 @@ func readMemfdOutput(reader io.ReaderAt, size int64, limit int) ([]byte, error) 
 	if size == 0 {
 		return nil, nil
 	}
+
 	var limitErr error
 	if size > int64(limit) {
 		limitErr = fmt.Errorf("%w: memfd output exceeds %d bytes", ErrOutputLimitExceeded, limit)
 	}
+
 	data := make([]byte, min(size, int64(limit)))
 	n, readErr := reader.ReadAt(data, 0)
 	return data[:n], errors.Join(limitErr, readErr)
@@ -97,11 +104,17 @@ func (m *memfdOutput) prepare(cmd *exec.Cmd) error {
 	if err != nil {
 		return fmt.Errorf("create command output memfd: %w", err)
 	}
+
 	m.file = os.NewFile(uintptr(fd), "huatuo-executil")
 	outputPath := "/proc/self/fd/" + strconv.Itoa(3+len(cmd.ExtraFiles))
-	cmd.Args = append(cmd.Args, m.argsForOutput(outputPath)...)
+	args := m.argsForOutput(outputPath)
+	if err := validateArgs(args); err != nil {
+		return fmt.Errorf("memfd output arguments: %w", err)
+	}
+
+	cmd.Args = append(cmd.Args, args...)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, m.file)
-	return validateArgs(cmd.Args[1:])
+	return nil
 }
 
 // close is called under Process.mu, including after a failed start.
@@ -110,8 +123,10 @@ func (m *memfdOutput) close() error {
 		if err := m.file.Close(); err != nil {
 			m.closeErr = fmt.Errorf("close command output memfd: %w", err)
 		}
+
 		m.file = nil
 	}
+
 	return m.closeErr
 }
 
@@ -119,6 +134,7 @@ func (p *Process) closeMemfd() error {
 	if p.memfd == nil {
 		return nil
 	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.memfd.close()

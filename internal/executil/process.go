@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // Package executil starts and manages operating-system process groups.
+// Context arguments must be non-nil.
 package executil
 
 import (
@@ -98,6 +99,13 @@ const (
 	processStateStartFailed
 )
 
+type memfdCleanup bool
+
+const (
+	preserveMemfd memfdCleanup = false
+	releaseMemfd  memfdCleanup = true
+)
+
 // Closing done publishes the immutable error to every waiter.
 type lifecycleResult struct {
 	done chan struct{}
@@ -126,12 +134,10 @@ type Process struct {
 	groupErr        error
 	isStopRequested bool
 	stopAttempt     *lifecycleResult
-	startCommand    func(*exec.Cmd) error
-	forceStop       func(int) error
 }
 
 // New validates and snapshots a command specification without starting it.
-func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // Spec is at the project's 80-byte value limit.
+func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // Spec is within the 80-byte value limit.
 	process := &Process{spec: spec}
 	for _, option := range options {
 		option(process)
@@ -140,17 +146,21 @@ func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // 
 	if err := process.spec.validate(); err != nil {
 		return nil, fmt.Errorf("new command: %w", err)
 	}
+
 	if process.memfd != nil {
 		if process.memfd.argsForOutput == nil {
 			return nil, errors.New("new command: output argument builder must not be nil")
 		}
+
 		if process.memfd.limit <= 0 {
 			return nil, errors.New("new command: maximum memfd output bytes must be positive")
 		}
 	}
+
 	if process.spec.StopGracePeriod == 0 {
 		process.spec.StopGracePeriod = defaultStopGracePeriod
 	}
+
 	if process.spec.MaxOutputBytes == 0 {
 		process.spec.MaxOutputBytes = defaultMaxOutputBytes
 	}
@@ -161,8 +171,6 @@ func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // 
 	process.state = processStateNew
 	process.start = lifecycleResult{done: make(chan struct{})}
 	process.wait = lifecycleResult{done: make(chan struct{})}
-	process.startCommand = (*exec.Cmd).Start
-	process.forceStop = forceStopProcessGroup
 
 	return process, nil
 }
@@ -171,16 +179,20 @@ func (s *Spec) validate() error {
 	if strings.TrimSpace(s.Path) == "" {
 		return errors.New("command path must not be empty")
 	}
+
 	if strings.IndexByte(s.Path, 0) >= 0 {
 		return fmt.Errorf("command path %q contains a null byte", s.Path)
 	}
+
 	if err := validateArgs(s.Args); err != nil {
 		return err
 	}
+
 	for index, value := range s.Env {
 		if strings.IndexByte(value, 0) >= 0 {
 			return fmt.Errorf("command environment entry %d contains a null byte", index)
 		}
+
 		if strings.IndexByte(value, '=') <= 0 {
 			return fmt.Errorf(
 				"command environment entry %d must use a non-empty KEY=VALUE form",
@@ -188,12 +200,15 @@ func (s *Spec) validate() error {
 			)
 		}
 	}
+
 	if s.StopGracePeriod < 0 {
 		return errors.New("stop grace period must not be negative")
 	}
+
 	if s.MaxOutputBytes < 0 {
 		return errors.New("maximum output bytes must not be negative")
 	}
+
 	return nil
 }
 
@@ -203,6 +218,7 @@ func validateArgs(args []string) error {
 			return fmt.Errorf("command argument %d contains a null byte", index)
 		}
 	}
+
 	return nil
 }
 
@@ -211,19 +227,17 @@ func validateArgs(args []string) error {
 // stop the process. WithMemfdOutput creates a file owned by Process; read it
 // with MemfdOutput before calling Stop. Failed starts close the created file.
 func (p *Process) Start(ctx context.Context) error {
-	if ctx == nil {
-		return fmt.Errorf("start command %q: context must not be nil", p.spec.Path)
-	}
-
 	p.mu.Lock()
 	if p.state == processStateInvalid {
 		p.mu.Unlock()
 		return fmt.Errorf("start command: %w", errProcessNotInitialized)
 	}
+
 	if p.state != processStateNew {
 		p.mu.Unlock()
 		return fmt.Errorf("start command %q: process has already been started", p.spec.Path)
 	}
+
 	p.state = processStateStarting
 	p.mu.Unlock()
 
@@ -240,6 +254,7 @@ func (p *Process) Start(ctx context.Context) error {
 	if p.stdoutWriter != nil {
 		cmd.Stdout = p.stdoutWriter
 	}
+
 	cmd.Stderr = &p.stderr
 	if p.stderrWriter != nil {
 		cmd.Stderr = p.stderrWriter
@@ -250,12 +265,13 @@ func (p *Process) Start(ctx context.Context) error {
 			return p.failStart(fmt.Errorf("start command %q: %w", p.spec.Path, err))
 		}
 	}
+
 	if err := ctx.Err(); err != nil {
 		return p.failStart(fmt.Errorf("start command %q: %w", p.spec.Path, err))
 	}
 
 	configureCommand(cmd)
-	if err := p.startCommand(cmd); err != nil {
+	if err := cmd.Start(); err != nil {
 		return p.failStart(fmt.Errorf("start command %q: %w", p.spec.Path, err))
 	}
 
@@ -265,16 +281,19 @@ func (p *Process) Start(ctx context.Context) error {
 	if launchErr != nil {
 		p.isStopRequested = true
 	}
+
 	go p.reap(cmd)
 	if launchErr == nil {
 		p.state = processStateRunning
 		close(p.start.done)
 	}
+
 	p.mu.Unlock()
 
 	if launchErr == nil {
 		return nil
 	}
+
 	return p.finishCanceledStart(launchErr)
 }
 
@@ -286,6 +305,7 @@ func (p *Process) finishCanceledStart(launchErr error) error {
 	if forceErr == nil && !errors.Is(p.wait.err, ErrStopped) {
 		waitErr = p.wait.err
 	}
+
 	p.start.err = errors.Join(
 		fmt.Errorf("start command %q: %w", p.spec.Path, launchErr),
 		forceErr,
@@ -301,9 +321,11 @@ func (p *Process) finishCanceledStart(launchErr error) error {
 			p.state = processStateRunning
 		}
 	}
+
 	if p.memfd != nil {
 		p.start.err = errors.Join(p.start.err, p.memfd.close())
 	}
+
 	close(p.start.done)
 	startErr := p.start.err
 	p.mu.Unlock()
@@ -315,6 +337,7 @@ func (p *Process) failStart(err error) error {
 	if p.memfd != nil {
 		err = errors.Join(err, p.memfd.close())
 	}
+
 	p.state = processStateStartFailed
 	p.start.err = err
 	p.wait.err = err
@@ -329,7 +352,7 @@ func (p *Process) reap(cmd *exec.Cmd) {
 	p.mu.Lock()
 	if exitErr != nil {
 		p.groupErr = wrapStopFailure(fmt.Errorf("observe command %q exit: %w", p.spec.Path, exitErr))
-	} else if err := p.forceStop(p.pid); err != nil && !processGroupMissing(err) {
+	} else if err := forceStopProcessGroup(p.pid); err != nil && !processGroupMissing(err) {
 		p.groupErr = wrapStopFailure(wrapSignalError("clean up", p.spec.Path, err))
 	}
 	// WNOWAIT pins the leader PID through the final group signal. Retire it
@@ -340,15 +363,23 @@ func (p *Process) reap(cmd *exec.Cmd) {
 	err := cmd.Wait()
 
 	p.mu.Lock()
-	if p.groupErr == nil && p.isStopRequested && isStoppedExit(err) {
-		err = fmt.Errorf("%w: command %q exited after a stop signal: %w", ErrStopped, p.spec.Path, err)
+	isExpectedStop := p.groupErr == nil && p.isStopRequested
+	if isExpectedStop && isStoppedExit(err) {
+		err = fmt.Errorf(
+			"%w: command %q exited after a stop signal: %w",
+			ErrStopped,
+			p.spec.Path,
+			err,
+		)
 	} else if err != nil {
 		err = fmt.Errorf("wait for command %q: %w", p.spec.Path, err)
 	}
+
 	p.wait.err = err
 	if p.state == processStateRunning {
 		p.state = processStateExited
 	}
+
 	close(p.wait.done)
 	p.mu.Unlock()
 }
@@ -359,34 +390,23 @@ func (p *Process) reap(cmd *exec.Cmd) {
 // ErrWaitDelay semantics. Wait preserves memfd output and does not report
 // output size limits; retrieve those errors from Stdout and MemfdOutput.
 func (p *Process) Wait() error {
-	for {
-		p.mu.Lock()
-		if p.state == processStateInvalid {
-			p.mu.Unlock()
-			return fmt.Errorf("wait for command: %w", errProcessNotInitialized)
-		}
-		switch p.state {
-		case processStateNew:
-			p.mu.Unlock()
-			return fmt.Errorf("wait for command %q: process has not been started", p.spec.Path)
-		case processStateStarting:
-			done := p.start.done
-			p.mu.Unlock()
-			<-done
-		case processStateStartFailed:
-			err := p.start.err
-			p.mu.Unlock()
-			return err
-		case processStateRunning, processStateExited:
-			done := p.wait.done
-			p.mu.Unlock()
-			<-done
-			return p.processResult()
-		default:
-			p.mu.Unlock()
-			return fmt.Errorf("wait for command %q: invalid process state", p.spec.Path)
-		}
+	p.mu.Lock()
+	if p.state == processStateInvalid {
+		p.mu.Unlock()
+		return fmt.Errorf("wait for command: %w", errProcessNotInitialized)
 	}
+
+	if p.state == processStateNew {
+		p.mu.Unlock()
+		return fmt.Errorf("wait for command %q: process has not been started", p.spec.Path)
+	}
+
+	p.mu.Unlock()
+
+	// Failed starts also publish both results once no process remains to reap.
+	<-p.start.done
+	<-p.wait.done
+	return p.processResult()
 }
 
 func (p *Process) processResult() error {
@@ -397,6 +417,7 @@ func (p *Process) processResult() error {
 	if p.start.err != nil {
 		err = p.start.err
 	}
+
 	if p.groupErr == nil || errors.Is(err, p.groupErr) {
 		return err
 	}
@@ -411,31 +432,31 @@ func (p *Process) processResult() error {
 // failure. Finish reading before calling Stop. Repeated calls close it only once;
 // failed process group termination can be retried.
 func (p *Process) Stop(ctx context.Context) error {
-	if ctx == nil {
-		return fmt.Errorf("stop command %q: context must not be nil", p.spec.Path)
-	}
-
-	return p.stop(ctx, true)
+	return p.stop(ctx, releaseMemfd)
 }
 
-func (p *Process) stop(ctx context.Context, closeOutput bool) (err error) {
+func (p *Process) stop(ctx context.Context, cleanup memfdCleanup) (err error) {
 	p.mu.Lock()
 	if p.state == processStateInvalid {
 		p.mu.Unlock()
 		return fmt.Errorf("stop command: %w", errProcessNotInitialized)
 	}
+
 	switch p.state {
 	case processStateNew, processStateStarting:
 		p.mu.Unlock()
 		return fmt.Errorf("stop command %q: process has not been started", p.spec.Path)
 	}
-	if closeOutput && p.memfd != nil {
+
+	if cleanup == releaseMemfd && p.memfd != nil {
 		defer func() { err = errors.Join(err, p.closeMemfd()) }()
 	}
+
 	if p.state == processStateStartFailed || p.state == processStateExited {
 		p.mu.Unlock()
 		return p.stopResult()
 	}
+
 	if attempt := p.stopAttempt; attempt != nil {
 		select {
 		case <-attempt.done:
@@ -479,6 +500,7 @@ func (p *Process) stopProcessGroup(ctx context.Context, waitDone <-chan struct{}
 		<-waitDone
 		return p.stopResult()
 	}
+
 	if gracefulErr != nil {
 		forceErr := p.forceStopAndWait(waitDone)
 		if forceErr != nil {
@@ -487,6 +509,7 @@ func (p *Process) stopProcessGroup(ctx context.Context, waitDone <-chan struct{}
 				forceErr,
 			)
 		}
+
 		return nil
 	}
 
@@ -499,13 +522,15 @@ func (p *Process) stopProcessGroup(ctx context.Context, waitDone <-chan struct{}
 }
 
 func (p *Process) forceStopAndWait(waitDone <-chan struct{}) error {
-	err := p.signalProcessGroup(p.forceStop)
+	err := p.signalProcessGroup(forceStopProcessGroup)
 	if processGroupMissing(err) {
 		err = nil
 	}
+
 	if err != nil {
 		return wrapSignalError("force stop", p.spec.Path, err)
 	}
+
 	<-waitDone
 	return p.stopResult()
 }
@@ -536,13 +561,20 @@ func wrapSignalError(action, path string, err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("%s command %q process group: %w", action, path, err)
+
+	return fmt.Errorf(
+		"%s command %q process group: %w",
+		action,
+		path,
+		err,
+	)
 }
 
 func wrapStopFailure(err error) error {
 	if err == nil || errors.Is(err, ErrStopFailed) {
 		return err
 	}
+
 	if errors.Is(err, exec.ErrWaitDelay) {
 		return err
 	}
@@ -555,9 +587,6 @@ func wrapStopFailure(err error) error {
 // Run preserves memfd output, including after cancellation. Read outputs and
 // call Stop to release the file. Output size errors come from the output methods.
 func (p *Process) Run(ctx context.Context) error {
-	if ctx == nil {
-		return fmt.Errorf("run command %q: context must not be nil", p.spec.Path)
-	}
 	if err := p.Start(ctx); err != nil {
 		return err
 	}
@@ -576,7 +605,7 @@ func (p *Process) Run(ctx context.Context) error {
 			context.WithoutCancel(ctx),
 			p.spec.StopGracePeriod,
 		)
-		stopErr := p.stop(stopCtx, false)
+		stopErr := p.stop(stopCtx, preserveMemfd)
 		cancel()
 		runErr := fmt.Errorf("run command %q: %w", p.spec.Path, ctx.Err())
 		if stopErr != nil {
@@ -599,11 +628,17 @@ func (p *Process) Stdout() ([]byte, error) {
 	if p.output.limit == 0 {
 		return nil, fmt.Errorf("read command stdout: %w", errProcessNotInitialized)
 	}
+
 	data, exceeded := p.output.Snapshot()
 	if exceeded {
-		return data, fmt.Errorf("%w: command %q stdout exceeds %d bytes",
-			ErrOutputLimitExceeded, p.spec.Path, p.spec.MaxOutputBytes)
+		return data, fmt.Errorf(
+			"%w: command %q stdout exceeds %d bytes",
+			ErrOutputLimitExceeded,
+			p.spec.Path,
+			p.spec.MaxOutputBytes,
+		)
 	}
+
 	return data, nil
 }
 

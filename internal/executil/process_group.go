@@ -25,7 +25,13 @@ import (
 func waitForCommandExit(pid int) error {
 	var info unix.Siginfo
 	for {
-		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		err := unix.Waitid(
+			unix.P_PID,
+			pid,
+			&info,
+			unix.WEXITED|unix.WNOWAIT,
+			nil,
+		)
 		if !errors.Is(err, syscall.EINTR) {
 			return err
 		}
@@ -56,10 +62,12 @@ func isStoppedExit(err error) bool {
 	if !errors.As(err, &exitErr) {
 		return false
 	}
+
 	waitStatus, ok := exitErr.Sys().(syscall.WaitStatus)
 	if !ok || !waitStatus.Signaled() {
 		return false
 	}
+
 	signal := waitStatus.Signal()
 	return signal == syscall.SIGTERM || signal == syscall.SIGKILL
 }
