@@ -18,19 +18,30 @@ set -euo pipefail
 
 # --------------------------------- log --------------------------------------
 
-TEST_LOG_TAG=${TEST_LOG_TAG:-"INTEGRATION TEST"}
+TEST_LOG_TAG=${TEST_LOG_TAG:-INTEGRATION}
 
-log_info() { echo "[${TEST_LOG_TAG}] $*"; }
-log_warn() { echo "[${TEST_LOG_TAG}][WARN] $*" >&2; }
-log_error() { echo "[${TEST_LOG_TAG}][ERROR] $*" >&2; }
+log_info() {
+	printf '[%s][%s] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*"
+}
+log_warn() {
+	printf '[%s][%s][WARN] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
+}
+log_error() {
+	printf '[%s][%s][ERROR] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
+}
 fatal() {
-	echo "[${TEST_LOG_TAG}][FAIL] $*" >&2
+	printf '[%s][%s][FAIL] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
 	exit 1
 }
 
 # skip exits 0 so the harness treats it as success without false confidence.
 skip() {
-	echo "[${TEST_LOG_TAG}][SKIP] $*"
+	printf '[%s][%s][SKIP] ⏭️ %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*"
 	exit 0
 }
 
@@ -72,7 +83,7 @@ allocate_available_port() {
 	local attempt port
 	for ((attempt = 0; attempt < 20; attempt++)); do
 		port=$((20000 + RANDOM % 20001))
-		if ! ss -H -ltn | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
+		if ! ss -H -tan | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
 			echo "${port}"
 			return 0
 		fi
@@ -114,12 +125,17 @@ wait_until() {
 	if (($# > 0)); then
 		invocation+=" $*"
 	fi
-	local end=$(($(date +%s) + timeout))
+	local start end now elapsed
+	start=$(date +%s)
+	end=$((start + timeout))
 	local attempt=0
 
-	while [ "$(date +%s)" -lt "$end" ]; do
+	while true; do
+		now=$(date +%s)
+		((now < end)) || break
 		attempt=$((attempt + 1))
-		log_info "wait attempt #${attempt}: [${invocation}]"
+		elapsed=$((now - start))
+		log_info "wait attempt #${attempt} (${elapsed}s/${timeout}s): [${invocation}]"
 		if "$func" "$@"; then
 			return 0
 		fi
@@ -205,7 +221,6 @@ bpf_tool_setup() {
 	TOOL_BIN="${ROOT_DIR}/_output/bin/${binary_name}"
 	TOOL_BPF="${ROOT_DIR}/_output/bpf/${bpf_name}.o"
 
-	[[ $EUID -eq 0 ]] || fatal "requires root (BPF requires CAP_BPF/CAP_SYS_ADMIN)"
 	[[ -x ${TOOL_BIN} ]] || fatal "missing ${binary_name} binary: ${TOOL_BIN}"
 	[[ -r ${TOOL_BPF} ]] || fatal "missing ${bpf_name} bpf object: ${TOOL_BPF}"
 
@@ -413,7 +428,11 @@ huatuo_bamai_metrics() {
 
 # Reject error/panic keywords in the log.
 huatuo_bamai_log_check() {
-	! grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	if grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"; then
+		sed -E "s/(${HUATUO_BAMAI_MATCH_KEYWORDS})/\x1b[1;31m\1\x1b[0m/gI" \
+			"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2
+		return 1
+	fi
 }
 
 # ----------------------------- metrics helpers --------------------------------
@@ -491,4 +510,24 @@ check_metrics() {
 				|| fatal "${desc}: expected present but not found: ${pat}"
 		done
 	fi
+}
+
+# Both clocks must survive BPF decoding and JSON output without exposing host uptime.
+assert_kernel_observation_timestamps() {
+	local events_file=$1
+	jq -e -s '
+		def utc_seconds:
+			if type == "string" and test("Z$") then
+				sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601
+			else error("expected UTC timestamp") end;
+		length > 0 and all(.[];
+			(has("kernel_observed_ns") | not)
+			and ((.observed_timestamp | utc_seconds) as $observed
+				| (.kernel_observed_timestamp | utc_seconds) as $kernel
+				| $kernel <= $observed + 1
+				and $observed - $kernel < 60
+				and (now - $observed | fabs) < 120))
+	' "${events_file}" > /dev/null \
+		|| fatal "invalid kernel/userspace observation timestamps: ${events_file}"
+	log_info "event with UTC observation timestamps: $(head -n 1 "${events_file}")"
 }

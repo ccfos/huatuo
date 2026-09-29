@@ -203,6 +203,24 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			wantAttach: []bpf.AttachOption{
 				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
 			},
+			wantConstants: map[string]any{
+				"profiler_folio_npages": false,
+			},
+		},
+		{
+			name: "physical alloc folio",
+			mode: profiling.ModePhysicalAlloc,
+			available: map[string]bool{
+				symbolFolioAddNewAnonRmap: true,
+			},
+			wantObject:      "native_physical_alloc.o",
+			wantProbability: true,
+			wantAttach: []bpf.AttachOption{
+				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+			},
+			wantConstants: map[string]any{
+				"profiler_folio_npages": true,
+			},
 		},
 	}
 

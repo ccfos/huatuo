@@ -835,9 +835,17 @@ components:
         uploaded_timestamp:
           type: string
           format: date-time
+          description: UTC timestamp emitted with nine fractional digits.
+          x-go-type: timeutil.Timestamp
+          x-go-type-import:
+            path: github.com/ccfos/huatuo/internal/timeutil
         started_timestamp:
           type: string
           format: date-time
+          description: UTC timestamp emitted with nine fractional digits.
+          x-go-type: timeutil.Timestamp
+          x-go-type-import:
+            path: github.com/ccfos/huatuo/internal/timeutil
         container_id:
           type: string
         container_hostname:

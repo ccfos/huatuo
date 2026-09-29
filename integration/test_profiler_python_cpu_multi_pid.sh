@@ -26,7 +26,7 @@ readonly FIXTURE="${ROOT_DIR}/integration/testdata/test_profiler_python_cpu.py"
 readonly PROFILER_DURATION=10
 
 command -v python3 > /dev/null || skip "python3 is not installed"
-readonly PYSPY_BIN="${PYTHON_PROFILER_TOOL_PATH}/py-spy"
+readonly PYSPY_BIN="${PROFILER_TOOL_DIR}/py-spy"
 [[ -x "${PYSPY_BIN}" ]] || skip "py-spy missing: ${PYSPY_BIN}"
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
 
@@ -43,6 +43,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+py_spy_supports_target() {
+	timeout 2 "${PYSPY_BIN}" dump --pid "${PROFILER_PARENT_PID}" \
+		> "${WORK_DIR}/py-spy-probe.out" 2> "${WORK_DIR}/py-spy-probe.err"
+}
+
 python3 "${FIXTURE}" parent "${PROFILER_PROFILER_CHILD_PID_FILE}" \
 	> "${WORK_DIR}/parent.out" 2> "${WORK_DIR}/parent.err" &
 PROFILER_PARENT_PID=$!
@@ -58,12 +63,15 @@ kill -0 "${PROFILER_PARENT_PID}" || fatal "Python parent exited immediately"
 kill -0 "${PROFILER_CHILD_PID}" || fatal "Python child exited immediately"
 kill -0 "${PROFILER_INDEPENDENT_PID}" || fatal "independent Python process exited immediately"
 
+wait_until 5 1 py_spy_supports_target \
+	|| skip "py-spy does not support $(python3 --version 2>&1)"
+
 log_info "profiling Python pids=${PROFILER_PARENT_PID},${PROFILER_CHILD_PID},${PROFILER_INDEPENDENT_PID}"
 if ! "${TOOL_BIN}" \
 	--type cpu \
 	--language python \
 	--pid "${PROFILER_PARENT_PID},${PROFILER_CHILD_PID},${PROFILER_INDEPENDENT_PID}" \
-	--tool-path "${PYTHON_PROFILER_TOOL_PATH}" \
+	--tool-path "${PROFILER_TOOL_DIR}" \
 	--max-concurrent-procs 2 \
 	--duration "${PROFILER_DURATION}" \
 	--aggr-interval "${PROFILER_DURATION}" \
@@ -83,5 +91,9 @@ grep -qh "process ${PROFILER_CHILD_PID}.*child_hot_method" "${FOLDED_FILES[@]}" 
 	|| fatal "child workload stack not found for PID ${PROFILER_CHILD_PID}"
 grep -qh "process ${PROFILER_INDEPENDENT_PID}.*independent_hot_method" "${FOLDED_FILES[@]}" \
 	|| fatal "independent workload stack not found for PID ${PROFILER_INDEPENDENT_PID}"
+
+if grep -Eq 'py-spy>|Wrote raw flamegraph data|Sampling process .* times a second|You can use the flamegraph\.pl' "${FOLDED_FILES[@]}"; then
+	fatal "py-spy status output was included in folded samples"
+fi
 
 log_info "Python parent, child, and independent stacks are correctly attributed"

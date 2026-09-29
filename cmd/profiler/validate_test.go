@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"testing"
@@ -614,6 +615,24 @@ func TestValidatePythonProfileOptions(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateLanguageOptionsToolRoot(t *testing.T) {
+	root := t.TempDir()
+	for _, language := range []profiling.Language{
+		profiling.LanguageJava, profiling.LanguagePython, profiling.LanguageGo,
+	} {
+		t.Run(string(language), func(t *testing.T) {
+			for _, directory := range []string{"", root, filepath.Join(root, "missing")} {
+				ctx := newValidationCLIContext(t, "--pid", "1", "--tool-path", directory)
+				err := validateLanguageOptions(ctx, language, profiling.TypeCPU)
+				wantError := language != profiling.LanguageGo && directory != root
+				if (err != nil) != wantError {
+					t.Errorf("validateLanguageOptions(%q) error = %v, want error %t", directory, err, wantError)
+				}
+			}
 		})
 	}
 }

@@ -17,7 +17,8 @@ package tracing
 import (
 	"errors"
 	"sync/atomic"
-	"time"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 
 	"github.com/rs/xid"
 
@@ -28,13 +29,14 @@ import (
 
 // WriteRequest carries one heterogeneous tracing event.
 type WriteRequest struct {
-	TracerName        string
-	TracerID          string
-	ContainerID       string
-	StartedTimestamp  time.Time
-	ObservedTimestamp time.Time
-	TracerData        any
-	TracerRunType     string
+	TracerName              string
+	TracerID                string
+	ContainerID             string
+	StartedTimestamp        timeutil.Timestamp
+	ObservedTimestamp       timeutil.Timestamp
+	KernelObservedTimestamp timeutil.Timestamp
+	TracerData              any
+	TracerRunType           string
 }
 
 type documentWriter struct {
@@ -79,12 +81,13 @@ func Save(request *WriteRequest) error {
 		runType = types.TracerRunTypeEvent
 	}
 	metadata, err := current.documents.Build(&document.Input{
-		TracerName:        request.TracerName,
-		TracerID:          tracerID,
-		ContainerID:       request.ContainerID,
-		StartedTimestamp:  request.StartedTimestamp,
-		ObservedTimestamp: request.ObservedTimestamp,
-		TracerRunType:     runType,
+		TracerName:              request.TracerName,
+		TracerID:                tracerID,
+		ContainerID:             request.ContainerID,
+		StartedTimestamp:        request.StartedTimestamp,
+		ObservedTimestamp:       request.ObservedTimestamp,
+		KernelObservedTimestamp: request.KernelObservedTimestamp,
+		TracerRunType:           runType,
 	})
 	if err != nil {
 		return err

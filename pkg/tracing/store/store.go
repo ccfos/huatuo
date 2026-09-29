@@ -18,10 +18,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/watch"
 )
 
@@ -140,7 +140,7 @@ func (s *Store) Save(document *Document) error {
 	if document == nil {
 		return errors.New("tracing document is required")
 	}
-	document.UploadedTimestamp = time.Now().UTC()
+	document.UploadedTimestamp = timeutil.Now()
 	if err := document.validate(); err != nil {
 		return err
 	}

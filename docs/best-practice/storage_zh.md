@@ -495,3 +495,10 @@ Bulk 请求的失败语义分为两层，重试范围不同：
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+### 内核观测时间
+
+事件文档可包含顶层 `kernel_observed_timestamp`，其值为 UTC 日期时间。
+`observed_timestamp` 是用户态观测时刻，`uploaded_timestamp` 是存储写入时刻。
+三者不互相补填。旧文档及没有内核时间的事件省略新增字段；历史数据不自动迁移。
+原始 `kernel_observed_ns` 仅用于进程内事件关联，不写入新文档。

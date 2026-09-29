@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/timeutil"
+
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/exec"
 	"github.com/ccfos/huatuo/internal/log"
@@ -47,7 +49,7 @@ var pendingReasons sync.Map
 
 type pendingIOTracingReason struct {
 	reason           *reasonSnapshot
-	startedTimestamp time.Time
+	startedTimestamp timeutil.Timestamp
 	received         chan struct{}
 	result           chan error
 }
@@ -424,7 +426,7 @@ func (i *ioTracing) Start(ctx context.Context) error {
 
 	pending := &pendingIOTracingReason{
 		reason:           reasonSnapshot,
-		startedTimestamp: time.Now().UTC(),
+		startedTimestamp: timeutil.Now(),
 		received:         make(chan struct{}),
 		result:           make(chan error, 1),
 	}

@@ -40,6 +40,7 @@ func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
 		"--output-storage", config.ToolstreamSocketPath,
 		"--tracer-id", request.RequestID,
 		"--huatuo-api-address", config.NodeAPIAddress,
+		"--tool-path", config.ToolDir,
 	}
 	if request.Scope == observation.ScopeContainer {
 		args = append(args, "--container-id", request.ContainerID)
@@ -54,12 +55,6 @@ func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
 	}
 	if request.Spec.BinaryMatchPath != "" {
 		args = append(args, "--binary-match-path", request.Spec.BinaryMatchPath)
-	}
-	switch request.Spec.Language {
-	case profilingdomain.LanguageJava:
-		args = append(args, "--tool-path", config.JavaToolPath)
-	case profilingdomain.LanguagePython:
-		args = append(args, "--tool-path", config.PythonToolPath)
 	}
 
 	return exec.Spec{

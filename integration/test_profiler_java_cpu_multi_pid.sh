@@ -30,10 +30,10 @@ readonly PROFILER_AGGR_INTERVAL=5
 command -v java > /dev/null || skip "java is not installed"
 command -v javac > /dev/null || skip "javac is not installed"
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -x "${JAVA_PROFILER_TOOL_PATH}/bin/asprof" ]] \
-	|| skip "asprof missing: ${JAVA_PROFILER_TOOL_PATH}/bin/asprof"
-[[ -r "${JAVA_PROFILER_TOOL_PATH}/lib/libasyncProfiler.so" ]] \
-	|| skip "async-profiler library missing: ${JAVA_PROFILER_TOOL_PATH}/lib/libasyncProfiler.so"
+[[ -x "${PROFILER_TOOL_DIR}/bin/asprof" ]] \
+	|| skip "asprof missing: ${PROFILER_TOOL_DIR}/bin/asprof"
+[[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
+	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-java-multi.XXXXXX")
 PROFILER_STDOUT="${WORK_DIR}/profiler.out"
@@ -61,15 +61,17 @@ java \
 	> "${WORK_DIR}/beta.out" 2> "${WORK_DIR}/beta.err" &
 PROFILER_TARGET_PID1=$!
 
-kill -0 "${PROFILER_TARGET_PID0}" 2> /dev/null || fatal "alpha fixture exited immediately"
-kill -0 "${PROFILER_TARGET_PID1}" 2> /dev/null || fatal "beta fixture exited immediately"
+wait_until 30 1 grep -qx ready "${WORK_DIR}/alpha.out" \
+	|| fatal "alpha fixture did not become ready"
+wait_until 30 1 grep -qx ready "${WORK_DIR}/beta.out" \
+	|| fatal "beta fixture did not become ready"
 
 log_info "profiling Java pids=${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1}"
 if ! "${TOOL_BIN}" \
 	--type cpu \
 	--language java \
 	--pid "${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1}" \
-	--tool-path "${JAVA_PROFILER_TOOL_PATH}" \
+	--tool-path "${PROFILER_TOOL_DIR}" \
 	--duration "${PROFILER_DURATION}" \
 	--freq "${PROFILER_FREQ}" \
 	--aggr-interval "${PROFILER_AGGR_INTERVAL}" \

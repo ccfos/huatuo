@@ -570,12 +570,22 @@
             "type": "string"
           },
           "started_timestamp": {
+            "description": "UTC timestamp emitted with nine fractional digits.",
             "format": "date-time",
-            "type": "string"
+            "type": "string",
+            "x-go-type": "timeutil.Timestamp",
+            "x-go-type-import": {
+              "path": "github.com/ccfos/huatuo/internal/timeutil"
+            }
           },
           "uploaded_timestamp": {
+            "description": "UTC timestamp emitted with nine fractional digits.",
             "format": "date-time",
-            "type": "string"
+            "type": "string",
+            "x-go-type": "timeutil.Timestamp",
+            "x-go-type-import": {
+              "path": "github.com/ccfos/huatuo/internal/timeutil"
+            }
           }
         },
         "required": [

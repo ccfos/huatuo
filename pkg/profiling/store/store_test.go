@@ -24,6 +24,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
@@ -86,8 +87,8 @@ func TestMapperIDIsUniquePerWindow(t *testing.T) {
 func TestMapperDecodeRejectsIncompleteDocument(t *testing.T) {
 	startedTimestamp := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
 	encoded, err := json.Marshal(&Document{Document: types.Document{
-		UploadedTimestamp: time.Date(2026, 8, 28, 2, 0, 1, 0, time.UTC),
-		StartedTimestamp:  &startedTimestamp,
+		UploadedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 8, 28, 2, 0, 1, 0, time.UTC)},
+		StartedTimestamp:  &timeutil.Timestamp{Time: startedTimestamp},
 		TracerID:          "profile-task-1",
 		TracerRunType:     types.TracerRunTypeProfiling,
 	}})
@@ -222,7 +223,7 @@ func validDocument() *Document {
 	startedTimestamp := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
 	return &Document{
 		Document: types.Document{
-			StartedTimestamp: &startedTimestamp,
+			StartedTimestamp: &timeutil.Timestamp{Time: startedTimestamp},
 			TracerID:         "profile-task-1",
 			TracerRunType:    types.TracerRunTypeProfiling,
 		},
@@ -230,5 +231,17 @@ func validDocument() *Document {
 			ProfileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
 			Profile:     &profilev1.Profile{},
 		},
+	}
+}
+
+func TestBuildAggregationQueryTimestampFormat(t *testing.T) {
+	start := time.Date(2026, 9, 17, 8, 0, 0, 123000000, time.FixedZone("local", 8*60*60))
+	query := buildAggregationQuery(&Filter{StartTime: start, EndTime: start.Add(time.Second)})
+	want := []driver.Filter{
+		{Field: types.DocumentFieldUploadedTimestamp, Op: driver.OpGte, Value: "2026-09-17T00:00:00.123000000Z"},
+		{Field: types.DocumentFieldUploadedTimestamp, Op: driver.OpLte, Value: "2026-09-17T00:00:01.123000000Z"},
+	}
+	if !reflect.DeepEqual(query.Filters, want) {
+		t.Fatalf("filters = %#v, want %#v", query.Filters, want)
 	}
 }

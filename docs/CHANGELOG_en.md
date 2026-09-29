@@ -13,16 +13,18 @@ weight: 50
 
 - Added `tcpshark --with-dropwatch --bpf-path-dir <dir>` to correlate TCP
   retransmissions with an embedded dropwatch source using one shared filter.
-- Added `EventTracing.TCPRetransmit.EnableDropwatchCorrelation` for the
+- Added `EventTracing.TCPRetransmit.EnableDropwatch` for the
   huatuo-bamai tcpshark child.
-- Added stable `correlation_reasons` for local no-match results.
+- Added a single `correlation_reason` for every finalized local correlation,
+  including `warmup` for expired waits whose retransmission predates source readiness,
+  and an independent namespace-match diagnostic.
 
 ### Changed
 
 - Replaced the daemon-wide tuple cache with strict local matching across
   namespace, direction, sequence or ACK evidence, and monotonic ordering.
 - No-match results now report `unknown` with cumulative embedded-dropwatch
-  loss counters and explicit reasons. Retransmissions wait up to 100 ms, while
+  loss counters, map-counter availability, and one terminal reason. Retransmissions wait up to 100 ms, while
   candidate drops have a one-second causal age limit.
 - `EventTracing.TCPRetransmit.Filter` now controls retransmission collection in
   both modes. Local mode applies it to both inputs, defaults an empty filter to

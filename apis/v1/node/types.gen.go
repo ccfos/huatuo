@@ -310,17 +310,22 @@ type WatchEvent struct {
 
 // WatchEventData defines model for WatchEventData.
 type WatchEventData struct {
-	ContainerHostNamespace *string   `json:"container_host_namespace,omitempty"`
-	ContainerHostname      *string   `json:"container_hostname,omitempty"`
-	ContainerID            *string   `json:"container_id,omitempty"`
-	ContainerQos           *string   `json:"container_qos,omitempty"`
-	ContainerType          *string   `json:"container_type,omitempty"`
-	Hostname               string    `json:"hostname"`
-	ObservedTimestamp      time.Time `json:"observed_timestamp"`
-	Region                 string    `json:"region"`
-	TracerID               *string   `json:"tracer_id,omitempty"`
-	TracerName             *string   `json:"tracer_name,omitempty"`
-	TracerRunType          *string   `json:"tracer_run_type,omitempty"`
+	ContainerHostNamespace *string `json:"container_host_namespace,omitempty"`
+	ContainerHostname      *string `json:"container_hostname,omitempty"`
+	ContainerID            *string `json:"container_id,omitempty"`
+	ContainerQos           *string `json:"container_qos,omitempty"`
+	ContainerType          *string `json:"container_type,omitempty"`
+	Hostname               string  `json:"hostname"`
+
+	// KernelObservedTimestamp UTC time when the kernel observed the event, when available, emitted with nine fractional digits.
+	KernelObservedTimestamp *time.Time `json:"kernel_observed_timestamp,omitempty"`
+
+	// ObservedTimestamp UTC time when the event producer observed the event in userspace, emitted with nine fractional digits.
+	ObservedTimestamp time.Time `json:"observed_timestamp"`
+	Region            string    `json:"region"`
+	TracerID          *string   `json:"tracer_id,omitempty"`
+	TracerName        *string   `json:"tracer_name,omitempty"`
+	TracerRunType     *string   `json:"tracer_run_type,omitempty"`
 }
 
 // WatchEventFilters defines model for WatchEventFilters.

@@ -18,11 +18,11 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/linkstatus"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -217,7 +217,7 @@ func (netdev *netdevTracing) updateAndSaveEvent(data *netdevEventData) {
 		log.Infof("%s %+v", data.LinkStatus, data)
 		if err := tracing.Save(&tracing.WriteRequest{
 			TracerName:        netdev.name,
-			ObservedTimestamp: time.Now().UTC(),
+			ObservedTimestamp: timeutil.Now(),
 			TracerData:        data,
 		}); err != nil {
 			log.Warnf("failed to save tracing data: %v", err)

@@ -29,10 +29,10 @@ readonly EXPECTED_METHOD="TestProfilerJavaMemory.allocateHotMethod"
 command -v java > /dev/null || skip "java is not installed"
 command -v javac > /dev/null || skip "javac is not installed"
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -x "${JAVA_PROFILER_TOOL_PATH}/bin/asprof" ]] \
-	|| skip "asprof missing: ${JAVA_PROFILER_TOOL_PATH}/bin/asprof"
-[[ -r "${JAVA_PROFILER_TOOL_PATH}/lib/libasyncProfiler.so" ]] \
-	|| skip "async-profiler library missing: ${JAVA_PROFILER_TOOL_PATH}/lib/libasyncProfiler.so"
+[[ -x "${PROFILER_TOOL_DIR}/bin/asprof" ]] \
+	|| skip "asprof missing: ${PROFILER_TOOL_DIR}/bin/asprof"
+[[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
+	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-java-mem.XXXXXX")
 PROFILER_TARGET_PID=""
@@ -64,7 +64,7 @@ run_profile_case() {
 		-cp "${WORK_DIR}" TestProfilerJavaMemory \
 		> "${out_dir}/java.out" 2> "${out_dir}/java.err" &
 	PROFILER_TARGET_PID=$!
-	wait_until 10 1 java_fixture_is_ready \
+	wait_until 10 0.1 java_fixture_is_ready \
 		"${PROFILER_TARGET_PID}" "${out_dir}/java.out" \
 		|| fatal "Java memory fixture did not become ready for mode=${mode}"
 
@@ -74,7 +74,7 @@ run_profile_case() {
 		--language java \
 		--memory-mode "${mode}" \
 		--pid "${PROFILER_TARGET_PID}" \
-		--tool-path "${JAVA_PROFILER_TOOL_PATH}" \
+		--tool-path "${PROFILER_TOOL_DIR}" \
 		--duration "${PROFILER_DURATION}" \
 		--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
 		--output-format collapsed \

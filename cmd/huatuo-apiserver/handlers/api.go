@@ -31,6 +31,7 @@ import (
 	"github.com/ccfos/huatuo/internal/job"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
 	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
@@ -556,8 +557,8 @@ func rawProfile(profile *profilinghandler.RawProfile) (serverapi.RawProfile, int
 	return serverapi.RawProfile{
 		Hostname:          profile.Hostname,
 		Region:            profile.Region,
-		UploadedTimestamp: profile.UploadedTimestamp,
-		StartedTimestamp:  profile.StartedTimestamp,
+		UploadedTimestamp: timeutil.Timestamp{Time: profile.UploadedTimestamp},
+		StartedTimestamp:  timeutil.Timestamp{Time: profile.StartedTimestamp},
 		ContainerID:       optionalString(profile.ContainerID),
 		ContainerHostname: optionalString(profile.ContainerHostname),
 		ContainerType:     optionalString(profile.ContainerType),

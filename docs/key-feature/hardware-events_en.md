@@ -178,7 +178,8 @@ graph TB
         "region": "xxx",
         "uploaded_timestamp": "2026-05-11T16:58:47.328548319+08:00",
         "tracer_name": "ras",
-        "observed_timestamp": "2026-05-11T08:58:47.328548319Z",
+        "observed_timestamp": "2026-05-11T08:58:47.329Z",
+        "kernel_observed_timestamp": "2026-05-11T08:58:47.328548319Z",
         "tracer_type": "event",
         "tracer_data": {
             "dev": "MEM",
@@ -194,7 +195,8 @@ graph TB
     | `Device` | Identifier of the hardware component where the error occurred (e.g., `CPU/MEM`, `MEM`, `ACPI`, `PCIe 0000:01:00.0`) |
     | `Event` | Event subtype (`MCE`, `EDAC`, `APIC`, `AER`) |
     | `ErrType` | Error severity level (see table below) |
-    | `ObservedTimestamp` | UTC time when the hardware error occurred |
+    | `ObservedTimestamp` | UTC userspace observation time |
+    | `KernelObservedTimestamp` | UTC kernel observation time (top-level Document field) |
     | `Info` | Detailed fields for the specific event |
 
     | Error Type | Description | Typical Sources |

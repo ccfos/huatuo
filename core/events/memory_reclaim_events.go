@@ -25,6 +25,7 @@ import (
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
@@ -141,7 +142,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "memory_reclaim",
 				ContainerID:       container.ID,
-				ObservedTimestamp: time.Now().UTC(),
+				ObservedTimestamp: timeutil.Now(),
 				TracerData:        tracingData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)

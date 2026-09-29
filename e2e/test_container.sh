@@ -21,22 +21,35 @@ source ${ROOT_DIR}/e2e/lib.sh
 
 E2E_CONTAINER_IDS=()
 
-test_huatuo_bamai_default_container_exists() {
-	log_info "⬅️ test huatuo-bamai default container exists"
+test_huatuo_bamai_existing_container_exists() {
+	local existing namespace pod_name pod_name_regex
+	log_info "⬅️ test huatuo-bamai discovers an existing Kubernetes container"
+
+	existing=$(kubectl get pods -n kube-system \
+		--field-selector=status.phase=Running -o json | jq -er '
+			first(.items[]
+				| select(.spec.hostNetwork != true)
+				| select(.status.containerStatuses != null)
+				| select(all(.status.containerStatuses[]; .ready == true))
+				| select(.spec.containers | length == 1)
+				| [.metadata.namespace, .metadata.name]
+				| @tsv)') || fatal "no running single-container Kubernetes component pod is available"
+	IFS=$'\t' read -r namespace pod_name <<< "$existing"
+	pod_name_regex="^${pod_name}$"
 
 	assert_kubelet_pod_count \
-		"${BUSINESS_POD_NS}" \
-		"${BUSINESS_DEFAULT_POD_NAME_REGEX}" \
-		"${BUSINESS_DEFAULT_POD_COUNT}" \
-		"default pod exists in kubelet"
+		"$namespace" \
+		"$pod_name_regex" \
+		"1" \
+		"existing Kubernetes component exists in kubelet"
 
 	assert_huatuo_bamai_containers_present \
-		"${BUSINESS_POD_NS}" \
-		"${BUSINESS_DEFAULT_POD_NAME_REGEX}" \
-		"${BUSINESS_DEFAULT_POD_COUNT}" \
-		"default pod exists in huatuo-bamai"
+		"$namespace" \
+		"$pod_name_regex" \
+		"1" \
+		"existing Kubernetes component exists in huatuo-bamai"
 
-	log_info "✅ test huatuo-bamai default container exists ok"
+	log_info "✅ existing Kubernetes container discovered: ${namespace}/${pod_name}"
 }
 
 test_huatuo_bamai_e2e_container_create() {
@@ -121,6 +134,11 @@ test_huatuo_bamai_e2e_container_delete() {
 	log_info "✅ test huatuo-bamai e2e container delete ok"
 }
 
-test_huatuo_bamai_default_container_exists
+cleanup_business_pods() {
+	k8s_delete_pod "${BUSINESS_POD_NS}" "${BUSINESS_E2E_TEST_POD_LABEL}" > /dev/null 2>&1 || true
+}
+
+test_huatuo_bamai_existing_container_exists
+trap cleanup_business_pods EXIT
 test_huatuo_bamai_e2e_container_create
 test_huatuo_bamai_e2e_container_delete

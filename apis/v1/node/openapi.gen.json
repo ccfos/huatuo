@@ -519,7 +519,13 @@
           "hostname": {
             "type": "string"
           },
+          "kernel_observed_timestamp": {
+            "description": "UTC time when the kernel observed the event, when available, emitted with nine fractional digits.",
+            "format": "date-time",
+            "type": "string"
+          },
           "observed_timestamp": {
+            "description": "UTC time when the event producer observed the event in userspace, emitted with nine fractional digits.",
             "format": "date-time",
             "type": "string"
           },

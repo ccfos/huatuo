@@ -21,7 +21,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-readonly SCHED_TICK_REPORT_TIMEOUT=5
+readonly SCHED_TICK_REPORT_TIMEOUT=10
 readonly SCHED_TICK_REPORT_INTERVAL=0.1
 readonly SCHED_TICK_NO_EVENT_WINDOW=2
 readonly SCHED_TICK_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/sched_tick"
@@ -46,8 +46,6 @@ start_sched_tick_test() {
 		--disable-kubelet \
 		--log-debug
 }
-
-[[ $EUID -eq 0 ]] || skip "requires root"
 
 command -v jq > /dev/null || skip "jq command is not installed"
 command -v taskset > /dev/null || skip "taskset command is not installed"
@@ -87,7 +85,7 @@ sched_tick_event_is_valid() {
 			and (.tracer_data.pid | type == "number")
 			and (.tracer_data.cpu | type == "number")
 			and (.tracer_data | has("now") | not)
-			and (.tracer_data | has("ktime_ns") | not)
+			and (.tracer_data | has("kernel_observed_ns") | not)
 			and (.tracer_data.stack | type == "string")
 			and (.tracer_data.stack | startswith("stack:\n"))
 			and ((.tracer_data.stack | ltrimstr("stack:\n") | length) > 0)
@@ -117,8 +115,13 @@ huatuo_bamai_stop
 start_sched_tick_test write_sched_tick_irqoff_config
 
 wait_until "${SCHED_TICK_REPORT_TIMEOUT}" "${SCHED_TICK_REPORT_INTERVAL}" \
-	sched_tick_event_is_valid \
-	|| fatal "sched_tick did not persist a valid event within ${SCHED_TICK_REPORT_TIMEOUT}s"
+	test -s "${SCHED_TICK_EVENT}" \
+	|| fatal "sched_tick did not persist an event within ${SCHED_TICK_REPORT_TIMEOUT}s"
+
+# Stop the writer before parsing so jq cannot observe a partially appended JSON object.
+huatuo_bamai_stop
+sched_tick_event_is_valid \
+	|| fatal "sched_tick did not persist a valid event"
 
 assert_log_has_no_failure \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"

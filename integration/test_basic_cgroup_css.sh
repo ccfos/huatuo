@@ -50,8 +50,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[[ $EUID -eq 0 ]] || skip "requires root"
-
 command -v go > /dev/null || skip "go command is not installed"
 command -v jq > /dev/null || skip "jq command is not installed"
 [[ -r /proc/sys/kernel/random/uuid ]] \

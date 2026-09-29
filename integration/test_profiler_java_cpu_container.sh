@@ -31,10 +31,10 @@ readonly PROFILER_DURATION=5
 readonly EXPECTED_METHOD="TestProfilerJavaMultiPID.alphaHotMethod"
 
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -x "${JAVA_PROFILER_TOOL_PATH}/bin/asprof" ]] \
-	|| skip "asprof missing: ${JAVA_PROFILER_TOOL_PATH}/bin/asprof"
-[[ -r "${JAVA_PROFILER_TOOL_PATH}/lib/libasyncProfiler.so" ]] \
-	|| skip "async-profiler library missing: ${JAVA_PROFILER_TOOL_PATH}/lib/libasyncProfiler.so"
+[[ -x "${PROFILER_TOOL_DIR}/bin/asprof" ]] \
+	|| skip "asprof missing: ${PROFILER_TOOL_DIR}/bin/asprof"
+[[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
+	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-java-container.XXXXXX")
 DOCKER_CONTAINER_ID=""
@@ -67,7 +67,7 @@ run_profile_case() {
 		--type cpu \
 		--language java \
 		--container-id "${target_id}" \
-		--tool-path "${JAVA_PROFILER_TOOL_PATH}" \
+		--tool-path "${PROFILER_TOOL_DIR}" \
 		--duration "${PROFILER_DURATION}" \
 		--aggr-interval "${PROFILER_DURATION}" \
 		--freq 99 \

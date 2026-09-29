@@ -29,7 +29,7 @@ if tracepoint_available devlink devlink_trap_report; then
 	has_devlink_tracepoint=true
 fi
 
-bpf_tool_setup dropwatch
+bpf_tool_setup dropwatch net_dropwatch
 "${TOOL_BIN}" \
 	--bpf-path "${TOOL_BPF}" \
 	--duration 1 \

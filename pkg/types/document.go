@@ -17,7 +17,8 @@ package types
 import (
 	"errors"
 	"fmt"
-	"time"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 const (
@@ -34,19 +35,20 @@ const (
 // Document field names are shared so storage indexes cannot drift from the
 // serialized contract.
 const (
-	DocumentFieldHostname               = "hostname"
-	DocumentFieldRegion                 = "region"
-	DocumentFieldUploadedTimestamp      = "uploaded_timestamp"
-	DocumentFieldStartedTimestamp       = "started_timestamp"
-	DocumentFieldObservedTimestamp      = "observed_timestamp"
-	DocumentFieldContainerID            = "container_id"
-	DocumentFieldContainerHostname      = "container_hostname"
-	DocumentFieldContainerHostNamespace = "container_host_namespace"
-	DocumentFieldContainerType          = "container_type"
-	DocumentFieldContainerQoS           = "container_qos"
-	DocumentFieldTracerName             = "tracer_name"
-	DocumentFieldTracerID               = "tracer_id"
-	DocumentFieldTracerType             = "tracer_type"
+	DocumentFieldHostname                = "hostname"
+	DocumentFieldRegion                  = "region"
+	DocumentFieldUploadedTimestamp       = "uploaded_timestamp"
+	DocumentFieldStartedTimestamp        = "started_timestamp"
+	DocumentFieldObservedTimestamp       = "observed_timestamp"
+	DocumentFieldKernelObservedTimestamp = "kernel_observed_timestamp"
+	DocumentFieldContainerID             = "container_id"
+	DocumentFieldContainerHostname       = "container_hostname"
+	DocumentFieldContainerHostNamespace  = "container_host_namespace"
+	DocumentFieldContainerType           = "container_type"
+	DocumentFieldContainerQoS            = "container_qos"
+	DocumentFieldTracerName              = "tracer_name"
+	DocumentFieldTracerID                = "tracer_id"
+	DocumentFieldTracerType              = "tracer_type"
 )
 
 // Document contains fields shared by persisted tracing and profiling documents.
@@ -56,16 +58,18 @@ const (
 //   - UploadedTimestamp is assigned by storage immediately before persistence.
 //   - StartedTimestamp is supplied by profiling, tracing, and autotracing
 //     producers and marks the beginning of the represented observation.
-//   - ObservedTimestamp is supplied by event producers and marks when the event
-//     occurred.
+//   - ObservedTimestamp marks when the event producer observed the event in userspace.
+//   - KernelObservedTimestamp is optional and marks when the kernel observed the
+//     event, converted from the host monotonic clock to UTC by the producer.
 //
 // TracerRunType determines which producer-owned timestamp is required.
 type Document struct {
-	Hostname          string     `json:"hostname"`
-	Region            string     `json:"region"`
-	UploadedTimestamp time.Time  `json:"uploaded_timestamp"`
-	StartedTimestamp  *time.Time `json:"started_timestamp,omitempty"`
-	ObservedTimestamp *time.Time `json:"observed_timestamp,omitempty"`
+	Hostname                string              `json:"hostname"`
+	Region                  string              `json:"region"`
+	UploadedTimestamp       timeutil.Timestamp  `json:"uploaded_timestamp"`
+	StartedTimestamp        *timeutil.Timestamp `json:"started_timestamp,omitempty"`
+	ObservedTimestamp       *timeutil.Timestamp `json:"observed_timestamp,omitempty"`
+	KernelObservedTimestamp *timeutil.Timestamp `json:"kernel_observed_timestamp,omitempty"`
 
 	ContainerID            string `json:"container_id,omitempty"`
 	ContainerHostname      string `json:"container_hostname,omitempty"`

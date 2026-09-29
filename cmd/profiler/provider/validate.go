@@ -16,7 +16,6 @@ package provider
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -61,31 +60,13 @@ func validateMaxProfilerProcesses(profilerName string, pids []int, maximum int) 
 	)
 }
 
-func validateToolFile(profilerName, toolPath, relativePath string, executable bool) error {
-	path := filepath.Join(toolPath, relativePath)
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("start %s profiler: required tool %q is unavailable: %w", profilerName, path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("start %s profiler: required tool %q is not a regular file", profilerName, path)
-	}
-	if executable && info.Mode().Perm()&0o111 == 0 {
-		return fmt.Errorf("start %s profiler: required tool %q is not executable", profilerName, path)
-	}
-	if !executable && info.Mode().Perm()&0o444 == 0 {
-		return fmt.Errorf("start %s profiler: required tool %q is not readable", profilerName, path)
-	}
-	return nil
-}
-
 func validateProcessExecutables(profilerName, executablePrefix string, pids []int) error {
 	for _, pid := range pids {
 		path, err := process.Executable(pid)
 		if err != nil {
 			return err
 		}
-		if !strings.HasPrefix(filepath.Base(path), executablePrefix) {
+		if !hasExecutablePrefix(filepath.Base(path), executablePrefix) {
 			return fmt.Errorf(
 				"%s PID %d executable %q, want prefix %q",
 				profilerName,
@@ -96,4 +77,12 @@ func validateProcessExecutables(profilerName, executablePrefix string, pids []in
 		}
 	}
 	return nil
+}
+
+func hasExecutablePrefix(name, prefix string) bool {
+	if strings.HasPrefix(name, prefix) {
+		return true
+	}
+	// RHEL 8 names its system Python executable platform-python.
+	return prefix == "python" && strings.HasPrefix(name, "platform-python")
 }

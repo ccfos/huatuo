@@ -50,7 +50,8 @@ fi
 # when invoked without privilege so `make integration` is a no-op for
 # unprivileged developers and CI lanes that don't grant root.
 if [[ ${EUID} -ne 0 ]]; then
-	echo "[INTEGRATION TEST] skipped: requires root (EUID=${EUID})" >&2
+	printf '[%s][INTEGRATION][SKIP] ⏭️ requires root (EUID=%s)\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "$EUID" >&2
 	exit 0
 fi
 

@@ -63,10 +63,8 @@ func TestCgroupSubsysIDIntegration(t *testing.T) {
 	t.Cleanup(bpf.Shutdown)
 
 	previousBPFDir := bpf.DefaultObjDir
-	previousIDs := cgroupCssID2SubSysNameMap
 	t.Cleanup(func() {
 		bpf.DefaultObjDir = previousBPFDir
-		cgroupCssID2SubSysNameMap = previousIDs
 	})
 
 	if err := cgroupInitSubSysIDs(); err != nil {
@@ -117,7 +115,7 @@ func integrationTestEnv(t *testing.T, name string) string {
 
 	value := os.Getenv(name)
 	if value == "" {
-		t.Skipf("%s is not set; run through integration/test_cgroup_subsys_id.sh", name)
+		t.Skipf("%s is not set; run through integration/test_basic_cgroup_subsys_id.sh", name)
 	}
 	return value
 }

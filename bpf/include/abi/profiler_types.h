@@ -27,7 +27,8 @@ struct profiler_event_base {
 
 struct profiler_oncpu_event {
 	struct profiler_event_base base;
-	u64 ktime_ns;
+	/* Host CLOCK_MONOTONIC at observation; excludes system suspend. */
+	u64 kernel_observed_ns;
 	u32 cpu;
 	u32 pad0;
 };
