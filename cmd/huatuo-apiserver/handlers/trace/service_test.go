@@ -37,6 +37,20 @@ func TestValidateCreateInput(t *testing.T) {
 	}{
 		{name: "valid"},
 		{
+			name: "negative duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = -1
+			},
+			wantErr: "duration_seconds",
+		},
+		{
+			name: "zero duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = 0
+			},
+			wantErr: "duration_seconds",
+		},
+		{
 			name: "overflowing duration",
 			mutate: func(input *CreateInput) {
 				input.DurationSeconds = math.MaxInt64
