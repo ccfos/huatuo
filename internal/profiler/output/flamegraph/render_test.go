@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestRenderStyleKeepsSymbolsOutOfJavaScript(t *testing.T) {
@@ -38,5 +39,25 @@ func TestRenderStyleKeepsSymbolsOutOfJavaScript(t *testing.T) {
 	if !strings.Contains(content, `data-title="`) ||
 		!strings.Contains(content, "&lt;script&gt;alert(2)&lt;/script&gt;") {
 		t.Fatalf("SVG does not preserve the escaped symbol as data: %s", content)
+	}
+}
+
+func TestRenderStyleTruncatesMultibyteLabelsAtRuneBoundary(t *testing.T) {
+	style := DefaultStyle
+	style.ImageWidth = 95
+	symbol := strings.Repeat("中文", 20)
+
+	var output bytes.Buffer
+	if err := RenderStyle([]Stack{{
+		Names:   []string{symbol},
+		Samples: 1,
+	}}, &output, style); err != nil {
+		t.Fatal(err)
+	}
+	if !utf8.Valid(output.Bytes()) {
+		t.Fatal("SVG contains invalid UTF-8 after truncating the frame label")
+	}
+	if !strings.Contains(output.String(), strings.Repeat("中文", 4)+"..") {
+		t.Fatal("SVG does not retain complete characters in the abbreviated label")
 	}
 }
