@@ -145,3 +145,25 @@ func TestContainerJSONUnknownValues(t *testing.T) {
 		t.Errorf("container qos = %v, want unknown", qos)
 	}
 }
+
+func TestContainerLabelHostNamespaceFallback(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels map[string]any
+		want   string
+	}{
+		{name: "nil labels", labels: nil, want: ""},
+		{name: "missing label", labels: map[string]any{}, want: ""},
+		{name: "wrong label type", labels: map[string]any{labelHostNamespace: 42}, want: ""},
+		{name: "string label", labels: map[string]any{labelHostNamespace: "kube-system"}, want: "kube-system"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			container := &Container{Labels: tt.labels}
+			if got := container.LabelHostNamespace(); got != tt.want {
+				t.Fatalf("LabelHostNamespace() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
