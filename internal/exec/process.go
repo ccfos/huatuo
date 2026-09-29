@@ -19,6 +19,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	osexec "os/exec"
 	"slices"
 	"strings"
@@ -52,6 +54,33 @@ type Spec struct {
 	MaxOutputBytes int
 }
 
+// Option configures a process before it starts.
+type Option func(*Process)
+
+// WithExtraFiles passes files to the child as descriptors starting at 3.
+// The caller owns the files and must keep them open until Start returns.
+func WithExtraFiles(files ...*os.File) Option {
+	return func(process *Process) {
+		process.extraFiles = slices.Clone(files)
+	}
+}
+
+// WithStdout redirects standard output instead of retaining it for Stdout.
+// A nil writer preserves capture. The caller owns the writer until Wait returns.
+func WithStdout(writer io.Writer) Option {
+	return func(process *Process) {
+		process.stdoutWriter = writer
+	}
+}
+
+// WithStderr redirects standard error instead of retaining it for Stderr.
+// A nil writer preserves capture. The caller owns the writer until Wait returns.
+func WithStderr(writer io.Writer) Option {
+	return func(process *Process) {
+		process.stderrWriter = writer
+	}
+}
+
 type processState uint8
 
 const (
@@ -72,9 +101,12 @@ type lifecycleResult struct {
 // Process owns one command lifecycle. It must be created with New and cannot be
 // restarted; methods on its zero value return an initialization error.
 type Process struct {
-	spec   Spec
-	output outputBuffer
-	stderr tailBuffer
+	spec         Spec
+	output       outputBuffer
+	stderr       tailBuffer
+	extraFiles   []*os.File
+	stdoutWriter io.Writer
+	stderrWriter io.Writer
 
 	mu              sync.Mutex
 	state           processState
@@ -88,28 +120,32 @@ type Process struct {
 }
 
 // New validates and snapshots a command specification without starting it.
-func New(spec Spec) (*Process, error) { //nolint:gocritic // Spec is at the project's 80-byte value limit.
-	if err := spec.validate(); err != nil {
-		return nil, fmt.Errorf("new command: %w", err)
-	}
-	if spec.StopGracePeriod == 0 {
-		spec.StopGracePeriod = defaultStopGracePeriod
-	}
-	if spec.MaxOutputBytes == 0 {
-		spec.MaxOutputBytes = defaultMaxOutputBytes
+func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // Spec is at the project's 80-byte value limit.
+	process := &Process{spec: spec}
+	for _, option := range options {
+		option(process)
 	}
 
-	spec.Args = slices.Clone(spec.Args)
-	spec.Env = slices.Clone(spec.Env)
-	return &Process{
-		spec:         spec,
-		output:       newOutputBuffer(spec.MaxOutputBytes),
-		state:        processStateNew,
-		start:        lifecycleResult{done: make(chan struct{})},
-		wait:         lifecycleResult{done: make(chan struct{})},
-		startCommand: (*osexec.Cmd).Start,
-		forceStop:    forceStopProcessGroup,
-	}, nil
+	if err := process.spec.validate(); err != nil {
+		return nil, fmt.Errorf("new command: %w", err)
+	}
+	if process.spec.StopGracePeriod == 0 {
+		process.spec.StopGracePeriod = defaultStopGracePeriod
+	}
+	if process.spec.MaxOutputBytes == 0 {
+		process.spec.MaxOutputBytes = defaultMaxOutputBytes
+	}
+
+	process.spec.Args = slices.Clone(process.spec.Args)
+	process.spec.Env = slices.Clone(process.spec.Env)
+	process.output = newOutputBuffer(process.spec.MaxOutputBytes)
+	process.state = processStateNew
+	process.start = lifecycleResult{done: make(chan struct{})}
+	process.wait = lifecycleResult{done: make(chan struct{})}
+	process.startCommand = (*osexec.Cmd).Start
+	process.forceStop = forceStopProcessGroup
+
+	return process, nil
 }
 
 func (s *Spec) validate() error {
@@ -170,8 +206,15 @@ func (p *Process) Start(ctx context.Context) error {
 
 	cmd := osexec.Command(p.spec.Path, p.spec.Args...)
 	cmd.Env = p.spec.Env
+	cmd.ExtraFiles = p.extraFiles
 	cmd.Stdout = &p.output
+	if p.stdoutWriter != nil {
+		cmd.Stdout = p.stdoutWriter
+	}
 	cmd.Stderr = &p.stderr
+	if p.stderrWriter != nil {
+		cmd.Stderr = p.stderrWriter
+	}
 
 	configureCommand(cmd)
 	if err := p.startCommand(cmd); err != nil {
@@ -467,11 +510,13 @@ func (p *Process) Run(ctx context.Context) error {
 }
 
 // Stdout returns a copy of the retained standard output.
+// It is empty when WithStdout redirects output to a non-nil writer.
 func (p *Process) Stdout() []byte {
 	return p.output.Bytes()
 }
 
 // Stderr returns a copy of the newest 64 KiB written to standard error.
+// It is empty when WithStderr redirects output to a non-nil writer.
 func (p *Process) Stderr() []byte {
 	return p.stderr.Bytes()
 }

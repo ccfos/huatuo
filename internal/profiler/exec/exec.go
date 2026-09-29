@@ -40,6 +40,45 @@ func Run(
 	path string,
 	argsForPID func(pid int) []string,
 ) []*Result {
+	return runForPIDs(pids, func(pid int) *Result {
+		args := argsForPID(pid)
+		if filepath.Base(path) == "asprof" {
+			return runAsyncProfiler(ctx, pid, path, args)
+		}
+		return runCommand(ctx, pid, &managedexec.Spec{
+			Path:           path,
+			Args:           args,
+			MaxOutputBytes: profilerOutputLimit,
+		})
+	})
+}
+
+// RunWithMemfd collects each profiler's file output separately from its logs.
+// Options are shared across commands; supplied writers must support concurrent use.
+func RunWithMemfd(
+	ctx context.Context,
+	pids []int,
+	path string,
+	argsForPID func(pid int, outputPath string) []string,
+	options ...managedexec.Option,
+) []*Result {
+	return runForPIDs(pids, func(pid int) *Result {
+		result := &Result{PID: pid, Command: path}
+		output, err := managedexec.RunWithMemfd(ctx, &managedexec.Spec{Path: path},
+			func(outputPath string) []string {
+				args := argsForPID(pid, outputPath)
+				result.Command = formatCommand(path, args)
+				log.Debugf("executing command: %s", result.Command)
+				return args
+			}, profilerOutputLimit, options...)
+		result.Err = err
+		result.Output = output.Data
+		result.Diagnostics = output.Stderr
+		return result
+	})
+}
+
+func runForPIDs(pids []int, run func(pid int) *Result) []*Result {
 	var waitGroup sync.WaitGroup
 	results := make(chan *Result, len(pids))
 
@@ -48,16 +87,7 @@ func Run(
 		go func(pid int) {
 			defer waitGroup.Done()
 
-			args := argsForPID(pid)
-			if filepath.Base(path) == "asprof" {
-				results <- runAsyncProfiler(ctx, pid, path, args)
-				return
-			}
-			results <- runCommand(ctx, pid, &managedexec.Spec{
-				Path:           path,
-				Args:           args,
-				MaxOutputBytes: profilerOutputLimit,
-			})
+			results <- run(pid)
 		}(pid)
 	}
 
