@@ -119,12 +119,31 @@ func newHTTPMetricsMiddleware(reg prometheus.Registerer) httpGin.HandlerFunc {
 		startedAt := time.Now()
 		ctx.Next()
 		route := ctx.FullPath()
+		method := ctx.Request.Method
 		if route == "" {
 			route = "unmatched"
+			method = boundedHTTPMethod(method)
 		}
 		status := strconv.Itoa(ctx.Writer.Status())
-		requests.WithLabelValues(route, ctx.Request.Method, status).Inc()
-		duration.WithLabelValues(route, ctx.Request.Method).Observe(time.Since(startedAt).Seconds())
+		requests.WithLabelValues(route, method, status).Inc()
+		duration.WithLabelValues(route, method).Observe(time.Since(startedAt).Seconds())
+	}
+}
+
+func boundedHTTPMethod(method string) string {
+	switch method {
+	case http.MethodConnect,
+		http.MethodDelete,
+		http.MethodGet,
+		http.MethodHead,
+		http.MethodOptions,
+		http.MethodPatch,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodTrace:
+		return method
+	default:
+		return "other"
 	}
 }
 
