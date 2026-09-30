@@ -1299,3 +1299,29 @@ Configuration: remove `mthreads_gpu` from `BlackList` to enable. Metric groups a
 |huatuo_bamai_mthreads_gpu_mtlink_state|GPU MtLink state (0=DOWN,1=UP,2=DOWNGRADE).|-|gpu, link|mtml.Device.MtLinkState|
 |huatuo_bamai_mthreads_gpu_mtlink_link_bandwidth_gb_s|GPU MtLink per-link max bandwidth (device static spec, not live throughput).|GB/s|gpu|mtml.Device.MtLinkSpec|
 |huatuo_bamai_mthreads_gpu_mtlink_link_count|GPU MtLink max number of supported links (device static spec).|links|gpu|mtml.Device.MtLinkSpec|
+
+### Disk busy time and average queue depth
+
+The `diskio` collector also exports two per-device counters (seconds):
+
+| Metric | Meaning |
+| --- | --- |
+| `huatuo_bamai_diskio_io_time_seconds_total` | Time with I/O in progress |
+| `huatuo_bamai_diskio_io_time_weighted_seconds_total` | Time weighted by the number of in-flight I/Os |
+
+Remove `diskio` from `BlackList` to enable the collector. Both counters use
+`device`, `host`, and `region` labels and require no additional file reads.
+
+```promql
+# Approximate percentage of time busy, per device
+100 * rate(huatuo_bamai_diskio_io_time_seconds_total[5m])
+# Average number of I/Os in progress over the interval
+rate(huatuo_bamai_diskio_io_time_weighted_seconds_total[5m])
+```
+
+These measurements complement CPU iowait and the instantaneous
+`io_in_progress` gauge. Busy time alone does not measure the capacity of
+parallel devices such as NVMe or RAID. Linux can undercount busy time with
+concurrent requests; see the [kernel I/O statistics documentation](https://docs.kernel.org/admin-guide/iostats.html).
+Use `rate()` to handle counter resets, and select either whole devices or
+partitions to avoid double-counting the same I/O.
