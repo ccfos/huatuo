@@ -19,6 +19,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/output/chrometrace"
+	"github.com/ccfos/huatuo/internal/profiler/output/dump"
+	"github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
+	"github.com/ccfos/huatuo/internal/profiler/output/raw"
+	"github.com/ccfos/huatuo/internal/profiler/output/speedscope"
 )
 
 func TestCreateOutputFileUsesUniqueNames(t *testing.T) {
@@ -80,5 +87,70 @@ func TestCreateOutputFileCreatesDirectory(t *testing.T) {
 	}
 	if err := file.Close(); err != nil {
 		t.Fatalf("close output file: %v", err)
+	}
+}
+
+func TestWriteOutputUsesFormatSpecificArtifact(t *testing.T) {
+	tests := []struct {
+		format    output.OutputFormat
+		prefix    string
+		ext       string
+		formatter output.Formatter
+	}{
+		{output.FormatCollapsed, "perf_", ".folded", raw.New()},
+		{output.FormatFlameGraph, "flamegraph_", ".svg", flamegraph.New()},
+		{output.FormatSVG, "flamegraph_", ".svg", flamegraph.New()},
+		{output.FormatSpeedscope, "speedscope_", ".json", speedscope.New(0)},
+		{output.FormatChromeTrace, "chrometrace_", ".json", chrometrace.New(0)},
+		{output.FormatDump, "perf_", ".txt", dump.New(dump.Options{})},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.format), func(t *testing.T) {
+			dir := t.TempDir()
+			if err := writeOutput(dir, tt.format, tt.formatter); err != nil {
+				t.Fatalf("writeOutput(%q) error = %v", tt.format, err)
+			}
+
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("read output directory: %v", err)
+			}
+			if len(entries) != 1 {
+				t.Fatalf("output files = %d, want 1", len(entries))
+			}
+
+			name := entries[0].Name()
+			if !strings.HasPrefix(name, tt.prefix) || !strings.HasSuffix(name, tt.ext) {
+				t.Fatalf("output file %q does not match prefix %q and extension %q", name, tt.prefix, tt.ext)
+			}
+		})
+	}
+}
+
+func TestWriteOutputTreatsEmptyFormatAsCollapsed(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeOutput(dir, "", raw.New()); err != nil {
+		t.Fatalf("writeOutput(\"\") error = %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read output directory: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("output files = %d, want 1", len(entries))
+	}
+	if name := entries[0].Name(); !strings.HasPrefix(name, "perf_") || !strings.HasSuffix(name, ".folded") {
+		t.Fatalf("zero-value format wrote %q, want a folded artifact", name)
+	}
+}
+
+func TestWriteOutputRejectsUnsupportedFormat(t *testing.T) {
+	for _, format := range []output.OutputFormat{output.FormatRemote, output.FormatPprof} {
+		err := writeOutput(t.TempDir(), format, raw.New())
+		if err == nil {
+			t.Fatalf("writeOutput(%q) returned nil error", format)
+		}
 	}
 }

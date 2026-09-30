@@ -421,7 +421,10 @@ func TestOffCPUStatsFlag(t *testing.T) {
 }
 
 func TestValidateOutputFormat(t *testing.T) {
-	for _, format := range []string{"collapsed", "flamegraph", "svg", "remote"} {
+	for _, format := range []string{
+		"collapsed", "flamegraph", "svg", "remote",
+		"speedscope", "chrometrace", "dump",
+	} {
 		require.NoError(t, validateOutputFormat(format))
 	}
 	require.EqualError(t, validateOutputFormat("pprof"), `unsupported output format "pprof"`)
