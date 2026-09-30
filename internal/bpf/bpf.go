@@ -56,7 +56,7 @@ type BPF interface {
 	// EventPipeByName gets event-pipe by the mapName and returns a PerfEventReader.
 	EventPipeByName(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error)
 
-	// AttachAndEventPipe attaches and event-pipe and returns a PerfEventReader.
+	// AttachAndEventPipe attaches an event-pipe and returns a PerfEventReader.
 	AttachAndEventPipe(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error)
 
 	// ReadMap read the value content corresponding to a key from a map
