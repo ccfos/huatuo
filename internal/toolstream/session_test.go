@@ -101,6 +101,33 @@ func TestDispatchCompletesHandlerErrorEndForExpectedSession(t *testing.T) {
 	}
 }
 
+func TestDispatchRejectsNullEvent(t *testing.T) {
+	server, err := NewServer(t.TempDir() + "/toolstream.sock")
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	if err := server.ExpectSession("profiler", "job-1"); err != nil {
+		t.Fatalf("ExpectSession() error = %v", err)
+	}
+	handled := false
+	Register(server, "profiler", func(*Session, *struct{}) error {
+		handled = true
+		return nil
+	})
+
+	server.dispatch(&transport.Session{
+		ToolName: "profiler",
+		TaskID:   "job-1",
+	}, transport.ChunkMsg{Data: []byte(`null`), End: true})
+	err = server.AwaitSession(t.Context(), "profiler", "job-1")
+	if err == nil || !strings.Contains(err.Error(), "null event") {
+		t.Fatalf("AwaitSession() error = %v, want null event error", err)
+	}
+	if handled {
+		t.Fatal("handler called with a nil event")
+	}
+}
+
 func TestAwaitSessionCancellationRemovesExpectation(t *testing.T) {
 	server, err := NewServer(t.TempDir() + "/toolstream.sock")
 	if err != nil {
