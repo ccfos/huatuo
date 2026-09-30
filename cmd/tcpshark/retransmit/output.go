@@ -20,6 +20,8 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/ccfos/huatuo/internal/strutil"
+
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -87,7 +89,7 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 	line = append(line, " pid="...)
 	line = strconv.AppendUint(line, ev.PID, 10)
 	line = append(line, " comm="...)
-	line = append(line, ev.Comm...)
+	line = append(line, strutil.EscapeControls(ev.Comm)...)
 	line = append(line, " ca="...)
 	line = strconv.AppendUint(line, uint64(ev.CaState), 10)
 	line = append(line, " retrans="...)

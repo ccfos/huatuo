@@ -14,7 +14,12 @@
 
 package strutil
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
 
 func SplitCommaList(raw string) []string {
 	if raw == "" {
@@ -31,4 +36,30 @@ func SplitCommaList(raw string) []string {
 	}
 
 	return parts
+}
+
+// EscapeControls makes control characters visible without changing ordinary text.
+// Use it on display fields, leaving the original data available for matching and
+// structured output.
+func EscapeControls(value string) string {
+	isControl := func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }
+	first := strings.IndexFunc(value, isControl)
+	if first < 0 {
+		return value
+	}
+	var out strings.Builder
+	out.Grow(len(value) + 8)
+	last := 0
+	for offset, r := range value[first:] {
+		if !isControl(r) {
+			continue
+		}
+		i := first + offset
+		out.WriteString(value[last:i])
+		quoted := strconv.QuoteRune(r)
+		out.WriteString(quoted[1 : len(quoted)-1])
+		last = i + utf8.RuneLen(r)
+	}
+	out.WriteString(value[last:])
+	return out.String()
 }
