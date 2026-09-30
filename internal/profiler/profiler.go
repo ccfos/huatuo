@@ -124,7 +124,8 @@ fallback:
 func ParseRawData(ctx context.Context, input *ParseInput) (*ProfileData, error) {
 	var outputs []SampleOutput
 	if err := json.Unmarshal(input.Data, &outputs); err == nil && len(outputs) > 0 {
-		for _, out := range outputs {
+		for i := range outputs {
+			out := &outputs[i]
 			if out.PID == 0 || out.Output == "" {
 				goto fallback
 			}
