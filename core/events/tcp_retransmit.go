@@ -22,7 +22,7 @@ import (
 	"strconv"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/pcapfilter"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/timeutil"
@@ -71,15 +71,17 @@ func validateTCPRetransmitFilter(config *Config) error {
 // Start launches tcpshark in retransmit mode and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
-	process, err := exec.New(exec.Spec{
+	process, err := executil.New(executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, tcpSharkToolName),
 		Args: tcpRetransmitArgs(configSnapshot()),
 	})
 	if err != nil {
 		return fmt.Errorf("create %s process: %w", tcpSharkToolName, err)
 	}
-	if err := process.Run(ctx); err != nil {
-		if errors.Is(err, exec.ErrStopFailed) {
+	runErr := process.Run(ctx)
+	_, outputErr := process.Stdout()
+	if err := errors.Join(runErr, outputErr); err != nil {
+		if errors.Is(err, executil.ErrStopFailed) {
 			stopErr := process.Stop(ctx)
 			if stopErr == nil && errors.Is(err, context.Canceled) {
 				return nil

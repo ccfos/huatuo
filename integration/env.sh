@@ -31,7 +31,7 @@ HUATUO_APISERVER_BIN="${ROOT_DIR}/_output/bin/huatuo-apiserver"
 export HUATUO_APISERVER_BIN
 HUATUO_BAMAI_TEST_TMPDIR=$(mktemp -d /tmp/huatuo-test.XXXXXX)
 export HUATUO_BAMAI_TEST_TMPDIR
-HUATUO_BAMAI_MATCH_KEYWORDS="\"error\"|panic"
+HUATUO_BAMAI_MATCH_KEYWORDS='level="?(error|panic|fatal)"?|panic:'
 export HUATUO_BAMAI_MATCH_KEYWORDS
 HUATUO_BAMAI_TEST_FIXTURES="${ROOT_DIR}/integration/fixtures"
 export HUATUO_BAMAI_TEST_FIXTURES
@@ -87,9 +87,11 @@ export BUSINESS_E2E_TEST_POD_COUNT
 
 KUBELET_PODS_API="https://127.0.0.1:10250/pods"
 export KUBELET_PODS_API
-KUBELET_CERT="/var/lib/kubelet/pki/kubelet-client-current.pem"
+# Match huatuo-bamai.conf: the kubelet's own client identity cannot query /pods
+# with kubeadm's Node authorization. Allow custom clusters to supply credentials.
+KUBELET_CERT=${KUBELET_CERT:-/etc/kubernetes/pki/apiserver-kubelet-client.crt}
 export KUBELET_CERT
-KUBELET_KEY="/var/lib/kubelet/pki/kubelet-client-current.pem"
+KUBELET_KEY=${KUBELET_KEY:-/etc/kubernetes/pki/apiserver-kubelet-client.key}
 export KUBELET_KEY
 
 CURL_TIMEOUT=(

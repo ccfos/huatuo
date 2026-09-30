@@ -11,7 +11,7 @@ weight: 5
 
 ### 前提条件与构建
 
-在 Linux 环境的仓库根目录执行。运行器要求 **root（EUID 为 0）**，并使用 `unshare --uts --mount`、挂载和 BPF 加载。受限容器中的 root 仍可能缺少 `CAP_SYS_ADMIN` 或内核要求的 BPF/perf 权限。各测试还会检查内核 tracepoint、PMU 访问、语言运行时和辅助命令等前提。
+在 Linux 环境的仓库根目录执行。运行器要求 **root（EUID 为 0）**，并使用 `unshare --uts --mount` 和挂载；许多用例还会加载 BPF 程序。受限容器中的 root 仍可能缺少 `CAP_SYS_ADMIN` 或内核要求的 BPF/perf 权限。各测试还会检查内核 tracepoint、PMU 访问、语言运行时和辅助命令等前提。
 
 直接调用运行器前，先构建二进制、BPF 对象和配置文件：
 
@@ -19,6 +19,8 @@ weight: 5
 make build
 sudo bash integration/run.sh
 ```
+
+运行器只检查 `_output` 目录是否存在，不逐个检查二进制和 BPF 产物。目录存在不代表构建完整，缺失产物会在实际使用时导致失败。
 
 也可以在具备构建工具链的 root 环境运行 `make integration`。该目标先构建，再调用同一个运行器；非 root 执行时可能完成构建后跳过整套测试。
 
@@ -31,12 +33,44 @@ sudo bash integration/run.sh test_metrics.sh
 sudo bash integration/run.sh test_metrics_exclude_filter.sh 10
 ```
 
+两套测试共用此运行器，默认运行 integration。`e2e/run.sh` 转发到 `--suite e2e`，`make e2e` 入口继续可用：
+
+```bash
+sudo bash integration/run.sh --suite e2e
+sudo bash integration/run.sh --suite e2e test_metrics.sh 2
+sudo bash e2e/run.sh test_metrics.sh 2
+```
+
+两套测试都在独立的 UTS、mount namespace 中运行，hostname 为 `huatuo-dev`，挂载传播设为 private。integration 由用例启动服务；e2e 在每例之前启动默认 bamai，结束时停止服务并检查日志。
+
 ### 如何判断结果
 
-- 非 root 执行时，运行器输出 `[INTEGRATION][SKIP] ... requires root`，随后以 **0 退出，但不会运行任何测试**。
-- 单个测试也可能因缺少前提而输出跳过原因并以 0 退出；运行器随后仍可能为该脚本打印 `passed`。应检查测试输出中的 `SKIP`，不能仅凭零退出码或最终成功提示认定全部测试已执行。
-- 测试失败时停止后续执行，运行器会停止相关服务、打印诊断文本，并保留失败的临时工作目录；失败日志中包含目录路径。
-- 成功测试的工作目录会被删除。指标固定数据测试会输出已检查的指标前缀及对应指标行。
+- 缺少 root 权限或所需的 namespace 命令（`unshare`、`mount`）时，运行器将所选执行全部计为 SKIP，随后以 **0 退出，但不会运行任何测试**。
+- 单个测试使用 `skip` 输出原因并以 **77** 退出，仍会执行 `EXIT` 清理。运行器将 0 记为 PASS、77 记为 SKIP，其他状态记为 FAIL；清理失败也记为 FAIL。
+- 只有成功和跳过时，运行器返回 0。应检查汇总和跳过原因，不能仅凭零退出码认定全部测试已执行。
+- 测试失败时停止后续用例。运行器会停止相关服务、打印诊断文本、保留失败的临时工作目录，并输出截至当前的统计。
+- integration 成功或跳过后删除工作目录，e2e 保留工作目录。指标固定数据测试会输出已检查的指标前缀及对应指标行。
+
+每次执行都单独计数，包括重复运行，例如：
+
+```text
+summary: total=5 passed=3 skipped=2 failed=0
+```
+
+### 检查用例前提
+
+使用同一个函数检查 PATH 中的命令或可执行文件路径，缺失时跳过：
+
+```bash
+require_commands jq curl ss
+require_commands "${PROFILER_TOOL_DIR}/bin/asprof"
+```
+
+证书等输入文件使用 `require_readable` 检查，不可读时输出具体路径并跳过：
+
+```bash
+require_readable "${KUBELET_CERT}" "${KUBELET_KEY}"
+```
 
 ### 指标固定数据测试
 
