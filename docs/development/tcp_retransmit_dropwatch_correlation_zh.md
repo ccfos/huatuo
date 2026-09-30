@@ -3,7 +3,7 @@ title: TCP retransmit 与 dropwatch 关联的难点
 type: docs
 author: HUATUO Team
 date: 2026-08-21
-weight: 7
+weight: 8
 ---
 
 本文说明 local correlation 的证据边界与实现。两条事件流没有共同事件 ID，

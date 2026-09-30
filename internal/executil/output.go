@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package exec
+package executil
 
 import (
 	"slices"
@@ -22,14 +22,10 @@ import (
 const maxErrorOutputBytes = 64 << 10
 
 type outputBuffer struct {
-	mu       sync.Mutex
-	limit    int
-	data     []byte
-	exceeded bool
-}
-
-func newOutputBuffer(limit int) outputBuffer {
-	return outputBuffer{limit: limit}
+	mu               sync.Mutex
+	limit            int
+	data             []byte
+	hasExceededLimit bool
 }
 
 func (b *outputBuffer) Write(data []byte) (int, error) {
@@ -37,32 +33,18 @@ func (b *outputBuffer) Write(data []byte) (int, error) {
 	defer b.mu.Unlock()
 
 	written := len(data)
-	remaining := b.limit - len(b.data)
-	if remaining <= 0 {
-		b.exceeded = b.exceeded || written > 0
-		return written, nil
-	}
-	if written > remaining {
-		b.data = append(b.data, data[:remaining]...)
-		b.exceeded = true
-		return written, nil
-	}
-	b.data = append(b.data, data...)
+	retained := min(written, b.limit-len(b.data))
+	b.data = append(b.data, data[:retained]...)
+	b.hasExceededLimit = b.hasExceededLimit || retained < written
+
 	return written, nil
 }
 
-func (b *outputBuffer) Bytes() []byte {
+// Snapshot keeps the retained prefix and its overflow flag consistent.
+func (b *outputBuffer) Snapshot() ([]byte, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-
-	return slices.Clone(b.data)
-}
-
-func (b *outputBuffer) Exceeded() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	return b.exceeded
+	return slices.Clone(b.data), b.hasExceededLimit
 }
 
 type tailBuffer struct {
@@ -79,12 +61,14 @@ func (b *tailBuffer) Write(data []byte) (int, error) {
 	if written == 0 {
 		return 0, nil
 	}
+
 	if written >= maxErrorOutputBytes {
 		if cap(b.data) < maxErrorOutputBytes {
 			b.data = make([]byte, maxErrorOutputBytes)
 		} else {
 			b.data = b.data[:maxErrorOutputBytes]
 		}
+
 		copy(b.data, data[written-maxErrorOutputBytes:])
 		b.start = 0
 		return written, nil
@@ -96,6 +80,7 @@ func (b *tailBuffer) Write(data []byte) (int, error) {
 			b.data = append(b.data, data...)
 			return written, nil
 		}
+
 		b.data = append(b.data, data[:remaining]...)
 		data = data[remaining:]
 	}

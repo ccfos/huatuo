@@ -44,6 +44,12 @@ type (
 		Aggs  map[string]termsAggBody `json:"aggs"`
 	}
 	valuesResponse struct {
+		// TimedOut reports a server-side search timeout; HTTP 200 can still
+		// carry incomplete aggregation buckets when this is true.
+		TimedOut bool `json:"timed_out"`
+		// Shards records per-shard execution results. Failed shards can leave
+		// aggregation buckets incomplete even when the HTTP request succeeds.
+		Shards       types.ShardStatistics `json:"_shards"`
 		Aggregations struct {
 			Terms struct {
 				Buckets []struct {

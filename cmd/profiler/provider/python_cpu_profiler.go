@@ -15,12 +15,15 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
@@ -146,12 +149,15 @@ func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids [
 			continue
 		}
 
-		if len(cmdRes.Output) > 0 {
-			enqueue(profiler.SampleOutput{
-				PID:    targetPid,
-				Output: string(cmdRes.Output),
-			})
+		if len(bytes.TrimSpace(cmdRes.Output)) == 0 {
+			errorMessages = append(errorMessages,
+				fmt.Sprintf("PID[%d] sampling failed: no samples collected", targetPid))
+			continue
 		}
+		enqueue(profiler.SampleOutput{
+			PID:    targetPid,
+			Output: string(cmdRes.Output),
+		})
 	}
 
 	if len(errorMessages) > 0 {
@@ -172,19 +178,19 @@ func runPySpy(
 	durStr := strconv.Itoa(dur)
 	freqStr := strconv.Itoa(freq)
 
-	return profilerexec.Run(ctx, pids, pyspyBin, func(pid int) []string {
-		return buildPySpyArgs(pid, durStr, freqStr)
-	})
+	return profilerexec.RunWithMemfd(ctx, pids, pyspyBin, func(pid int, outputPath string) []string {
+		return buildPySpyArgs(pid, durStr, freqStr, outputPath)
+	}, executil.WithStdout(io.Discard))
 }
 
-func buildPySpyArgs(pid int, duration, frequency string) []string {
+func buildPySpyArgs(pid int, duration, frequency, outputPath string) []string {
 	return []string{
 		"record",
 		"-d", duration,
 		"-f", "raw",
 		"-r", frequency,
 		"--subprocesses",
-		"-o", "/dev/stdout",
+		"-o", outputPath,
 		"-p", strconv.Itoa(pid),
 	}
 }

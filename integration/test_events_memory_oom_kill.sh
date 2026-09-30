@@ -29,11 +29,7 @@ readonly MEMORY_OOM_KILL_COMM="huoom-$(head -c 8 /proc/sys/kernel/random/uuid)"
 readonly MEMORY_OOM_KILL_BIN="${HUATUO_BAMAI_TEST_TMPDIR}/${MEMORY_OOM_KILL_COMM}"
 readonly MEMORY_OOM_KILL_LOG="${HUATUO_BAMAI_TEST_TMPDIR}/memory-oom-workload.log"
 
-command -v timeout > /dev/null || skip "timeout command is not installed"
-command -v jq > /dev/null || skip "jq command is not installed"
-command -v findmnt > /dev/null || skip "findmnt command is not installed"
-[[ -r "${ROOT_DIR}/_output/bpf/memory_oom_kill.o" ]] \
-	|| fatal "memory_oom_kill BPF object not found: ${ROOT_DIR}/_output/bpf/memory_oom_kill.o"
+require_commands timeout jq findmnt
 
 kprobe_available oom_kill_process \
 	|| skip "oom_kill_process is not available for kprobe"

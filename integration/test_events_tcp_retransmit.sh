@@ -29,17 +29,7 @@ readonly TCP_RETRANS_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/tcp_retransmit"
 readonly TCP_RETRANS_SAMPLE="${HUATUO_BAMAI_TEST_TMPDIR}/tcp-retransmit-event.json"
 readonly TCP_RETRANS_PARSE_ERROR="${HUATUO_BAMAI_TEST_TMPDIR}/event-parse.err"
 
-command -v ip > /dev/null || skip "ip command is not installed"
-command -v jq > /dev/null || skip "jq command is not installed"
-command -v ss > /dev/null || skip "ss command is not installed"
-command -v curl > /dev/null || skip "curl command is not installed"
-command -v pgrep > /dev/null || skip "pgrep command is not installed"
-command -v timeout > /dev/null || skip "timeout command is not installed"
-command -v unshare > /dev/null || skip "unshare command is not installed"
-command -v mount > /dev/null || skip "mount command is not installed"
-[[ -x "${HUATUO_BAMAI_BIN}" ]] || fatal "huatuo-bamai binary missing: ${HUATUO_BAMAI_BIN}"
-[[ -x "${ROOT_DIR}/_output/bin/tcpshark" ]] || fatal "tcpshark binary missing"
-[[ -r "${ROOT_DIR}/_output/bpf/tcp_retransmit.o" ]] || fatal "tcp_retransmit BPF object missing"
+require_commands ip jq ss curl pgrep timeout unshare mount
 tracepoint_available tcp tcp_retransmit_skb || skip "tcp/tcp_retransmit_skb tracepoint is unavailable"
 tracepoint_available tcp tcp_retransmit_synack || skip "tcp/tcp_retransmit_synack tracepoint is unavailable"
 

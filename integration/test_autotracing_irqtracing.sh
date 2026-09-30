@@ -22,16 +22,9 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-command -v jq > /dev/null || skip "jq command is not installed"
-command -v ss > /dev/null || skip "ss command is not installed"
+require_commands jq ss
 tracepoint_available irq softirq_raise || skip "irq/softirq_raise is unavailable"
 tracepoint_available irq softirq_entry || skip "irq/softirq_entry is unavailable"
-[[ -x "${HUATUO_BAMAI_BIN}" ]] \
-	|| fatal "huatuo-bamai binary missing: ${HUATUO_BAMAI_BIN}"
-[[ -x "${ROOT_DIR}/_output/bin/irqtracing" ]] \
-	|| fatal "irqtracing binary missing: ${ROOT_DIR}/_output/bin/irqtracing"
-[[ -r "${ROOT_DIR}/_output/bpf/irqtracing.o" ]] \
-	|| fatal "irqtracing BPF object missing: ${ROOT_DIR}/_output/bpf/irqtracing.o"
 
 IRQTRACING_API_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate a huatuo-bamai API port"

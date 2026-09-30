@@ -24,7 +24,7 @@ import (
 	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 )
 
 const (
@@ -56,7 +56,7 @@ func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error)
 		args = append(args, "--container-id", request.containerID)
 	}
 
-	process, err := exec.New(exec.Spec{
+	process, err := executil.New(executil.Spec{
 		Path:           filepath.Join(internalconfig.CoreBinDir, "perf"),
 		Args:           args,
 		MaxOutputBytes: maxPerfOutputBytes,
@@ -65,10 +65,11 @@ func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error)
 		return nil, perfCommandError(request.containerID, nil, err)
 	}
 
-	if err := process.Run(ctx); err != nil {
+	runErr := process.Run(ctx)
+	output, outputErr := process.Stdout()
+	if err := errors.Join(runErr, outputErr); err != nil {
 		return nil, perfCommandError(request.containerID, process.Stderr(), err)
 	}
-	output := process.Stdout()
 	if len(bytes.TrimSpace(output)) == 0 {
 		return nil, perfCommandError(
 			request.containerID,
