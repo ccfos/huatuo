@@ -156,6 +156,7 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			wantObject: "native_virtual_alloc.o",
 			wantAttach: []bpf.AttachOption{
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
+				{ProgramName: "trace_mmap_return", Symbol: "do_mmap"},
 			},
 		},
 		{
