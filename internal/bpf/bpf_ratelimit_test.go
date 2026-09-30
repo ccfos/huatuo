@@ -199,6 +199,10 @@ func (*rateLimitReaderStub) ReadBatch(func() any) (PerfEventBatch, error) {
 	return PerfEventBatch{}, nil
 }
 
+func (*rateLimitReaderStub) TotalLostSamples() uint64 {
+	return 0
+}
+
 func (r *rateLimitReaderStub) Close() error {
 	r.closes++
 	return r.closeErr
