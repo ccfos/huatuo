@@ -16,11 +16,47 @@ package executil
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 
+	"github.com/prometheus/procfs"
 	"golang.org/x/sys/unix"
 )
+
+func processGroupRunning(pgid int) (bool, error) {
+	fs, err := procfs.NewDefaultFS()
+	if err != nil {
+		return false, err
+	}
+	processes, err := fs.AllProcs()
+	if err != nil {
+		return false, err
+	}
+	for _, process := range processes {
+		group, err := syscall.Getpgid(process.PID)
+		if errors.Is(err, syscall.ESRCH) || errors.Is(err, syscall.EPERM) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if group != pgid {
+			continue
+		}
+		stat, err := process.Stat()
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if stat.PGRP == pgid && stat.State != "Z" && stat.State != "X" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 func waitForCommandExit(pid int) error {
 	var info unix.Siginfo
