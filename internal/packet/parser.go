@@ -35,6 +35,7 @@ var ErrNoLayers = errors.New("packet: no layers decoded")
 
 type decoder struct {
 	eth   layers.Ethernet
+	vlan  layers.Dot1Q
 	ipv4  layers.IPv4
 	ipv6  layers.IPv6
 	tcp   layers.TCP
@@ -55,7 +56,7 @@ var decoderPool = sync.Pool{
 		dec := &decoder{lyrs: make([]gopacket.LayerType, 0, 5)}
 		dec.dlp = gopacket.NewDecodingLayerParser(
 			layers.LayerTypeEthernet,
-			&dec.eth, &dec.ipv4, &dec.ipv6,
+			&dec.eth, &dec.vlan, &dec.ipv4, &dec.ipv6,
 			&dec.tcp, &dec.udp, &dec.icmp4, &dec.icmp6, &dec.arp,
 		)
 		dec.dlp.IgnoreUnsupported = true
