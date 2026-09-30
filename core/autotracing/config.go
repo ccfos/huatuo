@@ -150,6 +150,35 @@ func (c *Config) Validate() error {
 	if err := validateIRQTracingConfig(c.IRQTracing); err != nil {
 		return fmt.Errorf("irq tracing: %w", err)
 	}
+	if err := validateCPUIdleConfig(c.CPUIdle.Interval, c.CPUIdle.IntervalTracing,
+		c.CPUIdle.RunTracingToolTimeout, cpuIdleThreshold{
+			percent: cpuUsageBreakdown[int64]{
+				user: c.CPUIdle.UserThreshold, system: c.CPUIdle.SysThreshold, total: c.CPUIdle.UsageThreshold,
+			},
+			delta: cpuUsageBreakdown[int64]{
+				user: c.CPUIdle.DeltaUserThreshold, system: c.CPUIdle.DeltaSysThreshold, total: c.CPUIdle.DeltaUsageThreshold,
+			},
+		}); err != nil {
+		return fmt.Errorf("cpu idle: %w", err)
+	}
+	if _, err := c.CPUIdle.Filter.Build(); err != nil {
+		return fmt.Errorf("cpu idle filter: %w", err)
+	}
+	if err := validateCPUConfig(cpuTracingConfig{
+		intervalSeconds:         c.CPUSys.Interval,
+		minTraceIntervalSeconds: c.CPUSys.IntervalTracing,
+		perfDurationSeconds:     c.CPUSys.RunTracingToolTimeout,
+		systemThreshold:         c.CPUSys.SysThreshold,
+		systemDeltaThreshold:    c.CPUSys.DeltaSysThreshold,
+	}); err != nil {
+		return fmt.Errorf("cpu system: %w", err)
+	}
+	if err := validateDloadConfig(c); err != nil {
+		return err
+	}
+	if err := validateMemBurst(&c.MemoryBurst); err != nil {
+		return fmt.Errorf("memory burst: %w", err)
+	}
 	return nil
 }
 

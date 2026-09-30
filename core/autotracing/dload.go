@@ -100,15 +100,22 @@ type dloadThreshold struct {
 	isDebug          bool
 }
 
-func newDloadTracing(config *Config) (*dloadTracing, error) {
+func validateDloadConfig(config *Config) error {
 	if config.Dload.Interval <= 0 {
-		return nil, errors.New("dload sampling interval must be positive")
+		return errors.New("dload sampling interval must be positive")
 	}
 	if config.Dload.IntervalTracing < 0 {
-		return nil, errors.New("dload tracing interval must be non-negative")
+		return errors.New("dload tracing interval must be non-negative")
 	}
 	if config.Dload.ThresholdLoad < 0 {
-		return nil, errors.New("dload threshold must be non-negative")
+		return errors.New("dload threshold must be non-negative")
+	}
+	return nil
+}
+
+func newDloadTracing(config *Config) (*dloadTracing, error) {
+	if err := validateDloadConfig(config); err != nil {
+		return nil, err
 	}
 
 	return &dloadTracing{
