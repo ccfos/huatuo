@@ -31,6 +31,21 @@ sudo make compose-dev-down
 This command removes the Elasticsearch data volume. Do not run it when the
 integration data must be retained.
 
+## Go Debugging
+
+Normal `make build` binaries use Go's default optimizations and inlining in both
+static and nostatic modes. For source-level debugging, build a separate binary
+with optimizations disabled and debug information retained, for example:
+
+```bash
+make gen-build
+CGO_ENABLED=1 go build -tags "netgo osusergo" -gcflags=all="-N -l" \
+  -o _output/bin/profiler-debug ./cmd/profiler
+```
+
+These compiler flags apply to Go code. `BPF_DEBUG` controls BPF diagnostics
+independently.
+
 ## BPF Debugging
 
 BPF code can use the `bpf_dbg()` and `bpf_dbg_msg()` macros to emit debug
