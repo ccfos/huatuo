@@ -47,6 +47,33 @@ func TestNewServerRegistersMetricsRouteWithoutRegistry(t *testing.T) {
 	}
 }
 
+func TestNewServerReusesPrometheusRegistry(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	first := NewServer(&Config{PromReg: reg})
+	second := NewServer(&Config{PromReg: reg})
+
+	for name, s := range map[string]*Server{"first": first, "second": second} {
+		t.Run(name, func(t *testing.T) {
+			s.MustRegisterRoutes("", []Route{{
+				Method: http.MethodGet,
+				Path:   "/ping",
+				Handler: func(ctx *Context) error {
+					ctx.Status(http.StatusNoContent)
+					return nil
+				},
+			}})
+
+			request := httptest.NewRequest(http.MethodGet, "/ping", http.NoBody)
+			recorder := httptest.NewRecorder()
+			s.engine.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusNoContent {
+				t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
+			}
+		})
+	}
+}
+
 func TestNewServerUsesHTTPGuardDefaults(t *testing.T) {
 	s := NewServer(nil)
 
