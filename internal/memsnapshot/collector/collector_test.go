@@ -16,6 +16,7 @@ package collector
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,5 +43,15 @@ func TestSnapshotRejectsInvalidOptions(t *testing.T) {
 		if err == nil || result != nil {
 			t.Fatalf("invalid options %+v accepted: result=%+v err=%v", options, result, err)
 		}
+	}
+}
+
+func TestSnapshotRejectsChangedIdentity(t *testing.T) {
+	identity := processInstanceForTest(t)
+	identity.StartTimeTicks++
+
+	result, err := Snapshot(t.Context(), identity, Options{})
+	if result != nil || err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("snapshot with changed identity = %+v, %v", result, err)
 	}
 }
