@@ -229,16 +229,30 @@ SEC("kprobe/blk_mq_freeze_queue")
 int kprobe_freeze_queue(struct pt_regs *ctx)
 {
 	struct request_queue *q = (struct request_queue *)PT_REGS_PARM1(ctx);
-	struct blkcg_gq *blkg	= BPF_CORE_READ(q, root_blkg);
-	struct blkgq_entry *blkgq_entry;
+	struct request_queue___5_15 *qd = (void *)q;
+	struct gendisk *disk;
 	struct disk_entry *entry;
 
-	blkgq_entry = bpf_map_lookup_elem(&blkcg_map, &blkg);
-	if (blkgq_entry) {
-		entry = bpf_map_lookup_elem(&blkdisk_map, &blkgq_entry->disk);
-		if (entry)
-			__sync_fetch_and_add(&entry->freeze_nr, 1);
-	}
+	/*
+	 * A queue freeze is a per-disk event: blk_mq_freeze_queue freezes the
+	 * whole request_queue, so attribute it to the disk entry in blkdisk_map
+	 * (keyed by the gendisk pointer) and not through blkcg_map, which is
+	 * keyed by per-container blkio css addresses.
+	 *
+	 * request_queue only carries a ->disk back-pointer since v5.15. On
+	 * older kernels the gendisk cannot be reached from the queue and the
+	 * freeze counter stays 0, matching the pre-fix behaviour.
+	 */
+	if (!bpf_core_field_exists(qd->disk))
+		return 0;
+
+	BPF_CORE_READ_INTO(&disk, qd, disk);
+	if (!disk)
+		return 0;
+
+	entry = bpf_map_lookup_elem(&blkdisk_map, &disk);
+	if (entry)
+		__sync_fetch_and_add(&entry->freeze_nr, 1);
 
 	return 0;
 }
