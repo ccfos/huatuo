@@ -1,3 +1,6 @@
+{{- if not (.Values.config.content | trim) }}
+{{- fail "config.content must contain a configuration file; use --set-file config.content=./huatuo-bamai.conf" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
