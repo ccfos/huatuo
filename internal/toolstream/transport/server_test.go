@@ -33,6 +33,36 @@ type recordedChunk struct {
 	Error   string
 }
 
+func BenchmarkServerChunkStream(b *testing.B) {
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+	done := make(chan struct{})
+	server := &Server{handler: func(_ *Session, _ ChunkMsg) {}}
+	go func() {
+		defer close(done)
+		server.handleConn(b.Context(), serverConn)
+		serverConn.Close()
+	}()
+
+	client := &Client{encoder: capnp.NewEncoder(clientConn), conn: clientConn}
+	if err := client.handshake("profiler", "1", "benchmark"); err != nil {
+		b.Fatal(err)
+	}
+	data := make([]byte, 256<<10)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := client.SendChunk(data, false); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	if err := client.End(); err != nil {
+		b.Fatal(err)
+	}
+	<-done
+}
+
 type recorder struct {
 	mu       sync.Mutex
 	captured []recordedChunk
