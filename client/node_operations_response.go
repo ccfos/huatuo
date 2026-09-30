@@ -32,6 +32,7 @@ const (
 func parseNodeOperationResponse(
 	response *http.Response,
 	requestID string,
+	expectedKind nodeapi.OperationKind,
 	successMode nodeSuccessResponseMode,
 ) (*nodeapi.Operation, error) {
 	defer response.Body.Close()
@@ -48,10 +49,10 @@ func parseNodeOperationResponse(
 
 	switch response.StatusCode {
 	case http.StatusOK:
-		return parseNodeOperation(response.StatusCode, body, requestID)
+		return parseNodeOperation(response.StatusCode, body, requestID, expectedKind)
 	case http.StatusAccepted:
 		if successMode == nodeSuccessResponseOKOrAccepted {
-			return parseNodeOperation(response.StatusCode, body, requestID)
+			return parseNodeOperation(response.StatusCode, body, requestID, expectedKind)
 		}
 		return nil, newNodeProtocolError(response.StatusCode, "unexpected HTTP 202 success response")
 	default:
@@ -59,19 +60,29 @@ func parseNodeOperationResponse(
 	}
 }
 
-func parseNodeOperation(statusCode int, body []byte, requestID string) (*nodeapi.Operation, error) {
+func parseNodeOperation(
+	statusCode int,
+	body []byte,
+	requestID string,
+	expectedKind nodeapi.OperationKind,
+) (*nodeapi.Operation, error) {
 	var envelope nodeapi.OperationResponse
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, wrapNodeProtocolError(statusCode, "decode operation response", err)
 	}
 	operation := envelope.Data
-	if err := validateNodeOperation(statusCode, &operation, requestID); err != nil {
+	if err := validateNodeOperation(statusCode, &operation, requestID, expectedKind); err != nil {
 		return nil, err
 	}
 	return &operation, nil
 }
 
-func validateNodeOperation(statusCode int, operation *nodeapi.Operation, requestID string) error {
+func validateNodeOperation(
+	statusCode int,
+	operation *nodeapi.Operation,
+	requestID string,
+	expectedKind nodeapi.OperationKind,
+) error {
 	if operation.RequestID != requestID {
 		return newNodeProtocolError(
 			statusCode,
@@ -79,6 +90,22 @@ func validateNodeOperation(statusCode int, operation *nodeapi.Operation, request
 				"response request ID %q does not match %q",
 				operation.RequestID,
 				requestID,
+			),
+		)
+	}
+	if !operation.Kind.Valid() {
+		return newNodeProtocolError(
+			statusCode,
+			fmt.Sprintf("unsupported operation kind %q", operation.Kind),
+		)
+	}
+	if expectedKind != "" && operation.Kind != expectedKind {
+		return newNodeProtocolError(
+			statusCode,
+			fmt.Sprintf(
+				"response operation kind %q does not match %q",
+				operation.Kind,
+				expectedKind,
 			),
 		)
 	}
