@@ -173,11 +173,12 @@ int netif_receive_skb_prog(struct trace_event_raw_net_dev_template *args)
 	return 0;
 }
 
-SEC("kprobe/tcp_v4_rcv")
-int tcp_v4_rcv_prog(struct pt_regs *ctx)
+// Shared body of the tcp_v4_rcv hook. The kprobe and the fentry entry point
+// differ only in how they obtain ctx and skb; the latency check, the stage and
+// the submitted event are identical, and ctx always stays the context
+// bpf_perf_event_output() expects, never the skb.
+static __always_inline int rxlat_tcpv4_check(void *ctx, struct sk_buff *skb)
 {
-	struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM1_CORE(ctx);
-
 	u64 delta = skb_latency_check(skb, rxlat_thresh_tcpv4);
 	if (!delta)
 		return 0;
@@ -185,6 +186,25 @@ int tcp_v4_rcv_prog(struct pt_regs *ctx)
 	submit_rxlat_event(ctx, skb, delta, RX_STAGE_TCPV4);
 	return 0;
 }
+
+SEC("kprobe/tcp_v4_rcv")
+int tcp_v4_rcv_prog(struct pt_regs *ctx)
+{
+	struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM1_CORE(ctx);
+
+	return rxlat_tcpv4_check(ctx, skb);
+}
+
+// fentry variant of the same hook. Only the object built from
+// net_rx_latency_fentry.c defines HUATUO_RXLAT_FENTRY, so the original object
+// keeps exactly one entry point for tcp_v4_rcv.
+#ifdef HUATUO_RXLAT_FENTRY
+SEC("fentry/tcp_v4_rcv")
+int BPF_PROG(tcp_v4_rcv_fentry_prog, struct sk_buff *skb)
+{
+	return rxlat_tcpv4_check(ctx, skb);
+}
+#endif
 
 SEC("tracepoint/skb/skb_copy_datagram_iovec")
 int skb_copy_datagram_iovec_prog(

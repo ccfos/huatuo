@@ -48,6 +48,61 @@ integration_huatuo_bamai_start \
 	--procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
 	--disable-kubelet
 
+# The tcp_v4_rcv hook has an fentry and a kprobe entry point. The daemon must
+# report which one it selected: without that line an operator cannot tell a
+# kernel that fell back from a tracer that silently stopped covering the hook.
+#
+# Which one it selects is the kernel's decision, so it is not predicted here -
+# the tracing variant test proves that with a real attempt. This checks that the
+# daemon reported a decision, that it is one of the two entry points, and that a
+# fallback carries the reason it happened.
+#
+# The daemon answers on its metrics endpoint before its tracers load, and a
+# fallback loads the object twice, so the decision can be reported after startup:
+# the line is waited for, not read once, or a slow attach reads as a daemon that
+# never reported anything.
+tracing_selection_logged() {
+	grep -q 'msg="loaded BPF with a selected tracing entry point"' \
+		"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+}
+
+assert_tracing_entry_point() {
+	local log="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	local selection selected reason
+
+	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" "${WAIT_HUATUO_BAMAI_INTERVAL}" \
+		tracing_selection_logged \
+		|| fatal "the daemon did not report the selected tracing entry point"
+
+	selection=$(grep 'msg="loaded BPF with a selected tracing entry point"' "${log}" | tail -1)
+	selected=$(grep -o 'mode="[a-z]*"' <<< "${selection}" | tr -d '"' | cut -d= -f2)
+	reason=$(grep -o 'reason="[^"]*"' <<< "${selection}" | tr -d '"' | cut -d= -f2)
+
+	case "${selected}" in
+	fentry)
+		log_info "net_rx_latency selected the fentry entry point (tcp_v4_rcv_fentry_prog)"
+		;;
+	kprobe)
+		# Both kprobe paths have to say why they are kprobe, and they are
+		# different paths: a kernel the probe rules out selects kprobe without
+		# an attempt, a kernel whose fentry attempt failed falls back to it.
+		# Which one happens is the kernel's decision, so neither is predicted.
+		[[ -n "${reason}" ]] \
+			|| fatal "net_rx_latency selected the kprobe entry point without a reason"
+		if grep -q 'msg="attached kprobe entry point after fentry fallback"' "${log}"; then
+			log_info "net_rx_latency fell back to the kprobe entry point (tcp_v4_rcv_prog): ${reason}"
+		else
+			log_info "net_rx_latency selected the kprobe entry point without an fentry attempt: ${reason}"
+		fi
+		;;
+	*)
+		fatal "net_rx_latency reported an unknown entry point: ${selected:-none}"
+		;;
+	esac
+}
+
+assert_tracing_entry_point
+
 SLOW_TCP_SERVER="${WORK_DIR}/slow-tcp-server"
 compile_user_fixture \
 	"${ROOT_DIR}/integration/testdata/test_net_rx_latency_user.c" \
@@ -61,7 +116,10 @@ sleep 0.5
 
 for i in $(seq 1 5); do
 	log_info "curl request #${i} to ${TCP_NS_SERVER_ADDR}:${TEST_PORT}"
-	ip netns exec "${TCP_NS_CLIENT}" curl -s --connect-timeout 1 --max-time 2 \
+	# --noproxy: an http_proxy in the environment sends curl to the proxy
+	# instead of the peer, which fails instantly and generates no packet at all.
+	ip netns exec "${TCP_NS_CLIENT}" curl -s --noproxy '*' \
+		--connect-timeout 1 --max-time 2 \
 		http://${TCP_NS_SERVER_ADDR}:${TEST_PORT}/ \
 		>> "${WORK_DIR}/curl.log" 2>&1 || true
 done

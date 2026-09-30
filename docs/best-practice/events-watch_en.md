@@ -157,6 +157,18 @@ The `data` field contains the standard HUATUO event record:
 | `iotracing` | I/O latency anomaly (AutoTracing, auto-triggered) |
 | `memburst` | Memory usage spike anomaly (AutoTracing, auto-triggered) |
 
+#### 2.1 The tcp_v4_rcv hook of net_rx_latency
+
+The `tcp_v4_rcv` hook of `net_rx_latency` (the TCPV4 stage) uses fentry when the
+kernel supports it and falls back to kprobe when it does not: the loader picks
+one at start-up from the kernel's capabilities, attaches only that one, and
+retries at most once after an fentry failure. The event algorithm, the reported
+fields, the thresholds and the configuration are unchanged, and no new switch
+was added. The node log line `loaded BPF with a selected tracing entry point`
+records the hook that was actually selected (`mode=fentry` or `mode=kprobe`)
+together with the target function. Only this hook has been migrated so far; every
+other hook attaches the same way it always did.
+
 ---
 
 ### 3. POST Request Reference
