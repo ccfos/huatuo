@@ -195,13 +195,13 @@ go_snapshot_run_case() (
 	[[ $(< "${usage_file}") -lt ${GO_SNAPSHOT_THRESHOLD} ]] \
 		|| fatal "${mode}: workload already exceeds threshold before pressure: $(< "${usage_file}")"
 	wait_until 30 0.1 go_snapshot_watch_is_ready || fatal "${mode}: memory cgroup watch was not registered"
-	if [[ -e "${go_snapshot_cgroup}/memory.events" ]]; then
+	if [[ -e "${go_snapshot_cgroup}/memory.max" ]]; then
 		high_before=$(awk '$1 == "high" { print $2 }' "${go_snapshot_cgroup}/memory.events")
 	fi
 
 	triggered_at=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')
 	printf p >&"${go_snapshot_input_fd}"
-	if [[ -e "${go_snapshot_cgroup}/memory.events" ]]; then
+	if [[ -e "${go_snapshot_cgroup}/memory.max" ]]; then
 		wait_until 15 0.1 awk -v before="${high_before}" '$1 == "high" { high = $2 } END { exit !(high > before) }' \
 			"${go_snapshot_cgroup}/memory.events" || fatal "${mode}: no kernel memory.high event"
 		# Release reclaim throttling after notification so the workload can finish.
