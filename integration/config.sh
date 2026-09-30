@@ -128,6 +128,28 @@ write_sched_tick_irqoff_config() {
 	write_sched_tick_config_with_threshold 1
 }
 
+write_storage_consistency_config() {
+	# The case supplies the isolated ports, packet filter and backend credentials.
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${storage_http_port}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[EventTracing.Dropwatch]
+    Filter = "udp and dst host 127.0.0.99 and dst port ${storage_target_port}"
+    MaxEventsPerSecond = 100
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+[Storage.Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "${STORAGE_USERNAME}"
+    Password = "${STORAGE_PASSWORD}"
+    Index = "${STORAGE_INDEX}"
+EOF
+}
+
 write_tcp_events_config() {
 	# Ports, filter and storage path belong to this test workspace.
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
