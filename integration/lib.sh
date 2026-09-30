@@ -356,6 +356,8 @@ is_virtual_machine() {
 # ----------------------------- huatuo-bamai ----------------------------------
 
 huatuo_bamai_start() {
+	[[ -f "${HUATUO_BAMAI_BIN}" && -x "${HUATUO_BAMAI_BIN}" ]] \
+		|| fatal "huatuo-bamai binary missing or not executable: ${HUATUO_BAMAI_BIN}; run make build"
 	log_info "starting huatuo-bamai: $*"
 	"${HUATUO_BAMAI_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" 2>&1 &
 	local pid=$!
