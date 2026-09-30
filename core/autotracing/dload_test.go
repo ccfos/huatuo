@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/pod"
+	cadvisorV1 "github.com/google/cadvisor/info/v1"
 )
 
 func TestNewDloadTracing(t *testing.T) {
@@ -207,6 +208,77 @@ func TestDloadTracingShouldTrace(t *testing.T) {
 				t.Fatalf("shouldTrace() = %t, want %t", actual, test.expected)
 			}
 		})
+	}
+}
+
+func TestDloadSelectTraceTargetSamplesEveryContainer(t *testing.T) {
+	first := &containerDloadInfo{
+		cgroupName: "first",
+		container:  &pod.Container{ID: "first"},
+	}
+	second := &containerDloadInfo{
+		cgroupName: "second",
+		container:  &pod.Container{ID: "second"},
+	}
+	tracer := &dloadTracing{
+		containers: map[string]*containerDloadInfo{
+			"first":  first,
+			"second": second,
+		},
+	}
+	reads := make(map[string]int)
+	statsByCgroup := map[string]cadvisorV1.LoadStats{
+		"first":  {NrUninterruptible: 1},
+		"second": {NrUninterruptible: 2},
+	}
+
+	selected, stats, err := tracer.selectTraceTargetFromSamples(
+		time.Unix(100, 0),
+		func(cgroupName, _ string) (cadvisorV1.LoadStats, error) {
+			reads[cgroupName]++
+			return statsByCgroup[cgroupName], nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("selectTraceTargetFromSamples() error = %v", err)
+	}
+	if reads["first"] != 1 || reads["second"] != 1 {
+		t.Fatalf("sample counts = %v, want one read per container", reads)
+	}
+	if first.dLoadAvg[0] == 0 || second.dLoadAvg[0] == 0 {
+		t.Fatalf("dLoad averages = %d, %d, want both updated",
+			first.dLoadAvg[0], second.dLoadAvg[0])
+	}
+	if selected != second || stats.NrUninterruptible != 2 {
+		t.Fatalf("selected = %p with stats %+v, want second container", selected, stats)
+	}
+}
+
+func TestDloadSelectTraceTargetBreaksTiesByID(t *testing.T) {
+	tracer := &dloadTracing{
+		containers: map[string]*containerDloadInfo{
+			"second": {
+				cgroupName: "second",
+				container:  &pod.Container{ID: "second"},
+			},
+			"first": {
+				cgroupName: "first",
+				container:  &pod.Container{ID: "first"},
+			},
+		},
+	}
+
+	selected, _, err := tracer.selectTraceTargetFromSamples(
+		time.Unix(100, 0),
+		func(_, _ string) (cadvisorV1.LoadStats, error) {
+			return cadvisorV1.LoadStats{NrUninterruptible: 1}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("selectTraceTargetFromSamples() error = %v", err)
+	}
+	if selected != tracer.containers["first"] {
+		t.Fatalf("selected = %p, want first container", selected)
 	}
 }
 

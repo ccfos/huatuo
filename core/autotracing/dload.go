@@ -173,8 +173,18 @@ func (d *dloadTracing) selectTraceTarget(
 	}
 	defer n.Stop()
 
+	return d.selectTraceTargetFromSamples(sampledAt, n.GetCpuLoad)
+}
+
+func (d *dloadTracing) selectTraceTargetFromSamples(
+	sampledAt time.Time,
+	getCpuLoad func(string, string) (cadvisorV1.LoadStats, error),
+) (*containerDloadInfo, cadvisorV1.LoadStats, error) {
+	var selected *containerDloadInfo
+	var selectedStats cadvisorV1.LoadStats
+
 	for _, container := range d.containers {
-		stats, err := n.GetCpuLoad(container.cgroupName, container.cpuPath)
+		stats, err := getCpuLoad(container.cgroupName, container.cpuPath)
 		if err != nil {
 			log.WithError(err).
 				WithField("container_id", container.container.ID).
@@ -188,15 +198,22 @@ func (d *dloadTracing) selectTraceTarget(
 			continue
 		}
 
-		log.WithField("container_id", container.container.ID).
-			WithField("threshold", d.threshold.load).
-			WithField("load_average", container.loadAvg[0]).
-			WithField("dload_average", container.dLoad[0]).
-			Info("dload threshold exceeded")
-		return container, stats, nil
+		if selected == nil || container.dLoadAvg[0] > selected.dLoadAvg[0] ||
+			(container.dLoadAvg[0] == selected.dLoadAvg[0] &&
+				container.container.ID < selected.container.ID) {
+			selected = container
+			selectedStats = stats
+		}
 	}
 
-	return nil, cadvisorV1.LoadStats{}, nil
+	if selected != nil {
+		log.WithField("container_id", selected.container.ID).
+			WithField("threshold", d.threshold.load).
+			WithField("load_average", selected.loadAvg[0]).
+			WithField("dload_average", selected.dLoad[0]).
+			Info("dload threshold exceeded")
+	}
+	return selected, selectedStats, nil
 }
 
 func (d *dloadTracing) buildAndSave(
