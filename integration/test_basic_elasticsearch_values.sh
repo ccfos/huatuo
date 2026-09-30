@@ -31,16 +31,16 @@ readonly VALUES_ERRORS="${HUATUO_BAMAI_TEST_TMPDIR}/values-errors.log"
 cleanup() {
 	local status=$?
 	if ((status != 0)); then
-		elasticsearch_dump_logs
+		storage_dump_logs
 	fi
-	elasticsearch_stop
+	storage_stop
 }
 trap cleanup EXIT
 
 assert_storage_values() {
 	local field=$1 expected=$2 size=${3:-10}
 	local status=0
-	"${VALUES_BIN}" --address "${ELASTICSEARCH_ADDR}" --index "${VALUES_INDEX}" \
+	"${VALUES_BIN}" --address "${STORAGE_ADDR}" --index "${VALUES_INDEX}" \
 		--field "${field}" --size "${size}" \
 		> "${VALUES_RESPONSE}" 2> "${VALUES_ERRORS}" || status=$?
 	report_http_response "${field} values" "${VALUES_RESPONSE}" "${VALUES_ERRORS}"
@@ -50,12 +50,12 @@ assert_storage_values() {
 }
 
 go build -o "${VALUES_BIN}" "${ROOT_DIR}/integration/testdata/storage_values.go"
-elasticsearch_start
+storage_start
 
 values_status=0
 values_http_status=$(curl -sS "${CURL_TIMEOUT[@]}" \
 	-o "${VALUES_RESPONSE}" -w '%{http_code}' \
-	-X PUT "${ELASTICSEARCH_ADDR}/${VALUES_INDEX}" \
+	-X PUT "${STORAGE_ADDR}/${VALUES_INDEX}" \
 	-H 'Content-Type: application/json' \
 	-d '{"mappings":{"properties":{"label":{"type":"keyword"},"number":{"type":"long"},"ratio":{"type":"double"},"unsigned":{"type":"unsigned_long"},"empty":{"type":"keyword"}}}}' \
 	2> "${VALUES_ERRORS}") || values_status=$?
@@ -76,7 +76,7 @@ EOF
 values_status=0
 values_http_status=$(curl -sS "${CURL_TIMEOUT[@]}" \
 	-o "${VALUES_RESPONSE}" -w '%{http_code}' \
-	-X POST "${ELASTICSEARCH_ADDR}/${VALUES_INDEX}/_bulk?refresh=true" \
+	-X POST "${STORAGE_ADDR}/${VALUES_INDEX}/_bulk?refresh=true" \
 	-H 'Content-Type: application/x-ndjson' \
 	--data-binary "@${HUATUO_BAMAI_TEST_TMPDIR}/values.ndjson" \
 	2> "${VALUES_ERRORS}") || values_status=$?

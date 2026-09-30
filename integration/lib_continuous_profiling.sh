@@ -42,11 +42,11 @@ continuous_profiling_cleanup() {
 	[[ -n "${target_pid}" ]] && stop_by_pid "${target_pid}" 5 || true
 	huatuo_apiserver_stop
 	huatuo_bamai_stop "${HUATUO_BAMAI_TEST_TMPDIR}" || true
-	if [[ -n "${ELASTICSEARCH_CONTAINER_ID}" ]]; then
+	if [[ -n "${STORAGE_CONTAINER_ID}" ]]; then
 		if [[ ${status} -ne 0 ]]; then
-			elasticsearch_dump_logs || true
+			storage_dump_logs || true
 		fi
-		elasticsearch_stop || true
+		storage_stop || true
 	fi
 }
 
@@ -137,7 +137,7 @@ continuous_profile_windows_are_stored() {
 }
 
 continuous_profiling_start_stack() {
-	elasticsearch_start
+	storage_start
 	integration_huatuo_bamai_start \
 		write_continuous_profiling_bamai_config \
 		--region integration \

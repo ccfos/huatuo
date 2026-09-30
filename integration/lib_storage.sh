@@ -21,13 +21,13 @@ if [[ -n "${__HUATUO_LIB_STORAGE_SH_LOADED:-}" ]]; then
 fi
 readonly __HUATUO_LIB_STORAGE_SH_LOADED=1
 
-readonly DEFAULT_ELASTICSEARCH_TEST_IMAGE="docker.elastic.co/elasticsearch/elasticsearch:8.15.5"
+readonly STORAGE_DEFAULT_IMAGE="docker.elastic.co/elasticsearch/elasticsearch:8.15.5"
 
-ELASTICSEARCH_CONTAINER_ID=""
-ELASTICSEARCH_ADDR=""
+STORAGE_CONTAINER_ID=""
+STORAGE_ADDR=""
 
-elasticsearch_start() {
-	local image="${HUATUO_ES_TEST_IMAGE:-${DEFAULT_ELASTICSEARCH_TEST_IMAGE}}"
+storage_start() {
+	local image="${STORAGE_TEST_IMAGE:-${STORAGE_DEFAULT_IMAGE}}"
 	if ! docker image inspect "${image}" > /dev/null 2>&1; then
 		log_info "pulling Elasticsearch image: ${image}"
 		if ! timeout 5m docker pull "${image}" \
@@ -36,7 +36,7 @@ elasticsearch_start() {
 		fi
 	fi
 
-	ELASTICSEARCH_CONTAINER_ID=$(docker run --detach --rm \
+	STORAGE_CONTAINER_ID=$(docker run --detach --rm \
 		--publish 127.0.0.1::9200 \
 		--env discovery.type=single-node \
 		--env xpack.security.enabled=false \
@@ -44,38 +44,32 @@ elasticsearch_start() {
 		"${image}" \
 		2> "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-run.log")
 	local port
-	port=$(docker port "${ELASTICSEARCH_CONTAINER_ID}" 9200/tcp \
+	port=$(docker port "${STORAGE_CONTAINER_ID}" 9200/tcp \
 		| awk -F: 'NR == 1 { print $NF }')
 	[[ -n "${port}" ]] || fatal "failed to resolve Elasticsearch port"
 
-	ELASTICSEARCH_ADDR="http://127.0.0.1:${port}"
-	wait_until 120 2 elasticsearch_ready \
-		|| fatal "Elasticsearch did not become ready at ${ELASTICSEARCH_ADDR}"
+	STORAGE_ADDR="http://127.0.0.1:${port}"
+	wait_until 120 2 storage_ready \
+		|| fatal "Elasticsearch did not become ready at ${STORAGE_ADDR}"
 }
 
-elasticsearch_ready() {
-	[[ -n "${ELASTICSEARCH_ADDR}" ]] || return 1
+storage_ready() {
+	[[ -n "${STORAGE_ADDR}" ]] || return 1
 	curl -sf "${CURL_TIMEOUT[@]}" \
-		"${ELASTICSEARCH_ADDR}/_cluster/health?wait_for_status=yellow&timeout=2s" \
+		"${STORAGE_ADDR}/_cluster/health?wait_for_status=yellow&timeout=2s" \
 		| jq -e '.timed_out == false and (.status == "yellow" or .status == "green")' \
 			> /dev/null
 }
 
-elasticsearch_is_running() {
-	[[ -n "${ELASTICSEARCH_CONTAINER_ID}" ]] || return 1
-	docker inspect --format '{{.State.Running}}' \
-		"${ELASTICSEARCH_CONTAINER_ID}" 2> /dev/null | grep -qx true
-}
-
-elasticsearch_dump_logs() {
+storage_dump_logs() {
 	local output=${1:-"${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch.log"}
-	[[ -n "${ELASTICSEARCH_CONTAINER_ID}" ]] || return 0
-	docker logs "${ELASTICSEARCH_CONTAINER_ID}" > "${output}" 2>&1
+	[[ -n "${STORAGE_CONTAINER_ID}" ]] || return 0
+	docker logs "${STORAGE_CONTAINER_ID}" > "${output}" 2>&1
 }
 
-elasticsearch_stop() {
-	[[ -n "${ELASTICSEARCH_CONTAINER_ID}" ]] || return 0
-	docker rm -f "${ELASTICSEARCH_CONTAINER_ID}" > /dev/null 2>&1
-	ELASTICSEARCH_CONTAINER_ID=""
-	ELASTICSEARCH_ADDR=""
+storage_stop() {
+	[[ -n "${STORAGE_CONTAINER_ID}" ]] || return 0
+	docker rm -f "${STORAGE_CONTAINER_ID}" > /dev/null 2>&1
+	STORAGE_CONTAINER_ID=""
+	STORAGE_ADDR=""
 }

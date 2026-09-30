@@ -268,7 +268,7 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
     MaxConcurrentProcesses = 10
 
 [Storage.Elasticsearch]
-    Address = "${ELASTICSEARCH_ADDR}"
+    Address = "${STORAGE_ADDR}"
     Username = "elastic"
     Password = "${ES_PASSWORD}"
     Index = "huatuo_continuous_profiling_test"
@@ -285,7 +285,7 @@ write_continuous_profiling_apiserver_config() {
     ListenAddress = "127.0.0.1:${APISERVER_PORT}"
 
 [Elasticsearch]
-    Address = "${ELASTICSEARCH_ADDR}"
+    Address = "${STORAGE_ADDR}"
     Username = "elastic"
     Password = "${ES_PASSWORD}"
     Index = "huatuo_continuous_profiling_test"
