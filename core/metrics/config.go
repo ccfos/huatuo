@@ -15,6 +15,8 @@
 package collector
 
 import (
+	"fmt"
+	"regexp"
 	"slices"
 	"sync/atomic"
 )
@@ -99,4 +101,40 @@ func (c *Config) Clone() *Config {
 	dst.NetdevDCB.DeviceList = slices.Clone(c.NetdevDCB.DeviceList)
 	dst.NetdevHW.DeviceList = slices.Clone(c.NetdevHW.DeviceList)
 	return &dst
+}
+
+// Validate rejects filter patterns that collectors would only fail to compile
+// at scrape time, so an invalid configuration is refused before publication.
+// An empty pattern is valid: it disables filtering in that direction, the same
+// semantics matcher.NewValueMatcher applies at collection.
+func (c *Config) Validate() error {
+	fields := []struct {
+		path    string
+		pattern string
+	}{
+		{"NetdevStats.DeviceIncluded", c.NetdevStats.DeviceIncluded},
+		{"NetdevStats.DeviceExcluded", c.NetdevStats.DeviceExcluded},
+		{"Qdisc.DeviceIncluded", c.Qdisc.DeviceIncluded},
+		{"Qdisc.DeviceExcluded", c.Qdisc.DeviceExcluded},
+		{"Vmstat.IncludedOnHost", c.Vmstat.IncludedOnHost},
+		{"Vmstat.ExcludedOnHost", c.Vmstat.ExcludedOnHost},
+		{"Vmstat.IncludedOnContainer", c.Vmstat.IncludedOnContainer},
+		{"Vmstat.ExcludedOnContainer", c.Vmstat.ExcludedOnContainer},
+		{"MemoryEvents.Included", c.MemoryEvents.Included},
+		{"MemoryEvents.Excluded", c.MemoryEvents.Excluded},
+		{"Netstat.Included", c.Netstat.Included},
+		{"Netstat.Excluded", c.Netstat.Excluded},
+		{"MountPointStat.MountPointsIncluded", c.MountPointStat.MountPointsIncluded},
+	}
+
+	for _, f := range fields {
+		if f.pattern == "" {
+			continue
+		}
+		if _, err := regexp.Compile(f.pattern); err != nil {
+			return fmt.Errorf("invalid pattern %q for %s: %w", f.pattern, f.path, err)
+		}
+	}
+
+	return nil
 }

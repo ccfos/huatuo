@@ -33,3 +33,7 @@ weight: 50
 - Shutdown now finalizes pending local results inside tcpshark before the child
   exits. Embedded drops remain private; standalone dropwatch raw output is
   unchanged.
+- `huatuo-bamai` now rejects invalid regular expressions in `MetricCollector`
+  filter fields at startup and in config updates, instead of publishing them
+  and failing later at collection time. Empty patterns remain valid and keep
+  their no-filter semantics.
