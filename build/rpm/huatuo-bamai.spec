@@ -11,7 +11,7 @@ Group: System Environment/Daemons
 URL: https://huatuo.tech/
 License: APLv2
 
-Source0: https://github.com/ccfos/huatuo/archive/tags/tags/v%{version}.tar.gz
+Source0: https://github.com/ccfos/huatuo/archive/refs/tags/v%{version}.tar.gz
 Source1: huatuo-bamai.service
 Source2: grafana-example.zip
 
@@ -63,7 +63,7 @@ if [ ! -x "_output/bin/huatuo-bamai" ]; then
 fi
 
 # Check binary architecture matches build target
-file _output/bin/huatuo-bamai | grep -q "%{_target_cpu}" || {
+file _output/bin/huatuo-bamai | grep -Eq "x86-64|%{_target_cpu}" || {
     echo "WARNING: Binary architecture may not match target architecture %{_target_cpu}"
 }
 
@@ -104,7 +104,7 @@ unzip -q %{SOURCE2} -d %{buildroot}/opt/huatuo-bamai/grafana-example/
 
 # Create symlink for main executable
 mkdir -p %{buildroot}/usr/local/bin
-ln -s ../../opt/huatuo-bamai/bin/huatuo-bamai %{buildroot}/usr/local/bin/huatuo-bamai
+ln -s ../../../opt/huatuo-bamai/bin/huatuo-bamai %{buildroot}/usr/local/bin/huatuo-bamai
 
 # Install systemd service files
 mkdir -p %{buildroot}/etc/systemd/system
