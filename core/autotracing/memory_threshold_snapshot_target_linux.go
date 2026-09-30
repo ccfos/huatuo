@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -34,6 +35,7 @@ import (
 
 const (
 	maxCgroupProcesses        = 4096
+	maxCgroupDirectories      = 4096
 	maxCgroupProcessListBytes = 64 << 10
 )
 
@@ -205,12 +207,45 @@ func (s *processSelector) scanProcesses(ctx context.Context, group cgroupRef, vi
 		return fmt.Errorf("%w: %w", errInvalidSnapshotProcess, err)
 	}
 	directory := s.source.memcgDir(group.Path)
-	file, err := os.Open(filepath.Join(directory, "cgroup.procs"))
-	if err != nil {
+	hierarchical := true
+	// Legacy memory controllers can disable descendant accounting. Unified
+	// controllers do not expose this switch and always account hierarchically.
+	raw, err := os.ReadFile(filepath.Join(directory, "memory.use_hierarchy"))
+	if err == nil {
+		hierarchical = strings.TrimSpace(string(raw)) != "0"
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	defer file.Close()
-	if err := scanProcessPIDs(ctx, file, visit); err != nil {
+	budget := processScanBudget{bytes: maxCgroupProcessListBytes}
+	directories := 0
+	// A group's memory usage and OOM domain include its descendants, while
+	// cgroup.procs lists only processes directly attached to that directory.
+	err = filepath.WalkDir(directory, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		if path != directory && !hierarchical {
+			return filepath.SkipDir
+		}
+		directories++
+		if directories > maxCgroupDirectories {
+			return errors.New("cgroup subtree exceeds directory budget")
+		}
+		file, err := os.Open(filepath.Join(path, "cgroup.procs"))
+		if err != nil {
+			return err
+		}
+		err = budget.scan(ctx, file, visit)
+		file.Close()
+		return err
+	})
+	if err != nil {
 		return err
 	}
 	if err := s.source.Validate(ctx, group); err != nil {
@@ -220,11 +255,15 @@ func (s *processSelector) scanProcesses(ctx context.Context, group cgroupRef, vi
 	return nil
 }
 
-func scanProcessPIDs(ctx context.Context, reader io.Reader, visit func(int) error) error {
-	limited := &io.LimitedReader{R: reader, N: maxCgroupProcessListBytes + 1}
+type processScanBudget struct {
+	processes int
+	bytes     int64
+}
+
+func (b *processScanBudget) scan(ctx context.Context, reader io.Reader, visit func(int) error) error {
+	limited := &io.LimitedReader{R: reader, N: b.bytes + 1}
 	scanner := bufio.NewScanner(limited)
 	scanner.Buffer(make([]byte, 1024), 64)
-	count := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -232,8 +271,8 @@ func scanProcessPIDs(ctx context.Context, reader io.Reader, visit func(int) erro
 		if !scanner.Scan() {
 			break
 		}
-		count++
-		if count > maxCgroupProcesses || limited.N == 0 {
+		b.processes++
+		if b.processes > maxCgroupProcesses || limited.N == 0 {
 			return errors.New("cgroup process enumeration exceeds safety budget")
 		}
 		pid, err := strconv.Atoi(scanner.Text())
@@ -253,5 +292,6 @@ func scanProcessPIDs(ctx context.Context, reader io.Reader, visit func(int) erro
 	if limited.N == 0 {
 		return errors.New("cgroup process list exceeds byte budget")
 	}
+	b.bytes = limited.N - 1
 	return ctx.Err()
 }
