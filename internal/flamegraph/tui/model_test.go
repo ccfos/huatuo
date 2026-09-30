@@ -17,6 +17,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -111,5 +112,39 @@ func TestTruncateKeepsUTF8(t *testing.T) {
 	got := truncate("函数调用路径", 5)
 	if got != "函数..." {
 		t.Fatalf("truncate() = %q, want 函数...", got)
+	}
+}
+
+func TestSearchBackspaceKeepsUnicode(t *testing.T) {
+	for _, tt := range []struct{ input, want string }{
+		{"function", "functio"},
+		{"函数", "函"},
+		{"Aπ函", "Aπ"},
+		{"函数𐐀", "函数"},
+		{"函", ""},
+		{"", ""},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			model := NewModel([]flamegraph.FrameData{{Level: 0, Value: 1, Label: tt.input + "call"}})
+			key := func(k tea.KeyMsg) { updated, _ := model.Update(k); model = updated.(Model) }
+			key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+			key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tt.input)})
+			key(tea.KeyMsg{Type: tea.KeyBackspace})
+			if model.query != tt.want || !utf8.ValidString(model.View()) {
+				t.Fatalf("Backspace query=%q, want %q and valid UTF-8", model.query, tt.want)
+			}
+			key(tea.KeyMsg{Type: tea.KeyEnter})
+			if tt.want != "" && !model.matches[model.focus] {
+				t.Fatalf("remaining prefix %q does not match frame", tt.want)
+			}
+			key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+			key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tt.input)})
+			for range utf8.RuneCountInString(tt.input) + 1 {
+				key(tea.KeyMsg{Type: tea.KeyBackspace})
+			}
+			if model.query != "" {
+				t.Fatalf("repeated Backspace query=%q, want empty", model.query)
+			}
+		})
 	}
 }
