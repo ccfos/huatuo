@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/trace"
 	"github.com/ccfos/huatuo/internal/auth"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
 	"github.com/ccfos/huatuo/internal/server/response"
@@ -118,5 +120,29 @@ func TestSelectMergeStacktracesMapsProfileAbsence(t *testing.T) {
 	var apiErr *response.APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != "not_found" {
 		t.Fatalf("SelectMergeStacktraces() error = %v", err)
+	}
+}
+
+func TestNewAPIHandlerTreatsTypedNilProfileQueryAsUnavailable(t *testing.T) {
+	handler, err := NewAPIHandler(
+		&profiling.Service{},
+		&trace.Service{},
+		(*profilequery.ProfileQueryService)(nil),
+	)
+	if err != nil {
+		t.Fatalf("NewAPIHandler() error = %v", err)
+	}
+
+	_, err = handler.GetProfileTypes(
+		profileQueryContext(t, true),
+		serverapi.GetProfileTypesRequestObject{Body: bytes.NewReader(nil)},
+	)
+	var apiErr *response.APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "service_unavailable" {
+		t.Fatalf("GetProfileTypes() error = %v", err)
+	}
+
+	if handler.profileQuery != nil {
+		t.Fatal("typed-nil profile query service must be stored as unavailable")
 	}
 }
