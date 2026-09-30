@@ -33,6 +33,7 @@ import (
 	esdeletebyquery "github.com/elastic/go-elasticsearch/v8/typedapi/core/deletebyquery"
 	esget "github.com/elastic/go-elasticsearch/v8/typedapi/core/get"
 	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/storage/driver"
@@ -374,7 +375,12 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 		return nil, err
 	}
 
-	req := esapi.SearchRequest{Index: []string{s.index}, Body: bytes.NewReader(body)}
+	typedKeys := true
+	req := esapi.SearchRequest{
+		Index:     []string{s.index},
+		Body:      bytes.NewReader(body),
+		TypedKeys: &typedKeys,
+	}
 	res, err := req.Do(ctx, s.transport)
 	if err != nil {
 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
@@ -388,21 +394,75 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 		return nil, responseError("terms aggregation", s.index, res)
 	}
 
-	var payload valuesResponse
+	var payload essearch.Response
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: decode: %w", s.index, field, err)
 	}
+	// HTTP success can still carry incomplete buckets after a timeout or shard failure.
 	if payload.TimedOut {
 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s timed out", s.index, field)
 	}
-	if payload.Shards.Failed > 0 {
-		return nil, fmt.Errorf("elasticsearch backend terms %s/%s failed on %d shards", s.index, field, payload.Shards.Failed)
+	if payload.Shards_.Failed > 0 {
+		return nil, fmt.Errorf("elasticsearch backend terms %s/%s failed on %d shards", s.index, field, payload.Shards_.Failed)
 	}
-	result := make([]string, 0, len(payload.Aggregations.Terms.Buckets))
-	for _, bucket := range payload.Aggregations.Terms.Buckets {
-		result = append(result, driver.StringValue(bucket.Key))
+
+	result, err := termsValues(payload.Aggregations["terms"])
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
 	}
 	return result, nil
+}
+
+func termsValues(aggregation types.Aggregate) ([]string, error) {
+	var buckets any
+	switch aggregation := aggregation.(type) {
+	case *types.StringTermsAggregate:
+		buckets = aggregation.Buckets
+	case *types.LongTermsAggregate:
+		buckets = aggregation.Buckets
+	case *types.DoubleTermsAggregate:
+		buckets = aggregation.Buckets
+	case *types.UnmappedTermsAggregate:
+		buckets = aggregation.Buckets
+	case map[string]any:
+		// The SDK leaves OpenSearch-only types, such as ulterms, as generic JSON.
+		buckets = aggregation["buckets"]
+	default:
+		return nil, fmt.Errorf("unexpected terms aggregation type %T", aggregation)
+	}
+
+	switch buckets := buckets.(type) {
+	case []types.StringTermsBucket:
+		result := make([]string, len(buckets))
+		for i := range buckets {
+			result[i] = driver.StringValue(buckets[i].Key)
+		}
+		return result, nil
+	case []types.LongTermsBucket:
+		result := make([]string, len(buckets))
+		for i := range buckets {
+			result[i] = driver.StringValue(buckets[i].Key)
+		}
+		return result, nil
+	case []types.DoubleTermsBucket:
+		result := make([]string, len(buckets))
+		for i := range buckets {
+			result[i] = driver.StringValue(buckets[i].Key)
+		}
+		return result, nil
+	case []any:
+		result := make([]string, len(buckets))
+		for i, value := range buckets {
+			bucket, ok := value.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("unexpected terms bucket %d type %T", i, value)
+			}
+			result[i] = driver.StringValue(bucket["key"])
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("unexpected terms buckets type %T", buckets)
+	}
 }
 
 func responseError(action, target string, res *esapi.Response) error {
