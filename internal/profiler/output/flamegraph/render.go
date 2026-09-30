@@ -161,7 +161,7 @@ func (r *renderer) drawFrame(f frame, ew *errWriter) {
 	// prevent a crafted symbol from terminating that string.
 	attributeTitle := html.EscapeString(title)
 
-	ew.printf(`<g class="func_g" data-title="%s" onmouseover="s(this.getAttribute('data-title'))" onmouseout="c()" onclick="zoom(this)">`+"\n", attributeTitle)
+	ew.printf(`<g class="func_g" data-name="%s" data-title="%s" onmouseover="s(this.getAttribute('data-title'))" onmouseout="c()" onclick="zoom(this)">`+"\n", html.EscapeString(f.Name), attributeTitle)
 	ew.printf("  <title>%s</title>\n", html.EscapeString(title))
 	ew.printf(`  <rect x="%.1f" y="%d" width="%.1f" height="%d" fill="%s" rx="2" ry="2"/>`+"\n",
 		x, y, w, h, color)
