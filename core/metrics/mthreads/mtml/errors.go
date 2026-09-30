@@ -53,6 +53,13 @@ func hasRecoverableCode(err error) bool {
 	if err == nil {
 		return false
 	}
+	if e, ok := err.(*Error); ok {
+		switch e.code {
+		case ErrorDriverNotLoaded, ErrorDriverFailure,
+			ErrorResourceIsBusy, ErrorTimeout:
+			return true
+		}
+	}
 	if joiner, ok := err.(interface{ Unwrap() []error }); ok {
 		for _, e := range joiner.Unwrap() {
 			if hasRecoverableCode(e) {
@@ -61,13 +68,8 @@ func hasRecoverableCode(err error) bool {
 		}
 		return false
 	}
-	var e *Error
-	if errors.As(err, &e) {
-		switch e.code {
-		case ErrorDriverNotLoaded, ErrorDriverFailure,
-			ErrorResourceIsBusy, ErrorTimeout:
-			return true
-		}
+	if wrapper, ok := err.(interface{ Unwrap() error }); ok {
+		return hasRecoverableCode(wrapper.Unwrap())
 	}
 	return false
 }
