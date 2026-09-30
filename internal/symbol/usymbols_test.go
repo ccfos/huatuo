@@ -87,7 +87,7 @@ func setupMainElfResolverFixture(t *testing.T) (*UsymResolver, uint32, string, u
 
 	executablePath := filepath.Join(rootTarget, "usr", "bin", "huatuo-dev")
 	copyCurrentExecutable(t, executablePath)
-	mustSymlink(t, "/usr/bin/huatuo-dev", filepath.Join(procDir, "exe"))
+	mustSymlink(t, executablePath, filepath.Join(procDir, "exe"))
 
 	functionName, functionAddr := firstFunctionSymbol(t, executablePath)
 	return NewUsymResolver(), processID, functionName, functionAddr
@@ -108,7 +108,7 @@ func setupLibraryResolverFixture(t *testing.T) (*UsymResolver, uint32, string, u
 
 	executablePath := filepath.Join(rootTarget, "usr", "bin", "huatuo-dev")
 	copyCurrentExecutable(t, executablePath)
-	mustSymlink(t, "/usr/bin/huatuo-dev", filepath.Join(procDir, "exe"))
+	mustSymlink(t, executablePath, filepath.Join(procDir, "exe"))
 
 	libraryPath := filepath.Join(rootTarget, "usr", "lib", "libhuatuo.so")
 	copyCurrentExecutable(t, libraryPath)
@@ -167,10 +167,10 @@ func TestUsymResolverExePath(t *testing.T) {
 				tmpRoot := setupTempProcRoot(t)
 				processID := uint32(1001)
 				procDir := filepath.Join(tmpRoot, "proc", strconv.Itoa(int(processID)))
-				procDirRoot := filepath.Join(procDir, "root")
+
 				mustMkdirAll(t, procDir)
 				mustSymlink(t, "/usr/bin/huatuo-dev", filepath.Join(procDir, "exe"))
-				return NewUsymResolver(), processID, filepath.Join(procDirRoot, "/usr/bin/huatuo-dev")
+				return NewUsymResolver(), processID, filepath.Join(procDir, "exe")
 			},
 			wantErr: false,
 		},
@@ -245,7 +245,7 @@ func TestUsymResolverLoadElfCaches(t *testing.T) {
 			// syscall.Stat returns an identical (dev, inode) for both pids.
 			mustSymlink(t, backingBin, filepath.Join(rootTarget, "usr", "bin", "huatuo-dev"))
 			mustSymlink(t, rootTarget, filepath.Join(procDir, "root"))
-			mustSymlink(t, "/usr/bin/huatuo-dev", filepath.Join(procDir, "exe"))
+			mustSymlink(t, backingBin, filepath.Join(procDir, "exe"))
 		}
 
 		resolver := NewUsymResolver()
@@ -412,7 +412,7 @@ func TestUsymStackStrsLibraryFallback(t *testing.T) {
 
 		executablePath := filepath.Join(rootTarget, "usr", "bin", "huatuo-dev")
 		copyCurrentExecutable(t, executablePath)
-		mustSymlink(t, "/usr/bin/huatuo-dev", filepath.Join(procDir, "exe"))
+		mustSymlink(t, executablePath, filepath.Join(procDir, "exe"))
 
 		libraryPath := filepath.Join(rootTarget, "usr", "lib", "libhuatuo-pie.so")
 		copyCurrentExecutable(t, libraryPath)

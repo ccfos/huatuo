@@ -17,8 +17,10 @@ package symbol
 import (
 	"debug/elf"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/procfs"
@@ -125,6 +127,13 @@ func (r *UsymResolver) resolveAddr(pid uint32, addr uint64) string {
 
 	rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
 	libPath := filepath.Join(rootDir, m.Pathname)
+	// PIE executable frames use the mapped-image path, just like libraries.
+	if strings.HasSuffix(m.Pathname, " (deleted)") {
+		exeLink := procfs.Path(fmt.Sprintf("%d/exe", pid))
+		if executable, err := os.Readlink(exeLink); err == nil && executable == m.Pathname {
+			libPath = exeLink
+		}
+	}
 
 	libCache, err := r.loadLibCache(pid, libPath)
 	if err != nil {
@@ -242,16 +251,11 @@ func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*libCache, erro
 }
 
 func (r *UsymResolver) exePath(pid uint32) (string, error) {
-	proc, err := procfs.NewProc(int(pid))
-	if err != nil {
+	if _, err := procfs.NewProc(int(pid)); err != nil {
 		return "", fmt.Errorf("procfs.NewProc %d: %w", pid, err)
 	}
-	bin, err := proc.Executable()
-	if err != nil {
-		return "", fmt.Errorf("proc.Executable %d: %w", pid, err)
-	}
-	rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
-	return filepath.Join(rootDir, bin), nil
+	// The proc link retains the running ELF after its pathname is replaced.
+	return procfs.Path(fmt.Sprintf("%d/exe", pid)), nil
 }
 
 func (r *UsymResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
@@ -296,6 +300,16 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 		return "", err
 	}
 	if !inContainer {
+		if hostPath == procfs.Path(fmt.Sprintf("%d/exe", pid)) {
+			proc, err := procfs.NewProc(int(pid))
+			if err != nil {
+				return "", err
+			}
+			hostPath, err = proc.Executable()
+			if err != nil {
+				return "", err
+			}
+		}
 		return matchXfsMount(hostPath, mounts)
 	}
 
