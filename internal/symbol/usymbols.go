@@ -20,9 +20,10 @@ import (
 	"path/filepath"
 	"slices"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/procfs"
-	"github.com/ccfos/huatuo/internal/utils/fileutil"
 )
 
 type elfCache struct {
@@ -35,6 +36,7 @@ type libCache struct {
 }
 
 type cacheKey struct {
+	device   uint64 //nolint:unused // part of file identity in map key equality
 	inode    uint64 //nolint:unused // used implicitly via map key equality; never accessed by name
 	mountKey string
 }
@@ -42,9 +44,9 @@ type cacheKey struct {
 // UsymResolver resolves user-space stack addresses to symbol names across pids.
 // It is not safe for concurrent use.
 type UsymResolver struct {
-	exeCache  map[cacheKey]*elfCache // inode+xfs → elfcache
+	exeCache  map[cacheKey]*elfCache // device+inode+xfs → elfcache
 	exeKeys   map[uint32]cacheKey    // pid → cachekey
-	libcaches map[cacheKey]*libCache // inode+xfs → libcache
+	libcaches map[cacheKey]*libCache // device+inode+xfs → libcache
 	libKeys   map[string]cacheKey    // libpath → cachekey
 	procmaps  map[uint32]sections
 	names     map[string]string // mangled name → display name
@@ -255,8 +257,8 @@ func (r *UsymResolver) exePath(pid uint32) (string, error) {
 }
 
 func (r *UsymResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
-	inode, err := fileutil.StatInode(path)
-	if err != nil {
+	var identity unix.Stat_t
+	if err := unix.Stat(path, &identity); err != nil {
 		return cacheKey{}, fmt.Errorf("stat %q: %w", path, err)
 	}
 
@@ -265,12 +267,12 @@ func (r *UsymResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
 		return cacheKey{}, err
 	}
 
-	return cacheKey{inode: inode, mountKey: mountKey}, nil
+	return cacheKey{device: identity.Dev, inode: identity.Ino, mountKey: mountKey}, nil
 }
 
 func (r *UsymResolver) libCacheKey(pid uint32, libPath string) (cacheKey, error) {
-	inode, err := fileutil.StatInode(libPath)
-	if err != nil {
+	var identity unix.Stat_t
+	if err := unix.Stat(libPath, &identity); err != nil {
 		return cacheKey{}, fmt.Errorf("stat %q: %w", libPath, err)
 	}
 
@@ -279,7 +281,7 @@ func (r *UsymResolver) libCacheKey(pid uint32, libPath string) (cacheKey, error)
 		return cacheKey{}, err
 	}
 
-	return cacheKey{inode: inode, mountKey: mountKey}, nil
+	return cacheKey{device: identity.Dev, inode: identity.Ino, mountKey: mountKey}, nil
 }
 
 func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, error) {
