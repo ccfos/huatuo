@@ -355,6 +355,11 @@ func TestNewServerRateLimit(t *testing.T) {
 			expectedSecondStatus: http.StatusNoContent,
 		},
 		{
+			name:                 "zero config disables rate limiting",
+			rateLimit:            &RateLimitConfig{},
+			expectedSecondStatus: http.StatusNoContent,
+		},
+		{
 			name: "enabled when configured",
 			rateLimit: &RateLimitConfig{
 				RequestsPerSecond: 1,
