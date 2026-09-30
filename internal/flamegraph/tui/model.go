@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ccfos/huatuo/internal/flamegraph"
 )
@@ -244,17 +245,21 @@ func (m Model) View() string { //nolint:gocritic // tea.Model interface requires
 }
 
 func (m *Model) renderRow(cursor, match string, node *Node, rootValue int64) string {
-	depth := nodeDepthFrom(node, m.focus)
-	indent := strings.Repeat("  ", depth)
-	barWidth := m.barWidth(node.Value, rootValue)
-	percent := percent(node.Value, rootValue)
-	labelWidth := m.safeWidth() - len(cursor) - len(match) - len(indent) - barWidth - 16
-	if labelWidth < 12 {
-		labelWidth = 12
+	markers := cursor + match
+	suffix := fmt.Sprintf(" %6.2f%%", percent(node.Value, rootValue))
+	available := m.safeWidth() - len(markers) - len(suffix) - 1
+	if available <= 0 {
+		return ansi.Truncate(markers+suffix, m.safeWidth(), "")
 	}
+	// Reserve the percentage and label before allowing deep indentation.
+	barWidth := min(m.barWidth(node.Value, rootValue), max(0, available-12))
+	indentWidth := min(2*nodeDepthFrom(node, m.focus), max(0, available-barWidth-12))
+	indent := strings.Repeat(" ", indentWidth/2*2)
+	labelWidth := available - barWidth - len(indent)
 	label := truncate(node.Label, labelWidth)
+	padding := strings.Repeat(" ", labelWidth-ansi.StringWidth(label))
 	bar := strings.Repeat("#", barWidth)
-	return fmt.Sprintf("%s%s%s%s %-*s %6.2f%%", cursor, match, indent, bar, labelWidth, label, percent)
+	return markers + indent + bar + " " + label + padding + suffix
 }
 
 func renderDetails(node *Node, focusValue int64) string {
@@ -394,8 +399,8 @@ func (m *Model) viewportHeight() int {
 }
 
 func (m *Model) safeWidth() int {
-	if m.width < 40 {
-		return 40
+	if m.width <= 0 {
+		return defaultWidth
 	}
 	return m.width
 }
@@ -429,14 +434,10 @@ func truncate(value string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(value)
-	if len(runes) <= width {
-		return value
-	}
 	if width <= 3 {
-		return string(runes[:width])
+		return ansi.Truncate(value, width, "")
 	}
-	return string(runes[:width-3]) + "..."
+	return ansi.Truncate(value, width, "...")
 }
 
 func nodeDepthFrom(node, root *Node) int {
