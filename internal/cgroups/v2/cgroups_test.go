@@ -15,6 +15,7 @@
 package v2
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -342,6 +343,89 @@ func TestCpuQuotaAndPeriodEffectiveCPUCount(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMemoryUsage(t *testing.T) {
+	root := t.TempDir()
+	oldRoot := paths.RootfsDefaultPath
+	paths.RootfsDefaultPath = root
+	t.Cleanup(func() { paths.RootfsDefaultPath = oldRoot })
+
+	tests := []struct {
+		name         string
+		current      *string
+		limit        *string
+		wantUsage    uint64
+		wantLimit    uint64
+		wantError    bool
+	}{
+		{
+			name:      "decimal limit",
+			current:   stringPtr("4096\n"),
+			limit:     stringPtr("8192\n"),
+			wantUsage: 4096,
+			wantLimit: 8192,
+		},
+		{
+			name:      "unlimited",
+			current:   stringPtr("4096\n"),
+			limit:     stringPtr("max\n"),
+			wantUsage: 4096,
+			wantLimit: math.MaxUint64,
+		},
+		{
+			name:      "malformed limit",
+			current:   stringPtr("4096\n"),
+			limit:     stringPtr("invalid\n"),
+			wantError: true,
+		},
+		{
+			name:      "missing current",
+			limit:     stringPtr("8192\n"),
+			wantError: true,
+		},
+		{
+			name:      "missing limit",
+			current:   stringPtr("4096\n"),
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join("memory", tt.name)
+			if tt.current != nil {
+				writeCgroupFile(t, paths.Path(path, "memory.current"), *tt.current)
+			}
+			if tt.limit != nil {
+				writeCgroupFile(t, paths.Path(path, "memory.max"), *tt.limit)
+			}
+
+			usage, err := (&CgroupV2{}).MemoryUsage(path)
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("MemoryUsage() error = nil, want non-nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("MemoryUsage() error = %v", err)
+			}
+			if usage.Usage != tt.wantUsage || usage.MaxLimited != tt.wantLimit {
+				t.Errorf(
+					"MemoryUsage() = {Usage: %d, MaxLimited: %d}, want {Usage: %d, MaxLimited: %d}",
+					usage.Usage,
+					usage.MaxLimited,
+					tt.wantUsage,
+					tt.wantLimit,
+				)
+			}
+		})
+	}
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
 
 func writeCgroupFile(t *testing.T, path, content string) {
