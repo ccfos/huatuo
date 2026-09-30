@@ -50,10 +50,10 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 		dwbps := record.BlockWriteBytes / cfg.durationSecond
 		drbps := record.BlockReadBytes / cfg.durationSecond
 
-		read += rbps
-		write += wbps
-		dread += drbps
-		dwrite += dwbps
+		read += record.FsReadBytes
+		write += record.FsWriteBytes
+		dread += record.BlockReadBytes
+		dwrite += record.BlockWriteBytes
 
 		// First (highest-IO) record's comm is the fallback when
 		// /proc/<pid>/comm can't be read.
@@ -100,10 +100,10 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 	out := types.ProcessFileIOStats{
 		PID:               g.PID,
 		Comm:              cmdline,
-		TotalFsReadBps:    read,
-		TotalFsWriteBps:   write,
-		TotalDiskReadBps:  dread,
-		TotalDiskWriteBps: dwrite,
+		TotalFsReadBps:    read / cfg.durationSecond,
+		TotalFsWriteBps:   write / cfg.durationSecond,
+		TotalDiskReadBps:  dread / cfg.durationSecond,
+		TotalDiskWriteBps: dwrite / cfg.durationSecond,
 		TotalFiles:        fileStats,
 		TotalFileCount:    uint64(len(g.Files)),
 	}
