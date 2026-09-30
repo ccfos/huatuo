@@ -171,8 +171,10 @@ blkcg_latency_account(struct bio *bio, int q2c_index, int d2c_index)
 		entry->minor = disk_dev[1];
 	}
 
-	__sync_fetch_and_add(&entry->q2c_zone[q2c_index], 1);
-	__sync_fetch_and_add(&entry->d2c_zone[d2c_index], 1);
+	if (q2c_index >= 0 && q2c_index < LATENCY_ZONE_MAX)
+		__sync_fetch_and_add(&entry->q2c_zone[q2c_index], 1);
+	if (d2c_index >= 0 && d2c_index < LATENCY_ZONE_MAX)
+		__sync_fetch_and_add(&entry->d2c_zone[d2c_index], 1);
 }
 
 static __always_inline void
@@ -182,26 +184,32 @@ blkdisk_latency_account(struct bio *bio, int q2c_index, int d2c_index)
 	struct disk_entry *disk_entry;
 
 	disk_entry = bpf_map_lookup_elem(&blkdisk_map, &disk);
-	if (disk_entry) {
-		__sync_fetch_and_add(&disk_entry->q2c_zone[q2c_index], 1);
-		__sync_fetch_and_add(&disk_entry->d2c_zone[d2c_index], 1);
-		return;
+	if (!disk_entry) {
+		/* gendisk.major, gendisk.first_minor */
+		u32 disk_dev[2];
+
+		bio_major_minor_numbers(bio, disk_dev);
+
+		struct disk_entry new_entry = {
+			.disk	  = (u64)disk,
+			.major	  = disk_dev[0],
+			.minor	  = disk_dev[1],
+			.q2c_zone = {},
+			.d2c_zone = {},
+		};
+
+		/* A concurrent creator may already have counted samples. */
+		bpf_map_update_elem(&blkdisk_map, &disk, &new_entry,
+				    COMPAT_BPF_NOEXIST);
+		disk_entry = bpf_map_lookup_elem(&blkdisk_map, &disk);
+		if (!disk_entry)
+			return;
 	}
 
-	/* gendisk.major, gendisk.first_minor */
-	u32 disk_dev[2];
-
-	bio_major_minor_numbers(bio, disk_dev);
-
-	struct disk_entry new_entry = {
-		.disk	  = (u64)disk,
-		.major	  = disk_dev[0],
-		.minor	  = disk_dev[1],
-		.q2c_zone = {},
-		.d2c_zone = {},
-	};
-
-	bpf_map_update_elem(&blkdisk_map, &disk, &new_entry, COMPAT_BPF_ANY);
+	if (q2c_index >= 0 && q2c_index < LATENCY_ZONE_MAX)
+		__sync_fetch_and_add(&disk_entry->q2c_zone[q2c_index], 1);
+	if (d2c_index >= 0 && d2c_index < LATENCY_ZONE_MAX)
+		__sync_fetch_and_add(&disk_entry->d2c_zone[d2c_index], 1);
 }
 
 SEC("kprobe/__rq_qos_done_bio")
@@ -217,7 +225,8 @@ int kprobe_done_bio(struct pt_regs *ctx)
 	d2c_index = d2c_latency_index(bio, now);
 	q2c_index = q2c_latency_index(bio, now);
 
-	if (q2c_index < 0 || d2c_index < 0)
+	/* Each stage can be slow even when the other has no eligible sample. */
+	if (q2c_index < 0 && d2c_index < 0)
 		return 0;
 
 	blkcg_latency_account(bio, q2c_index, d2c_index);
