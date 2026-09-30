@@ -207,22 +207,27 @@ func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher)
 	if matcher.Type != labels.MatchEqual {
 		return fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, matcher.Name)
 	}
+	var field *string
 	switch matcher.Name {
 	case "id":
-		filter.ID = matcher.Value
+		field = &filter.ID
 	case "region":
-		filter.Region = matcher.Value
+		field = &filter.Region
 	case "hostname":
-		filter.Hostname = matcher.Value
+		field = &filter.Hostname
 	case "container_id":
-		filter.ContainerID = matcher.Value
+		field = &filter.ContainerID
 	case "container_hostname":
-		filter.ContainerHostname = matcher.Value
+		field = &filter.ContainerHostname
 	case "__profile_type__":
-		filter.ProfileType = matcher.Value
+		field = &filter.ProfileType
 	default:
 		return fmt.Errorf("%w: invalid label %q", ErrInvalidQuery, matcher.Name)
 	}
+	if *field != "" && *field != matcher.Value {
+		return fmt.Errorf("%w: conflicting values for label %q", ErrInvalidQuery, matcher.Name)
+	}
+	*field = matcher.Value
 	return nil
 }
 

@@ -15,6 +15,7 @@
 package query
 
 import (
+	"errors"
 	"testing"
 
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
@@ -52,5 +53,28 @@ func TestProfileStringRejectsInvalidIndex(t *testing.T) {
 		if got, ok := profileString(table, index); ok || got != "" {
 			t.Errorf("profileString(%d)=(%q,%t), want empty,false", index, got, ok)
 		}
+	}
+}
+
+func TestApplyProfileMatcherConflictingValues(t *testing.T) {
+	for _, name := range []string{"id", "region", "hostname", "container_id", "container_hostname", "__profile_type__"} {
+		t.Run(name, func(t *testing.T) {
+			filter := &profilingstore.Filter{}
+			first := &labels.Matcher{Name: name, Value: "a", Type: labels.MatchEqual}
+			if err := applyProfileMatcher(filter, first); err != nil {
+				t.Fatal(err)
+			}
+			if err := applyProfileMatcher(filter, first); err != nil {
+				t.Fatalf("identical matcher: %v", err)
+			}
+			before := *filter
+			conflicting := &labels.Matcher{Name: name, Value: "b", Type: labels.MatchEqual}
+			if err := applyProfileMatcher(filter, conflicting); !errors.Is(err, ErrInvalidQuery) {
+				t.Fatalf("conflicting matcher error = %v, want ErrInvalidQuery", err)
+			}
+			if *filter != before {
+				t.Fatal("conflicting matcher changed the filter")
+			}
+		})
 	}
 }
