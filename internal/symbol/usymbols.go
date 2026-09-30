@@ -112,10 +112,10 @@ func (r *UsymResolver) resolveAddr(pid uint32, addr uint64) string {
 		return failFrame("elf-no-sym", "")
 	}
 
-	if err = r.loadProcMaps(pid); err != nil {
+	m, err = r.procMapForAddr(pid, addr)
+	if err != nil {
 		return failFrame("procmap-fail", "")
 	}
-	m = r.procmaps[pid].find(addr)
 	if m == nil {
 		return failFrame("proc-unmapped", "")
 	}
@@ -209,6 +209,22 @@ func (r *UsymResolver) loadProcMaps(pid uint32) error {
 	}
 	r.procmaps[pid] = maps
 	return nil
+}
+
+func (r *UsymResolver) procMapForAddr(pid uint32, addr uint64) (*procfs.ProcMap, error) {
+	if err := r.loadProcMaps(pid); err != nil {
+		return nil, err
+	}
+	if m := r.procmaps[pid].find(addr); m != nil {
+		return m, nil
+	}
+
+	maps, err := parseMaps(pid)
+	if err != nil {
+		return nil, nil
+	}
+	r.procmaps[pid] = maps
+	return maps.find(addr), nil
 }
 
 func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*libCache, error) {
