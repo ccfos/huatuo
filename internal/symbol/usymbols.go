@@ -31,7 +31,21 @@ type elfCache struct {
 }
 
 type libCache struct {
-	syms symbols
+	syms     symbols
+	segments []elf.ProgHeader
+}
+
+// virtualAddress translates the containing mapping's file offset through the
+// ELF load segment. The same library can be mapped at multiple load biases.
+func (c *libCache) virtualAddress(mapping *procfs.ProcMap, addr uint64) (uint64, bool) {
+	offset := addr - uint64(mapping.StartAddr) + uint64(mapping.Offset)
+	for i := range c.segments {
+		segment := &c.segments[i]
+		if offset >= segment.Off && offset-segment.Off < segment.Filesz {
+			return segment.Vaddr + offset - segment.Off, true
+		}
+	}
+	return 0, false
 }
 
 type cacheKey struct {
@@ -130,11 +144,11 @@ func (r *UsymResolver) resolveAddr(pid uint32, addr uint64) string {
 	if err != nil {
 		return failFrame("lib-load-fail", m.Pathname)
 	}
-	baseAddr, ok := r.procmaps[pid].findBaseAddr(m.Pathname)
+	virtualAddr, ok := libCache.virtualAddress(m, addr)
 	if !ok {
-		return failFrame("no-baseaddr", m.Pathname)
+		return failFrame("no-load-segment", m.Pathname)
 	}
-	if sym := libCache.syms.resolve(addr - baseAddr); sym != "" {
+	if sym := libCache.syms.resolve(virtualAddr); sym != "" {
 		return r.displayName(sym)
 	}
 	return failFrame("lib-no-sym", m.Pathname)
@@ -236,6 +250,11 @@ func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*libCache, erro
 	defer f.Close()
 
 	cache = &libCache{syms: elfSymbols(f)}
+	for _, program := range f.Progs {
+		if program.Type == elf.PT_LOAD {
+			cache.segments = append(cache.segments, program.ProgHeader)
+		}
+	}
 	r.libcaches[key] = cache
 	r.libKeys[libPath] = key
 	return cache, nil

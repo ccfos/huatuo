@@ -101,18 +101,6 @@ func (secs sections) sort() {
 	sort.Slice(secs, func(i, j int) bool { return secs[i].StartAddr < secs[j].StartAddr })
 }
 
-// findBaseAddr returns the load base address for the named library.
-// It locates the first mapping (lowest StartAddr) and subtracts its file
-// offset so that ELF virtual addresses can be compared directly.
-func (secs sections) findBaseAddr(pathname string) (uint64, bool) {
-	for _, s := range secs {
-		if s.Pathname == pathname {
-			return uint64(s.StartAddr) - uint64(s.Offset), true
-		}
-	}
-	return 0, false
-}
-
 // find returns the section containing addr from a start-sorted slice, or nil.
 func (secs sections) find(addr uint64) *procfs.ProcMap {
 	idx := searchFloorIndex(len(secs), func(i int) bool { return uint64(secs[i].StartAddr) > addr })
