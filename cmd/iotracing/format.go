@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,8 +33,9 @@ type writer interface {
 type textWriter struct{ w io.Writer }
 
 func (s *textWriter) Write(snapshot *types.IOTracingSnapshot) error {
-	printIOTracingSnapshot(s.w, snapshot)
-	return nil
+	w := bufio.NewWriter(s.w)
+	printIOTracingSnapshot(w, snapshot)
+	return w.Flush()
 }
 
 type jsonWriter struct{ w io.Writer }
