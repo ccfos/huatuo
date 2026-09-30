@@ -110,7 +110,7 @@ func (c *memOthersCollector) Update() ([]*metric.Data, error) {
 		for _, spec := range didiMemcgMetricSpecs {
 			value, err := parseValueWithKey(container.CgroupPath, spec.path, spec.key)
 			if err != nil {
-				// FIXME: os maynot support this metric
+				// FIXME: os may not support this metric
 				continue
 			}
 
