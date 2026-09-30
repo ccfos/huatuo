@@ -455,7 +455,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_stat_container_inner_wait_rate{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
+              "expr": "huatuo_bamai_cpu_stat_container_wait_sum_percent{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
               "interval": "",
               "legendFormat": "{{host}}|{{container_host}}：{{container_type}}",
               "refId": "A"
@@ -557,7 +557,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_stat_container_exter_wait_rate{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
+              "expr": "huatuo_bamai_cpu_stat_container_wait_sum_percent{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
               "interval": "",
               "legendFormat": "{{host}}|{{container_host}}：{{container_type}}",
               "refId": "A"
@@ -659,7 +659,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_stat_container_throttle_wait_rate{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
+              "expr": "huatuo_bamai_cpu_stat_container_nr_throttled{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
               "interval": "",
               "legendFormat": "{{host}}|{{container_host}}：{{container_type}}",
               "refId": "A"
