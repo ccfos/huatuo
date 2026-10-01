@@ -146,11 +146,15 @@ func (s *Storage) Save(
 	if options.Mode != driver.SaveModeUpsert || len(options.Conditions) != 0 {
 		return driver.ErrInvalidQuery
 	}
+	body, err := encodeDocument(rec)
+	if err != nil {
+		return fmt.Errorf("elasticsearch backend save %s: %w", s.index, err)
+	}
 	item := esutil.BulkIndexerItem{
 		Index:      s.index,
 		Action:     "index",
 		DocumentID: rec.ID,
-		Body:       bytes.NewReader(rec.Data),
+		Body:       bytes.NewReader(body),
 		OnSuccess: func(_ context.Context, item esutil.BulkIndexerItem, res esutil.BulkIndexerResponseItem) {
 			// The indexer treats successful items with replica failures as successes.
 			if res.Shards.Failed > 0 {
@@ -183,10 +187,14 @@ func (s *Storage) saveDirect(
 	rec driver.Record,
 	options driver.SaveOptions,
 ) error {
+	body, err := encodeDocument(rec)
+	if err != nil {
+		return fmt.Errorf("elasticsearch backend save %s: %w", s.index, err)
+	}
 	req := esapi.IndexRequest{
 		Index:      s.index,
 		DocumentID: rec.ID,
-		Body:       bytes.NewReader(rec.Data),
+		Body:       bytes.NewReader(body),
 	}
 	if options.Mode == driver.SaveModeCreateOnly {
 		req.OpType = "create"
