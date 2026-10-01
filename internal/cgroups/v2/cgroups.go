@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"math/bits"
 	"strconv"
 
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
@@ -95,9 +96,13 @@ func specToSystemdProperties(spec *specs.LinuxResources) []systemdDbus.Property 
 		spec.CPU.Period != nil && *spec.CPU.Period != 0 {
 		quota := uint64(*spec.CPU.Quota)
 		period := *spec.CPU.Period
-		cpuQuotaPerSecUSec := quota * 1000000 / period
+		cpuQuotaPerSecUSec := cpuQuotaPerSecond(quota, period)
 		if cpuQuotaPerSecUSec%10000 != 0 {
-			cpuQuotaPerSecUSec = ((cpuQuotaPerSecUSec / 10000) + 1) * 10000
+			if cpuQuotaPerSecUSec > math.MaxUint64-9999 {
+				cpuQuotaPerSecUSec = math.MaxUint64
+			} else {
+				cpuQuotaPerSecUSec = ((cpuQuotaPerSecUSec / 10000) + 1) * 10000
+			}
 		}
 		properties = append(properties, systemdDbus.Property{
 			Name:  "CPUQuotaPerSecUSec",
@@ -113,6 +118,15 @@ func specToSystemdProperties(spec *specs.LinuxResources) []systemdDbus.Property 
 	}
 
 	return properties
+}
+
+func cpuQuotaPerSecond(quota, period uint64) uint64 {
+	high, low := bits.Mul64(quota, 1000000)
+	if high >= period {
+		return math.MaxUint64
+	}
+	quotient, _ := bits.Div64(high, low, period)
+	return quotient
 }
 
 func (c *CgroupV2) updateSystemd(properties []systemdDbus.Property) error {

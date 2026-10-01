@@ -15,6 +15,7 @@
 package v2
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -112,6 +113,16 @@ func TestSpecToSystemdProperties(t *testing.T) {
 				},
 			},
 			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": 130000},
+		},
+		{
+			name: "cpu-large-quota-does-not-wrap",
+			spec: &specs.LinuxResources{
+				CPU: &specs.LinuxCPU{
+					Quota:  i64ptr(math.MaxInt64),
+					Period: u64ptr(1000000),
+				},
+			},
+			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": 9223372036854780000},
 		},
 		{
 			// CPU section present but Quota <= 0 must be ignored: systemd
