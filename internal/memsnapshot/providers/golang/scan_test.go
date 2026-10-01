@@ -60,7 +60,7 @@ func TestScanHeapProfileTopKTruncation(t *testing.T) {
 			if result.status != memsnapshot.StatusComplete || len(result.allocations) != min(limit, 3) || result.hasOmittedAllocations != (limit < 3) {
 				t.Fatalf("scan limit=%d: %+v", limit, result)
 			}
-			want := []int64{100, 90, 90}
+			want := []uint64{100, 90, 90}
 			for i, entry := range result.allocations {
 				if entry.inuseBytes != want[i] {
 					t.Fatalf("scan limit=%d: %+v; want weights %v", limit, result.allocations, want[:min(limit, 3)])
@@ -183,11 +183,11 @@ func TestScanHeapProfileCycles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var objects int64
+			var objects uint64
 			for _, entry := range result.allocations {
 				objects += entry.inuseObjects
 			}
-			if objects != int64(count) || !strings.Contains(result.reason, "cycle") || result.status != memsnapshot.StatusPartial {
+			if objects != uint64(count) || !strings.Contains(result.reason, "cycle") || result.status != memsnapshot.StatusPartial {
 				t.Fatalf("objects=%d reason=%q", objects, result.reason)
 			}
 		})
