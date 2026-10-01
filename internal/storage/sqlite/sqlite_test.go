@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -489,5 +490,36 @@ func TestSQLiteTimestampIndexFormat(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSQLiteNestedJSONField(t *testing.T) {
+	backend := newSQLiteBackendForTest(t)
+	if backend == nil {
+		t.Fatal("SQLite backend unavailable")
+	}
+	if err := backend.Init(t.Context(), "profiles", []driver.Index{
+		{Field: "profile_data.profile_type"},
+	}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	record := driver.Record{
+		ID:   "profile-1",
+		Data: []byte(`{}`),
+		Fields: map[string]any{
+			"profile_data.profile_type": "cpu:samples:count:cpu:nanoseconds",
+		},
+	}
+	if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	values, err := backend.Values(t.Context(), "profile_data.profile_type", driver.Query{}, 10)
+	if err != nil {
+		t.Fatalf("Values() error = %v", err)
+	}
+	if !slices.Equal(values, []string{"cpu:samples:count:cpu:nanoseconds"}) {
+		t.Fatalf("Values() = %v, want the nested profile type", values)
 	}
 }
