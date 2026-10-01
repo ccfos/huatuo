@@ -145,11 +145,15 @@ func (s *Storage) Save(
 	if options.Mode != driver.SaveModeUpsert || len(options.Conditions) != 0 {
 		return driver.ErrInvalidQuery
 	}
+	body, err := encodeDocument(rec)
+	if err != nil {
+		return fmt.Errorf("elasticsearch backend save %s: %w", s.index, err)
+	}
 	item := esutil.BulkIndexerItem{
 		Index:      s.index,
 		Action:     "index",
 		DocumentID: rec.ID,
-		Body:       bytes.NewReader(rec.Data),
+		Body:       bytes.NewReader(body),
 		OnFailure: func(_ context.Context, _ esutil.BulkIndexerItem, res esutil.BulkIndexerResponseItem, err error) {
 			// Reached only after client-level retries are exhausted, or the
 			// failure is per-item (parsing, mapping, version conflict). The
@@ -174,10 +178,14 @@ func (s *Storage) saveDirect(
 	rec driver.Record,
 	options driver.SaveOptions,
 ) error {
+	body, err := encodeDocument(rec)
+	if err != nil {
+		return fmt.Errorf("elasticsearch backend save %s: %w", s.index, err)
+	}
 	req := esapi.IndexRequest{
 		Index:      s.index,
 		DocumentID: rec.ID,
-		Body:       bytes.NewReader(rec.Data),
+		Body:       bytes.NewReader(body),
 	}
 	if options.Mode == driver.SaveModeCreateOnly {
 		req.OpType = "create"
