@@ -301,20 +301,25 @@ func (c JobControllerConfig) Validate() error {
 	values := []struct {
 		name  string
 		value int
+		unit  time.Duration
 	}{
-		{name: "status poll interval seconds", value: c.StatusPollIntervalSeconds},
-		{name: "pending timeout seconds", value: c.PendingTimeoutSeconds},
-		{name: "completion grace period seconds", value: c.CompletionGracePeriodSeconds},
-		{name: "Node unavailable grace period seconds", value: c.NodeUnavailableGracePeriodSeconds},
-		{name: "Job retention period hours", value: c.JobRetentionPeriodHours},
+		{name: "status poll interval seconds", value: c.StatusPollIntervalSeconds, unit: time.Second},
+		{name: "pending timeout seconds", value: c.PendingTimeoutSeconds, unit: time.Second},
+		{name: "completion grace period seconds", value: c.CompletionGracePeriodSeconds, unit: time.Second},
+		{name: "Node unavailable grace period seconds", value: c.NodeUnavailableGracePeriodSeconds, unit: time.Second},
+		{name: "Job retention period hours", value: c.JobRetentionPeriodHours, unit: time.Hour},
 	}
 	for _, item := range values {
 		if item.value <= 0 {
 			return fmt.Errorf("%s must be greater than zero", item.name)
 		}
-	}
-	if int64(c.JobRetentionPeriodHours) > math.MaxInt64/int64(time.Hour) {
-		return errors.New("Job retention period is outside the supported range")
+		// jobs.go converts every field with value * unit, which is a plain
+		// int64 multiply: past MaxInt64/unit the result wraps, and a value that
+		// wraps back into the positive range would be accepted as a tiny
+		// duration instead of being rejected.
+		if int64(item.value) > math.MaxInt64/int64(item.unit) {
+			return fmt.Errorf("%s is outside the supported range", item.name)
+		}
 	}
 	return nil
 }

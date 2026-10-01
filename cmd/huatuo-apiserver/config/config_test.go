@@ -15,10 +15,12 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const requiredConfig = `
@@ -163,6 +165,29 @@ func TestConfigValidation(t *testing.T) {
 				config.Jobs.Controller.JobRetentionPeriodHours = 0
 			},
 			wantErr: "Job retention period hours",
+		},
+		{
+			// 18446744074 * time.Second wraps back into the positive range
+			// (290448384ns), so only an upper bound catches it.
+			name: "controller polling interval wraps positive",
+			mutate: func(config *Config) {
+				config.Jobs.Controller.StatusPollIntervalSeconds = 18446744074
+			},
+			wantErr: "status poll interval seconds is outside the supported range",
+		},
+		{
+			name: "controller pending timeout above the range",
+			mutate: func(config *Config) {
+				config.Jobs.Controller.PendingTimeoutSeconds = int(math.MaxInt64/int64(time.Second) + 1)
+			},
+			wantErr: "pending timeout seconds is outside the supported range",
+		},
+		{
+			name: "controller retention above the range",
+			mutate: func(config *Config) {
+				config.Jobs.Controller.JobRetentionPeriodHours = int(math.MaxInt64/int64(time.Hour) + 1)
+			},
+			wantErr: "Job retention period hours is outside the supported range",
 		},
 		{
 			name: "Agent token missing",
