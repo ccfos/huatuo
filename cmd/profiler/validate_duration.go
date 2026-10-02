@@ -28,7 +28,7 @@ func validateAggregationWindow(duration, interval int) error {
 	}
 	// Both values are converted to time.Duration in the sampling pipeline.
 	// Reject seconds that would wrap the duration and stop profiling immediately.
-	const maxSeconds = int64((1<<63 - 1) / int64(time.Second))
+	const maxSeconds = (1<<63 - 1) / int64(time.Second)
 	if int64(duration) > maxSeconds {
 		return fmt.Errorf("duration must not exceed %d seconds", maxSeconds)
 	}
