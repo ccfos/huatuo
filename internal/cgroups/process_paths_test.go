@@ -24,6 +24,7 @@ import (
 func TestParseProcessPaths(t *testing.T) {
 	tests := []struct {
 		name           string
+		mode           Mode
 		content        string
 		wantPath       string
 		hasError       bool
@@ -31,23 +32,41 @@ func TestParseProcessPaths(t *testing.T) {
 	}{
 		{
 			name:     "cgroup v2",
+			mode:     Unified,
 			content:  "0::/kubepods.slice/pod.slice/cri-containerd-id.scope\n",
 			wantPath: "/kubepods.slice/pod.slice/cri-containerd-id.scope",
 		},
 		{
 			name: "cgroup v1",
+			mode: Legacy,
 			content: "5:memory:/kubepods/container-id\n" +
 				"4:cpu,cpuacct:/kubepods/container-id\n",
 			wantPath:       "/kubepods/container-id",
 			hasControllers: true,
 		},
 		{
+			// A hybrid host reports the v1 controller lines and, after them,
+			// the controller-less cgroup v2 line. The v1 manager that
+			// NewManager() returns for this mode can only read the former.
+			name: "hybrid host",
+			mode: Hybrid,
+			content: "12:pids:/kubepods/container-id\n" +
+				"5:memory:/kubepods/container-id\n" +
+				"4:cpu,cpuacct:/kubepods/container-id\n" +
+				"1:name=systemd:/kubepods/container-id\n" +
+				"0::/system.slice/containerd.service\n",
+			wantPath:       "/kubepods/container-id",
+			hasControllers: true,
+		},
+		{
 			name:     "invalid entry",
+			mode:     Legacy,
 			content:  "invalid\n",
 			hasError: true,
 		},
 		{
 			name:     "empty membership",
+			mode:     Legacy,
 			hasError: true,
 		},
 	}
@@ -67,7 +86,7 @@ func TestParseProcessPaths(t *testing.T) {
 			if got := paths.Controllers != nil; got != tt.hasControllers {
 				t.Fatalf("parseProcessPaths() controllers initialized = %t, want %t", got, tt.hasControllers)
 			}
-			got, err := paths.PathForProcesses()
+			got, err := paths.pathForProcesses(tt.mode)
 			if err != nil {
 				t.Fatalf("PathForProcesses() error = %v", err)
 			}
@@ -82,6 +101,102 @@ func TestParseProcessPathsReturnsScannerError(t *testing.T) {
 	_, err := parseProcessPaths(iotest.ErrReader(errors.New("read failure")))
 	if err == nil {
 		t.Fatal("parseProcessPaths() error = nil, want non-nil")
+	}
+}
+
+// TestPathForProcessesHostModes pins which membership each host mode resolves
+// to. NewManager() reads the path through the v1 manager on legacy and hybrid
+// hosts and through the v2 manager on unified hosts, and the two managers read
+// it from different hierarchies, /sys/fs/cgroup/<controller>/<path>/cgroup.procs
+// against /sys/fs/cgroup/<path>/cgroup.procs.
+func TestPathForProcessesHostModes(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		mode  Mode
+		paths *ProcessPaths
+		want  string
+	}{
+		{
+			// The case that used to return the unified path: a hybrid host
+			// reports both memberships, and the v1 manager it gets cannot read
+			// the unified one.
+			name: "hybrid prefers the controller membership",
+			mode: Hybrid,
+			paths: &ProcessPaths{
+				Unified:     "/system.slice/containerd.service",
+				Controllers: map[string]string{"cpu": "/kubepods/burstable/pod/ctr-id"},
+			},
+			want: "/kubepods/burstable/pod/ctr-id",
+		},
+		{
+			name:  "legacy uses the controller membership",
+			mode:  Legacy,
+			paths: &ProcessPaths{Controllers: map[string]string{"cpu": "/kubepods/container-id"}},
+			want:  "/kubepods/container-id",
+		},
+		{
+			name:  "unified uses the unified membership",
+			mode:  Unified,
+			paths: &ProcessPaths{Unified: "/kubepods.slice/pod.slice/cri-containerd-id.scope"},
+			want:  "/kubepods.slice/pod.slice/cri-containerd-id.scope",
+		},
+		{
+			// Containerd classifies a host by statfs of /sys/fs/cgroup only, so
+			// the mode and the lines a process reports can disagree; keep a
+			// fallback in both directions.
+			name: "unified falls back to a controller membership",
+			mode: Unified,
+			paths: &ProcessPaths{
+				Controllers: map[string]string{"cpu": "/v1-only-membership"},
+			},
+			want: "/v1-only-membership",
+		},
+		{
+			name:  "hybrid falls back to the unified membership",
+			mode:  Hybrid,
+			paths: &ProcessPaths{Unified: "/v2-only-membership"},
+			want:  "/v2-only-membership",
+		},
+		{
+			// cpuacct and pids are fallbacks only: the caller reads the cpu
+			// hierarchy, so they are interchangeable with cpu whenever the
+			// runtime keeps one path across the hierarchies.
+			name: "cpuacct fallback",
+			mode: Hybrid,
+			paths: &ProcessPaths{
+				Unified:     "/unified",
+				Controllers: map[string]string{"cpuacct": "/cpuacct"},
+			},
+			want: "/cpuacct",
+		},
+		{
+			name: "pids fallback",
+			mode: Hybrid,
+			paths: &ProcessPaths{
+				Unified:     "/unified",
+				Controllers: map[string]string{"pids": "/pids"},
+			},
+			want: "/pids",
+		},
+		{
+			name: "empty controller value is skipped",
+			mode: Hybrid,
+			paths: &ProcessPaths{
+				Unified:     "/unified",
+				Controllers: map[string]string{"cpu": "", "pids": "/pids"},
+			},
+			want: "/pids",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.paths.pathForProcesses(tt.mode)
+			if err != nil {
+				t.Fatalf("PathForProcesses() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("PathForProcesses() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
