@@ -91,6 +91,8 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
 - **MemoryLimitMiB**：进程内存上限，默认 `2048` MiB。
 
 配置始终以文档标明的单位保存，仅在应用 cgroup 限制时将内存转换为字节。
+CPU 上限必须能转换为正数且不溢出的微秒配额；非有限值及小于 1 微秒配额的数值会被拒绝。
+内存上限不得超过 `8796093022207` MiB，以免转换为字节时溢出。
 
 ### 5. HTTP 服务与按需 Operation
 
