@@ -63,12 +63,6 @@ const (
 	LabelContainerHostNamespace = "container_hostnamespace"
 )
 
-type metricDescCacheKey struct {
-	name   string
-	help   string
-	labels string
-}
-
 var metricDescCache sync.Map
 
 // ErrNoData indicates the collector found no data to collect, but had no other error.
@@ -293,11 +287,7 @@ func (d *Data) prometheusMetric(collector string) prometheus.Metric {
 	metricName := prometheus.BuildFQName(DefaultNamespace, collector, d.name)
 	// A metric name can be emitted with different optional label keys. Reusing a
 	// descriptor from another label schema mislabels values or panics on count.
-	key := metricDescCacheKey{
-		name:   metricName,
-		help:   d.help,
-		labels: strings.Join(d.labelKey, "\x00"),
-	}
+	key := [3]string{metricName, d.help, strings.Join(d.labelKey, "\x00")}
 	desc, ok := metricDescCache.Load(key)
 	if !ok {
 		desc = prometheus.NewDesc(metricName, d.help, d.labelKey, nil)
