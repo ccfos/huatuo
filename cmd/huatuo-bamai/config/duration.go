@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const maxDurationSeconds = int64((1<<63 - 1) / int64(time.Second))
+const maxDurationSeconds = (1<<63 - 1) / int64(time.Second)
 
 func validatePositiveDurationSeconds(name string, seconds int) error {
 	if seconds <= 0 {

@@ -31,7 +31,7 @@ func TestValidatePositiveDurationSeconds(t *testing.T) {
 		return
 	}
 
-	limit := int64(maxDurationSeconds)
+	limit := maxDurationSeconds
 	if err := validatePositiveDurationSeconds("test interval", int(limit)); err != nil {
 		t.Fatalf("largest representable interval rejected: %v", err)
 	}

@@ -427,7 +427,7 @@ func TestConfigValidateDurationSecondsBounds(t *testing.T) {
 		t.Skip("int cannot represent seconds beyond the time.Duration limit")
 	}
 
-	limit := int64(maxDurationSeconds)
+	limit := maxDurationSeconds
 	tests := []struct {
 		name   string
 		mutate func(*Config, int)
