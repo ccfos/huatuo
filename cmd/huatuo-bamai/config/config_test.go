@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -418,6 +419,41 @@ IssuesList = [["broken", "["]]
 	if err == nil || !strings.Contains(err.Error(),
 		`rule 0 "broken" has invalid regular expression "["`) {
 		t.Fatalf("Load() error = %v, want actionable expression error", err)
+	}
+}
+
+func TestConfigValidateDurationSecondsBounds(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("int cannot represent seconds beyond the time.Duration limit")
+	}
+
+	limit := maxDurationSeconds
+	tests := []struct {
+		name   string
+		mutate func(*Config, int)
+	}{
+		{"event stream keepalive interval", func(c *Config, v int) { c.HTTPServer.EventStreamKeepAliveIntervalSeconds = v }},
+		{"launch timeout", func(c *Config, v int) { c.Operations.LaunchTimeoutSeconds = v }},
+		{"stop grace period", func(c *Config, v int) { c.Operations.StopGracePeriodSeconds = v }},
+		{"finalization timeout", func(c *Config, v int) { c.Operations.FinalizationTimeoutSeconds = v }},
+		{"terminal retention period", func(c *Config, v int) { c.Operations.TerminalRetentionPeriodSeconds = v }},
+		{"aggregation interval", func(c *Config, v int) { c.Profiling.AggregationIntervalSeconds = v }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := loadConfigDefaults(t)
+			tt.mutate(cfg, int(limit))
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("largest representable duration rejected: %v", err)
+			}
+
+			tt.mutate(cfg, int(limit+1))
+			want := tt.name + " must not exceed"
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("overflowing duration error = %v, want %q", err, want)
+			}
+		})
 	}
 }
 

@@ -147,6 +147,8 @@ to bytes only when the cgroup limit is applied.
   and Tracing. New operations are rejected instead of queued when it is full.
 - The four operation time settings independently limit process launch,
   graceful stop, result finalization, and terminal-state retention.
+- The SSE keepalive interval, the four operation time settings, and
+  `Profiling.AggregationIntervalSeconds` each accept 1–9,223,372,036 seconds.
 - **Profiling.ToolDir** is the shared external tool root, passed unchanged as
   profiler `--tool-path`. Java requires `bin/asprof` and
   `lib/libasyncProfiler.so` beneath this root; Python requires

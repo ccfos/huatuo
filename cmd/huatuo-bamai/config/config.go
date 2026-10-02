@@ -211,8 +211,10 @@ func (c HTTPServerConfig) Validate() error {
 	if c.MaxEventStreamClients <= 0 {
 		return errors.New("maximum event stream clients must be greater than zero")
 	}
-	if c.EventStreamKeepAliveIntervalSeconds <= 0 {
-		return errors.New("event stream keepalive interval must be greater than zero seconds")
+	if err := validatePositiveDurationSeconds(
+		"event stream keepalive interval", c.EventStreamKeepAliveIntervalSeconds,
+	); err != nil {
+		return err
 	}
 	if strings.TrimSpace(c.Auth.BearerToken) == "" {
 		return errors.New("auth bearer token is required")
@@ -238,8 +240,8 @@ func (c OperationsConfig) Validate() error {
 		{name: "terminal retention period", value: c.TerminalRetentionPeriodSeconds},
 	}
 	for _, item := range values {
-		if item.value <= 0 {
-			return fmt.Errorf("%s must be greater than zero seconds", item.name)
+		if err := validatePositiveDurationSeconds(item.name, item.value); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -247,8 +249,8 @@ func (c OperationsConfig) Validate() error {
 
 // Validate rejects invalid profiler execution settings.
 func (c ProfilingConfig) Validate() error {
-	if c.AggregationIntervalSeconds <= 0 {
-		return errors.New("aggregation interval must be greater than zero seconds")
+	if err := validatePositiveDurationSeconds("aggregation interval", c.AggregationIntervalSeconds); err != nil {
+		return err
 	}
 	if c.MaxConcurrentProcesses < 0 {
 		return errors.New("maximum concurrent profiler processes must not be negative")
