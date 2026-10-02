@@ -187,7 +187,7 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			wantProbability: true,
 			wantAttach: []bpf.AttachOption{
 				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-				{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+				{ProgramName: programTraceFolioFree, Symbol: symbolFolioRemoveRmapPtes},
 			},
 			wantConstants: map[string]any{
 				"profiler_folio_npages": true,
@@ -402,7 +402,7 @@ func TestNewPhysicalUsageAttachConfig(t *testing.T) {
 			want: physicalUsageAttachConfig{
 				AttachOpts: []bpf.AttachOption{
 					{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-					{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+					{ProgramName: programTraceFolioFree, Symbol: symbolFolioRemoveRmapPtes},
 				},
 				CountFolioPages: true,
 			},
@@ -431,7 +431,7 @@ func TestNewPhysicalUsageAttachConfig(t *testing.T) {
 			want: physicalUsageAttachConfig{
 				AttachOpts: []bpf.AttachOption{
 					{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-					{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+					{ProgramName: programTraceFolioFree, Symbol: symbolFolioRemoveRmapPtes},
 				},
 				CountFolioPages: true,
 			},
