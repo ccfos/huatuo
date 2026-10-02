@@ -17,8 +17,10 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v2"
 )
@@ -43,9 +45,12 @@ const (
 )
 
 const (
-	devMajorMax = 0xfff
-	devMinorMax = 0xfffff
+	devMajorMax            = 0xfff
+	devMinorMax            = 0xfffff
+	maxScheduleThresholdMs = math.MaxUint64 / uint64(time.Millisecond)
 )
+
+var maxDurationSeconds = min(uint64(math.MaxInt64/int64(time.Second)), uint64(int(^uint(0)>>1)))
 
 func appFlags() []cli.Flag {
 	return []cli.Flag{
@@ -128,9 +133,15 @@ func loadConfig(c *cli.Context) (ioConfig, map[string]any, error) {
 	if cfg.durationSecond == 0 {
 		return ioConfig{}, nil, errors.New("--duration must be greater than zero")
 	}
+	if cfg.durationSecond > maxDurationSeconds {
+		return ioConfig{}, nil, fmt.Errorf("--duration exceeds the supported range (%d seconds)", maxDurationSeconds)
+	}
 
 	if cfg.scheduleThreshold == 0 {
 		return ioConfig{}, nil, errors.New("--schedule-threshold must be greater than zero")
+	}
+	if cfg.scheduleThreshold > maxScheduleThresholdMs {
+		return ioConfig{}, nil, fmt.Errorf("--schedule-threshold exceeds the supported range (%d milliseconds)", maxScheduleThresholdMs)
 	}
 
 	filters := map[string]any{
