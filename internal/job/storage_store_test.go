@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
@@ -224,6 +225,53 @@ func TestValidateQuerySortRejectsUnsafeSort(t *testing.T) {
 	err := validateQuerySort(&Query{Sort: "created_at; DROP TABLE jobs"})
 	if !errors.Is(err, ErrInvalidQuery) {
 		t.Fatalf("validateQuerySort() error = %v, want ErrInvalidQuery", err)
+	}
+}
+
+func TestBuildStorageQueryIncludesIDFilter(t *testing.T) {
+	built, err := buildStorageQuery(&Query{ID: "job-1"})
+	if err != nil {
+		t.Fatalf("buildStorageQuery() error = %v", err)
+	}
+	found := false
+	for _, filter := range built.Filters {
+		if filter.Field == "id" && filter.Op == driver.OpEq && filter.Value == "job-1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("buildStorageQuery() filters = %#v, want id eq %q", built.Filters, "job-1")
+	}
+
+	built, err = buildStorageQuery(&Query{})
+	if err != nil {
+		t.Fatalf("buildStorageQuery(empty ID) error = %v", err)
+	}
+	for _, filter := range built.Filters {
+		if filter.Field == "id" {
+			t.Fatalf("buildStorageQuery(empty ID) filters = %#v, want no id filter", built.Filters)
+		}
+	}
+}
+
+func TestStorageStoreListFiltersByID(t *testing.T) {
+	store := openTestStore(t)
+	base := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	first := storedTestJob("job-1", "user-1", "node-1", StatusPending, base)
+	second := storedTestJob("job-2", "user-1", "node-1", StatusPending, base)
+	for _, job := range []*Job{first, second} {
+		if err := store.Create(t.Context(), job); err != nil {
+			t.Fatalf("Create(%q) error = %v", job.ID, err)
+		}
+	}
+
+	listed, err := store.List(t.Context(), &Query{ID: first.ID})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != first.ID {
+		t.Fatalf("List() IDs = %v, want [%s]", jobIDs(listed), first.ID)
 	}
 }
 
