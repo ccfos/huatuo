@@ -45,6 +45,19 @@ func TestConfigValidate(t *testing.T) {
 			wantError: "scheduler tick interval threshold must be greater than zero",
 		},
 		{
+			name: "maximum MCE threshold backoff",
+			configure: func(cfg *Config) {
+				cfg.Ras.MceThrBackoff = maxRasBackoffSeconds
+			},
+		},
+		{
+			name: "overflowing MCE threshold backoff",
+			configure: func(cfg *Config) {
+				cfg.Ras.MceThrBackoff = maxRasBackoffSeconds + 1
+			},
+			wantError: "ras MCE threshold backoff",
+		},
+		{
 			name: "invalid issues list",
 			configure: func(cfg *Config) {
 				cfg.IssuesList = [][]string{{"missing-expression"}}
