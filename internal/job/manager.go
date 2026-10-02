@@ -362,19 +362,37 @@ func (m *Manager) startCleanup() {
 		for {
 			select {
 			case <-ticker.C:
-				endedBefore := m.runtimeDeps.now().Add(-m.config.JobRetentionPeriod)
-				if _, err := m.store.DeleteTerminalBefore(
-					ctx,
-					endedBefore,
-					jobCleanupBatchSize,
-				); err != nil {
-					log.WithError(err).Error("failed to clean up terminal Jobs")
-				}
+				m.cleanupTerminalJobs(ctx)
 			case <-ctx.Done():
 				return
 			}
 		}
 	}(cleanupCtx)
+}
+
+// cleanupTerminalJobs deletes every terminal Job that ended before the retention
+// boundary. One statement removes at most jobCleanupBatchSize rows, so keep
+// deleting until a batch comes back short: a single batch per tick would let the
+// backlog grow without bound, and Jobs older than the retention period stay
+// stored forever, as soon as terminal Jobs are created faster than one batch per
+// tick. Every round removes at least one row from a finite table, so the loop
+// ends by itself; ctx stops it early when the Manager shuts down.
+func (m *Manager) cleanupTerminalJobs(ctx context.Context) {
+	endedBefore := m.runtimeDeps.now().Add(-m.config.JobRetentionPeriod)
+
+	for {
+		deleted, err := m.store.DeleteTerminalBefore(ctx, endedBefore, jobCleanupBatchSize)
+		if err != nil {
+			log.WithError(err).Error("failed to clean up terminal Jobs")
+			return
+		}
+		if deleted < int64(jobCleanupBatchSize) {
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
 }
 
 func (m *Manager) registerLocked(runtime *runtime) {
