@@ -491,8 +491,8 @@ sudo _output/bin/profiler \
 | `--language`, `-l` | None | All | Target language: `c`, `c++`, `go`, `java`, or `python`; required |
 | `--pid`, `-p` | None | All | Target PID; Java and Python accept comma-separated PIDs, while native profiling accepts at most one PID |
 | `--container-id` | None | All | Target container ID; mutually exclusive with `--pid` |
-| `--duration`, `-d` | `10` | All | Total profiling duration in seconds; minimum 1 |
-| `--aggr-interval` | `10` | All | Aggregation interval in seconds; must not exceed the duration |
+| `--duration`, `-d` | `10` | All | Total profiling duration: 1–9,223,372,036 seconds |
+| `--aggr-interval` | `10` | All | Aggregation interval: 1–9,223,372,036 seconds; must not exceed the duration |
 | `--freq`, `-F` | `99` | CPU | Samples collected per second; maximum 1000 for Java |
 | `--output-path` | `.` | Local output | Output directory, not an output file name |
 | `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, or `remote` |

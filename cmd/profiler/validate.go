@@ -351,23 +351,6 @@ func validateMemoryMode(lang profiling.Language, typ profiling.Type, value strin
 	)
 }
 
-func validateAggregationWindow(duration, interval int) error {
-	if duration < 1 {
-		return fmt.Errorf("duration must be at least 1 second")
-	}
-	if interval < 1 {
-		return fmt.Errorf("aggregation interval must be at least 1 second")
-	}
-	if interval > duration {
-		return fmt.Errorf(
-			"aggregation interval (%ds) exceeds duration (%ds)",
-			interval,
-			duration,
-		)
-	}
-	return nil
-}
-
 func parseCPUIDs(s string) ([]int, error) {
 	return parseCPUIDsWithLimit(s, runtime.NumCPU())
 }
