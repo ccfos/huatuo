@@ -16,6 +16,7 @@ package symbol
 
 import (
 	"debug/elf"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
@@ -581,5 +583,65 @@ func TestUsymStackStrsInvalidPid(t *testing.T) {
 	byteFrames := resolver.UsymStackBytes(uint32(99999998), []uint64{0x400100}, 1)
 	if len(byteFrames) != 1 || string(byteFrames[0]) != wantFrame {
 		t.Errorf("UsymStackBytes invalid pid: got %v, want [%s]", byteFrames, wantFrame)
+	}
+}
+
+func TestHostPathForPID(t *testing.T) {
+	const pid = 4242
+	procRoot := procfs.Path(fmt.Sprintf("%d/root", pid))
+
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "path below the process root",
+			path: filepath.Join(procRoot, "/data/bin/app"),
+			want: "/data/bin/app",
+		},
+		{name: "the process root itself", path: procRoot, want: "/"},
+		{name: "path without the proc prefix", path: "/data/bin/app", want: "/data/bin/app"},
+		{
+			name: "sibling of the process root",
+			path: procRoot + "-other/data/bin/app",
+			want: procRoot + "-other/data/bin/app",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hostPathForPID(pid, tt.path); got != tt.want {
+				t.Errorf("hostPathForPID(%d, %q) = %q, want %q", pid, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMountKeyForHostProcess covers the host-process branch of mountKeyForPID:
+// the callers hand it a /proc/<pid>/root prefixed read path, which must still
+// resolve to the xfs mount the file really lives on. Matching that path
+// unchanged against raw mount points can only ever select "/", so an xfs file
+// on any other mount would share one symbol cache with unrelated inodes or
+// fail the lookup outright.
+func TestMountKeyForHostProcess(t *testing.T) {
+	pid := uint32(os.Getpid())
+	inContainer, err := process.IsInContainer(int(pid))
+	if err != nil {
+		t.Fatalf("IsInContainer(%d): %v", pid, err)
+	}
+	if inContainer {
+		t.Skip("the host branch requires a process outside a container cgroup")
+	}
+
+	setTestXfsMounts(t, []string{"/", "/data"})
+	readPath := filepath.Join(procfs.Path(fmt.Sprintf("%d/root", pid)), "/data/bin/app")
+
+	got, err := NewUsymResolver().mountKeyForPID(pid, readPath)
+	if err != nil {
+		t.Fatalf("mountKeyForPID(%q): %v", readPath, err)
+	}
+	if got != "/data" {
+		t.Errorf("mountKeyForPID(%q) = %q, want %q", readPath, got, "/data")
 	}
 }

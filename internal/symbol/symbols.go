@@ -378,14 +378,26 @@ func countXfsMounts() (int, error) {
 	return len(mounts), nil
 }
 
+// matchXfsMount returns the xfs mount a path lives on. The most specific mount
+// wins: /proc/mounts lists the root mount first when it is xfs, and the root
+// mount prefixes every path, so taking the first match would attribute files on
+// every other xfs filesystem to "/".
 func matchXfsMount(path string, xfsMounts []string) (string, error) {
+	matched := ""
 	for _, mount := range xfsMounts {
-		if path == mount || strings.HasPrefix(path, strings.TrimRight(mount, "/")+"/") {
-			return mount, nil
+		if path != mount && !strings.HasPrefix(path, strings.TrimRight(mount, "/")+"/") {
+			continue
+		}
+		if len(mount) > len(matched) {
+			matched = mount
 		}
 	}
 
-	return "", fmt.Errorf("no xfs mount found for path %q", path)
+	if matched == "" {
+		return "", fmt.Errorf("no xfs mount found for path %q", path)
+	}
+
+	return matched, nil
 }
 
 func lowerDirFromMountInfo(pid uint32) (string, error) {
