@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 type failingCPUStatReader struct {
@@ -36,7 +36,7 @@ func (r failingCPUStatReader) Read([]byte) (int, error) {
 }
 
 func TestNewCPUSysBindsConfig(t *testing.T) {
-	originalConfig := cfg
+	originalConfig := configSnapshot()
 	t.Cleanup(func() {
 		Set(originalConfig)
 	})

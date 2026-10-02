@@ -21,18 +21,17 @@ import (
 	"io"
 	"strings"
 	"syscall"
-	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/packet"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/timeutil"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/netutil"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/internal/utils/netutil"
 
 	"golang.org/x/sys/unix"
 )
@@ -44,10 +43,10 @@ type netRecvLatTracing struct{}
 // NetTracingData is the full data structure.
 type NetTracingData struct {
 	Comm               string  `json:"comm"`
-	Pid                uint64  `json:"pid"`
-	LatStage           string  `json:"lat_stage"`
-	LatMs              float64 `json:"lat_ms"`
-	LatThresholds      uint64  `json:"lat_thresholds"`
+	PID                uint64  `json:"pid"`
+	LatencyStage       string  `json:"latency_stage"`
+	LatencyMS          float64 `json:"latency_ms"`
+	LatencyThresholdMS uint64  `json:"latency_threshold_ms"`
 	NetdevName         string  `json:"netdev_name"`
 	NetNamespaceInum   uint32  `json:"net_namespace_inum"`
 	NetNamespaceCookie uint64  `json:"net_namespace_cookie"`
@@ -58,10 +57,10 @@ type NetTracingData struct {
 	TCPDport           uint16  `json:"tcp_dport"`
 	TCPSeq             uint32  `json:"tcp_seq"`
 	TCPAckSeq          uint32  `json:"tcp_ack_seq"`
-	PktLen             uint64  `json:"pkt_len"`
+	PacketLenBytes     uint64  `json:"packet_len_bytes"`
 }
 
-var latStageNames = []string{
+var latencyStageNames = []string{
 	"RX_STAGE_NETIF",
 	"RX_STAGE_TCPV4",
 	"RX_STAGE_USERCOPY",
@@ -80,6 +79,7 @@ func newNetRcvLat() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netRecvLatTracing) Start(ctx context.Context) error {
+	cfg := configSnapshot()
 	rxlatThreshNetif := cfg.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
 	rxlatThreshTcpv4 := cfg.NetRxLatency.Driver2TCP          // ms, before RPS to TCP recv(tcp_v4_rcv)
 	rxlatThreshUsercopy := cfg.NetRxLatency.Driver2Userspace // ms, before RPS to user recv(skb_copy_datagram_iovec)
@@ -90,7 +90,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 
 	log.Debugf("net_rx_latency start, latency threshold [%v %v %v]ms", rxlatThreshNetif, rxlatThreshTcpv4, rxlatThreshUsercopy)
 
-	latThresholds := []uint64{rxlatThreshNetif, rxlatThreshTcpv4, rxlatThreshUsercopy}
+	latencyThresholds := []uint64{rxlatThreshNetif, rxlatThreshTcpv4, rxlatThreshUsercopy}
 
 	monoWallOffset, err := timeutil.MonoToRealOffset()
 	if err != nil {
@@ -123,7 +123,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "net_recv_lat_event_map", 8192)
+	reader, err := b.AttachAndEventPipe(childCtx, "net_recv_lat_event_map", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	b.DetachOnContextDone(childCtx, cancel)
 
 	// save host netns
-	hostNetNSInum, err := netutil.NetNSInumByPid(1)
+	hostNetNamespaceInum, err := netutil.NetNamespaceInumByPID(1)
 	if err != nil {
 		return fmt.Errorf("get host netns inum: %w", err)
 	}
@@ -151,28 +151,33 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				return fmt.Errorf("read from perf event fail: %w", err)
 			}
 
-			containerID, ok := filterByConfigAndResolveContainerID(&pd, hostNetNSInum)
+			eventConfig := configSnapshot()
+			containerID, ok := filterByConfigAndResolveContainerID(
+				&pd,
+				hostNetNamespaceInum,
+				eventConfig,
+			)
 			if !ok {
 				continue
 			}
 
-			where := latStageNames[pd.LatStage]
-			lat := float64(pd.Latency) / 1000 / 1000 // ms
-			latThreshold := latThresholds[pd.LatStage]
+			latencyStage := latencyStageNames[pd.LatencyStage]
+			latencyMS := float64(pd.LatencyNS) / 1000 / 1000
+			latencyThresholdMS := latencyThresholds[pd.LatencyStage]
 			state := packet.TCPStateName(pd.TCPState)
 			saddr, daddr := netutil.Inetv4Ntop(pd.TCPSaddr).String(), netutil.Inetv4Ntop(pd.TCPDaddr).String()
 			sport, dport := netutil.Ntohs(pd.TCPSport), netutil.Ntohs(pd.TCPDport)
 			seq, ackSeq := netutil.Ntohl(pd.TCPSeq), netutil.Ntohl(pd.TCPAckSeq)
-			pktLen := pd.PktLen
+			packetLenBytes := pd.PacketLenBytes
 
 			comm := bytesutil.ToStr(pd.Comm[:])
 			pid := pd.TGIDPID >> 32
 
-			title := fmt.Sprintf("comm=%s:%d to=%s lat(ms)=%.2f state=%s saddr=%s sport=%d daddr=%s dport=%d seq=%d ackSeq=%d pktLen=%d",
-				comm, pid, where, lat, state, saddr, sport, daddr, dport, seq, ackSeq, pktLen)
+			title := fmt.Sprintf("comm=%s:%d to=%s lat(ms)=%.2f state=%s saddr=%s sport=%d daddr=%s dport=%d seq=%d ackSeq=%d packetLenBytes=%d",
+				comm, pid, latencyStage, latencyMS, state, saddr, sport, daddr, dport, seq, ackSeq, packetLenBytes)
 
 			// known issue filter
-			_, found := matcher.Classify(cfg.IssuesList, title)
+			_, found := matcher.Classify(eventConfig.IssuesList, title)
 			if found {
 				log.Debugf("net_rx_latency known issue")
 				continue
@@ -180,13 +185,13 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 
 			tracerData := &NetTracingData{
 				Comm:               comm,
-				Pid:                pid,
-				LatStage:           where,
-				LatMs:              lat,
-				LatThresholds:      latThreshold,
+				PID:                pid,
+				LatencyStage:       latencyStage,
+				LatencyMS:          latencyMS,
+				LatencyThresholdMS: latencyThresholdMS,
 				NetdevName:         bytesutil.ToStr(pd.NetdevName[:]),
-				NetNamespaceInum:   pd.NetNSInum,
-				NetNamespaceCookie: pd.NetNSCookie,
+				NetNamespaceInum:   pd.NetNamespaceInum,
+				NetNamespaceCookie: pd.NetNamespaceCookie,
 				TCPState:           state,
 				TCPSaddr:           saddr,
 				TCPDaddr:           daddr,
@@ -194,16 +199,16 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				TCPDport:           dport,
 				TCPSeq:             seq,
 				TCPAckSeq:          ackSeq,
-				PktLen:             pktLen,
+				PacketLenBytes:     packetLenBytes,
 			}
 			log.Debugf("net_rx_latency tracerData: %+v", tracerData)
 
 			// save storage
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:  "net_rx_latency",
-				ContainerID: containerID,
-				TracerTime:  time.Now(),
-				TracerData:  tracerData,
+				TracerName:        "net_rx_latency",
+				ContainerID:       containerID,
+				ObservedTimestamp: timeutil.Now(),
+				TracerData:        tracerData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}
@@ -211,7 +216,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	}
 }
 
-func isQosExcluded(container *pod.Container) bool {
+func isQosExcluded(container *pod.Container, cfg *Config) bool {
 	for _, level := range cfg.NetRxLatency.ExcludedContainerQos {
 		if strings.EqualFold(container.Qos.String(), level) {
 			return true
@@ -220,26 +225,30 @@ func isQosExcluded(container *pod.Container) bool {
 	return false
 }
 
-func filterByConfigAndResolveContainerID(pd *abi.NetRXLatencyEvent, hostNetNSInum uint64) (string, bool) {
-	inum := uint64(pd.NetNSInum)
+func filterByConfigAndResolveContainerID(
+	pd *abi.NetRXLatencyEvent,
+	hostNetNamespaceInum uint64,
+	cfg *Config,
+) (string, bool) {
+	inum := uint64(pd.NetNamespaceInum)
 
-	if cfg.NetRxLatency.ExcludedHostNetnamespace && inum == hostNetNSInum {
+	if cfg.NetRxLatency.ExcludedHostNetnamespace && inum == hostNetNamespaceInum {
 		return "", false
 	}
 
 	var container *pod.Container
 
-	if pd.NetNSCookie != 0 {
-		ct, err := pod.ContainerByNetNSCookie(pd.NetNSCookie)
+	if pd.NetNamespaceCookie != 0 {
+		ct, err := pod.ContainerByNetNamespaceCookie(pd.NetNamespaceCookie)
 		if err != nil {
-			log.Debugf("net_rx_latency: netns_cookie lookup %d failed: %v", pd.NetNSCookie, err)
+			log.Debugf("net_rx_latency: netns_cookie lookup %d failed: %v", pd.NetNamespaceCookie, err)
 		} else if ct != nil {
 			container = ct
 		}
 	}
 
 	if container == nil {
-		ct, err := pod.ContainerByNetNSInum(inum)
+		ct, err := pod.ContainerByNetNamespaceInum(inum)
 		if err != nil {
 			log.Warnf("net_rx_latency: get container by netns inum %d failed: %v", inum, err)
 			return "", true
@@ -250,7 +259,7 @@ func filterByConfigAndResolveContainerID(pd *abi.NetRXLatencyEvent, hostNetNSInu
 		container = ct
 	}
 
-	if isQosExcluded(container) {
+	if isQosExcluded(container, cfg) {
 		return container.ID, false
 	}
 	return container.ID, true

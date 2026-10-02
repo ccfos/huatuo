@@ -16,16 +16,15 @@ package pod
 
 import (
 	"testing"
-	"time"
 
-	"huatuo-bamai/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 )
 
-func TestContainerIDByCgroupNetNS(t *testing.T) {
-	previousContainers := containers
-	previousUpdatedAt := lastUpdatedAt
-
-	containers = map[string]*Container{
+func TestContainerIDByCgroupNetNamespace(t *testing.T) {
+	previous := containerView
+	containerView = newContainerStore()
+	containerView.isActive, containerView.err = true, nil
+	fixtures := map[string]*Container{
 		"css": {
 			ID:        "css",
 			Type:      ContainerTypeNormal,
@@ -42,20 +41,19 @@ func TestContainerIDByCgroupNetNS(t *testing.T) {
 			NetNamespaceInum: 33,
 		},
 	}
-	lastUpdatedAt = time.Now()
-	t.Cleanup(func() {
-		containers = previousContainers
-		lastUpdatedAt = previousUpdatedAt
-	})
+	for id, container := range fixtures {
+		containerView.records[id] = &containerRecord{container: container}
+	}
+	t.Cleanup(func() { containerView = previous })
 
 	tests := []struct {
 		name string
-		ids  ContainerCgroupNetNS
+		ids  ContainerCgroupNetNamespace
 		want string
 	}{
 		{
 			name: "css takes precedence",
-			ids: ContainerCgroupNetNS{
+			ids: ContainerCgroupNetNamespace{
 				MemoryCgroupCSSAddr: 11,
 				NetNamespaceCookie:  22,
 				NetNamespaceInum:    33,
@@ -64,7 +62,7 @@ func TestContainerIDByCgroupNetNS(t *testing.T) {
 		},
 		{
 			name: "net namespace cookie falls back after CSS miss",
-			ids: ContainerCgroupNetNS{
+			ids: ContainerCgroupNetNamespace{
 				MemoryCgroupCSSAddr: 99,
 				NetNamespaceCookie:  22,
 				NetNamespaceInum:    33,
@@ -73,7 +71,7 @@ func TestContainerIDByCgroupNetNS(t *testing.T) {
 		},
 		{
 			name: "net namespace inum falls back after CSS and cookie misses",
-			ids: ContainerCgroupNetNS{
+			ids: ContainerCgroupNetNamespace{
 				MemoryCgroupCSSAddr: 99,
 				NetNamespaceCookie:  88,
 				NetNamespaceInum:    33,
@@ -82,7 +80,7 @@ func TestContainerIDByCgroupNetNS(t *testing.T) {
 		},
 		{
 			name: "no matching metadata",
-			ids: ContainerCgroupNetNS{
+			ids: ContainerCgroupNetNamespace{
 				MemoryCgroupCSSAddr: 99,
 				NetNamespaceCookie:  88,
 				NetNamespaceInum:    77,
@@ -93,9 +91,9 @@ func TestContainerIDByCgroupNetNS(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ContainerIDByCgroupNetNS(tt.ids)
+			got := ContainerIDByCgroupNetNamespace(tt.ids)
 			if got != tt.want {
-				t.Errorf("ContainerIDByCgroupNetNS(%+v) = %q, want %q", tt.ids, got, tt.want)
+				t.Errorf("ContainerIDByCgroupNetNamespace(%+v) = %q, want %q", tt.ids, got, tt.want)
 			}
 		})
 	}

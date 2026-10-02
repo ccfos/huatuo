@@ -189,7 +189,7 @@ sudo devlink trap show <bus/device>
 sudo devlink trap set <bus/device> trap <trap-name> action trap
 
 # 4. 启动 dropwatch，并只查看硬件丢包
-sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | \
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --output json 2>/dev/null | \
   jq -c 'select(.drop_source == "hardware")'
 ```
 
@@ -199,35 +199,34 @@ sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | \
 
 `--filter`、`--device`、`--device-excluded` 和 `--max-events-per-second` 同时作用于软件与硬件事件。文本输出将硬件原因表示为 `reason=<group>/<trap> drop_source=hardware`；JSON 输出使用独立的 `drop_reason_group`、`drop_reason` 和 `drop_source` 字段。
 
+`tcpshark --with-dropwatch` 复用相同的来源分类和 reason 解析，也自动启用可用的硬件采集；成功关联时保留相同的 `drop_source`、`drop_reason` 和 `drop_reason_group`。参见 [重传关联说明](/docs/best-practice/tcpshark_zh.md)。
+
 #### 常用命令
 
 ```bash
 # 文本格式输出，监控所有设备的 TCP 丢包
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp"
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp"
 
 # 只监控 eth0 上的丢包
-sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device eth0 --output json
 
 # 排除 loopback
-sudo dropwatch --bpf-path bpf/dropwatch.o --device-excluded lo --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device-excluded lo --output json
 
 # 设备过滤与协议过滤组合
-sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --filter "tcp and port 443" --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device eth0 --filter "tcp and port 443" --output json
 
 # 抓取 60 秒后退出
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp and port 443" --duration 60 --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp and port 443" --duration 60 --output json
 
 # 将事件转发给正在运行的 huatuo-bamai 实例
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
-
-# 通过 jq 过滤仅显示 RST 包
-sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | jq 'select(.layers.tcp.flags == "RST")'
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
 
 # 采集 10 秒 JSON 输出，并排除调用栈包含 ip_finish_output 的事件
-sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'select(.stack | test("ip_finish_output") | not)'
+sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -c 'select(.stack | test("ip_finish_output") | not)'
 
 # 采集 10 秒 JSON 输出，只打印除 stack 之外的字段
-sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'del(.stack)'
+sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -c 'del(.stack)'
 ```
 
 `jq -c` 会把每条匹配事件压缩成单行 JSON，便于保存为 NDJSON 或继续用管道处理。`test("ip_finish_output")` 判断 `stack` 是否匹配该正则，`not` 会把结果取反，因此上面的命令会排除包含 `ip_finish_output` 的调用栈；去掉 `| not` 后，就是只保留包含 `ip_finish_output` 的事件。`del(.stack)` 只从 jq 输出中删除 `stack` 字段，适合只查看时间、设备、进程、`packet_*` 元数据和 `layers` 协议字段。如需在存储前由用户态按调用栈过滤，可通过 huatuo-bamai 配置 `EventTracing.IssuesList` 实现（参见第 4 节）。
@@ -241,6 +240,7 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'd
 | 字段                     | 类型     | 说明                                          |
 | ------------------------ | -------- | --------------------------------------------- |
 | `observed_timestamp`     | string   | 用户态接收/格式化事件时生成的 UTC 时间（RFC3339Nano），不是内核 hook 时间 |
+| `kernel_observed_timestamp` | string | 内核观测事件的 UTC 时间（RFC3339Nano），由原始单调时钟转换。 |
 | `type`                   | string   | 预留 TCP 事件类型，当前未设置（`1` 普通丢包、`2` SYN flood、`3`/`4` listen overflow） |
 | `drop_source`            | string   | 丢包来源：`software` 表示内核协议栈，`hardware` 表示 devlink DROP trap |
 | `drop_reason`            | string   | 软件丢包为 `SKB_DROP_REASON_*`；无法从内核 BTF 解析时记录 warning 并回退为数字。硬件丢包为 devlink trap 名称 |
@@ -259,7 +259,7 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'd
 | `netdev_linkstatus`      | []string | 网络设备链路标志                              |
 | `packet_skb_addr`        | string   | SKB 地址（十六进制，omitempty）              |
 | `packet_eth_proto`       | string   | 原始 EtherType（十六进制，如 `0x0800`）       |
-| `packet_len`             | uint32   | 数据包长度（字节）                            |
+| `packet_len_bytes`       | uint32   | 内核 `skb->len` 快照；表示 SKB 逻辑长度，可能与线上帧长度不同 |
 | `layers`                 | object   | 分层协议解析结果，缺失的层会省略              |
 | `stack`                  | string   | 内核调用栈（换行分隔）                        |
 
@@ -273,7 +273,7 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'd
 | `layers.ether` | 存在真实 Ethernet header 时输出二层字段：`saddr`、`daddr`、`type`、`len`；仅 IEEE 802.3 framing 的 `len` 非零 |
 | `layers.ipv4`  | IPv4 字段：`version`、`ihl`、`tos`、`len`、`id`、`flags`、`frag_offset`、`ttl`、`protocol`、`checksum`、`saddr`、`daddr` |
 | `layers.ipv6`  | IPv6 字段：`version`、`traffic_class`、`flow_label`、`len`、`next_header`、`hop_limit`、`saddr`、`daddr` |
-| `layers.tcp`   | TCP 字段：`sport`、`dport`、`seq`、`ack_seq`、`data_offset`、`flags`、`window`、`checksum`、`urgent`、`sk_state` |
+| `layers.tcp`   | TCP 字段：`sport`、`dport`、`seq`、`ack_seq`、`data_offset`、`window`、`checksum`、`urgent`、`sk_state` |
 | `layers.udp`   | UDP 字段：`sport`、`dport`、`len`、`checksum`                |
 | `layers.icmp`  | ICMP/ICMPv6 字段：`type`、`code`、`checksum`、`id`、`seq`    |
 | `layers.arp`   | ARP 字段：`addr_type`、`protocol`、`hw_address_size`、`prot_address_size`、`operation`、`sender_mac`、`sender_ip`、`target_mac`、`target_ip` |
@@ -286,7 +286,7 @@ huatuo-bamai 以子进程形式启动 `dropwatch`，并通过 `--output-storage`
 
 ```bash
 dropwatch \
-  --bpf-path <CoreBpfDir>/dropwatch.o \
+  --bpf-path <CoreBpfDir>/net_dropwatch.o \
   --output-storage /var/run/huatuo-toolstream.sock \
   --filter "tcp"
 ```
@@ -300,14 +300,20 @@ dropwatch \
     IssuesList = []
 
 [EventTracing.Dropwatch]
-    # tcpdump 过滤表达式，转发给 dropwatch --filter。
+    # standalone dropwatch 使用的 tcpdump filter。
     # 默认值: "tcp"
     Filter = "tcp"
 
     # 转发给 dropwatch --max-events-per-second。
     # 默认值: 100
     MaxEventsPerSecond = 100
+
+[EventTracing.TCPRetransmit]
+    # 使用 tcpshark 私有的 embedded dropwatch source。
+    EnableDropwatch = false
 ```
+
+standalone dropwatch 始终输出 raw `DropWatchTracing`。TCP 重传 local 关联会加载另一份 `net_dropwatch.o`，两个输入统一使用 `EventTracing.TCPRetransmit.Filter`，并且只输出定型后的 `TCPRetransmitTracing` 结果。两种模式可以并行；embedded drop 不会重复保存成 raw event。
 
 #### 4.2 噪声过滤
 

@@ -51,9 +51,8 @@ git remote add upstream https://github.com/ccfos/huatuo.git
 ### 构建
 
 ```bash
-make all          # 全部构建（BPF + Go）
-make bpf-build    # 只构建 BPF 程序
-make build        # 只构建 Go 二进制文件
+make build        # 构建 BPF 程序和 Go 二进制
+make gen-build    # 重新生成 BPF 和 Go 生成代码
 make docker-build # 构建 Docker 镜像
 ```
 
@@ -81,6 +80,9 @@ make check # 运行代码风格和格式化检查
 ```
 
 > **注意**：`make test` 需要 `/etc/kubernetes/pki` 来运行 E2E 测试。如果没有 K8s 集群，请使用 `make unit`。
+
+无需本地虚拟机即可在其他发行版中测试或调试，具体步骤参见
+[GitHub Actions 虚拟机调试](/docs/development/vm-debugging_zh.md)。
 
 ---
 

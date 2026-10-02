@@ -18,7 +18,7 @@
 #include "bpf_abi.h"
 
 struct hungtask_event {
-	s32 pid;
+	u32 tid;
 	u8 comm[COMPAT_TASK_COMM_LEN];
 };
 

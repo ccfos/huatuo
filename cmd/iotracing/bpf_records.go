@@ -17,8 +17,8 @@ package main
 import (
 	"strings"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
 // iocbDirect mirrors the kernel IOCB_DIRECT flag in iocb.ki_flags;
@@ -38,8 +38,8 @@ type bpfBlockLatency struct {
 // bpfFilesystemIO mirrors one io_source_map entry: per-file IO totals,
 // latency, comm and dentry path captured during the trace window.
 type bpfFilesystemIO struct {
-	Tgid            uint32
-	Pid             uint32
+	TGID            uint32
+	PathInitialized uint32
 	DevID           uint32
 	Flags           uint32
 	FsWriteBytes    uint64
@@ -61,8 +61,7 @@ func (r *bpfFilesystemIO) IsDirect() bool {
 }
 
 // PathName reconstructs the absolute file path from the BPF dentry walk.
-// Empty when the BPF entry has no inode (typical for direct IO that
-// never reached an address_space).
+// Empty when the BPF entry has no inode or no dentry path was captured.
 func (r *bpfFilesystemIO) PathName() string {
 	if r.Ino == 0 {
 		return ""
@@ -76,6 +75,9 @@ func (r *bpfFilesystemIO) PathName() string {
 		}
 
 		names = append(names, s)
+	}
+	if len(names) == 0 {
+		return ""
 	}
 
 	return "/" + strings.Join(names, "/")

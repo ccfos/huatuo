@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"huatuo-bamai/internal/cgroups/paths"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/opencontainers/runtime-spec/specs-go"

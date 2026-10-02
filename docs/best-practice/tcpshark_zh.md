@@ -19,7 +19,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 用户态分类器根据事件类型、`sk_state`、`ca_state` 和乱序计数器生成连接阶段与原因标签。这些标签是用于运维分析的启发式分类，不是丢包根因的确定性证据。
 
-过滤表达式由 `internal/pcapfilter` 在加载时编译并在内核中执行。过滤器只对携带 SKB 的 `tcp_retransmit_skb` 事件生效；SYN-ACK 和 TLP 事件会绕过 pcap 过滤器。
+过滤表达式由 `internal/pcapfilter` 在加载时编译并在内核中执行。无论是否开启 local 关联，SKB、SYN-ACK 和 TLP 三个 hook 都对同一种合成 L3 TCP 报文执行过滤。支持协议、地址、网段和端口条件；不提供以太网地址、payload、真实包长、IP/TCP options 或原始 byte-offset 语义。`ether proto ip` 等安全的 ethertype 判断会转换为 L3 判断。一对 IPv4-mapped IPv6 socket 地址按 IPv4 执行过滤；原始 perf record 仍保留 AF_INET6，用户态在匹配前规范化地址。local 关联模式还会把完全相同的表达式用于 embedded dropwatch。需要保留反向 ACK 或 SYN-ACK 证据时，应使用方向对称的表达式。
 
 ---
 
@@ -39,7 +39,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 ### 4. 与 dropwatch 关联定位丢包位置
 
-在同一 huatuo-bamai 进程中同时运行 dropwatch 和 tcp_retransmit，通过 SKB 指针或连接四元组关联丢包与重传事件，辅助判断问题更可能发生在主机协议栈还是外部网络；关联结果属于启发式证据，仍需结合调用栈和网络指标确认。
+使用 tcpshark local 模式在同一进程内关联重传与丢包。匹配会检查 network namespace、四元组方向、TCP sequence 或 ACK 证据及内核单调时间顺序。严格匹配表示找到了满足关联条件的丢包证据，软件或硬件来源以记录为准。no-match 保持 `unknown`，因为 source ready 不能证明更早的因果历史已经被观测。
 
 ---
 
@@ -55,8 +55,12 @@ tcpshark --mode retransmit [flags]
 |------|--------|------|
 | `--mode retransmit` | 必填 | 选择 TCP 重传追踪模式。 |
 | `--enable-tlp`、`--tlp` | 关闭 | 同时挂载 `tcp_send_loss_probe` 并输出 TLP 事件。 |
-| `--bpf-path <path>` | 必填 | `tcp_retransmit.o` eBPF 对象文件路径。 |
-| `--filter <expr>` | （无） | 仅用于 `tcp_retransmit_skb` 事件的 tcpdump 风格过滤器，见 §2。 |
+| `--bpf-path <path>` | 非关联模式必填 | 单个 `tcp_retransmit.o` 文件路径。 |
+| `--bpf-path-dir <dir>` | 关联模式必填 | 同时包含 `tcp_retransmit.o` 和 `net_dropwatch.o` 的目录。 |
+| `--with-dropwatch` | 关闭 | 加载 embedded dropwatch 并与重传关联。 |
+| `--filter <expr>` | （无） | 三个重传 hook 共用的 L3 兼容 tcpdump 风格过滤器；local 模式下也与 embedded dropwatch 共用，见 §2。 |
+| `--device <names>` | （无） | 与 dropwatch 相同的网卡白名单，逗号分隔；只过滤 embedded dropwatch，要求 `--with-dropwatch`。 |
+| `--device-excluded <names>` | （无） | 网卡黑名单，与 `--device` 互斥；要求 `--with-dropwatch`。 |
 | `--duration <n>` | 0 | 运行 N 秒后退出（0 表示持续运行直至 Ctrl-C）。 |
 | `--max-events-per-second <n>` | 0 | BPF 侧事件限速，0 表示不限速。 |
 | `--output <json\|text>` | `text` | 输出格式；设置 `--output-storage` 时会被忽略。 |
@@ -76,6 +80,10 @@ sudo tcpshark --mode retransmit --bpf-path bpf/tcp_retransmit.o --output json
 
 # 在 BPF 侧过滤指定目标主机和端口的常规重传 SKB
 sudo tcpshark --mode retransmit --bpf-path bpf/tcp_retransmit.o --filter "dst host 10.0.0.1 and dst port 443"
+
+# 本地关联；两个 BPF 输入使用同一个方向对称 filter
+sudo tcpshark --mode retransmit --with-dropwatch --bpf-path-dir bpf \
+  --filter "tcp and port 443"
 
 # 包含 Tail Loss Probe 事件（默认关闭）
 sudo tcpshark --mode retransmit --enable-tlp --bpf-path bpf/tcp_retransmit.o
@@ -105,23 +113,27 @@ tcpshark 与 dropwatch 使用相同的 `--output-storage` 和 toolstream 流程�
 
 ```toml
 [EventTracing.TCPRetransmit]
-    # 转发给 tcpshark --filter；仅过滤 tcp_retransmit_skb。
-    # 默认值: ""
+    # 两种模式都由 tcpshark 使用；默认空值。
     Filter = ""
 
     # 设置为 true 时传入 tcpshark --enable-tlp；默认 false。
     EnableTLP = false
 
+    # 使用 embedded dropwatch；默认 false。
+    EnableDropwatch = false
+
     # 传给 tcpshark --max-events-per-second；默认 100，0 表示不限速。
     MaxEventsPerSecond = 100
 ```
 
-`tcp_retransmit` tracer 默认位于全局 `BlackList` 中。需要启用时，从名单中移除 `tcp_retransmit` 并重启 huatuo-bamai。丢包关联缓存仅在 tracer 运行期间启用，tracer 停止时会关闭并清空。启用后可通过 HTTP API 启停追踪：
+`EventTracing.TCPRetransmit.Filter` 在两种模式下都控制重传采集。关闭 local
+关联时，空值不传 `--filter`。开启 local 关联时，规范化后的表达式同时传给
+tcpshark 的两个输入，空值规范化为 `tcp`。`EventTracing.Dropwatch.Filter`
+保持独立，只控制 standalone dropwatch。
 
-```bash
-curl -X PUT http://localhost:19704/tracers/tcp_retransmit/start
-curl -X PUT http://localhost:19704/tracers/tcp_retransmit/stop
-```
+`tcp_retransmit` tracer 默认位于全局 `BlackList` 中。需要启用时，应将其移除并
+重启 huatuo-bamai。local 关联使用私有 dropwatch source，因此 standalone
+`dropwatch` 可以继续位于黑名单中。
 
 ---
 
@@ -137,7 +149,9 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 --filter "(src net 10.10.0.0/16 and dst net 10.20.0.0/16) or (src net 10.20.0.0/16 and dst net 10.10.0.0/16)"
 ```
 
-> `--filter` 只作用于 `tcp_retransmit_skb`。`tcp_retransmit_synack` 和启用后的 `tcp_send_loss_probe` 不携带 SKB，因此不会应用该过滤器。
+> local 模式下，同一个表达式必须覆盖两个流量方向。方向性 selector 可能排除反向 ACK 或 SYN-ACK drop 证据，降低结果可信度。
+
+> local 模式拒绝 `ether host 02:00:00:00:00:01` 等依赖以太网地址的 primitive。`ether proto ip` 和 `ether proto ip6` 可转换为 raw-IP version 判断，因此受支持。
 
 ---
 
@@ -148,6 +162,7 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `observed_timestamp` | string | 用户态接收/格式化事件时生成的 UTC 时间（RFC3339Nano），不是内核 hook 时间。 |
+| `kernel_observed_timestamp` | string | 内核观测事件的 UTC 时间（RFC3339Nano），由原始单调时钟转换。 |
 | `comm` | string | 当前内核执行上下文的进程名，不一定是 socket 所属进程。 |
 | `pid` | uint64 | 当前执行上下文的 TGID，不一定是 socket 所属进程的 TGID。 |
 | `container_id` | string | huatuo-bamai 解析出的容器 ID，见 §3.2。 |
@@ -160,19 +175,26 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 | `tcp_dport` | uint16 | 目的端口。 |
 | `tcp_state` | string | TCP socket 状态，如 `ESTABLISHED`、`SYN_SENT` 或 `NEW_SYN_RECV`。 |
 | `phase` | string | 分类结果：`connect`、`data` 或 `close`。 |
-| `tcp_reason` | string | 分类结果：`RTO`、`fast_retransmit`、`reorder_prone_fast`、`TLP` 或 `unknown`。 |
+| `tcp_reason` | string | 分类结果：`RTO`、`fast_retransmit`、`TLP` 或 `unknown`。 |
 | `event_type` | string | `tcp_retransmit_skb`、`tcp_retransmit_synack` 或 `tcp_send_loss_probe`。 |
 | `ca_state` | uint8 | 拥塞控制状态：0=Open、1=Disorder、2=CWR、3=Recovery、4=Loss。 |
 | `icsk_retransmits` | uint8 | 当前重传计数器快照。 |
 | `icsk_pending` | uint8 | `inet_connection_sock` 中原始的待处理定时器状态，取值见下表。 |
 | `reord_seen` | uint32 | 连接累计乱序计数器。 |
 | `dsack_dups` | uint32 | 累计 DSACK 重复计数器。 |
-| `tcp_seq` | uint32 | SKB 事件使用 `TCP_SKB_CB(skb)->seq`；TLP 事件使用 `snd_nxt`；SYN-ACK 事件中为零。 |
-| `tcp_ack_seq` | uint32 | SKB 事件使用 `tcp_sk(sk)->rcv_nxt`；TLP 事件使用 `snd_una`；SYN-ACK 事件中为零。 |
-| `tcp_end_seq` | uint32 | SKB 事件使用 `TCP_SKB_CB(skb)->end_seq`；SYN-ACK 和 TLP 事件中省略。 |
+| `tcp_seq` | uint32 | SKB 事件使用 `TCP_SKB_CB(skb)->seq`；TLP 使用 `snd_nxt`；字段可用时 SYN-ACK 使用 request `snt_isn`。 |
+| `tcp_ack_seq` | uint32 | SKB 事件使用 `tcp_sk(sk)->rcv_nxt`；TLP 使用 `snd_una`；字段可用时 SYN-ACK 使用 request `rcv_nxt`。 |
+| `tcp_end_seq` | uint32 | SKB 事件使用 `TCP_SKB_CB(skb)->end_seq`；字段可用时 SYN-ACK 使用 request `snt_isn + 1`；TLP 中省略。 |
 | `tcp_flags` | string | 渲染后的 TCP flag 集合，如 `SYN|ACK`、`ACK|PSH`；SKB 事件来自 `TCP_SKB_CB(skb)->tcp_flags`，SYN-ACK 事件由事件类型派生，TLP 事件中省略。 |
 | `skb_addr` | string | 十六进制重传队列 SKB 指针；SYN-ACK 和 TLP 事件中不存在。 |
-| `drop_location` | string | huatuo-bamai 生成的丢包关联启发式结果，见 §5。 |
+| `drop_location` | string | local 关联分类：`software`、`hardware` 或 `unknown`；匹配时与 `drop_source` 相同，与 dropwatch 的内核地址字段语义不同。 |
+| `drop_source` | string | 匹配丢包的来源：`software` 或 `hardware`；无法识别 ABI 来源时为 `unknown`，未匹配时省略。 |
+| `drop_reason` | string | 与 dropwatch 一致：软件丢包为 BTF 解析的 `SKB_DROP_REASON_*`，不可解析时为十进制数字，旧内核不支持时为 `NOT_SUPPORTED`；硬件丢包为 devlink trap 名称。 |
+| `drop_reason_group` | string | devlink trap 分组，如 `l2_drops`，用于聚合硬件丢包原因；软件丢包和未匹配事件省略。 |
+| `correlation_reason` | string | 唯一终态：`matched`、`unsupported`、`warmup`、`wait_timeout`、`queue_full` 或 `interrupted`；未启用关联时省略。 |
+| `matched_net_namespace` | bool | 同一 TCP flow 下观测到相同 namespace 的 drop，独立于报文和时间检查。严格匹配时必为 true；false 时省略。 |
+| `drop_perf_status` | object | 未匹配事件的 embedded dropwatch 累计计数；`map_counters_available` 标记 map 计数是否可用，读取失败时仍保留有效的 reader `lost_samples`。 |
+| `drop_stack` | string | 匹配到的 drop 调用栈；未匹配的栈不做符号化。 |
 | `source` | string | 事件来源。独立运行 tcpshark 时为 `tools`，由 huatuo-bamai 启动时为 `events`。 |
 
 `icsk_pending` 是 hook 时刻的定时器状态快照，不是重传原因的稳定枚举。TLP 分类以明确的 `event_type=tcp_send_loss_probe` 为准，不依赖 `icsk_pending=5`。
@@ -189,19 +211,21 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 
 #### 3.1 文本输出格式
 
-文本输出保留面向终端的可读布局，同时覆盖与 JSON 相同的事件变量。带 `omitempty` 的变量仅在非零或非空时显示，字符串值不添加 JSON 引号或转义。为兼容原文本格式，`state`、`skb`、`seq`、`end`、`ack`、`flags`、`ca` 和 `retrans` 分别对应 JSON 中的 `tcp_state`、`skb_addr`、`tcp_seq`、`tcp_end_seq`、`tcp_ack_seq`、`tcp_flags`、`ca_state` 和 `icsk_retransmits`。
+文本输出保留面向终端的可读布局，同时覆盖与 JSON 相同的事件变量。可选变量仅在非零或非空时显示，字符串值不添加 JSON 引号或转义。为兼容原文本格式，`state`、`skb`、`seq`、`end`、`ack`、`flags`、`ca`、`retrans` 和 `reason` 分别对应 JSON 中的 `tcp_state`、`skb_addr`、`tcp_seq`、`tcp_end_seq`、`tcp_ack_seq`、`tcp_flags`、`ca_state`、`icsk_retransmits` 和 `correlation_reason`。
 
 ```text
-<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [source=<SOURCE>]
+<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [kernel_observed_timestamp=<UTC>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [drop_source=<SOURCE>] [drop_reason=<REASON>] [drop_reason_group=<GROUP>] [reason=<REASON>] [matched_net_namespace=true] [dropwatch_map_counters_available=<true|false> dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
 ```
 
 示例：
 
 ```text
-2026-07-23T02:14:40.304775546Z [data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 state=ESTABLISHED event_type=tcp_retransmit_skb skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 ack=948393597 flags=ACK|PSH pid=1420 comm=kube-apiserver ca=4 retrans=4 icsk_pending=0 net_namespace_inum=4026531992
+2026-07-23T02:14:40.304775546Z [data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 state=ESTABLISHED event_type=tcp_retransmit_skb kernel_observed_timestamp=2026-07-23T02:14:40.304Z skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 ack=948393597 flags=ACK|PSH pid=1420 comm=kube-apiserver ca=4 retrans=4 icsk_pending=0 net_namespace_inum=4026531992
 ```
 
 示例中的 `pid` 和 `comm` 表示 hook 运行时的执行上下文；工作负载归属应使用 `container_id` 和 socket 元数据判断。
+
+非空的 `drop_stack` 会作为事件行之后的缩进调用栈行输出，不使用行内 `drop_stack=` token。
 
 #### 3.2 容器 ID 解析
 
@@ -265,7 +289,7 @@ sequenceDiagram
 | `tcp_retransmit_synack` | `RTO` | SYN-ACK 重试定时器路径的固定用户态标签。 |
 | `tcp_send_loss_probe` | `TLP` | 可选 Tail Loss Probe hook 的固定用户态标签。 |
 | `tcp_retransmit_skb`，`ca_state=4`（Loss） | `RTO` | socket 当前处于 TCP_CA_Loss。 |
-| `tcp_retransmit_skb`，`ca_state=3`（Recovery） | `fast_retransmit` 或 `reorder_prone_fast` | Recovery 路径重传；存在累计乱序历史时使用 reorder-prone 标签。 |
+| `tcp_retransmit_skb`，`ca_state=3`（Recovery） | `fast_retransmit` | Recovery 路径重传。 |
 | `tcp_retransmit_skb`，`ca_state=0..2`，connect/close 阶段 | `RTO` | 当前分类器使用的阶段回退结果。 |
 | `tcp_retransmit_skb`，`ca_state=0..2`，data 阶段 | `unknown` | 当前快照不足以生成其他标签。 |
 
@@ -273,7 +297,6 @@ sequenceDiagram
 
 #### 4.4 乱序启发式判断
 
-当 `reord_seen` 或 `dsack_dups` 任一累计计数器非零时，分类器会选择乱序倾向标签。连接一旦出现过乱序历史，后续 Recovery 状态的 SKB 事件就可能标记为 `reorder_prone_fast`。这是连接级启发式判断，不能证明当前重传由乱序触发。
 
 #### 4.5 运维解读
 
@@ -283,7 +306,6 @@ sequenceDiagram
 |------|------------|------|
 | `tcp_reason=RTO` | 高 | 排查持续增长或与服务异常相关的 RTO；它通常比 Recovery 路径重传带来更大延迟影响。 |
 | `tcp_reason=fast_retransmit` | 中 | 结合丢包、拥塞及 SACK/RACK 行为分析。 |
-| `tcp_reason=reorder_prone_fast` | 视上下文而定 | 连接存在乱序历史，但不能证明当前事件是伪重传；应检查延迟和计数器增长。 |
 | `tcp_reason=TLP` | 视上下文而定 | 这是可选信号；用于告警前应确认已主动开启 TLP 采集。 |
 | `event_type=tcp_retransmit_synack` | 单次通常较低 | 重复出现可能意味着握手可达性、主机出口、防火墙、客户端或网络问题。 |
 
@@ -293,28 +315,91 @@ sequenceDiagram
 
 ### 5. 与 dropwatch 关联
 
-dropwatch 和 tcpshark 向同一个 huatuo-bamai 进程发送事件时，dropwatch 事件会从到达用户态的时刻起在缓存中保留两秒。tcpshark 事件会立即按与方向无关的连接 key 查询此前已收到且尚未过期的 drop 事件。当前实现不会等待之后才到达的 drop 事件，也不会在事件存储后更新关联结果。
+指定 `--with-dropwatch` 后，一个 tcpshark 进程持有两条 perf 输入。重传最多等待 100ms，让较晚送达用户态的 dropwatch 事件参与匹配；候选 drop 的内核单调时间必须早于重传且相差不超过 1s。embedded source 不输出 raw drop 文档；独立启用的 standalone dropwatch 仍是另一条 raw event stream。
+
+关于双 perf stream 的读取乱序、100ms 到达窗口、1s 因果窗口及 negative evidence 的限制，参见
+[TCP retransmit 与 dropwatch 关联的难点](/docs/development/tcp_retransmit_dropwatch_correlation_zh.md)。
+
+与独立 dropwatch 一样，embedded source 自动检测并启用 devlink DROP trap 采集（`HardwareAuto`），无需额外硬件开关；tracepoint 不可用时输出 warning 并继续采集软件丢包。硬件可见性取决于驱动是否上报目标 DROP trap，条件见 [dropwatch 硬件丢包说明](/docs/best-practice/dropwatch_zh.md)。
+
+`--device`、`--device-excluded`、`--filter`、`--max-events-per-second` 使用与 dropwatch 相同的参数名。网卡白名单/黑名单仅限制 embedded dropwatch，同时作用于其软件和硬件事件；白名单拒绝没有网卡信息的记录，黑名单允许这类记录。重传输入仍按共同的 L3 filter 采集，设备过滤可能减少可匹配的 drop 证据。
+
+匹配后保留 `drop_source`、`drop_reason` 和硬件的 `drop_reason_group`。`drop_reason` 是观测到的丢包原因，`tcp_reason` 是重传触发分类，`correlation_reason` 是本次关联的唯一结束原因，独立诊断字段描述观测限制。BTF reason 表每次会话加载一次；加载失败时记录 warning，软件 reason 回退为数字，硬件 trap 解析不受影响。
+
+```bash
+# 使用与 dropwatch 相同的网卡和流量参数，查看匹配到的硬件 drop
+sudo tcpshark --mode retransmit --with-dropwatch --bpf-path-dir bpf \
+  --device eth0 --filter "tcp and port 443" --output json \
+  | jq -c 'select(.drop_source == "hardware")'
+```
+
+硬件 drop 也必须满足相同的 namespace、TCP 和时间约束。缺少 namespace 或 TCP 匹配字段时保持未匹配；未匹配不能证明发生了硬件丢包。硬件 `drop_stack` 是驱动上报 trap 时的内核栈，不是 ASIC 内部的丢弃位置。
+
+来源枚举未知时，匹配记录的 `drop_source` 和 `drop_location` 均为 `unknown`；不会根据 reason 或调用栈猜测来源；该记录仍输出 `correlation_reason=matched`。
 
 #### 5.1 关联结果
 
-| 内部结果 | 匹配条件 | `drop_location` | 安全解读方式 |
-|----------|----------|-----------------|--------------|
-| `TCPRetransmitDropDirect` | 在同一连接缓存桶内，非空的 `dropwatch.packet_skb_addr` 与 `tcpshark.skb_addr` 相等。 | `host_software` | 有较强证据表明观测到的主机丢包与重传指向同一 SKB 指针。 |
-| `TCPRetransmitDrop4Tuple` | 缓存中的 TCP drop 与重传事件的地址和端口正向或反向匹配。 | `host_software` | 重传附近在同一连接上观测到了主机丢包，不能证明因果关系。 |
-| `TCPRetransmitNoDrop` | 没有匹配且仍有效的缓存项。 | `network_or_host_hardware` | 只是当前实现的回退标签，不能证明发生了网络或硬件丢包。 |
+| 结果 | 必须满足的证据 | 输出 |
+|------|----------------|------|
+| 出方向 segment 匹配 | network namespace、地址族、方向、四元组、单调时间顺序相同，且 SYN/data/FIN sequence range 重叠。 | 输出 `correlation_reason=matched`，以及丢包来源、原因和 `drop_stack`。 |
+| 反方向 ACK 匹配 | 相同 namespace 中的反向四元组、ACK flag、单调时间顺序，且 ACK 覆盖重传 sequence end。 | 输出 `correlation_reason=matched`，以及丢包来源、原因和 `drop_stack`。 |
+| 无严格匹配 | 缺少本地证据不能证明实际丢包位置。 | `drop_location=unknown`、唯一的 `correlation_reason` 和独立诊断信息。 |
 
-dropwatch 未启用、过滤器未覆盖该连接、事件被抑制或丢失、投递乱序、相关 drop 超出缓存保留窗口时，同样会得到 `network_or_host_hardware`。四元组匹配也可能把繁忙连接上的无关报文关联到一起。缓存 key 不包含网络命名空间或容器标识，因此不同网络命名空间中地址和端口完全相同的连接也可能发生串联。
+不存在仅四元组、仅 SKB pointer、跨 namespace 或 ambiguous 的正向匹配。`matched_net_namespace` 在报文和时间检查前记录同一 flow（任一方向）下相同 namespace 的 drop。该值为 true 不代表严格匹配成功，完整关联仍以 `correlation_reason=matched` 为准。false 或字段缺省表示尚未观测到 namespace 匹配，不代表已确认 namespace 不同。匹配到的 drop 只消费一次，同一连接的后续 drop 仍可继续匹配。只有成功匹配后才做调用栈符号化。
 
-#### 5.2 使用条件与排查方式
+#### 5.2 关联终态
+
+每条已定型事件只有一个 `correlation_reason`：
+
+| 值 | 含义 |
+|----|------|
+| `matched` | 找到严格匹配的 drop，包括来源未知的已匹配记录。 |
+| `unsupported` | 事件缺少匹配规则要求的类型、namespace、时间或 sequence 证据。 |
+| `warmup` | 100ms 等待到期仍未匹配，且重传发生时间早于 embedded source ready。 |
+| `wait_timeout` | 100ms 等待到期仍未匹配，且重传发生时间不早于 embedded source ready；这里是关联等待超时，与 TCP 的 RTO 无关。 |
+| `queue_full` | 有界重传等待队列已满，该事件在到期前被淘汰。 |
+| `interrupted` | 关联循环退出，该事件尚未到期的等待被中断，包括正常停止和异常退出。 |
+
+匹配和容量检查前先处理到期事件。退出时使用同一个时间点：已到期项为 `warmup` 或 `wait_timeout`，剩余等待项为 `interrupted`。每条事件只定型一次，随后移出队列。无法解码或从 drop 缓存淘汰的记录不会直接结束某条重传的关联。
+
+单值字段替代原原因数组，tcpshark 与接收端需要配套更新。文本输出使用 `reason=<值>`；未启用关联时省略该字段。
+
+`warmup` 仅用于等待到期且重传内核时间早于 embedded source ready 的事件。重传时间等于或晚于 ready 时，等待到期统一使用 `wait_timeout`，包括 ready 后不足 1s 的情况。drop 到重传的 1s 上限只约束候选匹配，不定义预热期。处理延迟不会改变分类。严格匹配、不支持、队列淘汰和提前中断保留各自原因。该终态表达观测时序，不证明未匹配的具体根因。
+
+`matched_net_namespace` 保留为独立布尔诊断字段，同时用于已匹配和未匹配结果；可以与丢失计数同时存在，不改变终态原因。
+
+退出时不再读取 dropwatch perf ring 中尚未交给关联器的记录；未读取的尾部 drop 原本仍可能与被中断的重传匹配。
+
+#### 5.3 Dropwatch Perf Status
+
+每个非空输出批次在写出前读取一次状态，包括全部匹配的批次。未匹配事件保留状态快照：
+
+| 字段 | 含义 |
+|------|------|
+| `map_counters_available` | 两个 map 计数是否均可用；false 区分计数不可用与观测值为零。 |
+| `perf_lost` | embedded dropwatch 未能写入 perf stream 的累计事件数；仅在 map 计数可用时有效。 |
+| `lost_samples` | 用户态 reader 从 `PERF_RECORD_LOST` 累计的丢失样本数；map 读取失败时仍有效，为零时省略。 |
+| `rate_limited` | embedded dropwatch 被限速拒绝的累计事件数；仅在 map 计数可用时有效。 |
+
+状态读取失败时，`map_counters_available=false`，`perf_lost`、`rate_limited` 的零值表示不可用，快照仍保留 `lost_samples`。先尝试输出本批事件，再返回状态错误；写出失败则停止该批次，并保留两个错误。已匹配事件保留 `matched` 与丢包元数据，不附加未匹配状态快照。
+
+计数绑定本次 dropwatch 实例，重新加载时归零；map 与 reader 分别采样，不构成原子快照。它们不能证明某条重传未匹配的根因，丢失和限流也不会追加或替换关联原因。
+
+#### 5.4 使用条件与排查方式
 
 | 观测结果 | 检查项 |
 |----------|--------|
-| `host_software` 且直接匹配 | 检查对应 dropwatch 事件的调用栈、设备和 drop 元数据。 |
-| `host_software` 且仅连接匹配 | 在判断因果前核对方向、TCP seq/ack 上下文和时间关系。 |
-| `network_or_host_hardware` | 先确认 dropwatch 与 tcpshark 位于同一 huatuo-bamai 进程且过滤器覆盖该连接，再检查网卡和网络计数器。 |
-| `drop_location` 不存在 | 独立输出中的预期行为；关联由 huatuo-bamai 而不是 CLI 执行。 |
+| `software` | 结合 `drop_reason`、tuple、方向、sequence、namespace 检查匹配栈。 |
+| `hardware` | 按 `drop_reason_group`、trap 名称和驱动文档检查硬件丢包；匹配仍是基于报文证据的关联。 |
+| `unknown` 且 loss counter 非零 | 收紧共同 filter、增大 perf 容量或调整 embedded dropwatch 限速后重新采集。 |
+| `correlation_reason=wait_timeout` | 100ms 内没有严格候选；结合诊断标记和计数排查。 |
+| `correlation_reason=queue_full` | 等待队列已满，收紧采集范围。 |
+| `correlation_reason=interrupted` | 检查采集停止或错误，关联等待被提前结束。 |
+| `matched_net_namespace=true`，但关联未匹配 | 同一 flow 下已观测到相同 namespace 的 drop，继续检查报文和时间条件；该标记本身不构成完整关联。 |
+| `correlation_reason=warmup` | 等待到期，且重传发生时间早于 source ready；继续采集后续重传，本次结果无法排除 source ready 之前的丢包。 |
+| `drop_location` 不存在 | `off` 模式。 |
 
-要让“未观测到主机丢包”具备较可靠的负向证据，dropwatch 必须处于运行状态，并且过滤范围至少覆盖待分析的 tcpshark 流量。当前 schema 没有单独的 `unknown` 或 `dropwatch_not_observed` 值，因此消费者应把 `network_or_host_hardware` 视为排查提示，而不是事实。
+huatuo-bamai 会向 local 关联的两个输入传入同一个规范化 `EventTracing.TCPRetransmit.Filter`。采集范围一致可以避免两个 source 观察不同流量，但在缺少可靠因果起点边界时，no-match 仍不能成为确定结论。
 
 ---
 

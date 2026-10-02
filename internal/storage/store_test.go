@@ -18,9 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 type testEntity struct {
@@ -31,12 +32,14 @@ type testEntity struct {
 }
 
 type testMapper struct {
-	indexes   []driver.Index
-	fields    map[string]any
-	id        string
-	encodeErr error
-	decodeErr error
-	fieldsErr error
+	indexes      []driver.Index
+	fields       map[string]any
+	id           string
+	encodeErr    error
+	decodeErr    error
+	fieldsErr    error
+	indexesCalls int
+	decoded      []driver.Record
 }
 
 func (m *testMapper) ID(v testEntity) string {
@@ -53,13 +56,14 @@ func (m *testMapper) Encode(v testEntity) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-func (m *testMapper) Decode(data []byte) (testEntity, error) {
+func (m *testMapper) Decode(record driver.Record) (testEntity, error) {
+	m.decoded = append(m.decoded, record)
 	if m.decodeErr != nil {
 		return testEntity{}, m.decodeErr
 	}
 
 	var entity testEntity
-	err := json.Unmarshal(data, &entity)
+	err := json.Unmarshal(record.Data, &entity)
 	return entity, err
 }
 
@@ -78,34 +82,52 @@ func (m *testMapper) Fields(v testEntity) (map[string]any, error) {
 }
 
 func (m *testMapper) Indexes() []driver.Index {
+	m.indexesCalls++
 	return m.indexes
 }
 
 type testBackend struct {
-	initErr      error
-	saveErr      error
-	getErr       error
-	deleteErr    error
-	queryErr     error
-	countErr     error
-	valuesErr    error
-	getRecord    driver.Record
-	queryRecords []driver.Record
-	countValue   int64
-	valuesValue  []string
-	initCalls    int
-	saveCalls    int
-	deleteCalls  int
-	queryCalls   int
-	countCalls   int
-	valuesCalls  int
-	collection   string
-	indexes      []driver.Index
-	savedRecord  driver.Record
-	deletedID    string
-	lastQuery    driver.Query
-	valuesField  string
-	valuesSize   int
+	initErr            error
+	closeErr           error
+	saveErr            error
+	getErr             error
+	deleteErr          error
+	deleteByQueryErr   error
+	queryErr           error
+	countErr           error
+	valuesErr          error
+	getRecord          driver.Record
+	queryRecords       []driver.Record
+	countValue         int64
+	deleteByQueryCount int64
+	valuesValue        []string
+	initCalls          int
+	closeCalls         int
+	closeContext       context.Context
+	saveCalls          int
+	deleteCalls        int
+	deleteByQueryCalls int
+	queryCalls         int
+	countCalls         int
+	valuesCalls        int
+	collection         string
+	indexes            []driver.Index
+	savedRecord        driver.Record
+	saveOptions        driver.SaveOptions
+	deletedID          string
+	lastQuery          driver.Query
+	lastDeleteQuery    driver.DeleteQuery
+	valuesField        string
+	valuesSize         int
+}
+
+func (b *testBackend) DeleteByQuery(
+	_ context.Context,
+	query driver.DeleteQuery,
+) (int64, error) {
+	b.deleteByQueryCalls++
+	b.lastDeleteQuery = query
+	return b.deleteByQueryCount, b.deleteByQueryErr
 }
 
 func (b *testBackend) Init(_ context.Context, collection string, indexes []driver.Index) error {
@@ -115,9 +137,14 @@ func (b *testBackend) Init(_ context.Context, collection string, indexes []drive
 	return b.initErr
 }
 
-func (b *testBackend) Save(_ context.Context, rec driver.Record) error {
+func (b *testBackend) Save(
+	_ context.Context,
+	rec driver.Record,
+	options driver.SaveOptions,
+) error {
 	b.saveCalls++
 	b.savedRecord = rec
+	b.saveOptions = options
 	return b.saveErr
 }
 
@@ -157,7 +184,11 @@ func (b *testBackend) Values(_ context.Context, field string, q driver.Query, si
 	return b.valuesValue, b.valuesErr
 }
 
-func (b *testBackend) Close(context.Context) error { return nil }
+func (b *testBackend) Close(ctx context.Context) error {
+	b.closeCalls++
+	b.closeContext = ctx
+	return b.closeErr
+}
 
 func newTestMapper() *testMapper {
 	return &testMapper{
@@ -172,6 +203,64 @@ func newTestMapper() *testMapper {
 func mustEncodeEntity(entity testEntity) []byte {
 	data, _ := json.Marshal(entity)
 	return data
+}
+
+func TestSaveForwardsOptions(t *testing.T) {
+	backend := &testBackend{}
+	store, err := NewStore[testEntity](
+		t.Context(),
+		"sqlite",
+		backend,
+		"jobs",
+		newTestMapper(),
+	)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	options := driver.SaveOptions{WaitForVisibility: true}
+	if err := store.Save(t.Context(), testEntity{ID: "job-1"}, options); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if !reflect.DeepEqual(backend.saveOptions, options) {
+		t.Fatalf("Save() options = %#v, want %#v", backend.saveOptions, options)
+	}
+}
+
+func TestSaveRejectsInvalidOptions(t *testing.T) {
+	backend := &testBackend{}
+	store, err := NewStore[testEntity](
+		t.Context(),
+		"sqlite",
+		backend,
+		"jobs",
+		newTestMapper(),
+	)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	tests := []driver.SaveOptions{
+		{
+			Mode: driver.SaveModeUpsert,
+			Conditions: []driver.Filter{
+				{Field: "status", Op: driver.OpEq, Value: "pending"},
+			},
+		},
+		{Mode: driver.SaveModeConditional},
+		{Mode: driver.SaveMode(255)},
+	}
+	for _, options := range tests {
+		if err := store.Save(
+			t.Context(),
+			testEntity{ID: "job-1"},
+			options,
+		); !errors.Is(err, driver.ErrInvalidQuery) {
+			t.Errorf("Save(%#v) error = %v, want ErrInvalidQuery", options, err)
+		}
+	}
+	if backend.saveCalls != 0 {
+		t.Fatalf("backend Save() call count = %d, want 0", backend.saveCalls)
+	}
 }
 
 // TestNewStore covers NewStore initialization: verifies successful init, nil backend, nil mapper, empty collection, and backend Init error.
@@ -289,6 +378,51 @@ func TestNewStore(t *testing.T) {
 	}
 }
 
+func TestNewFromConfigClosesBackendAfterInitializationFailure(t *testing.T) {
+	const backendName = "new-from-config-close-test"
+	initErr := errors.New("backend init failed")
+	closeErr := errors.New("backend close failed")
+	backend := &testBackend{initErr: initErr, closeErr: closeErr}
+	driver.RegisterBackend(backendName, func(*driver.Config) (driver.Backend, error) {
+		return backend, nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	store, err := NewFromConfig[testEntity](
+		ctx,
+		&driver.Config{Driver: backendName},
+		"jobs",
+		newTestMapper(),
+	)
+	if store != nil {
+		t.Fatalf("NewFromConfig() store = %#v, want nil", store)
+	}
+	if !errors.Is(err, initErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("NewFromConfig() error = %v, want init and close errors", err)
+	}
+	if backend.closeCalls != 1 {
+		t.Fatalf("backend Close() call count = %d, want 1", backend.closeCalls)
+	}
+	if backend.closeContext == nil {
+		t.Fatal("backend Close() context = nil")
+	}
+	if err := backend.closeContext.Err(); err != nil {
+		t.Fatalf("backend Close() context error = %v, want nil", err)
+	}
+}
+
+func TestNewStoreReadsIndexesOnce(t *testing.T) {
+	mapper := newTestMapper()
+	_, err := NewStore[testEntity](t.Context(), "test", &testBackend{}, "jobs", mapper)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if mapper.indexesCalls != 1 {
+		t.Fatalf("Mapper.Indexes() call count = %d, want 1", mapper.indexesCalls)
+	}
+}
+
 // TestStoreSave covers the Save path: verifies successful save, encode failure, empty ID, and backend write failure.
 func TestStoreSave(t *testing.T) {
 	saveErr := errors.New("save failed")
@@ -398,7 +532,7 @@ func TestStoreSave(t *testing.T) {
 				return
 			}
 
-			err = store.Save(t.Context(), tc.entity)
+			err = store.Save(t.Context(), tc.entity, driver.SaveOptions{})
 			tc.validate(t, err, tc.backend)
 		})
 	}
@@ -494,6 +628,34 @@ func TestStoreGet(t *testing.T) {
 	}
 }
 
+func TestStoreGetPassesFullRecordToMapper(t *testing.T) {
+	record := driver.Record{
+		ID:   "job-20260409",
+		Data: mustEncodeEntity(testEntity{ID: "job-20260409"}),
+		Fields: map[string]any{
+			"revision": int64(3),
+		},
+	}
+	mapper := newTestMapper()
+	store, err := NewStore[testEntity](
+		t.Context(),
+		"record-mapper",
+		&testBackend{getRecord: record},
+		"jobs",
+		mapper,
+	)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	if _, err := store.Get(t.Context(), record.ID); err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if !reflect.DeepEqual(mapper.decoded, []driver.Record{record}) {
+		t.Fatalf("Decode() records = %#v, want %#v", mapper.decoded, []driver.Record{record})
+	}
+}
+
 // TestStoreDelete covers the Delete path: verifies the request is forwarded to the backend and backend errors are propagated.
 func TestStoreDelete(t *testing.T) {
 	deleteErr := errors.New("delete failed")
@@ -543,6 +705,67 @@ func TestStoreDelete(t *testing.T) {
 			err = store.Delete(t.Context(), "job-20260409")
 			tc.validate(t, err, tc.backend)
 		})
+	}
+}
+
+func TestStoreDeleteByQuery(t *testing.T) {
+	query := driver.DeleteQuery{Filters: []driver.Filter{
+		{Field: "status", Op: driver.OpEq, Value: "staging"},
+	}, Limit: 3}
+	backend := &testBackend{
+		deleteByQueryCount: 3,
+	}
+	store, err := NewStore[testEntity](
+		t.Context(),
+		"query-deleter",
+		backend,
+		"jobs",
+		newTestMapper(),
+	)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	deleted, err := store.DeleteByQuery(t.Context(), query)
+	if err != nil {
+		t.Fatalf("DeleteByQuery() error = %v", err)
+	}
+	if deleted != 3 || backend.deleteByQueryCalls != 1 {
+		t.Fatalf(
+			"DeleteByQuery() = (%d, calls=%d), want (3, 1)",
+			deleted,
+			backend.deleteByQueryCalls,
+		)
+	}
+	if !reflect.DeepEqual(backend.lastDeleteQuery, query) {
+		t.Fatalf("DeleteByQuery() query = %#v, want %#v", backend.lastDeleteQuery, query)
+	}
+}
+
+func TestStoreDeleteByQueryRejectsUnsafeQueries(t *testing.T) {
+	backend := &testBackend{}
+	store, err := NewStore[testEntity](
+		t.Context(),
+		"unsafe-query",
+		backend,
+		"jobs",
+		newTestMapper(),
+	)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	if _, err := store.DeleteByQuery(t.Context(), driver.DeleteQuery{}); !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("DeleteByQuery(empty) error = %v, want ErrInvalidQuery", err)
+	}
+	_, err = store.DeleteByQuery(t.Context(), driver.DeleteQuery{Filters: []driver.Filter{
+		{Field: "status", Op: driver.OpEq, Value: "staging"},
+	}, Limit: -1})
+	if !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("DeleteByQuery(negative limit) error = %v, want ErrInvalidQuery", err)
+	}
+	if backend.deleteByQueryCalls != 0 {
+		t.Fatalf("backend DeleteByQuery() call count = %d, want 0", backend.deleteByQueryCalls)
 	}
 }
 

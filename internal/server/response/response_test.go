@@ -19,6 +19,10 @@ import (
 	"net/http"
 	"reflect"
 	"testing"
+
+	v1 "github.com/ccfos/huatuo/apis/v1"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	serverapi "github.com/ccfos/huatuo/apis/v1/server"
 )
 
 type testResponseWriter struct {
@@ -52,15 +56,9 @@ func TestSuccess(t *testing.T) {
 	if w.statusCode != http.StatusOK {
 		t.Errorf("statusCode = %d, want %d", w.statusCode, http.StatusOK)
 	}
-	resp, ok := w.body.(Response)
+	resp, ok := w.body.(v1.Response[any])
 	if !ok {
-		t.Fatalf("body is not Response: %T", w.body)
-	}
-	if resp.Code != 0 {
-		t.Errorf("resp.Code = %d, want 0", resp.Code)
-	}
-	if resp.Message != "success" {
-		t.Errorf("resp.Message = %q, want %q", resp.Message, "success")
+		t.Fatalf("body type = %T, want v1.Response[any]", w.body)
 	}
 	if !reflect.DeepEqual(resp.Data, data) {
 		t.Errorf("resp.Data = %v, want %v", resp.Data, data)
@@ -80,9 +78,9 @@ func TestCreated(t *testing.T) {
 	if w.headers["Location"] != location {
 		t.Errorf("Location header = %q, want %q", w.headers["Location"], location)
 	}
-	resp, ok := w.body.(Response)
+	resp, ok := w.body.(v1.Response[any])
 	if !ok {
-		t.Fatalf("body is not Response: %T", w.body)
+		t.Fatalf("body type = %T, want v1.Response[any]", w.body)
 	}
 	if !reflect.DeepEqual(resp.Data, data) {
 		t.Errorf("resp.Data = %v, want %v", resp.Data, data)
@@ -103,20 +101,20 @@ func TestErrorWithAPIError(t *testing.T) {
 	w := &testResponseWriter{}
 	apiErr := ErrNotFound
 
-	Error(w, apiErr)
+	Error(w, apiErr, LegacyHTTPStatusForErrorCode)
 
 	if w.statusCode != http.StatusNotFound {
 		t.Errorf("statusCode = %d, want %d", w.statusCode, http.StatusNotFound)
 	}
-	resp, ok := w.body.(Response)
+	resp, ok := w.body.(v1.ErrorResponse)
 	if !ok {
-		t.Fatalf("body is not Response: %T", w.body)
+		t.Fatalf("body type = %T, want v1.ErrorResponse", w.body)
 	}
-	if resp.Code != 404 {
-		t.Errorf("resp.Code = %d, want 404", resp.Code)
+	if resp.Error.Code != v1.ErrorCodeNotFound {
+		t.Errorf("error code = %q, want %q", resp.Error.Code, v1.ErrorCodeNotFound)
 	}
-	if resp.Message != "not found" {
-		t.Errorf("resp.Message = %q, want %q", resp.Message, "not found")
+	if resp.Error.Message != "not found" {
+		t.Errorf("error message = %q, want %q", resp.Error.Message, "not found")
 	}
 }
 
@@ -124,39 +122,144 @@ func TestErrorWithPlainError(t *testing.T) {
 	w := &testResponseWriter{}
 	plainErr := errors.New("something went wrong")
 
-	Error(w, plainErr)
+	Error(w, plainErr, LegacyHTTPStatusForErrorCode)
 
 	if w.statusCode != http.StatusInternalServerError {
 		t.Errorf("statusCode = %d, want %d", w.statusCode, http.StatusInternalServerError)
 	}
-	resp, ok := w.body.(Response)
+	resp, ok := w.body.(v1.ErrorResponse)
 	if !ok {
-		t.Fatalf("body is not Response: %T", w.body)
+		t.Fatalf("body type = %T, want v1.ErrorResponse", w.body)
 	}
-	if resp.Code != 500 {
-		t.Errorf("resp.Code = %d, want 500", resp.Code)
+	if resp.Error.Code != v1.ErrorCodeInternal {
+		t.Errorf("error code = %q, want %q", resp.Error.Code, v1.ErrorCodeInternal)
 	}
-	if resp.Message != "something went wrong" {
-		t.Errorf("resp.Message = %q, want %q", resp.Message, "something went wrong")
+	if resp.Error.Message != "internal error" {
+		t.Errorf("error message = %q, want %q", resp.Error.Message, "internal error")
 	}
 }
 
 func TestErrorWithCode(t *testing.T) {
 	w := &testResponseWriter{}
 
-	ErrorWithCode(w, http.StatusBadRequest, 40001, "missing required field")
+	ErrorWithCode(
+		w,
+		LegacyHTTPStatusForErrorCode,
+		v1.ErrorCodeInvalidRequest,
+		"missing required field",
+	)
 
 	if w.statusCode != http.StatusBadRequest {
 		t.Errorf("statusCode = %d, want %d", w.statusCode, http.StatusBadRequest)
 	}
-	resp, ok := w.body.(Response)
+	resp, ok := w.body.(v1.ErrorResponse)
 	if !ok {
-		t.Fatalf("body is not Response: %T", w.body)
+		t.Fatalf("body type = %T, want v1.ErrorResponse", w.body)
 	}
-	if resp.Code != 40001 {
-		t.Errorf("resp.Code = %d, want 40001", resp.Code)
+	if resp.Error.Code != v1.ErrorCodeInvalidRequest {
+		t.Errorf("error code = %q, want %q", resp.Error.Code, v1.ErrorCodeInvalidRequest)
 	}
-	if resp.Message != "missing required field" {
-		t.Errorf("resp.Message = %q, want %q", resp.Message, "missing required field")
+	if resp.Error.Message != "missing required field" {
+		t.Errorf("error message = %q, want %q", resp.Error.Message, "missing required field")
+	}
+}
+
+func TestErrorWithUnknownCodeFallsBackToInternal(t *testing.T) {
+	w := &testResponseWriter{}
+
+	Error(w, NewAPIError("unknown_code", "sensitive details"), LegacyHTTPStatusForErrorCode)
+
+	if w.statusCode != http.StatusInternalServerError {
+		t.Errorf("statusCode = %d, want %d", w.statusCode, http.StatusInternalServerError)
+	}
+	resp, ok := w.body.(v1.ErrorResponse)
+	if !ok {
+		t.Fatalf("body type = %T, want v1.ErrorResponse", w.body)
+	}
+	if resp.Error.Code != v1.ErrorCodeInternal {
+		t.Errorf("error code = %q, want %q", resp.Error.Code, v1.ErrorCodeInternal)
+	}
+	if resp.Error.Message != ErrInternal.Message {
+		t.Errorf("error message = %q, want %q", resp.Error.Message, ErrInternal.Message)
+	}
+}
+
+func TestInjectedHTTPStatusMapper(t *testing.T) {
+	tests := []struct {
+		name       string
+		mapper     HTTPStatusMapper
+		code       v1.ErrorCode
+		wantStatus int
+		wantOK     bool
+	}{
+		{
+			name:       "shared",
+			mapper:     LegacyHTTPStatusForErrorCode,
+			code:       v1.ErrorCodeUnauthenticated,
+			wantStatus: http.StatusUnauthorized,
+			wantOK:     true,
+		},
+		{
+			name:       "shared route",
+			mapper:     serverapi.HTTPStatusForErrorCode,
+			code:       v1.ErrorCodeRouteNotFound,
+			wantStatus: http.StatusNotFound,
+			wantOK:     true,
+		},
+		{
+			name:       "server",
+			mapper:     serverapi.HTTPStatusForErrorCode,
+			code:       serverapi.ErrorCodeJobNotFound,
+			wantStatus: http.StatusNotFound,
+			wantOK:     true,
+		},
+		{
+			name:       "node",
+			mapper:     nodeapi.HTTPStatusForErrorCode,
+			code:       nodeapi.ErrorCodeServiceNotImplemented,
+			wantStatus: http.StatusNotImplemented,
+			wantOK:     true,
+		},
+		{
+			name:       "legacy",
+			mapper:     LegacyHTTPStatusForErrorCode,
+			code:       v1.ErrorCodeRateLimited,
+			wantStatus: http.StatusTooManyRequests,
+			wantOK:     true,
+		},
+		{name: "unknown", mapper: serverapi.HTTPStatusForErrorCode, code: "unknown_code"},
+		{name: "nil mapper", code: v1.ErrorCodeInvalidRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStatus, gotOK := statusForErrorCode(tt.mapper, tt.code)
+			if gotStatus != tt.wantStatus {
+				t.Errorf("HTTPStatusForErrorCode(%q) = %d, want %d", tt.code, gotStatus, tt.wantStatus)
+			}
+			if gotOK != tt.wantOK {
+				t.Errorf("HTTPStatusForErrorCode(%q) ok = %v, want %v", tt.code, gotOK, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestChainHTTPStatusMappers(t *testing.T) {
+	mapper := ChainHTTPStatusMappers(
+		serverapi.HTTPStatusForErrorCode,
+		LegacyHTTPStatusForErrorCode,
+	)
+
+	status, ok := mapper(serverapi.ErrorCodeJobNotFound)
+	if !ok || status != http.StatusNotFound {
+		t.Errorf("server status = %d/%v, want %d/true", status, ok, http.StatusNotFound)
+	}
+	status, ok = mapper(v1.ErrorCodeRateLimited)
+	if !ok || status != http.StatusTooManyRequests {
+		t.Errorf("legacy status = %d/%v, want %d/true", status, ok, http.StatusTooManyRequests)
+	}
+	status, ok = mapper("unknown_code")
+	if ok || status != 0 {
+		t.Errorf("unknown status = %d/%v, want 0/false", status, ok)
 	}
 }

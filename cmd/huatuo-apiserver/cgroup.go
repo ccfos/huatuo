@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"os"
 
-	"huatuo-bamai/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups"
 )
 
 func setupCgroup(_ context.Context, d *Daemon) (func(context.Context) error, error) {

@@ -188,7 +188,7 @@ sudo devlink trap show <bus/device>
 sudo devlink trap set <bus/device> trap <trap-name> action trap
 
 # 4. Start dropwatch and display only hardware drops
-sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | \
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --output json 2>/dev/null | \
   jq -c 'select(.drop_source == "hardware")'
 ```
 
@@ -198,35 +198,34 @@ This capability collects only packets that the driver reports through `DEVLINK_T
 
 `--filter`, `--device`, `--device-excluded`, and `--max-events-per-second` apply to both software and hardware events. Text output formats a hardware reason as `reason=<group>/<trap> drop_source=hardware`. JSON output uses the separate `drop_reason_group`, `drop_reason`, and `drop_source` fields.
 
+`tcpshark --with-dropwatch` shares source classification and reason resolution and automatically enables available hardware capture. A successful correlation preserves the same `drop_source`, `drop_reason`, and `drop_reason_group` semantics. See [retransmission correlation](/docs/best-practice/tcpshark_en.md).
+
 #### Examples
 
 ```bash
 # Text output, monitor TCP drops on all devices
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp"
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp"
 
 # Monitor drops on eth0 only
-sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device eth0 --output json
 
 # Exclude loopback
-sudo dropwatch --bpf-path bpf/dropwatch.o --device-excluded lo --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device-excluded lo --output json
 
 # Combine device and protocol filters
-sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --filter "tcp and port 443" --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --device eth0 --filter "tcp and port 443" --output json
 
 # Capture for 60 seconds and exit
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp and port 443" --duration 60 --output json
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp and port 443" --duration 60 --output json
 
 # Forward events to a running huatuo-bamai instance
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
-
-# Use jq to filter and show only RST packets
-sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | jq 'select(.layers.tcp.flags == "RST")'
+sudo dropwatch --bpf-path bpf/net_dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
 
 # Capture 10 seconds of JSON output, excluding events whose stack contains ip_finish_output
-sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'select(.stack | test("ip_finish_output") | not)'
+sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -c 'select(.stack | test("ip_finish_output") | not)'
 
 # Capture 10 seconds of JSON output, printing all fields except stack
-sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'del(.stack)'
+sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -c 'del(.stack)'
 ```
 
 `jq -c` compresses each matching event into a single-line JSON, convenient for saving as NDJSON or further pipe processing. `test("ip_finish_output")` checks whether `stack` matches the regex; `not` negates the result, so the command above excludes stacks containing `ip_finish_output`. Remove `| not` to keep only those containing `ip_finish_output`. `del(.stack)` removes the `stack` field from the jq output, useful for viewing just the timestamp, device, process, `packet_*` metadata, and `layers` protocol fields. For userspace call-stack filtering before storage, configure `EventTracing.IssuesList` in huatuo-bamai (see Section 4).
@@ -240,6 +239,7 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 | Field                    | Type     | Description                                                   |
 | ------------------------ | -------- | ------------------------------------------------------------- |
 | `observed_timestamp`     | string   | UTC userspace receive/format time (RFC3339Nano), not the kernel hook timestamp |
+| `kernel_observed_timestamp` | string | UTC kernel observation time (RFC3339Nano), converted from the raw monotonic clock. |
 | `type`                   | string   | Reserved TCP type; currently unset (`1` common, `2` SYN flood, `3`/`4` listen overflow) |
 | `drop_source`            | string   | Drop source: `software` for the kernel network stack or `hardware` for a devlink DROP trap |
 | `drop_reason`            | string   | `SKB_DROP_REASON_*` for software drops; if kernel BTF resolution fails, dropwatch logs a warning and falls back to the numeric value. For hardware drops, this is the devlink trap name |
@@ -258,7 +258,7 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 | `netdev_linkstatus`      | []string | Network device link status flags                              |
 | `packet_skb_addr`        | string   | SKB address (hexadecimal, omitempty)                         |
 | `packet_eth_proto`       | string   | Raw EtherType (hexadecimal, e.g. `0x0800`)                   |
-| `packet_len`             | uint32   | Packet length in bytes                                        |
+| `packet_len_bytes`       | uint32   | Kernel `skb->len` snapshot; it is an SKB logical length and may differ from the on-wire frame length |
 | `layers`                 | object   | Layered protocol parse result; missing layers are omitted      |
 | `stack`                  | string   | Kernel call stack (newline-separated)                         |
 
@@ -272,7 +272,7 @@ For hardware events, `stack` is the kernel call stack at which the driver report
 | `layers.ether` | L2 fields when a real Ethernet header is present: `saddr`, `daddr`, `type`, `len`; `len` is non-zero only for IEEE 802.3 framing |
 | `layers.ipv4`  | IPv4 fields: `version`, `ihl`, `tos`, `len`, `id`, `flags`, `frag_offset`, `ttl`, `protocol`, `checksum`, `saddr`, `daddr` |
 | `layers.ipv6`  | IPv6 fields: `version`, `traffic_class`, `flow_label`, `len`, `next_header`, `hop_limit`, `saddr`, `daddr`  |
-| `layers.tcp`   | TCP fields: `sport`, `dport`, `seq`, `ack_seq`, `data_offset`, `flags`, `window`, `checksum`, `urgent`, `sk_state` |
+| `layers.tcp`   | TCP fields: `sport`, `dport`, `seq`, `ack_seq`, `data_offset`, `window`, `checksum`, `urgent`, `sk_state` |
 | `layers.udp`   | UDP fields: `sport`, `dport`, `len`, `checksum`                                                         |
 | `layers.icmp`  | ICMP/ICMPv6 fields: `type`, `code`, `checksum`, `id`, `seq`                                             |
 | `layers.arp`   | ARP fields: `addr_type`, `protocol`, `hw_address_size`, `prot_address_size`, `operation`, `sender_mac`, `sender_ip`, `target_mac`, `target_ip` |
@@ -285,7 +285,7 @@ huatuo-bamai launches `dropwatch` as a subprocess and uses `--output-storage` to
 
 ```bash
 dropwatch \
-  --bpf-path <CoreBpfDir>/dropwatch.o \
+  --bpf-path <CoreBpfDir>/net_dropwatch.o \
   --output-storage /var/run/huatuo-toolstream.sock \
   --filter "tcp"
 ```
@@ -299,14 +299,20 @@ dropwatch \
     IssuesList = []
 
 [EventTracing.Dropwatch]
-    # tcpdump filter expression, forwarded to dropwatch --filter.
+    # Tcpdump filter for standalone dropwatch.
     # Default: "tcp"
     Filter = "tcp"
 
     # Forwarded to dropwatch --max-events-per-second.
     # Default: 100
     MaxEventsPerSecond = 100
+
+[EventTracing.TCPRetransmit]
+    # Run tcpshark with a private embedded dropwatch source.
+    EnableDropwatch = false
 ```
+
+Standalone dropwatch always emits raw `DropWatchTracing` events. Local TCP retransmission correlation loads a separate `net_dropwatch.o`, uses `EventTracing.TCPRetransmit.Filter` for both inputs, and emits only finalized `TCPRetransmitTracing` results. The two modes may run together; embedded drops are never stored as duplicate raw events.
 
 #### 4.2 Noise Filtering
 

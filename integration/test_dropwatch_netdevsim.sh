@@ -22,8 +22,6 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-readonly TRACEPOINT_ID="/sys/kernel/tracing/events/devlink/devlink_trap_report/id"
-readonly DEBUGFS_TRACEPOINT_ID="/sys/kernel/debug/tracing/events/devlink/devlink_trap_report/id"
 readonly NETDEVSIM_BUS="/sys/bus/netdevsim"
 readonly DROPWATCH_DURATION=10
 
@@ -43,14 +41,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for command in devlink ip jq modprobe; do
-	command -v "${command}" > /dev/null 2>&1 || skip "${command} command is not installed"
-done
-if [[ ! -e "${TRACEPOINT_ID}" && ! -e "${DEBUGFS_TRACEPOINT_ID}" ]]; then
-	skip "devlink:devlink_trap_report is unavailable"
-fi
+require_commands devlink ip jq modprobe
+tracepoint_available devlink devlink_trap_report \
+	|| skip "devlink/devlink_trap_report tracepoint is not available"
 
-bpf_tool_setup dropwatch
+bpf_tool_setup dropwatch net_dropwatch
 modprobe netdevsim > "${TOOL_WORK_DIR}/modprobe.out" 2> "${TOOL_WORK_DIR}/modprobe.err" \
 	|| skip "netdevsim kernel module is unavailable"
 [[ -w "${NETDEVSIM_BUS}/new_device" ]] || skip "netdevsim new_device is not writable"
@@ -120,7 +115,7 @@ hardware_event_ready() {
       .netdev_ifindex > 0 and
       (.packet_skb_addr | startswith("0x")) and
       .packet_eth_proto == "0x800" and
-      .packet_len > 0 and
+      .packet_len_bytes > 0 and
       .layers.label == "IPv4/UDP" and
       .layers.ipv4.saddr == "192.0.2.1" and
       .layers.ipv4.daddr == "198.51.100.1")
@@ -136,5 +131,6 @@ if ! wait "${DROPWATCH_PID}"; then
 fi
 DROPWATCH_PID=""
 
+assert_kernel_observation_timestamps "${TOOL_OUT}"
 assert_log_has_no_failure "${TOOL_ERR}" "dropwatch"
 log_info "dropwatch captured netdevsim hardware trap: ${TRAP_GROUP}/${TRAP_NAME} on ${NETDEV}"

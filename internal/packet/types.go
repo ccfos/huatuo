@@ -21,10 +21,10 @@ import (
 	"strings"
 )
 
-// RawCapacity is the size of the raw packet buffer, matching PKT_RAW_LEN in bpf/dropwatch.c.
+// RawCapacity is the size of the raw packet buffer, matching PKT_RAW_LEN in bpf/net_dropwatch.c.
 const RawCapacity = 120
 
-// Hdr mirrors struct packet_hdr in bpf/dropwatch.c.
+// Hdr mirrors struct packet_hdr in bpf/net_dropwatch.c.
 type Hdr struct {
 	EthProto  uint16
 	RawLen    uint8
@@ -103,11 +103,14 @@ type TCP struct {
 	Seq        uint32 `json:"seq"`
 	AckSeq     uint32 `json:"ack_seq"`
 	DataOffset uint8  `json:"data_offset"`
-	Flags      string `json:"flags"`
-	Window     uint16 `json:"window"`
-	Checksum   uint16 `json:"checksum"`
-	Urgent     uint16 `json:"urgent,omitempty"`
-	SkState    string `json:"sk_state,omitempty"`
+	// Flags preserves the JSON representation while RawFlags retains the same
+	// byte for protocol logic without exposing duplicate state on the wire.
+	Flags    string `json:"flags"`
+	RawFlags uint8  `json:"-"`
+	Window   uint16 `json:"window"`
+	Checksum uint16 `json:"checksum"`
+	Urgent   uint16 `json:"urgent,omitempty"`
+	SkState  string `json:"sk_state,omitempty"`
 }
 
 // UDP holds L4 UDP fields.

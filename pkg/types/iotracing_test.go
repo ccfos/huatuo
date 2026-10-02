@@ -40,7 +40,7 @@ func TestIOTracingSnapshotJSON(t *testing.T) {
 			name: "all fields",
 			snapshot: IOTracingSnapshot{
 				Processes: []ProcessFileIOStats{{
-					Pid:               42,
+					PID:               42,
 					Comm:              "worker",
 					ContainerHostname: "container-1",
 					TotalFsReadBps:    100,
@@ -66,10 +66,12 @@ func TestIOTracingSnapshotJSON(t *testing.T) {
 					TotalFileCount: 1,
 				}},
 				StallStacks: []IOScheduleEvent{{
-					Pid:               43,
+					PID:               43,
+					TID:               44,
+					CPU:               2,
 					Comm:              "kworker",
 					ContainerHostname: "container-2",
-					LatencyUs:         90,
+					ScheduleLatencyUS: 90,
 					Stack:             []string{"io_schedule", "worker_thread"},
 				}},
 			},
@@ -102,6 +104,8 @@ func TestIOTracingSnapshotJSON(t *testing.T) {
 				}],
 				"io_schedule_timeout_stacks": [{
 					"pid": 43,
+					"tid": 44,
+					"cpu": 2,
 					"comm": "kworker",
 					"container_hostname": "container-2",
 					"schedule_latency_us": 90,

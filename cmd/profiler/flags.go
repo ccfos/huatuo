@@ -73,6 +73,10 @@ var appFlags = []cli.Flag{
 		Usage:   "The number of samples to collect per second",
 		Value:   99,
 	},
+	&cli.BoolFlag{
+		Name:  "require-hardware-pmu",
+		Usage: "Require native on-CPU profiling to use the hardware PMU",
+	},
 	&cli.UintFlag{
 		Name:  "physical-memory-probability",
 		Usage: "Native physical-memory sampling probability, from 1 to 100 percent",
@@ -137,7 +141,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "tool-path",
-		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
+		Usage: "Tool directory containing bin/asprof and lib/libasyncProfiler.so for Java, or py-spy for Python",
 	},
 	&cli.StringFlag{
 		Name:  "binary-match-path",

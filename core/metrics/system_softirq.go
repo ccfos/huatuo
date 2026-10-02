@@ -22,9 +22,10 @@ import (
 	"fmt"
 	"strconv"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
+	"github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/tklauser/numcpus"
 )
@@ -38,16 +39,18 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch possible cpu num")
 	}
-
-	cpuOnline, err := numcpus.GetOnline()
-	if err != nil {
-		return nil, fmt.Errorf("fetch possible cpu num")
+	maxOnlineCPUID := cpuutil.MaxOnlineCPU(cpuutil.SystemCPUOnlinePath)
+	if maxOnlineCPUID < 0 {
+		return nil, fmt.Errorf("fetch maximum online CPU ID")
+	}
+	if maxOnlineCPUID >= cpuPossible {
+		return nil, fmt.Errorf("maximum online CPU ID %d exceeds possible CPUs %d", maxOnlineCPUID, cpuPossible)
 	}
 
 	return &tracing.EventTracingAttr{
 		TracingData: &softirqLatency{
-			cpuPossible: cpuPossible,
-			cpuOnline:   cpuOnline,
+			cpuPossible:    cpuPossible,
+			maxOnlineCPUID: maxOnlineCPUID,
 		},
 		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
@@ -57,15 +60,15 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/system_softirq.c -o $BPF_DIR/system_softirq.o
 
 type softirqLatency struct {
-	bpf         bpf.Reference
-	cpuPossible int
-	cpuOnline   int
+	bpf            bpf.Reference
+	cpuPossible    int
+	maxOnlineCPUID int
 }
 
 type softirqLatencyData struct {
-	Enable       uint64
-	Timestamp    uint64
-	TotalLatency [4]uint64
+	Enable        uint64
+	StartNS       uint64
+	LatencyCounts [4]uint64
 }
 
 const (
@@ -153,11 +156,11 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 		labels["type"] = irqTypeName(int(irqVector))
 
 		for cpuid, lat := range latencyOnAllCPU {
-			if cpuid >= s.cpuOnline {
+			if cpuid > s.maxOnlineCPUID {
 				break
 			}
 			labels["cpuid"] = strconv.Itoa(cpuid)
-			for zoneid, zone := range lat.TotalLatency {
+			for zoneid, zone := range lat.LatencyCounts {
 				labels["zone"] = strconv.Itoa(zoneid)
 				metricData = append(metricData, metric.NewCounterData("latency", float64(zone), "softirq latency", labels))
 			}

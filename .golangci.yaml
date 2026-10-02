@@ -55,7 +55,7 @@ linters-settings:
     # Default: false
     extra-rules: true
     # Module path which contains the source code being formatted.
-    module-path: huatuo-bamai
+    module-path: github.com/ccfos/huatuo
   gocritic:
     enabled-tags:
       - diagnostic

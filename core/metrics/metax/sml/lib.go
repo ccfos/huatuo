@@ -19,7 +19,7 @@ import (
 	"runtime"
 	"sync"
 
-	"huatuo-bamai/core/metrics/metax/dl"
+	"github.com/ccfos/huatuo/core/metrics/metax/dl"
 
 	"github.com/ebitengine/purego"
 )

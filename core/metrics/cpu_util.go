@@ -21,13 +21,13 @@ import (
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/cgroups/stats"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/utils/cpuutil"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 type cpuUtilStat struct {
@@ -98,7 +98,16 @@ func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, container *pod.Co
 		return err
 	}
 
-	// allow statistics 0
+	// Usage, User, and System should increase monotonically. This defensive
+	// check prevents an unexpected reset from causing uint64 underflow.
+	if stat.Usage < cache.lastUsage.Usage ||
+		stat.User < cache.lastUsage.User ||
+		stat.System < cache.lastUsage.System {
+		cache.lastUsage = *stat
+		cache.lastTimestamp = now
+		return nil
+	}
+
 	deltaTotalTime := stat.Usage - cache.lastUsage.Usage
 	deltaUsrTime := stat.User - cache.lastUsage.User
 	deltaSysTime := stat.System - cache.lastUsage.System

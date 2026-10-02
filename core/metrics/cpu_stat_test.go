@@ -114,7 +114,7 @@ func TestNewCPUStatSample(t *testing.T) {
 		name             string
 		raw              map[string]uint64
 		want             cpuStat
-		wantAvailability cpuStatMetrics
+		wantAvailability cpuStatAvailability
 	}{
 		{
 			name: "cgroup v1",
@@ -134,7 +134,7 @@ func TestNewCPUStatSample(t *testing.T) {
 				cpuTotal:      6,
 				lastUpdate:    now,
 			},
-			wantAvailability: cpuStatMetrics{
+			wantAvailability: cpuStatAvailability{
 				waitPercent:   true,
 				nrThrottled:   true,
 				throttledTime: true,
@@ -158,7 +158,7 @@ func TestNewCPUStatSample(t *testing.T) {
 				cpuTotal:      6,
 				lastUpdate:    now,
 			},
-			wantAvailability: cpuStatMetrics{
+			wantAvailability: cpuStatAvailability{
 				nrThrottled:   true,
 				throttledTime: true,
 				nrBursts:      true,
@@ -169,7 +169,7 @@ func TestNewCPUStatSample(t *testing.T) {
 			name:             "missing fields",
 			raw:              map[string]uint64{},
 			want:             cpuStat{cpuTotal: 6, lastUpdate: now},
-			wantAvailability: cpuStatMetrics{},
+			wantAvailability: cpuStatAvailability{},
 		},
 	}
 

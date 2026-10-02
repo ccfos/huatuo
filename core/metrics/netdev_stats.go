@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,12 +23,12 @@ import (
 	"os"
 	"strconv"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/jsimonetti/rtnetlink"
 	"github.com/mdlayher/netlink"
@@ -90,6 +90,7 @@ func (c *netdevCollector) Update() ([]*metric.Data, error) {
 }
 
 func (c *netdevCollector) getStats(container *pod.Container) (netdevStats, error) {
+	cfg := configSnapshot()
 	f, err := matcher.NewValueMatcher(cfg.NetdevStats.DeviceIncluded, cfg.NetdevStats.DeviceExcluded)
 	if err != nil {
 		return nil, fmt.Errorf("netdev device filter: %w", err)

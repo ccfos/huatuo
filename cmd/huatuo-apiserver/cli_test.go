@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 
 	"github.com/urfave/cli/v2"
 )
@@ -70,6 +70,9 @@ ID = "test-user"
 BearerToken = "test-token"
 Admin = true
 
+[Agent.Auth]
+BearerToken = "node-token"
+
 [Jobs]
 StoreDSN = "state/jobs.db"
 `)
@@ -103,6 +106,9 @@ Level = "Error"
 ID = "test-user"
 BearerToken = "test-token"
 Admin = true
+
+[Agent.Auth]
+BearerToken = "node-token"
 `)
 	if err := os.WriteFile(filepath.Join(configDir, configFile), contents, 0o600); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)

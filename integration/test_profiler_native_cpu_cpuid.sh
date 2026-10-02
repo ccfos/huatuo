@@ -28,7 +28,7 @@ bpf_tool_setup profiler native_oncpu_profiler profiler-cpuid
 readonly PROFILER_BIN=${TOOL_BIN}
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 
-command -v taskset > /dev/null || skip "taskset(1) not in PATH"
+require_commands taskset
 [[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip "perf_event_paranoid not readable: perf unavailable"
 readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
 [[ "${PARANOID}" -le 2 ]] || skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"

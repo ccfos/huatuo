@@ -21,24 +21,21 @@ import (
 	"strings"
 	"testing"
 
+	v1 "github.com/ccfos/huatuo/apis/v1"
+
 	httpGin "github.com/gin-gonic/gin"
 )
 
 type stubAPIError struct {
-	httpStatus int
-	code       int
-	message    string
+	code    v1.ErrorCode
+	message string
 }
 
 func (e stubAPIError) Error() string {
 	return e.message
 }
 
-func (e stubAPIError) GetHTTPStatus() int {
-	return e.httpStatus
-}
-
-func (e stubAPIError) GetCode() int {
+func (e stubAPIError) GetCode() v1.ErrorCode {
 	return e.code
 }
 
@@ -198,15 +195,15 @@ func TestWrapErrHandlerWritesErrors(t *testing.T) {
 	}{
 		{
 			name:         "api-style-error",
-			err:          stubAPIError{httpStatus: http.StatusBadRequest, code: 4001, message: "invalid payload"},
+			err:          stubAPIError{code: v1.ErrorCodeInvalidRequest, message: "invalid payload"},
 			wantStatus:   http.StatusBadRequest,
-			wantBodyPart: `"message":"invalid payload"`,
+			wantBodyPart: `"error":{"code":"invalid_request","message":"invalid payload"}`,
 		},
 		{
 			name:         "generic-error",
 			err:          errors.New("trace-2026 failed"),
 			wantStatus:   http.StatusInternalServerError,
-			wantBodyPart: `"message":"trace-2026 failed"`,
+			wantBodyPart: `"error":{"code":"internal_error","message":"internal error"}`,
 		},
 	}
 
@@ -239,10 +236,13 @@ func TestWriteErrorFallback(t *testing.T) {
 	if recorder.Code != http.StatusInternalServerError {
 		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusInternalServerError)
 	}
-	if !strings.Contains(recorder.Body.String(), `"code":500`) {
-		t.Errorf("response body = %q, want error code 500", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), `"code":"internal_error"`) {
+		t.Errorf("response body = %q, want internal_error code", recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), `"message":"unexpected failure"`) {
-		t.Errorf("response body = %q, want failure message", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), `"message":"internal error"`) {
+		t.Errorf("response body = %q, want public internal error message", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "unexpected failure") {
+		t.Errorf("response body = %q, exposed internal error", recorder.Body.String())
 	}
 }

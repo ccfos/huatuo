@@ -24,19 +24,9 @@ readonly __HUATUO_LIB_CONTINUOUS_PROFILING_SH_LOADED=1
 CONTINUOUS_PROFILE_DIAGNOSTIC="no raw profile request made"
 
 continuous_profiling_requirements() {
-	command -v docker > /dev/null || skip "docker command is not installed"
+	require_commands docker
 	docker info > /dev/null 2>&1 || skip "docker daemon is unavailable"
-	command -v jq > /dev/null || skip "jq command is not installed"
-	command -v ss > /dev/null || skip "ss command is not installed"
-	command -v timeout > /dev/null || fatal "timeout command is not installed"
-	[[ -x "${HUATUO_APISERVER_BIN}" ]] \
-		|| fatal "huatuo-apiserver binary missing"
-	[[ -x "${ROOT_DIR}/_output/bin/huatuo-bamai" ]] \
-		|| fatal "huatuo-bamai binary missing"
-	[[ -x "${ROOT_DIR}/_output/bin/profiler" ]] \
-		|| fatal "profiler binary missing"
-	[[ -r "${ROOT_DIR}/_output/bpf/native_oncpu_profiler.o" ]] \
-		|| fatal "native CPU profiler BPF object missing"
+	require_commands jq ss timeout
 	[[ -r /proc/sys/kernel/perf_event_paranoid ]] \
 		|| skip "perf_event is unavailable"
 
@@ -52,11 +42,11 @@ continuous_profiling_cleanup() {
 	[[ -n "${target_pid}" ]] && stop_by_pid "${target_pid}" 5 || true
 	huatuo_apiserver_stop
 	huatuo_bamai_stop "${HUATUO_BAMAI_TEST_TMPDIR}" || true
-	if [[ -n "${ELASTICSEARCH_CONTAINER_ID}" ]]; then
+	if [[ -n "${STORAGE_CONTAINER_ID}" ]]; then
 		if [[ ${status} -ne 0 ]]; then
-			elasticsearch_dump_logs || true
+			storage_dump_logs || true
 		fi
-		elasticsearch_stop || true
+		storage_stop || true
 	fi
 }
 
@@ -84,8 +74,8 @@ continuous_profile_create_cpu() {
 		-w '%{http_code}' -X POST \
 		-H "Authorization: Bearer ${API_TOKEN}" \
 		-H 'Content-Type: application/json' \
-		"${APISERVER_ADDR}/v1/profiles" \
-		-d "{\"type\":\"cpu\",\"language\":\"c\",\"duration_seconds\":${duration},\"hostname\":\"127.0.0.1\"}") \
+		"${APISERVER_ADDR}/v1/profiling" \
+		-d "{\"hostname\":\"127.0.0.1\",\"duration_seconds\":${duration},\"scope\":\"host\",\"type\":\"cpu\",\"language\":\"c\",\"mode\":\"oncpu\"}") \
 		|| curl_status=$?
 	if [[ -r "${response_file}" ]]; then
 		log_info "${description} response: $(< "${response_file}")"
@@ -102,11 +92,17 @@ continuous_profile_status_is() {
 	local profile_id=$1 expected_status=$2 response_file=$3
 
 	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiles/${profile_id}" \
+		"${APISERVER_ADDR}/v1/profiling/${profile_id}" \
 		> "${response_file}" \
 		|| return 1
 	jq -e --arg expected_status "${expected_status}" \
-		'.data.status == $expected_status' "${response_file}" > /dev/null
+		'if ($expected_status == "completed" or
+			$expected_status == "failed" or
+			$expected_status == "stopped")
+		 then .data.status == "terminal"
+			and .data.terminal.outcome == $expected_status
+		 else .data.status == $expected_status
+		 end' "${response_file}" > /dev/null
 }
 
 continuous_profile_windows_are_stored() {
@@ -116,7 +112,7 @@ continuous_profile_windows_are_stored() {
 	status=$(
 		curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
 			-H "Authorization: Bearer ${API_TOKEN}" \
-			"${APISERVER_ADDR}/v1/profiles/${profile_id}/raw"
+			"${APISERVER_ADDR}/v1/profiling/${profile_id}/raw"
 	) || {
 		CONTINUOUS_PROFILE_DIAGNOSTIC="raw profile request failed before receiving an HTTP response"
 		return 1
@@ -124,12 +120,12 @@ continuous_profile_windows_are_stored() {
 	count=$(jq -er '
 		.data.items
 		| map(
-			has("uploaded_at")
-			and has("captured_at")
+			has("uploaded_timestamp")
+			and has("started_timestamp")
 			and has("profile_type")
 			and has("profile")
 			and (has("tracer_id") | not)
-			and (has("tracer_data") | not)
+			and (has("profile_data") | not)
 		)
 		| if all then length else error("invalid raw profile contract") end
 	' "${response_file}" 2> /dev/null) || {
@@ -141,7 +137,7 @@ continuous_profile_windows_are_stored() {
 }
 
 continuous_profiling_start_stack() {
-	elasticsearch_start
+	storage_start
 	integration_huatuo_bamai_start \
 		write_continuous_profiling_bamai_config \
 		--region integration \

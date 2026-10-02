@@ -50,7 +50,7 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
 
 ## 整体大图
 
-![](/docs/img/hardware-errors-huatuo-framework.png)
+![](/docs/img/huatuo-arch-vendor.svg)
 
 ## 开源生态
 
@@ -86,25 +86,64 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
     </small>
     </div>
 
-    ![](/docs/img/quickstart-autotrcing-event.png)
+    ![](/docs/img/quickstart-autotracing-event.png)
 
 - **注意**
   请勿将 latest 标签的镜像部署至生产环境，此为开发测试分支。请使用正式发版的镜像或二进制文件。
+
+## Go 客户端
+
+对外提供的 Go 客户端位于 `client/`。Node 客户端文件使用 `node_` 前缀。
+
+```go
+package main
+
+import (
+	"context"
+	"encoding/json"
+
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/client"
+)
+
+func updateNodeConfig(ctx context.Context, address client.NodeAddress) error {
+	nodeClient, err := client.NewNode(&client.NodeConfig{
+		BearerToken: "node-token",
+	})
+	if err != nil {
+		return err
+	}
+	return nodeClient.UpdateConfig(ctx, address, &nodeapi.UpdateConfigRequest{
+		Config: map[string]json.RawMessage{
+			"Runtime.CPULimitCores": json.RawMessage("1.5"),
+		},
+	})
+}
+```
 
 ## 内核版本
 
 支持 4.18 及之后的所有内核版本。以下为主要测试过的内核与操作系统发行版。
 
-|  HUATUO      |  内核版本 |  操作系统发行版     |
-| :---  |    :----  |  :--- |
-| 1.0      | 4.18.x      | CentOS 8.x                                    |
-| 1.0      | 5.4.x       | OpenCloudOS V8/Ubuntu 20.04                   |
-| 1.0      | 5.10.x      | OpenEuler 22.03/Anolis OS 8.10                |
-| 1.0      | 5.15.x      | Ubuntu 22.04                                  |
-| 1.0      | 6.6.x       | OpenEuler 24.03/Anolis OS 23.3/OpenCloudOS V9 |
-| 1.0      | 6.8.x       | Ubuntu 24.04                                  |
-| 1.0      | 6.14.x      | Fedora 42                                     |
-| 2.3.0    | 7.0.x       | Ubuntu 26.04                                  |
+| HUATUO | Kernel | OS |
+| :--- | :--- | :--- |
+| 1.0.0 | 4.18.x | CentOS 8.x |
+| 2.4.0 | 4.18.x | Rocky Linux 8.10 |
+| 1.0.0 | 5.4.x | OpenCloudOS V8 |
+| 1.0.0 | 5.4.x | Ubuntu 20.04.6 LTS |
+| 1.0.0 | 5.10.x | Anolis OS 8.10 |
+| 1.0.0 | 5.10.x | openEuler 22.03 LTS-SP4 |
+| 2.4.0 | 5.14.x | Rocky Linux 9.8 |
+| 1.0.0 | 5.15.x | Ubuntu 22.04.5 LTS |
+| 2.4.0 | 6.1.x | Debian 12 (bookworm) |
+| 1.0.0 | 6.6.x | Anolis OS 23.3 |
+| 1.0.0 | 6.6.x | OpenCloudOS V9 |
+| 1.0.0 | 6.6.x | openEuler 24.03 LTS-SP4 |
+| 1.0.0 | 6.8.x | Ubuntu 24.04.4 LTS |
+| 2.4.0 | 6.12.x | Debian 13 (trixie) |
+| 1.0.0 | 6.14.x | Fedora 42 |
+| 2.4.0 | 6.19.x | Fedora Linux 44 |
+| 2.3.0 | 7.0.x | Ubuntu 26.04 LTS |
 
 
 ## 文档
@@ -113,7 +152,7 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
 
 ## 社区共建
 - ❇️ 真诚欢迎每一位用户、开发者、公司以及组织，使用华佗监控、积极反馈 Bug、提交功能需求、分享最佳实践，共建专业、活跃的华佗开源社区。
-- ❤️ 华佗贡献者
+- ❤️ 贡献者
 <a href="https://github.com/ccfos/huatuo/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
 </a>

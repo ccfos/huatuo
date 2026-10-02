@@ -15,7 +15,9 @@
 package packet
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -43,7 +45,7 @@ func buildIPv4TCPSYNHdr() Hdr {
 	binary.BigEndian.PutUint16(pkt.Raw[22:], 80)     // dport
 	binary.BigEndian.PutUint32(pkt.Raw[24:], 1)      // seq
 	pkt.Raw[32] = 0x50                               // data offset=5 (20 bytes)
-	pkt.Raw[33] = 0x02                               // SYN
+	pkt.Raw[33] = TCPFlagSYN                         // SYN
 	binary.BigEndian.PutUint16(pkt.Raw[34:], 0x2000) // window
 
 	return pkt
@@ -107,7 +109,10 @@ func TestParseIPv4TCP(t *testing.T) {
 		t.Errorf("TCP.DataOffset: want 5, got %d", p.TCP.DataOffset)
 	}
 	if p.TCP.Flags != "SYN" {
-		t.Errorf("TCP.Flags: want SYN, got %s", p.TCP.Flags)
+		t.Errorf("TCP.Flags: want SYN, got %q", p.TCP.Flags)
+	}
+	if p.TCP.RawFlags != 0x02 {
+		t.Errorf("TCP.RawFlags: want 0x02, got 0x%02x", p.TCP.RawFlags)
 	}
 	if p.TCP.Window != 0x2000 {
 		t.Errorf("TCP.Window: want 0x2000, got 0x%x", p.TCP.Window)
@@ -117,6 +122,56 @@ func TestParseIPv4TCP(t *testing.T) {
 	}
 	if got := p.Label; got != "IPv4/TCP" {
 		t.Errorf("Label: want IPv4/TCP, got %s", got)
+	}
+}
+
+func TestParseTCPFlagsJSONCompatibility(t *testing.T) {
+	pkt := buildIPv4TCPSYNHdr()
+	pkt.Raw[33] = TCPFlagSYN | TCPFlagACK
+
+	parsed, err := Parse(&pkt)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if parsed.TCP == nil {
+		t.Fatal("Parse() TCP = nil, want TCP layer")
+	}
+	if parsed.TCP.RawFlags != TCPFlagSYN|TCPFlagACK {
+		t.Fatalf("Parse() RawFlags = 0x%02x, want 0x12", parsed.TCP.RawFlags)
+	}
+
+	encoded, err := json.Marshal(parsed)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if !bytes.Contains(encoded, []byte(`"flags":"SYN|ACK"`)) {
+		t.Fatalf("json.Marshal() = %s, want TCP flags compatibility field", encoded)
+	}
+}
+
+func TestTCPSequenceSpan(t *testing.T) {
+	t.Parallel()
+
+	segment := &Packet{
+		IPv6: &IPv6{Length: 4020, NextHeader: "TCP"},
+		TCP: &TCP{
+			DataOffset: 5,
+			RawFlags:   TCPFlagSYN | TCPFlagFIN,
+		},
+	}
+	if span, ok := TCPSequenceSpan(segment); !ok || span != 4002 {
+		t.Fatalf("TCPSequenceSpan() = (%d, %t), want (4002, true)", span, ok)
+	}
+
+	invalid := &Packet{
+		IPv4: &IPv4{IHL: 5, Length: 30},
+		TCP:  &TCP{DataOffset: 5},
+	}
+	if span, ok := TCPSequenceSpan(invalid); ok || span != 0 {
+		t.Fatalf("TCPSequenceSpan(invalid) = (%d, %t), want (0, false)", span, ok)
+	}
+	if span, ok := TCPSequenceSpan(nil); ok || span != 0 {
+		t.Fatalf("TCPSequenceSpan(nil) = (%d, %t), want (0, false)", span, ok)
 	}
 }
 
@@ -135,28 +190,29 @@ func TestTCPFlagStrings(t *testing.T) {
 		},
 		{
 			name:  "syn",
-			flags: 0x02,
+			flags: TCPFlagSYN,
 			want:  "SYN",
 		},
 		{
 			name:  "syn ack",
-			flags: 0x12,
+			flags: TCPFlagSYN | TCPFlagACK,
 			want:  "SYN|ACK",
 		},
 		{
 			name:  "ack psh",
-			flags: 0x18,
+			flags: TCPFlagACK | TCPFlagPSH,
 			want:  "ACK|PSH",
 		},
 		{
 			name:  "fin ack",
-			flags: 0x11,
+			flags: TCPFlagACK | TCPFlagFIN,
 			want:  "ACK|FIN",
 		},
 		{
-			name:  "all",
-			flags: 0xff,
-			want:  "SYN|ACK|FIN|RST|PSH|URG|ECE|CWR",
+			name: "all",
+			flags: TCPFlagSYN | TCPFlagACK | TCPFlagFIN | TCPFlagRST |
+				TCPFlagPSH | TCPFlagURG | TCPFlagECE | TCPFlagCWR,
+			want: "SYN|ACK|FIN|RST|PSH|URG|ECE|CWR",
 		},
 	}
 

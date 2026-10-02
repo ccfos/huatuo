@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,56 +15,32 @@
 package handlers
 
 import (
-	"math"
-	"net/http"
-	"reflect"
+	"context"
+	"errors"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/server"
-	"huatuo-bamai/internal/server/response"
+	apiv1 "github.com/ccfos/huatuo/apis/v1"
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/server/response"
 )
 
-type ConfigHandler struct {
-	Handlers []server.Handle
-}
-
-type ConfigRequest struct {
-	Config map[string]any `json:"config"`
-}
-
-func NewConfigHandler() *ConfigHandler {
-	h := &ConfigHandler{}
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpPut, Uri: "/config", Handle: h.update},
+// UpdateConfig applies one validated configuration batch and persists it.
+func (h *NodeAPIHandler) UpdateConfig(
+	_ context.Context,
+	request nodeapi.UpdateConfigRequestObject,
+) (nodeapi.UpdateConfigResponseObject, error) {
+	values := make(map[string]any, len(request.Body.Config))
+	for key, value := range request.Body.Config {
+		values[key] = value
 	}
-	return h
-}
-
-func (h *ConfigHandler) update(ctx *server.Context) error {
-	req := ConfigRequest{}
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
-	}
-
-	for k, v := range req.Config {
-		if reflect.ValueOf(v).Kind() == reflect.Float64 {
-			f := v.(float64)
-			if f > math.MaxInt64 || f < math.MinInt64 {
-				return response.ErrInvalidRequest.WithMessage("integer value out of range")
-			}
-			v = int64(f)
+	if err := h.updateConfig(values); err != nil {
+		if errors.Is(err, config.ErrInvalidUpdate) {
+			return nil, response.NewAPIError(apiv1.ErrorCodeInvalidRequest, err.Error())
 		}
-		if err := config.Set(k, v); err != nil {
-			return response.ErrInvalidRequest.WithMessage(err.Error())
-		}
+		log.WithError(err).Error("failed to persist config")
+		return nil, response.ErrInternal.WithMessage("failed to persist config")
 	}
 
-	if err := config.Sync(); err != nil {
-		log.Warnf("config sync error: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
-	}
-
-	ctx.Status(http.StatusNoContent)
-	return nil
+	return nodeapi.UpdateConfig204Response{}, nil
 }

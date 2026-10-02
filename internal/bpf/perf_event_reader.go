@@ -19,6 +19,9 @@ import (
 	"fmt"
 )
 
+// DefaultPerfEventBufferBytes is the requested per-CPU capacity in bytes.
+const DefaultPerfEventBufferBytes = 8 * 1024
+
 // ErrPerfEventSamplesLost indicates that the kernel dropped perf samples.
 var ErrPerfEventSamplesLost = errors.New("bpf: perf event samples lost")
 
@@ -35,6 +38,13 @@ func (e *PerfEventSamplesLostError) Unwrap() error {
 	return ErrPerfEventSamplesLost
 }
 
+// PerfEventBatch contains decoded events and sample loss observed during one
+// ReadBatch call. Events remain valid when ReadBatch returns an error.
+type PerfEventBatch struct {
+	Events      []any
+	LostSamples uint64
+}
+
 // PerfEventReader reads the eBPF perf_event.
 type PerfEventReader interface {
 	// ReadInto reads the next eBPF perf event into dst. Sample loss returns
@@ -43,8 +53,9 @@ type PerfEventReader interface {
 
 	// ReadBatch drains all per-CPU ring buffers currently available within a
 	// bounded deadline. newEvent must return a new event destination per call.
-	ReadBatch(newEvent func() any) ([]any, error)
+	// The returned batch may contain events and sample loss when err is non-nil.
+	ReadBatch(newEvent func() any) (PerfEventBatch, error)
 
-	// Close the PerfEventReader.
+	// Close is idempotent and unblocks active reads before returning.
 	Close() error
 }

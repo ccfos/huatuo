@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,10 +21,10 @@ import (
 	"syscall"
 	"unsafe"
 
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/procfs/sysfs"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/procfs/sysfs"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
@@ -39,6 +39,7 @@ func init() {
 }
 
 func newDcb() (*tracing.EventTracingAttr, error) {
+	cfg := configSnapshot()
 	deviceMatcher, err := matcher.NewListMatcher(cfg.NetdevDCB.DeviceList)
 	if err != nil {
 		return nil, fmt.Errorf("netdev dcb device list: %w", err)

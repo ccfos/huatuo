@@ -15,16 +15,18 @@
 package provider
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"math"
 	"testing"
 	"unsafe"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/cilium/ebpf"
 	"github.com/stretchr/testify/require"
@@ -60,6 +62,138 @@ type stackLookupMissBPF struct {
 
 func (stackLookupMissBPF) ReadMap(uint32, []byte) ([]byte, error) {
 	return nil, ebpf.ErrKeyNotExist
+}
+
+type offCPUReaderStub struct {
+	readBatch func() (bpf.PerfEventBatch, error)
+}
+
+func (*offCPUReaderStub) ReadInto(any) error {
+	return nil
+}
+
+func (r *offCPUReaderStub) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
+	return r.readBatch()
+}
+
+func (*offCPUReaderStub) Close() error {
+	return nil
+}
+
+func newOffCPUReaderProfiler(reader bpf.PerfEventReader) *cpuNativeProfiler {
+	obj := stackLookupMissBPF{}
+	return &cpuNativeProfiler{
+		bpf:        obj,
+		offCPUMode: true,
+		ringCtx: &ringBufferContext{
+			bpf:         obj,
+			readerA:     reader,
+			stackMapAID: 1,
+		},
+	}
+}
+
+func TestReadOffCPUDataLoopReturnsReaderErrors(t *testing.T) {
+	readErr := errors.New("read failed")
+	tests := []struct {
+		name  string
+		batch bpf.PerfEventBatch
+	}{
+		{name: "read error"},
+		{
+			name: "read error with lost samples",
+			batch: bpf.PerfEventBatch{
+				LostSamples: 7,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			calls := 0
+			reader := &offCPUReaderStub{readBatch: func() (bpf.PerfEventBatch, error) {
+				calls++
+				if calls == 2 {
+					cancel()
+				}
+				return tt.batch, readErr
+			}}
+			profiler := newOffCPUReaderProfiler(reader)
+
+			err := profiler.ReadDataLoop(ctx, func(any) {})
+			require.ErrorIs(t, err, readErr)
+			require.Equal(t, 1, calls)
+		})
+	}
+}
+
+func TestReadOffCPUDataLoopContinuesAfterSamplesLost(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	calls := 0
+	reader := &offCPUReaderStub{readBatch: func() (bpf.PerfEventBatch, error) {
+		calls++
+		if calls == 2 {
+			cancel()
+		}
+		return bpf.PerfEventBatch{LostSamples: 7}, nil
+	}}
+	profiler := newOffCPUReaderProfiler(reader)
+
+	require.NoError(t, profiler.readOffCPUDataLoop(ctx, func(any) {}))
+	require.Equal(t, 2, calls)
+}
+
+func TestReadOffCPUDataLoopTreatsCancellationAsCleanShutdown(t *testing.T) {
+	tests := []struct {
+		name        string
+		lostSamples uint64
+	}{
+		{name: "canceled"},
+		{name: "canceled after samples lost", lostSamples: 7},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			reader := &offCPUReaderStub{readBatch: func() (bpf.PerfEventBatch, error) {
+				calls++
+				return bpf.PerfEventBatch{LostSamples: tt.lostSamples}, types.ErrExitByCancelCtx
+			}}
+			profiler := newOffCPUReaderProfiler(reader)
+
+			require.NoError(t, profiler.readOffCPUDataLoop(t.Context(), func(any) {}))
+			require.Equal(t, 1, calls)
+		})
+	}
+}
+
+func TestReadOffCPUDataLoopPreservesPartialBatchOnError(t *testing.T) {
+	readErr := errors.New("read failed")
+	event := &abi.ProfilerOffCPUEvent{
+		Base: abi.ProfilerEventBase{
+			PIDTGID:   uint64(100) << 32,
+			Value:     10,
+			Kernstack: 0,
+			Userstack: -1,
+		},
+		Kind: abi.ProfilerOffCPUEventBlocked,
+	}
+	reader := &offCPUReaderStub{readBatch: func() (bpf.PerfEventBatch, error) {
+		return bpf.PerfEventBatch{Events: []any{event}}, readErr
+	}}
+	profiler := newOffCPUReaderProfiler(reader)
+
+	var got []any
+	err := profiler.readOffCPUDataLoop(t.Context(), func(record any) {
+		got = append(got, record)
+	})
+	require.ErrorIs(t, err, readErr)
+	require.Len(t, got, 1)
 }
 
 func TestAggregateOffCPUBatch(t *testing.T) {
@@ -110,11 +244,12 @@ func TestAggregateOffCPUBatch(t *testing.T) {
 }
 
 func TestNativeAggregatorSeparatesOffCPUCategories(t *testing.T) {
-	aggr := &nativeAggregator{aggrMap: make(map[string]*stackSample)}
+	aggr := &nativeAggregator{stackSamples: make(map[stackSampleKey]int64)}
 	proc := processKey{PID: 123, Comm: "worker"}
-	aggr.Aggregate(&stackSample{Process: proc, UserStack: "main;wait;", Value: 10, Category: "off-CPU blocked"})
-	aggr.Aggregate(&stackSample{Process: proc, UserStack: "main;wait;", Value: 20, Category: "scheduling delay"})
-	require.Len(t, aggr.aggrMap, 2)
+	trace := symbolizedStackTrace{UserFrames: []string{"main", "wait"}}
+	aggr.Aggregate(&stackSample{Process: proc, StackTrace: trace, Value: 10, Category: "off-CPU blocked"})
+	aggr.Aggregate(&stackSample{Process: proc, StackTrace: trace, Value: 20, Category: "scheduling delay"})
+	require.Len(t, aggr.stackSamples, 2)
 }
 
 func TestNativeOffCPUBPFConstants(t *testing.T) {
@@ -225,7 +360,7 @@ func TestNativeCPUOffCPUAttachOptions(t *testing.T) {
 }
 
 func TestOffCPUProfileTypeUsesNanosecondsWithoutSampleRate(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, CPUMode: profiling.CPUModeOffCPU, Freq: 99}
+	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, Mode: profiling.ModeOffCPU, Freq: 99}
 	opt, profileType, err := profileTypeOptions(pctx)
 	require.NoError(t, err)
 	require.Zero(t, opt.SampleRate)

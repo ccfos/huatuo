@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -39,6 +40,9 @@ func TestListenUDSCreatesMissingSocket(t *testing.T) {
 	}
 	if info.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("mode = %v, want Unix socket", info.Mode())
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o660); got != want {
+		t.Fatalf("permissions = %v, want %v", got, want)
 	}
 }
 
@@ -99,6 +103,47 @@ func TestListenUDSRejectsNonSocketPath(t *testing.T) {
 	}
 	if string(got) != "keep" {
 		t.Fatalf("regular file content = %q, want keep", got)
+	}
+}
+
+func TestListenerClosePreservesReplacedPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "toolstream.sock")
+	listener, err := ListenUDS(path)
+	if err != nil {
+		t.Fatalf("ListenUDS: %v", err)
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove socket path: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatalf("create replacement path: %v", err)
+	}
+
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read replacement path: %v", err)
+	}
+	if string(data) != "replacement" {
+		t.Fatalf("replacement content = %q, want replacement", data)
+	}
+}
+
+func TestListenerCloseRemovesOwnedSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "toolstream.sock")
+	listener, err := ListenUDS(path)
+	if err != nil {
+		t.Fatalf("ListenUDS: %v", err)
+	}
+
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Lstat after Close error = %v, want not exist", err)
 	}
 }
 

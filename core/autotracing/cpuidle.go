@@ -22,15 +22,16 @@ import (
 	"os"
 	"time"
 
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/cgroups/stats"
-	"huatuo-bamai/internal/flamegraph"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/utils/cpuutil"
-	"huatuo-bamai/pkg/tracing"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/flamegraph"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const cpuIdleTracerName = "cpuidle"
@@ -45,7 +46,7 @@ func newCPUIdle() (*tracing.EventTracingAttr, error) {
 		return nil, err
 	}
 
-	tracer, err := newCPUIdleTracing(cgroupReader, cfg)
+	tracer, err := newCPUIdleTracing(cgroupReader, configSnapshot())
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +396,7 @@ func (c *cpuIdleTracing) selectTraceTarget(sampledAt time.Time) *containerCPUSta
 
 func (c *cpuIdleTracing) saveCPUIdleTrace(
 	state *containerCPUState,
-	traceTime time.Time,
+	traceTime timeutil.Timestamp,
 	flameData []byte,
 ) error {
 	tracerData := cpuIdleTracingData{
@@ -417,11 +418,11 @@ func (c *cpuIdleTracing) saveCPUIdleTrace(
 	}
 
 	if err := tracing.Save(&tracing.WriteRequest{
-		TracerName:    cpuIdleTracerName,
-		ContainerID:   state.containerID,
-		TracerTime:    traceTime,
-		TracerData:    &tracerData,
-		TracerRunType: tracing.TracerRunTypeAutotracing,
+		TracerName:       cpuIdleTracerName,
+		ContainerID:      state.containerID,
+		StartedTimestamp: traceTime,
+		TracerData:       &tracerData,
+		TracerRunType:    types.TracerRunTypeAutotracing,
 	}); err != nil {
 		return fmt.Errorf("save container cpu trace: %w", err)
 	}
@@ -452,7 +453,7 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			traceTime := time.Now()
+			traceTime := timeutil.Now()
 			log.WithField("container_id", traceTarget.containerID).
 				WithField("cgroup_path", traceTarget.cgroupPath).
 				WithField("cpu_percent", traceTarget.currentPercent).
@@ -470,7 +471,7 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 			if err := c.saveCPUIdleTrace(traceTarget, traceTime, flameData); err != nil {
 				return err
 			}
-			traceTarget.lastTraceAt = traceTime
+			traceTarget.lastTraceAt = traceTime.Time
 		}
 	}
 }

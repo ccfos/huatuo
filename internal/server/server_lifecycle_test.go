@@ -15,11 +15,15 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestServerStartReportsBindFailure(t *testing.T) {
@@ -40,7 +44,7 @@ func TestServerShutdownReleasesListener(t *testing.T) {
 	if err := srv.Start("127.0.0.1:0"); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	addr := srv.listener.Addr().String()
+	addr := testServerAddr(t, srv)
 
 	if err := srv.Shutdown(t.Context()); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
@@ -60,7 +64,7 @@ func TestServerServesPProfOnAPIListener(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = srv.Shutdown(t.Context()) })
 
-	response, err := http.Get("http://" + srv.listener.Addr().String() + "/debug/pprof/")
+	response, err := http.Get("http://" + testServerAddr(t, srv) + "/debug/pprof/")
 	if err != nil {
 		t.Fatalf("get pprof index: %v", err)
 	}
@@ -75,4 +79,100 @@ func TestServerServesPProfOnAPIListener(t *testing.T) {
 	if !strings.Contains(string(body), "Types of profiles available") {
 		t.Fatal("pprof index does not list profiles")
 	}
+}
+
+func TestServerRejectsOperationsWhileStopping(t *testing.T) {
+	srv := NewServer(nil)
+	handlerStarted := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	release := sync.OnceFunc(func() { close(releaseHandler) })
+	t.Cleanup(release)
+	srv.MustRegisterRoutes("", []Route{{
+		Method: http.MethodGet,
+		Path:   "/block",
+		Handler: func(ctx *Context) error {
+			close(handlerStarted)
+			select {
+			case <-releaseHandler:
+			case <-ctx.Request().Context().Done():
+			}
+			ctx.Status(http.StatusNoContent)
+			return nil
+		},
+	}})
+
+	if err := srv.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	request, err := http.NewRequestWithContext(
+		t.Context(),
+		http.MethodGet,
+		"http://"+testServerAddr(t, srv)+"/block",
+		http.NoBody,
+	)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+	requestDone := make(chan error, 1)
+	go func() {
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			requestDone <- requestErr
+			return
+		}
+		requestDone <- response.Body.Close()
+	}()
+
+	select {
+	case <-handlerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("request handler did not start")
+	}
+
+	serveDone := srv.Done()
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- srv.Shutdown(shutdownCtx)
+	}()
+
+	select {
+	case <-serveDone:
+	case <-time.After(time.Second):
+		t.Fatal("server did not enter stopping state")
+	}
+
+	if err := srv.Shutdown(t.Context()); !errors.Is(err, ErrServerStopping) {
+		t.Fatalf("concurrent Shutdown() error = %v, want %v", err, ErrServerStopping)
+	}
+	if err := srv.Start("127.0.0.1:0"); !errors.Is(err, ErrServerStopping) {
+		t.Fatalf("Start() while stopping error = %v, want %v", err, ErrServerStopping)
+	}
+
+	release()
+	if err := <-shutdownDone; err != nil {
+		t.Fatalf("first Shutdown() error = %v", err)
+	}
+	if err := <-requestDone; err != nil {
+		t.Fatalf("request error = %v", err)
+	}
+
+	if err := srv.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("restart after Shutdown() error = %v", err)
+	}
+	if err := srv.Shutdown(t.Context()); err != nil {
+		t.Fatalf("second lifecycle Shutdown() error = %v", err)
+	}
+}
+
+func testServerAddr(t *testing.T, srv *Server) string {
+	t.Helper()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if srv.activeExecution == nil {
+		t.Fatal("server is not running")
+	}
+	return srv.activeExecution.listener.Addr().String()
 }

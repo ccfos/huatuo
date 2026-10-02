@@ -24,7 +24,7 @@ import (
 
 	capnp "capnproto.org/go/capnp/v3"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 // Server accepts connections and dispatches ChunkMsg events to a caller-supplied handler.
@@ -39,10 +39,6 @@ type Server struct {
 
 // Serve starts accepting connections from l in the background.
 func Serve(l net.Listener, handler func(*Session, ChunkMsg)) (*Server, error) {
-	if l == nil {
-		return nil, fmt.Errorf("transport: listener must not be nil")
-	}
-
 	srv := &Server{
 		listener:    l,
 		connections: make(map[net.Conn]struct{}),

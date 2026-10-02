@@ -27,7 +27,7 @@ Kernel event subscription surfaces OS-level anomaly signals directly to higher-l
 
 Kernel events are the primary signal source for self-healing decisions. After subscribing to `events/watch`, a healing controller can trigger remediation the moment an event occurs, without waiting for an alert to propagate through a monitoring pipeline:
 
-- **OOM self-healing**: On receiving an `oom` event, immediately scale, restart, or drain traffic from the triggering container. Reduces service interruption from minutes to seconds.
+- **OOM self-healing**: On receiving a `memory_oom_kill` event, immediately scale, restart, or drain traffic from the triggering container. Reduces service interruption from minutes to seconds.
 - **Hung task self-healing**: On receiving a `hungtask` event, automatically cordon the node and evict Pods to prevent cascading blockage from spreading across the cluster.
 - **Network fault self-healing**: On receiving a `netdev_txqueue_timeout` or `netdev_bonding_lacp` event, trigger a NIC reset or traffic failover to restore the network link within minutes.
 - **I/O storm self-healing**: On receiving an `iotracing` event, dynamically throttle the affected container's disk I/O quota via cgroup blkio to protect co-located services on the same node.
@@ -36,14 +36,14 @@ Kernel events are the primary signal source for self-healing decisions. After su
 
 Integrating HUATUO kernel events into an observability platform adds a kernel-level perspective beyond application metrics and logs:
 
-- **Event timeline correlation**: Overlay `softlockup`, `oom`, and other kernel events onto Grafana timelines, aligning them precisely with application error rates and latency curves for root-cause analysis.
+- **Event timeline correlation**: Overlay `softlockup`, `memory_oom_kill`, and other kernel events onto Grafana timelines, aligning them precisely with application error rates and latency curves for root-cause analysis.
 - **Anomaly-driven alerting**: Replace fixed-threshold alerts with kernel events to reduce false positives. For example, a `ras` hardware error event triggers a high-priority alert directly, without relying on a CPU error rate crossing a threshold.
 - **Capacity and stability analysis**: Subscribe to `memburst`, `dload`, and other AutoTracing events over time to establish a node stability baseline and provide kernel-level data for capacity planning.
 - **Multi-dimensional drill-down**: Events carry container ID, namespace, region, and other context fields. Alert links can drill down directly to the corresponding Pod, Node, or Region view.
 
 ### Security Auditing and Compliance
 
-- **Anomalous behavior detection**: A cluster of `oom`, `hungtask`, or `softlockup` events outside business peak hours may indicate resource abuse or a malicious workload, triggering a security review workflow.
+- **Anomalous behavior detection**: A cluster of `memory_oom_kill`, `hungtask`, or `softlockup` events outside business peak hours may indicate resource abuse or a malicious workload, triggering a security review workflow.
 - **Event retention and traceability**: Write the CloudEvents stream to a message queue (Kafka, Pulsar) or object storage to satisfy the event retention requirements of security compliance frameworks.
 
 ### Chaos Engineering and Load Testing
@@ -97,7 +97,7 @@ The `data` field contains the standard HUATUO event record:
 {
   "specversion": "1.0",
   "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "source": "/huatuo/node-1/oom",
+  "source": "/huatuo/node-1/memory_oom_kill",
   "type": "tech.huatuo.kernel.event",
   "datacontenttype": "application/json",
   "time": "2026-05-18T10:23:45.123456789Z",
@@ -105,14 +105,14 @@ The `data` field contains the standard HUATUO event record:
     "hostname": "node-1",
     "region": "cn-beijing",
     "observed_timestamp": "2026-05-18T10:23:45Z",
-    "tracer_name": "oom",
+    "tracer_name": "memory_oom_kill",
     "tracer_id": "abc123",
     "tracer_run_type": "auto",
     "container_id": "d3f1a2b4c5e6",
     "container_hostname": "app-pod",
     "container_host_namespace": "prod",
     "container_type": "docker",
-    "container_qos": "Guaranteed"
+    "container_qos": "guaranteed"
   }
 }
 ```
@@ -123,7 +123,8 @@ The `data` field contains the standard HUATUO event record:
 |---|---|---|
 | `hostname` | string | Node hostname |
 | `region` | string | Region where the node is located |
-| `observed_timestamp` | string | Kernel event timestamp (Tracer collection time) |
+| `observed_timestamp` | string | UTC time when the event producer observed the event in userspace |
+| `kernel_observed_timestamp` | string | Optional UTC time when the kernel observed the event |
 | `tracer_name` | string | Name of the tracer that triggered the event (see the event list below) |
 | `tracer_id` | string | Unique ID of this event instance |
 | `tracer_run_type` | string | Collection mode: `auto` (triggered automatically) or `manual` |
@@ -131,7 +132,7 @@ The `data` field contains the standard HUATUO event record:
 | `container_hostname` | string | Container hostname |
 | `container_host_namespace` | string | Namespace of the container |
 | `container_type` | string | Container runtime type (docker, containerd, etc.) |
-| `container_qos` | string | Container QoS class |
+| `container_qos` | string | Container QoS class (`unknown`, `guaranteed`, `burstable`, or `besteffort`) |
 
 ---
 
@@ -139,7 +140,7 @@ The `data` field contains the standard HUATUO event record:
 
 | `tracer_name` | Description |
 |---|---|
-| `oom` | Out-of-memory (OOM Killer) triggered event |
+| `memory_oom_kill` | Out-of-memory (OOM Killer) triggered event |
 | `hungtask` | Kernel task stuck in D state (Hung Task) detection |
 | `softlockup` | CPU soft lockup detection |
 | `ras` | Hardware reliability (RAS) errors, such as ECC memory errors |
@@ -148,7 +149,7 @@ The `data` field contains the standard HUATUO event record:
 | `netdev_txqueue_timeout` | Network device transmit queue timeout events |
 | `netdev_bonding_lacp` | Bond device LACP protocol anomaly events |
 | `net_rx_latency` | Network receive latency anomaly events |
-| `softirq_tracing` | Soft IRQ excessive latency tracing events |
+| `sched_tick` | Scheduler tick interval tracing events |
 | `memory_reclaim_events` | Memory reclaim anomaly events |
 | `cpuidle` | CPU idle rate anomaly (AutoTracing, auto-triggered) |
 | `cpusys` | CPU system-mode usage anomaly (AutoTracing, auto-triggered) |
@@ -169,6 +170,7 @@ POST /v1/events/watch
 #### 3.2 Request Headers
 
 ```http
+Authorization: Bearer <node-token>
 Content-Type: application/json
 ```
 
@@ -181,6 +183,7 @@ Content-Type: application/json
     "hostname": "<regex>",
     "container_hostname": "<regex>",
     "container_host_namespace": "<regex>",
+    "container_qos": "<regex>",
     "region": "<regex>"
   }
 }
@@ -194,6 +197,7 @@ Content-Type: application/json
 | `hostname` | string | No | Filter by node hostname; supports regular expressions |
 | `container_hostname` | string | No | Filter by container hostname; supports regular expressions |
 | `container_host_namespace` | string | No | Filter by container namespace; supports regular expressions |
+| `container_qos` | string | No | Filter by container QoS; supports regular expressions |
 | `region` | string | No | Filter by region; supports regular expressions |
 
 - All filter fields are optional. Omitting or leaving a field empty matches all values.
@@ -205,7 +209,7 @@ Content-Type: application/json
 After the connection is established, the server continuously pushes events in SSE format:
 
 ```text
-data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/oom",...}\n\n
+data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom_kill",...}\n\n
 ```
 
 The server also sends periodic heartbeat comment lines to keep the connection alive:
@@ -245,6 +249,7 @@ Configure the event stream controls under `[HTTPServer]`:
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -256,17 +261,19 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
   -H "Connection: keep-alive" \
-  -d '{"filters": {"tracer_name": "^oom$"}}'
+  -d '{"filters": {"tracer_name": "^memory_oom_kill$"}}'
 ```
 
 #### 5.3 Subscribe to Network Events on a Specific Node
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -283,6 +290,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -298,16 +306,16 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ---
 
-### 6. Go Client Example
+### 6. Generated Go Client Example
 
-The following example shows how to subscribe to the `events/watch` endpoint in a Go program and consume CloudEvents in real time.
+`POST /v1/events/watch` is part of the Node OpenAPI contract. The generated
+client supplies the request and event types used below.
 
 ```go
 package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -316,47 +324,31 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
-// WatchRequest is the request body sent to /v1/events/watch.
-type WatchRequest struct {
-	Filters WatchFilters `json:"filters"`
-}
-
-type WatchFilters struct {
-	TracerName             string `json:"tracer_name,omitempty"`
-	Hostname               string `json:"hostname,omitempty"`
-	ContainerHostname      string `json:"container_hostname,omitempty"`
-	ContainerHostNamespace string `json:"container_host_namespace,omitempty"`
-	Region                 string `json:"region,omitempty"`
-}
-
-// WatchEvent is the CloudEvents 1.0 envelope pushed by HUATUO.
-type WatchEvent struct {
-	SpecVersion     string          `json:"specversion"`
-	ID              string          `json:"id"`
-	Source          string          `json:"source"`
-	Type            string          `json:"type"`
-	DataContentType string          `json:"datacontenttype"`
-	Time            string          `json:"time"`
-	Data            json.RawMessage `json:"data"`
-}
-
-func watchEvents(ctx context.Context, endpoint string, filters WatchFilters) error {
-	reqBody, err := json.Marshal(WatchRequest{Filters: filters})
+func watchEvents(
+	ctx context.Context,
+	baseURL string,
+	token string,
+	filters nodeapi.WatchEventFilters,
+) error {
+	client, err := nodeapi.NewClient(
+		baseURL,
+		nodeapi.WithHTTPClient(&http.Client{}),
+		nodeapi.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
+			request.Header.Set("Authorization", "Bearer "+token)
+			request.Header.Set("Accept", "text/event-stream")
+			return nil
+		}),
+	)
 	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
+		return fmt.Errorf("create Node API client: %w", err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-
-	client := &http.Client{Timeout: 0} // no timeout for SSE long-lived connections
-	resp, err := client.Do(req)
+	resp, err := client.WatchEvents(ctx, nodeapi.WatchEventsJSONRequestBody{
+		Filters: &filters,
+	})
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -381,14 +373,19 @@ func watchEvents(ctx context.Context, endpoint string, filters WatchFilters) err
 			continue
 		}
 
-		var event WatchEvent
+		var event nodeapi.WatchEvent
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			slog.Warn("parse event", "err", err)
 			continue
 		}
 
-		fmt.Printf("[%s] source=%s id=%s\n", event.Time, event.Source, event.ID)
-		fmt.Printf("  data: %s\n", event.Data)
+		fmt.Printf(
+			"[%s] source=%s id=%s\n",
+			event.Time.Format(time.RFC3339Nano),
+			event.Source,
+			event.ID.String(),
+		)
+		fmt.Printf("  data: %+v\n", event.Data)
 	}
 
 	return scanner.Err()
@@ -398,8 +395,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	err := watchEvents(ctx, "http://192.168.1.10:19704/v1/events/watch", WatchFilters{
-		TracerName: "oom|hungtask|softlockup",
+	tracerName := "memory_oom_kill|hungtask|softlockup"
+	err := watchEvents(ctx, "http://192.168.1.10:19704", "node-token", nodeapi.WatchEventFilters{
+		TracerName: &tracerName,
 	})
 	if err != nil {
 		slog.Error("watch events", "err", err)
@@ -408,40 +406,27 @@ func main() {
 }
 ```
 
-#### 6.1 Using the Official pkg/types Package (Recommended)
+#### 6.1 Streaming Client Selection
 
-If your project shares the same Go module as HUATUO, use the official types directly:
-
-```go
-import pkgtypes "huatuo-bamai/pkg/types"
-
-var event pkgtypes.WatchEvent
-if err := json.Unmarshal([]byte(data), &event); err != nil { ... }
-
-// WatchEvent.Data is json.RawMessage (deferred parsing); a second unmarshal is required to access typed fields
-dataBytes, err := json.Marshal(event.Data)
-if err != nil {
-    slog.Warn("marshal event data", "err", err)
-    return
-}
-var payload pkgtypes.WatchEventData
-if err := json.Unmarshal(dataBytes, &payload); err != nil {
-    slog.Warn("unmarshal event data", "err", err)
-    return
-}
-fmt.Println("tracer:", payload.TracerName)
-fmt.Println("observed_timestamp:", payload.ObservedTimestamp)
-```
+Use the generated `Client.WatchEvents` method, which returns the raw
+`http.Response`. Do not use `ClientWithResponses.WatchEventsWithResponse` for
+this endpoint: that helper reads the body to EOF, while an SSE stream normally
+remains open until its context is canceled.
 
 #### 6.2 Reconnection
 
 In production, network interruptions or service restarts will drop the connection. Use exponential backoff to reconnect:
 
 ```go
-func watchWithRetry(ctx context.Context, endpoint string, filters WatchFilters) {
+func watchWithRetry(
+	ctx context.Context,
+	baseURL string,
+	token string,
+	filters nodeapi.WatchEventFilters,
+) {
 	backoff := time.Second
 	for {
-		if err := watchEvents(ctx, endpoint, filters); err != nil {
+		if err := watchEvents(ctx, baseURL, token, filters); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
@@ -520,7 +505,7 @@ sequenceDiagram
     EW-->>C: 200 OK (Content-Type: text/event-stream)
 
     loop SSE long-lived connection
-        K->>T: Kernel event triggered (oom / hungtask / softlockup ...)
+        K->>T: Kernel event triggered (memory_oom_kill / hungtask / softlockup ...)
         T->>EW: Report raw event
         EW->>EW: Apply filter
         alt Filter matched

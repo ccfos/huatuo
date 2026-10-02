@@ -27,7 +27,8 @@ enum dropwatch_drop_source {
 };
 
 struct dropwatch_packet_meta {
-	u64 ktime_ns;
+	/* Host CLOCK_MONOTONIC at observation; excludes system suspend. */
+	u64 kernel_observed_ns;
 	u64 tgid_pid;
 	u64 netns_cookie;
 	u64 skb_addr;
@@ -50,7 +51,7 @@ struct dropwatch_packet_raw {
 	u16 raw_len;
 	u16 has_eth_hdr;
 	u16 pad;
-	u32 pkt_len;
+	u32 packet_len_bytes;
 	u32 sk_state;
 	u8 raw[DROPWATCH_PACKET_RAW_LEN];
 };

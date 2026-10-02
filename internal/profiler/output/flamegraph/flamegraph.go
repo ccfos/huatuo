@@ -20,8 +20,8 @@ import (
 	"sort"
 	"strings"
 
-	"huatuo-bamai/internal/profiler/output"
-	"huatuo-bamai/internal/profiler/output/raw"
+	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/output/raw"
 )
 
 // Formatter accumulates samples and renders an SVG flame graph.

@@ -18,40 +18,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 
 	escount "github.com/elastic/go-elasticsearch/v8/typedapi/core/count"
 	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/sortorder"
 
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 var fieldNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
 
-type (
-	termsAgg struct {
-		Field string `json:"field"`
-		Size  int    `json:"size"`
-	}
-	termsAggBody struct {
-		Terms termsAgg `json:"terms"`
-	}
-	valuesBody struct {
-		Size  int                     `json:"size"`
-		Query *types.Query            `json:"query,omitempty"`
-		Aggs  map[string]termsAggBody `json:"aggs"`
-	}
-	valuesResponse struct {
-		Aggregations struct {
-			Terms struct {
-				Buckets []struct {
-					Key any `json:"key"`
-				} `json:"buckets"`
-			} `json:"terms"`
-		} `json:"aggregations"`
-	}
-)
+type deleteByQueryBody struct {
+	Query *types.Query `json:"query"`
+}
 
 func validateFieldName(field string) error {
 	if !fieldNamePattern.MatchString(field) {
@@ -104,6 +85,27 @@ func buildCountRequest(q driver.Query) ([]byte, error) {
 	return json.Marshal(escount.Request{Query: query})
 }
 
+func buildDeleteByQueryRequest(q driver.DeleteQuery) ([]byte, error) {
+	if len(q.Filters) == 0 {
+		return nil, fmt.Errorf(
+			"%w: query deletion requires at least one filter",
+			driver.ErrInvalidQuery,
+		)
+	}
+	if q.Limit < 0 {
+		return nil, fmt.Errorf(
+			"%w: delete limit must be non-negative",
+			driver.ErrInvalidQuery,
+		)
+	}
+
+	query, err := buildQuery(q.Filters)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(deleteByQueryBody{Query: query})
+}
+
 func buildValuesRequest(field string, q driver.Query, size int) ([]byte, error) {
 	if err := validateFieldName(field); err != nil {
 		return nil, err
@@ -119,10 +121,15 @@ func buildValuesRequest(field string, q driver.Query, size int) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	body := valuesBody{
-		Size:  0,
+	hitsSize := 0
+	body := essearch.Request{
+		Size:  &hitsSize,
 		Query: query,
-		Aggs:  map[string]termsAggBody{"terms": {Terms: termsAgg{Field: field, Size: size}}},
+		Aggregations: map[string]types.Aggregations{
+			"terms": {
+				Terms: &types.TermsAggregation{Field: &field, Size: &size},
+			},
+		},
 	}
 	return json.Marshal(body)
 }
@@ -172,11 +179,9 @@ func buildClause(filter driver.Filter) (types.Query, bool, error) {
 			}
 			return q, true, nil
 		}
-		q := types.Query{Term: map[string]types.TermQuery{filter.Field: {Value: driver.NormalizeValue(filter.Value)}}}
-		return q, false, nil
+		return buildExactTermClause(filter.Field, filter.Value), false, nil
 	case driver.OpNe:
-		q := types.Query{Term: map[string]types.TermQuery{filter.Field: {Value: driver.NormalizeValue(filter.Value)}}}
-		return q, true, nil
+		return buildExactTermClause(filter.Field, filter.Value), true, nil
 	case driver.OpGt, driver.OpGte, driver.OpLt, driver.OpLte:
 		rangeQ, err := buildRangeClause(filter)
 		if err != nil {
@@ -188,16 +193,56 @@ func buildClause(filter driver.Filter) (types.Query, bool, error) {
 		if err != nil {
 			return types.Query{}, false, err
 		}
-		termsQ := types.NewTermsQuery()
-		termsQ.TermsQuery[filter.Field] = values
-		return types.Query{Terms: termsQ}, false, nil
+		return buildExactTermsClause(filter.Field, values), false, nil
 	default:
 		return types.Query{}, false, fmt.Errorf("%w: %s", driver.ErrUnsupportedOp, filter.Op)
 	}
 }
 
+func buildExactTermClause(field string, value any) types.Query {
+	primary := types.Query{
+		Term: map[string]types.TermQuery{field: {Value: value}},
+	}
+	if _, ok := value.(string); !ok || strings.HasSuffix(field, ".keyword") {
+		return primary
+	}
+	keyword := types.Query{
+		Term: map[string]types.TermQuery{field + ".keyword": {Value: value}},
+	}
+	return exactFieldFallback(&primary, &keyword)
+}
+
+func buildExactTermsClause(field string, values []any) types.Query {
+	primary := types.NewTermsQuery()
+	primary.TermsQuery[field] = values
+	primaryQuery := types.Query{Terms: primary}
+	if !containsString(values) || strings.HasSuffix(field, ".keyword") {
+		return primaryQuery
+	}
+	keyword := types.NewTermsQuery()
+	keyword.TermsQuery[field+".keyword"] = values
+	keywordQuery := types.Query{Terms: keyword}
+	return exactFieldFallback(&primaryQuery, &keywordQuery)
+}
+
+func exactFieldFallback(primary, keyword *types.Query) types.Query {
+	return types.Query{Bool: &types.BoolQuery{
+		Should:             []types.Query{*primary, *keyword},
+		MinimumShouldMatch: 1,
+	}}
+}
+
+func containsString(values []any) bool {
+	for _, value := range values {
+		if _, ok := value.(string); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func buildRangeClause(filter driver.Filter) (types.RangeQuery, error) {
-	if s, ok := driver.NormalizeValue(filter.Value).(string); ok {
+	if s, ok := filter.Value.(string); ok {
 		return buildDateRangeClause(filter.Op, s)
 	}
 	f, ok := asFloat64(filter.Value)

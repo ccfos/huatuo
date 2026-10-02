@@ -20,7 +20,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"huatuo-bamai/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf"
 
 	"github.com/cilium/ebpf"
 )

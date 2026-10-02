@@ -14,29 +14,52 @@
 
 package provider
 
+import "slices"
+
 type processKey struct {
 	PID  uint32
 	Comm string
 }
 
-type stackIDPair struct {
+type rawStackIDs struct {
 	KernelStackID int32
 	UserStackID   int32
 }
 
+// BPF may reuse a user stack ID across process address spaces.
+type userStackCacheKey struct {
+	PID     uint32
+	StackID int32
+}
+
+// symbolizedStackTrace stores raw outermost-first frames. The frame slices are
+// immutable after the sample is enqueued so cached symbolization can be shared.
+type symbolizedStackTrace struct {
+	UserFrames   []string
+	KernelFrames []string
+}
+
+func (s symbolizedStackTrace) frameCount() int {
+	return len(s.UserFrames) + len(s.KernelFrames)
+}
+
+func (s symbolizedStackTrace) appendTo(frames []string) []string {
+	frames = slices.Grow(frames, s.frameCount())
+	frames = append(frames, s.UserFrames...)
+	return append(frames, s.KernelFrames...)
+}
+
 type stackSample struct {
-	Process     processKey
-	UserStack   string
-	KernelStack string
-	Value       int64
-	Category    string
+	Process    processKey
+	StackTrace symbolizedStackTrace
+	Value      int64
+	Category   string
 }
 
 type lockSample struct {
 	Process         processKey
 	LockAddress     uint64
-	UserStack       string
-	KernelStack     string
+	StackTrace      symbolizedStackTrace
 	WaitNanoseconds uint64
 	ContentionCount uint32
 }

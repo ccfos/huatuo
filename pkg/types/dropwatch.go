@@ -15,7 +15,8 @@
 package types
 
 import (
-	"huatuo-bamai/internal/packet"
+	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 // DropWatchTracing is the canonical JSON schema for a dropwatch event,
@@ -27,26 +28,45 @@ import (
 // terminology and keeps the field distinct from the `Packet*` BPF-metadata
 // prefix family above.
 type DropWatchTracing struct {
-	ObservedTimestamp   string         `json:"observed_timestamp"`
-	Type                string         `json:"type,omitempty"`
-	DropSource          string         `json:"drop_source"`
-	DropReason          string         `json:"drop_reason"`
-	DropReasonGroup     string         `json:"drop_reason_group,omitempty"`
-	DropLocation        string         `json:"drop_location,omitempty"`
-	Source              string         `json:"source,omitempty"`
-	Comm                string         `json:"comm"`
-	Pid                 uint64         `json:"pid"`
-	ContainerID         string         `json:"container_id,omitempty"`
-	MemoryCgroupCSSAddr string         `json:"memory_cgroup_css_addr"`
-	NetNamespaceCookie  uint64         `json:"net_namespace_cookie"`
-	NetNamespaceInum    uint32         `json:"net_namespace_inum"`
-	NetdevName          string         `json:"netdev_name"`
-	NetdevIfindex       uint32         `json:"netdev_ifindex"`
-	NetdevQueueMapping  uint32         `json:"netdev_queue_mapping"`
-	NetdevLinkStatus    []string       `json:"netdev_linkstatus"`
-	PacketSkbAddr       string         `json:"packet_skb_addr,omitempty"`
-	PacketEthProto      string         `json:"packet_eth_proto"`
-	PacketLen           uint32         `json:"packet_len"`
-	Layers              *packet.Packet `json:"layers,omitempty"`
-	Stack               string         `json:"stack"`
+	KernelObservedTimestamp *timeutil.Timestamp `json:"kernel_observed_timestamp,omitempty"`
+	ObservedTimestamp       timeutil.Timestamp  `json:"observed_timestamp,omitzero"`
+	Type                    string              `json:"type,omitempty"`
+	DropSource              string              `json:"drop_source"`
+	DropReason              string              `json:"drop_reason"`
+	DropReasonGroup         string              `json:"drop_reason_group,omitempty"`
+	DropLocation            string              `json:"drop_location,omitempty"`
+	Source                  string              `json:"source,omitempty"`
+	Comm                    string              `json:"comm"`
+	PID                     uint64              `json:"pid"`
+	ContainerID             string              `json:"container_id,omitempty"`
+	MemoryCgroupCSSAddr     string              `json:"memory_cgroup_css_addr"`
+	NetNamespaceCookie      uint64              `json:"net_namespace_cookie"`
+	NetNamespaceInum        uint32              `json:"net_namespace_inum"`
+	NetdevName              string              `json:"netdev_name"`
+	NetdevIfindex           uint32              `json:"netdev_ifindex"`
+	NetdevQueueMapping      uint32              `json:"netdev_queue_mapping"`
+	NetdevLinkStatus        []string            `json:"netdev_linkstatus"`
+	PacketSkbAddr           string              `json:"packet_skb_addr,omitempty"`
+	PacketEthProto          string              `json:"packet_eth_proto"`
+	PacketLenBytes          uint32              `json:"packet_len_bytes"`
+	Layers                  *packet.Packet      `json:"layers,omitempty"`
+	Stack                   string              `json:"stack"`
+}
+
+// DropwatchStatus reports cumulative diagnostic counters for one dropwatch instance.
+type DropwatchStatus struct {
+	// HasMapCounters distinguishes unavailable map counters from observed zeros.
+	// LostSamples remains valid regardless of this flag.
+	HasMapCounters bool `json:"map_counters_available"`
+	// PerfLost counts dropwatch events that the kernel failed to write to the
+	// perf stream (bpf_perf_event_output returned a negative error, e.g. no
+	// reader attached for the current CPU).
+	PerfLost uint64 `json:"perf_lost"`
+	// LostSamples counts perf ring buffer overflows reported by the reader as
+	// PERF_RECORD_LOST records. It is only observable while the reader is
+	// running and is available after the reader processes the loss record.
+	LostSamples uint64 `json:"lost_samples,omitempty"`
+	// RateLimited counts dropwatch events rejected by the rate limiter, read
+	// from the limiter state map's total_missed counter.
+	RateLimited uint64 `json:"rate_limited"`
 }
