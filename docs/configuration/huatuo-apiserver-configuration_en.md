@@ -46,8 +46,9 @@ deployments should use their native resource controls.
 - `CPULimitCores` limits the API server process in CPU cores.
 - `MemoryLimitMiB` limits the API server process in MiB.
 
-All resource limits must be greater than zero. `--log-debug` overrides
-`Log.Level`.
+All resource limits must be greater than zero. The CPU limit must fit a positive
+signed cgroup quota, and the memory limit must not exceed `8796093022207` MiB
+so its conversion to bytes cannot overflow. `--log-debug` overrides `Log.Level`.
 
 ### 3. HTTP Server
 
