@@ -44,7 +44,8 @@ weight: 5
 - `CPULimitCores` 以 CPU 核数限制 API 服务进程。
 - `MemoryLimitMiB` 以 MiB 限制 API 服务进程。
 
-资源限制必须大于零。命令行参数 `--log-debug` 的优先级高于
+资源限制必须大于零。CPU 上限必须能转换为正数且不溢出的 cgroup 配额，内存上限不得超过
+`8796093022207` MiB，以免转换为字节时溢出。命令行参数 `--log-debug` 的优先级高于
 `Log.Level`。
 
 ### 3. HTTP 服务
