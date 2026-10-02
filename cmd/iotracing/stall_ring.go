@@ -32,16 +32,16 @@ func newStallRing(limit uint64) stallRing {
 	}
 }
 
-func (r *stallRing) add(sample types.IOScheduleEvent) {
+func (r *stallRing) add(sample *types.IOScheduleEvent) {
 	if r.limit == 0 {
 		return
 	}
 	if uint64(len(r.samples)) < r.limit {
-		r.samples = append(r.samples, sample)
+		r.samples = append(r.samples, *sample)
 		return
 	}
 
-	r.samples[r.oldest] = sample
+	r.samples[r.oldest] = *sample
 	r.oldest++
 	if r.oldest == r.limit {
 		r.oldest = 0

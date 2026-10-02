@@ -34,7 +34,7 @@ func TestStallRingNoEventsLargeLimit(t *testing.T) {
 func TestStallRingGrowsOnlyForObservedEvents(t *testing.T) {
 	ring := newStallRing(1 << 62)
 	for id := uint32(1); id <= 100; id++ {
-		ring.add(types.IOScheduleEvent{PID: id})
+		ring.add(&types.IOScheduleEvent{PID: id})
 	}
 	got := ring.ordered()
 	if len(got) != 100 {
@@ -64,7 +64,7 @@ func TestStallRingPreservesRecentEventOrder(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ring := newStallRing(tt.limit)
 			for id := uint32(1); id <= tt.count; id++ {
-				ring.add(types.IOScheduleEvent{PID: id})
+				ring.add(&types.IOScheduleEvent{PID: id})
 			}
 			got := make([]uint32, 0, len(ring.ordered()))
 			for _, event := range ring.ordered() {
@@ -94,7 +94,7 @@ func BenchmarkStallRing(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				ring := newStallRing(tc.limit)
 				for id := 0; id < tc.count; id++ {
-					ring.add(types.IOScheduleEvent{PID: uint32(id)})
+					ring.add(&types.IOScheduleEvent{PID: uint32(id)})
 				}
 				benchmarkStallRingResult = ring.ordered()
 			}

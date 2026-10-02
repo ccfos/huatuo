@@ -107,7 +107,7 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 
 		hostname, _ := process.Hostname(int(event.TGID))
 
-		ring.add(types.IOScheduleEvent{
+		ring.add(&types.IOScheduleEvent{
 			Comm:              bytesutil.ToStr(event.Comm[:]),
 			ContainerHostname: hostname,
 			PID:               event.TGID,
