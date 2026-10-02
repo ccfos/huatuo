@@ -105,7 +105,7 @@ func TestNewManagerRestartIntervalBounds(t *testing.T) {
 		t.Skip("overflowing second values cannot be represented by int")
 	}
 
-	maxSeconds := int64(math.MaxInt64 / int64(time.Second))
+	maxSeconds := math.MaxInt64 / int64(time.Second)
 	for _, tt := range []struct {
 		name     string
 		interval int
