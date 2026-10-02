@@ -17,6 +17,8 @@ package tracing
 import (
 	"context"
 	"errors"
+	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -93,6 +95,51 @@ func TestNewManagerRejectsInvalidTracer(t *testing.T) {
 			_, err := NewManager(nil)
 			if !errors.Is(err, ErrInvalidTracer) {
 				t.Errorf("NewManager() error = %v, want ErrInvalidTracer", err)
+			}
+		})
+	}
+}
+
+func TestNewManagerRestartIntervalBounds(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("overflowing second values cannot be represented by int")
+	}
+
+	maxSeconds := int64(math.MaxInt64 / int64(time.Second))
+	for _, tt := range []struct {
+		name     string
+		interval int
+		wantErr  bool
+	}{
+		{name: "maximum duration", interval: int(maxSeconds)},
+		{name: "overflowing duration", interval: int(maxSeconds + 1), wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resetRegisterState()
+			t.Cleanup(resetRegisterState)
+			RegisterEventTracing("bounded", func() (*EventTracingAttr, error) {
+				return &EventTracingAttr{
+					Flag:     FlagTracing,
+					Interval: tt.interval,
+					TracingData: &starterStub{
+						startFunc: func(context.Context) error { return nil },
+					},
+				}, nil
+			})
+
+			manager, err := NewManager(nil)
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidTracer) {
+					t.Fatalf("NewManager() error = %v, want ErrInvalidTracer", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewManager() error = %v, want nil", err)
+			}
+			want := time.Duration(tt.interval) * time.Second
+			if got := manager.runners["bounded"].restartInterval; got != want {
+				t.Fatalf("restart interval = %s, want %s", got, want)
 			}
 		})
 	}
