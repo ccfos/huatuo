@@ -220,7 +220,7 @@ func TestStrictErrorHandlers(t *testing.T) {
 			},
 			wantStatus:  http.StatusRequestEntityTooLarge,
 			wantCode:    "request_too_large",
-			wantMessage: "request body is too large",
+			wantMessage: "request body exceeds 10 bytes",
 		},
 		{
 			name: "business error",
