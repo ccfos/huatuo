@@ -51,7 +51,7 @@ func TestSubscribeReceivesDocumentsAndStopsAfterCancel(t *testing.T) {
 	}
 	select {
 	case got := <-first:
-		t.Errorf("cancelled subscriber received document = %p", got)
+		t.Errorf("canceled subscriber received document = %p", got)
 	case <-time.After(50 * time.Millisecond):
 	}
 }
