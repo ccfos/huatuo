@@ -19,8 +19,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ccfos/huatuo/internal/pod"
 	dto "github.com/prometheus/client_model/go"
+
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 func TestDefaultHostnameAndRegion(t *testing.T) {
