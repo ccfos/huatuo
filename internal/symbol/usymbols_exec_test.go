@@ -110,5 +110,15 @@ int main(int argc, char **argv) {
 	if !slices.Equal(after, []string{"after_exec_marker"}) {
 		t.Fatalf("after exec: %v, want [after_exec_marker]", after)
 	}
-	t.Logf("pid=%d before=%v after=%v", afterPID, before, after)
+	if _, err := fmt.Fprintln(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	afterExit := resolver.UsymStackStrs(afterPID, []uint64{afterAddress}, 1)
+	if !slices.Equal(afterExit, after) {
+		t.Fatalf("after exit: %v, want %v", afterExit, after)
+	}
+	t.Logf("pid=%d before=%v after=%v after exit=%v", afterPID, before, after, afterExit)
 }

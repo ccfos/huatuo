@@ -16,7 +16,9 @@ package symbol
 
 import (
 	"debug/elf"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -87,6 +89,14 @@ func (r *UsymResolver) resolveUserStack(pid uint32, stack []uint64, stackSize in
 	limit := min(stackSize, len(stack))
 	// Validate the executable once per stack, not once per frame.
 	cache, err := r.loadElfCaches(pid)
+	// Buffered samples can arrive after the process has exited.
+	if errors.Is(err, os.ErrNotExist) {
+		if key, ok := r.exeKeys[pid]; ok {
+			if cached := r.exeCache[key]; cached != nil {
+				cache, err = cached, nil
+			}
+		}
+	}
 	frames := resolveStack(stack[:limit], func(addr uint64) string {
 		if err != nil {
 			return failFrame("elf-load-fail", "")
