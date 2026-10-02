@@ -104,8 +104,14 @@ func newDloadTracing(config *Config) (*dloadTracing, error) {
 	if config.Dload.Interval <= 0 {
 		return nil, errors.New("dload sampling interval must be positive")
 	}
+	if config.Dload.Interval > maxTimerDurationSeconds {
+		return nil, fmt.Errorf("dload sampling interval must not exceed %d seconds", maxTimerDurationSeconds)
+	}
 	if config.Dload.IntervalTracing < 0 {
 		return nil, errors.New("dload tracing interval must be non-negative")
+	}
+	if config.Dload.IntervalTracing > maxTimerDurationSeconds {
+		return nil, fmt.Errorf("dload tracing interval must not exceed %d seconds", maxTimerDurationSeconds)
 	}
 	if config.Dload.ThresholdLoad < 0 {
 		return nil, errors.New("dload threshold must be non-negative")

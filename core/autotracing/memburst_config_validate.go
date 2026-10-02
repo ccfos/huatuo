@@ -26,6 +26,9 @@ func validateMemBurst(c *MemBurstConfig) error {
 	if c.Interval <= 0 {
 		return fmt.Errorf("memory burst interval must be positive, got %d", c.Interval)
 	}
+	if int64(c.Interval) > maxTimerDurationSeconds {
+		return fmt.Errorf("memory burst interval must not exceed %d seconds, got %d", maxTimerDurationSeconds, c.Interval)
+	}
 	if c.IntervalTracing <= 0 {
 		return fmt.Errorf("memory burst tracing interval must be positive, got %d", c.IntervalTracing)
 	}
