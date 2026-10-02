@@ -227,6 +227,15 @@ func TestValidateQuerySortRejectsUnsafeSort(t *testing.T) {
 	}
 }
 
+func TestValidateQuerySortRejectsLoneDescendingPrefix(t *testing.T) {
+	if err := validateQuerySort(&Query{Sort: "-"}); !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("validateQuerySort() error = %v, want ErrInvalidQuery", err)
+	}
+	if _, err := buildStorageQuery(&Query{Sort: "-"}); !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("buildStorageQuery() error = %v, want ErrInvalidQuery", err)
+	}
+}
+
 func jobIDs(jobs []*Job) []string {
 	ids := make([]string, len(jobs))
 	for i, job := range jobs {

@@ -188,6 +188,11 @@ func buildStorageQuery(query *Query) (driver.Query, error) {
 
 func validateQuerySort(query *Query) error {
 	field, _ := querySort(query)
+	// A lone "-" strips to an empty field; fail fast instead of letting
+	// the backend reject an empty sort column.
+	if field == "" {
+		return fmt.Errorf("%w: sort field is empty", ErrInvalidQuery)
+	}
 	if _, ok := jobQueryFields[field]; !ok {
 		return fmt.Errorf("%w: unsupported sort field %q", ErrInvalidQuery, field)
 	}
