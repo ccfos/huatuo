@@ -289,6 +289,69 @@ func TestUsymResolverLoadProcMaps(t *testing.T) {
 	}
 }
 
+func TestUsymResolverExecutableChangeDropsProcessBindings(t *testing.T) {
+	resolver, pid, _, _ := setupMainElfResolverFixture(t)
+	first, err := resolver.loadElfCaches(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstKey := resolver.exeKeys[pid]
+	otherPID := pid + 1
+	resolver.exeKeys[otherPID] = firstKey
+	resolver.procmaps[pid] = sections{}
+	resolver.procmaps[otherPID] = sections{}
+	libPath := procfs.Path(strconv.Itoa(int(pid)), "root", "usr/lib/libhuatuo.so")
+	otherLibPath := procfs.Path(strconv.Itoa(int(otherPID)), "root", "usr/lib/libhuatuo.so")
+	resolver.libKeys[libPath] = firstKey
+	resolver.libKeys[otherLibPath] = firstKey
+	resolver.libcaches[firstKey] = &libCache{}
+
+	if _, err := resolver.loadElfCaches(pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := resolver.procmaps[pid]; !ok {
+		t.Fatal("unchanged executable lost its process maps")
+	}
+	if _, ok := resolver.libKeys[libPath]; !ok {
+		t.Fatal("unchanged executable lost its library binding")
+	}
+
+	path, err := resolver.exePath(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := path + ".replacement"
+	copyCurrentExecutable(t, replacement)
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	second, err := resolver.loadElfCaches(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == first {
+		t.Fatal("replaced executable reused its old ELF cache")
+	}
+	if _, ok := resolver.procmaps[pid]; ok {
+		t.Fatal("replaced executable retained its old process maps")
+	}
+	if _, ok := resolver.libKeys[libPath]; ok {
+		t.Fatal("replaced executable retained its old library binding")
+	}
+	if resolver.exeCache[firstKey] != first || resolver.libcaches[firstKey] == nil {
+		t.Fatal("executable change discarded shared ELF data")
+	}
+	if resolver.exeKeys[otherPID] != firstKey {
+		t.Fatal("executable change changed another process binding")
+	}
+	if _, ok := resolver.procmaps[otherPID]; !ok {
+		t.Fatal("executable change discarded another process's maps")
+	}
+	if resolver.libKeys[otherLibPath] != firstKey {
+		t.Fatal("executable change discarded another process's library binding")
+	}
+}
+
 func TestUsymResolverLoadProcMapsNotFound(t *testing.T) {
 	setTestXfsMounts(t, []string{"/"})
 	setupTempProcRoot(t)
@@ -558,7 +621,8 @@ func TestUsymResolveAddrFailFrames(t *testing.T) {
 				tt.prepare(t, resolver, pid)
 			}
 
-			got := resolver.resolveAddr(pid, tt.addr)
+			cache := resolver.exeCache[resolver.exeKeys[pid]]
+			got := resolver.resolveAddr(pid, tt.addr, cache)
 			if got != tt.want {
 				t.Errorf("resolveAddr %s: got %q, want %q", tt.name, got, tt.want)
 			}

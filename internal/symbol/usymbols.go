@@ -16,9 +16,12 @@ package symbol
 
 import (
 	"debug/elf"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/procfs"
@@ -84,8 +87,21 @@ func (r *UsymResolver) UsymStackStrsReversed(pid uint32, ustack []uint64, ustack
 
 func (r *UsymResolver) resolveUserStack(pid uint32, stack []uint64, stackSize int, out outType, reversed bool) stackFrames {
 	limit := min(stackSize, len(stack))
+	// Validate the executable once per stack, not once per frame.
+	cache, err := r.loadElfCaches(pid)
+	// Buffered samples can arrive after the process has exited.
+	if errors.Is(err, os.ErrNotExist) {
+		if key, ok := r.exeKeys[pid]; ok {
+			if cached := r.exeCache[key]; cached != nil {
+				cache, err = cached, nil
+			}
+		}
+	}
 	frames := resolveStack(stack[:limit], func(addr uint64) string {
-		return r.resolveAddr(pid, addr)
+		if err != nil {
+			return failFrame("elf-load-fail", "")
+		}
+		return r.resolveAddr(pid, addr, cache)
 	}, out)
 
 	if reversed {
@@ -98,12 +114,7 @@ func (r *UsymResolver) resolveUserStack(pid uint32, stack []uint64, stackSize in
 	return frames
 }
 
-func (r *UsymResolver) resolveAddr(pid uint32, addr uint64) string {
-	cache, err := r.loadElfCaches(pid)
-	if err != nil {
-		return failFrame("elf-load-fail", "")
-	}
-
+func (r *UsymResolver) resolveAddr(pid uint32, addr uint64, cache *elfCache) string {
 	m := cache.secs.find(addr)
 	if m != nil {
 		if sym := cache.syms.resolve(addr); sym != "" {
@@ -112,7 +123,7 @@ func (r *UsymResolver) resolveAddr(pid uint32, addr uint64) string {
 		return failFrame("elf-no-sym", "")
 	}
 
-	if err = r.loadProcMaps(pid); err != nil {
+	if err := r.loadProcMaps(pid); err != nil {
 		return failFrame("procmap-fail", "")
 	}
 	m = r.procmaps[pid].find(addr)
@@ -151,12 +162,6 @@ func (r *UsymResolver) displayName(name string) string {
 }
 
 func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
-	if key, ok := r.exeKeys[pid]; ok {
-		if cache, ok := r.exeCache[key]; ok {
-			return cache, nil
-		}
-	}
-
 	path, err := r.exePath(pid)
 	if err != nil {
 		return nil, err
@@ -165,6 +170,17 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
 	key, err := r.exeCacheKey(pid, path)
 	if err != nil {
 		return nil, err
+	}
+	if previous, ok := r.exeKeys[pid]; ok && previous != key {
+		// exec replaces mappings and library bindings, but shared ELF data
+		// can still be used by other processes.
+		delete(r.procmaps, pid)
+		rootDir := procfs.Path(fmt.Sprintf("%d/root", pid)) + "/"
+		for libPath := range r.libKeys {
+			if strings.HasPrefix(libPath, rootDir) {
+				delete(r.libKeys, libPath)
+			}
+		}
 	}
 	cache, ok := r.exeCache[key]
 	if ok {
