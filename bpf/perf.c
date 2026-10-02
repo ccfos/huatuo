@@ -4,6 +4,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
+#include "bpf_cgroup.h"
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
 
@@ -33,8 +34,7 @@ struct {
 SEC("perf_event/software/cpu_clock")
 int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 {
-	struct task_struct *curr = (struct task_struct *)bpf_get_current_task();
-	u64 cpu_css = (u64)BPF_CORE_READ(curr, cgroups, subsys[cpu_cgrp_id]);
+	u64 cpu_css = current_task_cpu_css_addr();
 	if (css != 0 && css != cpu_css)
 		return 0;
 

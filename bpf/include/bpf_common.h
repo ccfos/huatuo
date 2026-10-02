@@ -1,6 +1,8 @@
 #ifndef __BPF_COMMON_H__
 #define __BPF_COMMON_H__
 
+#include <bpf/bpf_core_read.h>
+
 #ifndef NULL
 #define NULL ((void *)0)
 #endif
@@ -15,6 +17,14 @@
 
 #ifndef unlikely
 #define unlikely(x) __builtin_expect(!!(x), 0)
+#endif
+
+/* libbpf compatibility for field byte-offset CO-RE relocations. */
+#ifndef bpf_core_field_offset
+#define compat_bpf_core_field_offset(field) \
+	__builtin_preserve_field_info(field, BPF_FIELD_BYTE_OFFSET)
+#else
+#define compat_bpf_core_field_offset(field) bpf_core_field_offset(field)
 #endif
 
 /* define COMPAT_XXX for compat old kernel vmlinux.h */

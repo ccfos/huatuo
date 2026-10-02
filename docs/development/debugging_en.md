@@ -67,10 +67,10 @@ Set `BPF_DEBUG=1` to pass `-DDEBUG_BPF` to Clang:
 make BPF_DEBUG=1
 ```
 
-To rebuild only the BPF objects:
+To regenerate build artifacts without rebuilding binaries:
 
 ```bash
-make BPF_DEBUG=1 bpf-build
+make BPF_DEBUG=1 gen-build
 ```
 
 `BPF_DEBUG=0` is the default. In that mode the macros expand to no-ops, and the
@@ -102,7 +102,7 @@ User space emits each debug event at Debug level with these fields:
 - `args`: up to three `u64` arguments, omitted when all values are zero.
 
 ```text
-bpf_dbg: file=native_cpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456Z msg=enter prog args=[0x1f4 0xffff8881 0x0]
+bpf_dbg: file=native_oncpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456Z msg=enter prog args=[0x1f4 0xffff8881 0x0]
 ```
 
 Debug output requires both a build with `BPF_DEBUG=1` and the runtime

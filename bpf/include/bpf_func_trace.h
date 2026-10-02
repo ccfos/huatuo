@@ -6,7 +6,7 @@
 struct trace_entry_ctx {
 	u64 id;
 	u64 start_ns;
-	u64 delta_ns;
+	u64 duration_ns;
 };
 
 struct {
@@ -16,7 +16,7 @@ struct {
 	__uint(max_entries, 10240);
 } func_trace_map SEC(".maps");
 
-static __always_inline void func_trace_begain(u64 id)
+static __always_inline void func_trace_begin(u64 id)
 {
 	struct trace_entry_ctx entry = {
 		.start_ns = bpf_ktime_get_ns(),
@@ -35,8 +35,7 @@ static __always_inline struct trace_entry_ctx *func_trace_end(u64 id)
 		return NULL;
 	}
 
-	// update any elem you need!
-	entry->delta_ns = bpf_ktime_get_ns() - entry->start_ns;
+	entry->duration_ns = bpf_ktime_get_ns() - entry->start_ns;
 	return entry;
 }
 

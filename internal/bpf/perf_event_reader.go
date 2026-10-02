@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,16 +14,48 @@
 
 package bpf
 
+import (
+	"errors"
+	"fmt"
+)
+
+// DefaultPerfEventBufferBytes is the requested per-CPU capacity in bytes.
+const DefaultPerfEventBufferBytes = 8 * 1024
+
+// ErrPerfEventSamplesLost indicates that the kernel dropped perf samples.
+var ErrPerfEventSamplesLost = errors.New("bpf: perf event samples lost")
+
+// PerfEventSamplesLostError reports how many perf samples the kernel dropped.
+type PerfEventSamplesLostError struct {
+	Count uint64
+}
+
+func (e *PerfEventSamplesLostError) Error() string {
+	return fmt.Sprintf("bpf: %d perf event samples lost", e.Count)
+}
+
+func (e *PerfEventSamplesLostError) Unwrap() error {
+	return ErrPerfEventSamplesLost
+}
+
+// PerfEventBatch contains decoded events and sample loss observed during one
+// ReadBatch call. Events remain valid when ReadBatch returns an error.
+type PerfEventBatch struct {
+	Events      []any
+	LostSamples uint64
+}
+
 // PerfEventReader reads the eBPF perf_event.
 type PerfEventReader interface {
-	// ReadInto reads the eBPF perf_event into pdata.
-	ReadInto(pdata any) error
+	// ReadInto reads the next eBPF perf event into dst. Sample loss returns
+	// ErrPerfEventSamplesLost and may be retried.
+	ReadInto(dst any) error
 
 	// ReadBatch drains all per-CPU ring buffers currently available within a
-	// bounded deadline and returns the parsed events. Each element is a newly
-	// allocated value of the same type as pdata.
-	ReadBatch(pdata any) ([]any, error)
+	// bounded deadline. newEvent must return a new event destination per call.
+	// The returned batch may contain events and sample loss when err is non-nil.
+	ReadBatch(newEvent func() any) (PerfEventBatch, error)
 
-	// Close the PerfEventReader.
+	// Close is idempotent and unblocks active reads before returning.
 	Close() error
 }

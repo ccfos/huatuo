@@ -23,7 +23,7 @@ import (
 
 var errInvalidName = errors.New("invalid bpf name")
 
-// validateName guards bpf object names supplied via CLI/config. LoadBpf
+// validateName guards bpf object names supplied via CLI/config. LoadBPF
 // joins name into DefaultObjDir; a "../" prefix would escape that
 // directory and let a caller load arbitrary files. Slashes and absolute
 // paths are otherwise fine — names like "./_output/bpf/iotracing.o" are

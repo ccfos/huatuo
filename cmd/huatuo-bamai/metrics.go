@@ -17,9 +17,9 @@ package main
 import (
 	"context"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/metric/runtime"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/metric/runtime"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

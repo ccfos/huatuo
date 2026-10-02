@@ -15,15 +15,18 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
 
 	"github.com/urfave/cli/v2"
+	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/version"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/dropwatch.c -o $BPF_DIR/dropwatch.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/net_dropwatch.c -o $BPF_DIR/net_dropwatch.o
 
 var (
 	dropwatchToolName = "dropwatch"
@@ -31,28 +34,46 @@ var (
 	AppVersion   string
 	AppGitCommit string
 	AppBuildTime string
-
-	versionInfo version.Info
 )
 
 func main() {
 	app := &cli.App{
-		Name:   dropwatchToolName,
-		Usage:  "eBPF tracer for Linux kernel packet drops",
-		Flags:  appFlags(),
-		Action: mainAction,
-		Before: validateFlags,
+		Name:      dropwatchToolName,
+		Usage:     "eBPF tracer for Linux kernel packet drops",
+		Flags:     appFlags(),
+		Before:    validateFlags,
+		Writer:    os.Stdout,
+		ErrWriter: os.Stderr,
 	}
-
-	versionInfo = version.Wire(app, version.Seed{
+	versionInfo := version.Wire(app, version.Seed{
 		Name:      dropwatchToolName,
 		Version:   AppVersion,
 		GitCommit: AppGitCommit,
 		BuildTime: AppBuildTime,
 	})
+	app.Action = func(c *cli.Context) error {
+		return mainAction(c.Context, &dropwatchOptions{
+			bpfPath:            c.String(cliFlagBpfPath),
+			filterExpression:   c.String(cliFlagFilter),
+			device:             c.String(cliFlagDevice),
+			deviceExcluded:     c.String(cliFlagDeviceExcluded),
+			durationSeconds:    c.Int(cliFlagDuration),
+			outputFormat:       c.String(cliFlagOutput),
+			outputStorage:      c.String(cliFlagOutputStorage),
+			taskID:             c.String(cliFlagTaskID),
+			maxEventsPerSecond: c.Uint64(cliFlagMaxEventsPerSecond),
+			sourceType:         c.String(cliFlagSourceTypes),
+			version:            versionInfo.Version,
+			output:             c.App.Writer,
+		})
+	}
 
-	if err := app.Run(os.Args); err != nil {
-		log.Errorf("%v", err)
+	ctx, stop := signal.NotifyContext(context.Background(), unix.SIGINT, unix.SIGTERM)
+	defer stop()
+
+	log.SetOutput(os.Stderr)
+	if err := app.RunContext(ctx, os.Args); err != nil {
+		log.WithError(err).Error("run dropwatch")
 		os.Exit(1)
 	}
 }

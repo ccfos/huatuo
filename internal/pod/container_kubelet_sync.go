@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,37 +18,42 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/netutil"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/utils/netutil"
 
+	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 )
 
 const (
-	kubeletReqTimeout = 5 * time.Second
+	kubeletReqTimeout                       = 5 * time.Second
+	kubeletOversizedResponseWarningInterval = 30 * time.Minute
+	maxKubeletResponseBodyBytes             = 128 << 20
+	maxKubeletErrorBodyBytes                = 8 << 10
 )
 
 var (
-	kubeletPodListRunningEnabled = false
-	kubeletPodListURL            string
-	kubeletPodListClient         *http.Client
-	kubeletTimeTicker            *time.Ticker
-	kubeletDoneCancel            context.CancelFunc
-	kubeletPodCgroupDriver       = "cgroupfs"
-	kubeletRuntimeEndpoint       = "unix:///run/containerd/containerd.sock"
-	kubeletDefaultConfigPath     = []string{
+	kubeletPodListRunningEnabled    = false
+	kubeletPodListURL               string
+	kubeletPodListClient            *http.Client
+	kubeletPodCgroupDriver          = "cgroupfs"
+	kubeletRuntimeEndpoint          = "unix:///run/containerd/containerd.sock"
+	kubeletOversizedResponseWarning = &rate.Sometimes{
+		Interval: kubeletOversizedResponseWarningInterval,
+	}
+	kubeletDefaultConfigPath = []string{
 		"/var/lib/kubelet/config.yaml",
 		"/var/lib/kubelet/ack-managed-config.yaml",
+		"/etc/kubernetes/kubelet/config.json",
 		"/host/etc/kubernetes/kubelet/config.json",
 	}
 )
@@ -92,16 +97,16 @@ func kubeletConfigAuthorizedURL(port uint32) string {
 	return fmt.Sprintf("https://127.0.0.1:%d/configz", port)
 }
 
-func kubeletPodListHttpRequest(ctx *ManagerCtx) (*http.Client, error) {
+func kubeletPodListHttpRequest(requestCtx context.Context, ctx *ManagerCtx) (*http.Client, error) {
 	client := &http.Client{
 		Timeout: kubeletReqTimeout,
 	}
 
-	_, err := kubeletPodListDoRequest(client, kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort))
+	_, err := kubeletFetchPodList(requestCtx, client, kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort))
 	return client, err
 }
 
-func kubeletPodListAuthorizationRequest(ctx *ManagerCtx) (*http.Client, error) {
+func kubeletPodListAuthorizationRequest(requestCtx context.Context, ctx *ManagerCtx) (*http.Client, error) {
 	cert, err := tls.LoadX509KeyPair(ctx.podClientCertPath, ctx.podClientCertKey)
 	if err != nil {
 		return nil, fmt.Errorf("loading client key pair [%s,%s]: %w",
@@ -118,12 +123,12 @@ func kubeletPodListAuthorizationRequest(ctx *ManagerCtx) (*http.Client, error) {
 		},
 	}
 
-	_, err = kubeletPodListDoRequest(client, kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort))
+	_, err = kubeletFetchPodList(requestCtx, client, kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort))
 	return client, err
 }
 
-func kubeletPodListPortCacheUpdate(ctx *ManagerCtx) error {
-	if client, err := kubeletPodListHttpRequest(ctx); err == nil {
+func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) error {
+	if client, err := kubeletPodListHttpRequest(requestCtx, ctx); err == nil {
 		kubeletPodListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
 		kubeletPodListClient = client
 		kubeletPodListRunningEnabled = true
@@ -131,7 +136,7 @@ func kubeletPodListPortCacheUpdate(ctx *ManagerCtx) error {
 	}
 
 	// try to fallback https.
-	client, err := kubeletPodListAuthorizationRequest(ctx)
+	client, err := kubeletPodListAuthorizationRequest(requestCtx, ctx)
 	if err != nil {
 		return fmt.Errorf("podlist https: %w", err)
 	}
@@ -143,182 +148,41 @@ func kubeletPodListPortCacheUpdate(ctx *ManagerCtx) error {
 	return nil
 }
 
-func InitManager(ctx *ManagerCtx) error {
-	dockerAPIVersion = ctx.DockerAPIVersion
-
-	if ctx.PodReadOnlyPort == 0 && ctx.PodAuthorizedPort == 0 {
-		log.Warnf("pod sync is not working, we manually turned off this, readonlyport == 0, and authorizedport == 0")
-		return nil
-	}
-
-	// if user enable the only authorized port, the cert path must be not
-	// empty.
-	if ctx.PodReadOnlyPort == 0 && ctx.PodAuthorizedPort != 0 && ctx.PodClientCertPath == "" {
-		log.Errorf("when you enable only the authorized port, you should populate cert path.")
-		return nil
-	}
-
-	s := strings.Split(ctx.PodClientCertPath, ",")
-	cert := strings.TrimSpace(s[0])
-	if len(s) == 1 {
-		ctx.podClientCertPath, ctx.podClientCertKey = cert, cert
-	} else if len(s) >= 2 {
-		ctx.podClientCertPath, ctx.podClientCertKey = cert, strings.TrimSpace(s[1])
-	}
-
-	err := kubeletPodListPortCacheUpdate(ctx)
-	if !errors.Is(err, syscall.ECONNREFUSED) {
-		// success or other error codes except connect refused
-		// only init css metadata collect when kubelet available.
-		if err == nil {
-			_ = kubeletConfigCacheUpdate(ctx)
-			return containerCgroupCssInit()
-		}
-
-		return err
-	}
-
-	// syscall.ECONNREFUSED:
-	// I hope k8s will be available in the future. :)
-	doneCtx, cancel := context.WithCancel(context.Background())
-
-	kubeletDoneCancel = cancel
-	kubeletTimeTicker = time.NewTicker(30 * time.Minute)
-	go func(doneCtx context.Context, t *time.Ticker) {
-		for {
-			select {
-			case <-t.C:
-				if err := kubeletPodListPortCacheUpdate(ctx); err == nil {
-					log.Infof("kubelet is running now")
-					_ = kubeletConfigCacheUpdate(ctx)
-					_ = containerCgroupCssInit()
-					t.Stop()
-					return
-				}
-			case <-doneCtx.Done():
-				return
-			}
-		}
-	}(doneCtx, kubeletTimeTicker)
-
-	return nil
-}
-
-func ReleaseManager() {
-	if kubeletTimeTicker != nil {
-		kubeletTimeTicker.Stop()
-		kubeletTimeTicker = nil
-	}
-
-	if kubeletDoneCancel != nil {
-		kubeletDoneCancel()
-		kubeletDoneCancel = nil
-	}
-
-	containerCgroupCssRelease()
-}
-
-func kubeletSyncContainers() error {
-	podList, err := kubeletGetPodList()
-	if err != nil {
-		// ignore all errors and remain old containers.
-		return nil
-	}
-
-	type containerInfo struct {
-		container       *corev1.Container
-		containerStatus *corev1.ContainerStatus
-		pod             *corev1.Pod
-	}
-
-	// map: ContainerID -> *containerInfo
-	newContainers := make(map[string]*containerInfo)
-	for i := range podList.Items {
-		pod := &podList.Items[i]
-
-		if !isRuningPod(pod) {
-			continue
-		}
-
-		// map: name -> [*corev1.Container, *corev1.ContainerStatus]
-		m := make(map[string][2]any)
-		for i := range pod.Spec.Containers {
-			container := &pod.Spec.Containers[i]
-			m[container.Name] = [2]any{container, nil}
-		}
-		for i := range pod.Status.ContainerStatuses {
-			containerStatus := &pod.Status.ContainerStatuses[i]
-			if c, ok := m[containerStatus.Name]; ok {
-				m[containerStatus.Name] = [2]any{c[0], containerStatus}
-			}
-		}
-
-		for _, c := range m {
-			containerStatus := c[1].(*corev1.ContainerStatus)
-			containerID, err := parseContainerIDInPodStatus(containerStatus.ContainerID)
-			if err != nil {
-				log.Warnf("failed to parse container id %s in pod %s status: %v", containerStatus.ContainerID, pod.Name, err)
-				continue
-			}
-
-			newContainers[containerID] = &containerInfo{
-				container:       c[0].(*corev1.Container),
-				containerStatus: containerStatus,
-				pod:             pod,
-			}
-		}
-	}
-
-	for k := range containers {
-		// clear old containers which do not exist in newContainers.
-		if _, ok := newContainers[k]; !ok {
-			delete(containers, k)
-			continue
-		}
-
-		// skip the existing containers
-		delete(newContainers, k)
-	}
-
-	// update containers.
-	for newContainerID, newContainerInfo := range newContainers {
-		container := newContainerInfo.container
-		containerStatus := newContainerInfo.containerStatus
-		pod := newContainerInfo.pod
-
-		if err := kubeletUpdateContainer(newContainerID, container, containerStatus, pod); err != nil {
-			log.Infof("failed to update container %s in pod %s: %v", newContainerID, pod.Name, err)
-			continue
-		}
-	}
-
-	return nil
-}
-
-func kubeletGetPodList() (corev1.PodList, error) {
+func kubeletGetPodList(ctx context.Context) (corev1.PodList, error) {
 	if !kubeletPodListRunningEnabled {
 		return corev1.PodList{}, fmt.Errorf("kubelet not running")
 	}
 
-	return kubeletPodListDoRequest(kubeletPodListClient, kubeletPodListURL)
+	return kubeletFetchPodList(ctx, kubeletPodListClient, kubeletPodListURL)
 }
 
 func kubeletPodListDoRequest(client *http.Client, kubeletPodListURL string) (corev1.PodList, error) {
-	podList := corev1.PodList{}
+	return kubeletFetchPodList(context.Background(), client, kubeletPodListURL)
+}
 
-	body, err := httpDoRequest(client, kubeletPodListURL)
+func kubeletFetchPodList(ctx context.Context, client *http.Client, url string) (corev1.PodList, error) {
+	podList := corev1.PodList{}
+	body, err := httpRequestContext(ctx, client, url)
 	if err != nil {
 		return podList, err
 	}
 
 	if err := json.Unmarshal(body, &podList); err != nil {
-		return podList, fmt.Errorf("http: %s, Unmarshal: %w, body: %s", kubeletPodListURL, err, string(body))
+		return podList, fmt.Errorf(
+			"http: %s, Unmarshal: %w, body: %s",
+			url,
+			err,
+			requestErrorBody(body),
+		)
 	}
 
 	return podList, nil
 }
 
-func kubeletConfigDoRequest(client *http.Client, kubeletConfigURL string) (kubeletConfiguration, error) {
+func kubeletConfigDoRequest(
+	client *http.Client,
+	kubeletConfigURL string,
+) (kubeletConfiguration, error) {
 	empty := kubeletConfiguration{}
 
 	body, err := httpDoRequest(client, kubeletConfigURL)
@@ -328,14 +192,23 @@ func kubeletConfigDoRequest(client *http.Client, kubeletConfigURL string) (kubel
 
 	config := kubeletConfigz{}
 	if err := json.Unmarshal(body, &config); err != nil {
-		return empty, fmt.Errorf("http: %s, Unmarshal: %w, body: %s", kubeletConfigURL, err, string(body))
+		return empty, fmt.Errorf(
+			"http: %s, Unmarshal: %w, body: %s",
+			kubeletConfigURL,
+			err,
+			requestErrorBody(body),
+		)
 	}
 
 	return config.Kubeletconfig, nil
 }
 
 func httpDoRequest(client *http.Client, url string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, url, http.NoBody)
+	return httpRequestContext(context.Background(), client, url)
+}
+
+func httpRequestContext(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -346,80 +219,153 @@ func httpDoRequest(client *http.Client, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http: %s, status: %d, body: %s", url, resp.StatusCode, string(body))
+		body, _, err := requestLimitedBody(resp.Body, maxKubeletErrorBodyBytes)
+		if err != nil {
+			return nil, fmt.Errorf("http: %s, read body: %w", url, err)
+		}
+		return nil, fmt.Errorf(
+			"http: %s, status: %d, body: %s", url,
+			resp.StatusCode,
+			requestErrorBody(body),
+		)
+	}
+
+	if resp.ContentLength > maxKubeletResponseBodyBytes {
+		err := fmt.Errorf(
+			"http: %s, response body declares %d bytes, limit is %d bytes",
+			url,
+			resp.ContentLength,
+			maxKubeletResponseBodyBytes,
+		)
+		kubeletOversizedResponseWarning.Do(func() {
+			log.WithError(err).
+				WithField("url", url).
+				WithField("declared_size_bytes", resp.ContentLength).
+				WithField("limit_bytes", maxKubeletResponseBodyBytes).
+				Warn("rejecting oversized kubelet response")
+		})
+		return nil, err
+	}
+
+	// ContentLength covers declared-size responses; the stream check below covers
+	// unknown, chunked, decompressed, and inaccurate length declarations.
+	body, truncated, err := requestLimitedBody(resp.Body, maxKubeletResponseBodyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("http: %s, read body: %w", url, err)
+	}
+	if truncated {
+		err := fmt.Errorf(
+			"http: %s, response body exceeds %d bytes",
+			url,
+			maxKubeletResponseBodyBytes,
+		)
+		kubeletOversizedResponseWarning.Do(func() {
+			log.WithError(err).
+				WithField("url", url).
+				WithField("observed_size_bytes", maxKubeletResponseBodyBytes+1).
+				WithField("limit_bytes", maxKubeletResponseBodyBytes).
+				Warn("rejecting oversized kubelet response")
+		})
+		return nil, err
 	}
 
 	return body, nil
 }
 
-// func updateKubeletContainer(containerID string, container *corev1.Container, containerStatus *corev1.ContainerStatus, pod *corev1.Pod, css map[string]uint64) error {
-func kubeletUpdateContainer(containerID string, container *corev1.Container, containerStatus *corev1.ContainerStatus, pod *corev1.Pod) error {
+func requestLimitedBody(body io.Reader, limit int64) ([]byte, bool, error) {
+	if limit <= 0 || limit == math.MaxInt64 {
+		return nil, false, fmt.Errorf("invalid response byte limit %d", limit)
+	}
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) <= limit {
+		return data, false, nil
+	}
+	// Preserve the probe byte so error formatting can identify truncation without
+	// carrying separate state.
+	return data, true, nil
+}
+
+func requestErrorBody(body []byte) string {
+	truncated := len(body) > maxKubeletErrorBodyBytes
+	if len(body) > maxKubeletErrorBodyBytes {
+		body = body[:maxKubeletErrorBodyBytes]
+	}
+	message := strings.TrimSpace(string(body))
+	if truncated {
+		message += fmt.Sprintf("... [truncated after %d bytes]", maxKubeletErrorBodyBytes)
+	}
+	return message
+}
+
+func kubeletContainer(containerID string, container *corev1.Container, containerStatus *corev1.ContainerStatus, pod *corev1.Pod) (*Container, error) {
 	// container type
 	containerType, err := parseContainerType(container, pod)
 	if err != nil {
-		return fmt.Errorf("failed to parse type: %w", err)
+		return nil, fmt.Errorf("failed to parse type: %w", err)
 	}
 
 	// container qos
 	containerQos, err := parseContainerQos(containerType, pod)
 	if err != nil {
-		return fmt.Errorf("failed to parse qos: %w", err)
+		return nil, fmt.Errorf("failed to parse qos: %w", err)
 	}
 
 	hostname, err := parseContainerHostname(containerType, pod)
 	if err != nil {
-		return fmt.Errorf("failed to parse hostname: %w", err)
+		return nil, fmt.Errorf("failed to parse hostname: %w", err)
 	}
 
 	// fetch InitPid
 	initPid, err := containerInitPid(containerID)
 	if err != nil {
-		return fmt.Errorf("failed to get InitPid: %w", err)
+		return nil, fmt.Errorf("failed to get InitPid: %w", err)
 	}
 
 	// net namespace
-	nsInode, err := netutil.NetNSInodeByPid(initPid)
+	nsInum, err := netutil.NetNamespaceInumByPID(initPid)
 	if err != nil {
-		return fmt.Errorf("failed to get net namespace inode by pid: %w", err)
+		return nil, fmt.Errorf("failed to get net namespace inum by pid: %w", err)
 	}
 
 	// net namespace cookie (Linux 5.14+; falls back to 0 on older kernels)
-	netCookie, err := netutil.NetNSCookieByPid(initPid)
+	netNamespaceCookie, err := netutil.NetNamespaceCookieByPID(initPid)
 	if err != nil {
 		log.Debugf("failed to get net namespace cookie for pid %d: %v", initPid, err)
 	}
 
 	labels, err := parseContainerLabels(containerType, pod)
 	if err != nil {
-		return fmt.Errorf("failed to parse container labels: %w", err)
+		return nil, fmt.Errorf("failed to parse container labels: %w", err)
 	}
 
 	startedAt, err := time.Parse(time.RFC3339, containerStatus.State.Running.StartedAt.Format(time.RFC3339))
 	if err != nil {
-		return fmt.Errorf("failed to parse StartedAt %s: %w", containerStatus.State.Running.StartedAt, err)
+		return nil, fmt.Errorf("failed to parse StartedAt %s: %w", containerStatus.State.Running.StartedAt, err)
 	}
 
 	css, err := parseContainerCSS(containerID)
 	if err != nil {
-		return fmt.Errorf("failed to parse container css: %w", err)
+		return nil, fmt.Errorf("failed to parse container css: %w", err)
 	}
 
 	cgroupPath, err := containerCgroupSuffix(containerID, pod)
 	if err != nil {
-		return fmt.Errorf("failed to get cgroup path: %w", err)
+		return nil, fmt.Errorf("failed to get cgroup path: %w", err)
 	}
 
-	containers[containerID] = &Container{
+	result := &Container{
 		ID:                 containerID,
 		Name:               container.Name,
 		Hostname:           hostname,
 		Type:               containerType,
 		Qos:                containerQos,
 		IPAddress:          parseContainerIPAddress(pod),
-		NetNamespaceInode:  nsInode,
-		NetNamespaceCookie: netCookie,
+		NetNamespaceInum:   nsInum,
+		NetNamespaceCookie: netNamespaceCookie,
 		InitPid:            initPid,
 		CgroupPath:         cgroupPath,
 		CgroupCss:          css,
@@ -430,10 +376,9 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 	}
 
 	// create container life resources
-	createContainerLifeResources(containers[containerID])
+	createContainerLifeResources(result)
 
-	log.Debugf("update container %#v", containers[containerID])
-	return nil
+	return result, nil
 }
 
 func parseContainerIDInPodStatus(data string) (string, error) {
@@ -451,6 +396,12 @@ func parseContainerIDInPodStatus(data string) (string, error) {
 		return "", err
 	}
 
+	if len(parts[1]) != 64 {
+		return "", fmt.Errorf("container id must contain 64 hexadecimal characters: %q", parts[1])
+	}
+	if err := ValidateContainerID(parts[1]); err != nil {
+		return "", err
+	}
 	if err := initContainerProviderEnv(provider, dockerAPIVersion); err != nil {
 		return "", fmt.Errorf("init container provider for containerID %q: %w", data, err)
 	}
@@ -460,25 +411,6 @@ func parseContainerIDInPodStatus(data string) (string, error) {
 
 func parseContainerIPAddress(pod *corev1.Pod) string {
 	return pod.Status.PodIP
-}
-
-func isRuningPod(pod *corev1.Pod) bool {
-	// The Pod has been bound to a node, and all of the containers have been created.
-	// At least one container is still running, or is in the process of starting or
-	// restarting.
-	if pod.Status.Phase != corev1.PodRunning {
-		return false
-	}
-
-	// all containers are running.
-	for i := range pod.Status.ContainerStatuses {
-		containerStatus := &pod.Status.ContainerStatuses[i]
-		if containerStatus.State.Running == nil {
-			return false
-		}
-	}
-
-	return true
 }
 
 func kubeletConfigFileDefault() (kubeletConfiguration, error) {
@@ -501,11 +433,16 @@ func kubeletConfigFileDefault() (kubeletConfiguration, error) {
 	return empty, fmt.Errorf("not found kubelet config")
 }
 
-// kubeletConfigCacheUpdate try to update the cache var:
+// kubeletConfigCacheMustUpdate updates the kubelet configuration cache.
 //
-// CgroupDriver
-// ContainerRuntimeEndpoint
-func kubeletConfigCacheUpdate(ctx *ManagerCtx) error {
+// This function MUST succeed: if the kubelet configz endpoint and all
+// default config file paths are unavailable, it panics because downstream
+// services that depend on kubelet pod information would be broken.
+//
+// Updated cache vars:
+//   - CgroupDriver
+//   - ContainerRuntimeEndpoint
+func kubeletConfigCacheMustUpdate(ctx *ManagerCtx) error {
 	var (
 		config kubeletConfiguration
 		err    error
@@ -523,7 +460,10 @@ func kubeletConfigCacheUpdate(ctx *ManagerCtx) error {
 			kubeletPodCgroupDriver, kubeletRuntimeEndpoint)
 	}()
 
-	config, err = kubeletConfigDoRequest(kubeletPodListClient, kubeletConfigAuthorizedURL(ctx.PodAuthorizedPort))
+	config, err = kubeletConfigDoRequest(
+		kubeletPodListClient,
+		kubeletConfigAuthorizedURL(ctx.PodAuthorizedPort),
+	)
 	if err == nil {
 		return nil
 	}

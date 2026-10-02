@@ -26,11 +26,8 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
 
-readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
+bpf_tool_setup profiler native_oncpu_profiler profiler-callchain
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
-
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -r "${ROOT_DIR}/_output/bpf/native_cpu_profiler.o" ]] || fatal "native bpf object missing"
 
 # Missing perf_event_paranoid ⇒ perf not exposed; skip rather than default
 # to "2" which would mask the real issue as a misleading BPF load failure.
@@ -48,9 +45,7 @@ readonly CHAIN_PATTERN=';f1;f2;f3 [0-9]+$'
 
 # --- workspace + cleanup -----------------------------------------------------
 
-WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-callchain.XXXXXX")
-TOOL_OUT="${WORK_DIR}/profiler.out"
-TOOL_ERR="${WORK_DIR}/profiler.err"
+WORK_DIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${WORK_DIR}/callchain"
 FIXTURE_OUT="${WORK_DIR}/callchain.out"
 FIXTURE_ERR="${WORK_DIR}/callchain.err"

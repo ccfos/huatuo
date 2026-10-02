@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "huatuo.fullname" . }}
+  labels:
+{{ include "huatuo.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+{{ include "huatuo.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+{{ include "huatuo.selectorLabels" . | nindent 8 }}
+{{- with .Values.podLabels }}
+{{ toYaml . | nindent 8 }}
+{{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+{{- with .Values.podAnnotations }}
+{{ toYaml . | nindent 8 }}
+{{- end }}
+    spec:
+      hostNetwork: {{ .Values.hostNetwork }}
+      hostPID: {{ .Values.hostPID }}
+{{- if .Values.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+{{- else }}
+      dnsPolicy: {{ .Values.dnsPolicy }}
+{{- end }}
+{{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | nindent 8 }}
+{{- end }}
+      containers:
+        - name: huatuo
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          resources:
+{{ toYaml .Values.resources | nindent 12 }}
+          securityContext:
+{{ toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: proc
+              mountPath: /proc
+            - name: sys
+              mountPath: /sys
+            - name: run
+              mountPath: /run
+            - name: var
+              mountPath: /var
+            - name: etc
+              mountPath: /etc
+            - name: huatuo-local
+              mountPath: {{ .Values.localStorage.mountPath }}
+            - name: huatuo-bamai-config-volume
+              mountPath: {{ .Values.config.mountPath }}
+              subPath: {{ .Values.config.fileName }}
+              readOnly: true
+      volumes:
+        - name: proc
+          hostPath:
+            path: {{ .Values.hostPaths.proc }}
+            type: Directory
+        - name: sys
+          hostPath:
+            path: {{ .Values.hostPaths.sys }}
+            type: Directory
+        - name: run
+          hostPath:
+            path: {{ .Values.hostPaths.run }}
+            type: Directory
+        - name: var
+          hostPath:
+            path: {{ .Values.hostPaths.var }}
+            type: Directory
+        - name: etc
+          hostPath:
+            path: {{ .Values.hostPaths.etc }}
+            type: Directory
+        - name: huatuo-local
+          hostPath:
+            path: {{ .Values.hostPaths.data }}
+            type: DirectoryOrCreate
+        - name: huatuo-bamai-config-volume
+          configMap:
+            name: {{ include "huatuo.configName" . }}

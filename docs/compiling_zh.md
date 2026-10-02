@@ -23,7 +23,7 @@ $ docker build --network host -t huatuo/huatuo-bamai-dev:latest -f ./Dockerfile.
 
 **2. 启动编译容器** 
 ```bash
-$ docker run -it --privileged --cgroupns=host --network=host -v $(pwd):/go/huatuo-bamai huatuo/huatuo-bamai-dev:latest sh
+$ docker run -it --pid=host --privileged --cgroupns=host --network=host -v $(pwd):/go/huatuo-bamai huatuo/huatuo-bamai-dev:latest sh
 ```
 
 **3. 进入容器编译**
@@ -72,7 +72,7 @@ $ make
 通过 `BPF_DEBUG=1` 将 `-DDEBUG_BPF` 传给 clang，把调试代码编译进 BPF 对象：
 
 ```bash
-$ make BPF_DEBUG=1            # 或单独编译 BPF：make BPF_DEBUG=1 bpf-build
+$ make BPF_DEBUG=1     # 或只重新生成构建产物：make BPF_DEBUG=1 gen-build
 ```
 
 埋点、运行时开关和日志说明参见[调试](development/debugging_zh.md)。

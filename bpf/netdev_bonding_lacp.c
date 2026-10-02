@@ -3,6 +3,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "bpf_common.h"
+#include "abi/netdev_bonding_lacp_types.h"
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -16,9 +17,9 @@ int ad_disable(struct pt_regs *ctx)
 	// nothing to do here, only notify user space, because this is a
 	// ko module and CO-RE relocation is not supported directly at old
 	// kernel
-	u64 nothing = 0;
+	struct netdev_bonding_lacp_event event = {};
 	bpf_perf_event_output(ctx, &ad_event_map, COMPAT_BPF_F_CURRENT_CPU,
-			      &nothing, sizeof(nothing));
+			      &event, sizeof(event));
 	return 0;
 }
 

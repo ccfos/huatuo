@@ -16,115 +16,128 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
-	"os/signal"
+	"io"
+	"strings"
 	"time"
 
-	"github.com/urfave/cli/v2"
-	"golang.org/x/sys/unix"
-
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
-func mainAction(c *cli.Context) error {
-	duration := c.Int(cliFlagDuration)
-	outputFmt := c.String(cliFlagOutput)
+type dropwatchOptions struct {
+	bpfPath            string
+	filterExpression   string
+	device             string
+	deviceExcluded     string
+	durationSeconds    int
+	outputFormat       string
+	outputStorage      string
+	taskID             string
+	maxEventsPerSecond uint64
+	sourceType         string
+	version            string
+	output             io.Writer
+}
 
-	if err := bpf.NewManager(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
-		return fmt.Errorf("dropwatch: init bpf manager: %w", err)
-	}
-	defer bpf.Close()
-
-	netdevFilterMode, devIfindexes, err := parseNetdevFilterFlags(c.String(cliFlagDevice), c.String(cliFlagDeviceExcluded))
+func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error) {
+	names, err := dropwatch.LoadReasonNames()
 	if err != nil {
-		return fmt.Errorf("dropwatch: %w", err)
+		log.WithError(err).Warn("kernel drop-reason names unavailable; using numeric drop reasons")
 	}
+	duration := options.durationSeconds
 
-	maxEventsPerSecond := c.Uint64(cliFlagMaxEventsPerSecond)
-
-	bpfObj, err := loadDropwatchBPFWithFilter(c.String(cliFlagBpfPath), c.String(cliFlagFilter), netdevFilterMode, maxEventsPerSecond)
-	if err != nil {
-		return fmt.Errorf("dropwatch: load bpf: %w", err)
+	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
+		return fmt.Errorf("init bpf: %w", err)
 	}
-	defer bpfObj.Close()
+	defer bpf.Shutdown()
 
-	if err := applyDeviceFilter(bpfObj, netdevFilterMode, devIfindexes); err != nil {
-		return fmt.Errorf("dropwatch: device filter map: %w", err)
-	}
-
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-
 	if duration > 0 {
-		var dcancel context.CancelFunc
-		runCtx, dcancel = context.WithTimeout(runCtx, time.Duration(duration)*time.Second)
-		defer dcancel()
+		var durationCancel context.CancelFunc
+		runCtx, durationCancel = context.WithTimeout(
+			runCtx, time.Duration(duration)*time.Second,
+		)
+		defer durationCancel()
 	}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, unix.SIGINT, unix.SIGTERM)
-	defer signal.Stop(sig)
-
-	go func() {
-		select {
-		case <-sig:
-			cancel()
-		case <-runCtx.Done():
-		}
-	}()
-
-	if maxEventsPerSecond > 0 {
-		rlReader, err := openRateLimitEventPipe(runCtx, bpfObj)
-		if err != nil {
-			return err
-		}
-		defer rlReader.Close()
-
-		go readRateLimitEvents(runCtx, rlReader, maxEventsPerSecond)
+	var included, excluded []string
+	if options.device != "" {
+		included = strings.Split(options.device, ",")
 	}
-
-	reader, err := bpfObj.AttachAndEventPipe(runCtx, "perf_events", 8192)
-	if err != nil {
-		return fmt.Errorf("dropwatch: attach: %w", err)
+	if options.deviceExcluded != "" {
+		excluded = strings.Split(options.deviceExcluded, ",")
 	}
-	defer reader.Close()
-
-	bpfObj.WaitDetachByBreaker(runCtx, cancel)
-
-	sink, sinkCleanup, err := newWriter(&writerOption{
-		outputFmt: outputFmt,
-		sockPath:  c.String(cliFlagOutputStorage),
-		toolName:  dropwatchToolName,
-		version:   versionInfo.Version,
-		taskID:    c.String(cliFlagTaskID),
+	tracer, err := dropwatch.Open(runCtx, &dropwatch.Config{
+		BPFPath:            options.bpfPath,
+		FilterExpression:   options.filterExpression,
+		IncludeDevices:     included,
+		ExcludeDevices:     excluded,
+		MaxEventsPerSecond: options.maxEventsPerSecond,
+		HardwareMode:       dropwatch.HardwareAuto,
 	})
 	if err != nil {
 		return err
 	}
-	defer sinkCleanup()
+	defer func() {
+		returnErr = errors.Join(returnErr, tracer.Close())
+	}()
+	if !tracer.HardwareEnabled() {
+		log.Warn("devlink trap tracepoint unsupported; hardware drop tracing disabled")
+	}
 
-	var ev dropPacketEvent
+	sink, sinkCleanup, err := newWriter(options.output, &writerOptions{
+		outputFormat: options.outputFormat,
+		socketPath:   options.outputStorage,
+		toolName:     dropwatchToolName,
+		version:      options.version,
+		taskID:       options.taskID,
+	})
+	if err != nil {
+		return err
+	}
 
+	streamErr := streamDropwatchEvents(runCtx, tracer, sink, names, options.sourceType)
+	if err := sinkCleanup(); err != nil {
+		streamErr = errors.Join(streamErr, fmt.Errorf("close event sink: %w", err))
+	}
+	return streamErr
+}
+
+func streamDropwatchEvents(
+	ctx context.Context,
+	tracer *dropwatch.Tracer,
+	sink writer,
+	names dropwatch.ReasonNames,
+	sourceType string,
+) error {
 	for {
-		if runCtx.Err() != nil {
+		if ctx.Err() != nil {
 			return nil
 		}
 
-		if err := reader.ReadInto(&ev); err != nil {
-			if runCtx.Err() != nil {
+		var ev abi.DropwatchPacketEvent
+		if err := tracer.ReadInto(&ev); err != nil {
+			if ctx.Err() != nil {
 				return nil
 			}
-
-			log.Errorf("dropwatch: read: %v", err)
-
-			continue
+			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+				log.WithError(err).Warn("perf event samples lost")
+				continue
+			}
+			return fmt.Errorf("read event: %w", err)
 		}
 
-		if err := sink.Write(formatEvent(&ev)); err != nil {
-			log.Errorf("dropwatch: send event: %v", err)
-			return nil
+		event, err := formatEvent(&ev, names, sourceType)
+		if err != nil {
+			return err
+		}
+		if err := sink.Write(event); err != nil {
+			return fmt.Errorf("write event: %w", err)
 		}
 	}
 }

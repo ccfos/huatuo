@@ -13,13 +13,418 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 </div>
 {{% /alert %}}
 
-## 📖 功能概述
+## 🚀 快速上手
+
+示例基于仓库根目录下的 `build/docker/docker-compose.yml`，从零开始完成一次宿主机 CPU 性能剖析，并在 Grafana 中选择时间范围分析火焰图。
+
+### 1. 启动服务
+
+先修改配置，确保 huatuo-bamai 和 huatuo-apiserver 有写入 ES 的能力，才能正常保存 profile 数据。配置文件通过 docker compose 挂载到容器中，因此直接修改项目根目录下的文件即可。
+
+huatuo-bamai.conf 中配置：
+```toml
+[HTTPServer.Auth]
+    BearerToken = "REPLACE_WITH_NODE_TOKEN"
+
+[Storage]
+    [Storage.Elasticsearch]
+        Address = "http://127.0.0.1:9200"
+        Index = "huatuo_bamai"
+        Username = "elastic"
+        Password = "huatuo-bamai"
+```
+
+huatuo-apiserver.conf 中配置：
+```toml
+[Agent.Auth]
+    BearerToken = "REPLACE_WITH_NODE_TOKEN"
+
+[Elasticsearch]
+    Address = "http://127.0.0.1:9200"
+    Username = "elastic"
+    Password = "huatuo-bamai"
+    Index = "huatuo_bamai"
+
+[Auth]
+    [[Auth.Users]]
+        ID = "administrator"
+        BearerToken = "REPLACE_WITH_RANDOM_HEX"
+        Admin = true
+```
+
+然后项目根目录执行：
+
+```bash
+docker compose --project-directory ./build/docker up
+```
+
+> 不加 `-d`，方便观察各组件启动日志。如需后台运行可另开终端操作，或自行加 `-d`。
+
+启动后运行的组件及作用：
+
+| 服务 | 作用 | 默认端口 |
+| --- | --- | --- |
+| `huatuo-bamai` | 采集 Agent，执行 profiler 采样 | `19704` |
+| `huatuo-apiserver` | API 入口，创建任务、下发、查询火焰图 | `12740` |
+| `elasticsearch` | 存储 profile 数据（index：`huatuo_bamai`） | `9200` |
+| `grafana` | 火焰图面板展示 | `3000` |
+
+### 2. 确认服务就绪
+
+新开一个终端，执行以下命令确认服务就绪：
+
+```bash
+# Agent 健康检查
+$ curl -s http://localhost:19704/version | jq .data.name
+
+"huatuo-bamai"
+
+# API Server 健康检查
+$ curl -s http://localhost:12740/version | jq .data.name
+
+"huatuo-apiserver"
+
+# ES 索引状态
+$ curl -s -u elastic:huatuo-bamai "http://localhost:9200/_cat/indices/huatuo_bamai?v"
+
+health status index        uuid                   pri rep docs.count docs.deleted store.size pri.store.size dataset.size
+yellow open   huatuo_bamai 147fzHJhQ820GjCKFLh5ZQ   1   1         42            0    297.8kb        297.8kb      297.8kb
+```
+
+设置环境变量便于后续调用：
+
+```bash
+API_BASE="http://127.0.0.1:12740"
+API_TOKEN="REPLACE_WITH_RANDOM_HEX"
+```
+
+
+### 3. 创建宿主机 CPU 剖析任务
+
+以 `c` 语言（原生，覆盖 C/C++/Go 等）为例，对宿主机整体采样 30 秒：
+
+```bash
+# hostname 需要使用节点的实际主机名
+HOSTNAME=$(hostname)
+
+JOB_ID=$(curl -s -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"type\": \"cpu\",
+    \"language\": \"c\",
+    \"mode\": \"oncpu\",
+    \"scope\": \"host\",
+    \"duration_seconds\": 30,
+    \"hostname\": \"${HOSTNAME}\"
+  }" \
+  "${API_BASE}/v1/profiling" | jq -r .data.request_id)
+
+echo "Job ID: $JOB_ID"
+```
+
+### 4. 验证数据已写入 ES
+
+每 10 秒生成一个聚合窗口，30 秒任务约产生 3 条采样数据，等待 30 秒后确认数据写入：
+
+```bash
+$ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
+  -H "Content-Type: application/json" \
+  -d '{"query":{"exists":{"field":"profile_data.profile"}}}' | jq .count
+
+3
+```
+
+### 5. Grafana 面板查看火焰图
+
+示例是对本机进行剖析，打开 **Continuous Profiling (host)** 面板（容器是独立的面板）：
+
+- 地址：[http://localhost:3000/d/continuous-profiling-host](http://localhost:3000/d/continuous-profiling-host) （根据实际环境地址替换 `localhost:3000`）
+- 账号/密码：`admin / admin` （首次登陆提示修改默认账号密码，暂时跳过即可）
+
+操作步骤：
+
+1. 右上角选择时间范围，确保覆盖采样时间段
+2. 变量栏选择输入你的 `hostname` 和 选择 `type` 为 `process_cpu:cpu:nanoseconds:cpu:nanoseconds`
+3. 火焰图面板自动加载该时间窗口的聚合调用栈，随选择时间范围变化而自动聚合更新，focus block 可选定关心的调用栈
+4. symbol 排序、统计、筛选等操作在 top table 中进行，选择 Both 可展示
+
+![continuous-profiling-grafana-host.png](/docs/img/continuous-profiling-grafana-host.png)
+
+其他更多丰富维度的剖析任务参考 Profiling API。
+
+
+## 🌐 Profiling API
+
+huatuo-apiserver 通过 `/v1/profiling` 创建、监督和停止 Profiling Job。每次 HTTP
+创建请求都是一次独立执行。Job 持久化在 huatuo-apiserver，Node 只维护内存中的
+Operation 和 profiler 进程。
+
+Job 控制不依赖 Elasticsearch；查询原始结果和生成 Dashboard 链接时才要求配置
+Elasticsearch。Node 和 Apiserver 必须使用同一索引。
+
+### 1. 请求约定
+
+huatuo-apiserver 默认监听 `:12740`。以下示例使用环境变量统一设置服务地址和 Bearer token：
+
+```bash
+API_BASE="http://127.0.0.1:12740"
+API_TOKEN="REPLACE_WITH_RANDOM_HEX"
+```
+
+每个请求必须在 `Authorization` 请求头中传入配置的 Bearer token：
+
+```text
+Authorization: Bearer REPLACE_WITH_RANDOM_HEX
+```
+
+非管理员用户需要配置 `/v1/profiling` 和 `/v1/profiling/**` 权限。权限可带
+HTTP 方法前缀，例如 `GET /v1/profiling/**`。成功响应仅包含 `data`：
+
+```json
+{
+  "data": {}
+}
+```
+
+错误响应包含稳定错误码和可读消息：
+
+```json
+{
+  "error": {
+    "code": "result_unavailable",
+    "message": "Job state does not provide a complete Profiling result"
+  }
+}
+```
+
+客户端应根据 `error.code` 分支处理，不应解析 `error.message`。
+
+### 2. 查询剖析能力
+
+创建任务前，建议先查询服务端支持的剖析类型、语言、CPU 模式、内存模式和运行参数：
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  "${API_BASE}/v1/profiling/capabilities"
+```
+
+`data.items` 是随版本发布的静态能力表，每项包含：
+
+| 字段 | 说明 |
+| --- | --- |
+| `type` | 剖析类型：`cpu` 或 `memory` |
+| `language` | 目标语言 |
+| `modes` | 此类型与语言组合允许的 `mode` |
+| `supports_binary_match` | 是否允许 `binary_match_path` |
+| `supported_scopes` | 允许的 `scope` |
+
+当前 `c`、`c++` 和 `go` CPU 剖析支持 `oncpu`、`offcpu`，`java` 和
+`python` 仅支持 `oncpu`。内存剖析支持以下组合：
+
+| 语言 | `mode` | 说明 |
+| --- | --- | --- |
+| `c`、`c++`、`go` | `virtual_alloc` | 虚拟地址空间分配 |
+| `c`、`c++`、`go` | `physical_alloc` | 物理页分配 |
+| `c`、`c++`、`go` | `physical_usage` | 当前物理页驻留 |
+| `java` | `object_alloc` | JVM 对象分配 |
+| `java` | `object_usage` | JVM 存活对象 |
+
+### 3. 创建剖析任务
+
+`POST /v1/profiling` 的 JSON 参数如下：
+
+| 参数 | 是否必需 | 说明 |
+| --- | --- | --- |
+| `type` | 是 | 剖析类型：`cpu` 或 `memory` |
+| `language` | 是 | 目标进程语言，必须与剖析类型匹配 |
+| `mode` | 是 | 能力表为对应类型和语言声明的模式 |
+| `duration_seconds` | 是 | 采集时长，单位为秒 |
+| `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
+| `scope` | 是 | 能力表允许的 `host` 或 `container` |
+| `container_id` | container 范围必需 | 目标容器 ID |
+| `binary_match_path` | 否 | 能力表允许时使用的可执行文件路径匹配条件 |
+
+即使请求内容相同，每次请求也会创建一个新 Job。超过每节点或进程级活动 Job
+配额时返回 HTTP 429。
+
+创建宿主机 Go CPU 剖析任务：
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "cpu",
+    "language": "go",
+    "mode": "oncpu",
+    "scope": "host",
+    "duration_seconds": 60,
+    "hostname": "node-01"
+  }' \
+  "${API_BASE}/v1/profiling"
+```
+
+创建容器内 Java 存活对象剖析任务：
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "memory",
+    "language": "java",
+    "mode": "object_usage",
+    "scope": "container",
+    "duration_seconds": 60,
+    "container_id": "9f4c2f1a8b7d",
+    "hostname": "node-01"
+  }' \
+  "${API_BASE}/v1/profiling"
+```
+
+创建成功返回 `201 Created`，`Location` 响应头指向新任务，响应体包含后续查询所需的任务 ID：
+
+```json
+{
+  "data": {
+    "request_id": "<profile-job-id>",
+    "hostname": "node-01",
+    "duration_seconds": 60,
+    "scope": "host",
+    "type": "cpu",
+    "language": "go",
+    "mode": "oncpu",
+    "status": "pending",
+    "created_at": "2026-08-24T10:00:00Z",
+    "updated_at": "2026-08-24T10:00:00Z"
+  }
+}
+```
+
+```bash
+JOB_ID="<profile-job-id>"
+```
+
+### 4. 查询任务列表
+
+`GET /v1/profiling` 支持以下查询参数：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `limit` | `100` | 每页数量，取值范围为 1 到 1000 |
+| `offset` | `0` | 起始偏移量，必须大于或等于 0 |
+
+查询最新的 20 个 Profiling Job：
+
+```bash
+curl -sS -G \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  --data-urlencode "limit=20" \
+  --data-urlencode "offset=0" \
+  "${API_BASE}/v1/profiling"
+```
+
+服务端固定只返回 Profiling Job，并按 `created_at` 倒序排列。`data.items`
+是任务数组，`data.limit` 和 `data.offset` 是实际使用的分页参数；
+`data.has_more` 表示是否还有下一页。非管理员只能查看自己创建的任务。
+
+### 5. 查询单个任务
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  "${API_BASE}/v1/profiling/${JOB_ID}"
+```
+
+任务信息位于 `data` 字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `request_id` | 后续所有请求使用的 Profiling Job ID |
+| `container_id` | 目标容器 ID；宿主机任务不返回该字段 |
+| `hostname` | 目标节点主机名 |
+| `duration_seconds` | 请求的剖析时长，单位为秒 |
+| `scope` | `host` 或 `container` |
+| `type` | `cpu` 或 `memory` |
+| `language` | 目标进程语言 |
+| `mode` | 从能力表中选择的剖析模式 |
+| `binary_match_path` | 可执行文件匹配路径；未使用时不返回该字段 |
+| `status` | 当前任务状态 |
+| `terminal` | 终态详情 `{outcome, reason, message}`；非终态不返回 |
+| `created_at` | 任务创建时间 |
+| `updated_at` | Job 状态最后更新时间 |
+| `started_at` | 实际开始执行时间；尚未观察到运行时不返回 |
+| `ended_at` | 进入终态的时间；运行期间不返回 |
+| `result_url` | 完整结果可用时，由单任务详情接口返回的 Dashboard 链接 |
+
+任务状态流转如下：
+
+| 状态 | 说明 |
+| --- | --- |
+| `pending` | 任务已创建，正在等待 Agent 执行 |
+| `running` | Agent 正在采集剖析数据 |
+| `stopping` | 停止意图已持久化，正在异步执行停止操作 |
+| `terminal` | 任务已结束，具体结果见 `terminal.outcome` |
+
+`terminal.outcome` 可取 `completed`、`failed`、`stopped` 或
+`unknown`。`failed` 时通过 `terminal.reason` 和 `terminal.message` 定位原因；
+`stopped` 表示主动停止，结果可能不完整；`unknown` 表示 Apiserver 无法确认
+Operation 最终状态，但持久发布的结果仍可能可用。
+
+`operation_lost` 和 `execution_timed_out` 是 `terminal.reason` 的原因码，不是 Job
+状态。其他失败原因包括等待启动或停止超时、Node 不可用、执行容量超过上限、
+启动或执行失败、表示 Apiserver 构造的 Node 请求无效的
+`invalid_node_request`，以及协议错误。
+
+### 6. 获取原始剖析数据
+
+`GET /v1/profiling/:request_id/raw` 仅在持久发布标记仍存在时返回
+`terminal.outcome` 为 `completed` 或 `unknown` 的 Job 原始剖析窗口。发布标记
+不存在或已经过期时返回 `result_not_found`。活动状态返回 `result_not_ready`；
+`failed` 和 `stopped` 返回
+`result_unavailable`。
+
+数据量可能较大，可以直接保存到文件：
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -o profile-raw.json \
+  "${API_BASE}/v1/profiling/${JOB_ID}/raw?limit=100&offset=0"
+```
+
+剖析窗口位于响应体的 `data.items` 字段；`data.limit`、`data.offset`
+和 `data.has_more` 描述分页。每条记录包含 `uploaded_timestamp`、`started_timestamp`、
+`profile_type` 和兼容 pprof 的 `profile` 数据。
+已持久发布但内容为空的结果仍返回成功，`items` 为空数组。`limit` 默认值为 20，
+最大值为 100。编码后的 Profile 数据超过 64 MiB 时返回
+`413 result_too_large`，调用方应减小 `limit` 后重试。
+
+### 7. 停止任务
+
+停止是异步意图，`pending`、`running` 或已经处于 `stopping` 的 Job 均可接收：
+
+```bash
+curl -sS \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  "${API_BASE}/v1/profiling/${JOB_ID}/stop"
+```
+
+成功返回 `200 OK` 和当前 Job 快照。终态 Job 返回 `409 Conflict`。由于结果可能
+不完整，`stopped` Job 不提供结果查询。
+
+## 📖 profiler 命令行功能概述
 
 `profiler` 是 HUATUO 提供的独立性能剖析命令行工具。它可以直接对宿主机进程或容器内进程采样，不依赖 huatuo-apiserver、Elasticsearch 或 Grafana。工具支持 C、C++、Go、Java 和 Python 进程，并将调用栈输出为折叠栈或 SVG 火焰图。
 
-C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 CPU、虚拟内存分配、物理内存分配和物理内存驻留。Java 通过 async-profiler 观测 CPU、对象分配和存活对象；Python 通过 py-spy 观测 CPU。采集结果适合用于热点函数定位、内存增长归因、容器内进程分析和性能问题现场留存。
+C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU 阻塞与调度延迟、虚拟内存分配、物理内存分配和物理内存驻留。Java 通过 async-profiler 观测 CPU、对象分配和存活对象；Python 通过 py-spy 观测 CPU。采集结果适合用于热点函数定位、内存增长归因、容器内进程分析和性能问题现场留存。
 
-本文仅介绍 `_output/bin/profiler` 的独立使用方式。通过 apiserver 创建任务并在 Grafana 查询的服务化持续 Profiling 不在本文范围内。
+本节以下介绍 `_output/bin/profiler` 的独立使用方式。服务化的持续 Profiling 使用方式见上方 Profiling API。
 
 ## 🎯 应用场景
 
@@ -39,17 +444,17 @@ C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 CPU、虚拟内�
 
 通过容器 ID 自动解析容器内目标进程，适合 Docker 和 containerd 工作负载。Java 和 Python 还支持逗号分隔的多个 PID，并可限制同时运行的采集子进程数量，适用于同一服务的多实例或父子进程分析。
 
-## 🚀 功能使用
+## 🛠️ 功能使用
 
 ### 1. 构建与运行条件
 
 在仓库根目录构建完整产物：
 
 ```bash
-make all
+make build
 ```
 
-生成的命令位于 `_output/bin/profiler`。原生采集依赖 Linux eBPF、perf event 和仓库构建出的 BPF 对象，通常需要 root 权限，并要求 `kernel.perf_event_paranoid` 允许采样。Java 需要 async-profiler，`--tool-path` 指向包含 `bin/asprof` 和 `lib/libasyncProfiler.so` 的目录。Python 需要 py-spy，`--tool-path` 指向包含可执行文件 `py-spy` 的目录。
+生成的命令位于 `_output/bin/profiler`。原生采集依赖 Linux eBPF、perf event 和仓库构建出的 BPF 对象，通常需要 root 权限，并要求 `kernel.perf_event_paranoid` 允许采样。Java 需要 async-profiler，`--tool-path` 指向统一工具根目录，其中包含 `bin/asprof` 和 `lib/libasyncProfiler.so`。Python 使用同一根目录下的 `py-spy`。
 
 查看当前版本的完整帮助：
 
@@ -87,10 +492,10 @@ sudo _output/bin/profiler \
 | `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg` 或 `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | 远端上传使用的 Unix socket |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
-| `--tool-path` | 无 | Java、Python | 第三方采集工具根目录，必填 |
+| `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
 | `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
-| `--tracer-id` | 自动生成 | 全部 | 采集任务 ID，主要用于远端存储关联 |
+| `--tracer-id` | 空；本地输出时内部生成 | 全部；`remote` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
 | `--enable-pprof` | `false` | 工具自身 | 在 `:6000` 暴露 profiler 进程自身的 Go pprof 接口 |
 | `--version-format` | `text` | 版本查询 | `--version` 的输出格式：`text`、`json` 或 `short` |
 | `--help`, `-h` | - | 全部 | 显示命令帮助 |
@@ -101,7 +506,12 @@ sudo _output/bin/profiler \
 | 参数 | 默认值 | 适用范围 | 说明 |
 | --- | --- | --- | --- |
 | `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；使用 `--type memory` 时必填 |
-| `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围，例如 `1,3,5-10` |
+| `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围；off-CPU 样本按任务切出时所在 CPU 过滤 |
+| `--cpu-mode` | `oncpu` | 原生 CPU | `oncpu` 按频率采样，`offcpu` 归因阻塞与可运行调度延迟 |
+| `--require-hardware-pmu` | `false` | 原生 on-CPU | 强制使用硬件 PMU 采样；不可用时失败，不回退软件 CPU clock |
+| `--offcpu-phase` | `all` | 原生 off-CPU | 累计 `all`、`blocked` 或 `runqueue` 时间 |
+| `--offcpu-min-duration-us` | `1000` | 原生 off-CPU | 丢弃持续时间小于该微秒数的阶段 |
+| `--offcpu-stats` | `false` | 原生 off-CPU | 收集 BPF 诊断统计；错误和清理路径会产生额外开销 |
 | `--thread-group` | `false` | 原生 | 同时采集目标 PID 所在线程组中的其他线程 |
 | `--physical-memory-probability` | `100` | 原生物理内存 | 物理内存事件采样概率，范围为 1～100 |
 | `--log-bpf-debug` | `false` | 原生 | 输出 BPF 调试事件，常规采集不建议启用 |
@@ -133,6 +543,10 @@ sudo _output/bin/profiler \
 
 如需包含同一进程的工作线程，增加 `--thread-group`。如需限定 CPU，增加 `--cpuid 2,4-7`。原生 CPU 也支持容器和宿主机级采样：
 
+原生 on-CPU 采集优先使用硬件 CPU cycle event；硬件 PMU 不可用时回退软件
+CPU clock。两种采样源下 `--freq` 均表示每秒采样次数。若软件时钟回退会掩盖
+IRQ 关闭期间的 CPU 时间，可指定 `--require-hardware-pmu`。
+
 ```bash
 # 采集指定容器
 sudo _output/bin/profiler \
@@ -146,6 +560,20 @@ sudo _output/bin/profiler \
   --duration 30 --aggr-interval 10 \
   --output-format flamegraph --output-path ./profiles/host
 ```
+
+如需把线程离开 CPU 的时间归因到触发切出的调用路径，使用 off-CPU 模式：
+
+```bash
+sudo _output/bin/profiler \
+  --type cpu --language go --pid 12345 --thread-group \
+  --cpu-mode offcpu --offcpu-phase all \
+  --cpuid 2,4-7 \
+  --offcpu-min-duration-us 1000 \
+  --duration 30 --aggr-interval 10 \
+  --output-format flamegraph --output-path ./profiles/go-offcpu
+```
+
+off-CPU 是事件驱动采集，因此不使用 `--freq`。指定 `--cpuid` 时，仅记录任务从目标 CPU 切出后开始的区间；后续在其他 CPU 唤醒或切入不会改变该归属。火焰图直接以纳秒为数值，并增加 `off-CPU blocked`、`scheduling delay (preempted)`、`scheduling delay (yielded)` 等根节点。`all` 阶段同时累计阻塞与 runqueue 等待时间，但仍按这些根节点分开显示。采集端使用单一稳定的 BPF stack map，避免长时间睡眠跨越多轮读取后被错误解析到另一代栈。
 
 原生内存支持以下维度：
 
@@ -180,7 +608,7 @@ _output/bin/profiler \
   --type cpu \
   --language java \
   --pid 12345,12346 \
-  --tool-path /opt/async-profiler \
+  --tool-path /opt/huatuo/tools \
   --max-concurrent-procs 2 \
   --duration 30 \
   --aggr-interval 10 \
@@ -202,7 +630,7 @@ _output/bin/profiler \
   --language java \
   --memory-mode object_usage \
   --pid 12345 \
-  --tool-path /opt/async-profiler \
+  --tool-path /opt/huatuo/tools \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
@@ -213,14 +641,14 @@ _output/bin/profiler \
 
 ### 5. Python 观测
 
-Python 当前仅支持 CPU 观测。`--aggr-interval` 必须与 `--duration` 相等，即一次采集只生成一个聚合窗口。`--tool-path` 指向包含 `py-spy` 的目录。
+Python 当前仅支持 CPU 观测。`--aggr-interval` 必须与 `--duration` 相等，即一次采集只生成一个聚合窗口。`--tool-path` 指向包含 `py-spy` 的统一工具根目录。
 
 ```bash
 _output/bin/profiler \
   --type cpu \
   --language python \
   --pid 12345,12346 \
-  --tool-path /opt/py-spy \
+  --tool-path /opt/huatuo/tools \
   --max-concurrent-procs 2 \
   --duration 30 \
   --aggr-interval 30 \
@@ -249,7 +677,7 @@ main;handleRequest;parsePayload 428
 main;handleRequest;writeResponse 172
 ```
 
-需要保留原始数据并支持后续使用不同配色或过滤规则重新渲染时，选择 `collapsed`。只需直接定位热点时，选择 `flamegraph`。`remote` 依赖 HUATUO toolstream Unix socket，独立离线使用时不应选择该格式。
+需要保留原始数据并支持后续使用不同配色或过滤规则重新渲染时，选择 `collapsed`。只需直接定位热点时，选择 `flamegraph`。`remote` 依赖 HUATUO toolstream Unix socket，要求提供非空的 `--tracer-id`，独立离线使用时不应选择该格式。
 
 ### 7. 根据集成测试复现
 
@@ -259,9 +687,12 @@ main;handleRequest;writeResponse 172
 # 原生 CPU
 sudo ./integration/run.sh test_profiler_native_cpu.sh
 
+# 原生 off-CPU 阻塞与调度延迟
+sudo ./integration/run.sh test_profiler_native_cpu_offcpu.sh
+
 # 原生虚拟内存与物理内存
-sudo ./integration/run.sh test_profiler_native_mem_virtual_alloc.sh
-sudo ./integration/run.sh test_profiler_native_mem_physical_usage.sh
+sudo ./integration/run.sh test_profiler_native_memory_virtual_alloc.sh
+sudo ./integration/run.sh test_profiler_native_memory_physical_usage.sh
 
 # Java CPU 与内存
 sudo ./integration/run.sh test_profiler_java_cpu_multi_pid.sh
@@ -271,11 +702,11 @@ sudo ./integration/run.sh test_profiler_java_memory_usage_alloc.sh
 sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 ```
 
-容器、线程组和指定 CPU 的示例分别位于 `test_profiler_native_cpu_container.sh`、`test_profiler_native_cpu_thread_group.sh` 和 `test_profiler_native_cpu_cpuid.sh`。运行前需完成 `make all`，并根据 `integration/env.sh` 配置 Java 或 Python 采集工具路径。
+容器、线程组和指定 CPU 的示例分别位于 `test_profiler_native_cpu_container.sh`、`test_profiler_native_cpu_thread_group.sh` 和 `test_profiler_native_cpu_cpuid.sh`。运行前需完成 `make build`，并根据 `integration/env.sh` 配置 Java 或 Python 采集工具路径。
 
 ## ⚙️ 功能原理介绍
 
-`profiler` 先根据语言和观测类型选择采集器。原生 CPU 采集器将 eBPF 程序挂载到 perf event，原生内存采集器通过内核事件记录分配与释放路径；Java 和 Python 采集器分别启动 async-profiler 和 py-spy 子进程。采集记录进入统一聚合流水线，按调用栈合并计数，最后写入本地文件或上传远端存储。
+`profiler` 先根据语言和观测类型选择采集器。原生 on-CPU 采集器将 eBPF 程序挂载到 perf event；off-CPU 模式挂载调度切换、唤醒、退出和任务释放 tracepoint；原生内存采集器通过内核事件记录分配与释放路径；Java 和 Python 采集器分别启动 async-profiler 和 py-spy 子进程。采集记录进入统一聚合流水线，按调用栈合并计数，最后写入本地文件或上传远端存储。
 
 ```mermaid
 flowchart LR

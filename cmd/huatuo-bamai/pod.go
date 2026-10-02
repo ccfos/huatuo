@@ -18,9 +18,9 @@ import (
 	"context"
 	"fmt"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/pod"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 func setupPodManager(d *Daemon) (func(context.Context) error, error) {

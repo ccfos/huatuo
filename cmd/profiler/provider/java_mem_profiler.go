@@ -19,11 +19,12 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/profiler/aggregator"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/registry"
-	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/registry"
+	javaruntime "github.com/ccfos/huatuo/internal/profiler/runtime/java"
+	"github.com/ccfos/huatuo/internal/profiler/toolpath"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 const (
@@ -52,7 +53,7 @@ func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggr
 }
 
 func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if err := validateJavaToolPath(pctx.ToolPath); err != nil {
+	if err := toolpath.Validate(profiling.LanguageJava, pctx.ToolDir); err != nil {
 		return err
 	}
 
@@ -83,13 +84,13 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	extraArgs, err := validateJavaMemoryMode(pctx.MemoryMode)
+	extraArgs, err := validateJavaMemoryMode(pctx.Mode)
 	if err != nil {
 		return err
 	}
 
 	for _, pid := range pids {
-		if err := javaruntime.PrepareJavaAgent(pid, pctx.ToolPath); err != nil {
+		if err := javaruntime.PrepareJavaAgent(pid, pctx.ToolDir); err != nil {
 			return fmt.Errorf("prepare Java agent for PID %d: %w", pid, err)
 		}
 	}
@@ -104,7 +105,7 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	opt := &javaruntime.AsprofSamplingOption{
 		Pids:          pids,
-		ToolPath:      pctx.ToolPath,
+		ToolPath:      pctx.ToolDir,
 		BaseArgs:      baseArgs,
 		OutFilePrefix: "mem",
 		AggrInterval:  javaAggregationInterval(pctx),

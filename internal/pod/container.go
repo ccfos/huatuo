@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,28 +15,13 @@
 package pod
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
-	"sync"
-	"syscall"
 	"time"
-
-	"huatuo-bamai/internal/log"
 )
 
 // containerIDRegexp matches a 12-64 character hex container ID.
 var containerIDRegexp = regexp.MustCompile(`^[0-9a-fA-F]{12,64}$`)
-
-var (
-	// all containers, map: ContainerID -> *Container
-	containers = map[string]*Container{}
-
-	// updated
-	lastUpdatedAt     = time.Now()
-	updatedStep       = 5 * time.Second
-	containersMapLock sync.RWMutex
-)
 
 // Container object
 type Container struct {
@@ -46,7 +31,7 @@ type Container struct {
 	Type               ContainerType     `json:"type"`
 	Qos                ContainerQos      `json:"qos"`
 	IPAddress          string            `json:"net_ip_address"`
-	NetNamespaceInode  uint64            `json:"net_namespace_inode"`
+	NetNamespaceInum   uint64            `json:"net_namespace_inum"`
 	NetNamespaceCookie uint64            `json:"net_namespace_cookie"`
 	InitPid            int               `json:"init_pid"`
 	CgroupPath         string            `json:"cgroup_path"`
@@ -81,24 +66,11 @@ func (c *Container) InitPidOrInitnsPid() int {
 
 // containersByTypeQos returns the containers by type and level.
 func containersByTypeQos(typeMask ContainerType, minLevel ContainerQos) (map[string]*Container, error) {
-	containersMapLock.Lock()
-	defer containersMapLock.Unlock()
-
+	containerView.mu.RLock()
+	defer containerView.mu.RUnlock()
 	res := make(map[string]*Container)
-
-	if time.Since(lastUpdatedAt) > updatedStep {
-		if err := kubeletSyncContainers(); err != nil {
-			if errors.Is(err, syscall.ECONNREFUSED) { // ignore error of no connections
-				log.Debugf("failed to sync containers by ECONNREFUSED, err: %v", err)
-				return res, nil
-			}
-			return res, err
-		}
-		lastUpdatedAt = time.Now()
-	}
-
-	log.Debugf("sync latest containers: %+v", containers)
-	for _, c := range containers {
+	for _, record := range containerView.records {
+		c := record.container
 		// check Type
 		if c.Type&typeMask == 0 {
 			continue
@@ -129,15 +101,13 @@ func ValidateContainerID(id string) error {
 	return nil
 }
 
-// ContainerByID returns the special container by id.
+// ContainerByID returns cached metadata without runtime I/O. Fresh instance
+// checks use ContainerRefByID and ValidateContainerRef.
 func ContainerByID(id string) (*Container, error) {
-	all, err := Containers()
-	if err != nil {
-		return nil, err
-	}
-
-	if c, ok := all[id]; ok {
-		return c, nil
+	containerView.mu.RLock()
+	defer containerView.mu.RUnlock()
+	if record := containerView.records[id]; record != nil {
+		return record.container, nil
 	}
 	return nil, nil
 }
@@ -152,7 +122,10 @@ func NormalSidecarContainers() (map[string]*Container, error) {
 	return ContainersByType(ContainerTypeNormal | ContainerTypeSidecar)
 }
 
-// Containers returns all containers.
+// Containers returns the last committed metadata, including during a refresh
+// failure. Disabled managers return an empty view so host collectors still run.
+// Lifecycle consumers must use SubscribeContainers to distinguish unavailable
+// state from an authoritative empty view.
 func Containers() (map[string]*Container, error) {
 	return containersByTypeQos(ContainerTypeAll, ContainerQosLevelMin)
 }
@@ -174,9 +147,9 @@ func containerBy[T comparable](selector func(*Container) T, val T) (*Container, 
 	return nil, nil
 }
 
-// ContainerByNetInode returns the container whose net namespace inode matches.
-func ContainerByNetInode(inode uint64) (*Container, error) {
-	return containerBy(func(c *Container) uint64 { return c.NetNamespaceInode }, inode)
+// ContainerByNetNamespaceInum returns the container whose network namespace inum matches.
+func ContainerByNetNamespaceInum(inum uint64) (*Container, error) {
+	return containerBy(func(c *Container) uint64 { return c.NetNamespaceInum }, inum)
 }
 
 // GetCSSToContainerID builds a mapping from cgroup subsystem address to container ID.
@@ -219,8 +192,8 @@ func ContainerByCSS(css uint64, subsys string) (*Container, error) {
 	return containerBy(func(c *Container) uint64 { return c.CgroupCss[subsys] }, css)
 }
 
-// ContainerByNetCookie returns the container whose net namespace cookie matches cookie.
-func ContainerByNetCookie(cookie uint64) (*Container, error) {
+// ContainerByNetNamespaceCookie returns the container whose network namespace cookie matches.
+func ContainerByNetNamespaceCookie(cookie uint64) (*Container, error) {
 	if cookie == 0 {
 		return nil, nil
 	}

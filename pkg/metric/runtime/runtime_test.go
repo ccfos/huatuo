@@ -34,7 +34,7 @@ func TestRegisterCollector(t *testing.T) {
 		{
 			name:      "register with null namespace",
 			namespace: "",
-			expected:  []string{"_go_goroutines", "process_start_time_seconds"},
+			expected:  []string{"go_goroutines", "process_start_time_seconds"},
 		},
 	}
 

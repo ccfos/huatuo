@@ -21,11 +21,11 @@ import (
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler"
-	"huatuo-bamai/internal/profiler/aggregator"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 var _ aggregator.Aggregator = (*pythonAggregator)(nil)

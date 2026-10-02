@@ -24,14 +24,15 @@ import (
 	"testing"
 	"time"
 
-	testutils "huatuo-bamai/internal/testing"
-	"huatuo-bamai/pkg/types"
+	testutils "github.com/ccfos/huatuo/internal/testing"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
 	"github.com/cilium/ebpf/perf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 // emptyBpfContext is the smallest-possible BPF input context to be used for
@@ -46,25 +47,30 @@ var emptyBpfContext = make([]byte, 15)
 
 func TestPerfEventReader_Lifecycle(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-
 	reader := newTestPerfEventReader(t, ctx)
-	defer reader.Close()
-
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	errCh := make(chan error, 1)
+	started := make(chan struct{})
 	go func() {
-		time.Sleep(100 * time.Millisecond)
-		cancel()
+		close(started)
+		var data int32
+		errCh <- reader.ReadInto(&data)
 	}()
 
-	var data int32
-	err := reader.ReadInto(&data)
-
-	assert.ErrorIs(t, err, types.ErrExitByCancelCtx)
+	<-started
+	cancel()
+	select {
+	case err := <-errCh:
+		assert.ErrorIs(t, err, types.ErrExitByCancelCtx)
+	case <-time.After(time.Second):
+		t.Fatal("ReadInto() timed out waiting for context cancellation")
+	}
 }
 
 func TestPerfEventReader_Close(t *testing.T) {
 	reader := newTestPerfEventReader(t, t.Context())
 
+	require.NoError(t, reader.Close())
 	require.NoError(t, reader.Close())
 
 	var data int32
@@ -81,8 +87,6 @@ func TestPerfEventReader_ReadInto_Closed(t *testing.T) {
 		var data int32
 		errCh <- reader.ReadInto(&data)
 	}()
-
-	time.Sleep(50 * time.Millisecond)
 
 	require.NoError(t, reader.Close())
 
@@ -104,14 +108,11 @@ func TestNewPerfEventReader_Failure(t *testing.T) {
 	mapID := b.MapIDByName(info.MapsInfo[0].Name)
 	require.NotZero(t, mapID)
 
-	_, err = newPerfEventReader(t.Context(), b.mapSpecs[mapID].cloned, 0)
+	_, err = newPerfEventReader(t.Context(), b.mapsByID[mapID].handle, 0)
 	assert.Error(t, err)
 }
 
 func TestPerfEventReader_ReadInto_And_Close_ProgTest(t *testing.T) {
-	// This is the additional coverage you requested (modeled after ebpf/perf/reader_test.go):
-	// Use prog.Test(...) to emit one perf sample and ensure ReadInto consumes it.
-	t.Helper()
 	requireBPFPermission(t)
 
 	events := perfEventArray(t)
@@ -119,10 +120,9 @@ func TestPerfEventReader_ReadInto_And_Close_ProgTest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("perf.NewReader: %v", err)
 	}
-	defer rd.Close()
 
 	ctx, cancel := context.WithCancel(t.Context())
-	r := &perfEventReader{ctx: ctx, rd: rd, cancelCtx: cancel}
+	r := &perfEventReader{done: ctx.Done(), rd: rd, cancel: cancel}
 
 	sampleSize := 8
 	buf := emptyBpfContext
@@ -158,7 +158,11 @@ func newTestPerfEventReader(t *testing.T, ctx context.Context) PerfEventReader {
 
 	reader, err := newPerfEventReader(ctx, perfMap, 4096)
 	if err != nil {
-		t.Skipf("skipping test: newPerfEventReader failed: %v", err)
+		if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) ||
+			errors.Is(err, unix.ENOMEM) {
+			t.Skipf("skipping: perf event reader unavailable: %v", err)
+		}
+		t.Fatalf("newPerfEventReader: %v", err)
 	}
 
 	return reader
@@ -179,21 +183,22 @@ func getPerfEventArrayMap(t *testing.T) *ebpf.Map {
 			continue
 		}
 
-		spec := b.mapSpecs[id]
-		if spec.cloned == nil {
+		m := b.mapsByID[id]
+		if m.handle == nil {
 			continue
 		}
 
-		mapInfo, err := spec.cloned.Info()
+		mapInfo, err := m.handle.Info()
 		if err != nil {
-			continue
+			t.Fatalf("read map %q info: %v", mi.Name, err)
 		}
 
 		if mapInfo.Type == ebpf.PerfEventArray {
-			return spec.cloned
+			return m.handle
 		}
 	}
 
+	t.Fatal("perf event array map not found")
 	return nil
 }
 
@@ -209,7 +214,11 @@ func perfEventArray(tb testing.TB) *ebpf.Map {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() { m.Close() })
+	tb.Cleanup(func() {
+		if err := m.Close(); err != nil {
+			tb.Errorf("close perf event array: %v", err)
+		}
+	})
 	return m
 }
 
@@ -271,6 +280,10 @@ func outputSamplesProg(tb testing.TB, events *ebpf.Map, sampleSizes ...byte) *eb
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() { prog.Close() })
+	tb.Cleanup(func() {
+		if err := prog.Close(); err != nil {
+			tb.Errorf("close sample program: %v", err)
+		}
+	})
 	return prog
 }

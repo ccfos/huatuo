@@ -1,5 +1,5 @@
 ---
-title: Docker Compose
+title: Docker
 type: docs
 description: 
 author: HUATUO Team
@@ -14,17 +14,44 @@ Image repository: https://hub.docker.com/r/huatuo/huatuo-bamai/tags
 ### Start a container with Docker
 
 ```bash
-$ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+docker run --detach \
+  --name huatuo-bamai \
+  --restart unless-stopped \
+  --privileged \
+  --pid=host \
+  --cgroupns=host \
+  --network=host \
+  --cpus=2 \
+  --memory=2g \
+  --volume /sys:/sys \
+  --volume /proc:/proc \
+  --volume /run:/run \
+  huatuo/huatuo-bamai:latest
 ```
 
-> ⚠️ When this method is used, the container relies on the built-in default configuration file. That configuration does not connect to the kubelet or Elasticsearch.
+> Note: The built-in default configuration does not connect to kubelet or Elasticsearch.
 
-### Start containers with Docker Compose
+Limit CPU and memory in production to isolate abnormal collection workloads.
+Docker manages the container cgroup; Huatuo does not create its own cgroup by default,
+so do not pass `--enable-cgroup` in a Docker deployment.
 
-[Docker Compose](https://docs.docker.com/compose/) allows you to quickly set up a complete local environment where you manage the collector, Elasticsearch, Prometheus, Grafana, and other components yourself.
+Verify that the limits are active and observe actual usage:
+
+```bash
+docker inspect huatuo-bamai \
+  --format 'NanoCPUs={{.HostConfig.NanoCpus}} Memory={{.HostConfig.Memory}}'
+docker stats huatuo-bamai
+```
+
+These values are an initial baseline. Adjust them based on node capacity,
+collection jobs, and observed resource peaks.
+
+### Start containers with Docker
+
+The `docker compose` command allows you to quickly set up a complete local environment where you manage the collector, Elasticsearch, Prometheus, Grafana, and other components yourself.
 
 ```bash
 $ docker compose --project-directory ./build/docker up
 ```
 
-For Docker Compose installation instructions, see https://docs.docker.com/compose/install/linux/.
+For installation instructions, see https://docs.docker.com/compose/install/linux/.

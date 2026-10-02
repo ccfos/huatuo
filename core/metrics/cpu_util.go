@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,18 +15,19 @@
 package collector
 
 import (
-	"math"
+	"errors"
+	"fmt"
 	"reflect"
-	"runtime"
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/cgroups/stats"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 type cpuUtilStat struct {
@@ -55,9 +56,17 @@ func newCpuCollector() (*tracing.EventTracingAttr, error) {
 		return nil, err
 	}
 
+	numCores, err := cpuutil.ParseOnlineCores(cpuutil.SystemCPUOnlinePath)
+	if err != nil {
+		return nil, fmt.Errorf("read online cpu: %w", err)
+	}
+	if numCores == 0 {
+		return nil, errors.New("no online cpu")
+	}
+
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuUtilCollector{
-			numCores: float64(runtime.NumCPU()),
+			numCores: float64(numCores),
 			cgroup:   cgroup,
 		},
 		Flag: tracing.FlagMetric,
@@ -89,7 +98,16 @@ func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, container *pod.Co
 		return err
 	}
 
-	// allow statistics 0
+	// Usage, User, and System should increase monotonically. This defensive
+	// check prevents an unexpected reset from causing uint64 underflow.
+	if stat.Usage < cache.lastUsage.Usage ||
+		stat.User < cache.lastUsage.User ||
+		stat.System < cache.lastUsage.System {
+		cache.lastUsage = *stat
+		cache.lastTimestamp = now
+		return nil
+	}
+
 	deltaTotalTime := stat.Usage - cache.lastUsage.Usage
 	deltaUsrTime := stat.User - cache.lastUsage.User
 	deltaSysTime := stat.System - cache.lastUsage.System
@@ -136,34 +154,42 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 	for _, container := range containers {
 		cpuQuota, err := c.cgroup.CpuQuotaAndPeriod(container.CgroupPath)
 		if err != nil {
-			log.Infof("fetch container [%s] cpu quota and period: %v", container, err)
+			log.Infof("cpu quota: container=%s err=%v", container, err)
 			continue
 		}
 
-		var numCores float64
-		if cpuQuota.Quota == math.MaxUint64 {
-			numCores = float64(runtime.NumCPU())
-		} else {
-			numCores = float64(cpuQuota.Quota) / float64(cpuQuota.Period)
-		}
-
-		if numCores <= 0 {
+		numCores, err := cpuutil.BoundCores(
+			cpuQuota.Quota, cpuQuota.Period,
+			cpuQuota.EffectiveCPUCount, uint64(c.numCores),
+		)
+		if err != nil {
+			log.Infof("cpu capacity: container=%s err=%v", container, err)
 			continue
 		}
 
-		containerDataCache := container.LifeResources("collector_cpu_util").(*cpuUtilStat)
-		if err := c.updateDataCache(containerDataCache, container, numCores); err != nil {
-			log.Infof("failed to update cpu info of %s, %v", container, err)
+		dataCache, ok := container.LifeResources("collector_cpu_util").(*cpuUtilStat)
+		if !ok || dataCache == nil {
+			log.Warnf("cpu cache: container=%s unavailable", container)
+			continue
+		}
+		if err := c.updateDataCache(dataCache, container, numCores); err != nil {
+			log.Infof("cpu usage: container=%s err=%v", container, err)
 			continue
 		}
 
-		metrics = append(metrics, metric.NewContainerGaugeData(container, "cores", numCores, "cpu core number for the containers", nil),
-			metric.NewContainerGaugeData(container, "usr", containerDataCache.usrUtil, "cpu usr for the containers", nil),
-			metric.NewContainerGaugeData(container, "sys", containerDataCache.sysUtil, "cpu sys for the containers", nil),
-			metric.NewContainerGaugeData(container, "total", containerDataCache.totalUtil, "cpu total for the containers", nil))
+		metrics = append(
+			metrics,
+			metric.NewContainerGaugeData(container, "cores", numCores, "cpu core number for the containers", nil),
+			metric.NewContainerGaugeData(container, "usr", dataCache.usrUtil, "cpu usr for the containers", nil),
+			metric.NewContainerGaugeData(container, "sys", dataCache.sysUtil, "cpu sys for the containers", nil),
+			metric.NewContainerGaugeData(container, "total", dataCache.totalUtil, "cpu total for the containers", nil),
+		)
 	}
 
-	more, _ := c.updateHostDataCache()
+	more, err := c.updateHostDataCache()
+	if err != nil {
+		log.Warnf("host cpu usage: %v", err)
+	}
 
 	return append(metrics, more...), nil
 }

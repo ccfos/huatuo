@@ -1,0 +1,1427 @@
+---
+title: huatuo-bamai 配置
+type: docs
+description:
+author: HUATUO Team
+date: 2026-07-27
+weight: 4
+---
+
+### 1. 文档概述
+
+`huatuo-bamai` 作为 HUATUO 的核心采集器（bpf-based metrics and anomaly inspector），其配置文件用于定义数据采集范围、探针启用策略、指标输出格式、异常检测规则、以及日志行为等。
+
+配置文件包含全局黑名单、日志、运行时资源限制、存储配置以及自动追踪（AutoTracing）等多个 section。每个配置项均附带详细注释，明确说明用途、默认值及注意事项。本文档针对配置文件中的每一个配置项提供中文的详细解释，帮助用户准确理解和安全定制配置。
+
+**注意**：配置文件中多数参数以 # 注释形式提供默认值，实际启用时需移除 # 并根据环境调整。修改后需重启 huatuo-bamai 进程生效。生产环境建议遵循最小化原则，避免过度开启高开销特性。
+
+### 2. 全局黑名单
+
+```bash
+# Global tracing and metrics configuration.
+#
+# - BlackList
+# Global blacklist for tracing and metrics.
+#
+BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]
+```
+
+- **BlackList**：全局追踪与指标黑名单。
+
+  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`，即全局禁用网络设备硬件层（netdev_hw）、队列调度统计（netdev_qdisc）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标、TCP 重传追踪和摩尔线程 GPU 监控。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪时移除 `tcp_retransmit`；需要启用摩尔线程 GPU 指标采集时移除 `mthreads_gpu`（要求已安装 MTML 库）。local 关联不依赖 standalone `dropwatch` tracer。
+
+  **说明**：添加黑名单项可有效降低资源消耗，尤其在特定硬件环境中；支持数组格式，可根据实际业务扩展。
+
+### 3. 日志配置
+
+```bash
+# Log Configuration
+[Log]
+    # - Level
+    # The log level for huatuo-bamai: Debug, Info, Warn, Error, Panic.
+    # Default: Info
+    #
+    # - File
+    # Store logs to where the logging file is. If it is empty, don't write log
+    # to any file.
+    # Default: empty
+    #
+    # Level = "Info"
+    # File = ""
+```
+
+- **Level**：日志级别。 
+
+  可选值包括 Debug、Info、Warn、Error、Panic。默认值为 Info。 
+
+  **说明**：控制 huatuo-bamai 的日志输出详细程度。生产环境推荐使用 Info 或 Warn 以减少日志量；Debug 级别仅用于故障排查，会产生大量输出。
+
+- **File**：日志文件路径。
+
+   指定日志写入的文件路径。若为空字符串，则不写入文件（仅输出到标准输出或系统日志）。默认值为空。
+
+   **说明**：在容器化部署中，建议配置具体路径进行持久化。
+
+### 4. 运行时资源限制
+
+默认不创建 Huatuo 自身 cgroup。只有显式传入 `--enable-cgroup` 时，本节配置才会生效；Kubernetes 和 systemd 部署应使用各自的资源管理配置。
+
+```bash
+# Runtime limits for the huatuo-bamai process.
+[Runtime]
+    # - StartupCPULimitCores
+    # CPU limit during startup, in cores.
+    # Default: 0.5
+    #
+    # - CPULimitCores
+    # CPU limit after startup, in cores.
+    # Default: 2.0
+    #
+    # - MemoryLimitMiB
+    # Memory limit in MiB.
+    # Default: 2048
+    #
+    # StartupCPULimitCores = 0.5
+    # CPULimitCores = 2.0
+    # MemoryLimitMiB = 2048
+```
+
+- **StartupCPULimitCores**：初始化阶段 CPU 上限，默认 `0.5` 核。
+- **CPULimitCores**：启动完成后的 CPU 上限，默认 `2.0` 核。
+- **MemoryLimitMiB**：进程内存上限，默认 `2048` MiB。
+
+配置始终以文档标明的单位保存，仅在应用 cgroup 限制时将内存转换为字节。
+
+### 5. HTTP 服务与按需 Operation
+
+```toml
+# HTTP server configuration.
+[HTTPServer]
+    # - ListenAddress
+    # Listen address in "host:port" form.
+    # Default: ":19704"
+    #
+    # - MaxEventStreamClients
+    # Maximum number of concurrent clients allowed to hold an open
+    # /v1/events/watch SSE connection. Once the limit is reached, new requests
+    # are rejected with HTTP 429 until an existing client disconnects.
+    # Default: 100
+    #
+    # - EventStreamKeepAliveIntervalSeconds
+    # Interval in seconds at which the server sends an SSE comment ping to each
+    # connected client. The ping keeps the connection alive through load
+    # balancers and proxies that would otherwise time out idle connections. If
+    # writing the ping fails three consecutive times, the server closes the
+    # connection.
+    # Default: 30
+    #
+    # ListenAddress = ":19704"
+    # MaxEventStreamClients = 100
+    # EventStreamKeepAliveIntervalSeconds = 30
+
+[HTTPServer.Auth]
+    # huatuo-apiserver 调用 Node API 时使用的必填服务凭证。
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
+
+# Profiling 和 Tracing 共用的生命周期策略。
+[Operations]
+    # MaxConcurrent = 10
+    # LaunchTimeoutSeconds = 10
+    # StopGracePeriodSeconds = 5
+    # FinalizationTimeoutSeconds = 30
+    # TerminalRetentionPeriodSeconds = 600
+
+# Node 本地 Profiling 执行配置。
+[Profiling]
+    # AggregationIntervalSeconds = 10
+    # MaxConcurrentProcesses = 10
+    # CommandOutputLimitBytes = 65536
+    # ToolDir = "/opt/huatuo/tools"
+
+```
+
+- **ListenAddress** 使用 `host:port` 格式，主机为空时监听所有接口。
+- **HTTPServer.Auth.BearerToken** 必填，并且必须与 huatuo-apiserver 独立配置的
+  Node 凭证一致；部署前必须替换示例值。
+- **Operations.MaxConcurrent** 是 Profiling、Tracing 共用的进程级上限；容量用尽时
+  直接拒绝新 Operation，不在 Node 排队。
+- 四个 Operation 时间参数分别限制进程启动、优雅停止、结果收尾和终态保留，不能
+  合并为一个通用 timeout。
+- **Profiling.ToolDir** 是外部采样工具的统一根目录，原样传给 profiler 的
+  `--tool-path`。Java 使用该目录下的 `bin/asprof` 和
+  `lib/libasyncProfiler.so`，Python 使用 `py-spy`。
+  只检查请求语言所需的工具；原生采集不需要此配置。Node 环境不满足要求时
+  拒绝请求且不创建 Operation。
+
+生成的 Node API 通过 `GET /openapi.json` 提供协议文档。Profiling、Tracing 的
+Start、Get、Stop 路由、`POST /v1/events/watch` 及 `PUT /v1/config` 必须携带
+服务 Bearer Token；`/readyz`、指标、版本和 OpenAPI 文档保持公开。
+
+#### 5.1 通过 Node API 更新配置
+
+`PUT /v1/config` 接收一个非空的 `config` 对象。键名使用与 TOML 结构一致的
+点分路径，值保留 JSON 类型：
+
+```bash
+curl -i -X PUT 'http://127.0.0.1:19704/v1/config' \
+  -H 'Authorization: Bearer REPLACE_WITH_RANDOM_HEX' \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "config": {
+      "BlackList": ["dropwatch", "netdev_hw"],
+      "Runtime.CPULimitCores": 1.5,
+      "Runtime.MemoryLimitMiB": 1024
+    }
+  }'
+```
+
+更新成功返回 `204 No Content`。Node Agent 先校验完整的候选配置，再原子替换
+配置文件，最后发布新的内存快照。校验或持久化失败时，当前快照保持不变。
+未知键、无效值类型和空更新对象返回 `400 Bad Request`。
+
+动态读取配置的组件无需重启即可观察到新快照。HTTP 监听与鉴权、存储初始化、
+cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 `huatuo-bamai` 后
+才能生效。
+
+事件流配置控制 `POST /v1/events/watch`。达到
+`MaxEventStreamClients` 后，新连接返回 HTTP 429。
+`EventStreamKeepAliveIntervalSeconds` 控制 SSE 心跳注释间隔，用于避免
+代理或负载均衡器关闭空闲连接。连续三次写入失败后服务端关闭连接。
+该值应小于上游 idle timeout，生产环境通常设置为 15–60 秒。
+
+### 6. 存储配置
+
+#### 6.1 ElasticSearch/OpenSearch 存储
+
+```bash
+# Storage configuration
+[Storage]
+    # Elasticsearch and OpenSearch Storage
+    #
+    # Disable ES/OS storage if one of Address, Username, Password is empty.
+    # Store the tracing and events data of linux kernel to ES/OS.
+    #
+    # - Address
+    # Port 9200 is commonly used for Elasticsearch/OpenSearch HTTP APIs.
+    # e.g.
+    # http://127.0.0.1:9200
+    # https://127.0.0.1:9200
+    #
+    # - Index
+    # Elasticsearch or OpenSearch index, a logical namespace that holds a collection of
+    # documents for huatuo-bamai.
+    # Default: huatuo_bamai
+    #
+    # - Username
+    # - Password
+    # Address, Username, and Password must be either all empty (disabled) or
+    # all configured (enabled). Partial connection settings are invalid.
+    #
+    [Storage.Elasticsearch]
+        # Address = "http://127.0.0.1:9200"
+        # Index = "huatuo_bamai"
+        # Username = "elastic"
+        # Password = "REPLACE_WITH_PASSWORD"
+```
+
+- **Address**：ElasticSearch/OpenSearch 存储服务地址。 
+
+  无默认值。
+
+  **说明**：用于存储内核追踪和事件数据。Address、Username、Password
+  三项全部为空时禁用 ES/OS 存储；启用时必须三项全部配置，部分配置会
+  导致进程启动失败。支持 HTTP/HTTPS 协议。
+
+- **Index**：索引名称。
+
+  默认值为 huatuo_bamai。
+
+  **说明**：索引是 ElasticSearch/OpenSearch 文档的逻辑命名空间，用于组织 huatuo-bamai 产生的追踪与事件数据。
+
+- **Username**：用户名。
+
+  无默认值。
+
+  **说明**：用于 Basic Auth 认证。
+
+- **Password**：认证密码。
+
+  无默认值。
+
+  **说明**：配合用户名进行安全认证。生产环境强烈建议使用强密码并结合 TLS 加密传输。
+
+**整体说明**：ES/OS 存储用于持久化内核追踪和事件数据，便于后续检索与分析。如果用户不关心 Linux 内核事件、Autotracing 数据则可以关闭该配置。
+
+#### 6.2 本地文件存储
+
+```bash
+# LocalFile Storage
+#
+# Store data to local directory for troubleshooting on the host machine.
+#
+# - Path
+# The directory for storing data. If the Path is empty, LocalFile will be disabled.
+# Default: "huatuo-local"
+#
+# - RotationSizeMiB
+# The maximum size in Megabytes of a record file before it gets rotated
+# for per linux kernel tracer.
+# Default: 100MB
+#
+# - MaxRotatedFiles
+# The maximum number of old log files to retain for per tracer.
+# Default: 10
+#
+[Storage.LocalFile]
+	# Path = "huatuo-local"
+    # RotationSizeMiB = 100
+    # MaxRotatedFiles = 10
+```
+
+- **Path**：本地数据存储目录。
+
+  默认值为 huatuo-local。若路径为空，则禁用本地文件存储。
+
+  **说明**：用于在宿主机本地保存数据，主要用于现场故障排查。推荐配置为绝对路径。
+
+- **RotationSizeMiB**：单文件轮转大小。
+
+  每个追踪器记录文件在达到该大小时进行轮转。默认值为 100 MB。
+
+  **说明**：单位为 MB，防止单个文件过大导致磁盘占用失控。
+
+- **MaxRotatedFiles**：最大保留轮转文件数。
+
+  每个追踪器最多保留的历史文件数量。默认值为 10。
+
+  **说明**：超过数量后自动删除最早文件，控制磁盘空间使用。
+
+### 7. 自动追踪配置
+
+自动追踪模块是 HUATUO 的智能特性之一，可根据阈值自动触发特定性能追踪，减少人工干预。
+
+#### 7.1 CPUIdle 自动追踪 — 容器突发高 CPU 使用场景
+
+```bash
+# Autotracing configuration 
+[AutoTracing]
+    # cpuidle
+    #
+    # For a high cpu usage all of a sudden in containers.
+    #
+    # - UserThreshold
+    # User CPU usage threshold, when cpu usage reaches this threshold, cpu
+    # performance tracing will be triggered.
+    # Default: 75%
+    #
+    # - SysThreshold
+    # System CPU usage threshold, when reaching this threshold, cpu performance
+    # tracing will be triggered.
+    # Default: 45%
+    #
+    # - UsageThreshold
+    # The total cpu usage (system + user cpu usage) threshold, when reaching
+    # this threshold, cpu performance tracing will be triggered.
+    # Default: 45%
+    #
+    # - DeltaUserThreshold
+    # The range of this user cpu changes within a short period of time.
+    # Default: 45%
+    #
+    # - DeltaSysThreshold
+    # The range of this system cpu changes within a short period of time.
+    # Default: 20%
+    #
+    # - DeltaUsageThreshold
+    # The range of this cpu usage changes within a short period of time.
+    # Default: 55%
+    #
+    # - Interval
+    # The sample interval of the cpu usage for all containers.
+    # Default: 10s
+    #
+    # - IntervalTracing
+    # Time since last run. Avoid frequently executing this tracing to prevent
+    # damage to the system.
+    # Default: 1800s
+    #
+    # - RunTracingToolTimeout
+    # The executing time of this tracing program.
+    # Default: 10s
+    # 
+    # NOTE:
+    # Running this performance tool, when:
+    # 1. UserThreshold and DeltaUserThreshold are true, or
+    # 2. SysThreshold and DeltaSysThreshold are true, or
+    # 3. UsageThreshold and DeltaUsageThreshold
+    #
+    [AutoTracing.CPUIdle]
+        # UserThreshold = 75
+        # SysThreshold = 45
+        # UsageThreshold = 90
+        # DeltaUserThreshold = 45
+        # DeltaSysThreshold = 20
+        # DeltaUsageThreshold = 55
+        # Interval = 10
+        # IntervalTracing = 1800
+        # RunTracingToolTimeout = 10
+```
+
+- **UserThreshold**：用户态 CPU 使用率阈值（%）。
+
+  默认 75%。 当容器用户态 CPU 使用率达到该值时，可能触发 CPU 性能追踪。
+
+- **SysThreshold**：系统态 CPU 使用率阈值（%）。
+
+  默认 45%。 当系统态 CPU 使用率达到该值时，可能触发追踪。
+
+- **UsageThreshold**：总 CPU 使用率阈值（用户态 + 系统态，%）。
+
+  默认 90%（注释中示例）。 总 CPU 使用率达到该阈值时触发追踪。
+
+- **DeltaUserThreshold**：用户态 CPU 短期变化幅度阈值（%）。
+
+  默认 45%。 短时间内用户态 CPU 使用率变化超过该值时触发。
+
+- **DeltaSysThreshold**：系统态 CPU 短期变化幅度阈值（%）。
+
+  默认 20%。 短时间内系统态 CPU 使用率变化超过该值时触发。
+
+- **DeltaUsageThreshold**：总 CPU 使用率短期变化幅度阈值（%）。
+
+  默认 55%。 短时间内总 CPU 使用率变化超过该值时触发。
+
+- **Interval**：CPU 使用率采样间隔（秒）。
+
+  默认 10s。 对所有容器进行 CPU 使用率采样的周期。
+
+- **IntervalTracing**：连续运行间隔（秒）。
+
+  默认 1800s（30 分钟）。 两次自动追踪之间的最小间隔，防止频繁执行对系统造成压力。
+
+- **RunTracingToolTimeout**：单次性能追踪执行超时时间（秒）。默认 10s。 控制追踪程序的最长运行时间，避免长时间占用资源。
+
+**触发逻辑说明**：当满足以下任一条件时触发追踪：
+
+1. UserThreshold 与 DeltaUserThreshold 同时满足；或
+2. SysThreshold 与 DeltaSysThreshold 同时满足；或
+3. UsageThreshold 与 DeltaUsageThreshold 同时满足。
+
+**Filter 容器过滤**：通过 Included/Excluded 规则数组控制监控范围。
+
+```bash
+    # 每条规则包含 Field（过滤字段）和 Pattern（正则）
+    # Field: container_host_namespace | container_hostname | container_qos
+    #
+    # [[AutoTracing.CPUIdle.Filter.Excluded]]
+    #     Field = "container_qos"
+    #     Pattern = "besteffort"
+    # [[AutoTracing.CPUIdle.Filter.Included]]
+    #     Field = "container_host_namespace"
+    #     Pattern = "^application-"
+```
+
+- **Filter**：容器过滤规则。使用 `[[double-bracket]]` 语法定义多条规则，每条含 `Field`（过滤字段）和 `Pattern`（正则）。过滤逻辑：
+
+  - 无规则：监控所有容器
+  - 仅 `Excluded`：黑名单，排除匹配的容器
+  - 仅 `Included`：白名单，仅监控匹配的容器
+  - 两者并存：匹配 Included 且不匹配 Excluded
+
+  默认无规则，监控所有容器。
+
+#### 7.2 CPUSys 自动追踪 — 宿主机突发高系统 CPU 使用场景
+
+```bash
+# cpusys
+#
+# For a high system cpu usage all of a sudden on host machine.
+#
+# - SysThreshold
+# System CPU usage threshold, when reaching this threshold, cpu performance
+# tracing will be triggered.
+# Default: 45%
+#
+# - DeltaSysThreshold
+# The range of system cpu changes within a short period of time.
+# Default: 20%
+#
+# - Interval
+# The sample interval of the cpu usage for host machine.
+# Default: 10s
+#
+# - IntervalTracing
+# Minimum time between profiling runs.
+# Default: 1800s
+#
+# - RunTracingToolTimeout
+# The executing time of this tracing program.
+# Default: 10s
+#
+# NOTE:
+# Running this performance tool, when:
+# SysThreshold and DeltaSysThreshold are true.
+#
+[AutoTracing.CPUSys]
+	# SysThreshold = 45
+	# DeltaSysThreshold = 20
+	# Interval = 10
+	# IntervalTracing = 1800
+	# RunTracingToolTimeout = 10
+```
+
+- **SysThreshold**：系统态 CPU 使用率阈值（%）。
+
+  默认 45%。
+
+- **DeltaSysThreshold**：系统态 CPU 短期变化幅度阈值（%）。
+
+  默认 20%。
+
+- **Interval**：宿主机 CPU 使用率采样间隔（秒）。
+
+  默认 10s。
+
+- **IntervalTracing**：两次性能剖析之间的最短间隔，默认 1800s。
+
+- **RunTracingToolTimeout**：单次追踪执行超时时间（秒）。默认 10s。
+
+**触发逻辑**：当 SysThreshold 与 DeltaSysThreshold 同时满足时触发。
+
+#### 7.3 Dload 自动追踪 — 容器 D 状态任务剖析
+
+```bash
+# dload
+#
+# linux tasks D state profiling for containers.
+#
+# - ThresholdLoad
+# The loadavg threshold value, when reaching this threshold, dload profiling
+# is triggered.
+# Default: 5
+#
+# - Interval
+# The sample interval of the load for all containers.
+# Default: 10s
+#
+# - IntervalTracing
+# Time since last run. Avoid frequently executing this tracing to prevent
+# damage to the system.
+# Default: 1800s
+#
+[AutoTracing.Dload]
+	# ThresholdLoad = 5
+	# Interval = 10
+	# IntervalTracing = 1800
+```
+
+- **ThresholdLoad**：容器的系统负载平均值（loadavg）阈值。
+
+  默认 5。 当 loadavg 达到该值时，触发 D 状态（不可中断睡眠）任务剖析。
+
+  **说明**：用于诊断容器中大量进程进入 D 状态的场景。
+
+- **Interval**：监控间隔（秒）。
+
+  默认 10。 Dload 监控的周期。
+
+- **IntervalTracing**：连续运行间隔（秒）。
+
+  默认 1800s（30 分钟）。 两次自动追踪之间的最小间隔，防止频繁执行对系统造成压力。
+
+#### 7.4 IOTracing 自动追踪 — 容器 IO 性能剖析
+
+```bash
+# iotracing
+#
+# io profiling for containers.
+#
+# - WbpsThreshold
+# Max write bytes per second, when reaching this threshold, iotracing is triggered.
+# Please note that if it is an NVMe device, it must also meet the UtilThreshold.
+# Default: 1500 MB/s
+#
+# - RbpsThreshold
+# Max read bytes per second, when reaching this threshold, iotracing is triggered.
+# Please note that if it is an NVMe device, it must also meet the UtilThreshold.
+# Default: 2000 MB/s
+#
+# - UtilThreshold
+# Disk utilization, Percentage of time the disk is busy. If this is consistently
+# above 80-90%, the disk may be a bottleneck.
+# Default: 90%
+#
+# - AwaitThreshold
+# Await (Average IO wait time in ms): High values indicate slow disk response times.
+# Default: 100ms
+#
+# - RunTracingToolTimeout
+# The executing time of this tracing tool.
+# Default: 10s
+#
+# - MaxProcDump
+# The number of processes displayed by iotracing tool.
+# Default: 10
+#
+# - MaxFilesPerProcDump
+# The number of files per process displayed by iotracing tool.
+# Default: 5
+#
+[AutoTracing.IOTracing]
+	# WbpsThreshold = 1500
+	# RbpsThreshold = 2000
+	# UtilThreshold = 90
+	# AwaitThreshold = 100
+	# RunTracingToolTimeout = 10
+	# MaxProcDump = 10
+	# MaxFilesPerProcDump = 5
+```
+
+- **WbpsThreshold**：每秒最大写字节数阈值（MB/s）。
+
+  默认 1500 MB/s。 达到该值时可能触发 IO 追踪（NVMe 设备需同时满足 UtilThreshold）。
+
+- **RbpsThreshold**：每秒最大读字节数阈值（MB/s）。
+
+  默认 2000 MB/s。 类似写字节，达到阈值时触发。
+
+- **UtilThreshold**：磁盘利用率阈值（%）。
+
+  默认 90%。 磁盘忙碌时间百分比，持续高于 80-90% 可能成为瓶颈。
+
+- **AwaitThreshold**：平均 IO 等待时间阈值（ms）。
+
+  默认 100ms。 高值表示磁盘响应缓慢。
+
+- **RunIOTracingTimeout**：IO 追踪工具执行超时时间（秒）。
+
+  默认 10s。
+
+- **MaxProcDump**：IO 追踪显示的最大进程数。
+
+  默认 10。 控制输出中展示的进程数量。
+
+- **MaxFilesPerProcDump**：每个进程显示的最大文件数。
+
+  默认 5。 控制每个进程关联文件的展示数量。
+
+**说明**：IOTracing 用于容器 IO 热点诊断，特别关注高负载磁盘场景。
+
+#### 7.5 内存突发自动追踪
+
+该模块用于检测宿主机内存使用量突发增长场景，并在触发时自动捕获内核上下文，便于诊断内存压力事件。
+
+```bash
+# memory burst
+#
+# If there is a memory used burst on the host, capture this kernel context.
+#
+# - Interval
+# The sample interval of the memory used.
+# Default: 10s
+#
+# - DeltaMemoryBurst
+# A certain percentage of memory burst used. 100% that means, e.g.,
+# memory used increased from 200MB to 400MB.
+# Default: 100%
+#
+# - DeltaAnonThreshold
+# A certain percentage of anon memory burst used. 100% that means, e.g.,
+# anon memory used increased from 200MB to 400MB.
+# Default: 70%
+#
+# - IntervalTracing
+# Time since last run. Avoid frequently executing this tracing
+# to prevent damage to the system.
+# Default: 1800s
+#
+# - DumpProcessMaxNum
+# How many processes to dump when this event is triggered.
+# Default: 10
+#
+[AutoTracing.MemoryBurst]
+	# DeltaMemoryBurst = 100
+	# DeltaAnonThreshold = 70
+	# Interval = 10
+	# IntervalTracing = 1800
+	# SlidingWindowLength = 60
+	# DumpProcessMaxNum = 10
+```
+
+- **DeltaMemoryBurst**：内存使用量突发增长百分比阈值。
+
+  默认 100%。 表示内存使用量在采样窗口内增长的比例（例如从 200MB 增长到 400MB 即 100%）。达到该阈值时可能触发内存突发追踪。 
+
+  **说明**：用于捕获整体内存使用量的急剧上升场景。
+
+- **DeltaAnonThreshold**：匿名页内存突发增长百分比阈值。
+
+  默认 70%。 匿名内存（anonymous memory）增长比例阈值，匿名页是内存压力诊断的重要指标。 
+
+  **说明**：重点监控易导致 OOM 或 swap 的匿名内存突发。
+
+- **Interval**：内存使用量采样间隔（秒）。
+
+  默认 10s。 对宿主机内存使用情况进行周期性采样的时间间隔。 
+
+  **说明**：采样频率影响检测灵敏度与开销。
+
+- **IntervalTracing**：连续运行最小间隔（秒）。
+
+  默认 1800s（30 分钟）。 两次内存突发追踪之间的冷却时间，避免频繁执行对系统造成额外压力。
+
+  **说明**：防止追踪工具被过度触发。
+
+- **DumpProcessMaxNum**：触发事件时转储的最大进程数。
+
+  默认 10。 当内存突发事件触发时，最多转储多少个相关进程的详细信息（包括内存占用、调用栈等）。
+
+  **说明**：控制输出数据量，避免单次事件产生过多诊断信息。
+
+#### 7.6 内存阈值运行时快照
+
+`memory_threshold_snapshot` 默认开启；将该自动追踪加入全局 `BlackList`
+并重启 huatuo-bamai，即可关闭。
+该功能在容器内存压力通知后尝试采集 Go、HotSpot 或 CPython
+运行时快照，不保证在 OOM 前完成。候选进程按近似内核 OOM 分数选择。
+
+持久化字段 `victim_pid`、`victim_process_name` 和 `victim_oom_score_adj`
+描述本次快照选中的采集进程。
+
+```toml
+[AutoTracing.MemoryThresholdSnapshot]
+    # ThresholdPercent = 90
+    # IntervalTracing = 300
+    # RunTracingToolTimeout = 2
+    # MaxMemoryObjectEntries = 10
+```
+
+注释中的数值为默认值。
+
+| 参数 | 含义 |
+|------|------|
+| ThresholdPercent | 采集要求的内存使用量与限额比例，范围 1–100 |
+| IntervalTracing | 成功或失败采集尝试完成后的节点级最小间隔，单位秒，默认 300，必须为正数 |
+| RunTracingToolTimeout | Go、Java、Python 统一使用的协作式采集超时时间，单位秒，默认 2，必须为正数 |
+| MaxMemoryObjectEntries | 单次快照最多保留的内存对象排序条目数，范围 1–100，默认 10；最终 JSON 上限为 512 KiB，超限会裁剪 |
+
+运行时识别和保存时间不计入采集预算，运行时识别没有独立超时限制。
+超时不能中断正在执行的同步读取，因此不是整个操作的耗时上限。
+
+**触发条件：**
+
+- **cgroup v1**：通过 `cgroup.event_control` 注册 `ThresholdPercent` 对应的内存阈值。
+- **cgroup v2**：监听 `memory.events.local` 的 `high` 或 `max` 计数增长
+  （文件不存在时使用 `memory.events`），再检查
+  `memory.current / memory.max` 是否达到配置比例。
+  本功能不设置 `memory.high`；为 `max` 时仍可由硬限制的 `max` 计数触发检查。
+  该通知发生较晚，不能保证恰好在配置百分比处检测，也不能保证在 OOM 前完成抓取。
+
+两种版本均在注册完成后和硬限制变化时检查水位。一个 watcher 管理所有目标，
+不进行周期采样。同一目标的重复通知会合并，不逐次统计跨越，也不提供水位恢复通知。
+抓取前会重新检查当前水位和目标身份。
+
+该功能依赖已启用的 pod 管理器。pod 根据共享 CSS 生命周期线索主动更新容器视图，
+向快照模块提供存量容器及包含实例代次、InitPID、memory cgroup 路径的增删事件。
+快照模块不再扫描 cgroup 树；订阅溢出后通过 pod 的完整视图恢复。
+上游同步失败时暂停采集，不能把失败视为容器全部删除。
+
+监控范围包括运行中的普通容器和可重启 init sidecar，不包括临时调试容器及普通 init 容器。
+普通注册失败或达到监听数量上限时记录日志并跳过该目录实例；监听失效后注销，不自动重试或补位。
+重复事件、全量更新和容器代次变化不会恢复失败的监听。目录实例替换、原容器退出后
+建立新的跟踪状态，或重启 huatuo-bamai 后可重新尝试。宿主机资源耗尽等致命错误仍会停止当前监听流程。
+每个被监控容器必须拥有独立的 memory cgroup 目录；监听和采集事件直接绑定一个容器实例。
+注册时若发现返回的监听已属于其他容器，则停止该功能、取消采集并释放监听；
+修正容器 cgroup 隔离后需重启 huatuo-bamai，不自动重试该冲突。
+目录实例替换通过 watcher 的移除通知使旧注册失效。
+采集及保存前核验容器代次和实际绑定、目录身份，以及目标进程身份和
+cgroup 归属。记录中的内存使用量和限额属于该容器的 cgroup。
+
+部署限制和结果查询见第 14 节。
+
+#### 7.7 IRQTracing 自动追踪
+
+该模块检测单个 CPU 的 irq+softirq 利用率异常，并调用 `irqtracing` 采集
+softirq source 和 victim 调用栈。
+
+```bash
+[AutoTracing.IRQTracing]
+    Interval = 2
+    RunTracingToolTimeout = 3
+    IntervalTracing = 300
+    MaxEventsPerSecond = 1000
+    MinCPUs = 3
+    DeltaUsageThreshold = 20
+    RelativeIncreaseThreshold = 30
+    SustainedIntervals = 10
+    UsageThreshold = 80
+```
+
+- **Interval**：`/proc/stat` 中每 CPU irq+softirq 利用率的采样间隔，默认 2s。
+- **RunTracingToolTimeout**：单次 `irqtracing` 采集时长，默认 3s。
+- **IntervalTracing**：两次触发之间的最小间隔，默认 300s。
+- **MaxEventsPerSecond**：在被跟踪 CPU 上每秒采集的 source 和 victim 栈
+  样本总上限，默认 1000。守护进程将额度尽量均分给 `softirq_raise` 和
+  `softirq_entry`；默认每条流 500/s。该值必须在 2 到 8589934590 之间。
+- **MinCPUs**、**DeltaUsageThreshold** 和 **RelativeIncreaseThreshold**：
+  控制多 CPU irq+softirq 利用率突增规则；两个阈值分别表示利用率增加的
+  百分点和相对上一采样值的增长百分比。
+- **SustainedIntervals** 和 **UsageThreshold**：控制单 CPU
+  irq+softirq 持续高利用率规则的连续采样次数和利用率阈值。
+
+#### 7.8 已知问题过滤（IssuesList）
+
+```bash
+# Autotracing configuration.
+#
+# - IssuesList
+# Known issue filters for autotracing.
+#
+[AutoTracing]
+    IssuesList = []
+```
+
+- **IssuesList**：已知问题过滤器。格式 `[["问题名称", "正则"], ...]`。采集到的堆栈匹配正则时标记为对应问题名称，默认 `[]`。当前用于 dload 追踪。
+
+  示例：`IssuesList = [["known_issue1", "softlockup"], ["known_issue2", "alloc_pages.*failed"]]`
+
+**注意**：当前仅支持 `dload` 追踪的已知问题过滤，其他事件暂不支持。
+
+### 8. 事件追踪配置
+
+该 section 负责内核关键事件的捕获与延迟监控，包括调度 tick 间隔、内存回收、网络接收延迟、网卡事件及丢包监控等，是 HUATUO 内核级异常上下文采集的核心模块。
+
+#### 8.1 调度 tick 间隔追踪
+
+```bash
+# linux kernel events capturing configuration
+[EventTracing]
+	# scheduler tick
+	#
+	# Trace long scheduler tick intervals.
+	#
+	# - IntervalThreshold
+	# When the scheduler tick interval reaches the threshold, huatuo-bamai
+	# will collect kernel context.
+	# Default: 10000000 in nanoseconds, 10ms
+	#
+	[EventTracing.SchedTick]
+		# IntervalThreshold = 10000000
+```
+
+- **IntervalThreshold**：调度 tick 间隔阈值（纳秒）。默认 10000000 ns（10ms）。达到该阈值时采集事件。该事件通过过长的 tick 间隔推断 CPU 异常停顿，不能单独证明软中断被禁用。
+
+#### 8.2 内存回收阻塞追踪
+
+```bash
+# memreclaim
+#
+# The memory reclaim may block the process, if one process is blocked
+# for a long time, reporting the events to userspace.
+#
+# - BlockedThreshold
+# The blocked time when memory reclaiming.
+# Default: 900000000ns, 900ms
+#
+[EventTracing.MemoryReclaim]
+	# BlockedThreshold = 900000000
+```
+
+- **BlockedThreshold**：内存回收阻塞时间阈值（纳秒）。默认 900000000 ns（900ms）。 当单个进程因内存回收（reclaim）被阻塞超过该时间时，向用户态上报事件并捕获上下文。 说明：内存回收阻塞是导致进程卡顿的常见原因，尤其在内存紧张的云原生环境中。
+
+#### 8.3 网络接收延迟追踪
+
+```bash
+# networking rx latency
+#
+# linux net stack rx latency for every tcp skbs.
+#
+# - Driver2NetRx
+# The latency from driver to net rx, e.g., netif_receive_skb.
+# Default: 5ms
+#
+# - Driver2TCP
+# The latency from driver to tcp rx, e.g., tcp_v4_rcv.
+# Default: 10ms
+#
+# - Driver2Userspace
+# The latency from driver to userspace copy data, e.g., skb_copy_datagram_iovec.
+# Default: 115ms
+#
+# - ExcludedContainerQos
+# Blacklist: skip containers whose qos level matches.
+# Values: "guaranteed", "burstable", "besteffort" (case-insensitive).
+# Default: [].
+#
+# - ExcludedHostNetnamespace
+# Don't care the skbs, packets in the host net namespace.
+# Default: true
+#
+[EventTracing.NetRxLatency]
+	# Driver2NetRx = 5
+	# Driver2TCP = 10
+	# Driver2Userspace = 115
+	# ExcludedContainerQos = []
+	ExcludedContainerQos = ["besteffort"]
+	# ExcludedHostNetnamespace = true
+```
+
+- **Driver2NetRx**：从驱动到网络层接收的延迟阈值（毫秒）。
+
+  默认 5ms。 例如 netif_receive_skb 等函数的延迟监控阈值。
+
+- **Driver2TCP**：从驱动到 TCP 协议栈接收的延迟阈值（毫秒）。
+
+  默认 10ms。 例如 tcp_v4_rcv 等函数的延迟监控。
+
+- **Driver2Userspace**：从驱动到用户态数据拷贝的延迟阈值（毫秒）。
+
+  默认 115ms。 例如 skb_copy_datagram_iovec 等函数的延迟监控。
+
+- **ExcludedContainerQos**：排除的容器 QoS 级别，黑名单模式。
+
+  默认 [""]。 不监控指定 QoS 级别的容器网络接收延迟（对应 Kubernetes Pod QoS：Guaranteed、Burstable、BestEffort，大小写不敏感）。
+
+  **说明**：通常排除 BestEffort 容器以减少噪声。
+
+- **ExcludedHostNetnamespace**：是否排除宿主机网络命名空间。
+
+  默认 true。 不监控宿主机 net namespace 中的 skb 数据包延迟。 
+
+  **说明**：聚焦容器网络流量，减少无关宿主机数据干扰。
+
+#### 8.4 网卡事件监控
+
+```bash
+# netdev events
+#
+# monitor the net device events.
+#
+# - DeviceList
+# The net devices we take care of.
+# Default: [] is empty, meaning no devices.
+#
+[EventTracing.Netdev]
+	DeviceList = ["eth0", "eth1", "bond4", "lo"]
+```
+
+- **DeviceList**：需要监控的网卡设备完整匹配正则列表。`"eth0"` 等字面量名称保持精确匹配，`"bond[0-9]+"` 等模式可匹配多块网卡。
+
+  默认示例包含 "eth0", "eth1", "bond4", "lo"。 为空列表时表示不监控任何设备。 监控网络设备的物理链路状态事件等。
+
+  **说明**：精确指定感兴趣的网络接口，支持 bond、lo 等。
+
+#### 8.5 丢包监控（[EventTracing.Dropwatch]）
+
+```toml
+[EventTracing.Dropwatch]
+    # standalone dropwatch 使用的 filter。
+    # 默认值："tcp"
+    Filter = "tcp"
+
+    # 转发给 dropwatch --max-events-per-second。
+    # 默认值：100；0 表示不限速。
+    MaxEventsPerSecond = 100
+
+    # 预留配置字段。当前 dropwatch 事件链路未消费该字段，
+    # 因此不会产生容器过滤效果。
+    # 默认值：[]
+    ExcludeContainers = []
+```
+
+- **Filter**：只传给 standalone dropwatch 的 tcpdump 风格过滤表达式。TCP 重传关联的两个输入统一使用 `TCPRetransmit.Filter`。
+
+  默认值：`"tcp"`。
+
+- **MaxEventsPerSecond**：BPF 侧每秒最多输出的 dropwatch 事件数。
+
+  默认值：`100`，设置为 `0` 表示不限速。
+
+- **ExcludeContainers**：预留的容器排除列表。
+
+  默认值：`[]`。该字段存在于配置结构中，但当前 dropwatch 事件链路既不读取也不转发它，因此配置后不会生效。运维侧如需按调用栈抑制 dropwatch 噪声，应使用 `EventTracing.IssuesList`。
+
+#### 8.6 TCP 重传追踪（[EventTracing.TCPRetransmit]）
+
+```bash
+[EventTracing.TCPRetransmit]
+    # 重传过滤条件；local 关联会把它应用到两个输入。
+    # 默认值：空（关闭关联时不传参数，开启关联时使用 "tcp"）。
+    Filter = ""
+
+    # Forwarded as tcpshark --enable-tlp. Default: false.
+    EnableTLP = false
+
+    # Run tcpshark with an embedded dropwatch source. Default: false.
+    EnableDropwatch = false
+
+    # Forwarded as tcpshark --max-events-per-second.
+    # Default: 100; 0 disables rate limiting.
+    MaxEventsPerSecond = 100
+```
+
+- **EnableTLP**：是否采集 `tcp_send_loss_probe` 事件。
+
+  默认 false。
+
+- **Filter**：两种模式都使用的 TCP 重传过滤条件。开启 local 关联后，两个 tcpshark 输入统一使用规范化后的表达式，空值回退为 `tcp`；关闭关联时，空值不传 `--filter`。`Dropwatch.Filter` 保持独立，只控制 standalone dropwatch。
+
+- **EnableDropwatch**：是否让 tcpshark 加载私有 dropwatch source 并在本地完成重传结果定型，默认 false。必须从 `BlackList` 移除 `tcp_retransmit`；standalone `dropwatch` 可以继续位于黑名单中。重传最多等待 100ms，候选 drop 的内核单调时间必须早于重传且相差不超过 1s。embedded source 自动检测并启用 devlink DROP trap。同 netns 的严格匹配按来源输出 `software` 或 `hardware`，附带与 dropwatch 一致的 `drop_source`、`drop_reason` 和硬件 `drop_reason_group`；每条已定型事件输出唯一的 `correlation_reason`（`matched`、`unsupported`、`warmup`、`wait_timeout`、`queue_full` 或 `interrupted`）；`warmup` 仅用于等待到期且重传发生时间早于 source ready 的事件，等于或晚于 ready 的重传在等待到期时使用 `wait_timeout`，其他结束路径保留各自原因；未匹配事件输出 `drop_location=unknown`，并保留 namespace 诊断标记、dropwatch 计数及 map 计数可用性。
+
+- **MaxEventsPerSecond**：BPF 侧每秒最多输出的 TCP 重传事件数。关联模式还会给 embedded dropwatch 配置一个数值相同但独立的 limiter，因此 `100` 表示两条输入各自最多 100 条/秒。
+
+  默认 100，设置为 0 表示不限速。超限时 `tcpshark` 会输出 `rate limit hit` 日志。
+
+#### 8.7 硬件错误事件追踪（EventTracing.Ras）
+
+```bash
+# ras
+#
+# Hardware error event tracing (RAS: Reliability, Availability, Serviceability).
+# Captures MCE, EDAC, ACPI/GHES, PCIe AER, and MCE threshold (THR) events via eBPF.
+#
+# - MceThrBackoff
+# Minimum interval in seconds between consecutive MCE threshold (THR) event saves.
+# THR events are fired by the local-APIC threshold interrupt and can storm at high
+# frequency; this cooldown prevents flooding storage with redundant records.
+# Default: 1800s (30 minutes)
+#
+[EventTracing.Ras]
+    # MceThrBackoff = 1800
+```
+
+- **MceThrBackoff**：MCE 阈值中断（THR）事件存储的最小间隔时间（秒）。
+
+  默认 1800s（30 分钟）。
+
+  **说明**：THR 事件由 CPU 本地 APIC 阈值中断触发，在硬件出现纠正性错误时可能以极高频率产生。该冷却时间用于防止存储系统被大量重复记录淹没，同时保证关键事件仍能被捕获。调低该值可获得更实时的事件记录，但需注意存储压力；在错误频发的环境中建议适当调高。
+
+#### 8.8 摩尔线程 GPU 事件追踪（EventTracing.MthreadsGPU）
+
+```bash
+# mthreads_gpu
+#
+# Moore Threads GPU XID error event tracing.
+[EventTracing.MthreadsGPU]
+    # MthreadsXidLevel = ""
+```
+
+- **MthreadsXidLevel**：XID 错误报告的最低严重级别。
+
+  可选值：`""`（禁用）、`"notify"`、`"warning"`、`"fatal"`。
+
+  默认值：`""`（禁用）。
+
+  **说明**：控制哪些 XID 错误事件被报告。设置此选项以启用摩尔线程 GPU 的 XID 错误追踪。低于指定严重级别的 XID 错误将被过滤掉。要启用此功能，请确保 `mthreads_xid` 从全局 `BlackList`（如果存在）中移除，并将此字段设置为有效的严重级别之一（`"notify"`、`"warning"`、`"fatal"`）。此外，主机上必须安装 MUSA 驱动。该功能每秒轮询 `/proc/driver/musa/gpu*/event_report` 文件以捕获 XID 错误事件。每个 XID 事件包含详细信息，包括 UUID、XID ID、严重级别、作用域、PCI BDF、进程 ID 和附加上下文信息。
+
+#### 8.9 已知问题过滤（IssuesList）
+
+```bash
+# Linux kernel event tracing configuration.
+#
+# - IssuesList
+# Known issue filters for event tracing.
+#
+[EventTracing]
+    IssuesList = []
+```
+
+- **IssuesList**：已知问题抑制规则，格式为 `[["名称", "正则"], ...]`，默认值为 `[]`。
+
+  对 `net_rx_latency`，正则匹配生成的事件标题；对 `dropwatch`，正则匹配以换行符连接的内核调用栈。匹配后事件会被丢弃；配置的名称只用于标识规则，不会写入已保存事件。
+
+  示例：`IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
+
+### 9. 指标采集器配置
+
+该 section 定义各类系统与网络指标的采集规则。所有 `Included`/`Excluded` 字段底层共用同一套过滤逻辑（正则表达式）：
+
+- 无规则：全部采集
+- 仅 Excluded：黑名单，匹配即跳过
+- 仅 Included：白名单，仅采集匹配项
+- 两者并存：必须匹配 Included 且不匹配 Excluded
+
+#### 9.1 网卡统计
+
+```bash
+# Metric Collector
+[MetricCollector]
+	# Netdev statistic
+	#
+	# - EnableNetlink
+	# Use netlink instead of procfs net/dev to get netdev statistic.
+	# Only support the host environment to use `netlink` now.
+	# Default is "false".
+	#
+	# - DeviceIncluded
+	# Accept special devices in netdev statistic.
+	# Default: "" (empty), meaning include all.
+	#
+	# - DeviceExcluded
+	# Exclude special devices in netdev statistic.
+	# Default: "" (empty), meaning exclude nothing.
+	#
+	# Filter logic see MetricCollector section header.
+	#
+	[MetricCollector.NetdevStats]
+		# EnableNetlink = false
+		# DeviceIncluded = ""
+		DeviceExcluded = "^(lo)|(docker\\w*)|(veth\\w*)$"
+```
+
+- **EnableNetlink**：是否使用 netlink 而非 procfs 获取网卡统计。
+
+  默认 false。 仅宿主机环境支持 netlink。 
+
+  **说明**：netlink 方式通常更高效，但需内核支持。
+
+- **DeviceIncluded**：需要纳入统计的网卡设备正则。默认空（全部采集）。
+
+- **DeviceExcluded**：需排除的网卡设备正则。如：排除 lo、docker、veth 等虚拟接口。
+
+#### 9.2 网卡 DCB（Data Center Bridging）采集
+
+```bash
+# netdev dcb, DCB (Data Center Bridging)
+#
+# Collecting the DCB PFC (Priority-based Flow Control).
+#
+# - DeviceList
+# The net devices we take care of.
+# Default: [] is empty, meaning no devices.
+#
+[MetricCollector.NetdevDCB]
+	DeviceList = ["eth0", "eth1"]
+```
+
+- **DeviceList**：需要采集 DCB（优先流控 PFC）信息的网卡完整匹配正则列表。
+
+  默认空。 
+
+  **说明**：主要用于数据中心网络环境下的优先级流控监控。
+
+#### 9.3 网卡硬件统计
+
+```bash
+# netdev hardware statistic
+#
+# Collecting the hardware statistic of net devices, e.g, rx_dropped.
+#
+# - DeviceList
+# The net devices we take care of.
+# Default: [] is empty, meaning no devices.
+#
+[MetricCollector.NetdevHW]
+	DeviceList = ["eth0", "eth1"]
+```
+
+- **DeviceList**：需要采集硬件层统计（如 rx_dropped）的网卡完整匹配正则列表。
+
+  默认空。 
+
+  **说明**：聚焦硬件丢包、错误等底层指标。
+
+#### 9.4 Qdisc（队列规则）采集
+
+```bash
+# Qdisc
+#
+# - DeviceIncluded / DeviceExcluded
+# Same as above.
+#
+[MetricCollector.Qdisc]
+	# DeviceIncluded = ""
+	DeviceExcluded = "^(lo)|(docker\\w*)|(veth\\w*)$"
+```
+
+- **DeviceIncluded / DeviceExcluded**：同 MetricCollector 描述的过滤逻辑。
+
+  **说明**：用于诊断流量整形、调度延迟等问题。
+
+#### 9.5 vmstat 指标采集
+
+```bash
+# vmstat
+#
+# This metric supports host vmstat and cgroup vmstat.
+# - IncludedOnHost / ExcludedOnHost: same filter logic, for host /proc/vmstat.
+# - IncludedOnContainer / ExcludedOnContainer: same, for cgroup containers memory.stat.
+#
+[MetricCollector.Vmstat]
+	IncludedOnHost = "allocstall|nr_active_anon|nr_active_file|nr_boost_pages|nr_dirty|nr_free_pages|nr_inactive_anon|nr_inactive_file|nr_kswapd_boost|nr_mlock|nr_shmem|nr_slab_reclaimable|nr_slab_unreclaimable|nr_unevictable|nr_writeback|numa_pages_migrated|pgdeactivate|pgrefill|pgscan_direct|pgscan_kswapd|pgsteal_direct|pgsteal_kswapd"
+	ExcludedOnHost = "total"
+	IncludedOnContainer = "active_anon|active_file|dirty|inactive_anon|inactive_file|pgdeactivate|pgrefill|pgscan_direct|pgscan_kswapd|pgsteal_direct|pgsteal_kswapd|shmem|unevictable|writeback|pgscan_globaldirect|pgscan_globalkswapd|pgscan_cswapd|pgsteal_cswapd|pgsteal_globaldirect|pgsteal_globalkswapd"
+	ExcludedOnContainer = "total"
+```
+
+- **IncludedOnHost / ExcludedOnHost**：宿主机 /proc/vmstat 的过滤字段正则。
+
+- **IncludedOnContainer / ExcludedOnContainer**：容器 cgroup memory.stat 的过滤字段正则。
+
+  **说明**：精细控制 vmstat 指标采集，支持主机与容器差异化配置，避免采集无关字段。
+
+#### 9.6 其他指标采集
+
+```bash
+# MemoryEvents/Netstat/MountPointStat
+#
+# - Included / Excluded: same as above.
+# - MountPointsIncluded: whitelist only (no Excluded), same logic.
+#
+[MetricCollector.MemoryEvents]
+	Included = "watermark_inc|watermark_dec"
+	# Excluded = ""
+[MetricCollector.Netstat]
+	# Excluded = ""
+	# Included = ""
+
+# MountPointStat
+[MetricCollector.MountPointStat]
+	MountPointsIncluded = "(^/home$)|(^/$)|(^/boot$)"
+```
+
+- **Included / Excluded**（MemoryEvents、Netstat）：同上过滤逻辑。
+
+- **MountPointsIncluded**：采集挂载点统计的路径正则。默认示例含 /、/home、/boot。
+
+  **说明**：用于监控关键文件系统使用情况。
+
+#### 9.7 摩尔线程 GPU 指标
+
+```bash
+# MetricCollector.Mthreads
+#
+# 通过 MTML（摩尔线程管理库）共享库采集摩尔线程 GPU 指标。
+# 库文件在启动时通过系统动态链接器按 SONAME 顺序自动发现
+# （libmtml.so.2，然后 libmtml.so），无需硬编码路径。
+#
+# 从 BlackList 中移除 "mthreads_gpu" 以启用此采集器。
+#
+# - EnableHealth
+# 启用健康指标：温度、功耗、利用率、时钟、风扇、pstate、VPU。
+# 默认值：true
+#
+# - EnablePCIe
+# 启用 PCIe 链路指标：当前速率/宽度和重放计数器。
+# 默认值：false
+#
+# - EnableMTLink
+# 启用 MtLink 互连指标：每链路状态和带宽。
+# 默认值：false
+#
+[MetricCollector.Mthreads]
+    # EnableHealth = true
+    # EnablePCIe = false
+    # EnableMTLink = false
+```
+
+- **EnableHealth**：控制健康相关指标的采集。
+
+  默认值：true。启用后采集：GPU/内存温度（`gpu_temperature_celsius`、`memory_temperature_celsius`）、功耗及限制（`device_power_watts`、`gpu_power_limit_watts`、`gpu_power_default_limit_watts`）、GPU/内存利用率（`gpu_utilization_percent`、`memory_utilization_percent`）、时钟频率（`gpu_clock_mhz`、`gpu_max_clock_mhz`、`memory_clock_mhz`、`memory_max_clock_mhz`）、电压（`gpu_voltage_volts`）、内存容量（`memory_total_bytes`、`memory_used_bytes`）、风扇转速（`fan_rpm`、`fan_speed_percent`）、性能状态（`gpu_pstate`）以及 VPU 指标（`vpu_utilization_percent`、`vpu_encoder_utilization_percent`、`vpu_decoder_utilization_percent`、`vpu_clock_mhz`）。
+
+- **EnablePCIe**：控制 PCIe 链路指标的采集。
+
+  默认值：false。启用后采集：当前 PCIe 链路速率和宽度（`pcie_link_speed_gt_per_sec`、`pcie_link_width_lanes`）、最大能力值（`pcie_link_max_speed_gt_per_sec`、`pcie_link_max_width_lanes`）以及重放计数器（`pcie_replay_total`）。
+
+- **EnableMTLink**：控制 MtLink 互连指标的采集。
+
+  默认值：false。启用后采集：设备级静态规格（每链路带宽 `mtlink_link_bandwidth_gb_s` 和链路数 `mtlink_link_count`）以及每链路状态（`mtlink_state`）。
+
+**库发现机制**：启动时，采集器通过系统动态链接器（遵循 `LD_LIBRARY_PATH` 和 `/etc/ld.so.cache`）依次搜索 `libmtml.so.2` 和 `libmtml.so`。如果未找到库文件，采集器记录警告并在进程生命周期内保持禁用状态。库发现仅在启动时执行；更改 `LD_LIBRARY_PATH` 或安装新的 MTML 版本需要重启。
+
+**热更新语义**：`EnableHealth`、`EnablePCIe`、`EnableMTLink` 在每次 scrape 时从最新配置快照中读取，因此切换这些开关后下一个 Prometheus scrape 即可生效，无需重启 `huatuo-bamai`。`false → true → false` 的转换会在每次变更后的下一个 scrape 上按预期发布或停止发布对应的指标组。
+
+注意：在进程已经启动且因 `libmtml.so` 缺失导致采集器被禁用的情况下，要启用该采集器（即把 `mthreads_gpu` 从 `BlackList` 中移除）需要重启进程。采集器工厂只在初始化时运行，运行时即使库被加载成功也不会注册新的采集器。
+
+### 10. Pod 配置
+
+该 section 用于从 kubelet 获取 Pod 信息，实现容器与 Pod 级别的标签关联和指标隔离。
+
+```bash
+# Pod Configuration
+#
+# Configure these parameters for fetching pods from kubelet.
+#
+# - KubeletReadOnlyPort
+# The KubeletReadOnlyPort is kubelet read-only port for the Kubelet to serve on with
+# no authentication/authorization. The port number must be between 1 and 65535, inclusive.
+# Setting this field to 0 disables fetching pods from kubelet read-only service.
+# Default: 10255
+#
+# - KubeletAuthorizedPort
+# The port is the HTTPs port of the kubelet. The port number must be between 1 and 65535,
+# inclusive. Setting this field to 0 disables fetching pods from kubelet HTTPS port.
+# Default: 10250
+#
+# - KubeletClientCertPath
+# https://kubernetes.io/docs/setup/best-practices/certificates/
+#
+# Client certificate and private key file name. One file or two files:
+# "/path/to/xxx-kubelet-client.crt,/path/to/xxx-kubelet-client.key",
+# "/path/to/kubelet-client-current.pem"
+#
+# You can disable this kubelet fetching pods, for bare metal service, by
+# KubeletReadOnlyPort = 0, and KubeletAuthorizedPort = 0.
+#
+[Pod]
+	KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
+```
+
+- **KubeletReadOnlyPort**：kubelet 只读端口。
+
+  默认 10255。 用于无认证方式从 kubelet 获取 Pod 列表。设置为 0 时禁用该方式。
+
+  **说明**：端口范围 1-65535，适合测试或非安全环境。
+
+- **KubeletAuthorizedPort**：kubelet HTTPS 授权端口。
+
+  默认 10250。 用于安全方式（证书认证）从 kubelet 获取 Pod 信息。设置为 0 时禁用。 
+
+  **说明**：生产环境推荐使用该端口结合证书认证。
+
+- **KubeletClientCertPath**：kubelet 客户端证书及私钥路径。 
+
+  支持格式："/path/to/xxx-kubelet-client.crt,/path/to/xxx-kubelet-client.key" 或单文件 PEM 格式。 
+
+  **说明**：参考 Kubernetes 证书最佳实践，用于 HTTPS 端口的 mTLS 认证。在裸金属或非 Kubernetes 环境中可通过将两个端口设为 0 来禁用 Pod 获取功能。
+
+### 11. 命令行参数
+
+`huatuo-bamai` 支持以下命令行参数：
+
+```bash
+huatuo-bamai --region <region> [选项]
+```
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--config` | 配置文件名 | `huatuo-bamai.conf` |
+| `--config-dir` | 配置文件目录 | `conf` |
+| `--bpf-dir` | BPF 对象文件目录 | `bpf` |
+| `--tools-bin-dir` | 追踪工具二进制目录 | `bin` |
+| `--region` | 部署区域（必填） | - |
+| `--disable-kubelet` | 禁用 kubelet Pod 获取 | `false` |
+| `--disable-storage` | 禁用存储后端 | `false` |
+| `--enable-cgroup` | 启用自身 cgroup 资源限制（默认关闭） | `false` |
+| `--disable-tracing` | 禁用指定追踪模块（可多次指定） | - |
+| `--log-debug` | 强制设置日志级别为 Debug | `false` |
+| `--dry-run` | 仅加载测试，启动后优雅退出 | `false` |
+| `--procfs-prefix` | procfs 挂载点前缀 | - |
+
+### 12. 配置覆盖原则
+
+当同一配置项同时存在于命令行参数和配置文件时，遵循以下优先级：
+
+**命令行参数 > 配置文件 > 内置默认值**
+
+具体规则：
+
+1. **日志级别**：`--log-debug` > 配置文件 `[Log] Level` > 内置默认值 `Info`
+   - `--log-debug` 具有最高优先级，无论配置文件中 `Level` 为何值均强制设为 `Debug`
+   - 配置文件中显式设置 `Level` 时覆盖内置默认值
+   - 均未设置时使用默认值 `Info`
+
+2. **追踪黑名单**：`--disable-tracing` 与配置文件 `BlackList` 合并（两者互补，非覆盖）
+
+3. **其他布尔开关**（`--disable-kubelet`、`--disable-storage`）：命令行显式设置时覆盖配置文件
+
+### 13. 配置最佳实践与注意事项
+
+- **资源控制**：Kubernetes 使用 Pod resources，systemd 使用 service 的资源限制。只有直接运行且没有外部管理器时，才使用 `--enable-cgroup` 和 [Runtime]。
+- **存储选择**：小规模部署可优先使用 LocalFile 进行本地排查；大规模集群推荐配置 Elasticsearch 实现集中存储与查询。
+- **自动追踪调优**：根据业务负载特征调整阈值，过低阈值会导致频繁触发，过高则可能遗漏问题。建议在测试环境逐步验证。
+- **安全性**：ES 配置中请使用强密码，并考虑启用 HTTPS；避免在配置文件中硬编码敏感信息。
+- **兼容性**：配置参数受内核版本、硬件环境影响，建议结合 HUATUO 官方文档验证。
+
+通过合理配置 huatuo-bamai.conf，可充分发挥 HUATUO 在内核级异常检测与智能追踪方面的优势，有效提升云原生系统的可观测性和故障诊断效率。如需针对特定场景的深度定制，欢迎提供更多环境细节进一步讨论。
+
+### 14. 内存阈值快照部署与排障
+
+#### 14.1 部署条件与限制
+
+- 要求 Linux、memory cgroup v1/v2、宿主机 PID/procfs/cgroup 视图、
+  kubelet 元数据、内核 BTF 及加载和挂载 BPF 的权限。
+- 需读取目标进程内存（通常为 `CAP_SYS_PTRACE`）、访问 procfs/cgroup；
+  v1 还需写入 `cgroup.event_control`。安全策略可能阻止访问。
+- 仅选择该 cgroup 的直接成员，排除 `oom_score_adj = -1000` 的进程。
+  超过 4096 个 PID、64 KiB PID 数据或 1 秒预算时跳过选择。
+- 最多监听 4096 个容器，目标由 pod 事件提供，不扫描 cgroup 树。
+  普通注册失败或容量不足时记录日志并跳过，监听失效后注销，不自动重试或补位。
+  同一实例不会因资源恢复或全量更新而重新注册，可能持续缺少压力监控。
+- 身份校验失败或容器元数据缺失时，不采集或不保存。
+- 进程选择与采集统一使用 Huatuo 所在 PID 命名空间的 `/proc`；
+  `--procfs-prefix` 不会重定向内存快照读取。
+
+下表为实验性实现范围，不代表所有版本均已验证：
+
+| 运行时 | 实验性范围 | 主要限制 |
+|--------|------------|----------|
+| Go | Go 1.18–1.26，64 位 ELF | 去符号二进制的指令恢复仅支持 x86-64 |
+| Java | Java 8+，64 位小端 ELF HotSpot，G1 GC | 依赖可识别的 VMStruct/VMType 元数据 |
+| Python | CPython 3.8–3.14，64 位小端 ELF | 需能定位 `_PyRuntime` 并识别版本和布局 |
+
+已记录的人工验证：x86-64 Linux、cgroup v1（legacy/hybrid）、Go 1.24.0。
+请在实际环境验证压力触发与非空快照；跳过测试或返回 `unavailable` 不代表兼容。
+
+#### 14.2 输出与排障
+
+Info 日志记录监听状态和采集尝试。
+进程选择和保存细节记录在 Debug 日志中。
+按容器/cgroup 找到采集记录，通过进程选择日志确定 PID；
+运行时诊断查看已保存快照的状态和原因字段。
+若采集只有开始而没有结束，使用 bamai 的 `/debug/pprof/goroutine?debug=2`
+（需相应权限）确认阻塞栈；没有日志不代表监听已停止。
+
+`tracer_data.process_memory` 在运行时探测无错误返回后读取一次 `/proc/<pid>/status`，
+也适用于 C/C++ 等未识别的运行时。provider 失败会生成 `failed` 快照并保留已取得的摘要。
+探测或输出处理出错时不保存结果，错误原因查看采集日志；
+身份变化或任务取消时丢弃结果。不提供 PSS、映射排名或分配调用栈。
+
+| 字段（字节） | 来源 / 含义 |
+|------|--------|
+| `virtual_bytes` | VmSize，虚拟地址空间，不是实际物理内存占用 |
+| `rss_bytes` | VmRSS，常驻内存 |
+| `rss_anon_bytes` | RssAnon，匿名常驻内存 |
+| `rss_file_bytes` | RssFile，文件映射常驻内存 |
+| `rss_shmem_bytes` | RssShmem，共享内存常驻量 |
+| `swap_bytes` | VmSwap，私有匿名内存换出量，不含 shmem 换出 |
+| `page_table_bytes` | VmPTE，页表内存 |
+
+缺失或无效字段省略，不填 0；状态为 `partial`，完全无法读取时为
+`unavailable`，附带 `reason`。这些近似值不是 OOM 瞬间快照，也不能直接证明泄漏；
+候选进程不保证是最终 OOM victim。
+
+结果沿用现有 `[Storage]` 配置，见第 6 节，无需另配存储。
+LocalFile 文件名为 `memory_threshold_snapshot`；在 `tracing_documents` 中可按
+`tracer_name = memory_threshold_snapshot`、`tracer_type = autotracing` 查询。
+
+`started_timestamp` 记录采集尝试的开始时间，
+`observed_timestamp` 记录采集器给出的快照采集时间。
+
+Go 使用完整栈作为聚合键：Go 1.18–1.22 最多 32 帧，Go 1.23–1.26 最多 1024 帧；统一输出限制可将展示栈缩短到 64 帧，并设置 `output_truncated`。bucket 类型无效、栈或记录地址范围溢出、栈深度超过读取上限或 bucket 链表成环时，扫描以 `partial` 结束，重复 bucket 不会再次累计。
+
+扫描遇到导致 `partial` 的问题后停止遍历后续 bucket，保留此前及当前批次中已读取且聚合预算允许的有效样本，再计算 TopK。`reason` 只记录首次原因，收尾时不追加其他原因。
+
+任何 bucket 头、记录或栈读取失败（包括短读）都会使本次 Go 采集失败，丢弃所有运行时条目，包括此前批次的数据。采集器输出 `failed` 和读取错误，不逐区间重试。
+
+栈深度为 0 的样本不生成调用栈条目，也不会因空栈被标记为 `partial`。
+
+Go 快照要求采样率已知、采样已启用且 bucket 链表非空。采样率未知、采样已禁用或 bucket 链表为空时返回 `unavailable`，附带 `reason`，不返回条目。
+
+Go 采集在运行时读取、扫描、排序和条目生成阶段共用一个请求超时预算。
+超时后丢弃运行时条目，由采集器输出 `failed` 和超时原因，仍尝试读取进程内存摘要。
+取消采用协作方式，正在执行的系统调用或不支持取消的解析步骤可能在截止时间之后才结束。
+
+查看 `tracer_data.snapshot.status`（`complete`、`partial`、
+`unavailable`、`failed`），结合 `reason`、`runtime_version`、
+`duration_ms` 和 `output_truncated` 判断结果。
+
+`duration_ms` 统计 provider 阶段耗时，向上取整为毫秒；成功、失败及超时快照
+使用相同口径，不包含运行时探测、进程内存摘要读取、输出处理和保存时间。
+
+| 问题 | 检查项 |
+|------|--------|
+| 没有输出 | 是否启用并重启、是否被 BlackList 禁用；v2 触发条件见 7.6 |
+| 有事件但没有候选进程 | 进程是否直接属于该 cgroup、是否允许 OOM kill、是否超过枚举限制 |
+| `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `reason` |
+| 资源耗尽后事件停止 | 检查 `RLIMIT_NOFILE`、`fs.inotify.max_user_watches`、`fs.inotify.max_user_instances`，调整后重启；其他事件不受此停止影响 |

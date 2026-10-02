@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,14 +16,16 @@ package v1
 
 import (
 	"errors"
+	"io/fs"
 	"math"
 	"syscall"
 
-	"huatuo-bamai/internal/cgroups/paths"
-	"huatuo-bamai/internal/cgroups/pids"
-	"huatuo-bamai/internal/cgroups/stats"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/utils/parseutil"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	"github.com/ccfos/huatuo/internal/cgroups/pids"
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
+	"github.com/ccfos/huatuo/internal/utils/parseutil"
 
 	extv1 "github.com/containerd/cgroups/v3/cgroup1"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -88,13 +90,13 @@ func (c *CgroupV1) Procs(path string) ([]int32, error) {
 }
 
 func (c *CgroupV1) CpuUsage(path string) (*stats.CpuUsage, error) {
-	statPath := paths.Path(subsystem.SubsystemCPU, path, "cpuacct.stat")
+	statPath := paths.Path(subsystem.SubsystemCPUAcct, path, "cpuacct.stat")
 	raw, err := parseutil.RawKV(statPath)
 	if err != nil {
 		return nil, err
 	}
 
-	usagePath := paths.Path(subsystem.SubsystemCPU, path, "cpuacct.usage")
+	usagePath := paths.Path(subsystem.SubsystemCPUAcct, path, "cpuacct.usage")
 	usage, err := parseutil.ReadUint(usagePath)
 	if err != nil {
 		return nil, err
@@ -127,17 +129,28 @@ func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 		return nil, err
 	}
 
+	effectiveCPUCount, err := readEffectiveCPUCount(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+
 	if quota == -1 {
 		return &stats.CpuQuota{
-			Quota:  math.MaxUint64,
-			Period: period,
+			Quota:             math.MaxUint64,
+			Period:            period,
+			EffectiveCPUCount: effectiveCPUCount,
 		}, nil
 	}
 
 	return &stats.CpuQuota{
-		Quota:  uint64(quota),
-		Period: period,
+		Quota:             uint64(quota),
+		Period:            period,
+		EffectiveCPUCount: effectiveCPUCount,
 	}, nil
+}
+
+func readEffectiveCPUCount(path string) (uint64, error) {
+	return cpuutil.ParseOnlineCores(paths.Path(subsystem.SubsystemCPUSet, path, "cpuset.cpus"))
 }
 
 func (c *CgroupV1) MemoryStatRaw(path string) (map[string]uint64, error) {

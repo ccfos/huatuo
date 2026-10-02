@@ -1,0 +1,6 @@
+apiVersion: v2
+name: huatuo
+description: Helm chart for deploying the HUATUO collector as a Kubernetes DaemonSet
+type: application
+version: 0.1.0
+appVersion: "latest"

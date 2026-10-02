@@ -22,8 +22,9 @@ type CpuUsage struct {
 }
 
 type CpuQuota struct {
-	Quota  uint64
-	Period uint64
+	Quota             uint64
+	Period            uint64
+	EffectiveCPUCount uint64
 }
 
 type MemoryUsage struct {

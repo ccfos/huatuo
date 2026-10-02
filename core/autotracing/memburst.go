@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,8 +22,10 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func init() {
@@ -110,30 +112,13 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 	return []*processMemInfo{}, nil
 }
 
-func validateMemBurst(c *MemBurstConfig) error {
-	if c.DeltaMemoryBurst <= 0 {
-		return fmt.Errorf("memory burst delta must be positive, got %d", c.DeltaMemoryBurst)
-	}
-	if c.DeltaAnonThreshold < 0 || c.DeltaAnonThreshold > 100 {
-		return fmt.Errorf("memory burst anon threshold must be in [0, 100], got %d", c.DeltaAnonThreshold)
-	}
-	if c.Interval <= 0 {
-		return fmt.Errorf("memory burst interval must be positive, got %d", c.Interval)
-	}
-	if c.IntervalTracing <= 0 {
-		return fmt.Errorf("memory burst tracing interval must be positive, got %d", c.IntervalTracing)
-	}
-	if c.SlidingWindowLength <= 0 {
-		return fmt.Errorf("memory burst sliding window length must be positive, got %d", c.SlidingWindowLength)
-	}
-	if c.DumpProcessMaxNum <= 0 {
-		return fmt.Errorf("memory burst dump process max num must be positive, got %d", c.DumpProcessMaxNum)
-	}
-	return nil
-}
-
 // Core function
 func (c *memBurstTracing) Start(ctx context.Context) error {
+	cfg := configSnapshot()
+	if err := validateMemBurst(&cfg.MemoryBurst); err != nil {
+		return err
+	}
+
 	var err error
 
 	historyWindowLength := cfg.MemoryBurst.SlidingWindowLength
@@ -142,10 +127,6 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 	topNProcesses := cfg.MemoryBurst.DumpProcessMaxNum
 	burstRatio := (float64(cfg.MemoryBurst.DeltaMemoryBurst)/100.0 + 1)
 	anonThreshold := cfg.MemoryBurst.DeltaAnonThreshold
-
-	if err := validateMemBurst(&cfg.MemoryBurst); err != nil {
-		return err
-	}
 
 	memInfo, err := readMemInfo(map[string]bool{"MemTotal": true})
 	if err != nil {
@@ -182,18 +163,18 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 			}
 		}
 
-		currentTime := time.Now()
+		currentTime := timeutil.Now()
 		diff := currentTime.Sub(lastReportTime).Seconds()
 		if diff < float64(intervalTracing) {
 			continue
 		}
-		lastReportTime = currentTime
+		lastReportTime = currentTime.Time
 		if err := tracing.Save(&tracing.WriteRequest{
-			TracerName:    "memburst",
-			ContainerID:   "",
-			TracerTime:    time.Now(),
-			TracerData:    &MemoryTracingData{TopMemoryUsage: topProcesses},
-			TracerRunType: tracing.TracerRunTypeAutotracing,
+			TracerName:       "memburst",
+			ContainerID:      "",
+			StartedTimestamp: currentTime,
+			TracerData:       &MemoryTracingData{TopMemoryUsage: topProcesses},
+			TracerRunType:    types.TracerRunTypeAutotracing,
 		}); err != nil {
 			log.Warnf("failed to save tracing data: %v", err)
 		}

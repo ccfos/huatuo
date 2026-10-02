@@ -37,8 +37,8 @@ kernel context when an anomaly occurs. This mode is intended for low-overhead,
 always-on observation. Data is written to Elasticsearch and local files and
 can also produce Prometheus metrics. Built-in events include:
 
-- Soft interrupt anomalies (`softirq_tracing`).
-- Abnormal memory allocation (`oom`).
+- Scheduler tick interval anomalies (`sched_tick`).
+- Abnormal memory allocation (`memory_oom_kill`).
 - Soft lockups (`softlockup`).
 - D-state processes (`hungtask`).
 - Memory reclaim (`memory_reclaim_events`).
@@ -100,6 +100,66 @@ func newExampleMetric() (*tracing.EventTracingAttr, error) {
     }, nil
 }
 ```
+
+### Manage BPF object
+
+When one implementation provides both `Start` and `Update`, the methods may
+run concurrently. Do not read and write a `bpf.BPF` interface directly in a
+collector field. Use `Reference` and `Lease` from
+[`internal/bpf/bpf_ref.go`](../../internal/bpf/bpf_ref.go) to manage the
+object lifetime:
+
+```go
+type example struct {
+    object bpf.Reference
+}
+
+func (c *example) Start(ctx context.Context) (retErr error) {
+    object, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+    if err != nil {
+        return err
+    }
+
+    if err := object.Attach(); err != nil {
+        return errors.Join(err, object.Close())
+    }
+    if err := c.object.Publish(object); err != nil {
+        return errors.Join(err, object.Close())
+    }
+    defer func() {
+        retErr = errors.Join(retErr, c.object.UnPublish())
+    }()
+
+    <-ctx.Done()
+    return nil
+}
+
+func (c *example) Update() ([]*metric.Data, error) {
+    lease, ok := c.object.Acquire()
+    if !ok {
+        return nil, nil
+    }
+    defer lease.Release()
+
+    items, err := lease.DumpMapByName("example_map")
+    if err != nil {
+        return nil, fmt.Errorf("dump example_map: %w", err)
+    }
+
+    return buildMetrics(items), nil
+}
+```
+
+The API has these constraints:
+
+- `Publish` transfers ownership of the object to `Reference`. Do not call `object.Close()` directly after a successful publish.
+- The `Lease` returned by `Acquire` pins the BPF object until the current `Update` completes. Always pair it with `Release`, and do not copy a Lease.
+- `UnPublish` first prevents new acquisitions, then waits for every Lease to be released, closes the BPF object, and returns the close error.
+- Calls to `Publish` and `UnPublish` must be serialized. The current framework does not run `Start` concurrently for the same instance.
+
+An `Update` that has already started can therefore finish with its original
+BPF object. During shutdown or restart, `Start` closes that object only after
+those updates complete.
 
 ## Adding an Event
 

@@ -21,3 +21,20 @@ type Rule struct {
 	Field   string
 	Pattern string
 }
+
+// CloneRules returns an independent copy of rules and their elements.
+func CloneRules(rules []*Rule) []*Rule {
+	if rules == nil {
+		return nil
+	}
+
+	clone := make([]*Rule, len(rules))
+	for i, rule := range rules {
+		if rule == nil {
+			continue
+		}
+		clonedRule := *rule
+		clone[i] = &clonedRule
+	}
+	return clone
+}

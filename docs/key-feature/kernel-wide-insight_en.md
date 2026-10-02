@@ -136,21 +136,12 @@ Ref:
 - https://docs.kernel.org/scheduler/sched-bwc.html#statistics
 - https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#cpu-interface-files
 
-Future metrics (Didi kernel extensions – not yet public):
+The following metric is available when the kernel exports `wait_sum`:
 
 ```bash
-# HELP huatuo_bamai_cpu_stat_container_wait_rate wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_wait_rate gauge
-huatuo_bamai_cpu_stat_container_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_throttle_wait_rate throttle wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_throttle_wait_rate gauge
-huatuo_bamai_cpu_stat_container_throttle_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_inner_wait_rate inner wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_inner_wait_rate gauge
-huatuo_bamai_cpu_stat_container_inner_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_exter_wait_rate exter wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_exter_wait_rate gauge
-huatuo_bamai_cpu_stat_container_exter_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_cpu_stat_container_wait_sum_percent percentage of CFS cgroup schedulable time spent waiting on the parent runqueue (requires kernel.sched_schedstats=1)
+# TYPE huatuo_bamai_cpu_stat_container_wait_sum_percent gauge
+huatuo_bamai_cpu_stat_container_wait_sum_percent{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
 ```
 
 ### Burst Behavior
@@ -170,7 +161,7 @@ huatuo_bamai_cpu_stat_container_burst_time{container_host="coredns-855c4dd65d-mn
 
 |Metric|Description|Unit|Target|Labels|
 |---|---|---|---|---|
-|cpu_stat_container_burst_time|Cumulative wall-clock time spent above quota across all periods|count|Container|container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|cpu_stat_container_burst_time|Cumulative wall-clock time spent above quota across all periods|nanoseconds|Container|container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
 |cpu_stat_container_nr_bursts|Number of periods in which usage exceeded quota|count|Container|container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
 
 ### Load
@@ -1158,6 +1149,54 @@ huatuo_bamai_iolatency_blkdisk_freeze{disk="253:1",host="hostname",region="dev"}
 |---|---|---|---|---|
 |iolatency_blkdisk_freeze|Host disk freeze event count|count|Host|host, region, disk|
 
+### Disk IO Statistics
+
+`diskio` collects per-device disk IO metrics and system-wide CPU iowait by reading `/proc/diskstats` and `/proc/stat`. Unlike `iolatency`, `diskio` is procfs-based rather than eBPF-based, providing cumulative counters that support rate-based latency calculations.
+
+The default configuration disables this collector through `BlackList`. Remove
+`diskio` from `BlackList` to enable these metrics.
+
+Counter metrics are cumulative; use Prometheus `rate()` for per-second values (IOPS, throughput). Gauge metrics are point-in-time values. Average latency is computed in PromQL by dividing the I/O time rate by the request rate.
+
+```bash
+# HELP huatuo_bamai_diskio_read_requests_total Total number of read requests completed successfully.
+# TYPE huatuo_bamai_diskio_read_requests_total counter
+huatuo_bamai_diskio_read_requests_total{device="sda",host="hostname",region="dev"} 1000
+# HELP huatuo_bamai_diskio_write_requests_total Total number of write requests completed successfully.
+# TYPE huatuo_bamai_diskio_write_requests_total counter
+huatuo_bamai_diskio_write_requests_total{device="sda",host="hostname",region="dev"} 2000
+# HELP huatuo_bamai_diskio_read_bytes_total Total number of bytes read from the device.
+# TYPE huatuo_bamai_diskio_read_bytes_total counter
+huatuo_bamai_diskio_read_bytes_total{device="sda",host="hostname",region="dev"} 2.56e+07
+# HELP huatuo_bamai_diskio_written_bytes_total Total number of bytes written to the device.
+# TYPE huatuo_bamai_diskio_written_bytes_total counter
+huatuo_bamai_diskio_written_bytes_total{device="sda",host="hostname",region="dev"} 4.096e+07
+# HELP huatuo_bamai_diskio_io_in_progress Number of I/O requests currently in flight (queue depth).
+# TYPE huatuo_bamai_diskio_io_in_progress gauge
+huatuo_bamai_diskio_io_in_progress{device="sda",host="hostname",region="dev"} 50
+# HELP huatuo_bamai_diskio_read_time_seconds_total Total seconds spent by completed read requests.
+# TYPE huatuo_bamai_diskio_read_time_seconds_total counter
+huatuo_bamai_diskio_read_time_seconds_total{device="sda",host="hostname",region="dev"} 3
+# HELP huatuo_bamai_diskio_write_time_seconds_total Total seconds spent by completed write requests.
+# TYPE huatuo_bamai_diskio_write_time_seconds_total counter
+huatuo_bamai_diskio_write_time_seconds_total{device="sda",host="hostname",region="dev"} 6
+# HELP huatuo_bamai_diskio_disk_iowait_percent CPU time spent waiting for I/O during the collection interval.
+# TYPE huatuo_bamai_diskio_disk_iowait_percent gauge
+huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
+```
+
+|Metric|Description|Unit|Scope|Labels|
+|---|---|---|---|---|
+|read_requests_total|Cumulative read requests completed (field 4). Use `rate()` for read IOPS|count|Host|host, region, device|
+|write_requests_total|Cumulative write requests completed (field 8). Use `rate()` for write IOPS|count|Host|host, region, device|
+|read_bytes_total|Cumulative bytes read (field 6 × 512). Use `rate()` for read throughput|bytes|Host|host, region, device|
+|written_bytes_total|Cumulative bytes written (field 10 × 512). Use `rate()` for write throughput|bytes|Host|host, region, device|
+|read_time_seconds_total|Cumulative seconds spent by completed reads (field 7)|seconds|Host|host, region, device|
+|write_time_seconds_total|Cumulative seconds spent by completed writes (field 11)|seconds|Host|host, region, device|
+|io_in_progress|Current number of I/O requests in flight, i.e. queue depth (field 12)|count|Host|host, region, device|
+|disk_iowait_percent|CPU time spent waiting for I/O during the collection interval|percent|Host|host, region|
+
+
 ## General System
 
 ### Soft Lockup
@@ -1215,3 +1254,48 @@ huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
 |metax_gpu_dpm_performance_level|GPU DPM performance level.|-|gpu, die, ip|sml.GetDieDPMPerformanceLevel|
 |metax_gpu_ecc_memory_errors_total|GPU ECC memory errors count.|count|gpu, die, memory_type, error_type|sml.GetDieECCMemoryInfo|
 |metax_gpu_ecc_memory_retired_pages_total|GPU ECC memory retired pages count.|count|gpu, die|sml.GetDieECCMemoryInfo|
+
+- Moore Threads (MThreads)
+
+MThreads GPU monitoring via the MTML (Moore Threads Management Library). The library is discovered automatically at startup using SONAME search (`libmtml.so.2` then `libmtml.so`) through the system dynamic linker. Static device info is cached and only rebuilt on re-init; dynamic metrics are collected on every scrape.
+
+Configuration: remove `mthreads_gpu` from `BlackList` to enable. Metric groups are controlled by `[MetricCollector.Mthreads]` toggles (`EnableHealth`, `EnablePCIe`, `EnableMTLink`).
+
+|Metric|Description|Unit|Labels|Source|
+|----|---|---|---|---|
+|huatuo_bamai_mthreads_gpu_library_info|MTML library info.|-|version|mtml.LibraryVersion|
+|huatuo_bamai_mthreads_gpu_device_info|GPU info.|-|gpu, name, brand, serial|mtml.Device.Name/Brand/SerialNumber|
+|huatuo_bamai_mthreads_gpu_device_pci_info|GPU PCI info.|-|gpu, sbdf|mtml.Device.PciSbdf|
+|huatuo_bamai_mthreads_gpu_device_spec|GPU spec.|-|gpu, cores|mtml.Device.GpuCores|
+|huatuo_bamai_mthreads_gpu_device_bios_version|GPU BIOS version.|-|gpu, bios|mtml.Device.BiosVersion|
+|huatuo_bamai_mthreads_gpu_device_musa_capability|GPU MUSA compute capability.|-|gpu, musa_capability|mtml.Device.MusaComputeCapability|
+|huatuo_bamai_mthreads_gpu_memory_info|GPU memory info.|-|gpu, type, vendor, bus_width|mtml.Device.InitMemory|
+|huatuo_bamai_mthreads_gpu_pcie_link_max_speed_gt_per_sec|GPU PCIe max link speed in GT/s (hardware capability).|GT/s|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_pcie_link_max_width_lanes|GPU PCIe max link width in lanes (hardware capability).|lanes|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_device_power_watts|GPU device power in watts.|W|gpu|mtml.Device.PowerUsage|
+|huatuo_bamai_mthreads_gpu_gpu_temperature_celsius|GPU temperature.|°C|gpu|mtml.Gpu.Temperature|
+|huatuo_bamai_mthreads_gpu_memory_temperature_celsius|GPU memory temperature.|°C|gpu|mtml.Memory.Temperature|
+|huatuo_bamai_mthreads_gpu_gpu_utilization_percent|GPU utilization (0-100).|%|gpu|mtml.Gpu.Utilization|
+|huatuo_bamai_mthreads_gpu_memory_utilization_percent|GPU memory utilization (0-100).|%|gpu|mtml.Memory.Utilization|
+|huatuo_bamai_mthreads_gpu_memory_total_bytes|Total GPU memory in bytes.|bytes|gpu|mtml.Memory.Total|
+|huatuo_bamai_mthreads_gpu_memory_used_bytes|Used GPU memory in bytes.|bytes|gpu|mtml.Memory.Used|
+|huatuo_bamai_mthreads_gpu_gpu_clock_mhz|GPU clock in MHz.|MHz|gpu|mtml.Gpu.Clock|
+|huatuo_bamai_mthreads_gpu_gpu_max_clock_mhz|GPU max clock in MHz.|MHz|gpu|mtml.Gpu.MaxClock|
+|huatuo_bamai_mthreads_gpu_memory_clock_mhz|GPU memory clock in MHz.|MHz|gpu|mtml.Memory.Clock|
+|huatuo_bamai_mthreads_gpu_memory_max_clock_mhz|GPU memory max clock in MHz.|MHz|gpu|mtml.Memory.MaxClock|
+|huatuo_bamai_mthreads_gpu_gpu_voltage_volts|GPU voltage in volts.|V|gpu|mtml.Gpu.Voltage|
+|huatuo_bamai_mthreads_gpu_gpu_power_limit_watts|GPU enforced power limit in watts.|W|gpu|mtml.Gpu.EnforcedPowerLimit|
+|huatuo_bamai_mthreads_gpu_gpu_power_default_limit_watts|GPU default power management limit in watts.|W|gpu|mtml.Gpu.PowerManagementDefaultLimit|
+|huatuo_bamai_mthreads_gpu_fan_rpm|GPU fan speed in RPM.|RPM|gpu, fan|mtml.Device.FanRpm|
+|huatuo_bamai_mthreads_gpu_fan_speed_percent|GPU fan speed percent.|%|gpu, fan|mtml.Device.FanSpeed|
+|huatuo_bamai_mthreads_gpu_gpu_pstate|GPU performance state (0=P0).|-|gpu|mtml.Device.PerformanceState|
+|huatuo_bamai_mthreads_gpu_vpu_utilization_percent|GPU VPU utilization (0-100).|%|gpu|mtml.Vpu.Utilization|
+|huatuo_bamai_mthreads_gpu_vpu_encoder_utilization_percent|GPU VPU encoder utilization (0-100).|%|gpu|mtml.Vpu.Utilization|
+|huatuo_bamai_mthreads_gpu_vpu_decoder_utilization_percent|GPU VPU decoder utilization (0-100).|%|gpu|mtml.Vpu.Utilization|
+|huatuo_bamai_mthreads_gpu_vpu_clock_mhz|GPU VPU clock in MHz.|MHz|gpu|mtml.Vpu.Clock|
+|huatuo_bamai_mthreads_gpu_pcie_link_speed_gt_per_sec|GPU PCIe current link speed in GT/s.|GT/s|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_pcie_link_width_lanes|GPU PCIe current link width in lanes.|lanes|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_pcie_replay_total|GPU PCIe replay counter.|count|gpu|mtml.Device.PcieReplayCounter|
+|huatuo_bamai_mthreads_gpu_mtlink_state|GPU MtLink state (0=DOWN,1=UP,2=DOWNGRADE).|-|gpu, link|mtml.Device.MtLinkState|
+|huatuo_bamai_mthreads_gpu_mtlink_link_bandwidth_gb_s|GPU MtLink per-link max bandwidth (device static spec, not live throughput).|GB/s|gpu|mtml.Device.MtLinkSpec|
+|huatuo_bamai_mthreads_gpu_mtlink_link_count|GPU MtLink max number of supported links (device static spec).|links|gpu|mtml.Device.MtLinkSpec|

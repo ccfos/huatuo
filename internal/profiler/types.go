@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,16 +22,13 @@ import (
 
 const (
 	// ProfileTypeCpuSample is the profile type for CPU sample.
-	ProfileTypeCpuSample       = "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
-	ProfileTypeMemSample       = "memory:alloc_space:bytes:space:bytes"
-	ProfileTypeLockCountSample = "process_lock:lock:count:lock:count"
-	ProfileTypeLockTimeSample  = "process_lock:lock:nanoseconds:lock:nanoseconds"
+	ProfileTypeCpuSample        = "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+	ProfileTypeOffCpuSample     = "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds"
+	ProfileTypeMemSample        = "memory:alloc_space:bytes:space:bytes"
+	ProfileTypeLockCountSample  = "process_lock:lock:count:lock:count"
+	ProfileTypeLockTimeSample   = "process_lock:lock:nanoseconds:lock:nanoseconds"
+	ProfileTypeIRQTracingSample = "irqtracing:irq:count:irq:count"
 )
-
-// MetadataCollection is the storage collection name for profiling metadata documents.
-// Profiling metadata reuses tracing.DocumentStoreMapper; profile_type is queried in-place
-// via the nested path tracer_data.flamedata.profile_type.
-const MetadataCollection = "profiling_metadata"
 
 // ProfileData is the data saved by the profiler.
 type ProfileData struct {
@@ -63,12 +60,6 @@ type ParseInput struct {
 type ParseOption struct {
 	// SampleRate is only used for CPU sample.
 	SampleRate int64
-}
-
-// TreeItem is the item in the tree.
-type TreeItem struct {
-	Stack [][]byte `json:"stack,omitempty"`
-	Value uint64   `json:"value,omitempty"`
 }
 
 // NoSampleRate indicates that sampling rate is disabled, used for event-driven sampling types.

@@ -63,6 +63,26 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestParseOrZero(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want uint64
+	}{
+		{name: "valid address", raw: "0xffff888012345678", want: 0xffff888012345678},
+		{name: "empty address", raw: "", want: 0},
+		{name: "invalid address", raw: "not-hex", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ParseOrZero(tt.raw); got != tt.want {
+				t.Fatalf("ParseOrZero(%q) = %#x, want %#x", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFormatParseRoundTrip(t *testing.T) {
 	addr := uint64(0xffff888012345678)
 

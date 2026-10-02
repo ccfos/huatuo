@@ -3,7 +3,7 @@ title: 内核事件订阅
 type: docs
 description: ""
 author: HUATUO Team
-date: 2026-05-18
+date: 2026-07-27
 weight: 3
 ---
 
@@ -27,7 +27,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 内核事件是自愈决策的第一手信号源。订阅 `events/watch` 后，自愈控制器可在事件发生的瞬间触发处置动作，而不必等待监控系统的告警流转：
 
-- **OOM 自愈**：收到 `oom` 事件后，立即对触发容器执行扩容、重启或流量摘除，将服务中断时间从分钟级压缩到秒级。
+- **OOM 自愈**：收到 `memory_oom_kill` 事件后，立即对触发容器执行扩容、重启或流量摘除，将服务中断时间从分钟级压缩到秒级。
 - **Hung Task 自愈**：收到 `hungtask` 事件后，自动隔离节点并驱逐 Pod，防止级联阻塞蔓延至整个集群。
 - **网络故障自愈**：收到 `netdev_txqueue_timeout` 或 `netdev_bonding_lacp` 事件后，触发网卡重置或流量切换，实现分钟级网络链路自愈。
 - **I/O 风暴自愈**：收到 `iotracing` 事件后，结合 cgroup blkio 限速策略动态降低问题容器的磁盘 I/O 配额，保护同节点其他服务。
@@ -36,14 +36,14 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 将华佗内核事件接入可观测性平台，补齐应用指标和日志之外的内核视角：
 
-- **事件时间线关联**：将 `softlockup`、`oom` 等内核事件叠加到 Grafana 时间线上，与应用错误率、延迟曲线精确对齐，快速定位根因。
+- **事件时间线关联**：将 `softlockup`、`memory_oom_kill` 等内核事件叠加到 Grafana 时间线上，与应用错误率、延迟曲线精确对齐，快速定位根因。
 - **异常驱动告警**：以内核事件替代固定阈值告警，降低误报率。例如收到 `ras` 硬件错误事件时直接触发高优告警，而不依赖 CPU 错误率超阈值。
 - **容量与稳定性分析**：长期订阅 `memburst`、`dload` 等 AutoTracing 事件，建立节点稳定性基线，为容量规划提供内核级依据。
 - **多维下钻**：事件中携带容器 ID、命名空间、地域等上下文，告警链接可直接下钻到对应的 Pod、Node、Region 视图。
 
 ### 安全审计与合规
 
-- **异常行为检测**：`oom`、`hungtask`、`softlockup` 等事件若在非业务高峰期集中出现，可能指示资源滥用或恶意负载，触发安全审查流程。
+- **异常行为检测**：`memory_oom_kill`、`hungtask`、`softlockup` 等事件若在非业务高峰期集中出现，可能指示资源滥用或恶意负载，触发安全审查流程。
 - **事件留存与追溯**：将 CloudEvents 事件流写入消息队列（Kafka、Pulsar）或对象存储，满足等保合规对系统异常事件留存的要求。
 
 ### 混沌工程与压测验证
@@ -97,7 +97,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 {
   "specversion": "1.0",
   "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "source": "/huatuo/node-1/oom",
+  "source": "/huatuo/node-1/memory_oom_kill",
   "type": "tech.huatuo.kernel.event",
   "datacontenttype": "application/json",
   "time": "2026-05-18T10:23:45.123456789Z",
@@ -105,14 +105,14 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
     "hostname": "node-1",
     "region": "cn-beijing",
     "observed_timestamp": "2026-05-18T10:23:45Z",
-    "tracer_name": "oom",
+    "tracer_name": "memory_oom_kill",
     "tracer_id": "abc123",
     "tracer_run_type": "auto",
     "container_id": "d3f1a2b4c5e6",
     "container_hostname": "app-pod",
     "container_host_namespace": "prod",
     "container_type": "docker",
-    "container_qos": "Guaranteed"
+    "container_qos": "guaranteed"
   }
 }
 ```
@@ -123,7 +123,8 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 |----------------------------|------|---------------------------------------------|
 | `hostname`                 | string | 节点主机名                                  |
 | `region`                   | string | 节点所在地域                                |
-| `observed_timestamp`       | string | 内核事件发生时间（Tracer 采集时间）          |
+| `observed_timestamp`       | string | 事件生产者在用户态观测事件的 UTC 时间          |
+| `kernel_observed_timestamp` | string | 可选；内核观测事件的 UTC 时间 |
 | `tracer_name`              | string | 触发事件的采集器名称（见下文内核事件列表）   |
 | `tracer_id`                | string | 事件实例唯一 ID                             |
 | `tracer_run_type`          | string | 采集模式，`auto`（自动触发）或 `manual`     |
@@ -139,7 +140,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 | `tracer_name`              | 说明                                           |
 |--------------------------|-----------------------------------------------|
-| `oom`                    | 内存不足（OOM Killer）触发事件                  |
+| `memory_oom_kill`                    | 内存不足（OOM Killer）触发事件                  |
 | `hungtask`               | 内核任务长时间 D 状态（Hung Task）检测          |
 | `softlockup`             | CPU 软锁死（Soft Lockup）检测                  |
 | `ras`                    | 硬件可靠性（RAS）错误，如 ECC 内存错误         |
@@ -148,7 +149,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 | `netdev_txqueue_timeout` | 网络设备发送队列超时事件                        |
 | `netdev_bonding_lacp`    | Bond 设备 LACP 协议异常事件                    |
 | `net_rx_latency`         | 网络接收延迟异常事件                            |
-| `softirq_tracing`        | 软中断耗时异常追踪事件                          |
+| `sched_tick`             | 调度 tick 间隔异常追踪事件                     |
 | `memory_reclaim_events`  | 内存回收异常事件                               |
 | `cpuidle`                | CPU 空闲率异常（AutoTracing 自动触发）         |
 | `cpusys`                 | CPU 系统态占用率异常（AutoTracing 自动触发）   |
@@ -169,6 +170,7 @@ POST /v1/events/watch
 #### 3.2 请求头
 
 ```http
+Authorization: Bearer <node-token>
 Content-Type: application/json
 ```
 
@@ -181,6 +183,7 @@ Content-Type: application/json
     "hostname": "<regex>",
     "container_hostname": "<regex>",
     "container_host_namespace": "<regex>",
+    "container_qos": "<regex>",
     "region": "<regex>"
   }
 }
@@ -194,6 +197,7 @@ Content-Type: application/json
 | `hostname`                 | string | 否     | 按节点主机名过滤，支持正则表达式               |
 | `container_hostname`       | string | 否     | 按容器主机名过滤，支持正则表达式               |
 | `container_host_namespace` | string | 否     | 按容器命名空间过滤，支持正则表达式             |
+| `container_qos`            | string | 否     | 按容器 QoS 过滤，支持正则表达式                |
 | `region`                   | string | 否     | 按地域过滤，支持正则表达式                     |
 
 - 所有过滤字段均为可选；省略或留空表示匹配所有值。
@@ -205,7 +209,7 @@ Content-Type: application/json
 连接建立后，服务端以 SSE 格式持续推送事件：
 
 ```text
-data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/oom",...}\n\n
+data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom_kill",...}\n\n
 ```
 
 服务端还会定期发送心跳注释行以保持连接：
@@ -216,26 +220,26 @@ data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/oom",...}\n\n
 
 ---
 
-### 4. EventsWatch 配置说明
+### 4. HTTP 服务事件流配置
 
-在华佗配置文件（`huatuo-bamai.conf`）中通过 `[EventsWatch]` 段配置：
+在华佗配置文件的 `[HTTPServer]` 段配置事件流参数：
 
 ```toml
-[EventsWatch]
+[HTTPServer]
     # 最大并发客户端连接数，超出后新连接返回 HTTP 429
     # Default: 100
-    MaxClients = 100
+    MaxEventStreamClients = 100
 
     # SSE 心跳间隔（秒），防止代理/负载均衡因空闲而断开连接
     # 连续 3 次心跳写入失败则主动关闭该客户端连接
     # Default: 30
-    KeepAliveInterval = 30
+    EventStreamKeepAliveIntervalSeconds = 30
 ```
 
-| 配置项                | 默认值 | 说明                                                             |
-|---------------------|------|------------------------------------------------------------------|
-| `MaxClients`        | 100  | 同时允许的 `/v1/events/watch` 长连接上限，超出返回 HTTP 429      |
-| `KeepAliveInterval` | 30   | 心跳间隔（秒），建议不超过上游代理的 idle timeout，推荐 15–60 秒 |
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `MaxEventStreamClients` | 100 | `/v1/events/watch` 长连接上限，超出返回 HTTP 429 |
+| `EventStreamKeepAliveIntervalSeconds` | 30 | 心跳间隔，应小于上游代理的 idle timeout |
 
 ---
 
@@ -245,6 +249,7 @@ data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/oom",...}\n\n
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -256,17 +261,19 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
   -H "Connection: keep-alive" \
-  -d '{"filters": {"tracer_name": "^oom$"}}'
+  -d '{"filters": {"tracer_name": "^memory_oom_kill$"}}'
 ```
 
 #### 5.3 订阅指定节点的网络类事件
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -283,6 +290,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ```bash
 curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -H "Cache-Control: no-cache" \
@@ -298,16 +306,16 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 
 ---
 
-### 6. Go 编程调用示例
+### 6. 生成的 Go 客户端示例
 
-以下示例展示如何在 Go 程序中订阅 `events/watch` 接口，实时消费 CloudEvents 事件。
+`POST /v1/events/watch` 已纳入 Node OpenAPI 契约。以下示例直接使用生成的
+请求类型、事件类型和客户端。
 
 ```go
 package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -316,47 +324,31 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
-// WatchRequest 是发送给 /v1/events/watch 的请求体。
-type WatchRequest struct {
-	Filters WatchFilters `json:"filters"`
-}
-
-type WatchFilters struct {
-	TracerName             string `json:"tracer_name,omitempty"`
-	Hostname               string `json:"hostname,omitempty"`
-	ContainerHostname      string `json:"container_hostname,omitempty"`
-	ContainerHostNamespace string `json:"container_host_namespace,omitempty"`
-	Region                 string `json:"region,omitempty"`
-}
-
-// WatchEvent 是华佗推送的 CloudEvents 1.0 信封。
-type WatchEvent struct {
-	SpecVersion     string          `json:"specversion"`
-	ID              string          `json:"id"`
-	Source          string          `json:"source"`
-	Type            string          `json:"type"`
-	DataContentType string          `json:"datacontenttype"`
-	Time            string          `json:"time"`
-	Data            json.RawMessage `json:"data"`
-}
-
-func watchEvents(ctx context.Context, endpoint string, filters WatchFilters) error {
-	reqBody, err := json.Marshal(WatchRequest{Filters: filters})
+func watchEvents(
+	ctx context.Context,
+	baseURL string,
+	token string,
+	filters nodeapi.WatchEventFilters,
+) error {
+	client, err := nodeapi.NewClient(
+		baseURL,
+		nodeapi.WithHTTPClient(&http.Client{}),
+		nodeapi.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
+			request.Header.Set("Authorization", "Bearer "+token)
+			request.Header.Set("Accept", "text/event-stream")
+			return nil
+		}),
+	)
 	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
+		return fmt.Errorf("create Node API client: %w", err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-
-	client := &http.Client{Timeout: 0} // SSE 长连接，不设超时
-	resp, err := client.Do(req)
+	resp, err := client.WatchEvents(ctx, nodeapi.WatchEventsJSONRequestBody{
+		Filters: &filters,
+	})
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -381,14 +373,19 @@ func watchEvents(ctx context.Context, endpoint string, filters WatchFilters) err
 			continue
 		}
 
-		var event WatchEvent
+		var event nodeapi.WatchEvent
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			slog.Warn("parse event", "err", err)
 			continue
 		}
 
-		fmt.Printf("[%s] source=%s id=%s\n", event.Time, event.Source, event.ID)
-		fmt.Printf("  data: %s\n", event.Data)
+		fmt.Printf(
+			"[%s] source=%s id=%s\n",
+			event.Time.Format(time.RFC3339Nano),
+			event.Source,
+			event.ID.String(),
+		)
+		fmt.Printf("  data: %+v\n", event.Data)
 	}
 
 	return scanner.Err()
@@ -398,8 +395,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	err := watchEvents(ctx, "http://192.168.1.10:19704/v1/events/watch", WatchFilters{
-		TracerName: "oom|hungtask|softlockup",
+	tracerName := "memory_oom_kill|hungtask|softlockup"
+	err := watchEvents(ctx, "http://192.168.1.10:19704", "node-token", nodeapi.WatchEventFilters{
+		TracerName: &tracerName,
 	})
 	if err != nil {
 		slog.Error("watch events", "err", err)
@@ -408,40 +406,26 @@ func main() {
 }
 ```
 
-#### 6.1 使用 pkg/types 官方包（推荐）
+#### 6.1 流式客户端选择
 
-如果你的项目与华佗在同一 Go module，可直接引用官方类型：
-
-```go
-import pkgtypes "huatuo-bamai/pkg/types"
-
-var event pkgtypes.WatchEvent
-if err := json.Unmarshal([]byte(data), &event); err != nil { ... }
-
-// WatchEvent.Data 是 json.RawMessage（延迟解析），需二次反序列化才能访问具体字段
-dataBytes, err := json.Marshal(event.Data)
-if err != nil {
-    slog.Warn("marshal event data", "err", err)
-    return
-}
-var payload pkgtypes.WatchEventData
-if err := json.Unmarshal(dataBytes, &payload); err != nil {
-    slog.Warn("unmarshal event data", "err", err)
-    return
-}
-fmt.Println("tracer:", payload.TracerName)
-fmt.Println("observed_timestamp:", payload.ObservedTimestamp)
-```
+应使用生成的 `Client.WatchEvents` 方法直接获取 `http.Response`。不要对该接口使用
+`ClientWithResponses.WatchEventsWithResponse`：后者会读取响应体直到 EOF，而 SSE
+连接通常会持续到调用方取消 context。
 
 #### 6.2 重连机制建议
 
 生产环境中，网络抖动或服务重启会导致连接断开，建议加入指数退避重连逻辑：
 
 ```go
-func watchWithRetry(ctx context.Context, endpoint string, filters WatchFilters) {
+func watchWithRetry(
+	ctx context.Context,
+	baseURL string,
+	token string,
+	filters nodeapi.WatchEventFilters,
+) {
 	backoff := time.Second
 	for {
-		if err := watchEvents(ctx, endpoint, filters); err != nil {
+		if err := watchEvents(ctx, baseURL, token, filters); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
@@ -520,7 +504,7 @@ sequenceDiagram
     EW-->>C: 200 OK (Content-Type: text/event-stream)
 
     loop SSE 长连接持续推送
-        K->>T: 内核事件触发（oom / hungtask / softlockup ...）
+        K->>T: 内核事件触发（memory_oom_kill / hungtask / softlockup ...）
         T->>EW: 上报原始事件
         EW->>EW: 过滤器匹配
         alt 匹配成功
@@ -528,7 +512,7 @@ sequenceDiagram
         else 不匹配
             note over EW: 丢弃，不推送
         end
-        EW-->>C: : ping（心跳保活，间隔 KeepAliveInterval 秒）
+        EW-->>C: : ping（按配置间隔发送心跳）
     end
 ```
 

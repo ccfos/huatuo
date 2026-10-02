@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,12 +23,14 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v2"
+	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/command/container"
-	flamegraphtui "huatuo-bamai/internal/flamegraph/tui"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/client"
+	"github.com/ccfos/huatuo/internal/bpf"
+	flamegraphtui "github.com/ccfos/huatuo/internal/flamegraph/tui"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/utils/kernaddr"
+	"github.com/ccfos/huatuo/internal/version"
 )
 
 const perfToolName = "perf"
@@ -50,26 +52,39 @@ func mainAction(ctx *cli.Context) error {
 
 	var targetCssAddr uint64
 	if containerID := ctx.String("container-id"); containerID != "" {
-		c, err := container.GetContainerByID(ctx.String("huatuo-api-address"), containerID)
+		serverAddress := ctx.String("huatuo-api-address")
+		nodeClient, err := client.NewNode(&client.NodeConfig{})
 		if err != nil {
-			return err
+			return fmt.Errorf("initialize node client: %w", err)
 		}
-		targetCssAddr = c.CgroupCss["cpu"]
+		container, err := nodeClient.FetchContainer(
+			ctx.Context,
+			client.NodeAddress{HostPort: serverAddress},
+			containerID,
+		)
+		if err != nil {
+			return fmt.Errorf("fetch container %q metadata: %w", containerID, err)
+		}
+		var ok bool
+		targetCssAddr, ok = kernaddr.Parse(container.CgroupCSS["cpu"])
+		if !ok {
+			return fmt.Errorf("container %q has no CPU CSS address", containerID)
+		}
 	}
 
-	if err := bpf.NewManager(&bpf.Option{
+	if err := bpf.Init(&bpf.Option{
 		KeepaliveTimeout: optDuration,
 	}); err != nil {
 		return fmt.Errorf("init bpf err %w", err)
 	}
-	defer bpf.Close()
+	defer bpf.Shutdown()
 
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
 		return fmt.Errorf("read bpf object: %w", err)
 	}
 
-	b, err := bpf.LoadBpfFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
+	b, err := bpf.LoadBPFFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
@@ -79,6 +94,8 @@ func mainAction(ctx *cli.Context) error {
 		ProgramName: "perf_event_sw_cpu_clock",
 	}
 	opt.PerfEvent.SampleFreq = 99
+	opt.PerfEvent.Type = unix.PERF_TYPE_SOFTWARE
+	opt.PerfEvent.Config = unix.PERF_COUNT_SW_CPU_CLOCK
 	if err := b.AttachWithOptions([]bpf.AttachOption{opt}); err != nil {
 		return fmt.Errorf("attach err %w", err)
 	}
@@ -159,7 +176,7 @@ func main() {
 	})
 
 	if err := app.Run(os.Args); err != nil {
-		fmt.Printf("perf: %v\n", err)
+		fmt.Fprintf(os.Stderr, "perf: %v\n", err)
 		os.Exit(1)
 	}
 }

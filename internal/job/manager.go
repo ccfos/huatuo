@@ -16,387 +16,395 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 
 	"github.com/google/uuid"
 )
 
-// ErrJobCompleted is returned when a job is already completed.
-var ErrJobCompleted = fmt.Errorf("job already completed")
+const (
+	jobCleanupInterval  = time.Hour
+	jobCleanupBatchSize = 1000
+)
 
-// ErrCannotDeleteRunning is returned when trying to delete a running job.
-var ErrCannotDeleteRunning = fmt.Errorf("cannot delete running job")
-
-// ManagerConfig holds configuration for the job manager.
-type ManagerConfig struct {
+// Policy limits active Jobs for one service Kind.
+type Policy struct {
 	MaxJobsPerHost int
 	MaxTotalJobs   int
-	// StoreDSN is the SQLite data source name for the job store.
-	// Defaults to "jobs.db" when empty.
-	StoreDSN string
 }
 
-// Manager tracks running jobs in memory and persists terminal states to storage.
+// ManagerConfig contains resolved Apiserver persistence, quota, and lifecycle policy.
+type ManagerConfig struct {
+	StoreDSN        string
+	ProfilingPolicy Policy
+	TracingPolicy   Policy
+
+	StatusPollInterval         time.Duration
+	PendingTimeout             time.Duration
+	CompletionGracePeriod      time.Duration
+	NodeUnavailableGracePeriod time.Duration
+	JobRetentionPeriod         time.Duration
+}
+
+type activeHostKey [2]string
+
+func newActiveHostKey(hostname string, kind Kind) activeHostKey {
+	return activeHostKey{hostname, string(kind)}
+}
+
+// Manager owns all active Job state transitions for one Apiserver process.
 type Manager struct {
-	jobs       sync.Map // map[string]*Job
-	jobsByHost sync.Map // map[string]int
-	storage    Store
-	nodeAgent  NodeAgent
-	stopChan   chan struct{}
-	config     ManagerConfig
+	mu sync.RWMutex
+
+	active      map[string]*runtime
+	activeTotal map[Kind]int
+	activeHosts map[activeHostKey]int
+	accepting   bool
+
+	store       Store
+	config      *ManagerConfig
+	runtimeDeps runtimeDependencies
+
+	cleanupCancel context.CancelFunc
+	closeOnce     sync.Once
+	closeDone     chan struct{}
+	closeErr      error
+	wg            sync.WaitGroup
+
+	quotaRejections     atomic.Uint64
+	persistenceFailures atomic.Uint64
+	recoveredJobs       atomic.Uint64
 }
 
-func NewManager(ctx context.Context, nodeAgent NodeAgent, config ManagerConfig) (*Manager, error) {
-	storage, err := newStore(ctx, config.StoreDSN)
+// ActiveJobStat contains one active Job metric bucket.
+type ActiveJobStat struct {
+	Kind   Kind
+	Status Status
+	Count  int
+}
+
+// ManagerStats is a point-in-time Job Manager metrics snapshot.
+type ManagerStats struct {
+	Active              []ActiveJobStat
+	QuotaRejections     uint64
+	PersistenceFailures uint64
+	RecoveredJobs       uint64
+}
+
+// NewManager initializes storage and recovers active Jobs.
+func NewManager(
+	ctx context.Context,
+	nodeClient NodeClient,
+	config *ManagerConfig,
+) (*Manager, error) {
+	if nodeClient == nil {
+		return nil, errors.New("create job manager: Node client is required")
+	}
+	if err := validateManagerConfig(config); err != nil {
+		return nil, err
+	}
+	managerConfig := *config
+	store, err := newStore(ctx, managerConfig.StoreDSN)
 	if err != nil {
 		return nil, err
 	}
-
-	return newManagerWithStore(storage, nodeAgent, config), nil
+	manager := newManagerWithStore(store, nodeClient, &managerConfig)
+	if err := manager.recover(ctx); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("recover jobs: %w", err)
+	}
+	manager.startCleanup()
+	return manager, nil
 }
 
-func newManagerWithStore(storage Store, nodeAgent NodeAgent, config ManagerConfig) *Manager {
-	return &Manager{
-		storage:   storage,
-		nodeAgent: nodeAgent,
-		stopChan:  make(chan struct{}),
-		config:    config,
+func newManagerWithStore(
+	store Store,
+	nodeClient NodeClient,
+	config *ManagerConfig,
+) *Manager {
+	manager := &Manager{
+		active:      make(map[string]*runtime),
+		activeTotal: make(map[Kind]int),
+		activeHosts: make(map[activeHostKey]int),
+		accepting:   true,
+		store:       store,
+		config:      config,
+		closeDone:   make(chan struct{}),
+	}
+	manager.runtimeDeps = runtimeDependencies{
+		store:      store,
+		nodeClient: nodeClient,
+		policy: runtimePolicy{
+			statusPollInterval:         config.StatusPollInterval,
+			pendingTimeout:             config.PendingTimeout,
+			completionGracePeriod:      config.CompletionGracePeriod,
+			nodeUnavailableGracePeriod: config.NodeUnavailableGracePeriod,
+		},
+		now: func() time.Time {
+			return time.Now().UTC()
+		},
+		persistenceFailures: &manager.persistenceFailures,
+	}
+	return manager
+}
+
+// Create persists one independent Job and starts its supervisor.
+func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, error) {
+	if err := request.validate(); err != nil {
+		return nil, fmt.Errorf("%w: create job: %w", ErrInvalidQuery, err)
+	}
+	now := m.runtimeDeps.now()
+	newJob := &Job{
+		ID:          uuid.NewString(),
+		Kind:        request.Spec.kind(),
+		UserID:      request.UserID,
+		Hostname:    request.Hostname,
+		Duration:    request.Duration,
+		Scope:       request.Scope,
+		ContainerID: request.ContainerID,
+		Spec:        request.Spec,
+		Status:      StatusPending,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		revision:    1,
+	}
+	supervisorCtx, cancel := context.WithCancel(context.Background())
+	runtime := newRuntime(newJob, false, cancel, &m.runtimeDeps)
+
+	m.mu.Lock()
+	if !m.accepting {
+		m.mu.Unlock()
+		return nil, ErrShuttingDown
+	}
+	policy, ok := m.config.policy(newJob.Kind)
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("create job manager: unsupported Job kind %q", newJob.Kind)
+	}
+	if m.activeTotal[newJob.Kind] >= policy.MaxTotalJobs ||
+		m.activeHosts[newActiveHostKey(newJob.Hostname, newJob.Kind)] >=
+			policy.MaxJobsPerHost {
+		m.quotaRejections.Add(1)
+		m.mu.Unlock()
+		return nil, fmt.Errorf("%w: %s Job capacity is exhausted", ErrQuotaExceeded, newJob.Kind)
+	}
+	m.registerLocked(runtime)
+	// Register before persistence so Shutdown cannot close the Store under Create.
+	m.wg.Add(1)
+	m.mu.Unlock()
+
+	if err := m.store.Create(ctx, newJob); err != nil {
+		cancel()
+		m.persistenceFailures.Add(1)
+		m.mu.Lock()
+		m.unregisterLocked(runtime)
+		m.mu.Unlock()
+		m.wg.Done()
+		return nil, fmt.Errorf("%w: create job %q: %w", ErrPersistence, newJob.ID, err)
+	}
+	go m.runJobRuntime(supervisorCtx, runtime)
+	return cloneJob(newJob), nil
+}
+
+func (c *ManagerConfig) policy(kind Kind) (Policy, bool) {
+	switch kind {
+	case KindProfiling:
+		return c.ProfilingPolicy, true
+	case KindTracing:
+		return c.TracingPolicy, true
+	default:
+		return Policy{}, false
 	}
 }
 
-// Shutdown stops the manager and all background jobs
-func (m *Manager) Shutdown() {
-	close(m.stopChan)
+// Get returns one durable Job snapshot.
+func (m *Manager) Get(ctx context.Context, jobID string) (*Job, error) {
+	// Store is authoritative for all Jobs; active only tracks local supervisors.
+	return m.store.Get(ctx, jobID)
 }
 
-func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
-	if req.Args.TraceTimeout == 0 && req.Args.Duration == 0 {
-		return nil, fmt.Errorf("trace timeout or duration is required")
+// ListPage returns one durable page and whether another page is available.
+func (m *Manager) ListPage(ctx context.Context, query *Query) (*Page, error) {
+	if err := validateListPageQuery(query); err != nil {
+		return nil, err
 	}
+	pageQuery := *query
+	pageQuery.Limit++
+	items, err := m.store.List(ctx, &pageQuery)
+	if err != nil {
+		return nil, err
+	}
+	hasMore := len(items) > query.Limit
+	if hasMore {
+		items = items[:query.Limit]
+	}
+	return &Page{Items: items, HasMore: hasMore}, nil
+}
 
-	jobCountVal, exists := m.jobsByHost.Load(req.Host)
-	if exists {
-		jobCount := jobCountVal.(int)
-		if jobCount >= m.config.MaxJobsPerHost {
-			return nil, fmt.Errorf("maximum number of jobs reached for host %s", req.Host)
+// Stop persists a user stop intent before allowing any Node Stop request.
+func (m *Manager) Stop(ctx context.Context, jobID string) (*Job, error) {
+	runtime := m.activeRuntime(jobID)
+	if runtime == nil {
+		storedJob, err := m.store.Get(ctx, jobID)
+		if err != nil {
+			return nil, err
 		}
+		if isTerminal(storedJob.Status) {
+			return nil, ErrJobTerminal
+		}
+		return nil, fmt.Errorf("%w: active Job %q has no runtime", ErrJobNotSupervised, jobID)
 	}
 
-	jobCount := 0
-	m.jobs.Range(func(_, value any) bool {
-		jobCount++
-		return true
-	})
-	if jobCount >= m.config.MaxTotalJobs {
-		return nil, fmt.Errorf("maximum number of total jobs reached")
-	}
-
-	jobID := fmt.Sprintf("id-%s", uuid.NewString()[:8])
-	now := time.Now()
-	job := &Job{
-		Type:       req.JobType,
-		JobID:      jobID,
-		UserName:   req.UserID, // Set UserName to be the same as UserID for now
-		UserID:     req.UserID,
-		Container:  req.Container,
-		Host:       req.Host,
-		Status:     JobStatusPending,
-		StartTime:  now,
-		Duration:   req.Args.Duration,
-		Timeout:    req.Args.TraceTimeout,
-		Args:       *req.Args,
-		LastUpdate: now,
-		stopChan:   make(chan struct{}),
-	}
-
-	agentTaskID, err := m.nodeAgent.StartTask(job.Host, job.Container, req.Args)
-	if err != nil {
-		return nil, fmt.Errorf("start task %s: %w", job.JobID, err)
-	}
-	job.AgentTaskID = agentTaskID
-
-	log.Infof("start task %s on host %s, task info: %+v", job.JobID, job.Host, job)
-
-	go m.monitorJob(job)
-
-	m.updateJobStatus(job, JobStatusRunning, "")
-
-	m.jobs.Store(jobID, job)
-
-	currentCount := 0
-	if countVal, exists := m.jobsByHost.Load(req.Host); exists {
-		currentCount = countVal.(int)
-	}
-	m.jobsByHost.Store(req.Host, currentCount+1)
-
-	return job, nil
+	return runtime.stop(ctx)
 }
 
-// Stop stops a job
-func (m *Manager) Stop(jobID string, force bool) error {
-	jobVal, exists := m.jobs.Load(jobID)
-	if !exists {
-		// always return nil, because the job may be completed
-		return nil
+// Ready verifies that the durable Job Store can answer queries.
+func (m *Manager) Ready(ctx context.Context) error {
+	if err := m.store.Ping(ctx); err != nil {
+		return fmt.Errorf("Job Store readiness: %w", err)
 	}
-	job := jobVal.(*Job)
-
-	err := m.nodeAgent.StopTask(job.Host, job.AgentTaskID, false)
-	if err != nil {
-		return fmt.Errorf("stop task %s: %w", jobID, err)
-	}
-
-	close(job.stopChan)
-	m.updateJobStatus(job, JobStatusStopped, "Job stopped by user")
-	log.Infof("Job %s stopped by user", jobID)
 	return nil
 }
 
-func (m *Manager) Get(jobID string) (*Job, error) {
-	jobVal, exists := m.jobs.Load(jobID)
-	if exists {
-		return jobVal.(*Job), nil
+// Stats returns active Job and error counters without storage or network calls.
+func (m *Manager) Stats() ManagerStats {
+	m.mu.RLock()
+	runtimes := make([]*runtime, 0, len(m.active))
+	for _, runtime := range m.active {
+		runtimes = append(runtimes, runtime)
 	}
+	m.mu.RUnlock()
 
-	return m.storage.Get(jobID)
+	counts := make(map[[2]string]int)
+	for _, runtime := range runtimes {
+		key := [2]string{string(runtime.kind), string(runtime.status())}
+		counts[key]++
+	}
+	active := make([]ActiveJobStat, 0, len(counts))
+	for key, count := range counts {
+		active = append(active, ActiveJobStat{Kind: Kind(key[0]), Status: Status(key[1]), Count: count})
+	}
+	return ManagerStats{
+		Active:              active,
+		QuotaRejections:     m.quotaRejections.Load(),
+		PersistenceFailures: m.persistenceFailures.Load(),
+		RecoveredJobs:       m.recoveredJobs.Load(),
+	}
 }
 
-func (m *Manager) Save(job *Job) error {
-	return m.storage.Save(job)
-}
-
-func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, error) {
-	var jobs []*Job
-
-	m.jobs.Range(func(_, value any) bool {
-		job := value.(*Job)
-
-		if !isAdmin && job.UserID != userID {
-			return true
+// Shutdown stops local supervisors without stopping Node Operations.
+func (m *Manager) Shutdown(ctx context.Context) error {
+	m.closeOnce.Do(func() {
+		m.mu.Lock()
+		m.accepting = false
+		if m.cleanupCancel != nil {
+			m.cleanupCancel()
 		}
-
-		if filter != nil {
-			if filter.Container != "" && job.Container != filter.Container {
-				return true
-			}
-			if filter.Host != "" && job.Host != filter.Host {
-				return true
-			}
-			if filter.Status != "" && string(job.Status) != filter.Status {
-				return true
-			}
-			if filter.Type != "" && job.Type != filter.Type {
-				return true
-			}
+		for _, runtime := range m.active {
+			runtime.cancel()
 		}
+		m.mu.Unlock()
 
-		jobs = append(jobs, job)
-		return true
+		go func() {
+			m.wg.Wait()
+			m.closeErr = m.store.Close()
+			close(m.closeDone)
+		}()
 	})
-
-	if filter == nil {
-		filter = &JobQuery{}
-	}
-	filter.UserID = userID
-	filter.IsAdmin = isAdmin
-	storedJobs, err := m.storage.List(filter)
-	if err != nil {
-		return nil, err
-	}
-
-	return append(jobs, storedJobs...), nil
-}
-
-func (m *Manager) StopAll() {
-	var jobIDs []string
-
-	m.jobs.Range(func(_, value any) bool {
-		job := value.(*Job)
-		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
-			jobIDs = append(jobIDs, job.JobID)
-		}
-		return true
-	})
-
-	for _, id := range jobIDs {
-		if err := m.Stop(id, true); err != nil {
-			log.Errorf("Failed to stop agent job %s: %v", id, err)
-		}
-	}
-	log.Infof("admin stopped all jobs(count: %d)", len(jobIDs))
-}
-
-func (m *Manager) updateJobStatus(job *Job, status JobStatus, errMesg string) {
-	job.Status = status
-	job.LastUpdate = time.Now()
-
-	if status == JobStatusCompleted || status == JobStatusStopped || status == JobStatusFailed || status == JobStatusTimeout {
-		job.EndTime = time.Now()
-		job.Error = errMesg
-
-		if err := m.storage.Save(job); err != nil {
-			log.Errorf("Failed to save job %s: %v", job.JobID, err)
-		}
-
-		if countVal, exists := m.jobsByHost.Load(job.Host); exists {
-			currentCount := countVal.(int)
-			if currentCount <= 1 {
-				m.jobsByHost.Delete(job.Host)
-			} else {
-				m.jobsByHost.Store(job.Host, currentCount-1)
-			}
-		}
-
-		m.jobs.Delete(job.JobID)
-	} else {
-		m.jobs.Store(job.JobID, job)
+	select {
+	case <-m.closeDone:
+		return m.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
-// checkAndUpdateJobStatus polls the agent for the task's current status and transitions the local job accordingly.
-func (m *Manager) checkAndUpdateJobStatus(job *Job) (string, error) {
-	agentStatus, results, err := m.nodeAgent.GetTaskStatus(job.Host, job.AgentTaskID)
-	if err != nil {
-		return agentStatus, err
-	}
-
-	switch agentStatus {
-	case AgentStatusCompleted:
-		job.Results = *results
-		m.updateJobStatus(job, JobStatusCompleted, "")
-		return agentStatus, nil
-	case AgentStatusFailed:
-		job.Results = *results
-		m.updateJobStatus(job, JobStatusFailed, "Job failed: "+results.Error)
-		log.Errorf("Job %s failed: %v", job.JobID, results.Error)
-		return agentStatus, nil
-	case AgentStatusNotExist:
-		m.updateJobStatus(job, JobStatusFailed, "Job doesn't exist on agent")
-		return agentStatus, nil
-	case AgentStatusRunning, AgentStatusPending:
-		return agentStatus, nil
-	default:
-		return agentStatus, nil
-	}
-}
-
-func (m *Manager) monitorJob(job *Job) {
-	var err error
-	var status string
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-	defer func() {
-		// if job is still running when monitorJob exits, it means some error happened,
-		// try to stop job and set job status to failed
-		if job.Status == JobStatusRunning {
-			if stopErr := m.Stop(job.JobID, true); stopErr != nil {
-				log.Errorf("Failed to stop job %s in defer: %v", job.JobID, stopErr)
-			}
-			errMsg := "job interrupted"
-			if err != nil {
-				errMsg = err.Error()
-			}
-			m.updateJobStatus(job, JobStatusFailed, errMsg)
-		}
-	}()
-
-	var timeoutTime, durationEndTime time.Time
-	if job.Duration == 0 {
-		timeoutTime = job.StartTime.Add(time.Duration(job.Timeout) * time.Second)
-	} else {
-		durationEndTime = job.StartTime.Add(time.Duration(job.Duration) * time.Second)
-	}
-
-	// Counter for status check (every 5 seconds)
-	statusCheckCounter := 0
-
-	for {
-		select {
-		case <-job.stopChan:
-			return
-		case <-m.stopChan:
-			return
-		case <-ticker.C:
-			now := time.Now()
-
-			if !timeoutTime.IsZero() && now.After(timeoutTime) {
-				log.Infof("Job %s has timed out", job.JobID)
-
-				if status, err = m.checkAndUpdateJobStatus(job); err != nil {
-					log.Warnf("Failed to get job status before timeout stop: %v", err)
-					return
-				} else if status != AgentStatusRunning {
-					return
-				}
-
-				if err := m.Stop(job.JobID, true); err != nil {
-					log.Errorf("Failed to stop agent job %s: %v", job.JobID, err)
-				}
-				m.updateJobStatus(job, JobStatusTimeout, "Job has timed out")
-				return
-			}
-
-			if !durationEndTime.IsZero() && now.After(durationEndTime) {
-				log.Infof("Job %s duration completed, stopping job", job.JobID)
-
-				if status, err = m.checkAndUpdateJobStatus(job); err != nil {
-					log.Warnf("Failed to get job status before stop: %v", err)
-					return
-				} else if status != AgentStatusRunning {
-					return
-				}
-
-				if err := m.Stop(job.JobID, false); err != nil {
-					log.Errorf("Failed to stop agent job %s: %v", job.JobID, err)
-				}
-				if status, err = m.checkAndUpdateJobStatus(job); err != nil {
-					log.Warnf("Failed to get job status after stop: %v", err)
-				} else if status != AgentStatusRunning {
-					log.Infof("Job %s stopped by duration", job.JobID)
-				}
-
-				return
-			}
-
-			// Poll agent status every 5 ticks (5 s).
-			statusCheckCounter++
-			if statusCheckCounter < 5 {
-				continue
-			}
-			statusCheckCounter = 0
-
-			if status, err = m.checkAndUpdateJobStatus(job); err != nil {
-				log.Warnf("Failed to get job status: %v", err)
-				return
-			} else if status != AgentStatusRunning {
-				return
-			}
-		}
-	}
-}
-
-// Delete removes the persisted job record; returns ErrCannotDeleteRunning if the job is still active.
-func (m *Manager) Delete(jobID string) error {
-	if jobVal, exists := m.jobs.Load(jobID); exists {
-		job := jobVal.(*Job)
-		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
-			return ErrCannotDeleteRunning
-		}
-	}
-
-	storedJob, err := m.storage.Get(jobID)
+func (m *Manager) recover(ctx context.Context) error {
+	jobs, err := m.store.List(ctx, &Query{Statuses: []Status{
+		StatusPending,
+		StatusRunning,
+		StatusStopping,
+	}})
 	if err != nil {
 		return err
 	}
-
-	if storedJob.Status == JobStatusPending || storedJob.Status == JobStatusRunning {
-		return ErrCannotDeleteRunning
+	for _, storedJob := range jobs {
+		if _, ok := m.config.policy(storedJob.Kind); !ok {
+			return fmt.Errorf("Job %q has no policy for kind %q", storedJob.ID, storedJob.Kind)
+		}
+		supervisorCtx, cancel := context.WithCancel(context.Background())
+		runtime := newRuntime(storedJob, true, cancel, &m.runtimeDeps)
+		m.mu.Lock()
+		m.registerLocked(runtime)
+		m.wg.Add(1)
+		m.mu.Unlock()
+		go m.runJobRuntime(supervisorCtx, runtime)
 	}
+	m.recoveredJobs.Add(uint64(len(jobs)))
+	return nil
+}
 
-	return m.storage.Delete(jobID)
+func (m *Manager) startCleanup() {
+	cleanupCtx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	m.cleanupCancel = cancel
+	m.wg.Add(1)
+	m.mu.Unlock()
+	go func(ctx context.Context) {
+		defer m.wg.Done()
+		ticker := time.NewTicker(jobCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				endedBefore := m.runtimeDeps.now().Add(-m.config.JobRetentionPeriod)
+				if _, err := m.store.DeleteTerminalBefore(
+					ctx,
+					endedBefore,
+					jobCleanupBatchSize,
+				); err != nil {
+					log.WithError(err).Error("failed to clean up terminal Jobs")
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}(cleanupCtx)
+}
+
+func (m *Manager) registerLocked(runtime *runtime) {
+	m.active[runtime.id] = runtime
+	m.activeTotal[runtime.kind]++
+	m.activeHosts[newActiveHostKey(runtime.hostname, runtime.kind)]++
+}
+
+func (m *Manager) unregisterLocked(runtime *runtime) {
+	current, ok := m.active[runtime.id]
+	if !ok || current != runtime {
+		return
+	}
+	delete(m.active, runtime.id)
+	m.activeTotal[runtime.kind]--
+	m.activeHosts[newActiveHostKey(runtime.hostname, runtime.kind)]--
+}
+
+func (m *Manager) activeRuntime(jobID string) *runtime {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.active[jobID]
+}
+
+func (m *Manager) runJobRuntime(ctx context.Context, runtime *runtime) {
+	defer m.wg.Done()
+	defer func() {
+		m.mu.Lock()
+		m.unregisterLocked(runtime)
+		m.mu.Unlock()
+	}()
+	runtime.run(ctx)
 }

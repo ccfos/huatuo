@@ -20,11 +20,11 @@ jobs:
       - uses: actions/setup-node@v6.1.0
         name: Install Node.js
         with:
-          node-version: 16
+          node-version: 18
       - name: Install dependencies
         run: |
           npm install @commitlint/lint@18.6.1 @commitlint/load@18.6.1 @commitlint/config-conventional@18.6.2 @actions/core
-      - name: Lint PR name
+      - name: Lint PR and commit messages
         uses: actions/github-script@v8.0.0
         # Only validate on pull requests
         if: github.event_name == 'pull_request'
@@ -37,27 +37,46 @@ jobs:
               extends: ['./commitlint.config.js'],
             };
 
-            const title = context.payload.pull_request.title;
+            const opts = await load(CONFIG);
+            const lintOptions = opts.parserPreset
+              ? {parserOpts: opts.parserPreset.parserOpts}
+              : {};
+            let valid = true;
 
-            core.info(`Linting: ${title}`);
+            async function lintMessage(label, message) {
+              core.info(`Linting ${label}`);
+              const report = await lint(message, opts.rules, lintOptions);
 
-            load(CONFIG)
-              .then((opts) => {
-                lint(
-                  title,
-                  opts.rules,
-                  opts.parserPreset ? {parserOpts: opts.parserPreset.parserOpts} : {}
-                ).then((report) => {
-                  report.warnings.forEach((warning) => {
-                    core.warning(warning.message);
-                  });
-
-                  report.errors.forEach((error) => {
-                    core.error(error.message);
-                  });
-
-                  if (!report.valid) {
-                    core.setFailed("PR title linting failed");
-                  }
-                });
+              report.warnings.forEach((warning) => {
+                core.warning(`${label}: ${warning.message}`);
               });
+              report.errors.forEach((error) => {
+                core.error(`${label}: ${error.message}`);
+              });
+              valid = valid && report.valid;
+            }
+
+            await lintMessage(
+              'PR title',
+              context.payload.pull_request.title
+            );
+
+            const commits = await github.paginate(
+              github.rest.pulls.listCommits,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                per_page: 100,
+              }
+            );
+            for (const commit of commits) {
+              await lintMessage(
+                `commit ${commit.sha.slice(0, 8)}`,
+                commit.commit.message
+              );
+            }
+
+            if (!valid) {
+              core.setFailed('PR title or commit message linting failed');
+            }

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -65,6 +65,10 @@ func (t *ContainerType) UnmarshalJSON(data []byte) error {
 		*t = ContainerTypeDaemonSet
 	case containerType2String[ContainerTypeNormal]:
 		*t = ContainerTypeNormal
+	case containerType2String[ContainerTypeNode]:
+		*t = ContainerTypeNode
+	case containerType2String[ContainerTypeStatic]:
+		*t = ContainerTypeStatic
 	default:
 		*t = ContainerTypeUnknown
 	}

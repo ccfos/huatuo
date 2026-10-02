@@ -16,90 +16,181 @@ package job
 
 import (
 	"time"
+
+	"github.com/ccfos/huatuo/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/profiling"
+	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
 
-type JobStatus string
+// Kind identifies the service that owns a persistent Job.
+type Kind string
 
 const (
-	AgentStatusCompleted = "completed"
-	AgentStatusFailed    = "failed"
-	AgentStatusPending   = "pending"
-	AgentStatusRunning   = "running"
-	AgentStatusNotExist  = "not_exist"
+	KindProfiling Kind = "profiling"
+	KindTracing   Kind = "tracing"
 )
+
+// Status identifies a user-facing persistent Job state.
+type Status string
 
 const (
-	JobStatusPending   JobStatus = "pending"
-	JobStatusRunning   JobStatus = "running"
-	JobStatusCompleted JobStatus = "completed"
-	JobStatusFailed    JobStatus = "failed"
-	JobStatusStopped   JobStatus = "stopped"
-	JobStatusTimeout   JobStatus = "timeout"
+	StatusPending  Status = "pending"
+	StatusRunning  Status = "running"
+	StatusStopping Status = "stopping"
+	StatusTerminal Status = "terminal"
 )
 
-// Result represents the result of a job
-type Result struct {
-	URL   string `json:"url"`
-	Error string `json:"error"`
+// Outcome identifies the result of a terminal Job.
+type Outcome string
+
+const (
+	OutcomeCompleted Outcome = "completed"
+	OutcomeFailed    Outcome = "failed"
+	OutcomeStopped   Outcome = "stopped"
+	OutcomeUnknown   Outcome = "unknown"
+)
+
+// FailureReason classifies a failed Job independently of Node errors.
+type FailureReason string
+
+const (
+	FailureReasonExecutionStartFailed      FailureReason = "execution_start_failed"
+	FailureReasonExecutionCapacityExceeded FailureReason = "execution_capacity_exceeded"
+	FailureReasonStartTimeout              FailureReason = "start_timeout"
+	FailureReasonExecutionFailed           FailureReason = "execution_failed"
+	FailureReasonExecutionTimedOut         FailureReason = "execution_timed_out"
+	FailureReasonStopTimeout               FailureReason = "stop_timeout"
+	FailureReasonNodeUnavailable           FailureReason = "node_unavailable"
+	FailureReasonOperationLost             FailureReason = "operation_lost"
+	FailureReasonInvalidNodeRequest        FailureReason = "invalid_node_request"
+	FailureReasonProtocolError             FailureReason = "protocol_error"
+)
+
+// StopReason records why Apiserver requested asynchronous Node termination.
+type StopReason string
+
+const (
+	StopReasonUser             StopReason = "user_requested"
+	StopReasonStartTimeout     StopReason = "start_timeout"
+	StopReasonExecutionTimeout StopReason = "execution_timeout"
+)
+
+// TerminalResult is the stable result of a terminal Job.
+type TerminalResult struct {
+	Outcome Outcome       `json:"outcome"`
+	Reason  FailureReason `json:"reason,omitempty"`
+	Message string        `json:"message,omitempty"`
 }
 
-// NewAgentTaskReq represents the structure of the request body for creating a new job.
-type NewAgentTaskReq struct {
-	TracerName        string   `json:"tracer_name" binding:"required"`                  // Name of the tracer, required field
-	TraceTimeout      int      `json:"trace_timeout" binding:"required,number,lt=3600"` // Timeout in seconds, must be less than 3600s(1 hours)
-	Interval          int      `json:"interval" binding:"omitempty,number,lt=3600"`     // Interval in seconds, must be less than 3600s(1 hours)
-	Duration          int      `json:"duration" binding:"omitempty,number,lt=86400"`    // Duration in seconds, must be less than 86400s(24 hours)
-	DataType          string   `json:"data_type" binding:"required"`                    // Type of data to be handled, required field
-	ContainerID       string   `json:"container_id" binding:"omitempty"`                // ID of the container, optional field
-	ContainerHostname string   `json:"container_hostname" binding:"omitempty"`          // Hostname of the container, optional field
-	TracerArgs        []string `json:"trace_args" binding:"omitempty"`                  // Additional arguments for the tracer, optional field
+// Spec is a small discriminated union of service-owned Job parameters.
+type Spec struct {
+	Profiling *profiling.Spec     `json:"profiling,omitempty"`
+	Tracing   *tracingdomain.Spec `json:"tracing,omitempty"`
 }
 
-// CreateJobRequest holds parameters for creating a new job
-type CreateJobRequest struct {
-	UserID    string
-	Container string
-	Host      string
-	JobType   string
-	Args      *NewAgentTaskReq
-}
-
-// Job represents a job
+// Job is the persistent Apiserver lifecycle for one Node request ID.
 type Job struct {
-	Type        string          `json:"type"`
-	JobID       string          `json:"job_id"`
-	UserName    string          `json:"user_name"`
-	UserID      string          `json:"user_id"`
-	Container   string          `json:"container"`
-	Host        string          `json:"host"`
-	AgentTaskID string          `json:"agent_job_id"`
-	Status      JobStatus       `json:"status"`
-	Error       string          `json:"error,omitempty"`
-	Duration    int             `json:"duration"`
-	Timeout     int             `json:"timeout"`
-	StartTime   time.Time       `json:"start_time"`
-	EndTime     time.Time       `json:"end_time"`
-	Args        NewAgentTaskReq `json:"args"`
-	Results     Result          `json:"results,omitempty"`
+	ID          string
+	Kind        Kind
+	UserID      string
+	Hostname    string
+	Duration    time.Duration
+	Scope       observation.Scope
+	ContainerID string
+	Spec        Spec
 
-	LastUpdate time.Time `json:"-"`
-	stopChan   chan struct{}
+	Status    Status
+	Terminal  *TerminalResult
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	StartedAt time.Time
+	EndedAt   time.Time
 
-	PrivateData map[string]any `json:"-"`
+	PendingDeadline         time.Time
+	ExecutionDeadline       time.Time
+	NodeUnavailableDeadline time.Time
+	StopDeadline            time.Time
+	StopReason              StopReason
+
+	revision int64
 }
 
-// JobQuery defines filters for searching jobs
-type JobQuery struct {
-	JobID     string
-	UserID    string
-	IsAdmin   bool
-	Container string
-	Host      string
-	Status    string
-	Type      string
+// CreateRequest contains one independently created user request.
+type CreateRequest struct {
+	UserID      string
+	Hostname    string
+	Duration    time.Duration
+	Scope       observation.Scope
+	ContainerID string
+	Spec        Spec
 }
 
-// JobCleanupQuery defines parameters for cleaning up old jobs
-type JobCleanupQuery struct {
-	BeforeTime time.Time
+// Query filters persistent Jobs through derived storage indexes.
+type Query struct {
+	ID          string
+	UserID      string
+	IsAdmin     bool
+	ContainerID string
+	Hostname    string
+	Statuses    []Status
+	Kinds       []Kind
+	Subtypes    []string
+	Sort        string
+	Limit       int
+	Offset      int
+}
+
+// Page contains one Job page and whether another page is available.
+type Page struct {
+	Items   []*Job
+	HasMore bool
+}
+
+func (s Spec) kind() Kind {
+	switch {
+	case s.Profiling != nil && s.Tracing == nil:
+		return KindProfiling
+	case s.Tracing != nil && s.Profiling == nil:
+		return KindTracing
+	default:
+		return ""
+	}
+}
+
+func (s Spec) subtype(kind Kind) string {
+	switch kind {
+	case KindProfiling:
+		if s.Profiling != nil {
+			return string(s.Profiling.Type)
+		}
+	case KindTracing:
+		if s.Tracing != nil {
+			return string(s.Tracing.Type)
+		}
+	}
+	return ""
+}
+
+func cloneJob(source *Job) *Job {
+	if source == nil {
+		return nil
+	}
+	cloned := *source
+	if source.Spec.Profiling != nil {
+		profilingSpec := *source.Spec.Profiling
+		cloned.Spec.Profiling = &profilingSpec
+	}
+	if source.Spec.Tracing != nil {
+		tracingSpec := *source.Spec.Tracing
+		cloned.Spec.Tracing = &tracingSpec
+	}
+	if source.Terminal != nil {
+		terminal := *source.Terminal
+		cloned.Terminal = &terminal
+	}
+	return &cloned
+}
+
+func isTerminal(status Status) bool {
+	return status == StatusTerminal
 }

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,9 +20,9 @@ import (
 	"path/filepath"
 	"slices"
 
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/profiler/procutil"
-	"huatuo-bamai/internal/utils/fileutil"
+	"github.com/ccfos/huatuo/internal/process"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/utils/fileutil"
 )
 
 type elfCache struct {
@@ -40,12 +40,14 @@ type cacheKey struct {
 }
 
 // UsymResolver resolves user-space stack addresses to symbol names across pids.
+// It is not safe for concurrent use.
 type UsymResolver struct {
 	exeCache  map[cacheKey]*elfCache // inode+xfs → elfcache
 	exeKeys   map[uint32]cacheKey    // pid → cachekey
 	libcaches map[cacheKey]*libCache // inode+xfs → libcache
 	libKeys   map[string]cacheKey    // libpath → cachekey
 	procmaps  map[uint32]sections
+	names     map[string]string // mangled name → display name
 }
 
 // NewUsymResolver creates a UsymResolver with shared caches across pids.
@@ -56,6 +58,7 @@ func NewUsymResolver() *UsymResolver {
 		libcaches: make(map[cacheKey]*libCache),
 		libKeys:   make(map[string]cacheKey),
 		procmaps:  make(map[uint32]sections),
+		names:     make(map[string]string),
 	}
 }
 
@@ -104,7 +107,7 @@ func (r *UsymResolver) resolveAddr(pid uint32, addr uint64) string {
 	m := cache.secs.find(addr)
 	if m != nil {
 		if sym := cache.syms.resolve(addr); sym != "" {
-			return sym
+			return r.displayName(sym)
 		}
 		return failFrame("elf-no-sym", "")
 	}
@@ -132,9 +135,19 @@ func (r *UsymResolver) resolveAddr(pid uint32, addr uint64) string {
 		return failFrame("no-baseaddr", m.Pathname)
 	}
 	if sym := libCache.syms.resolve(addr - baseAddr); sym != "" {
-		return sym
+		return r.displayName(sym)
 	}
 	return failFrame("lib-no-sym", m.Pathname)
+}
+
+func (r *UsymResolver) displayName(name string) string {
+	if display, ok := r.names[name]; ok {
+		return display
+	}
+
+	display := demangleSymbolName(name)
+	r.names[name] = display
+	return display
 }
 
 func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
@@ -278,7 +291,7 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 		return "", nil
 	}
 
-	inContainer, err := procutil.IsProcessInContainer(int(pid))
+	inContainer, err := process.IsInContainer(int(pid))
 	if err != nil {
 		return "", err
 	}

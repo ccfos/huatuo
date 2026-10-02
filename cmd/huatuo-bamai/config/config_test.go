@@ -15,16 +15,26 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	testutils "github.com/ccfos/huatuo/internal/testing"
 )
 
 func writeConfigFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 
 	path := filepath.Join(dir, name)
+	content += `
+
+[HTTPServer.Auth]
+BearerToken = "test-node-secret"
+`
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config file %s: %v", path, err)
 	}
@@ -37,8 +47,29 @@ func TestLoad(t *testing.T) {
 	path := writeConfigFile(t, tmpDir, "huatuo-bamai.conf", `
 BlackList = ["netdev_hw", "metax_gpu"]
 
-[RuntimeCgroup]
-LimitMem = 2
+[Log]
+Level = "Warn"
+
+[Runtime]
+StartupCPULimitCores = 0.75
+CPULimitCores = 1.5
+MemoryLimitMiB = 2
+
+[HTTPServer]
+ListenAddress = "127.0.0.1:29704"
+MaxEventStreamClients = 25
+EventStreamKeepAliveIntervalSeconds = 15
+
+[Operations]
+MaxConcurrent = 7
+
+[Profiling]
+ToolDir = "/opt/huatuo/tools"
+
+[Storage.LocalFile]
+Path = "records"
+RotationSizeMiB = 64
+MaxRotatedFiles = 4
 
 [AutoTracing]
 IssuesList = [["dload", "jbd2"]]
@@ -46,8 +77,23 @@ IssuesList = [["dload", "jbd2"]]
 [EventTracing]
 IssuesList = [["net_rx_latency", "kernel_sched_tick"]]
 
+[EventTracing.SchedTick]
+IntervalThreshold = 20000000
+
 [EventTracing.NetRxLatency]
 ExcludedContainerQos = ["bestEffort"]
+
+[EventTracing.TCPRetransmit]
+Filter = "dst port 443"
+EnableTLP = true
+EnableDropwatch = true
+MaxEventsPerSecond = 42
+
+[AutoTracing.MemoryThresholdSnapshot]
+ThresholdPercent = 85
+IntervalTracing = 60
+RunTracingToolTimeout = 3
+MaxMemoryObjectEntries = 7
 
 [MetricCollector.Vmstat]
 IncludedOnHost = "pgscan_direct"
@@ -66,11 +112,48 @@ ExcludedOnContainer = "writeback"
 	if len(Get().BlackList) != 2 {
 		t.Errorf("unexpected BlackList length: %d", len(Get().BlackList))
 	}
-	if Get().RuntimeCgroup.LimitMem != 2*1024*1024 {
-		t.Errorf("LimitMem should be converted to bytes, got %d", Get().RuntimeCgroup.LimitMem)
+	if Get().Log.Level != "Warn" {
+		t.Errorf("Log.Level = %q, want %q", Get().Log.Level, "Warn")
+	}
+	if Get().Runtime.StartupCPULimitCores != 0.75 ||
+		Get().Runtime.CPULimitCores != 1.5 {
+		t.Errorf("Runtime = %+v, want CPU overrides", Get().Runtime)
+	}
+	if Get().Runtime.MemoryLimitMiB != 2 {
+		t.Errorf("MemoryLimitMiB = %d, want 2", Get().Runtime.MemoryLimitMiB)
+	}
+	if Get().HTTPServer.ListenAddress != "127.0.0.1:29704" ||
+		Get().HTTPServer.MaxEventStreamClients != 25 ||
+		Get().HTTPServer.EventStreamKeepAliveIntervalSeconds != 15 {
+		t.Errorf("HTTPServer = %+v, want overrides", Get().HTTPServer)
+	}
+	if Get().Profiling.ToolDir != "/opt/huatuo/tools" {
+		t.Errorf("Profiling.ToolDir = %q, want /opt/huatuo/tools", Get().Profiling.ToolDir)
+	}
+	if Get().Operations.MaxConcurrent != 7 {
+		t.Errorf("Operations.MaxConcurrent = %d, want 7", Get().Operations.MaxConcurrent)
+	}
+	if Get().Storage.LocalFile != (LocalFileConfig{
+		Path:            "records",
+		RotationSizeMiB: 64,
+		MaxRotatedFiles: 4,
+	}) {
+		t.Errorf("Storage.LocalFile = %+v, want overrides", Get().Storage.LocalFile)
 	}
 	if len(Get().AutoTracing.IssuesList) != 1 {
 		t.Errorf("unexpected AutoTracing.IssuesList length: %d", len(Get().AutoTracing.IssuesList))
+	}
+	if Get().EventTracing.SchedTick.IntervalThreshold != 20000000 {
+		t.Errorf(
+			"EventTracing.SchedTick.IntervalThreshold = %d, want 20000000",
+			Get().EventTracing.SchedTick.IntervalThreshold,
+		)
+	}
+	if Get().AutoTracing.CPUSys.IntervalTracing != 1800 {
+		t.Errorf(
+			"unexpected CPUSys.IntervalTracing: %d",
+			Get().AutoTracing.CPUSys.IntervalTracing,
+		)
 	}
 	if len(Get().EventTracing.IssuesList) != 1 {
 		t.Errorf("unexpected EventTracing.IssuesList length: %d", len(Get().EventTracing.IssuesList))
@@ -84,9 +167,297 @@ ExcludedOnContainer = "writeback"
 	if len(Get().EventTracing.NetRxLatency.ExcludedContainerQos) != 1 {
 		t.Errorf("unexpected ExcludedContainerQos length: %d", len(Get().EventTracing.NetRxLatency.ExcludedContainerQos))
 	}
+	if Get().EventTracing.TCPRetransmit.Filter != "dst port 443" {
+		t.Errorf("unexpected TCPRetransmit.Filter: %q", Get().EventTracing.TCPRetransmit.Filter)
+	}
+	if !Get().EventTracing.TCPRetransmit.EnableTLP {
+		t.Errorf("TCPRetransmit.EnableTLP should be true")
+	}
+	if !Get().EventTracing.TCPRetransmit.EnableDropwatch {
+		t.Errorf("TCPRetransmit.EnableDropwatch should be true")
+	}
+	if Get().EventTracing.TCPRetransmit.MaxEventsPerSecond != 42 {
+		t.Errorf("unexpected TCPRetransmit.MaxEventsPerSecond: %d", Get().EventTracing.TCPRetransmit.MaxEventsPerSecond)
+	}
+	snapshot := Get().AutoTracing.MemoryThresholdSnapshot
+	if snapshot.ThresholdPercent != 85 {
+		t.Errorf("MemoryThresholdSnapshot.ThresholdPercent = %d, want 85", snapshot.ThresholdPercent)
+	}
+	if snapshot.IntervalTracing != 60 {
+		t.Errorf("MemoryThresholdSnapshot.IntervalTracing = %d, want 60", snapshot.IntervalTracing)
+	}
+	if snapshot.RunTracingToolTimeout != 3 {
+		t.Errorf("MemoryThresholdSnapshot.RunTracingToolTimeout = %d, want 3", snapshot.RunTracingToolTimeout)
+	}
+	if snapshot.MaxMemoryObjectEntries != 7 {
+		t.Errorf("MemoryThresholdSnapshot.MaxMemoryObjectEntries = %d, want 7", snapshot.MaxMemoryObjectEntries)
+	}
+	if Get().Storage.Elasticsearch.Enabled() {
+		t.Error("Elasticsearch is enabled without connection settings")
+	}
 }
 
-func TestSetAndSync(t *testing.T) {
+func TestLoadAcceptsTCPRetransmitFilter(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[EventTracing.TCPRetransmit]
+Filter = "tcp port 8443"
+`)
+
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v, want strict decoder to accept TCPRetransmit.Filter", err)
+	}
+	if got := Get().EventTracing.TCPRetransmit.Filter; got != "tcp port 8443" {
+		t.Fatalf("TCPRetransmit.Filter = %q, want %q", got, "tcp port 8443")
+	}
+}
+
+func TestLoadRepositoryConfig(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "huatuo-bamai.conf")
+	if err := Load(path); err != nil {
+		t.Fatalf("Load(%q) error = %v", path, err)
+	}
+	snapshot := Get().AutoTracing.MemoryThresholdSnapshot
+	if snapshot.ThresholdPercent != 90 {
+		t.Errorf("MemoryThresholdSnapshot.ThresholdPercent = %d, want default 90", snapshot.ThresholdPercent)
+	}
+	if snapshot.IntervalTracing != 300 {
+		t.Errorf("MemoryThresholdSnapshot.IntervalTracing = %d, want default 300", snapshot.IntervalTracing)
+	}
+	if snapshot.RunTracingToolTimeout != 2 {
+		t.Errorf("MemoryThresholdSnapshot.RunTracingToolTimeout = %d, want default 2", snapshot.RunTracingToolTimeout)
+	}
+	if snapshot.MaxMemoryObjectEntries != 10 {
+		t.Errorf("MemoryThresholdSnapshot.MaxMemoryObjectEntries = %d, want default 10", snapshot.MaxMemoryObjectEntries)
+	}
+}
+
+func TestLoadEnablesCompleteElasticsearchConfig(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Storage.Elasticsearch]
+Address = "http://127.0.0.1:9200"
+Username = "elastic"
+Password = "secret"
+`)
+
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !Get().Storage.Elasticsearch.Enabled() {
+		t.Fatal("Elasticsearch is disabled with complete connection settings")
+	}
+	if Get().Storage.Elasticsearch.Index != "huatuo_bamai" {
+		t.Fatalf("Elasticsearch index = %q, want default", Get().Storage.Elasticsearch.Index)
+	}
+}
+
+func TestLoadRejectsPartialElasticsearchConfig(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Storage.Elasticsearch]
+Address = "http://127.0.0.1:9200"
+`)
+
+	err := Load(path)
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"address, username, and password must be configured together",
+	) {
+		t.Fatalf("Load() error = %v, want incomplete Elasticsearch error", err)
+	}
+}
+
+func TestLoadRejectsLegacyKeys(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+	}{
+		{name: "runtime cgroup", contents: "[RuntimeCgroup]\nLimitCPU = 2"},
+		{name: "api server", contents: "[APIServer]\nTCPAddr = \":19704\""},
+		{name: "task", contents: "[Task]\nMaxRunningTask = 10"},
+		{name: "events watch", contents: "[EventsWatch]\nMaxClients = 100"},
+		{name: "storage es", contents: "[Storage.ES]\nIndex = \"huatuo_bamai\""},
+		{
+			name:     "local file rotation size",
+			contents: "[Storage.LocalFile]\nRotationSize = 100",
+		},
+		{
+			name:     "memory threshold snapshot",
+			contents: "[EventTracing.BeforeOOMMemsnap]\nEnabled = false",
+		},
+		{
+			name:     "event tracing memory threshold snapshot",
+			contents: "[EventTracing.MemoryThresholdSnapshot]\nThresholdPercent = 90",
+		},
+		{
+			name:     "snapshot enablement",
+			contents: "[AutoTracing.MemoryThresholdSnapshot]\nEnabled = false",
+		},
+		{
+			name:     "snapshot go timeout",
+			contents: "[AutoTracing.MemoryThresholdSnapshot]\nGoTimeoutMS = 100",
+		},
+		{
+			name:     "snapshot java timeout",
+			contents: "[AutoTracing.MemoryThresholdSnapshot]\nJavaTimeoutMS = 2000",
+		},
+		{
+			name:     "snapshot python timeout",
+			contents: "[AutoTracing.MemoryThresholdSnapshot]\nPythonTimeoutMS = 2000",
+		},
+		{
+			name:     "snapshot top k",
+			contents: "[AutoTracing.MemoryThresholdSnapshot]\nTopK = 10",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", tt.contents)
+			if err := Load(path); err == nil {
+				t.Fatal("Load() error = nil, want strict legacy-key rejection")
+			}
+		})
+	}
+}
+
+func TestConfigValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr string
+	}{
+		{
+			name: "invalid log level",
+			mutate: func(cfg *Config) {
+				cfg.Log.Level = "verbose"
+			},
+			wantErr: "unsupported log level",
+		},
+		{
+			name: "invalid startup cpu limit",
+			mutate: func(cfg *Config) {
+				cfg.Runtime.StartupCPULimitCores = 0
+			},
+			wantErr: "startup cpu limit",
+		},
+		{
+			name: "invalid listen address",
+			mutate: func(cfg *Config) {
+				cfg.HTTPServer.ListenAddress = "missing-port"
+			},
+			wantErr: "invalid listen address",
+		},
+		{
+			name: "invalid event stream clients",
+			mutate: func(cfg *Config) {
+				cfg.HTTPServer.MaxEventStreamClients = 0
+			},
+			wantErr: "maximum event stream clients",
+		},
+		{
+			name: "invalid operation concurrency",
+			mutate: func(cfg *Config) {
+				cfg.Operations.MaxConcurrent = 0
+			},
+			wantErr: "maximum concurrent operations",
+		},
+		{
+			name: "invalid local rotation size",
+			mutate: func(cfg *Config) {
+				cfg.Storage.LocalFile.RotationSizeMiB = 0
+			},
+			wantErr: "local file rotation size",
+		},
+		{
+			name: "invalid kubelet port",
+			mutate: func(cfg *Config) {
+				cfg.Pod.KubeletReadOnlyPort = 65536
+			},
+			wantErr: "kubelet read-only port",
+		},
+		{
+			name: "invalid autotracing issue expression",
+			mutate: func(cfg *Config) {
+				cfg.AutoTracing.IssuesList = [][]string{{"broken", "["}}
+			},
+			wantErr: "validating autotracing config: validating issues list",
+		},
+		{
+			name: "invalid scheduler tick threshold",
+			mutate: func(cfg *Config) {
+				cfg.EventTracing.SchedTick.IntervalThreshold = 0
+			},
+			wantErr: "validating event tracing config: scheduler tick interval threshold",
+		},
+		{
+			name: "invalid event tracing issue shape",
+			mutate: func(cfg *Config) {
+				cfg.EventTracing.IssuesList = [][]string{{"missing-expression"}}
+			},
+			wantErr: "validating event tracing config: validating issues list",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := loadConfigDefaults(t)
+			tt.mutate(cfg)
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidIssuesListExpression(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[EventTracing]
+IssuesList = [["broken", "["]]
+`)
+	err := Load(path)
+	if err == nil || !strings.Contains(err.Error(),
+		`rule 0 "broken" has invalid regular expression "["`) {
+		t.Fatalf("Load() error = %v, want actionable expression error", err)
+	}
+}
+
+func loadConfigDefaults(t *testing.T) *Config {
+	t.Helper()
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", "")
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	return Get().Clone()
+}
+
+func TestIRQTracingRateLimitDefault(t *testing.T) {
+	cfg := loadConfigDefaults(t)
+	if got := cfg.AutoTracing.IRQTracing.MaxEventsPerSecond; got != 1000 {
+		t.Fatalf("AutoTracing.IRQTracing.MaxEventsPerSecond = %d, want 1000", got)
+	}
+}
+
+func TestIRQTracingConfigValidatedWhenBlacklisted(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+BlackList = ["irqtracing"]
+
+[AutoTracing.IRQTracing]
+    Interval = -1
+`)
+	err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "sampling interval") {
+		t.Fatalf("Load() error = %v, want invalid irq tracing interval", err)
+	}
+}
+
+func TestConfigCloneDoesNotShareMutableReferences(t *testing.T) {
+	source := &Config{}
+	testutils.PopulateCloneSource(t, source)
+
+	testutils.AssertDeepClone(t, source, source.Clone())
+}
+
+func TestUpdateAndSync(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := writeConfigFile(t, tmpDir, "huatuo-bamai.conf", `
 BlackList = ["netdev_hw"]
@@ -111,23 +482,18 @@ ExcludedOnContainer = "writeback"
 		t.Fatalf("Load returned error: %v", err)
 	}
 
-	for _, kv := range []struct {
-		key string
-		val any
-	}{
-		{"BlackList", []string{"netdev_hw", "metax_gpu"}},
-		{"AutoTracing.IssuesList", [][]string{{"cpuidle", "perf"}}},
-		{"EventTracing.IssuesList", [][]string{{"dropwatch", "kfree_skb"}}},
-		{"MetricCollector.Vmstat.IncludedOnHost", "pgsteal_direct"},
-		{"MetricCollector.Vmstat.IncludedOnContainer", "workingset_refault_file"},
-	} {
-		if err := Set(kv.key, kv.val); err != nil {
-			t.Fatalf("Set %s returned error: %v", kv.key, err)
-		}
-	}
-
-	if err := Sync(); err != nil {
-		t.Fatalf("Sync returned error: %v", err)
+	if err := UpdateAndSync(map[string]any{
+		"BlackList":               []string{"netdev_hw", "metax_gpu"},
+		"AutoTracing.IssuesList":  [][]string{{"cpuidle", "perf"}},
+		"EventTracing.IssuesList": [][]string{{"dropwatch", "kfree_skb"}},
+		"AutoTracing.MemoryThresholdSnapshot.ThresholdPercent":       85,
+		"AutoTracing.MemoryThresholdSnapshot.IntervalTracing":        60,
+		"AutoTracing.MemoryThresholdSnapshot.RunTracingToolTimeout":  3,
+		"AutoTracing.MemoryThresholdSnapshot.MaxMemoryObjectEntries": 7,
+		"MetricCollector.Vmstat.IncludedOnHost":                      "pgsteal_direct",
+		"MetricCollector.Vmstat.IncludedOnContainer":                 "workingset_refault_file",
+	}); err != nil {
+		t.Fatalf("UpdateAndSync returned error: %v", err)
 	}
 
 	if err := Load(path); err != nil {
@@ -149,6 +515,19 @@ ExcludedOnContainer = "writeback"
 	if len(Get().EventTracing.IssuesList) != 1 || len(Get().EventTracing.IssuesList[0]) != 2 || Get().EventTracing.IssuesList[0][0] != "dropwatch" {
 		t.Errorf("unexpected EventTracing.IssuesList after reload: %#v", Get().EventTracing.IssuesList)
 	}
+	snapshot := Get().AutoTracing.MemoryThresholdSnapshot
+	if snapshot.ThresholdPercent != 85 {
+		t.Errorf("MemoryThresholdSnapshot.ThresholdPercent after reload = %d, want 85", snapshot.ThresholdPercent)
+	}
+	if snapshot.IntervalTracing != 60 {
+		t.Errorf("MemoryThresholdSnapshot.IntervalTracing after reload = %d, want 60", snapshot.IntervalTracing)
+	}
+	if snapshot.RunTracingToolTimeout != 3 {
+		t.Errorf("MemoryThresholdSnapshot.RunTracingToolTimeout after reload = %d, want 3", snapshot.RunTracingToolTimeout)
+	}
+	if snapshot.MaxMemoryObjectEntries != 7 {
+		t.Errorf("MemoryThresholdSnapshot.MaxMemoryObjectEntries after reload = %d, want 7", snapshot.MaxMemoryObjectEntries)
+	}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -162,5 +541,122 @@ ExcludedOnContainer = "writeback"
 	}
 	if !strings.Contains(string(raw), "[MetricCollector.Vmstat]") || !strings.Contains(string(raw), "IncludedOnContainer = \"workingset_refault_file\"") {
 		t.Errorf("synced config should persist MetricCollector.Vmstat.IncludedOnContainer, got %s", string(raw))
+	}
+	if !strings.Contains(string(raw), "MemoryLimitMiB = 2048") {
+		t.Errorf("synced config should preserve the public memory unit, got %s", string(raw))
+	}
+	if !strings.Contains(string(raw), "[AutoTracing.MemoryThresholdSnapshot]") {
+		t.Error("synced config omitted AutoTracing.MemoryThresholdSnapshot")
+	}
+	if strings.Contains(string(raw), "BeforeOOMMemsnap") {
+		t.Error("synced config contains the old memory threshold snapshot key")
+	}
+}
+
+func TestUpdateRollsBackInvalidBatch(t *testing.T) {
+	loadConfigDefaults(t)
+	before := Get()
+
+	err := Update(map[string]any{
+		"BlackList": []string{"dropwatch"},
+		"NotExist":  1,
+	})
+	if !errors.Is(err, ErrInvalidUpdate) {
+		t.Fatalf("Update() error = %v, want ErrInvalidUpdate", err)
+	}
+	if Get() != before {
+		t.Fatal("Update() published a partial config")
+	}
+}
+
+func TestUpdateRejectsOverlappingKeys(t *testing.T) {
+	loadConfigDefaults(t)
+
+	err := Update(map[string]any{
+		"Runtime":                Get().Runtime,
+		"Runtime.MemoryLimitMiB": int64(1024),
+	})
+	if !errors.Is(err, ErrInvalidUpdate) || !strings.Contains(err.Error(), "overlap") {
+		t.Fatalf("Update() error = %v, want overlapping-fields error", err)
+	}
+}
+
+func TestUpdateDetachesCallerValues(t *testing.T) {
+	loadConfigDefaults(t)
+	blacklist := []string{"dropwatch"}
+
+	if err := Update(map[string]any{"BlackList": blacklist}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	blacklist[0] = "netdev_hw"
+
+	if got := Get().BlackList[0]; got != "dropwatch" {
+		t.Fatalf("BlackList[0] = %q, want detached value", got)
+	}
+}
+
+func TestUpdatePublishesConsistentSnapshots(t *testing.T) {
+	loadConfigDefaults(t)
+
+	type limits struct {
+		cpu    float64
+		memory int64
+	}
+	pairs := []limits{{cpu: 3, memory: 300}, {cpu: 4, memory: 400}}
+	valid := map[limits]bool{
+		{cpu: Get().Runtime.CPULimitCores, memory: Get().Runtime.MemoryLimitMiB}: true,
+		pairs[0]: true,
+		pairs[1]: true,
+	}
+
+	start := make(chan struct{})
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	for _, pair := range pairs {
+		wg.Add(1)
+		go func(pair limits) {
+			defer wg.Done()
+			<-start
+			for range 200 {
+				if err := Update(map[string]any{
+					"Runtime.CPULimitCores":  pair.cpu,
+					"Runtime.MemoryLimitMiB": pair.memory,
+				}); err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					return
+				}
+			}
+		}(pair)
+	}
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 1_000 {
+				snapshot := Get()
+				got := limits{
+					cpu:    snapshot.Runtime.CPULimitCores,
+					memory: snapshot.Runtime.MemoryLimitMiB,
+				}
+				if !valid[got] {
+					select {
+					case errCh <- fmt.Errorf("observed mixed config snapshot: %+v", got):
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
 	}
 }

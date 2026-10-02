@@ -26,7 +26,7 @@ integration_huatuo_bamai_start write_include_filter_config
 huatuo_bamai_await_metrics
 
 check_metrics "include filter" \
-	"memory_vmstat_thp_split_pmd" "memory_vmstat_thp_split_pud" \
+	"memory_vmstat_pgfault" \
 	"netstat_Tcp_RetransSegs" "netstat_TcpExt_TCPLostRetransmit" \
 	'netdev_.*device="eth0"' \
 	'mountpoint_perm_ro{.*mountpoint="/boot"' \

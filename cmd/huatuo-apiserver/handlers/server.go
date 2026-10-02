@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,63 +15,110 @@
 package handlers
 
 import (
-	"time"
+	"errors"
+	"fmt"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
-	"huatuo-bamai/internal/job"
-	"huatuo-bamai/internal/server"
-	"huatuo-bamai/internal/version"
+	serverapi "github.com/ccfos/huatuo/apis/v1/server"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/trace"
+	"github.com/ccfos/huatuo/internal/job"
+	"github.com/ccfos/huatuo/internal/profiling/publication"
+	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
+	"github.com/ccfos/huatuo/internal/server"
+	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/version"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
+	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ServerOptions groups the dependencies required to start the API server.
 type ServerOptions struct {
-	Addr             string
-	PromReg          *prometheus.Registry
-	ProfilingManager *job.Manager
-	TracingManager   *job.Manager
-	VersionInfo      *version.Info
+	Addr                string
+	PromReg             *prometheus.Registry
+	JobManager          *job.Manager
+	ProfileStorage      *profilingstore.Store
+	ProfileQueryService *profilequery.ProfileQueryService
+	ProfilePublications *publication.Store
+	ProfilingConfig     profiling.Config
+	AuthUsers           []server.UserConfig
+	EnablePProf         bool
+	VersionInfo         *version.Info
+	RateLimit           *server.RateLimitConfig
 }
 
-// ServerStart starts the API service with the given configuration.
-func ServerStart(opts ServerOptions) error {
-	httpServer := server.NewServer(&server.Config{
-		EnablePProf:     false,
-		EnableRateLimit: false,
-		AuthUsers:       getUserConfigs(),
-		PromReg:         opts.PromReg,
-		VersionInfo:     opts.VersionInfo,
-	})
-
-	// Register trace routes
-	httpServer.MustRegisterRoutes("/v1/traces", trace.NewHandler(opts.TracingManager).Handlers)
-	httpServer.MustRegisterRoutes("/v1/profiles", profiling.NewHandler(opts.ProfilingManager).Handlers)
-
-	_ = httpServer.Run(&server.Option{
-		Addr:          opts.Addr,
-		RetryMaxTime:  5 * time.Minute,
-		RetryInterval: 1 * time.Minute,
-	})
-
-	return nil
-}
-
-// getUserConfigs converts apiserver config users to server.UserConfig.
-func getUserConfigs() []server.UserConfig {
-	cfg := config.Get()
-	users := make([]server.UserConfig, 0, len(cfg.Auth.Users))
-
-	for _, u := range cfg.Auth.Users {
-		users = append(users, server.UserConfig{
-			ID:          u.ID,
-			Name:        u.Name,
-			Permissions: u.Permissions,
-			IsAdmin:     u.IsAdmin,
-		})
+// Start starts the API service with generated business routes.
+func Start(opts *ServerOptions) (*server.Server, error) {
+	if opts == nil {
+		return nil, errors.New("start API server: options are required")
+	}
+	if opts.JobManager == nil {
+		return nil, errors.New("start API server: Job Manager is required")
+	}
+	if len(opts.AuthUsers) == 0 {
+		return nil, errors.New("start API server: at least one auth user is required")
 	}
 
-	return users
+	profilingService, err := profiling.NewService(
+		opts.JobManager,
+		opts.ProfileStorage,
+		opts.ProfilePublications,
+		opts.ProfilingConfig,
+	)
+	if err != nil {
+		return nil, err
+	}
+	tracingService, err := trace.NewService(opts.JobManager)
+	if err != nil {
+		return nil, err
+	}
+	apiHandler, err := NewAPIHandler(
+		profilingService,
+		tracingService,
+		opts.ProfileQueryService,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	httpServer := server.NewServer(&server.Config{
+		EnablePProf: opts.EnablePProf,
+		RateLimit:   opts.RateLimit,
+		AuthUsers:   opts.AuthUsers,
+		PublicPaths: []string{"/openapi.json", "/readyz"},
+		AdminPaths: []string{
+			"/v1/profiling/flamegraph/**",
+		},
+		PromReg:     opts.PromReg,
+		VersionInfo: opts.VersionInfo,
+		ErrorStatusMapper: response.ChainHTTPStatusMappers(
+			serverapi.HTTPStatusForErrorCode,
+			response.LegacyHTTPStatusForErrorCode,
+		),
+	})
+
+	errorHandlers := httpServer.StrictErrorHandlers()
+	strictHandler := serverapi.NewStrictHandlerWithOptions(
+		apiHandler,
+		nil,
+		serverapi.StrictGinServerOptions{
+			RequestErrorHandlerFunc:  errorHandlers.RequestError,
+			HandlerErrorFunc:         errorHandlers.HandlerError,
+			ResponseErrorHandlerFunc: errorHandlers.ResponseError,
+		},
+	)
+	if err := httpServer.RegisterOpenAPIHandlers(
+		serverapi.OpenAPIJSON(),
+		func(router httpGin.IRouter) {
+			serverapi.RegisterHandlers(router, strictHandler)
+		},
+	); err != nil {
+		return nil, fmt.Errorf("register Server API handlers: %w", err)
+	}
+
+	if err := httpServer.Start(opts.Addr); err != nil {
+		return nil, err
+	}
+	return httpServer, nil
 }

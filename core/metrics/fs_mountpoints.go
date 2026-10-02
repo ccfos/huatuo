@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,10 +17,10 @@ package collector
 import (
 	"fmt"
 
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 )
 
 type mountPointCollector struct{}
@@ -47,6 +47,7 @@ func (c *mountPointCollector) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
+	cfg := configSnapshot()
 	f, err := matcher.NewValueMatcher(cfg.MountPointStat.MountPointsIncluded, "")
 	if err != nil {
 		return nil, fmt.Errorf("mount point filter: %w", err)

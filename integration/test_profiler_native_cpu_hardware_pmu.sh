@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+
+# Copyright 2026 The HuaTuo Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Verify native on-CPU profiling can require hardware PMU sampling and still
+# produce the expected user-space call chain.
+
+set -euo pipefail
+
+source "${ROOT_DIR}/integration/lib.sh"
+
+# --- preconditions -----------------------------------------------------------
+
+is_container && skip "hardware PMU profiling requires bare-metal access"
+is_virtual_machine && skip "hardware PMU profiling requires a physical machine"
+
+bpf_tool_setup profiler native_oncpu_profiler profiler-hardware-pmu
+readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
+
+[[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip \
+	"perf_event_paranoid not readable: perf unavailable"
+readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
+[[ "${PARANOID}" -le 2 ]] || skip \
+	"kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
+
+# --- tunables ----------------------------------------------------------------
+
+readonly PROFILER_DURATION=10
+readonly PROFILER_FREQ=99
+readonly PROFILER_AGGR_INTERVAL=5
+readonly CHAIN_PATTERN=';f1;f2;f3 [0-9]+$'
+
+# --- workspace + cleanup -----------------------------------------------------
+
+WORK_DIR=${TOOL_WORK_DIR}
+FIXTURE_BIN="${WORK_DIR}/callchain"
+FIXTURE_OUT="${WORK_DIR}/callchain.out"
+FIXTURE_ERR="${WORK_DIR}/callchain.err"
+TARGET_PID=""
+
+cleanup() {
+	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5 || true
+}
+trap cleanup EXIT
+
+# --- build and launch fixture ------------------------------------------------
+
+compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
+
+log_info "launching target with 30s"
+"${FIXTURE_BIN}" > "${FIXTURE_OUT}" 2> "${FIXTURE_ERR}" &
+TARGET_PID=$!
+kill -0 "${TARGET_PID}" 2> /dev/null || fatal \
+	"fixture exited immediately (pid=${TARGET_PID})"
+
+log_info "target pid=${TARGET_PID}"
+
+# --- run profiler ------------------------------------------------------------
+
+log_info "running hardware PMU profiler for ${PROFILER_DURATION}s @ ${PROFILER_FREQ}Hz"
+if ! "${TOOL_BIN}" \
+	--type cpu \
+	--language c \
+	--pid "${TARGET_PID}" \
+	--duration "${PROFILER_DURATION}" \
+	--freq "${PROFILER_FREQ}" \
+	--require-hardware-pmu \
+	--output-format collapsed \
+	--output-path "${WORK_DIR}" \
+	--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
+	> "${TOOL_OUT}" 2> "${TOOL_ERR}"; then
+	fatal "hardware PMU profiler exited non-zero (see ${TOOL_ERR})"
+fi
+
+# --- assert ------------------------------------------------------------------
+
+mapfile -t FOLDED_FILES < <(find "${WORK_DIR}" -maxdepth 1 -name 'perf_*.folded' -type f)
+[[ ${#FOLDED_FILES[@]} -gt 0 ]] || fatal \
+	"no perf_*.folded file produced in ${WORK_DIR}"
+
+MATCH_COUNT=$(grep -hE "${CHAIN_PATTERN}" "${FOLDED_FILES[@]}" | wc -l) || true
+[[ "${MATCH_COUNT}" -gt 0 ]] || fatal \
+	"f1->f2->f3 chain not found in hardware PMU output"
+
+log_info "matched hardware PMU stack lines: got ${MATCH_COUNT}, want >= 1"

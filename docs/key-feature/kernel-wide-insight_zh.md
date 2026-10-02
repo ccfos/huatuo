@@ -133,20 +133,11 @@ Ref:
 - https://docs.kernel.org/scheduler/sched-bwc.html#statistics
 - https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#cpu-interface-files
 
-此外，滴滴内核支持如下争抢指标，未来会开放：
+内核导出 `wait_sum` 时提供以下争抢指标：
 ```bash
-# HELP huatuo_bamai_cpu_stat_container_wait_rate wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_wait_rate gauge
-huatuo_bamai_cpu_stat_container_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_throttle_wait_rate throttle wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_throttle_wait_rate gauge
-huatuo_bamai_cpu_stat_container_throttle_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_inner_wait_rate inner wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_inner_wait_rate gauge
-huatuo_bamai_cpu_stat_container_inner_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_exter_wait_rate exter wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_exter_wait_rate gauge
-huatuo_bamai_cpu_stat_container_exter_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_cpu_stat_container_wait_sum_percent percentage of CFS cgroup schedulable time spent waiting on the parent runqueue (requires kernel.sched_schedstats=1)
+# TYPE huatuo_bamai_cpu_stat_container_wait_sum_percent gauge
+huatuo_bamai_cpu_stat_container_wait_sum_percent{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
 ```
 
 ### 资源突发
@@ -614,7 +605,7 @@ huatuo_bamai_netdev_qdisc_requeues_total{device="ens2",host="hostname",kind="fq_
 
 |指标|意义|单位|对象| 标签 |
 |---|---|---|---|---|
-|qdisc_backlog|后备排队待发送的包数|字节|物理机| device, host, kind, region |
+|qdisc_backlog|后备排队待发送的字节数|字节|物理机| device, host, kind, region |
 |qdisc_current_queue_length|当前排队的包量|计数|物理机| device, host, kind, region |
 |qdisc_overlimits_total|超限次数|计数|物理机| device, host, kind, region |
 |qdisc_requeues_total|由于网卡/驱动暂时无法发送而被重新入队的次数|计数|物理机| device, host, kind, region |
@@ -1238,6 +1229,53 @@ huatuo_bamai_iolatency_blkdisk_freeze{disk="253:1",host="hostname",region="dev"}
 |---|---|---|---|---|
 |iolatency_blkdisk_freeze|宿主机磁盘 freeze 事件次数|计数|宿主|host, region, disk|
 
+### 磁盘 IO 统计
+
+`diskio` 通过读取 `/proc/diskstats` 和 `/proc/stat` 采集 per-device 磁盘 IO 指标和系统级 CPU iowait。与 `iolatency` 不同，`diskio` 基于 procfs 而非 eBPF，提供可通过 rate 计算延迟的累积计数器。
+
+默认配置通过 `BlackList` 禁用该 collector。需要启用这些指标时，从
+`BlackList` 中移除 `diskio`。
+
+Counter 指标为累积值，需使用 Prometheus `rate()` 计算 per-second 值（IOPS、吞吐量）。Gauge 指标为瞬时值。平均延迟通过 PromQL 中的 I/O 时间 rate 除以请求 rate 计算。
+
+```bash
+# HELP huatuo_bamai_diskio_read_requests_total Total number of read requests completed successfully.
+# TYPE huatuo_bamai_diskio_read_requests_total counter
+huatuo_bamai_diskio_read_requests_total{device="sda",host="hostname",region="dev"} 1000
+# HELP huatuo_bamai_diskio_write_requests_total Total number of write requests completed successfully.
+# TYPE huatuo_bamai_diskio_write_requests_total counter
+huatuo_bamai_diskio_write_requests_total{device="sda",host="hostname",region="dev"} 2000
+# HELP huatuo_bamai_diskio_read_bytes_total Total number of bytes read from the device.
+# TYPE huatuo_bamai_diskio_read_bytes_total counter
+huatuo_bamai_diskio_read_bytes_total{device="sda",host="hostname",region="dev"} 2.56e+07
+# HELP huatuo_bamai_diskio_written_bytes_total Total number of bytes written to the device.
+# TYPE huatuo_bamai_diskio_written_bytes_total counter
+huatuo_bamai_diskio_written_bytes_total{device="sda",host="hostname",region="dev"} 4.096e+07
+# HELP huatuo_bamai_diskio_io_in_progress Number of I/O requests currently in flight (queue depth).
+# TYPE huatuo_bamai_diskio_io_in_progress gauge
+huatuo_bamai_diskio_io_in_progress{device="sda",host="hostname",region="dev"} 50
+# HELP huatuo_bamai_diskio_read_time_seconds_total Total seconds spent by completed read requests.
+# TYPE huatuo_bamai_diskio_read_time_seconds_total counter
+huatuo_bamai_diskio_read_time_seconds_total{device="sda",host="hostname",region="dev"} 3
+# HELP huatuo_bamai_diskio_write_time_seconds_total Total seconds spent by completed write requests.
+# TYPE huatuo_bamai_diskio_write_time_seconds_total counter
+huatuo_bamai_diskio_write_time_seconds_total{device="sda",host="hostname",region="dev"} 6
+# HELP huatuo_bamai_diskio_disk_iowait_percent CPU time spent waiting for I/O during the collection interval.
+# TYPE huatuo_bamai_diskio_disk_iowait_percent gauge
+huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
+```
+
+|指标|意义|单位|对象|标签|
+|---|---|---|---|---|
+|read_requests_total|累积读请求完成数（field 4），使用 `rate()` 计算读 IOPS|计数|宿主|host, region, device|
+|write_requests_total|累积写请求完成数（field 8），使用 `rate()` 计算写 IOPS|计数|宿主|host, region, device|
+|read_bytes_total|累积读取字节数（field 6 × 512），使用 `rate()` 计算读吞吐量|字节|宿主|host, region, device|
+|written_bytes_total|累积写入字节数（field 10 × 512），使用 `rate()` 计算写吞吐量|字节|宿主|host, region, device|
+|read_time_seconds_total|已完成读请求的累积耗时（field 7）|秒|宿主|host, region, device|
+|write_time_seconds_total|已完成写请求的累积耗时（field 11）|秒|宿主|host, region, device|
+|io_in_progress|当前正在进行的 I/O 请求数，即队列深度（field 12）|计数|宿主|host, region, device|
+|disk_iowait_percent|采集区间内 CPU 等待 I/O 完成的时间占比|百分比|宿主|host, region|
+
 
 ## 通用系统
 
@@ -1297,3 +1335,48 @@ huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
 |metax_gpu_dpm_performance_level|GPU DPM 性能等级|-|gpu, die, ip|sml.GetDieDPMPerformanceLevel|
 |metax_gpu_ecc_memory_errors_total|GPU ECC 内存错误次数|计数|gpu, die, memory_type, error_type|sml.GetDieECCMemoryInfo|
 |metax_gpu_ecc_memory_retired_pages_total|GPU ECC 内存退役页数|计数|gpu, die|sml.GetDieECCMemoryInfo|
+
+- 摩尔线程 (MThreads)
+
+摩尔线程 GPU 监控通过 MTML（摩尔线程管理库）实现。库文件在启动时通过 SONAME 搜索（`libmtml.so.2` 然后 `libmtml.so`）自动发现。静态设备信息会被缓存，仅在重新初始化时重建；动态指标在每次抓取时采集。
+
+配置：从 `BlackList` 中移除 `mthreads_gpu` 以启用。指标组由 `[MetricCollector.Mthreads]` 开关控制（`EnableHealth`、`EnablePCIe`、`EnableMTLink`）。
+
+|指标|描述|单位|标签|来源|
+|----|---|---|---|---|
+|huatuo_bamai_mthreads_gpu_library_info|MTML 库信息|-|version|mtml.LibraryVersion|
+|huatuo_bamai_mthreads_gpu_device_info|GPU 信息|-|gpu, name, brand, serial|mtml.Device.Name/Brand/SerialNumber|
+|huatuo_bamai_mthreads_gpu_device_pci_info|GPU PCI 信息|-|gpu, sbdf|mtml.Device.PciSbdf|
+|huatuo_bamai_mthreads_gpu_device_spec|GPU 规格|-|gpu, cores|mtml.Device.GpuCores|
+|huatuo_bamai_mthreads_gpu_device_bios_version|GPU BIOS 版本|-|gpu, bios|mtml.Device.BiosVersion|
+|huatuo_bamai_mthreads_gpu_device_musa_capability|GPU MUSA 计算能力|-|gpu, musa_capability|mtml.Device.MusaComputeCapability|
+|huatuo_bamai_mthreads_gpu_memory_info|GPU 内存信息|-|gpu, type, vendor, bus_width|mtml.Device.InitMemory|
+|huatuo_bamai_mthreads_gpu_pcie_link_max_speed_gt_per_sec|GPU PCIe 最大链路速率（硬件能力）|GT/s|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_pcie_link_max_width_lanes|GPU PCIe 最大链路宽度（硬件能力）|lanes|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_device_power_watts|GPU 设备功耗|W|gpu|mtml.Device.PowerUsage|
+|huatuo_bamai_mthreads_gpu_gpu_temperature_celsius|GPU 温度|°C|gpu|mtml.Gpu.Temperature|
+|huatuo_bamai_mthreads_gpu_memory_temperature_celsius|GPU 内存温度|°C|gpu|mtml.Memory.Temperature|
+|huatuo_bamai_mthreads_gpu_gpu_utilization_percent|GPU 利用率（0-100）|%|gpu|mtml.Gpu.Utilization|
+|huatuo_bamai_mthreads_gpu_memory_utilization_percent|GPU 内存利用率（0-100）|%|gpu|mtml.Memory.Utilization|
+|huatuo_bamai_mthreads_gpu_memory_total_bytes|GPU 总内存|bytes|gpu|mtml.Memory.Total|
+|huatuo_bamai_mthreads_gpu_memory_used_bytes|GPU 已使用内存|bytes|gpu|mtml.Memory.Used|
+|huatuo_bamai_mthreads_gpu_gpu_clock_mhz|GPU 时钟频率|MHz|gpu|mtml.Gpu.Clock|
+|huatuo_bamai_mthreads_gpu_gpu_max_clock_mhz|GPU 最大时钟频率|MHz|gpu|mtml.Gpu.MaxClock|
+|huatuo_bamai_mthreads_gpu_memory_clock_mhz|GPU 内存时钟频率|MHz|gpu|mtml.Memory.Clock|
+|huatuo_bamai_mthreads_gpu_memory_max_clock_mhz|GPU 内存最大时钟频率|MHz|gpu|mtml.Memory.MaxClock|
+|huatuo_bamai_mthreads_gpu_gpu_voltage_volts|GPU 电压|V|gpu|mtml.Gpu.Voltage|
+|huatuo_bamai_mthreads_gpu_gpu_power_limit_watts|GPU 强制功耗限制|W|gpu|mtml.Gpu.EnforcedPowerLimit|
+|huatuo_bamai_mthreads_gpu_gpu_power_default_limit_watts|GPU 默认功耗管理限制|W|gpu|mtml.Gpu.PowerManagementDefaultLimit|
+|huatuo_bamai_mthreads_gpu_fan_rpm|GPU 风扇转速|RPM|gpu, fan|mtml.Device.FanRpm|
+|huatuo_bamai_mthreads_gpu_fan_speed_percent|GPU 风扇速度百分比|%|gpu, fan|mtml.Device.FanSpeed|
+|huatuo_bamai_mthreads_gpu_gpu_pstate|GPU 性能状态（0=P0）|-|gpu|mtml.Device.PerformanceState|
+|huatuo_bamai_mthreads_gpu_vpu_utilization_percent|GPU VPU 利用率（0-100）|%|gpu|mtml.Vpu.Utilization|
+|huatuo_bamai_mthreads_gpu_vpu_encoder_utilization_percent|GPU VPU 编码器利用率（0-100）|%|gpu|mtml.Vpu.Utilization|
+|huatuo_bamai_mthreads_gpu_vpu_decoder_utilization_percent|GPU VPU 解码器利用率（0-100）|%|gpu|mtml.Vpu.Utilization|
+|huatuo_bamai_mthreads_gpu_vpu_clock_mhz|GPU VPU 时钟频率|MHz|gpu|mtml.Vpu.Clock|
+|huatuo_bamai_mthreads_gpu_pcie_link_speed_gt_per_sec|GPU PCIe 当前链路速率|GT/s|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_pcie_link_width_lanes|GPU PCIe 当前链路宽度|lanes|gpu|mtml.Device.PciInfo|
+|huatuo_bamai_mthreads_gpu_pcie_replay_total|GPU PCIe 重放计数器|count|gpu|mtml.Device.PcieReplayCounter|
+|huatuo_bamai_mthreads_gpu_mtlink_state|GPU MtLink 状态（0=DOWN,1=UP,2=DOWNGRADE）|-|gpu, link|mtml.Device.MtLinkState|
+|huatuo_bamai_mthreads_gpu_mtlink_link_bandwidth_gb_s|GPU MtLink 每链路最大带宽（设备静态规格，非实时吞吐）|GB/s|gpu|mtml.Device.MtLinkSpec|
+|huatuo_bamai_mthreads_gpu_mtlink_link_count|GPU MtLink 最大支持链路数（设备静态规格）|links|gpu|mtml.Device.MtLinkSpec|

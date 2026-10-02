@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@ import (
 
 	"github.com/cilium/ebpf"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 // Indices into profiler_state_map. The BPF program owns the layout; userspace
@@ -34,12 +34,6 @@ const (
 	SampleCountAIdx  uint32 = 1
 	SampleCountBIdx  uint32 = 2
 )
-
-// StackTraceID pairs a kernel and user stack-map ID emitted with each event.
-type StackTraceID struct {
-	KernelID int32
-	UserID   int32
-}
 
 // StackTraceLen matches PERF_MAX_STACK_DEPTH used when allocating BPF stack maps.
 const StackTraceLen = 127

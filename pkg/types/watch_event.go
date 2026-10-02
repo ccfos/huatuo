@@ -31,15 +31,16 @@ type WatchEvent struct {
 // It exposes a curated subset of internal Document fields so that internal
 // storage changes do not affect the public API contract.
 type WatchEventData struct {
-	Hostname               string `json:"hostname"`
-	Region                 string `json:"region"`
-	ObservedTimestamp      string `json:"observed_timestamp"`
-	ContainerID            string `json:"container_id,omitempty"`
-	ContainerHostname      string `json:"container_hostname,omitempty"`
-	ContainerHostNamespace string `json:"container_host_namespace,omitempty"`
-	ContainerType          string `json:"container_type,omitempty"`
-	ContainerQos           string `json:"container_qos,omitempty"`
-	TracerName             string `json:"tracer_name,omitempty"`
-	TracerID               string `json:"tracer_id,omitempty"`
-	TracerRunType          string `json:"tracer_run_type,omitempty"`
+	Hostname                string `json:"hostname"`
+	Region                  string `json:"region"`
+	ObservedTimestamp       string `json:"observed_timestamp"`
+	KernelObservedTimestamp string `json:"kernel_observed_timestamp,omitempty"`
+	ContainerID             string `json:"container_id,omitempty"`
+	ContainerHostname       string `json:"container_hostname,omitempty"`
+	ContainerHostNamespace  string `json:"container_host_namespace,omitempty"`
+	ContainerType           string `json:"container_type,omitempty"`
+	ContainerQos            string `json:"container_qos,omitempty"`
+	TracerName              string `json:"tracer_name,omitempty"`
+	TracerID                string `json:"tracer_id,omitempty"`
+	TracerRunType           string `json:"tracer_run_type,omitempty"`
 }

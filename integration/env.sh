@@ -27,9 +27,11 @@ export ROOT_DIR
 
 HUATUO_BAMAI_BIN="${ROOT_DIR}/_output/bin/huatuo-bamai"
 export HUATUO_BAMAI_BIN
+HUATUO_APISERVER_BIN="${ROOT_DIR}/_output/bin/huatuo-apiserver"
+export HUATUO_APISERVER_BIN
 HUATUO_BAMAI_TEST_TMPDIR=$(mktemp -d /tmp/huatuo-test.XXXXXX)
 export HUATUO_BAMAI_TEST_TMPDIR
-HUATUO_BAMAI_MATCH_KEYWORDS="\"error\"|panic"
+HUATUO_BAMAI_MATCH_KEYWORDS='level="?(error|panic|fatal)"?|panic:'
 export HUATUO_BAMAI_MATCH_KEYWORDS
 HUATUO_BAMAI_TEST_FIXTURES="${ROOT_DIR}/integration/fixtures"
 export HUATUO_BAMAI_TEST_FIXTURES
@@ -46,16 +48,16 @@ HUATUO_BAMAI_ADDR="http://127.0.0.1:19704"
 export HUATUO_BAMAI_ADDR
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 export HUATUO_BAMAI_METRICS_API
-HUATUO_BAMAI_PODS_API="${HUATUO_BAMAI_ADDR}/containers/json"
-export HUATUO_BAMAI_PODS_API
 WAIT_HUATUO_BAMAI_TIMEOUT=120 # second
 export WAIT_HUATUO_BAMAI_TIMEOUT
 WAIT_HUATUO_BAMAI_INTERVAL=2 # second
 export WAIT_HUATUO_BAMAI_INTERVAL
-JAVA_PROFILER_TOOL_PATH=${JAVA_PROFILER_TOOL_PATH:-/home/work/async-profiler}
-export JAVA_PROFILER_TOOL_PATH
-PYTHON_PROFILER_TOOL_PATH=${PYTHON_PROFILER_TOOL_PATH:-/home/didi/.local/bin}
-export PYTHON_PROFILER_TOOL_PATH
+WAIT_HUATUO_APISERVER_TIMEOUT=120 # second
+export WAIT_HUATUO_APISERVER_TIMEOUT
+WAIT_HUATUO_APISERVER_INTERVAL=2 # second
+export WAIT_HUATUO_APISERVER_INTERVAL
+PROFILER_TOOL_DIR=${PROFILER_TOOL_DIR:-${ROOT_DIR}/_output/tools}
+export PROFILER_TOOL_DIR
 
 # Arrays cannot be exported to child processes via environment variables.
 # Convert the E2E array to a string for reconstruction in child processes.
@@ -85,9 +87,11 @@ export BUSINESS_E2E_TEST_POD_COUNT
 
 KUBELET_PODS_API="https://127.0.0.1:10250/pods"
 export KUBELET_PODS_API
-KUBELET_CERT="/var/lib/kubelet/pki/kubelet-client-current.pem"
+# Match huatuo-bamai.conf: the kubelet's own client identity cannot query /pods
+# with kubeadm's Node authorization. Allow custom clusters to supply credentials.
+KUBELET_CERT=${KUBELET_CERT:-/etc/kubernetes/pki/apiserver-kubelet-client.crt}
 export KUBELET_CERT
-KUBELET_KEY="/var/lib/kubelet/pki/kubelet-client-current.pem"
+KUBELET_KEY=${KUBELET_KEY:-/etc/kubernetes/pki/apiserver-kubelet-client.key}
 export KUBELET_KEY
 
 CURL_TIMEOUT=(

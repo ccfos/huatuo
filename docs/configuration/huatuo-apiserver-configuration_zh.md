@@ -1,0 +1,245 @@
+---
+title: huatuo-apiserver 配置说明
+type: docs
+description:
+author: HUATUO Team
+date: 2026-07-27
+weight: 5
+---
+
+### 1. 概述
+
+`huatuo-apiserver` 使用 TOML 配置文件并启用严格解析。未知或废弃的配置项
+会阻止服务启动。以下被注释的配置使用所示默认值。
+
+### 2. 日志与运行时资源限制
+
+默认不创建 huatuo-apiserver 自身 cgroup。只有显式传入 `--enable-cgroup` 时，
+本节 `[Runtime]` 配置才会生效；Kubernetes 和 systemd 部署应使用各自的资源管理配置。
+
+```toml
+# Log Configuration
+[Log]
+    # - Level
+    # The log level for huatuo-apiserver: Debug, Info, Warn, Error, Panic.
+    # Default: Info
+    #
+    # Level = "Info"
+
+# Runtime limits for the huatuo-apiserver process.
+[Runtime]
+    # - CPULimitCores
+    # CPU limit in cores.
+    # Default: 20
+    #
+    # - MemoryLimitMiB
+    # Memory limit in MiB.
+    # Default: 4096
+    #
+    # CPULimitCores = 20
+    # MemoryLimitMiB = 4096
+```
+
+- `Log.Level` 支持 `Debug`、`Info`、`Warn`、`Error` 和 `Panic`。
+- `CPULimitCores` 以 CPU 核数限制 API 服务进程。
+- `MemoryLimitMiB` 以 MiB 限制 API 服务进程。
+
+资源限制必须大于零。命令行参数 `--log-debug` 的优先级高于
+`Log.Level`。
+
+### 3. HTTP 服务
+
+```toml
+# HTTP server configuration.
+[APIServer]
+    # - ListenAddress
+    # Listen address in "host:port" form.
+    # Default: ":12740"
+    #
+    # ListenAddress = ":12740"
+
+    # Request rate limiting.
+    [APIServer.RateLimit]
+        # - RequestsPerSecond
+        # Maximum process-wide request rate per second.
+        # Default: 200
+        #
+        # - Burst
+        # Maximum process-wide request burst.
+        # Default: 200
+        #
+        # RequestsPerSecond = 200
+        # Burst = 200
+```
+
+`ListenAddress` 使用 `host:port` 格式，主机为空表示监听所有网络接口。
+`RateLimit` 是进程级令牌桶，两个值都必须大于零。HTTP 超时和请求大小限制
+属于服务固定防护参数，不对用户开放配置。
+
+### 4. 任务与 Agent 通信
+
+```toml
+# Job persistence.
+[Jobs]
+    # - StoreDSN
+    # SQLite DSN. Relative paths are resolved from this file's directory.
+    # Default: "jobs.db"
+    #
+    # StoreDSN = "jobs.db"
+
+    # Job 记录使用内部修订号进行并发更新。仅支持当前服务版本写入的记录；
+    # 启动本版本前，需要停止旧服务并删除或替换不兼容的数据库。
+
+    # Profiling and tracing retain independent quotas because their resource
+    # costs and expected concurrency differ.
+    [Jobs.Profiling]
+        # - MaxConcurrentPerHost
+        # Maximum concurrent profiling jobs on one host.
+        # Default: 3
+        #
+        # - MaxConcurrent
+        # Maximum concurrent profiling jobs across all hosts.
+        # Default: 500
+        #
+        # MaxConcurrentPerHost = 3
+        # MaxConcurrent = 500
+
+    [Jobs.Tracing]
+        # - MaxConcurrentPerHost
+        # Maximum concurrent tracing jobs on one host.
+        # Default: 5
+        #
+        # - MaxConcurrent
+        # Maximum concurrent tracing jobs across all hosts.
+        # Default: 1000
+        #
+        # MaxConcurrentPerHost = 5
+        # MaxConcurrent = 1000
+
+    # Apiserver 独立维护的 Job 生命周期策略。
+    [Jobs.Controller]
+        # StatusPollIntervalSeconds = 5
+        # PendingTimeoutSeconds = 30
+        # CompletionGracePeriodSeconds = 60
+        # NodeUnavailableGracePeriodSeconds = 30
+        # JobRetentionPeriodHours = 720
+
+# huatuo-bamai Agent HTTP client configuration.
+[Agent]
+    # - HTTPPort
+    # Agent HTTP server port.
+    # Default: 19704
+    #
+    # HTTPPort = 19704
+
+    [Agent.Auth]
+        # 必须与各 Node 的 HTTPServer.Auth.BearerToken 一致。
+        BearerToken = "REPLACE_WITH_RANDOM_HEX"
+```
+
+`StoreDSN` 是持久化任务状态的 SQLite 数据源。相对路径基于配置文件目录
+解析。
+
+Profiling 和 tracing 复用相同的配额结构，但保留独立配置值。两类任务的
+资源开销和预期并发不同，统一限额会导致一类任务挤占另一类任务。
+
+Agent 请求传输保护使用客户端内部默认值。Job 轮询、各阶段 deadline、Node
+不可用宽限期和保留期由 `Jobs.Controller` 独立维护，不与 Node 运行时协商。
+
+服务退出时不停止 Node 上的活动 Operation。新的 API 服务实例从持久化状态
+恢复活动 Job 并继续监督，不重放 Start。
+
+### 5. Elasticsearch/OpenSearch
+
+```toml
+# Optional Elasticsearch/OpenSearch backend for querying profiling data.
+[Elasticsearch]
+    # Address, Username, and Password must be configured together to enable
+    # this backend.
+    #
+    # - Address
+    # Elasticsearch or OpenSearch HTTP address.
+    #
+    # - Username
+    # Elasticsearch or OpenSearch username.
+    #
+    # - Password
+    # Elasticsearch or OpenSearch password.
+    #
+    # - Index
+    # Index containing huatuo-bamai profiling data.
+    # Default: "huatuo_bamai"
+    #
+    # Address = "https://elasticsearch.example.com:9200"
+    # Username = "huatuo-apiserver"
+    # Password = "REPLACE_WITH_STRONG_PASSWORD"
+    # Index = "huatuo_bamai"
+```
+
+存储是可选能力。`Address`、`Username` 和 `Password` 必须同时为空或同时
+配置。`Index` 默认为 `huatuo_bamai`，并且应与采集端索引一致。禁用存储
+时，不注册原始 profile 和火焰图查询路由。
+
+### 6. 认证与授权
+
+```toml
+# Authentication configuration.
+[Auth]
+    # - ID
+    # Stable principal identifier stored with jobs.
+    #
+    # - BearerToken
+    # Secret used only to authenticate requests. IDs and tokens must be unique.
+    #
+    # - Admin
+    # Whether the principal has unrestricted API access.
+    #
+    # - Permissions
+    # API method and path patterns granted to a restricted principal.
+    #
+    # Administrator example:
+    # [[Auth.Users]]
+    #     ID = "administrator"
+    #     BearerToken = "REPLACE_WITH_RANDOM_HEX"
+    #     Admin = true
+    #
+    # Restricted example:
+    # [[Auth.Users]]
+    #     ID = "huatuo-front"
+    #     BearerToken = "REPLACE_WITH_ANOTHER_RANDOM_HEX"
+    #     Permissions = [
+    #         "GET /v1/tracing",
+    #         "GET /v1/tracing/**",
+    #         "GET /v1/profiling",
+    #         "GET /v1/profiling/**",
+    #     ]
+```
+
+- `ID` 是必填的稳定主体标识，会随任务持久化。
+- `BearerToken` 是必填密钥，仅用于请求认证。
+- `Admin` 授予全部路由权限，并忽略 `Permissions`。
+- 非管理员必须配置 `Permissions`。权限可以仅包含路径，也可以包含 HTTP
+  方法前缀；`*` 匹配单个路径段，`**` 匹配后续路径。
+
+用户 ID 和 BearerToken 都必须唯一。轮换 BearerToken 不会改变任务归属，
+因为 Token 不再作为用户 ID 使用或写入任务存储。
+
+`/readyz`、`/metrics` 和 `/version` 为公开路由。
+`/debug/pprof/**` 和 `/v1/profiling/flamegraph/**` 仅管理员可访问。
+
+### 7. 性能剖析
+
+```toml
+# Profiling 结果链接配置。
+[Profiling]
+    # - DashboardBaseURL
+    # Optional dashboard base URL. Result URLs are omitted when empty.
+    # Default: empty
+    #
+    # DashboardBaseURL = "https://grafana.example.com/d"
+```
+
+- `DashboardBaseURL` 可选；配置时必须使用 HTTP 或 HTTPS。为空时，已完成
+  或结果未知的任务不生成 Dashboard URL。
+
+Profiler 执行和聚合参数只在 Node 本地配置中维护。

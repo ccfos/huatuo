@@ -40,14 +40,4 @@ struct bio___7_0 {
 	u64 issue_time_ns;
 } __attribute__((preserve_access_index));
 
-/*
- * hungtask: trace_event_raw_sched_process_hang::comm changed from a
- * fixed-size __array to a __data_loc string on 7.0+.
- */
-struct trace_event_raw_sched_process_hang___7_0 {
-	struct trace_entry ent;
-	u32 __data_loc_comm;
-	pid_t pid;
-} __attribute__((preserve_access_index));
-
 #endif /* __BPF_COMPAT_7_0_H__ */

@@ -1,9 +1,9 @@
 ---
-title: Storage
+title: Storage Service
 type: docs
 description: ""
 author: HUATUO Team
-date: 2026-05-05
+date: 2026-07-27
 weight: 1
 ---
 
@@ -104,10 +104,10 @@ docker logs opensearch
 
 #### 3. Configure huatuo-bamai
 
-Add the following configuration to `huatuo-bamai.conf`. The default username and password for the OpenSearch container image are both `admin`. For a full description of storage configuration options, refer to the Configuration Guide.
+Add the following configuration to `huatuo-bamai.conf`. The default username and password for the OpenSearch container image are both `admin`. For a full description of storage configuration options, see the [Configuration Guide](/docs/configuration/huatuo-bamai-configuration_en.md).
 
 ```toml
-[Storage.ES]
+[Storage.Elasticsearch]
     Address = "https://127.0.0.1:9200"
     Index = "huatuo_bamai"
     Username = "admin"
@@ -141,23 +141,22 @@ Example response:
     "_source" : {
       "hostname" : "hostname",
       "region" : "dev",
-      "uploaded_time" : "2026-05-07T00:11:49.753166222Z",
-      "time" : "2026-05-07 00:11:49.753 +0000",
+      "uploaded_timestamp" : "2026-05-07T00:11:49.753166222Z",
       "tracer_name" : "net_rx_latency",
-      "tracer_time" : "2026-05-07 00:11:49.753 +0000",
-      "tracer_type" : "auto",
+      "observed_timestamp" : "2026-05-07T00:11:49.753166222Z",
+      "tracer_type" : "event",
       "tracer_data" : {
         "comm" : "<nil>",
         "pid" : 0,
-        "where" : "RX_STAGE_NETIF",
+        "latency_stage" : "RX_STAGE_NETIF",
         "latency_ms" : 1776078133565,
-        "saddr" : "127.0.0.1",
-        "daddr" : "127.0.0.1",
-        "sport" : 37736,
-        "dport" : 9200,
-        "seq" : 1080592402,
-        "ack_seq" : 2465063876,
-        "pkt_len" : 781
+        "tcp_saddr" : "127.0.0.1",
+        "tcp_daddr" : "127.0.0.1",
+        "tcp_sport" : 37736,
+        "tcp_dport" : 9200,
+        "tcp_seq" : 1080592402,
+        "tcp_ack_seq" : 2465063876,
+        "packet_len_bytes" : 781
       }
     }
 }
@@ -228,10 +227,10 @@ Example response:
 
 #### 3. Configure huatuo-bamai
 
-Add the following configuration to `huatuo-bamai.conf`. The default username for the Elasticsearch container image is `elastic`; the password is set via the `ELASTIC_PASSWORD` environment variable. For a full description of storage configuration options, refer to the Configuration Guide.
+Add the following configuration to `huatuo-bamai.conf`. The default username for the Elasticsearch container image is `elastic`; the password is set via the `ELASTIC_PASSWORD` environment variable. For a full description of storage configuration options, see the [Configuration Guide](/docs/configuration/huatuo-bamai-configuration_en.md).
 
 ```toml
-[Storage.ES]
+[Storage.Elasticsearch]
     Address = "https://127.0.0.1:9200"
     Index = "huatuo_bamai"
     Username = "elastic"
@@ -265,23 +264,22 @@ Example response:
     "_source" : {
       "hostname" : "hostname",
       "region" : "dev",
-      "uploaded_time" : "2026-05-07T02:51:37.696263325Z",
-      "time" : "2026-05-07 02:51:37.696 +0000",
+      "uploaded_timestamp" : "2026-05-07T02:51:37.696263325Z",
       "tracer_name" : "net_rx_latency",
-      "tracer_time" : "2026-05-07 02:51:37.696 +0000",
-      "tracer_type" : "auto",
+      "observed_timestamp" : "2026-05-07T02:51:37.696263325Z",
+      "tracer_type" : "event",
       "tracer_data" : {
         "comm" : "<nil>",
         "pid" : 0,
-        "where" : "RX_STAGE_NETIF",
+        "latency_stage" : "RX_STAGE_NETIF",
         "latency_ms" : 1776078133565,
-        "saddr" : "127.0.0.1",
-        "daddr" : "127.0.0.1",
-        "sport" : 2379,
-        "dport" : 36706,
-        "seq" : 950542706,
-        "ack_seq" : 1960972383,
-        "pkt_len" : 91
+        "tcp_saddr" : "127.0.0.1",
+        "tcp_daddr" : "127.0.0.1",
+        "tcp_sport" : 2379,
+        "tcp_dport" : 36706,
+        "tcp_seq" : 950542706,
+        "tcp_ack_seq" : 1960972383,
+        "packet_len_bytes" : 91
       }
     }
 }
@@ -353,7 +351,7 @@ Example response:
 #### 3. Configure huatuo-bamai
 
 ```toml
-[Storage.ES]
+[Storage.Elasticsearch]
     Address = "http://127.0.0.1:9200"
     Index = "huatuo_bamai"
     Username = "elastic"
@@ -389,7 +387,7 @@ curl -k -u elastic:123456 -X GET "http://localhost:9200/huatuo_bamai/_count?pret
 
 ### System Architecture
 
-The HUATUO Storage module runs on each node. It writes kernel events captured by the Tracer to the local directory and to Elasticsearch or OpenSearch. Both backends share the same `[Storage.ES]` configuration interface and are differentiated by address.
+The HUATUO Storage module runs on each node. It writes kernel events captured by the Tracer to the local directory and to Elasticsearch or OpenSearch. Both backends share the same `[Storage.Elasticsearch]` configuration interface and are differentiated by address.
 
 The remote write path uses the ES/OpenSearch **Bulk API** (`_bulk`): events are queued in an in-memory buffer and submitted in batches by background workers based on size and time thresholds, with transport-layer retries on transient failures.
 
@@ -501,3 +499,13 @@ Replacing per-event Index API calls with a buffered BulkIndexer + auto-retry add
 <img src="/img/contact-weixin.png" alt="WeChat QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+### Kernel observation time
+
+Event documents can include a top-level `kernel_observed_timestamp` containing
+a UTC date-time. `observed_timestamp` is userspace observation time, and
+`uploaded_timestamp` is storage write time. These fields do not fill one
+another. Older documents and events without kernel timestamps omit the new
+field; historical data is not migrated automatically. The raw
+`kernel_observed_ns` stays in process for correlation and is not
+written to new documents.

@@ -15,20 +15,22 @@
 package provider
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/bits"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler"
-	"huatuo-bamai/internal/profiler/aggregator"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/output"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 // ErrRootRequired indicates the operation requires root privileges.
@@ -45,41 +47,21 @@ func requireRoot() error {
 // Compile-time check: nativeAggregator implements aggregator.Aggregator.
 var _ aggregator.Aggregator = (*nativeAggregator)(nil)
 
-// processIDName identifies a process during aggregation.
-type processIDName struct {
-	Pid  uint32
-	Name string
-}
-
-// stackEntry represents a single sampling record (not aggregated).
-type stackEntry struct {
-	Proc    *processIDName
-	User    string
-	Kernel  string
-	Samples int64
-}
-
-type processIDNameLock struct {
-	Pid  uint32
-	Name string
-	Lock uint64
-}
-
-type lockStackEntry struct {
-	Proc      *processIDNameLock
-	User      string
-	Kernel    string
-	WaitTime  uint64
-	Contended uint32
-}
-
 type nativeAggregator struct {
 	mu sync.Mutex
 
 	formatter        output.Formatter
-	aggrMap          map[string]*stackEntry
-	lockAggrMap      map[string]*lockStackEntry
+	stackTraces      stackTraceInterner
+	stackSamples     map[stackSampleKey]int64
+	lockSamples      map[string]*lockSample
 	isLockFoldedDone bool
+}
+
+type stackSampleKey struct {
+	Process       processKey
+	Category      string
+	UserTraceID   stackTraceID
+	KernelTraceID stackTraceID
 }
 
 func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, error) {
@@ -89,9 +71,9 @@ func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, err
 	}
 
 	return &nativeAggregator{
-		formatter:   f,
-		aggrMap:     make(map[string]*stackEntry),
-		lockAggrMap: make(map[string]*lockStackEntry),
+		formatter:    f,
+		stackSamples: make(map[stackSampleKey]int64),
+		lockSamples:  make(map[string]*lockSample),
 	}, nil
 }
 
@@ -100,50 +82,49 @@ func (a *nativeAggregator) Aggregate(rec any) {
 	defer a.mu.Unlock()
 
 	switch v := rec.(type) {
-	case *stackEntry:
-		key := fmt.Sprintf("%d\x00%s\x00%s\x00%s", v.Proc.Pid, v.Proc.Name, v.User, v.Kernel)
-
-		if existed, ok := a.aggrMap[key]; ok {
-			existed.Samples += v.Samples
-		} else {
-			a.aggrMap[key] = &stackEntry{
-				Proc:    v.Proc,
-				User:    v.User,
-				Kernel:  v.Kernel,
-				Samples: v.Samples,
-			}
+	case *stackSample:
+		key := stackSampleKey{
+			Process:       v.Process,
+			Category:      v.Category,
+			UserTraceID:   a.stackTraces.LookupOrAdd(v.StackTrace.UserFrames),
+			KernelTraceID: a.stackTraces.LookupOrAdd(v.StackTrace.KernelFrames),
 		}
-
-		log.Debugf("aggregate: pid=%d comm=%s samples=%d key=%q", v.Proc.Pid, v.Proc.Name, v.Samples, key)
+		a.stackSamples[key] += v.Value
 
 		if a.formatter != nil {
-			frames := []string{
-				fmt.Sprintf("process %d:%s", v.Proc.Pid, v.Proc.Name),
+			frameCount := 1 + v.StackTrace.frameCount()
+			if v.Category != "" {
+				frameCount++
 			}
-			frames = appendStackFrames(frames, v.User, v.Kernel)
-			log.Debugf("formatter add: frames=%v count=%d", frames, v.Samples)
-			if err := a.formatter.Add(&output.Sample{Frames: frames, Count: v.Samples}); err != nil {
+			frames := make([]string, 0, frameCount)
+			frames = append(frames, fmt.Sprintf("process %d:%s", v.Process.PID, v.Process.Comm))
+			if v.Category != "" {
+				frames = append(frames, v.Category)
+			}
+			frames = v.StackTrace.appendTo(frames)
+			log.Debugf("formatter add: frames=%v count=%d", frames, v.Value)
+			if err := a.formatter.Add(&output.Sample{Frames: frames, Count: v.Value}); err != nil {
 				log.Warnf("formatter add sample: %v", err)
 			}
 		}
 
-	case *lockStackEntry:
-		key := fmt.Sprintf("%s\x00%d", v.User, v.Proc.Lock)
-		if existed, ok := a.lockAggrMap[key]; ok {
-			existed.Contended += v.Contended
-			existed.WaitTime += v.WaitTime
+	case *lockSample:
+		key := makeLockSampleKey(v)
+		if existed, ok := a.lockSamples[key]; ok {
+			existed.ContentionCount += v.ContentionCount
+			existed.WaitNanoseconds += v.WaitNanoseconds
 		} else {
-			a.lockAggrMap[key] = &lockStackEntry{
-				Proc:      v.Proc,
-				User:      v.User,
-				Kernel:    v.Kernel,
-				WaitTime:  v.WaitTime,
-				Contended: v.Contended,
+			a.lockSamples[key] = &lockSample{
+				Process:         v.Process,
+				LockAddress:     v.LockAddress,
+				StackTrace:      v.StackTrace,
+				WaitNanoseconds: v.WaitNanoseconds,
+				ContentionCount: v.ContentionCount,
 			}
 		}
 
 	default:
-		log.Warnf("invalid record type %T, expected *stackEntry or *lockStackEntry", rec)
+		log.Warnf("invalid record type %T, expected *stackSample or *lockSample", rec)
 	}
 }
 
@@ -169,13 +150,14 @@ func (a *nativeAggregator) Reset() {
 		a.formatter.Reset()
 	}
 
-	a.aggrMap = make(map[string]*stackEntry)
-	a.lockAggrMap = make(map[string]*lockStackEntry)
+	a.stackTraces.Reset()
+	a.stackSamples = make(map[stackSampleKey]int64)
+	a.lockSamples = make(map[string]*lockSample)
 	a.isLockFoldedDone = false
 }
 
 func (a *nativeAggregator) OutputFormatter() output.Formatter {
-	if a.formatter != nil && !a.isLockFoldedDone && len(a.lockAggrMap) > 0 {
+	if a.formatter != nil && !a.isLockFoldedDone && len(a.lockSamples) > 0 {
 		a.buildLockFolded()
 		a.isLockFoldedDone = true
 	}
@@ -183,9 +165,9 @@ func (a *nativeAggregator) OutputFormatter() output.Formatter {
 }
 
 func (a *nativeAggregator) buildLockFolded() {
-	for _, rec := range a.lockAggrMap {
+	for _, rec := range a.lockSamples {
 		frames, value := lockPrefixFrames(rec)
-		frames = appendStackFrames(frames, rec.User, rec.Kernel)
+		frames = rec.StackTrace.appendTo(frames)
 		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: int64(value)}); err != nil {
 			log.Warnf("formatter add lock sample: %v", err)
 		}
@@ -193,58 +175,93 @@ func (a *nativeAggregator) buildLockFolded() {
 }
 
 func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext) (any, error) {
-	if len(a.aggrMap) == 0 {
+	if len(a.stackSamples) == 0 {
 		return nil, nil
 	}
 
 	skipNegForPprof := pctx.Type == profiling.TypeMemory &&
-		pctx.MemoryMode == profiling.MemoryModePhysicalUsage
+		pctx.Mode == profiling.ModePhysicalUsage
 
-	tree := make([]*profiler.TreeItem, 0, len(a.aggrMap))
+	tree := make([]*profiler.TreeItem, 0, len(a.stackSamples))
 
-	for _, rec := range a.aggrMap {
-		if skipNegForPprof && rec.Samples < 0 {
+	for key, value := range a.stackSamples {
+		if skipNegForPprof && value < 0 {
 			continue
 		}
 
-		prefixes := []string{fmt.Sprintf("process %d:%s", rec.Proc.Pid, rec.Proc.Name)}
-		item := buildTreeItem(prefixes, rec.User, rec.Kernel, uint64(rec.Samples))
-		tree = append(tree, item)
+		prefixes := []string{fmt.Sprintf("process %d:%s", key.Process.PID, key.Process.Comm)}
+		if key.Category != "" {
+			prefixes = append(prefixes, key.Category)
+		}
+		tree = append(tree, profiler.BuildTreeItem(
+			prefixes,
+			a.stackTraces.Frames(key.UserTraceID),
+			a.stackTraces.Frames(key.KernelTraceID),
+			uint64(value),
+		))
 	}
 
 	return buildPprofData(pctx, tree)
 }
 
 func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (any, error) {
-	if len(a.lockAggrMap) == 0 {
+	if len(a.lockSamples) == 0 {
 		return nil, nil
 	}
 
-	tree := make([]*profiler.TreeItem, 0, len(a.lockAggrMap))
-	for _, rec := range a.lockAggrMap {
+	tree := make([]*profiler.TreeItem, 0, len(a.lockSamples))
+	for _, rec := range a.lockSamples {
 		prefixes, value := lockPrefixFrames(rec)
-		tree = append(tree, buildTreeItem(prefixes, rec.User, rec.Kernel, value))
+		tree = append(tree, profiler.BuildTreeItem(
+			prefixes,
+			rec.StackTrace.UserFrames,
+			rec.StackTrace.KernelFrames,
+			value,
+		))
 	}
 	return buildPprofData(pctx, tree)
 }
 
-func appendStackFrames(frames []string, userStack, kernelStack string) []string {
-	u := strings.TrimSuffix(userStack, ";")
-	k := strings.TrimSuffix(kernelStack, ";")
+func makeLockSampleKey(sample *lockSample) string {
+	var key strings.Builder
+	key.Grow(stackKeyUintSize(sample.LockAddress) + stackFramesKeySize(sample.StackTrace.UserFrames))
+	appendStackKeyUint(&key, sample.LockAddress)
+	appendStackKeyFrames(&key, sample.StackTrace.UserFrames)
+	return key.String()
+}
 
-	for _, s := range strings.Split(u, ";") {
-		if s != "" {
-			frames = append(frames, s)
-		}
+func stackFramesKeySize(frames []string) int {
+	size := stackKeyUintSize(uint64(len(frames)))
+	for _, frame := range frames {
+		size += stackKeyStringSize(frame)
 	}
+	return size
+}
 
-	for _, s := range strings.Split(k, ";") {
-		if s != "" {
-			frames = append(frames, s)
-		}
+func stackKeyStringSize(value string) int {
+	return stackKeyUintSize(uint64(len(value))) + len(value)
+}
+
+func stackKeyUintSize(value uint64) int {
+	return (bits.Len64(value|1) + 6) / 7
+}
+
+func appendStackKeyFrames(key *strings.Builder, frames []string) {
+	appendStackKeyUint(key, uint64(len(frames)))
+	for _, frame := range frames {
+		appendStackKeyString(key, frame)
 	}
+}
 
-	return frames
+func appendStackKeyString(key *strings.Builder, value string) {
+	appendStackKeyUint(key, uint64(len(value)))
+	key.WriteString(value)
+}
+
+func appendStackKeyUint(key *strings.Builder, value uint64) {
+	var encoded [binary.MaxVarintLen64]byte
+	length := binary.PutUvarint(encoded[:], value)
+	key.Write(encoded[:length])
 }
 
 // parseCollapsedLine splits a "stack count" folded line into its parts.
@@ -270,35 +287,6 @@ func parseCollapsedLine(line string) (stack string, count int64, ok bool) {
 	return stack, count, true
 }
 
-func buildTreeItem(prefixes []string, userStack, kernelStack string, value uint64) *profiler.TreeItem {
-	ustacks := strings.Split(userStack, ";")
-	kstacks := strings.Split(kernelStack, ";")
-
-	stackLen := len(prefixes) + len(ustacks) + len(kstacks)
-	stack := make([][]byte, 0, stackLen)
-
-	for _, p := range prefixes {
-		stack = append(stack, []byte(p))
-	}
-
-	for _, s := range ustacks {
-		if s != "" {
-			stack = append(stack, []byte(s))
-		}
-	}
-
-	for _, s := range kstacks {
-		if s != "" {
-			stack = append(stack, []byte(s))
-		}
-	}
-
-	return &profiler.TreeItem{
-		Stack: stack,
-		Value: value,
-	}
-}
-
 // buildPprofData constructs pprof (pyroscope-compatible) profile data.
 func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (*profiler.ProfileData, error) {
 	opt, sampleType, err := profileTypeOptions(pctx)
@@ -314,17 +302,20 @@ func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (
 	return data, nil
 }
 
-func lockPrefixFrames(rec *lockStackEntry) ([]string, uint64) {
+func lockPrefixFrames(rec *lockSample) ([]string, uint64) {
 	return []string{
-		fmt.Sprintf("lock: %x", rec.Proc.Lock),
-		fmt.Sprintf("PID: %d, COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
-		fmt.Sprintf("contended count: %d", rec.Contended),
-	}, rec.WaitTime
+		fmt.Sprintf("lock: %x", rec.LockAddress),
+		fmt.Sprintf("PID: %d, COMMAND: %s", rec.Process.PID, rec.Process.Comm),
+		fmt.Sprintf("contended count: %d", rec.ContentionCount),
+	}, rec.WaitNanoseconds
 }
 
 func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, error) {
 	switch pctx.Type {
 	case profiling.TypeCPU:
+		if pctx.Mode == profiling.ModeOffCPU {
+			return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeOffCpuSample, nil
+		}
 		return &profiler.ParseOption{SampleRate: int64(pctx.Freq)}, profiler.ProfileTypeCpuSample, nil
 	case profiling.TypeMemory:
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil

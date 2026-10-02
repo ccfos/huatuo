@@ -34,8 +34,8 @@ Event 常态监听内核事件或阈值条件，在异常发生时保存内核�
 面向需要持续开启的低开销观测，数据写入 Elasticsearch 和本地文件，也可以
 同步生成 Prometheus 指标。内置事件包括：
 
-- 软中断异常 `softirq_tracing`。
-- 内存异常分配 `oom`。
+- 调度 tick 间隔异常 `sched_tick`。
+- 内存异常分配 `memory_oom_kill`。
 - 软锁定 `softlockup`。
 - D 状态进程 `hungtask`。
 - 内存回收 `memory_reclaim_events`。
@@ -95,6 +95,64 @@ func newExampleMetric() (*tracing.EventTracingAttr, error) {
     }, nil
 }
 ```
+
+### 管理 BPF 对象
+
+同一个实现同时提供 `Start` 和 `Update` 时，两个方法可能并发执行。不要直接在
+collector 字段中读写 `bpf.BPF` 接口；使用
+[`internal/bpf/bpf_ref.go`](../../internal/bpf/bpf_ref.go) 提供的 `Reference`
+和 `Lease` 管理对象生命周期：
+
+```go
+type example struct {
+    object bpf.Reference
+}
+
+func (c *example) Start(ctx context.Context) (retErr error) {
+    object, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+    if err != nil {
+        return err
+    }
+
+    if err := object.Attach(); err != nil {
+        return errors.Join(err, object.Close())
+    }
+    if err := c.object.Publish(object); err != nil {
+        return errors.Join(err, object.Close())
+    }
+    defer func() {
+        retErr = errors.Join(retErr, c.object.UnPublish())
+    }()
+
+    <-ctx.Done()
+    return nil
+}
+
+func (c *example) Update() ([]*metric.Data, error) {
+    lease, ok := c.object.Acquire()
+    if !ok {
+        return nil, nil
+    }
+    defer lease.Release()
+
+    items, err := lease.DumpMapByName("example_map")
+    if err != nil {
+        return nil, fmt.Errorf("dump example_map: %w", err)
+    }
+
+    return buildMetrics(items), nil
+}
+```
+
+接口约束：
+
+- `Publish` 将对象所有权转移给 `Reference`。成功后不要直接调用`object.Close()`。
+- `Acquire` 返回的 `Lease` 将 BPF 对象固定到本次 `Update` 结束；必须配对调用`Release`，且不要复制 `Lease`。
+- `UnPublish` 先阻止新的 `Acquire`，再等待所有 Lease 释放，最后关闭 BPF 对象并返回关闭错误。
+- `Publish` 和 `UnPublish` 必须串行调用。当前框架保证同一实例的 `Start` 不会并发执行。
+
+因此，已经开始的 `Update` 可以完整使用原 BPF 对象；`Start` 退出或重启时，
+对象只会在这些 `Update` 完成后关闭。
 
 ## 添加 Event
 

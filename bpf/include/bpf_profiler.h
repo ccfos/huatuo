@@ -3,6 +3,7 @@
 
 #include "bpf_common.h"
 #include "bpf_cgroup.h"
+#include "abi/profiler_types.h"
 
 /* Stack trace map default entries */
 #define STACK_MAP_ENTRIES 65536
@@ -10,15 +11,6 @@
 /* Stack ID flags for bpf_get_stackid */
 #define KERN_STACKID_FLAGS (0)
 #define USER_STACKID_FLAGS (0 | COMPAT_BPF_F_USER_STACK)
-
-/* Profiler event base structure */
-struct profiler_event_base_t {
-	u64 pid_tgid;  /* tgid in upper 32 bits, pid in lower 32 bits */
-	char comm[COMPAT_TASK_COMM_LEN];
-	int kernstack;
-	int userstack;
-	s64 value;  /* CPU: sample count (1), Memory: page/byte delta */
-};
 
 /* State management indices */
 typedef enum {
@@ -75,7 +67,7 @@ static __always_inline bool profiler_should_sample(void)
  * Returns 0 on success, -1 if both stacks failed.
  */
 static __always_inline int profiler_fill_event_base(
-	struct profiler_event_base_t *event,
+	struct profiler_event_base *event,
 	u64 pid_tgid,
 	void *ctx,
 	void *stack_map)
@@ -93,8 +85,8 @@ static __always_inline int profiler_fill_event_base(
 }
 
 static __always_inline void profiler_copy_event_base(
-	struct profiler_event_base_t *dst,
-	const struct profiler_event_base_t *src)
+	struct profiler_event_base *dst,
+	const struct profiler_event_base *src)
 {
 	dst->pid_tgid = src->pid_tgid;
 	dst->kernstack = src->kernstack;
@@ -102,14 +94,14 @@ static __always_inline void profiler_copy_event_base(
 	__builtin_memcpy(&dst->comm, &src->comm, sizeof(dst->comm));
 }
 
-static __always_inline struct profiler_event_base_t *profiler_prepare_event_base(
+static __always_inline struct profiler_event_base *profiler_prepare_event_base(
 	void *event_map,
 	u64 pid_tgid,
 	void *ctx,
 	void *stack_map)
 {
 	u32 idx = 0;
-	struct profiler_event_base_t *event = bpf_map_lookup_elem(event_map, &idx);
+	struct profiler_event_base *event = bpf_map_lookup_elem(event_map, &idx);
 	if (!event)
 		return NULL;
 
@@ -139,7 +131,7 @@ static __always_inline void profiler_emit_event(
 
 /*
  * DEFINE_PROFILER_MAPS - define all standard profiler maps.
- * Usage: DEFINE_PROFILER_MAPS(struct profiler_event_base_t);
+ * Usage: DEFINE_PROFILER_MAPS(struct profiler_event_base);
  */
 #define DEFINE_PROFILER_MAPS(event_type) \
 struct { \
@@ -191,7 +183,7 @@ struct { \
 	__uint(type, BPF_MAP_TYPE_HASH); \
 	__uint(max_entries, 1 << 20); \
 	__type(key, u64); \
-	__type(value, struct profiler_event_base_t); \
+	__type(value, struct profiler_event_base); \
 } page_to_stackid SEC(".maps")
 
 /*

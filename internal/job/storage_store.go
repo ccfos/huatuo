@@ -16,243 +16,189 @@ package job
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
-	"huatuo-bamai/internal/storage"
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
+
+const jobStorageCollection = "jobs"
+
+var jobQueryFields = map[string]struct{}{
+	"id":           {},
+	"user_id":      {},
+	"container_id": {},
+	"hostname":     {},
+	"status":       {},
+	"kind":         {},
+	"subtype":      {},
+	"created_at":   {},
+	"ended_at":     {},
+}
 
 type storageStore struct {
 	store *storage.Store[*Job]
 }
 
-type storagePayload struct {
-	Type        string          `json:"type"`
-	JobID       string          `json:"job_id"`
-	UserName    string          `json:"user_name"`
-	UserID      string          `json:"user_id"`
-	Container   string          `json:"container"`
-	Host        string          `json:"host"`
-	AgentTaskID string          `json:"agent_job_id"`
-	Status      JobStatus       `json:"status"`
-	Error       string          `json:"error,omitempty"`
-	Duration    int             `json:"duration"`
-	Timeout     int             `json:"timeout"`
-	StartTime   time.Time       `json:"start_time"`
-	EndTime     time.Time       `json:"end_time"`
-	Args        NewAgentTaskReq `json:"args"`
-	Results     Result          `json:"results,omitempty"`
-	LastUpdate  time.Time       `json:"last_update"`
-	PrivateData map[string]any  `json:"private_data,omitempty"`
-}
-
-type storeMapper struct{}
-
-func StorageCollection() string {
-	return "jobs"
-}
-
-func StorageFields(entity *Job) map[string]any {
-	return map[string]any{
-		"user_id":    entity.UserID,
-		"container":  entity.Container,
-		"host":       entity.Host,
-		"status":     string(entity.Status),
-		"type":       entity.Type,
-		"start_time": entity.StartTime,
-	}
-}
-
-func StorageIndexes() []string {
-	return []string{
-		"user_id",
-		"container",
-		"host",
-		"status",
-		"type",
-		"start_time",
-	}
-}
-
-// defaultJobsDBPath is the SQLite file used when no DSN is provided via ManagerConfig.
-const defaultJobsDBPath = "jobs.db"
-
 func newStore(ctx context.Context, dsn string) (Store, error) {
-	if dsn == "" {
-		dsn = defaultJobsDBPath
-	}
-	store, err := storage.NewFromConfig(
+	jobStore, err := storage.NewFromConfig[*Job](
 		ctx,
-		&driver.Config{
-			Driver:    "sqlite",
-			SQLiteDSN: dsn,
-		},
-		StorageCollection(),
-		storeMapper{},
+		&driver.Config{Driver: "sqlite", SQLiteDSN: dsn},
+		jobStorageCollection,
+		recordMapper{},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize job backend: %w", err)
+		return nil, fmt.Errorf("open job storage: %w", err)
 	}
-
-	return &storageStore{store: store}, nil
+	return &storageStore{store: jobStore}, nil
 }
 
-func (s *storageStore) Get(jobID string) (*Job, error) {
-	entity, err := s.store.Get(context.Background(), jobID)
+func (s *storageStore) Get(ctx context.Context, jobID string) (*Job, error) {
+	storedJob, err := s.store.Get(ctx, jobID)
 	if err != nil {
 		return nil, err
 	}
-
-	return cloneJob(entity), nil
+	return cloneJob(storedJob), nil
 }
 
-func (s *storageStore) Save(jobEntity *Job) error {
-	if jobEntity == nil {
-		return fmt.Errorf("job store: job is nil")
+func (s *storageStore) Create(ctx context.Context, job *Job) error {
+	if job == nil || job.revision != 1 {
+		return fmt.Errorf("%w: created job revision must be 1", ErrInvalidQuery)
 	}
-
-	return s.store.Save(context.Background(), jobEntity)
+	return s.store.Save(ctx, job, driver.SaveOptions{Mode: driver.SaveModeCreateOnly})
 }
 
-func (s *storageStore) Delete(jobID string) error {
-	return s.store.Delete(context.Background(), jobID)
-}
-
-func (s *storageStore) List(query *JobQuery) ([]*Job, error) {
-	result, err := s.store.Query(context.Background(), toStorageQuery(query))
+func (s *storageStore) Save(ctx context.Context, job *Job) (*Job, error) {
+	if job == nil || job.revision <= 0 || job.revision == math.MaxInt64 {
+		return nil, fmt.Errorf("%w: saved job revision is invalid", ErrInvalidQuery)
+	}
+	persisted := cloneJob(job)
+	persisted.revision++
+	err := s.store.Save(ctx, persisted, driver.SaveOptions{
+		Mode: driver.SaveModeConditional,
+		Conditions: []driver.Filter{
+			{Field: "revision", Op: driver.OpEq, Value: job.revision},
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
+	return persisted, nil
+}
 
-	jobs := make([]*Job, 0, len(result))
-	for _, item := range result {
-		jobs = append(jobs, cloneJob(item))
+func (s *storageStore) List(ctx context.Context, query *Query) ([]*Job, error) {
+	storageQuery, err := buildStorageQuery(query)
+	if err != nil {
+		return nil, err
 	}
-
+	jobs, err := s.store.Query(ctx, storageQuery)
+	if err != nil {
+		return nil, err
+	}
+	for i := range jobs {
+		jobs[i] = cloneJob(jobs[i])
+	}
 	return jobs, nil
 }
 
-func (storeMapper) ID(entity *Job) string {
-	return entity.JobID
+func (s *storageStore) DeleteTerminalBefore(
+	ctx context.Context,
+	endedBefore time.Time,
+	limit int,
+) (int64, error) {
+	if endedBefore.IsZero() {
+		return 0, fmt.Errorf("%w: cleanup boundary is required", ErrInvalidQuery)
+	}
+	if limit <= 0 || limit > 1000 {
+		return 0, fmt.Errorf("%w: cleanup limit must be between 1 and 1000", ErrInvalidQuery)
+	}
+	return s.store.DeleteByQuery(ctx, driver.DeleteQuery{
+		Filters: []driver.Filter{
+			{Field: "status", Op: driver.OpEq, Value: string(StatusTerminal)},
+			{Field: "ended_at", Op: driver.OpNe, Value: ""},
+			{Field: "ended_at", Op: driver.OpLte, Value: driver.NormalizeValue(endedBefore)},
+		},
+		Limit: limit,
+	})
 }
 
-func (storeMapper) Encode(entity *Job) ([]byte, error) {
-	payload := storagePayload{
-		Type:        entity.Type,
-		JobID:       entity.JobID,
-		UserName:    entity.UserName,
-		UserID:      entity.UserID,
-		Container:   entity.Container,
-		Host:        entity.Host,
-		AgentTaskID: entity.AgentTaskID,
-		Status:      entity.Status,
-		Error:       entity.Error,
-		Duration:    entity.Duration,
-		Timeout:     entity.Timeout,
-		StartTime:   entity.StartTime,
-		EndTime:     entity.EndTime,
-		Args:        entity.Args,
-		Results:     entity.Results,
-		LastUpdate:  entity.LastUpdate,
-		PrivateData: entity.PrivateData,
-	}
-
-	return json.Marshal(payload)
+func (s *storageStore) Ping(ctx context.Context) error {
+	return s.store.Ping(ctx)
 }
 
-func (storeMapper) Decode(data []byte) (*Job, error) {
-	var payload storagePayload
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
-	}
-
-	return &Job{
-		Type:        payload.Type,
-		JobID:       payload.JobID,
-		UserName:    payload.UserName,
-		UserID:      payload.UserID,
-		Container:   payload.Container,
-		Host:        payload.Host,
-		AgentTaskID: payload.AgentTaskID,
-		Status:      payload.Status,
-		Error:       payload.Error,
-		Duration:    payload.Duration,
-		Timeout:     payload.Timeout,
-		StartTime:   payload.StartTime,
-		EndTime:     payload.EndTime,
-		Args:        payload.Args,
-		Results:     payload.Results,
-		LastUpdate:  payload.LastUpdate,
-		PrivateData: payload.PrivateData,
-	}, nil
+func (s *storageStore) Close() error {
+	return s.store.Close(context.Background())
 }
 
-func (storeMapper) Fields(entity *Job) (map[string]any, error) {
-	return map[string]any{
-		"user_id":    entity.UserID,
-		"container":  entity.Container,
-		"host":       entity.Host,
-		"status":     string(entity.Status),
-		"type":       entity.Type,
-		"start_time": entity.StartTime,
-	}, nil
-}
-
-func (storeMapper) Indexes() []driver.Index {
-	names := []string{
-		"user_id",
-		"container",
-		"host",
-		"status",
-		"type",
-		"start_time",
+func buildStorageQuery(query *Query) (driver.Query, error) {
+	if err := validateQuerySort(query); err != nil {
+		return driver.Query{}, err
 	}
-	indexes := make([]driver.Index, 0, len(names))
-	for _, name := range names {
-		indexes = append(indexes, driver.Index{Field: name})
-	}
-	return indexes
-}
-
-func toStorageQuery(q *JobQuery) driver.Query {
-	filters := make([]driver.Filter, 0, 6)
-	if q.UserID != "" && !q.IsAdmin {
-		filters = append(filters, driver.Filter{Field: "user_id", Op: driver.OpEq, Value: q.UserID})
-	}
-	if q.Container != "" {
-		filters = append(filters, driver.Filter{Field: "container", Op: driver.OpEq, Value: q.Container})
-	}
-	if q.Host != "" {
-		filters = append(filters, driver.Filter{Field: "host", Op: driver.OpEq, Value: q.Host})
-	}
-	if q.Status != "" {
-		filters = append(filters, driver.Filter{Field: "status", Op: driver.OpEq, Value: q.Status})
-	}
-	if q.Type != "" {
-		filters = append(filters, driver.Filter{Field: "type", Op: driver.OpEq, Value: q.Type})
+	if query == nil {
+		return driver.Query{
+			Sorts: []driver.Sort{{Field: "created_at", Desc: true}, {Field: "id", Desc: true}},
+		}, nil
 	}
 
+	filters := make([]driver.Filter, 0, 8)
+	appendEqual := func(field, value string) {
+		if value != "" {
+			filters = append(filters, driver.Filter{Field: field, Op: driver.OpEq, Value: value})
+		}
+	}
+	appendEqual("id", query.ID)
+	if !query.IsAdmin {
+		appendEqual("user_id", query.UserID)
+	}
+	appendEqual("container_id", query.ContainerID)
+	appendEqual("hostname", query.Hostname)
+	if len(query.Statuses) != 0 {
+		statuses := make([]string, len(query.Statuses))
+		for i, status := range query.Statuses {
+			statuses[i] = string(status)
+		}
+		filters = append(filters, driver.Filter{Field: "status", Op: driver.OpIn, Value: statuses})
+	}
+	if len(query.Kinds) != 0 {
+		kinds := make([]string, len(query.Kinds))
+		for i, kind := range query.Kinds {
+			kinds[i] = string(kind)
+		}
+		filters = append(filters, driver.Filter{Field: "kind", Op: driver.OpIn, Value: kinds})
+	}
+	if len(query.Subtypes) != 0 {
+		filters = append(filters, driver.Filter{Field: "subtype", Op: driver.OpIn, Value: query.Subtypes})
+	}
+
+	sortField, descending := querySort(query)
+	sorts := []driver.Sort{{Field: sortField, Desc: descending}}
+	if sortField != "id" {
+		sorts = append(sorts, driver.Sort{Field: "id", Desc: descending})
+	}
 	return driver.Query{
 		Filters: filters,
-	}
+		Sorts:   sorts,
+		Limit:   query.Limit,
+		Offset:  query.Offset,
+	}, nil
 }
 
-func cloneJob(entity *Job) *Job {
-	cloned := *entity
-	cloned.PrivateData = cloneJobPrivateData(entity.PrivateData)
-	return &cloned
+func validateQuerySort(query *Query) error {
+	field, _ := querySort(query)
+	if _, ok := jobQueryFields[field]; !ok {
+		return fmt.Errorf("%w: unsupported sort field %q", ErrInvalidQuery, field)
+	}
+	return nil
 }
 
-func cloneJobPrivateData(input map[string]any) map[string]any {
-	if len(input) == 0 {
-		return nil
+func querySort(query *Query) (string, bool) {
+	if query == nil || query.Sort == "" {
+		return "created_at", true
 	}
-
-	output := make(map[string]any, len(input))
-	for key, value := range input {
-		output[key] = value
-	}
-	return output
+	field := query.Sort
+	descending := strings.HasPrefix(field, "-")
+	return strings.TrimPrefix(field, "-"), descending
 }

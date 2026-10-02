@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,173 +15,130 @@
 package server
 
 import (
-	"fmt"
-	"net/http"
-	"strings"
-	"sync"
+	"errors"
 
-	"huatuo-bamai/internal/server/response"
+	authn "github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/server/response"
 )
 
-// Permission represents a permission string.
-type Permission string
+type (
+	Permission = authn.Permission
+	User       = authn.Principal
+	UserConfig = authn.UserConfig
+)
 
-// User represents a user with permissions.
-type User struct {
-	ID          string
-	Name        string
-	Permissions []Permission
-	IsAdmin     bool
-}
-
-// UserConfig represents a user configuration for initialization.
-type UserConfig struct {
-	ID          string
-	Name        string
-	Permissions []string
-	IsAdmin     bool
-}
-
-// authService handles authentication and authorization.
 type authService struct {
-	users sync.Map
+	service *authn.Service
 }
 
-// NewService creates a new auth authService.
+// NewAuthService creates a compatibility adapter for the HTTP server.
 func NewAuthService(users []UserConfig) *authService {
-	s := &authService{users: sync.Map{}}
-
-	for _, cfgUser := range users {
-		permissions := make([]Permission, 0, len(cfgUser.Permissions))
-		for _, p := range cfgUser.Permissions {
-			permissions = append(permissions, Permission(p))
-		}
-
-		s.users.Store(cfgUser.ID, User{
-			ID:          cfgUser.ID,
-			Name:        cfgUser.Name,
-			Permissions: permissions,
-			IsAdmin:     cfgUser.IsAdmin,
-		})
-	}
-
-	return s
+	return &authService{service: authn.NewService(users)}
 }
 
-// Add adds a user to the authService.
-func (s *authService) Add(user User) {
-	s.users.Store(user.ID, user)
-}
-
-// Delete removes a user from the authService.
-func (s *authService) Delete(userID string) {
-	s.users.Delete(userID)
-}
-
-// GetUserById gets a user by ID.
-func (s *authService) GetUserById(userID string) (User, bool) {
-	value, exists := s.users.Load(userID)
-	if !exists {
-		return User{}, false
-	}
-	return value.(User), true
+// Authenticate returns the principal associated with a bearer token.
+func (s *authService) Authenticate(token string) (User, bool) {
+	return s.service.Authenticate(token)
 }
 
 // Validate validates if a user has access to a specific path.
-func (s *authService) Validate(userID, path string) error {
-	value, exists := s.users.Load(userID)
-	if !exists {
-		return fmt.Errorf("user %s not found", userID)
+func (s *authService) Validate(user User, request ...string) error {
+	method, path := "", ""
+	if len(request) == 1 {
+		path = request[0]
+	} else if len(request) >= 2 {
+		method, path = request[0], request[1]
 	}
-
-	user := value.(User)
-
-	// Admin has access to everything
-	if user.IsAdmin {
-		return nil
-	}
-
-	// Check if user has permission for this path
-	for _, perm := range user.Permissions {
-		if s.matchesPath(string(perm), path) {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("user %s does not have permission to access %s", userID, path)
-}
-
-// IsAdmin checks if a user is an admin.
-func (s *authService) IsAdmin(userID string) bool {
-	value, exists := s.users.Load(userID)
-	if !exists {
-		return false
-	}
-	return value.(User).IsAdmin
+	return s.service.Authorize(user, method, path)
 }
 
 // matchesPath performs simple path matching, supporting basic wildcards and path parameters.
 func (s *authService) matchesPath(permission, path string) bool {
-	// 1. Exact match
-	if permission == path {
-		return true
-	}
-
-	// 2. Handle wildcard ** (matches all sub-paths)
-	if strings.Contains(permission, "**") {
-		prefix := strings.Split(permission, "**")[0]
-		return strings.HasPrefix(path, prefix)
-	}
-
-	// 3. Handle single-level wildcard * and path parameter :param
-	return s.matchesSegments(permission, path)
-}
-
-// matchesSegments matches by path segments.
-func (s *authService) matchesSegments(permission, path string) bool {
-	permSegments := strings.Split(strings.Trim(permission, "/"), "/")
-	pathSegments := strings.Split(strings.Trim(path, "/"), "/")
-
-	// Segments must be the same length (unless there's a wildcard)
-	if len(permSegments) != len(pathSegments) {
-		return false
-	}
-
-	// Compare each segment
-	for i, permSeg := range permSegments {
-		pathSeg := pathSegments[i]
-
-		if permSeg == pathSeg {
-			continue
-		}
-		if strings.HasPrefix(permSeg, ":") {
-			continue
-		}
-		if permSeg == "*" {
-			continue
-		}
-		return false
-	}
-
-	return true
+	return authn.MatchesPath(permission, path)
 }
 
 // NewAuthMiddleware returns a HandlerContextFunc that validates requests using the given authService.
-func NewAuthMiddleware(svc *authService) HandlerContextFunc {
+func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFunc {
+	var publicPaths, adminPaths []string
+	if len(pathSets) > 0 {
+		publicPaths = pathSets[0]
+	}
+	if len(pathSets) > 1 {
+		adminPaths = pathSets[1]
+	}
 	return func(ctx *Context) {
-		userID := ctx.Request().Header.Get("Authorization")
-		if userID == "" {
-			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "missing user ID")
+		path := ctx.Request().URL.Path
+		if matchesAnyPath(svc, publicPaths, path) {
+			ctx.Next()
+			return
+		}
+
+		user, err := svc.service.AuthenticateBearer(ctx.Request().Header.Get("Authorization"))
+		if err != nil {
+			rejectBearerToken(ctx, err)
+			return
+		}
+		if matchesAnyPath(svc, adminPaths, path) && !user.IsAdmin {
+			response.ErrorWithCode(
+				ctx,
+				ctx.ErrorStatusMapper(),
+				response.ErrForbidden.Code,
+				authn.ErrAdministratorRequired.Error(),
+			)
 			ctx.Abort()
 			return
 		}
-		if err := svc.Validate(userID, ctx.Request().URL.Path); err != nil {
-			response.ErrorWithCode(ctx, http.StatusForbidden, response.ErrForbidden.Code, err.Error())
+		if err := svc.Validate(user, ctx.Request().Method, path); err != nil {
+			response.ErrorWithCode(
+				ctx,
+				ctx.ErrorStatusMapper(),
+				response.ErrForbidden.Code,
+				err.Error(),
+			)
 			ctx.Abort()
 			return
 		}
-		ctx.UserID = userID
-		ctx.IsAdmin = svc.IsAdmin(userID)
+		ctx.UserID = user.ID
+		ctx.IsAdmin = user.IsAdmin
+		ctx.c.Request = ctx.c.Request.WithContext(authn.WithPrincipal(ctx.Request().Context(), user))
 		ctx.Next()
 	}
+}
+
+func newTokenAuthMiddleware(
+	authenticator *authn.TokenAuthenticator,
+	publicPaths []string,
+) HandlerContextFunc {
+	return func(ctx *Context) {
+		if authn.MatchesAnyPath(publicPaths, ctx.Request().URL.Path) {
+			ctx.Next()
+			return
+		}
+		if err := authenticator.AuthenticateBearer(
+			ctx.Request().Header.Get("Authorization"),
+		); err != nil {
+			rejectBearerToken(ctx, err)
+			return
+		}
+		ctx.Next()
+	}
+}
+
+func rejectBearerToken(ctx *Context, err error) {
+	ctx.Header("WWW-Authenticate", "Bearer")
+	message := authn.ErrInvalidBearerToken.Error()
+	if errors.Is(err, authn.ErrMissingBearerToken) {
+		message = authn.ErrMissingBearerToken.Error()
+	}
+	response.ErrorWithCode(
+		ctx,
+		ctx.ErrorStatusMapper(),
+		response.ErrUnauthorized.Code,
+		message,
+	)
+	ctx.Abort()
+}
+
+func matchesAnyPath(_ *authService, patterns []string, path string) bool {
+	return authn.MatchesAnyPath(patterns, path)
 }

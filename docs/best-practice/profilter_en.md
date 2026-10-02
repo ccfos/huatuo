@@ -37,6 +37,20 @@ frame1;frame2;frame3;...;frameN COUNT
 - Blank lines and lines starting with `#` are treated as comments and ignored during parsing
 - The semantics of COUNT depend on the analysis mode: for CPU sampling it is the number of samples, for memory allocation it is the number of bytes allocated, for lock analysis it is the contention time in milliseconds
 
+#### Frame Name Normalization
+
+Collapsed/folded uses `;` as the frame separator and has no standard escape
+syntax. To prevent symbol names from being split into extra frames, HUATUO:
+
+- Replaces `;` in frame names with `:`
+- Replaces carriage returns and line feeds with spaces so each stack occupies one line
+- Applies these changes only to collapsed/folded output; internal symbols and structured formats retain the original names
+
+For example, `generic::<[u8; 7]>` is written as `generic::<[u8: 7]>`.
+
+This conversion is lossy: symbols that differ only by `;` and `:` are merged. Use
+pprof or another structured format when exact symbol names must be preserved.
+
 **Extended specification:**
 
 Some profiling tools (e.g. async-profiler) add **frame type annotations** on top of the standard format to identify the runtime category of a frame:

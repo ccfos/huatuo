@@ -15,16 +15,17 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/version"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
@@ -84,7 +85,7 @@ func main() {
 	}
 }
 
-func mainAction(c *cli.Context) error {
+func mainAction(c *cli.Context) (returnErr error) {
 	cfg, filters, err := loadConfig(c)
 	if err != nil {
 		return err
@@ -96,15 +97,22 @@ func mainAction(c *cli.Context) error {
 	}
 
 	if client != nil {
-		defer client.End()
+		defer func() {
+			if err := client.End(); err != nil {
+				returnErr = errors.Join(
+					returnErr,
+					fmt.Errorf("close toolstream: %w", err),
+				)
+			}
+		}()
 	}
 
-	if err := bpf.NewManager(&bpf.Option{
+	if err := bpf.Init(&bpf.Option{
 		KeepaliveTimeout: int(cfg.durationSecond),
 	}); err != nil {
 		return fmt.Errorf("init bpf: %w", err)
 	}
-	defer bpf.Close()
+	defer bpf.Shutdown()
 
 	result, err := runTrace(c.Context, c.String(cliFlagBpfPath), cfg, filters)
 	if err != nil {

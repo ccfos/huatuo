@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "huatuo.configName" . }}
+  labels:
+{{ include "huatuo.labels" . | nindent 4 }}
+data:
+  {{ .Values.config.fileName }}: |-
+{{ .Values.config.content | nindent 4 }}

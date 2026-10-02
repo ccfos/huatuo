@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 func writeKallsymsFixture(t *testing.T, lines []string) string {
@@ -480,6 +480,28 @@ func TestElfSymbols(t *testing.T) {
 		if got[index-1].Addr > got[index].Addr {
 			t.Errorf("elfSymbols sort order: got[%d]=0x%x > got[%d]=0x%x", index-1, got[index-1].Addr, index, got[index].Addr)
 		}
+	}
+}
+
+func TestDemangleSymbolName(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{
+			name: "_ZN5doris6Thread16supervise_threadEPv",
+			want: "doris::Thread::supervise_thread(void*)",
+		},
+		{name: "malloc", want: "malloc"},
+		{name: "_ZN5doris_invalid", want: "_ZN5doris_invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := demangleSymbolName(tt.name); got != tt.want {
+				t.Errorf("demangleSymbolName(%q): got %q, want %q", tt.name, got, tt.want)
+			}
+		})
 	}
 }
 

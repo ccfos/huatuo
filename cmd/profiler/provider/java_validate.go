@@ -17,7 +17,7 @@ package provider
 import (
 	"fmt"
 
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func validateJavaFrequency(freq int) error {
@@ -27,18 +27,11 @@ func validateJavaFrequency(freq int) error {
 	return nil
 }
 
-func validateJavaToolPath(toolPath string) error {
-	if err := validateToolFile("Java", toolPath, "bin/asprof", true); err != nil {
-		return err
-	}
-	return validateToolFile("Java", toolPath, "lib/libasyncProfiler.so", false)
-}
-
-func validateJavaMemoryMode(mode profiling.MemoryMode) ([]string, error) {
+func validateJavaMemoryMode(mode profiling.Mode) ([]string, error) {
 	switch mode {
-	case profiling.MemoryModeObjectAlloc:
+	case profiling.ModeObjectAlloc:
 		return []string{}, nil
-	case profiling.MemoryModeObjectUsage:
+	case profiling.ModeObjectUsage:
 		return []string{"--live"}, nil
 	default:
 		return nil, fmt.Errorf("unsupported Java memory mode %q", mode)

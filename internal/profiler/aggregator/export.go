@@ -15,13 +15,14 @@
 package aggregator
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 // writeFolded persists the folded-stack data to a timestamped .folded file.
@@ -65,10 +66,14 @@ func createOutputFile(dir, prefix, ext string) (*os.File, error) {
 		return nil, fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	fileName := fmt.Sprintf("%s_%d%s", prefix, time.Now().Unix(), ext)
-	filePath := filepath.Join(dir, fileName)
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return nil, fmt.Errorf("failed to generate output filename: %w", err)
+	}
 
-	file, err := os.Create(filePath)
+	fileName := fmt.Sprintf("%s_%d_%x%s", prefix, time.Now().Unix(), suffix, ext)
+	filePath := filepath.Join(dir, fileName)
+	file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create output file: %w", err)
 	}

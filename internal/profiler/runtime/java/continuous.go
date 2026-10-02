@@ -25,9 +25,9 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler"
-	executil "huatuo-bamai/internal/profiler/exec"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiler"
+	profilerexec "github.com/ccfos/huatuo/internal/profiler/exec"
 )
 
 const (
@@ -214,7 +214,7 @@ func stopAsprofSampling(
 	defer cancel()
 
 	activePIDs := opt.activePIDList()
-	results := executil.ExecCmds(finalCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
+	results := profilerexec.Run(finalCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
 		return stopWithOutputArgs(pid, opt.SessionID, opt.OutFilePrefix, opt.outputFileCount)
 	})
 	finalCtxErr := finalCtx.Err()
@@ -226,6 +226,6 @@ func stopAsprofSampling(
 	}
 	return errors.Join(
 		timeoutErr,
-		executil.VerifyResults(results),
+		profilerexec.Verify(results),
 	)
 }

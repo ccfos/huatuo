@@ -22,20 +22,18 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
 
-readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
+bpf_tool_setup profiler native_oncpu_profiler profiler-cpu-thread-group
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_cpu_thread_group.user.c"
 readonly WORKER_SYMBOL="thread_group_cpu_loop"
 readonly PROFILER_DURATION=5
 readonly PROFILER_FREQ=99
 readonly PROFILER_AGGR_INTERVAL=2
 
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -r "${ROOT_DIR}/_output/bpf/native_cpu_profiler.o" ]] || fatal "native bpf object missing"
 [[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip "perf_event_paranoid not readable: perf unavailable"
 readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
 [[ "${PARANOID}" -le 2 ]] || skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
 
-WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-cpu-thread-group.XXXXXX")
+WORK_DIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${WORK_DIR}/thread_group_workload"
 TARGET_PID=""
 PROFILER_PID=""

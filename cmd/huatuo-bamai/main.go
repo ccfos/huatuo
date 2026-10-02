@@ -23,24 +23,31 @@ import (
 	"syscall"
 	"time"
 
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/pidfile"
-	"huatuo-bamai/internal/version"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/nodeagent/operation"
+	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
+	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
+	"github.com/ccfos/huatuo/internal/pidfile"
+	"github.com/ccfos/huatuo/internal/profiling/publication"
+	"github.com/ccfos/huatuo/internal/server"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/version"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	_ "huatuo-bamai/core/autotracing"
-	_ "huatuo-bamai/core/events"
-	_ "huatuo-bamai/core/metrics"
+	_ "github.com/ccfos/huatuo/core/autotracing"
+	_ "github.com/ccfos/huatuo/core/events"
+	_ "github.com/ccfos/huatuo/core/metrics"
 )
 
 const (
 	appName  = "huatuo-bamai"
 	appUsage = "Node agent for Linux kernel observability"
 
-	shutdownTimeout = 10 * time.Second
+	defaultShutdownTimeout = 60 * time.Second
 )
 
 var (
@@ -75,9 +82,16 @@ func mainAction(opts *Options) error {
 type Daemon struct {
 	opts *Options
 
-	cgr     cgroups.Cgroup
-	metrics *prometheus.Registry
-	tracer  *tracing.TracingManager
+	cgr              cgroups.Cgroup
+	metrics          *prometheus.Registry
+	operationManager *operation.Manager
+	profilingService *nodeprofiling.Service
+	tracingService   *nodetracing.Service
+	toolstreamServer *toolstream.Server
+	tracingStore     *tracingstore.Store
+	profileStore     *profilingstore.Store
+	publications     *publication.Store
+	apiServer        *server.Server
 }
 
 func NewDaemon(opts *Options) *Daemon {
@@ -92,11 +106,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 	var cleanups []func(context.Context) error
 
 	shutdown := func() error {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
 		defer cancel()
 
 		var errs []error
 		for i := len(cleanups) - 1; i >= 0; i-- {
+			if err := shutdownCtx.Err(); err != nil {
+				errs = append(errs, fmt.Errorf(
+					"shutdown deadline reached with %d cleanup stages remaining: %w",
+					i+1,
+					err,
+				))
+				break
+			}
 			if err := cleanups[i](shutdownCtx); err != nil {
 				errs = append(errs, err)
 			}
@@ -124,12 +146,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}{
 		{"pidfile", lockPidfile},
 		{"cgroup", setupCgroup},
-		{"storage", setupStorage},
 		{"bpf", setupBPF},
+		{"storage", setupStorage},
 		{"pod", setupPodManager},
 		{"metrics", setupMetrics},
 		{"toolstream", startToolstream},
 		{"tracing", startTracing},
+		{"operations", startOperations},
 		{"handlers", startHandlers},
 		{"cgroup-cpu-quota", applyCgroupCPUQuota},
 	}
@@ -140,17 +163,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 
 	log.Infof("huatuo-bamai started successfully")
-	s := d.waitForSignal(ctx)
-	log.Infof("huatuo-bamai received signal %v, shutting down", s)
-
-	if err := shutdown(); err != nil {
-		log.Warnf("shutdown completed with errors: %v", err)
+	s, serveErr := d.waitForSignal(ctx)
+	if serveErr == nil && s != nil {
+		log.Infof("huatuo-bamai received signal %v, shutting down", s)
 	}
-
-	return nil
+	return errors.Join(serveErr, shutdown())
 }
 
-func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
+func (d *Daemon) waitForSignal(ctx context.Context) (os.Signal, error) {
 	waitCh := make(chan os.Signal, 1)
 	signal.Notify(waitCh, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
 
@@ -160,11 +180,22 @@ func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
 		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
 	}
 
+	if d.apiServer == nil {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		case s := <-waitCh:
+			return s, nil
+		}
+	}
+
 	select {
 	case <-ctx.Done():
-		return nil
+		return nil, nil
 	case s := <-waitCh:
-		return s
+		return s, nil
+	case <-d.apiServer.Done():
+		return nil, d.apiServer.Wait(context.WithoutCancel(ctx))
 	}
 }
 

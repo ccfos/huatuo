@@ -15,13 +15,11 @@
 package provider
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func TestValidateJavaFrequency(t *testing.T) {
@@ -31,23 +29,12 @@ func TestValidateJavaFrequency(t *testing.T) {
 	require.Error(t, validateJavaFrequency(1001))
 }
 
-func TestValidateJavaToolPath(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "bin"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "lib"), 0o755))
-	asprof := filepath.Join(dir, "bin/asprof")
-	require.NoError(t, os.WriteFile(asprof, []byte("tool"), 0o600))
-	require.NoError(t, os.Chmod(asprof, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "lib/libasyncProfiler.so"), []byte("lib"), 0o600))
-	require.NoError(t, validateJavaToolPath(dir))
-}
-
 func TestValidateJavaMemoryMode(t *testing.T) {
-	args, err := validateJavaMemoryMode(profiling.MemoryModeObjectAlloc)
+	args, err := validateJavaMemoryMode(profiling.ModeObjectAlloc)
 	require.NoError(t, err)
 	require.Empty(t, args)
 
-	args, err = validateJavaMemoryMode(profiling.MemoryModeObjectUsage)
+	args, err = validateJavaMemoryMode(profiling.ModeObjectUsage)
 	require.NoError(t, err)
 	require.Equal(t, []string{"--live"}, args)
 

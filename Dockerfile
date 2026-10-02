@@ -1,4 +1,18 @@
-ARG BUILD_MODE
+# Copyright 2026 The HuaTuo Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+ARG BUILD_MODE=static
 
 # Build docker images
 #
@@ -15,12 +29,13 @@ COPY . .
 
 RUN set -x; \
     apt-get update && apt-get install -y --no-install-recommends \
-    make clang libbpf-dev bpftool curl git binutils-gold musl-tools capnproto &&\
-    go install github.com/vektra/mockery/v2@latest &&\
+    make clang libbpf-dev bpftool curl git binutils-gold musl-tools capnproto python3 &&\
+    go install github.com/vektra/mockery/v2@v2.53.6 &&\
     go install capnproto.org/go/capnp/v3/capnpc-go@latest
 
 RUN set -x; \
-    make BUILD_MODE=${BUILD_MODE} &&\
+    make install-tools &&\
+    make build BUILD_MODE=${BUILD_MODE} &&\
     mkdir -p ${RUN_PATH} &&\
     cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/ &&\
     sed -i -e 's/# Address.*/Address=""/g' \
@@ -46,7 +61,7 @@ FROM golang:1.24 AS run-nostatic
 ARG RUN_PATH="/home/huatuo-bamai"
 RUN apt-get update && apt-get install -y --no-install-recommends curl libelf1 libnuma1 &&\
     rm -rf /var/lib/apt/lists/*
-ENV LD_LIBRARY_PATH=/usr/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/dcmi:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/dcmi
 COPY --from=build ${RUN_PATH} ${RUN_PATH}
 WORKDIR ${RUN_PATH}
 

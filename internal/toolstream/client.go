@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"huatuo-bamai/internal/toolstream/transport"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
 )
 
 // ClientOptions configures a Client connection.
@@ -64,9 +64,9 @@ func (c *Client) Send(event any) error {
 	return c.inner.SendChunk(payload, false)
 }
 
-// End sends the end-of-stream marker and closes the connection; safe for defer.
-func (c *Client) End() {
-	c.inner.End()
+// End sends the end-of-stream marker and closes the connection.
+func (c *Client) End() error {
+	return c.inner.End()
 }
 
 // Close closes the connection without sending an end frame; prefer End.

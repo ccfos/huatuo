@@ -19,7 +19,7 @@ import (
 	"testing"
 )
 
-func TestNetNSInodeByPid(t *testing.T) {
+func TestNetNamespaceInumByPID(t *testing.T) {
 	tests := []struct {
 		name    string
 		pid     int
@@ -44,12 +44,12 @@ func TestNetNSInodeByPid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NetNSInodeByPid(tt.pid)
+			got, err := NetNamespaceInumByPID(tt.pid)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("NetNSInodeByPid() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("NetNamespaceInumByPID() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr && got == 0 {
-				t.Errorf("NetNSInodeByPid() got = %v, want non-zero inode", got)
+				t.Errorf("NetNamespaceInumByPID() got = %v, want non-zero inum", got)
 			}
 		})
 	}

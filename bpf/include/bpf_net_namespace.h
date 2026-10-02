@@ -5,6 +5,25 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
 
+static __always_inline u64 sk_netns_cookie(struct sock *sk)
+{
+	if (!sk)
+		return 0;
+
+	if (!bpf_core_field_exists(((struct net*)0)->net_cookie))
+		return 0;
+
+	return BPF_CORE_READ(sk, __sk_common.skc_net.net, net_cookie);
+}
+
+static __always_inline u32 sk_netns_inum(struct sock *sk)
+{
+	if (!sk)
+		return 0;
+
+	return BPF_CORE_READ(sk, __sk_common.skc_net.net, ns.inum);
+}
+
 static __always_inline u64 skb_netns_cookie(struct sk_buff *skb)
 {
 	if (!bpf_core_field_exists(((struct net*)0)->net_cookie))
@@ -15,12 +34,7 @@ static __always_inline u64 skb_netns_cookie(struct sk_buff *skb)
 		return BPF_CORE_READ(dev, nd_net.net, net_cookie);
 	}
 
-	struct sock *sk = BPF_CORE_READ(skb, sk);
-	if (sk) {
-		return BPF_CORE_READ(sk, __sk_common.skc_net.net, net_cookie);
-	}
-
-	return 0;
+	return sk_netns_cookie(BPF_CORE_READ(skb, sk));
 }
 
 static __always_inline u32 skb_netns_inum(struct sk_buff *skb)
@@ -30,12 +44,7 @@ static __always_inline u32 skb_netns_inum(struct sk_buff *skb)
 		return BPF_CORE_READ(dev, nd_net.net, ns.inum);
 	}
 
-	struct sock *sk = BPF_CORE_READ(skb, sk);
-	if (sk) {
-		return BPF_CORE_READ(sk, __sk_common.skc_net.net, ns.inum);
-	}
-
-	return 0;
+	return sk_netns_inum(BPF_CORE_READ(skb, sk));
 }
 
 #endif

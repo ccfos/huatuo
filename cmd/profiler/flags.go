@@ -38,7 +38,26 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "cpuid",
-		Usage: "CPU IDs to sample: comma-separated list and ranges (e.g., 1,3,5-10). Empty for all CPUs",
+		Usage: "CPU IDs to profile: comma-separated list and ranges (e.g., 1,3,5-10). Empty for all CPUs",
+	},
+	&cli.StringFlag{
+		Name:  "cpu-mode",
+		Usage: "Native CPU profiling mode: oncpu|offcpu",
+		Value: "oncpu",
+	},
+	&cli.StringFlag{
+		Name:  "offcpu-phase",
+		Usage: "Off-CPU phase to attribute: all|blocked|runqueue",
+		Value: "all",
+	},
+	&cli.Uint64Flag{
+		Name:  "offcpu-min-duration-us",
+		Usage: "Minimum off-CPU phase duration to record in microseconds",
+		Value: 1000,
+	},
+	&cli.BoolFlag{
+		Name:  "offcpu-stats",
+		Usage: "Enable off-CPU diagnostics",
 	},
 	&cli.StringFlag{
 		Name:  "container-id",
@@ -53,6 +72,10 @@ var appFlags = []cli.Flag{
 		Aliases: []string{"F"},
 		Usage:   "The number of samples to collect per second",
 		Value:   99,
+	},
+	&cli.BoolFlag{
+		Name:  "require-hardware-pmu",
+		Usage: "Require native on-CPU profiling to use the hardware PMU",
 	},
 	&cli.UintFlag{
 		Name:  "physical-memory-probability",
@@ -118,7 +141,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "tool-path",
-		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
+		Usage: "Tool directory containing bin/asprof and lib/libasyncProfiler.so for Java, or py-spy for Python",
 	},
 	&cli.StringFlag{
 		Name:  "binary-match-path",

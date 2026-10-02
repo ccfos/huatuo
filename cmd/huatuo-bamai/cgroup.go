@@ -19,14 +19,16 @@ import (
 	"fmt"
 	"os"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
+const bytesPerMiB = 1024 * 1024
+
 func setupCgroup(d *Daemon) (func(context.Context) error, error) {
-	if d.opts.DisableCgroup {
-		log.Infof("self cgroup resource limit disabled by --disable-cgroup")
+	if !d.opts.EnableCgroup {
+		log.Infof("self cgroup resource limit disabled by default")
 		return nil, nil
 	}
 
@@ -38,8 +40,8 @@ func setupCgroup(d *Daemon) (func(context.Context) error, error) {
 	if err := cgr.NewRuntime(
 		appName,
 		cgroups.ToSpec(
-			config.Get().RuntimeCgroup.LimitInitCPU,
-			config.Get().RuntimeCgroup.LimitMem,
+			config.Get().Runtime.StartupCPULimitCores,
+			config.Get().Runtime.MemoryLimitMiB*bytesPerMiB,
 		),
 	); err != nil {
 		return nil, fmt.Errorf("new runtime cgroup: %w", err)
@@ -57,7 +59,7 @@ func applyCgroupCPUQuota(d *Daemon) (func(context.Context) error, error) {
 	if d.cgr == nil {
 		return nil, nil
 	}
-	if err := d.cgr.UpdateRuntime(cgroups.ToSpec(config.Get().RuntimeCgroup.LimitCPU, 0)); err != nil {
+	if err := d.cgr.UpdateRuntime(cgroups.ToSpec(config.Get().Runtime.CPULimitCores, 0)); err != nil {
 		return nil, fmt.Errorf("update runtime: %w", err)
 	}
 

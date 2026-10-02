@@ -62,10 +62,10 @@ int prog(void *ctx)
 make BPF_DEBUG=1
 ```
 
-只重新编译 BPF 对象：
+只重新生成构建产物而不重新编译二进制：
 
 ```bash
-make BPF_DEBUG=1 bpf-build
+make BPF_DEBUG=1 gen-build
 ```
 
 `BPF_DEBUG=0` 是默认值。此时宏展开为空操作，调试 perf event array、事件结构、
@@ -95,7 +95,7 @@ profiler 支持该开关：
 - `args`：最多三个 `u64` 参数；全部为零时省略。
 
 ```text
-bpf_dbg: file=native_cpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456Z msg=enter prog args=[0x1f4 0xffff8881 0x0]
+bpf_dbg: file=native_oncpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456Z msg=enter prog args=[0x1f4 0xffff8881 0x0]
 ```
 
 只有同时使用 `BPF_DEBUG=1` 编译并在运行时指定 `--log-bpf-debug`，才会产生
