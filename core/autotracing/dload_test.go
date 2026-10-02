@@ -15,6 +15,7 @@
 package autotracing
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -36,11 +37,43 @@ func TestNewDloadTracing(t *testing.T) {
 			name: "valid config",
 		},
 		{
+			name: "maximum sampling interval",
+			update: func(config *Config) {
+				config.Dload.Interval = maxTimerDurationSeconds
+			},
+		},
+		{
+			name: "sampling interval overflow",
+			update: func(config *Config) {
+				config.Dload.Interval = maxTimerDurationSeconds + 1
+			},
+			expectedErr: fmt.Sprintf("dload sampling interval must not exceed %d seconds", maxTimerDurationSeconds),
+		},
+		{
 			name: "non-positive sampling interval",
 			update: func(config *Config) {
 				config.Dload.Interval = 0
 			},
 			expectedErr: "dload sampling interval must be positive",
+		},
+		{
+			name: "maximum tracing interval",
+			update: func(config *Config) {
+				config.Dload.IntervalTracing = maxTimerDurationSeconds
+			},
+		},
+		{
+			name: "tracing interval overflow",
+			update: func(config *Config) {
+				config.Dload.IntervalTracing = maxTimerDurationSeconds + 1
+			},
+			expectedErr: fmt.Sprintf("dload tracing interval must not exceed %d seconds", maxTimerDurationSeconds),
+		},
+		{
+			name: "zero tracing interval",
+			update: func(config *Config) {
+				config.Dload.IntervalTracing = 0
+			},
 		},
 		{
 			name: "negative tracing interval",
@@ -77,6 +110,9 @@ func TestNewDloadTracing(t *testing.T) {
 			}
 			if tracer.containers == nil {
 				t.Fatal("newDloadTracing() returned a nil container map")
+			}
+			if tracer.interval <= 0 || tracer.threshold.minTraceInterval < 0 {
+				t.Fatalf("converted durations = %s, %s", tracer.interval, tracer.threshold.minTraceInterval)
 			}
 		})
 	}
