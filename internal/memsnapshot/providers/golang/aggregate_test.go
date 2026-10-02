@@ -120,7 +120,7 @@ func TestStackAggregatesSortedAllocations(t *testing.T) {
 				entry := allocation{
 					key: fmt.Sprintf("stack-%04d", i), inuseBytes: uint64(i%7 + 1), inuseObjects: uint64(i + 1),
 				}
-				groups.addSample([]byte(entry.key), uint64(entry.inuseObjects), uint64(entry.inuseBytes), 1)
+			groups.addSample([]byte(entry.key), entry.inuseObjects, entry.inuseBytes, 1)
 				samples[entry.key] = entry
 				want = append(want, entry.inuseBytes)
 			}
@@ -155,7 +155,7 @@ func TestStackAggregatesSortedWeights(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			groups := newStackAggr()
 			for i, value := range test.values {
-				groups.addSample([]byte(fmt.Sprint(i)), 1, uint64(value), 1)
+			groups.addSample([]byte(fmt.Sprint(i)), 1, value, 1)
 			}
 			got, err := groups.sortedAllocations(t.Context())
 			if err != nil || len(got) != len(test.want) {
