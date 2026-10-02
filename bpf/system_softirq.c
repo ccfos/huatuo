@@ -16,8 +16,8 @@ enum lat_zone {
 
 struct softirq_lat {
 	u64 enable;
-	u64 timestamp;
-	u64 total_latency[LAT_ZONE_MAX];
+	u64 start_ns;
+	u64 latency_counts[LAT_ZONE_MAX];
 };
 
 struct {
@@ -39,7 +39,7 @@ int probe_softirq_raise(struct trace_event_raw_softirq *ctx)
 	lat = bpf_map_lookup_elem(&softirq_percpu_lats, &vec);
 	if (!lat) {
 		struct softirq_lat lat_init = {
-			.timestamp = bpf_ktime_get_ns(),
+			.start_ns = bpf_ktime_get_ns(),
 			.enable = 1,
 		};
 		bpf_map_update_elem(&softirq_percpu_lats, &vec, &lat_init, COMPAT_BPF_ANY);
@@ -48,7 +48,7 @@ int probe_softirq_raise(struct trace_event_raw_softirq *ctx)
 	}
 
 	if (!lat->enable) {
-		lat->timestamp = bpf_ktime_get_ns();
+		lat->start_ns = bpf_ktime_get_ns();
 		lat->enable = 1;
 	}
 
@@ -71,16 +71,16 @@ int probe_softirq_entry(struct trace_event_raw_softirq *ctx)
 	if (!lat->enable)
 		return 0;
 
-	u64 latency = bpf_ktime_get_ns() - lat->timestamp;
+	u64 latency = bpf_ktime_get_ns() - lat->start_ns;
 
 	if (latency < 10 * NSEC_PER_USEC) {
-		__sync_fetch_and_add(&lat->total_latency[LAT_ZONE0], 1);
+		__sync_fetch_and_add(&lat->latency_counts[LAT_ZONE0], 1);
 	} else if (latency < 100 * NSEC_PER_USEC) {
-		__sync_fetch_and_add(&lat->total_latency[LAT_ZONE1], 1);
+		__sync_fetch_and_add(&lat->latency_counts[LAT_ZONE1], 1);
 	} else if (latency < 1 * NSEC_PER_MSEC) {
-		__sync_fetch_and_add(&lat->total_latency[LAT_ZONE2], 1);
+		__sync_fetch_and_add(&lat->latency_counts[LAT_ZONE2], 1);
 	} else {
-		__sync_fetch_and_add(&lat->total_latency[LAT_ZONE3], 1);
+		__sync_fetch_and_add(&lat->latency_counts[LAT_ZONE3], 1);
 	}
 
 	lat->enable = 0;

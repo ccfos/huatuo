@@ -16,34 +16,34 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/executil"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/version"
 
 	"github.com/urfave/cli/v2"
 )
 
 const (
-	cliFlagConfig        = "config"
-	cliFlagConfigDir     = "config-dir"
-	cliFlagEnablePProf   = "enable-pprof"
-	cliFlagDisableCgroup = "disable-cgroup"
-	cliFlagLogDebug      = "log-debug"
+	cliFlagConfig       = "config"
+	cliFlagConfigDir    = "config-dir"
+	cliFlagEnablePProf  = "enable-pprof"
+	cliFlagEnableCgroup = "enable-cgroup"
+	cliFlagLogDebug     = "log-debug"
 )
 
 // Options holds CLI-derived configuration independently of urfave/cli.
 type Options struct {
-	ConfigFile    string
-	ConfigDir     string
-	EnablePProf   bool
-	DisableCgroup bool
-	LogDebug      bool
-	VersionInfo   version.Info
-	Config        *config.Config
+	ConfigFile   string
+	ConfigDir    string
+	EnablePProf  bool
+	EnableCgroup bool
+	LogDebug     bool
+	VersionInfo  version.Info
+	Config       *config.Config
 }
 
 func buildCommand(seed version.Seed) *cli.App {
@@ -89,8 +89,8 @@ func (o *Options) AddFlags(app *cli.App) {
 			Usage: "package pprof serves via its HTTP server runtime profiling data, default(false)",
 		},
 		&cli.BoolFlag{
-			Name:  cliFlagDisableCgroup,
-			Usage: "disable self cgroup resource limit",
+			Name:  cliFlagEnableCgroup,
+			Usage: "enable self cgroup resource limit",
 		},
 		&cli.BoolFlag{
 			Name:  cliFlagLogDebug,
@@ -103,7 +103,7 @@ func (o *Options) AddFlags(app *cli.App) {
 func (o *Options) FromContext(ctx *cli.Context) error {
 	o.ConfigFile = ctx.String(cliFlagConfig)
 	o.EnablePProf = ctx.Bool(cliFlagEnablePProf)
-	o.DisableCgroup = ctx.Bool(cliFlagDisableCgroup)
+	o.EnableCgroup = ctx.Bool(cliFlagEnableCgroup)
 	o.LogDebug = ctx.Bool(cliFlagLogDebug)
 
 	var err error
@@ -120,12 +120,12 @@ func resolveOptionDir(dir string) (string, error) {
 		return dir, nil
 	}
 
-	runningDir, err := executil.RunningDir()
+	executable, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve %s dir: %w", cliFlagConfigDir, err)
 	}
 
-	return filepath.Join(runningDir, "../", dir), nil
+	return filepath.Join(filepath.Dir(executable), "../", dir), nil
 }
 
 func configureRuntime(opts *Options) error {

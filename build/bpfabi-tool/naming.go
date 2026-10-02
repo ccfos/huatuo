@@ -28,7 +28,7 @@ var initialisms = map[string]string{
 	"ip":     "IP",
 	"lacp":   "LACP",
 	"n":      "N",
-	"netns":  "NetNS",
+	"netns":  "NetNamespace",
 	"ns":     "NS",
 	"offcpu": "OffCPU",
 	"oncpu":  "OnCPU",

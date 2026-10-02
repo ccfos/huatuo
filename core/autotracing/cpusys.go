@@ -26,11 +26,12 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/flamegraph"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/pkg/tracing"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/flamegraph"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const (
@@ -42,6 +43,7 @@ func init() {
 }
 
 func newCPUSys() (*tracing.EventTracingAttr, error) {
+	cfg := configSnapshot()
 	intervalSeconds := cfg.CPUSys.Interval
 	minTraceIntervalSeconds := cfg.CPUSys.IntervalTracing
 	perfDurationSeconds := cfg.CPUSys.RunTracingToolTimeout
@@ -234,7 +236,7 @@ func (c *cpuSysTracing) shouldTrace(state cpuSysState, sampledAt time.Time) bool
 }
 
 func (c *cpuSysTracing) saveCPUSysTrace(
-	traceTime time.Time,
+	traceTime timeutil.Timestamp,
 	state cpuSysState,
 	flameData []byte,
 ) error {
@@ -250,10 +252,10 @@ func (c *cpuSysTracing) saveCPUSysTrace(
 	}
 
 	if err := tracing.Save(&tracing.WriteRequest{
-		TracerName:    cpuSysTracerName,
-		TracerTime:    traceTime,
-		TracerData:    &tracerData,
-		TracerRunType: tracing.TracerRunTypeAutotracing,
+		TracerName:       cpuSysTracerName,
+		StartedTimestamp: traceTime,
+		TracerData:       &tracerData,
+		TracerRunType:    types.TracerRunTypeAutotracing,
 	}); err != nil {
 		return fmt.Errorf("save cpu system trace: %w", err)
 	}
@@ -284,7 +286,7 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			traceTime := time.Now()
+			traceTime := timeutil.Now()
 			log.WithField("cpu_system_percent", state.systemPercent).
 				WithField("cpu_system_delta", state.systemPercentDelta).
 				WithField("duration_seconds", int64(c.perfDuration/time.Second)).
@@ -299,7 +301,7 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 			if err := c.saveCPUSysTrace(traceTime, state, flameData); err != nil {
 				return err
 			}
-			c.lastTraceAt = traceTime
+			c.lastTraceAt = traceTime.Time
 		}
 	}
 }

@@ -45,17 +45,21 @@ struct {
  *   --device (whitelist): NULL dev is dropped (not in the listed set).
  *   --device-excluded (blacklist): NULL dev passes (not in the excluded set).
  */
-static __always_inline bool skb_filter_pass_dev(struct sk_buff *skb)
+static __always_inline bool skb_filter_pass_netdev(struct net_device *dev)
 {
 	if (filter_dev_mode == 0)
 		return true;
 
-	struct net_device *dev = BPF_CORE_READ(skb, dev);
 	__u32 idx = dev ? BPF_CORE_READ(dev, ifindex) : 0;
 	bool hit = bpf_map_lookup_elem(&skb_filter_dev_map, &idx) != NULL;
 
 	/* mode 1: whitelist (hit passes); mode 2: blacklist (hit dropped) */
 	return filter_dev_mode == 1 ? hit : !hit;
+}
+
+static __always_inline bool skb_filter_pass_dev(struct sk_buff *skb)
+{
+	return skb_filter_pass_netdev(BPF_CORE_READ(skb, dev));
 }
 
 #endif /* __BPF_SKB_FILTER_H__ */

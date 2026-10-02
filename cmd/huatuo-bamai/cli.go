@@ -19,13 +19,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/utils/executil"
-	"huatuo-bamai/internal/version"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/bpf"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/version"
 
 	"github.com/urfave/cli/v2"
 )
@@ -36,9 +35,9 @@ const (
 	cliFlagBPFObjDir      = "bpf-dir"
 	cliFlagToolBinDir     = "tools-bin-dir"
 	cliFlagRegion         = "region"
+	cliFlagEnableCgroup   = "enable-cgroup"
 	cliFlagDisableKubelet = "disable-kubelet"
 	cliFlagDisableStorage = "disable-storage"
-	cliFlagDisableCgroup  = "disable-cgroup"
 	cliFlagDisableTracing = "disable-tracing"
 	cliFlagLogDebug       = "log-debug"
 	cliFlagDryRun         = "dry-run"
@@ -54,9 +53,9 @@ type Options struct {
 	BPFObjDir      string
 	ToolBinDir     string
 	Region         string
+	EnableCgroup   bool
 	DisableKubelet bool
 	DisableStorage bool
-	DisableCgroup  bool
 	DisableTracing []string
 	LogDebug       bool
 	DryRun         bool
@@ -128,9 +127,8 @@ func (o *Options) AddFlags(app *cli.App) {
 			Usage: "disable storage backends(testing only). Not recommended for production use.",
 		},
 		&cli.BoolFlag{
-			Name:  cliFlagDisableCgroup,
-			Value: false,
-			Usage: "disable self cgroup resource limit",
+			Name:  cliFlagEnableCgroup,
+			Usage: "enable self cgroup resource limit",
 		},
 		&cli.StringSliceFlag{
 			Name:  cliFlagDisableTracing,
@@ -157,7 +155,7 @@ func (o *Options) FromContext(ctx *cli.Context) error {
 	o.Region = ctx.String(cliFlagRegion)
 	o.DisableKubelet = ctx.Bool(cliFlagDisableKubelet)
 	o.DisableStorage = ctx.Bool(cliFlagDisableStorage)
-	o.DisableCgroup = ctx.Bool(cliFlagDisableCgroup)
+	o.EnableCgroup = ctx.Bool(cliFlagEnableCgroup)
 	o.DisableTracing = ctx.StringSlice(cliFlagDisableTracing)
 	o.LogDebug = ctx.Bool(cliFlagLogDebug)
 	o.DryRun = ctx.Bool(cliFlagDryRun)
@@ -191,12 +189,12 @@ func resolveOptionDir(ctx *cli.Context, name string) (string, error) {
 		return dir, nil
 	}
 
-	runningDir, err := executil.RunningDir()
+	executable, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve %s dir: %w", name, err)
 	}
 
-	return filepath.Join(runningDir, "../", dir), nil
+	return filepath.Join(filepath.Dir(executable), "../", dir), nil
 }
 
 // configureRuntime applies process-global side effects derived from Options:
@@ -204,7 +202,7 @@ func resolveOptionDir(ctx *cli.Context, name string) (string, error) {
 // Runs once from app.Before so subsequent code can read config.Get() freely.
 func configureRuntime(opts *Options) error {
 	bpf.DefaultObjDir = opts.BPFObjDir
-	tracing.TaskBinDir = opts.ToolBinDir
+	internalconfig.CoreBinDir = opts.ToolBinDir
 
 	if err := config.Load(filepath.Join(opts.ConfigDir, opts.ConfigFile)); err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -239,7 +237,7 @@ func configureRuntime(opts *Options) error {
 		merged := make([]string, 0, len(bl)+len(opts.DisableTracing))
 		merged = append(merged, bl...)
 		merged = append(merged, opts.DisableTracing...)
-		if err := config.Set("BlackList", merged); err != nil {
+		if err := config.Update(map[string]any{"BlackList": merged}); err != nil {
 			return err
 		}
 		log.Infof("merged tracer blacklist from CLI: %v", config.Get().BlackList)
@@ -251,7 +249,7 @@ func configureRuntime(opts *Options) error {
 
 	log.Debugf("resolved dirs: %s=%q %s=%q %s=%q",
 		cliFlagBPFObjDir, bpf.DefaultObjDir,
-		cliFlagToolBinDir, tracing.TaskBinDir,
+		cliFlagToolBinDir, internalconfig.CoreBinDir,
 		cliFlagConfigDir, opts.ConfigDir)
 
 	return nil

@@ -23,9 +23,9 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/internal/pod"
-	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/internal/pod"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func runBefore(ctx *cli.Context) error {
@@ -128,16 +128,17 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 
 		return nil
 
-	case profiling.LanguageJava:
-		if ctx.String("tool-path") == "" {
+	case profiling.LanguageJava, profiling.LanguagePython:
+		toolDir := ctx.String("tool-path")
+		if toolDir == "" {
 			return fmt.Errorf("language=%s requires --tool-path", lang)
 		}
-
-		return validateExactlyOneTarget(ctx)
-
-	case profiling.LanguagePython:
-		if err := ensurePythonToolPath(ctx); err != nil {
-			return err
+		info, err := os.Stat(toolDir)
+		if err != nil {
+			return fmt.Errorf("profiling tool directory %q is unavailable: %w", toolDir, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("profiling tool path %q must be a directory", toolDir)
 		}
 		return validateExactlyOneTarget(ctx)
 
@@ -164,13 +165,6 @@ func validatePythonProfileOptions(lang profiling.Language, typ profiling.Type, d
 		)
 	}
 	return nil
-}
-
-func ensurePythonToolPath(ctx *cli.Context) error {
-	if ctx.String("tool-path") != "" {
-		return nil
-	}
-	return fmt.Errorf("language=python requires --tool-path")
 }
 
 func validateExactlyOneTarget(ctx *cli.Context) error {
@@ -231,17 +225,6 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 
-	if toolPath := ctx.String("tool-path"); toolPath != "" {
-		info, err := os.Stat(toolPath)
-		if err != nil {
-			return fmt.Errorf("tool-path does not exist: %s", toolPath)
-		}
-
-		if !info.IsDir() {
-			return fmt.Errorf("tool-path must be a directory: %s", toolPath)
-		}
-	}
-
 	if ctx.String("output-format") == "remote" && ctx.String("output-storage") == "" {
 		return fmt.Errorf("--output-storage must not be empty when --output-format=remote")
 	}
@@ -266,20 +249,20 @@ func validateNumericOptions(profileType profiling.Type, freq, maxProfilerProcess
 }
 
 func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language, typ profiling.Type) error {
-	implementation, _ := profiling.ImplementationFor(lang)
+	implementation, _ := profiling.ImplementationFor(lang, typ)
 	native := implementation == profiling.ImplementationNative
 	nativeCPU := native && typ == profiling.TypeCPU
 	nativeMemory := native && typ == profiling.TypeMemory
-	cpuMode, err := profiling.ParseCPUMode(ctx.String("cpu-mode"))
-	if err != nil {
-		return err
+	cpuMode := profiling.Mode(ctx.String("cpu-mode"))
+	if cpuMode != profiling.ModeOnCPU && cpuMode != profiling.ModeOffCPU {
+		return fmt.Errorf("unsupported CPU mode %q", cpuMode)
 	}
 	if _, err := profiling.ParseOffCPUPhase(ctx.String("offcpu-phase")); err != nil {
 		return err
 	}
-	offCPU := nativeCPU && cpuMode == profiling.CPUModeOffCPU
+	offCPU := nativeCPU && cpuMode == profiling.ModeOffCPU
 
-	if cpuMode == profiling.CPUModeOffCPU && !nativeCPU {
+	if cpuMode == profiling.ModeOffCPU && !nativeCPU {
 		return fmt.Errorf("--cpu-mode=offcpu is supported only by native CPU profiling")
 	}
 	if ctx.IsSet("cpu-mode") && typ != profiling.TypeCPU {
@@ -299,6 +282,9 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 			return fmt.Errorf("--freq is not used with --cpu-mode=offcpu")
 		}
 	}
+	if ctx.Bool("require-hardware-pmu") && (!nativeCPU || offCPU) {
+		return fmt.Errorf("--require-hardware-pmu requires native CPU profiling with --cpu-mode=oncpu")
+	}
 
 	if lang == profiling.LanguageJava && typ == profiling.TypeCPU && ctx.Int("freq") > 1000 {
 		return fmt.Errorf("Java profiler frequency must not exceed 1000 samples per second")
@@ -317,7 +303,7 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	}
 	if ctx.IsSet("physical-memory-probability") {
 		physicalMemory := nativeMemory &&
-			profiling.MemoryMode(ctx.String("memory-mode")) != profiling.MemoryModeVirtualAlloc
+			profiling.Mode(ctx.String("memory-mode")) != profiling.ModeVirtualAlloc
 		if !physicalMemory {
 			return fmt.Errorf("--physical-memory-probability is supported only by native physical memory profiling")
 		}
@@ -348,14 +334,11 @@ func validateMemoryMode(lang profiling.Language, typ profiling.Type, value strin
 	if value == "" {
 		return fmt.Errorf("--memory-mode is required when --type=memory")
 	}
-	mode, err := profiling.ParseMemoryMode(value)
-	if err != nil {
-		return err
-	}
-	if profiling.SupportsMemoryMode(lang, mode) {
+	mode := profiling.Mode(value)
+	if profiling.SupportsMode(lang, typ, mode) {
 		return nil
 	}
-	supported := profiling.MemoryModesFor(lang)
+	supported := profiling.ModesFor(lang, typ)
 	values := make([]string, 0, len(supported))
 	for _, candidate := range supported {
 		values = append(values, string(candidate))

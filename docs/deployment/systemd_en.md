@@ -9,34 +9,22 @@ weight: 3
 
 ## Production resource limits
 
-Set explicit collector resource limits in `huatuo-bamai.conf`:
+systemd owns resource limits and process lifecycle for `huatuo-bamai.service`. The service unit disables Huatuo self-managed cgroups and uses native controls:
 
-```toml
-[Runtime]
-StartupCPULimitCores = 0.5
-CPULimitCores = 2.0
-MemoryLimitMiB = 2048
+```ini
+[Service]
+CPUAccounting=yes
+CPUQuota=200%
+MemoryAccounting=yes
+MemoryMax=2G
+TasksAccounting=yes
+TasksMax=32768
+KillMode=control-group
 ```
 
-Binary installations use
-`/opt/huatuo-bamai/conf/huatuo-bamai.conf`; RPM installations use
-`/etc/huatuo-bamai/huatuo-bamai.conf`. Configure the limits before the first
-start. After changing them for a running service, restart the collector:
+`CPUQuota=200%` allows up to 2 CPU cores and `MemoryMax=2G` caps service memory. Adjust these values for the host, collection jobs, and observed peaks. Do not pass `--enable-cgroup` in a systemd deployment; it would move the process out of the service cgroup.
 
-```bash
-sudo systemctl restart huatuo-bamai
-```
-
-The `0.5` core startup limit reduces initialization spikes. The `2` core runtime
-limit preserves collection capacity, while the `2048 MiB` memory limit prevents
-abnormal growth from exhausting host memory. Adjust these values based on host
-capacity, collection jobs, and observed resource peaks.
-
-The provided `huatuo-bamai.service` uses `Delegate=yes`, allowing the collector
-to manage its delegated cgroup. Do not add `CPUQuota` or `MemoryMax`; a lower
-stacked limit can cause startup failures or unexpected throttling.
-
-After starting the service, check its status and delegated cgroup:
+After starting the service, check its status and cgroup:
 
 ```bash
 systemctl status huatuo-bamai --no-pager
@@ -102,8 +90,7 @@ sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubuse
 
 Edit `/opt/huatuo-bamai/conf/huatuo-bamai.conf` and `/opt/huatuo-bamai/conf/huatuo-apiserver.conf` to match the deployment environment. For detailed configuration options, see the [`huatuo-bamai` configuration](/docs/configuration/huatuo-bamai-configuration_en.md) and [`huatuo-apiserver` configuration](/docs/configuration/huatuo-apiserver-configuration_en.md).
 
-Set `[Runtime]` in `huatuo-bamai.conf` as described in "Production resource
-limits."
+Set `CPUQuota`, `MemoryMax`, and `TasksMax` in the service unit. Configure `[Runtime]` only for direct execution with `--enable-cgroup`.
 
 ### 5. Register the HUATUO services
 
@@ -159,7 +146,7 @@ sudo dnf install ./huatuo-bamai-2.1.0-2.oc9.aarch64.rpm
 
 Edit `/etc/huatuo-bamai/huatuo-bamai.conf` to match the deployment environment. For detailed configuration options, see the [`huatuo-bamai` configuration](/docs/configuration/huatuo-bamai-configuration_en.md).
 
-Set `[Runtime]` as described in "Production resource limits."
+Set `CPUQuota`, `MemoryMax`, and `TasksMax` in the service unit. Configure `[Runtime]` only for direct execution with `--enable-cgroup`.
 
 ### 4. Start the HUATUO service
 

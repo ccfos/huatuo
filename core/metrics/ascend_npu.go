@@ -26,13 +26,13 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"huatuo-bamai/core/metrics/ascend/dcmi"
-	"huatuo-bamai/core/metrics/ascend/hccn"
-	"huatuo-bamai/core/metrics/ascend/pcie"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/core/metrics/ascend/dcmi"
+	"github.com/ccfos/huatuo/core/metrics/ascend/hccn"
+	"github.com/ccfos/huatuo/core/metrics/ascend/pcie"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func init() {
@@ -155,6 +155,7 @@ func ascendCollectMetrics(ctx context.Context, devices []deviceKey) ([]*metric.D
 // do not block other groups.
 func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*metric.Data, error) {
 	metrics := make([]*metric.Data, 0, 32)
+	cfg := configSnapshot()
 
 	npuLabels := map[string]string{
 		"card":   strconv.Itoa(int(cardId)),

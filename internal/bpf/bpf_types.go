@@ -45,6 +45,8 @@ type AttachOption struct {
 	PerfEvent struct { // BPF_PROG_TYPE_PERF_EVENT
 		SamplePeriod, SampleFreq uint64
 		CPUIDs                   []int
+		Type                     uint32
+		Config                   uint64
 	}
 }
 

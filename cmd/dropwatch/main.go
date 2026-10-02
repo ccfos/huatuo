@@ -22,11 +22,11 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/version"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/dropwatch.c -o $BPF_DIR/dropwatch.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/net_dropwatch.c -o $BPF_DIR/net_dropwatch.o
 
 var (
 	dropwatchToolName = "dropwatch"

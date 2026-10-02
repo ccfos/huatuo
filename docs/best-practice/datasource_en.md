@@ -199,7 +199,7 @@ Configure via Grafana UI or provisioning:
 - **Username**: `elastic`
 - **Password**: `<your-elasticsearch-password>`
 - **Index name**: `huatuo_bamai`
-- **Time field name**: `uploaded_time`
+- **Time field name**: `uploaded_timestamp`
 
 ## Dashboard Import
 

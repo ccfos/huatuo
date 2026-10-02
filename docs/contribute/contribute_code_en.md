@@ -51,9 +51,8 @@ git remote add upstream https://github.com/ccfos/huatuo.git
 ### Build
 
 ```bash
-make all          # Build everything (BPF + Go)
-make bpf-build    # Build only BPF programs
-make build        # Build only Go binaries
+make build        # Build BPF programs and Go binaries
+make gen-build    # Regenerate BPF and generated Go artifacts
 make docker-build # Build Docker image
 ```
 
@@ -82,6 +81,9 @@ make check # Run linting and formatting checks
 ```
 
 > **Note**: `make test` requires `/etc/kubernetes/pki` for E2E tests. If you don't have a K8s cluster, use `make unit` instead.
+
+To test or debug on another distribution without a local VM, use
+[GitHub Actions VM debugging](/docs/development/vm-debugging_en.md).
 
 ---
 

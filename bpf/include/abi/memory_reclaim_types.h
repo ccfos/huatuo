@@ -19,9 +19,10 @@
 
 struct memory_reclaim_event {
 	u8 comm[COMPAT_TASK_COMM_LEN];
-	u64 delta_time;
-	u64 css;
-	u64 pid;
+	u64 reclaim_duration_ns;
+	u64 cpu_css_addr;
+	u32 tgid;
+	u32 tid;
 };
 
 BPF_ABI_EXPORT(memory_reclaim_event);

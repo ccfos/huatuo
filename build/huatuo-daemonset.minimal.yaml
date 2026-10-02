@@ -24,11 +24,11 @@ spec:
         imagePullPolicy: IfNotPresent
         resources:
           limits:
-            cpu: '1'
+            cpu: '2'
             memory: 2Gi
           requests:
-            cpu: 500m
-            memory: 512Mi
+            cpu: '2'
+            memory: 2Gi
         securityContext:
           privileged: true
         volumeMounts:

@@ -17,40 +17,49 @@ package response
 import (
 	"net/http"
 	"testing"
+
+	v1 "github.com/ccfos/huatuo/apis/v1"
 )
 
 func TestPredefinedAPIErrorsExposeTheirContract(t *testing.T) {
 	tests := []struct {
 		name    string
 		err     *APIError
-		code    int
+		code    v1.ErrorCode
 		status  int
 		message string
 	}{
-		{name: "invalid request", err: ErrInvalidRequest, code: 400, status: http.StatusBadRequest, message: "invalid request"},
-		{name: "unauthorized", err: ErrUnauthorized, code: 401, status: http.StatusUnauthorized, message: "unauthorized"},
-		{name: "forbidden", err: ErrForbidden, code: 403, status: http.StatusForbidden, message: "permission denied"},
-		{name: "not found", err: ErrNotFound, code: 404, status: http.StatusNotFound, message: "not found"},
-		{name: "conflict", err: ErrConflict, code: 409, status: http.StatusConflict, message: "conflict"},
-		{name: "internal", err: ErrInternal, code: 500, status: http.StatusInternalServerError, message: "internal error"},
-		{name: "rate limit", err: ErrTooManyRequests, code: 429, status: http.StatusTooManyRequests, message: "too many requests"},
+		{name: "invalid request", err: ErrInvalidRequest, code: v1.ErrorCodeInvalidRequest, status: http.StatusBadRequest, message: "invalid request"},
+		{name: "route not found", err: ErrRouteNotFound, code: v1.ErrorCodeRouteNotFound, status: http.StatusNotFound, message: "route not found"},
+		{name: "method not allowed", err: ErrMethodNotAllowed, code: v1.ErrorCodeMethodNotAllowed, status: http.StatusMethodNotAllowed, message: "method not allowed"},
+		{name: "unauthorized", err: ErrUnauthorized, code: v1.ErrorCodeUnauthorized, status: http.StatusUnauthorized, message: "unauthorized"},
+		{name: "forbidden", err: ErrForbidden, code: v1.ErrorCodeForbidden, status: http.StatusForbidden, message: "permission denied"},
+		{name: "not found", err: ErrNotFound, code: v1.ErrorCodeNotFound, status: http.StatusNotFound, message: "not found"},
+		{name: "conflict", err: ErrConflict, code: v1.ErrorCodeConflict, status: http.StatusConflict, message: "conflict"},
+		{name: "internal", err: ErrInternal, code: v1.ErrorCodeInternal, status: http.StatusInternalServerError, message: "internal error"},
+		{name: "request too large", err: ErrRequestTooLarge, code: v1.ErrorCodeRequestTooLarge, status: http.StatusRequestEntityTooLarge, message: "request body is too large"},
+		{name: "unsupported media type", err: ErrUnsupportedMediaType, code: v1.ErrorCodeUnsupportedMediaType, status: http.StatusUnsupportedMediaType, message: "request content type is not supported"},
+		{name: "rate limit", err: ErrTooManyRequests, code: v1.ErrorCodeRateLimited, status: http.StatusTooManyRequests, message: "too many requests"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.err.GetCode() != tt.code || tt.err.GetHTTPStatus() != tt.status || tt.err.GetMessage() != tt.message {
-				t.Errorf("APIError = %#v, want code=%d status=%d message=%q", tt.err, tt.code, tt.status, tt.message)
+			if tt.err.GetCode() != tt.code || tt.err.GetMessage() != tt.message {
+				t.Errorf("APIError = %#v, want code=%q message=%q", tt.err, tt.code, tt.message)
+			}
+			if status, ok := LegacyHTTPStatusForErrorCode(tt.err.GetCode()); !ok || status != tt.status {
+				t.Errorf("LegacyHTTPStatusForErrorCode(%q) = (%d, %t), want (%d, true)", tt.code, status, ok, tt.status)
 			}
 		})
 	}
 }
 
 func TestAPIErrorWithMessageCopiesOriginal(t *testing.T) {
-	original := NewAPIError(499, "original", http.StatusConflict)
+	original := NewAPIError(v1.ErrorCodeConflict, "original")
 	got := original.WithMessage("updated")
 	if got == original {
 		t.Fatal("WithMessage() returned the original pointer")
 	}
-	if got.Code != original.Code || got.HTTPStatus != original.HTTPStatus || got.Message != "updated" {
+	if got.Code != original.Code || got.Message != "updated" {
 		t.Errorf("WithMessage() = %#v", got)
 	}
 	if original.Message != "original" {

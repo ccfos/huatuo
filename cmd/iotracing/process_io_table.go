@@ -24,7 +24,7 @@ type fileEntry struct {
 
 // pidGroup is one pid's file-IO records and their summed Size.
 type pidGroup struct {
-	Pid   uint32
+	PID   uint32
 	Files []*fileEntry
 	Total uint64
 }
@@ -35,7 +35,7 @@ type ProcessIOTable map[uint32]*pidGroup
 func (t ProcessIOTable) Add(pid uint32, e *fileEntry) {
 	g := t[pid]
 	if g == nil {
-		g = &pidGroup{Pid: pid}
+		g = &pidGroup{PID: pid}
 		t[pid] = g
 	}
 

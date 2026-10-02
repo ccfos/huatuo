@@ -69,6 +69,33 @@ func TestParseOnlineCores(t *testing.T) {
 	}
 }
 
+func TestMaxOnlineCPU(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{name: "sparse", content: "0,2-3\n", want: 3},
+		{name: "single", content: "7\n", want: 7},
+		{name: "empty", content: "\n", want: -1},
+		{name: "invalid last ID", content: "0,x\n", want: -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "online")
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got := MaxOnlineCPU(path)
+			if got != tt.want {
+				t.Errorf("MaxOnlineCPU() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBoundCoresFallback(t *testing.T) {
 	got, err := BoundCores(math.MaxUint64, 0, 0, 4)
 	if err != nil {

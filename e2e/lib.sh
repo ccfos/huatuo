@@ -16,8 +16,6 @@
 
 set -euo pipefail
 
-export TEST_LOG_TAG="E2E TEST"
-
 source ${ROOT_DIR}/integration/lib.sh
 
 # k8s
@@ -32,6 +30,7 @@ k8s_create_pod() {
 		kubectl run "${name}-${i}" \
 			-n ${ns} \
 			--image=${image} \
+			--image-pull-policy=Never \
 			--restart=Never \
 			-l ${label} \
 			-- sleep infinity
@@ -66,6 +65,20 @@ kubelet_pod_count() {
         ' 2> /dev/null || echo 0
 }
 
+kubelet_container_ids() {
+	local ns=$1
+	local regex=$2
+	kubelet_pods_json \
+		| jq -r --arg ns "$ns" --arg re "$regex" '
+        .items[]
+        | select(.metadata.namespace == $ns)
+        | select(.metadata.name | test($re))
+        | select(.status.phase == "Running")
+        | .status.containerStatuses[]?.containerID // empty
+        | sub("^[^:]+://"; "")
+      ' 2> /dev/null
+}
+
 assert_kubelet_pod_count() {
 	local ns=$1 regex=$2 expect=$3 desc=${4:-"kubelet pod count"}
 
@@ -86,35 +99,72 @@ assert_kubelet_pod_count() {
 	fi
 }
 
-assert_huatuo_bamai_pod_count() {
-	local regex=$1 expect=$2 desc=${3:-"huatuo-bamai pod count"}
-	_assert() {
-		local actual
-		actual="$(huatuo_bamai_pod_count "$regex")"
-		assert_eq "$actual" "$expect" "$desc"
-	}
+huatuo_bamai_containers_present() {
+	local ns=$1 regex=$2 expect=$3
+	local -a container_ids=()
+	local container_id
+
+	mapfile -t container_ids < <(kubelet_container_ids "$ns" "$regex")
+	[[ ${#container_ids[@]} -eq ${expect} ]] || return 1
+	for container_id in "${container_ids[@]}"; do
+		curl -sf "${CURL_TIMEOUT[@]}" \
+			"${HUATUO_BAMAI_ADDR}/v1/containers/${container_id}" \
+			| jq -e --arg id "${container_id}" '.data.id == $id' > /dev/null \
+			|| return 1
+	done
+}
+
+assert_huatuo_bamai_containers_present() {
+	local ns=$1 regex=$2 expect=$3 desc=${4:-"huatuo-bamai containers present"}
+
+	wait_until \
+		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
+		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
+		huatuo_bamai_containers_present "$ns" "$regex" "$expect" \
+		|| fatal "${desc}: matching container metadata did not become available"
+}
+
+huatuo_bamai_containers_absent() {
+	local container_id status
+	for container_id in "$@"; do
+		status=$(curl -sS "${CURL_TIMEOUT[@]}" \
+			-o /dev/null -w '%{http_code}' \
+			"${HUATUO_BAMAI_ADDR}/v1/containers/${container_id}") \
+			|| return 1
+		[[ ${status} == "404" ]] || return 1
+	done
+}
+
+assert_huatuo_bamai_containers_absent() {
+	local desc=$1
+	shift
 
 	if ! wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		_assert; then
-		# wait timeout, dump pods from huatuo-bamai
-		curl "${CURL_TIMEOUT[@]}" ${HUATUO_BAMAI_PODS_API}
-
-		fatal "❌ wait timeout, huatuo-bamai pod count not expected"
+		huatuo_bamai_containers_absent "$@"; then
+		local container_id
+		for container_id in "$@"; do
+			log_error "container deletion not confirmed: ${container_id}; current API response follows"
+			curl -sS "${CURL_TIMEOUT[@]}" -w '\nHTTP status: %{http_code}\n' \
+				"${HUATUO_BAMAI_ADDR}/v1/containers/${container_id}" >&2 \
+				|| log_error "container metadata request failed: ${container_id}"
+		done
+		fatal "${desc}: container API did not confirm deletion with HTTP 404"
 	fi
 }
 
 e2e_test_teardown() {
 	local code=$1
 
-	huatuo_bamai_stop "${code}" || true
+	huatuo_bamai_stop || code=1
 	if ! huatuo_bamai_log_check; then
 		log_error "❌ huatuo-bamai log check failed"
 		code=1
 	fi
 
-	if [ $code -ne 0 ]; then
-		fatal "❌ e2e test failed with exit code: $code"
+	if [[ $code -ne 0 && $code -ne 77 ]]; then
+		log_error "❌ e2e test failed with exit code: $code"
+		return 1
 	fi
 }

@@ -16,50 +16,37 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
-	"huatuo-bamai/internal/server"
-
-	"golang.org/x/time/rate"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
+	"github.com/ccfos/huatuo/internal/server"
 )
 
 func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {
-	var profileQueryService profiling.ProfileQueryService
-	if d.profileService != nil {
-		profileQueryService = d.profileService
-	}
-
 	runningServer, err := handlers.Start(&handlers.ServerOptions{
 		Addr:                d.opts.Config.APIServer.ListenAddress,
 		PromReg:             d.metrics,
-		TraceJobManager:     d.jobManager,
-		ProfilingJobManager: d.jobManager,
-		ProfileService:      profileQueryService,
+		JobManager:          d.jobManager,
+		ProfileStorage:      d.profileStorage,
+		ProfileQueryService: d.profileQueryService,
+		ProfilePublications: d.publications,
 		ProfilingConfig: profiling.Config{
-			AggregationIntervalSeconds:     d.opts.Config.Profiling.AggregationIntervalSeconds,
-			MaxConcurrentProfilerProcesses: d.opts.Config.Profiling.MaxConcurrentProfilerProcesses,
-			DashboardBaseURL:               d.opts.Config.Profiling.DashboardBaseURL,
+			DashboardBaseURL: d.opts.Config.Profiling.DashboardBaseURL,
 		},
 		AuthUsers:   authUsers(d.opts.Config.Auth.Users),
 		EnablePProf: d.opts.EnablePProf,
 		VersionInfo: &d.opts.VersionInfo,
-		RateLimit:   rate.Limit(d.opts.Config.APIServer.RateLimit.RequestsPerSecond),
-		RateBurst:   d.opts.Config.APIServer.RateLimit.Burst,
-		Ready: func(ctx context.Context) error {
-			err := d.jobManager.Ready(ctx)
-			if d.profileService == nil {
-				return err
-			}
-			return errors.Join(err, d.profileService.Ready(ctx))
+		RateLimit: &server.RateLimitConfig{
+			RequestsPerSecond: d.opts.Config.APIServer.RateLimit.RequestsPerSecond,
+			Burst:             d.opts.Config.APIServer.RateLimit.Burst,
 		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start api server: %w", err)
 	}
+
 	d.apiServer = runningServer
 
 	return runningServer.Shutdown, nil

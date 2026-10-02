@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !didi
+
 package bpf
 
 import (
@@ -26,7 +28,7 @@ import (
 	"strings"
 	"sync"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"

@@ -6,7 +6,7 @@ datasources:
     uid: huatuo-apiserver-pyroscope
     access: proxy
     orgId: 1
-    url: http://127.0.0.1:12740/v1/profiles/flamegraph/
+    url: http://127.0.0.1:12740/v1/profiling/flamegraph/
     jsonData:
       minStep: '15s'
       httpHeaderName1: 'Authorization'

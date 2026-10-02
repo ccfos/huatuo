@@ -19,9 +19,9 @@ import (
 	"errors"
 	"fmt"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 const (
@@ -108,7 +108,7 @@ func (d *BpfDbg) debugEventLoop(ctx context.Context, reader PerfEventReader) err
 			return fmt.Errorf("read debug event: %w", err)
 		}
 
-		ts, err := timeutil.KtimeToTime(event.Timestamp)
+		ts, err := timeutil.KtimeToTime(event.KernelObservedNS)
 		if err != nil {
 			return fmt.Errorf("convert bpf timestamp: %w", err)
 		}

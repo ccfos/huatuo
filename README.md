@@ -50,7 +50,7 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
 ## Big Picture
 
-![](/docs/img/hardware-errors-huatuo-framework.png)
+![](/docs/img/huatuo-arch-vendor.svg)
 
 ## Ecosystem
 
@@ -78,36 +78,74 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
   ![](/docs/img/quickstart-components.png)  
   
-  ![](/docs/img/quickstart-autotrcing-event.png)
+  ![](/docs/img/quickstart-autotracing-event.png)
 
 - **NOTE**
 
   Do not deploy images with the latest tag to production environments, as this is a development and testing image. Use a formal release image or binary.
 
+## Go Client
+
+The public Go client is in `client/`. Node client files use the `node_` prefix.
+
+```go
+package main
+
+import (
+	"context"
+	"encoding/json"
+
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/client"
+)
+
+func updateNodeConfig(ctx context.Context, address client.NodeAddress) error {
+	nodeClient, err := client.NewNode(&client.NodeConfig{
+		BearerToken: "node-token",
+	})
+	if err != nil {
+		return err
+	}
+	return nodeClient.UpdateConfig(ctx, address, &nodeapi.UpdateConfigRequest{
+		Config: map[string]json.RawMessage{
+			"Runtime.CPULimitCores": json.RawMessage("1.5"),
+		},
+	})
+}
+```
 
 ## Kernel Versions
 
 The project supports kernel version 4.18 and later. The following kernel and OS distribution are primarily tested.
 
-| HUATUO | Kernel Version | OS Distribution                               |
-| :----- | :------------- | :-------------------------------------------- |
-| 1.0.0  | 4.18.x         | CentOS 8.x                                    |
-| 1.0.0  | 5.4.x          | OpenCloudOS V8/Ubuntu 20.04                   |
-| 1.0.0  | 5.10.x         | OpenEuler 22.03/Anolis OS 8.10                |
-| 1.0.0  | 5.15.x         | Ubuntu 22.04                                  |
-| 1.0.0  | 6.6.x          | OpenEuler 24.03/Anolis OS 23.3/OpenCloudOS V9 |
-| 1.0.0  | 6.8.x          | Ubuntu 24.04                                  |
-| 1.0.0  | 6.14.x         | Fedora 42                                     |
-| 2.3.0  | 7.0.x          | Ubuntu 26.04                                  |
+| HUATUO | Kernel | OS |
+| :--- | :--- | :--- |
+| 1.0.0 | 4.18.x | CentOS 8.x |
+| 2.4.0 | 4.18.x | Rocky Linux 8.10 |
+| 1.0.0 | 5.4.x | OpenCloudOS V8 |
+| 1.0.0 | 5.4.x | Ubuntu 20.04.6 LTS |
+| 1.0.0 | 5.10.x | Anolis OS 8.10 |
+| 1.0.0 | 5.10.x | openEuler 22.03 LTS-SP4 |
+| 2.4.0 | 5.14.x | Rocky Linux 9.8 |
+| 1.0.0 | 5.15.x | Ubuntu 22.04.5 LTS |
+| 2.4.0 | 6.1.x | Debian 12 (bookworm) |
+| 1.0.0 | 6.6.x | Anolis OS 23.3 |
+| 1.0.0 | 6.6.x | OpenCloudOS V9 |
+| 1.0.0 | 6.6.x | openEuler 24.03 LTS-SP4 |
+| 1.0.0 | 6.8.x | Ubuntu 24.04.4 LTS |
+| 2.4.0 | 6.12.x | Debian 13 (trixie) |
+| 1.0.0 | 6.14.x | Fedora 42 |
+| 2.4.0 | 6.19.x | Fedora Linux 44 |
+| 2.3.0 | 7.0.x | Ubuntu 26.04 LTS |
 
 ## Documentation
 
 For more information, visit [https://docs.huatuo.tech](https://docs.huatuo.tech/)
 
-## Community Co-Building
+## Co-Building
 
 - ❇️ We welcome all users, developers, companies, and organizations to use Huatuo, report bugs, submit feature requests, share best practices, and help us build a professional and vibrant open-source community.
-- ❤️ HUATUO Contributors
+- ❤️ Contributors
 <a href="https://github.com/ccfos/huatuo/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
 </a>

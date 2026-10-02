@@ -20,12 +20,12 @@ import (
 	"math"
 	"syscall"
 
-	"huatuo-bamai/internal/cgroups/paths"
-	"huatuo-bamai/internal/cgroups/pids"
-	"huatuo-bamai/internal/cgroups/stats"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/utils/cpuutil"
-	"huatuo-bamai/internal/utils/parseutil"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	"github.com/ccfos/huatuo/internal/cgroups/pids"
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
+	"github.com/ccfos/huatuo/internal/utils/parseutil"
 
 	extv1 "github.com/containerd/cgroups/v3/cgroup1"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -90,13 +90,13 @@ func (c *CgroupV1) Procs(path string) ([]int32, error) {
 }
 
 func (c *CgroupV1) CpuUsage(path string) (*stats.CpuUsage, error) {
-	statPath := paths.Path(subsystem.SubsystemCPU, path, "cpuacct.stat")
+	statPath := paths.Path(subsystem.SubsystemCPUAcct, path, "cpuacct.stat")
 	raw, err := parseutil.RawKV(statPath)
 	if err != nil {
 		return nil, err
 	}
 
-	usagePath := paths.Path(subsystem.SubsystemCPU, path, "cpuacct.usage")
+	usagePath := paths.Path(subsystem.SubsystemCPUAcct, path, "cpuacct.usage")
 	usage, err := parseutil.ReadUint(usagePath)
 	if err != nil {
 		return nil, err

@@ -20,17 +20,17 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"time"
 
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/linkstatus"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/packet"
-	"huatuo-bamai/internal/symbol"
-	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/kernaddr"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
+	"github.com/ccfos/huatuo/internal/linkstatus"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/internal/utils/kernaddr"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // writer is the single write destination for a dropwatch session.
@@ -42,17 +42,33 @@ type textWriter struct{ w io.Writer }
 
 func (s *textWriter) Write(ev *types.DropWatchTracing) error {
 	line := make([]byte, 0, 256)
-	line = append(line, ev.ObservedTimestamp...)
+	line = append(line, ev.ObservedTimestamp.FormatUTC()...)
+	if ev.KernelObservedTimestamp != nil {
+		line = append(line, " kernel_observed_timestamp="...)
+		line = append(line, ev.KernelObservedTimestamp.FormatUTC()...)
+	}
 	line = append(line, ' ')
 	line = append(line, ev.Layers.String()...)
 	line = append(line, " reason="...)
+	if ev.DropReasonGroup != "" {
+		line = append(line, ev.DropReasonGroup...)
+		line = append(line, '/')
+	}
 	line = append(line, ev.DropReason...)
+	if ev.DropSource != "" {
+		line = append(line, " drop_source="...)
+		line = append(line, ev.DropSource...)
+	}
+	if ev.DropLocation != "" {
+		line = append(line, " drop_location="...)
+		line = append(line, ev.DropLocation...)
+	}
 	line = append(line, " len="...)
-	line = strconv.AppendUint(line, uint64(ev.PacketLen), 10)
+	line = strconv.AppendUint(line, uint64(ev.PacketLenBytes), 10)
 	line = append(line, " dev="...)
 	line = append(line, ev.NetdevName...)
 	line = append(line, " pid="...)
-	line = strconv.AppendUint(line, ev.Pid, 10)
+	line = strconv.AppendUint(line, ev.PID, 10)
 	line = append(line, '[')
 	line = append(line, ev.Comm...)
 	line = append(line, "] addr="...)
@@ -128,40 +144,42 @@ func newWriter(output io.Writer, options *writerOptions) (writer, func() error, 
 	}
 }
 
-func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType string) *types.DropWatchTracing {
-	pkt := packet.Hdr{
-		EthProto:  ev.PktHdr.EthProto,
-		RawLen:    uint8(ev.PktHdr.RawLen),
-		HasEthHdr: uint8(ev.PktHdr.HasEthHdr),
-		SkState:   uint8(ev.PktHdr.SkState),
-		Raw:       ev.PktHdr.Raw,
+func formatEvent(ev *abi.DropwatchPacketEvent, names dropwatch.ReasonNames, sourceType string) (*types.DropWatchTracing, error) {
+	observedTimestamp := timeutil.Now()
+	kernelObservedTimestamp, err := timeutil.KtimeToTimestamp(ev.Meta.KernelObservedNS)
+	if err != nil {
+		return nil, fmt.Errorf("convert dropwatch kernel observation time: %w", err)
 	}
-
-	p, err := packet.Parse(&pkt)
+	p, err := dropwatch.DecodePacket(ev)
 	if err != nil {
 		log.WithError(err).Debug("parse dropwatch packet")
 	}
 
 	frames := symbol.KsymStackStrs(ev.Stack[:], symbol.KsymStackMaxDepth)
 	stackStr := strings.Join(frames, "\n")
+	metadata := dropwatch.ResolveMetadata(&ev.Meta, names)
 
 	return &types.DropWatchTracing{
-		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
-		DropReason:          names.Resolve(ev.Meta.DropReason),
-		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
-		Pid:                 ev.Meta.TGIDPID >> 32,
-		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemcgCSSAddr),
-		NetNamespaceCookie:  ev.Meta.NetNSCookie,
-		NetNamespaceInum:    ev.Meta.NetNSInum,
-		NetdevName:          bytesutil.ToStr(ev.Meta.DevName[:]),
-		NetdevIfindex:       ev.Meta.Ifindex,
-		NetdevQueueMapping:  ev.Meta.QueueMapping,
-		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.DevFlags),
-		PacketSkbAddr:       kernaddr.Format(ev.Meta.KfreeSKBAddr),
-		PacketEthProto:      "0x" + strconv.FormatUint(uint64(ev.PktHdr.EthProto), 16),
-		PacketLen:           ev.PktHdr.PktLen,
-		Layers:              p,
-		Stack:               stackStr,
-		Source:              sourceType,
-	}
+		ObservedTimestamp:       observedTimestamp,
+		KernelObservedTimestamp: &kernelObservedTimestamp,
+		DropSource:              metadata.Source,
+		DropReason:              metadata.Reason,
+		DropReasonGroup:         metadata.ReasonGroup,
+		DropLocation:            kernaddr.Format(ev.Meta.DropLocation),
+		Comm:                    bytesutil.ToStr(ev.Meta.Comm[:]),
+		PID:                     ev.Meta.TGIDPID >> 32,
+		MemoryCgroupCSSAddr:     kernaddr.Format(ev.Meta.MemcgCSSAddr),
+		NetNamespaceCookie:      ev.Meta.NetNamespaceCookie,
+		NetNamespaceInum:        ev.Meta.NetNamespaceInum,
+		NetdevName:              bytesutil.ToStr(ev.Meta.DevName[:]),
+		NetdevIfindex:           ev.Meta.Ifindex,
+		NetdevQueueMapping:      ev.Meta.QueueMapping,
+		NetdevLinkStatus:        linkstatus.FlagsRaw(ev.Meta.DevFlags),
+		PacketSkbAddr:           kernaddr.Format(ev.Meta.SKBAddr),
+		PacketEthProto:          "0x" + strconv.FormatUint(uint64(ev.PktHdr.EthProto), 16),
+		PacketLenBytes:          ev.PktHdr.PacketLenBytes,
+		Layers:                  p,
+		Stack:                   stackStr,
+		Source:                  sourceType,
+	}, nil
 }

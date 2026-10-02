@@ -22,8 +22,10 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func init() {
@@ -112,6 +114,7 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 
 // Core function
 func (c *memBurstTracing) Start(ctx context.Context) error {
+	cfg := configSnapshot()
 	if err := validateMemBurst(&cfg.MemoryBurst); err != nil {
 		return err
 	}
@@ -160,18 +163,18 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 			}
 		}
 
-		currentTime := time.Now()
+		currentTime := timeutil.Now()
 		diff := currentTime.Sub(lastReportTime).Seconds()
 		if diff < float64(intervalTracing) {
 			continue
 		}
-		lastReportTime = currentTime
+		lastReportTime = currentTime.Time
 		if err := tracing.Save(&tracing.WriteRequest{
-			TracerName:    "memburst",
-			ContainerID:   "",
-			TracerTime:    time.Now(),
-			TracerData:    &MemoryTracingData{TopMemoryUsage: topProcesses},
-			TracerRunType: tracing.TracerRunTypeAutotracing,
+			TracerName:       "memburst",
+			ContainerID:      "",
+			StartedTimestamp: currentTime,
+			TracerData:       &MemoryTracingData{TopMemoryUsage: topProcesses},
+			TracerRunType:    types.TracerRunTypeAutotracing,
 		}); err != nil {
 			log.Warnf("failed to save tracing data: %v", err)
 		}

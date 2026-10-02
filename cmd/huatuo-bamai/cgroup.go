@@ -19,16 +19,16 @@ import (
 	"fmt"
 	"os"
 
-	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 const bytesPerMiB = 1024 * 1024
 
 func setupCgroup(d *Daemon) (func(context.Context) error, error) {
-	if d.opts.DisableCgroup {
-		log.Infof("self cgroup resource limit disabled by --disable-cgroup")
+	if !d.opts.EnableCgroup {
+		log.Infof("self cgroup resource limit disabled by default")
 		return nil, nil
 	}
 

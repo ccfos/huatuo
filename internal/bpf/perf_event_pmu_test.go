@@ -24,6 +24,43 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestNewPerfEventAttrFrequency(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		wantType   uint32
+		wantConfig uint64
+	}{
+		{
+			name:       "hardware CPU cycles",
+			wantType:   unix.PERF_TYPE_HARDWARE,
+			wantConfig: unix.PERF_COUNT_HW_CPU_CYCLES,
+		},
+		{
+			name:       "software CPU clock",
+			wantType:   unix.PERF_TYPE_SOFTWARE,
+			wantConfig: unix.PERF_COUNT_SW_CPU_CLOCK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			attr := newPerfEventAttr(&perfEventOption{
+				sample:      99,
+				eventType:   tt.wantType,
+				eventConfig: tt.wantConfig,
+			})
+			require.Equal(t, tt.wantType, attr.Type)
+			require.Equal(t, tt.wantConfig, attr.Config)
+			require.Equal(t, uint64(99), attr.Sample)
+			require.NotZero(t, attr.Bits&unix.PerfBitFreq)
+		})
+	}
+}
+
 // TestAttachPerfEvent tests perf event attach using table-driven style.
 func TestAttachPerfEvent(t *testing.T) {
 	prog := newTestProgram(t)

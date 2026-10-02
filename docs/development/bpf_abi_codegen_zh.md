@@ -3,7 +3,7 @@ title: BPF ABI 指南
 type: docs
 author: HUATUO Team
 date: 2026-03-04
-weight: 6
+weight: 7
 ---
 
 BPF 侧 C 结构体是 perf event ABI 的唯一来源。Go 类型由 BPF 对象中的 BTF
@@ -59,9 +59,9 @@ struct sample_detail {
 };
 
 struct sample_event {
-	u64 timestamp;
+	u64 kernel_observed_ns;
 	struct sample_detail detail;
-	u32 pid;
+	u32 tgid;
 	u8 kind;
 	u8 pad[3];
 };
@@ -97,8 +97,8 @@ ABI 头文件依赖 `u8`、`u16` 等基础类型，应在 `vmlinux.h` 和项目�
 ```c
 struct sample_event event = {};
 
-event.timestamp = bpf_ktime_get_ns();
-event.pid = bpf_get_current_pid_tgid() >> 32;
+event.kernel_observed_ns = bpf_ktime_get_ns();
+event.tgid = bpf_get_current_pid_tgid() >> 32;
 event.kind = kind;
 
 bpf_perf_event_output(ctx, &events, COMPAT_BPF_F_CURRENT_CPU,
@@ -125,7 +125,7 @@ internal/bpf/abi/sample_types_generated.go
 Go 代码直接引用生成类型：
 
 ```go
-import "huatuo-bamai/internal/bpf/abi"
+import "github.com/ccfos/huatuo/internal/bpf/abi"
 
 var event abi.SampleEvent
 if err := reader.ReadInto(&event); err != nil {
@@ -159,8 +159,9 @@ if err := reader.ReadInto(&event); err != nil {
 - 同名结构体出现在多个 BPF 对象中时，字段、偏移和大小必须完全一致。
 
 C 名称按下划线转换为 Go 导出名称，例如 `sample_event` 转换为
-`SampleEvent`，`pid_tgid` 转换为 `PIDTGID`。避免使用会映射为相同 Go 名称
-的 C 名称，例如 `sample_id` 和 `sample_i_d`。
+`SampleEvent`，`kernel_observed_ns` 转换为 `KernelObservedNS`。字段语义和跨层命名遵循
+[事件字段命名规范](event-field-naming_zh.md)。避免使用会映射为相同 Go 名称的
+C 名称，例如 `sample_id` 和 `sample_i_d`。
 
 ## 验证
 

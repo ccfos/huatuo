@@ -46,10 +46,10 @@ curl -L -o huatuo-daemonset.yaml \
 resources:
   limits:
     cpu: "2"
-    memory: 4Gi
+    memory: 2Gi
   requests:
-    cpu: "1"
-    memory: 1Gi
+    cpu: "2"
+    memory: 2Gi
 ```
 
 应用修改后的清单：
@@ -58,11 +58,13 @@ resources:
 kubectl apply -f ./huatuo-daemonset.yaml
 ```
 
-`requests` 提供调度保障，`limits` 限制异常任务对节点的影响。`4 GiB` 容器内存
-上限为默认的 `2048 MiB` 进程上限预留运行时空间，降低 OOM 风险。
+`requests` 提供调度保障，`limits` 由 kubelet 写入 Pod cgroup，负责限制
+Huatuo 的 CPU 和内存。Huatuo 默认不创建自身 cgroup，因此不会把进程移出
+`kubepods` 层级，containerd 重启和 Pod 删除时可以正常回收进程。
 
-示例值为初始基线，应根据节点规格、采集任务和资源峰值调整。容器上限不得低于
-`huatuo-bamai.conf` 中的 `[Runtime]` 进程上限。
+示例值为初始基线，requests 与 limits 相同，因此 Pod 为 Guaranteed QoS。
+只有显式传入 `--enable-cgroup` 时 `[Runtime]` 才生效；Kubernetes 部署不要传入
+该参数。
 
 ### 1.5 验证部署
 
@@ -121,10 +123,10 @@ image:
 resources:
   limits:
     cpu: "2"
-    memory: 4Gi
+    memory: 2Gi
   requests:
-    cpu: "1"
-    memory: 1Gi
+    cpu: "2"
+    memory: 2Gi
 
 nodeSelector:
   kubernetes.io/os: linux

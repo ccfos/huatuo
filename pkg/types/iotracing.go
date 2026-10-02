@@ -25,10 +25,12 @@ type IOTracingSnapshot struct {
 // IOScheduleEvent records one task that spent longer than the configured
 // threshold in io_schedule, with the kernel stack captured at the stall.
 type IOScheduleEvent struct {
-	Pid               uint32   `json:"pid"`
+	PID               uint32   `json:"pid"`
+	TID               uint32   `json:"tid"`
+	CPU               uint32   `json:"cpu"`
 	Comm              string   `json:"comm"`
 	ContainerHostname string   `json:"container_hostname"`
-	LatencyUs         uint64   `json:"schedule_latency_us"`
+	ScheduleLatencyUS uint64   `json:"schedule_latency_us"`
 	Stack             []string `json:"stack"`
 }
 
@@ -37,7 +39,7 @@ type IOScheduleEvent struct {
 // top-K subset for inspection, while TotalFileCount reports the
 // untruncated count so callers can see when truncation occurred.
 type ProcessFileIOStats struct {
-	Pid               uint32        `json:"pid"`
+	PID               uint32        `json:"pid"`
 	Comm              string        `json:"comm"`
 	ContainerHostname string        `json:"container_hostname"`
 	TotalFsReadBps    uint64        `json:"total_fs_read_bps"`

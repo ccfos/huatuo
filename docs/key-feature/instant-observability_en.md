@@ -17,19 +17,19 @@ HUATUO is an operating system deep observability project open-sourced by DiDi an
 
 HUATUO uses eBPF technology to observe anomalous events in real time across core Linux kernel subsystems, including CPU scheduling, memory management, the network protocol stack, and hardware error reporting. When the kernel encounters anomalies such as softlockup, OOM, or hardware MCE errors, eBPF programs hook into kernel functions (kprobes) or kernel tracepoints, capturing process information, kernel call stacks, and network context at the moment the event occurs. The data is passed to user-space handlers via the perf event ring buffer and persisted to Elasticsearch or local disk files.
 
-Compared to traditional kernel log (dmesg/syslog) collection, eBPF-based event observation reduces the risk of data loss from log buffer overflow; it can capture transient anomalies that never appear in kernel logs (such as excessive softirq disable time); and it provides container-level event correlation for precise root-cause analysis in cloud-native environments.
+Compared to traditional kernel log (dmesg/syslog) collection, eBPF-based event observation reduces the risk of data loss from log buffer overflow; it can capture transient anomalies that never appear in kernel logs (such as excessive scheduler tick intervals); and it provides container-level event correlation for precise root-cause analysis in cloud-native environments.
 
-Twelve event types are continuously observed, covering CPU scheduling health (softirq_tracing, softlockup, hungtask), memory pressure (oom, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
+Twelve event types are continuously observed, covering CPU scheduling health (sched_tick, softlockup, hungtask), memory pressure (memory_oom_kill, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
 
 ## 🎯 Use Cases
 
-**Kubernetes Container Memory Fault Diagnosis**: In scenarios where containers frequently restart due to OOM, the oom event records both the process killed by the OOM Killer (victim) and the process that triggered the OOM (trigger), including their memcg cgroup pointers and container IDs. Combined with time-series data, this enables fast root-cause analysis of containers involved in memory contention, reducing the time spent manually reviewing container logs.
+**Kubernetes Container Memory Fault Diagnosis**: In scenarios where containers frequently restart due to OOM, the memory_oom_kill event records both the process killed by the OOM Killer (victim) and the process that triggered the OOM (trigger), including their memcg cgroup pointers and container IDs. Combined with time-series data, this enables fast root-cause analysis of containers involved in memory contention, reducing the time spent manually reviewing container logs.
 
 **AI Training Cluster Hardware Fault Detection**: On GPU training servers, the ras event continuously collects MCE (Machine Check Exception), EDAC memory controller errors, and PCIe AER (Advanced Error Reporting) errors, classifying them by severity (Corrected / UncorrectedRecoverable / UncorrectedFatal). This enables early detection of hardware aging or single-point failures before training jobs are interrupted, reducing training task losses caused by hardware faults.
 
 **Network Performance Jitter Analysis**: dropwatch observes packet drops in the kernel network stack, tcp_retransmit observes TCP retransmission activity, and net_rx_latency detects end-to-end receive-path latency for individual packets from the network card driver to user space. Separate thresholds are configured per stage (driver to kernel: 5ms, kernel to TCP: 10ms, TCP to user space: 115ms), precisely identifying which network layer causes business timeouts.
 
-**Host Scheduling Health Observation**: The softirq_tracing (softirq disable time, default threshold 10ms), softlockup (CPU unable to schedule, ~1 second), and hungtask (D-state process hang) events jointly cover anomalies along the CPU scheduling path. When system stalls or response timeouts occur, kernel call stacks and other diagnostic data are automatically preserved, supporting offline analysis after the fault clears.
+**Host Scheduling Health Observation**: The sched_tick (scheduler tick interval, default threshold 10ms), softlockup (CPU unable to schedule, ~1 second), and hungtask (D-state process hang) events jointly cover anomalies along the CPU scheduling path. When system stalls or response timeouts occur, kernel call stacks and other diagnostic data are automatically preserved, supporting offline analysis after the fault clears.
 
 ## 🚀 Usage
 
@@ -39,7 +39,7 @@ All events provide default values and are operational without any configuration.
 
 | Parameter | Default | Description |
 | --------- | ------- | ----------- |
-| `softirq.disabled_threshold` | `10000000` (10ms, nanoseconds) | Softirq disable time trigger threshold |
+| `sched_tick.interval_threshold` | `10000000` (10ms, nanoseconds) | Scheduler tick interval threshold |
 | `memory_reclaim.blocked_threshold` | `900000000` (900ms, nanoseconds) | Direct memory reclaim time trigger threshold |
 | `net_rx_latency.driver2net_rx` | `5` (ms) | Latency threshold from NIC driver to `__netif_receive_skb` |
 | `net_rx_latency.driver2tcp` | `10` (ms) | Latency threshold from NIC driver to `tcp_v4_rcv` |
@@ -57,10 +57,10 @@ All events provide default values and are operational without any configuration.
 
 | Event Name (tracer_name) | Probe Type | Trigger Condition | Typical Scenarios |
 | ------------------------ | ---------- | ----------------- | ----------------- |
-| `softirq_tracing` | kprobe | Softirq disable time > threshold (default 10ms) | System stalls, network latency, scheduling delays |
+| `sched_tick` | kprobe | Scheduler tick interval >= threshold (default 10ms) | System stalls, network latency, scheduling delays |
 | `softlockup` | kprobe | CPU unable to schedule for extended time (~1 second) | Soft lockup, response anomalies |
 | `hungtask` | kprobe | D-state process task hang | Transient mass D-state processes, IO blocking |
-| `oom` | kprobe | OOM Killer triggered | Container/host memory exhaustion |
+| `memory_oom_kill` | kprobe | OOM Killer triggered | Container/host memory exhaustion |
 | `memory_reclaim_events` | kprobe | Container process direct reclaim time > threshold (default 900ms) | Business stalls caused by memory pressure |
 | `ras` | tracepoint | CPU/MEM/PCIe hardware errors | Hardware fault detection |
 | `dropwatch` | tracepoint | Kernel network stack packet drop | Business jitter caused by protocol stack drops |
@@ -78,21 +78,29 @@ All event records include the following common fields:
 
 - **hostname**: Physical machine hostname
 - **region**: Availability zone where the physical machine is located
-- **uploaded_time**: Data upload time
+- **uploaded_timestamp**: Data upload time
 - **container_id**: Container ID if the event is associated with a container
 - **container_hostname**: Container hostname if the event is associated with a container
 - **container_host_namespace**: Kubernetes namespace of the container if the event is associated with a container
 - **container_type**: Container type, e.g., `normal` for regular containers, `sidecar` for sidecar containers
 - **container_qos**: Container QoS level
-- **tracer_name**: Event name (e.g., `softirq_tracing`, `oom`)
+- **tracer_name**: Event name (e.g., `sched_tick`, `memory_oom_kill`)
 - **tracer_id**: Tracing ID for this event
-- **tracer_time**: Time when the tracing was triggered
-- **tracer_type**: Trigger type — manual or automatic
+- **observed_timestamp**: Time when the tracing was triggered
+- **tracer_type**: Observation kind; instant event records use `event`
 - **tracer_data**: Event-specific private data (see individual event descriptions below)
 
-### 1. softirq_tracing
+### 1. sched_tick
 
-**Description** Triggered when the kernel disables softirqs for longer than the configured threshold. Records the kernel call stack during the disable period and current process information to help analyze interrupt-related latency issues. The filter automatically excludes noise events from `ksoftirqd` and `swapper` processes.
+**Description** Measures the interval between scheduler ticks. When the interval reaches the threshold, it records the current kernel call stack and process information. The event can reveal long IRQ-off sections, CPU stalls, or virtualization scheduling delays, but does not by itself prove that softirqs were disabled. `comm` and `pid` identify the task interrupted by the reporting tick; they do not identify the cause of the delay.
+
+**Applicable Scenarios**
+
+- The kernel or a driver disables local interrupts for too long, or hardirq/NMI processing monopolizes the CPU.
+- A VM vCPU is descheduled by the host, including high steal time and scheduling stalls.
+- Low-level anomalies such as SMI or firmware stalls, delayed clockevent delivery, or lost timer events.
+
+**Usage Boundaries** Normal tick suppression after a successful NO_HZ transition is excluded. Ordinary CPU load or a softirq backlog alone does not imply tick delay. Set the threshold above the target system's normal tick period. The captured stack represents the first tick after the delay and should be correlated with IRQ, steal-time, and hardware metrics.
 
 **Data Storage** Event data is automatically stored in Elasticsearch or as files on the physical machine disk.
 
@@ -100,34 +108,31 @@ All event records include the following common fields:
 
 ```json
 {
-    "uploaded_time": "2025-06-11T16:05:16.251152703+08:00",
+    "uploaded_timestamp": "2025-06-11T16:05:16.251152703+08:00",
     "hostname": "***",
     "tracer_data": {
-        "offtime": 237328905,
-        "threshold": 10000000,
+        "tick_interval_ns": 237328905,
+        "tick_interval_threshold_ns": 10000000,
         "comm": "***-agent",
         "pid": 688073,
         "cpu": 1,
-        "now": 5532940660025295,
         "stack": "scheduler_tick/..."
     },
-    "tracer_time": "2025-06-11 16:05:16.251 +0800",
-    "tracer_type": "auto",
-    "time": "2025-06-11 16:05:16.251 +0800",
+    "observed_timestamp": "2025-06-11T16:05:16.251+08:00",
+    "tracer_type": "event",
     "region": "***",
-    "tracer_name": "softirq_tracing"
+    "tracer_name": "sched_tick"
 }
 ```
 
 **Fields**
 
 - **comm**: Name of the process that triggered the event
-- **stack**: Kernel call stack during the softirq disable period
-- **now**: Monotonic clock timestamp at the time of the event (nanoseconds)
-- **offtime**: Duration that softirqs were disabled (nanoseconds)
+- **stack**: Kernel call stack captured on the first scheduler tick after the delay
+- **tick_interval_ns**: Total interval between adjacent scheduler ticks (nanoseconds)
 - **cpu**: CPU number where the event occurred
-- **threshold**: Trigger threshold (nanoseconds); events are recorded when this is exceeded
-- **pid**: Process ID that triggered the event
+- **tick_interval_threshold_ns**: Inclusive scheduler tick interval threshold (nanoseconds)
+- **pid**: Process ID of the task interrupted by the reporting tick
 
 ### 2. dropwatch
 
@@ -139,8 +144,8 @@ All event records include the following common fields:
 
 ```json
 {
+    "observed_timestamp": "2026-07-23T02:14:40.304775546Z",
     "tracer_data": {
-        "observed_timestamp": "2026-07-23T02:14:40.304775546Z",
         "drop_reason": "SKB_DROP_REASON_NOT_SPECIFIED",
         "source": "events",
         "comm": "kubelet",
@@ -152,7 +157,7 @@ All event records include the following common fields:
         "netdev_name": "eth0",
         "netdev_ifindex": 2,
         "packet_eth_proto": "0x0800",
-        "packet_len": 1460,
+        "packet_len_bytes": 1460,
         "layers": {
             "label": "IPv4/TCP",
             "ipv4": {
@@ -165,7 +170,6 @@ All event records include the following common fields:
                 "dport": 49000,
                 "seq": 1009085774,
                 "ack_seq": 689410995,
-                "flags": "ACK",
                 "sk_state": "ESTABLISHED"
             }
         },
@@ -186,7 +190,7 @@ All event records include the following common fields:
 - **netdev_linkstatus**: List of NIC link status flags
 - **netdev_name**: Network device name
 - **netdev_ifindex**: Network interface index
-- **packet_len**: Packet length (bytes)
+- **packet_len_bytes**: Packet length (bytes)
 - **layers.ipv4.saddr / layers.ipv4.daddr**: Source and destination IP addresses
 - **layers.tcp.sport / layers.tcp.dport**: Source and destination ports
 - **layers.tcp.seq / layers.tcp.ack_seq**: TCP sequence and acknowledgment sequence numbers
@@ -203,11 +207,13 @@ All event records include the following common fields:
 
 ```json
 {
+    "observed_timestamp": "2025-06-11T00:00:00Z",
     "tracer_data": {
         "comm": "nginx",
         "pid": 2921092,
-        "lat_stage": "RX_STAGE_USERCOPY",
-        "lat_ms": 95973,
+        "latency_stage": "RX_STAGE_USERCOPY",
+        "latency_ms": 95973,
+        "latency_threshold_ms": 115,
         "tcp_state": "ESTABLISHED",
         "tcp_saddr": "10.156.248.76",
         "tcp_daddr": "10.134.72.4",
@@ -217,7 +223,7 @@ All event records include the following common fields:
         "tcp_ack_seq": 689410995,
         "net_namespace_cookie": 123456789,
         "net_namespace_inum": 402653184,
-        "pkt_len": 26064
+        "packet_len_bytes": 26064
     }
 }
 ```
@@ -226,17 +232,20 @@ All event records include the following common fields:
 
 - **comm**: Name of the process that triggered the event
 - **pid**: Process ID that triggered the event
-- **lat_stage**: Stage where latency occurred (`RX_STAGE_NETIF` driver-to-kernel / `RX_STAGE_TCPV4` kernel-to-TCP / `RX_STAGE_USERCOPY` TCP-to-user-space)
-- **lat_ms**: Actual latency (milliseconds)
+- **latency_stage**: Stage where latency occurred (`RX_STAGE_NETIF` driver-to-kernel / `RX_STAGE_TCPV4` kernel-to-TCP / `RX_STAGE_USERCOPY` TCP-to-user-space)
+- **latency_ms**: Actual latency (milliseconds)
+- **latency_threshold_ms**: Latency threshold that triggered the event (milliseconds)
 - **tcp_state**: TCP connection state (all states are supported, e.g., `ESTABLISHED`, `SYN_SENT`, `FIN_WAIT`, `TIME_WAIT`)
 - **tcp_saddr / tcp_daddr**: Source IP / Destination IP address
 - **tcp_sport / tcp_dport**: Source port / Destination port
 - **tcp_seq / tcp_ack_seq**: TCP sequence number / Acknowledgment sequence number
 - **net_namespace_cookie**: Network namespace cookie (available on kernel ≥ 5.14, used for efficient container association)
 - **net_namespace_inum**: Network namespace inum
-- **pkt_len**: Packet length (bytes)
+- **packet_len_bytes**: Packet length (bytes)
 
-### 4. oom
+### 4. memory_oom_kill
+
+The OOM kill tracer is named `memory_oom_kill` (previously `memory_oom`, and earlier `oom`). Update blacklist entries, event filters, and alert queries. Its metric prefix is now `huatuo_bamai_memory_oom_kill_`, replacing `huatuo_bamai_memory_oom_` and the earlier `huatuo_bamai_oom_`; update metric dashboards and recording rules too. Previously stored events keep their original names. Queries spanning these versions must match all three names; the bundled event dashboard does so.
 
 **Description** Detects OOM (Out of Memory) events on the host or inside containers. Records information about the process killed by the OOM Killer (victim) and the process that triggered the OOM (trigger), along with the corresponding container and memory cgroup details, providing a complete fault snapshot. Host-level and per-container OOM count metrics are also maintained.
 
@@ -346,7 +355,7 @@ All event records include the following common fields:
 ```json
 {
     "tracer_data": {
-        "pid": 2567042,
+        "tid": 2567042,
         "comm": "kworker/u48:2",
         "cpus_stack": "2025-06-10 09:57:14 sysrq: Show backtrace of all active CPUs\nNMI backtrace for cpu 33\n...",
         "blocked_processes_stack": "task:java            state:D stack:    0 pid: 12345 ..."
@@ -356,8 +365,8 @@ All event records include the following common fields:
 
 **Fields**
 
-- **pid**: PID of the process that triggered the hungtask detection
-- **comm**: Name of the process that triggered the hungtask detection
+- **tid**: TID of the task that triggered hungtask detection
+- **comm**: Name of the task that triggered hungtask detection
 - **cpus_stack**: NMI backtrace for all CPUs (multi-line text containing timestamps and call stacks)
 - **blocked_processes_stack**: Kernel stack information of D-state processes
 
@@ -373,8 +382,9 @@ All event records include the following common fields:
 {
     "tracer_data": {
         "pid": 1896137,
+        "tid": 1896138,
         "comm": "java",
-        "deltatime": 1412702917
+        "reclaim_duration_ns": 1412702917
     }
 }
 ```
@@ -383,7 +393,8 @@ All event records include the following common fields:
 
 - **comm**: Name of the process that triggered direct memory reclaim
 - **pid**: PID of the triggering process
-- **deltatime**: Direct reclaim duration (nanoseconds)
+- **tid**: TID of the triggering thread
+- **reclaim_duration_ns**: Direct reclaim duration (nanoseconds)
 
 ### 8. ras
 
@@ -399,7 +410,6 @@ All event records include the following common fields:
         "dev": "CPU/MEM",
         "event": "MCE",
         "type": "UncorrectedRecoverable",
-        "timestamp": 1749600000000000000,
         "info": "{\"mcg_cpu_cap\":4096,\"banks_msr_status\":9295429630892703744,\"cpu\":2,\"socketid\":0,\"bank\":5}"
     }
 }
@@ -409,11 +419,11 @@ All event records include the following common fields:
 
 ```json
 {
+    "observed_timestamp": "2025-06-11T00:00:00Z",
     "tracer_data": {
         "dev": "PCIe 0000:3b:00.0",
         "event": "AER",
         "type": "UncorrectedRecoverable",
-        "timestamp": 1749600000000000000,
         "info": "{\"dev_name\":\"0000:3b:00.0\",\"err_type\":\"UncorrectedRecoverable\",\"err_reason\":\"Completion Timeout\",\"tlp_header\":\"not available\"}"
     }
 }
@@ -424,7 +434,7 @@ All event records include the following common fields:
 - **dev**: Hardware device where the error occurred (e.g., `CPU/MEM`, `PCIe 0000:3b:00.0`)
 - **event**: Error type (`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`)
 - **type**: Error severity (`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`)
-- **timestamp**: Timestamp when the hardware error occurred
+- **observed_timestamp**: Top-level UTC userspace observation time; `kernel_observed_timestamp` records UTC kernel observation time
 - **info**: JSON-formatted detailed error information; content varies by event type
 
 ### 9. netdev_events
@@ -515,7 +525,7 @@ HUATUO's anomalous event observation is built on eBPF technology. Event data is 
 graph TB
     subgraph "Linux Kernel"
         direction TB
-        K1["kprobe hooks\n(softirq_tracing / softlockup / hungtask\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
+        K1["kprobe hooks\n(sched_tick / softlockup / hungtask\n memory_oom_kill / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
         K2["tracepoint hooks\n(ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
         K3["netlink subscription\n(netdev_events: RTM_NEWLINK)"]
         K4["kprobe hooks\n(netdev_bonding_lacp: 802.3ad)"]

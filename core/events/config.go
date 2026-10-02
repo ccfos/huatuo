@@ -14,11 +14,21 @@
 
 package events
 
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"sync/atomic"
+
+	"github.com/ccfos/huatuo/internal/matcher"
+)
+
 // Config holds event tracing configuration.
 type Config struct {
-	Softirq struct {
+	SchedTick struct {
 		// 10ms
-		DisabledThreshold uint64 `default:"10000000"`
+		IntervalThreshold uint64 `default:"10000000"`
 	}
 
 	MemoryReclaim struct {
@@ -43,6 +53,7 @@ type Config struct {
 	TCPRetransmit struct {
 		Filter             string `default:""`
 		EnableTLP          bool   `default:"false"`
+		EnableDropwatch    bool   `default:"false"`
 		MaxEventsPerSecond uint64 `default:"100"`
 	}
 
@@ -54,17 +65,68 @@ type Config struct {
 		MceThrBackoff int64 `default:"1800"`
 	}
 
+	MthreadsGPU struct {
+		MthreadsXidLevel MthreadsXidLevel `default:""`
+	}
+
 	IssuesList [][]string
 }
 
-var cfg = &Config{}
+var currentConfig atomic.Pointer[Config]
 
-// Set sets the events config. A nil argument resets to the zero value so
-// callers never need to nil-check cfg.
+func init() {
+	currentConfig.Store(&Config{})
+}
+
+// Set atomically publishes an immutable copy of the events config. A nil
+// argument resets it to the zero value.
 func Set(c *Config) {
-	if c == nil {
-		cfg = &Config{}
-		return
+	currentConfig.Store(c.Clone())
+}
+
+func configSnapshot() *Config {
+	return currentConfig.Load()
+}
+
+// Validate rejects invalid event tracing settings.
+func (c *Config) Validate() error {
+	if c.SchedTick.IntervalThreshold == 0 {
+		return errors.New("scheduler tick interval threshold must be greater than zero")
 	}
-	cfg = c
+	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
+		return fmt.Errorf("validating issues list: %w", err)
+	}
+	if level := c.MthreadsGPU.MthreadsXidLevel; level != "" &&
+		level != mthreadsXidLevelNotify &&
+		level != mthreadsXidLevelWarning &&
+		level != mthreadsXidLevelFatal {
+		return fmt.Errorf("mthreads_xid report level %q invalid", level)
+	}
+
+	return nil
+}
+
+// Clone returns a deep copy suitable for immutable publication.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		return &Config{}
+	}
+
+	dst := *c
+	dst.NetRxLatency.ExcludedContainerQos = slices.Clone(c.NetRxLatency.ExcludedContainerQos)
+	dst.Dropwatch.ExcludeContainers = slices.Clone(c.Dropwatch.ExcludeContainers)
+	dst.Netdev.DeviceList = slices.Clone(c.Netdev.DeviceList)
+	dst.IssuesList = slices.Clone(c.IssuesList)
+	for i := range dst.IssuesList {
+		dst.IssuesList[i] = slices.Clone(c.IssuesList[i])
+	}
+	return &dst
+}
+
+func effectiveTCPRetransmitFilter(config *Config) string {
+	filter := strings.TrimSpace(config.TCPRetransmit.Filter)
+	if filter == "" && config.TCPRetransmit.EnableDropwatch {
+		return "tcp"
+	}
+	return filter
 }

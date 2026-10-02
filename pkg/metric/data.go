@@ -21,7 +21,7 @@ import (
 	"sort"
 	"sync"
 
-	"huatuo-bamai/internal/pod"
+	"github.com/ccfos/huatuo/internal/pod"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

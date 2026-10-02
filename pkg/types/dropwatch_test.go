@@ -18,10 +18,13 @@ import (
 	"encoding/json"
 	"net"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/timeutil"
 
 	"github.com/google/go-cmp/cmp"
 
-	"huatuo-bamai/internal/packet"
+	"github.com/ccfos/huatuo/internal/packet"
 )
 
 // TestDropWatchTracingRoundTrip verifies the layered Packet survives a JSON
@@ -39,7 +42,7 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 				IPv4:  &packet.IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
 				TCP: &packet.TCP{
 					Sport: 1234, Dport: 80, Seq: 1, AckSeq: 2, Window: 3,
-					Flags: "FIN|ACK", SkState: "CLOSE_WAIT",
+					SkState: "CLOSE_WAIT",
 				},
 			},
 		},
@@ -67,8 +70,9 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := &DropWatchTracing{
-				ObservedTimestamp: "2026-06-13T00:00:00Z",
-				Layers:            tc.pkt,
+				ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)},
+				KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 6, 12, 23, 59, 59, 0, time.UTC)},
+				Layers:                  tc.pkt,
 			}
 
 			b, err := json.Marshal(ev)
@@ -84,12 +88,43 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 			if diff := cmp.Diff(tc.pkt, got.Layers); diff != "" {
 				t.Errorf("Layers mismatch (-want +got):\n%s", diff)
 			}
+			if !got.ObservedTimestamp.Equal(ev.ObservedTimestamp.Time) {
+				t.Errorf("ObservedTimestamp = %v, want %v", got.ObservedTimestamp, ev.ObservedTimestamp)
+			}
+			if got.KernelObservedTimestamp == nil || !got.KernelObservedTimestamp.Equal(ev.KernelObservedTimestamp.Time) {
+				t.Errorf("KernelObservedTimestamp = %v, want %v", got.KernelObservedTimestamp, ev.KernelObservedTimestamp)
+			}
 		})
 	}
 }
 
+func TestDropWatchTracingJSONExcludesMonotonicClock(t *testing.T) {
+	const observed = "2026-06-13T00:00:00.123456789Z"
+	const kernel = "2026-06-12T23:59:59.987654321Z"
+	data := []byte(`{"observed_timestamp":"` + observed + `","kernel_observed_timestamp":"` + kernel + `"}`)
+	var event DropWatchTracing
+	if err := json.Unmarshal(data, &event); err != nil {
+		t.Fatal(err)
+	}
+
+	encoded, err := json.Marshal(&event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["observed_timestamp"] != observed || fields["kernel_observed_timestamp"] != kernel {
+		t.Fatalf("observation timestamps changed: %s", encoded)
+	}
+	if _, exists := fields["kernel_observed_ns"]; exists {
+		t.Error("internal clock kernel_observed_ns leaked into JSON")
+	}
+}
+
 func TestDropWatchTracingNilLayers(t *testing.T) {
-	src := &DropWatchTracing{ObservedTimestamp: "2026-06-13T00:00:00Z"}
+	src := &DropWatchTracing{ObservedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)}}
 
 	b, err := json.Marshal(src)
 	if err != nil {

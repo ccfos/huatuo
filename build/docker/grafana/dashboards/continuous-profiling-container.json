@@ -116,7 +116,7 @@
           "alias": "",
           "bucketAggs": [
             {
-              "field": "uploaded_time",
+              "field": "uploaded_timestamp",
               "id": "2",
               "settings": {
                 "interval": "auto"
@@ -135,9 +135,9 @@
               "type": "count"
             }
           ],
-          "query": "hostname.keyword:$hostname\nAND container_hostname.keyword:$container_hostname\nAND tracer_data.flamedata.profile_type.keyword:$type",
+          "query": "hostname.keyword:$hostname\nAND container_hostname.keyword:$container_hostname\nAND profile_data.profile_type.keyword:$type",
           "refId": "A",
-          "timeField": "uploaded_time"
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "",
@@ -194,12 +194,12 @@
           "type": "elasticsearch",
           "uid": "huatuo-bamai-es"
         },
-        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"profile_data.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
         "description": "Selects container-level profiles.",
         "label": "container hostname",
         "name": "container_hostname",
         "options": [],
-        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"profile_data.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
         "refresh": 1,
         "regex": "",
         "type": "query"
@@ -210,12 +210,12 @@
           "type": "elasticsearch",
           "uid": "huatuo-bamai-es"
         },
-        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND container_hostname.keyword:$container_hostname\",\n  \"size\": 5000\n}",
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"profile_data.profile_type.keyword:$type AND container_hostname.keyword:$container_hostname\",\n  \"size\": 5000\n}",
         "description": "Read-only. Displays the host where the selected container resides. Not used as a query filter; filtering is by container_hostname only.",
         "label": "hostname(Read-only)",
         "name": "hostname",
         "options": [],
-        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND container_hostname.keyword:$container_hostname\",\n  \"size\": 5000\n}",
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"profile_data.profile_type.keyword:$type AND container_hostname.keyword:$container_hostname\",\n  \"size\": 5000\n}",
         "refresh": 1,
         "regex": "",
         "type": "query"

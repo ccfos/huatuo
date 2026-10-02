@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"testing"
@@ -27,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
@@ -254,6 +255,7 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 		wantError string
 	}{
 		{name: "native CPU cpuid", language: "go", typ: "cpu", args: []string{"--cpuid", "1"}},
+		{name: "native hardware PMU", language: "go", typ: "cpu", args: []string{"--require-hardware-pmu"}},
 		{name: "native off-CPU", language: "go", typ: "cpu", args: []string{"--cpu-mode", "offcpu"}},
 		{
 			name:      "Java off-CPU",
@@ -289,6 +291,13 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			wantError: "--freq is not used with --cpu-mode=offcpu",
 		},
 		{
+			name:      "off-CPU rejects hardware PMU",
+			language:  "go",
+			typ:       "cpu",
+			args:      []string{"--cpu-mode", "offcpu", "--require-hardware-pmu"},
+			wantError: "--require-hardware-pmu requires native CPU profiling with --cpu-mode=oncpu",
+		},
+		{
 			name:      "off-CPU minimum duration requires mode",
 			language:  "c++",
 			typ:       "cpu",
@@ -315,6 +324,13 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			typ:       "cpu",
 			args:      []string{"--cpuid", "1"},
 			wantError: "--cpuid is supported only by native CPU profiling",
+		},
+		{
+			name:      "Java hardware PMU",
+			language:  "java",
+			typ:       "cpu",
+			args:      []string{"--require-hardware-pmu"},
+			wantError: "--require-hardware-pmu requires native CPU profiling with --cpu-mode=oncpu",
 		},
 		{
 			name:      "Python BPF debug",
@@ -599,6 +615,24 @@ func TestValidatePythonProfileOptions(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateLanguageOptionsToolRoot(t *testing.T) {
+	root := t.TempDir()
+	for _, language := range []profiling.Language{
+		profiling.LanguageJava, profiling.LanguagePython, profiling.LanguageGo,
+	} {
+		t.Run(string(language), func(t *testing.T) {
+			for _, directory := range []string{"", root, filepath.Join(root, "missing")} {
+				ctx := newValidationCLIContext(t, "--pid", "1", "--tool-path", directory)
+				err := validateLanguageOptions(ctx, language, profiling.TypeCPU)
+				wantError := language != profiling.LanguageGo && directory != root
+				if (err != nil) != wantError {
+					t.Errorf("validateLanguageOptions(%q) error = %v, want error %t", directory, err, wantError)
+				}
+			}
 		})
 	}
 }

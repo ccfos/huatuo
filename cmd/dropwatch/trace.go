@@ -19,13 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 type dropwatchOptions struct {
@@ -44,35 +44,16 @@ type dropwatchOptions struct {
 }
 
 func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error) {
-	names := NewDropReason()
+	names, err := dropwatch.LoadReasonNames()
+	if err != nil {
+		log.WithError(err).Warn("kernel drop-reason names unavailable; using numeric drop reasons")
+	}
 	duration := options.durationSeconds
 
 	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
 		return fmt.Errorf("init bpf: %w", err)
 	}
 	defer bpf.Shutdown()
-
-	netdevFilter, err := parseNetdevFilterOptions(options.device, options.deviceExcluded)
-	if err != nil {
-		return err
-	}
-
-	bpfLimiter := bpf.NewRateLimiter("dropwatch", options.maxEventsPerSecond)
-	bpfObj, err := loadDropwatchBPF(
-		options.bpfPath, options.filterExpression, netdevFilter.mode, bpfLimiter,
-	)
-	if err != nil {
-		return fmt.Errorf("load bpf: %w", err)
-	}
-	defer func() {
-		if err := bpfObj.Close(); err != nil {
-			returnErr = errors.Join(returnErr, fmt.Errorf("close bpf: %w", err))
-		}
-	}()
-
-	if err := configureNetdevFilter(bpfObj, netdevFilter); err != nil {
-		return fmt.Errorf("configure netdev filter: %w", err)
-	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -84,28 +65,30 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 		defer durationCancel()
 	}
 
-	group, groupCtx := errgroup.WithContext(runCtx)
-	if bpfLimiter.Enabled() {
-		if err := bpfLimiter.OpenEventPipe(groupCtx, bpfObj); err != nil {
-			return err
-		}
-		defer func() {
-			if err := bpfLimiter.CloseEventPipe(); err != nil {
-				returnErr = errors.Join(returnErr, fmt.Errorf("close rate limiter: %w", err))
-			}
-		}()
+	var included, excluded []string
+	if options.device != "" {
+		included = strings.Split(options.device, ",")
 	}
-
-	reader, err := bpfObj.AttachAndEventPipe(groupCtx, "perf_events", 8192)
+	if options.deviceExcluded != "" {
+		excluded = strings.Split(options.deviceExcluded, ",")
+	}
+	tracer, err := dropwatch.Open(runCtx, &dropwatch.Config{
+		BPFPath:            options.bpfPath,
+		FilterExpression:   options.filterExpression,
+		IncludeDevices:     included,
+		ExcludeDevices:     excluded,
+		MaxEventsPerSecond: options.maxEventsPerSecond,
+		HardwareMode:       dropwatch.HardwareAuto,
+	})
 	if err != nil {
-		return fmt.Errorf("attach BPF programs: %w", err)
+		return err
 	}
 	defer func() {
-		if err := reader.Close(); err != nil {
-			returnErr = errors.Join(returnErr, fmt.Errorf("close event pipe: %w", err))
-		}
+		returnErr = errors.Join(returnErr, tracer.Close())
 	}()
-	bpfObj.DetachOnContextDone(runCtx, cancel)
+	if !tracer.HardwareEnabled() {
+		log.Warn("devlink trap tracepoint unsupported; hardware drop tracing disabled")
+	}
 
 	sink, sinkCleanup, err := newWriter(options.output, &writerOptions{
 		outputFormat: options.outputFormat,
@@ -118,15 +101,7 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 		return err
 	}
 
-	if bpfLimiter.Enabled() {
-		group.Go(func() error { return bpfLimiter.ReadEvents(groupCtx) })
-	}
-
-	group.Go(func() error {
-		return streamDropwatchEvents(groupCtx, reader, sink, names, options.sourceType)
-	})
-
-	streamErr := group.Wait()
+	streamErr := streamDropwatchEvents(runCtx, tracer, sink, names, options.sourceType)
 	if err := sinkCleanup(); err != nil {
 		streamErr = errors.Join(streamErr, fmt.Errorf("close event sink: %w", err))
 	}
@@ -135,9 +110,9 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 
 func streamDropwatchEvents(
 	ctx context.Context,
-	reader bpf.PerfEventReader,
+	tracer *dropwatch.Tracer,
 	sink writer,
-	names dropReason,
+	names dropwatch.ReasonNames,
 	sourceType string,
 ) error {
 	for {
@@ -146,7 +121,7 @@ func streamDropwatchEvents(
 		}
 
 		var ev abi.DropwatchPacketEvent
-		if err := reader.ReadInto(&ev); err != nil {
+		if err := tracer.ReadInto(&ev); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -157,7 +132,11 @@ func streamDropwatchEvents(
 			return fmt.Errorf("read event: %w", err)
 		}
 
-		if err := sink.Write(formatEvent(&ev, names, sourceType)); err != nil {
+		event, err := formatEvent(&ev, names, sourceType)
+		if err != nil {
+			return err
+		}
+		if err := sink.Write(event); err != nil {
 			return fmt.Errorf("write event: %w", err)
 		}
 	}

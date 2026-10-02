@@ -3,7 +3,7 @@ title: BPF ABI Guide
 type: docs
 author: HUATUO Team
 date: 2026-03-04
-weight: 6
+weight: 7
 ---
 
 The C structures on the BPF side are the source of truth for the perf event
@@ -61,9 +61,9 @@ struct sample_detail {
 };
 
 struct sample_event {
-	u64 timestamp;
+	u64 kernel_observed_ns;
 	struct sample_detail detail;
-	u32 pid;
+	u32 tgid;
 	u8 kind;
 	u8 pad[3];
 };
@@ -101,8 +101,8 @@ Use the ABI structure directly when emitting a perf event:
 ```c
 struct sample_event event = {};
 
-event.timestamp = bpf_ktime_get_ns();
-event.pid = bpf_get_current_pid_tgid() >> 32;
+event.kernel_observed_ns = bpf_ktime_get_ns();
+event.tgid = bpf_get_current_pid_tgid() >> 32;
 event.kind = kind;
 
 bpf_perf_event_output(ctx, &events, COMPAT_BPF_F_CURRENT_CPU,
@@ -130,7 +130,7 @@ internal/bpf/abi/sample_types_generated.go
 Reference the generated type directly from Go code:
 
 ```go
-import "huatuo-bamai/internal/bpf/abi"
+import "github.com/ccfos/huatuo/internal/bpf/abi"
 
 var event abi.SampleEvent
 if err := reader.ReadInto(&event); err != nil {
@@ -166,9 +166,10 @@ Layout requirements:
   fields, offsets, and size must match exactly.
 
 C names are converted to exported Go names by splitting on underscores. For
-example, `sample_event` becomes `SampleEvent`, and `pid_tgid` becomes
-`PIDTGID`. Avoid C names that map to the same Go name, such as `sample_id` and
-`sample_i_d`.
+example, `sample_event` becomes `SampleEvent`, and `kernel_observed_ns` becomes
+`KernelObservedNS`. Field semantics and cross-layer names follow
+[Event Field Naming](event-field-naming_en.md). Avoid C names that map to the
+same Go name, such as `sample_id` and `sample_i_d`.
 
 ## Verification
 

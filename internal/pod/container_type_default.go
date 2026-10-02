@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,13 +16,11 @@
 
 package pod
 
-import (
-	"strings"
+import corev1 "k8s.io/api/core/v1"
 
-	corev1 "k8s.io/api/core/v1"
-)
-
-var sidecarModules = "istio-proxy"
+var sidecarModules = map[string]struct{}{
+	"istio-proxy": {},
+}
 
 func parseContainerType(container *corev1.Container, pod *corev1.Pod) (ContainerType, error) {
 	// List of objects depended by this object. If ALL objects in the list have
@@ -42,7 +40,7 @@ func parseContainerType(container *corev1.Container, pod *corev1.Pod) (Container
 		return ContainerTypeDaemonSet, nil
 	}
 
-	if strings.Contains(sidecarModules, container.Name) {
+	if _, ok := sidecarModules[container.Name]; ok {
 		return ContainerTypeSidecar, nil
 	}
 

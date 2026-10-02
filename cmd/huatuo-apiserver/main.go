@@ -23,11 +23,15 @@ import (
 	"syscall"
 	"time"
 
-	"huatuo-bamai/internal/job"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/pidfile"
-	profileService "huatuo-bamai/internal/profiler/service"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/client"
+	"github.com/ccfos/huatuo/internal/job"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pidfile"
+	"github.com/ccfos/huatuo/internal/profiling/publication"
+	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
+	"github.com/ccfos/huatuo/internal/server"
+	"github.com/ccfos/huatuo/internal/version"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -76,15 +80,14 @@ type daemonStep struct {
 type Daemon struct {
 	opts *Options
 
-	metrics        *prometheus.Registry
-	jobManager     *job.Manager
-	profileService *profileService.Service
-	agentObserver  job.AgentRequestObserver
-	apiServer      interface {
-		Done() <-chan struct{}
-		Wait(ctx context.Context) error
-	}
-	steps []daemonStep
+	metrics             *prometheus.Registry
+	jobManager          *job.Manager
+	profileStorage      *profilingstore.Store
+	profileQueryService *profilequery.ProfileQueryService
+	publications        *publication.Store
+	agentObserver       client.NodeRequestObserver
+	apiServer           *server.Server
+	steps               []daemonStep
 }
 
 func NewDaemon(opts *Options) *Daemon {
@@ -93,7 +96,7 @@ func NewDaemon(opts *Options) *Daemon {
 		steps: []daemonStep{
 			{name: "pidfile", setup: lockPidfile},
 			{name: "cgroup", setup: setupCgroup},
-			{name: "profiling-flamegraph", setup: setupProfileFlamegraph},
+			{name: "profile-query-service", setup: setupProfileQueryService},
 			{name: "metrics", setup: setupMetrics},
 			{name: "job-managers", setup: setupJobManagers},
 			{name: "handlers", setup: startHandlers},
@@ -114,20 +117,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 		var errs []error
 		for i := len(cleanups) - 1; i >= 0; i-- {
-			remainingSteps := i + 1
-			shutdownDeadline, _ := shutdownCtx.Deadline()
-			remaining := time.Until(shutdownDeadline)
-			if remaining <= 0 {
-				remaining = time.Nanosecond
+			if err := shutdownCtx.Err(); err != nil {
+				errs = append(errs, fmt.Errorf(
+					"shutdown deadline reached with %d cleanup stages remaining: %w",
+					i+1,
+					err,
+				))
+				break
 			}
-			stepCtx, stepCancel := context.WithTimeout(
-				context.WithoutCancel(shutdownCtx),
-				remaining/time.Duration(remainingSteps),
-			)
-			if err := cleanups[i](stepCtx); err != nil {
+			if err := cleanups[i](shutdownCtx); err != nil {
 				errs = append(errs, err)
 			}
-			stepCancel()
 		}
 
 		return errors.Join(errs...)

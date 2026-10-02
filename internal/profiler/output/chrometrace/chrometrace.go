@@ -20,7 +20,7 @@ import (
 	"io"
 	"strconv"
 
-	"huatuo-bamai/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 type event struct {

@@ -24,9 +24,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-command -v jq > /dev/null || skip "jq command is not installed"
-[[ -x "${HUATUO_BAMAI_BIN}" ]] \
-	|| fatal "huatuo-bamai binary missing: ${HUATUO_BAMAI_BIN}"
+require_commands jq
 
 readonly CPUSYS_FIXTURE_ROOT="${HUATUO_BAMAI_TEST_TMPDIR}/cpusys-fixture"
 readonly CPUSYS_PROC_STAT="${CPUSYS_FIXTURE_ROOT}/proc/stat"
@@ -85,7 +83,6 @@ integration_huatuo_bamai_start \
 	--procfs-prefix "${CPUSYS_FIXTURE_ROOT}" \
 	--tools-bin-dir "${CPUSYS_FIXTURE_ROOT}/tools" \
 	--disable-kubelet \
-	--disable-cgroup \
 	--log-debug
 
 # Sample 2: total=1100 and system=110. The 10/100 delta establishes a 10%

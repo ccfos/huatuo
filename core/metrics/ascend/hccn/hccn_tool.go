@@ -26,34 +26,24 @@ package hccn
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/executil"
 )
 
 // hccnSemaphore limits total concurrent hccn_tool processes across all devices.
 var hccnSemaphore = make(chan struct{}, 32)
 
 const (
-	hccnTool    = "/usr/local/Ascend/driver/tools/hccn_tool"
-	outputLimit = 1024 * 1024 // 1MB cap to prevent OOM from runaway output
+	hccnTool           = "/usr/local/Ascend/driver/tools/hccn_tool"
+	maxHCCNOutputBytes = 1024 * 1024
+	maxHCCNErrorBytes  = 4096
 )
-
-// limitedWriter caps the total bytes written to prevent memory exhaustion.
-type limitedWriter struct {
-	buf   bytes.Buffer
-	limit int
-}
-
-func (w *limitedWriter) Write(p []byte) (int, error) {
-	if w.buf.Len()+len(p) > w.limit {
-		return 0, fmt.Errorf("hccn_tool output exceeds limit (%d bytes)", w.limit)
-	}
-	return w.buf.Write(p)
-}
 
 func getInfoFromHccnTool(args ...string) (string, error) {
 	hccnSemaphore <- struct{}{}
@@ -62,22 +52,65 @@ func getInfoFromHccnTool(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, hccnTool, args...)
-	cmd.Env = []string{
-		"PATH=" + os.Getenv("PATH"),
-		"LD_LIBRARY_PATH=" + os.Getenv("LD_LIBRARY_PATH"),
+	return runHCCNCommand(ctx, hccnTool, args...)
+}
+
+func runHCCNCommand(ctx context.Context, tool string, args ...string) (string, error) {
+	process, err := executil.New(executil.Spec{
+		Path:            tool,
+		Args:            args,
+		StopGracePeriod: time.Second,
+		MaxOutputBytes:  maxHCCNOutputBytes,
+		Env: []string{
+			"PATH=" + os.Getenv("PATH"),
+			"LD_LIBRARY_PATH=" + os.Getenv("LD_LIBRARY_PATH"),
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("build hccn_tool command: %w", err)
+	}
+	runErr := process.Run(ctx)
+	output, outputErr := process.Stdout()
+	if err := errors.Join(runErr, outputErr); err != nil {
+		return "", hccnCommandError(
+			args,
+			output,
+			process.Stderr(),
+			err,
+		)
 	}
 
-	stdout := &limitedWriter{limit: outputLimit}
-	stderr := &limitedWriter{limit: outputLimit}
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	return string(output), nil
+}
 
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("hccn_tool %v failed: %w", args, err)
+func hccnCommandError(args []string, stdout, stderr []byte, err error) error {
+	stdout = bytes.TrimSpace(stdout)
+	stderr = bytes.TrimSpace(stderr)
+	isTruncated := len(stdout)+len(stderr) > maxHCCNErrorBytes
+	if len(stderr) >= maxHCCNErrorBytes {
+		stderr = stderr[len(stderr)-maxHCCNErrorBytes:]
+		stdout = nil
+	} else if isTruncated {
+		stdout = stdout[:maxHCCNErrorBytes-len(stderr)]
 	}
 
-	return stdout.buf.String(), nil
+	errorOutput := ""
+	if len(stdout) > 0 {
+		errorOutput = "stdout=" + strconv.Quote(string(stdout))
+	}
+	if len(stderr) > 0 {
+		if errorOutput != "" {
+			errorOutput += "; "
+		}
+		errorOutput += "stderr=" + strconv.Quote(string(stderr))
+	}
+	if errorOutput == "" {
+		return fmt.Errorf("hccn_tool %v failed: %w", args, err)
+	}
+	if isTruncated {
+		errorOutput += " (truncated)"
+	}
+	return fmt.Errorf("hccn_tool %v failed: %w; %s", args, err, errorOutput)
 }
 
 // GetLinkStatus returns the link status ("UP" or "DOWN") for the given phyID.

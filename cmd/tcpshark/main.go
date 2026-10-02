@@ -22,8 +22,8 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/sys/unix"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/version"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/version"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/tcp_retransmit.c -o $BPF_DIR/tcp_retransmit.o
@@ -54,19 +54,8 @@ func main() {
 		BuildTime: AppBuildTime,
 	})
 	app.Action = func(c *cli.Context) error {
-		return runRetransmit(c.Context, &retransmitOptions{
-			bpfPath:            c.String(cliFlagBpfPath),
-			filterExpression:   c.String(cliFlagFilter),
-			durationSeconds:    c.Int(cliFlagDuration),
-			outputFormat:       c.String(cliFlagOutput),
-			outputStorage:      c.String(cliFlagOutputStorage),
-			taskID:             c.String(cliFlagTaskID),
-			sourceType:         c.String(cliFlagSourceTypes),
-			maxEventsPerSecond: c.Uint64(cliFlagMaxEventsPerSecond),
-			isTLPEnabled:       c.Bool(cliFlagEnableTLP),
-			version:            versionInfo.Version,
-			output:             c.App.Writer,
-		})
+		options := resolveRunOptions(c, versionInfo.Version)
+		return mainAction(c.Context, &options)
 	}
 
 	ctx, stop := signal.NotifyContext(

@@ -26,12 +26,12 @@ import (
 	"syscall"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/symbol"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/executil"
-	"huatuo-bamai/pkg/types"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/process"
+	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // runTrace loads the BPF object, attaches probes for cfg.durationSecond
@@ -113,13 +113,15 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 			continue
 		}
 
-		hostname, _ := executil.HostnameByPid(event.PID)
+		hostname, _ := process.Hostname(int(event.TGID))
 
 		ring[head] = types.IOScheduleEvent{
 			Comm:              bytesutil.ToStr(event.Comm[:]),
 			ContainerHostname: hostname,
-			Pid:               event.PID,
-			LatencyUs:         event.Cost / 1000,
+			PID:               event.TGID,
+			TID:               event.TID,
+			CPU:               event.CPU,
+			ScheduleLatencyUS: event.DurationNS / 1000,
 			Stack:             symbol.KsymStackStrs(event.Stack[:], symbol.KsymStackMinDepth),
 		}
 
@@ -161,7 +163,7 @@ func dumpAndAggregate(b bpf.BPF, cfg ioConfig) ([]types.ProcessFileIOStats, erro
 		}
 
 		blkSize := record.BlockWriteBytes + record.BlockReadBytes
-		table.Add(record.Pid, &fileEntry{Record: &record, Size: blkSize})
+		table.Add(record.TGID, &fileEntry{Record: &record, Size: blkSize})
 	}
 
 	groups := table.TopN(int(cfg.maxProcess))

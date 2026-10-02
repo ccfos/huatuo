@@ -20,22 +20,24 @@ import (
 	"fmt"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/bpf/abi"
-	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
 type memoryReclaimTracing struct{}
 
 // MemoryReclaimTracingData is the full data structure.
 type MemoryReclaimTracingData struct {
-	Pid       uint64 `json:"pid"`
-	Comm      string `json:"comm"`
-	Deltatime uint64 `json:"deltatime"`
+	PID               uint32 `json:"pid"`
+	TID               uint32 `json:"tid"`
+	Comm              string `json:"comm"`
+	ReclaimDurationNS uint64 `json:"reclaim_duration_ns"`
 }
 
 func init() {
@@ -56,8 +58,9 @@ const cssCacheTTL = 5 * time.Second
 //
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim_events.c -o $BPF_DIR/memory_reclaim_events.o
 func (c *memoryReclaimTracing) Start(ctx context.Context) error {
+	cfg := configSnapshot()
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), map[string]any{
-		"deltath": cfg.MemoryReclaim.BlockedThreshold,
+		"reclaim_duration_threshold_ns": cfg.MemoryReclaim.BlockedThreshold,
 	})
 	if err != nil {
 		return err
@@ -67,7 +70,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "reclaim_perf_events", 8192)
+	reader, err := b.AttachAndEventPipe(childCtx, "reclaim_perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return err
 	}
@@ -111,13 +114,13 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 				}
 			}
 
-			container := cssToContainer[data.CSS]
+			container := cssToContainer[data.CPUCSSAddr]
 			if container == nil {
 				if err := refreshContainerCache(); err != nil {
 					log.Errorf("refresh container cache: %v", err)
 					continue
 				}
-				container = cssToContainer[data.CSS]
+				container = cssToContainer[data.CPUCSSAddr]
 				if container == nil {
 					// We only care about the container and nothing else.
 					// Though it may be unfair, that's just how life is.
@@ -129,17 +132,18 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 
 			// save storage
 			tracingData := &MemoryReclaimTracingData{
-				Pid:       data.PID,
-				Comm:      bytesutil.ToStr(data.Comm[:]),
-				Deltatime: data.DeltaTime,
+				PID:               data.TGID,
+				TID:               data.TID,
+				Comm:              bytesutil.ToStr(data.Comm[:]),
+				ReclaimDurationNS: data.ReclaimDurationNS,
 			}
 
 			log.Infof("memory_reclaim saves storage: %+v", tracingData)
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:  "memory_reclaim",
-				ContainerID: container.ID,
-				TracerTime:  time.Now(),
-				TracerData:  tracingData,
+				TracerName:        "memory_reclaim",
+				ContainerID:       container.ID,
+				ObservedTimestamp: timeutil.Now(),
+				TracerData:        tracingData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

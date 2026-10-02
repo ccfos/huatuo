@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
 // writeFolded persists the folded-stack data to a timestamped .folded file.

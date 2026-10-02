@@ -23,13 +23,27 @@ import (
 	"strconv"
 	"strings"
 
-	"huatuo-bamai/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 // ProcessPaths contains the cgroup membership paths reported for a process.
 type ProcessPaths struct {
 	Unified     string
 	Controllers map[string]string
+}
+
+// PathForMemory returns the memory-controller membership, including on hybrid hosts.
+func (p *ProcessPaths) PathForMemory() (string, error) {
+	if p == nil {
+		return "", fmt.Errorf("nil process paths")
+	}
+	if path := p.Controllers["memory"]; path != "" {
+		return path, nil
+	}
+	if p.Unified != "" {
+		return p.Unified, nil
+	}
+	return "", fmt.Errorf("process memory cgroup path not found")
 }
 
 // PathsForPID reads the kernel cgroup membership of pid.

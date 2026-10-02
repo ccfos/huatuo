@@ -52,6 +52,9 @@ func (c ElasticsearchConfig) Validate() error {
 	if configured != len(fields) {
 		return errors.New("address, username, and password must be configured together")
 	}
+	if strings.TrimSpace(c.Index) == "" {
+		return errors.New("index is required")
+	}
 
 	for _, address := range strings.Split(c.Address, ",") {
 		trimmed := strings.TrimSpace(address)

@@ -21,7 +21,7 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
 const (

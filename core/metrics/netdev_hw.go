@@ -25,13 +25,13 @@ import (
 	"slices"
 	"sync"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/matcher"
-	"huatuo-bamai/internal/procfs/sysfs"
-	"huatuo-bamai/internal/utils/parseutil"
-	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/internal/procfs/sysfs"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/parseutil"
+	"github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/safchain/ethtool"
 )
@@ -63,6 +63,7 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 		return nil, err
 	}
 
+	cfg := configSnapshot()
 	deviceMatcher, err := matcher.NewListMatcher(cfg.NetdevHW.DeviceList)
 	if err != nil {
 		return nil, fmt.Errorf("netdev hw device list: %w", err)

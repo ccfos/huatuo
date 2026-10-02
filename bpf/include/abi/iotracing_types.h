@@ -19,10 +19,10 @@
 
 struct iotracing_schedule_delay_event {
 	u64 stack[PERF_MIN_STACK_DEPTH];
-	u64 ts;
-	u64 cost;
+	u64 start_ns;
+	u64 duration_ns;
 	s32 stack_size;
-	u32 pid;
+	u32 tgid;
 	u32 tid;
 	u32 cpu;
 	u8 comm[COMPAT_TASK_COMM_LEN];

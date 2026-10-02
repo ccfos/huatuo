@@ -16,30 +16,5 @@
 
 set -euo pipefail
 
-source "./integration/env.sh"
-source "${ROOT_DIR}/integration/lib.sh"
-source "${ROOT_DIR}/e2e/lib.sh"
-
-_e2e_cleanup() {
-	local code=$?
-	[[ $code -eq 0 ]] && sleep 10 # wait more logs to be collected
-	e2e_test_teardown "$code" || true
-	exit $code
-}
-trap "_e2e_cleanup" EXIT
-
-huatuo_bamai_start "${HUATUO_BAMAI_ARGS_E2E[@]}"
-
-# auto run all test_*.sh scripts in the e2e
-for case in "${ROOT_DIR}"/e2e/test_*.sh; do
-	[[ -f "$case" ]] || continue
-	log_info "⬅️⬅️ start: $(basename "$case")"
-
-	if ! bash "$case"; then
-		fatal "❌ failed: $(basename "$case")"
-	fi
-
-	log_info "✅✅ passed: $(basename "$case")"
-done
-
-log_info "🎉🎉 all e2e tests passed."
+readonly E2E_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+exec bash "${E2E_DIR}/../integration/run.sh" --suite e2e "$@"

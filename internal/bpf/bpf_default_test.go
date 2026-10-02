@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !didi
+
 package bpf
 
 import (
@@ -28,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	testutils "huatuo-bamai/internal/testing"
+	testutils "github.com/ccfos/huatuo/internal/testing"
 
 	"github.com/cilium/ebpf"
 	"github.com/stretchr/testify/assert"
@@ -434,6 +436,8 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 			SamplePeriod uint64
 			SampleFreq   uint64
 			CPUIDs       []int
+			Type         uint32
+			Config       uint64
 		}
 		wantErr bool
 	}{
@@ -463,7 +467,13 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 				SamplePeriod uint64
 				SampleFreq   uint64
 				CPUIDs       []int
-			}{SampleFreq: 99},
+				Type         uint32
+				Config       uint64
+			}{
+				SampleFreq: 99,
+				Type:       unix.PERF_TYPE_SOFTWARE,
+				Config:     unix.PERF_COUNT_SW_CPU_CLOCK,
+			},
 			wantErr: false,
 		},
 		{
@@ -474,6 +484,8 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 				SamplePeriod uint64
 				SampleFreq   uint64
 				CPUIDs       []int
+				Type         uint32
+				Config       uint64
 			}{SampleFreq: 0},
 			wantErr: true,
 		},

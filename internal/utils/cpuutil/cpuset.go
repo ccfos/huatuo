@@ -74,6 +74,31 @@ func ParseOnlineCores(path string) (uint64, error) {
 	return count, nil
 }
 
+// MaxOnlineCPU returns the highest CPU ID in a Linux online CPU list.
+func MaxOnlineCPU(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return -1
+	}
+
+	list := strings.TrimSpace(string(data))
+	if list == "" {
+		return -1
+	}
+
+	parts := strings.Split(list, ",")
+	last := parts[len(parts)-1]
+	if idx := strings.LastIndex(last, "-"); idx != -1 {
+		last = last[idx+1:]
+	}
+
+	maxID, err := strconv.Atoi(last)
+	if err != nil {
+		return -1
+	}
+	return maxID
+}
+
 // BoundCores returns the effective CPU capacity after applying quota and cpuset.
 func BoundCores(quota, period, effective, fallback uint64) (float64, error) {
 	if effective == 0 {

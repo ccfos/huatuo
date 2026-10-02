@@ -22,6 +22,7 @@ public final class TestProfilerJavaMultiPID {
             throw new IllegalArgumentException("expected workload name");
         }
 
+        System.out.println("ready");
         switch (args[0]) {
             case "alpha":
                 alphaWorkload();

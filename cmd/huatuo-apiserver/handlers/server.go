@@ -15,76 +15,110 @@
 package handlers
 
 import (
-	"context"
 	"errors"
-	"net"
+	"fmt"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
-	"huatuo-bamai/internal/server"
-	"huatuo-bamai/internal/version"
+	serverapi "github.com/ccfos/huatuo/apis/v1/server"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/trace"
+	"github.com/ccfos/huatuo/internal/job"
+	"github.com/ccfos/huatuo/internal/profiling/publication"
+	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
+	"github.com/ccfos/huatuo/internal/server"
+	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/version"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
+	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/time/rate"
 )
 
 // ServerOptions groups the dependencies required to start the API server.
 type ServerOptions struct {
 	Addr                string
 	PromReg             *prometheus.Registry
-	TraceJobManager     trace.JobManager
-	ProfilingJobManager profiling.JobManager
-	ProfileService      profiling.ProfileQueryService
+	JobManager          *job.Manager
+	ProfileStorage      *profilingstore.Store
+	ProfileQueryService *profilequery.ProfileQueryService
+	ProfilePublications *publication.Store
 	ProfilingConfig     profiling.Config
 	AuthUsers           []server.UserConfig
 	EnablePProf         bool
 	VersionInfo         *version.Info
-	RateLimit           rate.Limit
-	RateBurst           int
-	Ready               func(context.Context) error
+	RateLimit           *server.RateLimitConfig
 }
 
-// RunningServer exposes the lifecycle of the API listener.
-type RunningServer interface {
-	Shutdown(ctx context.Context) error
-	Done() <-chan struct{}
-	Wait(ctx context.Context) error
-	Addr() net.Addr
-}
-
-// Start starts the API service with the given configuration.
-func Start(opts *ServerOptions) (RunningServer, error) {
+// Start starts the API service with generated business routes.
+func Start(opts *ServerOptions) (*server.Server, error) {
 	if opts == nil {
 		return nil, errors.New("start API server: options are required")
 	}
-	if opts.TraceJobManager == nil || opts.ProfilingJobManager == nil {
-		return nil, errors.New("start API server: job managers are required")
+	if opts.JobManager == nil {
+		return nil, errors.New("start API server: Job Manager is required")
 	}
+	if len(opts.AuthUsers) == 0 {
+		return nil, errors.New("start API server: at least one auth user is required")
+	}
+
+	profilingService, err := profiling.NewService(
+		opts.JobManager,
+		opts.ProfileStorage,
+		opts.ProfilePublications,
+		opts.ProfilingConfig,
+	)
+	if err != nil {
+		return nil, err
+	}
+	tracingService, err := trace.NewService(opts.JobManager)
+	if err != nil {
+		return nil, err
+	}
+	apiHandler, err := NewAPIHandler(
+		profilingService,
+		tracingService,
+		opts.ProfileQueryService,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	httpServer := server.NewServer(&server.Config{
-		RequireAuth:     true,
-		EnablePProf:     opts.EnablePProf,
-		EnableRateLimit: true,
-		RateLimit:       opts.RateLimit,
-		RateBurst:       opts.RateBurst,
-		AuthUsers:       opts.AuthUsers,
+		EnablePProf: opts.EnablePProf,
+		RateLimit:   opts.RateLimit,
+		AuthUsers:   opts.AuthUsers,
+		PublicPaths: []string{"/openapi.json", "/readyz"},
 		AdminPaths: []string{
-			"/v1/profiles/flamegraph/**",
+			"/v1/profiling/flamegraph/**",
 		},
 		PromReg:     opts.PromReg,
 		VersionInfo: opts.VersionInfo,
-		Ready:       opts.Ready,
+		ErrorStatusMapper: response.ChainHTTPStatusMappers(
+			serverapi.HTTPStatusForErrorCode,
+			response.LegacyHTTPStatusForErrorCode,
+		),
 	})
 
-	// Register trace routes
-	httpServer.MustRegisterRoutes("/v1/traces", trace.NewHandler(opts.TraceJobManager).Handlers)
-	httpServer.MustRegisterRoutes(
-		"/v1/profiles",
-		profiling.NewHandler(opts.ProfilingJobManager, opts.ProfileService, opts.ProfilingConfig).Handlers,
+	errorHandlers := httpServer.StrictErrorHandlers()
+	strictHandler := serverapi.NewStrictHandlerWithOptions(
+		apiHandler,
+		nil,
+		serverapi.StrictGinServerOptions{
+			RequestErrorHandlerFunc:  errorHandlers.RequestError,
+			HandlerErrorFunc:         errorHandlers.HandlerError,
+			ResponseErrorHandlerFunc: errorHandlers.ResponseError,
+		},
 	)
+	if err := httpServer.RegisterOpenAPIHandlers(
+		serverapi.OpenAPIJSON(),
+		func(router httpGin.IRouter) {
+			serverapi.RegisterHandlers(router, strictHandler)
+		},
+	); err != nil {
+		return nil, fmt.Errorf("register Server API handlers: %w", err)
+	}
 
 	if err := httpServer.Start(opts.Addr); err != nil {
 		return nil, err
 	}
-
 	return httpServer, nil
 }

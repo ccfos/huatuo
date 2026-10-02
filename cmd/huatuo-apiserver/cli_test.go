@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"huatuo-bamai/internal/log"
+	"github.com/ccfos/huatuo/internal/log"
 
 	"github.com/urfave/cli/v2"
 )
@@ -38,7 +38,7 @@ func TestOptionsFromContextPreservesExplicitRelativeConfigDir(t *testing.T) {
 	if err := flags.Parse([]string{
 		"--config-dir", "relative-conf",
 		"--enable-pprof",
-		"--disable-cgroup",
+		"--enable-cgroup",
 		"--log-debug",
 	}); err != nil {
 		t.Fatalf("parse flags: %v", err)
@@ -53,8 +53,8 @@ func TestOptionsFromContextPreservesExplicitRelativeConfigDir(t *testing.T) {
 	if !opts.EnablePProf {
 		t.Error("EnablePProf = false, want true")
 	}
-	if !opts.DisableCgroup {
-		t.Error("DisableCgroup = false, want true")
+	if !opts.EnableCgroup {
+		t.Error("EnableCgroup = false, want true")
 	}
 	if !opts.LogDebug {
 		t.Error("LogDebug = false, want true")
@@ -69,6 +69,9 @@ func TestConfigureRuntimeAnchorsRelativeJobStoreToConfigDirectory(t *testing.T) 
 ID = "test-user"
 BearerToken = "test-token"
 Admin = true
+
+[Agent.Auth]
+BearerToken = "node-token"
 
 [Jobs]
 StoreDSN = "state/jobs.db"
@@ -103,6 +106,9 @@ Level = "Error"
 ID = "test-user"
 BearerToken = "test-token"
 Admin = true
+
+[Agent.Auth]
+BearerToken = "node-token"
 `)
 	if err := os.WriteFile(filepath.Join(configDir, configFile), contents, 0o600); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)

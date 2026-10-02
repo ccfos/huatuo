@@ -19,11 +19,11 @@ import (
 	"fmt"
 	"os"
 
-	"huatuo-bamai/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups"
 )
 
 func setupCgroup(_ context.Context, d *Daemon) (func(context.Context) error, error) {
-	if d.opts.DisableCgroup {
+	if !d.opts.EnableCgroup {
 		return nil, nil
 	}
 	cgroup, err := cgroups.NewManager()

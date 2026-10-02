@@ -25,9 +25,9 @@ import (
 	"path"
 	"sync"
 
-	"huatuo-bamai/internal/filerotate"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/filerotate"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
 // Storage appends records to local files. It is bound to one collection by Init.
@@ -64,7 +64,14 @@ func (b *Storage) Init(_ context.Context, _ string, _ []driver.Index) error {
 	return nil
 }
 
-func (b *Storage) Save(_ context.Context, rec driver.Record) error {
+func (b *Storage) Save(
+	_ context.Context,
+	rec driver.Record,
+	options driver.SaveOptions,
+) error {
+	if options.Mode != driver.SaveModeUpsert || len(options.Conditions) != 0 {
+		return driver.ErrUnsupportedOp
+	}
 	filename := tracerFilename(rec)
 	if filename == "" {
 		return driver.ErrInvalidField
@@ -89,6 +96,10 @@ func (b *Storage) Get(context.Context, string) (driver.Record, error) {
 
 func (b *Storage) Delete(context.Context, string) error {
 	return driver.ErrUnsupported
+}
+
+func (b *Storage) DeleteByQuery(context.Context, driver.DeleteQuery) (int64, error) {
+	return 0, driver.ErrUnsupported
 }
 
 func (b *Storage) Query(context.Context, driver.Query) ([]driver.Record, error) {

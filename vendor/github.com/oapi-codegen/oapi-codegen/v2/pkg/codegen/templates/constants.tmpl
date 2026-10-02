@@ -1,0 +1,26 @@
+{{- if gt (len .SecuritySchemeProviderNames) 0 }}
+const (
+{{range $ProviderName := .SecuritySchemeProviderNames}}
+    {{- $ProviderName | sanitizeGoIdentity | ucFirst}}Scopes {{$ProviderName | schemaNameToTypeName | lcFirst}}ContextKey = "{{$ProviderName}}.Scopes"
+{{end}}
+)
+{{end}}
+{{range $Enum := .EnumDefinitions}}
+// Defines values for {{$Enum.TypeName}}.
+const (
+{{range $name, $value := $Enum.GetValues}}
+  {{$name}} {{$Enum.TypeName}} = {{if $Enum.ValueWrapper}}{{$value | toGoString}}{{else}}{{$value}}{{end -}}
+{{end}}
+)
+{{if not $.SkipEnumValidate}}
+// Valid indicates whether the value is a known member of the {{$Enum.TypeName}} enum.
+func (e {{$Enum.TypeName}}) Valid() bool {
+    switch e {
+    {{range $name, $value := $Enum.GetValues}}case {{$name}}:
+        return true
+    {{end}}default:
+        return false
+    }
+}
+{{end}}
+{{end}}
