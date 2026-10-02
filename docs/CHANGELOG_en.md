@@ -33,3 +33,7 @@ weight: 50
 - Shutdown now finalizes pending local results inside tcpshark before the child
   exits. Embedded drops remain private; standalone dropwatch raw output is
   unchanged.
+- Native on-CPU and memory profiling runs now fail when perf event reads or
+  profiler state map reads fail, instead of logging the error and finishing as
+  if the profile were complete. Samples decoded before the failure are still
+  aggregated and emitted, and context cancellation remains a clean shutdown.

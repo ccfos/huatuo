@@ -15,12 +15,15 @@
 package provider
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -143,4 +146,27 @@ func TestAttachNativeOnCPU(t *testing.T) {
 			require.ErrorContains(t, err, tt.wantErrorMessage)
 		})
 	}
+}
+
+func TestNativeCPUReadDataLoopReturnsDrainErrors(t *testing.T) {
+	readErr := errors.New("read failed")
+	profiler := &cpuNativeProfiler{
+		ringCtx: newFrozenRingTestContext(&frozenRingReaderStub{err: readErr}),
+	}
+
+	// Bounded context: a loop that swallows the failure would idle until
+	// the deadline and return nil instead of the read error.
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	err := profiler.readOnCPUDataLoop(ctx, func(any) {})
+	require.ErrorIs(t, err, readErr)
+}
+
+func TestNativeCPUReadDataLoopTreatsCancellationAsCleanShutdown(t *testing.T) {
+	profiler := &cpuNativeProfiler{
+		ringCtx: newFrozenRingTestContext(&frozenRingReaderStub{err: types.ErrExitByCancelCtx}),
+	}
+
+	require.NoError(t, profiler.readOnCPUDataLoop(t.Context(), func(any) {}))
 }
