@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -41,12 +42,26 @@ const (
 	maxKubeletErrorBodyBytes                = 8 << 10
 )
 
+// kubeletRuntimeState is the kubelet runtime cache. The retry goroutine that
+// InitManager starts fills it once kubelet answers, and the metric collectors
+// read it on every scrape, so writers update it under kubeletStateMu while
+// readers take a single snapshot: a reader must never observe a half-updated
+// cache, such as the enabled flag without the client and URL that come with it.
+type kubeletRuntimeState struct {
+	podListRunningEnabled bool
+	podListURL            string
+	podListClient         *http.Client
+	podCgroupDriver       string
+	runtimeEndpoint       string
+}
+
 var (
-	kubeletPodListRunningEnabled    = false
-	kubeletPodListURL               string
-	kubeletPodListClient            *http.Client
-	kubeletPodCgroupDriver          = "cgroupfs"
-	kubeletRuntimeEndpoint          = "unix:///run/containerd/containerd.sock"
+	kubeletStateMu sync.RWMutex
+	kubeletState   = kubeletRuntimeState{
+		podCgroupDriver: "cgroupfs",
+		runtimeEndpoint: "unix:///run/containerd/containerd.sock",
+	}
+
 	kubeletOversizedResponseWarning = &rate.Sometimes{
 		Interval: kubeletOversizedResponseWarningInterval,
 	}
@@ -57,6 +72,24 @@ var (
 		"/host/etc/kubernetes/kubelet/config.json",
 	}
 )
+
+// kubeletRuntimeSnapshot returns the current kubelet runtime cache. Callers read
+// every field they need from the returned value instead of from the shared state.
+func kubeletRuntimeSnapshot() kubeletRuntimeState {
+	kubeletStateMu.RLock()
+	defer kubeletStateMu.RUnlock()
+
+	return kubeletState
+}
+
+// updateKubeletRuntimeState applies one cache update while no reader is looking at
+// the shared state.
+func updateKubeletRuntimeState(update func(state *kubeletRuntimeState)) {
+	kubeletStateMu.Lock()
+	defer kubeletStateMu.Unlock()
+
+	update(&kubeletState)
+}
 
 type kubeletConfiguration struct {
 	// cgroupDriver is the driver kubelet uses to manipulate CGroups on the host (cgroupfs
@@ -129,9 +162,11 @@ func kubeletPodListAuthorizationRequest(requestCtx context.Context, ctx *Manager
 
 func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) error {
 	if client, err := kubeletPodListHttpRequest(requestCtx, ctx); err == nil {
-		kubeletPodListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
-		kubeletPodListClient = client
-		kubeletPodListRunningEnabled = true
+		updateKubeletRuntimeState(func(state *kubeletRuntimeState) {
+			state.podListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
+			state.podListClient = client
+			state.podListRunningEnabled = true
+		})
 		return nil
 	}
 
@@ -142,18 +177,21 @@ func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) 
 	}
 
 	// update https instance cache
-	kubeletPodListClient = client
-	kubeletPodListURL = kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort)
-	kubeletPodListRunningEnabled = true
+	updateKubeletRuntimeState(func(state *kubeletRuntimeState) {
+		state.podListClient = client
+		state.podListURL = kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort)
+		state.podListRunningEnabled = true
+	})
 	return nil
 }
 
 func kubeletGetPodList(ctx context.Context) (corev1.PodList, error) {
-	if !kubeletPodListRunningEnabled {
+	snapshot := kubeletRuntimeSnapshot()
+	if !snapshot.podListRunningEnabled {
 		return corev1.PodList{}, fmt.Errorf("kubelet not running")
 	}
 
-	return kubeletFetchPodList(ctx, kubeletPodListClient, kubeletPodListURL)
+	return kubeletFetchPodList(ctx, snapshot.podListClient, snapshot.podListURL)
 }
 
 func kubeletPodListDoRequest(client *http.Client, kubeletPodListURL string) (corev1.PodList, error) {
@@ -449,19 +487,22 @@ func kubeletConfigCacheMustUpdate(ctx *ManagerCtx) error {
 	)
 
 	defer func() {
-		if config.CgroupDriver != "" {
-			kubeletPodCgroupDriver = config.CgroupDriver
-		}
-		if config.ContainerRuntimeEndpoint != "" {
-			kubeletRuntimeEndpoint = config.ContainerRuntimeEndpoint
-		}
+		updateKubeletRuntimeState(func(state *kubeletRuntimeState) {
+			if config.CgroupDriver != "" {
+				state.podCgroupDriver = config.CgroupDriver
+			}
+			if config.ContainerRuntimeEndpoint != "" {
+				state.runtimeEndpoint = config.ContainerRuntimeEndpoint
+			}
+		})
 
+		snapshot := kubeletRuntimeSnapshot()
 		log.Debugf("kubelet config cache updated, cgroup driver: %s, runtime: %s",
-			kubeletPodCgroupDriver, kubeletRuntimeEndpoint)
+			snapshot.podCgroupDriver, snapshot.runtimeEndpoint)
 	}()
 
 	config, err = kubeletConfigDoRequest(
-		kubeletPodListClient,
+		kubeletRuntimeSnapshot().podListClient,
 		kubeletConfigAuthorizedURL(ctx.PodAuthorizedPort),
 	)
 	if err == nil {
