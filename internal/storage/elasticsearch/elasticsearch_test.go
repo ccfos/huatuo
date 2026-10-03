@@ -47,6 +47,8 @@ type mockElasticsearchServer struct {
 	searchBodies      []map[string]any
 	countBodies       []map[string]any
 	deleteResponse    map[string]any
+	termsFields       []string
+	termsErrors       map[string]string
 	server            *httptest.Server
 }
 
@@ -110,6 +112,25 @@ func (m *mockElasticsearchServer) URL() string {
 		return ""
 	}
 	return m.server.URL
+}
+
+// failTermsAggregation makes the mock answer a terms aggregation on the given
+// aggregation field with the supplied HTTP 400 body.
+func (m *mockElasticsearchServer) failTermsAggregation(field, errorBody string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.termsErrors == nil {
+		m.termsErrors = make(map[string]string)
+	}
+	m.termsErrors[field] = errorBody
+}
+
+// termsAggregationFields returns the aggregation field of every terms request
+// the mock received, in arrival order.
+func (m *mockElasticsearchServer) termsAggregationFields() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.termsFields...)
 }
 
 func (m *mockElasticsearchServer) handleIndexExists(w http.ResponseWriter, index string) {
@@ -322,6 +343,15 @@ func (m *mockElasticsearchServer) handleTermsSearch(w http.ResponseWriter, r *ht
 	termsAggregation, _ := aggs["terms"].(map[string]any)
 	termsConfig, _ := termsAggregation["terms"].(map[string]any)
 	fieldName := stringValue(termsConfig["field"])
+	m.termsFields = append(m.termsFields, fieldName)
+	if errorBody, ok := m.termsErrors[fieldName]; ok {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(errorBody))
+		return
+	}
+	// A dynamic text mapping exposes the values under the .keyword subfield, so
+	// aggregating there returns the base field's terms, like real Elasticsearch.
+	fieldName = strings.TrimSuffix(fieldName, ".keyword")
 
 	counts := make(map[string]int)
 	for _, doc := range docs {
@@ -1545,5 +1575,191 @@ func TestNewBackendRequiresIndex(t *testing.T) {
 	_, err := NewBackend(&Config{})
 	if err == nil || err.Error() != "elasticsearch backend: index is required" {
 		t.Fatalf("NewBackend() error = %v", err)
+	}
+}
+
+// TestBuildValuesRequestKeepsTheBaseAggregationField pins that the terms
+// aggregation is built on the field name the caller passed. Numeric, date and
+// explicitly mapped keyword fields have no .keyword child, so the request must
+// not rewrite them; the .keyword retry happens in Storage.Values only after
+// Elasticsearch rejects the base field as text-with-fielddata-disabled.
+func TestBuildValuesRequestKeepsTheBaseAggregationField(t *testing.T) {
+	testCases := []struct {
+		name     string
+		field    string
+		wantAgg  string
+		wantSize int
+	}{
+		{
+			name:     "document field stays at the base name",
+			field:    "profile_data.profile_type",
+			wantAgg:  "profile_data.profile_type",
+			wantSize: 10,
+		},
+		{
+			name:     "explicit keyword name passes through",
+			field:    "tracer_id.keyword",
+			wantAgg:  "tracer_id.keyword",
+			wantSize: 7,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body, err := buildValuesRequest(testCase.field, driver.Query{}, testCase.wantSize)
+			if err != nil {
+				t.Fatalf("buildValuesRequest() error = %v", err)
+			}
+
+			var payload struct {
+				Aggregations map[string]struct {
+					Terms struct {
+						Field string `json:"field"`
+						Size  int    `json:"size"`
+					} `json:"terms"`
+				} `json:"aggregations"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+
+			terms := payload.Aggregations["terms"].Terms
+			if terms.Field != testCase.wantAgg {
+				t.Fatalf("aggregation field = %q, want %q", terms.Field, testCase.wantAgg)
+			}
+			if terms.Size != testCase.wantSize {
+				t.Fatalf("aggregation size = %d, want %d", terms.Size, testCase.wantSize)
+			}
+		})
+	}
+}
+
+// fielddataDisabledError builds the Elasticsearch 400 body for a terms
+// aggregation on a text field with fielddata disabled, naming the rejected
+// field the way the server does.
+func fielddataDisabledError(field string) string {
+	reason := fmt.Sprintf("Text fields are not optimised for operations that require per-document field data"+
+		" like aggregations and sorting, so these operations are disabled by default. Please use a keyword"+
+		" field instead. Alternatively, set fielddata=true on [%s] in order to load field data by"+
+		" uninverting the inverted index.", field)
+	return fmt.Sprintf(`{"error":{"root_cause":[{"type":"illegal_argument_exception","reason":%q}],`+
+		`"type":"search_phase_execution_exception","reason":"all shards failed","phase":"query",`+
+		`"grouped":true,"failed_shards":[{"shard":0,"index":"huatuo_bamai","node":"mock-node",`+
+		`"reason":{"type":"illegal_argument_exception","reason":%q}}]},"status":400}`, reason, reason)
+}
+
+// saveProfiles writes records into the "profiles" index and flushes the bulk
+// indexer so a following aggregation sees them.
+func saveProfiles(t *testing.T, backend *Storage, records []driver.Record) {
+	t.Helper()
+	for _, record := range records {
+		if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
+			t.Fatalf("Save(%q) returned error: %v", record.ID, err)
+		}
+	}
+	flushBackend(t, backend)
+}
+
+// TestValuesAggregatesNumericFieldAtItsBaseName keeps the non-text case
+// honest: a numeric field is aggregatable at its base name, so Values must
+// issue exactly one aggregation there and never touch a .keyword subfield.
+func TestValuesAggregatesNumericFieldAtItsBaseName(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	if backend == nil {
+		return
+	}
+	if err := backend.Init(t.Context(), "profiles", []driver.Index{{Field: "priority"}}); err != nil {
+		t.Fatalf("Init() returned error: %v", err)
+	}
+	saveProfiles(t, backend, []driver.Record{
+		{ID: "high-1", Data: []byte(`{"tracer_id":"high-1","priority":7}`)},
+		{ID: "low-1", Data: []byte(`{"tracer_id":"low-1","priority":3}`)},
+		{ID: "high-2", Data: []byte(`{"tracer_id":"high-2","priority":7}`)},
+	})
+
+	values, err := backend.Values(t.Context(), "priority", driver.Query{}, 10)
+	if err != nil {
+		t.Fatalf("Values() returned error: %v", err)
+	}
+	if len(values) != 2 || values[0] != "7" || values[1] != "3" {
+		t.Fatalf("Values() = %v, want [7 3]", values)
+	}
+
+	requested := server.termsAggregationFields()
+	if len(requested) != 1 || requested[0] != "priority" {
+		t.Fatalf("aggregation fields = %v, want [priority] (no .keyword retry)", requested)
+	}
+}
+
+// TestValuesFallsBackToKeywordSubfieldOnlyForTextFielddata covers the dynamic
+// text mapping: the base field is rejected with the fielddata-disabled error
+// and the retry on the .keyword subfield returns the buckets.
+func TestValuesFallsBackToKeywordSubfieldOnlyForTextFielddata(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+	server.failTermsAggregation("profile_type", fielddataDisabledError("profile_type"))
+
+	backend := newBackendForTest(t, server)
+	if backend == nil {
+		return
+	}
+	if err := backend.Init(t.Context(), "profiles", []driver.Index{{Field: "profile_type"}}); err != nil {
+		t.Fatalf("Init() returned error: %v", err)
+	}
+	saveProfiles(t, backend, []driver.Record{
+		{ID: "cpu-1", Data: []byte(`{"tracer_id":"cpu-1","profile_type":"process_cpu"}`)},
+		{ID: "mem-1", Data: []byte(`{"tracer_id":"mem-1","profile_type":"process_mem"}`)},
+		{ID: "cpu-2", Data: []byte(`{"tracer_id":"cpu-2","profile_type":"process_cpu"}`)},
+	})
+
+	values, err := backend.Values(t.Context(), "profile_type", driver.Query{}, 10)
+	if err != nil {
+		t.Fatalf("Values() returned error: %v", err)
+	}
+	if len(values) != 2 || values[0] != "process_cpu" || values[1] != "process_mem" {
+		t.Fatalf("Values() = %v, want [process_cpu process_mem]", values)
+	}
+
+	requested := server.termsAggregationFields()
+	if len(requested) != 2 || requested[0] != "profile_type" || requested[1] != "profile_type.keyword" {
+		t.Fatalf("aggregation fields = %v, want [profile_type profile_type.keyword]", requested)
+	}
+}
+
+// TestValuesSurfacesNonFielddataErrorsWithoutRetry pins the narrowness of the
+// fallback: any other 400, even another illegal_argument_exception, must be
+// returned instead of retried against a .keyword field that may not exist.
+func TestValuesSurfacesNonFielddataErrorsWithoutRetry(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+	server.failTermsAggregation("priority", `{"error":{"root_cause":[{"type":"illegal_argument_exception",`+
+		`"reason":"Invalid aggregation field [priority]"}],"type":"search_phase_execution_exception"},`+
+		`"status":400}`)
+
+	backend := newBackendForTest(t, server)
+	if backend == nil {
+		return
+	}
+	if err := backend.Init(t.Context(), "profiles", []driver.Index{{Field: "priority"}}); err != nil {
+		t.Fatalf("Init() returned error: %v", err)
+	}
+	saveProfiles(t, backend, []driver.Record{
+		{ID: "high-1", Data: []byte(`{"tracer_id":"high-1","priority":7}`)},
+	})
+
+	_, err := backend.Values(t.Context(), "priority", driver.Query{}, 10)
+	if err == nil {
+		t.Fatal("Values() returned nil error for an unrelated 400")
+	}
+	if !strings.Contains(err.Error(), "Invalid aggregation field [priority]") {
+		t.Fatalf("Values() error = %v, want the server's rejection verbatim", err)
+	}
+
+	requested := server.termsAggregationFields()
+	if len(requested) != 1 || requested[0] != "priority" {
+		t.Fatalf("aggregation fields = %v, want [priority] (no .keyword retry)", requested)
 	}
 }
