@@ -369,10 +369,37 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	return payload.Count, nil
 }
 
+// Values returns the distinct values of field. The aggregation targets the
+// field name as given; the .keyword subfield is retried only when
+// Elasticsearch rejects the request with the text-fielddata error (see
+// keywordFallbackField). Numeric, date and explicitly mapped keyword fields
+// are aggregatable at their base name and usually have no .keyword child, so
+// rewriting every field would break exactly those calls.
 func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size int) ([]string, error) {
+	values, retryField, err := s.valuesOnce(ctx, field, q, size)
+	if err == nil {
+		return values, nil
+	}
+	if retryField == "" {
+		return nil, err
+	}
+	// The base field is a text field with fielddata disabled; a dynamic
+	// mapping's .keyword subfield is the only shape that can answer this
+	// aggregation.
+	retried, _, retryErr := s.valuesOnce(ctx, retryField, q, size)
+	if retryErr != nil {
+		return nil, fmt.Errorf("%w (retry on %s failed: %v)", err, retryField, retryErr)
+	}
+	return retried, nil
+}
+
+// valuesOnce issues one terms aggregation on field. retryField is non-empty
+// only when the response is the fielddata-disabled rejection of field, i.e.
+// the one error shape a .keyword retry can address.
+func (s *Storage) valuesOnce(ctx context.Context, field string, q driver.Query, size int) ([]string, string, error) {
 	body, err := buildValuesRequest(field, q, size)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	typedKeys := true
@@ -383,34 +410,104 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	}
 	res, err := req.Do(ctx, s.transport)
 	if err != nil {
-		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
+		return nil, "", fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode == http.StatusNotFound {
-		return nil, nil
+		return nil, "", nil
 	}
 	if res.IsError() {
-		return nil, responseError("terms aggregation", s.index, res)
+		detail, readErr := io.ReadAll(res.Body)
+		if readErr != nil {
+			return nil, "", fmt.Errorf("elasticsearch %s %s: status %d: read body: %w",
+				"terms aggregation", s.index, res.StatusCode, readErr)
+		}
+		aggregationErr := responseBodyError("terms aggregation", s.index, res.StatusCode, detail)
+		retryField := keywordFallbackField(field, detail)
+		if retryField == "" {
+			return nil, "", aggregationErr
+		}
+		return nil, retryField, aggregationErr
 	}
 
 	var payload essearch.Response
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: decode: %w", s.index, field, err)
+		return nil, "", fmt.Errorf("elasticsearch backend terms %s/%s: decode: %w", s.index, field, err)
 	}
 	// HTTP success can still carry incomplete buckets after a timeout or shard failure.
 	if payload.TimedOut {
-		return nil, fmt.Errorf("elasticsearch backend terms %s/%s timed out", s.index, field)
+		return nil, "", fmt.Errorf("elasticsearch backend terms %s/%s timed out", s.index, field)
 	}
 	if payload.Shards_.Failed > 0 {
-		return nil, fmt.Errorf("elasticsearch backend terms %s/%s failed on %d shards", s.index, field, payload.Shards_.Failed)
+		return nil, "", fmt.Errorf("elasticsearch backend terms %s/%s failed on %d shards", s.index, field, payload.Shards_.Failed)
 	}
 
 	result, err := termsValues(payload.Aggregations["terms"])
 	if err != nil {
-		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
+		return nil, "", fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
 	}
-	return result, nil
+	return result, "", nil
+}
+
+// keywordFallbackField returns field+".keyword" only when detail is
+// Elasticsearch's fielddata-disabled rejection of a terms aggregation on
+// field. Dynamic string mappings create that subfield; any other error must
+// surface unchanged instead of being retried against a field that may not
+// exist.
+func keywordFallbackField(field string, detail []byte) string {
+	if strings.HasSuffix(field, ".keyword") {
+		return ""
+	}
+	var payload struct {
+		Error struct {
+			RootCause    []elasticsearchErrorCause `json:"root_cause"`
+			FailedShards []struct {
+				Reason elasticsearchErrorCause `json:"reason"`
+			} `json:"failed_shards"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(detail, &payload); err != nil {
+		return ""
+	}
+	causes := make([]elasticsearchErrorCause, 0, len(payload.Error.RootCause)+len(payload.Error.FailedShards))
+	causes = append(causes, payload.Error.RootCause...)
+	for _, shard := range payload.Error.FailedShards {
+		causes = append(causes, shard.Reason)
+	}
+	for _, cause := range causes {
+		if cause.Type != "illegal_argument_exception" {
+			continue
+		}
+		reason := strings.ToLower(cause.Reason)
+		// The message names the rejected field ("... on [field] ..."), so the
+		// retry cannot be triggered by an unrelated field's failure.
+		if !strings.Contains(reason, strings.ToLower(field)) {
+			continue
+		}
+		if strings.Contains(reason, "fielddata is disabled on text fields") ||
+			strings.Contains(reason, "text fields are not optimi") {
+			return field + ".keyword"
+		}
+	}
+	return ""
+}
+
+type elasticsearchErrorCause struct {
+	Type   string `json:"type"`
+	Reason string `json:"reason"`
+}
+
+func responseError(action, target string, res *esapi.Response) error {
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return fmt.Errorf("elasticsearch %s %s: status %d: read body: %w", action, target, res.StatusCode, err)
+	}
+	return responseBodyError(action, target, res.StatusCode, body)
+}
+
+func responseBodyError(action, target string, status int, body []byte) error {
+	return fmt.Errorf("elasticsearch %s %s: status %d: %s", action, target, status, strings.TrimSpace(string(body)))
 }
 
 func termsValues(aggregation types.Aggregate) ([]string, error) {
@@ -463,12 +560,4 @@ func termsValues(aggregation types.Aggregate) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unexpected terms buckets type %T", buckets)
 	}
-}
-
-func responseError(action, target string, res *esapi.Response) error {
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return fmt.Errorf("elasticsearch %s %s: status %d: read body: %w", action, target, res.StatusCode, err)
-	}
-	return fmt.Errorf("elasticsearch %s %s: status %d: %s", action, target, res.StatusCode, strings.TrimSpace(string(body)))
 }
