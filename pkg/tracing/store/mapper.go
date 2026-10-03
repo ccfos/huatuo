@@ -71,6 +71,9 @@ func (mapper) Fields(document *Document) (map[string]any, error) {
 	if document.ObservedTimestamp != nil {
 		fields[types.DocumentFieldObservedTimestamp] = *document.ObservedTimestamp
 	}
+	if document.KernelObservedTimestamp != nil {
+		fields[types.DocumentFieldKernelObservedTimestamp] = *document.KernelObservedTimestamp
+	}
 	return fields, nil
 }
 
@@ -82,6 +85,7 @@ func (mapper) Indexes() []driver.Index {
 		{Field: types.DocumentFieldUploadedTimestamp},
 		{Field: types.DocumentFieldStartedTimestamp},
 		{Field: types.DocumentFieldObservedTimestamp},
+		{Field: types.DocumentFieldKernelObservedTimestamp},
 		{Field: types.DocumentFieldContainerID},
 		{Field: types.DocumentFieldContainerHostname},
 		{Field: types.DocumentFieldContainerHostNamespace},

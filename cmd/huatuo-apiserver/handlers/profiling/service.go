@@ -245,8 +245,8 @@ func (s *Service) RawProfiles(
 		items = append(items, &RawProfile{
 			Hostname:          document.Hostname,
 			Region:            document.Region,
-			UploadedTimestamp: document.UploadedTimestamp,
-			StartedTimestamp:  *document.StartedTimestamp,
+			UploadedTimestamp: document.UploadedTimestamp.Time,
+			StartedTimestamp:  document.StartedTimestamp.Time,
 			ContainerID:       document.ContainerID,
 			ContainerHostname: document.ContainerHostname,
 			ContainerType:     document.ContainerType,

@@ -18,20 +18,59 @@ set -euo pipefail
 
 # --------------------------------- log --------------------------------------
 
-TEST_LOG_TAG=${TEST_LOG_TAG:-"INTEGRATION TEST"}
+TEST_LOG_TAG=${TEST_LOG_TAG:-INTEGRATION}
 
-log_info() { echo "[${TEST_LOG_TAG}] $*"; }
-log_warn() { echo "[${TEST_LOG_TAG}][WARN] $*" >&2; }
-log_error() { echo "[${TEST_LOG_TAG}][ERROR] $*" >&2; }
+log_info() {
+	printf '[%s][%s] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*"
+}
+log_warn() {
+	printf '[%s][%s][WARN] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
+}
+log_error() {
+	printf '[%s][%s][ERROR] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
+}
 fatal() {
-	echo "[${TEST_LOG_TAG}][FAIL] $*" >&2
+	printf '[%s][%s][FAIL] %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
 	exit 1
 }
 
-# skip exits 0 so the harness treats it as success without false confidence.
+# The runner reserves 77 for skipped cases; cleanup still runs through EXIT.
 skip() {
-	echo "[${TEST_LOG_TAG}][SKIP] $*"
-	exit 0
+	printf '[%s][%s][SKIP] ⏭️ %s\n' \
+		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*"
+	exit 77
+}
+
+test_results_init() {
+	test_passed=0
+	test_skipped=0
+	test_failed=0
+}
+
+test_result_record() {
+	local name=$1 status=$2
+	case ${status} in
+	0)
+		test_passed=$((test_passed + 1))
+		log_info "PASS: ${name}"
+		;;
+	77)
+		test_skipped=$((test_skipped + 1))
+		log_info "SKIP: ${name}"
+		;;
+	*)
+		test_failed=$((test_failed + 1))
+		log_error "FAIL: ${name} (exit ${status})"
+		;;
+	esac
+}
+
+test_results_summary() {
+	log_info "summary: total=$((test_passed + test_skipped + test_failed)) passed=${test_passed} skipped=${test_skipped} failed=${test_failed}"
 }
 
 report_http_response() {
@@ -48,8 +87,26 @@ report_http_response() {
 
 # --------------------------------- utils ------------------------------------
 
-require_python3() {
-	command -v python3 > /dev/null 2>&1 || fatal "python3 not found"
+require_commands() {
+	local command
+	for command in "$@"; do
+		if [[ ${command} == */* ]]; then
+			[[ -f "${command}" && -x "${command}" ]] || skip "command is not executable: ${command}"
+		else
+			command -v "${command}" > /dev/null 2>&1 || skip "command is not installed: ${command}"
+		fi
+	done
+}
+
+require_readable() {
+	local path
+	for path in "$@"; do
+		[[ -r "${path}" ]] || skip "file is not readable: ${path}"
+	done
+}
+
+require_build_output() {
+	[[ -d "${ROOT_DIR}/_output" ]] || fatal "build output directory missing: ${ROOT_DIR}/_output; run make build"
 }
 
 assert_eq() {
@@ -69,10 +126,12 @@ assert_log_has_no_failure() {
 }
 
 allocate_available_port() {
-	local attempt port
+	local protocol=${1:-tcp} attempt port
+	[[ ${protocol} == tcp || ${protocol} == udp ]] \
+		|| fatal "unsupported port protocol: ${protocol}; expected tcp or udp"
 	for ((attempt = 0; attempt < 20; attempt++)); do
 		port=$((20000 + RANDOM % 20001))
-		if ! ss -H -ltn | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
+		if ! ss -H -an "--${protocol}" | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
 			echo "${port}"
 			return 0
 		fi
@@ -114,12 +173,17 @@ wait_until() {
 	if (($# > 0)); then
 		invocation+=" $*"
 	fi
-	local end=$(($(date +%s) + timeout))
+	local start end now elapsed
+	start=$(date +%s)
+	end=$((start + timeout))
 	local attempt=0
 
-	while [ "$(date +%s)" -lt "$end" ]; do
+	while true; do
+		now=$(date +%s)
+		((now < end)) || break
 		attempt=$((attempt + 1))
-		log_info "wait attempt #${attempt}: [${invocation}]"
+		elapsed=$((now - start))
+		log_info "wait attempt #${attempt} (${elapsed}s/${timeout}s): [${invocation}]"
 		if "$func" "$@"; then
 			return 0
 		fi
@@ -167,6 +231,7 @@ tracepoint_available() {
 # compile_user_fixture <source> <output> [compiler flags...]
 # Keep stack frames observable so profiler fixtures produce stable call chains.
 compile_user_fixture() {
+	require_commands gcc
 	local source=$1
 	local output=$2
 	shift 2
@@ -181,6 +246,7 @@ compile_user_fixture() {
 
 # compile_bpf_fixture <source> <output> [extra_cflags]
 compile_bpf_fixture() {
+	require_commands clang "${ROOT_DIR}/build/clang.sh"
 	local source=$1
 	local output=$2
 	local extra_cflags=${3:-}
@@ -204,10 +270,6 @@ bpf_tool_setup() {
 	local work_prefix=${3:-${binary_name}}
 	TOOL_BIN="${ROOT_DIR}/_output/bin/${binary_name}"
 	TOOL_BPF="${ROOT_DIR}/_output/bpf/${bpf_name}.o"
-
-	[[ $EUID -eq 0 ]] || fatal "requires root (BPF requires CAP_BPF/CAP_SYS_ADMIN)"
-	[[ -x ${TOOL_BIN} ]] || fatal "missing ${binary_name} binary: ${TOOL_BIN}"
-	[[ -r ${TOOL_BPF} ]] || fatal "missing ${bpf_name} bpf object: ${TOOL_BPF}"
 
 	TOOL_WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${work_prefix}.XXXXXX")
 	TOOL_OUT="${TOOL_WORK_DIR}/${binary_name}.out"
@@ -296,8 +358,8 @@ is_virtual_machine() {
 # ----------------------------- huatuo-bamai ----------------------------------
 
 huatuo_bamai_start() {
-	[[ -x "${HUATUO_BAMAI_BIN}" ]] || fatal "huatuo-bamai binary not found: ${HUATUO_BAMAI_BIN}"
-
+	[[ -f "${HUATUO_BAMAI_BIN}" && -x "${HUATUO_BAMAI_BIN}" ]] \
+		|| fatal "huatuo-bamai binary missing or not executable: ${HUATUO_BAMAI_BIN}; run make build"
 	log_info "starting huatuo-bamai: $*"
 	"${HUATUO_BAMAI_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" 2>&1 &
 	local pid=$!
@@ -333,9 +395,6 @@ huatuo_bamai_stop() {
 # --------------------------- huatuo-apiserver -------------------------------
 
 huatuo_apiserver_start() {
-	[[ -x "${HUATUO_APISERVER_BIN}" ]] \
-		|| fatal "huatuo-apiserver binary not found: ${HUATUO_APISERVER_BIN}"
-
 	log_info "starting huatuo-apiserver: $*"
 	"${HUATUO_APISERVER_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" 2>&1 &
 	local pid=$!
@@ -395,25 +454,32 @@ integration_test_exit() {
 		return 1
 	fi
 
-	huatuo_apiserver_stop "${test_workspace}" || true
-	huatuo_bamai_stop "${test_workspace}" || true
+	local cleanup_status=0
+	huatuo_apiserver_stop "${test_workspace}" || cleanup_status=1
+	huatuo_bamai_stop "${test_workspace}" || cleanup_status=1
+	[[ ${cleanup_status} -eq 0 ]] || exit_code=1
 
-	if [[ ${exit_code} -eq 0 ]]; then
-		rm -rf -- "${test_workspace}"
+	if [[ ${exit_code} -eq 0 || ${exit_code} -eq 77 ]]; then
+		rm -rf -- "${test_workspace}" || return 1
 		return 0
 	fi
 
-	dump_text_files "${test_workspace}"
+	dump_text_files "${test_workspace}" || true
 	log_error "integration test failed with exit code ${exit_code}; artifacts preserved at ${test_workspace}"
+	return "${cleanup_status}"
 }
 
 huatuo_bamai_metrics() {
 	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}"
 }
 
-# Reject error/panic keywords in the log.
+# Reject error/panic/fatal levels and runtime panics in the log.
 huatuo_bamai_log_check() {
-	! grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	if grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"; then
+		sed -E "s/(${HUATUO_BAMAI_MATCH_KEYWORDS})/\x1b[1;31m\1\x1b[0m/gI" \
+			"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2
+		return 1
+	fi
 }
 
 # ----------------------------- metrics helpers --------------------------------
@@ -491,4 +557,24 @@ check_metrics() {
 				|| fatal "${desc}: expected present but not found: ${pat}"
 		done
 	fi
+}
+
+# Both clocks must survive BPF decoding and JSON output without exposing host uptime.
+assert_kernel_observation_timestamps() {
+	local events_file=$1
+	jq -e -s '
+		def utc_seconds:
+			if type == "string" and test("Z$") then
+				sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601
+			else error("expected UTC timestamp") end;
+		length > 0 and all(.[];
+			(has("kernel_observed_ns") | not)
+			and ((.observed_timestamp | utc_seconds) as $observed
+				| (.kernel_observed_timestamp | utc_seconds) as $kernel
+				| $kernel <= $observed + 1
+				and $observed - $kernel < 60
+				and (now - $observed | fabs) < 120))
+	' "${events_file}" > /dev/null \
+		|| fatal "invalid kernel/userspace observation timestamps: ${events_file}"
+	log_info "event with UTC observation timestamps: $(head -n 1 "${events_file}")"
 }

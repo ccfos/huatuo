@@ -22,11 +22,32 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var (
-	offsetOnce        sync.Once
-	offsetNanoseconds int64
-	errOffsetOnce     error
-)
+const realtimeOffsetRefreshInterval = time.Hour
+
+type monotonicRealtimeOffsetCache struct {
+	mu          sync.Mutex
+	offsetNS    int64
+	refreshedAt time.Time
+}
+
+var realtimeOffsetCache monotonicRealtimeOffsetCache
+
+func (c *monotonicRealtimeOffsetCache) loadOrRefresh(now func() time.Time, sample func() (int64, error)) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.refreshedAt.IsZero() && now().Sub(c.refreshedAt) < realtimeOffsetRefreshInterval {
+		return c.offsetNS, nil
+	}
+
+	offsetNS, err := sample()
+	if err != nil {
+		return 0, err
+	}
+	c.offsetNS = offsetNS
+	// Start the lifetime after successful sampling, not before waiting for the lock.
+	c.refreshedAt = now()
+	return offsetNS, nil
+}
 
 // MonotonicNowNS returns the clock used by bpf_ktime_get_ns().
 func MonotonicNowNS() (uint64, error) {
@@ -37,20 +58,33 @@ func MonotonicNowNS() (uint64, error) {
 	return uint64(unix.TimespecToNsec(ts)), nil
 }
 
-// KtimeToTime converts a bpf_ktime_get_ns() nanosecond value to a
-// wall-clock time.Time in UTC. The monotonic-to-realtime offset is
-// sampled once on first call and cached for the process lifetime.
-func KtimeToTime(ktimeNs uint64) (time.Time, error) {
-	offsetOnce.Do(func() {
-		offsetNanoseconds, errOffsetOnce = MonoToRealOffset()
-	})
-	if errOffsetOnce != nil {
-		return time.Time{}, errOffsetOnce
+// KtimeToTime converts a host CLOCK_MONOTONIC timestamp to UTC. The offset
+// is refreshed on demand one hour after the last successful refresh.
+// Historical events spanning a clock step or suspend cannot be reconstructed
+// exactly from a monotonic timestamp alone.
+// The caller must supply a valid kernel timestamp whose value and converted
+// Unix nanoseconds fit in int64; this hot path does not check for overflow.
+func KtimeToTime(monotonicNS uint64) (time.Time, error) {
+	offset, err := realtimeOffsetCache.loadOrRefresh(time.Now, MonoToRealOffset)
+	if err != nil {
+		return time.Time{}, err
 	}
-	return time.Unix(0, int64(ktimeNs)+offsetNanoseconds).UTC(), nil
+	return time.Unix(0, int64(monotonicNS)+offset).UTC(), nil
 }
 
-// monoToRealOffset brackets a CLOCK_MONOTONIC read between two
+// KtimeToTimestamp converts KernelObservedNS from bpf_ktime_get_ns() to a UTC
+// Timestamp. The input is host CLOCK_MONOTONIC nanoseconds, not Unix nanoseconds.
+// It shares KtimeToTime's offset cache, range requirements, and clock-step
+// limitations.
+func KtimeToTimestamp(kernelObservedNS uint64) (Timestamp, error) {
+	t, err := KtimeToTime(kernelObservedNS)
+	if err != nil {
+		return Timestamp{}, err
+	}
+	return Timestamp{Time: t}, nil
+}
+
+// MonoToRealOffset brackets a CLOCK_MONOTONIC read between two
 // CLOCK_REALTIME reads, up to 5 times, and keeps the tightest pair.
 // Exits early when the bracket is already below 1µs.
 func MonoToRealOffset() (int64, error) {

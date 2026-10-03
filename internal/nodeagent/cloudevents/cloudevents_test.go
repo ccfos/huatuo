@@ -40,14 +40,14 @@ func TestDocumentToWatchEvent(t *testing.T) {
 	if !strings.HasPrefix(event.Source, "/huatuo/node-1/cpu") {
 		t.Errorf("documentToWatchEvent() source = %q", event.Source)
 	}
-	if event.Time != timeutil.FormatUTC(*document.ObservedTimestamp) {
+	if event.Time != document.ObservedTimestamp.FormatUTC() {
 		t.Errorf("documentToWatchEvent() time = %q", event.Time)
 	}
 
 	want := types.WatchEventData{
 		Hostname:          document.Hostname,
 		Region:            document.Region,
-		ObservedTimestamp: timeutil.FormatUTC(*document.ObservedTimestamp),
+		ObservedTimestamp: document.ObservedTimestamp.FormatUTC(),
 		TracerName:        document.TracerName,
 		TracerRunType:     document.TracerRunType,
 	}
@@ -65,9 +65,26 @@ func newTestDocument(tracerName, runType string) *tracingstore.Document {
 	return &tracingstore.Document{Document: types.Document{
 		Hostname:          "node-1",
 		Region:            "cn",
-		StartedTimestamp:  &startedTimestamp,
-		ObservedTimestamp: &observedTimestamp,
+		StartedTimestamp:  &timeutil.Timestamp{Time: startedTimestamp},
+		ObservedTimestamp: &timeutil.Timestamp{Time: observedTimestamp},
 		TracerName:        tracerName,
 		TracerRunType:     runType,
 	}}
+}
+
+func TestWatchEventSeparatesKernelObservation(t *testing.T) {
+	doc := newTestDocument("tcp_retransmit", types.TracerRunTypeEvent)
+	kernel := doc.ObservedTimestamp.Add(-time.Second)
+	doc.KernelObservedTimestamp = &timeutil.Timestamp{Time: kernel}
+	event := documentToWatchEvent(doc)
+	data, ok := event.Data.(types.WatchEventData)
+	if !ok {
+		t.Fatalf("unexpected payload %T", event.Data)
+	}
+	if data.KernelObservedTimestamp != timeutil.FormatUTC(kernel) {
+		t.Fatalf("kernel timestamp = %q", data.KernelObservedTimestamp)
+	}
+	if data.ObservedTimestamp != doc.ObservedTimestamp.FormatUTC() || event.Time != data.ObservedTimestamp {
+		t.Fatal("userspace observation time changed")
+	}
 }

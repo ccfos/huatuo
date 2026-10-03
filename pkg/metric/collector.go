@@ -37,7 +37,7 @@ var DefaultNamespace = "huatuo_bamai"
 
 // Collector is the interface a collector has to implement.
 //
-//go:generate mockery --name=Collector --dir=. --filename=mock_collector_test.go --inpackage --case=underscore
+//go:generate mockery --config /dev/null --name=Collector --dir=. --filename=mock_collector_test.go --inpackage --case=underscore
 type Collector interface {
 	// Get new metrics and expose them via prometheus registry. Implementations
 	// may return partial metrics with an error when only part of a scrape fails.

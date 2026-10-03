@@ -28,7 +28,7 @@ import (
 // returns a perf reader for iodelay events. The reader is closed if any
 // later attach step fails so the caller cannot leak the pipe on error.
 func attachAndEventPipe(ctx context.Context, b bpf.BPF) (reader bpf.PerfEventReader, err error) {
-	reader, err = b.EventPipeByName(ctx, bpfPerfMapName, 8192)
+	reader, err = b.EventPipeByName(ctx, bpfPerfMapName, bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return nil, fmt.Errorf("get event pipe: %w", err)
 	}

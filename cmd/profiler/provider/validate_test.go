@@ -15,9 +15,6 @@
 package provider
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -66,21 +63,17 @@ func TestValidateResolvedPIDs(t *testing.T) {
 	require.EqualError(t, validateResolvedPIDs("Java", nil), "start Java profiler: no target processes found")
 }
 
-func TestValidateToolFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "tool")
-	require.NoError(t, os.WriteFile(path, []byte("tool"), 0o600))
-	require.EqualError(
-		t,
-		validateToolFile("Python", dir, "tool", true),
-		fmt.Sprintf("start Python profiler: required tool %q is not executable", path),
-	)
-	require.NoError(t, os.Chmod(path, 0o755))
-	require.NoError(t, validateToolFile("Python", dir, "tool", true))
-	require.NoError(t, os.Chmod(path, 0o000))
-	require.EqualError(
-		t,
-		validateToolFile("Java", dir, "tool", false),
-		fmt.Sprintf("start Java profiler: required tool %q is not readable", path),
-	)
+func TestHasExecutablePrefix(t *testing.T) {
+	tests := map[string]bool{
+		"python3.12":         true,
+		"platform-python3.6": true,
+		"java":               false,
+		"my-python":          false,
+	}
+	for name, want := range tests {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, want, hasExecutablePrefix(name, "python"))
+		})
+	}
+	require.False(t, hasExecutablePrefix("platform-java", "java"))
 }

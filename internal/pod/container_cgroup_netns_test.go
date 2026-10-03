@@ -16,16 +16,15 @@ package pod
 
 import (
 	"testing"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 )
 
 func TestContainerIDByCgroupNetNamespace(t *testing.T) {
-	previousContainers := containers
-	previousUpdatedAt := lastUpdatedAt
-
-	containers = map[string]*Container{
+	previous := containerView
+	containerView = newContainerStore()
+	containerView.isActive, containerView.err = true, nil
+	fixtures := map[string]*Container{
 		"css": {
 			ID:        "css",
 			Type:      ContainerTypeNormal,
@@ -42,11 +41,10 @@ func TestContainerIDByCgroupNetNamespace(t *testing.T) {
 			NetNamespaceInum: 33,
 		},
 	}
-	lastUpdatedAt = time.Now()
-	t.Cleanup(func() {
-		containers = previousContainers
-		lastUpdatedAt = previousUpdatedAt
-	})
+	for id, container := range fixtures {
+		containerView.records[id] = &containerRecord{container: container}
+	}
+	t.Cleanup(func() { containerView = previous })
 
 	tests := []struct {
 		name string

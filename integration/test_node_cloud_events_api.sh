@@ -27,11 +27,7 @@ event_stream_pid=""
 event_capacity_status=""
 event_capacity_curl_status=0
 
-command -v curl > /dev/null || skip "curl command is not installed"
-command -v jq > /dev/null || skip "jq command is not installed"
-command -v ss > /dev/null || skip "ss command is not installed"
-[[ -x "${HUATUO_BAMAI_BIN}" ]] \
-	|| fatal "huatuo-bamai binary missing: ${HUATUO_BAMAI_BIN}"
+require_commands curl jq ss
 
 EVENT_API_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate a huatuo-bamai API port"
@@ -55,7 +51,7 @@ stop_event_stream() {
 
 write_event_api_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
+BlackList = ["memory_threshold_snapshot", "metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
 
 [HTTPServer]
     ListenAddress = "127.0.0.1:${EVENT_API_PORT}"

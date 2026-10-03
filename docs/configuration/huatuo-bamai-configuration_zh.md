@@ -136,8 +136,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
     # AggregationIntervalSeconds = 10
     # MaxConcurrentProcesses = 10
     # CommandOutputLimitBytes = 65536
-    # JavaToolPath = "/opt/async-profiler"
-    # PythonToolPath = "/opt/py-spy"
+    # ToolDir = "/opt/huatuo/tools"
 
 ```
 
@@ -148,8 +147,11 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
   直接拒绝新 Operation，不在 Node 排队。
 - 四个 Operation 时间参数分别限制进程启动、优雅停止、结果收尾和终态保留，不能
   合并为一个通用 timeout。
-- **Profiling.JavaToolPath** 和 **Profiling.PythonToolPath** 只在请求相应语言时需要；
-  Node 环境不满足要求时拒绝请求且不创建 Operation。
+- **Profiling.ToolDir** 是外部采样工具的统一根目录，原样传给 profiler 的
+  `--tool-path`。Java 使用该目录下的 `bin/asprof` 和
+  `lib/libasyncProfiler.so`，Python 使用 `py-spy`。
+  只检查请求语言所需的工具；原生采集不需要此配置。Node 环境不满足要求时
+  拒绝请求且不创建 Operation。
 
 生成的 Node API 通过 `GET /openapi.json` 提供协议文档。Profiling、Tracing 的
 Start、Get、Stop 路由、`POST /v1/events/watch` 及 `PUT /v1/config` 必须携带
@@ -676,7 +678,98 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
   **说明**：控制输出数据量，避免单次事件产生过多诊断信息。
 
-#### 7.6 已知问题过滤（IssuesList）
+#### 7.6 内存阈值运行时快照
+
+`memory_threshold_snapshot` 默认开启；将该自动追踪加入全局 `BlackList`
+并重启 huatuo-bamai，即可关闭。
+该功能在容器内存压力通知后尝试采集 Go、HotSpot 或 CPython
+运行时快照，不保证在 OOM 前完成。候选进程按近似内核 OOM 分数选择。
+
+持久化字段 `victim_pid`、`victim_process_name` 和 `victim_oom_score_adj`
+描述本次快照选中的采集进程。
+
+```toml
+[AutoTracing.MemoryThresholdSnapshot]
+    # ThresholdPercent = 90
+    # IntervalTracing = 300
+    # RunTracingToolTimeout = 2
+    # MaxMemoryObjectEntries = 10
+```
+
+注释中的数值为默认值。
+
+| 参数 | 含义 |
+|------|------|
+| ThresholdPercent | 采集要求的内存使用量与限额比例，范围 1–100 |
+| IntervalTracing | 成功或失败采集尝试完成后的节点级最小间隔，单位秒，默认 300，必须为正数 |
+| RunTracingToolTimeout | Go、Java、Python 统一使用的协作式采集超时时间，单位秒，默认 2，必须为正数 |
+| MaxMemoryObjectEntries | 单次快照最多保留的内存对象排序条目数，范围 1–100，默认 10；最终 JSON 上限为 512 KiB，超限会裁剪 |
+
+运行时识别和保存时间不计入采集预算，运行时识别没有独立超时限制。
+超时不能中断正在执行的同步读取，因此不是整个操作的耗时上限。
+
+**触发条件：**
+
+- **cgroup v1**：通过 `cgroup.event_control` 注册 `ThresholdPercent` 对应的内存阈值。
+- **cgroup v2**：监听 `memory.events.local` 的 `high` 或 `max` 计数增长
+  （文件不存在时使用 `memory.events`），再检查
+  `memory.current / memory.max` 是否达到配置比例。
+  本功能不设置 `memory.high`；为 `max` 时仍可由硬限制的 `max` 计数触发检查。
+  该通知发生较晚，不能保证恰好在配置百分比处检测，也不能保证在 OOM 前完成抓取。
+
+两种版本均在注册完成后和硬限制变化时检查水位。一个 watcher 管理所有目标，
+不进行周期采样。同一目标的重复通知会合并，不逐次统计跨越，也不提供水位恢复通知。
+抓取前会重新检查当前水位和目标身份。
+
+该功能依赖已启用的 pod 管理器。pod 根据共享 CSS 生命周期线索主动更新容器视图，
+向快照模块提供存量容器及包含实例代次、InitPID、memory cgroup 路径的增删事件。
+快照模块不再扫描 cgroup 树；订阅溢出后通过 pod 的完整视图恢复。
+上游同步失败时暂停采集，不能把失败视为容器全部删除。
+
+监控范围包括运行中的普通容器和可重启 init sidecar，不包括临时调试容器及普通 init 容器。
+普通注册失败或达到监听数量上限时记录日志并跳过该目录实例；监听失效后注销，不自动重试或补位。
+重复事件、全量更新和容器代次变化不会恢复失败的监听。目录实例替换、原容器退出后
+建立新的跟踪状态，或重启 huatuo-bamai 后可重新尝试。宿主机资源耗尽等致命错误仍会停止当前监听流程。
+每个被监控容器必须拥有独立的 memory cgroup 目录；监听和采集事件直接绑定一个容器实例。
+注册时若发现返回的监听已属于其他容器，则停止该功能、取消采集并释放监听；
+修正容器 cgroup 隔离后需重启 huatuo-bamai，不自动重试该冲突。
+目录实例替换通过 watcher 的移除通知使旧注册失效。
+采集及保存前核验容器代次和实际绑定、目录身份，以及目标进程身份和
+cgroup 归属。记录中的内存使用量和限额属于该容器的 cgroup。
+
+部署限制和结果查询见第 14 节。
+
+#### 7.7 IRQTracing 自动追踪
+
+该模块检测单个 CPU 的 irq+softirq 利用率异常，并调用 `irqtracing` 采集
+softirq source 和 victim 调用栈。
+
+```bash
+[AutoTracing.IRQTracing]
+    Interval = 2
+    RunTracingToolTimeout = 3
+    IntervalTracing = 300
+    MaxEventsPerSecond = 1000
+    MinCPUs = 3
+    DeltaUsageThreshold = 20
+    RelativeIncreaseThreshold = 30
+    SustainedIntervals = 10
+    UsageThreshold = 80
+```
+
+- **Interval**：`/proc/stat` 中每 CPU irq+softirq 利用率的采样间隔，默认 2s。
+- **RunTracingToolTimeout**：单次 `irqtracing` 采集时长，默认 3s。
+- **IntervalTracing**：两次触发之间的最小间隔，默认 300s。
+- **MaxEventsPerSecond**：在被跟踪 CPU 上每秒采集的 source 和 victim 栈
+  样本总上限，默认 1000。守护进程将额度尽量均分给 `softirq_raise` 和
+  `softirq_entry`；默认每条流 500/s。该值必须在 2 到 8589934590 之间。
+- **MinCPUs**、**DeltaUsageThreshold** 和 **RelativeIncreaseThreshold**：
+  控制多 CPU irq+softirq 利用率突增规则；两个阈值分别表示利用率增加的
+  百分点和相对上一采样值的增长百分比。
+- **SustainedIntervals** 和 **UsageThreshold**：控制单 CPU
+  irq+softirq 持续高利用率规则的连续采样次数和利用率阈值。
+
+#### 7.8 已知问题过滤（IssuesList）
 
 ```bash
 # Autotracing configuration.
@@ -860,7 +953,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
     EnableTLP = false
 
     # Run tcpshark with an embedded dropwatch source. Default: false.
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 
     # Forwarded as tcpshark --max-events-per-second.
     # Default: 100; 0 disables rate limiting.
@@ -873,7 +966,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
 - **Filter**：两种模式都使用的 TCP 重传过滤条件。开启 local 关联后，两个 tcpshark 输入统一使用规范化后的表达式，空值回退为 `tcp`；关闭关联时，空值不传 `--filter`。`Dropwatch.Filter` 保持独立，只控制 standalone dropwatch。
 
-- **EnableDropwatchCorrelation**：是否让 tcpshark 加载私有 dropwatch source 并在本地完成重传结果定型，默认 false。必须从 `BlackList` 移除 `tcp_retransmit`；standalone `dropwatch` 可以继续位于黑名单中。重传最多等待 100ms，候选 drop 的内核单调时间必须早于重传且相差不超过 1s。同 netns 的严格匹配输出 `host_software`；所有 no-match 都输出 `unknown` 及稳定的 `correlation_reasons`。
+- **EnableDropwatch**：是否让 tcpshark 加载私有 dropwatch source 并在本地完成重传结果定型，默认 false。必须从 `BlackList` 移除 `tcp_retransmit`；standalone `dropwatch` 可以继续位于黑名单中。重传最多等待 100ms，候选 drop 的内核单调时间必须早于重传且相差不超过 1s。embedded source 自动检测并启用 devlink DROP trap。同 netns 的严格匹配按来源输出 `software` 或 `hardware`，附带与 dropwatch 一致的 `drop_source`、`drop_reason` 和硬件 `drop_reason_group`；每条已定型事件输出唯一的 `correlation_reason`（`matched`、`unsupported`、`warmup`、`wait_timeout`、`queue_full` 或 `interrupted`）；`warmup` 仅用于等待到期且重传发生时间早于 source ready 的事件，等于或晚于 ready 的重传在等待到期时使用 `wait_timeout`，其他结束路径保留各自原因；未匹配事件输出 `drop_location=unknown`，并保留 namespace 诊断标记、dropwatch 计数及 map 计数可用性。
 
 - **MaxEventsPerSecond**：BPF 侧每秒最多输出的 TCP 重传事件数。关联模式还会给 embedded dropwatch 配置一个数值相同但独立的 limiter，因此 `100` 表示两条输入各自最多 100 条/秒。
 
@@ -903,7 +996,25 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
   **说明**：THR 事件由 CPU 本地 APIC 阈值中断触发，在硬件出现纠正性错误时可能以极高频率产生。该冷却时间用于防止存储系统被大量重复记录淹没，同时保证关键事件仍能被捕获。调低该值可获得更实时的事件记录，但需注意存储压力；在错误频发的环境中建议适当调高。
 
-#### 8.8 已知问题过滤（IssuesList）
+#### 8.8 摩尔线程 GPU 事件追踪（EventTracing.MthreadsGPU）
+
+```bash
+# mthreads_gpu
+#
+# Moore Threads GPU XID error event tracing.
+[EventTracing.MthreadsGPU]
+    # MthreadsXidLevel = ""
+```
+
+- **MthreadsXidLevel**：XID 错误报告的最低严重级别。
+
+  可选值：`""`（禁用）、`"notify"`、`"warning"`、`"fatal"`。
+
+  默认值：`""`（禁用）。
+
+  **说明**：控制哪些 XID 错误事件被报告。设置此选项以启用摩尔线程 GPU 的 XID 错误追踪。低于指定严重级别的 XID 错误将被过滤掉。要启用此功能，请确保 `mthreads_xid` 从全局 `BlackList`（如果存在）中移除，并将此字段设置为有效的严重级别之一（`"notify"`、`"warning"`、`"fatal"`）。此外，主机上必须安装 MUSA 驱动。该功能每秒轮询 `/proc/driver/musa/gpu*/event_report` 文件以捕获 XID 错误事件。每个 XID 事件包含详细信息，包括 UUID、XID ID、严重级别、作用域、PCI BDF、进程 ID 和附加上下文信息。
+
+#### 8.9 已知问题过滤（IssuesList）
 
 ```bash
 # Linux kernel event tracing configuration.
@@ -1223,3 +1334,94 @@ huatuo-bamai --region <region> [选项]
 - **兼容性**：配置参数受内核版本、硬件环境影响，建议结合 HUATUO 官方文档验证。
 
 通过合理配置 huatuo-bamai.conf，可充分发挥 HUATUO 在内核级异常检测与智能追踪方面的优势，有效提升云原生系统的可观测性和故障诊断效率。如需针对特定场景的深度定制，欢迎提供更多环境细节进一步讨论。
+
+### 14. 内存阈值快照部署与排障
+
+#### 14.1 部署条件与限制
+
+- 要求 Linux、memory cgroup v1/v2、宿主机 PID/procfs/cgroup 视图、
+  kubelet 元数据、内核 BTF 及加载和挂载 BPF 的权限。
+- 需读取目标进程内存（通常为 `CAP_SYS_PTRACE`）、访问 procfs/cgroup；
+  v1 还需写入 `cgroup.event_control`。安全策略可能阻止访问。
+- 仅选择该 cgroup 的直接成员，排除 `oom_score_adj = -1000` 的进程。
+  超过 4096 个 PID、64 KiB PID 数据或 1 秒预算时跳过选择。
+- 最多监听 4096 个容器，目标由 pod 事件提供，不扫描 cgroup 树。
+  普通注册失败或容量不足时记录日志并跳过，监听失效后注销，不自动重试或补位。
+  同一实例不会因资源恢复或全量更新而重新注册，可能持续缺少压力监控。
+- 身份校验失败或容器元数据缺失时，不采集或不保存。
+- 进程选择与采集统一使用 Huatuo 所在 PID 命名空间的 `/proc`；
+  `--procfs-prefix` 不会重定向内存快照读取。
+
+下表为实验性实现范围，不代表所有版本均已验证：
+
+| 运行时 | 实验性范围 | 主要限制 |
+|--------|------------|----------|
+| Go | Go 1.18–1.26，64 位 ELF | 去符号二进制的指令恢复仅支持 x86-64 |
+| Java | Java 8+，64 位小端 ELF HotSpot，G1 GC | 依赖可识别的 VMStruct/VMType 元数据 |
+| Python | CPython 3.8–3.14，64 位小端 ELF | 需能定位 `_PyRuntime` 并识别版本和布局 |
+
+已记录的人工验证：x86-64 Linux、cgroup v1（legacy/hybrid）、Go 1.24.0。
+请在实际环境验证压力触发与非空快照；跳过测试或返回 `unavailable` 不代表兼容。
+
+#### 14.2 输出与排障
+
+Info 日志记录监听状态和采集尝试。
+进程选择和保存细节记录在 Debug 日志中。
+按容器/cgroup 找到采集记录，通过进程选择日志确定 PID；
+运行时诊断查看已保存快照的状态和原因字段。
+若采集只有开始而没有结束，使用 bamai 的 `/debug/pprof/goroutine?debug=2`
+（需相应权限）确认阻塞栈；没有日志不代表监听已停止。
+
+`tracer_data.process_memory` 在运行时探测无错误返回后读取一次 `/proc/<pid>/status`，
+也适用于 C/C++ 等未识别的运行时。provider 失败会生成 `failed` 快照并保留已取得的摘要。
+探测或输出处理出错时不保存结果，错误原因查看采集日志；
+身份变化或任务取消时丢弃结果。不提供 PSS、映射排名或分配调用栈。
+
+| 字段（字节） | 来源 / 含义 |
+|------|--------|
+| `virtual_bytes` | VmSize，虚拟地址空间，不是实际物理内存占用 |
+| `rss_bytes` | VmRSS，常驻内存 |
+| `rss_anon_bytes` | RssAnon，匿名常驻内存 |
+| `rss_file_bytes` | RssFile，文件映射常驻内存 |
+| `rss_shmem_bytes` | RssShmem，共享内存常驻量 |
+| `swap_bytes` | VmSwap，私有匿名内存换出量，不含 shmem 换出 |
+| `page_table_bytes` | VmPTE，页表内存 |
+
+缺失或无效字段省略，不填 0；状态为 `partial`，完全无法读取时为
+`unavailable`，附带 `reason`。这些近似值不是 OOM 瞬间快照，也不能直接证明泄漏；
+候选进程不保证是最终 OOM victim。
+
+结果沿用现有 `[Storage]` 配置，见第 6 节，无需另配存储。
+LocalFile 文件名为 `memory_threshold_snapshot`；在 `tracing_documents` 中可按
+`tracer_name = memory_threshold_snapshot`、`tracer_type = autotracing` 查询。
+
+`started_timestamp` 记录采集尝试的开始时间，
+`observed_timestamp` 记录采集器给出的快照采集时间。
+
+Go 使用完整栈作为聚合键：Go 1.18–1.22 最多 32 帧，Go 1.23–1.26 最多 1024 帧；统一输出限制可将展示栈缩短到 64 帧，并设置 `output_truncated`。bucket 类型无效、栈或记录地址范围溢出、栈深度超过读取上限或 bucket 链表成环时，扫描以 `partial` 结束，重复 bucket 不会再次累计。
+
+扫描遇到导致 `partial` 的问题后停止遍历后续 bucket，保留此前及当前批次中已读取且聚合预算允许的有效样本，再计算 TopK。`reason` 只记录首次原因，收尾时不追加其他原因。
+
+任何 bucket 头、记录或栈读取失败（包括短读）都会使本次 Go 采集失败，丢弃所有运行时条目，包括此前批次的数据。采集器输出 `failed` 和读取错误，不逐区间重试。
+
+栈深度为 0 的样本不生成调用栈条目，也不会因空栈被标记为 `partial`。
+
+Go 快照要求采样率已知、采样已启用且 bucket 链表非空。采样率未知、采样已禁用或 bucket 链表为空时返回 `unavailable`，附带 `reason`，不返回条目。
+
+Go 采集在运行时读取、扫描、排序和条目生成阶段共用一个请求超时预算。
+超时后丢弃运行时条目，由采集器输出 `failed` 和超时原因，仍尝试读取进程内存摘要。
+取消采用协作方式，正在执行的系统调用或不支持取消的解析步骤可能在截止时间之后才结束。
+
+查看 `tracer_data.snapshot.status`（`complete`、`partial`、
+`unavailable`、`failed`），结合 `reason`、`runtime_version`、
+`duration_ms` 和 `output_truncated` 判断结果。
+
+`duration_ms` 统计 provider 阶段耗时，向上取整为毫秒；成功、失败及超时快照
+使用相同口径，不包含运行时探测、进程内存摘要读取、输出处理和保存时间。
+
+| 问题 | 检查项 |
+|------|--------|
+| 没有输出 | 是否启用并重启、是否被 BlackList 禁用；v2 触发条件见 7.6 |
+| 有事件但没有候选进程 | 进程是否直接属于该 cgroup、是否允许 OOM kill、是否超过枚举限制 |
+| `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `reason` |
+| 资源耗尽后事件停止 | 检查 `RLIMIT_NOFILE`、`fs.inotify.max_user_watches`、`fs.inotify.max_user_instances`，调整后重启；其他事件不受此停止影响 |

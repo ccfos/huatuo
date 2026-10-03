@@ -25,7 +25,7 @@ import (
 
 func TestDropwatchPacketEventParse(t *testing.T) {
 	const (
-		wantKtimeNS             uint64 = 12_345_678_901_234_567
+		wantKernelObservedNS    uint64 = 12_345_678_901_234_567
 		wantTgidPid             uint64 = uint64(4321)<<32 | 8765
 		wantNetNamespaceCookie  uint64 = 0x0123_4567_89ab_cdef
 		wantSkbAddr             uint64 = 0xffff_8880_1234_5678
@@ -50,7 +50,7 @@ func TestDropwatchPacketEventParse(t *testing.T) {
 	buf := make([]byte, abi.DropwatchPacketEventSize)
 
 	native := binary.NativeEndian
-	native.PutUint64(buf[0:], wantKtimeNS)              // ktime_ns
+	native.PutUint64(buf[0:], wantKernelObservedNS)     // kernel_observed_ns
 	native.PutUint64(buf[8:], wantTgidPid)              // tgid_pid
 	native.PutUint64(buf[16:], wantNetNamespaceCookie)  // netns_cookie
 	native.PutUint64(buf[24:], wantSkbAddr)             // skb_addr
@@ -96,7 +96,7 @@ func TestDropwatchPacketEventParse(t *testing.T) {
 	if got := bytesutil.ToStr(meta.TrapGroupName[:]); got != wantTrapGroupName {
 		t.Errorf("TrapGroupName = %q, want %q", got, wantTrapGroupName)
 	}
-	if meta.KtimeNS != wantKtimeNS || meta.TGIDPID != wantTgidPid || meta.NetNamespaceCookie != wantNetNamespaceCookie ||
+	if meta.KernelObservedNS != wantKernelObservedNS || meta.TGIDPID != wantTgidPid || meta.NetNamespaceCookie != wantNetNamespaceCookie ||
 		meta.SKBAddr != wantSkbAddr || meta.DropLocation != wantDropLocation ||
 		meta.MemcgCSSAddr != wantMemoryCgroupCSSAddr {
 		t.Errorf("u64 header fields misparsed: %+v", meta)

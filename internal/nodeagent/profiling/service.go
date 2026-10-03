@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/observation"
@@ -37,11 +37,11 @@ var (
 
 // Config contains Node-local profiler implementation settings.
 type Config struct {
-	ProfilerPath            string
-	ToolstreamSocketPath    string
-	NodeAPIAddress          string
-	JavaToolPath            string
-	PythonToolPath          string
+	ProfilerPath         string
+	ToolstreamSocketPath string
+	NodeAPIAddress       string
+	// ToolDir is the shared root of external profiling tools.
+	ToolDir                 string
 	AggregationInterval     time.Duration
 	MaxConcurrentProcesses  int
 	CommandOutputLimitBytes int
@@ -104,7 +104,7 @@ func (s *Service) Start(
 	if err != nil {
 		return nil, false, err
 	}
-	process, err := exec.New(commandSpec)
+	process, err := executil.New(commandSpec)
 	if err != nil {
 		return nil, false, fmt.Errorf("%w: build profiler process: %w", ErrInvalidRequest, err)
 	}

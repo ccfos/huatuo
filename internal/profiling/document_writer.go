@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -73,7 +74,7 @@ func (w *DocumentWriter) Write(
 		TracerName:       types.ProfilingToolName,
 		TracerID:         session.TaskID,
 		ContainerID:      window.ContainerID,
-		StartedTimestamp: time.Unix(0, window.Profile.TimeNanos).UTC(),
+		StartedTimestamp: timeutil.Timestamp{Time: time.Unix(0, window.Profile.TimeNanos)},
 		TracerRunType:    types.TracerRunTypeProfiling,
 	})
 	if err != nil {

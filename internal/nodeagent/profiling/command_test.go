@@ -36,8 +36,7 @@ func testProfilingConfig(t *testing.T) *Config {
 		ProfilerPath:            "/opt/huatuo/profiler",
 		ToolstreamSocketPath:    "/var/run/huatuo-toolstream.sock",
 		NodeAPIAddress:          "127.0.0.1:19704",
-		JavaToolPath:            "/opt/huatuo/async-profiler",
-		PythonToolPath:          "/opt/huatuo/py-spy",
+		ToolDir:                 "/opt/huatuo/tools",
 		AggregationInterval:     10 * time.Second,
 		MaxConcurrentProcesses:  4,
 		CommandOutputLimitBytes: 4096,
@@ -78,6 +77,7 @@ func TestBuildCommandUsesTypedRequestWithoutShellExpansion(t *testing.T) {
 		"--output-storage", "/var/run/huatuo-toolstream.sock",
 		"--tracer-id", "job-1",
 		"--huatuo-api-address", "127.0.0.1:19704",
+		"--tool-path", "/opt/huatuo/tools",
 		"--cpu-mode", "offcpu",
 		"--binary-match-path", "/usr/bin/service worker",
 	}
@@ -106,7 +106,7 @@ func TestBuildCommandUsesOnePythonAggregationWindow(t *testing.T) {
 	for _, value := range []string{
 		"--aggr-interval 45",
 		"--container-id " + request.ContainerID,
-		"--tool-path /opt/huatuo/py-spy",
+		"--tool-path /opt/huatuo/tools",
 	} {
 		if !strings.Contains(joined, value) {
 			t.Fatalf("command args = %q, want %q", joined, value)
@@ -120,5 +120,27 @@ func TestValidateRequestRejectsUnsupportedScope(t *testing.T) {
 	err := validateRequest(request)
 	if !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("validateRequest() error = %v", err)
+	}
+}
+
+func TestBuildCommandPassesSharedToolDir(t *testing.T) {
+	for _, language := range []profilingdomain.Language{
+		profilingdomain.LanguageJava, profilingdomain.LanguagePython, profilingdomain.LanguageGo,
+	} {
+		t.Run(string(language), func(t *testing.T) {
+			config := testProfilingConfig(t)
+			config.ToolDir = "/opt/profiling tools"
+			request := testProfilingRequest()
+			request.Spec.Language = language
+			command, err := buildCommand(request, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			index := slices.Index(command.Args, "--tool-path")
+
+			if index == -1 || index+1 >= len(command.Args) || command.Args[index+1] != config.ToolDir {
+				t.Fatalf("command args = %q, want shared root as one --tool-path argument", command.Args)
+			}
+		})
 	}
 }

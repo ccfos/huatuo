@@ -14,6 +14,8 @@
 
 package types
 
+import "github.com/ccfos/huatuo/internal/timeutil"
+
 // TCPRetransmitPhase is the connection state-machine stage for a TCP retransmission.
 type TCPRetransmitPhase uint8
 
@@ -42,7 +44,6 @@ type TCPRetransmitReason uint8
 const (
 	TCPRetransmitReasonRTO TCPRetransmitReason = iota
 	TCPRetransmitReasonFast
-	TCPRetransmitReasonReorderProneFast
 	TCPRetransmitReasonTLP
 	TCPRetransmitReasonSpurious
 	TCPRetransmitReasonUnknown
@@ -54,8 +55,6 @@ func (r TCPRetransmitReason) String() string {
 		return "RTO"
 	case TCPRetransmitReasonFast:
 		return "fast_retransmit"
-	case TCPRetransmitReasonReorderProneFast:
-		return "reorder_prone_fast"
 	case TCPRetransmitReasonTLP:
 		return "TLP"
 	case TCPRetransmitReasonSpurious:
@@ -65,33 +64,31 @@ func (r TCPRetransmitReason) String() string {
 	}
 }
 
-// CorrelationReason explains why local dropwatch evidence cannot establish a
-// conclusive no-match for a TCP retransmission.
+// CorrelationReason identifies the terminal outcome of one local drop correlation.
+// The empty value means correlation was not enabled, never a finalized outcome.
 type CorrelationReason string
 
 const (
-	CorrelationReasonNoMatchingDrop           CorrelationReason = "no_matching_drop"
-	CorrelationReasonCrossNetNSCandidate      CorrelationReason = "cross_netns_candidate"
-	CorrelationReasonStartupHistoryIncomplete CorrelationReason = "startup_history_incomplete"
-	// Deprecated: retained for source compatibility; tcpshark no longer emits it.
-	CorrelationReasonDropEvidenceUnusable CorrelationReason = "drop_evidence_unusable"
-	CorrelationReasonPerfEventsLost       CorrelationReason = "perf_events_lost"
-	CorrelationReasonDropRateLimited      CorrelationReason = "drop_rate_limited"
-	// Deprecated: retained for source compatibility; tcpshark no longer emits it.
-	CorrelationReasonDropEvidenceEvicted       CorrelationReason = "drop_evidence_evicted"
-	CorrelationReasonUnsupportedRetransmission CorrelationReason = "unsupported_retransmission"
-	// Deprecated: retained for source compatibility; tcpshark no longer emits it.
-	CorrelationReasonDropwatchInputInactive CorrelationReason = "dropwatch_input_inactive"
-	// #nosec G101 -- Public diagnostic, not a credential.
-	CorrelationReasonDropwatchPerfStatusUnavailable CorrelationReason = "dropwatch_perf_status_unavailable"
-	CorrelationReasonRetransmitWaitCapacityExceeded CorrelationReason = "retransmit_wait_capacity_exceeded"
+	// CorrelationMatched requires strict packet evidence, even if its drop source is unknown.
+	CorrelationMatched CorrelationReason = "matched"
+	// CorrelationUnsupported includes missing fields required by the matching rules.
+	CorrelationUnsupported CorrelationReason = "unsupported"
+	// CorrelationWarmup applies to expired waits for retransmissions before source readiness.
+	CorrelationWarmup CorrelationReason = "warmup"
+	// CorrelationWaitTimeout applies to expired waits for retransmissions at or after source readiness.
+	CorrelationWaitTimeout CorrelationReason = "wait_timeout"
+	// CorrelationQueueFull applies to a waiting retransmit evicted before its deadline.
+	CorrelationQueueFull CorrelationReason = "queue_full"
+	// CorrelationInterrupted applies to an unexpired wait when the correlation loop exits.
+	CorrelationInterrupted CorrelationReason = "interrupted"
 )
 
 // TCPRetransmitTracing is the canonical JSON schema for a TCP retransmission event.
 type TCPRetransmitTracing struct {
-	ObservedTimestamp   string `json:"observed_timestamp,omitempty"`
-	KtimeNS             uint64 `json:"ktime_ns,omitempty"`
-	TCPReason           string `json:"tcp_reason"` // "RTO", "fast_retransmit", "reorder_prone_fast", "TLP", "spurious", "unknown"
+	KernelObservedTimestamp *timeutil.Timestamp `json:"kernel_observed_timestamp,omitempty"`
+	ObservedTimestamp       timeutil.Timestamp  `json:"observed_timestamp,omitzero"`
+	// Internal correlation uses the raw clock; documents expose UTC instead.
+	KernelObservedNS    uint64 `json:"-"`
 	Source              string `json:"source,omitempty"`
 	Comm                string `json:"comm"`
 	PID                 uint64 `json:"pid"`
@@ -107,7 +104,8 @@ type TCPRetransmitTracing struct {
 	// flag set, e.g. "ACK|PSH". For tcp_retransmit_synack, tcp_flags is
 	// derived from the event type. For tcp_send_loss_probe, tcp_seq/tcp_ack_seq
 	// contain snd_nxt/snd_una and the remaining TCP metadata is unavailable.
-	TCPState  string `json:"tcp_state"` // e.g. "ESTABLISHED", "SYN_SENT", "SYN_RECV"
+	TCPReason string `json:"tcp_reason"` // "RTO", "fast_retransmit", "TLP", "unknown"
+	TCPState  string `json:"tcp_state"`  // e.g. "ESTABLISHED", "SYN_SENT", "SYN_RECV"
 	TCPSaddr  string `json:"tcp_saddr"`
 	TCPDaddr  string `json:"tcp_daddr"`
 	TCPSport  uint16 `json:"tcp_sport"`
@@ -143,8 +141,18 @@ type TCPRetransmitTracing struct {
 	SkbAddr string `json:"skb_addr,omitempty"` // the sk_buff pointer being retransmitted
 
 	// Correlation with dropwatch.
-	DropLocation        string               `json:"drop_location,omitempty"`
-	CorrelationReasons  []CorrelationReason  `json:"correlation_reasons,omitempty"`
-	DropwatchPerfStatus *DropwatchPerfStatus `json:"dropwatch_perf_status,omitempty"`
-	DropStack           string               `json:"drop_stack,omitempty"`
+	// DropSource, DropReason and DropReasonGroup describe the matched drop
+	// using the same semantics as DropWatchTracing. They are absent on no-match.
+	DropSource      string `json:"drop_source,omitempty"`
+	DropReason      string `json:"drop_reason,omitempty"`
+	DropReasonGroup string `json:"drop_reason_group,omitempty"`
+	// DropLocation uses DropSource for matches and "unknown" for no-match.
+	// Unlike DropWatchTracing, it is a classification rather than an address.
+	DropLocation      string            `json:"drop_location,omitempty"`
+	DropPerfStatus    *DropwatchStatus  `json:"drop_perf_status,omitempty"`
+	DropStack         string            `json:"drop_stack,omitempty"`
+	CorrelationReason CorrelationReason `json:"correlation_reason,omitempty"`
+	// NetNamespace records a same-flow drop in the same namespace,
+	// independently of packet and time checks. False means no match was observed.
+	NetNamespace bool `json:"matched_net_namespace,omitempty"`
 }

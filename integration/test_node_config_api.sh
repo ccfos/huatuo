@@ -27,11 +27,7 @@ config_error_file=""
 config_curl_status=0
 config_http_status=""
 
-command -v curl > /dev/null || skip "curl command is not installed"
-command -v jq > /dev/null || skip "jq command is not installed"
-command -v ss > /dev/null || skip "ss command is not installed"
-[[ -x "${HUATUO_BAMAI_BIN}" ]] \
-	|| fatal "huatuo-bamai binary missing: ${HUATUO_BAMAI_BIN}"
+require_commands curl jq ss
 
 CONFIG_API_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate a huatuo-bamai API port"
@@ -47,7 +43,7 @@ trap cleanup EXIT
 
 write_config_api_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
+BlackList = ["memory_threshold_snapshot", "metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
 
 [HTTPServer]
     ListenAddress = "127.0.0.1:${CONFIG_API_PORT}"
@@ -127,6 +123,14 @@ assert_persisted_config() {
 		|| fatal "persisted config omitted the CPULimitCores update"
 	grep -Fq 'MemoryLimitMiB = 1024' "${config_file}" \
 		|| fatal "persisted config omitted the MemoryLimitMiB update"
+	grep -Fq '[AutoTracing.MemoryThresholdSnapshot]' "${config_file}" \
+		|| fatal "persisted config omitted the memory snapshot section"
+	grep -Fq 'IntervalTracing = 60' "${config_file}" \
+		|| fatal "persisted config omitted the snapshot tracing interval update"
+	grep -Fq 'RunTracingToolTimeout = 3' "${config_file}" \
+		|| fatal "persisted config omitted the snapshot tracing tool timeout update"
+	grep -Fq 'MaxMemoryObjectEntries = 7' "${config_file}" \
+		|| fatal "persisted config omitted the snapshot maximum memory object entries update"
 }
 
 integration_huatuo_bamai_start write_config_api_config
@@ -139,11 +143,24 @@ assert_config_error empty-config /v1/config application/json \
 	'{"config":{}}' 400 invalid_request true
 assert_config_error unknown-key /v1/config application/json \
 	'{"config":{"NotExist":1}}' 400 invalid_request true
+assert_config_error invalid-tracing-interval /v1/config application/json \
+	'{"config":{"AutoTracing.MemoryThresholdSnapshot.IntervalTracing":0}}' 400 invalid_request true
+assert_config_error invalid-tracing-tool-timeout /v1/config application/json \
+	'{"config":{"AutoTracing.MemoryThresholdSnapshot.RunTracingToolTimeout":0}}' 400 invalid_request true
+assert_config_error invalid-max-memory-object-entries /v1/config application/json \
+	'{"config":{"AutoTracing.MemoryThresholdSnapshot.MaxMemoryObjectEntries":101}}' 400 invalid_request true
 assert_config_error legacy-route /config application/json \
 	'{"config":{"Runtime.MemoryLimitMiB":1024}}' 404 route_not_found true
 
 request_config_api update-config /v1/config application/json \
-	'{"config":{"BlackList":["dropwatch","netdev_hw"],"Runtime.CPULimitCores":1.5,"Runtime.MemoryLimitMiB":1024}}' true
+	'{"config":{
+        "BlackList":["dropwatch","netdev_hw"],
+        "Runtime.CPULimitCores":1.5,
+        "Runtime.MemoryLimitMiB":1024,
+        "AutoTracing.MemoryThresholdSnapshot.IntervalTracing":60,
+        "AutoTracing.MemoryThresholdSnapshot.RunTracingToolTimeout":3,
+        "AutoTracing.MemoryThresholdSnapshot.MaxMemoryObjectEntries":7
+    }}' true
 if [[ ${config_curl_status} -ne 0 ]]; then
 	fatal "update-config: curl exited ${config_curl_status}"
 fi

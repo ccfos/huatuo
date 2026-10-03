@@ -18,9 +18,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +31,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 type mockElasticsearchDocument struct {
@@ -286,9 +289,9 @@ func (m *mockElasticsearchServer) handleSearch(w http.ResponseWriter, r *http.Re
 		writeMissingIndex(w, index)
 		return
 	}
-	if body["aggs"] != nil {
+	if body["aggregations"] != nil {
 		docs := m.matchDocumentsLocked(index, body["query"])
-		m.handleTermsSearch(w, body, docs)
+		m.handleTermsSearch(w, r, body, docs)
 		return
 	}
 	docs := m.queryDocumentsLocked(index, body)
@@ -314,14 +317,11 @@ func (m *mockElasticsearchServer) handleSearch(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (m *mockElasticsearchServer) handleTermsSearch(w http.ResponseWriter, body map[string]any, docs []mockElasticsearchDocument) {
-	aggs, _ := body["aggs"].(map[string]any)
+func (m *mockElasticsearchServer) handleTermsSearch(w http.ResponseWriter, r *http.Request, body map[string]any, docs []mockElasticsearchDocument) {
+	aggs, _ := body["aggregations"].(map[string]any)
 	termsAggregation, _ := aggs["terms"].(map[string]any)
 	termsConfig, _ := termsAggregation["terms"].(map[string]any)
 	fieldName := stringValue(termsConfig["field"])
-	// Dynamic text mappings expose values under the .keyword subfield, so
-	// aggregate on the base field like real Elasticsearch would.
-	fieldName = strings.TrimSuffix(fieldName, ".keyword")
 
 	counts := make(map[string]int)
 	for _, doc := range docs {
@@ -357,6 +357,10 @@ func (m *mockElasticsearchServer) handleTermsSearch(w http.ResponseWriter, body 
 		})
 	}
 
+	aggregationName := "terms"
+	if r.URL.Query().Get("typed_keys") == "true" {
+		aggregationName = "sterms#terms"
+	}
 	resp := map[string]any{
 		"hits": map[string]any{
 			"total": map[string]any{
@@ -366,7 +370,7 @@ func (m *mockElasticsearchServer) handleTermsSearch(w http.ResponseWriter, body 
 			"hits": []any{},
 		},
 		"aggregations": map[string]any{
-			"terms": map[string]any{
+			aggregationName: map[string]any{
 				"buckets": responseBuckets,
 			},
 		},
@@ -817,7 +821,7 @@ func TestBuildSearchRequest(t *testing.T) {
 				Filters: []driver.Filter{
 					{Field: "status", Op: driver.OpEq, Value: "running"},
 					{Field: "priority", Op: driver.OpGt, Value: 5},
-					{Field: "created_at", Op: driver.OpLte, Value: baseTime},
+					{Field: "created_at", Op: driver.OpLte, Value: timeutil.FormatUTC(baseTime)},
 					{Field: "user_id", Op: driver.OpIn, Value: []string{"user-alpha", "user-beta"}},
 				},
 				Sorts: []driver.Sort{
@@ -1308,15 +1312,15 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 	records := []driver.Record{
 		{
 			ID:   "profile-alpha",
-			Data: []byte(`{"tracer_id":"profile-alpha","hostname":"huatuo-dev","profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds","time":"2026-04-09 12:00:00.000 +0000"}`),
+			Data: []byte(`{"tracer_id":"profile-alpha","hostname":"huatuo-dev","profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds","time":"2026-04-09T12:00:00.000000000Z"}`),
 		},
 		{
 			ID:   "profile-beta",
-			Data: []byte(`{"tracer_id":"profile-beta","hostname":"huatuo-dev","profile_type":"process_mem:alloc_objects:count:space:bytes","time":"2026-04-09 12:02:00.000 +0000"}`),
+			Data: []byte(`{"tracer_id":"profile-beta","hostname":"huatuo-dev","profile_type":"process_mem:alloc_objects:count:space:bytes","time":"2026-04-09T12:02:00.000000000Z"}`),
 		},
 		{
 			ID:   "profile-gamma",
-			Data: []byte(`{"tracer_id":"profile-gamma","hostname":"huatuo-dev","profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds","time":"2026-04-09 12:03:00.000 +0000"}`),
+			Data: []byte(`{"tracer_id":"profile-gamma","hostname":"huatuo-dev","profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds","time":"2026-04-09T12:03:00.000000000Z"}`),
 		},
 	}
 
@@ -1330,7 +1334,7 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 	terms, err := backend.Values(t.Context(), "profile_type", driver.Query{
 		Filters: []driver.Filter{
 			{Field: "hostname", Op: driver.OpEq, Value: "huatuo-dev"},
-			{Field: "time", Op: driver.OpGte, Value: baseTime.Add(-time.Minute)},
+			{Field: "time", Op: driver.OpGte, Value: timeutil.FormatUTC(baseTime.Add(-time.Minute))},
 		},
 	}, 10)
 	if err != nil {
@@ -1355,56 +1359,133 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 	}
 }
 
-// TestBuildValuesRequestAggregatesKeywordSubfield pins the terms aggregation
-// to the dynamic keyword subfield: stock Elasticsearch maps document string
-// fields as text plus a keyword subfield and rejects terms aggregations on
-// the text field itself with "Fielddata is disabled".
-func TestBuildValuesRequestAggregatesKeywordSubfield(t *testing.T) {
-	testCases := []struct {
-		name     string
-		field    string
-		wantAgg  string
-		wantSize int
+func TestElasticsearchBackendValuesResponses(t *testing.T) {
+	tests := []struct {
+		name          string
+		aggregation   string
+		timedOut      bool
+		failedShards  int
+		expected      []string
+		expectedError string
 	}{
 		{
-			name:     "document field gets keyword subfield",
-			field:    "profile_data.profile_type",
-			wantAgg:  "profile_data.profile_type.keyword",
-			wantSize: 10,
+			name:        "string terms",
+			aggregation: `"sterms#terms":{"buckets":[{"key":"node-b","doc_count":3},{"key":"node-a","doc_count":2}]}`,
+			expected:    []string{"node-b", "node-a"},
 		},
 		{
-			name:     "explicit keyword name passes through",
-			field:    "tracer_id.keyword",
-			wantAgg:  "tracer_id.keyword",
-			wantSize: 7,
+			name:        "integer terms",
+			aggregation: `"lterms#terms":{"buckets":[{"key":42,"doc_count":2},{"key":-7,"doc_count":1}]}`,
+			expected:    []string{"42", "-7"},
+		},
+		{
+			name:        "double terms",
+			aggregation: `"dterms#terms":{"buckets":[{"key":1.25,"doc_count":2}]}`,
+			expected:    []string{"1.25"},
+		},
+		{
+			name:        "unmapped terms",
+			aggregation: `"umterms#terms":{"buckets":[]}`,
+		},
+		{
+			name:        "empty terms",
+			aggregation: `"sterms#terms":{"buckets":[]}`,
+		},
+		{
+			name:        "opensearch unsigned terms",
+			aggregation: `"ulterms#terms":{"buckets":[{"key":42,"doc_count":2}]}`,
+			expected:    []string{"42"},
+		},
+		{
+			name:        "untyped terms",
+			aggregation: `"terms":{"buckets":[{"key":"node-a","doc_count":2}]}`,
+			expected:    []string{"node-a"},
+		},
+		{
+			name:          "timeout with partial buckets",
+			aggregation:   `"sterms#terms":{"buckets":[{"key":"node-a","doc_count":2}]}`,
+			timedOut:      true,
+			expectedError: "timed out",
+		},
+		{
+			name:          "failed shard with partial buckets",
+			aggregation:   `"sterms#terms":{"buckets":[{"key":"node-a","doc_count":2}]}`,
+			failedShards:  1,
+			expectedError: "failed on 1 shards",
+		},
+		{
+			name:          "missing aggregation",
+			expectedError: "unexpected terms aggregation type",
+		},
+		{
+			name:          "unexpected aggregation",
+			aggregation:   `"sum#terms":{"value":1}`,
+			expectedError: "unexpected terms aggregation type",
+		},
+		{
+			name:          "invalid buckets",
+			aggregation:   `"ulterms#terms":{"buckets":"invalid"}`,
+			expectedError: "unexpected terms buckets type",
+		},
+		{
+			name:          "invalid bucket",
+			aggregation:   `"ulterms#terms":{"buckets":[1]}`,
+			expectedError: "unexpected terms bucket 0 type",
 		},
 	}
 
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			body, err := buildValuesRequest(testCase.field, driver.Query{}, testCase.wantSize)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/" {
+					_, _ = w.Write([]byte(`{"version":{"number":"2.11.0","distribution":"opensearch"}}`))
+					return
+				}
+				if r.URL.Path != "/profiles/_search" || r.URL.Query().Get("typed_keys") != "true" {
+					t.Errorf("unexpected search URL: %s", r.URL)
+				}
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("decode search request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				expectedBody := `{"size":0,"query":{"match_all":{}},"aggregations":{"terms":{"terms":{"field":"label","size":3}}}}`
+				var expected map[string]any
+				if err := json.Unmarshal([]byte(expectedBody), &expected); err != nil {
+					t.Errorf("decode expected request: %v", err)
+					return
+				}
+				actualJSON, _ := json.Marshal(body)
+				expectedJSON, _ := json.Marshal(expected)
+				if !bytes.Equal(actualJSON, expectedJSON) {
+					t.Errorf("search request = %s, want %s", actualJSON, expectedJSON)
+				}
+				_, _ = fmt.Fprintf(w,
+					`{"timed_out":%t,"_shards":{"total":2,"successful":%d,"failed":%d},"hits":{"hits":[]},"aggregations":{%s}}`,
+					tt.timedOut, 2-tt.failedShards, tt.failedShards, tt.aggregation)
+			}))
+			defer server.Close()
+
+			backend, err := NewBackend(&Config{Addresses: []string{server.URL}, Index: "profiles"})
 			if err != nil {
-				t.Fatalf("buildValuesRequest() error = %v", err)
+				t.Fatal(err)
 			}
+			defer func() { _ = backend.Close(t.Context()) }()
 
-			var payload struct {
-				Aggs map[string]struct {
-					Terms struct {
-						Field string `json:"field"`
-						Size  int    `json:"size"`
-					} `json:"terms"`
-				} `json:"aggs"`
+			values, err := backend.Values(t.Context(), "label", driver.Query{}, 3)
+			if tt.expectedError != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
+					t.Fatalf("Values() error = %v, want %q", err, tt.expectedError)
+				}
+				if values != nil {
+					t.Fatalf("Values() returned partial values %v with error %v", values, err)
+				}
+				return
 			}
-			if err := json.Unmarshal(body, &payload); err != nil {
-				t.Fatalf("Unmarshal() error = %v", err)
-			}
-
-			terms := payload.Aggs["terms"].Terms
-			if terms.Field != testCase.wantAgg {
-				t.Fatalf("aggregation field = %q, want %q", terms.Field, testCase.wantAgg)
-			}
-			if terms.Size != testCase.wantSize {
-				t.Fatalf("aggregation size = %d, want %d", terms.Size, testCase.wantSize)
+			if err != nil || !slices.Equal(values, tt.expected) {
+				t.Fatalf("Values() = (%v, %v), want (%v, nil)", values, err, tt.expected)
 			}
 		})
 	}

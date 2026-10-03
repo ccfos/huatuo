@@ -24,8 +24,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/timeutil"
+
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
 	"github.com/ccfos/huatuo/internal/randomid"
@@ -47,7 +49,7 @@ var pendingReasons sync.Map
 
 type pendingIOTracingReason struct {
 	reason           *reasonSnapshot
-	startedTimestamp time.Time
+	startedTimestamp timeutil.Timestamp
 	received         chan struct{}
 	result           chan error
 }
@@ -424,7 +426,7 @@ func (i *ioTracing) Start(ctx context.Context) error {
 
 	pending := &pendingIOTracingReason{
 		reason:           reasonSnapshot,
-		startedTimestamp: time.Now().UTC(),
+		startedTimestamp: timeutil.Now(),
 		received:         make(chan struct{}),
 		result:           make(chan error, 1),
 	}
@@ -439,7 +441,7 @@ func (i *ioTracing) Start(ctx context.Context) error {
 		"--max-files-per-process", strconv.Itoa(i.maxFilesPerProcess),
 	}
 
-	process, err := exec.New(exec.Spec{
+	process, err := executil.New(executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, iotracingToolName),
 		Args: args,
 	})
@@ -447,9 +449,11 @@ func (i *ioTracing) Start(ctx context.Context) error {
 		pendingReasons.Delete(taskID)
 		return fmt.Errorf("build iotracing command: %w", err)
 	}
-	if err := process.Run(ctx); err != nil {
+	runErr := process.Run(ctx)
+	_, outputErr := process.Stdout()
+	if err := errors.Join(runErr, outputErr); err != nil {
 		pendingReasons.Delete(taskID)
-		if errors.Is(err, exec.ErrStopFailed) {
+		if errors.Is(err, executil.ErrStopFailed) {
 			stopErr := process.Stop(ctx)
 			if stopErr == nil {
 				log.Info("iotracing stopped")

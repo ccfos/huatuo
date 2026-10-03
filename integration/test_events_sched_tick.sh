@@ -21,11 +21,6 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-[[ $EUID -eq 0 ]] || skip "requires root"
-
-[[ -r "${ROOT_DIR}/_output/bpf/sched_tick.o" ]] \
-	|| fatal "sched_tick BPF object not found: ${ROOT_DIR}/_output/bpf/sched_tick.o"
-
 kprobe_available account_process_tick \
 	|| skip "account_process_tick is not available for kprobe"
 

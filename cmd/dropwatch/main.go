@@ -26,7 +26,7 @@ import (
 	"github.com/ccfos/huatuo/internal/version"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/dropwatch.c -o $BPF_DIR/dropwatch.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/net_dropwatch.c -o $BPF_DIR/net_dropwatch.o
 
 var (
 	dropwatchToolName = "dropwatch"

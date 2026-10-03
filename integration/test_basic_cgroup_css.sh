@@ -50,18 +50,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[[ $EUID -eq 0 ]] || skip "requires root"
-
-command -v go > /dev/null || skip "go command is not installed"
-command -v jq > /dev/null || skip "jq command is not installed"
+require_commands go jq
 [[ -r /proc/sys/kernel/random/uuid ]] \
 	|| skip "kernel UUID source is not readable: /proc/sys/kernel/random/uuid"
 [[ -r /sys/kernel/btf/vmlinux ]] \
 	|| skip "kernel BTF is not readable: /sys/kernel/btf/vmlinux"
-[[ -r "${ROOT_DIR}/_output/bpf/cgroup_css_sync.o" ]] \
-	|| fatal "cgroup CSS sync BPF object not found"
-[[ -r "${ROOT_DIR}/_output/bpf/cgroup_css_events.o" ]] \
-	|| fatal "cgroup CSS events BPF object not found"
 
 tracepoint_available cgroup cgroup_mkdir \
 	|| skip "cgroup/cgroup_mkdir tracepoint is not available"

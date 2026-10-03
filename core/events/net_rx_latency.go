@@ -21,7 +21,6 @@ import (
 	"io"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
@@ -124,7 +123,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "net_recv_lat_event_map", 8192)
+	reader, err := b.AttachAndEventPipe(childCtx, "net_recv_lat_event_map", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return err
 	}
@@ -208,7 +207,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "net_rx_latency",
 				ContainerID:       containerID,
-				ObservedTimestamp: time.Now().UTC(),
+				ObservedTimestamp: timeutil.Now(),
 				TracerData:        tracerData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)

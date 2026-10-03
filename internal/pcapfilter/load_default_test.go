@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"flag"
+	"fmt"
 	"os"
 	"testing"
 
@@ -39,10 +40,11 @@ const devlinkTrapReportSection = "raw_tracepoint/devlink_trap_report"
 func TestMain(m *testing.M) {
 	log.SetLevel("debug")
 
-	var rLimit unix.Rlimit
-	if err := unix.Getrlimit(unix.RLIMIT_MEMLOCK, &rLimit); err == nil {
-		rLimit.Cur = rLimit.Max // raise to kernel maximum
-		_ = unix.Setrlimit(unix.RLIMIT_MEMLOCK, &rLimit)
+	if os.Getuid() == 0 {
+		if err := bpf.Init(nil); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "initialize BPF resources: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	os.Exit(m.Run())
@@ -89,7 +91,7 @@ func TestApply(t *testing.T) {
 		t.Skip("Skipping: requires root")
 	}
 
-	origELF, err := os.ReadFile("../../bpf/dropwatch.o")
+	origELF, err := os.ReadFile("../../bpf/net_dropwatch.o")
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}

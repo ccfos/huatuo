@@ -45,7 +45,7 @@ static __always_inline void init_retransmit_event(struct tcp_retransmit_event *e
 						  u8 event_type)
 {
 	ev->event_type = event_type;
-	ev->ktime_ns = bpf_ktime_get_ns();
+	ev->kernel_observed_ns = bpf_ktime_get_ns();
 	ev->tgid_pid = bpf_get_current_pid_tgid();
 	bpf_get_current_comm(&ev->comm, sizeof(ev->comm));
 }
@@ -221,25 +221,19 @@ fill_retransmit_filter_tcp(struct tcphdr *tcp,
 	tcp->dest = bpf_htons(ev->dport);
 	tcp->seq = bpf_htonl(ev->tcp_seq);
 	tcp->ack_seq = bpf_htonl(ev->tcp_ack);
-	tcp->doff = 5;
-	tcp->fin = !!(ev->tcp_flags & 0x01);
-	tcp->syn = !!(ev->tcp_flags & 0x02);
-	tcp->rst = !!(ev->tcp_flags & 0x04);
-	tcp->psh = !!(ev->tcp_flags & 0x08);
-	tcp->ack = !!(ev->tcp_flags & 0x10);
-	tcp->urg = !!(ev->tcp_flags & 0x20);
-	tcp->ece = !!(ev->tcp_flags & 0x40);
-	tcp->cwr = !!(ev->tcp_flags & 0x80);
+	__be32 flag_word = bpf_htonl(
+		(5U << 28) | ((__u32)(ev->tcp_flags & 0xff) << 16));
+	__builtin_memcpy((__u8 *)tcp + 12, &flag_word, sizeof(flag_word));
 }
 
 static __always_inline bool
 retransmit_address_is_ipv4_mapped(const u8 address[16])
 {
-	return address[0] == 0 && address[1] == 0 && address[2] == 0 &&
-	       address[3] == 0 && address[4] == 0 && address[5] == 0 &&
-	       address[6] == 0 && address[7] == 0 && address[8] == 0 &&
-	       address[9] == 0 && address[10] == 0xff &&
-	       address[11] == 0xff;
+	__u32 words[3];
+
+	__builtin_memcpy(words, address, sizeof(words));
+	return (words[0] | words[1]) == 0 &&
+	       words[2] == bpf_htonl(0x0000ffff);
 }
 
 /* Retransmission queue skbs may not contain network or transport headers.
@@ -315,10 +309,10 @@ retransmit_filter_pass(void *ctx, const struct tcp_retransmit_event *ev)
 }
 
 SEC("tracepoint/tcp/tcp_retransmit_skb")
-int retrans_skb(struct trace_event_raw_tcp_event_sk_skb_compat *ctx)
+int retrans_skb(void *ctx)
 {
-	struct sk_buff *skb = (struct sk_buff *)ctx->skbaddr;
-	struct sock *sk = (struct sock *)ctx->skaddr;
+	struct sk_buff *skb = (struct sk_buff *)tracepoint_arg(ctx, 0);
+	struct sock *sk = (struct sock *)tracepoint_arg(ctx, 1);
 
 	if (!skb || !sk)
 		return 0;
@@ -326,7 +320,6 @@ int retrans_skb(struct trace_event_raw_tcp_event_sk_skb_compat *ctx)
 	struct tcp_retransmit_event ev = {};
 
 	init_retransmit_event(&ev, TCP_RETRANSMIT_EVENT_SKB);
-
 	ev.skb_addr = (u64)(unsigned long)skb;
 	fill_retransmit_event_from_sk(&ev, sk);
 

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,8 +55,7 @@ static KEEP_FRAME void test_physical_usage_touch_pages(char *buf, size_t size) {
 	}
 }
 
-static KEEP_FRAME void test_physical_usage_alloc_free_loop(void) {
-	const size_t size = page_size * PAGES_PER_ITERATION;
+static KEEP_FRAME void test_physical_usage_alloc_free_loop(size_t size) {
 	char *buf = mmap(NULL, size, PROT_READ | PROT_WRITE,
 			 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (buf == MAP_FAILED) {
@@ -76,7 +76,7 @@ static KEEP_FRAME void test_physical_usage_alloc_free_loop(void) {
 	}
 }
 
-int main(void) {
+int main(int argc, char **argv) {
 	long configured_page_size = sysconf(_SC_PAGESIZE);
 	if (configured_page_size <= 0) {
 		perror("sysconf");
@@ -84,10 +84,26 @@ int main(void) {
 	}
 	page_size = (size_t)configured_page_size;
 
+	/* A byte count runs immediately for cgroup OOM tests. */
+	if (argc > 1) {
+		char *end;
+		unsigned long size;
+
+		errno = 0;
+		size = strtoul(argv[1], &end, 10);
+		if (argc != 2 || argv[1][0] < '0' || argv[1][0] > '9' ||
+		    errno || *end || !size) {
+			fprintf(stderr, "usage: %s [positive-byte-count]\n", argv[0]);
+			return 1;
+		}
+		test_physical_usage_alloc_free_loop(size);
+		return 0;
+	}
+
 	wait_for_start_signal();
 
 	for (int i = 0; i < ITERATIONS; i++) {
-		test_physical_usage_alloc_free_loop();
+		test_physical_usage_alloc_free_loop(page_size * PAGES_PER_ITERATION);
 		/* Keep proc mappings available while the profiler drains and symbolizes. */
 		usleep(ITERATION_DELAY_US);
 	}

@@ -28,6 +28,7 @@ import (
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
 	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -100,12 +101,14 @@ func TestWatchEventsWritesCloudEvent(t *testing.T) {
 	}
 
 	observedTimestamp := time.Unix(1_700_000_000, 0).UTC()
+	kernelObservedTimestamp := observedTimestamp.Add(-time.Second)
 	if err := store.Save(&tracingstore.Document{Document: types.Document{
-		Hostname:          "node-1",
-		Region:            "cn",
-		ObservedTimestamp: &observedTimestamp,
-		TracerName:        "cpu",
-		TracerRunType:     types.TracerRunTypeEvent,
+		Hostname:                "node-1",
+		Region:                  "cn",
+		ObservedTimestamp:       &timeutil.Timestamp{Time: observedTimestamp},
+		KernelObservedTimestamp: &timeutil.Timestamp{Time: kernelObservedTimestamp},
+		TracerName:              "cpu",
+		TracerRunType:           types.TracerRunTypeEvent,
 	}}); err != nil {
 		t.Fatalf("Store.Save() error = %v", err)
 	}
@@ -129,6 +132,12 @@ func TestWatchEventsWritesCloudEvent(t *testing.T) {
 		event.Type != "tech.huatuo.kernel.event" ||
 		event.DataContentType != "application/json" {
 		t.Errorf("CloudEvent envelope = %+v", event)
+	}
+	if event.Data.KernelObservedTimestamp == nil || !event.Data.KernelObservedTimestamp.Equal(kernelObservedTimestamp) {
+		t.Fatalf("CloudEvent kernel observation time = %v", event.Data.KernelObservedTimestamp)
+	}
+	if !event.Data.ObservedTimestamp.Equal(observedTimestamp) {
+		t.Fatalf("CloudEvent userspace observation time = %v", event.Data.ObservedTimestamp)
 	}
 	if event.Data.Hostname != "node-1" || event.Data.TracerName == nil ||
 		*event.Data.TracerName != "cpu" {

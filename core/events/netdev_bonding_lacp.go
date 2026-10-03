@@ -21,11 +21,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
 
@@ -65,7 +65,7 @@ func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "ad_event_map", 8192)
+	reader, err := b.AttachAndEventPipe(childCtx, "ad_event_map", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return fmt.Errorf("attach and event pipe: %w", err)
 	}
@@ -105,7 +105,7 @@ func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
 			log.Debugf("bond info: %s", tracerData.Content)
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "lacp",
-				ObservedTimestamp: time.Now().UTC(),
+				ObservedTimestamp: timeutil.Now(),
 				TracerData:        tracerData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)

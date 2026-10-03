@@ -29,7 +29,7 @@ SYNACK_REJECT_PORT=$((TEST_PORT + 1))
 S_ADDR="10.99.3.1"
 C_ADDR="10.99.3.2"
 
-require_python3
+require_commands python3
 
 cleanup() {
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true
@@ -57,7 +57,7 @@ sleep 0.5
 #    --tcp-flags SYN,ACK ACK = ACK set, SYN NOT set → matches pure ACK, not SYNACK.
 #    The server never sees the final ACK → its retransmission timer fires
 #    inet_rtx_synack → tcp_retransmit_synack tracepoint fires.
-ip netns exec "${TCP_NS_CLIENT}" iptables -I OUTPUT 1 -p tcp --dport "${TEST_PORT}" --tcp-flags SYN,ACK ACK -j DROP
+ip netns exec "${TCP_NS_CLIENT}" iptables -w 5 -I OUTPUT 1 -p tcp --dport "${TEST_PORT}" --tcp-flags SYN,ACK ACK -j DROP
 log_info "iptables: DROP pure ACK (dport=${TEST_PORT})"
 
 # 3. Start tcpshark in retransmit mode.

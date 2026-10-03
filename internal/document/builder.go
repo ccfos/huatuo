@@ -19,9 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -29,12 +29,13 @@ const defaultHostname = "huatuo-dev"
 
 // Input contains fields supplied by an observation producer.
 type Input struct {
-	TracerName        string
-	TracerID          string
-	ContainerID       string
-	StartedTimestamp  time.Time
-	ObservedTimestamp time.Time
-	TracerRunType     string
+	TracerName              string
+	TracerID                string
+	ContainerID             string
+	StartedTimestamp        timeutil.Timestamp
+	ObservedTimestamp       timeutil.Timestamp
+	KernelObservedTimestamp timeutil.Timestamp
+	TracerRunType           string
 }
 
 // Builder enriches observation metadata with Node and container fields.
@@ -68,12 +69,16 @@ func (b *Builder) Build(input *Input) (types.Document, error) {
 		TracerRunType: input.TracerRunType,
 	}
 	if !input.StartedTimestamp.IsZero() {
-		startedTimestamp := input.StartedTimestamp.UTC()
+		startedTimestamp := input.StartedTimestamp
 		metadata.StartedTimestamp = &startedTimestamp
 	}
 	if !input.ObservedTimestamp.IsZero() {
-		observedTimestamp := input.ObservedTimestamp.UTC()
+		observedTimestamp := input.ObservedTimestamp
 		metadata.ObservedTimestamp = &observedTimestamp
+	}
+	if !input.KernelObservedTimestamp.IsZero() {
+		kernelObservedTimestamp := input.KernelObservedTimestamp
+		metadata.KernelObservedTimestamp = &kernelObservedTimestamp
 	}
 	if input.ContainerID == "" {
 		return metadata, nil

@@ -80,7 +80,7 @@ BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp-$(BPF_DEBUG)
 OPENAPI_COMMON_SPEC := apis/v1/components.yaml
 OPENAPI_SERVER_SPEC := apis/v1/server/openapi.yaml
 OPENAPI_NODE_SPEC := apis/v1/node/openapi.yaml
-OPENAPI_CODEGEN := go run -mod=mod github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
+OPENAPI_CODEGEN := go tool oapi-codegen
 OPENAPI_CODEGEN_JOBS := \
 	apis/v1/types.cfg.yaml:apis/v1/types.gen.go:$(OPENAPI_COMMON_SPEC) \
 	apis/v1/server/types.cfg.yaml:apis/v1/server/types.gen.go:$(OPENAPI_SERVER_SPEC) \
@@ -151,18 +151,21 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 		$(FIND_EXCLUDE_PATHS) \
 		-exec grep -l "^[[:space:]]*//go:generate.*BPF_COMPILE" {} \; | \
 		xargs -n1 dirname | sort -u | \
-		xargs -P $(shell nproc) -I {} sh -c ' \
+			xargs -P $(shell nproc) -I {} sh -c ' \
 			export BPF_DIR=$(BPF_DIR); \
 			export BPF_COMPILE=$(BPF_COMPILE); \
 			export BPF_INCLUDE=$(BPF_INCLUDE); \
 			export BPF_EXTRA_CFLAGS="$(BPF_EXTRA_CFLAGS)"; \
-			go generate {}'
+			go generate -run BPF_COMPILE {}'
 	@touch $@
 
 build: $(APP_CMD_BIN_TARGETS)
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
 	@cp *.conf $(APP_CMD_OUTPUT)/conf/
+
+install-tools:
+	@build/install-tools.sh
 
 $(APP_CMD_BIN_TARGETS): gen-build $(GO_SRCS)
 $(APP_CMD_OUTPUT)/bin/%:
@@ -194,7 +197,8 @@ vendor:
 	@set -eu; go mod tidy; go mod verify; go mod vendor
 
 clean:
-	@rm -rf $(OPENAPI_GENERATED_FILES) $(APP_CMD_OUTPUT)
+	# Keep tracked OpenAPI artifacts: Go builds embed the specs and check compares them.
+	@rm -rf $(APP_CMD_OUTPUT)
 	@find . \( -name "*.o" -o -name "mock_*.go" -o -name "*.capnp.go" \) \
 		$(FIND_EXCLUDE_PATHS) -delete
 
@@ -214,4 +218,4 @@ integration: build
 e2e: build
 	@bash e2e/run.sh
 
-.PHONY: build gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: build install-tools gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

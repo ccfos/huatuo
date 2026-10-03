@@ -19,6 +19,9 @@ import (
 	"fmt"
 )
 
+// DefaultPerfEventBufferBytes is the requested per-CPU capacity in bytes.
+const DefaultPerfEventBufferBytes = 8 * 1024
+
 // ErrPerfEventSamplesLost indicates that the kernel dropped perf samples.
 var ErrPerfEventSamplesLost = errors.New("bpf: perf event samples lost")
 

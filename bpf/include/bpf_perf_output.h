@@ -35,7 +35,7 @@
 //
 // On failure (negative return, e.g. no reader attached for the current CPU or
 // the ring buffer is full on newer kernels) increments the per-CPU lost
-// counter in stats_map. The helper return value is preserved so callers can
+// error counter in stats_map. The helper return value is preserved so callers can
 // keep acting on success or failure.
 static __always_inline long
 bpf_perf_event_output_counted(void *ctx, void *perf_map, void *stats_map,
@@ -48,7 +48,7 @@ bpf_perf_event_output_counted(void *ctx, void *perf_map, void *stats_map,
 		struct bpf_perf_output_stats *stats =
 			bpf_map_lookup_elem(stats_map, &key);
 		if (stats)
-			__sync_fetch_and_add(&stats->lost, 1);
+			stats->error_counter++;
 	}
 	return ret;
 }

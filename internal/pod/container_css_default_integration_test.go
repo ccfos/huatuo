@@ -63,10 +63,8 @@ func TestCgroupSubsysIDIntegration(t *testing.T) {
 	t.Cleanup(bpf.Shutdown)
 
 	previousBPFDir := bpf.DefaultObjDir
-	previousIDs := cgroupCssID2SubSysNameMap
 	t.Cleanup(func() {
 		bpf.DefaultObjDir = previousBPFDir
-		cgroupCssID2SubSysNameMap = previousIDs
 	})
 
 	if err := cgroupInitSubSysIDs(); err != nil {
@@ -87,7 +85,7 @@ func TestCgroupSubsysIDIntegration(t *testing.T) {
 		}
 	})
 
-	reader, err := oracle.EventPipeByName(ctx, cgroupSubsysIDEventMap, 8192)
+	reader, err := oracle.EventPipeByName(ctx, cgroupSubsysIDEventMap, bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		t.Fatalf("open BPF event map %q: %v", cgroupSubsysIDEventMap, err)
 	}
@@ -117,7 +115,7 @@ func integrationTestEnv(t *testing.T, name string) string {
 
 	value := os.Getenv(name)
 	if value == "" {
-		t.Skipf("%s is not set; run through integration/test_cgroup_subsys_id.sh", name)
+		t.Skipf("%s is not set; run through integration/test_basic_cgroup_subsys_id.sh", name)
 	}
 	return value
 }

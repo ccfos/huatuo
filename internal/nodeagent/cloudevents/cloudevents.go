@@ -19,13 +19,16 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/ccfos/huatuo/internal/timeutil"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func documentToWatchEvent(document *tracingstore.Document) types.WatchEvent {
-	observedTimestamp := timeutil.FormatUTC(*document.ObservedTimestamp)
+	observedTimestamp := document.ObservedTimestamp.FormatUTC()
+	var kernelObservedTimestamp string
+	if document.KernelObservedTimestamp != nil {
+		kernelObservedTimestamp = document.KernelObservedTimestamp.FormatUTC()
+	}
 	return types.WatchEvent{
 		SpecVersion:     "1.0",
 		ID:              uuid.New().String(),
@@ -34,17 +37,18 @@ func documentToWatchEvent(document *tracingstore.Document) types.WatchEvent {
 		DataContentType: "application/json",
 		Time:            observedTimestamp,
 		Data: types.WatchEventData{
-			Hostname:               document.Hostname,
-			Region:                 document.Region,
-			ObservedTimestamp:      observedTimestamp,
-			ContainerID:            document.ContainerID,
-			ContainerHostname:      document.ContainerHostname,
-			ContainerHostNamespace: document.ContainerHostNamespace,
-			ContainerType:          document.ContainerType,
-			ContainerQos:           document.ContainerQoS,
-			TracerName:             document.TracerName,
-			TracerID:               document.TracerID,
-			TracerRunType:          document.TracerRunType,
+			Hostname:                document.Hostname,
+			Region:                  document.Region,
+			ObservedTimestamp:       observedTimestamp,
+			KernelObservedTimestamp: kernelObservedTimestamp,
+			ContainerID:             document.ContainerID,
+			ContainerHostname:       document.ContainerHostname,
+			ContainerHostNamespace:  document.ContainerHostNamespace,
+			ContainerType:           document.ContainerType,
+			ContainerQos:            document.ContainerQoS,
+			TracerName:              document.TracerName,
+			TracerID:                document.TracerID,
+			TracerRunType:           document.TracerRunType,
 		},
 	}
 }

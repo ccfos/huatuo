@@ -30,32 +30,9 @@ import (
 
 var fieldNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
 
-type (
-	termsAgg struct {
-		Field string `json:"field"`
-		Size  int    `json:"size"`
-	}
-	termsAggBody struct {
-		Terms termsAgg `json:"terms"`
-	}
-	valuesBody struct {
-		Size  int                     `json:"size"`
-		Query *types.Query            `json:"query,omitempty"`
-		Aggs  map[string]termsAggBody `json:"aggs"`
-	}
-	valuesResponse struct {
-		Aggregations struct {
-			Terms struct {
-				Buckets []struct {
-					Key any `json:"key"`
-				} `json:"buckets"`
-			} `json:"terms"`
-		} `json:"aggregations"`
-	}
-	deleteByQueryBody struct {
-		Query *types.Query `json:"query"`
-	}
-)
+type deleteByQueryBody struct {
+	Query *types.Query `json:"query"`
+}
 
 func validateFieldName(field string) error {
 	if !fieldNamePattern.MatchString(field) {
@@ -144,24 +121,17 @@ func buildValuesRequest(field string, q driver.Query, size int) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	body := valuesBody{
-		Size:  0,
+	hitsSize := 0
+	body := essearch.Request{
+		Size:  &hitsSize,
 		Query: query,
-		Aggs: map[string]termsAggBody{
-			"terms": {Terms: termsAgg{Field: aggregationField(field), Size: size}},
+		Aggregations: map[string]types.Aggregations{
+			"terms": {
+				Terms: &types.TermsAggregation{Field: &field, Size: &size},
+			},
 		},
 	}
 	return json.Marshal(body)
-}
-
-// aggregationField targets the dynamic keyword subfield so terms
-// aggregations work on dynamically mapped text fields, mirroring the
-// exact-term query fallback; explicit .keyword names pass through.
-func aggregationField(field string) string {
-	if strings.HasSuffix(field, ".keyword") {
-		return field
-	}
-	return field + ".keyword"
 }
 
 func buildQuery(filters []driver.Filter) (*types.Query, error) {
@@ -230,7 +200,6 @@ func buildClause(filter driver.Filter) (types.Query, bool, error) {
 }
 
 func buildExactTermClause(field string, value any) types.Query {
-	value = driver.NormalizeValue(value)
 	primary := types.Query{
 		Term: map[string]types.TermQuery{field: {Value: value}},
 	}
@@ -273,7 +242,7 @@ func containsString(values []any) bool {
 }
 
 func buildRangeClause(filter driver.Filter) (types.RangeQuery, error) {
-	if s, ok := driver.NormalizeValue(filter.Value).(string); ok {
+	if s, ok := filter.Value.(string); ok {
 		return buildDateRangeClause(filter.Op, s)
 	}
 	f, ok := asFloat64(filter.Value)

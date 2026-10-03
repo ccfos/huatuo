@@ -18,12 +18,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
-func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
+func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) {
 	durationSeconds := int64(request.Duration / time.Second)
 	aggregationInterval := min(config.AggregationInterval, request.Duration)
 	if request.Spec.Language == profilingdomain.LanguagePython {
@@ -40,6 +40,7 @@ func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
 		"--output-storage", config.ToolstreamSocketPath,
 		"--tracer-id", request.RequestID,
 		"--huatuo-api-address", config.NodeAPIAddress,
+		"--tool-path", config.ToolDir,
 	}
 	if request.Scope == observation.ScopeContainer {
 		args = append(args, "--container-id", request.ContainerID)
@@ -55,14 +56,8 @@ func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
 	if request.Spec.BinaryMatchPath != "" {
 		args = append(args, "--binary-match-path", request.Spec.BinaryMatchPath)
 	}
-	switch request.Spec.Language {
-	case profilingdomain.LanguageJava:
-		args = append(args, "--tool-path", config.JavaToolPath)
-	case profilingdomain.LanguagePython:
-		args = append(args, "--tool-path", config.PythonToolPath)
-	}
 
-	return exec.Spec{
+	return executil.Spec{
 		Path:           config.ProfilerPath,
 		Args:           args,
 		MaxOutputBytes: config.CommandOutputLimitBytes,
