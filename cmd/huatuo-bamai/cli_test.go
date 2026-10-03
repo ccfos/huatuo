@@ -16,7 +16,12 @@ package main
 
 import (
 	"flag"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/ccfos/huatuo/internal/bpf"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
 
 	"github.com/urfave/cli/v2"
 )
@@ -40,5 +45,47 @@ func TestOptionsFromContextEnablesCgroup(t *testing.T) {
 	}
 	if !opts.EnableCgroup {
 		t.Fatal("EnableCgroup = false, want true")
+	}
+}
+
+func TestConfigureRuntimePropagatesBpfObjDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "huatuo-bamai.conf"), []byte(`
+[HTTPServer.Auth]
+BearerToken = "test-node-secret"
+`), 0o600); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	opts := &Options{
+		ConfigDir:  tmpDir,
+		ConfigFile: "huatuo-bamai.conf",
+		BPFObjDir:  filepath.Join(tmpDir, "custom-bpf"),
+		ToolBinDir: filepath.Join(tmpDir, "custom-bin"),
+	}
+
+	// configureRuntime mutates process-wide globals; snapshot and restore them
+	// so this test is hermetic regardless of execution order.
+	oldDefaultObjDir := bpf.DefaultObjDir
+	oldCoreBinDir := internalconfig.CoreBinDir
+	oldCoreBpfDir := internalconfig.CoreBpfDir
+	t.Cleanup(func() {
+		bpf.DefaultObjDir = oldDefaultObjDir
+		internalconfig.CoreBinDir = oldCoreBinDir
+		internalconfig.CoreBpfDir = oldCoreBpfDir
+	})
+
+	if err := configureRuntime(opts); err != nil {
+		t.Fatalf("configureRuntime() error = %v", err)
+	}
+
+	if bpf.DefaultObjDir != opts.BPFObjDir {
+		t.Fatalf("bpf.DefaultObjDir = %q, want %q", bpf.DefaultObjDir, opts.BPFObjDir)
+	}
+	if internalconfig.CoreBinDir != opts.ToolBinDir {
+		t.Fatalf("internalconfig.CoreBinDir = %q, want %q", internalconfig.CoreBinDir, opts.ToolBinDir)
+	}
+	if internalconfig.CoreBpfDir != opts.BPFObjDir {
+		t.Fatalf("internalconfig.CoreBpfDir = %q, want %q (--bpf-dir is not propagated to tool subprocesses)", internalconfig.CoreBpfDir, opts.BPFObjDir)
 	}
 }
