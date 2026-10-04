@@ -168,13 +168,20 @@ func Parse(pkt *Hdr) (*Packet, error) {
 				Checksum: dec.udp.Checksum,
 			}
 		case layers.LayerTypeICMPv4:
-			out.ICMP = &ICMP{
+			icmp := &ICMP{
 				Type:     dec.icmp4.TypeCode.String(),
 				Code:     dec.icmp4.TypeCode.Code(),
 				Checksum: dec.icmp4.Checksum,
-				ID:       dec.icmp4.Id,
-				Seq:      dec.icmp4.Seq,
 			}
+			// Header bytes 4-8 only carry id/seq for echo request/reply;
+			// on other types they are e.g. unused + next-hop MTU
+			// (FragmentationNeeded), not echo fields.
+			if t := dec.icmp4.TypeCode.Type(); t == layers.ICMPv4TypeEchoRequest ||
+				t == layers.ICMPv4TypeEchoReply {
+				icmp.ID = dec.icmp4.Id
+				icmp.Seq = dec.icmp4.Seq
+			}
+			out.ICMP = icmp
 		case layers.LayerTypeICMPv6:
 			out.ICMP = &ICMP{
 				Type:     dec.icmp6.TypeCode.String(),

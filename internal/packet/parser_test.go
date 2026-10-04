@@ -252,6 +252,60 @@ func TestParseIPv4UDP(t *testing.T) {
 	}
 }
 
+// buildIPv4ICMPv4Hdr crafts an IPv4 packet carrying an ICMPv4 header
+// (type, code at Raw[20:22]; the caller fills the remaining 4 header
+// bytes, which mean id/seq for echo and unused/next-hop-MTU otherwise).
+func buildIPv4ICMPv4Hdr(typ, code uint8) Hdr {
+	pkt := Hdr{EthProto: 0x0800, RawLen: 28} // 20 IPv4 + 8 ICMPv4
+	pkt.Raw[0] = 0x45                        // version=4, ihl=5
+	pkt.Raw[9] = 1                           // protocol=ICMP
+	pkt.Raw[12], pkt.Raw[15] = 10, 1         // src 10.0.0.1
+	pkt.Raw[16], pkt.Raw[19] = 10, 2         // dst 10.0.0.2
+	pkt.Raw[20] = typ
+	pkt.Raw[21] = code
+	return pkt
+}
+
+func TestParseIPv4ICMPv4EchoKeepsEchoFields(t *testing.T) {
+	pkt := buildIPv4ICMPv4Hdr(8, 0) // EchoRequest
+	binary.BigEndian.PutUint16(pkt.Raw[24:], 0x1234)
+	binary.BigEndian.PutUint16(pkt.Raw[26:], 7)
+
+	p, err := Parse(&pkt)
+	if err != nil {
+		t.Fatalf("Parse err: %v", err)
+	}
+	if p.ICMP == nil {
+		t.Fatalf("want ICMP, got %+v", p)
+	}
+	if p.ICMP.ID != 0x1234 || p.ICMP.Seq != 7 {
+		t.Errorf("echo id/seq: want 0x1234/7, got %#x/%d", p.ICMP.ID, p.ICMP.Seq)
+	}
+}
+
+func TestParseIPv4ICMPv4NonEchoOmitsEchoFields(t *testing.T) {
+	// DestinationUnreachable/FragmentationNeeded: header bytes 4-8 are
+	// unused + next-hop MTU, not echo id/seq. Reporting them as id/seq
+	// prints the MTU as "seq=1500" and corrupts dropwatch diagnostics.
+	pkt := buildIPv4ICMPv4Hdr(3, 4)
+	binary.BigEndian.PutUint16(pkt.Raw[26:], 1500) // next-hop MTU
+
+	p, err := Parse(&pkt)
+	if err != nil {
+		t.Fatalf("Parse err: %v", err)
+	}
+	if p.ICMP == nil {
+		t.Fatalf("want ICMP, got %+v", p)
+	}
+	if p.ICMP.ID != 0 || p.ICMP.Seq != 0 {
+		t.Errorf("non-echo ICMPv4 must not report echo id/seq, got id=%d seq=%d",
+			p.ICMP.ID, p.ICMP.Seq)
+	}
+	if s := p.String(); bytes.Contains([]byte(s), []byte("seq=")) {
+		t.Errorf("String() must not render echo fields for non-echo ICMPv4: %s", s)
+	}
+}
+
 func TestParseARP(t *testing.T) {
 	pkt := Hdr{EthProto: 0x0806, RawLen: 28}
 	// ARP header: htype=1, ptype=0x0800, hlen=6, plen=4, op=1
