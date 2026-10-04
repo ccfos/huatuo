@@ -15,7 +15,6 @@
 package paths
 
 import (
-	"path/filepath"
 	"testing"
 )
 
@@ -33,23 +32,23 @@ func TestPath(t *testing.T) {
 		{
 			name:     "single-segment-huatuo-dev",
 			segments: []string{"huatuo-dev"},
-			want:     filepath.Join(RootfsDefaultPath, "huatuo-dev"),
+			want:     "/sys/fs/cgroup/huatuo-dev",
 		},
 		{
 			name:     "two-segments-huatuo-region-memory",
 			segments: []string{"huatuo-region", "memory"},
-			want:     filepath.Join(RootfsDefaultPath, "huatuo-region", "memory"),
+			want:     "/sys/fs/cgroup/huatuo-region/memory",
 		},
 		{
 			name:     "nested-path-huatuo-dev-cpu-stat",
 			segments: []string{"huatuo-dev", "cpu", "cpu.stat"},
-			want:     filepath.Join(RootfsDefaultPath, "huatuo-dev", "cpu", "cpu.stat"),
+			want:     "/sys/fs/cgroup/huatuo-dev/cpu/cpu.stat",
 		},
 		{
-			// filepath.Join cleans ".." — the result must not escape rootfs root.
+			// path.Join cleans ".." — the result must not escape rootfs root.
 			name:     "dotdot-segment-is-cleaned",
 			segments: []string{"huatuo-dev", "..", "huatuo-region"},
-			want:     filepath.Join(RootfsDefaultPath, "huatuo-dev", "..", "huatuo-region"),
+			want:     "/sys/fs/cgroup/huatuo-region",
 		},
 	}
 

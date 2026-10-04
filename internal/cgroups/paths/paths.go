@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,12 +14,15 @@
 
 package paths
 
-import "path/filepath"
+import "path"
 
 var RootfsDefaultPath = "/sys/fs/cgroup"
 
-func Path(path ...string) string {
+// Path joins segments under the cgroupfs root. cgroupfs is a Linux
+// filesystem, so the result must be slash-separated regardless of the
+// GOOS the caller runs on; path.Join also cleans ".." like filepath.Join.
+func Path(segments ...string) string {
 	root := []string{RootfsDefaultPath}
 
-	return filepath.Join(append(root, path...)...)
+	return path.Join(append(root, segments...)...)
 }
