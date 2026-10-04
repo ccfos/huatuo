@@ -74,10 +74,33 @@ func GetSysrqMsg(command string) (string, error) {
 		return "", err
 	}
 
+	kmsgs, err := drainKmsgRecords(func(b []byte) (int, error) {
+		return syscall.Read(int(fd), b)
+	}, make([]byte, kmsgReadBufferSize))
+	if err != nil {
+		return "", err
+	}
+
+	return formatKmsgs(kmsgs), nil
+}
+
+// kmsgReadBufferSize covers the kernel's PRINTK_MESSAGE_MAX (2048, which
+// includes the "level,seq,ts,flag;" header, the \xNN-escaped text, and
+// dictionary lines) with headroom, so a legal record never fails the read.
+const kmsgReadBufferSize = 4096
+
+// kmsgRecordReader reads one raw /dev/kmsg record into buf.
+type kmsgRecordReader func(buf []byte) (int, error)
+
+// drainKmsgRecords accumulates records until EAGAIN. An EINVAL result means
+// the record was larger than buf and the kernel has ALREADY consumed it
+// (devkmsg_read advances user->seq before the size check), so the capture
+// continues with the following record instead of discarding everything
+// accumulated so far. Other errors are fatal.
+func drainKmsgRecords(read kmsgRecordReader, buf []byte) (string, error) {
 	var buffer strings.Builder
-	buf := make([]byte, 1024)
 	for {
-		n, err := syscall.Read(int(fd), buf)
+		n, err := read(buf)
 		if n > 0 {
 			buffer.Write(buf[:n])
 		}
@@ -85,11 +108,14 @@ func GetSysrqMsg(command string) (string, error) {
 			if err == syscall.EAGAIN {
 				break
 			}
+			if err == syscall.EINVAL {
+				// Oversized record: already consumed by the kernel.
+				continue
+			}
 			return "", err
 		}
 	}
-
-	return formatKmsgs(buffer.String()), nil
+	return buffer.String(), nil
 }
 
 // format kmsg to human-readable format
