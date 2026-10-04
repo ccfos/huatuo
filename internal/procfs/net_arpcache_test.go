@@ -114,3 +114,22 @@ func TestNetArpCache(t *testing.T) {
 		require.Equal(t, uint64(11), stats.Stats["allocs"])
 	})
 }
+
+func TestNetArpCacheRejectsWiderRowThanHeader(t *testing.T) {
+	tempDir := t.TempDir()
+	arpDir := filepath.Join(tempDir, "proc/net/stat")
+	require.NoError(t, os.MkdirAll(arpDir, 0o755))
+
+	RootPrefix(tempDir)
+	defer RootPrefix("/")
+
+	// Counters are keyed by header position: a data row with more fields than
+	// the header must be rejected instead of indexed with the header length.
+	content := "entries allocs\n0a 0b 0c\n"
+	require.NoError(t, os.WriteFile(filepath.Join(arpDir, "arp_cache"), []byte(content), 0o600))
+
+	stats, err := NetArpCache()
+	require.Error(t, err)
+	require.Nil(t, stats)
+	require.Contains(t, err.Error(), "header has 2 fields")
+}
