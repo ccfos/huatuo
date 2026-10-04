@@ -94,6 +94,34 @@ func TestNewCPUIdleTracingBindsConfig(t *testing.T) {
 	}
 }
 
+func TestNewCPUIdleUsesConfiguredSamplingInterval(t *testing.T) {
+	// The registration entry must publish the configured sampling interval
+	// on EventTracingAttr.Interval (not a hardcoded default), and the
+	// package-global config must be restored for later tests.
+	prev := configSnapshot()
+	t.Cleanup(func() { Set(prev) })
+
+	config := &Config{}
+	config.CPUIdle.UserThreshold = 75
+	config.CPUIdle.SysThreshold = 45
+	config.CPUIdle.UsageThreshold = 90
+	config.CPUIdle.DeltaUserThreshold = 40
+	config.CPUIdle.DeltaSysThreshold = 20
+	config.CPUIdle.DeltaUsageThreshold = 50
+	config.CPUIdle.Interval = 9
+	config.CPUIdle.IntervalTracing = 300
+	config.CPUIdle.RunTracingToolTimeout = 7
+	Set(config)
+
+	attr, err := newCPUIdle()
+	if err != nil {
+		t.Fatalf("newCPUIdle() error = %v", err)
+	}
+	if attr.Interval != 9 {
+		t.Fatalf("newCPUIdle() interval = %d, want 9", attr.Interval)
+	}
+}
+
 func TestValidateCPUIdleConfig(t *testing.T) {
 	t.Parallel()
 
