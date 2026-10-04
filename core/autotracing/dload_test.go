@@ -226,6 +226,10 @@ func TestUpdateLoad(t *testing.T) {
 }
 
 func TestNewDloadUsesConfiguredSamplingInterval(t *testing.T) {
+	// Restore the package-global config so later tests are order-independent.
+	prev := configSnapshot()
+	t.Cleanup(func() { Set(prev) })
+
 	config := &Config{}
 	config.Dload.Interval = 7
 	config.Dload.IntervalTracing = 30
