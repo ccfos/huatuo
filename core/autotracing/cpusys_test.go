@@ -57,6 +57,9 @@ func TestNewCPUSysBindsConfig(t *testing.T) {
 	if !ok {
 		t.Fatalf("TracingData type = %T, want *cpuSysTracing", attr.TracingData)
 	}
+	if attr.Interval != 12 {
+		t.Errorf("EventTracingAttr.Interval = %d, want 12", attr.Interval)
+	}
 	if tracer.interval != 12*time.Second {
 		t.Errorf("interval = %s, want 12s", tracer.interval)
 	}
