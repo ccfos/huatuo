@@ -17,9 +17,17 @@ package kmsgutil
 import (
 	"errors"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestReadKmsgsReturnsNonblockingError(t *testing.T) {
+	_, err := readKmsgs(-1)
+	if !errors.Is(err, syscall.EBADF) {
+		t.Fatalf("readKmsgs(-1) error=%v, want EBADF", err)
+	}
+}
 
 func parseFormattedKmsgLine(line string) (time.Time, string, error) {
 	parts := strings.SplitN(line, " ", 3)
