@@ -16,6 +16,7 @@ package procfs
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -38,17 +39,33 @@ func NetArpCache() (*ArpCacheStats, error) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	scanner.Scan()
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("scan arp cache header: %w", err)
+		}
+		return nil, fmt.Errorf("arp cache header is missing")
+	}
 
 	// First string is always a header for stats
-	var headers []string
-	headers = append(headers, strings.Fields(scanner.Text())...)
+	headers := strings.Fields(scanner.Text())
+	if len(headers) == 0 {
+		return nil, fmt.Errorf("arp cache header is empty")
+	}
 
 	// Fast path ...
 	cache := &ArpCacheStats{Stats: make(map[string]uint64)}
 
-	scanner.Scan()
-	for num, counter := range strings.Fields(scanner.Text()) {
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("scan arp cache values: %w", err)
+		}
+		return nil, fmt.Errorf("arp cache values are missing")
+	}
+	values := strings.Fields(scanner.Text())
+	if len(values) != len(headers) {
+		return nil, fmt.Errorf("arp cache field count mismatch: got %d values for %d headers", len(values), len(headers))
+	}
+	for num, counter := range values {
 		value, err := strconv.ParseUint(counter, 16, 64)
 		if err != nil {
 			return nil, err
