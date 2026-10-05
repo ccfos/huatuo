@@ -229,3 +229,23 @@ func TestNewServiceRequiresJobManager(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 }
+
+func TestNormalizeRawProfilePageRejectsNonPositive(t *testing.T) {
+	if limit, offset := NormalizeRawProfilePage(nil, nil); limit != defaultRawProfilePageSize || offset != 0 {
+		t.Fatalf("NormalizeRawProfilePage(nil, nil) = (%d, %d)", limit, offset)
+	}
+	validLimit, validOffset := 25, 50
+	if limit, offset := NormalizeRawProfilePage(&validLimit, &validOffset); limit != 25 || offset != 50 {
+		t.Fatalf("NormalizeRawProfilePage(valid) = (%d, %d)", limit, offset)
+	}
+	for _, bad := range []int{-1, -100, 0} {
+		badLimit := bad
+		if limit, _ := NormalizeRawProfilePage(&badLimit, nil); limit <= 0 {
+			t.Fatalf("NormalizeRawProfilePage(limit=%d) = %d, want default > 0", bad, limit)
+		}
+	}
+	badOffset := -5
+	if _, offset := NormalizeRawProfilePage(nil, &badOffset); offset != 0 {
+		t.Fatalf("NormalizeRawProfilePage(offset=-5) = %d, want 0", offset)
+	}
+}

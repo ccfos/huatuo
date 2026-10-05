@@ -236,7 +236,10 @@ func (s *Service) RawProfiles(
 			err,
 		)
 	}
-	hasMore := len(documents) > limit
+	// limit comes from NormalizeRawProfilePage and is always positive, but
+	// guard the slice anyway: a negative limit would panic here and zero
+	// would report hasMore=true on an empty page.
+	hasMore := limit > 0 && len(documents) > limit
 	if hasMore {
 		documents = documents[:limit]
 	}
@@ -375,11 +378,11 @@ func NormalizePage(limit, offset *int) (int, int) {
 // NormalizeRawProfilePage applies the raw Profile pagination defaults.
 func NormalizeRawProfilePage(limit, offset *int) (int, int) {
 	normalizedLimit := defaultRawProfilePageSize
-	if limit != nil {
+	if limit != nil && *limit > 0 {
 		normalizedLimit = *limit
 	}
 	normalizedOffset := 0
-	if offset != nil {
+	if offset != nil && *offset > 0 {
 		normalizedOffset = *offset
 	}
 	return normalizedLimit, normalizedOffset
