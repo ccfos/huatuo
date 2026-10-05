@@ -19,16 +19,16 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/huatuo-run-test.XXXXXX")
 mkdir -p "$work_dir/helpers" "$work_dir/run path/bin"
 
-cat >"$work_dir/helpers/curl" <<'EOF'
+cat > "$work_dir/helpers/curl" << 'EOF'
 #!/bin/sh
 printf '%s\n' "$@" > "$CAPTURE_ARGS"
 printf '200'
 EOF
-cat >"$work_dir/helpers/sleep" <<'EOF'
+cat > "$work_dir/helpers/sleep" << 'EOF'
 #!/bin/sh
 exit 0
 EOF
-cat >"$work_dir/run path/bin/huatuo-bamai" <<'EOF'
+cat > "$work_dir/run path/bin/huatuo-bamai" << 'EOF'
 #!/bin/sh
 printf '%s\n' "$PWD" > "$CAPTURE_START"
 EOF
@@ -41,7 +41,7 @@ export PATH="$work_dir/helpers:$PATH"
 export ELASTICSEARCH_HOST=localhost ELASTIC_PASSWORD="$password"
 export RUN_PATH="$work_dir/run path"
 
-(cd "$work_dir" && sh "$script_dir/run.sh") >"$work_dir/output" 2>&1 || {
+(cd "$work_dir" && sh "$script_dir/run.sh") > "$work_dir/output" 2>&1 || {
 	printf 'run.sh failed; inspect %s\n' "$work_dir/output" >&2
 	exit 1
 }
