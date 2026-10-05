@@ -267,3 +267,8 @@ func (s *Store) prepareDocument(document *Document) error {
 	}
 	return nil
 }
+
+// NewStoreFromPersistence wraps an existing storage persistence for tests.
+func NewStoreFromPersistence(p *storage.Store[*Document]) *Store {
+	return &Store{store: p}
+}
