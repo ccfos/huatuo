@@ -17,9 +17,11 @@ package localfile
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
@@ -119,6 +121,42 @@ func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 
 	if !bytes.Equal(got, want) {
 		t.Errorf("saved content = %q, want %q", got, want)
+	}
+}
+
+func TestBackendSaveConcurrentWriters(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+	start := make(chan struct{})
+	var group sync.WaitGroup
+
+	for index := range 32 {
+		name := fmt.Sprintf("tracer-%02d", index)
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			if err := backend.Save(t.Context(), driver.Record{
+				ID:   name,
+				Data: []byte(`{"tracer_name":"` + name + `"}`),
+				Fields: map[string]any{
+					"tracer_name": name,
+				},
+			}, driver.SaveOptions{}); err != nil {
+				t.Errorf("Save(%q) returned error: %v", name, err)
+			}
+		}()
+	}
+
+	close(start)
+	group.Wait()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 32 {
+		t.Fatalf("storage directory contains %d files, want 32", len(entries))
 	}
 }
 

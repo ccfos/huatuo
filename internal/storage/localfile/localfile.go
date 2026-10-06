@@ -32,7 +32,7 @@ import (
 
 // Storage appends records to local files. It is bound to one collection by Init.
 type Storage struct {
-	lock         sync.Mutex
+	lock         sync.RWMutex
 	files        map[string]io.Writer
 	writerCache  sync.Map
 	path         string
@@ -134,9 +134,12 @@ func (b *Storage) newFileWriter(filename string) io.Writer {
 }
 
 func (b *Storage) writerByName(name string) (io.Writer, error) {
+	b.lock.RLock()
 	if fileWriter, ok := b.files[name]; ok {
+		b.lock.RUnlock()
 		return fileWriter, nil
 	}
+	b.lock.RUnlock()
 
 	b.lock.Lock()
 	defer b.lock.Unlock()
