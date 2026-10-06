@@ -181,7 +181,12 @@ func buildClause(filter driver.Filter) (types.Query, bool, error) {
 		}
 		return buildExactTermClause(filter.Field, filter.Value), false, nil
 	case driver.OpNe:
-		return buildExactTermClause(filter.Field, filter.Value), true, nil
+		return types.Query{Bool: &types.BoolQuery{
+			Filter: []types.Query{{
+				Exists: &types.ExistsQuery{Field: filter.Field},
+			}},
+			MustNot: []types.Query{buildExactTermClause(filter.Field, filter.Value)},
+		}}, false, nil
 	case driver.OpGt, driver.OpGte, driver.OpLt, driver.OpLte:
 		rangeQ, err := buildRangeClause(filter)
 		if err != nil {
