@@ -122,6 +122,41 @@ func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 	}
 }
 
+func TestBackendRejectsPathTraversalTracerName(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+
+	for _, name := range []string{
+		"../outside",
+		`..\outside`,
+		"nested/name",
+		`nested\name`,
+		".",
+		"..",
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := backend.Save(t.Context(), driver.Record{
+				ID:   "trace-invalid-name",
+				Data: []byte(`{"tracer_name":"invalid"}`),
+				Fields: map[string]any{
+					"tracer_name": name,
+				},
+			}, driver.SaveOptions{})
+			if !errors.Is(err, driver.ErrInvalidField) {
+				t.Fatalf("Save() error = %v, want ErrInvalidField", err)
+			}
+		})
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("storage directory contains %d entries after rejected names, want 0", len(entries))
+	}
+}
+
 // TestBackendUnsupportedOperations covers operations not supported by the localfile backend: Get, Delete, DeleteByQuery, Query, Count, and Terms all return ErrUnsupported.
 func TestBackendUnsupportedOperations(t *testing.T) {
 	dir := t.TempDir()
