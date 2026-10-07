@@ -35,6 +35,7 @@ import (
 	esindex "github.com/elastic/go-elasticsearch/v8/typedapi/core/index"
 	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
+	"github.com/elastic/go-elasticsearch/v8/typedapi/types/enums/totalhitsrelation"
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/storage/driver"
@@ -361,6 +362,19 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 	}
 	if err := checkSearchStatus(&payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend query %s: %w", s.index, err)
+	}
+	// Limit zero requests every match (the job store issues such queries when
+	// callers do not paginate; the sqlite backend returns all of them). A
+	// single search can return at most defaultQuerySize hits, so a larger
+	// collection would come back silently truncated and every caller would
+	// treat it as complete. Reject instead, and let the caller page with an
+	// explicit Limit.
+	exactTotal := payload.Hits.Total != nil && payload.Hits.Total.Relation == totalhitsrelation.Eq
+	if q.Limit == 0 && exactTotal &&
+		payload.Hits.Total.Value > int64(q.Offset)+int64(defaultQuerySize) {
+		return nil, fmt.Errorf(
+			"elasticsearch backend query %s: %d matches exceed the %d single-request window; request an explicit Limit",
+			s.index, payload.Hits.Total.Value, defaultQuerySize)
 	}
 
 	records := make([]driver.Record, 0, len(payload.Hits.Hits))

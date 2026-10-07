@@ -16,6 +16,7 @@ package elasticsearch
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1545,5 +1546,78 @@ func TestNewBackendRequiresIndex(t *testing.T) {
 	_, err := NewBackend(&Config{})
 	if err == nil || err.Error() != "elasticsearch backend: index is required" {
 		t.Fatalf("NewBackend() error = %v", err)
+	}
+}
+
+// --- Query Limit=0 must not return a silently truncated result window ---
+
+type fakeTransport struct {
+	status int
+	body   string
+}
+
+func (t *fakeTransport) Perform(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: t.status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(t.body)),
+	}, nil
+}
+
+func newQueryStorage(body string) *Storage {
+	return &Storage{transport: &fakeTransport{status: 200, body: body}, index: "test"}
+}
+
+const queryTruncatedBody = `{
+  "took": 40,
+  "timed_out": false,
+  "_shards": {"total": 5, "successful": 5, "skipped": 0, "failed": 0},
+  "hits": {"total": {"value": 10001, "relation": "eq"}, "hits": [
+    {"_index": "test", "_id": "abc", "_score": 1.0, "_source": {"k": "v"}}
+  ]}
+}`
+
+const queryFullWindowBody = `{
+  "took": 40,
+  "timed_out": false,
+  "_shards": {"total": 5, "successful": 5, "skipped": 0, "failed": 0},
+  "hits": {"total": {"value": 10000, "relation": "eq"}, "hits": [
+    {"_index": "test", "_id": "abc", "_score": 1.0, "_source": {"k": "v"}}
+  ]}
+}`
+
+func TestQueryRejectsResultWindowTruncation(t *testing.T) {
+	// Limit zero means "no limit": the job store issues such queries when
+	// callers do not paginate, and the sqlite backend returns every match.
+	// A single Elasticsearch search can return at most defaultQuerySize
+	// hits, so 10001 matches must not come back as a silent partial slice.
+	s := newQueryStorage(queryTruncatedBody)
+	records, err := s.Query(context.Background(), driver.Query{})
+	if err == nil {
+		t.Fatalf("Query(limit 0, 10001 matches) = %d records, nil error; want error", len(records))
+	}
+	if !strings.Contains(err.Error(), "10001") || !strings.Contains(err.Error(), "exceed") {
+		t.Fatalf("Query(limit 0, 10001 matches) error = %v, want result-window truncation", err)
+	}
+}
+
+func TestQueryExplicitLimitStillPagesBeyondWindow(t *testing.T) {
+	// An explicit Limit is a caller-requested page, not truncation: the same
+	// 10001 matches must stay queryable page by page.
+	s := newQueryStorage(queryTruncatedBody)
+	if _, err := s.Query(context.Background(), driver.Query{Limit: 100}); err != nil {
+		t.Fatalf("Query(limit 100) error = %v", err)
+	}
+}
+
+func TestQueryLimitZeroWithinWindowStillWorks(t *testing.T) {
+	// A total exactly at the window cap is fully served in one request.
+	s := newQueryStorage(queryFullWindowBody)
+	records, err := s.Query(context.Background(), driver.Query{})
+	if err != nil {
+		t.Fatalf("Query(limit 0, 10000 matches) error = %v", err)
+	}
+	if len(records) != 1 || records[0].ID != "abc" {
+		t.Fatalf("Query(limit 0, 10000 matches) = %+v, want 1 record with ID abc", records)
 	}
 }
