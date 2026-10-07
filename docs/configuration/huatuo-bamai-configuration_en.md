@@ -1102,6 +1102,19 @@ This section defines collection rules for various system and network metrics. Al
 
 - **DeviceExcluded**: Regex to exclude devices. Example: "^(lo)|(docker\\w*)|(veth\\w*)$", meaning exclude loopback, docker, and veth interfaces.
 
+The `netdev_ipv6` collector exports IPv6 IP and ICMP counters per interface
+from `/proc/<pid>/net/dev_snmp6/` for the host and discovered containers. It
+shares `NetdevStats.DeviceIncluded` and `DeviceExcluded`; `EnableNetlink` does
+not change its procfs source. For example, `Ip6InDiscards` becomes
+`huatuo_bamai_netdev_ipv6_Ip6InDiscards_total{device="eth0",...}`. Container
+series use the `container_` prefix and the usual container labels. `ifIndex`
+is not exported as a counter. Kernels without IPv6 disable this collector;
+empty namespaces emit no series. Read failures mark the scrape unsuccessful
+while preserving collected series.
+
+These counters distinguish IPv6 routing, header, reassembly and ICMP errors
+from link-level drops. Add `netdev_ipv6` to `BlackList` to disable collection.
+
 #### 9.2 Netdev DCB Collection
 
 ```bash
