@@ -75,7 +75,8 @@ start_args=(
 	--ssh-key "$SSH_KEY"
 	--vcpus 4
 	--memory 8192
-	--disk-size 20G
+	# Tool caches and storage fixtures must not evict preloaded E2E images.
+	--disk-size 40G
 	--init-kubernetes
 )
 [[ -z "$VM_NAME" ]] || start_args+=(--name "$VM_NAME")
