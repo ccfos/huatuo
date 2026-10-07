@@ -241,7 +241,6 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -
 | ------------------------ | -------- | --------------------------------------------- |
 | `observed_timestamp`     | string   | 用户态接收/格式化事件时生成的 UTC 时间（RFC3339Nano），不是内核 hook 时间 |
 | `kernel_observed_timestamp` | string | 内核观测事件的 UTC 时间（RFC3339Nano），由原始单调时钟转换。 |
-| `ktime_ns`               | uint64   | 内核 hook 的单调时间戳（纳秒），仅可在同一主机、同一次启动内比较，不是 UTC 时间；旧事件缺失时视为不可用，零值省略 |
 | `type`                   | string   | 预留 TCP 事件类型，当前未设置（`1` 普通丢包、`2` SYN flood、`3`/`4` listen overflow） |
 | `drop_source`            | string   | 丢包来源：`software` 表示内核协议栈，`hardware` 表示 devlink DROP trap |
 | `drop_reason`            | string   | 软件丢包为 `SKB_DROP_REASON_*`；无法从内核 BTF 解析时记录 warning 并回退为数字。硬件丢包为 devlink trap 名称 |

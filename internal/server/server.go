@@ -150,6 +150,9 @@ func (s *Server) Start(addr string) error {
 		err := execution.httpServer.Serve(execution.listener)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
+		} else if err != nil {
+			// A failed listener must not leave connections owned by a stopped run.
+			err = errors.Join(err, execution.httpServer.Close())
 		}
 		s.mu.Lock()
 		execution.result = err

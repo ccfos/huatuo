@@ -30,32 +30,9 @@ import (
 
 var fieldNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
 
-type (
-	termsAgg struct {
-		Field string `json:"field"`
-		Size  int    `json:"size"`
-	}
-	termsAggBody struct {
-		Terms termsAgg `json:"terms"`
-	}
-	valuesBody struct {
-		Size  int                     `json:"size"`
-		Query *types.Query            `json:"query,omitempty"`
-		Aggs  map[string]termsAggBody `json:"aggs"`
-	}
-	valuesResponse struct {
-		Aggregations struct {
-			Terms struct {
-				Buckets []struct {
-					Key any `json:"key"`
-				} `json:"buckets"`
-			} `json:"terms"`
-		} `json:"aggregations"`
-	}
-	deleteByQueryBody struct {
-		Query *types.Query `json:"query"`
-	}
-)
+type deleteByQueryBody struct {
+	Query *types.Query `json:"query"`
+}
 
 func validateFieldName(field string) error {
 	if !fieldNamePattern.MatchString(field) {
@@ -144,10 +121,15 @@ func buildValuesRequest(field string, q driver.Query, size int) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	body := valuesBody{
-		Size:  0,
+	hitsSize := 0
+	body := essearch.Request{
+		Size:  &hitsSize,
 		Query: query,
-		Aggs:  map[string]termsAggBody{"terms": {Terms: termsAgg{Field: field, Size: size}}},
+		Aggregations: map[string]types.Aggregations{
+			"terms": {
+				Terms: &types.TermsAggregation{Field: &field, Size: &size},
+			},
+		},
 	}
 	return json.Marshal(body)
 }

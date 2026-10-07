@@ -74,7 +74,18 @@ func TestWatcherKernelNotification(t *testing.T) {
 	t.Cleanup(func() { _ = w.Close() })
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	id, err := w.Add(ctx, "/"+filepath.Base(directory))
+	identity, err := os.Lstat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := os.Lstat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, err := w.Add(ctx, "/"+filepath.Base(directory), other); id != 0 || !errors.Is(err, unix.ESTALE) {
+		t.Fatalf("mismatched kernel directory identity = %d, %v", id, err)
+	}
+	id, err := w.Add(ctx, "/"+filepath.Base(directory), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,8 +111,8 @@ func TestWatcherKernelNotification(t *testing.T) {
 	if _, err := input.Write([]byte{1}); err != nil {
 		t.Fatal(err)
 	}
-	var events [1]Event
-	if _, err := w.ReadEvents(ctx, events[:]); err != nil {
+	events, err := waitWatchEvents(ctx, w)
+	if err != nil {
 		for _, name := range []string{"memory.current", "memory.peak", "memory.events.local", "cgroup.procs"} {
 			contents, readErr := os.ReadFile(filepath.Join(directory, name))
 			t.Logf("%s: %s (read error: %v)", name, contents, readErr)

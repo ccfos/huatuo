@@ -15,27 +15,34 @@
 package memsnapshot
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
-func TestProcessIdentity(t *testing.T) {
-	procRoot := t.TempDir()
+func TestProcessInstance(t *testing.T) {
+	procRoot := identityProcRootForTest(t)
 	pidDir := filepath.Join(procRoot, "42")
 	if err := os.Mkdir(pidDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stat := []byte("42 (worker) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 999")
+	fields := strings.Fields("S " + strings.Repeat("0 ", 49))
+	fields[19] = "999"
+	stat := []byte("42 (worker) " + strings.Join(fields, " "))
 	if err := os.WriteFile(filepath.Join(pidDir, "stat"), stat, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity := ProcessIdentity{TGID: 42, StartTimeTicks: 999}
-	if err := ValidateIdentity(procRoot, identity); err != nil {
+	identity := ProcessInstance{TGID: 42, StartTimeTicks: 999}
+	if err := ValidateProcessInstance(identity); err != nil {
 		t.Fatal(err)
 	}
 	identity.StartTimeTicks++
-	if err := ValidateIdentity(procRoot, identity); err == nil {
+	if err := ValidateProcessInstance(identity); err == nil {
 		t.Fatal("changed process identity was accepted")
 	}
 }
@@ -61,4 +68,85 @@ func TestFindLoadBiasMappingIdentity(t *testing.T) {
 	if _, err := FindLoadBias(maps, &target, 0, 0x90000000); err == nil {
 		t.Fatal("accepted an underflowing relocation")
 	}
+}
+
+func TestReadProcessInstanceStat(t *testing.T) {
+	// Include the complete stat record because procfs parses more than starttime.
+	fields := strings.Fields("S " + strings.Repeat("0 ", 49))
+	fields[19] = "987654321"
+	valid := "123 (worker (heap)) " + strings.Join(fields, " ")
+	fields[19] = "0"
+	zero := "123 (worker (heap)) " + strings.Join(fields, " ")
+
+	for _, test := range []struct {
+		name      string
+		stat      string
+		want      uint64
+		wantError bool
+	}{
+		{name: "raw ticks and parentheses in comm", stat: valid, want: 987654321},
+		{name: "zero starttime", stat: zero},
+		{name: "truncated stat", stat: "123 (worker) S 0", wantError: true},
+		{name: "missing stat", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			procRoot := identityProcRootForTest(t)
+			// A real PID ensures the fixture detects accidental use of /proc.
+			pid := os.Getpid()
+			directory := filepath.Join(procRoot, strconv.Itoa(pid))
+			if err := os.Mkdir(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if test.stat != "" {
+				if err := os.WriteFile(filepath.Join(directory, "stat"), []byte(test.stat), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			identity, err := ReadProcessInstance(pid)
+			got := identity.StartTimeTicks
+			if (err != nil) != test.wantError || got != test.want {
+				t.Fatalf("starttime = %d, error = %v; want %d, error = %t", got, err, test.want, test.wantError)
+			}
+			if err == nil {
+				if err := ValidateProcessInstance(identity); err != nil {
+					t.Fatalf("validate read identity: %v", err)
+				}
+			}
+			if test.stat == "" && !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("missing stat error = %v, want os.ErrNotExist", err)
+			}
+		})
+	}
+}
+
+func TestReadProcessInstanceCurrentProcess(t *testing.T) {
+	identity, err := ReadProcessInstance(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.TGID != os.Getpid() {
+		t.Fatalf("identity=%+v", identity)
+	}
+	if err := ValidateProcessInstance(identity); err != nil {
+		t.Fatal(err)
+	}
+	for _, pid := range []int{0, -1} {
+		if _, err := ReadProcessInstance(pid); err == nil {
+			t.Fatalf("accepted pid %d", pid)
+		}
+	}
+}
+
+// These tests are serial because RootPrefix changes the process-wide mount paths.
+func identityProcRootForTest(t *testing.T) string {
+	t.Helper()
+	previous := filepath.Dir(procfs.DefaultPath())
+	root := t.TempDir()
+	procRoot := filepath.Join(root, "proc")
+	if err := os.Mkdir(procRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	procfs.RootPrefix(root)
+	t.Cleanup(func() { procfs.RootPrefix(previous) })
+	return procRoot
 }

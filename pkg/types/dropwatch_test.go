@@ -70,7 +70,6 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := &DropWatchTracing{
-				KtimeNS:                 12_345_678_901_234_567,
 				ObservedTimestamp:       timeutil.Timestamp{Time: time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)},
 				KernelObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 6, 12, 23, 59, 59, 0, time.UTC)},
 				Layers:                  tc.pkt,
@@ -89,31 +88,38 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 			if diff := cmp.Diff(tc.pkt, got.Layers); diff != "" {
 				t.Errorf("Layers mismatch (-want +got):\n%s", diff)
 			}
-			if got.KtimeNS != ev.KtimeNS {
-				t.Errorf("KtimeNS = %d, want %d", got.KtimeNS, ev.KtimeNS)
+			if !got.ObservedTimestamp.Equal(ev.ObservedTimestamp.Time) {
+				t.Errorf("ObservedTimestamp = %v, want %v", got.ObservedTimestamp, ev.ObservedTimestamp)
+			}
+			if got.KernelObservedTimestamp == nil || !got.KernelObservedTimestamp.Equal(ev.KernelObservedTimestamp.Time) {
+				t.Errorf("KernelObservedTimestamp = %v, want %v", got.KernelObservedTimestamp, ev.KernelObservedTimestamp)
 			}
 		})
 	}
 }
 
-func TestDropWatchTracingLegacyKernelTime(t *testing.T) {
+func TestDropWatchTracingJSONExcludesMonotonicClock(t *testing.T) {
+	const observed = "2026-06-13T00:00:00.123456789Z"
+	const kernel = "2026-06-12T23:59:59.987654321Z"
+	data := []byte(`{"observed_timestamp":"` + observed + `","kernel_observed_timestamp":"` + kernel + `"}`)
 	var event DropWatchTracing
-	if err := json.Unmarshal([]byte(`{"observed_timestamp":"2026-06-13T00:00:00Z"}`), &event); err != nil {
+	if err := json.Unmarshal(data, &event); err != nil {
 		t.Fatal(err)
 	}
-	if event.KtimeNS != 0 {
-		t.Fatalf("legacy KtimeNS = %d, want 0", event.KtimeNS)
-	}
+
 	encoded, err := json.Marshal(&event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]any
 	if err := json.Unmarshal(encoded, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := fields["ktime_ns"]; exists {
-		t.Fatal("zero ktime_ns must be omitted")
+	if fields["observed_timestamp"] != observed || fields["kernel_observed_timestamp"] != kernel {
+		t.Fatalf("observation timestamps changed: %s", encoded)
+	}
+	if _, exists := fields["kernel_observed_ns"]; exists {
+		t.Error("internal clock kernel_observed_ns leaked into JSON")
 	}
 }
 

@@ -57,7 +57,7 @@ EOF
 }
 
 start_control_stack() {
-	elasticsearch_start
+	storage_start
 	integration_huatuo_bamai_start \
 		write_control_bamai_config \
 		--region integration \

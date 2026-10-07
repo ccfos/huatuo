@@ -29,7 +29,7 @@ SYNACK_REJECT_PORT=$((TEST_PORT + 1))
 S_ADDR="10.99.3.1"
 C_ADDR="10.99.3.2"
 
-require_python3
+require_commands python3
 
 cleanup() {
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true

@@ -139,23 +139,31 @@ assert_huatuo_bamai_containers_absent() {
 	local desc=$1
 	shift
 
-	wait_until \
+	if ! wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		huatuo_bamai_containers_absent "$@" \
-		|| fatal "${desc}: stale container metadata remained available"
+		huatuo_bamai_containers_absent "$@"; then
+		local container_id
+		for container_id in "$@"; do
+			log_error "container deletion not confirmed: ${container_id}; current API response follows"
+			curl -sS "${CURL_TIMEOUT[@]}" -w '\nHTTP status: %{http_code}\n' \
+				"${HUATUO_BAMAI_ADDR}/v1/containers/${container_id}" >&2 \
+				|| log_error "container metadata request failed: ${container_id}"
+		done
+		fatal "${desc}: container API did not confirm deletion with HTTP 404"
+	fi
 }
 
 e2e_test_teardown() {
 	local code=$1
 
-	huatuo_bamai_stop || true
+	huatuo_bamai_stop || code=1
 	if ! huatuo_bamai_log_check; then
 		log_error "❌ huatuo-bamai log check failed"
 		code=1
 	fi
 
-	if [[ $code -ne 0 ]]; then
+	if [[ $code -ne 0 && $code -ne 77 ]]; then
 		log_error "❌ e2e test failed with exit code: $code"
 		return 1
 	fi
