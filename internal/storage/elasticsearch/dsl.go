@@ -245,11 +245,37 @@ func buildRangeClause(filter driver.Filter) (types.RangeQuery, error) {
 	if s, ok := filter.Value.(string); ok {
 		return buildDateRangeClause(filter.Op, s)
 	}
+	switch filter.Value.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return buildIntegerRangeClause(filter.Op, filter.Value)
+	}
 	f, ok := asFloat64(filter.Value)
 	if !ok {
 		return nil, fmt.Errorf("%w: unsupported range value type", driver.ErrUnsupportedOp)
 	}
 	return buildNumberRangeClause(filter.Op, f)
+}
+
+func buildIntegerRangeClause(op driver.Op, value any) (types.RangeQuery, error) {
+	// Converting integer bounds to float64 rounds values beyond its exact range.
+	bound, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("marshal integer range bound: %w", err)
+	}
+	q := types.UntypedRangeQuery{}
+	switch op {
+	case driver.OpGt:
+		q.Gt = bound
+	case driver.OpGte:
+		q.Gte = bound
+	case driver.OpLt:
+		q.Lt = bound
+	case driver.OpLte:
+		q.Lte = bound
+	default:
+		return nil, fmt.Errorf("%w: %s", driver.ErrUnsupportedOp, op)
+	}
+	return q, nil
 }
 
 func buildNumberRangeClause(op driver.Op, value float64) (types.RangeQuery, error) {
