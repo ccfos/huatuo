@@ -459,9 +459,29 @@ Bulk failures are split into two layers with different retry semantics:
 | **Whole-batch retry** | Transport error (connect / timeout / TLS)<br>HTTP status: `429 / 502 / 503 / 504` | Client retries with exponential backoff: 100 ms → 200 ms → 400 ms → 800 ms, up to **3 attempts**            | ✅ auto |
 | **Whole-batch reject**| HTTP status: `400 / 401 / 403 / 404 / 413`, etc.                              | Not retried; all records in the batch are dropped, an error is logged via `OnError`                        | ❌ drop |
 | **Per-item failure**  | 200 OK with per-item error: version conflict, mapping error, document too large| Not retried; only the failed item is dropped, `OnFailure` logs `index/id/status/type/reason`               | ❌ drop |
-| **Per-item success**  | 200 OK with per-item success                                                  | Considered durably indexed                                                                                 | —        |
+| **Per-item success**  | 200 OK with per-item success                                                  | Primary write succeeded; replica failures produce a warning with index, document ID, and failed shard count | —        |
 
 **Why this design**: 429/5xx and transport errors signal transient remote unavailability where retries are effective; 4xx (except 429) and per-item errors are client-side semantic issues (data shape, permissions) where retries would only amplify the failure — they should be surfaced via logs for human investigation.
+
+#### Response Errors
+
+HTTP success does not guarantee a complete result. `Query` and `Values` return
+an error without partial results when a search times out or a shard fails.
+`Count` returns zero and an error on shard failure. A search timeout takes
+precedence over shard failures. Shard errors include the failed shard count and
+the first failure's available type, reason, and nested causes.
+
+After an HTTP success response, `DeleteByQuery` checks for timeouts and failures
+in that order and returns the first error with the reported deleted count. HTTP errors
+return zero and an error, except that a missing index returns zero without an error.
+Any completed deletions are not rolled back.
+Direct writes and deletes retain primary-operation success when replicas fail;
+they log a warning with the available failure details. Bulk writes also report
+replica failures through warnings, without retrying the successful primary write.
+
+HTTP errors include the response status and available Elasticsearch error details.
+Unrecognized or oversized error bodies are reported as text, limited to 4 KiB
+plus a truncation marker.
 
 #### Data-Loss Scenarios
 

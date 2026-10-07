@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -30,8 +29,10 @@ import (
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 	"github.com/elastic/go-elasticsearch/v8/esutil"
 	escount "github.com/elastic/go-elasticsearch/v8/typedapi/core/count"
+	esdelete "github.com/elastic/go-elasticsearch/v8/typedapi/core/delete"
 	esdeletebyquery "github.com/elastic/go-elasticsearch/v8/typedapi/core/deletebyquery"
 	esget "github.com/elastic/go-elasticsearch/v8/typedapi/core/get"
+	esindex "github.com/elastic/go-elasticsearch/v8/typedapi/core/index"
 	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 
@@ -150,6 +151,14 @@ func (s *Storage) Save(
 		Action:     "index",
 		DocumentID: rec.ID,
 		Body:       bytes.NewReader(rec.Data),
+		OnSuccess: func(_ context.Context, item esutil.BulkIndexerItem, res esutil.BulkIndexerResponseItem) {
+			// The indexer treats successful items with replica failures as successes.
+			if res.Shards.Failed > 0 {
+				log.WithField("index", item.Index).WithField("id", item.DocumentID).
+					WithField("failed_shards", res.Shards.Failed).
+					Warn("elasticsearch bulk save replica failure")
+			}
+		},
 		OnFailure: func(_ context.Context, _ esutil.BulkIndexerItem, res esutil.BulkIndexerResponseItem, err error) {
 			// Reached only after client-level retries are exhausted, or the
 			// failure is per-item (parsing, mapping, version conflict). The
@@ -196,6 +205,18 @@ func (s *Storage) saveDirect(
 	if res.IsError() {
 		return responseError("save document", s.index, res)
 	}
+
+	var payload esindex.Response
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		return fmt.Errorf("elasticsearch backend save %s/%s: decode: %w", s.index, rec.ID, err)
+	}
+	// The primary write has succeeded and is not rolled back by replica failures.
+	// Only log the failure to avoid triggering retries of a successful write.
+	if err := checkShardStatus(&payload.Shards_); err != nil {
+		log.WithError(err).WithField("index", s.index).WithField("id", rec.ID).
+			Warn("elasticsearch save replica failure")
+	}
+
 	return nil
 }
 
@@ -242,6 +263,18 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 	if res.IsError() {
 		return responseError("delete document", s.index, res)
 	}
+
+	var payload esdelete.Response
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		return fmt.Errorf("elasticsearch backend delete %s/%s: decode: %w", s.index, id, err)
+	}
+	// The primary delete has succeeded and is not rolled back by replica failures.
+	// Only log the failure to avoid triggering retries of a successful delete.
+	if err := checkShardStatus(&payload.Shards_); err != nil {
+		log.WithError(err).WithField("index", s.index).WithField("id", id).
+			Warn("elasticsearch delete replica failure")
+	}
+
 	return nil
 }
 
@@ -326,6 +359,10 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend query %s: decode: %w", s.index, err)
 	}
+	if err := checkSearchStatus(&payload); err != nil {
+		return nil, fmt.Errorf("elasticsearch backend query %s: %w", s.index, err)
+	}
+
 	records := make([]driver.Record, 0, len(payload.Hits.Hits))
 	for i := range payload.Hits.Hits {
 		hit := &payload.Hits.Hits[i]
@@ -362,10 +399,10 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 		return 0, fmt.Errorf("elasticsearch backend count %s: decode: %w", s.index, err)
 	}
-	// A successful HTTP response can contain a count from only some shards.
-	if payload.Shards_.Failed > 0 {
-		return 0, fmt.Errorf("elasticsearch backend count %s failed on %d shards", s.index, payload.Shards_.Failed)
+	if err := checkShardStatus(&payload.Shards_); err != nil {
+		return 0, fmt.Errorf("elasticsearch backend count %s: %w", s.index, err)
 	}
+
 	return payload.Count, nil
 }
 
@@ -398,12 +435,8 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: decode: %w", s.index, field, err)
 	}
-	// HTTP success can still carry incomplete buckets after a timeout or shard failure.
-	if payload.TimedOut {
-		return nil, fmt.Errorf("elasticsearch backend terms %s/%s timed out", s.index, field)
-	}
-	if payload.Shards_.Failed > 0 {
-		return nil, fmt.Errorf("elasticsearch backend terms %s/%s failed on %d shards", s.index, field, payload.Shards_.Failed)
+	if err := checkSearchStatus(&payload); err != nil {
+		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
 	}
 
 	result, err := termsValues(payload.Aggregations["terms"])
@@ -463,12 +496,4 @@ func termsValues(aggregation types.Aggregate) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unexpected terms buckets type %T", buckets)
 	}
-}
-
-func responseError(action, target string, res *esapi.Response) error {
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return fmt.Errorf("elasticsearch %s %s: status %d: read body: %w", action, target, res.StatusCode, err)
-	}
-	return fmt.Errorf("elasticsearch %s %s: status %d: %s", action, target, res.StatusCode, strings.TrimSpace(string(body)))
 }
