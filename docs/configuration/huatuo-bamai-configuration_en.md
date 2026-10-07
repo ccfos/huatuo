@@ -710,8 +710,8 @@ Commented values are defaults.
 | RunTracingToolTimeout | Cooperative capture timeout shared by Go, Java, and Python, in seconds; defaults to 2 and must be positive |
 | MaxMemoryObjectEntries | Maximum number of ranked memory object entries in a snapshot, from 1 to 100; defaults to 10; final JSON is trimmed to at most 512 KiB |
 
-Runtime detection has a separate fixed one-second budget. Persistence is not
-included in the capture budget. Timeouts cannot interrupt synchronous reads
+Runtime detection and persistence are not included in the capture budget.
+Runtime detection has no separate timeout. Timeouts cannot interrupt synchronous reads
 already executing, so they do not bound the total operation time.
 
 **Trigger conditions:**
@@ -730,15 +730,67 @@ changes. One watcher manages all targets without periodic sampling. Repeated
 notifications for a target are coalesced; they do not count every crossing or
 report recovery below the threshold. Capture rechecks current usage and identity.
 
-Container changes reuse shared CSS notifications without carrying full paths.
-The snapshot watcher resolves and saves the actual memory cgroup path through the
-container init PID in its own processing loop. Unavailable paths or lost
-notifications use deferred directory-scan recovery; pressure triggers may be
-missed before monitoring is restored.
+This feature requires the pod manager. It actively maintains the container view
+from shared CSS lifecycle hints and supplies an initial view followed by events
+with instance generations, init PIDs, and memory cgroup paths. The snapshot module
+no longer scans the cgroup tree. Subscription overflow recovers from a complete
+pod view; synchronization failure suspends capture and never implies deletion.
+
+Running ordinary containers and restartable init sidecars are monitored;
+ephemeral debug containers and ordinary init containers are excluded. Ordinary
+registration errors and target capacity exhaustion are logged and the directory
+instance is skipped. Invalidated registrations are removed without automatic
+retries or backfilling. Repeated events, full views, and container generation changes
+do not restore a failed watch. A replacement directory, a new tracking lifetime
+after the previous container departs, or a huatuo-bamai restart allows a new attempt.
+Fatal errors such as host resource exhaustion still stop the current watcher.
+Each monitored container must have its own memory cgroup directory. A watch
+and its capture observations bind directly to one container instance. If registration
+returns a watch already owned by another container, the feature stops, cancels capture,
+and releases its watches. Correct the cgroup isolation and restart huatuo-bamai;
+the feature does not retry this conflict. Directory replacement invalidates the old
+registration through the watcher's removal notification.
+Before capture and saving, the feature verifies the container generation and live
+binding, directory identity, and selected process identity and cgroup membership.
+Recorded memory usage and limits belong to that container's cgroup.
 
 See section 14 for deployment limitations and output lookup.
 
-#### 7.7 Known Issue Filtering (IssuesList)
+#### 7.7 IRQTracing AutoTracing
+
+This module detects abnormal irq+softirq utilization on one CPU and invokes
+`irqtracing` to collect softirq source and victim stacks.
+
+```bash
+[AutoTracing.IRQTracing]
+    Interval = 2
+    RunTracingToolTimeout = 3
+    IntervalTracing = 300
+    MaxEventsPerSecond = 1000
+    MinCPUs = 3
+    DeltaUsageThreshold = 20
+    RelativeIncreaseThreshold = 30
+    SustainedIntervals = 10
+    UsageThreshold = 80
+```
+
+- **Interval**: Sampling interval for per-CPU irq+softirq utilization from
+  `/proc/stat`. Default: 2s.
+- **RunTracingToolTimeout**: Duration of one `irqtracing` collection. Default:
+  3s.
+- **IntervalTracing**: Minimum interval between triggers. Default: 300s.
+- **MaxEventsPerSecond**: Combined source and victim stack-sample limit per
+  second on the traced CPU. Default: 1000. The daemon divides it as evenly as
+  possible between `softirq_raise` and `softirq_entry`; the default is 500
+  events/s per stream. The value must be between 2 and 8589934590.
+- **MinCPUs**, **DeltaUsageThreshold**, and **RelativeIncreaseThreshold**:
+  Configure the multi-CPU irq+softirq spike rule. The two thresholds are the
+  increase in percentage points and the increase relative to the previous
+  sample, respectively.
+- **SustainedIntervals** and **UsageThreshold**: Configure the consecutive
+  sample count and utilization threshold for the single-CPU sustained rule.
+
+#### 7.8 Known Issue Filtering (IssuesList)
 
 ```bash
 # Autotracing configuration.
@@ -1306,12 +1358,14 @@ If you need deeper customization for a specific scenario, feel free to provide m
   Yama, SELinux, or AppArmor may block access.
 - Selects only direct cgroup members, excluding `oom_score_adj = -1000`.
   Selection is skipped above 4096 PIDs, 64 KiB of PID data, or a one-second budget.
-- Discovery is capped at 8192 directories and 4096 container watches.
-  Lifecycle loss or registration failure triggers a delayed rescan
-  (about one second, up to three attempts per round); normal operation does
-  not scan periodically. Warnings indicate possible coverage gaps.
-  Recovery cannot replay missed pressure events.
+- At most 4096 containers are watched. Targets come from pod events without
+  scanning the cgroup tree. Ordinary registration errors and capacity exhaustion
+  are logged and skipped; invalidated registrations are removed without retries
+  or backfilling. Resource recovery or a full view does not re-register the same
+  instance, so pressure monitoring may remain unavailable for that instance.
 - Failed identity checks or missing container metadata prevent capture or saving.
+- Process selection and capture both use `/proc` in Huatuo's PID namespace.
+  Changing `--procfs-prefix` does not redirect memory snapshot reads.
 
 This table describes experimental implementation coverage, not validation of
 every listed version:
@@ -1328,15 +1382,19 @@ skipped tests and `unavailable` results do not prove compatibility.
 
 #### 14.2 Output and Troubleshooting
 
-Info logs record watcher state and each capture stage's start, end, duration,
-and result. Locate attempts by container/PID and correlate stages by `capture_id`.
-If a stage starts but does not finish, inspect bamai's
+Info logs record watcher state and capture attempts.
+Process selection and persistence details use Debug logs. Locate attempts by
+container/cgroup and use process-selection logs to identify the PID. Inspect
+stored snapshot status and reason fields for runtime diagnostics.
+If a capture attempt starts but does not finish, inspect bamai's
 `/debug/pprof/goroutine?debug=2` with appropriate authorization for the blocked stack.
 No logs alone do not prove that monitoring has stopped.
 
-`tracer_data.process_memory` reads `/proc/<pid>/status` once per attempt,
-including C/C++ processes. Runtime snapshot failures do not discard this summary;
-target identity changes or cancellation discard the result.
+`tracer_data.process_memory` reads `/proc/<pid>/status` once after runtime detection
+returns without error, including for unrecognized runtimes such as C/C++.
+Provider failures produce a `failed` snapshot and retain this summary.
+Detection or output-processing errors prevent persistence; inspect the capture
+attempt logs for the error. Target identity changes or cancellation discard the result.
 It provides no PSS, mapping rankings, or allocation stacks.
 
 | Field (bytes) | Source / meaning |
@@ -1362,9 +1420,29 @@ Query `tracing_documents` with `tracer_name = memory_threshold_snapshot` and
 `started_timestamp` records when the capture attempt starts;
 `observed_timestamp` records the collector's snapshot capture time.
 
+Go aggregates complete stack keys up to 32 frames for Go 1.18–1.22 and 1024 frames for Go 1.23–1.26; the shared output limit may shorten displayed stacks to 64 frames and sets `output_truncated`. An invalid bucket type, an overflowing stack or record address range, an excessive stack depth, or a cyclic bucket chain stops the scan with `partial`; repeated buckets are never counted twice.
+
+Once a scan becomes partial, it stops traversing further buckets and computes TopK from the valid samples retained from earlier batches and the current batch, within the aggregation budget. The `reason` records only the first cause; finishing the current batch does not append further causes.
+
+Any bucket header, record, or stack read failure, including a short read, fails the entire Go collection attempt and discards all runtime entries, including those from earlier batches. The collector reports `failed` with the read error; individual ranges are not retried.
+
+Samples with a stack depth of zero produce no allocation-site entry; an empty stack alone does not make the scan `partial`.
+
+Go snapshots require a known, enabled sampling rate and a nonempty bucket list. An unknown or disabled rate, or an empty bucket list, yields `unavailable` with a `reason` and no entries.
+
+Go collection uses a single request timeout across runtime reads, scanning,
+ranking, and entry construction. When it expires, runtime entries are discarded
+and the collector emits `failed` with a timeout reason; it still attempts to
+read the process memory summary. Cancellation is cooperative, so an in-flight
+system call or non-cancelable parsing step can finish after the deadline.
+
 Inspect `tracer_data.snapshot.status` (`complete`, `partial`,
 `unavailable`, or `failed`) together with `reason`, `runtime_version`,
 `duration_ms`, and `output_truncated`.
+
+`duration_ms` measures the provider stage, rounded up to milliseconds, for both
+successful and failed snapshots, including timeouts. It excludes runtime
+detection, process memory summary reads, output processing, and persistence.
 
 | Problem | Checks |
 |---------|--------|

@@ -18,9 +18,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -287,9 +289,9 @@ func (m *mockElasticsearchServer) handleSearch(w http.ResponseWriter, r *http.Re
 		writeMissingIndex(w, index)
 		return
 	}
-	if body["aggs"] != nil {
+	if body["aggregations"] != nil {
 		docs := m.matchDocumentsLocked(index, body["query"])
-		m.handleTermsSearch(w, body, docs)
+		m.handleTermsSearch(w, r, body, docs)
 		return
 	}
 	docs := m.queryDocumentsLocked(index, body)
@@ -315,8 +317,8 @@ func (m *mockElasticsearchServer) handleSearch(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (m *mockElasticsearchServer) handleTermsSearch(w http.ResponseWriter, body map[string]any, docs []mockElasticsearchDocument) {
-	aggs, _ := body["aggs"].(map[string]any)
+func (m *mockElasticsearchServer) handleTermsSearch(w http.ResponseWriter, r *http.Request, body map[string]any, docs []mockElasticsearchDocument) {
+	aggs, _ := body["aggregations"].(map[string]any)
 	termsAggregation, _ := aggs["terms"].(map[string]any)
 	termsConfig, _ := termsAggregation["terms"].(map[string]any)
 	fieldName := stringValue(termsConfig["field"])
@@ -355,6 +357,10 @@ func (m *mockElasticsearchServer) handleTermsSearch(w http.ResponseWriter, body 
 		})
 	}
 
+	aggregationName := "terms"
+	if r.URL.Query().Get("typed_keys") == "true" {
+		aggregationName = "sterms#terms"
+	}
 	resp := map[string]any{
 		"hits": map[string]any{
 			"total": map[string]any{
@@ -364,7 +370,7 @@ func (m *mockElasticsearchServer) handleTermsSearch(w http.ResponseWriter, body 
 			"hits": []any{},
 		},
 		"aggregations": map[string]any{
-			"terms": map[string]any{
+			aggregationName: map[string]any{
 				"buckets": responseBuckets,
 			},
 		},
@@ -1350,6 +1356,138 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 		if terms[index] != expectedTerm {
 			t.Errorf("Terms()[%d]=%q, want %q", index, terms[index], expectedTerm)
 		}
+	}
+}
+
+func TestElasticsearchBackendValuesResponses(t *testing.T) {
+	tests := []struct {
+		name          string
+		aggregation   string
+		timedOut      bool
+		failedShards  int
+		expected      []string
+		expectedError string
+	}{
+		{
+			name:        "string terms",
+			aggregation: `"sterms#terms":{"buckets":[{"key":"node-b","doc_count":3},{"key":"node-a","doc_count":2}]}`,
+			expected:    []string{"node-b", "node-a"},
+		},
+		{
+			name:        "integer terms",
+			aggregation: `"lterms#terms":{"buckets":[{"key":42,"doc_count":2},{"key":-7,"doc_count":1}]}`,
+			expected:    []string{"42", "-7"},
+		},
+		{
+			name:        "double terms",
+			aggregation: `"dterms#terms":{"buckets":[{"key":1.25,"doc_count":2}]}`,
+			expected:    []string{"1.25"},
+		},
+		{
+			name:        "unmapped terms",
+			aggregation: `"umterms#terms":{"buckets":[]}`,
+		},
+		{
+			name:        "empty terms",
+			aggregation: `"sterms#terms":{"buckets":[]}`,
+		},
+		{
+			name:        "opensearch unsigned terms",
+			aggregation: `"ulterms#terms":{"buckets":[{"key":42,"doc_count":2}]}`,
+			expected:    []string{"42"},
+		},
+		{
+			name:        "untyped terms",
+			aggregation: `"terms":{"buckets":[{"key":"node-a","doc_count":2}]}`,
+			expected:    []string{"node-a"},
+		},
+		{
+			name:          "timeout with partial buckets",
+			aggregation:   `"sterms#terms":{"buckets":[{"key":"node-a","doc_count":2}]}`,
+			timedOut:      true,
+			expectedError: "timed out",
+		},
+		{
+			name:          "failed shard with partial buckets",
+			aggregation:   `"sterms#terms":{"buckets":[{"key":"node-a","doc_count":2}]}`,
+			failedShards:  1,
+			expectedError: "failed on 1 shards",
+		},
+		{
+			name:          "missing aggregation",
+			expectedError: "unexpected terms aggregation type",
+		},
+		{
+			name:          "unexpected aggregation",
+			aggregation:   `"sum#terms":{"value":1}`,
+			expectedError: "unexpected terms aggregation type",
+		},
+		{
+			name:          "invalid buckets",
+			aggregation:   `"ulterms#terms":{"buckets":"invalid"}`,
+			expectedError: "unexpected terms buckets type",
+		},
+		{
+			name:          "invalid bucket",
+			aggregation:   `"ulterms#terms":{"buckets":[1]}`,
+			expectedError: "unexpected terms bucket 0 type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/" {
+					_, _ = w.Write([]byte(`{"version":{"number":"2.11.0","distribution":"opensearch"}}`))
+					return
+				}
+				if r.URL.Path != "/profiles/_search" || r.URL.Query().Get("typed_keys") != "true" {
+					t.Errorf("unexpected search URL: %s", r.URL)
+				}
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("decode search request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				expectedBody := `{"size":0,"query":{"match_all":{}},"aggregations":{"terms":{"terms":{"field":"label","size":3}}}}`
+				var expected map[string]any
+				if err := json.Unmarshal([]byte(expectedBody), &expected); err != nil {
+					t.Errorf("decode expected request: %v", err)
+					return
+				}
+				actualJSON, _ := json.Marshal(body)
+				expectedJSON, _ := json.Marshal(expected)
+				if !bytes.Equal(actualJSON, expectedJSON) {
+					t.Errorf("search request = %s, want %s", actualJSON, expectedJSON)
+				}
+				_, _ = fmt.Fprintf(w,
+					`{"timed_out":%t,"_shards":{"total":2,"successful":%d,"failed":%d},"hits":{"hits":[]},"aggregations":{%s}}`,
+					tt.timedOut, 2-tt.failedShards, tt.failedShards, tt.aggregation)
+			}))
+			defer server.Close()
+
+			backend, err := NewBackend(&Config{Addresses: []string{server.URL}, Index: "profiles"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = backend.Close(t.Context()) }()
+
+			values, err := backend.Values(t.Context(), "label", driver.Query{}, 3)
+			if tt.expectedError != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
+					t.Fatalf("Values() error = %v, want %q", err, tt.expectedError)
+				}
+				if values != nil {
+					t.Fatalf("Values() returned partial values %v with error %v", values, err)
+				}
+				return
+			}
+			if err != nil || !slices.Equal(values, tt.expected) {
+				t.Fatalf("Values() = (%v, %v), want (%v, nil)", values, err, tt.expected)
+			}
+		})
 	}
 }
 

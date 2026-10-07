@@ -37,13 +37,7 @@ readonly CORR_PAYLOAD_BYTES=2097152
 readonly CORR_SERVER_ADDR="10.99.0.1"
 readonly CORR_CLIENT_ADDR="10.99.0.2"
 
-command -v ip > /dev/null 2>&1 || skip "ip command is not installed"
-command -v jq > /dev/null 2>&1 || skip "jq command is not installed"
-command -v ss > /dev/null 2>&1 || skip "ss command is not installed"
-command -v tc > /dev/null 2>&1 || skip "tc command is not installed"
-require_python3
-[[ -r "${CORR_DROPWATCH_BPF}" ]] \
-	|| fatal "dropwatch BPF object is not readable: ${CORR_DROPWATCH_BPF}"
+require_commands ip jq ss tc python3
 
 CORR_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate a TCP server port"

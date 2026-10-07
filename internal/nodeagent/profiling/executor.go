@@ -19,21 +19,21 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type executor struct {
-	process   *exec.Process
+	process   *executil.Process
 	stream    *toolstream.Server
 	publisher ResultPublisher
 	requestID string
 }
 
 func newExecutor(
-	process *exec.Process,
+	process *executil.Process,
 	stream *toolstream.Server,
 	publisher ResultPublisher,
 	requestID string,
@@ -59,13 +59,10 @@ func (e *executor) Start(ctx context.Context) error {
 
 func (e *executor) Wait() error {
 	err := e.process.Wait()
-	if errors.Is(err, exec.ErrStopped) {
-		return errors.Join(operation.ErrStopped, err)
+	if errors.Is(err, executil.ErrStopped) {
+		err = errors.Join(operation.ErrStopped, err)
 	}
-	if err != nil {
-		return e.withOutput("wait for profiler", err)
-	}
-	return nil
+	return e.withOutput("wait for profiler", err)
 }
 
 func (e *executor) Stop(ctx context.Context) error {
@@ -97,7 +94,11 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) er
 }
 
 func (e *executor) withOutput(action string, err error) error {
-	output := e.process.Stdout()
+	output, outputErr := e.process.Stdout()
+	err = errors.Join(err, outputErr)
+	if err == nil {
+		return nil
+	}
 	if stderr := e.process.Stderr(); len(stderr) > 0 {
 		if len(output) > 0 {
 			output = append(output, '\n')

@@ -37,8 +37,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-command -v jq > /dev/null 2>&1 || skip "jq command is not installed"
-command -v bpftool > /dev/null 2>&1 || skip "bpftool command is not installed"
+require_commands jq bpftool
 [[ -r "${KERNEL_BTF}" ]] || skip "kernel BTF is not readable: ${KERNEL_BTF}"
 
 btf_dump="${HUATUO_BAMAI_TEST_TMPDIR}/vmlinux.btf"

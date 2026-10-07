@@ -15,109 +15,52 @@
 package golang
 
 import (
-	"bytes"
 	"context"
-	"debug/elf"
-	"fmt"
+	"errors"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-func TestDiscoverPIDRejectsPIESymbolOverflow(t *testing.T) {
-	workspace := t.TempDir()
-	source := filepath.Join(workspace, "main.go")
-	if err := os.WriteFile(source, []byte("package main\nimport \"runtime\"\nfunc main() { runtime.GC() }\n"), 0o600); err != nil {
-		t.Fatal(err)
+func TestSnapshotReadFailure(t *testing.T) {
+	p := New()
+	result, err := p.Snapshot(t.Context(), memsnapshot.Request{
+		Process: memsnapshot.ProcessInstance{TGID: int(^uint32(0) >> 1), StartTimeTicks: 1}, TopK: 10,
+	})
+	if result != nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot = %+v, %v, want no snapshot and missing process", result, err)
 	}
-	executable := filepath.Join(workspace, "fixture")
-	if output, err := exec.Command("go", "build", "-buildmode=pie", "-o", executable, source).CombinedOutput(); err != nil {
-		t.Fatalf("build PIE fixture: %v: %s", err, output)
+}
+
+func TestSnapshotCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	result, err := New().Snapshot(ctx, memsnapshot.Request{TopK: 1})
+	if result != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled snapshot = %+v, %v", result, err)
 	}
-	raw, err := os.ReadFile(executable)
+}
+
+func TestSnapshotIdentityChanged(t *testing.T) {
+	identity, err := memsnapshot.ReadProcessInstance(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	file, err := elf.NewFile(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
+	identity.StartTimeTicks++
+	result, err := New().Snapshot(t.Context(), memsnapshot.Request{Process: identity, TopK: 1})
+	if result != nil || err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("identity mismatch: %+v %v", result, err)
 	}
-	defer file.Close()
-	symbols, err := file.Symbols()
-	if err != nil {
-		t.Fatal(err)
-	}
-	valueOffsets := make(map[string]uint64)
-	for index, symbol := range symbols {
-		if symbol.Name == "runtime.mbuckets" || symbol.Name == "runtime.MemProfileRate" {
-			// debug/elf omits the null symbol at index zero.
-			valueOffsets[symbol.Name] = file.Section(".symtab").Offset + uint64(index+1)*24 + 8
-		}
-	}
-	if len(valueOffsets) != 2 {
-		t.Fatalf("missing runtime symbols: %v", valueOffsets)
-	}
-	loadOffset, loadVaddr, err := firstLoadSegment(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stat, err := os.ReadFile("/proc/self/stat")
-	if err != nil {
-		t.Fatal(err)
-	}
-	const bias = uint64(0x10000)
-	for _, test := range []struct {
-		name, symbol string
-		value        uint64
-		wantError    bool
-	}{
-		{"ordinary PIE", "runtime.mbuckets", 0x1000, false},
-		{"mbuckets wraps to low address", "runtime.mbuckets", ^uint64(0) - bias + 0x1001, true},
-		{"rate wraps to low address", "runtime.MemProfileRate", ^uint64(0) - bias + 0x1001, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			procRoot := t.TempDir()
-			pidDir := filepath.Join(procRoot, "123")
-			if err := os.Mkdir(pidDir, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			data := bytes.Clone(raw)
-			file.ByteOrder.PutUint64(data[valueOffsets[test.symbol]:], test.value)
-			for name, contents := range map[string][]byte{"fixture": data, "stat": stat} {
-				if err := os.WriteFile(filepath.Join(pidDir, name), contents, 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			fixturePath := filepath.Join(pidDir, "fixture")
-			if err := os.Symlink(fixturePath, filepath.Join(pidDir, "exe")); err != nil {
-				t.Fatal(err)
-			}
-			exeStat, err := os.Stat(filepath.Join(pidDir, "exe"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			maps := fmt.Sprintf("%x-%x r-xp %08x 00:00 %d %s\n",
-				loadVaddr+bias, loadVaddr+bias+0x1000, loadOffset, exeStat.Sys().(*syscall.Stat_t).Ino, fixturePath)
-			if err := os.WriteFile(filepath.Join(pidDir, "maps"), []byte(maps), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			target, err := discoverPID(context.Background(), procRoot, 123)
-			if test.wantError {
-				if err == nil || !strings.Contains(err.Error(), test.symbol+" address overflows") {
-					t.Fatalf("error = %v, want %s address overflow", err, test.symbol)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, want := target.mbuckets(), test.value+bias
-			if got != want {
-				t.Fatalf("resolved address = %#x, want %#x", got, want)
-			}
-		})
+}
+
+func TestSnapshotDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(t.Context(), time.Unix(1, 0))
+	defer cancel()
+	result, err := New().Snapshot(ctx, memsnapshot.Request{TopK: 1})
+	if result != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired snapshot = %+v, %v", result, err)
 	}
 }

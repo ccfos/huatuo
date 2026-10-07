@@ -17,8 +17,26 @@
 set -euo pipefail
 
 usage() {
-	echo "usage: $0 [test_*.sh] [repeat-count]" >&2
+	echo "usage: $0 [--suite integration|e2e] [test_*.sh] [repeat-count]" >&2
 }
+
+TEST_SUITE=integration
+if [[ ${1:-} == --suite ]]; then
+	if (($# < 2)); then
+		usage
+		exit 2
+	fi
+	TEST_SUITE=$2
+	shift 2
+fi
+case ${TEST_SUITE} in
+integration | e2e) ;;
+*)
+	echo "unsupported test suite: ${TEST_SUITE}; expected integration or e2e" >&2
+	exit 2
+	;;
+esac
+readonly TEST_SUITE
 
 if (($# > 2)); then
 	usage
@@ -28,14 +46,16 @@ fi
 readonly REQUESTED_TEST=${1:-}
 readonly REQUESTED_REPEAT_COUNT=${2:-1}
 readonly INTEGRATION_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+readonly ROOT_DIR=$(cd "${INTEGRATION_DIR}/.." && pwd)
+readonly TEST_DIR="${ROOT_DIR}/${TEST_SUITE}"
 
 if [[ -n "${REQUESTED_TEST}" ]]; then
 	[[ "${REQUESTED_TEST}" == test_*.sh && "${REQUESTED_TEST}" != */* ]] || {
-		echo "integration test must be a test_*.sh file name: ${REQUESTED_TEST}" >&2
+		echo "${TEST_SUITE} test must be a test_*.sh file name: ${REQUESTED_TEST}" >&2
 		exit 2
 	}
-	[[ -f "${INTEGRATION_DIR}/${REQUESTED_TEST}" ]] || {
-		echo "integration test not found: ${REQUESTED_TEST}" >&2
+	[[ -f "${TEST_DIR}/${REQUESTED_TEST}" ]] || {
+		echo "${TEST_SUITE} test not found: ${REQUESTED_TEST}" >&2
 		exit 2
 	}
 fi
@@ -45,41 +65,75 @@ fi
 	exit 2
 }
 
-# Integration tests need root: unshare --uts/--mount, BPF loading, and the
-# test_*.sh cases themselves all require CAP_SYS_ADMIN/CAP_BPF. Skip cleanly
-# when invoked without privilege so `make integration` is a no-op for
-# unprivileged developers and CI lanes that don't grant root.
-if [[ ${EUID} -ne 0 ]]; then
-	printf '[%s][INTEGRATION][SKIP] ⏭️ requires root (EUID=%s)\n' \
-		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "$EUID" >&2
-	exit 0
+export TEST_LOG_TAG=${TEST_SUITE^^}
+source "${INTEGRATION_DIR}/lib.sh"
+test_results_init
+shopt -s nullglob
+if [[ -n "${REQUESTED_TEST}" ]]; then
+	test_scripts=("${TEST_DIR}/${REQUESTED_TEST}")
+else
+	test_scripts=("${TEST_DIR}"/test_*.sh)
 fi
 
-# Run the core integration tests.
+# The runner creates UTS and mount namespaces before executing any case.
+if [[ ${EUID} -ne 0 ]]; then
+	log_info "SKIP: requires root (EUID=${EUID})"
+	test_skipped=$((${#test_scripts[@]} * REQUESTED_REPEAT_COUNT))
+	test_results_summary
+	exit 0
+fi
+if ! (require_commands unshare mount); then
+	test_skipped=$((${#test_scripts[@]} * REQUESTED_REPEAT_COUNT))
+	test_results_summary
+	exit 0
+fi
+require_build_output
+
 unshare --uts --mount bash -c '
+	set -euo pipefail
 	mount --make-rprivate /
 	echo "huatuo-dev" > /proc/sys/kernel/hostname
 	hostname huatuo-dev 2>/dev/null || true
 
-	set -euo pipefail
+	requested_repeat_count=$1
+	test_suite=$2
+	cd "$3"
+	shift 3
+	test_scripts=("$@")
 	source "./integration/env.sh"
 	source "${ROOT_DIR}/integration/lib.sh"
-	requested_test=$1
-	requested_repeat_count=$2
+	if [[ ${test_suite} == e2e ]]; then
+		source "${ROOT_DIR}/e2e/lib.sh"
+	fi
+	test_results_init
 	active_test_workspace=""
+	active_test_name=""
+
+	runner_test_exit() {
+		local status=$1
+		if [[ ${test_suite} == e2e ]]; then
+			HUATUO_BAMAI_TEST_TMPDIR="${active_test_workspace}" e2e_test_teardown "${status}" || status=1
+			if [[ ${status} -ne 0 && ${status} -ne 77 ]]; then
+				log_error "e2e artifacts: ${active_test_workspace}"
+				dump_text_files "${active_test_workspace}" || true
+			fi
+		else
+			integration_test_exit "${status}" "${active_test_workspace}" || status=1
+		fi
+		return "${status}"
+	}
 
 	runner_cleanup() {
 		local runner_status=$?
-		[[ -n "${active_test_workspace}" ]] || return 0
-		integration_test_exit "${runner_status}" "${active_test_workspace}" || true
+		if [[ -n "${active_test_workspace}" ]]; then
+			runner_test_exit "${runner_status}" || runner_status=$?
+			test_result_record "${active_test_name}" "${runner_status}"
+		fi
+		test_results_summary
+		[[ ${runner_status} -ne 77 ]] || runner_status=0
+		exit "${runner_status}"
 	}
 	trap runner_cleanup EXIT
-
-	if [[ -n "${requested_test}" ]]; then
-		test_scripts=("${ROOT_DIR}/integration/${requested_test}")
-	else
-		test_scripts=("${ROOT_DIR}"/integration/test_*.sh)
-	fi
 
 	# Run each test in an isolated workspace owned by this runner.
 	for ((run = 1; run <= requested_repeat_count; run++)); do
@@ -88,26 +142,30 @@ unshare --uts --mount bash -c '
 			test_name=$(basename "${test_script}" .sh)
 			test_workspace=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${test_name}.XXXXXX")
 			active_test_workspace="${test_workspace}"
+			active_test_name="$(basename "${test_script}") (${run}/${requested_repeat_count})"
 			log_info "🚀🚀 start: $(basename "${test_script}") (${run}/${requested_repeat_count})"
 
-			chmod +x "${test_script}"
+			if [[ ${test_suite} == e2e ]]; then
+				# Cases may restart bamai; restore the baseline for each next case.
+				HUATUO_BAMAI_TEST_TMPDIR="${test_workspace}" huatuo_bamai_start "${HUATUO_BAMAI_ARGS_E2E[@]}"
+			fi
 			if HUATUO_BAMAI_TEST_TMPDIR="${test_workspace}" bash "${test_script}"; then
 				test_status=0
 			else
 				test_status=$?
 			fi
 
-			integration_test_exit "${test_status}" "${test_workspace}"
+			runner_test_exit "${test_status}" || test_status=$?
 			active_test_workspace=""
-			if [[ ${test_status} -ne 0 ]]; then
-				fatal "❌ failed: $(basename "${test_script}") (${run}/${requested_repeat_count})"
+			test_result_record "${active_test_name}" "${test_status}"
+			if [[ ${test_status} -ne 0 && ${test_status} -ne 77 ]]; then
+				exit "${test_status}"
 			fi
-
-			log_info "✅✅ passed: $(basename "${test_script}") (${run}/${requested_repeat_count})"
 		done
 	done
 
-	# Failed runs exit earlier and retain this root with their artifacts.
-	rmdir -- "${HUATUO_BAMAI_TEST_TMPDIR}"
-	log_info "🎉🎉 all integration tests passed."
-' integration-runner "${REQUESTED_TEST}" "${REQUESTED_REPEAT_COUNT}"
+	# E2E retains artifacts; successful integration runs leave an empty root.
+	if [[ ${test_suite} == integration ]]; then
+		rmdir -- "${HUATUO_BAMAI_TEST_TMPDIR}"
+	fi
+' huatuo-test-runner "${REQUESTED_REPEAT_COUNT}" "${TEST_SUITE}" "${ROOT_DIR}" "${test_scripts[@]}"

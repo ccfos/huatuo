@@ -358,9 +358,7 @@ func TestTCPRetransmitJSONExcludesMonotonicClock(t *testing.T) {
 	if raw["kernel_observed_timestamp"] != event.KernelObservedTimestamp.FormatUTC() {
 		t.Fatalf("JSON = %s", data)
 	}
-	for _, field := range []string{"ktime_ns", "kernel_observed_ns"} {
-		if _, ok := raw[field]; ok {
-			t.Fatalf("internal clock %q leaked into JSON", field)
-		}
+	if _, ok := raw["kernel_observed_ns"]; ok {
+		t.Fatal("internal clock kernel_observed_ns leaked into JSON")
 	}
 }

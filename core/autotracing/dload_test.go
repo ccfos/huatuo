@@ -18,8 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/pod"
 	cadvisorV1 "github.com/google/cadvisor/info/v1"
+
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 func TestNewDloadTracing(t *testing.T) {

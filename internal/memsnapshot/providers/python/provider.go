@@ -38,7 +38,7 @@ func unsupportedRuntime(reason string) error {
 // classify a process with no CPython runtime as unavailable rather than failed.
 var errNotCPythonModule = errors.New("module does not expose a CPython runtime")
 
-// Provider captures a CPython GC-tracked object census through the external
+// Provider reads a CPython GC-tracked object census through the external
 // reader.
 type Provider struct {
 	reader *reader
@@ -49,27 +49,51 @@ func New() *Provider {
 	return &Provider{reader: newReader("")}
 }
 
-// Capture counts CPython objects currently tracked by the cyclic garbage
-// collector and reduces them to type aggregates.
-func (p *Provider) Capture(ctx context.Context,
+// Snapshot counts CPython objects currently tracked by the cyclic garbage
+// collector and returns at most request.TopK ranked type aggregates.
+// Unavailable or partial data is a snapshot; fatal read failures and cancellation
+// return an error without a snapshot.
+func (p *Provider) Snapshot(ctx context.Context,
 	request memsnapshot.Request,
 ) (*memsnapshot.Snapshot, error) {
-	response, err := p.reader.capture(ctx, request)
-	return captureResult(response, err), nil
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	snapshot, err := p.reader.snapshot(ctx, request)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+
+	return snapshotResult(snapshot, err)
 }
 
-func captureResult(response *memsnapshot.Snapshot, err error) *memsnapshot.Snapshot {
+func snapshotResult(snapshot *memsnapshot.Snapshot, err error) (*memsnapshot.Snapshot, error) {
 	if errors.Is(err, errUnsupportedRuntime) {
-		return memsnapshot.Unavailable(boundedReason(err.Error()))
+		return memsnapshot.Unavailable(boundedReason(err.Error())), nil
 	}
 	if err != nil {
-		return memsnapshot.Failed(boundedReason(err.Error()))
+		return nil, boundedError{cause: err, reason: boundedReason(err.Error())}
 	}
-	if response == nil {
-		return memsnapshot.Failed("Python external census returned a nil response")
+	if snapshot == nil {
+		return nil, errors.New("Python external census returned a nil response")
 	}
-	response.Reason = boundedReason(response.Reason)
-	return response
+	snapshot.Reason = boundedReason(snapshot.Reason)
+	return snapshot, nil
+}
+
+// boundedError preserves the reader's cause without expanding persisted diagnostics.
+type boundedError struct {
+	cause  error
+	reason string
+}
+
+func (e boundedError) Error() string {
+	return e.reason
+}
+
+func (e boundedError) Unwrap() error {
+	return e.cause
 }
 
 func boundedReason(reason string) string {

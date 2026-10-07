@@ -38,10 +38,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-command -v go > /dev/null || skip "go command is not installed"
-command -v clang > /dev/null || skip "clang command is not installed"
-[[ -x "${ROOT_DIR}/build/clang.sh" ]] \
-	|| fatal "BPF compiler wrapper is not executable: ${ROOT_DIR}/build/clang.sh"
+require_commands go clang "${ROOT_DIR}/build/clang.sh"
 [[ -r /sys/kernel/btf/vmlinux ]] \
 	|| skip "kernel BTF is not readable: /sys/kernel/btf/vmlinux"
 
