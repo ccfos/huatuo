@@ -37,18 +37,27 @@ if ! iptables -m connbytes -h 2>&1 | grep -q connbytes; then
 	skip "iptables connbytes module not available on this kernel"
 fi
 
-require_commands python3
+require_commands python3 ss
 
 cleanup() {
+	local status=$?
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true
 	[[ -n "${SRV_PID:-}" ]] && kill "${SRV_PID}" 2> /dev/null || true
 	[[ -n "${CLI_PID:-}" ]] && kill "${CLI_PID}" 2> /dev/null || true
 	sleep 0.2
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill -9 "${TCPSHARK_PID}" 2> /dev/null || true
 	tcp_namespace_cleanup
-	rm -rf "${OUTPUT_DIR}"
+	if ((status != 0)); then
+		dump_text_files "${OUTPUT_DIR}" || true
+	else
+		rm -rf "${OUTPUT_DIR}"
+	fi
 }
 trap cleanup EXIT
+
+tcp_server_is_listening() {
+	ip netns exec "${TCP_NS_SERVER}" ss -ltnH "sport = :${TEST_PORT}" | grep -q .
+}
 
 log_info "tcp retrans rate limit: rate=${RATE}/s, duration=${DURATION}s, deterministic netns loss"
 
@@ -58,27 +67,37 @@ ip netns exec "${TCP_NS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT
 	-m connbytes --connbytes 30:60 --connbytes-dir reply \
 	--connbytes-mode packets -j DROP
 
+# A fixed delay can start the client before Python binds under VM load.
+ip netns exec "${TCP_NS_SERVER}" timeout 15 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
+	--listen-address "${TCP_NS_SERVER_ADDR}" --port "${TEST_PORT}" \
+	--payload-bytes "${PAYLOAD_SIZE}" > "${OUTPUT_DIR}/server.log" 2>&1 &
+SRV_PID=$!
+wait_until 5 0.1 tcp_server_is_listening || fatal "TCP fixture did not start listening"
+
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
 	--max-events-per-second "${RATE}" \
 	--duration "${DURATION}" --output json \
 	> "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 sleep 1
-
-ip netns exec "${TCP_NS_SERVER}" timeout 10 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
-	--listen-address "${TCP_NS_SERVER_ADDR}" --port "${TEST_PORT}" \
-	--payload-bytes "${PAYLOAD_SIZE}" > /dev/null 2>&1 &
-SRV_PID=$!
-sleep 0.5
+if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
+	tcpshark_status=0
+	wait "${TCPSHARK_PID}" || tcpshark_status=$?
+	TCPSHARK_PID=""
+	fatal "tcpshark exited before workload start (status=${tcpshark_status})"
+fi
 
 ip netns exec "${TCP_NS_CLIENT}" timeout 8 bash -c \
-	"exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
+	"exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" \
+	2> "${OUTPUT_DIR}/client.log" &
 CLI_PID=$!
 
 sleep 6
 
-wait "${TCPSHARK_PID}" || true
+tcpshark_status=0
+wait "${TCPSHARK_PID}" || tcpshark_status=$?
 TCPSHARK_PID=""
+((tcpshark_status == 0)) || fatal "tcpshark exited with status ${tcpshark_status}"
 
 events=$(grep -c '"event_type":"tcp_retransmit_' "${OUTPUT_DIR}/events.json" 2> /dev/null || true)
 events=${events:-0}
