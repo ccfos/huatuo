@@ -68,6 +68,11 @@ run_case() {
 	local name=$1 typ=$2 identifier=$3 sequence=$4 output=$5
 	local out="${TOOL_WORK_DIR}/${name}.${output}"
 	local err="${TOOL_WORK_DIR}/${name}.err"
+	local source=${CLIENT_ADDR} destination=${SERVER_ADDR}
+	if [[ ${typ} == EchoReply ]]; then
+		source=${SERVER_ADDR}
+		destination=${CLIENT_ADDR}
+	fi
 	if [[ -n "${RULE_NS}" ]]; then
 		ip netns exec "${RULE_NS}" ip6tables -D INPUT -p ipv6-icmp --icmpv6-type "${RULE_TYPE}" -j DROP
 	fi
@@ -77,7 +82,8 @@ run_case() {
 	[[ ${typ} != EchoReply ]] || RULE_TYPE=echo-reply
 	ip netns exec "${RULE_NS}" ip6tables -I INPUT 1 -p ipv6-icmp --icmpv6-type "${RULE_TYPE}" -j DROP \
 		|| skip "IPv6 ICMP netfilter rules are unavailable"
-	"${TOOL_BIN}" --bpf-path "${TOOL_BPF}" --filter icmp6 --duration 5 --output "${output}" \
+	# Select the isolated test flow in the output to exercise the decoder/writer path.
+	"${TOOL_BIN}" --bpf-path "${TOOL_BPF}" --duration 5 --output "${output}" \
 		> "${out}" 2> "${err}" &
 	DROPWATCH_PID=$!
 	send_echo "${identifier}" "${sequence}" > "${TOOL_WORK_DIR}/${name}-traffic.log" 2>&1 &
@@ -88,9 +94,11 @@ run_case() {
 	DROPWATCH_PID=""
 	assert_log_has_no_failure "${err}" dropwatch
 	if [[ ${output} == json ]]; then
-		jq -es --arg typ "${typ}" --argjson id "${identifier}" --argjson seq "${sequence}" '
+		jq -es --arg typ "${typ}" --arg src "${source}" --arg dst "${destination}" \
+			--argjson id "${identifier}" --argjson seq "${sequence}" '
 		  any(.[];
 		    .layers.label == "IPv6/ICMPv6" and .layers.icmp.type == $typ and
+		    .layers.ipv6.saddr == $src and .layers.ipv6.daddr == $dst and
 		    (if $id == 0 then (.layers.icmp | has("id") | not) else .layers.icmp.id == $id end) and
 		    (if $seq == 0 then (.layers.icmp | has("seq") | not) else .layers.icmp.seq == $seq end))
 		' "${out}" > /dev/null || fatal "${name}: JSON Echo identity or zero omission is incorrect"
