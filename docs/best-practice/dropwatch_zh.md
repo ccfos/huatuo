@@ -275,8 +275,16 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -
 | `layers.ipv6`  | IPv6 字段：`version`、`traffic_class`、`flow_label`、`len`、`next_header`、`hop_limit`、`saddr`、`daddr` |
 | `layers.tcp`   | TCP 字段：`sport`、`dport`、`seq`、`ack_seq`、`data_offset`、`window`、`checksum`、`urgent`、`sk_state` |
 | `layers.udp`   | UDP 字段：`sport`、`dport`、`len`、`checksum`                |
-| `layers.icmp`  | ICMP/ICMPv6 字段：`type`、`code`、`checksum`、`id`、`seq`    |
+| `layers.icmp`  | ICMP/ICMPv6 字段：`type`、`code`、`checksum`、`id`、`seq`；ICMPv6 Echo 请求/应答包含标识符和序号，其他 ICMPv6 消息省略这两个字段 |
 | `layers.arp`   | ARP 字段：`addr_type`、`protocol`、`hw_address_size`、`prot_address_size`、`operation`、`sender_mac`、`sender_ip`、`target_mac`、`target_ip` |
+
+ICMPv6 Echo Request/Reply（类型 128/129）仅在捕获完整四字节 Echo 字段时
+填充 `id`、`seq`。Echo 字段截断时保留通用 ICMPv6 字段，ID/Seq 为零；
+通用头也被截断时仍保留已解码的 IPv6 层，`layers.icmp` 不存在。
+其他 ICMPv6 消息类型不填充 Echo 字段。
+
+JSON 分别省略值为零的 `id`、`seq`；文本仅在两者都为零时省略它们。
+因此，输出字段缺失无法区分未包含或截断的 Echo 字段与合法的零值。
 
 ---
 
