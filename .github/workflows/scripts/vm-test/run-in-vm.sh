@@ -82,6 +82,9 @@ install_test_dependencies() {
 	os_id=${ID,,}
 	os_like=${ID_LIKE:-}
 	os_like=${os_like,,}
+	if [[ "$os_id" == anolis ]]; then
+		rpm_packages+=(cloud-utils-growpart e2fsprogs xfsprogs)
+	fi
 	case " ${os_id} ${os_like} " in
 	*ubuntu* | *debian*)
 		for package in "${deb_packages[@]}"; do
@@ -128,6 +131,45 @@ install_test_dependencies() {
 	esac
 }
 
+expand_anolis_root_filesystem() {
+	[[ ${ID:-} == anolis ]] || return 0
+	local root_device root_type disk partition partition_file grow_result
+	root_device=$(readlink -f "$(findmnt -n -o SOURCE /)")
+	root_type=$(findmnt -n -o FSTYPE /)
+	case "$root_type" in
+	ext4 | xfs) ;;
+	*)
+		vm_log_error "unsupported Anolis root filesystem: $root_type"
+		return 1
+		;;
+	esac
+	partition_file="/sys/class/block/${root_device##*/}/partition"
+	[[ -r "$partition_file" ]] || {
+		vm_log_error "Anolis root device is not a partition: $root_device"
+		return 1
+	}
+	partition=$(< "$partition_file")
+	disk=$(lsblk -n -o PKNAME "$root_device")
+	[[ -n "$disk" ]] || {
+		vm_log_error "cannot find the parent disk of $root_device"
+		return 1
+	}
+	# The image keeps its original root size after the virtual disk grows.
+	if ! grow_result=$(growpart "/dev/$disk" "$partition" 2>&1); then
+		[[ "$grow_result" == NOCHANGE:* ]] || {
+			vm_log_error "$grow_result"
+			return 1
+		}
+	fi
+	vm_log "$grow_result"
+	if [[ "$root_type" == xfs ]]; then
+		xfs_growfs /
+	else
+		resize2fs "$root_device"
+	fi
+	df -h /
+}
+
 install_temporary_go_tools() {
 	local tool command_name package attempt installed version
 	local -a tools=(
@@ -165,6 +207,7 @@ configure_proxy
 print_sys_info
 export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
 install_test_dependencies
+expand_anolis_root_filesystem
 install_temporary_go_tools
 export JAVA_PROFILER_DOCKER_IMAGE=eclipse-temurin:17-jdk
 export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
