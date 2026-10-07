@@ -19,6 +19,7 @@ on:
 
 jobs:
   sync:
+    if: github.repository == 'ccfos/huatuo' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: checkout huatuo
