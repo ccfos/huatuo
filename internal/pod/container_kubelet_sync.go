@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -42,6 +43,7 @@ const (
 )
 
 var (
+	kubeletPodListMu                sync.RWMutex
 	kubeletPodListRunningEnabled    = false
 	kubeletPodListURL               string
 	kubeletPodListClient            *http.Client
@@ -129,6 +131,8 @@ func kubeletPodListAuthorizationRequest(requestCtx context.Context, ctx *Manager
 
 func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) error {
 	if client, err := kubeletPodListHttpRequest(requestCtx, ctx); err == nil {
+		kubeletPodListMu.Lock()
+		defer kubeletPodListMu.Unlock()
 		kubeletPodListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
 		kubeletPodListClient = client
 		kubeletPodListRunningEnabled = true
@@ -142,18 +146,31 @@ func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) 
 	}
 
 	// update https instance cache
+	kubeletPodListMu.Lock()
+	defer kubeletPodListMu.Unlock()
 	kubeletPodListClient = client
 	kubeletPodListURL = kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort)
 	kubeletPodListRunningEnabled = true
 	return nil
 }
 
+func clearKubeletPodListCache() {
+	kubeletPodListMu.Lock()
+	defer kubeletPodListMu.Unlock()
+	kubeletPodListRunningEnabled = false
+	kubeletPodListClient = nil
+	kubeletPodListURL = ""
+}
+
 func kubeletGetPodList(ctx context.Context) (corev1.PodList, error) {
-	if !kubeletPodListRunningEnabled {
+	kubeletPodListMu.RLock()
+	enabled, client, url := kubeletPodListRunningEnabled, kubeletPodListClient, kubeletPodListURL
+	kubeletPodListMu.RUnlock()
+	if !enabled {
 		return corev1.PodList{}, fmt.Errorf("kubelet not running")
 	}
 
-	return kubeletFetchPodList(ctx, kubeletPodListClient, kubeletPodListURL)
+	return kubeletFetchPodList(ctx, client, url)
 }
 
 func kubeletPodListDoRequest(client *http.Client, kubeletPodListURL string) (corev1.PodList, error) {

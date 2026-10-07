@@ -70,6 +70,7 @@ func InitManager(config *ManagerCtx) error {
 	if containerManager != nil {
 		return nil
 	}
+	clearKubeletPodListCache()
 	if config.PodReadOnlyPort == 0 && config.PodAuthorizedPort == 0 {
 		return nil
 	}
@@ -107,10 +108,12 @@ func ReleaseManager() {
 	containerManager = nil
 	containerManagerMu.Unlock()
 	if controller == nil {
+		clearKubeletPodListCache()
 		return
 	}
 	controller.cancel()
 	<-controller.done
+	clearKubeletPodListCache()
 	containerCgroupCssRelease()
 }
 
