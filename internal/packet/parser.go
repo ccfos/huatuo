@@ -181,6 +181,12 @@ func Parse(pkt *Hdr) (*Packet, error) {
 				Code:     dec.icmp6.TypeCode.Code(),
 				Checksum: dec.icmp6.Checksum,
 			}
+			// The four bytes following the common header identify only echo messages.
+			typ := dec.icmp6.TypeCode.Type()
+			if (typ == layers.ICMPv6TypeEchoRequest || typ == layers.ICMPv6TypeEchoReply) && len(dec.icmp6.Payload) >= 4 {
+				out.ICMP.ID = binary.BigEndian.Uint16(dec.icmp6.Payload[:2])
+				out.ICMP.Seq = binary.BigEndian.Uint16(dec.icmp6.Payload[2:4])
+			}
 		case layers.LayerTypeARP:
 			out.ARP = &ARP{
 				AddrType:        dec.arp.AddrType.String(),

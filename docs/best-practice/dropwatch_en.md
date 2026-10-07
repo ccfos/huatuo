@@ -274,7 +274,7 @@ For hardware events, `stack` is the kernel call stack at which the driver report
 | `layers.ipv6`  | IPv6 fields: `version`, `traffic_class`, `flow_label`, `len`, `next_header`, `hop_limit`, `saddr`, `daddr`  |
 | `layers.tcp`   | TCP fields: `sport`, `dport`, `seq`, `ack_seq`, `data_offset`, `window`, `checksum`, `urgent`, `sk_state` |
 | `layers.udp`   | UDP fields: `sport`, `dport`, `len`, `checksum`                                                         |
-| `layers.icmp`  | ICMP/ICMPv6 fields: `type`, `code`, `checksum`, `id`, `seq`                                             |
+| `layers.icmp`  | ICMP/ICMPv6 fields: `type`, `code`, `checksum`, `id`, `seq`; ICMPv6 echo requests/replies include their identifier and sequence number, while other ICMPv6 messages omit them |
 | `layers.arp`   | ARP fields: `addr_type`, `protocol`, `hw_address_size`, `prot_address_size`, `operation`, `sender_mac`, `sender_ip`, `target_mac`, `target_ip` |
 
 ---

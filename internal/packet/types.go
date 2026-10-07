@@ -124,7 +124,7 @@ type UDP struct {
 // ICMP is shared between ICMPv4 and ICMPv6: the L3 layer (IPv4 vs IPv6)
 // is the discriminator. Type is gopacket's pre-rendered TypeCode string
 // (e.g. "EchoRequest"); Code is the raw code byte. ID/Seq carry the ICMPv4
-// echo fields when present; ICMPv6 packets populate only Type/Code/Checksum.
+// echo fields when present in ICMPv4 or ICMPv6 echo request/reply messages.
 type ICMP struct {
 	Type     string `json:"type"`
 	Code     uint8  `json:"code"`

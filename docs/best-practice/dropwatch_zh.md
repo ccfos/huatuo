@@ -275,7 +275,7 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -
 | `layers.ipv6`  | IPv6 字段：`version`、`traffic_class`、`flow_label`、`len`、`next_header`、`hop_limit`、`saddr`、`daddr` |
 | `layers.tcp`   | TCP 字段：`sport`、`dport`、`seq`、`ack_seq`、`data_offset`、`window`、`checksum`、`urgent`、`sk_state` |
 | `layers.udp`   | UDP 字段：`sport`、`dport`、`len`、`checksum`                |
-| `layers.icmp`  | ICMP/ICMPv6 字段：`type`、`code`、`checksum`、`id`、`seq`    |
+| `layers.icmp`  | ICMP/ICMPv6 字段：`type`、`code`、`checksum`、`id`、`seq`；ICMPv6 Echo 请求/应答包含标识符和序号，其他 ICMPv6 消息省略这两个字段 |
 | `layers.arp`   | ARP 字段：`addr_type`、`protocol`、`hw_address_size`、`prot_address_size`、`operation`、`sender_mac`、`sender_ip`、`target_mac`、`target_ip` |
 
 ---
