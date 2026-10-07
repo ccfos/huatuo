@@ -74,8 +74,8 @@ func TestReleaseManagerClearsKubeletPodListCache(t *testing.T) {
 		kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = previousEnabled, previousURL, previousClient
 	})
 	kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = true, srv.URL, srv.Client()
-	if _, err := kubeletGetPodList(); err != nil {
-		t.Fatalf("kubeletGetPodList() before release: %v", err)
+	if _, err := kubeletGetPodList(t.Context()); err != nil {
+		t.Fatalf("kubeletGetPodList(t.Context()) before release: %v", err)
 	}
 
 	ReleaseManager()
@@ -83,8 +83,8 @@ func TestReleaseManagerClearsKubeletPodListCache(t *testing.T) {
 		t.Fatalf("released cache = (%t, %p, %q), want disabled and empty",
 			kubeletPodListRunningEnabled, kubeletPodListClient, kubeletPodListURL)
 	}
-	if _, err := kubeletGetPodList(); err == nil {
-		t.Fatal("kubeletGetPodList() after release succeeded, want disabled error")
+	if _, err := kubeletGetPodList(t.Context()); err == nil {
+		t.Fatal("kubeletGetPodList(t.Context()) after release succeeded, want disabled error")
 	}
 	if got := requests.Load(); got != 1 {
 		t.Errorf("kubelet requests after release = %d, want 1", got)
@@ -93,8 +93,8 @@ func TestReleaseManagerClearsKubeletPodListCache(t *testing.T) {
 	if err := InitManager(&ManagerCtx{}); err != nil {
 		t.Fatalf("InitManager() with disabled ports: %v", err)
 	}
-	if _, err := kubeletGetPodList(); err == nil {
-		t.Fatal("kubeletGetPodList() after disabled reinit succeeded")
+	if _, err := kubeletGetPodList(t.Context()); err == nil {
+		t.Fatal("kubeletGetPodList(t.Context()) after disabled reinit succeeded")
 	}
 	if got := requests.Load(); got != 1 {
 		t.Errorf("kubelet requests after disabled reinit = %d, want 1", got)
@@ -117,28 +117,26 @@ func TestInitManagerDisabledClearsPreviousKubeletCache(t *testing.T) {
 		t.Fatalf("disabled cache = (%t, %p, %q), want disabled and empty",
 			kubeletPodListRunningEnabled, kubeletPodListClient, kubeletPodListURL)
 	}
-	if _, err := kubeletGetPodList(); err == nil {
-		t.Fatal("kubeletGetPodList() after disabled reinit succeeded")
+	if _, err := kubeletGetPodList(t.Context()); err == nil {
+		t.Fatal("kubeletGetPodList(t.Context()) after disabled reinit succeeded")
 	}
 }
 
 func TestReleaseManagerWaitsForKubeletRetry(t *testing.T) {
-	previousTicker, previousCancel, previousDone := kubeletTimeTicker, kubeletDoneCancel, kubeletRetryDone
+	previousManager := containerManager
 	previousEnabled, previousURL, previousClient := kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient
 	t.Cleanup(func() {
-		kubeletTimeTicker, kubeletDoneCancel, kubeletRetryDone = previousTicker, previousCancel, previousDone
+		containerManager = previousManager
 		kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = previousEnabled, previousURL, previousClient
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	kubeletDoneCancel = cancel
-	kubeletTimeTicker = time.NewTicker(time.Hour)
 	retryDone := make(chan struct{})
-	kubeletRetryDone = retryDone
-	cancelled := make(chan struct{})
+	containerManager = &containerController{cancel: cancel, done: retryDone}
+	canceled := make(chan struct{})
 	allowExit := make(chan struct{})
 	go func() {
 		<-ctx.Done()
-		close(cancelled)
+		close(canceled)
 		<-allowExit
 		kubeletPodListMu.Lock()
 		kubeletPodListRunningEnabled = true
@@ -148,10 +146,7 @@ func TestReleaseManagerWaitsForKubeletRetry(t *testing.T) {
 		close(retryDone)
 	}()
 	released := make(chan struct{})
-	go func() {
-		ReleaseManager()
-		close(released)
-	}()
+	go func() { ReleaseManager(); close(released) }()
 	defer func() {
 		cancel()
 		select {
@@ -161,24 +156,20 @@ func TestReleaseManagerWaitsForKubeletRetry(t *testing.T) {
 		}
 		<-released
 	}()
-
 	select {
-	case <-cancelled:
+	case <-canceled:
 	case <-time.After(time.Second):
-		t.Fatal("ReleaseManager did not cancel the retry")
+		t.Fatal("ReleaseManager did not cancel the producer")
 	}
 	select {
 	case <-released:
-		t.Fatal("ReleaseManager returned before the retry exited")
+		t.Fatal("ReleaseManager returned before the producer exited")
 	case <-time.After(20 * time.Millisecond):
 	}
 	close(allowExit)
 	<-released
-	if kubeletRetryDone != nil || kubeletDoneCancel != nil || kubeletTimeTicker != nil {
-		t.Fatal("ReleaseManager retained retry state")
-	}
-	if kubeletPodListRunningEnabled || kubeletPodListClient != nil || kubeletPodListURL != "" {
-		t.Fatal("ReleaseManager retained a late retry's kubelet cache")
+	if containerManager != nil || kubeletPodListRunningEnabled || kubeletPodListClient != nil || kubeletPodListURL != "" {
+		t.Fatal("ReleaseManager retained the producer or its late kubelet cache")
 	}
 }
 
