@@ -277,6 +277,16 @@ For hardware events, `stack` is the kernel call stack at which the driver report
 | `layers.icmp`  | ICMP/ICMPv6 fields: `type`, `code`, `checksum`, `id`, `seq`; ICMPv6 echo requests/replies include their identifier and sequence number, while other ICMPv6 messages omit them |
 | `layers.arp`   | ARP fields: `addr_type`, `protocol`, `hw_address_size`, `prot_address_size`, `operation`, `sender_mac`, `sender_ip`, `target_mac`, `target_ip` |
 
+For ICMPv6 Echo Request/Reply (types 128/129), `id` and `seq` are decoded only
+when all four Echo bytes were captured. A truncated Echo header retains the
+common ICMPv6 fields with zero ID/Seq. If the common header is also truncated,
+the decoded IPv6 layer is retained and `layers.icmp` is absent. Other ICMPv6
+message types do not populate the Echo fields.
+
+JSON omits each zero-valued `id` or `seq` independently. Text omits both only
+when both are zero. A missing output field therefore cannot distinguish an
+absent or truncated Echo header from a valid zero value.
+
 ---
 
 ### 4. Integration with huatuo-bamai
