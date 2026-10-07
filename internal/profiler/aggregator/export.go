@@ -15,15 +15,46 @@
 package aggregator
 
 import (
+	"compress/gzip"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/output"
 )
+
+func writePprof(dir string, data any) error {
+	result, ok := data.(*profiler.ProfileData)
+	if !ok || result == nil {
+		return fmt.Errorf("invalid pprof snapshot: %T", data)
+	}
+	encoded, err := result.Profile.MarshalVT()
+	if err != nil {
+		return fmt.Errorf("marshal pprof profile: %w", err)
+	}
+	file, err := createOutputFile(dir, "pprof", ".pprof.gz")
+	if err != nil {
+		return err
+	}
+	compressed := gzip.NewWriter(file)
+	_, writeErr := compressed.Write(encoded)
+	gzipCloseErr := compressed.Close()
+	fileCloseErr := file.Close()
+	if err := errors.Join(writeErr, gzipCloseErr, fileCloseErr); err != nil {
+		writeErr := fmt.Errorf("write pprof profile: %w", err)
+		if removeErr := os.Remove(file.Name()); removeErr != nil {
+			return errors.Join(writeErr, fmt.Errorf("remove incomplete pprof profile: %w", removeErr))
+		}
+		return writeErr
+	}
+	log.WithField("path", file.Name()).Info("pprof profile written")
+	return nil
+}
 
 // writeFolded persists the folded-stack data to a timestamped .folded file.
 func writeFolded(dir string, f output.Formatter) error {

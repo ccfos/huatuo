@@ -495,7 +495,7 @@ sudo _output/bin/profiler \
 | `--aggr-interval` | `10` | All | Aggregation interval in seconds; must not exceed the duration |
 | `--freq`, `-F` | `99` | CPU | Samples collected per second; maximum 1000 for Java |
 | `--output-path` | `.` | Local output | Output directory, not an output file name |
-| `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, or `remote` |
+| `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, `pprof`, or `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | Unix socket used for remote upload |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collector subprocesses; `0` means unlimited |
 | `--tool-path` | None | Java, Python | Shared external tool root; required |
@@ -673,6 +673,7 @@ Python does not support `--type memory`. Use a separate memory analysis tool for
 | `collapsed` | `perf_<Unix timestamp>.folded`; each line contains a semicolon-separated call stack followed by a count | Scripted searches, result comparison, or rendering later with another flame-graph tool |
 | `flamegraph` | `flamegraph_<Unix timestamp>.svg`; an SVG with embedded interaction scripts | Default format for manual analysis; supports searching, zooming, and inspecting frame values in a browser |
 | `svg` | The same interactive SVG as `flamegraph` | Compatibility with callers that explicitly request SVG; currently equivalent to `flamegraph` |
+| `pprof` | `pprof_<Unix timestamp>_<unique suffix>.pprof.gz`; a standard gzip-compressed pprof profile with the selected mode's sample units | Offline analysis with `go tool pprof`, including CPU time, memory bytes, off-CPU time, and lock wait time |
 | `remote` | No local flame graph; uploads pprof-compatible data through a Unix socket | Integration with the HUATUO storage pipeline; not suitable for offline viewing |
 
 A flame graph shows the call direction from bottom to top. Rectangle width represents the cumulative value for that call stack in the selected profiling mode. For CPU profiles, width represents the proportion of CPU time derived from sample counts. For memory profiles, it represents virtual allocation, physical allocation, physical residency, Java object allocation, or live-object volume, depending on the selected mode. Horizontal position does not represent chronological order.
@@ -685,6 +686,16 @@ main;handleRequest;writeResponse 172
 ```
 
 Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote` depends on the HUATUO toolstream Unix socket, requires a non-empty `--tracer-id`, and should not be selected for standalone offline use.
+
+Choose `pprof` for a portable local profile. The file is written from the final aggregate when collection ends. It uses the same structured profile as remote export, preserving sample types, units, weights, function names, and available metadata. Native, Java, and Python providers support this output for their supported profiling modes.
+
+```bash
+sudo ./_output/bin/profiler --type cpu --language c --pid 12345 \
+  --duration 30 --output-format pprof --output-path ./profiles
+
+# Replace this path with the .pprof.gz file reported by profiler.
+go tool pprof -top /path/to/profile.pprof.gz
+```
 
 ### 7. Reproducing Integration Test Examples
 
@@ -730,7 +741,7 @@ flowchart LR
     Aggregate --> Remote[Remote upload through Unix socket]
 ```
 
-`--duration` controls the collection lifetime, while `--aggr-interval` controls the snapshot interval for remote uploads. Local `collapsed`, `flamegraph`, and `svg` modes write the final aggregate when collection ends. `remote` creates and uploads snapshots at the aggregation interval. The queue decouples collection from symbolization, aggregation, and output so file rendering does not block the sampling path.
+`--duration` controls the collection lifetime, while `--aggr-interval` controls the snapshot interval for remote uploads. Local `collapsed`, `flamegraph`, `svg`, and `pprof` modes write the final aggregate when collection ends. `remote` creates and uploads snapshots at the aggregation interval. The queue decouples collection from symbolization, aggregation, and output so file rendering does not block the sampling path.
 
 ## 🌟 Conclusion
 

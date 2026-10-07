@@ -29,7 +29,7 @@ type Aggregator interface {
 	// Aggregate incorporates a single record into internal state.
 	Aggregate(rec any)
 
-	// Snapshot returns the pprof profile data for upload backends.
+	// Snapshot returns the pprof profile data for remote or local pprof output.
 	// For raw/flamegraph/svg output, returns nil — the pipeline reads
 	// the output formatter directly via OutputFormatter.
 	Snapshot(pctx *pcontext.ProfilerContext) (any, error)
@@ -42,9 +42,9 @@ type Aggregator interface {
 }
 
 // NewFormatterForOutput creates a Formatter based on the context's output format.
-// Returns nil for upload formats — the aggregator should use Snapshot instead.
+// Returns nil for snapshot formats — the aggregator should use Snapshot instead.
 func NewFormatterForOutput(pctx *pcontext.ProfilerContext) (output.Formatter, error) {
-	if pctx.OutputFormat.IsUpload() {
+	if pctx.OutputFormat.UsesSnapshot() {
 		return nil, nil
 	}
 

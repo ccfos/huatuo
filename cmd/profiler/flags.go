@@ -104,7 +104,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-format",
-		Usage: "Output format for profiling: collapsed|flamegraph|svg|remote",
+		Usage: "Output format for profiling: collapsed|flamegraph|svg|pprof|remote",
 		Value: "collapsed",
 	},
 	&cli.StringFlag{

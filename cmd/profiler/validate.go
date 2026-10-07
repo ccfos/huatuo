@@ -317,7 +317,7 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 
 func validateOutputFormat(format string) error {
 	switch format {
-	case "collapsed", "flamegraph", "svg", "remote":
+	case "collapsed", "flamegraph", "svg", "pprof", "remote":
 		return nil
 	default:
 		return fmt.Errorf("unsupported output format %q", format)

@@ -31,13 +31,18 @@ const (
 	FormatCollapsed  OutputFormat = "collapsed"
 	FormatFlameGraph OutputFormat = "flamegraph"
 	FormatSVG        OutputFormat = "svg"
-	FormatPprof      OutputFormat = "pprof"  // reserved; not yet implemented
+	FormatPprof      OutputFormat = "pprof"  // write a local gzip-compressed pprof profile
 	FormatRemote     OutputFormat = "remote" // upload to a remote storage backend
 )
 
 // IsUpload reports whether the format uploads to a remote storage backend.
 func (f OutputFormat) IsUpload() bool {
 	return f == FormatRemote
+}
+
+// UsesSnapshot reports whether the format exports a structured pprof profile.
+func (f OutputFormat) UsesSnapshot() bool {
+	return f == FormatRemote || f == FormatPprof
 }
 
 // IsFlameGraph reports whether the format renders a flame graph (flamegraph or svg).

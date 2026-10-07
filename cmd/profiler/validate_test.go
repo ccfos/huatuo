@@ -65,6 +65,15 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "local pprof needs no remote storage or tracer ID",
+			args: []string{
+				"--type", "cpu",
+				"--language", "c",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--output-format", "pprof",
+			},
+		},
+		{
 			name: "remote output requires tracer ID",
 			args: []string{
 				"--type", "cpu",
@@ -421,10 +430,10 @@ func TestOffCPUStatsFlag(t *testing.T) {
 }
 
 func TestValidateOutputFormat(t *testing.T) {
-	for _, format := range []string{"collapsed", "flamegraph", "svg", "remote"} {
+	for _, format := range []string{"collapsed", "flamegraph", "svg", "pprof", "remote"} {
 		require.NoError(t, validateOutputFormat(format))
 	}
-	require.EqualError(t, validateOutputFormat("pprof"), `unsupported output format "pprof"`)
+	require.EqualError(t, validateOutputFormat("unknown"), `unsupported output format "unknown"`)
 }
 
 func TestValidateNumericOptions(t *testing.T) {
