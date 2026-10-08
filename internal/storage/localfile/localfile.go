@@ -23,6 +23,8 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/ccfos/huatuo/internal/filerotate"
@@ -72,9 +74,9 @@ func (b *Storage) Save(
 	if options.Mode != driver.SaveModeUpsert || len(options.Conditions) != 0 {
 		return driver.ErrUnsupportedOp
 	}
-	filename := tracerFilename(rec)
-	if filename == "" {
-		return driver.ErrInvalidField
+	filename, err := sanitizeTracerName(tracerFilename(rec))
+	if err != nil {
+		return err
 	}
 
 	data, err := formatDocumentJSON(rec.Data)
@@ -162,6 +164,21 @@ func tracerFilename(rec driver.Record) string {
 		}
 	}
 	return ""
+}
+
+// sanitizeTracerName rejects names that could escape the storage directory
+// when joined into a file path (path separators, "..", and NUL).
+func sanitizeTracerName(name string) (string, error) {
+	if name == "" {
+		return "", driver.ErrInvalidField
+	}
+	if strings.ContainsRune(name, 0) {
+		return "", driver.ErrInvalidField
+	}
+	if filepath.Base(name) != name || name == "." || name == ".." {
+		return "", driver.ErrInvalidField
+	}
+	return name, nil
 }
 
 func formatDocumentJSON(data []byte) ([]byte, error) {

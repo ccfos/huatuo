@@ -16,6 +16,7 @@ package localfile
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -144,5 +145,68 @@ func TestBackendUnsupportedOperations(t *testing.T) {
 	}
 	if _, err := backend.Values(t.Context(), "tracer_name", driver.Query{}, 10); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.Terms() error = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestSanitizeTracerName rejects names that would escape the storage directory
+// once joined into a path, and accepts plain names.
+func TestSanitizeTracerName(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		ok   bool
+	}{
+		{"plain", "kernel_sched_tick", true},
+		{"dotted name", "sched.tick", true},
+		{"empty", "", false},
+		{"parent dir", "..", false},
+		{"current dir", ".", false},
+		{"unix traversal", "../../etc/passwd", false},
+		{"nested path", "a/b", false},
+		{"absolute path", "/etc/passwd", false},
+		{"trailing separator", "tracer/", false},
+		{"nul byte", "tracer\x00", false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := sanitizeTracerName(c.in)
+			if c.ok {
+				if err != nil {
+					t.Fatalf("sanitizeTracerName(%q) unexpected error = %v", c.in, err)
+				}
+				if got != c.in {
+					t.Fatalf("sanitizeTracerName(%q) = %q, want %q", c.in, got, c.in)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("sanitizeTracerName(%q) = %q, want error", c.in, got)
+			}
+		})
+	}
+}
+
+// TestBackendSaveRejectsTraversal verifies Save refuses a tracer name that
+// would write outside the storage directory and creates no file for it.
+func TestBackendSaveRejectsTraversal(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+
+	err := backend.Save(context.Background(), driver.Record{
+		ID:     "escape",
+		Data:   []byte(`{"tracer_name":"x"}`),
+		Fields: map[string]any{"tracer_name": "../../escaping-tracer"},
+	}, driver.SaveOptions{})
+	if !errors.Is(err, driver.ErrInvalidField) {
+		t.Fatalf("Save() error = %v, want %v", err, driver.ErrInvalidField)
+	}
+
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatalf("ReadDir(%q) error = %v", dir, readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("Save() wrote %d entries for a traversal name, want 0", len(entries))
 	}
 }
