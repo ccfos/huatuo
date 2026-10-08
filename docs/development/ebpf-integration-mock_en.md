@@ -90,3 +90,42 @@ cgroups and target BTF for its CO-RE relocations. The mock path has been run
 on 4.18; other kernels still need runtime results, including vendor kernels
 with backports. The current test checks local storage and metrics; checking
 external ES or Grafana services requires a separate deployment test.
+
+## Softlockup example
+
+`integration/test_events_softlockup_mock.sh` uses the normal softlockup BPF
+program and collector. Its module provides `add_taint_mock(unsigned flag,
+enum lockdep_ok lockdep_ok)`, matching `add_taint`. The signature and
+`TAINT_SOFTLOCKUP` value are unchanged in the supplied 4.18 and 5.10 sources
+and the checked-out upstream tree. Including `linux/kernel.h` exposes the
+required declarations across these trees; no version guard is needed.
+
+The trigger accepts `softlockup` or `other` and sends the named scenario
+`SOFTLOCKUP_MOCK_TAINT_SOFTLOCKUP` or `SOFTLOCKUP_MOCK_TAINT_USER` from the
+header `softlockup_mock.h`, shared with the module. The ioctl handler calls the
+mock with the kernel's `TAINT_SOFTLOCKUP` or `TAINT_USER`, respectively. It never
+calls the real `add_taint`, changes lockdep state, or causes a lockup.
+
+The test verifies attachment to `add_taint_mock`, the persisted event's exact
+trigger PID and command name, CPU, and CPU-backtrace field. It checks that the
+counter changes from zero to one and that the other flag produces neither an
+event nor a counter increment. The other flag is tested before and after the
+positive case, with an observation window longer than the collector's metric
+interval. The kernel's softlockup taint bit must remain unchanged.
+
+The production collector requests **real CPU backtraces** through SysRq `l`
+and `/dev/kmsg`. The fixture preserves that behavior. The saved `cpus_stack`
+field may contain backtrace text, an empty result, or the collector's diagnostic
+error if those interfaces are unavailable; the test checks the field's type,
+not completeness of the backtraces.
+
+Run on a test machine with Linux 4.18 or newer, on x86_64 or aarch64:
+
+```sh
+make build
+sudo bash integration/run.sh test_events_softlockup_mock.sh
+```
+
+Build-directory selection and cleanup follow the OOM workflow above. Module
+unload failure fails the test and preserves its workspace. The test prints a
+compact event summary with the backtrace length instead of all CPU stacks.

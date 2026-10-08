@@ -346,3 +346,7 @@ EOF
 write_memory_oom_kill_config() {
 	write_single_event_config memory_oom_kill
 }
+
+write_softlockup_config() {
+	write_single_event_config softlockup
+}
