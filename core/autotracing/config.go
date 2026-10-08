@@ -47,7 +47,8 @@ type MemBurstConfig struct {
 	Interval            int `default:"10"`
 	IntervalTracing     int `default:"1800"`
 	SlidingWindowLength int `default:"60"`
-	DumpProcessMaxNum   int `default:"10"`
+	// DumpProcessMaxNum bounds the RSS ranking; snapshots cover at most the first 3.
+	DumpProcessMaxNum int `default:"10"`
 }
 
 // IRQTracingConfig holds irq spike tracing configuration.
@@ -141,6 +142,9 @@ func configSnapshot() *Config {
 
 // Validate rejects invalid autotracing settings.
 func (c *Config) Validate() error {
+	if err := validateMemBurst(&c.MemoryBurst); err != nil {
+		return fmt.Errorf("validating memory burst: %w", err)
+	}
 	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
 		return fmt.Errorf("validating issues list: %w", err)
 	}
