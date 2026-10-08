@@ -104,6 +104,14 @@ all selected executions as SKIP.
 
 ---
 
+### Background Process Cleanup
+
+`stop_and_wait_by_pid PID [TIMEOUT]` stops and waits for a child process,
+returning its exit status. An omitted or empty PID returns success immediately,
+so callers can pass an initialized PID variable without checking it first.
+Clear the variable after waiting; use `|| true` in best-effort cleanup and
+assert the exit status when it is part of the test contract.
+
 ### How to Add New Metrics Tests
 #### 1: Add or Update Fixture Data
 

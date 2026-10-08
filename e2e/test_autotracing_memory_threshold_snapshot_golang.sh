@@ -49,10 +49,8 @@ cleanup() {
 			[[ ! -r "${go_snapshot_cgroup}/${file}" ]] || cat "${go_snapshot_cgroup}/${file}" >&2 || true
 		done
 	fi
-	if [[ -n "${go_snapshot_pid}" ]]; then
-		stop_and_wait_by_pid "${go_snapshot_pid}" || true
-		go_snapshot_pid=""
-	fi
+	stop_and_wait_by_pid "${go_snapshot_pid}" || true
+	go_snapshot_pid=""
 	k8s_delete_pod "${GO_SNAPSHOT_NAMESPACE}" "${go_snapshot_pod_label}" || status=1
 	return "${status}"
 }

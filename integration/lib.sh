@@ -305,7 +305,8 @@ stop_by_pid() {
 }
 
 stop_and_wait_by_pid() {
-	local pid=$1 timeout=${2:-10}
+	local pid=${1:-} timeout=${2:-10}
+	[[ -n "${pid}" ]] || return 0
 	stop_by_pid "${pid}" "${timeout}"
 	wait "${pid}"
 }
