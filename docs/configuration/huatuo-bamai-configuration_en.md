@@ -678,9 +678,10 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
   Default: 60s.
 
-- **DumpProcessMaxNum**: Maximum processes to dump on trigger.
+- **DumpProcessMaxNum**: Maximum RSS-ranked processes retained on trigger.
 
-  Default: 10.
+  Default: 10. Runtime snapshots are attempted for the first `min(DumpProcessMaxNum, 3)`
+  available ranked processes. Values above 3 increase the ranking size only.
 
 #### 7.6 Memory Threshold Runtime Snapshots
 
