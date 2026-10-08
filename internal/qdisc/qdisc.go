@@ -36,6 +36,7 @@ const (
 const (
 	tcaStatsBasic         = 1
 	tcaStatsQueue         = 3
+	tcaStatsPad           = 6
 	tcaStatsBasicHardware = 7
 	tcaStatsPacket64      = 8
 )
@@ -258,6 +259,22 @@ func decodeLegacyStats(data []byte) (counters, error) {
 }
 
 func nextAttribute(data []byte) (uint16, []byte, []byte, error) {
+	// Padding belongs to the netlink envelope and must not interrupt the
+	// BASIC -> PKT64 sequence inside TCA_STATS2.
+	for len(data) > 0 {
+		attributeType, payload, remaining, err := readAttribute(data)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		if attributeType != tcaStatsPad {
+			return attributeType, payload, remaining, nil
+		}
+		data = remaining
+	}
+	return 0, nil, nil, nil
+}
+
+func readAttribute(data []byte) (uint16, []byte, []byte, error) {
 	if len(data) < netlinkAttributeHeaderLen {
 		return 0, nil, nil, fmt.Errorf(
 			"netlink attribute has %d bytes, want at least %d",
