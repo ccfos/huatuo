@@ -16,10 +16,13 @@ package localfile
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
@@ -145,4 +148,33 @@ func TestBackendUnsupportedOperations(t *testing.T) {
 	if _, err := backend.Values(t.Context(), "tracer_name", driver.Query{}, 10); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.Terms() error = %v, want ErrUnsupported", err)
 	}
+}
+
+// TestBackendSaveConcurrentWriters verifies that concurrent Save calls with
+// distinct tracer names do not race on the writer map. Run with -race: before
+// the fix, the unlocked fast-path read raced with the locked map write.
+func TestBackendSaveConcurrentWriters(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+	ctx := context.Background()
+
+	const goroutines = 32
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			name := "tracer-" + strconv.Itoa(i%4)
+			if err := backend.Save(ctx, driver.Record{
+				ID:   "trace-" + strconv.Itoa(i),
+				Data: []byte(`{"tracer_name":"x"}`),
+				Fields: map[string]any{
+					"tracer_name": name,
+				},
+			}, driver.SaveOptions{}); err != nil {
+				t.Errorf("Save() error = %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
