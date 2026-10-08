@@ -17,6 +17,7 @@ package kmsgutil
 import (
 	"errors"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -195,3 +196,95 @@ func TestGetBootTime(t *testing.T) {
 // and are better suited for integration tests with mocked file systems (e.g., using afero or test containers).
 // Unit tests for these would require dependency injection for os.Open, syscall.Read, etc., to isolate logic.
 // For brevity, they are omitted here; focus on pure functions above.
+
+// scriptedKmsgRead replays a fixed sequence of (data, error) reads.
+type scriptedKmsgRead struct {
+	chunks [][]byte
+	errs   []error
+	index  int
+	// seenBufLen records the buffer size passed on the first read, so a test
+	// can assert the reader no longer uses a 1024-byte buffer.
+	seenBufLen int
+}
+
+func (s *scriptedKmsgRead) read(buf []byte) (int, error) {
+	if s.index == 0 {
+		s.seenBufLen = len(buf)
+	}
+	if s.index >= len(s.chunks) {
+		return 0, syscall.EAGAIN
+	}
+	data := s.chunks[s.index]
+	err := error(nil)
+	if s.index < len(s.errs) {
+		err = s.errs[s.index]
+	}
+	s.index++
+	n := copy(buf, data)
+	return n, err
+}
+
+// TestDrainKmsgSkipsOversizedRecord verifies an EINVAL (oversized, already
+// consumed record) is skipped instead of aborting the drain, so records
+// accumulated before it survive.
+func TestDrainKmsgSkipsOversizedRecord(t *testing.T) {
+	read := &scriptedKmsgRead{
+		chunks: [][]byte{
+			[]byte("6,1,100,0;before\n"),
+			nil, // oversized record consumed, read fails EINVAL
+			[]byte("6,2,200,0;after\n"),
+		},
+		errs: []error{nil, syscall.EINVAL, nil},
+	}
+
+	var got strings.Builder
+	err := drainKmsg(read.read, func(record string) error {
+		got.WriteString(record)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("drainKmsg() error = %v, want nil", err)
+	}
+
+	want := "6,1,100,0;before\n6,2,200,0;after\n"
+	if got.String() != want {
+		t.Fatalf("drainKmsg() records = %q, want %q", got.String(), want)
+	}
+	if read.seenBufLen < 2048 {
+		t.Fatalf("drainKmsg() buffer size = %d, want >= 2048 to fit legal records", read.seenBufLen)
+	}
+}
+
+// TestDrainKmsgPropagatesOtherErrors verifies non-EAGAIN/EINVAL errors stay
+// fatal.
+func TestDrainKmsgPropagatesOtherErrors(t *testing.T) {
+	read := &scriptedKmsgRead{
+		chunks: [][]byte{[]byte("6,1,100,0;x\n")},
+		errs:   []error{syscall.EIO},
+	}
+
+	err := drainKmsg(read.read, func(string) error { return nil })
+	if !errors.Is(err, syscall.EIO) {
+		t.Fatalf("drainKmsg() error = %v, want %v", err, syscall.EIO)
+	}
+}
+
+// TestDrainKmsgStopsOnEAGAIN verifies the drain returns nil once the device is
+// empty.
+func TestDrainKmsgStopsOnEAGAIN(t *testing.T) {
+	read := &scriptedKmsgRead{
+		chunks: [][]byte{[]byte("6,1,100,0;only\n")},
+		errs:   []error{nil},
+	}
+
+	var got strings.Builder
+	if err := drainKmsg(read.read, func(r string) error {
+		got.WriteString(r)
+		return nil
+	}); err != nil {
+		t.Fatalf("drainKmsg() error = %v, want nil", err)
+	}
+	if got.String() != "6,1,100,0;only\n" {
+		t.Fatalf("drainKmsg() records = %q", got.String())
+	}
+}

@@ -75,21 +75,51 @@ func GetSysrqMsg(command string) (string, error) {
 	}
 
 	var buffer strings.Builder
-	buf := make([]byte, 1024)
-	for {
-		n, err := syscall.Read(int(fd), buf)
-		if n > 0 {
-			buffer.Write(buf[:n])
-		}
-		if err != nil {
-			if err == syscall.EAGAIN {
-				break
-			}
-			return "", err
-		}
+	if err := drainKmsgRecords(int(fd), func(record string) error {
+		buffer.WriteString(record)
+		return nil
+	}); err != nil {
+		return "", err
 	}
 
 	return formatKmsgs(buffer.String()), nil
+}
+
+// kmsgReadFunc reads one /dev/kmsg record, so tests can inject synthetic
+// record/error sequences.
+type kmsgReadFunc func(buf []byte) (int, error)
+
+// drainKmsgRecords reads records using read until the device reports EAGAIN
+// (drained). A record larger than the buffer fails with EINVAL after the
+// kernel has already consumed it, so EINVAL must be skipped rather than
+// treated as fatal: returning early would discard every record already
+// accumulated.
+func drainKmsgRecords(fd int, write func(string) error) error {
+	return drainKmsg(func(buf []byte) (int, error) {
+		return syscall.Read(fd, buf)
+	}, write)
+}
+
+func drainKmsg(read kmsgReadFunc, write func(string) error) error {
+	buf := make([]byte, 4096)
+	for {
+		n, err := read(buf)
+		if n > 0 {
+			if writeErr := write(string(buf[:n])); writeErr != nil {
+				return writeErr
+			}
+		}
+		if err != nil {
+			if err == syscall.EAGAIN {
+				return nil
+			}
+			if err == syscall.EINVAL {
+				// Oversized record: already consumed by the kernel, skip it.
+				continue
+			}
+			return err
+		}
+	}
 }
 
 // format kmsg to human-readable format
