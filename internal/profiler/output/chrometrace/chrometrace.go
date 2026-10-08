@@ -163,9 +163,13 @@ func (f *Formatter) addStreaming(s *output.Sample, ts float64) {
 	newFrames := make([]string, len(s.Frames))
 	copy(newFrames, s.Frames)
 
-	common := commonSuffixLen(oldFrames, newFrames)
+	// Frames are outermost-first, so the shared part of consecutive stacks
+	// is the common prefix.
+	common := commonPrefixLen(oldFrames, newFrames)
 
-	for i := range len(oldFrames) - common {
+	// Emit "E" for frames that left the stack, innermost-first: trace
+	// viewers close the most recently opened event first.
+	for i := len(oldFrames) - 1; i >= common; i-- {
 		f.events = append(f.events, event{
 			Name: oldFrames[i],
 			Cat:  "profiler",
@@ -177,8 +181,7 @@ func (f *Formatter) addStreaming(s *output.Sample, ts float64) {
 	}
 
 	// Emit "B" for frames that are entering (outermost-first).
-	beginCount := len(newFrames) - common
-	for i := beginCount - 1; i >= 0; i-- {
+	for i := common; i < len(newFrames); i++ {
 		f.events = append(f.events, event{
 			Name: newFrames[i],
 			Cat:  "profiler",
@@ -235,9 +238,11 @@ func (f *Formatter) Write(w io.Writer) error {
 	all = append(all, f.events...)
 
 	for tid, ps := range f.prev {
-		for _, name := range ps.frames {
+		// Close the still-open stack innermost-first, matching how trace
+		// viewers pair "E" events with the most recently opened "B".
+		for i := len(ps.frames) - 1; i >= 0; i-- {
 			all = append(all, event{
-				Name: name,
+				Name: ps.frames[i],
 				Cat:  "profiler",
 				Ph:   "E",
 				PID:  ps.pid,
@@ -268,14 +273,11 @@ func (f *Formatter) timestampFor(s *output.Sample) float64 {
 	return float64(f.sampleIdx) * 1e6 / f.sampleRateHz
 }
 
-// commonSuffixLen returns the length of the shared outermost suffix.
-func commonSuffixLen(a, b []string) int {
-	i, j := len(a)-1, len(b)-1
+// commonPrefixLen returns the length of the shared outermost prefix.
+func commonPrefixLen(a, b []string) int {
 	n := 0
-	for i >= 0 && j >= 0 && a[i] == b[j] {
+	for n < len(a) && n < len(b) && a[n] == b[n] {
 		n++
-		i--
-		j--
 	}
 	return n
 }
