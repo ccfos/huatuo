@@ -15,6 +15,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -111,5 +112,46 @@ func TestTruncateKeepsUTF8(t *testing.T) {
 	got := truncate("函数调用路径", 5)
 	if got != "函数..." {
 		t.Fatalf("truncate() = %q, want 函数...", got)
+	}
+}
+
+// A deep stack on a narrow terminal must not push the percentage past the
+// terminal width, where Bubble Tea would clip it away.
+func TestRenderRowKeepsPercentageWithinWidth(t *testing.T) {
+	frames := []flamegraph.FrameData{
+		{Level: 0, Value: 100, Self: 0, Label: "root"},
+	}
+	for depth := 1; depth < 20; depth++ {
+		frames = append(frames, flamegraph.FrameData{
+			Level: int64(depth), Value: int64(100 - depth), Self: 0,
+			Label: fmt.Sprintf("frame-%d", depth),
+		})
+	}
+	model := NewModel(frames)
+	for _, width := range []int{60, 80, 100, 120} {
+		t.Run(fmt.Sprintf("width-%d", width), func(t *testing.T) {
+			model.width = width
+			model.height = 30
+			for _, row := range strings.Split(model.View(), "\n") {
+				if !strings.Contains(row, "frame-") {
+					// Header/footer lines are static text outside this fix.
+					continue
+				}
+				if got := len([]rune(row)); got > width {
+					t.Fatalf("row width %d exceeds terminal %d: %q", got, width, row)
+				}
+			}
+			// The deepest visible row must still end in a percentage.
+			lines := strings.Split(model.View(), "\n")
+			last := ""
+			for _, row := range lines {
+				if strings.Contains(row, "frame-") {
+					last = row
+				}
+			}
+			if last != "" && !strings.HasSuffix(strings.TrimSpace(last), "%") {
+				t.Fatalf("percentage clipped from row %q", last)
+			}
+		})
 	}
 }
