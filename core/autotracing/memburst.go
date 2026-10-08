@@ -25,7 +25,6 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func init() {
@@ -41,9 +40,14 @@ func newMemBurst() (*tracing.EventTracingAttr, error) {
 }
 
 type (
-	memBurstTracing   struct{}
+	memBurstTracing struct {
+		snapshotJobs          chan *burstSnapshotJob
+		snapshotProcessMaxNum int
+	}
 	MemoryTracingData struct {
-		TopMemoryUsage []*processMemInfo `json:"top_memory_usage"`
+		TopMemoryUsage   []*processMemInfo      `json:"top_memory_usage"`
+		ProcessSnapshots []burstProcessSnapshot `json:"process_snapshots,omitempty"`
+		SnapshotReason   string                 `json:"snapshot_reason,omitempty"`
 	}
 )
 
@@ -134,6 +138,12 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 		return err
 	}
 	memTotal := memInfo["MemTotal"]
+	workerCtx, stopWorker := context.WithCancel(ctx)
+	c.snapshotProcessMaxNum = cfg.MemoryBurst.SnapshotProcessMaxNum
+	c.snapshotJobs = make(chan *burstSnapshotJob, 1)
+	workerDone := make(chan struct{})
+	go c.runBurstSnapshots(workerCtx, workerDone)
+	defer func() { close(c.snapshotJobs); stopWorker(); <-workerDone }()
 	history := make([]int, historyWindowLength) // circular buffer
 	var currentIndex int
 	var isHistoryFull bool // don't check memory burst until we have enough data
@@ -169,14 +179,6 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 			continue
 		}
 		lastReportTime = currentTime.Time
-		if err := tracing.Save(&tracing.WriteRequest{
-			TracerName:       "memburst",
-			ContainerID:      "",
-			StartedTimestamp: currentTime,
-			TracerData:       &MemoryTracingData{TopMemoryUsage: topProcesses},
-			TracerRunType:    types.TracerRunTypeAutotracing,
-		}); err != nil {
-			log.Warnf("failed to save tracing data: %v", err)
-		}
+		c.enqueueBurst(ctx, &burstSnapshotJob{processes: topProcesses, started: currentTime.Time})
 	}
 }
