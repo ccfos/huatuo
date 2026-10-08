@@ -15,6 +15,7 @@
 package v2
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -339,6 +340,71 @@ func TestCpuQuotaAndPeriodEffectiveCPUCount(t *testing.T) {
 			}
 			if quota.EffectiveCPUCount != tt.want {
 				t.Errorf("EffectiveCPUCount = %d, want %d", quota.EffectiveCPUCount, tt.want)
+			}
+		})
+	}
+}
+
+func TestMemoryUsage(t *testing.T) {
+	root := t.TempDir()
+	oldRoot := paths.RootfsDefaultPath
+	paths.RootfsDefaultPath = root
+	t.Cleanup(func() { paths.RootfsDefaultPath = oldRoot })
+
+	tests := []struct {
+		name      string
+		current   string
+		maximum   string
+		wantUsage uint64
+		wantMax   uint64
+		wantErr   bool
+	}{
+		{
+			name:      "limited",
+			current:   "1024\n",
+			maximum:   "2048\n",
+			wantUsage: 1024,
+			wantMax:   2048,
+		},
+		{
+			name:      "unlimited",
+			current:   "1024\n",
+			maximum:   "max\n",
+			wantUsage: 1024,
+			wantMax:   math.MaxUint64,
+		},
+		{
+			name:    "invalid current",
+			current: "invalid\n",
+			maximum: "2048\n",
+			wantErr: true,
+		},
+		{
+			name:    "invalid max",
+			current: "1024\n",
+			maximum: "invalid\n",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join("memory", tt.name)
+			writeCgroupFile(t, paths.Path(path, "memory.current"), tt.current)
+			writeCgroupFile(t, paths.Path(path, "memory.max"), tt.maximum)
+
+			got, err := (&CgroupV2{}).MemoryUsage(path)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("MemoryUsage() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if got.Usage != tt.wantUsage {
+				t.Errorf("MemoryUsage().Usage = %d, want %d", got.Usage, tt.wantUsage)
+			}
+			if got.MaxLimited != tt.wantMax {
+				t.Errorf("MemoryUsage().MaxLimited = %d, want %d", got.MaxLimited, tt.wantMax)
 			}
 		})
 	}
