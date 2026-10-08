@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -217,19 +217,15 @@ func (e *EnumField) GetField() *data.Field {
 }
 
 func walkTree(tree *ProfileTree, fn func(tree *ProfileTree)) {
-	fn(tree)
-	stack := tree.Nodes
-
-	for {
-		if len(stack) == 0 {
-			break
-		}
-
-		fn(stack[0])
-		if stack[0].Nodes != nil {
-			stack = append(stack[0].Nodes, stack[1:]...)
-		} else {
-			stack = stack[1:]
+	// Keep pending nodes separate from the caller's child backing arrays.
+	stack := []*ProfileTree{tree}
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		node := stack[last]
+		stack = stack[:last]
+		fn(node)
+		for i := len(node.Nodes) - 1; i >= 0; i-- {
+			stack = append(stack, node.Nodes[i])
 		}
 	}
 }
