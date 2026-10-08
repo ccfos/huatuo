@@ -150,6 +150,7 @@ func Parse(pkt *Hdr) (*Packet, error) {
 			}
 		case layers.LayerTypeTCP:
 			rawFlags := tcpFlagsRaw(&dec.tcp)
+			payloadLength, payloadLengthKnown := tcpPayloadLengthFromDecoded(dec)
 			out.TCP = &TCP{
 				Sport:              uint16(dec.tcp.SrcPort),
 				Dport:              uint16(dec.tcp.DstPort),
@@ -162,8 +163,8 @@ func Parse(pkt *Hdr) (*Packet, error) {
 				Checksum:           dec.tcp.Checksum,
 				Urgent:             dec.tcp.Urgent,
 				SkState:            TCPStateName(pkt.SkState),
-				payloadLength:      uint32(len(dec.tcp.Payload)),
-				payloadLengthKnown: true,
+				payloadLength:      payloadLength,
+				payloadLengthKnown: payloadLengthKnown,
 			}
 		case layers.LayerTypeUDP:
 			out.UDP = &UDP{
@@ -260,6 +261,40 @@ func tcpPayloadLength(packet *Packet) (uint32, bool) {
 			return 0, false
 		}
 		return payloadLength - tcpHeaderLength, true
+	default:
+		return 0, false
+	}
+}
+
+func tcpPayloadLengthFromDecoded(dec *decoder) (uint32, bool) {
+	tcpHeaderLength := uint32(dec.tcp.DataOffset) * 4
+
+	switch {
+	case dec.ipv4.Version != 0:
+		ipHeaderLength := uint32(dec.ipv4.IHL) * 4
+		totalLength := uint32(dec.ipv4.Length)
+		if ipHeaderLength+tcpHeaderLength > totalLength {
+			return 0, false
+		}
+		return totalLength - ipHeaderLength - tcpHeaderLength, true
+	case dec.ipv6.Version != 0:
+		// IPv6 Payload includes any extension headers that were not consumed
+		// by the IPv6 decoder. Subtract the bytes before TCP so the result
+		// remains the wire payload length even when the raw capture is short.
+		extensionLength := len(dec.ipv6.Payload) -
+			len(dec.tcp.Contents) - len(dec.tcp.Payload)
+		if dec.ipv6.HopByHop != nil {
+			extensionLength += len(dec.ipv6.HopByHop.Contents)
+		}
+		if extensionLength < 0 {
+			return 0, false
+		}
+		payloadLength := uint32(dec.ipv6.Length)
+		overhead := uint32(extensionLength) + tcpHeaderLength
+		if overhead > payloadLength {
+			return 0, false
+		}
+		return payloadLength - overhead, true
 	default:
 		return 0, false
 	}
