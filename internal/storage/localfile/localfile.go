@@ -32,7 +32,7 @@ import (
 
 // Storage appends records to local files. It is bound to one collection by Init.
 type Storage struct {
-	lock         sync.Mutex
+	lock         sync.RWMutex
 	files        map[string]io.Writer
 	writerCache  sync.Map
 	path         string
@@ -134,14 +134,18 @@ func (b *Storage) newFileWriter(filename string) io.Writer {
 }
 
 func (b *Storage) writerByName(name string) (io.Writer, error) {
-	if fileWriter, ok := b.files[name]; ok {
+	// The read fast path and every map write must share the same lock, or
+	// concurrent Save calls race on the map header (see issue #1186).
+	b.lock.RLock()
+	fileWriter, ok := b.files[name]
+	b.lock.RUnlock()
+	if ok {
 		return fileWriter, nil
 	}
 
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
-	// Double-check after acquiring lock
 	if fileWriter, ok := b.files[name]; ok {
 		return fileWriter, nil
 	}
