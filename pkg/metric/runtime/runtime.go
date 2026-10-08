@@ -18,6 +18,8 @@
 package runtime
 
 import (
+	"os"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 
@@ -35,8 +37,13 @@ func RegisterCollector(reg *prometheus.Registry, namespace string) {
 		prefix = namespace + "_"
 	}
 
+	hostname := metric.DefaultHostname()
+	if hostname == "" {
+		// The standalone apiserver does not initialize a collector manager.
+		hostname, _ = os.Hostname()
+	}
 	labeledReg := prometheus.WrapRegistererWith(prometheus.Labels{
-		metric.LabelHost:   metric.DefaultHostname(),
+		metric.LabelHost:   hostname,
 		metric.LabelRegion: metric.DefaultRegion(),
 	}, prometheus.WrapRegistererWithPrefix(prefix, reg))
 
