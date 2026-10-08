@@ -42,8 +42,8 @@ type Result struct {
 
 // Snapshot binds memory collection to an already selected process instance.
 // Callers must validate the process instance before calling Snapshot.
-// Provider failures become failed snapshots. Detection and output-processing
-// failures, cancellation and invalid options return errors without a result.
+// Detection and provider failures become failed snapshots, retaining process memory.
+// Output-processing failures, cancellation and invalid options return no result.
 func Snapshot(ctx context.Context, process memsnapshot.ProcessInstanceID,
 	options Options,
 ) (*Result, error) {
@@ -57,14 +57,22 @@ func Snapshot(ctx context.Context, process memsnapshot.ProcessInstanceID,
 	}
 	snapshotStartedAt := time.Now().UTC()
 
-	language, err := memsnapshot.DetectLanguage(pid)
-	if err != nil {
-		return nil, fmt.Errorf("detect process runtime: %w", err)
+	language, detectionErr := memsnapshot.DetectLanguage(pid)
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
-	snapshotCtx, cancelSnapshot := context.WithTimeout(ctx, options.SnapshotTimeout)
-	snapshot := snapshotProvider(snapshotCtx, newProvider(language), process, options.MaxMemoryObjectEntries)
-	cancelSnapshot()
+	var snapshot *memsnapshot.Snapshot
+	if detectionErr != nil {
+		if err := memsnapshot.ValidateProcessInstanceID(process); err != nil {
+			return nil, fmt.Errorf("detect process runtime: %w; validate process: %w", detectionErr, err)
+		}
+		language = memsnapshot.LanguageUnknown
+		snapshot = memsnapshot.Failed("detect process runtime: " + detectionErr.Error())
+	} else {
+		snapshotCtx, cancelSnapshot := context.WithTimeout(ctx, options.SnapshotTimeout)
+		snapshot = snapshotProvider(snapshotCtx, newProvider(language), process, options.MaxMemoryObjectEntries)
+		cancelSnapshot()
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
