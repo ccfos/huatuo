@@ -141,8 +141,8 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
 
-	needsFallback := p.internalMode == profiling.ModePhysicalUsage
-	ringCtx, err := newRingBufferContext(b, pctx.Ctx, 4096*257, needsFallback)
+	sharedStackMap := p.internalMode == profiling.ModePhysicalUsage
+	ringCtx, err := newRingBufferContext(b, pctx.Ctx, 4096*257, sharedStackMap)
 	if err != nil {
 		readerErr := fmt.Errorf("create native memory event readers: %w", err)
 		if closeErr := b.Close(); closeErr != nil {

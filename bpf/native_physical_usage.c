@@ -83,8 +83,9 @@ int BPF_KPROBE(trace_page_alloc, void *page_or_folio)
 
 	SELECT_PROFILER_AB();
 
+	/* Allocation IDs must survive output-ring swaps until the page is freed. */
 	struct profiler_event_base *event = profiler_prepare_event_base(
-		&event_buf, pid_tgid, ctx, select_profiler_stack_map);
+		&event_buf, pid_tgid, ctx, &stack_map_a);
 	if (!event)
 		return 0;
 
