@@ -53,3 +53,13 @@ $ docker compose --project-directory ./build/docker up
 ```
 
 > Docker Compose 安装方法请参阅 https://docs.docker.com/compose/install/linux/。
+
+Compose 使用命名卷 `elasticsearch-data`、`prometheus-data` 和 `grafana-data`
+保存 Elasticsearch 数据、Prometheus 历史和 Grafana 状态。保持相同的 Compose 项目名，
+以继续使用这些卷。重建容器或执行普通的 `docker compose down` 会保留数据卷；
+`docker compose down --volumes` 会删除数据卷，开发清理命令 `make compose-dev-down`
+也会删除它们。
+
+将此 Compose 文件用于尚未配置命名数据卷的已有部署前，请先备份各服务数据，并规划如何
+恢复到新卷。旧容器可写层或匿名卷中的数据不会自动迁移。请使用各服务支持的备份和恢复
+流程，确认数据恢复成功后再删除旧容器或旧卷。
