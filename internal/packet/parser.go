@@ -150,7 +150,7 @@ func Parse(pkt *Hdr) (*Packet, error) {
 			}
 		case layers.LayerTypeTCP:
 			rawFlags := tcpFlagsRaw(&dec.tcp)
-			payloadLength, payloadLengthKnown := tcpPayloadLengthFromDecoded(dec)
+			payloadLength, payloadLengthKnown := tcpPayloadLengthFromDecoded(dec, out)
 			out.TCP = &TCP{
 				Sport:              uint16(dec.tcp.SrcPort),
 				Dport:              uint16(dec.tcp.DstPort),
@@ -266,18 +266,18 @@ func tcpPayloadLength(packet *Packet) (uint32, bool) {
 	}
 }
 
-func tcpPayloadLengthFromDecoded(dec *decoder) (uint32, bool) {
+func tcpPayloadLengthFromDecoded(dec *decoder, packet *Packet) (uint32, bool) {
 	tcpHeaderLength := uint32(dec.tcp.DataOffset) * 4
 
 	switch {
-	case dec.ipv4.Version != 0:
-		ipHeaderLength := uint32(dec.ipv4.IHL) * 4
-		totalLength := uint32(dec.ipv4.Length)
+	case packet.IPv4 != nil:
+		ipHeaderLength := uint32(packet.IPv4.IHL) * 4
+		totalLength := uint32(packet.IPv4.Length)
 		if ipHeaderLength+tcpHeaderLength > totalLength {
 			return 0, false
 		}
 		return totalLength - ipHeaderLength - tcpHeaderLength, true
-	case dec.ipv6.Version != 0:
+	case packet.IPv6 != nil:
 		// IPv6 Payload includes any extension headers that were not consumed
 		// by the IPv6 decoder. Subtract the bytes before TCP so the result
 		// remains the wire payload length even when the raw capture is short.
