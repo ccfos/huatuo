@@ -56,7 +56,7 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 		dwrite += dwbps
 
 		// First (highest-IO) record's comm is the fallback when
-		// /proc/<pid>/comm can't be read.
+		// /proc/<pid>/cmdline is empty or can't be read.
 		if comm == "" {
 			comm = bytesutil.ToStr(record.Comm[:])
 		}
@@ -93,7 +93,7 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 	}
 
 	cmdline, err := process.CommandLine(int(g.PID))
-	if err != nil {
+	if err != nil || cmdline == "" {
 		cmdline = comm
 	}
 
