@@ -308,9 +308,31 @@ write_continuous_profiling_apiserver_config() {
 EOF
 }
 
-write_memory_oom_kill_config() {
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "sched_tick", "ras", "runqlat", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
+# Keep event tests isolated with one shared collector list.
+write_single_event_config() {
+	local enabled=$1 tracer separator=""
+	local tracers=(
+		arp ascend_npu cpu_stat cpu_util cpuidle
+		cpusys diskio dload dropwatch hungtask
+		iolatency iotracing irqtracing loadavg memburst
+		memory_buddyinfo memory_events memory_free memory_oom_kill memory_others
+		memory_reclaim memory_reclaim_events memory_threshold_snapshot memory_vmstat metax_gpu
+		mountpoint_perm mthreads_gpu mthreads_xid net_rx_latency netdev
+		netdev_bonding_lacp netdev_dcb netdev_events netdev_hw netdev_qdisc
+		netdev_rdma_link netdev_txqueue_timeout netstat ras runqlat
+		sched_tick sockstat softirq softlockup tcp_memory
+		tcp_retransmit tracing_status
+	)
+
+	{
+		printf 'BlackList = ['
+		for tracer in "${tracers[@]}"; do
+			[[ "${tracer}" == "${enabled}" ]] && continue
+			printf '%s"%s"' "${separator}" "${tracer}"
+			separator=', '
+		done
+		printf ']\n'
+		cat << EOF
 
 [HTTPServer.Auth]
     BearerToken = "integration-node-token"
@@ -318,4 +340,9 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
 [Storage.LocalFile]
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 EOF
+	} > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+}
+
+write_memory_oom_kill_config() {
+	write_single_event_config memory_oom_kill
 }
