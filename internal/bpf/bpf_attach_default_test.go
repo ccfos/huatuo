@@ -16,6 +16,7 @@ package bpf
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cilium/ebpf"
@@ -283,5 +284,92 @@ func TestDuplicateAttachErrors(t *testing.T) {
 				t.Errorf("error = %v, want an error matching ErrDuplicateAttach", err)
 			}
 		})
+	}
+}
+
+func TestResolveAttachSymbol(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		mock        bool
+		programType ebpf.ProgramType
+		symbol      string
+		want        string
+		wantErr     bool
+	}{
+		{name: "production", programType: ebpf.Kprobe, symbol: "oom_kill_process", want: "oom_kill_process"},
+		{name: "production tracepoint", programType: ebpf.TracePoint, symbol: "sched/sched_switch", want: "sched/sched_switch"},
+		{name: "production offset", programType: ebpf.Kprobe, symbol: "oom_kill_process+16", want: "oom_kill_process+16"},
+		{name: "mock function probe", mock: true, programType: ebpf.Kprobe, symbol: "oom_kill_process", want: "oom_kill_process_mock"},
+		{name: "empty mock target", mock: true, programType: ebpf.Kprobe, wantErr: true},
+		{name: "mock offset", mock: true, programType: ebpf.Kprobe, symbol: "oom_kill_process+16", wantErr: true},
+		{name: "mock tracepoint", mock: true, programType: ebpf.TracePoint, symbol: "sched/sched_process_hang", want: "sched/sched_process_hang_mock"},
+		{name: "empty mock tracepoint", mock: true, programType: ebpf.TracePoint, wantErr: true},
+		{name: "mock tracepoint without group", mock: true, programType: ebpf.TracePoint, symbol: "sched_process_hang", wantErr: true},
+		{name: "mock tracepoint without event", mock: true, programType: ebpf.TracePoint, symbol: "sched/", wantErr: true},
+		{name: "raw tracepoint", mock: true, programType: ebpf.RawTracepoint, symbol: "sched_switch", wantErr: true},
+		{name: "perf event", mock: true, programType: ebpf.PerfEvent, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			b := &defaultBPF{mock: tt.mock}
+			program := &loadedProgram{name: "hook", programType: tt.programType}
+			got, err := b.resolveAttachSymbol(program, tt.symbol)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("resolveAttachSymbol() error = %v, wantErr %t", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("resolveAttachSymbol() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMockTracepointAttachmentUsesMockTarget(t *testing.T) {
+	t.Parallel()
+	for _, withOptions := range []bool{false, true} {
+		program := &loadedProgram{
+			name:        "hook",
+			programType: ebpf.TracePoint,
+			sectionName: "tracepoint/sched/sched_process_hang",
+			links:       map[string]link.Link{"sched/sched_process_hang_mock": nil},
+		}
+		b := &defaultBPF{
+			mock:             true,
+			programsByID:     map[uint32]*loadedProgram{1: program},
+			programIDsByName: map[string]uint32{"hook": 1},
+		}
+		var err error
+		if withOptions {
+			err = b.AttachWithOptions([]AttachOption{{ProgramName: "hook", Symbol: "sched/sched_process_hang"}})
+		} else {
+			err = b.Attach()
+		}
+		// An existing mock link must be found before attempting a kernel attachment.
+		if !errors.Is(err, ErrDuplicateAttach) || !strings.Contains(err.Error(), "sched/sched_process_hang_mock") {
+			t.Fatalf("withOptions %t: error = %v, want duplicate mock attachment", withOptions, err)
+		}
+	}
+}
+
+func TestMockAttachmentRejectsUnsupportedTargets(t *testing.T) {
+	t.Parallel()
+	for _, withOptions := range []bool{false, true} {
+		program := &loadedProgram{name: "hook", programType: ebpf.RawTracepoint, sectionName: "raw_tracepoint/sched_switch"}
+		b := &defaultBPF{
+			mock:             true,
+			programsByID:     map[uint32]*loadedProgram{1: program},
+			programIDsByName: map[string]uint32{"hook": 1},
+		}
+		var err error
+		if withOptions {
+			err = b.AttachWithOptions([]AttachOption{{ProgramName: "hook", Symbol: "sched_switch"}})
+		} else {
+			err = b.Attach()
+		}
+		if err == nil || !strings.Contains(err.Error(), "only kprobe, kretprobe, and tracepoint are supported") {
+			t.Fatalf("withOptions %t: error = %v", withOptions, err)
+		}
 	}
 }

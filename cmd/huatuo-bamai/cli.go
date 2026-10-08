@@ -42,6 +42,7 @@ const (
 	cliFlagLogDebug       = "log-debug"
 	cliFlagDryRun         = "dry-run"
 	cliFlagProcfsPrefix   = "procfs-prefix"
+	cliFlagBPFMock        = "bpf-mock"
 )
 
 // Options holds all CLI-derived configuration. Populated by FromContext
@@ -60,6 +61,7 @@ type Options struct {
 	LogDebug       bool
 	DryRun         bool
 	ProcfsPrefix   string
+	BPFMock        bool
 	VersionInfo    version.Info
 }
 
@@ -146,6 +148,10 @@ func (o *Options) AddFlags(app *cli.App) {
 			Name:  cliFlagProcfsPrefix,
 			Usage: "procfs prefix for default mountpoint e.g. /proc /sys and /dev",
 		},
+		&cli.BoolFlag{
+			Name:  cliFlagBPFMock,
+			Usage: "testing only: attach kprobes, kretprobes, and tracepoints to <symbol>_mock",
+		},
 	}
 }
 
@@ -160,6 +166,7 @@ func (o *Options) FromContext(ctx *cli.Context) error {
 	o.LogDebug = ctx.Bool(cliFlagLogDebug)
 	o.DryRun = ctx.Bool(cliFlagDryRun)
 	o.ProcfsPrefix = ctx.String(cliFlagProcfsPrefix)
+	o.BPFMock = ctx.Bool(cliFlagBPFMock)
 
 	var err error
 	if o.ConfigDir, err = resolveOptionDir(ctx, cliFlagConfigDir); err != nil {

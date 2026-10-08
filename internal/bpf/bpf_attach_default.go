@@ -57,6 +57,26 @@ func parseSectionSymbol(sectionName string) (string, error) {
 	return parts[1], nil
 }
 
+// resolveAttachSymbol applies the same target policy to both attachment APIs.
+func (b *defaultBPF) resolveAttachSymbol(program *loadedProgram, symbol string) (string, error) {
+	if !b.mock {
+		return symbol, nil
+	}
+	switch program.programType {
+	case ebpf.Kprobe:
+		if symbol == "" || strings.Contains(symbol, "+") {
+			return "", fmt.Errorf("cannot derive mock target for %s:%s from %q; use a function entry symbol without an offset", b.name, program.name, symbol)
+		}
+	case ebpf.TracePoint:
+		if _, err := parseTracepointAttachOptions(program, symbol); err != nil {
+			return "", err
+		}
+	default:
+		return "", fmt.Errorf("BPF mock attachment for %s:%s does not support %s; only kprobe, kretprobe, and tracepoint are supported", b.name, program.name, program.programType)
+	}
+	return symbol + "_mock", nil
+}
+
 func parseKprobeAttachOptions(
 	program *loadedProgram,
 	symbol string,
@@ -200,9 +220,14 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 			return fmt.Errorf("unknown BPF program %q", opt.ProgramName)
 		}
 
+		symbol, resolveErr := b.resolveAttachSymbol(program, opt.Symbol)
+		if resolveErr != nil {
+			return resolveErr
+		}
+
 		switch program.programType {
 		case ebpf.TracePoint:
-			attachOpts, parseErr := parseTracepointAttachOptions(program, opt.Symbol)
+			attachOpts, parseErr := parseTracepointAttachOptions(program, symbol)
 			if parseErr != nil {
 				return parseErr
 			}
@@ -212,7 +237,7 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 		case ebpf.Kprobe:
 			attachOpts, parseErr := parseKprobeAttachOptions(
 				program,
-				opt.Symbol,
+				symbol,
 				program.sectionPrefix == "kretprobe",
 				opt.Kprobe.RetprobeMaxActive,
 			)
@@ -223,7 +248,7 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 				return err
 			}
 		case ebpf.RawTracepoint:
-			attachOpts, parseErr := parseRawTracepointAttachOptions(program, opt.Symbol)
+			attachOpts, parseErr := parseRawTracepointAttachOptions(program, symbol)
 			if parseErr != nil {
 				return parseErr
 			}
@@ -275,11 +300,22 @@ func (b *defaultBPF) attach() (err error) {
 
 	for _, program := range b.programsByID {
 		switch program.programType {
+		case ebpf.TracePoint, ebpf.Kprobe, ebpf.RawTracepoint:
+		default:
+			return fmt.Errorf("unsupported BPF program type %q", program.programType)
+		}
+
+		symbol, parseErr := parseSectionSymbol(program.sectionName)
+		if parseErr != nil {
+			return parseErr
+		}
+		symbol, parseErr = b.resolveAttachSymbol(program, symbol)
+		if parseErr != nil {
+			return parseErr
+		}
+
+		switch program.programType {
 		case ebpf.TracePoint:
-			symbol, parseErr := parseSectionSymbol(program.sectionName)
-			if parseErr != nil {
-				return parseErr
-			}
 			attachOpts, parseErr := parseTracepointAttachOptions(program, symbol)
 			if parseErr != nil {
 				return fmt.Errorf("parse BPF section %q: %w", program.sectionName, parseErr)
@@ -288,10 +324,6 @@ func (b *defaultBPF) attach() (err error) {
 				return err
 			}
 		case ebpf.Kprobe:
-			symbol, parseErr := parseSectionSymbol(program.sectionName)
-			if parseErr != nil {
-				return parseErr
-			}
 			attachOpts, parseErr := parseKprobeAttachOptions(
 				program,
 				symbol,
@@ -305,10 +337,6 @@ func (b *defaultBPF) attach() (err error) {
 				return err
 			}
 		case ebpf.RawTracepoint:
-			symbol, parseErr := parseSectionSymbol(program.sectionName)
-			if parseErr != nil {
-				return parseErr
-			}
 			attachOpts, parseErr := parseRawTracepointAttachOptions(program, symbol)
 			if parseErr != nil {
 				return fmt.Errorf("parse BPF section %q: %w", program.sectionName, parseErr)
@@ -316,8 +344,6 @@ func (b *defaultBPF) attach() (err error) {
 			if err = b.attachRawTracepoint(attachOpts); err != nil {
 				return err
 			}
-		default:
-			return fmt.Errorf("unsupported BPF program type %q", program.programType)
 		}
 	}
 
