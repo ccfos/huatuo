@@ -45,35 +45,36 @@ type runtimeLayout struct {
 	objectSizeOffset    uint64
 	typeNameOffset      uint64
 	typeFlagsOffset     uint64
+	typeQualnameOffset  uint64
 	unicodeDataOffset   uint64
 }
 
 var runtimeLayouts = map[int]runtimeLayout{
 	8: {
-		interpreterMode: layoutRuntimeGC, unicodeDataOffset: 48,
+		interpreterMode: layoutRuntimeGC, unicodeDataOffset: 48, typeQualnameOffset: 864,
 	},
 	9: {
-		interpreterMode: layoutProbedList, unicodeDataOffset: 48,
+		interpreterMode: layoutProbedList, unicodeDataOffset: 48, typeQualnameOffset: 856,
 	},
 	10: {
-		interpreterMode: layoutProbedList, unicodeDataOffset: 48,
+		interpreterMode: layoutProbedList, unicodeDataOffset: 48, typeQualnameOffset: 864,
 	},
 	11: {
-		interpreterMode: layoutProbedList, unicodeDataOffset: 48,
+		interpreterMode: layoutProbedList, unicodeDataOffset: 48, typeQualnameOffset: 864,
 	},
 	12: {
 		interpreterMode: layoutFixed, runtimeHeadOffset: 40,
-		interpreterGCOffset: 112, unicodeDataOffset: 40,
+		interpreterGCOffset: 112, unicodeDataOffset: 40, typeQualnameOffset: 872,
 	},
 	13: {
 		interpreterMode:    layoutDebugOffsets,
 		debugInterpreterGC: 80, debugObjectType: 360,
-		debugTypeName: 376, debugTypeFlags: 392, unicodeDataOffset: 40,
+		debugTypeName: 376, debugTypeFlags: 392, unicodeDataOffset: 40, typeQualnameOffset: 872,
 	},
 	14: {
 		interpreterMode:    layoutDebugOffsets,
 		debugInterpreterGC: 88, debugObjectType: 408,
-		debugTypeName: 424, debugTypeFlags: 440, unicodeDataOffset: 40,
+		debugTypeName: 424, debugTypeFlags: 440, unicodeDataOffset: 40, typeQualnameOffset: 872,
 	},
 }
 
