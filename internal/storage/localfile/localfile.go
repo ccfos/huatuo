@@ -102,8 +102,8 @@ func (b *Storage) DeleteByQuery(context.Context, driver.DeleteQuery) (int64, err
 	return 0, driver.ErrUnsupported
 }
 
-func (b *Storage) Query(context.Context, driver.Query) ([]driver.Record, error) {
-	return nil, driver.ErrUnsupported
+func (b *Storage) Query(context.Context, driver.Query, func([]driver.Record) error) error {
+	return driver.ErrUnsupported
 }
 
 func (b *Storage) Count(context.Context, driver.Query) (int64, error) {

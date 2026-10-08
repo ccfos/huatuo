@@ -463,10 +463,52 @@ Bulk failures are split into two layers with different retry semantics:
 
 **Why this design**: 429/5xx and transport errors signal transient remote unavailability where retries are effective; 4xx (except 429) and per-item errors are client-side semantic issues (data shape, permissions) where retries would only amplify the failure — they should be surfaced via logs for human investigation.
 
+### Batched Reads
+
+`Query(ctx, query, consume)` calls the consumer synchronously for each nonempty
+batch. `Limit` caps the total records delivered after `Offset` matching records
+are skipped. `storage.Store.Query` requires a positive Limit and non-negative
+Offset and BatchSize before calling a backend; backends consume validated input.
+`BatchSize` controls each batch, defaults to 100 when zero, and is capped by the
+remaining total. Callers must supply a positive total limit when they need data.
+`Count` and `Values` use only `Filters` from the query and ignore `Sorts`, `Limit`,
+`Offset`, and `BatchSize`, including zero and negative pagination values. `Count`
+counts all matching records. `Values` uses its separate `size` argument, whose
+non-negative constraint is checked by `storage.Store.Values` before dispatch;
+backends do not repeat pagination or size validation for these operations.
+Local file storage remains write-only.
+
+SQLite streams one `SELECT ... LIMIT ... OFFSET ...` through rows. A consumer
+must not query the same SQLite backend synchronously while rows hold its single
+connection. Job recovery reads 1000 Jobs at a time using ascending IDs, then
+starts their supervisors after the read closes; status changes cannot shift the
+next page. Elasticsearch 7/8 and OpenSearch use Scroll snapshots, including for
+offsets beyond the result window. Deep offsets still require reading and
+skipping earlier records. Separate API calls do not share a snapshot.
+
+Each batch has independent ownership. Callback errors, decoding errors, backend
+errors, and cancellation stop the query immediately; earlier callback effects
+are not rolled back. Scroll cleanup uses a separate bounded context even after
+cancellation. Query requests are not retried because a lost Scroll response may
+already have advanced the cursor. Write retry behavior is unchanged.
+
+API defaults apply only when `limit` is omitted: Job lists default to 100 with a
+maximum of 1000; raw Profile pages default to 20 with a maximum of 100 and retain
+the 64 MiB response budget. Explicit zero, negative, or oversized limits are rejected. One additional
+record is fetched to determine `has_more`.
+
+Profile flamegraphs merge batches as they arrive, with a total budget of 100000
+windows. One extra record detects overflow and rejects the query with an
+instruction to narrow its time range or filters. Read or merge failure never
+returns a partial flamegraph. Input batches can be released as processing
+advances; the merged profile still grows with distinct stacks.
+
 #### Response Errors
 
 HTTP success does not guarantee a complete result. `Query` and `Values` return
-an error without partial results when a search times out or a shard fails.
+an error when a search times out or a shard fails. `Query` stops before
+delivering the failing page; already consumed batches remain consumed. `Values`
+does not return partial results.
 `Count` returns zero and an error on shard failure. A search timeout takes
 precedence over shard failures. Shard errors include the failed shard count and
 the first failure's available type, reason, and nested causes.

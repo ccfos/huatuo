@@ -109,7 +109,7 @@ func TestStorageSearchStatus(t *testing.T) {
 				var count int
 				if operation == "query" {
 					var records []driver.Record
-					records, err = backend.Query(t.Context(), driver.Query{})
+					records, err = queryRecords(t.Context(), backend, driver.Query{Limit: 1})
 					count = len(records)
 					if err != nil && records != nil {
 						t.Fatalf("Query() returned partial records: %v", records)

@@ -42,27 +42,28 @@ func validateFieldName(field string) error {
 }
 
 func buildSearchRequest(q driver.Query) ([]byte, error) {
-	if q.Limit < 0 || q.Offset < 0 {
-		return nil, driver.ErrNegativePagination
-	}
-
 	query, err := buildQuery(q.Filters)
 	if err != nil {
 		return nil, err
 	}
 
-	size := defaultQuerySize
-	if q.Limit > 0 {
-		size = q.Limit
+	size := q.BatchSize
+	if size == 0 {
+		size = driver.DefaultBatchSize
 	}
+	// Include skipped hits so a small limit does not shrink every scroll page.
+	// Bound the addition by size to avoid overflowing Offset+Limit.
+	if q.Offset < size {
+		size = q.Offset + min(q.Limit, size-q.Offset)
+	}
+
 	req := essearch.Request{
-		Query:          query,
+		Query: query,
+		// Scroll rejects disabled total-hit tracking, including on ES 7.
 		TrackTotalHits: true,
 		Size:           &size,
 	}
-	if q.Offset > 0 {
-		req.From = &q.Offset
-	}
+	// Scroll advances through skipped records without the from+size window limit.
 	if len(q.Sorts) > 0 {
 		sorts, err := buildSort(q.Sorts)
 		if err != nil {
@@ -74,10 +75,6 @@ func buildSearchRequest(q driver.Query) ([]byte, error) {
 }
 
 func buildCountRequest(q driver.Query) ([]byte, error) {
-	if q.Limit < 0 || q.Offset < 0 {
-		return nil, driver.ErrNegativePagination
-	}
-
 	query, err := buildQuery(q.Filters)
 	if err != nil {
 		return nil, err
@@ -110,13 +107,6 @@ func buildValuesRequest(field string, q driver.Query, size int) ([]byte, error) 
 	if err := validateFieldName(field); err != nil {
 		return nil, err
 	}
-	if q.Limit < 0 || q.Offset < 0 {
-		return nil, driver.ErrNegativePagination
-	}
-	if size < 0 {
-		return nil, driver.ErrNegativeSize
-	}
-
 	query, err := buildQuery(q.Filters)
 	if err != nil {
 		return nil, err

@@ -16,10 +16,12 @@ package elasticsearch
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -812,7 +814,6 @@ func flushBackend(t *testing.T, backend *Storage) {
 	}
 }
 
-// TestBuildSearchRequest covers query DSL construction: verifies that equality, not-equal, range, IN, sort, pagination, and invalid pagination are all translated to the correct ES request body.
 func TestBuildSearchRequest(t *testing.T) {
 	baseTime := time.Date(2026, 4, 9, 8, 0, 0, 123000000, time.UTC)
 
@@ -842,11 +843,11 @@ func TestBuildSearchRequest(t *testing.T) {
 					return
 				}
 
-				if intFromAny(got["size"]) != 2 {
-					t.Errorf("size = %v, want 2", got["size"])
+				if intFromAny(got["size"]) != 3 {
+					t.Errorf("size = %v, want 3", got["size"])
 				}
-				if intFromAny(got["from"]) != 1 {
-					t.Errorf("from = %v, want 1", got["from"])
+				if _, ok := got["from"]; ok {
+					t.Errorf("from = %v, want omitted for scroll", got["from"])
 				}
 
 				queryMap, _ := got["query"].(map[string]any)
@@ -894,17 +895,6 @@ func TestBuildSearchRequest(t *testing.T) {
 				}
 			},
 		},
-		{
-			name: "invalid-pagination",
-			query: driver.Query{
-				Limit: -1,
-			},
-			validate: func(t *testing.T, got map[string]any, err error) {
-				if err == nil {
-					t.Errorf("buildSearchBody() error = nil, want error")
-				}
-			},
-		},
 	}
 
 	for _, tc := range cases {
@@ -912,6 +902,44 @@ func TestBuildSearchRequest(t *testing.T) {
 			rawBody, err := buildSearchRequest(tc.query)
 			body := decodeJSONMap(t, rawBody)
 			tc.validate(t, body, err)
+		})
+	}
+}
+
+func TestBuildSearchRequestPageSize(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		query driver.Query
+		size  int
+	}{
+		{name: "limit below default", query: driver.Query{Limit: 1}, size: 1},
+		{name: "offset below default", query: driver.Query{Limit: 1, Offset: 2}, size: 3},
+		{name: "offset exceeds default", query: driver.Query{Limit: 1, Offset: 10000}, size: driver.DefaultBatchSize},
+		{
+			name:  "offset and limit overflow",
+			query: driver.Query{Limit: math.MaxInt, Offset: math.MaxInt, BatchSize: 100},
+			size:  100,
+		},
+		{
+			name:  "maximum batch size",
+			query: driver.Query{Limit: math.MaxInt, Offset: 1, BatchSize: math.MaxInt},
+			size:  math.MaxInt,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := buildSearchRequest(tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var request struct {
+				Size int `json:"size"`
+			}
+			if err := json.Unmarshal(body, &request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Size != tc.size {
+				t.Fatalf("size=%d, want %d", request.Size, tc.size)
+			}
 		})
 	}
 }
@@ -1202,7 +1230,7 @@ func TestElasticsearchBackendMissingIndexIsEmpty(t *testing.T) {
 	backend := newBackendForTest(t, server)
 	defer func() { _ = backend.Close(t.Context()) }()
 
-	records, err := backend.Query(t.Context(), driver.Query{})
+	records, err := queryRecords(t.Context(), backend, driver.Query{Limit: 1})
 	if err != nil || len(records) != 0 {
 		t.Fatalf("Query() = (%v, %v), want empty result", records, err)
 	}
@@ -1265,7 +1293,7 @@ func TestElasticsearchBackendQuery(t *testing.T) {
 	}
 	flushBackend(t, backend)
 
-	result, err := backend.Query(t.Context(), driver.Query{
+	result, err := queryRecords(t.Context(), backend, driver.Query{
 		Filters: []driver.Filter{
 			{Field: "status", Op: driver.OpEq, Value: "running"},
 			{Field: "priority", Op: driver.OpGt, Value: 5},
@@ -1291,6 +1319,9 @@ func TestElasticsearchBackendQuery(t *testing.T) {
 			{Field: "status", Op: driver.OpEq, Value: "running"},
 			{Field: "priority", Op: driver.OpGt, Value: 5},
 		},
+		Limit:     -1,
+		Offset:    -1,
+		BatchSize: -1,
 	})
 	if err != nil {
 		t.Errorf("Count() returned error: %v", err)
@@ -1336,9 +1367,16 @@ func TestElasticsearchBackendNotEqualExcludesMissingFields(t *testing.T) {
 	}
 	flushBackend(t, backend)
 
-	records, err := backend.Query(t.Context(), driver.Query{
+	query := driver.Query{
 		Filters: []driver.Filter{{Field: "ended_at", Op: driver.OpNe, Value: ""}},
-	})
+		Limit:   1,
+	}
+	count, err := backend.Count(t.Context(), query)
+	if err != nil || count != 1 {
+		t.Fatalf("Count() = (%d, %v), want (1, nil)", count, err)
+	}
+
+	records, err := queryRecords(t.Context(), backend, query)
 	if err != nil {
 		t.Fatalf("Query() returned error: %v", err)
 	}
@@ -1398,6 +1436,9 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 			{Field: "hostname", Op: driver.OpEq, Value: "huatuo-dev"},
 			{Field: "time", Op: driver.OpGte, Value: timeutil.FormatUTC(baseTime.Add(-time.Minute))},
 		},
+		Limit:     -1,
+		Offset:    -1,
+		BatchSize: -1,
 	}, 10)
 	if err != nil {
 		t.Errorf("Terms() returned error: %v", err)
@@ -1608,4 +1649,16 @@ func TestNewBackendRequiresIndex(t *testing.T) {
 	if err == nil || err.Error() != "elasticsearch backend: index is required" {
 		t.Fatalf("NewBackend() error = %v", err)
 	}
+}
+
+func queryRecords(ctx context.Context, backend driver.Backend, q driver.Query) ([]driver.Record, error) {
+	var records []driver.Record
+	err := backend.Query(ctx, q, func(batch []driver.Record) error {
+		records = append(records, batch...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return records, nil
 }

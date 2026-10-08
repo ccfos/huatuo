@@ -35,10 +35,6 @@ var binaryOpSQL = map[driver.Op]string{
 }
 
 func buildSelectSQL(collection string, q driver.Query) (string, []any, error) {
-	if q.Limit < 0 || q.Offset < 0 {
-		return "", nil, driver.ErrNegativePagination
-	}
-
 	baseSQL := fmt.Sprintf(`SELECT id, data, fields FROM %s`, quoteIdentifier(collection))
 	whereSQL, args, err := buildWhereSQL(q.Filters)
 	if err != nil {
@@ -61,14 +57,9 @@ func buildSelectSQL(collection string, q driver.Query) (string, []any, error) {
 		sb.WriteString(orderSQL)
 	}
 
-	if q.Limit > 0 {
-		sb.WriteString(" LIMIT ?")
-		args = append(args, q.Limit)
-	}
+	sb.WriteString(" LIMIT ?")
+	args = append(args, q.Limit)
 	if q.Offset > 0 {
-		if q.Limit == 0 {
-			sb.WriteString(" LIMIT -1")
-		}
 		sb.WriteString(" OFFSET ?")
 		args = append(args, q.Offset)
 	}
@@ -76,10 +67,6 @@ func buildSelectSQL(collection string, q driver.Query) (string, []any, error) {
 }
 
 func buildCountSQL(collection string, q driver.Query) (string, []any, error) {
-	if q.Limit < 0 || q.Offset < 0 {
-		return "", nil, driver.ErrNegativePagination
-	}
-
 	baseSQL := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, quoteIdentifier(collection))
 	whereSQL, args, err := buildWhereSQL(q.Filters)
 	if err != nil {
@@ -92,13 +79,6 @@ func buildCountSQL(collection string, q driver.Query) (string, []any, error) {
 }
 
 func buildValuesSQL(collection, field string, q driver.Query, size int) (string, []any, error) {
-	if q.Limit < 0 || q.Offset < 0 {
-		return "", nil, driver.ErrNegativePagination
-	}
-	if size < 0 {
-		return "", nil, driver.ErrNegativeSize
-	}
-
 	termExpr := jsonExtractExpr(field)
 	baseSQL := fmt.Sprintf(`SELECT DISTINCT %s AS term FROM %s`, termExpr, quoteIdentifier(collection))
 	whereSQL, args, err := buildWhereSQL(q.Filters)

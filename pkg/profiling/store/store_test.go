@@ -191,8 +191,8 @@ func (*recordingBackend) DeleteByQuery(context.Context, driver.DeleteQuery) (int
 	return 0, nil
 }
 
-func (*recordingBackend) Query(context.Context, driver.Query) ([]driver.Record, error) {
-	return nil, nil
+func (*recordingBackend) Query(context.Context, driver.Query, func([]driver.Record) error) error {
+	return nil
 }
 
 func (*recordingBackend) Count(context.Context, driver.Query) (int64, error) { return 0, nil }
