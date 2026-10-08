@@ -187,6 +187,38 @@ huatuo_bamai_loadavg_container_nr_uninterruptible{container_host="coredns-855c4d
 |loadavg_container_container_nr_running|容器中运行的任务数量|计数|容器| host, region | 只支持 cgroup v1|
 |loadavg_container_container_nr_uninterruptible|容器中不可中断任务的数量|计数|容器| host, region |只支持 cgroup v1|
 
+### 资源压力
+
+压力失速信息（PSI）量化 CPU、内存和 IO 的资源竞争程度。avg 值为对应窗口
+内的百分比；total 计数器单位为秒，可配合 rate() 使用。物理机指标来自
+/proc/pressure，容器指标仅 cgroup v2 支持，来自 <cgroup>/<resource>.pressure：
+```bash
+# HELP huatuo_bamai_psi_cpu_some_avg10 at least one task stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_cpu_some_avg10 gauge
+huatuo_bamai_psi_cpu_some_avg10{host="hostname",region="dev"} 0.05
+# HELP huatuo_bamai_psi_cpu_some_seconds_total at least one task stalled: PSI total stall time, in seconds
+# TYPE huatuo_bamai_psi_cpu_some_seconds_total counter
+huatuo_bamai_psi_cpu_some_seconds_total{host="hostname",region="dev"} 615.63
+# HELP huatuo_bamai_psi_memory_full_avg10 all non-idle tasks stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_memory_full_avg10 gauge
+huatuo_bamai_psi_memory_full_avg10{host="hostname",region="dev"} 0.01
+# HELP huatuo_bamai_psi_io_some_avg60 at least one task stalled: PSI average over 60 seconds, in percent
+# TYPE huatuo_bamai_psi_io_some_avg60 gauge
+huatuo_bamai_psi_io_some_avg60{host="hostname",region="dev"} 0.12
+# HELP huatuo_bamai_psi_memory_full_container_avg10 all non-idle tasks stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_memory_full_container_avg10 gauge
+huatuo_bamai_psi_memory_full_container_avg10{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象|标签|
+|---|---|---|---|---|
+|psi_cpu_some_avg10/avg60/avg300|至少一个任务因等待 CPU 而失速的时间占比|百分比|物理机| host, region |
+|psi_cpu_some_seconds_total|CPU 失速总时长|秒|物理机| host, region |
+|psi_memory_some_*|至少一个任务因等待内存而失速|百分比 / 秒|物理机| host, region |
+|psi_memory_full_*|所有非空闲任务同时因内存失速|百分比 / 秒|物理机| host, region |
+|psi_io_some_* / psi_io_full_*|因等待 IO 失速|百分比 / 秒|物理机| host, region |
+|psi_<resource>_<some/full>_container_*|容器级资源压力|百分比 / 秒|容器| host, region, container_host, container_hostnamespace, container_level, container_name, container_type |仅 cgroup v2|
+
 ## 内存系统
 
 ### 资源回收
