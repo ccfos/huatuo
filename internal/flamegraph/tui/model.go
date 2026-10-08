@@ -29,7 +29,7 @@ const (
 	defaultHeight = 30
 	barMinWidth   = 1
 	headerLines   = 4
-	footerLines   = 5
+	footerLines   = 4
 )
 
 // Node is one reconstructed flamegraph frame.
@@ -198,6 +198,12 @@ func (m *Model) updateSearch(key tea.KeyMsg) Model {
 }
 
 func (m Model) View() string { //nolint:gocritic // tea.Model interface requires value receiver
+	if m.height <= 0 {
+		return ""
+	}
+	if m.height <= headerLines+footerLines {
+		return m.compactView()
+	}
 	var out strings.Builder
 	selected := m.selectedNode()
 	rootValue := m.focus.Value
@@ -240,7 +246,24 @@ func (m Model) View() string { //nolint:gocritic // tea.Model interface requires
 
 	out.WriteString(strings.Repeat("-", m.safeWidth()) + "\n")
 	out.WriteString(renderDetails(selected, m.focus.Value))
-	return out.String()
+	return strings.TrimSuffix(out.String(), "\n")
+}
+
+func (m *Model) compactView() string {
+	lines := []string{
+		"HUATUO perf flamegraph  q quit",
+		"keys: up/down scroll  enter zoom  backspace back  / search  n next",
+	}
+	if m.searching {
+		lines = append(lines, "search: "+m.query+"_")
+	} else {
+		lines = append(lines, "search: "+m.lastSearch)
+	}
+	lines = append(lines, strings.Split(strings.TrimSuffix(renderDetails(m.selectedNode(), m.focus.Value), "\n"), "\n")...)
+	if len(lines) > m.height {
+		lines = lines[:m.height]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) renderRow(cursor, match string, node *Node, rootValue int64) string {
@@ -387,8 +410,8 @@ func (m *Model) nextMatch() {
 
 func (m *Model) viewportHeight() int {
 	height := m.height - headerLines - footerLines
-	if height < 3 {
-		return 3
+	if height < 1 {
+		return 1
 	}
 	return height
 }
