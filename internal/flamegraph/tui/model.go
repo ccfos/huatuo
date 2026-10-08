@@ -18,6 +18,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -185,7 +186,10 @@ func (m *Model) updateSearch(key tea.KeyMsg) Model {
 		m.applySearch()
 	case "backspace":
 		if m.query != "" {
-			m.query = m.query[:len(m.query)-1]
+			// Remove one rune: slicing a byte off a multi-byte character
+			// would leave invalid UTF-8 in the query.
+			_, size := utf8.DecodeLastRuneInString(m.query)
+			m.query = m.query[:len(m.query)-size]
 		}
 	case "space":
 		m.query += " "
