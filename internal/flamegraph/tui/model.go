@@ -324,6 +324,7 @@ func (m *Model) zoomIn() {
 	m.cursor = 0
 	m.offset = 0
 	m.refreshVisible()
+	m.refreshMatches()
 }
 
 func (m *Model) zoomOut() {
@@ -333,6 +334,7 @@ func (m *Model) zoomOut() {
 	previous := m.focus
 	m.focus = m.focus.Parent
 	m.refreshVisible()
+	m.refreshMatches()
 	for index, node := range m.visible {
 		if node == previous {
 			m.cursor = index
@@ -340,6 +342,18 @@ func (m *Model) zoomOut() {
 		}
 	}
 	m.ensureCursorVisible()
+}
+
+// refreshMatches recomputes the active search over the now-visible frames so
+// zooming in or out rediscovers matches that entered or left the viewport set.
+func (m *Model) refreshMatches() {
+	if m.lastSearch == "" {
+		return
+	}
+	query := m.query
+	m.query = m.lastSearch
+	m.applySearch()
+	m.query = query
 }
 
 func (m *Model) selectedNode() *Node {
