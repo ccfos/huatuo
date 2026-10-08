@@ -167,6 +167,10 @@ func buildClause(filter driver.Filter) (types.Query, error) {
 		terms := types.NewTermsQuery()
 		terms.TermsQuery[filter.Field] = value.([]any)
 		return types.Query{Terms: terms}, nil
+	case driver.OpPrefix:
+		return types.Query{Prefix: map[string]types.PrefixQuery{
+			filter.Field: {Value: value.(string)},
+		}}, nil
 	default:
 		rangeQuery, err := buildRangeClause(filter.Op, value)
 		if err != nil {
