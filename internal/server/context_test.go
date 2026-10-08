@@ -260,3 +260,36 @@ func TestContextCanAccessTask(t *testing.T) {
 		})
 	}
 }
+
+func TestParseListParams(t *testing.T) {
+	for _, tc := range []struct {
+		query         string
+		limit, offset int
+		invalid       bool
+	}{
+		{"", 100, 0, false},
+		{"?limit=0", 0, 0, true},
+		{"?limit=1000&offset=7", 1000, 7, false},
+		{"?limit=-1", 0, 0, true},
+		{"?limit=1001", 0, 0, true},
+		{"?offset=-1", 0, 0, true},
+		{"?limit=invalid", 0, 0, true},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			ctx, _ := newTestServerContext(http.MethodGet, "/items"+tc.query, "")
+			params, err := ctx.ParseListParams()
+			if tc.invalid {
+				if err == nil {
+					t.Fatal("expected invalid pagination")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if params.Limit != tc.limit || params.Offset != tc.offset {
+				t.Fatalf("params=%+v, want limit=%d offset=%d", params, tc.limit, tc.offset)
+			}
+		})
+	}
+}

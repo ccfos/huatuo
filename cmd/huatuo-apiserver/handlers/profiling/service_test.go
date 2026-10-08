@@ -229,3 +229,11 @@ func TestNewServiceRequiresJobManager(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 }
+
+func TestNormalizePagePreservesExplicitZero(t *testing.T) {
+	zero := 0
+	limit, offset := NormalizePage(&zero, &zero)
+	if limit != 0 || offset != 0 {
+		t.Fatalf("explicit zero normalized to limit=%d offset=%d", limit, offset)
+	}
+}

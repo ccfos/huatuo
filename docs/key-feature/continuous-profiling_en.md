@@ -404,7 +404,8 @@ The profiling windows are in `data.items`; `data.limit`, `data.offset`, and
 `data.has_more` describe the page. Each item contains `uploaded_timestamp`,
 `started_timestamp`, `profile_type`, and the pprof-compatible `profile` payload.
 An empty, durably published result is a successful response with an empty
-`items` array. `limit` defaults to 20 and cannot exceed 100. If the encoded
+`items` array. `limit` defaults to 20 and accepts 1–100. Explicit `limit=0`
+returns a parameter error; omitted limits use the default. If the encoded
 profile data exceeds 64 MiB, the server returns `413 result_too_large`; retry
 with a smaller `limit`.
 

@@ -24,11 +24,10 @@ import (
 
 	"github.com/ccfos/huatuo/internal/auth"
 	"github.com/ccfos/huatuo/internal/job"
+	"github.com/ccfos/huatuo/internal/server"
 	"github.com/ccfos/huatuo/pkg/observation"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
-
-const defaultPageSize = 100
 
 // CreateInput contains transport-independent Tracing Job parameters.
 type CreateInput struct {
@@ -126,7 +125,7 @@ func (*Service) Capabilities() []tracingdomain.Capability {
 
 // NormalizePage applies the public pagination defaults.
 func NormalizePage(limit, offset *int) (int, int) {
-	normalizedLimit := defaultPageSize
+	normalizedLimit := server.DefaultListLimit
 	if limit != nil {
 		normalizedLimit = *limit
 	}
