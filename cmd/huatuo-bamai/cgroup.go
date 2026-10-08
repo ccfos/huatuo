@@ -26,13 +26,17 @@ import (
 
 const bytesPerMiB = 1024 * 1024
 
+// newCgroupManager is a seam for tests: the failure paths below need a manager
+// whose calls fail without touching the host cgroups.
+var newCgroupManager = cgroups.NewManager
+
 func setupCgroup(d *Daemon) (func(context.Context) error, error) {
 	if !d.opts.EnableCgroup {
 		log.Infof("self cgroup resource limit disabled by default")
 		return nil, nil
 	}
 
-	cgr, err := cgroups.NewManager()
+	cgr, err := newCgroupManager()
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +52,10 @@ func setupCgroup(d *Daemon) (func(context.Context) error, error) {
 	}
 
 	if err := cgr.AddProc(uint64(os.Getpid())); err != nil {
+		// The runtime cgroup exists already; the cleanup below is only handed
+		// to the daemon on success, so this path has to remove it itself or it
+		// outlives the process.
+		_ = cgr.DeleteRuntime()
 		return nil, fmt.Errorf("cgroup add pid to cgroup.procs: %w", err)
 	}
 
