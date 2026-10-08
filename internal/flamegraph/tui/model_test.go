@@ -15,10 +15,12 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ccfos/huatuo/internal/flamegraph"
 )
@@ -109,7 +111,43 @@ func TestSearchInputUsesRunesOnly(t *testing.T) {
 
 func TestTruncateKeepsUTF8(t *testing.T) {
 	got := truncate("函数调用路径", 5)
-	if got != "函数..." {
-		t.Fatalf("truncate() = %q, want 函数...", got)
+	if got != "函..." {
+		t.Fatalf("truncate() = %q, want 函...", got)
+	}
+}
+
+func TestModelRowsFitTerminal(t *testing.T) {
+	for _, width := range []int{12, 24, 40, 80, 120} {
+		for _, label := range []string{"frame", "函数调用路径"} {
+			t.Run(fmt.Sprintf("%d/%s", width, label), func(t *testing.T) {
+				frames := make([]flamegraph.FrameData, 20)
+				for depth := range frames {
+					frames[depth] = flamegraph.FrameData{Level: int64(depth), Value: 100, Label: label}
+				}
+				model := NewModel(frames)
+				resized, _ := model.Update(tea.WindowSizeMsg{Width: width, Height: 40})
+				model = resized.(Model)
+				model.query = label
+				model.applySearch()
+				selected, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnd})
+				model = selected.(Model)
+				rows := strings.Split(model.View(), "\n")[headerLines : headerLines+len(frames)]
+				for depth, row := range rows {
+					if ansi.StringWidth(row) > width {
+						t.Errorf("depth %d: row width %d exceeds %d: %q", depth, ansi.StringWidth(row), width, row)
+					}
+					rendered := ansi.Truncate(row, width, "")
+					if !strings.HasSuffix(rendered, "100.00%") {
+						t.Errorf("depth %d: percentage clipped: %q", depth, rendered)
+					}
+					if depth == len(frames)-1 && !strings.HasPrefix(rendered, ">*") {
+						t.Errorf("selected search match markers missing: %q", rendered)
+					}
+					if width >= 80 && !strings.Contains(rendered, label) {
+						t.Errorf("depth %d: label lost with enough room: %q", depth, rendered)
+					}
+				}
+			})
+		}
 	}
 }
