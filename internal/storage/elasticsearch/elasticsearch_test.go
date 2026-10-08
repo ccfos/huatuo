@@ -540,6 +540,12 @@ func matchesClause(doc mockElasticsearchDocument, rawClause any) bool {
 		return matchesBoolQuery(doc, boolQuery)
 	}
 
+	if rawExists, ok := clause["exists"].(map[string]any); ok {
+		field, _ := rawExists["field"].(string)
+		_, exists := doc.Fields[field]
+		return exists
+	}
+
 	if rawTerm, ok := clause["term"].(map[string]any); ok {
 		for path, rawValue := range rawTerm {
 			// Handle both short form {"field": "val"} and long form {"field": {"value": "val"}}.
@@ -871,9 +877,20 @@ func TestBuildSearchRequest(t *testing.T) {
 
 				queryMap, _ := got["query"].(map[string]any)
 				boolQuery, _ := queryMap["bool"].(map[string]any)
-				mustNotClauses := toAnySlice(boolQuery["must_not"])
-				if len(mustNotClauses) != 1 {
-					t.Errorf("must_not clause count = %d, want 1", len(mustNotClauses))
+				filterClauses := toAnySlice(boolQuery["filter"])
+				if len(filterClauses) != 1 {
+					t.Errorf("filter clause count = %d, want 1", len(filterClauses))
+				}
+				if len(filterClauses) != 1 {
+					return
+				}
+				nestedQuery, _ := filterClauses[0].(map[string]any)
+				nestedBool, _ := nestedQuery["bool"].(map[string]any)
+				if len(toAnySlice(nestedBool["filter"])) != 1 {
+					t.Errorf("nested filter clause count = %d, want 1", len(toAnySlice(nestedBool["filter"])))
+				}
+				if len(toAnySlice(nestedBool["must_not"])) != 1 {
+					t.Errorf("nested must_not clause count = %d, want 1", len(toAnySlice(nestedBool["must_not"])))
 				}
 			},
 		},
@@ -923,7 +940,7 @@ func TestBuildExactStringClauseUsesKeywordFallback(t *testing.T) {
 				Value: "id-profile-1",
 			},
 			queryType:  "term",
-			wantNegate: true,
+			wantNegate: false,
 		},
 		{
 			name: "in",
@@ -951,6 +968,13 @@ func TestBuildExactStringClauseUsesKeywordFallback(t *testing.T) {
 				t.Fatalf("json.Marshal() error = %v", err)
 			}
 			body := decodeJSONMap(t, raw)
+			if test.filter.Op == driver.OpNe {
+				mustNotClauses := toAnySlice(body["bool"].(map[string]any)["must_not"])
+				if len(mustNotClauses) != 1 {
+					t.Fatalf("not-equal must_not clause count = %d, want 1", len(mustNotClauses))
+				}
+				body, _ = mustNotClauses[0].(map[string]any)
+			}
 			boolQuery, _ := body["bool"].(map[string]any)
 			shouldClauses := toAnySlice(boolQuery["should"])
 			if intFromAny(boolQuery["minimum_should_match"]) != 1 || len(shouldClauses) != 2 {
@@ -1285,6 +1309,44 @@ func TestElasticsearchBackendQuery(t *testing.T) {
 	}
 	if len(countBodies) != 1 {
 		t.Errorf("count body count = %d, want 1", len(countBodies))
+	}
+}
+
+func TestElasticsearchBackendNotEqualExcludesMissingFields(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	if backend == nil {
+		return
+	}
+
+	if err := backend.Init(t.Context(), "jobs", []driver.Index{{Field: "ended_at"}}); err != nil {
+		t.Fatalf("Init() returned error: %v", err)
+	}
+
+	for _, record := range []driver.Record{
+		{ID: "job-ended", Data: []byte(`{"ended_at":"2026-10-01T00:00:00Z"}`)},
+		{ID: "job-empty", Data: []byte(`{"ended_at":""}`)},
+		{ID: "job-missing", Data: []byte(`{"status":"running"}`)},
+	} {
+		if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
+			t.Fatalf("Save(%q) returned error: %v", record.ID, err)
+		}
+	}
+	flushBackend(t, backend)
+
+	records, err := backend.Query(t.Context(), driver.Query{
+		Filters: []driver.Filter{{Field: "ended_at", Op: driver.OpNe, Value: ""}},
+	})
+	if err != nil {
+		t.Fatalf("Query() returned error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("Query() returned %d records, want 1", len(records))
+	}
+	if records[0].ID != "job-ended" {
+		t.Fatalf("Query() first ID = %q, want %q", records[0].ID, "job-ended")
 	}
 }
 
