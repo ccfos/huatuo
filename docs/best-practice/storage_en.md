@@ -416,6 +416,43 @@ graph TB
     S -->|Bulk API + auto retry| OS
 ```
 
+### Filter semantics
+
+The internal storage query API combines filters with AND. SQLite and
+Elasticsearch share the following contract for non-null scalar values:
+
+| Operator | Meaning |
+| --- | --- |
+| `OpEq`, `OpNe` | Equal / not equal; missing and null values do not match |
+| `OpGt`, `OpGte`, `OpLt`, `OpLte` | Strict / inclusive range bounds |
+| `OpIn` | Membership in a non-empty slice or array of scalar values |
+| `OpExists`, `OpNotExists` | Has / lacks a non-null queryable value; omit `Value` |
+
+Empty strings are literal values: `OpEq("")` matches an empty string, while
+`OpNe("")` requires an existing, non-null, non-empty string. To query missing
+fields, use `OpNotExists`; `OpEq("")` no longer means field absence. Host profiling
+queries use `OpNotExists` on `container_hostname` to preserve their selection.
+
+Operands accept built-in string, boolean, integer, and finite floating-point
+types. Range comparisons exclude booleans. `time.Time` and `timeutil.Timestamp`
+are normalized to UTC strings with nine fractional digits, including in `OpIn`.
+Nil, pointers, objects, nested collections, and non-finite numbers return
+`driver.ErrInvalidQuery`. Integer range bounds retain their original JSON
+precision; each backend's supported numeric domain and field mapping still apply.
+
+For Elasticsearch, callers must supply the exact indexed field: use the original
+field for a `keyword` mapping, or an explicitly configured keyword subfield such
+as `hostname.keyword` for a `text` mapping. The backend neither guesses subfields
+nor combines text and keyword queries. `OpNe` applies `exists` and `must_not term`
+to the same field. Full-text matching and array equality are outside this scalar
+comparison contract.
+
+Elasticsearch existence refers to indexed values, not `_source` key presence.
+Mapping options such as `ignore_above`, `null_value`, and normalizers can change
+existence or equality behavior. Use mappings that preserve the intended scalar
+values when requiring equivalence with SQLite. A date field cannot be compared
+to an empty string; use an existence operator when the intent is a populated date.
+
 ### Write Flow
 
 `Save` returns immediately after the event is buffered. Background workers flush the buffer to the remote backend when **any** of the following triggers fire: byte threshold, time threshold, or process shutdown. The local directory write is synchronous and independent of the remote Bulk path.

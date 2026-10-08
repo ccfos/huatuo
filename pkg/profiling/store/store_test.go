@@ -245,3 +245,14 @@ func TestBuildAggregationQueryTimestampFormat(t *testing.T) {
 		t.Fatalf("filters = %#v, want %#v", query.Filters, want)
 	}
 }
+
+func TestBuildProfileHostQueryUsesMissingContainer(t *testing.T) {
+	query := buildAggregationQuery(&Filter{Hostname: "host-a"})
+	want := []driver.Filter{
+		{Field: types.DocumentFieldHostname + ".keyword", Op: driver.OpEq, Value: "host-a"},
+		{Field: types.DocumentFieldContainerHostname, Op: driver.OpNotExists},
+	}
+	if !reflect.DeepEqual(query.Filters, want) {
+		t.Fatalf("host filters = %#v, want %#v", query.Filters, want)
+	}
+}

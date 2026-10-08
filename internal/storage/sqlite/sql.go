@@ -148,21 +148,27 @@ func buildWhereSQL(filters []driver.Filter) (string, []any, error) {
 			return "", nil, err
 		}
 
+		value, err := driver.NormalizeFilterValue(filter)
+		if err != nil {
+			return "", nil, err
+		}
+
 		fieldExpr := jsonExtractExpr(filter.Field)
 		if opStr, ok := binaryOpSQL[filter.Op]; ok {
 			clauses = append(clauses, fieldExpr+" "+opStr+" ?")
-			args = append(args, driver.NormalizeValue(filter.Value))
+			args = append(args, value)
 		} else if filter.Op == driver.OpIn {
-			inValues, err := driver.FlattenInValues(filter.Value)
-			if err != nil {
-				return "", nil, err
-			}
+			inValues := value.([]any)
 			placeholders := make([]string, len(inValues))
 			for i, value := range inValues {
 				placeholders[i] = "?"
-				args = append(args, driver.NormalizeValue(value))
+				args = append(args, value)
 			}
 			clauses = append(clauses, fmt.Sprintf("%s IN (%s)", fieldExpr, strings.Join(placeholders, ", ")))
+		} else if filter.Op == driver.OpExists {
+			clauses = append(clauses, fieldExpr+" IS NOT NULL")
+		} else if filter.Op == driver.OpNotExists {
+			clauses = append(clauses, fieldExpr+" IS NULL")
 		} else {
 			return "", nil, driver.ErrUnsupportedOp
 		}

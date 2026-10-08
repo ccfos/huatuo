@@ -223,8 +223,7 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 		appendTextFilter(types.DocumentFieldHostname, filter.Hostname)
 		query.Filters = append(query.Filters, driver.Filter{
 			Field: types.DocumentFieldContainerHostname,
-			Op:    driver.OpEq,
-			Value: "",
+			Op:    driver.OpNotExists,
 		})
 	}
 	return query

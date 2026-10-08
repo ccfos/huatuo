@@ -544,8 +544,7 @@ func matchesClause(doc mockElasticsearchDocument, rawClause any) bool {
 
 	if rawExists, ok := clause["exists"].(map[string]any); ok {
 		field, _ := rawExists["field"].(string)
-		_, exists := doc.Fields[field]
-		return exists
+		return fieldValue(doc, field) != nil
 	}
 
 	if rawTerm, ok := clause["term"].(map[string]any); ok {
@@ -657,6 +656,10 @@ func fieldValue(doc mockElasticsearchDocument, path string) any {
 }
 
 func valuesEqual(left, right any) bool {
+	if left == nil || right == nil {
+		return false
+	}
+
 	if leftFloat, ok := toFloat64(left); ok {
 		rightFloat, ok := toFloat64(right)
 		if !ok {
@@ -668,6 +671,10 @@ func valuesEqual(left, right any) bool {
 }
 
 func compareValues(left, right any) (int, bool) {
+	if left == nil || right == nil {
+		return 0, false
+	}
+
 	if leftFloat, ok := toFloat64(left); ok {
 		rightFloat, ok := toFloat64(right)
 		if !ok {
@@ -939,86 +946,6 @@ func TestBuildSearchRequestPageSize(t *testing.T) {
 			}
 			if request.Size != tc.size {
 				t.Fatalf("size=%d, want %d", request.Size, tc.size)
-			}
-		})
-	}
-}
-
-func TestBuildExactStringClauseUsesKeywordFallback(t *testing.T) {
-	tests := []struct {
-		name       string
-		filter     driver.Filter
-		queryType  string
-		wantNegate bool
-	}{
-		{
-			name: "equal",
-			filter: driver.Filter{
-				Field: "tracer_id",
-				Op:    driver.OpEq,
-				Value: "id-profile-1",
-			},
-			queryType: "term",
-		},
-		{
-			name: "not equal",
-			filter: driver.Filter{
-				Field: "tracer_id",
-				Op:    driver.OpNe,
-				Value: "id-profile-1",
-			},
-			queryType:  "term",
-			wantNegate: false,
-		},
-		{
-			name: "in",
-			filter: driver.Filter{
-				Field: "tracer_id",
-				Op:    driver.OpIn,
-				Value: []string{"id-profile-1", "id-profile-2"},
-			},
-			queryType: "terms",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			clause, negate, err := buildClause(test.filter)
-			if err != nil {
-				t.Fatalf("buildClause() error = %v", err)
-			}
-			if negate != test.wantNegate {
-				t.Fatalf("buildClause() negate = %t, want %t", negate, test.wantNegate)
-			}
-
-			raw, err := json.Marshal(clause)
-			if err != nil {
-				t.Fatalf("json.Marshal() error = %v", err)
-			}
-			body := decodeJSONMap(t, raw)
-			if test.filter.Op == driver.OpNe {
-				mustNotClauses := toAnySlice(body["bool"].(map[string]any)["must_not"])
-				if len(mustNotClauses) != 1 {
-					t.Fatalf("not-equal must_not clause count = %d, want 1", len(mustNotClauses))
-				}
-				body, _ = mustNotClauses[0].(map[string]any)
-			}
-			boolQuery, _ := body["bool"].(map[string]any)
-			shouldClauses := toAnySlice(boolQuery["should"])
-			if intFromAny(boolQuery["minimum_should_match"]) != 1 || len(shouldClauses) != 2 {
-				t.Fatalf("exact fallback bool = %#v, want two required alternatives", boolQuery)
-			}
-
-			fields := make(map[string]bool, len(shouldClauses))
-			for _, rawClause := range shouldClauses {
-				query, _ := rawClause.(map[string]any)
-				fieldQuery, _ := query[test.queryType].(map[string]any)
-				for field := range fieldQuery {
-					fields[field] = true
-				}
-			}
-			if !fields["tracer_id"] || !fields["tracer_id.keyword"] {
-				t.Fatalf("exact fallback fields = %v, want raw and keyword", fields)
 			}
 		})
 	}
@@ -1360,6 +1287,7 @@ func TestElasticsearchBackendNotEqualExcludesMissingFields(t *testing.T) {
 		{ID: "job-ended", Data: []byte(`{"ended_at":"2026-10-01T00:00:00Z"}`)},
 		{ID: "job-empty", Data: []byte(`{"ended_at":""}`)},
 		{ID: "job-missing", Data: []byte(`{"status":"running"}`)},
+		{ID: "job-null", Data: []byte(`{"ended_at":null}`)},
 	} {
 		if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
 			t.Fatalf("Save(%q) returned error: %v", record.ID, err)

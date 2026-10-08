@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strings"
 
 	escount "github.com/elastic/go-elasticsearch/v8/typedapi/core/count"
 	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
@@ -129,159 +128,75 @@ func buildQuery(filters []driver.Filter) (*types.Query, error) {
 		return &types.Query{MatchAll: &types.MatchAllQuery{}}, nil
 	}
 
-	var filterClauses []types.Query
-	var mustNotClauses []types.Query
-
+	clauses := make([]types.Query, 0, len(filters))
 	for _, filter := range filters {
-		clause, negate, err := buildClause(filter)
+		clause, err := buildClause(filter)
 		if err != nil {
 			return nil, err
 		}
-		if negate {
-			mustNotClauses = append(mustNotClauses, clause)
-		} else {
-			filterClauses = append(filterClauses, clause)
-		}
+		clauses = append(clauses, clause)
 	}
 
-	boolQuery := &types.BoolQuery{}
-
-	if len(filterClauses) > 0 {
-		boolQuery.Filter = filterClauses
-	}
-	if len(mustNotClauses) > 0 {
-		boolQuery.MustNot = mustNotClauses
-	}
-	return &types.Query{Bool: boolQuery}, nil
+	return &types.Query{Bool: &types.BoolQuery{Filter: clauses}}, nil
 }
 
-func buildClause(filter driver.Filter) (types.Query, bool, error) {
+func buildClause(filter driver.Filter) (types.Query, error) {
 	if err := validateFieldName(filter.Field); err != nil {
-		return types.Query{}, false, err
+		return types.Query{}, err
+	}
+	value, err := driver.NormalizeFilterValue(filter)
+	if err != nil {
+		return types.Query{}, err
 	}
 
 	switch filter.Op {
 	case driver.OpEq:
-		// empty string match -> must_not exists (field does not exist)
-		if s, ok := filter.Value.(string); ok && s == "" {
-			q := types.Query{
-				Exists: &types.ExistsQuery{Field: filter.Field},
-			}
-			return q, true, nil
-		}
-		return buildExactTermClause(filter.Field, filter.Value), false, nil
+		return types.Query{Term: map[string]types.TermQuery{filter.Field: {Value: value}}}, nil
 	case driver.OpNe:
 		return types.Query{Bool: &types.BoolQuery{
-			Filter: []types.Query{{
-				Exists: &types.ExistsQuery{Field: filter.Field},
-			}},
-			MustNot: []types.Query{buildExactTermClause(filter.Field, filter.Value)},
-		}}, false, nil
-	case driver.OpGt, driver.OpGte, driver.OpLt, driver.OpLte:
-		rangeQ, err := buildRangeClause(filter)
-		if err != nil {
-			return types.Query{}, false, err
-		}
-		return types.Query{Range: map[string]types.RangeQuery{filter.Field: rangeQ}}, false, nil
+			Filter:  []types.Query{{Exists: &types.ExistsQuery{Field: filter.Field}}},
+			MustNot: []types.Query{{Term: map[string]types.TermQuery{filter.Field: {Value: value}}}},
+		}}, nil
+	case driver.OpExists:
+		return types.Query{Exists: &types.ExistsQuery{Field: filter.Field}}, nil
+	case driver.OpNotExists:
+		return types.Query{Bool: &types.BoolQuery{
+			MustNot: []types.Query{{Exists: &types.ExistsQuery{Field: filter.Field}}},
+		}}, nil
 	case driver.OpIn:
-		values, err := driver.FlattenInValues(filter.Value)
+		terms := types.NewTermsQuery()
+		terms.TermsQuery[filter.Field] = value.([]any)
+		return types.Query{Terms: terms}, nil
+	default:
+		rangeQuery, err := buildRangeClause(filter.Op, value)
 		if err != nil {
-			return types.Query{}, false, err
+			return types.Query{}, err
 		}
-		return buildExactTermsClause(filter.Field, values), false, nil
-	default:
-		return types.Query{}, false, fmt.Errorf("%w: %s", driver.ErrUnsupportedOp, filter.Op)
+		return types.Query{Range: map[string]types.RangeQuery{filter.Field: rangeQuery}}, nil
 	}
 }
 
-func buildExactTermClause(field string, value any) types.Query {
-	primary := types.Query{
-		Term: map[string]types.TermQuery{field: {Value: value}},
+func buildRangeClause(op driver.Op, value any) (*types.UntypedRangeQuery, error) {
+	// NumberRangeQuery converts every bound to float64, losing large integers.
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode range value: %w", driver.ErrInvalidQuery, err)
 	}
-	if _, ok := value.(string); !ok || strings.HasSuffix(field, ".keyword") {
-		return primary
-	}
-	keyword := types.Query{
-		Term: map[string]types.TermQuery{field + ".keyword": {Value: value}},
-	}
-	return exactFieldFallback(&primary, &keyword)
-}
-
-func buildExactTermsClause(field string, values []any) types.Query {
-	primary := types.NewTermsQuery()
-	primary.TermsQuery[field] = values
-	primaryQuery := types.Query{Terms: primary}
-	if !containsString(values) || strings.HasSuffix(field, ".keyword") {
-		return primaryQuery
-	}
-	keyword := types.NewTermsQuery()
-	keyword.TermsQuery[field+".keyword"] = values
-	keywordQuery := types.Query{Terms: keyword}
-	return exactFieldFallback(&primaryQuery, &keywordQuery)
-}
-
-func exactFieldFallback(primary, keyword *types.Query) types.Query {
-	return types.Query{Bool: &types.BoolQuery{
-		Should:             []types.Query{*primary, *keyword},
-		MinimumShouldMatch: 1,
-	}}
-}
-
-func containsString(values []any) bool {
-	for _, value := range values {
-		if _, ok := value.(string); ok {
-			return true
-		}
-	}
-	return false
-}
-
-func buildRangeClause(filter driver.Filter) (types.RangeQuery, error) {
-	if s, ok := filter.Value.(string); ok {
-		return buildDateRangeClause(filter.Op, s)
-	}
-	f, ok := asFloat64(filter.Value)
-	if !ok {
-		return nil, fmt.Errorf("%w: unsupported range value type", driver.ErrUnsupportedOp)
-	}
-	return buildNumberRangeClause(filter.Op, f)
-}
-
-func buildNumberRangeClause(op driver.Op, value float64) (types.RangeQuery, error) {
-	f := types.Float64(value)
-	q := types.NumberRangeQuery{}
-
+	query := &types.UntypedRangeQuery{}
 	switch op {
 	case driver.OpGt:
-		q.Gt = &f
+		query.Gt = raw
 	case driver.OpGte:
-		q.Gte = &f
+		query.Gte = raw
 	case driver.OpLt:
-		q.Lt = &f
+		query.Lt = raw
 	case driver.OpLte:
-		q.Lte = &f
+		query.Lte = raw
 	default:
 		return nil, fmt.Errorf("%w: %s", driver.ErrUnsupportedOp, op)
 	}
-	return q, nil
-}
 
-func buildDateRangeClause(op driver.Op, value string) (types.RangeQuery, error) {
-	q := types.DateRangeQuery{}
-
-	switch op {
-	case driver.OpGt:
-		q.Gt = &value
-	case driver.OpGte:
-		q.Gte = &value
-	case driver.OpLt:
-		q.Lt = &value
-	case driver.OpLte:
-		q.Lte = &value
-	default:
-		return nil, fmt.Errorf("%w: %s", driver.ErrUnsupportedOp, op)
-	}
-	return q, nil
+	return query, nil
 }
 
 func buildSort(sorts []driver.Sort) ([]types.SortCombinations, error) {
@@ -299,35 +214,4 @@ func buildSort(sorts []driver.Sort) ([]types.SortCombinations, error) {
 		result = append(result, opt)
 	}
 	return result, nil
-}
-
-func asFloat64(value any) (float64, bool) {
-	switch v := value.(type) {
-	case float64:
-		return v, true
-	case float32:
-		return float64(v), true
-	case int:
-		return float64(v), true
-	case int8:
-		return float64(v), true
-	case int16:
-		return float64(v), true
-	case int32:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case uint:
-		return float64(v), true
-	case uint8:
-		return float64(v), true
-	case uint16:
-		return float64(v), true
-	case uint32:
-		return float64(v), true
-	case uint64:
-		return float64(v), true
-	default:
-		return 0, false
-	}
 }

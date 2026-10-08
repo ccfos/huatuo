@@ -258,6 +258,19 @@ write_apiserver_apis_config() {
 EOF
 }
 
+# The profile filter case supplies its API settings and isolated storage index.
+write_profile_query_apiserver_config() {
+	write_apiserver_apis_config
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
+
+[Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "elastic"
+    Password = "profile-filter-test"
+    Index = "${PROFILE_FILTER_INDEX}"
+EOF
+}
+
 # The caller owns the API port and bearer token.
 write_apiserver_without_profile_storage_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF

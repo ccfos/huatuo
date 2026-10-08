@@ -412,6 +412,39 @@ graph TB
     S -->|Bulk API + 自动重试| OS
 ```
 
+### 过滤条件语义
+
+内部存储查询 API 使用 AND 组合过滤条件。SQLite 和 Elasticsearch 对非 null
+标量值采用以下约定：
+
+| 操作符 | 含义 |
+| --- | --- |
+| `OpEq`、`OpNe` | 相等／不等；缺失和 null 值均不匹配 |
+| `OpGt`、`OpGte`、`OpLt`、`OpLte` | 严格／包含边界的范围比较 |
+| `OpIn` | 属于非空切片或数组中的标量值 |
+| `OpExists`、`OpNotExists` | 存在／不存在非 null 的可查询值；不设置 `Value` |
+
+空字符串是字面值：`OpEq("")` 匹配空字符串；`OpNe("")` 要求字符串存在、非 null
+且非空。查询缺失字段应使用 `OpNotExists`，`OpEq("")` 不再表示字段缺失。
+主机 profiling 查询改用 `container_hostname` 的 `OpNotExists`，保留原有筛选行为。
+
+比较值支持 Go 内建字符串、布尔、整数及有限浮点数，范围比较不接受布尔值。
+`time.Time` 和 `timeutil.Timestamp` 统一转为保留九位小数的 UTC 字符串，
+`OpIn` 元素也采用相同规则。nil、指针、对象、嵌套集合及非有限数值返回
+`driver.ErrInvalidQuery`。整数范围边界保留原始 JSON 精度，实际支持的数值范围
+仍受后端和字段映射约束。
+
+Elasticsearch 调用方必须指定实际用于精确比较的索引字段：`keyword` 映射使用
+原字段；`text` 映射使用明确配置的 keyword 子字段，例如 `hostname.keyword`。
+后端不会猜测子字段，也不会将 text 与 keyword 查询进行 OR 组合。
+`OpNe` 对同一字段执行 `exists` 和 `must_not term`。全文匹配和数组整体相等
+不属于这里的标量比较约定。
+
+Elasticsearch 的存在性判断针对索引值，而不是 `_source` 中是否包含键。
+`ignore_above`、`null_value` 和 normalizer 等映射设置可能改变存在性或相等行为。
+要求与 SQLite 一致时，应使用保留目标标量语义的映射。日期字段不能与空字符串
+比较；表达“已有日期值”时应使用存在性操作符。
+
 ### 数据写入流程
 
 采集层调用 `Save` 后立即返回，事件落入 BulkIndexer 缓冲；后台 worker 在满足"字节阈值 / 时间阈值 / 进程退出"任一条件时将批次提交至远端。本地目录写入是同步落盘，与远端 Bulk 路径相互独立。
