@@ -14,12 +14,14 @@
 
 package paths
 
-import "path/filepath"
+import "path"
 
 var RootfsDefaultPath = "/sys/fs/cgroup"
 
-func Path(path ...string) string {
+func Path(segments ...string) string {
 	root := []string{RootfsDefaultPath}
 
-	return filepath.Join(append(root, path...)...)
+	// cgroupfs is a Linux filesystem and every result is consumed by Linux
+	// path lookups, so join with "/" regardless of the host GOOS.
+	return path.Join(append(root, segments...)...)
 }
