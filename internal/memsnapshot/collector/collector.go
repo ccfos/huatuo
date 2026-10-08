@@ -18,10 +18,17 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
+)
+
+// ErrCaptureBusy lets triggers retain their event without concurrent external scans.
+var (
+	ErrCaptureBusy = errors.New("another memory snapshot is in progress")
+	captureSlot    = make(chan struct{}, 1)
 )
 
 // Options uses the before-OOM budgets as defaults for zero-valued fields.
@@ -29,6 +36,8 @@ import (
 type Options struct {
 	MaxMemoryObjectEntries int
 	SnapshotTimeout        time.Duration
+	// WaitForCapture queues threshold captures behind the current scan.
+	WaitForCapture bool
 }
 
 // Result carries runtime data without event or container metadata.
@@ -52,6 +61,13 @@ func Snapshot(ctx context.Context, process memsnapshot.ProcessInstanceID,
 	if err := options.validate(); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := acquireCapture(ctx, options); err != nil {
+		return nil, err
+	}
+	defer func() { <-captureSlot }()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -86,4 +102,26 @@ func Snapshot(ctx context.Context, process memsnapshot.ProcessInstanceID,
 		Snapshot:          snapshot,
 		ProcessMemory:     readProcessMemory(pid),
 	}, nil
+}
+
+func acquireCapture(ctx context.Context, options Options) error {
+	if !options.WaitForCapture {
+		select {
+		case captureSlot <- struct{}{}:
+			return nil
+		default:
+			return ErrCaptureBusy
+		}
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, options.SnapshotTimeout)
+	defer cancel()
+	select {
+	case captureSlot <- struct{}{}:
+		return nil
+	case <-waitCtx.Done():
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: wait budget exceeded", ErrCaptureBusy)
+	}
 }

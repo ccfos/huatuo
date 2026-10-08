@@ -69,6 +69,7 @@ All events provide default values and work without configuration:
 | `memburst.interval_tracing` | `1800` (s) | Cooldown period between triggers |
 | `memburst.sliding_window_length` | `60` | Sliding window sample count (corresponding to 600 seconds of history) |
 | `memburst.dump_process_max_num` | `10` | Maximum number of top memory-consuming processes to collect |
+| `memburst.snapshot_process_max_num` | `3` | Maximum ranked processes to snapshot; range 1–10, capped by available rankings and `dump_process_max_num` |
 
 ### Event List
 
@@ -305,14 +306,37 @@ All event records include the following common fields:
     "tracer_data": {
         "top_memory_usage": [
             {
-                "pid": 3456,
-                "process_name": "java",
-                "memory_size": 8589934592
-            },
+                "PID": 3456,
+                "ProcessName": "go-service",
+                "MemSize": 268435456
+            }
+        ],
+        "process_snapshots": [
             {
-                "pid": 3789,
-                "process_name": "python3",
-                "memory_size": 2147483648
+                "pid": 3456,
+                "process_name": "go-service",
+                "language": "go",
+                "snapshot": {
+                    "runtime_version": "go1.24.0",
+                    "status": "complete",
+                    "duration_ms": 25,
+                    "entries": [
+                        {
+                            "kind": "inuse_space_objects",
+                            "name": "main.allocate",
+                            "bytes": 1048576,
+                            "objects": 16,
+                            "stack": [
+                                "main.allocate fixture.go:42"
+                            ]
+                        }
+                    ]
+                },
+                "process_memory": {
+                    "status": "complete",
+                    "rss_bytes": 268435456,
+                    "rss_anon_bytes": 260046848
+                }
             }
         ]
     }
@@ -322,9 +346,16 @@ All event records include the following common fields:
 **Field Descriptions**
 
 - **top_memory_usage**: List of top memory-consuming processes sorted by RSS in descending order. Each record contains:
-  - **pid**: Process PID
-  - **process_name**: Process name
-  - **memory_size**: Process RSS memory usage (bytes)
+  - **PID**: Process PID
+  - **ProcessName**: Process name
+  - **MemSize**: Process RSS memory usage (bytes)
+
+- **process_snapshots** (optional): Snapshots for the highest-ranked processes, in rank order. Each record contains `pid`, `process_name`, `language`, `snapshot`, and optional `process_memory`.
+  - **snapshot**: `runtime_version`, `status` (`complete`, `partial`, `unavailable`, or `failed`), optional `status_reason`, `duration_ms` (milliseconds), optional `output_truncated`, and ranked `entries` (`kind`, `name`, `bytes`, `objects`, optional `average_bytes` and `stack`). Unsupported runtimes report `unavailable`.
+  - **process_memory**: Language-independent memory counters; `status` and optional `status_reason` describe availability. `virtual_bytes`, `rss_bytes`, `rss_anon_bytes`, `rss_file_bytes`, `rss_shmem_bytes`, `swap_bytes`, and `page_table_bytes` are bytes. Missing counters are unavailable, not zero.
+- **snapshot_reason** (optional): Explains cancellation, a full capture queue, or whole-event truncation. For example: `"snapshot_reason": "memburst payload truncated to fit event budget"`. Per-process failures are reported in `snapshot.status_reason`.
+
+By default, snapshot the first three ranked processes serially, with a cooperative two-second budget per process. Go, Java, and Python use their runtime providers; other runtimes retain memory counters when available. The serialized `tracer_data` budget is 2 MiB. Drop the lowest-ranked snapshots first when this budget is exceeded, preserving the base ranking where possible; persistence retains at most 1,000 ranking records and trims ranking tails if necessary. Every budget truncation sets `snapshot_reason`. These limits also apply to cancellation/fallback records.
 
 ## ⚙️ Principle
 

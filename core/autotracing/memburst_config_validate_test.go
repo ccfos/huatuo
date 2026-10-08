@@ -18,12 +18,13 @@ import "testing"
 
 func TestValidateMemBurst(t *testing.T) {
 	valid := MemBurstConfig{
-		DeltaMemoryBurst:    100,
-		DeltaAnonThreshold:  70,
-		Interval:            10,
-		IntervalTracing:     1800,
-		SlidingWindowLength: 60,
-		DumpProcessMaxNum:   10,
+		DeltaMemoryBurst:      100,
+		DeltaAnonThreshold:    70,
+		Interval:              10,
+		IntervalTracing:       1800,
+		SlidingWindowLength:   60,
+		DumpProcessMaxNum:     10,
+		SnapshotProcessMaxNum: 3,
 	}
 
 	cases := []struct {
@@ -31,6 +32,10 @@ func TestValidateMemBurst(t *testing.T) {
 		modify  func(*MemBurstConfig)
 		wantErr bool
 	}{
+		{name: "zero snapshot process max num", modify: func(c *MemBurstConfig) { c.SnapshotProcessMaxNum = 0 }, wantErr: true},
+		{name: "negative snapshot process max num", modify: func(c *MemBurstConfig) { c.SnapshotProcessMaxNum = -1 }, wantErr: true},
+		{name: "maximum snapshots", modify: func(c *MemBurstConfig) { c.SnapshotProcessMaxNum = 10 }},
+		{name: "too many snapshots", modify: func(c *MemBurstConfig) { c.SnapshotProcessMaxNum = 11 }, wantErr: true},
 		{name: "valid", modify: func(*MemBurstConfig) {}},
 		{name: "zero delta memory burst", modify: func(c *MemBurstConfig) { c.DeltaMemoryBurst = 0 }, wantErr: true},
 		{name: "negative delta memory burst", modify: func(c *MemBurstConfig) { c.DeltaMemoryBurst = -1 }, wantErr: true},
