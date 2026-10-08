@@ -172,10 +172,17 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 
 	shutdownErr := execution.shutdown(ctx)
-	serveResult := execution.wait(ctx)
 	if shutdownErr != nil && ctx.Err() != nil {
+		// The graceful drain ran out of time. Force the remaining connections
+		// closed and wait for the serving goroutine without a deadline, so the
+		// server cannot stay in the stopping state with a live execution.
+		shutdownErr = errors.Join(shutdownErr, execution.httpServer.Close())
+		serveResult := execution.wait(context.Background())
+
+		s.finishExecution(execution)
 		return errors.Join(shutdownErr, serveResult)
 	}
+	serveResult := execution.wait(ctx)
 
 	s.finishExecution(execution)
 	return errors.Join(shutdownErr, serveResult)
