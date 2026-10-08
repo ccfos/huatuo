@@ -69,9 +69,19 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 
 	log.Debugf("SelectMergeStacktracesRequest: %+v", req)
 
-	profileTypes := strings.Split(filter.ProfileType, ":")
-	if len(profileTypes) != 5 {
-		return nil, fmt.Errorf("%w: invalid profile type %q", ErrInvalidQuery, filter.ProfileType)
+	// The __profile_type__ label matcher may override the profile type, so
+	// parse and validate the type AFTER the matchers run: deriving the
+	// sample-type axis from the pre-override value filtered the store on
+	// one type while extracting values for another.
+	validateProfileType := func() ([]string, error) {
+		parts := strings.Split(filter.ProfileType, ":")
+		if len(parts) != 5 {
+			return nil, fmt.Errorf("%w: invalid profile type %q", ErrInvalidQuery, filter.ProfileType)
+		}
+		return parts, nil
+	}
+	if _, err := validateProfileType(); err != nil {
+		return nil, err
 	}
 
 	// labels
@@ -93,6 +103,13 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 
 	if filter.ID == "" && filter.Hostname == "" && filter.ContainerID == "" && filter.ContainerHostname == "" {
 		return nil, fmt.Errorf("%w: id, hostname, or container must be specified", ErrInvalidQuery)
+	}
+
+	// Re-derive after the label matchers: the __profile_type__ matcher may
+	// have replaced filter.ProfileType above.
+	profileTypes, err := validateProfileType()
+	if err != nil {
+		return nil, err
 	}
 
 	var profilesMerge pprof.ProfileMerge
