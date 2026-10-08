@@ -111,7 +111,7 @@ func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if !pctx.OutputFormat.IsUpload() || len(a.sampleOutput) == 0 {
+	if !pctx.OutputFormat.UsesSnapshot() || len(a.sampleOutput) == 0 {
 		return nil, nil
 	}
 

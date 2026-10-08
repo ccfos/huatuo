@@ -495,7 +495,7 @@ sudo _output/bin/profiler \
 | `--aggr-interval` | `10` | 全部 | 聚合周期，单位为秒，不得大于采集时长 |
 | `--freq`, `-F` | `99` | CPU | 每秒采样次数；Java 最大为 1000 |
 | `--output-path` | `.` | 本地输出 | 输出目录，不是输出文件名 |
-| `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg` 或 `remote` |
+| `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg`、`pprof` 或 `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | 远端上传使用的 Unix socket |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
 | `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
@@ -672,6 +672,7 @@ Python 不支持 `--type memory`。若需要 Python 内存分析，应使用独�
 | `collapsed` | `perf_<Unix 时间戳>.folded`；每行是以分号分隔的调用栈及末尾计数 | 用于脚本检索、结果比较，或交给其他火焰图工具二次渲染 |
 | `flamegraph` | `flamegraph_<Unix 时间戳>.svg`；内嵌交互脚本的 SVG | 默认的人工分析格式，可在浏览器中搜索、缩放和查看栈帧数值 |
 | `svg` | 与 `flamegraph` 相同的交互式 SVG | 兼容显式要求 SVG 的调用方；当前实现与 `flamegraph` 等价 |
+| `pprof` | `pprof_<Unix 时间戳>_<唯一后缀>.pprof.gz`；标准 gzip 压缩的 pprof 文件，保留当前模式的采样单位 | 使用 `go tool pprof` 离线分析 CPU 时间、内存字节数、off-CPU 时间或锁等待时间 |
 | `remote` | 不生成本地火焰图，通过 Unix socket 上传 pprof 兼容数据 | 接入 HUATUO 存储链路时使用，不适合离线查看 |
 
 火焰图从下到上表示调用方向，矩形宽度表示该调用栈在当前观测维度中的累计值。不同类型的宽度含义不同：CPU 表示采样次数折算的 CPU 时间占比；内存模式表示相应的虚拟分配、物理分配、物理驻留、Java 对象分配或存活对象量。横向位置不表示时间先后。
@@ -684,6 +685,16 @@ main;handleRequest;writeResponse 172
 ```
 
 需要保留原始数据并支持后续使用不同配色或过滤规则重新渲染时，选择 `collapsed`。只需直接定位热点时，选择 `flamegraph`。`remote` 依赖 HUATUO toolstream Unix socket，要求提供非空的 `--tracer-id`，独立离线使用时不应选择该格式。
+
+需要可移植的本地结果时选择 `pprof`。采集结束后，profiler 将最终聚合结果写成文件；它复用远端导出的结构化 profile，保留采样类型、单位、权重、函数名及已有元数据。原生、Java 和 Python 后端在各自支持的采集模式下均可选择该格式。
+
+```bash
+sudo ./_output/bin/profiler --type cpu --language c --pid 12345 \
+  --duration 30 --output-format pprof --output-path ./profiles
+
+# 将路径替换为 profiler 输出的 .pprof.gz 文件。
+go tool pprof -top /path/to/profile.pprof.gz
+```
 
 ### 7. 根据集成测试复现
 
@@ -729,7 +740,7 @@ flowchart LR
     Aggregate --> Remote[Unix socket 远端上传]
 ```
 
-`--duration` 控制采集生命周期，`--aggr-interval` 控制远端上传的快照周期。本地 `collapsed`、`flamegraph` 和 `svg` 在采集结束时写出最终聚合结果；`remote` 按聚合周期生成并上传快照。队列将采集与符号化、聚合和输出解耦，避免文件渲染阻塞采样路径。
+`--duration` 控制采集生命周期，`--aggr-interval` 控制远端上传的快照周期。本地 `collapsed`、`flamegraph`、`svg` 和 `pprof` 在采集结束时写出最终聚合结果；`remote` 按聚合周期生成并上传快照。队列将采集与符号化、聚合和输出解耦，避免文件渲染阻塞采样路径。
 
 ## 🌟 结尾
 

@@ -23,6 +23,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/log"
 	profctx "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/internal/randomid"
 )
 
@@ -205,8 +206,18 @@ func (p *Pipeline) logAggregateExportError(err error) {
 }
 
 func (p *Pipeline) aggregateAndSnapshot(ctx context.Context, final bool) error {
-	if p.pctx.OutputFormat.IsUpload() {
-		data, err := p.aggr.Snapshot(p.pctx)
+	if p.pctx.OutputFormat.UsesSnapshot() {
+		if !p.pctx.OutputFormat.IsUpload() && !final {
+			return nil
+		}
+		snapshotContext := p.pctx
+		if p.pctx.OutputFormat == output.FormatPprof && p.pctx.Ctx != nil {
+			// Sampling stops before export; parsing the accepted records must survive cancellation.
+			localContext := *p.pctx
+			localContext.Ctx = context.WithoutCancel(p.pctx.Ctx)
+			snapshotContext = &localContext
+		}
+		data, err := p.aggr.Snapshot(snapshotContext)
 		if err != nil {
 			return fmt.Errorf("aggregate snapshot: %w", err)
 		}
@@ -215,8 +226,12 @@ func (p *Pipeline) aggregateAndSnapshot(ctx context.Context, final bool) error {
 			return nil
 		}
 
-		if err := p.saveProfilingDocument(ctx, data); err != nil {
-			return fmt.Errorf("upload profiling document: %w", err)
+		if p.pctx.OutputFormat.IsUpload() {
+			if err := p.saveProfilingDocument(ctx, data); err != nil {
+				return fmt.Errorf("upload profiling document: %w", err)
+			}
+		} else if err := writePprof(p.pctx.OutputPath, data); err != nil {
+			return fmt.Errorf("write pprof output to %q: %w", p.pctx.OutputPath, err)
 		}
 
 		p.aggr.Reset()
