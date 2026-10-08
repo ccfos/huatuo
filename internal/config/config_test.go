@@ -230,6 +230,49 @@ func TestSetDecodesJSONValue(t *testing.T) {
 	}
 }
 
+func TestSetInitializesOptionalStructs(t *testing.T) {
+	type leaf struct {
+		Value string
+	}
+	type section struct {
+		Nested *leaf
+		Other  string
+	}
+	tests := []struct {
+		name    string
+		section *section
+		value   any
+	}{
+		{name: "typed value", value: "updated"},
+		{name: "JSON value", value: json.RawMessage(`"updated"`)},
+		{name: "existing section", section: &section{Other: "keep"}, value: "updated"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &struct{ Optional *section }{Optional: tt.section}
+			if err := Set(cfg, "Optional.Nested.Value", tt.value); err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+			if cfg.Optional == nil || cfg.Optional.Nested == nil || cfg.Optional.Nested.Value != "updated" {
+				t.Fatalf("optional path was not initialized: %+v", cfg.Optional)
+			}
+			if tt.section != nil && cfg.Optional.Other != "keep" {
+				t.Fatalf("existing sibling changed: %q", cfg.Optional.Other)
+			}
+		})
+	}
+}
+
+func TestSetRejectsScalarPointerPath(t *testing.T) {
+	cfg := &struct{ Count *int }{}
+	if err := Set(cfg, "Count.Value", 1); err == nil {
+		t.Fatal("Set() accepted a path through a scalar pointer")
+	}
+	if cfg.Count != nil {
+		t.Fatal("Set() initialized an invalid scalar path")
+	}
+}
+
 func TestSyncPreservesOriginalOnEncodeFailure(t *testing.T) {
 	dir := t.TempDir()
 	path := writeConfigFile(t, dir, "config.toml", "name = \"original\"\n")
