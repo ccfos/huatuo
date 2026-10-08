@@ -234,6 +234,14 @@ func (h *NodeAPIHandler) GetOpenAPI(
 }
 
 func secondsDuration(seconds int64) (time.Duration, error) {
+	// The node OpenAPI spec declares duration_seconds: minimum 1 and the
+	// apiserver enforces positivity (internal/job/validate.go); the
+	// generated strict server does not check body schema constraints, so
+	// this handler must reject non-positive durations itself or the
+	// profiler is spawned with --duration 0 / negative.
+	if seconds <= 0 {
+		return 0, errors.New("duration seconds must be at least 1")
+	}
 	if seconds > math.MaxInt64/int64(time.Second) {
 		return 0, errors.New("duration seconds exceed the supported range")
 	}
