@@ -350,3 +350,7 @@ write_memory_oom_kill_config() {
 write_softlockup_config() {
 	write_single_event_config softlockup
 }
+
+write_hungtask_config() {
+	write_single_event_config hungtask
+}

@@ -129,3 +129,38 @@ sudo bash integration/run.sh test_events_softlockup_mock.sh
 Build-directory selection and cleanup follow the OOM workflow above. Module
 unload failure fails the test and preserves its workspace. The test prints a
 compact event summary with the backtrace length instead of all CPU stacks.
+
+## Hung task example
+
+`integration/test_events_hungtask_mock.sh` runs the production hung task BPF
+program against `sched/sched_process_hang_mock`. Its module generates that
+event from the build kernel's `TRACE_EVENT(sched_process_hang, ...)` in
+`include/trace/events/sched.h`, changing only the event name. This preserves
+the event's argument signature, field order, sizes, and assignment logic.
+The supplied 4.18 and 5.10 trees use a fixed `comm` array; the upstream tree
+uses a dynamic string. The production BPF program already checks the field
+itself to handle both layouts, so it needs no additional version branch.
+
+The ioctl emits the mock tracepoint with `current`. It does not block a task
+or invoke the hung task detector. The test compares production and mock
+tracepoint format fields before starting Huatuo, then checks the saved TID,
+command name, timeout, and both stack fields. Two triggers must increase the
+counter from zero to one to two, while the collector's existing backoff keeps
+only the first saved report.
+
+The production collector requests real CPU and blocked-task backtraces
+through SysRq `l` and `w` and `/dev/kmsg`. Stack fields are checked as strings;
+the fixture does not create blocked tasks or verify stack completeness.
+
+Run on Linux 4.18 or newer, on x86_64 or aarch64:
+
+```sh
+make build
+sudo bash integration/run.sh test_events_hungtask_mock.sh
+```
+
+The running kernel must have hung task detection and event tracing enabled,
+with tracefs mounted. The prepared build directory must contain the kernel's
+`include/trace/events/sched.h`. Build-directory selection and cleanup follow
+the OOM workflow. The script skips kernels without the hung task sysctl;
+other failures preserve the workspace for inspection.
