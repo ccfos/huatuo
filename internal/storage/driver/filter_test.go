@@ -45,6 +45,8 @@ func TestNormalizeFilterValue(t *testing.T) {
 		{"timestamp slice", OpIn, []timeutil.Timestamp{{Time: instant}}, []any{formatted}},
 		{"exists", OpExists, nil, nil},
 		{"not exists", OpNotExists, nil, nil},
+		{"prefix", OpPrefix, "pod-", "pod-"},
+		{"empty prefix", OpPrefix, "", ""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -80,6 +82,9 @@ func TestNormalizeFilterValueRejectsInvalidOperands(t *testing.T) {
 		{"in nil", OpIn, []string(nil), ErrInRequiresNonEmpty},
 		{"in null element", OpIn, []any{"a", nil}, ErrInvalidQuery},
 		{"in nested slice", OpIn, [][]int{{1}}, ErrInvalidQuery},
+		{"prefix int", OpPrefix, 1, ErrInvalidQuery},
+		{"prefix bool", OpPrefix, true, ErrInvalidQuery},
+		{"prefix nil", OpPrefix, nil, ErrInvalidQuery},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
