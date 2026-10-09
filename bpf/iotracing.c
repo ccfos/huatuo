@@ -13,13 +13,13 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define FILEPATH_MAX_DEPTH 8
 #define DNAME_INLINE_LEN   32
 #define PAGE_SIZE	   4096
-#define BPF_DEV_MINOR_BITS 20
-#define BPF_DEV_MINOR_MASK ((1U << BPF_DEV_MINOR_BITS) - 1)
 #define FILTER_DEV_MAX	   16
 
 volatile const u32 FILTER_DEV_IDS[FILTER_DEV_MAX] = {};
 volatile const u32 FILTER_DEV_COUNT = 0;
 volatile const u64 FILTER_EVENT_TIMEOUT = 100000000;
+/* Selected from request.part's BTF pointee before the object is loaded. */
+volatile const bool REQUEST_PART_BLOCK_DEVICE = false;
 
 static __always_inline int should_process_device(u32 dev)
 {
@@ -33,12 +33,6 @@ static __always_inline int should_process_device(u32 dev)
 			return 1;
 
 	return 0;
-}
-
-static __always_inline u32 encode_dev(u32 major, u32 minor)
-{
-	return (major & 0xfff) << BPF_DEV_MINOR_BITS |
-	       (minor & BPF_DEV_MINOR_MASK);
 }
 
 struct latency_info {
@@ -119,75 +113,23 @@ static __always_inline int is_write_request(u32 cmd_flags)
 	return (cmd_flags & REQ_OP_MASK) == REQ_OP_WRITE;
 }
 
-struct request_queue___5_14 {
-	struct gendisk *disk;
-} __attribute__((preserve_access_index));
-
-struct block_device___5_11 {
-	dev_t bd_dev;
-};
-
-/*
- * compatible with different kernel versions of disk device acquisition.
- *
- *   pre-5.17:   request->rq_disk
- *   5.17 ~ 6.x: request->q->disk (rq_disk removed, request_queue gained
- *               the disk field in 5.14)
- *   7.0+:       request->part->bd_disk (request_queue->disk no longer
- *               reflects the real disk on 7.0+)
- *
- * Discriminating 5.17~6.x from 7.0+ relies on whether the kernel's
- * struct request_queue still carries the `disk` field. request->part
- * cannot be used for this purpose: it exists since 5.11 (just with a
- * different type) and is therefore always present on every kernel that
- * reaches the second branch below.
- */
-static __always_inline struct gendisk *get_request_disk(struct request *req)
+/* Use the partition's dev_t unchanged on both request hooks. */
+static __always_inline bool get_request_dev(struct request *req, dev_t *dev)
 {
-	struct request_queue___5_14 *q = NULL;
+	void *part = NULL;
+	struct hd_struct *old_part;
+	struct block_device___7_0 *bdev7;
 
-	if (bpf_core_field_exists(req->rq_disk))
-		return BPF_CORE_READ(req, rq_disk);
+	/* part is not initialized when request IO statistics are disabled. */
+	if (BPF_CORE_READ_INTO(&part, req, part) || !part)
+		return false;
 
-	if (bpf_core_field_exists(q->disk)) {
-		q = (struct request_queue___5_14 *)BPF_CORE_READ(req, q);
-		return BPF_CORE_READ(q, disk);
-	}
+	old_part = (struct hd_struct *)part;
+	if (!REQUEST_PART_BLOCK_DEVICE)
+		return BPF_CORE_READ_INTO(dev, old_part, __dev.devt) == 0;
 
-	{
-		struct request___7_0 *req7 = (struct request___7_0 *)req;
-		struct block_device___7_0 *bdev7;
-
-		bdev7 = (struct block_device___7_0 *)BPF_CORE_READ(req7, part);
-		return BPF_CORE_READ(bdev7, bd_disk);
-	}
-}
-
-/*
- * compatible with different kernel versions of partition number acquisition.
- *
- *   pre-5.11: request->part is struct hd_struct*, partno is the
- *             partition index directly
- *   5.11+:    request->part is struct block_device*, the low byte of
- *             bd_dev encodes the partition index
- *
- * 7.0+ keeps using struct block_device, so the 5.11+ path covers both.
- */
-static __always_inline int get_partition_number(struct request *req)
-{
-	void *part = BPF_CORE_READ(req, part);
-
-	if (bpf_core_field_exists(((struct hd_struct *)part)->partno))
-		return BPF_CORE_READ((struct hd_struct *)part, partno);
-
-	{
-		struct block_device___5_11 *new_part;
-		int partno;
-
-		new_part = (struct block_device___5_11 *)part;
-		partno = BPF_CORE_READ(new_part, bd_dev);
-		return partno & 0xff;
-	}
+	bdev7 = (struct block_device___7_0 *)part;
+	return BPF_CORE_READ_INTO(dev, bdev7, bd_dev) == 0;
 }
 
 SEC("kprobe/rq_qos_issue")
@@ -198,10 +140,7 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 	struct io_start_info info = {};
 	struct bio *bio;
 	struct inode *inode;
-	struct gendisk *disk;
 	u32 cmd_flags;
-	int partno;
-	int devn[2];
 
 	bio = BPF_CORE_READ(req, bio);
 
@@ -209,13 +148,9 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 	if (cmd_flags & REQ_META)
 		return 0;
 
-	disk = get_request_disk(req);
-	/* gendisk.major, gendisk.first_minor */
-	if (bpf_probe_read(devn, sizeof(devn), disk))
+	if (!get_request_dev(req, &key.dev))
 		return -1;
 
-	partno = get_partition_number(req);
-	key.dev = encode_dev(devn[0], devn[1] + partno);
 	key.sector = BPF_CORE_READ(req, __sector);
 
 	if (!should_process_device(key.dev))
@@ -246,21 +181,14 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 	struct io_key io_key = {};
 	struct io_data data = {};
 	struct io_data *entry;
-	struct gendisk *disk;
 	u32 cmd_flags;
-	int partno;
-	int devn[2];
 	u64 now;
 	u64 q2c;
 	u64 d2c;
 
-	disk = get_request_disk(req);
-	/* gendisk.major, gendisk.first_minor */
-	if (bpf_probe_read(devn, sizeof(devn), disk))
+	if (!get_request_dev(req, &info_key.dev))
 		return -1;
 
-	partno = get_partition_number(req);
-	info_key.dev = encode_dev(devn[0], devn[1] + partno);
 	info_key.sector = BPF_CORE_READ(req, __sector);
 
 	if (!should_process_device(info_key.dev))

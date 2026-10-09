@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/cilium/ebpf/btf"
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/internal/bpf"
@@ -90,6 +91,16 @@ func mainAction(c *cli.Context) (returnErr error) {
 	if err != nil {
 		return err
 	}
+
+	kernel, err := btf.LoadKernelSpec()
+	if err != nil {
+		return fmt.Errorf("check request.part layout: load kernel BTF: %w", err)
+	}
+	blockDevice, err := requestPartIsBlockDevice(kernel)
+	if err != nil {
+		return err
+	}
+	filters[bpfRequestPartBlockDevice] = blockDevice
 
 	client, err := openToolstream(c)
 	if err != nil {

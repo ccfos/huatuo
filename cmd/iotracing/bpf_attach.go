@@ -21,8 +21,50 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cilium/ebpf/btf"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 )
+
+// requestPartIsBlockDevice selects the reader from the request's own pointee.
+// Unrelated legacy types in kernel BTF must not affect device attribution.
+func requestPartIsBlockDevice(spec *btf.Spec) (bool, error) {
+	var request *btf.Struct
+	if err := spec.TypeByName("request", &request); err != nil {
+		return false, fmt.Errorf("unsupported request.part layout: find request: %w", err)
+	}
+	part, ok := btf.As[*btf.Pointer](requestLayoutMember(request, "part"))
+	if !ok || part.Target == nil {
+		return false, fmt.Errorf("unsupported request.part layout: part is not a typed pointer")
+	}
+	target := btf.UnderlyingType(part.Target)
+	switch target.TypeName() {
+	case "hd_struct":
+		if requestLayoutMember(requestLayoutMember(target, "__dev"), "devt") != nil {
+			return false, nil
+		}
+	case "block_device":
+		if requestLayoutMember(target, "bd_dev") != nil {
+			return true, nil
+		}
+	default:
+		return false, fmt.Errorf("unsupported request.part layout: points to %s", target.TypeName())
+	}
+	return false, fmt.Errorf("unsupported request.part layout: device-number field missing in %s", target.TypeName())
+}
+
+func requestLayoutMember(typ btf.Type, name string) btf.Type {
+	structure, ok := btf.As[*btf.Struct](typ)
+	if !ok || structure == nil {
+		return nil
+	}
+	for _, member := range structure.Members {
+		if member.Name == name {
+			return member.Type
+		}
+	}
+	return nil
+}
 
 // attachAndEventPipe attaches all programs found in the BPF object and
 // returns a perf reader for iodelay events. The reader is closed if any
