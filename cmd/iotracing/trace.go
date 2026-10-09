@@ -85,16 +85,8 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 // are usually most relevant for diagnosis — the ones closest to the end
 // of the window.
 func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOScheduleEvent, error) {
-	var (
-		event bpfScheduleDelay
-		ring  []types.IOScheduleEvent
-		head  uint64
-		count uint64
-	)
-
-	if maxStack > 0 {
-		ring = make([]types.IOScheduleEvent, maxStack)
-	}
+	var event bpfScheduleDelay
+	ring := newStallRing(maxStack)
 
 	for {
 		if err := reader.ReadInto(&event); err != nil {
@@ -115,7 +107,7 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 
 		hostname, _ := process.Hostname(int(event.TGID))
 
-		ring[head] = types.IOScheduleEvent{
+		ring.add(&types.IOScheduleEvent{
 			Comm:              bytesutil.ToStr(event.Comm[:]),
 			ContainerHostname: hostname,
 			PID:               event.TGID,
@@ -123,25 +115,10 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 			CPU:               event.CPU,
 			ScheduleLatencyUS: event.DurationNS / 1000,
 			Stack:             symbol.KsymStackStrs(event.Stack[:], symbol.KsymStackMinDepth),
-		}
-
-		head = (head + 1) % maxStack
-		if count < maxStack {
-			count++
-		}
+		})
 	}
 
-	if count < maxStack {
-		return ring[:count], nil
-	}
-
-	// Buffer wrapped: head points to the oldest entry. Stitch
-	// [head:] + [:head] so output stays oldest-to-newest.
-	out := make([]types.IOScheduleEvent, 0, maxStack)
-	out = append(out, ring[head:]...)
-	out = append(out, ring[:head]...)
-
-	return out, nil
+	return ring.ordered(), nil
 }
 
 // dumpAndAggregate reads io_source_map after detach and reduces it into
