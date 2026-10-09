@@ -91,6 +91,12 @@ func mainAction(c *cli.Context) (returnErr error) {
 		return err
 	}
 
+	blockDevice, err := requestPartIsBlockDevice()
+	if err != nil {
+		return err
+	}
+	filters[bpfRequestPartBlockDevice] = blockDevice
+
 	client, err := openToolstream(c)
 	if err != nil {
 		return err
