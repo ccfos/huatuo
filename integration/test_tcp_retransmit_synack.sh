@@ -29,7 +29,7 @@ SYNACK_REJECT_PORT=$((TEST_PORT + 1))
 S_ADDR="10.99.3.1"
 C_ADDR="10.99.3.2"
 
-require_python3
+require_commands python3
 
 cleanup() {
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true
@@ -38,18 +38,18 @@ cleanup() {
 	sleep 0.2
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill -9 "${TCPSHARK_PID}" 2> /dev/null || true
 	[[ -n "${reject_tcpshark_pid:-}" ]] && kill -9 "${reject_tcpshark_pid}" 2> /dev/null || true
-	tcp_namespace_cleanup
+	namespace_cleanup
 	rm -rf "${OUTPUT_DIR}"
 }
 trap cleanup EXIT
 
 log_info "SYNACK retrans: drop client's final ACK in an isolated namespace"
 
-tcp_namespace_setup synack "${S_ADDR}" "${C_ADDR}"
+namespace_setup_with_pair synack "${S_ADDR}" "${C_ADDR}"
 
 # 1. Hold a listening socket while the kernel handles the 3-way handshake.
-ip netns exec "${TCP_NS_SERVER}" timeout 8 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
-	--listen-address "${TCP_NS_SERVER_ADDR}" --port "${TEST_PORT}" > /dev/null 2>&1 &
+ip netns exec "${NETNS_SERVER}" timeout 8 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
+	--listen-address "${NETNS_SERVER_ADDR}" --port "${TEST_PORT}" > /dev/null 2>&1 &
 SRV_PID=$!
 sleep 0.5
 
@@ -57,24 +57,24 @@ sleep 0.5
 #    --tcp-flags SYN,ACK ACK = ACK set, SYN NOT set → matches pure ACK, not SYNACK.
 #    The server never sees the final ACK → its retransmission timer fires
 #    inet_rtx_synack → tcp_retransmit_synack tracepoint fires.
-ip netns exec "${TCP_NS_CLIENT}" iptables -w 5 -I OUTPUT 1 -p tcp --dport "${TEST_PORT}" --tcp-flags SYN,ACK ACK -j DROP
+ip netns exec "${NETNS_CLIENT}" iptables -w 5 -I OUTPUT 1 -p tcp --dport "${TEST_PORT}" --tcp-flags SYN,ACK ACK -j DROP
 log_info "iptables: DROP pure ACK (dport=${TEST_PORT})"
 
 # 3. Start tcpshark in retransmit mode.
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
-	--filter "tcp and src host ${TCP_NS_SERVER_ADDR} and src port ${TEST_PORT}" \
+	--filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TEST_PORT}" \
 	--duration 8 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
-	--filter "tcp and src host ${TCP_NS_SERVER_ADDR} and src port ${SYNACK_REJECT_PORT}" \
+	--filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${SYNACK_REJECT_PORT}" \
 	--duration 8 --output json > "${OUTPUT_DIR}/rejected-events.json" \
 	2> "${OUTPUT_DIR}/rejected-stderr.log" &
 reject_tcpshark_pid=$!
 sleep 1
 
 # 4. Client connects: SYN → server, SYNACK → client, ACK → dropped.
-timeout 3 ip netns exec "${TCP_NS_CLIENT}" bash -c \
-	"exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}" 2> /dev/null || true
+timeout 3 ip netns exec "${NETNS_CLIENT}" bash -c \
+	"exec 3<>/dev/tcp/${NETNS_SERVER_ADDR}/${TEST_PORT}" 2> /dev/null || true
 
 # 5. Wait for SYNACK retransmissions (initial RTO ~1s, exponential backoff).
 sleep 5

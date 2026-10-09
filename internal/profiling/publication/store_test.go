@@ -69,8 +69,8 @@ func (*memoryBackend) DeleteByQuery(context.Context, driver.DeleteQuery) (int64,
 	return 0, nil
 }
 
-func (*memoryBackend) Query(context.Context, driver.Query) ([]driver.Record, error) {
-	return nil, nil
+func (*memoryBackend) Query(context.Context, driver.Query, func([]driver.Record) error) error {
+	return nil
 }
 
 func (b *memoryBackend) Count(context.Context, driver.Query) (int64, error) {

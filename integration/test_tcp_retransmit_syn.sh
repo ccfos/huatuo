@@ -35,31 +35,31 @@ cleanup() {
 	sleep 0.2
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill -9 "${TCPSHARK_PID}" 2> /dev/null || true
 	[[ -n "${reject_tcpshark_pid:-}" ]] && kill -9 "${reject_tcpshark_pid}" 2> /dev/null || true
-	tcp_namespace_cleanup
+	namespace_cleanup
 	rm -rf "${OUTPUT_DIR}"
 }
 trap cleanup EXIT
 
 log_info "S0/EXP1: SYN retrans (connect/RTO) via isolated netns drop"
 
-tcp_namespace_setup syn "${S_ADDR}" "${C_ADDR}"
+namespace_setup_with_pair syn "${S_ADDR}" "${C_ADDR}"
 
 # Drop SYN packets in the peer namespace so the client enters TCP RTO retry.
-ip netns exec "${TCP_NS_SERVER}" iptables -I INPUT 1 -p tcp --dport "${TEST_PORT}" -j DROP
+ip netns exec "${NETNS_SERVER}" iptables -I INPUT 1 -p tcp --dport "${TEST_PORT}" -j DROP
 
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
-	--filter "tcp and dst host ${TCP_NS_SERVER_ADDR} and dst port ${TEST_PORT}" \
+	--filter "tcp and dst host ${NETNS_SERVER_ADDR} and dst port ${TEST_PORT}" \
 	--duration 6 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
-	--filter "tcp and dst host ${TCP_NS_SERVER_ADDR} and dst port ${SYN_REJECT_PORT}" \
+	--filter "tcp and dst host ${NETNS_SERVER_ADDR} and dst port ${SYN_REJECT_PORT}" \
 	--duration 6 --output json > "${OUTPUT_DIR}/rejected-events.json" \
 	2> "${OUTPUT_DIR}/rejected-stderr.log" &
 reject_tcpshark_pid=$!
 sleep 1
 
-timeout 7 ip netns exec "${TCP_NS_CLIENT}" bash -c \
-	"exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}" 2> /dev/null || true
+timeout 7 ip netns exec "${NETNS_CLIENT}" bash -c \
+	"exec 3<>/dev/tcp/${NETNS_SERVER_ADDR}/${TEST_PORT}" 2> /dev/null || true
 sleep 1
 
 tcpshark_status=0

@@ -26,6 +26,7 @@ import (
 	"github.com/ccfos/huatuo/internal/auth"
 	"github.com/ccfos/huatuo/internal/job"
 	"github.com/ccfos/huatuo/internal/profiling/publication"
+	"github.com/ccfos/huatuo/internal/server"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
@@ -34,8 +35,9 @@ import (
 )
 
 const (
-	defaultPageSize           = 100
 	defaultRawProfilePageSize = 20
+	// Bound decoded profiles retained before response-size validation.
+	maxRawProfilePageSize = 100
 )
 
 var (
@@ -191,6 +193,13 @@ func (s *Service) RawProfiles(
 	limit int,
 	offset int,
 ) (*RawProfilePage, error) {
+	if limit <= 0 || limit > maxRawProfilePageSize || offset < 0 {
+		return nil, fmt.Errorf(
+			"%w: raw profile limit must be between 1 and %d and offset must be non-negative",
+			job.ErrInvalidQuery,
+			maxRawProfilePageSize,
+		)
+	}
 	currentJob, err := s.Get(ctx, principal, requestID)
 	if err != nil {
 		return nil, err
@@ -361,7 +370,7 @@ func buildDashboardURL(baseURL string, resultJob *job.Job) *string {
 
 // NormalizePage applies the public pagination defaults.
 func NormalizePage(limit, offset *int) (int, int) {
-	normalizedLimit := defaultPageSize
+	normalizedLimit := server.DefaultListLimit
 	if limit != nil {
 		normalizedLimit = *limit
 	}

@@ -105,7 +105,7 @@ write_sched_tick_config_with_threshold() {
 	local interval_threshold=$1
 
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["arp", "ascend_npu", "memory_threshold_snapshot", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
+BlackList = ["arp", "ascend_npu", "memory_threshold_snapshot", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
 
 [HTTPServer.Auth]
     BearerToken = "integration-node-token"
@@ -128,6 +128,28 @@ write_sched_tick_irqoff_config() {
 	write_sched_tick_config_with_threshold 1
 }
 
+write_storage_consistency_config() {
+	# The case supplies the isolated ports, packet filter and backend credentials.
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${storage_http_port}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[EventTracing.Dropwatch]
+    Filter = "udp and dst host 127.0.0.99 and dst port ${storage_target_port}"
+    MaxEventsPerSecond = 100
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+[Storage.Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "${STORAGE_USERNAME}"
+    Password = "${STORAGE_PASSWORD}"
+    Index = "${STORAGE_INDEX}"
+EOF
+}
+
 write_tcp_events_config() {
 	# Ports, filter and storage path belong to this test workspace.
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
@@ -142,7 +164,7 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
 [EventTracing.TCPRetransmit]
     Filter = "${TCP_RETRANS_FILTER}"
     EnableTLP = false
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 
 [Storage.LocalFile]
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
@@ -190,6 +212,33 @@ BlackList = ["arp", "ascend_npu", "memory_threshold_snapshot", "cpu_stat", "cpu_
 EOF
 }
 
+# The irqtracing test controls proc/stat and the Toolstream subprocess.
+write_irqtracing_autotracing_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${IRQTRACING_API_PORT}"
+
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
+[AutoTracing.IRQTracing]
+    Interval = 1
+    IntervalTracing = 60
+    RunTracingToolTimeout = 1
+    MaxEventsPerSecond = 1000
+    MinCPUs = 1
+    DeltaUsageThreshold = 1
+    RelativeIncreaseThreshold = 1
+    SustainedIntervals = 10
+    UsageThreshold = 100
+
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}
+
 # The apiserver port and workspace paths are allocated by the caller.
 write_apiserver_apis_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
@@ -206,6 +255,19 @@ write_apiserver_apis_config() {
     ID = "integration-admin-user"
     BearerToken = "${API_TOKEN}"
     Admin = true
+EOF
+}
+
+# The profile filter case supplies its API settings and isolated storage index.
+write_profile_query_apiserver_config() {
+	write_apiserver_apis_config
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
+
+[Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "elastic"
+    Password = "profile-filter-test"
+    Index = "${PROFILE_FILTER_INDEX}"
 EOF
 }
 
@@ -241,7 +303,7 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
     MaxConcurrentProcesses = 10
 
 [Storage.Elasticsearch]
-    Address = "${ELASTICSEARCH_ADDR}"
+    Address = "${STORAGE_ADDR}"
     Username = "elastic"
     Password = "${ES_PASSWORD}"
     Index = "huatuo_continuous_profiling_test"
@@ -258,7 +320,7 @@ write_continuous_profiling_apiserver_config() {
     ListenAddress = "127.0.0.1:${APISERVER_PORT}"
 
 [Elasticsearch]
-    Address = "${ELASTICSEARCH_ADDR}"
+    Address = "${STORAGE_ADDR}"
     Username = "elastic"
     Password = "${ES_PASSWORD}"
     Index = "huatuo_continuous_profiling_test"
@@ -290,5 +352,31 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
 
 [Storage.LocalFile]
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}
+
+# The caller supplies the real kubelet endpoint, certificates, and output limits.
+write_memory_threshold_snapshot_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${GO_SNAPSHOT_KUBELET_PORT}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+
+[AutoTracing.MemoryThresholdSnapshot]
+    ThresholdPercent = 50
+    IntervalTracing = 300
+    RunTracingToolTimeout = 10
+    MaxMemoryObjectEntries = ${go_snapshot_top_k}
+
+[Storage.LocalFile]
+    Path = "${go_snapshot_case_dir}/events"
 EOF
 }

@@ -191,8 +191,8 @@ func (*recordingBackend) DeleteByQuery(context.Context, driver.DeleteQuery) (int
 	return 0, nil
 }
 
-func (*recordingBackend) Query(context.Context, driver.Query) ([]driver.Record, error) {
-	return nil, nil
+func (*recordingBackend) Query(context.Context, driver.Query, func([]driver.Record) error) error {
+	return nil
 }
 
 func (*recordingBackend) Count(context.Context, driver.Query) (int64, error) { return 0, nil }
@@ -243,5 +243,16 @@ func TestBuildAggregationQueryTimestampFormat(t *testing.T) {
 	}
 	if !reflect.DeepEqual(query.Filters, want) {
 		t.Fatalf("filters = %#v, want %#v", query.Filters, want)
+	}
+}
+
+func TestBuildProfileHostQueryUsesMissingContainer(t *testing.T) {
+	query := buildAggregationQuery(&Filter{Hostname: "host-a"})
+	want := []driver.Filter{
+		{Field: types.DocumentFieldHostname + ".keyword", Op: driver.OpEq, Value: "host-a"},
+		{Field: types.DocumentFieldContainerHostname, Op: driver.OpNotExists},
+	}
+	if !reflect.DeepEqual(query.Filters, want) {
+		t.Fatalf("host filters = %#v, want %#v", query.Filters, want)
 	}
 }

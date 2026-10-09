@@ -30,7 +30,7 @@ PAYLOAD_SIZE=262144 # 256 KB
 S_ADDR="10.99.4.1"
 C_ADDR="10.99.4.2"
 
-require_python3
+require_commands python3
 
 cleanup() {
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true
@@ -40,29 +40,29 @@ cleanup() {
 	sleep 0.2
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill -9 "${TCPSHARK_PID}" 2> /dev/null || true
 	[[ -n "${reject_tcpshark_pid:-}" ]] && kill -9 "${reject_tcpshark_pid}" 2> /dev/null || true
-	tcp_namespace_cleanup
+	namespace_cleanup
 }
 trap cleanup EXIT
 
 log_info "TLP: tcp_send_loss_probe via isolated namespace with dropped data ACKs"
 
-tcp_namespace_setup tlp "${S_ADDR}" "${C_ADDR}"
+namespace_setup_with_pair tlp "${S_ADDR}" "${C_ADDR}"
 
 # 1. Server: listen immediately, then delay the payload until after the
 #    iptables rule is installed. This leaves unacknowledged data for TLP.
-ip netns exec "${TCP_NS_SERVER}" timeout 14 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
-	--listen-address "${TCP_NS_SERVER_ADDR}" --port "${TEST_PORT}" \
+ip netns exec "${NETNS_SERVER}" timeout 14 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
+	--listen-address "${NETNS_SERVER_ADDR}" --port "${TEST_PORT}" \
 	--payload-bytes "${PAYLOAD_SIZE}" --send-delay 3 > /dev/null 2>&1 &
 SRV_PID=$!
 sleep 0.5
 
 # 2. Start tcpshark with TLP collection explicitly enabled.
 "${TCPSHARK_BIN}" --mode retransmit --enable-tlp --bpf-path "${BPF_OBJ}" \
-	--filter "tcp and src host ${TCP_NS_SERVER_ADDR} and src port ${TEST_PORT}" \
+	--filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TEST_PORT}" \
 	--duration 14 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 "${TCPSHARK_BIN}" --mode retransmit --enable-tlp --bpf-path "${BPF_OBJ}" \
-	--filter "tcp and src host ${TCP_NS_SERVER_ADDR} and src port ${TLP_REJECT_PORT}" \
+	--filter "tcp and src host ${NETNS_SERVER_ADDR} and src port ${TLP_REJECT_PORT}" \
 	--duration 14 --output json > "${OUTPUT_DIR}/rejected-events.json" \
 	2> "${OUTPUT_DIR}/rejected-stderr.log" &
 reject_tcpshark_pid=$!
@@ -81,14 +81,14 @@ if ! kill -0 "${reject_tcpshark_pid}" 2> /dev/null; then
 fi
 
 # 3. Client connects via bash /dev/tcp and reads data to /dev/null.
-ip netns exec "${TCP_NS_CLIENT}" timeout 12 bash -c \
-	"exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
+ip netns exec "${NETNS_CLIENT}" timeout 12 bash -c \
+	"exec 3<>/dev/tcp/${NETNS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
 CLI_PID=$!
 
 # 4. Wait for handshake to complete, then drop ACKs to the server.
 #    Must happen before the server's 3s send delay expires.
 sleep 1
-ip netns exec "${TCP_NS_CLIENT}" iptables -I OUTPUT 1 -p tcp --dport "${TEST_PORT}" --tcp-flags ACK ACK -j DROP
+ip netns exec "${NETNS_CLIENT}" iptables -I OUTPUT 1 -p tcp --dport "${TEST_PORT}" --tcp-flags ACK ACK -j DROP
 log_info "iptables: DROP ACK (dport=${TEST_PORT}) — client ACKs will be dropped"
 
 # 5. Wait for data send + TLP (PTO ~10ms on loopback; generous window).

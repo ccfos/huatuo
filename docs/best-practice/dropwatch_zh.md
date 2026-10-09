@@ -199,6 +199,8 @@ sudo dropwatch --bpf-path bpf/net_dropwatch.o --output json 2>/dev/null | \
 
 `--filter`、`--device`、`--device-excluded` 和 `--max-events-per-second` 同时作用于软件与硬件事件。文本输出将硬件原因表示为 `reason=<group>/<trap> drop_source=hardware`；JSON 输出使用独立的 `drop_reason_group`、`drop_reason` 和 `drop_source` 字段。
 
+`tcpshark --with-dropwatch` 复用相同的来源分类和 reason 解析，也自动启用可用的硬件采集；成功关联时保留相同的 `drop_source`、`drop_reason` 和 `drop_reason_group`。参见 [重传关联说明](/docs/best-practice/tcpshark_zh.md)。
+
 #### 常用命令
 
 ```bash
@@ -273,8 +275,16 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -
 | `layers.ipv6`  | IPv6 字段：`version`、`traffic_class`、`flow_label`、`len`、`next_header`、`hop_limit`、`saddr`、`daddr` |
 | `layers.tcp`   | TCP 字段：`sport`、`dport`、`seq`、`ack_seq`、`data_offset`、`window`、`checksum`、`urgent`、`sk_state` |
 | `layers.udp`   | UDP 字段：`sport`、`dport`、`len`、`checksum`                |
-| `layers.icmp`  | ICMP/ICMPv6 字段：`type`、`code`、`checksum`、`id`、`seq`    |
+| `layers.icmp`  | ICMP/ICMPv6 字段：`type`、`code`、`checksum`、`id`、`seq`；ICMPv6 Echo 请求/应答包含标识符和序号，其他 ICMPv6 消息省略这两个字段 |
 | `layers.arp`   | ARP 字段：`addr_type`、`protocol`、`hw_address_size`、`prot_address_size`、`operation`、`sender_mac`、`sender_ip`、`target_mac`、`target_ip` |
+
+ICMPv6 Echo Request/Reply（类型 128/129）仅在捕获完整四字节 Echo 字段时
+填充 `id`、`seq`。Echo 字段截断时保留通用 ICMPv6 字段，ID/Seq 为零；
+通用头也被截断时仍保留已解码的 IPv6 层，`layers.icmp` 不存在。
+其他 ICMPv6 消息类型不填充 Echo 字段。
+
+JSON 分别省略值为零的 `id`、`seq`；文本仅在两者都为零时省略它们。
+因此，输出字段缺失无法区分未包含或截断的 Echo 字段与合法的零值。
 
 ---
 
@@ -308,7 +318,7 @@ dropwatch \
 
 [EventTracing.TCPRetransmit]
     # 使用 tcpshark 私有的 embedded dropwatch source。
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 ```
 
 standalone dropwatch 始终输出 raw `DropWatchTracing`。TCP 重传 local 关联会加载另一份 `net_dropwatch.o`，两个输入统一使用 `EventTracing.TCPRetransmit.Filter`，并且只输出定型后的 `TCPRetransmitTracing` 结果。两种模式可以并行；embedded drop 不会重复保存成 raw event。

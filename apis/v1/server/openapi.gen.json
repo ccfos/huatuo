@@ -2,6 +2,7 @@
   "components": {
     "parameters": {
       "Limit": {
+        "description": "Maximum items in this page. Must be positive; omission uses the default.",
         "in": "query",
         "name": "limit",
         "schema": {
@@ -21,6 +22,7 @@
         }
       },
       "RawProfileLimit": {
+        "description": "Maximum raw profiles in this page. Must be positive; omission uses the default.",
         "in": "query",
         "name": "limit",
         "schema": {

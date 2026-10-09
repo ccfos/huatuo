@@ -111,7 +111,7 @@ func TestRunningExecutableCacheKeepsXFSMountIdentity(t *testing.T) {
 	if _, err := resolver.loadElfCaches(pid); err != nil {
 		t.Fatal(err)
 	}
-	if got := resolver.exeKeys[pid].mountKey; got != root {
+	if got := resolver.processes[pid].cacheKey.mountKey; got != root {
 		t.Errorf("XFS identity = %q, want %q", got, root)
 	}
 }
@@ -119,10 +119,10 @@ func TestRunningExecutableCacheKeepsXFSMountIdentity(t *testing.T) {
 func BenchmarkCachedExecutableSymbol(b *testing.B) {
 	resolver := NewUsymResolver()
 	key := cacheKey{inode: 1}
-	resolver.exeKeys[1] = key
-	resolver.exeCache[key] = &elfCache{
-		secs: sections{&procfs.ProcMap{StartAddr: 0x1000, EndAddr: 0x2000, Pathname: ".text"}},
-		syms: symbols{&symbol{Addr: 0x1000, Size: 0x1000, Name: "probe"}},
+	resolver.processes[1] = processELF{cacheKey: key, path: "/proc/1/exe"}
+	resolver.exeCache[key] = &executableCache{
+		sections: sections{&procfs.ProcMap{StartAddr: 0x1000, EndAddr: 0x2000, Pathname: ".text"}},
+		symbols:  elfSymbolCache{namesByELFPC: map[uint64]string{0x1001: "probe"}},
 	}
 	b.ReportAllocs()
 	for b.Loop() {

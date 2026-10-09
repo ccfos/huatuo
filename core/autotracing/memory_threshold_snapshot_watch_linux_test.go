@@ -16,128 +16,160 @@ package autotracing
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/pod"
+	"golang.org/x/sys/unix"
+
+	"github.com/ccfos/huatuo/internal/cgroups/memorywatch"
 )
 
-func TestMemoryCgroupLifecycleWakesWatcher(t *testing.T) {
-	w := newTestPressureWatcher(t)
-	first := "/" + strings.Repeat("a", 64)
-	createMemoryCgroupForTest(t, w.root, first, 95)
-	changes := make(chan pod.MemoryCgroupChange, 1)
-	w.changes = changes
-	w.containerPath = func(id string) (string, error) { return "/" + id, nil }
-	ctx, cancel := context.WithCancel(t.Context())
-	events, done := w.Run(ctx)
+func newTestMemoryThresholdWatcher(t testing.TB, opts memoryWatchOptions) (*memoryThresholdWatcher, *cgroupSource) {
+	t.Helper()
+	source := newTestCgroupSource(t)
+	watcher, err := newMemoryThresholdWatcher(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Error(err)
-			}
-		case <-time.After(3 * time.Second):
-			t.Error("watcher did not stop")
+		if err := watcher.Close(); err != nil {
+			t.Error(err)
 		}
 	})
-	waitPressure := func(want string) {
-		t.Helper()
-		select {
-		case got := <-events:
-			if got.cgroupPath != want {
-				t.Fatalf("pressure = %+v, want %s", got, want)
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("watcher was not woken")
-		}
-	}
-	waitPressure(first)
-	second := "/" + strings.Repeat("b", 64)
-	createMemoryCgroupForTest(t, w.root, second, 95)
-	changes <- pod.MemoryCgroupChange{ContainerID: filepath.Base(second)}
-	waitPressure(second)
+	return watcher, source
 }
 
-func TestMemorySnapshotSlowConsumerDoesNotBlockLifecycle(t *testing.T) {
-	w := newTestPressureWatcher(t)
-	first, second := strings.Repeat("a", 64), strings.Repeat("b", 64)
-	createMemoryCgroupForTest(t, w.root, "/"+first, 95)
-	createMemoryCgroupForTest(t, w.root, "/"+second, 95)
-	changes := make(chan pod.MemoryCgroupChange, 1)
-	resolved := make(chan string, 1)
+func TestMemoryThresholdWatcherRegistersPaths(t *testing.T) {
+	watcher, source := newTestMemoryThresholdWatcher(t, memoryWatchOptions{ThresholdPercent: 90})
+	// A plain hierarchy path needs neither a container ID nor a pod subscription.
+	path := "/workload"
+	createMemoryCgroupForTest(t, source.root, path, 95)
+	identity := cgroupRefForTest(t, source, path).directory
+	first, err := watcher.Register(t.Context(), path, identity)
+	if err != nil || first == 0 {
+		t.Fatalf("register path = %d, %v", first, err)
+	}
+	duplicate, err := watcher.Register(t.Context(), path, identity)
+	if err != nil || duplicate != first {
+		t.Fatalf("duplicate registration = %d, %v; want %d", duplicate, err, first)
+	}
+	if err := os.Rename(source.memcgDir(path), filepath.Join(source.root, "retired")); err != nil {
+		t.Fatal(err)
+	}
+	createMemoryCgroupForTest(t, source.root, path, 99)
+	replacement, err := watcher.Register(t.Context(), path, cgroupRefForTest(t, source, path).directory)
+	if err != nil || replacement == first {
+		t.Fatalf("replacement registration = %d, %v", replacement, err)
+	}
+	if staleID, err := watcher.Register(t.Context(), path, identity); staleID != 0 || !errors.Is(err, unix.ESTALE) {
+		t.Fatalf("stale identity reused the replacement registration: %d, %v", staleID, err)
+	}
+	if err := watcher.Unregister(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	events, err := watcher.ProcessEvents(t.Context())
+	if err != nil || len(events) != 1 {
+		t.Fatalf("replacement events = %+v, %v", events, err)
+	}
+	event := &events[0]
+	if event.TargetID != replacement || event.Kind != memoryThresholdObserved || event.UsageBytes != 99 {
+		t.Fatalf("replacement observation = %+v", event)
+	}
+	retained := slices.Clone(events)
+	if err := watcher.Unregister(t.Context(), replacement); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(events, retained) {
+		t.Fatal("unregister changed a borrowed kernel batch")
+	}
+	remaining, err := watcher.ProcessEvents(t.Context())
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("unregistered events = %+v, %v", remaining, err)
+	}
+}
+
+func TestMemoryThresholdWatcherPressureBatchBudget(t *testing.T) {
+	watcher, source := newTestMemoryThresholdWatcher(t, memoryWatchOptions{ThresholdPercent: 90})
+	const count = 2*defaultMemoryWatchEventBatch + 1
+	for i := 0; i < count; i++ {
+		path := fmt.Sprintf("/workload-%d", i)
+		createMemoryCgroupForTest(t, source.root, path, 95)
+		if _, err := watcher.Register(t.Context(), path, cgroupRefForTest(t, source, path).directory); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := make(map[memoryWatchRegistrationID]bool)
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	w.changes = changes
-	w.containerPath = func(id string) (string, error) {
-		select {
-		case resolved <- id:
-			return "/" + id, nil
-		case <-ctx.Done():
-			return "", ctx.Err()
-		}
-	}
-	events, done := w.Run(ctx)
 	defer cancel()
-	t.Cleanup(func() {
-		cancel()
-		<-done
-	})
-	// Leave the output full while exercising registration and removal.
-	for len(events) == 0 {
+	for len(seen) < count {
 		select {
+		case <-watcher.Notifications():
 		case <-ctx.Done():
-			t.Fatal("initial pressure was not delivered")
-		case <-time.After(time.Millisecond):
+			t.Fatal("remaining kernel events lost their notification")
 		}
-	}
-	third, fourth := strings.Repeat("c", 64), strings.Repeat("d", 64)
-	for _, id := range []string{third, fourth} {
-		createMemoryCgroupForTest(t, w.root, "/"+id, 95)
-		select {
-		case changes <- pod.MemoryCgroupChange{ContainerID: id}:
-		case <-ctx.Done():
-			t.Fatal("slow consumer blocked lifecycle submission")
+		events, err := watcher.ProcessEvents(ctx)
+		if err != nil {
+			t.Fatal(err)
 		}
-		select {
-		case got := <-resolved:
-			if got != id {
-				t.Fatalf("resolved container = %s, want %s", got, id)
+		if len(events) > defaultMemoryWatchEventBatch || cap(events) != len(events) {
+			t.Fatalf("unbounded kernel batch: len=%d cap=%d", len(events), cap(events))
+		}
+		for i := range events {
+			if seen[events[i].TargetID] || events[i].Kind != memoryThresholdObserved {
+				t.Fatalf("duplicate or unexpected event: %+v", events[i])
 			}
-		case <-ctx.Done():
-			t.Fatal("slow consumer blocked container registration")
+			seen[events[i].TargetID] = true
 		}
-		if id == third {
-			if err := os.RemoveAll(w.memcgDir("/" + first)); err != nil {
-				t.Fatal(err)
-			}
-			changes <- pod.MemoryCgroupChange{ContainerID: first, Removed: true}
-		}
-	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if w.cgroups["/"+third] == nil || w.cgroups["/"+first] != nil {
-		t.Fatal("slow consumer prevented lifecycle reconciliation")
 	}
 }
 
-func TestMemorySnapshotIgnoresRetiredTarget(t *testing.T) {
-	w := newTestPressureWatcher(t)
-	path := "/" + strings.Repeat("a", 64)
-	createMemoryCgroupForTest(t, w.root, path, 95)
-	if err := w.addCgroup(t.Context(), filepath.Base(path), path); err != nil {
+func TestMemoryThresholdWatcherRegistrationLimit(t *testing.T) {
+	watcher, source := newTestMemoryThresholdWatcher(t, memoryWatchOptions{ThresholdPercent: 90, MaxCgroups: 1})
+	for _, path := range []string{"/first", "/second"} {
+		createMemoryCgroupForTest(t, source.root, path, 95)
+	}
+	first, err := watcher.Register(t.Context(), "/first", cgroupRefForTest(t, source, "/first").directory)
+	if err != nil {
 		t.Fatal(err)
 	}
-	waitMemoryPressureForTest(t, w, path)
-	if err := w.removeCgroup(t.Context(), path); err != nil {
+	if _, err := watcher.Register(t.Context(), "/second", cgroupRefForTest(t, source, "/second").directory); !errors.Is(err, memorywatch.ErrTargetLimit) {
+		t.Fatalf("registration limit lost its cause: %v", err)
+	}
+	if err := watcher.Unregister(t.Context(), first); err != nil {
 		t.Fatal(err)
 	}
-	if len(w.pending) != 0 {
-		t.Fatal("retired target retained unread pressure")
+	if _, err := watcher.Register(t.Context(), "/second", cgroupRefForTest(t, source, "/second").directory); err != nil {
+		t.Fatalf("unregister did not release capacity: %v", err)
+	}
+}
+
+func TestMemoryThresholdWatcherClosedAndCanceled(t *testing.T) {
+	watcher, _ := newTestMemoryThresholdWatcher(t, memoryWatchOptions{ThresholdPercent: 90})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := watcher.ProcessEvents(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled processing = %v", err)
+	}
+	notifications := watcher.Notifications()
+	for i := 0; i < 2; i++ {
+		if err := watcher.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case _, ok := <-notifications:
+		if ok {
+			t.Fatal("idle closed watcher retained a notification")
+		}
+	default:
+		t.Fatal("watcher close did not finish the notification producer")
+	}
+	if _, err := watcher.ProcessEvents(t.Context()); !errors.Is(err, memorywatch.ErrClosed) {
+		t.Fatalf("processing after close lost its cause: %v", err)
 	}
 }

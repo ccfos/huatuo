@@ -400,9 +400,15 @@ curl -sS \
 剖析窗口位于响应体的 `data.items` 字段；`data.limit`、`data.offset`
 和 `data.has_more` 描述分页。每条记录包含 `uploaded_timestamp`、`started_timestamp`、
 `profile_type` 和兼容 pprof 的 `profile` 数据。
-已持久发布但内容为空的结果仍返回成功，`items` 为空数组。`limit` 默认值为 20，
+已持久发布但内容为空的结果仍返回成功，`items` 为空数组。显式 `limit=0` 返回参数
+错误；只有未传 limit 才使用默认值。`limit` 默认值为 20，
 最大值为 100。编码后的 Profile 数据超过 64 MiB 时返回
 `413 result_too_large`，调用方应减小 `limit` 后重试。
+
+火焰图每批读取并合并 100 个窗口，每次请求总上限为 100000 个窗口。一小时每秒产生
+一个窗口时，全部 3600 个窗口都会参与合并。超过 100000 个窗口时返回错误，提示缩小
+时间范围或过滤条件；查询或合并失败都不返回部分火焰图。原始 Profile 列表仍按 Job
+查询，其每页上限不限制完整火焰图的聚合数量。
 
 ### 7. 停止任务
 

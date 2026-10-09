@@ -35,32 +35,32 @@ if ! iptables -m connbytes -h 2>&1 | grep -q connbytes; then
 	skip "iptables connbytes module not available on this kernel"
 fi
 
-require_python3
+require_commands python3
 
 cleanup() {
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true
 	[[ -n "${SRV_PID:-}" ]] && kill "${SRV_PID}" 2> /dev/null || true
 	[[ -n "${CLI_PID:-}" ]] && kill "${CLI_PID}" 2> /dev/null || true
-	tcp_namespace_cleanup
+	namespace_cleanup
 }
 trap cleanup EXIT
 
 log_info "fast_retransmit: drop one data segment via netns+veth+connbytes → dup ACK → Recovery"
 
 # 1. Build netns+veth topology.
-tcp_namespace_setup fast "${S_ADDR}" "${C_ADDR}"
+namespace_setup_with_pair fast "${S_ADDR}" "${C_ADDR}"
 
 # Limit GSO segments so each TCP segment is a distinct sk_buff (deterministic
 # connbytes counting). Without this, veth GSO may coalesce segments.
-ip netns exec "${TCP_NS_SERVER}" ip link set dev "${TCP_NS_VETH_SERVER}" gso_max_segs 1
+ip netns exec "${NETNS_SERVER}" ip link set dev "${NETNS_VETH_SERVER}" gso_max_segs 1
 
-log_info "netns topology ready: ${TCP_NS_SERVER}(${S_ADDR}) ←→ ${TCP_NS_CLIENT}(${C_ADDR})"
+log_info "netns topology ready: ${NETNS_SERVER}(${S_ADDR}) ←→ ${NETNS_CLIENT}(${C_ADDR})"
 
 # 2. Client-side: drop the 30th reply-direction packet (a single
 #    server→client data segment). Subsequent segments arrive out-of-order
 #    → receiver sends 3 dup ACKs → sender enters Recovery and
 #    fast-retransmits the lost segment.
-ip netns exec "${TCP_NS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
+ip netns exec "${NETNS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
 	-m connbytes --connbytes 30:30 --connbytes-dir reply \
 	--connbytes-mode packets -j DROP
 log_info "connbytes rule: drop reply packet #30 in client netns"
@@ -77,14 +77,14 @@ if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
 fi
 
 # 4. Server: listen and send 2 MB of data.
-ip netns exec "${TCP_NS_SERVER}" timeout 10 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
-	--listen-address "${TCP_NS_SERVER_ADDR}" --port "${TEST_PORT}" \
+ip netns exec "${NETNS_SERVER}" timeout 10 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
+	--listen-address "${NETNS_SERVER_ADDR}" --port "${TEST_PORT}" \
 	--payload-bytes "${PAYLOAD_SIZE}" > /dev/null 2>&1 &
 SRV_PID=$!
 sleep 0.5
 
 # 5. Client: connect and receive data to /dev/null.
-ip netns exec "${TCP_NS_CLIENT}" timeout 8 bash -c "exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
+ip netns exec "${NETNS_CLIENT}" timeout 8 bash -c "exec 3<>/dev/tcp/${NETNS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
 CLI_PID=$!
 
 # 6. Wait for data transfer + fast retransmit (3 dup ACKs are fast on veth).

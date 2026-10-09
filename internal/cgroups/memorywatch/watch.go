@@ -62,7 +62,8 @@ type command struct {
 }
 
 // Watcher owns one event loop for all registered memory cgroups.
-// Add, Remove and Close may run concurrently. ReadEvents has one consumer.
+// Add, Remove and Close may run concurrently. Notify and DrainEvents have one
+// consumer, which must finish processing a batch before draining the next one.
 // Idle watchers do not sample memory. v1 registers byte thresholds; v2 observes
 // existing high/max events and cannot notify at arbitrary usage percentages.
 // No memory limit, including memory.high, is changed.
@@ -82,6 +83,7 @@ type Watcher struct {
 	commands                      chan command
 	done                          chan struct{}
 	ready                         chan struct{}
+	batch                         []Event
 
 	// This lock also prevents a control write from racing FD closure and reuse.
 	mu         sync.Mutex
@@ -129,6 +131,7 @@ func openWatcher(opts Options, mode cgroups.Mode, root string,
 		inotifyWatches: make(map[int]fileWatch),
 		dirty:          make(map[TargetID]changeFlags),
 		pending:        make(map[TargetID]*target),
+		batch:          make([]Event, 0, eventBatch),
 		commands:       make(chan command, 1),
 		done:           make(chan struct{}), ready: make(chan struct{}, 1),
 	}
@@ -154,19 +157,25 @@ func openWatcher(opts Options, mode cgroups.Mode, root string,
 	return w, nil
 }
 
-// Add registers a hierarchy-relative absolute path, such as /kubepods/container.
-// Re-adding the same live target is idempotent. A replacement receives a new ID.
+// Add requires path's directory to match expectedIdentity from os.Lstat.
+// The path is hierarchy-relative and absolute, such as /kubepods/container.
+// Re-adding the same live identity is idempotent. A replacement needs its own
+// identity and receives a new ID. Identity mismatches wrap unix.ESTALE.
 // Cancellation after submission waits for completion or rollback: an error never
 // leaves a new registration owned by an unknown caller.
-func (w *Watcher) Add(ctx context.Context, path string) (TargetID, error) {
+func (w *Watcher) Add(ctx context.Context, path string, expectedIdentity os.FileInfo) (TargetID, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return 0, fmt.Errorf("memory cgroup path must be absolute and clean: %q", path)
 	}
+	if expectedIdentity == nil || !expectedIdentity.IsDir() {
+		return 0, fmt.Errorf("memory cgroup %q requires a directory identity from os.Lstat", path)
+	}
+
 	return w.submit(ctx, func() (TargetID, error) {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		entry, initial, err := w.addTarget(path)
+		entry, initial, err := w.addTarget(path, expectedIdentity)
 		if err != nil {
 			return 0, err
 		}
@@ -239,41 +248,40 @@ func (w *Watcher) submit(ctx context.Context, run func() (TargetID, error)) (Tar
 	}
 }
 
-// ReadEvents waits for at least one observation and fills dst without retaining it.
-// dst must be nonempty. Canceling ctx only ends this read, not the watcher.
-func (w *Watcher) ReadEvents(ctx context.Context, dst []Event) (int, error) {
-	if len(dst) == 0 {
-		return 0, errors.New("memory event destination must not be empty")
+// Notify coalesces event availability into a selectable signal. A notification
+// may be stale after Remove or DrainEvents; it does not count individual events.
+// The channel closes after the event loop and FD cleanup finish. Call DrainEvents
+// after receiving a signal or closure to obtain events or the terminal error.
+func (w *Watcher) Notify() <-chan struct{} {
+	return w.ready
+}
+
+// DrainEvents returns up to 64 available events without waiting for new ones.
+// An empty batch is valid, including after Notify signals. Remaining events keep
+// Notify signaled so consumers can return to select between batches.
+// The slice is borrowed until the next DrainEvents call; copy it to retain it.
+// Add, Remove and Close do not change a returned batch. Only one consumer may
+// drain and process batches. A stopped watcher returns ErrClosed or its failure.
+func (w *Watcher) DrainEvents() ([]Event, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.isClosing {
+		return nil, w.closedError()
 	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return 0, err
-		}
-		w.mu.Lock()
-		if w.isClosing {
-			err := w.closedError()
-			w.mu.Unlock()
-			return 0, err
-		}
-		n := 0
-		for n < len(dst) && w.head != nil {
-			entry := w.head
-			dst[n] = entry.pendingEvent
-			w.removePending(entry)
-			n++
-		}
-		w.mu.Unlock()
-		if n != 0 {
-			return n, nil
-		}
+	clear(w.batch)
+	w.batch = w.batch[:0]
+	for len(w.batch) < cap(w.batch) && w.head != nil {
+		entry := w.head
+		w.batch = append(w.batch, entry.pendingEvent)
+		w.removePending(entry)
+	}
+	if w.head != nil {
 		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-w.done:
-			return 0, w.terminalError()
-		case <-w.ready:
+		case w.ready <- struct{}{}:
+		default:
 		}
 	}
+	return w.batch[:len(w.batch):len(w.batch)], nil
 }
 
 // Close rejects new operations and waits for the event loop and FD cleanup.
@@ -353,6 +361,8 @@ func (w *Watcher) run() {
 	w.isClosing, w.runErr = true, err
 	w.mu.Unlock()
 	w.release()
+	// Closing state excludes all publishers and drainers from signaling ready.
+	close(w.ready)
 	close(w.done)
 }
 
@@ -442,7 +452,7 @@ func (w *Watcher) addEpoll(fd int, token uint64) error {
 	})
 }
 
-func (w *Watcher) addTarget(path string) (*target, *Event, error) {
+func (w *Watcher) addTarget(path string, expectedIdentity os.FileInfo) (*target, *Event, error) {
 	directory := filepath.Join(w.root, path)
 	info, err := os.Lstat(directory)
 	if err != nil {
@@ -451,6 +461,11 @@ func (w *Watcher) addTarget(path string) (*target, *Event, error) {
 	if !info.IsDir() {
 		return nil, nil, fmt.Errorf("memory cgroup %q is not a directory", path)
 	}
+	// A stale request must not reuse or retire another directory's registration.
+	if !os.SameFile(expectedIdentity, info) {
+		return nil, nil, fmt.Errorf("memory cgroup %q identity changed: %w", path, unix.ESTALE)
+	}
+
 	if old := w.paths[path]; old != nil {
 		if os.SameFile(old.identity, info) {
 			return old, nil, nil
@@ -489,7 +504,7 @@ func (w *Watcher) addTarget(path string) (*target, *Event, error) {
 		var current os.FileInfo
 		current, err = os.Lstat(directory)
 		if err == nil && !os.SameFile(info, current) {
-			err = os.ErrNotExist
+			err = unix.ESTALE
 		}
 	}
 	if err != nil {

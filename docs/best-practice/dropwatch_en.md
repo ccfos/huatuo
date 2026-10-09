@@ -198,6 +198,8 @@ This capability collects only packets that the driver reports through `DEVLINK_T
 
 `--filter`, `--device`, `--device-excluded`, and `--max-events-per-second` apply to both software and hardware events. Text output formats a hardware reason as `reason=<group>/<trap> drop_source=hardware`. JSON output uses the separate `drop_reason_group`, `drop_reason`, and `drop_source` fields.
 
+`tcpshark --with-dropwatch` shares source classification and reason resolution and automatically enables available hardware capture. A successful correlation preserves the same `drop_source`, `drop_reason`, and `drop_reason_group` semantics. See [retransmission correlation](/docs/best-practice/tcpshark_en.md).
+
 #### Examples
 
 ```bash
@@ -272,8 +274,18 @@ For hardware events, `stack` is the kernel call stack at which the driver report
 | `layers.ipv6`  | IPv6 fields: `version`, `traffic_class`, `flow_label`, `len`, `next_header`, `hop_limit`, `saddr`, `daddr`  |
 | `layers.tcp`   | TCP fields: `sport`, `dport`, `seq`, `ack_seq`, `data_offset`, `window`, `checksum`, `urgent`, `sk_state` |
 | `layers.udp`   | UDP fields: `sport`, `dport`, `len`, `checksum`                                                         |
-| `layers.icmp`  | ICMP/ICMPv6 fields: `type`, `code`, `checksum`, `id`, `seq`                                             |
+| `layers.icmp`  | ICMP/ICMPv6 fields: `type`, `code`, `checksum`, `id`, `seq`; ICMPv6 echo requests/replies include their identifier and sequence number, while other ICMPv6 messages omit them |
 | `layers.arp`   | ARP fields: `addr_type`, `protocol`, `hw_address_size`, `prot_address_size`, `operation`, `sender_mac`, `sender_ip`, `target_mac`, `target_ip` |
+
+For ICMPv6 Echo Request/Reply (types 128/129), `id` and `seq` are decoded only
+when all four Echo bytes were captured. A truncated Echo header retains the
+common ICMPv6 fields with zero ID/Seq. If the common header is also truncated,
+the decoded IPv6 layer is retained and `layers.icmp` is absent. Other ICMPv6
+message types do not populate the Echo fields.
+
+JSON omits each zero-valued `id` or `seq` independently. Text omits both only
+when both are zero. A missing output field therefore cannot distinguish an
+absent or truncated Echo header from a valid zero value.
 
 ---
 
@@ -307,7 +319,7 @@ dropwatch \
 
 [EventTracing.TCPRetransmit]
     # Run tcpshark with a private embedded dropwatch source.
-    EnableDropwatchCorrelation = false
+    EnableDropwatch = false
 ```
 
 Standalone dropwatch always emits raw `DropWatchTracing` events. Local TCP retransmission correlation loads a separate `net_dropwatch.o`, uses `EventTracing.TCPRetransmit.Filter` for both inputs, and emits only finalized `TCPRetransmitTracing` results. The two modes may run together; embedded drops are never stored as duplicate raw events.
