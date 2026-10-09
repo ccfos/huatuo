@@ -15,6 +15,9 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define PAGE_SIZE	   4096
 #define FILTER_DEV_MAX	   16
 
+/* Linux UAPI errno-base.h; libc headers are unsuitable for the BPF target. */
+#define E2BIG 7
+
 volatile const u32 FILTER_DEV_IDS[FILTER_DEV_MAX] = {};
 volatile const u32 FILTER_DEV_COUNT = 0;
 volatile const u64 FILTER_EVENT_TIMEOUT = 100000000;
@@ -89,6 +92,18 @@ struct {
 	__uint(key_size, sizeof(struct io_key));
 	__uint(value_size, sizeof(struct io_data));
 } io_source_map SEC(".maps");
+
+/* Remember a real capacity failure so unseen files skip path collection and
+ * unsuccessful inserts. Existing records still receive updates. Records are
+ * never deleted during a capture, so full remains valid until this BPF object
+ * is closed; a new capture starts with full cleared.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, sizeof(u32));
+} io_source_full SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -248,6 +263,9 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 static __always_inline void
 init_io_data(struct io_data *entry, struct dentry *dentry, u32 dev, u64 inode)
 {
+	/* Consume identity before the path walk to bound the BPF call stack. */
+	entry->dev = dev;
+	entry->inode = inode;
 	entry->tgid = bpf_get_current_pid_tgid() >> 32;
 
 	bpf_get_current_comm(entry->comm, COMPAT_TASK_COMM_LEN);
@@ -267,36 +285,68 @@ init_io_data(struct io_data *entry, struct dentry *dentry, u32 dev, u64 inode)
 		}
 		dentry = BPF_CORE_READ(dentry, d_parent);
 	}
-	entry->dev = dev;
-	entry->inode = inode;
 	entry->path_initialized = 1;
+}
+
+/* Keep the 376-byte initialization and path walk off the map-hit path. */
+static __noinline struct io_data *
+create_file_io_entry(struct io_key *key, struct file *file, u32 *full)
+{
+	struct io_data data = {};
+	int err;
+
+	init_io_data(&data, BPF_CORE_READ(file, f_path.dentry), key->dev, key->inode);
+	err = bpf_map_update_elem(&io_source_map, key, &data,
+				  COMPAT_BPF_NOEXIST);
+	if (err == -E2BIG && full)
+		*full = 1;
+
+	/* A concurrent first observation may already have installed this key. */
+	return bpf_map_lookup_elem(&io_source_map, key);
+}
+
+static __always_inline struct io_data *
+get_file_io_entry(struct io_key *key, struct file *file)
+{
+	struct io_data *entry = bpf_map_lookup_elem(&io_source_map, key);
+
+	if (!entry) {
+		u32 zero = 0;
+		u32 *full = bpf_map_lookup_elem(&io_source_full, &zero);
+
+		if (full && *full)
+			return NULL;
+		entry = create_file_io_entry(key, file, full);
+		if (!entry)
+			return NULL;
+	}
+	/* Block completion can create an entry before its first file event. */
+	if (!entry->path_initialized)
+		init_io_data(entry, BPF_CORE_READ(file, f_path.dentry), key->dev, key->inode);
+	return entry;
 }
 
 static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_write)
 {
-	struct kiocb *iocb = (struct kiocb *)PT_REGS_PARM1(ctx);
-	struct io_data data = {};
-	struct io_data *entry;
-	struct dentry *dentry;
+	struct kiocb *iocb    = (struct kiocb *)PT_REGS_PARM1(ctx);
+	struct io_data *entry = NULL;
+	struct file *file;
 	struct inode *inode;
 	struct io_key key = {};
 	struct iov_iter *from;
 	size_t count;
 
-	inode = BPF_CORE_READ(iocb, ki_filp, f_inode);
-	key.inode = BPF_CORE_READ(inode, i_ino);
-	key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	file	  = BPF_CORE_READ(iocb, ki_filp);
+	inode	  = BPF_CORE_READ(file, f_inode);
+	key.dev	  = BPF_CORE_READ(inode, i_sb, s_dev);
 
 	if (!should_process_device(key.dev))
 		return 0;
 
-	entry = bpf_map_lookup_elem(&io_source_map, &key);
+	key.inode = BPF_CORE_READ(inode, i_ino);
+	entry = get_file_io_entry(&key, file);
 	if (!entry)
-		entry = &data;
-
-	dentry = BPF_CORE_READ(iocb, ki_filp, f_path.dentry);
-	if (!entry->path_initialized)
-		init_io_data(entry, dentry, key.dev, key.inode);
+		return 0;
 
 	from = (struct iov_iter *)PT_REGS_PARM2(ctx);
 	count = BPF_CORE_READ(from, count);
@@ -307,9 +357,6 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 		entry->fs_read_bytes += count;
 
 	entry->flag = BPF_CORE_READ(iocb, ki_flags);
-	if (entry == &data)
-		bpf_map_update_elem(&io_source_map, &key, &data,
-				    COMPAT_BPF_ANY);
 
 	return 0;
 }
@@ -330,33 +377,24 @@ static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 {
 	struct vm_fault *vm = (struct vm_fault *)PT_REGS_PARM1(ctx);
 	struct vm_area_struct *vma = BPF_CORE_READ(vm, vma);
-	struct io_data *entry;
-	struct io_data data = {};
-	struct io_key key = {};
+	struct io_data *entry	   = NULL;
+	struct io_key key	   = {};
+	struct file *file;
 	struct inode *inode;
 
-	inode = BPF_CORE_READ(vma, vm_file, f_inode);
-	key.inode = BPF_CORE_READ(inode, i_ino);
-	key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	file	  = BPF_CORE_READ(vma, vm_file);
+	inode	  = BPF_CORE_READ(file, f_inode);
+	key.dev	  = BPF_CORE_READ(inode, i_sb, s_dev);
 
 	if (!should_process_device(key.dev))
 		return 0;
 
-	entry = bpf_map_lookup_elem(&io_source_map, &key);
+	key.inode = BPF_CORE_READ(inode, i_ino);
+	entry = get_file_io_entry(&key, file);
 	if (!entry)
-		entry = &data;
-
-	if (!entry->path_initialized) {
-		struct dentry *dentry;
-
-		dentry = BPF_CORE_READ(vma, vm_file, f_path.dentry);
-		init_io_data(entry, dentry, key.dev, key.inode);
-	}
+		return 0;
 
 	entry->fs_write_bytes += PAGE_SIZE;
-	if (entry == &data)
-		bpf_map_update_elem(&io_source_map, &key, &data,
-				    COMPAT_BPF_ANY);
 
 	return 0;
 }
@@ -372,33 +410,23 @@ int bpf_filemap_fault(struct pt_regs *ctx)
 {
 	struct vm_fault *vm = (struct vm_fault *)PT_REGS_PARM1(ctx);
 	struct vm_area_struct *vma = BPF_CORE_READ(vm, vma);
-	struct io_data *entry;
-	struct io_data data = {};
-	struct io_key key = {};
+	struct io_data *entry	   = NULL;
+	struct io_key key	   = {};
+	struct file *file;
 	struct inode *inode;
 
-	inode = BPF_CORE_READ(vma, vm_file, f_inode);
-	key.inode = BPF_CORE_READ(inode, i_ino);
-	key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	file	  = BPF_CORE_READ(vma, vm_file);
+	inode	  = BPF_CORE_READ(file, f_inode);
+	key.dev	  = BPF_CORE_READ(inode, i_sb, s_dev);
 
 	if (!should_process_device(key.dev))
 		return 0;
 
-	entry = bpf_map_lookup_elem(&io_source_map, &key);
+	key.inode = BPF_CORE_READ(inode, i_ino);
+	entry = get_file_io_entry(&key, file);
 	if (!entry)
-		entry = &data;
-
-	if (!entry->path_initialized) {
-		struct dentry *dentry;
-
-		dentry = BPF_CORE_READ(vma, vm_file, f_path.dentry);
-		init_io_data(entry, dentry, key.dev, key.inode);
-	}
+		return 0;
 	entry->fs_read_bytes += PAGE_SIZE;
-
-	if (entry == &data)
-		bpf_map_update_elem(&io_source_map, &key, &data,
-				    COMPAT_BPF_ANY);
 
 	return 0;
 }
