@@ -16,6 +16,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,6 +163,9 @@ func TestSyncAndSet(t *testing.T) {
 	if err := Set(cfg, "Nested.Value", "kernel_sched_tick"); err != nil {
 		t.Fatalf("Set Nested.Value returned error: %v", err)
 	}
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatalf("chmod synced config: %v", err)
+	}
 
 	if err := Sync(path, cfg); err != nil {
 		t.Fatalf("Sync after Set returned error: %v", err)
@@ -185,6 +189,20 @@ func TestSyncAndSet(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "name = \"huatuo-region\"") {
 		t.Errorf("synced file should contain updated name, got: %s", string(raw))
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat synced file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("synced file mode = %o, want 640", got)
+	}
+	temps, err := filepath.Glob(filepath.Join(tmpDir, ".sync-config.toml.tmp-*"))
+	if err != nil {
+		t.Fatalf("find temporary config files: %v", err)
+	}
+	if len(temps) != 0 {
+		t.Fatalf("temporary config files remain after success: %v", temps)
 	}
 }
 
@@ -253,5 +271,230 @@ func TestSyncPreservesOriginalOnEncodeFailure(t *testing.T) {
 	}
 	if len(temps) != 0 {
 		t.Fatalf("temporary config files remain: %v", temps)
+	}
+}
+
+type fakeSyncFile struct {
+	name   string
+	events *[]string
+	wrote  bool
+	closed bool
+}
+
+func (f *fakeSyncFile) Write(p []byte) (int, error) {
+	if !f.wrote {
+		*f.events = append(*f.events, "write")
+		f.wrote = true
+	}
+	return len(p), nil
+}
+
+func (f *fakeSyncFile) Name() string {
+	return f.name
+}
+
+func (f *fakeSyncFile) Chmod(os.FileMode) error {
+	*f.events = append(*f.events, "chmod")
+	return nil
+}
+
+func (f *fakeSyncFile) Sync() error {
+	*f.events = append(*f.events, "file-sync")
+	return nil
+}
+
+func (f *fakeSyncFile) Close() error {
+	if f.closed {
+		return os.ErrClosed
+	}
+	f.closed = true
+	*f.events = append(*f.events, "file-close")
+	return nil
+}
+
+type fakeSyncDirectory struct {
+	events   *[]string
+	syncErr  error
+	closeErr error
+}
+
+func (d *fakeSyncDirectory) Sync() error {
+	*d.events = append(*d.events, "directory-sync")
+	return d.syncErr
+}
+
+func (d *fakeSyncDirectory) Close() error {
+	*d.events = append(*d.events, "directory-close")
+	return d.closeErr
+}
+
+func TestSyncFlushesDirectoryAfterRename(t *testing.T) {
+	var events []string
+	const tempPath = "/config/.huatuo.toml.tmp-test"
+	file := &fakeSyncFile{name: tempPath, events: &events}
+	directory := &fakeSyncDirectory{events: &events}
+	operations := syncOperations{
+		createTemp: func(dir, pattern string) (syncFile, error) {
+			if dir != "/config" {
+				t.Fatalf("temporary directory = %q, want /config", dir)
+			}
+			if pattern != ".huatuo.toml.tmp-*" {
+				t.Fatalf("temporary pattern = %q", pattern)
+			}
+			events = append(events, "create")
+			return file, nil
+		},
+		stat: func(string) (os.FileInfo, error) {
+			events = append(events, "stat")
+			return nil, os.ErrNotExist
+		},
+		rename: func(oldPath, newPath string) error {
+			if oldPath != tempPath || newPath != "/config/huatuo.toml" {
+				t.Fatalf("rename(%q, %q)", oldPath, newPath)
+			}
+			events = append(events, "rename")
+			return nil
+		},
+		remove: func(path string) error {
+			t.Fatalf("unexpected remove(%q)", path)
+			return nil
+		},
+		openDirectory: func(path string) (syncDirectory, error) {
+			if path != "/config" {
+				t.Fatalf("directory path = %q, want /config", path)
+			}
+			events = append(events, "directory-open")
+			return directory, nil
+		},
+	}
+
+	if err := syncConfig("/config/huatuo.toml", sampleConfig{}, operations); err != nil {
+		t.Fatalf("syncConfig() error = %v", err)
+	}
+	want := []string{
+		"create",
+		"stat",
+		"chmod",
+		"write",
+		"file-sync",
+		"file-close",
+		"rename",
+		"directory-open",
+		"directory-sync",
+		"directory-close",
+	}
+	if strings.Join(events, ",") != strings.Join(want, ",") {
+		t.Fatalf("operation order = %v, want %v", events, want)
+	}
+}
+
+func TestSyncReturnsDirectoryDurabilityErrors(t *testing.T) {
+	openErr := errors.New("directory open failed")
+	syncErr := errors.New("directory sync failed")
+	closeErr := errors.New("directory close failed")
+	tests := []struct {
+		name      string
+		openErr   error
+		syncErr   error
+		closeErr  error
+		wantError []error
+	}{
+		{name: "open", openErr: openErr, wantError: []error{openErr}},
+		{name: "sync", syncErr: syncErr, wantError: []error{syncErr}},
+		{name: "close", closeErr: closeErr, wantError: []error{closeErr}},
+		{
+			name:      "sync and close",
+			syncErr:   syncErr,
+			closeErr:  closeErr,
+			wantError: []error{syncErr, closeErr},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var events []string
+			const tempPath = "/config/.huatuo.toml.tmp-test"
+			file := &fakeSyncFile{name: tempPath, events: &events}
+			operations := syncOperations{
+				createTemp: func(string, string) (syncFile, error) {
+					return file, nil
+				},
+				stat: func(string) (os.FileInfo, error) {
+					return nil, os.ErrNotExist
+				},
+				rename: func(string, string) error {
+					events = append(events, "rename")
+					return nil
+				},
+				remove: func(path string) error {
+					if path != tempPath {
+						t.Fatalf("remove path = %q, want %q", path, tempPath)
+					}
+					events = append(events, "remove-temp")
+					return os.ErrNotExist
+				},
+				openDirectory: func(string) (syncDirectory, error) {
+					events = append(events, "directory-open")
+					if tt.openErr != nil {
+						return nil, tt.openErr
+					}
+					return &fakeSyncDirectory{
+						events:   &events,
+						syncErr:  tt.syncErr,
+						closeErr: tt.closeErr,
+					}, nil
+				},
+			}
+
+			err := syncConfig("/config/huatuo.toml", sampleConfig{}, operations)
+			if err == nil {
+				t.Fatal("syncConfig() error = nil, want durability error")
+			}
+			for _, wantErr := range tt.wantError {
+				if !errors.Is(err, wantErr) {
+					t.Fatalf("syncConfig() error = %v, want errors.Is(%v)", err, wantErr)
+				}
+			}
+			if !strings.Contains(strings.Join(events, ","), "rename,directory-open") {
+				t.Fatalf("directory was not opened immediately after rename: %v", events)
+			}
+			if events[len(events)-1] != "remove-temp" {
+				t.Fatalf("temporary cleanup was not last: %v", events)
+			}
+		})
+	}
+}
+
+func TestSyncSkipsDirectorySyncAfterRenameFailure(t *testing.T) {
+	var events []string
+	const tempPath = "/config/.huatuo.toml.tmp-test"
+	renameErr := errors.New("rename failed")
+	file := &fakeSyncFile{name: tempPath, events: &events}
+	operations := syncOperations{
+		createTemp: func(string, string) (syncFile, error) { return file, nil },
+		stat:       func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+		rename: func(string, string) error {
+			events = append(events, "rename")
+			return renameErr
+		},
+		remove: func(path string) error {
+			if path != tempPath {
+				t.Fatalf("remove path = %q, want %q", path, tempPath)
+			}
+			events = append(events, "remove-temp")
+			return nil
+		},
+		openDirectory: func(string) (syncDirectory, error) {
+			t.Fatal("directory must not be opened after rename failure")
+			return nil, nil
+		},
+	}
+
+	err := syncConfig("/config/huatuo.toml", sampleConfig{}, operations)
+	if !errors.Is(err, renameErr) {
+		t.Fatalf("syncConfig() error = %v, want rename error", err)
+	}
+	if events[len(events)-1] != "remove-temp" {
+		t.Fatalf("temporary file not removed after rename failure: %v", events)
 	}
 }
