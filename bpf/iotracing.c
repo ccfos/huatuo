@@ -272,11 +272,7 @@ init_io_data(struct io_data *entry, struct dentry *dentry, u32 dev, u64 inode)
 	entry->path_initialized = 1;
 }
 
-struct iov_iter___5_14 {
-	bool data_source;
-} __attribute__((preserve_access_index));
-
-static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
+static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_write)
 {
 	struct kiocb *iocb = (struct kiocb *)PT_REGS_PARM1(ctx);
 	struct io_data data = {};
@@ -286,7 +282,6 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 	struct io_key key = {};
 	struct iov_iter *from;
 	size_t count;
-	unsigned int type;
 
 	inode = BPF_CORE_READ(iocb, ki_filp, f_inode);
 	key.inode = BPF_CORE_READ(inode, i_ino);
@@ -306,28 +301,7 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 	from = (struct iov_iter *)PT_REGS_PARM2(ctx);
 	count = BPF_CORE_READ(from, count);
 
-	/*
-	 * iov_iter direction across kernel versions:
-	 *   pre-5.14: iov_iter::type        (low bit: 0=read, 1=write)
-	 *   5.14~6.x: iov_iter::data_source (bool: 0=read, 1=write)
-	 *   7.0+:     iov_iter::iter_type   (low bit: 0=read, 1=write)
-	 */
-	if (bpf_core_field_exists(from->type)) {
-		type = BPF_CORE_READ(from, type);
-	} else if (bpf_core_field_exists(
-			   ((struct iov_iter___7_0 *)0)->iter_type)) {
-		struct iov_iter___7_0 *from7 = (struct iov_iter___7_0 *)from;
-
-		type = BPF_CORE_READ(from7, iter_type);
-	} else {
-		struct iov_iter___5_14 *from_new;
-
-		from_new = (struct iov_iter___5_14 *)from;
-		type = BPF_CORE_READ(from_new, data_source);
-	}
-
-	type &= 0x1;
-	if (type) /* 0: read, 1: write */
+	if (is_write)
 		entry->fs_write_bytes += count;
 	else
 		entry->fs_read_bytes += count;
@@ -343,13 +317,13 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 SEC("kprobe/anyfs_file_read_iter")
 int bpf_anyfs_file_read_iter(struct pt_regs *ctx)
 {
-	return bpf_file_read_write(ctx);
+	return bpf_file_read_write(ctx, false);
 }
 
 SEC("kprobe/anyfs_file_write_iter")
 int bpf_anyfs_file_write_iter(struct pt_regs *ctx)
 {
-	return bpf_file_read_write(ctx);
+	return bpf_file_read_write(ctx, true);
 }
 
 static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
