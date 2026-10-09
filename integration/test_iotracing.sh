@@ -21,6 +21,8 @@
 # JSON with the expected top-level schema and the dd workload we drive
 # shows up under per-file attribution. Skipped on hosts without a
 # writable ext4/xfs mount, since anyfsAttachOptions only hooks those.
+# Real BPF contracts additionally cover accounting, metadata, capacity,
+# device filters and complete object loading and attach.
 # Path-validation rules are covered by internal/bpf TestValidateName.
 
 set -exuo pipefail
@@ -107,3 +109,13 @@ MATCHED_IO=$(jq -ce --arg dir "${io_test_dir}/" '
 
 log_info "matched dd-attributed writes:"
 echo "${MATCHED_IO}" | jq '.'
+
+# Reuse this test's owned filesystem directory after the CLI capture exits.
+stop_by_pid "${WORKLOAD_PID}" 5
+WORKLOAD_PID=""
+[[ -x ${ROOT_DIR}/_output/test-bpf/iotracing-integration.test ]] \
+	|| fatal "iotracing integration binary missing; run make integration"
+TMPDIR="${io_test_dir}" TEST_IOTRACING_FILE_BPF="${TOOL_BPF}" \
+	timeout --kill-after=5s 240s "${ROOT_DIR}/_output/test-bpf/iotracing-integration.test" \
+	-test.v -test.count=1 -test.timeout=230s \
+	-test.run='^TestIOTracing'

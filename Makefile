@@ -159,6 +159,26 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			go generate -run BPF_COMPILE {}'
 	@touch $@
 
+# Exercise snapshot and fallback reads against four native field layouts.
+iotracing-file-read-test:
+	@mkdir -p $(APP_CMD_OUTPUT)/test-bpf
+	@set -eu; for iocb in 3 2; do for inode in 2 1; do \
+		$(CC) -std=gnu11 -O2 -Wno-attributes -Wno-incompatible-pointer-types \
+			-D__TARGET_ARCH_$(shell uname -m | sed -e 's/x86_64/x86/' -e 's/aarch64/arm64/') \
+			-DTEST_IOCB_PADDING=$$iocb -DTEST_INODE_PADDING=$$inode $(subst ",,$(BPF_INCLUDE)) -I$(BPF_DIR) \
+			$(ROOT_DIR)/integration/testdata/iotracing_file_reads_test.c \
+			-o $(APP_CMD_OUTPUT)/test-bpf/iotracing-file-reads-$$iocb-$$inode; \
+		$(APP_CMD_OUTPUT)/test-bpf/iotracing-file-reads-$$iocb-$$inode; \
+	done; done
+
+# Build the privileged tests for integration/test_iotracing.sh, not unit runs.
+iotracing-runtime-build: gen-build
+	@mkdir -p $(APP_CMD_OUTPUT)/test-bpf
+	CGO_ENABLED=1 go test -c -tags "integration netgo osusergo" -ldflags "-extldflags -static" \
+		-o $(APP_CMD_OUTPUT)/test-bpf/iotracing-integration.test ./cmd/iotracing
+
+.PHONY: iotracing-file-read-test iotracing-runtime-build
+
 build: $(APP_CMD_BIN_TARGETS)
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
@@ -208,11 +228,11 @@ gen-build: $(BPF_BUILD_STAMP)
 
 test: unit integration e2e
 
-unit: gen-build
+unit: gen-build iotracing-file-read-test
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
-integration: build
+integration: build iotracing-runtime-build
 	@bash integration/run.sh
 
 e2e: build
