@@ -37,8 +37,9 @@ type dynamicLibrary interface {
 // while delegating loading/unloading to dynamicLibrary.
 type library struct {
 	sync.Mutex
-	refcount refcount
-	dl       dynamicLibrary
+	refcount        refcount
+	dl              dynamicLibrary
+	registerSymbols func(uintptr)
 }
 
 // global singleton instance
@@ -46,9 +47,11 @@ var libdcmi = newLibrary()
 
 func newLibrary() *library {
 	path := defaultDcmiLibraryPath()
-	return &library{
+	library := &library{
 		dl: dl.New(path, purego.RTLD_NOW|purego.RTLD_GLOBAL),
 	}
+	library.registerSymbols = library.registerDcmiLibSymbols
+	return library
 }
 
 func defaultDcmiLibraryPath() string {
@@ -76,7 +79,7 @@ func (l *library) load() (rerr error) {
 	}
 
 	// Register all symbols after successful loading.
-	l.registerDcmiLibSymbols(l.dl.Handle())
+	l.registerSymbols(l.dl.Handle())
 
 	return nil
 }
