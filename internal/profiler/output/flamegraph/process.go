@@ -54,7 +54,7 @@ func (p *processor) Process(stack Stack) {
 
 func (p *processor) Finalize() {
 	p.sort(p.frames)
-	p.calcPcts(p.frames, 100, 0)
+	p.calcPcts(p.frames, totalSamples(p.frames), 0)
 }
 
 func (p *processor) Result() (frames []frame, maxDepth int) {
@@ -71,13 +71,14 @@ func (p *processor) sort(frames []frame) {
 	}
 }
 
-func (p *processor) calcPcts(frames []frame, totalPct, leftPct float32) {
-	var total int64
-
-	for i := range frames {
-		total += frames[i].SampleCount
-	}
-
+// calcPcts assigns each frame its share of the whole profile.
+//
+// total is the sample count of the entire profile and stays constant down the
+// tree. Dividing by the sum of the current level's siblings would instead give
+// every child the full width of its parent, so a parent with its own samples
+// would render its children stretched across space that belongs to those self
+// samples.
+func (p *processor) calcPcts(frames []frame, total int64, leftPct float32) {
 	if total == 0 {
 		return
 	}
@@ -85,15 +86,27 @@ func (p *processor) calcPcts(frames []frame, totalPct, leftPct float32) {
 	d := leftPct
 
 	for i := range frames {
-		pct := float32(frames[i].SampleCount) / float32(total) * totalPct
+		pct := float32(frames[i].SampleCount) / float32(total) * 100
 		frames[i].SamplePercent = pct
 		frames[i].LeftPercent = d
 		d += pct
 	}
 
 	for i := range frames {
-		p.calcPcts(frames[i].Children, frames[i].SamplePercent, frames[i].LeftPercent)
+		p.calcPcts(frames[i].Children, total, frames[i].LeftPercent)
 	}
+}
+
+// totalSamples sums the sample counts of the top-level frames. Frame counts are
+// inclusive, so this is the size of the whole profile.
+func totalSamples(frames []frame) int64 {
+	var total int64
+
+	for i := range frames {
+		total += frames[i].SampleCount
+	}
+
+	return total
 }
 
 func findFrame(frames []frame, name string) *frame {
