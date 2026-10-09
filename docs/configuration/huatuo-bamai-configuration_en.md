@@ -1435,6 +1435,37 @@ objects, not the entire Python heap. Older records may use `allocation_site`
 for Go and `object_type` for Java; consumers reading historical records should
 accept those values.
 
+For Go entries, `name` remains the plain function name of the first non-runtime
+frame, or the first frame when all frames belong to the runtime. `stack` remains
+a string array ordered from the allocation site toward its callers. When both
+file and line are available, each frame uses `function, source_file:line`, with
+one space after the comma. For example:
+
+```json
+{
+  "kind": "inuse_space_objects",
+  "name": "example/cache.allocate",
+  "bytes": 131072,
+  "objects": 32,
+  "average_bytes": 4096,
+  "stack": [
+    "example/cache.allocate, example/cache/cache.go:123",
+    "example/service.load, example/service/load.go:58",
+    "main.main, example/cmd/server/main.go:42"
+  ]
+}
+```
+
+Locations come from the binary's Go line table; source files need not exist on
+the target machine. Paths retain their compiled values, which may reflect
+`-trimpath` and may not identify files on the target machine. A missing file or
+an invalid line leaves only the function name; an unresolved function leaves the
+hexadecimal PC. Consumers should also accept historical frames containing only
+names or addresses. Function names and paths may themselves contain commas, so
+splitting indiscriminately on commas is not reliable. Source locations identify
+allocation sites, not object owners, and do not guarantee a fully expanded
+inline call chain.
+
 Go subtracts frees from allocations using only the runtime's published `active`
 counters, then corrects for sampling. Unpublished `future[0..2]` counters are
 excluded. Publication is delayed until the corresponding GC sweep frees are

@@ -80,8 +80,9 @@ go_snapshot_assert_statistics() {
 			and .bytes == $bytes
 			and .objects == $objects
 			and .average_bytes == ($bytes / $objects)
-			and ([.stack[] | select(startswith("main."))]
-				== ["main.allocateBlock", $caller, "main.main"]);
+			and ([.stack[] | select(startswith("main."))] as $frames |
+				[$frames[] | split(", ")[0]] == ["main.allocateBlock", $caller, "main.main"]
+				and all($frames[]; test(", .*/memory_threshold_snapshot_golang\\.go:[1-9][0-9]*$")));
 		.tracer_data.snapshot as $snapshot |
 		if $mode == "disabled" then
 			$snapshot.status == "unavailable"
@@ -93,7 +94,7 @@ go_snapshot_assert_statistics() {
 			and ($snapshot.status_reason // "") == ""
 			and ($snapshot.entries[0] | allocation("main.allocatePrimary"; 16777216; 6))
 			and ([$snapshot.entries[].bytes] == ([$snapshot.entries[].bytes] | sort | reverse))
-			and ([$snapshot.entries[].stack[] | select(. == "main.allocateReleased")] | length == 0)
+			and ([$snapshot.entries[].stack[] | select(startswith("main.allocateReleased, "))] | length == 0)
 			and (if $mode == "topk" then
 				($snapshot.entries | length == 1) and $snapshot.output_truncated == true
 			else

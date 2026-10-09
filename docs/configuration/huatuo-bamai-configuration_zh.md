@@ -1412,6 +1412,31 @@ Go 的 `bytes` 和 `objects` 分别对应 pprof 的 `inuse_space` 和
 不能代表整个 Python 堆。历史记录中，Go 和 Java 的 `kind` 可能分别为
 `allocation_site` 和 `object_type`；读取历史记录的消费方应兼容这些旧值。
 
+Go 条目的 `name` 保留首个非 runtime 栈帧的纯函数名；全部为 runtime 栈帧时，
+取第一帧。`stack` 仍为字符串数组，按分配位置到上层调用者的顺序保存栈帧。
+文件和行号可用时，每帧使用 `函数名, 源文件:行号` 格式，逗号后留一个空格。例如：
+
+```json
+{
+  "kind": "inuse_space_objects",
+  "name": "example/cache.allocate",
+  "bytes": 131072,
+  "objects": 32,
+  "average_bytes": 4096,
+  "stack": [
+    "example/cache.allocate, example/cache/cache.go:123",
+    "example/service.load, example/service/load.go:58",
+    "main.main, example/cmd/server/main.go:42"
+  ]
+}
+```
+
+位置来自二进制的 Go 行号表，无需目标机器保存源码。路径保留编译元数据中的值，
+可能受 `-trimpath` 影响，不保证对应目标机器上的实际文件。缺少文件或有效行号时，
+栈帧只显示函数名；函数也无法解析时，保留十六进制 PC。历史记录的栈帧可能只有
+函数名或地址，消费方应兼容；函数名和路径本身也可能包含逗号，不能按逗号任意拆分。
+源码位置用于分配归因，不表示对象持有位置，也不保证完整展开内联调用链。
+
 Go 仅使用 runtime 已发布的 `active` 计数计算分配量与释放量之差，再进行采样校正，
 不合并尚未发布的 `future[0..2]`。runtime 延迟发布以等待相应的 GC 清扫释放统计，
 因此近期分配峰值可能尚未反映在结果中；结果是已发布堆画像的外部采样，

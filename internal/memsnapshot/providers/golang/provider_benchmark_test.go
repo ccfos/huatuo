@@ -19,7 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
@@ -80,9 +80,11 @@ func main() {
 		}
 		found := false
 		for _, entry := range result.Entries {
-			if slices.Contains(entry.Stack, "main.main") {
-				found = true
-				break
+			for _, frame := range entry.Stack {
+				if strings.HasPrefix(frame, "main.main, "+source+":") {
+					found = true
+					break
+				}
 			}
 		}
 		if !found {
