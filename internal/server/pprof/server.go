@@ -54,6 +54,9 @@ func Start(ctx context.Context, listener net.Listener) (*Server, error) {
 		return nil, fmt.Errorf("start pprof server: listener is nil")
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	httpServer := &http.Server{
 		Handler:           Handler(),
 		ReadHeaderTimeout: readHeaderTimeout,
