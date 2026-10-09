@@ -33,7 +33,7 @@ import (
 func TestScanHeapProfileAcrossBatches(t *testing.T) {
 	memory, info, _ := bucketFixture(t, mbucketBatchSize+1)
 	result, err := (&processReader{memory: *memory, runtime: info}).scanHeapProfile(t.Context(), 1)
-	if err != nil || result.status != memsnapshot.StatusComplete {
+	if err != nil || result.status != memsnapshot.SnapshotStatusComplete {
 		t.Fatalf("scan = %+v, %v", result, err)
 	}
 	entries := result.allocations
@@ -57,7 +57,7 @@ func TestScanHeapProfileTopKTruncation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.status != memsnapshot.StatusComplete || len(result.allocations) != min(limit, 3) || result.hasOmittedAllocations != (limit < 3) {
+			if result.status != memsnapshot.SnapshotStatusComplete || len(result.allocations) != min(limit, 3) || result.hasOmittedAllocations != (limit < 3) {
 				t.Fatalf("scan limit=%d: %+v", limit, result)
 			}
 			want := []int64{100, 90, 90}
@@ -95,9 +95,9 @@ func TestScanHeapProfileSampleRate(t *testing.T) {
 		status memsnapshot.Status
 		reason string
 	}{
-		{name: "unknown", rate: -1, status: memsnapshot.StatusUnavailable, reason: "runtime.MemProfileRate is unavailable"},
-		{name: "disabled", rate: 0, status: memsnapshot.StatusUnavailable, reason: "Go heap profiling is disabled by MemProfileRate=0"},
-		{name: "enabled", rate: 1, status: memsnapshot.StatusComplete},
+		{name: "unknown", rate: -1, status: memsnapshot.SnapshotStatusUnavailable, reason: "runtime.MemProfileRate is unavailable"},
+		{name: "disabled", rate: 0, status: memsnapshot.SnapshotStatusUnavailable, reason: "Go heap profiling is disabled by MemProfileRate=0"},
+		{name: "enabled", rate: 1, status: memsnapshot.SnapshotStatusComplete},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			memory, info, _ := bucketFixture(t, 1)
@@ -187,7 +187,7 @@ func TestScanHeapProfileCycles(t *testing.T) {
 			for _, entry := range result.allocations {
 				objects += entry.inuseObjects
 			}
-			if objects != int64(count) || !strings.Contains(result.reason, "cycle") || result.status != memsnapshot.StatusPartial {
+			if objects != int64(count) || !strings.Contains(result.reason, "cycle") || result.status != memsnapshot.SnapshotStatusPartial {
 				t.Fatalf("objects=%d reason=%q", objects, result.reason)
 			}
 		})
@@ -204,12 +204,12 @@ func TestScanHeapProfileDeepStacks(t *testing.T) {
 			}
 			entries := result.allocations
 			if depth > 1024 {
-				if len(entries) != 0 || !strings.Contains(result.reason, "stack depth") || result.status != memsnapshot.StatusPartial {
+				if len(entries) != 0 || !strings.Contains(result.reason, "stack depth") || result.status != memsnapshot.SnapshotStatusPartial {
 					t.Fatalf("oversized stack: %+v", result)
 				}
 				return
 			}
-			if len(entries) != 2 || result.status != memsnapshot.StatusComplete {
+			if len(entries) != 2 || result.status != memsnapshot.SnapshotStatusComplete {
 				t.Fatalf("distinct stacks lost: %+v", result)
 			}
 			for _, entry := range entries {
@@ -221,11 +221,11 @@ func TestScanHeapProfileDeepStacks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			snapshot := &memsnapshot.Snapshot{Status: memsnapshot.StatusComplete, Entries: output}
+			snapshot := &memsnapshot.Snapshot{Status: memsnapshot.SnapshotStatusComplete, Entries: output}
 			if err := memsnapshot.LimitOutput(snapshot, 2); err != nil {
 				t.Fatal(err)
 			}
-			if len(snapshot.Entries) != 2 || !snapshot.HasOmittedData || snapshot.Status != memsnapshot.StatusComplete || len(snapshot.Entries[0].Stack) != 64 {
+			if len(snapshot.Entries) != 2 || !snapshot.OutputTruncated || snapshot.Status != memsnapshot.SnapshotStatusComplete || len(snapshot.Entries[0].Stack) != 64 {
 				t.Fatalf("output=%+v", snapshot)
 			}
 		})
@@ -235,7 +235,7 @@ func TestScanHeapProfileDeepStacks(t *testing.T) {
 func TestScanHeapProfileZeroDepthStack(t *testing.T) {
 	memory, info, _ := allocationFixture(t, 1, 0, 1)
 	result, err := (&processReader{memory: *memory, runtime: info}).scanHeapProfile(t.Context(), 1)
-	if err != nil || result == nil || result.status != memsnapshot.StatusComplete || result.reason != "" ||
+	if err != nil || result == nil || result.status != memsnapshot.SnapshotStatusComplete || result.reason != "" ||
 		len(result.allocations) != 0 || result.hasOmittedAllocations {
 		t.Fatalf("zero-depth stack must not mark the scan partial: result=%+v err=%v", result, err)
 	}
@@ -260,7 +260,7 @@ func BenchmarkCollectAllocations(b *testing.B) {
 					b.Fatal(err)
 				}
 
-				if (result.status != memsnapshot.StatusComplete) != (test.name == "key_budget") {
+				if (result.status != memsnapshot.SnapshotStatusComplete) != (test.name == "key_budget") {
 					b.Fatalf("reason=%q", result.reason)
 				}
 				top := result.allocations
@@ -289,7 +289,7 @@ func TestScanHeapProfileInvalidLayout(t *testing.T) {
 			binary.LittleEndian.PutUint64(raw[second+16:], test.typ)
 			binary.LittleEndian.PutUint64(raw[second+40:], test.depth)
 			result, err := (&processReader{memory: *memory, runtime: info}).scanHeapProfile(t.Context(), 2)
-			if err != nil || !strings.Contains(result.reason, test.reason) || result.status != memsnapshot.StatusPartial || len(result.allocations) != 1 {
+			if err != nil || !strings.Contains(result.reason, test.reason) || result.status != memsnapshot.SnapshotStatusPartial || len(result.allocations) != 1 {
 				t.Fatalf("invalid layout scan: %+v %v", result, err)
 			}
 		})
@@ -304,7 +304,7 @@ func TestScanHeapProfileUnknownSampleRate(t *testing.T) {
 		t.Run(fmt.Sprint(head), func(t *testing.T) {
 			info.mbucketsHead = head
 			scan, err := reader.scanHeapProfile(t.Context(), 2)
-			if err != nil || scan.status != memsnapshot.StatusUnavailable ||
+			if err != nil || scan.status != memsnapshot.SnapshotStatusUnavailable ||
 				scan.reason != "runtime.MemProfileRate is unavailable" || len(scan.allocations) != 0 || scan.hasOmittedAllocations {
 				t.Fatalf("unknown rate must stop before reading buckets: scan=%+v err=%v", scan, err)
 			}
@@ -327,10 +327,10 @@ func TestScanHeapProfileRanksAllBuckets(t *testing.T) {
 	binary.LittleEndian.PutUint64(raw[record+16:], 4096)
 	reader := &processReader{memory: *memory, runtime: info}
 	for _, partial := range []bool{false, true} {
-		wantStatus := memsnapshot.StatusComplete
+		wantStatus := memsnapshot.SnapshotStatusComplete
 		if partial {
 			binary.LittleEndian.PutUint64(raw[last+8:], info.mbucketsHead)
-			wantStatus = memsnapshot.StatusPartial
+			wantStatus = memsnapshot.SnapshotStatusPartial
 		}
 		result, err := reader.scanHeapProfile(t.Context(), 1)
 		if err != nil || result.status != wantStatus || !result.hasOmittedAllocations || len(result.allocations) != 1 {
@@ -355,7 +355,7 @@ func TestScanHeapProfileEmpty(t *testing.T) {
 			} else if rate == 0 {
 				wantReason = "Go heap profiling is disabled by MemProfileRate=0"
 			}
-			if err != nil || result == nil || result.status != memsnapshot.StatusUnavailable ||
+			if err != nil || result == nil || result.status != memsnapshot.SnapshotStatusUnavailable ||
 				len(result.allocations) != 0 || result.hasOmittedAllocations {
 				t.Fatalf("empty scan=%+v err=%v", result, err)
 			}
@@ -388,7 +388,7 @@ func TestScanHeapProfileKeyBudget(t *testing.T) {
 			if err != nil || result == nil {
 				t.Fatalf("budgeted scan: result=%v err=%v", result, err)
 			}
-			if result.status != memsnapshot.StatusPartial || result.hasOmittedAllocations ||
+			if result.status != memsnapshot.SnapshotStatusPartial || result.hasOmittedAllocations ||
 				len(result.allocations) != retained || result.reason != test.reason {
 				t.Fatalf("status=%s hasOmittedAllocations=%v allocations=%d reason=%q, want reason %q",
 					result.status, result.hasOmittedAllocations, len(result.allocations), result.reason, test.reason)

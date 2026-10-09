@@ -1388,33 +1388,51 @@ Info 日志记录监听状态和采集尝试。
 | `page_table_bytes` | VmPTE，页表内存 |
 
 缺失或无效字段省略，不填 0；状态为 `partial`，完全无法读取时为
-`unavailable`，附带 `reason`。这些近似值不是 OOM 瞬间快照，也不能直接证明泄漏；
+`unavailable`，附带 `status_reason`。这些近似值不是 OOM 瞬间快照，也不能直接证明泄漏；
 候选进程不保证是最终 OOM victim。
 
 结果沿用现有 `[Storage]` 配置，见第 6 节，无需另配存储。
 LocalFile 文件名为 `memory_threshold_snapshot`；在 `tracing_documents` 中可按
 `tracer_name = memory_threshold_snapshot`、`tracer_type = autotracing` 查询。
 
-`started_timestamp` 记录采集尝试的开始时间，
-`observed_timestamp` 记录采集器给出的快照采集时间。
+`started_timestamp` 记录采集尝试的开始时间，位于目标进程选择之前。
+`observed_timestamp` 记录快照采集流程的开始时间，位于目标进程选定之后、
+运行时识别之前。
+
+`tracer_data.snapshot.entries` 的 `kind` 和统计口径如下：
+
+| 运行时 | `kind` | `objects` | `bytes` |
+|--------|--------|-----------|---------|
+| Go | `inuse_space_objects` | 按完整分配栈聚合、经采样校正的未释放对象数量估计 | 对应的未释放字节数估计 |
+| Java | `object_class` | 按类汇总的实例数量估计 | 对象自身占用的堆内存估计（shallow heap） |
+| Python | `gc_tracked_object_type` | 按类型汇总的 GC 跟踪对象数量 | 这些对象的浅层内存大小估计（shallow size） |
+
+Go 的 `bytes` 和 `objects` 分别对应 pprof 的 `inuse_space` 和
+`inuse_objects` 统计口径。Java 未计算 retained heap；Python 只覆盖 GC 跟踪对象，
+不能代表整个 Python 堆。历史记录中，Go 和 Java 的 `kind` 可能分别为
+`allocation_site` 和 `object_type`；读取历史记录的消费方应兼容这些旧值。
 
 Go 使用完整栈作为聚合键：Go 1.18–1.22 最多 32 帧，Go 1.23–1.26 最多 1024 帧；统一输出限制可将展示栈缩短到 64 帧，并设置 `output_truncated`。bucket 类型无效、栈或记录地址范围溢出、栈深度超过读取上限或 bucket 链表成环时，扫描以 `partial` 结束，重复 bucket 不会再次累计。
 
-扫描遇到导致 `partial` 的问题后停止遍历后续 bucket，保留此前及当前批次中已读取且聚合预算允许的有效样本，再计算 TopK。`reason` 只记录首次原因，收尾时不追加其他原因。
+扫描遇到导致 `partial` 的问题后停止遍历后续 bucket，保留此前及当前批次中已读取且聚合预算允许的有效样本，再按内存字节数降序排列，最多保留 `MaxMemoryObjectEntries` 条结果。`status_reason` 只记录首次原因，收尾时不追加其他原因。
 
 任何 bucket 头、记录或栈读取失败（包括短读）都会使本次 Go 采集失败，丢弃所有运行时条目，包括此前批次的数据。采集器输出 `failed` 和读取错误，不逐区间重试。
 
 栈深度为 0 的样本不生成调用栈条目，也不会因空栈被标记为 `partial`。
 
-Go 快照要求采样率已知、采样已启用且 bucket 链表非空。采样率未知、采样已禁用或 bucket 链表为空时返回 `unavailable`，附带 `reason`，不返回条目。
+Go 快照要求采样率已知、采样已启用且 bucket 链表非空。采样率未知、采样已禁用或 bucket 链表为空时返回 `unavailable`，附带 `status_reason`，不返回条目。
 
 Go 采集在运行时读取、扫描、排序和条目生成阶段共用一个请求超时预算。
 超时后丢弃运行时条目，由采集器输出 `failed` 和超时原因，仍尝试读取进程内存摘要。
 取消采用协作方式，正在执行的系统调用或不支持取消的解析步骤可能在截止时间之后才结束。
 
 查看 `tracer_data.snapshot.status`（`complete`、`partial`、
-`unavailable`、`failed`），结合 `reason`、`runtime_version`、
+`unavailable`、`failed`），结合 `status_reason`、`runtime_version`、
 `duration_ms` 和 `output_truncated` 判断结果。
+
+`status_reason` 解释采集处于 `partial`、`unavailable` 或 `failed` 状态的原因，
+为空时省略。`snapshot` 和 `process_memory` 均使用该字段。
+历史记录可能使用 `reason`；同时读取新旧记录的消费方应兼容两种字段名。
 
 `duration_ms` 统计 provider 阶段耗时，向上取整为毫秒；成功、失败及超时快照
 使用相同口径，不包含运行时探测、进程内存摘要读取、输出处理和保存时间。
@@ -1423,5 +1441,5 @@ Go 采集在运行时读取、扫描、排序和条目生成阶段共用一个�
 |------|--------|
 | 没有输出 | 是否启用并重启、是否被 BlackList 禁用；v2 触发条件见 7.6 |
 | 有事件但没有候选进程 | 进程是否直接属于该 cgroup、是否允许 OOM kill、是否超过枚举限制 |
-| `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `reason` |
+| `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `status_reason` |
 | 资源耗尽后事件停止 | 检查 `RLIMIT_NOFILE`、`fs.inotify.max_user_watches`、`fs.inotify.max_user_instances`，调整后重启；其他事件不受此停止影响 |

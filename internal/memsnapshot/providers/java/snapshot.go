@@ -35,7 +35,7 @@ func unsupportedHotSpot(reason string) error {
 
 // snapshot samples the running HotSpot heap and reduces it to type aggregates.
 func snapshot(ctx context.Context,
-	identity memsnapshot.ProcessInstance, maxEntries int,
+	identity memsnapshot.ProcessInstanceID, maxEntries int,
 	samplingSeed uint64,
 ) (*memsnapshot.Snapshot, error) {
 	readPID := identity.TGID
@@ -48,7 +48,7 @@ func snapshot(ctx context.Context,
 	memory := processMemory{
 		pid: readPID, ctx: ctx, deadline: scanDeadline, hasDeadline: hasDeadline,
 	}
-	if err := memsnapshot.ValidateProcessInstance(identity); err != nil {
+	if err := memsnapshot.ValidateProcessInstanceID(identity); err != nil {
 		return nil, err
 	}
 	metadata, err := loadMetadata(procRoot, memory)
@@ -61,7 +61,7 @@ func snapshot(ctx context.Context,
 		appendPartial(snapshot, "HotSpot GC sequence could not be read before scanning")
 		trackGC = false
 	}
-	if err := memsnapshot.ValidateProcessInstance(identity); err != nil {
+	if err := memsnapshot.ValidateProcessInstanceID(identity); err != nil {
 		return nil, err
 	}
 	regions, err := readRegions(memory, metadata)
@@ -80,7 +80,7 @@ func snapshot(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if err := memsnapshot.ValidateProcessInstance(identity); err != nil {
+	if err := memsnapshot.ValidateProcessInstanceID(identity); err != nil {
 		return nil, err
 	}
 	classes := make(map[uint64]*klass)
@@ -111,7 +111,7 @@ func snapshot(ctx context.Context,
 	aggregates := estimateAggregates(classes, statistics, heap.ordinaryUsed)
 	if len(aggregates) == 0 {
 		deadlineStopped := memory.check() != nil
-		identityErr := memsnapshot.ValidateProcessInstance(identity)
+		identityErr := memsnapshot.ValidateProcessInstanceID(identity)
 		targetExited := errors.Is(identityErr, os.ErrNotExist)
 		if identityErr != nil && !targetExited {
 			return nil, identityErr
@@ -140,10 +140,10 @@ func snapshot(ctx context.Context,
 	sortObjects(objects)
 	if len(objects) > maxEntries {
 		objects = objects[:maxEntries]
-		snapshot.HasOmittedData = true
+		snapshot.OutputTruncated = true
 	}
 	snapshot.Entries = memsnapshot.EntriesFromObjects(objects)
-	if err := memsnapshot.ValidateProcessInstance(identity); err != nil {
+	if err := memsnapshot.ValidateProcessInstanceID(identity); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
@@ -293,10 +293,10 @@ func appendPartial(snapshot *memsnapshot.Snapshot, reason string) {
 	if snapshot == nil || reason == "" {
 		return
 	}
-	snapshot.Status = memsnapshot.StatusPartial
-	if snapshot.Reason == "" {
-		snapshot.Reason = reason
+	snapshot.Status = memsnapshot.SnapshotStatusPartial
+	if snapshot.StatusReason == "" {
+		snapshot.StatusReason = reason
 		return
 	}
-	snapshot.Reason += "; " + reason
+	snapshot.StatusReason += "; " + reason
 }

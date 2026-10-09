@@ -67,7 +67,7 @@ func TestProbedInterpreterDiscovery(t *testing.T) {
 				if err == nil || result != nil {
 					t.Fatalf("incomplete chain = %+v, %v; want no snapshot and error", result, err)
 				}
-			} else if err != nil || result.Status != memsnapshot.StatusComplete {
+			} else if err != nil || result.Status != memsnapshot.SnapshotStatusComplete {
 				t.Fatalf("complete chain = %+v, %v", result, err)
 			}
 		})

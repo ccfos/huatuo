@@ -45,25 +45,25 @@ func (r *processReader) scanHeapProfile(ctx context.Context, topK int) (*scanRes
 	sampleRate := info.memProfileRate
 	if sampleRate == 0 {
 		return &scanResult{
-			status: memsnapshot.StatusUnavailable,
+			status: memsnapshot.SnapshotStatusUnavailable,
 			reason: "Go heap profiling is disabled by MemProfileRate=0",
 		}, nil
 	}
 	if sampleRate < 0 {
 		return &scanResult{
-			status: memsnapshot.StatusUnavailable,
+			status: memsnapshot.SnapshotStatusUnavailable,
 			reason: "runtime.MemProfileRate is unavailable",
 		}, nil
 	}
 
 	if info.mbucketsHead == 0 {
 		return &scanResult{
-			status: memsnapshot.StatusUnavailable,
+			status: memsnapshot.SnapshotStatusUnavailable,
 			reason: "Go heap profile contains no buckets",
 		}, nil
 	}
 
-	result := &scanResult{status: memsnapshot.StatusComplete}
+	result := &scanResult{status: memsnapshot.SnapshotStatusComplete}
 	layout := info.layout
 	address := info.mbucketsHead
 	// TopK bounds only the result. Reachable bucket stacks are read until
@@ -133,7 +133,7 @@ func (r *processReader) scanHeapProfile(ctx context.Context, topK int) (*scanRes
 		}
 	}
 	if result.reason != "" {
-		result.status = memsnapshot.StatusPartial
+		result.status = memsnapshot.SnapshotStatusPartial
 	}
 
 	var err error

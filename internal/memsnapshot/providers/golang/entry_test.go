@@ -58,7 +58,7 @@ func TestBuildEntriesWithoutSymbols(t *testing.T) {
 			order.PutUint64(raw[4*programCounterBytes:], 0xdead)
 			input := []allocation{{key: string(raw[:]), inuseBytes: 256, inuseObjects: 2}}
 			want := []memsnapshot.Entry{{
-				Kind: "allocation_site", Name: "0x0",
+				Kind: "inuse_space_objects", Name: "0x0",
 				Bytes: 256, Objects: 2, AverageBytes: 128,
 				Stack: []string{"0x0", "0x1200", "0x9999", "0x0", "0xdead"},
 			}}

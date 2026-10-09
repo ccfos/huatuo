@@ -37,7 +37,7 @@ func buildEntries(ctx context.Context,
 			average = float64(candidate.inuseBytes) / float64(candidate.inuseObjects)
 		}
 		entries = append(entries, memsnapshot.Entry{
-			Kind: "allocation_site", Name: allocationSiteName(stack),
+			Kind: "inuse_space_objects", Name: allocationSiteName(stack),
 			Bytes: uint64(candidate.inuseBytes), Objects: uint64(candidate.inuseObjects), AverageBytes: average, Stack: stack,
 		})
 	}

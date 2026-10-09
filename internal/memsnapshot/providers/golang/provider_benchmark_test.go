@@ -66,16 +66,16 @@ func main() {
 	if !ready.Scan() || ready.Text() != "ready" {
 		b.Fatal("fixture did not become ready")
 	}
-	identity, err := memsnapshot.ReadProcessInstance(command.Process.Pid)
+	identity, err := memsnapshot.ReadProcessInstanceID(command.Process.Pid)
 	if err != nil {
 		b.Fatal(err)
 	}
 	provider := New()
-	request := memsnapshot.Request{Process: identity, TopK: 10}
+	request := memsnapshot.Request{Process: identity, MaxMemoryObjectEntries: 10}
 	b.ReportAllocs()
 	for b.Loop() {
 		result, err := provider.Snapshot(b.Context(), request)
-		if err != nil || result == nil || result.Status != memsnapshot.StatusComplete || result.Reason != "" || len(result.Entries) == 0 {
+		if err != nil || result == nil || result.Status != memsnapshot.SnapshotStatusComplete || result.StatusReason != "" || len(result.Entries) == 0 {
 			b.Fatalf("snapshot = %+v, %v", result, err)
 		}
 		found := false

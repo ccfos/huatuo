@@ -64,11 +64,11 @@ func newReader(procRoot string) *reader {
 func (r *reader) snapshot(ctx context.Context,
 	request memsnapshot.Request,
 ) (*memsnapshot.Snapshot, error) {
-	if request.TopK <= 0 {
-		return nil, errors.New("CPython snapshot top-K must be positive")
+	if request.MaxMemoryObjectEntries <= 0 {
+		return nil, errors.New("CPython snapshot maximum memory object entries must be positive")
 	}
 	readPID := request.Process.TGID
-	if err := memsnapshot.ValidateProcessInstance(request.Process); err != nil {
+	if err := memsnapshot.ValidateProcessInstanceID(request.Process); err != nil {
 		return nil, err
 	}
 	deadline, hasDeadline := memsnapshot.DeadlineWithReserve(ctx,
@@ -84,15 +84,15 @@ func (r *reader) snapshot(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if err := memsnapshot.ValidateProcessInstance(request.Process); err != nil {
+	if err := memsnapshot.ValidateProcessInstanceID(request.Process); err != nil {
 		return nil, err
 	}
 	census := newScanner(reader, &target, deadline)
-	snapshot, err := census.snapshot(ctx, request.TopK)
+	snapshot, err := census.snapshot(ctx, request.MaxMemoryObjectEntries)
 	if err != nil {
 		return nil, err
 	}
-	if err := memsnapshot.ValidateProcessInstance(request.Process); err != nil {
+	if err := memsnapshot.ValidateProcessInstanceID(request.Process); err != nil {
 		return nil, err
 	}
 	return snapshot, nil
@@ -121,7 +121,7 @@ func (c *scanner) snapshot(ctx context.Context, topK int) (*memsnapshot.Snapshot
 }
 
 func (c *scanner) buildSnapshot(topK int) *memsnapshot.Snapshot {
-	status := memsnapshot.StatusComplete
+	status := memsnapshot.SnapshotStatusComplete
 	reason := c.partial
 	if c.skippedObjects != 0 {
 		classificationReason := fmt.Sprintf(
@@ -134,14 +134,14 @@ func (c *scanner) buildSnapshot(topK int) *memsnapshot.Snapshot {
 		}
 	}
 	if reason != "" {
-		status = memsnapshot.StatusPartial
+		status = memsnapshot.SnapshotStatusPartial
 	}
 	snapshot := &memsnapshot.Snapshot{
 		RuntimeVersion: c.image.version.String(), Status: status,
-		Reason: reason,
+		StatusReason: reason,
 	}
 	snapshot.Entries = c.entries(topK)
-	snapshot.HasOmittedData = len(c.aggregates) > len(snapshot.Entries)
+	snapshot.OutputTruncated = len(c.aggregates) > len(snapshot.Entries)
 	return snapshot
 }
 
