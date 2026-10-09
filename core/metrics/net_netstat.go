@@ -139,9 +139,16 @@ func parseNetStat(fileName string) (map[string]map[string]string, error) {
 	for scanner.Scan() {
 		nameParts := strings.Split(scanner.Text(), " ")
 
-		scanner.Scan()
+		if !scanner.Scan() {
+			// A header without its value row (truncated file): stop rather
+			// than re-reading the header line as the values.
+			break
+		}
 		valueParts := strings.Split(scanner.Text(), " ")
 
+		if len(nameParts[0]) == 0 {
+			continue
+		}
 		// remove trailing ":"
 		protocol := nameParts[0][:len(nameParts[0])-1]
 		if protocol != "Tcp" && protocol != "TcpExt" {
