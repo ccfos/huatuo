@@ -50,8 +50,25 @@ type npuCache struct {
 	devices []deviceKey
 }
 
+type ascendTopologyProvider interface {
+	cardList(ctx context.Context) ([]int32, error)
+	deviceCount(ctx context.Context, cardID int32) (int32, error)
+}
+
+type dcmiTopologyProvider struct{}
+
+func (dcmiTopologyProvider) cardList(ctx context.Context) ([]int32, error) {
+	_, cards, err := dcmi.DcGetCardList(ctx)
+	return cards, err
+}
+
+func (dcmiTopologyProvider) deviceCount(ctx context.Context, cardID int32) (int32, error) {
+	return dcmi.DcGetDeviceNumInCard(ctx, cardID)
+}
+
 type ascendNpuCollector struct {
-	cache atomic.Pointer[npuCache]
+	cache    atomic.Pointer[npuCache]
+	topology ascendTopologyProvider
 }
 
 func newAscendNpuCollector() (*tracing.EventTracingAttr, error) {
@@ -60,17 +77,31 @@ func newAscendNpuCollector() (*tracing.EventTracingAttr, error) {
 		return nil, types.ErrNotSupported
 	}
 
-	c := &ascendNpuCollector{}
-	c.refreshCache()
+	c := newAscendNpuCollectorWithTopology(dcmiTopologyProvider{})
 	return &tracing.EventTracingAttr{
 		TracingData: c,
 		Flag:        tracing.FlagMetric,
 	}, nil
 }
 
+func newAscendNpuCollectorWithTopology(topology ascendTopologyProvider) *ascendNpuCollector {
+	c := &ascendNpuCollector{topology: topology}
+	if _, err := c.refreshCache(context.Background()); err != nil {
+		// Keep the collector registered so a transient startup failure can be
+		// retried by the first metric scrape.
+		log.Errorf("ascend: failed to discover NPU topology: %v", err)
+	}
+	return c
+}
+
 func (a *ascendNpuCollector) Update() ([]*metric.Data, error) {
 	ctx := context.Background()
-	metrics, err := ascendCollectMetrics(ctx, a.getDevices())
+	devices, err := a.getDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	metrics, err := ascendCollectMetrics(ctx, devices)
 	if err != nil {
 		var dcmiErr *dcmi.Error
 		if ok := errors.As(err, &dcmiErr); ok {
@@ -80,7 +111,11 @@ func (a *ascendNpuCollector) Update() ([]*metric.Data, error) {
 				return nil, fmt.Errorf("failed to re-init dcmi: %w", err)
 			}
 			a.cache.Store(nil)
-			return ascendCollectMetrics(ctx, a.getDevices())
+			devices, discoveryErr := a.getDevices(ctx)
+			if discoveryErr != nil {
+				return nil, fmt.Errorf("rediscover NPU topology after DCMI re-init: %w", discoveryErr)
+			}
+			return ascendCollectMetrics(ctx, devices)
 		}
 
 		return nil, err
@@ -89,27 +124,24 @@ func (a *ascendNpuCollector) Update() ([]*metric.Data, error) {
 	return metrics, nil
 }
 
-func (a *ascendNpuCollector) getDevices() []deviceKey {
+func (a *ascendNpuCollector) getDevices(ctx context.Context) ([]deviceKey, error) {
 	if c := a.cache.Load(); c != nil {
-		return c.devices
+		return c.devices, nil
 	}
-	return a.refreshCache()
+	return a.refreshCache(ctx)
 }
 
-func (a *ascendNpuCollector) refreshCache() []deviceKey {
-	ctx := context.Background()
-	_, cardList, err := dcmi.DcGetCardList(ctx)
+func (a *ascendNpuCollector) refreshCache(ctx context.Context) ([]deviceKey, error) {
+	cardList, err := a.topology.cardList(ctx)
 	if err != nil {
-		log.Errorf("ascend: failed to get card list for cache: %v", err)
-		return nil
+		return nil, fmt.Errorf("discover Ascend card list: %w", err)
 	}
 
 	var devices []deviceKey
 	for _, cardId := range cardList {
-		deviceNum, err := dcmi.DcGetDeviceNumInCard(ctx, cardId)
+		deviceNum, err := a.topology.deviceCount(ctx, cardId)
 		if err != nil {
-			log.Errorf("ascend: failed to get device count for card %d: %v", cardId, err)
-			continue
+			return nil, fmt.Errorf("discover devices for Ascend card %d: %w", cardId, err)
 		}
 		for devId := int32(0); devId < deviceNum; devId++ {
 			devices = append(devices, deviceKey{uint32(cardId), uint32(devId)})
@@ -117,7 +149,7 @@ func (a *ascendNpuCollector) refreshCache() []deviceKey {
 	}
 
 	a.cache.Store(&npuCache{devices: devices})
-	return devices
+	return devices, nil
 }
 
 func ascendCollectMetrics(ctx context.Context, devices []deviceKey) ([]*metric.Data, error) {
