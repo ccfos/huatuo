@@ -406,6 +406,35 @@ assert_huatuo_bamai_shutdown() {
 		|| fatal "huatuo-bamai pid=${pid} did not exit successfully: status=${status}"
 }
 
+# process_exited <pid>
+# Bash may reap a child between the procfs existence check and the read.
+process_exited() {
+	local state
+	state=$(awk '{print $3}' "/proc/$1/stat" 2> /dev/null) || return 0
+	[[ ${state} == Z ]]
+}
+
+# huatuo_bamai_stop_with_signal <TERM|KILL> [sent]
+# Lifecycle tests require the real exit status instead of best-effort teardown.
+huatuo_bamai_stop_with_signal() {
+	local signal=$1 already_sent=${2:-} pid status=0 expected
+	case ${signal} in
+	TERM) expected=0 ;;
+	KILL) expected=137 ;;
+	*) fatal "unsupported daemon stop signal: ${signal}" ;;
+	esac
+	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
+	[[ ${already_sent} == sent ]] || kill -"${signal}" "${pid}"
+	if ! wait_until 65 0.1 process_exited "${pid}"; then
+		kill -KILL "${pid}" 2> /dev/null || true
+		wait "${pid}" 2> /dev/null || true
+		fatal "daemon did not stop after ${signal} within 65 seconds"
+	fi
+	wait "${pid}" || status=$?
+	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
+	[[ ${status} == "${expected}" ]] || fatal "daemon ${signal} exit status ${status}, expected ${expected}"
+}
+
 # --------------------------- huatuo-apiserver -------------------------------
 
 huatuo_apiserver_start() {
