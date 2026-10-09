@@ -1403,7 +1403,7 @@ LocalFile 文件名为 `memory_threshold_snapshot`；在 `tracing_documents` 中
 
 | 运行时 | `kind` | `objects` | `bytes` |
 |--------|--------|-----------|---------|
-| Go | `inuse_space_objects` | 按完整分配栈聚合、经采样校正的未释放对象数量估计 | 对应的未释放字节数估计 |
+| Go | `inuse_space_objects` | 根据已发布统计，按完整分配栈聚合、经采样校正的未释放对象数量估计 | 对应的未释放字节数估计 |
 | Java | `object_class` | 按类汇总的实例数量估计 | 对象自身占用的堆内存估计（shallow heap） |
 | Python | `gc_tracked_object_type` | 按类型汇总的 GC 跟踪对象数量 | 这些对象的浅层内存大小估计（shallow size） |
 
@@ -1411,6 +1411,18 @@ Go 的 `bytes` 和 `objects` 分别对应 pprof 的 `inuse_space` 和
 `inuse_objects` 统计口径。Java 未计算 retained heap；Python 只覆盖 GC 跟踪对象，
 不能代表整个 Python 堆。历史记录中，Go 和 Java 的 `kind` 可能分别为
 `allocation_site` 和 `object_type`；读取历史记录的消费方应兼容这些旧值。
+
+Go 仅使用 runtime 已发布的 `active` 计数计算分配量与释放量之差，再进行采样校正，
+不合并尚未发布的 `future[0..2]`。runtime 延迟发布以等待相应的 GC 清扫释放统计，
+因此近期分配峰值可能尚未反映在结果中；结果是已发布堆画像的外部采样，
+不能代表触发瞬间的堆占用。采集不获取 runtime 锁、不主动发布计数，
+也不触发目标进程 GC，字段或 bucket 仍可能处于不同发布阶段，不能保证与 pprof 原子一致。
+
+完整扫描未观察到任何非零 `active` 计数时，返回 `unavailable`，
+`status_reason` 为 `Go heap profile has no published statistics`，不回退到 `future`。
+这可能发生在尚未 GC 的进程中，并不表示没有堆对象。
+已有发布计数但样本全部释放时，完整扫描仍可返回 `complete` 和空条目。
+扫描因其他问题中断时保留 `partial` 及其原因，不将未扫描到数据解释为尚未发布。
 
 Go 使用完整栈作为聚合键：Go 1.18–1.22 最多 32 帧，Go 1.23–1.26 最多 1024 帧；统一输出限制可将展示栈缩短到 64 帧，并设置 `output_truncated`。bucket 类型无效、栈或记录地址范围溢出、栈深度超过读取上限或 bucket 链表成环时，扫描以 `partial` 结束，重复 bucket 不会再次累计。
 

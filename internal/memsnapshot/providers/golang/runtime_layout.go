@@ -80,9 +80,11 @@ import (
 // Each cycle contains uintptr counters at offsets 0 (allocs), 8 (frees),
 // 16 (alloc_bytes), and 24 (free_bytes). Active contains published cumulative
 // statistics; future is a ring of three not-yet-published profile cycles.
-// decodeCounters sums all four records before subtracting frees. External reads
-// do not acquire runtime locks: updates or transfers from future to active can
-// produce inconsistent observations. This is not an atomic MemProfile snapshot.
+// decodeCounters uses only active to preserve the runtime's publication delay:
+// recent allocations in future may not yet have matching sweep frees. External
+// reads do not acquire runtime locks or flush pending cycles, so active can lag
+// and fields or buckets can be observed at different publication stages.
+// This is not an atomic MemProfile snapshot.
 //
 // Version differences that preserve the byte layout:
 //   - Go 1.18 uses *bucket for mbuckets; Go 1.19+ uses atomic.UnsafePointer.
@@ -174,19 +176,16 @@ func (l runtimeLayout) decodeBucketHeader(addr uint64, header *bucketHeader) (bu
 	}, nil
 }
 
-// decodeCounters returns in-use counts. Remote reads can observe inconsistent
-// counters, so negative differences are clamped to zero.
-func (l runtimeLayout) decodeCounters(raw *[heapProfileRecordBytes]byte) (objects, bytes uint64) {
-	var allocObjects, freeObjects, allocBytes, freeBytes uint64
-	// Match runtime.memRecordCycle.add on supported 64-bit targets:
-	// unsigned sums wrap on overflow.
-	// https://github.com/golang/go/blob/go1.23.0/src/runtime/mprof.go#L154-L159
-	for base := 0; base < heapProfileRecordBytes; base += 32 {
-		allocObjects += l.byteOrder.Uint64(raw[base : base+8])
-		freeObjects += l.byteOrder.Uint64(raw[base+8 : base+16])
-		allocBytes += l.byteOrder.Uint64(raw[base+16 : base+24])
-		freeBytes += l.byteOrder.Uint64(raw[base+24 : base+32])
-	}
+// decodeCounters returns active in-use counts and whether any active counter is
+// nonzero, distinguishing unpublished data from samples that have all been freed.
+// Remote reads can observe inconsistent counters, so negative differences are
+// clamped to zero.
+func (l runtimeLayout) decodeCounters(raw *[heapProfileRecordBytes]byte) (objects, bytes uint64, published bool) {
+	allocObjects := l.byteOrder.Uint64(raw[0:8])
+	freeObjects := l.byteOrder.Uint64(raw[8:16])
+	allocBytes := l.byteOrder.Uint64(raw[16:24])
+	freeBytes := l.byteOrder.Uint64(raw[24:32])
+	published = allocObjects != 0 || freeObjects != 0 || allocBytes != 0 || freeBytes != 0
 
-	return allocObjects - min(allocObjects, freeObjects), allocBytes - min(allocBytes, freeBytes)
+	return allocObjects - min(allocObjects, freeObjects), allocBytes - min(allocBytes, freeBytes), published
 }

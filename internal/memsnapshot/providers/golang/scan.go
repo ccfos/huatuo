@@ -74,6 +74,7 @@ func (r *processReader) scanHeapProfile(ctx context.Context, topK int) (*scanRes
 	// ByteOrder decoding can retain the header on the heap; reuse it across buckets.
 	var header bucketHeader
 	batch := &bucketBatch{buckets: make([]bucketSample, 0, mbucketBatchSize)}
+	hasPublishedCounters := false
 	for {
 		batch.buckets = batch.buckets[:0]
 		for address != 0 && len(batch.buckets) < mbucketBatchSize {
@@ -109,6 +110,7 @@ func (r *processReader) scanHeapProfile(ctx context.Context, topK int) (*scanRes
 		if err := batch.readRuntimeLayoutSamples(ctx, memory, layout); err != nil {
 			return nil, err
 		}
+		hasPublishedCounters = hasPublishedCounters || batch.hasPublishedCounters
 		for i := range batch.buckets {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -134,6 +136,10 @@ func (r *processReader) scanHeapProfile(ctx context.Context, topK int) (*scanRes
 	}
 	if result.reason != "" {
 		result.status = memsnapshot.SnapshotStatusPartial
+	} else if !hasPublishedCounters {
+		// Only a complete scan can establish that no published data was observed.
+		result.status = memsnapshot.SnapshotStatusUnavailable
+		result.reason = "Go heap profile has no published statistics"
 	}
 
 	var err error

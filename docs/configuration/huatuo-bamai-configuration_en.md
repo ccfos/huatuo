@@ -1425,7 +1425,7 @@ The `kind` and measurement semantics of `tracer_data.snapshot.entries` are:
 
 | Runtime | `kind` | `objects` | `bytes` |
 |---------|--------|-----------|---------|
-| Go | `inuse_space_objects` | Estimated unfreed object count, corrected for sampling and grouped by complete allocation stack | Estimated unfreed bytes for those objects |
+| Go | `inuse_space_objects` | Estimated unfreed object count from published statistics, corrected for sampling and grouped by complete allocation stack | Estimated unfreed bytes for those objects |
 | Java | `object_class` | Estimated instance count grouped by class | Estimated memory occupied by the objects themselves (shallow heap) |
 | Python | `gc_tracked_object_type` | GC-tracked object count grouped by type | Estimated shallow size of those objects |
 
@@ -1434,6 +1434,23 @@ metrics. Java does not compute retained heap; Python covers only GC-tracked
 objects, not the entire Python heap. Older records may use `allocation_site`
 for Go and `object_type` for Java; consumers reading historical records should
 accept those values.
+
+Go subtracts frees from allocations using only the runtime's published `active`
+counters, then corrects for sampling. Unpublished `future[0..2]` counters are
+excluded. Publication is delayed until the corresponding GC sweep frees are
+accounted for, so recent allocation spikes may be absent. Results are external
+samples of the published heap profile, not heap usage at the trigger instant.
+Collection does not acquire runtime locks, flush counters, or trigger GC in the
+target. Fields or buckets may still reflect different publication stages, so
+the result does not provide pprof's atomic consistency.
+
+If a complete scan observes no nonzero `active` counters, it returns `unavailable`
+with `status_reason` set to `Go heap profile has no published statistics`, without
+falling back to `future`. This can occur before the first GC and does not mean
+that the process has no heap objects. Published counters whose sampled objects
+have all been freed can still produce `complete` with empty entries. An
+interrupted scan preserves `partial` and its reason rather than treating
+unobserved data as unpublished.
 
 Go aggregates complete stack keys up to 32 frames for Go 1.18–1.22 and 1024 frames for Go 1.23–1.26; the shared output limit may shorten displayed stacks to 64 frames and sets `output_truncated`. An invalid bucket type, an overflowing stack or record address range, an excessive stack depth, or a cyclic bucket chain stops the scan with `partial`; repeated buckets are never counted twice.
 

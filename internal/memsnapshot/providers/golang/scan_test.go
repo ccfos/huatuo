@@ -366,6 +366,71 @@ func TestScanHeapProfileEmpty(t *testing.T) {
 	}
 }
 
+func TestScanHeapProfilePublishedStatistics(t *testing.T) {
+	const count = mbucketBatchSize + 1
+	for _, test := range []struct {
+		name        string
+		activeIndex int
+		future      bool
+		allFreed    bool
+		cycle       bool
+		status      memsnapshot.Status
+		reason      string
+		entries     int
+	}{
+		{name: "unpublished", activeIndex: -1, status: memsnapshot.SnapshotStatusUnavailable, reason: "Go heap profile has no published statistics"},
+		{name: "future only", activeIndex: -1, future: true, status: memsnapshot.SnapshotStatusUnavailable, reason: "Go heap profile has no published statistics"},
+		{name: "active first", activeIndex: 0, future: true, status: memsnapshot.SnapshotStatusComplete, entries: 1},
+		{name: "active last", activeIndex: count - 1, future: true, status: memsnapshot.SnapshotStatusComplete, entries: 1},
+		{name: "all freed first", activeIndex: 0, future: true, allFreed: true, status: memsnapshot.SnapshotStatusComplete},
+		{name: "all freed last", activeIndex: count - 1, future: true, allFreed: true, status: memsnapshot.SnapshotStatusComplete},
+		{name: "partial without published data", activeIndex: -1, future: true, cycle: true, status: memsnapshot.SnapshotStatusPartial, reason: "mbucket chain contains a cycle"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			memory, info, raw := allocationFixture(t, count, 1, count)
+			stride := bucketHeaderBytes + programCounterBytes + heapProfileRecordBytes
+			for i := range count {
+				offset := 8 + i*stride + bucketHeaderBytes + programCounterBytes
+				record := raw[offset : offset+heapProfileRecordBytes]
+				clear(record)
+				if i == test.activeIndex {
+					binary.LittleEndian.PutUint64(record, 1)
+					binary.LittleEndian.PutUint64(record[16:], 128)
+					if test.allFreed {
+						binary.LittleEndian.PutUint64(record[8:], 1)
+						binary.LittleEndian.PutUint64(record[24:], 128)
+					}
+				}
+				if test.future {
+					for base := 32; base < heapProfileRecordBytes; base += 32 {
+						binary.LittleEndian.PutUint64(record[base:], 100)
+						binary.LittleEndian.PutUint64(record[base+16:], 12800)
+					}
+				}
+			}
+			if test.cycle {
+				binary.LittleEndian.PutUint64(raw[8+(count-1)*stride+8:], info.mbucketsHead)
+			}
+			result, err := (&processReader{memory: *memory, runtime: info}).scanHeapProfile(t.Context(), 1)
+			if err != nil || result == nil {
+				t.Fatalf("scan = %+v, %v", result, err)
+			}
+			if result.status != test.status || result.reason != test.reason ||
+				len(result.allocations) != test.entries || result.hasOmittedAllocations {
+				t.Fatalf("scan = %+v, want status=%s reason=%q entries=%d without truncation",
+					result, test.status, test.reason, test.entries)
+			}
+			if test.entries != 0 {
+				entry := result.allocations[0]
+				if entry.inuseObjects != 1 || entry.inuseBytes != 128 ||
+					binary.LittleEndian.Uint64([]byte(entry.key)) != uint64(test.activeIndex+1) {
+					t.Fatalf("published allocation = %+v, want 1 object and 128 bytes from bucket %d", entry, test.activeIndex)
+				}
+			}
+		})
+	}
+}
+
 func TestScanHeapProfileKeyBudget(t *testing.T) {
 	const depth = 1024
 	const retained = maxAggregateKeyBytes / (depth * programCounterBytes)

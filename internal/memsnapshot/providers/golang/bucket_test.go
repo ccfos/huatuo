@@ -293,9 +293,15 @@ func TestBucketBatchReuse(t *testing.T) {
 			binary.LittleEndian.PutUint64(record, 1)
 			binary.LittleEndian.PutUint64(record[16:], 128)
 		}
+		// Unpublished allocations must not trigger stack reads or survive reuse.
+		binary.LittleEndian.PutUint64(record[32:], 10)
+		binary.LittleEndian.PutUint64(record[48:], 1280)
 		err := workspace.readRuntimeLayoutSamples(t.Context(), memory, info.layout)
 		if err != nil || (len(batch[0].stack) != 0) != live {
 			t.Fatalf("live=%v stack=%d err=%v", live, len(batch[0].stack), err)
+		}
+		if workspace.hasPublishedCounters != live {
+			t.Fatalf("published=%v, want %v", workspace.hasPublishedCounters, live)
 		}
 		if i == 0 && workspace.stackStorage != nil {
 			t.Fatal("allocated stack storage for an inactive sample")

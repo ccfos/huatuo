@@ -129,44 +129,39 @@ func TestRuntimeLayoutDecodeCounters(t *testing.T) {
 			name           string
 			cycles         [][4]uint64 // alloc objects, free objects, alloc bytes, free bytes
 			objects, bytes uint64
+			published      bool
 		}{
 			{name: "zero"},
-			{name: "in use", cycles: [][4]uint64{{8, 3, 800, 300}}, objects: 5, bytes: 500},
-			{name: "all freed", cycles: [][4]uint64{{8, 8, 800, 800}}},
-			{name: "object underflow", cycles: [][4]uint64{{2, 3, 800, 300}}, bytes: 500},
-			{name: "byte underflow", cycles: [][4]uint64{{8, 3, 200, 300}}, objects: 5},
+			{name: "in use", cycles: [][4]uint64{{8, 3, 800, 300}}, objects: 5, bytes: 500, published: true},
+			{name: "all freed", cycles: [][4]uint64{{8, 8, 800, 800}}, published: true},
+			{name: "object underflow", cycles: [][4]uint64{{2, 3, 800, 300}}, bytes: 500, published: true},
+			{name: "byte underflow", cycles: [][4]uint64{{8, 3, 200, 300}}, objects: 5, published: true},
+			{name: "only free counters", cycles: [][4]uint64{{0, 3, 0, 300}}, published: true},
+			{name: "only byte counters", cycles: [][4]uint64{{0, 0, 128, 0}}, bytes: 128, published: true},
 			{
-				name: "different cycles",
+				name: "future counters ignored",
 				cycles: [][4]uint64{
-					{8, 0, 800, 0}, {0, 3, 0, 300}, {4, 1, 640, 128}, {0, 2, 0, 256},
+					{8, 3, 800, 300}, {0, 3, 0, 300}, {4, 1, 640, 128}, {math.MaxUint64, 2, math.MaxUint64, 256},
 				},
-				objects: 6, bytes: 756,
+				objects: 5, bytes: 500, published: true,
 			},
 			{
 				name:    "large counters",
 				cycles:  [][4]uint64{{math.MaxUint64, math.MaxUint64 - 1, math.MaxUint64 - 1, math.MaxUint64 - 2}},
-				objects: 1, bytes: 1,
+				objects: 1, bytes: 1, published: true,
 			},
 			{
-				name: "allocation overflow",
+				name: "future only",
 				cycles: [][4]uint64{
-					{math.MaxUint64 - 1, 1, math.MaxUint64 - 2, 2}, {4, 1, 8, 3},
+					{}, {5, 1, 640, 128}, {2, 1, 256, 128}, {1, 0, 128, 0},
 				},
 			},
 			{
-				name: "free overflow",
+				name: "all freed with future allocations",
 				cycles: [][4]uint64{
-					{math.MaxUint64 - 1, math.MaxUint64 - 1, math.MaxUint64 - 2, math.MaxUint64 - 2},
-					{0, 4, 0, 8},
+					{8, 8, 800, 800}, {4, 0, 640, 0},
 				},
-				objects: math.MaxUint64 - 3, bytes: math.MaxUint64 - 7,
-			},
-			{
-				name: "all counters overflow",
-				cycles: [][4]uint64{
-					{math.MaxUint64, math.MaxUint64, math.MaxUint64, math.MaxUint64}, {5, 2, 10, 3},
-				},
-				objects: 3, bytes: 7,
+				published: true,
 			},
 		} {
 			t.Run(fmt.Sprintf("%s/%s", order, test.name), func(t *testing.T) {
@@ -177,9 +172,10 @@ func TestRuntimeLayoutDecodeCounters(t *testing.T) {
 					}
 				}
 				layout := runtimeLayout{byteOrder: order}
-				objects, bytes := layout.decodeCounters(&raw)
-				if objects != test.objects || bytes != test.bytes {
-					t.Fatalf("in-use: %d objects, %d bytes; want %d objects, %d bytes", objects, bytes, test.objects, test.bytes)
+				objects, bytes, published := layout.decodeCounters(&raw)
+				if objects != test.objects || bytes != test.bytes || published != test.published {
+					t.Fatalf("active: %d objects, %d bytes, published=%v; want %d objects, %d bytes, published=%v",
+						objects, bytes, published, test.objects, test.bytes, test.published)
 				}
 			})
 		}

@@ -35,15 +35,23 @@ import (
 
 func TestSnapshotLiveGoProcess(t *testing.T) {
 	for _, mode := range []string{"exe", "pie"} {
-		for _, sampleRate := range []int{0, 1} {
-			t.Run(mode+"/rate="+strconv.Itoa(sampleRate), func(t *testing.T) {
-				snapshotLiveGoProcess(t, mode, sampleRate)
+		for _, test := range []struct {
+			name       string
+			sampleRate int
+			gcCycles   int
+		}{
+			{name: "disabled", sampleRate: 0, gcCycles: 2},
+			{name: "published", sampleRate: 1, gcCycles: 2},
+			{name: "unpublished", sampleRate: 1, gcCycles: 0},
+		} {
+			t.Run(mode+"/"+test.name, func(t *testing.T) {
+				snapshotLiveGoProcess(t, mode, test.sampleRate, test.gcCycles)
 			})
 		}
 	}
 }
 
-func snapshotLiveGoProcess(t *testing.T, mode string, sampleRate int) {
+func snapshotLiveGoProcess(t *testing.T, mode string, sampleRate, gcCycles int) {
 	t.Helper()
 	directory := t.TempDir()
 	source := filepath.Join(directory, "heap.go")
@@ -61,6 +69,8 @@ import (
 func main() {
     rate, err := strconv.Atoi(os.Args[1])
     if err != nil { panic(err) }
+    gcCycles, err := strconv.Atoi(os.Args[2])
+    if err != nil { panic(err) }
     // Rate 1 makes the enabled case deterministic; rate 0 disables profiling.
     runtime.MemProfileRate = rate
     payloads := make([][]byte, 8)
@@ -68,8 +78,9 @@ func main() {
         payloads[i] = make([]byte, 128<<10)
         payloads[i][0] = byte(i)
     }
-    runtime.GC()
-    runtime.GC()
+    for i := 0; i < gcCycles; i++ {
+        runtime.GC()
+    }
     fmt.Println("ready")
     time.Sleep(time.Minute)
     runtime.KeepAlive(payloads)
@@ -87,7 +98,9 @@ func main() {
 
 	fixtureCtx, stopFixture := context.WithTimeout(t.Context(), time.Minute)
 	defer stopFixture()
-	command := exec.CommandContext(fixtureCtx, executable, strconv.Itoa(sampleRate))
+	command := exec.CommandContext(fixtureCtx, executable, strconv.Itoa(sampleRate), strconv.Itoa(gcCycles))
+	// Only explicit collections may publish the fixture's heap profile.
+	command.Env = append(os.Environ(), "GOGC=off", "GOMEMLIMIT=off")
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +142,12 @@ func main() {
 			snapshot.StatusReason != "Go heap profiling is disabled by MemProfileRate=0" ||
 			len(snapshot.Entries) != 0 || snapshot.OutputTruncated {
 			t.Fatalf("disabled Go profiling snapshot = %+v", snapshot)
+		}
+	} else if gcCycles == 0 {
+		if snapshot.Status != memsnapshot.SnapshotStatusUnavailable ||
+			snapshot.StatusReason != "Go heap profile has no published statistics" ||
+			len(snapshot.Entries) != 0 || snapshot.OutputTruncated {
+			t.Fatalf("unpublished Go heap profile snapshot = %+v", snapshot)
 		}
 	} else {
 		if snapshot.Status != memsnapshot.SnapshotStatusComplete && snapshot.Status != memsnapshot.SnapshotStatusPartial {
