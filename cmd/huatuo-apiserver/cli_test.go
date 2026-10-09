@@ -16,6 +16,8 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -88,6 +90,93 @@ StoreDSN = "state/jobs.db"
 	if got := opts.Config.Jobs.StoreDSN; got != want {
 		t.Fatalf("StoreDSN = %q, want %q", got, want)
 	}
+}
+
+func TestConfigureRuntimeAnchorsRelativeSQLiteURI(t *testing.T) {
+	configDir := t.TempDir()
+	tests := []struct {
+		name      string
+		dsn       string
+		wantFile  string
+		wantQuery string
+	}{
+		{
+			name:      "relative file with query",
+			dsn:       "file:jobs.db?mode=rwc",
+			wantFile:  filepath.Join(configDir, "jobs.db"),
+			wantQuery: "mode=rwc",
+		},
+		{
+			name:      "relative path with query",
+			dsn:       "file:state/jobs.db?mode=rwc&cache=shared",
+			wantFile:  filepath.Join(configDir, "state/jobs.db"),
+			wantQuery: "mode=rwc&cache=shared",
+		},
+		{
+			name:      "escaped filename",
+			dsn:       "file:state/job%20store.db?mode=rwc",
+			wantFile:  filepath.Join(configDir, "state/job store.db"),
+			wantQuery: "mode=rwc",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := configureRuntimeWithJobDSN(t, configDir, tt.dsn)
+			got, err := url.Parse(opts.Config.Jobs.StoreDSN)
+			if err != nil {
+				t.Fatalf("url.Parse() error = %v", err)
+			}
+			if got.Scheme != "file" || got.Path != filepath.ToSlash(tt.wantFile) ||
+				got.RawQuery != tt.wantQuery {
+				t.Fatalf("StoreDSN = %q, want file path %q and query %q",
+					opts.Config.Jobs.StoreDSN, tt.wantFile, tt.wantQuery)
+			}
+		})
+	}
+}
+
+func TestConfigureRuntimePreservesSpecialSQLiteURIs(t *testing.T) {
+	configDir := t.TempDir()
+	for _, dsn := range []string{
+		"file:/var/lib/jobs.db?mode=ro",
+		"file:///var/lib/jobs.db?mode=ro",
+		"file::memory:?cache=shared",
+		"file:?cache=shared",
+		"file:?mode=memory&cache=shared",
+		"file:jobs.db?mode=memory&cache=shared",
+	} {
+		t.Run(dsn, func(t *testing.T) {
+			opts := configureRuntimeWithJobDSN(t, configDir, dsn)
+			if got := opts.Config.Jobs.StoreDSN; got != dsn {
+				t.Fatalf("StoreDSN = %q, want %q", got, dsn)
+			}
+		})
+	}
+}
+
+func configureRuntimeWithJobDSN(t *testing.T, configDir, dsn string) *Options {
+	t.Helper()
+	configFile := "apiserver.conf"
+	contents := fmt.Sprintf(`
+[[Auth.Users]]
+ID = "test-user"
+BearerToken = "test-token"
+Admin = true
+
+[Agent.Auth]
+BearerToken = "node-token"
+
+[Jobs]
+StoreDSN = %q
+`, dsn)
+	if err := os.WriteFile(filepath.Join(configDir, configFile), []byte(contents), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+	opts := &Options{ConfigDir: configDir, ConfigFile: configFile}
+	if err := configureRuntime(opts); err != nil {
+		t.Fatalf("configureRuntime() error = %v", err)
+	}
+	return opts
 }
 
 func TestConfigureRuntimeLogDebugOverridesConfigLevel(t *testing.T) {
