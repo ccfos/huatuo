@@ -18,6 +18,11 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 /* Linux UAPI errno-base.h; libc headers are unsuitable for the BPF target. */
 #define E2BIG 7
 
+#ifndef bpf_core_field_offset
+#define bpf_core_field_offset(field) \
+	__builtin_preserve_field_info(field, BPF_FIELD_BYTE_OFFSET)
+#endif
+
 volatile const u32 FILTER_DEV_IDS[FILTER_DEV_MAX] = {};
 volatile const u32 FILTER_DEV_COUNT = 0;
 volatile const u64 FILTER_EVENT_TIMEOUT = 100000000;
@@ -335,15 +340,51 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 	struct io_key key = {};
 	struct iov_iter *from;
 	size_t count;
+	u32 io_flags = 0;
+	u64 inode_number = 0;
 
-	file	  = BPF_CORE_READ(iocb, ki_filp);
+	/* Batch only when the target layout matches the snapshot's field spacing. */
+	bool bulk_iocb = bpf_core_field_offset(iocb->ki_flags) -
+		bpf_core_field_offset(iocb->ki_filp) == 32;
+
+	if (bulk_iocb) {
+		struct {
+			struct file *file;
+			u64 skipped[3];
+			u32 flags;
+		} __attribute__((packed)) snapshot;
+
+		BPF_CORE_READ_INTO(&snapshot, iocb, ki_filp);
+		file = snapshot.file;
+		io_flags = snapshot.flags;
+	} else {
+		file = BPF_CORE_READ(iocb, ki_filp);
+	}
 	inode	  = BPF_CORE_READ(file, f_inode);
-	key.dev	  = BPF_CORE_READ(inode, i_sb, s_dev);
+
+	bool bulk_inode = bpf_core_field_offset(inode->i_ino) -
+		bpf_core_field_offset(inode->i_sb) == 24;
+
+	if (bulk_inode) {
+		struct {
+			struct super_block *sb;
+			u64 skipped[2];
+			u64 ino;
+		} snapshot;
+		struct super_block *sb;
+
+		BPF_CORE_READ_INTO(&snapshot, inode, i_sb);
+		sb = snapshot.sb;
+		key.dev = BPF_CORE_READ(sb, s_dev);
+		inode_number = snapshot.ino;
+	} else {
+		key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	}
 
 	if (!should_process_device(key.dev))
 		return 0;
 
-	key.inode = BPF_CORE_READ(inode, i_ino);
+	key.inode = bulk_inode ? inode_number : BPF_CORE_READ(inode, i_ino);
 	entry = get_file_io_entry(&key, file);
 	if (!entry)
 		return 0;
@@ -356,7 +397,7 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 	else
 		entry->fs_read_bytes += count;
 
-	entry->flag = BPF_CORE_READ(iocb, ki_flags);
+	entry->flag = bulk_iocb ? io_flags : BPF_CORE_READ(iocb, ki_flags);
 
 	return 0;
 }
