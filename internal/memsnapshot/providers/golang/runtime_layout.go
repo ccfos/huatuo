@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	versionpkg "go/version"
-	"math"
 )
 
 // Heap profile layout contract (64-bit Go 1.18 through Go 1.26).
@@ -152,8 +151,9 @@ func newRuntimeLayout(goVersion string, class elf.Class, order binary.ByteOrder)
 	return runtimeLayout{byteOrder: order, maxStackDepth: depth}, nil
 }
 
-// decodeBucketHeader validates remote bytes and the entire record range before the
-// scanner can schedule reads. The caller must first read the complete header.
+// decodeBucketHeader requires a complete header read from addr. On supported
+// Linux targets, a readable user address plus the bounded bucket size cannot
+// overflow uint64.
 func (l runtimeLayout) decodeBucketHeader(addr uint64, header *bucketHeader) (bucketDescriptor, error) {
 	if typ := l.byteOrder.Uint64(header.raw[16:24]); typ != 1 {
 		return bucketDescriptor{}, fmt.Errorf("mbucket profile type %d is not memory profile type 1", typ)
@@ -162,11 +162,7 @@ func (l runtimeLayout) decodeBucketHeader(addr uint64, header *bucketHeader) (bu
 	if depth > l.maxStackDepth {
 		return bucketDescriptor{}, fmt.Errorf("mbucket stack depth %d exceeds limit %d", depth, l.maxStackDepth)
 	}
-	// Depth is bounded above, so the remaining risk is the remote base address.
-	lastOffset := uint64(bucketHeaderBytes) + depth*programCounterBytes + heapProfileRecordBytes - 1
-	if addr > math.MaxUint64-lastOffset {
-		return bucketDescriptor{}, fmt.Errorf("mbucket stack or record range overflows address space")
-	}
+
 	stackAddr := addr + bucketHeaderBytes
 	return bucketDescriptor{
 		nextAddr:   l.byteOrder.Uint64(header.raw[8:16]),

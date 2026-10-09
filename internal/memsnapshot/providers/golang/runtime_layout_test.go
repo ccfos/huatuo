@@ -109,17 +109,6 @@ func TestRuntimeLayoutDecodeBucketHeader(t *testing.T) {
 				t.Fatalf("accepted type %d", typ)
 			}
 		}
-		order.PutUint64(header.raw[16:24], 1)
-		order.PutUint64(header.raw[40:48], 1)
-		lastOffset := uint64(bucketHeaderBytes + programCounterBytes + heapProfileRecordBytes - 1)
-		addr := uint64(math.MaxUint64) - lastOffset
-		got, err := layout.decodeBucketHeader(addr, &header)
-		if err != nil || got.nextAddr != 0 || got.recordAddr+heapProfileRecordBytes-1 != math.MaxUint64 {
-			t.Fatalf("last byte boundary: %+v %v", got, err)
-		}
-		if _, err := layout.decodeBucketHeader(addr+1, &header); err == nil {
-			t.Fatal("accepted record-end overflow")
-		}
 	}
 }
 

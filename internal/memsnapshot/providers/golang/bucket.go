@@ -69,19 +69,14 @@ func (batch *bucketBatch) readRuntimeLayoutSamples(ctx context.Context,
 		return err
 	}
 	err := batch.readMemRecords(memory, layout)
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
-	}
 	if err != nil {
 		return err
 	}
-
-	err = batch.readStackPCs(memory)
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
-	return err
+	return batch.readStackPCs(memory)
 }
 
 func (batch *bucketBatch) readMemRecords(memory *processMemory, layout runtimeLayout) error {

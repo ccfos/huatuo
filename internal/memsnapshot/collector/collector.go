@@ -61,9 +61,6 @@ func Snapshot(ctx context.Context, process memsnapshot.ProcessInstanceID,
 	if err != nil {
 		return nil, fmt.Errorf("detect process runtime: %w", err)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 
 	snapshotCtx, cancelSnapshot := context.WithTimeout(ctx, options.SnapshotTimeout)
 	snapshot := snapshotProvider(snapshotCtx, newProvider(language), process, options.MaxMemoryObjectEntries)

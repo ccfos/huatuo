@@ -1452,7 +1452,7 @@ have all been freed can still produce `complete` with empty entries. An
 interrupted scan preserves `partial` and its reason rather than treating
 unobserved data as unpublished.
 
-Go aggregates complete stack keys up to 32 frames for Go 1.18–1.22 and 1024 frames for Go 1.23–1.26; the shared output limit may shorten displayed stacks to 64 frames and sets `output_truncated`. An invalid bucket type, an overflowing stack or record address range, an excessive stack depth, or a cyclic bucket chain stops the scan with `partial`; repeated buckets are never counted twice.
+Go aggregates complete stack keys up to 32 frames for Go 1.18–1.22 and 1024 frames for Go 1.23–1.26; the shared output limit may shorten displayed stacks to 64 frames and sets `output_truncated`. An invalid bucket type, an excessive stack depth, or a cyclic bucket chain stops the scan with `partial`; repeated buckets are never counted twice.
 
 Once a scan becomes partial, it stops traversing further buckets and selects at most `MaxMemoryObjectEntries` entries by descending byte count from the valid samples retained from earlier batches and the current batch, within the aggregation budget. The `status_reason` records only the first cause; finishing the current batch does not append further causes.
 
