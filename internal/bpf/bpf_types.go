@@ -29,6 +29,7 @@ var (
 
 type Option struct {
 	KeepaliveTimeout int
+	Mock             bool
 }
 
 // AttachOption is an option for attaching a program.

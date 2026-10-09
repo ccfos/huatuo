@@ -21,24 +21,33 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
-func TestOptionsFromContextEnablesCgroup(t *testing.T) {
-	app := cli.NewApp()
-	opts := &Options{}
-	opts.AddFlags(app)
-	flags := flag.NewFlagSet("test", flag.ContinueOnError)
-	for _, cliFlag := range app.Flags {
-		if err := cliFlag.Apply(flags); err != nil {
-			t.Fatalf("apply flag: %v", err)
+func TestOptionsFromContext(t *testing.T) {
+	for _, mock := range []bool{false, true} {
+		app := cli.NewApp()
+		opts := &Options{}
+		opts.AddFlags(app)
+		flags := flag.NewFlagSet("test", flag.ContinueOnError)
+		for _, cliFlag := range app.Flags {
+			if err := cliFlag.Apply(flags); err != nil {
+				t.Fatalf("apply flag: %v", err)
+			}
 		}
-	}
-	if err := flags.Parse([]string{"--region", "test", "--enable-cgroup"}); err != nil {
-		t.Fatalf("parse flags: %v", err)
-	}
+		args := []string{"--region", "test", "--enable-cgroup"}
+		if mock {
+			args = append(args, "--bpf-mock")
+		}
+		if err := flags.Parse(args); err != nil {
+			t.Fatalf("parse flags: %v", err)
+		}
 
-	if err := opts.FromContext(cli.NewContext(app, flags, nil)); err != nil {
-		t.Fatalf("FromContext() error = %v", err)
-	}
-	if !opts.EnableCgroup {
-		t.Fatal("EnableCgroup = false, want true")
+		if err := opts.FromContext(cli.NewContext(app, flags, nil)); err != nil {
+			t.Fatalf("FromContext() error = %v", err)
+		}
+		if opts.BPFMock != mock {
+			t.Fatalf("BPFMock = %t, want %t", opts.BPFMock, mock)
+		}
+		if !opts.EnableCgroup {
+			t.Fatal("EnableCgroup = false, want true")
+		}
 	}
 }

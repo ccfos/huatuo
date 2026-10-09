@@ -27,6 +27,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ccfos/huatuo/internal/log"
 
@@ -37,16 +38,25 @@ import (
 
 var DefaultObjDir = "bpf"
 
+var mockMode atomic.Bool
+
 // Init initializes package-level BPF resources.
-func Init(_ *Option) error {
-	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
+func Init(option *Option) error {
+	if err := unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
 		Cur: unix.RLIM_INFINITY,
 		Max: unix.RLIM_INFINITY,
-	})
+	}); err != nil {
+		return err
+	}
+
+	mockMode.Store(option != nil && option.Mock)
+	return nil
 }
 
 // Shutdown releases package-level BPF resources.
-func Shutdown() {}
+func Shutdown() {
+	mockMode.Store(false)
+}
 
 type loadedMap struct {
 	name   string
@@ -73,6 +83,7 @@ type defaultBPF struct {
 	programsByID     map[uint32]*loadedProgram
 	mapIDsByName     map[string]uint32
 	programIDsByName map[string]uint32
+	mock             bool
 	perfEvent        *perfEventAttach
 	isClosed         bool
 }
@@ -143,6 +154,7 @@ func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 		name:         bpfName,
 		mapsByID:     make(map[uint32]loadedMap),
 		programsByID: make(map[uint32]*loadedProgram),
+		mock:         mockMode.Load(),
 	}
 
 	// maps
