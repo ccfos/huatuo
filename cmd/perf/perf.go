@@ -49,6 +49,10 @@ func mainAction(ctx *cli.Context) error {
 	bpfPath := ctx.String("bpf-path")
 	optPid := ctx.Uint64("pid")
 	optDuration := ctx.Int("duration")
+	duration, err := validatePerfDuration(optDuration)
+	if err != nil {
+		return err
+	}
 
 	var targetCssAddr uint64
 	if containerID := ctx.String("container-id"); containerID != "" {
@@ -104,7 +108,7 @@ func mainAction(ctx *cli.Context) error {
 	signal.Notify(signalWait, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
 
 	select {
-	case <-time.After(time.Duration(optDuration) * time.Second):
+	case <-time.After(duration):
 	case <-ctx.Done():
 		return fmt.Errorf("caller requests stop")
 	case sig := <-signalWait:
@@ -123,6 +127,17 @@ func mainAction(ctx *cli.Context) error {
 	}
 
 	return nil
+}
+
+func validatePerfDuration(seconds int) (time.Duration, error) {
+	const maxSeconds = int64(time.Duration(1<<63-1) / time.Second)
+	if seconds <= 0 {
+		return 0, fmt.Errorf("duration must be greater than zero seconds")
+	}
+	if int64(seconds) > maxSeconds {
+		return 0, fmt.Errorf("duration exceeds maximum of %d seconds", maxSeconds)
+	}
+	return time.Duration(seconds) * time.Second, nil
 }
 
 func main() {
