@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 
 	"github.com/cilium/ebpf"
 
@@ -53,11 +54,18 @@ func ReadUint64(b bpf.BPF, mapID, idx uint32) (uint64, error) {
 		return 0, err
 	}
 
-	if len(val) < 8 {
-		return 0, nil
+	value, err := decodeUint64MapValue(val)
+	if err != nil {
+		return 0, fmt.Errorf("read uint64 map %d index %d: %w", mapID, idx, err)
 	}
+	return value, nil
+}
 
-	return binary.LittleEndian.Uint64(val), nil
+func decodeUint64MapValue(value []byte) (uint64, error) {
+	if len(value) != 8 {
+		return 0, fmt.Errorf("value has %d bytes, want 8", len(value))
+	}
+	return binary.LittleEndian.Uint64(value), nil
 }
 
 // WriteUint64 stores a uint64 value at a uint32-indexed cell in a BPF map.
