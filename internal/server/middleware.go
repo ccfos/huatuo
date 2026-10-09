@@ -63,7 +63,7 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 			wrapHandler(NewAuthMiddleware(authService, publicPaths, adminPaths)),
 		)
 	}
-	if cfg.RateLimit != nil {
+	if cfg.RateLimit != nil && cfg.RateLimit.RequestsPerSecond > 0 && cfg.RateLimit.Burst > 0 {
 		chain = append(chain, newRateLimitMiddleware(
 			rate.Limit(cfg.RateLimit.RequestsPerSecond),
 			cfg.RateLimit.Burst,
