@@ -1197,6 +1197,26 @@ huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
 |disk_iowait_percent|CPU time spent waiting for I/O during the collection interval|percent|Host|host, region|
 
 
+### XFS Filesystem Statistics
+
+`xfs` collects per-device statistics from sysfs. Metrics use the
+`huatuo_bamai_xfs_` prefix and `device`, `host`, `region` labels.
+`log_free_bytes` is a gauge; `_total` metrics are cumulative counters.
+
+|Metric suffix|Description|Unit|
+|---|---|---|
+|log_free_bytes|Available log space|bytes|
+|log_space_sleep_total|Cumulative waits for log space|count|
+|alloc_blocks_total|Cumulative allocated blocks|blocks|
+|alloc_extents_total|Cumulative allocated extents|count|
+|inode_attempts_total|Cumulative inode cache requests|count|
+|inode_missed_total|Cumulative inode cache misses|count|
+|buf_busy_locked_total|Cumulative busy-locked buffer events|count|
+|buf_locked_waited_total|Cumulative waits for buffer locks|count|
+
+`log_free_bytes` is omitted when log-space information is unavailable.
+Restart the daemon after adding XFS mounts.
+
 ## General System
 
 ### Soft Lockup

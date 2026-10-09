@@ -1277,6 +1277,24 @@ huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
 |disk_iowait_percent|采集区间内 CPU 等待 I/O 完成的时间占比|百分比|宿主|host, region|
 
 
+### XFS 文件系统统计
+
+`xfs` 从 sysfs 采集每设备统计，指标前缀为 `huatuo_bamai_xfs_`，标签为
+`device`、`host`、`region`。`log_free_bytes` 为 Gauge，`_total` 为累积 Counter。
+
+|指标后缀|意义|单位|
+|---|---|---|
+|log_free_bytes|log 剩余可用空间|字节|
+|log_space_sleep_total|等待 log 空间的累计次数|计数|
+|alloc_blocks_total|累计分配 block 数|块|
+|alloc_extents_total|累计分配 extent 数|计数|
+|inode_attempts_total|inode cache 累计请求数|计数|
+|inode_missed_total|inode cache 累计 miss 数|计数|
+|buf_busy_locked_total|buffer busy-locked 累计次数|计数|
+|buf_locked_waited_total|等待 buffer 锁的累计次数|计数|
+
+无法获取 log 可用空间时不输出 `log_free_bytes`。新增 XFS 挂载后需重启 daemon。
+
 ## 通用系统
 
 ### Soft Lockup
