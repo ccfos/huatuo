@@ -29,19 +29,19 @@ func TestRegisterCollector(t *testing.T) {
 		{
 			name:      "register with huatuo namespace",
 			namespace: "huatuo",
-			expected:  []string{"huatuo_go_goroutines", "huatuo_process_start_time_seconds"},
+			expected:  []string{"huatuo_build_info", "huatuo_go_goroutines", "huatuo_process_start_time_seconds"},
 		},
 		{
 			name:      "register with null namespace",
 			namespace: "",
-			expected:  []string{"go_goroutines", "process_start_time_seconds"},
+			expected:  []string{"build_info", "go_goroutines", "process_start_time_seconds"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := prometheus.NewRegistry()
-			RegisterCollector(reg, tt.namespace)
+			RegisterCollector(reg, tt.namespace, "v1.2.3")
 			families, err := reg.Gather()
 			if err != nil {
 				t.Fatalf("Gather() returned error: %v", err)
@@ -61,7 +61,7 @@ func TestRegisterCollector(t *testing.T) {
 
 func TestRegisterCollectorProcessMetrics(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	RegisterCollector(reg, "huatuo")
+	RegisterCollector(reg, "huatuo", "v1.2.3")
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -90,7 +90,7 @@ func TestRegisterCollectorProcessMetrics(t *testing.T) {
 
 func TestRegisterCollectorGoMetrics(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	RegisterCollector(reg, "huatuo")
+	RegisterCollector(reg, "huatuo", "v1.2.3")
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -117,9 +117,45 @@ func TestRegisterCollectorGoMetrics(t *testing.T) {
 	}
 }
 
+func TestRegisterCollectorBuildInfo(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	RegisterCollector(reg, "huatuo", "v1.2.3")
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather() returned error: %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != "huatuo_build_info" {
+			continue
+		}
+		metrics := family.GetMetric()
+		if len(metrics) != 1 {
+			t.Fatalf("huatuo_build_info samples = %d, want 1", len(metrics))
+		}
+		if value := metrics[0].GetGauge().GetValue(); value != 1 {
+			t.Fatalf("huatuo_build_info = %v, want 1", value)
+		}
+		labels := make(map[string]string)
+		for _, label := range metrics[0].GetLabel() {
+			labels[label.GetName()] = label.GetValue()
+		}
+		if labels["version"] != "v1.2.3" {
+			t.Fatalf("huatuo_build_info version label = %q, want %q", labels["version"], "v1.2.3")
+		}
+		for _, expected := range []string{"host", "region"} {
+			if _, ok := labels[expected]; !ok {
+				t.Errorf("huatuo_build_info labels = %v, want a %q label", labels, expected)
+			}
+		}
+		return
+	}
+	t.Fatal("huatuo_build_info metric not found")
+}
+
 func TestRegisterCollectorNoDuplicate(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	RegisterCollector(reg, "test")
+	RegisterCollector(reg, "test", "v1.2.3")
 
 	families, err := reg.Gather()
 	if err != nil {
