@@ -907,6 +907,8 @@ This section captures key kernel events and latency, including scheduler tick in
 
   Default: 115ms.
 
+All three latency thresholds must be positive milliseconds and fit in a `uint64` nanosecond value.
+
 - **ExcludedContainerQos**: Container QoS levels to exclude (blacklist).
 
   Default: []. Corresponds to Kubernetes Pod QoS levels (Guaranteed, Burstable, BestEffort).
