@@ -185,6 +185,34 @@ func TestConfigValidation(t *testing.T) {
 			},
 			wantErr: "must use http or https",
 		},
+		{
+			name: "dashboard query",
+			mutate: func(config *Config) {
+				config.Profiling.DashboardBaseURL = "https://grafana.example/d?orgId=2"
+			},
+			wantErr: "must not include a query or fragment",
+		},
+		{
+			name: "dashboard empty query",
+			mutate: func(config *Config) {
+				config.Profiling.DashboardBaseURL = "https://grafana.example/d?"
+			},
+			wantErr: "must not include a query or fragment",
+		},
+		{
+			name: "dashboard fragment",
+			mutate: func(config *Config) {
+				config.Profiling.DashboardBaseURL = "https://grafana.example/d#panel=1"
+			},
+			wantErr: "must not include a query or fragment",
+		},
+		{
+			name: "dashboard empty fragment",
+			mutate: func(config *Config) {
+				config.Profiling.DashboardBaseURL = "https://grafana.example/d#"
+			},
+			wantErr: "must not include a query or fragment",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
