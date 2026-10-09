@@ -34,8 +34,6 @@ var (
 	ErrAlreadyExists = errors.New("storage: already exists")
 	ErrConflict      = errors.New("storage: conflict")
 
-	// ErrNegativePagination is returned when Limit or Offset is negative.
-	ErrNegativePagination = fmt.Errorf("%w: limit and offset must be non-negative", ErrInvalidQuery)
 	// ErrNegativeSize is returned when a Terms size is negative.
 	ErrNegativeSize = fmt.Errorf("%w: size must be non-negative", ErrInvalidQuery)
 	// ErrInRequiresSlice is returned when an OpIn filter value is not a slice or array.
@@ -66,7 +64,7 @@ type Op string
 const (
 	// OpEq matches values equal to the filter value.
 	OpEq Op = "eq"
-	// OpNe matches values not equal to the filter value.
+	// OpNe matches existing non-null values not equal to the filter value.
 	OpNe Op = "ne"
 	// OpGt matches values greater than the filter value.
 	OpGt Op = "gt"
@@ -78,9 +76,17 @@ const (
 	OpLte Op = "lte"
 	// OpIn matches values contained in the filter value.
 	OpIn Op = "in"
+	// OpExists matches fields with a non-null queryable value, including empty strings.
+	OpExists Op = "exists"
+	// OpNotExists matches fields without a non-null queryable value.
+	OpNotExists Op = "not_exists"
 )
 
-// Filter describes one field predicate in a query.
+// Filter describes one field predicate in a query. Comparisons accept non-null
+// scalar values; OpIn accepts a non-empty slice or array of scalars. Existence
+// operators require a nil Value. Empty strings are literal values, not absence.
+// Elasticsearch callers must select fields mapped for exact comparisons,
+// such as keyword fields; the backend does not resolve text subfields.
 type Filter struct {
 	Field string
 	Op    Op
@@ -93,12 +99,28 @@ type Sort struct {
 	Desc  bool
 }
 
-// Query describes filters, ordering, and pagination.
+// DefaultBatchSize bounds a query's working set without limiting its total results.
+const DefaultBatchSize = 100
+
+// Query describes record selection. For record reads, Limit must be positive;
+// Offset is applied before Limit and BatchSize zero selects DefaultBatchSize.
+// storage.Store.Query validates these constraints before calling a backend.
+// Count and Values use only Filters and ignore Sorts, Limit, Offset, and BatchSize.
 type Query struct {
-	Filters []Filter
-	Sorts   []Sort
-	Limit   int
-	Offset  int
+	Filters   []Filter
+	Sorts     []Sort
+	Limit     int
+	BatchSize int
+	Offset    int
+}
+
+// ReadSize returns the effective batch size for this bounded query.
+func (q Query) ReadSize() int {
+	size := q.BatchSize
+	if size == 0 {
+		size = DefaultBatchSize
+	}
+	return min(size, q.Limit)
 }
 
 // DeleteQuery selects records for synchronous bulk deletion. Limit zero
@@ -161,8 +183,15 @@ type Backend interface {
 	Get(ctx context.Context, id string) (Record, error)
 	Delete(ctx context.Context, id string) error
 	DeleteByQuery(ctx context.Context, query DeleteQuery) (int64, error)
-	Query(ctx context.Context, q Query) ([]Record, error)
+	// Query receives pagination and a non-nil consumer validated by storage.Store.
+	// It calls consume synchronously with nonempty, independently owned batches.
+	// It delivers at most q.Limit records and stops on the first error. Previously
+	// completed callbacks are not rolled back. Consumers must not synchronously
+	// reenter the same backend while it holds a database connection.
+	Query(ctx context.Context, q Query, consume func([]Record) error) error
+	// Count uses only q.Filters and ignores record pagination and sorting.
 	Count(ctx context.Context, q Query) (int64, error)
+	// Values uses only q.Filters; storage.Store validates size before dispatch.
 	Values(ctx context.Context, field string, q Query, size int) ([]string, error)
 	Close(ctx context.Context) error
 }

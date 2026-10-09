@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/storage/driver"
+
 	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
@@ -233,4 +235,37 @@ func jobIDs(jobs []*Job) []string {
 		ids[i] = job.ID
 	}
 	return ids
+}
+
+func TestStorageStoreKeysetAfterStatusChange(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Now()
+	for _, id := range []string{"job-1", "job-2", "job-3"} {
+		if err := store.Create(t.Context(), storedTestJob(id, "owner", "host", StatusPending, now)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	query := &Query{Statuses: []Status{StatusPending}, Sort: storageKeyFieldID, Limit: 2}
+	first, err := store.List(t.Context(), query)
+	if err != nil || len(first) != 2 {
+		t.Fatalf("first batch=%v error=%v", first, err)
+	}
+	for _, job := range first {
+		job.Status = StatusTerminal
+		job.Terminal = &TerminalResult{Outcome: OutcomeCompleted}
+		job.EndedAt = now
+		if _, err := store.Save(t.Context(), job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	query.lastReadID = first[len(first)-1].ID
+	second, err := store.List(t.Context(), query)
+	if err != nil || len(second) != 1 || second[0].ID != "job-3" {
+		t.Fatalf("second batch=%v error=%v, want job-3", second, err)
+	}
+	query.Limit = 0
+	empty, err := store.List(t.Context(), query)
+	if !errors.Is(err, driver.ErrInvalidQuery) || len(empty) != 0 {
+		t.Fatalf("zero limit=%v error=%v", empty, err)
+	}
 }

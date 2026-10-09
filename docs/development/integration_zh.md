@@ -94,6 +94,26 @@ summary: total=5 passed=3 skipped=2 failed=0
 - 显示验证成功的``metrics`` 列表
 ---
 
+### 后台进程清理
+
+`stop_and_wait_by_pid PID [TIMEOUT]` 停止并等待子进程，返回其退出码。
+未传入 PID 或 PID 为空时立即返回成功，调用方可以直接传入已初始化的 PID 变量。
+等待结束后清空变量；尽力清理时使用 `|| true`，退出码属于测试契约时应进行断言。
+
+### 网络命名空间辅助函数
+
+网络测试可以在加载 `lib.sh` 后加载 `integration/lib_namespace.sh`：
+
+- `namespace_setup NAME` 创建一个网络命名空间，通过 `NETNS` 暴露名称。
+  调用方负责启用 `lo` 并配置所需地址。
+- `namespace_setup_with_pair PREFIX SERVER_ADDR CLIENT_ADDR [PREFIX_LENGTH]`
+  创建通过 veth 连接的两个命名空间，配置地址并启用接口，地址前缀长度默认为 24。
+  命名空间、接口和地址通过 `NETNS_SERVER`、`NETNS_CLIENT`、
+  `NETNS_VETH_SERVER`、`NETNS_VETH_CLIENT`、`NETNS_SERVER_ADDR`、
+  `NETNS_CLIENT_ADDR` 暴露。
+- `namespace_cleanup` 删除上述函数创建的命名空间并清空状态，支持重复调用。
+  用例应在 `EXIT` 清理中先停止命名空间内的进程，再调用该函数。
+
 ### 如何新增指标测试
 #### 第一步：新增或更新模拟数据
 如果新增的指标依赖 ``/proc`` 或 ``/sys`` 文件内容，请在以下目录中新增或修改模拟数据：

@@ -222,8 +222,8 @@ func (*profileBackend) DeleteByQuery(context.Context, driver.DeleteQuery) (int64
 	return 0, nil
 }
 
-func (*profileBackend) Query(context.Context, driver.Query) ([]driver.Record, error) {
-	return nil, nil
+func (*profileBackend) Query(context.Context, driver.Query, func([]driver.Record) error) error {
+	return nil
 }
 
 func (*profileBackend) Count(context.Context, driver.Query) (int64, error) { return 0, nil }

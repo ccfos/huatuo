@@ -50,7 +50,7 @@ corr_netem_active=false
 
 remove_netem_loss() {
 	[[ "${corr_netem_active}" == true ]] || return 0
-	tc -n "${TCP_NS_SERVER}" qdisc del dev "${TCP_NS_VETH_SERVER}" root \
+	tc -n "${NETNS_SERVER}" qdisc del dev "${NETNS_VETH_SERVER}" root \
 		2> /dev/null || true
 	corr_netem_active=false
 }
@@ -63,7 +63,7 @@ cleanup() {
 	[[ -z "${corr_client_pid}" ]] \
 		|| stop_by_pid "${corr_client_pid}" 2 || true
 	remove_netem_loss
-	tcp_namespace_cleanup
+	namespace_cleanup
 }
 trap cleanup EXIT
 
@@ -92,15 +92,15 @@ correlated_event_ready() {
 	' "${CORR_OUTPUT}" > "${CORR_MATCHED_EVENT}" 2> /dev/null
 }
 
-tcp_namespace_setup corr "${CORR_SERVER_ADDR}" "${CORR_CLIENT_ADDR}"
+namespace_setup_with_pair corr "${CORR_SERVER_ADDR}" "${CORR_CLIENT_ADDR}"
 
 # Keep data segments separate so netem drops expose stable sequence ranges.
-ip netns exec "${TCP_NS_SERVER}" \
-	ip link set dev "${TCP_NS_VETH_SERVER}" gso_max_segs 1
-ip netns exec "${TCP_NS_CLIENT}" \
-	ethtool -K "${TCP_NS_VETH_CLIENT}" gro off 2> /dev/null || true
+ip netns exec "${NETNS_SERVER}" \
+	ip link set dev "${NETNS_VETH_SERVER}" gso_max_segs 1
+ip netns exec "${NETNS_CLIENT}" \
+	ethtool -K "${NETNS_VETH_CLIENT}" gro off 2> /dev/null || true
 
-tc -n "${TCP_NS_SERVER}" qdisc replace dev "${TCP_NS_VETH_SERVER}" root \
+tc -n "${NETNS_SERVER}" qdisc replace dev "${NETNS_VETH_SERVER}" root \
 	netem loss 2%
 corr_netem_active=true
 
@@ -118,7 +118,7 @@ corr_tcpshark_pid=$!
 sleep 1
 tcpshark_running || fatal "tcpshark exited before the workload started"
 
-ip netns exec "${TCP_NS_SERVER}" timeout 15 python3 \
+ip netns exec "${NETNS_SERVER}" timeout 15 python3 \
 	"${ROOT_DIR}/integration/testdata/tcp_server.py" \
 	--listen-address "${CORR_SERVER_ADDR}" \
 	--port "${CORR_PORT}" \
@@ -127,7 +127,7 @@ ip netns exec "${TCP_NS_SERVER}" timeout 15 python3 \
 corr_server_pid=$!
 sleep 0.5
 
-ip netns exec "${TCP_NS_CLIENT}" timeout 12 bash -c \
+ip netns exec "${NETNS_CLIENT}" timeout 12 bash -c \
 	"exec 3<>/dev/tcp/${CORR_SERVER_ADDR}/${CORR_PORT}; cat <&3 >/dev/null" \
 	> "${CORR_CLIENT_LOG}" 2>&1 &
 corr_client_pid=$!

@@ -45,16 +45,16 @@ cleanup() {
 	[[ -n "${CLI_PID:-}" ]] && kill "${CLI_PID}" 2> /dev/null || true
 	sleep 0.2
 	[[ -n "${TCPSHARK_PID:-}" ]] && kill -9 "${TCPSHARK_PID}" 2> /dev/null || true
-	tcp_namespace_cleanup
+	namespace_cleanup
 	rm -rf "${OUTPUT_DIR}"
 }
 trap cleanup EXIT
 
 log_info "tcp retrans rate limit: rate=${RATE}/s, duration=${DURATION}s, deterministic netns loss"
 
-tcp_namespace_setup rl "${S_ADDR}" "${C_ADDR}"
-ip netns exec "${TCP_NS_SERVER}" ip link set dev "${TCP_NS_VETH_SERVER}" gso_max_segs 1
-ip netns exec "${TCP_NS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
+namespace_setup_with_pair rl "${S_ADDR}" "${C_ADDR}"
+ip netns exec "${NETNS_SERVER}" ip link set dev "${NETNS_VETH_SERVER}" gso_max_segs 1
+ip netns exec "${NETNS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
 	-m connbytes --connbytes 30:60 --connbytes-dir reply \
 	--connbytes-mode packets -j DROP
 
@@ -65,14 +65,14 @@ ip netns exec "${TCP_NS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT
 TCPSHARK_PID=$!
 sleep 1
 
-ip netns exec "${TCP_NS_SERVER}" timeout 10 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
-	--listen-address "${TCP_NS_SERVER_ADDR}" --port "${TEST_PORT}" \
+ip netns exec "${NETNS_SERVER}" timeout 10 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
+	--listen-address "${NETNS_SERVER_ADDR}" --port "${TEST_PORT}" \
 	--payload-bytes "${PAYLOAD_SIZE}" > /dev/null 2>&1 &
 SRV_PID=$!
 sleep 0.5
 
-ip netns exec "${TCP_NS_CLIENT}" timeout 8 bash -c \
-	"exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
+ip netns exec "${NETNS_CLIENT}" timeout 8 bash -c \
+	"exec 3<>/dev/tcp/${NETNS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
 CLI_PID=$!
 
 sleep 6

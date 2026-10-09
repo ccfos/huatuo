@@ -34,16 +34,17 @@ const ethernetHeaderLen = 14
 var ErrNoLayers = errors.New("packet: no layers decoded")
 
 type decoder struct {
-	eth   layers.Ethernet
-	ipv4  layers.IPv4
-	ipv6  layers.IPv6
-	tcp   layers.TCP
-	udp   layers.UDP
-	icmp4 layers.ICMPv4
-	icmp6 layers.ICMPv6
-	arp   layers.ARP
-	dlp   *gopacket.DecodingLayerParser
-	lyrs  []gopacket.LayerType
+	eth       layers.Ethernet
+	ipv4      layers.IPv4
+	ipv6      layers.IPv6
+	tcp       layers.TCP
+	udp       layers.UDP
+	icmp4     layers.ICMPv4
+	icmp6     layers.ICMPv6
+	icmp6Echo layers.ICMPv6Echo
+	arp       layers.ARP
+	dlp       *gopacket.DecodingLayerParser
+	lyrs      []gopacket.LayerType
 	// frame holds a synthesized Ethernet frame for the HasEthHdr==0 path,
 	// reused across calls. The HasEthHdr==1 path slices pkt.Raw directly and
 	// does not touch this buffer.
@@ -56,7 +57,7 @@ var decoderPool = sync.Pool{
 		dec.dlp = gopacket.NewDecodingLayerParser(
 			layers.LayerTypeEthernet,
 			&dec.eth, &dec.ipv4, &dec.ipv6,
-			&dec.tcp, &dec.udp, &dec.icmp4, &dec.icmp6, &dec.arp,
+			&dec.tcp, &dec.udp, &dec.icmp4, &dec.icmp6, &dec.icmp6Echo, &dec.arp,
 		)
 		dec.dlp.IgnoreUnsupported = true
 
@@ -181,6 +182,9 @@ func Parse(pkt *Hdr) (*Packet, error) {
 				Code:     dec.icmp6.TypeCode.Code(),
 				Checksum: dec.icmp6.Checksum,
 			}
+		case layers.LayerTypeICMPv6Echo:
+			out.ICMP.ID = dec.icmp6Echo.Identifier
+			out.ICMP.Seq = dec.icmp6Echo.SeqNumber
 		case layers.LayerTypeARP:
 			out.ARP = &ARP{
 				AddrType:        dec.arp.AddrType.String(),

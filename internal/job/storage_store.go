@@ -25,7 +25,10 @@ import (
 	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
-const jobStorageCollection = "jobs"
+const (
+	jobStorageCollection = "jobs"
+	storageKeyFieldID    = "id"
+)
 
 var jobQueryFields = map[string]struct{}{
 	"id":           {},
@@ -94,12 +97,15 @@ func (s *storageStore) List(ctx context.Context, query *Query) ([]*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	jobs, err := s.store.Query(ctx, storageQuery)
+	var jobs []*Job
+	err = s.store.Query(ctx, storageQuery, func(batch []*Job) error {
+		for _, storedJob := range batch {
+			jobs = append(jobs, cloneJob(storedJob))
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	for i := range jobs {
-		jobs[i] = cloneJob(jobs[i])
 	}
 	return jobs, nil
 }
@@ -139,7 +145,7 @@ func buildStorageQuery(query *Query) (driver.Query, error) {
 	}
 	if query == nil {
 		return driver.Query{
-			Sorts: []driver.Sort{{Field: "created_at", Desc: true}, {Field: "id", Desc: true}},
+			Sorts: []driver.Sort{{Field: "created_at", Desc: true}, {Field: storageKeyFieldID, Desc: true}},
 		}, nil
 	}
 
@@ -149,7 +155,10 @@ func buildStorageQuery(query *Query) (driver.Query, error) {
 			filters = append(filters, driver.Filter{Field: field, Op: driver.OpEq, Value: value})
 		}
 	}
-	appendEqual("id", query.ID)
+	appendEqual(storageKeyFieldID, query.ID)
+	if query.lastReadID != "" {
+		filters = append(filters, driver.Filter{Field: storageKeyFieldID, Op: driver.OpGt, Value: query.lastReadID})
+	}
 	if !query.IsAdmin {
 		appendEqual("user_id", query.UserID)
 	}
@@ -175,8 +184,8 @@ func buildStorageQuery(query *Query) (driver.Query, error) {
 
 	sortField, descending := querySort(query)
 	sorts := []driver.Sort{{Field: sortField, Desc: descending}}
-	if sortField != "id" {
-		sorts = append(sorts, driver.Sort{Field: "id", Desc: descending})
+	if sortField != storageKeyFieldID {
+		sorts = append(sorts, driver.Sort{Field: storageKeyFieldID, Desc: descending})
 	}
 	return driver.Query{
 		Filters: filters,

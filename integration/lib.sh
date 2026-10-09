@@ -126,10 +126,12 @@ assert_log_has_no_failure() {
 }
 
 allocate_available_port() {
-	local attempt port
+	local protocol=${1:-tcp} attempt port
+	[[ ${protocol} == tcp || ${protocol} == udp ]] \
+		|| fatal "unsupported port protocol: ${protocol}; expected tcp or udp"
 	for ((attempt = 0; attempt < 20; attempt++)); do
 		port=$((20000 + RANDOM % 20001))
-		if ! ss -H -tan | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
+		if ! ss -H -an "--${protocol}" | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
 			echo "${port}"
 			return 0
 		fi
@@ -303,7 +305,8 @@ stop_by_pid() {
 }
 
 stop_and_wait_by_pid() {
-	local pid=$1 timeout=${2:-10}
+	local pid=${1:-} timeout=${2:-10}
+	[[ -n "${pid}" ]] || return 0
 	stop_by_pid "${pid}" "${timeout}"
 	wait "${pid}"
 }
@@ -356,6 +359,8 @@ is_virtual_machine() {
 # ----------------------------- huatuo-bamai ----------------------------------
 
 huatuo_bamai_start() {
+	[[ -f "${HUATUO_BAMAI_BIN}" && -x "${HUATUO_BAMAI_BIN}" ]] \
+		|| fatal "huatuo-bamai binary missing or not executable: ${HUATUO_BAMAI_BIN}; run make build"
 	log_info "starting huatuo-bamai: $*"
 	"${HUATUO_BAMAI_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" 2>&1 &
 	local pid=$!

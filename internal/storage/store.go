@@ -171,77 +171,48 @@ func (s *Store[T]) Ping(ctx context.Context) error {
 	return pinger.Ping(ctx)
 }
 
-// Query returns objects matching q; all filter and sort fields must be registered indexes.
-func (s *Store[T]) Query(ctx context.Context, q driver.Query) ([]T, error) {
-	if err := s.validateQuery(q); err != nil {
-		return nil, err
+// Query decodes and delivers one batch at a time so consumers need not retain
+// the entire result. A consumer error stops the read without rolling back prior batches.
+func (s *Store[T]) Query(ctx context.Context, q driver.Query, consume func([]T) error) error {
+	if err := validateQuery(q); err != nil {
+		return err
+	}
+	if consume == nil {
+		return fmt.Errorf("%w: query consumer is required", driver.ErrInvalidQuery)
 	}
 
-	records, err := s.backend.Query(ctx, q)
-	if err != nil {
-		return nil, err
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	values := make([]T, 0, len(records))
-	for _, rec := range records {
-		value, decodeErr := s.mapper.Decode(rec)
-		if decodeErr != nil {
-			return nil, fmt.Errorf("%w: %w", driver.ErrDecodeFailed, decodeErr)
+	return s.backend.Query(ctx, q, func(records []driver.Record) error {
+		values := make([]T, 0, len(records))
+		for i := range records {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			value, err := s.mapper.Decode(records[i])
+			if err != nil {
+				return fmt.Errorf("%w: %w", driver.ErrDecodeFailed, err)
+			}
+			values = append(values, value)
 		}
-		values = append(values, value)
-	}
-
-	return values, nil
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return consume(values)
+	})
 }
 
-// Count returns the number of objects matching the given query.
+// Count uses only q.Filters so pagination cannot truncate the matching total.
 func (s *Store[T]) Count(ctx context.Context, q driver.Query) (int64, error) {
-	if err := s.validateQuery(q); err != nil {
-		return 0, err
-	}
-
 	return s.backend.Count(ctx, q)
 }
 
-// Values returns up to size distinct values for field, filtered by q.
+// Values uses only q.Filters; size controls distinct values independently of record pagination.
 func (s *Store[T]) Values(ctx context.Context, field string, q driver.Query, size int) ([]string, error) {
 	if size < 0 {
 		return nil, driver.ErrNegativeSize
 	}
-	if err := s.validateQuery(q); err != nil {
-		return nil, err
-	}
 
 	return s.backend.Values(ctx, field, q, size)
-}
-
-// validateQuery checks that limit and offset are non-negative.
-func (s *Store[T]) validateQuery(q driver.Query) error {
-	if q.Limit < 0 || q.Offset < 0 {
-		return driver.ErrNegativePagination
-	}
-
-	return nil
-}
-
-func validateSaveOptions(options driver.SaveOptions) error {
-	switch options.Mode {
-	case driver.SaveModeUpsert, driver.SaveModeCreateOnly:
-		if len(options.Conditions) != 0 {
-			return fmt.Errorf(
-				"%w: save conditions require conditional mode",
-				driver.ErrInvalidQuery,
-			)
-		}
-	case driver.SaveModeConditional:
-		if len(options.Conditions) == 0 {
-			return fmt.Errorf(
-				"%w: conditional save requires at least one condition",
-				driver.ErrInvalidQuery,
-			)
-		}
-	default:
-		return fmt.Errorf("%w: unsupported save mode %d", driver.ErrInvalidQuery, options.Mode)
-	}
-	return nil
 }

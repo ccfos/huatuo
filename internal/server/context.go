@@ -161,9 +161,9 @@ func (ctx *Context) CanAccessTask(taskUserID string) bool {
 
 const (
 	// DefaultListLimit is the default page size for list endpoints.
-	DefaultListLimit = 50
+	DefaultListLimit = 100
 	// MaxListLimit is the maximum allowed page size.
-	MaxListLimit = 500
+	MaxListLimit = 1000
 )
 
 // ListParams holds pagination and sorting parameters for list endpoints.
@@ -175,7 +175,7 @@ type ListParams struct {
 }
 
 // ParseListParams reads limit/offset/sort from the query string.
-// Defaults: limit=50, offset=0. limit is clamped to [1, 500].
+// Defaults apply only to absent parameters; explicit limits must be positive.
 func (ctx *Context) ParseListParams() (ListParams, error) {
 	p := ListParams{Limit: DefaultListLimit}
 
@@ -185,7 +185,7 @@ func (ctx *Context) ParseListParams() (ListParams, error) {
 			return p, fmt.Errorf("invalid limit %q", v)
 		}
 		if n > MaxListLimit {
-			n = MaxListLimit
+			return p, fmt.Errorf("limit must not exceed %d", MaxListLimit)
 		}
 		p.Limit = n
 	}

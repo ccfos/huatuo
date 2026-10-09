@@ -232,37 +232,59 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, error) {
+func (s *Storage) Query(ctx context.Context, q driver.Query, consume func([]driver.Record) error) error {
 	querySQL, args, err := buildSelectSQL(s.table, q)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	rows, err := s.db.QueryContext(ctx, querySQL, args...)
 	if err != nil {
-		return nil, fmt.Errorf("sqlite backend query %s: %w", s.table, err)
+		return fmt.Errorf("sqlite backend query %s: %w", s.table, err)
 	}
 	defer rows.Close()
 
-	records := make([]driver.Record, 0)
+	batchSize := q.ReadSize()
+	records := make([]driver.Record, 0, batchSize)
 	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var (
 			rec        driver.Record
 			fieldsJSON []byte
 		)
 		if err := rows.Scan(&rec.ID, &rec.Data, &fieldsJSON); err != nil {
-			return nil, fmt.Errorf("sqlite backend scan record from %s: %w", s.table, err)
+			return fmt.Errorf("sqlite backend scan record from %s: %w", s.table, err)
 		}
 		rec.Fields, err = decodeFields(fieldsJSON)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		records = append(records, rec)
+		if len(records) == batchSize {
+			if err := consume(records); err != nil {
+				return err
+			}
+			// Consumers may retain a batch after returning.
+			records = make([]driver.Record, 0, batchSize)
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlite backend iterate %s: %w", s.table, err)
+		return fmt.Errorf("sqlite backend iterate %s: %w", s.table, err)
 	}
-	return records, nil
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(records) > 0 {
+		if err := consume(records); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
 }
 
 func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {

@@ -104,6 +104,30 @@ all selected executions as SKIP.
 
 ---
 
+### Background Process Cleanup
+
+`stop_and_wait_by_pid PID [TIMEOUT]` stops and waits for a child process,
+returning its exit status. An omitted or empty PID returns success immediately,
+so callers can pass an initialized PID variable without checking it first.
+Clear the variable after waiting; use `|| true` in best-effort cleanup and
+assert the exit status when it is part of the test contract.
+
+### Network Namespace Helpers
+
+Network tests can source `integration/lib_namespace.sh` after `lib.sh`:
+
+- `namespace_setup NAME` creates one network namespace and exposes its name as
+  `NETNS`. The caller brings up `lo` and configures any addresses it needs.
+- `namespace_setup_with_pair PREFIX SERVER_ADDR CLIENT_ADDR [PREFIX_LENGTH]`
+  creates two namespaces connected by a veth pair, configures their addresses,
+  and brings up the interfaces. The prefix length defaults to 24. Names and
+  addresses are exposed through `NETNS_SERVER`, `NETNS_CLIENT`,
+  `NETNS_VETH_SERVER`, `NETNS_VETH_CLIENT`, `NETNS_SERVER_ADDR`, and
+  `NETNS_CLIENT_ADDR`.
+- `namespace_cleanup` deletes the namespaces created by either helper and
+  clears their state. Call it from the test's `EXIT` cleanup after stopping
+  processes in those namespaces. Repeated cleanup calls are supported.
+
 ### How to Add New Metrics Tests
 #### 1: Add or Update Fixture Data
 
