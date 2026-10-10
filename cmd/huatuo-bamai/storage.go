@@ -94,10 +94,11 @@ func initStorage(
 	tracingConfig := tracingstore.Config{}
 	if cfg.Storage.Elasticsearch.Enabled() {
 		tracingConfig.Elasticsearch = &tracingstore.ElasticsearchConfig{
-			Addresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
-			Username:  cfg.Storage.Elasticsearch.Username,
-			Password:  cfg.Storage.Elasticsearch.Password,
-			Index:     cfg.Storage.Elasticsearch.Index,
+			Addresses:        strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
+			Username:         cfg.Storage.Elasticsearch.Username,
+			Password:         cfg.Storage.Elasticsearch.Password,
+			Index:            cfg.Storage.Elasticsearch.Index,
+			ILMRetentionDays: cfg.Storage.Elasticsearch.ILMRetentionDays,
 		}
 	}
 	if cfg.Storage.LocalFile.Path != "" {
@@ -118,19 +119,21 @@ func initStorage(
 
 	if cfg.Storage.Elasticsearch.Enabled() {
 		storeConfig := &driver.Config{
-			Driver:      "elasticsearch",
-			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
-			ESUsername:  cfg.Storage.Elasticsearch.Username,
-			ESPassword:  cfg.Storage.Elasticsearch.Password,
-			ESIndex:     cfg.Storage.Elasticsearch.Index,
+			Driver:             "elasticsearch",
+			ESAddresses:        strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
+			ESUsername:         cfg.Storage.Elasticsearch.Username,
+			ESPassword:         cfg.Storage.Elasticsearch.Password,
+			ESIndex:            cfg.Storage.Elasticsearch.Index,
+			ESILMRetentionDays: cfg.Storage.Elasticsearch.ILMRetentionDays,
 		}
 		initializedProfileStore, err := profilingstore.NewFromConfig(
 			context.Background(),
-			profilingstore.Config{
-				Addresses: storeConfig.ESAddresses,
-				Username:  storeConfig.ESUsername,
-				Password:  storeConfig.ESPassword,
-				Index:     storeConfig.ESIndex,
+			&profilingstore.Config{
+				Addresses:        storeConfig.ESAddresses,
+				Username:         storeConfig.ESUsername,
+				Password:         storeConfig.ESPassword,
+				Index:            storeConfig.ESIndex,
+				ILMRetentionDays: storeConfig.ESILMRetentionDays,
 			},
 		)
 		if err != nil {

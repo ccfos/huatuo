@@ -24,10 +24,11 @@ import (
 // ElasticsearchConfig keeps storage opt-in explicit so incomplete credentials
 // cannot silently disable persistence.
 type ElasticsearchConfig struct {
-	Address  string
-	Username string
-	Password string
-	Index    string `default:"huatuo_bamai"`
+	Address          string
+	Username         string
+	Password         string
+	Index            string `default:"huatuo_bamai"`
+	ILMRetentionDays int
 }
 
 // Enabled reports whether all connection fields opt in to Elasticsearch.
@@ -39,6 +40,9 @@ func (c ElasticsearchConfig) Enabled() bool {
 
 // Validate accepts either a complete connection or no connection fields.
 func (c ElasticsearchConfig) Validate() error {
+	if c.ILMRetentionDays < 0 {
+		return errors.New("ILM retention days must not be negative")
+	}
 	fields := []string{c.Address, c.Username, c.Password}
 	configured := 0
 	for _, field := range fields {
@@ -47,6 +51,9 @@ func (c ElasticsearchConfig) Validate() error {
 		}
 	}
 	if configured == 0 {
+		if c.ILMRetentionDays > 0 {
+			return errors.New("ILM retention requires an Elasticsearch connection")
+		}
 		return nil
 	}
 	if configured != len(fields) {

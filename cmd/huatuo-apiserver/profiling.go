@@ -35,7 +35,7 @@ func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Cont
 
 	profileStorage, err := profilingstore.NewFromConfig(
 		ctx,
-		profilingstore.Config{
+		&profilingstore.Config{
 			Addresses: strutil.SplitCommaList(d.opts.Config.Elasticsearch.Address),
 			Username:  d.opts.Config.Elasticsearch.Username,
 			Password:  d.opts.Config.Elasticsearch.Password,
