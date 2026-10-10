@@ -96,6 +96,40 @@ while :; do sleep 1; done
 	}
 }
 
+func TestRunStopsAsyncProfilerWithItsStartLibrary(t *testing.T) {
+	dir := t.TempDir()
+	asprofPath := filepath.Join(dir, "asprof")
+	stopLibPath := filepath.Join(dir, "stop-libpath")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--libpath" ]; then
+	printf '%%s' "$2" > %q
+	exit 0
+fi
+trap 'exit 0' TERM
+while :; do sleep 1; done
+`, stopLibPath)
+	if err := os.WriteFile(asprofPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(asprofPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	libPath := "/tmp/libasyncProfiler-session123.so"
+
+	results := Run(ctx, []int{1234}, asprofPath, func(int) []string {
+		return []string{"start", "--libpath", libPath}
+	})
+	if len(results) != 1 || !results[0].Succeeded() {
+		t.Fatalf("Run() results=%v, want successful stop", results)
+	}
+	got, err := os.ReadFile(stopLibPath)
+	if err != nil || string(got) != libPath {
+		t.Fatalf("stop --libpath=%q, error=%v, want %q", got, err, libPath)
+	}
+}
+
 func TestRunDoesNotStopAsyncProfilerWhenLaunchIsCanceled(t *testing.T) {
 	dir := t.TempDir()
 	asprofPath := filepath.Join(dir, "asprof")
