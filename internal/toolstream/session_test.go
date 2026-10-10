@@ -19,6 +19,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/toolstream/transport"
 )
@@ -116,5 +117,53 @@ func TestAwaitSessionCancellationRemovesExpectation(t *testing.T) {
 	}
 	if err := server.ExpectSession("profiler", "job-1"); err != nil {
 		t.Fatalf("ExpectSession() after cancellation error = %v", err)
+	}
+}
+
+func TestCancelSessionWakesBlockedAwait(t *testing.T) {
+	server, err := NewServer(t.TempDir() + "/toolstream.sock")
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	if err := server.ExpectSession("profiler", "job-1"); err != nil {
+		t.Fatalf("ExpectSession() error = %v", err)
+	}
+
+	waitErr := make(chan error, 1)
+	go func() {
+		waitErr <- server.AwaitSession(t.Context(), "profiler", "job-1")
+	}()
+
+	// Allow the waiter to reach select on session.done before canceling.
+	// A blocked waiter would previously hang until the test context expired.
+	time.Sleep(20 * time.Millisecond)
+	server.CancelSession("profiler", "job-1")
+
+	select {
+	case err := <-waitErr:
+		if err == nil || !strings.Contains(err.Error(), "canceled") {
+			t.Fatalf("AwaitSession() error = %v, want canceled session error", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("AwaitSession() still blocked after CancelSession")
+	}
+
+	if err := server.ExpectSession("profiler", "job-1"); err != nil {
+		t.Fatalf("ExpectSession() after CancelSession error = %v", err)
+	}
+}
+
+func TestCancelSessionIsIdempotent(t *testing.T) {
+	server, err := NewServer(t.TempDir() + "/toolstream.sock")
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	if err := server.ExpectSession("profiler", "job-1"); err != nil {
+		t.Fatalf("ExpectSession() error = %v", err)
+	}
+	server.CancelSession("profiler", "job-1")
+	server.CancelSession("profiler", "job-1")
+	if err := server.ExpectSession("profiler", "job-1"); err != nil {
+		t.Fatalf("ExpectSession() after double CancelSession error = %v", err)
 	}
 }
