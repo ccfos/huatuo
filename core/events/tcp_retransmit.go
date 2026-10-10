@@ -71,14 +71,7 @@ func validateTCPRetransmitFilter(config *Config) error {
 // Start launches tcpshark in retransmit mode and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
-	return c.start(ctx, executil.Run)
-}
-
-func (c *tcpRetransmitTracing) start(
-	ctx context.Context,
-	run func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error),
-) error {
-	result, err := run(ctx, executil.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, tcpSharkToolName),
 		Args: tcpRetransmitArgs(configSnapshot()),
 	})

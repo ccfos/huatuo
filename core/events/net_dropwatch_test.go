@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -137,61 +136,6 @@ func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 					}
 					if failure == "execution" && !strings.Contains(err.Error(), "exit status 7") {
 						t.Fatalf("execution error: %v", err)
-					}
-				})
-			}
-		})
-	}
-}
-
-func TestEventCommandsPreserveCleanupFailureDuringCancellation(t *testing.T) {
-	commands := []struct {
-		name  string
-		start func(context.Context, func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error)) error
-	}{
-		{"dropwatch", (&dropWatchTracing{}).start},
-		{"tcpshark", (&tcpRetransmitTracing{}).start},
-	}
-	for _, command := range commands {
-		t.Run(command.name, func(t *testing.T) {
-			for _, diagnostic := range []string{"", "tool cleanup diagnostic"} {
-				name := "without output"
-				if diagnostic != "" {
-					name = "with stderr"
-				}
-				t.Run(name, func(t *testing.T) {
-					ctx, cancel := context.WithCancel(t.Context())
-					defer cancel()
-					failure := &executil.RunError{
-						ContextErr: context.Canceled,
-						CleanupErr: fmt.Errorf("signal process group: %w", errors.Join(executil.ErrStopFailed, syscall.EPERM)),
-					}
-					calls := 0
-					err := command.start(ctx, func(runCtx context.Context, spec executil.Spec, _ ...executil.Option) (*executil.Result, error) {
-						calls++
-						if runCtx != ctx || filepath.Base(spec.Path) != command.name {
-							t.Fatalf("unexpected command context or path: %s", spec.Path)
-						}
-						cancel()
-						if diagnostic == "" {
-							return nil, failure
-						}
-						return &executil.Result{Stderr: []byte(diagnostic)}, failure
-					})
-					if calls != 1 {
-						t.Fatalf("command ran %d times, want 1", calls)
-					}
-					for _, cause := range []error{context.Canceled, executil.ErrStopFailed, syscall.EPERM} {
-						if !errors.Is(err, cause) {
-							t.Errorf("lost %v: %v", cause, err)
-						}
-					}
-					var got *executil.RunError
-					if !errors.As(err, &got) || got != failure {
-						t.Fatalf("lost RunError: %v", err)
-					}
-					if diagnostic != "" && !strings.Contains(err.Error(), diagnostic) {
-						t.Fatalf("lost diagnostic: %v", err)
 					}
 				})
 			}

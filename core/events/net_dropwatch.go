@@ -50,13 +50,6 @@ func newDropWatch() (*tracing.EventTracingAttr, error) {
 // Start launches dropwatch as a subprocess and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *dropWatchTracing) Start(ctx context.Context) error {
-	return c.start(ctx, executil.Run)
-}
-
-func (c *dropWatchTracing) start(
-	ctx context.Context,
-	run func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error),
-) error {
 	cfg := configSnapshot()
 	args := []string{
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "net_dropwatch.o"),
@@ -66,7 +59,7 @@ func (c *dropWatchTracing) start(
 		"--source-types", toolstream.SourceTypeEvent,
 	}
 
-	result, err := run(ctx, executil.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, "dropwatch"),
 		Args: args,
 	})
