@@ -15,6 +15,7 @@
 package handlers
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -32,6 +33,38 @@ import (
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
+
+func TestWatchEventsEstablishesIdleStreamBeforeHeartbeat(t *testing.T) {
+	handler := newTestNodeAPIHandler(t, time.Hour)
+	baseURL := startNodeAPIServer(t, handler)
+	transport := &http.Transport{ResponseHeaderTimeout: time.Second}
+	t.Cleanup(transport.CloseIdleConnections)
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	request, err := http.NewRequestWithContext(
+		t.Context(), http.MethodPost, baseURL+"/v1/events/watch", strings.NewReader("{}"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer node-secret")
+
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("idle event stream did not establish before its heartbeat: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("event stream status = %d, want 200", response.StatusCode)
+	}
+	if contentType := response.Header.Get("Content-Type"); contentType != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", contentType)
+	}
+	line, err := bufio.NewReader(response.Body).ReadString('\n')
+	if err != nil || line != ": ping\n" {
+		t.Fatalf("initial heartbeat = %q, %v", line, err)
+	}
+}
 
 func TestWatchEventsRejectsInvalidFilter(t *testing.T) {
 	handler := newTestNodeAPIHandler(t, time.Second)
@@ -73,8 +106,8 @@ func TestWatchEventsWritesHeartbeat(t *testing.T) {
 	if got := writer.header.Get("X-Accel-Buffering"); got != "no" {
 		t.Errorf("X-Accel-Buffering = %q, want no", got)
 	}
-	if got := writer.body.String(); !strings.Contains(got, ": ping\n") {
-		t.Errorf("body = %q, want heartbeat", got)
+	if got := writer.body.String(); got != ": ping\n: ping\n" {
+		t.Errorf("body = %q, want initial and periodic heartbeats", got)
 	}
 }
 
@@ -118,7 +151,7 @@ func TestWatchEventsWritesCloudEvent(t *testing.T) {
 		t.Fatalf("VisitWatchEventsResponse() error = %v", err)
 	}
 	payload, ok := strings.CutPrefix(
-		strings.TrimSuffix(writer.body.String(), "\n\n"),
+		strings.TrimSuffix(strings.TrimPrefix(writer.body.String(), ": ping\n"), "\n\n"),
 		"data: ",
 	)
 	if !ok {
@@ -146,10 +179,11 @@ func TestWatchEventsWritesCloudEvent(t *testing.T) {
 }
 
 type cancelingResponseWriter struct {
-	header http.Header
-	body   bytes.Buffer
-	status int
-	cancel context.CancelFunc
+	header  http.Header
+	body    bytes.Buffer
+	status  int
+	cancel  context.CancelFunc
+	flushes int
 }
 
 func (w *cancelingResponseWriter) Header() http.Header {
@@ -165,7 +199,10 @@ func (w *cancelingResponseWriter) WriteHeader(status int) {
 }
 
 func (w *cancelingResponseWriter) Flush() {
-	w.cancel()
+	w.flushes++
+	if w.flushes == 2 {
+		w.cancel()
+	}
 }
 
 func newTestCloudEventsService(t *testing.T, maxSubscriptions int) *nodecloudevents.Service {
