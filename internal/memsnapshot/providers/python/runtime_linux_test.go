@@ -184,3 +184,81 @@ func (m *countingMemory) read(address uint64, size int) ([]byte, error) {
 	m.reads[address]++
 	return m.memoryReader.read(address, size)
 }
+
+func TestInspectModuleMappedVersion(t *testing.T) {
+	const names = "\x00_PyRuntime\x00Py_Version\x00"
+	for _, tc := range []struct {
+		name          string
+		mappedPath    string
+		versionSymbol bool
+		wantMinor     int
+		wantErr       bool
+	}{
+		{"executable", "/usr/bin/python3.10", false, 10, false},
+		{"deleted executable", "/usr/bin/python3.10 (deleted)", false, 10, false},
+		{"library", "/usr/lib/libpython3.9.so.1.0", false, 9, false},
+		{"unversioned mapping", "/usr/bin/python3", false, 0, true},
+		{"symbol takes precedence", "/usr/bin/python3.10", true, 12, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The opened procfs path has no version; only the mapping retains it.
+			fd, err := unix.MemfdCreate("exe", unix.MFD_CLOEXEC)
+			if err != nil {
+				t.Fatal(err)
+			}
+			module := os.NewFile(uintptr(fd), "exe")
+			defer module.Close()
+			header := elf.Header64{
+				Type: uint16(elf.ET_EXEC), Machine: uint16(elf.EM_X86_64),
+				Version: 1, Ehsize: 64, Shoff: 64, Shentsize: 64, Shnum: 3,
+			}
+			copy(header.Ident[:], "\x7fELF\x02\x01\x01")
+			versionSection := uint16(elf.SHN_UNDEF)
+			if tc.versionSymbol {
+				versionSection = 1
+			}
+			var data bytes.Buffer
+			for _, value := range []any{
+				header,
+				elf.Section64{},
+				elf.Section64{Type: uint32(elf.SHT_STRTAB), Off: 328, Size: uint64(len(names))},
+				elf.Section64{Type: uint32(elf.SHT_DYNSYM), Off: 256, Size: 72, Link: 1, Entsize: 24},
+				elf.Sym64{},
+				elf.Sym64{Name: 1, Shndx: 1, Value: 0x1000},
+				elf.Sym64{Name: 12, Shndx: versionSection, Value: 0x2000},
+			} {
+				if err := binary.Write(&data, binary.LittleEndian, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+			data.WriteString(names)
+			if _, err := module.Write(data.Bytes()); err != nil {
+				t.Fatal(err)
+			}
+			var stat unix.Stat_t
+			if err := unix.Fstat(fd, &stat); err != nil {
+				t.Fatal(err)
+			}
+			memory := sparseMemory{}
+			memory.put32(0x2000, 3<<24|12<<16)
+			target, err := inspectModule(t.Context(), fmt.Sprintf("/proc/self/fd/%d", fd),
+				[]memsnapshot.ProcMap{{
+					Start: 0x1000, End: 0x3000, Inode: stat.Ino,
+					DevMajor: unix.Major(stat.Dev), DevMinor: unix.Minor(stat.Dev),
+					Path: tc.mappedPath,
+				}}, memory)
+			if tc.wantErr {
+				if !errors.Is(err, errUnsupportedRuntime) {
+					t.Fatalf("error = %v, want unsupported runtime", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if target.version.minor != tc.wantMinor || target.runtimeAddress != 0x1000 {
+				t.Fatalf("runtime = %+v, want Python 3.%d at 0x1000", target, tc.wantMinor)
+			}
+		})
+	}
+}
