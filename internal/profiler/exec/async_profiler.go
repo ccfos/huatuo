@@ -17,10 +17,7 @@ package exec
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/executil"
@@ -28,52 +25,21 @@ import (
 )
 
 const (
-	profilerOutputLimit             = 16 << 20
 	asyncProfilerStopGracePeriod    = time.Second
 	asyncProfilerStopCommandTimeout = 5 * time.Second
 )
 
-// Run executes one profiler command for every process concurrently.
-func Run(
+// RunAsyncProfiler executes the async-profiler protocol for each target PID.
+// Cancellation after launch stops both the CLI and the injected JVM agent.
+func RunAsyncProfiler(
 	ctx context.Context,
 	pids []int,
 	path string,
 	argsForPID func(pid int) []string,
 ) []*Result {
 	return runForPIDs(pids, func(pid int) *Result {
-		args := argsForPID(pid)
-		if filepath.Base(path) == "asprof" {
-			return runAsyncProfiler(ctx, pid, path, args)
-		}
-		return runCommand(ctx, pid, &executil.Spec{
-			Path:           path,
-			Args:           args,
-			MaxOutputBytes: profilerOutputLimit,
-		})
+		return runAsyncProfiler(ctx, pid, path, argsForPID(pid))
 	})
-}
-
-func runForPIDs(pids []int, run func(pid int) *Result) []*Result {
-	var waitGroup sync.WaitGroup
-	results := make(chan *Result, len(pids))
-
-	for _, pid := range pids {
-		waitGroup.Add(1)
-		go func(pid int) {
-			defer waitGroup.Done()
-
-			results <- run(pid)
-		}(pid)
-	}
-
-	waitGroup.Wait()
-	close(results)
-
-	collected := make([]*Result, 0, len(pids))
-	for result := range results {
-		collected = append(collected, result)
-	}
-	return collected
 }
 
 func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) *Result {
@@ -85,17 +51,16 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 		result.Err = err
 		return result
 	}
+	defer func() { result.Err = errors.Join(result.Err, process.Close()) }()
+
 	if err := process.Start(ctx); err != nil {
 		result.Err = err
 		return result
 	}
 
-	waitDone := make(chan error, 1)
-	go func() {
-		waitDone <- process.Wait()
-	}()
 	select {
-	case result.Err = <-waitDone:
+	case <-process.Done():
+		result.Err = process.Wait()
 		var outputErr error
 		result.Diagnostics, outputErr = combinedOutput(process)
 		result.Err = errors.Join(result.Err, outputErr)
@@ -120,7 +85,18 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 	cancel()
 	processStopErr := <-processStopDone
 	cancelProcessStop()
-	waitErr := <-waitDone
+	// A failed Stop may leave the CLI running. Close owns the final forceful
+	// attempt; do not wait indefinitely after both signaling attempts failed.
+	if processStopErr != nil {
+		processStopErr = errors.Join(processStopErr, process.Close())
+	}
+	var waitErr error
+	select {
+	case <-process.Done():
+		waitErr = process.Wait()
+	default:
+		waitErr = processStopErr
+	}
 	if errors.Is(waitErr, executil.ErrStopped) {
 		waitErr = nil
 	}
@@ -137,27 +113,15 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 	return result
 }
 
-func runCommand(
-	ctx context.Context,
-	pid int,
-	spec *executil.Spec,
-) *Result {
-	result := &Result{
-		PID:     pid,
-		Command: formatCommand(spec.Path, spec.Args),
-	}
-	log.Debugf("executing command: %s", result.Command)
-
-	process, err := executil.New(*spec)
-	if err != nil {
-		result.Err = err
-		return result
-	}
-	runErr := process.Run(ctx)
-	result.Output, err = process.Stdout()
-	result.Err = errors.Join(runErr, err)
-	result.Diagnostics = process.Stderr()
-	return result
+// StopAsyncProfiler asks the injected agent in one target JVM to stop.
+func StopAsyncProfiler(ctx context.Context, asprofPath string, pid int) error {
+	args := []string{"--libpath", "/tmp/libasyncProfiler.so", "stop", strconv.Itoa(pid)}
+	result := runCommand(ctx, pid, &executil.Spec{
+		Path:            asprofPath,
+		Args:            args,
+		StopGracePeriod: asyncProfilerStopGracePeriod,
+	})
+	return Verify([]*Result{result})
 }
 
 func combinedOutput(process *executil.Process) ([]byte, error) {
@@ -170,19 +134,4 @@ func combinedOutput(process *executil.Process) ([]byte, error) {
 		output = append(append(output, '\n'), stderr...)
 	}
 	return output, err
-}
-
-func formatCommand(path string, args []string) string {
-	return path + " " + strings.Join(args, " ")
-}
-
-// StopAsyncProfiler asks the injected agent in one target JVM to stop.
-func StopAsyncProfiler(ctx context.Context, asprofPath string, pid int) error {
-	args := []string{"--libpath", "/tmp/libasyncProfiler.so", "stop", strconv.Itoa(pid)}
-	result := runCommand(ctx, pid, &executil.Spec{
-		Path:            asprofPath,
-		Args:            args,
-		StopGracePeriod: asyncProfilerStopGracePeriod,
-	})
-	return Verify([]*Result{result})
 }

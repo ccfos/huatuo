@@ -16,12 +16,13 @@ package exec
 
 import (
 	"context"
-	"errors"
 	"slices"
 
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/log"
 )
+
+const profilerOutputLimit = 16 << 20
 
 // RunWithMemfd collects each profiler's file output separately from its logs.
 // Options are shared across commands; supplied writers must support concurrent use.
@@ -40,29 +41,14 @@ func RunWithMemfd(
 			log.Debugf("executing command: %s", result.Command)
 			return args
 		}))
-		process, err := executil.New(executil.Spec{Path: path}, commandOptions...)
-		if err != nil {
-			result.Err = err
-			return result
-		}
-		defer func() {
-			if err := process.Close(); err != nil {
-				result.Err = errors.Join(result.Err, err)
-				result.Output = nil
+		output, err := executil.Run(ctx, executil.Spec{Path: path}, commandOptions...)
+		result.Err = err
+		if output != nil {
+			result.Diagnostics = output.Stderr
+			if err == nil {
+				// A truncated or failed profile must not be parsed as a complete capture.
+				result.Output = output.Memfd
 			}
-			result.Diagnostics = process.Stderr()
-		}()
-
-		runErr := process.Run(ctx)
-		_, stdoutErr := process.Stdout()
-		result.Err = errors.Join(runErr, stdoutErr)
-		if result.Err != nil {
-			return result
-		}
-		result.Output, result.Err = process.MemfdOutput()
-		if result.Err != nil {
-			// A truncated profile must not be parsed as a complete capture.
-			result.Output = nil
 		}
 		return result
 	})

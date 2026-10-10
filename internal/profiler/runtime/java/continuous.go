@@ -214,7 +214,7 @@ func stopAsprofSampling(
 	defer cancel()
 
 	activePIDs := opt.activePIDList()
-	results := profilerexec.Run(finalCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
+	results := profilerexec.RunAsyncProfiler(finalCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
 		return stopWithOutputArgs(pid, opt.SessionID, opt.OutFilePrefix, opt.outputFileCount)
 	})
 	finalCtxErr := finalCtx.Err()
