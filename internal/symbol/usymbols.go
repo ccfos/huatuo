@@ -427,7 +427,11 @@ func (r *UsymResolver) libCacheKey(pid uint32, libPath string) (cacheKey, error)
 	return cacheKey{inode: inode, mountKey: mountKey}, nil
 }
 
-func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, error) {
+// mountKeyForPID returns the host mount the path lives on, so that files with
+// the same inode on different xfs filesystems do not share one symbol cache.
+// path is the path used to read the file, which is rooted at /proc/<pid>/root
+// for a process outside our mount namespace.
+func (r *UsymResolver) mountKeyForPID(pid uint32, path string) (string, error) {
 	count, err := countXfsMounts()
 	if err != nil {
 		return "", err
@@ -441,7 +445,7 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 		return "", err
 	}
 	if !inContainer {
-		return matchXfsMount(hostPath, mounts)
+		return matchXfsMount(hostPathForPID(pid, path), mounts)
 	}
 
 	if process, ok := r.processes[pid]; ok {
@@ -452,4 +456,18 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 		return "", err
 	}
 	return matchXfsMount(lowerDir, mounts)
+}
+
+// hostPathForPID rewrites a /proc/<pid>/root prefixed path into the host mount
+// namespace. matchXfsMount compares against raw mount points, and only the root
+// mount can ever match a /proc prefixed path, so an unrewritten path leaves a
+// file on any other xfs mount attributed to "/" or unresolved.
+func hostPathForPID(pid uint32, path string) string {
+	rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
+	relative, err := filepath.Rel(rootDir, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return path
+	}
+
+	return filepath.Join(string(filepath.Separator), relative)
 }
