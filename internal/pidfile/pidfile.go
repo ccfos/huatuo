@@ -45,7 +45,7 @@ type Handle struct {
 func Lock(name string) (*Handle, error) {
 	p := path(name)
 
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -64,15 +64,32 @@ func Lock(name string) (*Handle, error) {
 		return nil, err
 	}
 
+	// Truncate only after acquiring the flock. Opening with O_TRUNC would let
+	// a rejected second instance erase the PID recorded by the lock owner.
+	if err := f.Truncate(0); err != nil {
+		cleanupFailedLock(f, p)
+		return nil, err
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		cleanupFailedLock(f, p)
+		return nil, err
+	}
+
 	if _, err := fmt.Fprintf(f, "%d", os.Getpid()); err != nil {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		_ = f.Close()
-		_ = os.Remove(p)
+		cleanupFailedLock(f, p)
 
 		return nil, err
 	}
 
 	return &Handle{file: f, path: p}, nil
+}
+
+// Remove the locked path before releasing the flock so a replacement file
+// created by another process cannot be removed by this failed lock attempt.
+func cleanupFailedLock(f *os.File, path string) {
+	_ = os.Remove(path)
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = f.Close()
 }
 
 // Unlock unlocks, closes, and removes the pid file. Calling Unlock more
