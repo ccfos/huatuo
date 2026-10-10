@@ -27,6 +27,16 @@ struct bio___5_12 {
 	struct block_device *bi_bdev;
 } __attribute__((preserve_access_index));
 
+/*
+ * request_queue gained an explicit ->disk back-pointer to the gendisk in
+ * v5.15 (commit d152c682f03c, "block: add an explicit ->disk backpointer
+ * to the request_queue"). On older kernels the queue has no way to reach
+ * the gendisk, so check the field exists before reading it.
+ */
+struct request_queue___5_15 {
+	struct gendisk *disk;
+} __attribute__((preserve_access_index));
+
 static __always_inline struct gendisk *bio_disk(struct bio *bio)
 {
 	struct gendisk *disk = NULL;
