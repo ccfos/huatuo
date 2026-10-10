@@ -112,9 +112,9 @@ type lifecycleResult struct {
 	err  error
 }
 
-// Process owns one command lifecycle and its process group. The group leader's
-// exit ends the command lifetime; remaining group members are killed before the
-// leader is reaped. Children must finish their work before the leader exits.
+// Process owns one command lifecycle and its process group. On natural exit,
+// remaining group members are killed before the leader is reaped. Stop allows
+// group members to finish within its grace period before escalating.
 // Process must be created with New and cannot be restarted; methods on its zero
 // value return an initialization error, except Stderr, which returns no data.
 type Process struct {
@@ -134,6 +134,7 @@ type Process struct {
 	groupErr        error
 	isStopRequested bool
 	stopAttempt     *lifecycleResult
+	groupStopDone   chan struct{}
 }
 
 // New validates and snapshots a command specification without starting it.
@@ -350,10 +351,20 @@ func (p *Process) failStart(err error) error {
 func (p *Process) reap(cmd *exec.Cmd) {
 	exitErr := waitForCommandExit(cmd.Process.Pid)
 	p.mu.Lock()
+	stopDone := p.groupStopDone
+	p.mu.Unlock()
+	if stopDone != nil && exitErr == nil {
+		// Stop owns the grace period; keep the leader waitable until it has
+		// observed or terminated the remaining group members.
+		<-stopDone
+	}
+	p.mu.Lock()
 	if exitErr != nil {
-		p.groupErr = wrapStopFailure(fmt.Errorf("observe command %q exit: %w", p.spec.Path, exitErr))
+		p.groupErr = errors.Join(p.groupErr, wrapStopFailure(
+			fmt.Errorf("observe command %q exit: %w", p.spec.Path, exitErr)))
 	} else if err := forceStopProcessGroup(p.pid); err != nil && !processGroupMissing(err) {
-		p.groupErr = wrapStopFailure(wrapSignalError("clean up", p.spec.Path, err))
+		p.groupErr = errors.Join(p.groupErr, wrapStopFailure(
+			wrapSignalError("clean up", p.spec.Path, err)))
 	}
 	// WNOWAIT pins the leader PID through the final group signal. Retire it
 	// before Wait can release it for reuse; later Stop calls only read results.
@@ -425,8 +436,8 @@ func (p *Process) processResult() error {
 	return errors.Join(err, p.groupErr)
 }
 
-// Stop sends SIGTERM to the process group. The leader's exit or ctx expiration
-// ends the grace period and escalates remaining group members to SIGKILL.
+// Stop sends SIGTERM to the process group. It waits for all group members
+// within the context deadline before escalating to SIGKILL.
 // Reaping and bounded output draining remain internal to Process.
 // Stop closes the memfd, even after natural exit or a stop
 // failure. Finish reading before calling Stop. Repeated calls close it only once;
@@ -473,10 +484,21 @@ func (p *Process) stop(ctx context.Context, cleanup memfdCleanup) (err error) {
 	p.isStopRequested = true
 	attempt := &lifecycleResult{done: make(chan struct{})}
 	p.stopAttempt = attempt
-	waitDone := p.wait.done
+	p.groupStopDone = make(chan struct{})
+	groupStopDone := p.groupStopDone
 	p.mu.Unlock()
 
-	err = wrapStopFailure(p.stopProcessGroup(ctx, waitDone))
+	err = wrapStopFailure(p.stopProcessGroup(ctx))
+	if err != nil {
+		p.mu.Lock()
+		p.groupErr = errors.Join(p.groupErr, err)
+		p.mu.Unlock()
+	}
+	close(groupStopDone)
+	if err == nil {
+		<-p.wait.done
+		err = p.stopResult()
+	}
 
 	p.mu.Lock()
 	attempt.err = err
@@ -494,31 +516,66 @@ func (p *Process) waitForStopAttempt(ctx context.Context, attempt *lifecycleResu
 	}
 }
 
-func (p *Process) stopProcessGroup(ctx context.Context, waitDone <-chan struct{}) error {
+func (p *Process) stopProcessGroup(ctx context.Context) error {
 	gracefulErr := p.signalProcessGroup(gracefulStopProcessGroup)
 	if processGroupMissing(gracefulErr) {
-		<-waitDone
-		return p.stopResult()
+		return nil
 	}
 
 	if gracefulErr != nil {
-		forceErr := p.forceStopAndWait(waitDone)
+		forceErr := p.forceStopGroup()
 		if forceErr != nil {
 			return errors.Join(
 				wrapSignalError("gracefully stop", p.spec.Path, gracefulErr),
 				forceErr,
 			)
 		}
+		return p.waitForGroupExit(context.Background())
+	}
 
+	if err := p.waitForGroupExit(ctx); err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		if err := p.forceStopGroup(); err != nil {
+			return err
+		}
+		return p.waitForGroupExit(context.Background())
+	}
+	return nil
+}
+
+func (p *Process) waitForGroupExit(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		p.mu.Lock()
+		pid := p.pid
+		p.mu.Unlock()
+		if pid == 0 {
+			return nil
+		}
+		running, err := processGroupRunning(pid)
+		if err != nil {
+			return fmt.Errorf("inspect command %q process group: %w", p.spec.Path, err)
+		}
+		if !running {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (p *Process) forceStopGroup() error {
+	err := p.signalProcessGroup(forceStopProcessGroup)
+	if processGroupMissing(err) {
 		return nil
 	}
-
-	select {
-	case <-waitDone:
-		return p.stopResult()
-	case <-ctx.Done():
-		return p.forceStopAndWait(waitDone)
-	}
+	return wrapSignalError("force stop", p.spec.Path, err)
 }
 
 func (p *Process) forceStopAndWait(waitDone <-chan struct{}) error {
