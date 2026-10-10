@@ -238,8 +238,11 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil, frozenRingBuffer{}, err
 			}
-			log.WithError(err).Warn("failed to read BPF event batch")
-			break
+			// ReadBatch pairs a failure with the partial batch it decoded,
+			// and the batch is already aggregated above. Return the samples
+			// with the error so callers keep the progress instead of
+			// reporting a truncated profile as a complete one.
+			return sampleCountsByProcess, ring, fmt.Errorf("read BPF event batch: %w", err)
 		}
 
 		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch.Events), totalRead, len(sampleCountsByProcess))
@@ -252,7 +255,7 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 
 		bpfCount, err := bpfmap.ReadUint64(r.bpf, r.transferStateMapID, ring.sampleCountIdx)
 		if err != nil {
-			return nil, frozenRingBuffer{}, fmt.Errorf("read sampleCnt: %w", err)
+			return sampleCountsByProcess, ring, fmt.Errorf("read sampleCnt: %w", err)
 		}
 
 		log.Debugf(
