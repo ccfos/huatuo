@@ -24,13 +24,17 @@ import (
 func buildEntries(ctx context.Context,
 	allocations []allocation, order binary.ByteOrder, symbols *symbolizer,
 ) ([]memsnapshot.Entry, error) {
+	remaining := maxGoFrameBytes
 	entries := make([]memsnapshot.Entry, 0, len(allocations))
 	for _, candidate := range allocations {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		name, stack := symbols.resolveStack([]byte(candidate.key), order)
+		name, stack, err := symbols.resolveStack(ctx, []byte(candidate.key), order, &remaining)
+		if err != nil {
+			return nil, err
+		}
 		average := float64(0)
 		if candidate.inuseObjects != 0 {
 			average = float64(candidate.inuseBytes) / float64(candidate.inuseObjects)

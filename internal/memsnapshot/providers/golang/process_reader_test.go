@@ -53,7 +53,8 @@ func TestProcessReaderRetainsExecutable(t *testing.T) {
 	if fn == nil {
 		t.Fatal("runtime.GC is missing from pinned executable")
 	}
-	if name, _ := symbols.resolve(fn.Entry + 1); name != "runtime.GC" {
+	remaining := maxGoFrameBytes
+	if name, _, err := symbols.resolve(t.Context(), fn.Entry+1, &remaining); err != nil || name != "runtime.GC" {
 		t.Fatal("cannot resolve pinned executable")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
