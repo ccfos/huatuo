@@ -585,10 +585,32 @@ func TestDefaultBPF_EventPipe_Flow(t *testing.T) {
 }
 
 func TestDefaultBPF_DetachOnContextDone(t *testing.T) {
-	b := &defaultBPF{}
+	b := loadMinimalBpfFromBytes(t)
+	err := b.AttachWithOptions([]AttachOption{
+		{ProgramName: "test_kprobe", Symbol: "sys_openat"},
+	})
+	if errors.Is(err, ebpf.ErrNotSupported) || errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) {
+		t.Skipf("skipping: attach not supported: %v", err)
+	}
+	require.NoError(t, err)
+
+	hasLinks := func() bool {
+		for _, p := range b.programsByID {
+			if len(p.links) != 0 {
+				return true
+			}
+		}
+		return false
+	}
+	require.True(t, hasLinks(), "expected at least one link after attach")
+
 	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
 	b.DetachOnContextDone(ctx, cancel)
+	cancel()
+
+	require.Eventually(t, func() bool {
+		return !hasLinks()
+	}, time.Second, time.Millisecond, "context cancellation did not detach BPF links")
 }
 
 func loadMinimalObjBytes(t *testing.T) []byte {
