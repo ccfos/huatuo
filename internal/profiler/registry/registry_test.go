@@ -143,3 +143,23 @@ func TestProfileLogsDataReadingLoopLifecycleOnce(t *testing.T) {
 		t.Fatalf("data loop lifecycle logs out of order: %s", output)
 	}
 }
+
+func TestProfilePropagatesFinalExportError(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stdout) })
+
+	// fakeAggregator returns a nil formatter, so the collapsed final export fails.
+	pctx := &pcontext.ProfilerContext{
+		Ctx:          t.Context(),
+		Cancel:       func() {},
+		OutputFormat: output.FormatCollapsed,
+	}
+	err := Profile(pctx, newMeta(profiling.ImplementationNative, profiling.TypeCPU))
+	if err == nil {
+		t.Fatal("Profile() error = nil, want final export failure")
+	}
+	if !strings.Contains(err.Error(), "output formatter is nil") {
+		t.Fatalf("Profile() error = %v, want nil-formatter export failure", err)
+	}
+}
