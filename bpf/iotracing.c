@@ -380,22 +380,25 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 
 	/*
 	 * iov_iter direction across kernel versions:
-	 *   pre-5.14: iov_iter::type        (low bit: 0=read, 1=write)
-	 *   5.14~6.x: iov_iter::data_source (bool: 0=read, 1=write)
-	 *   7.0+:     iov_iter::iter_type   (low bit: 0=read, 1=write)
+	 *   pre-5.14: iov_iter::type        (bit 0: 0=read, 1=write)
+	 *   5.14+:    iov_iter::data_source (bool: 0=read, 1=write)
+	 *
+	 * Since 5.14 the direction (data_source) and the buffer flavour
+	 * (iter_type) are separate fields that always coexist. iter_type is a
+	 * flavour enum (ITER_UBUF/ITER_IOVEC/ITER_BVEC/...); its value says
+	 * nothing about read vs write, so it must not be used for direction.
 	 */
 	if (bpf_core_field_exists(from->type)) {
 		type = BPF_CORE_READ(from, type);
 	} else if (bpf_core_field_exists(
-			   ((struct iov_iter___7_0 *)0)->iter_type)) {
-		struct iov_iter___7_0 *from7 = (struct iov_iter___7_0 *)from;
-
-		type = BPF_CORE_READ(from7, iter_type);
-	} else {
+			   ((struct iov_iter___5_14 *)0)->data_source)) {
 		struct iov_iter___5_14 *from_new;
 
 		from_new = (struct iov_iter___5_14 *)from;
 		type = BPF_CORE_READ(from_new, data_source);
+	} else {
+		/* No direction field is exposed; refuse to guess. */
+		return 0;
 	}
 
 	type &= 0x1;
