@@ -419,21 +419,13 @@ func (i *ioTracing) Start(ctx context.Context) error {
 	log.WithField("reason_snapshot", reasonSnapshot).
 		Debug("detected disk io event")
 
-	return i.runSnapshot(ctx, reasonSnapshot, executil.Run)
-}
-
-func (i *ioTracing) runSnapshot(
-	ctx context.Context,
-	reason *reasonSnapshot,
-	run func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error),
-) error {
 	taskID, err := randomid.New()
 	if err != nil {
 		return fmt.Errorf("allocate iotracing task id: %w", err)
 	}
 
 	pending := &pendingIOTracingReason{
-		reason:           reason,
+		reason:           reasonSnapshot,
 		startedTimestamp: timeutil.Now(),
 		received:         make(chan struct{}),
 		result:           make(chan error, 1),
@@ -449,7 +441,7 @@ func (i *ioTracing) runSnapshot(
 		"--max-files-per-process", strconv.Itoa(i.maxFilesPerProcess),
 	}
 
-	result, err := run(ctx, executil.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, iotracingToolName),
 		Args: args,
 	})
