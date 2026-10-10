@@ -1380,3 +1380,26 @@ huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
 |huatuo_bamai_mthreads_gpu_mtlink_state|GPU MtLink 状态（0=DOWN,1=UP,2=DOWNGRADE）|-|gpu, link|mtml.Device.MtLinkState|
 |huatuo_bamai_mthreads_gpu_mtlink_link_bandwidth_gb_s|GPU MtLink 每链路最大带宽（设备静态规格，非实时吞吐）|GB/s|gpu|mtml.Device.MtLinkSpec|
 |huatuo_bamai_mthreads_gpu_mtlink_link_count|GPU MtLink 最大支持链路数（设备静态规格）|links|gpu|mtml.Device.MtLinkSpec|
+
+### 磁盘繁忙时间和平均队列深度
+
+`diskio` 新增两个以秒为单位、带 `device`、`host`、`region` 标签的累计计数器：
+
+| 指标 | 含义 |
+| --- | --- |
+| `huatuo_bamai_diskio_io_time_seconds_total` | 存在未完成 I/O 的累计时间 |
+| `huatuo_bamai_diskio_io_time_weighted_seconds_total` | 按未完成 I/O 数量加权的累计时间 |
+
+从 `BlackList` 中移除 `diskio` 即可启用；新增指标不增加文件读取次数。
+
+```promql
+# 每个设备的近似繁忙时间百分比
+100 * rate(huatuo_bamai_diskio_io_time_seconds_total[5m])
+# 采样窗口内平均未完成 I/O 数量
+rate(huatuo_bamai_diskio_io_time_weighted_seconds_total[5m])
+```
+
+这些指标可结合 CPU iowait 和瞬时 `io_in_progress` 定位 I/O 排队。
+繁忙时间不代表 NVMe、RAID 等并行设备的容量利用率，Linux 对并发请求的繁忙时间也可能低估，详见
+[内核 I/O 统计说明](https://docs.kernel.org/admin-guide/iostats.html)。
+使用 `rate()` 处理计数器重置；不要同时汇总整盘及其分区，以免重复计算。

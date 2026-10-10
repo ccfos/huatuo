@@ -35,6 +35,8 @@ const (
 	diskIOReadTimeMetric      = "read_time_seconds_total"
 	diskIOWriteTimeMetric     = "write_time_seconds_total"
 	diskIOInProgressMetric    = "io_in_progress"
+	diskIOTimeMetric          = "io_time_seconds_total"
+	diskIOWeightedTimeMetric  = "io_time_weighted_seconds_total"
 	diskIOIOWaitPercentMetric = "disk_iowait_percent"
 )
 
@@ -125,8 +127,8 @@ func (c *diskIOStatsCollector) Update() ([]*metric.Data, error) {
 //	Field 10: sectors written (each sector = 512 bytes)
 //	Field 11: time spent writing in milliseconds (cumulative counter)
 //	Field 12: I/Os currently in progress (gauge, only field that can decrease)
-//	Field 13: time spent doing I/Os in ms (only counts when field 12 > 0) — not used
-//	Field 14: weighted time spent doing I/Os (for backlog measurement) — not used
+//	Field 13: time spent doing I/Os in ms (only counts when field 12 > 0)
+//	Field 14: weighted time spent doing I/Os (for backlog measurement)
 //
 // # Exposed Metrics
 //
@@ -181,7 +183,7 @@ func (c *diskIOStatsCollector) collectDiskstats() ([]*metric.Data, error) {
 		return nil, err
 	}
 
-	metrics := make([]*metric.Data, 0, len(diskstats)*7)
+	metrics := make([]*metric.Data, 0, len(diskstats)*9)
 
 	for i := range diskstats {
 		ds := &diskstats[i]
@@ -205,6 +207,10 @@ func (c *diskIOStatsCollector) collectDiskstats() ([]*metric.Data, error) {
 				"Total seconds spent by completed write requests.", deviceLabel),
 			metric.NewGaugeData(diskIOInProgressMetric, float64(ds.IOsInProgress),
 				"Number of I/O requests currently in flight (queue depth).", deviceLabel),
+			metric.NewCounterData(diskIOTimeMetric, float64(ds.IOsTotalTicks)/1000,
+				"Total seconds spent doing I/Os.", deviceLabel),
+			metric.NewCounterData(diskIOWeightedTimeMetric, float64(ds.WeightedIOTicks)/1000,
+				"Total weighted seconds spent doing I/Os.", deviceLabel),
 		)
 	}
 
