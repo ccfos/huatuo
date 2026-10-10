@@ -51,12 +51,8 @@ func getInfoFromHccnTool(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	return runHCCNCommand(ctx, hccnTool, args...)
-}
-
-func runHCCNCommand(ctx context.Context, tool string, args ...string) (string, error) {
 	result, err := executil.Run(ctx, executil.Spec{
-		Path:            tool,
+		Path:            hccnTool,
 		Args:            args,
 		StopGracePeriod: time.Second,
 		MaxOutputBytes:  maxHCCNOutputBytes,
