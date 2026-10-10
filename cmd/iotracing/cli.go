@@ -63,17 +63,17 @@ func appFlags() []cli.Flag {
 			Value: outputText,
 			Usage: "output format: json or text; mutually exclusive with --output-storage",
 		},
-		&cli.IntFlag{
+		&cli.Uint64Flag{
 			Name:  cliFlagMaxStack,
 			Value: 10,
 			Usage: "keep at most N most-recent IO stack traces (older samples are evicted when the window overflows)",
 		},
-		&cli.IntFlag{
+		&cli.Uint64Flag{
 			Name:  cliFlagMaxProcess,
 			Value: 10,
 			Usage: "maximum number of top processes to display",
 		},
-		&cli.IntFlag{
+		&cli.Uint64Flag{
 			Name:  cliFlagMaxFilesPerPid,
 			Value: 5,
 			Usage: "maximum number of top files per process to display",
@@ -123,6 +123,18 @@ func loadConfig(c *cli.Context) (ioConfig, map[string]any, error) {
 		maxFilesPerProcess: c.Uint64(cliFlagMaxFilesPerPid),
 		scheduleThreshold:  c.Uint64(cliFlagSchedThreshold),
 		durationSecond:     c.Uint64(cliFlagDuration),
+	}
+
+	if cfg.maxStack == 0 {
+		return ioConfig{}, nil, errors.New("--max-stack must be greater than zero")
+	}
+
+	if cfg.maxProcess == 0 {
+		return ioConfig{}, nil, errors.New("--max-process must be greater than zero")
+	}
+
+	if cfg.maxFilesPerProcess == 0 {
+		return ioConfig{}, nil, errors.New("--max-files-per-process must be greater than zero")
 	}
 
 	if cfg.durationSecond == 0 {
