@@ -16,7 +16,9 @@ package symbol
 
 import (
 	"debug/elf"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -152,6 +154,13 @@ type pendingELFPCs struct {
 func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 	result := slices.Repeat([]string{failFrame("elf-load-fail", "")}, len(addrs))
 	cache, err := r.loadElfCaches(pid)
+	if errors.Is(err, os.ErrNotExist) {
+		if process, ok := r.processes[pid]; ok {
+			if cached := r.exeCache[process.cacheKey]; cached != nil {
+				cache, err = cached, nil
+			}
+		}
+	}
 	if err != nil {
 		return result
 	}
@@ -295,12 +304,6 @@ func unresolvedELFPCs(pcs []uint64, cached map[uint64]string) []uint64 {
 }
 
 func (r *UsymResolver) loadElfCaches(pid uint32) (*executableCache, error) {
-	if process, ok := r.processes[pid]; ok {
-		if cache, ok := r.exeCache[process.cacheKey]; ok {
-			return cache, nil
-		}
-	}
-
 	path, err := r.exePath(pid)
 	if err != nil {
 		return nil, err
@@ -309,6 +312,15 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*executableCache, error) {
 	key, err := r.exeCacheKey(pid, path)
 	if err != nil {
 		return nil, err
+	}
+	if previous, ok := r.processes[pid]; ok && previous.cacheKey != key {
+		delete(r.procmaps, pid)
+		rootDir := procfs.Path(fmt.Sprintf("%d/root", pid)) + "/"
+		for libPath := range r.libKeys {
+			if strings.HasPrefix(libPath, rootDir) {
+				delete(r.libKeys, libPath)
+			}
+		}
 	}
 	cache, ok := r.exeCache[key]
 	if ok {
