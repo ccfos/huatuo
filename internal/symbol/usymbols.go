@@ -21,10 +21,11 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/procfs"
-	"github.com/ccfos/huatuo/internal/utils/fileutil"
 )
 
 type executableCache struct {
@@ -44,6 +45,7 @@ type processELF struct {
 }
 
 type cacheKey struct {
+	device   uint64 //nolint:unused // part of file identity in map key equality
 	inode    uint64 //nolint:unused // used implicitly via map key equality; never accessed by name
 	mountKey string
 }
@@ -400,8 +402,8 @@ func (r *UsymResolver) exePath(pid uint32) (string, error) {
 }
 
 func (r *UsymResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
-	inode, err := fileutil.StatInode(path)
-	if err != nil {
+	var identity unix.Stat_t
+	if err := unix.Stat(path, &identity); err != nil {
 		return cacheKey{}, fmt.Errorf("stat %q: %w", path, err)
 	}
 
@@ -410,12 +412,12 @@ func (r *UsymResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
 		return cacheKey{}, err
 	}
 
-	return cacheKey{inode: inode, mountKey: mountKey}, nil
+	return cacheKey{device: identity.Dev, inode: identity.Ino, mountKey: mountKey}, nil
 }
 
 func (r *UsymResolver) libCacheKey(pid uint32, libPath string) (cacheKey, error) {
-	inode, err := fileutil.StatInode(libPath)
-	if err != nil {
+	var identity unix.Stat_t
+	if err := unix.Stat(libPath, &identity); err != nil {
 		return cacheKey{}, fmt.Errorf("stat %q: %w", libPath, err)
 	}
 
@@ -424,7 +426,7 @@ func (r *UsymResolver) libCacheKey(pid uint32, libPath string) (cacheKey, error)
 		return cacheKey{}, err
 	}
 
-	return cacheKey{inode: inode, mountKey: mountKey}, nil
+	return cacheKey{device: identity.Dev, inode: identity.Ino, mountKey: mountKey}, nil
 }
 
 func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, error) {
