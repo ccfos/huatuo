@@ -519,22 +519,20 @@ func runIRQTracingCLI(
 }
 
 func runIRQTracingProcess(ctx context.Context, args []string) error {
-	process, err := executil.New(executil.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path:           filepath.Join(internalconfig.CoreBinDir, irqTracingToolName),
 		Args:           args,
 		MaxOutputBytes: maxIRQTracingOutputBytes,
 	})
 	if err != nil {
-		return fmt.Errorf("create irqtracing command: %w", err)
-	}
-
-	runErr := process.Run(ctx)
-	_, outputErr := process.Stdout()
-	if err := errors.Join(runErr, outputErr); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("irqtracing timed out: %w", err)
 		}
-		return irqTracingCommandError(process.Stderr(), err)
+		var diagnostic []byte
+		if result != nil {
+			diagnostic = result.Stderr
+		}
+		return irqTracingCommandError(diagnostic, err)
 	}
 	return nil
 }

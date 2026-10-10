@@ -26,7 +26,6 @@ package hccn
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -56,7 +55,7 @@ func getInfoFromHccnTool(args ...string) (string, error) {
 }
 
 func runHCCNCommand(ctx context.Context, tool string, args ...string) (string, error) {
-	process, err := executil.New(executil.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path:            tool,
 		Args:            args,
 		StopGracePeriod: time.Second,
@@ -67,20 +66,13 @@ func runHCCNCommand(ctx context.Context, tool string, args ...string) (string, e
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("build hccn_tool command: %w", err)
-	}
-	runErr := process.Run(ctx)
-	output, outputErr := process.Stdout()
-	if err := errors.Join(runErr, outputErr); err != nil {
-		return "", hccnCommandError(
-			args,
-			output,
-			process.Stderr(),
-			err,
-		)
+		if result == nil {
+			return "", hccnCommandError(args, nil, nil, err)
+		}
+		return "", hccnCommandError(args, result.Stdout, result.Stderr, err)
 	}
 
-	return string(output), nil
+	return string(result.Stdout), nil
 }
 
 func hccnCommandError(args []string, stdout, stderr []byte, err error) error {
