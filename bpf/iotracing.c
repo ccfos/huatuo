@@ -13,13 +13,21 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define FILEPATH_MAX_DEPTH 8
 #define DNAME_INLINE_LEN   32
 #define PAGE_SIZE	   4096
-#define BPF_DEV_MINOR_BITS 20
-#define BPF_DEV_MINOR_MASK ((1U << BPF_DEV_MINOR_BITS) - 1)
 #define FILTER_DEV_MAX	   16
+
+/* Linux UAPI errno-base.h; libc headers are unsuitable for the BPF target. */
+#define E2BIG 7
+
+#ifndef bpf_core_field_offset
+#define bpf_core_field_offset(field) \
+	__builtin_preserve_field_info(field, BPF_FIELD_BYTE_OFFSET)
+#endif
 
 volatile const u32 FILTER_DEV_IDS[FILTER_DEV_MAX] = {};
 volatile const u32 FILTER_DEV_COUNT = 0;
 volatile const u64 FILTER_EVENT_TIMEOUT = 100000000;
+/* Selected from request.part's BTF pointee before the object is loaded. */
+volatile const bool REQUEST_PART_BLOCK_DEVICE = false;
 
 static __always_inline int should_process_device(u32 dev)
 {
@@ -33,12 +41,6 @@ static __always_inline int should_process_device(u32 dev)
 			return 1;
 
 	return 0;
-}
-
-static __always_inline u32 encode_dev(u32 major, u32 minor)
-{
-	return (major & 0xfff) << BPF_DEV_MINOR_BITS |
-	       (minor & BPF_DEV_MINOR_MASK);
 }
 
 struct latency_info {
@@ -96,6 +98,18 @@ struct {
 	__uint(value_size, sizeof(struct io_data));
 } io_source_map SEC(".maps");
 
+/* Remember a real capacity failure so unseen files skip path collection and
+ * unsuccessful inserts. Existing records still receive updates. Records are
+ * never deleted during a capture, so full remains valid until this BPF object
+ * is closed; a new capture starts with full cleared.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, sizeof(u32));
+} io_source_full SEC(".maps");
+
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 4096);
@@ -119,75 +133,23 @@ static __always_inline int is_write_request(u32 cmd_flags)
 	return (cmd_flags & REQ_OP_MASK) == REQ_OP_WRITE;
 }
 
-struct request_queue___5_14 {
-	struct gendisk *disk;
-} __attribute__((preserve_access_index));
-
-struct block_device___5_11 {
-	dev_t bd_dev;
-};
-
-/*
- * compatible with different kernel versions of disk device acquisition.
- *
- *   pre-5.17:   request->rq_disk
- *   5.17 ~ 6.x: request->q->disk (rq_disk removed, request_queue gained
- *               the disk field in 5.14)
- *   7.0+:       request->part->bd_disk (request_queue->disk no longer
- *               reflects the real disk on 7.0+)
- *
- * Discriminating 5.17~6.x from 7.0+ relies on whether the kernel's
- * struct request_queue still carries the `disk` field. request->part
- * cannot be used for this purpose: it exists since 5.11 (just with a
- * different type) and is therefore always present on every kernel that
- * reaches the second branch below.
- */
-static __always_inline struct gendisk *get_request_disk(struct request *req)
+/* Use the partition's dev_t unchanged on both request hooks. */
+static __always_inline bool get_request_dev(struct request *req, dev_t *dev)
 {
-	struct request_queue___5_14 *q = NULL;
+	void *part = NULL;
+	struct hd_struct *old_part;
+	struct block_device___7_0 *bdev7;
 
-	if (bpf_core_field_exists(req->rq_disk))
-		return BPF_CORE_READ(req, rq_disk);
+	/* part is not initialized when request IO statistics are disabled. */
+	if (BPF_CORE_READ_INTO(&part, req, part) || !part)
+		return false;
 
-	if (bpf_core_field_exists(q->disk)) {
-		q = (struct request_queue___5_14 *)BPF_CORE_READ(req, q);
-		return BPF_CORE_READ(q, disk);
-	}
+	old_part = (struct hd_struct *)part;
+	if (!REQUEST_PART_BLOCK_DEVICE)
+		return BPF_CORE_READ_INTO(dev, old_part, __dev.devt) == 0;
 
-	{
-		struct request___7_0 *req7 = (struct request___7_0 *)req;
-		struct block_device___7_0 *bdev7;
-
-		bdev7 = (struct block_device___7_0 *)BPF_CORE_READ(req7, part);
-		return BPF_CORE_READ(bdev7, bd_disk);
-	}
-}
-
-/*
- * compatible with different kernel versions of partition number acquisition.
- *
- *   pre-5.11: request->part is struct hd_struct*, partno is the
- *             partition index directly
- *   5.11+:    request->part is struct block_device*, the low byte of
- *             bd_dev encodes the partition index
- *
- * 7.0+ keeps using struct block_device, so the 5.11+ path covers both.
- */
-static __always_inline int get_partition_number(struct request *req)
-{
-	void *part = BPF_CORE_READ(req, part);
-
-	if (bpf_core_field_exists(((struct hd_struct *)part)->partno))
-		return BPF_CORE_READ((struct hd_struct *)part, partno);
-
-	{
-		struct block_device___5_11 *new_part;
-		int partno;
-
-		new_part = (struct block_device___5_11 *)part;
-		partno = BPF_CORE_READ(new_part, bd_dev);
-		return partno & 0xff;
-	}
+	bdev7 = (struct block_device___7_0 *)part;
+	return BPF_CORE_READ_INTO(dev, bdev7, bd_dev) == 0;
 }
 
 SEC("kprobe/rq_qos_issue")
@@ -198,10 +160,7 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 	struct io_start_info info = {};
 	struct bio *bio;
 	struct inode *inode;
-	struct gendisk *disk;
 	u32 cmd_flags;
-	int partno;
-	int devn[2];
 
 	bio = BPF_CORE_READ(req, bio);
 
@@ -209,13 +168,9 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 	if (cmd_flags & REQ_META)
 		return 0;
 
-	disk = get_request_disk(req);
-	/* gendisk.major, gendisk.first_minor */
-	if (bpf_probe_read(devn, sizeof(devn), disk))
+	if (!get_request_dev(req, &key.dev))
 		return -1;
 
-	partno = get_partition_number(req);
-	key.dev = encode_dev(devn[0], devn[1] + partno);
 	key.sector = BPF_CORE_READ(req, __sector);
 
 	if (!should_process_device(key.dev))
@@ -246,21 +201,14 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 	struct io_key io_key = {};
 	struct io_data data = {};
 	struct io_data *entry;
-	struct gendisk *disk;
 	u32 cmd_flags;
-	int partno;
-	int devn[2];
 	u64 now;
 	u64 q2c;
 	u64 d2c;
 
-	disk = get_request_disk(req);
-	/* gendisk.major, gendisk.first_minor */
-	if (bpf_probe_read(devn, sizeof(devn), disk))
+	if (!get_request_dev(req, &info_key.dev))
 		return -1;
 
-	partno = get_partition_number(req);
-	info_key.dev = encode_dev(devn[0], devn[1] + partno);
 	info_key.sector = BPF_CORE_READ(req, __sector);
 
 	if (!should_process_device(info_key.dev))
@@ -320,6 +268,9 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 static __always_inline void
 init_io_data(struct io_data *entry, struct dentry *dentry, u32 dev, u64 inode)
 {
+	/* Consume identity before the path walk to bound the BPF call stack. */
+	entry->dev = dev;
+	entry->inode = inode;
 	entry->tgid = bpf_get_current_pid_tgid() >> 32;
 
 	bpf_get_current_comm(entry->comm, COMPAT_TASK_COMM_LEN);
@@ -339,75 +290,114 @@ init_io_data(struct io_data *entry, struct dentry *dentry, u32 dev, u64 inode)
 		}
 		dentry = BPF_CORE_READ(dentry, d_parent);
 	}
-	entry->dev = dev;
-	entry->inode = inode;
 	entry->path_initialized = 1;
 }
 
-struct iov_iter___5_14 {
-	bool data_source;
-} __attribute__((preserve_access_index));
-
-static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
+/* Keep the 376-byte initialization and path walk off the map-hit path. */
+static __noinline struct io_data *
+create_file_io_entry(struct io_key *key, struct file *file, u32 *full)
 {
-	struct kiocb *iocb = (struct kiocb *)PT_REGS_PARM1(ctx);
 	struct io_data data = {};
-	struct io_data *entry;
-	struct dentry *dentry;
+	int err;
+
+	init_io_data(&data, BPF_CORE_READ(file, f_path.dentry), key->dev, key->inode);
+	err = bpf_map_update_elem(&io_source_map, key, &data,
+				  COMPAT_BPF_NOEXIST);
+	if (err == -E2BIG && full)
+		*full = 1;
+
+	/* A concurrent first observation may already have installed this key. */
+	return bpf_map_lookup_elem(&io_source_map, key);
+}
+
+static __always_inline struct io_data *
+get_file_io_entry(struct io_key *key, struct file *file)
+{
+	struct io_data *entry = bpf_map_lookup_elem(&io_source_map, key);
+
+	if (!entry) {
+		u32 zero = 0;
+		u32 *full = bpf_map_lookup_elem(&io_source_full, &zero);
+
+		if (full && *full)
+			return NULL;
+		entry = create_file_io_entry(key, file, full);
+		if (!entry)
+			return NULL;
+	}
+	/* Block completion can create an entry before its first file event. */
+	if (!entry->path_initialized)
+		init_io_data(entry, BPF_CORE_READ(file, f_path.dentry), key->dev, key->inode);
+	return entry;
+}
+
+static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_write)
+{
+	struct kiocb *iocb    = (struct kiocb *)PT_REGS_PARM1(ctx);
+	struct io_data *entry = NULL;
+	struct file *file;
 	struct inode *inode;
 	struct io_key key = {};
 	struct iov_iter *from;
 	size_t count;
-	unsigned int type;
+	u32 io_flags = 0;
+	u64 inode_number = 0;
 
-	inode = BPF_CORE_READ(iocb, ki_filp, f_inode);
-	key.inode = BPF_CORE_READ(inode, i_ino);
-	key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	/* Batch only when the target layout matches the snapshot's field spacing. */
+	bool bulk_iocb = bpf_core_field_offset(iocb->ki_flags) -
+		bpf_core_field_offset(iocb->ki_filp) == 32;
+
+	if (bulk_iocb) {
+		struct {
+			struct file *file;
+			u64 skipped[3];
+			u32 flags;
+		} __attribute__((packed)) snapshot;
+
+		BPF_CORE_READ_INTO(&snapshot, iocb, ki_filp);
+		file = snapshot.file;
+		io_flags = snapshot.flags;
+	} else {
+		file = BPF_CORE_READ(iocb, ki_filp);
+	}
+	inode	  = BPF_CORE_READ(file, f_inode);
+
+	bool bulk_inode = bpf_core_field_offset(inode->i_ino) -
+		bpf_core_field_offset(inode->i_sb) == 24;
+
+	if (bulk_inode) {
+		struct {
+			struct super_block *sb;
+			u64 skipped[2];
+			u64 ino;
+		} snapshot;
+		struct super_block *sb;
+
+		BPF_CORE_READ_INTO(&snapshot, inode, i_sb);
+		sb = snapshot.sb;
+		key.dev = BPF_CORE_READ(sb, s_dev);
+		inode_number = snapshot.ino;
+	} else {
+		key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	}
 
 	if (!should_process_device(key.dev))
 		return 0;
 
-	entry = bpf_map_lookup_elem(&io_source_map, &key);
+	key.inode = bulk_inode ? inode_number : BPF_CORE_READ(inode, i_ino);
+	entry = get_file_io_entry(&key, file);
 	if (!entry)
-		entry = &data;
-
-	dentry = BPF_CORE_READ(iocb, ki_filp, f_path.dentry);
-	if (!entry->path_initialized)
-		init_io_data(entry, dentry, key.dev, key.inode);
+		return 0;
 
 	from = (struct iov_iter *)PT_REGS_PARM2(ctx);
 	count = BPF_CORE_READ(from, count);
 
-	/*
-	 * iov_iter direction across kernel versions:
-	 *   pre-5.14: iov_iter::type        (low bit: 0=read, 1=write)
-	 *   5.14~6.x: iov_iter::data_source (bool: 0=read, 1=write)
-	 *   7.0+:     iov_iter::iter_type   (low bit: 0=read, 1=write)
-	 */
-	if (bpf_core_field_exists(from->type)) {
-		type = BPF_CORE_READ(from, type);
-	} else if (bpf_core_field_exists(
-			   ((struct iov_iter___7_0 *)0)->iter_type)) {
-		struct iov_iter___7_0 *from7 = (struct iov_iter___7_0 *)from;
-
-		type = BPF_CORE_READ(from7, iter_type);
-	} else {
-		struct iov_iter___5_14 *from_new;
-
-		from_new = (struct iov_iter___5_14 *)from;
-		type = BPF_CORE_READ(from_new, data_source);
-	}
-
-	type &= 0x1;
-	if (type) /* 0: read, 1: write */
+	if (is_write)
 		entry->fs_write_bytes += count;
 	else
 		entry->fs_read_bytes += count;
 
-	entry->flag = BPF_CORE_READ(iocb, ki_flags);
-	if (entry == &data)
-		bpf_map_update_elem(&io_source_map, &key, &data,
-				    COMPAT_BPF_ANY);
+	entry->flag = bulk_iocb ? io_flags : BPF_CORE_READ(iocb, ki_flags);
 
 	return 0;
 }
@@ -415,46 +405,37 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 SEC("kprobe/anyfs_file_read_iter")
 int bpf_anyfs_file_read_iter(struct pt_regs *ctx)
 {
-	return bpf_file_read_write(ctx);
+	return bpf_file_read_write(ctx, false);
 }
 
 SEC("kprobe/anyfs_file_write_iter")
 int bpf_anyfs_file_write_iter(struct pt_regs *ctx)
 {
-	return bpf_file_read_write(ctx);
+	return bpf_file_read_write(ctx, true);
 }
 
 static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 {
 	struct vm_fault *vm = (struct vm_fault *)PT_REGS_PARM1(ctx);
 	struct vm_area_struct *vma = BPF_CORE_READ(vm, vma);
-	struct io_data *entry;
-	struct io_data data = {};
-	struct io_key key = {};
+	struct io_data *entry	   = NULL;
+	struct io_key key	   = {};
+	struct file *file;
 	struct inode *inode;
 
-	inode = BPF_CORE_READ(vma, vm_file, f_inode);
-	key.inode = BPF_CORE_READ(inode, i_ino);
-	key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	file	  = BPF_CORE_READ(vma, vm_file);
+	inode	  = BPF_CORE_READ(file, f_inode);
+	key.dev	  = BPF_CORE_READ(inode, i_sb, s_dev);
 
 	if (!should_process_device(key.dev))
 		return 0;
 
-	entry = bpf_map_lookup_elem(&io_source_map, &key);
+	key.inode = BPF_CORE_READ(inode, i_ino);
+	entry = get_file_io_entry(&key, file);
 	if (!entry)
-		entry = &data;
-
-	if (!entry->path_initialized) {
-		struct dentry *dentry;
-
-		dentry = BPF_CORE_READ(vma, vm_file, f_path.dentry);
-		init_io_data(entry, dentry, key.dev, key.inode);
-	}
+		return 0;
 
 	entry->fs_write_bytes += PAGE_SIZE;
-	if (entry == &data)
-		bpf_map_update_elem(&io_source_map, &key, &data,
-				    COMPAT_BPF_ANY);
 
 	return 0;
 }
@@ -470,33 +451,23 @@ int bpf_filemap_fault(struct pt_regs *ctx)
 {
 	struct vm_fault *vm = (struct vm_fault *)PT_REGS_PARM1(ctx);
 	struct vm_area_struct *vma = BPF_CORE_READ(vm, vma);
-	struct io_data *entry;
-	struct io_data data = {};
-	struct io_key key = {};
+	struct io_data *entry	   = NULL;
+	struct io_key key	   = {};
+	struct file *file;
 	struct inode *inode;
 
-	inode = BPF_CORE_READ(vma, vm_file, f_inode);
-	key.inode = BPF_CORE_READ(inode, i_ino);
-	key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	file	  = BPF_CORE_READ(vma, vm_file);
+	inode	  = BPF_CORE_READ(file, f_inode);
+	key.dev	  = BPF_CORE_READ(inode, i_sb, s_dev);
 
 	if (!should_process_device(key.dev))
 		return 0;
 
-	entry = bpf_map_lookup_elem(&io_source_map, &key);
+	key.inode = BPF_CORE_READ(inode, i_ino);
+	entry = get_file_io_entry(&key, file);
 	if (!entry)
-		entry = &data;
-
-	if (!entry->path_initialized) {
-		struct dentry *dentry;
-
-		dentry = BPF_CORE_READ(vma, vm_file, f_path.dentry);
-		init_io_data(entry, dentry, key.dev, key.inode);
-	}
+		return 0;
 	entry->fs_read_bytes += PAGE_SIZE;
-
-	if (entry == &data)
-		bpf_map_update_elem(&io_source_map, &key, &data,
-				    COMPAT_BPF_ANY);
 
 	return 0;
 }

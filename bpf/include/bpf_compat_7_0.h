@@ -13,23 +13,8 @@
  * (or the existing per-file ___X_Y compat structs).
  */
 
-/*
- * iotracing: rq_disk was removed; gendisk is now reached via
- * request->part->bd_disk on 7.0+.
- */
-struct request___7_0 {
-	struct block_device *part;
-} __attribute__((preserve_access_index));
-
 struct block_device___7_0 {
-	struct gendisk *bd_disk;
-} __attribute__((preserve_access_index));
-
-/*
- * iotracing: iov_iter::data_source was renamed to ::iter_type on 7.0+.
- */
-struct iov_iter___7_0 {
-	u8 iter_type;
+	dev_t bd_dev;
 } __attribute__((preserve_access_index));
 
 /*
