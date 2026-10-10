@@ -44,7 +44,7 @@ var (
 )
 
 type selectedProcess struct {
-	identity    memsnapshot.ProcessInstance
+	instance    memsnapshot.ProcessInstanceID
 	comm        string
 	oomScoreAdj int
 }
@@ -97,13 +97,13 @@ func (s *processSelector) Select(ctx context.Context, group cgroupRef, memoryLim
 		if current.Starttime != stat.Starttime {
 			return processCandidate{}, errProcessNotEligible
 		}
-		candidate.process.identity = memsnapshot.ProcessInstance{TGID: pid, StartTimeTicks: stat.Starttime}
+		candidate.process.instance = memsnapshot.ProcessInstanceID{TGID: pid, StartTimeTicks: stat.Starttime}
 		return candidate, nil
 	})
 	if err != nil {
 		return selectedProcess{}, err
 	}
-	if err := s.Validate(ctx, group, process.identity); err != nil {
+	if err := s.Validate(ctx, group, process.instance); err != nil {
 		return selectedProcess{}, err
 	}
 
@@ -140,21 +140,21 @@ func selectProcessFromProcs(scan func(func(int) error) error,
 	return selected.process, nil
 }
 
-func (s *processSelector) Validate(ctx context.Context, group cgroupRef, identity memsnapshot.ProcessInstance) error {
+func (s *processSelector) Validate(ctx context.Context, group cgroupRef, process memsnapshot.ProcessInstanceID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	found := false
 	if err := s.scanProcesses(ctx, group, func(pid int) error {
-		found = found || pid == identity.TGID
+		found = found || pid == process.TGID
 		return nil
 	}); err != nil {
 		return err
 	}
 	if !found {
-		return fmt.Errorf("%w: process %d left memory cgroup %q", errInvalidSnapshotProcess, identity.TGID, group.Path)
+		return fmt.Errorf("%w: process %d left memory cgroup %q", errInvalidSnapshotProcess, process.TGID, group.Path)
 	}
-	if err := memsnapshot.ValidateProcessInstance(identity); err != nil {
+	if err := memsnapshot.ValidateProcessInstanceID(process); err != nil {
 		return fmt.Errorf("%w: %w", errInvalidSnapshotProcess, err)
 	}
 

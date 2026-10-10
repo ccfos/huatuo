@@ -32,6 +32,10 @@ func TestBuildEntries(t *testing.T) {
 		{Entry: 0x100, End: 0x200, Sym: &gosym.Sym{Name: "runtime.alloc"}},
 		{Entry: 0x200, End: 0x300, Sym: &gosym.Sym{Name: "main.allocate"}},
 	}}
+	for i := range table.Funcs {
+		table.Funcs[i].Obj = &gosym.Obj{}
+		table.Funcs[i].LineTable = &gosym.LineTable{}
+	}
 	for _, order := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
 		raw := make([]byte, 40)
 		order.PutUint64(raw, 0x1200)
@@ -49,6 +53,76 @@ func TestBuildEntries(t *testing.T) {
 	}
 }
 
+func TestBuildEntriesSourceLocations(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		function string
+		file     string
+		line     int
+		wantName string
+		want     string
+	}{
+		{
+			name: "source_location", function: "main.allocate", file: "example/cache.go", line: 123,
+			wantName: "main.allocate", want: "main.allocate, example/cache.go:123",
+		},
+		{
+			name: "commas", function: "main.allocate[go.shape.int,go.shape.string]",
+			file: "example/source, files/cache.go", line: 123,
+			wantName: "main.allocate[go.shape.int,go.shape.string]",
+			want:     "main.allocate[go.shape.int,go.shape.string], example/source, files/cache.go:123",
+		},
+		{
+			name: "missing_file", function: "main.allocate", line: 123,
+			wantName: "main.allocate", want: "main.allocate",
+		},
+		{
+			name: "missing_line", function: "main.allocate", file: "example/cache.go",
+			wantName: "main.allocate", want: "main.allocate",
+		},
+		{
+			name: "runtime_only", function: "runtime.main", file: "runtime/proc.go", line: 123,
+			wantName: "runtime.alloc", want: "runtime.main, runtime/proc.go:123",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			table := &gosym.Table{Funcs: []gosym.Func{
+				{
+					Entry: 0x100, End: 0x200, Sym: &gosym.Sym{Name: "runtime.alloc"},
+					Obj: &gosym.Obj{}, LineTable: &gosym.LineTable{},
+				},
+				{
+					Entry: 0x200, End: 0x300, Sym: &gosym.Sym{Name: "internal/runtime/maps.newTable"},
+					Obj: &gosym.Obj{}, LineTable: &gosym.LineTable{},
+				},
+				{
+					Entry: 0x300, End: 0x400, Sym: &gosym.Sym{Name: test.function},
+					Obj:       &gosym.Obj{Paths: []gosym.Sym{{Name: test.file, Value: 1}}},
+					LineTable: &gosym.LineTable{Line: test.line},
+				},
+			}}
+			var raw [3 * programCounterBytes]byte
+			binary.LittleEndian.PutUint64(raw[:], 0x1200)
+			binary.LittleEndian.PutUint64(raw[programCounterBytes:], 0x1300)
+			binary.LittleEndian.PutUint64(raw[2*programCounterBytes:], 0x1301)
+			input := []allocation{{key: string(raw[:]), inuseBytes: 256, inuseObjects: 2}}
+			entries, err := buildEntries(t.Context(), input, binary.LittleEndian,
+				&symbolizer{table: table, loadBias: 0x1000})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []memsnapshot.Entry{{
+				Kind: "inuse_space_objects", Name: test.wantName,
+				Bytes: 256, Objects: 2, AverageBytes: 128,
+				Stack: []string{"runtime.alloc", "internal/runtime/maps.newTable", test.want},
+			}}
+			if !reflect.DeepEqual(entries, want) {
+				t.Fatalf("entries = %+v, want %+v", entries, want)
+			}
+		})
+	}
+}
+
 func TestBuildEntriesWithoutSymbols(t *testing.T) {
 	for _, order := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
 		t.Run(order.String(), func(t *testing.T) {
@@ -58,7 +132,7 @@ func TestBuildEntriesWithoutSymbols(t *testing.T) {
 			order.PutUint64(raw[4*programCounterBytes:], 0xdead)
 			input := []allocation{{key: string(raw[:]), inuseBytes: 256, inuseObjects: 2}}
 			want := []memsnapshot.Entry{{
-				Kind: "allocation_site", Name: "0x0",
+				Kind: "inuse_space_objects", Name: "0x0",
 				Bytes: 256, Objects: 2, AverageBytes: 128,
 				Stack: []string{"0x0", "0x1200", "0x9999", "0x0", "0xdead"},
 			}}

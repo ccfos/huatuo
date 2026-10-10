@@ -50,6 +50,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+assert_profile_storage_request() {
+	local operation=$1 response_file=$2 status curl_status=0
+	local error_file="${response_file}.err"
+	shift 2
+	status=$(storage_curl "$@" -o "${response_file}" -w '%{http_code}' \
+		2> "${error_file}") || curl_status=$?
+	log_info "${operation} status=${status}, curl=${curl_status}"
+	report_http_response "${operation}" "${response_file}" "${error_file}"
+	assert_eq "${curl_status}" "0" "${operation} transport" || fatal "${operation} request failed"
+	assert_eq "${status}" "200" "${operation} HTTP status" || fatal "${operation} returned HTTP ${status}"
+}
+
 assert_profile_filter() {
 	local matcher=$1 expected=$2 length status curl_status=0
 	# LabelValuesRequest: name (field 1), matcher (field 2), epoch time bounds.
@@ -76,15 +88,15 @@ assert_profile_filter() {
 }
 
 storage_start
-storage_curl --fail-with-body -X PUT "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}" \
+assert_profile_storage_request "create index" "${HUATUO_BAMAI_TEST_TMPDIR}/create-index.json" \
+	-X PUT "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}" \
 	-H 'Content-Type: application/json' -d '{"mappings":{"properties":{
   "tracer_id":{"type":"keyword"},
   "hostname":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
   "container_hostname":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
   "uploaded_timestamp":{"type":"date"},
   "profile_data":{"properties":{"profile_type":{"type":"text","fields":{"keyword":{"type":"keyword"}}}}}
- }}}' > "${HUATUO_BAMAI_TEST_TMPDIR}/create-index.json"
-log_info "create index response: $(< "${HUATUO_BAMAI_TEST_TMPDIR}/create-index.json")"
+ }}}'
 
 jq -cn --arg type "${PROFILE_FILTER_TYPE}" '
  [
@@ -100,11 +112,10 @@ jq -cn --arg type "${PROFILE_FILTER_TYPE}" '
  ][] | {index:{_id:.tracer_id}},
  ({uploaded_timestamp:"1970-01-01T00:00:00.000Z",profile_data:{profile_type:$type}} + .)
 ' > "${HUATUO_BAMAI_TEST_TMPDIR}/profiles.ndjson"
-storage_curl --fail-with-body -X POST "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}/_bulk?refresh=true" \
+assert_profile_storage_request "seed profiles" "${HUATUO_BAMAI_TEST_TMPDIR}/seed-profiles.json" \
+	-X POST "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}/_bulk?refresh=true" \
 	-H 'Content-Type: application/x-ndjson' \
-	--data-binary "@${HUATUO_BAMAI_TEST_TMPDIR}/profiles.ndjson" \
-	> "${HUATUO_BAMAI_TEST_TMPDIR}/seed-profiles.json"
-log_info "seed profiles response: $(< "${HUATUO_BAMAI_TEST_TMPDIR}/seed-profiles.json")"
+	--data-binary "@${HUATUO_BAMAI_TEST_TMPDIR}/profiles.ndjson"
 assert_eq "$(jq -r '.errors' "${HUATUO_BAMAI_TEST_TMPDIR}/seed-profiles.json")" \
 	"false" "seed profile documents" || fatal "profile fixture writes failed"
 

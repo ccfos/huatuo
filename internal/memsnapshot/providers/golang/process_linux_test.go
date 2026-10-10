@@ -72,7 +72,7 @@ func TestNewProcessReader(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = stdin.Close(); _ = command.Wait() }()
-	identity, err := memsnapshot.ReadProcessInstance(command.Process.Pid)
+	identity, err := memsnapshot.ReadProcessInstanceID(command.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}

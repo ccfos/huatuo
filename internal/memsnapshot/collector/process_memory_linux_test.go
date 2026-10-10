@@ -25,18 +25,18 @@ import (
 func TestProcessMemory(t *testing.T) {
 	full := "VmSize: 100 kB\nVmRSS: 60 kB\nRssAnon: 40 kB\nRssFile: 20 kB\nRssShmem: 0 kB\nVmSwap: 0 kB\nVmPTE: 4 kB\n"
 	m := parseProcessMemory(strings.NewReader(full))
-	if m.Status != memsnapshot.StatusComplete || *m.RSSBytes != 60*1024 || *m.PageTableBytes != 4096 {
+	if m.Status != memsnapshot.SnapshotStatusComplete || *m.RSSBytes != 60*1024 || *m.PageTableBytes != 4096 {
 		t.Fatalf("memory = %+v", m)
 	}
 	for _, input := range []string{"VmRSS: 0 kB\n", "VmRSS: 0 kB\nVmSwap: bad kB\nVmSize: 18446744073709551615 kB\n"} {
 		m = parseProcessMemory(strings.NewReader(input))
 		data, err := json.Marshal(m)
-		if err != nil || m.Status != memsnapshot.StatusPartial || m.RSSBytes == nil || *m.RSSBytes != 0 ||
+		if err != nil || m.Status != memsnapshot.SnapshotStatusPartial || m.RSSBytes == nil || *m.RSSBytes != 0 ||
 			m.SwapBytes != nil || m.VirtualBytes != nil || !strings.Contains(string(data), `"rss_bytes":0`) || strings.Contains(string(data), `"swap_bytes"`) {
 			t.Fatalf("missing fields confused with zero: %s, %v", data, err)
 		}
 	}
-	if m := readProcessMemory(-1); m.Status != memsnapshot.StatusUnavailable || m.RSSBytes != nil {
+	if m := readProcessMemory(-1); m.Status != memsnapshot.SnapshotStatusUnavailable || m.RSSBytes != nil {
 		t.Fatalf("missing process = %+v", m)
 	}
 }

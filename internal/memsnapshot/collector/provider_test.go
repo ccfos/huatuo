@@ -64,13 +64,13 @@ func TestSnapshotProviderResult(t *testing.T) {
 		status memsnapshot.Status
 		reason string
 	}{
-		{name: "complete", status: memsnapshot.StatusComplete},
-		{name: "partial", status: memsnapshot.StatusPartial},
-		{name: "unsupported", status: memsnapshot.StatusUnavailable, reason: "runtime is not supported"},
-		{name: "read error", status: memsnapshot.StatusFailed, reason: os.ErrPermission.Error()},
-		{name: "panic", status: memsnapshot.StatusFailed, reason: "runtime snapshot panic: broken reader"},
-		{name: "panic with timeout", status: memsnapshot.StatusFailed, reason: "runtime snapshot panic: broken reader"},
-		{name: "timeout", status: memsnapshot.StatusFailed, reason: context.DeadlineExceeded.Error()},
+		{name: "complete", status: memsnapshot.SnapshotStatusComplete},
+		{name: "partial", status: memsnapshot.SnapshotStatusPartial},
+		{name: "unsupported", status: memsnapshot.SnapshotStatusUnavailable, reason: "runtime is not supported"},
+		{name: "read error", status: memsnapshot.SnapshotStatusFailed, reason: os.ErrPermission.Error()},
+		{name: "panic", status: memsnapshot.SnapshotStatusFailed, reason: "runtime snapshot panic: broken reader"},
+		{name: "panic with timeout", status: memsnapshot.SnapshotStatusFailed, reason: "runtime snapshot panic: broken reader"},
+		{name: "timeout", status: memsnapshot.SnapshotStatusFailed, reason: context.DeadlineExceeded.Error()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := t.Context()
@@ -86,17 +86,17 @@ func TestSnapshotProviderResult(t *testing.T) {
 				case "panic", "panic with timeout":
 					panic("broken reader")
 				}
-				status := memsnapshot.StatusComplete
+				status := memsnapshot.SnapshotStatusComplete
 				if test.name == "partial" {
-					status = memsnapshot.StatusPartial
+					status = memsnapshot.SnapshotStatusPartial
 				}
 				return &memsnapshot.Snapshot{Status: status}, nil
 			})
 			if test.name == "unsupported" {
 				p = nil
 			}
-			result := snapshotProvider(ctx, p, memsnapshot.ProcessInstance{}, 0)
-			if result == nil || result.Status != test.status || !strings.Contains(result.Reason, test.reason) {
+			result := snapshotProvider(ctx, p, memsnapshot.ProcessInstanceID{}, 0)
+			if result == nil || result.Status != test.status || !strings.Contains(result.StatusReason, test.reason) {
 				t.Fatalf("snapshot = %+v; want status %s and reason containing %q", result, test.status, test.reason)
 			}
 			if result.DurationMS == 0 {
@@ -107,15 +107,15 @@ func TestSnapshotProviderResult(t *testing.T) {
 }
 
 func TestSnapshotProviderRequest(t *testing.T) {
-	identity := memsnapshot.ProcessInstance{TGID: 42, StartTimeTicks: 100}
-	want := &memsnapshot.Snapshot{Status: memsnapshot.StatusComplete}
+	process := memsnapshot.ProcessInstanceID{TGID: 42, StartTimeTicks: 100}
+	want := &memsnapshot.Snapshot{Status: memsnapshot.SnapshotStatusComplete}
 	p := providerFunc(func(_ context.Context, request memsnapshot.Request) (*memsnapshot.Snapshot, error) {
-		if request.Process != identity || request.TopK != 7 {
-			t.Fatalf("provider request = %+v; want selected identity and top-K 7", request)
+		if request.Process != process || request.MaxMemoryObjectEntries != 7 {
+			t.Fatalf("provider request = %+v; want selected identity and maximum memory object entries 7", request)
 		}
 		return want, nil
 	})
-	result := snapshotProvider(t.Context(), p, identity, 7)
+	result := snapshotProvider(t.Context(), p, process, 7)
 	if result != want {
 		t.Fatalf("snapshot = %+v; want provider result", result)
 	}

@@ -25,7 +25,7 @@ import (
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
-func TestProcessInstance(t *testing.T) {
+func TestProcessInstanceID(t *testing.T) {
 	procRoot := identityProcRootForTest(t)
 	pidDir := filepath.Join(procRoot, "42")
 	if err := os.Mkdir(pidDir, 0o755); err != nil {
@@ -37,12 +37,12 @@ func TestProcessInstance(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(pidDir, "stat"), stat, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity := ProcessInstance{TGID: 42, StartTimeTicks: 999}
-	if err := ValidateProcessInstance(identity); err != nil {
+	identity := ProcessInstanceID{TGID: 42, StartTimeTicks: 999}
+	if err := ValidateProcessInstanceID(identity); err != nil {
 		t.Fatal(err)
 	}
 	identity.StartTimeTicks++
-	if err := ValidateProcessInstance(identity); err == nil {
+	if err := ValidateProcessInstanceID(identity); err == nil {
 		t.Fatal("changed process identity was accepted")
 	}
 }
@@ -70,7 +70,7 @@ func TestFindLoadBiasMappingIdentity(t *testing.T) {
 	}
 }
 
-func TestReadProcessInstanceStat(t *testing.T) {
+func TestReadProcessInstanceIDStat(t *testing.T) {
 	// Include the complete stat record because procfs parses more than starttime.
 	fields := strings.Fields("S " + strings.Repeat("0 ", 49))
 	fields[19] = "987654321"
@@ -102,13 +102,13 @@ func TestReadProcessInstanceStat(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			identity, err := ReadProcessInstance(pid)
+			identity, err := ReadProcessInstanceID(pid)
 			got := identity.StartTimeTicks
 			if (err != nil) != test.wantError || got != test.want {
 				t.Fatalf("starttime = %d, error = %v; want %d, error = %t", got, err, test.want, test.wantError)
 			}
 			if err == nil {
-				if err := ValidateProcessInstance(identity); err != nil {
+				if err := ValidateProcessInstanceID(identity); err != nil {
 					t.Fatalf("validate read identity: %v", err)
 				}
 			}
@@ -119,19 +119,19 @@ func TestReadProcessInstanceStat(t *testing.T) {
 	}
 }
 
-func TestReadProcessInstanceCurrentProcess(t *testing.T) {
-	identity, err := ReadProcessInstance(os.Getpid())
+func TestReadProcessInstanceIDCurrentProcess(t *testing.T) {
+	identity, err := ReadProcessInstanceID(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if identity.TGID != os.Getpid() {
 		t.Fatalf("identity=%+v", identity)
 	}
-	if err := ValidateProcessInstance(identity); err != nil {
+	if err := ValidateProcessInstanceID(identity); err != nil {
 		t.Fatal(err)
 	}
 	for _, pid := range []int{0, -1} {
-		if _, err := ReadProcessInstance(pid); err == nil {
+		if _, err := ReadProcessInstanceID(pid); err == nil {
 			t.Fatalf("accepted pid %d", pid)
 		}
 	}

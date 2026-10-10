@@ -31,7 +31,7 @@ func New() *Provider {
 	return &Provider{}
 }
 
-// Snapshot expects the caller to validate the request identity and TopK.
+// Snapshot expects the caller to validate the request identity and MaxMemoryObjectEntries.
 // Unavailable or partial data is a snapshot; fatal read failures and cancellation
 // return an error without a snapshot. The caller's context owns the time budget;
 // cancellation and deadline expiry take precedence over collected data.
@@ -56,24 +56,25 @@ func (p *Provider) Snapshot(ctx context.Context,
 	}
 	defer reader.Close()
 
-	scan, err := reader.scanHeapProfile(ctx, request.TopK)
+	scan, err := reader.scanHeapProfile(ctx, request.MaxMemoryObjectEntries)
 	if err != nil {
 		return nil, fmt.Errorf("read Go runtime mbuckets: %w", err)
 	}
 
 	result := &memsnapshot.Snapshot{
-		RuntimeVersion: reader.runtime.version,
-		Status:         scan.status,
-		Reason:         scan.reason,
-		HasOmittedData: scan.hasOmittedAllocations,
+		RuntimeVersion:  reader.runtime.version,
+		Status:          scan.status,
+		StatusReason:    scan.reason,
+		OutputTruncated: scan.hasOmittedAllocations,
 	}
 
-	if scan.status == memsnapshot.StatusUnavailable {
+	if scan.status == memsnapshot.SnapshotStatusUnavailable {
 		return result, nil
 	}
 	if len(scan.allocations) == 0 {
 		return result, nil
 	}
+
 	symbols, symbolErr := reader.buildSymbolizer(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err

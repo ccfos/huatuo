@@ -1385,7 +1385,7 @@ skipped tests and `unavailable` results do not prove compatibility.
 Info logs record watcher state and capture attempts.
 Process selection and persistence details use Debug logs. Locate attempts by
 container/cgroup and use process-selection logs to identify the PID. Inspect
-stored snapshot status and reason fields for runtime diagnostics.
+stored snapshot `status` and `status_reason` fields for runtime diagnostics.
 If a capture attempt starts but does not finish, inspect bamai's
 `/debug/pprof/goroutine?debug=2` with appropriate authorization for the blocked stack.
 No logs alone do not prove that monitoring has stopped.
@@ -1408,7 +1408,7 @@ It provides no PSS, mapping rankings, or allocation stacks.
 | `page_table_bytes` | VmPTE, page-table memory |
 
 Missing/invalid fields are omitted, not zero-filled: status is `partial`,
-or `unavailable` with `reason` if nothing can be read.
+or `unavailable` with `status_reason` if nothing can be read.
 Values are approximate, not an OOM-time snapshot or proof of a leak.
 The selected process may not be the eventual OOM victim.
 
@@ -1417,18 +1417,81 @@ storage setup is needed. The LocalFile filename is `memory_threshold_snapshot`.
 Query `tracing_documents` with `tracer_name = memory_threshold_snapshot` and
 `tracer_type = autotracing`.
 
-`started_timestamp` records when the capture attempt starts;
-`observed_timestamp` records the collector's snapshot capture time.
+`started_timestamp` records when the capture attempt starts, before process selection.
+`observed_timestamp` records when snapshot collection starts, after process selection
+and before runtime detection.
 
-Go aggregates complete stack keys up to 32 frames for Go 1.18–1.22 and 1024 frames for Go 1.23–1.26; the shared output limit may shorten displayed stacks to 64 frames and sets `output_truncated`. An invalid bucket type, an overflowing stack or record address range, an excessive stack depth, or a cyclic bucket chain stops the scan with `partial`; repeated buckets are never counted twice.
+The `kind` and measurement semantics of `tracer_data.snapshot.entries` are:
 
-Once a scan becomes partial, it stops traversing further buckets and computes TopK from the valid samples retained from earlier batches and the current batch, within the aggregation budget. The `reason` records only the first cause; finishing the current batch does not append further causes.
+| Runtime | `kind` | `objects` | `bytes` |
+|---------|--------|-----------|---------|
+| Go | `inuse_space_objects` | Estimated unfreed object count from published statistics, corrected for sampling and grouped by complete allocation stack | Estimated unfreed bytes for those objects |
+| Java | `object_class` | Estimated instance count grouped by class | Estimated memory occupied by the objects themselves (shallow heap) |
+| Python | `gc_tracked_object_type` | GC-tracked object count grouped by type | Estimated shallow size of those objects |
+
+Go's `bytes` and `objects` correspond to pprof's `inuse_space` and `inuse_objects`
+metrics. Java does not compute retained heap; Python covers only GC-tracked
+objects, not the entire Python heap. Older records may use `allocation_site`
+for Go and `object_type` for Java; consumers reading historical records should
+accept those values.
+
+For Go entries, `name` remains the plain function name of the first non-runtime
+frame, or the first frame when all frames belong to the runtime. `stack` remains
+a string array ordered from the allocation site toward its callers. When both
+file and line are available, each frame uses `function, source_file:line`, with
+one space after the comma. For example:
+
+```json
+{
+  "kind": "inuse_space_objects",
+  "name": "example/cache.allocate",
+  "bytes": 131072,
+  "objects": 32,
+  "average_bytes": 4096,
+  "stack": [
+    "example/cache.allocate, example/cache/cache.go:123",
+    "example/service.load, example/service/load.go:58",
+    "main.main, example/cmd/server/main.go:42"
+  ]
+}
+```
+
+Locations come from the binary's Go line table; source files need not exist on
+the target machine. Paths retain their compiled values, which may reflect
+`-trimpath` and may not identify files on the target machine. A missing file or
+an invalid line leaves only the function name; an unresolved function leaves the
+hexadecimal PC. Consumers should also accept historical frames containing only
+names or addresses. Function names and paths may themselves contain commas, so
+splitting indiscriminately on commas is not reliable. Source locations identify
+allocation sites, not object owners, and do not guarantee a fully expanded
+inline call chain.
+
+Go subtracts frees from allocations using only the runtime's published `active`
+counters, then corrects for sampling. Unpublished `future[0..2]` counters are
+excluded. Publication is delayed until the corresponding GC sweep frees are
+accounted for, so recent allocation spikes may be absent. Results are external
+samples of the published heap profile, not heap usage at the trigger instant.
+Collection does not acquire runtime locks, flush counters, or trigger GC in the
+target. Fields or buckets may still reflect different publication stages, so
+the result does not provide pprof's atomic consistency.
+
+If a complete scan observes no nonzero `active` counters, it returns `unavailable`
+with `status_reason` set to `Go heap profile has no published statistics`, without
+falling back to `future`. This can occur before the first GC and does not mean
+that the process has no heap objects. Published counters whose sampled objects
+have all been freed can still produce `complete` with empty entries. An
+interrupted scan preserves `partial` and its reason rather than treating
+unobserved data as unpublished.
+
+Go aggregates complete stack keys up to 32 frames for Go 1.18–1.22 and 1024 frames for Go 1.23–1.26; the shared output limit may shorten displayed stacks to 64 frames and sets `output_truncated`. An invalid bucket type, an excessive stack depth, or a cyclic bucket chain stops the scan with `partial`; repeated buckets are never counted twice.
+
+Once a scan becomes partial, it stops traversing further buckets and selects at most `MaxMemoryObjectEntries` entries by descending byte count from the valid samples retained from earlier batches and the current batch, within the aggregation budget. The `status_reason` records only the first cause; finishing the current batch does not append further causes.
 
 Any bucket header, record, or stack read failure, including a short read, fails the entire Go collection attempt and discards all runtime entries, including those from earlier batches. The collector reports `failed` with the read error; individual ranges are not retried.
 
 Samples with a stack depth of zero produce no allocation-site entry; an empty stack alone does not make the scan `partial`.
 
-Go snapshots require a known, enabled sampling rate and a nonempty bucket list. An unknown or disabled rate, or an empty bucket list, yields `unavailable` with a `reason` and no entries.
+Go snapshots require a known, enabled sampling rate and a nonempty bucket list. An unknown or disabled rate, or an empty bucket list, yields `unavailable` with a `status_reason` and no entries.
 
 Go collection uses a single request timeout across runtime reads, scanning,
 ranking, and entry construction. When it expires, runtime entries are discarded
@@ -1437,8 +1500,13 @@ read the process memory summary. Cancellation is cooperative, so an in-flight
 system call or non-cancelable parsing step can finish after the deadline.
 
 Inspect `tracer_data.snapshot.status` (`complete`, `partial`,
-`unavailable`, or `failed`) together with `reason`, `runtime_version`,
+`unavailable`, or `failed`) together with `status_reason`, `runtime_version`,
 `duration_ms`, and `output_truncated`.
+
+`status_reason` explains why collection is `partial`, `unavailable`, or `failed`;
+it is omitted when empty. Both `snapshot` and `process_memory` use this field.
+Older records may use `reason`; readers of historical and new records should
+accept both names.
 
 `duration_ms` measures the provider stage, rounded up to milliseconds, for both
 successful and failed snapshots, including timeouts. It excludes runtime
@@ -1448,5 +1516,5 @@ detection, process memory summary reads, output processing, and persistence.
 |---------|--------|
 | No output | Enable and restart; check BlackList; see section 7.6 for v2 trigger conditions |
 | Event without a candidate | Check direct cgroup membership, OOM-kill eligibility, and enumeration limits |
-| `unavailable` / `failed` | Check runtime/layout restrictions, access permissions, container metadata, and target exit; inspect `reason` |
+| `unavailable` / `failed` | Check runtime/layout restrictions, access permissions, container metadata, and target exit; inspect `status_reason` |
 | Event stops after resource exhaustion | Check `RLIMIT_NOFILE`, `fs.inotify.max_user_watches`, and `fs.inotify.max_user_instances`; adjust and restart; this stop does not stop other events |

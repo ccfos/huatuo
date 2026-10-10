@@ -19,6 +19,7 @@ import (
 	"debug/gosym"
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/ccfos/huatuo/internal/symbol"
 )
@@ -38,30 +39,47 @@ func (r *processReader) buildSymbolizer(ctx context.Context) (*symbolizer, error
 	return &symbolizer{table: table, loadBias: r.runtime.loadBias}, nil
 }
 
-// resolve resolves one runtime PC to a Go function name.
-func (s *symbolizer) resolve(runtimePC uint64) string {
+// Keep the function name separate from its display frame so source locations
+// cannot change the allocation-site name, including names containing commas.
+func (s *symbolizer) resolve(runtimePC uint64) (name, frame string) {
 	if s == nil || s.table == nil || runtimePC <= s.loadBias {
-		return ""
+		return "", ""
 	}
 	// runtime.MemProfile stacks contain return PCs. Move into the call
 	// instruction so boundary PCs are attributed to the allocating function.
-	function := s.table.PCToFunc(runtimePC - s.loadBias - 1)
+	file, line, function := s.table.PCToLine(runtimePC - s.loadBias - 1)
 	if function == nil {
-		return ""
+		return "", ""
 	}
-	return function.Name
+	if file == "" || line <= 0 {
+		return function.Name, function.Name
+	}
+	return function.Name, fmt.Sprintf("%s, %s:%d", function.Name, file, line)
 }
 
 // A nil symbolizer preserves raw PCs so collected allocations remain available.
-func (s *symbolizer) resolveStack(stack []byte, order binary.ByteOrder) []string {
-	resolved := make([]string, 0, len(stack)/8)
+func (s *symbolizer) resolveStack(stack []byte, order binary.ByteOrder) (name string, frames []string) {
+	frames = make([]string, 0, len(stack)/8)
+	var firstName string
 	for offset := 0; offset < len(stack); offset += 8 {
 		pc := order.Uint64(stack[offset : offset+8])
-		name := s.resolve(pc)
-		if name == "" {
-			name = fmt.Sprintf("0x%x", pc)
+		function, frame := s.resolve(pc)
+		if function == "" {
+			function = fmt.Sprintf("0x%x", pc)
+			frame = function
 		}
-		resolved = append(resolved, name)
+		if offset == 0 {
+			firstName = function
+		}
+		// Match pprof's allocation-site naming while retaining runtime frames.
+		if name == "" && !strings.HasPrefix(function, "runtime.") &&
+			!strings.HasPrefix(function, "internal/runtime/") {
+			name = function
+		}
+		frames = append(frames, frame)
 	}
-	return resolved
+	if name == "" {
+		name = firstName
+	}
+	return name, frames
 }

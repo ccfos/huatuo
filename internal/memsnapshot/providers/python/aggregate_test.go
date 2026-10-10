@@ -35,20 +35,20 @@ func TestSnapshotTopK(t *testing.T) {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			result := c.buildSnapshot(limit)
 			want := all[:min(limit, len(all))]
-			if !reflect.DeepEqual(result.Entries, want) || result.HasOmittedData != (len(all) > limit) {
+			if !reflect.DeepEqual(result.Entries, want) || result.OutputTruncated != (len(all) > limit) {
 				t.Fatalf("snapshot = %+v, want entries %+v", result, want)
 			}
-			if result.Status != memsnapshot.StatusComplete {
+			if result.Status != memsnapshot.SnapshotStatusComplete {
 				t.Fatalf("status = %s", result.Status)
 			}
 		})
 	}
 	c.partial = "scan stopped"
-	if result := c.buildSnapshot(1); result.Status != memsnapshot.StatusPartial || !result.HasOmittedData {
+	if result := c.buildSnapshot(1); result.Status != memsnapshot.SnapshotStatusPartial || !result.OutputTruncated {
 		t.Fatalf("partial snapshot lost status or output limit: %+v", result)
 	}
 	c.aggregates = nil
-	if result := c.buildSnapshot(10); len(result.Entries) != 0 || result.HasOmittedData {
+	if result := c.buildSnapshot(10); len(result.Entries) != 0 || result.OutputTruncated {
 		t.Fatal(result)
 	}
 }

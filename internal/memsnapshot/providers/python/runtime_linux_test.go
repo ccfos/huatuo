@@ -167,8 +167,8 @@ func TestDiscoverRuntimeSymbolErrors(t *testing.T) {
 				}
 				return
 			}
-			if snapshotErr != nil || result == nil || result.Status != memsnapshot.StatusUnavailable ||
-				!strings.Contains(result.Reason, tc.reason) {
+			if snapshotErr != nil || result == nil || result.Status != memsnapshot.SnapshotStatusUnavailable ||
+				!strings.Contains(result.StatusReason, tc.reason) {
 				t.Fatalf("snapshot = %+v, %v, want unavailable containing %q", result, snapshotErr, tc.reason)
 			}
 		})

@@ -27,27 +27,27 @@ import (
 // Options uses the before-OOM budgets as defaults for zero-valued fields.
 // SnapshotTimeout is cooperative; it cannot interrupt an in-flight syscall.
 type Options struct {
-	TopK            int
-	SnapshotTimeout time.Duration
+	MaxMemoryObjectEntries int
+	SnapshotTimeout        time.Duration
 }
 
 // Result carries runtime data without event or container metadata.
 type Result struct {
-	Identity      memsnapshot.ProcessInstance
-	Language      memsnapshot.Language
-	SnapshotTime  time.Time
-	Snapshot      *memsnapshot.Snapshot
-	ProcessMemory *memsnapshot.ProcessMemory
+	Process           memsnapshot.ProcessInstanceID
+	Language          memsnapshot.Language
+	SnapshotStartedAt time.Time
+	Snapshot          *memsnapshot.Snapshot
+	ProcessMemory     *memsnapshot.ProcessMemory
 }
 
-// Snapshot binds memory collection to an already selected process identity.
-// Callers must validate the identity before calling Snapshot.
+// Snapshot binds memory collection to an already selected process instance.
+// Callers must validate the process instance before calling Snapshot.
 // Provider failures become failed snapshots. Detection and output-processing
 // failures, cancellation and invalid options return errors without a result.
-func Snapshot(ctx context.Context, identity memsnapshot.ProcessInstance,
+func Snapshot(ctx context.Context, process memsnapshot.ProcessInstanceID,
 	options Options,
 ) (*Result, error) {
-	pid := identity.TGID
+	pid := process.TGID
 	options.setDefaults()
 	if err := options.validate(); err != nil {
 		return nil, err
@@ -55,29 +55,27 @@ func Snapshot(ctx context.Context, identity memsnapshot.ProcessInstance,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
+	snapshotStartedAt := time.Now().UTC()
 
 	language, err := memsnapshot.DetectLanguage(pid)
 	if err != nil {
 		return nil, fmt.Errorf("detect process runtime: %w", err)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+
 	snapshotCtx, cancelSnapshot := context.WithTimeout(ctx, options.SnapshotTimeout)
-	snapshot := snapshotProvider(snapshotCtx, newProvider(language), identity, options.TopK)
+	snapshot := snapshotProvider(snapshotCtx, newProvider(language), process, options.MaxMemoryObjectEntries)
 	cancelSnapshot()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := memsnapshot.LimitOutput(snapshot, options.TopK); err != nil {
+	if err := memsnapshot.LimitOutput(snapshot, options.MaxMemoryObjectEntries); err != nil {
 		return nil, fmt.Errorf("limit runtime snapshot output: %w", err)
 	}
 	return &Result{
-		Identity:      identity,
-		Language:      language,
-		SnapshotTime:  now,
-		Snapshot:      snapshot,
-		ProcessMemory: readProcessMemory(pid),
+		Process:           process,
+		Language:          language,
+		SnapshotStartedAt: snapshotStartedAt,
+		Snapshot:          snapshot,
+		ProcessMemory:     readProcessMemory(pid),
 	}, nil
 }
