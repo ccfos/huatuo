@@ -20,10 +20,13 @@ import (
 	"github.com/shirou/gopsutil/process"
 )
 
+// processMemInfo is serialized verbatim into the memburst tracing document
+// (tracer_data.top_memory_usage), so its json keys are part of the documented
+// wire contract (docs/key-feature/autotracing_en.md).
 type processMemInfo struct {
-	PID         int32
-	ProcessName string
-	MemSize     uint64
+	PID         int32  `json:"pid"`
+	ProcessName string `json:"process_name"`
+	MemSize     uint64 `json:"memory_size"`
 }
 
 type memoryType int
