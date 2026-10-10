@@ -15,15 +15,23 @@
 package collector
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
+
+	"github.com/cilium/ebpf"
 )
 
 func init() {
@@ -44,11 +52,16 @@ type reclaimCompact struct {
 	bpf bpf.Reference
 }
 
+// Keep the mode with the leased object across stop/start and fallback.
+type memoryStallObject struct {
+	bpf.BPF
+	containers bool
+}
+
 type memoryLatency struct {
 	/* the host latency counters of compaction and alloc pages in direct reclaim. */
 	CompactionStall uint64
 	AllocPagesStall uint64
-	// FIXME: support cgroups v1/v2
 }
 
 func (c *reclaimCompact) Update() ([]*metric.Data, error) {
@@ -58,43 +71,105 @@ func (c *reclaimCompact) Update() ([]*metric.Data, error) {
 	}
 	defer lease.Release()
 
-	items, err := lease.DumpMapByName("mm_free_compact_map")
+	return c.update(lease.BPF.(*memoryStallObject), pod.NormalContainers)
+}
+
+func (c *reclaimCompact) update(obj *memoryStallObject, discover func() (map[string]*pod.Container, error)) ([]*metric.Data, error) {
+	items, err := obj.DumpMapByName("mm_free_compact_map")
 	if err != nil {
 		return nil, fmt.Errorf("dump map mm_free_compact_map: %w", err)
 	}
-
-	var (
-		compaction float64
-		allocPages float64
-	)
-
-	if len(items) != 0 {
-		mm := memoryLatency{}
-		buf := bytes.NewReader(items[0].Value)
-		if err := binary.Read(buf, binary.LittleEndian, &mm); err != nil {
-			return nil, err
-		}
-
-		compaction = float64(mm.CompactionStall) / 1000 / 1000
-		allocPages = float64(mm.AllocPagesStall) / 1000 / 1000
+	if len(items) != 1 || len(items[0].Value) != 16 {
+		return nil, fmt.Errorf("host memory stall map: expected one 16-byte value")
 	}
+	host := decodeMemoryLatency(items[0].Value)
+	data := []*metric.Data{
+		metric.NewGaugeData("compaction_stall", float64(host.CompactionStall)/1e6, "time stalled in memory compaction", nil),
+		metric.NewGaugeData("allocpages_stall", float64(host.AllocPagesStall)/1e6, "time stalled in alloc pages", nil),
+	}
+	if !obj.containers {
+		return data, nil
+	}
+	containers, err := discover()
+	if err != nil {
+		return data, fmt.Errorf("discover memory stall containers: %w", err)
+	}
+	if len(containers) == 0 {
+		return data, nil
+	}
+	items, err = obj.DumpMapByName("mm_container_free_compact_map")
+	if err != nil {
+		return data, fmt.Errorf("dump container memory stall map: %w", err)
+	}
+	if len(items) == 0 {
+		return data, nil
+	}
+	byID := make(map[uint64]*pod.Container, len(containers))
+	var resolveErr error
+	for _, container := range containers {
+		if container == nil {
+			continue
+		}
+		root := filepath.Clean(container.CgroupPath)
+		if !filepath.IsAbs(root) || root == "/" {
+			continue
+		}
+		cgroupPath := paths.Path(root)
+		if cgroups.CgroupMode() != cgroups.Unified {
+			cgroupPath = paths.Path(subsystem.SubsystemMemory, root)
+		}
+		id, err := paths.KernfsID(cgroupPath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			resolveErr = errors.Join(resolveErr, fmt.Errorf("resolve memory cgroup ID for %q: %w", cgroupPath, err))
+			continue
+		}
+		if id == 0 {
+			continue
+		}
+		byID[id] = container
+	}
+	containerData, err := containerMemoryStalls(items, byID)
+	return append(data, containerData...), errors.Join(resolveErr, err)
+}
 
-	return []*metric.Data{
-		metric.NewGaugeData("compaction_stall", compaction, "time stalled in memory compaction", nil),
-		metric.NewGaugeData("allocpages_stall", allocPages, "time stalled in alloc pages", nil),
-	}, nil
+func decodeMemoryLatency(value []byte) memoryLatency {
+	return memoryLatency{
+		CompactionStall: binary.LittleEndian.Uint64(value[:8]),
+		AllocPagesStall: binary.LittleEndian.Uint64(value[8:]),
+	}
+}
+
+func containerMemoryStalls(items []bpf.MapItem, containers map[uint64]*pod.Container) ([]*metric.Data, error) {
+	data := make([]*metric.Data, 0, 2*len(containers))
+	var decodeErr error
+	for _, item := range items {
+		if len(item.Key) != 8 || len(item.Value) != 16 {
+			decodeErr = fmt.Errorf("container memory stall map: expected 8-byte key and 16-byte value")
+			continue
+		}
+		id := binary.LittleEndian.Uint64(item.Key)
+		container := containers[id]
+		if id == 0 || container == nil {
+			continue
+		}
+		mm := decodeMemoryLatency(item.Value)
+		data = append(data,
+			metric.NewContainerGaugeData(container, "compaction_stall", float64(mm.CompactionStall)/1e6, "cumulative milliseconds stalled in memory compaction", nil),
+			metric.NewContainerGaugeData(container, "allocpages_stall", float64(mm.AllocPagesStall)/1e6, "cumulative milliseconds stalled in global direct reclaim", nil))
+	}
+	return data, decodeErr
 }
 
 // Start detect work, load bpf and wait data
 func (c *reclaimCompact) Start(ctx context.Context) (retErr error) {
-	obj, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
+	obj, err := loadMemoryStalls(bpf.ThisBpfOBJ(), loadMemoryStallObject)
 	if err != nil {
 		return err
 	}
 
-	if err := obj.Attach(); err != nil {
-		return errors.Join(err, obj.Close())
-	}
 	if err := c.bpf.Publish(obj); err != nil {
 		return errors.Join(err, obj.Close())
 	}
@@ -110,4 +185,52 @@ func (c *reclaimCompact) Start(ctx context.Context) (retErr error) {
 	// wait stop
 	<-childCtx.Done()
 	return nil
+}
+
+func loadMemoryStallObject(name string, containers bool) (bpf.BPF, error) {
+	spec, err := ebpf.LoadCollectionSpec(filepath.Join(bpf.DefaultObjDir, name))
+	if err != nil {
+		return nil, err
+	}
+	enabled := uint32(1)
+	if !containers {
+		enabled = 0
+	}
+	return bpf.LoadBPFFromCollectionSpec(name, spec, map[string]any{"enable_container_stalls": enabled})
+}
+
+func loadMemoryStalls(name string, load func(string, bool) (bpf.BPF, error)) (*memoryStallObject, error) {
+	var containerErr error
+	for _, containers := range []bool{true, false} {
+		obj, err := load(name, containers)
+		if err == nil {
+			opts := memoryStallAttachOptions()
+			err = obj.AttachWithOptions(opts)
+			if err == nil {
+				if !containers {
+					log.WithError(containerErr).Warn("container memory stalls unavailable; collecting host stalls only")
+				}
+				return &memoryStallObject{BPF: obj, containers: containers}, nil
+			}
+			if closeErr := obj.Close(); closeErr != nil {
+				return nil, errors.Join(containerErr, err, closeErr)
+			}
+		}
+		if containers {
+			containerErr = err
+		} else {
+			return nil, errors.Join(containerErr, fmt.Errorf("load host memory stalls: %w", err))
+		}
+	}
+	panic("unreachable")
+}
+
+func memoryStallAttachOptions() []bpf.AttachOption {
+	// Attach completion probes before recording operation starts.
+	return []bpf.AttachOption{
+		{ProgramName: "tracepoint_try_to_free_pages_end", Symbol: "vmscan/mm_vmscan_direct_reclaim_end"},
+		{ProgramName: "kretprobe_try_to_compact_pages_host", Symbol: "try_to_compact_pages"},
+		{ProgramName: "tracepoint_try_to_free_pages_begin", Symbol: "vmscan/mm_vmscan_direct_reclaim_begin"},
+		{ProgramName: "kprobe_try_to_compact_pages_host", Symbol: "try_to_compact_pages"},
+	}
 }

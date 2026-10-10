@@ -40,7 +40,10 @@ func topMemoryProcesses(topN int, metric memoryType) ([]*processMemInfo, error) 
 	if err != nil {
 		return nil, err
 	}
+	return topMemoryProcessList(procs, topN, metric), nil
+}
 
+func topMemoryProcessList(procs []*process.Process, topN int, metric memoryType) []*processMemInfo {
 	var infos []*processMemInfo
 	for _, p := range procs {
 		var val uint64
@@ -77,7 +80,7 @@ func topMemoryProcesses(topN int, metric memoryType) ([]*processMemInfo, error) 
 	})
 
 	if len(infos) < topN {
-		return infos, nil
+		return infos
 	}
-	return infos[:topN], nil
+	return infos[:topN]
 }
