@@ -87,6 +87,9 @@ func (r *eventRunner) run(ctx context.Context, done chan<- struct{}) {
 			!errors.Is(err, types.ErrDisconnectedHuatuo) {
 			log.WithError(err).WithField("tracer", r.name).Error("tracer failed")
 		}
+		if errors.Is(err, types.ErrTracingStopped) {
+			return
+		}
 		timer := time.NewTimer(r.restartInterval)
 		select {
 		case <-ctx.Done():

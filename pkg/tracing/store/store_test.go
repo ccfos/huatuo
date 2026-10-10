@@ -17,6 +17,8 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -215,5 +217,167 @@ func TestMapperKernelObservationRoundTrip(t *testing.T) {
 				t.Fatal("legacy document gained a kernel timestamp")
 			}
 		})
+	}
+}
+
+type contextSaveBackend struct {
+	testBackend
+	ctx context.Context
+}
+
+func (b *contextSaveBackend) Save(ctx context.Context, record driver.Record, options driver.SaveOptions) error {
+	b.ctx = ctx
+	return b.testBackend.Save(ctx, record, options)
+}
+
+func TestStoreSaveContextPassesContextToBackend(t *testing.T) {
+	backend := &contextSaveBackend{}
+	persistence, err := storage.NewStore[*Document](t.Context(), "memory", backend, Collection, mapper{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &Store{
+		backends: []*storage.Store[*Document]{persistence},
+		hub:      watch.NewHub[*Document](),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	observed := timeutil.Now()
+	document := &Document{Document: types.Document{
+		TracerID:          "context-save",
+		TracerRunType:     types.TracerRunTypeEvent,
+		ObservedTimestamp: &observed,
+	}}
+	if err := store.SaveContext(ctx, document); err != nil {
+		t.Fatal(err)
+	}
+	if backend.ctx != ctx {
+		t.Fatal("save context did not reach persistence backend")
+	}
+	if len(backend.saved) != 1 {
+		t.Fatalf("backend saves = %d, want 1", len(backend.saved))
+	}
+}
+
+func TestStoreCloseDoesNotWaitForCompletedSave(t *testing.T) {
+	backend := &testBackend{}
+	persistence, err := storage.NewStore[*Document](t.Context(), "memory", backend, Collection, mapper{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &Store{
+		backends: []*storage.Store[*Document]{persistence},
+		hub:      watch.NewHub[*Document](),
+	}
+	observed := timeutil.Now()
+	if err := store.Save(&Document{Document: types.Document{
+		TracerID:          "completed-save",
+		TracerRunType:     types.TracerRunTypeEvent,
+		ObservedTimestamp: &observed,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := store.Close(ctx); err != nil {
+		t.Fatalf("Close() waited for a completed save: %v", err)
+	}
+}
+
+type blockingSaveBackend struct {
+	testBackend
+	started    chan struct{}
+	release    chan struct{}
+	closeCount atomic.Int32
+}
+
+func (b *blockingSaveBackend) Save(context.Context, driver.Record, driver.SaveOptions) error {
+	close(b.started)
+	// Backends may finish after the producer cancels its bounded save.
+	<-b.release
+	return nil
+}
+
+func (b *blockingSaveBackend) Close(context.Context) error {
+	b.closeCount.Add(1)
+	return nil
+}
+
+func TestStoreCloseWaitsForInFlightSaveAfterCancellation(t *testing.T) {
+	backend := &blockingSaveBackend{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	persistence, err := storage.NewStore[*Document](t.Context(), "blocking", backend, Collection, mapper{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &Store{
+		backends: []*storage.Store[*Document]{persistence},
+		hub:      watch.NewHub[*Document](),
+	}
+	observed := timeutil.Now()
+	document := &Document{Document: types.Document{
+		TracerID:          "inflight-save",
+		TracerRunType:     types.TracerRunTypeEvent,
+		ObservedTimestamp: &observed,
+	}}
+	saveCtx, cancelSave := context.WithCancel(t.Context())
+	defer cancelSave()
+	saveDone := make(chan error, 1)
+	saveFinished := make(chan struct{})
+	go func() {
+		defer close(saveFinished)
+		saveDone <- store.SaveContext(saveCtx, document)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-backend.release:
+		default:
+			close(backend.release)
+		}
+		select {
+		case <-saveFinished:
+		case <-time.After(time.Second):
+			t.Error("released save did not finish during cleanup")
+		}
+	})
+	select {
+	case <-backend.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for in-flight save")
+	}
+	cancelSave()
+	closeCtx, cancelClose := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancelClose()
+	if err := store.Close(closeCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close() error = %v, want deadline", err)
+	}
+	if got := backend.closeCount.Load(); got != 0 {
+		t.Fatalf("backend closed %d times while save was active", got)
+	}
+	if err := store.SaveContext(t.Context(), document); !errors.Is(err, errStoreClosing) {
+		t.Fatalf("SaveContext() while closing error = %v", err)
+	}
+	close(backend.release)
+	select {
+	case err := <-saveDone:
+		if err != nil {
+			t.Fatalf("in-flight save error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("in-flight save did not finish")
+	}
+	if err := store.Close(t.Context()); err != nil {
+		t.Fatalf("Close() after save error = %v", err)
+	}
+	if err := store.Close(t.Context()); err != nil {
+		t.Fatalf("repeated Close() error = %v", err)
+	}
+	if got := backend.closeCount.Load(); got != 1 {
+		t.Fatalf("backend close count = %d, want 1", got)
+	}
+	if err := store.Save(document); !errors.Is(err, errStoreClosing) {
+		t.Fatalf("Save() after close error = %v", err)
 	}
 }

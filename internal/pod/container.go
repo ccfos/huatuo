@@ -130,6 +130,36 @@ func Containers() (map[string]*Container, error) {
 	return containersByTypeQos(ContainerTypeAll, ContainerQosLevelMin)
 }
 
+// ContainerSyncEnabled reports discovery configuration, not source health.
+func ContainerSyncEnabled() bool {
+	containerView.mu.RLock()
+	defer containerView.mu.RUnlock()
+	return containerView.isActive
+}
+
+// SynchronizedContainers reads the current committed view and its source health
+// together. Disabled discovery returns an empty view; query failures retain the
+// cache for ordinary consumers but are returned to interval collectors.
+func SynchronizedContainers() (map[string]*Container, error) {
+	containerView.mu.RLock()
+	defer containerView.mu.RUnlock()
+	result := make(map[string]*Container)
+	if !containerView.isActive {
+		return result, nil
+	}
+	if containerView.err != nil {
+		return nil, containerView.err
+	}
+	for _, record := range containerView.records {
+		container := record.container
+		if container.Type&ContainerTypeAll == 0 || container.Qos < ContainerQosLevelMin {
+			continue
+		}
+		result[container.ID] = container
+	}
+	return result, nil
+}
+
 // containerBy searches normal containers and returns the first one for which
 // selector returns val. Returns nil, nil when no container matches.
 func containerBy[T comparable](selector func(*Container) T, val T) (*Container, error) {

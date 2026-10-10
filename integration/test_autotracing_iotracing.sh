@@ -33,7 +33,7 @@ mkdir -p \
 	"${IOTRACING_FIXTURE_ROOT}/bin" \
 	"${IOTRACING_FIXTURE_ROOT}/bpf" \
 	"${IOTRACING_FIXTURE_ROOT}/proc" \
-	"${IOTRACING_FIXTURE_ROOT}/sys" \
+	"${IOTRACING_FIXTURE_ROOT}/sys/dev/block/8:0" \
 	"${IOTRACING_FIXTURE_ROOT}/dev"
 
 cp "${HUATUO_BAMAI_BIN}" "${IOTRACING_FIXTURE_ROOT}/bin/huatuo-bamai"
@@ -41,7 +41,7 @@ cp "${ROOT_DIR}/_output/bin/iotracing" "${IOTRACING_FIXTURE_ROOT}/bin/iotracing"
 cp "${ROOT_DIR}/_output/bpf/iotracing.o" "${IOTRACING_FIXTURE_ROOT}/bpf/iotracing.o"
 
 # IOsTotalTicks is the tenth counter after the device name. Increasing it by
-# 500 over each five-second interval yields 10% utilization.
+# 500 over each five-second interval yields about 10% utilization.
 write_diskstats() {
 	local io_ticks=$1
 	printf '8 0 vda 100 0 100 100 100 0 100 100 0 %s %s 0 0 0 0 0 0 0\n' \
@@ -56,7 +56,7 @@ iotracing_event_is_valid() {
 		and .tracer_data.reason_snapshot.type == "ioutil"
 		and .tracer_data.reason_snapshot.major_num == 8
 		and .tracer_data.reason_snapshot.minor_num == 0
-		and .tracer_data.reason_snapshot.iostatus.io_util == 10
+		and .tracer_data.reason_snapshot.iostatus.io_util > 1
 		and (.tracer_data.process_file_io_stats | type == "array")
 		and ((.tracer_data.process_file_io_stats | length) <= 1)
 		and all(

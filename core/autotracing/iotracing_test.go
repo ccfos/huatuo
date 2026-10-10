@@ -16,15 +16,212 @@ package autotracing
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
+	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/localfile"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/toolstream/transport"
+	"github.com/ccfos/huatuo/internal/tracing"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
+
+	promblockdevice "github.com/prometheus/procfs/blockdevice"
 )
+
+// A blocking backend observes the real writer path before persistence completes.
+type blockingIOTracingBackend struct {
+	driver.Backend
+	started chan driver.Record
+	release chan struct{}
+	saveErr error
+}
+
+func (*blockingIOTracingBackend) Init(context.Context, string, []driver.Index) error {
+	return nil
+}
+
+func (b *blockingIOTracingBackend) Save(
+	ctx context.Context,
+	record driver.Record,
+	_ driver.SaveOptions,
+) error {
+	b.started <- record
+	select {
+	case <-b.release:
+		return b.saveErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (*blockingIOTracingBackend) Close(context.Context) error { return nil }
+
+func TestHandleIOTracingEventCompletesAfterSave(t *testing.T) {
+	exitErr := errors.New("child failed")
+	saveErr := errors.New("save failed")
+	for _, test := range []struct {
+		name    string
+		exitErr error
+		saveErr error
+	}{
+		{"success", nil, nil},
+		{"failed child keeps partial report", exitErr, nil},
+		{"save failure", nil, saveErr},
+		{"child and save failure", exitErr, saveErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			taskID := t.Name()
+			backend := &blockingIOTracingBackend{
+				started: make(chan driver.Record, 1),
+				release: make(chan struct{}),
+				saveErr: test.saveErr,
+			}
+			driver.RegisterBackend("localfile", func(*driver.Config) (driver.Backend, error) {
+				return backend, nil
+			})
+			t.Cleanup(func() {
+				driver.RegisterBackend("localfile", func(cfg *driver.Config) (driver.Backend, error) {
+					return localfile.NewBackend(cfg.LocalFilePath, cfg.LocalFileRotationSize, cfg.LocalFileMaxRotation), nil
+				})
+			})
+			store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{
+				LocalFile: &tracingstore.LocalFileConfig{
+					Path: t.TempDir(), RotationSizeMiB: 1, MaxRotatedFiles: 1,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				tracing.DisableDocumentWriter()
+				if err := store.Close(context.Background()); err != nil {
+					t.Errorf("close tracing store: %v", err)
+				}
+			})
+			if err := tracing.EnableDocumentWriter(store, document.New("test-region")); err != nil {
+				t.Fatal(err)
+			}
+			pending := &pendingIOTracingReason{
+				reason: &reasonSnapshot{
+					Type: string(ioReasonUtil), Device: "sda", IOStatus: diskStatus{IOUtil: 95},
+				},
+				startedTimestamp: timeutil.Now(),
+				received:         make(chan struct{}),
+				result:           make(chan error, 1),
+			}
+			pendingReasons.Store(taskID, pending)
+			report := &types.IOTracingSnapshot{
+				Processes: []types.ProcessFileIOStats{{PID: 42, Comm: "writer", TotalDiskWriteBps: 4096}},
+				StallStacks: []types.IOScheduleEvent{{
+					PID: 42, TID: 43, CPU: 2, Comm: "writer", ScheduleLatencyUS: 2500,
+					ContainerHostname: "container", Stack: []string{"io_schedule"},
+				}},
+			}
+			if test.exitErr != nil {
+				report.FailureReason = types.IOTracingFailureReader
+			}
+			waitDone := make(chan error, 1)
+			go func() {
+				waitDone <- waitForSnapshotAfterExit(t.Context(), taskID, pending, test.exitErr, time.Second, time.Second)
+			}()
+			select {
+			case err := <-waitDone:
+				t.Fatalf("wait returned before snapshot delivery: %v", err)
+			case <-time.After(10 * time.Millisecond):
+			}
+			if value, ok := pendingReasons.Load(taskID); !ok || value != pending {
+				t.Fatal("child exit did not retain its pending reason")
+			}
+			handlerDone := make(chan error, 1)
+			handlerStopped := make(chan struct{})
+			go func() {
+				defer close(handlerStopped)
+				handlerDone <- handleIotracingEvent(
+					&toolstream.Session{Session: &transport.Session{TaskID: taskID}}, report)
+			}()
+			t.Cleanup(func() {
+				select {
+				case <-backend.release:
+				default:
+					close(backend.release)
+				}
+				select {
+				case <-handlerStopped:
+				case <-time.After(time.Second):
+					t.Error("handler did not stop after releasing save")
+				}
+				pendingReasons.Delete(taskID)
+			})
+			var record driver.Record
+			select {
+			case record = <-backend.started:
+			case <-time.After(time.Second):
+				t.Fatal("save did not start")
+			}
+			var document struct {
+				TracerName       string             `json:"tracer_name"`
+				TracerRunType    string             `json:"tracer_type"`
+				StartedTimestamp timeutil.Timestamp `json:"started_timestamp"`
+				TracerData       ioStatusData       `json:"tracer_data"`
+			}
+			if err := json.Unmarshal(record.Data, &document); err != nil {
+				t.Fatal(err)
+			}
+			if document.TracerName != iotracingToolName ||
+				document.TracerRunType != types.TracerRunTypeAutotracing ||
+				!document.StartedTimestamp.Equal(pending.startedTimestamp.Time) {
+				t.Fatalf("saved document metadata = %+v", document)
+			}
+			wantData := ioStatusData{
+				Reason: pending.reason, FailureReason: report.FailureReason,
+				Processes: report.Processes, StallStacks: report.StallStacks,
+			}
+			if !reflect.DeepEqual(document.TracerData, wantData) {
+				t.Fatalf("saved snapshot = %+v, want %+v", document.TracerData, wantData)
+			}
+			if _, ok := pendingReasons.Load(taskID); ok {
+				t.Fatal("handler retained the delivered pending reason")
+			}
+			select {
+			case <-pending.received:
+			default:
+				t.Fatal("handler did not signal snapshot receipt before save")
+			}
+			select {
+			case err := <-waitDone:
+				t.Fatalf("snapshot wait completed before save returned: %v", err)
+			case <-time.After(10 * time.Millisecond):
+			}
+			close(backend.release)
+			select {
+			case err := <-handlerDone:
+				if !errors.Is(err, test.saveErr) {
+					t.Fatalf("handler error = %v, want %v", err, test.saveErr)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("handler did not finish after save returned")
+			}
+			select {
+			case err := <-waitDone:
+				if (test.exitErr == nil && test.saveErr == nil && err != nil) ||
+					(test.exitErr != nil && !errors.Is(err, test.exitErr)) ||
+					(test.saveErr != nil && !errors.Is(err, test.saveErr)) {
+					t.Fatalf("wait error = %v, want child %v and save %v", err, test.exitErr, test.saveErr)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("snapshot wait did not finish after save returned")
+			}
+		})
+	}
+}
 
 func TestHandleIotracingEventReturnsPendingResult(t *testing.T) {
 	const taskID = "iotracing-test-task"
@@ -69,33 +266,31 @@ func TestHandleIotracingEventReturnsPendingResult(t *testing.T) {
 	}
 }
 
-func TestDeleteMissingDiskState(t *testing.T) {
-	rawStats := map[string]*blockdevice.Diskstats{
+func TestDiskSnapshotsDeleteMissingDiskState(t *testing.T) {
+	previous := metricTestSnapshot(time.Unix(100, 0), "present", 8, 0, &promblockdevice.IOStats{})
+	missing := previous.devices["present"]
+	missing.DeviceName = "missing"
+	missing.MinorNumber = 16
+	previous.devices["missing"] = missing
+	previous.order = append(previous.order, "missing")
+	current := metricTestSnapshot(time.Unix(101, 0), "present", 8, 0, &promblockdevice.IOStats{})
+	metrics := map[string]diskMetricStatus{
 		"present": {},
 		"missing": {},
 	}
-	metrics := map[string]diskStatus{
-		"present": {},
-		"missing": {},
+	snapshot := buildDiskStatusSnapshot(previous, current)
+	if _, ok := snapshot.devices["missing"]; ok {
+		t.Error("raw window retained a missing device")
 	}
-
-	deleteMissingDiskState(
-		rawStats,
-		metrics,
-		map[string]struct{}{"present": {}},
-	)
-
-	if _, ok := rawStats["missing"]; ok {
-		t.Error("raw stats retained a missing device")
+	if _, ok := snapshot.devices["present"]; !ok {
+		t.Error("raw window removed a present device")
 	}
+	evaluateThresholds(current, snapshot, metrics, ioThresholds{})
 	if _, ok := metrics["missing"]; ok {
-		t.Error("metrics retained a missing device")
-	}
-	if _, ok := rawStats["present"]; !ok {
-		t.Error("raw stats removed a present device")
+		t.Error("threshold history retained a missing device")
 	}
 	if _, ok := metrics["present"]; !ok {
-		t.Error("metrics removed a present device")
+		t.Error("threshold history removed a present device")
 	}
 }
 
@@ -145,6 +340,26 @@ func TestWaitForSnapshotTimeouts(t *testing.T) {
 			t.Fatalf("waitForSnapshot() error = %v", err)
 		}
 	})
+}
+
+func TestWaitForSnapshotAfterFailedExitCancellation(t *testing.T) {
+	const taskID = "canceled-failed-child-task"
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pending := &pendingIOTracingReason{
+		received: make(chan struct{}),
+		result:   make(chan error, 1),
+	}
+	pendingReasons.Store(taskID, pending)
+	t.Cleanup(func() { pendingReasons.Delete(taskID) })
+	cancel()
+	err := waitForSnapshotAfterExit(ctx, taskID, pending, errors.New("child failed"), time.Second, time.Second)
+	if err != nil {
+		t.Fatalf("canceled snapshot wait returned a child error: %v", err)
+	}
+	if _, ok := pendingReasons.Load(taskID); ok {
+		t.Fatal("canceled snapshot wait retained its pending reason")
+	}
 }
 
 func TestNewIOTracer(t *testing.T) {

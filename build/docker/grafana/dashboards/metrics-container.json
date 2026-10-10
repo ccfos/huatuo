@@ -3724,10 +3724,6 @@
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "elasticsearch",
-        "uid": "huatuo-bamai-es"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -3741,186 +3737,52 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Disk IO with q2c latency >20ms (5-min incremental).",
+          "description": "每列是 Huatuo 相邻两次成功采集的区间。Tooltip 的 Duration 为查询步长，真实起止与时长请点击查看详情。",
           "fieldConfig": {
             "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 20,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
+              "links": [
+                {
+                  "targetBlank": false,
+                  "title": "查看该区间详情",
+                  "url": "/d/huatuo-metrics-ctr-v2-3-0/iolatency?${__all_variables}&viewPanel=52&time=${__value.time}&time.window=2"
                 }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "short"
+              ]
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 7,
-            "w": 24,
+            "h": 12,
+            "w": 12,
             "x": 0,
             "y": 13
           },
           "id": 47,
           "options": {
-            "legend": {
-              "calcs": [
-                "max",
-                "mean"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true,
-              "sortBy": "Mean",
-              "sortDesc": true,
-              "width": 500
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.0.3",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "increase(huatuo_bamai_iolatency_container_blkdisk_q2c{container_host=~\"$container_host\",region=~\"$region\"}[5m])",
-              "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}:{{container_type}} [{{latency}}]",
-              "refId": "A"
-            }
-          ],
-          "title": "Slow IO (q2c)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "description": "Disk IO with d2c latency >20ms (5-min incremental).",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 20,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
+            "calculate": false,
+            "cellGap": 1,
+            "cellValues": {
               "unit": "short"
             },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 24,
-            "x": 0,
-            "y": 20
-          },
-          "id": 50,
-          "options": {
+            "color": {
+              "mode": "scheme",
+              "scheme": "Spectral",
+              "steps": 64
+            },
             "legend": {
-              "calcs": [
-                "max",
-                "mean"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true,
-              "sortBy": "Mean",
-              "sortDesc": true,
-              "width": 500
+              "show": true
+            },
+            "rowsFrame": {
+              "layout": "le"
             },
             "tooltip": {
-              "hideZeros": false,
               "mode": "single",
-              "sort": "none"
+              "showColorScale": false,
+              "yHistogram": true
+            },
+            "yAxis": {
+              "axisPlacement": "left",
+              "reverse": false,
+              "unit": "s"
             }
           },
           "pluginVersion": "12.0.3",
@@ -3931,25 +3793,616 @@
                 "uid": "huatuo-bamai-prom"
               },
               "editorMode": "code",
-              "exemplar": true,
-              "expr": "increase(huatuo_bamai_iolatency_container_blkdisk_d2c{container_host=~\"$container_host\",region=~\"$region\"}[5m])",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_container_${iolatency_stage}{region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\",host=\"$iolatency_node\",device=\"$iolatency_device\",operation=\"$iolatency_operation\"}[${__range_s}s]",
+              "format": "heatmap",
+              "instant": true,
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}:{{container_type}} [{{latency}}]",
-              "range": true,
+              "legendFormat": "{{le}}",
+              "range": false,
               "refId": "A"
             }
           ],
-          "title": "Slow IO (d2c)",
-          "type": "timeseries"
-        }
-      ],
-      "targets": [
+          "title": "容器 IO 延时区间分布",
+          "transformations": [],
+          "type": "heatmap"
+        },
         {
           "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
           },
-          "refId": "A"
+          "description": "每列是 Huatuo 相邻两次成功采集的区间。Tooltip 的 Duration 为查询步长，真实起止与时长请点击查看详情。",
+          "fieldConfig": {
+            "defaults": {
+              "links": [
+                {
+                  "targetBlank": false,
+                  "title": "查看该区间详情",
+                  "url": "/d/huatuo-metrics-ctr-v2-3-0/iolatency?${__all_variables}&viewPanel=53&time=${__value.time}&time.window=2"
+                }
+              ]
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 12,
+            "w": 12,
+            "x": 12,
+            "y": 13
+          },
+          "id": 50,
+          "options": {
+            "calculate": false,
+            "cellGap": 1,
+            "cellValues": {
+              "unit": "short"
+            },
+            "color": {
+              "mode": "scheme",
+              "scheme": "Spectral",
+              "steps": 64
+            },
+            "legend": {
+              "show": true
+            },
+            "rowsFrame": {
+              "layout": "le"
+            },
+            "tooltip": {
+              "mode": "single",
+              "showColorScale": false,
+              "yHistogram": true
+            },
+            "yAxis": {
+              "axisPlacement": "left",
+              "reverse": false,
+              "unit": "bytes"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_container_${iolatency_size_point}{region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\",host=\"$iolatency_node\",device=\"$iolatency_device\",operation=\"$iolatency_operation\"}[${__range_s}s]",
+              "format": "heatmap",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "{{le}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "容器 IO size 区间分布",
+          "transformations": [],
+          "type": "heatmap"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "Heatmap 的全零区间不着色。此表保留每个区间的 IO 总数，点击数值可查看详情。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": false,
+                "inspect": false
+              },
+              "decimals": 0,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "延时 IO 总数"
+                },
+                "properties": [
+                  {
+                    "id": "links",
+                    "value": [
+                      {
+                        "targetBlank": false,
+                        "title": "查看该区间详情",
+                        "url": "/d/huatuo-metrics-ctr-v2-3-0/iolatency?${__all_variables}&viewPanel=52&time=${__value.time}&time.window=2"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Size IO 总数"
+                },
+                "properties": [
+                  {
+                    "id": "links",
+                    "value": [
+                      {
+                        "targetBlank": false,
+                        "title": "查看该区间详情",
+                        "url": "/d/huatuo-metrics-ctr-v2-3-0/iolatency?${__all_variables}&viewPanel=53&time=${__value.time}&time.window=2"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 24,
+            "x": 0,
+            "y": 25
+          },
+          "id": 54,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "count"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "Time"
+              }
+            ]
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_container_${iolatency_stage}{region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\",host=\"$iolatency_node\",device=\"$iolatency_device\",operation=\"$iolatency_operation\",le=\"+Inf\"}[${__range_s}s]",
+              "format": "time_series",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "延时 IO 总数",
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_container_${iolatency_size_point}{region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\",host=\"$iolatency_node\",device=\"$iolatency_device\",operation=\"$iolatency_operation\",le=\"+Inf\"}[${__range_s}s]",
+              "format": "time_series",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "Size IO 总数",
+              "range": false,
+              "refId": "B"
+            }
+          ],
+          "title": "区间详情入口（含全零区间）",
+          "transformations": [
+            {
+              "id": "joinByField",
+              "options": {
+                "byField": "Time",
+                "mode": "outer"
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "开始、结束和时长来自同一次 Huatuo 区间采集。IO 总数取 +Inf，其余列为互斥桶且保留零值。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": false,
+                "inspect": false
+              },
+              "decimals": 0,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "^区间(开始|结束)$"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "dateTimeAsIso"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "实际时长"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 3
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 30
+          },
+          "id": 52,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "count"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": []
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_interval_start_timestamp_seconds{region=\"$region\",host=\"$iolatency_node\"} * 1000",
+              "format": "time_series",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "区间开始",
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_interval_end_timestamp_seconds{region=\"$region\",host=\"$iolatency_node\"} * 1000",
+              "format": "time_series",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "区间结束",
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_interval_end_timestamp_seconds{region=\"$region\",host=\"$iolatency_node\"} - on(region,host) huatuo_bamai_iolatency_interval_start_timestamp_seconds{region=\"$region\",host=\"$iolatency_node\"}",
+              "format": "time_series",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "实际时长",
+              "range": false,
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_container_${iolatency_stage}{region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\",host=\"$iolatency_node\",device=\"$iolatency_device\",operation=\"$iolatency_operation\",le=\"+Inf\"}",
+              "format": "time_series",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "IO 总数",
+              "range": false,
+              "refId": "D"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_container_${iolatency_stage}{region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\",host=\"$iolatency_node\",device=\"$iolatency_device\",operation=\"$iolatency_operation\"}",
+              "format": "heatmap",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "{{le}}",
+              "range": false,
+              "refId": "E"
+            }
+          ],
+          "title": "容器单区间延时详情",
+          "transformations": [
+            {
+              "id": "joinByField",
+              "options": {
+                "byField": "Time",
+                "mode": "outer"
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {},
+                "indexByName": {},
+                "renameByName": {
+                  "1": "512ms–1s",
+                  "2": "1–2s",
+                  "0.00005": "≤ 50µs",
+                  "0.0001": "50–100µs",
+                  "0.00025": "100–250µs",
+                  "0.0005": "250–500µs",
+                  "0.001": "500µs–1ms",
+                  "0.002": "1–2ms",
+                  "0.004": "2–4ms",
+                  "0.008": "4–8ms",
+                  "0.016": "8–16ms",
+                  "0.032": "16–32ms",
+                  "0.064": "32–64ms",
+                  "0.128": "64–128ms",
+                  "0.256": "128–256ms",
+                  "0.512": "256–512ms",
+                  "+Inf": "> 2s"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "开始、结束和时长来自同一次 Huatuo 区间采集。IO 总数取 +Inf，其余列为互斥桶且保留零值。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": false,
+                "inspect": false
+              },
+              "decimals": 0,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "^区间(开始|结束)$"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "dateTimeAsIso"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "实际时长"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 3
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 24,
+            "x": 0,
+            "y": 38
+          },
+          "id": 53,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "count"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": []
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_interval_start_timestamp_seconds{region=\"$region\",host=\"$iolatency_node\"} * 1000",
+              "format": "time_series",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "区间开始",
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_interval_end_timestamp_seconds{region=\"$region\",host=\"$iolatency_node\"} * 1000",
+              "format": "time_series",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "区间结束",
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_interval_end_timestamp_seconds{region=\"$region\",host=\"$iolatency_node\"} - on(region,host) huatuo_bamai_iolatency_interval_start_timestamp_seconds{region=\"$region\",host=\"$iolatency_node\"}",
+              "format": "time_series",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "实际时长",
+              "range": false,
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_container_${iolatency_size_point}{region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\",host=\"$iolatency_node\",device=\"$iolatency_device\",operation=\"$iolatency_operation\",le=\"+Inf\"}",
+              "format": "time_series",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "IO 总数",
+              "range": false,
+              "refId": "D"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "huatuo_bamai_iolatency_container_${iolatency_size_point}{region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\",host=\"$iolatency_node\",device=\"$iolatency_device\",operation=\"$iolatency_operation\"}",
+              "format": "heatmap",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "{{le}}",
+              "range": false,
+              "refId": "E"
+            }
+          ],
+          "title": "容器单区间 IO size 详情",
+          "transformations": [
+            {
+              "id": "joinByField",
+              "options": {
+                "byField": "Time",
+                "mode": "outer"
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {},
+                "indexByName": {},
+                "renameByName": {
+                  "4096": "≤ 4KiB",
+                  "16384": "4–16KiB",
+                  "65536": "16–64KiB",
+                  "262144": "64–256KiB",
+                  "1048576": "256KiB–1MiB",
+                  "+Inf": "> 1MiB"
+                }
+              }
+            }
+          ],
+          "type": "table"
         }
       ],
       "title": "🐳 IO",
@@ -4041,6 +4494,246 @@
         "skipUrlSync": false,
         "sort": 2,
         "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "huatuo-bamai-prom"
+        },
+        "definition": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\"}, container_hostnamespace)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO 命名空间",
+        "multi": false,
+        "name": "iolatency_namespace",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\"}, container_hostnamespace)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "huatuo-bamai-prom"
+        },
+        "definition": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\"}, container_host)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO 容器主机名",
+        "multi": false,
+        "name": "iolatency_container_host",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\"}, container_host)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "huatuo-bamai-prom"
+        },
+        "definition": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\"}, container_name)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO 容器名",
+        "multi": false,
+        "name": "iolatency_container_name",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\"}, container_name)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "huatuo-bamai-prom"
+        },
+        "definition": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\"}, container_type)",
+        "hide": 2,
+        "includeAll": false,
+        "label": "IO 容器类型",
+        "multi": false,
+        "name": "iolatency_container_type",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\"}, container_type)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "huatuo-bamai-prom"
+        },
+        "definition": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\"}, container_level)",
+        "hide": 2,
+        "includeAll": false,
+        "label": "IO 容器级别",
+        "multi": false,
+        "name": "iolatency_container_level",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\"}, container_level)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "huatuo-bamai-prom"
+        },
+        "definition": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\"}, host)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO 物理机",
+        "multi": false,
+        "name": "iolatency_node",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\"}, host)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "huatuo-bamai-prom"
+        },
+        "definition": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\",host=\"$iolatency_node\"}, device)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO 磁盘",
+        "multi": false,
+        "name": "iolatency_device",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"huatuo_bamai_iolatency_container_.*_bucket\",region=\"$region\",container_hostnamespace=\"$iolatency_namespace\",container_host=\"$iolatency_container_host\",container_name=\"$iolatency_container_name\",container_type=\"$iolatency_container_type\",container_level=\"$iolatency_container_level\",host=\"$iolatency_node\"}, device)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "read",
+          "value": "read"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO 操作",
+        "multi": false,
+        "name": "iolatency_operation",
+        "options": [
+          {
+            "selected": true,
+            "text": "read",
+            "value": "read"
+          },
+          {
+            "selected": false,
+            "text": "write",
+            "value": "write"
+          }
+        ],
+        "query": "read : read,write : write",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "D→C",
+          "value": "d2c_seconds_bucket"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO 延时阶段",
+        "multi": false,
+        "name": "iolatency_stage",
+        "options": [
+          {
+            "selected": false,
+            "text": "Q→G",
+            "value": "q2g_seconds_bucket"
+          },
+          {
+            "selected": false,
+            "text": "Q→D",
+            "value": "q2d_seconds_bucket"
+          },
+          {
+            "selected": true,
+            "text": "D→C",
+            "value": "d2c_seconds_bucket"
+          }
+        ],
+        "query": "Q→G : q2g_seconds_bucket,Q→D : q2d_seconds_bucket,D→C : d2c_seconds_bucket",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "Queued (Q)",
+          "value": "queued_io_size_bytes_bucket"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO 大小采集点",
+        "multi": false,
+        "name": "iolatency_size_point",
+        "options": [
+          {
+            "selected": true,
+            "text": "Queued (Q)",
+            "value": "queued_io_size_bytes_bucket"
+          },
+          {
+            "selected": false,
+            "text": "Issued (D)",
+            "value": "issued_io_size_bytes_bucket"
+          }
+        ],
+        "query": "Queued (Q) : queued_io_size_bytes_bucket,Issued (D) : issued_io_size_bytes_bucket",
+        "skipUrlSync": false,
+        "type": "custom"
       },
       {
         "current": {

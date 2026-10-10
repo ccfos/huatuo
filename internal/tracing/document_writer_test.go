@@ -15,11 +15,15 @@
 package tracing
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestEnableDocumentWriterRequiresDependencies(t *testing.T) {
@@ -68,6 +72,42 @@ func TestDisableDocumentWriter(t *testing.T) {
 	DisableDocumentWriter()
 	if configuredWriter.Load() != nil {
 		t.Fatal("configured writer is still set after DisableDocumentWriter()")
+	}
+}
+
+func TestSaveContextPublishesObservedEvent(t *testing.T) {
+	DisableDocumentWriter()
+	t.Cleanup(DisableDocumentWriter)
+	store := newTracingStore(t)
+	if err := EnableDocumentWriter(store, document.New("health-region")); err != nil {
+		t.Fatal(err)
+	}
+	documents, unsubscribe := store.Subscribe()
+	defer unsubscribe()
+	observed := timeutil.Timestamp{Time: time.Unix(123, 456)}
+	payload := map[string]any{"type": "block_error"}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	if err := SaveContext(ctx, &WriteRequest{
+		TracerName:        "io_health",
+		ObservedTimestamp: observed,
+		TracerData:        payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-documents:
+		if event.TracerName != "io_health" || event.Region != "health-region" ||
+			event.TracerRunType != types.TracerRunTypeEvent ||
+			event.ObservedTimestamp == nil || !event.ObservedTimestamp.Equal(observed.Time) ||
+			event.StartedTimestamp != nil || event.TracerID == "" {
+			t.Fatalf("observed event metadata = %+v", event.Document)
+		}
+		if event.TracerData.(map[string]any)["type"] != "block_error" {
+			t.Fatalf("event payload = %+v", event.TracerData)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("observed event was not published")
 	}
 }
 

@@ -1101,41 +1101,50 @@ huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
 
 ## IO
 
-`iolatency` tracks disk I/O latency distribution. A simple way to read it is: break one disk request into stages, then count how many requests fall into each latency bucket.
+`iolatency` reports host and container IO latency distributions and disk freeze
+event counts. See [IO monitoring](../development/io_monitoring_zh.md) for the
+complete stage list, IO size distributions, and configuration.
 
-- `q2c`: from entering the queue to completion, covering the full I/O lifecycle
-- `d2c`: from driver dispatch to completion, closer to device-side latency
-- `freeze`: number of disk freeze events
+### Latency distributions
 
-The current version exposes both host-level and container-level metrics.
+Latency buckets are Gauges for the interval between successful collections.
+The first collection establishes a baseline; failed collections retain it.
+After that baseline, newly observed host series start from zero. The `le`
+label is the latency upper bound in seconds. Each bucket counts IOs at or
+below that bound within the interval; `+Inf` is the interval total.
 
-### Queue
+Metrics include `host`, `region`, `device`, `operation`, and `le` labels.
+The operation is `read` or `write`. Container metrics also include
+`container_host`, `container_name`, `container_type`, `container_level`,
+and `container_hostnamespace`.
 
-These metrics always include the common labels `host` and `region`. Container
-metrics also always include `container_host`, `container_name`,
-`container_type`, `container_level`, and `container_hostnamespace`.
-
-```bash
-# HELP huatuo_bamai_iolatency_blkdisk_d2c the disk d2c latency
-# TYPE huatuo_bamai_iolatency_blkdisk_d2c gauge
-huatuo_bamai_iolatency_blkdisk_d2c{disk="253:1",host="hostname",region="dev",zone="0"} 3
-# HELP huatuo_bamai_iolatency_blkdisk_q2c the disk q2c latency
-# TYPE huatuo_bamai_iolatency_blkdisk_q2c gauge
-huatuo_bamai_iolatency_blkdisk_q2c{disk="253:1",host="hostname",region="dev",zone="0"} 3
-# HELP huatuo_bamai_iolatency_container_blkdisk_d2c container blkio d2c latency
-# TYPE huatuo_bamai_iolatency_container_blkdisk_d2c gauge
-huatuo_bamai_iolatency_container_blkdisk_d2c{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="253:1",host="hostname",region="dev",zone="5"} 2
-# HELP huatuo_bamai_iolatency_container_blkdisk_q2c container blkio q2c latency
-# TYPE huatuo_bamai_iolatency_container_blkdisk_q2c gauge
-huatuo_bamai_iolatency_container_blkdisk_q2c{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="253:1",host="hostname",region="dev",zone="5"} 2
+```text
+# TYPE huatuo_bamai_iolatency_q2d_seconds_bucket gauge
+huatuo_bamai_iolatency_q2d_seconds_bucket{device="sda",operation="read",host="hostname",region="dev",le="0.001"} 3
+huatuo_bamai_iolatency_q2d_seconds_bucket{device="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_d2c_seconds_bucket gauge
+huatuo_bamai_iolatency_d2c_seconds_bucket{device="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_q2g_seconds_bucket gauge
+huatuo_bamai_iolatency_q2g_seconds_bucket{device="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_container_q2g_seconds_bucket gauge
+huatuo_bamai_iolatency_container_q2g_seconds_bucket{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",device="sda",operation="read",host="hostname",region="dev",le="+Inf"} 2
 ```
 
-|Metric|Description|Unit|Scope|Labels|
-|---|---|---|---|---|
-|iolatency_blkdisk_q2c|Host disk latency statistics for the full I/O lifecycle, from queueing to completion. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Host|host, region, disk, zone|
-|iolatency_blkdisk_d2c|Host disk latency statistics from driver dispatch to completion, closer to device processing time. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Host|host, region, disk, zone|
-|iolatency_container_blkdisk_q2c|Container-caused latency statistics for the full I/O lifecycle, from queueing to completion. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Container|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, zone|
-|iolatency_container_blkdisk_d2c|Container-caused latency statistics from driver dispatch to completion. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Container|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, zone|
+|Metric|Description|Unit|Scope|
+|---|---|---|---|
+|iolatency_q2d_seconds_bucket|Queue-to-issue latency distribution|count|Host|
+|iolatency_d2c_seconds_bucket|Issue-to-complete latency distribution|count|Host|
+|iolatency_q2g_seconds_bucket|Queue-to-request-allocation latency distribution|count|Host|
+|iolatency_container_q2d_seconds_bucket|Queue-to-issue latency distribution|count|Container|
+|iolatency_container_d2c_seconds_bucket|Issue-to-complete latency distribution|count|Container|
+|iolatency_container_q2g_seconds_bucket|Queue-to-request-allocation latency distribution|count|Container|
+|iolatency_interval_start_timestamp_seconds|Start of the interval|Unix seconds|Host|
+|iolatency_interval_end_timestamp_seconds|End of the interval|Unix seconds|Host|
+
+Grafana uses bucket values directly for Heatmaps, without `rate()` or
+`increase()`. Interval timestamps carry only `host` and `region` labels.
+Update existing dashboards to use these metric names and select devices,
+operations, and latency bounds through `device`, `operation`, and `le`.
 
 ### Hardware
 

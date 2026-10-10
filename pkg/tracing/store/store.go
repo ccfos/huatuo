@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/storage"
@@ -30,7 +31,16 @@ import (
 type Store struct {
 	backends []*storage.Store[*Document]
 	hub      *watch.Hub[*Document]
+
+	// Cancellation can outlive a backend save; Close waits before releasing it.
+	mu      sync.Mutex
+	active  int
+	closing bool
+	closed  bool
+	idle    chan struct{}
 }
+
+var errStoreClosing = errors.New("tracing store is closing")
 
 // Config contains optional persistence backend settings.
 type Config struct {
@@ -135,11 +145,23 @@ func closeBackends(ctx context.Context, backends []*storage.Store[*Document]) er
 
 // Save publishes and asynchronously persists one tracing document.
 func (s *Store) Save(document *Document) error {
+	return s.SaveContext(context.Background(), document)
+}
+
+// SaveContext publishes a document and passes cancellation to persistence.
+func (s *Store) SaveContext(ctx context.Context, document *Document) error {
 	if s == nil {
 		return errors.New("tracing store is required")
 	}
 	if document == nil {
 		return errors.New("tracing document is required")
+	}
+	if err := s.beginSave(); err != nil {
+		return err
+	}
+	defer s.endSave()
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	document.UploadedTimestamp = timeutil.Now()
 	if err := document.validate(); err != nil {
@@ -148,7 +170,7 @@ func (s *Store) Save(document *Document) error {
 	s.hub.Notify(document)
 	var errs []error
 	for _, backend := range s.backends {
-		err := backend.Save(context.Background(), document, driver.SaveOptions{})
+		err := backend.Save(ctx, document, driver.SaveOptions{})
 		log.Debugf("save tracing document backend=%s tracer_id=%s tracer_name=%s hostname=%s "+
 			"uploaded_timestamp=%v tracer_data=%+v error=%v",
 			backend.Name, document.TracerID, document.TracerName, document.Hostname,
@@ -158,6 +180,28 @@ func (s *Store) Save(document *Document) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (s *Store) beginSave() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing || s.closed {
+		return errStoreClosing
+	}
+	if s.active == 0 {
+		s.idle = make(chan struct{})
+	}
+	s.active++
+	return nil
+}
+
+func (s *Store) endSave() {
+	s.mu.Lock()
+	s.active--
+	if s.active == 0 {
+		close(s.idle)
+	}
+	s.mu.Unlock()
 }
 
 // Subscribe registers a watcher for tracing documents.
@@ -170,5 +214,30 @@ func (s *Store) Close(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
-	return closeBackends(ctx, s.backends)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closing = true
+	var idle <-chan struct{}
+	if s.active != 0 {
+		idle = s.idle
+	}
+	s.mu.Unlock()
+	if idle != nil {
+		select {
+		case <-idle:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	err := closeBackends(ctx, s.backends)
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+	return err
 }

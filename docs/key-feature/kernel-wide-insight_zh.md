@@ -1184,38 +1184,45 @@ huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
 
 ## IO
 
-`iolatency` 用来统计磁盘 I/O 延迟分布。可以把它理解成“把一次磁盘请求拆成几个阶段，再分别看每个阶段耗时多久”。
+`iolatency` 统计宿主机和容器的 IO 延时分布，并记录磁盘 freeze 事件次数。
+完整阶段、IO 大小分布和配置见 [IO 监测](../development/io_monitoring_zh.md)。
 
-- `q2c`：从请求进入队列到完成，反映整个 I/O 生命周期延迟
-- `d2c`：从驱动层下发到完成，更接近磁盘和驱动本身的耗时
-- `freeze`：磁盘冻结事件次数
+### 延时分布
 
-### 队列
+延时桶是相邻两次成功采集之间的 Gauge。首次采集建立基线，采集失败保留基线；
+建立基线后新出现的宿主机统计项从零开始计算。`le` 表示延时上界，单位为秒；
+桶值是本区间延时不超过该上界的 IO 数量，`+Inf` 表示本区间总数。
 
-这些指标都会自动带上公共标签 `host` 和 `region`。其中容器维度指标还会固定带上
-`container_host`、`container_name`、`container_type`、`container_level`、`container_hostnamespace` 标签。
+指标带 `host`、`region`、`device`、`operation` 和 `le` 标签，
+`operation` 为 `read` 或 `write`。容器指标还带 `container_host`、
+`container_name`、`container_type`、`container_level` 和 `container_hostnamespace`。
 
-```bash
-# HELP huatuo_bamai_iolatency_blkdisk_d2c the disk d2c latency
-# TYPE huatuo_bamai_iolatency_blkdisk_d2c gauge
-huatuo_bamai_iolatency_blkdisk_d2c{disk="253:1",host="hostname",region="dev",zone="0"} 3
-# HELP huatuo_bamai_iolatency_blkdisk_q2c the disk q2c latency
-# TYPE huatuo_bamai_iolatency_blkdisk_q2c gauge
-huatuo_bamai_iolatency_blkdisk_q2c{disk="253:1",host="hostname",region="dev",zone="0"} 3
-# HELP huatuo_bamai_iolatency_container_blkdisk_d2c container blkio d2c latency
-# TYPE huatuo_bamai_iolatency_container_blkdisk_d2c gauge
-huatuo_bamai_iolatency_container_blkdisk_d2c{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="253:1",host="hostname",region="dev",zone="5"} 2
-# HELP huatuo_bamai_iolatency_container_blkdisk_q2c container blkio q2c latency
-# TYPE huatuo_bamai_iolatency_container_blkdisk_q2c gauge
-huatuo_bamai_iolatency_container_blkdisk_q2c{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="253:1",host="hostname",region="dev",zone="5"} 2
+```text
+# TYPE huatuo_bamai_iolatency_q2d_seconds_bucket gauge
+huatuo_bamai_iolatency_q2d_seconds_bucket{device="sda",operation="read",host="hostname",region="dev",le="0.001"} 3
+huatuo_bamai_iolatency_q2d_seconds_bucket{device="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_d2c_seconds_bucket gauge
+huatuo_bamai_iolatency_d2c_seconds_bucket{device="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_q2g_seconds_bucket gauge
+huatuo_bamai_iolatency_q2g_seconds_bucket{device="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_container_q2g_seconds_bucket gauge
+huatuo_bamai_iolatency_container_q2g_seconds_bucket{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",device="sda",operation="read",host="hostname",region="dev",le="+Inf"} 2
 ```
 
-|指标|意义|单位|对象|标签|
-|---|---|---|---|---|
-|iolatency_blkdisk_q2c|宿主机磁盘整体 I/O 生命周期延迟统计，从入队到完成。分桶为：zone0 20-30ms，zone1 30-50ms，zone2 50-100ms，zone3 100-200ms，zone4 200-400ms，zone5 400ms+|计数|宿主|host, region, disk, zone|
-|iolatency_blkdisk_d2c|宿主机磁盘驱动到完成阶段的延迟统计，更接近设备处理耗时。分桶为：zone0 20-30ms，zone1 30-50ms，zone2 50-100ms，zone3 100-200ms，zone4 200-400ms，zone5 400ms+|计数|宿主|host, region, disk, zone|
-|iolatency_container_blkdisk_q2c|容器触发的整体 I/O 生命周期延迟统计，从入队到完成。分桶为：zone0 20-30ms，zone1 30-50ms，zone2 50-100ms，zone3 100-200ms，zone4 200-400ms，zone5 400ms+|计数|容器|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, zone|
-|iolatency_container_blkdisk_d2c|容器触发的驱动到完成阶段延迟统计。分桶为：zone0 20-30ms，zone1 30-50ms，zone2 50-100ms，zone3 100-200ms，zone4 200-400ms，zone5 400ms+|计数|容器|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, zone|
+|指标|意义|单位|对象|
+|---|---|---|---|
+|iolatency_q2d_seconds_bucket|入队到下发的延时分布|计数|宿主|
+|iolatency_d2c_seconds_bucket|下发到完成的延时分布|计数|宿主|
+|iolatency_q2g_seconds_bucket|入队到 request 分配的延时分布|计数|宿主|
+|iolatency_container_q2d_seconds_bucket|入队到下发的延时分布|计数|容器|
+|iolatency_container_d2c_seconds_bucket|下发到完成的延时分布|计数|容器|
+|iolatency_container_q2g_seconds_bucket|入队到 request 分配的延时分布|计数|容器|
+|iolatency_interval_start_timestamp_seconds|本区间开始时间|Unix 秒|宿主|
+|iolatency_interval_end_timestamp_seconds|本区间结束时间|Unix 秒|宿主|
+
+Grafana 直接使用桶值绘制 Heatmap，无需 `rate()` 或 `increase()`。
+区间起止时间指标仅带 `host` 和 `region` 标签。已有面板需更新指标名，
+并通过 `device`、`operation` 和 `le` 选择设备、读写类型与延时上界。
 
 ### 硬件
 
