@@ -15,6 +15,8 @@
 package executil
 
 import (
+	"fmt"
+	"io"
 	"slices"
 	"sync"
 )
@@ -48,9 +50,10 @@ func (b *outputBuffer) Snapshot() ([]byte, bool) {
 }
 
 type tailBuffer struct {
-	mu    sync.Mutex
-	data  []byte
-	start int
+	mu           sync.Mutex
+	data         []byte
+	start        int
+	hasTruncated bool
 }
 
 func (b *tailBuffer) Write(data []byte) (int, error) {
@@ -61,6 +64,7 @@ func (b *tailBuffer) Write(data []byte) (int, error) {
 	if written == 0 {
 		return 0, nil
 	}
+	b.hasTruncated = b.hasTruncated || written > maxErrorOutputBytes-len(b.data)
 
 	if written >= maxErrorOutputBytes {
 		if cap(b.data) < maxErrorOutputBytes {
@@ -93,15 +97,67 @@ func (b *tailBuffer) Write(data []byte) (int, error) {
 }
 
 func (b *tailBuffer) Bytes() []byte {
+	data, _ := b.Snapshot()
+	return data
+}
+
+func (b *tailBuffer) Snapshot() ([]byte, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if len(b.data) < maxErrorOutputBytes || b.start == 0 {
-		return slices.Clone(b.data)
+		return slices.Clone(b.data), b.hasTruncated
 	}
 
 	data := make([]byte, len(b.data))
 	offset := copy(data, b.data[b.start:])
 	copy(data[offset:], b.data[:b.start])
-	return data
+	return data, b.hasTruncated
+}
+
+// WithStdout redirects standard output instead of retaining it for Stdout.
+// A nil writer preserves capture. The caller owns the writer until Wait returns.
+// Write must return promptly; the process cannot interrupt a blocked writer.
+func WithStdout(writer io.Writer) Option {
+	return func(process *Process) {
+		process.stdoutWriter = writer
+	}
+}
+
+// WithStderr redirects standard error instead of retaining it for Stderr.
+// A nil writer preserves capture. The caller owns the writer until Wait returns.
+// Write must return promptly; the process cannot interrupt a blocked writer.
+func WithStderr(writer io.Writer) Option {
+	return func(process *Process) {
+		process.stderrWriter = writer
+	}
+}
+
+// Stdout returns a copy of the retained standard output.
+// It is empty when WithStdout redirects output to a non-nil writer. Exceeding
+// Spec.MaxOutputBytes returns the retained prefix and ErrOutputLimitExceeded.
+// Wait first for complete output; snapshots remain available after Stop.
+func (p *Process) Stdout() ([]byte, error) {
+	// The limit is immutable after New and distinguishes an uninitialized Process.
+	if p.output.limit == 0 {
+		return nil, fmt.Errorf("read command stdout: %w", errProcessNotInitialized)
+	}
+
+	data, exceeded := p.output.Snapshot()
+	if exceeded {
+		return data, fmt.Errorf(
+			"%w: command %q stdout exceeds %d bytes",
+			ErrOutputLimitExceeded,
+			p.spec.Path,
+			p.spec.MaxOutputBytes,
+		)
+	}
+
+	return data, nil
+}
+
+// Stderr returns a copy of the newest 64 KiB written to standard error.
+// It is empty when WithStderr redirects output to a non-nil writer.
+func (p *Process) Stderr() []byte {
+	return p.stderr.Bytes()
 }

@@ -72,7 +72,7 @@ func TestMemfdOptionDefersCreationUntilStart(t *testing.T) {
 	}
 }
 
-func TestStopPreservesMemfdAndGroupCleanupErrors(t *testing.T) {
+func TestClosePreservesMemfdAndGroupCleanupErrors(t *testing.T) {
 	closeErr := errors.New("close memfd failed")
 	groupErr := errors.New("terminate group failed")
 	for _, cleanupErr := range []error{nil, groupErr} {
@@ -93,17 +93,17 @@ func TestStopPreservesMemfdAndGroupCleanupErrors(t *testing.T) {
 			close(process.start.done)
 			close(process.wait.done)
 			for range 2 {
-				err := process.Stop(t.Context())
+				err := process.Close()
 				if !errors.Is(err, closeErr) {
-					t.Fatalf("Stop() error = %v, want stored close error", err)
+					t.Fatalf("Close() error = %v, want stored close error", err)
 				}
 
 				if errors.Is(err, ErrStopFailed) != (cleanupErr != nil) {
-					t.Fatalf("Stop() error = %v, incorrect process group failure classification", err)
+					t.Fatalf("Close() error = %v, incorrect process group failure classification", err)
 				}
 
 				if cleanupErr != nil && !errors.Is(err, cleanupErr) {
-					t.Fatalf("Stop() error = %v, want group cleanup error", err)
+					t.Fatalf("Close() error = %v, want group cleanup error", err)
 				}
 			}
 

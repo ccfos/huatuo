@@ -200,3 +200,24 @@ func BenchmarkTailBufferWriteFull(b *testing.B) {
 		_, _ = buffer.Write(data)
 	}
 }
+
+func TestTailBufferSnapshotReportsTruncation(t *testing.T) {
+	for _, size := range []int{maxErrorOutputBytes - 1, maxErrorOutputBytes, maxErrorOutputBytes + 1} {
+		var buffer tailBuffer
+		data := make([]byte, size)
+		for _, chunk := range [][]byte{data[:size/2], data[size/2:]} {
+			if _, err := buffer.Write(chunk); err != nil {
+				t.Fatal(err)
+			}
+		}
+		snapshot, truncated := buffer.Snapshot()
+		if len(snapshot) != min(size, maxErrorOutputBytes) || truncated != (size > maxErrorOutputBytes) {
+			t.Fatalf("size %d: snapshot=%d truncated=%v", size, len(snapshot), truncated)
+		}
+		snapshot[0] = 1
+		other, _ := buffer.Snapshot()
+		if other[0] != 0 {
+			t.Fatal("snapshot aliases buffer")
+		}
+	}
+}

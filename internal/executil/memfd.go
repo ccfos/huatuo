@@ -30,7 +30,7 @@ import (
 // During Start, argsForOutput receives its child-visible /proc/self/fd path and
 // returns arguments to append to Spec.Args. It must be non-nil.
 // This does not redirect stdout or stderr. New allocates no file; Wait and Run
-// preserve it for MemfdOutput, and Stop closes it. Linux and /proc/self/fd are required.
+// preserve it for MemfdOutput, and Close closes it. Linux and /proc/self/fd are required.
 func WithMemfdOutput(maxBytes int, argsForOutput func(outputPath string) []string) Option {
 	return func(process *Process) {
 		process.memfd = &memfdOutput{limit: maxBytes, argsForOutput: argsForOutput}

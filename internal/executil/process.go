@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package executil starts and manages operating-system process groups.
-// Context arguments must be non-nil.
 package executil
 
 import (
@@ -24,7 +22,6 @@ import (
 	"os"
 	"os/exec"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 )
@@ -40,53 +37,7 @@ var (
 	errProcessNotInitialized = errors.New("process is not initialized")
 )
 
-const (
-	defaultStopGracePeriod = 5 * time.Second
-	defaultMaxOutputBytes  = 64 << 10
-	outputDrainTimeout     = time.Second
-)
-
-// Spec describes one external command invocation.
-type Spec struct {
-	Path string
-	Args []string
-	// Env replaces the child environment. A nil Env inherits the parent environment.
-	Env []string
-	// StopGracePeriod controls when Run escalates from SIGTERM to SIGKILL.
-	// A zero value uses five seconds.
-	StopGracePeriod time.Duration
-	// MaxOutputBytes limits retained standard output. A zero value uses 64 KiB.
-	MaxOutputBytes int
-}
-
-// Option configures a process before it starts.
-type Option func(*Process)
-
-// WithExtraFiles passes files to the child as descriptors starting at 3.
-// The caller owns the files and must keep them open until Start returns.
-func WithExtraFiles(files ...*os.File) Option {
-	return func(process *Process) {
-		process.extraFiles = slices.Clone(files)
-	}
-}
-
-// WithStdout redirects standard output instead of retaining it for Stdout.
-// A nil writer preserves capture. The caller owns the writer until Wait returns.
-// Write must return promptly; the process cannot interrupt a blocked writer.
-func WithStdout(writer io.Writer) Option {
-	return func(process *Process) {
-		process.stdoutWriter = writer
-	}
-}
-
-// WithStderr redirects standard error instead of retaining it for Stderr.
-// A nil writer preserves capture. The caller owns the writer until Wait returns.
-// Write must return promptly; the process cannot interrupt a blocked writer.
-func WithStderr(writer io.Writer) Option {
-	return func(process *Process) {
-		process.stderrWriter = writer
-	}
-}
+const outputDrainTimeout = time.Second
 
 type processState uint8
 
@@ -97,13 +48,7 @@ const (
 	processStateRunning
 	processStateExited
 	processStateStartFailed
-)
-
-type memfdCleanup bool
-
-const (
-	preserveMemfd memfdCleanup = false
-	releaseMemfd  memfdCleanup = true
+	processStateClosed
 )
 
 // Closing done publishes the immutable error to every waiter.
@@ -116,7 +61,8 @@ type lifecycleResult struct {
 // exit ends the command lifetime; remaining group members are killed before the
 // leader is reaped. Children must finish their work before the leader exits.
 // Process must be created with New and cannot be restarted; methods on its zero
-// value return an initialization error, except Stderr, which returns no data.
+// value return an initialization error, except Stderr (no data) and Done (nil).
+// Process must not be copied.
 type Process struct {
 	spec         Spec
 	output       outputBuffer
@@ -131,6 +77,7 @@ type Process struct {
 	pid             int
 	start           lifecycleResult
 	wait            lifecycleResult
+	done            chan struct{}
 	groupErr        error
 	isStopRequested bool
 	stopAttempt     *lifecycleResult
@@ -171,61 +118,15 @@ func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // 
 	process.state = processStateNew
 	process.start = lifecycleResult{done: make(chan struct{})}
 	process.wait = lifecycleResult{done: make(chan struct{})}
+	process.done = make(chan struct{})
 
 	return process, nil
-}
-
-func (s *Spec) validate() error {
-	if strings.TrimSpace(s.Path) == "" {
-		return errors.New("command path must not be empty")
-	}
-
-	if strings.IndexByte(s.Path, 0) >= 0 {
-		return fmt.Errorf("command path %q contains a null byte", s.Path)
-	}
-
-	if err := validateArgs(s.Args); err != nil {
-		return err
-	}
-
-	for index, value := range s.Env {
-		if strings.IndexByte(value, 0) >= 0 {
-			return fmt.Errorf("command environment entry %d contains a null byte", index)
-		}
-
-		if strings.IndexByte(value, '=') <= 0 {
-			return fmt.Errorf(
-				"command environment entry %d must use a non-empty KEY=VALUE form",
-				index,
-			)
-		}
-	}
-
-	if s.StopGracePeriod < 0 {
-		return errors.New("stop grace period must not be negative")
-	}
-
-	if s.MaxOutputBytes < 0 {
-		return errors.New("maximum output bytes must not be negative")
-	}
-
-	return nil
-}
-
-func validateArgs(args []string) error {
-	for index, arg := range args {
-		if strings.IndexByte(arg, 0) >= 0 {
-			return fmt.Errorf("command argument %d contains a null byte", index)
-		}
-	}
-
-	return nil
 }
 
 // Start launches the command and starts its single internal reaper.
 // The context controls launch only; canceling it after Start returns does not
 // stop the process. WithMemfdOutput creates a file owned by Process; read it
-// with MemfdOutput before calling Stop. Failed starts close the created file.
+// with MemfdOutput before calling Close. Failed starts close the created file.
 func (p *Process) Start(ctx context.Context) error {
 	p.mu.Lock()
 	if p.state == processStateInvalid {
@@ -234,6 +135,11 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 
 	if p.state != processStateNew {
+		if p.state == processStateClosed {
+			p.mu.Unlock()
+			return fmt.Errorf("start command %q: %w", p.spec.Path, os.ErrClosed)
+		}
+
 		p.mu.Unlock()
 		return fmt.Errorf("start command %q: process has already been started", p.spec.Path)
 	}
@@ -242,7 +148,7 @@ func (p *Process) Start(ctx context.Context) error {
 	p.mu.Unlock()
 
 	if err := ctx.Err(); err != nil {
-		return p.failStart(fmt.Errorf("start command %q: %w", p.spec.Path, err))
+		return p.failStart(&RunError{ContextErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
 	}
 
 	cmd := exec.Command(p.spec.Path, p.spec.Args...)
@@ -262,17 +168,17 @@ func (p *Process) Start(ctx context.Context) error {
 
 	if p.memfd != nil {
 		if err := p.memfd.prepare(cmd); err != nil {
-			return p.failStart(fmt.Errorf("start command %q: %w", p.spec.Path, err))
+			return p.failStart(&RunError{ExecutionErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
 		}
 	}
 
 	if err := ctx.Err(); err != nil {
-		return p.failStart(fmt.Errorf("start command %q: %w", p.spec.Path, err))
+		return p.failStart(&RunError{ContextErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
 	}
 
 	configureCommand(cmd)
 	if err := cmd.Start(); err != nil {
-		return p.failStart(fmt.Errorf("start command %q: %w", p.spec.Path, err))
+		return p.failStart(&RunError{ExecutionErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
 	}
 
 	p.mu.Lock()
@@ -302,15 +208,20 @@ func (p *Process) finishCanceledStart(launchErr error) error {
 
 	p.mu.Lock()
 	var waitErr error
-	if forceErr == nil && !errors.Is(p.wait.err, ErrStopped) {
-		waitErr = p.wait.err
+	select {
+	case <-p.wait.done:
+		if !errors.Is(p.wait.err, ErrStopped) {
+			waitErr = p.wait.err
+		}
+	default:
 	}
 
-	p.start.err = errors.Join(
-		fmt.Errorf("start command %q: %w", p.spec.Path, launchErr),
-		forceErr,
-		waitErr,
-	)
+	failure := &RunError{
+		ContextErr:   fmt.Errorf("start command %q: %w", p.spec.Path, launchErr),
+		ExecutionErr: waitErr,
+		CleanupErr:   forceErr,
+	}
+	p.start.err = failure
 	if forceErr == nil {
 		p.state = processStateStartFailed
 	} else {
@@ -323,19 +234,20 @@ func (p *Process) finishCanceledStart(launchErr error) error {
 	}
 
 	if p.memfd != nil {
-		p.start.err = errors.Join(p.start.err, p.memfd.close())
+		failure.CleanupErr = errors.Join(failure.CleanupErr, p.memfd.close())
 	}
 
 	close(p.start.done)
+	p.publishDone()
 	startErr := p.start.err
 	p.mu.Unlock()
 	return startErr
 }
 
-func (p *Process) failStart(err error) error {
+func (p *Process) failStart(err *RunError) error {
 	p.mu.Lock()
 	if p.memfd != nil {
-		err = errors.Join(err, p.memfd.close())
+		err.CleanupErr = errors.Join(err.CleanupErr, p.memfd.close())
 	}
 
 	p.state = processStateStartFailed
@@ -343,6 +255,7 @@ func (p *Process) failStart(err error) error {
 	p.wait.err = err
 	close(p.start.done)
 	close(p.wait.done)
+	p.publishDone()
 	p.mu.Unlock()
 	return err
 }
@@ -381,7 +294,30 @@ func (p *Process) reap(cmd *exec.Cmd) {
 	}
 
 	close(p.wait.done)
+	p.publishDone()
 	p.mu.Unlock()
+}
+
+// publishDone runs under mu. A canceled launch may finish reaping before Start
+// publishes its result, so neither internal notification alone is sufficient.
+func (p *Process) publishDone() {
+	select {
+	case <-p.start.done:
+	default:
+		return
+	}
+	select {
+	case <-p.wait.done:
+	default:
+		return
+	}
+	close(p.done)
+}
+
+// Done closes when Wait's final result is available, including failed starts and
+// Close before Start. Before Start it remains open. The zero value returns nil.
+func (p *Process) Done() <-chan struct{} {
+	return p.done
 }
 
 // Wait waits for an in-progress Start and then for the command reaper. Multiple
@@ -416,6 +352,11 @@ func (p *Process) processResult() error {
 	err := p.wait.err
 	if p.start.err != nil {
 		err = p.start.err
+		// A canceled launch can fail to signal the child and return before
+		// reaping. Preserve any independent exit failure observed later.
+		if p.wait.err != nil && !errors.Is(p.wait.err, ErrStopped) && !errors.Is(err, p.wait.err) {
+			err = errors.Join(err, p.wait.err)
+		}
 	}
 
 	if p.groupErr == nil || errors.Is(err, p.groupErr) {
@@ -425,17 +366,19 @@ func (p *Process) processResult() error {
 	return errors.Join(err, p.groupErr)
 }
 
-// Stop sends SIGTERM to the process group. The leader's exit or ctx expiration
-// ends the grace period and escalates remaining group members to SIGKILL.
+// Stop sends SIGTERM to the process group. The leader's exit, ctx expiration or
+// Spec.StopGracePeriod ends the grace period and escalates to SIGKILL.
 // Reaping and bounded output draining remain internal to Process.
-// Stop closes the memfd, even after natural exit or a stop
-// failure. Finish reading before calling Stop. Repeated calls close it only once;
-// failed process group termination can be retried.
+// Stop preserves output, including memfd. Call Close after reading it.
+// Failed process group termination can be retried. Stop rejects an unfinished
+// Start; Close instead waits for that Start before forcing cleanup.
 func (p *Process) Stop(ctx context.Context) error {
-	return p.stop(ctx, releaseMemfd)
+	ctx, cancel := context.WithTimeout(ctx, p.spec.StopGracePeriod)
+	defer cancel()
+	return p.stop(ctx)
 }
 
-func (p *Process) stop(ctx context.Context, cleanup memfdCleanup) (err error) {
+func (p *Process) stop(ctx context.Context) error {
 	p.mu.Lock()
 	if p.state == processStateInvalid {
 		p.mu.Unlock()
@@ -448,11 +391,7 @@ func (p *Process) stop(ctx context.Context, cleanup memfdCleanup) (err error) {
 		return fmt.Errorf("stop command %q: process has not been started", p.spec.Path)
 	}
 
-	if cleanup == releaseMemfd && p.memfd != nil {
-		defer func() { err = errors.Join(err, p.closeMemfd()) }()
-	}
-
-	if p.state == processStateStartFailed || p.state == processStateExited {
+	if p.state == processStateStartFailed || p.state == processStateExited || p.state == processStateClosed {
 		p.mu.Unlock()
 		return p.stopResult()
 	}
@@ -476,7 +415,7 @@ func (p *Process) stop(ctx context.Context, cleanup memfdCleanup) (err error) {
 	waitDone := p.wait.done
 	p.mu.Unlock()
 
-	err = wrapStopFailure(p.stopProcessGroup(ctx, waitDone))
+	err := wrapStopFailure(p.stopProcessGroup(ctx, waitDone))
 
 	p.mu.Lock()
 	attempt.err = err
@@ -490,8 +429,39 @@ func (p *Process) waitForStopAttempt(ctx context.Context, attempt *lifecycleResu
 	case <-attempt.done:
 		return attempt.err
 	case <-ctx.Done():
-		return fmt.Errorf("wait for command %q stop: %w", p.spec.Path, ctx.Err())
+		return wrapStopFailure(p.forceStopAndWait(p.wait.done))
 	}
+}
+
+// Close forcefully stops and reaps a running command, then releases owned files.
+// It waits for an in-progress Start. Calling Close before Start permanently
+// closes the process; Wait then returns os.ErrClosed. Concurrent and repeated
+// calls are safe. Signal failures can be retried; file close failures are cached.
+// Borrowed writers and ExtraFiles are never closed. Close does not report an
+// ordinary exit failure: use Wait to obtain the execution result.
+func (p *Process) Close() error {
+	p.mu.Lock()
+	if p.state == processStateInvalid {
+		p.mu.Unlock()
+		return fmt.Errorf("close command: %w", errProcessNotInitialized)
+	}
+	if p.state == processStateNew {
+		p.state = processStateClosed
+		p.start.err = fmt.Errorf("command %q closed before start: %w", p.spec.Path, os.ErrClosed)
+		p.wait.err = p.start.err
+		close(p.start.done)
+		close(p.wait.done)
+		p.publishDone()
+	}
+	p.mu.Unlock()
+
+	<-p.start.done
+	p.mu.Lock()
+	p.isStopRequested = true
+	p.mu.Unlock()
+
+	stopErr := wrapStopFailure(p.forceStopAndWait(p.wait.done))
+	return errors.Join(stopErr, p.closeMemfd())
 }
 
 func (p *Process) stopProcessGroup(ctx context.Context, waitDone <-chan struct{}) error {
@@ -585,7 +555,7 @@ func wrapStopFailure(err error) error {
 // Run starts the command and waits for it. If ctx is canceled after launch,
 // Spec.StopGracePeriod controls when Stop escalates from SIGTERM to SIGKILL.
 // Run preserves memfd output, including after cancellation. Read outputs and
-// call Stop to release the file. Output size errors come from the output methods.
+// call Close to release the file. Output size errors come from the output methods.
 func (p *Process) Run(ctx context.Context) error {
 	if err := p.Start(ctx); err != nil {
 		return err
@@ -593,57 +563,35 @@ func (p *Process) Run(ctx context.Context) error {
 
 	select {
 	case <-p.wait.done:
-		return p.processResult()
+		return p.runResult(nil, nil)
 	case <-ctx.Done():
 		select {
 		case <-p.wait.done:
-			return p.processResult()
+			return p.runResult(nil, nil)
 		default:
 		}
 
-		stopCtx, cancel := context.WithTimeout(
-			context.WithoutCancel(ctx),
-			p.spec.StopGracePeriod,
-		)
-		stopErr := p.stop(stopCtx, preserveMemfd)
-		cancel()
-		runErr := fmt.Errorf("run command %q: %w", p.spec.Path, ctx.Err())
-		if stopErr != nil {
-			return errors.Join(runErr, stopErr)
-		}
-		waitErr := p.processResult()
-		if errors.Is(waitErr, ErrStopped) {
-			waitErr = nil
-		}
-		return errors.Join(runErr, waitErr)
+		stopErr := p.Stop(context.WithoutCancel(ctx))
+		return p.runResult(fmt.Errorf("run command %q: %w", p.spec.Path, ctx.Err()), stopErr)
 	}
 }
 
-// Stdout returns a copy of the retained standard output.
-// It is empty when WithStdout redirects output to a non-nil writer. Exceeding
-// Spec.MaxOutputBytes returns the retained prefix and ErrOutputLimitExceeded.
-// Wait first for complete output; snapshots remain available after Stop.
-func (p *Process) Stdout() ([]byte, error) {
-	// The limit is immutable after New and distinguishes an uninitialized Process.
-	if p.output.limit == 0 {
-		return nil, fmt.Errorf("read command stdout: %w", errProcessNotInitialized)
+func (p *Process) runResult(contextErr, stopErr error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	executionErr := p.wait.err
+	if contextErr != nil && errors.Is(executionErr, ErrStopped) {
+		executionErr = nil
+	}
+	cleanupErr := errors.Join(stopErr, p.groupErr)
+	if contextErr == nil && executionErr == nil && cleanupErr == nil {
+		return nil
 	}
 
-	data, exceeded := p.output.Snapshot()
-	if exceeded {
-		return data, fmt.Errorf(
-			"%w: command %q stdout exceeds %d bytes",
-			ErrOutputLimitExceeded,
-			p.spec.Path,
-			p.spec.MaxOutputBytes,
-		)
+	return &RunError{
+		ContextErr:   contextErr,
+		ExecutionErr: executionErr,
+		CleanupErr:   cleanupErr,
 	}
-
-	return data, nil
-}
-
-// Stderr returns a copy of the newest 64 KiB written to standard error.
-// It is empty when WithStderr redirects output to a non-nil writer.
-func (p *Process) Stderr() []byte {
-	return p.stderr.Bytes()
 }

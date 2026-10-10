@@ -18,13 +18,10 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/log"
 )
-
-const memfdStopGracePeriod = 5 * time.Second
 
 // RunWithMemfd collects each profiler's file output separately from its logs.
 // Options are shared across commands; supplied writers must support concurrent use.
@@ -49,9 +46,7 @@ func RunWithMemfd(
 			return result
 		}
 		defer func() {
-			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), memfdStopGracePeriod)
-			defer cancel()
-			if err := process.Stop(stopCtx); err != nil {
+			if err := process.Close(); err != nil {
 				result.Err = errors.Join(result.Err, err)
 				result.Output = nil
 			}

@@ -48,11 +48,11 @@ func newExecutor(
 
 func (e *executor) Start(ctx context.Context) error {
 	if err := e.stream.ExpectSession(types.ProfilingToolName, e.requestID); err != nil {
-		return fmt.Errorf("expect profiler result stream: %w", err)
+		return fmt.Errorf("expect profiler result stream: %w", errors.Join(err, e.process.Close()))
 	}
 	if err := e.process.Start(ctx); err != nil {
 		e.stream.CancelSession(types.ProfilingToolName, e.requestID)
-		return e.withOutput("start profiler", err)
+		return e.withOutput("start profiler", errors.Join(err, e.process.Close()))
 	}
 	return nil
 }
@@ -72,7 +72,9 @@ func (e *executor) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) error {
+func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) (err error) {
+	defer func() { err = errors.Join(err, e.process.Close()) }()
+
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("finalize profiler: %w", err)
 	}
