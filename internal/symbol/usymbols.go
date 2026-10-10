@@ -17,6 +17,7 @@ package symbol
 import (
 	"debug/elf"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -156,10 +157,14 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 		return result
 	}
 
+	path := r.processes[pid].path
+	module := strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid)))
+	if cache.typ == elf.ET_DYN && path == procfs.Path(fmt.Sprintf("%d/exe", pid)) {
+		// Match PIE mappings to the retained ELF, including deleted images.
+		module, _ = os.Readlink(path)
+	}
 	groups := make(map[string]*pendingELFPCs)
 	for index, addr := range addrs {
-		path := r.processes[pid].path
-		module := strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid)))
 		if cache.typ == elf.ET_DYN && module != "" {
 			if err = r.loadProcMaps(pid); err == nil {
 				if m := r.procmaps[pid].find(addr); m != nil && m.Pathname == module {
@@ -387,16 +392,11 @@ func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*elfSymbolCache
 }
 
 func (r *UsymResolver) exePath(pid uint32) (string, error) {
-	proc, err := procfs.NewProc(int(pid))
-	if err != nil {
+	if _, err := procfs.NewProc(int(pid)); err != nil {
 		return "", fmt.Errorf("procfs.NewProc %d: %w", pid, err)
 	}
-	bin, err := proc.Executable()
-	if err != nil {
-		return "", fmt.Errorf("proc.Executable %d: %w", pid, err)
-	}
-	rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
-	return filepath.Join(rootDir, bin), nil
+	// The proc link retains the running ELF after its pathname is replaced.
+	return procfs.Path(fmt.Sprintf("%d/exe", pid)), nil
 }
 
 func (r *UsymResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
@@ -441,6 +441,16 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 		return "", err
 	}
 	if !inContainer {
+		if hostPath == procfs.Path(fmt.Sprintf("%d/exe", pid)) {
+			proc, err := procfs.NewProc(int(pid))
+			if err != nil {
+				return "", err
+			}
+			hostPath, err = proc.Executable()
+			if err != nil {
+				return "", err
+			}
+		}
 		return matchXfsMount(hostPath, mounts)
 	}
 
