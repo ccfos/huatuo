@@ -212,7 +212,7 @@ Content-Type: application/json
 data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom_kill",...}\n\n
 ```
 
-服务端还会定期发送心跳注释行以保持连接：
+订阅建立后，服务端会立即发送一条心跳注释行，再按配置间隔发送后续心跳以保持连接：
 
 ```text
 : ping\n
