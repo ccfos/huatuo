@@ -86,6 +86,22 @@ sudo wget -O /etc/systemd/system/huatuo-bamai.service "https://raw.githubusercon
 sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubusercontent.com/ccfos/huatuo/${HUATUO_VERSION}/build/rpm/huatuo-apiserver.service"
 ```
 
+随后确认两个文件都是有效的 unit 文件。当 URL 不存在时，`wget` 会返回非 0 退出码并在目标位置留下一个 0 字节文件，而 systemd 会把这种文件识别为 `masked`，因此下载失败不会在此处报错，只会在第 6 步表现为难以理解的错误：
+
+```bash
+for unit in huatuo-bamai huatuo-apiserver; do
+    sudo test -s "/etc/systemd/system/${unit}.service" &&
+        sudo head -n 1 "/etc/systemd/system/${unit}.service" | grep -q '^\[Unit\]' ||
+        { echo "${unit}.service was not downloaded correctly" >&2; exit 1; }
+done
+```
+
+`build/rpm/huatuo-apiserver.service` 是在 v2.3.0 之后补入仓库的，因此 v2.3.0 及更早的发布版本中并不包含该文件，上述第二个下载在这些 tag 上会失败。遇到这种情况时，可改从 main 分支获取该 unit（若不需要把 API server 作为服务运行，第 6 步只启用 `huatuo-bamai` 即可）：
+
+```bash
+sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubusercontent.com/ccfos/huatuo/main/build/rpm/huatuo-apiserver.service"
+```
+
 ### 4. 修改配置
 
 根据实际部署环境编辑 `/opt/huatuo-bamai/conf/huatuo-bamai.conf` 和 `/opt/huatuo-bamai/conf/huatuo-apiserver.conf`。详细配置项说明请参见 [`huatuo-bamai` 配置](/docs/configuration/huatuo-bamai-configuration_zh.md) 和 [`huatuo-apiserver` 配置](/docs/configuration/huatuo-apiserver-configuration_zh.md)。
