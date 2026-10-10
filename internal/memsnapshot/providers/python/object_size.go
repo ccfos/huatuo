@@ -65,7 +65,11 @@ func (c *scanner) objectSize(address uint64, objectHead []byte,
 	if !logicalOK || !c.isListType(typeInfo) {
 		return size
 	}
-	if err := c.memory.readInto(address+24, c.objectScratch[:]); err == nil {
+	listMetadataOffset := c.image.layout.objectTypeOffset + 16
+	if address > ^uint64(0)-listMetadataOffset {
+		return size
+	}
+	if err := c.memory.readInto(address+listMetadataOffset, c.objectScratch[:]); err == nil {
 		buffer := c.image.order.Uint64(c.objectScratch[:8])
 		allocated := int64(c.image.order.Uint64(c.objectScratch[8:]))
 		if listBufferValid(logicalItems, allocated, buffer) {
