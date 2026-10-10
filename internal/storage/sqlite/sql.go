@@ -97,7 +97,7 @@ func buildValuesSQL(collection, field string, q driver.Query, size int) (string,
 	}
 	sb.WriteString(termExpr)
 	sb.WriteString(" IS NOT NULL ORDER BY term ASC")
-	if size > 0 {
+	if size >= 0 {
 		sb.WriteString(" LIMIT ?")
 		args = append(args, size)
 	}
