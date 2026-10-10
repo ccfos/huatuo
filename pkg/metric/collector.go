@@ -55,15 +55,16 @@ type CollectorManager struct {
 	collectors         map[string]*CollectorWrapper
 	hostname           string
 	region             string
+	nodeIP             string
 	scrapeDurationDesc *prometheus.Desc
 	scrapeSuccessDesc  *prometheus.Desc
 }
 
-func NewCollectorManager(blackListed []string, region string) (*CollectorManager, error) {
+func NewCollectorManager(blackListed []string, region, nodeIP string) (*CollectorManager, error) {
 	// Init defaultRegion, defaultHostname firstly,
 	// NewGaugeData may be used for data caching in tracing.NewRegister.
 	hostname, _ := os.Hostname()
-	defaultRegion, defaultHostname = region, hostname
+	defaultRegion, defaultHostname, defaultNodeIP = region, hostname, nodeIP
 
 	tracings, err := tracing.NewRegister(blackListed)
 	if err != nil {
@@ -90,16 +91,21 @@ func NewCollectorManager(blackListed []string, region string) (*CollectorManager
 		}
 	}
 
+	identityLabelNames := []string{LabelHost, LabelRegion}
+	if nodeIP != "" {
+		identityLabelNames = append(identityLabelNames, LabelNodeIP)
+	}
+	identityLabelNames = append(identityLabelNames, "collector")
 	scrapeDurationDesc := prometheus.NewDesc(
 		prometheus.BuildFQName(DefaultNamespace, "scrape", "collector_duration_seconds"),
 		DefaultNamespace+": Duration of a collector scrape.",
-		[]string{LabelHost, LabelRegion, "collector"},
+		identityLabelNames,
 		nil,
 	)
 	scrapeSuccessDesc := prometheus.NewDesc(
 		prometheus.BuildFQName(DefaultNamespace, "scrape", "collector_success"),
 		DefaultNamespace+": Whether a collector succeeded.",
-		[]string{LabelHost, LabelRegion, "collector"},
+		identityLabelNames,
 		nil,
 	)
 
@@ -107,6 +113,7 @@ func NewCollectorManager(blackListed []string, region string) (*CollectorManager
 		collectors:         collectors,
 		hostname:           hostname,
 		region:             region,
+		nodeIP:             nodeIP,
 		scrapeDurationDesc: scrapeDurationDesc,
 		scrapeSuccessDesc:  scrapeSuccessDesc,
 	}, nil
@@ -166,6 +173,11 @@ func (m *CollectorManager) doCollect(collectorName string, c *CollectorWrapper, 
 		ch <- data.prometheusMetric(collectorName)
 	}
 
-	ch <- prometheus.MustNewConstMetric(m.scrapeDurationDesc, prometheus.GaugeValue, duration.Seconds(), m.hostname, m.region, collectorName)
-	ch <- prometheus.MustNewConstMetric(m.scrapeSuccessDesc, prometheus.GaugeValue, success, m.hostname, m.region, collectorName)
+	identityLabelValues := []string{m.hostname, m.region}
+	if m.nodeIP != "" {
+		identityLabelValues = append(identityLabelValues, m.nodeIP)
+	}
+	identityLabelValues = append(identityLabelValues, collectorName)
+	ch <- prometheus.MustNewConstMetric(m.scrapeDurationDesc, prometheus.GaugeValue, duration.Seconds(), identityLabelValues...)
+	ch <- prometheus.MustNewConstMetric(m.scrapeSuccessDesc, prometheus.GaugeValue, success, identityLabelValues...)
 }

@@ -40,7 +40,7 @@ func TestNewDocumentWriterRequiresConcreteDependencies(t *testing.T) {
 func TestDocumentWriterRequiresSession(t *testing.T) {
 	writer, err := NewDocumentWriter(
 		&profilingstore.Store{},
-		document.New("test"),
+		document.New("test", ""),
 	)
 	if err != nil {
 		t.Fatalf("NewDocumentWriter() error = %v", err)
@@ -249,7 +249,7 @@ func newPersistentDocumentWriter(t *testing.T) (*DocumentWriter, *profileBackend
 	}
 	writer, err := NewDocumentWriter(
 		store,
-		document.New("test"),
+		document.New("test", ""),
 	)
 	if err != nil {
 		t.Fatalf("NewDocumentWriter() error = %v", err)
