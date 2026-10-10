@@ -64,11 +64,18 @@ func main() {
 	fmt.Println("ready")
 	waitForCommand('p')
 
+	pressureMiB := 64
+	if value := os.Getenv("MEMSNAPSHOT_PRESSURE_MIB"); value != "" {
+		pressureMiB, err = strconv.Atoi(value)
+		if err != nil || pressureMiB < 1 || pressureMiB > 512 {
+			panic("pressure size must be in [1, 512] MiB")
+		}
+	}
 	// Anonymous mmap charges real memory without adding Go heap profile samples.
 	pressure, err := syscall.Mmap(
 		-1,
 		0,
-		64<<20,
+		pressureMiB<<20,
 		syscall.PROT_READ|syscall.PROT_WRITE,
 		syscall.MAP_PRIVATE|syscall.MAP_ANON,
 	)
