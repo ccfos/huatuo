@@ -24,6 +24,8 @@ import (
 	"github.com/ccfos/huatuo/internal/symbol"
 )
 
+const maxGoFrameBytes = 8 << 20
+
 // symbolizer only queries copied metadata; it remains usable after the target exits.
 type symbolizer struct {
 	table    *gosym.Table
@@ -41,30 +43,58 @@ func (r *processReader) buildSymbolizer(ctx context.Context) (*symbolizer, error
 
 // Keep the function name separate from its display frame so source locations
 // cannot change the allocation-site name, including names containing commas.
-func (s *symbolizer) resolve(runtimePC uint64) (name, frame string) {
+func (s *symbolizer) resolve(ctx context.Context, runtimePC uint64, remaining *int) (name, frame string, err error) {
 	if s == nil || s.table == nil || runtimePC <= s.loadBias {
-		return "", ""
+		return "", "", nil
 	}
 	// runtime.MemProfile stacks contain return PCs. Move into the call
 	// instruction so boundary PCs are attributed to the allocating function.
 	file, line, function := s.table.PCToLine(runtimePC - s.loadBias - 1)
 	if function == nil {
-		return "", ""
+		return "", "", nil
 	}
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+	// Charge the entry name, frame string and slice slot before formatting.
+	charge := 2*len(function.Name) + 16
+	if file != "" && line > 0 {
+		charge += len(file) + 32
+	}
+	if charge > *remaining {
+		return "", "", fmt.Errorf("Go snapshot frame-byte budget exceeded")
+	}
+	*remaining -= charge
 	if file == "" || line <= 0 {
-		return function.Name, function.Name
+		return function.Name, function.Name, nil
 	}
-	return function.Name, fmt.Sprintf("%s, %s:%d", function.Name, file, line)
+	return function.Name, fmt.Sprintf("%s, %s:%d", function.Name, file, line), nil
 }
 
 // A nil symbolizer preserves raw PCs so collected allocations remain available.
-func (s *symbolizer) resolveStack(stack []byte, order binary.ByteOrder) (name string, frames []string) {
+func (s *symbolizer) resolveStack(ctx context.Context, stack []byte, order binary.ByteOrder, remaining *int) (name string, frames []string, err error) {
+	if len(stack)%8 != 0 {
+		return "", nil, fmt.Errorf("Go snapshot stack is misaligned")
+	}
+	if len(stack)/8 > *remaining/16 {
+		return "", nil, fmt.Errorf("Go snapshot frame-byte budget exceeded")
+	}
 	frames = make([]string, 0, len(stack)/8)
 	var firstName string
 	for offset := 0; offset < len(stack); offset += 8 {
+		if err := ctx.Err(); err != nil {
+			return "", nil, err
+		}
 		pc := order.Uint64(stack[offset : offset+8])
-		function, frame := s.resolve(pc)
+		function, frame, err := s.resolve(ctx, pc, remaining)
+		if err != nil {
+			return "", nil, err
+		}
 		if function == "" {
+			if *remaining < 52 {
+				return "", nil, fmt.Errorf("Go snapshot frame-byte budget exceeded")
+			}
+			*remaining -= 52
 			function = fmt.Sprintf("0x%x", pc)
 			frame = function
 		}
@@ -81,5 +111,5 @@ func (s *symbolizer) resolveStack(stack []byte, order binary.ByteOrder) (name st
 	if name == "" {
 		name = firstName
 	}
-	return name, frames
+	return name, frames, ctx.Err()
 }

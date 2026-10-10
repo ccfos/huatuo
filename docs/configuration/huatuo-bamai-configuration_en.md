@@ -656,6 +656,7 @@ This module detects sudden memory usage spikes on the host and automatically cap
 	# IntervalTracing = 1800
 	# SlidingWindowLength = 60
 	# DumpProcessMaxNum = 10
+	# SnapshotProcessMaxNum = 3
 ```
 
 - **DeltaMemoryBurst**: Memory usage burst growth percentage threshold.
@@ -681,6 +682,10 @@ This module detects sudden memory usage spikes on the host and automatically cap
 - **DumpProcessMaxNum**: Maximum processes to dump on trigger.
 
   Default: 10.
+
+- **SnapshotProcessMaxNum**: Maximum ranked processes to capture runtime snapshots for. Must be in `[1, 10]`; the actual count is capped by `DumpProcessMaxNum` and available ranked processes.
+
+  Default: 3.
 
 #### 7.6 Memory Threshold Runtime Snapshots
 

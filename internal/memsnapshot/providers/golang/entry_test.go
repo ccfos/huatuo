@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,4 +197,42 @@ type cancelingByteOrder struct {
 func (o cancelingByteOrder) Uint64(raw []byte) uint64 {
 	o.cancel()
 	return o.ByteOrder.Uint64(raw)
+}
+
+func TestBuildEntriesFrameBudget(t *testing.T) {
+	// Every single stack fits; their combined display strings must not.
+	function := strings.Repeat("f", 4096)
+	table := &gosym.Table{Funcs: []gosym.Func{{Entry: 0x100, End: 0x200, Sym: &gosym.Sym{Name: function}, Obj: &gosym.Obj{}, LineTable: &gosym.LineTable{}}}}
+	var raw [programCounterBytes]byte
+	binary.LittleEndian.PutUint64(raw[:], 0x101)
+	input := make([]allocation, maxGoFrameBytes/(2*len(function))+1)
+	for i := range input {
+		input[i] = allocation{key: string(raw[:]), inuseBytes: 128, inuseObjects: 1}
+	}
+	if entries, err := buildEntries(t.Context(), input, binary.LittleEndian, &symbolizer{table: table}); err == nil || entries != nil {
+		t.Fatalf("aggregate frame budget = %v, %v", entries, err)
+	}
+}
+
+func TestResolveStackBudgetAndCancellation(t *testing.T) {
+	var raw [2 * programCounterBytes]byte
+	binary.LittleEndian.PutUint64(raw[:], 0x1234)
+	binary.LittleEndian.PutUint64(raw[programCounterBytes:], 0x5678)
+	for _, remaining := range []int{0, 52, 104} {
+		budget := remaining
+		_, frames, err := (*symbolizer)(nil).resolveStack(t.Context(), raw[:], binary.LittleEndian, &budget)
+		if (err == nil) != (remaining == 104) {
+			t.Fatalf("budget %d: frames=%v error=%v", remaining, frames, err)
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	budget := maxGoFrameBytes
+	order := cancelingByteOrder{ByteOrder: binary.LittleEndian, cancel: cancel}
+	if _, _, err := (*symbolizer)(nil).resolveStack(ctx, raw[:], order, &budget); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation within stack = %v", err)
+	}
+	budget = maxGoFrameBytes
+	if _, _, err := (*symbolizer)(nil).resolveStack(t.Context(), raw[:1], binary.LittleEndian, &budget); err == nil {
+		t.Fatal("accepted misaligned stack")
+	}
 }

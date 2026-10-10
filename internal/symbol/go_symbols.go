@@ -65,6 +65,7 @@ const (
 	maxGoSymbolNames   = 16 << 20
 	maxGoSymbolName    = 4 << 10
 	maxGoSymbolBytes   = 64 << 20
+	maxGoPCValueBytes  = 64 << 10
 	// Include Func/Sym storage, name/file maps (including growth), and
 	// fixed parser state. These are conservative charges, not an RSS cap.
 	goSymbolFunctionBytes = 256
@@ -121,7 +122,7 @@ func validatePCLN(ctx context.Context, data []byte, order binary.ByteOrder) erro
 		previous = offset
 	}
 	functions := data[word(7):]
-	if len(functions) < 16 || nfunc*8+4 > uint64(len(functions)) {
+	if len(functions) < 44 || nfunc*8+4 > uint64(len(functions)) {
 		return fmt.Errorf("Go pclntab function table is truncated")
 	}
 	names := data[word(3):word(4)]
@@ -153,7 +154,7 @@ func validatePCLN(ctx context.Context, data []byte, order binary.ByteOrder) erro
 			return err
 		}
 		offset := uint64(order.Uint32(functions[index*8+4:]))
-		if offset < nfunc*8+4 || offset > uint64(len(functions))-16 {
+		if offset < nfunc*8+4 || offset > uint64(len(functions))-44 {
 			return fmt.Errorf("Go pclntab function record is out of bounds")
 		}
 		if _, err := checkName(names, uint64(order.Uint32(functions[offset+4:]))); err != nil {
@@ -162,6 +163,7 @@ func validatePCLN(ctx context.Context, data []byte, order binary.ByteOrder) erro
 	}
 	files := data[word(5):word(6)]
 	position := uint64(0)
+	fileStarts := make(map[uint32]struct{}, nfile)
 	for index := uint64(0); index < nfile; index++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -170,9 +172,119 @@ func validatePCLN(ctx context.Context, data []byte, order binary.ByteOrder) erro
 		if err != nil {
 			return err
 		}
+		fileStarts[uint32(position)] = struct{}{}
 		position += uint64(size)
 	}
+	return validateGoFileReferences(ctx, data[word(4):word(5)], data[word(6):word(7)], functions, nfunc, fileStarts, order, uint32(data[6]))
+}
+
+// Every compilation-unit reference must name a validated string start. Checking
+// only the declared sequential filenames leaves trailing and interior strings
+// reachable through PC-to-file tables.
+func validateGoFileReferences(ctx context.Context, units, pcdata, functions []byte,
+	nfunc uint64, fileStarts map[uint32]struct{}, order binary.ByteOrder, quantum uint32,
+) error {
+	if len(units)%4 != 0 {
+		return fmt.Errorf("Go compilation-unit table is misaligned")
+	}
+	for offset := 0; offset < len(units); offset += 4 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		name := order.Uint32(units[offset:])
+		if name != ^uint32(0) {
+			if _, ok := fileStarts[name]; !ok {
+				return fmt.Errorf("Go compilation-unit filename offset is not a validated string start")
+			}
+		}
+	}
+	// Shared tables are decoded once. A total byte budget also bounds overlapping
+	// encodings, which otherwise permit quadratic validation work.
+	budget := maxGoSymbolBytes
+	decoded := make(map[uint32]int32)
+	for index := uint64(0); index < nfunc; index++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		record := functions[order.Uint32(functions[index*8+4:]):]
+		for _, field := range []int{20, 24} {
+			offset := order.Uint32(record[field:])
+			maximum, ok := decoded[offset]
+			if !ok {
+				var err error
+				maximum, err = validateGoPCValues(ctx, pcdata, offset, quantum, &budget)
+				if err != nil {
+					return fmt.Errorf("Go PC-value offset %d: %w", offset, err)
+				}
+				decoded[offset] = maximum
+			}
+			// Offset zero is the no-PC-data sentinel and can have no CU.
+			// Its fallback decoding is bounded above; every filename in units
+			// was validated independently, including references it may reach.
+			if field == 20 && offset != 0 && maximum >= 0 {
+				unit := uint64(order.Uint32(record[32:])) + uint64(maximum)
+				if unit >= uint64(len(units)/4) {
+					return fmt.Errorf("Go PC-to-file compilation-unit index is out of bounds")
+				}
+			}
+		}
+	}
 	return nil
+}
+
+func validateGoPCValues(ctx context.Context, data []byte, offset, quantum uint32, budget *int) (int32, error) {
+	if uint64(offset) >= uint64(len(data)) {
+		return 0, fmt.Errorf("Go PC-value table offset is out of bounds")
+	}
+	data = data[offset:]
+	consumed := 0
+	read := func() (uint32, error) {
+		var value uint32
+		for shift := uint(0); shift < 35; shift += 7 {
+			if len(data) == 0 || *budget == 0 || consumed >= maxGoPCValueBytes {
+				return 0, fmt.Errorf("Go PC-value table exceeds safety limit")
+			}
+			b := data[0]
+			data = data[1:]
+			consumed++
+			*budget--
+			if shift == 28 && b > 15 {
+				return 0, fmt.Errorf("Go PC-value varint overflows")
+			}
+			value |= uint32(b&127) << shift
+			if b < 128 {
+				return value, nil
+			}
+		}
+		return 0, fmt.Errorf("Go PC-value varint overflows")
+	}
+	value, maximum := int32(-1), int32(-1)
+	for first := true; ; {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		delta, err := read()
+		if err != nil {
+			return 0, err
+		}
+		if delta == 0 && !first {
+			return maximum, nil
+		}
+		value += int32(delta>>1) ^ -int32(delta&1)
+		if value > maximum {
+			maximum = value
+		}
+		advance, err := read()
+		if err != nil {
+			return 0, err
+		}
+		if advance > ^uint32(0)/quantum {
+			return 0, fmt.Errorf("Go PC-value advance is invalid")
+		}
+		if advance != 0 {
+			first = false
+		}
+	}
 }
 
 // goTextStart returns the link-time start of the Go text section, which the

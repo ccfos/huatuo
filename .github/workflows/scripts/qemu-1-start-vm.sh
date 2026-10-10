@@ -46,6 +46,10 @@ VM_MAC=${4:-}
 VM_IP=${5:-}
 VM_IMAGE_REF=${VM_IMAGE_REF:-huatuo/os-distro-test:${OS_DISTRO}.${ARCH}}
 VM_IMAGE_PULL=${VM_IMAGE_PULL:-always}
+vm_disk_size=20G
+if [[ "$OS_DISTRO" == anolis8.10 ]]; then
+	vm_disk_size=22G
+fi
 
 run_root=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/huatuo-vm-${OS_DISTRO}-${ARCH}.XXXXXXXX")
 SSH_KEY="$run_root/id_ed25519_vm"
@@ -75,7 +79,7 @@ start_args=(
 	--ssh-key "$SSH_KEY"
 	--vcpus 4
 	--memory 8192
-	--disk-size 20G
+	--disk-size "$vm_disk_size"
 	--init-kubernetes
 )
 [[ -z "$VM_NAME" ]] || start_args+=(--name "$VM_NAME")

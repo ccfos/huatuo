@@ -22,6 +22,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -49,6 +50,17 @@ func main() {
 	runtime.GC()
 	runtime.GC()
 	debug.FreeOSMemory()
+	// Opt-in churn exercises capture while the target allocates, frees and runs GC.
+	if os.Getenv("MEMSNAPSHOT_CHURN") == "1" {
+		go func() {
+			for {
+				block := allocateBlock(2 << 20)
+				runtime.KeepAlive(block)
+				runtime.GC()
+				time.Sleep(10 * time.Millisecond)
+			}
+		}()
+	}
 	fmt.Println("ready")
 	waitForCommand('p')
 
@@ -93,6 +105,9 @@ func allocatePrimary() [6][]byte {
 		size := 2 << 20
 		if i >= 4 {
 			size = 4 << 20
+		}
+		if os.Getenv("MEMSNAPSHOT_VARIANT") == "small" {
+			size = 1 << 20
 		}
 		blocks[i] = allocateBlock(size)
 	}

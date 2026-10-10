@@ -69,6 +69,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 | `memburst.interval_tracing` | `1800`（秒） | 触发冷却时间 |
 | `memburst.sliding_window_length` | `60` | 滑动窗口采样数（对应 600 秒历史数据） |
 | `memburst.dump_process_max_num` | `10` | 最多采集的内存消耗进程数 |
+| `memburst.snapshot_process_max_num` | `3` | 采集内存快照的最大排名进程数；范围 1～10，实际不超过可用排名和 `dump_process_max_num` |
 
 ### 事件列表
 
@@ -305,14 +306,37 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
     "tracer_data": {
         "top_memory_usage": [
             {
-                "pid": 3456,
-                "process_name": "java",
-                "memory_size": 8589934592
-            },
+                "PID": 3456,
+                "ProcessName": "go-service",
+                "MemSize": 268435456
+            }
+        ],
+        "process_snapshots": [
             {
-                "pid": 3789,
-                "process_name": "python3",
-                "memory_size": 2147483648
+                "pid": 3456,
+                "process_name": "go-service",
+                "language": "go",
+                "snapshot": {
+                    "runtime_version": "go1.24.0",
+                    "status": "complete",
+                    "duration_ms": 25,
+                    "entries": [
+                        {
+                            "kind": "inuse_space_objects",
+                            "name": "main.allocate",
+                            "bytes": 1048576,
+                            "objects": 16,
+                            "stack": [
+                                "main.allocate fixture.go:42"
+                            ]
+                        }
+                    ]
+                },
+                "process_memory": {
+                    "status": "complete",
+                    "rss_bytes": 268435456,
+                    "rss_anon_bytes": 260046848
+                }
             }
         ]
     }
@@ -322,9 +346,16 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 **字段含义解释**
 
 - **top_memory_usage**：内存消耗最多的进程列表（按 RSS 降序排列），每条记录包含：
-  - **pid**：进程 PID
-  - **process_name**：进程名称
-  - **memory_size**：进程 RSS 内存占用（字节）
+  - **PID**：进程 PID
+  - **ProcessName**：进程名称
+  - **MemSize**：进程 RSS 内存占用（字节）
+
+- **process_snapshots**（可选）：按排名顺序记录进程快照，每项包含 `pid`、`process_name`、`language`、`snapshot` 和可选的 `process_memory`。
+  - **snapshot**：包含 `runtime_version`、`status`（`complete`、`partial`、`unavailable` 或 `failed`）、可选的 `status_reason`、`duration_ms`（毫秒）、可选的 `output_truncated`，以及排名条目 `entries`（`kind`、`name`、`bytes`、`objects`、可选的 `average_bytes` 和 `stack`）。不支持的运行时返回 `unavailable`。
+  - **process_memory**：与语言无关的内存计数，`status` 和可选的 `status_reason` 表示可用性。`virtual_bytes`、`rss_bytes`、`rss_anon_bytes`、`rss_file_bytes`、`rss_shmem_bytes`、`swap_bytes`、`page_table_bytes` 的单位均为字节；字段缺失表示不可用，不表示零。
+- **snapshot_reason**（可选）：说明取消、采集队列满或整体事件裁剪。例如 `"snapshot_reason": "memburst payload truncated to fit event budget"`。单进程失败记录在 `snapshot.status_reason` 中。
+
+默认依次采集排名前三个进程，每个进程使用协作式的 2 秒采集预算。Go、Java、Python 使用对应运行时采集器；其他运行时在可用时保留内存计数。序列化后的 `tracer_data` 总预算为 2 MiB；超限时优先移除排名靠后的快照，尽量保留基础排名。落盘最多保留 1,000 条基础排名，必要时继续裁剪排名尾部。所有预算裁剪均设置 `snapshot_reason`，取消和降级记录也遵循此限制。
 
 ## ⚙️ 原理
 

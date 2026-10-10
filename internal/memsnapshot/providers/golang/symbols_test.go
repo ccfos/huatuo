@@ -59,7 +59,11 @@ func TestBuildSymbolizerStrippedExecutable(t *testing.T) {
 		}
 		var stack [programCounterBytes]byte
 		file.ByteOrder.PutUint64(stack[:], fn.Entry+reader.runtime.loadBias+1)
-		name, resolved := symbols.resolveStack(stack[:], file.ByteOrder)
+		remaining := maxGoFrameBytes
+		name, resolved, err := symbols.resolveStack(t.Context(), stack[:], file.ByteOrder, &remaining)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if name != "runtime.MemProfile" || len(resolved) != 1 ||
 			!strings.HasPrefix(resolved[0], "runtime.MemProfile, ") ||
 			!strings.Contains(resolved[0], "/runtime/mprof.go:") {
@@ -119,7 +123,11 @@ func main() { runtime.KeepAlive(allocate()) }
 			}
 			var stack [programCounterBytes]byte
 			file.ByteOrder.PutUint64(stack[:], pc+reader.runtime.loadBias+1)
-			name, frames := symbols.resolveStack(stack[:], file.ByteOrder)
+			remaining := maxGoFrameBytes
+			name, frames, err := symbols.resolveStack(t.Context(), stack[:], file.ByteOrder, &remaining)
+			if err != nil {
+				t.Fatal(err)
+			}
 			wantFrame := fmt.Sprintf("main.allocate, %s:5", source)
 			if name != "main.allocate" || len(frames) != 1 || frames[0] != wantFrame {
 				t.Fatalf("source location = %q, %v; want main.allocate, [%q]", name, frames, wantFrame)

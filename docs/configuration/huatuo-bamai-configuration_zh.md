@@ -646,6 +646,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 	# IntervalTracing = 1800
 	# SlidingWindowLength = 60
 	# DumpProcessMaxNum = 10
+	# SnapshotProcessMaxNum = 3
 ```
 
 - **DeltaMemoryBurst**：内存使用量突发增长百分比阈值。
@@ -677,6 +678,10 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
   默认 10。 当内存突发事件触发时，最多转储多少个相关进程的详细信息（包括内存占用、调用栈等）。
 
   **说明**：控制输出数据量，避免单次事件产生过多诊断信息。
+
+- **SnapshotProcessMaxNum**：采集运行时内存快照的最大排名进程数。范围为 `[1, 10]`；实际数量不超过 `DumpProcessMaxNum` 和可用排名进程数。
+
+  默认 3。
 
 #### 7.6 内存阈值运行时快照
 

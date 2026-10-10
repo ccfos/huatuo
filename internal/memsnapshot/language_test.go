@@ -83,3 +83,19 @@ func TestDetectLanguageELF(t *testing.T) {
 		})
 	}
 }
+
+func TestLanguageSymbolErrorsBoundSectionNames(t *testing.T) {
+	for _, stringsTable := range []bool{false, true} {
+		section := &elf.Section{SectionHeader: elf.SectionHeader{Type: elf.SHT_SYMTAB, Entsize: 24, Link: 1}}
+		names := &elf.Section{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB}}
+		if stringsTable {
+			names.Name = ".zdebug" + string(bytes.Repeat([]byte("x"), 1<<20))
+		} else {
+			section.Name = ".zdebug" + string(bytes.Repeat([]byte("x"), 1<<20))
+		}
+		_, err := languageFromSymbols(&elf.File{FileHeader: elf.FileHeader{Class: elf.ELFCLASS64}, Sections: []*elf.Section{section, names}})
+		if err == nil || len(err.Error()) > 100 {
+			t.Fatalf("unbounded parser error: %v", err)
+		}
+	}
+}
