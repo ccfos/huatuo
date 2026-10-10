@@ -23,6 +23,7 @@ import (
 	"github.com/ccfos/huatuo/internal/timeutil"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ccfos/huatuo/internal/packet"
 )
@@ -85,7 +86,7 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 				t.Fatalf("Unmarshal: %v", err)
 			}
 
-			if diff := cmp.Diff(tc.pkt, got.Layers); diff != "" {
+			if diff := cmp.Diff(tc.pkt, got.Layers, cmpopts.IgnoreUnexported(packet.TCP{})); diff != "" {
 				t.Errorf("Layers mismatch (-want +got):\n%s", diff)
 			}
 			if !got.ObservedTimestamp.Equal(ev.ObservedTimestamp.Time) {

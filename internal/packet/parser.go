@@ -34,17 +34,18 @@ const ethernetHeaderLen = 14
 var ErrNoLayers = errors.New("packet: no layers decoded")
 
 type decoder struct {
-	eth       layers.Ethernet
-	ipv4      layers.IPv4
-	ipv6      layers.IPv6
-	tcp       layers.TCP
-	udp       layers.UDP
-	icmp4     layers.ICMPv4
-	icmp6     layers.ICMPv6
-	icmp6Echo layers.ICMPv6Echo
-	arp       layers.ARP
-	dlp       *gopacket.DecodingLayerParser
-	lyrs      []gopacket.LayerType
+	eth           layers.Ethernet
+	ipv4          layers.IPv4
+	ipv6          layers.IPv6
+	ipv6Extension ipv6ExtensionSkipper
+	tcp           layers.TCP
+	udp           layers.UDP
+	icmp4         layers.ICMPv4
+	icmp6         layers.ICMPv6
+	icmp6Echo     layers.ICMPv6Echo
+	arp           layers.ARP
+	dlp           *gopacket.DecodingLayerParser
+	lyrs          []gopacket.LayerType
 	// frame holds a synthesized Ethernet frame for the HasEthHdr==0 path,
 	// reused across calls. The HasEthHdr==1 path slices pkt.Raw directly and
 	// does not touch this buffer.
@@ -57,6 +58,7 @@ var decoderPool = sync.Pool{
 		dec.dlp = gopacket.NewDecodingLayerParser(
 			layers.LayerTypeEthernet,
 			&dec.eth, &dec.ipv4, &dec.ipv6,
+			&dec.ipv6Extension,
 			&dec.tcp, &dec.udp, &dec.icmp4, &dec.icmp6, &dec.icmp6Echo, &dec.arp,
 		)
 		dec.dlp.IgnoreUnsupported = true
@@ -148,18 +150,21 @@ func Parse(pkt *Hdr) (*Packet, error) {
 			}
 		case layers.LayerTypeTCP:
 			rawFlags := tcpFlagsRaw(&dec.tcp)
+			payloadLength, payloadLengthKnown := tcpPayloadLengthFromDecoded(dec, out)
 			out.TCP = &TCP{
-				Sport:      uint16(dec.tcp.SrcPort),
-				Dport:      uint16(dec.tcp.DstPort),
-				Seq:        dec.tcp.Seq,
-				AckSeq:     dec.tcp.Ack,
-				DataOffset: dec.tcp.DataOffset,
-				Flags:      TCPFlagStrings[rawFlags],
-				RawFlags:   rawFlags,
-				Window:     dec.tcp.Window,
-				Checksum:   dec.tcp.Checksum,
-				Urgent:     dec.tcp.Urgent,
-				SkState:    TCPStateName(pkt.SkState),
+				Sport:              uint16(dec.tcp.SrcPort),
+				Dport:              uint16(dec.tcp.DstPort),
+				Seq:                dec.tcp.Seq,
+				AckSeq:             dec.tcp.Ack,
+				DataOffset:         dec.tcp.DataOffset,
+				Flags:              TCPFlagStrings[rawFlags],
+				RawFlags:           rawFlags,
+				Window:             dec.tcp.Window,
+				Checksum:           dec.tcp.Checksum,
+				Urgent:             dec.tcp.Urgent,
+				SkState:            TCPStateName(pkt.SkState),
+				payloadLength:      payloadLength,
+				payloadLengthKnown: payloadLengthKnown,
 			}
 		case layers.LayerTypeUDP:
 			out.UDP = &UDP{
@@ -233,6 +238,10 @@ func TCPSequenceSpan(packet *Packet) (uint32, bool) {
 }
 
 func tcpPayloadLength(packet *Packet) (uint32, bool) {
+	if packet.TCP.payloadLengthKnown {
+		return packet.TCP.payloadLength, true
+	}
+
 	tcpHeaderLength := uint32(packet.TCP.DataOffset) * 4
 
 	switch {
@@ -255,6 +264,51 @@ func tcpPayloadLength(packet *Packet) (uint32, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func tcpPayloadLengthFromDecoded(dec *decoder, packet *Packet) (uint32, bool) {
+	tcpHeaderLength := uint32(dec.tcp.DataOffset) * 4
+
+	switch {
+	case packet.IPv4 != nil:
+		ipHeaderLength := uint32(packet.IPv4.IHL) * 4
+		totalLength := uint32(packet.IPv4.Length)
+		if ipHeaderLength+tcpHeaderLength > totalLength {
+			return 0, false
+		}
+		return totalLength - ipHeaderLength - tcpHeaderLength, true
+	case packet.IPv6 != nil:
+		// IPv6 Payload includes any extension headers that were not consumed
+		// by the IPv6 decoder. Subtract the bytes before TCP so the result
+		// remains the wire payload length even when the raw capture is short.
+		extensionLength := len(dec.ipv6.Payload) -
+			len(dec.tcp.Contents) - len(dec.tcp.Payload)
+		if dec.ipv6.HopByHop != nil {
+			extensionLength += len(dec.ipv6.HopByHop.Contents)
+		}
+		if extensionLength < 0 {
+			return 0, false
+		}
+		payloadLength := uint32(dec.ipv6.Length)
+		overhead := uint32(extensionLength) + tcpHeaderLength
+		if overhead > payloadLength {
+			return 0, false
+		}
+		return payloadLength - overhead, true
+	default:
+		return 0, false
+	}
+}
+
+type ipv6ExtensionSkipper struct {
+	layers.IPv6ExtensionSkipper
+}
+
+func (*ipv6ExtensionSkipper) CanDecode() gopacket.LayerClass {
+	return gopacket.NewLayerClassSlice([]gopacket.LayerType{
+		layers.LayerTypeIPv6Routing,
+		layers.LayerTypeIPv6Destination,
+	})
 }
 
 // TCP flag bits are encoded in a TCP header and in TCP_SKB_CB(skb)->tcp_flags.
