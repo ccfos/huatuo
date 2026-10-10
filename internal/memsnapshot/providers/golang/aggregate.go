@@ -19,6 +19,8 @@ import (
 	"context"
 	"math"
 	"slices"
+
+	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
 // Bound stable stack keys retained by the global aggregate map. Map and
@@ -27,15 +29,15 @@ const maxAggregateKeyBytes = 32 << 20
 
 type allocation struct {
 	key          string
-	inuseBytes   int64
-	inuseObjects int64
+	inuseBytes   uint64
+	inuseObjects uint64
 }
 
 // allocationTotals is kept separately from the aggregate map key so each
 // retained stack has only one string header.
 type allocationTotals struct {
-	inuseBytes   int64
-	inuseObjects int64
+	inuseBytes   uint64
+	inuseObjects uint64
 }
 
 // stackAggregates owns stable stack keys and their accumulated sample weights.
@@ -66,10 +68,10 @@ func (a *stackAggregates) addSample(stack []byte, objects, bytes uint64, sampleR
 		a.keyBytes += len(key)
 	}
 
-	scaledObjects, scaledBytes := scaleHeapSample(int64(objects), int64(bytes), sampleRate)
+	scaledObjects, scaledBytes := scaleHeapSample(objects, bytes, sampleRate)
 	total := &a.totals[index]
-	total.inuseObjects += scaledObjects
-	total.inuseBytes += scaledBytes
+	total.inuseObjects = memsnapshot.SaturatingAdd(total.inuseObjects, scaledObjects)
+	total.inuseBytes = memsnapshot.SaturatingAdd(total.inuseBytes, scaledBytes)
 	return true
 }
 
@@ -102,7 +104,7 @@ func (a *stackAggregates) sortedAllocations(ctx context.Context) ([]allocation, 
 }
 
 // scaleHeapSample follows runtime/pprof's Poisson sampling correction.
-func scaleHeapSample(count, size, rate int64) (int64, int64) {
+func scaleHeapSample(count, size uint64, rate int64) (uint64, uint64) {
 	if count == 0 || size == 0 {
 		return 0, 0
 	}
@@ -112,14 +114,16 @@ func scaleHeapSample(count, size, rate int64) (int64, int64) {
 	averageSize := float64(size) / float64(count)
 	scale := 1 / (1 - math.Exp(-averageSize/float64(rate)))
 
-	// Clamp positive estimates before conversion: values >= 2^63, including
-	// +Inf, have implementation-dependent int64 results.
-	objects, bytes := int64(math.MaxInt64), int64(math.MaxInt64)
-	if scaled := float64(count) * scale; scaled < math.MaxInt64 {
-		objects = int64(scaled)
+	return clampScaled(count, scale), clampScaled(size, scale)
+}
+
+func clampScaled(value uint64, scale float64) uint64 {
+	scaled := float64(value) * scale
+	if scaled <= 0 || math.IsNaN(scaled) {
+		return 0
 	}
-	if scaled := float64(size) * scale; scaled < math.MaxInt64 {
-		bytes = int64(scaled)
+	if math.IsInf(scaled, 1) || scaled >= float64(^uint64(0)) {
+		return ^uint64(0)
 	}
-	return objects, bytes
+	return uint64(scaled)
 }
