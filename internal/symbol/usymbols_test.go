@@ -310,6 +310,23 @@ func TestUsymResolverLoadProcMapsNotFound(t *testing.T) {
 	}
 }
 
+func TestUsymResolverRefreshesProcMapsForLateLoadedLibrary(t *testing.T) {
+	resolver, processID, functionName, stackAddr := setupLibraryResolverFixture(t)
+	mapsPath := procfs.Path(strconv.Itoa(int(processID)), "maps")
+	mustWriteFile(t, mapsPath, "72000000-72100000 rw-p 00000000 00:00 0 [heap]\n")
+	if err := resolver.loadProcMaps(processID); err != nil {
+		t.Fatalf("loadProcMaps: %v", err)
+	}
+
+	mustWriteFile(t, mapsPath, "70000000-71000000 r-xp 00000000 fd:01 1001 /usr/lib/libhuatuo.so\n")
+
+	got := resolver.UsymStackStrs(processID, []uint64{stackAddr}, 1)
+	want := []string{functionName}
+	if !slices.Equal(got, want) {
+		t.Fatalf("UsymStackStrs late-loaded library: got %v, want %v", got, want)
+	}
+}
+
 func TestUsymResolverLoadLibCache(t *testing.T) {
 	t.Run("repeated-load-shares-cache-entry", func(t *testing.T) {
 		setTestXfsMounts(t, []string{"/"})
