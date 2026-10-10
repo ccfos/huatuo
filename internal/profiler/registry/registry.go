@@ -16,6 +16,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -136,15 +137,14 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	}
 	log.Info("data reading loop ended")
 
+	if err == nil {
+		err = loopErr
+	}
 	if stopErr := p.Impl.Stop(pctx); stopErr != nil {
 		log.Errorf("profiler stop: %v", stopErr)
+		err = errors.Join(err, fmt.Errorf("stop profiler: %w", stopErr))
 	}
 
 	pipe.Stop()
-
-	if err == nil && loopErr != nil {
-		err = loopErr
-	}
-
 	return err
 }

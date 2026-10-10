@@ -17,6 +17,7 @@ package registry
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -35,6 +36,15 @@ type fakeProfiler struct{}
 func (fakeProfiler) Start(*pcontext.ProfilerContext) error         { return nil }
 func (fakeProfiler) ReadDataLoop(context.Context, func(any)) error { return nil }
 func (fakeProfiler) Stop(*pcontext.ProfilerContext) error          { return nil }
+
+type stopFailureProfiler struct {
+	fakeProfiler
+	stopErr error
+	loopErr error
+}
+
+func (p stopFailureProfiler) ReadDataLoop(context.Context, func(any)) error { return p.loopErr }
+func (p stopFailureProfiler) Stop(*pcontext.ProfilerContext) error          { return p.stopErr }
 
 // fakeAggregator satisfies aggregator.Aggregator with no behavior.
 type fakeAggregator struct{}
@@ -141,5 +151,33 @@ func TestProfileLogsDataReadingLoopLifecycleOnce(t *testing.T) {
 	}
 	if strings.Index(output, started) > strings.Index(output, ended) {
 		t.Fatalf("data loop lifecycle logs out of order: %s", output)
+	}
+}
+
+func TestProfileReturnsProfilerStopError(t *testing.T) {
+	stopErr := errors.New("failed to stop sampler")
+	loopErr := errors.New("failed to read samples")
+	for _, tt := range []struct {
+		name    string
+		loopErr error
+	}{
+		{name: "stop only"},
+		{name: "read and stop", loopErr: loopErr},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			pctx := &pcontext.ProfilerContext{
+				Ctx:          ctx,
+				Cancel:       cancel,
+				OutputFormat: output.FormatRemote,
+			}
+			meta := newMeta(profiling.ImplementationNative, profiling.TypeCPU)
+			meta.Impl = stopFailureProfiler{stopErr: stopErr, loopErr: tt.loopErr}
+
+			err := Profile(pctx, meta)
+			if !errors.Is(err, stopErr) || tt.loopErr != nil && !errors.Is(err, tt.loopErr) {
+				t.Fatalf("Profile() error = %v, want stop error and read error %v", err, tt.loopErr)
+			}
+		})
 	}
 }
