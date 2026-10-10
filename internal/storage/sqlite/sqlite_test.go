@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -578,5 +579,36 @@ func TestSQLiteQueryBatchesAndCleanup(t *testing.T) {
 	err := backend.Query(ctx, driver.Query{Limit: 20, BatchSize: 20}, func([]driver.Record) error { cancel(); return nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("final partial batch cancellation: %v", err)
+	}
+}
+
+func TestSQLiteNestedJSONField(t *testing.T) {
+	backend := newSQLiteBackendForTest(t)
+	if backend == nil {
+		t.Fatal("SQLite backend unavailable")
+	}
+	if err := backend.Init(t.Context(), "profiles", []driver.Index{
+		{Field: "profile_data.profile_type"},
+	}); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	record := driver.Record{
+		ID:   "profile-1",
+		Data: []byte(`{}`),
+		Fields: map[string]any{
+			"profile_data.profile_type": "cpu:samples:count:cpu:nanoseconds",
+		},
+	}
+	if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	values, err := backend.Values(t.Context(), "profile_data.profile_type", driver.Query{}, 10)
+	if err != nil {
+		t.Fatalf("Values() error = %v", err)
+	}
+	if !slices.Equal(values, []string{"cpu:samples:count:cpu:nanoseconds"}) {
+		t.Fatalf("Values() = %v, want the nested profile type", values)
 	}
 }
