@@ -50,7 +50,7 @@ func copyCurrentExecutable(t *testing.T, destinationPath string) {
 	}
 }
 
-func firstFunctionSymbol(t *testing.T, elfPath string) (string, uint64) {
+func firstFunctionSymbol(t *testing.T, elfPath string) (name string, address, fileOffset uint64) {
 	t.Helper()
 	elfFile, err := elf.Open(elfPath)
 	if err != nil {
@@ -64,13 +64,19 @@ func firstFunctionSymbol(t *testing.T, elfPath string) (string, uint64) {
 			continue
 		}
 		for _, entry := range elfSymbols {
-			if elf.ST_TYPE(entry.Info) == elf.STT_FUNC && entry.Name != "" {
-				return entry.Name, entry.Value
+			if elf.ST_TYPE(entry.Info) != elf.STT_FUNC || entry.Name == "" || entry.Section == elf.SHN_UNDEF {
+				continue
+			}
+			for _, program := range elfFile.Progs {
+				if program.Type == elf.PT_LOAD && entry.Value >= program.Vaddr &&
+					entry.Value-program.Vaddr < program.Filesz {
+					return entry.Name, entry.Value, program.Off + entry.Value - program.Vaddr
+				}
 			}
 		}
 	}
 	t.Fatalf("no STT_FUNC symbol in %q", elfPath)
-	return "", 0
+	return "", 0, 0
 }
 
 func setupMainElfResolverFixture(t *testing.T) (*UsymResolver, uint32, string, uint64) {
@@ -89,7 +95,7 @@ func setupMainElfResolverFixture(t *testing.T) (*UsymResolver, uint32, string, u
 	copyCurrentExecutable(t, executablePath)
 	mustSymlink(t, "/usr/bin/huatuo-dev", filepath.Join(procDir, "exe"))
 
-	functionName, functionAddr := firstFunctionSymbol(t, executablePath)
+	functionName, functionAddr, _ := firstFunctionSymbol(t, executablePath)
 	return NewUsymResolver(), processID, functionName, functionAddr
 }
 
@@ -112,13 +118,13 @@ func setupLibraryResolverFixture(t *testing.T) (*UsymResolver, uint32, string, u
 
 	libraryPath := filepath.Join(rootTarget, "usr", "lib", "libhuatuo.so")
 	copyCurrentExecutable(t, libraryPath)
-	functionName, functionAddr := firstFunctionSymbol(t, libraryPath)
+	functionName, _, functionOffset := firstFunctionSymbol(t, libraryPath)
 
 	mapStart := uint64(0x70000000)
 	mapsContent := "70000000-71000000 r-xp 00000000 fd:01 1001 /usr/lib/libhuatuo.so\n"
 	mustWriteFile(t, filepath.Join(procDir, "maps"), mapsContent)
 
-	return NewUsymResolver(), processID, functionName, mapStart + functionAddr
+	return NewUsymResolver(), processID, functionName, mapStart + functionOffset
 }
 
 func TestNewUsymResolver(t *testing.T) {
@@ -406,8 +412,9 @@ func TestUsymResolverBatchesAndRelocatesPIEAddresses(t *testing.T) {
 	)
 	key := cacheKey{inode: 1}
 	cache := &executableCache{
-		symbols: elfSymbolCache{namesByELFPC: map[uint64]string{0x1001: "pie_func"}},
-		typ:     elf.ET_DYN,
+		symbols:  elfSymbolCache{namesByELFPC: map[uint64]string{0x1001: "pie_func"}},
+		segments: []elf.ProgHeader{{Filesz: 0x2000}},
+		typ:      elf.ET_DYN,
 	}
 	resolver := NewUsymResolver()
 	resolver.processes[pid] = processELF{cacheKey: key, path: module}
@@ -457,7 +464,7 @@ func TestUsymStackStrsLibraryFallback(t *testing.T) {
 
 		libraryPath := filepath.Join(rootTarget, "usr", "lib", "libhuatuo-pie.so")
 		copyCurrentExecutable(t, libraryPath)
-		functionName, functionAddr := firstFunctionSymbol(t, libraryPath)
+		functionName, _, functionOffset := firstFunctionSymbol(t, libraryPath)
 
 		// r--p (offset=0) before r-xp (offset=0x1000): PIE layout
 		// r-xp range must be large enough to cover Go test binary symbol addresses
@@ -468,7 +475,7 @@ func TestUsymStackStrsLibraryFallback(t *testing.T) {
 		mustWriteFile(t, filepath.Join(procDir, "maps"), mapsContent)
 
 		// Runtime addr = pieBase + ELF symbol Value (first segment offset=0)
-		stackAddr := pieBase + functionAddr
+		stackAddr := pieBase + functionOffset
 		resolver := NewUsymResolver()
 		got := resolver.UsymStackStrs(processID, []uint64{stackAddr}, 1)
 		want := []string{functionName}
@@ -584,7 +591,9 @@ func TestUsymResolveAddrFailFrames(t *testing.T) {
 				libPath := filepath.Join(procfs.Path(strconv.Itoa(int(pid))+"/root"), libPathname)
 				libKey := cacheKey{inode: 7}
 				resolver.libKeys[libPath] = libKey
-				resolver.libCaches[libKey] = &elfSymbolCache{}
+				resolver.libCaches[libKey] = &elfSymbolCache{
+					segments: []elf.ProgHeader{{Filesz: 0x1000}},
+				}
 			},
 			want: "unknown lib-no-sym/usr/lib/libhuatuo.so",
 		},
