@@ -131,6 +131,31 @@ func parseAttributes(attrs []syscall.NetlinkRouteAttr) (*ieeePfc, error) {
 	return nil, fmt.Errorf("no attr")
 }
 
+// parseDcbNetlinkMessages validates each netlink payload before slicing off
+// the dcbMsg header so a truncated kernel reply cannot panic the collector.
+func parseDcbNetlinkMessages(msgs [][]byte) ([]*ieeePfc, error) {
+	pfcs := make([]*ieeePfc, 0, len(msgs))
+	for _, m := range msgs {
+		if len(m) < sizeofDcbmsg {
+			return nil, fmt.Errorf(
+				"dcb netlink message too short: got %d bytes, want at least %d",
+				len(m), sizeofDcbmsg)
+		}
+
+		attrs, err := nl.ParseRouteAttr(m[sizeofDcbmsg:])
+		if err != nil {
+			return nil, err
+		}
+
+		pfc, err := parseAttributes(attrs)
+		if err != nil {
+			return nil, err
+		}
+		pfcs = append(pfcs, pfc)
+	}
+	return pfcs, nil
+}
+
 func (dcb *dcbCollector) Update() ([]*metric.Data, error) {
 	data := []*metric.Data{}
 
@@ -149,17 +174,12 @@ func (dcb *dcbCollector) Update() ([]*metric.Data, error) {
 			return nil, err
 		}
 
-		for _, m := range msgs {
-			attrs, err := nl.ParseRouteAttr(m[sizeofDcbmsg:])
-			if err != nil {
-				return nil, err
-			}
+		pfcs, err := parseDcbNetlinkMessages(msgs)
+		if err != nil {
+			return nil, err
+		}
 
-			pfc, err := parseAttributes(attrs)
-			if err != nil {
-				return nil, err
-			}
-
+		for _, pfc := range pfcs {
 			for i, cnt := range pfc.Requests {
 				data = append(data, metric.NewCounterData("pfc_send_total", float64(cnt),
 					"count of the sent pfc frames",
