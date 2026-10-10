@@ -68,18 +68,46 @@ func PathsForPID(pid int) (*ProcessPaths, error) {
 
 // PathForProcesses returns the path used to read cgroup.procs on this host.
 func (p *ProcessPaths) PathForProcesses() (string, error) {
+	return p.pathForProcesses(CgroupMode())
+}
+
+// pathForProcesses resolves the membership for the manager that mode selects.
+// NewManager() returns the v1 manager on legacy and hybrid hosts and the v2
+// manager on unified hosts, and each manager reads the returned path from its
+// own hierarchy: /sys/fs/cgroup/<controller>/<path>/cgroup.procs against
+// /sys/fs/cgroup/<path>/cgroup.procs.
+//
+// A hybrid host reports both memberships in /proc/<pid>/cgroup, and only the
+// controller entry is meaningful there, because hybrid hosts keep the resource
+// controllers on the v1 hierarchies and the unified hierarchy carries none.
+// The other membership is kept as a fallback so that a host whose layout does
+// not match the mode it is classified as still resolves something.
+func (p *ProcessPaths) pathForProcesses(mode Mode) (string, error) {
 	if p == nil {
 		return "", fmt.Errorf("nil process paths")
+	}
+
+	if mode == Unified {
+		if p.Unified != "" {
+			return p.Unified, nil
+		}
+	}
+	if path := p.controllerMembership(); path != "" {
+		return path, nil
 	}
 	if p.Unified != "" {
 		return p.Unified, nil
 	}
+	return "", fmt.Errorf("process cgroup path not found")
+}
+
+func (p *ProcessPaths) controllerMembership() string {
 	for _, controller := range []string{"cpu", "cpuacct", "pids"} {
 		if value := p.Controllers[controller]; value != "" {
-			return value, nil
+			return value
 		}
 	}
-	return "", fmt.Errorf("process cgroup path not found")
+	return ""
 }
 
 func parseProcessPaths(reader io.Reader) (*ProcessPaths, error) {
