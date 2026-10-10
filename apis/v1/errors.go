@@ -21,6 +21,5 @@ const (
 	ErrorCodeForbidden         ErrorCode = ErrorCodePermissionDenied
 	ErrorCodeNotFound          ErrorCode = "not_found"
 	ErrorCodeConflict          ErrorCode = "conflict"
-	ErrorCodeRateLimited       ErrorCode = "rate_limited"
 	ErrorCodeProfilingDisabled ErrorCode = "profiling_disabled"
 )
