@@ -93,6 +93,20 @@ func (c *sockstatCollector) procStatMetrics(container *pod.Container) ([]*metric
 		return nil, err
 	}
 
+	stat6, err := fs.NetSockstat6()
+	switch {
+	case err == nil:
+		if stat == nil {
+			stat = stat6
+		} else {
+			stat.Protocols = append(stat.Protocols, stat6.Protocols...)
+		}
+	case errors.Is(err, os.ErrNotExist):
+		log.Debug("IPv6 sockstat statistics not found, skipping")
+	default:
+		return nil, err
+	}
+
 	if stat == nil { // nothing to do.
 		return nil, nil
 	}
