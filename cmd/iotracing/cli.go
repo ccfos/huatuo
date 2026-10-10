@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v2"
 )
@@ -116,6 +117,25 @@ func validateFlags(c *cli.Context) error {
 // loadConfig reads CLI flags into ioConfig and the BPF filter map. The
 // filter map is a separate return because it crosses the BPF ABI; keeping
 // it out of ioConfig avoids accidental mutation by the data layer.
+// maxDurationSeconds bounds --duration to the values trace.go can turn into a
+// time.Duration without overflowing the int64 multiply, the same bound
+// dropwatch applies to its own --duration.
+const maxDurationSeconds = uint64(int64(1<<63-1) / int64(time.Second))
+
+func validateDuration(seconds uint64) error {
+	if seconds == 0 {
+		return errors.New("--duration must be greater than zero")
+	}
+	if seconds > maxDurationSeconds {
+		return fmt.Errorf(
+			"--duration %d too large; want 1..%d seconds",
+			seconds,
+			maxDurationSeconds,
+		)
+	}
+	return nil
+}
+
 func loadConfig(c *cli.Context) (ioConfig, map[string]any, error) {
 	cfg := ioConfig{
 		maxStack:           c.Uint64(cliFlagMaxStack),
@@ -125,8 +145,8 @@ func loadConfig(c *cli.Context) (ioConfig, map[string]any, error) {
 		durationSecond:     c.Uint64(cliFlagDuration),
 	}
 
-	if cfg.durationSecond == 0 {
-		return ioConfig{}, nil, errors.New("--duration must be greater than zero")
+	if err := validateDuration(cfg.durationSecond); err != nil {
+		return ioConfig{}, nil, err
 	}
 
 	if cfg.scheduleThreshold == 0 {
