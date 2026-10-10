@@ -34,15 +34,21 @@ int tracepoint_vmscan_mm_vmscan_memcg_reclaim_begin(struct pt_regs *ctx)
 		return 0;
 
 	css = (struct cgroup_subsys_state *)current_task_memory_css_addr();
+
+	struct mem_cgroup_metric new = {};
+
+	/*
+	 * Only create the entry, never replace it: another CPU reclaiming for
+	 * the same cgroup can have stored its own sample already, and replacing
+	 * the value would drop it. The sample of this CPU is added below in
+	 * both cases, so it is counted exactly once.
+	 */
+	bpf_map_update_elem(&memory_cgroup_allocpages_stall, &css, &new,
+			    COMPAT_BPF_NOEXIST);
+
 	valp = bpf_map_lookup_elem(&memory_cgroup_allocpages_stall, &css);
-	if (!valp) {
-		struct mem_cgroup_metric new = {
-			.directstall_count = 1,
-		};
-		bpf_map_update_elem(&memory_cgroup_allocpages_stall, &css, &new,
-				    COMPAT_BPF_ANY);
+	if (!valp)
 		return 0;
-	}
 
 	__sync_fetch_and_add(&valp->directstall_count, 1);
 	return 0;
