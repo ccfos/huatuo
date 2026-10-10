@@ -137,7 +137,12 @@ var appFlags = []cli.Flag{
 	},
 	&cli.BoolFlag{
 		Name:  "enable-pprof",
-		Usage: "Serve Go runtime profiles on port 6000",
+		Usage: "Serve Go runtime profiles for the profiler process on the address given by --pprof-address (loopback by default)",
+	},
+	&cli.StringFlag{
+		Name:  "pprof-address",
+		Usage: "Listen address for the Go pprof server enabled by --enable-pprof; bind a non-loopback address only when remote access is explicitly intended",
+		Value: profilerPprofAddressDefault,
 	},
 	&cli.StringFlag{
 		Name:  "tool-path",
