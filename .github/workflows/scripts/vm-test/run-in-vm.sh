@@ -50,6 +50,52 @@ print_sys_info() {
 	kubectl get pods -A || true
 }
 
+# Anolis 8.10 does not automatically consume its enlarged VM disk.
+grow_root_filesystem() {
+	local root_device filesystem parent partition output
+	local ID VERSION_ID
+	# Keep every other distribution on its existing preparation path.
+	source /etc/os-release
+	if [[ "${ID:-}" != anolis || "${VERSION_ID:-}" != 8.10 ]]; then
+		return 0
+	fi
+	root_device=$(findmnt -n -o SOURCE /)
+	root_device=$(readlink -f "$root_device")
+	filesystem=$(findmnt -n -o FSTYPE /)
+	case "$filesystem" in
+	ext4 | xfs) ;;
+	*)
+		vm_log "root filesystem expansion skipped: unsupported type $filesystem"
+		return
+		;;
+	esac
+	if [[ ! -f /sys/class/block/${root_device##*/}/partition ]]; then
+		vm_log "root filesystem expansion skipped: $root_device is not a direct partition"
+		return
+	fi
+	parent=$(lsblk -n -o PKNAME "$root_device")
+	partition=$(< "/sys/class/block/${root_device##*/}/partition")
+	[[ -n "$parent" && "$partition" =~ ^[0-9]+$ ]] || {
+		vm_log_error "cannot identify root partition: $root_device"
+		return 1
+	}
+	vm_log "expanding root partition $root_device on /dev/$parent"
+	if output=$(growpart "/dev/$parent" "$partition" 2>&1); then
+		vm_log "$output"
+	elif [[ "$output" == NOCHANGE:* ]]; then
+		vm_log "$output"
+	else
+		vm_log_error "root partition expansion failed: $output"
+		return 1
+	fi
+	case "$filesystem" in
+	ext4) resize2fs "$root_device" ;;
+	xfs) xfs_growfs / ;;
+	esac
+	lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT "/dev/$parent"
+	df -h /
+}
+
 configure_proxy() {
 	local guest_hostname guest_ip proxy_port=11008
 	if ! timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/$1' _ "$proxy_port" 2> /dev/null; then
@@ -161,6 +207,7 @@ install_temporary_go_tools() {
 	done
 }
 
+grow_root_filesystem
 configure_proxy
 print_sys_info
 export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
