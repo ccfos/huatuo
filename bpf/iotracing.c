@@ -5,6 +5,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "bpf_common.h"
+#include "bpf_blkio.h"
 #include "bpf_compat_7_0.h"
 #include "abi/iotracing_types.h"
 
@@ -116,14 +117,12 @@ static __always_inline int is_write_request(u32 cmd_flags)
  * Both store the complete device ID, including the partition minor.
  * bd_dev is not a partition index to add to gendisk.first_minor.
  */
-static __always_inline dev_t get_request_dev(struct request *req)
+static __always_inline u32 get_request_dev(struct request *req)
 {
-	void *part = BPF_CORE_READ(req, part);
+	u32 disk_dev[2] = {};
 
-	if (bpf_core_field_exists(((struct hd_struct *)part)->partno))
-		return BPF_CORE_READ((struct hd_struct *)part, __dev.devt);
-
-	return BPF_CORE_READ((struct block_device *)part, bd_dev);
+	bio_major_minor_numbers(BPF_CORE_READ(req, bio), disk_dev);
+	return disk_dev[0] << 20 | disk_dev[1];
 }
 
 SEC("kprobe/rq_qos_issue")

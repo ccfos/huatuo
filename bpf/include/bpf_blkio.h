@@ -45,18 +45,24 @@ static __always_inline struct gendisk *bio_disk(struct bio *bio)
 static __always_inline void
 bio_major_minor_numbers(struct bio *bio, u32 *disk_dev)
 {
-	if (bpf_core_field_exists(bio->bi_partno)) {
-		struct gendisk *disk = bio_disk(bio);
+	struct bio___5_12 *bio_new = (struct bio___5_12 *)bio;
 
-		bpf_probe_read(disk_dev, 2 * sizeof(u32), disk);
-		disk_dev[1] += BPF_CORE_READ(bio, bi_partno);
-	} else {
-		struct bio___5_12 *bio_new = (struct bio___5_12 *)bio;
+	/* bi_bdev->bd_dev already contains the complete partition ID. */
+	if (bpf_core_field_exists(bio_new->bi_bdev)) {
 		dev_t dev = BPF_CORE_READ(bio_new, bi_bdev, bd_dev);
 
-		/* bd_dev already includes the disk's base minor. */
 		disk_dev[0] = dev >> 20;
 		disk_dev[1] = dev & ((1U << 20) - 1);
+		return;
+	}
+
+	struct gendisk *disk = bio_disk(bio);
+
+	if (bpf_probe_read(disk_dev, 2 * sizeof(u32), disk))
+		return;
+
+	if (bpf_core_field_exists(bio->bi_partno)) {
+		disk_dev[1] += BPF_CORE_READ(bio, bi_partno);
 	}
 }
 
