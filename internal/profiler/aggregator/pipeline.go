@@ -237,14 +237,10 @@ func (p *Pipeline) aggregateAndSnapshot(ctx context.Context, final bool) error {
 		return nil
 	}
 
-	if p.pctx.OutputFormat.IsFlameGraph() {
-		if err := writeFlameGraph(p.pctx.OutputPath, formatter); err != nil {
-			return fmt.Errorf("write flamegraph SVG to %q: %w", p.pctx.OutputPath, err)
-		}
-	} else {
-		if err := writeFolded(p.pctx.OutputPath, formatter); err != nil {
-			return fmt.Errorf("write folded output to %q: %w", p.pctx.OutputPath, err)
-		}
+	// Route every file-backed format through the same writer so newly added
+	// formats only need an entry in outputArtifacts.
+	if err := writeOutput(p.pctx.OutputPath, p.pctx.OutputFormat, formatter); err != nil {
+		return fmt.Errorf("write %s output to %q: %w", p.pctx.OutputFormat, p.pctx.OutputPath, err)
 	}
 
 	p.aggr.Reset()

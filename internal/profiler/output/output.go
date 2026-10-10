@@ -33,6 +33,11 @@ const (
 	FormatSVG        OutputFormat = "svg"
 	FormatPprof      OutputFormat = "pprof"  // reserved; not yet implemented
 	FormatRemote     OutputFormat = "remote" // upload to a remote storage backend
+
+	// File-backed formats registered by their sub-packages in init().
+	FormatSpeedscope  OutputFormat = "speedscope"
+	FormatChromeTrace OutputFormat = "chrometrace"
+	FormatDump        OutputFormat = "dump"
 )
 
 // IsUpload reports whether the format uploads to a remote storage backend.

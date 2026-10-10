@@ -503,7 +503,7 @@ sudo _output/bin/profiler \
 | `--aggr-interval` | `10` | All | Aggregation interval in seconds; must not exceed the duration |
 | `--freq`, `-F` | `99` | CPU | Samples collected per second; maximum 1000 for Java |
 | `--output-path` | `.` | Local output | Output directory, not an output file name |
-| `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, or `remote` |
+| `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, `speedscope`, `chrometrace`, `dump`, or `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | Unix socket used for remote upload |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collector subprocesses; `0` means unlimited |
 | `--tool-path` | None | Java, Python | Shared external tool root; required |
@@ -681,6 +681,9 @@ Python does not support `--type memory`. Use a separate memory analysis tool for
 | `collapsed` | `perf_<Unix timestamp>.folded`; each line contains a semicolon-separated call stack followed by a count | Scripted searches, result comparison, or rendering later with another flame-graph tool |
 | `flamegraph` | `flamegraph_<Unix timestamp>.svg`; an SVG with embedded interaction scripts | Default format for manual analysis; supports searching, zooming, and inspecting frame values in a browser |
 | `svg` | The same interactive SVG as `flamegraph` | Compatibility with callers that explicitly request SVG; currently equivalent to `flamegraph` |
+| `speedscope` | `speedscope_<Unix timestamp>.json`; Speedscope sampled-profile JSON | Share profiles with speedscope.app or another Speedscope-compatible viewer |
+| `chrometrace` | `chrometrace_<Unix timestamp>.json`; Chrome Trace Event JSON | Open in chrome://tracing or Perfetto to inspect per-thread timelines |
+| `dump` | `perf_<Unix timestamp>.txt`; readable per-thread stack dump | Keep a text record for logs, tickets, or support hand-off |
 | `remote` | No local flame graph; uploads pprof-compatible data through a Unix socket | Integration with the HUATUO storage pipeline; not suitable for offline viewing |
 
 A flame graph shows the call direction from bottom to top. Rectangle width represents the cumulative value for that call stack in the selected profiling mode. For CPU profiles, width represents the proportion of CPU time derived from sample counts. For memory profiles, it represents virtual allocation, physical allocation, physical residency, Java object allocation, or live-object volume, depending on the selected mode. Horizontal position does not represent chronological order.
@@ -693,6 +696,8 @@ main;handleRequest;writeResponse 172
 ```
 
 Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote` depends on the HUATUO toolstream Unix socket, requires a non-empty `--tracer-id`, and should not be selected for standalone offline use.
+
+Choose `speedscope` or `chrometrace` when the profile will be opened in an external viewer, and choose `dump` when a plain-text record is more useful than a visualisation.
 
 ### 7. Reproducing Integration Test Examples
 
