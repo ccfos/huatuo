@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 type klass struct {
@@ -173,9 +175,13 @@ func resolveKlassNames(memory processMemory, metadata *vmMeta,
 			continue
 		}
 		for index, name := range names {
+			decoded, err := decodeModifiedUTF8(name)
+			if err != nil {
+				continue
+			}
 			header := nameHeaders[index]
 			resolved[header.address] = &klass{
-				name: string(name), layoutHelper: header.layout,
+				name: decoded, layoutHelper: header.layout,
 			}
 		}
 	}
@@ -212,7 +218,71 @@ func readSymbol(memory processMemory, metadata *vmMeta,
 	if err != nil {
 		return "", err
 	}
-	return string(raw), nil
+	name, err := decodeModifiedUTF8(raw)
+	if err != nil {
+		return "", fmt.Errorf("decode HotSpot Symbol: %w", err)
+	}
+	return name, nil
+}
+
+func decodeModifiedUTF8(raw []byte) (string, error) {
+	if utf8.Valid(raw) {
+		return string(raw), nil
+	}
+	result := make([]rune, 0, len(raw))
+	for index := 0; index < len(raw); {
+		code, size, err := modifiedUTF8Rune(raw[index:])
+		if err != nil {
+			return "", err
+		}
+		index += size
+		if code >= 0xd800 && code <= 0xdbff && index < len(raw) {
+			low, lowSize, lowErr := modifiedUTF8Rune(raw[index:])
+			if lowErr == nil && low >= 0xdc00 && low <= 0xdfff {
+				code = utf16.DecodeRune(code, low)
+				index += lowSize
+			}
+		}
+		if code >= 0xd800 && code <= 0xdfff {
+			code = utf8.RuneError
+		}
+		result = append(result, code)
+	}
+	return string(result), nil
+}
+
+func modifiedUTF8Rune(raw []byte) (rune, int, error) {
+	if len(raw) == 0 {
+		return 0, 0, errors.New("modified UTF-8 is truncated")
+	}
+	switch value := raw[0]; {
+	case value == 0:
+		return 0, 0, errors.New("modified UTF-8 contains an embedded NUL")
+	case value&0x80 == 0:
+		return rune(value), 1, nil
+	case value&0xe0 == 0xc0:
+		if len(raw) < 2 || raw[1]&0xc0 != 0x80 {
+			return 0, 0, errors.New("modified UTF-8 has a truncated two-byte sequence")
+		}
+		code := rune(value&0x1f)<<6 | rune(raw[1]&0x3f)
+		if code < 0x80 && !(value == 0xc0 && raw[1] == 0x80) {
+			return 0, 0, errors.New("modified UTF-8 has a noncanonical two-byte sequence")
+		}
+		return code, 2, nil
+	case value&0xf0 == 0xe0:
+		if len(raw) < 3 || raw[1]&0xc0 != 0x80 || raw[2]&0xc0 != 0x80 {
+			return 0, 0, errors.New("modified UTF-8 has a truncated three-byte sequence")
+		}
+		code := rune(value&0x0f)<<12 |
+			rune(raw[1]&0x3f)<<6 |
+			rune(raw[2]&0x3f)
+		if code < 0x800 {
+			return 0, 0, errors.New("modified UTF-8 has a noncanonical three-byte sequence")
+		}
+		return code, 3, nil
+	default:
+		return 0, 0, errors.New("modified UTF-8 has an invalid byte")
+	}
 }
 
 func normalizeClassName(name string) string {
