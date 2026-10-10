@@ -77,15 +77,23 @@ func initStorage(
 	publicationStore *publication.Store,
 	returnedErr error,
 ) {
+	// The error returns below set the named results to nil before deferred
+	// functions run, so the cleanup has to read what was opened from locals:
+	// through the named results it would always see nil and close nothing.
+	var (
+		openedTracing     *tracingstore.Store
+		openedProfile     *profilingstore.Store
+		openedPublication *publication.Store
+	)
 	defer func() {
 		if returnedErr != nil {
 			returnedErr = errors.Join(
 				returnedErr,
 				closeStores(
 					context.Background(),
-					tracingStore,
-					profileStore,
-					publicationStore,
+					openedTracing,
+					openedProfile,
+					openedPublication,
 				),
 			)
 		}
@@ -114,7 +122,7 @@ func initStorage(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	tracingStore = initializedTracingStore
+	openedTracing = initializedTracingStore
 
 	if cfg.Storage.Elasticsearch.Enabled() {
 		storeConfig := &driver.Config{
@@ -136,14 +144,16 @@ func initStorage(
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("new profiling document store (elasticsearch): %w", err)
 		}
-		profileStore = initializedProfileStore
-		publicationStore, err = publication.NewFromConfig(context.Background(), storeConfig)
+		openedProfile = initializedProfileStore
+
+		openedPublication, err = publication.NewFromConfig(context.Background(), storeConfig)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 	}
 
-	return tracingStore, profileStore, publicationStore, nil
+	tracingStore, profileStore, publicationStore = openedTracing, openedProfile, openedPublication
+	return
 }
 
 func closeStores(
