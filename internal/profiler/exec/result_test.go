@@ -18,6 +18,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestVerifyIncludesFailureDetails(t *testing.T) {
@@ -82,5 +83,19 @@ func TestOutputForErrorTruncatesOversizedOutput(t *testing.T) {
 	want := strings.Repeat("x", maxOutputInError) + "... (truncated)"
 	if got != want {
 		t.Fatalf("outputForError() length = %d, want %d", len(got), len(want))
+	}
+}
+
+func TestOutputForErrorPreservesUTF8AtLimit(t *testing.T) {
+	t.Parallel()
+
+	output := []byte(strings.Repeat("x", maxOutputInError-1) + "中")
+	got := outputForError(output)
+	if !utf8.ValidString(got) {
+		t.Fatalf("outputForError() contains invalid UTF-8 at truncation boundary")
+	}
+	want := strings.Repeat("x", maxOutputInError-1) + "... (truncated)"
+	if got != want {
+		t.Fatalf("outputForError() = %q, want %q", got, want)
 	}
 }
