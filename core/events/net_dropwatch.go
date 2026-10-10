@@ -50,6 +50,13 @@ func newDropWatch() (*tracing.EventTracingAttr, error) {
 // Start launches dropwatch as a subprocess and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *dropWatchTracing) Start(ctx context.Context) error {
+	return c.start(ctx, executil.Run)
+}
+
+func (c *dropWatchTracing) start(
+	ctx context.Context,
+	run func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error),
+) error {
 	cfg := configSnapshot()
 	args := []string{
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "net_dropwatch.o"),
@@ -59,29 +66,17 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 		"--source-types", toolstream.SourceTypeEvent,
 	}
 
-	process, err := executil.New(executil.Spec{
+	result, err := run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, "dropwatch"),
 		Args: args,
 	})
 	if err != nil {
-		return fmt.Errorf("create dropwatch process: %w", err)
-	}
-	runErr := process.Run(ctx)
-	_, outputErr := process.Stdout()
-	if err := errors.Join(runErr, outputErr); err != nil {
-		if errors.Is(err, executil.ErrStopFailed) {
-			stopErr := process.Stop(ctx)
-			if stopErr == nil && errors.Is(err, context.Canceled) {
-				return nil
-			}
-			if stopErr != nil {
-				err = errors.Join(err, fmt.Errorf("retry stop dropwatch: %w", stopErr))
-			}
-		} else if errors.Is(err, context.Canceled) {
+		var runErr *executil.RunError
+		if errors.As(err, &runErr) && runErr.IsCancellation() && errors.Is(err, context.Canceled) {
 			return nil
 		}
-		if stderr := process.Stderr(); len(stderr) > 0 {
-			return fmt.Errorf("run dropwatch: %w; stderr: %s", err, stderr)
+		if result != nil && len(result.Stderr) > 0 {
+			return fmt.Errorf("run dropwatch: %w; stderr: %s", err, result.Stderr)
 		}
 		return fmt.Errorf("run dropwatch: %w", err)
 	}

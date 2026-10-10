@@ -16,10 +16,15 @@ package autotracing
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/toolstream/transport"
@@ -145,6 +150,88 @@ func TestWaitForSnapshotTimeouts(t *testing.T) {
 			t.Fatalf("waitForSnapshot() error = %v", err)
 		}
 	})
+}
+
+func TestIOTracingCancellationPreservesIndependentFailures(t *testing.T) {
+	for _, contextErr := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(contextErr.Error(), func(t *testing.T) {
+			for _, name := range []string{"pure cancellation", "output", "execution", "cleanup", "cleanup without output"} {
+				t.Run(name, func(t *testing.T) {
+					tracer, err := newIOTracer(validIOTracingConfig())
+					if err != nil {
+						t.Fatal(err)
+					}
+					ctx, cancel := context.WithCancel(t.Context())
+					if errors.Is(contextErr, context.DeadlineExceeded) {
+						cancel()
+						ctx, cancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+					}
+					defer cancel()
+
+					failure := &executil.RunError{ContextErr: contextErr}
+					var cause error
+					switch name {
+					case "output":
+						cause = executil.ErrOutputLimitExceeded
+						failure.OutputErr = cause
+					case "execution":
+						cause = errors.New("tool exited with status 7")
+						failure.ExecutionErr = cause
+					case "cleanup", "cleanup without output":
+						cause = syscall.EPERM
+						failure.CleanupErr = fmt.Errorf("signal process group: %w", errors.Join(executil.ErrStopFailed, cause))
+					}
+					reason := &reasonSnapshot{Type: string(ioReasonUtil)}
+					var taskID string
+					t.Cleanup(func() { pendingReasons.Delete(taskID) })
+					err = tracer.runSnapshot(ctx, reason, func(runCtx context.Context, spec executil.Spec, _ ...executil.Option) (*executil.Result, error) {
+						if runCtx != ctx || filepath.Base(spec.Path) != iotracingToolName {
+							t.Fatalf("unexpected command context or path: %s", spec.Path)
+						}
+						for index, arg := range spec.Args {
+							if arg == "--task-id" && index+1 < len(spec.Args) {
+								taskID = spec.Args[index+1]
+							}
+						}
+						pending, ok := pendingReasons.Load(taskID)
+						if !ok || pending.(*pendingIOTracingReason).reason != reason {
+							t.Fatal("command started without its pending reason")
+						}
+						cancel()
+						if name == "cleanup without output" {
+							return nil, failure
+						}
+						return &executil.Result{Stderr: []byte("iotracing diagnostic")}, failure
+					})
+					if taskID == "" {
+						t.Fatal("iotracing command was not run")
+					}
+					if _, ok := pendingReasons.Load(taskID); ok {
+						t.Error("failed command retained its pending reason")
+					}
+					if cause == nil {
+						if err != nil {
+							t.Fatalf("pure cancellation: %v", err)
+						}
+						return
+					}
+					if !errors.Is(err, contextErr) || !errors.Is(err, cause) {
+						t.Fatalf("lost cancellation or independent failure: %v", err)
+					}
+					var got *executil.RunError
+					if !errors.As(err, &got) || got != failure {
+						t.Fatalf("lost RunError: %v", err)
+					}
+					if failure.CleanupErr != nil && !errors.Is(err, executil.ErrStopFailed) {
+						t.Errorf("lost stop failure: %v", err)
+					}
+					if name != "cleanup without output" && !strings.Contains(err.Error(), "iotracing diagnostic") {
+						t.Errorf("lost diagnostic: %v", err)
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestNewIOTracer(t *testing.T) {

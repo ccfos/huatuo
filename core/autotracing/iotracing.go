@@ -419,13 +419,21 @@ func (i *ioTracing) Start(ctx context.Context) error {
 	log.WithField("reason_snapshot", reasonSnapshot).
 		Debug("detected disk io event")
 
+	return i.runSnapshot(ctx, reasonSnapshot, executil.Run)
+}
+
+func (i *ioTracing) runSnapshot(
+	ctx context.Context,
+	reason *reasonSnapshot,
+	run func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error),
+) error {
 	taskID, err := randomid.New()
 	if err != nil {
 		return fmt.Errorf("allocate iotracing task id: %w", err)
 	}
 
 	pending := &pendingIOTracingReason{
-		reason:           reasonSnapshot,
+		reason:           reason,
 		startedTimestamp: timeutil.Now(),
 		received:         make(chan struct{}),
 		result:           make(chan error, 1),
@@ -441,31 +449,19 @@ func (i *ioTracing) Start(ctx context.Context) error {
 		"--max-files-per-process", strconv.Itoa(i.maxFilesPerProcess),
 	}
 
-	process, err := executil.New(executil.Spec{
+	result, err := run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, iotracingToolName),
 		Args: args,
 	})
 	if err != nil {
 		pendingReasons.Delete(taskID)
-		return fmt.Errorf("build iotracing command: %w", err)
-	}
-	runErr := process.Run(ctx)
-	_, outputErr := process.Stdout()
-	if err := errors.Join(runErr, outputErr); err != nil {
-		pendingReasons.Delete(taskID)
-		if errors.Is(err, executil.ErrStopFailed) {
-			stopErr := process.Stop(ctx)
-			if stopErr == nil {
-				log.Info("iotracing stopped")
-				return nil
-			}
-			err = errors.Join(err, fmt.Errorf("retry stop iotracing: %w", stopErr))
-		} else if ctx.Err() != nil {
+		var runErr *executil.RunError
+		if errors.As(err, &runErr) && runErr.IsCancellation() {
 			log.Info("iotracing stopped")
 			return nil
 		}
-		if stderr := process.Stderr(); len(stderr) > 0 {
-			return fmt.Errorf("run iotracing: %w; stderr: %s", err, stderr)
+		if result != nil && len(result.Stderr) > 0 {
+			return fmt.Errorf("run iotracing: %w; stderr: %s", err, result.Stderr)
 		}
 		return fmt.Errorf("run iotracing: %w", err)
 	}
