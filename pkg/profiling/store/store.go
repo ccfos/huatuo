@@ -41,18 +41,19 @@ type Config struct {
 
 // Filter selects profiling aggregation windows.
 type Filter struct {
-	ID                string
-	Region            string
-	Hostname          string
-	ContainerID       string
-	ContainerHostname string
-	TracerID          string
-	StartTime         time.Time
-	EndTime           time.Time
-	ProfileType       string
-	Limit             int
-	BatchSize         int
-	Offset            int
+	ID                     string
+	Region                 string
+	Hostname               string
+	ContainerID            string
+	ContainerHostname      string
+	ContainerHostNamespace string
+	TracerID               string
+	StartTime              time.Time
+	EndTime                time.Time
+	ProfileType            string
+	Limit                  int
+	BatchSize              int
+	Offset                 int
 }
 
 // Store persists and queries profiling aggregation windows.
@@ -218,6 +219,7 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 	appendTextFilter(types.DocumentFieldRegion, filter.Region)
 	appendTextFilter(types.DocumentFieldContainerID, filter.ContainerID)
 	appendTextFilter(types.DocumentFieldContainerHostname, filter.ContainerHostname)
+	appendTextFilter(types.DocumentFieldContainerHostNamespace, filter.ContainerHostNamespace)
 	appendTextFilter(fieldProfileType, filter.ProfileType)
 	if filter.Hostname != "" {
 		appendTextFilter(types.DocumentFieldHostname, filter.Hostname)
