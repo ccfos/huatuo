@@ -63,7 +63,7 @@ func TestPythonAggregatorKeepsProcessRoots(t *testing.T) {
 	}, aggr.sampleOutput)
 }
 
-func TestRunPySpyAndEmitExcludesStatusSamples(t *testing.T) {
+func TestPythonCPUProfilerReadDataLoopExcludesStatusSamples(t *testing.T) {
 	toolDir := t.TempDir()
 	// py-spy 0.4.1 exits successfully even when individual samples fail.
 	// Raw stacks go to the requested file; the error-count summary stays on stdout.
@@ -98,7 +98,13 @@ RAW
 			aggr, err := newPythonCPUAggregator(pctx)
 			require.NoError(t, err)
 
-			require.NoError(t, runPySpyAndEmit(ctx, 5, 100, toolDir, []int{100}, aggr.Aggregate))
+			p := &pythonCPUProfiler{
+				duration: 5,
+				freq:     100,
+				toolPath: toolDir,
+				pids:     []int{100},
+			}
+			require.NoError(t, p.ReadDataLoop(ctx, aggr.Aggregate))
 
 			if format == output.FormatCollapsed {
 				var folded bytes.Buffer

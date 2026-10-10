@@ -101,35 +101,7 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 }
 
 func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	return runPySpyAndEmit(ctx, p.duration, p.freq, p.toolPath, p.pids, enqueue)
-}
-
-func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
-	return nil
-}
-
-func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
-	if len(pctx.PIDs) > 0 {
-		return pctx.PIDs, nil
-	}
-
-	pids, err := profilerprocess.ContainerRootPIDs(pctx.ContainerID, profilerprocess.ExecutableFilter{
-		ExecutablePrefix: "python",
-		ExecutablePath:   pctx.ExecPath,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if len(pids) == 0 {
-		return nil, fmt.Errorf("sampling failed: no target Python processes found in container %q", pctx.ContainerID)
-	}
-
-	return pids, nil
-}
-
-func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids []int, enqueue func(any)) error {
-	cmdResults := runPySpy(ctx, pids, dur, freq, toolPath)
+	cmdResults := runPySpy(ctx, p.pids, p.duration, p.freq, p.toolPath)
 
 	var errorMessages []string
 
@@ -165,6 +137,30 @@ func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids [
 	}
 
 	return nil
+}
+
+func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
+	return nil
+}
+
+func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
+	if len(pctx.PIDs) > 0 {
+		return pctx.PIDs, nil
+	}
+
+	pids, err := profilerprocess.ContainerRootPIDs(pctx.ContainerID, profilerprocess.ExecutableFilter{
+		ExecutablePrefix: "python",
+		ExecutablePath:   pctx.ExecPath,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(pids) == 0 {
+		return nil, fmt.Errorf("sampling failed: no target Python processes found in container %q", pctx.ContainerID)
+	}
+
+	return pids, nil
 }
 
 func runPySpy(

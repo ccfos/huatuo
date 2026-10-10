@@ -75,7 +75,7 @@ func TestBuildPySpyArgs(t *testing.T) {
 	}, buildPySpyArgs(123, "10", "99", "/proc/self/fd/3"))
 }
 
-func TestRunPySpyAndEmitUsesOnlyMemfdSamples(t *testing.T) {
+func TestPythonCPUProfilerReadDataLoopUsesOnlyMemfdSamples(t *testing.T) {
 	tests := []struct {
 		name    string
 		sample  string
@@ -90,8 +90,14 @@ func TestRunPySpyAndEmitUsesOnlyMemfdSamples(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			toolDir := writeFakePySpy(t, tt.sample, tt.exit)
+			p := &pythonCPUProfiler{
+				duration: 1,
+				freq:     99,
+				toolPath: toolDir,
+				pids:     []int{123, 456},
+			}
 			var samples []profiler.SampleOutput
-			err := runPySpyAndEmit(t.Context(), 1, 99, toolDir, []int{123, 456}, func(sample any) {
+			err := p.ReadDataLoop(t.Context(), func(sample any) {
 				output, ok := sample.(profiler.SampleOutput)
 				require.True(t, ok, "unexpected sample type %T", sample)
 				samples = append(samples, output)
