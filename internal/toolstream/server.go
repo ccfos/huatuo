@@ -142,7 +142,7 @@ func (s *Server) Start() error {
 		return err
 	}
 
-	inner, err := transport.Serve(l, s.dispatch)
+	inner, err := transport.ServeWithDisconnect(l, s.dispatch, s.onTransportDisconnect)
 	if err != nil {
 		_ = l.Close()
 		return err
@@ -198,4 +198,16 @@ func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {
 	if chunk.End {
 		s.finishSession(sess)
 	}
+}
+
+// onTransportDisconnect finishes an expected session when the client
+// disconnects without sending the protocol end frame. Otherwise AwaitSession
+// would block until ctx timeout and leak the expectation entry.
+func (s *Server) onTransportDisconnect(tsess *transport.Session, sawEnd bool) {
+	if tsess == nil || sawEnd {
+		return
+	}
+	sess := &Session{Session: tsess, IsExpected: s.isExpectedSession(tsess)}
+	s.recordSessionError(sess, errors.New("connection closed before end frame"))
+	s.finishSession(sess)
 }
