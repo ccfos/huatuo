@@ -33,7 +33,7 @@ HUATUO 华佗以零侵入、低开销的方式持续监听 Linux 内核上报的
 
 HUATUO 华佗通过 eBPF 技术观测内核的 MCE / EDAC / ACPI GHES / PCIe AER 子系统，当 eBPF tracepoint 被触发时，将原始事件写入 BPF Perf Event Buffer。用户态程序读取事件，解析结构体字段，生成结构化记录，并存储至本地或远端。总体架构如下：
 
-![](/img/hardware-errors-huatuo-framework.png)
+![](/docs/img/hardware-errors-huatuo-framework.png)
 
 
 ### RAS 原理
