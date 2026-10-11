@@ -96,11 +96,10 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) (e
 }
 
 func (e *executor) withOutput(action string, err error) error {
-	output, outputErr := e.process.Stdout()
-	err = errors.Join(err, outputErr)
 	if err == nil {
 		return nil
 	}
+	output := e.process.Stdout()
 	if stderr := e.process.Stderr(); len(stderr) > 0 {
 		if len(output) > 0 {
 			output = append(output, '\n')

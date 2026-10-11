@@ -61,9 +61,7 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 	select {
 	case <-process.Done():
 		result.Err = process.Wait()
-		var outputErr error
-		result.Diagnostics, outputErr = combinedOutput(process)
-		result.Err = errors.Join(result.Err, outputErr)
+		result.Diagnostics = combinedOutput(process)
 		return result
 	case <-ctx.Done():
 	}
@@ -101,9 +99,7 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 		waitErr = nil
 	}
 	result.Err = errors.Join(stopProfilerErr, processStopErr, waitErr)
-	var outputErr error
-	result.Diagnostics, outputErr = combinedOutput(process)
-	result.Err = errors.Join(result.Err, outputErr)
+	result.Diagnostics = combinedOutput(process)
 	if result.Err != nil {
 		result.Diagnostics = append(
 			result.Diagnostics,
@@ -124,14 +120,14 @@ func StopAsyncProfiler(ctx context.Context, asprofPath string, pid int) error {
 	return Verify([]*Result{result})
 }
 
-func combinedOutput(process *executil.Process) ([]byte, error) {
-	output, err := process.Stdout()
+func combinedOutput(process *executil.Process) []byte {
+	output := process.Stdout()
 	stderr := process.Stderr()
 	if len(output) == 0 {
-		return stderr, err
+		return stderr
 	}
 	if len(stderr) > 0 {
 		output = append(append(output, '\n'), stderr...)
 	}
-	return output, err
+	return output
 }

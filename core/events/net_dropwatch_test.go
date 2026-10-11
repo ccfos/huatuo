@@ -16,7 +16,6 @@ package events
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +25,6 @@ import (
 	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/executil"
 )
 
 func TestDropWatchStartTreatsCancellationAsExpectedStop(t *testing.T) {
@@ -85,16 +83,16 @@ func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 	}
 	for _, command := range commands {
 		t.Run(command.name, func(t *testing.T) {
-			for _, failure := range []string{"none", "output", "execution"} {
-				t.Run(failure, func(t *testing.T) {
+			for _, scenario := range []string{"none", "stdout tail", "execution"} {
+				t.Run(scenario, func(t *testing.T) {
 					internalconfig.CoreBinDir = t.TempDir()
 					marker := filepath.Join(t.TempDir(), "ready")
 					exitCode := 0
-					if failure == "execution" {
+					if scenario == "execution" {
 						exitCode = 7
 					}
 					output := ""
-					if failure == "output" {
+					if scenario == "stdout tail" {
 						output = "head -c 65537 /dev/zero"
 					}
 					script := fmt.Sprintf("#!/bin/sh\ntrap 'exit %d' TERM\n%s\ntouch %q\nwhile :; do :; done\n", exitCode, output, marker)
@@ -122,7 +120,7 @@ func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 					}
 					cancel()
 					err := <-result
-					if failure == "none" {
+					if scenario != "execution" {
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -131,10 +129,7 @@ func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 					if err == nil {
 						t.Fatal("independent failure was swallowed")
 					}
-					if failure == "output" && !errors.Is(err, executil.ErrOutputLimitExceeded) {
-						t.Fatalf("output error: %v", err)
-					}
-					if failure == "execution" && !strings.Contains(err.Error(), "exit status 7") {
+					if !strings.Contains(err.Error(), "exit status 7") {
 						t.Fatalf("execution error: %v", err)
 					}
 				})

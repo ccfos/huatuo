@@ -55,7 +55,7 @@ func getInfoFromHccnTool(args ...string) (string, error) {
 		Path:            hccnTool,
 		Args:            args,
 		StopGracePeriod: time.Second,
-		MaxOutputBytes:  maxHCCNOutputBytes,
+		MaxStdoutBytes:  maxHCCNOutputBytes,
 		Env: []string{
 			"PATH=" + os.Getenv("PATH"),
 			"LD_LIBRARY_PATH=" + os.Getenv("LD_LIBRARY_PATH"),

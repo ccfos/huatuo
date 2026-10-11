@@ -37,8 +37,10 @@ type Spec struct {
 	// StopGracePeriod controls when Stop and Run escalate from SIGTERM to SIGKILL.
 	// A zero value uses five seconds.
 	StopGracePeriod time.Duration
-	// MaxOutputBytes limits retained standard output. A zero value uses 64 KiB.
-	MaxOutputBytes int
+	// MaxStdoutBytes keeps this many newest stdout bytes. A zero value uses 64 KiB.
+	MaxStdoutBytes int
+	// MaxStderrBytes keeps this many newest stderr bytes. A zero value uses 64 KiB.
+	MaxStderrBytes int
 }
 
 // Option configures a process before it starts.
@@ -82,8 +84,12 @@ func (s *Spec) validate() error {
 		return errors.New("stop grace period must not be negative")
 	}
 
-	if s.MaxOutputBytes < 0 {
-		return errors.New("maximum output bytes must not be negative")
+	if s.MaxStdoutBytes < 0 {
+		return errors.New("maximum stdout bytes must not be negative")
+	}
+
+	if s.MaxStderrBytes < 0 {
+		return errors.New("maximum stderr bytes must not be negative")
 	}
 
 	return nil

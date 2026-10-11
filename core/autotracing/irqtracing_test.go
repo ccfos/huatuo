@@ -176,7 +176,7 @@ exit 2
 	if err == nil {
 		t.Fatal("runIRQTracingProcess() error = nil")
 	}
-	for _, want := range []string{"stdout exceeds", "(truncated)"} {
+	for _, want := range []string{"exit status 2", "(truncated)"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("runIRQTracingProcess() error = %v, want containing %q", err, want)
 		}

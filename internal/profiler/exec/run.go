@@ -15,6 +15,7 @@
 package exec
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"sync"
@@ -57,10 +58,11 @@ func runCommand(
 	}
 	log.Debugf("executing command: %s", result.Command)
 
-	output, err := executil.Run(ctx, *spec)
+	var stdout bytes.Buffer
+	output, err := executil.Run(ctx, *spec, executil.WithStdout(&stdout))
 	result.Err = err
 	if output != nil {
-		result.Output = output.Stdout
+		result.Output = stdout.Bytes()
 		result.Diagnostics = output.Stderr
 	}
 	return result

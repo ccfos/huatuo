@@ -42,10 +42,14 @@
 //
 // One internal reaper owns cmd.Wait. Process methods support concurrent use;
 // configuration options apply only during New, and Process must not be copied.
-// Stop rejects an unfinished Start. Output methods return independent snapshots;
-// wait for completion to obtain final output. Default stdout retains a 64 KiB
-// prefix and reports overflow; stderr retains a 64 KiB tail. Memfd limits bound
-// reads, not file growth. Borrowed writers and ExtraFiles remain caller-owned.
+// Stop rejects an unfinished Start. Stdout and Stderr return byte slices;
+// MemfdOutput also reports read errors. Output methods return independent snapshots;
+// wait for completion to obtain final output. Default stdout and stderr each
+// retain a 64 KiB tail; Spec.MaxStdoutBytes and Spec.MaxStderrBytes override
+// these limits independently. Older bytes are discarded without error. Use
+// WithStdout or WithStderr with a caller-owned writer when complete output is required.
+// Memfd limits bound reads, not file growth. Borrowed writers and ExtraFiles
+// remain caller-owned.
 //
 // The leader's exit ends the command lifetime. Remaining group members are
 // killed before reaping the leader to prevent signaling a reused PID. Descendants

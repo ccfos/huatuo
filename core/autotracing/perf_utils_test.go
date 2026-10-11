@@ -35,6 +35,7 @@ func TestRunPerfCommand(t *testing.T) {
 		script           string
 		request          perfRequest
 		wantOutput       []string
+		wantOutputBytes  int
 		wantError        string
 		wantMissing      string
 		wantErrorMissing string
@@ -61,6 +62,19 @@ func TestRunPerfCommand(t *testing.T) {
 				"--duration",
 				"3",
 			},
+		},
+		{
+			name: "complete output exceeds default capture limit",
+			script: `#!/bin/sh
+printf 'first\n'
+head -c 65536 /dev/zero
+printf 'last\n'
+`,
+			request: perfRequest{
+				duration: time.Second,
+			},
+			wantOutput:      []string{"first", "last"},
+			wantOutputBytes: 65536 + len("first\nlast\n"),
 		},
 		{
 			name: "empty output",
@@ -134,6 +148,9 @@ exit 2
 			}
 
 			actual := string(output)
+			if tt.wantOutputBytes != 0 && len(output) != tt.wantOutputBytes {
+				t.Errorf("runPerfCommand() output length = %d, want %d", len(output), tt.wantOutputBytes)
+			}
 			for _, expected := range tt.wantOutput {
 				if !strings.Contains(actual, expected+"\n") {
 					t.Errorf("runPerfCommand() output = %q, want contain %q", actual, expected)

@@ -60,6 +60,6 @@ func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) 
 	return executil.Spec{
 		Path:           config.ProfilerPath,
 		Args:           args,
-		MaxOutputBytes: config.CommandOutputLimitBytes,
+		MaxStdoutBytes: config.CommandOutputLimitBytes,
 	}, nil
 }

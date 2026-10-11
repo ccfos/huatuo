@@ -48,7 +48,7 @@ printf 'tool warning' >&2
 		t.Fatalf("make fake profiler executable: %v", err)
 	}
 
-	result := runCommand(t.Context(), 164879, &executil.Spec{Path: toolPath})
+	result := runCommand(t.Context(), 164879, &executil.Spec{Path: toolPath, MaxStdoutBytes: 4})
 	if !result.Succeeded() {
 		t.Fatalf("Run() error = %v", result.Err)
 	}

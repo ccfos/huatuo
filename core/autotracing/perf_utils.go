@@ -29,7 +29,6 @@ import (
 
 const (
 	perfCompletionGracePeriod = 30 * time.Second
-	maxPerfOutputBytes        = 16 << 20
 	maxPerfErrorOutputLen     = 4096
 	maxTimerDurationSeconds   = int64(time.Duration(1<<63-1) / time.Second)
 	maxPerfDurationSeconds    = int64(
@@ -56,11 +55,11 @@ func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error)
 		args = append(args, "--container-id", request.containerID)
 	}
 
+	var stdout bytes.Buffer
 	result, err := executil.Run(ctx, executil.Spec{
-		Path:           filepath.Join(internalconfig.CoreBinDir, "perf"),
-		Args:           args,
-		MaxOutputBytes: maxPerfOutputBytes,
-	})
+		Path: filepath.Join(internalconfig.CoreBinDir, "perf"),
+		Args: args,
+	}, executil.WithStdout(&stdout))
 	if err != nil {
 		var diagnostic []byte
 		if result != nil {
@@ -68,7 +67,7 @@ func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error)
 		}
 		return nil, perfCommandError(request.containerID, diagnostic, err)
 	}
-	output := result.Stdout
+	output := stdout.Bytes()
 	if len(bytes.TrimSpace(output)) == 0 {
 		return nil, perfCommandError(
 			request.containerID,

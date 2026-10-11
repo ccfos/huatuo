@@ -486,10 +486,7 @@ func TestProcessLeaderExitKillsRemainingGroup(t *testing.T) {
 	if err := process.Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	output, err := process.Stdout()
-	if err != nil {
-		t.Fatal(err)
-	}
+	output := process.Stdout()
 	pid, err := strconv.Atoi(string(output))
 	if err != nil {
 		t.Fatal(err)
@@ -521,10 +518,7 @@ func TestProcessReportsUnclosedOutputPipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = process.Run(t.Context())
-	output, outputErr := process.Stdout()
-	if outputErr != nil {
-		t.Fatal(outputErr)
-	}
+	output := process.Stdout()
 	fields := strings.Fields(string(output))
 	if len(fields) == 0 {
 		t.Fatalf("no escaped pid: %v", err)

@@ -80,8 +80,8 @@ func TestProcessZeroValueReturnsInitializationError(t *testing.T) {
 	}
 
 	var process Process
-	if got, err := process.Stdout(); len(got) != 0 || !errors.Is(err, errProcessNotInitialized) {
-		t.Errorf("Stdout() = (%q, %v), want empty output and initialization error", got, err)
+	if got := process.Stdout(); len(got) != 0 {
+		t.Errorf("Stdout() = %q, want empty output", got)
 	}
 
 	if got := process.Stderr(); len(got) != 0 {
@@ -132,6 +132,7 @@ func TestProcessWaitAndStopPreserveCleanupFailure(t *testing.T) {
 			process.groupErr = wrapStopFailure(cleanupErr)
 			close(process.start.done)
 			close(process.wait.done)
+			process.publishDone()
 			for range 2 {
 				err = process.Wait()
 				if !errors.Is(err, ErrStopFailed) || !errors.Is(err, cleanupErr) {
@@ -150,15 +151,15 @@ func TestProcessWaitAndStopPreserveCleanupFailure(t *testing.T) {
 	}
 }
 
-func TestProcessStdoutReportsOutputLimit(t *testing.T) {
+func TestProcessStdoutKeepsOutputTail(t *testing.T) {
 	for _, output := range []string{"123", "1234", "12345"} {
 		t.Run(output, func(t *testing.T) {
-			process, err := New(Spec{Path: "/unused/command", MaxOutputBytes: 4})
+			process, err := New(Spec{Path: "/unused/command", MaxStdoutBytes: 4})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if _, err := process.output.Write([]byte(output)); err != nil {
+			if _, err := process.stdout.Write([]byte(output)); err != nil {
 				t.Fatal(err)
 			}
 
@@ -166,17 +167,14 @@ func TestProcessStdoutReportsOutputLimit(t *testing.T) {
 			process.state = processStateExited
 			close(process.start.done)
 			close(process.wait.done)
+			process.publishDone()
 			if err := process.Wait(); err != nil {
 				t.Fatalf("Wait() reported an output size error: %v", err)
 			}
 
-			got, err := process.Stdout()
-			if errors.Is(err, ErrOutputLimitExceeded) != (len(output) > 4) {
-				t.Fatalf("Stdout() error = %v for %d bytes, incorrect limit classification", err, len(output))
-			}
-
-			if string(got) != output[:min(len(output), 4)] {
-				t.Errorf("Stdout() = %q, want retained output prefix", got)
+			got := process.Stdout()
+			if string(got) != output[max(0, len(output)-4):] {
+				t.Errorf("Stdout() = %q, want retained output tail", got)
 			}
 		})
 	}

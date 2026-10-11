@@ -21,7 +21,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"testing"
 	"time"
 )
@@ -30,21 +29,17 @@ func TestRunCapturesOutputAndErrors(t *testing.T) {
 	tests := []struct {
 		name, script, stdout, stderr string
 		exitCode                     int
-		limit                        bool
 	}{
 		{name: "success", script: `printf data; printf warning >&2`, stdout: "data", stderr: "warning"},
 		{name: "nonzero exit", script: `printf data; printf warning >&2; exit 7`, stdout: "data", stderr: "warning", exitCode: 7},
-		{name: "output limit", script: `printf 12345`, stdout: "1234", limit: true},
-		{name: "output and exit", script: `printf 12345; exit 7`, stdout: "1234", limit: true, exitCode: 7},
+		{name: "stdout tail", script: `printf 12345`, stdout: "2345"},
+		{name: "stdout tail and exit", script: `printf 12345; exit 7`, stdout: "2345", exitCode: 7},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := Run(t.Context(), Spec{Path: "/bin/sh", Args: []string{"-c", tt.script}, MaxOutputBytes: 4})
+			result, err := Run(t.Context(), Spec{Path: "/bin/sh", Args: []string{"-c", tt.script}, MaxStdoutBytes: 4})
 			if result == nil || string(result.Stdout) != tt.stdout || string(result.Stderr) != tt.stderr {
 				t.Fatalf("result = %+v, err = %v", result, err)
-			}
-			if errors.Is(err, ErrOutputLimitExceeded) != tt.limit {
-				t.Fatalf("limit error: %v", err)
 			}
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) != (tt.exitCode != 0) {
@@ -53,7 +48,7 @@ func TestRunCapturesOutputAndErrors(t *testing.T) {
 			if exitErr != nil && exitErr.ExitCode() != tt.exitCode {
 				t.Fatalf("exit code %d", exitErr.ExitCode())
 			}
-			if tt.exitCode == 0 && !tt.limit && err != nil {
+			if tt.exitCode == 0 && err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -93,26 +88,94 @@ func TestRunMemfdSnapshotsSurviveClose(t *testing.T) {
 }
 
 func TestRunRedirectsBorrowedWriters(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	result, err := Run(t.Context(), Spec{Path: "/bin/sh", Args: []string{"-c", `printf data; printf warning >&2`}}, WithStdout(&stdout), WithStderr(&stderr))
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name                           string
+		redirectStdout, redirectStderr bool
+	}{
+		{"nil writers preserve capture", false, false},
+		{"stdout only", true, false},
+		{"stderr only", false, true},
+		{"both streams", true, true},
 	}
-	if len(result.Stdout) != 0 || len(result.Stderr) != 0 || result.StderrTruncated {
-		t.Fatalf("redirected result = %+v", result)
-	}
-	if stdout.String() != "data" || stderr.String() != "warning" {
-		t.Fatalf("writers = %q, %q", stdout.String(), stderr.String())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			var stdoutWriter, stderrWriter io.Writer
+			wantStdout, wantStderr := "ta", "ing"
+			var wantStdoutWriter, wantStderrWriter string
+			if tt.redirectStdout {
+				stdoutWriter = &stdout
+				wantStdout, wantStdoutWriter = "", "data"
+			}
+			if tt.redirectStderr {
+				stderrWriter = &stderr
+				wantStderr, wantStderrWriter = "", "warning"
+			}
+			result, err := Run(t.Context(), Spec{
+				Path:           "/bin/sh",
+				Args:           []string{"-c", `printf data; printf warning >&2`},
+				MaxStdoutBytes: 2,
+				MaxStderrBytes: 3,
+			}, WithStdout(stdoutWriter), WithStderr(stderrWriter))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(result.Stdout) != wantStdout || string(result.Stderr) != wantStderr {
+				t.Fatalf("captured stdout = %q, stderr = %q; want %q, %q", result.Stdout, result.Stderr, wantStdout, wantStderr)
+			}
+			if stdout.String() != wantStdoutWriter || stderr.String() != wantStderrWriter {
+				t.Fatalf("writers = %q, %q; want %q, %q", stdout.String(), stderr.String(), wantStdoutWriter, wantStderrWriter)
+			}
+		})
 	}
 }
 
-func TestRunStderrTruncation(t *testing.T) {
-	result, err := Run(t.Context(), Spec{Path: "/bin/sh", Args: []string{"-c", `head -c 65536 /dev/zero >&2; printf tail >&2`}})
+func TestRunDrainsOutputAndKeepsTails(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	result, err := Run(ctx, Spec{
+		Path:           "/bin/sh",
+		Args:           []string{"-c", `head -c 2097152 /dev/zero; printf stdout; head -c 2097152 /dev/zero >&2; printf stderr >&2`},
+		MaxStdoutBytes: 4,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.StderrTruncated || len(result.Stderr) != maxErrorOutputBytes || !strings.HasSuffix(string(result.Stderr), "tail") {
-		t.Fatal("incorrect stderr tail or truncation flag")
+	if string(result.Stdout) != "dout" {
+		t.Fatalf("stdout tail = %q, want dout", result.Stdout)
+	}
+	wantStderr := append(make([]byte, defaultMaxOutputBytes-len("stderr")), "stderr"...)
+	if !bytes.Equal(result.Stderr, wantStderr) {
+		t.Fatal("incorrect stderr tail")
+	}
+}
+
+func TestRunKeepsIndependentOutputTails(t *testing.T) {
+	tests := []struct {
+		name                           string
+		maxStdoutBytes, maxStderrBytes int
+		stdout, stderr                 string
+	}{
+		{"defaults", 0, 0, "12345", "abcdefgh"},
+		{"stdout limit", 2, 0, "45", "abcdefgh"},
+		{"stderr limit", 0, 3, "12345", "fgh"},
+		{"both limits", 2, 3, "45", "fgh"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Run(t.Context(), Spec{
+				Path:           "/bin/sh",
+				Args:           []string{"-c", `printf 12; printf abc >&2; printf 345; printf defgh >&2`},
+				MaxStdoutBytes: tt.maxStdoutBytes,
+				MaxStderrBytes: tt.maxStderrBytes,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(result.Stdout) != tt.stdout || string(result.Stderr) != tt.stderr {
+				t.Fatalf("stdout = %q, stderr = %q; want %q, %q", result.Stdout, result.Stderr, tt.stdout, tt.stderr)
+			}
+		})
 	}
 }
 
@@ -126,14 +189,21 @@ func TestRunCancellationPreservesIndependentFailures(t *testing.T) {
 		outputLimit, exitFailure bool
 	}{
 		{"pure cancellation", `trap '' TERM; printf ready >&2; while :; do :; done`, false, false},
-		{"output failure", `trap '' TERM; printf 12345; printf ready >&2; while :; do :; done`, true, false},
+		{"stdout tail", `trap '' TERM; printf 12345; printf ready >&2; while :; do :; done`, false, false},
+		{"memfd output failure", `trap '' TERM; printf 12345 > "$1"; printf ready >&2; while :; do :; done`, true, false},
 		{"execution failure", `trap 'exit 7' TERM; printf ready >&2; while :; do :; done`, false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			_, err := Run(ctx, Spec{Path: "/bin/sh", Args: []string{"-c", tt.script}, StopGracePeriod: 50 * time.Millisecond, MaxOutputBytes: 4}, WithStderr(cancelOutput{cancel: cancel}))
+			_, err := Run(
+				ctx, Spec{Path: "/bin/sh", StopGracePeriod: 50 * time.Millisecond, MaxStdoutBytes: 4},
+				WithStderr(cancelOutput{cancel: cancel}),
+				WithMemfdOutput(4, func(path string) []string {
+					return []string{"-c", tt.script, "test", path}
+				}),
+			)
 			var failure *RunError
 			if !errors.Is(err, context.Canceled) || !errors.As(err, &failure) {
 				t.Fatalf("Run(): %v", err)
@@ -164,7 +234,7 @@ func TestRunDeadline(t *testing.T) {
 func TestCollectResultPreservesCleanupOwnership(t *testing.T) {
 	cleanupErr := errors.New("close output failed")
 	executionErr := errors.New("exit failed independently")
-	process, err := New(Spec{Path: "/unused/command", MaxOutputBytes: 4})
+	process, err := New(Spec{Path: "/unused/command", MaxStdoutBytes: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +245,7 @@ func TestCollectResultPreservesCleanupOwnership(t *testing.T) {
 	close(process.start.done)
 	close(process.wait.done)
 	process.publishDone()
-	if _, err := process.output.Write([]byte("12345")); err != nil {
+	if _, err := process.stdout.Write([]byte("12345")); err != nil {
 		t.Fatal(err)
 	}
 	result, err := collectResult(process, &RunError{ContextErr: context.Canceled})
@@ -183,7 +253,10 @@ func TestCollectResultPreservesCleanupOwnership(t *testing.T) {
 	if result == nil || !errors.As(err, &failure) || failure.IsCancellation() || failure.Process != process {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
-	for _, cause := range []error{context.Canceled, executionErr, cleanupErr, ErrOutputLimitExceeded} {
+	if string(result.Stdout) != "2345" || failure.OutputErr != nil {
+		t.Fatalf("stdout = %q, output error = %v", result.Stdout, failure.OutputErr)
+	}
+	for _, cause := range []error{context.Canceled, executionErr, cleanupErr} {
 		if !errors.Is(err, cause) {
 			t.Errorf("lost %v: %v", cause, err)
 		}

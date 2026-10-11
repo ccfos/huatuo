@@ -522,7 +522,7 @@ func runIRQTracingProcess(ctx context.Context, args []string) error {
 	result, err := executil.Run(ctx, executil.Spec{
 		Path:           filepath.Join(internalconfig.CoreBinDir, irqTracingToolName),
 		Args:           args,
-		MaxOutputBytes: maxIRQTracingOutputBytes,
+		MaxStdoutBytes: maxIRQTracingOutputBytes,
 	})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {

@@ -31,7 +31,7 @@ var (
 	ErrStopped = errors.New("executil: command stopped")
 	// ErrStopFailed reports that process group termination failed.
 	ErrStopFailed = errors.New("executil: stop failed")
-	// ErrOutputLimitExceeded reports that stdout or memfd data exceeds its limit.
+	// ErrOutputLimitExceeded reports that memfd data exceeds its read limit.
 	ErrOutputLimitExceeded = errors.New("executil: output limit exceeded")
 
 	errProcessNotInitialized = errors.New("process is not initialized")
@@ -61,16 +61,15 @@ type lifecycleResult struct {
 // exit ends the command lifetime; remaining group members are killed before the
 // leader is reaped. Children must finish their work before the leader exits.
 // Process must be created with New and cannot be restarted; methods on its zero
-// value return an initialization error, except Stderr (no data) and Done (nil).
+// value return an initialization error, except Stdout and Stderr (no data),
+// and Done (nil).
 // Process must not be copied.
 type Process struct {
-	spec         Spec
-	output       outputBuffer
-	stderr       tailBuffer
-	extraFiles   []*os.File
-	stdoutWriter io.Writer
-	stderrWriter io.Writer
-	memfd        *memfdOutput
+	spec       Spec
+	stdout     io.Writer
+	stderr     io.Writer
+	extraFiles []*os.File
+	memfd      *memfdOutput
 
 	mu              sync.Mutex
 	state           processState
@@ -84,7 +83,7 @@ type Process struct {
 }
 
 // New validates and snapshots a command specification without starting it.
-func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // Spec is within the 80-byte value limit.
+func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // Preserve value semantics for command configuration.
 	process := &Process{spec: spec}
 	for _, option := range options {
 		option(process)
@@ -108,13 +107,21 @@ func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // 
 		process.spec.StopGracePeriod = defaultStopGracePeriod
 	}
 
-	if process.spec.MaxOutputBytes == 0 {
-		process.spec.MaxOutputBytes = defaultMaxOutputBytes
+	if process.spec.MaxStdoutBytes == 0 {
+		process.spec.MaxStdoutBytes = defaultMaxOutputBytes
+	}
+	if process.spec.MaxStderrBytes == 0 {
+		process.spec.MaxStderrBytes = defaultMaxOutputBytes
 	}
 
 	process.spec.Args = slices.Clone(process.spec.Args)
 	process.spec.Env = slices.Clone(process.spec.Env)
-	process.output = outputBuffer{limit: process.spec.MaxOutputBytes}
+	if process.stdout == nil {
+		process.stdout = &outputBuffer{maxBytes: process.spec.MaxStdoutBytes}
+	}
+	if process.stderr == nil {
+		process.stderr = &outputBuffer{maxBytes: process.spec.MaxStderrBytes}
+	}
 	process.state = processStateNew
 	process.start = lifecycleResult{done: make(chan struct{})}
 	process.wait = lifecycleResult{done: make(chan struct{})}
@@ -156,15 +163,8 @@ func (p *Process) Start(ctx context.Context) error {
 	cmd.WaitDelay = outputDrainTimeout
 	cmd.Env = p.spec.Env
 	cmd.ExtraFiles = p.extraFiles
-	cmd.Stdout = &p.output
-	if p.stdoutWriter != nil {
-		cmd.Stdout = p.stdoutWriter
-	}
-
-	cmd.Stderr = &p.stderr
-	if p.stderrWriter != nil {
-		cmd.Stderr = p.stderrWriter
-	}
+	cmd.Stdout = p.stdout
+	cmd.Stderr = p.stderr
 
 	if p.memfd != nil {
 		if err := p.memfd.prepare(cmd); err != nil {
@@ -323,8 +323,8 @@ func (p *Process) Done() <-chan struct{} {
 // Wait waits for an in-progress Start and then for the command reaper. Multiple
 // callers receive the same stored result. Inherited output pipes have one second
 // to close after the leader is reaped; an incomplete drain follows os/exec's
-// ErrWaitDelay semantics. Wait preserves memfd output and does not report
-// output size limits; retrieve those errors from Stdout and MemfdOutput.
+// ErrWaitDelay semantics. Wait preserves memfd output; retrieve read limit
+// errors from MemfdOutput.
 func (p *Process) Wait() error {
 	p.mu.Lock()
 	if p.state == processStateInvalid {
@@ -555,7 +555,7 @@ func wrapStopFailure(err error) error {
 // Run starts the command and waits for it. If ctx is canceled after launch,
 // Spec.StopGracePeriod controls when Stop escalates from SIGTERM to SIGKILL.
 // Run preserves memfd output, including after cancellation. Read outputs and
-// call Close to release the file. Output size errors come from the output methods.
+// call Close to release the file. MemfdOutput reports read limit errors.
 func (p *Process) Run(ctx context.Context) error {
 	if err := p.Start(ctx); err != nil {
 		return err

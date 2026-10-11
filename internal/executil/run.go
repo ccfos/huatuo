@@ -21,12 +21,12 @@ import (
 
 // Result owns output snapshots that remain valid after the command is closed.
 // Redirected streams are empty. Memfd is empty unless WithMemfdOutput was used.
-// Failed commands can return partial output; a limit error makes it incomplete.
+// Stdout and Stderr retain only their configured tails. Failed commands can
+// return partial output; a memfd read limit error makes Memfd incomplete.
 type Result struct {
-	Stdout          []byte
-	Stderr          []byte
-	Memfd           []byte
-	StderrTruncated bool
+	Stdout []byte
+	Stderr []byte
+	Memfd  []byte
 }
 
 // RunError separates cancellation from independent failures. errors.Is and
@@ -73,7 +73,7 @@ func (e *RunError) IsCancellation() bool {
 // Cancellation is an error. A failed stop gets a final forceful cleanup attempt;
 // earlier stop failures remain reported even if recovery succeeds. A failed
 // final Close returns its Process in RunError for explicit recovery by the caller.
-func Run(ctx context.Context, spec Spec, options ...Option) (*Result, error) { //nolint:gocritic // Spec is within the 80-byte value limit.
+func Run(ctx context.Context, spec Spec, options ...Option) (*Result, error) { //nolint:gocritic // Preserve value semantics for command configuration.
 	process, err := New(spec, options...)
 	if err != nil {
 		return nil, &RunError{ExecutionErr: err}
@@ -103,8 +103,8 @@ func collectResult(process *Process, runErr error) (*Result, error) {
 	}
 
 	result := &Result{}
-	result.Stdout, failure.OutputErr = process.Stdout()
-	result.Stderr, result.StderrTruncated = process.stderr.Snapshot()
+	result.Stdout = process.Stdout()
+	result.Stderr = process.Stderr()
 	process.mu.Lock()
 	hasMemfd := process.memfd != nil && process.memfd.file != nil
 	process.mu.Unlock()
