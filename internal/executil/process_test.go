@@ -127,7 +127,7 @@ func TestProcessWaitAndStopPreserveCleanupFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Publish a completed lifecycle without launching an OS process.
-			process.state = processStateExited
+			process.state = processStateFinished
 			process.start.err = startErr
 			process.groupErr = wrapStopFailure(cleanupErr)
 			close(process.start.done)
@@ -164,7 +164,7 @@ func TestProcessStdoutKeepsOutputTail(t *testing.T) {
 			}
 
 			// Publish captured output without depending on an OS subprocess.
-			process.state = processStateExited
+			process.state = processStateFinished
 			close(process.start.done)
 			close(process.wait.done)
 			process.publishDone()

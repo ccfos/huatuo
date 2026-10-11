@@ -41,7 +41,7 @@ func WithMemfdOutput(maxBytes int, argsForOutput func(outputPath string) []strin
 // configured limit returns that many prefix bytes and ErrOutputLimitExceeded.
 // Read errors preserve any bytes already read and may accompany the limit error.
 // Wait first for complete output. The returned data remains valid after Stop;
-// subsequent reads after Stop return an error wrapping os.ErrClosed.
+// subsequent reads after Close return an error wrapping os.ErrClosed.
 // Reading requires WithMemfdOutput and a successfully completed Start.
 func (p *Process) MemfdOutput() ([]byte, error) {
 	p.mu.Lock()
@@ -59,17 +59,7 @@ func (p *Process) MemfdOutput() ([]byte, error) {
 		return nil, fmt.Errorf("read command %q memfd output: process has not been started", p.spec.Path)
 	}
 
-	if p.memfd.file == nil {
-		return nil, fmt.Errorf("read command %q memfd output: %w", p.spec.Path, os.ErrClosed)
-	}
-
-	// Serialize the entire read with close; expose no borrowed file descriptor.
-	info, err := p.memfd.file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("stat command %q memfd output: %w", p.spec.Path, err)
-	}
-
-	data, err := readMemfdOutput(p.memfd.file, info.Size(), p.memfd.limit)
+	data, err := p.memfd.read()
 	if err != nil {
 		return data, fmt.Errorf("read command %q memfd output: %w", p.spec.Path, err)
 	}
@@ -99,6 +89,18 @@ type memfdOutput struct {
 	closeErr      error
 }
 
+func (m *memfdOutput) validate() error {
+	if m.argsForOutput == nil {
+		return errors.New("output argument builder must not be nil")
+	}
+
+	if m.limit <= 0 {
+		return errors.New("maximum memfd output bytes must be positive")
+	}
+
+	return nil
+}
+
 func (m *memfdOutput) prepare(cmd *exec.Cmd) error {
 	fd, err := unix.MemfdCreate("huatuo-executil", unix.MFD_CLOEXEC)
 	if err != nil {
@@ -115,6 +117,20 @@ func (m *memfdOutput) prepare(cmd *exec.Cmd) error {
 	cmd.Args = append(cmd.Args, args...)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, m.file)
 	return nil
+}
+
+// read is called under Process.mu to serialize reads with close.
+func (m *memfdOutput) read() ([]byte, error) {
+	if m.file == nil {
+		return nil, os.ErrClosed
+	}
+
+	info, err := m.file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	return readMemfdOutput(m.file, info.Size(), m.limit)
 }
 
 // close is called under Process.mu, including after a failed start.

@@ -443,7 +443,34 @@ func TestProcessDonePublishesFailuresAndCloseBeforeStart(t *testing.T) {
 	}
 }
 
-func TestProcessCloseWaitsForStart(t *testing.T) {
+func TestProcessStartCanceledDuringPreparation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	process, err := New(Spec{Path: "/missing/executil-command"}, WithMemfdOutput(10, func(string) []string {
+		cancel()
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = process.Start(ctx)
+	var failure *RunError
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &failure) || !failure.IsCancellation() {
+		t.Fatalf("Start() error = %v, want cancellation before attempting execution", err)
+	}
+	if process.memfd.file != nil {
+		t.Fatal("canceled Start() retained its memfd")
+	}
+	if err := process.Wait(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Wait() error = %v, want context.Canceled", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessCloseAndWaitDuringStart(t *testing.T) {
 	preparing, release := make(chan struct{}), make(chan struct{})
 	process, err := New(Spec{Path: "/bin/sh"}, WithMemfdOutput(10, func(string) []string {
 		close(preparing)
@@ -456,6 +483,8 @@ func TestProcessCloseWaitsForStart(t *testing.T) {
 	startResult := make(chan error, 1)
 	go func() { startResult <- process.Start(t.Context()) }()
 	<-preparing
+	waitResult := make(chan error, 1)
+	go func() { waitResult <- process.Wait() }()
 	closeResult := make(chan error, 1)
 	go func() { closeResult <- process.Close() }()
 	close(release)
@@ -465,7 +494,7 @@ func TestProcessCloseWaitsForStart(t *testing.T) {
 	if err := <-closeResult; err != nil {
 		t.Fatal(err)
 	}
-	if err := process.Wait(); !errors.Is(err, ErrStopped) {
+	if err := <-waitResult; !errors.Is(err, ErrStopped) {
 		t.Fatalf("Wait(): %v", err)
 	}
 	if _, err := process.MemfdOutput(); !errors.Is(err, os.ErrClosed) {

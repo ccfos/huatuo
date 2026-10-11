@@ -31,6 +31,17 @@ func TestNewRejectsNilMemfdArgumentBuilder(t *testing.T) {
 	}
 }
 
+func TestNewRejectsInvalidMemfdLimit(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		process, err := New(Spec{Path: "/unused/command"}, WithMemfdOutput(limit, func(string) []string {
+			return nil
+		}))
+		if process != nil || err == nil || !strings.Contains(err.Error(), "maximum memfd output bytes must be positive") {
+			t.Fatalf("New() with memfd limit %d = (%v, %v), want invalid limit error", limit, process, err)
+		}
+	}
+}
+
 func TestMemfdOptionDefersCreationUntilStart(t *testing.T) {
 	calls := 0
 	option := WithMemfdOutput(4, func(string) []string {
@@ -87,11 +98,12 @@ func TestClosePreservesMemfdAndGroupCleanupErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Publish failures without requiring an OS close or signal failure.
-			process.state = processStateExited
+			process.state = processStateFinished
 			process.memfd = &memfdOutput{closeErr: closeErr}
 			process.groupErr = wrapStopFailure(cleanupErr)
 			close(process.start.done)
 			close(process.wait.done)
+			process.publishDone()
 			for range 2 {
 				err := process.Close()
 				if !errors.Is(err, closeErr) {
@@ -114,32 +126,56 @@ func TestClosePreservesMemfdAndGroupCleanupErrors(t *testing.T) {
 	}
 }
 
-func TestNewRejectsNonPositiveMemfdLimit(t *testing.T) {
-	for _, limit := range []int{0, -1} {
-		_, err := New(Spec{Path: "/unused/command"}, WithMemfdOutput(limit, func(string) []string { return nil }))
-		if err == nil || !strings.Contains(err.Error(), "must be positive") {
-			t.Fatalf("New() with limit %d error = %v, want positive limit error", limit, err)
-		}
+func TestMemfdOutputRead(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    string
+		wantErr error
+	}{
+		{name: "empty"},
+		{name: "below limit", data: "123"},
+		{name: "at limit", data: "1234"},
+		{name: "above limit", data: "12345", wantErr: ErrOutputLimitExceeded},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file, err := os.CreateTemp(t.TempDir(), "memfd-output")
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := &memfdOutput{file: file, limit: 4}
+			t.Cleanup(func() {
+				if err := output.close(); err != nil {
+					t.Error(err)
+				}
+			})
+			if _, err := file.WriteString(tt.data); err != nil {
+				t.Fatal(err)
+			}
 
-func TestReadMemfdOutput(t *testing.T) {
-	for _, data := range []string{"", "123", "1234", "12345"} {
-		t.Run(data, func(t *testing.T) {
-			reader := bytes.NewReader([]byte(data))
 			for range 2 {
-				got, err := readMemfdOutput(reader, int64(len(data)), 4)
-				if errors.Is(err, ErrOutputLimitExceeded) != (len(data) > 4) {
-					t.Fatalf("readMemfdOutput() error = %v for %d bytes", err, len(data))
+				got, err := output.read()
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("read() error = %v, want %v", err, tt.wantErr)
 				}
 
-				if string(got) != data[:min(len(data), 4)] {
-					t.Fatalf("readMemfdOutput() = %q, want retained prefix", got)
+				if string(got) != tt.data[:min(len(tt.data), 4)] {
+					t.Fatalf("read() = %q, want retained prefix", got)
 				}
 
 				if len(got) > 0 {
 					got[0] = 'x'
 				}
+			}
+
+			if offset, err := file.Seek(0, io.SeekCurrent); err != nil || offset != int64(len(tt.data)) {
+				t.Fatalf("file offset after read() = (%d, %v), want %d", offset, err, len(tt.data))
+			}
+			if err := output.close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := output.read(); !errors.Is(err, os.ErrClosed) {
+				t.Fatalf("read() after close() error = %v, want os.ErrClosed", err)
 			}
 		})
 	}
@@ -169,14 +205,14 @@ func TestMemfdOutputRejectsUnavailableFile(t *testing.T) {
 	}
 
 	process.memfd = &memfdOutput{limit: 4}
-	for _, state := range []processState{processStateNew, processStateStarting, processStateExited} {
+	for _, state := range []processState{processStateNew, processStateStarting, processStateFinished} {
 		process.state = state
 		_, err := process.MemfdOutput()
 		if err == nil {
 			t.Fatalf("MemfdOutput() in state %d succeeded", state)
 		}
 
-		if state == processStateExited && !errors.Is(err, os.ErrClosed) {
+		if state == processStateFinished && !errors.Is(err, os.ErrClosed) {
 			t.Fatalf("MemfdOutput() error = %v, want os.ErrClosed", err)
 		}
 	}

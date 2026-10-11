@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -46,9 +47,8 @@ const (
 	processStateNew
 	processStateStarting
 	processStateRunning
-	processStateExited
-	processStateStartFailed
-	processStateClosed
+	processStateFinished
+	processStateClosedBeforeStart
 )
 
 // Closing done publishes the immutable error to every waiter.
@@ -94,12 +94,8 @@ func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // 
 	}
 
 	if process.memfd != nil {
-		if process.memfd.argsForOutput == nil {
-			return nil, errors.New("new command: output argument builder must not be nil")
-		}
-
-		if process.memfd.limit <= 0 {
-			return nil, errors.New("new command: maximum memfd output bytes must be positive")
+		if err := process.memfd.validate(); err != nil {
+			return nil, fmt.Errorf("new command: %w", err)
 		}
 	}
 
@@ -114,8 +110,8 @@ func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // 
 		process.spec.MaxStderrBytes = defaultMaxOutputBytes
 	}
 
-	process.spec.Args = slices.Clone(process.spec.Args)
-	process.spec.Env = slices.Clone(process.spec.Env)
+	process.spec.Args = slices.Clone(spec.Args)
+	process.spec.Env = slices.Clone(spec.Env)
 	if process.stdout == nil {
 		process.stdout = &outputBuffer{maxBytes: process.spec.MaxStdoutBytes}
 	}
@@ -142,7 +138,7 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 
 	if p.state != processStateNew {
-		if p.state == processStateClosed {
+		if p.state == processStateClosedBeforeStart {
 			p.mu.Unlock()
 			return fmt.Errorf("start command %q: %w", p.spec.Path, os.ErrClosed)
 		}
@@ -158,25 +154,15 @@ func (p *Process) Start(ctx context.Context) error {
 		return p.failStart(&RunError{ContextErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
 	}
 
-	cmd := exec.Command(p.spec.Path, p.spec.Args...)
-	// Descendants outside our group may retain a pipe after the leader exits.
-	cmd.WaitDelay = outputDrainTimeout
-	cmd.Env = p.spec.Env
-	cmd.ExtraFiles = p.extraFiles
-	cmd.Stdout = p.stdout
-	cmd.Stderr = p.stderr
-
-	if p.memfd != nil {
-		if err := p.memfd.prepare(cmd); err != nil {
-			return p.failStart(&RunError{ExecutionErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
-		}
+	cmd, err := prepareCommand(p)
+	if err != nil {
+		return p.failStart(&RunError{ExecutionErr: fmt.Errorf("prepare command %q: %w", p.spec.Path, err)})
 	}
 
 	if err := ctx.Err(); err != nil {
 		return p.failStart(&RunError{ContextErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
 	}
 
-	configureCommand(cmd)
 	if err := cmd.Start(); err != nil {
 		return p.failStart(&RunError{ExecutionErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
 	}
@@ -203,17 +189,44 @@ func (p *Process) Start(ctx context.Context) error {
 	return p.finishCanceledStart(launchErr)
 }
 
+// prepareCommand runs during Start so New does not acquire output files.
+func prepareCommand(process *Process) (*exec.Cmd, error) {
+	cmd := exec.Command(process.spec.Path, process.spec.Args...)
+	// Descendants outside our group may retain a pipe after the leader exits.
+	cmd.WaitDelay = outputDrainTimeout
+	cmd.Env = process.spec.Env
+	cmd.ExtraFiles = process.extraFiles
+	cmd.Stdout = process.stdout
+	cmd.Stderr = process.stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		// Give Stop and Close a dedicated process group to signal.
+		Setpgid: true,
+		// Avoid orphaning the command if its creating OS thread exits.
+		Pdeathsig: syscall.SIGKILL,
+	}
+
+	if process.memfd != nil {
+		if err := process.memfd.prepare(cmd); err != nil {
+			return nil, err
+		}
+	}
+
+	return cmd, nil
+}
+
 func (p *Process) finishCanceledStart(launchErr error) error {
-	forceErr := wrapStopFailure(p.forceStopAndWait(p.wait.done))
+	forceErr := wrapStopFailure(p.forceStopAndWait())
 
 	p.mu.Lock()
 	var waitErr error
 	select {
 	case <-p.wait.done:
+		p.state = processStateFinished
 		if !errors.Is(p.wait.err, ErrStopped) {
 			waitErr = p.wait.err
 		}
 	default:
+		p.state = processStateRunning
 	}
 
 	failure := &RunError{
@@ -222,16 +235,6 @@ func (p *Process) finishCanceledStart(launchErr error) error {
 		CleanupErr:   forceErr,
 	}
 	p.start.err = failure
-	if forceErr == nil {
-		p.state = processStateStartFailed
-	} else {
-		select {
-		case <-p.wait.done:
-			p.state = processStateExited
-		default:
-			p.state = processStateRunning
-		}
-	}
 
 	if p.memfd != nil {
 		failure.CleanupErr = errors.Join(failure.CleanupErr, p.memfd.close())
@@ -250,7 +253,7 @@ func (p *Process) failStart(err *RunError) error {
 		err.CleanupErr = errors.Join(err.CleanupErr, p.memfd.close())
 	}
 
-	p.state = processStateStartFailed
+	p.state = processStateFinished
 	p.start.err = err
 	p.wait.err = err
 	close(p.start.done)
@@ -290,7 +293,7 @@ func (p *Process) reap(cmd *exec.Cmd) {
 
 	p.wait.err = err
 	if p.state == processStateRunning {
-		p.state = processStateExited
+		p.state = processStateFinished
 	}
 
 	close(p.wait.done)
@@ -320,7 +323,7 @@ func (p *Process) Done() <-chan struct{} {
 	return p.done
 }
 
-// Wait waits for an in-progress Start and then for the command reaper. Multiple
+// Wait waits for both the launch result and command reaping. Multiple
 // callers receive the same stored result. Inherited output pipes have one second
 // to close after the leader is reaped; an incomplete drain follows os/exec's
 // ErrWaitDelay semantics. Wait preserves memfd output; retrieve read limit
@@ -339,9 +342,7 @@ func (p *Process) Wait() error {
 
 	p.mu.Unlock()
 
-	// Failed starts also publish both results once no process remains to reap.
-	<-p.start.done
-	<-p.wait.done
+	<-p.done
 	return p.processResult()
 }
 
@@ -364,234 +365,4 @@ func (p *Process) processResult() error {
 	}
 
 	return errors.Join(err, p.groupErr)
-}
-
-// Stop sends SIGTERM to the process group. The leader's exit, ctx expiration or
-// Spec.StopGracePeriod ends the grace period and escalates to SIGKILL.
-// Reaping and bounded output draining remain internal to Process.
-// Stop preserves output, including memfd. Call Close after reading it.
-// Failed process group termination can be retried. Stop rejects an unfinished
-// Start; Close instead waits for that Start before forcing cleanup.
-func (p *Process) Stop(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, p.spec.StopGracePeriod)
-	defer cancel()
-	return p.stop(ctx)
-}
-
-func (p *Process) stop(ctx context.Context) error {
-	p.mu.Lock()
-	if p.state == processStateInvalid {
-		p.mu.Unlock()
-		return fmt.Errorf("stop command: %w", errProcessNotInitialized)
-	}
-
-	switch p.state {
-	case processStateNew, processStateStarting:
-		p.mu.Unlock()
-		return fmt.Errorf("stop command %q: process has not been started", p.spec.Path)
-	}
-
-	if p.state == processStateStartFailed || p.state == processStateExited || p.state == processStateClosed {
-		p.mu.Unlock()
-		return p.stopResult()
-	}
-
-	if attempt := p.stopAttempt; attempt != nil {
-		select {
-		case <-attempt.done:
-			if attempt.err == nil {
-				p.mu.Unlock()
-				return nil
-			}
-		default:
-			p.mu.Unlock()
-			return p.waitForStopAttempt(ctx, attempt)
-		}
-	}
-
-	p.isStopRequested = true
-	attempt := &lifecycleResult{done: make(chan struct{})}
-	p.stopAttempt = attempt
-	waitDone := p.wait.done
-	p.mu.Unlock()
-
-	err := wrapStopFailure(p.stopProcessGroup(ctx, waitDone))
-
-	p.mu.Lock()
-	attempt.err = err
-	close(attempt.done)
-	p.mu.Unlock()
-	return err
-}
-
-func (p *Process) waitForStopAttempt(ctx context.Context, attempt *lifecycleResult) error {
-	select {
-	case <-attempt.done:
-		return attempt.err
-	case <-ctx.Done():
-		return wrapStopFailure(p.forceStopAndWait(p.wait.done))
-	}
-}
-
-// Close forcefully stops and reaps a running command, then releases owned files.
-// It waits for an in-progress Start. Calling Close before Start permanently
-// closes the process; Wait then returns os.ErrClosed. Concurrent and repeated
-// calls are safe. Signal failures can be retried; file close failures are cached.
-// Borrowed writers and ExtraFiles are never closed. Close does not report an
-// ordinary exit failure: use Wait to obtain the execution result.
-func (p *Process) Close() error {
-	p.mu.Lock()
-	if p.state == processStateInvalid {
-		p.mu.Unlock()
-		return fmt.Errorf("close command: %w", errProcessNotInitialized)
-	}
-	if p.state == processStateNew {
-		p.state = processStateClosed
-		p.start.err = fmt.Errorf("command %q closed before start: %w", p.spec.Path, os.ErrClosed)
-		p.wait.err = p.start.err
-		close(p.start.done)
-		close(p.wait.done)
-		p.publishDone()
-	}
-	p.mu.Unlock()
-
-	<-p.start.done
-	p.mu.Lock()
-	p.isStopRequested = true
-	p.mu.Unlock()
-
-	stopErr := wrapStopFailure(p.forceStopAndWait(p.wait.done))
-	return errors.Join(stopErr, p.closeMemfd())
-}
-
-func (p *Process) stopProcessGroup(ctx context.Context, waitDone <-chan struct{}) error {
-	gracefulErr := p.signalProcessGroup(gracefulStopProcessGroup)
-	if processGroupMissing(gracefulErr) {
-		<-waitDone
-		return p.stopResult()
-	}
-
-	if gracefulErr != nil {
-		forceErr := p.forceStopAndWait(waitDone)
-		if forceErr != nil {
-			return errors.Join(
-				wrapSignalError("gracefully stop", p.spec.Path, gracefulErr),
-				forceErr,
-			)
-		}
-
-		return nil
-	}
-
-	select {
-	case <-waitDone:
-		return p.stopResult()
-	case <-ctx.Done():
-		return p.forceStopAndWait(waitDone)
-	}
-}
-
-func (p *Process) forceStopAndWait(waitDone <-chan struct{}) error {
-	err := p.signalProcessGroup(forceStopProcessGroup)
-	if processGroupMissing(err) {
-		err = nil
-	}
-
-	if err != nil {
-		return wrapSignalError("force stop", p.spec.Path, err)
-	}
-
-	<-waitDone
-	return p.stopResult()
-}
-
-func (p *Process) signalProcessGroup(signal func(int) error) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.pid == 0 {
-		return nil
-	}
-
-	return signal(p.pid)
-}
-
-func (p *Process) stopResult() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if errors.Is(p.wait.err, exec.ErrWaitDelay) {
-		return errors.Join(p.groupErr, p.wait.err)
-	}
-
-	return p.groupErr
-}
-
-func wrapSignalError(action, path string, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	return fmt.Errorf(
-		"%s command %q process group: %w",
-		action,
-		path,
-		err,
-	)
-}
-
-func wrapStopFailure(err error) error {
-	if err == nil || errors.Is(err, ErrStopFailed) {
-		return err
-	}
-
-	if errors.Is(err, exec.ErrWaitDelay) {
-		return err
-	}
-
-	return fmt.Errorf("%w: %w", ErrStopFailed, err)
-}
-
-// Run starts the command and waits for it. If ctx is canceled after launch,
-// Spec.StopGracePeriod controls when Stop escalates from SIGTERM to SIGKILL.
-// Run preserves memfd output, including after cancellation. Read outputs and
-// call Close to release the file. MemfdOutput reports read limit errors.
-func (p *Process) Run(ctx context.Context) error {
-	if err := p.Start(ctx); err != nil {
-		return err
-	}
-
-	select {
-	case <-p.wait.done:
-		return p.runResult(nil, nil)
-	case <-ctx.Done():
-		select {
-		case <-p.wait.done:
-			return p.runResult(nil, nil)
-		default:
-		}
-
-		stopErr := p.Stop(context.WithoutCancel(ctx))
-		return p.runResult(fmt.Errorf("run command %q: %w", p.spec.Path, ctx.Err()), stopErr)
-	}
-}
-
-func (p *Process) runResult(contextErr, stopErr error) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	executionErr := p.wait.err
-	if contextErr != nil && errors.Is(executionErr, ErrStopped) {
-		executionErr = nil
-	}
-	cleanupErr := errors.Join(stopErr, p.groupErr)
-	if contextErr == nil && executionErr == nil && cleanupErr == nil {
-		return nil
-	}
-
-	return &RunError{
-		ContextErr:   contextErr,
-		ExecutionErr: executionErr,
-		CleanupErr:   cleanupErr,
-	}
 }

@@ -239,7 +239,7 @@ func TestCollectResultPreservesCleanupOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Inject an OS cleanup failure after publishing a completed lifecycle.
-	process.state = processStateExited
+	process.state = processStateFinished
 	process.memfd = &memfdOutput{closeErr: cleanupErr}
 	process.wait.err = executionErr
 	close(process.start.done)
@@ -300,7 +300,7 @@ func TestCanceledLaunchPreservesLaterExitFailure(t *testing.T) {
 	}
 	stopErr := wrapStopFailure(errors.New("signal failed during launch"))
 	exitErr := errors.New("command exited with a separate failure")
-	process.state = processStateExited
+	process.state = processStateFinished
 	process.start.err = &RunError{ContextErr: context.Canceled, CleanupErr: stopErr}
 	process.wait.err = exitErr
 	close(process.start.done)

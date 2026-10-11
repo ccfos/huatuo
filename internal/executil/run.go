@@ -17,6 +17,7 @@ package executil
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // Result owns output snapshots that remain valid after the command is closed.
@@ -99,7 +100,7 @@ func collectResult(process *Process, runErr error) (*Result, error) {
 	case <-process.wait.done:
 	default:
 		failure.CleanupErr = errors.Join(failure.CleanupErr,
-			wrapStopFailure(process.forceStopAndWait(process.wait.done)))
+			wrapStopFailure(process.forceStopAndWait()))
 	}
 
 	result := &Result{}
@@ -131,4 +132,48 @@ func collectResult(process *Process, runErr error) (*Result, error) {
 		return result, nil
 	}
 	return result, failure
+}
+
+// Run starts the command and waits for it. If ctx is canceled after launch,
+// Spec.StopGracePeriod controls when Stop escalates from SIGTERM to SIGKILL.
+// Run preserves memfd output, including after cancellation. Read outputs and
+// call Close to release the file. MemfdOutput reports read limit errors.
+func (p *Process) Run(ctx context.Context) error {
+	if err := p.Start(ctx); err != nil {
+		return err
+	}
+
+	select {
+	case <-p.wait.done:
+		return p.runResult(nil, nil)
+	case <-ctx.Done():
+		select {
+		case <-p.wait.done:
+			return p.runResult(nil, nil)
+		default:
+		}
+
+		stopErr := p.Stop(context.WithoutCancel(ctx))
+		return p.runResult(fmt.Errorf("run command %q: %w", p.spec.Path, ctx.Err()), stopErr)
+	}
+}
+
+func (p *Process) runResult(contextErr, stopErr error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	executionErr := p.wait.err
+	if contextErr != nil && errors.Is(executionErr, ErrStopped) {
+		executionErr = nil
+	}
+	cleanupErr := errors.Join(stopErr, p.groupErr)
+	if contextErr == nil && executionErr == nil && cleanupErr == nil {
+		return nil
+	}
+
+	return &RunError{
+		ContextErr:   contextErr,
+		ExecutionErr: executionErr,
+		CleanupErr:   cleanupErr,
+	}
 }
