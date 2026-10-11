@@ -354,7 +354,7 @@ func TestProcessDoneDuringExitAndCancellation(t *testing.T) {
 				}
 			} else if runErr != nil || name == "cancel first" {
 				var failure *RunError
-				if !errors.Is(runErr, context.Canceled) || !errors.As(runErr, &failure) || !failure.IsCancellation() {
+				if !errors.Is(runErr, context.Canceled) || !errors.As(runErr, &failure) || !failure.isCancellation() {
 					t.Fatalf("Run(): %v, want pure cancellation", runErr)
 				}
 			}
@@ -456,7 +456,7 @@ func TestProcessStartCanceledDuringPreparation(t *testing.T) {
 
 	err = process.Start(ctx)
 	var failure *RunError
-	if !errors.Is(err, context.Canceled) || !errors.As(err, &failure) || !failure.IsCancellation() {
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &failure) || !failure.isCancellation() {
 		t.Fatalf("Start() error = %v, want cancellation before attempting execution", err)
 	}
 	if process.memfd.file != nil {

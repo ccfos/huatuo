@@ -19,8 +19,11 @@
 // Use Run for synchronous execution and owned output snapshots. Run always
 // returns a non-nil Result, even for invalid configuration. A non-nil RunError
 // distinguishes cancellation, execution, output and cleanup failures.
-// IsCancellation permits business layers to recognize a pure cancellation;
-// errors.Is(err, context.Canceled) alone does not exclude other failures.
+// Run adds ErrCmdCanceled or ErrCmdTimeout only when cancellation or timeout has
+// no independent execution, output or cleanup failure. Match these markers with
+// errors.Is to recognize a normal context stop; matching context.Canceled alone
+// does not exclude other failures. Process.Start and Process.Run do not add
+// these markers because output collection and final cleanup are caller-owned.
 // Earlier stop failures remain visible after successful cleanup. If final Close
 // fails, RunError.Process transfers ownership of any further cleanup attempts.
 //

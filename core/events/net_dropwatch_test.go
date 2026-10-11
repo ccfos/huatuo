@@ -16,6 +16,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/executil"
 )
 
 func TestDropWatchStartTreatsCancellationAsExpectedStop(t *testing.T) {
@@ -42,6 +44,28 @@ func TestTCPRetransmitStartTreatsCancellationAsExpectedStop(t *testing.T) {
 
 	if err := (&tcpRetransmitTracing{}).Start(ctx); err != nil {
 		t.Fatalf("Start() error = %v", err)
+	}
+}
+
+func TestEventCommandsPreserveTimeouts(t *testing.T) {
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	for _, command := range []struct {
+		name  string
+		start func(context.Context) error
+	}{
+		{"dropwatch", (&dropWatchTracing{}).Start},
+		{"tcpshark", (&tcpRetransmitTracing{}).Start},
+	} {
+		t.Run(command.name, func(t *testing.T) {
+			err := command.start(ctx)
+			if !errors.Is(err, executil.ErrCmdTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Start() error = %v, want command timeout", err)
+			}
+			if errors.Is(err, executil.ErrCmdCanceled) {
+				t.Fatalf("Start() incorrectly marked timeout as cancellation: %v", err)
+			}
+		})
 	}
 }
 

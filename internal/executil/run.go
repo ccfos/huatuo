@@ -20,6 +20,13 @@ import (
 	"fmt"
 )
 
+var (
+	// ErrCmdCanceled reports Run cancellation without independent failures.
+	ErrCmdCanceled = errors.New("executil: command canceled")
+	// ErrCmdTimeout reports Run timeout without independent failures.
+	ErrCmdTimeout = errors.New("executil: command timed out")
+)
+
 // Result owns output snapshots that remain valid after the command is closed.
 // Redirected streams are empty. Memfd is empty unless WithMemfdOutput was used.
 // Stdout and Stderr retain only their configured tails. Failed commands can
@@ -63,28 +70,28 @@ func (e *RunError) Unwrap() []error {
 	return causes
 }
 
-// IsCancellation reports cancellation or a deadline with no independent failure.
-// Callers decide whether either context error means a successful business stop.
-func (e *RunError) IsCancellation() bool {
+func (e *RunError) isCancellation() bool {
 	return e.ContextErr != nil && e.ExecutionErr == nil && e.OutputErr == nil && e.CleanupErr == nil
 }
 
 // Run executes, captures output and closes one command. It always returns a
 // non-nil Result, which is empty for invalid configuration. Other failures
 // return the available output snapshots.
+// Pure cancellation and timeout errors match ErrCmdCanceled and ErrCmdTimeout,
+// respectively, after output collection and cleanup finish.
 // Cancellation is an error. A failed stop gets a final forceful cleanup attempt;
 // earlier stop failures remain reported even if recovery succeeds. A failed
 // final Close returns its Process in RunError for explicit recovery by the caller.
 func Run(ctx context.Context, spec Spec, options ...Option) (*Result, error) { //nolint:gocritic // Preserve value semantics for command configuration.
-	process, err := New(spec, options...)
+	p, err := New(spec, options...)
 	if err != nil {
 		return &Result{}, &RunError{ExecutionErr: err}
 	}
 
-	return collectResult(process, process.Run(ctx))
+	return collectResult(p, p.Run(ctx))
 }
 
-func collectResult(process *Process, runErr error) (*Result, error) {
+func collectResult(p *Process, runErr error) (*Result, error) {
 	failure := &RunError{}
 	if runErr != nil {
 		var classified *RunError
@@ -98,39 +105,47 @@ func collectResult(process *Process, runErr error) (*Result, error) {
 	// A failed stop can return while the reaper is still running. Retry before
 	// reading the file so that a successful recovery preserves its final output.
 	select {
-	case <-process.wait.done:
+	case <-p.wait.done:
 	default:
 		failure.CleanupErr = errors.Join(failure.CleanupErr,
-			wrapStopFailure(process.forceStopAndWait()))
+			wrapStopFailure(p.forceStopAndWait()))
 	}
 
 	result := &Result{}
-	result.Stdout = process.Stdout()
-	result.Stderr = process.Stderr()
-	process.mu.Lock()
-	hasMemfd := process.memfd != nil && process.memfd.file != nil
-	process.mu.Unlock()
+	result.Stdout = p.Stdout()
+	result.Stderr = p.Stderr()
+	p.mu.Lock()
+	hasMemfd := p.memfd != nil && p.memfd.file != nil
+	p.mu.Unlock()
 	if hasMemfd {
 		var outputErr error
-		result.Memfd, outputErr = process.MemfdOutput()
+		result.Memfd, outputErr = p.MemfdOutput()
 		failure.OutputErr = errors.Join(failure.OutputErr, outputErr)
 	}
 
-	if err := process.Close(); err != nil {
+	if err := p.Close(); err != nil {
 		failure.CleanupErr = errors.Join(failure.CleanupErr, err)
-		failure.Process = process
+		failure.Process = p
 	}
-	process.mu.Lock()
-	waitErr := process.wait.err
-	if errors.Is(process.start.err, waitErr) || (failure.ContextErr != nil && errors.Is(waitErr, ErrStopped)) {
+	p.mu.Lock()
+	waitErr := p.wait.err
+	if errors.Is(p.start.err, waitErr) || (failure.ContextErr != nil && errors.Is(waitErr, ErrStopped)) {
 		waitErr = nil
 	}
 	if waitErr != nil && !errors.Is(failure.ExecutionErr, waitErr) {
 		failure.ExecutionErr = errors.Join(failure.ExecutionErr, waitErr)
 	}
-	process.mu.Unlock()
+	p.mu.Unlock()
 	if len(failure.Unwrap()) == 0 {
 		return result, nil
+	}
+	if failure.isCancellation() {
+		switch {
+		case errors.Is(failure.ContextErr, context.Canceled):
+			return result, errors.Join(ErrCmdCanceled, failure)
+		case errors.Is(failure.ContextErr, context.DeadlineExceeded):
+			return result, errors.Join(ErrCmdTimeout, failure)
+		}
 	}
 	return result, failure
 }
