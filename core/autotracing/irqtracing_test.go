@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -154,7 +155,7 @@ func TestIRQTracingCLIArgsIncludesRateLimit(t *testing.T) {
 	}
 }
 
-func TestRunIRQTracingProcessBoundsOutput(t *testing.T) {
+func TestRunIRQTracingProcessKeepsStderrTail(t *testing.T) {
 	originalCoreBinDir := internalconfig.CoreBinDir
 	t.Cleanup(func() { internalconfig.CoreBinDir = originalCoreBinDir })
 
@@ -162,7 +163,9 @@ func TestRunIRQTracingProcessBoundsOutput(t *testing.T) {
 	path := filepath.Join(internalconfig.CoreBinDir, irqTracingToolName)
 	script := `#!/bin/sh
 head -c 70000 /dev/zero | tr '\000' x
+printf 'stderr-start\n' >&2
 head -c 70000 /dev/zero | tr '\000' y >&2
+printf 'stderr-tail\n' >&2
 exit 2
 `
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
@@ -176,13 +179,22 @@ exit 2
 	if err == nil {
 		t.Fatal("runIRQTracingProcess() error = nil")
 	}
-	for _, want := range []string{"exit status 2", "(truncated)"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("runIRQTracingProcess() error = %v, want containing %q", err, want)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("runIRQTracingProcess() error = %v, want exit code 2", err)
+	}
+	message := err.Error()
+	wantDiagnostic := strings.Repeat("y", (4<<10)-len("stderr-tail\n")) + "stderr-tail"
+	if !strings.Contains(message, "output=\""+wantDiagnostic+"\"") {
+		t.Fatalf("runIRQTracingProcess() error = %v, want the final 4 KiB of stderr", err)
+	}
+	for _, unwanted := range []string{"stderr-start", "(truncated)"} {
+		if strings.Contains(message, unwanted) {
+			t.Fatalf("runIRQTracingProcess() error contains %q", unwanted)
 		}
 	}
-	if len(err.Error()) > maxIRQTracingErrorOutputLen+1024 {
-		t.Fatalf("runIRQTracingProcess() error length = %d", len(err.Error()))
+	if len(message) > (4<<10)+1024 {
+		t.Fatalf("runIRQTracingProcess() error length = %d", len(message))
 	}
 }
 

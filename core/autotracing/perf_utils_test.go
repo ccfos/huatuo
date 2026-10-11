@@ -87,16 +87,20 @@ exit 0
 			wantError: "run system-wide perf: empty output",
 		},
 		{
-			name: "failed command truncates diagnostics",
+			name: "failed command keeps stderr tail",
 			script: `#!/bin/sh
+printf 'stderr-start\n' >&2
 head -c 5000 /dev/zero | tr '\000' x >&2
+printf 'stderr-tail\n' >&2
 exit 2
 `,
 			request: perfRequest{
 				duration:    time.Second,
 				containerID: "0123456789ab",
 			},
-			wantError: "(truncated)",
+			wantError: "output=\"" + strings.Repeat("x", (4<<10)-len("stderr-tail\n")) +
+				"stderr-tail\"",
+			wantErrorMissing: "(truncated)",
 		},
 		{
 			name: "failed command uses stderr diagnostics",

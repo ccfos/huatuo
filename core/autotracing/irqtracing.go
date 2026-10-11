@@ -38,11 +38,7 @@ import (
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-const (
-	irqTracingToolName          = "irqtracing"
-	maxIRQTracingOutputBytes    = 64 << 10
-	maxIRQTracingErrorOutputLen = 4096
-)
+const irqTracingToolName = "irqtracing"
 
 var pendingIRQTracingResults sync.Map
 
@@ -522,31 +518,19 @@ func runIRQTracingProcess(ctx context.Context, args []string) error {
 	result, err := executil.Run(ctx, executil.Spec{
 		Path:           filepath.Join(internalconfig.CoreBinDir, irqTracingToolName),
 		Args:           args,
-		MaxStdoutBytes: maxIRQTracingOutputBytes,
+		MaxStderrBytes: 4 << 10,
 	})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("irqtracing timed out: %w", err)
 		}
-		diagnostic := result.Stderr
-		return irqTracingCommandError(diagnostic, err)
+		diagnostic := bytes.TrimSpace(result.Stderr)
+		if len(diagnostic) == 0 {
+			return fmt.Errorf("irqtracing failed: %w", err)
+		}
+		return fmt.Errorf("irqtracing failed: %w: output=%q", err, diagnostic)
 	}
 	return nil
-}
-
-func irqTracingCommandError(output []byte, err error) error {
-	diagnostic := bytes.TrimSpace(output)
-	isTruncated := len(diagnostic) > maxIRQTracingErrorOutputLen
-	if isTruncated {
-		diagnostic = diagnostic[:maxIRQTracingErrorOutputLen]
-	}
-	if len(diagnostic) == 0 {
-		return fmt.Errorf("irqtracing failed: %w", err)
-	}
-	if isTruncated {
-		return fmt.Errorf("irqtracing failed: %w: output=%q (truncated)", err, diagnostic)
-	}
-	return fmt.Errorf("irqtracing failed: %w: output=%q", err, diagnostic)
 }
 
 func irqTracingCLIArgs(

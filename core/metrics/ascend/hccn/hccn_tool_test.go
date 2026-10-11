@@ -16,23 +16,25 @@
 package hccn
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/ccfos/huatuo/internal/executil"
 )
 
-func TestHCCNCommandErrorLimitsOutput(t *testing.T) {
-	err := hccnCommandError(
-		nil,
-		bytes.Repeat([]byte("o"), maxHCCNErrorBytes),
-		[]byte("stderr tail"),
-		errors.New("command failed"),
-	)
-	if !strings.Contains(err.Error(), "(truncated)") {
-		t.Fatalf("hccnCommandError() = %v, want truncation marker", err)
+func TestGetInfoFromHccnToolInvalidArguments(t *testing.T) {
+	output, err := getInfoFromHccnTool("\x00")
+	var runErr *executil.RunError
+	if !errors.As(err, &runErr) || runErr.ExecutionErr == nil {
+		t.Fatalf("getInfoFromHccnTool() error = %v, want configuration error", err)
 	}
-	if strings.Contains(err.Error(), strings.Repeat("o", maxHCCNErrorBytes)) {
-		t.Fatalf("hccnCommandError() retained the full stdout error output")
+	if output != "" {
+		t.Fatalf("getInfoFromHccnTool() output = %q, want empty output", output)
+	}
+	for _, want := range []string{"command argument 0 contains a null byte", `stdout=""`, `stderr=""`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("getInfoFromHccnTool() error = %v, want containing %q", err, want)
+		}
 	}
 }
