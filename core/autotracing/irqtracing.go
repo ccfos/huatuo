@@ -496,7 +496,14 @@ func runIRQTracingCLI(
 	pendingIRQTracingResults.Store(taskID, pending)
 	defer pendingIRQTracingResults.Delete(taskID)
 
-	args := irqTracingCLIArgs(triggerCPU, runTracingToolTimeout, maxEventsPerSecond, taskID)
+	args := []string{
+		"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "irqtracing.o"),
+		"--target-cpu", strconv.Itoa(triggerCPU),
+		"--duration", strconv.FormatInt(runTracingToolTimeout, 10),
+		"--max-events-per-second-per-cpu", strconv.FormatUint(maxEventsPerSecond, 10),
+		"--output-storage", toolstream.DefaultSockPath,
+		"--task-id", taskID,
+	}
 
 	if err := runIRQTracingProcess(ctx, args); err != nil {
 		return nil, err
@@ -531,20 +538,4 @@ func runIRQTracingProcess(ctx context.Context, args []string) error {
 		return fmt.Errorf("irqtracing failed: %w: output=%q", err, diagnostic)
 	}
 	return nil
-}
-
-func irqTracingCLIArgs(
-	triggerCPU int,
-	runTracingToolTimeout int64,
-	maxEventsPerSecond uint64,
-	taskID string,
-) []string {
-	return []string{
-		"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "irqtracing.o"),
-		"--target-cpu", strconv.Itoa(triggerCPU),
-		"--duration", strconv.FormatInt(runTracingToolTimeout, 10),
-		"--max-events-per-second-per-cpu", strconv.FormatUint(maxEventsPerSecond, 10),
-		"--output-storage", toolstream.DefaultSockPath,
-		"--task-id", taskID,
-	}
 }

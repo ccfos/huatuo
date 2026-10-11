@@ -133,25 +133,44 @@ func TestValidateIRQTracingConfig(t *testing.T) {
 	}
 }
 
-func TestIRQTracingCLIArgsIncludesRateLimit(t *testing.T) {
-	args := irqTracingCLIArgs(4, 3, 1000, "task-1")
+func TestRunIRQTracingCLIPassesArguments(t *testing.T) {
+	originalCoreBinDir := internalconfig.CoreBinDir
+	t.Cleanup(func() { internalconfig.CoreBinDir = originalCoreBinDir })
+	internalconfig.CoreBinDir = t.TempDir()
+	path := filepath.Join(internalconfig.CoreBinDir, irqTracingToolName)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nexit 2\n"
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatalf("write fake irqtracing: %v", err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatalf("make fake irqtracing executable: %v", err)
+	}
+
+	_, err := runIRQTracingCLI(t.Context(), 4, 3, 1000)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("runIRQTracingCLI() error = %v, want exit code 2", err)
+	}
+	output, err := os.ReadFile(path + ".args")
+	if err != nil {
+		t.Fatalf("read irqtracing arguments: %v", err)
+	}
+	args := strings.Split(strings.TrimSuffix(string(output), "\n"), "\n")
 	want := []string{
+		"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "irqtracing.o"),
 		"--target-cpu", "4",
 		"--duration", "3",
 		"--max-events-per-second-per-cpu", "1000",
-		"--task-id", "task-1",
+		"--output-storage", toolstream.DefaultSockPath,
+		"--task-id",
 	}
-	for i := 0; i < len(want); i += 2 {
-		found := false
-		for j := 0; j+1 < len(args); j += 2 {
-			if args[j] == want[i] && args[j+1] == want[i+1] {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("args = %v, missing %s %s", args, want[i], want[i+1])
-		}
+	if len(args) != len(want)+1 {
+		t.Fatalf("args = %v, want %d arguments", args, len(want)+1)
+	}
+	assert.Equal(t, want, args[:len(want)])
+	assert.NotEmpty(t, args[len(want)], "task ID must be generated")
+	if _, ok := pendingIRQTracingResults.Load(args[len(want)]); ok {
+		t.Fatal("runIRQTracingCLI() left the failed task registered")
 	}
 }
 
