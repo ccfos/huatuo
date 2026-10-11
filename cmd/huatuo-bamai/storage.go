@@ -152,8 +152,7 @@ func initStorage(
 		}
 	}
 
-	tracingStore, profileStore, publicationStore = openedTracing, openedProfile, openedPublication
-	return
+	return openedTracing, openedProfile, openedPublication, nil
 }
 
 func closeStores(
