@@ -69,15 +69,16 @@ func (e *RunError) IsCancellation() bool {
 	return e.ContextErr != nil && e.ExecutionErr == nil && e.OutputErr == nil && e.CleanupErr == nil
 }
 
-// Run executes, captures output and closes one command. Invalid configuration
-// returns a nil Result; all other failures return the available snapshots.
+// Run executes, captures output and closes one command. It always returns a
+// non-nil Result, which is empty for invalid configuration. Other failures
+// return the available output snapshots.
 // Cancellation is an error. A failed stop gets a final forceful cleanup attempt;
 // earlier stop failures remain reported even if recovery succeeds. A failed
 // final Close returns its Process in RunError for explicit recovery by the caller.
 func Run(ctx context.Context, spec Spec, options ...Option) (*Result, error) { //nolint:gocritic // Preserve value semantics for command configuration.
 	process, err := New(spec, options...)
 	if err != nil {
-		return nil, &RunError{ExecutionErr: err}
+		return &Result{}, &RunError{ExecutionErr: err}
 	}
 
 	return collectResult(process, process.Run(ctx))

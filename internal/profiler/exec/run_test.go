@@ -35,6 +35,13 @@ func TestFormatCommandIncludesExecutableAndArguments(t *testing.T) {
 	}
 }
 
+func TestRunCommandInvalidConfiguration(t *testing.T) {
+	result := runCommand(t.Context(), 123, &executil.Spec{})
+	if result.Err == nil || result.PID != 123 || len(result.Output) != 0 || len(result.Diagnostics) != 0 {
+		t.Fatalf("runCommand() = %+v, want configuration error and empty output for PID 123", result)
+	}
+}
+
 func TestRunCommandSeparatesProfilerOutputFromDiagnostics(t *testing.T) {
 	toolPath := filepath.Join(t.TempDir(), "py-spy")
 	script := `#!/bin/sh

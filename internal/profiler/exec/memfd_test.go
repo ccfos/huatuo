@@ -24,6 +24,20 @@ import (
 	"github.com/ccfos/huatuo/internal/executil"
 )
 
+func TestRunWithMemfdInvalidConfiguration(t *testing.T) {
+	results := RunWithMemfd(t.Context(), []int{123}, "", func(_ int, _ string) []string {
+		t.Error("argument builder called for invalid configuration")
+		return nil
+	})
+	if len(results) != 1 {
+		t.Fatalf("RunWithMemfd() returned %d results, want 1", len(results))
+	}
+	result := results[0]
+	if result.Err == nil || result.PID != 123 || len(result.Output) != 0 || len(result.Diagnostics) != 0 {
+		t.Fatalf("RunWithMemfd() = %+v, want configuration error and empty output for PID 123", result)
+	}
+}
+
 func TestRunWithMemfdKeepsPIDOutputsSeparate(t *testing.T) {
 	results := RunWithMemfd(t.Context(), []int{123, 456}, "/bin/sh", func(pid int, outputPath string) []string {
 		return []string{

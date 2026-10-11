@@ -62,9 +62,6 @@ func getInfoFromHccnTool(args ...string) (string, error) {
 		},
 	})
 	if err != nil {
-		if result == nil {
-			return "", hccnCommandError(args, nil, nil, err)
-		}
 		return "", hccnCommandError(args, result.Stdout, result.Stderr, err)
 	}
 

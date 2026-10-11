@@ -528,10 +528,7 @@ func runIRQTracingProcess(ctx context.Context, args []string) error {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("irqtracing timed out: %w", err)
 		}
-		var diagnostic []byte
-		if result != nil {
-			diagnostic = result.Stderr
-		}
+		diagnostic := result.Stderr
 		return irqTracingCommandError(diagnostic, err)
 	}
 	return nil

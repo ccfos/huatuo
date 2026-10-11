@@ -68,7 +68,7 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 		if errors.As(err, &runErr) && runErr.IsCancellation() && errors.Is(err, context.Canceled) {
 			return nil
 		}
-		if result != nil && len(result.Stderr) > 0 {
+		if len(result.Stderr) > 0 {
 			return fmt.Errorf("run dropwatch: %w; stderr: %s", err, result.Stderr)
 		}
 		return fmt.Errorf("run dropwatch: %w", err)

@@ -56,11 +56,26 @@ func TestRunCapturesOutputAndErrors(t *testing.T) {
 }
 
 func TestRunResultAvailability(t *testing.T) {
-	result, err := Run(t.Context(), Spec{})
-	if result != nil || err == nil {
-		t.Fatalf("invalid spec = (%+v,%v)", result, err)
+	for _, tt := range []struct {
+		name    string
+		spec    Spec
+		options []Option
+	}{
+		{name: "invalid spec"},
+		{name: "invalid memfd option", spec: Spec{Path: "/bin/true"}, options: []Option{WithMemfdOutput(64, nil)}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Run(t.Context(), tt.spec, tt.options...)
+			var failure *RunError
+			if result == nil || !errors.As(err, &failure) || failure.ExecutionErr == nil {
+				t.Fatalf("Run() = (%+v,%v), want non-nil result and configuration error", result, err)
+			}
+			if len(result.Stdout) != 0 || len(result.Stderr) != 0 || len(result.Memfd) != 0 {
+				t.Fatalf("Run() result = %+v, want empty output for invalid configuration", result)
+			}
+		})
 	}
-	result, err = Run(t.Context(), Spec{Path: "/missing/executil-command"}, WithMemfdOutput(64, func(string) []string { return nil }))
+	result, err := Run(t.Context(), Spec{Path: "/missing/executil-command"}, WithMemfdOutput(64, func(string) []string { return nil }))
 	if result == nil || !errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrClosed) {
 		t.Fatalf("failed start = (%+v,%v)", result, err)
 	}

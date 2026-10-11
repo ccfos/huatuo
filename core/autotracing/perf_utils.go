@@ -61,10 +61,7 @@ func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error)
 		Args: args,
 	}, executil.WithStdout(&stdout))
 	if err != nil {
-		var diagnostic []byte
-		if result != nil {
-			diagnostic = result.Stderr
-		}
+		diagnostic := result.Stderr
 		return nil, perfCommandError(request.containerID, diagnostic, err)
 	}
 	output := stdout.Bytes()

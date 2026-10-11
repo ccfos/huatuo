@@ -43,12 +43,10 @@ func RunWithMemfd(
 		}))
 		output, err := executil.Run(ctx, executil.Spec{Path: path}, commandOptions...)
 		result.Err = err
-		if output != nil {
-			result.Diagnostics = output.Stderr
-			if err == nil {
-				// A truncated or failed profile must not be parsed as a complete capture.
-				result.Output = output.Memfd
-			}
+		result.Diagnostics = output.Stderr
+		if err == nil {
+			// A truncated or failed profile must not be parsed as a complete capture.
+			result.Output = output.Memfd
 		}
 		return result
 	})

@@ -16,8 +16,9 @@
 // Paths and arguments are passed directly to os/exec; shell syntax requires an
 // explicit shell command. Context arguments must be non-nil.
 //
-// Use Run for synchronous execution and owned output snapshots. A non-nil
-// RunError distinguishes cancellation, execution, output and cleanup failures.
+// Use Run for synchronous execution and owned output snapshots. Run always
+// returns a non-nil Result, even for invalid configuration. A non-nil RunError
+// distinguishes cancellation, execution, output and cleanup failures.
 // IsCancellation permits business layers to recognize a pure cancellation;
 // errors.Is(err, context.Canceled) alone does not exclude other failures.
 // Earlier stop failures remain visible after successful cleanup. If final Close

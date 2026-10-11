@@ -452,7 +452,7 @@ func (i *ioTracing) Start(ctx context.Context) error {
 			log.Info("iotracing stopped")
 			return nil
 		}
-		if result != nil && len(result.Stderr) > 0 {
+		if len(result.Stderr) > 0 {
 			return fmt.Errorf("run iotracing: %w; stderr: %s", err, result.Stderr)
 		}
 		return fmt.Errorf("run iotracing: %w", err)

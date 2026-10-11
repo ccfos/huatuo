@@ -61,10 +61,8 @@ func runCommand(
 	var stdout bytes.Buffer
 	output, err := executil.Run(ctx, *spec, executil.WithStdout(&stdout))
 	result.Err = err
-	if output != nil {
-		result.Output = stdout.Bytes()
-		result.Diagnostics = output.Stderr
-	}
+	result.Output = stdout.Bytes()
+	result.Diagnostics = output.Stderr
 	return result
 }
 
