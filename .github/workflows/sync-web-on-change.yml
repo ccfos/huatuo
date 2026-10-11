@@ -10,11 +10,6 @@ on:
     paths:
       - 'docs/**'
       - 'data/img/**'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'docs/**'
-      - 'data/img/**'
   workflow_dispatch:
 
 jobs:
