@@ -56,8 +56,8 @@ func (b *failingBackend) DeleteByQuery(context.Context, driver.DeleteQuery) (int
 	return 0, nil
 }
 
-func (b *failingBackend) Query(context.Context, driver.Query) ([]driver.Record, error) {
-	return nil, nil
+func (b *failingBackend) Query(context.Context, driver.Query, func([]driver.Record) error) error {
+	return nil
 }
 
 func (b *failingBackend) Count(context.Context, driver.Query) (int64, error) { return 0, nil }
