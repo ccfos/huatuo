@@ -270,6 +270,17 @@ func TestOperationResponseMapsFailureReason(t *testing.T) {
 	}
 }
 
+func TestSecondsDurationRejectsNonPositive(t *testing.T) {
+	// The node OpenAPI spec declares duration_seconds: minimum 1; the
+	// handler must enforce it because the generated strict server does
+	// not check body schema constraints.
+	for _, bad := range []int64{0, -1, -3600} {
+		if _, err := secondsDuration(bad); err == nil {
+			t.Fatalf("secondsDuration(%d) error = nil, want rejection", bad)
+		}
+	}
+}
+
 func TestSecondsDurationRejectsOverflow(t *testing.T) {
 	if _, err := secondsDuration(int64(^uint64(0) >> 1)); err == nil {
 		t.Fatal("secondsDuration(MaxInt64) error = nil")

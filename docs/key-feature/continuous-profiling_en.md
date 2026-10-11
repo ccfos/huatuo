@@ -404,9 +404,17 @@ The profiling windows are in `data.items`; `data.limit`, `data.offset`, and
 `data.has_more` describe the page. Each item contains `uploaded_timestamp`,
 `started_timestamp`, `profile_type`, and the pprof-compatible `profile` payload.
 An empty, durably published result is a successful response with an empty
-`items` array. `limit` defaults to 20 and cannot exceed 100. If the encoded
+`items` array. `limit` defaults to 20 and accepts 1–100. Explicit `limit=0`
+returns a parameter error; omitted limits use the default. If the encoded
 profile data exceeds 64 MiB, the server returns `413 result_too_large`; retry
 with a smaller `limit`.
+
+Flamegraph queries consume matching windows in batches of 100 and merge them
+incrementally, up to 100000 windows per request. A one-hour profile with one
+window per second therefore includes all 3600 windows. More than 100000 windows
+returns an error asking for a narrower range or filters. Query or merge errors
+never return a partial flamegraph. Raw Profile pages remain scoped to a Job;
+their page limit does not cap the full flamegraph query.
 
 ### 7. Stop a Profiling Job
 

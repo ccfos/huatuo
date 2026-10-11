@@ -139,7 +139,7 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 
 	asprofBin := asprofPath(opt.ToolPath)
 	startCtx, cancel := context.WithTimeout(ctx, asprofCommandTimeout)
-	cmdResults := profilerexec.Run(startCtx, opt.Pids, asprofBin, func(pid int) []string {
+	cmdResults := profilerexec.RunAsyncProfiler(startCtx, opt.Pids, asprofBin, func(pid int) []string {
 		return argsByPID[pid]
 	})
 	startCtxErr := startCtx.Err()
@@ -258,7 +258,7 @@ func stopActiveAsprofProcesses(ctx context.Context, opt *AsprofSamplingOption) e
 	defer cancel()
 
 	activePIDs := opt.activePIDList()
-	results := profilerexec.Run(stopCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
+	results := profilerexec.RunAsyncProfiler(stopCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
 		return []string{
 			"stop",
 			"--libpath", "/tmp/libasyncProfiler.so",

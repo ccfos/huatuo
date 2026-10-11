@@ -16,12 +16,15 @@ package pod
 
 import (
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 const (
@@ -165,4 +168,85 @@ func containerCgroupPath(containerID string, pod *corev1.Pod) (cgroupPath, error
 
 	paths = append(paths, containerID)
 	return cgroupPath{slices: paths}, nil
+}
+
+// containerMemoryBinding resolves kernel membership rather than reconstructing
+// the memory hierarchy from the kubelet's cgroup driver or container name.
+func containerMemoryBinding(container *Container) (*containerRecord, error) {
+	process, err := procfs.NewProc(container.InitPid)
+	if err != nil {
+		return nil, err
+	}
+	before, err := process.Stat()
+	if err != nil {
+		return nil, err
+	}
+	paths, err := cgroups.PathsForPID(container.InitPid)
+	if err != nil {
+		return nil, err
+	}
+	path, err := paths.PathForMemory()
+	if err != nil {
+		return nil, err
+	}
+	root, err := cgroups.MemoryRoot()
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(filepath.Join(root, path))
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("memory cgroup %q is not a directory", path)
+	}
+	after, err := process.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if before.Starttime != after.Starttime {
+		return nil, fmt.Errorf("container %q init process was replaced", container.ID)
+	}
+	return &containerRecord{
+		container: container,
+		ref:       ContainerRef{Key: ContainerKey{ID: container.ID}, InitPID: container.InitPid, MemoryCgroupPath: path},
+		startTime: before.Starttime, directory: info,
+	}, nil
+}
+
+// ValidateContainerRef verifies the published generation and the live process
+// and cgroup binding. It uses local kernel/runtime state, never a kubelet query.
+func ValidateContainerRef(ref ContainerRef) error {
+	containerView.mu.RLock()
+	previous, err := containerView.records[ref.Key.ID], containerView.err
+	containerView.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	if previous == nil || previous.ref != ref {
+		return fmt.Errorf("container %q instance is no longer current", ref.Key.ID)
+	}
+	pid, err := containerInitPIDByID(ref.Key.ID)
+	if err != nil {
+		return err
+	}
+	if pid != ref.InitPID {
+		return fmt.Errorf("container %q init pid changed", ref.Key.ID)
+	}
+	current, err := containerMemoryBinding(previous.container)
+	if err != nil {
+		return err
+	}
+	if !previous.sameInstance(current) {
+		return fmt.Errorf("container %q kernel binding changed", ref.Key.ID)
+	}
+	// A lifecycle commit may have raced with the kernel reads.
+	actual, err := ContainerRefByID(ref.Key.ID)
+	if err != nil {
+		return err
+	}
+	if actual != ref {
+		return fmt.Errorf("container %q generation changed", ref.Key.ID)
+	}
+	return nil
 }

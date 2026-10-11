@@ -349,7 +349,7 @@ func TestKubeletPodListPortCacheUpdatePreservesConnectionRefused(t *testing.T) {
 		PodAuthorizedPort: port,
 	}
 
-	err = kubeletPodListPortCacheUpdate(ctx)
+	err = kubeletPodListPortCacheUpdate(t.Context(), ctx)
 	if err == nil {
 		t.Fatal("kubeletPodListPortCacheUpdate() error=nil, want non-nil")
 	}

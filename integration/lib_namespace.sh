@@ -16,39 +16,57 @@
 
 set -euo pipefail
 
-TCP_NS_SERVER=""
-TCP_NS_CLIENT=""
-TCP_NS_VETH_SERVER=""
-TCP_NS_VETH_CLIENT=""
-TCP_NS_SERVER_ADDR=""
-TCP_NS_CLIENT_ADDR=""
+NETNS=""
+NETNS_SERVER=""
+NETNS_CLIENT=""
+NETNS_VETH_SERVER=""
+NETNS_VETH_CLIENT=""
+NETNS_SERVER_ADDR=""
+NETNS_CLIENT_ADDR=""
 
-tcp_namespace_setup() {
-	local prefix=$1 server_addr=$2 client_addr=$3 netmask=${4:-24}
+namespace_setup() {
+	local name=$1
 
-	TCP_NS_SERVER="ts_${prefix}"
-	TCP_NS_CLIENT="tc_${prefix}"
-	TCP_NS_VETH_SERVER="vs_${prefix}"
-	TCP_NS_VETH_CLIENT="vc_${prefix}"
-	TCP_NS_SERVER_ADDR=${server_addr}
-	TCP_NS_CLIENT_ADDR=${client_addr}
-
-	ip netns add "${TCP_NS_SERVER}" || fatal "failed to create server netns"
-	ip netns add "${TCP_NS_CLIENT}" || fatal "failed to create client netns"
-	ip link add "${TCP_NS_VETH_SERVER}" type veth peer name "${TCP_NS_VETH_CLIENT}"
-	ip link set "${TCP_NS_VETH_SERVER}" netns "${TCP_NS_SERVER}"
-	ip link set "${TCP_NS_VETH_CLIENT}" netns "${TCP_NS_CLIENT}"
-
-	ip netns exec "${TCP_NS_SERVER}" ip addr add "${server_addr}/${netmask}" dev "${TCP_NS_VETH_SERVER}"
-	ip netns exec "${TCP_NS_SERVER}" ip link set "${TCP_NS_VETH_SERVER}" up
-	ip netns exec "${TCP_NS_SERVER}" ip link set lo up
-
-	ip netns exec "${TCP_NS_CLIENT}" ip addr add "${client_addr}/${netmask}" dev "${TCP_NS_VETH_CLIENT}"
-	ip netns exec "${TCP_NS_CLIENT}" ip link set "${TCP_NS_VETH_CLIENT}" up
-	ip netns exec "${TCP_NS_CLIENT}" ip link set lo up
+	ip netns add "${name}" || fatal "failed to create netns ${name}"
+	NETNS=${name}
 }
 
-tcp_namespace_cleanup() {
-	[[ -z "${TCP_NS_SERVER}" ]] || ip netns del "${TCP_NS_SERVER}" 2> /dev/null || true
-	[[ -z "${TCP_NS_CLIENT}" ]] || ip netns del "${TCP_NS_CLIENT}" 2> /dev/null || true
+namespace_setup_with_pair() {
+	local prefix=$1 server_addr=$2 client_addr=$3 netmask=${4:-24}
+	local server="ts_${prefix}" client="tc_${prefix}"
+
+	ip netns add "${server}" || fatal "failed to create server netns ${server}"
+	NETNS_SERVER=${server}
+	ip netns add "${client}" || fatal "failed to create client netns ${client}"
+	NETNS_CLIENT=${client}
+	NETNS_VETH_SERVER="vs_${prefix}"
+	NETNS_VETH_CLIENT="vc_${prefix}"
+	NETNS_SERVER_ADDR=${server_addr}
+	NETNS_CLIENT_ADDR=${client_addr}
+
+	ip link add "${NETNS_VETH_SERVER}" type veth peer name "${NETNS_VETH_CLIENT}"
+	ip link set "${NETNS_VETH_SERVER}" netns "${NETNS_SERVER}"
+	ip link set "${NETNS_VETH_CLIENT}" netns "${NETNS_CLIENT}"
+
+	ip netns exec "${NETNS_SERVER}" ip addr add "${server_addr}/${netmask}" dev "${NETNS_VETH_SERVER}"
+	ip netns exec "${NETNS_SERVER}" ip link set "${NETNS_VETH_SERVER}" up
+	ip netns exec "${NETNS_SERVER}" ip link set lo up
+
+	ip netns exec "${NETNS_CLIENT}" ip addr add "${client_addr}/${netmask}" dev "${NETNS_VETH_CLIENT}"
+	ip netns exec "${NETNS_CLIENT}" ip link set "${NETNS_VETH_CLIENT}" up
+	ip netns exec "${NETNS_CLIENT}" ip link set lo up
+}
+
+namespace_cleanup() {
+	local namespace
+	for namespace in "${NETNS}" "${NETNS_SERVER}" "${NETNS_CLIENT}"; do
+		[[ -z "${namespace}" ]] || ip netns del "${namespace}" 2> /dev/null || true
+	done
+	NETNS=""
+	NETNS_SERVER=""
+	NETNS_CLIENT=""
+	NETNS_VETH_SERVER=""
+	NETNS_VETH_CLIENT=""
+	NETNS_SERVER_ADDR=""
+	NETNS_CLIENT_ADDR=""
 }

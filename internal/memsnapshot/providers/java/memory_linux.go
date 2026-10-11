@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -148,7 +149,11 @@ func (m processMemory) cstring(address uint64) (string, error) {
 		if remaining := maxHotSpotStringBytes - len(result); remaining < chunkSize {
 			chunkSize = remaining
 		}
-		chunk, err := m.read(address+uint64(len(result)), chunkSize)
+		start, valid := checkedAdd(address, uint64(len(result)))
+		if !valid {
+			return "", errors.New("HotSpot metadata string address overflows")
+		}
+		chunk, err := m.read(start, pageReadSize(start, chunkSize))
 		if err != nil {
 			return "", err
 		}
@@ -167,4 +172,10 @@ func checkedAdd(left, right uint64) (uint64, bool) {
 		return 0, false
 	}
 	return left + right, true
+}
+
+// Do not probe the next page until the current page proves the string continues.
+func pageReadSize(address uint64, limit int) int {
+	pageSize := uint64(os.Getpagesize())
+	return min(limit, int(pageSize-address%pageSize))
 }

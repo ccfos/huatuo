@@ -160,7 +160,6 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropwatch.ReasonNames, sour
 	metadata := dropwatch.ResolveMetadata(&ev.Meta, names)
 
 	return &types.DropWatchTracing{
-		KtimeNS:                 ev.Meta.KernelObservedNS,
 		ObservedTimestamp:       observedTimestamp,
 		KernelObservedTimestamp: &kernelObservedTimestamp,
 		DropSource:              metadata.Source,

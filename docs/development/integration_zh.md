@@ -41,6 +41,51 @@ bash integration/run.sh test_metrics_exclude_filter.sh 10
 make integration
 ```
 
+### 前置检查与结果汇总
+
+两套测试共用 `integration/run.sh`，默认运行 integration；`e2e/run.sh` 转发到
+`--suite e2e`。现有 `make integration`、`make e2e` 和单用例入口继续可用：
+
+```bash
+bash integration/run.sh --suite e2e
+bash integration/run.sh --suite e2e test_metrics.sh 2
+bash e2e/run.sh test_metrics.sh 2
+```
+
+两套测试都在独立的 UTS、mount namespace 中运行，hostname 为 `huatuo-dev`，
+挂载传播设为 private。integration 由用例启动服务；e2e 在每例之前启动默认 bamai，
+结束时停止服务并检查日志。integration 成功或跳过后删除工作目录，失败时保留；
+e2e 保留工作目录。
+
+runner 只检查 `_output` 目录是否存在，不逐个检查项目二进制和 BPF 产物。
+直接运行脚本前先执行 `make build`；
+目录存在不代表构建完整，缺失产物会在实际使用时导致失败。
+
+用例使用同一个函数检查 PATH 中的命令或可执行文件路径，缺失时跳过：
+
+```bash
+require_commands jq curl ss
+require_commands "${PROFILER_TOOL_DIR}/bin/asprof"
+```
+
+证书等输入文件使用 `require_readable` 检查，不可读时输出具体路径并跳过：
+
+```bash
+require_readable "${KUBELET_CERT}" "${KUBELET_KEY}"
+```
+
+`skip` 输出原因并以 77 退出，仍会执行 `EXIT` 清理。runner 将 0 记为 PASS、
+77 记为 SKIP，其他状态记为 FAIL；清理失败也记为 FAIL。只有成功和跳过时，
+runner 返回 0。失败时停止后续用例，并输出截至当前的统计。
+
+每次执行都单独计数，包括重复运行，例如：
+
+```text
+summary: total=5 passed=3 skipped=2 failed=0
+```
+
+两套测试缺少 root 权限或 namespace 命令时，所选用例全部计为 SKIP。
+
 #### 失败时的行为
 - ``huatuo-bamai`` 服务指标和日志将直接输出到标准输出，便于问题定位
 - 临时工作目录将被保留，用于后续调试分析
@@ -48,6 +93,26 @@ make integration
 #### 成功时的行为
 - 显示验证成功的``metrics`` 列表
 ---
+
+### 后台进程清理
+
+`stop_and_wait_by_pid PID [TIMEOUT]` 停止并等待子进程，返回其退出码。
+未传入 PID 或 PID 为空时立即返回成功，调用方可以直接传入已初始化的 PID 变量。
+等待结束后清空变量；尽力清理时使用 `|| true`，退出码属于测试契约时应进行断言。
+
+### 网络命名空间辅助函数
+
+网络测试可以在加载 `lib.sh` 后加载 `integration/lib_namespace.sh`：
+
+- `namespace_setup NAME` 创建一个网络命名空间，通过 `NETNS` 暴露名称。
+  调用方负责启用 `lo` 并配置所需地址。
+- `namespace_setup_with_pair PREFIX SERVER_ADDR CLIENT_ADDR [PREFIX_LENGTH]`
+  创建通过 veth 连接的两个命名空间，配置地址并启用接口，地址前缀长度默认为 24。
+  命名空间、接口和地址通过 `NETNS_SERVER`、`NETNS_CLIENT`、
+  `NETNS_VETH_SERVER`、`NETNS_VETH_CLIENT`、`NETNS_SERVER_ADDR`、
+  `NETNS_CLIENT_ADDR` 暴露。
+- `namespace_cleanup` 删除上述函数创建的命名空间并清空状态，支持重复调用。
+  用例应在 `EXIT` 清理中先停止命名空间内的进程，再调用该函数。
 
 ### 如何新增指标测试
 #### 第一步：新增或更新模拟数据

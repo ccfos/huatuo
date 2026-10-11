@@ -193,12 +193,12 @@ func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext)
 		if key.Category != "" {
 			prefixes = append(prefixes, key.Category)
 		}
-		trace := symbolizedStackTrace{
-			UserFrames:   a.stackTraces.Frames(key.UserTraceID),
-			KernelFrames: a.stackTraces.Frames(key.KernelTraceID),
-		}
-		item := buildTreeItem(prefixes, trace, uint64(value))
-		tree = append(tree, item)
+		tree = append(tree, profiler.BuildTreeItem(
+			prefixes,
+			a.stackTraces.Frames(key.UserTraceID),
+			a.stackTraces.Frames(key.KernelTraceID),
+			uint64(value),
+		))
 	}
 
 	return buildPprofData(pctx, tree)
@@ -212,7 +212,12 @@ func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (
 	tree := make([]*profiler.TreeItem, 0, len(a.lockSamples))
 	for _, rec := range a.lockSamples {
 		prefixes, value := lockPrefixFrames(rec)
-		tree = append(tree, buildTreeItem(prefixes, rec.StackTrace, value))
+		tree = append(tree, profiler.BuildTreeItem(
+			prefixes,
+			rec.StackTrace.UserFrames,
+			rec.StackTrace.KernelFrames,
+			value,
+		))
 	}
 	return buildPprofData(pctx, tree)
 }
@@ -280,28 +285,6 @@ func parseCollapsedLine(line string) (stack string, count int64, ok bool) {
 	}
 
 	return stack, count, true
-}
-
-func buildTreeItem(prefixes []string, trace symbolizedStackTrace, value uint64) *profiler.TreeItem {
-	stackLen := len(prefixes) + trace.frameCount()
-	stack := make([][]byte, 0, stackLen)
-
-	for _, p := range prefixes {
-		stack = append(stack, []byte(p))
-	}
-
-	for _, frame := range trace.UserFrames {
-		stack = append(stack, []byte(frame))
-	}
-
-	for _, frame := range trace.KernelFrames {
-		stack = append(stack, []byte(frame))
-	}
-
-	return &profiler.TreeItem{
-		Stack: stack,
-		Value: value,
-	}
 }
 
 // buildPprofData constructs pprof (pyroscope-compatible) profile data.

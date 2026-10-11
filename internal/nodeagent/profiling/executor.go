@@ -19,21 +19,21 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type executor struct {
-	process   *exec.Process
+	process   *executil.Process
 	stream    *toolstream.Server
 	publisher ResultPublisher
 	requestID string
 }
 
 func newExecutor(
-	process *exec.Process,
+	process *executil.Process,
 	stream *toolstream.Server,
 	publisher ResultPublisher,
 	requestID string,
@@ -48,24 +48,21 @@ func newExecutor(
 
 func (e *executor) Start(ctx context.Context) error {
 	if err := e.stream.ExpectSession(types.ProfilingToolName, e.requestID); err != nil {
-		return fmt.Errorf("expect profiler result stream: %w", err)
+		return fmt.Errorf("expect profiler result stream: %w", errors.Join(err, e.process.Close()))
 	}
 	if err := e.process.Start(ctx); err != nil {
 		e.stream.CancelSession(types.ProfilingToolName, e.requestID)
-		return e.withOutput("start profiler", err)
+		return e.withOutput("start profiler", errors.Join(err, e.process.Close()))
 	}
 	return nil
 }
 
 func (e *executor) Wait() error {
 	err := e.process.Wait()
-	if errors.Is(err, exec.ErrStopped) {
-		return errors.Join(operation.ErrStopped, err)
+	if errors.Is(err, executil.ErrStopped) {
+		err = errors.Join(operation.ErrStopped, err)
 	}
-	if err != nil {
-		return e.withOutput("wait for profiler", err)
-	}
-	return nil
+	return e.withOutput("wait for profiler", err)
 }
 
 func (e *executor) Stop(ctx context.Context) error {
@@ -75,7 +72,9 @@ func (e *executor) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) error {
+func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) (err error) {
+	defer func() { err = errors.Join(err, e.process.Close()) }()
+
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("finalize profiler: %w", err)
 	}
@@ -97,7 +96,11 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) er
 }
 
 func (e *executor) withOutput(action string, err error) error {
-	output := e.process.Stdout()
+	output, outputErr := e.process.Stdout()
+	err = errors.Join(err, outputErr)
+	if err == nil {
+		return nil
+	}
 	if stderr := e.process.Stderr(); len(stderr) > 0 {
 		if len(output) > 0 {
 			output = append(output, '\n')

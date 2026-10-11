@@ -120,15 +120,20 @@ func TestFormatHardwareEvent(t *testing.T) {
 	}
 }
 
-func TestJSONWriterPreservesKernelTime(t *testing.T) {
-	const ktimeNS uint64 = 12_345_678_901_234_567
+func TestJSONWriterObservationTimestamps(t *testing.T) {
+	const kernelObservedNS uint64 = 12_345_678_901_234_567
+	kernelObservedTimestamp, err := timeutil.KtimeToTimestamp(kernelObservedNS)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for _, source := range []abi.DropwatchDropSource{
 		abi.DropwatchDropSourceSoftware,
 		abi.DropwatchDropSourceHardware,
 	} {
 		t.Run(dropwatch.ResolveMetadata(&abi.DropwatchPacketMeta{DropSource: uint32(source)}, nil).Source, func(t *testing.T) {
 			var record abi.DropwatchPacketEvent
-			record.Meta.KernelObservedNS = ktimeNS
+			record.Meta.KernelObservedNS = kernelObservedNS
 			record.Meta.DropSource = uint32(source)
 			var output bytes.Buffer
 			event, err := formatEvent(&record, nil, "tools")
@@ -138,14 +143,18 @@ func TestJSONWriterPreservesKernelTime(t *testing.T) {
 			if err := (&jsonWriter{w: &output}).Write(event); err != nil {
 				t.Fatal(err)
 			}
-			var got struct {
-				KtimeNS uint64 `json:"ktime_ns"`
-			}
+			var got map[string]any
 			if err := json.Unmarshal(output.Bytes(), &got); err != nil {
 				t.Fatal(err)
 			}
-			if got.KtimeNS != ktimeNS {
-				t.Fatalf("ktime_ns = %d, want %d", got.KtimeNS, ktimeNS)
+			if got["kernel_observed_timestamp"] != kernelObservedTimestamp.FormatUTC() {
+				t.Fatalf("kernel_observed_timestamp = %v, want %s", got["kernel_observed_timestamp"], kernelObservedTimestamp.FormatUTC())
+			}
+			if got["observed_timestamp"] != event.ObservedTimestamp.FormatUTC() {
+				t.Fatalf("observed_timestamp = %v, want %s", got["observed_timestamp"], event.ObservedTimestamp.FormatUTC())
+			}
+			if _, exists := got["kernel_observed_ns"]; exists {
+				t.Error("internal clock kernel_observed_ns leaked into JSON")
 			}
 		})
 	}
@@ -215,6 +224,26 @@ func BenchmarkTextWriter(b *testing.B) {
 		NetdevName:              "eth0",
 	}
 	w := &textWriter{w: io.Discard}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := w.Write(event); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkJSONWriter(b *testing.B) {
+	var record abi.DropwatchPacketEvent
+	record.Meta.KernelObservedNS = uint64(time.Second)
+	record.Meta.DropSource = uint32(abi.DropwatchDropSourceHardware)
+	copy(record.Meta.TrapName[:], "ingress_vlan_filter")
+	copy(record.Meta.TrapGroupName[:], "l2_drops")
+	event, err := formatEvent(&record, nil, "tools")
+	if err != nil {
+		b.Fatal(err)
+	}
+	w := &jsonWriter{w: io.Discard}
 
 	b.ReportAllocs()
 	for b.Loop() {

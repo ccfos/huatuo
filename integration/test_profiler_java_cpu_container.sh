@@ -30,9 +30,7 @@ readonly CONTAINERD_NAMESPACE="k8s.io"
 readonly PROFILER_DURATION=5
 readonly EXPECTED_METHOD="TestProfilerJavaMultiPID.alphaHotMethod"
 
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -x "${PROFILER_TOOL_DIR}/bin/asprof" ]] \
-	|| skip "asprof missing: ${PROFILER_TOOL_DIR}/bin/asprof"
+require_commands "${PROFILER_TOOL_DIR}/bin/asprof"
 [[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
 	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 
