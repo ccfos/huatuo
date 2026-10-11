@@ -27,13 +27,17 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 )
 
-const containerRefreshDelay = 25 * time.Millisecond
+const (
+	containerRefreshDelay   = 25 * time.Millisecond
+	containerResyncInterval = 30 * time.Second
+)
 
 type containerController struct {
 	store             *containerStore
 	fetch             func(context.Context) (corev1.PodList, error)
 	resolve           func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error)
 	initialize        func(context.Context) error
+	resyncInterval    time.Duration
 	wake              chan struct{}
 	mu                sync.Mutex
 	hints             map[string]bool
@@ -48,6 +52,7 @@ type containerController struct {
 type containerRefreshRetry struct {
 	attempts         int
 	awaitingCreation bool
+	awaitingRemoval  bool
 	err              error
 }
 
@@ -112,7 +117,8 @@ func ReleaseManager() {
 func newContainerController(store *containerStore) *containerController {
 	return &containerController{
 		store: store, fetch: kubeletGetPodList, resolve: resolveContainerRecord,
-		wake: make(chan struct{}, 1), hints: make(map[string]bool), full: true,
+		resyncInterval: containerResyncInterval,
+		wake:           make(chan struct{}, 1), hints: make(map[string]bool), full: true,
 		done: make(chan struct{}), retries: make(map[string]*containerRefreshRetry),
 	}
 }
@@ -173,19 +179,18 @@ func (c *containerController) run(ctx context.Context) {
 		case <-c.wake:
 			// Leave the timer unchanged on duplicate hints; bursts must not
 			// postpone synchronization forever.
-			if due.IsZero() || time.Until(due) > containerRefreshDelay {
+			if time.Until(due) > containerRefreshDelay {
 				due = time.Now().Add(containerRefreshDelay)
 				timer.Reset(containerRefreshDelay)
 			}
 		case <-timer.C:
-			due = time.Time{}
 			if !initialized {
 				if err := c.initialize(ctx); err != nil {
-					c.store.commit(nil, err)
+					c.store.commit(containerSnapshot{}, err)
 					log.WithError(err).Warn("initialize container state producer")
 					due = time.Now().Add(delay)
 					timer.Reset(delay)
-					delay = min(2*delay, 30*time.Second)
+					delay = min(2*delay, c.resyncInterval)
 					continue
 				}
 				initialized = true
@@ -194,21 +199,25 @@ func (c *containerController) run(ctx context.Context) {
 			hints, full := c.hints, c.full
 			c.hints, c.full = make(map[string]bool), false
 			c.mu.Unlock()
-			records, err, retry := c.refresh(ctx, hints, full)
+			snapshot, err, retry := c.refresh(ctx, hints, full)
 			if ctx.Err() != nil {
 				return
 			}
-			c.store.commit(records, err)
+			c.store.commit(snapshot, err)
 			if err != nil {
 				log.WithError(err).Warn("refresh container view")
-				if retry {
-					due = time.Now().Add(delay)
-					timer.Reset(delay)
-					delay = min(2*delay, 30*time.Second)
-				}
+			}
+			// Kernel hints can precede kubelet status or be lost entirely.
+			// Keep reconciling membership after readiness retries are exhausted.
+			next := c.resyncInterval
+			if retry {
+				next = min(delay, c.resyncInterval)
+				delay = min(2*delay, c.resyncInterval)
 			} else {
 				delay = time.Second
 			}
+			due = time.Now().Add(next)
+			timer.Reset(next)
 		}
 	}
 }
@@ -216,7 +225,8 @@ func (c *containerController) run(ctx context.Context) {
 // refresh retries unresolved instances without re-resolving healthy records.
 // Upstream query failures retry with capped backoff; individual readiness
 // failures stop after three attempts and remain visible until another hint.
-func (c *containerController) refresh(ctx context.Context, hints map[string]bool, full bool) (map[string]*containerRecord, error, bool) {
+// Deletion hints keep retrying until kubelet confirms absence.
+func (c *containerController) refresh(ctx context.Context, hints map[string]bool, full bool) (containerSnapshot, error, bool) {
 	if full {
 		clear(c.retries)
 		c.needsFull = true
@@ -225,20 +235,19 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 		c.malformedAttempts = 0
 	}
 	for id, removed := range hints {
-		c.retries[id] = &containerRefreshRetry{awaitingCreation: !removed}
+		c.retries[id] = &containerRefreshRetry{awaitingCreation: !removed, awaitingRemoval: removed}
 	}
 	list, err := c.fetch(ctx)
 	if err != nil {
-		return nil, err, true
+		return containerSnapshot{}, err, true
 	}
 	records := make(map[string]*containerRecord)
-	seen := make(map[string]struct{})
 	var syncErr error
 	retry := false
 	malformed := false
 	for i := range list.Items {
 		if err := ctx.Err(); err != nil {
-			return nil, err, false
+			return containerSnapshot{}, err, false
 		}
 		p := &list.Items[i]
 		// Completed init and ephemeral debug containers are outside the view.
@@ -277,13 +286,15 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 					malformed = true
 					continue
 				}
-				seen[id] = struct{}{}
 				c.store.mu.RLock()
 				previous := c.store.records[id]
 				c.store.mu.RUnlock()
+				// Retain membership even when metadata cannot be resolved yet.
+				records[id] = previous
 				pending := c.retries[id]
-				if pending == nil && previous != nil && !c.needsFull && previous.container.StartedAt.Equal(status.State.Running.StartedAt.Time) {
-					records[id] = previous
+				removing := pending != nil && pending.awaitingRemoval
+				retry = retry || removing
+				if (pending == nil || removing) && previous != nil && !c.needsFull && previous.container.StartedAt.Equal(status.State.Running.StartedAt.Time) {
 					continue
 				}
 				if pending == nil {
@@ -292,9 +303,6 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 				}
 				pending.awaitingCreation = false
 				if pending.attempts >= 3 {
-					if previous != nil {
-						records[id] = previous
-					}
 					syncErr = pending.err
 					continue
 				}
@@ -304,21 +312,21 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 					pending.err = fmt.Errorf("resolve container %q: %w", id, err)
 					syncErr = pending.err
 					retry = retry || pending.attempts < 3
-					if previous != nil {
-						records[id] = previous
-					} else if record != nil {
+					if previous == nil && record != nil {
 						records[id] = record
 					}
 					continue
 				}
 				records[id] = record
-				delete(c.retries, id)
+				if !removing {
+					delete(c.retries, id)
+				}
 			}
 		}
 	}
 	c.needsFull = false
 	for id, pending := range c.retries {
-		if _, exists := seen[id]; exists {
+		if _, exists := records[id]; exists {
 			continue
 		}
 		if !pending.awaitingCreation {
@@ -326,6 +334,12 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 			continue
 		}
 		pending.attempts++
+		// CSS also reports containers outside the kubelet view. A hint is
+		// not evidence that the successfully fetched list is incomplete.
+		if pending.attempts >= 3 {
+			delete(c.retries, id)
+			continue
+		}
 		pending.err = fmt.Errorf("container %q creation is not yet reflected by kubelet", id)
 		syncErr = pending.err
 		retry = retry || pending.attempts < 3
@@ -334,7 +348,7 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 		c.malformedAttempts++
 		retry = retry || c.malformedAttempts < 3
 	}
-	return records, syncErr, retry
+	return containerSnapshot{records: records, isComplete: !malformed}, syncErr, retry
 }
 
 func resolveContainerRecord(id string, spec *corev1.Container, status *corev1.ContainerStatus, p *corev1.Pod) (*containerRecord, error) {

@@ -18,7 +18,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -35,15 +34,5 @@ func TestJavaDiscovery(t *testing.T) {
 	}
 	if _, err := discoverVM(t.Context(), root, 1); !errors.Is(err, errHotSpotUnavailable) {
 		t.Fatalf("non-HotSpot mapping must be unsupported: %v", err)
-	}
-}
-
-func TestJavaReleaseBounds(t *testing.T) {
-	version, err := parseJavaRelease(t.Context(), strings.NewReader("JAVA_VERSION=\"17.0.12\"\n"))
-	if err != nil || version != "17.0.12" {
-		t.Fatalf("release: %q, %v", version, err)
-	}
-	if _, err := parseJavaRelease(t.Context(), strings.NewReader(strings.Repeat("X=1\n", 257))); err == nil {
-		t.Fatal("unbounded release metadata")
 	}
 }

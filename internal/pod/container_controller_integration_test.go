@@ -53,16 +53,26 @@ func TestContainerControllerHTTPAndKernelBinding(t *testing.T) {
 	var mu sync.Mutex
 	list := runningPodListForTest(id)
 	list.Items[0].Status.Phase = corev1.PodRunning
+	deleting := false
+	staleFetched := make(chan struct{})
+	var staleOnce sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		if err := json.NewEncoder(w).Encode(list); err != nil {
 			t.Error(err)
 		}
+		if deleting && len(list.Items) != 0 {
+			staleOnce.Do(func() { close(staleFetched) })
+		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	store := newContainerStore()
+	previousView := containerView
+	containerView = store
+	t.Cleanup(func() { containerView = previousView })
 	controller := newContainerController(store)
+	controller.resyncInterval = 25 * time.Millisecond
 	controller.fetch = func(ctx context.Context) (corev1.PodList, error) {
 		return kubeletFetchPodList(ctx, server.Client(), server.URL)
 	}
@@ -77,10 +87,22 @@ func TestContainerControllerHTTPAndKernelBinding(t *testing.T) {
 	if record.ref.InitPID != os.Getpid() || record.startTime == 0 || record.directory == nil {
 		t.Fatal("kernel binding missing")
 	}
+	// Runtime teardown and its CSS hint can precede kubelet's next status.
+	if err := os.Remove(filepath.Join(runtimeDir, "init.pid")); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	deleting = true
+	mu.Unlock()
+	controller.request(id, true)
+	select {
+	case <-staleFetched:
+	case <-time.After(2 * time.Second):
+		t.Fatal("deletion hint did not fetch the stale kubelet status")
+	}
 	mu.Lock()
 	list = corev1.PodList{}
 	mu.Unlock()
-	controller.request(id, true)
 	timeout := time.After(2 * time.Second)
 	for {
 		select {
@@ -93,6 +115,9 @@ func TestContainerControllerHTTPAndKernelBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(update.Events) == 1 && update.Events[0].Kind == ContainerDeleted && update.Events[0].Container.Key == record.ref.Key {
+			if cached, err := ContainerByID(id); err != nil || cached != nil {
+				t.Fatalf("deleted container remains available to the API: cached=%v, err=%v", cached, err)
+			}
 			return
 		}
 	}

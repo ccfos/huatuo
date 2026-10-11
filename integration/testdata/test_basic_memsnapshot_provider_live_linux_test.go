@@ -30,15 +30,28 @@ import (
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
+	"github.com/ccfos/huatuo/internal/memsnapshot/providers/python"
 )
 
-func TestCaptureLiveGoProcess(t *testing.T) {
+func TestSnapshotLiveGoProcess(t *testing.T) {
 	for _, mode := range []string{"exe", "pie"} {
-		t.Run(mode, func(t *testing.T) { captureLiveGoProcess(t, mode) })
+		for _, test := range []struct {
+			name       string
+			sampleRate int
+			gcCycles   int
+		}{
+			{name: "disabled", sampleRate: 0, gcCycles: 2},
+			{name: "published", sampleRate: 1, gcCycles: 2},
+			{name: "unpublished", sampleRate: 1, gcCycles: 0},
+		} {
+			t.Run(mode+"/"+test.name, func(t *testing.T) {
+				snapshotLiveGoProcess(t, mode, test.sampleRate, test.gcCycles)
+			})
+		}
 	}
 }
 
-func captureLiveGoProcess(t *testing.T, mode string) {
+func snapshotLiveGoProcess(t *testing.T, mode string, sampleRate, gcCycles int) {
 	t.Helper()
 	directory := t.TempDir()
 	source := filepath.Join(directory, "heap.go")
@@ -47,20 +60,27 @@ package main
 
 import (
     "fmt"
+    "os"
     "runtime"
+    "strconv"
     "time"
 )
 
 func main() {
-    // Sample every allocation so this small fixture reliably has heap entries.
-    runtime.MemProfileRate = 1
+    rate, err := strconv.Atoi(os.Args[1])
+    if err != nil { panic(err) }
+    gcCycles, err := strconv.Atoi(os.Args[2])
+    if err != nil { panic(err) }
+    // Rate 1 makes the enabled case deterministic; rate 0 disables profiling.
+    runtime.MemProfileRate = rate
     payloads := make([][]byte, 8)
     for i := range payloads {
         payloads[i] = make([]byte, 128<<10)
         payloads[i][0] = byte(i)
     }
-    runtime.GC()
-    runtime.GC()
+    for i := 0; i < gcCycles; i++ {
+        runtime.GC()
+    }
     fmt.Println("ready")
     time.Sleep(time.Minute)
     runtime.KeepAlive(payloads)
@@ -78,7 +98,9 @@ func main() {
 
 	fixtureCtx, stopFixture := context.WithTimeout(t.Context(), time.Minute)
 	defer stopFixture()
-	command := exec.CommandContext(fixtureCtx, executable)
+	command := exec.CommandContext(fixtureCtx, executable, strconv.Itoa(sampleRate), strconv.Itoa(gcCycles))
+	// Only explicit collections may publish the fixture's heap profile.
+	command.Env = append(os.Environ(), "GOGC=off", "GOMEMLIMIT=off")
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -95,41 +117,92 @@ func main() {
 		t.Fatal("Go fixture did not acknowledge readiness")
 	}
 
-	identity, err := memsnapshot.ReadIdentity(command.Process.Pid)
+	process, err := memsnapshot.ReadProcessInstanceID(command.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	captureCtx, cancelCapture := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancelCapture()
-	result, err := collector.Capture(captureCtx, identity, collector.Options{
-		TopK: 10, CaptureTimeout: 10 * time.Second,
+	snapshotCtx, cancelSnapshot := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancelSnapshot()
+	result, err := collector.Snapshot(snapshotCtx, process, collector.Options{
+		MaxMemoryObjectEntries: 10, SnapshotTimeout: 10 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Identity != identity || result.Language != memsnapshot.LanguageGo ||
+	if result.Process != process || result.Language != memsnapshot.LanguageGo ||
 		result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
 		t.Fatalf("live Go collector result = %+v", result)
 	}
 	snapshot := result.Snapshot
-	if snapshot.Status != memsnapshot.StatusComplete && snapshot.Status != memsnapshot.StatusPartial {
-		t.Fatalf("live Go snapshot status = %q, reason = %q",
-			snapshot.Status, snapshot.Reason)
+	if snapshot.RuntimeVersion == "" {
+		t.Fatalf("live Go snapshot has no runtime version: %+v", snapshot)
 	}
-	if snapshot.RuntimeVersion == "" || len(snapshot.Entries) == 0 {
-		t.Fatalf("live Go snapshot has no runtime data: %+v", snapshot)
+	if sampleRate == 0 {
+		if snapshot.Status != memsnapshot.SnapshotStatusUnavailable ||
+			snapshot.StatusReason != "Go heap profiling is disabled by MemProfileRate=0" ||
+			len(snapshot.Entries) != 0 || snapshot.OutputTruncated {
+			t.Fatalf("disabled Go profiling snapshot = %+v", snapshot)
+		}
+	} else if gcCycles == 0 {
+		if snapshot.Status != memsnapshot.SnapshotStatusUnavailable ||
+			snapshot.StatusReason != "Go heap profile has no published statistics" ||
+			len(snapshot.Entries) != 0 || snapshot.OutputTruncated {
+			t.Fatalf("unpublished Go heap profile snapshot = %+v", snapshot)
+		}
+	} else {
+		if snapshot.Status != memsnapshot.SnapshotStatusComplete && snapshot.Status != memsnapshot.SnapshotStatusPartial {
+			t.Fatalf("live Go snapshot status = %q, reason = %q",
+				snapshot.Status, snapshot.StatusReason)
+		}
+		if len(snapshot.Entries) == 0 {
+			t.Fatalf("live Go snapshot has no runtime data: %+v", snapshot)
+		}
+		for index := range snapshot.Entries {
+			if kind := snapshot.Entries[index].Kind; kind != "inuse_space_objects" {
+				t.Fatalf("live Go entry %d kind = %q, want inuse_space_objects", index, kind)
+			}
+		}
 	}
+
+	t.Run("snapshot timeout", func(t *testing.T) {
+		result, err := collector.Snapshot(t.Context(), process, collector.Options{
+			MaxMemoryObjectEntries: 10, SnapshotTimeout: time.Nanosecond,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Snapshot.Status != memsnapshot.SnapshotStatusFailed || len(result.Snapshot.Entries) != 0 ||
+			!strings.Contains(result.Snapshot.StatusReason, context.DeadlineExceeded.Error()) {
+			t.Fatalf("timed-out Go snapshot = %+v", result.Snapshot)
+		}
+		if result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
+			t.Fatalf("timed-out Go snapshot lost process memory: %+v", result)
+		}
+	})
+
+	t.Run("exit before detection", func(t *testing.T) {
+		// Selection can succeed before the process exits and removes its procfs files.
+		stopFixture()
+		_ = command.Wait()
+		result, err := collector.Snapshot(t.Context(), process, collector.Options{})
+		if result != nil || !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("exited process snapshot = %+v, %v; want no result and missing process error", result, err)
+		}
+		if !strings.Contains(err.Error(), "detect process runtime:") {
+			t.Fatalf("missing detection error context: %v", err)
+		}
+	})
 }
 
-// TestCaptureLiveHotSpotProcess is an optional environment validation rather
+// TestSnapshotLiveHotSpotProcess is an optional environment validation rather
 // than a required CI gate. It exercises a real HotSpot process when a supported
 // JDK is already available and otherwise skips without installing one.
-func TestCaptureLiveHotSpotProcess(t *testing.T) {
-	t.Run("arrays", func(t *testing.T) { captureLiveHotSpotProcess(t, false) })
-	t.Run("finalizable", func(t *testing.T) { captureLiveHotSpotProcess(t, true) })
+func TestSnapshotLiveHotSpotProcess(t *testing.T) {
+	t.Run("arrays", func(t *testing.T) { snapshotLiveHotSpotProcess(t, false) })
+	t.Run("finalizable", func(t *testing.T) { snapshotLiveHotSpotProcess(t, true) })
 }
 
-func captureLiveHotSpotProcess(t *testing.T, finalizable bool) {
+func snapshotLiveHotSpotProcess(t *testing.T, finalizable bool) {
 	t.Helper()
 	javaPath, javaErr := exec.LookPath("java")
 	javacPath, javacErr := exec.LookPath("javac")
@@ -201,29 +274,34 @@ public class HeapFixture {
 		t.Fatal("HotSpot fixture did not acknowledge readiness")
 	}
 
-	identity, err := memsnapshot.ReadIdentity(command.Process.Pid)
+	process, err := memsnapshot.ReadProcessInstanceID(command.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	captureCtx, cancelCapture := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancelCapture()
-	result, err := collector.Capture(captureCtx, identity, collector.Options{
-		TopK: 10, CaptureTimeout: 15 * time.Second,
+	snapshotCtx, cancelSnapshot := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancelSnapshot()
+	result, err := collector.Snapshot(snapshotCtx, process, collector.Options{
+		MaxMemoryObjectEntries: 10, SnapshotTimeout: 15 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Identity != identity || result.Language != memsnapshot.LanguageJava ||
+	if result.Process != process || result.Language != memsnapshot.LanguageJava ||
 		result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
 		t.Fatalf("live Java collector result = %+v", result)
 	}
 	snapshot := result.Snapshot
-	if snapshot.Status != memsnapshot.StatusComplete && snapshot.Status != memsnapshot.StatusPartial {
+	if snapshot.Status != memsnapshot.SnapshotStatusComplete && snapshot.Status != memsnapshot.SnapshotStatusPartial {
 		t.Fatalf("live HotSpot snapshot status = %q, reason = %q",
-			snapshot.Status, snapshot.Reason)
+			snapshot.Status, snapshot.StatusReason)
 	}
 	if snapshot.RuntimeVersion == "" || len(snapshot.Entries) == 0 {
 		t.Fatalf("live HotSpot snapshot has no runtime data: %+v", snapshot)
+	}
+	for index := range snapshot.Entries {
+		if kind := snapshot.Entries[index].Kind; kind != "object_class" {
+			t.Fatalf("live HotSpot entry %d kind = %q, want object_class", index, kind)
+		}
 	}
 	if finalizable {
 		for _, entry := range snapshot.Entries {
@@ -312,7 +390,7 @@ func parseJavaMajor(version string) (int, error) {
 	return major, nil
 }
 
-func TestCaptureLiveCPythonProcess(t *testing.T) {
+func TestSnapshotLiveCPythonProcess(t *testing.T) {
 	pythonPath, err := exec.LookPath("python3")
 	if err != nil {
 		skipMissingRuntime(t, "python3 is not installed")
@@ -344,19 +422,19 @@ time.sleep(60)
 		t.Fatal("CPython fixture did not acknowledge readiness")
 	}
 
-	identity, err := memsnapshot.ReadIdentity(command.Process.Pid)
+	process, err := memsnapshot.ReadProcessInstanceID(command.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	captureCtx, cancelCapture := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancelCapture()
-	result, err := collector.Capture(captureCtx, identity, collector.Options{
-		TopK: 10, CaptureTimeout: 10 * time.Second,
+	snapshotCtx, cancelSnapshot := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancelSnapshot()
+	result, err := collector.Snapshot(snapshotCtx, process, collector.Options{
+		MaxMemoryObjectEntries: 10, SnapshotTimeout: 10 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Identity != identity || result.Language != memsnapshot.LanguagePython ||
+	if result.Process != process || result.Language != memsnapshot.LanguagePython ||
 		result.ProcessMemory == nil || result.ProcessMemory.RSSBytes == nil {
 		t.Fatalf("live Python collector result = %+v", result)
 	}
@@ -365,18 +443,35 @@ time.sleep(60)
 	// uniform discovery ABI. In particular, some builds export _PyRuntime but
 	// expose neither Py_Version nor a versioned libpython mapping. The provider
 	// classifies that environment as unsupported; skip it without hiding actual
-	// capture failures, which use StatusFailed.
-	if snapshot.Status == memsnapshot.StatusUnavailable &&
-		strings.HasPrefix(snapshot.Reason, "CPython runtime is unsupported:") {
+	// capture failures, which use SnapshotStatusFailed.
+	if snapshot.Status == memsnapshot.SnapshotStatusUnavailable &&
+		strings.HasPrefix(snapshot.StatusReason, "CPython runtime is unsupported:") {
 		skipMissingRuntime(t, "live CPython snapshot is unsupported in this environment: %s",
-			snapshot.Reason)
+			snapshot.StatusReason)
 	}
-	if snapshot.Status != memsnapshot.StatusComplete && snapshot.Status != memsnapshot.StatusPartial {
+	if snapshot.Status != memsnapshot.SnapshotStatusComplete && snapshot.Status != memsnapshot.SnapshotStatusPartial {
 		t.Fatalf("live CPython snapshot status = %q, reason = %q",
-			snapshot.Status, snapshot.Reason)
+			snapshot.Status, snapshot.StatusReason)
 	}
 	if snapshot.RuntimeVersion == "" || len(snapshot.Entries) == 0 {
 		t.Fatalf("live CPython snapshot has no runtime data: %+v", snapshot)
+	}
+	for index := range snapshot.Entries {
+		if kind := snapshot.Entries[index].Kind; kind != "gc_tracked_object_type" {
+			t.Fatalf("live CPython entry %d kind = %q, want gc_tracked_object_type", index, kind)
+		}
+	}
+
+	// Exercise the provider boundary directly so collector trimming cannot hide
+	// a provider that ignores MaxMemoryObjectEntries.
+	bounded, err := python.New().Snapshot(snapshotCtx, memsnapshot.Request{
+		Process: process, MaxMemoryObjectEntries: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bounded.Entries) != 1 || !bounded.OutputTruncated {
+		t.Fatalf("live CPython provider did not apply MaxMemoryObjectEntries: %+v", bounded)
 	}
 }
 

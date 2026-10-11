@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	maxSearchLimit = 1001
+	maxValuesSize = 1001
 )
 
 // Config contains the Elasticsearch settings used by profiling storage.
@@ -51,6 +51,7 @@ type Filter struct {
 	EndTime           time.Time
 	ProfileType       string
 	Limit             int
+	BatchSize         int
 	Offset            int
 }
 
@@ -112,12 +113,12 @@ func (s *Store) Ready(ctx context.Context) error {
 	return nil
 }
 
-// Search returns profiling windows matching filter.
-func (s *Store) Search(ctx context.Context, filter *Filter) ([]*Document, error) {
+// Search delivers matching profiling windows without retaining earlier batches.
+func (s *Store) Search(ctx context.Context, filter *Filter, consume func([]*Document) error) error {
 	if s == nil || s.store == nil {
-		return nil, errors.New("profile storage is not initialized")
+		return errors.New("profile storage is not initialized")
 	}
-	return s.store.Query(ctx, buildSearchQuery(filter))
+	return s.store.Query(ctx, buildSearchQuery(filter), consume)
 }
 
 // ListByTracerID returns one page of profiling windows for a task.
@@ -127,11 +128,19 @@ func (s *Store) ListByTracerID(
 	limit int,
 	offset int,
 ) ([]*Document, error) {
-	return s.Search(ctx, &Filter{
+	var documents []*Document
+	err := s.Search(ctx, &Filter{
 		TracerID: tracerID,
 		Limit:    limit,
 		Offset:   offset,
+	}, func(batch []*Document) error {
+		documents = append(documents, batch...)
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return documents, nil
 }
 
 // Values returns distinct indexed values matching filter.
@@ -151,14 +160,15 @@ func (s *Store) Values(
 		ctx,
 		normalizedField,
 		buildAggregationQuery(filter),
-		normalizeSearchLimit(filter),
+		normalizeValuesSize(filter),
 	)
 }
 
 func buildSearchQuery(filter *Filter) driver.Query {
 	query := buildAggregationQuery(filter)
-	query.Limit = normalizeSearchLimit(filter)
-	if filter != nil && filter.Offset > 0 {
+	if filter != nil {
+		query.Limit = filter.Limit
+		query.BatchSize = filter.BatchSize
 		query.Offset = filter.Offset
 	}
 	query.Sorts = []driver.Sort{{Field: types.DocumentFieldUploadedTimestamp, Desc: true}}
@@ -213,8 +223,7 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 		appendTextFilter(types.DocumentFieldHostname, filter.Hostname)
 		query.Filters = append(query.Filters, driver.Filter{
 			Field: types.DocumentFieldContainerHostname,
-			Op:    driver.OpEq,
-			Value: "",
+			Op:    driver.OpNotExists,
 		})
 	}
 	return query
@@ -242,11 +251,11 @@ func normalizeAggregationField(field string) (string, error) {
 	}
 }
 
-func normalizeSearchLimit(filter *Filter) int {
+func normalizeValuesSize(filter *Filter) int {
 	if filter == nil || filter.Limit <= 0 {
 		return 100
 	}
-	return min(filter.Limit, maxSearchLimit)
+	return min(filter.Limit, maxValuesSize)
 }
 
 func (s *Store) prepareDocument(document *Document) error {

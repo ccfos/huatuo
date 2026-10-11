@@ -16,7 +16,7 @@ is_container && skip "native off-CPU PID filtering requires host PID namespace"
 bpf_tool_setup profiler native_offcpu_profiler profiler-offcpu
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_offcpu.user.c"
 
-command -v taskset > /dev/null || skip "taskset(1) not in PATH"
+require_commands taskset
 
 allowed_cpu_ids() {
 	local allowed_list segment start end cpu

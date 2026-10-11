@@ -129,7 +129,7 @@ func TestCleanupTerminalJobsDrainsBacklogOlderThanOneBatch(t *testing.T) {
 		t.Fatalf("%d Jobs are still stored after the cleanup, want 0", got)
 	}
 	// 1000 + 1000 + 500, the short batch ends the loop.
-	if want := backlog/jobCleanupBatchSize + 1; store.calls != want {
+	if want := backlog/jobBatchSize + 1; store.calls != want {
 		t.Fatalf("DeleteTerminalBefore calls = %d, want %d", store.calls, want)
 	}
 }
@@ -173,7 +173,7 @@ func TestCleanupTerminalJobsStopsOnStoreError(t *testing.T) {
 	if store.calls != 2 {
 		t.Fatalf("DeleteTerminalBefore calls = %d, want 2 (the loop must stop at the failing call)", store.calls)
 	}
-	if want := backlog - jobCleanupBatchSize; store.stored() != want {
+	if want := backlog - jobBatchSize; store.stored() != want {
 		t.Fatalf("%d Jobs are still stored, want %d", store.stored(), want)
 	}
 }

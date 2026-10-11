@@ -92,7 +92,8 @@ func TestProcessStackMapFrameCount(t *testing.T) {
 			stacks:     map[uint32][]byte{1: stackBytes(0xaaaa0001, 0xaaaa0002), 2: stackBytes(0xbbbb0001, 0xbbbb0002, 0xbbbb0003)},
 			stackMapID: 99,
 		}
-		items, err := processStackMap(b, "source_counts", symbol.NewUsymResolver(), nil,
+		items, err := processStackMap(
+			b, "source_counts", symbol.NewUsymResolver(), nil,
 			func(key bpfabi.IrqtracingStackKey) string { return "label" },
 			"source",
 		)
@@ -109,7 +110,8 @@ func TestProcessStackMapFrameCount(t *testing.T) {
 			stacks:     map[uint32][]byte{0: stackBytes(0xaaaa0001), 1: stackBytes(0xbbbb0001)},
 			stackMapID: 99,
 		}
-		items, err := processStackMap(b, "source_counts", symbol.NewUsymResolver(), nil,
+		items, err := processStackMap(
+			b, "source_counts", symbol.NewUsymResolver(), nil,
 			func(key bpfabi.IrqtracingStackKey) string { return "label" },
 			"source",
 		)
@@ -125,7 +127,8 @@ func TestProcessStackMapFrameCount(t *testing.T) {
 			items:      map[string][]bpf.MapItem{"source_counts": {mapItem(key, 1)}},
 			stackMapID: 99,
 		}
-		_, err := processStackMap(b, "source_counts", symbol.NewUsymResolver(), nil,
+		_, err := processStackMap(
+			b, "source_counts", symbol.NewUsymResolver(), nil,
 			func(key bpfabi.IrqtracingStackKey) string { return "label" },
 			"source",
 		)
@@ -139,7 +142,8 @@ func TestProcessStackMapFrameCount(t *testing.T) {
 			stacks:     map[uint32][]byte{1: stackBytes(0xaaaa0001, 0xaaaa0002, 0, 0xaaaa0004), 2: stackBytes(0xbbbb0001, 0, 0xbbbb0003)},
 			stackMapID: 99,
 		}
-		items, err := processStackMap(b, "source_counts", symbol.NewUsymResolver(), nil,
+		items, err := processStackMap(
+			b, "source_counts", symbol.NewUsymResolver(), nil,
 			func(key bpfabi.IrqtracingStackKey) string { return "label" },
 			"source",
 		)
@@ -164,7 +168,8 @@ func TestProcessStackMapFrameCount(t *testing.T) {
 			},
 			stackMapID: 99,
 		}
-		items, err := processStackMap(b, "source_counts", symbol.NewUsymResolver(), nil,
+		items, err := processStackMap(
+			b, "source_counts", symbol.NewUsymResolver(), nil,
 			func(key bpfabi.IrqtracingStackKey) string { return "label" },
 			"source",
 		)
@@ -186,7 +191,8 @@ func TestProcessStackMapFrameCount(t *testing.T) {
 			stackMapID: 99,
 		}
 
-		items, err := processStackMap(b, "source_counts", symbol.NewUsymResolver(), nil,
+		items, err := processStackMap(
+			b, "source_counts", symbol.NewUsymResolver(), nil,
 			func(key bpfabi.IrqtracingStackKey) string { return "label" },
 			"source",
 		)

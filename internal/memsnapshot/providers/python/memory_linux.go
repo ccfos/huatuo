@@ -22,12 +22,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const (
-	// Remote values must never be allowed to drive an unbounded allocation in
-	// Huatuo. Current CPython metadata reads are at most a few KiB; these limits
-	// leave ample headroom while containing corrupt or concurrently changed data.
-	maxReadBytes = 1 << 20
-)
+// Remote values must never be allowed to drive an unbounded allocation in
+// Huatuo. Current CPython metadata reads are at most a few KiB; these limits
+// leave ample headroom while containing corrupt or concurrently changed data.
+const maxReadBytes = 1 << 20
 
 type memoryReader interface {
 	read(address uint64, size int) ([]byte, error)
@@ -96,4 +94,16 @@ func validateRead(address uint64, size int) error {
 		return errors.New("CPython process memory range overflows the address space")
 	}
 	return nil
+}
+
+func alignUp(value, alignment uint64) uint64 {
+	return (value + alignment - 1) &^ (alignment - 1)
+}
+
+func plausiblePtr(address uint64) bool {
+	return plausibleAddr(address) && address&7 == 0
+}
+
+func plausibleAddr(address uint64) bool {
+	return address >= 0x10000 && address < 1<<56
 }

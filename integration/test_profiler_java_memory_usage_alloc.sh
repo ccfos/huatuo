@@ -26,11 +26,7 @@ readonly PROFILER_DURATION=10
 readonly PROFILER_AGGR_INTERVAL=10
 readonly EXPECTED_METHOD="TestProfilerJavaMemory.allocateHotMethod"
 
-command -v java > /dev/null || skip "java is not installed"
-command -v javac > /dev/null || skip "javac is not installed"
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -x "${PROFILER_TOOL_DIR}/bin/asprof" ]] \
-	|| skip "asprof missing: ${PROFILER_TOOL_DIR}/bin/asprof"
+require_commands java javac "${PROFILER_TOOL_DIR}/bin/asprof"
 [[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
 	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 

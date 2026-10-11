@@ -24,9 +24,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-command -v jq > /dev/null || skip "jq command is not installed"
-[[ -x "${HUATUO_BAMAI_BIN}" ]] \
-	|| fatal "huatuo-bamai binary missing: ${HUATUO_BAMAI_BIN}"
+require_commands jq
 
 readonly CPUSYS_FIXTURE_ROOT="${HUATUO_BAMAI_TEST_TMPDIR}/cpusys-fixture"
 readonly CPUSYS_PROC_STAT="${CPUSYS_FIXTURE_ROOT}/proc/stat"

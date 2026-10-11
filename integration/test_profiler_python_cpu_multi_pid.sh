@@ -25,10 +25,9 @@ readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
 readonly FIXTURE="${ROOT_DIR}/integration/testdata/test_profiler_python_cpu.py"
 readonly PROFILER_DURATION=10
 
-command -v python3 > /dev/null || skip "python3 is not installed"
+require_commands python3
 readonly PYSPY_BIN="${PROFILER_TOOL_DIR}/py-spy"
-[[ -x "${PYSPY_BIN}" ]] || skip "py-spy missing: ${PYSPY_BIN}"
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
+require_commands "${PYSPY_BIN}"
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-python-multi.XXXXXX")
 PROFILER_PROFILER_CHILD_PID_FILE="${WORK_DIR}/child.pid"
@@ -91,5 +90,9 @@ grep -qh "process ${PROFILER_CHILD_PID}.*child_hot_method" "${FOLDED_FILES[@]}" 
 	|| fatal "child workload stack not found for PID ${PROFILER_CHILD_PID}"
 grep -qh "process ${PROFILER_INDEPENDENT_PID}.*independent_hot_method" "${FOLDED_FILES[@]}" \
 	|| fatal "independent workload stack not found for PID ${PROFILER_INDEPENDENT_PID}"
+
+if grep -Eq 'py-spy>|Wrote raw flamegraph data|Sampling process .* times a second|You can use the flamegraph\.pl' "${FOLDED_FILES[@]}"; then
+	fatal "py-spy status output was included in folded samples"
+fi
 
 log_info "Python parent, child, and independent stacks are correctly attributed"

@@ -14,17 +14,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Memory-controller helpers for isolated, flat test cgroups.
+# Memory-controller helpers for test cgroups.
 set -euo pipefail
 
-# cgroup_create <name>: print the new memory cgroup path. Prefer v1 on hybrid hosts.
-cgroup_create() {
+# Prefer v1 on hybrid hosts, where it owns the memory controller.
+cgroup_memory_root() {
 	local root
-	[[ $1 =~ ^[a-zA-Z0-9_-]+$ ]] || return 1
 	root=$(findmnt -rn -t cgroup -O memory -o TARGET) || true
 	if [[ -z "${root}" ]]; then
 		root=$(findmnt -rn -t cgroup2 -o TARGET) || return 1
 	fi
+	printf '%s\n' "${root}"
+}
+
+# cgroup_find_container <root> <container-id>: support cgroupfs and systemd scopes.
+cgroup_find_container() {
+	local root=$1 container_id=$2 path
+	[[ ${container_id} =~ ^[0-9a-f]{64}$ ]] || return 1
+	path=$(find "${root}" -type d \
+		\( -name "${container_id}" -o -name "*-${container_id}.scope" \) -print -quit) || return 1
+	[[ -n "${path}" ]] || return 1
+	printf '%s\n' "${path}"
+}
+
+# cgroup_create <name>: print the new memory cgroup path.
+cgroup_create() {
+	local root
+	[[ $1 =~ ^[a-zA-Z0-9_-]+$ ]] || return 1
+	root=$(cgroup_memory_root) || return 1
 	mkdir "${root}/$1" || return 1
 	printf '%s\n' "${root}/$1"
 }

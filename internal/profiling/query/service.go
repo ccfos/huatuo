@@ -33,6 +33,9 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
+// The extra probe record detects truncation before a partial flamegraph is published.
+const maxProfileQueryRecords = 100000
+
 // ProfileQueryService provides Pyroscope-compatible profile queries.
 type ProfileQueryService struct {
 	profileStorage *profilingstore.Store
@@ -61,7 +64,7 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		StartTime:   time.UnixMilli(req.Start),
 		EndTime:     time.UnixMilli(req.End),
 		ProfileType: req.ProfileTypeID,
-		Limit:       100,
+		Limit:       maxProfileQueryRecords + 1,
 	}
 
 	log.Debugf("SelectMergeStacktracesRequest: %+v", req)
@@ -92,22 +95,28 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		return nil, fmt.Errorf("%w: id, hostname, or container must be specified", ErrInvalidQuery)
 	}
 
-	// search
-	profileDocs, err := s.profileStorage.Search(ctx, filter)
-	if err != nil {
-		return nil, fmt.Errorf("search profiles: %w", err)
-	}
-	if len(profileDocs) == 0 {
-		return nil, ErrProfilesAbsent
-	}
-
-	// merge profileDocs
 	var profilesMerge pprof.ProfileMerge
-	for _, profileDoc := range profileDocs {
-		profile := profileDoc.ProfileData.Profile
-		if err := profilesMerge.Merge(profile); err != nil {
-			return nil, fmt.Errorf("merge profile: %w", err)
+	consumed := 0
+	err = s.profileStorage.Search(ctx, filter, func(batch []*profilingstore.Document) error {
+		if len(batch) > maxProfileQueryRecords-consumed {
+			return fmt.Errorf("%w: matching profiles exceed %d records; narrow the time range or filters", ErrInvalidQuery, maxProfileQueryRecords)
 		}
+		for _, document := range batch {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := profilesMerge.Merge(document.ProfileData.Profile); err != nil {
+				return fmt.Errorf("merge profile: %w", err)
+			}
+		}
+		consumed += len(batch)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query profiles: %w", err)
+	}
+	if consumed == 0 {
+		return nil, ErrProfilesAbsent
 	}
 	profile := profilesMerge.Profile()
 	if profile == nil {

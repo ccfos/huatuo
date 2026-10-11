@@ -144,19 +144,19 @@ func TestContainerControllerScopeAndPartialFailure(t *testing.T) {
 		counts[id]++
 		return containerRecordForTest(id), nil
 	}
-	records, err, retry := c.refresh(t.Context(), nil, true)
-	if err != nil || retry || len(records) != 2 || records[first] == nil || records[sidecar] == nil {
-		t.Fatalf("scope=%v, err=%v", records, err)
+	snapshot, err, retry := c.refresh(t.Context(), nil, true)
+	if err != nil || retry || len(snapshot.records) != 2 || snapshot.records[first] == nil || snapshot.records[sidecar] == nil {
+		t.Fatalf("scope=%v, err=%v", snapshot.records, err)
 	}
-	store.commit(records, err)
-	records, err, _ = c.refresh(t.Context(), map[string]bool{sidecar: false}, false)
+	store.commit(snapshot, err)
+	snapshot, err, _ = c.refresh(t.Context(), map[string]bool{sidecar: false}, false)
 	if err != nil || counts[first] != 1 || counts[sidecar] != 2 {
 		t.Fatal("increment resolved unrelated containers")
 	}
-	store.commit(records, err)
+	store.commit(snapshot, err)
 	c.fetch = func(context.Context) (corev1.PodList, error) { return corev1.PodList{}, errors.New("query failed") }
-	records, err, retry = c.refresh(t.Context(), nil, false)
-	store.commit(records, err)
+	snapshot, err, retry = c.refresh(t.Context(), nil, false)
+	store.commit(snapshot, err)
 	if err == nil || !retry || len(store.records) != 2 {
 		t.Fatal("failed query deleted cached containers")
 	}
@@ -174,8 +174,8 @@ func TestContainerControllerReadinessRetriesAreBounded(t *testing.T) {
 		return nil, errors.New("init pid not ready")
 	}
 	for i := 0; i < 4; i++ {
-		records, err, retry := c.refresh(t.Context(), nil, i == 0)
-		store.commit(records, err)
+		snapshot, err, retry := c.refresh(t.Context(), nil, i == 0)
+		store.commit(snapshot, err)
 		if err == nil || retry != (i < 2) {
 			t.Fatalf("attempt %d: err=%v retry=%t", i, err, retry)
 		}
@@ -186,8 +186,8 @@ func TestContainerControllerReadinessRetriesAreBounded(t *testing.T) {
 	c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
 		return containerRecordForTest(id), nil
 	}
-	records, err, retry := c.refresh(t.Context(), map[string]bool{id: false}, false)
-	if err != nil || retry || records[id] == nil {
+	snapshot, err, retry := c.refresh(t.Context(), map[string]bool{id: false}, false)
+	if err != nil || retry || snapshot.records[id] == nil {
 		t.Fatal("new hint did not recover readiness")
 	}
 }
@@ -212,5 +212,199 @@ func TestContainerControllerShutdownCancelsFetch(t *testing.T) {
 	}
 	if _, err := sub.DrainEvents(); !errors.Is(err, ErrContainerSubscriptionClosed) {
 		t.Fatal(err)
+	}
+}
+
+func TestContainerControllerDeletionBeforeKubeletUpdate(t *testing.T) {
+	for _, name := range []string{"metadata available", "runtime already removed"} {
+		t.Run(name, func(t *testing.T) {
+			useContainerdForTest(t)
+			id := strings.Repeat("a", 64)
+			store := newTestContainerStore()
+			c := newContainerController(store)
+			list := runningPodListForTest(id)
+			c.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
+			c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+				return containerRecordForTest(id), nil
+			}
+			snapshot, err, _ := c.refresh(t.Context(), nil, true)
+			store.commit(snapshot, err)
+			sub := subscribeForTest(t, store)
+			if _, err := sub.DrainEvents(); err != nil {
+				t.Fatal(err)
+			}
+			if name == "runtime already removed" {
+				c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+					return nil, errors.New("init pid file no longer exists")
+				}
+			}
+			hints := map[string]bool{id: true}
+			for range 4 {
+				snapshot, err, retry := c.refresh(t.Context(), hints, false)
+				store.commit(snapshot, err)
+				if !retry || store.records[id] == nil {
+					t.Fatalf("unconfirmed deletion: retry=%t, cached=%t", retry, store.records[id] != nil)
+				}
+				if update, err := sub.DrainEvents(); err != nil || len(update.Events) != 0 {
+					t.Fatalf("deletion hint changed the view: update=%+v, err=%v", update, err)
+				}
+				hints = nil
+			}
+			list = corev1.PodList{}
+			snapshot, err, retry := c.refresh(t.Context(), nil, false)
+			store.commit(snapshot, err)
+			if err != nil || retry || store.records[id] != nil {
+				t.Fatalf("confirmed deletion: cached=%t, retry=%t, err=%v", store.records[id] != nil, retry, err)
+			}
+			update, err := sub.DrainEvents()
+			if err != nil || len(update.Events) != 1 || update.Events[0].Kind != ContainerDeleted || update.Events[0].Container.Key.ID != id {
+				t.Fatalf("missing deletion event: update=%+v, err=%v", update, err)
+			}
+		})
+	}
+}
+
+func TestContainerControllerUnmatchedCreationHintExpires(t *testing.T) {
+	useContainerdForTest(t)
+	id, unmatched := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	store := newTestContainerStore()
+	store.commit(containerSnapshot{records: map[string]*containerRecord{id: containerRecordForTest(id)}, isComplete: true}, nil)
+	sub := subscribeForTest(t, store)
+	if _, err := sub.DrainEvents(); err != nil {
+		t.Fatal(err)
+	}
+	c := newContainerController(store)
+	c.fetch = func(context.Context) (corev1.PodList, error) { return corev1.PodList{}, nil }
+	hints := map[string]bool{unmatched: false}
+	for attempt := range 4 {
+		snapshot, err, retry := c.refresh(t.Context(), hints, false)
+		store.commit(snapshot, err)
+		if len(store.records) != 0 {
+			t.Fatal("unmatched hint retained a container absent from a complete list")
+		}
+		if retry != (attempt < 2) || (err != nil) != (attempt < 2) {
+			t.Fatalf("attempt=%d, retry=%t, err=%v", attempt, retry, err)
+		}
+		hints = nil
+	}
+	update, err := sub.DrainEvents()
+	if err != nil || update.Mode != ContainerUpdateFull || len(update.Events) != 0 {
+		t.Fatalf("expired hint blocked recovery: update=%+v, err=%v", update, err)
+	}
+}
+
+func TestContainerControllerMetadataFailureDoesNotPreventDeletion(t *testing.T) {
+	useContainerdForTest(t)
+	deleted, healthy, unresolved := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	store := newTestContainerStore()
+	previousView := containerView
+	containerView = store
+	t.Cleanup(func() { containerView = previousView })
+	store.commit(containerSnapshot{records: map[string]*containerRecord{
+		deleted: containerRecordForTest(deleted), healthy: containerRecordForTest(healthy),
+	}, isComplete: true}, nil)
+	sub := subscribeForTest(t, store)
+	if _, err := sub.DrainEvents(); err != nil {
+		t.Fatal(err)
+	}
+	c := newContainerController(store)
+	c.fetch = func(context.Context) (corev1.PodList, error) { return runningPodListForTest(healthy, unresolved), nil }
+	c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+		return nil, errors.New("init pid not ready")
+	}
+	snapshot, err, _ := c.refresh(t.Context(), nil, false)
+	if err == nil || !snapshot.isComplete {
+		t.Fatalf("metadata failure changed membership completeness: complete=%t, err=%v", snapshot.isComplete, err)
+	}
+	store.commit(snapshot, err)
+	if cached, err := ContainerByID(deleted); err != nil || cached != nil {
+		t.Fatalf("deleted container still available: cached=%v, err=%v", cached, err)
+	}
+	if store.records[healthy] == nil || store.records[unresolved] != nil {
+		t.Fatal("partial metadata resolution lost a healthy container or published a nil record")
+	}
+	if _, err := sub.DrainEvents(); !errors.Is(err, ErrContainersUnavailable) {
+		t.Fatalf("incomplete metadata view became available: %v", err)
+	}
+	c.resolve = func(id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+		return containerRecordForTest(id), nil
+	}
+	snapshot, err, _ = c.refresh(t.Context(), nil, false)
+	store.commit(snapshot, err)
+	update, err := sub.DrainEvents()
+	if err != nil || update.Mode != ContainerUpdateFull || len(update.Events) != 2 {
+		t.Fatalf("recovery did not publish a full view: update=%+v, err=%v", update, err)
+	}
+	for _, event := range update.Events {
+		if event.Container.Key.ID == deleted {
+			t.Fatal("recovery resurrected the deleted container")
+		}
+	}
+}
+
+func TestContainerControllerIncompleteListPreservesMetadata(t *testing.T) {
+	for _, name := range []string{"request failure", "missing spec", "invalid container id"} {
+		t.Run(name, func(t *testing.T) {
+			useContainerdForTest(t)
+			id, other := strings.Repeat("a", 64), strings.Repeat("b", 64)
+			store := newTestContainerStore()
+			store.commit(containerSnapshot{records: map[string]*containerRecord{id: containerRecordForTest(id)}, isComplete: true}, nil)
+			c := newContainerController(store)
+			list := runningPodListForTest(other)
+			switch name {
+			case "missing spec":
+				list.Items[0].Spec.Containers = nil
+			case "invalid container id":
+				list.Items[0].Status.ContainerStatuses[0].ContainerID = "containerd://invalid"
+			}
+			c.fetch = func(context.Context) (corev1.PodList, error) {
+				if name == "request failure" {
+					return corev1.PodList{}, errors.New("kubelet unavailable")
+				}
+				return list, nil
+			}
+			snapshot, err, _ := c.refresh(t.Context(), nil, false)
+			if err == nil || snapshot.isComplete {
+				t.Fatalf("invalid list accepted: complete=%t, err=%v", snapshot.isComplete, err)
+			}
+			store.commit(snapshot, err)
+			if store.records[id] == nil {
+				t.Fatal("incomplete list deleted cached metadata")
+			}
+		})
+	}
+}
+
+func TestContainerControllerReconcilesWithoutHint(t *testing.T) {
+	useContainerdForTest(t)
+	id := strings.Repeat("a", 64)
+	store := newContainerStore()
+	c := newContainerController(store)
+	c.resyncInterval = 25 * time.Millisecond
+	var mu sync.Mutex
+	list := runningPodListForTest(id)
+	c.fetch = func(context.Context) (corev1.PodList, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return list, nil
+	}
+	c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+		return containerRecordForTest(id), nil
+	}
+	c.start()
+	t.Cleanup(func() { c.cancel(); <-c.done })
+	sub := subscribeForTest(t, store)
+	waitContainerViewForTest(t, sub, 1)
+	mu.Lock()
+	list = corev1.PodList{}
+	mu.Unlock()
+	select {
+	case <-sub.Notify():
+	case <-time.After(2 * time.Second):
+		t.Fatal("missing CSS hint prevented periodic reconciliation")
+	}
+	update, err := sub.DrainEvents()
+	if err != nil || len(update.Events) != 1 || update.Events[0].Kind != ContainerDeleted || update.Events[0].Container.Key.ID != id {
+		t.Fatalf("missing deletion event: update=%+v, err=%v", update, err)
 	}
 }

@@ -238,7 +238,7 @@ func TestMemorySnapshotSubscriptionClosurePreservesCooldown(t *testing.T) {
 	}
 }
 
-func TestMemorySnapshotUnavailableViewSuppressesCapture(t *testing.T) {
+func TestMemorySnapshotUnavailableViewSuppressesSnapshot(t *testing.T) {
 	tracker, source := newTestCgroupTracker(t)
 	path := "/" + strings.Repeat("a", 64)
 	createMemoryCgroupForTest(t, source.root, path, 95)
@@ -255,7 +255,7 @@ func TestMemorySnapshotUnavailableViewSuppressesCapture(t *testing.T) {
 	ops, selected := newActionBatchOpsForTest(t)
 	cfg := &Config{}
 	cfg.MemoryThresholdSnapshot.ThresholdPercent = 90
-	cancel, done := runMemorySnapshotForTest(t, &memoryThresholdSnapshot{captureOps: ops}, cfg, source, tracker, subscription)
+	cancel, done := runMemorySnapshotForTest(t, &memoryThresholdSnapshot{snapshotOps: ops}, cfg, source, tracker, subscription)
 	select {
 	case path := <-selected:
 		t.Fatalf("unavailable container view admitted capture for %s", path)

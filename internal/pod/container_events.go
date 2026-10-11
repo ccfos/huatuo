@@ -101,6 +101,13 @@ func (r *containerRecord) sameInstance(other *containerRecord) bool {
 			(r.directory != nil && other.directory != nil && os.SameFile(r.directory, other.directory)))
 }
 
+// A complete snapshot accounts for every in-scope ID. A nil record retains
+// membership while metadata is unresolved; incomplete snapshots cannot delete.
+type containerSnapshot struct {
+	records    map[string]*containerRecord
+	isComplete bool
+}
+
 type containerStore struct {
 	mu          sync.RWMutex
 	records     map[string]*containerRecord
@@ -268,25 +275,25 @@ func (v *containerStore) publish(kind ContainerEventKind, ref ContainerRef) {
 	}
 }
 
-// commit receives immutable records assembled outside the lock. A partial
-// result can establish additions/replacements, but never absence or an empty full view.
-func (v *containerStore) commit(records map[string]*containerRecord, syncErr error) {
+// commit keeps membership completeness separate from metadata readiness, so
+// one unresolved container cannot retain unrelated deleted containers.
+func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if !v.isActive {
 		return
 	}
-	if syncErr == nil {
+	if snapshot.isComplete {
 		for id, previous := range v.records {
-			if _, exists := records[id]; !exists {
+			if _, exists := snapshot.records[id]; !exists {
 				delete(v.records, id)
 				v.publish(ContainerDeleted, previous.ref)
 			}
 		}
 	}
-	for id, record := range records {
+	for id, record := range snapshot.records {
 		previous := v.records[id]
-		if previous == record {
+		if record == nil || previous == record {
 			continue
 		}
 		if previous != nil && previous.sameInstance(record) {

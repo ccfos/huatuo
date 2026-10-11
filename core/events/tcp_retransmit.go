@@ -22,7 +22,7 @@ import (
 	"strconv"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/pcapfilter"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/timeutil"
@@ -71,32 +71,26 @@ func validateTCPRetransmitFilter(config *Config) error {
 // Start launches tcpshark in retransmit mode and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
-	process, err := exec.New(exec.Spec{
+	return c.start(ctx, executil.Run)
+}
+
+func (c *tcpRetransmitTracing) start(
+	ctx context.Context,
+	run func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error),
+) error {
+	result, err := run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, tcpSharkToolName),
 		Args: tcpRetransmitArgs(configSnapshot()),
 	})
 	if err != nil {
-		return fmt.Errorf("create %s process: %w", tcpSharkToolName, err)
-	}
-	if err := process.Run(ctx); err != nil {
-		if errors.Is(err, exec.ErrStopFailed) {
-			stopErr := process.Stop(ctx)
-			if stopErr == nil && errors.Is(err, context.Canceled) {
-				return nil
-			}
-			if stopErr != nil {
-				err = errors.Join(
-					err,
-					fmt.Errorf("retry stop %s: %w", tcpSharkToolName, stopErr),
-				)
-			}
-		} else if errors.Is(err, context.Canceled) {
+		var runErr *executil.RunError
+		if errors.As(err, &runErr) && runErr.IsCancellation() && errors.Is(err, context.Canceled) {
 			return nil
 		}
-		if stderr := process.Stderr(); len(stderr) > 0 {
-			return fmt.Errorf("run %s: %w; stderr: %s", tcpSharkToolName, err, stderr)
+		if result != nil && len(result.Stderr) > 0 {
+			return fmt.Errorf("run tcpshark: %w; stderr: %s", err, result.Stderr)
 		}
-		return fmt.Errorf("run %s: %w", tcpSharkToolName, err)
+		return fmt.Errorf("run tcpshark: %w", err)
 	}
 	return nil
 }
