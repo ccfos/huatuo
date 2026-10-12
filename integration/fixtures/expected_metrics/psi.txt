@@ -1,0 +1,60 @@
+# HELP huatuo_bamai_psi_cpu_some_avg10 at least one task stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_cpu_some_avg10 gauge
+huatuo_bamai_psi_cpu_some_avg10{host="huatuo-dev",region="dev"} 4
+# HELP huatuo_bamai_psi_cpu_some_avg60 at least one task stalled: PSI average over 60 seconds, in percent
+# TYPE huatuo_bamai_psi_cpu_some_avg60 gauge
+huatuo_bamai_psi_cpu_some_avg60{host="huatuo-dev",region="dev"} 2
+# HELP huatuo_bamai_psi_cpu_some_avg300 at least one task stalled: PSI average over 300 seconds, in percent
+# TYPE huatuo_bamai_psi_cpu_some_avg300 gauge
+huatuo_bamai_psi_cpu_some_avg300{host="huatuo-dev",region="dev"} 1
+# HELP huatuo_bamai_psi_cpu_some_seconds_total at least one task stalled: PSI total stall time, in seconds
+# TYPE huatuo_bamai_psi_cpu_some_seconds_total counter
+huatuo_bamai_psi_cpu_some_seconds_total{host="huatuo-dev",region="dev"} 9
+# HELP huatuo_bamai_psi_memory_some_avg10 at least one task stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_memory_some_avg10 gauge
+huatuo_bamai_psi_memory_some_avg10{host="huatuo-dev",region="dev"} 1.5
+# HELP huatuo_bamai_psi_memory_some_avg60 at least one task stalled: PSI average over 60 seconds, in percent
+# TYPE huatuo_bamai_psi_memory_some_avg60 gauge
+huatuo_bamai_psi_memory_some_avg60{host="huatuo-dev",region="dev"} 2.5
+# HELP huatuo_bamai_psi_memory_some_avg300 at least one task stalled: PSI average over 300 seconds, in percent
+# TYPE huatuo_bamai_psi_memory_some_avg300 gauge
+huatuo_bamai_psi_memory_some_avg300{host="huatuo-dev",region="dev"} 3.5
+# HELP huatuo_bamai_psi_memory_some_seconds_total at least one task stalled: PSI total stall time, in seconds
+# TYPE huatuo_bamai_psi_memory_some_seconds_total counter
+huatuo_bamai_psi_memory_some_seconds_total{host="huatuo-dev",region="dev"} 12.5
+# HELP huatuo_bamai_psi_memory_full_avg10 all non-idle tasks stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_memory_full_avg10 gauge
+huatuo_bamai_psi_memory_full_avg10{host="huatuo-dev",region="dev"} 0.25
+# HELP huatuo_bamai_psi_memory_full_avg60 all non-idle tasks stalled: PSI average over 60 seconds, in percent
+# TYPE huatuo_bamai_psi_memory_full_avg60 gauge
+huatuo_bamai_psi_memory_full_avg60{host="huatuo-dev",region="dev"} 0.5
+# HELP huatuo_bamai_psi_memory_full_avg300 all non-idle tasks stalled: PSI average over 300 seconds, in percent
+# TYPE huatuo_bamai_psi_memory_full_avg300 gauge
+huatuo_bamai_psi_memory_full_avg300{host="huatuo-dev",region="dev"} 0.75
+# HELP huatuo_bamai_psi_memory_full_seconds_total all non-idle tasks stalled: PSI total stall time, in seconds
+# TYPE huatuo_bamai_psi_memory_full_seconds_total counter
+huatuo_bamai_psi_memory_full_seconds_total{host="huatuo-dev",region="dev"} 0.5
+# HELP huatuo_bamai_psi_io_some_avg10 at least one task stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_io_some_avg10 gauge
+huatuo_bamai_psi_io_some_avg10{host="huatuo-dev",region="dev"} 1.5
+# HELP huatuo_bamai_psi_io_some_avg60 at least one task stalled: PSI average over 60 seconds, in percent
+# TYPE huatuo_bamai_psi_io_some_avg60 gauge
+huatuo_bamai_psi_io_some_avg60{host="huatuo-dev",region="dev"} 2.5
+# HELP huatuo_bamai_psi_io_some_avg300 at least one task stalled: PSI average over 300 seconds, in percent
+# TYPE huatuo_bamai_psi_io_some_avg300 gauge
+huatuo_bamai_psi_io_some_avg300{host="huatuo-dev",region="dev"} 3.5
+# HELP huatuo_bamai_psi_io_some_seconds_total at least one task stalled: PSI total stall time, in seconds
+# TYPE huatuo_bamai_psi_io_some_seconds_total counter
+huatuo_bamai_psi_io_some_seconds_total{host="huatuo-dev",region="dev"} 12.5
+# HELP huatuo_bamai_psi_io_full_avg10 all non-idle tasks stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_io_full_avg10 gauge
+huatuo_bamai_psi_io_full_avg10{host="huatuo-dev",region="dev"} 0.25
+# HELP huatuo_bamai_psi_io_full_avg60 all non-idle tasks stalled: PSI average over 60 seconds, in percent
+# TYPE huatuo_bamai_psi_io_full_avg60 gauge
+huatuo_bamai_psi_io_full_avg60{host="huatuo-dev",region="dev"} 0.5
+# HELP huatuo_bamai_psi_io_full_avg300 all non-idle tasks stalled: PSI average over 300 seconds, in percent
+# TYPE huatuo_bamai_psi_io_full_avg300 gauge
+huatuo_bamai_psi_io_full_avg300{host="huatuo-dev",region="dev"} 0.75
+# HELP huatuo_bamai_psi_io_full_seconds_total all non-idle tasks stalled: PSI total stall time, in seconds
+# TYPE huatuo_bamai_psi_io_full_seconds_total counter
+huatuo_bamai_psi_io_full_seconds_total{host="huatuo-dev",region="dev"} 0.5

@@ -193,6 +193,39 @@ huatuo_bamai_loadavg_container_nr_uninterruptible{container_host="coredns-855c4d
 |loadavg_container_container_nr_running|Number of running tasks in container|count|Container| host, region |cgroup v1 only|
 |loadavg_container_container_nr_uninterruptible|Number of uninterruptible tasks in container|count|Container| host, region |cgroup v1 only|
 
+### Pressure
+
+Pressure stall information (PSI) quantifies resource contention for CPU, memory
+and IO. Avg values are percentages over the window; the total counters are in
+seconds and can be used with rate(). Host series are exported from
+/proc/pressure, container series (cgroup v2 only) from <cgroup>/<resource>.pressure:
+```bash
+# HELP huatuo_bamai_psi_cpu_some_avg10 at least one task stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_cpu_some_avg10 gauge
+huatuo_bamai_psi_cpu_some_avg10{host="hostname",region="dev"} 0.05
+# HELP huatuo_bamai_psi_cpu_some_seconds_total at least one task stalled: PSI total stall time, in seconds
+# TYPE huatuo_bamai_psi_cpu_some_seconds_total counter
+huatuo_bamai_psi_cpu_some_seconds_total{host="hostname",region="dev"} 615.63
+# HELP huatuo_bamai_psi_memory_full_avg10 all non-idle tasks stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_memory_full_avg10 gauge
+huatuo_bamai_psi_memory_full_avg10{host="hostname",region="dev"} 0.01
+# HELP huatuo_bamai_psi_io_some_avg60 at least one task stalled: PSI average over 60 seconds, in percent
+# TYPE huatuo_bamai_psi_io_some_avg60 gauge
+huatuo_bamai_psi_io_some_avg60{host="hostname",region="dev"} 0.12
+# HELP huatuo_bamai_psi_memory_full_container_avg10 all non-idle tasks stalled: PSI average over 10 seconds, in percent
+# TYPE huatuo_bamai_psi_memory_full_container_avg10 gauge
+huatuo_bamai_psi_memory_full_container_avg10{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+```
+
+|Metric|Description|Unit|Target|Labels|
+|---|---|---|---|---|
+|psi_cpu_some_avg10/avg60/avg300|Share of time at least one task stalled on CPU|percent|Host| host, region |
+|psi_cpu_some_seconds_total|Total CPU stall time|seconds|Host| host, region |
+|psi_memory_some_*|At least one task stalled on memory|percent / seconds|Host| host, region |
+|psi_memory_full_*|All non-idle tasks stalled on memory|percent / seconds|Host| host, region |
+|psi_io_some_* / psi_io_full_*|Tasks stalled on IO|percent / seconds|Host| host, region |
+|psi_<resource>_<some/full>_container_*|Per-container pressure|percent / seconds|Container| host, region, container_host, container_hostnamespace, container_level, container_name, container_type |cgroup v2 only|
+
 ## Memory System
 
 ### Reclaim
