@@ -447,7 +447,7 @@ func (i *ioTracing) Start(ctx context.Context) error {
 	})
 	if err != nil {
 		pendingReasons.Delete(taskID)
-		if errors.Is(err, executil.ErrCmdCanceled) || errors.Is(err, executil.ErrCmdTimeout) {
+		if errors.Is(err, executil.ErrRunCanceled) || errors.Is(err, executil.ErrRunTimeout) {
 			log.Info("iotracing stopped")
 			return nil
 		}

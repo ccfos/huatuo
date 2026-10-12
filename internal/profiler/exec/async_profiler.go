@@ -51,10 +51,26 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 		result.Err = err
 		return result
 	}
-	defer func() { result.Err = errors.Join(result.Err, process.Close()) }()
+	isCanceled := false
+	var startErr error
+	defer func() {
+		closeErr := process.Close()
+		select {
+		case <-process.Done():
+			executionErr := process.Wait()
+			if executionErr != nil && executionErr != executil.ErrStopped && !errors.Is(result.Err, executionErr) { //nolint:errorlint // Ignore only the direct lifecycle stop marker.
+				result.Err = errors.Join(result.Err, executionErr)
+			}
+		default:
+			result.Err = errors.Join(result.Err, startErr)
+		}
+		result.Err = errors.Join(result.Err, closeErr)
+		if isCanceled && result.Err != nil {
+			result.Diagnostics = append(result.Diagnostics, []byte("\n[Error stopping profiler]: "+result.Err.Error())...)
+		}
+	}()
 
-	if err := process.Start(ctx); err != nil {
-		result.Err = err
+	if startErr = process.Start(ctx); startErr != nil {
 		return result
 	}
 
@@ -64,6 +80,7 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 		result.Diagnostics = combinedOutput(process)
 		return result
 	case <-ctx.Done():
+		isCanceled = true
 	}
 
 	processStopCtx, cancelProcessStop := context.WithTimeout(
@@ -83,29 +100,18 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 	cancel()
 	processStopErr := <-processStopDone
 	cancelProcessStop()
-	// A failed Stop may leave the CLI running. Close owns the final forceful
-	// attempt; do not wait indefinitely after both signaling attempts failed.
-	if processStopErr != nil {
-		processStopErr = errors.Join(processStopErr, process.Close())
-	}
 	var waitErr error
 	select {
 	case <-process.Done():
 		waitErr = process.Wait()
 	default:
-		waitErr = processStopErr
 	}
-	if errors.Is(waitErr, executil.ErrStopped) {
+	if waitErr == executil.ErrStopped { //nolint:errorlint // Preserve independent failures containing a stop marker.
 		waitErr = nil
 	}
 	result.Err = errors.Join(stopProfilerErr, processStopErr, waitErr)
 	result.Diagnostics = combinedOutput(process)
-	if result.Err != nil {
-		result.Diagnostics = append(
-			result.Diagnostics,
-			[]byte("\n[Error stopping profiler]: "+result.Err.Error())...,
-		)
-	}
+
 	return result
 }
 

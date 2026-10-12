@@ -47,16 +47,16 @@ func (p *Process) MemfdOutput() ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.state == processStateInvalid {
-		return nil, fmt.Errorf("read command memfd output: %w", errProcessNotInitialized)
+	if p.state == processRunStateInvalid {
+		return nil, ErrProcessNotInitialized
 	}
 
 	if p.memfd == nil {
 		return nil, fmt.Errorf("read command %q memfd output: WithMemfdOutput is not configured", p.spec.Path)
 	}
 
-	if p.state == processStateNew || p.state == processStateStarting {
-		return nil, fmt.Errorf("read command %q memfd output: process has not been started", p.spec.Path)
+	if p.state == processRunStateNew || p.state == processRunStateStarting {
+		return nil, ErrProcessNotStarted
 	}
 
 	data, err := p.memfd.read()
@@ -146,12 +146,22 @@ func (m *memfdOutput) close() error {
 	return m.closeErr
 }
 
-func (p *Process) closeMemfd() error {
+// releaseResources leaves lifecycle publication to Start and the reaper.
+func releaseResources(p *Process) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.closeMemfdLocked()
+}
+
+func (p *Process) closeMemfdLocked() error {
 	if p.memfd == nil {
 		return nil
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.memfd.close()
+	err := p.memfd.close()
+	if err != nil && !errors.Is(err, ErrCleanupFailed) {
+		p.memfd.closeErr = fmt.Errorf("%w: %w", ErrCleanupFailed, err)
+	}
+
+	return p.memfd.closeErr
 }

@@ -52,28 +52,35 @@ func (e *executor) Start(ctx context.Context) error {
 	}
 	if err := e.process.Start(ctx); err != nil {
 		e.stream.CancelSession(types.ProfilingToolName, e.requestID)
-		return e.withOutput("start profiler", errors.Join(err, e.process.Close()))
+		closeErr := e.process.Close()
+		if !errors.Is(err, executil.ErrProcessAlreadyStarted) {
+			select {
+			case <-e.process.Done():
+				err = e.process.Wait()
+			default:
+			}
+		}
+		return e.withOutput("start profiler", errors.Join(err, closeErr))
 	}
 	return nil
 }
 
 func (e *executor) Wait() error {
 	err := e.process.Wait()
-	if errors.Is(err, executil.ErrStopped) {
+	if err == executil.ErrStopped { //nolint:errorlint // Wrapped or joined stop markers can contain independent failures.
 		err = errors.Join(operation.ErrStopped, err)
 	}
 	return e.withOutput("wait for profiler", err)
 }
 
 func (e *executor) Stop(ctx context.Context) error {
-	if err := e.process.Stop(ctx); err != nil {
-		return e.withOutput("stop profiler", err)
-	}
-	return nil
+	return e.withOutput("stop profiler", e.process.Stop(ctx))
 }
 
 func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) (err error) {
-	defer func() { err = errors.Join(err, e.process.Close()) }()
+	defer func() {
+		err = errors.Join(err, e.process.Close())
+	}()
 
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("finalize profiler: %w", err)

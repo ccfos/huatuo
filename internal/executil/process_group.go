@@ -38,19 +38,24 @@ func waitForCommandExit(pid int) error {
 	}
 }
 
-func gracefulStopProcessGroup(pid int) error {
-	return syscall.Kill(-pid, syscall.SIGTERM)
+// Hold p.mu so reaping cannot release the PID before signaling.
+func (p *Process) signalProcessGroup(signal syscall.Signal) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.pid == 0 {
+		return nil
+	}
+
+	err := syscall.Kill(-p.pid, signal)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+
+	return err
 }
 
-func forceStopProcessGroup(pid int) error {
-	return syscall.Kill(-pid, syscall.SIGKILL)
-}
-
-func processGroupMissing(err error) bool {
-	return errors.Is(err, syscall.ESRCH)
-}
-
-func isStoppedExit(err error) bool {
+func exitedOnStopSignal(err error) bool {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
 		return false

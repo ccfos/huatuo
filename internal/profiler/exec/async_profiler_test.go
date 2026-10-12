@@ -21,31 +21,55 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/executil"
 )
+
+// The child can become ready before Start returns. Done is first observed by
+// runAsyncProfiler after launch, so cancellation waits for both acknowledgments.
+type profilerLaunchContext struct {
+	context.Context
+	launched chan struct{}
+	once     sync.Once
+}
+
+func (c *profilerLaunchContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.launched) })
+	return c.Context.Done()
+}
 
 func TestRunAsyncProfilerUsesStopAsyncProfilerResultAfterCancellation(t *testing.T) {
 	tests := []struct {
 		name        string
 		stopExit    int
 		wantSuccess bool
+		signalExit  bool
 		wantErr     string
 	}{
 		{name: "stop succeeds", wantSuccess: true},
+		{name: "signal stop succeeds", signalExit: true, wantSuccess: true},
 		{name: "stop fails", stopExit: 23, wantErr: "exit status 23"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			asprofPath := filepath.Join(t.TempDir(), "renamed-profiler")
+			readyPath := filepath.Join(filepath.Dir(asprofPath), "ready")
+			trap := "trap 'exit 0' TERM"
+			if tt.signalExit {
+				trap = ""
+			}
 			script := fmt.Sprintf(`#!/bin/sh
 if [ "$1" = "--libpath" ]; then
 	exit %d
 fi
-trap 'exit 0' TERM
+%s
+: > %q
 while :; do sleep 1; done
-`, tt.stopExit)
+`, tt.stopExit, trap, readyPath)
 			if err := os.WriteFile(asprofPath, []byte(script), 0o600); err != nil {
 				t.Fatalf("write fake asprof: %v", err)
 			}
@@ -53,8 +77,30 @@ while :; do sleep 1; done
 				t.Fatalf("make fake asprof executable: %v", err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			baseCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
+			ctx := &profilerLaunchContext{Context: baseCtx, launched: make(chan struct{})}
+			// Cancel after launch so this test exercises stopping, even under load.
+			go func() {
+				ticker := time.NewTicker(time.Millisecond)
+				defer ticker.Stop()
+				for {
+					if _, err := os.Stat(readyPath); err == nil {
+						select {
+						case <-ctx.launched:
+						case <-baseCtx.Done():
+							return
+						}
+						cancel()
+						return
+					}
+					select {
+					case <-baseCtx.Done():
+						return
+					case <-ticker.C:
+					}
+				}
+			}()
 
 			results := RunAsyncProfiler(ctx, []int{164879}, asprofPath, func(int) []string {
 				return []string{"start"}
@@ -109,5 +155,25 @@ fi
 	}
 	if _, err := os.Stat(stopMarker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("async-profiler stop marker error = %v, want missing file", err)
+	}
+}
+
+func TestRunAsyncProfilerReportsExecutionFailureOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiler")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	results := RunAsyncProfiler(t.Context(), []int{123}, path, func(int) []string { return nil })
+	if len(results) != 1 || results[0].Err == nil {
+		t.Fatalf("RunAsyncProfiler() = %+v, want execution failure", results)
+	}
+	if count := strings.Count(results[0].Err.Error(), "exit status 7"); count != 1 {
+		t.Fatalf("execution failure appeared %d times: %v", count, results[0].Err)
+	}
+	if errors.Is(results[0].Err, executil.ErrCleanupFailed) {
+		t.Fatalf("ordinary exit was classified as cleanup failure: %v", results[0].Err)
 	}
 }

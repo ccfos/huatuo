@@ -16,17 +16,13 @@
 package hccn
 
 import (
-	"errors"
 	"strings"
 	"testing"
-
-	"github.com/ccfos/huatuo/internal/executil"
 )
 
 func TestGetInfoFromHccnToolInvalidArguments(t *testing.T) {
 	output, err := getInfoFromHccnTool("\x00")
-	var runErr *executil.RunError
-	if !errors.As(err, &runErr) || runErr.ExecutionErr == nil {
+	if err == nil {
 		t.Fatalf("getInfoFromHccnTool() error = %v, want configuration error", err)
 	}
 	if output != "" {

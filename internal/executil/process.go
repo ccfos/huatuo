@@ -27,35 +27,18 @@ import (
 	"time"
 )
 
-var (
-	// ErrStopped reports that Stop terminated the command with a signal.
-	ErrStopped = errors.New("executil: command stopped")
-	// ErrStopFailed reports that process group termination failed.
-	ErrStopFailed = errors.New("executil: stop failed")
-	// ErrOutputLimitExceeded reports that memfd data exceeds its read limit.
-	ErrOutputLimitExceeded = errors.New("executil: output limit exceeded")
-
-	errProcessNotInitialized = errors.New("process is not initialized")
-)
-
 const outputDrainTimeout = time.Second
 
 type processState uint8
 
 const (
-	processStateInvalid processState = iota
-	processStateNew
-	processStateStarting
-	processStateRunning
-	processStateFinished
-	processStateClosedBeforeStart
+	processRunStateInvalid processState = iota
+	processRunStateNew
+	processRunStateStarting
+	processRunStateRunning
+	processRunStateFinished
+	processRunStateClosedBeforeStart
 )
-
-// Closing done publishes the immutable error to every waiter.
-type lifecycleResult struct {
-	done chan struct{}
-	err  error
-}
 
 // Process owns one command lifecycle and its process group. The group leader's
 // exit ends the command lifetime; remaining group members are killed before the
@@ -71,15 +54,17 @@ type Process struct {
 	extraFiles []*os.File
 	memfd      *memfdOutput
 
-	mu              sync.Mutex
-	state           processState
-	pid             int
-	start           lifecycleResult
-	wait            lifecycleResult
-	done            chan struct{}
-	groupErr        error
+	mu          sync.Mutex
+	state       processState
+	pid         int
+	startDone   chan struct{}
+	waitDone    chan struct{}
+	done        chan struct{}
+	terminalErr error
+
+	// Only Start sets this marker; errors from writers cannot cancel launch.
+	startCancelErr  error
 	isStopRequested bool
-	stopAttempt     *lifecycleResult
 }
 
 // New validates and snapshots a command specification without starting it.
@@ -110,17 +95,18 @@ func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // 
 		process.spec.MaxStderrBytes = defaultMaxOutputBytes
 	}
 
-	process.spec.Args = slices.Clone(spec.Args)
-	process.spec.Env = slices.Clone(spec.Env)
 	if process.stdout == nil {
 		process.stdout = &outputBuffer{maxBytes: process.spec.MaxStdoutBytes}
 	}
 	if process.stderr == nil {
 		process.stderr = &outputBuffer{maxBytes: process.spec.MaxStderrBytes}
 	}
-	process.state = processStateNew
-	process.start = lifecycleResult{done: make(chan struct{})}
-	process.wait = lifecycleResult{done: make(chan struct{})}
+
+	process.spec.Args = slices.Clone(spec.Args)
+	process.spec.Env = slices.Clone(spec.Env)
+	process.state = processRunStateNew
+	process.startDone = make(chan struct{})
+	process.waitDone = make(chan struct{})
 	process.done = make(chan struct{})
 
 	return process, nil
@@ -130,63 +116,88 @@ func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // 
 // The context controls launch only; canceling it after Start returns does not
 // stop the process. WithMemfdOutput creates a file owned by Process; read it
 // with MemfdOutput before calling Close. Failed starts close the created file.
-func (p *Process) Start(ctx context.Context) error {
+func (p *Process) Start(ctx context.Context) (err error) {
 	p.mu.Lock()
-	if p.state == processStateInvalid {
+	if p.state == processRunStateInvalid {
 		p.mu.Unlock()
-		return fmt.Errorf("start command: %w", errProcessNotInitialized)
+		return ErrProcessNotInitialized
 	}
 
-	if p.state != processStateNew {
-		if p.state == processStateClosedBeforeStart {
+	if p.state != processRunStateNew {
+		if p.state == processRunStateClosedBeforeStart {
 			p.mu.Unlock()
-			return fmt.Errorf("start command %q: %w", p.spec.Path, os.ErrClosed)
+			return ErrProcessClosed
 		}
 
 		p.mu.Unlock()
-		return fmt.Errorf("start command %q: process has already been started", p.spec.Path)
+		return ErrProcessAlreadyStarted
 	}
 
-	p.state = processStateStarting
+	p.state = processRunStateStarting
 	p.mu.Unlock()
 
-	if err := ctx.Err(); err != nil {
-		return p.failStart(&RunError{ContextErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
+	started := false
+	var launchErr error
+	defer func() {
+		if err == nil {
+			return
+		}
+
+		if started {
+			if stopErr := p.forceStopAndWait(); stopErr != nil {
+				p.mu.Lock()
+				mayAppendCleanupError(p, stopErr)
+				p.mu.Unlock()
+			}
+		} else {
+			p.mu.Lock()
+			p.startCancelErr = launchErr
+			p.terminalErr = err
+			close(p.waitDone)
+			p.mu.Unlock()
+		}
+
+		err = exitWithCleanup(p)
+	}()
+
+	if launchErr = ctx.Err(); launchErr != nil {
+		return launchErr
 	}
 
 	cmd, err := prepareCommand(p)
 	if err != nil {
-		return p.failStart(&RunError{ExecutionErr: fmt.Errorf("prepare command %q: %w", p.spec.Path, err)})
+		return err
 	}
 
-	if err := ctx.Err(); err != nil {
-		return p.failStart(&RunError{ContextErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
+	// Argument preparation can cancel the launch context.
+	if launchErr = ctx.Err(); launchErr != nil {
+		return launchErr
 	}
 
 	if err := cmd.Start(); err != nil {
-		return p.failStart(&RunError{ExecutionErr: fmt.Errorf("start command %q: %w", p.spec.Path, err)})
+		return err
 	}
+	started = true
 
 	p.mu.Lock()
 	p.pid = cmd.Process.Pid
-	launchErr := ctx.Err()
+	launchErr = ctx.Err()
 	if launchErr != nil {
 		p.isStopRequested = true
+		p.startCancelErr = launchErr
+		p.terminalErr = launchErr
 	}
 
 	go p.reap(cmd)
+
 	if launchErr == nil {
-		p.state = processStateRunning
-		close(p.start.done)
+		p.state = processRunStateRunning
+		close(p.startDone)
 	}
 
 	p.mu.Unlock()
 
-	if launchErr == nil {
-		return nil
-	}
-
-	return p.finishCanceledStart(launchErr)
+	return launchErr
 }
 
 // prepareCommand runs during Start so New does not acquire output files.
@@ -214,103 +225,104 @@ func prepareCommand(process *Process) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-func (p *Process) finishCanceledStart(launchErr error) error {
-	forceErr := wrapStopFailure(p.forceStopAndWait())
+// exitWithCleanup publishes a failed launch after resource release. The caller
+// or reaper owns waitDone, so a failed stop can leave reaping in progress.
+func exitWithCleanup(p *Process) error {
+	cleanupErr := releaseResources(p)
 
 	p.mu.Lock()
-	var waitErr error
+	defer p.mu.Unlock()
+
+	mayAppendCleanupError(p, cleanupErr)
 	select {
-	case <-p.wait.done:
-		p.state = processStateFinished
-		if !errors.Is(p.wait.err, ErrStopped) {
-			waitErr = p.wait.err
-		}
+	case <-p.waitDone:
+		p.state = processRunStateFinished
 	default:
-		p.state = processStateRunning
+		p.state = processRunStateRunning
 	}
 
-	failure := &RunError{
-		ContextErr:   fmt.Errorf("start command %q: %w", p.spec.Path, launchErr),
-		ExecutionErr: waitErr,
-		CleanupErr:   forceErr,
-	}
-	p.start.err = failure
-
-	if p.memfd != nil {
-		failure.CleanupErr = errors.Join(failure.CleanupErr, p.memfd.close())
-	}
-
-	close(p.start.done)
+	close(p.startDone)
 	p.publishDone()
-	startErr := p.start.err
-	p.mu.Unlock()
-	return startErr
-}
-
-func (p *Process) failStart(err *RunError) error {
-	p.mu.Lock()
-	if p.memfd != nil {
-		err.CleanupErr = errors.Join(err.CleanupErr, p.memfd.close())
-	}
-
-	p.state = processStateFinished
-	p.start.err = err
-	p.wait.err = err
-	close(p.start.done)
-	close(p.wait.done)
-	p.publishDone()
-	p.mu.Unlock()
-	return err
+	return p.terminalErr
 }
 
 func (p *Process) reap(cmd *exec.Cmd) {
-	exitErr := waitForCommandExit(cmd.Process.Pid)
+	observeErr := waitForCommandExit(cmd.Process.Pid)
+
 	p.mu.Lock()
-	if exitErr != nil {
-		p.groupErr = wrapStopFailure(fmt.Errorf("observe command %q exit: %w", p.spec.Path, exitErr))
-	} else if err := forceStopProcessGroup(p.pid); err != nil && !processGroupMissing(err) {
-		p.groupErr = wrapStopFailure(wrapSignalError("clean up", p.spec.Path, err))
+	var groupErr error
+	if observeErr != nil {
+		groupErr = fmt.Errorf("%w: observe command %q exit: %w", ErrStopFailed, p.spec.Path, observeErr)
+	} else if err := syscall.Kill(-p.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		groupErr = fmt.Errorf("%w: clean up command %q process group: %w", ErrStopFailed, p.spec.Path, err)
 	}
 	// WNOWAIT pins the leader PID through the final group signal. Retire it
-	// before Wait can release it for reuse; later Stop calls only read results.
+	// before Wait can release it for reuse; later Stop calls cannot signal a reused PID.
 	p.pid = 0
 	p.mu.Unlock()
 
-	err := cmd.Wait()
+	waitErr := cmd.Wait()
 
 	p.mu.Lock()
-	isExpectedStop := p.groupErr == nil && p.isStopRequested
-	if isExpectedStop && isStoppedExit(err) {
-		err = fmt.Errorf(
-			"%w: command %q exited after a stop signal: %w",
-			ErrStopped,
-			p.spec.Path,
-			err,
-		)
-	} else if err != nil {
-		err = fmt.Errorf("wait for command %q: %w", p.spec.Path, err)
+	defer p.mu.Unlock()
+
+	cleanupErr := groupErr
+	switch {
+	case groupErr == nil && p.isStopRequested && exitedOnStopSignal(waitErr):
+		// Launch cancellation already explains the requested signal exit.
+		waitErr = nil
+		if p.startCancelErr == nil {
+			waitErr = ErrStopped
+		}
+	case errors.Is(waitErr, exec.ErrWaitDelay):
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("drain command %q output: %w", p.spec.Path, waitErr))
+		waitErr = nil
+	case waitErr != nil:
+		waitErr = fmt.Errorf("wait for command %q: %w", p.spec.Path, waitErr)
+	}
+	if p.terminalErr == nil {
+		p.terminalErr = waitErr
+	} else if waitErr != nil {
+		p.terminalErr = errors.Join(p.terminalErr, waitErr)
+	}
+	mayAppendCleanupError(p, cleanupErr)
+
+	// Start owns the Starting transition until its cleanup has finished.
+	if p.state == processRunStateRunning {
+		p.state = processRunStateFinished
 	}
 
-	p.wait.err = err
-	if p.state == processStateRunning {
-		p.state = processStateFinished
-	}
-
-	close(p.wait.done)
+	close(p.waitDone)
 	p.publishDone()
-	p.mu.Unlock()
+}
+
+// mayAppendCleanupError runs under p.mu and marks only cleanup failures.
+func mayAppendCleanupError(p *Process, err error) {
+	if err == nil {
+		return
+	}
+
+	if !errors.Is(err, ErrCleanupFailed) {
+		err = fmt.Errorf("%w: %w", ErrCleanupFailed, err)
+	}
+
+	if p.terminalErr == nil {
+		p.terminalErr = err
+		return
+	}
+	p.terminalErr = errors.Join(p.terminalErr, err)
 }
 
 // publishDone runs under mu. A canceled launch may finish reaping before Start
 // publishes its result, so neither internal notification alone is sufficient.
 func (p *Process) publishDone() {
 	select {
-	case <-p.start.done:
+	case <-p.startDone:
 	default:
 		return
 	}
 	select {
-	case <-p.wait.done:
+	case <-p.waitDone:
 	default:
 		return
 	}
@@ -330,39 +342,18 @@ func (p *Process) Done() <-chan struct{} {
 // errors from MemfdOutput.
 func (p *Process) Wait() error {
 	p.mu.Lock()
-	if p.state == processStateInvalid {
+	if p.state == processRunStateInvalid {
 		p.mu.Unlock()
-		return fmt.Errorf("wait for command: %w", errProcessNotInitialized)
+		return ErrProcessNotInitialized
 	}
 
-	if p.state == processStateNew {
+	if p.state == processRunStateNew {
 		p.mu.Unlock()
-		return fmt.Errorf("wait for command %q: process has not been started", p.spec.Path)
+		return ErrProcessNotStarted
 	}
 
 	p.mu.Unlock()
 
 	<-p.done
-	return p.processResult()
-}
-
-func (p *Process) processResult() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	err := p.wait.err
-	if p.start.err != nil {
-		err = p.start.err
-		// A canceled launch can fail to signal the child and return before
-		// reaping. Preserve any independent exit failure observed later.
-		if p.wait.err != nil && !errors.Is(p.wait.err, ErrStopped) && !errors.Is(err, p.wait.err) {
-			err = errors.Join(err, p.wait.err)
-		}
-	}
-
-	if p.groupErr == nil || errors.Is(err, p.groupErr) {
-		return err
-	}
-
-	return errors.Join(err, p.groupErr)
+	return p.terminalErr
 }

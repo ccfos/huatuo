@@ -18,8 +18,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
@@ -111,7 +114,10 @@ func TestExecutorFinalizeAlwaysClosesProcess(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := process.Run(t.Context()); err != nil {
+			if err := process.Start(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := process.Wait(); err != nil {
 				t.Fatal(err)
 			}
 			publisher := &fakeResultPublisher{}
@@ -144,7 +150,67 @@ func TestExecutorClosesProcessWhenSessionRegistrationFails(t *testing.T) {
 	if err := executor.Start(t.Context()); !errors.Is(err, toolstream.ErrNotInitialized) {
 		t.Fatalf("Start(): %v", err)
 	}
-	if err := process.Start(t.Context()); !errors.Is(err, os.ErrClosed) {
+	if err := process.Start(t.Context()); !errors.Is(err, executil.ErrProcessClosed) {
 		t.Fatalf("process was not closed: %v", err)
+	}
+}
+
+type readySignalWriter struct {
+	once  sync.Once
+	ready chan struct{}
+}
+
+func (w *readySignalWriter) Write(data []byte) (int, error) {
+	w.once.Do(func() { close(w.ready) })
+	return len(data), nil
+}
+
+func TestExecutorStopAndFinalizeKeepExecutionSeparate(t *testing.T) {
+	for _, trap := range []string{"", "trap 'exit 7' TERM; "} {
+		t.Run(trap, func(t *testing.T) {
+			stream, err := toolstream.NewServer(filepath.Join(t.TempDir(), "toolstream.sock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ready := &readySignalWriter{ready: make(chan struct{})}
+			process, err := executil.New(executil.Spec{
+				Path: "/bin/sh", Args: []string{"-c", trap + "printf ready; while :; do :; done"},
+				StopGracePeriod: time.Second,
+			}, executil.WithStdout(ready))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := process.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			executor := newExecutor(process, stream, &fakeResultPublisher{}, "stopped-job")
+			if err := executor.Start(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-ready.ready:
+			case <-time.After(5 * time.Second):
+				t.Fatal("profiler did not become ready")
+			}
+			if err := executor.Stop(t.Context()); err != nil {
+				t.Fatalf("operation Stop reported an execution result as cleanup failure: %v", err)
+			}
+			waitErr := executor.Wait()
+			if trap == "" {
+				if !errors.Is(waitErr, operation.ErrStopped) {
+					t.Fatalf("Wait() = %v, want operation.ErrStopped", waitErr)
+				}
+			} else {
+				var exitErr *exec.ExitError
+				if !errors.As(waitErr, &exitErr) || exitErr.ExitCode() != 7 {
+					t.Fatalf("Wait() = %v, want exit 7", waitErr)
+				}
+			}
+			if err := executor.Finalize(t.Context(), operation.FinalizeDiscard); err != nil {
+				t.Fatalf("Finalize repeated execution failure: %v", err)
+			}
+		})
 	}
 }

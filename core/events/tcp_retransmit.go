@@ -76,7 +76,7 @@ func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
 		Args: tcpRetransmitArgs(configSnapshot()),
 	})
 	if err != nil {
-		if errors.Is(err, executil.ErrCmdCanceled) {
+		if errors.Is(err, executil.ErrRunCanceled) {
 			return nil
 		}
 		if len(result.Stderr) > 0 {
