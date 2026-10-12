@@ -67,11 +67,14 @@ func TestProfileStringRejectsInvalidIndex(t *testing.T) {
 }
 
 // The fake exercises the production mapper, batched storage, and aggregation together.
-func newProfileQueryStore(t testing.TB, total int, fail bool) *profilingstore.Store {
+func newProfileQueryStore(t testing.TB, total int, fail bool, documentOverride ...json.RawMessage) *profilingstore.Store {
 	t.Helper()
 	var cleared atomic.Bool
 	position, size := 0, 0
 	document := json.RawMessage(`{"hostname":"node-1","region":"test","uploaded_timestamp":"2026-10-08T00:00:00Z","started_timestamp":"2026-10-08T00:00:00Z","tracer_type":"profiling","tracer_id":"job-1","profile_data":{"profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds","profile":{"string_table":["","cpu","nanoseconds","work"],"sample_type":[{"type":1,"unit":2}],"period_type":{"type":1,"unit":2},"function":[{"id":1,"name":3}],"location":[{"id":1,"line":[{"function_id":1}]}],"sample":[{"location_id":[1],"value":[1]}]}}}`)
+	if len(documentOverride) > 0 {
+		document = documentOverride[0]
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/" {
