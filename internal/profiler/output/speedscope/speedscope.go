@@ -54,7 +54,8 @@ type sampledProfile struct {
 type threadState struct {
 	name    string
 	samples [][]int
-	total   int64 // total sample count
+	weights []float64 // per-sample weight in seconds
+	total   int64     // total sample count
 }
 
 // Formatter accumulates samples and writes Speedscope JSON.
@@ -82,7 +83,9 @@ func New(sampleRateHz float64) *Formatter {
 
 func (f *Formatter) Name() string { return "speedscope" }
 
-// Add incorporates one sample. Batch samples (Count > 1) are expanded inline.
+// Add incorporates one sample. Batch samples (Count > 1) are stored as one
+// entry weighted by their duration: expanding them would multiply memory by
+// the caller-supplied count, which is untrusted input from collapsed files.
 func (f *Formatter) Add(s *output.Sample) error {
 	if len(s.Frames) == 0 {
 		return nil
@@ -106,10 +109,9 @@ func (f *Formatter) Add(s *output.Sample) error {
 	if count <= 0 {
 		count = 1
 	}
-	for i := int64(0); i < count; i++ {
-		ts.samples = append(ts.samples, indices)
-		ts.total++
-	}
+	ts.samples = append(ts.samples, indices)
+	ts.weights = append(ts.weights, float64(count)*f.sampleDuration)
+	ts.total += count
 	return nil
 }
 
@@ -117,10 +119,6 @@ func (f *Formatter) Write(w io.Writer) error {
 	profiles := make([]sampledProfile, 0, len(f.threadOrder))
 	for _, key := range f.threadOrder {
 		ts := f.threads[key]
-		weights := make([]float64, len(ts.samples))
-		for i := range weights {
-			weights[i] = f.sampleDuration
-		}
 		profiles = append(profiles, sampledProfile{
 			Type:       "sampled",
 			Name:       ts.name,
@@ -128,7 +126,7 @@ func (f *Formatter) Write(w io.Writer) error {
 			StartValue: 0,
 			EndValue:   float64(ts.total) * f.sampleDuration,
 			Samples:    ts.samples,
-			Weights:    weights,
+			Weights:    ts.weights,
 		})
 	}
 
