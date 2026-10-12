@@ -47,21 +47,6 @@ func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
 			wantErr: "argument 0 contains a null byte",
 		},
 		{
-			name:    "null byte in environment",
-			spec:    Spec{Path: "/bin/true", Env: []string{"KEY=bad\x00value"}},
-			wantErr: "environment entry 0 contains a null byte",
-		},
-		{
-			name:    "invalid environment",
-			spec:    Spec{Path: "/bin/true", Env: []string{"INVALID"}},
-			wantErr: "environment entry 0 must use a non-empty KEY=VALUE form",
-		},
-		{
-			name:    "empty environment key",
-			spec:    Spec{Path: "/bin/true", Env: []string{"=value"}},
-			wantErr: "environment entry 0 must use a non-empty KEY=VALUE form",
-		},
-		{
 			name:    "negative stop grace period",
 			spec:    Spec{Path: "/bin/true", StopGracePeriod: -time.Second},
 			wantErr: "stop grace period must not be negative",

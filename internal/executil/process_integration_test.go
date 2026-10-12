@@ -721,3 +721,32 @@ func TestProcessExternalSignalIsNotExpectedStop(t *testing.T) {
 		t.Fatalf("external signal result: %v", terminalErr)
 	}
 }
+
+func TestProcessEnvironmentUsesExecSemantics(t *testing.T) {
+	for _, env := range [][]string{{"KEY=bad\x00value"}, {"INVALID"}, {"=value"}} {
+		t.Run(strconv.Quote(env[0]), func(t *testing.T) {
+			command := exec.Command("/bin/true")
+			command.Env = env
+			wantErr := command.Run()
+			process, err := New(Spec{Path: "/bin/true", Env: env})
+			if err != nil {
+				t.Fatalf("New() validated environment owned by os/exec: %v", err)
+			}
+			startErr := process.Start(t.Context())
+			if wantErr != nil {
+				if startErr == nil || !strings.Contains(startErr.Error(), wantErr.Error()) {
+					t.Fatalf("Start() = %v, want os/exec failure %v", startErr, wantErr)
+				}
+			} else if startErr != nil {
+				t.Fatalf("Start() = %v, os/exec accepted the environment", startErr)
+			}
+			waitErr := process.Wait()
+			if (waitErr != nil) != (wantErr != nil) {
+				t.Fatalf("Wait() = %v, os/exec returned %v", waitErr, wantErr)
+			}
+			if got := process.Close(); got != nil {
+				t.Fatalf("Close() repeated execution failure: %v", got)
+			}
+		})
+	}
+}
