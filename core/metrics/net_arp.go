@@ -60,7 +60,7 @@ func nodeArpCacheEntries() ([]*metric.Data, error) {
 	}
 
 	return []*metric.Data{
-		metric.NewGaugeData("entries", float64(count-1), "host init namespace", nil),
+		metric.NewGaugeData("entries", float64(max(count-1, 0)), "host init namespace", nil),
 		metric.NewGaugeData("total", float64(cache.Stats["entries"]), "all entries in arp_cache for containers and host netns", nil),
 	}, nil
 }
@@ -80,7 +80,7 @@ func (c *arpCollector) Update() ([]*metric.Data, error) {
 			return data, err
 		}
 
-		data = append(data, metric.NewContainerGaugeData(container, "entries", float64(count-1), "arp entries in container netns", nil))
+		data = append(data, metric.NewContainerGaugeData(container, "entries", float64(max(count-1, 0)), "arp entries in container netns", nil))
 	}
 
 	entries, err := nodeArpCacheEntries()
