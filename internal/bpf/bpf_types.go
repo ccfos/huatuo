@@ -16,6 +16,7 @@ package bpf
 
 import (
 	"errors"
+	"slices"
 )
 
 var (
@@ -29,6 +30,13 @@ var (
 
 type Option struct {
 	KeepaliveTimeout int
+	Mock             bool
+	MockObjects      []string // Empty selects all objects when Mock is true.
+}
+
+// mockObject keeps unrelated objects attached to their production hooks.
+func (o *Option) mockObject(name string) bool {
+	return o != nil && o.Mock && (len(o.MockObjects) == 0 || slices.Contains(o.MockObjects, name))
 }
 
 // AttachOption is an option for attaching a program.

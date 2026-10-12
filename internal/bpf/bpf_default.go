@@ -25,8 +25,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ccfos/huatuo/internal/log"
 
@@ -37,16 +39,41 @@ import (
 
 var DefaultObjDir = "bpf"
 
+var mockMode atomic.Pointer[Option]
+
 // Init initializes package-level BPF resources.
-func Init(_ *Option) error {
-	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
+func Init(option *Option) error {
+	if option != nil && len(option.MockObjects) > 0 {
+		if !option.Mock {
+			return errors.New("mock object selection requires mock mode")
+		}
+		for _, name := range option.MockObjects {
+			if err := validateName(name); err != nil {
+				return fmt.Errorf("invalid mock object %q: %w", name, err)
+			}
+		}
+	}
+	if err := unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
 		Cur: unix.RLIM_INFINITY,
 		Max: unix.RLIM_INFINITY,
-	})
+	}); err != nil {
+		return err
+	}
+
+	if option == nil {
+		mockMode.Store(nil)
+	} else {
+		copied := *option
+		copied.MockObjects = slices.Clone(option.MockObjects)
+		mockMode.Store(&copied)
+	}
+	return nil
 }
 
 // Shutdown releases package-level BPF resources.
-func Shutdown() {}
+func Shutdown() {
+	mockMode.Store(nil)
+}
 
 type loadedMap struct {
 	name   string
@@ -73,6 +100,7 @@ type defaultBPF struct {
 	programsByID     map[uint32]*loadedProgram
 	mapIDsByName     map[string]uint32
 	programIDsByName map[string]uint32
+	mock             bool
 	perfEvent        *perfEventAttach
 	isClosed         bool
 }
@@ -143,6 +171,7 @@ func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 		name:         bpfName,
 		mapsByID:     make(map[uint32]loadedMap),
 		programsByID: make(map[uint32]*loadedProgram),
+		mock:         mockMode.Load().mockObject(bpfName),
 	}
 
 	// maps
