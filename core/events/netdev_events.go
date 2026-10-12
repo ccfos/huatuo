@@ -39,6 +39,11 @@ type netdevInfo struct {
 	firmwareVersion string
 }
 
+// driverInfoSource provides ethtool driver metadata for netdev interfaces.
+type driverInfoSource interface {
+	DriverInfo(ifname string) (ethtool.DrvInfo, error)
+}
+
 type netdevTracing struct {
 	name                  string
 	linkUpdateCh          chan netlink.LinkUpdate
@@ -46,6 +51,8 @@ type netdevTracing struct {
 	mu                    sync.Mutex
 	netdevInfoStore       map[string]*netdevInfo              // [ifname]ifinfomsg::netdevInfo
 	linkStatusEventCounts map[linkstatus.Types]map[string]int // [netdevEventType][ifname]count
+	deviceMatcher         *matcher.ListMatcher                // device whitelist for interfaces first seen after start
+	eth                   driverInfoSource                    // driver metadata for interfaces first seen after start
 }
 
 type netdevEventData struct {
@@ -83,6 +90,13 @@ func newNetdevTracing() (*tracing.EventTracingAttr, error) {
 }
 
 func (netdev *netdevTracing) Start(ctx context.Context) error {
+	eth, err := ethtool.NewEthtool()
+	if err != nil {
+		return err
+	}
+	netdev.eth = eth
+	defer eth.Close()
+
 	if err := netdev.checkAndInitLinkStatus(); err != nil {
 		return err
 	}
@@ -108,7 +122,7 @@ func (netdev *netdevTracing) Start(ctx context.Context) error {
 			switch update.Header.Type {
 			case unix.NLMSG_ERROR:
 				return fmt.Errorf("NLMSG_ERROR")
-			case unix.RTM_NEWLINK:
+			case unix.RTM_NEWLINK, unix.RTM_DELLINK:
 				netdev.handleEvent(&update)
 			}
 		}
@@ -149,25 +163,19 @@ func (netdev *netdevTracing) checkAndInitLinkStatus() error {
 		return err
 	}
 
-	eth, err := ethtool.NewEthtool()
-	if err != nil {
-		return err
-	}
-	defer eth.Close()
-
 	cfg := configSnapshot()
-	deviceMatcher, err := matcher.NewListMatcher(cfg.Netdev.DeviceList)
+	netdev.deviceMatcher, err = matcher.NewListMatcher(cfg.Netdev.DeviceList)
 	if err != nil {
 		return fmt.Errorf("netdev device list: %w", err)
 	}
 
 	for _, link := range links {
 		ifname := link.Attrs().Name
-		if !deviceMatcher.Match(ifname) {
+		if !netdev.deviceMatcher.Match(ifname) {
 			continue
 		}
 
-		drvInfo, err := eth.DriverInfo(ifname)
+		drvInfo, err := netdev.eth.DriverInfo(ifname)
 		if err != nil {
 			continue
 		}
@@ -231,6 +239,45 @@ func (netdev *netdevTracing) setInfo(ifname string, info *netdevInfo) {
 	netdev.mu.Unlock()
 }
 
+// trackNewDevice starts tracking an interface first seen after startup so its
+// later flag changes are reported like devices present at startup. Devices
+// outside the configured device list, or without driver info, stay untracked,
+// matching checkAndInitLinkStatus. The observed flags become the baseline and
+// do not count as events.
+func (netdev *netdevTracing) trackNewDevice(ifname string, flags uint32) {
+	if !netdev.deviceMatcher.Match(ifname) {
+		return
+	}
+
+	var drvInfo ethtool.DrvInfo
+	if netdev.eth != nil {
+		info, err := netdev.eth.DriverInfo(ifname)
+		if err != nil {
+			return
+		}
+		drvInfo = info
+	}
+
+	netdev.setInfo(ifname, &netdevInfo{
+		flags:           flags,
+		driver:          drvInfo.Driver,
+		driverVersion:   drvInfo.Version,
+		firmwareVersion: drvInfo.FwVersion,
+	})
+}
+
+// removeDevice forgets a deleted interface so its metrics stop being exported
+// and a reused interface name does not inherit its counters.
+func (netdev *netdevTracing) removeDevice(ifname string) {
+	netdev.mu.Lock()
+	defer netdev.mu.Unlock()
+
+	delete(netdev.netdevInfoStore, ifname)
+	for _, counts := range netdev.linkStatusEventCounts {
+		delete(counts, ifname)
+	}
+}
+
 func (netdev *netdevTracing) loadAndSwapFlags(ifname string, newFlags uint32) (oldFlags uint32, driverInfo netdevInfo, ok bool) {
 	netdev.mu.Lock()
 	defer netdev.mu.Unlock()
@@ -249,10 +296,17 @@ func (netdev *netdevTracing) loadAndSwapFlags(ifname string, newFlags uint32) (o
 func (netdev *netdevTracing) handleEvent(ev *netlink.LinkUpdate) {
 	ifname := ev.Link.Attrs().Name
 
+	if ev.Header.Type == unix.RTM_DELLINK {
+		netdev.removeDevice(ifname)
+		return
+	}
+
 	currFlags := ev.Attrs().RawFlags
 
 	oldFlags, driverInfo, ok := netdev.loadAndSwapFlags(ifname, currFlags)
 	if !ok {
+		// interface first seen after startup
+		netdev.trackNewDevice(ifname, currFlags)
 		return
 	}
 	change := currFlags ^ oldFlags
