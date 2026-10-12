@@ -61,12 +61,22 @@ func (r *rdmaLink) Update() ([]*metric.Data, error) {
 		}
 
 		for _, s := range stats.RdmaPortStatistics {
+			portTags := rdmaPortTags(tags, s.PortIndex)
 			for lable, val := range s.Statistics {
 				data = append(data, metric.NewCounterData(lable, float64(val),
-					fmt.Sprintf("rdma device statistic %s.", lable), tags))
+					fmt.Sprintf("rdma device statistic %s.", lable), portTags))
 			}
 		}
 	}
 
 	return data, nil
+}
+
+func rdmaPortTags(base map[string]string, portIndex uint32) map[string]string {
+	tags := make(map[string]string, len(base)+1)
+	for key, value := range base {
+		tags[key] = value
+	}
+	tags["port"] = strconv.FormatUint(uint64(portIndex), 10)
+	return tags
 }
