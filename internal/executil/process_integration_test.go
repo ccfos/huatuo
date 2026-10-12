@@ -353,7 +353,7 @@ func TestProcessStartContextDoesNotControlLifetime(t *testing.T) {
 	if err := process.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := process.Start(ctx); err != ErrProcessAlreadyStarted { //nolint:errorlint // Verify the direct-return contract.
+	if err := process.Start(ctx); !errors.Is(err, ErrProcessAlreadyStarted) {
 		t.Fatalf("Start() while running = %v, want ErrProcessAlreadyStarted", err)
 	}
 
@@ -415,7 +415,7 @@ func TestProcessDonePublishesFailuresAndCloseBeforeStart(t *testing.T) {
 			if tt.name == "close before start" {
 				wantStartErr = ErrProcessClosed
 			}
-			if err := process.Start(t.Context()); err != wantStartErr { //nolint:errorlint // Verify the direct-return contract.
+			if err := process.Start(t.Context()); !errors.Is(err, wantStartErr) {
 				t.Fatalf("Start() after completion = %v, want %v", err, wantStartErr)
 			}
 		})
@@ -583,7 +583,7 @@ func TestProcessCloseAndWaitDuringStart(t *testing.T) {
 	startResult := make(chan error, 1)
 	go func() { startResult <- process.Start(t.Context()) }()
 	<-preparing
-	if err := process.Start(t.Context()); err != ErrProcessAlreadyStarted { //nolint:errorlint // Verify the direct-return contract.
+	if err := process.Start(t.Context()); !errors.Is(err, ErrProcessAlreadyStarted) {
 		t.Errorf("Start() during launch = %v, want ErrProcessAlreadyStarted", err)
 	}
 

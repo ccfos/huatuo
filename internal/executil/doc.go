@@ -56,9 +56,10 @@
 // failures; errors.Is may also match a stop marker inside an independent error.
 // Concurrent Stop calls execute independently, and failed attempts can be retried.
 // The zero Process is invalid; error-returning methods return
-// ErrProcessNotInitialized directly, and Done returns nil. Start returns
-// ErrProcessAlreadyStarted directly after a previous or unfinished launch.
+// ErrProcessNotInitialized, and Done returns nil. Start returns
+// ErrProcessAlreadyStarted after a previous or unfinished launch.
 // Wait before Start and Stop before completed launch return ErrProcessNotStarted.
+// Match these process state errors with errors.Is.
 //
 // One internal reaper owns cmd.Wait. Process methods support concurrent use;
 // configuration options apply only during New, and Process must not be copied.

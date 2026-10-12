@@ -28,13 +28,13 @@ func TestProcessRejectsWaitAndStopBeforeStart(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	if err := process.Wait(); err != ErrProcessNotStarted { //nolint:errorlint // Verify the direct-return contract.
+	if err := process.Wait(); !errors.Is(err, ErrProcessNotStarted) {
 		t.Errorf("Wait() error = %v, want not-started error", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := process.Stop(ctx); err != ErrProcessNotStarted { //nolint:errorlint // Verify the direct-return contract.
+	if err := process.Stop(ctx); !errors.Is(err, ErrProcessNotStarted) {
 		t.Errorf("Stop() error = %v, want not-started error", err)
 	}
 }
@@ -80,7 +80,7 @@ func TestProcessZeroValueReturnsInitializationError(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var process Process
-			if err := test.call(&process); err != ErrProcessNotInitialized { //nolint:errorlint // Verify the direct-return contract.
+			if err := test.call(&process); !errors.Is(err, ErrProcessNotInitialized) {
 				t.Errorf("operation error = %v, want ErrProcessNotInitialized", err)
 			}
 		})
@@ -131,7 +131,7 @@ func TestProcessStartRejectsCanceledContextAndRetry(t *testing.T) {
 					t.Fatalf("cleanup repeated launch cancellation: %v", err)
 				}
 			}
-			if err := process.Start(t.Context()); err != ErrProcessAlreadyStarted { //nolint:errorlint // Verify the direct-return contract.
+			if err := process.Start(t.Context()); !errors.Is(err, ErrProcessAlreadyStarted) {
 				t.Fatalf("second Start() = %v, want already-started error", err)
 			}
 		})
