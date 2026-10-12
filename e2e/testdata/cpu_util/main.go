@@ -212,10 +212,11 @@ func load(path string) error {
 			var mode, generation string
 			var milli, count int
 			if _, err := fmt.Sscan(command, &mode, &milli, &count, &generation); err != nil {
-				return fmt.Errorf("command must be '<idle|user|system|mixed> <millicpu> <workers> <generation>': %w", err)
+				return fmt.Errorf("command must be '<idle|user|system|mixed|burst> <millicpu> <workers> <generation>': %w", err)
 			}
-			if count < 1 || count > 2 || milli < 0 || milli > 2000 ||
-				(mode != "idle" && mode != "user" && mode != "system" && mode != "mixed") {
+			if count < 1 || count > 3 || milli < 0 || milli > 2000 ||
+				(mode != "idle" && mode != "user" && mode != "system" && mode != "mixed" && mode != "burst") ||
+				(mode == "burst" && milli != 0) {
 				return fmt.Errorf("invalid workload command %q", command)
 			}
 			stopWorkload()
@@ -230,7 +231,13 @@ func startWorkload(ctx context.Context, mode string, milli, count int) func() {
 	workerCtx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	runtime.GOMAXPROCS(count + 1)
-	if mode != "idle" {
+	if mode == "burst" {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			pulseWorkload(workerCtx, count, 200*time.Millisecond, 300*time.Millisecond)
+		}()
+	} else if mode != "idle" {
 		for range count {
 			workers.Add(1)
 			go func() {
@@ -240,6 +247,30 @@ func startWorkload(ctx context.Context, mode string, milli, count int) func() {
 		}
 	}
 	return func() { cancel(); workers.Wait() }
+}
+
+func pulseWorkload(ctx context.Context, count int, busy, idle time.Duration) {
+	for ctx.Err() == nil {
+		// Idle gaps refill the bandwidth reserve before the next >quota pulse.
+		pulse, cancel := context.WithTimeout(ctx, busy)
+		var workers sync.WaitGroup
+		for range count {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				burn(pulse, "user", 0)
+			}()
+		}
+		workers.Wait()
+		cancel()
+		timer := time.NewTimer(idle)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
 
 func burn(ctx context.Context, mode string, rate float64) {

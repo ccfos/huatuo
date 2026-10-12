@@ -15,17 +15,57 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/common/expfmt"
 )
+
+func TestThreeWorkerCancellation(t *testing.T) {
+	procs := runtime.GOMAXPROCS(0)
+	defer runtime.GOMAXPROCS(procs)
+	for _, mode := range []string{"user", "burst"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			stop := startWorkload(ctx, mode, 0, 3)
+			time.Sleep(20 * time.Millisecond)
+			cancel()
+			done := make(chan struct{})
+			go func() { stop(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("three-worker workload did not stop after cancellation")
+			}
+		})
+	}
+}
+
+func TestPulseIdleCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		pulseWorkload(ctx, 3, 10*time.Millisecond, time.Hour)
+		close(done)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("pulse workload ignored cancellation during idle")
+	}
+}
 
 func writeFixture(t *testing.T, dir, name, data string) {
 	t.Helper()
