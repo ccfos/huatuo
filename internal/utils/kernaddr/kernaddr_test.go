@@ -94,3 +94,10 @@ func TestFormatParseRoundTrip(t *testing.T) {
 		t.Fatalf("Parse(Format(%#x)) = %#x, want %#x", addr, got, addr)
 	}
 }
+
+func TestParseAcceptsMaximumUint64(t *testing.T) {
+	const address = ^uint64(0)
+	if got, ok := Parse(Format(address)); !ok || got != address {
+		t.Fatalf("Parse(Format(%#x)) = (%#x, %t), want (%#x, true)", address, got, ok, address)
+	}
+}
