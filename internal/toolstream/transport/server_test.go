@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -395,5 +396,78 @@ func TestClientRoundTrip(t *testing.T) {
 	}
 	if !got[1].End {
 		t.Errorf("second chunk End=false want true")
+	}
+}
+
+// A connection accepted while Close() is running must not escape the close:
+// either Close() closes it from its snapshot, or the accept loop discards it.
+// Otherwise its handler blocks in a read forever and Close() never returns.
+func TestCloseClosesConcurrentlyAcceptedConnection(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	accepted := make(chan struct{})
+	release := make(chan struct{})
+	srv := &Server{
+		listener:    listener,
+		connections: make(map[net.Conn]struct{}),
+		handler:     func(*Session, ChunkMsg) {},
+		acceptHook: func() {
+			close(accepted)
+			<-release
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv.cancel = cancel
+	srv.waitGroup.Add(1)
+	go func() {
+		defer srv.waitGroup.Done()
+		srv.acceptLoop(ctx)
+	}()
+
+	client, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	select {
+	case <-accepted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not accept the connection")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- srv.Close()
+	}()
+
+	// Give Close() time to finish its connection snapshot (cancel, listener
+	// close, snapshot) and park in waitGroup.Wait() while the connection is
+	// still parked in the accept hook. Releasing the hook must then make the
+	// accept loop discard the connection, unblocking Close().
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close() error=%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close() did not return; concurrently accepted connection escaped the close")
+	}
+
+	// The client side must observe the server-side close.
+	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	one := make([]byte, 1)
+	if _, err := client.Read(one); err == nil {
+		t.Error("client still readable; server-side connection was never closed")
 	}
 }
