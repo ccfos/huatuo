@@ -186,14 +186,14 @@ compose-dev-down:
 	@$(COMPOSE_DEV) down --remove-orphans --volumes
 	@docker image rm huatuo/huatuo-bamai:dev || true
 
-check: vendor $(BPF_BUILD_STAMP)
+check: vendor
 	@$(check-openapi)
-	@set -eu; $(generate-non-openapi)
 	@set -eu; $(format-sources)
 	@golangci-lint run -v ./... --timeout=5m --config .golangci.yaml
 	@git diff --exit-code
 
-vendor:
+# tidy and vendor need imports from generated ABI, mock and Cap'n Proto files.
+vendor: gen-non-openapi
 	@set -eu; go mod tidy; go mod verify; go mod vendor
 
 clean:
@@ -202,9 +202,11 @@ clean:
 	@find . \( -name "*.o" -o -name "mock_*.go" -o -name "*.capnp.go" \) \
 		$(FIND_EXCLUDE_PATHS) -delete
 
-gen-build: $(BPF_BUILD_STAMP)
-	@set -eu; $(call generate-openapi,.)
+gen-non-openapi: $(BPF_BUILD_STAMP)
 	@set -eu; $(generate-non-openapi)
+
+gen-build: gen-non-openapi
+	@set -eu; $(call generate-openapi,.)
 
 test: unit integration e2e
 
@@ -218,4 +220,4 @@ integration: build
 e2e: build
 	@bash e2e/run.sh
 
-.PHONY: build install-tools gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: build install-tools gen-build gen-non-openapi check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
