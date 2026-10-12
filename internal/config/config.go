@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -33,6 +34,27 @@ var (
 	// CoreBpfDir is the directory where BPF object files are stored.
 	CoreBpfDir = ""
 )
+
+type syncFile interface {
+	io.Writer
+	Name() string
+	Chmod(mode os.FileMode) error
+	Sync() error
+	Close() error
+}
+
+type syncDirectory interface {
+	Sync() error
+	Close() error
+}
+
+type syncOperations struct {
+	createTemp    func(string, string) (syncFile, error)
+	stat          func(string) (os.FileInfo, error)
+	rename        func(string, string) error
+	remove        func(string) error
+	openDirectory func(string) (syncDirectory, error)
+}
 
 func init() {
 	if exePath, err := os.Executable(); err == nil {
@@ -55,8 +77,22 @@ func Load(path string, dst any) error {
 // Sync atomically replaces path with the TOML encoding of src. Callers must
 // prevent concurrent mutation of src until Sync returns.
 func Sync(path string, src any) (retErr error) {
+	return syncConfig(path, src, syncOperations{
+		createTemp: func(dir, pattern string) (syncFile, error) {
+			return os.CreateTemp(dir, pattern)
+		},
+		stat:   os.Stat,
+		rename: os.Rename,
+		remove: os.Remove,
+		openDirectory: func(path string) (syncDirectory, error) {
+			return os.Open(path)
+		},
+	})
+}
+
+func syncConfig(path string, src any, operations syncOperations) (retErr error) {
 	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	f, err := operations.createTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("creating temporary config file: %w", err)
 	}
@@ -68,13 +104,13 @@ func Sync(path string, src any) (retErr error) {
 		if err := f.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 			retErr = errors.Join(retErr, fmt.Errorf("closing temporary config file: %w", err))
 		}
-		if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := operations.remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			retErr = errors.Join(retErr, fmt.Errorf("removing temporary config file: %w", err))
 		}
 	}()
 
 	mode := os.FileMode(0o600)
-	info, err := os.Stat(path)
+	info, err := operations.stat(path)
 	switch {
 	case err == nil:
 		mode = info.Mode().Perm()
@@ -94,11 +130,34 @@ func Sync(path string, src any) (retErr error) {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("closing temporary config file: %w", err)
 	}
-	if err := os.Rename(tempPath, path); err != nil {
+	if err := operations.rename(tempPath, path); err != nil {
 		return fmt.Errorf("replacing config file: %w", err)
+	}
+	if err := syncConfigDirectory(dir, operations.openDirectory); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+func syncConfigDirectory(
+	path string,
+	openDirectory func(string) (syncDirectory, error),
+) error {
+	dir, err := openDirectory(path)
+	if err != nil {
+		return fmt.Errorf("opening config directory for sync: %w", err)
+	}
+
+	syncErr := dir.Sync()
+	if syncErr != nil {
+		syncErr = fmt.Errorf("syncing config directory: %w", syncErr)
+	}
+	closeErr := dir.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("closing config directory after sync: %w", closeErr)
+	}
+	return errors.Join(syncErr, closeErr)
 }
 
 // Set modifies an unpublished config value by dot-separated key. Callers must
