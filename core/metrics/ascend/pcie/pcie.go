@@ -23,7 +23,9 @@ package pcie
 
 import (
 	"fmt"
+	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -40,28 +42,33 @@ type PCIeLinkInfo struct {
 
 // GetPCIeLinkInfo reads PCIe link info from sysfs for the given BDF.
 func GetPCIeLinkInfo(bdf string) (*PCIeLinkInfo, error) {
-	base := pciDevicesPath + "/" + bdf
+	return getPCIeLinkInfo(filepath.Join(pciDevicesPath, bdf))
+}
 
-	info := &PCIeLinkInfo{}
+func getPCIeLinkInfo(base string) (*PCIeLinkInfo, error) {
+	capSpeed, err := parseSpeed(filepath.Join(base, "max_link_speed"))
+	if err != nil {
+		return nil, fmt.Errorf("read maximum link speed: %w", err)
+	}
+	capWidth, err := parseWidth(filepath.Join(base, "max_link_width"))
+	if err != nil {
+		return nil, fmt.Errorf("read maximum link width: %w", err)
+	}
+	statusSpeed, err := parseSpeed(filepath.Join(base, "current_link_speed"))
+	if err != nil {
+		return nil, fmt.Errorf("read current link speed: %w", err)
+	}
+	statusWidth, err := parseWidth(filepath.Join(base, "current_link_width"))
+	if err != nil {
+		return nil, fmt.Errorf("read current link width: %w", err)
+	}
 
-	if s, err := parseSpeed(base + "/max_link_speed"); err == nil {
-		info.CapSpeed = s
-	}
-	if w, err := parseWidth(base + "/max_link_width"); err == nil {
-		info.CapWidth = w
-	}
-	if s, err := parseSpeed(base + "/current_link_speed"); err == nil {
-		info.StatusSpeed = s
-	}
-	if w, err := parseWidth(base + "/current_link_width"); err == nil {
-		info.StatusWidth = w
-	}
-
-	if info.CapSpeed == 0 && info.StatusSpeed == 0 {
-		return nil, fmt.Errorf("sysfs: unable to read link info for %s", bdf)
-	}
-
-	return info, nil
+	return &PCIeLinkInfo{
+		CapSpeed:    capSpeed,
+		CapWidth:    capWidth,
+		StatusSpeed: statusSpeed,
+		StatusWidth: statusWidth,
+	}, nil
 }
 
 func parseSpeed(path string) (float64, error) {
@@ -74,7 +81,11 @@ func parseSpeed(path string) (float64, error) {
 	if len(fields) == 0 {
 		return 0, fmt.Errorf("empty speed in %s", path)
 	}
-	return strconv.ParseFloat(fields[0], 64)
+	speed, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil || math.IsNaN(speed) || math.IsInf(speed, 0) || speed <= 0 {
+		return 0, fmt.Errorf("invalid speed in %s: %q", path, fields[0])
+	}
+	return speed, nil
 }
 
 func parseWidth(path string) (uint32, error) {
@@ -86,6 +97,9 @@ func parseWidth(path string) (uint32, error) {
 	width, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("invalid width in %s: %w", path, err)
+	}
+	if width == 0 {
+		return 0, fmt.Errorf("invalid width in %s: must be greater than zero", path)
 	}
 	return uint32(width), nil
 }
