@@ -55,6 +55,7 @@ type Formatter struct {
 	seenThreads  map[string]struct{}   // threads that already have an M event
 	sampleIdx    int
 	sampleRateHz float64
+	latestTS     float64
 }
 
 var _ output.Formatter = (*Formatter)(nil)
@@ -82,6 +83,9 @@ func (f *Formatter) Name() string { return "chrometrace" }
 // The first sample from each thread also emits an M (thread_name) metadata event.
 func (f *Formatter) Add(s *output.Sample) error {
 	ts := f.timestampFor(s)
+	if f.sampleIdx == 0 || ts > f.latestTS {
+		f.latestTS = ts
+	}
 
 	// M event: name the thread on first encounter.
 	if s.ThreadID != "" {
@@ -225,6 +229,10 @@ func (f *Formatter) addBatch(s *output.Sample, ts float64) {
 
 func (f *Formatter) Write(w io.Writer) error {
 	finalTS := f.timestampFor(&output.Sample{})
+	if f.sampleIdx > 0 {
+		// Explicit timestamps need an endpoint in the same time domain.
+		finalTS = max(finalTS, f.latestTS+1e6/f.sampleRateHz)
+	}
 
 	n := len(f.events)
 	for _, ps := range f.prev {
@@ -255,6 +263,7 @@ func (f *Formatter) Reset() {
 	f.prev = make(map[string]*prevState)
 	f.seenThreads = make(map[string]struct{})
 	f.sampleIdx = 0
+	f.latestTS = 0
 }
 
 func (f *Formatter) IsEmpty() bool {
