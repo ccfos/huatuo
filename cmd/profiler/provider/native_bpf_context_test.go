@@ -28,11 +28,20 @@ type closeBPFStub struct {
 	bpf.BPF
 	closeErr error
 	closed   bool
+	detached bool
 }
 
 func (s *closeBPFStub) Close() error {
 	s.closed = true
 	return s.closeErr
+}
+
+// Detach must be implemented rather than promoted from the embedded bpf.BPF:
+// the embedded interface is a nil field here, so a promoted call would panic with
+// a nil pointer dereference instead of reporting that detaching happened.
+func (s *closeBPFStub) Detach() error {
+	s.detached = true
+	return nil
 }
 
 func TestValidateStackID(t *testing.T) {
@@ -130,6 +139,9 @@ func TestNativeProfilerStopClosesReadersAndBPF(t *testing.T) {
 			}
 			if !readerA.closed || !readerB.closed {
 				t.Fatalf("Stop() closed readers = (%t, %t), want (true, true)", readerA.closed, readerB.closed)
+			}
+			if !obj.detached {
+				t.Fatal("Stop() did not detach BPF programs")
 			}
 			if !obj.closed {
 				t.Fatal("Stop() did not close BPF")
