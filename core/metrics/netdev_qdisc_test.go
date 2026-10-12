@@ -81,6 +81,36 @@ func TestQdiscCollectorUpdate(t *testing.T) {
 	}
 }
 
+func TestQdiscCollectorSkipsUnresolvedDevice(t *testing.T) {
+	originalConfig := configSnapshot()
+	t.Cleanup(func() { Set(originalConfig) })
+	Set(&Config{})
+
+	attr, err := newQdiscCollector()
+	if err != nil {
+		t.Fatalf("create qdisc collector: %v", err)
+	}
+	collector, ok := attr.TracingData.(*qdiscCollector)
+	if !ok {
+		t.Fatalf("tracing data type = %T, want *qdiscCollector", attr.TracingData)
+	}
+	collector.readStats = func() ([]qdisc.Stats, error) {
+		return []qdisc.Stats{{
+			Netdev: "",
+			Parent: math.MaxUint32,
+			Kind:   "fq_codel",
+		}}, nil
+	}
+
+	metrics, err := collector.Update()
+	if err != nil {
+		t.Fatalf("update qdisc metrics: %v", err)
+	}
+	if len(metrics) != 0 {
+		t.Fatalf("metric count = %d, want 0", len(metrics))
+	}
+}
+
 func TestQdiscCollectorUpdateReadError(t *testing.T) {
 	wantErr := errors.New("netlink unavailable")
 	collector := &qdiscCollector{
