@@ -102,6 +102,22 @@ iotracing_filesystem_test() {
 		done
 		device=$(cat "/sys/class/block/${loop_devices[first_loop]##*/}/dev")
 
+		# Qualify attach before requiring CLI attribution from this filesystem.
+		# A Go skip exits zero, so propagate unavailable XFS coverage explicitly.
+		mkdir -p "${TOOL_WORK_DIR}/go-tmp"
+		local runtime_log="${TOOL_WORK_DIR}/runtime.json" runtime_status=0
+		# A lazily faulted Go test executable must not reside on the captured device.
+		GOTMPDIR="${TOOL_WORK_DIR}/go-tmp" TMPDIR="${io_test_dir}" \
+			TEST_IOTRACING_OTHER_FS="${other_test_dir}" TEST_IOTRACING_FILE_BPF="${TOOL_BPF}" \
+			timeout --kill-after=5s 240s go test -mod=vendor -tags=integration ./cmd/iotracing \
+			-run '^TestIOTracing' -count=1 -json -timeout=230s > "${runtime_log}" || runtime_status=$?
+		jq -rj 'select(.Action == "output") | .Output' "${runtime_log}" \
+			|| fatal "invalid iotracing runtime test results"
+		[[ ${runtime_status} -eq 0 ]] || fatal "iotracing runtime tests failed with ${runtime_status}"
+		if jq -e -s 'any(.[]; .Action == "skip" and .Test == "TestIOTracingFullObject")' "${runtime_log}" > /dev/null; then
+			skip "XFS name-based probe attachment is unavailable; full-object qualification was not completed"
+		fi
+
 		log_info "iotracing: filesystem=${filesystem}, duration=${DURATION}s, device=${device}, io_test_dir=${io_test_dir}"
 		"${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
 			--duration "${DURATION}" \
@@ -165,14 +181,6 @@ iotracing_filesystem_test() {
 
 		log_info "matched dd-attributed writes:"
 		echo "${MATCHED_IO}" | jq '.'
-
-		# Reuse this test's owned filesystem directory after the CLI capture exits.
-		mkdir -p "${TOOL_WORK_DIR}/go-tmp"
-		# A lazily faulted Go test executable must not reside on the captured device.
-		GOTMPDIR="${TOOL_WORK_DIR}/go-tmp" TMPDIR="${io_test_dir}" \
-			TEST_IOTRACING_OTHER_FS="${other_test_dir}" TEST_IOTRACING_FILE_BPF="${TOOL_BPF}" \
-			timeout --kill-after=5s 240s go test -mod=vendor -tags=integration ./cmd/iotracing \
-			-run '^TestIOTracing' -count=1 -v -timeout=230s
 	}
 
 	run_filesystem_tests "${filesystem}"

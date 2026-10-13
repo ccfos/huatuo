@@ -459,14 +459,8 @@ func TestIOTracingReadWrite(t *testing.T) {
 	t.Cleanup(coll.Close)
 	source := coll.Maps[bpfSourceMapName]
 	require.NotNil(t, source)
-	readProbe, err := link.Kprobe(filesystem+"_file_read_iter",
-		coll.Programs["bpf_anyfs_file_read_iter"], nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = readProbe.Close() })
-	writeProbe, err := link.Kprobe(filesystem+"_file_write_iter",
-		coll.Programs["bpf_anyfs_file_write_iter"], nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = writeProbe.Close() })
+	attachFileIOProbe(t, filesystem+"_file_read_iter", coll.Programs["bpf_anyfs_file_read_iter"])
+	attachFileIOProbe(t, filesystem+"_file_write_iter", coll.Programs["bpf_anyfs_file_write_iter"])
 
 	// A block completion can publish a row before any file event. Leave its
 	// file metadata empty and verify real entries fill it without losing IO.
@@ -664,9 +658,7 @@ func TestIOTracingFileMetadata(t *testing.T) {
 			var absent bpfFilesystemIO
 			require.ErrorIs(t, source.Lookup(files[0].key, &absent), ebpf.ErrKeyNotExist)
 			require.NoError(t, source.Update(files[1].key, files[1].seed, ebpf.UpdateNoExist))
-			probe, err := link.Kprobe(tc.symbol, coll.Programs[tc.program], nil)
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = probe.Close() })
+			attachFileIOProbe(t, tc.symbol, coll.Programs[tc.program])
 			runtime.LockOSThread()
 			defer runtime.UnlockOSThread()
 
@@ -723,4 +715,22 @@ func TestIOTracingFileMetadata(t *testing.T) {
 			}
 		})
 	}
+}
+
+func attachFileIOProbe(t *testing.T, name string, program *ebpf.Program) {
+	t.Helper()
+	probe, err := link.Kprobe(name, program, nil)
+	if err != nil {
+		err = xfsKprobeFailure(name, err)
+		if errors.Is(err, errXFSKprobeUnsupported) {
+			t.Skipf("XFS qualification unavailable: %v", err)
+		}
+	}
+	require.NoError(
+		t,
+		err,
+		"attach file IO probe %s",
+		name,
+	)
+	t.Cleanup(func() { _ = probe.Close() })
 }
