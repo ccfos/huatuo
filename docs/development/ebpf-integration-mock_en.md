@@ -55,7 +55,9 @@ Build once, then run the host mock tests:
 
 ```sh
 make build
-sudo bash integration/run.sh test_events_memory_oom_kill_mock.sh
+for test in memory_oom_kill softlockup; do
+    sudo bash integration/run.sh "test_events_${test}_mock.sh"
+done
 ```
 
 Run a single test by its script name. Run container OOM separately:
@@ -77,7 +79,7 @@ directory matching the running kernel, pass `sudo env KERNEL_BUILD_DIR=...`.
 Build and transfer checkers from the same revision as the daemon and BPF objects:
 
 ```sh
-for feature in oom; do
+for feature in oom softlockup; do
     go build -tags integration -o "_output/bin/${feature}-mock-checker" \
         "./integration/bpf_mock/${feature}/checker"
 done
@@ -124,6 +126,15 @@ ES documents. Counters follow the victim: four container increments and one
 host increment for null victim. The pod must remain running without restarting.
 Cross-container victims are not covered.
 
+### Softlockup
+
+`add_taint_mock` receives accepted `TAINT_SOFTLOCKUP` and rejected `TAINT_USER`
+inputs from main and worker threads. The test verifies two ES documents with
+exact TGID, CPU, truncated command name, metadata, and a stack string. Rejected
+flags produce no event; the kernel softlockup taint bit remains unchanged.
+Each positive case uses a fresh daemon and increments its counter once,
+respecting production backoff.
+
 ## Cleanup and debugging
 
 Tests stop their daemon and unload their module. The runner removes shared ES;
@@ -141,20 +152,25 @@ attachment failures fail it once prerequisites are present.
 - Tests cover the exercised paths on the tested kernel builds. Source inspection
   alone does not establish runtime compatibility with every vendor kernel.
 - Grafana rendering is outside these tests.
+- Softlockup/hungtask use real SysRq and `/dev/kmsg` collection. Stack fields
+  may be empty or contain diagnostics; tests check their types, not completeness.
 
 ### Known Ubuntu kernel attachment limitation
 
-On Ubuntu kernel `5.4.0-216-generic`, the OOM module and BPF object load, but
-attachment to `oom_kill_process_mock` fails with `EADDRNOTAVAIL` ("cannot assign
-requested address"). See the [CI failure](https://github.com/ccfos/huatuo/actions/runs/38233705136/job/114764618198).
+On Ubuntu kernel `5.4.0-216-generic`, the OOM and softlockup modules and BPF
+objects load, but attachment to `oom_kill_process_mock` and `add_taint_mock`
+fails with `EADDRNOTAVAIL` ("cannot assign requested address"). See the
+[OOM failure](https://github.com/ccfos/huatuo/actions/runs/38233705136/job/114764618198)
+and [softlockup failure](https://github.com/ccfos/huatuo/actions/runs/38375800134/job/115223763730).
 
 The suspected cause is duplicate module-symbol counting, as seen in the
 [5.4 stable symbol iterator](https://github.com/gregkh/linux/blob/v5.4.293/kernel/kallsyms.c#L168)
 and [kprobe symbol counting](https://github.com/gregkh/linux/blob/v5.4.293/kernel/trace/trace_kprobe.c#L692).
 The exact Ubuntu source and live symbol counts remain unverified. This is a
-known limitation of that kernel release. Both host and container OOM mock
-tests skip `5.4.0-216-generic` before allocating resources. Other kernel releases
-still run these tests; attachment failures remain fatal.
+known limitation of that kernel release. Host and container OOM mock tests
+and the softlockup mock test skip `5.4.0-216-generic` before allocating resources.
+Other kernel releases still run all mock tests; attachment failures
+remain fatal.
 
 ## Adding a fixture
 

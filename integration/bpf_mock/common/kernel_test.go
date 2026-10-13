@@ -58,7 +58,7 @@ func TestMockKprobeScriptsSkipKnownKernel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, script := range []string{"test_events_memory_oom_kill_mock.sh", "test_events_memory_oom_kill_mock_container.sh"} {
+	for _, script := range []string{"test_events_memory_oom_kill_mock.sh", "test_events_memory_oom_kill_mock_container.sh", "test_events_softlockup_mock.sh"} {
 		t.Run(script, func(t *testing.T) {
 			cmd := exec.Command("bash", "-c", `
 set -euo pipefail
