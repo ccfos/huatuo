@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/ccfos/huatuo/internal/log"
 )
 
@@ -34,6 +36,26 @@ func GetAllCPUsBT() (string, error) {
 // GetBlockedProcessesBT gets backtrace of blocked processes
 func GetBlockedProcessesBT() (string, error) {
 	return GetSysrqMsg("w")
+}
+
+// setNonblock switches fd to non-blocking mode.
+//
+// /dev/kmsg blocks once the record buffer has been drained, so the read loop in
+// GetSysrqMsg relies on EAGAIN to stop. A descriptor that cannot be switched
+// would block there instead, so the failure has to reach the caller: discarding
+// it returns an empty backtrace together with a nil error, and neither the
+// caller nor the operator has anything to investigate.
+func setNonblock(fd uintptr) error {
+	flags, err := unix.FcntlInt(fd, unix.F_GETFL, 0)
+	if err != nil {
+		return fmt.Errorf("read kmsg descriptor flags: %w", err)
+	}
+
+	if _, err := unix.FcntlInt(fd, unix.F_SETFL, flags|unix.O_NONBLOCK); err != nil {
+		return fmt.Errorf("set kmsg descriptor non-blocking: %w", err)
+	}
+
+	return nil
 }
 
 // GetSysrqMsg reads sysrq triggered demsg
@@ -64,13 +86,7 @@ func GetSysrqMsg(command string) (string, error) {
 	}
 
 	fd := kmsgFile.Fd()
-	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
-	if errno != 0 {
-		return "", err
-	}
-
-	_, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFL, flags|syscall.O_NONBLOCK)
-	if errno != 0 {
+	if err := setNonblock(fd); err != nil {
 		return "", err
 	}
 
@@ -100,7 +116,7 @@ func formatKmsgs(kmsgs string) string {
 		if line != "" {
 			formattedLine, err := formatKmsgEntry(line)
 			if err != nil {
-				fmt.Printf("Error formatting kmsg line: %v\n", err)
+				log.Errorf("Error formatting kmsg line: %v", err)
 				continue
 			}
 			formattedMsgs.WriteString(formattedLine)
