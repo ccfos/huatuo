@@ -254,28 +254,43 @@ func getXFSLogFreeSize(statsList []*xfs.Stats) map[string]float64 {
 	return logFreeSizeMap
 }
 
-// Follow xlog_space_left: only the next cycle is a single wrap. An overrun
-// leaves no free space; a head behind the tail is treated as an empty log.
+// calcuXlogFreeBytes returns the available xlog space in bytes for one XFS
+// device. Kernels expose two sysfs interfaces for the reserve grant head: the
+// legacy cycle:offset pair (3.17 up to 6.10) and the plain byte count that
+// kernel commit c1220522ef40 introduced in 6.11.
 func calcuXlogFreeBytes(logPath string, maxSize float64) (float64, error) {
-	logFiles := map[string]string{
-		"tail":  filepath.Join(logPath, "log_tail_lsn"),
-		"rhead": filepath.Join(logPath, "reserve_grant_head"),
+	tailPath := filepath.Join(logPath, "log_tail_lsn")
+	if _, err := os.Stat(tailPath); err != nil {
+		log.Infof("log_tail_lsn file not found, err: %v", err)
+		return -1, err
 	}
-
-	for name, path := range logFiles {
-		if _, err := os.Stat(path); err != nil {
-			log.Infof("%s file not found, err: %v", name, err)
-			return -1, err
-		}
+	legacyHead := filepath.Join(logPath, "reserve_grant_head")
+	if _, err := os.Stat(legacyHead); err == nil {
+		return calcuXlogFreeBytesLegacy(tailPath, legacyHead, maxSize)
 	}
+	grantBytesPath := filepath.Join(logPath, "reserve_grant_head_bytes")
+	if _, err := os.Stat(grantBytesPath); err != nil {
+		log.Infof("reserve grant head file not found, err: %v", err)
+		return -1, err
+	}
+	return calcuXlogFreeBytesByteCounts(tailPath, grantBytesPath,
+		filepath.Join(logPath, "log_head_lsn"), maxSize)
+}
 
-	tCycle, tBlocks, err := readCycleValue(logFiles["tail"])
+// calcuXlogFreeBytesLegacy mirrors xlog_space_left for kernels that export
+// the reserve grant head as a "cycle:bytes" pair. Only the next cycle is a
+// single wrap; an overrun leaves no free space and a head behind the tail is
+// treated as an empty log.
+func calcuXlogFreeBytesLegacy(tailPath, legacyHead string,
+	maxSize float64,
+) (float64, error) {
+	tCycle, tBlocks, err := readCycleValue(tailPath)
 	if err != nil {
 		log.Infof("read log_tail_lsn failed, err: %v", err)
 		return -1, err
 	}
 
-	rhCycle, rhBytes, err := readCycleValue(logFiles["rhead"])
+	rhCycle, rhBytes, err := readCycleValue(legacyHead)
 	if err != nil {
 		log.Infof("read reserve_grant_head failed, err: %v", err)
 		return -1, err
@@ -292,6 +307,82 @@ func calcuXlogFreeBytes(logPath string, maxSize float64) (float64, error) {
 		return tailBytes - rhBytes, nil
 	}
 	return maxSize, nil
+}
+
+// calcuXlogFreeBytesByteCounts serves kernels 6.11 and newer, where commit
+// c1220522ef40 ("xfs: grant heads track byte counts, not LSNs") replaced the
+// cycle:offset reserve grant head with a plain byte count. The kernel derives
+// free space as log size - tail space - reservation, but the tail space is not
+// exported. The written-but-unflushed window between the tail LSN and the log
+// head LSN covers the tail space, so the derived value never reports more
+// free space than the kernel would; the gap is the in-flight iclog window.
+func calcuXlogFreeBytesByteCounts(tailPath, grantBytesPath, headPath string,
+	maxSize float64,
+) (float64, error) {
+	// Read the tail first and the moving counters last: concurrent progress
+	// can only enlarge the derived window, never shrink it.
+	tCycle, tBlocks, err := readCycleValue(tailPath)
+	if err != nil {
+		log.Infof("read log_tail_lsn failed, err: %v", err)
+		return -1, err
+	}
+	hCycle, hBlocks, err := readCycleValue(headPath)
+	if err != nil {
+		log.Infof("read log_head_lsn failed, err: %v", err)
+		return -1, err
+	}
+	grantBytes, err := readPlainValue(grantBytesPath)
+	if err != nil {
+		log.Infof("read reserve_grant_head_bytes failed, err: %v", err)
+		return -1, err
+	}
+	if grantBytes < 0 {
+		log.Infof("invalid reserve grant head bytes: %.0f", grantBytes)
+		return -1, fmt.Errorf("invalid reserve grant head bytes: %.0f", grantBytes)
+	}
+
+	window := logWindowBytes(tCycle, tBlocks*512, hCycle, hBlocks*512, maxSize)
+	used := grantBytes + window
+	if used > maxSize {
+		return 0, nil
+	}
+	return maxSize - used, nil
+}
+
+// logWindowBytes returns the forward byte distance from the log tail to the
+// log head, clamped to [0, one full log]. The head cannot fall behind the
+// tail in a consistent snapshot; treat that as an empty window.
+func logWindowBytes(tailCycle, tailBytes, headCycle, headBytes,
+	logSize float64,
+) float64 {
+	var window float64
+	switch {
+	case headCycle == tailCycle:
+		if headBytes > tailBytes {
+			window = headBytes - tailBytes
+		}
+	case headCycle == tailCycle+1:
+		window = logSize - tailBytes + headBytes
+	case headCycle > tailCycle+1:
+		window = logSize
+	}
+	return min(max(window, 0), logSize)
+}
+
+func readPlainValue(filePath string) (float64, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		log.Errorf("read file failed, err: %v", err)
+		return -1, err
+	}
+
+	value, err := strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
+	if err != nil {
+		log.Infof("invalid numeric value, err: %v", err)
+		return -1, err
+	}
+
+	return value, nil
 }
 
 func readCycleValue(filePath string) (float64, float64, error) {

@@ -1215,7 +1215,10 @@ huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
 |buf_locked_waited_total|Cumulative waits for buffer locks|count|
 
 `log_free_bytes` is omitted when log-space information is unavailable.
-Restart the daemon after adding XFS mounts.
+On kernels 6.11 and newer, where the reserve grant head exports a byte
+count instead of a cycle:offset pair, the value is derived from that
+count and the tail-to-head window; it is a lower bound that never
+over-reports available space. Restart the daemon after adding XFS mounts.
 
 ## General System
 

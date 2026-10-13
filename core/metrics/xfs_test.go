@@ -39,6 +39,7 @@ func newXFSFixture(t testing.TB, devices int) (*xfsCollector, string) {
 			filepath.Join("dev", name):                                  "dev/sda0",
 			filepath.Join("sys/fs/xfs", name, "stats/stats"):            "sys/fs/xfs/sda0/stats/stats",
 			filepath.Join("sys/fs/xfs", name, "log/log_tail_lsn"):       "sys/fs/xfs/sda0/log/log_tail_lsn",
+			filepath.Join("sys/fs/xfs", name, "log/log_head_lsn"):       "sys/fs/xfs/sda0/log/log_head_lsn",
 			filepath.Join("sys/fs/xfs", name, "log/reserve_grant_head"): "sys/fs/xfs/sda0/log/reserve_grant_head",
 		} {
 			data, err := os.ReadFile(filepath.Join("..", "..", "integration", "fixtures", source))
@@ -148,12 +149,19 @@ func TestXFSUpdateErrors(t *testing.T) {
 		reinit    bool
 		fatal     bool
 		headBytes string
+		noHeadLSN bool
 	}{
 		{name: "missing max size", path: "dev/sda0", remove: true, reinit: true},
 		{name: "invalid max size", path: "dev/sda0", content: string(make([]byte, 512)), reinit: true},
 		{name: "missing log", path: "sys/fs/xfs/sda0/log/log_tail_lsn", remove: true},
 		{name: "invalid log", path: "sys/fs/xfs/sda0/log/reserve_grant_head", content: "invalid\n"},
-		{name: "new log interface", path: "sys/fs/xfs/sda0/log/reserve_grant_head", remove: true, headBytes: "8192\n"},
+		{
+			name:      "byte-count grant without head lsn",
+			path:      "sys/fs/xfs/sda0/log/reserve_grant_head",
+			remove:    true,
+			headBytes: "8192\n",
+			noHeadLSN: true,
+		},
 		{name: "invalid stats", path: "sys/fs/xfs/sda0/stats/stats", content: "extent_alloc invalid\n", fatal: true},
 		{name: "unreadable stats", path: "sys/fs/xfs/sda0/stats/stats", remove: true, fatal: true},
 	} {
@@ -171,6 +179,9 @@ func TestXFSUpdateErrors(t *testing.T) {
 			if tt.headBytes != "" {
 				path := filepath.Join(root, "sys/fs/xfs/sda0/log/reserve_grant_head_bytes")
 				require.NoError(t, os.WriteFile(path, []byte(tt.headBytes), 0o600))
+			}
+			if tt.noHeadLSN {
+				require.NoError(t, os.Remove(filepath.Join(root, "sys/fs/xfs/sda0/log/log_head_lsn")))
 			}
 			if tt.reinit {
 				attr, err := newXFSCollector()
@@ -216,6 +227,23 @@ func TestXFSUpdateFullLog(t *testing.T) {
 	require.Zero(t, metrics[0].Value)
 }
 
+// Kernels 6.11 and newer export the reserve grant head as a plain byte count
+// instead of the legacy cycle:offset pair.
+func TestXFSUpdateByteCountGrantHead(t *testing.T) {
+	c, root := newXFSFixture(t, 1)
+	logPath := filepath.Join(root, "sys/fs/xfs/sda0/log")
+	require.NoError(t, os.Remove(filepath.Join(logPath, "reserve_grant_head")))
+	require.NoError(t, os.WriteFile(filepath.Join(logPath, "reserve_grant_head_bytes"), []byte("8192\n"), 0o600))
+
+	metrics, err := c.Update()
+	require.NoError(t, err)
+	require.Len(t, metrics, metricsPerDevice)
+	require.Equal(t, "log_free_bytes", metrics[0].Name())
+	// log size 10485760 minus the tail-to-head window 7680 minus the
+	// reservation 8192.
+	require.Equal(t, float64(10469888), metrics[0].Value)
+}
+
 func TestXFSNoDevices(t *testing.T) {
 	c, _ := newXFSFixture(t, 0)
 	metrics, err := c.Update()
@@ -240,6 +268,34 @@ func TestXFSLogFreeBytes(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(root, "log_tail_lsn"), []byte(tt.tail), 0o600))
 			require.NoError(t, os.WriteFile(filepath.Join(root, "reserve_grant_head"), []byte(tt.head), 0o600))
+			got, err := calcuXlogFreeBytes(root, 16384)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestXFSLogFreeBytesByteCountGrant(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		tail       string
+		head       string
+		grantBytes string
+		want       float64
+	}{
+		{name: "same cycle", tail: "1:8\n", head: "1:16\n", grantBytes: "4096\n", want: 8192},
+		{name: "next cycle", tail: "1:24\n", head: "2:4\n", grantBytes: "1024\n", want: 9216},
+		{name: "full window", tail: "1:0\n", head: "1:32\n", grantBytes: "0\n", want: 0},
+		{name: "window more than one cycle ahead", tail: "1:0\n", head: "3:0\n", grantBytes: "0\n", want: 0},
+		{name: "grant overcommit", tail: "1:0\n", head: "1:0\n", grantBytes: "20000\n", want: 0},
+		{name: "head behind tail", tail: "1:24\n", head: "1:8\n", grantBytes: "1024\n", want: 15360},
+		{name: "idle log", tail: "1:0\n", head: "1:0\n", grantBytes: "0\n", want: 16384},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "log_tail_lsn"), []byte(tt.tail), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "log_head_lsn"), []byte(tt.head), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "reserve_grant_head_bytes"), []byte(tt.grantBytes), 0o600))
 			got, err := calcuXlogFreeBytes(root, 16384)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)

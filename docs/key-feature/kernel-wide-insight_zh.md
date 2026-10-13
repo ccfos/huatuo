@@ -1293,7 +1293,9 @@ huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
 |buf_busy_locked_total|buffer busy-locked 累计次数|计数|
 |buf_locked_waited_total|等待 buffer 锁的累计次数|计数|
 
-无法获取 log 可用空间时不输出 `log_free_bytes`。新增 XFS 挂载后需重启 daemon。
+无法获取 log 可用空间时不输出 `log_free_bytes`。内核 6.11 起 reserve grant head
+以字节数而非 cycle:offset 导出,此时 `log_free_bytes` 由该字节数与 tail 到 head
+的窗口推导,是可用空间的下界,不会高估。新增 XFS 挂载后需重启 daemon。
 
 ## 通用系统
 
