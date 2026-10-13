@@ -266,6 +266,8 @@ graph TB
   | `data_len` | **Raw error data payload length (in bytes)**. |
   | `raw_data` | **Hexadecimal dump of raw error data** (space-separated bytes). Used for in-depth diagnostics; must be interpreted with the relevant hardware vendor documentation. |
 
+  Non-standard sections (NVDIMM, CXL, and vendor payloads) are frequently larger than the fixed 456-byte window HUATUO keeps in userspace. When the kernel-reported section length exceeds that window, `raw_data` is truncated to the bytes actually available while `data_len` still reports the original kernel length. The excess bytes are dropped on purpose: the offset and length come from the hardware record, and honoring them blindly would let a single malformed event take down the event loop.
+
 - **PCIe AER**
 
   Monitored devices include GPUs, NVMe SSDs, RDMA NICs/HCAs, FPGA accelerator cards, and PCIe switches.
