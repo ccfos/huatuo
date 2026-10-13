@@ -241,7 +241,7 @@ func newPersistentDocumentWriter(t *testing.T) (*DocumentWriter, *profileBackend
 		return backend, nil
 	})
 
-	store, err := profilingstore.NewFromConfig(t.Context(), profilingstore.Config{
+	store, err := profilingstore.NewFromConfig(t.Context(), &profilingstore.Config{
 		Index: "profiling-results-test",
 	})
 	if err != nil {

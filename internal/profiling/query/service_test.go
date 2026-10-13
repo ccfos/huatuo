@@ -110,7 +110,7 @@ func newProfileQueryStore(t testing.TB, total int, fail bool) *profilingstore.St
 		}
 	}))
 	t.Cleanup(server.Close)
-	store, err := profilingstore.NewFromConfig(context.Background(), profilingstore.Config{Addresses: []string{server.URL}, Index: "profiles"})
+	store, err := profilingstore.NewFromConfig(context.Background(), &profilingstore.Config{Addresses: []string{server.URL}, Index: "profiles"})
 	if err != nil {
 		t.Fatal(err)
 	}
