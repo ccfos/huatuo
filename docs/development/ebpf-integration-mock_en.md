@@ -30,6 +30,8 @@ mock mode applies to all loaded objects; enable only collectors with fixtures.
 - Target BTF for production CO-RE programs; memory cgroups for OOM.
 - Docker, curl, jq, timeout, and access to the Elasticsearch image.
 - Go to build checkers, or a transferred checker executable (see below).
+- Hung task detection and event tracing enabled, tracefs mounted, and the
+  build tree containing `include/trace/events/sched.h`.
 
 The container case also needs Kubernetes on the test node, working kubelet
 credentials, kubectl, and static libc development libraries. Preload
@@ -55,7 +57,7 @@ Build once, then run the host mock tests:
 
 ```sh
 make build
-for test in memory_oom_kill softlockup; do
+for test in memory_oom_kill softlockup hungtask; do
     sudo bash integration/run.sh "test_events_${test}_mock.sh"
 done
 ```
@@ -79,7 +81,7 @@ directory matching the running kernel, pass `sudo env KERNEL_BUILD_DIR=...`.
 Build and transfer checkers from the same revision as the daemon and BPF objects:
 
 ```sh
-for feature in oom softlockup; do
+for feature in oom softlockup hungtask; do
     go build -tags integration -o "_output/bin/${feature}-mock-checker" \
         "./integration/bpf_mock/${feature}/checker"
 done
@@ -135,6 +137,15 @@ flags produce no event; the kernel softlockup taint bit remains unchanged.
 Each positive case uses a fresh daemon and increments its counter once,
 respecting production backoff.
 
+### Hung task
+
+The module generates `sched/sched_process_hang_mock` from the target kernel's
+tracepoint declaration and compares real/mock field layouts. Main and worker
+cases verify two ES documents with exact TID, truncated command name, kernel
+timeout, metadata, and both stack strings. Each uses a fresh daemon and
+increments its counter once. No task is blocked. Validate fixed-array and
+dynamic-string comm layouts on kernels providing each layout.
+
 ## Cleanup and debugging
 
 Tests stop their daemon and unload their module. The runner removes shared ES;
@@ -169,7 +180,8 @@ and [kprobe symbol counting](https://github.com/gregkh/linux/blob/v5.4.293/kerne
 The exact Ubuntu source and live symbol counts remain unverified. This is a
 known limitation of that kernel release. Host and container OOM mock tests
 and the softlockup mock test skip `5.4.0-216-generic` before allocating resources.
-Other kernel releases still run all mock tests; attachment failures
+The hungtask mock uses a tracepoint and passed on this kernel, so it continues
+to run. Other kernel releases still run all mock tests; attachment failures
 remain fatal.
 
 ## Adding a fixture

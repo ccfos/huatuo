@@ -9,7 +9,7 @@ weight: 5
 
 The integration suite includes fixture tests for **huatuo-bamai** metrics and
 [kernel mock tests for BPF events](ebpf-integration-mock_en.md). The kernel
-mock guide describes the shared infrastructure with OOM and softlockup
+mock guide describes the shared infrastructure with OOM, softlockup, and hung task
 examples.
 
 The metrics fixture tests run the real `huatuo-bamai` binary with mocked
