@@ -7,9 +7,13 @@ date: 2026-03-04
 weight: 5
 ---
 
-This integration test validates that **huatuo-bamai** can start correctly with mocked `/proc` and `/sys` filesystems and expose the expected **Prometheus metrics**.
+The integration suite includes fixture tests for **huatuo-bamai** metrics and
+[kernel mock tests for BPF events](ebpf-integration-mock_en.md). The kernel
+mock guide describes the shared infrastructure and uses OOM as its first
+example.
 
-The test runs the real `huatuo-bamai` binary and verifies the `/metrics`endpoint output without relying on the host kernel or hardware.
+The metrics fixture tests run the real `huatuo-bamai` binary with mocked
+`/proc` and `/sys` filesystems and verify the `/metrics` endpoint output.
 
 ### What the Script Does
 The integration test performs the following steps:
