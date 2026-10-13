@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -66,6 +67,23 @@ func TestIOTracingFileReadLayouts(t *testing.T) {
 	}
 }
 
+// Keep a separate backing-page mapping resident: locking the tested mapping
+// would make MADV_DONTNEED fail instead of exercising another file fault.
+func pinIOTracingPageCache(t *testing.T, file *os.File) {
+	t.Helper()
+	page, err := unix.Mmap(
+		int(file.Fd()),
+		0,
+		os.Getpagesize(),
+		unix.PROT_READ,
+		unix.MAP_SHARED,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, unix.Munmap(page)) })
+	require.NoError(t, unix.Mlock(page))
+	t.Cleanup(func() { require.NoError(t, unix.Munlock(page)) })
+}
+
 // TestIOTracingFilemapCapacity exercises the production filemap probe with
 // real map exhaustion. It deliberately excludes unrelated programs and does
 // not replace full iotracing qualification. Set TEST_IOTRACING_FILE_BPF to the
@@ -104,6 +122,7 @@ func TestIOTracingFilemapCapacity(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, os.Getpagesize(), n)
 		require.NoError(t, file.Sync())
+		pinIOTracingPageCache(t, file)
 		var stat unix.Stat_t
 		require.NoError(t, unix.Fstat(int(file.Fd()), &stat))
 		page, err := unix.Mmap(int(file.Fd()), 0, os.Getpagesize(),
@@ -191,6 +210,8 @@ func TestIOTracingFilemapCapacity(t *testing.T) {
 		require.Zero(t, fresh.FsWriteBytes)
 		require.NoError(t, full.Lookup(uint32(0), &saturated))
 		require.Zero(t, saturated, "a successful insert must not latch the map full")
+		// Unrelated faults must not latch full while userspace fills the map.
+		require.NoError(t, probe.Close())
 
 		// Fill the actual hash map; the production update helper, not the
 		// test, must set the capacity flag when a new file is observed.
@@ -205,6 +226,9 @@ func TestIOTracingFilemapCapacity(t *testing.T) {
 		require.Equal(t, 512, occupancy())
 		require.NoError(t, full.Lookup(uint32(0), &saturated))
 		require.Zero(t, saturated, "userspace filling the HASH must not set the production flag")
+		overflowProbe, err := link.Kprobe("filemap_fault", coll.Programs["bpf_filemap_fault"], nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = overflowProbe.Close() })
 		fault(files[2])
 		require.NoError(t, full.Lookup(uint32(0), &saturated))
 		require.Equal(t, uint32(1), saturated)
@@ -243,9 +267,131 @@ func TestIOTracingFilemapCapacity(t *testing.T) {
 		require.Equal(t, 512, occupancy())
 		require.NoError(t, full.Lookup(uint32(0), &saturated))
 		require.Equal(t, uint32(1), saturated)
-		require.NoError(t, probe.Close())
+		require.NoError(t, overflowProbe.Close())
 		coll.Close()
 	}
+}
+
+func TestIOTracingFilemapDeviceFilter(t *testing.T) {
+	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
+	require.NotEmpty(t, object, "run make integration to supply the production BPF object")
+	require.Equal(
+		t,
+		0,
+		os.Geteuid(),
+		"live filemap qualification requires root",
+	)
+	require.NotEmpty(t, os.Getenv("TMPDIR"), "set TMPDIR to a private ext4/XFS filesystem")
+	require.NoError(t, unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
+		Cur: unix.RLIM_INFINITY, Max: unix.RLIM_INFINITY,
+	}))
+
+	type sourceKey struct {
+		PID   uint32
+		Dev   uint32
+		Inode uint64
+	}
+	makeFile := func(dir, name string) (*os.File, []byte, sourceKey) {
+		t.Helper()
+		file, err := os.Create(filepath.Join(dir, name))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = file.Close() })
+		data := make([]byte, os.Getpagesize())
+		n, err := file.Write(data)
+		require.NoError(t, err)
+		require.Equal(t, len(data), n)
+		require.NoError(t, file.Sync())
+		var stat unix.Stat_t
+		require.NoError(t, unix.Fstat(int(file.Fd()), &stat))
+		page, err := unix.Mmap(
+			int(file.Fd()),
+			0,
+			len(data),
+			unix.PROT_READ|unix.PROT_WRITE,
+			unix.MAP_PRIVATE,
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = unix.Munmap(page) })
+		return file, page, sourceKey{
+			Dev: unix.Major(stat.Dev)<<20 | unix.Minor(stat.Dev), Inode: stat.Ino,
+		}
+	}
+	dir := t.TempDir()
+	var fs unix.Statfs_t
+	require.NoError(t, unix.Statfs(dir, &fs))
+	require.True(t, fs.Type == unix.EXT4_SUPER_MAGIC || fs.Type == unix.XFS_SUPER_MAGIC,
+		"TMPDIR must be on ext4 or XFS")
+	file, page, key := makeFile(dir, "captured")
+	pinIOTracingPageCache(t, file)
+
+	spec, err := ebpf.LoadCollectionSpec(object)
+	require.NoError(t, err)
+	for name := range spec.Programs {
+		if name != "bpf_filemap_fault" {
+			delete(spec.Programs, name)
+		}
+	}
+	require.NoError(t, spec.RewriteConstants(map[string]any{
+		"FILTER_DEV_COUNT": uint32(1),
+		"FILTER_DEV_IDS":   [16]uint32{key.Dev},
+	}))
+	coll, err := ebpf.NewCollection(spec)
+	require.NoError(t, err)
+	t.Cleanup(coll.Close)
+	source := coll.Maps[bpfSourceMapName]
+	full := coll.Maps["io_source_full"]
+	require.NotNil(t, source)
+	require.NotNil(t, full)
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	probe, err := link.Kprobe("filemap_fault", coll.Programs["bpf_filemap_fault"], nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = probe.Close() })
+
+	otherFS := os.Getenv("TEST_IOTRACING_OTHER_FS")
+	require.NotEmpty(t, otherFS, "run make integration to supply the excluded filesystem")
+	otherDir, err := os.MkdirTemp(otherFS, "filemap-background-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(otherDir)) })
+	var otherStat unix.Statfs_t
+	require.NoError(t, unix.Statfs(otherDir, &otherStat))
+	require.True(t, otherStat.Type == unix.EXT4_SUPER_MAGIC || otherStat.Type == unix.XFS_SUPER_MAGIC,
+		"excluded-device qualification requires real ext4/XFS filemap faults")
+	// More distinct foreign files than the map can admit must not
+	// consume its capacity or set its capture-local full flag.
+	for i := uint32(0); i <= source.MaxEntries(); i++ {
+		other, otherPage, otherKey := makeFile(otherDir, strconv.FormatUint(uint64(i), 10))
+		require.NotEqual(
+			t,
+			key.Dev,
+			otherKey.Dev,
+			"background files need a different device",
+		)
+		otherPage[0] = 1
+		require.NoError(t, unix.Munmap(otherPage))
+		require.NoError(t, other.Close())
+	}
+	var anyKey sourceKey
+	var anyRecord bpfFilesystemIO
+	entries := source.Iterate()
+	require.False(t, entries.Next(&anyKey, &anyRecord), "foreign faults must not create records")
+	require.NoError(t, entries.Err())
+	var saturated uint32
+	require.NoError(t, full.Lookup(uint32(0), &saturated))
+	require.Zero(t, saturated)
+	page[0] = 1
+	var record bpfFilesystemIO
+	require.NoError(t, source.Lookup(key, &record))
+	require.Equal(t, key.Dev, record.DevID)
+	require.Equal(t, key.Inode, record.Ino)
+	require.Equal(t, uint32(os.Getpid()), record.TGID)
+	require.Equal(t, uint32(1), record.PathInitialized)
+	require.Equal(t, "captured", filepath.Base(record.PathName()))
+	require.Zero(t, record.FsWriteBytes)
+	require.Equal(t, uint64(4096), record.FsReadBytes)
+	require.NoError(t, full.Lookup(uint32(0), &saturated))
+	require.Zero(t, saturated)
+	require.NoError(t, probe.Close())
 }
 
 // TestIOTracingReadWrite requires TEST_IOTRACING_FILE_BPF and an explicit
@@ -475,6 +621,7 @@ func TestIOTracingFileMetadata(t *testing.T) {
 					},
 				}
 				if tc.mapping != 0 {
+					pinIOTracingPageCache(t, file)
 					page, err := unix.Mmap(int(file.Fd()), 0, len(data),
 						unix.PROT_READ|unix.PROT_WRITE, tc.mapping)
 					require.NoError(t, err)
