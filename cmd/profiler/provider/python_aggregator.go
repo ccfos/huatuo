@@ -15,6 +15,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -31,18 +32,20 @@ import (
 var _ aggregator.Aggregator = (*pythonAggregator)(nil)
 
 type pythonAggregator struct {
+	containerID  string
+	pid          int
 	mu           sync.Mutex
 	sampleOutput []profiler.SampleOutput
-	startedAt    time.Time
 	sampleRate   int64
 }
 
 func newPythonCPUAggregator(pctx *pcontext.ProfilerContext) (*pythonAggregator, error) {
-	pctx.IsOneShotAgg = true
+	pctx.AggregationMode = aggregator.AggregationModeOneShot
 
 	return &pythonAggregator{
-		startedAt:  time.Now(),
-		sampleRate: int64(pctx.Freq),
+		containerID: pctx.ContainerID,
+		pid:         pctx.PID(),
+		sampleRate:  int64(pctx.Freq),
 	}, nil
 }
 
@@ -82,16 +85,16 @@ func normalizePythonOutput(pid int, raw string) string {
 	return normalized.String()
 }
 
-func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
+func (a *pythonAggregator) Snapshot(ctx context.Context) (*types.ProfilingWindow, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if len(a.sampleOutput) == 0 {
-		data, err := profiler.ParseTree(a.startedAt, profiler.ProfileTypeCpuSample, nil, &profiler.ParseOption{SampleRate: a.sampleRate})
+		data, err := profiler.ParseTree(time.Time{}, profiler.ProfileTypeCpuSample, nil, &profiler.ParseOption{SampleRate: a.sampleRate})
 		if err != nil {
 			return nil, err
 		}
-		return profiler.NewWindow(data, pctx.ContainerID, time.Since(a.startedAt))
+		return profiler.NewWindow(data, a.containerID)
 	}
 
 	data, err := json.MarshalIndent(a.sampleOutput, "", "  ")
@@ -100,21 +103,20 @@ func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (*types.Prof
 	}
 
 	pprofData, err := profiler.ParseRawData(
-		pctx.Ctx,
+		ctx,
 		&profiler.ParseInput{
-			StartTime:    a.startedAt,
 			ProfileType:  profiler.ProfileTypeCpuSample,
 			ProfilerName: "python-cpu",
 			Data:         data,
 			Opt:          &profiler.ParseOption{SampleRate: a.sampleRate},
-			PID:          pctx.PID(),
+			PID:          a.pid,
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse raw data: %w", err)
 	}
 
-	return profiler.NewWindow(pprofData, pctx.ContainerID, time.Since(a.startedAt))
+	return profiler.NewWindow(pprofData, a.containerID)
 }
 
 func (a *pythonAggregator) Reset() {

@@ -15,6 +15,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -48,6 +49,11 @@ func requireRoot() error {
 var _ aggregator.Aggregator = (*nativeAggregator)(nil)
 
 type nativeAggregator struct {
+	profileType  profiling.Type
+	mode         profiling.Mode
+	containerID  string
+	parseOption  *profiler.ParseOption
+	sampleType   string
 	mu           sync.Mutex
 	stackTraces  stackTraceInterner
 	stackSamples map[stackSampleKey]int64
@@ -62,7 +68,16 @@ type stackSampleKey struct {
 }
 
 func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, error) {
+	opt, sampleType, err := profileTypeOptions(pctx)
+	if err != nil {
+		return nil, err
+	}
 	return &nativeAggregator{
+		profileType:  pctx.Type,
+		mode:         pctx.Mode,
+		containerID:  pctx.ContainerID,
+		parseOption:  opt,
+		sampleType:   sampleType,
 		stackSamples: make(map[stackSampleKey]int64),
 		lockSamples:  make(map[string]*lockSample),
 	}, nil
@@ -102,14 +117,14 @@ func (a *nativeAggregator) Aggregate(rec any) {
 	}
 }
 
-func (a *nativeAggregator) Snapshot(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
+func (a *nativeAggregator) Snapshot(context.Context) (*types.ProfilingWindow, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if pctx.Type == profiling.TypeLock {
-		return a.snapshotLockProfile(pctx)
+	if a.profileType == profiling.TypeLock {
+		return a.snapshotLockProfile()
 	}
-	return a.snapshotCpuMemProfile(pctx)
+	return a.snapshotCpuMemProfile()
 }
 
 func (a *nativeAggregator) Reset() {
@@ -121,9 +136,9 @@ func (a *nativeAggregator) Reset() {
 	a.lockSamples = make(map[string]*lockSample)
 }
 
-func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
-	skipNegForPprof := pctx.Type == profiling.TypeMemory &&
-		pctx.Mode == profiling.ModePhysicalUsage
+func (a *nativeAggregator) snapshotCpuMemProfile() (*types.ProfilingWindow, error) {
+	skipNegForPprof := a.profileType == profiling.TypeMemory &&
+		a.mode == profiling.ModePhysicalUsage
 
 	tree := make([]*profiler.TreeItem, 0, len(a.stackSamples))
 
@@ -144,10 +159,10 @@ func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext)
 		))
 	}
 
-	return buildPprofData(pctx, tree)
+	return a.buildPprofData(tree)
 }
 
-func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
+func (a *nativeAggregator) snapshotLockProfile() (*types.ProfilingWindow, error) {
 	tree := make([]*profiler.TreeItem, 0, len(a.lockSamples))
 	for _, rec := range a.lockSamples {
 		prefixes, value := lockPrefixFrames(rec)
@@ -158,7 +173,7 @@ func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (
 			value,
 		))
 	}
-	return buildPprofData(pctx, tree)
+	return a.buildPprofData(tree)
 }
 
 func makeLockSampleKey(sample *lockSample) string {
@@ -227,18 +242,13 @@ func parseCollapsedLine(line string) (stack string, count int64, ok bool) {
 }
 
 // buildPprofData constructs pprof (pyroscope-compatible) profile data.
-func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (*types.ProfilingWindow, error) {
-	opt, sampleType, err := profileTypeOptions(pctx)
-	if err != nil {
-		return nil, err
-	}
-
-	data, err := profiler.ParseTree(time.Now(), sampleType, tree, opt)
+func (a *nativeAggregator) buildPprofData(tree []*profiler.TreeItem) (*types.ProfilingWindow, error) {
+	data, err := profiler.ParseTree(time.Time{}, a.sampleType, tree, a.parseOption)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse tree: %w", err)
 	}
 
-	return profiler.NewWindow(data, pctx.ContainerID, 0)
+	return profiler.NewWindow(data, a.containerID)
 }
 
 func lockPrefixFrames(rec *lockSample) ([]string, uint64) {

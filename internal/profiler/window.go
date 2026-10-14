@@ -16,7 +16,6 @@ package profiler
 
 import (
 	"fmt"
-	"time"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 
@@ -24,7 +23,7 @@ import (
 )
 
 // NewWindow converts the internal profile into the common wire and output model.
-func NewWindow(data *ProfileData, containerID string, duration time.Duration) (*types.ProfilingWindow, error) {
+func NewWindow(data *ProfileData, containerID string) (*types.ProfilingWindow, error) {
 	encoded, err := data.Profile.MarshalVT()
 	if err != nil {
 		return nil, fmt.Errorf("encode profile: %w", err)
@@ -33,6 +32,8 @@ func NewWindow(data *ProfileData, containerID string, duration time.Duration) (*
 	if err := profile.UnmarshalVT(encoded); err != nil {
 		return nil, fmt.Errorf("decode profile: %w", err)
 	}
-	profile.DurationNanos = int64(duration)
+	// Pipeline owns the aggregation interval, independently of parser metadata.
+	profile.TimeNanos = 0
+	profile.DurationNanos = 0
 	return &types.ProfilingWindow{ContainerID: containerID, ProfileType: data.ProfileType, Profile: profile}, nil
 }

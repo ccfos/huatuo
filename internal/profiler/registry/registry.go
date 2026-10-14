@@ -41,7 +41,10 @@ type ProfilerMeta struct {
 // so streaming (eBPF, async-profiler tail) and one-shot (py-spy) providers
 // share one shape. Streaming providers initialize their event inputs in Start,
 // so ReadDataLoop only consumes data. ReadDataLoop returns when ctx is canceled
-// or sampling completes naturally, and its error surfaces through Profile.
+// or sampling completes naturally. Streaming providers return nil after a clean
+// requested stop; incomplete one-shot results and collection failures return an
+// error. Profile propagates every loop error and handles external cancellation
+// separately, even when the loop stops cleanly.
 type Profiler interface {
 	Start(pctx *pcontext.ProfilerContext) error
 	ReadDataLoop(ctx context.Context, enqueue func(any)) error
@@ -82,7 +85,18 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	if aggrErr != nil {
 		return fmt.Errorf("create aggregator: %w", aggrErr)
 	}
-	pipe := aggregator.NewPipeline(pctx, aggr)
+	formatter, err := newFormatter(pctx)
+	if err != nil {
+		return fmt.Errorf("create profiling formatter: %w", err)
+	}
+	pipe := aggregator.NewPipeline(aggregator.PipelineConfig{
+		AggregationMode:     pctx.AggregationMode,
+		AggregationInterval: time.Duration(pctx.AggrInterval) * time.Second,
+		TracerID:            pctx.TracerID,
+		Aggregator:          aggr,
+		Formatter:           formatter,
+		OnFailure:           pctx.Cancel,
+	})
 
 	if err := p.Impl.Start(pctx); err != nil {
 		cleanupErr := pipe.Abort()
@@ -91,18 +105,18 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 		return fmt.Errorf("start profiler: %w", errors.Join(err, cleanupErr))
 	}
 
-	pipe.Start()
+	pipe.Start(pctx.Ctx)
 	log.Info("aggregator started")
 
 	loopDone := make(chan error, 1)
 	go func() {
 		var deliveryErr error
-		enqueue := pipe.Enqueue
-		if pctx.IsOneShotAgg {
-			enqueue = func(data any) {
-				if deliveryErr == nil {
-					deliveryErr = pipe.EnqueueBatch(pctx.Ctx, data)
-				}
+		// Collectors may deliver final records after the stop signal. The
+		// pipeline keeps draining until this loop exits, even on abort.
+		deliveryCtx := context.WithoutCancel(pctx.Ctx)
+		enqueue := func(data any) {
+			if deliveryErr == nil {
+				deliveryErr = pipe.Enqueue(deliveryCtx, data)
 			}
 		}
 		loopErr := p.Impl.ReadDataLoop(pctx.Ctx, enqueue)
@@ -123,7 +137,6 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	}
 
 	var (
-		err     error
 		loopErr error
 		looped  bool
 	)
@@ -132,12 +145,15 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	case <-deadline:
 		log.Info("profiler auto-stop by duration")
 	case <-pctx.Ctx.Done():
-		err = pctx.Ctx.Err()
-		log.Infof("profiler stop by context: %v", err)
+		log.Infof("profiler stop by context: %v", pctx.Ctx.Err())
 	case loopErr = <-loopDone:
 		looped = true
 		log.Infof("profiler stop by loop exit: %v", loopErr)
 	}
+
+	// Observe cancellation before issuing our own normal-stop signal. Another
+	// ready select case must not hide an already canceled collection.
+	waitErr := pctx.Ctx.Err()
 
 	// Cancel first so ReadDataLoop exits before Stop closes BPF/file handles
 	// the loop may still be reading from.
@@ -151,12 +167,8 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	stopErr := p.Impl.Stop(pctx)
 	// A failed collector must never turn its partial state into a successful
 	// final window. Previously exported windows remain unpublished.
-	if loopErr != nil && (!errors.Is(loopErr, context.Canceled) || managesDuration) {
-		return errors.Join(err, loopErr, stopErr, pipe.Abort())
+	if err := errors.Join(waitErr, loopErr, stopErr); err != nil {
+		return errors.Join(err, pipe.Abort())
 	}
-	if stopErr != nil || err != nil {
-		return errors.Join(err, loopErr, stopErr, pipe.Abort())
-	}
-	exportErr := pipe.Stop()
-	return errors.Join(err, exportErr)
+	return pipe.Stop()
 }

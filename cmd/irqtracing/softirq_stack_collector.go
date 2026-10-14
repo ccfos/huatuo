@@ -38,7 +38,6 @@ type collector struct {
 	duration                 time.Duration
 	maxEventsPerSecondPerCPU uint64
 	bpfObj                   bpf.BPF
-	startedAt                time.Time
 }
 
 // newIRQProfiler binds one IRQ collection to the common runner.
@@ -47,8 +46,8 @@ func newIRQProfiler(c *collector) registry.ProfilerMeta {
 		Description: "softirq profiling",
 		Impl:        c,
 		NewAggregator: func(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-			pctx.IsOneShotAgg = true
-			return &irqAggregator{}, nil
+			pctx.AggregationMode = aggregator.AggregationModeOneShot
+			return &irqAggregator{containerID: pctx.ContainerID}, nil
 		},
 	}
 }
@@ -73,7 +72,6 @@ func (c *collector) Start(_ *pcontext.ProfilerContext) error {
 		return fmt.Errorf("attach IRQ probes: %w", err)
 	}
 	c.bpfObj = object
-	c.startedAt = time.Now()
 	return nil
 }
 
@@ -92,13 +90,12 @@ func (c *collector) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
 		return err
 	}
 
-	endedAt := time.Now()
-	data, err := buildProfile(c.bpfObj, c.startedAt)
+	data, err := buildProfile(c.bpfObj)
 	if err != nil {
 		return fmt.Errorf("build IRQ profile: %w", err)
 	}
 
-	enqueue(&softIRQBatch{profile: data, duration: endedAt.Sub(c.startedAt), dropped: dropped, targetCPU: c.cpuId})
+	enqueue(&softIRQBatch{profile: data, dropped: dropped, targetCPU: c.cpuId})
 	return nil
 }
 

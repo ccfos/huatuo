@@ -15,6 +15,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -32,16 +33,28 @@ import (
 var _ aggregator.Aggregator = (*javaAggregator)(nil)
 
 type javaAggregator struct {
+	containerID  string
+	pid          int
+	parseOption  *profiler.ParseOption
+	sampleType   string
+	profilerName string
 	mu           sync.Mutex
 	sampleOutput []profiler.SampleOutput
-	startedAt    time.Time
 }
 
 func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) {
-	pctx.IsOneShotAgg = true
+	pctx.AggregationMode = aggregator.AggregationModeOneShot
 
+	opt, sampleType, name, err := javaParseOptions(pctx)
+	if err != nil {
+		return nil, err
+	}
 	return &javaAggregator{
-		startedAt: time.Now(),
+		containerID:  pctx.ContainerID,
+		pid:          pctx.PID(),
+		parseOption:  opt,
+		sampleType:   sampleType,
+		profilerName: name,
 	}, nil
 }
 
@@ -59,11 +72,11 @@ func (a *javaAggregator) Aggregate(rec any) {
 	a.sampleOutput = append(a.sampleOutput, so)
 }
 
-func (a *javaAggregator) Snapshot(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
+func (a *javaAggregator) Snapshot(ctx context.Context) (*types.ProfilingWindow, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	return a.snapshotPprof(pctx)
+	return a.snapshotPprof(ctx)
 }
 
 func (a *javaAggregator) Reset() {
@@ -73,17 +86,13 @@ func (a *javaAggregator) Reset() {
 	a.sampleOutput = nil
 }
 
-func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
+func (a *javaAggregator) snapshotPprof(ctx context.Context) (*types.ProfilingWindow, error) {
 	if len(a.sampleOutput) == 0 {
-		opt, sampleType, _, err := javaParseOptions(pctx)
+		data, err := profiler.ParseTree(time.Time{}, a.sampleType, nil, a.parseOption)
 		if err != nil {
 			return nil, err
 		}
-		data, err := profiler.ParseTree(a.startedAt, sampleType, nil, opt)
-		if err != nil {
-			return nil, err
-		}
-		return profiler.NewWindow(data, pctx.ContainerID, time.Since(a.startedAt))
+		return profiler.NewWindow(data, a.containerID)
 	}
 
 	pprofFolded, err := json.MarshalIndent(a.sampleOutput, "", "  ")
@@ -91,27 +100,21 @@ func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (*types.P
 		return nil, fmt.Errorf("failed to marshal sample output: %w", err)
 	}
 
-	opt, sampleType, prName, err := javaParseOptions(pctx)
-	if err != nil {
-		return nil, err
-	}
-
 	pprofData, err := profiler.ParseCollapsedData(
-		pctx.Ctx,
+		ctx,
 		&profiler.ParseInput{
-			StartTime:    a.startedAt,
-			ProfileType:  sampleType,
-			ProfilerName: prName,
+			ProfileType:  a.sampleType,
+			ProfilerName: a.profilerName,
 			Data:         pprofFolded,
-			Opt:          opt,
-			PID:          pctx.PID(),
+			Opt:          a.parseOption,
+			PID:          a.pid,
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse collapsed data: %w", err)
 	}
 
-	return profiler.NewWindow(pprofData, pctx.ContainerID, time.Since(a.startedAt))
+	return profiler.NewWindow(pprofData, a.containerID)
 }
 
 func javaParseOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, string, error) {

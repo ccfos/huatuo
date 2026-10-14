@@ -15,7 +15,8 @@
 package aggregator
 
 import (
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"context"
+
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -25,6 +26,6 @@ import (
 // Pipeline serializes Aggregate, Snapshot and Reset at each window boundary.
 type Aggregator interface {
 	Aggregate(rec any)
-	Snapshot(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error)
+	Snapshot(ctx context.Context) (*types.ProfilingWindow, error)
 	Reset()
 }

@@ -157,7 +157,13 @@ func TestNativeAggregatorSeparatesStackSampleIdentity(t *testing.T) {
 }
 
 func TestNativeAggregatorSnapshotResolvesStackTraceIDs(t *testing.T) {
-	aggregator := &nativeAggregator{stackSamples: make(map[stackSampleKey]int64)}
+	aggregator, err := newNativeAggregator(&pcontext.ProfilerContext{
+		Type:         profiling.TypeMemory,
+		OutputFormat: output.FormatRemoteStore,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	aggregator.Aggregate(&stackSample{
 		Process: processKey{PID: 12, Comm: "app"},
 		StackTrace: symbolizedStackTrace{
@@ -168,10 +174,7 @@ func TestNativeAggregatorSnapshotResolvesStackTraceIDs(t *testing.T) {
 		Category: "cpu",
 	})
 
-	snapshot, err := aggregator.Snapshot(&pcontext.ProfilerContext{
-		Type:         profiling.TypeMemory,
-		OutputFormat: output.FormatRemoteStore,
-	})
+	snapshot, err := aggregator.Snapshot(t.Context())
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
@@ -196,7 +199,14 @@ func TestNativeAggregatorSnapshotResolvesStackTraceIDs(t *testing.T) {
 }
 
 func TestNativeAggregatorPhysicalMemoryFiltersAfterAggregation(t *testing.T) {
-	aggregator := &nativeAggregator{stackSamples: make(map[stackSampleKey]int64)}
+	aggregator, err := newNativeAggregator(&pcontext.ProfilerContext{
+		Type:         profiling.TypeMemory,
+		Mode:         profiling.ModePhysicalUsage,
+		OutputFormat: output.FormatRemoteStore,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	sample := &stackSample{
 		Process:    processKey{PID: 12, Comm: "app"},
 		StackTrace: symbolizedStackTrace{UserFrames: []string{"main"}},
@@ -206,11 +216,7 @@ func TestNativeAggregatorPhysicalMemoryFiltersAfterAggregation(t *testing.T) {
 	sample.Value = -20
 	aggregator.Aggregate(sample)
 
-	snapshot, err := aggregator.Snapshot(&pcontext.ProfilerContext{
-		Type:         profiling.TypeMemory,
-		Mode:         profiling.ModePhysicalUsage,
-		OutputFormat: output.FormatRemoteStore,
-	})
+	snapshot, err := aggregator.Snapshot(t.Context())
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
@@ -410,5 +416,26 @@ func requireSingleLockRecord(t *testing.T, aggregator *nativeAggregator, waitTim
 				contended,
 			)
 		}
+	}
+}
+
+func TestNativeAggregatorCapturesConfiguration(t *testing.T) {
+	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, Freq: 100, ContainerID: "original-container"}
+	aggr, err := newNativeAggregator(pctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pctx.Type = "unsupported"
+	pctx.Freq = 1
+	pctx.ContainerID = "changed-container"
+	window, err := aggr.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window.ContainerID != "original-container" {
+		t.Fatalf("container ID = %q", window.ContainerID)
+	}
+	if window.Profile.Period != 10000000 {
+		t.Fatalf("sample period = %d, want 10000000", window.Profile.Period)
 	}
 }

@@ -729,7 +729,50 @@ flowchart LR
     Aggregate --> Remote[Unix socket 远端上传]
 ```
 
-`--duration` 控制采集生命周期，`--aggr-interval` 控制远端上传的快照周期。本地 `collapsed`、`flamegraph` 和 `svg` 在采集结束时写出最终聚合结果；`remote` 按聚合周期生成并上传快照。队列将采集与符号化、聚合和输出解耦，避免文件渲染阻塞采样路径。
+`--duration` 控制采集生命周期，`--aggr-interval` 控制远端上传的快照周期。本地 `collapsed`、`flamegraph` 和 `svg` 在采集结束时写出最终聚合结果；`remote` 在流式模式下周期上传快照，在单次模式下于采集结束后上传。队列将采集与符号化、聚合和输出解耦，避免文件渲染阻塞采样路径。
+
+## 公共采集窗口
+
+profiler 与 irqtracing 共用采集执行器、Pipeline 和 `types.ProfilingWindow`。IRQ 业务实现位于 `cmd/irqtracing`；Java、Python 和 Native 聚合器位于 `cmd/profiler/provider`。样本数值遵循 profile 单位，例如 CPU 使用纳秒、IRQ 使用次数；Java 进程根帧使用 `process PID:MainClass`。
+
+### 配置和聚合周期
+
+执行器在启动采集前创建 Aggregator 和 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 不依赖 `ProfilerContext`。文件输出装配由 `internal/profiler/registry` 负责。
+
+聚合模式定义在 `internal/profiler/aggregator/config.go`：
+
+| 模式 | 导出时机 | 队列满时 |
+| --- | --- | --- |
+| `AggregationModeStreaming`（零值默认） | 周期导出，停止时导出剩余数据 | 统计并丢弃记录 |
+| `AggregationModeOneShot` | 采集结束后导出 | 等待空位或交付上下文取消 |
+
+两种模式使用容量为 65536 的队列，通过统一的 `Enqueue(ctx, data) error` 入队，仅在 Pipeline 运行期间接收数据。
+
+所有语言和模式的 profile 时间均由 Pipeline 管理。`Start(ctx)` 初始化 `aggregationStartTime`；`exportAggregationWindow` 统一填写 pprof 的 `time_nanos` 和 `duration_nanos`。成功导出并重置聚合器后，起点推进到本次快照结束时间；空快照或导出失败不推进起点。这些字段表示包含快照处理耗时的聚合周期，而非底层采样器的精确采样区间。
+
+### 输出和错误处理
+
+Formatter 接口为 `Add(ctx, window)` 和 `Complete(ctx)`。本地 Renderer 通过 `RegisterRenderer`、`OutputFormat.NewRenderer` 选择，累积各窗口的样本，在 Complete 时写出结果；写入和关闭文件的错误均会返回。远端 Formatter 通过 toolstream 发送窗口，并在 Complete 时提交任务。Pipeline 对窗口导出和 Complete 设置独立的 30 秒超时，正常收尾不受采集上下文取消影响。
+
+Pipeline 用 `runErr` 保存运行错误，通过 `OnFailure func()` 通知执行器停止采集，并通过 `Stop()` 返回错误。快照或输出失败后停止导出，不再调用 Complete。执行器保留读循环和停止操作的全部错误；任一采集错误或外部取消都会 Abort，阻止完成提交。
+
+执行器在发出自身停止信号前检查上下文，避免已发生的外部取消被同时就绪的自然结束或时长到期掩盖。此后进入正常收尾，共享上下文不区分之后发生的取消来源。读循环收到停止信号后仍可交付最终批次，Pipeline 在读循环退出前持续消费；交付不受采集上下文取消影响。
+
+### 存储和可见性
+
+守护进程通过 `internal/profiling.Register` 初始化存储，再注册 profiler 和 irqtracing 入口。toolstream 的工具名称用于路由，并写入 document 的 `tracer_name`；`ProfilingWindow` 不重复携带工具标识。
+
+工具使用 `Send(ctx, event, SendOptions)` 发送数据和控制帧。`End` 标记最后一帧，`Commit` 必须同时设置 End，并等待服务端 ACK。最后一份数据可以与提交标记共用一帧；nil event 不携带数据。远端 Formatter 的 Complete 发送无数据的 `End + Commit`。Close 单独释放连接，取消进行中的发送会关闭连接以中断 I/O。
+
+handler 接收 `Handle(ctx, *toolstream.Request[T])`，包含连接元数据、可选 Data、End/Commit、此前帧累计错误 PriorErr 和当前帧错误 Err。即使前帧失败，后续帧仍会交给 handler。profiling handler 通过 `pkg/profiling/store.SaveSync` 保存有效窗口，仅在整次请求处理成功后调用 Commit 写入持久化完成标记。普通 End、断连或失败不发布结果。
+
+普通数据帧没有 ACK，未注册入口及存储错误通过提交 ACK 返回。CLI 在 Complete 收到成功 ACK 后正常退出，bamai 根据退出状态判断任务结果。ACK 丢失表示客户端无法确认结果，不会回滚已写入数据。
+
+transport 将非空 `(toolName, taskID)` 绑定到活动连接，拒绝并发连接写入或提交同一任务，连接处理结束时释放归属。不同工具的 handler 独立运行。持久化任务 ID 必须全局唯一；既有完成标记 ID 保留兼容性。toolstream 使用协议版本 2，工具与守护进程需同时升级。
+
+### 丢样统计
+
+`ProfilingWindow.DroppedSamples` 使用 `pkg/types/profiling.go` 中的公共键：`collection` 表示采集阶段丢样，`aggregation_queue` 表示聚合队列满导致丢样。Pipeline 的 `queueDroppedSamples` 记录后者。数据存入 `profile_data.metrics.dropped_samples`。
 
 ## 🌟 结尾
 
@@ -741,41 +784,3 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
-
-## 公共采集窗口
-
-profiler 与 irqtracing 共用采集、聚合和流水线生命周期，所有快照返回 `types.ProfilingWindow`。本地 SVG/collapsed 输出通过 `internal/profiler/output` 读取同一份 profile；数值使用 profile 的样本单位（CPU 为纳秒，IRQ 为次数），不再维护独立的本地原始计数。Java 进程根帧统一为远端格式 `process PID:MainClass`，替代旧的本地 `process PID` 格式。周期采集在本地和远端模式均逐窗口处理，本地 Renderer 累积窗口直到最终导出；IRQ 在 detach 后只输出一个窗口。
-
-受管任务与独立 CLI 上传均通过 `pkg/profiling/store` 同步保存每个窗口。采集成功后，remote Formatter 的 `Complete` 发送 `end + commit`；profiling handler 检查请求中的错误，再写入持久化任务完成标记；Toolstream 通过 ACK 返回累计处理结果。采集、导出、存储和发布失败均使任务失败。普通 End 或断连不会发布。ACK 丢失表示客户端无法确认结果，不代表已写入的数据被回滚。`dropped_samples` 分别记录采集端与聚合队列丢样，持久化到 `profile_data.metrics`。采用新传输格式时需要同时升级工具与守护进程。
-
-窗口级 Formatter 统一接收 `types.ProfilingWindow`，本地格式在 `Complete` 时完成文件输出，remote 格式等待服务端提交确认。聚合器按窗口 Reset，Formatter 不暴露 Reset。toolstream 协议版本为 2，原 `flush @1` 改为 `commit @1`，新增提交结果帧；所有工具和 daemon 必须同时升级。IRQ 业务采集实现位于 `cmd/irqtracing`。
-
-输出边界为 `Formatter.Add(window)` / `Formatter.Complete(ctx)`。
-本地 Renderer 仅实现 `Add(sample)`、`Write(writer)` 和 `IsEmpty()`，由
-`RegisterRenderer` 和 `OutputFormat.NewRenderer` 选择。
-`Complete` 传播文件写入及关闭错误。每个 Renderer 属于一个任务，窗口之间不重置。
-
-守护进程通过 `internal/profiling.Register` 初始化存储并注册两个工具入口。
-transport 将非空的 `(toolName, taskID)` 绑定到活动连接，拒绝并发连接写入或提交同一任务。
-连接处理结束时释放归属记录，包括断连后的清理。
-profiler 和 IRQ 的处理器独立运行，一个工具等待存储不会阻塞另一个工具。
-持久化结果的 taskID 必须全局唯一；既有发布标记 ID 保留，以兼容历史数据。
-
-profiling 存储仅通过同步 `SaveSync` 写入窗口、通过 `Commit` 提交完成标记；旧的异步 profiling `Save` 入口已移除。
-
-Toolstream 使用 `Send(ctx, event, SendOptions)` 统一发送数据和控制帧。
-`End` 标记最后一帧；`Commit` 必须同时设置 `End`，并等待服务端 ACK。
-最后一份数据可以与结束、提交标记放在同一帧；event 为 nil 时不携带数据。
-`Close` 单独释放连接，取消进行中的发送会关闭连接以中断阻塞 I/O。
-窗口 Formatter 保留 `Complete`，内部发送无数据的 `End + Commit` 帧。
-任务启动前不查询 handler 注册状态。普通数据帧没有 ACK；入口未注册或存储失败的错误
-通过提交 ACK 返回。CLI 只有在 `Complete` 收到成功 ACK 后才正常退出；
-bamai 根据 CLI 退出状态判断受管任务结果，不再维护独立的服务端等待机制。
-显式取消采集走 Abort，不提交结果。
-
-工具处理器统一注册为 `Handle(ctx, *toolstream.Request[T])`。
-每帧请求包含连接元数据、可选 `Data`、`End`/`Commit` 标记、此前帧的累计错误
-`PriorErr`，以及当前帧的工具报错、协议或解码错误 `Err`。
-即使此前处理失败，后续帧及提交请求仍会传给 handler。profiling handler
-继续保存有效窗口，仅在此前帧、当前帧及本次写入均成功时发布。
-连接状态由 Toolstream 内部维护，不再提供独立提交回调。

@@ -20,7 +20,6 @@ import (
 	"errors"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -388,15 +387,13 @@ func TestVecName(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildProfile(t *testing.T) {
-	startedAt := time.Unix(123, 456)
-
 	t.Run("empty maps return a valid empty profile", func(t *testing.T) {
 		b := &mockBPF{
 			items:      map[string][]bpf.MapItem{},
 			stacks:     map[uint32][]byte{},
 			stackMapID: 99,
 		}
-		data, err := buildProfile(b, startedAt)
+		data, err := buildProfile(b)
 		assert.NoError(t, err)
 		require.NotNil(t, data)
 		assert.Empty(t, data.Profile.Sample)
@@ -421,11 +418,10 @@ func TestBuildProfile(t *testing.T) {
 			stackMapID: 99,
 		}
 
-		data, err := buildProfile(b, startedAt)
+		data, err := buildProfile(b)
 		assert.NoError(t, err)
 		assert.NotNil(t, data)
 		assert.Equal(t, profiler.ProfileTypeIRQTracingSample, data.ProfileType)
-		assert.Equal(t, startedAt.UnixNano(), data.Profile.TimeNanos)
 		for _, frame := range []string{
 			"source",
 			"source[raiser,NET_RX]",

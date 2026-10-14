@@ -82,7 +82,7 @@ func (p *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 	}
 
 	if mode == profiling.ModePhysicalUsage {
-		pctx.IsOneShotAgg = true
+		pctx.AggregationMode = aggregator.AggregationModeOneShot
 	}
 
 	return newNativeAggregator(pctx)

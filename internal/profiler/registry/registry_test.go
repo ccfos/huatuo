@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -42,7 +44,7 @@ func (fakeProfiler) Stop(*pcontext.ProfilerContext) error          { return nil 
 type fakeAggregator struct{}
 
 func (fakeAggregator) Aggregate(any) {}
-func (fakeAggregator) Snapshot(*pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
+func (fakeAggregator) Snapshot(context.Context) (*types.ProfilingWindow, error) {
 	return nil, nil
 }
 func (fakeAggregator) Reset() {}
@@ -162,7 +164,7 @@ type failingAggregator struct {
 	snapshots *int
 }
 
-func (a failingAggregator) Snapshot(*pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
+func (a failingAggregator) Snapshot(context.Context) (*types.ProfilingWindow, error) {
 	*a.snapshots++
 	return nil, a.err
 }
@@ -173,7 +175,7 @@ func TestProfilePropagatesFailures(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			pctx := &pcontext.ProfilerContext{Ctx: ctx, Cancel: cancel, IsOneShotAgg: true}
+			pctx := &pcontext.ProfilerContext{Ctx: ctx, Cancel: cancel, AggregationMode: aggregator.AggregationModeOneShot}
 			provider := failingProfiler{}
 			snapshots := 0
 			aggr := failingAggregator{snapshots: &snapshots}
@@ -193,5 +195,144 @@ func TestProfilePropagatesFailures(t *testing.T) {
 				t.Fatalf("exported %d snapshots after %s failed", snapshots, phase)
 			}
 		})
+	}
+}
+
+// Completion reaches Renderer.Write even when no aggregation window was emitted.
+type completionRenderer struct {
+	writes int
+}
+
+func (*completionRenderer) Add(*output.Sample) error { return nil }
+func (*completionRenderer) IsEmpty() bool            { return true }
+func (r *completionRenderer) Write(io.Writer) error {
+	r.writes++
+	return nil
+}
+
+type completionAggregator struct {
+	fakeAggregator
+	records int
+}
+
+func (a *completionAggregator) Aggregate(any) { a.records++ }
+
+type loopProfiler struct {
+	fakeProfiler
+	read      func(context.Context, func(any)) error
+	stopErr   error
+	loopEnded bool
+	stopped   bool
+}
+
+func (p *loopProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
+	defer func() { p.loopEnded = true }()
+	return p.read(ctx, enqueue)
+}
+
+func (p *loopProfiler) Stop(*pcontext.ProfilerContext) error {
+	if !p.loopEnded {
+		return errors.New("collector stopped before read loop ended")
+	}
+	p.stopped = true
+	return p.stopErr
+}
+
+func TestProfileCompletionRequiresSuccessfulCollection(t *testing.T) {
+	failure := errors.New("read samples failed")
+	stopFailure := errors.New("stop collector failed")
+	for _, tc := range []struct {
+		name            string
+		duration        int
+		finalBatch      bool
+		cancelBeforeRun bool
+		loopErr         error
+		stopErr         error
+		wantErr         error
+	}{
+		{name: "natural completion"},
+		{name: "normal duration", duration: 1},
+		{name: "final batch after normal stop", duration: 1, finalBatch: true},
+		{name: "external cancellation with clean loop", cancelBeforeRun: true, wantErr: context.Canceled},
+		{name: "external cancellation with final batch", cancelBeforeRun: true, finalBatch: true, wantErr: context.Canceled},
+		{name: "read failure", loopErr: failure, wantErr: failure},
+		{name: "loop cancellation", loopErr: context.Canceled, wantErr: context.Canceled},
+		{name: "joined cancellation and failure", loopErr: errors.Join(context.Canceled, failure), wantErr: failure},
+		{name: "wrapped joined failure", loopErr: fmt.Errorf("read loop: %w", errors.Join(context.Canceled, failure)), wantErr: failure},
+		{name: "failure at duration", duration: 1, loopErr: errors.Join(context.Canceled, failure), wantErr: failure},
+		{name: "stop failure", stopErr: stopFailure, wantErr: stopFailure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tc.cancelBeforeRun {
+				cancel()
+			}
+			renderer := &completionRenderer{}
+			const format output.OutputFormat = "registry-completion-test"
+			output.RegisterRenderer(format, func() output.Renderer { return renderer })
+			collector := &loopProfiler{stopErr: tc.stopErr, read: func(ctx context.Context, enqueue func(any)) error {
+				if tc.duration != 0 {
+					<-ctx.Done()
+				}
+				if tc.finalBatch {
+					// Final batches must remain deliverable after collection ends.
+					for range 8 {
+						enqueue(1)
+					}
+				}
+				return tc.loopErr
+			}}
+			pctx := &pcontext.ProfilerContext{
+				Ctx: ctx, Cancel: cancel, Duration: tc.duration,
+				OutputFormat: format, OutputWriter: io.Discard,
+			}
+			if tc.finalBatch {
+				pctx.AggregationMode = aggregator.AggregationModeOneShot
+			}
+			aggr := &completionAggregator{}
+			err := Profile(pctx, ProfilerMeta{
+				Impl: collector,
+				NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) {
+					return aggr, nil
+				},
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Profile() error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.loopErr != nil && errors.Is(tc.loopErr, context.Canceled) && !errors.Is(err, context.Canceled) {
+				t.Fatalf("Profile() lost cancellation from loop error: %v", err)
+			}
+			if !collector.stopped {
+				t.Fatal("collector was not stopped after its read loop ended")
+			}
+			if tc.finalBatch && aggr.records != 8 {
+				t.Fatalf("delivered records = %d, want 8", aggr.records)
+			}
+			wantWrites := 0
+			if tc.wantErr == nil {
+				wantWrites = 1
+			}
+			if renderer.writes != wantWrites {
+				t.Fatalf("completion writes = %d, want %d", renderer.writes, wantWrites)
+			}
+		})
+	}
+}
+
+func TestProfileRejectsInvalidFormatterBeforeCollection(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	startErr := errors.New("collector must not start")
+	pctx := &pcontext.ProfilerContext{Ctx: ctx, Cancel: cancel, OutputFormat: output.FormatRemoteStore}
+	err := Profile(pctx, ProfilerMeta{
+		Impl:          failingProfiler{startErr: startErr},
+		NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return fakeAggregator{}, nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires toolstream client") {
+		t.Fatalf("Profile() error = %v, want missing toolstream client", err)
+	}
+	if errors.Is(err, startErr) {
+		t.Fatal("started collection before validating formatter")
 	}
 }

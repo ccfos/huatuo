@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/pkg/profiling"
+
 	"github.com/ccfos/huatuo/internal/profiler"
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
@@ -51,7 +53,7 @@ func TestPythonAggregatorKeepsProcessRoots(t *testing.T) {
 	aggr.Aggregate(profiler.SampleOutput{PID: 200, Output: "hot (a.py:1) 4\n"})
 
 	var folded bytes.Buffer
-	window, err := aggr.Snapshot(pctx)
+	window, err := aggr.Snapshot(t.Context())
 	require.NoError(t, err)
 	formatter, err := output.FormatCollapsed.NewRenderer()
 	require.NoError(t, err)
@@ -113,7 +115,7 @@ RAW
 
 			if format == output.FormatCollapsed {
 				var folded bytes.Buffer
-				window, err := aggr.Snapshot(pctx)
+				window, err := aggr.Snapshot(t.Context())
 				require.NoError(t, err)
 				formatter, err := output.FormatCollapsed.NewRenderer()
 				require.NoError(t, err)
@@ -123,7 +125,7 @@ RAW
 				return
 			}
 
-			snapshot, err := aggr.Snapshot(pctx)
+			snapshot, err := aggr.Snapshot(t.Context())
 			require.NoError(t, err)
 			data := snapshot
 			require.Len(t, data.Profile.Sample, 2)
@@ -140,5 +142,26 @@ RAW
 				require.NotContains(t, frame, "py-spy>")
 			}
 		})
+	}
+}
+
+func TestPythonAggregatorCapturesConfiguration(t *testing.T) {
+	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, Freq: 100, ContainerID: "original-container"}
+	aggr, err := newPythonCPUAggregator(pctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pctx.Type = "unsupported"
+	pctx.Freq = 1
+	pctx.ContainerID = "changed-container"
+	window, err := aggr.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window.ContainerID != "original-container" {
+		t.Fatalf("container ID = %q", window.ContainerID)
+	}
+	if window.Profile.Period != 10000000 {
+		t.Fatalf("sample period = %d, want 10000000", window.Profile.Period)
 	}
 }

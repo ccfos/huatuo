@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package aggregator
+package registry
 
 import (
 	"bytes"
@@ -24,12 +24,12 @@ import (
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 
 	"github.com/ccfos/huatuo/internal/profiler"
-	profctx "github.com/ccfos/huatuo/internal/profiler/context"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-func TestCollapsedWriter(t *testing.T) {
+func TestFormatterCollapsedOutput(t *testing.T) {
 	items := []*profiler.TreeItem{
 		{Stack: [][]byte{[]byte("source"), []byte("raise;net\nrx")}, Value: 3},
 		{Stack: [][]byte{[]byte("source"), []byte("raise:net rx")}, Value: 2},
@@ -42,15 +42,18 @@ func TestCollapsedWriter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			window, err := profiler.NewWindow(data, "", time.Second)
-			p := NewPipeline(&profctx.ProfilerContext{Ctx: t.Context(), OutputFormat: format, OutputWriter: &destination}, nil)
+			window, err := profiler.NewWindow(data, "")
 			if err != nil {
-				t.Fatalf("newWriter() error = %v", err)
+				t.Fatal(err)
 			}
-			if err := p.exportWindow(window); err != nil {
-				t.Fatalf("Write() error = %v", err)
+			formatter, err := newFormatter(&pcontext.ProfilerContext{OutputFormat: format, OutputWriter: &destination})
+			if err != nil {
+				t.Fatalf("newFormatter() error = %v", err)
 			}
-			if err := p.formatter.Complete(t.Context()); err != nil {
+			if err := formatter.Add(t.Context(), window); err != nil {
+				t.Fatalf("Formatter.Add() error = %v", err)
+			}
+			if err := formatter.Complete(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if got := destination.String(); got != "source;raise:net rx 5\n" {
@@ -60,7 +63,7 @@ func TestCollapsedWriter(t *testing.T) {
 	}
 }
 
-func TestFlameGraphWriter(t *testing.T) {
+func TestFormatterFlameGraphOutput(t *testing.T) {
 	items := []*profiler.TreeItem{
 		{Stack: [][]byte{[]byte("source"), []byte("raise_softirq_[k]")}, Value: 3},
 	}
@@ -72,15 +75,18 @@ func TestFlameGraphWriter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			window, err := profiler.NewWindow(data, "", time.Second)
-			p := NewPipeline(&profctx.ProfilerContext{Ctx: t.Context(), OutputFormat: format, OutputWriter: &destination}, nil)
+			window, err := profiler.NewWindow(data, "")
 			if err != nil {
-				t.Fatalf("newWriter() error = %v", err)
+				t.Fatal(err)
 			}
-			if err := p.exportWindow(window); err != nil {
-				t.Fatalf("Write() error = %v", err)
+			formatter, err := newFormatter(&pcontext.ProfilerContext{OutputFormat: format, OutputWriter: &destination})
+			if err != nil {
+				t.Fatalf("newFormatter() error = %v", err)
 			}
-			if err := p.formatter.Complete(t.Context()); err != nil {
+			if err := formatter.Add(t.Context(), window); err != nil {
+				t.Fatalf("Formatter.Add() error = %v", err)
+			}
+			if err := formatter.Complete(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if got := destination.String(); !strings.Contains(got, "<svg") ||
@@ -91,11 +97,14 @@ func TestFlameGraphWriter(t *testing.T) {
 	}
 }
 
-func TestJSONWriter(t *testing.T) {
+func TestFormatterJSONOutput(t *testing.T) {
 	window := &types.ProfilingWindow{Profile: &profilev1.Profile{}, DroppedSamples: map[string]uint64{types.DropReasonCollection: 3}}
 	var destination bytes.Buffer
-	p := NewPipeline(&profctx.ProfilerContext{Ctx: t.Context(), OutputFormat: output.FormatJSON, OutputWriter: &destination}, nil)
-	if err := p.exportWindow(window); err != nil {
+	formatter, err := newFormatter(&pcontext.ProfilerContext{OutputFormat: output.FormatJSON, OutputWriter: &destination})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := formatter.Add(t.Context(), window); err != nil {
 		t.Fatal(err)
 	}
 	var got types.ProfilingWindow

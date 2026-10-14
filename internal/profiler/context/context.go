@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ccfos/huatuo/internal/profiler/aggregator"
 	"github.com/ccfos/huatuo/internal/profiler/output"
 	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
 	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
@@ -43,7 +44,7 @@ type ProfilerContext struct {
 	Duration             int
 	MaxProfilerProcesses int
 	AggrInterval         int
-	IsOneShotAgg         bool
+	AggregationMode      aggregator.AggregationMode
 	CPUIDs               []int
 	RequireHardwarePMU   bool
 

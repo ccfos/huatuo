@@ -17,6 +17,8 @@ package provider
 import (
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/pkg/profiling"
@@ -47,11 +49,11 @@ func TestJavaParseOptionsKeepsProfilerNames(t *testing.T) {
 func TestNewJavaAggregatorUsesOneShotAggregation(t *testing.T) {
 	t.Parallel()
 
-	pctx := &pcontext.ProfilerContext{OutputFormat: output.FormatCollapsed}
+	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, OutputFormat: output.FormatCollapsed}
 	if _, err := newJavaAggregator(pctx); err != nil {
 		t.Fatalf("newJavaAggregator() error=%v", err)
 	}
-	if !pctx.IsOneShotAgg {
+	if pctx.AggregationMode != aggregator.AggregationModeOneShot {
 		t.Fatal("newJavaAggregator() did not enable one-shot aggregation")
 	}
 }
@@ -86,5 +88,26 @@ func TestNativeProfilersRejectMultiplePIDs(t *testing.T) {
 				t.Fatalf("Start() error=%v, want %q", err, tt.wantError)
 			}
 		})
+	}
+}
+
+func TestJavaAggregatorCapturesConfiguration(t *testing.T) {
+	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, Freq: 100, ContainerID: "original-container"}
+	aggr, err := newJavaAggregator(pctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pctx.Type = "unsupported"
+	pctx.Freq = 1
+	pctx.ContainerID = "changed-container"
+	window, err := aggr.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window.ContainerID != "original-container" {
+		t.Fatalf("container ID = %q", window.ContainerID)
+	}
+	if window.Profile.Period != 10000000 {
+		t.Fatalf("sample period = %d, want 10000000", window.Profile.Period)
 	}
 }

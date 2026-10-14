@@ -15,33 +15,34 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strconv"
-	"time"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 
 	"github.com/ccfos/huatuo/internal/profiler"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type softIRQBatch struct {
 	profile   *profiler.ProfileData
-	duration  time.Duration
 	dropped   uint64
 	targetCPU int32
 }
 
-type irqAggregator struct{ batch *softIRQBatch }
+type irqAggregator struct {
+	batch       *softIRQBatch
+	containerID string
+}
 
 func (a *irqAggregator) Aggregate(record any) { a.batch = record.(*softIRQBatch) }
 
-func (a *irqAggregator) Snapshot(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
+func (a *irqAggregator) Snapshot(context.Context) (*types.ProfilingWindow, error) {
 	if a.batch == nil {
 		return nil, fmt.Errorf("IRQ collection completed without a batch")
 	}
-	window, err := profiler.NewWindow(a.batch.profile, pctx.ContainerID, a.batch.duration)
+	window, err := profiler.NewWindow(a.batch.profile, a.containerID)
 	if err != nil {
 		return nil, err
 	}

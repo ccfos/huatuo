@@ -738,7 +738,50 @@ flowchart LR
     Aggregate --> Remote[Remote upload through Unix socket]
 ```
 
-`--duration` controls the collection lifetime, while `--aggr-interval` controls the snapshot interval for remote uploads. Local `collapsed`, `flamegraph`, and `svg` modes write the final aggregate when collection ends. `remote` creates and uploads snapshots at the aggregation interval. The queue decouples collection from symbolization, aggregation, and output so file rendering does not block the sampling path.
+`--duration` controls the collection lifetime, while `--aggr-interval` controls the snapshot interval for remote uploads. Local `collapsed`, `flamegraph`, and `svg` modes write the final aggregate when collection ends. `remote` uploads periodic snapshots in streaming mode and one final window in one-shot mode. The queue decouples collection from symbolization, aggregation, and output so file rendering does not block the sampling path.
+
+## Common profiling windows
+
+Profiler and irqtracing share the collection runner, Pipeline and `types.ProfilingWindow`. IRQ business logic lives in `cmd/irqtracing`; Java, Python and Native aggregators live in `cmd/profiler/provider`. Values follow profile units, such as nanoseconds for CPU and counts for IRQ. Java process roots use `process PID:MainClass`.
+
+### Configuration and aggregation intervals
+
+The runner creates the Aggregator and Formatter before starting collection, constructs Pipeline with `aggregator.PipelineConfig`, and passes the runtime context through `Start(ctx)`. Invalid output configuration fails before collection starts. Each aggregator captures its business settings at construction and implements `Aggregate`, `Snapshot(context.Context)` and `Reset`. Pipeline does not depend on `ProfilerContext`. The runner in `internal/profiler/registry` assembles file output.
+
+Aggregation modes are defined in `internal/profiler/aggregator/config.go`:
+
+| Mode | Export timing | Full queue |
+| --- | --- | --- |
+| `AggregationModeStreaming` (zero-value default) | Periodically and for remaining data at shutdown | Count and discard records |
+| `AggregationModeOneShot` | At collection completion | Wait for space or delivery-context cancellation |
+
+Both modes use a queue capacity of 65536 and accept records through `Enqueue(ctx, data) error` only while Pipeline is running.
+
+Pipeline owns profile timestamps for every language and mode. `Start(ctx)` initializes `aggregationStartTime`; `exportAggregationWindow` assigns pprof `time_nanos` and `duration_nanos`. Successful export and reset advance the start to the snapshot end; empty snapshots and failed exports do not advance it. These fields describe the aggregation interval, including snapshot processing, rather than the exact underlying sampling interval.
+
+### Output and errors
+
+Formatter exposes `Add(ctx, window)` and `Complete(ctx)`. Local renderers are selected through `RegisterRenderer` and `OutputFormat.NewRenderer`, accumulate samples across windows, and write the result at Complete. File write and close errors propagate to the caller. Remote Formatter sends windows through toolstream and commits the task at Complete. Pipeline gives each window export and Complete a separate 30-second timeout, independent of collection-context cancellation during normal cleanup.
+
+Pipeline stores failures in `runErr`, notifies the runner through `OnFailure func()`, and returns the error from `Stop()`. Snapshot or output failure prevents further exports and Complete. The runner preserves all read-loop and stop errors; collection failures or external cancellation cause Abort and prevent completion.
+
+Before issuing its own stop signal, the runner checks the context so an existing external cancellation cannot be hidden by simultaneous natural completion or duration expiry. Normal cleanup starts after this check; the shared context does not distinguish later cancellation sources. Read loops may still deliver final batches after the stop signal, and Pipeline keeps consuming until the loop exits. Delivery is independent of collection-context cancellation.
+
+### Storage and visibility
+
+The daemon initializes storage through `internal/profiling.Register` before registering the profiler and irqtracing handlers. The toolstream tool name selects the handler and populates document `tracer_name`; `ProfilingWindow` does not duplicate tool identity.
+
+Tools send data and control frames with `Send(ctx, event, SendOptions)`. End marks the final frame; Commit requires End and waits for the server ACK. The final window may share a frame with these flags; a nil event carries no payload. Remote Formatter sends an empty `End + Commit` from Complete. Close releases the connection separately; canceling an in-flight send closes it to interrupt I/O.
+
+Handlers receive `Handle(ctx, *toolstream.Request[T])`, containing connection metadata, optional Data, End/Commit, prior-frame errors in PriorErr and current-frame errors in Err. Later frames still reach the handler after an earlier failure. The profiling handler saves valid windows through `pkg/profiling/store.SaveSync` and calls Commit to write the durable completion marker only after successful request processing. Plain End, disconnects and failures do not publish results.
+
+Ordinary data frames have no ACK; missing handlers and storage errors are reported by the commit ACK. The CLI exits successfully after Complete receives a successful ACK, and bamai uses that exit status for the task result. A lost ACK means the client cannot confirm the outcome; it does not roll back stored data.
+
+Transport binds each non-empty `(toolName, taskID)` to its active connection, rejects concurrent duplicate connections for that task, and releases ownership when connection handling finishes. Different tool handlers run independently. Persisted task IDs must be globally unique; existing completion-marker IDs retain compatibility. Toolstream uses protocol version 2, requiring tools and daemon to be upgraded together.
+
+### Dropped samples
+
+`ProfilingWindow.DroppedSamples` uses the common keys in `pkg/types/profiling.go`: `collection` for collection loss and `aggregation_queue` for loss caused by a full aggregation queue. Pipeline tracks the latter with `queueDroppedSamples`. Values are stored in `profile_data.metrics.dropped_samples`.
 
 ## 🌟 Conclusion
 
@@ -750,48 +793,3 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="Official WeChat account QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
-
-## Common profiling windows
-
-The profiler and irqtracing tools share the collection, aggregation and pipeline lifecycle. Every snapshot returns `types.ProfilingWindow`. Local SVG/collapsed output reads that same profile through `internal/profiler/output`; values use the profile unit (CPU nanoseconds, IRQ counts) rather than separate local raw counts. Java process roots now match the remote profile (`process PID:MainClass`) instead of the old local-only `process PID` root. Periodic profiling emits one window per interval for both local and remote output; local renderers accumulate those windows until final export. IRQ emits one final window after probes are detached.
-
-Managed tasks and standalone CLI uploads synchronously save every window through `pkg/profiling/store`. After successful collection, the remote Formatter sends `end + commit` from `Complete`. The profiling handler checks the request errors and writes the durable task marker; Toolstream returns the accumulated processing result in its ACK. Collection, export, storage and publication failures fail the task. Plain End and disconnect do not publish results. A lost ACK means the client cannot confirm the outcome; it does not roll back stored data. `dropped_samples` records collection and aggregation-queue loss separately and is stored under `profile_data.metrics`. Upgrade tools and daemon together for the new wire format.
-
-The window Formatter accepts `types.ProfilingWindow` for every output format. Local `Complete` finishes the output file; remote `Complete` waits for the commit result. Aggregators reset per window; Formatter does not expose Reset. Toolstream protocol version 2 renames `flush @1` to `commit @1` and adds a commit-result frame. Upgrade all tools and the daemon together. IRQ collection logic resides in `cmd/irqtracing`.
-
-The output boundary is `Formatter.Add(window)` / `Formatter.Complete(ctx)`.
-Local renderers implement `Add(sample)`, `Write(writer)` and `IsEmpty()`;
-`RegisterRenderer` and `OutputFormat.NewRenderer` select the renderer.
-`Complete` propagates both file write and close errors. Renderer instances belong
-to one task and are never reset between windows.
-
-The daemon initializes storage and registers both tool handlers through
-`internal/profiling.Register`. Transport binds each non-empty `(toolName, taskID)` to its active
-connection; concurrent duplicate connections cannot write or commit that task.
-Ownership is released when connection handling finishes, including after a disconnect.
-Profiler and IRQ handlers execute independently, including while another tool
-waits for storage. Task IDs must remain globally unique for persisted results,
-whose existing publication marker IDs are retained for compatibility.
-
-The profiling store exposes synchronous `SaveSync` and final `Commit`; the former asynchronous profiling `Save` entry point has been removed.
-
-Toolstream uses `Send(ctx, event, SendOptions)` for data and control frames.
-`End` marks the final frame; `Commit` requires `End` and waits for the server ACK.
-An event may accompany these flags so the final window and commit share a frame.
-A nil event sends no payload. `Close` releases the connection separately;
-canceling an in-flight send closes it to interrupt blocked I/O. The window
-Formatter keeps `Complete`, which sends an empty `End + Commit` frame.
-
-Task startup does not query handler registration. Ordinary data frames have no ACK;
-missing handlers and storage failures are reported through the commit ACK.
-The CLI exits successfully only after `Complete` receives a successful ACK.
-For managed tasks, bamai uses the CLI exit status without a separate server-side
-wait. Explicit cancellation aborts collection without committing results.
-
-Tool handlers receive `Handle(ctx, *toolstream.Request[T])` through one registration.
-Each request contains connection metadata, optional `Data`, `End`/`Commit`,
-`PriorErr` for preceding frames, and `Err` for the current frame's tool, protocol
-or decoding failure. Even after a failure, later frames and the commit request
-still reach the handler. The profiling handler continues saving valid windows,
-but publishes only when prior frames, the current frame and its write all succeed.
-Connection state stays inside Toolstream; there is no separate commit callback.

@@ -219,7 +219,7 @@ func detachAndReadDroppedSamples(b mapSnapshotter) (uint64, error) {
 
 // buildProfile merges the source and victim stack maps into a ProfileData
 // tree, prefixing each stack with "source" / "victim" roots.
-func buildProfile(b bpf.BPF, startedAt time.Time) (*profiler.ProfileData, error) {
+func buildProfile(b bpf.BPF) (*profiler.ProfileData, error) {
 	u := symbol.NewUsymResolver()
 
 	var items []*profiler.TreeItem
@@ -248,7 +248,7 @@ func buildProfile(b bpf.BPF, startedAt time.Time) (*profiler.ProfileData, error)
 		return nil, err
 	}
 
-	data, err := profiler.ParseTree(startedAt, profiler.ProfileTypeIRQTracingSample,
+	data, err := profiler.ParseTree(time.Time{}, profiler.ProfileTypeIRQTracingSample,
 		items, &profiler.ParseOption{SampleRate: profiler.NoSampleRate})
 	if err != nil {
 		return nil, err

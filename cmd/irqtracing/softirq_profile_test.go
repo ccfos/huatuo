@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/profiler"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -30,13 +29,16 @@ func TestSoftIRQWindowUsesCommonProfileAndQuality(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &irqAggregator{}
-	a.Aggregate(&softIRQBatch{profile: data, duration: time.Second, dropped: 3, targetCPU: 2})
-	window, err := a.Snapshot(&pcontext.ProfilerContext{})
+	a := &irqAggregator{containerID: "irq-container"}
+	a.Aggregate(&softIRQBatch{profile: data, dropped: 3, targetCPU: 2})
+	window, err := a.Snapshot(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if window.ProfileType != profiler.ProfileTypeIRQTracingSample || window.Profile.TimeNanos != start.UnixNano() || window.Profile.DurationNanos != int64(time.Second) {
+	if window.ContainerID != "irq-container" {
+		t.Fatalf("container ID = %q", window.ContainerID)
+	}
+	if window.ProfileType != profiler.ProfileTypeIRQTracingSample || window.Profile.TimeNanos != 0 || window.Profile.DurationNanos != 0 {
 		t.Fatalf("window = %+v", window)
 	}
 	if window.DroppedSamples[types.DropReasonCollection] != 3 || window.Profile.Sample[0].Value[0] != 7 {
@@ -47,7 +49,7 @@ func TestSoftIRQWindowUsesCommonProfileAndQuality(t *testing.T) {
 		t.Fatalf("CPU label = %+v", label)
 	}
 	a.Reset()
-	if _, err := a.Snapshot(&pcontext.ProfilerContext{}); err == nil {
+	if _, err := a.Snapshot(t.Context()); err == nil {
 		t.Fatal("missing batch reported success")
 	}
 }

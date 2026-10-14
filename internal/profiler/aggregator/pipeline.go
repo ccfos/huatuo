@@ -23,13 +23,15 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
-	profctx "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/internal/randomid"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-const pipelineQueueCapacity = 65536
+const (
+	pipelineQueueCapacity      = 65536
+	defaultAggregationInterval = 10 * time.Second
+)
 
 const (
 	pipelineStateIdle uint32 = iota
@@ -44,70 +46,55 @@ type Pipeline struct {
 	stopCh chan struct{}
 	state  atomic.Uint32
 
-	tracerID      string
-	aggrInterval  time.Duration
-	overflowCount atomic.Int64
+	tracerID            string
+	aggrInterval        time.Duration
+	queueDroppedSamples atomic.Int64
 
-	pctx      *profctx.ProfilerContext
+	ctx       context.Context
+	mode      AggregationMode
+	onFailure func()
 	aggr      Aggregator
 	formatter output.Formatter
 	// A channel blocks idle consumers; RingBuffer.Poll spins on timeout checks
 	// and spends CPU in runtime.nanotime and scheduler operations. The mutex
 	// makes stopping atomic with respect to accepting a record.
-	queue           chan any
-	enqueueMutex    sync.RWMutex
-	exportErr       error
-	abort           atomic.Bool
-	stopped         chan struct{}
-	windowStartedAt time.Time
+	queue                chan any
+	enqueueMutex         sync.RWMutex
+	runErr               error
+	abort                atomic.Bool
+	stopped              chan struct{}
+	aggregationStartTime time.Time
 }
 
 // NewPipeline initializes the data pipeline.
-func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
-	aggrInterval := time.Duration(pctx.AggrInterval) * time.Second
+func NewPipeline(cfg PipelineConfig) *Pipeline {
+	aggrInterval := cfg.AggregationInterval
 	if aggrInterval <= 0 {
-		aggrInterval = 10 * time.Second
+		aggrInterval = defaultAggregationInterval
 	}
 
 	return &Pipeline{
-		pctx:            pctx,
-		aggr:            aggr,
-		queue:           make(chan any, queueCapacity(pctx)),
-		tracerID:        resolveTracerID(pctx.TracerID, randomid.New),
-		aggrInterval:    aggrInterval,
-		stopCh:          make(chan struct{}),
-		stopped:         make(chan struct{}),
-		windowStartedAt: time.Now(),
+		mode:         cfg.AggregationMode,
+		onFailure:    cfg.OnFailure,
+		formatter:    cfg.Formatter,
+		aggr:         cfg.Aggregator,
+		queue:        make(chan any, pipelineQueueCapacity),
+		tracerID:     randomid.NewIfEmpty(cfg.TracerID),
+		aggrInterval: aggrInterval,
+		stopCh:       make(chan struct{}),
+		stopped:      make(chan struct{}),
 	}
-}
-
-func queueCapacity(pctx *profctx.ProfilerContext) int {
-	if pctx.IsOneShotAgg {
-		return 1
-	}
-	return pipelineQueueCapacity
-}
-
-func resolveTracerID(configured string, allocate func() (string, error)) string {
-	if configured != "" {
-		return configured
-	}
-
-	id, err := allocate()
-	if err != nil {
-		log.Errorf("alloc tracer id: %v", err)
-	}
-	return id
 }
 
 // Start launches the aggregation worker and periodic export schedule once.
 // It is a no-op after Stop starts; Pipeline instances are not restartable.
-func (p *Pipeline) Start() {
+func (p *Pipeline) Start(ctx context.Context) {
 	if !p.state.CompareAndSwap(pipelineStateIdle, pipelineStateRunning) {
 		return
 	}
 
-	p.windowStartedAt = time.Now()
+	p.ctx = ctx
+	p.aggregationStartTime = time.Now()
 	p.wg.Add(1)
 	go p.runDequeueAndAggregate()
 }
@@ -117,7 +104,7 @@ func (p *Pipeline) Start() {
 func (p *Pipeline) runDequeueAndAggregate() {
 	defer p.wg.Done()
 	var tick <-chan time.Time
-	if !p.pctx.IsOneShotAgg {
+	if p.mode == AggregationModeStreaming {
 		ticker := time.NewTicker(p.aggrInterval)
 		defer ticker.Stop()
 		tick = ticker.C
@@ -127,8 +114,8 @@ func (p *Pipeline) runDequeueAndAggregate() {
 		case rec := <-p.queue:
 			p.aggr.Aggregate(rec)
 		case <-tick:
-			if err := p.exportSnapshot(p.pctx.Ctx); err != nil {
-				p.logAggregateExportError(err)
+			if err := p.exportAggregationWindow(p.ctx); err != nil {
+				p.handleRunFailure(err)
 			}
 		case <-p.stopCh:
 			for {
@@ -136,8 +123,8 @@ func (p *Pipeline) runDequeueAndAggregate() {
 				case rec := <-p.queue:
 					p.aggr.Aggregate(rec)
 				default:
-					if err := p.exportSnapshot(p.pctx.Ctx); err != nil {
-						p.logAggregateExportError(err)
+					if err := p.exportAggregationWindow(p.ctx); err != nil {
+						p.handleRunFailure(err)
 					}
 					return
 				}
@@ -153,7 +140,7 @@ func (p *Pipeline) Stop() error {
 		state := p.state.Load()
 		if state == pipelineStateStopped {
 			<-p.stopped
-			return p.exportErr
+			return p.runErr
 		}
 
 		if p.state.CompareAndSwap(state, pipelineStateStopped) {
@@ -161,41 +148,53 @@ func (p *Pipeline) Stop() error {
 			close(p.stopCh)
 			p.enqueueMutex.Unlock()
 			p.wg.Wait()
-			if state == pipelineStateRunning && !p.abort.Load() && p.exportErr == nil {
-				p.exportErr = p.prepareFormatter()
-				if p.exportErr == nil {
-					ctx, cancel := context.WithTimeout(context.WithoutCancel(p.pctx.Ctx), 30*time.Second)
-					p.exportErr = p.formatter.Complete(ctx)
-					cancel()
-				}
+			if state == pipelineStateRunning && !p.abort.Load() && p.runErr == nil {
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(p.ctx), 30*time.Second)
+				p.runErr = p.formatter.Complete(ctx)
+				cancel()
 			}
 			close(p.stopped)
-			return p.exportErr
+			return p.runErr
 		}
 	}
 }
 
-// Enqueue offers a record into the aggregation queue for async processing.
-// Records offered after Stop begins are ignored.
-func (p *Pipeline) Enqueue(data any) {
+// Enqueue buffers a record while the pipeline is running. Streaming queues
+// count and discard overflow; one-shot queues wait for space or ctx cancellation.
+func (p *Pipeline) Enqueue(ctx context.Context, data any) error {
 	p.enqueueMutex.RLock()
 	defer p.enqueueMutex.RUnlock()
 
-	if p.state.Load() == pipelineStateStopped {
-		return
+	if p.state.Load() != pipelineStateRunning {
+		return errors.New("profiling pipeline is not running")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	select {
 	case p.queue <- data:
+		return nil
 	default:
-		p.overflowCount.Add(1)
+	}
+
+	if p.mode == AggregationModeStreaming {
+		p.queueDroppedSamples.Add(1)
+		return nil
+	}
+
+	select {
+	case p.queue <- data:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
-func (p *Pipeline) logAggregateExportError(err error) {
-	p.exportErr = errors.Join(p.exportErr, err)
-	if p.pctx.Cancel != nil {
-		p.pctx.Cancel()
+func (p *Pipeline) handleRunFailure(err error) {
+	p.runErr = errors.Join(p.runErr, err)
+	if p.onFailure != nil {
+		p.onFailure()
 	}
 	log.WithError(err).WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed")
 }
@@ -206,41 +205,24 @@ func (p *Pipeline) Abort() error {
 	return p.Stop()
 }
 
-// EnqueueBatch applies backpressure to a complete one-shot result instead of
-// silently dropping it under the streaming queue's overload policy.
-func (p *Pipeline) EnqueueBatch(ctx context.Context, data any) error {
-	p.enqueueMutex.RLock()
-	defer p.enqueueMutex.RUnlock()
-	if p.state.Load() != pipelineStateRunning {
-		return errors.New("profiling pipeline is not running")
-	}
-	select {
-	case p.queue <- data:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (p *Pipeline) exportSnapshot(ctx context.Context) error {
-	if p.abort.Load() || p.exportErr != nil {
+func (p *Pipeline) exportAggregationWindow(ctx context.Context) error {
+	if p.abort.Load() || p.runErr != nil {
 		return nil
 	}
-	snapshotContext := *p.pctx
-	snapshotContext.Ctx = context.WithoutCancel(ctx)
-	window, err := p.aggr.Snapshot(&snapshotContext)
+	window, err := p.aggr.Snapshot(context.WithoutCancel(ctx))
 	if err != nil {
 		return fmt.Errorf("aggregate snapshot: %w", err)
 	}
 	if window == nil {
 		return nil
 	}
-	now := time.Now()
-	if window.Profile.TimeNanos == 0 || window.Profile.DurationNanos == 0 {
-		window.Profile.TimeNanos = p.windowStartedAt.UnixNano()
-		window.Profile.DurationNanos = int64(now.Sub(p.windowStartedAt))
-	}
-	if dropped := p.overflowCount.Swap(0); dropped != 0 {
+
+	aggregationEndTime := time.Now()
+	aggregationDuration := aggregationEndTime.Sub(p.aggregationStartTime)
+	window.Profile.TimeNanos = p.aggregationStartTime.UnixNano()
+	window.Profile.DurationNanos = aggregationDuration.Nanoseconds()
+
+	if dropped := p.queueDroppedSamples.Swap(0); dropped != 0 {
 		if window.DroppedSamples == nil {
 			window.DroppedSamples = make(map[string]uint64)
 		}
@@ -256,10 +238,12 @@ func (p *Pipeline) exportSnapshot(ctx context.Context) error {
 		}
 	}
 
-	if err := p.exportWindow(window); err != nil {
+	outputContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := p.formatter.Add(outputContext, window); err != nil {
 		return err
 	}
 	p.aggr.Reset()
-	p.windowStartedAt = now
+	p.aggregationStartTime = aggregationEndTime
 	return nil
 }

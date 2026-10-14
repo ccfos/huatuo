@@ -22,6 +22,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/internal/bpf"
@@ -71,7 +73,7 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 		format = profileroutput.FormatRemoteStore
 	}
 	pctx := &pcontext.ProfilerContext{
-		Ctx: ctx, Cancel: cancel, Duration: cfg.duration, IsOneShotAgg: true,
+		Ctx: ctx, Cancel: cancel, Duration: cfg.duration, AggregationMode: aggregator.AggregationModeOneShot,
 		OutputFormat: format, OutputWriter: cliCtx.App.Writer, ToolstreamClient: client,
 		TracerID: cliCtx.String(cliFlagTaskID),
 	}
