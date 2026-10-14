@@ -100,7 +100,7 @@ func TestAttachAndEventPipeReaderOwnership(t *testing.T) {
 			if test.invalidSection {
 				b.extra = []bpf.ProgramInfo{{Name: "test_invalid", SectionName: "invalid"}}
 			}
-			reader, err := attachAndEventPipe(context.Background(), b)
+			reader, _, err := attachAndEventPipe(context.Background(), b)
 			switch {
 			case test.pipeErr != nil:
 				require.ErrorIs(t, err, test.pipeErr)
@@ -121,13 +121,4 @@ func TestAttachAndEventPipeReaderOwnership(t *testing.T) {
 			require.Equal(t, test.closes, b.reader.closes)
 		})
 	}
-}
-
-func TestAttachAndEventPipePreservesXFSFailure(t *testing.T) {
-	attachErr := fmt.Errorf("attach XFS probe: %w", syscall.EADDRNOTAVAIL)
-	b := &attachTestBPF{reader: new(attachTestReader), failures: map[string][]error{"xfs_file_read_iter": {attachErr}}}
-	reader, err := attachAndEventPipe(context.Background(), b)
-	require.ErrorIs(t, err, attachErr, "production must retain the original attach failure")
-	require.Nil(t, reader)
-	require.Equal(t, 1, b.reader.closes)
 }

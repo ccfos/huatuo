@@ -401,14 +401,26 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 	return 0;
 }
 
-SEC("kprobe/anyfs_file_read_iter")
-int bpf_anyfs_file_read_iter(struct pt_regs *ctx)
+SEC("kprobe/ext4_file_read_iter")
+int bpf_ext4_file_read_iter(struct pt_regs *ctx)
 {
 	return bpf_file_read_write(ctx, false);
 }
 
-SEC("kprobe/anyfs_file_write_iter")
-int bpf_anyfs_file_write_iter(struct pt_regs *ctx)
+SEC("kprobe/xfs_file_read_iter")
+int bpf_xfs_file_read_iter(struct pt_regs *ctx)
+{
+	return bpf_file_read_write(ctx, false);
+}
+
+SEC("kprobe/ext4_file_write_iter")
+int bpf_ext4_file_write_iter(struct pt_regs *ctx)
+{
+	return bpf_file_read_write(ctx, true);
+}
+
+SEC("kprobe/xfs_file_write_iter")
+int bpf_xfs_file_write_iter(struct pt_regs *ctx)
 {
 	return bpf_file_read_write(ctx, true);
 }
@@ -439,8 +451,14 @@ static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 	return 0;
 }
 
-SEC("kprobe/anyfs_filemap_page_mkwrite")
-int bpf_anyfs_filemap_page_mkwrite(struct pt_regs *ctx)
+SEC("kprobe/ext4_page_mkwrite")
+int bpf_ext4_filemap_page_mkwrite(struct pt_regs *ctx)
+{
+	return bpf_filemap_page_mkwrite(ctx);
+}
+
+SEC("kprobe/xfs_filemap_page_mkwrite")
+int bpf_xfs_filemap_page_mkwrite(struct pt_regs *ctx)
 {
 	return bpf_filemap_page_mkwrite(ctx);
 }
