@@ -70,7 +70,7 @@ type ProfilerContext struct {
 	ToolstreamClient *toolstream.Client
 }
 
-func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, error) {
+func NewContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, error) {
 	ctx, cancel := context.WithCancel(cliCtx.Context)
 
 	sigCh, err := psignal.SetupSignals()

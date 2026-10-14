@@ -43,11 +43,12 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) (returnErr error) {
 		defer cleanup()
 	}
 
-	pctx, err := pcontext.NewProfilerContext(cliCtx, signalLog)
+	pctx, err := pcontext.NewContext(cliCtx, signalLog)
 	if err != nil {
 		return err
 	}
 	defer pctx.Cancel()
+
 	if pctx.ToolstreamClient != nil {
 		defer func() {
 			if err := pctx.ToolstreamClient.Close(); err != nil {

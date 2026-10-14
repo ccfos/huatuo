@@ -37,9 +37,9 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	}
 	cliCtx := cli.NewContext(nil, set, nil)
 
-	pctx, err := NewProfilerContext(cliCtx, &bytes.Buffer{})
+	pctx, err := NewContext(cliCtx, &bytes.Buffer{})
 	if err != nil {
-		t.Fatalf("NewProfilerContext() error = %v", err)
+		t.Fatalf("NewContext() error = %v", err)
 	}
 	if pctx.ToolDir != "/opt/huatuo/tools" {
 		t.Fatalf("ToolDir = %q, want shared tool root", pctx.ToolDir)
