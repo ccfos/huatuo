@@ -31,12 +31,11 @@ import (
 	"github.com/ccfos/huatuo/internal/profiler/registry"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/version"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/irqtracing.c -o $BPF_DIR/irqtracing.o
 
-const irqTracingToolName = types.IRQProfilingToolName
+const irqTracingToolName = "irqtracing"
 
 // Set by Makefile via -ldflags -X. Must live in package main; an empty
 // value falls back to version.Devel via version.Resolve.

@@ -21,7 +21,6 @@ import (
 	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // Register initializes result storage before exposing the shared tool handlers.
@@ -38,7 +37,7 @@ func Register(ctx context.Context, server *toolstream.Server, cfg profilingstore
 	if err != nil {
 		return nil, errors.Join(err, store.Close(ctx))
 	}
-	for _, tool := range []string{types.ProfilingToolName, types.IRQProfilingToolName} {
+	for _, tool := range []string{"profiler", "irqtracing"} {
 		toolstream.Register(server, tool, writer.Handle)
 	}
 	return store.Close, nil

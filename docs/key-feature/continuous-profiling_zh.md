@@ -746,7 +746,7 @@ flowchart LR
 
 profiler 与 irqtracing 共用采集、聚合和流水线生命周期，所有快照返回 `types.ProfilingWindow`。本地 SVG/collapsed 输出通过 `internal/profiler/output` 读取同一份 profile；数值使用 profile 的样本单位（CPU 为纳秒，IRQ 为次数），不再维护独立的本地原始计数。Java 进程根帧统一为远端格式 `process PID:MainClass`，替代旧的本地 `process PID` 格式。周期采集在本地和远端模式均逐窗口处理，本地 Renderer 累积窗口直到最终导出；IRQ 在 detach 后只输出一个窗口。
 
-受管任务与独立 CLI 上传均通过 `pkg/profiling/store` 同步保存每个窗口。采集成功后，remote Formatter 的 `Complete` 发送 `end + commit`；profiling handler 检查请求中的错误，再写入持久化任务完成标记；Toolstream 通过 ACK 返回累计处理结果。采集、导出、存储和发布失败均使任务失败。普通 End 或断连不会发布。ACK 丢失表示客户端无法确认结果，不代表已写入的数据被回滚。`dropped_samples` 分别记录采集端与聚合队列丢样，持久化到 `profile_data.metrics`；历史 `aggr_overflow_count` 仍可读取。采用新传输格式时需要同时升级工具与守护进程。
+受管任务与独立 CLI 上传均通过 `pkg/profiling/store` 同步保存每个窗口。采集成功后，remote Formatter 的 `Complete` 发送 `end + commit`；profiling handler 检查请求中的错误，再写入持久化任务完成标记；Toolstream 通过 ACK 返回累计处理结果。采集、导出、存储和发布失败均使任务失败。普通 End 或断连不会发布。ACK 丢失表示客户端无法确认结果，不代表已写入的数据被回滚。`dropped_samples` 分别记录采集端与聚合队列丢样，持久化到 `profile_data.metrics`。采用新传输格式时需要同时升级工具与守护进程。
 
 窗口级 Formatter 统一接收 `types.ProfilingWindow`，本地格式在 `Complete` 时完成文件输出，remote 格式等待服务端提交确认。聚合器按窗口 Reset，Formatter 不暴露 Reset。toolstream 协议版本为 2，原 `flush @1` 改为 `commit @1`，新增提交结果帧；所有工具和 daemon 必须同时升级。IRQ 业务采集实现位于 `cmd/irqtracing`。
 

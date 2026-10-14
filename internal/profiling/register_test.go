@@ -24,11 +24,10 @@ import (
 
 	"github.com/ccfos/huatuo/internal/toolstream"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestCommitRequiresDurableWindows(t *testing.T) {
-	for _, tool := range []string{types.ProfilingToolName, types.IRQProfilingToolName} {
+	for _, tool := range []string{"profiler", "irqtracing"} {
 		for _, failWrite := range []bool{false, true} {
 			name := tool
 			if failWrite {
@@ -59,7 +58,7 @@ func TestCommitRequiresDurableWindows(t *testing.T) {
 					t.Fatal(err)
 				}
 				count := 1
-				if tool == types.ProfilingToolName {
+				if tool == "profiler" {
 					count = 2
 				}
 				for i := range count {
@@ -114,8 +113,8 @@ func TestCommitPropagatesPublicationFailure(t *testing.T) {
 	}()
 	writer, backend := newPersistentDocumentWriter(t)
 	backend.commitErr = errors.New("publication failed")
-	toolstream.Register(server, types.ProfilingToolName, writer.Handle)
-	client, err := toolstream.NewClient(toolstream.ClientOptions{SockPath: path, ToolName: types.ProfilingToolName, Version: "test", TaskID: "empty"})
+	toolstream.Register(server, "profiler", writer.Handle)
+	client, err := toolstream.NewClient(toolstream.ClientOptions{SockPath: path, ToolName: "profiler", Version: "test", TaskID: "empty"})
 	if err != nil {
 		t.Fatal(err)
 	}

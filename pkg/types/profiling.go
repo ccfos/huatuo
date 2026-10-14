@@ -16,9 +16,6 @@ package types
 
 import profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 
-// ProfilingToolName identifies profiler Toolstream sessions.
-const ProfilingToolName = "profiler"
-
 // ProfilingWindow contains one aggregation window emitted by the profiler.
 type ProfilingWindow struct {
 	ContainerID    string             `json:"container_id,omitempty"`
@@ -31,5 +28,4 @@ type ProfilingWindow struct {
 const (
 	DropReasonAggregationQueue = "aggregation_queue"
 	DropReasonCollection       = "collection"
-	IRQProfilingToolName       = "irqtracing"
 )

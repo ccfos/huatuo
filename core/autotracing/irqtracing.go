@@ -35,7 +35,7 @@ import (
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-const irqTracingToolName = types.IRQProfilingToolName
+const irqTracingToolName = "irqtracing"
 
 func init() {
 	tracing.RegisterEventTracing(irqTracingToolName, newIRQTracing)

@@ -30,7 +30,6 @@ import (
 	psignal "github.com/ccfos/huatuo/internal/profiler/signal"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/profiling"
-	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/urfave/cli/v2"
 )
@@ -203,7 +202,7 @@ func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*too
 
 	client, err := toolstream.NewClient(toolstream.ClientOptions{
 		SockPath: sockPath,
-		ToolName: types.ProfilingToolName,
+		ToolName: "profiler",
 		Version:  "1",
 		TaskID:   cliCtx.String("task-id"),
 	})

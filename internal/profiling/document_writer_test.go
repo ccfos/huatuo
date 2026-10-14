@@ -86,7 +86,7 @@ func TestDocumentWriterPersistsWindowSynchronously(t *testing.T) {
 
 func TestDocumentWriterPersistsEveryWindowSynchronously(t *testing.T) {
 	writer, backend := newPersistentDocumentWriter(t)
-	session := &toolstream.Request[types.ProfilingWindow]{ToolName: types.ProfilingToolName, TaskID: "profile-task-1"}
+	session := &toolstream.Request[types.ProfilingWindow]{ToolName: "profiler", TaskID: "profile-task-1"}
 
 	for i := range 2 {
 		window := validProfilingWindow()
@@ -137,7 +137,7 @@ func TestDocumentWriterRejectsIncompleteWindow(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			writer, backend := newPersistentDocumentWriter(t)
-			session := &toolstream.Request[types.ProfilingWindow]{ToolName: types.ProfilingToolName, TaskID: "profile-task-1"}
+			session := &toolstream.Request[types.ProfilingWindow]{ToolName: "profiler", TaskID: "profile-task-1"}
 			window := validProfilingWindow()
 			test.modify(window)
 
