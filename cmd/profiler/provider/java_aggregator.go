@@ -89,7 +89,7 @@ func (a *javaAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if !pctx.OutputFormat.IsUpload() {
+	if !pctx.OutputFormat.UsesSnapshot() {
 		return nil, nil
 	}
 
