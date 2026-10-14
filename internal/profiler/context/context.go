@@ -107,13 +107,6 @@ func NewContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, er
 	outputFormat := output.OutputFormat(cliCtx.String("output-format"))
 
 	outputPath := cliCtx.String("output-path")
-	if outputFormat == output.FormatRemoteStore {
-		outputPath = cliCtx.String("output-storage")
-		if outputPath == "" {
-			return nil, fmt.Errorf("--output-storage is required when --output-format=remote")
-		}
-	}
-
 	var cpuIDs []int
 	if cpuidStr := cliCtx.String("cpuid"); cpuidStr != "" {
 		cpuIDs, err = parseCPUIDList(cpuidStr)

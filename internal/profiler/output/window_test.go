@@ -121,7 +121,7 @@ func TestFormatterStandardOutputIsNotClosed(t *testing.T) {
 	previous := os.Stdout
 	os.Stdout = file
 	defer func() { os.Stdout = previous }()
-	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatJSON, Destination: "-"}, output.TaskIdentity{})
+	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatJSON, Destination: "stdout"}, output.TaskIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}

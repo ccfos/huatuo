@@ -502,14 +502,13 @@ sudo _output/bin/profiler \
 | `--duration`, `-d` | `10` | All | Total profiling duration in seconds; minimum 1 |
 | `--aggr-interval` | `10` | All | Aggregation interval in seconds; must not exceed the duration |
 | `--freq`, `-F` | `99` | CPU | Samples collected per second; maximum 1000 for Java |
-| `--output-path` | `.` | Local output | Existing file/directory, a new file path, or `-` for stdout; append `/` to create a directory |
-| `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, or `remote` |
-| `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | Unix socket used for remote upload |
+| `--output-path` | Required | All | Local file/directory or `stdout`, Unix socket for `remote-store`; append `/` to create a directory. Warning: stdout may expose profiling data |
+| `--output-format` | `collapsed` (must be explicit) | All | `collapsed`, `flamegraph`, `svg`, `json`, or `remote-store`; must be supplied together with `--output-path` |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collector subprocesses; `0` means unlimited |
 | `--tool-path` | None | Java, Python | Shared external tool root; required |
 | `--binary-match-path` | None | Java, Python | Executable path used to match target processes |
 | `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address used to resolve container metadata |
-| `--task-id` | Empty; generated internally for local output | All; required for `remote` | Stable profiling task ID used by toolstream and remote storage |
+| `--task-id` | Empty; generated internally for local output | All; required for `remote-store` | Stable profiling task ID used by toolstream and remote storage |
 | `--enable-pprof` | `false` | Profiler itself | Expose Go pprof endpoints for the profiler process on `:6000` |
 | `--version-format` | `text` | Version query | Output format for `--version`: `text`, `json`, or `short` |
 | `--help`, `-h` | - | All | Display command help |
@@ -681,7 +680,7 @@ Python does not support `--type memory`. Use a separate memory analysis tool for
 | `collapsed` | `perf_<Unix timestamp>.folded`; each line contains a semicolon-separated call stack followed by a count | Scripted searches, result comparison, or rendering later with another flame-graph tool |
 | `flamegraph` | `flamegraph_<Unix timestamp>.svg`; an SVG with embedded interaction scripts | Default format for manual analysis; supports searching, zooming, and inspecting frame values in a browser |
 | `svg` | The same interactive SVG as `flamegraph` | Compatibility with callers that explicitly request SVG; currently equivalent to `flamegraph` |
-| `remote` | No local flame graph; uploads pprof-compatible data through a Unix socket | Integration with the HUATUO storage pipeline; not suitable for offline viewing |
+| `remote-store` | No local flame graph; uploads pprof-compatible data through a Unix socket | Integration with the HUATUO storage pipeline; not suitable for offline viewing |
 
 A flame graph shows the call direction from bottom to top. Rectangle width represents the cumulative value for that call stack in the selected profiling mode. For CPU profiles, width represents the proportion of CPU time derived from sample counts. For memory profiles, it represents virtual allocation, physical allocation, physical residency, Java object allocation, or live-object volume, depending on the selected mode. Horizontal position does not represent chronological order.
 
@@ -692,7 +691,7 @@ main;handleRequest;parsePayload 428
 main;handleRequest;writeResponse 172
 ```
 
-Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote` depends on the HUATUO toolstream Unix socket, requires a non-empty `--task-id`, and should not be selected for standalone offline use.
+Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote-store` depends on the HUATUO toolstream Unix socket, requires a non-empty `--task-id`, and should not be selected for standalone offline use.
 
 ### 7. Reproducing Integration Test Examples
 
@@ -738,7 +737,7 @@ flowchart LR
     Aggregate --> Remote[Remote upload through Unix socket]
 ```
 
-`--duration` controls the collection lifetime, while `--aggr-interval` controls the snapshot interval for remote uploads. Local `collapsed`, `flamegraph`, and `svg` modes write the final aggregate when collection ends. `remote` uploads periodic snapshots in streaming mode and one final window in one-shot mode. The queue decouples collection from symbolization, aggregation, and output so file rendering does not block the sampling path.
+`--duration` controls the collection lifetime, while `--aggr-interval` controls the snapshot interval. `json` writes each common profiling window as one JSON line, so streaming collection can emit multiple lines. Local `collapsed`, `flamegraph`, and `svg` modes write the final aggregate when collection ends. `remote-store` uploads periodic snapshots in streaming mode and one final window in one-shot mode. The queue decouples collection from symbolization, aggregation, and output so file rendering does not block the sampling path.
 
 ## Common profiling windows
 
@@ -748,7 +747,7 @@ Profiler and irqtracing share the collection runner, Pipeline and `types.Profili
 
 The runner creates the Aggregator and Formatter before starting collection, constructs Pipeline with `aggregator.PipelineConfig`, and passes the runtime context through `Start(ctx)`. Invalid output configuration fails before collection starts. Each aggregator captures its business settings at construction and implements `Aggregate`, `Snapshot(context.Context)` and `Reset`. Pipeline does not depend on `ProfilerContext`. File creation, naming, writing, and closing belong to `internal/profiler/output`.
 
-`FormatterConfig` contains only `Format` and `Destination`. Existing destinations are identified by filesystem type: local formatters accept regular files and directories; RemoteStore requires a Unix socket. A missing local path denotes a file unless it ends in `/`, which requests directory creation. `-` writes to standard output. Existing files are replaced when output is written, not during initialization; empty collections do not create result files. Directory output retains unique generated filenames. Initialization checks paths but cannot guarantee a later write will succeed.
+`FormatterConfig` contains only `Format` and `Destination`. Existing destinations are identified by filesystem type: local formatters accept regular files and directories; RemoteStore requires a Unix socket. A missing local path denotes a file unless it ends in `/`, which requests directory creation. `stdout` (also `-` and standard fd aliases) writes to standard output without closing it. Warning: profiling data may be exposed through terminal output, redirection, or captured logs. Existing files are replaced when output is written, not during initialization; empty collections do not create result files. Directory output retains unique generated filenames. Initialization checks paths but cannot guarantee a later write will succeed.
 
 Task identity (`ToolName`, `TaskID`, `Version`) is supplied separately. RemoteStore initializes toolstream internally, and the runner always invokes the returned cleanup function. `Complete` commits output and waits for the remote ACK; cleanup only releases resources, including after a failed collection. JSON opens its output on the first window and closes it on completion or cleanup.
 

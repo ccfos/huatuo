@@ -494,14 +494,13 @@ sudo _output/bin/profiler \
 | `--duration`, `-d` | `10` | 全部 | 总采集时长，单位为秒，最小为 1 |
 | `--aggr-interval` | `10` | 全部 | 聚合周期，单位为秒，不得大于采集时长 |
 | `--freq`, `-F` | `99` | CPU | 每秒采样次数；Java 最大为 1000 |
-| `--output-path` | `.` | 本地输出 | 已有文件或目录、新文件路径，或 `-`（标准输出）；新目录路径以 `/` 结尾 |
-| `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg` 或 `remote` |
-| `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | 远端上传使用的 Unix socket |
+| `--output-path` | 必填 | 全部 | 本地文件、目录或 `stdout`，`remote-store` 时为 Unix socket；新目录路径以 `/` 结尾。危险使用提醒：stdout 可能暴露采集数据 |
+| `--output-format` | `collapsed`（必须显式指定） | 全部 | `collapsed`、`flamegraph`、`svg`、`json` 或 `remote-store`；必须与 `--output-path` 同时使用 |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
 | `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
 | `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
-| `--task-id` | 空；本地输出时内部生成 | 全部；`remote` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
+| `--task-id` | 空；本地输出时内部生成 | 全部；`remote-store` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
 | `--enable-pprof` | `false` | 工具自身 | 在 `:6000` 暴露 profiler 进程自身的 Go pprof 接口 |
 | `--version-format` | `text` | 版本查询 | `--version` 的输出格式：`text`、`json` 或 `short` |
 | `--help`, `-h` | - | 全部 | 显示命令帮助 |
@@ -672,7 +671,7 @@ Python 不支持 `--type memory`。若需要 Python 内存分析，应使用独�
 | `collapsed` | `perf_<Unix 时间戳>.folded`；每行是以分号分隔的调用栈及末尾计数 | 用于脚本检索、结果比较，或交给其他火焰图工具二次渲染 |
 | `flamegraph` | `flamegraph_<Unix 时间戳>.svg`；内嵌交互脚本的 SVG | 默认的人工分析格式，可在浏览器中搜索、缩放和查看栈帧数值 |
 | `svg` | 与 `flamegraph` 相同的交互式 SVG | 兼容显式要求 SVG 的调用方；当前实现与 `flamegraph` 等价 |
-| `remote` | 不生成本地火焰图，通过 Unix socket 上传 pprof 兼容数据 | 接入 HUATUO 存储链路时使用，不适合离线查看 |
+| `remote-store` | 不生成本地火焰图，通过 Unix socket 上传 pprof 兼容数据 | 接入 HUATUO 存储链路时使用，不适合离线查看 |
 
 火焰图从下到上表示调用方向，矩形宽度表示该调用栈在当前观测维度中的累计值。不同类型的宽度含义不同：CPU 表示采样次数折算的 CPU 时间占比；内存模式表示相应的虚拟分配、物理分配、物理驻留、Java 对象分配或存活对象量。横向位置不表示时间先后。
 
@@ -683,7 +682,7 @@ main;handleRequest;parsePayload 428
 main;handleRequest;writeResponse 172
 ```
 
-需要保留原始数据并支持后续使用不同配色或过滤规则重新渲染时，选择 `collapsed`。只需直接定位热点时，选择 `flamegraph`。`remote` 依赖 HUATUO toolstream Unix socket，要求提供非空的 `--task-id`，独立离线使用时不应选择该格式。
+需要保留原始数据并支持后续使用不同配色或过滤规则重新渲染时，选择 `collapsed`。只需直接定位热点时，选择 `flamegraph`。`remote-store` 依赖 HUATUO toolstream Unix socket，要求提供非空的 `--task-id`，独立离线使用时不应选择该格式。
 
 ### 7. 根据集成测试复现
 
@@ -729,7 +728,7 @@ flowchart LR
     Aggregate --> Remote[Unix socket 远端上传]
 ```
 
-`--duration` 控制采集生命周期，`--aggr-interval` 控制远端上传的快照周期。本地 `collapsed`、`flamegraph` 和 `svg` 在采集结束时写出最终聚合结果；`remote` 在流式模式下周期上传快照，在单次模式下于采集结束后上传。队列将采集与符号化、聚合和输出解耦，避免文件渲染阻塞采样路径。
+`--duration` 控制采集生命周期，`--aggr-interval` 控制快照周期。`json` 将每个公共采集窗口写成一行 JSON，因此流式采集可能输出多行。本地 `collapsed`、`flamegraph` 和 `svg` 在采集结束时写出最终聚合结果；`remote-store` 在流式模式下周期上传快照，在单次模式下于采集结束后上传。队列将采集与符号化、聚合和输出解耦，避免文件渲染阻塞采样路径。
 
 ## 公共采集窗口
 
@@ -739,7 +738,7 @@ profiler 与 irqtracing 共用采集执行器、Pipeline 和 `types.ProfilingWin
 
 执行器在启动采集前创建 Aggregator 和 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 不依赖 `ProfilerContext`。文件创建、命名、写入和关闭由 `internal/profiler/output` 负责。
 
-`FormatterConfig` 仅包含 `Format` 和 `Destination`。已有路径按实际文件类型识别：本地 Formatter 接受普通文件和目录，RemoteStore 要求 Unix socket。不存在的本地路径默认表示新文件，以 `/` 结尾则创建目录；`-` 表示标准输出。已有文件在实际写出时覆盖，初始化不截断文件；空任务不创建结果文件。目录输出保持自动生成的唯一文件名。初始化检查路径，但不能保证之后的写入一定成功。
+`FormatterConfig` 仅包含 `Format` 和 `Destination`。已有路径按实际文件类型识别：本地 Formatter 接受普通文件和目录，RemoteStore 要求 Unix socket。不存在的本地路径默认表示新文件，以 `/` 结尾则创建目录。`stdout`（也支持 `-` 及标准输出文件描述符别名）写入标准输出，Formatter 不关闭该描述符。危险使用提醒：终端、重定向或日志捕获可能暴露采集数据。已有文件在实际写出时覆盖，初始化不截断文件；空任务不创建结果文件。目录输出保持自动生成的唯一文件名。初始化检查路径，但不能保证之后的写入一定成功。
 
 任务身份（`ToolName`、`TaskID`、`Version`）独立传入。RemoteStore 内部初始化 toolstream，执行器在所有退出路径调用返回的清理函数。`Complete` 完成输出并等待远端提交 ACK；清理函数只释放资源，采集失败时也会执行。JSON 在第一个窗口到达时打开文件，在完成或清理时关闭。
 

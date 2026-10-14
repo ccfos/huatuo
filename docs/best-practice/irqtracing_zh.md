@@ -24,14 +24,15 @@ make build
 ```bash
 sudo ./_output/bin/irqtracing \
   --bpf-path ./_output/bpf/irqtracing.o \
-  --duration 5 > irqtracing.folded
+  --duration 5 \
+  --output-format collapsed --output-path irqtracing.folded
 ```
 
 `--target-cpu` 可选，默认值为 `-1`，表示跟踪系统中的全部 CPU。工具只挂载 `irq/softirq_raise` / `irq/softirq_entry` tracepoint；全量模式聚合所有 CPU 的 source 和直接被抢占的 victim，指定非负 CPU 时只保留该 CPU 的数据。两种模式都采集 `--duration` 秒（默认 3）。
 
 `--max-events-per-second-per-cpu N` 可选，用于限制每个被跟踪 CPU 每秒采集的 source 和 victim 栈样本总数。省略该参数或设置为 `0` 时不限速；启用时 `N` 必须在 2 到 8589934590 之间。每 CPU 额度在 `softirq_raise` 和 `softirq_entry` 之间尽量均分；奇数额度多出的一个样本分给 raise。全 CPU 模式下，系统总额度随被跟踪 CPU 数量增长。
 
-本地结果写入 stdout。`--output collapsed` 是默认值，
+必须显式同时指定 `--output-path` 和 `--output-format`。支持 `collapsed`（帮助中显示的默认值）、`flamegraph`、`svg`、`json`、`remote-store`。本地结果写入指定文件、目录或 `stdout`。危险使用提醒：终端、重定向或日志捕获可能暴露采集数据，请谨慎使用 stdout。不存在的路径默认作为新文件，以 `/` 结尾则创建目录。`collapsed`
 输出可供火焰图工具使用的 folded stack：
 
 ```text
@@ -39,27 +40,28 @@ source;source[raiser,NET_RX];raise_softirq_[k] 12
 victim;victim[worker(123),NET_RX];work 4
 ```
 
-使用 `--output flamegraph` 或 `--output svg` 可直接输出 SVG 火焰图：
+使用 `--output-format flamegraph` 或 `--output-format svg` 可直接输出 SVG 火焰图：
 
 ```bash
 sudo ./_output/bin/irqtracing \
   --bpf-path ./_output/bpf/irqtracing.o \
   --duration 5 \
-  --output flamegraph > irqtracing.svg
+  --output-format flamegraph --output-path irqtracing.svg
 ```
 
-公共采集框架在窗口存在丢样时统一记录警告，包含任务 ID 和各类丢样数量。IRQ 的 warning 及以上日志写入 stderr，采集结果写入 stdout；诊断日志写入失败不会阻止数据导出。
+公共采集框架在窗口存在丢样时统一记录警告，包含任务 ID 和各类丢样数量。IRQ 的 warning 及以上日志写入 stderr，采集结果写入指定目标；诊断日志写入失败不会阻止数据导出。
 
-需要平台 profile 数据和丢样计数时使用 `--output json`：
+需要上传标准 profile 和丢样计数时，使用 `remote-store`，指定 toolstream Unix socket 和唯一任务 ID：
 
 ```bash
 sudo ./_output/bin/irqtracing \
   --bpf-path ./_output/bpf/irqtracing.o \
   --duration 5 \
-  --output json > irqtracing.json
+  --output-format remote-store --output-path /var/run/huatuo-toolstream.sock \
+  --task-id irq-demo-1
 ```
 
-JSON 内容：
+使用 `--output-format json --output-path irqtracing.json` 可将相同的窗口数据保存到本地。JSON 内容：
 
 ```json
 {

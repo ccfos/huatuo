@@ -15,7 +15,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"io"
 	"math"
@@ -29,76 +28,50 @@ import (
 )
 
 func TestValidateFlags(t *testing.T) {
-	tests := []struct {
+	for _, tc := range []struct {
 		name    string
 		args    []string
 		wantErr string
 	}{
-		{name: "local output"},
-		{name: "removed text alias", args: []string{"--output", "text"}, wantErr: `invalid --output "text"`},
-		{name: "unimplemented pprof", args: []string{"--output", "pprof"}, wantErr: `invalid --output "pprof"`},
-		{name: "JSON output", args: []string{"--output", "json"}},
-		{
-			name: "Toolstream output",
-			args: []string{"--output-storage", "/run/toolstream.sock", "--task-id", "task-1"},
-		},
-		{name: "collapsed output", args: []string{"--output", "collapsed"}},
-		{name: "flame graph output", args: []string{"--output", "flamegraph"}},
-		{name: "SVG output", args: []string{"--output", "svg"}},
-		{
-			name:    "invalid output",
-			args:    []string{"--output", "folded"},
-			wantErr: "want collapsed, flamegraph, svg, or json",
-		},
-		{
-			name:    "missing task ID",
-			args:    []string{"--output-storage", "/run/toolstream.sock"},
-			wantErr: "--task-id is required",
-		},
-		{
-			name:    "task ID without Toolstream",
-			args:    []string{"--task-id", "task-1"},
-			wantErr: "--task-id requires --output-storage",
-		},
-		{
-			name:    "unexpected argument",
-			args:    []string{"extra"},
-			wantErr: "unexpected arguments",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			ctx := newOutputFlagContext(t, test.args...)
-			err := validateFlags(ctx)
-			if test.wantErr == "" {
+		{name: "both missing", wantErr: "must both be specified"},
+		{name: "format missing", args: []string{"--output-path", "profile"}, wantErr: "must both be specified"},
+		{name: "path missing", args: []string{"--output-format", "collapsed"}, wantErr: "must both be specified"},
+		{name: "empty path", args: []string{"--output-format", "collapsed", "--output-path", ""}, wantErr: "must not be empty"},
+		{name: "stdout", args: []string{"--output-format", "collapsed", "--output-path", "stdout"}},
+		{name: "stdout alias", args: []string{"--output-format", "collapsed", "--output-path", "-"}},
+		{name: "collapsed", args: []string{"--output-format", "collapsed", "--output-path", "profile"}},
+		{name: "flamegraph", args: []string{"--output-format", "flamegraph", "--output-path", "profile.svg"}},
+		{name: "svg", args: []string{"--output-format", "svg", "--output-path", "profile.svg"}},
+		{name: "json", args: []string{"--output-format", "json", "--output-path", "profile"}},
+		{name: "remote-store", args: []string{"--output-format", "remote-store", "--output-path", "/run/toolstream.sock", "--task-id", "task"}},
+		{name: "remote missing task", args: []string{"--output-format", "remote-store", "--output-path", "/run/toolstream.sock"}, wantErr: "--task-id must not be empty"},
+		{name: "local task", args: []string{"--output-format", "collapsed", "--output-path", "profile", "--task-id", "task"}},
+		{name: "unexpected argument", args: []string{"extra"}, wantErr: "unexpected arguments"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateFlags(newOutputFlagContext(t, tc.args...))
+			if tc.wantErr == "" {
 				if err != nil {
-					t.Fatalf("validateFlags() error = %v", err)
+					t.Fatal(err)
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-				t.Fatalf("validateFlags() error = %v, want containing %q", err, test.wantErr)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
 			}
 		})
 	}
 }
 
-func TestValidateFlagsWarnsWhenStorageOverridesOutput(t *testing.T) {
-	ctx := newOutputFlagContext(
-		t,
-		"--output", "json",
-		"--output-storage", "/run/toolstream.sock",
-		"--task-id", "task-1",
-	)
-	var stderr bytes.Buffer
-	ctx.App.ErrWriter = &stderr
-
-	if err := validateFlags(ctx); err != nil {
-		t.Fatalf("validateFlags() error = %v", err)
-	}
-	if got := stderr.String(); got != "warning: --output is ignored because --output-storage is set\n" {
-		t.Fatalf("warning = %q", got)
+func TestRemovedOutputFlags(t *testing.T) {
+	for _, name := range []string{"output", "output-storage"} {
+		t.Run(name, func(t *testing.T) {
+			app := &cli.App{Flags: appFlags(), Writer: io.Discard, ErrWriter: io.Discard}
+			err := app.Run([]string{"irqtracing", "--" + name, "value"})
+			if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+				t.Fatalf("removed flag accepted: %v", err)
+			}
+		})
 	}
 }
 
@@ -109,7 +82,7 @@ func TestLoadConfig(t *testing.T) {
 		"--target-cpu", "4",
 		"--duration", "5",
 		"--max-events-per-second-per-cpu", "1000",
-		"--output", "json",
+		"--output-format", "svg",
 	)
 
 	cfg, err := loadConfig(ctx)
@@ -118,7 +91,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 	if cfg.bpfPath != "/tmp/irqtracing.o" || cfg.targetCPU != 4 ||
 		cfg.duration != 5 || cfg.maxEventsPerSecondPerCPU != 1000 ||
-		cfg.output != profileroutput.FormatJSON {
+		cfg.output != profileroutput.FormatSVG {
 		t.Fatalf("loadConfig() = %+v", cfg)
 	}
 }

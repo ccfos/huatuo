@@ -28,7 +28,6 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	profileroutput "github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/internal/profiler/registry"
 	"github.com/ccfos/huatuo/internal/version"
 )
@@ -59,13 +58,9 @@ func mainAction(cliCtx *cli.Context) error {
 	ctx, cancel := signal.NotifyContext(cliCtx.Context, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	format, destination := cfg.output, "-"
-	if path := cliCtx.String(cliFlagOutputStorage); path != "" {
-		format, destination = profileroutput.FormatRemoteStore, path
-	}
 	pctx := &pcontext.ProfilerContext{
 		Ctx: ctx, Cancel: cancel, Duration: cfg.duration, AggregationMode: aggregator.AggregationModeOneShot,
-		OutputFormat: format, OutputPath: destination,
+		OutputFormat: cfg.output, OutputPath: cliCtx.String(cliFlagOutputPath),
 		ToolName: irqTracingToolName, Version: versionInfo.Version,
 		TracerID: cliCtx.String(cliFlagTaskID),
 	}

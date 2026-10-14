@@ -99,18 +99,12 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-path",
-		Usage: "Output file, directory, or - for stdout; append / to create a directory",
-		Value: ".",
+		Usage: "Output path: file|directory|socket|stdout (WARNING: stdout may expose data)",
 	},
 	&cli.StringFlag{
 		Name:  "output-format",
-		Usage: "Output format for profiling: collapsed|flamegraph|svg|remote",
+		Usage: "Output format: collapsed|flamegraph|svg|json|remote-store",
 		Value: "collapsed",
-	},
-	&cli.StringFlag{
-		Name:  "output-storage",
-		Usage: "Unix socket path for remote upload (used with --output-format=remote)",
-		Value: "/var/run/huatuo-toolstream.sock",
 	},
 	&cli.StringFlag{
 		Name:  "log-level",

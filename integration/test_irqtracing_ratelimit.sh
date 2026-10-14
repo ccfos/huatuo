@@ -115,7 +115,8 @@ wait_until 5 0.1 flood_is_ready \
 	--target-cpu "${TARGET_CPU}" \
 	--duration "${DURATION}" \
 	--max-events-per-second-per-cpu "${MAX_EVENTS_PER_SECOND_PER_CPU}" \
-	--output json > "${OUT_DIR}/result.json" 2> "${OUT_DIR}/err.txt" &
+	--output-format json --output-path "${OUT_DIR}/result.json" \
+	2> "${OUT_DIR}/err.txt" &
 tool_pid=$!
 
 wait_until "${TOOL_DEADLINE}" 1 tool_has_exited \

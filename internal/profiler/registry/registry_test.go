@@ -332,7 +332,7 @@ func TestProfileRejectsInvalidFormatterBeforeCollection(t *testing.T) {
 		Impl:          failingProfiler{startErr: startErr},
 		NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return fakeAggregator{}, nil },
 	})
-	if err == nil || !strings.Contains(err.Error(), "inspect remote profiling destination") {
+	if err == nil || !strings.Contains(err.Error(), "--output-path must not be empty") {
 		t.Fatalf("Profile() error = %v, want invalid socket destination", err)
 	}
 	if errors.Is(err, startErr) {

@@ -24,42 +24,44 @@ The command is written to `_output/bin/irqtracing` and the BPF object to `_outpu
 ```bash
 sudo ./_output/bin/irqtracing \
   --bpf-path ./_output/bpf/irqtracing.o \
-  --duration 5 > irqtracing.folded
+  --duration 5 \
+  --output-format collapsed --output-path irqtracing.folded
 ```
 
 `--target-cpu` is optional and defaults to `-1`, which traces every CPU. The tool attaches only the `irq/softirq_raise` and `irq/softirq_entry` tracepoints. All-CPU mode aggregates sources and directly preempted victims across the system; selecting a non-negative CPU keeps only data from that CPU. Both modes collect for `--duration` seconds (default 3).
 
 `--max-events-per-second-per-cpu N` optionally limits the combined number of source and victim stack samples collected per second on each traced CPU. Omitting it or setting it to `0` disables rate limiting; when enabled, `N` must be between 2 and 8589934590. The per-CPU budget is divided as evenly as possible between `softirq_raise` and `softirq_entry`; raise receives the extra sample when the value is odd. In all-CPU mode, the system-wide limit scales with the number of traced CPUs.
 
-Local output is written to stdout. `--output collapsed` is the default; it emits folded stacks suitable for flame graph tools:
+Both `--output-path` and `--output-format` must be supplied explicitly. Supported formats are `collapsed` (the displayed default), `flamegraph`, `svg`, `json`, and `remote-store`. Local output goes to the specified file, directory, or `stdout`. Warning: stdout may expose profiling data through the terminal, redirection, or captured logs; use it with care. A nonexistent path denotes a new file unless it ends in `/`, which creates a directory. Collapsed output contains folded stacks suitable for flame graph tools:
 
 ```text
 source;source[raiser,NET_RX];raise_softirq_[k] 12
 victim;victim[worker(123),NET_RX];work 4
 ```
 
-Use `--output flamegraph` or `--output svg` to render an SVG flame graph
+Use `--output-format flamegraph` or `--output-format svg` to render an SVG flame graph
 directly:
 
 ```bash
 sudo ./_output/bin/irqtracing \
   --bpf-path ./_output/bpf/irqtracing.o \
   --duration 5 \
-  --output flamegraph > irqtracing.svg
+  --output-format flamegraph --output-path irqtracing.svg
 ```
 
-The common collection pipeline logs one warning per window with sample loss, including the task ID and counts by reason. IRQ logs warnings and errors to stderr and writes results to stdout. A diagnostic log write failure does not prevent data export.
+The common collection pipeline logs one warning per window with sample loss, including the task ID and counts by reason. IRQ logs warnings and errors to stderr and writes results to the configured destination. A diagnostic log write failure does not prevent data export.
 
-Use `--output json` when the platform profile payload and drop count are needed:
+Use `remote-store` to upload the standard profile and drop counts through a toolstream Unix socket. Supply a unique task ID:
 
 ```bash
 sudo ./_output/bin/irqtracing \
   --bpf-path ./_output/bpf/irqtracing.o \
   --duration 5 \
-  --output json > irqtracing.json
+  --output-format remote-store --output-path /var/run/huatuo-toolstream.sock \
+  --task-id irq-demo-1
 ```
 
-The JSON contains:
+Use `--output-format json --output-path irqtracing.json` to save the same window payload locally. The JSON contains:
 
 ```json
 {

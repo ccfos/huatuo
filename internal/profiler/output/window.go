@@ -38,7 +38,7 @@ type windowFormatter struct {
 
 // FormatterConfig selects the representation and its filesystem destination.
 // Existing paths retain their type. A missing path denotes a file unless it
-// ends in a separator, which requests a directory. "-" denotes standard output.
+// ends in a separator, which requests a directory. "stdout" or "-" denotes standard output.
 type FormatterConfig struct {
 	Format      OutputFormat
 	Destination string
@@ -54,6 +54,9 @@ type TaskIdentity struct {
 // NewFormatter initializes output before collection starts. The caller must
 // invoke cleanup on both success and failure; cleanup never commits a task.
 func NewFormatter(cfg FormatterConfig, task TaskIdentity) (Formatter, func() error, error) {
+	if err := ValidateDestination(cfg.Destination); err != nil {
+		return nil, nil, err
+	}
 	var formatter Formatter
 	cleanup := func() error { return nil }
 	if cfg.Format == FormatRemoteStore {

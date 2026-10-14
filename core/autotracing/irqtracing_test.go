@@ -125,7 +125,8 @@ func TestRunIRQTracingCLIPassesArguments(t *testing.T) {
 		"--target-cpu", "4",
 		"--duration", "3",
 		"--max-events-per-second-per-cpu", "1000",
-		"--output-storage", toolstream.DefaultSockPath,
+		"--output-format", "remote-store",
+		"--output-path", toolstream.DefaultSockPath,
 		"--task-id",
 	}
 	if len(args) != len(want)+1 {

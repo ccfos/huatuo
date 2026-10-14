@@ -70,10 +70,10 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 				"--type", "cpu",
 				"--language", "c",
 				"--pid", strconv.Itoa(os.Getpid()),
-				"--output-format", "remote",
-				"--output-storage", "/var/run/huatuo-toolstream.sock",
+				"--output-format", "remote-store",
+				"--output-path", "/var/run/huatuo-toolstream.sock",
 			},
-			wantError: "--task-id must not be empty when --output-format=remote",
+			wantError: "--task-id must not be empty when --output-format=remote-store",
 		},
 		{
 			name:      "legacy mem type",
@@ -117,7 +117,7 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 				ErrWriter:     io.Discard,
 				Action:        func(*cli.Context) error { return nil },
 			}
-			err := app.Run(append([]string{"profiler"}, tt.args...))
+			err := app.Run(append([]string{"profiler", "--output-path", t.TempDir(), "--output-format", "collapsed"}, tt.args...))
 			if tt.wantError == "" {
 				require.NoError(t, err)
 				return
@@ -421,7 +421,7 @@ func TestOffCPUStatsFlag(t *testing.T) {
 }
 
 func TestValidateOutputFormat(t *testing.T) {
-	for _, format := range []string{"collapsed", "flamegraph", "svg", "remote"} {
+	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "remote-store"} {
 		require.NoError(t, validateOutputFormat(format))
 	}
 	require.EqualError(t, validateOutputFormat("pprof"), `unsupported output format "pprof"`)
@@ -632,6 +632,36 @@ func TestValidateLanguageOptionsToolRoot(t *testing.T) {
 				if (err != nil) != wantError {
 					t.Errorf("validateLanguageOptions(%q) error = %v, want error %t", directory, err, wantError)
 				}
+			}
+		})
+	}
+}
+
+func TestCLIOutputOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		wantError string
+	}{
+		{name: "both missing", wantError: "must both be specified"},
+		{name: "format missing", args: []string{"--output-path", "profile"}, wantError: "must both be specified"},
+		{name: "path missing", args: []string{"--output-format", "collapsed"}, wantError: "must both be specified"},
+		{name: "empty path", args: []string{"--output-format", "collapsed", "--output-path", ""}, wantError: "must not be empty"},
+		{name: "stdout", args: []string{"--output-format", "collapsed", "--output-path", "stdout"}},
+		{name: "stdout alias", args: []string{"--output-format", "collapsed", "--output-path", "-"}},
+		{name: "collapsed", args: []string{"--output-format", "collapsed", "--output-path", "profile"}},
+		{name: "json", args: []string{"--output-format", "json", "--output-path", "profile.json"}},
+		{name: "remote-store", args: []string{"--output-format", "remote-store", "--output-path", "/run/toolstream.sock", "--task-id", "task"}},
+		{name: "removed storage flag", args: []string{"--output-storage", "/run/toolstream.sock"}, wantError: "flag provided but not defined"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := &cli.App{Flags: appFlags, Before: runBefore, Writer: io.Discard, ErrWriter: io.Discard, Action: func(*cli.Context) error { return nil }}
+			args := []string{"profiler", "--type", "cpu", "--language", "c", "--pid", strconv.Itoa(os.Getpid())}
+			err := app.Run(append(args, tc.args...))
+			if tc.wantError == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.wantError)
 			}
 		})
 	}

@@ -32,7 +32,7 @@ const (
 	FormatSVG         OutputFormat = "svg"
 	FormatPprof       OutputFormat = "pprof" // reserved; not yet implemented
 	FormatJSON        OutputFormat = "json"
-	FormatRemoteStore OutputFormat = "remote" // upload to a remote storage backend
+	FormatRemoteStore OutputFormat = "remote-store" // upload to a remote storage backend
 )
 
 // IsFlameGraph reports whether the format renders a flame graph (flamegraph or svg).

@@ -25,14 +25,11 @@ import (
 
 	"github.com/ccfos/huatuo/internal/pod"
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func runBefore(ctx *cli.Context) error {
-	if ctx.NumFlags() == 0 || (ctx.Args().Len() == 0 && ctx.NumFlags() == 1) {
-		cli.ShowAppHelpAndExit(ctx, 0)
-	}
-
 	if ctx.Args().Len() > 0 {
 		return fmt.Errorf("invalid config: cannot specify two or more values(e.g., --pid pid1 instead of: --pid pid1 pid2)")
 	}
@@ -225,11 +222,14 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 
-	if ctx.String("output-format") == "remote" && ctx.String("output-storage") == "" {
-		return fmt.Errorf("--output-storage must not be empty when --output-format=remote")
+	if !ctx.IsSet("output-path") || !ctx.IsSet("output-format") {
+		return fmt.Errorf("--output-path and --output-format must both be specified")
 	}
-	if ctx.String("output-format") == "remote" && ctx.String("task-id") == "" {
-		return fmt.Errorf("--task-id must not be empty when --output-format=remote")
+	if err := output.ValidateDestination(ctx.String("output-path")); err != nil {
+		return err
+	}
+	if ctx.String("output-format") == "remote-store" && ctx.String("task-id") == "" {
+		return fmt.Errorf("--task-id must not be empty when --output-format=remote-store")
 	}
 	if err := validateOutputFormat(ctx.String("output-format")); err != nil {
 		return err
@@ -317,7 +317,7 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 
 func validateOutputFormat(format string) error {
 	switch format {
-	case "collapsed", "flamegraph", "svg", "remote":
+	case "collapsed", "flamegraph", "svg", "json", "remote-store":
 		return nil
 	default:
 		return fmt.Errorf("unsupported output format %q", format)

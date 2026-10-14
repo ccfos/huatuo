@@ -38,13 +38,9 @@ type localDestination struct {
 }
 
 func newLocalDestination(cfg FormatterConfig) (*localDestination, error) {
-	d := &localDestination{path: cfg.Destination, format: cfg.Format}
-	if d.path == "-" {
-		d.isStdout = true
+	d := &localDestination{path: cfg.Destination, format: cfg.Format, isStdout: isStdoutDestination(cfg.Destination)}
+	if d.isStdout {
 		return d, nil
-	}
-	if d.path == "" {
-		return nil, errors.New("profiling output destination is required")
 	}
 	info, err := os.Stat(d.path)
 	switch {

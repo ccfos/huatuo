@@ -407,7 +407,8 @@ func runIRQTracingCLI(
 		"--target-cpu", strconv.Itoa(triggerCPU),
 		"--duration", strconv.FormatInt(runTracingToolTimeout, 10),
 		"--max-events-per-second-per-cpu", strconv.FormatUint(maxEventsPerSecond, 10),
-		"--output-storage", toolstream.DefaultSockPath,
+		"--output-format", "remote-store",
+		"--output-path", toolstream.DefaultSockPath,
 		"--task-id", taskID,
 	}
 
