@@ -553,6 +553,26 @@ huatuo_bamai_tcp_memory_usage_percent{host="hostname",region="dev"} 0
 |tcp_memory_usage_pages| 系统已使用的 TCP 内存大小|内存页|物理机| host, region |
 |tcp_memory_usage_percent|系统已使用的 TCP 内存百分比（相对 TCP 内存总限制）|%|物理机| host, region |
 
+### conntrack 表
+
+宿主机 nf_conntrack 表的占用与容量，分别来自
+`/proc/sys/net/netfilter/nf_conntrack_count` 与
+`/proc/sys/net/netfilter/nf_conntrack_max`。
+
+```bash
+# HELP huatuo_bamai_net_conntrack_entries number of entries currently tracked in the nf_conntrack table
+# TYPE huatuo_bamai_net_conntrack_entries gauge
+huatuo_bamai_net_conntrack_entries{host="hostname",region="dev"} 1024
+# HELP huatuo_bamai_net_conntrack_entries_limit maximum number of entries the nf_conntrack table can hold
+# TYPE huatuo_bamai_net_conntrack_entries_limit gauge
+huatuo_bamai_net_conntrack_entries_limit{host="hostname",region="dev"} 65536
+```
+
+|指标|意义|单位|对象|标签 |
+|---|---|---|---|---|
+|net_conntrack_entries|当前 nf_conntrack 表中的条目数|个|物理机| host, region |
+|net_conntrack_entries_limit|nf_conntrack 表可容纳的最大条目数|个|物理机| host, region |
+
 ### 邻居项
 
 如下指标描述邻居项使用状态。
