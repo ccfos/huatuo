@@ -1233,6 +1233,45 @@ softirq source 和 victim 调用栈。
 
 注意：在进程已经启动且因 `libmtml.so` 缺失导致采集器被禁用的情况下，要启用该采集器（即把 `mthreads_gpu` 从 `BlackList` 中移除）需要重启进程。采集器工厂只在初始化时运行，运行时即使库被加载成功也不会注册新的采集器。
 
+#### 9.8 昇腾 NPU 指标
+
+本节配置昇腾 NPU 的细粒度开关。只要全局 `BlackList` 中仍包含 `ascend_npu`，
+该采集器即处于禁用状态。
+
+```bash
+# Ascend NPU fine-grained toggles
+#
+# - EnableDCMI
+# Enable DCMI metrics: health, power, temp, voltage, util, freq,
+# network health, HBM, and ECC info. Default: true
+#
+# - EnablePCIe
+# Enable PCIe link metrics: capability and status (speed/width).
+# Default: true
+#
+# - EnableHCCN
+# Enable HCCN network metrics via hccn_tool subprocesses.
+# Default: false
+#
+[MetricCollector.AscendNPU]
+    # EnableDCMI = true
+    # EnablePCIe = false
+    # EnableHCCN = false
+```
+
+- **EnableDCMI**：控制 DCMI 指标的采集。
+
+  默认值：true。开启后采集：健康状态、功耗、温度、电压、利用率、频率、
+  网络健康、HBM 与 ECC 等信息。
+
+- **EnablePCIe**：控制 PCIe 链路指标的采集。
+
+  默认值：true。开启后采集：链路能力与状态（速率/宽度）。
+
+- **EnableHCCN**：控制 HCCN 网络指标的采集。
+
+  默认值：false。开启后通过 `hccn_tool` 子进程采集 HCCN 指标。
+
 ### 10. Pod 配置
 
 该 section 用于从 kubelet 获取 Pod 信息，实现容器与 Pod 级别的标签关联和指标隔离。

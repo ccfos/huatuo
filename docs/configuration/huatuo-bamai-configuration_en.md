@@ -1247,6 +1247,46 @@ This section defines collection rules for various system and network metrics. Al
 
 Note: enabling the collector itself (i.e. removing `mthreads_gpu` from `BlackList` after the process has already started with the collector disabled because `libmtml.so` was missing at startup) requires a restart. The collector factory runs only during initialization, so a successful late library load will not register a new collector.
 
+#### 9.8 Ascend NPU Metrics
+
+This section configures the fine-grained Ascend NPU toggles. The collector
+itself stays disabled while `ascend_npu` is listed in the global `BlackList`.
+
+```bash
+# Ascend NPU fine-grained toggles
+#
+# - EnableDCMI
+# Enable DCMI metrics: health, power, temp, voltage, util, freq,
+# network health, HBM, and ECC info. Default: true
+#
+# - EnablePCIe
+# Enable PCIe link metrics: capability and status (speed/width).
+# Default: true
+#
+# - EnableHCCN
+# Enable HCCN network metrics via hccn_tool subprocesses.
+# Default: false
+#
+[MetricCollector.AscendNPU]
+    # EnableDCMI = true
+    # EnablePCIe = false
+    # EnableHCCN = false
+```
+
+- **EnableDCMI**: Controls collection of DCMI metrics.
+
+  Default: true. When enabled, collects: health, power, temperature, voltage,
+  utilization, frequency, network health, HBM, and ECC information.
+
+- **EnablePCIe**: Controls collection of PCIe link metrics.
+
+  Default: true. When enabled, collects: capability and status (speed/width).
+
+- **EnableHCCN**: Controls collection of HCCN network metrics.
+
+  Default: false. When enabled, collects HCCN metrics through `hccn_tool`
+  subprocesses.
+
 ### 10. Pod
 
 This section configures how to fetch Pod information from kubelet to enable container/Pod-level labeling and metric isolation.
