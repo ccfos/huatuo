@@ -159,10 +159,11 @@ install_test_dependencies() {
 		if [[ "$os_id" == rocky ]]; then
 			package_options+=(--disablerepo='epel*')
 		fi
-		# openEuler publishes kernel-devel in its binary OS repositories.
-		# Its update and everything repositories carry very large metadata
-		# (tens of MB) served by slow mirrors and are not required to install
-		# the build dependencies, so skip them as well.
+		# openEuler publishes kernel-devel/kernel-headers in its binary OS
+		# repositories. Its update and everything repositories carry very
+		# large metadata (tens of MB) served by slow mirrors, so skip them
+		# and only fall back to the full set if a build dependency is missing
+		# from the restricted repositories.
 		if [[ "$os_id" == openeuler ]]; then
 			package_options+=(
 				--disablerepo=EPOL --disablerepo=debuginfo --disablerepo=source
@@ -170,7 +171,11 @@ install_test_dependencies() {
 				--disablerepo=everything
 			)
 		fi
-		"$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"
+		if ! "$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"; then
+			((${#package_options[@]})) || return 1
+			vm_log "install with restricted repositories failed; retrying with all repositories"
+			"$package_manager" install -y "${missing_packages[@]}"
+		fi
 		;;
 	*)
 		vm_log_error "unsupported guest package family: ID=$ID ID_LIKE=${ID_LIKE:-}"
