@@ -453,10 +453,11 @@ func TestIOTracingReadWrite(t *testing.T) {
 		Inode uint64
 	}
 	key := sourceKey{Dev: unix.Major(stat.Dev)<<20 | unix.Minor(stat.Dev), Inode: stat.Ino}
+	readProgram, writeProgram := "bpf_"+filesystem+"_file_read_iter", "bpf_"+filesystem+"_file_write_iter"
 	spec, err := ebpf.LoadCollectionSpec(object)
 	require.NoError(t, err)
 	for name := range spec.Programs {
-		if name != "bpf_anyfs_file_read_iter" && name != "bpf_anyfs_file_write_iter" {
+		if name != readProgram && name != writeProgram {
 			delete(spec.Programs, name)
 		}
 	}
@@ -470,8 +471,8 @@ func TestIOTracingReadWrite(t *testing.T) {
 	t.Cleanup(coll.Close)
 	source := coll.Maps[bpfSourceMapName]
 	require.NotNil(t, source)
-	attachFileIOProbe(t, filesystem+"_file_read_iter", coll.Programs["bpf_anyfs_file_read_iter"])
-	attachFileIOProbe(t, filesystem+"_file_write_iter", coll.Programs["bpf_anyfs_file_write_iter"])
+	attachFileIOProbe(t, filesystem+"_file_read_iter", coll.Programs[readProgram])
+	attachFileIOProbe(t, filesystem+"_file_write_iter", coll.Programs[writeProgram])
 
 	// A block completion can publish a row before any file event. Leave its
 	// file metadata empty and verify real entries fill it without losing IO.
@@ -595,10 +596,16 @@ func TestIOTracingFileMetadata(t *testing.T) {
 		mapping               int
 		read, write           uint64
 	}{
-		{name: "read", program: "bpf_anyfs_file_read_iter", symbol: filesystem + "_file_read_iter", read: 17},
-		{name: "write", program: "bpf_anyfs_file_write_iter", symbol: filesystem + "_file_write_iter", write: 29},
+		{name: "read", program: "bpf_" + filesystem + "_file_read_iter", symbol: filesystem + "_file_read_iter", read: 17},
+		{
+			name: "write", program: "bpf_" + filesystem + "_file_write_iter",
+			symbol: filesystem + "_file_write_iter", write: 29,
+		},
 		{name: "private_fault", program: "bpf_filemap_fault", symbol: "filemap_fault", mapping: unix.MAP_PRIVATE, read: 4096},
-		{name: "shared_mkwrite", program: "bpf_anyfs_filemap_page_mkwrite", symbol: mkwrite, mapping: unix.MAP_SHARED, write: 4096},
+		{
+			name: "shared_mkwrite", program: "bpf_" + filesystem + "_filemap_page_mkwrite",
+			symbol: mkwrite, mapping: unix.MAP_SHARED, write: 4096,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			type testFile struct {

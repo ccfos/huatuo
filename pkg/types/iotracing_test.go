@@ -37,6 +37,17 @@ func TestIOTracingSnapshotJSON(t *testing.T) {
 			}`,
 		},
 		{
+			name: "disabled filesystem",
+			snapshot: IOTracingSnapshot{
+				DisabledFilesystems: map[string]string{"xfs": "attach xfs_file_read_iter: permission denied"},
+			},
+			wantJSON: `{
+				"process_file_io_stats": null,
+				"io_schedule_timeout_stacks": null,
+				"disabled_filesystems": {"xfs": "attach xfs_file_read_iter: permission denied"}
+			}`,
+		},
+		{
 			name: "all fields",
 			snapshot: IOTracingSnapshot{
 				Processes: []ProcessFileIOStats{{

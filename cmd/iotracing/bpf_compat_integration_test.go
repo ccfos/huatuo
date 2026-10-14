@@ -320,8 +320,9 @@ func TestIOTracingFullObject(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, program.Close()) })
 	for _, name := range []string{
 		"bpf_rq_qos_issue", "bpf_rq_qos_done",
-		"bpf_anyfs_file_read_iter", "bpf_anyfs_file_write_iter",
-		"bpf_anyfs_filemap_page_mkwrite", "bpf_filemap_fault",
+		"bpf_ext4_file_read_iter", "bpf_ext4_file_write_iter", "bpf_ext4_filemap_page_mkwrite",
+		"bpf_xfs_file_read_iter", "bpf_xfs_file_write_iter", "bpf_xfs_filemap_page_mkwrite",
+		"bpf_filemap_fault",
 		"bpf_io_schedule", "bpf_return_io_schedule",
 		"bpf_io_schedule_timeout", "bpf_return_io_schedule_timeout",
 	} {
@@ -329,28 +330,43 @@ func TestIOTracingFullObject(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	reader, _, err := attachAndEventPipe(ctx, &ioTracingProbeQualifier{BPF: program})
-	if errors.Is(err, errXFSKprobeUnsupported) {
-		t.Skipf("XFS qualification unavailable: %v", err)
-	}
-	require.NoError(t, err, "all production attach options must succeed")
+	qualifier := &ioTracingProbeQualifier{BPF: program}
+	reader, _, err := attachAndEventPipe(ctx, qualifier)
+	require.NoError(t, err, "shared attach and filesystem rollback must succeed")
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	require.NoError(t, program.Detach())
+	var unavailable error
+	for symbol, failure := range qualifier.failures {
+		failure = xfsKprobeFailure(symbol, failure)
+		if !errors.Is(failure, errXFSKprobeUnsupported) {
+			require.NoError(t, failure, "production probe %s must attach", symbol)
+		}
+		unavailable = failure
+	}
+	if unavailable != nil {
+		if fs.Type == unix.XFS_SUPER_MAGIC {
+			t.Skipf("XFS qualification unavailable: %v", unavailable)
+		}
+		t.Logf("XFS unavailable; ext4 production capture remains qualified: %v", unavailable)
+	}
 }
 
-// Keep the production attach order while identifying the rejected probe.
-// Only qualification classifies unavailable XFS; production retains the error.
+// Observe filesystem attach failures so qualification checks its filesystem's
+// coverage without hiding errors from other probes.
 type ioTracingProbeQualifier struct {
 	bpf.BPF
+	failures map[string]error
 }
 
 func (b *ioTracingProbeQualifier) AttachWithOptions(options []bpf.AttachOption) error {
-	for _, option := range options {
-		if err := b.BPF.AttachWithOptions([]bpf.AttachOption{option}); err != nil {
-			return xfsKprobeFailure(option.Symbol, err)
+	err := b.BPF.AttachWithOptions(options)
+	if err != nil && len(options) == 1 {
+		if b.failures == nil {
+			b.failures = make(map[string]error)
 		}
+		b.failures[options[0].Symbol] = err
 	}
-	return nil
+	return err
 }
 
 var errXFSKprobeUnsupported = errors.New("XFS module name-based kprobes are unsupported")
@@ -474,7 +490,10 @@ func TestIOTracingXFSSymbolQualification(t *testing.T) {
 			installAttachKallsyms(t, symbols, test.missingFile)
 			firstErr := fmt.Errorf("attach failed: %w", syscall.EADDRNOTAVAIL)
 			b := &attachTestBPF{reader: new(attachTestReader), failures: map[string][]error{"xfs_file_read_iter": {firstErr}}}
-			err := (&ioTracingProbeQualifier{BPF: b}).AttachWithOptions([]bpf.AttachOption{{Symbol: "xfs_file_read_iter"}})
+			err := (&ioTracingProbeQualifier{BPF: b}).AttachWithOptions([]bpf.AttachOption{{
+				Symbol: "xfs_file_read_iter", KeepAttachedOnError: true,
+			}})
+			err = xfsKprobeFailure("xfs_file_read_iter", err)
 			require.ErrorIs(t, err, firstErr)
 			require.NotErrorIs(t, err, errXFSKprobeUnsupported)
 			if test.cause != nil {
@@ -491,7 +510,10 @@ func TestIOTracingXFSSymbolQualification(t *testing.T) {
 			reader:   new(attachTestReader),
 			failures: map[string][]error{"xfs_file_read_iter": {syscall.EADDRNOTAVAIL}},
 		}
-		err := (&ioTracingProbeQualifier{BPF: b}).AttachWithOptions([]bpf.AttachOption{{Symbol: "xfs_file_read_iter"}})
+		err := (&ioTracingProbeQualifier{BPF: b}).AttachWithOptions([]bpf.AttachOption{{
+			Symbol: "xfs_file_read_iter", KeepAttachedOnError: true,
+		}})
+		err = xfsKprobeFailure("xfs_file_read_iter", err)
 		require.ErrorContains(t, err, "missing")
 		require.NotErrorIs(t, err, errXFSKprobeUnsupported)
 	})
@@ -514,7 +536,10 @@ func TestIOTracingXFSQualificationScope(t *testing.T) {
 			installAttachKallsyms(t, attachXFSKallsyms(), false)
 			failure := fmt.Errorf("attach %s: %w", test.symbol, test.cause)
 			b := &attachTestBPF{failures: map[string][]error{test.symbol: {failure}}}
-			err := (&ioTracingProbeQualifier{BPF: b}).AttachWithOptions([]bpf.AttachOption{{Symbol: test.symbol}})
+			err := (&ioTracingProbeQualifier{BPF: b}).AttachWithOptions([]bpf.AttachOption{{
+				Symbol: test.symbol, KeepAttachedOnError: true,
+			}})
+			err = xfsKprobeFailure(test.symbol, err)
 			require.ErrorIs(t, err, failure)
 			if test.wantSkip {
 				require.ErrorIs(t, err, errXFSKprobeUnsupported)
