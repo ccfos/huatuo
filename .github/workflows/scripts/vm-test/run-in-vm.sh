@@ -50,6 +50,53 @@ print_sys_info() {
 	kubectl get pods -A || true
 }
 
+# Some images (e.g. anolis8.10) neither run cloud-init nor auto-grow their
+# root partition, so the extra space requested with --disk-size stays
+# invisible to the guest. Grow the root partition and filesystem to fill the
+# disk. Best effort: distros that already grew report NOCHANGE.
+grow_root_filesystem() {
+	local root_device filesystem parent partition output
+	root_device=$(findmnt -n -o SOURCE /)
+	root_device=$(readlink -f "$root_device")
+	filesystem=$(findmnt -n -o FSTYPE /)
+	case "$filesystem" in
+	ext4 | xfs) ;;
+	*)
+		vm_log "rootfs grow skipped: unsupported filesystem $filesystem"
+		return 0
+		;;
+	esac
+	if [[ ! -f /sys/class/block/${root_device##*/}/partition ]]; then
+		vm_log "rootfs grow skipped: $root_device is not a direct partition"
+		return 0
+	fi
+	if ! command -v growpart > /dev/null 2>&1; then
+		vm_log_error "rootfs grow skipped: growpart is not installed"
+		return 0
+	fi
+	parent=$(lsblk -n -o PKNAME "$root_device")
+	partition=$(< "/sys/class/block/${root_device##*/}/partition")
+	[[ -n "$parent" && "$partition" =~ ^[0-9]+$ ]] || {
+		vm_log_error "cannot identify root partition for $root_device"
+		return 1
+	}
+	vm_log "growing root partition $root_device on /dev/$parent"
+	if output=$(growpart "/dev/$parent" "$partition" 2>&1); then
+		vm_log "$output"
+	elif [[ "$output" == NOCHANGE:* ]]; then
+		vm_log "$output"
+	else
+		vm_log_error "root partition expansion failed: $output"
+		return 1
+	fi
+	case "$filesystem" in
+	ext4) resize2fs "$root_device" ;;
+	xfs) xfs_growfs / ;;
+	esac
+	lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT "/dev/$parent"
+	df -h /
+}
+
 configure_proxy() {
 	local guest_hostname guest_ip proxy_port=11008
 	if ! timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/$1' _ "$proxy_port" 2> /dev/null; then
@@ -162,6 +209,7 @@ install_temporary_go_tools() {
 }
 
 configure_proxy
+grow_root_filesystem
 print_sys_info
 export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
 install_test_dependencies
