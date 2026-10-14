@@ -1,4 +1,4 @@
-// Copyright 2025, 2026 The HuaTuo Authors
+// Copyright 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,58 +16,34 @@ package aggregator
 
 import (
 	"context"
-	"fmt"
+	"time"
 
-	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/pkg/types"
-
-	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
-	ptree "github.com/grafana/pyroscope/pkg/og/storage/tree"
 )
 
-func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
-	if p.pctx.ToolstreamClient == nil {
-		return fmt.Errorf("toolstream client not initialized")
+func (p *Pipeline) prepareFormatter() error {
+	if p.formatter != nil {
+		return nil
 	}
-
-	result, ok := data.(*profiler.ProfileData)
-	if !ok {
-		return fmt.Errorf("invalid pprof data for uploading: %T", data)
-	}
-
-	profile, err := convertProfile(&result.Profile)
+	formatter, err := output.NewFormatter(p.pctx.OutputFormat, p.pctx.OutputWriter, p.pctx.ToolstreamClient, func(renderer output.Renderer) error {
+		if p.pctx.OutputFormat.IsFlameGraph() {
+			return writeFlameGraph(p.pctx.OutputPath, renderer)
+		}
+		return writeFolded(p.pctx.OutputPath, renderer)
+	})
 	if err != nil {
-		return fmt.Errorf("convert profile for upload: %w", err)
-	}
-	if profile.TimeNanos == 0 {
-		return fmt.Errorf("profile start timestamp is required")
-	}
-	window := &types.ProfilingWindow{
-		ContainerID:              p.pctx.ContainerID,
-		ProfileType:              result.ProfileType,
-		Profile:                  profile,
-		AggregationOverflowCount: int(p.overflowCount.Load()),
-	}
-
-	if err := p.pctx.ToolstreamClient.Send(window); err != nil {
-		log.WithField("tracer_id", p.tracerID).Errorf("failed to send profiling event: %v", err)
 		return err
 	}
-
-	log.WithField("tracer_id", p.tracerID).Infof("profiling event sent via toolstream")
-
+	p.formatter = formatter
 	return nil
 }
 
-func convertProfile(profile *ptree.Profile) (*profilev1.Profile, error) {
-	data, err := profile.MarshalVT()
-	if err != nil {
-		return nil, err
+func (p *Pipeline) exportWindow(window *types.ProfilingWindow) error {
+	if err := p.prepareFormatter(); err != nil {
+		return err
 	}
-	converted := new(profilev1.Profile)
-	if err := converted.UnmarshalVT(data); err != nil {
-		return nil, err
-	}
-	return converted, nil
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(p.pctx.Ctx), 30*time.Second)
+	defer cancel()
+	return p.formatter.Add(ctx, window)
 }

@@ -21,8 +21,15 @@ const ProfilingToolName = "profiler"
 
 // ProfilingWindow contains one aggregation window emitted by the profiler.
 type ProfilingWindow struct {
-	ContainerID              string             `json:"container_id,omitempty"`
-	ProfileType              string             `json:"profile_type"`
-	Profile                  *profilev1.Profile `json:"profile"`
-	AggregationOverflowCount int                `json:"aggr_overflow_count,omitempty"`
+	ContainerID    string             `json:"container_id,omitempty"`
+	ProfileType    string             `json:"profile_type"`
+	Profile        *profilev1.Profile `json:"profile"`
+	DroppedSamples map[string]uint64  `json:"dropped_samples,omitempty"`
 }
+
+// Drop reasons distinguish collection loss from userspace queue overflow.
+const (
+	DropReasonAggregationQueue = "aggregation_queue"
+	DropReasonCollection       = "collection"
+	IRQProfilingToolName       = "irqtracing"
+)

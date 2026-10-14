@@ -57,8 +57,8 @@ type threadState struct {
 	total   int64 // total sample count
 }
 
-// Formatter accumulates samples and writes Speedscope JSON.
-type Formatter struct {
+// Renderer accumulates samples and writes Speedscope JSON.
+type Renderer struct {
 	sampleDuration float64 // seconds per sample (default 0.01 = 100 Hz)
 	frames         map[ssFrame]int
 	frameList      []ssFrame
@@ -66,24 +66,22 @@ type Formatter struct {
 	threadOrder    []string // insertion order
 }
 
-var _ output.Formatter = (*Formatter)(nil)
+var _ output.Renderer = (*Renderer)(nil)
 
-// New creates a Formatter. Pass 0 for sampleRateHz to default to 100 Hz.
-func New(sampleRateHz float64) *Formatter {
+// New creates a Renderer. Pass 0 for sampleRateHz to default to 100 Hz.
+func New(sampleRateHz float64) *Renderer {
 	if sampleRateHz <= 0 {
 		sampleRateHz = 100
 	}
-	return &Formatter{
+	return &Renderer{
 		sampleDuration: 1.0 / sampleRateHz,
 		frames:         make(map[ssFrame]int),
 		threads:        make(map[string]*threadState),
 	}
 }
 
-func (f *Formatter) Name() string { return "speedscope" }
-
 // Add incorporates one sample. Batch samples (Count > 1) are expanded inline.
-func (f *Formatter) Add(s *output.Sample) error {
+func (f *Renderer) Add(s *output.Sample) error {
 	if len(s.Frames) == 0 {
 		return nil
 	}
@@ -113,7 +111,7 @@ func (f *Formatter) Add(s *output.Sample) error {
 	return nil
 }
 
-func (f *Formatter) Write(w io.Writer) error {
+func (f *Renderer) Write(w io.Writer) error {
 	profiles := make([]sampledProfile, 0, len(f.threadOrder))
 	for _, key := range f.threadOrder {
 		ts := f.threads[key]
@@ -152,20 +150,13 @@ func (f *Formatter) Write(w io.Writer) error {
 	return json.NewEncoder(w).Encode(file)
 }
 
-func (f *Formatter) Reset() {
-	f.frames = make(map[ssFrame]int)
-	f.frameList = nil
-	f.threads = make(map[string]*threadState)
-	f.threadOrder = nil
-}
-
-func (f *Formatter) IsEmpty() bool {
+func (f *Renderer) IsEmpty() bool {
 	return len(f.threads) == 0
 }
 
 // getOrAddFrame returns the global index for a frame, adding it if unseen.
 // detail is optional; when provided, file and line are included in dedup and output.
-func (f *Formatter) getOrAddFrame(name string, detail *output.Frame) int {
+func (f *Renderer) getOrAddFrame(name string, detail *output.Frame) int {
 	sf := ssFrame{Name: name}
 	if detail != nil {
 		sf.File = detail.File
@@ -183,7 +174,7 @@ func (f *Formatter) getOrAddFrame(name string, detail *output.Frame) int {
 	return idx
 }
 
-func (f *Formatter) getOrAddThread(key, name string) *threadState {
+func (f *Renderer) getOrAddThread(key, name string) *threadState {
 	if ts, ok := f.threads[key]; ok {
 		return ts
 	}

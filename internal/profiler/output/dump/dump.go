@@ -39,48 +39,42 @@ type dumpEntry struct {
 	Frames     []string `json:"frames"`
 }
 
-// Formatter accumulates samples and writes a stack dump.
-type Formatter struct {
+// Renderer accumulates samples and writes a stack dump.
+type Renderer struct {
 	opts    Options
 	samples []output.Sample
 }
 
-var _ output.Formatter = (*Formatter)(nil)
+var _ output.Renderer = (*Renderer)(nil)
 
-// New returns a Formatter with the given options. Indent defaults to 4 spaces.
-func New(opts Options) *Formatter {
+// New returns a Renderer with the given options. Indent defaults to 4 spaces.
+func New(opts Options) *Renderer {
 	if opts.Indent == "" {
 		opts.Indent = "    "
 	}
 
-	return &Formatter{opts: opts}
+	return &Renderer{opts: opts}
 }
 
-func (f *Formatter) Name() string { return "dump" }
-
-func (f *Formatter) Add(s *output.Sample) error {
+func (f *Renderer) Add(s *output.Sample) error {
 	if len(s.Frames) > 0 {
 		f.samples = append(f.samples, *s)
 	}
 	return nil
 }
 
-func (f *Formatter) Write(w io.Writer) error {
+func (f *Renderer) Write(w io.Writer) error {
 	if f.opts.JSON {
 		return f.writeJSON(w)
 	}
 	return f.writeText(w)
 }
 
-func (f *Formatter) Reset() {
-	f.samples = nil
-}
-
-func (f *Formatter) IsEmpty() bool {
+func (f *Renderer) IsEmpty() bool {
 	return len(f.samples) == 0
 }
 
-func (f *Formatter) writeText(w io.Writer) error {
+func (f *Renderer) writeText(w io.Writer) error {
 	for i := range f.samples {
 		if err := f.writeOneSampleText(w, &f.samples[i]); err != nil {
 			return err
@@ -89,7 +83,7 @@ func (f *Formatter) writeText(w io.Writer) error {
 	return nil
 }
 
-func (f *Formatter) writeOneSampleText(w io.Writer, s *output.Sample) error {
+func (f *Renderer) writeOneSampleText(w io.Writer, s *output.Sample) error {
 	parts := []string{"Thread"}
 
 	if s.ThreadID != "" {
@@ -119,7 +113,7 @@ func (f *Formatter) writeOneSampleText(w io.Writer, s *output.Sample) error {
 	return err
 }
 
-func (f *Formatter) writeJSON(w io.Writer) error {
+func (f *Renderer) writeJSON(w io.Writer) error {
 	entries := make([]dumpEntry, 0, len(f.samples))
 	for i := range f.samples {
 		s := &f.samples[i]

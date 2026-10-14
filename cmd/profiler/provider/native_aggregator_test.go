@@ -170,15 +170,12 @@ func TestNativeAggregatorSnapshotResolvesStackTraceIDs(t *testing.T) {
 
 	snapshot, err := aggregator.Snapshot(&pcontext.ProfilerContext{
 		Type:         profiling.TypeMemory,
-		OutputFormat: output.FormatRemote,
+		OutputFormat: output.FormatRemoteStore,
 	})
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
-	data, ok := snapshot.(*profiler.ProfileData)
-	if !ok {
-		t.Fatalf("Snapshot() type = %T, want *profiler.ProfileData", snapshot)
-	}
+	data := snapshot
 	for _, frame := range []string{
 		"process 12:app",
 		"cpu",
@@ -212,15 +209,12 @@ func TestNativeAggregatorPhysicalMemoryFiltersAfterAggregation(t *testing.T) {
 	snapshot, err := aggregator.Snapshot(&pcontext.ProfilerContext{
 		Type:         profiling.TypeMemory,
 		Mode:         profiling.ModePhysicalUsage,
-		OutputFormat: output.FormatRemote,
+		OutputFormat: output.FormatRemoteStore,
 	})
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
-	data, ok := snapshot.(*profiler.ProfileData)
-	if !ok {
-		t.Fatalf("Snapshot() type = %T, want *profiler.ProfileData", snapshot)
-	}
+	data := snapshot
 	if len(data.Profile.Sample) != 0 {
 		t.Fatalf("Snapshot() samples = %d, want 0", len(data.Profile.Sample))
 	}

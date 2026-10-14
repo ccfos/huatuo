@@ -509,7 +509,7 @@ sudo _output/bin/profiler \
 | `--tool-path` | None | Java, Python | Shared external tool root; required |
 | `--binary-match-path` | None | Java, Python | Executable path used to match target processes |
 | `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address used to resolve container metadata |
-| `--tracer-id` | Empty; generated internally for local output | All; required for `remote` | Stable profiling task ID used by toolstream and remote storage |
+| `--task-id` | Empty; generated internally for local output | All; required for `remote` | Stable profiling task ID used by toolstream and remote storage |
 | `--enable-pprof` | `false` | Profiler itself | Expose Go pprof endpoints for the profiler process on `:6000` |
 | `--version-format` | `text` | Version query | Output format for `--version`: `text`, `json`, or `short` |
 | `--help`, `-h` | - | All | Display command help |
@@ -692,7 +692,7 @@ main;handleRequest;parsePayload 428
 main;handleRequest;writeResponse 172
 ```
 
-Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote` depends on the HUATUO toolstream Unix socket, requires a non-empty `--tracer-id`, and should not be selected for standalone offline use.
+Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote` depends on the HUATUO toolstream Unix socket, requires a non-empty `--task-id`, and should not be selected for standalone offline use.
 
 ### 7. Reproducing Integration Test Examples
 
@@ -750,3 +750,48 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="Official WeChat account QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+## Common profiling windows
+
+The profiler and irqtracing tools share the collection, aggregation and pipeline lifecycle. Every snapshot returns `types.ProfilingWindow`. Local SVG/collapsed output reads that same profile through `internal/profiler/output`; values use the profile unit (CPU nanoseconds, IRQ counts) rather than separate local raw counts. Java process roots now match the remote profile (`process PID:MainClass`) instead of the old local-only `process PID` root. Periodic profiling emits one window per interval for both local and remote output; local renderers accumulate those windows until final export. IRQ emits one final window after probes are detached.
+
+Managed tasks and standalone CLI uploads synchronously save every window through `pkg/profiling/store`. After successful collection, the remote Formatter sends `end + commit` from `Complete`. The profiling handler checks the request errors and writes the durable task marker; Toolstream returns the accumulated processing result in its ACK. Collection, export, storage and publication failures fail the task. Plain End and disconnect do not publish results. A lost ACK means the client cannot confirm the outcome; it does not roll back stored data. `dropped_samples` records collection and aggregation-queue loss separately and is stored under `profile_data.metrics`. Historical `aggr_overflow_count` remains readable. Upgrade tools and daemon together for the new wire format.
+
+The window Formatter accepts `types.ProfilingWindow` for every output format. Local `Complete` finishes the output file; remote `Complete` waits for the commit result. Aggregators reset per window; Formatter does not expose Reset. Toolstream protocol version 2 renames `flush @1` to `commit @1` and adds a commit-result frame. Upgrade all tools and the daemon together. IRQ collection logic resides in `cmd/irqtracing`.
+
+The output boundary is `Formatter.Add(window)` / `Formatter.Complete(ctx)`.
+Local renderers implement `Add(sample)`, `Write(writer)` and `IsEmpty()`;
+`RegisterRenderer` and `OutputFormat.NewRenderer` select the renderer.
+`Complete` propagates both file write and close errors. Renderer instances belong
+to one task and are never reset between windows.
+
+The daemon initializes storage and registers both tool handlers through
+`internal/profiling.Register`. Transport binds each non-empty `(toolName, taskID)` to its active
+connection; concurrent duplicate connections cannot write or commit that task.
+Ownership is released when connection handling finishes, including after a disconnect.
+Profiler and IRQ handlers execute independently, including while another tool
+waits for storage. Task IDs must remain globally unique for persisted results,
+whose existing publication marker IDs are retained for compatibility.
+
+The profiling store exposes synchronous `SaveSync` and final `Commit`; the former asynchronous profiling `Save` entry point has been removed.
+
+Toolstream uses `Send(ctx, event, SendOptions)` for data and control frames.
+`End` marks the final frame; `Commit` requires `End` and waits for the server ACK.
+An event may accompany these flags so the final window and commit share a frame.
+A nil event sends no payload. `Close` releases the connection separately;
+canceling an in-flight send closes it to interrupt blocked I/O. The window
+Formatter keeps `Complete`, which sends an empty `End + Commit` frame.
+
+Task startup does not query handler registration. Ordinary data frames have no ACK;
+missing handlers and storage failures are reported through the commit ACK.
+The CLI exits successfully only after `Complete` receives a successful ACK.
+For managed tasks, bamai uses the CLI exit status without a separate server-side
+wait. Explicit cancellation aborts collection without committing results.
+
+Tool handlers receive `Handle(ctx, *toolstream.Request[T])` through one registration.
+Each request contains connection metadata, optional `Data`, `End`/`Commit`,
+`PriorErr` for preceding frames, and `Err` for the current frame's tool, protocol
+or decoding failure. Even after a failure, later frames and the commit request
+still reach the handler. The profiling handler continues saving valid windows,
+but publishes only when prior frames, the current frame and its write all succeed.
+Connection state stays inside Toolstream; there is no separate commit callback.

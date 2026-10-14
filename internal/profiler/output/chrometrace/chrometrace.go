@@ -48,8 +48,8 @@ type prevState struct {
 // giving visual depth in trace viewers.
 const nestingIndent = 0.001
 
-// Formatter accumulates samples and writes Chrome Trace JSON.
-type Formatter struct {
+// Renderer accumulates samples and writes Chrome Trace JSON.
+type Renderer struct {
 	events       []event
 	prev         map[string]*prevState // threadID → last state (streaming)
 	seenThreads  map[string]struct{}   // threads that already have an M event
@@ -57,21 +57,19 @@ type Formatter struct {
 	sampleRateHz float64
 }
 
-var _ output.Formatter = (*Formatter)(nil)
+var _ output.Renderer = (*Renderer)(nil)
 
-// New creates a Formatter. Pass 0 for sampleRateHz to default to 100 Hz.
-func New(sampleRateHz float64) *Formatter {
+// New creates a Renderer. Pass 0 for sampleRateHz to default to 100 Hz.
+func New(sampleRateHz float64) *Renderer {
 	if sampleRateHz <= 0 {
 		sampleRateHz = 100
 	}
-	return &Formatter{
+	return &Renderer{
 		prev:         make(map[string]*prevState),
 		seenThreads:  make(map[string]struct{}),
 		sampleRateHz: sampleRateHz,
 	}
 }
-
-func (f *Formatter) Name() string { return "chrometrace" }
 
 // Add incorporates one sample.
 //
@@ -80,7 +78,7 @@ func (f *Formatter) Name() string { return "chrometrace" }
 // Counter (no Frames, Tags non-empty): emits a C event for each tag value.
 //
 // The first sample from each thread also emits an M (thread_name) metadata event.
-func (f *Formatter) Add(s *output.Sample) error {
+func (f *Renderer) Add(s *output.Sample) error {
 	ts := f.timestampFor(s)
 
 	// M event: name the thread on first encounter.
@@ -152,7 +150,7 @@ func counterEvent(s *output.Sample, ts float64) event {
 	}
 }
 
-func (f *Formatter) addStreaming(s *output.Sample, ts float64) {
+func (f *Renderer) addStreaming(s *output.Sample, ts float64) {
 	tid := s.ThreadID
 	prev := f.prev[tid]
 
@@ -198,7 +196,7 @@ func (f *Formatter) addStreaming(s *output.Sample, ts float64) {
 }
 
 // addBatch emits X events; each frame gets a duration proportional to Count.
-func (f *Formatter) addBatch(s *output.Sample, ts float64) {
+func (f *Renderer) addBatch(s *output.Sample, ts float64) {
 	tid := s.ThreadID
 	if tid == "" {
 		tid = "main"
@@ -223,7 +221,7 @@ func (f *Formatter) addBatch(s *output.Sample, ts float64) {
 	}
 }
 
-func (f *Formatter) Write(w io.Writer) error {
+func (f *Renderer) Write(w io.Writer) error {
 	finalTS := f.timestampFor(&output.Sample{})
 
 	n := len(f.events)
@@ -250,18 +248,11 @@ func (f *Formatter) Write(w io.Writer) error {
 	return json.NewEncoder(w).Encode(traceOutput{TraceEvents: all})
 }
 
-func (f *Formatter) Reset() {
-	f.events = nil
-	f.prev = make(map[string]*prevState)
-	f.seenThreads = make(map[string]struct{})
-	f.sampleIdx = 0
-}
-
-func (f *Formatter) IsEmpty() bool {
+func (f *Renderer) IsEmpty() bool {
 	return len(f.events) == 0
 }
 
-func (f *Formatter) timestampFor(s *output.Sample) float64 {
+func (f *Renderer) timestampFor(s *output.Sample) float64 {
 	if s.Timestamp != 0 {
 		return float64(s.Timestamp) // already in microseconds
 	}

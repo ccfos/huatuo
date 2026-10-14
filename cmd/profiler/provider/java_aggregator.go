@@ -17,7 +17,6 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -25,17 +24,15 @@ import (
 	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // Compile-time check: javaAggregator implements aggregator.Aggregator.
 var _ aggregator.Aggregator = (*javaAggregator)(nil)
 
 type javaAggregator struct {
-	mu sync.Mutex
-
-	formatter    output.Formatter
+	mu           sync.Mutex
 	sampleOutput []profiler.SampleOutput
 	startedAt    time.Time
 }
@@ -43,13 +40,7 @@ type javaAggregator struct {
 func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) {
 	pctx.IsOneShotAgg = true
 
-	f, err := aggregator.NewFormatterForOutput(pctx)
-	if err != nil {
-		return nil, err
-	}
-
 	return &javaAggregator{
-		formatter: f,
 		startedAt: time.Now(),
 	}, nil
 }
@@ -66,32 +57,11 @@ func (a *javaAggregator) Aggregate(rec any) {
 	defer a.mu.Unlock()
 
 	a.sampleOutput = append(a.sampleOutput, so)
-	if a.formatter == nil {
-		return
-	}
-
-	lines := strings.Split(so.Output, "\n")
-
-	for _, line := range lines {
-		stack, count, ok := parseCollapsedLine(line)
-		if !ok {
-			continue
-		}
-
-		frames := []string{fmt.Sprintf("process %d", so.PID), stack}
-		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: count}); err != nil {
-			log.Warnf("formatter add sample: %v", err)
-		}
-	}
 }
 
-func (a *javaAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
+func (a *javaAggregator) Snapshot(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	if !pctx.OutputFormat.IsUpload() {
-		return nil, nil
-	}
 
 	return a.snapshotPprof(pctx)
 }
@@ -100,20 +70,20 @@ func (a *javaAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.formatter != nil {
-		a.formatter.Reset()
-	}
-
 	a.sampleOutput = nil
 }
 
-func (a *javaAggregator) OutputFormatter() output.Formatter {
-	return a.formatter
-}
-
-func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, error) {
+func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
 	if len(a.sampleOutput) == 0 {
-		return nil, nil
+		opt, sampleType, _, err := javaParseOptions(pctx)
+		if err != nil {
+			return nil, err
+		}
+		data, err := profiler.ParseTree(a.startedAt, sampleType, nil, opt)
+		if err != nil {
+			return nil, err
+		}
+		return profiler.NewWindow(data, pctx.ContainerID, time.Since(a.startedAt))
 	}
 
 	pprofFolded, err := json.MarshalIndent(a.sampleOutput, "", "  ")
@@ -141,7 +111,7 @@ func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, err
 		return nil, fmt.Errorf("failed to parse collapsed data: %w", err)
 	}
 
-	return pprofData, nil
+	return profiler.NewWindow(pprofData, pctx.ContainerID, time.Since(a.startedAt))
 }
 
 func javaParseOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, string, error) {

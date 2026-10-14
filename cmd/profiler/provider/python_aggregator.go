@@ -25,15 +25,13 @@ import (
 	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 var _ aggregator.Aggregator = (*pythonAggregator)(nil)
 
 type pythonAggregator struct {
-	mu sync.Mutex
-
-	formatter    output.Formatter
+	mu           sync.Mutex
 	sampleOutput []profiler.SampleOutput
 	startedAt    time.Time
 	sampleRate   int64
@@ -42,13 +40,7 @@ type pythonAggregator struct {
 func newPythonCPUAggregator(pctx *pcontext.ProfilerContext) (*pythonAggregator, error) {
 	pctx.IsOneShotAgg = true
 
-	f, err := aggregator.NewFormatterForOutput(pctx)
-	if err != nil {
-		return nil, err
-	}
-
 	return &pythonAggregator{
-		formatter:  f,
 		startedAt:  time.Now(),
 		sampleRate: int64(pctx.Freq),
 	}, nil
@@ -70,23 +62,6 @@ func (a *pythonAggregator) Aggregate(rec any) {
 	defer a.mu.Unlock()
 
 	a.sampleOutput = append(a.sampleOutput, so)
-	if a.formatter == nil {
-		return
-	}
-
-	for _, line := range strings.Split(so.Output, "\n") {
-		stack, count, ok := parseCollapsedLine(line)
-		if !ok || count <= 0 {
-			continue
-		}
-
-		if err := a.formatter.Add(&output.Sample{
-			Frames: strings.Split(stack, ";"),
-			Count:  count,
-		}); err != nil {
-			log.Warnf("formatter add sample: %v", err)
-		}
-	}
 }
 
 func normalizePythonOutput(pid int, raw string) string {
@@ -107,12 +82,16 @@ func normalizePythonOutput(pid int, raw string) string {
 	return normalized.String()
 }
 
-func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
+func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if !pctx.OutputFormat.IsUpload() || len(a.sampleOutput) == 0 {
-		return nil, nil
+	if len(a.sampleOutput) == 0 {
+		data, err := profiler.ParseTree(a.startedAt, profiler.ProfileTypeCpuSample, nil, &profiler.ParseOption{SampleRate: a.sampleRate})
+		if err != nil {
+			return nil, err
+		}
+		return profiler.NewWindow(data, pctx.ContainerID, time.Since(a.startedAt))
 	}
 
 	data, err := json.MarshalIndent(a.sampleOutput, "", "  ")
@@ -135,19 +114,12 @@ func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error)
 		return nil, fmt.Errorf("failed to parse raw data: %w", err)
 	}
 
-	return pprofData, nil
+	return profiler.NewWindow(pprofData, pctx.ContainerID, time.Since(a.startedAt))
 }
 
 func (a *pythonAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.formatter != nil {
-		a.formatter.Reset()
-	}
 	a.sampleOutput = nil
-}
-
-func (a *pythonAggregator) OutputFormatter() output.Formatter {
-	return a.formatter
 }

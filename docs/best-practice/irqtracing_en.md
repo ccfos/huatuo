@@ -31,8 +31,7 @@ sudo ./_output/bin/irqtracing \
 
 `--max-events-per-second-per-cpu N` optionally limits the combined number of source and victim stack samples collected per second on each traced CPU. Omitting it or setting it to `0` disables rate limiting; when enabled, `N` must be between 2 and 8589934590. The per-CPU budget is divided as evenly as possible between `softirq_raise` and `softirq_entry`; raise receives the extra sample when the value is odd. In all-CPU mode, the system-wide limit scales with the number of traced CPUs.
 
-Local output is written to stdout. `--output text` is the default and an alias
-for `collapsed`; it emits folded stacks suitable for flame graph tools:
+Local output is written to stdout. `--output collapsed` is the default; it emits folded stacks suitable for flame graph tools:
 
 ```text
 source;source[raiser,NET_RX];raise_softirq_[k] 12
@@ -49,6 +48,8 @@ sudo ./_output/bin/irqtracing \
   --output flamegraph > irqtracing.svg
 ```
 
+The common collection pipeline logs one warning per window with sample loss, including the task ID and counts by reason. IRQ logs warnings and errors to stderr and writes results to stdout. A diagnostic log write failure does not prevent data export.
+
 Use `--output json` when the platform profile payload and drop count are needed:
 
 ```bash
@@ -62,22 +63,25 @@ The JSON contains:
 
 ```json
 {
-  "flamedata": { "...": "profile tree, null when nothing was collected" },
-  "nmissed": 1234
+  "profile_type": "irqtracing:irq:count:irq:count",
+  "profile": {
+    "time_nanos": 1790000000000000000,
+    "duration_nanos": 3000000000,
+    "sample_type": [{"type": 1, "unit": 2}],
+    "string_table": ["", "irq", "count"]
+  },
+  "dropped_samples": {"collection": 1234}
 }
 ```
 
-`flamedata` is the same profile format the platform consumes (`ProfileType` `irqtracing:irq:count:irq:count`). Every stack is rooted at `source` or `victim`, followed by a `source[comm,VEC]` or `victim[comm(pid),VEC]` label frame, then the user-space frames and the kernel frames suffixed with `_[k]`. `VEC` is one of `HI`, `TIMER`, `NET_TX`, `NET_RX`, `BLOCK`, `IRQ_POLL`, `TASKLET`, `SCHED`, `HRTIMER`, `RCU`, or `VEC<n>` for unknown vectors.
+`profile` is the same standard profile carried by `types.ProfilingWindow` for the profiler tool. The example shows an empty window; non-empty windows also contain samples, locations and functions. Empty collections retain a valid profile with its start time and actual duration. Stacks preserve the `source` / `victim` roots and their process/vector grouping, followed by user-space and kernel (`_[k]`) frames. A selected target CPU is also recorded as a sample label.
 
-`nmissed` is the total number of samples dropped during the collection window. Samples are dropped either by the first-N budgets enabled through `--max-events-per-second-per-cpu` or because a counts map is full. Either case means the flame graph is incomplete. When the drop count cannot be read, the tool fails instead of writing a result. A non-zero `nmissed` also produces a warning line on stderr; the JSON field is the persisted contract consumed by the daemon.
-
-`--output-storage <socket>` sends the JSON payload over Toolstream instead of
-writing local output and requires `--task-id`. An explicitly supplied
-`--output` is ignored in that mode. Operational logs are discarded; local
-results go to stdout and failures or drop warnings go to stderr.
-
-The process exits when the duration elapses, when the caller cancels, or when it receives `SIGHUP`, `SIGQUIT`, `SIGINT`, or `SIGTERM`.
+`dropped_samples.collection` counts samples discarded by the kernel sample budget or full counts maps. The aggregate counter cannot distinguish these causes. A nonzero count means the profile is incomplete and also produces a stderr warning. Failure to read the counter fails collection. Profiler userspace queue loss uses the separate `dropped_samples.aggregation_queue` reason.
 
 ## Use from huatuo-bamai
 
-The daemon's `AutoTracing.IRQTracing` tracer invokes the `irqtracing` binary located next to the daemon executable itself (`CoreBinDir` is derived from the daemon's own path; in the source build tree that is `_output/bin/irqtracing`) when its rules detect an irq/softirq spike or sustained high utilization on some CPU, passing `--bpf-path <CoreBpfDir>/irqtracing.o`, `--target-cpu <cpu>`, `--duration <RunTracingToolTimeout>` and `--max-events-per-second-per-cpu <MaxEventsPerSecond>`. `MaxEventsPerSecond` defaults to 1000, so raise and entry each default to 500 events/s. The CLI returns its result over Toolstream and the daemon merges it into the saved tracing data; the daemon additionally records `rule`, `trigger_cpu`, `trace_duration` and `hit_cpus`.
+The daemon's `AutoTracing.IRQTracing` tracer invokes the `irqtracing` binary located next to the daemon executable itself (`CoreBinDir` is derived from the daemon's own path; in the source build tree that is `_output/bin/irqtracing`) when its rules detect an irq/softirq spike or sustained high utilization on some CPU, passing `--bpf-path <CoreBpfDir>/irqtracing.o`, `--target-cpu <cpu>`, `--duration <RunTracingToolTimeout>` and `--max-events-per-second-per-cpu <MaxEventsPerSecond>`. `MaxEventsPerSecond` defaults to 1000, so raise and entry each default to 500 events/s. The CLI runs through the shared profiler runner and single-window pipeline. It sends `types.ProfilingWindow` over Toolstream. The handler registered by `internal/profiling.Register` writes each window through `pkg/profiling/store.SaveSync`; the same handler calls `Store.Commit` on an error-free commit request to publish the durable completion marker. Collection succeeds only after the profile is query-visible and publication succeeds. Elasticsearch must be configured; local tracing-file storage alone is insufficient. Trigger rules and hit-CPU utilization remain in daemon logs.
+
+New IRQ results use `profile_data` in profiling storage, with `tracer_name=irqtracing` and `tracer_type=profiling`. Query them through the profiling APIs using `irqtracing:irq:count:irq:count`. Historical tracing documents remain available through their existing tracing queries; they are not rewritten. The old `flamedata`/`nmissed` wire format is removed, so upgrade the CLI and daemon together.
+
+Remote output sends `end + commit` and waits for the daemon ACK confirming storage and publication. Plain End, collection failure and disconnect do not publish a completion marker. Protocol version 2 requires upgrading tools and daemon together. If the ACK is lost, the result may already be published; query by task ID to confirm.

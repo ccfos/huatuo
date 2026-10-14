@@ -384,22 +384,22 @@ func TestVecName(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// buildFlameGraph
+// buildProfile
 // ---------------------------------------------------------------------------
 
-func TestBuildFlameGraph(t *testing.T) {
+func TestBuildProfile(t *testing.T) {
 	startedAt := time.Unix(123, 456)
 
-	t.Run("empty maps return nil", func(t *testing.T) {
+	t.Run("empty maps return a valid empty profile", func(t *testing.T) {
 		b := &mockBPF{
 			items:      map[string][]bpf.MapItem{},
 			stacks:     map[uint32][]byte{},
 			stackMapID: 99,
 		}
-		data, stacks, err := buildFlameGraph(b, startedAt)
+		data, err := buildProfile(b, startedAt)
 		assert.NoError(t, err)
-		assert.Nil(t, data)
-		assert.Nil(t, stacks)
+		require.NotNil(t, data)
+		assert.Empty(t, data.Profile.Sample)
 	})
 
 	t.Run("merges source and victim entries into one profile", func(t *testing.T) {
@@ -421,10 +421,9 @@ func TestBuildFlameGraph(t *testing.T) {
 			stackMapID: 99,
 		}
 
-		data, stacks, err := buildFlameGraph(b, startedAt)
+		data, err := buildProfile(b, startedAt)
 		assert.NoError(t, err)
 		assert.NotNil(t, data)
-		assert.Len(t, stacks, 2)
 		assert.Equal(t, profiler.ProfileTypeIRQTracingSample, data.ProfileType)
 		assert.Equal(t, startedAt.UnixNano(), data.Profile.TimeNanos)
 		for _, frame := range []string{

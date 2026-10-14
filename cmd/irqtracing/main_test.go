@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"io"
 	"math"
@@ -27,8 +28,10 @@ import (
 	"github.com/urfave/cli/v2"
 
 	bpfabi "github.com/ccfos/huatuo/internal/bpf/abi"
+	profileroutput "github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/version"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestValidateFlags(t *testing.T) {
@@ -38,6 +41,8 @@ func TestValidateFlags(t *testing.T) {
 		wantErr string
 	}{
 		{name: "local output"},
+		{name: "removed text alias", args: []string{"--output", "text"}, wantErr: `invalid --output "text"`},
+		{name: "unimplemented pprof", args: []string{"--output", "pprof"}, wantErr: `invalid --output "pprof"`},
 		{name: "JSON output", args: []string{"--output", "json"}},
 		{
 			name: "Toolstream output",
@@ -49,7 +54,7 @@ func TestValidateFlags(t *testing.T) {
 		{
 			name:    "invalid output",
 			args:    []string{"--output", "folded"},
-			wantErr: "want text, collapsed, flamegraph, svg, or json",
+			wantErr: "want collapsed, flamegraph, svg, or json",
 		},
 		{
 			name:    "missing task ID",
@@ -119,8 +124,18 @@ func TestLoadConfig(t *testing.T) {
 	}
 	if cfg.bpfPath != "/tmp/irqtracing.o" || cfg.targetCPU != 4 ||
 		cfg.duration != 5 || cfg.maxEventsPerSecondPerCPU != 1000 ||
-		cfg.output != outputJSON {
+		cfg.output != profileroutput.FormatJSON {
 		t.Fatalf("loadConfig() = %+v", cfg)
+	}
+}
+
+func TestDefaultOutputIsCollapsed(t *testing.T) {
+	cfg, err := loadConfig(newOutputFlagContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.output != profileroutput.FormatCollapsed {
+		t.Fatalf("default output = %q, want collapsed", cfg.output)
 	}
 }
 
@@ -194,45 +209,6 @@ func TestValidateDuration(t *testing.T) {
 	}
 }
 
-func TestIRQTracingBPFConstants(t *testing.T) {
-	t.Run("unlimited", func(t *testing.T) {
-		constants := irqTracingBPFConstants(allCPUsTarget, 0)
-		if len(constants) != 1 || constants["target_cpu"] != allCPUsTarget {
-			t.Fatalf("constants = %#v, want only target_cpu", constants)
-		}
-	})
-
-	t.Run("splits per-CPU limit", func(t *testing.T) {
-		constants := irqTracingBPFConstants(3, 1000)
-		if got := constants[sourceRateLimitConstant]; got != uint32(500) {
-			t.Fatalf("source rate = %v, want 500", got)
-		}
-		if got := constants[victimRateLimitConstant]; got != uint32(500) {
-			t.Fatalf("victim rate = %v, want 500", got)
-		}
-	})
-
-	t.Run("keeps odd total", func(t *testing.T) {
-		constants := irqTracingBPFConstants(3, 1001)
-		if got := constants[sourceRateLimitConstant]; got != uint32(501) {
-			t.Fatalf("source rate = %v, want 501", got)
-		}
-		if got := constants[victimRateLimitConstant]; got != uint32(500) {
-			t.Fatalf("victim rate = %v, want 500", got)
-		}
-	})
-
-	t.Run("keeps maximum total", func(t *testing.T) {
-		constants := irqTracingBPFConstants(3, maxEventsPerSecondPerCPULimit)
-		if got := constants[sourceRateLimitConstant]; got != uint32(math.MaxUint32) {
-			t.Fatalf("source rate = %v, want %d", got, uint32(math.MaxUint32))
-		}
-		if got := constants[victimRateLimitConstant]; got != uint32(math.MaxUint32) {
-			t.Fatalf("victim rate = %v, want %d", got, uint32(math.MaxUint32))
-		}
-	})
-}
-
 func TestValidateMaxEventsPerSecondPerCPU(t *testing.T) {
 	for _, limit := range []uint64{0, 2, 1000, maxEventsPerSecondPerCPULimit} {
 		if err := validateMaxEventsPerSecondPerCPU(limit); err != nil {
@@ -248,25 +224,20 @@ func TestValidateMaxEventsPerSecondPerCPU(t *testing.T) {
 	}
 }
 
-func TestWriteDroppedSamplesWarning(t *testing.T) {
-	var output bytes.Buffer
-	writeDroppedSamplesWarning(&output, 7)
-
-	if got := output.String(); got != "irqtracing: 7 samples dropped; the flame graph is incomplete\n" {
-		t.Fatalf("warning = %q", got)
-	}
-}
-
 func TestOpenToolstreamSendsResult(t *testing.T) {
 	sockPath := filepath.Join(t.TempDir(), "toolstream.sock")
 	server, err := toolstream.NewServer(sockPath)
 	if err != nil {
 		t.Fatalf("toolstream.NewServer() error = %v", err)
 	}
-	received := make(chan *IRQTracingResult, 1)
-	toolstream.Register(server, irqTracingToolName, func(sess *toolstream.Session, result *IRQTracingResult) error {
-		if sess.TaskID != "task-1" {
-			t.Errorf("TaskID = %q, want task-1", sess.TaskID)
+	received := make(chan *types.ProfilingWindow, 1)
+	toolstream.Register(server, irqTracingToolName, func(_ context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
+		if request.Data == nil {
+			return nil
+		}
+		result := request.Data
+		if request.TaskID != "task-1" {
+			t.Errorf("TaskID = %q, want task-1", request.TaskID)
 		}
 		received <- result
 		return nil
@@ -289,21 +260,20 @@ func TestOpenToolstreamSendsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openToolstream() error = %v", err)
 	}
-	result := &IRQTracingResult{NMissed: 3}
-	outputWriter, err := newWriter(io.Discard, outputText, client)
-	if err != nil {
-		t.Fatalf("newWriter() error = %v", err)
+	defer client.Close()
+	result := &types.ProfilingWindow{DroppedSamples: map[string]uint64{types.DropReasonCollection: 3}}
+
+	if err := client.Send(t.Context(), result, toolstream.SendOptions{}); err != nil {
+		t.Fatal(err)
 	}
-	if err := outputWriter.Write(&irqTracingSnapshot{result: result}); err != nil {
-		t.Fatalf("socket writer error = %v", err)
-	}
-	if err := client.End(); err != nil {
-		t.Fatalf("client.End() error = %v", err)
+
+	if err := client.Send(t.Context(), nil, toolstream.SendOptions{End: true}); err != nil {
+		t.Fatalf("send end marker: %v", err)
 	}
 
 	select {
 	case got := <-received:
-		if got.NMissed != 3 {
+		if got.DroppedSamples[types.DropReasonCollection] != 3 {
 			t.Fatalf("received result = %+v", got)
 		}
 	case <-time.After(time.Second):

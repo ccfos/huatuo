@@ -80,20 +80,24 @@ fi
 mapfile -t FOLDED_FILES < <(find "${WORK_DIR}" -maxdepth 1 -name 'perf_*.folded' -type f)
 [[ ${#FOLDED_FILES[@]} -gt 0 ]] || fatal "no perf_*.folded file produced"
 
-grep -qh "process ${PROFILER_TARGET_PID0};" "${FOLDED_FILES[@]}" \
-	|| fatal "PID ${PROFILER_TARGET_PID0} root not found"
-grep -qh "process ${PROFILER_TARGET_PID1};" "${FOLDED_FILES[@]}" \
-	|| fatal "PID ${PROFILER_TARGET_PID1} root not found"
-grep -qh "process ${PROFILER_TARGET_PID0};.*alphaHotMethod" "${FOLDED_FILES[@]}" \
-	|| fatal "alpha workload stack not found for PID ${PROFILER_TARGET_PID0}"
-grep -qh "process ${PROFILER_TARGET_PID1};.*betaHotMethod" "${FOLDED_FILES[@]}" \
-	|| fatal "beta workload stack not found for PID ${PROFILER_TARGET_PID1}"
+assert_java_process_roots() {
+	grep -qh "process ${PROFILER_TARGET_PID0}:TestProfilerJavaMultiPID;" "${FOLDED_FILES[@]}" \
+		|| fatal "PID ${PROFILER_TARGET_PID0} root not found"
+	grep -qh "process ${PROFILER_TARGET_PID1}:TestProfilerJavaMultiPID;" "${FOLDED_FILES[@]}" \
+		|| fatal "PID ${PROFILER_TARGET_PID1} root not found"
+	grep -qh "process ${PROFILER_TARGET_PID0}:TestProfilerJavaMultiPID;.*alphaHotMethod" "${FOLDED_FILES[@]}" \
+		|| fatal "alpha workload stack not found for PID ${PROFILER_TARGET_PID0}"
+	grep -qh "process ${PROFILER_TARGET_PID1}:TestProfilerJavaMultiPID;.*betaHotMethod" "${FOLDED_FILES[@]}" \
+		|| fatal "beta workload stack not found for PID ${PROFILER_TARGET_PID1}"
 
-if grep -qh "process ${PROFILER_TARGET_PID0};.*betaHotMethod" "${FOLDED_FILES[@]}"; then
-	fatal "beta workload was attributed to PID ${PROFILER_TARGET_PID0}"
-fi
-if grep -qh "process ${PROFILER_TARGET_PID1};.*alphaHotMethod" "${FOLDED_FILES[@]}"; then
-	fatal "alpha workload was attributed to PID ${PROFILER_TARGET_PID1}"
-fi
+	if grep -qh "process ${PROFILER_TARGET_PID0}:TestProfilerJavaMultiPID;.*betaHotMethod" "${FOLDED_FILES[@]}"; then
+		fatal "beta workload was attributed to PID ${PROFILER_TARGET_PID0}"
+	fi
+	if grep -qh "process ${PROFILER_TARGET_PID1}:TestProfilerJavaMultiPID;.*alphaHotMethod" "${FOLDED_FILES[@]}"; then
+		fatal "alpha workload was attributed to PID ${PROFILER_TARGET_PID1}"
+	fi
+
+}
+assert_java_process_roots
 
 log_info "both Java PIDs produced distinct correctly attributed stacks"

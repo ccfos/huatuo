@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"runtime"
 	"strconv"
 	"strings"
@@ -37,7 +38,6 @@ import (
 type ProfilerContext struct {
 	Ctx    context.Context
 	Cancel context.CancelFunc
-	Cli    *cli.Context
 
 	PIDs                 []int
 	Freq                 int
@@ -51,6 +51,7 @@ type ProfilerContext struct {
 	ServerAddress             string
 	OutputFormat              output.OutputFormat
 	OutputPath                string
+	OutputWriter              io.Writer
 	ContainerID               string
 	Type                      profiling.Type
 	Language                  profiling.Language
@@ -157,7 +158,6 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	profilerContext := &ProfilerContext{
 		Ctx:    ctx,
 		Cancel: cancelProfiler,
-		Cli:    cliCtx,
 
 		PIDs:                 pids,
 		Freq:                 cliCtx.Int("freq"),
@@ -183,7 +183,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		OffCPUStatsEnabled:        cliCtx.Bool("offcpu-stats"),
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
 
-		TracerID: cliCtx.String("tracer-id"),
+		TracerID: cliCtx.String("task-id"),
 
 		ToolstreamClient: tsClient,
 	}
@@ -192,7 +192,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 }
 
 func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*toolstream.Client, error) {
-	if format != output.FormatRemote {
+	if format != output.FormatRemoteStore {
 		return nil, nil
 	}
 
@@ -205,7 +205,7 @@ func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*too
 		SockPath: sockPath,
 		ToolName: types.ProfilingToolName,
 		Version:  "1",
-		TaskID:   cliCtx.String("tracer-id"),
+		TaskID:   cliCtx.String("task-id"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("toolstream connect %s: %w", sockPath, err)

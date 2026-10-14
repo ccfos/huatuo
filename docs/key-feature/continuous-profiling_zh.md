@@ -501,7 +501,7 @@ sudo _output/bin/profiler \
 | `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
 | `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
-| `--tracer-id` | 空；本地输出时内部生成 | 全部；`remote` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
+| `--task-id` | 空；本地输出时内部生成 | 全部；`remote` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
 | `--enable-pprof` | `false` | 工具自身 | 在 `:6000` 暴露 profiler 进程自身的 Go pprof 接口 |
 | `--version-format` | `text` | 版本查询 | `--version` 的输出格式：`text`、`json` 或 `short` |
 | `--help`, `-h` | - | 全部 | 显示命令帮助 |
@@ -683,7 +683,7 @@ main;handleRequest;parsePayload 428
 main;handleRequest;writeResponse 172
 ```
 
-需要保留原始数据并支持后续使用不同配色或过滤规则重新渲染时，选择 `collapsed`。只需直接定位热点时，选择 `flamegraph`。`remote` 依赖 HUATUO toolstream Unix socket，要求提供非空的 `--tracer-id`，独立离线使用时不应选择该格式。
+需要保留原始数据并支持后续使用不同配色或过滤规则重新渲染时，选择 `collapsed`。只需直接定位热点时，选择 `flamegraph`。`remote` 依赖 HUATUO toolstream Unix socket，要求提供非空的 `--task-id`，独立离线使用时不应选择该格式。
 
 ### 7. 根据集成测试复现
 
@@ -741,3 +741,41 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+## 公共采集窗口
+
+profiler 与 irqtracing 共用采集、聚合和流水线生命周期，所有快照返回 `types.ProfilingWindow`。本地 SVG/collapsed 输出通过 `internal/profiler/output` 读取同一份 profile；数值使用 profile 的样本单位（CPU 为纳秒，IRQ 为次数），不再维护独立的本地原始计数。Java 进程根帧统一为远端格式 `process PID:MainClass`，替代旧的本地 `process PID` 格式。周期采集在本地和远端模式均逐窗口处理，本地 Renderer 累积窗口直到最终导出；IRQ 在 detach 后只输出一个窗口。
+
+受管任务与独立 CLI 上传均通过 `pkg/profiling/store` 同步保存每个窗口。采集成功后，remote Formatter 的 `Complete` 发送 `end + commit`；profiling handler 检查请求中的错误，再写入持久化任务完成标记；Toolstream 通过 ACK 返回累计处理结果。采集、导出、存储和发布失败均使任务失败。普通 End 或断连不会发布。ACK 丢失表示客户端无法确认结果，不代表已写入的数据被回滚。`dropped_samples` 分别记录采集端与聚合队列丢样，持久化到 `profile_data.metrics`；历史 `aggr_overflow_count` 仍可读取。采用新传输格式时需要同时升级工具与守护进程。
+
+窗口级 Formatter 统一接收 `types.ProfilingWindow`，本地格式在 `Complete` 时完成文件输出，remote 格式等待服务端提交确认。聚合器按窗口 Reset，Formatter 不暴露 Reset。toolstream 协议版本为 2，原 `flush @1` 改为 `commit @1`，新增提交结果帧；所有工具和 daemon 必须同时升级。IRQ 业务采集实现位于 `cmd/irqtracing`。
+
+输出边界为 `Formatter.Add(window)` / `Formatter.Complete(ctx)`。
+本地 Renderer 仅实现 `Add(sample)`、`Write(writer)` 和 `IsEmpty()`，由
+`RegisterRenderer` 和 `OutputFormat.NewRenderer` 选择。
+`Complete` 传播文件写入及关闭错误。每个 Renderer 属于一个任务，窗口之间不重置。
+
+守护进程通过 `internal/profiling.Register` 初始化存储并注册两个工具入口。
+transport 将非空的 `(toolName, taskID)` 绑定到活动连接，拒绝并发连接写入或提交同一任务。
+连接处理结束时释放归属记录，包括断连后的清理。
+profiler 和 IRQ 的处理器独立运行，一个工具等待存储不会阻塞另一个工具。
+持久化结果的 taskID 必须全局唯一；既有发布标记 ID 保留，以兼容历史数据。
+
+profiling 存储仅通过同步 `SaveSync` 写入窗口、通过 `Commit` 提交完成标记；旧的异步 profiling `Save` 入口已移除。
+
+Toolstream 使用 `Send(ctx, event, SendOptions)` 统一发送数据和控制帧。
+`End` 标记最后一帧；`Commit` 必须同时设置 `End`，并等待服务端 ACK。
+最后一份数据可以与结束、提交标记放在同一帧；event 为 nil 时不携带数据。
+`Close` 单独释放连接，取消进行中的发送会关闭连接以中断阻塞 I/O。
+窗口 Formatter 保留 `Complete`，内部发送无数据的 `End + Commit` 帧。
+任务启动前不查询 handler 注册状态。普通数据帧没有 ACK；入口未注册或存储失败的错误
+通过提交 ACK 返回。CLI 只有在 `Complete` 收到成功 ACK 后才正常退出；
+bamai 根据 CLI 退出状态判断受管任务结果，不再维护独立的服务端等待机制。
+显式取消采集走 Abort，不提交结果。
+
+工具处理器统一注册为 `Handle(ctx, *toolstream.Request[T])`。
+每帧请求包含连接元数据、可选 `Data`、`End`/`Commit` 标记、此前帧的累计错误
+`PriorErr`，以及当前帧的工具报错、协议或解码错误 `Err`。
+即使此前处理失败，后续帧及提交请求仍会传给 handler。profiling handler
+继续保存有效窗口，仅在此前帧、当前帧及本次写入均成功时发布。
+连接状态由 Toolstream 内部维护，不再提供独立提交回调。

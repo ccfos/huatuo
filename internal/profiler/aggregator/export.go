@@ -16,7 +16,9 @@ package aggregator
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -26,14 +28,13 @@ import (
 )
 
 // writeFolded persists the folded-stack data to a timestamped .folded file.
-func writeFolded(dir string, f output.Formatter) error {
+func writeFolded(dir string, f output.Renderer) error {
 	file, err := createOutputFile(dir, "perf", ".folded")
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 
-	if err := f.Write(file); err != nil {
+	if err := writeAndClose(file, f.Write); err != nil {
 		return fmt.Errorf("failed to write folded data: %w", err)
 	}
 
@@ -43,20 +44,29 @@ func writeFolded(dir string, f output.Formatter) error {
 }
 
 // writeFlameGraph persists the aggregated data as a flame graph SVG.
-func writeFlameGraph(dir string, f output.Formatter) error {
+func writeFlameGraph(dir string, f output.Renderer) error {
 	file, err := createOutputFile(dir, "flamegraph", ".svg")
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 
-	if err := f.Write(file); err != nil {
+	if err := writeAndClose(file, f.Write); err != nil {
 		return fmt.Errorf("failed to render flame graph: %w", err)
 	}
 
 	log.WithField("path", file.Name()).Infof("flame graph written")
 
 	return nil
+}
+
+// writeAndClose includes delayed filesystem errors in the completion result.
+func writeAndClose(file io.WriteCloser, write func(io.Writer) error) error {
+	writeErr := write(file)
+	closeErr := file.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close profiling output: %w", closeErr)
+	}
+	return errors.Join(writeErr, closeErr)
 }
 
 // createOutputFile ensures the output directory exists and creates a

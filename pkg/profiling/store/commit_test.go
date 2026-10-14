@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package publication
+package store
 
 import (
 	"context"
@@ -83,43 +83,43 @@ func (*memoryBackend) Values(context.Context, string, driver.Query, int) ([]stri
 
 func (*memoryBackend) Close(context.Context) error { return nil }
 
-func newTestStore(
+func newTestCommitStore(
 	t *testing.T,
 	backend *memoryBackend,
 	now func() time.Time,
-) (*Store, *storage.Store[*Marker]) {
+) (*commitStore, *storage.Store[*commitMarker]) {
 	t.Helper()
-	markerStore, err := storage.NewStore[*Marker](
+	markerStore, err := storage.NewStore[*commitMarker](
 		t.Context(),
 		"memory",
 		backend,
-		Collection,
+		commitCollection,
 		markerMapper{},
 	)
 	if err != nil {
 		t.Fatalf("storage.NewStore() error = %v", err)
 	}
-	return &Store{store: markerStore, now: now}, markerStore
+	return &commitStore{store: markerStore, now: now}, markerStore
 }
 
-func TestStorePublishesQueryVisibleCommitMarker(t *testing.T) {
+func TestCommitStoresQueryVisibleMarker(t *testing.T) {
 	backend := &memoryBackend{}
 	publishedAt := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	store, markerStore := newTestStore(t, backend, func() time.Time { return publishedAt })
+	store, markerStore := newTestCommitStore(t, backend, func() time.Time { return publishedAt })
 
-	published, err := store.IsPublished(t.Context(), "job-1")
+	published, err := store.IsCommitted(t.Context(), "job-1")
 	if err != nil || published {
-		t.Fatalf("IsPublished() before Publish = (%t, %v), want (false, nil)", published, err)
+		t.Fatalf("IsCommitted() before Commit = (%t, %v), want (false, nil)", published, err)
 	}
-	if err := store.Publish(t.Context(), "job-1"); err != nil {
-		t.Fatalf("Publish() error = %v", err)
+	if err := store.Commit(t.Context(), "job-1"); err != nil {
+		t.Fatalf("Commit() error = %v", err)
 	}
 	if backend.visibilitySaves != 1 {
 		t.Fatalf("visibility saves = %d, want 1", backend.visibilitySaves)
 	}
-	published, err = store.IsPublished(t.Context(), "job-1")
+	published, err = store.IsCommitted(t.Context(), "job-1")
 	if err != nil || !published {
-		t.Fatalf("IsPublished() after Publish = (%t, %v), want (true, nil)", published, err)
+		t.Fatalf("IsCommitted() after Commit = (%t, %v), want (true, nil)", published, err)
 	}
 	marker, err := markerStore.Get(t.Context(), markerID("job-1"))
 	if err != nil {
@@ -130,19 +130,19 @@ func TestStorePublishesQueryVisibleCommitMarker(t *testing.T) {
 	}
 }
 
-func TestStorePublishIsIdempotentByRequestID(t *testing.T) {
+func TestStoreCommitIsIdempotentByRequestID(t *testing.T) {
 	backend := &memoryBackend{}
-	store, _ := newTestStore(t, backend, func() time.Time { return time.Now().UTC() })
+	store, _ := newTestCommitStore(t, backend, func() time.Time { return time.Now().UTC() })
 
-	if err := store.Publish(t.Context(), "job-1"); err != nil {
-		t.Fatalf("first Publish() error = %v", err)
+	if err := store.Commit(t.Context(), "job-1"); err != nil {
+		t.Fatalf("first Commit() error = %v", err)
 	}
-	if err := store.Publish(t.Context(), "job-1"); err != nil {
-		t.Fatalf("second Publish() error = %v", err)
+	if err := store.Commit(t.Context(), "job-1"); err != nil {
+		t.Fatalf("second Commit() error = %v", err)
 	}
 	if backend.visibilitySaves != 2 || len(backend.records) != 1 {
 		t.Fatalf(
-			"Publish() result = (visibility saves=%d, records=%d), want (2, 1)",
+			"Commit() result = (visibility saves=%d, records=%d), want (2, 1)",
 			backend.visibilitySaves,
 			len(backend.records),
 		)
@@ -151,27 +151,48 @@ func TestStorePublishIsIdempotentByRequestID(t *testing.T) {
 
 func TestStoreTreatsLegacyStagingMarkerAsUnpublished(t *testing.T) {
 	backend := &memoryBackend{}
-	store, markerStore := newTestStore(t, backend, func() time.Time { return time.Now().UTC() })
+	store, markerStore := newTestCommitStore(t, backend, func() time.Time { return time.Now().UTC() })
 	if err := markerStore.Save(
 		t.Context(),
-		&Marker{RequestID: "job-legacy"},
+		&commitMarker{RequestID: "job-legacy"},
 		driver.SaveOptions{WaitForVisibility: true},
 	); err != nil {
 		t.Fatalf("Save(legacy marker) error = %v", err)
 	}
 
-	published, err := store.IsPublished(t.Context(), "job-legacy")
+	published, err := store.IsCommitted(t.Context(), "job-legacy")
 	if err != nil || published {
-		t.Fatalf("IsPublished(legacy) = (%t, %v), want (false, nil)", published, err)
+		t.Fatalf("IsCommitted(legacy) = (%t, %v), want (false, nil)", published, err)
 	}
 }
 
-func TestStoreReturnsPublishFailure(t *testing.T) {
+func TestStoreReturnsCommitFailure(t *testing.T) {
 	saveErr := errors.New("save failed")
 	backend := &memoryBackend{visibilitySaveErr: saveErr}
-	store, _ := newTestStore(t, backend, func() time.Time { return time.Now().UTC() })
+	store, _ := newTestCommitStore(t, backend, func() time.Time { return time.Now().UTC() })
 
-	if err := store.Publish(t.Context(), "job-1"); !errors.Is(err, saveErr) {
-		t.Fatalf("Publish() error = %v, want %v", err, saveErr)
+	if err := store.Commit(t.Context(), "job-1"); !errors.Is(err, saveErr) {
+		t.Fatalf("Commit() error = %v, want %v", err, saveErr)
+	}
+}
+
+func TestStoreCommitUsesStableTaskMarker(t *testing.T) {
+	backend := &memoryBackend{}
+	commits, _ := newTestCommitStore(t, backend, func() time.Time { return time.Now().UTC() })
+	store := &Store{commits: commits}
+	if err := store.Commit(t.Context(), ""); err == nil {
+		t.Fatal("accepted empty task ID")
+	}
+	for range 2 {
+		if err := store.Commit(t.Context(), "task"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(backend.records) != 1 {
+		t.Fatalf("commit created %d markers", len(backend.records))
+	}
+	ok, err := store.IsCommitted(t.Context(), "task")
+	if err != nil || !ok {
+		t.Fatalf("IsCommitted = %v, %v", ok, err)
 	}
 }

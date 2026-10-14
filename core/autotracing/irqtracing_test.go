@@ -29,49 +29,8 @@ import (
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/toolstream"
-	"github.com/ccfos/huatuo/internal/toolstream/transport"
 	"github.com/ccfos/huatuo/pkg/types"
 )
-
-func TestHandleIRQTracingResultReturnsPendingResult(t *testing.T) {
-	const taskID = "irqtracing-test-task"
-	pending := &pendingIRQTracingResult{
-		result: make(chan *irqTracingCLIResult, 1),
-	}
-	pendingIRQTracingResults.Store(taskID, pending)
-	t.Cleanup(func() { pendingIRQTracingResults.Delete(taskID) })
-
-	want := &irqTracingCLIResult{NMissed: 3}
-	err := handleIRQTracingResult(
-		&toolstream.Session{Session: &transport.Session{TaskID: taskID}},
-		want,
-	)
-	if err != nil {
-		t.Fatalf("handleIRQTracingResult() error = %v", err)
-	}
-
-	select {
-	case got := <-pending.result:
-		if got != want {
-			t.Fatalf("result = %p, want %p", got, want)
-		}
-	default:
-		t.Fatal("handleIRQTracingResult() did not return the pending result")
-	}
-	if _, ok := pendingIRQTracingResults.Load(taskID); ok {
-		t.Fatal("handleIRQTracingResult() left the pending result registered")
-	}
-}
-
-func TestHandleIRQTracingResultRejectsUnknownTask(t *testing.T) {
-	err := handleIRQTracingResult(
-		&toolstream.Session{Session: &transport.Session{TaskID: "missing"}},
-		&irqTracingCLIResult{},
-	)
-	if err == nil || !strings.Contains(err.Error(), `task "missing"`) {
-		t.Fatalf("handleIRQTracingResult() error = %v", err)
-	}
-}
 
 func validIRQTracingConfig() IRQTracingConfig {
 	return IRQTracingConfig{
@@ -134,6 +93,11 @@ func TestValidateIRQTracingConfig(t *testing.T) {
 }
 
 func TestRunIRQTracingCLIPassesArguments(t *testing.T) {
+	stream, err := toolstream.NewServerDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolstream.Register(stream, irqTracingToolName, func(context.Context, *toolstream.Request[types.ProfilingWindow]) error { return nil })
 	originalCoreBinDir := internalconfig.CoreBinDir
 	t.Cleanup(func() { internalconfig.CoreBinDir = originalCoreBinDir })
 	internalconfig.CoreBinDir = t.TempDir()
@@ -146,7 +110,7 @@ func TestRunIRQTracingCLIPassesArguments(t *testing.T) {
 		t.Fatalf("make fake irqtracing executable: %v", err)
 	}
 
-	_, err := runIRQTracingCLI(t.Context(), 4, 3, 1000)
+	err = runIRQTracingCLI(t.Context(), 4, 3, 1000)
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
 		t.Fatalf("runIRQTracingCLI() error = %v, want exit code 2", err)
@@ -169,9 +133,6 @@ func TestRunIRQTracingCLIPassesArguments(t *testing.T) {
 	}
 	assert.Equal(t, want, args[:len(want)])
 	assert.NotEmpty(t, args[len(want)], "task ID must be generated")
-	if _, ok := pendingIRQTracingResults.Load(args[len(want)]); ok {
-		t.Fatal("runIRQTracingCLI() left the failed task registered")
-	}
 }
 
 func TestRunIRQTracingProcessKeepsStderrTail(t *testing.T) {

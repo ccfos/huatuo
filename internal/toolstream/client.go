@@ -15,6 +15,7 @@
 package toolstream
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -30,6 +31,7 @@ type ClientOptions struct {
 }
 
 // Client is the tool-side peer; use NewClient to create one.
+// Serialize Send calls; Close may interrupt an in-flight send.
 type Client struct {
 	inner *transport.Client
 }
@@ -54,22 +56,25 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	return &Client{inner: conn}, nil
 }
 
-// Send encodes event and sends it as a payload frame.
-func (c *Client) Send(event any) error {
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
+// SendOptions controls the protocol flags on a payload frame.
+type SendOptions = transport.SendOptions
+
+// Send encodes an optional event and sends it with the requested protocol flags.
+// Commit waits for the server acknowledgement; Close releases the connection.
+func (c *Client) Send(ctx context.Context, event any, opts SendOptions) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	return c.inner.SendChunk(payload, false)
+	var payload []byte
+	if event != nil {
+		var err error
+		payload, err = json.Marshal(event)
+		if err != nil {
+			return fmt.Errorf("marshal: %w", err)
+		}
+	}
+	return c.inner.Send(ctx, payload, opts)
 }
 
-// End sends the end-of-stream marker and closes the connection.
-func (c *Client) End() error {
-	return c.inner.End()
-}
-
-// Close closes the connection without sending an end frame; prefer End.
-func (c *Client) Close() error {
-	return c.inner.Close()
-}
+// Close releases the connection without sending a protocol frame.
+func (c *Client) Close() error { return c.inner.Close() }

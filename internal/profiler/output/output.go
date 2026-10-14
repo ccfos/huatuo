@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package output defines a unified Formatter interface for profiling output.
-// Supports both streaming (Count=1, Timestamp set) and batch (Count>1) usage.
+// Package output formats common profiling windows and renders local samples.
 package output
 
 import (
@@ -28,17 +27,13 @@ import (
 type OutputFormat string
 
 const (
-	FormatCollapsed  OutputFormat = "collapsed"
-	FormatFlameGraph OutputFormat = "flamegraph"
-	FormatSVG        OutputFormat = "svg"
-	FormatPprof      OutputFormat = "pprof"  // reserved; not yet implemented
-	FormatRemote     OutputFormat = "remote" // upload to a remote storage backend
+	FormatCollapsed   OutputFormat = "collapsed"
+	FormatFlameGraph  OutputFormat = "flamegraph"
+	FormatSVG         OutputFormat = "svg"
+	FormatPprof       OutputFormat = "pprof" // reserved; not yet implemented
+	FormatJSON        OutputFormat = "json"
+	FormatRemoteStore OutputFormat = "remote" // upload to a remote storage backend
 )
-
-// IsUpload reports whether the format uploads to a remote storage backend.
-func (f OutputFormat) IsUpload() bool {
-	return f == FormatRemote
-}
 
 // IsFlameGraph reports whether the format renders a flame graph (flamegraph or svg).
 func (f OutputFormat) IsFlameGraph() bool {
@@ -46,33 +41,33 @@ func (f OutputFormat) IsFlameGraph() bool {
 }
 
 var (
-	formatterFactories = map[OutputFormat]func() Formatter{}
-	formatterMu        sync.RWMutex
+	rendererFactories = map[OutputFormat]func() Renderer{}
+	rendererMu        sync.RWMutex
 )
 
-// RegisterFormatter registers a factory for the given output format.
+// RegisterRenderer registers a factory for the given output format.
 // Called by sub-packages in init().
-func RegisterFormatter(f OutputFormat, fn func() Formatter) {
-	formatterMu.Lock()
-	formatterFactories[f] = fn
-	formatterMu.Unlock()
+func RegisterRenderer(f OutputFormat, fn func() Renderer) {
+	rendererMu.Lock()
+	rendererFactories[f] = fn
+	rendererMu.Unlock()
 }
 
 // ErrUnregisteredFormat indicates the requested output format has no
 // registered factory (the corresponding sub-package was not imported).
 var ErrUnregisteredFormat = errors.New("output: format not registered")
 
-// NewFormatter returns the appropriate Formatter for this format.
+// NewRenderer returns the appropriate Renderer for this format.
 // The corresponding sub-package must be imported so its init() registers
 // the factory; otherwise ErrUnregisteredFormat is returned.
-func (f OutputFormat) NewFormatter() (Formatter, error) {
+func (f OutputFormat) NewRenderer() (Renderer, error) {
 	if f == "" {
 		f = FormatCollapsed
 	}
 
-	formatterMu.RLock()
-	fn, ok := formatterFactories[f]
-	formatterMu.RUnlock()
+	rendererMu.RLock()
+	fn, ok := rendererFactories[f]
+	rendererMu.RUnlock()
 
 	if ok {
 		return fn(), nil
@@ -119,11 +114,9 @@ type Sample struct {
 	Tags map[string]string
 }
 
-// Formatter accumulates samples and serializes them to a specific output format.
-type Formatter interface {
-	Name() string
+// Renderer implements sample-level serialization behind a window Formatter.
+type Renderer interface {
 	Add(s *Sample) error
 	Write(w io.Writer) error
-	Reset()
 	IsEmpty() bool
 }

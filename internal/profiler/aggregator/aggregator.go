@@ -16,37 +16,15 @@ package aggregator
 
 import (
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 //go:generate mockery --config /dev/null --name=Aggregator --dir=. --filename=mock_aggregator_test.go --inpackage --case=underscore
-//go:generate mockery --config /dev/null --name=Formatter --dir=../output --filename=mock_formatter_test.go --output=. --outpkg=aggregator --case=underscore
 
-// Aggregator absorbs profiler records into language-specific aggregated
-// state and exports the result on demand. Each profiler language provides
-// its own implementation.
+// Aggregator converts provider records into a common profiling window.
+// Pipeline serializes Aggregate, Snapshot and Reset at each window boundary.
 type Aggregator interface {
-	// Aggregate incorporates a single record into internal state.
 	Aggregate(rec any)
-
-	// Snapshot returns the pprof profile data for upload backends.
-	// For raw/flamegraph/svg output, returns nil — the pipeline reads
-	// the output formatter directly via OutputFormatter.
-	Snapshot(pctx *pcontext.ProfilerContext) (any, error)
-
-	// Reset clears accumulated state for the next cycle.
+	Snapshot(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error)
 	Reset()
-
-	// OutputFormatter returns the formatter for file output (raw, flamegraph, svg).
-	OutputFormatter() output.Formatter
-}
-
-// NewFormatterForOutput creates a Formatter based on the context's output format.
-// Returns nil for upload formats — the aggregator should use Snapshot instead.
-func NewFormatterForOutput(pctx *pcontext.ProfilerContext) (output.Formatter, error) {
-	if pctx.OutputFormat.IsUpload() {
-		return nil, nil
-	}
-
-	return pctx.OutputFormat.NewFormatter()
 }

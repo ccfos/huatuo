@@ -15,7 +15,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -109,7 +111,7 @@ func (s *jsonWriter) Write(ev *types.DropWatchTracing) error {
 type socketWriter struct{ client *toolstream.Client }
 
 func (s *socketWriter) Write(ev *types.DropWatchTracing) error {
-	return s.client.Send(ev)
+	return s.client.Send(context.Background(), ev, toolstream.SendOptions{})
 }
 
 type writerOptions struct {
@@ -131,7 +133,9 @@ func newWriter(output io.Writer, options *writerOptions) (writer, func() error, 
 		if err != nil {
 			return nil, nil, fmt.Errorf("create event sink: %w", err)
 		}
-		return &socketWriter{client: client}, client.End, nil
+		return &socketWriter{client: client}, func() error {
+			return errors.Join(client.Send(context.Background(), nil, toolstream.SendOptions{End: true}), client.Close())
+		}, nil
 	}
 
 	switch options.outputFormat {

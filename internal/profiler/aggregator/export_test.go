@@ -15,6 +15,8 @@
 package aggregator
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,4 +83,45 @@ func TestCreateOutputFileCreatesDirectory(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatalf("close output file: %v", err)
 	}
+}
+
+func TestWriteAndClosePropagatesOutputFailures(t *testing.T) {
+	writeFailure := errors.New("write failed")
+	closeFailure := errors.New("close failed")
+	for _, tc := range []struct {
+		name               string
+		writeErr, closeErr error
+	}{
+		{name: "success"},
+		{name: "write", writeErr: writeFailure},
+		{name: "close", closeErr: closeFailure},
+		{name: "both", writeErr: writeFailure, closeErr: closeFailure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := &failingOutputFile{closeErr: tc.closeErr}
+			err := writeAndClose(file, func(io.Writer) error { return tc.writeErr })
+			if file.closes != 1 {
+				t.Fatalf("Close called %d times", file.closes)
+			}
+			for _, failure := range []error{tc.writeErr, tc.closeErr} {
+				if failure != nil && !errors.Is(err, failure) {
+					t.Fatalf("output error %v does not include %v", err, failure)
+				}
+			}
+			if tc.writeErr == nil && tc.closeErr == nil && err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+type failingOutputFile struct {
+	closeErr error
+	closes   int
+}
+
+func (*failingOutputFile) Write(p []byte) (int, error) { return len(p), nil }
+func (f *failingOutputFile) Close() error {
+	f.closes++
+	return f.closeErr
 }

@@ -17,7 +17,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -27,18 +26,17 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiler"
+	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	profileroutput "github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/registry"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/version"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/irqtracing.c -o $BPF_DIR/irqtracing.o
 
-const (
-	irqTracingToolName      = "irqtracing"
-	sourceRateLimitConstant = "source_rate_limit"
-	victimRateLimitConstant = "victim_rate_limit"
-)
+const irqTracingToolName = types.IRQProfilingToolName
 
 // Set by Makefile via -ldflags -X. Must live in package main; an empty
 // value falls back to version.Devel via version.Resolve.
@@ -49,121 +47,42 @@ var (
 	versionInfo  version.Info
 )
 
-// IRQTracingResult is the payload emitted by the CLI. A non-zero NMissed means
-// the flame graph is incomplete.
-type IRQTracingResult struct {
-	FlameData *profiler.ProfileData `json:"flamedata"`
-	NMissed   uint64                `json:"nmissed"`
-}
-
 func mainAction(cliCtx *cli.Context) (returnErr error) {
 	cfg, err := loadConfig(cliCtx)
 	if err != nil {
 		return err
 	}
-
 	client, err := openToolstream(cliCtx)
 	if err != nil {
 		return err
 	}
 	if client != nil {
-		defer func() {
-			if err := client.End(); err != nil {
-				returnErr = errors.Join(returnErr, fmt.Errorf("close toolstream: %w", err))
-			}
-		}()
+		defer func() { returnErr = errors.Join(returnErr, client.Close()) }()
 	}
-
-	if err := bpf.Init(&bpf.Option{
-		KeepaliveTimeout: cfg.duration,
-	}); err != nil {
+	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: cfg.duration}); err != nil {
 		return fmt.Errorf("init bpf: %w", err)
 	}
 	defer bpf.Shutdown()
 
-	bpfBytes, err := os.ReadFile(cfg.bpfPath)
-	if err != nil {
-		return fmt.Errorf("read bpf object: %w", err)
+	ctx, cancel := signal.NotifyContext(cliCtx.Context, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	format := cfg.output
+	if client != nil {
+		format = profileroutput.FormatRemoteStore
+	}
+	pctx := &pcontext.ProfilerContext{
+		Ctx: ctx, Cancel: cancel, Duration: cfg.duration, IsOneShotAgg: true,
+		OutputFormat: format, OutputWriter: cliCtx.App.Writer, ToolstreamClient: client,
+		TracerID: cliCtx.String(cliFlagTaskID),
 	}
 
-	b, err := bpf.LoadBPFFromBytes(
-		fmt.Sprintf("irqtracing_%d.o", time.Now().UnixNano()),
-		bpfBytes,
-		irqTracingBPFConstants(cfg.targetCPU, cfg.maxEventsPerSecondPerCPU),
-	)
-	if err != nil {
-		return fmt.Errorf("load bpf: %w", err)
-	}
-	defer b.Close()
-
-	ctx, stop := signal.NotifyContext(
-		cliCtx.Context,
-		syscall.SIGHUP,
-		syscall.SIGQUIT,
-		syscall.SIGINT,
-		syscall.SIGTERM,
-	)
-	defer stop()
-
-	profileStartedAt := time.Now()
-	if err := b.AttachWithOptions([]bpf.AttachOption{
-		{ProgramName: "probe_softirq_raise", Symbol: "irq/softirq_raise"},
-		{ProgramName: "probe_softirq_entry", Symbol: "irq/softirq_entry"},
-	}); err != nil {
-		return fmt.Errorf("attach: %w", err)
-	}
-
-	timer := time.NewTimer(time.Duration(cfg.duration) * time.Second)
-	defer timer.Stop()
-
-	select {
-	case <-timer.C:
-	case <-ctx.Done():
-		return fmt.Errorf("collection stopped: %w", ctx.Err())
-	}
-
-	// Freeze the collection point before reading the drop counter.
-	nmissed, err := detachAndReadDroppedSamples(b)
-	if err != nil {
-		return err
-	}
-	if nmissed > 0 {
-		writeDroppedSamplesWarning(cliCtx.App.ErrWriter, nmissed)
-	}
-
-	flameData, stacks, err := buildFlameGraph(b, profileStartedAt)
-	if err != nil {
-		return fmt.Errorf("build flamegraph: %w", err)
-	}
-
-	result := &IRQTracingResult{
-		FlameData: flameData,
-		NMissed:   nmissed,
-	}
-	snapshot := &irqTracingSnapshot{result: result, stacks: stacks}
-	outputWriter, err := newWriter(cliCtx.App.Writer, cfg.output, client)
-	if err != nil {
-		return fmt.Errorf("create output writer: %w", err)
-	}
-	if err := outputWriter.Write(snapshot); err != nil {
-		return fmt.Errorf("write output: %w", err)
-	}
-	return nil
-}
-
-// irqTracingBPFConstants divides each CPU's budget between the source and
-// victim probes. An odd remainder goes to source.
-func irqTracingBPFConstants(targetCPU int32, maxEventsPerSecondPerCPU uint64) map[string]any {
-	constants := map[string]any{"target_cpu": targetCPU}
-	if maxEventsPerSecondPerCPU == 0 {
-		return constants
-	}
-
-	sourceRate := maxEventsPerSecondPerCPU/2 + maxEventsPerSecondPerCPU%2
-	victimRate := maxEventsPerSecondPerCPU / 2
-	constants[sourceRateLimitConstant] = uint32(sourceRate)
-	constants[victimRateLimitConstant] = uint32(victimRate)
-	return constants
+	return registry.Profile(pctx, newIRQProfiler(&collector{
+		bpfPath:                  cfg.bpfPath,
+		cpuId:                    cfg.targetCPU,
+		duration:                 time.Duration(cfg.duration) * time.Second,
+		maxEventsPerSecondPerCPU: cfg.maxEventsPerSecondPerCPU,
+	}))
 }
 
 func openToolstream(cliCtx *cli.Context) (*toolstream.Client, error) {
@@ -185,14 +104,6 @@ func openToolstream(cliCtx *cli.Context) (*toolstream.Client, error) {
 	return client, nil
 }
 
-func writeDroppedSamplesWarning(output io.Writer, nmissed uint64) {
-	if output == nil {
-		output = os.Stderr
-	}
-	fmt.Fprintf(output,
-		"irqtracing: %d samples dropped; the flame graph is incomplete\n", nmissed)
-}
-
 func main() {
 	app := cli.NewApp()
 	app.Name = irqTracingToolName
@@ -203,7 +114,8 @@ func main() {
 		if err := validateFlags(ctx); err != nil {
 			return err
 		}
-		log.SetOutput(io.Discard)
+		log.SetOutput(ctx.App.ErrWriter)
+		log.SetLevel("warn")
 		return nil
 	}
 

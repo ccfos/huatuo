@@ -38,7 +38,7 @@ func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) 
 		"--max-concurrent-procs", strconv.Itoa(config.MaxConcurrentProcesses),
 		"--output-format", "remote",
 		"--output-storage", config.ToolstreamSocketPath,
-		"--tracer-id", request.RequestID,
+		"--task-id", request.RequestID,
 		"--huatuo-api-address", config.NodeAPIAddress,
 		"--tool-path", config.ToolDir,
 	}

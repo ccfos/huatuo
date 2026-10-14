@@ -28,7 +28,7 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	set.String("type", "cpu", "")
 	set.String("language", "c", "")
 	set.String("output-format", "collapsed", "")
-	set.String("tracer-id", "trace-123", "")
+	set.String("task-id", "trace-123", "")
 	set.String("tool-path", "/opt/huatuo/tools", "")
 	set.Bool("offcpu-stats", false, "")
 	set.Bool("require-hardware-pmu", false, "")

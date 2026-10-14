@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package publication owns the durable profiling result commit marker.
-package publication
+package store
 
 import (
 	"context"
@@ -27,37 +26,37 @@ import (
 )
 
 const (
-	Collection     = "profiling_publications"
-	markerIDPrefix = "profiling-publication:"
+	commitCollection = "profiling_publications"
+	markerIDPrefix   = "profiling-publication:"
 )
 
-// Marker proves that all profiling windows for a request are query-visible.
+// commitMarker proves that all profiling windows for a request are query-visible.
 // A marker is also written when a successful profiling run has no samples.
-type Marker struct {
+type commitMarker struct {
 	RequestID   string    `json:"request_id"`
 	PublishedAt time.Time `json:"published_at"`
 }
 
 type markerMapper struct{}
 
-// Store publishes and verifies profiling result commit markers.
-type Store struct {
-	store *storage.Store[*Marker]
+// commitStore publishes and verifies profiling result commit markers.
+type commitStore struct {
+	store *storage.Store[*commitMarker]
 	now   func() time.Time
 }
 
-// NewFromConfig creates a publication Store on the shared result backend.
-func NewFromConfig(ctx context.Context, config *driver.Config) (*Store, error) {
-	markerStore, err := storage.NewFromConfig[*Marker](
+// newCommitStore creates a commit store on the shared result backend.
+func newCommitStore(ctx context.Context, config *driver.Config) (*commitStore, error) {
+	markerStore, err := storage.NewFromConfig[*commitMarker](
 		ctx,
 		config,
-		Collection,
+		commitCollection,
 		markerMapper{},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("create profiling publication Store: %w", err)
+		return nil, fmt.Errorf("create profiling commit store: %w", err)
 	}
-	return &Store{
+	return &commitStore{
 		store: markerStore,
 		now: func() time.Time {
 			return time.Now().UTC()
@@ -65,17 +64,17 @@ func NewFromConfig(ctx context.Context, config *driver.Config) (*Store, error) {
 	}, nil
 }
 
-// Publish writes the final commit marker synchronously.
-func (s *Store) Publish(ctx context.Context, requestID string) error {
-	marker := &Marker{RequestID: requestID, PublishedAt: s.now()}
+// Commit writes the final commit marker synchronously.
+func (s *commitStore) Commit(ctx context.Context, requestID string) error {
+	marker := &commitMarker{RequestID: requestID, PublishedAt: s.now()}
 	if err := s.store.Save(ctx, marker, driver.SaveOptions{WaitForVisibility: true}); err != nil {
 		return fmt.Errorf("publish profiling result %q: %w", requestID, err)
 	}
 	return nil
 }
 
-// IsPublished reports whether a durable commit marker exists.
-func (s *Store) IsPublished(ctx context.Context, requestID string) (bool, error) {
+// IsCommitted reports whether a durable commit marker exists.
+func (s *commitStore) IsCommitted(ctx context.Context, requestID string) (bool, error) {
 	marker, err := s.store.Get(ctx, markerID(requestID))
 	if errors.Is(err, driver.ErrNotFound) {
 		return false, nil
@@ -93,19 +92,19 @@ func (s *Store) IsPublished(ctx context.Context, requestID string) (bool, error)
 	return true, nil
 }
 
-// Ready verifies that the publication backend can serve reads.
-func (s *Store) Ready(ctx context.Context) error {
+// Ready verifies that the commit backend can serve reads.
+func (s *commitStore) Ready(ctx context.Context) error {
 	if s == nil || s.store == nil {
-		return errors.New("profiling publication Store is not initialized")
+		return errors.New("profiling commit store is not initialized")
 	}
 	if _, err := s.store.Count(ctx, driver.Query{Limit: 1}); err != nil {
-		return fmt.Errorf("profiling publication Store readiness: %w", err)
+		return fmt.Errorf("profiling commit store readiness: %w", err)
 	}
 	return nil
 }
 
-// Close releases the publication backend.
-func (s *Store) Close(ctx context.Context) error {
+// Close releases the commit backend.
+func (s *commitStore) Close(ctx context.Context) error {
 	if s == nil || s.store == nil {
 		return nil
 	}
@@ -116,26 +115,26 @@ func markerID(requestID string) string {
 	return markerIDPrefix + requestID
 }
 
-func (markerMapper) ID(marker *Marker) string {
+func (markerMapper) ID(marker *commitMarker) string {
 	if marker == nil {
 		return ""
 	}
 	return markerID(marker.RequestID)
 }
 
-func (markerMapper) Encode(marker *Marker) ([]byte, error) {
+func (markerMapper) Encode(marker *commitMarker) ([]byte, error) {
 	return json.Marshal(marker)
 }
 
-func (markerMapper) Decode(record driver.Record) (*Marker, error) {
-	var marker Marker
+func (markerMapper) Decode(record driver.Record) (*commitMarker, error) {
+	var marker commitMarker
 	if err := json.Unmarshal(record.Data, &marker); err != nil {
 		return nil, err
 	}
 	return &marker, nil
 }
 
-func (markerMapper) Fields(*Marker) (map[string]any, error) {
+func (markerMapper) Fields(*commitMarker) (map[string]any, error) {
 	return nil, nil
 }
 

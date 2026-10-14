@@ -50,7 +50,7 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) (returnErr error) {
 	defer pctx.Cancel()
 	if pctx.ToolstreamClient != nil {
 		defer func() {
-			if err := pctx.ToolstreamClient.End(); err != nil {
+			if err := pctx.ToolstreamClient.Close(); err != nil {
 				returnErr = errors.Join(
 					returnErr,
 					fmt.Errorf("close toolstream: %w", err),

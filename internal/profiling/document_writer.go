@@ -47,20 +47,38 @@ func NewDocumentWriter(
 	return &DocumentWriter{store: store, documents: documents}, nil
 }
 
-// Write persists Operation results synchronously and standalone results asynchronously.
-func (w *DocumentWriter) Write(
-	session *toolstream.Session,
-	window *types.ProfilingWindow,
-) error {
-	if window == nil {
-		return errors.New("profiling window is required")
+// Handle persists each supplied window even after earlier failures. Only an
+// error-free task may publish its completion marker.
+func (w *DocumentWriter) Handle(ctx context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
+	if request == nil {
+		return errors.New("profiling result request is required")
 	}
-	if session == nil || session.Session == nil {
-		return errors.New("profiling result session is required")
+	if request.TaskID == "" {
+		return errors.New("profiling result request task id is required")
 	}
-	if session.TaskID == "" {
-		return errors.New("profiling result session task id is required")
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	var writeErr error
+	if request.Data != nil {
+		writeErr = w.writeWindow(ctx, request)
 	}
+	if writeErr != nil {
+		return writeErr
+	}
+	if request.End && !request.Commit {
+		return errors.New("profiling result stream ended without commit")
+	}
+	if !request.Commit || request.PriorErr != nil || request.Err != nil {
+		return nil
+	}
+	if !request.End {
+		return errors.New("profiling commit requires end")
+	}
+	return w.store.Commit(ctx, request.TaskID)
+}
+
+func (w *DocumentWriter) writeWindow(ctx context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
+	window := request.Data
 	if window.ProfileType == "" {
 		return errors.New("profiling window profile type is required")
 	}
@@ -71,8 +89,8 @@ func (w *DocumentWriter) Write(
 		return errors.New("profiling window profile start timestamp is required")
 	}
 	metadata, err := w.documents.Build(&document.Input{
-		TracerName:       types.ProfilingToolName,
-		TracerID:         session.TaskID,
+		TracerName:       request.ToolName,
+		TracerID:         request.TaskID,
 		ContainerID:      window.ContainerID,
 		StartedTimestamp: timeutil.Timestamp{Time: time.Unix(0, window.Profile.TimeNanos)},
 		TracerRunType:    types.TracerRunTypeProfiling,
@@ -86,12 +104,9 @@ func (w *DocumentWriter) Write(
 			ProfileType: window.ProfileType,
 			Profile:     window.Profile,
 			Metrics: &profilingstore.Metrics{
-				AggrOverflowCount: window.AggregationOverflowCount,
+				DroppedSamples: window.DroppedSamples,
 			},
 		},
 	}
-	if session.IsExpected {
-		return w.store.SaveSync(context.Background(), document)
-	}
-	return w.store.Save(context.Background(), document)
+	return w.store.SaveSync(ctx, document)
 }

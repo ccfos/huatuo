@@ -17,6 +17,7 @@ package registry
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -26,6 +27,7 @@ import (
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // fakeProfiler satisfies Profiler with no behavior. Registry tests exercise
@@ -39,10 +41,11 @@ func (fakeProfiler) Stop(*pcontext.ProfilerContext) error          { return nil 
 // fakeAggregator satisfies aggregator.Aggregator with no behavior.
 type fakeAggregator struct{}
 
-func (fakeAggregator) Aggregate(any)                                   {}
-func (fakeAggregator) Snapshot(*pcontext.ProfilerContext) (any, error) { return nil, nil }
-func (fakeAggregator) Reset()                                          {}
-func (fakeAggregator) OutputFormatter() output.Formatter               { return nil }
+func (fakeAggregator) Aggregate(any) {}
+func (fakeAggregator) Snapshot(*pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
+	return nil, nil
+}
+func (fakeAggregator) Reset() {}
 
 func resetRegistry(t *testing.T) {
 	t.Helper()
@@ -124,7 +127,8 @@ func TestProfileLogsDataReadingLoopLifecycleOnce(t *testing.T) {
 	pctx := &pcontext.ProfilerContext{
 		Ctx:          ctx,
 		Cancel:       cancel,
-		OutputFormat: output.FormatRemote,
+		OutputFormat: output.FormatJSON,
+		OutputWriter: &bytes.Buffer{},
 	}
 	if err := Profile(pctx, newMeta(profiling.ImplementationNative, profiling.TypeCPU)); err != nil {
 		t.Fatalf("Profile() error = %v, want nil", err)
@@ -141,5 +145,53 @@ func TestProfileLogsDataReadingLoopLifecycleOnce(t *testing.T) {
 	}
 	if strings.Index(output, started) > strings.Index(output, ended) {
 		t.Fatalf("data loop lifecycle logs out of order: %s", output)
+	}
+}
+
+type failingProfiler struct {
+	fakeProfiler
+	startErr, stopErr error
+}
+
+func (p failingProfiler) Start(*pcontext.ProfilerContext) error { return p.startErr }
+func (p failingProfiler) Stop(*pcontext.ProfilerContext) error  { return p.stopErr }
+
+type failingAggregator struct {
+	fakeAggregator
+	err       error
+	snapshots *int
+}
+
+func (a failingAggregator) Snapshot(*pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
+	*a.snapshots++
+	return nil, a.err
+}
+
+func TestProfilePropagatesFailures(t *testing.T) {
+	failure := errors.New("test failure")
+	for _, phase := range []string{"start", "stop", "export"} {
+		t.Run(phase, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			pctx := &pcontext.ProfilerContext{Ctx: ctx, Cancel: cancel, IsOneShotAgg: true}
+			provider := failingProfiler{}
+			snapshots := 0
+			aggr := failingAggregator{snapshots: &snapshots}
+			switch phase {
+			case "start":
+				provider.startErr = failure
+			case "stop":
+				provider.stopErr = failure
+			case "export":
+				aggr.err = failure
+			}
+			err := Profile(pctx, ProfilerMeta{Impl: provider, NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return aggr, nil }})
+			if !errors.Is(err, failure) {
+				t.Fatalf("error=%v", err)
+			}
+			if phase != "export" && snapshots != 0 {
+				t.Fatalf("exported %d snapshots after %s failed", snapshots, phase)
+			}
+		})
 	}
 }

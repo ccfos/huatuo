@@ -30,20 +30,11 @@ const (
 	ProfileTypeIRQTracingSample = "irqtracing:irq:count:irq:count"
 )
 
-// ProfileData is the data saved by the profiler.
+// ProfileData holds the parser's intermediate tree profile. NewWindow converts
+// it into the common wire and output model before any formatting or storage.
 type ProfileData struct {
-	ProfileType string `json:"profile_type,omitempty"`
-	// Please note:
-	//
-	//	In pyroscope 1.13.0, use profilev1.Profile instead of ptree.Profile, but it depends
-	//	on the go1.23.0 or later.
-	//
-	//	Like:
-	//		Profile     profilev1.Profile `json:"profile,omitempty"`
-	//
-	//	Currently, in go1.22.4, the profilev1.Profile is the same as ptree.Profile, so we
-	//	use ptree.Profile.
-	Profile ptree.Profile `json:"profile,omitempty"`
+	ProfileType string
+	Profile     ptree.Profile
 }
 
 // ParseInput holds the input parameters for ParseCollapsedData and ParseRawData.

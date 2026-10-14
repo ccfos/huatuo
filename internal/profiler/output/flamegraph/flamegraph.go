@@ -24,35 +24,33 @@ import (
 	"github.com/ccfos/huatuo/internal/profiler/output/raw"
 )
 
-// Formatter accumulates samples and renders an SVG flame graph.
-type Formatter struct {
-	*raw.Formatter
+// Renderer accumulates samples and renders an SVG flame graph.
+type Renderer struct {
+	*raw.Renderer
 	style Style
 }
 
-var _ output.Formatter = (*Formatter)(nil)
+var _ output.Renderer = (*Renderer)(nil)
 
 func init() {
-	output.RegisterFormatter(output.FormatFlameGraph, func() output.Formatter { return New() })
-	output.RegisterFormatter(output.FormatSVG, func() output.Formatter { return New() })
+	output.RegisterRenderer(output.FormatFlameGraph, func() output.Renderer { return New() })
+	output.RegisterRenderer(output.FormatSVG, func() output.Renderer { return New() })
 }
 
-// New returns a Formatter with the default SVG style.
-func New() *Formatter {
-	return &Formatter{
-		Formatter: raw.New(),
-		style:     DefaultStyle,
+// New returns a Renderer with the default SVG style.
+func New() *Renderer {
+	return &Renderer{
+		Renderer: raw.New(),
+		style:    DefaultStyle,
 	}
 }
 
-func (f *Formatter) Name() string { return "flamegraph" }
-
-func (f *Formatter) Write(w io.Writer) error {
+func (f *Renderer) Write(w io.Writer) error {
 	return RenderStyle(f.toStacks(), w, f.style)
 }
 
 // toStacks converts the count map to []Stack.
-func (f *Formatter) toStacks() []Stack {
+func (f *Renderer) toStacks() []Stack {
 	counts := f.Counts()
 	stacks := make([]Stack, 0, len(counts))
 

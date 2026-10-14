@@ -39,11 +39,6 @@ const (
 	defaultMaxEventsPerSecondPerCPU = uint64(0)
 	maxEventsPerSecondPerCPULimit   = uint64(math.MaxUint32) * 2
 	maxDurationSeconds              = int64(math.MaxInt64) / int64(time.Second)
-	outputText                      = "text"
-	outputJSON                      = "json"
-	outputCollapsed                 = string(profileroutput.FormatCollapsed)
-	outputFlameGraph                = string(profileroutput.FormatFlameGraph)
-	outputSVG                       = string(profileroutput.FormatSVG)
 )
 
 type irqTracingConfig struct {
@@ -51,7 +46,7 @@ type irqTracingConfig struct {
 	targetCPU                int32
 	duration                 int
 	maxEventsPerSecondPerCPU uint64
-	output                   string
+	output                   profileroutput.OutputFormat
 }
 
 func appFlags() []cli.Flag {
@@ -78,8 +73,8 @@ func appFlags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:  cliFlagOutput,
-			Value: outputText,
-			Usage: "local output format: text|collapsed|flamegraph|svg|json (text aliases collapsed; flamegraph and svg emit SVG); ignored when --output-storage is set",
+			Value: string(profileroutput.FormatCollapsed),
+			Usage: "local output format: collapsed|flamegraph|svg|json (flamegraph and svg emit SVG); ignored when --output-storage is set",
 		},
 		&cli.StringFlag{
 			Name:  cliFlagOutputStorage,
@@ -96,12 +91,12 @@ func validateFlags(c *cli.Context) error {
 	if c.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %q", c.Args().Slice())
 	}
-	outputFormat := c.String(cliFlagOutput)
+	outputFormat := profileroutput.OutputFormat(c.String(cliFlagOutput))
 	switch outputFormat {
-	case outputText, outputCollapsed, outputFlameGraph, outputSVG, outputJSON:
+	case profileroutput.FormatCollapsed, profileroutput.FormatFlameGraph, profileroutput.FormatSVG, profileroutput.FormatJSON:
 	default:
 		return fmt.Errorf(
-			"invalid --output %q; want text, collapsed, flamegraph, svg, or json",
+			"invalid --output %q; want collapsed, flamegraph, svg, or json",
 			outputFormat,
 		)
 	}
@@ -145,7 +140,7 @@ func loadConfig(c *cli.Context) (irqTracingConfig, error) {
 		targetCPU:                int32(targetCPU),
 		duration:                 duration,
 		maxEventsPerSecondPerCPU: limit,
-		output:                   c.String(cliFlagOutput),
+		output:                   profileroutput.OutputFormat(c.String(cliFlagOutput)),
 	}, nil
 }
 

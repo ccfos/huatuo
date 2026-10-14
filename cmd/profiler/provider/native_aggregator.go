@@ -29,8 +29,8 @@ import (
 	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // ErrRootRequired indicates the operation requires root privileges.
@@ -48,13 +48,10 @@ func requireRoot() error {
 var _ aggregator.Aggregator = (*nativeAggregator)(nil)
 
 type nativeAggregator struct {
-	mu sync.Mutex
-
-	formatter        output.Formatter
-	stackTraces      stackTraceInterner
-	stackSamples     map[stackSampleKey]int64
-	lockSamples      map[string]*lockSample
-	isLockFoldedDone bool
+	mu           sync.Mutex
+	stackTraces  stackTraceInterner
+	stackSamples map[stackSampleKey]int64
+	lockSamples  map[string]*lockSample
 }
 
 type stackSampleKey struct {
@@ -65,13 +62,7 @@ type stackSampleKey struct {
 }
 
 func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, error) {
-	f, err := aggregator.NewFormatterForOutput(pctx)
-	if err != nil {
-		return nil, err
-	}
-
 	return &nativeAggregator{
-		formatter:    f,
 		stackSamples: make(map[stackSampleKey]int64),
 		lockSamples:  make(map[string]*lockSample),
 	}, nil
@@ -90,23 +81,6 @@ func (a *nativeAggregator) Aggregate(rec any) {
 			KernelTraceID: a.stackTraces.LookupOrAdd(v.StackTrace.KernelFrames),
 		}
 		a.stackSamples[key] += v.Value
-
-		if a.formatter != nil {
-			frameCount := 1 + v.StackTrace.frameCount()
-			if v.Category != "" {
-				frameCount++
-			}
-			frames := make([]string, 0, frameCount)
-			frames = append(frames, fmt.Sprintf("process %d:%s", v.Process.PID, v.Process.Comm))
-			if v.Category != "" {
-				frames = append(frames, v.Category)
-			}
-			frames = v.StackTrace.appendTo(frames)
-			log.Debugf("formatter add: frames=%v count=%d", frames, v.Value)
-			if err := a.formatter.Add(&output.Sample{Frames: frames, Count: v.Value}); err != nil {
-				log.Warnf("formatter add sample: %v", err)
-			}
-		}
 
 	case *lockSample:
 		key := makeLockSampleKey(v)
@@ -128,13 +102,9 @@ func (a *nativeAggregator) Aggregate(rec any) {
 	}
 }
 
-func (a *nativeAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
+func (a *nativeAggregator) Snapshot(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	if !pctx.OutputFormat.IsUpload() {
-		return nil, nil
-	}
 
 	if pctx.Type == profiling.TypeLock {
 		return a.snapshotLockProfile(pctx)
@@ -146,39 +116,12 @@ func (a *nativeAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.formatter != nil {
-		a.formatter.Reset()
-	}
-
 	a.stackTraces.Reset()
 	a.stackSamples = make(map[stackSampleKey]int64)
 	a.lockSamples = make(map[string]*lockSample)
-	a.isLockFoldedDone = false
 }
 
-func (a *nativeAggregator) OutputFormatter() output.Formatter {
-	if a.formatter != nil && !a.isLockFoldedDone && len(a.lockSamples) > 0 {
-		a.buildLockFolded()
-		a.isLockFoldedDone = true
-	}
-	return a.formatter
-}
-
-func (a *nativeAggregator) buildLockFolded() {
-	for _, rec := range a.lockSamples {
-		frames, value := lockPrefixFrames(rec)
-		frames = rec.StackTrace.appendTo(frames)
-		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: int64(value)}); err != nil {
-			log.Warnf("formatter add lock sample: %v", err)
-		}
-	}
-}
-
-func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext) (any, error) {
-	if len(a.stackSamples) == 0 {
-		return nil, nil
-	}
-
+func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
 	skipNegForPprof := pctx.Type == profiling.TypeMemory &&
 		pctx.Mode == profiling.ModePhysicalUsage
 
@@ -204,11 +147,7 @@ func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext)
 	return buildPprofData(pctx, tree)
 }
 
-func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (any, error) {
-	if len(a.lockSamples) == 0 {
-		return nil, nil
-	}
-
+func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (*types.ProfilingWindow, error) {
 	tree := make([]*profiler.TreeItem, 0, len(a.lockSamples))
 	for _, rec := range a.lockSamples {
 		prefixes, value := lockPrefixFrames(rec)
@@ -288,7 +227,7 @@ func parseCollapsedLine(line string) (stack string, count int64, ok bool) {
 }
 
 // buildPprofData constructs pprof (pyroscope-compatible) profile data.
-func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (*profiler.ProfileData, error) {
+func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (*types.ProfilingWindow, error) {
 	opt, sampleType, err := profileTypeOptions(pctx)
 	if err != nil {
 		return nil, err
@@ -299,7 +238,7 @@ func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (
 		return nil, fmt.Errorf("failed to parse tree: %w", err)
 	}
 
-	return data, nil
+	return profiler.NewWindow(data, pctx.ContainerID, 0)
 }
 
 func lockPrefixFrames(rec *lockSample) ([]string, uint64) {

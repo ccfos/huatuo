@@ -16,6 +16,7 @@ package aggregator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -23,7 +24,9 @@ import (
 
 	"github.com/ccfos/huatuo/internal/log"
 	profctx "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/internal/randomid"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const pipelineQueueCapacity = 65536
@@ -35,25 +38,28 @@ const (
 )
 
 // Pipeline buffers profiler records through a channel, drives periodic
-// aggregation via the embedded Aggregator, and routes output to the
-// configured backend (ES upload, file write, or SVG render).
+// aggregation via its Aggregator, and exports common windows through Formatter.
 type Pipeline struct {
 	wg     sync.WaitGroup
 	stopCh chan struct{}
-	doneCh chan struct{}
 	state  atomic.Uint32
 
 	tracerID      string
 	aggrInterval  time.Duration
 	overflowCount atomic.Int64
 
-	pctx *profctx.ProfilerContext
-	aggr Aggregator
+	pctx      *profctx.ProfilerContext
+	aggr      Aggregator
+	formatter output.Formatter
 	// A channel blocks idle consumers; RingBuffer.Poll spins on timeout checks
 	// and spends CPU in runtime.nanotime and scheduler operations. The mutex
 	// makes stopping atomic with respect to accepting a record.
-	queue        chan any
-	enqueueMutex sync.RWMutex
+	queue           chan any
+	enqueueMutex    sync.RWMutex
+	exportErr       error
+	abort           atomic.Bool
+	stopped         chan struct{}
+	windowStartedAt time.Time
 }
 
 // NewPipeline initializes the data pipeline.
@@ -64,14 +70,22 @@ func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
 	}
 
 	return &Pipeline{
-		pctx:         pctx,
-		aggr:         aggr,
-		queue:        make(chan any, pipelineQueueCapacity),
-		tracerID:     resolveTracerID(pctx.TracerID, randomid.New),
-		aggrInterval: aggrInterval,
-		stopCh:       make(chan struct{}),
-		doneCh:       make(chan struct{}),
+		pctx:            pctx,
+		aggr:            aggr,
+		queue:           make(chan any, queueCapacity(pctx)),
+		tracerID:        resolveTracerID(pctx.TracerID, randomid.New),
+		aggrInterval:    aggrInterval,
+		stopCh:          make(chan struct{}),
+		stopped:         make(chan struct{}),
+		windowStartedAt: time.Now(),
 	}
+}
+
+func queueCapacity(pctx *profctx.ProfilerContext) int {
+	if pctx.IsOneShotAgg {
+		return 1
+	}
+	return pipelineQueueCapacity
 }
 
 func resolveTracerID(configured string, allocate func() (string, error)) string {
@@ -93,70 +107,38 @@ func (p *Pipeline) Start() {
 		return
 	}
 
+	p.windowStartedAt = time.Now()
 	p.wg.Add(1)
 	go p.runDequeueAndAggregate()
-
-	p.wg.Add(1)
-	go p.runAggregateSnapshot()
 }
 
-// runAggregateSnapshot periodically snapshots and exports aggregated
-// data until the pipeline is stopped. In one-shot mode it exports once on stop.
-func (p *Pipeline) runAggregateSnapshot() {
-	defer p.wg.Done()
-
-	if p.pctx.IsOneShotAgg {
-		<-p.stopCh
-		// Wait for queued records to drain before the final snapshot.
-		<-p.doneCh
-		snapshotCtx := p.pctx.Ctx
-		if snapshotCtx != nil {
-			snapshotCtx = context.WithoutCancel(snapshotCtx)
-		}
-		if err := p.aggregateAndSnapshot(snapshotCtx, true); err != nil {
-			p.logAggregateExportError(err)
-		}
-
-		return
-	}
-	ticker := time.NewTicker(p.aggrInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if err := p.aggregateAndSnapshot(p.pctx.Ctx, false); err != nil {
-				p.logAggregateExportError(err)
-			}
-		case <-p.stopCh:
-			// Stop scheduling periodic snapshots; the final snapshot must observe
-			// all records accepted before shutdown.
-			<-p.doneCh
-			if err := p.aggregateAndSnapshot(p.pctx.Ctx, true); err != nil {
-				p.logAggregateExportError(err)
-			}
-
-			return
-		}
-	}
-}
-
-// runDequeueAndAggregate drains queued records into the aggregator.
-// After Stop begins, it exits only after the queue is empty.
+// runDequeueAndAggregate owns every aggregator call so a record cannot land
+// between Snapshot and Reset. One-shot providers never schedule a ticker.
 func (p *Pipeline) runDequeueAndAggregate() {
 	defer p.wg.Done()
-	defer close(p.doneCh)
-
+	var tick <-chan time.Time
+	if !p.pctx.IsOneShotAgg {
+		ticker := time.NewTicker(p.aggrInterval)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
 	for {
 		select {
 		case rec := <-p.queue:
 			p.aggr.Aggregate(rec)
+		case <-tick:
+			if err := p.exportSnapshot(p.pctx.Ctx); err != nil {
+				p.logAggregateExportError(err)
+			}
 		case <-p.stopCh:
 			for {
 				select {
 				case rec := <-p.queue:
 					p.aggr.Aggregate(rec)
 				default:
+					if err := p.exportSnapshot(p.pctx.Ctx); err != nil {
+						p.logAggregateExportError(err)
+					}
 					return
 				}
 			}
@@ -166,11 +148,12 @@ func (p *Pipeline) runDequeueAndAggregate() {
 
 // Stop signals the pipeline to terminate and waits for all goroutines to exit.
 // Calls after the first one are no-ops. A stopped Pipeline cannot be restarted.
-func (p *Pipeline) Stop() {
+func (p *Pipeline) Stop() error {
 	for {
 		state := p.state.Load()
 		if state == pipelineStateStopped {
-			return
+			<-p.stopped
+			return p.exportErr
 		}
 
 		if p.state.CompareAndSwap(state, pipelineStateStopped) {
@@ -178,7 +161,16 @@ func (p *Pipeline) Stop() {
 			close(p.stopCh)
 			p.enqueueMutex.Unlock()
 			p.wg.Wait()
-			return
+			if state == pipelineStateRunning && !p.abort.Load() && p.exportErr == nil {
+				p.exportErr = p.prepareFormatter()
+				if p.exportErr == nil {
+					ctx, cancel := context.WithTimeout(context.WithoutCancel(p.pctx.Ctx), 30*time.Second)
+					p.exportErr = p.formatter.Complete(ctx)
+					cancel()
+				}
+			}
+			close(p.stopped)
+			return p.exportErr
 		}
 	}
 }
@@ -201,53 +193,73 @@ func (p *Pipeline) Enqueue(data any) {
 }
 
 func (p *Pipeline) logAggregateExportError(err error) {
+	p.exportErr = errors.Join(p.exportErr, err)
+	if p.pctx.Cancel != nil {
+		p.pctx.Cancel()
+	}
 	log.WithError(err).WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed")
 }
 
-func (p *Pipeline) aggregateAndSnapshot(ctx context.Context, final bool) error {
-	if p.pctx.OutputFormat.IsUpload() {
-		data, err := p.aggr.Snapshot(p.pctx)
-		if err != nil {
-			return fmt.Errorf("aggregate snapshot: %w", err)
-		}
+// Abort discards the final snapshot after collection or startup failed.
+func (p *Pipeline) Abort() error {
+	p.abort.Store(true)
+	return p.Stop()
+}
 
-		if data == nil {
-			return nil
-		}
+// EnqueueBatch applies backpressure to a complete one-shot result instead of
+// silently dropping it under the streaming queue's overload policy.
+func (p *Pipeline) EnqueueBatch(ctx context.Context, data any) error {
+	p.enqueueMutex.RLock()
+	defer p.enqueueMutex.RUnlock()
+	if p.state.Load() != pipelineStateRunning {
+		return errors.New("profiling pipeline is not running")
+	}
+	select {
+	case p.queue <- data:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
-		if err := p.saveProfilingDocument(ctx, data); err != nil {
-			return fmt.Errorf("upload profiling document: %w", err)
-		}
-
-		p.aggr.Reset()
+func (p *Pipeline) exportSnapshot(ctx context.Context) error {
+	if p.abort.Load() || p.exportErr != nil {
 		return nil
 	}
-
-	if !final {
+	snapshotContext := *p.pctx
+	snapshotContext.Ctx = context.WithoutCancel(ctx)
+	window, err := p.aggr.Snapshot(&snapshotContext)
+	if err != nil {
+		return fmt.Errorf("aggregate snapshot: %w", err)
+	}
+	if window == nil {
 		return nil
 	}
-
-	// Non-upload mode: write directly from the folded formatter.
-	formatter := p.aggr.OutputFormatter()
-	if formatter == nil {
-		return fmt.Errorf("output formatter is nil for non-upload format %q", p.pctx.OutputFormat)
+	now := time.Now()
+	if window.Profile.TimeNanos == 0 || window.Profile.DurationNanos == 0 {
+		window.Profile.TimeNanos = p.windowStartedAt.UnixNano()
+		window.Profile.DurationNanos = int64(now.Sub(p.windowStartedAt))
 	}
-
-	if formatter.IsEmpty() {
-		return nil
-	}
-
-	if p.pctx.OutputFormat.IsFlameGraph() {
-		if err := writeFlameGraph(p.pctx.OutputPath, formatter); err != nil {
-			return fmt.Errorf("write flamegraph SVG to %q: %w", p.pctx.OutputPath, err)
+	if dropped := p.overflowCount.Swap(0); dropped != 0 {
+		if window.DroppedSamples == nil {
+			window.DroppedSamples = make(map[string]uint64)
 		}
-	} else {
-		if err := writeFolded(p.pctx.OutputPath, formatter); err != nil {
-			return fmt.Errorf("write folded output to %q: %w", p.pctx.OutputPath, err)
+		window.DroppedSamples[types.DropReasonAggregationQueue] += uint64(dropped)
+	}
+
+	for _, dropped := range window.DroppedSamples {
+		if dropped != 0 {
+			log.WithField("tracer_id", p.tracerID).
+				WithField("dropped_samples", window.DroppedSamples).
+				Warn("profiling samples dropped; profile is incomplete")
+			break
 		}
 	}
 
+	if err := p.exportWindow(window); err != nil {
+		return err
+	}
 	p.aggr.Reset()
-
+	p.windowStartedAt = now
 	return nil
 }

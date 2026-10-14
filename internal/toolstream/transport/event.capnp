@@ -16,7 +16,7 @@ struct ConnectRequest {
 # Mirrors transport-design.md DataChunk.
 struct Chunk {
     data        @0 :Data;    # opaque payload, handler decides how to parse
-    flush       @1 :Bool;    # reserved; server may save accumulated buffer on true
+    commit      @1 :Bool;    # with end, requests successful result finalization
     end         @2 :Bool;    # true marks a normal end of stream
     error       @3 :Text;    # non-empty marks a fatal error from the tool
     containerID @4 :Text;    # tool-declared container ID for this chunk; daemon
@@ -28,5 +28,11 @@ struct Message {
     union {
         connect @0 :ConnectRequest;
         chunk   @1 :Chunk;
+        result  @2 :CommitResult;
     }
+}
+
+# Acknowledges handling of the commit request, including preceding frame errors.
+struct CommitResult {
+    error @0 :Text;
 }

@@ -7,6 +7,11 @@ date: 2026-06-18
 weight: 4
 ---
 
+HUATUO 的 profiler 与 irqtracing 使用同一窗口 Formatter。Collapsed 和 SVG
+输出使用公共 profile 的样本数值：CPU 时间为纳秒，内存为字节，IRQ 事件为次数。
+下文按样本次数展示的是通用 collapsed 格式，不代表所有 HUATUO profile 的单位。
+采集、存储和完成语义见[公共采集流程](../../key-feature/continuous-profiling_zh/)。
+
 ## 火焰图格式
 
 在性能剖析领域，**collapsed** 和 **flamegraph** 是最常用的两种火焰图格式，分别对应"原始数据"与"可视化视图"两个层次。

@@ -24,25 +24,23 @@ import (
 	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
-// Formatter writes folded-stack output.
-type Formatter struct {
+// Renderer writes folded-stack output.
+type Renderer struct {
 	counts map[string]int64
 }
 
-var _ output.Formatter = (*Formatter)(nil)
+var _ output.Renderer = (*Renderer)(nil)
 
 func init() {
-	output.RegisterFormatter(output.FormatCollapsed, func() output.Formatter { return New() })
+	output.RegisterRenderer(output.FormatCollapsed, func() output.Renderer { return New() })
 }
 
-// New returns a Formatter that writes folded-stack output.
-func New() *Formatter {
-	return &Formatter{counts: make(map[string]int64)}
+// New returns a Renderer that writes folded-stack output.
+func New() *Renderer {
+	return &Renderer{counts: make(map[string]int64)}
 }
 
-func (f *Formatter) Name() string { return "raw" }
-
-func (f *Formatter) Add(s *output.Sample) error {
+func (f *Renderer) Add(s *output.Sample) error {
 	if len(s.Frames) == 0 {
 		return nil
 	}
@@ -97,7 +95,7 @@ func writeFoldedFrame(key *strings.Builder, frame string) {
 	key.WriteString(frame[start:])
 }
 
-func (f *Formatter) Write(w io.Writer) error {
+func (f *Renderer) Write(w io.Writer) error {
 	keys := make([]string, 0, len(f.counts))
 
 	for k := range f.counts {
@@ -115,17 +113,13 @@ func (f *Formatter) Write(w io.Writer) error {
 	return nil
 }
 
-func (f *Formatter) Reset() {
-	f.counts = make(map[string]int64)
-}
-
 // IsEmpty reports whether the formatter contains no samples.
-func (f *Formatter) IsEmpty() bool {
+func (f *Renderer) IsEmpty() bool {
 	return len(f.counts) == 0
 }
 
 // Counts returns the accumulated stack-to-count map. The returned map
 // must not be modified; callers should treat it as read-only.
-func (f *Formatter) Counts() map[string]int64 {
+func (f *Renderer) Counts() map[string]int64 {
 	return f.counts
 }

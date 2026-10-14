@@ -16,6 +16,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -82,19 +83,30 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 		return fmt.Errorf("create aggregator: %w", aggrErr)
 	}
 	pipe := aggregator.NewPipeline(pctx, aggr)
+
+	if err := p.Impl.Start(pctx); err != nil {
+		cleanupErr := pipe.Abort()
+		pctx.Cancel()
+
+		return fmt.Errorf("start profiler: %w", errors.Join(err, cleanupErr))
+	}
+
 	pipe.Start()
 	log.Info("aggregator started")
 
-	if err := p.Impl.Start(pctx); err != nil {
-		pipe.Stop()
-		pctx.Cancel()
-
-		return fmt.Errorf("start profiler: %w", err)
-	}
-
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- p.Impl.ReadDataLoop(pctx.Ctx, pipe.Enqueue)
+		var deliveryErr error
+		enqueue := pipe.Enqueue
+		if pctx.IsOneShotAgg {
+			enqueue = func(data any) {
+				if deliveryErr == nil {
+					deliveryErr = pipe.EnqueueBatch(pctx.Ctx, data)
+				}
+			}
+		}
+		loopErr := p.Impl.ReadDataLoop(pctx.Ctx, enqueue)
+		loopDone <- errors.Join(loopErr, deliveryErr)
 	}()
 	// Native integration tests use this exact message as the barrier before
 	// releasing target workloads. Do not remove, rename, or move this log.
@@ -136,15 +148,15 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	}
 	log.Info("data reading loop ended")
 
-	if stopErr := p.Impl.Stop(pctx); stopErr != nil {
-		log.Errorf("profiler stop: %v", stopErr)
+	stopErr := p.Impl.Stop(pctx)
+	// A failed collector must never turn its partial state into a successful
+	// final window. Previously exported windows remain unpublished.
+	if loopErr != nil && (!errors.Is(loopErr, context.Canceled) || managesDuration) {
+		return errors.Join(err, loopErr, stopErr, pipe.Abort())
 	}
-
-	pipe.Stop()
-
-	if err == nil && loopErr != nil {
-		err = loopErr
+	if stopErr != nil || err != nil {
+		return errors.Join(err, loopErr, stopErr, pipe.Abort())
 	}
-
-	return err
+	exportErr := pipe.Stop()
+	return errors.Join(err, exportErr)
 }

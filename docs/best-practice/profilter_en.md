@@ -7,6 +7,13 @@ date: 2026-06-18
 weight: 4
 ---
 
+HUATUO's profiler and irqtracing use the same window formatter. Collapsed and
+SVG output use values from the common profile: CPU time is measured in
+nanoseconds, memory in bytes, and IRQ events in counts. The sample-count examples
+below illustrate the generic collapsed format; they are not the units of every
+HUATUO profile. See [the shared profiling pipeline](../../key-feature/continuous-profiling_en/)
+for collection, storage and completion semantics.
+
 ## Flame Graph Formats
 
 In profiling, **collapsed** and **flamegraph** are the two most common formats, corresponding to the "raw data" and "visual view" layers respectively.

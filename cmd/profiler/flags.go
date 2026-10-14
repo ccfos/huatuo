@@ -153,7 +153,7 @@ var appFlags = []cli.Flag{
 		Value: "127.0.0.1:19704",
 	},
 	&cli.StringFlag{
-		Name:  "tracer-id",
-		Usage: "Tracing task ID; generated automatically when empty",
+		Name:  "task-id",
+		Usage: "Profiling task ID; required for remote output, generated when empty for local output",
 	},
 }

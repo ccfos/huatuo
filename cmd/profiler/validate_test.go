@@ -56,16 +56,16 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
-			name: "tracer ID",
+			name: "task ID",
 			args: []string{
 				"--type", "cpu",
 				"--language", "c",
 				"--pid", strconv.Itoa(os.Getpid()),
-				"--tracer-id", "trace-123",
+				"--task-id", "trace-123",
 			},
 		},
 		{
-			name: "remote output requires tracer ID",
+			name: "remote output requires task ID",
 			args: []string{
 				"--type", "cpu",
 				"--language", "c",
@@ -73,7 +73,7 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 				"--output-format", "remote",
 				"--output-storage", "/var/run/huatuo-toolstream.sock",
 			},
-			wantError: "--tracer-id must not be empty when --output-format=remote",
+			wantError: "--task-id must not be empty when --output-format=remote",
 		},
 		{
 			name:      "legacy mem type",

@@ -43,7 +43,7 @@ func TestNormalizePythonOutput(t *testing.T) {
 }
 
 func TestPythonAggregatorKeepsProcessRoots(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{Freq: 99, OutputFormat: output.FormatCollapsed}
+	pctx := &pcontext.ProfilerContext{Ctx: t.Context(), Freq: 100, OutputFormat: output.FormatCollapsed}
 	aggr, err := newPythonCPUAggregator(pctx)
 	require.NoError(t, err)
 
@@ -51,10 +51,15 @@ func TestPythonAggregatorKeepsProcessRoots(t *testing.T) {
 	aggr.Aggregate(profiler.SampleOutput{PID: 200, Output: "hot (a.py:1) 4\n"})
 
 	var folded bytes.Buffer
-	require.NoError(t, aggr.OutputFormatter().Write(&folded))
+	window, err := aggr.Snapshot(pctx)
+	require.NoError(t, err)
+	formatter, err := output.FormatCollapsed.NewRenderer()
+	require.NoError(t, err)
+	require.NoError(t, output.AddProfile(formatter, window.Profile))
+	require.NoError(t, formatter.Write(&folded))
 	require.Equal(
 		t,
-		"process 100;hot (a.py:1) 3\nprocess 200;hot (a.py:1) 4\n",
+		"process 100;hot (a.py:1) 30000000\nprocess 200;hot (a.py:1) 40000000\n",
 		folded.String(),
 	)
 	require.Equal(t, []profiler.SampleOutput{
@@ -90,7 +95,7 @@ RAW
 	require.NoError(t, os.WriteFile(toolPath, []byte(script), 0o600))
 	require.NoError(t, os.Chmod(toolPath, 0o700))
 
-	for _, format := range []output.OutputFormat{output.FormatCollapsed, output.FormatRemote} {
+	for _, format := range []output.OutputFormat{output.FormatCollapsed, output.FormatRemoteStore} {
 		t.Run(string(format), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -108,15 +113,19 @@ RAW
 
 			if format == output.FormatCollapsed {
 				var folded bytes.Buffer
-				require.NoError(t, aggr.OutputFormatter().Write(&folded))
-				require.Equal(t, "process 100;worker (app.py:10) 3\nprocess 101;child (child.py:20) 2\n", folded.String())
+				window, err := aggr.Snapshot(pctx)
+				require.NoError(t, err)
+				formatter, err := output.FormatCollapsed.NewRenderer()
+				require.NoError(t, err)
+				require.NoError(t, output.AddProfile(formatter, window.Profile))
+				require.NoError(t, formatter.Write(&folded))
+				require.Equal(t, "process 100;worker (app.py:10) 30000000\nprocess 101;child (child.py:20) 20000000\n", folded.String())
 				return
 			}
 
 			snapshot, err := aggr.Snapshot(pctx)
 			require.NoError(t, err)
-			data, ok := snapshot.(*profiler.ProfileData)
-			require.True(t, ok, "snapshot type: %T", snapshot)
+			data := snapshot
 			require.Len(t, data.Profile.Sample, 2)
 			var total int64
 			for _, sample := range data.Profile.Sample {

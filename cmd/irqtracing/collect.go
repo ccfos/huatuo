@@ -217,9 +217,9 @@ func detachAndReadDroppedSamples(b mapSnapshotter) (uint64, error) {
 	return nmissed, nil
 }
 
-// buildFlameGraph merges the source and victim stack maps into a ProfileData
+// buildProfile merges the source and victim stack maps into a ProfileData
 // tree, prefixing each stack with "source" / "victim" roots.
-func buildFlameGraph(b bpf.BPF, startedAt time.Time) (*profiler.ProfileData, []*profiler.TreeItem, error) {
+func buildProfile(b bpf.BPF, startedAt time.Time) (*profiler.ProfileData, error) {
 	u := symbol.NewUsymResolver()
 
 	var items []*profiler.TreeItem
@@ -233,7 +233,7 @@ func buildFlameGraph(b bpf.BPF, startedAt time.Time) (*profiler.ProfileData, []*
 		"source",
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	items, err = processStackMap(
@@ -245,17 +245,13 @@ func buildFlameGraph(b bpf.BPF, startedAt time.Time) (*profiler.ProfileData, []*
 		"victim",
 	)
 	if err != nil {
-		return nil, nil, err
-	}
-
-	if len(items) == 0 {
-		return nil, nil, nil
+		return nil, err
 	}
 
 	data, err := profiler.ParseTree(startedAt, profiler.ProfileTypeIRQTracingSample,
 		items, &profiler.ParseOption{SampleRate: profiler.NoSampleRate})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return data, items, nil
+	return data, nil
 }
