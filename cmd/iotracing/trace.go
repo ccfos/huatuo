@@ -56,7 +56,7 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 	signalCtx, signalCancel := signal.NotifyContext(timeCtx, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
 	defer signalCancel()
 
-	reader, err := attachAndEventPipe(signalCtx, b)
+	reader, disabled, err := attachAndEventPipe(signalCtx, b)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,9 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 		return nil, err
 	}
 
-	return &types.IOTracingSnapshot{Processes: processes, StallStacks: stalls}, nil
+	return &types.IOTracingSnapshot{
+		Processes: processes, StallStacks: stalls, DisabledFilesystems: disabled,
+	}, nil
 }
 
 // collectStalls drains the iodelay perf reader until ctx cancellation

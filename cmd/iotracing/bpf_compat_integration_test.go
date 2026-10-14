@@ -329,7 +329,7 @@ func TestIOTracingFullObject(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	reader, err := attachAndEventPipe(ctx, &ioTracingProbeQualifier{BPF: program})
+	reader, _, err := attachAndEventPipe(ctx, &ioTracingProbeQualifier{BPF: program})
 	if errors.Is(err, errXFSKprobeUnsupported) {
 		t.Skipf("XFS qualification unavailable: %v", err)
 	}

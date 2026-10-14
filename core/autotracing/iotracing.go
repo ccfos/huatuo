@@ -75,9 +75,10 @@ func handleIotracingEvent(sess *toolstream.Session, ev *types.IOTracingSnapshot)
 		TracerName:       iotracingToolName,
 		StartedTimestamp: pending.startedTimestamp,
 		TracerData: &ioStatusData{
-			Reason:      reason,
-			Processes:   ev.Processes,
-			StallStacks: ev.StallStacks,
+			Reason:              reason,
+			Processes:           ev.Processes,
+			StallStacks:         ev.StallStacks,
+			DisabledFilesystems: ev.DisabledFilesystems,
 		},
 		TracerRunType: types.TracerRunTypeAutotracing,
 	})
@@ -113,9 +114,10 @@ type ioTracing struct {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
 
 type ioStatusData struct {
-	Reason      *reasonSnapshot            `json:"reason_snapshot"`
-	Processes   []types.ProcessFileIOStats `json:"process_file_io_stats"`
-	StallStacks []types.IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
+	Reason              *reasonSnapshot            `json:"reason_snapshot"`
+	Processes           []types.ProcessFileIOStats `json:"process_file_io_stats"`
+	StallStacks         []types.IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
+	DisabledFilesystems map[string]string          `json:"disabled_filesystems,omitempty"`
 }
 
 type diskStatus struct {
@@ -455,6 +457,9 @@ func (i *ioTracing) Start(ctx context.Context) error {
 			return fmt.Errorf("run iotracing: %w; stderr: %s", err, result.Stderr)
 		}
 		return fmt.Errorf("run iotracing: %w", err)
+	}
+	if stderr := strings.TrimSpace(string(result.Stderr)); stderr != "" {
+		log.WithField("stderr", stderr).Warn("iotracing completed with warnings")
 	}
 
 	return waitForSnapshot(

@@ -285,6 +285,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
   - **disk_read / disk_write**：进程磁盘层面的实际读写字节数
   - **file_stat**：进程当前打开的文件路径列表
   - **file_count**：进程打开的文件总数
+- **disabled_filesystems**：挂载失败而停用的文件系统及原因；无禁用组时省略
 - **timeout_io_stack**：等待 IO 调度的进程调用栈列表，每条记录包含：
   - **pid / comm**：进程 PID 与进程名
   - **container_hostname**：进程所在容器 hostname

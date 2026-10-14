@@ -24,13 +24,13 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 )
 
-// attachAndEventPipe attaches all programs found in the BPF object and
-// returns a perf reader for iodelay events. The reader is closed if any
-// later attach step fails so the caller cannot leak the pipe on error.
-func attachAndEventPipe(ctx context.Context, b bpf.BPF) (reader bpf.PerfEventReader, err error) {
+// attachAndEventPipe attaches shared and available filesystem probes and
+// returns a perf reader for iodelay events. Fatal errors close the reader;
+// incomplete filesystem groups are retired without stopping other probes.
+func attachAndEventPipe(ctx context.Context, b bpf.BPF) (reader bpf.PerfEventReader, disabled map[string]string, err error) {
 	reader, err = b.EventPipeByName(ctx, bpfPerfMapName, bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
-		return nil, fmt.Errorf("get event pipe: %w", err)
+		return nil, nil, fmt.Errorf("get event pipe: %w", err)
 	}
 
 	// Capture the opened reader before an error return clears the result.
@@ -44,14 +44,63 @@ func attachAndEventPipe(ctx context.Context, b bpf.BPF) (reader bpf.PerfEventRea
 
 	options, err := buildAttachOptions(infos.ProgramsInfo)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	if err = b.AttachWithOptions(options); err != nil {
-		return nil, fmt.Errorf("attach with options: %w", err)
+	filesystemErrors, err := attachIOTracingPrograms(b, options)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, filesystem := range []string{"ext4", "xfs"} {
+		if failure := filesystemErrors[filesystem]; failure != nil {
+			if disabled == nil {
+				disabled = make(map[string]string, len(filesystemErrors))
+			}
+			disabled[filesystem] = failure.Error()
+			fmt.Fprintf(os.Stderr, "iotracing: %s file probes disabled; other probes remain active: %v\n", filesystem, failure)
+		}
 	}
 
-	return reader, nil
+	return reader, disabled, nil
+}
+
+func attachIOTracingPrograms(b bpf.BPF, options []bpf.AttachOption) (map[string]error, error) {
+	groups := map[string][]bpf.AttachOption{"ext4": nil, "xfs": nil}
+	shared := make([]bpf.AttachOption, 0, len(options))
+	for _, option := range options {
+		filesystem, _, _ := strings.Cut(option.Symbol, "_")
+		if _, ok := groups[filesystem]; ok {
+			groups[filesystem] = append(groups[filesystem], option)
+		} else {
+			shared = append(shared, option)
+		}
+	}
+	if err := b.AttachWithOptions(shared); err != nil {
+		return nil, fmt.Errorf("attach shared probes: %w", err)
+	}
+	var failures map[string]error
+	for _, filesystem := range []string{"ext4", "xfs"} {
+		group := groups[filesystem]
+		for index := range group {
+			err := b.AttachIndependently(&group[index])
+			if err == nil {
+				continue
+			}
+			// Both filesystems share BPF programs. Retire exact targets,
+			// not all links on those programs, when a group is incomplete.
+			for previous := index - 1; previous >= 0; previous-- {
+				if closeErr := b.DetachIndependently(&group[previous]); closeErr != nil {
+					return nil, fmt.Errorf("rollback %s after (%w): %w", filesystem, err, closeErr)
+				}
+			}
+			if failures == nil {
+				failures = make(map[string]error, 2)
+			}
+			failures[filesystem] = fmt.Errorf("attach %s: %w", group[index].Symbol, err)
+			break
+		}
+	}
+	return failures, nil
 }
 
 // buildAttachOptions resolves attach points for every BPF program in the
