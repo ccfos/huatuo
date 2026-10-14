@@ -44,23 +44,16 @@ type FormatterConfig struct {
 	Destination string
 }
 
-// TaskIdentity identifies a collection independently of its output transport.
-type TaskIdentity struct {
-	ToolName string
-	TaskID   string
-	Version  string
-}
-
 // NewFormatter initializes output before collection starts. The caller must
 // invoke cleanup on both success and failure; cleanup never commits a task.
-func NewFormatter(cfg FormatterConfig, task TaskIdentity) (Formatter, func() error, error) {
+func NewFormatter(cfg FormatterConfig, taskID, toolName string) (Formatter, func() error, error) {
 	if err := ValidateDestination(cfg.Destination); err != nil {
 		return nil, nil, err
 	}
 	var formatter Formatter
 	cleanup := func() error { return nil }
 	if cfg.Format == FormatRemoteStore {
-		remote, err := newRemoteStoreFormatter(cfg.Destination, task)
+		remote, err := newRemoteStoreFormatter(cfg.Destination, taskID, toolName)
 		if err != nil {
 			return nil, nil, err
 		}

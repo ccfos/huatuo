@@ -389,7 +389,7 @@ func (failedDiagnosticWriter) Write([]byte) (int, error) {
 
 func testFormatter(t *testing.T, format output.OutputFormat, destination string) output.Formatter {
 	t.Helper()
-	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: format, Destination: destination}, output.TaskIdentity{TaskID: "task", ToolName: "test"})
+	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: format, Destination: destination}, "task", "test")
 	if err != nil {
 		t.Fatal(err)
 	}

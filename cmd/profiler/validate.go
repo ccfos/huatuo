@@ -24,7 +24,6 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/internal/pod"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
@@ -176,7 +175,7 @@ func validateExactlyOneTarget(ctx *cli.Context) error {
 }
 
 func validateSinglePID(ctx *cli.Context, profilerName string) error {
-	pids, err := pcontext.ParsePIDs(ctx.String("pid"))
+	pids, err := parsePIDs(ctx.String("pid"))
 	if err != nil {
 		return err
 	}
@@ -195,7 +194,7 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 
-	pids, err := pcontext.ParsePIDs(ctx.String("pid"))
+	pids, err := parsePIDs(ctx.String("pid"))
 	if err != nil {
 		return err
 	}

@@ -24,29 +24,16 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	"github.com/ccfos/huatuo/internal/profiler/registry"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	"golang.org/x/sys/unix"
 )
 
-func init() {
-	impl := &cpuNativeProfiler{}
-	registry.Register(registry.ProfilerMeta{
-		Type:           profiling.TypeCPU,
-		Implementation: profiling.ImplementationNative,
-		Description:    "Native CPU profiler using ebpf",
-		Impl:           impl,
-		NewAggregator:  impl.NewAggregator,
-	})
-}
-
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_oncpu_profiler.c -o $BPF_DIR/native_oncpu_profiler.o
 
 type cpuNativeProfiler struct {
+	config             Config
 	bpf                bpf.BPF
 	ringCtx            *ringBufferContext
 	dbg                *bpf.BpfDbg
@@ -54,11 +41,7 @@ type cpuNativeProfiler struct {
 	offCPUStatsEnabled bool
 }
 
-func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	return newNativeAggregator(pctx)
-}
-
-func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
+func (p *cpuNativeProfiler) Stop(_ context.Context) error {
 	if p.offCPUStatsEnabled {
 		logOffCPUBPFStats(p.bpf)
 	}
@@ -72,27 +55,28 @@ func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 	return err
 }
 
-func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if err := validateNativePIDs("CPU", pctx.PIDs); err != nil {
+func (p *cpuNativeProfiler) Start(ctx context.Context) error {
+	cfg := &p.config
+	if err := validateNativePIDs("CPU", cfg.PIDs); err != nil {
 		return err
 	}
 
 	var offCPU bool
-	switch pctx.Mode {
+	switch cfg.Mode {
 	case profiling.ModeOnCPU:
 	case profiling.ModeOffCPU:
 		offCPU = true
 	default:
-		return fmt.Errorf("start native CPU profiler: unsupported mode %q", pctx.Mode)
+		return fmt.Errorf("start native CPU profiler: unsupported mode %q", cfg.Mode)
 	}
 
 	if err := requireRoot(); err != nil {
 		return err
 	}
 
-	log.Infof("starting native CPU profiler: mode=%s", pctx.Mode)
+	log.Infof("starting native CPU profiler: mode=%s", cfg.Mode)
 
-	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemCPU)
+	cssAddr, err := resolveContainerCgroupCss(ctx, cfg, subsystem.SubsystemCPU)
 	if err != nil {
 		return err
 	}
@@ -101,19 +85,19 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	var constants map[string]any
 	if offCPU {
 		objectName = "native_offcpu_profiler.o"
-		constants = newNativeOffCPUBPFConstants(pctx, cssAddr)
+		constants = newNativeOffCPUBPFConstants(cfg, cssAddr)
 	} else {
 		objectName = "native_oncpu_profiler.o"
-		constants = newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
+		constants = newNativeBPFConstants(cfg.PID(), cssAddr, cfg.ThreadGroup)
 	}
 
-	dbg := bpf.NewDbg(pctx.LogBpfDebug)
+	dbg := bpf.NewDbg(cfg.LogBpfDebug)
 	b, err := bpf.LoadBPF(objectName, dbg.WithBpfDbg(constants))
 	if err != nil {
-		return fmt.Errorf("load native CPU %s BPF object %q: %w", pctx.Mode, objectName, err)
+		return fmt.Errorf("load native CPU %s BPF object %q: %w", cfg.Mode, objectName, err)
 	}
 	if offCPU {
-		if err := configureOffCPUSet(b, pctx.CPUIDs); err != nil {
+		if err := configureOffCPUSet(b, cfg.CPUIDs); err != nil {
 			configureErr := fmt.Errorf("configure native CPU off-CPU filter: %w", err)
 			if closeErr := b.Close(); closeErr != nil {
 				return errors.Join(
@@ -127,12 +111,12 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	var ringCtx *ringBufferContext
 	if offCPU {
-		ringCtx, err = newSingleRingBufferContext(b, pctx.Ctx, 4096*257)
+		ringCtx, err = newSingleRingBufferContext(b, ctx, 4096*257)
 	} else {
-		ringCtx, err = newRingBufferContext(b, pctx.Ctx, 4096*257, false)
+		ringCtx, err = newRingBufferContext(b, ctx, 4096*257, false)
 	}
 	if err != nil {
-		readerErr := fmt.Errorf("create native CPU %s event readers: %w", pctx.Mode, err)
+		readerErr := fmt.Errorf("create native CPU %s event readers: %w", cfg.Mode, err)
 		if closeErr := b.Close(); closeErr != nil {
 			return errors.Join(
 				readerErr,
@@ -146,11 +130,11 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	if offCPU {
 		attachErr = b.AttachWithOptions(nativeOffCPUAttachOptions())
 	} else {
-		attachErr = attachNativeOnCPU(b.AttachWithOptions, pctx)
+		attachErr = attachNativeOnCPU(b.AttachWithOptions, cfg)
 	}
 	if attachErr != nil {
 		ringCtx.Close()
-		attachErr = fmt.Errorf("attach native CPU %s probes: %w", pctx.Mode, attachErr)
+		attachErr = fmt.Errorf("attach native CPU %s probes: %w", cfg.Mode, attachErr)
 		if closeErr := b.Close(); closeErr != nil {
 			return errors.Join(
 				attachErr,
@@ -164,7 +148,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	p.ringCtx = ringCtx
 	p.dbg = dbg
 	p.offCPUMode = offCPU
-	p.offCPUStatsEnabled = offCPU && pctx.OffCPUStatsEnabled
+	p.offCPUStatsEnabled = offCPU && cfg.OffCPUStatsEnabled
 	log.Infof("eBPF attached")
 
 	return nil
@@ -172,10 +156,10 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 func attachNativeOnCPU(
 	attach func(opts []bpf.AttachOption) error,
-	pctx *pcontext.ProfilerContext,
+	cfg *Config,
 ) error {
 	hardware := nativeOnCPUAttachOptions(
-		pctx,
+		cfg,
 		unix.PERF_TYPE_HARDWARE,
 		unix.PERF_COUNT_HW_CPU_CYCLES,
 	)
@@ -183,12 +167,12 @@ func attachNativeOnCPU(
 	if hardwareErr == nil {
 		return nil
 	}
-	if pctx.RequireHardwarePMU {
+	if cfg.RequireHardwarePMU {
 		return fmt.Errorf("attach required hardware PMU: %w", hardwareErr)
 	}
 
 	software := nativeOnCPUAttachOptions(
-		pctx,
+		cfg,
 		unix.PERF_TYPE_SOFTWARE,
 		unix.PERF_COUNT_SW_CPU_CLOCK,
 	)
@@ -204,14 +188,14 @@ func attachNativeOnCPU(
 }
 
 func nativeOnCPUAttachOptions(
-	pctx *pcontext.ProfilerContext,
+	cfg *Config,
 	eventType uint32,
 	eventConfig uint64,
 ) []bpf.AttachOption {
 	opt := bpf.AttachOption{ProgramName: "perf_event_sw_cpu_clock"}
-	opt.PerfEvent.SampleFreq = uint64(pctx.Freq)
+	opt.PerfEvent.SampleFreq = uint64(cfg.Freq)
 	opt.PerfEvent.SamplePeriod = 0
-	opt.PerfEvent.CPUIDs = pctx.CPUIDs
+	opt.PerfEvent.CPUIDs = cfg.CPUIDs
 	opt.PerfEvent.Type = eventType
 	opt.PerfEvent.Config = eventConfig
 	return []bpf.AttachOption{opt}

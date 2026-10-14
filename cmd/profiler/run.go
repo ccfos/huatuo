@@ -20,36 +20,37 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/ccfos/huatuo/cmd/profiler/provider"
 	"github.com/ccfos/huatuo/internal/log"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/registry"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
-	typ := profiling.Type(cliCtx.String("type"))
-	lang := profiling.Language(cliCtx.String("language"))
-
-	implementation, ok := profiling.ImplementationFor(lang, typ)
-	if !ok {
-		return fmt.Errorf("no profiling implementation for language %q", lang)
+	cfg, err := loadConfig(cliCtx)
+	if err != nil {
+		return err
 	}
+	implementation, ok := profiling.ImplementationFor(cfg.Language, cfg.Provider.Type)
+	if !ok {
+		return fmt.Errorf("no profiling implementation for language %q", cfg.Language)
+	}
+	meta, err := provider.New(implementation, &cfg.Provider)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := newSignalContext(cliCtx.Context, signalLog)
+	defer cancel()
 	if implementation == profiling.ImplementationNative {
-		cleanup, err := initBpfManager(cliCtx.Int("duration"))
+		cleanup, err := initBpfManager(cfg.Provider.Duration)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
 	}
 
-	pctx, err := pcontext.NewContext(cliCtx, signalLog)
-	if err != nil {
-		return err
-	}
-	defer pctx.Cancel()
-
 	if cliCtx.Bool("enable-pprof") {
-		server, err := startPprofServer(pctx.Ctx, profilerPprofAddress)
+		server, err := startPprofServer(ctx, profilerPprofAddress)
 		if err != nil {
 			return err
 		}
@@ -62,12 +63,13 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 		log.Infof("pprof server started on %s", profilerPprofAddress)
 	}
 
-	meta, err := registry.Get(implementation, typ)
-	if err != nil {
-		return err
-	}
-
 	log.Infof("using profiler: %s-%s (%s)", meta.Implementation, meta.Type, meta.Description)
 
-	return registry.Profile(pctx, meta)
+	return registry.Profile(ctx, registry.RunConfig{
+		ID:                  cfg.TaskID,
+		Duration:            cfg.Provider.Duration,
+		AggregationInterval: cfg.Provider.AggregationInterval,
+		OutputFormat:        cfg.Output.Format,
+		OutputDestination:   cfg.Output.Destination,
+	}, meta)
 }

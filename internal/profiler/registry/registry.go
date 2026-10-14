@@ -22,21 +22,21 @@ import (
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/internal/randomid"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
-// ProfilerMeta groups identity fields (used as registry keys) and the
-// Profiler/Aggregator behavior pair driven by Profile.
+// ProfilerMeta binds a fresh collector and its aggregation policy for one task.
 type ProfilerMeta struct {
+	ToolName       string
 	Type           profiling.Type
 	Implementation profiling.Implementation
 	Description    string
 
-	Impl          Profiler
-	NewAggregator func(*pcontext.ProfilerContext) (aggregator.Aggregator, error)
+	Impl            Profiler
+	AggregationMode aggregator.AggregationMode
+	Aggregator      aggregator.Aggregator
 }
 
 // Profiler is the sampling lifecycle. Aggregator ownership stays with Profile
@@ -48,70 +48,59 @@ type ProfilerMeta struct {
 // error. Profile propagates every loop error and handles external cancellation
 // separately, even when the loop stops cleanly.
 type Profiler interface {
-	Start(pctx *pcontext.ProfilerContext) error
+	Start(ctx context.Context) error
 	ReadDataLoop(ctx context.Context, enqueue func(any)) error
-	Stop(pctx *pcontext.ProfilerContext) error
+	Stop(ctx context.Context) error
 }
 
-// Registration is init-time only; profilerRegistry is read without locking
-// after init() ordering finishes. Do not call Register from request paths.
-var profilerRegistry = map[profiling.Implementation]map[profiling.Type]ProfilerMeta{}
-
-// Register adds meta to the registry keyed by implementation and profile type.
-// Duplicate pairs panic because registration happens only during init.
-func Register(meta ProfilerMeta) {
-	if profilerRegistry[meta.Implementation] == nil {
-		profilerRegistry[meta.Implementation] = make(map[profiling.Type]ProfilerMeta)
-	}
-
-	if _, dup := profilerRegistry[meta.Implementation][meta.Type]; dup {
-		panic(fmt.Sprintf("registry: duplicate profiler %s/%s", meta.Implementation, meta.Type))
-	}
-
-	profilerRegistry[meta.Implementation][meta.Type] = meta
-}
-
-func Get(implementation profiling.Implementation, typ profiling.Type) (ProfilerMeta, error) {
-	if meta, ok := profilerRegistry[implementation][typ]; ok {
-		return meta, nil
-	}
-
-	return ProfilerMeta{}, fmt.Errorf("no profiler for implementation=%q type=%q", implementation, typ)
+// RunConfig identifies the task and configures collection, window scheduling, and output.
+type RunConfig struct {
+	ID                  string
+	Duration            time.Duration
+	AggregationInterval time.Duration
+	OutputFormat        output.OutputFormat
+	OutputDestination   string
 }
 
 // Profile blocks until cleanup completes so resources are guaranteed released.
 // ReadDataLoop returning on its own is a legitimate stop reason — one-shot
 // samplers (py-spy) finish before the duration timer fires.
-func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) (returnErr error) {
-	aggr, aggrErr := p.NewAggregator(pctx)
-	if aggrErr != nil {
-		return fmt.Errorf("create aggregator: %w", aggrErr)
-	}
-	pctx.TracerID = randomid.NewIfEmpty(pctx.TracerID)
+func Profile(
+	ctx context.Context,
+	cfg RunConfig,
+	p *ProfilerMeta,
+) (returnErr error) {
+	collectionCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	cfg.ID = randomid.NewIfEmpty(cfg.ID)
+
 	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{
-		Format: pctx.OutputFormat, Destination: pctx.OutputPath,
-	}, output.TaskIdentity{ToolName: pctx.ToolName, TaskID: pctx.TracerID, Version: pctx.Version})
+		Format:      cfg.OutputFormat,
+		Destination: cfg.OutputDestination,
+	}, cfg.ID, p.ToolName)
 	if err != nil {
 		return fmt.Errorf("create profiling formatter: %w", err)
 	}
 	defer func() { returnErr = errors.Join(returnErr, cleanup()) }()
+
 	pipe := aggregator.NewPipeline(aggregator.PipelineConfig{
-		AggregationMode:     pctx.AggregationMode,
-		AggregationInterval: time.Duration(pctx.AggrInterval) * time.Second,
-		TracerID:            pctx.TracerID,
-		Aggregator:          aggr,
+		AggregationMode:     p.AggregationMode,
+		AggregationInterval: cfg.AggregationInterval,
+		TracerID:            cfg.ID,
+		Aggregator:          p.Aggregator,
 		Formatter:           formatter,
-		OnFailure:           pctx.Cancel,
+		OnFailure:           cancel,
 	})
 
-	if err := p.Impl.Start(pctx); err != nil {
+	if err := p.Impl.Start(collectionCtx); err != nil {
 		cleanupErr := pipe.Abort()
-		pctx.Cancel()
+		cancel()
 
 		return fmt.Errorf("start profiler: %w", errors.Join(err, cleanupErr))
 	}
 
-	pipe.Start(pctx.Ctx)
+	pipe.Start(collectionCtx)
 	log.Info("aggregator started")
 
 	loopDone := make(chan error, 1)
@@ -119,13 +108,13 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) (returnErr error) {
 		var deliveryErr error
 		// Collectors may deliver final records after the stop signal. The
 		// pipeline keeps draining until this loop exits, even on abort.
-		deliveryCtx := context.WithoutCancel(pctx.Ctx)
+		deliveryCtx := context.WithoutCancel(collectionCtx)
 		enqueue := func(data any) {
 			if deliveryErr == nil {
 				deliveryErr = pipe.Enqueue(deliveryCtx, data)
 			}
 		}
-		loopErr := p.Impl.ReadDataLoop(pctx.Ctx, enqueue)
+		loopErr := p.Impl.ReadDataLoop(collectionCtx, enqueue)
 		loopDone <- errors.Join(loopErr, deliveryErr)
 	}()
 	// Native integration tests use this exact message as the barrier before
@@ -134,9 +123,10 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) (returnErr error) {
 
 	var deadline <-chan time.Time
 
+	// ManagesDuration only suppresses this timer; it never suppresses errors.
 	_, managesDuration := p.Impl.(interface{ ManagesDuration() })
-	if pctx.Duration > 0 && !managesDuration {
-		t := time.NewTimer(time.Duration(pctx.Duration) * time.Second)
+	if cfg.Duration > 0 && !managesDuration {
+		t := time.NewTimer(cfg.Duration)
 		defer t.Stop()
 
 		deadline = t.C
@@ -150,30 +140,28 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) (returnErr error) {
 	select {
 	case <-deadline:
 		log.Info("profiler auto-stop by duration")
-	case <-pctx.Ctx.Done():
-		log.Infof("profiler stop by context: %v", pctx.Ctx.Err())
+	case <-collectionCtx.Done():
+		log.Infof("profiler stop by context: %v", collectionCtx.Err())
 	case loopErr = <-loopDone:
 		looped = true
 		log.Infof("profiler stop by loop exit: %v", loopErr)
 	}
 
-	// Observe cancellation before issuing our own normal-stop signal. Another
-	// ready select case must not hide an already canceled collection.
-	waitErr := pctx.Ctx.Err()
-
 	// Cancel first so ReadDataLoop exits before Stop closes BPF/file handles
 	// the loop may still be reading from.
-	pctx.Cancel()
+	cancel()
 
 	if !looped {
 		loopErr = <-loopDone
 	}
 	log.Info("data reading loop ended")
 
-	stopErr := p.Impl.Stop(pctx)
+	stopErr := p.Impl.Stop(collectionCtx)
 	// A failed collector must never turn its partial state into a successful
-	// final window. Previously exported windows remain unpublished.
-	if err := errors.Join(waitErr, loopErr, stopErr); err != nil {
+	// final window. Check the caller after cleanup to include cancellation
+	// during Stop; our normal-stop signal only cancels collectionCtx.
+	// Previously exported windows remain unpublished.
+	if err := errors.Join(ctx.Err(), loopErr, stopErr); err != nil {
 		return errors.Join(err, pipe.Abort())
 	}
 	return pipe.Stop()

@@ -19,48 +19,32 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	"github.com/ccfos/huatuo/internal/profiler/registry"
 	javaruntime "github.com/ccfos/huatuo/internal/profiler/runtime/java"
 	"github.com/ccfos/huatuo/internal/profiler/toolpath"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
-func init() {
-	impl := &cpuJavaProfiler{}
-	registry.Register(registry.ProfilerMeta{
-		Type:           profiling.TypeCPU,
-		Implementation: profiling.ImplementationJava,
-		Description:    "Java CPU profiler using async-profiler",
-		Impl:           impl,
-		NewAggregator:  impl.NewAggregator,
-	})
-}
-
 type cpuJavaProfiler struct {
+	config         Config
 	profileOutFile map[int]string
 	samplingOpt    *javaruntime.AsprofSamplingOption
 }
 
-func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	return newJavaAggregator(pctx)
-}
-
-func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if err := validateJavaFrequency(pctx.Freq); err != nil {
+func (p *cpuJavaProfiler) Start(ctx context.Context) error {
+	cfg := &p.config
+	if err := validateJavaFrequency(cfg.Freq); err != nil {
 		return err
 	}
-	if err := toolpath.Validate(profiling.LanguageJava, pctx.ToolDir); err != nil {
+	if err := toolpath.Validate(profiling.LanguageJava, cfg.ToolDir); err != nil {
 		return err
 	}
 
-	pids := pctx.PIDs
+	pids := cfg.PIDs
 	if len(pids) == 0 {
 		var err error
 		pids, err = javaruntime.ResolveJavaPids(
-			pctx.ExecPath,
-			pctx.ContainerID,
+			cfg.ExecPath,
+			cfg.ContainerID,
 		)
 		if err != nil {
 			return err
@@ -69,40 +53,40 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	if err := validateResolvedPIDs("Java", pids); err != nil {
 		return err
 	}
-	if len(pctx.PIDs) > 0 {
+	if len(cfg.PIDs) > 0 {
 		if err := validateProcessExecutables("Java", "java", pids); err != nil {
 			return err
 		}
-		if err := validateExpectedExecPath(pids, pctx.ExecPath); err != nil {
+		if err := validateExpectedExecPath(pids, cfg.ExecPath); err != nil {
 			return err
 		}
 	}
 
-	if err := validateMaxProfilerProcesses("Java", pids, pctx.MaxProfilerProcesses); err != nil {
+	if err := validateMaxProfilerProcesses("Java", pids, cfg.MaxProfilerProcesses); err != nil {
 		return err
 	}
 
 	for _, pid := range pids {
-		if err := javaruntime.PrepareJavaAgent(pid, pctx.ToolDir); err != nil {
+		if err := javaruntime.PrepareJavaAgent(pid, cfg.ToolDir); err != nil {
 			return fmt.Errorf("prepare Java agent for PID %d: %w", pid, err)
 		}
 	}
 
 	baseArgs := []string{
 		"--libpath", "/tmp/libasyncProfiler.so",
-		"-i", fmt.Sprintf("%dms", 1000/pctx.Freq),
+		"-i", fmt.Sprintf("%dms", 1000/cfg.Freq),
 		"-j", "256",
 	}
 
 	opt := &javaruntime.AsprofSamplingOption{
 		Pids:          pids,
-		ToolPath:      pctx.ToolDir,
+		ToolPath:      cfg.ToolDir,
 		BaseArgs:      baseArgs,
 		OutFilePrefix: "cpu",
-		AggrInterval:  javaAggregationInterval(pctx),
-		Duration:      time.Duration(pctx.Duration) * time.Second,
+		AggrInterval:  javaAggregationInterval(cfg),
+		Duration:      cfg.Duration,
 	}
-	profileOutFile, err := javaruntime.StartAsprofSampling(pctx.Ctx, opt)
+	profileOutFile, err := javaruntime.StartAsprofSampling(ctx, opt)
 	if err != nil {
 		return err
 	}
@@ -112,12 +96,12 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	return nil
 }
 
-func (p *cpuJavaProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	return javaruntime.StopJavaProfiler(pctx.Ctx, p.samplingOpt)
+func (p *cpuJavaProfiler) Stop(ctx context.Context) error {
+	return javaruntime.StopJavaProfiler(ctx, p.samplingOpt)
 }
 
-func javaAggregationInterval(pctx *pcontext.ProfilerContext) time.Duration {
-	interval := time.Duration(pctx.AggrInterval) * time.Second
+func javaAggregationInterval(cfg *Config) time.Duration {
+	interval := cfg.AggregationInterval
 	if interval <= 0 {
 		return 10 * time.Second
 	}

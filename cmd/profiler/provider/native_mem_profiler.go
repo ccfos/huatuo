@@ -25,9 +25,6 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	"github.com/ccfos/huatuo/internal/profiler/registry"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -52,6 +49,7 @@ type physicalUsageAttachConfig struct {
 }
 
 type memNativeProfiler struct {
+	config  Config
 	bpf     bpf.BPF
 	ringCtx *ringBufferContext
 
@@ -62,33 +60,7 @@ type memNativeProfiler struct {
 
 var hasKprobeFunction = bpf.HasKprobeFunction
 
-func init() {
-	impl := &memNativeProfiler{}
-	registry.Register(registry.ProfilerMeta{
-		Type:           profiling.TypeMemory,
-		Implementation: profiling.ImplementationNative,
-		Description:    "Native memory profiler using eBPF (virtual_alloc, physical_alloc, physical_usage modes)",
-		Impl:           impl,
-		NewAggregator:  impl.NewAggregator,
-	})
-}
-
-// NewAggregator stamps OneShotAgg before construction for retained mode —
-// alloc/free deltas must collapse in a single shot, not stream every interval.
-func (p *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	mode, err := resolveMemMode(pctx.Mode)
-	if err != nil {
-		return nil, err
-	}
-
-	if mode == profiling.ModePhysicalUsage {
-		pctx.AggregationMode = aggregator.AggregationModeOneShot
-	}
-
-	return newNativeAggregator(pctx)
-}
-
-func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
+func (p *memNativeProfiler) Stop(_ context.Context) error {
 	if p.ringCtx != nil {
 		p.ringCtx.Close()
 		p.ringCtx = nil
@@ -99,8 +71,9 @@ func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 	return err
 }
 
-func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if err := validateNativePIDs("memory", pctx.PIDs); err != nil {
+func (p *memNativeProfiler) Start(ctx context.Context) error {
+	cfg := &p.config
+	if err := validateNativePIDs("memory", cfg.PIDs); err != nil {
 		return err
 	}
 	if err := requireRoot(); err != nil {
@@ -109,13 +82,13 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	p.pageSize = int64(os.Getpagesize())
 
-	internalMode, err := resolveMemMode(pctx.Mode)
+	internalMode, err := resolveMemMode(cfg.Mode)
 	if err != nil {
 		return err
 	}
 
 	p.internalMode = internalMode
-	probability, err := resolveProbability(pctx.PhysicalMemoryProbability)
+	probability, err := resolveProbability(cfg.PhysicalMemoryProbability)
 	if err != nil {
 		return err
 	}
@@ -124,25 +97,25 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	log.Info("starting native memory profiler mode: ", p.internalMode)
 
-	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemMemory)
+	cssAddr, err := resolveContainerCgroupCss(ctx, cfg, subsystem.SubsystemMemory)
 	if err != nil {
 		return err
 	}
 
-	cfg, err := newNativeMemoryBPFLoadConfig(p.internalMode, pctx.PID(), cssAddr, pctx.ThreadGroup, p.probability)
+	loadConfig, err := newNativeMemoryBPFLoadConfig(p.internalMode, cfg.PID(), cssAddr, cfg.ThreadGroup, p.probability)
 	if err != nil {
 		return err
 	}
 
-	dbg := bpf.NewDbg(pctx.LogBpfDebug)
+	dbg := bpf.NewDbg(cfg.LogBpfDebug)
 
-	b, err := bpf.LoadBPF(cfg.ObjectFile, dbg.WithBpfDbg(cfg.Constants))
+	b, err := bpf.LoadBPF(loadConfig.ObjectFile, dbg.WithBpfDbg(loadConfig.Constants))
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
 
 	needsFallback := p.internalMode == profiling.ModePhysicalUsage
-	ringCtx, err := newRingBufferContext(b, pctx.Ctx, 4096*257, needsFallback)
+	ringCtx, err := newRingBufferContext(b, ctx, 4096*257, needsFallback)
 	if err != nil {
 		readerErr := fmt.Errorf("create native memory event readers: %w", err)
 		if closeErr := b.Close(); closeErr != nil {
@@ -154,7 +127,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return readerErr
 	}
 
-	if err := b.AttachWithOptions(cfg.AttachOpts); err != nil {
+	if err := b.AttachWithOptions(loadConfig.AttachOpts); err != nil {
 		ringCtx.Close()
 		if cerr := b.Close(); cerr != nil {
 			log.Warn("closing eBPF after attach failure", "error", cerr)

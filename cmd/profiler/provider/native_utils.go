@@ -28,7 +28,6 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/profiler/bpfmap"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 )
 
@@ -52,26 +51,26 @@ func taskCommString(comm [bpf.TaskCommLen]byte) string {
 // It first attempts to get CSS via huatuo-bamai API, and falls back to local BPF-based
 // method if the API is unavailable. The subsysName parameter specifies the cgroup subsystem
 // (e.g., "memory", "cpu").
-func resolveContainerCgroupCss(pctx *pcontext.ProfilerContext, subsysName string) (uint64, error) {
-	if pctx.ContainerID == "" {
+func resolveContainerCgroupCss(ctx context.Context, cfg *Config, subsysName string) (uint64, error) {
+	if cfg.ContainerID == "" {
 		return 0, nil
 	}
 
 	// Try API method first
 	cssAddr, err := resolveContainerCgroupCssByAPI(
-		pctx.Ctx,
-		pctx.ServerAddress,
-		pctx.ContainerID,
+		ctx,
+		cfg.ServerAddress,
+		cfg.ContainerID,
 		subsysName,
 	)
 	if err == nil {
 		return cssAddr, nil
 	}
 
-	log.Warn("API method failed, falling back to local method", "error", err, "container_id", pctx.ContainerID, "subsystem", subsysName)
+	log.Warn("API method failed, falling back to local method", "error", err, "container_id", cfg.ContainerID, "subsystem", subsysName)
 
 	// Fallback to local BPF-based method
-	cssAddr, err = resolveContainerCgroupCssByLocal(pctx.ContainerID, subsysName)
+	cssAddr, err = resolveContainerCgroupCssByLocal(cfg.ContainerID, subsysName)
 	if err != nil {
 		return 0, fmt.Errorf("both API and local methods failed for subsystem %s: %w", subsysName, err)
 	}

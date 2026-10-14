@@ -20,6 +20,8 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/profiler/aggregator"
 )
 
 func TestIRQTracingBPFConstants(t *testing.T) {
@@ -69,5 +71,15 @@ func TestSoftIRQCancellationDoesNotSubmitPartialBatch(t *testing.T) {
 	err := c.ReadDataLoop(ctx, func(any) { submitted = true })
 	if !errors.Is(err, context.Canceled) || submitted {
 		t.Fatalf("error=%v submitted=%v", err, submitted)
+	}
+}
+
+func TestNewIRQProfilerUsesOneShotAggregation(t *testing.T) {
+	task := newIRQProfiler(&collector{})
+	if task.AggregationMode != aggregator.AggregationModeOneShot {
+		t.Fatalf("aggregation mode=%v", task.AggregationMode)
+	}
+	if _, ok := task.Impl.(interface{ ManagesDuration() }); !ok {
+		t.Fatal("IRQ collector must own its duration")
 	}
 }

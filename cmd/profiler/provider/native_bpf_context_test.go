@@ -107,13 +107,13 @@ func TestNativeProfilerStopClosesReadersAndBPF(t *testing.T) {
 		{
 			name: "memory",
 			stop: func(ringCtx *ringBufferContext, obj *closeBPFStub) error {
-				return (&memNativeProfiler{bpf: obj, ringCtx: ringCtx}).Stop(nil)
+				return (&memNativeProfiler{bpf: obj, ringCtx: ringCtx}).Stop(t.Context())
 			},
 		},
 		{
 			name: "CPU",
 			stop: func(ringCtx *ringBufferContext, obj *closeBPFStub) error {
-				return (&cpuNativeProfiler{bpf: obj, ringCtx: ringCtx}).Stop(nil)
+				return (&cpuNativeProfiler{bpf: obj, ringCtx: ringCtx}).Stop(t.Context())
 			},
 		},
 	}

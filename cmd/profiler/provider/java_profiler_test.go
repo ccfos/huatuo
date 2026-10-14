@@ -15,12 +15,9 @@
 package provider
 
 import (
+	"context"
 	"testing"
 
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -35,7 +32,7 @@ func TestJavaParseOptionsKeepsProfilerNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.typ), func(t *testing.T) {
-			_, _, name, err := javaParseOptions(&pcontext.ProfilerContext{Type: tt.typ})
+			_, _, name, err := javaParseOptions(&Config{Type: tt.typ})
 			if err != nil {
 				t.Fatalf("javaParseOptions() error = %v", err)
 			}
@@ -46,35 +43,23 @@ func TestJavaParseOptionsKeepsProfilerNames(t *testing.T) {
 	}
 }
 
-func TestNewJavaAggregatorUsesOneShotAggregation(t *testing.T) {
-	t.Parallel()
-
-	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, OutputFormat: output.FormatCollapsed}
-	if _, err := newJavaAggregator(pctx); err != nil {
-		t.Fatalf("newJavaAggregator() error=%v", err)
-	}
-	if pctx.AggregationMode != aggregator.AggregationModeOneShot {
-		t.Fatal("newJavaAggregator() did not enable one-shot aggregation")
-	}
-}
-
 func TestNativeProfilersRejectMultiplePIDs(t *testing.T) {
 	t.Parallel()
 
-	pctx := &pcontext.ProfilerContext{PIDs: []int{123, 456}}
+	cfg := &Config{PIDs: []int{123, 456}}
 	tests := []struct {
 		name      string
-		start     func(*pcontext.ProfilerContext) error
+		start     func(context.Context) error
 		wantError string
 	}{
 		{
 			name:      "CPU",
-			start:     (&cpuNativeProfiler{}).Start,
+			start:     (&cpuNativeProfiler{config: *cfg}).Start,
 			wantError: "start native CPU profiler: multiple PIDs are not supported",
 		},
 		{
 			name:      "memory",
-			start:     (&memNativeProfiler{}).Start,
+			start:     (&memNativeProfiler{config: *cfg}).Start,
 			wantError: "start native memory profiler: multiple PIDs are not supported",
 		},
 	}
@@ -83,7 +68,7 @@ func TestNativeProfilersRejectMultiplePIDs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := tt.start(pctx)
+			err := tt.start(t.Context())
 			if err == nil || err.Error() != tt.wantError {
 				t.Fatalf("Start() error=%v, want %q", err, tt.wantError)
 			}
@@ -92,14 +77,14 @@ func TestNativeProfilersRejectMultiplePIDs(t *testing.T) {
 }
 
 func TestJavaAggregatorCapturesConfiguration(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, Freq: 100, ContainerID: "original-container"}
-	aggr, err := newJavaAggregator(pctx)
+	cfg := &Config{Type: profiling.TypeCPU, Freq: 100, ContainerID: "original-container"}
+	aggr, err := newJavaAggregator(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pctx.Type = "unsupported"
-	pctx.Freq = 1
-	pctx.ContainerID = "changed-container"
+	cfg.Type = "unsupported"
+	cfg.Freq = 1
+	cfg.ContainerID = "changed-container"
 	window, err := aggr.Snapshot(t.Context())
 	if err != nil {
 		t.Fatal(err)

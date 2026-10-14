@@ -27,21 +27,23 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
+
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-// fakeProfiler satisfies Profiler with no behavior. Registry tests exercise
-// the lookup tables, not sampling, so a stub is enough.
+// fakeProfiler completes without collecting samples.
 type fakeProfiler struct{}
 
-func (fakeProfiler) Start(*pcontext.ProfilerContext) error         { return nil }
+func (fakeProfiler) Start(context.Context) error                   { return nil }
 func (fakeProfiler) ReadDataLoop(context.Context, func(any)) error { return nil }
-func (fakeProfiler) Stop(*pcontext.ProfilerContext) error          { return nil }
+func (fakeProfiler) Stop(context.Context) error                    { return nil }
 
 // fakeAggregator satisfies aggregator.Aggregator with no behavior.
 type fakeAggregator struct{}
@@ -52,74 +54,13 @@ func (fakeAggregator) Snapshot(context.Context) (*types.ProfilingWindow, error) 
 }
 func (fakeAggregator) Reset() {}
 
-func resetRegistry(t *testing.T) {
-	t.Helper()
-
-	saved := profilerRegistry
-	profilerRegistry = map[profiling.Implementation]map[profiling.Type]ProfilerMeta{}
-
-	t.Cleanup(func() { profilerRegistry = saved })
-}
-
-func newMeta(implementation profiling.Implementation, typ profiling.Type) ProfilerMeta {
-	return ProfilerMeta{
+func newMeta(implementation profiling.Implementation, typ profiling.Type) *ProfilerMeta {
+	return &ProfilerMeta{
 		Type:           typ,
 		Implementation: implementation,
 		Description:    "fake",
 		Impl:           fakeProfiler{},
-		NewAggregator:  func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return fakeAggregator{}, nil },
-	}
-}
-
-func TestRegisterThenGet(t *testing.T) {
-	resetRegistry(t)
-	Register(newMeta(profiling.ImplementationNative, profiling.TypeCPU))
-
-	got, err := Get(profiling.ImplementationNative, profiling.TypeCPU)
-	if err != nil {
-		t.Fatalf(`Get("native", "cpu") error = %v, want nil`, err)
-	}
-
-	if got.Implementation != profiling.ImplementationNative || got.Type != profiling.TypeCPU {
-		t.Errorf(`Get("native", "cpu") = (%q, %q), want ("native", "cpu")`,
-			got.Implementation, got.Type)
-	}
-}
-
-func TestRegisterDuplicatePanics(t *testing.T) {
-	resetRegistry(t)
-	Register(newMeta(profiling.ImplementationNative, profiling.TypeCPU))
-
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal(`Register duplicate ("native", "cpu") did not panic`)
-		}
-
-		msg, ok := r.(string)
-		if !ok || !strings.Contains(msg, "duplicate") {
-			t.Errorf(`Register panic = %v, want message containing "duplicate"`, r)
-		}
-	}()
-
-	Register(newMeta(profiling.ImplementationNative, profiling.TypeCPU))
-}
-
-func TestGetFallbackMissesWhenTypeAbsent(t *testing.T) {
-	resetRegistry(t)
-	Register(newMeta(profiling.ImplementationNative, profiling.TypeCPU))
-
-	// The native implementation has no memory provider registered in this test.
-	if _, err := Get(profiling.ImplementationNative, profiling.TypeMemory); err == nil {
-		t.Fatal(`Get("native", "memory") error = nil, want non-nil`)
-	}
-}
-
-func TestGetUnknownImplementation(t *testing.T) {
-	resetRegistry(t)
-
-	if _, err := Get("unknown", profiling.TypeCPU); err == nil {
-		t.Fatal(`Get("unknown", "cpu") error = nil, want non-nil`)
+		Aggregator:     fakeAggregator{},
 	}
 }
 
@@ -129,13 +70,9 @@ func TestProfileLogsDataReadingLoopLifecycleOnce(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(os.Stdout) })
 
 	ctx, cancel := context.WithCancel(t.Context())
-	pctx := &pcontext.ProfilerContext{
-		Ctx:          ctx,
-		Cancel:       cancel,
-		OutputFormat: output.FormatJSON,
-		OutputPath:   t.TempDir(),
-	}
-	if err := Profile(pctx, newMeta(profiling.ImplementationNative, profiling.TypeCPU)); err != nil {
+	defer cancel()
+	cfg := RunConfig{Duration: 0, OutputFormat: output.FormatJSON, OutputDestination: t.TempDir()}
+	if err := Profile(ctx, cfg, newMeta(profiling.ImplementationNative, profiling.TypeCPU)); err != nil {
 		t.Fatalf("Profile() error = %v, want nil", err)
 	}
 
@@ -158,8 +95,8 @@ type failingProfiler struct {
 	startErr, stopErr error
 }
 
-func (p failingProfiler) Start(*pcontext.ProfilerContext) error { return p.startErr }
-func (p failingProfiler) Stop(*pcontext.ProfilerContext) error  { return p.stopErr }
+func (p failingProfiler) Start(context.Context) error { return p.startErr }
+func (p failingProfiler) Stop(context.Context) error  { return p.stopErr }
 
 type failingAggregator struct {
 	fakeAggregator
@@ -178,7 +115,7 @@ func TestProfilePropagatesFailures(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			pctx := &pcontext.ProfilerContext{Ctx: ctx, Cancel: cancel, AggregationMode: aggregator.AggregationModeOneShot, OutputPath: t.TempDir()}
+			cfg := RunConfig{Duration: 0, OutputFormat: output.FormatCollapsed, OutputDestination: t.TempDir()}
 			provider := failingProfiler{}
 			snapshots := 0
 			aggr := failingAggregator{snapshots: &snapshots}
@@ -190,7 +127,7 @@ func TestProfilePropagatesFailures(t *testing.T) {
 			case "export":
 				aggr.err = failure
 			}
-			err := Profile(pctx, ProfilerMeta{Impl: provider, NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return aggr, nil }})
+			err := Profile(ctx, cfg, &ProfilerMeta{Impl: provider, Aggregator: aggr})
 			if !errors.Is(err, failure) {
 				t.Fatalf("error=%v", err)
 			}
@@ -224,6 +161,7 @@ type loopProfiler struct {
 	fakeProfiler
 	read      func(context.Context, func(any)) error
 	stopErr   error
+	onStop    func()
 	loopEnded bool
 	stopped   bool
 }
@@ -233,9 +171,12 @@ func (p *loopProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) erro
 	return p.read(ctx, enqueue)
 }
 
-func (p *loopProfiler) Stop(*pcontext.ProfilerContext) error {
+func (p *loopProfiler) Stop(context.Context) error {
 	if !p.loopEnded {
 		return errors.New("collector stopped before read loop ended")
+	}
+	if p.onStop != nil {
+		p.onStop()
 	}
 	p.stopped = true
 	return p.stopErr
@@ -245,25 +186,27 @@ func TestProfileCompletionRequiresSuccessfulCollection(t *testing.T) {
 	failure := errors.New("read samples failed")
 	stopFailure := errors.New("stop collector failed")
 	for _, tc := range []struct {
-		name            string
-		duration        int
-		finalBatch      bool
-		cancelBeforeRun bool
-		loopErr         error
-		stopErr         error
-		wantErr         error
+		name             string
+		duration         time.Duration
+		finalBatch       bool
+		cancelBeforeRun  bool
+		cancelDuringStop bool
+		loopErr          error
+		stopErr          error
+		wantErr          error
 	}{
 		{name: "natural completion"},
-		{name: "normal duration", duration: 1},
-		{name: "final batch after normal stop", duration: 1, finalBatch: true},
+		{name: "normal duration", duration: time.Millisecond},
+		{name: "final batch after normal stop", duration: time.Millisecond, finalBatch: true},
 		{name: "external cancellation with clean loop", cancelBeforeRun: true, wantErr: context.Canceled},
 		{name: "external cancellation with final batch", cancelBeforeRun: true, finalBatch: true, wantErr: context.Canceled},
 		{name: "read failure", loopErr: failure, wantErr: failure},
 		{name: "loop cancellation", loopErr: context.Canceled, wantErr: context.Canceled},
 		{name: "joined cancellation and failure", loopErr: errors.Join(context.Canceled, failure), wantErr: failure},
 		{name: "wrapped joined failure", loopErr: fmt.Errorf("read loop: %w", errors.Join(context.Canceled, failure)), wantErr: failure},
-		{name: "failure at duration", duration: 1, loopErr: errors.Join(context.Canceled, failure), wantErr: failure},
+		{name: "failure at duration", duration: time.Millisecond, loopErr: errors.Join(context.Canceled, failure), wantErr: failure},
 		{name: "stop failure", stopErr: stopFailure, wantErr: stopFailure},
+		{name: "external cancellation during cleanup", cancelDuringStop: true, wantErr: context.Canceled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -286,25 +229,27 @@ func TestProfileCompletionRequiresSuccessfulCollection(t *testing.T) {
 				}
 				return tc.loopErr
 			}}
-			pctx := &pcontext.ProfilerContext{
-				Ctx: ctx, Cancel: cancel, Duration: tc.duration,
-				OutputFormat: format, OutputPath: "-",
+			if tc.cancelDuringStop {
+				collector.onStop = cancel
 			}
+			cfg := RunConfig{Duration: tc.duration, OutputFormat: format, OutputDestination: "-"}
+			mode := aggregator.AggregationModeStreaming
 			if tc.finalBatch {
-				pctx.AggregationMode = aggregator.AggregationModeOneShot
+				mode = aggregator.AggregationModeOneShot
 			}
 			aggr := &completionAggregator{}
-			err := Profile(pctx, ProfilerMeta{
-				Impl: collector,
-				NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-					return aggr, nil
-				},
+			err := Profile(ctx, cfg, &ProfilerMeta{
+				Impl: collector, AggregationMode: mode,
+				Aggregator: aggr,
 			})
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Profile() error = %v, want %v", err, tc.wantErr)
 			}
 			if tc.loopErr != nil && errors.Is(tc.loopErr, context.Canceled) && !errors.Is(err, context.Canceled) {
 				t.Fatalf("Profile() lost cancellation from loop error: %v", err)
+			}
+			if !tc.cancelBeforeRun && !tc.cancelDuringStop && ctx.Err() != nil {
+				t.Fatalf("runner canceled caller context: %v", ctx.Err())
 			}
 			if !collector.stopped {
 				t.Fatal("collector was not stopped after its read loop ended")
@@ -327,10 +272,10 @@ func TestProfileRejectsInvalidFormatterBeforeCollection(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	startErr := errors.New("collector must not start")
-	pctx := &pcontext.ProfilerContext{Ctx: ctx, Cancel: cancel, OutputFormat: output.FormatRemoteStore}
-	err := Profile(pctx, ProfilerMeta{
-		Impl:          failingProfiler{startErr: startErr},
-		NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return fakeAggregator{}, nil },
+	cfg := RunConfig{Duration: 0, OutputFormat: output.FormatRemoteStore, OutputDestination: ""}
+	err := Profile(ctx, cfg, &ProfilerMeta{
+		Impl:       failingProfiler{startErr: startErr},
+		Aggregator: fakeAggregator{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "--output-path must not be empty") {
 		t.Fatalf("Profile() error = %v, want invalid socket destination", err)
@@ -359,11 +304,9 @@ func TestProfileClosesRemoteOutputOnCollectionFailure(t *testing.T) {
 			if phase == "stop" {
 				collector = failingProfiler{stopErr: failure}
 			}
-			pctx := &pcontext.ProfilerContext{
-				Ctx: ctx, Cancel: cancel, OutputFormat: output.FormatRemoteStore, OutputPath: path,
-				ToolName: "profiler", Version: "1", TracerID: "task-1",
-			}
-			err = Profile(pctx, ProfilerMeta{Impl: collector, NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return fakeAggregator{}, nil }})
+			cfg := RunConfig{Duration: 0, OutputFormat: output.FormatRemoteStore, OutputDestination: path}
+			cfg.ID = "task-1"
+			err = Profile(ctx, cfg, &ProfilerMeta{Impl: collector, Aggregator: fakeAggregator{}})
 			if !errors.Is(err, failure) {
 				t.Fatalf("Profile error = %v, want %v", err, failure)
 			}
@@ -377,6 +320,87 @@ func TestProfileClosesRemoteOutputOnCollectionFailure(t *testing.T) {
 			}
 			if _, err := io.Copy(io.Discard, conn); err != nil {
 				t.Fatalf("connection left open after %s failure: %v", phase, err)
+			}
+		})
+	}
+}
+
+type selfTimedProfiler struct{ loopProfiler }
+
+func (*selfTimedProfiler) ManagesDuration() {}
+
+func TestProfileSelfTimedCollectorPreservesErrors(t *testing.T) {
+	failure := errors.New("incomplete self-timed collection")
+	for _, tc := range []struct {
+		name      string
+		readError error
+	}{
+		{name: "complete"}, {name: "failed", readError: errors.Join(context.Canceled, failure)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			renderer := &completionRenderer{}
+			const format output.OutputFormat = "self-timed-test"
+			output.RegisterRenderer(format, func() output.Renderer { return renderer })
+			collector := &selfTimedProfiler{loopProfiler: loopProfiler{read: func(ctx context.Context, _ func(any)) error {
+				// A self-timed collector must outlive the runner's configured duration.
+				timer := time.NewTimer(10 * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+					return errors.New("runner stopped self-timed collector")
+				case <-timer.C:
+				}
+				return tc.readError
+			}}}
+			err := Profile(t.Context(), RunConfig{Duration: time.Nanosecond, OutputFormat: format, OutputDestination: "-"}, &ProfilerMeta{Impl: collector, AggregationMode: aggregator.AggregationModeOneShot, Aggregator: fakeAggregator{}})
+			if tc.readError == nil {
+				if err != nil || renderer.writes != 1 {
+					t.Fatalf("error=%v completions=%d", err, renderer.writes)
+				}
+			} else if !errors.Is(err, failure) || !errors.Is(err, context.Canceled) || renderer.writes != 0 {
+				t.Fatalf("error=%v completions=%d", err, renderer.writes)
+			}
+		})
+	}
+}
+
+func TestProfileRemoteTaskIdentity(t *testing.T) {
+	for _, taskID := range []string{"scheduled-task", ""} {
+		t.Run("task="+taskID, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "profile.sock")
+			server, err := toolstream.NewServer(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			received := make(chan *toolstream.Request[types.ProfilingWindow], 1)
+			toolstream.Register(server, profiling.StoreServiceName, func(_ context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
+				if request.Commit {
+					received <- request
+				}
+				return nil
+			})
+			if err := server.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := server.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			task := newMeta(profiling.ImplementationNative, profiling.TypeCPU)
+			task.ToolName = "profiler"
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			if err := Profile(ctx, RunConfig{ID: taskID, OutputFormat: output.FormatRemoteStore, OutputDestination: path}, task); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case request := <-received:
+				if request.TaskID == "" || (taskID != "" && request.TaskID != taskID) || request.ToolName != "profiler" {
+					t.Fatalf("commit identity: %+v", request)
+				}
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
 			}
 		})
 	}

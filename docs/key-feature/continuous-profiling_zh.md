@@ -736,11 +736,15 @@ profiler 与 irqtracing 共用采集执行器、Pipeline 和 `types.ProfilingWin
 
 ### 配置和聚合周期
 
-执行器在启动采集前创建 Aggregator 和 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 不依赖 `ProfilerContext`。文件创建、命名、写入和关闭由 `internal/profiler/output` 负责。
+入口装配采集器和 Aggregator，执行器在启动采集前创建 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 通过配置接收运行参数，通过方法参数接收标准 `context.Context`。文件创建、命名、写入和关闭由 `internal/profiler/output` 负责。
 
 `FormatterConfig` 仅包含 `Format` 和 `Destination`。已有路径按实际文件类型识别：本地 Formatter 接受普通文件和目录，RemoteStore 要求 Unix socket。不存在的本地路径默认表示新文件，以 `/` 结尾则创建目录。`stdout`（也支持 `-` 及标准输出文件描述符别名）写入标准输出，Formatter 不关闭该描述符。危险使用提醒：终端、重定向或日志捕获可能暴露采集数据。已有文件在实际写出时覆盖，初始化不截断文件；空任务不创建结果文件。目录输出保持自动生成的唯一文件名。初始化检查路径，但不能保证之后的写入一定成功。
 
-任务身份（`ToolName`、`TaskID`、`Version`）独立传入。RemoteStore 内部初始化 toolstream，执行器在所有退出路径调用返回的清理函数。`Complete` 完成输出并等待远端提交 ACK；清理函数只释放资源，采集失败时也会执行。JSON 在第一个窗口到达时打开文件，在完成或清理时关闭。
+任务 ID 来自 `registry.RunConfig.ID`，工具来源来自 `ProfilerMeta.ToolName`。RemoteStore 内部固定服务名 `profiling_store_service` 和版本 `1`，初始化 toolstream，执行器在所有退出路径调用返回的清理函数。`Complete` 完成输出并等待远端提交 ACK；清理函数只释放资源，采集失败时也会执行。JSON 在第一个窗口到达时打开文件，在完成或清理时关闭。
+
+CLI 解析和信号监听由 `cmd/profiler` 管理。`provider.New` 为每次任务创建独立采集器，复制并绑定业务配置；`registry.RunConfig` 包含任务 ID，以及 `time.Duration` 类型的采集时长和聚合周期。执行器仅在任务 ID 为空时生成 ID，聚合与远程提交使用同一个 ID。输出格式和目标通过同一个 `RunConfig` 的 `OutputFormat`、`OutputDestination` 传入，由执行器构造 output 层的 `FormatterConfig`；output 层不依赖 `RunConfig`。CLI 时长参数仍以整数秒表示，并在转换前检查范围。
+
+聚合策略在任务构造时确定，聚合器构造不修改配置。native CPU 和 memory alloc 使用 Streaming；native physical_usage、Java、Python 和 IRQ 使用 OneShot。Java runtime 仍按配置周期读取结果，这与 Pipeline 的单次导出策略独立。Python 和 IRQ 的 `ManagesDuration` 仅关闭执行器时长定时器，不豁免任何错误。
 
 聚合模式定义在 `internal/profiler/aggregator/config.go`：
 
@@ -759,7 +763,7 @@ Formatter 接口为 `Add(ctx, window)` 和 `Complete(ctx)`。本地 Renderer 通
 
 Pipeline 用 `runErr` 保存运行错误，通过 `OnFailure func()` 通知执行器停止采集，并通过 `Stop()` 返回错误。快照或输出失败后停止导出，不再调用 Complete。执行器保留读循环和停止操作的全部错误；任一采集错误或外部取消都会 Abort，阻止完成提交。
 
-执行器在发出自身停止信号前检查上下文，避免已发生的外部取消被同时就绪的自然结束或时长到期掩盖。此后进入正常收尾，共享上下文不区分之后发生的取消来源。读循环收到停止信号后仍可交付最终批次，Pipeline 在读循环退出前持续消费；交付不受采集上下文取消影响。
+执行器派生私有采集上下文；正常结束只取消采集，不取消调用方。读循环退出并完成 Stop 后、进入最终输出流程前，再检查调用方上下文，因此收尾期间的外部取消仍会 Abort。最终输出流程开始后的取消不保证回滚已经提交的结果。读循环收到停止信号后仍可交付最终批次，Pipeline 在读循环退出前持续消费；交付不受采集上下文取消影响。
 
 ### 存储和可见性
 

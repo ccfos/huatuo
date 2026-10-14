@@ -22,10 +22,12 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
+
 	"github.com/ccfos/huatuo/pkg/profiling"
 
 	"github.com/ccfos/huatuo/internal/profiler"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
 
 	"github.com/stretchr/testify/require"
@@ -45,8 +47,8 @@ func TestNormalizePythonOutput(t *testing.T) {
 }
 
 func TestPythonAggregatorKeepsProcessRoots(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{Ctx: t.Context(), Freq: 100, OutputFormat: output.FormatCollapsed}
-	aggr, err := newPythonCPUAggregator(pctx)
+	cfg := &Config{Freq: 100}
+	aggr, err := newPythonCPUAggregator(cfg)
 	require.NoError(t, err)
 
 	aggr.Aggregate(profiler.SampleOutput{PID: 100, Output: "hot (a.py:1) 3\n"})
@@ -101,15 +103,13 @@ RAW
 		t.Run(string(format), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			pctx := &pcontext.ProfilerContext{Ctx: ctx, Freq: 100, OutputFormat: format}
-			aggr, err := newPythonCPUAggregator(pctx)
+			cfg := &Config{Freq: 100}
+			aggr, err := newPythonCPUAggregator(cfg)
 			require.NoError(t, err)
 
 			p := &pythonCPUProfiler{
-				duration: 5,
-				freq:     100,
-				toolPath: toolDir,
-				pids:     []int{100},
+				config: Config{Duration: 5 * time.Second, Freq: 100, ToolDir: toolDir},
+				pids:   []int{100},
 			}
 			require.NoError(t, p.ReadDataLoop(ctx, aggr.Aggregate))
 
@@ -146,14 +146,14 @@ RAW
 }
 
 func TestPythonAggregatorCapturesConfiguration(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, Freq: 100, ContainerID: "original-container"}
-	aggr, err := newPythonCPUAggregator(pctx)
+	cfg := &Config{Type: profiling.TypeCPU, Freq: 100, ContainerID: "original-container"}
+	aggr, err := newPythonCPUAggregator(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pctx.Type = "unsupported"
-	pctx.Freq = 1
-	pctx.ContainerID = "changed-container"
+	cfg.Type = "unsupported"
+	cfg.Freq = 1
+	cfg.ContainerID = "changed-container"
 	window, err := aggr.Snapshot(t.Context())
 	if err != nil {
 		t.Fatal(err)

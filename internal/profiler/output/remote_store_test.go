@@ -71,7 +71,7 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 		}
 	})
 
-	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: sockPath}, output.TaskIdentity{TaskID: "task-1", ToolName: "irqtracing"})
+	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: sockPath}, "task-1", "irqtracing")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestRemoteStoreFormatterCleanupDoesNotCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	_, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path}, output.TaskIdentity{TaskID: "task", ToolName: "profiler"})
+	_, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path}, "task", "profiler")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestRemoteStoreFormatterRejectsNonSocket(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, _, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path}, output.TaskIdentity{}); err == nil {
+			if _, _, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path}, "", ""); err == nil {
 				t.Fatal("accepted non-socket remote destination")
 			}
 		})

@@ -22,8 +22,6 @@ import (
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/profiler"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -44,7 +42,7 @@ func TestNativeAggregatorAggregatesLockTime(t *testing.T) {
 	aggregator.Aggregate(record)
 
 	requireSingleLockRecord(t, aggregator, 20, 4)
-	_, sampleType, err := profileTypeOptions(&pcontext.ProfilerContext{Type: profiling.TypeLock})
+	_, sampleType, err := profileTypeOptions(&Config{Type: profiling.TypeLock})
 	if err != nil {
 		t.Fatalf("profileTypeOptions() error = %v", err)
 	}
@@ -157,9 +155,8 @@ func TestNativeAggregatorSeparatesStackSampleIdentity(t *testing.T) {
 }
 
 func TestNativeAggregatorSnapshotResolvesStackTraceIDs(t *testing.T) {
-	aggregator, err := newNativeAggregator(&pcontext.ProfilerContext{
-		Type:         profiling.TypeMemory,
-		OutputFormat: output.FormatRemoteStore,
+	aggregator, err := newNativeAggregator(&Config{
+		Type: profiling.TypeMemory,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -199,10 +196,9 @@ func TestNativeAggregatorSnapshotResolvesStackTraceIDs(t *testing.T) {
 }
 
 func TestNativeAggregatorPhysicalMemoryFiltersAfterAggregation(t *testing.T) {
-	aggregator, err := newNativeAggregator(&pcontext.ProfilerContext{
-		Type:         profiling.TypeMemory,
-		Mode:         profiling.ModePhysicalUsage,
-		OutputFormat: output.FormatRemoteStore,
+	aggregator, err := newNativeAggregator(&Config{
+		Type: profiling.TypeMemory,
+		Mode: profiling.ModePhysicalUsage,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -420,14 +416,14 @@ func requireSingleLockRecord(t *testing.T, aggregator *nativeAggregator, waitTim
 }
 
 func TestNativeAggregatorCapturesConfiguration(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, Freq: 100, ContainerID: "original-container"}
-	aggr, err := newNativeAggregator(pctx)
+	cfg := &Config{Type: profiling.TypeCPU, Freq: 100, ContainerID: "original-container"}
+	aggr, err := newNativeAggregator(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pctx.Type = "unsupported"
-	pctx.Freq = 1
-	pctx.ContainerID = "changed-container"
+	cfg.Type = "unsupported"
+	cfg.Freq = 1
+	cfg.ContainerID = "changed-container"
 	window, err := aggr.Snapshot(t.Context())
 	if err != nil {
 		t.Fatal(err)

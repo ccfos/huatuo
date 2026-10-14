@@ -21,17 +21,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/profiler"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestResolvePythonPidsExplicitTargets(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{PIDs: []int{123, 456}}
+	cfg := &Config{PIDs: []int{123, 456}}
 
-	pids, err := resolvePythonPids(pctx)
+	pids, err := resolvePythonPids(cfg)
 	require.NoError(t, err)
 	require.Equal(t, []int{123, 456}, pids)
 }
@@ -91,10 +91,8 @@ func TestPythonCPUProfilerReadDataLoopUsesOnlyMemfdSamples(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			toolDir := writeFakePySpy(t, tt.sample, tt.exit)
 			p := &pythonCPUProfiler{
-				duration: 1,
-				freq:     99,
-				toolPath: toolDir,
-				pids:     []int{123, 456},
+				config: Config{Duration: 1 * time.Second, Freq: 99, ToolDir: toolDir},
+				pids:   []int{123, 456},
 			}
 			var samples []profiler.SampleOutput
 			err := p.ReadDataLoop(t.Context(), func(sample any) {
@@ -120,7 +118,7 @@ func TestPythonCPUProfilerReadDataLoopUsesOnlyMemfdSamples(t *testing.T) {
 }
 
 func TestRunPySpyPreservesExitError(t *testing.T) {
-	results := runPySpy(t.Context(), []int{123}, 1, 99, writeFakePySpy(t, "partial 3\n", 7))
+	results := runPySpy(t.Context(), []int{123}, time.Second, 99, writeFakePySpy(t, "partial 3\n", 7))
 	require.Len(t, results, 1)
 	var exitErr *exec.ExitError
 	if !errors.As(results[0].Err, &exitErr) || exitErr.ExitCode() != 7 {
@@ -160,10 +158,25 @@ exit %d
 }
 
 func TestValidatePythonAggregationWindow(t *testing.T) {
-	require.NoError(t, validatePythonAggregationWindow(10, 10))
+	require.NoError(t, validatePythonAggregationWindow(10*time.Second, 10*time.Second))
 	require.EqualError(
 		t,
-		validatePythonAggregationWindow(30, 10),
+		validatePythonAggregationWindow(30*time.Second, 10*time.Second),
 		"Python CPU profiler does not support continuous profiling: aggregation interval (10s) must equal duration (30s)",
 	)
+}
+
+func TestPythonCPUProfilerRejectsFractionalDuration(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		duration time.Duration
+	}{
+		{name: "zero"}, {name: "negative", duration: -time.Second}, {name: "fractional", duration: 1500 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &pythonCPUProfiler{config: Config{Duration: tc.duration, AggregationInterval: tc.duration, ToolDir: writeFakePySpy(t, "", 0)}}
+			err := p.Start(t.Context())
+			require.ErrorContains(t, err, "duration must be a positive whole number of seconds")
+		})
+	}
 }

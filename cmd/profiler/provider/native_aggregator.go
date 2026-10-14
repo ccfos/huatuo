@@ -29,7 +29,6 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -67,15 +66,15 @@ type stackSampleKey struct {
 	KernelTraceID stackTraceID
 }
 
-func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, error) {
-	opt, sampleType, err := profileTypeOptions(pctx)
+func newNativeAggregator(cfg *Config) (*nativeAggregator, error) {
+	opt, sampleType, err := profileTypeOptions(cfg)
 	if err != nil {
 		return nil, err
 	}
 	return &nativeAggregator{
-		profileType:  pctx.Type,
-		mode:         pctx.Mode,
-		containerID:  pctx.ContainerID,
+		profileType:  cfg.Type,
+		mode:         cfg.Mode,
+		containerID:  cfg.ContainerID,
 		parseOption:  opt,
 		sampleType:   sampleType,
 		stackSamples: make(map[stackSampleKey]int64),
@@ -259,18 +258,18 @@ func lockPrefixFrames(rec *lockSample) ([]string, uint64) {
 	}, rec.WaitNanoseconds
 }
 
-func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, error) {
-	switch pctx.Type {
+func profileTypeOptions(cfg *Config) (*profiler.ParseOption, string, error) {
+	switch cfg.Type {
 	case profiling.TypeCPU:
-		if pctx.Mode == profiling.ModeOffCPU {
+		if cfg.Mode == profiling.ModeOffCPU {
 			return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeOffCpuSample, nil
 		}
-		return &profiler.ParseOption{SampleRate: int64(pctx.Freq)}, profiler.ProfileTypeCpuSample, nil
+		return &profiler.ParseOption{SampleRate: int64(cfg.Freq)}, profiler.ProfileTypeCpuSample, nil
 	case profiling.TypeMemory:
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil
 	case profiling.TypeLock:
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeLockTimeSample, nil
 	default:
-		return nil, "", fmt.Errorf("unsupported profile type %q", pctx.Type)
+		return nil, "", fmt.Errorf("unsupported profile type %q", cfg.Type)
 	}
 }

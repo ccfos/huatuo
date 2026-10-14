@@ -24,7 +24,6 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -42,16 +41,14 @@ type javaAggregator struct {
 	sampleOutput []profiler.SampleOutput
 }
 
-func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) {
-	pctx.AggregationMode = aggregator.AggregationModeOneShot
-
-	opt, sampleType, name, err := javaParseOptions(pctx)
+func newJavaAggregator(cfg *Config) (*javaAggregator, error) {
+	opt, sampleType, name, err := javaParseOptions(cfg)
 	if err != nil {
 		return nil, err
 	}
 	return &javaAggregator{
-		containerID:  pctx.ContainerID,
-		pid:          pctx.PID(),
+		containerID:  cfg.ContainerID,
+		pid:          cfg.PID(),
 		parseOption:  opt,
 		sampleType:   sampleType,
 		profilerName: name,
@@ -117,14 +114,14 @@ func (a *javaAggregator) snapshotPprof(ctx context.Context) (*types.ProfilingWin
 	return profiler.NewWindow(pprofData, a.containerID)
 }
 
-func javaParseOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, string, error) {
-	opt, sampleType, err := profileTypeOptions(pctx)
+func javaParseOptions(cfg *Config) (*profiler.ParseOption, string, string, error) {
+	opt, sampleType, err := profileTypeOptions(cfg)
 	if err != nil {
 		return nil, "", "", err
 	}
 
-	prName := "java-" + string(pctx.Type)
-	if pctx.Type == profiling.TypeMemory {
+	prName := "java-" + string(cfg.Type)
+	if cfg.Type == profiling.TypeMemory {
 		prName = "java-mem"
 	}
 	return opt, sampleType, prName, nil

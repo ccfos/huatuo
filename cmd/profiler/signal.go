@@ -1,4 +1,4 @@
-// Copyright 2025, 2026 The HuaTuo Authors
+// Copyright 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,42 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package signal
+package main
 
 import (
+	"bytes"
 	"context"
-	"errors"
+	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 )
 
-// setupSignalHandler sets up system signal monitoring.
-func SetupSignals() (chan os.Signal, error) {
+func newSignalContext(parent context.Context, logBuf *bytes.Buffer) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
-	return signals, nil
-}
-
-// StopSignals unregisters a channel created by SetupSignals.
-func StopSignals(signals chan os.Signal) {
-	signal.Stop(signals)
-}
-
-// Once Caught signal, the main process will exit
-func ListenSignalAndCancel(
-	ctx context.Context,
-	sigCh <-chan os.Signal,
-	cancel context.CancelFunc,
-) (os.Signal, error) {
-	select {
-	case <-ctx.Done():
-		return nil, nil
-	case sig, ok := <-sigCh:
-		if !ok {
-			return nil, errors.New("signal channel closed unexpectedly")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case <-ctx.Done():
+		case sig := <-signals:
+			cancel()
+			fmt.Fprintf(logBuf, "[signal] caught signal: %s, canceling context\n", sig)
 		}
-		cancel()
-		return sig, nil
+	}()
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			signal.Stop(signals)
+			cancel()
+			// The caller may read logBuf as soon as cleanup returns.
+			<-done
+		})
 	}
+	return ctx, cleanup
 }

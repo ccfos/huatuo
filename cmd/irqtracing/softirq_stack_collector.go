@@ -22,7 +22,6 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/registry"
 )
 
@@ -41,20 +40,19 @@ type collector struct {
 }
 
 // newIRQProfiler binds one IRQ collection to the common runner.
-func newIRQProfiler(c *collector) registry.ProfilerMeta {
-	return registry.ProfilerMeta{
-		Description: "softirq profiling",
-		Impl:        c,
-		NewAggregator: func(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-			pctx.AggregationMode = aggregator.AggregationModeOneShot
-			return &irqAggregator{containerID: pctx.ContainerID}, nil
-		},
+func newIRQProfiler(c *collector) *registry.ProfilerMeta {
+	return &registry.ProfilerMeta{
+		ToolName:        irqTracingToolName,
+		Description:     "softirq profiling",
+		Impl:            c,
+		AggregationMode: aggregator.AggregationModeOneShot,
+		Aggregator:      &irqAggregator{},
 	}
 }
 
 func (*collector) ManagesDuration() {}
 
-func (c *collector) Start(_ *pcontext.ProfilerContext) error {
+func (c *collector) Start(_ context.Context) error {
 	data, err := os.ReadFile(c.bpfPath)
 	if err != nil {
 		return fmt.Errorf("read IRQ BPF object: %w", err)
@@ -99,7 +97,7 @@ func (c *collector) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
 	return nil
 }
 
-func (c *collector) Stop(_ *pcontext.ProfilerContext) error {
+func (c *collector) Stop(_ context.Context) error {
 	if c.bpfObj != nil {
 		c.bpfObj.Close()
 		c.bpfObj = nil

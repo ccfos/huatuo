@@ -76,7 +76,7 @@ func TestFormatterFailurePreventsCompletion(t *testing.T) {
 
 func createFormatter(t *testing.T, format output.OutputFormat, destination string) output.Formatter {
 	t.Helper()
-	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: format, Destination: destination}, output.TaskIdentity{})
+	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: format, Destination: destination}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestFormatterStandardOutputIsNotClosed(t *testing.T) {
 	previous := os.Stdout
 	os.Stdout = file
 	defer func() { os.Stdout = previous }()
-	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatJSON, Destination: "stdout"}, output.TaskIdentity{})
+	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatJSON, Destination: "stdout"}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

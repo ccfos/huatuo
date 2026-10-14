@@ -25,7 +25,6 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -39,13 +38,11 @@ type pythonAggregator struct {
 	sampleRate   int64
 }
 
-func newPythonCPUAggregator(pctx *pcontext.ProfilerContext) (*pythonAggregator, error) {
-	pctx.AggregationMode = aggregator.AggregationModeOneShot
-
+func newPythonCPUAggregator(cfg *Config) (*pythonAggregator, error) {
 	return &pythonAggregator{
-		containerID: pctx.ContainerID,
-		pid:         pctx.PID(),
-		sampleRate:  int64(pctx.Freq),
+		containerID: cfg.ContainerID,
+		pid:         cfg.PID(),
+		sampleRate:  int64(cfg.Freq),
 	}, nil
 }
 

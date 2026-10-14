@@ -24,7 +24,6 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 
@@ -253,7 +252,7 @@ func TestNativeAggregatorSeparatesOffCPUCategories(t *testing.T) {
 }
 
 func TestNativeOffCPUBPFConstants(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{
+	cfg := &Config{
 		PIDs:                []int{123},
 		CPUIDs:              []int{2, 4},
 		ThreadGroup:         true,
@@ -261,7 +260,7 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 		OffCPUMinDurationUS: 250,
 		OffCPUStatsEnabled:  true,
 	}
-	constants := newNativeOffCPUBPFConstants(pctx, 456)
+	constants := newNativeOffCPUBPFConstants(cfg, 456)
 	require.Equal(t, uint32(123), constants["profiler_filter_pid"])
 	require.Equal(t, uint64(456), constants["profiler_filter_css"])
 	require.Equal(t, true, constants["profiler_filter_threads"])
@@ -272,7 +271,7 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 }
 
 func TestNativeOffCPUBPFConstantsDisablesEmptyCPUSet(t *testing.T) {
-	constants := newNativeOffCPUBPFConstants(&pcontext.ProfilerContext{}, 0)
+	constants := newNativeOffCPUBPFConstants(&Config{}, 0)
 	require.Equal(t, uint32(0), constants["profiler_offcpu_cpu_set_enabled"])
 	require.Equal(t, uint32(0), constants["profiler_offcpu_stats_enabled"])
 }
@@ -360,8 +359,8 @@ func TestNativeCPUOffCPUAttachOptions(t *testing.T) {
 }
 
 func TestOffCPUProfileTypeUsesNanosecondsWithoutSampleRate(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, Mode: profiling.ModeOffCPU, Freq: 99}
-	opt, profileType, err := profileTypeOptions(pctx)
+	cfg := &Config{Type: profiling.TypeCPU, Mode: profiling.ModeOffCPU, Freq: 99}
+	opt, profileType, err := profileTypeOptions(cfg)
 	require.NoError(t, err)
 	require.Zero(t, opt.SampleRate)
 	require.Equal(t, "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds", profileType)

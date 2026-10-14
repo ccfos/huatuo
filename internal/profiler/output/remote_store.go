@@ -36,7 +36,7 @@ func (f *remoteStoreFormatter) Complete(ctx context.Context) error {
 	return f.toolstreamClient.Send(ctx, nil, toolstream.SendOptions{End: true, Commit: true})
 }
 
-func newRemoteStoreFormatter(path string, task TaskIdentity) (*remoteStoreFormatter, error) {
+func newRemoteStoreFormatter(path, taskID, toolName string) (*remoteStoreFormatter, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("inspect remote profiling destination %q: %w", path, err)
@@ -45,7 +45,7 @@ func newRemoteStoreFormatter(path string, task TaskIdentity) (*remoteStoreFormat
 		return nil, fmt.Errorf("remote profiling destination %q must be a Unix socket", path)
 	}
 	client, err := toolstream.NewClient(&toolstream.ClientOptions{
-		SockPath: path, ServiceName: profiling.StoreServiceName, ToolName: task.ToolName, TaskID: task.TaskID, Version: "1",
+		SockPath: path, ServiceName: profiling.StoreServiceName, ToolName: toolName, TaskID: taskID, Version: "1",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connect remote profiling destination %q: %w", path, err)

@@ -745,12 +745,16 @@ Profiler and irqtracing share the collection runner, Pipeline and `types.Profili
 
 ### Configuration and aggregation intervals
 
-The runner creates the Aggregator and Formatter before starting collection, constructs Pipeline with `aggregator.PipelineConfig`, and passes the runtime context through `Start(ctx)`. Invalid output configuration fails before collection starts. Each aggregator captures its business settings at construction and implements `Aggregate`, `Snapshot(context.Context)` and `Reset`. Pipeline does not depend on `ProfilerContext`. File creation, naming, writing, and closing belong to `internal/profiler/output`.
+The entry point assembles the collector and Aggregator. Before starting collection, the runner creates the Formatter, constructs Pipeline with `aggregator.PipelineConfig`, and passes the runtime context through `Start(ctx)`. Invalid output configuration fails before collection starts. Each aggregator captures its business settings at construction and implements `Aggregate`, `Snapshot(context.Context)` and `Reset`. Pipeline receives runtime settings through configuration and a standard `context.Context` through method parameters. File creation, naming, writing, and closing belong to `internal/profiler/output`.
 
 `FormatterConfig` contains only `Format` and `Destination`. Existing destinations are identified by filesystem type: local formatters accept regular files and directories; RemoteStore requires a Unix socket. A missing local path denotes a file unless it ends in `/`, which requests directory creation. `stdout` (also `-` and standard fd aliases) writes to standard output without closing it. Warning: profiling data may be exposed through terminal output, redirection, or captured logs. Existing files are replaced when output is written, not during initialization; empty collections do not create result files. Directory output retains unique generated filenames. Initialization checks paths but cannot guarantee a later write will succeed.
 
-Task identity (`ToolName`, `TaskID`, `Version`) is supplied separately. RemoteStore initializes toolstream internally, and the runner always invokes the returned cleanup function. `Complete` commits output and waits for the remote ACK; cleanup only releases resources, including after a failed collection. JSON opens its output on the first window and closes it on completion or cleanup.
+Task IDs come from `registry.RunConfig.ID`, and source tools come from `ProfilerMeta.ToolName`. RemoteStore fixes the service name to `profiling_store_service` and version to `1`, initializes toolstream internally, and the runner always invokes the returned cleanup function. `Complete` commits output and waits for the remote ACK; cleanup only releases resources, including after a failed collection. JSON opens its output on the first window and closes it on completion or cleanup.
 
+
+`cmd/profiler` owns CLI parsing and signal handling. `provider.New` creates a fresh collector for each task and copies its business configuration. `registry.RunConfig` contains the task ID, collection duration and aggregation interval; both durations use `time.Duration`. The runner generates an ID only when absent and uses the same ID for aggregation and remote commits. Output format and destination are supplied through `RunConfig.OutputFormat` and `RunConfig.OutputDestination`. The runner constructs the output layer’s `FormatterConfig`; the output layer does not depend on `RunConfig`. CLI duration flags still accept integer seconds, with range checks before conversion.
+
+Task construction selects the aggregation policy; aggregator constructors do not modify configuration. Native CPU and memory allocation use Streaming; native physical_usage, Java, Python, and IRQ use OneShot. Java runtime still reads results periodically, independently of Pipeline's one-shot export policy. Python and IRQ implement `ManagesDuration` only to disable the runner's duration timer; no errors are exempted.
 
 Aggregation modes are defined in `internal/profiler/aggregator/config.go`:
 
@@ -769,7 +773,7 @@ Formatter exposes `Add(ctx, window)` and `Complete(ctx)`. Local renderers are se
 
 Pipeline stores failures in `runErr`, notifies the runner through `OnFailure func()`, and returns the error from `Stop()`. Snapshot or output failure prevents further exports and Complete. The runner preserves all read-loop and stop errors; collection failures or external cancellation cause Abort and prevent completion.
 
-Before issuing its own stop signal, the runner checks the context so an existing external cancellation cannot be hidden by simultaneous natural completion or duration expiry. Normal cleanup starts after this check; the shared context does not distinguish later cancellation sources. Read loops may still deliver final batches after the stop signal, and Pipeline keeps consuming until the loop exits. Delivery is independent of collection-context cancellation.
+The runner derives a private collection context; normal completion cancels collection without canceling the caller. After the read loop exits and Stop finishes, the runner checks the caller context before starting final output, so external cancellation during cleanup still causes Abort. Cancellation after final output begins does not guarantee rollback of committed results. Read loops may still deliver final batches after the stop signal, and Pipeline keeps consuming until the loop exits. Delivery is independent of collection-context cancellation.
 
 ### Storage and visibility
 

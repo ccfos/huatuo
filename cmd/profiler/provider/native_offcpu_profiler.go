@@ -25,7 +25,6 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -53,16 +52,16 @@ func nativeOffCPUAttachOptions() []bpf.AttachOption {
 	}
 }
 
-func newNativeOffCPUBPFConstants(pctx *pcontext.ProfilerContext, cssAddr uint64) map[string]any {
-	constants := newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
-	constants["profiler_offcpu_phase"] = offCPUPhaseCode(pctx.OffCPUPhase)
-	constants["profiler_offcpu_min_duration_ns"] = microsecondsToNanoseconds(pctx.OffCPUMinDurationUS)
+func newNativeOffCPUBPFConstants(cfg *Config, cssAddr uint64) map[string]any {
+	constants := newNativeBPFConstants(cfg.PID(), cssAddr, cfg.ThreadGroup)
+	constants["profiler_offcpu_phase"] = offCPUPhaseCode(cfg.OffCPUPhase)
+	constants["profiler_offcpu_min_duration_ns"] = microsecondsToNanoseconds(cfg.OffCPUMinDurationUS)
 	constants["profiler_offcpu_cpu_set_enabled"] = uint32(0)
 	constants["profiler_offcpu_stats_enabled"] = uint32(0)
-	if len(pctx.CPUIDs) != 0 {
+	if len(cfg.CPUIDs) != 0 {
 		constants["profiler_offcpu_cpu_set_enabled"] = uint32(1)
 	}
-	if pctx.OffCPUStatsEnabled {
+	if cfg.OffCPUStatsEnabled {
 		constants["profiler_offcpu_stats_enabled"] = uint32(1)
 	}
 	return constants

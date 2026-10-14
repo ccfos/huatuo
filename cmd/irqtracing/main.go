@@ -21,13 +21,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
 
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/registry"
 	"github.com/ccfos/huatuo/internal/version"
 )
@@ -42,7 +42,6 @@ var (
 	AppVersion   string
 	AppGitCommit string
 	AppBuildTime string
-	versionInfo  version.Info
 )
 
 func mainAction(cliCtx *cli.Context) error {
@@ -58,19 +57,19 @@ func mainAction(cliCtx *cli.Context) error {
 	ctx, cancel := signal.NotifyContext(cliCtx.Context, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	pctx := &pcontext.ProfilerContext{
-		Ctx: ctx, Cancel: cancel, Duration: cfg.duration, AggregationMode: aggregator.AggregationModeOneShot,
-		OutputFormat: cfg.output, OutputPath: cliCtx.String(cliFlagOutputPath),
-		ToolName: irqTracingToolName, Version: versionInfo.Version,
-		TracerID: cliCtx.String(cliFlagTaskID),
-	}
-
-	return registry.Profile(pctx, newIRQProfiler(&collector{
+	duration := time.Duration(cfg.duration) * time.Second
+	task := newIRQProfiler(&collector{
 		bpfPath:                  cfg.bpfPath,
 		cpuId:                    cfg.targetCPU,
-		duration:                 time.Duration(cfg.duration) * time.Second,
+		duration:                 duration,
 		maxEventsPerSecondPerCPU: cfg.maxEventsPerSecondPerCPU,
-	}))
+	})
+	return registry.Profile(ctx, registry.RunConfig{
+		ID:                cliCtx.String(cliFlagTaskID),
+		Duration:          duration,
+		OutputFormat:      cfg.output,
+		OutputDestination: cliCtx.String(cliFlagOutputPath),
+	}, task)
 }
 
 func main() {
@@ -88,7 +87,7 @@ func main() {
 		return nil
 	}
 
-	versionInfo = version.Wire(app, version.Seed{
+	version.Wire(app, version.Seed{
 		Name:      irqTracingToolName,
 		Version:   AppVersion,
 		GitCommit: AppGitCommit,
