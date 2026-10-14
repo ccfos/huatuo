@@ -16,22 +16,16 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"flag"
 	"io"
 	"math"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/urfave/cli/v2"
 
 	bpfabi "github.com/ccfos/huatuo/internal/bpf/abi"
 	profileroutput "github.com/ccfos/huatuo/internal/profiler/output"
-	"github.com/ccfos/huatuo/internal/toolstream"
-	"github.com/ccfos/huatuo/internal/version"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestValidateFlags(t *testing.T) {
@@ -221,63 +215,6 @@ func TestValidateMaxEventsPerSecondPerCPU(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "must be 0 or between") {
 			t.Fatalf("validateMaxEventsPerSecondPerCPU(%d) error = %v", limit, err)
 		}
-	}
-}
-
-func TestOpenToolstreamSendsResult(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "toolstream.sock")
-	server, err := toolstream.NewServer(sockPath)
-	if err != nil {
-		t.Fatalf("toolstream.NewServer() error = %v", err)
-	}
-	received := make(chan *types.ProfilingWindow, 1)
-	toolstream.Register(server, irqTracingToolName, func(_ context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
-		if request.Data == nil {
-			return nil
-		}
-		result := request.Data
-		if request.TaskID != "task-1" {
-			t.Errorf("TaskID = %q, want task-1", request.TaskID)
-		}
-		received <- result
-		return nil
-	})
-	if err := server.Start(); err != nil {
-		t.Fatalf("server.Start() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := server.Close(); err != nil {
-			t.Errorf("server.Close() error = %v", err)
-		}
-	})
-
-	previousVersion := versionInfo
-	versionInfo = version.Info{Version: "test"}
-	t.Cleanup(func() { versionInfo = previousVersion })
-
-	ctx := newOutputFlagContext(t, "--output-storage", sockPath, "--task-id", "task-1")
-	client, err := openToolstream(ctx)
-	if err != nil {
-		t.Fatalf("openToolstream() error = %v", err)
-	}
-	defer client.Close()
-	result := &types.ProfilingWindow{DroppedSamples: map[string]uint64{types.DropReasonCollection: 3}}
-
-	if err := client.Send(t.Context(), result, toolstream.SendOptions{}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := client.Send(t.Context(), nil, toolstream.SendOptions{End: true}); err != nil {
-		t.Fatalf("send end marker: %v", err)
-	}
-
-	select {
-	case got := <-received:
-		if got.DroppedSamples[types.DropReasonCollection] != 3 {
-			t.Fatalf("received result = %+v", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for Toolstream result")
 	}
 }
 

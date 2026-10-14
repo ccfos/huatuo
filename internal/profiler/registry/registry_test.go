@@ -20,9 +20,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
@@ -130,7 +133,7 @@ func TestProfileLogsDataReadingLoopLifecycleOnce(t *testing.T) {
 		Ctx:          ctx,
 		Cancel:       cancel,
 		OutputFormat: output.FormatJSON,
-		OutputWriter: &bytes.Buffer{},
+		OutputPath:   t.TempDir(),
 	}
 	if err := Profile(pctx, newMeta(profiling.ImplementationNative, profiling.TypeCPU)); err != nil {
 		t.Fatalf("Profile() error = %v, want nil", err)
@@ -175,7 +178,7 @@ func TestProfilePropagatesFailures(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			pctx := &pcontext.ProfilerContext{Ctx: ctx, Cancel: cancel, AggregationMode: aggregator.AggregationModeOneShot}
+			pctx := &pcontext.ProfilerContext{Ctx: ctx, Cancel: cancel, AggregationMode: aggregator.AggregationModeOneShot, OutputPath: t.TempDir()}
 			provider := failingProfiler{}
 			snapshots := 0
 			aggr := failingAggregator{snapshots: &snapshots}
@@ -285,7 +288,7 @@ func TestProfileCompletionRequiresSuccessfulCollection(t *testing.T) {
 			}}
 			pctx := &pcontext.ProfilerContext{
 				Ctx: ctx, Cancel: cancel, Duration: tc.duration,
-				OutputFormat: format, OutputWriter: io.Discard,
+				OutputFormat: format, OutputPath: "-",
 			}
 			if tc.finalBatch {
 				pctx.AggregationMode = aggregator.AggregationModeOneShot
@@ -329,10 +332,52 @@ func TestProfileRejectsInvalidFormatterBeforeCollection(t *testing.T) {
 		Impl:          failingProfiler{startErr: startErr},
 		NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return fakeAggregator{}, nil },
 	})
-	if err == nil || !strings.Contains(err.Error(), "requires toolstream client") {
-		t.Fatalf("Profile() error = %v, want missing toolstream client", err)
+	if err == nil || !strings.Contains(err.Error(), "inspect remote profiling destination") {
+		t.Fatalf("Profile() error = %v, want invalid socket destination", err)
 	}
 	if errors.Is(err, startErr) {
 		t.Fatal("started collection before validating formatter")
+	}
+}
+
+func TestProfileClosesRemoteOutputOnCollectionFailure(t *testing.T) {
+	for _, phase := range []string{"start", "read", "stop"} {
+		t.Run(phase, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "output.sock")
+			listener, err := net.Listen("unix", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			failure := errors.New("collection failed")
+			var collector Profiler = &loopProfiler{read: func(context.Context, func(any)) error { return failure }}
+			if phase == "start" {
+				collector = failingProfiler{startErr: failure}
+			}
+			if phase == "stop" {
+				collector = failingProfiler{stopErr: failure}
+			}
+			pctx := &pcontext.ProfilerContext{
+				Ctx: ctx, Cancel: cancel, OutputFormat: output.FormatRemoteStore, OutputPath: path,
+				ToolName: "profiler", Version: "1", TracerID: "task-1",
+			}
+			err = Profile(pctx, ProfilerMeta{Impl: collector, NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return fakeAggregator{}, nil }})
+			if !errors.Is(err, failure) {
+				t.Fatalf("Profile error = %v, want %v", err, failure)
+			}
+			conn, err := listener.Accept()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.Copy(io.Discard, conn); err != nil {
+				t.Fatalf("connection left open after %s failure: %v", phase, err)
+			}
+		})
 	}
 }

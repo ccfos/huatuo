@@ -16,15 +16,13 @@ package output
 
 import (
 	"context"
-	"io"
 
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type localFormatter struct {
-	renderer Renderer
-	writer   io.Writer
-	finish   func(Renderer) error
+	renderer    Renderer
+	destination *localDestination
 }
 
 func (f *localFormatter) Add(_ context.Context, window *types.ProfilingWindow) error {
@@ -32,11 +30,8 @@ func (f *localFormatter) Add(_ context.Context, window *types.ProfilingWindow) e
 }
 
 func (f *localFormatter) Complete(context.Context) error {
-	if f.writer != nil {
-		return f.renderer.Write(f.writer)
-	}
-	if f.renderer.IsEmpty() {
+	if f.renderer.IsEmpty() && !f.destination.isStdout {
 		return nil
 	}
-	return f.finish(f.renderer)
+	return f.destination.writeAndClose(f.renderer.Write)
 }

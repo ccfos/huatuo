@@ -478,7 +478,7 @@ sudo _output/bin/profiler \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
-  --output-path ./profiles
+  --output-path ./profiles/
 ```
 
 `--type` 和 `--language` 为必填参数。Java、Python 和原生内存采集必须在 `--pid` 与 `--container-id` 中指定且仅指定一个目标；原生 CPU 采集未指定目标时可进行宿主机级采样。
@@ -494,7 +494,7 @@ sudo _output/bin/profiler \
 | `--duration`, `-d` | `10` | 全部 | 总采集时长，单位为秒，最小为 1 |
 | `--aggr-interval` | `10` | 全部 | 聚合周期，单位为秒，不得大于采集时长 |
 | `--freq`, `-F` | `99` | CPU | 每秒采样次数；Java 最大为 1000 |
-| `--output-path` | `.` | 本地输出 | 输出目录，不是输出文件名 |
+| `--output-path` | `.` | 本地输出 | 已有文件或目录、新文件路径，或 `-`（标准输出）；新目录路径以 `/` 结尾 |
 | `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg` 或 `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | 远端上传使用的 Unix socket |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
@@ -544,7 +544,7 @@ sudo _output/bin/profiler \
   --aggr-interval 10 \
   --freq 99 \
   --output-format flamegraph \
-  --output-path ./profiles/go-cpu
+  --output-path ./profiles/go-cpu/
 ```
 
 如需包含同一进程的工作线程，增加 `--thread-group`。如需限定 CPU，增加 `--cpuid 2,4-7`。原生 CPU 也支持容器和宿主机级采样：
@@ -558,13 +558,13 @@ IRQ 关闭期间的 CPU 时间，可指定 `--require-hardware-pmu`。
 sudo _output/bin/profiler \
   --type cpu --language c --container-id <container-id> \
   --duration 30 --aggr-interval 10 \
-  --output-format collapsed --output-path ./profiles/container
+  --output-format collapsed --output-path ./profiles/container/
 
 # 不指定 PID 或容器，采集宿主机
 sudo _output/bin/profiler \
   --type cpu --language c \
   --duration 30 --aggr-interval 10 \
-  --output-format flamegraph --output-path ./profiles/host
+  --output-format flamegraph --output-path ./profiles/host/
 ```
 
 如需把线程离开 CPU 的时间归因到触发切出的调用路径，使用 off-CPU 模式：
@@ -576,7 +576,7 @@ sudo _output/bin/profiler \
   --cpuid 2,4-7 \
   --offcpu-min-duration-us 1000 \
   --duration 30 --aggr-interval 10 \
-  --output-format flamegraph --output-path ./profiles/go-offcpu
+  --output-format flamegraph --output-path ./profiles/go-offcpu/
 ```
 
 off-CPU 是事件驱动采集，因此不使用 `--freq`。指定 `--cpuid` 时，仅记录任务从目标 CPU 切出后开始的区间；后续在其他 CPU 唤醒或切入不会改变该归属。火焰图直接以纳秒为数值，并增加 `off-CPU blocked`、`scheduling delay (preempted)`、`scheduling delay (yielded)` 等根节点。`all` 阶段同时累计阻塞与 runqueue 等待时间，但仍按这些根节点分开显示。采集端使用单一稳定的 BPF stack map，避免长时间睡眠跨越多轮读取后被错误解析到另一代栈。
@@ -600,7 +600,7 @@ sudo _output/bin/profiler \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
-  --output-path ./profiles/native-memory
+  --output-path ./profiles/native-memory/
 ```
 
 `--physical-memory-probability` 仅适用于 `physical_alloc` 和 `physical_usage`。降低该值可减少高频内存事件的处理量，但火焰图中的值由采样事件估算，不再是逐事件统计。
@@ -620,7 +620,7 @@ _output/bin/profiler \
   --aggr-interval 10 \
   --freq 99 \
   --output-format flamegraph \
-  --output-path ./profiles/java-cpu
+  --output-path ./profiles/java-cpu/
 ```
 
 Java 内存支持两个维度：
@@ -640,7 +640,7 @@ _output/bin/profiler \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
-  --output-path ./profiles/java-memory
+  --output-path ./profiles/java-memory/
 ```
 
 使用容器 ID 时，将 `--pid` 替换为 `--container-id <container-id>`。如果容器内存在多个候选进程，可通过 `--binary-match-path` 指定目标可执行文件路径。
@@ -660,7 +660,7 @@ _output/bin/profiler \
   --aggr-interval 30 \
   --freq 99 \
   --output-format flamegraph \
-  --output-path ./profiles/python-cpu
+  --output-path ./profiles/python-cpu/
 ```
 
 Python 不支持 `--type memory`。若需要 Python 内存分析，应使用独立的内存分析工具；当前 `profiler` 命令不会调用 memray 生成 Python 内存结果。
@@ -737,7 +737,11 @@ profiler 与 irqtracing 共用采集执行器、Pipeline 和 `types.ProfilingWin
 
 ### 配置和聚合周期
 
-执行器在启动采集前创建 Aggregator 和 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 不依赖 `ProfilerContext`。文件输出装配由 `internal/profiler/registry` 负责。
+执行器在启动采集前创建 Aggregator 和 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 不依赖 `ProfilerContext`。文件创建、命名、写入和关闭由 `internal/profiler/output` 负责。
+
+`FormatterConfig` 仅包含 `Format` 和 `Destination`。已有路径按实际文件类型识别：本地 Formatter 接受普通文件和目录，RemoteStore 要求 Unix socket。不存在的本地路径默认表示新文件，以 `/` 结尾则创建目录；`-` 表示标准输出。已有文件在实际写出时覆盖，初始化不截断文件；空任务不创建结果文件。目录输出保持自动生成的唯一文件名。初始化检查路径，但不能保证之后的写入一定成功。
+
+任务身份（`ToolName`、`TaskID`、`Version`）独立传入。RemoteStore 内部初始化 toolstream，执行器在所有退出路径调用返回的清理函数。`Complete` 完成输出并等待远端提交 ACK；清理函数只释放资源，采集失败时也会执行。JSON 在第一个窗口到达时打开文件，在完成或清理时关闭。
 
 聚合模式定义在 `internal/profiler/aggregator/config.go`：
 

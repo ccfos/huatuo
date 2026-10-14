@@ -486,7 +486,7 @@ sudo _output/bin/profiler \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
-  --output-path ./profiles
+  --output-path ./profiles/
 ```
 
 `--type` and `--language` are required. Java, Python, and native memory profiling require exactly one target specified with either `--pid` or `--container-id`. Native CPU profiling can sample the entire host when neither target is specified.
@@ -502,7 +502,7 @@ sudo _output/bin/profiler \
 | `--duration`, `-d` | `10` | All | Total profiling duration in seconds; minimum 1 |
 | `--aggr-interval` | `10` | All | Aggregation interval in seconds; must not exceed the duration |
 | `--freq`, `-F` | `99` | CPU | Samples collected per second; maximum 1000 for Java |
-| `--output-path` | `.` | Local output | Output directory, not an output file name |
+| `--output-path` | `.` | Local output | Existing file/directory, a new file path, or `-` for stdout; append `/` to create a directory |
 | `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, or `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | Unix socket used for remote upload |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collector subprocesses; `0` means unlimited |
@@ -552,7 +552,7 @@ sudo _output/bin/profiler \
   --aggr-interval 10 \
   --freq 99 \
   --output-format flamegraph \
-  --output-path ./profiles/go-cpu
+  --output-path ./profiles/go-cpu/
 ```
 
 Add `--thread-group` to include worker threads in the same process. Add `--cpuid 2,4-7` to limit collection to selected CPUs. Native CPU profiling also supports container-level and host-level collection:
@@ -567,13 +567,13 @@ clock fallback would hide IRQ-disabled CPU time.
 sudo _output/bin/profiler \
   --type cpu --language c --container-id <container-id> \
   --duration 30 --aggr-interval 10 \
-  --output-format collapsed --output-path ./profiles/container
+  --output-format collapsed --output-path ./profiles/container/
 
 # Profile the host without specifying a PID or container
 sudo _output/bin/profiler \
   --type cpu --language c \
   --duration 30 --aggr-interval 10 \
-  --output-format flamegraph --output-path ./profiles/host
+  --output-format flamegraph --output-path ./profiles/host/
 ```
 
 To attribute time spent outside the CPU to the call path that descheduled, select off-CPU mode:
@@ -585,7 +585,7 @@ sudo _output/bin/profiler \
   --cpuid 2,4-7 \
   --offcpu-min-duration-us 1000 \
   --duration 30 --aggr-interval 10 \
-  --output-format flamegraph --output-path ./profiles/go-offcpu
+  --output-format flamegraph --output-path ./profiles/go-offcpu/
 ```
 
 Off-CPU output is event-driven, so `--freq` does not apply. With `--cpuid`, an interval is collected only when the task switches out from a selected CPU; later wakeup or switch-in on another CPU does not change that attribution. Flame graphs use nanoseconds directly and add roots such as `off-CPU blocked`, `scheduling delay (preempted)`, and `scheduling delay (yielded)`. The `all` phase includes blocked and runqueue time but keeps them separated by these roots. A single stable BPF stack map is used so a long sleep cannot be resolved against a later rotating stack-map generation.
@@ -609,7 +609,7 @@ sudo _output/bin/profiler \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
-  --output-path ./profiles/native-memory
+  --output-path ./profiles/native-memory/
 ```
 
 `--physical-memory-probability` applies only to `physical_alloc` and `physical_usage`. Lowering it reduces processing for high-frequency memory events, but flame-graph values are then estimates based on sampled events rather than counts of every event.
@@ -629,7 +629,7 @@ _output/bin/profiler \
   --aggr-interval 10 \
   --freq 99 \
   --output-format flamegraph \
-  --output-path ./profiles/java-cpu
+  --output-path ./profiles/java-cpu/
 ```
 
 Java memory profiling supports two dimensions:
@@ -649,7 +649,7 @@ _output/bin/profiler \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
-  --output-path ./profiles/java-memory
+  --output-path ./profiles/java-memory/
 ```
 
 To target a container, replace `--pid` with `--container-id <container-id>`. If a container has multiple candidate processes, use `--binary-match-path` to select the target executable path.
@@ -669,7 +669,7 @@ _output/bin/profiler \
   --aggr-interval 30 \
   --freq 99 \
   --output-format flamegraph \
-  --output-path ./profiles/python-cpu
+  --output-path ./profiles/python-cpu/
 ```
 
 Python does not support `--type memory`. Use a separate memory analysis tool for Python memory profiling; the current `profiler` command does not invoke memray to generate Python memory profiles.
@@ -746,7 +746,12 @@ Profiler and irqtracing share the collection runner, Pipeline and `types.Profili
 
 ### Configuration and aggregation intervals
 
-The runner creates the Aggregator and Formatter before starting collection, constructs Pipeline with `aggregator.PipelineConfig`, and passes the runtime context through `Start(ctx)`. Invalid output configuration fails before collection starts. Each aggregator captures its business settings at construction and implements `Aggregate`, `Snapshot(context.Context)` and `Reset`. Pipeline does not depend on `ProfilerContext`. The runner in `internal/profiler/registry` assembles file output.
+The runner creates the Aggregator and Formatter before starting collection, constructs Pipeline with `aggregator.PipelineConfig`, and passes the runtime context through `Start(ctx)`. Invalid output configuration fails before collection starts. Each aggregator captures its business settings at construction and implements `Aggregate`, `Snapshot(context.Context)` and `Reset`. Pipeline does not depend on `ProfilerContext`. File creation, naming, writing, and closing belong to `internal/profiler/output`.
+
+`FormatterConfig` contains only `Format` and `Destination`. Existing destinations are identified by filesystem type: local formatters accept regular files and directories; RemoteStore requires a Unix socket. A missing local path denotes a file unless it ends in `/`, which requests directory creation. `-` writes to standard output. Existing files are replaced when output is written, not during initialization; empty collections do not create result files. Directory output retains unique generated filenames. Initialization checks paths but cannot guarantee a later write will succeed.
+
+Task identity (`ToolName`, `TaskID`, `Version`) is supplied separately. RemoteStore initializes toolstream internally, and the runner always invokes the returned cleanup function. `Complete` commits output and waits for the remote ACK; cleanup only releases resources, including after a failed collection. JSON opens its output on the first window and closes it on completion or cleanup.
+
 
 Aggregation modes are defined in `internal/profiler/aggregator/config.go`:
 

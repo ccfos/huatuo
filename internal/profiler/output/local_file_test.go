@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package registry
+package output
 
 import (
 	"errors"
@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -66,10 +67,17 @@ func TestCreateOutputFileUsesUniqueNames(t *testing.T) {
 	}
 }
 
-func TestCreateOutputFileCreatesDirectory(t *testing.T) {
+func TestLocalDestinationCreatesDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "profiles")
 
-	file, err := createOutputFile(dir, "flamegraph", ".svg")
+	destination, err := newLocalDestination(FormatterConfig{Format: FormatSVG, Destination: dir + "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := destination.open(); err != nil {
+		t.Fatal(err)
+	}
+	file := destination.file
 	if err != nil {
 		t.Fatalf("create output file: %v", err)
 	}
@@ -124,4 +132,79 @@ func (*failingOutputFile) Write(p []byte) (int, error) { return len(p), nil }
 func (f *failingOutputFile) Close() error {
 	f.closes++
 	return f.closeErr
+}
+
+func TestLocalDestinationResolvesPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		existing, directory bool
+	}{
+		{name: "existing file", existing: true},
+		{name: "new file"},
+		{name: "existing directory", existing: true, directory: true},
+		{name: "new directory", directory: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "output")
+			if tc.existing {
+				if tc.directory {
+					if err := os.Mkdir(path, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.WriteFile(path, []byte("previous data"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if tc.directory {
+				path += "/"
+			}
+			destination, err := newLocalDestination(FormatterConfig{Format: FormatCollapsed, Destination: path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.existing && !tc.directory {
+				data, err := os.ReadFile(path)
+				if err != nil || string(data) != "previous data" {
+					t.Fatalf("constructor changed file: %q, %v", data, err)
+				}
+			}
+			if err := destination.writeAndClose(func(w io.Writer) error { _, err := io.WriteString(w, "work 2\n"); return err }); err != nil {
+				t.Fatal(err)
+			}
+			if tc.directory {
+				files, err := filepath.Glob(filepath.Join(path, "perf_*.folded"))
+				if err != nil || len(files) != 1 {
+					t.Fatalf("output files = %v, error = %v", files, err)
+				}
+				path = files[0]
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != "work 2\n" {
+				t.Fatalf("output = %q, error = %v", data, err)
+			}
+		})
+	}
+}
+
+func TestLocalDestinationRejectsSpecialFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fifo")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newLocalDestination(FormatterConfig{Destination: path}); err == nil {
+		t.Fatal("accepted FIFO destination")
+	}
+}
+
+func TestLocalDestinationRejectsChangedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profile")
+	destination, err := newLocalDestination(FormatterConfig{Destination: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := destination.writeAndClose(func(io.Writer) error { t.Fatal("wrote to FIFO"); return nil }); err == nil {
+		t.Fatal("accepted replaced destination")
+	}
 }

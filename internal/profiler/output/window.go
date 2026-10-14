@@ -18,9 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 
-	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -38,31 +36,54 @@ type windowFormatter struct {
 	err       error
 }
 
-// NewFormatter binds output resources without taking ownership of their lifetime.
-func NewFormatter(format OutputFormat, writer io.Writer, toolstreamClient *toolstream.Client, finish func(Renderer) error) (Formatter, error) {
+// FormatterConfig selects the representation and its filesystem destination.
+// Existing paths retain their type. A missing path denotes a file unless it
+// ends in a separator, which requests a directory. "-" denotes standard output.
+type FormatterConfig struct {
+	Format      OutputFormat
+	Destination string
+}
+
+// TaskIdentity identifies a collection independently of its output transport.
+type TaskIdentity struct {
+	ToolName string
+	TaskID   string
+	Version  string
+}
+
+// NewFormatter initializes output before collection starts. The caller must
+// invoke cleanup on both success and failure; cleanup never commits a task.
+func NewFormatter(cfg FormatterConfig, task TaskIdentity) (Formatter, func() error, error) {
 	var formatter Formatter
-	switch format {
-	case FormatRemoteStore:
-		if toolstreamClient == nil {
-			return nil, errors.New("remote store formatter requires toolstream client")
-		}
-		formatter = &remoteStoreFormatter{toolstreamClient: toolstreamClient}
-	case FormatJSON:
-		if writer == nil {
-			return nil, errors.New("JSON formatter requires writer")
-		}
-		formatter = &jsonFormatter{writer: writer}
-	default:
-		renderer, err := format.NewRenderer()
+	cleanup := func() error { return nil }
+	if cfg.Format == FormatRemoteStore {
+		remote, err := newRemoteStoreFormatter(cfg.Destination, task)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if writer == nil && finish == nil {
-			return nil, errors.New("local formatter requires output destination")
+		formatter = remote
+		cleanup = remote.toolstreamClient.Close
+	} else {
+		var renderer Renderer
+		if cfg.Format != FormatJSON {
+			var err error
+			renderer, err = cfg.Format.NewRenderer()
+			if err != nil {
+				return nil, nil, err
+			}
 		}
-		formatter = &localFormatter{renderer: renderer, writer: writer, finish: finish}
+		destination, err := newLocalDestination(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		if cfg.Format == FormatJSON {
+			formatter = &jsonFormatter{destination: destination}
+			cleanup = destination.close
+		} else {
+			formatter = &localFormatter{renderer: renderer, destination: destination}
+		}
 	}
-	return &windowFormatter{formatter: formatter}, nil
+	return &windowFormatter{formatter: formatter}, cleanup, nil
 }
 
 func (f *windowFormatter) Add(ctx context.Context, window *types.ProfilingWindow) error {

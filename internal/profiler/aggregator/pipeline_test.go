@@ -64,7 +64,7 @@ func TestPipelineStart_IsIdempotent(t *testing.T) {
 	aggr := NewMockAggregator(t)
 	aggr.On("Snapshot", mock.Anything).Return(nil, nil).Once()
 
-	p := NewPipeline(PipelineConfig{Aggregator: aggr, Formatter: testFormatter(t, output.FormatCollapsed, io.Discard, nil)})
+	p := NewPipeline(PipelineConfig{Aggregator: aggr, Formatter: testFormatter(t, output.FormatCollapsed, t.TempDir())})
 
 	p.Start(t.Context())
 	p.Start(t.Context())
@@ -76,7 +76,7 @@ func TestPipelineStart_IsIdempotent(t *testing.T) {
 func TestPipelineStart_AfterStop(t *testing.T) {
 	aggr := NewMockAggregator(t)
 
-	p := NewPipeline(PipelineConfig{Aggregator: aggr, Formatter: testFormatter(t, output.FormatCollapsed, io.Discard, nil)})
+	p := NewPipeline(PipelineConfig{Aggregator: aggr, Formatter: testFormatter(t, output.FormatCollapsed, t.TempDir())})
 
 	if err := p.Stop(); err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestPipelineStop_DrainsAcceptedRecords(t *testing.T) {
 	aggr.On("Aggregate", "second").Once()
 	aggr.On("Snapshot", mock.Anything).Return(nil, nil).Once()
 
-	p := NewPipeline(PipelineConfig{Aggregator: aggr, Formatter: testFormatter(t, output.FormatCollapsed, io.Discard, nil)})
+	p := NewPipeline(PipelineConfig{Aggregator: aggr, Formatter: testFormatter(t, output.FormatCollapsed, t.TempDir())})
 	p.Start(t.Context())
 	if err := p.Enqueue(t.Context(), "first"); err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestPipelineEnqueueFullQueue(t *testing.T) {
 				<-release
 			}).Once()
 			aggr.On("Aggregate", "queued").Once()
-			p := NewPipeline(PipelineConfig{AggregationMode: tc.mode, Aggregator: aggr, Formatter: testFormatter(t, output.FormatCollapsed, io.Discard, nil)})
+			p := NewPipeline(PipelineConfig{AggregationMode: tc.mode, Aggregator: aggr, Formatter: testFormatter(t, output.FormatCollapsed, t.TempDir())})
 			p.queue = make(chan any, 1)
 			p.Start(t.Context())
 			t.Cleanup(func() { close(release); _ = p.Abort() })
@@ -151,7 +151,7 @@ func TestPipelineEnqueueFullQueue(t *testing.T) {
 
 func TestPipelineEnqueueRequiresRunningAndActiveContext(t *testing.T) {
 	for _, mode := range []AggregationMode{AggregationModeStreaming, AggregationModeOneShot} {
-		p := NewPipeline(PipelineConfig{AggregationMode: mode, Aggregator: NewMockAggregator(t), Formatter: testFormatter(t, output.FormatCollapsed, io.Discard, nil)})
+		p := NewPipeline(PipelineConfig{AggregationMode: mode, Aggregator: NewMockAggregator(t), Formatter: testFormatter(t, output.FormatCollapsed, t.TempDir())})
 		if err := p.Enqueue(t.Context(), "before start"); err == nil {
 			t.Fatal("accepted a record before Start")
 		}
@@ -202,7 +202,7 @@ func TestPipelineReturnsExportFailure(t *testing.T) {
 
 func TestPipelineAbortDoesNotExport(t *testing.T) {
 	aggr := NewMockAggregator(t)
-	p := NewPipeline(PipelineConfig{AggregationMode: AggregationModeOneShot, Aggregator: aggr, Formatter: testFormatter(t, output.FormatCollapsed, io.Discard, nil)})
+	p := NewPipeline(PipelineConfig{AggregationMode: AggregationModeOneShot, Aggregator: aggr, Formatter: testFormatter(t, output.FormatCollapsed, t.TempDir())})
 	p.Start(t.Context())
 	if err := p.Abort(); err != nil {
 		t.Fatal(err)
@@ -215,8 +215,8 @@ func TestPipelineOneShotDrainsBatchAndWritesOneWindow(t *testing.T) {
 	aggr.On("Aggregate", "batch").Once()
 	aggr.On("Snapshot", mock.Anything).Return(testWindow(9), nil).Once()
 	aggr.On("Reset").Once()
-	var destination bytes.Buffer
-	p := NewPipeline(PipelineConfig{AggregationMode: AggregationModeOneShot, Aggregator: aggr, Formatter: testFormatter(t, output.FormatJSON, &destination, nil)})
+	destination := filepath.Join(t.TempDir(), "profile.json")
+	p := NewPipeline(PipelineConfig{AggregationMode: AggregationModeOneShot, Aggregator: aggr, Formatter: testFormatter(t, output.FormatJSON, destination)})
 	p.Start(t.Context())
 	if err := p.Enqueue(t.Context(), "batch"); err != nil {
 		t.Fatal(err)
@@ -225,7 +225,7 @@ func TestPipelineOneShotDrainsBatchAndWritesOneWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got types.ProfilingWindow
-	if err := json.Unmarshal(destination.Bytes(), &got); err != nil {
+	if err := json.Unmarshal(readOutput(t, destination), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.Profile.Sample[0].Value[0] != 9 {
@@ -252,24 +252,15 @@ func TestPipelinePeriodicWindowKeepsRecordsArrivingDuringExport(t *testing.T) {
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		if err := server.Close(); err != nil {
 			t.Error(err)
 		}
-	}()
-	client, err := toolstream.NewClient(toolstream.ClientOptions{SockPath: path, ToolName: "test", TaskID: "task", Version: "test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := client.Close(); err != nil {
-			t.Error(err)
-		}
-	}()
+	})
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	aggr := &windowCounter{entered: entered, release: release}
-	p := NewPipeline(PipelineConfig{Aggregator: aggr, Formatter: testFormatter(t, output.FormatRemoteStore, io.Discard, client)})
+	p := NewPipeline(PipelineConfig{Aggregator: aggr, Formatter: testFormatter(t, output.FormatRemoteStore, path)})
 	p.aggrInterval = time.Millisecond
 	p.Start(t.Context())
 	if err := p.Enqueue(t.Context(), 1); err != nil {
@@ -340,7 +331,8 @@ func TestExportAggregationWindowReportsDroppedSamples(t *testing.T) {
 		{name: "diagnostic write failure", collection: 3, failLog: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var diagnostics, destination bytes.Buffer
+			var diagnostics bytes.Buffer
+			destination := filepath.Join(t.TempDir(), "profile.json")
 			var diagnosticWriter io.Writer = &diagnostics
 			if tc.failLog {
 				diagnosticWriter = failedDiagnosticWriter{}
@@ -356,7 +348,7 @@ func TestExportAggregationWindowReportsDroppedSamples(t *testing.T) {
 			aggr := new(MockAggregator)
 			aggr.On("Snapshot", mock.Anything).Return(window, nil).Once()
 			aggr.On("Reset").Once()
-			pipeline := NewPipeline(PipelineConfig{TracerID: "loss-task", Aggregator: aggr, Formatter: testFormatter(t, output.FormatJSON, &destination, nil)})
+			pipeline := NewPipeline(PipelineConfig{TracerID: "loss-task", Aggregator: aggr, Formatter: testFormatter(t, output.FormatJSON, destination)})
 			pipeline.aggregationStartTime = time.Now()
 			pipeline.queueDroppedSamples.Store(tc.queue)
 			if err := pipeline.exportAggregationWindow(t.Context()); err != nil {
@@ -364,7 +356,7 @@ func TestExportAggregationWindowReportsDroppedSamples(t *testing.T) {
 			}
 			aggr.AssertExpectations(t)
 			var result types.ProfilingWindow
-			if err := json.Unmarshal(destination.Bytes(), &result); err != nil {
+			if err := json.Unmarshal(readOutput(t, destination), &result); err != nil {
 				t.Fatal(err)
 			}
 			if result.DroppedSamples[types.DropReasonCollection] != tc.collection ||
@@ -394,13 +386,27 @@ func (failedDiagnosticWriter) Write([]byte) (int, error) {
 	return 0, errors.New("diagnostic output unavailable")
 }
 
-func testFormatter(t *testing.T, format output.OutputFormat, writer io.Writer, client *toolstream.Client) output.Formatter {
+func testFormatter(t *testing.T, format output.OutputFormat, destination string) output.Formatter {
 	t.Helper()
-	formatter, err := output.NewFormatter(format, writer, client, nil)
+	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: format, Destination: destination}, output.TaskIdentity{ToolName: "test", TaskID: "task", Version: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
 	return formatter
+}
+
+func readOutput(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 type failingFormatter struct {
@@ -422,7 +428,7 @@ func TestPipelineFinalSnapshotUsesRuntimeContext(t *testing.T) {
 	p := NewPipeline(PipelineConfig{
 		AggregationMode: AggregationModeOneShot,
 		Aggregator:      aggr,
-		Formatter:       testFormatter(t, output.FormatCollapsed, io.Discard, nil),
+		Formatter:       testFormatter(t, output.FormatCollapsed, t.TempDir()),
 	})
 	p.Start(ctx)
 	cancel()
@@ -448,7 +454,7 @@ func TestPipelineOwnsAggregationTime(t *testing.T) {
 			aggr.On("Reset").Twice()
 			p := NewPipeline(PipelineConfig{
 				AggregationMode: tc.mode, AggregationInterval: time.Hour, Aggregator: aggr,
-				Formatter: testFormatter(t, output.FormatJSON, io.Discard, nil),
+				Formatter: testFormatter(t, output.FormatJSON, t.TempDir()),
 			})
 			if !p.aggregationStartTime.IsZero() {
 				t.Fatal("constructor initialized aggregation time before Start")

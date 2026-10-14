@@ -17,19 +17,22 @@ package output
 import (
 	"context"
 	"encoding/json"
-	"io"
 
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type jsonFormatter struct {
-	writer io.Writer
+	destination *localDestination
 }
 
 func (f *jsonFormatter) Add(_ context.Context, window *types.ProfilingWindow) error {
-	return json.NewEncoder(f.writer).Encode(window)
+	writer, err := f.destination.open()
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(writer).Encode(window)
 }
 
-func (*jsonFormatter) Complete(context.Context) error {
-	return nil
+func (f *jsonFormatter) Complete(context.Context) error {
+	return f.destination.close()
 }

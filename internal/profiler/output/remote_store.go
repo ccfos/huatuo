@@ -16,6 +16,8 @@ package output
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -31,4 +33,21 @@ func (f *remoteStoreFormatter) Add(ctx context.Context, window *types.ProfilingW
 
 func (f *remoteStoreFormatter) Complete(ctx context.Context) error {
 	return f.toolstreamClient.Send(ctx, nil, toolstream.SendOptions{End: true, Commit: true})
+}
+
+func newRemoteStoreFormatter(path string, task TaskIdentity) (*remoteStoreFormatter, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect remote profiling destination %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return nil, fmt.Errorf("remote profiling destination %q must be a Unix socket", path)
+	}
+	client, err := toolstream.NewClient(toolstream.ClientOptions{
+		SockPath: path, ToolName: task.ToolName, TaskID: task.TaskID, Version: task.Version,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connect remote profiling destination %q: %w", path, err)
+	}
+	return &remoteStoreFormatter{toolstreamClient: client}, nil
 }

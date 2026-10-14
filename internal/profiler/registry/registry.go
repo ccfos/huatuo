@@ -23,6 +23,8 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/randomid"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -80,15 +82,19 @@ func Get(implementation profiling.Implementation, typ profiling.Type) (ProfilerM
 // Profile blocks until cleanup completes so resources are guaranteed released.
 // ReadDataLoop returning on its own is a legitimate stop reason — one-shot
 // samplers (py-spy) finish before the duration timer fires.
-func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
+func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) (returnErr error) {
 	aggr, aggrErr := p.NewAggregator(pctx)
 	if aggrErr != nil {
 		return fmt.Errorf("create aggregator: %w", aggrErr)
 	}
-	formatter, err := newFormatter(pctx)
+	pctx.TracerID = randomid.NewIfEmpty(pctx.TracerID)
+	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{
+		Format: pctx.OutputFormat, Destination: pctx.OutputPath,
+	}, output.TaskIdentity{ToolName: pctx.ToolName, TaskID: pctx.TracerID, Version: pctx.Version})
 	if err != nil {
 		return fmt.Errorf("create profiling formatter: %w", err)
 	}
+	defer func() { returnErr = errors.Join(returnErr, cleanup()) }()
 	pipe := aggregator.NewPipeline(aggregator.PipelineConfig{
 		AggregationMode:     pctx.AggregationMode,
 		AggregationInterval: time.Duration(pctx.AggrInterval) * time.Second,

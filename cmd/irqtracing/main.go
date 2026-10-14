@@ -15,7 +15,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -31,7 +30,6 @@ import (
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	profileroutput "github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/internal/profiler/registry"
-	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/version"
 )
 
@@ -48,17 +46,10 @@ var (
 	versionInfo  version.Info
 )
 
-func mainAction(cliCtx *cli.Context) (returnErr error) {
+func mainAction(cliCtx *cli.Context) error {
 	cfg, err := loadConfig(cliCtx)
 	if err != nil {
 		return err
-	}
-	client, err := openToolstream(cliCtx)
-	if err != nil {
-		return err
-	}
-	if client != nil {
-		defer func() { returnErr = errors.Join(returnErr, client.Close()) }()
 	}
 	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: cfg.duration}); err != nil {
 		return fmt.Errorf("init bpf: %w", err)
@@ -68,13 +59,14 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 	ctx, cancel := signal.NotifyContext(cliCtx.Context, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	format := cfg.output
-	if client != nil {
-		format = profileroutput.FormatRemoteStore
+	format, destination := cfg.output, "-"
+	if path := cliCtx.String(cliFlagOutputStorage); path != "" {
+		format, destination = profileroutput.FormatRemoteStore, path
 	}
 	pctx := &pcontext.ProfilerContext{
 		Ctx: ctx, Cancel: cancel, Duration: cfg.duration, AggregationMode: aggregator.AggregationModeOneShot,
-		OutputFormat: format, OutputWriter: cliCtx.App.Writer, ToolstreamClient: client,
+		OutputFormat: format, OutputPath: destination,
+		ToolName: irqTracingToolName, Version: versionInfo.Version,
 		TracerID: cliCtx.String(cliFlagTaskID),
 	}
 
@@ -84,25 +76,6 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 		duration:                 time.Duration(cfg.duration) * time.Second,
 		maxEventsPerSecondPerCPU: cfg.maxEventsPerSecondPerCPU,
 	}))
-}
-
-func openToolstream(cliCtx *cli.Context) (*toolstream.Client, error) {
-	sockPath := cliCtx.String(cliFlagOutputStorage)
-	if sockPath == "" {
-		return nil, nil
-	}
-
-	client, err := toolstream.NewClient(toolstream.ClientOptions{
-		SockPath: sockPath,
-		ToolName: irqTracingToolName,
-		Version:  versionInfo.Version,
-		TaskID:   cliCtx.String(cliFlagTaskID),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("--output-storage: %w", err)
-	}
-
-	return client, nil
 }
 
 func main() {

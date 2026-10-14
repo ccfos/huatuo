@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package registry
+package output_test
 
 import (
-	"bytes"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,8 +24,8 @@ import (
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 
 	"github.com/ccfos/huatuo/internal/profiler"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/profiler/output"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -37,7 +37,7 @@ func TestFormatterCollapsedOutput(t *testing.T) {
 
 	for _, format := range []output.OutputFormat{output.FormatCollapsed} {
 		t.Run(string(format), func(t *testing.T) {
-			var destination bytes.Buffer
+			destination := filepath.Join(t.TempDir(), "profile")
 			data, err := profiler.ParseTree(time.Now(), profiler.ProfileTypeIRQTracingSample, items, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -46,17 +46,14 @@ func TestFormatterCollapsedOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			formatter, err := newFormatter(&pcontext.ProfilerContext{OutputFormat: format, OutputWriter: &destination})
-			if err != nil {
-				t.Fatalf("newFormatter() error = %v", err)
-			}
+			formatter := createFormatter(t, format, destination)
 			if err := formatter.Add(t.Context(), window); err != nil {
 				t.Fatalf("Formatter.Add() error = %v", err)
 			}
 			if err := formatter.Complete(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if got := destination.String(); got != "source;raise:net rx 5\n" {
+			if got := string(readDestination(t, destination)); got != "source;raise:net rx 5\n" {
 				t.Fatalf("output = %q", got)
 			}
 		})
@@ -70,7 +67,7 @@ func TestFormatterFlameGraphOutput(t *testing.T) {
 
 	for _, format := range []output.OutputFormat{output.FormatFlameGraph, output.FormatSVG} {
 		t.Run(string(format), func(t *testing.T) {
-			var destination bytes.Buffer
+			destination := filepath.Join(t.TempDir(), "profile")
 			data, err := profiler.ParseTree(time.Now(), profiler.ProfileTypeIRQTracingSample, items, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -79,17 +76,14 @@ func TestFormatterFlameGraphOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			formatter, err := newFormatter(&pcontext.ProfilerContext{OutputFormat: format, OutputWriter: &destination})
-			if err != nil {
-				t.Fatalf("newFormatter() error = %v", err)
-			}
+			formatter := createFormatter(t, format, destination)
 			if err := formatter.Add(t.Context(), window); err != nil {
 				t.Fatalf("Formatter.Add() error = %v", err)
 			}
 			if err := formatter.Complete(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if got := destination.String(); !strings.Contains(got, "<svg") ||
+			if got := string(readDestination(t, destination)); !strings.Contains(got, "<svg") ||
 				!strings.Contains(got, "raise_softirq_[k]") {
 				t.Fatalf("output does not contain an SVG flame graph: %q", got)
 			}
@@ -99,16 +93,13 @@ func TestFormatterFlameGraphOutput(t *testing.T) {
 
 func TestFormatterJSONOutput(t *testing.T) {
 	window := &types.ProfilingWindow{Profile: &profilev1.Profile{}, DroppedSamples: map[string]uint64{types.DropReasonCollection: 3}}
-	var destination bytes.Buffer
-	formatter, err := newFormatter(&pcontext.ProfilerContext{OutputFormat: output.FormatJSON, OutputWriter: &destination})
-	if err != nil {
-		t.Fatal(err)
-	}
+	destination := filepath.Join(t.TempDir(), "profile")
+	formatter := createFormatter(t, output.FormatJSON, destination)
 	if err := formatter.Add(t.Context(), window); err != nil {
 		t.Fatal(err)
 	}
 	var got types.ProfilingWindow
-	if err := json.Unmarshal(destination.Bytes(), &got); err != nil {
+	if err := json.Unmarshal(readDestination(t, destination), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.DroppedSamples[types.DropReasonCollection] != 3 {

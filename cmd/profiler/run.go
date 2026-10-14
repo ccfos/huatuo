@@ -16,7 +16,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 
 	"github.com/urfave/cli/v2"
@@ -27,7 +26,7 @@ import (
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
-func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) (returnErr error) {
+func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 	typ := profiling.Type(cliCtx.String("type"))
 	lang := profiling.Language(cliCtx.String("language"))
 
@@ -48,17 +47,6 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) (returnErr error) {
 		return err
 	}
 	defer pctx.Cancel()
-
-	if pctx.ToolstreamClient != nil {
-		defer func() {
-			if err := pctx.ToolstreamClient.Close(); err != nil {
-				returnErr = errors.Join(
-					returnErr,
-					fmt.Errorf("close toolstream: %w", err),
-				)
-			}
-		}()
-	}
 
 	if cliCtx.Bool("enable-pprof") {
 		server, err := startPprofServer(pctx.Ctx, profilerPprofAddress)

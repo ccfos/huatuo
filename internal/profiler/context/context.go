@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"runtime"
 	"strconv"
 	"strings"
@@ -29,7 +28,6 @@ import (
 	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
 	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
 	psignal "github.com/ccfos/huatuo/internal/profiler/signal"
-	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/profiling"
 
 	"github.com/urfave/cli/v2"
@@ -51,7 +49,6 @@ type ProfilerContext struct {
 	ServerAddress             string
 	OutputFormat              output.OutputFormat
 	OutputPath                string
-	OutputWriter              io.Writer
 	ContainerID               string
 	Type                      profiling.Type
 	Language                  profiling.Language
@@ -67,7 +64,8 @@ type ProfilerContext struct {
 
 	TracerID string
 
-	ToolstreamClient *toolstream.Client
+	ToolName string
+	Version  string
 }
 
 func NewContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, error) {
@@ -88,15 +86,11 @@ func NewContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, er
 		})
 	}
 	succeeded := false
-	var tsClient *toolstream.Client
 	defer func() {
 		if succeeded {
 			return
 		}
 		cancelProfiler()
-		if tsClient != nil {
-			_ = tsClient.Close()
-		}
 	}()
 
 	go func() {
@@ -112,9 +106,12 @@ func NewContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, er
 
 	outputFormat := output.OutputFormat(cliCtx.String("output-format"))
 
-	tsClient, err = initToolstreamClient(cliCtx, outputFormat)
-	if err != nil {
-		return nil, err
+	outputPath := cliCtx.String("output-path")
+	if outputFormat == output.FormatRemoteStore {
+		outputPath = cliCtx.String("output-storage")
+		if outputPath == "" {
+			return nil, fmt.Errorf("--output-storage is required when --output-format=remote")
+		}
 	}
 
 	var cpuIDs []int
@@ -175,7 +172,7 @@ func NewContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, er
 		ThreadGroup:               cliCtx.Bool("thread-group"),
 		ToolDir:                   cliCtx.String("tool-path"),
 		LogBpfDebug:               cliCtx.Bool("log-bpf-debug"),
-		OutputPath:                cliCtx.String("output-path"),
+		OutputPath:                outputPath,
 		OutputFormat:              outputFormat,
 		Mode:                      mode,
 		OffCPUPhase:               offCPUPhase,
@@ -185,33 +182,11 @@ func NewContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, er
 
 		TracerID: cliCtx.String("task-id"),
 
-		ToolstreamClient: tsClient,
+		ToolName: "profiler",
+		Version:  "1",
 	}
 	succeeded = true
 	return profilerContext, nil
-}
-
-func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*toolstream.Client, error) {
-	if format != output.FormatRemoteStore {
-		return nil, nil
-	}
-
-	sockPath := cliCtx.String("output-storage")
-	if sockPath == "" {
-		return nil, fmt.Errorf("--output-storage is required when --output-format=remote")
-	}
-
-	client, err := toolstream.NewClient(toolstream.ClientOptions{
-		SockPath: sockPath,
-		ToolName: "profiler",
-		Version:  "1",
-		TaskID:   cliCtx.String("task-id"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("toolstream connect %s: %w", sockPath, err)
-	}
-
-	return client, nil
 }
 
 func parseCPUIDList(s string) ([]int, error) {

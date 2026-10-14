@@ -99,7 +99,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-path",
-		Usage: "Output path for profiling",
+		Usage: "Output file, directory, or - for stdout; append / to create a directory",
 		Value: ".",
 	},
 	&cli.StringFlag{
