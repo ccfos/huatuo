@@ -106,8 +106,12 @@ func TestWatchEventsWritesHeartbeat(t *testing.T) {
 	if got := writer.header.Get("X-Accel-Buffering"); got != "no" {
 		t.Errorf("X-Accel-Buffering = %q, want no", got)
 	}
-	if got := writer.body.String(); got != ": ping\n: ping\n" {
-		t.Errorf("body = %q, want initial and periodic heartbeats", got)
+	// Cancellation can race with a ready tick, so allow trailing heartbeats.
+	const heartbeat = ": ping\n"
+	got := writer.body.String()
+	heartbeats := strings.Count(got, heartbeat)
+	if heartbeats < 2 || got != strings.Repeat(heartbeat, heartbeats) {
+		t.Errorf("body = %q, want initial and periodic heartbeat lines", got)
 	}
 }
 
