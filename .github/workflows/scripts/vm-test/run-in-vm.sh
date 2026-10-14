@@ -56,8 +56,6 @@ print_sys_info() {
 # disk. Best effort: distros that already grew report NOCHANGE.
 grow_root_filesystem() {
 	local root_device filesystem parent partition output
-	root_device=$(findmnt -n -o SOURCE /)
-	root_device=$(readlink -f "$root_device")
 	filesystem=$(findmnt -n -o FSTYPE /)
 	case "$filesystem" in
 	ext4 | xfs) ;;
@@ -66,6 +64,12 @@ grow_root_filesystem() {
 		return 0
 		;;
 	esac
+	root_device=$(findmnt -n -o SOURCE /)
+	# findmnt reports a btrfs root as "/dev/vda3[/root]"; never let that
+	# suffix reach readlink -f, which treats the embedded "/" as a path
+	# separator and fails (fatal under set -e).
+	root_device=${root_device%%\[*}
+	root_device=$(readlink -f "$root_device" 2> /dev/null || printf '%s' "$root_device")
 	if [[ ! -f /sys/class/block/${root_device##*/}/partition ]]; then
 		vm_log "rootfs grow skipped: $root_device is not a direct partition"
 		return 0
