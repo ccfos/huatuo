@@ -261,6 +261,15 @@ func (b *defaultBPF) attachOne(opt *AttachOption) (err error) {
 	return nil
 }
 
+func (b *defaultBPF) AttachIndependently(opt *AttachOption) error {
+	if err := b.acquireWriteLock(); err != nil {
+		return err
+	}
+	defer b.mu.Unlock()
+
+	return b.attachOne(opt)
+}
+
 // Attach the default programs.
 func (b *defaultBPF) Attach() error {
 	if err := b.acquireWriteLock(); err != nil {
@@ -461,4 +470,53 @@ func (b *defaultBPF) detach() error {
 	}
 
 	return errors.Join(detachErrs...)
+}
+
+// DetachIndependently preserves other targets, including those on this program.
+func (b *defaultBPF) DetachIndependently(opt *AttachOption) error {
+	if err := b.acquireWriteLock(); err != nil {
+		return err
+	}
+	defer b.mu.Unlock()
+	if opt == nil {
+		return errors.New("nil detach option")
+	}
+	program, ok := b.programsByID[b.ProgramIDByName(opt.ProgramName)]
+	if !ok {
+		return fmt.Errorf("unknown BPF program %q", opt.ProgramName)
+	}
+	var linkKey string
+	switch program.programType {
+	case ebpf.Kprobe:
+		options, err := parseKprobeAttachOptions(program, opt.Symbol,
+			program.sectionPrefix == "kretprobe", opt.Kprobe.RetprobeMaxActive)
+		if err != nil {
+			return err
+		}
+		linkKey = options.symbol
+		if !options.isRetprobe {
+			linkKey = fmt.Sprintf("%s+%d", options.symbol, options.linkOptions.Offset)
+		}
+	case ebpf.TracePoint:
+		options, err := parseTracepointAttachOptions(program, opt.Symbol)
+		if err != nil {
+			return err
+		}
+		linkKey = fmt.Sprintf("%s/%s", options.system, options.symbol)
+	case ebpf.RawTracepoint:
+		options, err := parseRawTracepointAttachOptions(program, opt.Symbol)
+		if err != nil {
+			return err
+		}
+		linkKey = options.linkOptions.Name
+	default:
+		return fmt.Errorf("%w: independent detach of %s", types.ErrNotSupported, program.programType)
+	}
+	if attached := program.links[linkKey]; attached != nil {
+		if err := attached.Close(); err != nil {
+			return fmt.Errorf("detach %q from program %q: %w", linkKey, opt.ProgramName, err)
+		}
+	}
+	delete(program.links, linkKey)
+	return nil
 }
