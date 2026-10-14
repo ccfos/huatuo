@@ -160,10 +160,14 @@ install_test_dependencies() {
 			package_options+=(--disablerepo='epel*')
 		fi
 		# openEuler publishes kernel-devel in its binary OS repositories.
+		# Its update and everything repositories carry very large metadata
+		# (tens of MB) served by slow mirrors and are not required to install
+		# the build dependencies, so skip them as well.
 		if [[ "$os_id" == openeuler ]]; then
 			package_options+=(
 				--disablerepo=EPOL --disablerepo=debuginfo --disablerepo=source
-				--disablerepo=update-source
+				--disablerepo=update-source --disablerepo=update
+				--disablerepo=everything
 			)
 		fi
 		"$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"
