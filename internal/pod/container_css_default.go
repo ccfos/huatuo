@@ -360,7 +360,7 @@ func ContainerCSSBySubsys(containerID, subsysName string) (uint64, error) {
 	}
 
 	// CSS not found in cache, trigger one-time collection
-	if err := syncContainerCSS(containerID); err != nil {
+	if err := syncContainerCSS(containerID, subsysName); err != nil {
 		return 0, fmt.Errorf("sync container CSS: %w", err)
 	}
 
@@ -378,9 +378,9 @@ func ContainerCSSBySubsys(containerID, subsysName string) (uint64, error) {
 // syncContainerCSS triggers a one-time BPF-based CSS collection for a specific container.
 // It finds the container's cgroup path, reads a notification file to trigger the BPF program,
 // and waits for the CSS data to be populated.
-func syncContainerCSS(containerID string) error {
+func syncContainerCSS(containerID, subsysName string) error {
 	// Find container cgroup path
-	cgroupPath, err := findContainerCgroupPath(containerID)
+	cgroupPath, err := findContainerCgroupPath(containerID, subsysName)
 	if err != nil {
 		return fmt.Errorf("find container cgroup path: %w", err)
 	}
@@ -397,53 +397,31 @@ func syncContainerCSS(containerID string) error {
 	return nil
 }
 
-// findContainerCgroupPath resolves the container's kernel cgroup membership on this host.
-func findContainerCgroupPath(containerID string) (string, error) {
+// findContainerCgroupPath resolves the requested controller's kernel membership.
+func findContainerCgroupPath(containerID, subsysName string) (string, error) {
 	paths, err := containerCgroupPathsByID(containerID)
 	if err != nil {
 		return "", err
 	}
 
-	switch cgroups.CgroupMode() {
+	return containerCgroupPathForSubsys(paths, cgroups.CgroupMode(), subsysName)
+}
+
+func containerCgroupPathForSubsys(paths *cgroups.ProcessPaths, mode cgroups.Mode, subsysName string) (string, error) {
+	switch mode {
 	case cgroups.Legacy, cgroups.Hybrid:
-		var resolveErrors []error
-		for _, subsys := range cgroupv1SubSysName {
-			membershipPath := paths.Controllers[subsys]
-			if membershipPath == "" {
-				continue
-			}
-
-			cgroupPath, err := resolveCgroupFilesystemPath(
-				cgroups.RootFsFilePath(subsys),
-				membershipPath,
-				cgroupv1NotifyFile,
-			)
-			if err == nil {
-				return cgroupPath, nil
-			}
-			resolveErrors = append(resolveErrors, fmt.Errorf("%s controller: %w", subsys, err))
+		membershipPath := paths.Controllers[subsysName]
+		if membershipPath == "" {
+			return "", fmt.Errorf("container has no %q cgroup v1 membership", subsysName)
 		}
-
-		if len(resolveErrors) == 0 {
-			return "", fmt.Errorf("container %q has no supported cgroup v1 membership", containerID)
-		}
-		return "", fmt.Errorf(
-			"container %q has no accessible cgroup v1 notification file: %w",
-			containerID,
-			errors.Join(resolveErrors...),
-		)
+		return resolveCgroupFilesystemPath(cgroups.RootFsFilePath(subsysName), membershipPath, cgroupv1NotifyFile)
 	case cgroups.Unified:
 		if paths.Unified == "" {
-			return "", fmt.Errorf("container %q has no cgroup v2 membership", containerID)
+			return "", fmt.Errorf("container has no cgroup v2 membership")
 		}
-
-		return resolveCgroupFilesystemPath(
-			cgroups.RootfsDefaultPath(),
-			paths.Unified,
-			cgroupv2NotifyFile,
-		)
+		return resolveCgroupFilesystemPath(cgroups.RootfsDefaultPath(), paths.Unified, cgroupv2NotifyFile)
 	default:
-		return "", fmt.Errorf("unsupported cgroup mode %d", cgroups.CgroupMode())
+		return "", fmt.Errorf("unsupported cgroup mode %d", mode)
 	}
 }
 
