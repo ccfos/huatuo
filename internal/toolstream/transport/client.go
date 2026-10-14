@@ -32,7 +32,7 @@ type Client struct {
 // handshake writes the one-shot ConnectRequest frame. UDS has no handshake;
 // the server reads this frame, parses metadata, and starts dispatching chunks.
 // There is no server ack.
-func (c *Client) handshake(toolName, version, taskID string) error {
+func (c *Client) handshake(serviceName, toolName, version, taskID string) error {
 	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err != nil {
 		return err
@@ -49,6 +49,10 @@ func (c *Client) handshake(toolName, version, taskID string) error {
 		return err
 	}
 
+	if err := connect.SetServiceName(serviceName); err != nil {
+		return err
+	}
+
 	if err := connect.SetToolName(toolName); err != nil {
 		return err
 	}
@@ -61,7 +65,7 @@ func (c *Client) handshake(toolName, version, taskID string) error {
 		return err
 	}
 
-	connect.SetProtoVersion(2)
+	connect.SetProtoVersion(3)
 
 	return c.encoder.Encode(m)
 }
@@ -157,14 +161,14 @@ func (c *Client) receiveCommitResult(ctx context.Context) error {
 }
 
 // NewClient dials path, sends the handshake, and returns a ready Client.
-func NewClient(path, toolName, version, taskID string) (*Client, error) {
+func NewClient(path, serviceName, toolName, version, taskID string) (*Client, error) {
 	conn, err := DialUDS(path)
 	if err != nil {
 		return nil, err
 	}
 
 	c := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
-	if err := c.handshake(toolName, version, taskID); err != nil {
+	if err := c.handshake(serviceName, toolName, version, taskID); err != nil {
 		// The caller never sees the connection, so it must not leak.
 		_ = conn.Close()
 		return nil, fmt.Errorf("transport: send connect: %w", err)

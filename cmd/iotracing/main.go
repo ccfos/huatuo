@@ -145,11 +145,11 @@ func openToolstream(c *cli.Context) (*toolstream.Client, error) {
 		return nil, nil
 	}
 
-	client, err := toolstream.NewClient(toolstream.ClientOptions{
-		SockPath: path,
-		ToolName: iotracingToolName,
-		Version:  versionInfo.Version,
-		TaskID:   c.String(cliFlagTaskID),
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    path,
+		ServiceName: iotracingToolName,
+		Version:     versionInfo.Version,
+		TaskID:      c.String(cliFlagTaskID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("--output-storage: %w", err)

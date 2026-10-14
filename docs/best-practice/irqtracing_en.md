@@ -86,4 +86,4 @@ The daemon's `AutoTracing.IRQTracing` tracer invokes the `irqtracing` binary loc
 
 New IRQ results use `profile_data` in profiling storage, with `tracer_name=irqtracing` and `tracer_type=profiling`. Query them through the profiling APIs using `irqtracing:irq:count:irq:count`. Historical tracing documents remain available through their existing tracing queries; they are not rewritten. The old `flamedata`/`nmissed` wire format is removed, so upgrade the CLI and daemon together.
 
-Remote output sends `end + commit` and waits for the daemon ACK confirming storage and publication. Plain End, collection failure and disconnect do not publish a completion marker. Protocol version 2 requires upgrading tools and daemon together. If the ACK is lost, the result may already be published; query by task ID to confirm.
+Remote output sends `end + commit` and waits for the daemon ACK confirming storage and publication. Plain End, collection failure and disconnect do not publish a completion marker. Protocol version 3 requires upgrading tools and daemon together. If the ACK is lost, the result may already be published; query by task ID to confirm.

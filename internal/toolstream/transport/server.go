@@ -114,10 +114,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	// Empty ToolName violates the protocol: with no name the connection cannot
+	// Empty ServiceName violates the protocol: with no name the connection cannot
 	// be routed to any handler. Log at Error level so the producer side notices.
-	if sess.ToolName == "" {
-		log.Errorf("connect: empty tool name, closing connection")
+	if sess.ServiceName == "" {
+		log.Errorf("connect: empty service name, closing connection")
 		return
 	}
 
@@ -126,13 +126,13 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	// Ownership lasts through handler completion and ACK, including a peer disconnect.
 	var ownershipErr error
 	if sess.TaskID != "" {
-		key := [2]string{sess.ToolName, sess.TaskID}
+		key := [2]string{sess.ServiceName, sess.TaskID}
 		s.mutex.Lock()
 		if s.tasks == nil {
 			s.tasks = make(map[[2]string]*Session)
 		}
 		if s.tasks[key] != nil {
-			ownershipErr = fmt.Errorf("toolstream: session %s/%s already belongs to another connection", sess.ToolName, sess.TaskID)
+			ownershipErr = fmt.Errorf("toolstream: session %s/%s already belongs to another connection", sess.ServiceName, sess.TaskID)
 			sess.Err = ownershipErr
 		} else {
 			s.tasks[key] = sess
@@ -147,10 +147,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		}
 	}
 
-	log.Infof("connected tool=%s version=%s task_id=%s",
-		sess.ToolName, sess.Version, sess.TaskID)
-	defer log.Infof("disconnected tool=%s task_id=%s",
-		sess.ToolName, sess.TaskID)
+	log.Infof("connected service=%s version=%s task_id=%s",
+		sess.ServiceName, sess.Version, sess.TaskID)
+	defer log.Infof("disconnected service=%s task_id=%s",
+		sess.ServiceName, sess.TaskID)
 
 	for {
 		if ctx.Err() != nil {
@@ -160,7 +160,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		msg, err := frameDecoder.Decode()
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				log.Warnf("%s: recv: %v", sess.ToolName, err)
+				log.Warnf("%s: recv: %v", sess.ServiceName, err)
 			}
 
 			return
@@ -168,7 +168,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 
 		chunk, err := parseChunk(msg)
 		if err != nil {
-			log.Warnf("%s: recv: %v", sess.ToolName, err)
+			log.Warnf("%s: recv: %v", sess.ServiceName, err)
 			return
 		}
 
@@ -184,7 +184,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 				return
 			}
 			if err := sendCommitResult(conn, sess.Err); err != nil {
-				log.Warnf("%s: commit acknowledgement: %v", sess.ToolName, err)
+				log.Warnf("%s: commit acknowledgement: %v", sess.ServiceName, err)
 			}
 		}
 
@@ -210,17 +210,19 @@ func parseSession(msg *capnp.Message) (*Session, error) {
 		return nil, fmt.Errorf("transport: decode connect: %w", err)
 	}
 
-	if connect.ProtoVersion() != 2 {
-		return nil, fmt.Errorf("unsupported toolstream protocol %d; require 2", connect.ProtoVersion())
+	if connect.ProtoVersion() != 3 {
+		return nil, fmt.Errorf("unsupported toolstream protocol %d; require 3", connect.ProtoVersion())
 	}
+	serviceName, _ := connect.ServiceName()
 	toolName, _ := connect.ToolName()
 	version, _ := connect.Version()
 	taskID, _ := connect.TaskID()
 
 	return &Session{
-		ToolName: toolName,
-		Version:  version,
-		TaskID:   taskID,
+		ServiceName: serviceName,
+		ToolName:    toolName,
+		Version:     version,
+		TaskID:      taskID,
 	}, nil
 }
 

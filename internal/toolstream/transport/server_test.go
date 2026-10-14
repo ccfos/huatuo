@@ -92,9 +92,9 @@ func newPipedServer(t *testing.T) (rawClient net.Conn, clientEnc *capnp.Encoder,
 }
 
 // handshake sends a Connect frame via enc using Client.handshake.
-func handshake(t *testing.T, enc *capnp.Encoder, rawClient net.Conn, toolName, version, taskID string) error {
+func handshake(t *testing.T, enc *capnp.Encoder, rawClient net.Conn, serviceName, version, taskID string) error {
 	t.Helper()
-	return (&Client{encoder: enc, conn: rawClient}).handshake(toolName, version, taskID)
+	return (&Client{encoder: enc, conn: rawClient}).handshake(serviceName, "", version, taskID)
 }
 
 // sendChunk sends a Chunk frame via enc.
@@ -158,8 +158,8 @@ func TestNormalPath(t *testing.T) {
 		t.Fatalf("want 3 handler calls, got %d", len(got))
 	}
 	for i, c := range got {
-		if c.Session.ToolName != "dropwatch" {
-			t.Errorf("call %d ToolName=%q want %q", i, c.Session.ToolName, "dropwatch")
+		if c.Session.ServiceName != "dropwatch" {
+			t.Errorf("call %d ServiceName=%q want %q", i, c.Session.ServiceName, "dropwatch")
 		}
 		if c.Session.Version != "1.0" {
 			t.Errorf("call %d Version=%q want %q", i, c.Session.Version, "1.0")
@@ -265,7 +265,7 @@ func TestInvalidFirstFrame(t *testing.T) {
 	}
 }
 
-func TestEmptyToolName(t *testing.T) {
+func TestEmptyServiceName(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
@@ -282,12 +282,12 @@ func TestEmptyToolName(t *testing.T) {
 	}
 }
 
-// TestEmptyToolNameClosesEarly pins that empty ToolName causes handleConn to
+// TestEmptyServiceNameClosesEarly pins that empty ServiceName causes handleConn to
 // return immediately rather than entering the Decode loop. Without this guard
 // the server would block waiting for a chunk forever; the test deliberately
 // omits the client-side close so that "accept-then-loop" behavior would hang
 // here until wait() trips its 2s timeout.
-func TestEmptyToolNameClosesEarly(t *testing.T) {
+func TestEmptyServiceNameClosesEarly(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	if err := handshake(t, clientEnc, rawClient, "", "v", ""); err != nil {
@@ -346,7 +346,7 @@ func TestClientRoundTrip(t *testing.T) {
 	var c *Client
 
 	for range 20 {
-		c, err = NewClient(sockPath, "client-tool", "9.9", "task-rt")
+		c, err = NewClient(sockPath, "client-tool", "", "9.9", "task-rt")
 		if err == nil {
 			break
 		}
@@ -378,8 +378,8 @@ func TestClientRoundTrip(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("want 2 handler calls, got %d", len(got))
 	}
-	if got[0].Session.ToolName != "client-tool" {
-		t.Errorf("ToolName=%q want %q", got[0].Session.ToolName, "client-tool")
+	if got[0].Session.ServiceName != "client-tool" {
+		t.Errorf("ServiceName=%q want %q", got[0].Session.ServiceName, "client-tool")
 	}
 	if got[0].Session.Version != "9.9" {
 		t.Errorf("Version=%q want %q", got[0].Session.Version, "9.9")
@@ -412,9 +412,11 @@ func TestParseSessionRejectsPreviousProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connect.SetProtoVersion(1)
-	if _, err := parseSession(msg); err == nil {
-		t.Fatal("accepted protocol 1 with incompatible commit semantics")
+	for _, version := range []uint32{1, 2, 4} {
+		connect.SetProtoVersion(version)
+		if _, err := parseSession(msg); err == nil {
+			t.Fatalf("accepted unsupported protocol %d", version)
+		}
 	}
 }
 

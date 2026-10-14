@@ -86,4 +86,4 @@ sudo ./_output/bin/irqtracing \
 
 新的 IRQ 结果写入 profiling 存储的 `profile_data`，`tracer_name=irqtracing`、`tracer_type=profiling`，可通过 profiling API 按 `irqtracing:irq:count:irq:count` 查询。历史 tracing 文档继续通过原 tracing 查询读取，不改写历史数据。旧 `flamedata`/`nmissed` 传输格式已移除，CLI 与守护进程需要同时升级。
 
-远端输出成功后发送 `end + commit`，并等待 daemon 返回存储和发布结果 ACK。普通 End、采集失败和断连均不发布任务完成标记。协议版本 2 要求工具与 daemon 同时升级；ACK 丢失时结果可能已发布，应按任务 ID 查询确认。
+远端输出成功后发送 `end + commit`，并等待 daemon 返回存储和发布结果 ACK。普通 End、采集失败和断连均不发布任务完成标记。协议版本 3 要求工具与 daemon 同时升级；ACK 丢失时结果可能已发布，应按任务 ID 查询确认。

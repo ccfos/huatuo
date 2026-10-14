@@ -20,6 +20,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 )
 
@@ -37,8 +38,6 @@ func Register(ctx context.Context, server *toolstream.Server, cfg profilingstore
 	if err != nil {
 		return nil, errors.Join(err, store.Close(ctx))
 	}
-	for _, tool := range []string{"profiler", "irqtracing"} {
-		toolstream.Register(server, tool, writer.Handle)
-	}
+	toolstream.Register(server, profiling.StoreServiceName, writer.Handle)
 	return store.Close, nil
 }

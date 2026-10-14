@@ -763,7 +763,7 @@ Pipeline 用 `runErr` 保存运行错误，通过 `OnFailure func()` 通知执�
 
 ### 存储和可见性
 
-守护进程通过 `internal/profiling.Register` 初始化存储，再注册 profiler 和 irqtracing 入口。toolstream 的工具名称用于路由，并写入 document 的 `tracer_name`；`ProfilingWindow` 不重复携带工具标识。
+守护进程通过 `internal/profiling.Register` 初始化存储，再注册共享的 `profiling_store_service` 入口。toolstream 的必填 `ServiceName` 用于路由；可选 `ToolName` 仅表示业务来源。profiling 存储要求非空工具名称，并将 `profiler` 或 `irqtracing` 写入 document 的 `tracer_name`；其他服务可以不传 `ToolName`。`ProfilingWindow` 不重复携带工具标识。
 
 工具使用 `Send(ctx, event, SendOptions)` 发送数据和控制帧。`End` 标记最后一帧，`Commit` 必须同时设置 End，并等待服务端 ACK。最后一份数据可以与提交标记共用一帧；nil event 不携带数据。远端 Formatter 的 Complete 发送无数据的 `End + Commit`。Close 单独释放连接，取消进行中的发送会关闭连接以中断 I/O。
 
@@ -771,7 +771,7 @@ handler 接收 `Handle(ctx, *toolstream.Request[T])`，包含连接元数据、�
 
 普通数据帧没有 ACK，未注册入口及存储错误通过提交 ACK 返回。CLI 在 Complete 收到成功 ACK 后正常退出，bamai 根据退出状态判断任务结果。ACK 丢失表示客户端无法确认结果，不会回滚已写入数据。
 
-transport 将非空 `(toolName, taskID)` 绑定到活动连接，拒绝并发连接写入或提交同一任务，连接处理结束时释放归属。不同工具的 handler 独立运行。持久化任务 ID 必须全局唯一；既有完成标记 ID 保留兼容性。toolstream 使用协议版本 2，工具与守护进程需同时升级。
+transport 将非空 `(serviceName, taskID)` 绑定到活动连接，拒绝并发连接写入或提交同一任务，连接处理结束时释放归属。同一服务内不能通过不同工具名称重复占用任务；不同服务的 handler 独立运行。持久化任务 ID 必须全局唯一；既有完成标记 ID 保留兼容性。toolstream 使用协议版本 3，工具与守护进程需同时升级；旧协议被明确拒绝。握手保留既有字段编号，在 `@4` 追加 `serviceName`。
 
 ### 丢样统计
 

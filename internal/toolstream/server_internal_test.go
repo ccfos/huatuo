@@ -36,7 +36,7 @@ func TestRequestsContinueAfterFrameFailures(t *testing.T) {
 		}
 		return nil
 	})
-	session := &transport.Session{Context: t.Context(), ToolName: "test", TaskID: "task", Version: "v1"}
+	session := &transport.Session{Context: t.Context(), ServiceName: "test", ToolName: "source", TaskID: "task", Version: "v1"}
 	server.dispatch(session, transport.ChunkMsg{Data: []byte("1")})
 	server.dispatch(session, transport.ChunkMsg{Data: []byte("bad json")})
 	server.dispatch(session, transport.ChunkMsg{Data: []byte("2"), End: true, Commit: true})
@@ -53,7 +53,7 @@ func TestRequestsContinueAfterFrameFailures(t *testing.T) {
 	if last.Data == nil || *last.Data != 2 || !last.Commit || !last.End || last.Err != nil || !errors.Is(last.PriorErr, failure) {
 		t.Fatalf("final frame not delivered with prior error: %+v", last)
 	}
-	if last.ToolName != "test" || last.TaskID != "task" || last.Version != "v1" {
+	if last.ToolName != "source" || last.ServiceName != "test" || last.TaskID != "task" || last.Version != "v1" {
 		t.Fatalf("metadata=%+v", last)
 	}
 	if !errors.Is(session.Err, failure) {
@@ -84,7 +84,7 @@ func TestRequestDecodeFailureDiscardsPartialData(t *testing.T) {
 				return nil
 			})
 
-			session := &transport.Session{Context: t.Context(), ToolName: "test"}
+			session := &transport.Session{Context: t.Context(), ServiceName: "test"}
 			server.dispatch(session, transport.ChunkMsg{Data: []byte(payload), End: true, Commit: true})
 			if !called || session.Err == nil {
 				t.Fatalf("called=%v, session error=%v", called, session.Err)

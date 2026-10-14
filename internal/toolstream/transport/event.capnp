@@ -10,6 +10,7 @@ struct ConnectRequest {
     version      @1 :Text;
     taskID       @2 :Text;
     protoVersion @3 :UInt32 = 1;
+    serviceName  @4 :Text;   # required handler route; toolName is optional source metadata
 }
 
 # Chunk is every subsequent data / control frame.

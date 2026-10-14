@@ -34,9 +34,10 @@ type ChunkMsg struct {
 
 // Session holds per-connection state populated from the Connect frame.
 type Session struct {
-	ToolName string
-	Version  string
-	TaskID   string
+	ServiceName string
+	ToolName    string
+	Version     string
+	TaskID      string
 	// Err accumulates synchronous handler failures for this connection.
 	Err error
 	// Context is canceled when the transport server shuts down.

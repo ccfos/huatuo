@@ -29,12 +29,13 @@ import (
 // Request is one frame and a snapshot of its connection metadata.
 // Data is nil for control-only frames or decoding failures.
 type Request[T any] struct {
-	ToolName string
-	Version  string
-	TaskID   string
-	Data     *T
-	End      bool
-	Commit   bool
+	ServiceName string
+	ToolName    string
+	Version     string
+	TaskID      string
+	Data        *T
+	End         bool
+	Commit      bool
 	// PriorErr contains failures from earlier frames only.
 	PriorErr error
 	// Err contains tool, protocol or decoding failures for this frame.
@@ -101,13 +102,13 @@ func NewServerDefault() (*Server, error) {
 	return defaultServer, nil
 }
 
-// Register binds a typed handler for events from toolName; safe for concurrent use.
-func Register[T any](srv *Server, toolName string, handler func(context.Context, *Request[T]) error) {
+// Register binds a typed handler for events from serviceName; safe for concurrent use.
+func Register[T any](srv *Server, serviceName string, handler func(context.Context, *Request[T]) error) {
 	srv.handlersMu.Lock()
 	defer srv.handlersMu.Unlock()
-	srv.handlers[toolName] = func(ctx context.Context, session *transport.Session, chunk transport.ChunkMsg) error {
+	srv.handlers[serviceName] = func(ctx context.Context, session *transport.Session, chunk transport.ChunkMsg) error {
 		request := &Request[T]{
-			ToolName: session.ToolName, Version: session.Version,
+			ServiceName: session.ServiceName, ToolName: session.ToolName, Version: session.Version,
 			TaskID: session.TaskID, End: chunk.End, Commit: chunk.Commit, PriorErr: session.Err,
 		}
 		if chunk.Err != "" {
@@ -116,7 +117,7 @@ func Register[T any](srv *Server, toolName string, handler func(context.Context,
 		if len(chunk.Data) != 0 {
 			if err := json.Unmarshal(chunk.Data, &request.Data); err != nil {
 				request.Data = nil
-				request.Err = errors.Join(request.Err, fmt.Errorf("unmarshal for %s: %w", toolName, err))
+				request.Err = errors.Join(request.Err, fmt.Errorf("unmarshal for %s: %w", serviceName, err))
 			} else if request.Data == nil {
 				request.Err = errors.Join(request.Err, errors.New("event payload must not be null"))
 			}
@@ -127,12 +128,12 @@ func Register[T any](srv *Server, toolName string, handler func(context.Context,
 }
 
 // RegisterDefault binds a typed handler on the default server.
-func RegisterDefault[T any](toolName string, handler func(context.Context, *Request[T]) error) {
+func RegisterDefault[T any](serviceName string, handler func(context.Context, *Request[T]) error) {
 	srv, err := NewServerDefault()
 	if err != nil {
 		log.Fatalf("default server: %v", err)
 	}
-	Register(srv, toolName, handler)
+	Register(srv, serviceName, handler)
 }
 
 // Start listens in the background; call Close to stop.
@@ -183,7 +184,7 @@ func (s *Server) Close() error {
 
 func (s *Server) dispatch(session *transport.Session, chunk transport.ChunkMsg) {
 	s.handlersMu.RLock()
-	handler := s.handlers[session.ToolName]
+	handler := s.handlers[session.ServiceName]
 	s.handlersMu.RUnlock()
 	var err error
 	if handler == nil {
@@ -196,6 +197,6 @@ func (s *Server) dispatch(session *transport.Session, chunk transport.ChunkMsg) 
 	}
 	if err != nil {
 		session.Err = errors.Join(session.Err, err)
-		log.Warnf("%s: handler: %v", session.ToolName, err)
+		log.Warnf("%s: handler: %v", session.ServiceName, err)
 	}
 }

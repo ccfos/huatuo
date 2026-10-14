@@ -203,11 +203,11 @@ type writerOptions struct {
 
 func newWriter(output io.Writer, options *writerOptions) (writer, func() error, error) {
 	if options.socketPath != "" {
-		client, err := toolstream.NewClient(toolstream.ClientOptions{
-			SockPath: options.socketPath,
-			ToolName: options.toolName,
-			Version:  options.version,
-			TaskID:   options.taskID,
+		client, err := toolstream.NewClient(&toolstream.ClientOptions{
+			SockPath:    options.socketPath,
+			ServiceName: options.toolName,
+			Version:     options.version,
+			TaskID:      options.taskID,
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("--output-storage: %w", err)

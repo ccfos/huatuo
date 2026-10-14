@@ -53,6 +53,9 @@ func (w *DocumentWriter) Handle(ctx context.Context, request *toolstream.Request
 	if request == nil {
 		return errors.New("profiling result request is required")
 	}
+	if request.ToolName == "" {
+		return errors.New("profiling result tool name is required")
+	}
 	if request.TaskID == "" {
 		return errors.New("profiling result request task id is required")
 	}

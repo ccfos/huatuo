@@ -29,6 +29,7 @@ import (
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	"github.com/ccfos/huatuo/internal/toolstream"
+	profilingapi "github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func TestExecutorClosesProcessWhenStartFails(t *testing.T) {
@@ -147,7 +148,7 @@ func TestExecutorCommitClient(t *testing.T) {
 	if socket == "" {
 		return
 	}
-	client, err := toolstream.NewClient(toolstream.ClientOptions{SockPath: socket, ToolName: "profiler", Version: "test", TaskID: "job"})
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{ServiceName: profilingapi.StoreServiceName, SockPath: socket, ToolName: "profiler", Version: "test", TaskID: "job"})
 	if err == nil {
 		defer client.Close()
 		err = client.Send(t.Context(), nil, toolstream.SendOptions{End: true, Commit: true})
@@ -169,7 +170,7 @@ func TestExecutorWaitIncludesCommitResult(t *testing.T) {
 			entered, release := make(chan struct{}), make(chan struct{})
 			var once sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
-			toolstream.Register(server, "profiler", func(_ context.Context, request *toolstream.Request[int]) error {
+			toolstream.Register(server, profilingapi.StoreServiceName, func(_ context.Context, request *toolstream.Request[int]) error {
 				if !request.Commit {
 					return nil
 				}

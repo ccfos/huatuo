@@ -773,7 +773,7 @@ Before issuing its own stop signal, the runner checks the context so an existing
 
 ### Storage and visibility
 
-The daemon initializes storage through `internal/profiling.Register` before registering the profiler and irqtracing handlers. The toolstream tool name selects the handler and populates document `tracer_name`; `ProfilingWindow` does not duplicate tool identity.
+The daemon initializes storage through `internal/profiling.Register` before registering the shared `profiling_store_service` handler. Required `ServiceName` selects the handler; optional `ToolName` identifies the business source. Profiling storage requires a non-empty tool name and preserves `profiler` or `irqtracing` in document `tracer_name`; other services may omit `ToolName`. `ProfilingWindow` does not duplicate tool identity.
 
 Tools send data and control frames with `Send(ctx, event, SendOptions)`. End marks the final frame; Commit requires End and waits for the server ACK. The final window may share a frame with these flags; a nil event carries no payload. Remote Formatter sends an empty `End + Commit` from Complete. Close releases the connection separately; canceling an in-flight send closes it to interrupt I/O.
 
@@ -781,7 +781,7 @@ Handlers receive `Handle(ctx, *toolstream.Request[T])`, containing connection me
 
 Ordinary data frames have no ACK; missing handlers and storage errors are reported by the commit ACK. The CLI exits successfully after Complete receives a successful ACK, and bamai uses that exit status for the task result. A lost ACK means the client cannot confirm the outcome; it does not roll back stored data.
 
-Transport binds each non-empty `(toolName, taskID)` to its active connection, rejects concurrent duplicate connections for that task, and releases ownership when connection handling finishes. Different tool handlers run independently. Persisted task IDs must be globally unique; existing completion-marker IDs retain compatibility. Toolstream uses protocol version 2, requiring tools and daemon to be upgraded together.
+Transport binds each non-empty `(serviceName, taskID)` to its active connection, rejects concurrent duplicate connections for that task, and releases ownership when connection handling finishes. Different tool names cannot claim the same task within a service. Different service handlers run independently. Persisted task IDs must be globally unique; existing completion-marker IDs retain compatibility. Toolstream uses protocol version 3, requiring tools and daemon to be upgraded together; old protocols are explicitly rejected. The handshake preserves existing field ordinals and appends `serviceName` at `@4`.
 
 ### Dropped samples
 

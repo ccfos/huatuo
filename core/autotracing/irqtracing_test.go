@@ -29,6 +29,7 @@ import (
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/toolstream"
+	profilingapi "github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -97,7 +98,7 @@ func TestRunIRQTracingCLIPassesArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	toolstream.Register(stream, irqTracingToolName, func(context.Context, *toolstream.Request[types.ProfilingWindow]) error { return nil })
+	toolstream.Register(stream, profilingapi.StoreServiceName, func(context.Context, *toolstream.Request[types.ProfilingWindow]) error { return nil })
 	originalCoreBinDir := internalconfig.CoreBinDir
 	t.Cleanup(func() { internalconfig.CoreBinDir = originalCoreBinDir })
 	internalconfig.CoreBinDir = t.TempDir()

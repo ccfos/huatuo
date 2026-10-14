@@ -64,7 +64,7 @@ func TestCommitAcknowledgesAllWindowsAndPublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer server.Close()
-			client, err := toolstream.NewClient(toolstream.ClientOptions{SockPath: path, ToolName: "test", Version: "test", TaskID: "job"})
+			client, err := toolstream.NewClient(&toolstream.ClientOptions{SockPath: path, ServiceName: "test", Version: "test", TaskID: "job"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +123,7 @@ func TestCommitCancellationDoesNotClaimRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	client, err := toolstream.NewClient(toolstream.ClientOptions{SockPath: path, ToolName: "test", Version: "test", TaskID: "job"})
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{SockPath: path, ServiceName: "test", Version: "test", TaskID: "job"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestCommitCancellationDoesNotClaimRollback(t *testing.T) {
 	}
 }
 
-func TestConcurrentToolsAndDuplicateConnection(t *testing.T) {
+func TestConcurrentServicesAndDuplicateConnection(t *testing.T) {
 	for _, failWindow := range []bool{false, true} {
 		name := "success"
 		if failWindow {
@@ -185,9 +185,9 @@ func TestConcurrentToolsAndDuplicateConnection(t *testing.T) {
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			t.Cleanup(unblock)
-			connect := func(tool string) *toolstream.Client {
+			connect := func(service, tool string) *toolstream.Client {
 				t.Helper()
-				client, err := toolstream.NewClient(toolstream.ClientOptions{SockPath: path, ToolName: tool, Version: "test", TaskID: "shared-id"})
+				client, err := toolstream.NewClient(&toolstream.ClientOptions{SockPath: path, ServiceName: service, ToolName: tool, Version: "test", TaskID: "shared-id"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -196,7 +196,7 @@ func TestConcurrentToolsAndDuplicateConnection(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			owner := connect("profiler")
+			owner := connect("profiler", "first")
 			if err := owner.Send(ctx, 1, toolstream.SendOptions{}); err != nil {
 				t.Fatal(err)
 			}
@@ -205,11 +205,11 @@ func TestConcurrentToolsAndDuplicateConnection(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			if err := connect("profiler").Send(ctx, nil, toolstream.SendOptions{End: true, Commit: true}); err == nil || !strings.Contains(err.Error(), "already belongs") {
+			if err := connect("profiler", "second").Send(ctx, nil, toolstream.SendOptions{End: true, Commit: true}); err == nil || !strings.Contains(err.Error(), "already belongs") {
 				t.Fatalf("duplicate Send(commit): %v", err)
 			}
 			// IRQ must finish while the profiler's storage handler remains blocked.
-			if err := connect("irqtracing").Send(ctx, nil, toolstream.SendOptions{End: true, Commit: true}); err != nil {
+			if err := connect("irqtracing", "").Send(ctx, nil, toolstream.SendOptions{End: true, Commit: true}); err != nil {
 				t.Fatalf("IRQ Send(commit): %v", err)
 			}
 			unblock()
@@ -255,7 +255,7 @@ func TestSendFinalDataAndCommitInOneFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	client, err := toolstream.NewClient(toolstream.ClientOptions{SockPath: path, ToolName: "test", Version: "test", TaskID: "final"})
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{SockPath: path, ServiceName: "test", Version: "test", TaskID: "final"})
 	if err != nil {
 		t.Fatal(err)
 	}

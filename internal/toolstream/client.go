@@ -24,10 +24,11 @@ import (
 
 // ClientOptions configures a Client connection.
 type ClientOptions struct {
-	SockPath string
-	ToolName string
-	Version  string
-	TaskID   string
+	SockPath    string
+	ServiceName string // Required handler route.
+	ToolName    string // Optional business source; never used for routing.
+	Version     string
+	TaskID      string
 }
 
 // Client is the tool-side peer; use NewClient to create one.
@@ -37,18 +38,18 @@ type Client struct {
 }
 
 // NewClient connects to the server and returns a ready Client.
-func NewClient(opts ClientOptions) (*Client, error) {
+func NewClient(opts *ClientOptions) (*Client, error) {
 	if opts.SockPath == "" {
 		return nil, fmt.Errorf("SockPath must not be empty")
 	}
-	if opts.ToolName == "" {
-		return nil, fmt.Errorf("ToolName must not be empty")
+	if opts.ServiceName == "" {
+		return nil, fmt.Errorf("ServiceName must not be empty")
 	}
 	if opts.Version == "" {
 		return nil, fmt.Errorf("Version must not be empty")
 	}
 
-	conn, err := transport.NewClient(opts.SockPath, opts.ToolName, opts.Version, opts.TaskID)
+	conn, err := transport.NewClient(opts.SockPath, opts.ServiceName, opts.ToolName, opts.Version, opts.TaskID)
 	if err != nil {
 		return nil, err
 	}

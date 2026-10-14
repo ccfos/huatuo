@@ -281,3 +281,15 @@ func TestHandleStoresFinalWindowBeforeConditionalCommit(t *testing.T) {
 		})
 	}
 }
+
+func TestDocumentWriterRequiresToolName(t *testing.T) {
+	writer, backend := newPersistentDocumentWriter(t)
+	request := &toolstream.Request[types.ProfilingWindow]{TaskID: "task", Data: validProfilingWindow(), End: true, Commit: true}
+	err := writer.Handle(t.Context(), request)
+	if err == nil || !strings.Contains(err.Error(), "tool name is required") {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if backend.syncWrites != 0 || backend.commits != 0 {
+		t.Fatalf("writes=%d commits=%d", backend.syncWrites, backend.commits)
+	}
+}

@@ -28,6 +28,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/profiling"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	"github.com/stretchr/testify/mock"
@@ -243,7 +244,7 @@ func TestPipelinePeriodicWindowKeepsRecordsArrivingDuringExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	received := make(chan *types.ProfilingWindow, 16)
-	toolstream.Register(server, "test", func(_ context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
+	toolstream.Register(server, profiling.StoreServiceName, func(_ context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
 		if request.Data != nil {
 			received <- request.Data
 		}
@@ -388,7 +389,7 @@ func (failedDiagnosticWriter) Write([]byte) (int, error) {
 
 func testFormatter(t *testing.T, format output.OutputFormat, destination string) output.Formatter {
 	t.Helper()
-	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: format, Destination: destination}, output.TaskIdentity{ToolName: "test", TaskID: "task", Version: "test"})
+	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: format, Destination: destination}, output.TaskIdentity{TaskID: "task", ToolName: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

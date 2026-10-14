@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/toolstream"
+	profilingapi "github.com/ccfos/huatuo/pkg/profiling"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 )
 
@@ -44,7 +45,7 @@ func TestCommitRequiresDurableWindows(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				toolstream.Register(server, tool, writer.Handle)
+				toolstream.Register(server, profilingapi.StoreServiceName, writer.Handle)
 				if err := server.Start(); err != nil {
 					t.Fatal(err)
 				}
@@ -53,7 +54,7 @@ func TestCommitRequiresDurableWindows(t *testing.T) {
 						t.Error(err)
 					}
 				})
-				client, err := toolstream.NewClient(toolstream.ClientOptions{SockPath: path, ToolName: tool, Version: "test", TaskID: "request"})
+				client, err := toolstream.NewClient(&toolstream.ClientOptions{ServiceName: profilingapi.StoreServiceName, SockPath: path, ToolName: tool, Version: "test", TaskID: "request"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -113,8 +114,8 @@ func TestCommitPropagatesPublicationFailure(t *testing.T) {
 	}()
 	writer, backend := newPersistentDocumentWriter(t)
 	backend.commitErr = errors.New("publication failed")
-	toolstream.Register(server, "profiler", writer.Handle)
-	client, err := toolstream.NewClient(toolstream.ClientOptions{SockPath: path, ToolName: "profiler", Version: "test", TaskID: "empty"})
+	toolstream.Register(server, profilingapi.StoreServiceName, writer.Handle)
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{ServiceName: profilingapi.StoreServiceName, SockPath: path, ToolName: "profiler", Version: "test", TaskID: "empty"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -30,6 +30,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/internal/toolstream"
+	profilingapi "github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -41,12 +42,15 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 	}
 	received := make(chan *types.ProfilingWindow, 1)
 	var commits atomic.Int32
-	toolstream.Register(server, "irqtracing", func(_ context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
+	toolstream.Register(server, profilingapi.StoreServiceName, func(_ context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
 		if request.Commit {
 			commits.Add(1)
 		}
-		if request.Version != "test" {
+		if request.Version != "1" {
 			t.Errorf("version = %q", request.Version)
+		}
+		if request.ServiceName != profilingapi.StoreServiceName || request.ToolName != "irqtracing" {
+			t.Errorf("service=%q tool=%q", request.ServiceName, request.ToolName)
 		}
 		if request.Data == nil {
 			return nil
@@ -67,7 +71,7 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 		}
 	})
 
-	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: sockPath}, output.TaskIdentity{ToolName: "irqtracing", TaskID: "task-1", Version: "test"})
+	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: sockPath}, output.TaskIdentity{TaskID: "task-1", ToolName: "irqtracing"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +111,7 @@ func TestRemoteStoreFormatterCleanupDoesNotCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	_, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path}, output.TaskIdentity{ToolName: "profiler", TaskID: "task", Version: "1"})
+	_, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path}, output.TaskIdentity{TaskID: "task", ToolName: "profiler"})
 	if err != nil {
 		t.Fatal(err)
 	}
