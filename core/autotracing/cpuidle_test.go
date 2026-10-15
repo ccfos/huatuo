@@ -25,6 +25,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/matcher"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 )
@@ -585,5 +586,64 @@ func TestCPUIdleTracingDataJSON(t *testing.T) {
 		if actualValue, ok := actual[field]; !ok || string(actualValue) != expectedValue {
 			t.Errorf("JSON field %q = %s, want %s", field, actualValue, expectedValue)
 		}
+	}
+}
+
+func TestCPUIdleKataSharedState(t *testing.T) {
+	tracer := &cpuIdleTracing{containers: make(map[string]*containerCPUState)}
+	first := &pod.Container{ID: "z-first", RuntimeType: "io.containerd.kata-qemu.v2", SandboxID: "vm", SyncedAt: time.Unix(1, 0), CgroupPath: "/kata/vm", CgroupCss: map[string]uint64{"cpu": 10}}
+	second := *first
+	second.ID = "a-second"
+	second.SyncedAt = time.Unix(2, 0)
+	members := map[string]*pod.Container{first.ID: first, second.ID: &second, "runc": {ID: "runc", CgroupPath: "/runc"}, "guest": {ID: "guest", CgroupPath: "/guest"}}
+	tracer.reconcileContainerStates(members)
+	state := tracer.containers["kata:vm"]
+	if len(tracer.containers) != 3 || state == nil || state.containerID != first.ID {
+		t.Fatalf("unexpected shared state: %+v", tracer.containers)
+	}
+	state.previousUsage.total = 123
+	state.hasUsage = true
+	state.lastTraceAt = time.Unix(100, 0)
+	for range 100 {
+		tracer.reconcileContainerStates(members)
+		if tracer.containers["kata:vm"] != state || state.containerID != first.ID {
+			t.Fatal("representative is not stable")
+		}
+	}
+	delete(members, first.ID)
+	tracer.reconcileContainerStates(members)
+	if tracer.containers["kata:vm"] != state || state.containerID != second.ID || state.previousUsage.total != 123 || !state.hasUsage || !state.lastTraceAt.Equal(time.Unix(100, 0)) {
+		t.Errorf("representative handoff reset shared measurements: %+v", state)
+	}
+	second.CgroupCss = map[string]uint64{"cpu": 11}
+	tracer.reconcileContainerStates(members)
+	if state.hasUsage || state.previousUsage.total != 0 || !state.lastTraceAt.Equal(time.Unix(100, 0)) {
+		t.Errorf("VM replacement must reset baseline and keep cooldown: %+v", state)
+	}
+	second.SandboxID = "new-vm"
+	tracer.reconcileContainerStates(members)
+	if tracer.containers["kata:vm"] != nil || tracer.containers["kata:new-vm"] == nil || !tracer.containers["kata:new-vm"].lastTraceAt.IsZero() {
+		t.Error("new sandbox reused old cooldown")
+	}
+	second.CgroupCss = nil
+	tracer.reconcileContainerStates(members)
+	if tracer.containers["kata:new-vm"] != nil {
+		t.Error("Kata without CPU CSS must not be sampled")
+	}
+}
+
+func TestCPUIdleKataRepresentativeRespectsFilter(t *testing.T) {
+	config := &ContainerFilterConfig{Excluded: []*matcher.Rule{{Field: matcher.FieldTypeContainerHostname, Pattern: "^excluded$"}}}
+	filter, err := config.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracer := &cpuIdleTracing{filter: filter, containers: make(map[string]*containerCPUState)}
+	tracer.reconcileContainerStates(map[string]*pod.Container{
+		"first":  {ID: "first", Hostname: "excluded", RuntimeType: "io.containerd.kata.v2", SandboxID: "vm", SyncedAt: time.Unix(1, 0), CgroupCss: map[string]uint64{"cpu": 10}},
+		"second": {ID: "second", Hostname: "included", RuntimeType: "io.containerd.kata.v2", SandboxID: "vm", SyncedAt: time.Unix(2, 0), CgroupCss: map[string]uint64{"cpu": 10}},
+	})
+	if len(tracer.containers) != 1 || tracer.containers["kata:vm"] == nil || tracer.containers["kata:vm"].containerID != "second" {
+		t.Errorf("filter ignored: %+v", tracer.containers)
 	}
 }

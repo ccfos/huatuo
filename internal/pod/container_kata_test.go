@@ -18,6 +18,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
@@ -122,5 +125,66 @@ func TestKataCgroupPath(t *testing.T) {
 	}
 	if _, err := kataCgroupPath(filepath.Join(t.TempDir(), "missing"), cgroups.Unified); err == nil {
 		t.Error("missing process must fail")
+	}
+}
+
+func TestKataCSSRepresentative(t *testing.T) {
+	oldView := containerView
+	t.Cleanup(func() { containerView = oldView })
+	first := &Container{ID: "z-first", RuntimeType: "io.containerd.kata-qemu.v2", SandboxID: "vm", Type: ContainerTypeNormal, SyncedAt: time.Unix(1, 0), CgroupCss: map[string]uint64{subsystem.SubsystemCPU: 10}}
+	second := &Container{ID: "a-second", RuntimeType: first.RuntimeType, SandboxID: "vm", Type: ContainerTypeNormal, SyncedAt: time.Unix(2, 0), CgroupCss: map[string]uint64{subsystem.SubsystemCPU: 10}}
+	runc := &Container{ID: "runc", RuntimeType: "io.containerd.runc.v2", Type: ContainerTypeNormal, CgroupCss: map[string]uint64{subsystem.SubsystemCPU: 20}}
+	members := map[string]*Container{first.ID: first, second.ID: second, runc.ID: runc}
+	check := func(want *Container) {
+		t.Helper()
+		containerView = newTestContainerStore()
+		for id, member := range members {
+			containerView.records[id] = &containerRecord{container: member}
+		}
+		for range 100 {
+			byCSS := BuildCssContainers(members, subsystem.SubsystemCPU)
+			if byCSS[10] != want || byCSS[20] != runc || len(byCSS) != 2 {
+				t.Errorf("CSS mapping = %v, want VM representative %s and runc", byCSS, want.ID)
+				return
+			}
+			ids, err := GetCSSToContainerID(subsystem.SubsystemCPU)
+			if err != nil || ids[10] != want.ID || ids[20] != runc.ID {
+				t.Errorf("CSS IDs = %v, error %v", ids, err)
+				return
+			}
+			got, err := ContainerByCSS(10, subsystem.SubsystemCPU)
+			if err != nil || got != want {
+				t.Errorf("ContainerByCSS = %v, error %v, want %s", got, err, want.ID)
+				return
+			}
+		}
+	}
+	check(first)
+	// A new member with an earlier lexical ID cannot steal attribution.
+	third := *second
+	third.ID, third.SyncedAt = "0-new", time.Unix(3, 0)
+	members[third.ID] = &third
+	check(first)
+	delete(members, first.ID)
+	check(second)
+	// Equal discovery times still produce a deterministic representative.
+	third.SyncedAt = second.SyncedAt
+	check(&third)
+}
+
+func TestKataRefreshPreservesFirstDiscovery(t *testing.T) {
+	store := newTestContainerStore()
+	first := containerRecordForTest("first")
+	first.container.RuntimeType = "io.containerd.kata-qemu.v2"
+	first.container.SandboxID = "vm"
+	first.container.SyncedAt = time.Unix(1, 0)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{"first": first}, isComplete: true}, nil)
+	refreshed := containerRecordForTest("first")
+	refreshed.container.RuntimeType = first.container.RuntimeType
+	refreshed.container.SandboxID = first.container.SandboxID
+	refreshed.container.SyncedAt = time.Unix(10, 0)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{"first": refreshed}, isComplete: true}, nil)
+	if !refreshed.container.SyncedAt.Equal(first.container.SyncedAt) {
+		t.Errorf("refresh changed discovery time: %s", refreshed.container.SyncedAt)
 	}
 }

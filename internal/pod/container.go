@@ -167,7 +167,7 @@ func GetCSSToContainerID(subsys string) (map[uint64]string, error) {
 func BuildCssContainersID(containers map[string]*Container, subsys string) map[uint64]string {
 	cssToContainerMap := make(map[uint64]string, len(containers))
 	for _, container := range containers {
-		if addr, ok := container.CgroupCss[subsys]; ok {
+		if addr := container.CgroupCss[subsys]; addr != 0 && (container.HostKataSandboxID() == "" || !keepKataRepresentative(containers[cssToContainerMap[addr]], container)) {
 			cssToContainerMap[addr] = container.ID
 		}
 	}
@@ -178,7 +178,7 @@ func BuildCssContainersID(containers map[string]*Container, subsys string) map[u
 func BuildCssContainers(containers map[string]*Container, subsys string) map[uint64]*Container {
 	cssToContainerMap := make(map[uint64]*Container, len(containers))
 	for _, container := range containers {
-		if addr, ok := container.CgroupCss[subsys]; ok {
+		if addr := container.CgroupCss[subsys]; addr != 0 && (container.HostKataSandboxID() == "" || !keepKataRepresentative(cssToContainerMap[addr], container)) {
 			cssToContainerMap[addr] = container
 		}
 	}
@@ -191,7 +191,17 @@ func ContainerByCSS(css uint64, subsys string) (*Container, error) {
 	if css == 0 {
 		return nil, nil
 	}
-	return containerBy(func(c *Container) uint64 { return c.CgroupCss[subsys] }, css)
+	containers, err := NormalContainers()
+	if err != nil {
+		return nil, err
+	}
+	var selected *Container
+	for _, container := range containers {
+		if container.CgroupCss[subsys] == css && !keepKataRepresentative(selected, container) {
+			selected = container
+		}
+	}
+	return selected, nil
 }
 
 // ContainerByNetNamespaceCookie returns the container whose network namespace cookie matches.
