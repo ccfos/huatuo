@@ -1266,7 +1266,7 @@ softirq source 和 victim 调用栈。
 
 - **EnablePCIe**：控制 PCIe 链路指标的采集。
 
-  默认值：true。开启后采集：链路能力与状态（速率/宽度）。
+  默认值：false。开启后采集：链路能力与状态（速率/宽度）。
 
 - **EnableHCCN**：控制 HCCN 网络指标的采集。
 

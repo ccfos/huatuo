@@ -1280,7 +1280,7 @@ itself stays disabled while `ascend_npu` is listed in the global `BlackList`.
 
 - **EnablePCIe**: Controls collection of PCIe link metrics.
 
-  Default: true. When enabled, collects: capability and status (speed/width).
+  Default: false. When enabled, collects: capability and status (speed/width).
 
 - **EnableHCCN**: Controls collection of HCCN network metrics.
 
