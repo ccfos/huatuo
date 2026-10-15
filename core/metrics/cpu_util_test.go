@@ -15,6 +15,7 @@
 package collector
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -25,10 +26,11 @@ import (
 type cpuUsageCgroup struct {
 	cgroups.Cgroup
 	usage stats.CpuUsage
+	err   error
 }
 
 func (c *cpuUsageCgroup) CpuUsage(string) (*stats.CpuUsage, error) {
-	return &c.usage, nil
+	return &c.usage, c.err
 }
 
 func TestCPUUtilCollectorUpdateDataCacheCounterRegression(t *testing.T) {
@@ -82,5 +84,32 @@ func TestCPUUtilCollectorUpdateDataCacheCounterRegression(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestCPUUtilCollectorUpdateHostReadError(t *testing.T) {
+	readErr := errors.New("host CPU usage unavailable")
+	collector := &cpuUtilCollector{cgroup: &cpuUsageCgroup{err: readErr}, numCores: 1}
+	metrics, err := collector.Update()
+	if !errors.Is(err, readErr) {
+		t.Fatalf("Update error = %v, want %v", err, readErr)
+	}
+	if len(metrics) != 0 {
+		t.Fatalf("failed host read emitted %d metrics", len(metrics))
+	}
+	collector.cgroup = &cpuUsageCgroup{usage: stats.CpuUsage{Usage: 100, User: 60, System: 40}}
+	metrics, err = collector.Update()
+	if err != nil || len(metrics) != 3 {
+		t.Fatalf("recovered host read = (%d metrics, %v), want 3 and nil", len(metrics), err)
+	}
+}
+
+func BenchmarkCPUUtilCollectorUpdate(b *testing.B) {
+	collector := &cpuUtilCollector{cgroup: &cpuUsageCgroup{}, numCores: 1}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := collector.Update(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

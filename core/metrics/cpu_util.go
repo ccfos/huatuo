@@ -191,5 +191,5 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 		log.Warnf("host cpu usage: %v", err)
 	}
 
-	return append(metrics, more...), nil
+	return append(metrics, more...), err
 }
