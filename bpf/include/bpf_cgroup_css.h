@@ -15,6 +15,20 @@ struct {
 	__uint(value_size, sizeof(u32));
 } cgroup_perf_events SEC(".maps");
 
+/* Newer kernels replaced the ino/generation union with a 64-bit ID. */
+struct kernfs_node___new {
+	u64 id;
+} __attribute__((preserve_access_index));
+
+static __always_inline u64 cgroup_inode(struct cgroup *cgrp)
+{
+	struct kernfs_node *kn = BPF_CORE_READ(cgrp, kn);
+
+	if (bpf_core_field_exists(kn->id.ino))
+		return BPF_CORE_READ(kn, id.ino);
+	return BPF_CORE_READ((struct kernfs_node___new *)kn, id);
+}
+
 static __noinline int
 submit_cgroup_css_event(void *ctx, struct cgroup *cgrp,
 			 enum cgroup_css_operation operation)
@@ -26,10 +40,11 @@ submit_cgroup_css_event(void *ctx, struct cgroup *cgrp,
 	knode_len =
 		bpf_probe_read_kernel_str(&data.knode_name, sizeof(data.knode_name),
 					  BPF_CORE_READ(cgrp, kn, name));
-	if (knode_len < CGROUP_KNODE_NAME_MINLEN + 1)
+	if (knode_len <= 1)
 		return 0;
 
 	data.cgroup	  = (u64)cgrp;
+	data.inode = cgroup_inode(cgrp);
 	data.operation   = operation;
 	data.cgroup_root  = BPF_CORE_READ(cgrp, root, hierarchy_id);
 	data.cgroup_level = BPF_CORE_READ(cgrp, level);

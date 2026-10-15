@@ -35,6 +35,7 @@ type Option struct {
 type AttachOption struct {
 	ProgramName string
 	Symbol      string // symbol for kprobe/kretprobe/tracepoint/raw_tracepoint
+	Optional    bool   // An unavailable hook does not roll back other attachments.
 
 	Kprobe struct {
 		// RetprobeMaxActive limits concurrent kretprobe instances.
