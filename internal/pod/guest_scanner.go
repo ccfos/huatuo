@@ -81,7 +81,6 @@ func InitGuestManager(options GuestScannerOptions) error {
 	controller := newContainerController(containerView)
 	controller.scan = scanner.scan
 	controller.resyncInterval = options.Interval
-	controller.initialize = func(context.Context) error { return containerCgroupCssInit() }
 	containerManager = controller
 	controller.start()
 	return nil
@@ -99,11 +98,13 @@ func (s *guestScanner) scan(ctx context.Context) (containerSnapshot, error) {
 	if err != nil {
 		return containerSnapshot{}, fmt.Errorf("read guest self cgroup: %w", err)
 	}
-	selfID, _, _, _ := parseGuestCgroups(string(self))
+	selfID, selfPath, _, _ := parseGuestCgroups(string(self))
 	if selfID == "" {
 		selfID, err = s.selfIDFromMounts()
 	}
-	if err != nil || selfID == "" {
+	// A private cgroup namespace reports the sidecar and its children as /.
+	// Those processes have no container ID and are already excluded below.
+	if selfID == "" && selfPath != "/" {
 		return containerSnapshot{}, fmt.Errorf("resolve guest sidecar identity: %w", err)
 	}
 	processes := make(map[int]guestProcess)
@@ -263,7 +264,7 @@ func resolveGuestCgroup(ctx context.Context, root, path, id string) (string, err
 			return "", err
 		}
 		if found == "" {
-			return "", fmt.Errorf("guest cgroup for %s not found", id)
+			return "", fmt.Errorf("guest cgroup for %s not found under %s: expose the complete Guest cgroup tree", id, root)
 		}
 		path = found
 	}

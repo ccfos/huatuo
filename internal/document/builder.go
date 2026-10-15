@@ -50,7 +50,7 @@ func New(region string) *Builder {
 	if err != nil {
 		hostname = defaultHostname
 	}
-	return &Builder{region: region, hostname: hostname}
+	return NewWithHostname(region, hostname)
 }
 
 // Build creates shared document metadata and resolves optional container fields.
@@ -96,4 +96,9 @@ func (b *Builder) Build(input *Input) (types.Document, error) {
 	metadata.ContainerType = container.Type.String()
 	metadata.ContainerQoS = container.Qos.String()
 	return metadata, nil
+}
+
+// NewWithHostname binds an explicitly configured node name for Guest writers.
+func NewWithHostname(region, hostname string) *Builder {
+	return &Builder{region: region, hostname: hostname}
 }

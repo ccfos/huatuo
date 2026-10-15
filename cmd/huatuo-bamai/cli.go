@@ -24,6 +24,7 @@ import (
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/runmode"
 	"github.com/ccfos/huatuo/internal/version"
 
 	"github.com/urfave/cli/v2"
@@ -48,6 +49,8 @@ const (
 // during app.Before so downstream code reads only from Options and stays
 // decoupled from the urfave/cli framework.
 type Options struct {
+	Mode           runmode.Mode
+	GuestIdentity  runmode.GuestIdentity
 	ConfigFile     string
 	ConfigDir      string
 	BPFObjDir      string
@@ -215,6 +218,14 @@ func configureRuntime(opts *Options) error {
 
 	internalconfig.CoreAPIAddress = nodeAPIAddress
 
+	opts.Mode = config.Get().Mode
+	if opts.Mode == runmode.Sandbox {
+		identity, err := runmode.LoadGuestIdentity()
+		if err != nil {
+			return err
+		}
+		opts.GuestIdentity = identity
+	}
 	// Log level: CLI --log-debug overrides config file; config file overrides
 	// the built-in default (Info).
 	switch {

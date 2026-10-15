@@ -148,6 +148,7 @@ func TestGuestScannerMountIdentity(t *testing.T) {
 		t.Errorf("mount fallback=%+v, %v", snap, err)
 	}
 	guestFile(t, s.options.ProcRoot, "self/mountinfo", "")
+	guestFile(t, s.options.ProcRoot, "self/cgroup", "0::/unidentified\n")
 	if _, err := s.scan(t.Context()); err == nil {
 		t.Error("unknown sidecar identity accepted")
 	}
@@ -271,5 +272,20 @@ func BenchmarkGuestScan(b *testing.B) {
 		if _, err := s.scan(context.Background()); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestGuestScannerPrivateCgroupRoot(t *testing.T) {
+	s := guestFixture(t)
+	guestFile(t, s.options.ProcRoot, "self/cgroup", "0::/\n")
+	guestDirectory(t, s.options.CgroupRoot, "/workloads/"+guestCheckoutID)
+	guestProc(t, s, 150, 1, 100, "0::/../"+guestCheckoutID+"\n")
+	guestProc(t, s, 200, 1, 100, "0::/\n")
+	snapshot, err := s.scan(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.records) != 1 || snapshot.records[guestCheckoutID] == nil {
+		t.Errorf("private namespace snapshot=%+v", snapshot)
 	}
 }
