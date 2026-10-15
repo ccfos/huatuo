@@ -526,6 +526,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 	# ThresholdLoad = 5
 	# Interval = 10
 	# IntervalTracing = 1800
+	# EnableDebug = false
 ```
 
 - **ThresholdLoad**: System load average (loadavg) threshold for containers.
@@ -539,6 +540,13 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 - **IntervalTracing**: Minimum time between consecutive tracings.
 
   Default: 1800s (30 minutes).
+
+- **EnableDebug**: Forces the Dload tracer to capture on every sample.
+
+  Default: false. When enabled, the tracer bypasses the load threshold,
+  the minimum trace interval, and the empty-stack check, so a task-stack
+  dump is attempted for every container on each sample. Intended for
+  troubleshooting the tracer itself; keep it disabled in production.
 
 #### 7.4 IOTracing AutoTracing — Container IO Performance Profiling
 
