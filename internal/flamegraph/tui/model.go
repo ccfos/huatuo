@@ -267,6 +267,7 @@ func renderDetails(node *Node, focusValue int64) string {
 
 func (m *Model) refreshVisible() {
 	m.visible = flatten(m.focus)
+	m.refreshMatches()
 	m.clampCursor()
 }
 
@@ -351,23 +352,26 @@ func (m *Model) selectedNode() *Node {
 
 func (m *Model) applySearch() {
 	m.lastSearch = strings.TrimSpace(m.query)
+	m.refreshMatches()
+	for index, node := range m.visible {
+		if m.matches[node] {
+			m.cursor = index
+			m.ensureCursorVisible()
+			return
+		}
+	}
+}
+
+func (m *Model) refreshMatches() {
 	m.matches = map[*Node]bool{}
 	if m.lastSearch == "" {
 		return
 	}
 	needle := strings.ToLower(m.lastSearch)
-	firstMatch := -1
-	for index, node := range m.visible {
+	for _, node := range m.visible {
 		if strings.Contains(strings.ToLower(node.Label), needle) {
 			m.matches[node] = true
-			if firstMatch == -1 {
-				firstMatch = index
-			}
 		}
-	}
-	if firstMatch >= 0 {
-		m.cursor = firstMatch
-		m.ensureCursorVisible()
 	}
 }
 

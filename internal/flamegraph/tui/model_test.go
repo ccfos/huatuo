@@ -113,3 +113,53 @@ func TestTruncateKeepsUTF8(t *testing.T) {
 		t.Fatalf("truncate() = %q, want 函数...", got)
 	}
 }
+
+func TestModelSearchTracksFocusedFrames(t *testing.T) {
+	model := NewModel([]flamegraph.FrameData{
+		{Level: 0, Value: 100, Label: "root"},
+		{Level: 1, Value: 50, Label: "request-a"},
+		{Level: 2, Value: 50, Label: "handle"},
+		{Level: 1, Value: 50, Label: "request-b"},
+		{Level: 2, Value: 50, Label: "handle"},
+	})
+	key := func(k tea.KeyMsg) {
+		updated, _ := model.Update(k)
+		model = updated.(Model)
+	}
+	key(tea.KeyMsg{Type: tea.KeyDown})
+	key(tea.KeyMsg{Type: tea.KeyEnter})
+	key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("handle")})
+	key(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(model.matches) != 1 {
+		t.Fatalf("branch matches = %d, want 1", len(model.matches))
+	}
+	key(tea.KeyMsg{Type: tea.KeyLeft})
+	if model.selectedNode().Label != "request-a" {
+		t.Fatalf("zoom out selection = %q", model.selectedNode().Label)
+	}
+	if !strings.Contains(model.View(), "matches=2") {
+		t.Fatalf("newly visible match missing: %s", model.View())
+	}
+	key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	first := model.selectedNode()
+	key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	second := model.selectedNode()
+	if first == second || first.Label != "handle" || second.Label != "handle" {
+		t.Fatal("next match does not visit both handles")
+	}
+	key(tea.KeyMsg{Type: tea.KeyUp})
+	key(tea.KeyMsg{Type: tea.KeyEnter})
+	if model.focus.Label != "request-b" || len(model.matches) != 1 || !model.matches[second] {
+		t.Fatalf("zoom in retains matches outside focus: %s", model.View())
+	}
+	if model.selectedNode() != model.focus {
+		t.Fatal("zoom in should keep the focus selected")
+	}
+	key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	key(tea.KeyMsg{Type: tea.KeyEnter})
+	key(tea.KeyMsg{Type: tea.KeyLeft})
+	if len(model.matches) != 0 || model.lastSearch != "" {
+		t.Fatal("cleared query restored after zoom")
+	}
+}
