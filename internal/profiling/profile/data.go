@@ -17,7 +17,7 @@ package profile
 import (
 	"time"
 
-	ptree "github.com/grafana/pyroscope/pkg/og/storage/tree"
+	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
 const (
@@ -30,11 +30,10 @@ const (
 	ProfileTypeIRQTracingSample = "irqtracing:irq:count:irq:count"
 )
 
-// Data holds the parser's intermediate tree profile. NewWindow converts
-// it into the common wire and output model before any formatting or storage.
+// Data owns the parsed profile in the common wire and output model.
 type Data struct {
 	ProfileType string
-	Profile     ptree.Profile
+	Profile     *profilev1.Profile
 }
 
 // ParseInput holds the input parameters for ParseCollapsedData and ParseRawData.

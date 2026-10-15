@@ -111,10 +111,7 @@ func TestParseProcessFrames(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			window, err := profile.NewWindow(data, "container")
-			if err != nil {
-				t.Fatal(err)
-			}
+			window := profile.NewWindow(data, "container")
 			if window.Profile.Period != 10000000 || window.Profile.TimeNanos != 0 || window.Profile.DurationNanos != 0 {
 				t.Fatalf("unexpected sampling/window metadata: %v", window.Profile)
 			}

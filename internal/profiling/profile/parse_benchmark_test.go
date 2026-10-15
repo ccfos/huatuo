@@ -16,8 +16,10 @@ package profile
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func BenchmarkParseRawData(b *testing.B) {
@@ -32,5 +34,24 @@ func BenchmarkParseRawData(b *testing.B) {
 		if _, err := ParseRawData(b.Context(), input); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkParseTreeWindow(b *testing.B) {
+	for _, size := range []int{1, 1000} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			items := make([]*TreeItem, size)
+			for i := range items {
+				items[i] = BuildTreeItem([]string{"process"}, []string{"main", fmt.Sprintf("work%d", i)}, nil, 7)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				data, err := ParseTree(time.Unix(100, 0), ProfileTypeCpuSample, items, &ParseOption{SampleRate: 100})
+				if err != nil {
+					b.Fatal(err)
+				}
+				_ = NewWindow(data, "container")
+			}
+		})
 	}
 }

@@ -86,7 +86,7 @@ func (a *javaAggregator) snapshotPprof(ctx context.Context) (*types.ProfilingWin
 		if err != nil {
 			return nil, err
 		}
-		return profile.NewWindow(data, a.containerID)
+		return profile.NewWindow(data, a.containerID), nil
 	}
 
 	pprofFolded, err := json.MarshalIndent(a.sampleOutput, "", "  ")
@@ -113,5 +113,5 @@ func (a *javaAggregator) snapshotPprof(ctx context.Context) (*types.ProfilingWin
 		return nil, fmt.Errorf("failed to parse collapsed data: %w", err)
 	}
 
-	return profile.NewWindow(pprofData, a.containerID)
+	return profile.NewWindow(pprofData, a.containerID), nil
 }

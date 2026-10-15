@@ -91,7 +91,7 @@ func (a *pythonAggregator) Snapshot(ctx context.Context) (*types.ProfilingWindow
 		if err != nil {
 			return nil, err
 		}
-		return profile.NewWindow(data, a.containerID)
+		return profile.NewWindow(data, a.containerID), nil
 	}
 
 	data, err := json.MarshalIndent(a.sampleOutput, "", "  ")
@@ -118,7 +118,7 @@ func (a *pythonAggregator) Snapshot(ctx context.Context) (*types.ProfilingWindow
 		return nil, fmt.Errorf("failed to parse raw data: %w", err)
 	}
 
-	return profile.NewWindow(pprofData, a.containerID)
+	return profile.NewWindow(pprofData, a.containerID), nil
 }
 
 func (a *pythonAggregator) Reset() {

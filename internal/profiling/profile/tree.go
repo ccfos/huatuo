@@ -77,7 +77,6 @@ func ParseTree(startTime time.Time, profileType string, data []*TreeItem, opt *P
 
 	tree := ptree.New()
 
-	// foreach
 	for _, item := range data {
 		tree.InsertStack(item.Stack, item.Value)
 	}
@@ -101,6 +100,6 @@ func ParseTree(startTime time.Time, profileType string, data []*TreeItem, opt *P
 
 	return &Data{
 		ProfileType: profileType,
-		Profile:     *tree.Pprof(mdata),
+		Profile:     buildTreeProfile(tree, mdata),
 	}, nil
 }

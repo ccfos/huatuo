@@ -43,10 +43,7 @@ func TestFormatterCollapsedOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	window, err := profile.NewWindow(data, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	window := profile.NewWindow(data, "")
 	formatter := createFormatter(t, output.FormatCollapsed, destination)
 	if err := formatter.Add(t.Context(), window); err != nil {
 		t.Fatalf("Formatter.Add() error = %v", err)
@@ -71,10 +68,7 @@ func TestFormatterFlameGraphOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			window, err := profile.NewWindow(data, "")
-			if err != nil {
-				t.Fatal(err)
-			}
+			window := profile.NewWindow(data, "")
 			formatter := createFormatter(t, format, destination)
 			if err := formatter.Add(t.Context(), window); err != nil {
 				t.Fatalf("Formatter.Add() error = %v", err)

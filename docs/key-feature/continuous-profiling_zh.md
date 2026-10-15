@@ -734,6 +734,8 @@ flowchart LR
 
 profiler 与 irqtracing 共用 `internal/profiling/profile.Run`、Pipeline 和 `types.ProfilingWindow`。IRQ 业务实现位于 `cmd/irqtracing`；Java、Python 和 Native 聚合器位于 `cmd/profiler/provider`。目标进程发现和语言元数据查询也由 provider 负责，解析器只接收数据和已取得的进程名称。Java agent 生命周期与输出文件收集位于 `cmd/profiler/runtime/java`，工具执行位于 `cmd/profiler/exec`；BPF map 辅助能力和工具路径校验分别保留在 `internal/profiling/bpfmap`、`internal/profiling/toolpath`。样本数值遵循 profile 单位，例如 CPU 使用纳秒、IRQ 使用次数；Java 进程根帧使用 `process PID:MainClass`。
 
+解析器直接返回公共 `profilev1.Profile` 模型。`profile.NewWindow` 深拷贝为独立窗口并清除解析时间，由 Pipeline 填写聚合周期。
+
 ### 配置和聚合周期
 
 入口装配采集器和 Aggregator，执行器在启动采集前创建 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 通过配置接收运行参数，通过方法参数接收标准 `context.Context`。文件创建、命名、写入和关闭由 `internal/profiling/formatter` 负责。

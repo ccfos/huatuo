@@ -42,10 +42,7 @@ func (a *irqAggregator) Snapshot(context.Context) (*types.ProfilingWindow, error
 	if a.batch == nil {
 		return nil, fmt.Errorf("IRQ collection completed without a batch")
 	}
-	window, err := profile.NewWindow(a.batch.profile, a.containerID)
-	if err != nil {
-		return nil, err
-	}
+	window := profile.NewWindow(a.batch.profile, a.containerID)
 	if a.batch.dropped != 0 {
 		window.DroppedSamples = map[string]uint64{types.DropReasonCollection: a.batch.dropped}
 	}

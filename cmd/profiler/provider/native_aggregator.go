@@ -247,7 +247,7 @@ func (a *nativeAggregator) buildPprofData(tree []*profile.TreeItem) (*types.Prof
 		return nil, fmt.Errorf("failed to parse tree: %w", err)
 	}
 
-	return profile.NewWindow(data, a.containerID)
+	return profile.NewWindow(data, a.containerID), nil
 }
 
 func lockPrefixFrames(rec *lockSample) ([]string, uint64) {

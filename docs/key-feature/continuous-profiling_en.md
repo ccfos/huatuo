@@ -743,6 +743,8 @@ flowchart LR
 
 Profiler and irqtracing share the collection runner, Pipeline and `types.ProfilingWindow`. IRQ business logic lives in `cmd/irqtracing`; Java, Python and Native aggregators live in `cmd/profiler/provider`. Target discovery and language metadata lookup belong to `cmd/profiler/provider`; parsers receive data and resolved process names. Java agent lifecycle and output collection live in `cmd/profiler/runtime/java`, and tool execution lives in `cmd/profiler/exec`. BPF map helpers and tool path validation remain in `internal/profiling/bpfmap` and `internal/profiling/toolpath`. Both profiler and IRQ tracing use `internal/profiling/profile.Run`. Values follow profile units, such as nanoseconds for CPU and counts for IRQ. Java process roots use `process PID:MainClass`.
 
+Parsers return the common `profilev1.Profile` model. `profile.NewWindow` copies it into an independent window and clears parser timestamps; Pipeline assigns the aggregation interval.
+
 ### Configuration and aggregation intervals
 
 The entry point assembles the collector and Aggregator. Before starting collection, the runner creates the Formatter, constructs Pipeline with `aggregator.PipelineConfig`, and passes the runtime context through `Start(ctx)`. Invalid output configuration fails before collection starts. Each aggregator captures its business settings at construction and implements `Aggregate`, `Snapshot(context.Context)` and `Reset`. Pipeline receives runtime settings through configuration and a standard `context.Context` through method parameters. File creation, naming, writing, and closing belong to `internal/profiling/formatter`.
