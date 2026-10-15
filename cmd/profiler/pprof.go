@@ -22,7 +22,7 @@ import (
 	serverpprof "github.com/ccfos/huatuo/internal/server/pprof"
 )
 
-const profilerPprofAddress = ":6000"
+const profilerPprofAddressDefault = "127.0.0.1:6000"
 
 func startPprofServer(ctx context.Context, address string) (*serverpprof.Server, error) {
 	listener, err := net.Listen("tcp", address)
