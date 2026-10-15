@@ -86,6 +86,29 @@ sudo wget -O /etc/systemd/system/huatuo-bamai.service "https://raw.githubusercon
 sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubusercontent.com/ccfos/huatuo/${HUATUO_VERSION}/build/rpm/huatuo-apiserver.service"
 ```
 
+Then check that both downloads produced a real unit file. `wget` exits non-zero
+and leaves a zero-byte file behind when the URL does not exist, and systemd
+reports such a file as `masked` instead of a download error, so a failed download
+would otherwise only surface as a confusing error in step 6:
+
+```bash
+for unit in huatuo-bamai huatuo-apiserver; do
+    sudo test -s "/etc/systemd/system/${unit}.service" &&
+        sudo head -n 1 "/etc/systemd/system/${unit}.service" | grep -q '^\[Unit\]' ||
+        { echo "${unit}.service was not downloaded correctly" >&2; exit 1; }
+done
+```
+
+`build/rpm/huatuo-apiserver.service` was added after v2.3.0, so releases up to
+and including v2.3.0 do not contain it and the second download fails on those
+tags. On such a release, fetch the unit from the main branch instead (and enable
+only `huatuo-bamai` in step 6 if you do not want to run the API server as a
+service):
+
+```bash
+sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubusercontent.com/ccfos/huatuo/main/build/rpm/huatuo-apiserver.service"
+```
+
 ### 4. Modify the configurations
 
 Edit `/opt/huatuo-bamai/conf/huatuo-bamai.conf` and `/opt/huatuo-bamai/conf/huatuo-apiserver.conf` to match the deployment environment. For detailed configuration options, see the [`huatuo-bamai` configuration](/docs/configuration/huatuo-bamai-configuration_en.md) and [`huatuo-apiserver` configuration](/docs/configuration/huatuo-apiserver-configuration_en.md).
