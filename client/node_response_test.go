@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+
+	apiv1 "github.com/ccfos/huatuo/apis/v1"
 )
 
 func nodeJSONResponse(status int, body string) *http.Response {
@@ -95,5 +97,22 @@ func TestParseNodeErrorRejectsProtocolViolations(t *testing.T) {
 				t.Fatalf("Node client error = %+v", nodeErr)
 			}
 		})
+	}
+}
+
+func TestParseNodeErrorRecognizesRateLimited(t *testing.T) {
+	err := parseNodeError(
+		http.StatusTooManyRequests,
+		[]byte(`{"error":{"code":"rate_limited","message":"too many requests"}}`),
+	)
+	var nodeErr *NodeError
+	if !errors.As(err, &nodeErr) {
+		t.Fatalf("parseNodeError() error = %v, want *NodeError", err)
+	}
+	if nodeErr.Code != apiv1.ErrorCodeRateLimited || nodeErr.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("Node client error = %+v, want code %q", nodeErr, apiv1.ErrorCodeRateLimited)
+	}
+	if nodeErr.Message != "too many requests" {
+		t.Fatalf("Node client message = %q, want %q", nodeErr.Message, "too many requests")
 	}
 }
