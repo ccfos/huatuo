@@ -23,6 +23,8 @@ import (
 	"time"
 
 	dockerclient "github.com/docker/docker/client"
+	criapi "k8s.io/cri-api/pkg/apis"
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	k8sremote "k8s.io/cri-client/pkg"
 )
 
@@ -41,6 +43,7 @@ var (
 
 	dockerRootDir      string
 	containerdStateDir string
+	containerdClient   criapi.RuntimeService
 	dockerAPIVersion   string
 )
 
@@ -121,6 +124,42 @@ func initContainerdProviderEnv() error {
 	}
 
 	containerdStateDir = path.Dir(config.StateDir)
+	containerdClient = client
 	currContainerProvider = containerProviderContainerd
 	return nil
+}
+
+// containerdRuntimeInfo is containerd's verbose CRI status. For Kata, PID is
+// the Host hypervisor PID, not the container's init PID inside the Guest.
+type containerdRuntimeInfo struct {
+	PID         int    `json:"pid"`
+	RuntimeType string `json:"runtimeType"`
+	SandboxID   string `json:"sandboxID"`
+}
+
+func readContainerdRuntimeInfo(containerID string) (*containerdRuntimeInfo, error) {
+	initMu.Lock()
+	client := containerdClient
+	initMu.Unlock()
+	if client == nil {
+		return nil, fmt.Errorf("containerd client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	response, err := client.ContainerStatus(ctx, containerID, true)
+	if err != nil {
+		return nil, fmt.Errorf("get containerd container status: %w", err)
+	}
+	status := response.GetStatus()
+	if status.GetId() != containerID || status.GetState() != runtimeapi.ContainerState_CONTAINER_RUNNING {
+		return nil, fmt.Errorf("container %s has no matching running CRI status", containerID)
+	}
+	info := &containerdRuntimeInfo{}
+	if err := json.Unmarshal([]byte(response.GetInfo()["info"]), info); err != nil {
+		return nil, fmt.Errorf("decode containerd container info: %w", err)
+	}
+	if info.RuntimeType == "" {
+		return nil, fmt.Errorf("container %s has no CRI runtime type", containerID)
+	}
+	return info, nil
 }

@@ -54,6 +54,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	k8s.io/api v0.31.3
 	k8s.io/apimachinery v0.31.3
+	k8s.io/cri-api v0.31.3
 	k8s.io/cri-client v0.31.3
 	modernc.org/sqlite v1.44.0
 	sigs.k8s.io/yaml v1.5.0
@@ -234,7 +235,6 @@ require (
 	gotest.tools/v3 v3.5.1 // indirect
 	k8s.io/client-go v0.31.3 // indirect
 	k8s.io/component-base v0.31.3 // indirect
-	k8s.io/cri-api v0.31.3 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/utils v0.0.0-20240711033017-18e509b52bc8 // indirect
 	modernc.org/libc v1.67.4 // indirect
