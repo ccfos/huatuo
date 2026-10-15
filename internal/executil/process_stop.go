@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"syscall"
+	"time"
 )
 
 // Stop sends SIGTERM to the process group, escalating to SIGKILL when the
@@ -37,14 +38,25 @@ func (p *Process) Stop(ctx context.Context) error {
 		return ErrProcessNotStarted
 	}
 	p.isStopRequested = true
+	stopDone := p.groupStopDone
+	ownsStop := stopDone == nil
+	if ownsStop {
+		stopDone = make(chan struct{})
+		p.groupStopDone = stopDone
+	}
 	p.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(ctx, p.spec.StopGracePeriod)
 	defer cancel()
-	if err := p.stopProcessGroup(ctx); err != nil {
+	err := p.stopProcessGroup(ctx)
+	if ownsStop {
+		close(stopDone)
+	}
+	if err != nil {
 		return fmt.Errorf("%w: %w", ErrCleanupFailed, err)
 	}
 
+	<-p.waitDone
 	return nil
 }
 
@@ -98,22 +110,52 @@ func (p *Process) Close() error {
 func (p *Process) stopProcessGroup(ctx context.Context) error {
 	gracefulErr := p.signalProcessGroup(syscall.SIGTERM)
 	if gracefulErr != nil {
-		forceErr := p.forceStopAndWait()
+		forceErr := p.signalProcessGroup(syscall.SIGKILL)
 		if forceErr != nil {
 			return errors.Join(
 				fmt.Errorf("gracefully stop command %q process group: %w", p.spec.Path, gracefulErr),
-				forceErr,
+				fmt.Errorf("force stop command %q process group: %w", p.spec.Path, forceErr),
 			)
 		}
 
 		return nil
 	}
 
-	select {
-	case <-p.waitDone:
-		return nil
-	case <-ctx.Done():
-		return p.forceStopAndWait()
+	if err := p.waitForGroupExit(ctx); err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		if err := p.signalProcessGroup(syscall.SIGKILL); err != nil {
+			return fmt.Errorf("%w: force stop command %q process group: %w", ErrStopFailed, p.spec.Path, err)
+		}
+	}
+	return nil
+}
+
+func (p *Process) waitForGroupExit(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		p.mu.Lock()
+		pid := p.pid
+		p.mu.Unlock()
+		if pid == 0 {
+			return nil
+		}
+
+		running, err := processGroupRunning(pid)
+		if err != nil {
+			return fmt.Errorf("inspect command %q process group: %w", p.spec.Path, err)
+		}
+		if !running {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
 }
 
