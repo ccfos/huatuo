@@ -25,6 +25,7 @@
 set -exuo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_resources.sh"
 
 require_commands jq
 bpf_tool_setup dropwatch net_dropwatch
@@ -33,9 +34,24 @@ readonly DURATION=10
 readonly TARGET_IP="127.0.0.99"
 readonly TARGET_PORT=9999
 readonly EXPECTED_MAX=$((RATE * (DURATION + 1))) # +1s headroom for the first burst
+readonly DROPWATCH_RESOURCE_DIR="${TOOL_WORK_DIR}/resources"
+readonly DROPWATCH_RESOURCE_SECONDS=5
 DROPWATCH_PID=""
+dropwatch_load_pid=""
 
 cleanup() {
+	resource_cleanup "${DROPWATCH_RESOURCE_DIR}"
+	# GNU timeout owns this load's process group; never signal a completed job.
+	if [[ -n ${dropwatch_load_pid} ]]; then
+		local job_pid
+		while read -r job_pid; do
+			[[ ${job_pid} != "${dropwatch_load_pid}" ]] || kill -KILL -- "-${job_pid}" 2> /dev/null || true
+		done < <(
+			jobs -pr
+			jobs -ps
+		)
+		wait "${dropwatch_load_pid}" 2> /dev/null || true
+	fi
 	[[ -n "${DROPWATCH_PID}" ]] && stop_by_pid "${DROPWATCH_PID}" 5 || true
 }
 trap cleanup EXIT
@@ -46,6 +62,7 @@ trap cleanup EXIT
 # means zero host-state pollution and no cleanup trap.
 
 log_info "dropwatch: rate=${RATE}/s, duration=${DURATION}s, target=${TARGET_IP}:${TARGET_PORT}"
+resource_build || fatal "failed to build resource sampler"
 "${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
 	--filter "udp and port ${TARGET_PORT}" \
 	--max-events-per-second "${RATE}" \
@@ -56,6 +73,7 @@ DROPWATCH_PID=$!
 
 # Let the BPF program attach before flooding.
 sleep 0.5
+resource_start "${DROPWATCH_PID}" "${DROPWATCH_RESOURCE_DIR}" || fatal "resource capture did not start"
 
 # Use bash's built-in /dev/udp/HOST/PORT pseudo-device for sending UDP — no
 # external dependency (nc/hping3/nping/socat versions vary across distros),
@@ -66,7 +84,17 @@ timeout "${DURATION}" bash -c "
 	while :; do
 		printf x >/dev/udp/${TARGET_IP}/${TARGET_PORT}
 	done
-" > /dev/null 2>&1 || true
+" > /dev/null 2>&1 &
+dropwatch_load_pid=$!
+# Observe part of the flood, ending before dropwatch's own --duration expires.
+# The complete DURATION-second flood and rate-limit assertions are unchanged.
+sleep "${DROPWATCH_RESOURCE_SECONDS}"
+resource_stop "${DROPWATCH_RESOURCE_DIR}" || fatal "resource capture is unusable"
+jq -c '{cpu_seconds, cpu_percent, rss_bytes, fds, io}' "${DROPWATCH_RESOURCE_DIR}/result.json"
+dropwatch_load_status=0
+wait "${dropwatch_load_pid}" || dropwatch_load_status=$?
+dropwatch_load_pid=""
+((dropwatch_load_status == 124)) || fatal "UDP load did not complete its timeout window"
 if ! wait "${DROPWATCH_PID}"; then
 	DROPWATCH_PID=""
 	fatal "dropwatch failed while tracing rate-limited drops"
