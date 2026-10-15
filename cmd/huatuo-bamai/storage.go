@@ -21,6 +21,7 @@ import (
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
 	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/runmode"
 	"github.com/ccfos/huatuo/internal/strutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
@@ -47,7 +48,7 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	}
 	if err := tracing.EnableDocumentWriter(
 		tracingStore,
-		document.New(d.opts.Region),
+		newDocumentBuilder(d.opts),
 	); err != nil {
 		return nil, errors.Join(
 			err,
@@ -93,4 +94,11 @@ func initStorage(
 	tracingStore = initializedTracingStore
 
 	return tracingStore, nil
+}
+
+func newDocumentBuilder(opts *Options) *document.Builder {
+	if opts.Mode == runmode.Sandbox {
+		return document.NewWithHostname(opts.Region, opts.GuestIdentity.NodeName)
+	}
+	return document.New(opts.Region)
 }

@@ -23,8 +23,10 @@ import (
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/handlers"
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/log"
 	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
 	"github.com/ccfos/huatuo/internal/profiling"
+	"github.com/ccfos/huatuo/internal/runmode"
 	"github.com/ccfos/huatuo/internal/strutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/tracing"
@@ -33,7 +35,12 @@ import (
 
 const defaultHTTPDrainTimeout = 5 * time.Second
 
-func setupBPF(_ *Daemon) (func(context.Context) error, error) {
+func setupBPF(d *Daemon) (func(context.Context) error, error) {
+	if d.opts.Mode == runmode.Sandbox {
+		if err := bpf.PrepareTraceFS(); err != nil {
+			log.Warnf("sandbox tracing filesystems unavailable: %v", err)
+		}
+	}
 	if err := bpf.Init(&bpf.Option{}); err != nil {
 		return nil, fmt.Errorf("init bpf: %w", err)
 	}
@@ -55,7 +62,7 @@ func startToolstream(d *Daemon) (func(context.Context) error, error) {
 		cleanup, err = profiling.Register(context.Background(), srv, profilingstore.Config{
 			Addresses: strutil.SplitCommaList(cfg.Address), Username: cfg.Username,
 			Password: cfg.Password, Index: cfg.Index,
-		}, d.opts.Region)
+		}, newDocumentBuilder(d.opts))
 		if err != nil {
 			return nil, err
 		}

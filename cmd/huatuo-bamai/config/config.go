@@ -27,6 +27,7 @@ import (
 	"github.com/ccfos/huatuo/core/events"
 	collector "github.com/ccfos/huatuo/core/metrics"
 	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/runmode"
 )
 
 // LogConfig controls process logging.
@@ -96,6 +97,7 @@ type PodConfig struct {
 
 // Config is the global huatuo-bamai configuration.
 type Config struct {
+	Mode      runmode.Mode `default:"none"`
 	BlackList []string
 
 	Log        LogConfig
@@ -149,6 +151,9 @@ func Load(path string) error {
 
 // Validate rejects invalid operational settings before startup side effects.
 func (c *Config) Validate() error {
+	if err := c.Mode.Validate(); err != nil {
+		return err
+	}
 	if err := c.Log.Validate(); err != nil {
 		return fmt.Errorf("validating log config: %w", err)
 	}
@@ -326,6 +331,9 @@ func update(values map[string]any, persist bool) error {
 		return fmt.Errorf("%w: %w", ErrInvalidUpdate, err)
 	}
 
+	if next.Mode != configState.current.Load().Mode {
+		return fmt.Errorf("%w: changing Mode requires a restart", ErrInvalidUpdate)
+	}
 	// Detach values supplied by the caller before publishing the snapshot.
 	next = next.Clone()
 	if persist {
