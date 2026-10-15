@@ -28,5 +28,5 @@ int bpf_cgroup_cpu_weight_nice_prog(struct pt_regs *ctx)
 	struct cgroup_subsys_state *css = (void *)PT_REGS_PARM1(ctx);
 
 	return submit_cgroup_css_event(ctx, BPF_CORE_READ(css, cgroup),
-				       CGROUP_CSS_OPERATION_UPDATE);
+				       CGROUP_CSS_OPERATION_REFRESH);
 }

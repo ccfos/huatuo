@@ -1,4 +1,4 @@
-// Copyright 2025, 2026 The HuaTuo Authors
+// Copyright 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +17,9 @@
 package pod
 
 import (
+	"os"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
@@ -60,5 +62,33 @@ func TestKataRuntimeIntegration(t *testing.T) {
 	if c.NetNamespaceInum != 0 || c.NetNamespaceCookie != 0 {
 		t.Fatal("Host VM namespace must not identify a Guest network namespace")
 	}
+	if peerID := os.Getenv("HUATUO_KATA_PEER_CONTAINER_ID"); peerID != "" {
+		peerInfo, err := readContainerdRuntimeInfo(peerID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		peer := &Container{ID: peerID, RuntimeType: peerInfo.RuntimeType}
+		if err := populateKataContainer(peer, peerInfo); err != nil {
+			t.Fatal(err)
+		}
+		if peer.InitPid != c.InitPid || peer.SandboxID != c.SandboxID || peer.CgroupPath != c.CgroupPath || peer.CgroupCss[subsystem.SubsystemCPU] != c.CgroupCss[subsystem.SubsystemCPU] {
+			t.Fatalf("shared VM has different Host binding: first=%+v peer=%+v", c, peer)
+		}
+		c.SyncedAt = time.Unix(1, 0)
+		peer.SyncedAt = time.Unix(2, 0)
+		members := map[string]*Container{c.ID: c, peer.ID: peer}
+		css := c.CgroupCss[subsystem.SubsystemCPU]
+		for range 100 {
+			if BuildCssContainers(members, subsystem.SubsystemCPU)[css] != c {
+				t.Fatal("shared VM representative is unstable")
+			}
+		}
+		delete(members, c.ID)
+		if BuildCssContainers(members, subsystem.SubsystemCPU)[css] != peer {
+			t.Fatal("remaining member did not become representative")
+		}
+		t.Logf("shared VM peer=%s matched the same PID, sandbox, path and CPU CSS", peer.ID)
+	}
+
 	t.Logf("runtime=%s pid=%d sandbox=%s path=%s cpu_css=%#x", c.RuntimeType, c.InitPid, c.SandboxID, c.CgroupPath, c.CgroupCss[subsystem.SubsystemCPU])
 }

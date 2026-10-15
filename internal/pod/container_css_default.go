@@ -53,7 +53,7 @@ func updateCgroupCSSCache(data *containerCssPerfEvent, containerID string) {
 	log.Debugf("sync container css data: %+v", data)
 
 	switch data.Operation {
-	case abi.CgroupCSSOperationUpdate:
+	case abi.CgroupCSSOperationUpdate, abi.CgroupCSSOperationRefresh:
 		_ = cgroupUpdateOrCreateCssData(data, containerID)
 	case abi.CgroupCSSOperationRemove:
 		_ = cgroupDeleteCssData(data, containerID)

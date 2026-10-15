@@ -37,3 +37,18 @@ go test -tags integration ./internal/pod \
 This attaches temporary BPF probes, reads CRI/proc/cgroup data, and releases the
 probes on exit. It does not restart or delete the selected container. Run QEMU
 and Firecracker checks separately; passing one does not validate the other.
+
+## Shared VM CPU attribution
+
+Members of one Kata sandbox share the Host CPU CSS. The earliest discovered
+live member represents that VM; the container ID breaks timestamp ties.
+Refreshing metadata preserves this priority. When the member exits, the next
+live member takes over. Run queue latency is reported only by that member.
+
+CPU autotracing groups state by sandbox, applies its container filter before
+selecting a representative, and includes `sandbox_id` in trace data. A member
+handoff preserves usage history and the tracing cooldown. A changed VM CPU CSS
+or path resets the usage baseline while retaining the cooldown. A new sandbox
+starts with fresh state. Host Kata bindings are checked again during periodic
+container reconciliation; read-time CPU cache refreshes do not trigger another
+lifecycle reconciliation.

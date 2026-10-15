@@ -299,7 +299,7 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 				pending := c.retries[id]
 				removing := pending != nil && pending.awaitingRemoval
 				retry = retry || removing
-				if (pending == nil || removing) && previous != nil && !c.needsFull && previous.container.StartedAt.Equal(status.State.Running.StartedAt.Time) {
+				if (pending == nil || removing) && previous != nil && previous.container.HostKataSandboxID() == "" && !c.needsFull && previous.container.StartedAt.Equal(status.State.Running.StartedAt.Time) {
 					continue
 				}
 				if pending == nil {

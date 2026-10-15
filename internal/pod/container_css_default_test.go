@@ -204,10 +204,11 @@ func TestCgroupSubsystemInitializationRetries(t *testing.T) {
 
 type lifecycleReaderTest struct {
 	bpf.PerfEventReader
-	event  *containerCssPerfEvent
-	closed chan struct{}
-	once   sync.Once
-	fail   bool
+	event     *containerCssPerfEvent
+	closed    chan struct{}
+	once      sync.Once
+	fail      bool
+	processed chan struct{}
 }
 
 func (r *lifecycleReaderTest) ReadInto(dst any) error {
@@ -218,6 +219,10 @@ func (r *lifecycleReaderTest) ReadInto(dst any) error {
 		*dst.(*containerCssPerfEvent) = *r.event
 		r.event = nil
 		return nil
+	}
+	if r.processed != nil {
+		close(r.processed)
+		r.processed = nil
 	}
 	<-r.closed
 	return context.Canceled
@@ -270,5 +275,39 @@ func TestCgroupReaderRecoversAndStops(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("reader did not stop")
+	}
+}
+
+func TestCPURefreshDoesNotRetriggerDiscovery(t *testing.T) {
+	oldNames := cgroupCssID2SubSysNameMap
+	cgroupCssID2SubSysNameMap = map[int]string{0: "cpu"}
+	t.Cleanup(func() { cgroupCssID2SubSysNameMap = oldNames; cgroupCssMetaDataMap.Delete(uint64(765432)) })
+	controller := newContainerController(newTestContainerStore())
+	controller.full = false
+	containerManagerMu.Lock()
+	previous := containerManager
+	containerManager = controller
+	containerManagerMu.Unlock()
+	t.Cleanup(func() { containerManagerMu.Lock(); containerManager = previous; containerManagerMu.Unlock() })
+	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRefresh, Inode: 42}
+	event.CSS[0] = 765432
+	copy(event.KnodeName[:], strings.Repeat("a", 64))
+	processed := make(chan struct{})
+	reader := &lifecycleReaderTest{closed: make(chan struct{}), event: event, processed: processed}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := cgroupCssEventSyncHandler(ctx, reader, true)
+	t.Cleanup(func() { cancel(); reader.Close(); <-done })
+	select {
+	case <-processed:
+	case <-time.After(time.Second):
+		t.Fatal("CSS refresh was not processed")
+	}
+	if _, ok := cgroupCssMetaDataMap.Load(uint64(765432)); !ok {
+		t.Error("CPU refresh did not populate the cache")
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if controller.full || len(controller.hints) != 0 {
+		t.Errorf("read-time refresh produced lifecycle hints: %+v", controller.hints)
 	}
 }

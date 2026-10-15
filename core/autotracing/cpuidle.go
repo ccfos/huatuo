@@ -86,6 +86,8 @@ type containerCPUState struct {
 	percentDelta    cpuUsageBreakdown[int64]
 
 	containerID  string
+	sandboxID    string
+	cpuCSS       uint64
 	cgroupPath   string
 	seen         bool
 	hasUsage     bool
@@ -107,6 +109,7 @@ type cpuIdleTracingData struct {
 	TotalPercentThreshold       int64                  `json:"total_percent_threshold"`
 	TotalPercentDelta           int64                  `json:"total_percent_delta"`
 	TotalPercentDeltaThreshold  int64                  `json:"total_percent_delta_threshold"`
+	SandboxID                   string                 `json:"sandbox_id,omitempty"`
 	FlameData                   []flamegraph.FrameData `json:"flamedata"`
 }
 
@@ -164,25 +167,47 @@ func (c *cpuIdleTracing) reconcileContainerStates(containers map[string]*pod.Con
 		state.seen = false
 	}
 
+	var cssContainers map[uint64]*pod.Container
 	for _, container := range containers {
 		if !c.filter.Match(container) {
 			continue
 		}
-
-		state, ok := c.containers[container.ID]
-		if !ok {
-			c.containers[container.ID] = &containerCPUState{
-				containerID: container.ID,
-				cgroupPath:  container.CgroupPath,
-				seen:        true,
+		key := container.ID
+		sandboxID := container.HostKataSandboxID()
+		css := uint64(0)
+		var state *containerCPUState
+		if sandboxID != "" {
+			css = container.CgroupCss["cpu"]
+			if cssContainers == nil {
+				matched := make(map[string]*pod.Container)
+				for id, member := range containers {
+					if member.HostKataSandboxID() != "" && c.filter.Match(member) {
+						matched[id] = member
+					}
+				}
+				cssContainers = pod.BuildCssContainers(matched, "cpu")
 			}
-			continue
+			if css == 0 || cssContainers[css] != container {
+				continue
+			}
+			state = c.containers["kata:"+sandboxID]
+			if state == nil {
+				key = "kata:" + sandboxID
+			}
+		} else {
+			state = c.containers[key]
 		}
-
-		if state.cgroupPath != container.CgroupPath {
+		if state == nil {
+			state = &containerCPUState{}
+			c.containers[key] = state
+		} else if state.cgroupPath != container.CgroupPath || (sandboxID != "" && state.cpuCSS != css) {
+			// Replacing the VM resets the sample baseline but preserves its cooldown.
 			state.resetMeasurements()
-			state.cgroupPath = container.CgroupPath
 		}
+		state.containerID = container.ID
+		state.sandboxID = sandboxID
+		state.cpuCSS = css
+		state.cgroupPath = container.CgroupPath
 		state.seen = true
 	}
 
@@ -399,6 +424,7 @@ func (c *cpuIdleTracing) saveCPUIdleTrace(
 	result profileResult,
 ) error {
 	tracerData := cpuIdleTracingData{
+		SandboxID:                   state.sandboxID,
 		UserPercent:                 state.currentPercent.user,
 		UserPercentThreshold:        c.threshold.percent.user,
 		UserPercentDelta:            state.percentDelta.user,
