@@ -20,7 +20,7 @@ import (
 	"os"
 
 	"github.com/ccfos/huatuo/internal/pod"
-	"github.com/ccfos/huatuo/internal/profiler/toolpath"
+	"github.com/ccfos/huatuo/internal/profiling/toolpath"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )

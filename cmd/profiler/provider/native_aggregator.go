@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiler"
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -51,7 +51,7 @@ type nativeAggregator struct {
 	profileType  profiling.Type
 	mode         profiling.Mode
 	containerID  string
-	parseOption  *profiler.ParseOption
+	parseOption  *profile.ParseOption
 	sampleType   string
 	mu           sync.Mutex
 	stackTraces  stackTraceInterner
@@ -139,7 +139,7 @@ func (a *nativeAggregator) snapshotCpuMemProfile() (*types.ProfilingWindow, erro
 	skipNegForPprof := a.profileType == profiling.TypeMemory &&
 		a.mode == profiling.ModePhysicalUsage
 
-	tree := make([]*profiler.TreeItem, 0, len(a.stackSamples))
+	tree := make([]*profile.TreeItem, 0, len(a.stackSamples))
 
 	for key, value := range a.stackSamples {
 		if skipNegForPprof && value < 0 {
@@ -150,7 +150,7 @@ func (a *nativeAggregator) snapshotCpuMemProfile() (*types.ProfilingWindow, erro
 		if key.Category != "" {
 			prefixes = append(prefixes, key.Category)
 		}
-		tree = append(tree, profiler.BuildTreeItem(
+		tree = append(tree, profile.BuildTreeItem(
 			prefixes,
 			a.stackTraces.Frames(key.UserTraceID),
 			a.stackTraces.Frames(key.KernelTraceID),
@@ -162,10 +162,10 @@ func (a *nativeAggregator) snapshotCpuMemProfile() (*types.ProfilingWindow, erro
 }
 
 func (a *nativeAggregator) snapshotLockProfile() (*types.ProfilingWindow, error) {
-	tree := make([]*profiler.TreeItem, 0, len(a.lockSamples))
+	tree := make([]*profile.TreeItem, 0, len(a.lockSamples))
 	for _, rec := range a.lockSamples {
 		prefixes, value := lockPrefixFrames(rec)
-		tree = append(tree, profiler.BuildTreeItem(
+		tree = append(tree, profile.BuildTreeItem(
 			prefixes,
 			rec.StackTrace.UserFrames,
 			rec.StackTrace.KernelFrames,
@@ -241,13 +241,13 @@ func parseCollapsedLine(line string) (stack string, count int64, ok bool) {
 }
 
 // buildPprofData constructs pprof (pyroscope-compatible) profile data.
-func (a *nativeAggregator) buildPprofData(tree []*profiler.TreeItem) (*types.ProfilingWindow, error) {
-	data, err := profiler.ParseTree(time.Time{}, a.sampleType, tree, a.parseOption)
+func (a *nativeAggregator) buildPprofData(tree []*profile.TreeItem) (*types.ProfilingWindow, error) {
+	data, err := profile.ParseTree(time.Time{}, a.sampleType, tree, a.parseOption)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse tree: %w", err)
 	}
 
-	return profiler.NewWindow(data, a.containerID)
+	return profile.NewWindow(data, a.containerID)
 }
 
 func lockPrefixFrames(rec *lockSample) ([]string, uint64) {
@@ -258,17 +258,17 @@ func lockPrefixFrames(rec *lockSample) ([]string, uint64) {
 	}, rec.WaitNanoseconds
 }
 
-func profileTypeOptions(cfg *Config) (*profiler.ParseOption, string, error) {
+func profileTypeOptions(cfg *Config) (*profile.ParseOption, string, error) {
 	switch cfg.Type {
 	case profiling.TypeCPU:
 		if cfg.Mode == profiling.ModeOffCPU {
-			return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeOffCpuSample, nil
+			return &profile.ParseOption{SampleRate: profile.NoSampleRate}, profile.ProfileTypeOffCpuSample, nil
 		}
-		return &profiler.ParseOption{SampleRate: int64(cfg.Freq)}, profiler.ProfileTypeCpuSample, nil
+		return &profile.ParseOption{SampleRate: int64(cfg.Freq)}, profile.ProfileTypeCpuSample, nil
 	case profiling.TypeMemory:
-		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil
+		return &profile.ParseOption{SampleRate: profile.NoSampleRate}, profile.ProfileTypeMemSample, nil
 	case profiling.TypeLock:
-		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeLockTimeSample, nil
+		return &profile.ParseOption{SampleRate: profile.NoSampleRate}, profile.ProfileTypeLockTimeSample, nil
 	default:
 		return nil, "", fmt.Errorf("unsupported profile type %q", cfg.Type)
 	}

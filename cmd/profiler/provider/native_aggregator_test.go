@@ -21,7 +21,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ccfos/huatuo/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -46,8 +46,8 @@ func TestNativeAggregatorAggregatesLockTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("profileTypeOptions() error = %v", err)
 	}
-	if sampleType != profiler.ProfileTypeLockTimeSample {
-		t.Fatalf("sample type = %q, want %q", sampleType, profiler.ProfileTypeLockTimeSample)
+	if sampleType != profile.ProfileTypeLockTimeSample {
+		t.Fatalf("sample type = %q, want %q", sampleType, profile.ProfileTypeLockTimeSample)
 	}
 }
 

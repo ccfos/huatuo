@@ -23,7 +23,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	bpfabi "github.com/ccfos/huatuo/internal/bpf/abi"
-	"github.com/ccfos/huatuo/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
@@ -130,15 +130,15 @@ func readStackTrace(b bpf.BPF, stackMapID, id uint32) ([symbol.KsymStackMaxDepth
 }
 
 // processStackMap reads a per-CPU BPF stack-counts map, sums its CPU slots,
-// converts each entry into profiler.TreeItem stack frames, and appends it to
+// converts each entry into profile.TreeItem stack frames, and appends it to
 // items. When provided,
 // labelFn produces the per-entry leaf label (e.g. "source[comm,HI]") and
 // rootLabel is prepended as the root frame (e.g. "source" or "victim").
 func processStackMap(b bpf.BPF, mapName string, u *symbol.UsymResolver,
-	items []*profiler.TreeItem,
+	items []*profile.TreeItem,
 	labelFn func(key bpfabi.IrqtracingStackKey) string,
 	rootLabel string,
-) ([]*profiler.TreeItem, error) {
+) ([]*profile.TreeItem, error) {
 	mapItems, err := b.DumpMapByName(mapName)
 	if err != nil {
 		return items, err
@@ -195,7 +195,7 @@ func processStackMap(b bpf.BPF, mapName string, u *symbol.UsymResolver,
 			}
 		}
 
-		items = append(items, profiler.BuildTreeItem(prefixes, userFrames, kernelFrames, count))
+		items = append(items, profile.BuildTreeItem(prefixes, userFrames, kernelFrames, count))
 	}
 	return items, nil
 }
@@ -217,12 +217,12 @@ func detachAndReadDroppedSamples(b mapSnapshotter) (uint64, error) {
 	return nmissed, nil
 }
 
-// buildProfile merges the source and victim stack maps into a ProfileData
+// buildProfile merges the source and victim stack maps into a Data
 // tree, prefixing each stack with "source" / "victim" roots.
-func buildProfile(b bpf.BPF) (*profiler.ProfileData, error) {
+func buildProfile(b bpf.BPF) (*profile.Data, error) {
 	u := symbol.NewUsymResolver()
 
-	var items []*profiler.TreeItem
+	var items []*profile.TreeItem
 	var err error
 
 	items, err = processStackMap(
@@ -248,8 +248,8 @@ func buildProfile(b bpf.BPF) (*profiler.ProfileData, error) {
 		return nil, err
 	}
 
-	data, err := profiler.ParseTree(time.Time{}, profiler.ProfileTypeIRQTracingSample,
-		items, &profiler.ParseOption{SampleRate: profiler.NoSampleRate})
+	data, err := profile.ParseTree(time.Time{}, profile.ProfileTypeIRQTracingSample,
+		items, &profile.ParseOption{SampleRate: profile.NoSampleRate})
 	if err != nil {
 		return nil, err
 	}

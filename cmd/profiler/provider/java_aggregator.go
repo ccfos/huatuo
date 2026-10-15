@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiler"
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -33,10 +33,10 @@ var _ aggregator.Aggregator = (*javaAggregator)(nil)
 type javaAggregator struct {
 	containerID  string
 	pid          int
-	parseOption  *profiler.ParseOption
+	parseOption  *profile.ParseOption
 	sampleType   string
 	mu           sync.Mutex
-	sampleOutput []profiler.SampleOutput
+	sampleOutput []profile.SampleOutput
 }
 
 func newJavaAggregator(cfg *Config) (*javaAggregator, error) {
@@ -53,9 +53,9 @@ func newJavaAggregator(cfg *Config) (*javaAggregator, error) {
 }
 
 func (a *javaAggregator) Aggregate(rec any) {
-	so, ok := rec.(profiler.SampleOutput)
+	so, ok := rec.(profile.SampleOutput)
 	if !ok {
-		log.Warnf("invalid record type %T, expected profiler.SampleOutput", rec)
+		log.Warnf("invalid record type %T, expected profile.SampleOutput", rec)
 
 		return
 	}
@@ -82,11 +82,11 @@ func (a *javaAggregator) Reset() {
 
 func (a *javaAggregator) snapshotPprof(ctx context.Context) (*types.ProfilingWindow, error) {
 	if len(a.sampleOutput) == 0 {
-		data, err := profiler.ParseTree(time.Time{}, a.sampleType, nil, a.parseOption)
+		data, err := profile.ParseTree(time.Time{}, a.sampleType, nil, a.parseOption)
 		if err != nil {
 			return nil, err
 		}
-		return profiler.NewWindow(data, a.containerID)
+		return profile.NewWindow(data, a.containerID)
 	}
 
 	pprofFolded, err := json.MarshalIndent(a.sampleOutput, "", "  ")
@@ -94,18 +94,24 @@ func (a *javaAggregator) snapshotPprof(ctx context.Context) (*types.ProfilingWin
 		return nil, fmt.Errorf("failed to marshal sample output: %w", err)
 	}
 
-	pprofData, err := profiler.ParseCollapsedData(
+	processNames, err := javaProcessNames(ctx, a.sampleOutput, a.pid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse collapsed data: %w", err)
+	}
+
+	pprofData, err := profile.ParseCollapsedData(
 		ctx,
-		&profiler.ParseInput{
-			ProfileType: a.sampleType,
-			Data:        pprofFolded,
-			Opt:         a.parseOption,
-			PID:         a.pid,
+		&profile.ParseInput{
+			ProcessNames: processNames,
+			ProfileType:  a.sampleType,
+			Data:         pprofFolded,
+			Opt:          a.parseOption,
+			PID:          a.pid,
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse collapsed data: %w", err)
 	}
 
-	return profiler.NewWindow(pprofData, a.containerID)
+	return profile.NewWindow(pprofData, a.containerID)
 }

@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/profiler"
-	"github.com/ccfos/huatuo/internal/profiler/output"
-	"github.com/ccfos/huatuo/internal/profiler/output/factory"
+	output "github.com/ccfos/huatuo/internal/profiling/formatter"
+	"github.com/ccfos/huatuo/internal/profiling/formatter/factory"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/profiling"
 
 	"github.com/stretchr/testify/require"
@@ -47,8 +47,8 @@ func TestPythonAggregatorKeepsProcessRoots(t *testing.T) {
 	aggr, err := newPythonCPUAggregator(cfg)
 	require.NoError(t, err)
 
-	aggr.Aggregate(profiler.SampleOutput{PID: 100, Output: "hot (a.py:1) 3\n"})
-	aggr.Aggregate(profiler.SampleOutput{PID: 200, Output: "hot (a.py:1) 4\n"})
+	aggr.Aggregate(profile.SampleOutput{PID: 100, Output: "hot (a.py:1) 3\n"})
+	aggr.Aggregate(profile.SampleOutput{PID: 200, Output: "hot (a.py:1) 4\n"})
 
 	destination := filepath.Join(t.TempDir(), "profile.folded")
 	window, err := aggr.Snapshot(t.Context())
@@ -65,7 +65,7 @@ func TestPythonAggregatorKeepsProcessRoots(t *testing.T) {
 		"process 100;hot (a.py:1) 30000000\nprocess 200;hot (a.py:1) 40000000\n",
 		string(folded),
 	)
-	require.Equal(t, []profiler.SampleOutput{
+	require.Equal(t, []profile.SampleOutput{
 		{PID: 100, Output: "process 100;hot (a.py:1) 3\n"},
 		{PID: 200, Output: "process 200;hot (a.py:1) 4\n"},
 	}, aggr.sampleOutput)

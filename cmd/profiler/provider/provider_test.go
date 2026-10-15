@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/aggregator"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 

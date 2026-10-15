@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiler"
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -34,7 +34,7 @@ type pythonAggregator struct {
 	containerID  string
 	pid          int
 	mu           sync.Mutex
-	sampleOutput []profiler.SampleOutput
+	sampleOutput []profile.SampleOutput
 	sampleRate   int64
 }
 
@@ -47,9 +47,9 @@ func newPythonCPUAggregator(cfg *Config) (*pythonAggregator, error) {
 }
 
 func (a *pythonAggregator) Aggregate(rec any) {
-	so, ok := rec.(profiler.SampleOutput)
+	so, ok := rec.(profile.SampleOutput)
 	if !ok {
-		log.Warnf("invalid record type %T, expected profiler.SampleOutput", rec)
+		log.Warnf("invalid record type %T, expected profile.SampleOutput", rec)
 		return
 	}
 
@@ -87,11 +87,11 @@ func (a *pythonAggregator) Snapshot(ctx context.Context) (*types.ProfilingWindow
 	defer a.mu.Unlock()
 
 	if len(a.sampleOutput) == 0 {
-		data, err := profiler.ParseTree(time.Time{}, profiler.ProfileTypeCpuSample, nil, &profiler.ParseOption{SampleRate: a.sampleRate})
+		data, err := profile.ParseTree(time.Time{}, profile.ProfileTypeCpuSample, nil, &profile.ParseOption{SampleRate: a.sampleRate})
 		if err != nil {
 			return nil, err
 		}
-		return profiler.NewWindow(data, a.containerID)
+		return profile.NewWindow(data, a.containerID)
 	}
 
 	data, err := json.MarshalIndent(a.sampleOutput, "", "  ")
@@ -99,20 +99,26 @@ func (a *pythonAggregator) Snapshot(ctx context.Context) (*types.ProfilingWindow
 		return nil, fmt.Errorf("failed to marshal sample output: %w", err)
 	}
 
-	pprofData, err := profiler.ParseRawData(
+	processNames, err := pythonProcessNames(ctx, a.sampleOutput, a.pid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse raw data: %w", err)
+	}
+
+	pprofData, err := profile.ParseRawData(
 		ctx,
-		&profiler.ParseInput{
-			ProfileType: profiler.ProfileTypeCpuSample,
-			Data:        data,
-			Opt:         &profiler.ParseOption{SampleRate: a.sampleRate},
-			PID:         a.pid,
+		&profile.ParseInput{
+			ProcessNames: processNames,
+			ProfileType:  profile.ProfileTypeCpuSample,
+			Data:         data,
+			Opt:          &profile.ParseOption{SampleRate: a.sampleRate},
+			PID:          a.pid,
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse raw data: %w", err)
 	}
 
-	return profiler.NewWindow(pprofData, a.containerID)
+	return profile.NewWindow(pprofData, a.containerID)
 }
 
 func (a *pythonAggregator) Reset() {

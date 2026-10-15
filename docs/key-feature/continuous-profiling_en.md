@@ -741,21 +741,21 @@ flowchart LR
 
 ## Common profiling windows
 
-Profiler and irqtracing share the collection runner, Pipeline and `types.ProfilingWindow`. IRQ business logic lives in `cmd/irqtracing`; Java, Python and Native aggregators live in `cmd/profiler/provider`. Values follow profile units, such as nanoseconds for CPU and counts for IRQ. Java process roots use `process PID:MainClass`.
+Profiler and irqtracing share the collection runner, Pipeline and `types.ProfilingWindow`. IRQ business logic lives in `cmd/irqtracing`; Java, Python and Native aggregators live in `cmd/profiler/provider`. Target discovery and language metadata lookup belong to `cmd/profiler/provider`; parsers receive data and resolved process names. Java agent lifecycle and output collection live in `cmd/profiler/runtime/java`, and tool execution lives in `cmd/profiler/exec`. BPF map helpers and tool path validation remain in `internal/profiling/bpfmap` and `internal/profiling/toolpath`. Both profiler and IRQ tracing use `internal/profiling/profile.Run`. Values follow profile units, such as nanoseconds for CPU and counts for IRQ. Java process roots use `process PID:MainClass`.
 
 ### Configuration and aggregation intervals
 
-The entry point assembles the collector and Aggregator. Before starting collection, the runner creates the Formatter, constructs Pipeline with `aggregator.PipelineConfig`, and passes the runtime context through `Start(ctx)`. Invalid output configuration fails before collection starts. Each aggregator captures its business settings at construction and implements `Aggregate`, `Snapshot(context.Context)` and `Reset`. Pipeline receives runtime settings through configuration and a standard `context.Context` through method parameters. File creation, naming, writing, and closing belong to `internal/profiler/output`.
+The entry point assembles the collector and Aggregator. Before starting collection, the runner creates the Formatter, constructs Pipeline with `aggregator.PipelineConfig`, and passes the runtime context through `Start(ctx)`. Invalid output configuration fails before collection starts. Each aggregator captures its business settings at construction and implements `Aggregate`, `Snapshot(context.Context)` and `Reset`. Pipeline receives runtime settings through configuration and a standard `context.Context` through method parameters. File creation, naming, writing, and closing belong to `internal/profiling/formatter`.
 
 `FormatterConfig` contains `Format`, `Destination`, `TaskID`, and `ToolName`. Local targets accept files, directories, or stdout (`stdout`, `-`, or standard fd aliases); remote targets require a Unix socket. New paths denote files unless they end in `/`; directory output uses unique filenames. Existing files are replaced only when written, empty tasks create no result, and stdout stays open. Initialization checks do not guarantee later writes; terminal output, redirection, and logs may expose data.
 
-Task IDs and source tools come from `registry.RunConfig.ID` and `ProfilerMeta.ToolName`. RemoteStore manages toolstream internally, using service `profiling_store_service` and version `1`.
+Task IDs and source tools come from `profile.RunConfig.ID` and `ProfilerMeta.ToolName`. RemoteStore manages toolstream internally, using service `profiling_store_service` and version `1`.
 
-`cmd/profiler` owns CLI parsing and signal handling. `provider.New` creates a fresh collector for each task and copies its business configuration. `registry.RunConfig` contains the task ID, collection duration and aggregation interval; both durations use `time.Duration`. The runner generates an ID only when absent and uses the same ID for aggregation and remote commits. Output format and destination are supplied through `RunConfig.OutputFormat` and `RunConfig.OutputDestination`. The runner constructs the output layer’s `FormatterConfig`; the output layer does not depend on `RunConfig`. CLI duration flags still accept integer seconds, with range checks before conversion.
+`cmd/profiler` owns CLI parsing and signal handling. `provider.New` creates a fresh collector for each task and copies its business configuration. `profile.RunConfig` contains the task ID, collection duration and aggregation interval; both durations use `time.Duration`. The runner generates an ID only when absent and uses the same ID for aggregation and remote commits. Output format and destination are supplied through `RunConfig.OutputFormat` and `RunConfig.OutputDestination`. The runner constructs the formatter layer’s `FormatterConfig`; the formatter layer does not depend on `RunConfig`. CLI duration flags still accept integer seconds, with range checks before conversion.
 
 Task construction selects the aggregation policy; aggregator constructors do not modify configuration. Native CPU and memory allocation use Streaming; native physical_usage, Java, Python, and IRQ use OneShot. Java runtime still reads results periodically, independently of Pipeline's one-shot export policy. Python and IRQ implement `ManagesDuration` only to disable the runner's duration timer; no errors are exempted.
 
-Aggregation modes are defined in `internal/profiler/aggregator/config.go`:
+Aggregation modes are defined in `internal/profiling/aggregator/config.go`:
 
 | Mode | Export timing | Full queue |
 | --- | --- | --- |

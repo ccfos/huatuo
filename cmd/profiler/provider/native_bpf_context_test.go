@@ -21,7 +21,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
-	"github.com/ccfos/huatuo/internal/profiler/bpfmap"
+	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
 )
 
 type closeBPFStub struct {

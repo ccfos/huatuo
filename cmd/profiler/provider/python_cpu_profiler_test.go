@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 
 	"github.com/stretchr/testify/require"
 )
@@ -94,9 +94,9 @@ func TestPythonCPUProfilerReadDataLoopUsesOnlyMemfdSamples(t *testing.T) {
 				config: Config{Duration: 1 * time.Second, Freq: 99, ToolDir: toolDir},
 				pids:   []int{123, 456},
 			}
-			var samples []profiler.SampleOutput
+			var samples []profile.SampleOutput
 			err := p.ReadDataLoop(t.Context(), func(sample any) {
-				output, ok := sample.(profiler.SampleOutput)
+				output, ok := sample.(profile.SampleOutput)
 				require.True(t, ok, "unexpected sample type %T", sample)
 				samples = append(samples, output)
 			})
@@ -109,7 +109,7 @@ func TestPythonCPUProfilerReadDataLoopUsesOnlyMemfdSamples(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.ElementsMatch(t, []profiler.SampleOutput{
+			require.ElementsMatch(t, []profile.SampleOutput{
 				{PID: 123, Output: tt.sample},
 				{PID: 456, Output: tt.sample},
 			}, samples)

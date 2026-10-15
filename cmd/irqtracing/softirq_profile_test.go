@@ -18,14 +18,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestSoftIRQWindowUsesCommonProfileAndQuality(t *testing.T) {
 	start := time.Unix(123, 456)
-	data, err := profiler.ParseTree(start, profiler.ProfileTypeIRQTracingSample,
-		[]*profiler.TreeItem{profiler.BuildTreeItem([]string{"source"}, []string{"raise"}, nil, 7)}, nil)
+	data, err := profile.ParseTree(start, profile.ProfileTypeIRQTracingSample,
+		[]*profile.TreeItem{profile.BuildTreeItem([]string{"source"}, []string{"raise"}, nil, 7)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestSoftIRQWindowUsesCommonProfileAndQuality(t *testing.T) {
 	if window.ContainerID != "irq-container" {
 		t.Fatalf("container ID = %q", window.ContainerID)
 	}
-	if window.ProfileType != profiler.ProfileTypeIRQTracingSample || window.Profile.TimeNanos != 0 || window.Profile.DurationNanos != 0 {
+	if window.ProfileType != profile.ProfileTypeIRQTracingSample || window.Profile.TimeNanos != 0 || window.Profile.DurationNanos != 0 {
 		t.Fatalf("window = %+v", window)
 	}
 	if window.DroppedSamples[types.DropReasonCollection] != 3 || window.Profile.Sample[0].Value[0] != 7 {

@@ -25,7 +25,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiler/registry"
+	profile "github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/version"
 )
 
@@ -61,7 +61,7 @@ func mainAction(cliCtx *cli.Context) error {
 		duration:                 duration,
 		maxEventsPerSecondPerCPU: cfg.maxEventsPerSecondPerCPU,
 	})
-	return registry.Profile(ctx, registry.RunConfig{
+	return profile.Run(ctx, profile.RunConfig{
 		ID:                cliCtx.String(cliFlagTaskID),
 		Duration:          duration,
 		OutputFormat:      cfg.output,

@@ -21,12 +21,12 @@ import (
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 
-	"github.com/ccfos/huatuo/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type softIRQBatch struct {
-	profile   *profiler.ProfileData
+	profile   *profile.Data
 	dropped   uint64
 	targetCPU int32
 }
@@ -42,7 +42,7 @@ func (a *irqAggregator) Snapshot(context.Context) (*types.ProfilingWindow, error
 	if a.batch == nil {
 		return nil, fmt.Errorf("IRQ collection completed without a batch")
 	}
-	window, err := profiler.NewWindow(a.batch.profile, a.containerID)
+	window, err := profile.NewWindow(a.batch.profile, a.containerID)
 	if err != nil {
 		return nil, err
 	}

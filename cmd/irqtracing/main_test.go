@@ -24,7 +24,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	bpfabi "github.com/ccfos/huatuo/internal/bpf/abi"
-	profileroutput "github.com/ccfos/huatuo/internal/profiler/output"
+	profileroutput "github.com/ccfos/huatuo/internal/profiling/formatter"
 )
 
 func TestValidateFlags(t *testing.T) {

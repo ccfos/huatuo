@@ -24,12 +24,11 @@ import (
 	"strings"
 	"time"
 
+	profilerexec "github.com/ccfos/huatuo/cmd/profiler/exec"
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/process"
-	"github.com/ccfos/huatuo/internal/profiler"
-	profilerexec "github.com/ccfos/huatuo/internal/profiler/exec"
-	profilerprocess "github.com/ccfos/huatuo/internal/profiler/process"
-	"github.com/ccfos/huatuo/internal/profiler/toolpath"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
+	"github.com/ccfos/huatuo/internal/profiling/toolpath"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -108,7 +107,7 @@ func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 				fmt.Sprintf("PID[%d] sampling failed: no samples collected", targetPid))
 			continue
 		}
-		enqueue(profiler.SampleOutput{
+		enqueue(profile.SampleOutput{
 			PID:    targetPid,
 			Output: string(cmdRes.Output),
 		})
@@ -130,7 +129,7 @@ func resolvePythonPids(cfg *Config) ([]int, error) {
 		return cfg.PIDs, nil
 	}
 
-	pids, err := profilerprocess.ContainerRootPIDs(cfg.ContainerID, profilerprocess.ExecutableFilter{
+	pids, err := containerRootPIDs(cfg.ContainerID, executableFilter{
 		ExecutablePrefix: "python",
 		ExecutablePath:   cfg.ExecPath,
 	})

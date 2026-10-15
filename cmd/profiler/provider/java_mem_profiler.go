@@ -18,8 +18,8 @@ import (
 	"context"
 	"fmt"
 
-	javaruntime "github.com/ccfos/huatuo/internal/profiler/runtime/java"
-	"github.com/ccfos/huatuo/internal/profiler/toolpath"
+	javaruntime "github.com/ccfos/huatuo/cmd/profiler/runtime/java"
+	"github.com/ccfos/huatuo/internal/profiling/toolpath"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -43,7 +43,7 @@ func (p *javaMemoryProfiler) Start(ctx context.Context) error {
 	pids := cfg.PIDs
 	if len(pids) == 0 {
 		var err error
-		pids, err = javaruntime.ResolveJavaPids(
+		pids, err = resolveJavaPIDs(
 			cfg.ExecPath,
 			cfg.ContainerID,
 		)

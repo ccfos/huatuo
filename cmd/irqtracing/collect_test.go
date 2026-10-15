@@ -26,7 +26,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	bpfabi "github.com/ccfos/huatuo/internal/bpf/abi"
-	"github.com/ccfos/huatuo/internal/profiler"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/symbol"
 )
 
@@ -421,7 +421,7 @@ func TestBuildProfile(t *testing.T) {
 		data, err := buildProfile(b)
 		assert.NoError(t, err)
 		assert.NotNil(t, data)
-		assert.Equal(t, profiler.ProfileTypeIRQTracingSample, data.ProfileType)
+		assert.Equal(t, profile.ProfileTypeIRQTracingSample, data.ProfileType)
 		for _, frame := range []string{
 			"source",
 			"source[raiser,NET_RX]",

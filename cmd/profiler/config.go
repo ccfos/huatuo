@@ -24,7 +24,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/cmd/profiler/provider"
-	"github.com/ccfos/huatuo/internal/profiler/output"
+	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 

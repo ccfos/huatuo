@@ -732,21 +732,21 @@ flowchart LR
 
 ## 公共采集窗口
 
-profiler 与 irqtracing 共用采集执行器、Pipeline 和 `types.ProfilingWindow`。IRQ 业务实现位于 `cmd/irqtracing`；Java、Python 和 Native 聚合器位于 `cmd/profiler/provider`。样本数值遵循 profile 单位，例如 CPU 使用纳秒、IRQ 使用次数；Java 进程根帧使用 `process PID:MainClass`。
+profiler 与 irqtracing 共用 `internal/profiling/profile.Run`、Pipeline 和 `types.ProfilingWindow`。IRQ 业务实现位于 `cmd/irqtracing`；Java、Python 和 Native 聚合器位于 `cmd/profiler/provider`。目标进程发现和语言元数据查询也由 provider 负责，解析器只接收数据和已取得的进程名称。Java agent 生命周期与输出文件收集位于 `cmd/profiler/runtime/java`，工具执行位于 `cmd/profiler/exec`；BPF map 辅助能力和工具路径校验分别保留在 `internal/profiling/bpfmap`、`internal/profiling/toolpath`。样本数值遵循 profile 单位，例如 CPU 使用纳秒、IRQ 使用次数；Java 进程根帧使用 `process PID:MainClass`。
 
 ### 配置和聚合周期
 
-入口装配采集器和 Aggregator，执行器在启动采集前创建 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 通过配置接收运行参数，通过方法参数接收标准 `context.Context`。文件创建、命名、写入和关闭由 `internal/profiler/output` 负责。
+入口装配采集器和 Aggregator，执行器在启动采集前创建 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 通过配置接收运行参数，通过方法参数接收标准 `context.Context`。文件创建、命名、写入和关闭由 `internal/profiling/formatter` 负责。
 
 `FormatterConfig` 包含 `Format`、`Destination`、`TaskID`、`ToolName`。本地目标支持普通文件、目录和标准输出（`stdout`、`-` 或标准 fd 别名），远端目标须为 Unix socket。新路径默认表示文件，以 `/` 结尾则创建目录；目录内自动生成唯一文件名。已有文件仅在写入时覆盖，空任务不创建结果文件，标准输出不关闭。初始化检查不保证后续写入成功；终端、重定向和日志捕获可能暴露数据。
 
-任务 ID 和工具来源分别取自 `registry.RunConfig.ID`、`ProfilerMeta.ToolName`。RemoteStore 内部管理 toolstream，固定使用服务名 `profiling_store_service` 和版本 `1`。
+任务 ID 和工具来源分别取自 `profile.RunConfig.ID`、`ProfilerMeta.ToolName`。RemoteStore 内部管理 toolstream，固定使用服务名 `profiling_store_service` 和版本 `1`。
 
-CLI 解析和信号监听由 `cmd/profiler` 管理。`provider.New` 为每次任务创建独立采集器，复制并绑定业务配置；`registry.RunConfig` 包含任务 ID，以及 `time.Duration` 类型的采集时长和聚合周期。执行器仅在任务 ID 为空时生成 ID，聚合与远程提交使用同一个 ID。输出格式和目标通过同一个 `RunConfig` 的 `OutputFormat`、`OutputDestination` 传入，由执行器构造 output 层的 `FormatterConfig`；output 层不依赖 `RunConfig`。CLI 时长参数仍以整数秒表示，并在转换前检查范围。
+CLI 解析和信号监听由 `cmd/profiler` 管理。`provider.New` 为每次任务创建独立采集器，复制并绑定业务配置；`profile.RunConfig` 包含任务 ID，以及 `time.Duration` 类型的采集时长和聚合周期。执行器仅在任务 ID 为空时生成 ID，聚合与远程提交使用同一个 ID。输出格式和目标通过同一个 `RunConfig` 的 `OutputFormat`、`OutputDestination` 传入，由执行器构造 formatter 层的 `FormatterConfig`；formatter 层不依赖 `RunConfig`。CLI 时长参数仍以整数秒表示，并在转换前检查范围。
 
 聚合策略在任务构造时确定，聚合器构造不修改配置。native CPU 和 memory alloc 使用 Streaming；native physical_usage、Java、Python 和 IRQ 使用 OneShot。Java runtime 仍按配置周期读取结果，这与 Pipeline 的单次导出策略独立。Python 和 IRQ 的 `ManagesDuration` 仅关闭执行器时长定时器，不豁免任何错误。
 
-聚合模式定义在 `internal/profiler/aggregator/config.go`：
+聚合模式定义在 `internal/profiling/aggregator/config.go`：
 
 | 模式 | 导出时机 | 队列满时 |
 | --- | --- | --- |

@@ -21,7 +21,7 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	profileroutput "github.com/ccfos/huatuo/internal/profiler/output"
+	profileroutput "github.com/ccfos/huatuo/internal/profiling/formatter"
 )
 
 // Older Clang versions emit the negative BTF enum as unsigned.

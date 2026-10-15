@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	"github.com/ccfos/huatuo/internal/profiler/registry"
+	"github.com/ccfos/huatuo/internal/profiling/aggregator"
+	profile "github.com/ccfos/huatuo/internal/profiling/profile"
 )
 
 const (
@@ -40,8 +40,8 @@ type collector struct {
 }
 
 // newIRQProfiler binds one IRQ collection to the common runner.
-func newIRQProfiler(c *collector) *registry.ProfilerMeta {
-	return &registry.ProfilerMeta{
+func newIRQProfiler(c *collector) *profile.ProfilerMeta {
+	return &profile.ProfilerMeta{
 		ToolName:        irqTracingToolName,
 		Description:     "softirq profiling",
 		Impl:            c,

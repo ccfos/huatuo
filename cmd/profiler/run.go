@@ -22,7 +22,7 @@ import (
 
 	"github.com/ccfos/huatuo/cmd/profiler/provider"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiler/registry"
+	profile "github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -65,7 +65,7 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 
 	log.Infof("using profiler: %s-%s (%s)", meta.Implementation, meta.Type, meta.Description)
 
-	return registry.Profile(ctx, registry.RunConfig{
+	return profile.Run(ctx, profile.RunConfig{
 		ID:                  cfg.TaskID,
 		Duration:            cfg.Provider.Duration,
 		AggregationInterval: cfg.Provider.AggregationInterval,

@@ -18,17 +18,17 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	"github.com/ccfos/huatuo/internal/profiler/registry"
+	"github.com/ccfos/huatuo/internal/profiling/aggregator"
+	profile "github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 // New binds a private configuration copy to a fresh collection task.
-func New(implementation profiling.Implementation, config *Config) (*registry.ProfilerMeta, error) {
+func New(implementation profiling.Implementation, config *Config) (*profile.ProfilerMeta, error) {
 	cfg := *config
 	cfg.PIDs = slices.Clone(config.PIDs)
 	cfg.CPUIDs = slices.Clone(config.CPUIDs)
-	meta := &registry.ProfilerMeta{ToolName: "profiler", Type: cfg.Type, Implementation: implementation}
+	meta := &profile.ProfilerMeta{ToolName: "profiler", Type: cfg.Type, Implementation: implementation}
 	var err error
 	switch {
 	case implementation == profiling.ImplementationNative && cfg.Type == profiling.TypeCPU:
