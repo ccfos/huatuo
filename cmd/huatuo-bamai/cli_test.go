@@ -21,24 +21,54 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
-func TestOptionsFromContextEnablesCgroup(t *testing.T) {
+func TestOptionsFromContext(t *testing.T) {
+	for _, mock := range []bool{false, true} {
+		app := cli.NewApp()
+		opts := &Options{}
+		opts.AddFlags(app)
+		flags := flag.NewFlagSet("test", flag.ContinueOnError)
+		for _, cliFlag := range app.Flags {
+			if err := cliFlag.Apply(flags); err != nil {
+				t.Fatalf("apply flag: %v", err)
+			}
+		}
+		args := []string{"--region", "test", "--enable-cgroup"}
+		if mock {
+			args = append(args, "--bpf-mock", "--bpf-mock-object", "memory_oom_kill.o", "--bpf-mock-object", "system_softlockup.o")
+		}
+		if err := flags.Parse(args); err != nil {
+			t.Fatalf("parse flags: %v", err)
+		}
+
+		if err := opts.FromContext(cli.NewContext(app, flags, nil)); err != nil {
+			t.Fatalf("FromContext() error = %v", err)
+		}
+		if opts.BPFMock != mock {
+			t.Fatalf("BPFMock = %t, want %t", opts.BPFMock, mock)
+		}
+		if mock && (len(opts.BPFMockObjects) != 2 || opts.BPFMockObjects[0] != "memory_oom_kill.o" || opts.BPFMockObjects[1] != "system_softlockup.o") {
+			t.Fatalf("BPFMockObjects = %v, want the selected objects", opts.BPFMockObjects)
+		}
+		if !opts.EnableCgroup {
+			t.Fatal("EnableCgroup = false, want true")
+		}
+	}
+}
+
+func TestMockObjectRequiresMockMode(t *testing.T) {
 	app := cli.NewApp()
 	opts := &Options{}
 	opts.AddFlags(app)
 	flags := flag.NewFlagSet("test", flag.ContinueOnError)
 	for _, cliFlag := range app.Flags {
 		if err := cliFlag.Apply(flags); err != nil {
-			t.Fatalf("apply flag: %v", err)
+			t.Fatal(err)
 		}
 	}
-	if err := flags.Parse([]string{"--region", "test", "--enable-cgroup"}); err != nil {
-		t.Fatalf("parse flags: %v", err)
+	if err := flags.Parse([]string{"--bpf-mock-object", "memory_oom_kill.o"}); err != nil {
+		t.Fatal(err)
 	}
-
-	if err := opts.FromContext(cli.NewContext(app, flags, nil)); err != nil {
-		t.Fatalf("FromContext() error = %v", err)
-	}
-	if !opts.EnableCgroup {
-		t.Fatal("EnableCgroup = false, want true")
+	if err := opts.FromContext(cli.NewContext(app, flags, nil)); err == nil {
+		t.Fatal("mock object selection without mock mode was accepted")
 	}
 }

@@ -213,6 +213,7 @@ unit: gen-build
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
 integration: build
+	go test -v -tags integration ./integration/bpf_mock/...
 	@bash integration/run.sh
 
 e2e: build
