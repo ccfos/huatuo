@@ -80,12 +80,14 @@ var (
 	cgroupv1SubSysName        = []string{subsystem.SubsystemCPU, subsystem.SubsystemCPUAcct, subsystem.SubsystemCPUSet, subsystem.SubsystemMemory, subsystem.SubsystemBlkIO}
 	cgroupv1NotifyFile        = "cgroup.clone_children"
 	cgroupv2NotifyFile        = "memory.current"
+	cgroupv2CPUNotifyFile     = "cpu.weight.nice"
 	cgroupCssID2SubSysNameMap = map[int]string{}
 	cgroupCssMetaDataMap      sync.Map
 )
 
 type containerCssMetaData struct {
 	CSS         uint64
+	Inode       uint64
 	SubSys      string
 	Cgroup      uint64
 	CgroupRoot  int32
@@ -107,7 +109,7 @@ func cgroupListCssDataByKnode(containerID string) []*containerCssMetaData {
 }
 
 func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent, containerID string) error {
-	if containerID == "" {
+	if containerID == "" && data.Inode == 0 {
 		return fmt.Errorf("knode name is not containterID")
 	}
 
@@ -119,6 +121,7 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent, containerID string
 		if sysName, ok := cgroupCssID2SubSysNameMap[index]; ok {
 			m := &containerCssMetaData{
 				CSS:         css,
+				Inode:       data.Inode,
 				Cgroup:      data.Cgroup,
 				CgroupRoot:  data.CgroupRoot,
 				CgroupLevel: data.CgroupLevel,
@@ -134,7 +137,7 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent, containerID string
 }
 
 func cgroupDeleteCssData(data *containerCssPerfEvent, containerID string) error {
-	if containerID == "" {
+	if containerID == "" && data.Inode == 0 {
 		return fmt.Errorf("knode name is not containterID")
 	}
 
@@ -175,7 +178,10 @@ func cgroupRootNotify(realRoot, name string) error {
 		}
 
 		notifyPath := filepath.Join(path, name)
-		_, _ = os.ReadFile(notifyPath)
+		_, readErr := os.ReadFile(notifyPath)
+		if errors.Is(readErr, os.ErrNotExist) && name == cgroupv2NotifyFile {
+			_, _ = os.ReadFile(filepath.Join(path, cgroupv2CPUNotifyFile))
+		}
 
 		log.Debugf("read cgroup path: %s", notifyPath)
 		return filepath.SkipDir
