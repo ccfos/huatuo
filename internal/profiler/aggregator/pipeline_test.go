@@ -99,7 +99,7 @@ func TestPipelineStart_IsIdempotent(t *testing.T) {
 
 	p.Start()
 	p.Start()
-	p.Stop()
+	_ = p.Stop()
 }
 
 func TestPipelineStart_AfterStop(t *testing.T) {
@@ -110,7 +110,7 @@ func TestPipelineStart_AfterStop(t *testing.T) {
 		OutputFormat: output.FormatCollapsed,
 	}, aggr)
 
-	p.Stop()
+	_ = p.Stop()
 	p.Start()
 	p.Enqueue("ignored")
 
@@ -126,7 +126,7 @@ func TestPipelineEnqueue_AfterStop(t *testing.T) {
 		OutputFormat: output.FormatCollapsed,
 	}, aggr)
 
-	p.Stop()
+	_ = p.Stop()
 	p.Enqueue("ignored")
 
 	aggr.AssertNotCalled(t, "Aggregate")
@@ -146,7 +146,7 @@ func TestPipelineStop_DrainsAcceptedRecords(t *testing.T) {
 	p.Enqueue("second")
 
 	p.Start()
-	p.Stop()
+	_ = p.Stop()
 }
 
 func TestPipelineEnqueue_CountsOverflow(t *testing.T) {

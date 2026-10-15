@@ -43,6 +43,9 @@ type Pipeline struct {
 	doneCh chan struct{}
 	state  atomic.Uint32
 
+	// Only the export worker writes this; Stop reads it after waiting for the worker.
+	exportErr error
+
 	tracerID      string
 	aggrInterval  time.Duration
 	overflowCount atomic.Int64
@@ -109,11 +112,7 @@ func (p *Pipeline) runAggregateSnapshot() {
 		<-p.stopCh
 		// Wait for queued records to drain before the final snapshot.
 		<-p.doneCh
-		snapshotCtx := p.pctx.Ctx
-		if snapshotCtx != nil {
-			snapshotCtx = context.WithoutCancel(snapshotCtx)
-		}
-		if err := p.aggregateAndSnapshot(snapshotCtx, true); err != nil {
+		if err := p.aggregateAndSnapshot(p.pctx.Ctx, true); err != nil {
 			p.logAggregateExportError(err)
 		}
 
@@ -165,12 +164,14 @@ func (p *Pipeline) runDequeueAndAggregate() {
 }
 
 // Stop signals the pipeline to terminate and waits for all goroutines to exit.
-// Calls after the first one are no-ops. A stopped Pipeline cannot be restarted.
-func (p *Pipeline) Stop() {
+// Repeated calls wait for completion and return the first export error.
+// A stopped Pipeline cannot be restarted.
+func (p *Pipeline) Stop() error {
 	for {
 		state := p.state.Load()
 		if state == pipelineStateStopped {
-			return
+			p.wg.Wait()
+			return p.exportErr
 		}
 
 		if p.state.CompareAndSwap(state, pipelineStateStopped) {
@@ -178,7 +179,7 @@ func (p *Pipeline) Stop() {
 			close(p.stopCh)
 			p.enqueueMutex.Unlock()
 			p.wg.Wait()
-			return
+			return p.exportErr
 		}
 	}
 }
@@ -201,12 +202,23 @@ func (p *Pipeline) Enqueue(data any) {
 }
 
 func (p *Pipeline) logAggregateExportError(err error) {
+	// Keep the first failed window even if a later export succeeds.
+	if p.exportErr == nil {
+		p.exportErr = err
+	}
 	log.WithError(err).WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed")
 }
 
 func (p *Pipeline) aggregateAndSnapshot(ctx context.Context, final bool) error {
 	if p.pctx.OutputFormat.IsUpload() {
-		data, err := p.aggr.Snapshot(p.pctx)
+		// Sampling is canceled before the final records are drained. Do not
+		// mutate the context shared with the sampler while exporting them.
+		snapshotContext := *p.pctx
+		if final && ctx != nil {
+			ctx = context.WithoutCancel(ctx)
+		}
+		snapshotContext.Ctx = ctx
+		data, err := p.aggr.Snapshot(&snapshotContext)
 		if err != nil {
 			return fmt.Errorf("aggregate snapshot: %w", err)
 		}
