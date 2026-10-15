@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package raw writes folded-stack format (Brendan Gregg): "frame;frame count\n".
-package raw
+// Package collapsed writes folded-stack format (Brendan Gregg): "frame;frame count\n".
+package collapsed
 
 import (
 	"fmt"

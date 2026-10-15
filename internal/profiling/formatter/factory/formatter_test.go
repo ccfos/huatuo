@@ -25,10 +25,10 @@ import (
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/chrometrace"
+	"github.com/ccfos/huatuo/internal/profiling/formatter/collapsed"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/factory"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/flamegraph"
 	jsonoutput "github.com/ccfos/huatuo/internal/profiling/formatter/json"
-	"github.com/ccfos/huatuo/internal/profiling/formatter/raw"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/remotestore"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/speedscope"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -88,7 +88,7 @@ func TestSubpackageConstructors(t *testing.T) {
 		name         string
 		newFormatter func(output.FormatterConfig) (output.Formatter, error)
 	}{
-		{"raw", raw.NewFormatter},
+		{"collapsed", collapsed.NewFormatter},
 		{"flamegraph", flamegraph.NewFormatter},
 		{"json", jsonoutput.NewFormatter},
 		{"speedscope", speedscope.NewFormatter},

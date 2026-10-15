@@ -20,9 +20,9 @@ import (
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/chrometrace"
+	"github.com/ccfos/huatuo/internal/profiling/formatter/collapsed"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/flamegraph"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/json"
-	"github.com/ccfos/huatuo/internal/profiling/formatter/raw"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/remotestore"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/speedscope"
 )
@@ -31,7 +31,7 @@ import (
 func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
 	switch cfg.Format {
 	case "", output.FormatCollapsed:
-		return raw.NewFormatter(cfg)
+		return collapsed.NewFormatter(cfg)
 	case output.FormatFlameGraph, output.FormatSVG:
 		return flamegraph.NewFormatter(cfg)
 	case output.FormatJSON:

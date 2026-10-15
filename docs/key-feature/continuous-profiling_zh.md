@@ -763,7 +763,7 @@ CLI 解析和信号监听由 `cmd/profiler` 管理。`provider.New` 为每次任
 
 `factory.NewFormatter` 选择格式；各子包的 `NewFormatter` 完成初始化，也可直接调用。Pipeline 串行执行 Add，仅在输出成功后调用一次 Complete；执行器始终调用 Close 释放资源。直接调用者须遵守相同顺序，遇错即停。
 
-raw/SVG 在 Complete 时写出累计栈权重；JSON/远程输出逐窗口写入，分别在 Complete 时关闭文件、提交并等待 ACK。栈输出保留无符号地址。写入和关闭错误均返回，Complete 不自动重试，已写数据不保证回滚。导出和 Complete 各有独立的 30 秒超时，正常收尾不受采集上下文取消影响。
+collapsed/SVG 在 Complete 时写出累计栈权重；JSON/远程输出逐窗口写入，分别在 Complete 时关闭文件、提交并等待 ACK。栈输出保留无符号地址。写入和关闭错误均返回，Complete 不自动重试，已写数据不保证回滚。导出和 Complete 各有独立的 30 秒超时，正常收尾不受采集上下文取消影响。
 
 [speedscope](https://www.speedscope.app/file-format-schema.json) 和 [chrometrace](https://perfetto.dev/docs/getting-started/other-formats#chrome-json-format) 支持工厂构造，暂无 CLI 选项；目录文件后缀分别为 `.speedscope.json`、`.chrometrace.json`。前者保留聚合权重、单位、源位置和标签分组；后者按聚合顺序排列栈，时间换算为微秒，次数按 100 Hz 估算时长。两者均不还原真实采样时序。
 

@@ -22,13 +22,13 @@ import (
 	"strings"
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
-	"github.com/ccfos/huatuo/internal/profiling/formatter/raw"
+	"github.com/ccfos/huatuo/internal/profiling/formatter/collapsed"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // formatter accumulates windows and writes an SVG flame graph at completion.
 type formatter struct {
-	stacks      raw.Stacks
+	stacks      collapsed.Stacks
 	destination *output.LocalDestination
 	style       Style
 }
