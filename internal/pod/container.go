@@ -33,7 +33,9 @@ type Container struct {
 	IPAddress          string            `json:"net_ip_address"`
 	NetNamespaceInum   uint64            `json:"net_namespace_inum"`
 	NetNamespaceCookie uint64            `json:"net_namespace_cookie"`
-	InitPid            int               `json:"init_pid"`
+	InitPid            int               `json:"init_pid"` // Host Kata uses the hypervisor PID.
+	RuntimeType        string            `json:"runtime_type,omitempty"`
+	SandboxID          string            `json:"sandbox_id,omitempty"`
 	CgroupPath         string            `json:"cgroup_path"`
 	CgroupCss          map[string]uint64 `json:"cgroup_css"` // map for: subSysName -> structAddress
 	StartedAt          time.Time         `json:"started_at"`
