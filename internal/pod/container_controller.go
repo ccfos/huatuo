@@ -34,6 +34,7 @@ const (
 
 type containerController struct {
 	store             *containerStore
+	scan              func(context.Context) (containerSnapshot, error)
 	fetch             func(context.Context) (corev1.PodList, error)
 	resolve           func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error)
 	initialize        func(context.Context) error
@@ -227,6 +228,10 @@ func (c *containerController) run(ctx context.Context) {
 // failures stop after three attempts and remain visible until another hint.
 // Deletion hints keep retrying until kubelet confirms absence.
 func (c *containerController) refresh(ctx context.Context, hints map[string]bool, full bool) (containerSnapshot, error, bool) {
+	if c.scan != nil {
+		snapshot, err := c.scan(ctx)
+		return snapshot, err, err != nil
+	}
 	if full {
 		clear(c.retries)
 		c.needsFull = true
