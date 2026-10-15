@@ -97,3 +97,18 @@ func kataCgroupPath(procCgroupFile string, mode cgroups.Mode) (string, error) {
 	}
 	return cgroupPath, nil
 }
+
+// keepKataRepresentative retains the first discovered live member of a sandbox.
+// New members have a later SyncedAt, so they cannot displace it. The ID breaks
+// ties without depending on map iteration order. No separate lifetime cache is
+// needed: removing the representative naturally selects the next live member.
+func keepKataRepresentative(current, candidate *Container) bool {
+	if current == nil || current.HostKataSandboxID() == "" ||
+		current.HostKataSandboxID() != candidate.HostKataSandboxID() {
+		return false
+	}
+	if current.SyncedAt.Equal(candidate.SyncedAt) {
+		return current.ID < candidate.ID
+	}
+	return current.SyncedAt.Before(candidate.SyncedAt)
+}

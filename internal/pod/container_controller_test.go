@@ -408,3 +408,37 @@ func TestContainerControllerReconcilesWithoutHint(t *testing.T) {
 		t.Fatalf("missing deletion event: update=%+v, err=%v", update, err)
 	}
 }
+
+func TestControllerRefreshesKataRuntimeBinding(t *testing.T) {
+	oldProvider := currContainerProvider
+	currContainerProvider = containerProviderContainerd
+	t.Cleanup(func() { currContainerProvider = oldProvider })
+	id := strings.Repeat("a", 64)
+	list := runningPodListForTest(id)
+	store := newTestContainerStore()
+	controller := newContainerController(store)
+	controller.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
+	resolves := 0
+	controller.resolve = func(id string, _ *corev1.Container, status *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+		resolves++
+		record := containerRecordForTest(id)
+		record.container.RuntimeType = "io.containerd.kata-qemu.v2"
+		record.container.SandboxID = "vm"
+		record.container.StartedAt = status.State.Running.StartedAt.Time
+		record.container.SyncedAt = time.Unix(int64(resolves), 0)
+		return record, nil
+	}
+	for range 2 {
+		snapshot, err, _ := controller.refresh(t.Context(), nil, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store.commit(snapshot, nil)
+	}
+	if resolves != 2 {
+		t.Errorf("Kata resolutions=%d, want 2", resolves)
+	}
+	if !store.records[id].container.SyncedAt.Equal(time.Unix(1, 0)) {
+		t.Error("refresh changed representative priority")
+	}
+}

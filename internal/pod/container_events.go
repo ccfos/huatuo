@@ -298,7 +298,7 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 			continue
 		}
 		if previous != nil && previous.sameInstance(record) {
-			if record.guest != nil {
+			if record.guest != nil || (record.container.HostKataSandboxID() != "" && record.container.HostKataSandboxID() == previous.container.HostKataSandboxID()) {
 				record.container.StartedAt = previous.container.StartedAt
 				record.container.SyncedAt = previous.container.SyncedAt
 			}
