@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/utils/netutil"
 
 	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
@@ -311,24 +310,6 @@ func kubeletContainer(containerID string, container *corev1.Container, container
 		return nil, fmt.Errorf("failed to parse hostname: %w", err)
 	}
 
-	// fetch InitPid
-	initPid, err := containerInitPid(containerID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get InitPid: %w", err)
-	}
-
-	// net namespace
-	nsInum, err := netutil.NetNamespaceInumByPID(initPid)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get net namespace inum by pid: %w", err)
-	}
-
-	// net namespace cookie (Linux 5.14+; falls back to 0 on older kernels)
-	netNamespaceCookie, err := netutil.NetNamespaceCookieByPID(initPid)
-	if err != nil {
-		log.Debugf("failed to get net namespace cookie for pid %d: %v", initPid, err)
-	}
-
 	labels, err := parseContainerLabels(containerType, pod)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse container labels: %w", err)
@@ -339,32 +320,21 @@ func kubeletContainer(containerID string, container *corev1.Container, container
 		return nil, fmt.Errorf("failed to parse StartedAt %s: %w", containerStatus.State.Running.StartedAt, err)
 	}
 
-	css, err := parseContainerCSS(containerID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse container css: %w", err)
-	}
-
-	cgroupPath, err := containerCgroupSuffix(containerID, pod)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get cgroup path: %w", err)
-	}
-
 	result := &Container{
-		ID:                 containerID,
-		Name:               container.Name,
-		Hostname:           hostname,
-		Type:               containerType,
-		Qos:                containerQos,
-		IPAddress:          parseContainerIPAddress(pod),
-		NetNamespaceInum:   nsInum,
-		NetNamespaceCookie: netNamespaceCookie,
-		InitPid:            initPid,
-		CgroupPath:         cgroupPath,
-		CgroupCss:          css,
-		StartedAt:          startedAt,
-		SyncedAt:           time.Now(),
-		lifeResources:      make(map[string]any),
-		Labels:             labels,
+		ID:            containerID,
+		Name:          container.Name,
+		Hostname:      hostname,
+		Type:          containerType,
+		Qos:           containerQos,
+		IPAddress:     parseContainerIPAddress(pod),
+		StartedAt:     startedAt,
+		SyncedAt:      time.Now(),
+		lifeResources: make(map[string]any),
+		Labels:        labels,
+	}
+
+	if err := populateContainerRuntime(result, pod); err != nil {
+		return nil, err
 	}
 
 	// create container life resources
