@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiler/output/factory"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/profiling"
 
@@ -34,8 +35,6 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"github.com/ccfos/huatuo/internal/profiler/output"
-	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
-	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -389,12 +388,12 @@ func (failedDiagnosticWriter) Write([]byte) (int, error) {
 
 func testFormatter(t *testing.T, format output.OutputFormat, destination string) output.Formatter {
 	t.Helper()
-	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: format, Destination: destination}, "task", "test")
+	formatter, err := factory.NewFormatter(output.FormatterConfig{Format: format, Destination: destination, TaskID: "task", ToolName: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := cleanup(); err != nil {
+		if err := formatter.Close(); err != nil {
 			t.Error(err)
 		}
 	})
@@ -487,5 +486,23 @@ func TestPipelineOwnsAggregationTime(t *testing.T) {
 				t.Fatal("empty snapshot advanced aggregation time")
 			}
 		})
+	}
+}
+
+func (f *failingFormatter) Close() error { return nil }
+
+func TestPipelineCompletesFormatterOnce(t *testing.T) {
+	aggr := NewMockAggregator(t)
+	aggr.On("Snapshot", mock.Anything).Return(nil, nil).Once()
+	formatter := &failingFormatter{}
+	p := NewPipeline(PipelineConfig{AggregationMode: AggregationModeOneShot, Aggregator: aggr, Formatter: formatter})
+	p.Start(t.Context())
+	for range 2 {
+		if err := p.Stop(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if formatter.completions != 1 {
+		t.Fatalf("Complete calls = %d, want 1", formatter.completions)
 	}
 }

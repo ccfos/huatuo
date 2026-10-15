@@ -70,17 +70,14 @@ func TestCreateOutputFileUsesUniqueNames(t *testing.T) {
 func TestLocalDestinationCreatesDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "profiles")
 
-	destination, err := newLocalDestination(FormatterConfig{Format: FormatSVG, Destination: dir + "/"})
+	destination, err := NewLocalDestination(FormatterConfig{Format: FormatSVG, Destination: dir + "/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := destination.open(); err != nil {
+	if _, err := destination.Open(); err != nil {
 		t.Fatal(err)
 	}
 	file := destination.file
-	if err != nil {
-		t.Fatalf("create output file: %v", err)
-	}
 
 	if got := filepath.Dir(file.Name()); got != dir {
 		t.Errorf("output directory = %q, want %q", got, dir)
@@ -88,7 +85,7 @@ func TestLocalDestinationCreatesDirectory(t *testing.T) {
 	if base := filepath.Base(file.Name()); !strings.HasPrefix(base, "flamegraph_") || !strings.HasSuffix(base, ".svg") {
 		t.Errorf("output filename %q does not preserve prefix and extension", base)
 	}
-	if err := file.Close(); err != nil {
+	if err := destination.Close(); err != nil {
 		t.Fatalf("close output file: %v", err)
 	}
 }
@@ -157,7 +154,7 @@ func TestLocalDestinationResolvesPaths(t *testing.T) {
 			} else if tc.directory {
 				path += "/"
 			}
-			destination, err := newLocalDestination(FormatterConfig{Format: FormatCollapsed, Destination: path})
+			destination, err := NewLocalDestination(FormatterConfig{Format: FormatCollapsed, Destination: path})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -167,7 +164,7 @@ func TestLocalDestinationResolvesPaths(t *testing.T) {
 					t.Fatalf("constructor changed file: %q, %v", data, err)
 				}
 			}
-			if err := destination.writeAndClose(func(w io.Writer) error { _, err := io.WriteString(w, "work 2\n"); return err }); err != nil {
+			if err := destination.WriteAndClose(func(w io.Writer) error { _, err := io.WriteString(w, "work 2\n"); return err }); err != nil {
 				t.Fatal(err)
 			}
 			if tc.directory {
@@ -190,21 +187,40 @@ func TestLocalDestinationRejectsSpecialFiles(t *testing.T) {
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newLocalDestination(FormatterConfig{Destination: path}); err == nil {
+	if _, err := NewLocalDestination(FormatterConfig{Destination: path}); err == nil {
 		t.Fatal("accepted FIFO destination")
 	}
 }
 
 func TestLocalDestinationRejectsChangedFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profile")
-	destination, err := newLocalDestination(FormatterConfig{Destination: path})
+	destination, err := NewLocalDestination(FormatterConfig{Destination: path})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := destination.writeAndClose(func(io.Writer) error { t.Fatal("wrote to FIFO"); return nil }); err == nil {
+	if err := destination.WriteAndClose(func(io.Writer) error { t.Fatal("wrote to FIFO"); return nil }); err == nil {
 		t.Fatal("accepted replaced destination")
+	}
+}
+
+func TestLocalDestinationReportsCloseFailureOnce(t *testing.T) {
+	destination, err := NewLocalDestination(FormatterConfig{Format: FormatJSON, Destination: filepath.Join(t.TempDir(), "profile")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := destination.Open(); err != nil {
+		t.Fatal(err)
+	}
+	if err := destination.file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := destination.Close(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("Close = %v", err)
+	}
+	if err := destination.Close(); err != nil {
+		t.Fatalf("Close repeated failure: %v", err)
 	}
 }

@@ -12,43 +12,65 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package output
+package remotestore
 
 import (
 	"context"
 	"fmt"
 	"os"
 
+	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-type remoteStoreFormatter struct {
-	toolstreamClient *toolstream.Client
+type formatter struct {
+	client *toolstream.Client
 }
 
-func (f *remoteStoreFormatter) Add(ctx context.Context, window *types.ProfilingWindow) error {
-	return f.toolstreamClient.Send(ctx, window, toolstream.SendOptions{})
+func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return f.client.Send(ctx, window, toolstream.SendOptions{})
 }
 
-func (f *remoteStoreFormatter) Complete(ctx context.Context) error {
-	return f.toolstreamClient.Send(ctx, nil, toolstream.SendOptions{End: true, Commit: true})
+func (f *formatter) Complete(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return f.client.Send(ctx, nil, toolstream.SendOptions{End: true, Commit: true})
 }
 
-func newRemoteStoreFormatter(path, taskID, toolName string) (*remoteStoreFormatter, error) {
+// NewFormatter connects remote output.
+func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
+	if err := output.ValidateDestination(cfg.Destination); err != nil {
+		return nil, err
+	}
+	path := cfg.Destination
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("inspect remote profiling destination %q: %w", path, err)
 	}
+
 	if info.Mode()&os.ModeSocket == 0 {
 		return nil, fmt.Errorf("remote profiling destination %q must be a Unix socket", path)
 	}
 	client, err := toolstream.NewClient(&toolstream.ClientOptions{
-		SockPath: path, ServiceName: profiling.StoreServiceName, ToolName: toolName, TaskID: taskID, Version: "1",
+		SockPath:    path,
+		ServiceName: profiling.StoreServiceName,
+		ToolName:    cfg.ToolName,
+		TaskID:      cfg.TaskID,
+		Version:     "1",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connect remote profiling destination %q: %w", path, err)
 	}
-	return &remoteStoreFormatter{toolstreamClient: client}, nil
+
+	return &formatter{client: client}, nil
 }
+
+func (f *formatter) Close() error { return f.client.Close() }

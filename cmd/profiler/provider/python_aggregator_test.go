@@ -15,20 +15,16 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
-	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
-
-	"github.com/ccfos/huatuo/pkg/profiling"
-
 	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/output/factory"
+	"github.com/ccfos/huatuo/pkg/profiling"
 
 	"github.com/stretchr/testify/require"
 )
@@ -54,17 +50,20 @@ func TestPythonAggregatorKeepsProcessRoots(t *testing.T) {
 	aggr.Aggregate(profiler.SampleOutput{PID: 100, Output: "hot (a.py:1) 3\n"})
 	aggr.Aggregate(profiler.SampleOutput{PID: 200, Output: "hot (a.py:1) 4\n"})
 
-	var folded bytes.Buffer
+	destination := filepath.Join(t.TempDir(), "profile.folded")
 	window, err := aggr.Snapshot(t.Context())
 	require.NoError(t, err)
-	formatter, err := output.FormatCollapsed.NewRenderer()
+	formatter, err := factory.NewFormatter(output.FormatterConfig{Format: output.FormatCollapsed, Destination: destination})
 	require.NoError(t, err)
-	require.NoError(t, output.AddProfile(formatter, window.Profile))
-	require.NoError(t, formatter.Write(&folded))
+	t.Cleanup(func() { require.NoError(t, formatter.Close()) })
+	require.NoError(t, formatter.Add(t.Context(), window))
+	require.NoError(t, formatter.Complete(t.Context()))
+	folded, err := os.ReadFile(destination)
+	require.NoError(t, err)
 	require.Equal(
 		t,
 		"process 100;hot (a.py:1) 30000000\nprocess 200;hot (a.py:1) 40000000\n",
-		folded.String(),
+		string(folded),
 	)
 	require.Equal(t, []profiler.SampleOutput{
 		{PID: 100, Output: "process 100;hot (a.py:1) 3\n"},
@@ -114,14 +113,17 @@ RAW
 			require.NoError(t, p.ReadDataLoop(ctx, aggr.Aggregate))
 
 			if format == output.FormatCollapsed {
-				var folded bytes.Buffer
+				destination := filepath.Join(t.TempDir(), "profile.folded")
 				window, err := aggr.Snapshot(t.Context())
 				require.NoError(t, err)
-				formatter, err := output.FormatCollapsed.NewRenderer()
+				formatter, err := factory.NewFormatter(output.FormatterConfig{Format: output.FormatCollapsed, Destination: destination})
 				require.NoError(t, err)
-				require.NoError(t, output.AddProfile(formatter, window.Profile))
-				require.NoError(t, formatter.Write(&folded))
-				require.Equal(t, "process 100;worker (app.py:10) 30000000\nprocess 101;child (child.py:20) 20000000\n", folded.String())
+				t.Cleanup(func() { require.NoError(t, formatter.Close()) })
+				require.NoError(t, formatter.Add(t.Context(), window))
+				require.NoError(t, formatter.Complete(t.Context()))
+				folded, err := os.ReadFile(destination)
+				require.NoError(t, err)
+				require.Equal(t, "process 100;worker (app.py:10) 30000000\nprocess 101;child (child.py:20) 20000000\n", string(folded))
 				return
 			}
 

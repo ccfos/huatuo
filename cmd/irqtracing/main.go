@@ -21,9 +21,6 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
-	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
-
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/internal/bpf"

@@ -28,8 +28,8 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 )
 
-// localDestination opens lazily so aborted or empty collections leave no result.
-type localDestination struct {
+// LocalDestination opens lazily so aborted or empty collections leave no result.
+type LocalDestination struct {
 	path        string
 	format      OutputFormat
 	isDirectory bool
@@ -37,8 +37,12 @@ type localDestination struct {
 	file        *os.File
 }
 
-func newLocalDestination(cfg FormatterConfig) (*localDestination, error) {
-	d := &localDestination{path: cfg.Destination, format: cfg.Format, isStdout: isStdoutDestination(cfg.Destination)}
+// NewLocalDestination resolves the target without opening or truncating a result.
+func NewLocalDestination(cfg FormatterConfig) (*LocalDestination, error) {
+	if err := ValidateDestination(cfg.Destination); err != nil {
+		return nil, err
+	}
+	d := &LocalDestination{path: cfg.Destination, format: cfg.Format, isStdout: isStdoutDestination(cfg.Destination)}
 	if d.isStdout {
 		return d, nil
 	}
@@ -64,7 +68,8 @@ func newLocalDestination(cfg FormatterConfig) (*localDestination, error) {
 	return d, nil
 }
 
-func (d *localDestination) open() (io.Writer, error) {
+// Open opens the result lazily. The destination retains ownership of the file.
+func (d *LocalDestination) Open() (io.Writer, error) {
 	if d.isStdout {
 		return os.Stdout, nil
 	}
@@ -75,9 +80,14 @@ func (d *localDestination) open() (io.Writer, error) {
 	var err error
 	if d.isDirectory {
 		prefix, extension := "perf", ".folded"
-		if d.format.IsFlameGraph() {
+		switch d.format {
+		case FormatFlameGraph, FormatSVG:
 			prefix, extension = "flamegraph", ".svg"
-		} else if d.format == FormatJSON {
+		case FormatSpeedscope:
+			prefix, extension = "profile", ".speedscope.json"
+		case FormatChromeTrace:
+			prefix, extension = "profile", ".chrometrace.json"
+		case FormatJSON:
 			prefix, extension = "profile", ".json"
 		}
 		file, err = createOutputFile(d.path, prefix, extension)
@@ -106,8 +116,9 @@ func (d *localDestination) open() (io.Writer, error) {
 	return file, nil
 }
 
-func (d *localDestination) writeAndClose(write func(io.Writer) error) error {
-	writer, err := d.open()
+// WriteAndClose preserves write and close failures without closing stdout.
+func (d *LocalDestination) WriteAndClose(write func(io.Writer) error) error {
+	writer, err := d.Open()
 	if err != nil {
 		return err
 	}
@@ -123,7 +134,8 @@ func (d *localDestination) writeAndClose(write func(io.Writer) error) error {
 	return nil
 }
 
-func (d *localDestination) close() error {
+// Close releases an open file without creating output or closing stdout.
+func (d *LocalDestination) Close() error {
 	if d.file == nil {
 		return nil
 	}
@@ -154,3 +166,6 @@ func writeAndClose(file io.WriteCloser, write func(io.Writer) error) error {
 	}
 	return errors.Join(writeErr, closeErr)
 }
+
+// IsStdout reports whether empty output may be written without creating a file.
+func (d *LocalDestination) IsStdout() bool { return d.isStdout }

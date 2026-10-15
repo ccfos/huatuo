@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package output_test
+package remotestore_test
 
 import (
 	"context"
@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/profiler/output/remotestore"
 
 	capnp "capnproto.org/go/capnp/v3"
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
@@ -71,12 +73,12 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 		}
 	})
 
-	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: sockPath}, "task-1", "irqtracing")
+	formatter, err := remotestore.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: sockPath, TaskID: "task-1", ToolName: "irqtracing"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := cleanup(); err != nil {
+		if err := formatter.Close(); err != nil {
 			t.Error(err)
 		}
 	})
@@ -104,14 +106,14 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 	}
 }
 
-func TestRemoteStoreFormatterCleanupDoesNotCommit(t *testing.T) {
+func TestRemoteStoreFormatterCloseDoesNotCommit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "output.sock")
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	_, cleanup, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path}, "task", "profiler")
+	formatter, err := remotestore.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path, TaskID: "task", ToolName: "profiler"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +125,7 @@ func TestRemoteStoreFormatterCleanupDoesNotCommit(t *testing.T) {
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err := cleanup(); err != nil {
+	if err := formatter.Close(); err != nil {
 		t.Fatal(err)
 	}
 	decoder := capnp.NewDecoder(conn)
@@ -136,7 +138,7 @@ func TestRemoteStoreFormatterCleanupDoesNotCommit(t *testing.T) {
 		if message != nil {
 			message.Release()
 		}
-		t.Fatalf("cleanup sent a frame or left connection open: %v", err)
+		t.Fatalf("Close sent a frame or left connection open: %v", err)
 	}
 }
 
@@ -154,9 +156,51 @@ func TestRemoteStoreFormatterRejectsNonSocket(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, _, err := output.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path}, "", ""); err == nil {
+			if _, err := remotestore.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path}); err == nil {
 				t.Fatal("accepted non-socket remote destination")
 			}
 		})
+	}
+}
+
+func TestRemoteStoreFormatterReturnsCommitFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "output.sock")
+	server, err := toolstream.NewServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var commits atomic.Int32
+	toolstream.Register(server, profilingapi.StoreServiceName, func(_ context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
+		if request.Commit {
+			commits.Add(1)
+			return errors.New("store commit rejected")
+		}
+		return nil
+	})
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	f, err := remotestore.NewFormatter(output.FormatterConfig{
+		Format: output.FormatRemoteStore, Destination: path, TaskID: "failed-commit", ToolName: "profiler",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	first := f.Complete(t.Context())
+	if first == nil {
+		t.Fatal("commit rejection was ignored")
+	}
+	if commits.Load() != 1 {
+		t.Fatalf("commit attempts = %d", commits.Load())
 	}
 }

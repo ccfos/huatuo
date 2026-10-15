@@ -738,9 +738,9 @@ profiler 与 irqtracing 共用采集执行器、Pipeline 和 `types.ProfilingWin
 
 入口装配采集器和 Aggregator，执行器在启动采集前创建 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 通过配置接收运行参数，通过方法参数接收标准 `context.Context`。文件创建、命名、写入和关闭由 `internal/profiler/output` 负责。
 
-`FormatterConfig` 仅包含 `Format` 和 `Destination`。已有路径按实际文件类型识别：本地 Formatter 接受普通文件和目录，RemoteStore 要求 Unix socket。不存在的本地路径默认表示新文件，以 `/` 结尾则创建目录。`stdout`（也支持 `-` 及标准输出文件描述符别名）写入标准输出，Formatter 不关闭该描述符。危险使用提醒：终端、重定向或日志捕获可能暴露采集数据。已有文件在实际写出时覆盖，初始化不截断文件；空任务不创建结果文件。目录输出保持自动生成的唯一文件名。初始化检查路径，但不能保证之后的写入一定成功。
+`FormatterConfig` 包含 `Format`、`Destination`、`TaskID`、`ToolName`。本地目标支持普通文件、目录和标准输出（`stdout`、`-` 或标准 fd 别名），远端目标须为 Unix socket。新路径默认表示文件，以 `/` 结尾则创建目录；目录内自动生成唯一文件名。已有文件仅在写入时覆盖，空任务不创建结果文件，标准输出不关闭。初始化检查不保证后续写入成功；终端、重定向和日志捕获可能暴露数据。
 
-任务 ID 来自 `registry.RunConfig.ID`，工具来源来自 `ProfilerMeta.ToolName`。RemoteStore 内部固定服务名 `profiling_store_service` 和版本 `1`，初始化 toolstream，执行器在所有退出路径调用返回的清理函数。`Complete` 完成输出并等待远端提交 ACK；清理函数只释放资源，采集失败时也会执行。JSON 在第一个窗口到达时打开文件，在完成或清理时关闭。
+任务 ID 和工具来源分别取自 `registry.RunConfig.ID`、`ProfilerMeta.ToolName`。RemoteStore 内部管理 toolstream，固定使用服务名 `profiling_store_service` 和版本 `1`。
 
 CLI 解析和信号监听由 `cmd/profiler` 管理。`provider.New` 为每次任务创建独立采集器，复制并绑定业务配置；`registry.RunConfig` 包含任务 ID，以及 `time.Duration` 类型的采集时长和聚合周期。执行器仅在任务 ID 为空时生成 ID，聚合与远程提交使用同一个 ID。输出格式和目标通过同一个 `RunConfig` 的 `OutputFormat`、`OutputDestination` 传入，由执行器构造 output 层的 `FormatterConfig`；output 层不依赖 `RunConfig`。CLI 时长参数仍以整数秒表示，并在转换前检查范围。
 
@@ -759,7 +759,11 @@ CLI 解析和信号监听由 `cmd/profiler` 管理。`provider.New` 为每次任
 
 ### 输出和错误处理
 
-Formatter 接口为 `Add(ctx, window)` 和 `Complete(ctx)`。本地 Renderer 通过 `RegisterRenderer`、`OutputFormat.NewRenderer` 选择，累积各窗口的样本，在 Complete 时写出结果；写入和关闭文件的错误均会返回。远端 Formatter 通过 toolstream 发送窗口，并在 Complete 时提交任务。Pipeline 对窗口导出和 Complete 设置独立的 30 秒超时，正常收尾不受采集上下文取消影响。
+`factory.NewFormatter` 选择格式；各子包的 `NewFormatter` 完成初始化，也可直接调用。Pipeline 串行执行 Add，仅在输出成功后调用一次 Complete；执行器始终调用 Close 释放资源。直接调用者须遵守相同顺序，遇错即停。
+
+raw/SVG 在 Complete 时写出累计栈权重；JSON/远程输出逐窗口写入，分别在 Complete 时关闭文件、提交并等待 ACK。栈输出保留无符号地址。写入和关闭错误均返回，Complete 不自动重试，已写数据不保证回滚。导出和 Complete 各有独立的 30 秒超时，正常收尾不受采集上下文取消影响。
+
+[speedscope](https://www.speedscope.app/file-format-schema.json) 和 [chrometrace](https://perfetto.dev/docs/getting-started/other-formats#chrome-json-format) 支持工厂构造，暂无 CLI 选项；目录文件后缀分别为 `.speedscope.json`、`.chrometrace.json`。前者保留聚合权重、单位、源位置和标签分组；后者按聚合顺序排列栈，时间换算为微秒，次数按 100 Hz 估算时长。两者均不还原真实采样时序。
 
 Pipeline 用 `runErr` 保存运行错误，通过 `OnFailure func()` 通知执行器停止采集，并通过 `Stop()` 返回错误。快照或输出失败后停止导出，不再调用 Complete。执行器保留读循环和停止操作的全部错误；任一采集错误或外部取消都会 Abort，阻止完成提交。
 

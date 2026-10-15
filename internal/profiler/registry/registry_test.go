@@ -27,9 +27,6 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
-	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
-
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
 	"github.com/ccfos/huatuo/internal/profiler/output"
@@ -138,15 +135,17 @@ func TestProfilePropagatesFailures(t *testing.T) {
 	}
 }
 
-// Completion reaches Renderer.Write even when no aggregation window was emitted.
-type completionRenderer struct {
+// Completion reaches Formatter.Complete even when no aggregation window was emitted.
+type completionFormatter struct {
 	writes int
+	closes int
 }
 
-func (*completionRenderer) Add(*output.Sample) error { return nil }
-func (*completionRenderer) IsEmpty() bool            { return true }
-func (r *completionRenderer) Write(io.Writer) error {
-	r.writes++
+func (*completionFormatter) Add(context.Context, *types.ProfilingWindow) error { return nil }
+func (f *completionFormatter) Close() error                                    { f.closes++; return nil }
+
+func (f *completionFormatter) Complete(context.Context) error {
+	f.writes++
 	return nil
 }
 
@@ -214,9 +213,7 @@ func TestProfileCompletionRequiresSuccessfulCollection(t *testing.T) {
 			if tc.cancelBeforeRun {
 				cancel()
 			}
-			renderer := &completionRenderer{}
-			const format output.OutputFormat = "registry-completion-test"
-			output.RegisterRenderer(format, func() output.Renderer { return renderer })
+			formatter := &completionFormatter{}
 			collector := &loopProfiler{stopErr: tc.stopErr, read: func(ctx context.Context, enqueue func(any)) error {
 				if tc.duration != 0 {
 					<-ctx.Done()
@@ -232,16 +229,16 @@ func TestProfileCompletionRequiresSuccessfulCollection(t *testing.T) {
 			if tc.cancelDuringStop {
 				collector.onStop = cancel
 			}
-			cfg := RunConfig{Duration: tc.duration, OutputFormat: format, OutputDestination: "-"}
+			cfg := RunConfig{Duration: tc.duration}
 			mode := aggregator.AggregationModeStreaming
 			if tc.finalBatch {
 				mode = aggregator.AggregationModeOneShot
 			}
 			aggr := &completionAggregator{}
-			err := Profile(ctx, cfg, &ProfilerMeta{
+			err := runProfile(ctx, cfg, &ProfilerMeta{
 				Impl: collector, AggregationMode: mode,
 				Aggregator: aggr,
-			})
+			}, formatter)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Profile() error = %v, want %v", err, tc.wantErr)
 			}
@@ -257,12 +254,15 @@ func TestProfileCompletionRequiresSuccessfulCollection(t *testing.T) {
 			if tc.finalBatch && aggr.records != 8 {
 				t.Fatalf("delivered records = %d, want 8", aggr.records)
 			}
+			if formatter.closes != 1 {
+				t.Fatalf("Close calls = %d", formatter.closes)
+			}
 			wantWrites := 0
 			if tc.wantErr == nil {
 				wantWrites = 1
 			}
-			if renderer.writes != wantWrites {
-				t.Fatalf("completion writes = %d, want %d", renderer.writes, wantWrites)
+			if formatter.writes != wantWrites {
+				t.Fatalf("completion writes = %d, want %d", formatter.writes, wantWrites)
 			}
 		})
 	}
@@ -338,9 +338,7 @@ func TestProfileSelfTimedCollectorPreservesErrors(t *testing.T) {
 		{name: "complete"}, {name: "failed", readError: errors.Join(context.Canceled, failure)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			renderer := &completionRenderer{}
-			const format output.OutputFormat = "self-timed-test"
-			output.RegisterRenderer(format, func() output.Renderer { return renderer })
+			formatter := &completionFormatter{}
 			collector := &selfTimedProfiler{loopProfiler: loopProfiler{read: func(ctx context.Context, _ func(any)) error {
 				// A self-timed collector must outlive the runner's configured duration.
 				timer := time.NewTimer(10 * time.Millisecond)
@@ -352,13 +350,13 @@ func TestProfileSelfTimedCollectorPreservesErrors(t *testing.T) {
 				}
 				return tc.readError
 			}}}
-			err := Profile(t.Context(), RunConfig{Duration: time.Nanosecond, OutputFormat: format, OutputDestination: "-"}, &ProfilerMeta{Impl: collector, AggregationMode: aggregator.AggregationModeOneShot, Aggregator: fakeAggregator{}})
+			err := runProfile(t.Context(), RunConfig{Duration: time.Nanosecond}, &ProfilerMeta{Impl: collector, AggregationMode: aggregator.AggregationModeOneShot, Aggregator: fakeAggregator{}}, formatter)
 			if tc.readError == nil {
-				if err != nil || renderer.writes != 1 {
-					t.Fatalf("error=%v completions=%d", err, renderer.writes)
+				if err != nil || formatter.writes != 1 {
+					t.Fatalf("error=%v completions=%d", err, formatter.writes)
 				}
-			} else if !errors.Is(err, failure) || !errors.Is(err, context.Canceled) || renderer.writes != 0 {
-				t.Fatalf("error=%v completions=%d", err, renderer.writes)
+			} else if !errors.Is(err, failure) || !errors.Is(err, context.Canceled) || formatter.writes != 0 {
+				t.Fatalf("error=%v completions=%d", err, formatter.writes)
 			}
 		})
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
 	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/internal/profiler/output/factory"
 	"github.com/ccfos/huatuo/internal/randomid"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
@@ -69,20 +70,26 @@ func Profile(
 	ctx context.Context,
 	cfg RunConfig,
 	p *ProfilerMeta,
-) (returnErr error) {
-	collectionCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
+) error {
 	cfg.ID = randomid.NewIfEmpty(cfg.ID)
 
-	formatter, cleanup, err := output.NewFormatter(output.FormatterConfig{
+	formatter, err := factory.NewFormatter(output.FormatterConfig{
 		Format:      cfg.OutputFormat,
 		Destination: cfg.OutputDestination,
-	}, cfg.ID, p.ToolName)
+		TaskID:      cfg.ID,
+		ToolName:    p.ToolName,
+	})
 	if err != nil {
 		return fmt.Errorf("create profiling formatter: %w", err)
 	}
-	defer func() { returnErr = errors.Join(returnErr, cleanup()) }()
+	return runProfile(ctx, cfg, p, formatter)
+}
+
+// runProfile owns the initialized formatter until collection and cleanup finish.
+func runProfile(ctx context.Context, cfg RunConfig, p *ProfilerMeta, formatter output.Formatter) (returnErr error) {
+	collectionCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer func() { returnErr = errors.Join(returnErr, formatter.Close()) }()
 
 	pipe := aggregator.NewPipeline(aggregator.PipelineConfig{
 		AggregationMode:     p.AggregationMode,

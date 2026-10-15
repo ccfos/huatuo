@@ -17,18 +17,16 @@ package raw
 import (
 	"bytes"
 	"testing"
-
-	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
-func TestFormatterAdd_RemovesBalancedStack(t *testing.T) {
-	formatter := New()
+func TestStacksAdd_RemovesBalancedStack(t *testing.T) {
+	formatter := &Stacks{}
 	frames := []string{"root", "allocate"}
 
-	if err := formatter.Add(&output.Sample{Frames: frames, Count: 4096}); err != nil {
+	if err := formatter.Add(frames, 4096); err != nil {
 		t.Fatalf("add allocation sample: %v", err)
 	}
-	if err := formatter.Add(&output.Sample{Frames: frames, Count: -4096}); err != nil {
+	if err := formatter.Add(frames, -4096); err != nil {
 		t.Fatalf("add free sample: %v", err)
 	}
 
@@ -45,7 +43,7 @@ func TestFormatterAdd_RemovesBalancedStack(t *testing.T) {
 	}
 }
 
-func TestFormatterAddNormalizesFoldedFrames(t *testing.T) {
+func TestStacksAddNormalizesFoldedFrames(t *testing.T) {
 	tests := []struct {
 		name   string
 		frames []string
@@ -65,8 +63,8 @@ func TestFormatterAddNormalizesFoldedFrames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			formatter := New()
-			if err := formatter.Add(&output.Sample{Frames: tt.frames, Count: 3}); err != nil {
+			formatter := &Stacks{}
+			if err := formatter.Add(tt.frames, 3); err != nil {
 				t.Fatalf("add sample: %v", err)
 			}
 
@@ -81,14 +79,17 @@ func TestFormatterAddNormalizesFoldedFrames(t *testing.T) {
 	}
 }
 
-func TestFormatterAddMergesNormalizationCollisions(t *testing.T) {
-	formatter := New()
-	samples := []*output.Sample{
+func TestStacksAddMergesNormalizationCollisions(t *testing.T) {
+	formatter := &Stacks{}
+	samples := []struct {
+		Frames []string
+		Count  int64
+	}{
 		{Frames: []string{"root", "foo;bar"}, Count: 2},
 		{Frames: []string{"root", "foo:bar"}, Count: 3},
 	}
 	for _, sample := range samples {
-		if err := formatter.Add(sample); err != nil {
+		if err := formatter.Add(sample.Frames, sample.Count); err != nil {
 			t.Fatalf("add sample: %v", err)
 		}
 	}
@@ -103,7 +104,7 @@ func TestFormatterAddMergesNormalizationCollisions(t *testing.T) {
 	}
 }
 
-func BenchmarkFormatterAdd(b *testing.B) {
+func BenchmarkStacksAdd(b *testing.B) {
 	tests := []struct {
 		name   string
 		frames []string
@@ -128,12 +129,11 @@ func BenchmarkFormatterAdd(b *testing.B) {
 
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
-			formatter := New()
-			sample := &output.Sample{Frames: tt.frames, Count: 1}
+			formatter := &Stacks{}
 
 			b.ReportAllocs()
 			for b.Loop() {
-				if err := formatter.Add(sample); err != nil {
+				if err := formatter.Add(tt.frames, 1); err != nil {
 					b.Fatal(err)
 				}
 			}

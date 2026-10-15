@@ -16,42 +16,63 @@
 package flamegraph
 
 import (
+	"context"
 	"io"
 	"sort"
 	"strings"
 
 	"github.com/ccfos/huatuo/internal/profiler/output"
 	"github.com/ccfos/huatuo/internal/profiler/output/raw"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
-// Renderer accumulates samples and renders an SVG flame graph.
-type Renderer struct {
-	*raw.Renderer
-	style Style
+// formatter accumulates windows and writes an SVG flame graph at completion.
+type formatter struct {
+	stacks      raw.Stacks
+	destination *output.LocalDestination
+	style       Style
 }
 
-var _ output.Renderer = (*Renderer)(nil)
+var _ output.Formatter = (*formatter)(nil)
 
-func init() {
-	output.RegisterRenderer(output.FormatFlameGraph, func() output.Renderer { return New() })
-	output.RegisterRenderer(output.FormatSVG, func() output.Renderer { return New() })
-}
-
-// New returns a Renderer with the default SVG style.
-func New() *Renderer {
-	return &Renderer{
-		Renderer: raw.New(),
-		style:    DefaultStyle,
+// NewFormatter initializes SVG output.
+func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
+	cfg.Format = output.FormatSVG
+	destination, err := output.NewLocalDestination(cfg)
+	if err != nil {
+		return nil, err
 	}
+
+	return &formatter{destination: destination, style: DefaultStyle}, nil
 }
 
-func (f *Renderer) Write(w io.Writer) error {
-	return RenderStyle(f.toStacks(), w, f.style)
+func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return output.WalkProfile(ctx, window.Profile, f.stacks.Add)
 }
+
+func (f *formatter) Complete(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if f.stacks.IsEmpty() && !f.destination.IsStdout() {
+		return nil
+	}
+
+	return f.destination.WriteAndClose(func(w io.Writer) error {
+		return RenderStyle(f.toStacks(), w, f.style)
+	})
+}
+
+func (f *formatter) Close() error { return f.destination.Close() }
 
 // toStacks converts the count map to []Stack.
-func (f *Renderer) toStacks() []Stack {
-	counts := f.Counts()
+func (f *formatter) toStacks() []Stack {
+	counts := f.stacks.Counts()
 	stacks := make([]Stack, 0, len(counts))
 
 	for stackStr, count := range counts {

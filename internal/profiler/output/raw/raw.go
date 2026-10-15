@@ -20,37 +20,30 @@ import (
 	"io"
 	"sort"
 	"strings"
-
-	"github.com/ccfos/huatuo/internal/profiler/output"
 )
 
-// Renderer writes folded-stack output.
-type Renderer struct {
+// Stacks accumulates folded stack weights. Its zero value is ready to use.
+// It retains encoded keys, so callers may reuse their frame slices after Add.
+type Stacks struct {
 	counts map[string]int64
 }
 
-var _ output.Renderer = (*Renderer)(nil)
-
-func init() {
-	output.RegisterRenderer(output.FormatCollapsed, func() output.Renderer { return New() })
-}
-
-// New returns a Renderer that writes folded-stack output.
-func New() *Renderer {
-	return &Renderer{counts: make(map[string]int64)}
-}
-
-func (f *Renderer) Add(s *output.Sample) error {
-	if len(s.Frames) == 0 {
+func (s *Stacks) Add(frames []string, weight int64) error {
+	if len(frames) == 0 {
 		return nil
 	}
-	key := foldedStackKey(s.Frames)
-	f.counts[key] += s.Count
-	if f.counts[key] == 0 {
-		// Zero-count stacks have no visual weight and make empty profiles appear non-empty.
-		// Do not remove this deletion unless zero-count stacks become part of the output contract.
-		delete(f.counts, key)
+
+	if s.counts == nil {
+		s.counts = make(map[string]int64)
 	}
+
+	key := foldedStackKey(frames)
+	s.counts[key] += weight
+	// Balanced allocations have no visual weight and must not create output.
+	if s.counts[key] == 0 {
+		delete(s.counts, key)
+	}
+
 	return nil
 }
 
@@ -95,17 +88,17 @@ func writeFoldedFrame(key *strings.Builder, frame string) {
 	key.WriteString(frame[start:])
 }
 
-func (f *Renderer) Write(w io.Writer) error {
-	keys := make([]string, 0, len(f.counts))
+func (s *Stacks) Write(w io.Writer) error {
+	keys := make([]string, 0, len(s.counts))
 
-	for k := range f.counts {
+	for k := range s.counts {
 		keys = append(keys, k)
 	}
 
 	sort.Strings(keys)
 
 	for _, k := range keys {
-		if _, err := fmt.Fprintf(w, "%s %d\n", k, f.counts[k]); err != nil {
+		if _, err := fmt.Fprintf(w, "%s %d\n", k, s.counts[k]); err != nil {
 			return err
 		}
 	}
@@ -113,13 +106,13 @@ func (f *Renderer) Write(w io.Writer) error {
 	return nil
 }
 
-// IsEmpty reports whether the formatter contains no samples.
-func (f *Renderer) IsEmpty() bool {
-	return len(f.counts) == 0
+// IsEmpty reports whether all stack weights are zero.
+func (s *Stacks) IsEmpty() bool {
+	return len(s.counts) == 0
 }
 
 // Counts returns the accumulated stack-to-count map. The returned map
 // must not be modified; callers should treat it as read-only.
-func (f *Renderer) Counts() map[string]int64 {
-	return f.counts
+func (s *Stacks) Counts() map[string]int64 {
+	return s.counts
 }

@@ -12,261 +12,131 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package chrometrace writes Chrome Trace Event JSON, loadable in chrome://tracing or Perfetto.
+// Package chrometrace writes aggregated stacks as Chrome Trace Event JSON.
 package chrometrace
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
-	"strconv"
 
 	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
+// formatter places aggregate stacks consecutively on an estimated timeline.
+// TODO: preserve observation timestamps before aggregation to recover chronology.
+type formatter struct {
+	events      []event
+	endUS       int64
+	destination *output.LocalDestination
+}
+
 type event struct {
-	Name string         `json:"name"`
-	Cat  string         `json:"cat,omitempty"`
-	Ph   string         `json:"ph"` // "B", "E", "X", "M", or "C"
-	PID  int            `json:"pid"`
-	TID  string         `json:"tid"`
-	TS   float64        `json:"ts"`            // microseconds
-	Dur  float64        `json:"dur,omitempty"` // X events only
-	Args map[string]any `json:"args,omitempty"`
+	Name        string            `json:"name"`
+	Phase       string            `json:"ph"`
+	PID         int64             `json:"pid"`
+	TID         int64             `json:"tid"`
+	TimestampUS int64             `json:"ts"`
+	DurationUS  *int64            `json:"dur,omitempty"`
+	Args        map[string]string `json:"args,omitempty"`
 }
 
-type traceOutput struct {
-	TraceEvents []event `json:"traceEvents"`
-}
+const maxExactInteger int64 = 1<<53 - 1
 
-// prevState tracks the last-seen stack for one thread.
-type prevState struct {
-	frames []string
-	pid    int
-}
+var _ output.Formatter = (*formatter)(nil)
 
-// nestingIndent is the microsecond offset between nested X events,
-// giving visual depth in trace viewers.
-const nestingIndent = 0.001
-
-// Renderer accumulates samples and writes Chrome Trace JSON.
-type Renderer struct {
-	events       []event
-	prev         map[string]*prevState // threadID → last state (streaming)
-	seenThreads  map[string]struct{}   // threads that already have an M event
-	sampleIdx    int
-	sampleRateHz float64
-}
-
-var _ output.Renderer = (*Renderer)(nil)
-
-// New creates a Renderer. Pass 0 for sampleRateHz to default to 100 Hz.
-func New(sampleRateHz float64) *Renderer {
-	if sampleRateHz <= 0 {
-		sampleRateHz = 100
-	}
-	return &Renderer{
-		prev:         make(map[string]*prevState),
-		seenThreads:  make(map[string]struct{}),
-		sampleRateHz: sampleRateHz,
-	}
-}
-
-// Add incorporates one sample.
-//
-// Streaming (Count=1, ThreadID set): diffs stacks per thread, emits B/E events.
-// Batch (Count>1 or no ThreadID): emits X events with duration ∝ Count.
-// Counter (no Frames, Tags non-empty): emits a C event for each tag value.
-//
-// The first sample from each thread also emits an M (thread_name) metadata event.
-func (f *Renderer) Add(s *output.Sample) error {
-	ts := f.timestampFor(s)
-
-	// M event: name the thread on first encounter.
-	if s.ThreadID != "" {
-		if _, seen := f.seenThreads[s.ThreadID]; !seen {
-			f.seenThreads[s.ThreadID] = struct{}{}
-			name := s.ThreadName
-			if name == "" {
-				name = s.ThreadID
-			}
-
-			f.events = append(f.events, event{
-				Name: "thread_name",
-				Ph:   "M",
-				PID:  s.PID,
-				TID:  s.ThreadID,
-				Args: map[string]any{"name": name},
-			})
-		}
+// NewFormatter initializes chrometrace output.
+func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
+	cfg.Format = output.FormatChromeTrace
+	destination, err := output.NewLocalDestination(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	// C event: samples with no frames but non-empty Tags are counter observations.
-	if len(s.Frames) == 0 {
-		if len(s.Tags) > 0 {
-			f.events = append(f.events, counterEvent(s, ts))
-		}
+	return &formatter{destination: destination}, nil
+}
 
-		f.sampleIdx++
+func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
+	p := window.Profile
+	if len(p.Sample) == 0 {
 		return nil
 	}
 
-	if s.Count <= 1 && s.ThreadID != "" {
-		f.addStreaming(s, ts)
-	} else {
-		f.addBatch(s, ts)
+	if len(p.SampleType) == 0 || p.SampleType[0] == nil {
+		return fmt.Errorf("chrometrace: first sample type is required")
 	}
 
-	f.sampleIdx++
+	index := p.SampleType[0].Unit
+	if index < 0 || index >= int64(len(p.StringTable)) {
+		return fmt.Errorf("chrometrace: invalid sample unit index %d", index)
+	}
 
-	return nil
-}
+	multiplier, divisor := int64(1), int64(1)
+	switch unit := p.StringTable[index]; unit {
+	case "nanoseconds":
+		divisor = 1000
+	case "microseconds":
+	case "milliseconds":
+		multiplier = 1000
+	case "seconds":
+		multiplier = 1000000
+	case "count", "counts":
+		// Preserve the legacy 100 Hz estimate only for count-valued profiles.
+		multiplier = 10000
+	default:
+		return fmt.Errorf("chrometrace: cannot estimate duration from unit %q", unit)
+	}
 
-// counterEvent builds a C (counter) event from sample tags.
-// Numeric tag values are stored as float64; others remain strings.
-func counterEvent(s *output.Sample, ts float64) event {
-	args := make(map[string]any, len(s.Tags))
-
-	for k, v := range s.Tags {
-		if fv, err := strconv.ParseFloat(v, 64); err == nil {
-			args[k] = fv
-		} else {
-			args[k] = v
+	return output.WalkProfile(ctx, p, func(frames []string, value int64) error {
+		if value < 0 {
+			return fmt.Errorf("chrometrace: negative sample weight %d", value)
 		}
-	}
 
-	name := "counters"
-	if s.ThreadName != "" {
-		name = s.ThreadName
-	}
-
-	return event{
-		Name: name,
-		Ph:   "C",
-		PID:  s.PID,
-		TID:  s.ThreadID,
-		TS:   ts,
-		Args: args,
-	}
-}
-
-func (f *Renderer) addStreaming(s *output.Sample, ts float64) {
-	tid := s.ThreadID
-	prev := f.prev[tid]
-
-	var oldFrames []string
-	if prev != nil {
-		oldFrames = prev.frames
-	}
-	newFrames := make([]string, len(s.Frames))
-	copy(newFrames, s.Frames)
-
-	common := commonSuffixLen(oldFrames, newFrames)
-
-	for i := range len(oldFrames) - common {
-		f.events = append(f.events, event{
-			Name: oldFrames[i],
-			Cat:  "profiler",
-			Ph:   "E",
-			PID:  s.PID,
-			TID:  tid,
-			TS:   ts,
-		})
-	}
-
-	// Emit "B" for frames that are entering (outermost-first).
-	beginCount := len(newFrames) - common
-	for i := beginCount - 1; i >= 0; i-- {
-		f.events = append(f.events, event{
-			Name: newFrames[i],
-			Cat:  "profiler",
-			Ph:   "B",
-			PID:  s.PID,
-			TID:  tid,
-			TS:   ts,
-		})
-	}
-
-	if prev == nil {
-		prev = &prevState{}
-		f.prev[tid] = prev
-	}
-	prev.frames = newFrames
-	prev.pid = s.PID
-}
-
-// addBatch emits X events; each frame gets a duration proportional to Count.
-func (f *Renderer) addBatch(s *output.Sample, ts float64) {
-	tid := s.ThreadID
-	if tid == "" {
-		tid = "main"
-	}
-	dur := float64(s.Count) * (1e6 / f.sampleRateHz) // microseconds
-
-	// Emit outermost frame as parent, innermost as deepest child.
-	// Use nested X events by staggering start times slightly.
-	offset := 0.0
-
-	for i := range len(s.Frames) {
-		f.events = append(f.events, event{
-			Name: s.Frames[i],
-			Cat:  "profiler",
-			Ph:   "X",
-			PID:  s.PID,
-			TID:  tid,
-			TS:   ts + offset,
-			Dur:  dur - offset,
-		})
-		offset += nestingIndent
-	}
-}
-
-func (f *Renderer) Write(w io.Writer) error {
-	finalTS := f.timestampFor(&output.Sample{})
-
-	n := len(f.events)
-	for _, ps := range f.prev {
-		n += len(ps.frames)
-	}
-
-	all := make([]event, 0, n)
-	all = append(all, f.events...)
-
-	for tid, ps := range f.prev {
-		for _, name := range ps.frames {
-			all = append(all, event{
-				Name: name,
-				Cat:  "profiler",
-				Ph:   "E",
-				PID:  ps.pid,
-				TID:  tid,
-				TS:   finalTS,
-			})
+		if value == 0 || len(frames) == 0 {
+			return nil
 		}
+
+		duration := value / divisor
+		if duration > (maxExactInteger-f.endUS)/multiplier {
+			return fmt.Errorf("chrometrace: estimated timeline exceeds 2^53-1 microseconds")
+		}
+
+		duration *= multiplier
+		if len(f.events) == 0 {
+			f.events = append(f.events, event{Name: "thread_name", Phase: "M", Args: map[string]string{"name": "aggregated (estimated)"}})
+		}
+		for _, name := range frames {
+			f.events = append(f.events, event{Name: name, Phase: "X", TimestampUS: f.endUS, DurationUS: &duration})
+		}
+		f.endUS += duration
+		return nil
+	})
+}
+
+func (f *formatter) Complete(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
-	return json.NewEncoder(w).Encode(traceOutput{TraceEvents: all})
-}
-
-func (f *Renderer) IsEmpty() bool {
-	return len(f.events) == 0
-}
-
-func (f *Renderer) timestampFor(s *output.Sample) float64 {
-	if s.Timestamp != 0 {
-		return float64(s.Timestamp) // already in microseconds
+	if len(f.events) == 0 && !f.destination.IsStdout() {
+		return nil
 	}
-	return float64(f.sampleIdx) * 1e6 / f.sampleRateHz
+
+	return f.destination.WriteAndClose(func(w io.Writer) error {
+		events := f.events
+		if events == nil {
+			events = []event{}
+		}
+		return json.NewEncoder(w).Encode(struct {
+			Events []event `json:"traceEvents"`
+		}{Events: events})
+	})
 }
 
-// commonSuffixLen returns the length of the shared outermost suffix.
-func commonSuffixLen(a, b []string) int {
-	i, j := len(a)-1, len(b)-1
-	n := 0
-	for i >= 0 && j >= 0 && a[i] == b[j] {
-		n++
-		i--
-		j--
-	}
-	return n
-}
+func (f *formatter) Close() error { return f.destination.Close() }

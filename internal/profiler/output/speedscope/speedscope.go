@@ -12,14 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package speedscope writes Speedscope JSON profile format (https://www.speedscope.app/).
+// Package speedscope encodes aggregated profiles as weighted Speedscope samples.
 package speedscope
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 
 	"github.com/ccfos/huatuo/internal/profiler/output"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type speedscopeFile struct {
@@ -32,174 +35,151 @@ type speedscopeFile struct {
 }
 
 type sharedData struct {
-	Frames []ssFrame `json:"frames"`
+	Frames []frame `json:"frames"`
 }
 
-type ssFrame struct {
+type frame struct {
 	Name string `json:"name"`
 	File string `json:"file,omitempty"`
-	Line int32  `json:"line,omitempty"`
+	Line int64  `json:"line,omitempty"`
 }
 
 type sampledProfile struct {
-	Type       string    `json:"type"`
-	Name       string    `json:"name"`
-	Unit       string    `json:"unit"`
-	StartValue float64   `json:"startValue"`
-	EndValue   float64   `json:"endValue"`
-	Samples    [][]int   `json:"samples"`
-	Weights    []float64 `json:"weights"`
+	Type       string  `json:"type"`
+	Name       string  `json:"name"`
+	Unit       string  `json:"unit"`
+	StartValue int64   `json:"startValue"`
+	EndValue   int64   `json:"endValue"`
+	Samples    [][]int `json:"samples"`
+	Weights    []int64 `json:"weights"`
 }
 
-type threadState struct {
-	name    string
-	samples [][]int
-	total   int64 // total sample count
+// formatter retains owned frame indices and weights, never caller profile buffers.
+// Samples describe aggregate weights, not the chronological order of observations.
+type formatter struct {
+	destination *output.LocalDestination
+	frames      map[frame]int
+	frameList   []frame
+	profiles    []sampledProfile
+	groups      map[string]int
+	sampleType  string
+	sampleUnit  string
 }
 
-// Renderer accumulates samples and writes Speedscope JSON.
-type Renderer struct {
-	sampleDuration float64 // seconds per sample (default 0.01 = 100 Hz)
-	frames         map[ssFrame]int
-	frameList      []ssFrame
-	threads        map[string]*threadState
-	threadOrder    []string // insertion order
-}
+var _ output.Formatter = (*formatter)(nil)
 
-var _ output.Renderer = (*Renderer)(nil)
-
-// New creates a Renderer. Pass 0 for sampleRateHz to default to 100 Hz.
-func New(sampleRateHz float64) *Renderer {
-	if sampleRateHz <= 0 {
-		sampleRateHz = 100
+// NewFormatter initializes speedscope output.
+func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
+	cfg.Format = output.FormatSpeedscope
+	destination, err := output.NewLocalDestination(cfg)
+	if err != nil {
+		return nil, err
 	}
-	return &Renderer{
-		sampleDuration: 1.0 / sampleRateHz,
-		frames:         make(map[ssFrame]int),
-		threads:        make(map[string]*threadState),
-	}
+
+	return &formatter{
+		destination: destination,
+		frames:      make(map[frame]int),
+		groups:      make(map[string]int),
+	}, nil
 }
 
-// Add incorporates one sample. Batch samples (Count > 1) are expanded inline.
-func (f *Renderer) Add(s *output.Sample) error {
-	if len(s.Frames) == 0 {
+func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	p := window.Profile
+	if len(p.Sample) == 0 {
 		return nil
 	}
 
-	key := threadKey(s)
-	ts := f.getOrAddThread(key, threadName(s))
+	decoder, err := newProfileDecoder(p)
+	if err != nil {
+		return err
+	}
 
-	indices := make([]int, 0, len(s.Frames))
+	if f.sampleType != "" && (f.sampleType != decoder.sampleType || f.sampleUnit != decoder.sampleUnit) {
+		return fmt.Errorf("speedscope: cannot mix %s/%s with %s/%s", f.sampleType, f.sampleUnit, decoder.sampleType, decoder.sampleUnit)
+	}
 
-	for i, name := range s.Frames {
-		var detail *output.Frame
-		if i < len(s.FrameDetails) {
-			detail = &s.FrameDetails[i]
+	f.sampleType, f.sampleUnit = decoder.sampleType, decoder.sampleUnit
+	for _, sample := range p.Sample {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 
-		indices = append(indices, f.getOrAddFrame(name, detail))
-	}
+		if sample == nil || len(sample.Value) != len(p.SampleType) {
+			return fmt.Errorf("speedscope: sample values must match sample types")
+		}
 
-	count := s.Count
-	if count <= 0 {
-		count = 1
-	}
-	for i := int64(0); i < count; i++ {
-		ts.samples = append(ts.samples, indices)
-		ts.total++
+		weight := sample.Value[0]
+		if weight < 0 || weight > maxExactInteger {
+			return fmt.Errorf("speedscope: weight %d is outside the supported range [0, 2^53-1]", weight)
+		}
+
+		frames, err := decoder.frames(sample)
+		if err != nil {
+			return err
+		}
+
+		group, name, err := decoder.group(window, sample)
+		if err != nil {
+			return err
+		}
+
+		if weight == 0 || len(frames) == 0 {
+			continue
+		}
+		index, exists := f.groups[group]
+		if !exists {
+			index = len(f.profiles)
+			f.groups[group] = index
+			f.profiles = append(f.profiles, sampledProfile{Type: "sampled", Name: name, Unit: decoder.unit})
+		}
+		target := &f.profiles[index]
+		if weight > maxExactInteger-target.EndValue {
+			return fmt.Errorf("speedscope: total weight exceeds exact browser integer range")
+		}
+
+		indices := make([]int, 0, len(frames))
+		for _, item := range frames {
+			frameIndex, exists := f.frames[item]
+			if !exists {
+				frameIndex = len(f.frameList)
+				f.frames[item] = frameIndex
+				f.frameList = append(f.frameList, item)
+			}
+			indices = append(indices, frameIndex)
+		}
+		target.Samples = append(target.Samples, indices)
+		target.Weights = append(target.Weights, weight)
+		target.EndValue += weight
 	}
 	return nil
 }
 
-func (f *Renderer) Write(w io.Writer) error {
-	profiles := make([]sampledProfile, 0, len(f.threadOrder))
-	for _, key := range f.threadOrder {
-		ts := f.threads[key]
-		weights := make([]float64, len(ts.samples))
-		for i := range weights {
-			weights[i] = f.sampleDuration
+func (f *formatter) Complete(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if len(f.profiles) == 0 {
+		return nil
+	}
+
+	active := 0
+	for i := range f.profiles {
+		if f.profiles[i].EndValue > f.profiles[active].EndValue {
+			active = i
 		}
-		profiles = append(profiles, sampledProfile{
-			Type:       "sampled",
-			Name:       ts.name,
-			Unit:       "seconds",
-			StartValue: 0,
-			EndValue:   float64(ts.total) * f.sampleDuration,
-			Samples:    ts.samples,
-			Weights:    weights,
+	}
+	return f.destination.WriteAndClose(func(w io.Writer) error {
+		return json.NewEncoder(w).Encode(speedscopeFile{
+			Schema: "https://www.speedscope.app/file-format-schema.json",
+			Shared: sharedData{Frames: f.frameList}, Profiles: f.profiles,
+			ActiveProfileIdx: active, Exporter: "huatuo-profiler", Name: "aggregated profile",
 		})
-	}
-
-	activeIdx := 0
-	var maxSamples int
-	for i := range profiles {
-		if len(profiles[i].Samples) > maxSamples {
-			maxSamples = len(profiles[i].Samples)
-			activeIdx = i
-		}
-	}
-
-	file := speedscopeFile{
-		Schema:           "https://www.speedscope.app/file-format-schema.json",
-		Shared:           sharedData{Frames: f.frameList},
-		Profiles:         profiles,
-		ActiveProfileIdx: activeIdx,
-		Exporter:         "huatuo-profiler",
-		Name:             "profile",
-	}
-	return json.NewEncoder(w).Encode(file)
+	})
 }
 
-func (f *Renderer) IsEmpty() bool {
-	return len(f.threads) == 0
-}
-
-// getOrAddFrame returns the global index for a frame, adding it if unseen.
-// detail is optional; when provided, file and line are included in dedup and output.
-func (f *Renderer) getOrAddFrame(name string, detail *output.Frame) int {
-	sf := ssFrame{Name: name}
-	if detail != nil {
-		sf.File = detail.File
-		sf.Line = detail.Line
-	}
-
-	if idx, ok := f.frames[sf]; ok {
-		return idx
-	}
-
-	idx := len(f.frameList)
-	f.frameList = append(f.frameList, sf)
-	f.frames[sf] = idx
-
-	return idx
-}
-
-func (f *Renderer) getOrAddThread(key, name string) *threadState {
-	if ts, ok := f.threads[key]; ok {
-		return ts
-	}
-	ts := &threadState{name: name}
-	f.threads[key] = ts
-	f.threadOrder = append(f.threadOrder, key)
-	return ts
-}
-
-func threadKey(s *output.Sample) string {
-	if s.ThreadID != "" {
-		return s.ThreadID
-	}
-	if s.PID != 0 {
-		return "main"
-	}
-	return "default"
-}
-
-func threadName(s *output.Sample) string {
-	if s.ThreadName != "" {
-		return s.ThreadName
-	}
-	if s.ThreadID != "" {
-		return s.ThreadID
-	}
-	return "main thread"
-}
+func (f *formatter) Close() error { return f.destination.Close() }
