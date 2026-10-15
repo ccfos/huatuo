@@ -12,13 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package exec
+package java
 
 import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
+
+	profilerexec "github.com/ccfos/huatuo/cmd/profiler/exec"
 
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/log"
@@ -36,14 +39,14 @@ func RunAsyncProfiler(
 	pids []int,
 	path string,
 	argsForPID func(pid int) []string,
-) []*Result {
-	return runForPIDs(pids, func(pid int) *Result {
+) []*profilerexec.Result {
+	return profilerexec.RunForPIDs(pids, func(pid int) *profilerexec.Result {
 		return runAsyncProfiler(ctx, pid, path, argsForPID(pid))
 	})
 }
 
-func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) *Result {
-	result := &Result{PID: pid, Command: formatCommand(path, args)}
+func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) *profilerexec.Result {
+	result := &profilerexec.Result{PID: pid, Command: path + " " + strings.Join(args, " ")}
 	log.Debugf("executing command: %s", result.Command)
 
 	process, err := executil.New(executil.Spec{Path: path, Args: args})
@@ -118,12 +121,12 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 // StopAsyncProfiler asks the injected agent in one target JVM to stop.
 func StopAsyncProfiler(ctx context.Context, asprofPath string, pid int) error {
 	args := []string{"--libpath", "/tmp/libasyncProfiler.so", "stop", strconv.Itoa(pid)}
-	result := runCommand(ctx, pid, &executil.Spec{
+	result := profilerexec.RunCommand(ctx, pid, &executil.Spec{
 		Path:            asprofPath,
 		Args:            args,
 		StopGracePeriod: asyncProfilerStopGracePeriod,
 	})
-	return Verify([]*Result{result})
+	return profilerexec.Verify([]*profilerexec.Result{result})
 }
 
 func combinedOutput(process *executil.Process) []byte {

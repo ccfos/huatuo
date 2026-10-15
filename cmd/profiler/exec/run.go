@@ -24,7 +24,8 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 )
 
-func runForPIDs(pids []int, run func(pid int) *Result) []*Result {
+// RunForPIDs executes one operation per target and waits for every result.
+func RunForPIDs(pids []int, run func(pid int) *Result) []*Result {
 	var waitGroup sync.WaitGroup
 	results := make(chan *Result, len(pids))
 
@@ -47,7 +48,8 @@ func runForPIDs(pids []int, run func(pid int) *Result) []*Result {
 	return collected
 }
 
-func runCommand(
+// RunCommand captures one target command's output and execution diagnostics.
+func RunCommand(
 	ctx context.Context,
 	pid int,
 	spec *executil.Spec,

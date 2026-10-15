@@ -33,7 +33,7 @@ func RunWithMemfd(
 	argsForPID func(pid int, outputPath string) []string,
 	options ...executil.Option,
 ) []*Result {
-	return runForPIDs(pids, func(pid int) *Result {
+	return RunForPIDs(pids, func(pid int) *Result {
 		result := &Result{PID: pid, Command: path}
 		commandOptions := append(slices.Clone(options), executil.WithMemfdOutput(profilerOutputLimit, func(outputPath string) []string {
 			args := argsForPID(pid, outputPath)

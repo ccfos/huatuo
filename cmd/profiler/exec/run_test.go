@@ -36,9 +36,9 @@ func TestFormatCommandIncludesExecutableAndArguments(t *testing.T) {
 }
 
 func TestRunCommandInvalidConfiguration(t *testing.T) {
-	result := runCommand(t.Context(), 123, &executil.Spec{})
+	result := RunCommand(t.Context(), 123, &executil.Spec{})
 	if result.Err == nil || result.PID != 123 || len(result.Output) != 0 || len(result.Diagnostics) != 0 {
-		t.Fatalf("runCommand() = %+v, want configuration error and empty output for PID 123", result)
+		t.Fatalf("RunCommand() = %+v, want configuration error and empty output for PID 123", result)
 	}
 }
 
@@ -55,7 +55,7 @@ printf 'tool warning' >&2
 		t.Fatalf("make fake profiler executable: %v", err)
 	}
 
-	result := runCommand(t.Context(), 164879, &executil.Spec{Path: toolPath, MaxStdoutBytes: 4})
+	result := RunCommand(t.Context(), 164879, &executil.Spec{Path: toolPath, MaxStdoutBytes: 4})
 	if !result.Succeeded() {
 		t.Fatalf("Run() error = %v", result.Err)
 	}
