@@ -41,7 +41,7 @@ func TestParseWindowsPreservesSamplesAroundEmptyWindows(t *testing.T) {
 				}
 				profile, err := parse(t.Context(), &ParseInput{
 					StartTime: time.Now(), ProfileType: ProfileTypeMemSample,
-					ProfilerName: name, PID: os.Getpid(), Data: data,
+					PID: os.Getpid(), Data: data,
 					Opt: &ParseOption{SampleRate: NoSampleRate},
 				})
 				if err != nil {

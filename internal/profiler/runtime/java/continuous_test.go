@@ -18,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/ccfos/huatuo/internal/profiler"
 )
@@ -31,12 +30,7 @@ func TestCollapsedFileCollectorConsumesEachFileOnce(t *testing.T) {
 	if err := os.WriteFile(path, []byte("first 1\n"), 0o600); err != nil {
 		t.Fatalf("write collapsed output: %v", err)
 	}
-	opt := &AsprofSamplingOption{
-		Pids:         []int{1234},
-		AggrInterval: time.Second,
-		StartedAt:    time.Unix(100, 0),
-	}
-	samples, collector := newTestCollapsedFileCollector(t, opt.Pids, map[int]string{
+	samples, collector := newTestCollapsedFileCollector(t, []int{1234}, map[int]string{
 		1234: filepath.Join(dir, "profile-*.collapsed"),
 	})
 	if err := collector.scanOutputFiles(false); err != nil {

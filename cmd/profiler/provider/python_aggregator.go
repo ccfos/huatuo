@@ -102,11 +102,10 @@ func (a *pythonAggregator) Snapshot(ctx context.Context) (*types.ProfilingWindow
 	pprofData, err := profiler.ParseRawData(
 		ctx,
 		&profiler.ParseInput{
-			ProfileType:  profiler.ProfileTypeCpuSample,
-			ProfilerName: "python-cpu",
-			Data:         data,
-			Opt:          &profiler.ParseOption{SampleRate: a.sampleRate},
-			PID:          a.pid,
+			ProfileType: profiler.ProfileTypeCpuSample,
+			Data:        data,
+			Opt:         &profiler.ParseOption{SampleRate: a.sampleRate},
+			PID:         a.pid,
 		},
 	)
 	if err != nil {

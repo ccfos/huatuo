@@ -102,7 +102,7 @@ func ParseCollapsedData(ctx context.Context, input *ParseInput) (*ProfileData, e
 				goto fallback
 			}
 		}
-		return parseMultiProcessData(ctx, input.StartTime, input.ProfileType, input.ProfilerName, outputs, input.Opt,
+		return parseMultiProcessData(ctx, input.StartTime, input.ProfileType, outputs, input.Opt,
 			func(pid int) ([]byte, error) {
 				threadName, err := extractJavaMainClassFromPid(pid)
 				if err != nil {
@@ -128,21 +128,8 @@ func ParseRawData(ctx context.Context, input *ParseInput) (*ProfileData, error) 
 			if out.PID == 0 {
 				goto fallback
 			}
-			raw := []byte(out.Output)
-			if bytes.Contains(raw, []byte("py-spy>")) {
-				lines := bytes.Split(raw, []byte("\n"))
-				buf := &bytes.Buffer{}
-				for _, line := range lines {
-					line = bytes.TrimSpace(line)
-					if !bytes.HasPrefix(line, []byte("py-spy>")) {
-						buf.Write(line)
-						buf.WriteByte('\n')
-					}
-				}
-				out.Output = buf.String()
-			}
 		}
-		return parseMultiProcessData(ctx, input.StartTime, input.ProfileType, input.ProfilerName, outputs, input.Opt, nil)
+		return parseMultiProcessData(ctx, input.StartTime, input.ProfileType, outputs, input.Opt, nil)
 	}
 
 fallback:
@@ -156,7 +143,7 @@ type SampleOutput struct {
 }
 
 // parseMultiProcessData parses profiles of multiple PIDs from SampleOutput.
-func parseMultiProcessData(ctx context.Context, startTime time.Time, profileType, profilerName string, outputs []SampleOutput, opt *ParseOption, getThreadName func(pid int) ([]byte, error)) (*ProfileData, error) {
+func parseMultiProcessData(ctx context.Context, startTime time.Time, profileType string, outputs []SampleOutput, opt *ParseOption, getThreadName func(pid int) ([]byte, error)) (*ProfileData, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -228,9 +215,6 @@ func parseMultiProcessData(ctx context.Context, startTime time.Time, profileType
 			tree = append(tree, item)
 		}
 	}
-
-	// record the timestamp when symbolizing to pprof starts
-	SetSymbolizeToPprofTimeStamp(profilerName, time.Now())
 
 	return ParseTree(startTime, profileType, tree, opt)
 }

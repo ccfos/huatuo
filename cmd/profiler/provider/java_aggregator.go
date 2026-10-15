@@ -24,7 +24,6 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -36,22 +35,20 @@ type javaAggregator struct {
 	pid          int
 	parseOption  *profiler.ParseOption
 	sampleType   string
-	profilerName string
 	mu           sync.Mutex
 	sampleOutput []profiler.SampleOutput
 }
 
 func newJavaAggregator(cfg *Config) (*javaAggregator, error) {
-	opt, sampleType, name, err := javaParseOptions(cfg)
+	opt, sampleType, err := profileTypeOptions(cfg)
 	if err != nil {
 		return nil, err
 	}
 	return &javaAggregator{
-		containerID:  cfg.ContainerID,
-		pid:          cfg.PID(),
-		parseOption:  opt,
-		sampleType:   sampleType,
-		profilerName: name,
+		containerID: cfg.ContainerID,
+		pid:         cfg.PID(),
+		parseOption: opt,
+		sampleType:  sampleType,
 	}, nil
 }
 
@@ -100,11 +97,10 @@ func (a *javaAggregator) snapshotPprof(ctx context.Context) (*types.ProfilingWin
 	pprofData, err := profiler.ParseCollapsedData(
 		ctx,
 		&profiler.ParseInput{
-			ProfileType:  a.sampleType,
-			ProfilerName: a.profilerName,
-			Data:         pprofFolded,
-			Opt:          a.parseOption,
-			PID:          a.pid,
+			ProfileType: a.sampleType,
+			Data:        pprofFolded,
+			Opt:         a.parseOption,
+			PID:         a.pid,
 		},
 	)
 	if err != nil {
@@ -112,17 +108,4 @@ func (a *javaAggregator) snapshotPprof(ctx context.Context) (*types.ProfilingWin
 	}
 
 	return profiler.NewWindow(pprofData, a.containerID)
-}
-
-func javaParseOptions(cfg *Config) (*profiler.ParseOption, string, string, error) {
-	opt, sampleType, err := profileTypeOptions(cfg)
-	if err != nil {
-		return nil, "", "", err
-	}
-
-	prName := "java-" + string(cfg.Type)
-	if cfg.Type == profiling.TypeMemory {
-		prName = "java-mem"
-	}
-	return opt, sampleType, prName, nil
 }

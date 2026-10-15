@@ -39,12 +39,11 @@ type ProfileData struct {
 
 // ParseInput holds the input parameters for ParseCollapsedData and ParseRawData.
 type ParseInput struct {
-	StartTime    time.Time
-	ProfileType  string
-	ProfilerName string
-	Data         []byte
-	Opt          *ParseOption
-	PID          int
+	StartTime   time.Time
+	ProfileType string
+	Data        []byte
+	Opt         *ParseOption
+	PID         int
 }
 
 // ParseOption is the option for ParseTree.

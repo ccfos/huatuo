@@ -83,10 +83,6 @@ func ReadAsprofDataLoop(
 }
 
 type AsprofSamplingOption struct {
-	PID             int
-	ExecPath        string
-	ServerAddr      string
-	ContainerID     string
 	ToolPath        string
 	Pids            []int
 	BaseArgs        []string
@@ -94,7 +90,6 @@ type AsprofSamplingOption struct {
 	AggrInterval    time.Duration
 	Duration        time.Duration
 	SessionID       string
-	StartedAt       time.Time
 	activePIDs      map[int]bool
 	outputFileCount uint64
 }
@@ -160,7 +155,6 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 		)
 	}
 
-	opt.StartedAt = time.Now()
 	return profileOutFile, nil
 }
 
