@@ -53,7 +53,12 @@ func (c *Container) LifeResources(key string) any {
 
 // LabelHostNamespace returns namespace label
 func (c *Container) LabelHostNamespace() string {
-	return c.Labels[labelHostNamespace].(string)
+	// Containers built before the label sync, or provided by a foreign
+	// provider, may carry no labels. A missing or mistyped value must not
+	// panic the metric and document serialization paths.
+	namespace, _ := c.Labels[labelHostNamespace].(string)
+
+	return namespace
 }
 
 func (c *Container) InitPidOrInitnsPid() int {
