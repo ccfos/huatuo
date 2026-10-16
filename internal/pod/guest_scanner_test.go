@@ -73,6 +73,36 @@ func guestDirectory(t testing.TB, root, path string) {
 	}
 }
 
+func TestInitGuestManagerKeepsDiscoveryWithoutCSS(t *testing.T) {
+	scanner := guestFixture(t)
+	previousView := containerView
+	previousLoader := cgroupSubSysLoader
+	previousIDs := cgroupCssID2SubSysNameMap
+	containerView = newTestContainerStore()
+	cgroupCssID2SubSysNameMap = map[int]string{}
+	attempted := make(chan struct{}, 1)
+	cgroupSubSysLoader = func() error {
+		attempted <- struct{}{}
+		return errors.New("Guest kernel has no BTF")
+	}
+	t.Cleanup(func() {
+		ReleaseManager()
+		containerView = previousView
+		cgroupSubSysLoader = previousLoader
+		cgroupCssID2SubSysNameMap = previousIDs
+	})
+	if err := InitGuestManager(scanner.options); err != nil {
+		t.Fatal(err)
+	}
+	sub := subscribeForTest(t, containerView)
+	waitContainerViewForTest(t, sub, 0)
+	select {
+	case <-attempted:
+	default:
+		t.Error("Guest manager did not initialize the cgroup CSS producer")
+	}
+}
+
 func TestGuestScannerDiscovery(t *testing.T) {
 	s := guestFixture(t)
 	path := "/kubepods/burstable/" + guestCheckoutID
