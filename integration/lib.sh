@@ -16,6 +16,15 @@
 
 set -euo pipefail
 
+# Bash arrays cannot be exported, so CURL_TIMEOUT from env.sh is lost in the
+# child test processes run.sh spawns; the exported __HUATUO_ENV_SH_LOADED
+# guard also blocks re-initialization. Restore the same defaults here so the
+# curl calls below keep their hang protection in children. Scripts that set
+# their own (readonly) CURL_TIMEOUT are unaffected.
+if [[ -z "${CURL_TIMEOUT+x}" ]]; then
+	CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
+fi
+
 # --------------------------------- log --------------------------------------
 
 TEST_LOG_TAG=${TEST_LOG_TAG:-INTEGRATION}
