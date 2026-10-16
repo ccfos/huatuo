@@ -25,8 +25,8 @@ var containerIDRegexp = regexp.MustCompile(`^[0-9a-fA-F]{12,64}$`)
 
 // containerViewKey identifies one cached containersByTypeQos result.
 type containerViewKey struct {
-	typeMask ContainerType
-	minLevel ContainerQos
+	typeMask ContainerType //nolint:unused // read via map key equality
+	minLevel ContainerQos  //nolint:unused // read via map key equality
 }
 
 // containerViewEntry is a cached view pinned to the store revision it was
