@@ -38,10 +38,14 @@ type traceOutput struct {
 	TraceEvents []event `json:"traceEvents"`
 }
 
+type threadKey struct {
+	pid int
+	tid string
+}
+
 // prevState tracks the last-seen stack for one thread.
 type prevState struct {
 	frames []string
-	pid    int
 }
 
 // nestingIndent is the microsecond offset between nested X events,
@@ -51,8 +55,8 @@ const nestingIndent = 0.001
 // Formatter accumulates samples and writes Chrome Trace JSON.
 type Formatter struct {
 	events       []event
-	prev         map[string]*prevState // threadID → last state (streaming)
-	seenThreads  map[string]struct{}   // threads that already have an M event
+	prev         map[threadKey]*prevState
+	seenThreads  map[threadKey]struct{}
 	sampleIdx    int
 	sampleRateHz float64
 }
@@ -65,8 +69,8 @@ func New(sampleRateHz float64) *Formatter {
 		sampleRateHz = 100
 	}
 	return &Formatter{
-		prev:         make(map[string]*prevState),
-		seenThreads:  make(map[string]struct{}),
+		prev:         make(map[threadKey]*prevState),
+		seenThreads:  make(map[threadKey]struct{}),
 		sampleRateHz: sampleRateHz,
 	}
 }
@@ -85,8 +89,9 @@ func (f *Formatter) Add(s *output.Sample) error {
 
 	// M event: name the thread on first encounter.
 	if s.ThreadID != "" {
-		if _, seen := f.seenThreads[s.ThreadID]; !seen {
-			f.seenThreads[s.ThreadID] = struct{}{}
+		key := threadKey{pid: s.PID, tid: s.ThreadID}
+		if _, seen := f.seenThreads[key]; !seen {
+			f.seenThreads[key] = struct{}{}
 			name := s.ThreadName
 			if name == "" {
 				name = s.ThreadID
@@ -153,8 +158,8 @@ func counterEvent(s *output.Sample, ts float64) event {
 }
 
 func (f *Formatter) addStreaming(s *output.Sample, ts float64) {
-	tid := s.ThreadID
-	prev := f.prev[tid]
+	key := threadKey{pid: s.PID, tid: s.ThreadID}
+	prev := f.prev[key]
 
 	var oldFrames []string
 	if prev != nil {
@@ -171,7 +176,7 @@ func (f *Formatter) addStreaming(s *output.Sample, ts float64) {
 			Cat:  "profiler",
 			Ph:   "E",
 			PID:  s.PID,
-			TID:  tid,
+			TID:  s.ThreadID,
 			TS:   ts,
 		})
 	}
@@ -184,17 +189,16 @@ func (f *Formatter) addStreaming(s *output.Sample, ts float64) {
 			Cat:  "profiler",
 			Ph:   "B",
 			PID:  s.PID,
-			TID:  tid,
+			TID:  s.ThreadID,
 			TS:   ts,
 		})
 	}
 
 	if prev == nil {
 		prev = &prevState{}
-		f.prev[tid] = prev
+		f.prev[key] = prev
 	}
 	prev.frames = newFrames
-	prev.pid = s.PID
 }
 
 // addBatch emits X events; each frame gets a duration proportional to Count.
@@ -234,14 +238,14 @@ func (f *Formatter) Write(w io.Writer) error {
 	all := make([]event, 0, n)
 	all = append(all, f.events...)
 
-	for tid, ps := range f.prev {
+	for key, ps := range f.prev {
 		for _, name := range ps.frames {
 			all = append(all, event{
 				Name: name,
 				Cat:  "profiler",
 				Ph:   "E",
-				PID:  ps.pid,
-				TID:  tid,
+				PID:  key.pid,
+				TID:  key.tid,
 				TS:   finalTS,
 			})
 		}
@@ -252,8 +256,8 @@ func (f *Formatter) Write(w io.Writer) error {
 
 func (f *Formatter) Reset() {
 	f.events = nil
-	f.prev = make(map[string]*prevState)
-	f.seenThreads = make(map[string]struct{})
+	f.prev = make(map[threadKey]*prevState)
+	f.seenThreads = make(map[threadKey]struct{})
 	f.sampleIdx = 0
 }
 
