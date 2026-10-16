@@ -17,7 +17,30 @@ package matcher
 import (
 	"fmt"
 	"regexp"
+	"sync"
 )
+
+// compiledCache memoizes compiled regular expressions. Configurations carry a
+// fixed, small set of patterns, so the cache stays bounded by config size.
+// Invalid expressions cache their compile error, so a bad pattern costs one
+// failed compile instead of one per classified event.
+var compiledCache sync.Map // map[string]compiledEntry
+
+type compiledEntry struct {
+	reg *regexp.Regexp
+	err error
+}
+
+func compile(expression string) (*regexp.Regexp, error) {
+	if cached, ok := compiledCache.Load(expression); ok {
+		entry := cached.(compiledEntry)
+		return entry.reg, entry.err
+	}
+
+	reg, err := regexp.Compile(expression)
+	compiledCache.Store(expression, compiledEntry{reg: reg, err: err})
+	return reg, err
+}
 
 // ValidateClassifications validates the name and regular expression in every
 // classification rule.
@@ -29,7 +52,7 @@ func ValidateClassifications(patternList [][]string) error {
 		if pattern[0] == "" {
 			return fmt.Errorf("rule %d has an empty name", i)
 		}
-		if _, err := regexp.Compile(pattern[1]); err != nil {
+		if _, err := compile(pattern[1]); err != nil {
 			return fmt.Errorf("rule %d %q has invalid regular expression %q: %w",
 				i, pattern[0], pattern[1], err)
 		}
@@ -43,7 +66,7 @@ func Classify(patternList [][]string, value string) (string, bool) {
 			return "none", false
 		}
 
-		reg, err := regexp.Compile(p[1])
+		reg, err := compile(p[1])
 		if err != nil {
 			return "none", false
 		}
