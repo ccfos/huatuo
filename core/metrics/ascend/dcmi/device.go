@@ -233,6 +233,8 @@ func (l *library) DcGetDeviceNetWorkHealth(ctx context.Context, cardId, deviceId
 			return 0, fmt.Errorf("invalid network health code: %d", res.health)
 		}
 		return res.health, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
 	case <-time.After(1 * time.Second):
 		return 0, fmt.Errorf("dcmi_get_device_network_health timeout for card %d device %d", cardId, deviceId)
 	}
