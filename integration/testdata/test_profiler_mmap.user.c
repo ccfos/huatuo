@@ -16,6 +16,7 @@
 // Continuously allocates and frees memory via mmap/munmap to trigger
 // virtual_alloc profiling events.
 
+#include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <signal.h>
@@ -65,6 +66,17 @@ static KEEP_FRAME void test_alloc_free_loop(void) {
 	// Allocate blocks of varying sizes
 	for (int i = 0; i < num_sizes; i++) {
 		blocks[i] = test_mmap_allocator(block_sizes[i]);
+	}
+
+	/* A rejected mapping must not contribute virtual allocation bytes. */
+	errno = 0;
+	void *failed = (void *)syscall(SYS_mmap, blocks[0], ALLOC_SIZE_1,
+				      PROT_READ | PROT_WRITE,
+				      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+				      -1, 0);
+	if (failed != MAP_FAILED || errno != EEXIST) {
+		fprintf(stderr, "expected mmap to fail with EEXIST\n");
+		exit(1);
 	}
 
 	// Do some work
