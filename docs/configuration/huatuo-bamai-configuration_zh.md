@@ -513,6 +513,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 	# ThresholdLoad = 5
 	# Interval = 10
 	# IntervalTracing = 1800
+	# EnableDebug = false
 ```
 
 - **ThresholdLoad**：容器的系统负载平均值（loadavg）阈值。
@@ -528,6 +529,10 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 - **IntervalTracing**：连续运行间隔（秒）。
 
   默认 1800s（30 分钟）。 两次自动追踪之间的最小间隔，防止频繁执行对系统造成压力。
+
+- **EnableDebug**：强制 Dload 追踪器在每次采样时都执行抓取。
+
+  默认值：false。开启后会绕过负载阈值、最小追踪间隔与空栈检查，每次采样都会尝试为所有容器抓取任务栈。仅用于排查追踪器自身的问题，生产环境请保持关闭。
 
 #### 7.4 IOTracing 自动追踪 — 容器 IO 性能剖析
 
