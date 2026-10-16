@@ -10,7 +10,7 @@ User=root
 Group=root
 WorkingDirectory=/opt/huatuo-bamai
 ExecStart=/opt/huatuo-bamai/bin/huatuo-bamai --region example --config huatuo-bamai.conf
-ExecReload=/bin/kill -HUP $MAINPID
+# SIGHUP shuts the daemon down; configuration file changes require a restart.
 Restart=always
 RestartSec=10
 StandardOutput=journal
