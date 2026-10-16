@@ -159,7 +159,26 @@ func NormalContainers() (map[string]*Container, error) {
 
 // NormalSidecarContainers returns the normal and sidecar containers.
 func NormalSidecarContainers() (map[string]*Container, error) {
-	return ContainersByType(ContainerTypeNormal | ContainerTypeSidecar)
+	return containersByTypeQos(ContainerTypeNormal|ContainerTypeSidecar, ContainerQosLevelMin)
+}
+
+// NormalContainersWithHost returns the normal containers plus a "" key with a
+// nil container representing the host (init) network namespace. The returned
+// map is a private copy; callers may mutate it freely. Collectors that sample
+// both containers and the host use this so they never mutate the shared
+// container view returned by NormalContainers.
+func NormalContainersWithHost() (map[string]*Container, error) {
+	containers, err := containersByTypeQos(ContainerTypeNormal, ContainerQosLevelMin)
+	if err != nil {
+		return nil, err
+	}
+
+	withHost := make(map[string]*Container, len(containers)+1)
+	for id, container := range containers {
+		withHost[id] = container
+	}
+	withHost[""] = nil
+	return withHost, nil
 }
 
 // Containers returns the last committed metadata, including during a refresh

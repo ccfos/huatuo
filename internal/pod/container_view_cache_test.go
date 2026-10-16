@@ -75,3 +75,49 @@ func TestContainersByTypeQosCachedUntilCommit(t *testing.T) {
 		t.Fatalf("stale cache after commit: got %v", after)
 	}
 }
+
+func TestNormalContainersWithHost(t *testing.T) {
+	savedRecords := containerView.records
+	savedViews := containerView.views
+	savedErr := containerView.err
+	savedActive := containerView.isActive
+	t.Cleanup(func() {
+		containerView.records = savedRecords
+		containerView.views = savedViews
+		containerView.err = savedErr
+		containerView.isActive = savedActive
+	})
+
+	containerView.isActive = true
+	containerView.err = nil
+	containerView.records = map[string]*containerRecord{
+		"a": {container: &Container{ID: "a", Type: ContainerTypeNormal, Qos: containerQosGuaranteed}},
+	}
+	containerView.views = nil
+
+	// Mutating the WithHost view must not corrupt the shared cached view.
+	withHost, err := NormalContainersWithHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := withHost[""]; !ok {
+		t.Fatal("expected the host entry under the empty key")
+	}
+	if withHost[""] != nil {
+		t.Fatal("expected the host entry to be nil")
+	}
+	if len(withHost) != 2 || withHost["a"] == nil {
+		t.Fatalf("unexpected view: %v", withHost)
+	}
+
+	shared, err := NormalContainers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := shared[""]; ok {
+		t.Fatal("shared view must not contain the host entry")
+	}
+	if len(shared) != 1 {
+		t.Fatalf("shared view must be untouched: %v", shared)
+	}
+}
