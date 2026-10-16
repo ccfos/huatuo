@@ -193,7 +193,7 @@ graph TB
     | Field | Description |
     | :---------- | :----------------------------------------------------------- |
     | `Device` | Identifier of the hardware component where the error occurred (e.g., `CPU/MEM`, `MEM`, `ACPI`, `PCIe 0000:01:00.0`) |
-    | `Event` | Event subtype (`MCE`, `EDAC`, `APIC`, `AER`) |
+    | `Event` | Event subtype (`MCE`, `EDAC`, `NON_STANDARD`, `AER`, `MCE_THRESHOLD`, `ARM_GHES`) |
     | `ErrType` | Error severity level (see table below) |
     | `ObservedTimestamp` | UTC userspace observation time |
     | `KernelObservedTimestamp` | UTC kernel observation time (top-level Document field) |
