@@ -66,6 +66,9 @@ func newWatchEventsBody(
 	return &watchEventsBody{
 		subscription: subscription,
 		ticker:       time.NewTicker(keepAliveInterval),
+		// The generated response flushes after a body read. Establish idle
+		// subscriptions immediately instead of waiting for the first tick.
+		pending: []byte(": ping\n"),
 	}
 }
 
