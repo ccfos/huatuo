@@ -88,3 +88,12 @@ func TestWatchEventSeparatesKernelObservation(t *testing.T) {
 		t.Fatal("userspace observation time changed")
 	}
 }
+
+func TestWatchEventCarriesGuestOrigin(t *testing.T) {
+	document := newTestDocument("cpu", types.TracerRunTypeEvent)
+	document.SourceType = types.DocumentSourceKataGuest
+	got := documentToWatchEvent(document).Data.(types.WatchEventData)
+	if got.SourceType != types.DocumentSourceKataGuest {
+		t.Errorf("origin=%q", got.SourceType)
+	}
+}

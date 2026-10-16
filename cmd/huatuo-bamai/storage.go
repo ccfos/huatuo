@@ -25,6 +25,7 @@ import (
 	"github.com/ccfos/huatuo/internal/strutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func setupStorage(d *Daemon) (func(context.Context) error, error) {
@@ -98,7 +99,7 @@ func initStorage(
 
 func newDocumentBuilder(opts *Options) *document.Builder {
 	if opts.Mode == runmode.Sandbox {
-		return document.NewWithHostname(opts.Region, opts.GuestIdentity.NodeName)
+		return document.NewWithSource(opts.Region, opts.GuestIdentity.NodeName, types.DocumentSourceKataGuest)
 	}
 	return document.New(opts.Region)
 }
