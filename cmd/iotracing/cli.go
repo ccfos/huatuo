@@ -21,6 +21,8 @@ import (
 	"strings"
 
 	"github.com/urfave/cli/v2"
+
+	serverpprof "github.com/ccfos/huatuo/internal/server/pprof"
 )
 
 // Flag names. Centralized so that registration and lookup cannot drift.
@@ -35,6 +37,7 @@ const (
 	cliFlagMaxFilesPerPid = "max-files-per-process"
 	cliFlagSchedThreshold = "schedule-threshold"
 	cliFlagDuration       = "duration"
+	cliFlagEnablePProf    = "enable-pprof"
 )
 
 const (
@@ -95,6 +98,10 @@ func appFlags() []cli.Flag {
 		&cli.StringFlag{
 			Name:  cliFlagTaskID,
 			Usage: "task ID to associate with this session (requires --output-storage)",
+		},
+		&cli.BoolFlag{
+			Name:  cliFlagEnablePProf,
+			Usage: "serve Go runtime profiles on " + serverpprof.DefaultAddress,
 		},
 	}
 }

@@ -311,6 +311,71 @@ stop_and_wait_by_pid() {
 	wait "${pid}"
 }
 
+# ------------------------- Go runtime resource profiles ----------------------
+
+pprof_ready() {
+	local pid=$1 directory=$2 url=$3
+	# Arrays are not exported to child shells; keep explicit timeout bounds.
+	curl -fsS "${CURL_TIMEOUT[@]}" --connect-timeout 2 --max-time 3 "${url}/cmdline" \
+		> "${directory}/pprof.cmdline" 2> "${directory}/pprof.err" || return 1
+	printf '\0' >> "${directory}/pprof.cmdline"
+	# cmp -s can short-circuit on procfs's zero file size; compare saved bytes.
+	cp "/proc/${pid}/cmdline" "${directory}/target.cmdline" || return 1
+	cmp -s "${directory}/target.cmdline" "${directory}/pprof.cmdline"
+}
+
+# pprof_capture <pid> <existing-output-directory>
+# Blocks for a five-second CPU profile, then takes heap/goroutine snapshots.
+# The caller owns the target/load lifecycle and waits for its workload to be ready.
+pprof_capture() {
+	require_commands curl go awk cmp cp
+	local pid=$1 directory=$2 profile
+	local url="http://127.0.0.1:6000/debug/pprof"
+	wait_until 2 0.1 pprof_ready "${pid}" "${directory}" "${url}" || return 1
+	curl -fsS "${CURL_TIMEOUT[@]}" --connect-timeout 2 --max-time 8 \
+		"${url}/profile?seconds=5" > "${directory}/cpu.pprof" || return 1
+	for profile in heap goroutine; do
+		curl -fsS "${CURL_TIMEOUT[@]}" --connect-timeout 2 --max-time 3 "${url}/${profile}" \
+			> "${directory}/${profile}.pprof" || return 1
+	done
+	pprof_ready "${pid}" "${directory}" "${url}"
+}
+
+# Let Go decode the profile; sum the named sample column without stack filtering.
+pprof_profile_total() {
+	local file=$1 sample_type=$2
+	go tool pprof -raw "${file}" > "${file}.txt" || return 1
+	LC_ALL=C awk -v sample_type="${sample_type}" '
+		/^Samples:$/ {
+			getline
+			for (i = 1; i <= NF; i++) if ($i == sample_type) column = i
+			samples = 1; next
+		}
+		/^Locations/ { samples = 0 }
+		samples && $1 ~ /^[0-9]+:?$/ { total += $column }
+		END { if (!column) exit 1; printf "%.0f\n", total }
+	' "${file}.txt"
+}
+
+# pprof_resource_usage <capture-directory>: emit JSON after the workload ends.
+# Whole-process estimates: CPU uses one core = 100%; heap is sampled live bytes
+# at the last GC, not RSS. Heap/goroutine snapshots are not window peaks.
+pprof_resource_usage() {
+	local directory=$1 cpu_ns cpu_percent heap_bytes goroutines
+	cpu_ns=$(pprof_profile_total "${directory}/cpu.pprof" cpu/nanoseconds) || return 1
+	cpu_percent=$(LC_ALL=C awk -v cpu="${cpu_ns}" '
+		$1 == "Duration:" && $2 > 0 { printf "%.6f\n", cpu / 1e9 / $2 * 100; found = 1 }
+		END { if (!found) exit 1 }
+	' "${directory}/cpu.pprof.txt") || return 1
+	heap_bytes=$(pprof_profile_total "${directory}/heap.pprof" inuse_space/bytes) || return 1
+	goroutines=$(pprof_profile_total "${directory}/goroutine.pprof" goroutine/count) || return 1
+	if ((cpu_ns == 0)); then
+		log_warn "CPU profile has no samples; this does not establish zero CPU usage"
+	fi
+	printf '{"cpu_percent":%s,"heap_inuse_bytes":%s,"goroutines":%s}\n' \
+		"${cpu_percent}" "${heap_bytes}" "${goroutines}"
+}
+
 # ------------------------- virtualization detection -------------------------
 
 # Returns 0 when running inside a container.

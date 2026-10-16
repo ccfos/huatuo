@@ -26,17 +26,22 @@ set -exuo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-require_commands jq
+require_commands jq timeout
 bpf_tool_setup dropwatch net_dropwatch
 readonly RATE=1
 readonly DURATION=10
 readonly TARGET_IP="127.0.0.99"
 readonly TARGET_PORT=9999
 readonly EXPECTED_MAX=$((RATE * (DURATION + 1))) # +1s headroom for the first burst
+readonly DROPWATCH_CPU_LIMIT_PERCENT=5           # One fully occupied core is 100%.
+readonly DROPWATCH_HEAP_LIMIT_BYTES=$((64 * 1024 * 1024))
+readonly DROPWATCH_GOROUTINE_LIMIT=16
 DROPWATCH_PID=""
+dropwatch_load_pid=""
 
 cleanup() {
-	[[ -n "${DROPWATCH_PID}" ]] && stop_by_pid "${DROPWATCH_PID}" 5 || true
+	stop_and_wait_by_pid "${dropwatch_load_pid}" 1 || true
+	stop_and_wait_by_pid "${DROPWATCH_PID}" 5 || true
 }
 trap cleanup EXIT
 
@@ -50,6 +55,7 @@ log_info "dropwatch: rate=${RATE}/s, duration=${DURATION}s, target=${TARGET_IP}:
 	--filter "udp and port ${TARGET_PORT}" \
 	--max-events-per-second "${RATE}" \
 	--duration "${DURATION}" \
+	--enable-pprof \
 	--output json \
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
 DROPWATCH_PID=$!
@@ -66,7 +72,16 @@ timeout "${DURATION}" bash -c "
 	while :; do
 		printf x >/dev/udp/${TARGET_IP}/${TARGET_PORT}
 	done
-" > /dev/null 2>&1 || true
+" > /dev/null 2>&1 &
+dropwatch_load_pid=$!
+
+wait_until 2 0.1 test -s "${TOOL_OUT}" || fatal "dropwatch produced no events under load"
+pprof_capture "${DROPWATCH_PID}" "${TOOL_WORK_DIR}" || fatal "dropwatch pprof capture failed"
+
+dropwatch_load_status=0
+wait "${dropwatch_load_pid}" || dropwatch_load_status=$?
+dropwatch_load_pid=""
+((dropwatch_load_status == 124)) || fatal "UDP load exited unexpectedly: ${dropwatch_load_status}"
 if ! wait "${DROPWATCH_PID}"; then
 	DROPWATCH_PID=""
 	fatal "dropwatch failed while tracing rate-limited drops"
@@ -84,6 +99,16 @@ log_info "events=${events} (cap=${EXPECTED_MAX}), rate-limit warnings=${warns}"
 
 # Different kernels/distros vary in how aggressively they coalesce or
 # drop UDP packets to a closed loopback port, so keep both assertions explicit.
-((events <= EXPECTED_MAX)) || fatal "events ${events} exceed cap ${EXPECTED_MAX}"
+((events > 0 && events <= EXPECTED_MAX)) || fatal "events ${events} outside budget 1..${EXPECTED_MAX}"
 ((warns >= 1)) || fatal "expected at least one rate-limit warning under flood"
+
+# Keep budgets in the feature test; analysis runs outside the load window.
+pprof_resource_usage "${TOOL_WORK_DIR}" > "${TOOL_WORK_DIR}/resources.json" \
+	|| fatal "dropwatch pprof analysis failed"
+log_info "pprof estimates: $(< "${TOOL_WORK_DIR}/resources.json")"
+jq -e --argjson cpu "${DROPWATCH_CPU_LIMIT_PERCENT}" \
+	--argjson heap "${DROPWATCH_HEAP_LIMIT_BYTES}" --argjson goroutines "${DROPWATCH_GOROUTINE_LIMIT}" \
+	'.cpu_percent <= $cpu and .heap_inuse_bytes <= $heap
+	 and .goroutines > 0 and .goroutines <= $goroutines' \
+	"${TOOL_WORK_DIR}/resources.json" > /dev/null || fatal "dropwatch pprof resource budget exceeded"
 assert_log_has_no_failure "${TOOL_ERR}" "dropwatch"

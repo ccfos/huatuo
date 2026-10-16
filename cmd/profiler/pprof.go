@@ -16,8 +16,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"net"
 
 	serverpprof "github.com/ccfos/huatuo/internal/server/pprof"
 )
@@ -25,16 +23,5 @@ import (
 const profilerPprofAddress = ":6000"
 
 func startPprofServer(ctx context.Context, address string) (*serverpprof.Server, error) {
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return nil, fmt.Errorf("listen for pprof server on %s: %w", address, err)
-	}
-
-	server, err := serverpprof.Start(ctx, listener)
-	if err != nil {
-		_ = listener.Close()
-		return nil, err
-	}
-
-	return server, nil
+	return serverpprof.ListenAndStart(ctx, address)
 }

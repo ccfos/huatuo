@@ -24,6 +24,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
+	serverpprof "github.com/ccfos/huatuo/internal/server/pprof"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/version"
 )
@@ -89,6 +90,18 @@ func mainAction(c *cli.Context) (returnErr error) {
 	cfg, filters, err := loadConfig(c)
 	if err != nil {
 		return err
+	}
+
+	if c.Bool(cliFlagEnablePProf) {
+		server, err := serverpprof.ListenAndStart(c.Context, serverpprof.DefaultAddress)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := server.Close(); err != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("close pprof server: %w", err))
+			}
+		}()
 	}
 
 	blockDevice, err := requestPartIsBlockDevice()
