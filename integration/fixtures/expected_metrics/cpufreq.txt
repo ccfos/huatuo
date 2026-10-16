@@ -1,0 +1,5 @@
+# TYPE huatuo_bamai_cpufreq_scaling_current_hertz gauge
+huatuo_bamai_cpufreq_scaling_current_hertz{host="huatuo-dev",policy="7",region="dev"} 1.800123e+09
+huatuo_bamai_cpufreq_scaling_maximum_hertz{host="huatuo-dev",policy="7",region="dev"} 2.2e+09
+huatuo_bamai_cpufreq_hardware_maximum_hertz{host="huatuo-dev",policy="7",region="dev"} 3.2e+09
+huatuo_bamai_cpufreq_info{driver="acpi-cpufreq",governor="schedutil",host="huatuo-dev",policy="7",region="dev"} 1
