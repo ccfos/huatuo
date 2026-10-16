@@ -16,6 +16,7 @@ package flamegraph
 
 import (
 	"bytes"
+	"encoding/xml"
 	"strings"
 	"testing"
 )
@@ -38,5 +39,42 @@ func TestRenderStyleKeepsSymbolsOutOfJavaScript(t *testing.T) {
 	if !strings.Contains(content, `data-title="`) ||
 		!strings.Contains(content, "&lt;script&gt;alert(2)&lt;/script&gt;") {
 		t.Fatalf("SVG does not preserve the escaped symbol as data: %s", content)
+	}
+}
+
+func TestRenderStylePreservesFullSymbolNames(t *testing.T) {
+	symbols := []string{
+		"operator new(unsigned long)",
+		"worker(int, int)",
+		"std::vector<int>::operator[](unsigned long)",
+		"worker (2 samples, 10.00%)",
+		"函数(参数)",
+		`quoted "name" & <tag> 'value'`,
+	}
+	stacks := make([]Stack, 0, len(symbols))
+	for _, symbol := range symbols {
+		stacks = append(stacks, Stack{Names: []string{symbol}, Samples: 1})
+	}
+
+	var output bytes.Buffer
+	if err := RenderStyle(stacks, &output, DefaultStyle); err != nil {
+		t.Fatalf("RenderStyle() error = %v", err)
+	}
+	var document struct {
+		Frames []struct {
+			Name string `xml:"data-name,attr"`
+		} `xml:"g"`
+	}
+	if err := xml.Unmarshal(output.Bytes(), &document); err != nil {
+		t.Fatalf("generated SVG is not valid XML: %v", err)
+	}
+	got := make(map[string]bool, len(document.Frames))
+	for _, frame := range document.Frames {
+		got[frame.Name] = true
+	}
+	for _, symbol := range symbols {
+		if !got[symbol] {
+			t.Errorf("SVG did not preserve the complete symbol %q", symbol)
+		}
 	}
 }
