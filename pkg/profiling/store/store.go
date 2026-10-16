@@ -23,6 +23,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/vsock"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -32,8 +33,9 @@ const (
 	maxValuesSize = 1001
 )
 
-// Config contains the Elasticsearch settings used by profiling storage.
+// Config selects Elasticsearch or write-only Guest profiling storage.
 type Config struct {
+	VSOCK     *vsock.Options
 	Addresses []string
 	Username  string
 	Password  string
@@ -62,8 +64,28 @@ type Store struct {
 	commits *commitStore
 }
 
-// NewFromConfig creates profiling storage backed by Elasticsearch.
+// NewFromConfig creates profiling storage using the selected backend.
+//
+//nolint:gocritic // Startup configuration is copied once and remains immutable.
 func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
+	if config.VSOCK != nil {
+		if len(config.Addresses) > 0 {
+			return nil, errors.New("profiling store: VSOCK and Elasticsearch are mutually exclusive")
+		}
+		options := *config.VSOCK
+		options.ToolName = vsock.ProfilingTool
+		backend, err := vsock.New(options)
+		if err != nil {
+			return nil, err
+		}
+		store, err := storage.NewStore[*Document](ctx, "vsock", backend, Collection, mapper{})
+		if err != nil {
+			_ = backend.Close(context.Background())
+			return nil, err
+		}
+		return &Store{store: store}, nil
+	}
+
 	profileStore, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
 		Driver:      "elasticsearch",
 		ESAddresses: config.Addresses,
