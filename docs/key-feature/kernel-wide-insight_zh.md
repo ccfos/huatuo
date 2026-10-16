@@ -560,18 +560,18 @@ huatuo_bamai_tcp_memory_usage_percent{host="hostname",region="dev"} 0
 `/proc/sys/net/netfilter/nf_conntrack_max`。
 
 ```bash
-# HELP huatuo_bamai_net_conntrack_entries number of entries currently tracked in the nf_conntrack table
-# TYPE huatuo_bamai_net_conntrack_entries gauge
-huatuo_bamai_net_conntrack_entries{host="hostname",region="dev"} 1024
-# HELP huatuo_bamai_net_conntrack_entries_limit maximum number of entries the nf_conntrack table can hold
-# TYPE huatuo_bamai_net_conntrack_entries_limit gauge
-huatuo_bamai_net_conntrack_entries_limit{host="hostname",region="dev"} 65536
+# HELP huatuo_bamai_net_conntrack_entry_count number of entries currently tracked in the nf_conntrack table
+# TYPE huatuo_bamai_net_conntrack_entry_count gauge
+huatuo_bamai_net_conntrack_entry_count{host="hostname",region="dev"} 1024
+# HELP huatuo_bamai_net_conntrack_entry_max maximum number of entries the nf_conntrack table can hold
+# TYPE huatuo_bamai_net_conntrack_entry_max gauge
+huatuo_bamai_net_conntrack_entry_max{host="hostname",region="dev"} 65536
 ```
 
 |指标|意义|单位|对象|标签 |
 |---|---|---|---|---|
-|net_conntrack_entries|当前 nf_conntrack 表中的条目数|个|物理机| host, region |
-|net_conntrack_entries_limit|nf_conntrack 表可容纳的最大条目数|个|物理机| host, region |
+|net_conntrack_entry_count|当前 nf_conntrack 表中的条目数|个|物理机| host, region |
+|net_conntrack_entry_max|nf_conntrack 表可容纳的最大条目数|个|物理机| host, region |
 
 ### 邻居项
 

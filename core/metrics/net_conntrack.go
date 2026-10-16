@@ -33,10 +33,22 @@ import (
 // from the two sysctl files below; there is no other procfs interface for
 // them. The collector ships disabled - it is listed in the default BlackList of
 // huatuo-bamai.conf - so a host only pays for it once an operator enables it.
-const (
-	conntrackCountPath = "sys/net/netfilter/nf_conntrack_count"
-	conntrackMaxPath   = "sys/net/netfilter/nf_conntrack_max"
-)
+var conntrackSpecs = []struct {
+	path string
+	name string
+	help string
+}{
+	{
+		path: "sys/net/netfilter/nf_conntrack_count",
+		name: "entry_count",
+		help: "number of entries currently tracked in the nf_conntrack table",
+	},
+	{
+		path: "sys/net/netfilter/nf_conntrack_max",
+		name: "entry_max",
+		help: "maximum number of entries the nf_conntrack table can hold",
+	},
+}
 
 type conntrackCollector struct{}
 
@@ -49,13 +61,13 @@ func newConntrackCollector() (*tracing.EventTracingAttr, error) {
 	// missing means nf_conntrack is unavailable. A kernel built or booted
 	// without it reports ENOENT, which must disable the collector instead of
 	// failing the whole registration.
-	for _, path := range []string{conntrackCountPath, conntrackMaxPath} {
-		if err := procfs.RequireFile(path); err != nil {
+	for _, spec := range conntrackSpecs {
+		if err := procfs.RequireFile(spec.path); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil, types.ErrNotSupported
 			}
 
-			return nil, fmt.Errorf("check conntrack statistics support (%s): %w", path, err)
+			return nil, fmt.Errorf("check conntrack statistics support (%s): %w", spec.path, err)
 		}
 	}
 
@@ -66,22 +78,24 @@ func newConntrackCollector() (*tracing.EventTracingAttr, error) {
 }
 
 // Update reports the raw occupancy and capacity of the table; the fill ratio
-// is left to PromQL (entries / entries_limit), so both numbers are exported
+// is left to PromQL (entry_count / entry_max), so both numbers are exported
 // unchanged. The kernel appends a newline to each file, which
 // parseutil.ReadUint trims.
 func (c *conntrackCollector) Update() ([]*metric.Data, error) {
-	count, err := parseutil.ReadUint(procfs.Path(conntrackCountPath))
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", conntrackCountPath, err)
+	data := make([]*metric.Data, 0, len(conntrackSpecs))
+	for _, spec := range conntrackSpecs {
+		value, err := parseutil.ReadUint(procfs.Path(spec.path))
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", spec.path, err)
+		}
+
+		data = append(data, metric.NewGaugeData(
+			spec.name,
+			float64(value),
+			spec.help,
+			nil,
+		))
 	}
 
-	limit, err := parseutil.ReadUint(procfs.Path(conntrackMaxPath))
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", conntrackMaxPath, err)
-	}
-
-	return []*metric.Data{
-		metric.NewGaugeData("entries", float64(count), "number of entries currently tracked in the nf_conntrack table", nil),
-		metric.NewGaugeData("entries_limit", float64(limit), "maximum number of entries the nf_conntrack table can hold", nil),
-	}, nil
+	return data, nil
 }

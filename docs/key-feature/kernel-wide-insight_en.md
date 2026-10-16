@@ -647,18 +647,18 @@ Host nf_conntrack table occupancy and size, from
 `/proc/sys/net/netfilter/nf_conntrack_max`:
 
 ```bash
-# HELP huatuo_bamai_net_conntrack_entries number of entries currently tracked in the nf_conntrack table
-# TYPE huatuo_bamai_net_conntrack_entries gauge
-huatuo_bamai_net_conntrack_entries{host="hostname",region="dev"} 1024
-# HELP huatuo_bamai_net_conntrack_entries_limit maximum number of entries the nf_conntrack table can hold
-# TYPE huatuo_bamai_net_conntrack_entries_limit gauge
-huatuo_bamai_net_conntrack_entries_limit{host="hostname",region="dev"} 65536
+# HELP huatuo_bamai_net_conntrack_entry_count number of entries currently tracked in the nf_conntrack table
+# TYPE huatuo_bamai_net_conntrack_entry_count gauge
+huatuo_bamai_net_conntrack_entry_count{host="hostname",region="dev"} 1024
+# HELP huatuo_bamai_net_conntrack_entry_max maximum number of entries the nf_conntrack table can hold
+# TYPE huatuo_bamai_net_conntrack_entry_max gauge
+huatuo_bamai_net_conntrack_entry_max{host="hostname",region="dev"} 65536
 ```
 
 |Metric|Description|Unit|Scope| Labels |
 |---|---|---|---|---|
-|net_conntrack_entries|Number of entries currently tracked in the nf_conntrack table|count|Host| host, region |
-|net_conntrack_entries_limit|Maximum number of entries the nf_conntrack table can hold|count|Host| host, region |
+|net_conntrack_entry_count|Number of entries currently tracked in the nf_conntrack table|count|Host| host, region |
+|net_conntrack_entry_max|Maximum number of entries the nf_conntrack table can hold|count|Host| host, region |
 
 ### TcpExt
 
