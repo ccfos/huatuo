@@ -46,6 +46,74 @@ func runningPodListForTest(ids ...string) corev1.PodList {
 	return corev1.PodList{Items: []corev1.Pod{p}}
 }
 
+func TestSynchronizedContainersQueryBoundaries(t *testing.T) {
+	useContainerdForTest(t)
+	previous := containerView
+	containerView = newContainerStore()
+	t.Cleanup(func() { containerView = previous })
+	if ContainerSyncEnabled() {
+		t.Fatal("disabled container source reported enabled")
+	}
+	if got, err := SynchronizedContainers(); err != nil || len(got) != 0 {
+		t.Fatalf("disabled view = %v, %v", got, err)
+	}
+
+	store := newTestContainerStore()
+	containerView = store
+	controller := newContainerController(store)
+	id := strings.Repeat("a", 64)
+	list := runningPodListForTest(id)
+	var queryErr error
+	queries := 0
+	controller.fetch = func(context.Context) (corev1.PodList, error) {
+		queries++
+		return list, queryErr
+	}
+	controller.resolve = func(id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+		record := containerRecordForTest(id)
+		record.container.Qos = ContainerQosLevelMin
+		record.container.CgroupCss = map[string]uint64{"blkio": 123}
+		return record, nil
+	}
+	refresh := func() {
+		snapshot, err, _ := controller.refresh(t.Context(), nil, true)
+		store.commit(snapshot, err)
+	}
+	refresh()
+	got, err := SynchronizedContainers()
+	if err != nil || len(got) != 1 || got[id].CgroupCss["blkio"] != 123 {
+		t.Fatalf("available view = %v, %v", got, err)
+	}
+	delete(got, id)
+	if next, err := SynchronizedContainers(); err != nil || len(next) != 1 || queries != 1 {
+		t.Fatalf("copied view / shared producer = %v, %v, queries=%d", next, err, queries)
+	}
+
+	queryErr = errors.New("kubelet query failed")
+	refresh()
+	if !ContainerSyncEnabled() {
+		t.Fatal("unavailable container source reported disabled")
+	}
+	if got, err := SynchronizedContainers(); got != nil || !errors.Is(err, queryErr) {
+		t.Fatalf("failed strict view = %v, %v", got, err)
+	}
+	if cached, err := Containers(); err != nil || len(cached) != 1 {
+		t.Fatalf("ordinary cached view changed = %v, %v", cached, err)
+	}
+
+	queryErr = nil
+	list = corev1.PodList{}
+	refresh()
+	if got, err := SynchronizedContainers(); err != nil || len(got) != 0 {
+		t.Fatalf("confirmed empty view = %v, %v", got, err)
+	}
+	list = runningPodListForTest(id)
+	refresh()
+	if got, err := SynchronizedContainers(); err != nil || len(got) != 1 {
+		t.Fatalf("recovered view = %v, %v", got, err)
+	}
+}
+
 func TestContainerControllerIndependentOfGetters(t *testing.T) {
 	useContainerdForTest(t)
 	store := newContainerStore()

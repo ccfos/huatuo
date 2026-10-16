@@ -41,11 +41,18 @@ type BPF interface {
 	// AttachWithOptions attaches programs with options.
 	AttachWithOptions(opts []AttachOption) error
 
+	// AttachIndependently attaches one program without rolling back earlier links.
+	AttachIndependently(opt *AttachOption) error
+
 	// Attach the default programs.
 	Attach() error
 
 	// Detach all programs.
 	Detach() error
+
+	// DetachProgram closes one program's links while preserving other programs.
+	// PerfEvent programs require Detach or Close.
+	DetachProgram(programName string) error
 
 	// IsLoaded reports whether the BPF object is still loaded.
 	IsLoaded() (bool, error)
@@ -74,6 +81,11 @@ type BPF interface {
 
 	// DumpMap dump all the context of the map
 	DumpMap(mapID uint32) ([]MapItem, error)
+
+	// DumpMapBatch copies HASH/PERCPU_HASH rows under the kernel bucket lock.
+	// Values may still advance; this is not an atomic whole-map snapshot.
+	// Unsupported kernels return an error without falling back to single lookups.
+	DumpMapBatch(mapID uint32) ([]MapItem, error)
 
 	// DumpMapByName dump all the context of the map.
 	DumpMapByName(mapName string) ([]MapItem, error)

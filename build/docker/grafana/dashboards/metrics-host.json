@@ -43,6 +43,401 @@
   "panels": [
     {
       "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "id": 67,
+      "panels": [],
+      "title": "🐳 IO",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "huatuo-bamai-prom"
+      },
+      "description": "IO counts colored by six latency groups. For ranges up to 15 minutes, each bar shows one collection interval; longer ranges combine samples into about 100 bars. Hover for interval and group counts, or click to update both histograms in place. Missing samples are not filled with zeros. Zero-IO bars are hidden; detail histograms retain zero-valued buckets.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 14,
+        "h": 14
+      },
+      "id": 65,
+      "options": {
+        "renderer": "svg",
+        "map": "none",
+        "editorMode": "code",
+        "themeEditor": {
+          "name": "default",
+          "config": "{}"
+        },
+        "getOption": "// Keep selection in Grafana's variable state so the detail panels update in place.\nconst chart = context.panel.chart;\nconst theme = context.grafana.theme;\nconst groups = [\n  { le: '0.0001', name: '≤100µs', color: 'green' },\n  { le: '0.0005', name: '100–500µs', color: 'blue' },\n  { le: '0.002', name: '500µs–2ms', color: 'yellow' },\n  { le: '0.016', name: '2–16ms', color: 'orange' },\n  { le: '0.128', name: '16–128ms', color: 'red' },\n  { le: '+Inf', name: '>128ms', color: 'purple' },\n];\nconst from = Number(context.grafana.replaceVariables('${__from}'));\nconst to = Number(context.grafana.replaceVariables('${__to}'));\nconst duration = (to - from) / 1000;\nconst steps = [60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];\nconst step = duration <= 900 ? 0 :\n  (steps.find((value) => value >= duration / 100) ?? Math.ceil(duration / 8640000) * 86400);\n// A partial edge window must not shrink the inferred width of every bar.\nconst barWidth = step ? Math.max(4, Math.min(36, (chart.getWidth() - 100) * step / duration * 0.7)) : undefined;\nconst counts = new Map();\nfor (const frame of context.panel.data.series) {\n  const time = frame.fields.find((field) => field.type === 'time');\n  const count = frame.fields.find((field) => field.type === 'number');\n  const group = groups.findIndex((group) => group.le === count?.labels?.le);\n  if (!time || !count || group < 0) {\n    continue;\n  }\n  for (let index = 0; index < time.values.length; index++) {\n    const timestamp = time.values[index];\n    const value = count.values[index];\n    if (Number.isFinite(timestamp) && Number.isFinite(value)) {\n      const cumulative = counts.get(timestamp) ?? Array(groups.length).fill(null);\n      cumulative[group] = (cumulative[group] ?? 0) + value;\n      counts.set(timestamp, cumulative);\n    }\n  }\n}\n// Only complete samples can be decumulated; absent buckets are not zero IO.\nconst samples = [...counts]\n  .filter(([timestamp, cumulative]) => timestamp > from && timestamp <= to &&\n    cumulative.every((value, index) =>\n      Number.isFinite(value) && (index === 0 || value >= cumulative[index - 1])))\n  .sort((left, right) => left[0] - right[0]);\nconst periods = new Map();\nfor (const [timestamp, cumulative] of samples) {\n  // Overview and detail both filter raw samples to (start, end].\n  const boundary = step ? Math.ceil(timestamp / (step * 1000)) * step * 1000 : timestamp;\n  const end = Math.min(boundary, to);\n  const start = step ? Math.max(boundary - step * 1000, from) : timestamp;\n  const point = periods.get(end) ?? { time: end, start, cumulative: Array(groups.length).fill(0), samples: 0 };\n  cumulative.forEach((value, index) => point.cumulative[index] += value);\n  point.samples++;\n  periods.set(end, point);\n}\n// Keep zero-IO periods for detail selection, but draw only positive totals.\nconst allPeriods = [...periods.values()];\nconst points = allPeriods.filter((point) => point.cumulative.at(-1) > 0);\nconst sample = context.grafana.replaceVariables('${iolatency_sample_time:raw}');\nconst selectedTime = Math.round(Number(sample) * 1000);\nconst selected = points.find((point) => step ?\n  selectedTime > point.start && selectedTime <= point.time : point.time === selectedTime) ?? points.at(-1) ?? allPeriods.at(-1);\nconst select = (point) => {\n  const end = point?.time ?? 0;\n  // Prometheus timestamps have millisecond precision. A single-sample\n  // window excludes every earlier sample, including other series' old data.\n  const start = point ? (step ? point.start : end - 1) : 0;\n  const selection = {\n    'var-iolatency_sample_time': (end / 1000).toFixed(3),\n    'var-iolatency_sample_start': String(start),\n    'var-iolatency_window': `${Math.max(1, Math.round(end - start))}ms`,\n  };\n  if (Object.entries(selection).some(([key, value]) =>\n    context.grafana.replaceVariables('${' + key.slice(4) + ':raw}') !== value)) {\n    context.grafana.locationService.partial(selection, true);\n  }\n};\n// No valid selection uses the empty window (0, 0], clearing both details.\nselect(selected);\nconst timezone = context.grafana.replaceVariables('${__timezone}');\nconst clock = new Intl.DateTimeFormat('en-US', {\n  timeZone: timezone === 'utc' ? 'UTC' : timezone,\n  ...(duration > 86400 ? { month: '2-digit', day: '2-digit' } : {}),\n  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,\n});\nconst data = (timestamp) => points.map((point) => ({\n  value: [point.time, point.cumulative.at(-1)],\n  itemStyle: {\n    color: 'transparent',\n    borderWidth: point.time === timestamp ? (step ? 1 : 2) : 0,\n    borderColor: theme.colors.text.primary,\n  },\n}));\nconst selectPeriod = (params) => {\n  const point = periods.get(params.value[0]);\n  if (point) {\n    chart.setOption({ series: [{ id: 'io-total', data: data(point.time) }] });\n    select(point);\n  }\n};\nchart.on('click', { seriesId: 'io-total' }, selectPeriod);\nconst interval = step >= 3600 ? `${step / 3600} h` : `${step / 60} min`;\nreturn {\n  version: 2,\n  unsubscribe: () => chart.off('click', selectPeriod),\n  option: {\n    animation: false,\n    aria: { enabled: true },\n    grid: { left: 12, right: 24, top: 48, bottom: 60, containLabel: true },\n    legend: {\n      bottom: 8, selectedMode: false,\n      data: groups.map((group) => group.name),\n      textStyle: { color: theme.colors.text.primary },\n    },\n    textStyle: { color: theme.colors.text.primary, fontFamily: theme.typography.fontFamily },\n    title: points.length ? {\n      text: step ? `${interval} per bar · Total IO count` : 'One collection interval per bar',\n      left: 12, top: 4,\n      textStyle: { color: theme.colors.text.secondary, fontSize: 12, fontWeight: 'normal' },\n    } : {\n      text: allPeriods.length ? 'No IO in collected intervals' : 'No complete samples in the selected time range', left: 'center', top: 'middle',\n      textStyle: { color: theme.colors.text.secondary, fontSize: 14 },\n    },\n    tooltip: {\n      trigger: 'axis', axisPointer: { type: 'shadow' },\n      formatter: (items) => {\n        const total = items.find((item) => item.seriesId === 'io-total');\n        const point = periods.get(total.value[0]);\n        const time = step ? `${clock.format(point.start)}–${clock.format(point.time)}` : clock.format(point.time);\n        return `${time}<br/>Total IO: ${total.value[1]}<br/>` +\n          items.filter((item) => item.seriesId !== 'io-total')\n            .map((item) => `${item.marker}${item.seriesName}: ${item.value[1]}`).join('<br/>');\n      },\n    },\n    xAxis: {\n      type: 'time', min: from, max: to,\n      axisLabel: { formatter: (value) => clock.format(value), hideOverlap: true },\n      axisLine: { lineStyle: { color: theme.colors.border.weak } },\n      splitLine: { show: false },\n    },\n    yAxis: {\n      type: 'value', min: 0, minInterval: 1, name: 'IO Count',\n      splitLine: { lineStyle: { color: theme.colors.border.weak } },\n    },\n    series: [...groups.map((group, index) => ({\n      id: `io-group-${index}`, name: group.name, type: 'bar', stack: 'latency',\n      barWidth, barMaxWidth: 36, silent: true,\n      itemStyle: { color: theme.visualization.getColorByName(group.color) },\n      data: points.map((point) => [point.time,\n        point.cumulative[index] - (index ? point.cumulative[index - 1] : 0)]),\n    })), {\n      // A transparent overlay preserves the bucket colors and gives the whole bar one click target.\n      id: 'io-total', name: 'Total IO', type: 'bar', z: 3, barGap: '-100%',\n      barWidth, barMaxWidth: 36, barMinHeight: 4, emphasis: { disabled: true },\n      label: { show: true, position: 'top', formatter: (params) => `${params.value[1]}` },\n      data: data(selected?.time),\n    }],\n  },\n};\n"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "huatuo_bamai_iolatency_${iolatency_stage}{region=\"$iolatency_region\",host=\"$iolatency_host\",disk=\"$iolatency_disk\",operation=\"$iolatency_operation\",le=~\"0[.]0001|0[.]0005|0[.]002|0[.]016|0[.]128|[+]Inf\"}[${__range_s}s]",
+          "format": "time_series",
+          "instant": true,
+          "interval": "",
+          "legendFormat": "{{le}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "IO Latency Intervals",
+      "type": "volkovlabs-echarts-panel"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "huatuo-bamai-prom"
+      },
+      "description": "Latency counts across 17 buckets for the selected collection interval or combined window. Combined windows sum interval counts and retain zero-count buckets.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "custom": {
+            "axisLabel": "IO Count",
+            "axisPlacement": "auto",
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Latency Range"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "512ms–1s"
+                      },
+                      "2": {
+                        "text": "1–2s"
+                      },
+                      "0.00005": {
+                        "text": "≤ 50µs"
+                      },
+                      "0.0001": {
+                        "text": "50–100µs"
+                      },
+                      "0.00025": {
+                        "text": "100–250µs"
+                      },
+                      "0.0005": {
+                        "text": "250–500µs"
+                      },
+                      "0.001": {
+                        "text": "500µs–1ms"
+                      },
+                      "0.002": {
+                        "text": "1–2ms"
+                      },
+                      "0.004": {
+                        "text": "2–4ms"
+                      },
+                      "0.008": {
+                        "text": "4–8ms"
+                      },
+                      "0.016": {
+                        "text": "8–16ms"
+                      },
+                      "0.032": {
+                        "text": "16–32ms"
+                      },
+                      "0.064": {
+                        "text": "32–64ms"
+                      },
+                      "0.128": {
+                        "text": "64–128ms"
+                      },
+                      "0.256": {
+                        "text": "128–256ms"
+                      },
+                      "0.512": {
+                        "text": "256–512ms"
+                      },
+                      "+Inf": {
+                        "text": "> 2s"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 1,
+        "w": 10,
+        "h": 14
+      },
+      "id": 94,
+      "options": {
+        "orientation": "horizontal",
+        "xField": "Latency Range",
+        "showValue": "always",
+        "barWidth": 0.8,
+        "groupWidth": 0.85,
+        "barRadius": 0,
+        "stacking": "none",
+        "fullHighlight": true,
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "hideZeros": false
+        }
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "huatuo_bamai_iolatency_${iolatency_stage}{region=\"$iolatency_region\",host=\"$iolatency_host\",disk=\"$iolatency_disk\",operation=\"$iolatency_operation\"}[${iolatency_window:raw}] @ ${iolatency_sample_time:raw}",
+          "format": "heatmap",
+          "instant": true,
+          "interval": "",
+          "legendFormat": "{{le}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Selected Latency Distribution · 17 Buckets",
+      "transformations": [
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "fieldName": "Time",
+                "config": {
+                  "id": "greater",
+                  "options": {
+                    "value": "${iolatency_sample_start:raw}"
+                  }
+                }
+              }
+            ],
+            "type": "include",
+            "match": "all"
+          }
+        },
+        {
+          "id": "reduce",
+          "options": {
+            "reducers": [
+              "sum"
+            ],
+            "mode": "seriesToRows",
+            "labelsToFields": false
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {
+              "Field": "Latency Range",
+              "Total": "IO Count"
+            },
+            "indexByName": {
+              "Field": 0,
+              "Total": 1
+            }
+          }
+        }
+      ],
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "huatuo-bamai-prom"
+      },
+      "description": "IO size counts across six buckets for the selected window. Queued counts bio sizes; Request counts the last dispatched size for SCSI and completion bytes for NVMe/virtio. Zero-count buckets are retained.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "custom": {
+            "axisLabel": "IO Count",
+            "axisPlacement": "auto",
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "gradientMode": "none"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Size Range"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "4096": {
+                        "text": "≤ 4KiB"
+                      },
+                      "16384": {
+                        "text": "4–16KiB"
+                      },
+                      "65536": {
+                        "text": "16–64KiB"
+                      },
+                      "262144": {
+                        "text": "64–256KiB"
+                      },
+                      "1048576": {
+                        "text": "256KiB–1MiB"
+                      },
+                      "+Inf": {
+                        "text": "> 1MiB"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 8
+      },
+      "id": 68,
+      "options": {
+        "orientation": "horizontal",
+        "xField": "Size Range",
+        "showValue": "always",
+        "barWidth": 0.8,
+        "groupWidth": 0.85,
+        "barRadius": 0,
+        "stacking": "none",
+        "fullHighlight": true,
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "hideZeros": false
+        }
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "huatuo_bamai_iolatency_${iolatency_size_point}{region=\"$iolatency_region\",host=\"$iolatency_host\",disk=\"$iolatency_disk\",operation=\"$iolatency_operation\"}[${iolatency_window:raw}] @ ${iolatency_sample_time:raw}",
+          "format": "heatmap",
+          "instant": true,
+          "interval": "",
+          "legendFormat": "{{le}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Selected Interval IO Size Distribution",
+      "transformations": [
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              {
+                "fieldName": "Time",
+                "config": {
+                  "id": "greater",
+                  "options": {
+                    "value": "${iolatency_sample_start:raw}"
+                  }
+                }
+              }
+            ],
+            "type": "include",
+            "match": "all"
+          }
+        },
+        {
+          "id": "reduce",
+          "options": {
+            "reducers": [
+              "sum"
+            ],
+            "mode": "seriesToRows",
+            "labelsToFields": false
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {
+              "Field": "Size Range",
+              "Total": "IO Count"
+            },
+            "indexByName": {
+              "Field": 0,
+              "Total": 1
+            }
+          }
+        }
+      ],
+      "type": "barchart"
+    },
+    {
+      "collapsed": false,
       "datasource": {
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
@@ -51,7 +446,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 24
       },
       "id": 80,
       "panels": [],
@@ -117,7 +512,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 1
+        "y": 25
       },
       "id": 33,
       "options": {
@@ -274,7 +669,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 34
       },
       "id": 5,
       "options": {
@@ -323,7 +718,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 19
+        "y": 43
       },
       "id": 4,
       "panels": [
@@ -390,7 +785,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 20
+            "y": 44
           },
           "id": 2,
           "options": {
@@ -492,7 +887,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 29
+            "y": 53
           },
           "id": 28,
           "options": {
@@ -594,7 +989,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 38
+            "y": 62
           },
           "id": 6,
           "options": {
@@ -694,7 +1089,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 47
+            "y": 71
           },
           "id": 29,
           "options": {
@@ -793,7 +1188,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 56
+            "y": 80
           },
           "id": 30,
           "options": {
@@ -892,7 +1287,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 65
+            "y": 89
           },
           "id": 31,
           "options": {
@@ -992,7 +1387,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 74
+            "y": 98
           },
           "id": 32,
           "options": {
@@ -1092,7 +1487,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 83
+            "y": 107
           },
           "id": 89,
           "options": {
@@ -1195,7 +1590,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 92
+            "y": 116
           },
           "id": 90,
           "options": {
@@ -1258,7 +1653,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 44
       },
       "id": 38,
       "panels": [
@@ -1324,7 +1719,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 21
+            "y": 45
           },
           "id": 39,
           "options": {
@@ -1424,7 +1819,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 30
+            "y": 54
           },
           "id": 40,
           "options": {
@@ -1524,7 +1919,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 39
+            "y": 63
           },
           "id": 41,
           "options": {
@@ -1624,7 +2019,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 48
+            "y": 72
           },
           "id": 42,
           "options": {
@@ -1723,7 +2118,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 57
+            "y": 81
           },
           "id": 43,
           "options": {
@@ -1822,7 +2217,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 66
+            "y": 90
           },
           "id": 44,
           "options": {
@@ -1921,7 +2316,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 75
+            "y": 99
           },
           "id": 45,
           "options": {
@@ -1983,7 +2378,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 45
       },
       "id": 10,
       "panels": [
@@ -2049,7 +2444,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 4
+            "y": 46
           },
           "id": 11,
           "options": {
@@ -2162,7 +2557,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 13
+            "y": 55
           },
           "id": 12,
           "options": {
@@ -2274,7 +2669,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 22
+            "y": 64
           },
           "id": 13,
           "options": {
@@ -2385,7 +2780,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 31
+            "y": 73
           },
           "id": 14,
           "options": {
@@ -2497,7 +2892,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 40
+            "y": 82
           },
           "id": 15,
           "options": {
@@ -2609,7 +3004,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 49
+            "y": 91
           },
           "id": 16,
           "options": {
@@ -2765,7 +3160,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 58
+            "y": 100
           },
           "id": 17,
           "options": {
@@ -2888,7 +3283,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 67
+            "y": 109
           },
           "id": 18,
           "options": {
@@ -3015,7 +3410,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 76
+            "y": 118
           },
           "id": 19,
           "options": {
@@ -3183,7 +3578,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 85
+            "y": 127
           },
           "id": 20,
           "options": {
@@ -3336,7 +3731,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 94
+            "y": 136
           },
           "id": 21,
           "options": {
@@ -3475,7 +3870,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 103
+            "y": 145
           },
           "id": 22,
           "options": {
@@ -3614,7 +4009,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 112
+            "y": 154
           },
           "id": 24,
           "options": {
@@ -3753,7 +4148,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 121
+            "y": 163
           },
           "id": 23,
           "options": {
@@ -3892,7 +4287,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 130
+            "y": 172
           },
           "id": 58,
           "options": {
@@ -4031,7 +4426,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 139
+            "y": 181
           },
           "id": 59,
           "options": {
@@ -4150,7 +4545,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 148
+            "y": 190
           },
           "id": 25,
           "options": {
@@ -4344,7 +4739,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 157
+            "y": 199
           },
           "id": 27,
           "options": {
@@ -4628,7 +5023,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 166
+            "y": 208
           },
           "id": 26,
           "options": {
@@ -4867,7 +5262,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 175
+            "y": 217
           },
           "id": 36,
           "options": {
@@ -5046,7 +5441,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 184
+            "y": 226
           },
           "id": 35,
           "options": {
@@ -5165,7 +5560,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 193
+            "y": 235
           },
           "id": 70,
           "options": {
@@ -5314,7 +5709,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 202
+            "y": 244
           },
           "id": 79,
           "options": {
@@ -5378,362 +5773,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
-      },
-      "id": 67,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "description": "Disk IO with q2c latency >20ms (5-min incremental).",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 20,
-                "gradientMode": "hue",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "short"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 24,
-            "x": 0,
-            "y": 230
-          },
-          "id": 65,
-          "options": {
-            "legend": {
-              "calcs": [
-                "max",
-                "mean"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true,
-              "sortBy": "Mean",
-              "sortDesc": true,
-              "width": 500
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.0.3",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "increase(huatuo_bamai_iolatency_blkdisk_q2c{host=~\"$host\",region=~\"$region\"}[5m])",
-              "interval": "",
-              "legendFormat": "{{host}},disk={{disk}} [{{latency}}]",
-              "refId": "A"
-            }
-          ],
-          "title": "Slow IO (q2c)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "description": "Disk IO with d2c latency >20ms (5-min incremental).",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 20,
-                "gradientMode": "hue",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "short"
-            },
-            "overrides": [
-              {
-                "__systemRef": "hideSeriesFrom",
-                "matcher": {
-                  "id": "byNames",
-                  "options": {
-                    "mode": "exclude",
-                    "names": [
-                      "ddcloud-underlay-kernel-node004.gz01,disk=259:1 [30ms - 50ms]"
-                    ],
-                    "prefix": "All except:",
-                    "readOnly": true
-                  }
-                },
-                "properties": [
-                  {
-                    "id": "custom.hideFrom",
-                    "value": {
-                      "legend": false,
-                      "tooltip": false,
-                      "viz": true
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 24,
-            "x": 0,
-            "y": 238
-          },
-          "id": 68,
-          "options": {
-            "legend": {
-              "calcs": [
-                "max",
-                "mean"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true,
-              "sortBy": "Mean",
-              "sortDesc": true,
-              "width": 500
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.0.3",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "increase(huatuo_bamai_iolatency_blkdisk_d2c{host=~\"$host\",region=~\"$region\"}[5m])",
-              "interval": "",
-              "legendFormat": "{{host}},disk={{disk}} [{{latency}}]",
-              "refId": "A"
-            }
-          ],
-          "title": "Slow IO (d2c)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "description": "Disk IO with RAID flush latency >20ms (5-min incremental).",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 20,
-                "gradientMode": "hue",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "short"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 24,
-            "x": 0,
-            "y": 246
-          },
-          "id": 69,
-          "options": {
-            "legend": {
-              "calcs": [
-                "max",
-                "mean"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true,
-              "sortBy": "Mean",
-              "sortDesc": true,
-              "width": 500
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.0.3",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "increase(huatuo_bamai_iolatency_blkdisk_freeze{host=~\"$host\",region=~\"$region\"}[5m])",
-              "interval": "",
-              "legendFormat": "{{host}},disk={{disk}} [{{latency}}]",
-              "refId": "A"
-            }
-          ],
-          "title": "Slow Flush (RAID)",
-          "type": "timeseries"
-        }
-      ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "refId": "A"
-        }
-      ],
-      "title": "🐳 IO",
-      "type": "row"
-    },
-    {
-      "collapsed": true,
-      "datasource": {
-        "type": "elasticsearch",
-        "uid": "huatuo-bamai-es"
-      },
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 23
+        "y": 46
       },
       "id": 72,
       "panels": [
@@ -5800,7 +5840,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 24
+            "y": 47
           },
           "id": 73,
           "options": {
@@ -5904,7 +5944,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 33
+            "y": 56
           },
           "id": 74,
           "options": {
@@ -6008,7 +6048,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 42
+            "y": 65
           },
           "id": 76,
           "options": {
@@ -6112,7 +6152,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 51
+            "y": 74
           },
           "id": 75,
           "options": {
@@ -6216,7 +6256,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 60
+            "y": 83
           },
           "id": 77,
           "options": {
@@ -6320,7 +6360,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 69
+            "y": 92
           },
           "id": 78,
           "options": {
@@ -6384,7 +6424,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 47
       },
       "id": 88,
       "panels": [
@@ -6451,7 +6491,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 0
+            "y": 48
           },
           "id": 81,
           "options": {
@@ -6552,7 +6592,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 9
+            "y": 57
           },
           "id": 82,
           "options": {
@@ -6692,7 +6732,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 18
+            "y": 66
           },
           "id": 83,
           "options": {
@@ -6793,7 +6833,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 27
+            "y": 75
           },
           "id": 84,
           "options": {
@@ -6907,7 +6947,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 36
+            "y": 84
           },
           "id": 85,
           "options": {
@@ -7008,7 +7048,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 45
+            "y": 93
           },
           "id": 86,
           "options": {
@@ -7109,7 +7149,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 54
+            "y": 102
           },
           "id": 87,
           "options": {
@@ -7225,6 +7265,158 @@
         "type": "query"
       },
       {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "huatuo-bamai-prom"
+        },
+        "definition": "label_values(huatuo_bamai_iolatency_interval_end_timestamp_seconds{region=~\"$region\"}, region)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO Region",
+        "multi": false,
+        "name": "iolatency_region",
+        "options": [],
+        "query": {
+          "query": "label_values(huatuo_bamai_iolatency_interval_end_timestamp_seconds{region=~\"$region\"}, region)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "huatuo-bamai-prom"
+        },
+        "definition": "label_values(huatuo_bamai_iolatency_interval_end_timestamp_seconds{region=\"$iolatency_region\"}, host)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO Host",
+        "multi": false,
+        "name": "iolatency_host",
+        "options": [],
+        "query": {
+          "query": "label_values(huatuo_bamai_iolatency_interval_end_timestamp_seconds{region=\"$iolatency_region\"}, host)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "huatuo-bamai-prom"
+        },
+        "definition": "label_values({__name__=~\"huatuo_bamai_iolatency_.*_bucket\",region=\"$iolatency_region\",host=\"$iolatency_host\"}, disk)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO Disk",
+        "multi": false,
+        "name": "iolatency_disk",
+        "options": [],
+        "query": {
+          "query": "label_values({__name__=~\"huatuo_bamai_iolatency_.*_bucket\",region=\"$iolatency_region\",host=\"$iolatency_host\"}, disk)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 2,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "read",
+          "value": "read"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO Operation",
+        "multi": false,
+        "name": "iolatency_operation",
+        "options": [
+          {
+            "selected": true,
+            "text": "read",
+            "value": "read"
+          },
+          {
+            "selected": false,
+            "text": "write",
+            "value": "write"
+          }
+        ],
+        "query": "read : read,write : write",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "D→C",
+          "value": "d2c_seconds_bucket"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO Latency Stage",
+        "multi": false,
+        "name": "iolatency_stage",
+        "options": [
+          {
+            "selected": false,
+            "text": "Q→G",
+            "value": "q2g_seconds_bucket"
+          },
+          {
+            "selected": false,
+            "text": "Q→D",
+            "value": "q2d_seconds_bucket"
+          },
+          {
+            "selected": true,
+            "text": "D→C",
+            "value": "d2c_seconds_bucket"
+          }
+        ],
+        "query": "Q→G : q2g_seconds_bucket,Q→D : q2d_seconds_bucket,D→C : d2c_seconds_bucket",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "Queued (Q)",
+          "value": "queued_io_size_bytes_bucket"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "IO Size Sampling Point",
+        "multi": false,
+        "name": "iolatency_size_point",
+        "options": [
+          {
+            "selected": true,
+            "text": "Queued (Q)",
+            "value": "queued_io_size_bytes_bucket"
+          },
+          {
+            "selected": false,
+            "text": "Request (C)",
+            "value": "issued_io_size_bytes_bucket"
+          }
+        ],
+        "query": "Queued (Q) : queued_io_size_bytes_bucket,Request (C) : issued_io_size_bytes_bucket",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
         "current": {
           "text": "huatuo_bamai_sockstat_TCP_tw",
           "value": "huatuo_bamai_sockstat_TCP_tw"
@@ -7249,6 +7441,63 @@
         "skipUrlSync": false,
         "sort": 2,
         "type": "query"
+      },
+      {
+        "name": "iolatency_sample_time",
+        "label": "Selected IO Interval End",
+        "type": "textbox",
+        "hide": 2,
+        "query": "0",
+        "current": {
+          "text": "0",
+          "value": "0"
+        },
+        "options": [
+          {
+            "text": "0",
+            "value": "0",
+            "selected": true
+          }
+        ],
+        "skipUrlSync": false
+      },
+      {
+        "name": "iolatency_sample_start",
+        "label": "Selected IO Window Start (milliseconds)",
+        "type": "textbox",
+        "hide": 2,
+        "query": "0",
+        "current": {
+          "text": "0",
+          "value": "0"
+        },
+        "options": [
+          {
+            "text": "0",
+            "value": "0",
+            "selected": true
+          }
+        ],
+        "skipUrlSync": false
+      },
+      {
+        "name": "iolatency_window",
+        "label": "Selected Interval Duration",
+        "type": "textbox",
+        "hide": 2,
+        "query": "1ms",
+        "current": {
+          "text": "1ms",
+          "value": "1ms"
+        },
+        "options": [
+          {
+            "text": "1ms",
+            "value": "1ms",
+            "selected": true
+          }
+        ],
+        "skipUrlSync": false
       }
     ]
   },
