@@ -38,7 +38,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 - **事件时间线关联**：将 `softlockup`、`memory_oom_kill` 等内核事件叠加到 Grafana 时间线上，与应用错误率、延迟曲线精确对齐，快速定位根因。
 - **异常驱动告警**：以内核事件替代固定阈值告警，降低误报率。例如收到 `ras` 硬件错误事件时直接触发高优告警，而不依赖 CPU 错误率超阈值。
-- **容量与稳定性分析**：长期订阅 `memburst`、`dload` 等 AutoTracing 事件，建立节点稳定性基线，为容量规划提供内核级依据。
+- **容量与稳定性分析**：长期跟踪 `memburst`、`dload` 等 AutoTracing 观测数据，建立节点稳定性基线，为容量规划提供内核级依据。
 - **多维下钻**：事件中携带容器 ID、命名空间、地域等上下文，告警链接可直接下钻到对应的 Pod、Node、Region 视图。
 
 ### 安全审计与合规
@@ -48,7 +48,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 ### 混沌工程与压测验证
 
-- **故障注入验证**：混沌工程平台注入网络延迟、内存压力等故障后，实时订阅 `net_rx_latency`、`memburst` 事件验证故障是否生效，取代人工观察。
+- **故障注入验证**：混沌工程平台注入网络延迟、内存压力等故障后，实时订阅 `net_rx_latency`、`memory_reclaim_events` 事件验证故障是否生效，取代人工观察。
 - **压测基线建立**：压测期间持续订阅全量事件，记录首个内核异常事件的出现时机，精确标定系统承压极限。
 
 ### AIOps 智能运维
@@ -107,7 +107,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
     "observed_timestamp": "2026-05-18T10:23:45Z",
     "tracer_name": "memory_oom_kill",
     "tracer_id": "abc123",
-    "tracer_run_type": "auto",
+    "tracer_run_type": "event",
     "container_id": "d3f1a2b4c5e6",
     "container_hostname": "app-pod",
     "container_host_namespace": "prod",
@@ -127,7 +127,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 | `kernel_observed_timestamp` | string | 可选；内核观测事件的 UTC 时间 |
 | `tracer_name`              | string | 触发事件的采集器名称（见下文内核事件列表）   |
 | `tracer_id`                | string | 事件实例唯一 ID                             |
-| `tracer_run_type`          | string | 采集模式，`auto`（自动触发）或 `manual`     |
+| `tracer_run_type` | string | 文档运行类型。本接口仅投递 `event` 文档；共享文档契约另定义 `autotracing`、`tracing`、`profiling` |
 | `container_id`             | string | 容器 ID（容器级事件时存在）                 |
 | `container_hostname`       | string | 容器主机名                                  |
 | `container_host_namespace` | string | 容器所在命名空间                            |
@@ -151,11 +151,10 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 | `net_rx_latency`         | 网络接收延迟异常事件                            |
 | `sched_tick`             | 调度 tick 间隔异常追踪事件                     |
 | `memory_reclaim_events`  | 内存回收异常事件                               |
-| `cpuidle`                | CPU 空闲率异常（AutoTracing 自动触发）         |
-| `cpusys`                 | CPU 系统态占用率异常（AutoTracing 自动触发）   |
-| `dload`                  | 系统负载异常（AutoTracing 自动触发）           |
-| `iotracing`              | I/O 延迟异常（AutoTracing 自动触发）           |
-| `memburst`               | 内存突增异常（AutoTracing 自动触发）           |
+| `tcp_retransmit` | TCP 重传或 Tail Loss Probe 事件（默认经全局 `BlackList` 关闭） |
+| `mthreads_xid` | 摩尔线程 GPU XID 错误事件（默认经全局 `BlackList` 关闭） |
+
+本接口仅投递 `event` 文档。AutoTracing 观测（`cpuidle`、`cpusys`、`dload`、`iotracing`、`memburst`、`irqtracing`、`memory_threshold_snapshot`）以 `tracer_run_type = autotracing` 保存，不在本接口的投递范围内。
 
 ---
 

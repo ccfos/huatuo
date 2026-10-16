@@ -38,7 +38,7 @@ Integrating HUATUO kernel events into an observability platform adds a kernel-le
 
 - **Event timeline correlation**: Overlay `softlockup`, `memory_oom_kill`, and other kernel events onto Grafana timelines, aligning them precisely with application error rates and latency curves for root-cause analysis.
 - **Anomaly-driven alerting**: Replace fixed-threshold alerts with kernel events to reduce false positives. For example, a `ras` hardware error event triggers a high-priority alert directly, without relying on a CPU error rate crossing a threshold.
-- **Capacity and stability analysis**: Subscribe to `memburst`, `dload`, and other AutoTracing events over time to establish a node stability baseline and provide kernel-level data for capacity planning.
+- **Capacity and stability analysis**: Track `memburst`, `dload`, and other AutoTracing observations over time to establish a node stability baseline and provide kernel-level data for capacity planning.
 - **Multi-dimensional drill-down**: Events carry container ID, namespace, region, and other context fields. Alert links can drill down directly to the corresponding Pod, Node, or Region view.
 
 ### Security Auditing and Compliance
@@ -48,7 +48,7 @@ Integrating HUATUO kernel events into an observability platform adds a kernel-le
 
 ### Chaos Engineering and Load Testing
 
-- **Fault injection verification**: After injecting network latency or memory pressure via a chaos engineering platform, subscribe to `net_rx_latency` and `memburst` events in real time to verify the fault is active, replacing manual observation.
+- **Fault injection verification**: After injecting network latency or memory pressure via a chaos engineering platform, subscribe to `net_rx_latency` and `memory_reclaim_events` events in real time to verify the fault is active, replacing manual observation.
 - **Load test baseline**: Subscribe to all events during a load test. The timestamp of the first kernel anomaly event precisely marks the system's stress threshold.
 
 ### AIOps
@@ -107,7 +107,7 @@ The `data` field contains the standard HUATUO event record:
     "observed_timestamp": "2026-05-18T10:23:45Z",
     "tracer_name": "memory_oom_kill",
     "tracer_id": "abc123",
-    "tracer_run_type": "auto",
+    "tracer_run_type": "event",
     "container_id": "d3f1a2b4c5e6",
     "container_hostname": "app-pod",
     "container_host_namespace": "prod",
@@ -127,7 +127,7 @@ The `data` field contains the standard HUATUO event record:
 | `kernel_observed_timestamp` | string | Optional UTC time when the kernel observed the event |
 | `tracer_name` | string | Name of the tracer that triggered the event (see the event list below) |
 | `tracer_id` | string | Unique ID of this event instance |
-| `tracer_run_type` | string | Collection mode: `auto` (triggered automatically) or `manual` |
+| `tracer_run_type` | string | Document run type. This endpoint delivers `event` documents only; the shared document contract also defines `autotracing`, `tracing`, and `profiling` |
 | `container_id` | string | Container ID (present for container-level events) |
 | `container_hostname` | string | Container hostname |
 | `container_host_namespace` | string | Namespace of the container |
@@ -151,11 +151,10 @@ The `data` field contains the standard HUATUO event record:
 | `net_rx_latency` | Network receive latency anomaly events |
 | `sched_tick` | Scheduler tick interval tracing events |
 | `memory_reclaim_events` | Memory reclaim anomaly events |
-| `cpuidle` | CPU idle rate anomaly (AutoTracing, auto-triggered) |
-| `cpusys` | CPU system-mode usage anomaly (AutoTracing, auto-triggered) |
-| `dload` | System load anomaly (AutoTracing, auto-triggered) |
-| `iotracing` | I/O latency anomaly (AutoTracing, auto-triggered) |
-| `memburst` | Memory usage spike anomaly (AutoTracing, auto-triggered) |
+| `tcp_retransmit` | TCP retransmission or Tail Loss Probe events (disabled by default via the global `BlackList`) |
+| `mthreads_xid` | Moore Threads GPU XID error events (disabled by default via the global `BlackList`) |
+
+The endpoint delivers `event` documents only. AutoTracing observations (`cpuidle`, `cpusys`, `dload`, `iotracing`, `memburst`, `irqtracing`, and `memory_threshold_snapshot`) are saved with `tracer_run_type = autotracing` and are not part of this stream.
 
 ---
 
