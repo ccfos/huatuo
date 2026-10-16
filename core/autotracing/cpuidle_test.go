@@ -350,6 +350,137 @@ func TestContainerCPUStateTraceScore(t *testing.T) {
 	}
 }
 
+func TestContainerCPUStateTraceScoreBranches(t *testing.T) {
+	t.Parallel()
+
+	for _, channel := range []string{"user", "system", "total"} {
+		t.Run(channel, func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range []struct {
+				name           string
+				percent, delta int64
+				want           bool
+			}{
+				{"both exceeded", 61, 21, true},
+				{"equal percentage", 60, 21, false},
+				{"equal delta", 61, 20, false},
+				{"percentage only", 80, 0, false},
+				{"delta only", 40, 30, false},
+				{"falling utilization", 80, -20, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					threshold := cpuIdleThreshold{
+						percent: cpuUsageBreakdown[int64]{user: 100, system: 100, total: 100},
+						delta:   cpuUsageBreakdown[int64]{user: 100, system: 100, total: 100},
+					}
+					var state containerCPUState
+					switch channel {
+					case "user":
+						threshold.percent.user, threshold.delta.user = 60, 20
+						state.currentPercent.user, state.percentDelta.user = tc.percent, tc.delta
+					case "system":
+						threshold.percent.system, threshold.delta.system = 60, 20
+						state.currentPercent.system, state.percentDelta.system = tc.percent, tc.delta
+					case "total":
+						threshold.percent.total, threshold.delta.total = 60, 20
+						state.currentPercent.total, state.percentDelta.total = tc.percent, tc.delta
+					}
+					if _, got := state.traceScore(threshold); got != tc.want {
+						t.Fatalf("percent=%d delta=%d: trigger=%t, want %t", tc.percent, tc.delta, got, tc.want)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestCPUIdleTracingInitialHighUsageAndIntegerPercent(t *testing.T) {
+	t.Parallel()
+
+	threshold := cpuIdleThreshold{
+		percent: cpuUsageBreakdown[int64]{user: 50, system: 100, total: 100},
+		delta:   cpuUsageBreakdown[int64]{user: 20, system: 100, total: 100},
+	}
+	var state containerCPUState
+	now := time.Unix(100, 0)
+	state.update(cpuUsageBreakdown[uint64]{user: 10_000_000}, .5, now)
+	state.update(cpuUsageBreakdown[uint64]{user: 10_304_999}, .5, now.Add(time.Second))
+	if state.currentPercent.user != 60 || state.percentDelta.user != 0 {
+		t.Fatalf("first percentage=%+v delta=%+v, want truncated 60%% and zero delta", state.currentPercent, state.percentDelta)
+	}
+	if _, trigger := state.traceScore(threshold); trigger {
+		t.Fatal("initial high utilization invented a spike without a preceding percentage")
+	}
+}
+
+func TestCPUIdleTracingSplitTotalSpike(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name                   string
+		partial, steady, delta int64
+		wantTrigger            bool
+	}{
+		{"equal delta", 40, 60, 20, false},
+		{"truncated percent", 39, 59, 20, false},
+		{"equal delta with margin", 40, 60, 10, true},
+		{"truncated percent with margin", 39, 59, 10, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			threshold := cpuIdleThreshold{
+				percent: cpuUsageBreakdown[int64]{user: 100, system: 100, total: 40},
+				delta:   cpuUsageBreakdown[int64]{user: 100, system: 100, total: tc.delta},
+			}
+			var state containerCPUState
+			var usage uint64
+			triggered := false
+			start := time.Unix(100, 0)
+			for i, percent := range []int64{0, 0, tc.partial, tc.steady} {
+				usage += uint64(percent) * 20_000
+				state.update(cpuUsageBreakdown[uint64]{total: usage}, 1, start.Add(time.Duration(i)*2*time.Second))
+				_, trigger := state.traceScore(threshold)
+				triggered = triggered || trigger
+			}
+			if triggered != tc.wantTrigger {
+				t.Fatalf("total 0→%d→%d, delta threshold=%d: trigger=%t, want %t",
+					tc.partial, tc.steady, tc.delta, triggered, tc.wantTrigger)
+			}
+		})
+	}
+}
+
+func TestCPUIdleTracingSelectTraceTargetTieAndIndependentCooldown(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(100, 0)
+	tracer := &cpuIdleTracing{
+		minTraceInterval: 30 * time.Second,
+		threshold: cpuIdleThreshold{
+			percent: cpuUsageBreakdown[int64]{user: 50},
+			delta:   cpuUsageBreakdown[int64]{user: 20},
+		},
+		containers: map[string]*containerCPUState{
+			"a": {
+				containerID: "a", hasPercent: true, lastSampleAt: now,
+				currentPercent: cpuUsageBreakdown[int64]{user: 80}, percentDelta: cpuUsageBreakdown[int64]{user: 40},
+			},
+			"b": {
+				containerID: "b", hasPercent: true, lastSampleAt: now,
+				currentPercent: cpuUsageBreakdown[int64]{user: 80}, percentDelta: cpuUsageBreakdown[int64]{user: 40},
+			},
+		},
+	}
+	if target := tracer.selectTraceTarget(now); target != tracer.containers["a"] {
+		t.Fatalf("equal-score target=%+v, want container a", target)
+	}
+	tracer.containers["a"].lastTraceAt = now.Add(-time.Second)
+	if target := tracer.selectTraceTarget(now); target != tracer.containers["b"] {
+		t.Fatalf("target while a is cooling down=%+v, want container b", target)
+	}
+}
+
 func TestCPUIdleTracingReconcileContainerStates(t *testing.T) {
 	t.Parallel()
 

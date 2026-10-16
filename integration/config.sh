@@ -190,6 +190,33 @@ BlackList = ["arp", "ascend_npu", "memory_threshold_snapshot", "cpu_stat", "cpu_
 EOF
 }
 
+# The E2E uses real host counters and perf, with an isolated API and storage.
+write_cpusys_e2e_config() {
+	local blacklist=""
+	[[ ${CPUSYS_DISABLED} != true ]] || blacklist='"cpusys", '
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${CPUSYS_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[AutoTracing.CPUSys]
+    SysThreshold = ${CPUSYS_USAGE}
+    DeltaSysThreshold = ${CPUSYS_DELTA}
+    Interval = ${CPUSYS_INTERVAL}
+    IntervalTracing = ${CPUSYS_COOLDOWN}
+    RunTracingToolTimeout = ${CPUSYS_DURATION}
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+[Storage.Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "${STORAGE_USERNAME}"
+    Password = "${STORAGE_PASSWORD}"
+    Index = "${CPUSYS_INDEX}"
+EOF
+}
+
 # The iotracing test controls proc/diskstats and the toolstream subprocess.
 write_iotracing_autotracing_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
@@ -355,6 +382,60 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
 EOF
 }
 
+write_cpu_util_config() {
+	local cpu_blacklist=""
+	[[ ${CPU_UTIL_DISABLED} != true ]] || cpu_blacklist='"cpu_util", '
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_stat", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${CPU_UTIL_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${CPU_UTIL_KUBELET_PORT}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+EOF
+}
+
+write_runqlat_config() {
+	local runqlat_blacklist=""
+	[[ ${RUNQLAT_DISABLED} != true ]] || runqlat_blacklist='"runqlat", '
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = [${runqlat_blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${RUNQLAT_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${RUNQLAT_KUBELET_PORT}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+EOF
+}
+
+write_cpu_stat_config() {
+	local cpu_blacklist=""
+	[[ ${CPU_STAT_DISABLED} != true ]] || cpu_blacklist='"cpu_stat", '
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${CPU_STAT_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${CPU_STAT_KUBELET_PORT}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+EOF
+}
+
 # The caller supplies the real kubelet endpoint, certificates, and output limits.
 write_memory_threshold_snapshot_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
@@ -378,5 +459,83 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
 
 [Storage.LocalFile]
     Path = "${go_snapshot_case_dir}/events"
+EOF
+}
+
+# The dload case owns its Pod, IO device, endpoint and storage index.
+write_dload_autotracing_config() {
+	local blacklist="" es_config=""
+	[[ ${DLOAD_DISABLED} != true ]] || blacklist='"dload", '
+	if [[ -n ${STORAGE_ADDR} ]]; then
+		es_config="[Storage.Elasticsearch]
+    Address = \"${STORAGE_ADDR}\"
+    Username = \"${STORAGE_USERNAME}\"
+    Password = \"${STORAGE_PASSWORD}\"
+    Index = \"${DLOAD_INDEX}\""
+	fi
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${DLOAD_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${DLOAD_KUBELET_PORT}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+[AutoTracing]
+    IssuesList = ${DLOAD_ISSUES}
+[AutoTracing.Dload]
+    Interval = ${DLOAD_INTERVAL}
+    IntervalTracing = ${DLOAD_COOLDOWN}
+    ThresholdLoad = ${DLOAD_THRESHOLD}
+    EnableDebug = ${DLOAD_DEBUG}
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+${es_config}
+EOF
+}
+
+write_cpuidle_autotracing_config() {
+	local blacklist="" es_config=""
+	[[ ${CPUIDLE_DISABLED} != true ]] || blacklist='"cpuidle", '
+	if [[ -n ${STORAGE_ADDR} ]]; then
+		es_config="[Storage.Elasticsearch]
+    Address = \"${STORAGE_ADDR}\"
+    Username = \"${STORAGE_USERNAME}\"
+    Password = \"${STORAGE_PASSWORD}\"
+    Index = \"${CPUIDLE_INDEX}\""
+	fi
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${CPUIDLE_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${CPUIDLE_KUBELET_PORT}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+[AutoTracing.CPUIdle]
+    UserThreshold = ${CPUIDLE_THRESHOLDS[0]}
+    SysThreshold = ${CPUIDLE_THRESHOLDS[1]}
+    UsageThreshold = ${CPUIDLE_THRESHOLDS[2]}
+    DeltaUserThreshold = ${CPUIDLE_THRESHOLDS[3]}
+    DeltaSysThreshold = ${CPUIDLE_THRESHOLDS[4]}
+    DeltaUsageThreshold = ${CPUIDLE_THRESHOLDS[5]}
+    Interval = ${CPUIDLE_INTERVAL}
+    IntervalTracing = ${CPUIDLE_COOLDOWN}
+    RunTracingToolTimeout = ${CPUIDLE_DURATION}
+[[AutoTracing.CPUIdle.Filter.Included]]
+    Field = "${CPUIDLE_INCLUDE_FIELD}"
+    Pattern = "${CPUIDLE_INCLUDE}"
+[[AutoTracing.CPUIdle.Filter.Excluded]]
+    Field = "${CPUIDLE_EXCLUDE_FIELD}"
+    Pattern = "${CPUIDLE_EXCLUDE}"
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+${es_config}
 EOF
 }
