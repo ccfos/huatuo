@@ -94,7 +94,7 @@ func newPipedServer(t *testing.T) (rawClient net.Conn, clientEnc *capnp.Encoder,
 // handshake sends a Connect frame via enc using Client.handshake.
 func handshake(t *testing.T, enc *capnp.Encoder, rawClient net.Conn, serviceName, version, taskID string) error {
 	t.Helper()
-	return (&Client{encoder: enc, conn: rawClient}).handshake(serviceName, "", version, taskID)
+	return (&Client{encoder: enc, conn: rawClient}).handshake(serviceName, "", version, taskID, ProtocolVersion)
 }
 
 // sendChunk sends a Chunk frame via enc.

@@ -27,12 +27,13 @@ import (
 type Client struct {
 	encoder *capnp.Encoder
 	conn    net.Conn
+	stop    func() bool
 }
 
 // handshake writes the one-shot ConnectRequest frame. UDS has no handshake;
 // the server reads this frame, parses metadata, and starts dispatching chunks.
 // There is no server ack.
-func (c *Client) handshake(serviceName, toolName, version, taskID string) error {
+func (c *Client) handshake(serviceName, toolName, version, taskID string, protoVersion uint32) error {
 	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err != nil {
 		return err
@@ -65,7 +66,7 @@ func (c *Client) handshake(serviceName, toolName, version, taskID string) error 
 		return err
 	}
 
-	connect.SetProtoVersion(3)
+	connect.SetProtoVersion(protoVersion)
 
 	return c.encoder.Encode(m)
 }
@@ -131,7 +132,12 @@ func (c *Client) Send(ctx context.Context, data []byte, opts SendOptions) error 
 }
 
 // Close releases the connection without sending a protocol frame.
-func (c *Client) Close() error { return c.conn.Close() }
+func (c *Client) Close() error {
+	if c.stop != nil {
+		c.stop()
+	}
+	return c.conn.Close()
+}
 
 func (c *Client) receiveCommitResult(ctx context.Context) error {
 	msg, err := capnp.NewDecoder(c.conn).Decode()
@@ -168,11 +174,64 @@ func NewClient(path, serviceName, toolName, version, taskID string) (*Client, er
 	}
 
 	c := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
-	if err := c.handshake(serviceName, toolName, version, taskID); err != nil {
+	if err := c.handshake(serviceName, toolName, version, taskID, ProtocolVersion); err != nil {
 		// The caller never sees the connection, so it must not leak.
 		_ = conn.Close()
 		return nil, fmt.Errorf("transport: send connect: %w", err)
 	}
 
 	return c, nil
+}
+
+// NewClientWithConn takes ownership of conn, including handshake failures.
+func NewClientWithConn(conn net.Conn, toolName, version, taskID string, protoVersion uint32) (*Client, error) {
+	return NewClientWithConnContext(context.Background(), conn, toolName, version, taskID, protoVersion)
+}
+
+// NewClientWithConnContext closes conn when ctx is canceled, interrupting
+// both handshake writes and later sends. The caller owns ctx's lifetime.
+func NewClientWithConnContext(ctx context.Context, conn net.Conn, toolName, version, taskID string, protoVersion uint32) (*Client, error) {
+	if conn == nil {
+		return nil, errors.New("transport: connection must not be nil")
+	}
+	if err := ctx.Err(); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	c := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
+	c.stop = context.AfterFunc(ctx, func() { _ = conn.Close() })
+	if err := c.handshake(toolName, toolName, version, taskID, protoVersion); err != nil {
+		_ = c.Close()
+		return nil, fmt.Errorf("transport: send connect: %w", errors.Join(err, ctx.Err()))
+	}
+	return c, nil
+}
+
+// ChunkFrameSize returns the encoded Cap'n Proto frame size for one data chunk.
+func ChunkFrameSize(data []byte) (int, error) {
+	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil {
+		return 0, err
+	}
+	defer m.Release()
+
+	root, err := NewRootMessage(seg)
+	if err != nil {
+		return 0, err
+	}
+	chunk, err := root.NewChunk()
+	if err != nil {
+		return 0, err
+	}
+	if len(data) > 0 {
+		if err := chunk.SetData(data); err != nil {
+			return 0, err
+		}
+	}
+
+	frame, err := m.Marshal()
+	if err != nil {
+		return 0, err
+	}
+	return len(frame), nil
 }
