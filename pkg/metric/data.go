@@ -30,6 +30,18 @@ var (
 	// FIXME If you use this package to other project.
 	defaultHostname string
 	defaultRegion   string
+
+	// cachedHostname is read once; os.Hostname is a syscall and
+	// newData/newContainerData run for every metric of every collection
+	// tick, so re-reading it per data point is measurable overhead. The
+	// node hostname is treated as static for the process lifetime.
+	cachedHostname = sync.OnceValue(func() string {
+		hostname, err := os.Hostname()
+		if err != nil {
+			return defaultHostname
+		}
+		return hostname
+	})
 )
 
 func DefaultHostname() string {
@@ -114,10 +126,7 @@ func newData(name string, value float64, typ int, help string, label map[string]
 		help:      help,
 	}
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = defaultHostname
-	}
+	hostname := cachedHostname()
 
 	data.labelKey = append(data.labelKey, LabelRegion, LabelHost)
 	data.labelValue = append(data.labelValue,
@@ -194,10 +203,7 @@ func newContainerData(container *pod.Container, name string, value float64, typ 
 		help:      help,
 	}
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = defaultHostname
-	}
+	hostname := cachedHostname()
 
 	// default label
 	data.labelKey = append(data.labelKey,
