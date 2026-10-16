@@ -611,5 +611,12 @@ func (b *defaultBPF) DumpMapByName(mapName string) ([]MapItem, error) {
 
 // DetachOnContextDone is a hook for context-driven detach handling.
 func (b *defaultBPF) DetachOnContextDone(ctx context.Context, cancel context.CancelFunc) {
-	// TODO: implement
+	go func() {
+		<-ctx.Done()
+		if err := b.Detach(); err != nil {
+			log.WithError(err).WithField("bpf", b.name).
+				Warn("failed to detach BPF after context cancellation")
+		}
+		cancel()
+	}()
 }
