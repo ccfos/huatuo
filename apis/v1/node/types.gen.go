@@ -323,9 +323,12 @@ type WatchEventData struct {
 	// ObservedTimestamp UTC time when the event producer observed the event in userspace, emitted with nine fractional digits.
 	ObservedTimestamp time.Time `json:"observed_timestamp"`
 	Region            string    `json:"region"`
-	TracerID          *string   `json:"tracer_id,omitempty"`
-	TracerName        *string   `json:"tracer_name,omitempty"`
-	TracerRunType     *string   `json:"tracer_run_type,omitempty"`
+
+	// SourceType Observation producer origin (host or kata_guest); omitted for historical documents with unknown origin.
+	SourceType    *string `json:"source_type,omitempty"`
+	TracerID      *string `json:"tracer_id,omitempty"`
+	TracerName    *string `json:"tracer_name,omitempty"`
+	TracerRunType *string `json:"tracer_run_type,omitempty"`
 }
 
 // WatchEventFilters defines model for WatchEventFilters.

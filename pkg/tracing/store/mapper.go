@@ -40,19 +40,20 @@ func (mapper) Encode(document *Document) ([]byte, error) {
 }
 
 func (mapper) Decode(record driver.Record) (*Document, error) {
-	var document Document
-	if err := json.Unmarshal(record.Data, &document); err != nil {
+	document, err := DecodeDocument(record.Data)
+	if err != nil {
 		return nil, err
 	}
 	if err := document.validate(); err != nil {
 		return nil, err
 	}
-	return &document, nil
+	return document, nil
 }
 
 func (mapper) Fields(document *Document) (map[string]any, error) {
 	fields := map[string]any{
 		fieldRecordID:                             document.TracerID,
+		types.DocumentFieldSourceType:             document.SourceType,
 		types.DocumentFieldHostname:               document.Hostname,
 		types.DocumentFieldRegion:                 document.Region,
 		types.DocumentFieldUploadedTimestamp:      document.UploadedTimestamp,
@@ -80,6 +81,7 @@ func (mapper) Fields(document *Document) (map[string]any, error) {
 func (mapper) Indexes() []driver.Index {
 	return []driver.Index{
 		{Field: fieldRecordID},
+		{Field: types.DocumentFieldSourceType},
 		{Field: types.DocumentFieldHostname},
 		{Field: types.DocumentFieldRegion},
 		{Field: types.DocumentFieldUploadedTimestamp},

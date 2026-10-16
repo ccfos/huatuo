@@ -19,6 +19,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/runmode"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestSandboxDocumentNodeIdentity(t *testing.T) {
@@ -27,7 +28,17 @@ func TestSandboxDocumentNodeIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata.Hostname != "physical-node" || metadata.Region != "test" {
+	if metadata.Hostname != "physical-node" || metadata.Region != "test" || metadata.SourceType != types.DocumentSourceKataGuest {
 		t.Errorf("Guest document metadata=%+v", metadata)
+	}
+}
+
+func TestHostDocumentOrigin(t *testing.T) {
+	metadata, err := newDocumentBuilder(&Options{Mode: runmode.Baremetal}).Build(&document.Input{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.SourceType != types.DocumentSourceHost {
+		t.Errorf("Host origin=%q", metadata.SourceType)
 	}
 }
