@@ -20,6 +20,8 @@ import (
 	"io"
 	"os"
 
+	"github.com/ccfos/huatuo/internal/strutil"
+
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -75,7 +77,7 @@ func printIOTracingSnapshot(w io.Writer, snapshot *types.IOTracingSnapshot) {
 	fmt.Fprintln(w, "=======  ==================== ======= ======== ========= ========== =====")
 
 	for _, p := range snapshot.Processes {
-		comm := p.Comm
+		comm := strutil.EscapeControls(p.Comm)
 		if len(comm) > 20 {
 			comm = comm[:17] + "..."
 		} else {
@@ -100,13 +102,13 @@ func printIOTracingSnapshot(w io.Writer, snapshot *types.IOTracingSnapshot) {
 			formatBytes(p.TotalFsReadBps),
 			formatBytes(p.TotalFsWriteBps),
 			p.TotalFileCount)
-		fmt.Fprintf(w, "COMMAND: %-20s\n", p.Comm)
+		fmt.Fprintf(w, "COMMAND: %-20s\n", strutil.EscapeControls(p.Comm))
 
 		fmt.Fprintln(w, "-----------------------------------")
 		fmt.Fprintln(w, "DEVICE  FS_READ FS_WRITE DISK_READ DISK_WRITE   LATENCY(us)                         FILE/INODE")
 
 		for _, f := range p.TotalFiles {
-			path := f.Path
+			path := strutil.EscapeControls(f.Path)
 			if f.IsDirect {
 				if path == "" {
 					path = "[direct IO]"

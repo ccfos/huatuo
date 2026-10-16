@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ccfos/huatuo/internal/strutil"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ccfos/huatuo/internal/flamegraph"
@@ -205,12 +207,12 @@ func (m Model) View() string { //nolint:gocritic // tea.Model interface requires
 		rootValue = selected.Value
 	}
 
-	fmt.Fprintf(&out, "HUATUO perf flamegraph  frames=%d  focus=%s\n", len(m.visible), m.focus.Label)
+	fmt.Fprintf(&out, "HUATUO perf flamegraph  frames=%d  focus=%s\n", len(m.visible), strutil.EscapeControls(m.focus.Label))
 	fmt.Fprintf(&out, "keys: up/down scroll  enter zoom  backspace back  / search  n next  q quit\n")
 	if m.searching {
-		fmt.Fprintf(&out, "search: %s_\n", m.query)
+		fmt.Fprintf(&out, "search: %s_\n", strutil.EscapeControls(m.query))
 	} else if m.lastSearch != "" {
-		fmt.Fprintf(&out, "search: %s  matches=%d\n", m.lastSearch, len(m.matches))
+		fmt.Fprintf(&out, "search: %s  matches=%d\n", strutil.EscapeControls(m.lastSearch), len(m.matches))
 	} else {
 		out.WriteString("search: none\n")
 	}
@@ -252,7 +254,7 @@ func (m *Model) renderRow(cursor, match string, node *Node, rootValue int64) str
 	if labelWidth < 12 {
 		labelWidth = 12
 	}
-	label := truncate(node.Label, labelWidth)
+	label := truncate(strutil.EscapeControls(node.Label), labelWidth)
 	bar := strings.Repeat("#", barWidth)
 	return fmt.Sprintf("%s%s%s%s %-*s %6.2f%%", cursor, match, indent, bar, labelWidth, label, percent)
 }
@@ -262,7 +264,7 @@ func renderDetails(node *Node, focusValue int64) string {
 		return "selected: none\n"
 	}
 	return fmt.Sprintf("selected: %s\nvalue: %d  self: %d  focus: %.2f%%  children: %d\npath: %s\n",
-		node.Label, node.Value, node.Self, percent(node.Value, focusValue), len(node.Children), nodePath(node))
+		strutil.EscapeControls(node.Label), node.Value, node.Self, percent(node.Value, focusValue), len(node.Children), strutil.EscapeControls(nodePath(node)))
 }
 
 func (m *Model) refreshVisible() {

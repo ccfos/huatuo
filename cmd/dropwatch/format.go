@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ccfos/huatuo/internal/strutil"
+
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/linkstatus"
@@ -70,7 +72,7 @@ func (s *textWriter) Write(ev *types.DropWatchTracing) error {
 	line = append(line, " pid="...)
 	line = strconv.AppendUint(line, ev.PID, 10)
 	line = append(line, '[')
-	line = append(line, ev.Comm...)
+	line = append(line, strutil.EscapeControls(ev.Comm)...)
 	line = append(line, "] addr="...)
 	line = append(line, ev.PacketSkbAddr...)
 	line = append(line, " source="...)
