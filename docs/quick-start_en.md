@@ -46,7 +46,7 @@ If you want to further understand HUATUO's operational mechanisms, architecture 
 $ docker compose --project-directory ./build/docker up
 ```
 
-This command pulls the latest images and starts components including [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com)，huatuo-bamai. After successful command execution, open your browser and visit [http://localhost:3000](http://localhost:3000) to access the monitoring dashboard (Grafana default admin account: admin, password: admin; Since your system is in normal state, the Events and AutoTracing dashboards typically won't display data).
+This command pulls the latest images and starts components including [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com), huatuo-bamai, and huatuo-apiserver. After successful command execution, open your browser and visit [http://localhost:3000](http://localhost:3000) to access the monitoring dashboard (Grafana default admin account: admin, password: admin; Since your system is in normal state, the Events and AutoTracing dashboards typically won't display data).
 
 ![HUATUO huatuo-bamai Component Operation Diagram](/docs/img/quickstart-components.png)
 
