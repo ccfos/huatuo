@@ -29,6 +29,16 @@ func NormalizeFilterValue(filter Filter) (any, error) {
 		}
 
 		return nil, nil
+	case OpPrefix:
+		value, ok := filter.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf(
+				"%w: field %q operator %s requires a string value",
+				ErrInvalidQuery, filter.Field, filter.Op,
+			)
+		}
+
+		return value, nil
 	case OpIn:
 		values, err := FlattenInValues(filter.Value)
 		if err != nil {

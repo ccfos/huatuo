@@ -81,6 +81,16 @@ func TestBuildClauseComparisons(t *testing.T) {
 			`{"bool":{"must_not":[{"exists":{"field":"label"}}]}}`,
 		},
 		{
+			"prefix",
+			driver.Filter{Field: "label.keyword", Op: driver.OpPrefix, Value: "pod-a"},
+			`{"prefix":{"label.keyword":{"value":"pod-a"}}}`,
+		},
+		{
+			"native prefix",
+			driver.Filter{Field: "label", Op: driver.OpPrefix, Value: "pod-a"},
+			`{"prefix":{"label":{"value":"pod-a"}}}`,
+		},
+		{
 			"false",
 			driver.Filter{Field: "enabled", Op: driver.OpEq, Value: false},
 			`{"term":{"enabled":{"value":false}}}`,

@@ -427,6 +427,7 @@ Elasticsearch share the following contract for non-null scalar values:
 | `OpGt`, `OpGte`, `OpLt`, `OpLte` | Strict / inclusive range bounds |
 | `OpIn` | Membership in a non-empty slice or array of scalar values |
 | `OpExists`, `OpNotExists` | Has / lacks a non-null queryable value; omit `Value` |
+| `OpPrefix` | String values beginning with the given prefix; requires a string `Value` |
 
 Empty strings are literal values: `OpEq("")` matches an empty string, while
 `OpNe("")` requires an existing, non-null, non-empty string. To query missing
@@ -444,8 +445,11 @@ For Elasticsearch, callers must supply the exact indexed field: use the original
 field for a `keyword` mapping, or an explicitly configured keyword subfield such
 as `hostname.keyword` for a `text` mapping. The backend neither guesses subfields
 nor combines text and keyword queries. `OpNe` applies `exists` and `must_not term`
-to the same field. Full-text matching and array equality are outside this scalar
-comparison contract.
+to the same field. `OpPrefix` maps to an Elasticsearch `prefix` query and
+therefore requires the same exact-mapped keyword field as `OpEq`; analyzed text
+fields would not match the raw prefix. SQLite applies `LIKE` with wildcard
+escaping, so `%` and `_` in the prefix match literally. Full-text matching and
+array equality are outside this scalar comparison contract.
 
 Elasticsearch existence refers to indexed values, not `_source` key presence.
 Mapping options such as `ignore_above`, `null_value`, and normalizers can change

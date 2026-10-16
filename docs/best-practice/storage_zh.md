@@ -423,10 +423,15 @@ graph TB
 | `OpGt`、`OpGte`、`OpLt`、`OpLte` | 严格／包含边界的范围比较 |
 | `OpIn` | 属于非空切片或数组中的标量值 |
 | `OpExists`、`OpNotExists` | 存在／不存在非 null 的可查询值；不设置 `Value` |
+| `OpPrefix` | 字符串值以指定前缀开头；`Value` 必须为字符串 |
 
 空字符串是字面值：`OpEq("")` 匹配空字符串；`OpNe("")` 要求字符串存在、非 null
 且非空。查询缺失字段应使用 `OpNotExists`，`OpEq("")` 不再表示字段缺失。
 主机 profiling 查询改用 `container_hostname` 的 `OpNotExists`，保留原有筛选行为。
+
+`OpPrefix` 在 Elasticsearch 端映射为 `prefix` 查询，与 `OpEq` 一样要求精确映射的
+keyword 字段；分词的 text 字段无法匹配原始前缀。SQLite 端使用 `LIKE` 并转义
+通配符，前缀中的 `%` 和 `_` 按字面量匹配。
 
 比较值支持 Go 内建字符串、布尔、整数及有限浮点数，范围比较不接受布尔值。
 `time.Time` 和 `timeutil.Timestamp` 统一转为保留九位小数的 UTC 字符串，

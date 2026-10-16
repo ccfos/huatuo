@@ -80,6 +80,8 @@ const (
 	OpExists Op = "exists"
 	// OpNotExists matches fields without a non-null queryable value.
 	OpNotExists Op = "not_exists"
+	// OpPrefix matches string values beginning with the filter value's prefix.
+	OpPrefix Op = "prefix"
 )
 
 // Filter describes one field predicate in a query. Comparisons accept non-null

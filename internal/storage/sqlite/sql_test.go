@@ -39,6 +39,10 @@ func TestSQLiteFilterSemantics(t *testing.T) {
 		{"greater equal", driver.Filter{Field: "n", Op: driver.OpGte, Value: int64(9007199254740993)}, []string{"exact", "phrase"}},
 		{"less", driver.Filter{Field: "n", Op: driver.OpLt, Value: int64(9007199254740993)}, []string{"empty"}},
 		{"less equal", driver.Filter{Field: "n", Op: driver.OpLte, Value: int64(9007199254740993)}, []string{"empty", "exact"}},
+		{"prefix", driver.Filter{Field: "label", Op: driver.OpPrefix, Value: "run"}, []string{"exact", "phrase"}},
+		{"empty prefix", driver.Filter{Field: "label", Op: driver.OpPrefix, Value: ""}, []string{"empty", "exact", "phrase"}},
+		{"prefix underscore literal", driver.Filter{Field: "label", Op: driver.OpPrefix, Value: "runnin_"}, nil},
+		{"prefix percent literal", driver.Filter{Field: "label", Op: driver.OpPrefix, Value: "run%"}, nil},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

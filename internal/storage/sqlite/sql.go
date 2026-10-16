@@ -169,6 +169,9 @@ func buildWhereSQL(filters []driver.Filter) (string, []any, error) {
 			clauses = append(clauses, fieldExpr+" IS NOT NULL")
 		} else if filter.Op == driver.OpNotExists {
 			clauses = append(clauses, fieldExpr+" IS NULL")
+		} else if filter.Op == driver.OpPrefix {
+			clauses = append(clauses, fieldExpr+" LIKE ? ESCAPE '\\'")
+			args = append(args, likeEscape(value.(string))+"%")
 		} else {
 			return "", nil, driver.ErrUnsupportedOp
 		}
@@ -200,6 +203,12 @@ func jsonExtractExpr(field string) string {
 
 func jsonPath(field string) string {
 	return "$." + field
+}
+
+// likeEscape escapes LIKE wildcards so a prefix matches literal characters only.
+func likeEscape(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(value)
 }
 
 func quoteIdentifier(name string) string {
