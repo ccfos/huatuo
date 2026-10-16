@@ -54,7 +54,11 @@ func (p *processor) Process(stack Stack) {
 
 func (p *processor) Finalize() {
 	p.sort(p.frames)
-	p.calcPcts(p.frames, 100, 0)
+	var total int64
+	for i := range p.frames {
+		total += p.frames[i].SampleCount
+	}
+	p.calcPcts(p.frames, total, 0)
 }
 
 func (p *processor) Result() (frames []frame, maxDepth int) {
@@ -71,13 +75,8 @@ func (p *processor) sort(frames []frame) {
 	}
 }
 
-func (p *processor) calcPcts(frames []frame, totalPct, leftPct float32) {
-	var total int64
-
-	for i := range frames {
-		total += frames[i].SampleCount
-	}
-
+// All depths use the profile total so parent self samples retain their width.
+func (p *processor) calcPcts(frames []frame, total int64, leftPct float32) {
 	if total == 0 {
 		return
 	}
@@ -85,14 +84,14 @@ func (p *processor) calcPcts(frames []frame, totalPct, leftPct float32) {
 	d := leftPct
 
 	for i := range frames {
-		pct := float32(frames[i].SampleCount) / float32(total) * totalPct
+		pct := float32(frames[i].SampleCount) * 100 / float32(total)
 		frames[i].SamplePercent = pct
 		frames[i].LeftPercent = d
 		d += pct
 	}
 
 	for i := range frames {
-		p.calcPcts(frames[i].Children, frames[i].SamplePercent, frames[i].LeftPercent)
+		p.calcPcts(frames[i].Children, total, frames[i].LeftPercent)
 	}
 }
 
