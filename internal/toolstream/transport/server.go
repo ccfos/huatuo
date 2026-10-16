@@ -107,6 +107,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	}
 
 	sess, err := parseSession(firstMsg)
+	firstMsg.Release()
 	if err != nil {
 		log.Warnf("connect: %v", err)
 		return
@@ -140,13 +141,17 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 
 		chunk, err := parseChunk(msg)
 		if err != nil {
+			msg.Release()
 			log.Warnf("%s: recv: %v", sess.ToolName, err)
 			return
 		}
 
 		s.handler(sess, chunk)
 
-		if chunk.End {
+		// The handler has consumed Data; return the decoded frame to Cap'n Proto's pool.
+		end := chunk.End
+		msg.Release()
+		if end {
 			return
 		}
 	}
