@@ -19,7 +19,7 @@ HUATUO uses eBPF technology to observe anomalous events in real time across core
 
 Compared to traditional kernel log (dmesg/syslog) collection, eBPF-based event observation reduces the risk of data loss from log buffer overflow; it can capture transient anomalies that never appear in kernel logs (such as excessive scheduler tick intervals); and it provides container-level event correlation for precise root-cause analysis in cloud-native environments.
 
-Twelve event types are continuously observed, covering CPU scheduling health (sched_tick, softlockup, hungtask), memory pressure (memory_oom_kill, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
+Thirteen event types are continuously observed, covering CPU scheduling health (sched_tick, softlockup, hungtask), memory pressure (memory_oom_kill, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras, mthreads_xid).
 
 ## 🎯 Use Cases
 
@@ -69,8 +69,11 @@ All events provide default values and are operational without any configuration.
 | `netdev_events` | netlink | NIC link state change | Physical NIC link failures |
 | `netdev_bonding_lacp` | kprobe | LACP protocol state change (IEEE 802.3ad mode only) | Fault boundary between physical machines and switches |
 | `netdev_txqueue_timeout` | kprobe | NIC transmit queue timeout | NIC transmit queue hardware failure |
+| `mthreads_xid` | MUSA driver poll | Moore Threads GPU XID error at or above the configured severity (reported only after `MthreadsXidLevel` is set) | GPU driver and hardware fault detection |
 
 For tcp_retransmit usage, fields, classification, and drop correlation, refer to the [tcpshark documentation](/docs/best-practice/tcpshark_en.md).
+
+For mthreads_xid severity levels, enabling, and prerequisites, refer to the [configuration reference](/docs/configuration/huatuo-bamai-configuration_en.md).
 
 ### Fields
 
