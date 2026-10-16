@@ -47,6 +47,10 @@ type Formatter struct {
 
 var _ output.Formatter = (*Formatter)(nil)
 
+func init() {
+	output.RegisterFormatter(output.FormatDump, func() output.Formatter { return New(Options{}) })
+}
+
 // New returns a Formatter with the given options. Indent defaults to 4 spaces.
 func New(opts Options) *Formatter {
 	if opts.Indent == "" {

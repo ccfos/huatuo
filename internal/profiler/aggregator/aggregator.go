@@ -37,7 +37,7 @@ type Aggregator interface {
 	// Reset clears accumulated state for the next cycle.
 	Reset()
 
-	// OutputFormatter returns the formatter for file output (raw, flamegraph, svg).
+	// OutputFormatter returns the formatter for non-upload output formats.
 	OutputFormatter() output.Formatter
 }
 

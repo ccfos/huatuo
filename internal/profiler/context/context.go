@@ -24,8 +24,11 @@ import (
 	"sync"
 
 	"github.com/ccfos/huatuo/internal/profiler/output"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/chrometrace"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/dump"
 	_ "github.com/ccfos/huatuo/internal/profiler/output/flamegraph"
 	_ "github.com/ccfos/huatuo/internal/profiler/output/raw"
+	_ "github.com/ccfos/huatuo/internal/profiler/output/speedscope"
 	psignal "github.com/ccfos/huatuo/internal/profiler/signal"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/profiling"
