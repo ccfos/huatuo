@@ -190,6 +190,33 @@ BlackList = ["arp", "ascend_npu", "memory_threshold_snapshot", "cpu_stat", "cpu_
 EOF
 }
 
+# The E2E uses real host counters and perf, with an isolated API and storage.
+write_cpusys_e2e_config() {
+	local blacklist=""
+	[[ ${CPUSYS_DISABLED} != true ]] || blacklist='"cpusys", '
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${CPUSYS_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[AutoTracing.CPUSys]
+    SysThreshold = ${CPUSYS_USAGE}
+    DeltaSysThreshold = ${CPUSYS_DELTA}
+    Interval = ${CPUSYS_INTERVAL}
+    IntervalTracing = ${CPUSYS_COOLDOWN}
+    RunTracingToolTimeout = ${CPUSYS_DURATION}
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+[Storage.Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "${STORAGE_USERNAME}"
+    Password = "${STORAGE_PASSWORD}"
+    Index = "${CPUSYS_INDEX}"
+EOF
+}
+
 # The iotracing test controls proc/diskstats and the toolstream subprocess.
 write_iotracing_autotracing_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
