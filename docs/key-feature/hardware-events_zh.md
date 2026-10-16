@@ -191,7 +191,7 @@ graph TB
     | 字段名      | 含义                                                         |
     | :---------- | :----------------------------------------------------------- |
     | `Device`    | 发生错误的硬件部件标识（如 `CPU/MEM`、`MEM`、`ACPI`、`PCIe 0000:01:00.0`） |
-    | `Event`     | 事件子类型（`MCE`、`EDAC`、`APIC`、`AER`） |
+    | `Event`     | 事件子类型（`MCE`、`EDAC`、`NON_STANDARD`、`AER`、`MCE_THRESHOLD`、`ARM_GHES`） |
     | `ErrType`   | 错误严重级别（见下表）                                       |
     | `ObservedTimestamp` | 用户态观测事件的 UTC 时间                              |
     | `KernelObservedTimestamp` | 内核观测事件的 UTC 时间（Document 顶层字段） |
