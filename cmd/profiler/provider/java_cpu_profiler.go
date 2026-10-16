@@ -82,14 +82,7 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	for _, pid := range pids {
-		if err := javaruntime.PrepareJavaAgent(pid, pctx.ToolDir); err != nil {
-			return fmt.Errorf("prepare Java agent for PID %d: %w", pid, err)
-		}
-	}
-
 	baseArgs := []string{
-		"--libpath", "/tmp/libasyncProfiler.so",
 		"-i", fmt.Sprintf("%dms", 1000/pctx.Freq),
 		"-j", "256",
 	}

@@ -96,7 +96,7 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 		context.WithoutCancel(ctx),
 		asyncProfilerStopCommandTimeout,
 	)
-	stopProfilerErr := StopAsyncProfiler(stopCtx, path, pid)
+	stopProfilerErr := StopAsyncProfiler(stopCtx, path, pid, asyncProfilerLibPath(args))
 	cancel()
 	processStopErr := <-processStopDone
 	cancelProcessStop()
@@ -115,9 +115,19 @@ func runAsyncProfiler(ctx context.Context, pid int, path string, args []string) 
 	return result
 }
 
+// asyncProfilerLibPath returns the library path used by the start command.
+func asyncProfilerLibPath(args []string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--libpath" {
+			return args[i+1]
+		}
+	}
+	return "/tmp/libasyncProfiler.so"
+}
+
 // StopAsyncProfiler asks the injected agent in one target JVM to stop.
-func StopAsyncProfiler(ctx context.Context, asprofPath string, pid int) error {
-	args := []string{"--libpath", "/tmp/libasyncProfiler.so", "stop", strconv.Itoa(pid)}
+func StopAsyncProfiler(ctx context.Context, asprofPath string, pid int, libPath string) error {
+	args := []string{"--libpath", libPath, "stop", strconv.Itoa(pid)}
 	result := runCommand(ctx, pid, &executil.Spec{
 		Path:            asprofPath,
 		Args:            args,
