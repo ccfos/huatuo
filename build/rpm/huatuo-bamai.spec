@@ -1,6 +1,6 @@
 Name: huatuo-bamai
-Version: 2.1.0
-Release: 3%{?dist}
+Version: 2.3.0
+Release: 1%{?dist}
 Summary: Huatuo is a cloud-native operating system observability project
 
 # Disable debug package and build-id generation
@@ -173,6 +173,14 @@ else
 fi
 
 %changelog
+* Tue Sep 29 2026 peter <peterrock6666@gmail.com> - 2.3.0-1
+- [Type] bugfix
+- [DESC] Aligned the package version with the released project version
+- Version was still 2.1.0 after v2.2.0 and v2.3.0 were released, and Source0
+  resolves v%{version}, so a build of this spec packaged the v2.1.0 sources
+  under a 2.1.0 package name; the Makefile APP_VERSION is 2.3.0
+- Release resets to 1 for the new version
+
 * Mon Dec 23 2025 panzerzheng <panzerzheng@tencent.com> - 2.1.0-3
 - [Type] optimization
 - [DESC] Optimized Grafana configuration files packaging
