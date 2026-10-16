@@ -8,9 +8,11 @@ nameOverride: ""
 fullnameOverride: ""
 
 config:
-  name: huatuo-bamai-config
+  # Defaults to the release's full name with the -config suffix.
+  name: ""
   fileName: huatuo-bamai.conf
   mountPath: /home/huatuo-bamai/conf/huatuo-bamai.conf
+  # Required. Pass the configuration with --set-file config.content=path/to/file.
   content: ""
 
 podAnnotations:
