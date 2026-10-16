@@ -58,8 +58,11 @@ type loadedProgram struct {
 	programType   ebpf.ProgramType
 	sectionName   string
 	sectionPrefix string
-	handle        *ebpf.Program
-	links         map[string]link.Link
+	// attachTo is the kernel symbol recorded at load time. Tracing programs
+	// are pinned to it by the kernel, so it also names the attach target.
+	attachTo string
+	handle   *ebpf.Program
+	links    map[string]link.Link
 }
 
 // defaultBPF holds loaded BPF maps and programs.
@@ -116,15 +119,99 @@ func LoadBPF(bpfName string, consts map[string]any) (BPF, error) {
 
 // loadBPFFromReader loads the BPF object from reader.
 func loadBPFFromReader(bpfName string, rd io.ReaderAt, consts map[string]any) (BPF, error) {
-	specs, err := ebpf.LoadCollectionSpecFromReader(rd)
+	specs, err := collectionSpecFromReader(bpfName, rd)
 	if err != nil {
-		return nil, fmt.Errorf("parse BPF object %q: %w", bpfName, err)
+		return nil, err
 	}
 
 	return loadBPFFromCollectionSpec(bpfName, specs, consts)
 }
 
+// loadCollectionSpec reads the collection spec of bpfName from the default
+// object directory without loading it into the kernel. Callers that select
+// programs before loading need the spec untouched.
+func loadCollectionSpec(bpfName string) (*ebpf.CollectionSpec, error) {
+	f, err := os.Open(filepath.Join(DefaultObjDir, bpfName))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	return collectionSpecFromReader(bpfName, f)
+}
+
+func collectionSpecFromReader(bpfName string, rd io.ReaderAt) (*ebpf.CollectionSpec, error) {
+	specs, err := ebpf.LoadCollectionSpecFromReader(rd)
+	if err != nil {
+		return nil, fmt.Errorf("parse BPF object %q: %w", bpfName, err)
+	}
+
+	return specs, nil
+}
+
+// kernelHandles are the kernel operations the loader performs on a freshly
+// loaded collection: reading a handle's kernel ID, cloning the handle into the
+// loader, and releasing a clone. They are an interface so the cleanup of a
+// partly cloned collection can be exercised without a kernel failing on
+// demand.
+type kernelHandles interface {
+	mapID(m *ebpf.Map) (uint32, error)
+	cloneMap(m *ebpf.Map) (*ebpf.Map, error)
+	closeMap(m *ebpf.Map) error
+	programID(p *ebpf.Program) (uint32, error)
+	cloneProgram(p *ebpf.Program) (*ebpf.Program, error)
+	closeProgram(p *ebpf.Program) error
+}
+
+// kernelHandleOps is the production kernelHandles implementation.
+type kernelHandleOps struct{}
+
+func (kernelHandleOps) mapID(m *ebpf.Map) (uint32, error) {
+	info, err := m.Info()
+	if err != nil {
+		return 0, fmt.Errorf("get map info: %w", err)
+	}
+
+	id, ok := info.ID()
+	if !ok {
+		return 0, errors.New("map has no kernel ID")
+	}
+
+	return uint32(id), nil
+}
+
+func (kernelHandleOps) cloneMap(m *ebpf.Map) (*ebpf.Map, error) { return m.Clone() }
+
+func (kernelHandleOps) closeMap(m *ebpf.Map) error { return m.Close() }
+
+func (kernelHandleOps) programID(p *ebpf.Program) (uint32, error) {
+	info, err := p.Info()
+	if err != nil {
+		return 0, fmt.Errorf("get program info: %w", err)
+	}
+
+	id, ok := info.ID()
+	if !ok {
+		return 0, errors.New("program has no kernel ID")
+	}
+
+	return uint32(id), nil
+}
+
+func (kernelHandleOps) cloneProgram(p *ebpf.Program) (*ebpf.Program, error) { return p.Clone() }
+
+func (kernelHandleOps) closeProgram(p *ebpf.Program) error { return p.Close() }
+
 func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
+	return loadBPFFromCollectionSpecWithHandles(bpfName, specs, consts, kernelHandleOps{})
+}
+
+func loadBPFFromCollectionSpecWithHandles(
+	bpfName string,
+	specs *ebpf.CollectionSpec,
+	consts map[string]any,
+	handles kernelHandles,
+) (BPF, error) {
 	// RewriteConstants
 	if consts != nil {
 		if err := specs.RewriteConstants(consts); err != nil {
@@ -145,64 +232,12 @@ func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 		programsByID: make(map[uint32]*loadedProgram),
 	}
 
-	// maps
-	for name, spec := range specs.Maps {
-		m, ok := coll.Maps[name]
-		if !ok {
-			continue
-		}
-
-		info, err := m.Info()
-		if err != nil {
-			return nil, fmt.Errorf("get map info: %w", err)
-		}
-
-		id, ok := info.ID()
-		if !ok {
-			return nil, fmt.Errorf("invalid map ID: %d", id)
-		}
-
-		cloned, err := m.Clone()
-		if err != nil {
-			return nil, fmt.Errorf("clone map: %w", err)
-		}
-
-		b.mapsByID[uint32(id)] = loadedMap{
-			name:   spec.Name,
-			handle: cloned,
-		}
-	}
-
-	// programs
-	for name, spec := range specs.Programs {
-		p, ok := coll.Programs[name]
-		if !ok {
-			continue
-		}
-
-		info, err := p.Info()
-		if err != nil {
-			return nil, fmt.Errorf("get program info: %w", err)
-		}
-
-		id, ok := info.ID()
-		if !ok {
-			return nil, fmt.Errorf("invalid program ID: %d", id)
-		}
-
-		cloned, err := p.Clone()
-		if err != nil {
-			return nil, fmt.Errorf("clone program: %w", err)
-		}
-
-		b.programsByID[uint32(id)] = &loadedProgram{
-			name:          spec.Name,
-			programType:   spec.Type,
-			sectionName:   spec.SectionName,
-			sectionPrefix: strings.SplitN(spec.SectionName, "/", 2)[0],
-			handle:        cloned,
-			links:         make(map[string]link.Link),
-		}
+	if err := b.cloneHandles(specs, coll, handles); err != nil {
+		// coll.Close() only releases the handles the collection owns, and the
+		// caller never receives the failed defaultBPF, so the handles cloned
+		// so far have to be released here. Keep the original error and report
+		// a failing release alongside it instead of hiding either.
+		return nil, b.closeClonedHandlesAfterFailure(handles, err)
 	}
 
 	b.mapIDsByName = make(map[string]uint32, len(b.mapsByID))
@@ -223,6 +258,111 @@ func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 	// auto clean
 	runtime.SetFinalizer(b, (*defaultBPF).Close)
 	return b, nil
+}
+
+// closeClonedHandlesAfterFailure releases the handles a failed load cloned and
+// joins the load error with the release error.
+//
+// A release that fails is marked with the attempt-cleanup contract the tracing
+// loaders share: an attempt that could not let go of its handles must not be
+// retried, because the next attempt would run next to handles that are still
+// attached. The mark is defined next to that contract, in
+// tracing_variant_default.go.
+func (b *defaultBPF) closeClonedHandlesAfterFailure(handles kernelHandles, loadErr error) error {
+	releaseErr := b.closeClonedHandles(handles)
+	if releaseErr == nil {
+		return loadErr
+	}
+
+	return markTracingCleanupFailure(errors.Join(loadErr, releaseErr))
+}
+
+// cloneHandles takes ownership of the maps and programs of a freshly loaded
+// collection by cloning their kernel handles into b. A failure leaves the
+// handles cloned so far in b; the caller releases them.
+func (b *defaultBPF) cloneHandles(
+	specs *ebpf.CollectionSpec,
+	coll *ebpf.Collection,
+	handles kernelHandles,
+) error {
+	for name, spec := range specs.Maps {
+		m, ok := coll.Maps[name]
+		if !ok {
+			continue
+		}
+
+		id, err := handles.mapID(m)
+		if err != nil {
+			return fmt.Errorf("map %s: %w", spec.Name, err)
+		}
+
+		cloned, err := handles.cloneMap(m)
+		if err != nil {
+			return fmt.Errorf("clone map %s: %w", spec.Name, err)
+		}
+
+		b.mapsByID[id] = loadedMap{
+			name:   spec.Name,
+			handle: cloned,
+		}
+	}
+
+	for name, spec := range specs.Programs {
+		p, ok := coll.Programs[name]
+		if !ok {
+			continue
+		}
+
+		id, err := handles.programID(p)
+		if err != nil {
+			return fmt.Errorf("program %s: %w", spec.Name, err)
+		}
+
+		cloned, err := handles.cloneProgram(p)
+		if err != nil {
+			return fmt.Errorf("clone program %s: %w", spec.Name, err)
+		}
+
+		b.programsByID[id] = &loadedProgram{
+			name:          spec.Name,
+			programType:   spec.Type,
+			sectionName:   spec.SectionName,
+			sectionPrefix: strings.SplitN(spec.SectionName, "/", 2)[0],
+			attachTo:      spec.AttachTo,
+			handle:        cloned,
+			links:         make(map[string]link.Link),
+		}
+	}
+
+	return nil
+}
+
+// closeClonedHandles releases the cloned program and map handles and empties
+// the handle tables so no closed handle can be reached again.
+func (b *defaultBPF) closeClonedHandles(handles kernelHandles) error {
+	var closeErrs []error
+
+	for id, p := range b.programsByID {
+		if p.handle != nil {
+			if err := handles.closeProgram(p.handle); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close program %s: %w", p.name, err))
+			}
+		}
+
+		delete(b.programsByID, id)
+	}
+
+	for id, m := range b.mapsByID {
+		if m.handle != nil {
+			if err := handles.closeMap(m.handle); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close map %s: %w", m.name, err))
+			}
+		}
+
+		delete(b.mapsByID, id)
+	}
+
+	return errors.Join(closeErrs...)
 }
 
 // Name returns the name of the bpf.
@@ -336,20 +476,8 @@ func (b *defaultBPF) Close() error {
 		}
 	}
 
-	for _, p := range b.programsByID {
-		if p.handle != nil {
-			if err := p.handle.Close(); err != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("close program %s: %w", p.name, err))
-			}
-		}
-	}
-
-	for _, m := range b.mapsByID {
-		if m.handle != nil {
-			if err := m.handle.Close(); err != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("close map %s: %w", m.name, err))
-			}
-		}
+	if err := b.closeClonedHandles(kernelHandleOps{}); err != nil {
+		closeErrs = append(closeErrs, err)
 	}
 
 	if b.perfEvent != nil {
