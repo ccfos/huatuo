@@ -16,6 +16,7 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 
 /* Linux UAPI errno-base.h; libc headers are unsuitable for the BPF target. */
 #define E2BIG 7
+#define EIOCBQUEUED 529
 
 #ifndef bpf_core_field_offset
 #define bpf_core_field_offset(field) \
@@ -55,6 +56,19 @@ struct io_key {
 	u32 dev;
 	u64 inode;
 };
+
+struct file_io_start {
+	struct io_key key;
+	u64 requested;
+	bool is_write;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 4096);
+	__type(key, u64);
+	__type(value, struct file_io_start);
+} file_io_start_map SEC(".maps");
 
 struct hash_key {
 	dev_t dev;
@@ -330,6 +344,20 @@ get_file_io_entry(struct io_key *key, struct file *file)
 	return entry;
 }
 
+/* Keep pending metadata off the caller's stack during file-entry creation. */
+static __noinline void
+save_file_io_start(struct io_key *key, u64 requested, bool is_write)
+{
+	struct file_io_start start = {
+		.key = *key,
+		.requested = requested,
+		.is_write = is_write,
+	};
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+
+	bpf_map_update_elem(&file_io_start_map, &pid_tgid, &start, COMPAT_BPF_ANY);
+}
+
 static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_write)
 {
 	struct kiocb *iocb    = (struct kiocb *)PT_REGS_PARM1(ctx);
@@ -338,9 +366,12 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 	struct inode *inode;
 	struct io_key key = {};
 	struct iov_iter *from;
-	size_t count;
+	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 io_flags = 0;
 	u64 inode_number = 0;
+
+	/* A missed return must not attribute a later filtered call to this file. */
+	bpf_map_delete_elem(&file_io_start_map, &pid_tgid);
 
 	/* Batch only when the target layout matches the snapshot's field spacing. */
 	bool bulk_iocb = bpf_core_field_offset(iocb->ki_flags) -
@@ -358,6 +389,7 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 		io_flags = snapshot.flags;
 	} else {
 		file = BPF_CORE_READ(iocb, ki_filp);
+		io_flags = BPF_CORE_READ(iocb, ki_flags);
 	}
 	inode	  = BPF_CORE_READ(file, f_inode);
 
@@ -384,20 +416,46 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 		return 0;
 
 	key.inode = bulk_inode ? inode_number : BPF_CORE_READ(inode, i_ino);
+	from = (struct iov_iter *)PT_REGS_PARM2(ctx);
+	save_file_io_start(&key, BPF_CORE_READ(from, count), is_write);
 	entry = get_file_io_entry(&key, file);
 	if (!entry)
 		return 0;
+	entry->flag = io_flags;
 
-	from = (struct iov_iter *)PT_REGS_PARM2(ctx);
-	count = BPF_CORE_READ(from, count);
+	return 0;
+}
 
-	if (is_write)
-		entry->fs_write_bytes += count;
+static __always_inline int bpf_file_read_write_return(struct pt_regs *ctx)
+{
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	struct file_io_start *pending;
+	struct file_io_start start;
+	struct io_data *entry;
+	s64 result = PT_REGS_RC(ctx);
+	u64 bytes;
+
+	pending = bpf_map_lookup_elem(&file_io_start_map, &pid_tgid);
+	if (!pending)
+		return 0;
+	start = *pending;
+	bpf_map_delete_elem(&file_io_start_map, &pid_tgid);
+
+	/* Async completions are not observed here; retain submitted-byte accounting. */
+	if (result == -EIOCBQUEUED)
+		bytes = start.requested;
+	else if (result > 0)
+		bytes = result;
 	else
-		entry->fs_read_bytes += count;
+		return 0;
 
-	entry->flag = bulk_iocb ? io_flags : BPF_CORE_READ(iocb, ki_flags);
-
+	entry = bpf_map_lookup_elem(&io_source_map, &start.key);
+	if (!entry)
+		return 0;
+	if (start.is_write)
+		__sync_fetch_and_add(&entry->fs_write_bytes, bytes);
+	else
+		__sync_fetch_and_add(&entry->fs_read_bytes, bytes);
 	return 0;
 }
 
@@ -407,10 +465,22 @@ int bpf_anyfs_file_read_iter(struct pt_regs *ctx)
 	return bpf_file_read_write(ctx, false);
 }
 
+SEC("kretprobe/anyfs_file_read_iter")
+int bpf_anyfs_file_read_iter_return(struct pt_regs *ctx)
+{
+	return bpf_file_read_write_return(ctx);
+}
+
 SEC("kprobe/anyfs_file_write_iter")
 int bpf_anyfs_file_write_iter(struct pt_regs *ctx)
 {
 	return bpf_file_read_write(ctx, true);
+}
+
+SEC("kretprobe/anyfs_file_write_iter")
+int bpf_anyfs_file_write_iter_return(struct pt_regs *ctx)
+{
+	return bpf_file_read_write_return(ctx);
 }
 
 static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
