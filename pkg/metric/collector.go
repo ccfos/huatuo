@@ -24,6 +24,7 @@ package metric
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -125,8 +126,18 @@ func (m *CollectorManager) Collect(ch chan<- prometheus.Metric) {
 
 	for name, c := range m.collectors {
 		go func(name string, c *CollectorWrapper) {
+			// Recover from collector panics so a single misbehaving
+			// collector cannot deadlock the Prometheus scrape. wg.Done
+			// still runs to unblock wg.Wait.
+			defer wg.Done()
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					log.WithField("collector", name).
+						WithField("stack", string(debug.Stack())).
+						Errorf("collector panicked: %v", recovered)
+				}
+			}()
 			m.doCollect(name, c, ch)
-			wg.Done()
 		}(name, c)
 	}
 	wg.Wait()
