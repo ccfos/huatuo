@@ -26,9 +26,12 @@ import (
 	"time"
 )
 
+// DefaultAddress is the loopback listener address for standalone tool profiles.
+const DefaultAddress = "127.0.0.1:6000"
+
 const readHeaderTimeout = 5 * time.Second
 
-// Server serves Go runtime profiles on a caller-owned listener.
+// Server serves Go runtime profiles and owns its listener.
 type Server struct {
 	httpServer         *http.Server
 	serveErr           <-chan error
@@ -46,6 +49,21 @@ func Handler() http.Handler {
 	mux.HandleFunc("/debug/pprof/symbol", httppprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", httppprof.Trace)
 	return mux
+}
+
+// ListenAndStart listens on the TCP address and serves pprof asynchronously.
+// The caller must close the returned server; startup failures close the listener.
+func ListenAndStart(ctx context.Context, address string) (*Server, error) {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, fmt.Errorf("listen for pprof server on %s: %w", address, err)
+	}
+
+	server, err := Start(ctx, listener)
+	if err != nil {
+		return nil, errors.Join(err, listener.Close())
+	}
+	return server, nil
 }
 
 // Start serves pprof until ctx is canceled or Server.Close is called.

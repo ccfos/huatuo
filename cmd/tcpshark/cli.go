@@ -26,6 +26,7 @@ import (
 	"github.com/ccfos/huatuo/cmd/tcpshark/retransmit"
 	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/pcapfilter"
+	serverpprof "github.com/ccfos/huatuo/internal/server/pprof"
 	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
@@ -44,6 +45,7 @@ const (
 	cliFlagTaskID             = "task-id"
 	cliFlagMaxEventsPerSecond = "max-events-per-second"
 	cliFlagSourceTypes        = "source-types"
+	cliFlagEnablePProf        = "enable-pprof"
 )
 
 const (
@@ -117,6 +119,10 @@ func appFlags() []cli.Flag {
 			Name:   cliFlagSourceTypes,
 			Value:  toolstream.SourceTypeTool,
 			Hidden: true,
+		},
+		&cli.BoolFlag{
+			Name:  cliFlagEnablePProf,
+			Usage: "serve Go runtime profiles on " + serverpprof.DefaultAddress,
 		},
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	profileroutput "github.com/ccfos/huatuo/internal/profiler/output"
+	serverpprof "github.com/ccfos/huatuo/internal/server/pprof"
 )
 
 // Older Clang versions emit the negative BTF enum as unsigned.
@@ -36,6 +37,7 @@ const (
 	cliFlagOutput                   = "output"
 	cliFlagOutputStorage            = "output-storage"
 	cliFlagTaskID                   = "task-id"
+	cliFlagEnablePProf              = "enable-pprof"
 	defaultMaxEventsPerSecondPerCPU = uint64(0)
 	maxEventsPerSecondPerCPULimit   = uint64(math.MaxUint32) * 2
 	maxDurationSeconds              = int64(math.MaxInt64) / int64(time.Second)
@@ -88,6 +90,10 @@ func appFlags() []cli.Flag {
 		&cli.StringFlag{
 			Name:  cliFlagTaskID,
 			Usage: "Toolstream task ID; requires --output-storage",
+		},
+		&cli.BoolFlag{
+			Name:  cliFlagEnablePProf,
+			Usage: "serve Go runtime profiles on " + serverpprof.DefaultAddress,
 		},
 	}
 }
