@@ -28,6 +28,19 @@ sudo make compose-dev-down
 
 该命令会删除 Elasticsearch 数据卷。需要保留联调数据时，不要执行该命令。
 
+## Go 调试
+
+普通 `make build` 在 static 和 nostatic 模式下均使用 Go 默认的优化和内联。
+进行源码级调试时，可以单独构建一个关闭优化、保留调试信息的程序，例如：
+
+```bash
+make gen-build
+CGO_ENABLED=1 go build -tags "netgo osusergo" -gcflags=all="-N -l" \
+  -o _output/bin/profiler-debug ./cmd/profiler
+```
+
+这些编译器参数只作用于 Go 代码；`BPF_DEBUG` 独立控制 BPF 诊断信息。
+
 ## BPF 调试
 
 BPF 代码可以使用 `bpf_dbg()` 和 `bpf_dbg_msg()` 宏在内核态输出调试信息。
