@@ -55,3 +55,15 @@ $ docker compose --project-directory ./build/docker up
 ```
 
 For installation instructions, see https://docs.docker.com/compose/install/linux/.
+
+Compose stores Elasticsearch data, Prometheus history, and Grafana state in the
+named volumes `elasticsearch-data`, `prometheus-data`, and `grafana-data`. Keep the
+same Compose project name to reuse them. Container recreation and ordinary
+`docker compose down` preserve these volumes. `docker compose down --volumes`
+deletes them, as does the development cleanup command `make compose-dev-down`.
+
+Before applying this Compose file to an existing installation that has no named
+data volumes, back up the services' data and plan its restoration into the new
+volumes. Data in old container layers or anonymous volumes is not migrated
+automatically. Use each service's supported backup/restore procedure and verify
+the restored data before removing the old containers or volumes.
