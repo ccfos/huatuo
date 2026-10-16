@@ -300,7 +300,9 @@ func (g *Gpu) Close() error {
 		return errNotSupportedSymbol("mtmlDeviceFreeGpu")
 	}
 	err := checkReturnCode("mtmlDeviceFreeGpu", mtmlDeviceFreeGpu(g.handle))
-	g.handle = 0
+	if err == nil {
+		g.handle = 0
+	}
 	return err
 }
 
@@ -429,7 +431,9 @@ func (m *Memory) Close() error {
 		return errNotSupportedSymbol("mtmlDeviceFreeMemory")
 	}
 	err := checkReturnCode("mtmlDeviceFreeMemory", mtmlDeviceFreeMemory(m.handle))
-	m.handle = 0
+	if err == nil {
+		m.handle = 0
+	}
 	return err
 }
 
@@ -590,7 +594,9 @@ func (v *Vpu) Close() error {
 		return errNotSupportedSymbol("mtmlDeviceFreeVpu")
 	}
 	err := checkReturnCode("mtmlDeviceFreeVpu", mtmlDeviceFreeVpu(v.handle))
-	v.handle = 0
+	if err == nil {
+		v.handle = 0
+	}
 	return err
 }
 
