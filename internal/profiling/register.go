@@ -30,7 +30,7 @@ func Register(
 	ctx context.Context,
 	server *toolstream.Server,
 	cfg profilingstore.Config,
-	builder *document.Builder,
+	region string,
 ) (func(context.Context) error, error) {
 	if server == nil {
 		return nil, errors.New("register profiling: server is required")
@@ -41,7 +41,7 @@ func Register(
 		return nil, err
 	}
 
-	writer, err := NewDocumentWriter(store, builder)
+	writer, err := NewDocumentWriter(store, document.New(region))
 	if err != nil {
 		return nil, errors.Join(err, store.Close(ctx))
 	}

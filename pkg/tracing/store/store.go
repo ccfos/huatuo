@@ -22,6 +22,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/vsock"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/watch"
 )
@@ -34,6 +35,7 @@ type Store struct {
 
 // Config contains optional persistence backend settings.
 type Config struct {
+	VSOCK         *vsock.Options
 	Elasticsearch *ElasticsearchConfig
 	LocalFile     *LocalFileConfig
 }
@@ -54,6 +56,9 @@ type LocalFileConfig struct {
 }
 
 func (c Config) validate() error {
+	if c.VSOCK != nil && (c.Elasticsearch != nil || c.LocalFile != nil) {
+		return errors.New("tracing store: VSOCK must be the only backend")
+	}
 	if c.Elasticsearch != nil && len(c.Elasticsearch.Addresses) == 0 {
 		return errors.New("tracing store: Elasticsearch addresses are required")
 	}
@@ -88,6 +93,20 @@ func NewFromConfig(
 		}
 	}()
 
+	if config.VSOCK != nil {
+		options := *config.VSOCK
+		options.ToolName = vsock.TracingTool
+		backend, err := vsock.New(options)
+		if err != nil {
+			return nil, err
+		}
+		store, err := storage.NewStore[*Document](ctx, "vsock", backend, Collection, mapper{})
+		if err != nil {
+			_ = backend.Close(context.Background())
+			return nil, err
+		}
+		backends = append(backends, store)
+	}
 	if config.Elasticsearch != nil {
 		backendConfig := config.Elasticsearch
 		backend, err := storage.NewFromConfig[*Document](ctx, &driver.Config{

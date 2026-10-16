@@ -166,7 +166,7 @@ func (b *Backend) run(ctx context.Context) {
 		if err == nil {
 			err = b.send(ctx, conn)
 		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || err == nil {
 			return
 		}
 		log.Warnf("vsock storage: connection ended: %v", err)

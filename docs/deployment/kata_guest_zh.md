@@ -54,3 +54,5 @@ Guest 缺少 systemd 而创建失败，sandbox 模式记录警告并继续运行
 本配置将 Guest 结果按当前文档格式保存到本地，节点名称取 BAMAI_NODE_NAME。
 这里不启用 Guest 到 Host 的 VSOCK 转发；通信和 Host 侧连接身份认证单独实现。
 检查 Guest 本地结果时仍需使用现有 API 认证。
+
+如需开启 VSOCK 转发，见[Guest 到 Host 的数据传输](kata_transport_zh.md)，其中说明 Host 身份校验、队列限制和数据丢失语义。默认配置仍保存本地结果。

@@ -52,3 +52,5 @@ or path resets the usage baseline while retaining the cooldown. A new sandbox
 starts with fresh state. Host Kata bindings are checked again during periodic
 container reconciliation; read-time CPU cache refreshes do not trigger another
 lifecycle reconciliation.
+
+For authenticated Guest event and profiling ingress, see [Guest-to-Host transport](kata_transport_en.md). The receiver is disabled by default.
