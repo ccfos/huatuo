@@ -84,6 +84,54 @@ func TestMapperIDIsUniquePerWindow(t *testing.T) {
 	}
 }
 
+func TestMapperFieldsSkipsMissingStartedTimestamp(t *testing.T) {
+	document := &Document{
+		Document: types.Document{
+			UploadedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 8, 28, 2, 0, 1, 0, time.UTC)},
+			ObservedTimestamp: &timeutil.Timestamp{Time: time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)},
+			TracerID:          "event-1",
+			TracerRunType:     types.TracerRunTypeEvent,
+		},
+		ProfileData: &ProfileData{
+			ProfileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			Profile:     &profilev1.Profile{},
+		},
+	}
+
+	fields, err := (mapper{}).Fields(document)
+	if err != nil {
+		t.Fatalf("mapper.Fields() error = %v", err)
+	}
+	if _, ok := fields[types.DocumentFieldStartedTimestamp]; ok {
+		t.Fatalf("started timestamp present for event document: %#v", fields)
+	}
+}
+
+func TestMapperFieldsIncludesStartedTimestamp(t *testing.T) {
+	startedTimestamp := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
+	document := &Document{
+		Document: types.Document{
+			UploadedTimestamp: timeutil.Timestamp{Time: startedTimestamp.Add(time.Second)},
+			StartedTimestamp:  &timeutil.Timestamp{Time: startedTimestamp},
+			TracerID:          "profile-task-1",
+			TracerRunType:     types.TracerRunTypeProfiling,
+		},
+		ProfileData: &ProfileData{
+			ProfileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			Profile:     &profilev1.Profile{},
+		},
+	}
+
+	fields, err := (mapper{}).Fields(document)
+	if err != nil {
+		t.Fatalf("mapper.Fields() error = %v", err)
+	}
+	want := timeutil.Timestamp{Time: startedTimestamp}
+	if got := fields[types.DocumentFieldStartedTimestamp]; got != want {
+		t.Fatalf("started timestamp = %#v, want %#v", got, want)
+	}
+}
+
 func TestMapperDecodeRejectsIncompleteDocument(t *testing.T) {
 	startedTimestamp := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
 	encoded, err := json.Marshal(&Document{Document: types.Document{
