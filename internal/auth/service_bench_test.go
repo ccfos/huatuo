@@ -80,7 +80,7 @@ func splitSegments(s string) []string {
 }
 
 func segHasParamPrefix(s string) bool {
-	return len(s) > 0 && s[0] == ':'
+	return s != "" && s[0] == ':'
 }
 
 func TestMatchesPathMatchesReference(t *testing.T) {
