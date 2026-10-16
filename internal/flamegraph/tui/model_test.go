@@ -17,6 +17,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -111,5 +112,38 @@ func TestTruncateKeepsUTF8(t *testing.T) {
 	got := truncate("函数调用路径", 5)
 	if got != "函数..." {
 		t.Fatalf("truncate() = %q, want 函数...", got)
+	}
+}
+
+// TestSearchBackspaceRemovesWholeRune verifies Backspace deletes one Unicode
+// character, not one byte, so the query stays valid UTF-8.
+func TestSearchBackspaceRemovesWholeRune(t *testing.T) {
+	frames := []flamegraph.FrameData{
+		{Level: 0, Value: 100, Self: 0, Label: "root"},
+		{Level: 1, Value: 100, Self: 100, Label: "函数调用"},
+	}
+	model := NewModel(frames)
+	model.width = 80
+	model.height = 20
+	model.searching = true
+	model = model.updateSearch(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("函数")})
+
+	model = model.updateSearch(tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if model.query != "函" {
+		t.Fatalf("query after backspace = %q, want %q", model.query, "函")
+	}
+	if !utf8.ValidString(model.query) {
+		t.Fatalf("query after backspace = %q is not valid UTF-8", model.query)
+	}
+	model.applySearch()
+	if len(model.matches) == 0 {
+		t.Fatalf("query %q matched no frames, want a match for 函数调用", model.query)
+	}
+
+	// A second Backspace removes the last remaining rune.
+	model = model.updateSearch(tea.KeyMsg{Type: tea.KeyBackspace})
+	if model.query != "" {
+		t.Fatalf("query after second backspace = %q, want empty", model.query)
 	}
 }
