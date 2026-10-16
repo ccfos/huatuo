@@ -416,7 +416,7 @@ func (b *defaultBPF) EventPipeByName(ctx context.Context, mapName string, perCPU
 	return reader, nil
 }
 
-// AttachAndEventPipe attaches and event-pipe and returns a PerfEventReader.
+// AttachAndEventPipe attaches an event-pipe and returns a PerfEventReader.
 func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error) {
 	if err := b.acquireWriteLock(); err != nil {
 		return nil, err
