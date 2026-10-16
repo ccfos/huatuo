@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
 )
@@ -31,6 +32,31 @@ import (
 type Storage struct {
 	db    *sql.DB
 	table string
+
+	stmtMu    sync.Mutex
+	saveStmts map[driver.SaveMode]*sql.Stmt
+}
+
+// saveStmt returns a cached prepared statement for the save mode, preparing
+// it on first use. database/sql multiplexes one *sql.Stmt over the pool, so
+// the hot per-event Save path skips re-preparing SQL on every call.
+func (s *Storage) saveStmt(ctx context.Context, mode driver.SaveMode, statement string) (*sql.Stmt, error) {
+	s.stmtMu.Lock()
+	defer s.stmtMu.Unlock()
+
+	if s.saveStmts == nil {
+		s.saveStmts = make(map[driver.SaveMode]*sql.Stmt)
+	}
+	if stmt, ok := s.saveStmts[mode]; ok {
+		return stmt, nil
+	}
+
+	stmt, err := s.db.PrepareContext(ctx, statement)
+	if err != nil {
+		return nil, err
+	}
+	s.saveStmts[mode] = stmt
+	return stmt, nil
 }
 
 var _ driver.Backend = (*Storage)(nil)
@@ -56,11 +82,19 @@ func NewBackend(dsn string) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-// Close closes the SQLite database.
+// Close closes the SQLite database and any cached prepared statements.
 func (s *Storage) Close(_ context.Context) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+
+	s.stmtMu.Lock()
+	for _, stmt := range s.saveStmts {
+		_ = stmt.Close()
+	}
+	s.saveStmts = nil
+	s.stmtMu.Unlock()
+
 	return s.db.Close()
 }
 
@@ -150,7 +184,12 @@ func (s *Storage) Save(
 		return fmt.Errorf("%w: unsupported save mode %d", driver.ErrInvalidQuery, options.Mode)
 	}
 
-	result, err := s.db.ExecContext(ctx, statement, args...)
+	stmt, err := s.saveStmt(ctx, options.Mode, statement)
+	if err != nil {
+		return fmt.Errorf("sqlite backend prepare save into %s: %w", s.table, err)
+	}
+
+	result, err := stmt.ExecContext(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("sqlite backend save into %s: %w", s.table, err)
 	}
