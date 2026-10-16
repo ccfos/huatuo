@@ -111,6 +111,10 @@ func Set(cfg any, key string, val any) error {
 
 	parts := strings.Split(key, ".")
 	for i, part := range parts {
+		if c.Kind() == reflect.Pointer && c.IsNil() && c.CanSet() && c.Type().Elem().Kind() == reflect.Struct {
+			// Optional sections can be absent in the unpublished candidate.
+			c.Set(reflect.New(c.Type().Elem()))
+		}
 		c = reflect.Indirect(c)
 		if c.Kind() != reflect.Struct {
 			return fmt.Errorf("config path %q does not refer to a struct", strings.Join(parts[:i], "."))
