@@ -76,8 +76,8 @@ func printIOTracingSnapshot(w io.Writer, snapshot *types.IOTracingSnapshot) {
 
 	for _, p := range snapshot.Processes {
 		comm := p.Comm
-		if len(comm) > 20 {
-			comm = comm[:17] + "..."
+		if runes := []rune(comm); len(runes) > 20 {
+			comm = string(runes[:17]) + "..."
 		} else {
 			comm = fmt.Sprintf("%-20s", comm)
 		}
