@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
@@ -79,6 +80,15 @@ func InitGuestManager(options GuestScannerOptions) error {
 		return errors.New("container manager is already running")
 	}
 	controller := newContainerController(containerView)
+
+	// Populate the CSS cache before discovery publishes BPF sampling targets.
+	// Missing kernel capabilities must not disable basic Guest discovery.
+	controller.initialize = func(context.Context) error {
+		if err := containerCgroupCssInit(); err != nil {
+			log.WithError(err).Warn("Guest cgroup CSS unavailable; container BPF sampling is limited")
+		}
+		return nil
+	}
 	controller.scan = scanner.scan
 	controller.resyncInterval = options.Interval
 	containerManager = controller
