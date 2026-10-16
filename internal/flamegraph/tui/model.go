@@ -244,17 +244,44 @@ func (m Model) View() string { //nolint:gocritic // tea.Model interface requires
 }
 
 func (m *Model) renderRow(cursor, match string, node *Node, rootValue int64) string {
+	width := m.safeWidth()
 	depth := nodeDepthFrom(node, m.focus)
 	indent := strings.Repeat("  ", depth)
+	prefix := len(cursor) + len(match) + len(indent)
+	// The suffix is " " + a %6.2f percentage field (6 columns plus "%"), and the
+	// label is also preceded by a space.
+	const suffixWidth = len(" ") + len("100.00%") + len(" ")
+	// Keep the percentage visible on every row: shrink the bar and the label
+	// before the row is allowed to exceed the terminal width.
+	maxBar := width / 3
+	if maxBar < barMinWidth {
+		maxBar = barMinWidth
+	}
+	if prefix+maxBar+suffixWidth > width {
+		maxBar = width - prefix - suffixWidth
+		if maxBar < barMinWidth {
+			maxBar = barMinWidth
+		}
+	}
 	barWidth := m.barWidth(node.Value, rootValue)
-	percent := percent(node.Value, rootValue)
-	labelWidth := m.safeWidth() - len(cursor) - len(match) - len(indent) - barWidth - 16
-	if labelWidth < 12 {
+	if barWidth > maxBar {
+		barWidth = maxBar
+	}
+	labelWidth := width - prefix - barWidth - suffixWidth
+	if labelWidth < 0 {
+		// Extremely narrow terminals give up the label before the percentage.
+		labelWidth = 0
+		barWidth = width - prefix - suffixWidth
+		if barWidth < 0 {
+			barWidth = 0
+		}
+	}
+	if labelWidth < 12 && width-prefix-barWidth-suffixWidth >= 12 {
 		labelWidth = 12
 	}
 	label := truncate(node.Label, labelWidth)
 	bar := strings.Repeat("#", barWidth)
-	return fmt.Sprintf("%s%s%s%s %-*s %6.2f%%", cursor, match, indent, bar, labelWidth, label, percent)
+	return fmt.Sprintf("%s%s%s%s %-*s %6.2f%%", cursor, match, indent, bar, labelWidth, label, percent(node.Value, rootValue))
 }
 
 func renderDetails(node *Node, focusValue int64) string {
