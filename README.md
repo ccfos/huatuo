@@ -50,11 +50,11 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
 ## Big Picture
 
-![](/docs/img/huatuo-arch-vendor.svg)
+![](docs/img/huatuo-arch-vendor.svg)
 
 ## Ecosystem
 
-![](/docs/img/huatuo-ecosystem.svg)
+![](docs/img/huatuo-ecosystem.svg)
 
 ## Getting Started
 
@@ -76,9 +76,9 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
   Once running, access the monitoring dashboard at http://localhost:3000.
 
-  ![](/docs/img/quickstart-components.png)  
+  ![](docs/img/quickstart-components.png)  
   
-  ![](/docs/img/quickstart-autotracing-event.png)
+  ![](docs/img/quickstart-autotracing-event.png)
 
 - **NOTE**
 
@@ -153,7 +153,7 @@ For more information, visit [https://docs.huatuo.tech](https://docs.huatuo.tech/
 ## Contact Us
 - WeChat Group and Official Account:
 
-![](/docs/img/contact-weixin.png)
+![](docs/img/contact-weixin.png)
 
 ## License
 
