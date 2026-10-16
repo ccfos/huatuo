@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/ccfos/huatuo/internal/procfs"
 
@@ -42,6 +44,33 @@ func Executable(pid int) (string, error) {
 	}
 
 	return executable, nil
+}
+
+// unlinkedExecutableMarker is appended by the Linux kernel to the
+// /proc/<pid>/exe target once the running executable is unlinked or replaced.
+// In-place upgrades unlink the old image while the process keeps running, so
+// the marker describes the file rather than the process.
+const unlinkedExecutableMarker = " (deleted)"
+
+// TrimUnlinkedExecutable removes the marker from a procfs executable path, so
+// callers comparing process identity ignore an in-place replacement.
+func TrimUnlinkedExecutable(path string) string {
+	return strings.TrimSuffix(path, unlinkedExecutableMarker)
+}
+
+// ExecutableName returns the basename of pid's executable without the kernel's
+// unlinked marker.
+//
+// Runtime recognition must match this value: filepath.Base of the raw link
+// reports "python3.10 (deleted)", which no longer matches the interpreter name
+// once the binary is unlinked.
+func ExecutableName(pid int) (string, error) {
+	path, err := Executable(pid)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Base(TrimUnlinkedExecutable(path)), nil
 }
 
 // PPID returns pid's current parent PID.
