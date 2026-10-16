@@ -27,6 +27,9 @@ type Stack struct {
 type processor struct {
 	frames   []frame
 	maxDepth int
+	// indexes holds one name→position map per depth level, replacing the
+	// linear findFrame scan per processed stack frame.
+	indexes []map[string]int
 }
 
 func (p *processor) Process(stack Stack) {
@@ -38,15 +41,22 @@ func (p *processor) Process(stack Stack) {
 	}
 
 	for depth, name := range stack.Names {
-		fr := findFrame(*frames, name)
-		if fr == nil {
+		if depth == len(p.indexes) {
+			p.indexes = append(p.indexes, make(map[string]int))
+		}
+		level := p.indexes[depth]
+
+		index, ok := level[name]
+		if !ok {
 			f := frame{
 				Name:  name,
 				Depth: depth,
 			}
 			*frames = append(*frames, f)
-			fr = &(*frames)[len(*frames)-1]
+			index = len(*frames) - 1
+			level[name] = index
 		}
+		fr := &(*frames)[index]
 		fr.SampleCount += stack.Samples
 		frames = &fr.Children
 	}
@@ -94,14 +104,4 @@ func (p *processor) calcPcts(frames []frame, totalPct, leftPct float32) {
 	for i := range frames {
 		p.calcPcts(frames[i].Children, frames[i].SamplePercent, frames[i].LeftPercent)
 	}
-}
-
-func findFrame(frames []frame, name string) *frame {
-	for i := range frames {
-		if frames[i].Name == name {
-			return &frames[i]
-		}
-	}
-
-	return nil
 }
