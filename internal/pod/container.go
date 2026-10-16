@@ -23,6 +23,19 @@ import (
 // containerIDRegexp matches a 12-64 character hex container ID.
 var containerIDRegexp = regexp.MustCompile(`^[0-9a-fA-F]{12,64}$`)
 
+// containerViewKey identifies one cached containersByTypeQos result.
+type containerViewKey struct {
+	typeMask ContainerType
+	minLevel ContainerQos
+}
+
+// containerViewEntry is a cached view pinned to the store revision it was
+// built from.
+type containerViewEntry struct {
+	revision   uint64
+	containers map[string]*Container
+}
+
 // Container object
 type Container struct {
 	ID                 string            `json:"id"`
@@ -64,10 +77,29 @@ func (c *Container) InitPidOrInitnsPid() int {
 	return 1
 }
 
-// containersByTypeQos returns the containers by type and level.
+// containersByTypeQos returns the containers by type and level. The returned
+// map is cached per (typeMask, minLevel) and must be treated as read-only: it
+// is rebuilt only when the container store commits a change, so per-event
+// callers (e.g. container lookups on BPF event paths) stop paying a full
+// map rebuild on every call.
 func containersByTypeQos(typeMask ContainerType, minLevel ContainerQos) (map[string]*Container, error) {
+	key := containerViewKey{typeMask: typeMask, minLevel: minLevel}
+
 	containerView.mu.RLock()
-	defer containerView.mu.RUnlock()
+	if view, ok := containerView.views[key]; ok && view.revision == containerView.revision {
+		containerView.mu.RUnlock()
+		return view.containers, nil
+	}
+	containerView.mu.RUnlock()
+
+	containerView.mu.Lock()
+	defer containerView.mu.Unlock()
+
+	// Re-check under the write lock: another goroutine may have rebuilt it.
+	if view, ok := containerView.views[key]; ok && view.revision == containerView.revision {
+		return view.containers, nil
+	}
+
 	res := make(map[string]*Container)
 	for _, record := range containerView.records {
 		c := record.container
@@ -82,6 +114,14 @@ func containersByTypeQos(typeMask ContainerType, minLevel ContainerQos) (map[str
 		}
 
 		res[c.ID] = c
+	}
+
+	if containerView.views == nil {
+		containerView.views = make(map[containerViewKey]*containerViewEntry)
+	}
+	containerView.views[key] = &containerViewEntry{
+		revision:   containerView.revision,
+		containers: res,
 	}
 
 	return res, nil
