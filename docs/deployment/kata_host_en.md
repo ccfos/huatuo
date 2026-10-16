@@ -54,3 +54,5 @@ container reconciliation; read-time CPU cache refreshes do not trigger another
 lifecycle reconciliation.
 
 For authenticated Guest event and profiling ingress, see [Guest-to-Host transport](kata_transport_en.md). The receiver is disabled by default.
+
+Host Kata records do not publish application memory snapshot targets because the hypervisor memory cgroup is shared by the VM. Capture application memory snapshots in the Guest. Ordinary Host containers retain their existing memory watches.
