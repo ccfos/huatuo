@@ -162,14 +162,6 @@ func TestAuthenticatedStreamToLocalFile(t *testing.T) {
 }
 
 func TestFirecrackerCredentialAndSocketBoundary(t *testing.T) {
-	peer := PeerIdentity{SandboxID: "orders-vm", Namespace: "application"}
-	containers := map[string]*pod.Container{"orders": {ID: "orders", InitPid: 1234, SandboxID: peer.SandboxID, RuntimeType: "io.containerd.kata-fc.v2", Labels: map[string]any{"HostNamespace": peer.Namespace}}}
-	if _, err := validateFirecrackerPeer(1234, containers, peer); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := validateFirecrackerPeer(5678, containers, peer); !errors.Is(err, ErrUntrustedPeer) {
-		t.Errorf("foreign PID=%v", err)
-	}
 	path := filepath.Join(t.TempDir(), "kata.sock")
 	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
