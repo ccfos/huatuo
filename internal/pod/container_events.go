@@ -47,7 +47,8 @@ type ContainerKey struct {
 }
 
 // ContainerRef is an immutable instance description. An empty memory path
-// means the binding is pending; consumers must wait for a replacement event.
+// means per-container memory is unavailable or pending. Host Kata VM cgroups
+// are deliberately excluded; Guest discovery publishes application bindings.
 type ContainerRef struct {
 	Key              ContainerKey
 	InitPID          int
