@@ -227,6 +227,9 @@ Agent 请求传输保护使用客户端内部默认值。Job 轮询、各阶段 
 `/readyz`、`/metrics` 和 `/version` 为公开路由。
 `/debug/pprof/**` 和 `/v1/profiling/flamegraph/**` 仅管理员可访问。
 
+`/metrics` 的进程和 Go 运行时指标使用 apiserver 所在操作系统的主机名作为
+`host` 标签。apiserver 没有区域配置，因此这些指标的 `region` 标签为空。
+
 ### 7. 性能剖析
 
 ```toml

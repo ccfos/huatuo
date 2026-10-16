@@ -17,6 +17,8 @@ package runtime
 import (
 	"testing"
 
+	"github.com/ccfos/huatuo/pkg/metric"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -135,6 +137,35 @@ func TestRegisterCollectorNoDuplicate(t *testing.T) {
 	for name, count := range seen {
 		if count > 1 {
 			t.Errorf("metric %q registered %d times, want 1", name, count)
+		}
+	}
+}
+
+func TestRegisterCollectorKeepsAgentLabels(t *testing.T) {
+	region := metric.DefaultRegion()
+	t.Cleanup(func() {
+		if _, err := metric.NewCollectorManager(nil, region); err != nil {
+			t.Error(err)
+		}
+	})
+	if _, err := metric.NewCollectorManager(nil, "test-region"); err != nil {
+		t.Fatal(err)
+	}
+	reg := prometheus.NewRegistry()
+	RegisterCollector(reg, "huatuo")
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		for _, sample := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, label := range sample.GetLabel() {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels[metric.LabelHost] != metric.DefaultHostname() || labels[metric.LabelRegion] != "test-region" {
+				t.Errorf("%s labels = %v, want initialized agent host and region", family.GetName(), labels)
+			}
 		}
 	}
 }
