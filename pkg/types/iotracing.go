@@ -20,6 +20,8 @@ package types
 type IOTracingSnapshot struct {
 	Processes   []ProcessFileIOStats `json:"process_file_io_stats"`
 	StallStacks []IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
+	// Attach failures distinguish incomplete file-probe coverage from zero IO.
+	DisabledFilesystems map[string]string `json:"disabled_filesystems,omitempty"`
 }
 
 // IOScheduleEvent records one task that spent longer than the configured

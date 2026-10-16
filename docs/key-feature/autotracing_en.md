@@ -285,6 +285,7 @@ All event records include the following common fields:
   - **disk_read / disk_write**: Bytes actually read/written at the disk layer
   - **file_stat**: List of file paths currently open by the process
   - **file_count**: Total number of files open by the process
+- **disabled_filesystems**: Filesystems disabled by probe attachment failures and their reasons; omitted when no group is disabled
 - **timeout_io_stack**: Call stacks of processes waiting in IO scheduling. Each record contains:
   - **pid / comm**: Process PID and name
   - **container_hostname**: Container hostname of the process

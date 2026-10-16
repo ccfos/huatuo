@@ -71,6 +71,11 @@ func newWriter(outputFmt string, client *toolstream.Client) writer {
 // printIOTracingSnapshot renders the snapshot as two tables: a per-process
 // summary, then a per-file detail block for each process.
 func printIOTracingSnapshot(w io.Writer, snapshot *types.IOTracingSnapshot) {
+	for _, filesystem := range []string{"ext4", "xfs"} {
+		if reason, disabled := snapshot.DisabledFilesystems[filesystem]; disabled {
+			fmt.Fprintf(w, "WARNING: %s file probes disabled: %s\n", filesystem, reason)
+		}
+	}
 	fmt.Fprintln(w, "PID      COMMAND              FS_READ FS_WRITE DISK_READ DISK_WRITE FILES")
 	fmt.Fprintln(w, "=======  ==================== ======= ======== ========= ========== =====")
 
