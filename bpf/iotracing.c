@@ -57,9 +57,8 @@ struct io_key {
 };
 
 struct hash_key {
-	dev_t dev;
-	u32 _pad;
-	sector_t sector;
+	/* Device and sector are not unique while requests are in flight. */
+	u64 request;
 };
 
 struct io_start_info {
@@ -159,6 +158,7 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 	struct io_start_info info = {};
 	struct bio *bio;
 	struct inode *inode;
+	dev_t dev;
 	u32 cmd_flags;
 
 	bio = BPF_CORE_READ(req, bio);
@@ -167,18 +167,18 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 	if (cmd_flags & REQ_META)
 		return 0;
 
-	if (!get_request_dev(req, &key.dev))
+	if (!get_request_dev(req, &dev))
 		return -1;
 
-	key.sector = BPF_CORE_READ(req, __sector);
+	key.request = (u64)req;
 
-	if (!should_process_device(key.dev))
+	if (!should_process_device(dev))
 		return 0;
 
 	inode = BPF_CORE_READ(bio, bi_io_vec, bv_page, mapping, host);
 	info.inode = BPF_CORE_READ(inode, i_ino);
 	if (!info.inode)
-		info.dev = key.dev;
+		info.dev = dev;
 	else
 		info.dev = BPF_CORE_READ(inode, i_sb, s_dev);
 
@@ -200,17 +200,18 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 	struct io_key io_key = {};
 	struct io_data data = {};
 	struct io_data *entry;
+	dev_t dev;
 	u32 cmd_flags;
 	u64 now;
 	u64 q2c;
 	u64 d2c;
 
-	if (!get_request_dev(req, &info_key.dev))
+	if (!get_request_dev(req, &dev))
 		return -1;
 
-	info_key.sector = BPF_CORE_READ(req, __sector);
+	info_key.request = (u64)req;
 
-	if (!should_process_device(info_key.dev))
+	if (!should_process_device(dev))
 		return 0;
 
 	info = bpf_map_lookup_elem(&start_info_map, &info_key);
