@@ -650,9 +650,23 @@ func applySorts(docs []mockElasticsearchDocument, rawSort any) {
 
 func fieldValue(doc mockElasticsearchDocument, path string) any {
 	if basePath, ok := strings.CutSuffix(path, ".keyword"); ok {
-		return doc.Fields[basePath]
+		path = basePath
 	}
-	return doc.Fields[path]
+	if value, ok := doc.Fields[path]; ok {
+		return value
+	}
+	var current any = doc.Fields
+	for _, part := range strings.Split(path, ".") {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+		current, ok = object[part]
+		if !ok {
+			return nil
+		}
+	}
+	return current
 }
 
 func valuesEqual(left, right any) bool {
@@ -1019,8 +1033,15 @@ func TestElasticsearchBackendCRUD(t *testing.T) {
 	if err != nil {
 		t.Errorf("Get() returned error: %v", err)
 	}
-	if !bytes.Equal(gotRecord.Data, record.Data) {
-		t.Errorf("Get() data = %s, want %s", string(gotRecord.Data), string(record.Data))
+	var gotData, wantData map[string]any
+	if err := json.Unmarshal(gotRecord.Data, &gotData); err != nil {
+		t.Fatalf("Get() data is invalid JSON: %v", err)
+	}
+	if err := json.Unmarshal(record.Data, &wantData); err != nil {
+		t.Fatalf("test record data is invalid JSON: %v", err)
+	}
+	if gotData["id"] != wantData["id"] || gotData["status"] != wantData["status"] {
+		t.Errorf("Get() data = %#v, want original fields %#v", gotData, wantData)
 	}
 
 	if err := backend.Delete(t.Context(), "job-es-alpha"); err != nil {
@@ -1034,6 +1055,37 @@ func TestElasticsearchBackendCRUD(t *testing.T) {
 
 	if err := backend.Delete(t.Context(), "job-es-missing"); err != nil {
 		t.Errorf("Delete() for missing id returned error: %v", err)
+	}
+}
+
+func TestElasticsearchBackendIndexesRecordFields(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+
+	record := driver.Record{
+		ID:   "trace-es-fields",
+		Data: []byte(`{"tracer_id":"trace-es-fields"}`),
+		Fields: map[string]any{
+			"record_id":                 "trace-es-fields",
+			"profile_data.profile_type": "cpu",
+		},
+	}
+	if err := backend.Save(t.Context(), record, driver.SaveOptions{WaitForVisibility: true}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	records, err := backend.Query(t.Context(), driver.Query{Filters: []driver.Filter{
+		{Field: "record_id", Op: driver.OpEq, Value: record.ID},
+		{Field: "profile_data.profile_type", Op: driver.OpEq, Value: "cpu"},
+	}})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if len(records) != 1 || records[0].ID != record.ID {
+		t.Fatalf("Query() = %#v, want one record with ID %q", records, record.ID)
 	}
 }
 
