@@ -60,7 +60,10 @@ func (f *Formatter) Name() string { return "dump" }
 
 func (f *Formatter) Add(s *output.Sample) error {
 	if len(s.Frames) > 0 {
-		f.samples = append(f.samples, *s)
+		// Callers may reuse the frame buffer before Write consumes it.
+		sample := *s
+		sample.Frames = append([]string(nil), s.Frames...)
+		f.samples = append(f.samples, sample)
 	}
 	return nil
 }
