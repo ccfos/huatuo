@@ -126,3 +126,18 @@ func TestWaitPeerStops(t *testing.T) {
 		})
 	}
 }
+
+func TestPIDReuseDoesNotReuseAnotherSandboxCID(t *testing.T) {
+	containers := map[string]*pod.Container{
+		"old":    {ID: "old", InitPid: 4105, SandboxID: "orders-vm", RuntimeType: "io.containerd.kata-qemu.v2"},
+		"reused": {ID: "reused", InitPid: 4105, SandboxID: "payments-vm", RuntimeType: "io.containerd.kata-qemu.v2", Labels: map[string]any{"HostNamespace": "application"}},
+	}
+	readFile := func(string) ([]byte, error) {
+		return []byte(strings.Join([]string{"qemu-system-x86_64", "-name", "sandbox-orders-vm", "-device", "vhost-vsock-pci,guest-cid=5105"}, "\x00")), nil
+	}
+	for range 100 {
+		if _, err := resolvePeerFromContainers(&vsock.Addr{ContextID: 5105}, "", containers, readFile); !errors.Is(err, errUnknownPeerSandbox) {
+			t.Fatalf("stale PID attributed to another sandbox: %v", err)
+		}
+	}
+}

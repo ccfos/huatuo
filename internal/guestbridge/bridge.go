@@ -191,20 +191,7 @@ func New(options Options) (*Bridge, error) {
 		options.QEMUListen = listenQEMU
 	}
 	if options.UnixListen == nil {
-		options.UnixListen = func(path string) (net.Listener, error) {
-			listener, err := net.Listen("unix", path)
-			if err != nil {
-				return nil, err
-			}
-			// Firecracker may run with a jailer UID. The sandbox-specific
-			// parent directory is the access boundary for this socket.
-			//nolint:gosec
-			if err := os.Chmod(path, 0o666); err != nil {
-				_ = listener.Close()
-				return nil, fmt.Errorf("chmod hybrid-vsock listener: %w", err)
-			}
-			return listener, nil
-		}
+		options.UnixListen = listenFirecracker
 	}
 	decodeBudget, err := transport.NewDecodeBudget(options.MaxInFlightBytes)
 	if err != nil {
