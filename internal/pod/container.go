@@ -200,23 +200,6 @@ func Containers() (map[string]*Container, error) {
 	return containersByTypeQos(ContainerTypeAll, ContainerQosLevelMin)
 }
 
-// containerBy searches normal containers and returns the first one for which
-// selector returns val. Returns nil, nil when no container matches.
-func containerBy[T comparable](selector func(*Container) T, val T) (*Container, error) {
-	all, err := NormalContainers()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, c := range all {
-		if selector(c) == val {
-			return c, nil
-		}
-	}
-
-	return nil, nil
-}
-
 // containerByNetNamespace resolves a container by network namespace cookie
 // or inode number using a revision-pinned index; a nil result (without
 // error) means no container matches.
