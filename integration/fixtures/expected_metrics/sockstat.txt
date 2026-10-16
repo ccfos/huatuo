@@ -40,3 +40,15 @@ huatuo_bamai_sockstat_UDP_mem_bytes{host="huatuo-dev",region="dev"} 24576
 # HELP huatuo_bamai_sockstat_sockets_used Number of IPv4 sockets in use.
 # TYPE huatuo_bamai_sockstat_sockets_used gauge
 huatuo_bamai_sockstat_sockets_used{host="huatuo-dev",region="dev"} 773
+# TYPE huatuo_bamai_sockstat_TCP6_inuse gauge
+huatuo_bamai_sockstat_TCP6_inuse{host="huatuo-dev",region="dev"} 7
+# TYPE huatuo_bamai_sockstat_UDP6_inuse gauge
+huatuo_bamai_sockstat_UDP6_inuse{host="huatuo-dev",region="dev"} 3
+# TYPE huatuo_bamai_sockstat_UDPLITE6_inuse gauge
+huatuo_bamai_sockstat_UDPLITE6_inuse{host="huatuo-dev",region="dev"} 0
+# TYPE huatuo_bamai_sockstat_RAW6_inuse gauge
+huatuo_bamai_sockstat_RAW6_inuse{host="huatuo-dev",region="dev"} 1
+# TYPE huatuo_bamai_sockstat_FRAG6_inuse gauge
+huatuo_bamai_sockstat_FRAG6_inuse{host="huatuo-dev",region="dev"} 2
+# TYPE huatuo_bamai_sockstat_FRAG6_memory gauge
+huatuo_bamai_sockstat_FRAG6_memory{host="huatuo-dev",region="dev"} 4096
