@@ -1234,6 +1234,102 @@
           ],
           "title": "Softirq Latency",
           "type": "timeseries"
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 92,
+          "title": "Host Runnable Tasks",
+          "description": "Instantaneous running or runnable tasks from /proc/stat procs_running, including container tasks. Not CPU utilization or load average.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_loadavg_nr_running{host=~\"$host\",region=~\"$region\"}",
+              "legendFormat": "Runnable {{host}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 101
+          }
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 93,
+          "title": "Host Uninterruptible Tasks",
+          "description": "Host tasks contributing to load, excluding TASK_NOLOAD and TASK_FROZEN, collected with the loadavg component. Requires host PID visibility, kernel BTF and the BPF task iterator; sampled at MetricCollector.Loadavg.Interval (seconds; default 15). Unsupported systems omit the metric.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_loadavg_nr_uninterruptible{host=~\"$host\",region=~\"$region\"}",
+              "legendFormat": "D state {{host}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 109
+          }
         }
       ],
       "targets": [
@@ -1959,6 +2055,54 @@
           ],
           "title": "Anon Pages",
           "type": "timeseries"
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 91,
+          "title": "Cumulative Memcg Limit Reclaim Events",
+          "description": "Cumulative host-wide memcg limit reclaim events, exported as a Gauge. Includes container and unassigned tasks; do not add container counts. BPF reload resets the total. Not global physical-memory reclaim or reclaim duration.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_memory_reclaim_directstall{host=~\"$host\",region=~\"$region\"}",
+              "legendFormat": "Memcg reclaim {{host}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 84
+          }
         }
       ],
       "targets": [

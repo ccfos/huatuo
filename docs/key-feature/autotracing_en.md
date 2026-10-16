@@ -19,7 +19,7 @@ AutoTracing is an event-driven automatic diagnosis mechanism. When a host or con
 
 Collected artifacts include eBPF flame graphs (system-wide or container-scoped CPU call stack samples via `perf`), D-state process kernel call stacks, disk IO call stacks, and process memory usage rankings. Each event type has a built-in cooldown period (30 minutes by default) to prevent redundant data from continuous triggers.
 
-Five event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container D-state load spike), `iotracing` (disk IO anomaly), and `memburst` (memory burst allocation).
+Five event types are supported: `cpusys` (host CPU sys spike, user/total CPU spikes), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (host and container memory bursts).
 
 ## 🎯 Use Cases
 
@@ -50,12 +50,17 @@ All events provide default values and work without configuration:
 | `cpuidle.run_tracing_tool_timeout` | `10` (s) | perf flame graph collection timeout |
 | `cpusys.sys_threshold` | `45` (%) | Host CPU sys utilization trigger threshold |
 | `cpusys.delta_sys_threshold` | `20` (%) | Host CPU sys utilization delta trigger threshold |
+| `cpusys.user_threshold` | `0` (%) | User utilization threshold; 0 disables the user trigger |
+| `cpusys.delta_user_threshold` | `0` (percentage points) | User utilization increase threshold |
+| `cpusys.usage_threshold` | `0` (%) | Total executing CPU utilization threshold; 0 disables the total trigger |
+| `cpusys.delta_usage_threshold` | `0` (percentage points) | Total executing CPU utilization increase threshold |
 | `cpusys.interval` | `10` (s) | Detection interval |
 | `cpusys.interval_tracing` | `1800` (s) | Global cooldown period between triggers |
 | `cpusys.run_tracing_tool_timeout` | `10` (s) | perf flame graph collection timeout |
 | `dload.threshold_load` | `5` | Container D-state process load EMA trigger threshold |
+| `dload.host_threshold_load` | `5` | Host D-state task count's one-minute EMA threshold |
 | `dload.interval` | `10` (s) | Detection interval |
-| `dload.interval_tracing` | `1800` (s) | Per-container cooldown period between triggers |
+| `dload.interval_tracing` | `1800` (s) | Independent cooldown for each container and the host trigger |
 | `iotracing.rbps_threshold` | `2000` (MB/s) | Disk read throughput trigger threshold |
 | `iotracing.wbps_threshold` | `1500` (MB/s) | Disk write throughput trigger threshold |
 | `iotracing.util_threshold` | `90` (%) | Disk IO utilization trigger threshold |
@@ -64,21 +69,23 @@ All events provide default values and work without configuration:
 | `iotracing.max_proc_dump` | `10` | Maximum number of high-IO processes to collect |
 | `iotracing.max_files_per_proc_dump` | `5` | Maximum open files to collect per process |
 | `memburst.delta_memory_burst` | `100` (%) | Anonymous memory growth rate threshold relative to the oldest sample in the sliding window (100% means ≥ 2× triggers) |
-| `memburst.delta_anon_threshold` | `70` (%) | Anonymous memory as a percentage of total host memory threshold |
+| `memburst.delta_anon_threshold` | `70` (%) | Anonymous memory as a percentage of host MemTotal or the effective container limit |
 | `memburst.interval` | `10` (s) | Detection interval |
-| `memburst.interval_tracing` | `1800` (s) | Cooldown period between triggers |
-| `memburst.sliding_window_length` | `60` | Sliding window sample count (corresponding to 600 seconds of history) |
+| `memburst.interval_tracing` | `1800` (s) | Independent host and per-container cooldown periods |
+| `memburst.sliding_window_length` | `60` | Sliding window sample count (590 seconds between the oldest and newest samples at the default interval) |
 | `memburst.dump_process_max_num` | `10` | Maximum number of top memory-consuming processes to collect |
 
 ### Event List
 
+Host dload and container memburst run whenever their corresponding tracer is enabled and prerequisites are met. The additional cpusys user/total triggers also require a positive `UserThreshold`/`UsageThreshold`, respectively; both default to disabled. Table parameter names are shorthand; use the TOML keys in the [configuration reference](../configuration/huatuo-bamai-configuration_en.md).
+
 | Event Name (tracer_name) | Target | Trigger Condition | Typical Scenario |
 | ------------------------ | ------ | ----------------- | ---------------- |
-| `cpusys` | Host | sys > 45% and delta_sys > 20% | Kernel-mode CPU spike, syscall hotspot |
+| `cpusys` | Host | Default: sys > 45% and delta_sys > 20%. Optional user/total triggers require both utilization and its increase to exceed their configured thresholds. | Host CPU spikes and hotspots |
 | `cpuidle` | Container | (user>75% and delta_user>45%) or (sys>45% and delta_sys>20%) or (total>90% and delta_total>55%) | Container CPU spike, hotspot function analysis |
-| `dload` | Container | D-state process load EMA > 5 | D-state process accumulation, IO blocking |
+| `dload` | Container; whole host | D-state task count's one-minute EMA > 5, with independent thresholds and cooldowns | D-state process accumulation, IO blocking |
 | `iotracing` | Host | Any IO metric exceeds threshold for two consecutive samples | Saturated disk IO, high IO wait latency |
-| `memburst` | Host | Anonymous memory ≥ 2× oldest window sample and ≥ 70% of total memory | Memory burst allocation, OOM precursor |
+| `memburst` | Host; container | Anonymous memory ≥ 2× oldest window sample and ≥ 70% of host MemTotal or effective container limit | Memory burst allocation, OOM precursor |
 
 ### Fields
 
@@ -101,6 +108,52 @@ All event records include the following common fields:
 ### 1. cpusys
 
 **Description** Periodically reads `/proc/stat` to calculate host CPU sys utilization and the delta between consecutive samples. When sys utilization exceeds the threshold (default 45%) and the delta exceeds its threshold (default 20%), a system-wide perf sampling run is triggered to generate a full-host CPU flame graph. A 30-minute global cooldown prevents repeated triggers.
+
+`cpusys` can additionally trigger on host user CPU or total executing CPU.
+It reuses the existing `/proc/stat` sampling loop, system-wide `perf` capture
+and `cpusys` storage record. No new tracer, probe or periodic reader is added.
+
+```toml
+[AutoTracing.CPUSys]
+UserThreshold = 75
+DeltaUserThreshold = 45
+UsageThreshold = 90
+DeltaUsageThreshold = 55
+```
+
+Existing system thresholds, sampling interval, capture duration and cooldown
+remain unchanged. The four user/total thresholds default to 0; a positive
+`UserThreshold` or `UsageThreshold` enables the corresponding trigger, as in
+the example above. Omitted settings preserve system-only triggering.
+Each trigger requires both the percentage and its increase from the
+previous interval to **exceed** their thresholds. This detects bursts, not every
+case of sustained high usage. The first percentage sample establishes a baseline.
+
+All percentages use the delta of aggregate CPU time as their denominator:
+
+| Trigger | Numerator |
+| --- | --- |
+| Existing system | `system` |
+| User | `user + nice` |
+| Total executing | `user + nice + system + irq + softirq` |
+
+The denominator sums the first eight `/proc/stat` CPU counters. Guest time is
+already included in user/nice and is not counted twice. Idle, iowait and steal
+are excluded from total executing time: local on-CPU profiling cannot explain
+waiting or time stolen by a hypervisor. This is whole-machine utilization,
+including container work, not a container's quota-normalized utilization.
+
+All three triggers share one capture and cooldown. Simultaneous crossings do
+not run perf repeatedly. `container_id` stays empty. Existing system JSON fields
+are preserved. Records also include `user_percent*`, `total_percent*` and
+`trigger_reasons` (`user`, `total`, `system`); zero-valued additional fields are omitted.
+
+Verification: unit tests cover counter calculations, rollback, defaults,
+trigger combinations, threshold boundaries and cooldown. LocalFile integration
+tests check payload persistence. `TestCPUHostLiveTrigger`, enabled only by
+`HUATUO_CPU_LIVE_DIR`, runs a bounded one-process workload and checks the real
+sampling → perf → LocalFile path. That directory must contain this build's `perf`
+executable and `perf.o`; run only in a test VM with BPF/perf privileges.
 
 **Storage** Event data is automatically stored in Elasticsearch or a local disk file.
 
@@ -178,7 +231,38 @@ All event records include the following common fields:
 
 ### 3. dload
 
-**Description** Reads container process states via netlink and cgroup, then computes an exponential weighted moving average (EMA) of the load contribution from uninterruptible (D-state) processes per container. When the EMA exceeds the threshold (default 5), kernel call stacks are collected for all D-state processes inside the container and on the host. Known-issue filtering (`issues_list`) reduces false positives. A 30-minute per-container cooldown applies.
+**Description** Reads container process states through netlink on cgroup v1 and through a batched BPF task iterator on cgroup v2. It computes an exponential weighted moving average (EMA) of the load contribution from uninterruptible (D-state) processes per container. When the EMA exceeds the threshold (default 5), kernel call stacks are collected for all D-state processes inside the container and on the host. Known-issue filtering (`issues_list`) reduces false positives. A 30-minute per-container cooldown applies. The cgroup v2 path walks all host tasks per sample; it requires readable kernel BTF and the BPF `task` iterator. Counts are non-hierarchical and include only tasks directly attached to each target cgroup. On unsupported or verifier-incompatible kernels, the first sample marks `dload` as unsupported and stops this detector without periodically retrying the BPF load.
+
+Kubernetes deployments must run Huatuo with `hostPID: true`. Without host PID namespace visibility, cgroup v2 dload is reported as unsupported instead of returning misleading zero counts.
+
+| Feature | Configuration | Implementation |
+| --- | --- | --- |
+| Host `dload` | `HostThresholdLoad=5` | Shared BPF task iterator counts whole-host D-state threads; reuse the existing interval-based EMA and stack capture. Threshold and cooldown state are independent of container triggers. |
+
+Host and container triggers run whenever `dload` is enabled. Events retain their existing name and data layout.
+
+Host dload includes container threads; it is not a non-container-only count.
+It requires the same BPF task iterator/BTF/privileges and host PID visibility as
+the existing host D-state metric (upstream iterator foundation: Linux 5.8).
+It works with either cgroup version. On v2, a single iterator snapshot supplies
+both host and container scopes. On unsupported v1 kernels, only the new host trigger stops;
+the existing netlink container path remains. D-load is a sampled estimate,
+not `/proc/loadavg`. Host stacks include threads, not only process leaders.
+Simultaneous host/container threshold crossings produce separate events.
+
+Costs: no new BPF probes/maps. Host dload enables the existing full task walk
+once per sample unless a compatible fresh snapshot is already available.
+
+Validation on the 5.10 test VM: with debug off, a bounded `vfork` worker stays
+in D state until its child exits. A one-second sample and host threshold zero
+produce D=1 and D-load=0.02, trigger independently without container discovery,
+and persist a LocalFile record containing the worker's kernel stack. The existing
+debug capture test also reads the local file rather than accepting an unconfigured
+`Save` as proof. Live tests require `HUATUO_TRIGGER_BPF_DIR`; the normal trigger
+test additionally requires `HUATUO_DLOAD_WORKER_PID`. Use only a disposable VM;
+the fixture must exit on its own and the test never creates an unbounded D task.
+
+Sampling follows `AutoTracing.Dload.Interval` (default 10 seconds), not `MetricCollector.Loadavg.Interval`.
 
 **Storage** Event data is automatically stored in Elasticsearch or a local disk file.
 
@@ -293,7 +377,45 @@ All event records include the following common fields:
 
 ### 5. memburst
 
-**Description** Periodically samples host anonymous memory usage and maintains a sliding window of 60 samples (corresponding to 600 seconds). A trigger fires when current anonymous memory is ≥ 2× the oldest sample in the window and anonymous memory accounts for ≥ 70% of total host memory. On trigger, the top N processes by memory consumption (default 10) are collected, recording their PID, process name, and RSS memory size. A 30-minute cooldown applies.
+**Description** Periodically samples host anonymous memory usage and maintains a sliding window of 60 samples (590 seconds between the oldest and newest samples at the default interval). A trigger fires when current anonymous memory is ≥ 2× the oldest sample in the window and anonymous memory accounts for ≥ 70% of total host memory. On trigger, the top N processes by memory consumption (default 10) are collected, recording their PID, process name, and RSS memory size. A 30-minute cooldown applies.
+
+`memburst` detects container anonymous-memory bursts independently alongside
+host bursts whenever the component is enabled. Reuse `DeltaMemoryBurst`, `DeltaAnonThreshold`,
+`SlidingWindowLength`, `Interval`, `IntervalTracing`, `DumpProcessMaxNum`,
+the window comparison and RSS process ranking. Events remain `memburst` with
+the same data layout and set the corresponding container ID.
+
+Read v1 `total_active_anon + total_inactive_anon`, or v2
+`active_anon + inactive_anon`. The denominator is the smaller of host MemTotal
+and the effective memory limit (v1 `hierarchical_memory_limit`; v2 minimum
+ancestor `memory.max`). Unlimited containers use MemTotal. Anonymous LRU usage,
+like the host baseline, is not total cgroup usage and can include shmem.
+
+Each container has its own history and cooldown. Cooldown starts before saving
+a nonempty snapshot, even if saving fails. Discovery or memory-read failure,
+path or limit change resets history but preserves the cooldown, so a new
+window cannot bypass `IntervalTracing`. State is removed
+when the container disappears from a successful discovery result.
+Snapshots read `cgroup.procs` recursively
+only after a trigger and outside cooldown; RSS ranking need not sum to charged
+cgroup memory. The existing ring compares newest vs oldest retained sample:
+60 samples at 10-second intervals span 590 seconds.
+
+No new BPF probes or maps. Per-interval cost is reading memory counters and
+ancestor limits, with one bounded history ring per live container. Process
+enumeration occurs on triggers. The shared window helper benchmark on the
+development host takes approximately 23 ns/sample with zero allocations;
+this excludes file reads and snapshots and is not an end-to-end overhead claim.
+
+Validation on the 5.10 hybrid test VM: a bounded worker in an isolated 128 MiB
+v1 memory cgroup grew from 8176 to 110596 KiB anonymous LRU. The real counters
+crossed the two-sample test window's doubling/70%-of-limit thresholds, and the
+RSS snapshot included the worker. `TestContainerBurstLiveGrowth` accepts its
+PID via `HUATUO_MEMBURST_WORKER_PID`; it does not create pressure itself.
+This checks counters, threshold logic and snapshots, not kubelet discovery or
+container-event persistence. The VM has no kubelet, so that end-to-end path
+and pure-v2 live memory coverage remain unverified. v2 ancestor-limit behavior
+is covered by fixtures. The live worker and its cgroup were removed afterward.
 
 **Storage** Event data is automatically stored in Elasticsearch or a local disk file.
 
