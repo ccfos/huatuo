@@ -49,15 +49,15 @@ type ringBufferContext struct {
 	transferStateMapID uint32
 	stackMapAID        uint32
 	stackMapBID        uint32
-	needsFallback      bool // true for memory retained mode, false for CPU/non-retained
+	sharedStackMap     bool // retained events always resolve against stack_map_a
 	usym               *symbol.UsymResolver
 }
 
 // newRingBufferContext initializes the ring buffer infrastructure for dual-buffer profiling.
 // It creates perf event readers for both A/B outputs and resolves map IDs for state and stack maps.
 // The returned context can be used throughout the profiler's lifetime without passing individual components.
-// needsFallback: true for memory retained mode (requires dual-stack-map fallback), false for others.
-func newRingBufferContext(b bpf.BPF, ctx context.Context, bufferSize int, needsFallback bool) (*ringBufferContext, error) {
+// sharedStackMap pins retained-memory stack IDs to stack_map_a across output swaps.
+func newRingBufferContext(b bpf.BPF, ctx context.Context, bufferSize int, sharedStackMap bool) (*ringBufferContext, error) {
 	readerA, err := b.EventPipeByName(ctx, "profiler_output_a", uint32(bufferSize))
 	if err != nil {
 		return nil, fmt.Errorf("create readerA: %w", err)
@@ -76,7 +76,7 @@ func newRingBufferContext(b bpf.BPF, ctx context.Context, bufferSize int, needsF
 		transferStateMapID: b.MapIDByName("profiler_state_map"),
 		stackMapAID:        b.MapIDByName("stack_map_a"),
 		stackMapBID:        b.MapIDByName("stack_map_b"),
-		needsFallback:      needsFallback,
+		sharedStackMap:     sharedStackMap,
 		usym:               symbol.NewUsymResolver(),
 	}, nil
 }
@@ -116,12 +116,10 @@ func (r *ringBufferContext) Close() {
 
 // frozenRingBuffer represents a frozen ring buffer that is ready to be drained.
 // It contains the reader for the ring buffer and the index to track sample counts.
-// For retained mode memory profiling, fallbackStackMapID provides fallback lookup path.
 type frozenRingBuffer struct {
-	reader             bpf.PerfEventReader
-	stackMapID         uint32
-	sampleCountIdx     uint32
-	fallbackStackMapID uint32 // 0 for CPU/non-retained, other stack_map for retained
+	reader         bpf.PerfEventReader
+	stackMapID     uint32
+	sampleCountIdx uint32
 }
 
 // advanceSwapParity increments the BPF write-parity counter so the kernel
@@ -131,7 +129,7 @@ type frozenRingBuffer struct {
 //
 // This method uses the pre-initialized ring buffer context, eliminating the need
 // to pass readerA/readerB/transferStateMapID/map names on every call.
-// For retained mode (needsFallback=true), it automatically sets fallbackStackMapID.
+// Retained memory uses stack_map_a regardless of the output ring parity.
 func (r *ringBufferContext) advanceSwapParity() (frozenRingBuffer, error) {
 	transferCount, err := bpfmap.ReadUint64(r.bpf, r.transferStateMapID, bpfmap.TransferCountIdx)
 	if err != nil {
@@ -145,20 +143,16 @@ func (r *ringBufferContext) advanceSwapParity() (frozenRingBuffer, error) {
 			stackMapID:     r.stackMapAID,
 			sampleCountIdx: bpfmap.SampleCountAIdx,
 		}
-		// Set fallback to stack_map_b for retained mode
-		if r.needsFallback {
-			ring.fallbackStackMapID = r.stackMapBID
-		}
 	} else {
 		ring = frozenRingBuffer{
 			reader:         r.readerB,
 			stackMapID:     r.stackMapBID,
 			sampleCountIdx: bpfmap.SampleCountBIdx,
 		}
-		// Set fallback to stack_map_a for retained mode
-		if r.needsFallback {
-			ring.fallbackStackMapID = r.stackMapAID
-		}
+	}
+
+	if r.sharedStackMap {
+		ring.stackMapID = r.stackMapAID
 	}
 
 	if err := bpfmap.WriteUint64(r.bpf, r.transferStateMapID, bpfmap.TransferCountIdx, transferCount+1); err != nil {
@@ -279,26 +273,11 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 // aggregateStacksAndEnqueue resolves stack traces and emits aggregated records via enqueue callback.
 // For CPU profiler, convertValue is nil (samples are already counts).
 // For Memory profiler non-retained modes, convertValue converts raw value to bytes.
-// For Memory profiler retained mode, fallbackStackMapID provides fallback lookup path.
-//
-// Stack IDs are NOT deleted from the stack map after resolution for the following reasons:
-//
-//  1. Caching Performance: BPF_MAP_TYPE_STACK_TRACE is a cache-like map where stack IDs
-//     can be reused across multiple events. Keeping the IDs cached improves performance
-//     for subsequent lookups (10-20% hit rate for repeated stacks).
-//
-//  2. Fallback Support: In retained mode (physical_usage), free events may reference
-//     stack IDs from the previous cycle's stack_map. Deleting them would break the
-//     fallback lookup path that cross-references alloc-time stacks.
-//
-//  3. Automatic Management: The kernel's BPF stack map implementation uses a LRU-like
-//     eviction policy when the map is full, automatically managing the lifecycle of
-//     stack traces without requiring explicit deletion.
-//
-//  4. Reduced Overhead: Deleting stack IDs requires additional BPF map operations
-//     (one delete syscall per stack ID), which adds unnecessary overhead for a
-//     performance-critical path. The memory overhead of keeping stale entries is
-//     bounded by the map size limit (STACK_MAP_ENTRIES = 65536).
+// Retained memory uses one stable map for allocation and free events. Keep stack
+// entries for the session: delayed frees still reference their allocation IDs.
+// BPF_F_REUSE_STACKID is disabled, so a hash collision rejects a new stack instead
+// of replacing an ID still referenced by a tracked page. Storage is bounded by
+// STACK_MAP_ENTRIES; the stack map does not evict old entries automatically.
 func (r *ringBufferContext) aggregateStacksAndEnqueue(
 	sampleCountsByProcess map[processKey]map[rawStackIDs]int64,
 	ring frozenRingBuffer,
@@ -322,8 +301,8 @@ func (r *ringBufferContext) aggregateStacksAndEnqueue(
 
 			if validateStackID(stackIDs.KernelStackID) {
 				if _, ok := kstackCache[stackIDs.KernelStackID]; !ok {
-					kstackCache[stackIDs.KernelStackID] = r.resolveKernelStackWithFallback(
-						ring,
+					kstackCache[stackIDs.KernelStackID] = r.resolveKernelStack(
+						ring.stackMapID,
 						stackIDs.KernelStackID,
 					)
 				}
@@ -334,8 +313,8 @@ func (r *ringBufferContext) aggregateStacksAndEnqueue(
 			}
 			if validateStackID(stackIDs.UserStackID) {
 				if _, ok := ustackCache[userCacheKey]; !ok {
-					ustackCache[userCacheKey] = r.resolveUserStackWithFallback(
-						ring,
+					ustackCache[userCacheKey] = r.resolveUserStack(
+						ring.stackMapID,
 						stackIDs.UserStackID,
 						process.PID,
 					)
@@ -363,45 +342,6 @@ func (r *ringBufferContext) aggregateStacksAndEnqueue(
 		len(ustackCache),
 		records,
 	)
-}
-
-// resolveKernelStackWithFallback resolves kernel stack with fallback support.
-// Fast path: lookup primary stackMapID (90-95% hit rate).
-// Slow path: fallback to another stackMapID if primary lookup fails.
-func (r *ringBufferContext) resolveKernelStackWithFallback(
-	ring frozenRingBuffer,
-	kernelStackID int32,
-) []string {
-	stack := r.resolveKernelStack(ring.stackMapID, kernelStackID)
-	if len(stack) > 0 {
-		return stack
-	}
-
-	if ring.fallbackStackMapID != 0 {
-		return r.resolveKernelStack(ring.fallbackStackMapID, kernelStackID)
-	}
-
-	return nil
-}
-
-// resolveUserStackWithFallback resolves user stack with fallback support.
-// Fast path: lookup primary stackMapID (90-95% hit rate).
-// Slow path: fallback to another stackMapID if primary lookup fails.
-func (r *ringBufferContext) resolveUserStackWithFallback(
-	ring frozenRingBuffer,
-	userStackID int32,
-	pid uint32,
-) []string {
-	stack := r.resolveUserStack(ring.stackMapID, userStackID, pid)
-	if len(stack) > 0 {
-		return stack
-	}
-
-	if ring.fallbackStackMapID != 0 {
-		return r.resolveUserStack(ring.fallbackStackMapID, userStackID, pid)
-	}
-
-	return nil
 }
 
 func (r *ringBufferContext) resolveKernelStack(stackMapID uint32, stackID int32) []string {
