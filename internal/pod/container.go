@@ -36,6 +36,15 @@ type containerViewEntry struct {
 	containers map[string]*Container
 }
 
+// netnsIndexes caches net-namespace lookup tables (cookie and inode numbers)
+// pinned to the store revision they were built from, so per-event BPF
+// paths stop scanning every container linearly.
+type netnsIndexes struct {
+	revision uint64
+	byCookie map[uint64]*Container
+	byInum   map[uint64]*Container
+}
+
 // Container object
 type Container struct {
 	ID                 string            `json:"id"`
@@ -206,9 +215,63 @@ func containerBy[T comparable](selector func(*Container) T, val T) (*Container, 
 	return nil, nil
 }
 
+// containerByNetNamespace resolves a container by network namespace cookie
+// or inode number using a revision-pinned index; a nil result (without
+// error) means no container matches.
+func containerByNetNamespace(cookie, inum uint64) (*Container, error) {
+	containerView.mu.RLock()
+	if idx := containerView.netns; idx != nil && idx.revision == containerView.revision {
+		c := idx.byCookie[cookie]
+		if c == nil {
+			c = idx.byInum[inum]
+		}
+		containerView.mu.RUnlock()
+		return c, nil
+	}
+	containerView.mu.RUnlock()
+	containers, err := containersByTypeQos(ContainerTypeNormal, ContainerQosLevelMin)
+	if err != nil {
+		return nil, err
+	}
+
+	// Re-check under the write lock: another goroutine may have built it.
+	containerView.mu.Lock()
+	if containerView.netns != nil && containerView.netns.revision == containerView.revision {
+		idx := containerView.netns
+		c := idx.byCookie[cookie]
+		if c == nil {
+			c = idx.byInum[inum]
+		}
+		containerView.mu.Unlock()
+		return c, nil
+	}
+
+	idx := &netnsIndexes{
+		revision: containerView.revision,
+		byCookie: make(map[uint64]*Container),
+		byInum:   make(map[uint64]*Container),
+	}
+	for _, c := range containers {
+		if c.NetNamespaceCookie != 0 {
+			idx.byCookie[c.NetNamespaceCookie] = c
+		}
+		if c.NetNamespaceInum != 0 {
+			idx.byInum[c.NetNamespaceInum] = c
+		}
+	}
+	containerView.netns = idx
+
+	c := idx.byCookie[cookie]
+	if c == nil {
+		c = idx.byInum[inum]
+	}
+	containerView.mu.Unlock()
+	return c, nil
+}
+
 // ContainerByNetNamespaceInum returns the container whose network namespace inum matches.
 func ContainerByNetNamespaceInum(inum uint64) (*Container, error) {
-	return containerBy(func(c *Container) uint64 { return c.NetNamespaceInum }, inum)
+	return containerByNetNamespace(0, inum)
 }
 
 // GetCSSToContainerID builds a mapping from cgroup subsystem address to container ID.
@@ -256,5 +319,5 @@ func ContainerByNetNamespaceCookie(cookie uint64) (*Container, error) {
 	if cookie == 0 {
 		return nil, nil
 	}
-	return containerBy(func(c *Container) uint64 { return c.NetNamespaceCookie }, cookie)
+	return containerByNetNamespace(cookie, 0)
 }
