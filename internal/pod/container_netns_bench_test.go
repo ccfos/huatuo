@@ -31,10 +31,37 @@ func benchNetnsContainers(b *testing.B, n int) func() {
 				Type:               ContainerTypeNormal,
 				NetNamespaceCookie: uint64(1000 + i),
 				NetNamespaceInum:   uint64(2000 + i),
+				CgroupCss:          map[string]uint64{"memory": uint64(50 + i)},
 			},
 		}
 	}
 	return func() { containerView = previous }
+}
+
+func BenchmarkContainerByCSS(b *testing.B) {
+	defer benchNetnsContainers(b, 100)()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := ContainerByCSS(50, "memory"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkContainerByCSSLinear(b *testing.B) {
+	defer benchNetnsContainers(b, 100)()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		all, err := NormalContainers()
+		if err != nil {
+			b.Fatal(err)
+		}
+		for _, c := range all {
+			if c.CgroupCss["memory"] == 50 {
+				break
+			}
+		}
+	}
 }
 
 func BenchmarkContainerByNetNamespaceCookie(b *testing.B) {

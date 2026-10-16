@@ -36,13 +36,15 @@ type containerViewEntry struct {
 	containers map[string]*Container
 }
 
-// netnsIndexes caches net-namespace lookup tables (cookie and inode numbers)
-// pinned to the store revision they were built from, so per-event BPF
-// paths stop scanning every container linearly.
+// netnsIndexes caches net-namespace and cgroup-CSS lookup tables (cookie,
+// inode number, and per-subsystem CSS addresses) pinned to the store revision
+// they were built from, so per-event BPF paths stop scanning every container
+// linearly.
 type netnsIndexes struct {
 	revision uint64
 	byCookie map[uint64]*Container
 	byInum   map[uint64]*Container
+	byCSS    map[string]map[uint64]*Container
 }
 
 // Container object
@@ -250,6 +252,7 @@ func containerByNetNamespace(cookie, inum uint64) (*Container, error) {
 		revision: containerView.revision,
 		byCookie: make(map[uint64]*Container),
 		byInum:   make(map[uint64]*Container),
+		byCSS:    make(map[string]map[uint64]*Container),
 	}
 	for _, c := range containers {
 		if c.NetNamespaceCookie != 0 {
@@ -257,6 +260,17 @@ func containerByNetNamespace(cookie, inum uint64) (*Container, error) {
 		}
 		if c.NetNamespaceInum != 0 {
 			idx.byInum[c.NetNamespaceInum] = c
+		}
+		for subsys, addr := range c.CgroupCss {
+			if addr == 0 {
+				continue
+			}
+			bySubsys, ok := idx.byCSS[subsys]
+			if !ok {
+				bySubsys = make(map[uint64]*Container)
+				idx.byCSS[subsys] = bySubsys
+			}
+			bySubsys[addr] = c
 		}
 	}
 	containerView.netns = idx
@@ -306,12 +320,31 @@ func BuildCssContainers(containers map[string]*Container, subsys string) map[uin
 }
 
 // ContainerByCSS returns the container whose cgroup subsystem state address
-// for the given subsystem matches css.
+// for the given subsystem matches css. A nil result (without error) means no
+// container matches.
 func ContainerByCSS(css uint64, subsys string) (*Container, error) {
 	if css == 0 {
 		return nil, nil
 	}
-	return containerBy(func(c *Container) uint64 { return c.CgroupCss[subsys] }, css)
+	containerView.mu.RLock()
+	idx := containerView.netns
+	fresh := idx != nil && idx.revision == containerView.revision
+	var c *Container
+	if fresh {
+		c = idx.byCSS[subsys][css]
+	}
+	containerView.mu.RUnlock()
+	if fresh {
+		return c, nil
+	}
+	if _, err := containerByNetNamespace(0, 0); err != nil {
+		return nil, err
+	}
+	// containerByNetNamespace above builds the index.
+	containerView.mu.RLock()
+	c = containerView.netns.byCSS[subsys][css]
+	containerView.mu.RUnlock()
+	return c, nil
 }
 
 // ContainerByNetNamespaceCookie returns the container whose network namespace cookie matches.
