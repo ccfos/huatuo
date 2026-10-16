@@ -138,8 +138,17 @@ func cgroupDeleteCssData(data *containerCssPerfEvent, containerID string) error 
 		}
 
 		if _, ok := cgroupCssID2SubSysNameMap[index]; ok {
-			m, loaded := cgroupCssMetaDataMap.LoadAndDelete(css)
-			if loaded {
+			value, loaded := cgroupCssMetaDataMap.Load(css)
+			if !loaded {
+				continue
+			}
+
+			m, ok := value.(*containerCssMetaData)
+			if !ok || m.ContainerID != containerID || m.Cgroup != data.Cgroup {
+				continue
+			}
+
+			if cgroupCssMetaDataMap.CompareAndDelete(css, value) {
 				log.Debugf("delete container css data: %+v", m)
 			}
 		}
