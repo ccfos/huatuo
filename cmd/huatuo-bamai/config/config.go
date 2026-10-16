@@ -107,6 +107,9 @@ type Config struct {
 	Operations OperationsConfig
 	Profiling  ProfilingConfig
 
+	GuestTransport GuestTransportConfig
+	GuestBridge    GuestBridgeConfig
+
 	Pod PodConfig
 
 	AutoTracing     autotracing.Config
@@ -151,6 +154,10 @@ func Load(path string) error {
 
 // Validate rejects invalid operational settings before startup side effects.
 func (c *Config) Validate() error {
+	if err := c.validateGuestTransport(); err != nil {
+		return err
+	}
+
 	if err := c.Mode.Validate(); err != nil {
 		return err
 	}
@@ -328,6 +335,9 @@ func update(values map[string]any, persist bool) error {
 		return fmt.Errorf("%w: %w", ErrInvalidUpdate, err)
 	}
 
+	if next.GuestTransport != configState.current.Load().GuestTransport || next.GuestBridge != configState.current.Load().GuestBridge {
+		return fmt.Errorf("%w: changing Guest transport or bridge requires a restart", ErrInvalidUpdate)
+	}
 	if next.Mode != configState.current.Load().Mode {
 		return fmt.Errorf("%w: changing Mode requires a restart", ErrInvalidUpdate)
 	}

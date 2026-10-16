@@ -71,3 +71,5 @@ format and the physical node name from BAMAI_NODE_NAME. It does not enable
 Guest-to-Host VSOCK forwarding. That transport and Host-side peer authentication
 are separate functionality; keep the collector API's existing authentication
 when inspecting local results.
+
+VSOCK forwarding is available as an explicit opt-in; see [Guest-to-Host transport](kata_transport_en.md) for authenticated Host listeners, queue limits and delivery semantics.

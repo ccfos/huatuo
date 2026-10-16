@@ -19,6 +19,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/vsock"
 	"github.com/ccfos/huatuo/internal/toolstream/transport"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -166,5 +168,95 @@ func TestDocumentTransportIntegration(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
+	}
+}
+
+func TestGuestNativeStoresToTransport(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	type receivedDocument struct {
+		tool string
+		data []byte
+	}
+	received := make(chan receivedDocument, 2)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := transport.Serve(listener, func(session *transport.Session, chunk transport.ChunkMsg) {
+		if len(chunk.Data) > 0 {
+			received <- receivedDocument{tool: session.ToolName, data: append([]byte(nil), chunk.Data...)}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	options := &vsock.Options{Version: "integration", DialContext: func(ctx context.Context, _ uint32) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+	}}
+	traces, err := tracingstore.NewFromConfig(ctx, tracingstore.Config{VSOCK: options})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer traces.Close(ctx)
+	profiles, err := NewFromConfig(ctx, Config{VSOCK: options})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profiles.Close(ctx)
+	event, err := tracingstore.DecodeDocument([]byte(`{"tracer_id":"guest-event","tracer_name":"cpu","tracer_type":"event","observed_timestamp":"2026-10-16T01:00:00Z","source_type":"kata_guest","tracer_data":{"counter":18446744073709551615}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := validDocument()
+	profile.SourceType = types.DocumentSourceKataGuest
+	for _, save := range []func() error{func() error { return traces.Save(event) }, func() error { return profiles.Save(ctx, profile) }} {
+		for {
+			err := save()
+			if err == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(err)
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}
+	if err := profiles.SaveSync(ctx, profile); !errors.Is(err, driver.ErrUnsupportedOp) {
+		t.Errorf("remote visibility guarantee=%v", err)
+	}
+	seen := map[string]bool{}
+	for range 2 {
+		select {
+		case document := <-received:
+			seen[document.tool] = true
+			switch document.tool {
+			case vsock.TracingTool:
+				d, err := tracingstore.DecodeDocument(document.data)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if d.SourceType != types.DocumentSourceKataGuest || d.TracerData.(map[string]any)["counter"].(json.Number).String() != "18446744073709551615" {
+					t.Errorf("event=%+v", d)
+				}
+			case vsock.ProfilingTool:
+				d, err := DecodeDocument(document.data)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if d.ProfileData.ProfileType != profile.ProfileData.ProfileType || d.SourceType != types.DocumentSourceKataGuest {
+					t.Errorf("profile=%+v", d)
+				}
+			default:
+				t.Errorf("wrong document tool %q", document.tool)
+			}
+		case <-ctx.Done():
+			t.Fatal("Guest native store did not forward documents")
+		}
+	}
+	if !seen[vsock.TracingTool] || !seen[vsock.ProfilingTool] {
+		t.Errorf("routed tools=%v", seen)
 	}
 }
