@@ -58,22 +58,22 @@ func convertLevels(levels []*querierv1.Level) []*flamegraph.Level {
 	return result
 }
 
-func findOrAdd(strA string, b []string) (int, []string) {
-	var index int
-	found := false
-	for idxB, strB := range b {
-		if strA == strB {
-			index = idxB
-			found = true
-			break
-		}
-	}
-	if !found {
-		b = append(b, strA)
-		index = len(b) - 1
-	}
+type functionNameIndex struct {
+	names []string
+	ids   map[string]int
+}
 
-	return index, b
+func (f *functionNameIndex) add(name string) int {
+	if index, ok := f.ids[name]; ok {
+		return index
+	}
+	if f.ids == nil {
+		f.ids = make(map[string]int)
+	}
+	index := len(f.names)
+	f.names = append(f.names, name)
+	f.ids[name] = index
+	return index
 }
 
 func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
@@ -115,7 +115,7 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 	})
 
 	var stacktraces []*ingestv1.StacktraceSample
-	var functionNames []string
+	var functionNames functionNameIndex
 
 	for k := range keyValuePairs {
 		sample := &ingestv1.StacktraceSample{}
@@ -127,7 +127,7 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 			frames := symbol.KsymStackStrs(kv.Key.Kstack[:], perfStackDepth)
 			for _, frame := range frames {
 				if frame != "" {
-					index, functionNames = findOrAdd(frame+"_[k]", functionNames)
+					index = functionNames.add(frame + "_[k]")
 					sample.FunctionIds = append(sample.FunctionIds, int32(index))
 				}
 			}
@@ -137,14 +137,14 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 			frames := u.UsymStackStrs(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
 			for _, frame := range frames {
 				if frame != "" {
-					index, functionNames = findOrAdd(frame, functionNames)
+					index = functionNames.add(frame)
 					sample.FunctionIds = append(sample.FunctionIds, int32(index))
 				}
 			}
 		}
 
 		sttitle := bytesutil.ToStr(kv.Key.Name[:])
-		index, functionNames = findOrAdd(sttitle, functionNames)
+		index = functionNames.add(sttitle)
 		sample.FunctionIds = append(sample.FunctionIds, int32(index))
 
 		stacktraces = append(stacktraces, sample)
@@ -154,7 +154,7 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 	m := phlaremodel.NewTreeMerger()
 	sm := phlaremodel.NewStackTraceMerger()
 
-	sm.MergeStackTraces(stacktraces, functionNames)
+	sm.MergeStackTraces(stacktraces, functionNames.names)
 	if sm.Size() > 0 {
 		if err := m.MergeTreeBytes(sm.TreeBytes(-1)); err != nil {
 			return nil, err
