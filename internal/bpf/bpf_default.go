@@ -32,17 +32,14 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
-	"golang.org/x/sys/unix"
+	"github.com/cilium/ebpf/rlimit"
 )
 
 var DefaultObjDir = "bpf"
 
 // Init initializes package-level BPF resources.
 func Init(_ *Option) error {
-	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
-		Cur: unix.RLIM_INFINITY,
-		Max: unix.RLIM_INFINITY,
-	})
+	return rlimit.RemoveMemlock()
 }
 
 // Shutdown releases package-level BPF resources.
