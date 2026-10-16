@@ -208,6 +208,11 @@ func containerMemoryBinding(container *Container) (*containerRecord, error) {
 	if before.Starttime != after.Starttime {
 		return nil, fmt.Errorf("container %q init process was replaced", container.ID)
 	}
+	// A hypervisor's memory cgroup describes the shared VM, not each Guest
+	// application. Guest discovery supplies application memory bindings.
+	if container.HostKataSandboxID() != "" {
+		path = ""
+	}
 	return &containerRecord{
 		container: container,
 		ref:       ContainerRef{Key: ContainerKey{ID: container.ID}, InitPID: container.InitPid, MemoryCgroupPath: path},
