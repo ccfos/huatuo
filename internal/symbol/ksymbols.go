@@ -25,11 +25,42 @@ import (
 
 const ksymMax = 300000
 
+// ksymFrameCacheCap bounds the resolved-frame cache; kernel stack addresses
+// repeat heavily across events (the same hot functions), so a small cache
+// removes most floorSym binary searches and frame-string allocations.
+const ksymFrameCacheCap = 8192
+
 var (
 	ksymLoadOnce sync.Once
 	ksymTable    symbols
 	ksymUnknown  = &symbol{Name: "[unknown]"}
+
+	ksymFrameMu    sync.Mutex
+	ksymFrameCache = make(map[uint64]string, ksymFrameCacheCap)
 )
+
+// ksymFrameString resolves addr through ksymTable and caches the formatted
+// frame. The cache is cleared wholesale when it fills; this keeps memory
+// bounded without per-entry eviction.
+func ksymFrameString(addr uint64) string {
+	ksymFrameMu.Lock()
+	frame, ok := ksymFrameCache[addr]
+	if !ok {
+		ensureKsymsLoaded()
+		sym := ksymTable.floorSym(addr)
+		if sym == nil {
+			frame = failFrame("ksym-not-found", "")
+		} else {
+			frame = fmt.Sprintf("%s/+%d %s", sym.Name, addr-sym.Addr, sym.Module)
+		}
+		if len(ksymFrameCache) >= ksymFrameCacheCap {
+			clear(ksymFrameCache)
+		}
+		ksymFrameCache[addr] = frame
+	}
+	ksymFrameMu.Unlock()
+	return frame
+}
 
 const (
 	// KsymStackMinDepth is the minimum supported kernel stack depth.
@@ -79,13 +110,7 @@ func dumpKernelBackTrace(stack []uint64, maxDepth int, out outType, reversed boo
 		stack = stack[:maxDepth]
 	}
 	ensureKsymsLoaded()
-	frames := resolveStack(stack, func(addr uint64) string {
-		sym := ksymTable.floorSym(addr)
-		if sym == nil {
-			return failFrame("ksym-not-found", "")
-		}
-		return fmt.Sprintf("%s/+%d %s", sym.Name, addr-sym.Addr, sym.Module)
-	}, out)
+	frames := resolveStack(stack, ksymFrameString, out)
 
 	if reversed {
 		if out == outTypeBytes {
