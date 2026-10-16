@@ -17,6 +17,7 @@ package speedscope
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 
 	"github.com/ccfos/huatuo/internal/profiler/output"
@@ -51,6 +52,11 @@ type sampledProfile struct {
 	Weights    []float64 `json:"weights"`
 }
 
+type threadKey struct {
+	pid      int
+	threadID string
+}
+
 type threadState struct {
 	name    string
 	samples [][]int
@@ -62,8 +68,8 @@ type Formatter struct {
 	sampleDuration float64 // seconds per sample (default 0.01 = 100 Hz)
 	frames         map[ssFrame]int
 	frameList      []ssFrame
-	threads        map[string]*threadState
-	threadOrder    []string // insertion order
+	threads        map[threadKey]*threadState
+	threadOrder    []threadKey // insertion order
 }
 
 var _ output.Formatter = (*Formatter)(nil)
@@ -76,7 +82,7 @@ func New(sampleRateHz float64) *Formatter {
 	return &Formatter{
 		sampleDuration: 1.0 / sampleRateHz,
 		frames:         make(map[ssFrame]int),
-		threads:        make(map[string]*threadState),
+		threads:        make(map[threadKey]*threadState),
 	}
 }
 
@@ -88,8 +94,7 @@ func (f *Formatter) Add(s *output.Sample) error {
 		return nil
 	}
 
-	key := threadKey(s)
-	ts := f.getOrAddThread(key, threadName(s))
+	ts := f.getOrAddThread(s)
 
 	indices := make([]int, 0, len(s.Frames))
 
@@ -155,7 +160,7 @@ func (f *Formatter) Write(w io.Writer) error {
 func (f *Formatter) Reset() {
 	f.frames = make(map[ssFrame]int)
 	f.frameList = nil
-	f.threads = make(map[string]*threadState)
+	f.threads = make(map[threadKey]*threadState)
 	f.threadOrder = nil
 }
 
@@ -183,32 +188,26 @@ func (f *Formatter) getOrAddFrame(name string, detail *output.Frame) int {
 	return idx
 }
 
-func (f *Formatter) getOrAddThread(key, name string) *threadState {
+func (f *Formatter) getOrAddThread(s *output.Sample) *threadState {
+	key := threadKey{pid: s.PID, threadID: s.ThreadID}
 	if ts, ok := f.threads[key]; ok {
 		return ts
 	}
-	ts := &threadState{name: name}
+	ts := &threadState{name: threadName(key, s.ThreadName)}
 	f.threads[key] = ts
 	f.threadOrder = append(f.threadOrder, key)
 	return ts
 }
 
-func threadKey(s *output.Sample) string {
-	if s.ThreadID != "" {
-		return s.ThreadID
+func threadName(key threadKey, name string) string {
+	if name == "" {
+		name = key.threadID
 	}
-	if s.PID != 0 {
-		return "main"
+	if name == "" {
+		name = "main thread"
 	}
-	return "default"
-}
-
-func threadName(s *output.Sample) string {
-	if s.ThreadName != "" {
-		return s.ThreadName
+	if key.pid != 0 {
+		return fmt.Sprintf("%s (pid %d)", name, key.pid)
 	}
-	if s.ThreadID != "" {
-		return s.ThreadID
-	}
-	return "main thread"
+	return name
 }
