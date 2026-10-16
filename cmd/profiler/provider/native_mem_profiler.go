@@ -37,8 +37,10 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_physical_alloc.c -o $BPF_DIR/native_physical_alloc.o
 
 const (
-	programTracePageAlloc = "trace_page_alloc"
-	programTracePageFree  = "trace_page_free"
+	programTracePageAlloc     = "trace_page_alloc"
+	programTracePageFreeEntry = "trace_page_free_entry"
+	programTracePageFree      = "trace_page_free"
+	programTraceFolioFree     = "trace_folio_free"
 
 	symbolPageAddNewAnonRmap  = "page_add_new_anon_rmap"
 	symbolPageRemoveRmap      = "page_remove_rmap"
@@ -249,7 +251,7 @@ func newPhysicalUsageAttachConfig() (physicalUsageAttachConfig, error) {
 		return physicalUsageAttachConfig{
 			AttachOpts: []bpf.AttachOption{
 				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-				{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+				{ProgramName: programTraceFolioFree, Symbol: symbolFolioRemoveRmapPtes},
 			},
 			CountFolioPages: true,
 		}, nil
@@ -259,6 +261,7 @@ func newPhysicalUsageAttachConfig() (physicalUsageAttachConfig, error) {
 		return physicalUsageAttachConfig{
 			AttachOpts: []bpf.AttachOption{
 				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+				{ProgramName: programTracePageFreeEntry, Symbol: symbolPageRemoveRmap},
 				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
 			},
 		}, nil
@@ -268,6 +271,7 @@ func newPhysicalUsageAttachConfig() (physicalUsageAttachConfig, error) {
 		return physicalUsageAttachConfig{
 			AttachOpts: []bpf.AttachOption{
 				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
+				{ProgramName: programTracePageFreeEntry, Symbol: symbolPageRemoveRmap},
 				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
 			},
 		}, nil
