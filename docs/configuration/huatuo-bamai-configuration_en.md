@@ -23,12 +23,12 @@ The configuration file uses **TOML** format and includes multiple sections such 
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]
+BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
 ```
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
-  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, and Moore Threads GPU. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, or `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
+  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, Moore Threads GPU metrics, and Moore Threads GPU XID event tracing. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs, or `mthreads_xid` to enable Moore Threads GPU XID event tracing on hosts with the MUSA driver. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
 
 ### 3. Logging
 
