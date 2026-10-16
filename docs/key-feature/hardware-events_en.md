@@ -99,6 +99,10 @@ graph TB
 
     PCIe AER (Advanced Error Reporting) is an error reporting mechanism defined in the PCIe specification. It enables PCIe devices to report link-layer and transaction-layer errors to the operating system with precision.
 
+- **ARM GHES**
+
+    ARM GHES is the ARM processor error section of a CPER record (UEFI §N.2.4.4), delivered through the same ACPI GHES path as the non-standard sections and available on arm64 hosts only. Each event reports the affected processor's MPIDR/MIDR and its power state at the time of the error.
+
 ### Metrics Reference
 
 - **RAS Metrics**
@@ -206,6 +210,7 @@ graph TB
     | `UncorrectedDeferred` | Not corrected by hardware; requires deferred handling | MCE MCI_STATUS_DEFERRED, EDAC HW_EVENT_ERR_DEFERRED |
     | `UncorrectedFatal` | Fatal hardware error; requires immediate reboot | EDAC FATAL, ACPI Sev=3, AER Severity=0 |
     | `Info` | Error type for which the system is expected to log informational records | EDAC HW_EVENT_ERR_INFO, ACPI Sev=0 |
+    | `unknown` | The error could not be mapped to a severity level | ARM GHES processor-context events |
 
 
 ### Field Reference
@@ -265,6 +270,18 @@ graph TB
   | `fru_text` | **Human-readable FRU description string** (e.g., `"CPU0_DIMM_A1"`). |
   | `data_len` | **Raw error data payload length (in bytes)**. |
   | `raw_data` | **Hexadecimal dump of raw error data** (space-separated bytes). Used for in-depth diagnostics; must be interpreted with the relevant hardware vendor documentation. |
+
+- **ARM GHES**
+
+  Monitored components: ARM processor cores (arm64 hosts).
+
+  | Field | Description |
+  | ---------- | ------------------------------------------------------------ |
+  | `mpidr` | **MPIDR register value (hexadecimal)**. Identifies the processor core. `0x0` is ambiguous: the CPER record may simply not carry a valid MPIDR. |
+  | `midr` | **MIDR register value (hexadecimal)**. Identifies the processor model and revision. |
+  | `running_state` | Processor running state at the time of the error: `running`, `stopped`, or `N/A` when the CPER record carries no valid running state. |
+  | `psci_state` | PSCI power state (hexadecimal), reported only when `running_state` is `stopped`; otherwise `N/A`. |
+  | `affinity_level` | Affinity level at which the error was reported, as a decimal number; `N/A` when not present. |
 
 - **PCIe AER**
 
