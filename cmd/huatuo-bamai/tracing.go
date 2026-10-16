@@ -52,7 +52,7 @@ func startToolstream(d *Daemon) (func(context.Context) error, error) {
 	if d.profileStore != nil {
 		documentWriter, err := profiling.NewDocumentWriter(
 			d.profileStore,
-			document.New(d.opts.Region),
+			document.New(d.opts.Region, d.opts.NodeIP),
 		)
 		if err != nil {
 			return nil, err

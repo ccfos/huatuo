@@ -43,6 +43,44 @@ func TestDefaultHostnameAndRegion(t *testing.T) {
 	}
 }
 
+func TestConfiguredNodeIPLabel(t *testing.T) {
+	oldNodeIP := defaultNodeIP
+	defaultNodeIP = "192.0.2.10"
+	t.Cleanup(func() { defaultNodeIP = oldNodeIP })
+
+	data := NewGaugeData("cpu_usage", 1, "cpu usage", nil)
+	if got := data.Labels()[LabelNodeIP]; got != "192.0.2.10" {
+		t.Errorf("node_ip label = %q, want %q", got, "192.0.2.10")
+	}
+
+	override := NewGaugeData("cpu_usage", 1, "cpu usage", map[string]string{
+		LabelNodeIP: "198.51.100.20",
+	})
+	if got := override.Labels()[LabelNodeIP]; got != "198.51.100.20" {
+		t.Errorf("overridden node_ip label = %q, want %q", got, "198.51.100.20")
+	}
+}
+
+func TestPerMetricNodeIPWithoutDefault(t *testing.T) {
+	oldNodeIP := defaultNodeIP
+	defaultNodeIP = ""
+	t.Cleanup(func() { defaultNodeIP = oldNodeIP })
+
+	data := NewGaugeData("cpu_usage", 1, "cpu usage", map[string]string{
+		LabelNodeIP: "198.51.100.20",
+	})
+	if got := data.Labels()[LabelNodeIP]; got != "198.51.100.20" {
+		t.Errorf("node_ip label = %q, want %q", got, "198.51.100.20")
+	}
+
+	container := &pod.Container{Labels: map[string]any{"HostNamespace": "host-ns"}}
+	containerData := NewContainerGaugeData(container, "cpu_usage", 1,
+		"cpu usage", map[string]string{LabelNodeIP: "203.0.113.30"})
+	if got := containerData.Labels()[LabelNodeIP]; got != "203.0.113.30" {
+		t.Errorf("container node_ip label = %q, want %q", got, "203.0.113.30")
+	}
+}
+
 func TestIsNoDataError(t *testing.T) {
 	tests := []struct {
 		name     string

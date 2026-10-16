@@ -42,15 +42,16 @@ type Input struct {
 type Builder struct {
 	region   string
 	hostname string
+	nodeIP   string
 }
 
 // New binds Node-local metadata used by every generated document.
-func New(region string) *Builder {
+func New(region, nodeIP string) *Builder {
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = defaultHostname
 	}
-	return &Builder{region: region, hostname: hostname}
+	return &Builder{region: region, hostname: hostname, nodeIP: nodeIP}
 }
 
 // Build creates shared document metadata and resolves optional container fields.
@@ -64,6 +65,7 @@ func (b *Builder) Build(input *Input) (types.Document, error) {
 	metadata := types.Document{
 		Hostname:      b.hostname,
 		Region:        b.region,
+		NodeIP:        b.nodeIP,
 		TracerName:    input.TracerName,
 		TracerID:      input.TracerID,
 		TracerRunType: input.TracerRunType,
