@@ -94,6 +94,20 @@ func TestIsRecoverable_NestedErrorsJoin(t *testing.T) {
 	}
 }
 
+func TestIsRecoverable_WrappedJoin(t *testing.T) {
+	nonRecoverable := &Error{symbol: "mtmlDeviceGetName", code: ErrorInvalidArgument}
+	recoverable := &Error{symbol: "mtmlDeviceGetPciInfo", code: ErrorDriverFailure}
+	for _, joined := range []error{
+		errors.Join(nonRecoverable, recoverable),
+		errors.Join(recoverable, nonRecoverable),
+	} {
+		err := fmt.Errorf("health: %w", joined)
+		if !IsRecoverable(err) {
+			t.Fatal("IsRecoverable(wrapped join with recoverable sibling) = false, want true")
+		}
+	}
+}
+
 func TestEnforceInitFreePair_ConstructorWithoutDestructor(t *testing.T) {
 	// If a constructor resolved but its matching destructor did not, the
 	// constructor must be cleared so callers see a uniform NotSupported
