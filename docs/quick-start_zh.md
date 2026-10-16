@@ -47,7 +47,7 @@ $ curl -s localhost:19704/metrics
 
 #### 2.2 Docker Compose 启动
 
-通过 docker compose，可以快速地在本地搭建部署一套完整的环境。该命令拉取最新镜像，启动 [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com)，huatuo-bamai 等组件。命令执行成功后，打开浏览器访问 [http://localhost:3000](http://localhost:3000) 即可浏览监控大盘（grafana 默认管理员账户：admin 密码：admin； 系统正常状态不会触发 Events, AutoTracing）。
+通过 docker compose，可以快速地在本地搭建部署一套完整的环境。该命令拉取最新镜像，启动 [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com)、huatuo-bamai、huatuo-apiserver 等组件。命令执行成功后，打开浏览器访问 [http://localhost:3000](http://localhost:3000) 即可浏览监控大盘（grafana 默认管理员账户：admin 密码：admin； 系统正常状态不会触发 Events, AutoTracing）。
 
 ```bash
 $ docker compose --project-directory ./build/docker up
