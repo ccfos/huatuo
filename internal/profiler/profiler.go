@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/log"
 	hostprocess "github.com/ccfos/huatuo/internal/process"
 
 	ptree "github.com/grafana/pyroscope/pkg/og/storage/tree"
@@ -96,23 +97,25 @@ func ParseTree(startTime time.Time, profileType string, data []*TreeItem, opt *P
 // read;entry_SYSCALL_64_after_hwframe_[k];do_syscall_64_[k];ksys_read_[k];__check_object_size_[k] 1
 func ParseCollapsedData(ctx context.Context, input *ParseInput) (*ProfileData, error) {
 	var outputs []SampleOutput
-	if err := json.Unmarshal(input.Data, &outputs); err == nil && len(outputs) > 0 {
+	if err := json.Unmarshal(input.Data, &outputs); err == nil {
 		for _, out := range outputs {
-			if out.PID == 0 || out.Output == "" {
-				goto fallback
+			if out.PID <= 0 {
+				return nil, fmt.Errorf("invalid collapsed profile PID %d", out.PID)
 			}
 		}
 		return parseMultiProcessData(ctx, input.StartTime, input.ProfileType, input.ProfilerName, outputs, input.Opt,
 			func(pid int) ([]byte, error) {
+				header := fmt.Sprintf("process %d", pid)
 				threadName, err := extractJavaMainClassFromPid(pid)
 				if err != nil {
-					return nil, err
+					// Name enrichment must not discard stacks captured before a JVM exited.
+					log.WithError(err).WithField("pid", pid).Debug("Java process name unavailable")
+				} else if threadName != "" {
+					header += ":" + threadName
 				}
-				return []byte(fmt.Sprintf("process %d:%s", pid, threadName)), nil
+				return []byte(header), nil
 			})
 	}
-
-fallback:
 	return parseCommonData(ctx, input.StartTime, input.ProfileType, input.Data, input.Opt, input.PID, extractJavaMainClassFromPid)
 }
 
@@ -166,6 +169,9 @@ func parseMultiProcessData(ctx context.Context, startTime time.Time, profileType
 	var tree []*TreeItem
 
 	for _, out := range outputs {
+		if out.Output == "" {
+			continue
+		}
 		lines := bytes.Split([]byte(out.Output), []byte("\n"))
 
 		var headerFrame []byte
