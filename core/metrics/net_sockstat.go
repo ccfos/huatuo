@@ -49,17 +49,12 @@ func newSockstatCollector() (*tracing.EventTracingAttr, error) {
 func (c *sockstatCollector) Update() ([]*metric.Data, error) {
 	log.Debugf("Updating sockstat metrics")
 
-	containers, err := pod.NormalContainers()
+	// The host is included as the "" key with a nil container; the map is a
+	// private copy safe to extend.
+	containers, err := pod.NormalContainersWithHost()
 	if err != nil {
 		return nil, err
 	}
-
-	// support the empty container
-	if containers == nil {
-		containers = make(map[string]*pod.Container)
-	}
-	// append host into containers
-	containers[""] = nil
 
 	var metrics []*metric.Data
 	for _, container := range containers {
