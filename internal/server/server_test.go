@@ -397,6 +397,44 @@ func TestNewServerRateLimit(t *testing.T) {
 	}
 }
 
+// TestNewServerRateLimitsRejectedCredentials keeps the limiter ahead of the auth
+// middleware. The auth middleware aborts the gin chain when it rejects a
+// credential, so a limiter appended after it never runs for those requests and
+// bearer-token guessing at the authentication boundary stays unthrottled.
+func TestNewServerRateLimitsRejectedCredentials(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+
+	s := NewServer(&Config{
+		AuthUsers: []UserConfig{{ID: "tester", BearerToken: "valid-token", IsAdmin: true}},
+		RateLimit: &RateLimitConfig{RequestsPerSecond: 1, Burst: 1},
+	})
+	s.MustRegisterRoutes("", []Route{{
+		Method: http.MethodGet,
+		Path:   "/tasks",
+		Handler: func(ctx *Context) error {
+			ctx.Status(http.StatusNoContent)
+			return nil
+		},
+	}})
+
+	statuses := make([]int, 0, 4)
+	for range 4 {
+		request := httptest.NewRequest(http.MethodGet, "/tasks", http.NoBody)
+		request.Header.Set("Authorization", "Bearer invalid-token")
+		recorder := httptest.NewRecorder()
+
+		s.engine.ServeHTTP(recorder, request)
+		statuses = append(statuses, recorder.Code)
+	}
+
+	if statuses[0] != http.StatusUnauthorized {
+		t.Fatalf("first response status = %d, want %d", statuses[0], http.StatusUnauthorized)
+	}
+	if statuses[len(statuses)-1] != http.StatusTooManyRequests {
+		t.Fatalf("requests with a rejected credential were not throttled: statuses = %v", statuses)
+	}
+}
+
 func TestServerMustRegisterRoutes(t *testing.T) {
 	s := NewServer(nil)
 	s.MustRegisterRoutes("/tasks", []Route{
