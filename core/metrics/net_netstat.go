@@ -46,18 +46,12 @@ func newNetstatCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netstatCollector) Update() ([]*metric.Data, error) {
-	containers, err := pod.NormalContainers()
+	// The host (init namespace) is included as the "" key with a nil
+	// container; the returned map is a private copy safe to extend.
+	containers, err := pod.NormalContainersWithHost()
 	if err != nil {
 		return nil, err
 	}
-
-	// support the host metrics
-	if containers == nil {
-		containers = make(map[string]*pod.Container)
-	}
-
-	// append init namespace into containers
-	containers[""] = nil
 
 	cfg := configSnapshot()
 	f, err := matcher.NewValueMatcher(cfg.Netstat.Included, cfg.Netstat.Excluded)
