@@ -89,3 +89,6 @@ func (mapper) Indexes() []driver.Index {
 		{Field: fieldProfileType},
 	}
 }
+
+// NewMapperForTest exposes the document mapper for tests in other packages.
+func NewMapperForTest() driver.Mapper[*Document] { return mapper{} }
