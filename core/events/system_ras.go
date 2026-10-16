@@ -163,19 +163,52 @@ func decodePayload[T any](info []byte) (*T, error) {
 	return &payload, nil
 }
 
-func cstring(buf []byte, rawOffset, base uint32) string {
+// dynamicWindow resolves a tracepoint __data_loc descriptor against the
+// userspace copy of the record and returns the bytes it addresses.
+//
+// A __data_loc u32 packs the absolute byte offset of the dynamic data in its
+// low 16 bits and the element's length in the high 16 bits (Linux tracepoint
+// convention). The BPF probe copies at most 512 bytes of the tracepoint record
+// (event_size() in bpf/system_ras.c clamps the span to 512), so the userspace
+// window is strictly smaller than the record the kernel logged: the CPER
+// non-standard error section carrying the vendor payload is routinely larger
+// than 416 bytes, which is why a perfectly valid record can carry a Len that
+// does not fit the window. Offset and length therefore both have to be treated
+// as untrusted: an offset pointing past the captured bytes, or a length larger
+// than what is left, must truncate the decoded view instead of slicing out of
+// range. A bad slice here panics the RAS event loop, and that loop has no
+// recover(), so the whole agent would go down with it.
+//
+// dyn is the captured dynamic area; rawOffset is the raw descriptor (only its
+// low 16 bits are used); base is the size of the record's fixed portion, i.e.
+// the offset at which the dynamic area starts; length caps the returned window,
+// where ^uint32(0) means "everything that is left". The result is always a
+// sub-slice of dyn, or nil when the offset falls outside it.
+func dynamicWindow(dyn []byte, rawOffset, base, length uint32) []byte {
 	absOff := rawOffset & 0xffff
 	if absOff < base {
-		return ""
+		return nil
 	}
 	off := int(absOff - base)
-	if off >= len(buf) {
-		return ""
+	if off >= len(dyn) {
+		return nil
 	}
-	if end := bytes.IndexByte(buf[off:], 0); end >= 0 {
-		return string(buf[off : off+end])
+	n := len(dyn) - off
+	if uint64(length) < uint64(n) {
+		n = int(length)
 	}
-	return string(buf[off:])
+	return dyn[off : off+n]
+}
+
+// cstring reads a NUL-terminated string out of the captured dynamic window. It
+// shares the bounds handling with dynamicWindow() so a kernel-supplied offset
+// outside the userspace copy yields "" instead of a panic.
+func cstring(buf []byte, rawOffset, base uint32) string {
+	window := dynamicWindow(buf, rawOffset, base, ^uint32(0))
+	if end := bytes.IndexByte(window, 0); end >= 0 {
+		return string(window[:end])
+	}
+	return string(window)
 }
 
 // Bank's MCi_STATUS MSR
@@ -489,11 +522,14 @@ func buildRasAcpiTracerData(data *rasEvent) (*RasTracingData, error) {
 	const nonStandardBase uint32 = 56
 	fru := cstring(payload.Msg[:], payload.FRUTxtOffset, nonStandardBase)
 
-	// Extract raw bytes at the FRU text location for the hex dump.
-	var rawData []byte
-	if absOff := payload.FRUTxtOffset & 0xffff; absOff >= nonStandardBase {
-		rawData = bytes.Clone(payload.Msg[absOff-nonStandardBase : absOff-nonStandardBase+payload.Len])
-	}
+	// Extract the raw bytes for the hex dump. Len is the CPER non-standard
+	// error length as recorded by the kernel and is deliberately not clamped to
+	// the userspace window: the probe copies only DETAIL_INFO_SIZE_ACPI (456)
+	// bytes of the record, while NVDIMM, CXL and vendor sections are routinely
+	// 1 KiB or larger. dynamicWindow() truncates the request to what was
+	// actually captured, so an oversized length degrades the dump instead of
+	// panicking the agent.
+	rawData := dynamicWindow(payload.Msg[:], payload.FRUTxtOffset, nonStandardBase, payload.Len)
 
 	return newRasTracingData(data, "ACPI", "NON_STANDARD", acpiErrType(payload.Sev), struct {
 		Severity uint8  `json:"severity"`
