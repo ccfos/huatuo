@@ -1079,6 +1079,18 @@ softirq source 和 victim 调用栈。
 
 - **DeviceExcluded**：需排除的网卡设备正则。如：排除 lo、docker、veth 等虚拟接口。
 
+`netdev_ipv6` 采集器从 `/proc/<pid>/net/dev_snmp6/` 导出主机和已发现容器的
+每网卡 IPv6 IP、ICMP 计数器。它复用 `NetdevStats.DeviceIncluded` 和
+`DeviceExcluded` 过滤规则，`EnableNetlink` 不改变其 procfs 数据源。例如
+`Ip6InDiscards` 导出为
+`huatuo_bamai_netdev_ipv6_Ip6InDiscards_total{device="eth0",...}`。容器指标
+使用 `container_` 前缀及已有容器标签。`ifIndex` 不作为计数器导出。
+未启用 IPv6 的内核禁用该采集器；空命名空间不产生指标。读取失败会标记
+本次采集不成功，同时保留已采集的数据。
+
+这些计数器可区分 IPv6 路由、报头、重组和 ICMP 错误与链路层丢包。
+在 `BlackList` 中加入 `netdev_ipv6` 可以禁用采集。
+
 #### 9.2 网卡 DCB（Data Center Bridging）采集
 
 ```bash
