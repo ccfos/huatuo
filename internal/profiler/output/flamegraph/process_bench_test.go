@@ -19,7 +19,7 @@ import (
 	"testing"
 )
 
-func benchmarkStacks(names int, depth int) []Stack {
+func benchmarkStacks(names, depth int) []Stack {
 	stacks := make([]Stack, 0, names)
 	for i := range names {
 		frames := make([]string, depth)
