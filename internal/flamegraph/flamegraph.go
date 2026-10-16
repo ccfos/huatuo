@@ -61,13 +61,20 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 	if len(levels) == 0 {
 		return nil
 	}
+	if len(levels[0].Values) < ItemOffest {
+		return nil
+	}
 
+	rootName := ""
+	if idx := levels[0].Values[NameOffest]; idx >= 0 && int(idx) < len(names) {
+		rootName = names[idx]
+	}
 	tree := &ProfileTree{
 		Start: 0,
 		Value: levels[0].Values[ValueOffest],
 		Self:  levels[0].Values[SelfOffest],
 		Level: 0,
-		Name:  names[levels[0].Values[NameOffest]],
+		Name:  rootName,
 	}
 
 	parentsStack := []*ProfileTree{tree}
@@ -90,27 +97,33 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 		itemIndex := 0
 		// cumulative offset as items in flamebearer format have just relative to prev item
 		offset := int64(0)
+		values := levels[currentLevel].Values
 
 		// Cycle through bar in a level
 		for {
-			if itemIndex >= len(levels[currentLevel].Values) {
+			if itemIndex+ItemOffest > len(values) {
 				break
 			}
 
-			itemStart := levels[currentLevel].Values[itemIndex+StartOffest] + offset
-			itemValue := levels[currentLevel].Values[itemIndex+ValueOffest]
-			selfValue := levels[currentLevel].Values[itemIndex+SelfOffest]
+			itemStart := values[itemIndex+StartOffest] + offset
+			itemValue := values[itemIndex+ValueOffest]
+			selfValue := values[itemIndex+SelfOffest]
 			itemEnd := itemStart + itemValue
 			parentEnd := currentParent.Start + currentParent.Value
 
 			if itemStart >= currentParent.Start && itemEnd <= parentEnd {
+				nameIndex := values[itemIndex+NameOffest]
+				itemName := ""
+				if nameIndex >= 0 && int(nameIndex) < len(names) {
+					itemName = names[nameIndex]
+				}
 				// We have an item that is in the bounds of current parent item, so it should be its child
 				treeItem := &ProfileTree{
 					Start: itemStart,
 					Value: itemValue,
 					Self:  selfValue,
 					Level: currentLevel,
-					Name:  names[levels[currentLevel].Values[itemIndex+NameOffest]],
+					Name:  itemName,
 				}
 				// Add to parent
 				currentParent.Nodes = append(currentParent.Nodes, treeItem)
