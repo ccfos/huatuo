@@ -18,26 +18,38 @@ package randomid
 import (
 	"crypto/rand"
 	"fmt"
-	"math/big"
 )
 
 const (
-	charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	length  = 16
+	charset  = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	length   = 16
+	maxByte  = 256 / len(charset) * len(charset) // largest multiple of len(charset) in a byte
+	rejectAt = 256 % len(charset)                // bytes >= rejectAt would bias the charset
 )
 
 // New returns a cryptographically random identifier.
+//
+// It samples raw bytes in one crypto/rand read and maps them onto charset
+// with rejection sampling, instead of one big.Int allocation per character,
+// so generating an ID stays cheap on event-path callers.
 func New() (string, error) {
-	result := make([]byte, length)
-	charsetLength := big.NewInt(int64(len(charset)))
-
-	for i := range result {
-		num, err := rand.Int(rand.Reader, charsetLength)
-		if err != nil {
+	buf := make([]byte, length)
+	needed := length
+	for needed > 0 {
+		raw := make([]byte, needed)
+		if _, err := rand.Read(raw); err != nil {
 			return "", fmt.Errorf("generate random ID: %w", err)
 		}
-		result[i] = charset[num.Int64()]
+		for _, b := range raw {
+			if int(b) >= maxByte {
+				continue
+			}
+			buf[length-needed] = charset[b%byte(len(charset))]
+			needed--
+			if needed == 0 {
+				break
+			}
+		}
 	}
-
-	return string(result), nil
+	return string(buf), nil
 }
