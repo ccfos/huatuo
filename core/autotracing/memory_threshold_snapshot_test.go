@@ -15,8 +15,10 @@
 package autotracing
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +31,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
 )
@@ -269,5 +272,31 @@ func TestMemorySnapshotUnavailableViewSuppressesSnapshot(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("unavailable snapshot did not stop")
+	}
+}
+
+func TestMemoryContainerViewUnavailableLogLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		err   error
+		ready bool
+		level string
+	}{
+		{"initializing", pod.ErrContainersUnavailable, false, "debug"},
+		{"lost established view", pod.ErrContainersUnavailable, true, "warning"},
+		{"startup producer failure", fmt.Errorf("%w: kubelet sync failed", pod.ErrContainersUnavailable), false, "warning"},
+		{"runtime producer failure", fmt.Errorf("%w: kubelet sync failed", pod.ErrContainersUnavailable), true, "warning"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			previous := log.GetLevel()
+			log.SetOutput(&output)
+			log.SetLevel("debug")
+			defer func() { log.SetOutput(os.Stdout); log.SetLevel(previous.String()) }()
+			logMemoryContainerViewUnavailable(tc.err, tc.ready)
+			if !strings.Contains(output.String(), `level="`+tc.level+`"`) || !strings.Contains(output.String(), tc.err.Error()) {
+				t.Fatalf("unexpected container view log: %s", output.String())
+			}
+		})
 	}
 }

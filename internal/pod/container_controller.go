@@ -92,7 +92,7 @@ func InitManager(config *ManagerCtx) error {
 		if err := kubeletConfigCacheMustUpdate(&managerConfig); err != nil {
 			return err
 		}
-		return containerCgroupCssInit()
+		return initCgroupLifecycle()
 	}
 	containerManager = controller
 	controller.start()
@@ -111,7 +111,7 @@ func ReleaseManager() {
 	}
 	controller.cancel()
 	<-controller.done
-	containerCgroupCssRelease()
+	releaseCgroupLifecycle()
 }
 
 func newContainerController(store *containerStore) *containerController {

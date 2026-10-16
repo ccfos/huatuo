@@ -22,6 +22,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -49,14 +50,32 @@ func main() {
 	runtime.GC()
 	runtime.GC()
 	debug.FreeOSMemory()
+	// Opt-in churn exercises capture while the target allocates, frees and runs GC.
+	if os.Getenv("MEMSNAPSHOT_CHURN") == "1" {
+		go func() {
+			for {
+				block := allocateBlock(2 << 20)
+				runtime.KeepAlive(block)
+				runtime.GC()
+				time.Sleep(10 * time.Millisecond)
+			}
+		}()
+	}
 	fmt.Println("ready")
 	waitForCommand('p')
 
+	pressureMiB := 64
+	if value := os.Getenv("MEMSNAPSHOT_PRESSURE_MIB"); value != "" {
+		pressureMiB, err = strconv.Atoi(value)
+		if err != nil || pressureMiB < 1 || pressureMiB > 512 {
+			panic("pressure size must be in [1, 512] MiB")
+		}
+	}
 	// Anonymous mmap charges real memory without adding Go heap profile samples.
 	pressure, err := syscall.Mmap(
 		-1,
 		0,
-		64<<20,
+		pressureMiB<<20,
 		syscall.PROT_READ|syscall.PROT_WRITE,
 		syscall.MAP_PRIVATE|syscall.MAP_ANON,
 	)
@@ -93,6 +112,9 @@ func allocatePrimary() [6][]byte {
 		size := 2 << 20
 		if i >= 4 {
 			size = 4 << 20
+		}
+		if os.Getenv("MEMSNAPSHOT_VARIANT") == "small" {
+			size = 1 << 20
 		}
 		blocks[i] = allocateBlock(size)
 	}

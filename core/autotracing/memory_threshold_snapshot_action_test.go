@@ -988,3 +988,110 @@ func TestActionBatchSnapshotSequenceAndFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestThresholdRetriesAfterBurstContention(t *testing.T) {
+	for _, outcome := range []string{"released", "pressure recovered", "canceled"} {
+		t.Run(outcome, func(t *testing.T) {
+			batch := newRunnerActionBatchForTest(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			batch.ctx = ctx
+			calls, saves := 0, 0
+			batch.ops.save = func(*tracing.WriteRequest) error { saves++; return nil }
+			batch.ops.snapshotProcessMemory = func(context.Context, memsnapshot.ProcessInstanceID, collector.Options) (*collector.Result, error) {
+				calls++
+				if calls == 1 {
+					if outcome == "canceled" {
+						cancel()
+					}
+					if outcome == "pressure recovered" {
+						for _, target := range batch.targets {
+							createMemoryCgroupForTest(t, batch.source.root, target.Cgroup.Path, 1)
+						}
+					}
+					return nil, collector.ErrCaptureBusy
+				}
+				return &collector.Result{SnapshotStartedAt: time.Now()}, nil
+			}
+			finished := batch.Run()
+			if outcome == "released" {
+				if calls != 2 || saves != 1 || finished.IsZero() {
+					t.Fatalf("retry lost: calls=%d saves=%d finished=%v", calls, saves, finished)
+				}
+			} else if calls != 1 || saves != 0 || !finished.IsZero() {
+				t.Fatalf("invalid retry: calls=%d saves=%d", calls, saves)
+			}
+		})
+	}
+}
+
+func TestBurstCaptureFailureBoundsError(t *testing.T) {
+	snapshot := burstCaptureFailure(errors.New(strings.Repeat("x", 1<<20)))
+	if snapshot.Status != memsnapshot.SnapshotStatusFailed || len(snapshot.StatusReason) > 4096 || !snapshot.OutputTruncated {
+		t.Fatal("capture failure was not bounded")
+	}
+}
+
+func TestBurstSnapshotIdentityChangedBeforePersistence(t *testing.T) {
+	identity, err := memsnapshot.ReadProcessInstanceID(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := &memsnapshot.Snapshot{}
+	memory := &memsnapshot.ProcessMemory{}
+	snapshots := []burstProcessSnapshot{
+		{identity: identity, Snapshot: captured, ProcessMemory: memory},
+		{identity: identity, Snapshot: captured, ProcessMemory: memory},
+	}
+	// Capture succeeded, but the selected process instance changed before save.
+	snapshots[0].identity.StartTimeTicks++
+	revalidateBurstSnapshots(snapshots)
+	failed := snapshots[0].Snapshot
+	if failed == captured || failed.Status != memsnapshot.SnapshotStatusFailed ||
+		failed.StatusReason == "" || len(failed.StatusReason) > 4096 || snapshots[0].ProcessMemory != nil {
+		t.Fatal("stale capture was not replaced by a bounded failure without memory counters")
+	}
+	if snapshots[1].Snapshot != captured || snapshots[1].ProcessMemory != memory {
+		t.Fatal("identity failure affected another process snapshot")
+	}
+}
+
+func TestBurstSerializedEventBudget(t *testing.T) {
+	ranking := []*processMemInfo{{PID: 1, ProcessName: "keep-ranking", MemSize: 123}}
+	var snapshots []burstProcessSnapshot
+	for i := 0; i < maxBurstSnapshotProcesses; i++ {
+		snapshot := &memsnapshot.Snapshot{Status: memsnapshot.SnapshotStatusComplete}
+		for j := 0; j < 10; j++ {
+			snapshot.Entries = append(snapshot.Entries, memsnapshot.Entry{
+				Name: strings.Repeat("x", 4096), Stack: slices.Repeat([]string{strings.Repeat("x", 1024)}, 64),
+			})
+		}
+		if err := memsnapshot.LimitOutput(snapshot, 10); err != nil {
+			t.Fatal(err)
+		}
+		snapshots = append(snapshots, burstProcessSnapshot{PID: int32(i + 1), Snapshot: snapshot})
+	}
+	data, err := boundedBurstTracingData(ranking, snapshots, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > maxBurstTracingDataBytes || len(data.ProcessSnapshots) >= len(snapshots) || data.SnapshotReason == "" {
+		t.Fatalf("unbounded aggregate payload: bytes=%d retained=%d reason=%q", len(encoded), len(data.ProcessSnapshots), data.SnapshotReason)
+	}
+	if len(data.TopMemoryUsage) != 1 || data.TopMemoryUsage[0] != ranking[0] {
+		t.Fatal("snapshot truncation lost base ranking")
+	}
+	for i := range data.ProcessSnapshots {
+		if data.ProcessSnapshots[i].PID != snapshots[i].PID {
+			t.Fatal("rank order changed")
+		}
+	}
+	plain, err := boundedBurstTracingData(ranking, nil, "snapshot canceled")
+	if err != nil || plain.SnapshotReason != "snapshot canceled" {
+		t.Fatal("ordinary failure reason changed", err)
+	}
+}
