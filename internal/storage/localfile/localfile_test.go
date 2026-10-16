@@ -17,9 +17,12 @@ package localfile
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
@@ -144,5 +147,260 @@ func TestBackendUnsupportedOperations(t *testing.T) {
 	}
 	if _, err := backend.Values(t.Context(), "tracer_name", driver.Query{}, 10); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.Terms() error = %v, want ErrUnsupported", err)
+	}
+}
+
+// tracerRecord builds the minimal record the localfile backend needs: the
+// tracer_name field selects the output file and the data is written verbatim.
+func tracerRecord(name, id string) driver.Record {
+	return driver.Record{
+		ID:     id,
+		Data:   []byte(fmt.Sprintf("{\"tracer_name\":%q}", name)),
+		Fields: map[string]any{"tracer_name": name},
+	}
+}
+
+// TestBackendSaveConcurrentTracers saves from many goroutines at once, each
+// using its own tracer name, and checks that every name ends up in exactly one
+// file holding all of its records.
+//
+// Regression test: writerByName used to read the writer map without holding
+// the lock while the miss path inserted into that same map under the lock, so
+// two concurrent Saves could abort the whole process with "concurrent map read
+// and map write". Run with -race to catch a regression deterministically.
+func TestBackendSaveConcurrentTracers(t *testing.T) {
+	const (
+		workers    = 16
+		iterations = 4
+	)
+
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+	t.Cleanup(func() { _ = backend.Close(t.Context()) })
+
+	// Release every worker at the same instant so the first Save of each
+	// tracer name reaches the cache-miss path concurrently.
+	var (
+		ready sync.WaitGroup
+		done  sync.WaitGroup
+	)
+	start := make(chan struct{})
+	ready.Add(workers)
+	done.Add(workers)
+
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer done.Done()
+			name := fmt.Sprintf("tracer-%d", i)
+			ready.Done()
+			<-start
+			for j := 0; j < iterations; j++ {
+				err := backend.Save(
+					t.Context(),
+					tracerRecord(name, fmt.Sprintf("%s-%d", name, j)),
+					driver.SaveOptions{},
+				)
+				if err != nil {
+					t.Errorf("Save(%q) = %v, want nil", name, err)
+					return
+				}
+			}
+		}()
+	}
+
+	ready.Wait()
+	close(start)
+	done.Wait()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%q) = %v, want nil", dir, err)
+	}
+	if len(entries) != workers {
+		t.Errorf("files in %q = %d, want %d", dir, len(entries), workers)
+	}
+
+	for i := 0; i < workers; i++ {
+		name := fmt.Sprintf("tracer-%d", i)
+		got, readErr := os.ReadFile(filepath.Join(dir, name))
+		if readErr != nil {
+			t.Errorf("ReadFile(%q) = %v, want nil", name, readErr)
+			continue
+		}
+		want := strings.Repeat(fmt.Sprintf("{\n\t\"tracer_name\": %q\n}", name), iterations)
+		if string(got) != want {
+			t.Errorf("content of %q = %q, want %q", name, string(got), want)
+		}
+	}
+}
+
+// TestBackendSaveSameTracerConcurrently hammers one tracer name from many
+// goroutines. It covers the cache-miss path where every goroutine contends for
+// the write lock and only the first opens the rotator, and it checks that no
+// record is lost while they all append to the shared file.
+func TestBackendSaveSameTracerConcurrently(t *testing.T) {
+	const (
+		workers    = 8
+		iterations = 16
+	)
+
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+	t.Cleanup(func() { _ = backend.Close(t.Context()) })
+
+	const name = "shared_tracer"
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				err := backend.Save(
+					t.Context(),
+					tracerRecord(name, fmt.Sprintf("%d-%d", i, j)),
+					driver.SaveOptions{},
+				)
+				if err != nil {
+					t.Errorf("Save(%q) = %v, want nil", name, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	got, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatalf("ReadFile(%q) = %v, want nil", name, err)
+	}
+	if count := strings.Count(string(got), "\"tracer_name\""); count != workers*iterations {
+		t.Errorf("records in %q = %d, want %d", name, count, workers*iterations)
+	}
+}
+
+// TestBackendSaveReusesRotator verifies that repeated Saves for one tracer name
+// reuse the cached rotator and append to the same file instead of truncating
+// it or opening a second descriptor.
+func TestBackendSaveReusesRotator(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+	t.Cleanup(func() { _ = backend.Close(t.Context()) })
+
+	const name = "reuse_tracer"
+
+	first, err := backend.writerByName(name)
+	if err != nil {
+		t.Fatalf("writerByName(%q) = %v, want nil", name, err)
+	}
+	second, err := backend.writerByName(name)
+	if err != nil {
+		t.Fatalf("writerByName(%q) = %v, want nil", name, err)
+	}
+	if first != second {
+		t.Errorf("writerByName(%q) returned a different writer on the second call", name)
+	}
+
+	const saves = 3
+	for i := 0; i < saves; i++ {
+		err := backend.Save(t.Context(), tracerRecord(name, fmt.Sprintf("%s-%d", name, i)), driver.SaveOptions{})
+		if err != nil {
+			t.Fatalf("Save(%q) = %v, want nil", name, err)
+		}
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatalf("ReadFile(%q) = %v, want nil", name, err)
+	}
+	want := strings.Repeat(fmt.Sprintf("{\n\t\"tracer_name\": %q\n}", name), saves)
+	if string(got) != want {
+		t.Errorf("content of %q = %q, want %q", name, string(got), want)
+	}
+}
+
+// TestBackendSaveMissingTracerName covers the empty/missing-field path: without
+// a tracer_name field no output file can be selected, so Save must report
+// ErrInvalidField and must not create anything on disk.
+func TestBackendSaveMissingTracerName(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+	t.Cleanup(func() { _ = backend.Close(t.Context()) })
+
+	err := backend.Save(t.Context(), driver.Record{
+		ID:   "missing-name",
+		Data: []byte("{\"tracer_name\":\"\"}"),
+	}, driver.SaveOptions{})
+	if !errors.Is(err, driver.ErrInvalidField) {
+		t.Errorf("Save() error = %v, want ErrInvalidField", err)
+	}
+
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatalf("ReadDir(%q) = %v, want nil", dir, readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("files in %q = %d, want 0", dir, len(entries))
+	}
+}
+
+// TestBackendClose verifies that Close releases the rotators, that Save after
+// Close reports ErrClosed, and that a second Close is a safe no-op so shutdown
+// paths that close a backend more than once stay idempotent.
+func TestBackendClose(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+
+	if err := backend.Save(t.Context(), tracerRecord("close_tracer", "close-0"), driver.SaveOptions{}); err != nil {
+		t.Fatalf("Save() = %v, want nil", err)
+	}
+	if err := backend.Close(t.Context()); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+
+	// A cached writer must not be reused, and a tracer that was never written
+	// must not be able to open a new file after shutdown.
+	if err := backend.Save(t.Context(), tracerRecord("close_tracer", "close-1"), driver.SaveOptions{}); !errors.Is(err, ErrClosed) {
+		t.Errorf("Save() for a cached tracer after Close error = %v, want ErrClosed", err)
+	}
+	if err := backend.Save(t.Context(), tracerRecord("fresh_tracer", "close-2"), driver.SaveOptions{}); !errors.Is(err, ErrClosed) {
+		t.Errorf("Save() for a new tracer after Close error = %v, want ErrClosed", err)
+	}
+
+	if err := backend.Close(t.Context()); err != nil {
+		t.Errorf("second Close() = %v, want nil", err)
+	}
+}
+
+// TestBackendCloseDrainsWriterCache is a white-box check that Close removes
+// every writer from the registry. Leaving a drained rotator cached would let a
+// later Save reopen and append to a file the backend no longer tracks.
+func TestBackendCloseDrainsWriterCache(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+
+	names := []string{"tracer-a", "tracer-b", "tracer-c"}
+	for _, name := range names {
+		if err := backend.Save(t.Context(), tracerRecord(name, name), driver.SaveOptions{}); err != nil {
+			t.Fatalf("Save(%q) = %v, want nil", name, err)
+		}
+	}
+
+	backend.mu.RLock()
+	cached := len(backend.writers)
+	backend.mu.RUnlock()
+	if cached != len(names) {
+		t.Errorf("writers before Close = %d, want %d", cached, len(names))
+	}
+
+	if err := backend.Close(t.Context()); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+
+	backend.mu.RLock()
+	remaining := len(backend.writers)
+	backend.mu.RUnlock()
+	if remaining != 0 {
+		t.Errorf("writers after Close = %d, want 0", remaining)
 	}
 }
