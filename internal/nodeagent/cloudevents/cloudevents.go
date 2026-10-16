@@ -37,6 +37,7 @@ func documentToWatchEvent(document *tracingstore.Document) types.WatchEvent {
 		DataContentType: "application/json",
 		Time:            observedTimestamp,
 		Data: types.WatchEventData{
+			SourceType:              document.SourceType,
 			Hostname:                document.Hostname,
 			Region:                  document.Region,
 			ObservedTimestamp:       observedTimestamp,

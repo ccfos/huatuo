@@ -555,6 +555,7 @@ func rawProfile(profile *profilinghandler.RawProfile) (serverapi.RawProfile, int
 		return serverapi.RawProfile{}, 0, fmt.Errorf("map raw Profile: encode payload: %w", err)
 	}
 	return serverapi.RawProfile{
+		SourceType:        optionalString(profile.SourceType),
 		Hostname:          profile.Hostname,
 		Region:            profile.Region,
 		UploadedTimestamp: timeutil.Timestamp{Time: profile.UploadedTimestamp},

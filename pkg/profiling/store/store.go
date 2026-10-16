@@ -248,7 +248,8 @@ func normalizeAggregationField(field string) (string, error) {
 		return types.DocumentFieldTracerID, nil
 	case "profile_type":
 		return fieldProfileType, nil
-	case types.DocumentFieldRegion,
+	case types.DocumentFieldSourceType,
+		types.DocumentFieldRegion,
 		types.DocumentFieldHostname,
 		types.DocumentFieldContainerHostname,
 		types.DocumentFieldContainerHostNamespace,
