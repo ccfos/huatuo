@@ -43,6 +43,10 @@ var (
 	ErrNotInitialized = errors.New("toolstream: server not initialized")
 	// ErrAlreadyStarted is returned by Start when the server is already running.
 	ErrAlreadyStarted = errors.New("toolstream: server already started")
+	// ErrSessionCanceled is reported by AwaitSession when CancelSession dropped
+	// the expectation before the stream reached a clean end, for example after a
+	// profiler start failure or a FinalizeDiscard.
+	ErrSessionCanceled = errors.New("toolstream: session canceled")
 )
 
 var (
