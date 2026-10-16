@@ -26,3 +26,7 @@ func (*Bridge) waitConnectionPeer(context.Context, net.Conn, string) (PeerIdenti
 	return PeerIdentity{}, fmt.Errorf("guestbridge: Linux is required")
 }
 func removeStaleSocket(string) error { return fmt.Errorf("guestbridge: Linux is required") }
+
+func listenFirecracker(string) (net.Listener, error) {
+	return nil, fmt.Errorf("guestbridge: Linux is required")
+}

@@ -22,12 +22,12 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
-
-	"github.com/ccfos/huatuo/internal/pod"
 )
 
 func (b *Bridge) waitConnectionPeer(ctx context.Context, conn net.Conn, sandboxID string) (PeerIdentity, error) {
@@ -54,20 +54,10 @@ func (b *Bridge) waitConnectionPeer(ctx context.Context, conn net.Conn, sandboxI
 	if err != nil {
 		return PeerIdentity{}, err
 	}
-	containers, err := pod.Containers()
-	if err != nil {
-		return PeerIdentity{}, err
+	if peer.HypervisorPID <= 0 || int(cred.Pid) != peer.HypervisorPID {
+		return PeerIdentity{}, fmt.Errorf("%w: Unix peer is not the sandbox hypervisor", ErrUntrustedPeer)
 	}
-	return validateFirecrackerPeer(int(cred.Pid), containers, peer)
-}
-
-func validateFirecrackerPeer(pid int, containers map[string]*pod.Container, peer PeerIdentity) (PeerIdentity, error) {
-	for _, c := range containers {
-		if c.HostKataSandboxID() == peer.SandboxID && c.InitPid == pid && c.LabelHostNamespace() == peer.Namespace {
-			return peer, nil
-		}
-	}
-	return PeerIdentity{}, fmt.Errorf("%w: Unix peer is not the sandbox hypervisor", ErrUntrustedPeer)
+	return peer, nil
 }
 
 func removeStaleSocket(path string) error {
@@ -81,7 +71,12 @@ func removeStaleSocket(path string) error {
 	if info.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("guestbridge: refusing to remove non-socket %s", path)
 	}
-	conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	directory, address, err := socketAddress(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	conn, err := net.DialTimeout("unix", address, 100*time.Millisecond)
 	if err == nil {
 		_ = conn.Close()
 		return fmt.Errorf("guestbridge: socket already active: %s", path)
@@ -92,4 +87,51 @@ func removeStaleSocket(path string) error {
 		return err
 	}
 	return os.Remove(path)
+}
+
+// Linux limits sockaddr_un to 108 bytes. Open the actual parent directory and
+// bind via its short fd path so full sandbox IDs work with longer runtime roots.
+func socketAddress(path string) (*os.File, string, error) {
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return nil, "", err
+	}
+	address := filepath.Join("/proc/self/fd", strconv.FormatUint(uint64(directory.Fd()), 10), filepath.Base(path))
+	return directory, address, nil
+}
+
+type socketListener struct {
+	*net.UnixListener
+	path string
+}
+
+func (l *socketListener) Close() error {
+	err := l.UnixListener.Close()
+	removeErr := os.Remove(l.path)
+	if errors.Is(removeErr, os.ErrNotExist) {
+		removeErr = nil
+	}
+	return errors.Join(err, removeErr)
+}
+
+func listenFirecracker(path string) (net.Listener, error) {
+	directory, address, err := socketAddress(path)
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: address, Net: "unix"})
+	if err != nil {
+		return nil, err
+	}
+	// The fd path expires after bind. Cleanup must use the canonical socket path.
+	listener.SetUnlinkOnClose(false)
+	wrapped := &socketListener{UnixListener: listener, path: path}
+	// Access is restricted by the runtime directory and verified Unix peer PID.
+	//nolint:gosec
+	if err := os.Chmod(path, 0o666); err != nil {
+		_ = wrapped.Close()
+		return nil, err
+	}
+	return wrapped, nil
 }

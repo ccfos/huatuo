@@ -33,8 +33,9 @@ import (
 // PeerIdentity is resolved by the Host, never from the Guest handshake or JSON.
 // It is bound once per connection so a reused CID cannot reassign a live session.
 type PeerIdentity struct {
-	SandboxID string
-	Namespace string
+	SandboxID     string
+	HypervisorPID int
+	Namespace     string
 }
 
 type peerIdentityKey struct{}
@@ -85,7 +86,11 @@ func resolvePeerFromContainers(addr net.Addr, sandboxID string, containers map[s
 		cid = peer.ContextID
 	}
 	identity := PeerIdentity{}
-	checked := make(map[int]uint32)
+	type processKey struct {
+		PID     int
+		Sandbox string
+	}
+	checked := make(map[processKey]uint32)
 	for _, container := range containers {
 		candidate := container.HostKataSandboxID()
 		if candidate == "" {
@@ -96,7 +101,8 @@ func resolvePeerFromContainers(addr net.Addr, sandboxID string, containers map[s
 				continue
 			}
 		} else {
-			guestCID, found := checked[container.InitPid]
+			key := processKey{PID: container.InitPid, Sandbox: candidate}
+			guestCID, found := checked[key]
 			if !found {
 				raw, err := readFile(filepath.Join("/proc", strconv.Itoa(container.InitPid), "cmdline"))
 				if err != nil {
@@ -106,7 +112,7 @@ func resolvePeerFromContainers(addr net.Addr, sandboxID string, containers map[s
 				if err != nil {
 					continue
 				}
-				checked[container.InitPid] = guestCID
+				checked[key] = guestCID
 			}
 			if guestCID != cid {
 				continue
@@ -116,10 +122,10 @@ func resolvePeerFromContainers(addr net.Addr, sandboxID string, containers map[s
 		if !ok || namespace == "" {
 			continue
 		}
-		if identity.SandboxID != "" && (identity.SandboxID != candidate || identity.Namespace != namespace) {
+		if identity.SandboxID != "" && (identity.SandboxID != candidate || identity.Namespace != namespace || identity.HypervisorPID != container.InitPid) {
 			return PeerIdentity{}, fmt.Errorf("guestbridge: ambiguous peer identity")
 		}
-		identity = PeerIdentity{SandboxID: candidate, Namespace: namespace}
+		identity = PeerIdentity{SandboxID: candidate, Namespace: namespace, HypervisorPID: container.InitPid}
 	}
 	if identity.SandboxID == "" {
 		return PeerIdentity{}, errUnknownPeerSandbox
