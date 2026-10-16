@@ -73,13 +73,13 @@ template:
       prometheus.io/path: "/metrics"
 ```
 
-Helm Chart 根据 `charts/huatuo/values.yaml` 中的以下配置生成注解：
+Helm Chart 根据 `build/charts/values.yaml` 中的以下配置生成注解：
 
 ```yaml
-metrics:
-  enabled: true
-  port: 19704
-  path: /metrics
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "19704"
+  prometheus.io/path: /metrics
 ```
 
 Prometheus 需要启用 Kubernetes Pod 服务发现，并通过 relabel 读取注解：
