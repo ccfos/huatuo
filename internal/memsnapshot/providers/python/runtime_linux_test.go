@@ -82,6 +82,7 @@ func TestInspectModuleSymbolOverflow(t *testing.T) {
 			raw.put32(bias+tc.version, 3<<24|12<<16)
 			memory := &countingMemory{memoryReader: raw, reads: make(map[uint64]int)}
 			target, err := inspectModule(context.Background(), path,
+				path,
 				[]memsnapshot.ProcMap{{
 					Start: bias, End: bias + 0x10000, Inode: stat.Ino,
 					DevMajor: unix.Major(stat.Dev), DevMinor: unix.Minor(stat.Dev),
