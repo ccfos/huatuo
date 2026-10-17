@@ -14,6 +14,10 @@ Two deployment paths are supported:
 - **Docker Compose** — recommended for development and testing; all components are pre-configured.
 - **Kubernetes** — for production clusters; requires manual data source configuration.
 
+> Do not run the Docker Compose, systemd, and Kubernetes deployments of
+> huatuo-bamai on the same node. They contend for port `19704` and
+> `/var/run/huatuo-toolstream.sock`.
+
 ## Quick Start (Docker Compose)
 
 The `build/docker/` directory contains a complete stack. All default credentials and ports listed below match this setup.
