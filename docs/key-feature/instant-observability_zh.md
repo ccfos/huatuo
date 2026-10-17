@@ -398,7 +398,7 @@ OOM kill 追踪器现命名为 `memory_oom_kill`（此前为 `memory_oom`，更�
 
 ### 8. ras 硬件错误
 
-**功能描述** 通过内核 tracepoint 检测 CPU、内存、PCIe 等硬件错误，支持 5 种硬件错误来源：MCE（Machine Check Exception）、EDAC（内存控制器）、ACPI/GHES（非标准硬件错误）、PCIe AER（高级错误上报）、MCE 阈值中断（THR）。错误按严重程度分级：`Corrected`（已纠正）、`UncorrectedRecoverable`（未纠正可恢复）、`UncorrectedFatal`（未纠正致命）。MCE 阈值中断事件采用冷却策略（默认 30 分钟），防止中断风暴触发大量重复上报。
+**功能描述** 通过内核 tracepoint 检测 CPU、内存、PCIe 等硬件错误，支持 6 种硬件错误来源：MCE（Machine Check Exception）、EDAC（内存控制器）、ACPI/GHES（非标准硬件错误）、PCIe AER（高级错误上报）、MCE 阈值中断（THR）、ARM 处理器错误（ARM GHES，即 CPER 的 ARM 处理器错误部分，仅 arm64）。错误按严重程度分级：`Corrected`（已纠正）、`UncorrectedRecoverable`（未纠正可恢复）、`UncorrectedFatal`（未纠正致命）。MCE 阈值中断事件采用冷却策略（默认 30 分钟），防止中断风暴触发大量重复上报。
 
 **数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
 
@@ -432,8 +432,8 @@ OOM kill 追踪器现命名为 `memory_oom_kill`（此前为 `memory_oom`，更�
 **字段含义解释**
 
 - **dev**：发生错误的硬件设备（如 `CPU/MEM`、`PCIe 0000:3b:00.0`）
-- **event**：错误类型（`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`）
-- **type**：错误严重程度（`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`）
+- **event**：错误类型（`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD` / `ARM_GHES`）
+- **type**：错误严重程度（`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info` / `unknown`）
 - **observed_timestamp**：顶层字段，表示用户态观测事件的 UTC 时间；`kernel_observed_timestamp` 表示内核观测事件的 UTC 时间
 - **info**：JSON 格式的详细错误信息，内容因 event 类型不同而不同
 
