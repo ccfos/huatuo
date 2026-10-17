@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"unicode/utf8"
 )
 
 type frame struct {
@@ -191,11 +192,31 @@ func (r *renderer) fitText(text string, width float32) string {
 		return ""
 	}
 
-	if len(text) < avail {
+	// The budget is counted in glyphs, and frame names carry arbitrary UTF-8.
+	// Measure and cut by rune so truncation never splits a multi-byte
+	// sequence: the SVG is XML, so half a rune makes the document malformed.
+	if utf8.RuneCountInString(text) < avail {
 		return html.EscapeString(text)
 	}
 
-	return html.EscapeString(text[:avail-2]) + ".."
+	return html.EscapeString(truncateRunes(text, avail-2)) + ".."
+}
+
+// truncateRunes returns the first limit runes of text.
+func truncateRunes(text string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+
+	count := 0
+	for index := range text {
+		if count == limit {
+			return text[:index]
+		}
+		count++
+	}
+
+	return text
 }
 
 // RenderStyle writes a flame graph SVG for stacks using the given style.
