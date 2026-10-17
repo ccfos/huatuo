@@ -97,6 +97,10 @@ func Parse(pkt *Hdr) (*Packet, error) {
 		copy(frame[ethernetHeaderLen:], pkt.Raw[:rawLen])
 	}
 
+	// An IPv4 header carrying options needs its option bytes rewritten before
+	// decoding; see normalizeIPv4Options for why.
+	frame = normalizeIPv4Options(frame, &dec.frame)
+
 	dec.lyrs = dec.lyrs[:0]
 
 	if err := dec.dlp.DecodeLayers(frame, &dec.lyrs); err != nil && len(dec.lyrs) == 0 {
@@ -211,6 +215,35 @@ func Parse(pkt *Hdr) (*Packet, error) {
 
 	out.Label = labelOf(out)
 	return out, nil
+}
+
+// normalizeIPv4Options returns frame unchanged unless it carries an IPv4 header
+// with options. gopacket v1.2.0's IPv4 decoder (layers/ip4.go) returns from
+// DecodeFromBytes as soon as it meets an End-of-Options byte, before assigning
+// Version/TOS/Id/Flags/FragOffset/TTL/Protocol/Checksum/SrcIP/DstIP. A pooled
+// decoder then republishes the previous frame's fixed fields and derives the
+// next layer from its Protocol, so such frames are copied into scratch and
+// their option bytes blanked to NOPs. This package never exposes option bytes,
+// and NOPs neither end the option scan early nor make it fail, so the fixed
+// fields are always decoded and the caller's buffer stays intact.
+func normalizeIPv4Options(frame []byte, scratch *[ethernetHeaderLen + RawCapacity]byte) []byte {
+	if len(frame) < ethernetHeaderLen+20 || binary.BigEndian.Uint16(frame[12:]) != 0x0800 {
+		return frame
+	}
+
+	ihl := int(frame[ethernetHeaderLen]) & 0x0f
+	if ihl <= 5 || len(frame) < ethernetHeaderLen+ihl*4 {
+		return frame
+	}
+
+	out := scratch[:len(frame)]
+	copy(out, frame)
+
+	for i := ethernetHeaderLen + 20; i < ethernetHeaderLen+ihl*4; i++ {
+		out[i] = 1 // NOP
+	}
+
+	return out
 }
 
 // TCPSequenceSpan returns the sequence space consumed by a parsed TCP segment.
