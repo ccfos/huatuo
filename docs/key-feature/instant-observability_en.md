@@ -398,7 +398,7 @@ The OOM kill tracer is named `memory_oom_kill` (previously `memory_oom`, and ear
 
 ### 8. ras
 
-**Description** Detects hardware errors from CPU, memory, and PCIe subsystems via kernel tracepoints. Supports five hardware error sources: MCE (Machine Check Exception), EDAC (memory controller), ACPI/GHES (non-standard hardware errors), PCIe AER (Advanced Error Reporting), and MCE threshold interrupts (THR). Errors are classified by severity: `Corrected`, `UncorrectedRecoverable`, `UncorrectedDeferred`, and `UncorrectedFatal`. MCE threshold interrupt events use a cooldown period (default 30 minutes) to suppress interrupt storm-driven duplicate reports.
+**Description** Detects hardware errors from CPU, memory, and PCIe subsystems via kernel tracepoints. Supports six hardware error sources: MCE (Machine Check Exception), EDAC (memory controller), ACPI/GHES (non-standard hardware errors), PCIe AER (Advanced Error Reporting), MCE threshold interrupts (THR), and ARM processor errors (ARM GHES, the CPER ARM processor error section, arm64 only). Errors are classified by severity: `Corrected`, `UncorrectedRecoverable`, `UncorrectedDeferred`, and `UncorrectedFatal`. MCE threshold interrupt events use a cooldown period (default 30 minutes) to suppress interrupt storm-driven duplicate reports.
 
 **Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
 
@@ -432,8 +432,8 @@ The OOM kill tracer is named `memory_oom_kill` (previously `memory_oom`, and ear
 **Fields**
 
 - **dev**: Hardware device where the error occurred (e.g., `CPU/MEM`, `PCIe 0000:3b:00.0`)
-- **event**: Error type (`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`)
-- **type**: Error severity (`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`)
+- **event**: Error type (`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD` / `ARM_GHES`)
+- **type**: Error severity (`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info` / `unknown`)
 - **observed_timestamp**: Top-level UTC userspace observation time; `kernel_observed_timestamp` records UTC kernel observation time
 - **info**: JSON-formatted detailed error information; content varies by event type
 
