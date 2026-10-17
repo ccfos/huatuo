@@ -184,6 +184,16 @@ kubectl apply -f huatuo-service.yaml
 kubectl apply -f huatuo-servicemonitor.yaml
 ```
 
+## 日志查询（Kubernetes）
+
+从 Elasticsearch 查询事件数据：
+
+```bash
+curl -u elastic:<password> "http://<es-host>:9200/huatuo_bamai/_search?pretty"
+```
+
+将 `<password>` 和 `<es-host>` 替换为实际的 Elasticsearch 凭据和地址。
+
 ## Grafana 数据源
 
 不使用 Docker Compose 时，在 Grafana 中手动添加数据源。
@@ -225,3 +235,37 @@ Docker Compose 会自动加载仓库内置仪表盘。外部 Grafana 按以下�
 5. 复制 JSON 并导入目标 Grafana
 
 控制台登录凭证由部署管理员提供，不应保存在公开文档中。
+
+## 故障排查
+
+### 导入仪表盘时报 "datasource not found"
+
+当仪表盘 JSON 引用了 Grafana 中不存在的数据源 UID 时会出现该错误。
+
+**解决方法：**
+
+1. 从 Grafana UI 地址中获取 Elasticsearch 数据源的 UID：`http://<grafana-host>:3000/connections/datasources/edit/<uid>`
+2. 在仪表盘 JSON 中将所有 `"uid": "${DS_HUATUO-BAMAI-ES}"` 替换为实际 UID
+3. 重新导入仪表盘
+
+### Prometheus target 显示 "down"
+
+- 确认 huatuo-bamai 正在运行：`curl http://<host>:19704/metrics`
+- 检查 Prometheus 配置中的采集地址和端口与 Agent 一致
+- Kubernetes 环境：确认 Pod 注解正确，或 ServiceMonitor 的 selector 与 Service 标签匹配
+
+### Elasticsearch 索引为空
+
+- 确认 Elasticsearch 可访问：`curl -u elastic:<password> http://<host>:9200/_cat/indices`
+- 检查 huatuo-bamai 配置中 `[Storage.Elasticsearch]` 段的 `Address`、`Username`、`Password` 是否正确
+- 默认索引名为 `huatuo_bamai`
+
+### 启动时报 "socket path already exists"
+
+出现该错误说明上一次 huatuo-bamai 进程没有正常停止。
+
+**解决方法：**
+
+```bash
+rm -f /var/run/huatuo-toolstream.sock
+```
