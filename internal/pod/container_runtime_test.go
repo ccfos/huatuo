@@ -157,6 +157,9 @@ func TestKubeletUpdateContainerRuntimeRouting(t *testing.T) {
 }
 
 func TestPopulateKataContainerUsesHostBinding(t *testing.T) {
+	previousProvider := currContainerProvider
+	currContainerProvider = containerProviderContainerd
+	t.Cleanup(func() { currContainerProvider = previousProvider })
 	oldRoot, oldClient, oldNames := paths.RootfsDefaultPath, containerdClient, cgroupCssID2SubSysNameMap
 	t.Cleanup(func() {
 		paths.RootfsDefaultPath, containerdClient, cgroupCssID2SubSysNameMap = oldRoot, oldClient, oldNames
@@ -217,6 +220,19 @@ func TestPopulateKataContainerUsesHostBinding(t *testing.T) {
 	containerdClient = &pidRuntimeService{response: response}
 	if pid, err := containerInitPIDByID(c.ID); err != nil || pid != 4321 {
 		t.Errorf("Kata PID=%d err=%v", pid, err)
+	}
+	guestPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: "payments"}, Spec: corev1.PodSpec{NodeName: "worker-96"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	spec := &corev1.Container{Name: "collector", Env: []corev1.EnvVar{{Name: "BAMAI_POD_NAME", Value: "orders"}, {Name: "BAMAI_POD_NAMESPACE", Value: "payments"}, {Name: "BAMAI_NODE_NAME", Value: "worker-96"}}}
+	status := &corev1.ContainerStatus{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now())}}}
+	classified, err := kubeletContainer(c.ID, spec, status, guestPod)
+	if err != nil || classified == nil || classified.Type != ContainerTypeSidecar {
+		t.Fatalf("Kata Guest agent classification=%+v err=%v", classified, err)
+	}
+	spec.Name = "agent"
+	spec.Env = nil
+	classified, err = kubeletContainer(c.ID, spec, status, guestPod)
+	if err != nil || classified == nil || classified.Type != ContainerTypeNormal {
+		t.Fatalf("business named agent classification=%+v err=%v", classified, err)
 	}
 	response.Info["info"] = `{"pid":4321,"runtimeType":"io.containerd.kata-qemu.v2","sandboxID":"replaced"}`
 	if _, err := containerInitPIDByID(c.ID); err == nil {

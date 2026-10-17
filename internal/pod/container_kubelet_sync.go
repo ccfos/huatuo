@@ -337,6 +337,11 @@ func kubeletContainer(containerID string, container *corev1.Container, container
 		return nil, err
 	}
 
+	// Guest agents share the VM cgroup but are not business sampling targets.
+	if result.HostKataSandboxID() != "" && hasGuestAgentIdentity(container, pod) {
+		result.Type = ContainerTypeSidecar
+	}
+
 	// create container life resources
 	createContainerLifeResources(result)
 

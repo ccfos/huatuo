@@ -373,6 +373,7 @@ func TestCPUIdleTracingReconcileContainerStates(t *testing.T) {
 	tracer.reconcileContainerStates(map[string]*pod.Container{
 		"keep": {
 			ID:         "keep",
+			Type:       pod.ContainerTypeNormal,
 			CgroupPath: "new",
 		},
 	})
@@ -591,11 +592,11 @@ func TestCPUIdleTracingDataJSON(t *testing.T) {
 
 func TestCPUIdleKataSharedState(t *testing.T) {
 	tracer := &cpuIdleTracing{containers: make(map[string]*containerCPUState)}
-	first := &pod.Container{ID: "z-first", RuntimeType: "io.containerd.kata-qemu.v2", SandboxID: "vm", SyncedAt: time.Unix(1, 0), CgroupPath: "/kata/vm", CgroupCss: map[string]uint64{"cpu": 10}}
+	first := &pod.Container{ID: "z-first", Type: pod.ContainerTypeNormal, RuntimeType: "io.containerd.kata-qemu.v2", SandboxID: "vm", SyncedAt: time.Unix(1, 0), CgroupPath: "/kata/vm", CgroupCss: map[string]uint64{"cpu": 10}}
 	second := *first
 	second.ID = "a-second"
 	second.SyncedAt = time.Unix(2, 0)
-	members := map[string]*pod.Container{first.ID: first, second.ID: &second, "runc": {ID: "runc", CgroupPath: "/runc"}, "guest": {ID: "guest", CgroupPath: "/guest"}}
+	members := map[string]*pod.Container{first.ID: first, second.ID: &second, "runc": {ID: "runc", Type: pod.ContainerTypeNormal, CgroupPath: "/runc"}, "guest": {ID: "guest", Type: pod.ContainerTypeNormal, CgroupPath: "/guest"}}
 	tracer.reconcileContainerStates(members)
 	state := tracer.containers["kata:vm"]
 	if len(tracer.containers) != 3 || state == nil || state.containerID != first.ID {
@@ -627,8 +628,8 @@ func TestCPUIdleKataSharedState(t *testing.T) {
 	}
 	second.CgroupCss = nil
 	tracer.reconcileContainerStates(members)
-	if tracer.containers["kata:new-vm"] != nil {
-		t.Error("Kata without CPU CSS must not be sampled")
+	if state := tracer.containers["kata:new-vm"]; state == nil || state.containerID != "" || state.hasUsage {
+		t.Error("Kata without CPU CSS must retain only its VM lifetime state")
 	}
 }
 
@@ -640,8 +641,8 @@ func TestCPUIdleKataRepresentativeRespectsFilter(t *testing.T) {
 	}
 	tracer := &cpuIdleTracing{filter: filter, containers: make(map[string]*containerCPUState)}
 	tracer.reconcileContainerStates(map[string]*pod.Container{
-		"first":  {ID: "first", Hostname: "excluded", RuntimeType: "io.containerd.kata.v2", SandboxID: "vm", SyncedAt: time.Unix(1, 0), CgroupCss: map[string]uint64{"cpu": 10}},
-		"second": {ID: "second", Hostname: "included", RuntimeType: "io.containerd.kata.v2", SandboxID: "vm", SyncedAt: time.Unix(2, 0), CgroupCss: map[string]uint64{"cpu": 10}},
+		"first":  {ID: "first", Type: pod.ContainerTypeNormal, Hostname: "excluded", RuntimeType: "io.containerd.kata.v2", SandboxID: "vm", SyncedAt: time.Unix(1, 0), CgroupCss: map[string]uint64{"cpu": 10}},
+		"second": {ID: "second", Type: pod.ContainerTypeNormal, Hostname: "included", RuntimeType: "io.containerd.kata.v2", SandboxID: "vm", SyncedAt: time.Unix(2, 0), CgroupCss: map[string]uint64{"cpu": 10}},
 	})
 	if len(tracer.containers) != 1 || tracer.containers["kata:vm"] == nil || tracer.containers["kata:vm"].containerID != "second" {
 		t.Errorf("filter ignored: %+v", tracer.containers)
