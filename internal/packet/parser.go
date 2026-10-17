@@ -193,9 +193,9 @@ func Parse(pkt *Hdr) (*Packet, error) {
 				ProtAddressSize: dec.arp.ProtAddressSize,
 				Operation:       arpOperationName(dec.arp.Operation),
 				SenderMAC:       net.HardwareAddr(dec.arp.SourceHwAddress).String(),
-				SenderIP:        net.IP(slices.Clone(dec.arp.SourceProtAddress)),
+				SenderIP:        arpIP(dec.arp.SourceProtAddress),
 				TargetMAC:       net.HardwareAddr(dec.arp.DstHwAddress).String(),
-				TargetIP:        net.IP(slices.Clone(dec.arp.DstProtAddress)),
+				TargetIP:        arpIP(dec.arp.DstProtAddress),
 			}
 		}
 	}
@@ -374,4 +374,16 @@ func arpOperationName(op uint16) string {
 	default:
 		return fmt.Sprintf("UNKNOWN(%d)", op)
 	}
+}
+
+// arpIP converts an ARP protocol address to net.IP. Values that are not 4 or 16
+// bytes are not IP addresses (malformed, or a non-IP protocol family); keeping
+// them as a short net.IP would make net.IP.MarshalText fail and break the
+// dropwatch JSON/socket writers, so report nil instead.
+func arpIP(addr []byte) net.IP {
+	if len(addr) != net.IPv4len && len(addr) != net.IPv6len {
+		return nil
+	}
+
+	return net.IP(slices.Clone(addr))
 }
