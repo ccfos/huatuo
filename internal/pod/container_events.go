@@ -111,6 +111,7 @@ type containerSnapshot struct {
 type containerStore struct {
 	mu          sync.RWMutex
 	records     map[string]*containerRecord
+	views       map[containerViewKey]*containerViewEntry
 	subscribers map[*ContainerSubscription]struct{}
 	revision    uint64
 	err         error
@@ -282,6 +283,11 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 	defer v.mu.Unlock()
 	if !v.isActive {
 		return
+	}
+	// Any commit can change container metadata, so drop the cached
+	// containersByTypeQos views; the next reader rebuilds them.
+	if len(v.views) > 0 {
+		clear(v.views)
 	}
 	if snapshot.isComplete {
 		for id, previous := range v.records {
