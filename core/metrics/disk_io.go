@@ -187,7 +187,7 @@ func (c *diskIOStatsCollector) collectDiskstats() ([]*metric.Data, error) {
 		ds := &diskstats[i]
 		device := ds.DeviceName
 
-		deviceLabel := map[string]string{"device": device}
+		deviceLabel := map[string]string{"disk": device}
 
 		metrics = append(
 			metrics,
