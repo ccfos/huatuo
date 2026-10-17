@@ -56,3 +56,21 @@ lifecycle reconciliation.
 For authenticated Guest event and profiling ingress, see [Guest-to-Host transport](kata_transport_en.md). The receiver is disabled by default.
 
 Host Kata records do not publish application memory snapshot targets because the hypervisor memory cgroup is shared by the VM. Capture application memory snapshots in the Guest. Ordinary Host containers retain their existing memory watches.
+
+## Business attribution and capture deduplication
+
+Set `BAMAI_POD_NAME`, `BAMAI_POD_NAMESPACE` and `BAMAI_NODE_NAME` only
+on the Guest agent, using their documented Downward API fields or literal
+values matching the actual Pod and Node. Declare them in the Pod container
+Env list; exporting them only inside a startup script is not visible to
+Host role discovery. After CRI confirms Kata, Host
+validates this identity and classifies the agent as a sidecar. Discovery
+and connection authentication retain it, while cpuidle excludes it from
+business targets. Container and image names do not determine this role.
+
+CPU autotracing keeps cooldown per Sandbox and selects a business target.
+Member changes or temporary business absence do not reset a live VM's
+cooldown. Failed capture or persistence cannot repeat perf in that window.
+Multiple business members share one Host capture, attributed to a stable
+business representative. The Host stack still covers the whole VM; it
+does not assign all VM CPU consumption to that representative.
