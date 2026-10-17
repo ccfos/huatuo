@@ -34,6 +34,35 @@ func TestPerfEventSamplesLostError(t *testing.T) {
 	require.Equal(t, uint64(7), lostErr.Count)
 }
 
+func TestPerfEventBufferCapacityAndDropCounters(t *testing.T) {
+	t.Parallel()
+
+	// Verify buffer capacities: default must be at least 64KB and burst at least 128KB to withstand spike bursts.
+	require.GreaterOrEqual(t, DefaultPerfEventBufferBytes, 64*1024)
+	require.GreaterOrEqual(t, BurstPerfEventBufferBytes, 128*1024)
+
+	// Verify sample loss error unwrap and string formatting
+	lostErr := &PerfEventSamplesLostError{Count: 42}
+	require.Equal(t, "bpf: 42 perf event samples lost", lostErr.Error())
+	require.ErrorIs(t, lostErr, ErrPerfEventSamplesLost)
+
+	// Verify batch drop accounting
+	batch := PerfEventBatch{
+		Events:      []any{"event1", "event2"},
+		LostSamples: 15,
+	}
+	require.Equal(t, 2, len(batch.Events))
+	require.Equal(t, uint64(15), batch.LostSamples)
+
+	// Verify mock reader tracking TotalLostSamples
+	r := &perfEventReader{}
+	require.Equal(t, uint64(0), r.TotalLostSamples())
+	r.totalLostSamples.Add(10)
+	require.Equal(t, uint64(10), r.TotalLostSamples())
+	r.totalLostSamples.Add(32)
+	require.Equal(t, uint64(42), r.TotalLostSamples())
+}
+
 func TestDecodePerfEvent(t *testing.T) {
 	t.Parallel()
 

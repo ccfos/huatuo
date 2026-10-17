@@ -20,7 +20,11 @@ import (
 )
 
 // DefaultPerfEventBufferBytes is the requested per-CPU capacity in bytes.
-const DefaultPerfEventBufferBytes = 8 * 1024
+// Expanded to 64KB to avoid ring buffer event drop during burst scheduling spikes.
+const DefaultPerfEventBufferBytes = 64 * 1024
+
+// BurstPerfEventBufferBytes provides expanded per-CPU capacity for high-frequency burst streams.
+const BurstPerfEventBufferBytes = 128 * 1024
 
 // ErrPerfEventSamplesLost indicates that the kernel dropped perf samples.
 var ErrPerfEventSamplesLost = errors.New("bpf: perf event samples lost")
@@ -55,6 +59,10 @@ type PerfEventReader interface {
 	// bounded deadline. newEvent must return a new event destination per call.
 	// The returned batch may contain events and sample loss when err is non-nil.
 	ReadBatch(newEvent func() any) (PerfEventBatch, error)
+
+	// TotalLostSamples returns the cumulative count of perf event samples lost
+	// due to buffer exhaustion across the lifetime of the reader.
+	TotalLostSamples() uint64
 
 	// Close is idempotent and unblocks active reads before returning.
 	Close() error

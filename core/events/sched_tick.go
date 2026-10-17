@@ -136,7 +136,7 @@ func (*schedTickTracing) Start(ctx context.Context) error {
 
 			if err := reader.ReadInto(&data); err != nil {
 				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
-					log.WithError(err).Warn("lost BPF perf event samples")
+					log.WithField("total_lost", reader.TotalLostSamples()).WithError(err).Warn("lost BPF perf event samples")
 					continue
 				}
 				return fmt.Errorf("read scheduler tick event: %w", err)
