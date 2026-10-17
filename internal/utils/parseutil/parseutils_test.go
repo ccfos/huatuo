@@ -51,7 +51,8 @@ func TestReadUint(t *testing.T) {
 		want    uint64
 		wantErr bool
 	}{
-		{"max", strconv.FormatUint(math.MaxUint64, 10) + "\n", math.MaxUint64, false},
+		{"max keyword", "max\n", math.MaxUint64, false},
+		{"max uint64", strconv.FormatUint(math.MaxUint64, 10) + "\n", math.MaxUint64, false},
 		{"trimmed", " 2026 ", 2026, false},
 		{"invalid", "huatuo", 0, true},
 		{"empty", "", 0, true},
