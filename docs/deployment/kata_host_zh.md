@@ -46,3 +46,17 @@ CPU 自动采样按 Sandbox 保存状态，先应用容器过滤条件再选择�
 如需接收并认证 Guest 的事件与性能采样结果，见[Guest 到 Host 的数据传输](kata_transport_zh.md)。接收端默认关闭。
 
 Host Kata 记录不发布应用级内存快照目标，因为虚拟机的内存 cgroup 由同一 VM 的所有容器共享。应用内存快照应在 Guest 中采集；普通 Host 容器继续使用原有内存监测。
+
+## 业务容器归属与采集去重
+
+Guest 采集器专用的 `BAMAI_POD_NAME`、`BAMAI_POD_NAMESPACE` 和
+`BAMAI_NODE_NAME` 必须通过正确的 Downward API 字段，或与实际 Pod/Node
+一致的静态值，在 Pod 容器的 Env 列表中声明；只在启动脚本里 export
+不能提供 Host 识别依据。不要将这三项采集器身份配置添加到业务容器。
+Host 在 CRI 确认 Kata 运行时后核对这三项身份，将该容器归为 sidecar，
+保留其发现和认证信息，但不作为 cpuidle 业务目标。容器名或镜像名不用于猜测角色。
+
+cpuidle 按 Sandbox 保留冷却状态，只从业务容器选择目标。业务成员变化或短暂
+缺失不会重置仍存活 VM 的冷却；采集或保存失败也不会在冷却期内重复执行 perf。
+同一 VM 的多个业务容器共享一次 Host 采样，文档归属稳定的业务代表；Host 栈
+仍是整个 VM 的视角，不表示该 VM 的全部 CPU 消耗都属于代表容器。

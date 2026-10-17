@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	extcgroups "github.com/containerd/cgroups/v3"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/procfs"
@@ -98,7 +99,41 @@ func kataCgroupPath(procCgroupFile string, mode cgroups.Mode) (string, error) {
 	return cgroupPath, nil
 }
 
-// keepKataRepresentative retains the first discovered live member of a sandbox.
+// hasGuestAgentIdentity recognizes the existing Guest deployment contract,
+// without guessing a role from container or image names.
+func hasGuestAgentIdentity(container *corev1.Container, pod *corev1.Pod) bool {
+	for _, identity := range []struct{ name, field, value string }{
+		{"BAMAI_POD_NAME", "metadata.name", pod.Name},
+		{"BAMAI_POD_NAMESPACE", "metadata.namespace", pod.Namespace},
+		{"BAMAI_NODE_NAME", "spec.nodeName", pod.Spec.NodeName},
+	} {
+		var matched *corev1.EnvVar
+		for i := range container.Env {
+			env := &container.Env[i]
+			if env.Name != identity.name {
+				continue
+			}
+			if matched != nil {
+				return false
+			}
+			matched = env
+		}
+		if matched == nil || identity.value == "" {
+			return false
+		}
+		if matched.ValueFrom == nil {
+			if matched.Value != identity.value {
+				return false
+			}
+		} else if matched.Value != "" || matched.ValueFrom.FieldRef == nil || matched.ValueFrom.FieldRef.FieldPath != identity.field || (matched.ValueFrom.FieldRef.APIVersion != "" && matched.ValueFrom.FieldRef.APIVersion != "v1") {
+			return false
+		}
+	}
+	return true
+}
+
+// keepKataRepresentative prefers business containers, then retains the first
+// discovered live member of a sandbox.
 // New members have a later SyncedAt, so they cannot displace it. The ID breaks
 // ties without depending on map iteration order. No separate lifetime cache is
 // needed: removing the representative naturally selects the next live member.
@@ -106,6 +141,9 @@ func keepKataRepresentative(current, candidate *Container) bool {
 	if current == nil || current.HostKataSandboxID() == "" ||
 		current.HostKataSandboxID() != candidate.HostKataSandboxID() {
 		return false
+	}
+	if current.Type.IsNormal() != candidate.Type.IsNormal() {
+		return current.Type.IsNormal()
 	}
 	if current.SyncedAt.Equal(candidate.SyncedAt) {
 		return current.ID < candidate.ID

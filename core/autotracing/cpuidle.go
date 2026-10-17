@@ -165,11 +165,18 @@ func newCPUIdleTracing(
 func (c *cpuIdleTracing) reconcileContainerStates(containers map[string]*pod.Container) {
 	for _, state := range c.containers {
 		state.seen = false
+		state.containerID = ""
 	}
 
 	var cssContainers map[uint64]*pod.Container
 	for _, container := range containers {
-		if !c.filter.Match(container) {
+		// VM lifetime is independent of which business member can be sampled.
+		if sandboxID := container.HostKataSandboxID(); sandboxID != "" {
+			if state := c.containers["kata:"+sandboxID]; state != nil {
+				state.seen = true
+			}
+		}
+		if !container.Type.IsNormal() || !c.filter.Match(container) {
 			continue
 		}
 		key := container.ID
@@ -181,7 +188,7 @@ func (c *cpuIdleTracing) reconcileContainerStates(containers map[string]*pod.Con
 			if cssContainers == nil {
 				matched := make(map[string]*pod.Container)
 				for id, member := range containers {
-					if member.HostKataSandboxID() != "" && c.filter.Match(member) {
+					if member.HostKataSandboxID() != "" && member.Type.IsNormal() && c.filter.Match(member) {
 						matched[id] = member
 					}
 				}
@@ -214,6 +221,8 @@ func (c *cpuIdleTracing) reconcileContainerStates(containers map[string]*pod.Con
 	for containerID, state := range c.containers {
 		if !state.seen {
 			delete(c.containers, containerID)
+		} else if state.containerID == "" {
+			state.resetMeasurements()
 		}
 	}
 }
@@ -372,6 +381,9 @@ func (c *cpuIdleTracing) readContainerCPUSample(
 
 func (c *cpuIdleTracing) updateContainerCPUStates(sampledAt time.Time) error {
 	for _, state := range c.containers {
+		if state.containerID == "" {
+			continue
+		}
 		usage, capacity, err := c.readContainerCPUSample(state)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
@@ -395,7 +407,7 @@ func (c *cpuIdleTracing) selectTraceTarget(sampledAt time.Time) *containerCPUSta
 	var highestScore int64
 
 	for _, state := range c.containers {
-		if !state.hasPercent || !state.lastSampleAt.Equal(sampledAt) {
+		if state.containerID == "" || !state.hasPercent || !state.lastSampleAt.Equal(sampledAt) {
 			continue
 		}
 		if !state.lastTraceAt.IsZero() &&
@@ -415,6 +427,10 @@ func (c *cpuIdleTracing) selectTraceTarget(sampledAt time.Time) *containerCPUSta
 		}
 	}
 
+	// Reserve before perf or persistence can fail and restart the runner.
+	if traceTarget != nil {
+		traceTarget.lastTraceAt = sampledAt
+	}
 	return traceTarget
 }
 
@@ -463,7 +479,7 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
 		case sampledAt := <-ticker.C:
-			containers, err := pod.NormalContainers()
+			containers, err := pod.Containers()
 			if err != nil {
 				return fmt.Errorf("list containers for cpu sampling: %w", err)
 			}
@@ -498,7 +514,6 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 			if err := c.saveCPUIdleTrace(traceTarget, traceTime, result); err != nil {
 				return err
 			}
-			traceTarget.lastTraceAt = traceTime.Time
 		}
 	}
 }
