@@ -56,7 +56,8 @@ type oomMetric struct {
 }
 
 type oomCollector struct {
-	cgroup cgroups.Cgroup
+	cgroup           cgroups.Cgroup
+	normalContainers func() (map[string]*pod.Container, error)
 }
 
 var (
@@ -77,7 +78,8 @@ func newOOMCollector() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: &oomCollector{
-			cgroup: cgroup,
+			cgroup:           cgroup,
+			normalContainers: pod.NormalContainers,
 		},
 		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
@@ -85,7 +87,7 @@ func newOOMCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *oomCollector) Update() ([]*metric.Data, error) {
-	containers, err := pod.NormalContainers()
+	containers, err := c.normalContainers()
 	if err != nil {
 		return nil, fmt.Errorf("get normal container: %w", err)
 	}
@@ -93,6 +95,15 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 	var metrics []*metric.Data
 
 	mutex.Lock()
+	defer mutex.Unlock()
+
+	// Drop counters of containers that no longer exist, otherwise the map
+	// grows without bound on nodes with container churn.
+	for id := range outOfMemoryCounterContainer {
+		if _, ok := containers[id]; !ok {
+			delete(outOfMemoryCounterContainer, id)
+		}
+	}
 
 	metrics = append(metrics, metric.NewCounterData("host_total", outOfMemoryCounterHost, "host oom counter", nil))
 	for _, container := range containers {
@@ -104,7 +115,6 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 		}
 	}
 
-	mutex.Unlock()
 	return metrics, nil
 }
 
