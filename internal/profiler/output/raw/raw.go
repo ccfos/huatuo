@@ -100,7 +100,15 @@ func writeFoldedFrame(key *strings.Builder, frame string) {
 func (f *Formatter) Write(w io.Writer) error {
 	keys := make([]string, 0, len(f.counts))
 
-	for k := range f.counts {
+	for k, count := range f.counts {
+		// Net-negative and zero-count stacks have no visual weight in
+		// folded output; negative counts come from physical_usage free
+		// events, which the pprof path also drops when a stack nets
+		// negative. Filtering here (not in Add) keeps every running sum
+		// exact, so a stack that nets positive still shows its full net.
+		if count <= 0 {
+			continue
+		}
 		keys = append(keys, k)
 	}
 
@@ -119,13 +127,27 @@ func (f *Formatter) Reset() {
 	f.counts = make(map[string]int64)
 }
 
-// IsEmpty reports whether the formatter contains no samples.
+// IsEmpty reports whether the formatter contains no visible samples.
+// Stacks with a non-positive net count are dropped from output, so they do
+// not count as samples here either.
 func (f *Formatter) IsEmpty() bool {
-	return len(f.counts) == 0
+	for _, count := range f.counts {
+		if count > 0 {
+			return false
+		}
+	}
+	return true
 }
 
-// Counts returns the accumulated stack-to-count map. The returned map
-// must not be modified; callers should treat it as read-only.
+// Counts returns a copy of the accumulated stack-to-count map, keeping only
+// stacks with a positive net count; see Write for why non-positive stacks
+// are excluded.
 func (f *Formatter) Counts() map[string]int64 {
-	return f.counts
+	counts := make(map[string]int64, len(f.counts))
+	for stack, count := range f.counts {
+		if count > 0 {
+			counts[stack] = count
+		}
+	}
+	return counts
 }
