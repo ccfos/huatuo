@@ -242,6 +242,10 @@ write_config_bamai_sched_tick() {
 	write_config_bamai_sched_tick_threshold 60000000000
 }
 
+write_config_bamai_io_health() {
+	write_config_bamai_sched_tick | sed 's/"io_health"/"sched_tick"/'
+}
+
 # Let normal ticks exercise the irqoff reporting path without disabling IRQs.
 write_config_bamai_sched_tick_irqoff() {
 	write_config_bamai_sched_tick_threshold 1

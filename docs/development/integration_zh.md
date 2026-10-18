@@ -198,29 +198,21 @@ sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 
 ## IO 测试
 
-`make integration` 包含 IO 内核资格测试，覆盖延时和大小统计、blk-throttle 与
-IOCOST 等待统计、设备及 cgroup 生命周期和健康取证。这些组件测试不替代
-服务启动、配置及公开输出的黑盒验证。
+`sudo make integration` 覆盖公开 IO 指标、容器归属、自动诊断和健康事件取证。
+离线布局、兼容选择和记账检查由 `make unit` 执行，真实 IOLatency 输出由宿主机和容器指标用例验证。
+这些用例不逐一验证各内核的完整 tracepoint 参数数量，也不保证触发全部 remap 路径。
 
-在具备 BPF/BTF 的独立 Linux 测试环境以 root 权限运行。用例自动创建并
-清理临时虚拟设备和 cgroup。单独运行 IOCOST：
-`sudo bash integration/run.sh test_iocost.sh`。`TEST_IOCOST_MODE` 可选
-`functional`、`lifecycle`、`faults`、`pressure`、`compat`，默认 `all`。
+在具备 BPF/BTF 支持的独立 Linux 环境中运行，沿用调用者权限。
+普通磁盘指标用例使用 `TEST_IO_DISK`，默认 `/dev/disk/by-id/virtio-huatuo-ci-io`。
+该盘必须专用于测试，内容可被覆盖；不存在、已挂载或有分区时直接失败。
+可通过 `sudo env TEST_IO_DISK=/dev/vdb make integration` 指定其他空闲测试盘。
+MD、loop 和 NVMe-loop 的后端文件也使用该盘；需要 SCSI 驱动控制的场景由 Shell
+系统测试单独创建 `scsi_debug`。
+容器指标用例沿用本机 Kubernetes、已缓存的 `BUSINESS_POD_IMAGE` 和
+`KUBELET_CERT`、`KUBELET_KEY` 凭证，通过真实 Pod 验证容器归属。
 
-IO 测试优先通过 `scsi_debug` 创建测试盘；不可用时选择已有合格
-SCSI/NVMe/virtio 磁盘，只做只读验证。没有合适磁盘时跳过相关检查。配置切换和
-设备删除仅操作测试创建的磁盘。指标用例自行启动 Huatuo 验证输出。
-
-IO health 使用真实 Linux 内核验证健康事件与取证结果。真实 NVMe/SCSI
-取证命令需要显式指定专用测试设备，例如：
-
-```bash
-sudo env TEST_IO_CONFIRM_NON_SYSTEM=1 TEST_NVME_DEVICE=nvme0 \
-  bash integration/run.sh test_io_kernel.sh
-```
-
-SCSI 使用 `TEST_SCSI_DEVICE=sdb`。这两类用例分别需要 `nvme-cli` 和
-`smartmontools`。
+健康取证用例调用真实 `smartctl`、`nvme`，分别需要 `smartmontools`、`nvme-cli`，
+并保留受控工具输出的错误场景。
 
 ## 网络命名空间辅助函数
 
