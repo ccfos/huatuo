@@ -674,9 +674,10 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
   Default: 1800s.
 
-- **SlidingWindowLength**: Sliding window length (seconds).
+- **SlidingWindowLength**: Sliding window length in samples. At the
+  default 10-second interval, 60 samples cover 600 seconds.
 
-  Default: 60s.
+  Default: 60.
 
 - **DumpProcessMaxNum**: Maximum processes to dump on trigger.
 
