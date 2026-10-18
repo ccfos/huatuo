@@ -1515,3 +1515,197 @@ func cleanupIOControlKernelCommand(name string, arguments ...string) error {
 	}
 	return nil
 }
+
+// Only a module carrying this invocation's marker may be removed. Existing
+// disks are read-only candidates and never have their queue settings changed.
+func prepareIOKernelDisks(t *testing.T, ctx context.Context) ([]string, bool) {
+	t.Helper()
+	disks := []string{}
+	_, moduleErr := os.Stat("/sys/module/scsi_debug")
+	_, probeErr := exec.LookPath("modprobe")
+	_, unloadErr := exec.LookPath("rmmod")
+	if os.IsNotExist(moduleErr) && probeErr == nil && unloadErr == nil {
+		data, err := os.ReadFile("/proc/sys/kernel/random/uuid")
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(data), 8)
+		owner := string(data[:8])
+		isOwned := false
+		release := func() error {
+			if !isOwned {
+				return nil
+			}
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			for {
+				value, err := os.ReadFile("/sys/module/scsi_debug/parameters/inq_vendor")
+				if os.IsNotExist(err) {
+					isOwned = false
+					return nil
+				}
+				if err != nil {
+					return fmt.Errorf("cannot read scsi_debug owner %s: %w", owner, err)
+				}
+				if actual := strings.TrimSpace(string(value)); actual != owner {
+					return fmt.Errorf("scsi_debug ownership changed: want=%s got=%q", owner, actual)
+				}
+				output, err := exec.CommandContext(cleanupCtx, "rmmod", "scsi_debug").CombinedOutput()
+				if err == nil {
+					isOwned = false
+					return nil
+				}
+				if cleanupCtx.Err() != nil {
+					return fmt.Errorf(
+						"retain scsi_debug owner=%s: %w: %s",
+						owner,
+						err,
+						output,
+					)
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		t.Cleanup(func() {
+			if err := release(); err != nil {
+				t.Error(err)
+			}
+		})
+		t.Logf("IO kernel scsi_debug owner=%s", owner)
+		commandCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		output, loadErr := exec.CommandContext(
+			commandCtx,
+			"modprobe",
+			"--first-time",
+			"scsi_debug",
+			"dev_size_mb=128",
+			"add_host=2",
+			"inq_vendor="+owner,
+		).CombinedOutput()
+		cancel()
+		value, _ := os.ReadFile("/sys/module/scsi_debug/parameters/inq_vendor")
+		isOwned = strings.TrimSpace(string(value)) == owner
+		require.NoError(t, ctx.Err(), "scsi_debug preparation interrupted")
+		if loadErr != nil {
+			require.NoError(t, release())
+		} else {
+			require.True(t, isOwned, "cannot verify newly created scsi_debug owner=%s", owner)
+		}
+		if isOwned {
+			deadline := time.Now().Add(10 * time.Second)
+			for time.Now().Before(deadline) {
+				require.NoError(t, ctx.Err(), "waiting for owned SCSI devices")
+				disks = disks[:0]
+				paths, err := filepath.Glob("/sys/block/sd*")
+				require.NoError(t, err)
+				for _, path := range paths {
+					model, err := os.ReadFile(filepath.Join(path, "device", "model"))
+					if err == nil && strings.TrimSpace(string(model)) == "scsi_debug" {
+						if _, err := os.Stat(filepath.Join("/dev", filepath.Base(path))); err == nil {
+							disks = append(disks, filepath.Base(path))
+						}
+					}
+				}
+				if len(disks) == 2 {
+					for _, disk := range disks {
+						require.NoError(t, os.WriteFile(filepath.Join("/sys/block", disk, "queue", "iostats"), []byte("1"), 0o600))
+					}
+					t.Logf("owned IO kernel disks: %v", disks)
+					return disks, true
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			require.NoError(t, release())
+		}
+		t.Logf("scsi_debug unavailable; selecting read-only existing disks: %v: %s", loadErr, output)
+	}
+	disks = disks[:0]
+	for _, pattern := range []string{"vd*", "sd*", "nvme*"} {
+		paths, err := filepath.Glob(filepath.Join("/sys/block", pattern))
+		require.NoError(t, err)
+		for _, path := range paths {
+			iostats, err := os.ReadFile(filepath.Join(path, "queue", "iostats"))
+			if err != nil || strings.TrimSpace(string(iostats)) == "0" {
+				continue
+			}
+			size, err := os.ReadFile(filepath.Join(path, "size"))
+			if err != nil {
+				continue
+			}
+			sectors, err := strconv.ParseUint(strings.TrimSpace(string(size)), 10, 64)
+			if err != nil || sectors < 262144 {
+				continue
+			}
+			name := filepath.Base(path)
+			if err := unix.Access(filepath.Join("/dev", name), unix.R_OK); err == nil {
+				disks = append(disks, name)
+			}
+		}
+	}
+	t.Logf("read-only IO kernel candidates: %v", disks)
+	return disks, false
+}
+
+func prepareIOKernelTopology(t *testing.T, ctx context.Context, disks []string) {
+	t.Helper()
+	uuid := fmt.Sprintf("HUATUO-IO-KERNEL-%d-%d", os.Getpid(), time.Now().UnixNano())
+	name := fmt.Sprintf("huatuo-io-kernel-%d", os.Getpid())
+	find := func() string {
+		paths, err := filepath.Glob("/sys/block/dm-*/dm/uuid")
+		require.NoError(t, err)
+		for _, path := range paths {
+			value, err := os.ReadFile(path)
+			if err == nil && strings.TrimSpace(string(value)) == uuid {
+				return filepath.Base(filepath.Dir(filepath.Dir(path)))
+			}
+		}
+		return ""
+	}
+	// Record UUID before dmsetup may create the target and then time out.
+	t.Logf(
+		"owned IO kernel topology: name=%s uuid=%s disks=%v",
+		name,
+		uuid,
+		disks,
+	)
+	t.Cleanup(func() {
+		if find() != "" {
+			if err := cleanupIOControlKernelCommand(
+				"dmsetup",
+				"remove",
+				"--retry",
+				"--uuid",
+				uuid,
+			); err != nil {
+				t.Errorf("retain owned topology uuid=%s: %v", uuid, err)
+			}
+		}
+	})
+	table := fmt.Sprintf("0 131072 linear /dev/%s 0\n131072 131072 linear /dev/%s 0", disks[0], disks[1])
+	runIOControlKernelCommand(
+		t,
+		ctx,
+		10*time.Second,
+		"dmsetup",
+		"create",
+		name,
+		"--uuid",
+		uuid,
+		"--table",
+		table,
+	)
+	var device string
+	waitIOControlKernelState(
+		t,
+		ctx,
+		"owned DM topology publication",
+		func() bool {
+			device = find()
+			if device == "" {
+				return false
+			}
+			_, err := os.Stat(filepath.Join("/dev", device))
+			leaves, leafErr := os.ReadDir(filepath.Join("/sys/block", device, "slaves"))
+			return err == nil && leafErr == nil && len(leaves) == 2
+		},
+	)
+	t.Setenv("TEST_IO_MULTILEAF_DEVICE", device)
+}

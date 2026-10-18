@@ -38,7 +38,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Live kernel argument qualification, selected by make integration.
+// Live kernel argument qualification, selected by make test.
 
 // TEST_INTEGRATION=true exercises the active backend against the live kernel.
 func TestIOLatencyArgumentProbeKernel(t *testing.T) {
@@ -46,6 +46,14 @@ func TestIOLatencyArgumentProbeKernel(t *testing.T) {
 		t.Skip("Set TEST_INTEGRATION=true to probe live block tracepoints")
 	}
 	ctx := ioControlKernelContext(t)
+	if os.Getenv("TEST_IOLATENCY_IO_DEVICE") == "" && os.Getenv("TEST_IOLATENCY_DISK_CANDIDATES") == "" {
+		disks, isOwned := prepareIOKernelDisks(t, ctx)
+		t.Setenv("TEST_IOLATENCY_DISK_CANDIDATES", strings.Join(disks, " "))
+		t.Setenv("TEST_IOLATENCY_IO_EXCLUSIVE", "")
+		if isOwned {
+			t.Setenv("TEST_IOLATENCY_IO_EXCLUSIVE", "1")
+		}
+	}
 	if err := bpf.Init(&bpf.Option{}); err != nil {
 		t.Fatal(err)
 	}

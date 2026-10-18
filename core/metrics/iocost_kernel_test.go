@@ -94,11 +94,20 @@ type ioCostKernelWrite struct {
 func requireIOCostKernel(t *testing.T) *ioCostKernelFixture {
 	t.Helper()
 	if os.Getenv("TEST_INTEGRATION") != "true" {
-		t.Skip("run make integration for live IOCOST qualification")
+		t.Skip("run make test for live IOCOST qualification")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || os.Geteuid() != 0 {
 		t.Skip("IOCOST kernel qualification requires Linux x86_64 and root")
 	}
+	require.NoError(t, os.MkdirAll("/run/huatuo-iocost-test", 0o755))
+	lock, err := os.OpenFile("/run/huatuo-iocost-test/runner.lock", os.O_CREATE|os.O_RDWR, 0o600)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lock.Close()) })
+	require.NoError(
+		t,
+		unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB),
+		"another IOCOST qualification is running",
+	)
 	f := &ioCostKernelFixture{cgroupRoot: ioCostKernelCgroupRoot, controlPrefix: "io"}
 	if _, err := os.Stat(filepath.Join(f.cgroupRoot, "cgroup.controllers")); os.IsNotExist(err) {
 		f.cgroupRoot = filepath.Join(f.cgroupRoot, "blkio")
@@ -189,6 +198,9 @@ func requireIOCostKernel(t *testing.T) *ioCostKernelFixture {
 	}
 	f.leaf = f.cgroup(t, "leaf")
 	f.parking = f.cgroup(t, "parking")
+	if os.Getenv("TEST_IOCOST_DIAGNOSTIC_OBJECT") == "" {
+		t.Setenv("TEST_IOCOST_DIAGNOSTIC_OBJECT", compileIOCostDiagnosticObject(t))
+	}
 	t.Logf("IOCOST owned resources: work=%s nodes=%s cgroup=%s", f.directory, f.nodes, f.parent)
 	return f
 }

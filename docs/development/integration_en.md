@@ -134,31 +134,50 @@ Both cases call `integration_isolate_run_directory` before starting the service 
 
 ## IO tests
 
-`make integration` includes live-kernel IO qualification for latency and size
-statistics, blk-throttle and IOCOST waits, device and cgroup lifecycles, and
-health evidence. These component tests do not replace black-box checks of
-service startup, configuration, and public output.
+Run `sudo make integration` to execute all integration tests. IO black-box cases
+verify built programs and public interfaces; `test_io_kernel.sh` separately runs
+internal Go/BPF qualifications through the same runner. It compiles first, runs
+test binaries directly, and waits for cleanup and final exit status after a
+signal or timeout. Go cases own devices and filesystems; their internal assertions
+do not count as black-box coverage.
 
-Run as root on a dedicated Linux test host with BPF/BTF support. Cases create
-and clean up temporary virtual devices and cgroups. Run IOCOST alone with
-`sudo bash integration/run.sh test_iocost.sh`; `TEST_IOCOST_MODE` selects
-`functional`, `lifecycle`, `faults`, `pressure`, or `compat` (default: `all`).
+Run as root on a dedicated Linux test host with BPF/BTF support. Run only the
+kernel qualifications:
 
-IO tests prefer disks created with `scsi_debug`. If it is unavailable,
-they use an eligible existing SCSI/NVMe/virtio disk for read-only checks, or skip
-those checks when none is available. Configuration changes and device deletion use
-only test-owned disks. Metric checks start their own Huatuo daemon.
+```bash
+sudo bash integration/run.sh test_io_kernel.sh
+```
+
+IO tests prefer disks created with `scsi_debug`, then unused virtio disks and
+other eligible disks. Existing disks are read-only by default; set
+`TEST_IO_ALLOW_FREE_DISK_WRITES=1` to permit writes to unused virtio disks.
+Configuration changes and device deletion use only test-owned disks.
 
 IO health verifies health events and evidence on a live Linux kernel.
 Real NVMe/SCSI evidence commands require an explicit dedicated test device:
 
 ```bash
-sudo env TEST_IO_CONFIRM_NON_SYSTEM=1 TEST_NVME_DEVICE=nvme0 \
+sudo env TEST_IO_KERNEL_MODE=collectors TEST_IO_CONFIRM_NON_SYSTEM=1 TEST_NVME_DEVICE=nvme0 \
   bash integration/run.sh test_io_kernel.sh
 ```
 
 For SCSI, use `TEST_SCSI_DEVICE=sdb`. These cases require `nvme-cli` and
 `smartmontools`, respectively.
+
+Black-box cases cover public IO metrics, container attribution, automatic
+diagnostics and health evidence. Device-change recovery covers IOCOST,
+blk-throttle and IOLatency; freeze Counter checks run with only IO health enabled.
+
+Wait cases accept `TEST_IO_WAIT_COLLECTOR=all|blk_throtl|iocost` (default: `all`).
+Container cases require containerd's `k8s.io` namespace and the cached image
+`docker.io/library/busybox:1.36.1`. Filesystem checks use private loop/ext4 and
+loop/XFS filesystems and require the corresponding `mkfs` tools; blocked-stack
+checks require `dm-delay`. Health evidence cases create private MD/NVMe-loop
+devices and require `mdadm`, `nvme-cli`, `udevadm` and their kernel modules.
+SCSI timeout and dispatch-error checks inject faults on owned `scsi_debug`
+disks and confirm them independently through a private tracefs instance.
+When isolating runtime files, keep `/run/udev`, `/run/mdadm` and `/run/lock`
+shared with the host.
 
 ## Network Namespace Helpers
 

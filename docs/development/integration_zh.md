@@ -144,29 +144,42 @@ sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 
 ## IO 测试
 
-`make integration` 包含 IO 内核资格测试，覆盖延时和大小统计、blk-throttle 与
-IOCOST 等待统计、设备及 cgroup 生命周期和健康取证。这些组件测试不替代
-服务启动、配置及公开输出的黑盒验证。
+执行 `sudo make integration` 可一次运行全部集成测试。IO 黑盒用例通过真实程序和公开
+接口验证；`test_io_kernel.sh` 独立运行 Go/BPF 内核专项，二者共用原 runner。
+专项先编译，再直接运行测试二进制；中断或超时后等待清理并保留最终退出结果。
+Go 用例自行准备、清理设备和文件系统，内部断言不计入黑盒覆盖。
 
-在具备 BPF/BTF 的独立 Linux 测试环境以 root 权限运行。用例自动创建并
-清理临时虚拟设备和 cgroup。单独运行 IOCOST：
-`sudo bash integration/run.sh test_iocost.sh`。`TEST_IOCOST_MODE` 可选
-`functional`、`lifecycle`、`faults`、`pressure`、`compat`，默认 `all`。
+在具备 BPF/BTF 的独立 Linux 测试环境以 root 权限运行。单独运行内核专项：
 
-IO 测试优先通过 `scsi_debug` 创建测试盘；不可用时选择已有合格
-SCSI/NVMe/virtio 磁盘，只做只读验证。没有合适磁盘时跳过相关检查。配置切换和
-设备删除仅操作测试创建的磁盘。指标用例自行启动 Huatuo 验证输出。
+```bash
+sudo bash integration/run.sh test_io_kernel.sh
+```
+
+IO 测试优先创建 `scsi_debug` 测试盘，不可用时依次选择空闲 virtio 和其他合格磁盘，
+已有盘默认只读。设置 `TEST_IO_ALLOW_FREE_DISK_WRITES=1` 可允许写入空闲 virtio 盘。
+配置切换和设备删除仅操作测试创建的磁盘。
 
 IO health 使用真实 Linux 内核验证健康事件与取证结果。真实 NVMe/SCSI
 取证命令需要显式指定专用测试设备，例如：
 
 ```bash
-sudo env TEST_IO_CONFIRM_NON_SYSTEM=1 TEST_NVME_DEVICE=nvme0 \
+sudo env TEST_IO_KERNEL_MODE=collectors TEST_IO_CONFIRM_NON_SYSTEM=1 TEST_NVME_DEVICE=nvme0 \
   bash integration/run.sh test_io_kernel.sh
 ```
 
 SCSI 使用 `TEST_SCSI_DEVICE=sdb`。这两类用例分别需要 `nvme-cli` 和
 `smartmontools`。
+
+黑盒用例覆盖公开 IO 指标、容器归属、自动诊断和健康取证。设备变化恢复检查覆盖
+IOCOST、blk-throttle 和 IOLatency；freeze Counter 在仅启用 IO health 时验证。
+
+等待用例支持 `TEST_IO_WAIT_COLLECTOR=all|blk_throtl|iocost`，默认 `all`。
+容器用例需要 containerd 的 `k8s.io` namespace 和缓存镜像
+`docker.io/library/busybox:1.36.1`。文件系统检查使用私有 loop/ext4 和 loop/XFS，
+需要对应的 `mkfs` 工具；阻塞堆栈检查需要 `dm-delay`。
+健康取证用例自动创建私有 MD／NVMe-loop 设备，需要 `mdadm`、`nvme-cli`、`udevadm` 及对应内核模块。
+SCSI 超时和派发失败使用自有 `scsi_debug` 设备注入，并由私有 tracefs 实例独立确认。
+隔离运行目录时，保留与宿主共享的 `/run/udev`、`/run/mdadm` 和 `/run/lock`。
 
 ## 网络命名空间辅助函数
 

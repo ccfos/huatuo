@@ -3022,17 +3022,35 @@ func loadIOCostObjectSpec(t *testing.T) *ebpf.CollectionSpec {
 	return spec
 }
 
-func loadIOCostDiagnosticObjectSpec(t *testing.T) *ebpf.CollectionSpec {
+func compileIOCostDiagnosticObject(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join("..", "..")
 	object := filepath.Join(t.TempDir(), ioCostDiagnosticObjectName)
-	command := exec.CommandContext(t.Context(), filepath.Join(root, "build", "clang.sh"),
-		"-I", filepath.Join(root, "bpf", "include"),
-		"-s", filepath.Join(root, "integration", "testdata", "test_iocost_tracing.c"),
-		"-o", object)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(
+		ctx,
+		filepath.Join(root, "build", "clang.sh"),
+		"-I",
+		filepath.Join(root, "bpf", "include"),
+		"-s",
+		filepath.Join(root, "integration", "testdata", "test_iocost_tracing.c"),
+		"-o",
+		object,
+	)
 	output, err := command.CombinedOutput()
-	require.NoError(t, err, "%s", output)
-	spec, err := ebpf.LoadCollectionSpec(object)
+	require.NoError(
+		t,
+		err,
+		"%s",
+		output,
+	)
+	return object
+}
+
+func loadIOCostDiagnosticObjectSpec(t *testing.T) *ebpf.CollectionSpec {
+	t.Helper()
+	spec, err := ebpf.LoadCollectionSpec(compileIOCostDiagnosticObject(t))
 	require.NoError(t, err)
 	return spec
 }

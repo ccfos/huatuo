@@ -279,7 +279,7 @@ func requireBlkThrotlKernelTest(t *testing.T) {
 	t.Helper()
 	required := os.Getenv(blkThrotlKernelRequiredEnvironment)
 	if required == "" && os.Getenv("TEST_INTEGRATION") != "true" {
-		t.Skip("run make integration for live blk-throttle qualification")
+		t.Skip("run make test for live blk-throttle qualification")
 	}
 	if required != "" && required != "1" {
 		t.Fatalf("%s must be exactly 1, got %q",

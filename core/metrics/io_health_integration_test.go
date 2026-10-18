@@ -102,6 +102,17 @@ func TestIOHealthRealTargetResolution(t *testing.T) {
 		t.Skip("Set TEST_INTEGRATION=true to run integration tests")
 	}
 
+	if os.Getenv("TEST_IO_UNIQUE_DEVICE") == "" && os.Getenv("TEST_IO_MULTILEAF_DEVICE") == "" {
+		ctx := ioControlKernelContext(t)
+		disks, isOwned := prepareIOKernelDisks(t, ctx)
+		if len(disks) > 0 && (strings.HasPrefix(disks[0], "sd") || strings.HasPrefix(disks[0], "nvme")) {
+			t.Setenv("TEST_IO_UNIQUE_DEVICE", disks[0])
+		}
+		if isOwned {
+			prepareIOKernelTopology(t, ctx, disks)
+		}
+	}
+
 	tests := []struct {
 		name      string
 		env       string

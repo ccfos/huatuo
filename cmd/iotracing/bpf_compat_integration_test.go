@@ -24,7 +24,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -41,10 +44,323 @@ import (
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
+// TestIOTracingKernel owns its filesystems so the Go qualification can run
+// independently of the public CLI integration cases.
+func TestIOTracingKernel(t *testing.T) {
+	if os.Getenv("TEST_INTEGRATION") != "true" {
+		t.Skip("set TEST_INTEGRATION=true for live iotracing qualification")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("live iotracing qualification requires root")
+	}
+	compiler := strings.Fields(os.Getenv("CC"))
+	if len(compiler) == 0 {
+		compiler = []string{"cc"}
+	}
+	for _, name := range append([]string{"losetup", "mount", "umount"}, compiler[0]) {
+		if _, err := exec.LookPath(name); err != nil {
+			t.Skipf("iotracing qualification requires %s: %v", name, err)
+		}
+	}
+	if _, err := os.Stat("/sys/kernel/btf/vmlinux"); os.IsNotExist(err) {
+		t.Skip("kernel BTF is unavailable")
+	} else {
+		require.NoError(t, err)
+	}
+	ctx, stop := signal.NotifyContext(t.Context(), os.Interrupt, syscall.SIGTERM)
+	t.Cleanup(stop)
+	if deadline, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline.Add(-time.Minute))
+		t.Cleanup(cancel)
+	}
+	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
+	if object == "" {
+		var err error
+		object, err = filepath.Abs(filepath.Join("..", "..", "bpf", "iotracing.o"))
+		require.NoError(t, err)
+	}
+	require.FileExists(t, object, "run make build before kernel qualification")
+	t.Setenv("TEST_IOTRACING_FILE_BPF", object)
+	work, err := os.MkdirTemp("/var/tmp", "huatuo-iotracing-kernel-")
+	require.NoError(t, err)
+	t.Logf("iotracing owned resources: %s", work)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("retaining iotracing evidence: %s", work)
+			return
+		}
+		require.NoError(t, os.RemoveAll(work))
+	})
+	if !t.Run("FileReadLayouts", TestIOTracingFileReadLayouts) {
+		t.FailNow()
+	}
+	hasLoadedXFS := false
+	t.Cleanup(func() {
+		if !hasLoadedXFS {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for {
+			_, err := ioTracingKernelCommand(cleanupCtx, "rmmod", "xfs")
+			if err == nil {
+				return
+			}
+			if cleanupCtx.Err() != nil {
+				t.Errorf("cannot restore initially absent XFS module: %v", err)
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+	qualified := 0
+	for _, filesystem := range []string{"ext4", "xfs"} {
+		require.NoError(t, ctx.Err(), "iotracing qualification interrupted")
+		if !t.Run(filesystem, func(t *testing.T) {
+			if _, err := exec.LookPath("mkfs." + filesystem); err != nil {
+				t.Skipf("%s qualification requires mkfs.%s", filesystem, filesystem)
+			}
+			filesystems, err := os.ReadFile("/proc/filesystems")
+			require.NoError(t, err)
+			if !slices.Contains(strings.Fields(string(filesystems)), filesystem) {
+				if _, err := exec.LookPath("modprobe"); err != nil {
+					t.Skipf("%s is unavailable in the running kernel", filesystem)
+				}
+				if _, err := ioTracingKernelCommand(ctx, "modprobe", "-n", "-q", filesystem); err != nil {
+					t.Skipf("%s is unavailable: %v", filesystem, err)
+				}
+				if filesystem == "xfs" {
+					_, err := exec.LookPath("rmmod")
+					require.NoError(t, err)
+					hasLoadedXFS = true
+				}
+			}
+			captured := prepareIOTracingKernelFilesystem(
+				t,
+				ctx,
+				work,
+				filesystem,
+				"captured",
+			)
+			excluded := prepareIOTracingKernelFilesystem(
+				t,
+				ctx,
+				work,
+				filesystem,
+				"excluded",
+			)
+			t.Setenv("TMPDIR", captured)
+			t.Setenv("TEST_IOTRACING_OTHER_FS", excluded)
+			for _, test := range []struct {
+				name string
+				run  func(*testing.T)
+			}{
+				{
+					name: "BlockDevice",
+					run:  TestIOTracingBlockDevice,
+				},
+				{
+					name: "FullObject",
+					run:  TestIOTracingFullObject,
+				},
+				{
+					name: "FilemapCapacity",
+					run:  TestIOTracingFilemapCapacity,
+				},
+				{
+					name: "FilemapDeviceFilter",
+					run:  TestIOTracingFilemapDeviceFilter,
+				},
+				{
+					name: "ReadWrite",
+					run:  TestIOTracingReadWrite,
+				},
+				{
+					name: "FileMetadata",
+					run:  TestIOTracingFileMetadata,
+				},
+			} {
+				require.NoError(t, ctx.Err(), "iotracing qualification interrupted")
+				if !t.Run(test.name, test.run) {
+					t.FailNow()
+				}
+			}
+			require.NoError(t, ctx.Err(), "iotracing qualification interrupted")
+			qualified++
+		}) {
+			t.FailNow()
+		}
+	}
+	if qualified == 0 {
+		t.Skip("iotracing qualification requires private ext4 or XFS filesystems")
+	}
+	require.NoError(t, ctx.Err(), "iotracing qualification interrupted")
+}
+
+func ioTracingKernelCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	commandCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	command := exec.CommandContext(commandCtx, name, args...)
+	command.WaitDelay = time.Second
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return output, fmt.Errorf(
+			"%s %s: %w: %s",
+			name,
+			strings.Join(args, " "),
+			err,
+			output,
+		)
+	}
+	return output, nil
+}
+
+func prepareIOTracingKernelFilesystem(
+	t *testing.T,
+	ctx context.Context,
+	work string,
+	filesystem string,
+	role string,
+) string {
+	t.Helper()
+	directory := filepath.Join(work, filesystem+"-"+role)
+	image := directory + ".img"
+	require.NoError(t, os.Mkdir(directory, 0o700))
+	t.Logf("owned filesystem: image=%s mount=%s", image, directory)
+	// Register by backing identity before losetup can create a device and fail.
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		mounts, err := os.ReadFile("/proc/self/mountinfo")
+		if err != nil {
+			t.Errorf(
+				"cannot inspect mount %s; retain %s: %v",
+				directory,
+				image,
+				err,
+			)
+			return
+		}
+		for _, line := range strings.Split(string(mounts), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 4 && fields[4] == directory {
+				if _, err := ioTracingKernelCommand(cleanupCtx, "umount", directory); err != nil {
+					t.Errorf(
+						"cannot unmount owned filesystem %s; retain %s: %v",
+						directory,
+						image,
+						err,
+					)
+					return
+				}
+			}
+		}
+		devices, err := ioTracingKernelCommand(
+			cleanupCtx,
+			"losetup",
+			"-j",
+			image,
+			"-n",
+			"-O",
+			"NAME",
+		)
+		if err != nil {
+			t.Errorf("cannot inspect owned loop backing %s: %v", image, err)
+			return
+		}
+		for _, device := range strings.Fields(string(devices)) {
+			if _, err := ioTracingKernelCommand(cleanupCtx, "losetup", "-d", device); err != nil {
+				t.Errorf(
+					"cannot detach owned loop %s backing=%s: %v",
+					device,
+					image,
+					err,
+				)
+				return
+			}
+			for {
+				remaining, err := ioTracingKernelCommand(
+					cleanupCtx,
+					"losetup",
+					"-j",
+					image,
+					"-n",
+					"-O",
+					"NAME",
+				)
+				if err != nil {
+					t.Errorf(
+						"cannot confirm loop release: %s backing=%s: %v",
+						device,
+						image,
+						err,
+					)
+					return
+				}
+				if !slices.Contains(strings.Fields(string(remaining)), device) {
+					break
+				}
+				if cleanupCtx.Err() != nil {
+					t.Errorf("owned loop remains: %s backing=%s", device, image)
+					return
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+	})
+	file, err := os.OpenFile(image, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	require.NoError(t, err)
+	size := int64(64 << 20)
+	format := []string{"-q", "-F"}
+	if filesystem == "xfs" {
+		size = 512 << 20
+		format = []string{"-q", "-f"}
+		usage, _ := ioTracingKernelCommand(ctx, "mkfs.xfs")
+		for _, feature := range []string{"inobtcount", "bigtime"} {
+			if strings.Contains(string(usage), feature+"=") {
+				format = append(format, "-m", feature+"=0")
+			}
+		}
+		for _, feature := range []string{"nrext64", "exchange"} {
+			if strings.Contains(string(usage), feature+"=") {
+				format = append(format, "-i", feature+"=0")
+			}
+		}
+		if strings.Contains(string(usage), "parent=") {
+			format = append(format, "-n", "parent=0")
+		}
+	}
+	err = file.Truncate(size)
+	closeErr := file.Close()
+	require.NoError(t, err)
+	require.NoError(t, closeErr)
+	output, err := ioTracingKernelCommand(
+		ctx,
+		"losetup",
+		"--find",
+		"--show",
+		image,
+	)
+	require.NoError(t, err)
+	device := strings.TrimSpace(string(output))
+	format = append(format, device)
+	_, err = ioTracingKernelCommand(ctx, "mkfs."+filesystem, format...)
+	require.NoError(t, err)
+	_, err = ioTracingKernelCommand(
+		ctx,
+		"mount",
+		device,
+		directory,
+	)
+	require.NoError(t, err)
+	return directory
+}
+
 // TestIOTracingBlockDevice observes real file IO on an ext4/XFS TMPDIR.
 func TestIOTracingBlockDevice(t *testing.T) {
 	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
-	require.NotEmpty(t, object, "run make integration to supply the production BPF object")
+	require.NotEmpty(t, object, "run make test to supply the production BPF object")
 	require.Equal(t, 0, os.Geteuid(), "live block-device qualification requires root")
 	require.NoError(t, unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
 		Cur: unix.RLIM_INFINITY, Max: unix.RLIM_INFINITY,
@@ -270,6 +586,53 @@ func TestIOTracingBlockDevice(t *testing.T) {
 		})
 	}
 
+	t.Run("block_device_inode", func(t *testing.T) {
+		buffer := make([]byte, os.Getpagesize())
+		device := filepath.Join(dir, "block-device-node")
+		require.NoError(t, unix.Mknod(device, unix.S_IFBLK|0o600, int(stat.Dev)))
+		fd, err := unix.Open(device, unix.O_RDONLY|unix.O_CLOEXEC, 0)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = unix.Close(fd) })
+		size, err := unix.Seek(fd, 0, unix.SEEK_END)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, size, int64(len(buffer)))
+		offset := (size/int64(len(buffer)) - 1) * int64(len(buffer))
+		// Buffered device IO uses a bdevfs inode whose superblock is not the
+		// request device. Evict only this page so the read reaches block IO.
+		require.NoError(t, unix.Fadvise(
+			fd,
+			offset,
+			int64(len(buffer)),
+			unix.FADV_DONTNEED,
+		))
+		coll := load(t, object, []uint32{fileKey.Dev})
+		n, err := unix.Pread(fd, buffer, offset)
+		require.NoError(t, err)
+		require.Equal(t, len(buffer), n)
+		require.Eventually(
+			t,
+			func() bool {
+				var key sourceKey
+				var record bpfFilesystemIO
+				entries := coll.Maps[bpfSourceMapName].Iterate()
+				for entries.Next(&key, &record) {
+					hasDeviceIdentity := key.Dev == fileKey.Dev && record.DevID == fileKey.Dev
+					hasProcessIdentity := record.TGID == uint32(os.Getpid())
+					hasCompletedRead := record.Latency.Count > 0 && record.BlockReadBytes >= uint64(len(buffer))
+					if hasDeviceIdentity && hasProcessIdentity && hasCompletedRead {
+						return true
+					}
+				}
+				require.NoError(t, entries.Err())
+				return false
+			},
+			3*time.Second,
+			10*time.Millisecond,
+			"buffered block-device IO must retain request device %d",
+			fileKey.Dev,
+		)
+	})
+
 	t.Run("file_excluded", func(t *testing.T) {
 		// This invalid device cannot accept real IO from the temporary file.
 		coll := load(t, object, []uint32{^uint32(0)})
@@ -297,7 +660,7 @@ func TestIOTracingBlockDevice(t *testing.T) {
 // it does not qualify capture results or the automatic triggering workflow.
 func TestIOTracingFullObject(t *testing.T) {
 	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
-	require.NotEmpty(t, object, "run make integration to supply the production BPF object")
+	require.NotEmpty(t, object, "run make test to supply the production BPF object")
 	require.Equal(t, 0, os.Geteuid(), "live full-object qualification requires root")
 	require.NotEmpty(t, os.Getenv("TMPDIR"), "set TMPDIR to an ext4/XFS test directory")
 	require.NoError(t, unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
