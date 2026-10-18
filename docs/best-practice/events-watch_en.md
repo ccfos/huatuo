@@ -231,7 +231,7 @@ Configure the event stream controls under `[HTTPServer]`:
     MaxEventStreamClients = 100
 
     # SSE heartbeat interval in seconds. Prevents proxies and load balancers from closing idle connections.
-    # The connection is closed after three consecutive heartbeat write failures.
+    # A failed heartbeat write closes the connection.
     # Default: 30
     EventStreamKeepAliveIntervalSeconds = 30
 ```

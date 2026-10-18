@@ -231,7 +231,7 @@ data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom_kill",
     MaxEventStreamClients = 100
 
     # SSE 心跳间隔（秒），防止代理/负载均衡因空闲而断开连接
-    # 连续 3 次心跳写入失败则主动关闭该客户端连接
+    # 心跳写入失败则立即关闭该客户端连接
     # Default: 30
     EventStreamKeepAliveIntervalSeconds = 30
 ```
