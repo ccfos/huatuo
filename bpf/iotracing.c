@@ -339,27 +339,27 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 	struct io_key key = {};
 	struct iov_iter *from;
 	size_t count;
-	u32 io_flags = 0;
+	u32 file_flags = 0;
 	u64 inode_number = 0;
 
+	file = BPF_CORE_READ(iocb, ki_filp);
 	/* Batch only when the target layout matches the snapshot's field spacing. */
-	bool bulk_iocb = bpf_core_field_offset(iocb->ki_flags) -
-		bpf_core_field_offset(iocb->ki_filp) == 32;
+	bool bulk_file = bpf_core_field_offset(file->f_flags) -
+		bpf_core_field_offset(file->f_inode) == 32;
 
-	if (bulk_iocb) {
+	if (bulk_file) {
 		struct {
-			struct file *file;
+			struct inode *inode;
 			u64 skipped[3];
 			u32 flags;
 		} __attribute__((packed)) snapshot;
 
-		BPF_CORE_READ_INTO(&snapshot, iocb, ki_filp);
-		file = snapshot.file;
-		io_flags = snapshot.flags;
+		BPF_CORE_READ_INTO(&snapshot, file, f_inode);
+		inode = snapshot.inode;
+		file_flags = snapshot.flags;
 	} else {
-		file = BPF_CORE_READ(iocb, ki_filp);
+		inode = BPF_CORE_READ(file, f_inode);
 	}
-	inode	  = BPF_CORE_READ(file, f_inode);
 
 	bool bulk_inode = bpf_core_field_offset(inode->i_ino) -
 		bpf_core_field_offset(inode->i_sb) == 24;
@@ -396,7 +396,8 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 	else
 		entry->fs_read_bytes += count;
 
-	entry->flag = bulk_iocb ? io_flags : BPF_CORE_READ(iocb, ki_flags);
+	/* File open flags avoid kernel-dependent IOCB_DIRECT bit assignments. */
+	entry->flag = bulk_file ? file_flags : BPF_CORE_READ(file, f_flags);
 
 	return 0;
 }
