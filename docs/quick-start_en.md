@@ -88,7 +88,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
     - **Exception Event Storage (Events, AutoTracing)**: All kernel events and AutoTracing events are stored in ES. Note: If the configuration is empty, ES storage is not activated, and events are only stored in the local directory `huatuo-local`.
 
        ES storage configuration is as follows:
-        ```yaml
+        ```toml
         [Storage.Elasticsearch]
             Address = "http://127.0.0.1:9200"
             Username = "elastic"
@@ -97,7 +97,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
         ```
 
         Local storage configuration is as follows:
-        ```yaml
+        ```toml
         # tracer's record data
         # Path: all but the last element of path for per tracer
         # RotationSizeMiB: maximum record file size before rotation

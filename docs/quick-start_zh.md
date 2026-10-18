@@ -81,7 +81,7 @@ $ ./huatuo-bamai --region example --config huatuo-bamai.conf
 #### 3.3 配置
 1. 配置容器信息
     HUATUO 通过调用 kubelet 接口获取POD/容器信息。你可以根据实际环境配置访问接口和证书，KubeletAuthorizedPort = 0, KubeletReadOnlyPort = 0 表示禁用该功能。
-    ```yml
+    ```toml
       [Pod]
         KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
     ```
@@ -91,7 +91,7 @@ $ ./huatuo-bamai --region example --config huatuo-bamai.conf
     - **异常事件存储 (Events, AutoTracing)**: 所有的内核事件，和 Autotracing 事件都存储在 ES。注意：如果配置为空表示不启动 ES 存储，只在本地目录 `huatuo-local` 存储事件。
 
         ES 存储配置如下：
-        ```yaml
+        ```toml
         [Storage.Elasticsearch]
             Address = "http://127.0.0.1:9200"
             Username = "elastic"
@@ -100,7 +100,7 @@ $ ./huatuo-bamai --region example --config huatuo-bamai.conf
         ```
 
         本地存储配置如下：
-        ```yaml
+        ```toml
         # tracer's record data
         # Path: all but the last element of path for per tracer
         # RotationSizeMiB：单个记录文件轮转前的最大容量
