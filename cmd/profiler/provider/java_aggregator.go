@@ -78,7 +78,10 @@ func (a *javaAggregator) Aggregate(rec any) {
 			continue
 		}
 
-		frames := []string{fmt.Sprintf("process %d", so.PID), stack}
+		// Frames must be one element per frame: the raw formatter rewrites
+		// ';' inside a frame to ':', which would weld the whole collapsed
+		// stack into a single frame.
+		frames := append([]string{fmt.Sprintf("process %d", so.PID)}, strings.Split(stack, ";")...)
 		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: count}); err != nil {
 			log.Warnf("formatter add sample: %v", err)
 		}
