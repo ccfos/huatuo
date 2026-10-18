@@ -108,9 +108,8 @@ to bytes only when the cgroup limit is applied.
     # - EventStreamKeepAliveIntervalSeconds
     # Interval in seconds at which the server sends an SSE comment ping to each
     # connected client. The ping keeps the connection alive through load
-    # balancers and proxies that would otherwise time out idle connections. If
-    # writing the ping fails three consecutive times, the server closes the
-    # connection.
+    # balancers and proxies that would otherwise time out idle connections. A
+    # failed ping write closes the connection immediately.
     # Default: 30
     #
     # ListenAddress = ":19704"
@@ -192,8 +191,8 @@ persisted but take effect only after restarting `huatuo-bamai`.
 The event stream settings control `POST /v1/events/watch`. When
 `MaxEventStreamClients` is reached, new streams receive HTTP 429.
 `EventStreamKeepAliveIntervalSeconds` controls SSE heartbeat comments used to
-keep proxy and load-balancer connections alive. After three consecutive write
-failures, the server closes the stream. Set the interval below any upstream
+keep proxy and load-balancer connections alive. A failed heartbeat write
+closes the stream immediately. Set the interval below any upstream
 idle timeout; 15–60 seconds is typical.
 
 ### 6. Storage

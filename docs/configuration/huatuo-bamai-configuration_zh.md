@@ -110,9 +110,8 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
     # - EventStreamKeepAliveIntervalSeconds
     # Interval in seconds at which the server sends an SSE comment ping to each
     # connected client. The ping keeps the connection alive through load
-    # balancers and proxies that would otherwise time out idle connections. If
-    # writing the ping fails three consecutive times, the server closes the
-    # connection.
+    # balancers and proxies that would otherwise time out idle connections. A
+    # failed ping write closes the connection immediately.
     # Default: 30
     #
     # ListenAddress = ":19704"
@@ -186,7 +185,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 事件流配置控制 `POST /v1/events/watch`。达到
 `MaxEventStreamClients` 后，新连接返回 HTTP 429。
 `EventStreamKeepAliveIntervalSeconds` 控制 SSE 心跳注释间隔，用于避免
-代理或负载均衡器关闭空闲连接。连续三次写入失败后服务端关闭连接。
+代理或负载均衡器关闭空闲连接。心跳写入失败后服务端立即关闭连接。
 该值应小于上游 idle timeout，生产环境通常设置为 15–60 秒。
 
 ### 6. 存储配置
