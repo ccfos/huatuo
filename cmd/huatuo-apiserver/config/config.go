@@ -199,6 +199,9 @@ func (c ProfilingConfig) Validate() error {
 	if dashboardURL.Host == "" {
 		return errors.New("dashboard base url must include a host")
 	}
+	if strings.ContainsAny(c.DashboardBaseURL, "?#") {
+		return errors.New("dashboard base url must not include a query or fragment")
+	}
 	return nil
 }
 

@@ -239,7 +239,8 @@ Agent 请求传输保护使用客户端内部默认值。Job 轮询、各阶段 
     # DashboardBaseURL = "https://grafana.example.com/d"
 ```
 
-- `DashboardBaseURL` 可选；配置时必须使用 HTTP 或 HTTPS。为空时，已完成
-  或结果未知的任务不生成 Dashboard URL。
+- `DashboardBaseURL` 可选；配置时必须使用 HTTP 或 HTTPS，且不能包含查询参数
+  或片段。结果 URL 会添加任务专属参数。为空时，已完成或结果未知的任务
+  不生成 Dashboard URL。
 
 Profiler 执行和聚合参数只在 Node 本地配置中维护。
