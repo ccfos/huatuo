@@ -42,7 +42,7 @@ const (
 )
 
 func ResolveJavaPids(execPath, containerID string) ([]int, error) {
-	pids, err := profilerprocess.ContainerRootPIDs(containerID, profilerprocess.ExecutableFilter{
+	pids, err := profilerprocess.ContainerPIDs(containerID, profilerprocess.ExecutableFilter{
 		ExecutableName: "java",
 		ExecutablePath: execPath,
 	})

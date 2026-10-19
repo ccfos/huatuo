@@ -255,3 +255,20 @@ func writeTestProcess(t *testing.T, root string, process testProcess) {
 		t.Fatalf("WriteFile(%q) error = %v", cmdlinePath, err)
 	}
 }
+
+func TestAllProcessPIDsKeepsParentAndChildJVMs(t *testing.T) {
+	root, fs := newTestProcFS(t)
+	writeTestProcess(t, root, testProcess{pid: 100, executable: "/usr/bin/java", ppid: 1})
+	writeTestProcess(t, root, testProcess{pid: 200, executable: "/usr/bin/java", ppid: 100})
+	writeTestProcess(t, root, testProcess{pid: 300, executable: "/usr/bin/python3", ppid: 1})
+	groups, err := findProcesses([]int32{300, 200, 100}, fs, ExecutableFilter{ExecutableName: "java"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := allProcessPIDs(groups); !reflect.DeepEqual(got, []int{100, 200}) {
+		t.Fatalf("JVM targets=%v, want [100 200]", got)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("root-only discovery changed: %v", groups)
+	}
+}

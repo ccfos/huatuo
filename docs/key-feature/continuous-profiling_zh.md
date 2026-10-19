@@ -741,3 +741,5 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+Java 容器发现会选择所有匹配的 JVM，包括其他 JVM 启动的子 JVM；Python 仅选择进程树根节点，由 py-spy 跟踪其子进程。

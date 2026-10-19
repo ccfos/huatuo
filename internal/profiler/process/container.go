@@ -43,8 +43,30 @@ type procInfo struct {
 	ppid int
 }
 
+// ContainerPIDs returns every matching process in containerID, including descendants.
+func ContainerPIDs(containerID string, filter ExecutableFilter) ([]int, error) {
+	groups, err := containerProcessGroups(containerID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return allProcessPIDs(groups), nil
+}
+
 // ContainerRootPIDs returns one root PID per matching process tree in containerID.
 func ContainerRootPIDs(containerID string, filter ExecutableFilter) ([]int, error) {
+	groups, err := containerProcessGroups(containerID, filter)
+	if err != nil {
+		return nil, err
+	}
+	roots := make([]int, 0, len(groups))
+	for pid := range groups {
+		roots = append(roots, pid)
+	}
+	slices.Sort(roots)
+	return roots, nil
+}
+
+func containerProcessGroups(containerID string, filter ExecutableFilter) (map[int][]int, error) {
 	if err := filter.validate(); err != nil {
 		return nil, err
 	}
@@ -59,13 +81,16 @@ func ContainerRootPIDs(containerID string, filter ExecutableFilter) ([]int, erro
 		return nil, fmt.Errorf("scan container %q processes: %w", containerID, err)
 	}
 
-	rootPIDs := make([]int, 0, len(pidMap))
-	for pid := range pidMap {
-		rootPIDs = append(rootPIDs, pid)
-	}
-	slices.Sort(rootPIDs)
+	return pidMap, nil
+}
 
-	return rootPIDs, nil
+func allProcessPIDs(groups map[int][]int) []int {
+	var result []int
+	for _, members := range groups {
+		result = append(result, members...)
+	}
+	slices.Sort(result)
+	return result
 }
 
 func (f ExecutableFilter) validate() error {

@@ -750,3 +750,5 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="Official WeChat account QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+Java container discovery selects every matching JVM, including JVMs started by another JVM. Python discovery selects process-tree roots because py-spy follows subprocesses.
