@@ -9,7 +9,9 @@ handshake timeout, and shutdown cancels that wait.
 Firecracker uses sandbox-specific `root/kata.hvsock_<port>` Unix listeners.
 The kernel-provided Unix peer PID must equal that sandbox's Host-discovered
 hypervisor PID. The socket path alone does not authenticate a peer. Active
-listeners and non-socket files are never removed as stale sockets.
+listeners and non-socket files are never removed as stale sockets. A closing
+listener only unlinks the socket it bound; a path replaced by another process
+is left untouched.
 
 Each document carrying a container ID must match the Host's exact container ID,
 Kata sandbox and namespace. Host region, hostname, source and container metadata

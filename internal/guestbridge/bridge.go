@@ -64,9 +64,8 @@ type Options struct {
 }
 
 type listenerEntry struct {
-	server     *transport.Server
-	socketPath string
-	failed     <-chan struct{}
+	server *transport.Server
+	failed <-chan struct{}
 }
 
 type bridgeShutdown struct {
@@ -373,14 +372,11 @@ func (bridge *Bridge) scanFirecracker() {
 		listenerEntry, err := bridge.serve(listener, "firecracker", sandboxID)
 		if err != nil {
 			_ = listener.Close()
-			_ = os.Remove(socketPath)
 			log.Warnf("guestbridge: firecracker serve sandbox=%s: %v", sandboxID, err)
 			continue
 		}
-		listenerEntry.socketPath = socketPath
 		if !bridge.addListener(key, listenerEntry) {
 			_ = listenerEntry.server.Close()
-			_ = os.Remove(socketPath)
 			return
 		}
 	}
@@ -451,9 +447,6 @@ func (bridge *Bridge) removeListener(key string, entry *listenerEntry) {
 	delete(bridge.listeners, key)
 	bridge.mutex.Unlock()
 	_ = entry.server.Close()
-	if entry.socketPath != "" {
-		_ = os.Remove(entry.socketPath)
-	}
 }
 
 // Close stops scanning and closes every Listener and active connection.
@@ -502,13 +495,7 @@ func (bridge *Bridge) closeListeners(listeners map[string]*listenerEntry) error 
 	results := make(chan error, len(listeners))
 	for _, entry := range listeners {
 		go func() {
-			err := entry.server.Close()
-			if entry.socketPath != "" {
-				if removeErr := os.Remove(entry.socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-					err = errors.Join(err, removeErr)
-				}
-			}
-			results <- err
+			results <- entry.server.Close()
 		}()
 	}
 	var errs []error
