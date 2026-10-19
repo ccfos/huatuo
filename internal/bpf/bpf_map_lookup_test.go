@@ -84,6 +84,14 @@ func TestDefaultBPFMapOperationsRejectUnknownMap(t *testing.T) {
 			expected: "bpf: map not found: id 42",
 		},
 		{
+			name: "dump map batch",
+			run: func(*testing.T) error {
+				_, err := b.DumpMapBatch(42)
+				return err
+			},
+			expected: "bpf: map not found: id 42",
+		},
+		{
 			name: "dump map by name",
 			run: func(*testing.T) error {
 				_, err := b.DumpMapByName("missing")
@@ -103,5 +111,19 @@ func TestDefaultBPFMapOperationsRejectUnknownMap(t *testing.T) {
 				t.Errorf("%s error = %q, want %q", tt.name, err, tt.expected)
 			}
 		})
+	}
+}
+
+func TestDumpMapBatchAfterClose(t *testing.T) {
+	b := &defaultBPF{}
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	items, err := b.DumpMapBatch(42)
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("DumpMapBatch() error = %v, want ErrClosed", err)
+	}
+	if items != nil {
+		t.Fatalf("DumpMapBatch() items = %v, want nil", items)
 	}
 }

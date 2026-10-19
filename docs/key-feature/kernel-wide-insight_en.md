@@ -1121,53 +1121,225 @@ huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
 
 ## IO
 
-`iolatency` tracks disk I/O latency distribution. A simple way to read it is: break one disk request into stages, then count how many requests fall into each latency bucket.
+IO monitoring combines disk performance, block IO latency and size
+distributions, blk-throttle and IOCOST waits, and device health events.
 
-- `q2c`: from entering the queue to completion, covering the full I/O lifecycle
-- `d2c`: from driver dispatch to completion, closer to device-side latency
-- `freeze`: number of disk freeze events
+### Configuration
 
-The current version exposes both host-level and container-level metrics.
+`iotracing`, `iolatency`, `blk_throtl`, `iocost`, and `io_health` are enabled
+by default. Add a feature name to the global `BlackList` and restart Huatuo
+to disable it. Disabling `iotracing` stops both its disk metrics and automatic
+diagnosis. Disabling `io_health` stops health events, evidence collection,
+and its metrics independently of `iotracing`.
 
-### Queue
+### Disk performance
 
-These metrics always include the common labels `host` and `region`. Container
-metrics also always include `container_host`, `container_name`,
-`container_type`, `container_level`, and `container_hostnamespace`.
+The following metrics describe disk performance. They use the
+`huatuo_bamai_iotracing_` prefix and are interval Gauges with a `disk` label:
 
-```bash
-# HELP huatuo_bamai_iolatency_blkdisk_d2c the disk d2c latency
-# TYPE huatuo_bamai_iolatency_blkdisk_d2c gauge
-huatuo_bamai_iolatency_blkdisk_d2c{disk="253:1",host="hostname",region="dev",zone="0"} 3
-# HELP huatuo_bamai_iolatency_blkdisk_q2c the disk q2c latency
-# TYPE huatuo_bamai_iolatency_blkdisk_q2c gauge
-huatuo_bamai_iolatency_blkdisk_q2c{disk="253:1",host="hostname",region="dev",zone="0"} 3
-# HELP huatuo_bamai_iolatency_container_blkdisk_d2c container blkio d2c latency
-# TYPE huatuo_bamai_iolatency_container_blkdisk_d2c gauge
-huatuo_bamai_iolatency_container_blkdisk_d2c{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="253:1",host="hostname",region="dev",zone="5"} 2
-# HELP huatuo_bamai_iolatency_container_blkdisk_q2c container blkio q2c latency
-# TYPE huatuo_bamai_iolatency_container_blkdisk_q2c gauge
-huatuo_bamai_iolatency_container_blkdisk_q2c{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="253:1",host="hostname",region="dev",zone="5"} 2
+|Metric suffix|Description|
+|---|---|
+|`read_bps`, `write_bps`|Read/write throughput in bytes per second|
+|`read_iops`, `write_iops`|Read/write operations per second|
+|`read_await_ms`, `write_await_ms`|Mean read/write completion time in milliseconds|
+|`io_util_percent`|Percentage of time the disk is busy|
+|`average_queue_size`|Average IO queue length|
+
+Metrics cover whole disks and supported logical devices, excluding partitions
+and pseudo devices such as loop, ram, zram, and fd.
+
+### Latency and IO size distributions
+
+`iolatency` measures read/write IO latency and size distributions for SCSI/SAS,
+NVMe, and virtio disks and containers. Only disks with `iostats` and
+request-time accounting enabled at startup are included. Disabling these settings
+during operation is unsupported.
+Q uses the bio submission time recorded by the kernel. IO without an initialized
+submission time contributes only D→C latency and size samples.
+
+Block device additions, removals, or recreation restart `iolatency`,
+`blk_throtl`, and `iocost` collection. Data for all disks may be omitted during
+the transition. Cgroup changes retain their normal attribution and cleanup.
+If a device change is detected during capture, `blk_throtl` and `iocost`
+publish zero wait metrics for that interval.
+
+Bucket values count IOs in the collection interval at or below the `le` upper
+bound; `+Inf` is the total. Latency bounds are in seconds and size bounds in
+bytes. Metrics are interval Gauges.
+
+```text
+# TYPE huatuo_bamai_iolatency_q2d_seconds_bucket gauge
+huatuo_bamai_iolatency_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="0.001"} 3
+huatuo_bamai_iolatency_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_d2c_seconds_bucket gauge
+huatuo_bamai_iolatency_d2c_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_q2g_seconds_bucket gauge
+huatuo_bamai_iolatency_q2g_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_container_q2g_seconds_bucket gauge
+huatuo_bamai_iolatency_container_q2g_seconds_bucket{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 2
 ```
 
-|Metric|Description|Unit|Scope|Labels|
-|---|---|---|---|---|
-|iolatency_blkdisk_q2c|Host disk latency statistics for the full I/O lifecycle, from queueing to completion. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Host|host, region, disk, zone|
-|iolatency_blkdisk_d2c|Host disk latency statistics from driver dispatch to completion, closer to device processing time. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Host|host, region, disk, zone|
-|iolatency_container_blkdisk_q2c|Container-caused latency statistics for the full I/O lifecycle, from queueing to completion. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Container|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, zone|
-|iolatency_container_blkdisk_d2c|Container-caused latency statistics from driver dispatch to completion. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Container|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, zone|
+|Metric|Description|Unit|Scope|
+|---|---|---|---|
+|iolatency_q2d_seconds_bucket|Queue-to-last-issue latency distribution|count|Host|
+|iolatency_d2c_seconds_bucket|Last-issue-to-complete latency distribution|count|Host|
+|iolatency_q2g_seconds_bucket|Queue-to-request-start latency distribution|count|Host|
+|iolatency_container_q2d_seconds_bucket|Queue-to-last-issue latency distribution|count|Container|
+|iolatency_container_d2c_seconds_bucket|Last-issue-to-complete latency distribution|count|Container|
+|iolatency_container_q2g_seconds_bucket|Queue-to-request-start latency distribution|count|Container|
+|iolatency_queued_io_size_bytes_bucket|Queued bio size distribution|count|Host|
+|iolatency_issued_io_size_bytes_bucket|Request size; last dispatched size for SCSI, completion bytes for NVMe/virtio|count|Host|
+|iolatency_container_queued_io_size_bytes_bucket|Queued bio size distribution|count|Container|
+|iolatency_container_issued_io_size_bytes_bucket|Request size; last dispatched size for SCSI, completion bytes for NVMe/virtio|count|Container|
+|iolatency_interval_start_timestamp_seconds|Start of the interval|Unix seconds|Host|
+|iolatency_interval_end_timestamp_seconds|End of the interval|Unix seconds|Host|
+
+The 17 latency bounds in seconds are `0.00005`, `0.0001`, `0.00025`, `0.0005`,
+`0.001`, `0.002`, `0.004`, `0.008`, `0.016`, `0.032`, `0.064`, `0.128`,
+`0.256`, `0.512`, `1`, `2`, and `+Inf`.
+
+#### Grafana
+
+The IO overview shows latency distributions and IO counts by collection
+interval. Click a bar to view latency and size histograms for that window.
+The panels use Business Charts (`volkovlabs-echarts-panel`).
+The overview hides zero-IO bars consistently across time ranges. Detail
+histograms retain zero-valued buckets; missing collections are not filled
+with zero.
 
 ### Hardware
 
 ```bash
-# HELP huatuo_bamai_iolatency_blkdisk_freeze the disk freeze event count
-# TYPE huatuo_bamai_iolatency_blkdisk_freeze gauge
-huatuo_bamai_iolatency_blkdisk_freeze{disk="253:1",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_io_health_blkdisk_freeze the disk freeze event count
+# TYPE huatuo_bamai_io_health_blkdisk_freeze counter
+huatuo_bamai_io_health_blkdisk_freeze{disk="sda",host="hostname",region="dev"} 0
 ```
 
 |Metric|Description|Unit|Scope|Labels|
 |---|---|---|---|---|
-|iolatency_blkdisk_freeze|Host disk freeze event count|count|Host|host, region, disk|
+|io_health_blkdisk_freeze|Host disk freeze count; resets on disk replacement|count|Host|host, region, disk|
+
+This Counter is cumulative.
+Select it under `Overview → Selected Metric` on the host dashboard.
+
+### blk-throttle waits
+
+`blk_throtl` counts IOs delayed by blk-throttle and their mean queue wait.
+Each IO is counted when it leaves the queue; its wait starts at its first
+queue entry.
+
+|Metric|Description|
+|---|---|
+|`huatuo_bamai_blk_throtl_delayed_io_count`|IOs that finished waiting in the collection interval|
+|`huatuo_bamai_blk_throtl_average_wait_ms`|Mean queue wait for those IOs, in milliseconds|
+|`huatuo_bamai_blk_throtl_container_delayed_io_count`|Container IOs that finished waiting in the collection interval|
+|`huatuo_bamai_blk_throtl_container_average_wait_ms`|Mean container queue wait, in milliseconds|
+
+Metrics distinguish `disk` and `operation` (`read` or `write`). `scope=host`
+is the host total; `scope=other` is its portion without container attribution.
+Container series use container labels instead of `scope`. All four metrics
+are interval Gauges.
+
+Container discovery is optional. Failed lookups or invalid labels attribute
+the current data to `other` while baselines advance; recovery does not replay
+past data. Temporary collection failures retry without filling the gap.
+If an error stops `blk_throtl`, inspect the logged cause, resolve it, and
+restart Huatuo.
+
+### IOCOST waits
+
+`iocost` measures waits caused by insufficient IOCOST budget. Waiting starts
+when the IO enters the wait queue and ends at its final wakeup; the full wait
+belongs to the collection interval in which it ends.
+
+|Metric|Description|
+|---|---|
+|`huatuo_bamai_iocost_waitq_io_count`|Read/write IOs that finished waiting in the interval|
+|`huatuo_bamai_iocost_average_wait_ms`|Mean wait for those IOs, in milliseconds|
+|`huatuo_bamai_iocost_container_waitq_io_count`|Container read/write IOs that finished waiting in the interval|
+|`huatuo_bamai_iocost_container_average_wait_ms`|Mean container IO wait, in milliseconds|
+
+These interval Gauges use `disk` (`sda`, `nvme0n1`, etc.) and `operation` (`read` or
+`write`). `scope=host` includes all containers; `scope=other` is the portion
+without container attribution.
+
+Container discovery is optional and does not require kubelet for host
+collection. Failed lookups or invalid labels send the current data to `other`
+while baselines advance; recovered associations do not replay past intervals.
+After collection failure, the first successful collection rebuilds the
+baseline and the next resumes output. Cgroup release can discard unreported
+data.
+
+Results can undercount if one series on one CPU completes at least 67,108,864
+waits, or accumulates about 2.749 million seconds of waiting, between
+successful collections. For example, 10,240 IOs each waiting 270 seconds and
+finishing in the same interval exceed the wait-time capacity. IOCOST requires
+a non-PREEMPT_RT Linux x86_64 kernel with IOCOST functions, BPF/BTF, and kprobes.
+
+### Device health
+
+`io_health` records these events:
+
+|Event type|Trigger|
+|---|---|
+|`block_error`|A normal block request completes with an error|
+|`nvme_timeout`|An NVMe request times out|
+|`nvme_reset`|An NVMe controller resets; event only, without evidence commands|
+|`nvme_state_change`|An NVMe controller changes state|
+|`scsi_timeout`|A SCSI command times out|
+|`scsi_dispatch_error`|SCSI command dispatch fails|
+|`md_sync_action`|An MD sync action changes|
+|`md_degraded`|The number of unavailable MD members changes|
+|`md_member_state`|An MD member changes state or disappears|
+
+NVMe state names come from the running kernel's BTF enum. If unavailable,
+the name is `unknown` and `new_state_raw` retains the numeric state.
+
+Block errors, NVMe timeouts, SCSI errors, and MD members entering `faulty`,
+`blocked`, `write_error`, or `removed` trigger evidence collection. A uniquely
+resolved NVMe target uses read-only `nvme-cli` commands; SCSI uses read-only
+`smartctl` commands. Ambiguous targets retain the event without scanning other
+devices. MD monitoring reads `/proc/mdstat` and sysfs and does not run `mdadm`.
+Evidence commands use the resolved physical disk or NVMe controller; the
+event's `device` can retain an MD member's partition name.
+
+The `huatuo_bamai_io_health_` Counters track events since process startup:
+
+|Metric suffix|Labels|Description|
+|---|---|---|
+|`block_errors_total`|disk, operation, status|Block-layer errors|
+|`nvme_timeouts_total`|disk|NVMe timeouts|
+|`nvme_resets_total`|disk|NVMe resets|
+|`scsi_timeouts_total`|disk|SCSI timeouts|
+|`scsi_dispatch_errors_total`|disk, status|SCSI dispatch errors|
+|`collection_errors_total`|disk, reason|Evidence collection failures|
+|`event_persistence_failures_total`|reason|Event save errors|
+
+MD and NVMe controller state changes are stored as events, without a current
+state Gauge. Counters update before events are saved. Event saves use the
+regular synchronous tracing writer; returned errors are counted by
+`event_persistence_failures_total{reason="save_error"}`. Evidence commands for
+the same device are suppressed while running and for a 60-second cooldown;
+raw events remain independent.
+
+Accepted health events are stored as individual documents. Unavailable or
+inapplicable optional fields are omitted:
+
+|Field|Description|
+|---|---|
+|`type`|Event type|
+|`device`|Event device name; MD member events may retain a partition name|
+|`array`, `member`|MD array and member names|
+|`old_state`, `new_state`|MD state transition; NVMe provides only the new state|
+|`new_state_raw`|Numeric NVMe controller state|
+|`operation`, `io_error_status`, `sector`|Block operation, error, and starting sector|
+|`collection_status`|`ok`, `partial`, `unsupported`, `timeout`, or `error`|
+|`nvme`, `scsi`|Protocol health evidence collected after the event|
+
+NVMe evidence includes `critical_warning`, `media_errors_total`, and up to
+eight error-log entries with status code, NSID, and LBA. SCSI evidence includes
+overall health, ASC/ASCQ, temperature, defect counts, read/write verification
+errors, and pending-defect counts with up to eight sample LBAs.
 
 ### Disk IO Statistics
 
@@ -1181,25 +1353,25 @@ Counter metrics are cumulative; use Prometheus `rate()` for per-second values (I
 ```bash
 # HELP huatuo_bamai_diskio_read_requests_total Total number of read requests completed successfully.
 # TYPE huatuo_bamai_diskio_read_requests_total counter
-huatuo_bamai_diskio_read_requests_total{device="sda",host="hostname",region="dev"} 1000
+huatuo_bamai_diskio_read_requests_total{disk="sda",host="hostname",region="dev"} 1000
 # HELP huatuo_bamai_diskio_write_requests_total Total number of write requests completed successfully.
 # TYPE huatuo_bamai_diskio_write_requests_total counter
-huatuo_bamai_diskio_write_requests_total{device="sda",host="hostname",region="dev"} 2000
+huatuo_bamai_diskio_write_requests_total{disk="sda",host="hostname",region="dev"} 2000
 # HELP huatuo_bamai_diskio_read_bytes_total Total number of bytes read from the device.
 # TYPE huatuo_bamai_diskio_read_bytes_total counter
-huatuo_bamai_diskio_read_bytes_total{device="sda",host="hostname",region="dev"} 2.56e+07
+huatuo_bamai_diskio_read_bytes_total{disk="sda",host="hostname",region="dev"} 2.56e+07
 # HELP huatuo_bamai_diskio_written_bytes_total Total number of bytes written to the device.
 # TYPE huatuo_bamai_diskio_written_bytes_total counter
-huatuo_bamai_diskio_written_bytes_total{device="sda",host="hostname",region="dev"} 4.096e+07
+huatuo_bamai_diskio_written_bytes_total{disk="sda",host="hostname",region="dev"} 4.096e+07
 # HELP huatuo_bamai_diskio_io_in_progress Number of I/O requests currently in flight (queue depth).
 # TYPE huatuo_bamai_diskio_io_in_progress gauge
-huatuo_bamai_diskio_io_in_progress{device="sda",host="hostname",region="dev"} 50
+huatuo_bamai_diskio_io_in_progress{disk="sda",host="hostname",region="dev"} 50
 # HELP huatuo_bamai_diskio_read_time_seconds_total Total seconds spent by completed read requests.
 # TYPE huatuo_bamai_diskio_read_time_seconds_total counter
-huatuo_bamai_diskio_read_time_seconds_total{device="sda",host="hostname",region="dev"} 3
+huatuo_bamai_diskio_read_time_seconds_total{disk="sda",host="hostname",region="dev"} 3
 # HELP huatuo_bamai_diskio_write_time_seconds_total Total seconds spent by completed write requests.
 # TYPE huatuo_bamai_diskio_write_time_seconds_total counter
-huatuo_bamai_diskio_write_time_seconds_total{device="sda",host="hostname",region="dev"} 6
+huatuo_bamai_diskio_write_time_seconds_total{disk="sda",host="hostname",region="dev"} 6
 # HELP huatuo_bamai_diskio_disk_iowait_percent CPU time spent waiting for I/O during the collection interval.
 # TYPE huatuo_bamai_diskio_disk_iowait_percent gauge
 huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
@@ -1207,13 +1379,13 @@ huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
 
 |Metric|Description|Unit|Scope|Labels|
 |---|---|---|---|---|
-|read_requests_total|Cumulative read requests completed (field 4). Use `rate()` for read IOPS|count|Host|host, region, device|
-|write_requests_total|Cumulative write requests completed (field 8). Use `rate()` for write IOPS|count|Host|host, region, device|
-|read_bytes_total|Cumulative bytes read (field 6 × 512). Use `rate()` for read throughput|bytes|Host|host, region, device|
-|written_bytes_total|Cumulative bytes written (field 10 × 512). Use `rate()` for write throughput|bytes|Host|host, region, device|
-|read_time_seconds_total|Cumulative seconds spent by completed reads (field 7)|seconds|Host|host, region, device|
-|write_time_seconds_total|Cumulative seconds spent by completed writes (field 11)|seconds|Host|host, region, device|
-|io_in_progress|Current number of I/O requests in flight, i.e. queue depth (field 12)|count|Host|host, region, device|
+|read_requests_total|Cumulative read requests completed (field 4). Use `rate()` for read IOPS|count|Host|host, region, disk|
+|write_requests_total|Cumulative write requests completed (field 8). Use `rate()` for write IOPS|count|Host|host, region, disk|
+|read_bytes_total|Cumulative bytes read (field 6 × 512). Use `rate()` for read throughput|bytes|Host|host, region, disk|
+|written_bytes_total|Cumulative bytes written (field 10 × 512). Use `rate()` for write throughput|bytes|Host|host, region, disk|
+|read_time_seconds_total|Cumulative seconds spent by completed reads (field 7)|seconds|Host|host, region, disk|
+|write_time_seconds_total|Cumulative seconds spent by completed writes (field 11)|seconds|Host|host, region, disk|
+|io_in_progress|Current number of I/O requests in flight, i.e. queue depth (field 12)|count|Host|host, region, disk|
 |disk_iowait_percent|CPU time spent waiting for I/O during the collection interval|percent|Host|host, region|
 
 

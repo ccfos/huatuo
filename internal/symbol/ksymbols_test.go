@@ -16,6 +16,7 @@ package symbol
 
 import (
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,6 +88,222 @@ func TestKsymbolSearchAddrNotFound(t *testing.T) {
 	_, err := KsymbolSearchAddr(missingName)
 	if err == nil {
 		t.Errorf("KsymbolSearchAddr(%q): got nil error, want non-nil", missingName)
+	}
+}
+
+// Startup consumers need current module text and data addresses, independently
+// of the cached symbol table used to format stack traces.
+func TestKsymbolSearchAddresses(t *testing.T) {
+	resetKernelSymbolFixture(t, []string{
+		"ffffffff81001000 T core_function",
+		"ffffffff82001000 b tfms_inited",
+		"ffffffffc0001000 t sd_open [sd_mod]",
+		"ffffffffc0001000 t sd_open [sd_mod]",
+	})
+	want := map[string]uint64{
+		"core_function": 0xffffffff81001000,
+		"tfms_inited":   0xffffffff82001000,
+		"sd_open":       0xffffffffc0001000,
+	}
+	got, err := KsymbolSearchAddresses("core_function", "tfms_inited", "sd_open", "missing")
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("addresses = %#v, %v; want %#v", got, err, want)
+	}
+
+	resetKernelSymbolFixture(t, []string{"ffffffffc0002000 t sd_open [sd_mod]"})
+	got, err = KsymbolSearchAddresses("sd_open")
+	if err != nil || got["sd_open"] != 0xffffffffc0002000 {
+		t.Fatalf("reloaded module address = %#v, %v", got, err)
+	}
+}
+
+func TestKsymbolSearchAddressesRejectsInvalidData(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{
+			name: "hidden data address", want: "zero address",
+			lines: []string{"0000000000000000 b target"},
+		},
+		{
+			name: "ambiguous module identity", want: "ambiguous",
+			lines: []string{
+				"ffffffff81001000 T target",
+				"ffffffffc0001000 t target [vendor_module]",
+			},
+		},
+		{
+			name: "malformed input", want: "malformed",
+			lines: []string{"not a kallsyms entry"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resetKernelSymbolFixture(t, test.lines)
+			_, err := KsymbolSearchAddresses("target")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v; want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestKsymbolSearchProfile(t *testing.T) {
+	resetKernelSymbolFixture(t, []string{
+		"ffffffff81001000 T blk_throtl_bio",
+		"ffffffff81001000 t blk_throtl_bio_alias",
+		"ffffffff81001080 R blk_throtl_rodata",
+		"ffffffff81001200 w weak_after",
+		"ffffffff81001400 W weak_target",
+		"ffffffff81001600 t tg_dispatch_one_bio",
+		"ffffffff81001800 T throtl_add_bio_tg",
+		"ffffffff81001a00 t throtl_pop_queued",
+		"ffffffff81001c00 T del_gendisk",
+		"ffffffffc0002000 t throtl_add_bio_tg [vendor_probe]",
+	})
+
+	got, err := KsymbolSearchProfile(
+		[]string{
+			"throtl_add_bio_tg",
+			"throtl_pop_queued",
+			"del_gendisk",
+			"missing_address",
+		},
+		[]string{
+			"blk_throtl_bio",
+			"weak_target",
+			"tg_dispatch_one_bio",
+			"missing_range",
+		},
+	)
+	if err != nil {
+		t.Fatalf("KsymbolSearchProfile: %v", err)
+	}
+	want := KsymbolProfile{
+		Addresses: map[string]uint64{
+			"throtl_add_bio_tg": 0xffffffff81001800,
+			"throtl_pop_queued": 0xffffffff81001a00,
+			"del_gendisk":       0xffffffff81001c00,
+		},
+		Ranges: map[string]KsymbolRange{
+			"blk_throtl_bio": {
+				Start: 0xffffffff81001000,
+				End:   0xffffffff81001200,
+			},
+			"weak_target": {
+				Start: 0xffffffff81001400,
+				End:   0xffffffff81001600,
+			},
+			"tg_dispatch_one_bio": {
+				Start: 0xffffffff81001600,
+				End:   0xffffffff81001800,
+			},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("KsymbolSearchProfile: got %#v, want %#v", got, want)
+	}
+}
+
+func TestKsymbolSearchProfileAllowsOptionalAndAddressOnlyTargets(t *testing.T) {
+	resetKernelSymbolFixture(t, []string{
+		"ffffffff81001000 R non_text",
+		"ffffffff81002000 T attach_only",
+		"ffffffff81003000 t open_range",
+		"ffffffff81003800 W range_boundary",
+		"ffffffffc0004000 t module_only [vendor_probe]",
+	})
+
+	got, err := KsymbolSearchProfile(
+		[]string{"attach_only", "module_only", "missing_address"},
+		[]string{"open_range", "missing_range"},
+	)
+	if err != nil {
+		t.Fatalf("KsymbolSearchProfile: %v", err)
+	}
+	want := KsymbolProfile{
+		Addresses: map[string]uint64{
+			"attach_only": 0xffffffff81002000,
+		},
+		Ranges: map[string]KsymbolRange{
+			"open_range": {
+				Start: 0xffffffff81003000,
+				End:   0xffffffff81003800,
+			},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("KsymbolSearchProfile: got %#v, want %#v", got, want)
+	}
+}
+
+func TestKsymbolSearchProfileRejectsInvalidData(t *testing.T) {
+	tests := []struct {
+		name      string
+		lines     []string
+		address   string
+		rangeName string
+		wantErr   string
+	}{
+		{
+			name: "hidden-address",
+			lines: []string{
+				"0000000000000000 T target",
+				"0000000000000000 t after",
+			},
+			address: "target",
+			wantErr: "zero",
+		},
+		{
+			name: "same-name-at-distinct-kernel-addresses",
+			lines: []string{
+				"ffffffff81001000 T target",
+				"ffffffff81002000 t target",
+				"ffffffff81003000 t after",
+			},
+			rangeName: "target",
+			wantErr:   "ambiguous",
+		},
+		{
+			name: "range-without-upper-bound",
+			lines: []string{
+				"ffffffff81001000 T target",
+			},
+			rangeName: "target",
+			wantErr:   "upper bound",
+		},
+		{
+			name: "malformed-kallsyms-line",
+			lines: []string{
+				"ffffffff81001000 T target",
+				"not-a-kallsyms-line",
+				"ffffffff81002000 t after",
+			},
+			rangeName: "target",
+			wantErr:   "malformed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetKernelSymbolFixture(t, tt.lines)
+			var addresses []string
+			if tt.address != "" {
+				addresses = []string{tt.address}
+			}
+			var ranges []string
+			if tt.rangeName != "" {
+				ranges = []string{tt.rangeName}
+			}
+			_, err := KsymbolSearchProfile(addresses, ranges)
+			if err == nil {
+				t.Fatalf("KsymbolSearchProfile: got nil error, want error containing %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("KsymbolSearchProfile: got error %q, want containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
