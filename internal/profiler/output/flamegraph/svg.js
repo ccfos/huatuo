@@ -224,7 +224,8 @@ function search(term) {
 	var re = new RegExp(term);
 	var el = document.getElementsByTagName("g");
 	var matches = new Object();
-	var maxwidth = 0;
+	var minx = Infinity;
+	var maxx = 0;
 	for (var i = 0; i < el.length; i++) {
 		var e = el[i];
 		if (e.attributes["class"].value != "func_g")
@@ -241,14 +242,14 @@ function search(term) {
 		if (func == null || rect == null)
 			continue;
 
-		// Save max width. Only works as we have a root frame
+		// The renderer can emit several roots; their full span is the total.
 		var w = parseFloat(rect.attributes["width"].value);
-		if (w > maxwidth)
-			maxwidth = w;
+		var x = parseFloat(rect.attributes["x"].value);
+		minx = Math.min(minx, x);
+		maxx = Math.max(maxx, x + w);
 
 		if (func.match(re)) {
 			// highlight
-			var x = parseFloat(rect.attributes["x"].value);
 			orig_save(rect, "fill");
 			rect.attributes["fill"].value =
 			    "rgb(230,0,230)";
@@ -294,7 +295,8 @@ function search(term) {
 	for (var k in keys) {
 		var x = parseFloat(keys[k]);
 		var w = matches[keys[k]];
-		if (x >= lastx + lastw) {
+		// Adjacent decimal coordinates can overlap by floating-point roundoff.
+		if (x >= lastx + lastw - 0.0001) {
 			count += w;
 			lastx = x;
 			lastw = w;
@@ -302,7 +304,7 @@ function search(term) {
 	}
 	// display matched percent
 	matchedtxt.style["opacity"] = "1.0";
-	pct = 100 * count / maxwidth;7
+	pct = 100 * count / (maxx - minx);
 	if (pct == 100)
 		pct = "100"
 	else
