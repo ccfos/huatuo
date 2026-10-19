@@ -39,9 +39,20 @@ func benchStack() []uint64 {
 	return stack
 }
 
+// ksymFrameStringDirect is the pre-cache baseline resolver: floorSym
+// lookup plus formatting on every call, with no memoization.
+func ksymFrameStringDirect(addr uint64) string {
+	sym := ksymTable.floorSym(addr)
+	if sym == nil {
+		return failFrame("ksym-not-found", "")
+	}
+	return fmt.Sprintf("%s/+%d %s", sym.Name, addr-sym.Addr, sym.Module)
+}
+
 func BenchmarkKsymStackStrsCached(b *testing.B) {
 	benchKsymFixture(b, 300000)
 	stack := benchStack()
+	KsymStackStrs(stack, KsymStackMaxDepth) // warm the table + frame cache
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		frames := KsymStackStrs(stack, KsymStackMaxDepth)
@@ -51,17 +62,17 @@ func BenchmarkKsymStackStrsCached(b *testing.B) {
 	}
 }
 
+// BenchmarkKsymStackStrsUncached measures the pre-cache baseline:
+// resolveStack driving the direct floorSym+format resolver, no cache.
 func BenchmarkKsymStackStrsUncached(b *testing.B) {
 	benchKsymFixture(b, 300000)
 	stack := benchStack()
+	ensureKsymsLoaded() // load the table outside the timed loop
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ksymFrameMu.Lock()
-		clear(ksymFrameCache)
-		ksymFrameMu.Unlock()
-		frames := KsymStackStrs(stack, KsymStackMaxDepth)
-		if len(frames) != len(stack) {
-			b.Fatalf("got %d frames", len(frames))
+		out := resolveStack(stack, ksymFrameStringDirect, outTypeString)
+		if len(out.strings) != len(stack) {
+			b.Fatalf("got %d frames", len(out.strings))
 		}
 	}
 }
