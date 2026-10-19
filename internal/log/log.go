@@ -34,17 +34,28 @@ const modulePath = "github.com/ccfos/huatuo"
 func init() {
 	logger = logrus.New()
 
-	logger.SetFormatter(&logrus.TextFormatter{
+	logger.SetFormatter(&utcTextFormatter{TextFormatter: logrus.TextFormatter{
 		DisableColors:   true,
 		ForceQuote:      true,
 		FullTimestamp:   true,
 		TimestampFormat: timeutil.Layout,
 		DisableSorting:  false,
-	})
+	}})
 
 	logger.SetOutput(os.Stdout)
 	logger.SetLevel(logrus.InfoLevel)
 	logger.SetReportCaller(false)
+}
+
+type utcTextFormatter struct {
+	logrus.TextFormatter
+}
+
+func (f *utcTextFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	// Match stored event timestamps without changing entries shared with hooks.
+	normalized := *entry
+	normalized.Time = entry.Time.UTC()
+	return f.TextFormatter.Format(&normalized)
 }
 
 func newLogrusEntry(callerSkip int) *logrus.Entry {
