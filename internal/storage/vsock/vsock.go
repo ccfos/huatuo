@@ -49,8 +49,7 @@ type Options struct {
 }
 
 type queuedDocument struct {
-	data []byte
-	size int
+	frame []byte
 }
 
 // Backend is a write-only, byte-bounded, reconnecting document sender.
@@ -115,15 +114,15 @@ func (b *Backend) Save(ctx context.Context, rec driver.Record, options driver.Sa
 	if options.Mode != driver.SaveModeUpsert || len(options.Conditions) > 0 || options.WaitForVisibility {
 		return driver.ErrUnsupportedOp
 	}
-	// Reject oversized JSON before ChunkFrameSize allocates a temporary frame.
+	// Reject oversized JSON before encoding allocates a temporary frame.
 	if len(rec.Data) > b.options.MaxMessageSize {
 		return fmt.Errorf("vsock storage: message too large")
 	}
-	size, err := transport.ChunkFrameSize(rec.Data)
+	frame, err := transport.EncodeChunkFrame(rec.Data)
 	if err != nil {
 		return err
 	}
-	if size > b.options.MaxMessageSize {
+	if len(frame) > b.options.MaxMessageSize {
 		return fmt.Errorf("vsock storage: frame too large")
 	}
 	b.mutex.Lock()
@@ -134,11 +133,11 @@ func (b *Backend) Save(ctx context.Context, rec driver.Record, options driver.Sa
 	if !b.connected {
 		return fmt.Errorf("vsock storage: disconnected; document dropped")
 	}
-	if size > b.options.MaxPendingBytes-b.pendingBytes {
+	if len(frame) > b.options.MaxPendingBytes-b.pendingBytes {
 		return fmt.Errorf("vsock storage: queue full; document dropped")
 	}
-	b.pending = append(b.pending, queuedDocument{data: append([]byte(nil), rec.Data...), size: size})
-	b.pendingBytes += size
+	b.pending = append(b.pending, queuedDocument{frame: frame})
+	b.pendingBytes += len(frame)
 	b.signal()
 	return nil
 }
@@ -222,13 +221,13 @@ func (b *Backend) send(ctx context.Context, conn net.Conn) error {
 		item := b.pending[0]
 		b.mutex.Unlock()
 		_ = conn.SetWriteDeadline(time.Now().Add(b.options.IOTimeout))
-		if err := client.SendChunk(item.data, false); err != nil {
+		if err := client.SendFrame(item.frame); err != nil {
 			return err
 		}
 		b.mutex.Lock()
 		b.pending[0] = queuedDocument{}
 		b.pending = b.pending[1:]
-		b.pendingBytes -= item.size
+		b.pendingBytes -= len(item.frame)
 		b.mutex.Unlock()
 	}
 }
