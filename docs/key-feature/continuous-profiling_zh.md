@@ -741,3 +741,5 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+Java 和 Python 的容器进程发现会遍历进程 cgroup 子树，覆盖移动到嵌套 cgroup 的进程。PID 会去重；扫描期间消失的子 cgroup 会被跳过，根目录或其他读取错误会返回。

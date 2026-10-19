@@ -750,3 +750,5 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="Official WeChat account QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+Java and Python container target discovery walks the process cgroup subtree, so processes moved into nested cgroups remain eligible. Process IDs are deduplicated; disappearing child cgroups are skipped, while root and other read errors are returned.

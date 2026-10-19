@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
@@ -253,5 +255,35 @@ func writeTestProcess(t *testing.T, root string, process testProcess) {
 	cmdlinePath := filepath.Join(processPath, "cmdline")
 	if err := os.WriteFile(cmdlinePath, []byte(cmdline), 0o600); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", cmdlinePath, err)
+	}
+}
+
+func TestContainerProcessDiscoveryIncludesChildCgroups(t *testing.T) {
+	procRoot, _ := newTestProcFS(t)
+	writeTestProcess(t, procRoot, testProcess{pid: 100, executable: "/bin/sh", ppid: 1})
+	writeTestProcess(t, procRoot, testProcess{pid: 200, executable: "/usr/bin/java", ppid: 100})
+	previousRoot := paths.RootfsDefaultPath
+	paths.RootfsDefaultPath = t.TempDir()
+	procfs.RootPrefix(filepath.Dir(procRoot))
+	t.Cleanup(func() { paths.RootfsDefaultPath = previousRoot; procfs.RootPrefix("") })
+	root := paths.RootfsDefaultPath
+	if cgroups.CgroupMode() != cgroups.Unified {
+		root = filepath.Join(root, "cpu")
+	}
+	for dir, data := range map[string]string{"target": "100\n", "target/worker": "200\n"} {
+		path := filepath.Join(root, dir)
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "cgroup.procs"), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := findProcessesInCgroups("target", ExecutableFilter{ExecutableName: "java"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, map[int][]int{200: {200}}) {
+		t.Fatalf("targets=%v, want child JVM 200", got)
 	}
 }

@@ -89,12 +89,7 @@ func (f ExecutableFilter) matchesName(name string) bool {
 // findProcessesInCgroups keeps one root per matching process tree so callers
 // start only one profiler for that tree.
 func findProcessesInCgroups(cgroupSuffix string, filter ExecutableFilter) (map[int][]int, error) {
-	cgroup, err := cgroups.NewManager()
-	if err != nil {
-		return nil, err
-	}
-
-	pids, err := cgroup.Procs(cgroupSuffix)
+	pids, err := cgroups.ProcsRecursive(cgroupSuffix)
 	if err != nil {
 		return nil, err
 	}
