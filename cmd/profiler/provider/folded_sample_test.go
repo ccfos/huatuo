@@ -154,6 +154,12 @@ func TestFoldedFramesPreserveFieldsAndOwnStrings(t *testing.T) {
 			isKernel: true,
 		},
 		{
+			name:     "java allocation type",
+			language: profiling.LanguageJava,
+			input:    "byte[] 3",
+			frame:    types.ProfileFrame{Name: "byte[]"},
+		},
+		{
 			name:     "python source",
 			language: profiling.LanguagePython,
 			input:    "worker (app.py:10) 3",

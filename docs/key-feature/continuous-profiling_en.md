@@ -631,6 +631,8 @@ _output/bin/profiler \
   --output-path ./profiles/java-cpu/
 ```
 
+Java class names use dots (for example, `java.lang.Thread.run`). Allocation types omit TLAB color markers; allocations of the same type on the same stack are combined by byte count. Actual kernel frames retain the `_[k]` suffix.
+
 Java memory profiling supports two dimensions:
 
 | `--memory-mode` | Measurement | Suitable for |

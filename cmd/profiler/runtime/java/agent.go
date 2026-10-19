@@ -38,6 +38,10 @@ const (
 	agentCopySpaceHeadroom   = 16 * 1024 * 1024
 	asprofCommandTimeout     = 5 * time.Second
 	asprofOutputFileHeadroom = 2
+
+	// dot removes allocation color suffixes (_[i]/_[k]) while preserving kernel
+	// suffixes. Both loop and final output must use this format for frame identity.
+	asprofOutputFormat = "collapsed,dot"
 )
 
 // HostViewPath prefixes paths hidden by a different target mount namespace.
@@ -200,7 +204,7 @@ func startAsprofCallback(
 			"--loop",
 			formatAsprofDuration(aggrInterval),
 			"-o",
-			"collapsed",
+			asprofOutputFormat,
 			"-f",
 			outFile,
 			strconv.Itoa(pid),
@@ -255,7 +259,7 @@ func stopWithOutputArgs(pid int, sessionID, outFilePrefix string, sequence uint6
 	args := []string{
 		"stop",
 		"--libpath", "/tmp/libasyncProfiler.so",
-		"-o", "collapsed",
+		"-o", asprofOutputFormat,
 		"-f", finalOutputPath(
 			sessionID,
 			outFilePrefix,

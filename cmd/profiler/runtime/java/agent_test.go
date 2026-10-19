@@ -220,7 +220,7 @@ func TestStartAsprofCallbackBuildsStartCommand(t *testing.T) {
 		"--libpath", "/tmp/libasyncProfiler.so",
 		"-e", "cpu",
 		"--loop", "10s",
-		"-o", "collapsed",
+		"-o", "collapsed,dot",
 		"-f", "/tmp/huatuo-asprof-session123-cpu-999999999-%n{4}.collapsed",
 		"999999999",
 	}
@@ -286,7 +286,7 @@ func TestStopWithOutputArgsBuildsCollapsedOutputCommand(t *testing.T) {
 	want := []string{
 		"stop",
 		"--libpath", "/tmp/libasyncProfiler.so",
-		"-o", "collapsed",
+		"-o", "collapsed,dot",
 		"-f", "/tmp/huatuo-asprof-session123-mem-1234-4.collapsed",
 		"--total",
 		"1234",

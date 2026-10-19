@@ -622,6 +622,8 @@ _output/bin/profiler \
   --output-path ./profiles/java-cpu/
 ```
 
+Java 栈中的类名使用点分隔（例如 `java.lang.Thread.run`）。分配对象类型不保留 TLAB 内外的颜色标记；同一调用栈中的同类型对象按字节数合并。真正的内核帧仍使用 `_[k]` 后缀。
+
 Java 内存支持两个维度：
 
 | `--memory-mode` | 统计内容 | 适用问题 |

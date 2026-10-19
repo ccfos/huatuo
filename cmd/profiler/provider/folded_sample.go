@@ -30,6 +30,8 @@ import (
 
 // enqueueFolded decodes a known producer format. Only async-profiler's kernel
 // suffix and py-spy's exact process header grammar are interpreted as metadata.
+// Java input must use collapsed,dot: without dot, allocation types can also
+// carry _[k], which would incorrectly classify them as kernel frames.
 func enqueueFolded(
 	output profile.SampleOutput,
 	labels []types.ProfileLabel,
