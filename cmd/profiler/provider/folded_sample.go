@@ -97,15 +97,20 @@ func enqueueFolded(
 			Value:  value,
 		}
 		for _, name := range names {
-			frame := types.ProfileFrame{Name: strings.Clone(name)}
-			if language == profiling.LanguageJava && strings.HasSuffix(name, "_[k]") {
-				frame.Name = strings.Clone(strings.TrimSuffix(name, "_[k]"))
+			frame := types.ProfileFrame{Name: name}
+			isKernel := language == profiling.LanguageJava && strings.HasSuffix(name, "_[k]")
+			if isKernel {
+				frame.Name = strings.TrimSuffix(name, "_[k]")
+			} else if language == profiling.LanguagePython {
+				frame = pythonSourceFrame(name)
+			}
+
+			// Retained frames must not keep the entire folded output alive.
+			frame.Name = strings.Clone(frame.Name)
+			frame.File = strings.Clone(frame.File)
+			if isKernel {
 				sample.KernelFrames = append(sample.KernelFrames, frame)
 			} else {
-				if language == profiling.LanguagePython {
-					frame = pythonSourceFrame(name)
-				}
-
 				sample.UserFrames = append(sample.UserFrames, frame)
 			}
 		}
@@ -159,8 +164,9 @@ func pythonProcessHeader(name string) (int, string, bool) {
 	return int(pid), strings.Clone(text), true
 }
 
+// pythonSourceFrame borrows name; the sample builder owns copying retained fields.
 func pythonSourceFrame(name string) types.ProfileFrame {
-	frame := types.ProfileFrame{Name: strings.Clone(name)}
+	frame := types.ProfileFrame{Name: name}
 	index := strings.LastIndex(name, " (")
 	if index < 0 || !strings.HasSuffix(name, ")") {
 		return frame
@@ -178,8 +184,8 @@ func pythonSourceFrame(name string) types.ProfileFrame {
 	}
 
 	return types.ProfileFrame{
-		Name: strings.Clone(name[:index]),
-		File: strings.Clone(position[:colon]),
+		Name: name[:index],
+		File: position[:colon],
 		Line: line,
 	}
 }

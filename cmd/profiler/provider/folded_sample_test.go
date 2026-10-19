@@ -18,7 +18,9 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 
@@ -125,6 +127,94 @@ func TestFoldedSampleSyntax(t *testing.T) {
 			}
 			if !slices.Equal(names, tc.frames) {
 				t.Fatalf("frames=%v want=%v", names, tc.frames)
+			}
+		})
+	}
+}
+
+func TestFoldedFramesPreserveFieldsAndOwnStrings(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		language profiling.Language
+		input    string
+		frame    types.ProfileFrame
+		isKernel bool
+	}{
+		{
+			name:     "java user",
+			language: profiling.LanguageJava,
+			input:    "worker 3",
+			frame:    types.ProfileFrame{Name: "worker"},
+		},
+		{
+			name:     "java kernel",
+			language: profiling.LanguageJava,
+			input:    "worker_[k] 3",
+			frame:    types.ProfileFrame{Name: "worker"},
+			isKernel: true,
+		},
+		{
+			name:     "python source",
+			language: profiling.LanguagePython,
+			input:    "worker (app.py:10) 3",
+			frame: types.ProfileFrame{
+				Name: "worker",
+				File: "app.py",
+				Line: 10,
+			},
+		},
+		{
+			name:     "python plain",
+			language: profiling.LanguagePython,
+			input:    "worker 3",
+			frame:    types.ProfileFrame{Name: "worker"},
+		},
+		{
+			name:     "python without line",
+			language: profiling.LanguagePython,
+			input:    "worker (app.py) 3",
+			frame:    types.ProfileFrame{Name: "worker (app.py)"},
+		},
+		{
+			name:     "python invalid line",
+			language: profiling.LanguagePython,
+			input:    "worker (app.py:bad) 3",
+			frame:    types.ProfileFrame{Name: "worker (app.py:bad)"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := strings.Clone(tc.input)
+			var samples []aggregation.Sample
+			err := enqueueFolded(profile.SampleOutput{Output: input}, nil, 1, tc.language, func(batch *pipeline.SampleBatch) error {
+				samples = append(samples, batch.Samples...)
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(samples) != 1 || samples[0].Value != 3 {
+				t.Fatalf("samples = %v", samples)
+			}
+
+			frames, other := samples[0].UserFrames, samples[0].KernelFrames
+			if tc.isKernel {
+				frames, other = other, frames
+			}
+			if !slices.Equal(frames, []types.ProfileFrame{tc.frame}) || len(other) != 0 {
+				t.Fatalf("user frames = %v, kernel frames = %v", samples[0].UserFrames, samples[0].KernelFrames)
+			}
+
+			for _, value := range []string{frames[0].Name, frames[0].File} {
+				if value == "" {
+					continue
+				}
+				offset := strings.Index(input, value)
+				if offset < 0 {
+					t.Fatalf("fixture does not contain retained value %q", value)
+				}
+				if unsafe.StringData(value) == unsafe.StringData(input[offset:]) {
+					t.Fatalf("retained value %q still references the input buffer", value)
+				}
 			}
 		})
 	}
