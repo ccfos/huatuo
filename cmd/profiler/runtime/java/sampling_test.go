@@ -16,6 +16,7 @@ package java
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -133,5 +134,35 @@ func TestStopWithOutputArgsBuildsCollapsedOutputCommand(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("stopWithOutputArgs()=%q, want %q", got, want)
+	}
+}
+
+func TestStopJavaProfilerCleansDeployment(t *testing.T) {
+	t.Parallel()
+	toolPath := t.TempDir()
+	writeAgentSource(t, toolPath, []byte("agent"), 0o600)
+	directory := t.TempDir()
+	installed, err := installJavaAgents(toolPath, []string{directory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for _, directory := range installed {
+			_ = directory.Close()
+		}
+	})
+	// Startup failure and normal shutdown share this cleanup without active PIDs.
+	opt := &AsprofSamplingOption{agentDirectories: installed}
+	if err := StopJavaProfiler(opt); err != nil {
+		t.Fatal(err)
+	}
+	if opt.agentDirectories != nil {
+		t.Fatal("stopped session retains deployment handles")
+	}
+	if _, err := os.Stat(filepath.Join(directory, "libasyncProfiler.so")); !os.IsNotExist(err) {
+		t.Fatalf("agent remains after stop: %v", err)
+	}
+	if _, err := installed[0].Stat(); err == nil {
+		t.Fatal("stop left the directory handle open")
 	}
 }

@@ -23,7 +23,6 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/process"
 )
 
@@ -43,51 +42,91 @@ func agentLibraryPath(toolPath string) string {
 	return filepath.Join(toolPath, "lib", "libasyncProfiler.so")
 }
 
-// PrepareJavaAgent places the agent where the target JVM can load it.
-func PrepareJavaAgent(pid int, toolPath string) error {
-	hasDifferentMountNamespace, err := process.HasDifferentMountNamespace(pid)
-	if err != nil {
-		return err
-	}
-
-	targetTmp := "/tmp"
-	if hasDifferentMountNamespace {
-		targetTmp = fmt.Sprintf("/proc/%d/root/tmp", pid)
-	}
-
-	log.WithField("pid", pid).
-		WithField("path", targetTmp).
-		Debug("using Java agent directory")
-
-	return copyAgentLib(toolPath, targetTmp)
-}
-
-// CleanupJavaAgent removes the copied agent to avoid artifacts in the target.
-func CleanupJavaAgent(pid int) error {
-	hasDifferentMountNamespace, err := process.HasDifferentMountNamespace(pid)
-	if err != nil {
-		return err
-	}
-
-	targetTmp := "/tmp"
-	if hasDifferentMountNamespace {
-		targetTmp = fmt.Sprintf("/proc/%d/root/tmp", pid)
-	}
-
-	agentPath := filepath.Join(targetTmp, "libasyncProfiler.so")
-	if err := os.Remove(agentPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
+// Resolve all targets first so lookup failures cannot leave deployed libraries.
+func prepareJavaAgents(pids []int, toolPath string) ([]*os.File, error) {
+	directories := make([]string, 0, len(pids))
+	for _, pid := range pids {
+		different, err := process.HasDifferentMountNamespace(pid)
+		if err != nil {
+			return nil, fmt.Errorf("resolve Java agent directory for PID %d: %w", pid, err)
 		}
 
-		return fmt.Errorf("remove Java agent %q: %w", agentPath, err)
+		directory := "/tmp"
+		if different {
+			directory = fmt.Sprintf("/proc/%d/root/tmp", pid)
+		}
+
+		directories = append(directories, directory)
 	}
 
-	log.WithField("pid", pid).
-		WithField("path", agentPath).
-		Debug("removed Java agent")
+	return installJavaAgents(toolPath, directories)
+}
 
-	return nil
+// Directory handles keep cleanup independent of target PIDs exiting.
+func installJavaAgents(toolPath string, paths []string) (installed []*os.File, returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			returnErr = errors.Join(returnErr, cleanupJavaAgents(installed))
+			installed = nil
+		}
+	}()
+
+	var identities []os.FileInfo
+	for _, path := range paths {
+		directory, err := os.Open(path)
+		if err != nil {
+			return installed, fmt.Errorf("open Java agent directory %q: %w", path, err)
+		}
+
+		info, err := directory.Stat()
+		if err != nil {
+			return installed, errors.Join(fmt.Errorf("stat Java agent directory %q: %w", path, err), directory.Close())
+		}
+
+		duplicate := false
+		for _, identity := range identities {
+			if os.SameFile(info, identity) {
+				duplicate = true
+				break
+			}
+		}
+
+		if duplicate {
+			if err := directory.Close(); err != nil {
+				return installed, err
+			}
+
+			continue
+		}
+
+		if err := copyAgentLib(toolPath, agentDirectoryPath(directory)); err != nil {
+			return installed, errors.Join(fmt.Errorf("install Java agent in %q: %w", path, err), directory.Close())
+		}
+
+		installed = append(installed, directory)
+		identities = append(identities, info)
+	}
+
+	return installed, nil
+}
+
+func agentDirectoryPath(directory *os.File) string {
+	return fmt.Sprintf("/proc/self/fd/%d", directory.Fd())
+}
+
+func cleanupJavaAgents(directories []*os.File) error {
+	var errs []error
+	for _, directory := range directories {
+		path := filepath.Join(agentDirectoryPath(directory), "libasyncProfiler.so")
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("remove Java agent from %q: %w", directory.Name(), err))
+		}
+		if err := directory.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 func copyAgentLib(toolPath, targetDir string) error {

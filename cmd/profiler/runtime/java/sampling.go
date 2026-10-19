@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -37,15 +38,16 @@ const (
 )
 
 type AsprofSamplingOption struct {
-	ToolPath        string
-	Pids            []int
-	BaseArgs        []string
-	OutFilePrefix   string
-	AggrInterval    time.Duration
-	Duration        time.Duration
-	SessionID       string
-	activePIDs      map[int]bool
-	outputFileCount uint64
+	ToolPath         string
+	Pids             []int
+	BaseArgs         []string
+	OutFilePrefix    string
+	AggrInterval     time.Duration
+	Duration         time.Duration
+	SessionID        string
+	agentDirectories []*os.File
+	activePIDs       map[int]bool
+	outputFileCount  uint64
 }
 
 func asprofPath(toolPath string) string {
@@ -69,6 +71,11 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 	opt.SessionID = sessionID
 	opt.activePIDs = make(map[int]bool, len(opt.Pids))
 	opt.outputFileCount = asprofOutputFileCount(opt.Duration, opt.AggrInterval)
+
+	opt.agentDirectories, err = prepareJavaAgents(opt.Pids, opt.ToolPath)
+	if err != nil {
+		return nil, err
+	}
 
 	profileOutFile := make(map[int]string)
 	argsByPID := make(map[int][]string, len(opt.Pids))
@@ -251,17 +258,9 @@ func stopActiveAsprofProcesses(opt *AsprofSamplingOption) error {
 	)
 	opt.markStopped(results)
 
-	var cleanupErrs []error
-	for _, pid := range opt.Pids {
-		if err := CleanupJavaAgent(pid); err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup Java agent for PID %d: %w", pid, err))
-		}
-	}
-
-	return errors.Join(
-		profilerexec.Verify(results),
-		errors.Join(cleanupErrs...),
-	)
+	cleanupErr := cleanupJavaAgents(opt.agentDirectories)
+	opt.agentDirectories = nil
+	return errors.Join(profilerexec.Verify(results), cleanupErr)
 }
 
 func (opt *AsprofSamplingOption) activePIDList() []int {

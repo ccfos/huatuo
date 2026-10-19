@@ -169,12 +169,6 @@ func prepareJavaSampling(cfg *Config) ([]int, map[int][]types.ProfileLabel, erro
 		labelsByPID[pid] = labels
 	}
 
-	for _, pid := range pids {
-		if err := javaruntime.PrepareJavaAgent(pid, cfg.ToolDir); err != nil {
-			return nil, nil, fmt.Errorf("prepare Java agent for PID %d: %w", pid, err)
-		}
-	}
-
 	return pids, labelsByPID, nil
 }
 
