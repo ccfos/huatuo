@@ -28,14 +28,7 @@ import (
 	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
 	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
 	"github.com/ccfos/huatuo/internal/server/response"
-	"github.com/ccfos/huatuo/internal/toolstream"
 )
-
-type testResultPublisher struct{}
-
-func (testResultPublisher) Publish(context.Context, string) error {
-	return nil
-}
 
 func newTestOperationManager(t *testing.T) *operation.Manager {
 	t.Helper()
@@ -73,10 +66,6 @@ func newTestNodeServices(
 		t.Fatalf("Chmod() profiler error = %v", err)
 	}
 	socketPath := filepath.Join(directory, "toolstream.sock")
-	stream, err := toolstream.NewServer(socketPath)
-	if err != nil {
-		t.Fatalf("toolstream.NewServer() error = %v", err)
-	}
 	profilingService, err := nodeprofiling.NewService(manager, &nodeprofiling.Config{
 		ProfilerPath:            profilerPath,
 		ToolstreamSocketPath:    socketPath,
@@ -84,8 +73,6 @@ func newTestNodeServices(
 		AggregationInterval:     time.Second,
 		MaxConcurrentProcesses:  1,
 		CommandOutputLimitBytes: 1024,
-		ToolstreamServer:        stream,
-		ResultPublisher:         testResultPublisher{},
 	})
 	if err != nil {
 		t.Fatalf("profiling.NewService() error = %v", err)
@@ -267,6 +254,17 @@ func TestOperationResponseMapsFailureReason(t *testing.T) {
 		payload.Data.Terminal.Reason == nil ||
 		*payload.Data.Terminal.Reason != string(operation.FailureReasonFinalizationTimeout) {
 		t.Fatalf("operationResponse() = %+v", payload.Data)
+	}
+}
+
+func TestSecondsDurationRejectsNonPositive(t *testing.T) {
+	// The node OpenAPI spec declares duration_seconds: minimum 1; the
+	// handler must enforce it because the generated strict server does
+	// not check body schema constraints.
+	for _, bad := range []int64{0, -1, -3600} {
+		if _, err := secondsDuration(bad); err == nil {
+			t.Fatalf("secondsDuration(%d) error = nil, want rejection", bad)
+		}
 	}
 }
 

@@ -1,0 +1,24 @@
+# HELP huatuo_bamai_xfs_alloc_blocks_total Blocks allocated on XFS filesystem
+# TYPE huatuo_bamai_xfs_alloc_blocks_total counter
+huatuo_bamai_xfs_alloc_blocks_total{device="sda0",host="huatuo-dev",region="dev"} 2.01138642e+08
+# HELP huatuo_bamai_xfs_alloc_extents_total Extents allocated on XFS filesystem
+# TYPE huatuo_bamai_xfs_alloc_extents_total counter
+huatuo_bamai_xfs_alloc_extents_total{device="sda0",host="huatuo-dev",region="dev"} 5.044296e+06
+# HELP huatuo_bamai_xfs_buf_busy_locked_total Busy locked times in XFS buffer
+# TYPE huatuo_bamai_xfs_buf_busy_locked_total counter
+huatuo_bamai_xfs_buf_busy_locked_total{device="sda0",host="huatuo-dev",region="dev"} 629546
+# HELP huatuo_bamai_xfs_buf_locked_waited_total Waited times in XFS locked buffer
+# TYPE huatuo_bamai_xfs_buf_locked_waited_total counter
+huatuo_bamai_xfs_buf_locked_waited_total{device="sda0",host="huatuo-dev",region="dev"} 444421
+# HELP huatuo_bamai_xfs_inode_attempts_total Attempt times in XFS inode cache
+# TYPE huatuo_bamai_xfs_inode_attempts_total counter
+huatuo_bamai_xfs_inode_attempts_total{device="sda0",host="huatuo-dev",region="dev"} 1.2131976e+07
+# HELP huatuo_bamai_xfs_inode_missed_total Missed times in XFS inode cache
+# TYPE huatuo_bamai_xfs_inode_missed_total counter
+huatuo_bamai_xfs_inode_missed_total{device="sda0",host="huatuo-dev",region="dev"} 7.162023e+06
+# HELP huatuo_bamai_xfs_log_free_bytes Available space in XFS log space
+# TYPE huatuo_bamai_xfs_log_free_bytes gauge
+huatuo_bamai_xfs_log_free_bytes{device="sda0",host="huatuo-dev",region="dev"} 1.04668e+07
+# HELP huatuo_bamai_xfs_log_space_sleep_total Total sleep times in XFS log space
+# TYPE huatuo_bamai_xfs_log_space_sleep_total counter
+huatuo_bamai_xfs_log_space_sleep_total{device="sda0",host="huatuo-dev",region="dev"} 1430

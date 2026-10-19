@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	maxSearchLimit = 1001
+	maxValuesSize = 1001
 )
 
 // Config contains the Elasticsearch settings used by profiling storage.
@@ -51,12 +51,14 @@ type Filter struct {
 	EndTime           time.Time
 	ProfileType       string
 	Limit             int
+	BatchSize         int
 	Offset            int
 }
 
 // Store persists and queries profiling aggregation windows.
 type Store struct {
-	store *storage.Store[*Document]
+	store   *storage.Store[*Document]
+	commits *commitStore
 }
 
 // NewFromConfig creates profiling storage backed by Elasticsearch.
@@ -74,15 +76,14 @@ func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
 	log.WithField("driver", "elasticsearch").WithField("index", config.Index).Info(
 		"initialized profile storage",
 	)
-	return &Store{store: profileStore}, nil
-}
-
-// Save queues a profiling window for asynchronous persistence.
-func (s *Store) Save(ctx context.Context, document *Document) error {
-	if err := s.prepareDocument(document); err != nil {
-		return err
+	commits, err := newCommitStore(ctx, &driver.Config{
+		Driver: "elasticsearch", ESAddresses: config.Addresses, ESUsername: config.Username,
+		ESPassword: config.Password, ESIndex: config.Index,
+	})
+	if err != nil {
+		return nil, errors.Join(err, profileStore.Close(context.WithoutCancel(ctx)))
 	}
-	return s.store.Save(ctx, document, driver.SaveOptions{})
+	return &Store{store: profileStore, commits: commits}, nil
 }
 
 // SaveSync persists a profiling window and waits until subsequent queries can see it.
@@ -98,7 +99,7 @@ func (s *Store) Close(ctx context.Context) error {
 	if s == nil || s.store == nil {
 		return nil
 	}
-	return s.store.Close(ctx)
+	return errors.Join(s.store.Close(ctx), s.commits.Close(ctx))
 }
 
 // Ready checks whether the backing store can serve queries.
@@ -109,15 +110,18 @@ func (s *Store) Ready(ctx context.Context) error {
 	if _, err := s.store.Count(ctx, driver.Query{Limit: 1}); err != nil {
 		return fmt.Errorf("profile storage readiness: %w", err)
 	}
+	if s.commits != nil {
+		return s.commits.Ready(ctx)
+	}
 	return nil
 }
 
-// Search returns profiling windows matching filter.
-func (s *Store) Search(ctx context.Context, filter *Filter) ([]*Document, error) {
+// Search delivers matching profiling windows without retaining earlier batches.
+func (s *Store) Search(ctx context.Context, filter *Filter, consume func([]*Document) error) error {
 	if s == nil || s.store == nil {
-		return nil, errors.New("profile storage is not initialized")
+		return errors.New("profile storage is not initialized")
 	}
-	return s.store.Query(ctx, buildSearchQuery(filter))
+	return s.store.Query(ctx, buildSearchQuery(filter), consume)
 }
 
 // ListByTracerID returns one page of profiling windows for a task.
@@ -127,11 +131,19 @@ func (s *Store) ListByTracerID(
 	limit int,
 	offset int,
 ) ([]*Document, error) {
-	return s.Search(ctx, &Filter{
+	var documents []*Document
+	err := s.Search(ctx, &Filter{
 		TracerID: tracerID,
 		Limit:    limit,
 		Offset:   offset,
+	}, func(batch []*Document) error {
+		documents = append(documents, batch...)
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return documents, nil
 }
 
 // Values returns distinct indexed values matching filter.
@@ -151,14 +163,15 @@ func (s *Store) Values(
 		ctx,
 		normalizedField,
 		buildAggregationQuery(filter),
-		normalizeSearchLimit(filter),
+		normalizeValuesSize(filter),
 	)
 }
 
 func buildSearchQuery(filter *Filter) driver.Query {
 	query := buildAggregationQuery(filter)
-	query.Limit = normalizeSearchLimit(filter)
-	if filter != nil && filter.Offset > 0 {
+	if filter != nil {
+		query.Limit = filter.Limit
+		query.BatchSize = filter.BatchSize
 		query.Offset = filter.Offset
 	}
 	query.Sorts = []driver.Sort{{Field: types.DocumentFieldUploadedTimestamp, Desc: true}}
@@ -213,8 +226,7 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 		appendTextFilter(types.DocumentFieldHostname, filter.Hostname)
 		query.Filters = append(query.Filters, driver.Filter{
 			Field: types.DocumentFieldContainerHostname,
-			Op:    driver.OpEq,
-			Value: "",
+			Op:    driver.OpNotExists,
 		})
 	}
 	return query
@@ -242,11 +254,11 @@ func normalizeAggregationField(field string) (string, error) {
 	}
 }
 
-func normalizeSearchLimit(filter *Filter) int {
+func normalizeValuesSize(filter *Filter) int {
 	if filter == nil || filter.Limit <= 0 {
 		return 100
 	}
-	return min(filter.Limit, maxSearchLimit)
+	return min(filter.Limit, maxValuesSize)
 }
 
 func (s *Store) prepareDocument(document *Document) error {
@@ -257,4 +269,23 @@ func (s *Store) prepareDocument(document *Document) error {
 		document.UploadedTimestamp = timeutil.Now()
 	}
 	return nil
+}
+
+// Commit publishes a task after its caller has persisted all windows successfully.
+func (s *Store) Commit(ctx context.Context, taskID string) error {
+	if s == nil || s.commits == nil {
+		return errors.New("profiling commit store is not initialized")
+	}
+	if taskID == "" {
+		return errors.New("profiling commit requires task ID")
+	}
+	return s.commits.Commit(ctx, taskID)
+}
+
+// IsCommitted reports whether a task has a durable completion marker.
+func (s *Store) IsCommitted(ctx context.Context, taskID string) (bool, error) {
+	if s == nil || s.commits == nil {
+		return false, errors.New("profiling commit store is not initialized")
+	}
+	return s.commits.IsCommitted(ctx, taskID)
 }

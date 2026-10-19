@@ -23,8 +23,8 @@ import (
 )
 
 func (o *Options) setDefaults() {
-	if o.TopK == 0 {
-		o.TopK = 10
+	if o.MaxMemoryObjectEntries == 0 {
+		o.MaxMemoryObjectEntries = 10
 	}
 	if o.SnapshotTimeout == 0 {
 		o.SnapshotTimeout = 2 * time.Second
@@ -32,8 +32,9 @@ func (o *Options) setDefaults() {
 }
 
 func (o Options) validate() error {
-	if o.TopK < 1 || o.TopK > memsnapshot.MaxMemoryObjectEntries {
-		return fmt.Errorf("snapshot top-K must be in [1, %d], got %d", memsnapshot.MaxMemoryObjectEntries, o.TopK)
+	if o.MaxMemoryObjectEntries < 1 || o.MaxMemoryObjectEntries > memsnapshot.MaxMemoryObjectEntries {
+		return fmt.Errorf("snapshot maximum memory object entries must be in [1, %d], got %d",
+			memsnapshot.MaxMemoryObjectEntries, o.MaxMemoryObjectEntries)
 	}
 	if o.SnapshotTimeout < 0 {
 		return errors.New("capture timeout must not be negative")

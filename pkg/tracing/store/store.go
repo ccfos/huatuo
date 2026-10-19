@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/timeutil"
@@ -147,7 +148,12 @@ func (s *Store) Save(document *Document) error {
 	s.hub.Notify(document)
 	var errs []error
 	for _, backend := range s.backends {
-		if err := backend.Save(context.Background(), document, driver.SaveOptions{}); err != nil {
+		err := backend.Save(context.Background(), document, driver.SaveOptions{})
+		log.Debugf("save tracing document backend=%s tracer_id=%s tracer_name=%s hostname=%s "+
+			"uploaded_timestamp=%v tracer_data=%+v error=%v",
+			backend.Name, document.TracerID, document.TracerName, document.Hostname,
+			document.UploadedTimestamp, document.TracerData, err)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("save tracing document to %q: %w", backend.Name, err))
 		}
 	}
