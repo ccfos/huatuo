@@ -27,6 +27,8 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/paths"
 
 	"github.com/cilium/ebpf/btf"
 )
@@ -270,5 +272,43 @@ func TestCgroupReaderRecoversAndStops(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("reader did not stop")
+	}
+}
+
+func TestContainerCgroupPathForSubsys(t *testing.T) {
+	oldRoot := paths.RootfsDefaultPath
+	root := t.TempDir()
+	paths.RootfsDefaultPath = root
+	t.Cleanup(func() { paths.RootfsDefaultPath = oldRoot })
+	for _, entry := range []struct{ path, notify string }{
+		{"cpu/cpu-container", cgroupv1NotifyFile},
+		{"memory/memory-container", cgroupv1NotifyFile},
+		{"unified-container", cgroupv2NotifyFile},
+	} {
+		dir := filepath.Join(root, entry.path)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, entry.notify), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	membership := &cgroups.ProcessPaths{
+		Controllers: map[string]string{"cpu": "/cpu-container", "memory": "/memory-container"},
+		Unified:     "/unified-container",
+	}
+	for _, mode := range []cgroups.Mode{cgroups.Legacy, cgroups.Hybrid, cgroups.Unified} {
+		got, err := containerCgroupPathForSubsys(membership, mode, "memory")
+		want := filepath.Join(root, "memory/memory-container")
+		if mode == cgroups.Unified {
+			want = filepath.Join(root, "unified-container")
+		}
+		if err != nil || got != want {
+			t.Fatalf("mode=%v: got=%q err=%v, want=%q", mode, got, err, want)
+		}
+	}
+	delete(membership.Controllers, "memory")
+	if got, err := containerCgroupPathForSubsys(membership, cgroups.Hybrid, "memory"); err == nil {
+		t.Fatalf("missing memory membership fell back to CPU or unified hierarchy: %q", got)
 	}
 }
