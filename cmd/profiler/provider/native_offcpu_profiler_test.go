@@ -19,6 +19,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"os"
+	"slices"
 	"testing"
 	"unsafe"
 
@@ -26,7 +28,9 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 
@@ -450,4 +454,120 @@ func TestOffCPUProfileTypeUsesNanosecondsWithoutSampleRate(t *testing.T) {
 	profileType, err := sampleType(cfg)
 	require.NoError(t, err)
 	require.Equal(t, "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds", profileType)
+}
+
+// offCPUStackBPF supplies stack bytes at the BPF I/O boundary.
+type offCPUStackBPF struct {
+	bpf.BPF
+	reads     map[uint32]int
+	failFirst bool
+	trace     []byte
+}
+
+func (b *offCPUStackBPF) ReadMap(_ uint32, key []byte) ([]byte, error) {
+	id := binary.LittleEndian.Uint32(key)
+	b.reads[id]++
+	if b.failFirst && b.reads[id] == 1 {
+		return nil, ebpf.ErrKeyNotExist
+	}
+
+	return slices.Clone(b.trace), nil
+}
+
+func newOffCPUStackBPF() *offCPUStackBPF {
+	trace := make([]byte, bpfmap.StackTraceLen*8)
+	binary.LittleEndian.PutUint64(trace, 0x1000)
+
+	return &offCPUStackBPF{
+		reads: make(map[uint32]int),
+		trace: trace,
+	}
+}
+
+func offCPUStackEvent(pid uint32, userStack, kernelStack int32) *abi.ProfilerOffCPUEvent {
+	return &abi.ProfilerOffCPUEvent{
+		Base: abi.ProfilerEventBase{
+			PIDTGID:   uint64(pid) << 32,
+			Userstack: userStack,
+			Kernstack: kernelStack,
+			Value:     7,
+		},
+		Kind: abi.ProfilerOffCPUEventBlocked,
+	}
+}
+
+func TestOffCPUBatchStackCache(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		differentPID    bool
+		failFirst       bool
+		wantUserReads   int
+		wantKernelReads int
+	}{
+		{
+			name:            "repeated stacks",
+			wantUserReads:   1,
+			wantKernelReads: 1,
+		},
+		{
+			name:            "different processes",
+			differentPID:    true,
+			wantUserReads:   2,
+			wantKernelReads: 1,
+		},
+		{
+			name:            "retry missing stacks",
+			failFirst:       true,
+			wantUserReads:   2,
+			wantKernelReads: 2,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			obj := newOffCPUStackBPF()
+			obj.failFirst = tc.failFirst
+			r := &ringBufferContext{
+				bpf:         obj,
+				stackMapAID: 1,
+				usym:        symbol.NewUsymResolver(),
+			}
+			pid := uint32(os.Getpid())
+			otherPID := pid
+			if tc.differentPID {
+				otherPID = uint32(os.Getppid())
+			}
+
+			events := []any{
+				offCPUStackEvent(pid, 0, 1),
+				offCPUStackEvent(otherPID, 0, 1),
+				offCPUStackEvent(pid, 0, 1),
+			}
+			var samples []aggregation.Sample
+			enqueue := func(batch *pipeline.SampleBatch) error {
+				samples = append(samples, batch.Samples...)
+				return nil
+			}
+			require.NoError(t, r.enqueueOffCPUBatch(events, enqueue))
+			require.Equal(t, tc.wantUserReads, obj.reads[0])
+			require.Equal(t, tc.wantKernelReads, obj.reads[1])
+			require.Len(t, samples, len(events))
+			for i := range samples {
+				if tc.failFirst && i == 0 {
+					require.Empty(t, samples[i].UserFrames)
+					require.Empty(t, samples[i].KernelFrames)
+				} else {
+					require.Len(t, samples[i].UserFrames, 1)
+					require.Len(t, samples[i].KernelFrames, 1)
+				}
+			}
+
+			// A new batch must resolve stacks again, including changed map contents.
+			binary.LittleEndian.PutUint64(obj.trace, 0x9000)
+			require.NoError(t, r.enqueueOffCPUBatch(events[:1], enqueue))
+			require.Len(t, samples, len(events)+1)
+			require.Equal(t, tc.wantUserReads+1, obj.reads[0])
+			require.Equal(t, tc.wantKernelReads+1, obj.reads[1])
+			require.NotEqual(t, samples[2].UserFrames, samples[3].UserFrames)
+			require.NotEqual(t, samples[2].KernelFrames, samples[3].KernelFrames)
+		})
+	}
 }

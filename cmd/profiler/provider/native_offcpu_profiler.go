@@ -196,6 +196,9 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(
 }
 
 func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipeline.SampleBatch) error) error {
+	// Reuse immutable frames within this batch; later batches resolve anew.
+	userCache := make(map[userStackCacheKey][]types.ProfileFrame)
+	kernelCache := make(map[int32][]types.ProfileFrame)
 	var builder pipeline.BatchBuilder
 	for _, record := range events {
 		event, ok := record.(*abi.ProfilerOffCPUEvent)
@@ -213,9 +216,30 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 			return err
 		}
 
+		// Missing stacks remain retryable while the BPF map is live.
+		userKey := userStackCacheKey{
+			PID:     pid,
+			StackID: event.Base.Userstack,
+		}
+		user := userCache[userKey]
+		if user == nil {
+			user = r.resolveUserStack(r.stackMapAID, event.Base.Userstack, pid)
+			if len(user) != 0 {
+				userCache[userKey] = user
+			}
+		}
+
+		kernel := kernelCache[event.Base.Kernstack]
+		if kernel == nil {
+			kernel = r.resolveKernelStack(r.stackMapAID, event.Base.Kernstack)
+			if len(kernel) != 0 {
+				kernelCache[event.Base.Kernstack] = kernel
+			}
+		}
+
 		sample := aggregation.Sample{
-			UserFrames:   r.resolveUserStack(r.stackMapAID, event.Base.Userstack, pid),
-			KernelFrames: r.resolveKernelStack(r.stackMapAID, event.Base.Kernstack),
+			UserFrames:   user,
+			KernelFrames: kernel,
 			Labels:       labels,
 			Value:        event.Base.Value,
 		}
