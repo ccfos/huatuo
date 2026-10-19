@@ -6,19 +6,19 @@ date: 2026-07-27
 weight: 1
 ---
 
-> To help users quickly experience and deploy HUATUO, this document is divided into three sections: [Quick Experience](#1-quick-experience)，[Quick Start](#2-quick-start)，[Compilation & Deployment](#3-compilation--deployment).
+> To help users quickly experience and deploy HUATUO, this document is divided into three sections: [Quick Experience](#1-quick-experience), [Quick Start](#2-quick-start), [Compilation & Deployment](#3-compilation--deployment).
 
 ### 1. Quick Experience
 
 This section helps you quickly explore the frontend capabilities. You can directly access [demo station](http://console.huatuo.tech), such as viewing exception event overviews, exception event context information, metric curves, etc. (Account: huatuo passwd: huatuo1024).
 
-- [Events, AutoTracing Dashboard（improvements in progress）](http://console.huatuo.tech/d/autotracing-event)
+- [Events, AutoTracing Dashboard (improvements in progress)](http://console.huatuo.tech/d/autotracing-event)
   ![autotracing-event demo diagram​](/docs/img/quickstart-autotracing-event.png)
 
-- [Host Metrics Dashboard（improvements in progress）](http://console.huatuo.tech/d/metrics-host)
+- [Host Metrics Dashboard (improvements in progress)](http://console.huatuo.tech/d/metrics-host)
   ![metrics-host demo diagram](/docs/img/quickstart-metrics-host.png)
 
-- [Container Metrics Dashboard（improvements in progress）](http://console.huatuo.tech/d/metrics-container)
+- [Container Metrics Dashboard (improvements in progress)](http://console.huatuo.tech/d/metrics-container)
  ![metrics-container demo diagram](/docs/img/quickstart-metrics-container.png)
 
 ### 2. Quick Start
@@ -28,16 +28,16 @@ This section helps you quickly explore the frontend capabilities. You can direct
 #### 2.1 Quick Run
 If you want to understand the underlying principles and deploy HUATUO to your own monitoring system, you can start pre-compiled container images via Docker (Note: This method disables container information retrieval and ES storage functionality by default).
 
-- **Direct Execution**：
+- **Direct Execution**:
     ```bash
     $ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
     ```
 
-- **Metric Collection**：In another terminal, collect metrics
+- **Metric Collection**: In another terminal, collect metrics
     ```bash
     $ curl -s localhost:19704/metrics
     ```
-- **View Exception Events (Events, AutoTracing)**：HUATUO stores collected kernel exception event information in ES (disabled by default) while retaining a copy in the local directory `huatuo-local`. Note: Typically, no files exist in this path (systems in normal state don't trigger event collection). You can generate events by creating exception scenarios or modifying configuration thresholds.
+- **View Exception Events (Events, AutoTracing)**: HUATUO stores collected kernel exception event information in ES (disabled by default) while retaining a copy in the local directory `huatuo-local`. Note: Typically, no files exist in this path (systems in normal state don't trigger event collection). You can generate events by creating exception scenarios or modifying configuration thresholds.
 
 #### 2.2 Quick Setup
 If you want to further understand HUATUO's operational mechanisms, architecture design, monitoring dashboard, and custom deployment, you can quickly set up a complete local environment using docker compose.
@@ -46,7 +46,7 @@ If you want to further understand HUATUO's operational mechanisms, architecture 
 $ docker compose --project-directory ./build/docker up
 ```
 
-This command pulls the latest images and starts components including [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com)，huatuo-bamai. After successful command execution, open your browser and visit [http://localhost:3000](http://localhost:3000) to access the monitoring dashboard (Grafana default admin account: admin, password: admin; Since your system is in normal state, the Events and AutoTracing dashboards typically won't display data).
+This command pulls the latest images and starts components including [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com), huatuo-bamai, and huatuo-apiserver. After successful command execution, open your browser and visit [http://localhost:3000](http://localhost:3000) to access the monitoring dashboard (Grafana default admin account: admin, password: admin; Since your system is in normal state, the Events and AutoTracing dashboards typically won't display data).
 
 ![HUATUO huatuo-bamai Component Operation Diagram](/docs/img/quickstart-components.png)
 
@@ -74,12 +74,12 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 #### 3.3 Configuration
 - Container Information Configuration
 
-    HUATUO obtains POD/container information by calling the kubelet interface. Configure the access interface and certificates according to your actual environment. Empty configuration "" indicates disabling this functionality.
-    ```yml
+    HUATUO obtains POD/container information by calling the kubelet interface. Configure the access ports and the client certificate according to your actual environment; setting `KubeletReadOnlyPort = 0` and `KubeletAuthorizedPort = 0` disables kubelet pod fetching, for example on bare-metal services.
+    ```toml
       [Pod]
-        KubeletPodListURL = "http://127.0.0.1:10255/pods"
-        KubeletPodListHTTPSURL = "https://127.0.0.1:10250/pods"
-        KubeletPodClientCertPath = "/var/lib/kubelet/pki/kubelet-client-current.pem"
+        KubeletReadOnlyPort = 10255
+        KubeletAuthorizedPort = 10250
+        KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
     ```
 
 - Storage Configuration
@@ -88,7 +88,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
     - **Exception Event Storage (Events, AutoTracing)**: All kernel events and AutoTracing events are stored in ES. Note: If the configuration is empty, ES storage is not activated, and events are only stored in the local directory `huatuo-local`.
 
        ES storage configuration is as follows:
-        ```yaml
+        ```toml
         [Storage.Elasticsearch]
             Address = "http://127.0.0.1:9200"
             Username = "elastic"
@@ -97,7 +97,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
         ```
 
         Local storage configuration is as follows:
-        ```yaml
+        ```toml
         # tracer's record data
         # Path: all but the last element of path for per tracer
         # RotationSizeMiB: maximum record file size before rotation

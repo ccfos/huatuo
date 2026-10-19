@@ -23,12 +23,12 @@ The configuration file uses **TOML** format and includes multiple sections such 
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]
+BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
 ```
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
-  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, and Moore Threads GPU. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, or `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
+  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, Moore Threads GPU metrics, and Moore Threads GPU XID event tracing. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs, or `mthreads_xid` to enable Moore Threads GPU XID event tracing on hosts with the MUSA driver. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
 
 ### 3. Logging
 
@@ -108,9 +108,8 @@ to bytes only when the cgroup limit is applied.
     # - EventStreamKeepAliveIntervalSeconds
     # Interval in seconds at which the server sends an SSE comment ping to each
     # connected client. The ping keeps the connection alive through load
-    # balancers and proxies that would otherwise time out idle connections. If
-    # writing the ping fails three consecutive times, the server closes the
-    # connection.
+    # balancers and proxies that would otherwise time out idle connections. A
+    # failed ping write closes the connection immediately.
     # Default: 30
     #
     # ListenAddress = ":19704"
@@ -192,8 +191,8 @@ persisted but take effect only after restarting `huatuo-bamai`.
 The event stream settings control `POST /v1/events/watch`. When
 `MaxEventStreamClients` is reached, new streams receive HTTP 429.
 `EventStreamKeepAliveIntervalSeconds` controls SSE heartbeat comments used to
-keep proxy and load-balancer connections alive. After three consecutive write
-failures, the server closes the stream. Set the interval below any upstream
+keep proxy and load-balancer connections alive. A failed heartbeat write
+closes the stream immediately. Set the interval below any upstream
 idle timeout; 15–60 seconds is typical.
 
 ### 6. Storage
@@ -526,6 +525,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 	# ThresholdLoad = 5
 	# Interval = 10
 	# IntervalTracing = 1800
+	# EnableDebug = false
 ```
 
 - **ThresholdLoad**: System load average (loadavg) threshold for containers.
@@ -539,6 +539,13 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 - **IntervalTracing**: Minimum time between consecutive tracings.
 
   Default: 1800s (30 minutes).
+
+- **EnableDebug**: Forces the Dload tracer to capture on every sample.
+
+  Default: false. When enabled, the tracer bypasses the load threshold,
+  the minimum trace interval, and the empty-stack check, so a task-stack
+  dump is attempted for every container on each sample. Intended for
+  troubleshooting the tracer itself; keep it disabled in production.
 
 #### 7.4 IOTracing AutoTracing — Container IO Performance Profiling
 
@@ -674,9 +681,10 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
   Default: 1800s.
 
-- **SlidingWindowLength**: Sliding window length (seconds).
+- **SlidingWindowLength**: Sliding window length in samples. At the
+  default 10-second interval, 60 samples cover 600 seconds.
 
-  Default: 60s.
+  Default: 60.
 
 - **DumpProcessMaxNum**: Maximum processes to dump on trigger.
 
@@ -1246,6 +1254,46 @@ This section defines collection rules for various system and network metrics. Al
 **Hot-reload semantics**: `EnableHealth`, `EnablePCIe`, and `EnableMTLink` are read from the latest config snapshot on every scrape, so toggling them takes effect on the next Prometheus scrape without restarting `huatuo-bamai`. A `false → true → false` transition emits and suppresses the corresponding metric groups on the next scrape after each change.
 
 Note: enabling the collector itself (i.e. removing `mthreads_gpu` from `BlackList` after the process has already started with the collector disabled because `libmtml.so` was missing at startup) requires a restart. The collector factory runs only during initialization, so a successful late library load will not register a new collector.
+
+#### 9.8 Ascend NPU Metrics
+
+This section configures the fine-grained Ascend NPU toggles. The collector
+itself stays disabled while `ascend_npu` is listed in the global `BlackList`.
+
+```bash
+# Ascend NPU fine-grained toggles
+#
+# - EnableDCMI
+# Enable DCMI metrics: health, power, temp, voltage, util, freq,
+# network health, HBM, and ECC info. Default: true
+#
+# - EnablePCIe
+# Enable PCIe link metrics: capability and status (speed/width).
+# Default: true
+#
+# - EnableHCCN
+# Enable HCCN network metrics via hccn_tool subprocesses.
+# Default: false
+#
+[MetricCollector.AscendNPU]
+    # EnableDCMI = true
+    # EnablePCIe = false
+    # EnableHCCN = false
+```
+
+- **EnableDCMI**: Controls collection of DCMI metrics.
+
+  Default: true. When enabled, collects: health, power, temperature, voltage,
+  utilization, frequency, network health, HBM, and ECC information.
+
+- **EnablePCIe**: Controls collection of PCIe link metrics.
+
+  Default: false. When enabled, collects: capability and status (speed/width).
+
+- **EnableHCCN**: Controls collection of HCCN network metrics.
+
+  Default: false. When enabled, collects HCCN metrics through `hccn_tool`
+  subprocesses.
 
 ### 10. Pod
 

@@ -99,6 +99,10 @@ graph TB
 
     PCIe AER（Advanced Error Reporting）是 PCIe 规范定义的错误上报机制，允许 PCIe 设备向操作系统精确报告链路层和事务层的错误类型。
 
+- ARM GHES
+
+    ARM GHES 是 CPER 记录中的 ARM 处理器错误部分（UEFI §N.2.4.4），与“非标准”错误段经由同一条 ACPI GHES 路径上报，仅在 arm64 主机可用。每条事件记录出错处理器的 MPIDR/MIDR 及错误发生时的电源状态。
+
 ### 指标总览
 
 - RAS 指标
@@ -191,7 +195,7 @@ graph TB
     | 字段名      | 含义                                                         |
     | :---------- | :----------------------------------------------------------- |
     | `Device`    | 发生错误的硬件部件标识（如 `CPU/MEM`、`MEM`、`ACPI`、`PCIe 0000:01:00.0`） |
-    | `Event`     | 事件子类型（`MCE`、`EDAC`、`APIC`、`AER`） |
+    | `Event`     | 事件子类型（`MCE`、`EDAC`、`NON_STANDARD`、`AER`、`MCE_THRESHOLD`、`ARM_GHES`） |
     | `ErrType`   | 错误严重级别（见下表）                                       |
     | `ObservedTimestamp` | 用户态观测事件的 UTC 时间                              |
     | `KernelObservedTimestamp` | 内核观测事件的 UTC 时间（Document 顶层字段） |
@@ -204,6 +208,7 @@ graph TB
     | `UncorrectedDeferred`    | 硬件无法纠正，需要延迟处理的错误| MCE MCI_STATUS_DEFERRED, EDAC HW_EVENT_ERR_DEFERRED|
     | `UncorrectedFatal`       | 硬件无法纠正的致命错误，需立即重启| EDAC FATAL, ACPI Sev=3, AER Severity=0 |
     | `Info`       | 期望系统记录日志信息的错误类型| EDAC HW_EVENT_ERR_INFO, ACPI Sev=0 |
+    | `unknown`    | 无法映射到严重级别的错误 | ARM GHES 处理器上下文事件 |
 
 
 ### 详细说明
@@ -263,6 +268,18 @@ graph TB
   | `fru_text` | FRU 人类可读描述字符串（如 `"CPU0_DIMM_A1"`）。 |
   | `data_len` | 原始错误数据载荷长度（字节数）。                         |
   | `raw_data` | 原始错误数据的十六进制转储（空格分隔字节）。用于深度诊断，需结合具体硬件厂商文档解析。 |
+
+- ARM GHES
+
+  监控部件：ARM 处理器核（arm64 主机）。
+
+  | 字段名 | 含义 |
+  | ---------- | ------------------------------------------------------------ |
+  | `mpidr` | MPIDR 寄存器值（十六进制），标识处理器核；`0x0` 具有歧义——CPER 记录可能未携带有效 MPIDR。 |
+  | `midr` | MIDR 寄存器值（十六进制），标识处理器型号与版本。 |
+  | `running_state` | 错误发生时处理器的运行状态：`running`、`stopped`，或 CPER 未携带有效运行状态时的 `N/A`。 |
+  | `psci_state` | PSCI 电源状态（十六进制），仅当 `running_state` 为 `stopped` 时给出，否则为 `N/A`。 |
+  | `affinity_level` | 错误上报所在的 affinity level（十进制）；缺失时为 `N/A`。 |
 
 - PCIe AER
 

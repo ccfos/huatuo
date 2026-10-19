@@ -19,7 +19,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 相比传统的基于内核日志（dmesg/syslog）采集方案，eBPF 事件观测具备更低的数据丢失风险——不会因内核日志缓冲区满溢而丢失关键事件；同时可捕获不会写入内核日志的短暂性异常（如调度 tick 间隔过长）；并提供容器级别的事件关联信息，满足云原生场景下的精准定位需求。
 
-当前支持 12 类事件的持续观测，覆盖 CPU 调度健康状态（sched_tick、softlockup、hungtask）、内存压力（memory_oom_kill、memory_reclaim_events）、网络协议栈（dropwatch、tcp_retransmit、net_rx_latency、netdev_events、netdev_bonding_lacp、netdev_txqueue_timeout）以及硬件可靠性（ras）等方面。
+当前支持 13 类事件的持续观测，覆盖 CPU 调度健康状态（sched_tick、softlockup、hungtask）、内存压力（memory_oom_kill、memory_reclaim_events）、网络协议栈（dropwatch、tcp_retransmit、net_rx_latency、netdev_events、netdev_bonding_lacp、netdev_txqueue_timeout）以及硬件可靠性（ras、mthreads_xid）等方面。
 
 ## 🎯 场景
 
@@ -69,8 +69,11 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 | `netdev_events` | netlink | 网卡链路状态变化 | 网卡物理链路故障 |
 | `netdev_bonding_lacp` | kprobe | LACP 协议状态变化（仅 802.3ad 模式环境） | 物理机与交换机故障边界界定 |
 | `netdev_txqueue_timeout` | kprobe | 网卡发送队列超时 | 网卡发送队列硬件故障 |
+| `mthreads_xid` | MUSA 驱动轮询 | 摩尔线程 GPU 上报的 XID 错误达到或超过配置的严重级别（需先设置 `MthreadsXidLevel`） | GPU 驱动与硬件故障感知 |
 
 tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpshark 文档](/docs/best-practice/tcpshark_zh.md)。
+
+mthreads_xid 的严重级别、启用方式与前提条件请参考[配置指南](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
 ### 通用字段说明
 
@@ -398,7 +401,7 @@ OOM kill 追踪器现命名为 `memory_oom_kill`（此前为 `memory_oom`，更�
 
 ### 8. ras 硬件错误
 
-**功能描述** 通过内核 tracepoint 检测 CPU、内存、PCIe 等硬件错误，支持 5 种硬件错误来源：MCE（Machine Check Exception）、EDAC（内存控制器）、ACPI/GHES（非标准硬件错误）、PCIe AER（高级错误上报）、MCE 阈值中断（THR）。错误按严重程度分级：`Corrected`（已纠正）、`UncorrectedRecoverable`（未纠正可恢复）、`UncorrectedFatal`（未纠正致命）。MCE 阈值中断事件采用冷却策略（默认 30 分钟），防止中断风暴触发大量重复上报。
+**功能描述** 通过内核 tracepoint 检测 CPU、内存、PCIe 等硬件错误，支持 6 种硬件错误来源：MCE（Machine Check Exception）、EDAC（内存控制器）、ACPI/GHES（非标准硬件错误）、PCIe AER（高级错误上报）、MCE 阈值中断（THR）、ARM 处理器错误（ARM GHES，即 CPER 的 ARM 处理器错误部分，仅 arm64）。错误按严重程度分级：`Corrected`（已纠正）、`UncorrectedRecoverable`（未纠正可恢复）、`UncorrectedDeferred`（未纠正延迟处理）、`UncorrectedFatal`（未纠正致命）。MCE 阈值中断事件采用冷却策略（默认 30 分钟），防止中断风暴触发大量重复上报。
 
 **数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
 
@@ -432,8 +435,8 @@ OOM kill 追踪器现命名为 `memory_oom_kill`（此前为 `memory_oom`，更�
 **字段含义解释**
 
 - **dev**：发生错误的硬件设备（如 `CPU/MEM`、`PCIe 0000:3b:00.0`）
-- **event**：错误类型（`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`）
-- **type**：错误严重程度（`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`）
+- **event**：错误类型（`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD` / `ARM_GHES`）
+- **type**：错误严重程度（`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info` / `unknown`）
 - **observed_timestamp**：顶层字段，表示用户态观测事件的 UTC 时间；`kernel_observed_timestamp` 表示内核观测事件的 UTC 时间
 - **info**：JSON 格式的详细错误信息，内容因 event 类型不同而不同
 

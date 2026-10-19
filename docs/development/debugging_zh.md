@@ -92,10 +92,10 @@ profiler 支持该开关：
 - `line`：源文件行号。
 - `ts`：转换为 UTC 墙钟时间的事件时间戳。
 - `msg`：调试消息。
-- `args`：最多三个 `u64` 参数；全部为零时省略。
+- `args`：调试事件的四个 `u64` 槽位；全部为零时整体省略。`bpf_dbg` 宏最多接受三个参数，其余槽位由宏补零。
 
 ```text
-bpf_dbg: file=native_oncpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456Z msg=enter prog args=[0x1f4 0xffff8881 0x0]
+bpf_dbg: file=native_oncpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456000Z msg=enter prog args=[0x1f4 0xffff8881 0x0 0x0]
 ```
 
 只有同时使用 `BPF_DEBUG=1` 编译并在运行时指定 `--log-bpf-debug`，才会产生

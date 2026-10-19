@@ -23,12 +23,12 @@ weight: 4
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]
+BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
 ```
 
 - **BlackList**：全局追踪与指标黑名单。
 
-  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`，即全局禁用网络设备硬件层（netdev_hw）、队列调度统计（netdev_qdisc）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标、TCP 重传追踪和摩尔线程 GPU 监控。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪时移除 `tcp_retransmit`；需要启用摩尔线程 GPU 指标采集时移除 `mthreads_gpu`（要求已安装 MTML 库）。local 关联不依赖 standalone `dropwatch` tracer。
+  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]`，即全局禁用网络设备硬件层（netdev_hw）、队列调度统计（netdev_qdisc）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标、TCP 重传追踪、摩尔线程 GPU 监控和摩尔线程 GPU XID 事件追踪。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪时移除 `tcp_retransmit`；需要启用摩尔线程 GPU 指标采集时移除 `mthreads_gpu`（要求已安装 MTML 库）；需要启用摩尔线程 GPU XID 事件追踪时移除 `mthreads_xid`（要求已安装 MUSA 驱动）。local 关联不依赖 standalone `dropwatch` tracer。
 
   **说明**：添加黑名单项可有效降低资源消耗，尤其在特定硬件环境中；支持数组格式，可根据实际业务扩展。
 
@@ -110,9 +110,8 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
     # - EventStreamKeepAliveIntervalSeconds
     # Interval in seconds at which the server sends an SSE comment ping to each
     # connected client. The ping keeps the connection alive through load
-    # balancers and proxies that would otherwise time out idle connections. If
-    # writing the ping fails three consecutive times, the server closes the
-    # connection.
+    # balancers and proxies that would otherwise time out idle connections. A
+    # failed ping write closes the connection immediately.
     # Default: 30
     #
     # ListenAddress = ":19704"
@@ -186,7 +185,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 事件流配置控制 `POST /v1/events/watch`。达到
 `MaxEventStreamClients` 后，新连接返回 HTTP 429。
 `EventStreamKeepAliveIntervalSeconds` 控制 SSE 心跳注释间隔，用于避免
-代理或负载均衡器关闭空闲连接。连续三次写入失败后服务端关闭连接。
+代理或负载均衡器关闭空闲连接。心跳写入失败后服务端立即关闭连接。
 该值应小于上游 idle timeout，生产环境通常设置为 15–60 秒。
 
 ### 6. 存储配置
@@ -513,6 +512,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 	# ThresholdLoad = 5
 	# Interval = 10
 	# IntervalTracing = 1800
+	# EnableDebug = false
 ```
 
 - **ThresholdLoad**：容器的系统负载平均值（loadavg）阈值。
@@ -528,6 +528,10 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 - **IntervalTracing**：连续运行间隔（秒）。
 
   默认 1800s（30 分钟）。 两次自动追踪之间的最小间隔，防止频繁执行对系统造成压力。
+
+- **EnableDebug**：强制 Dload 追踪器在每次采样时都执行抓取。
+
+  默认值：false。开启后会绕过负载阈值、最小追踪间隔与空栈检查，每次采样都会尝试为所有容器抓取任务栈。仅用于排查追踪器自身的问题，生产环境请保持关闭。
 
 #### 7.4 IOTracing 自动追踪 — 容器 IO 性能剖析
 
@@ -671,6 +675,11 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
   默认 1800s（30 分钟）。 两次内存突发追踪之间的冷却时间，避免频繁执行对系统造成额外压力。
 
   **说明**：防止追踪工具被过度触发。
+
+- **SlidingWindowLength**：滑动窗口长度（采样点数）。默认 10 秒间隔下，
+  60 个采样点覆盖 600 秒历史。
+
+  默认 60。
 
 - **DumpProcessMaxNum**：触发事件时转储的最大进程数。
 
@@ -1232,6 +1241,45 @@ softirq source 和 victim 调用栈。
 **热更新语义**：`EnableHealth`、`EnablePCIe`、`EnableMTLink` 在每次 scrape 时从最新配置快照中读取，因此切换这些开关后下一个 Prometheus scrape 即可生效，无需重启 `huatuo-bamai`。`false → true → false` 的转换会在每次变更后的下一个 scrape 上按预期发布或停止发布对应的指标组。
 
 注意：在进程已经启动且因 `libmtml.so` 缺失导致采集器被禁用的情况下，要启用该采集器（即把 `mthreads_gpu` 从 `BlackList` 中移除）需要重启进程。采集器工厂只在初始化时运行，运行时即使库被加载成功也不会注册新的采集器。
+
+#### 9.8 昇腾 NPU 指标
+
+本节配置昇腾 NPU 的细粒度开关。只要全局 `BlackList` 中仍包含 `ascend_npu`，
+该采集器即处于禁用状态。
+
+```bash
+# Ascend NPU fine-grained toggles
+#
+# - EnableDCMI
+# Enable DCMI metrics: health, power, temp, voltage, util, freq,
+# network health, HBM, and ECC info. Default: true
+#
+# - EnablePCIe
+# Enable PCIe link metrics: capability and status (speed/width).
+# Default: true
+#
+# - EnableHCCN
+# Enable HCCN network metrics via hccn_tool subprocesses.
+# Default: false
+#
+[MetricCollector.AscendNPU]
+    # EnableDCMI = true
+    # EnablePCIe = false
+    # EnableHCCN = false
+```
+
+- **EnableDCMI**：控制 DCMI 指标的采集。
+
+  默认值：true。开启后采集：健康状态、功耗、温度、电压、利用率、频率、
+  网络健康、HBM 与 ECC 等信息。
+
+- **EnablePCIe**：控制 PCIe 链路指标的采集。
+
+  默认值：false。开启后采集：链路能力与状态（速率/宽度）。
+
+- **EnableHCCN**：控制 HCCN 网络指标的采集。
+
+  默认值：false。开启后通过 `hccn_tool` 子进程采集 HCCN 指标。
 
 ### 10. Pod 配置
 

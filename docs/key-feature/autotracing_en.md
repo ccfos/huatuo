@@ -19,7 +19,7 @@ AutoTracing is an event-driven automatic diagnosis mechanism. When a host or con
 
 Collected artifacts include eBPF flame graphs (system-wide or container-scoped CPU call stack samples via `perf`), D-state process kernel call stacks, disk IO call stacks, and process memory usage rankings. Each event type has a built-in cooldown period (30 minutes by default) to prevent redundant data from continuous triggers.
 
-Five event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container D-state load spike), `iotracing` (disk IO anomaly), and `memburst` (memory burst allocation).
+Seven event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container D-state load spike), `iotracing` (disk IO anomaly), `memburst` (memory burst allocation), `irqtracing` (per-CPU IRQ/softirq utilization spike), and `memory_threshold_snapshot` (Go/HotSpot/CPython memory snapshot after container memory pressure).
 
 ## 🎯 Use Cases
 
@@ -79,6 +79,10 @@ All events provide default values and work without configuration:
 | `dload` | Container | D-state process load EMA > 5 | D-state process accumulation, IO blocking |
 | `iotracing` | Host | Any IO metric exceeds threshold for two consecutive samples | Saturated disk IO, high IO wait latency |
 | `memburst` | Host | Anonymous memory ≥ 2× oldest window sample and ≥ 70% of total memory | Memory burst allocation, OOM precursor |
+| `irqtracing` | Host, per-CPU | Simultaneous IRQ/softirq utilization rise on at least `MinCPUs` CPUs, or a single CPU sustained above `UsageThreshold` | Interrupt storm, softirq hotspot |
+| `memory_threshold_snapshot` | Container | Container memory reaches the configured threshold (default 90%) or receives a memory-pressure notification | Memory object snapshot ahead of OOM (Go/HotSpot/CPython) |
+
+For irqtracing usage and rule configuration, refer to the [irqtracing documentation](/docs/best-practice/irqtracing_en.md). For memory_threshold_snapshot parameters and trigger conditions, refer to the [configuration reference](/docs/configuration/huatuo-bamai-configuration_en.md) (section 7.6).
 
 ### Fields
 
