@@ -416,6 +416,43 @@ graph TB
     S -->|Bulk API + auto retry| OS
 ```
 
+### Filter semantics
+
+The internal storage query API combines filters with AND. SQLite and
+Elasticsearch share the following contract for non-null scalar values:
+
+| Operator | Meaning |
+| --- | --- |
+| `OpEq`, `OpNe` | Equal / not equal; missing and null values do not match |
+| `OpGt`, `OpGte`, `OpLt`, `OpLte` | Strict / inclusive range bounds |
+| `OpIn` | Membership in a non-empty slice or array of scalar values |
+| `OpExists`, `OpNotExists` | Has / lacks a non-null queryable value; omit `Value` |
+
+Empty strings are literal values: `OpEq("")` matches an empty string, while
+`OpNe("")` requires an existing, non-null, non-empty string. To query missing
+fields, use `OpNotExists`; `OpEq("")` no longer means field absence. Host profiling
+queries use `OpNotExists` on `container_hostname` to preserve their selection.
+
+Operands accept built-in string, boolean, integer, and finite floating-point
+types. Range comparisons exclude booleans. `time.Time` and `timeutil.Timestamp`
+are normalized to UTC strings with nine fractional digits, including in `OpIn`.
+Nil, pointers, objects, nested collections, and non-finite numbers return
+`driver.ErrInvalidQuery`. Integer range bounds retain their original JSON
+precision; each backend's supported numeric domain and field mapping still apply.
+
+For Elasticsearch, callers must supply the exact indexed field: use the original
+field for a `keyword` mapping, or an explicitly configured keyword subfield such
+as `hostname.keyword` for a `text` mapping. The backend neither guesses subfields
+nor combines text and keyword queries. `OpNe` applies `exists` and `must_not term`
+to the same field. Full-text matching and array equality are outside this scalar
+comparison contract.
+
+Elasticsearch existence refers to indexed values, not `_source` key presence.
+Mapping options such as `ignore_above`, `null_value`, and normalizers can change
+existence or equality behavior. Use mappings that preserve the intended scalar
+values when requiring equivalence with SQLite. A date field cannot be compared
+to an empty string; use an existence operator when the intent is a populated date.
+
 ### Write Flow
 
 `Save` returns immediately after the event is buffered. Background workers flush the buffer to the remote backend when **any** of the following triggers fire: byte threshold, time threshold, or process shutdown. The local directory write is synchronous and independent of the remote Bulk path.
@@ -459,9 +496,71 @@ Bulk failures are split into two layers with different retry semantics:
 | **Whole-batch retry** | Transport error (connect / timeout / TLS)<br>HTTP status: `429 / 502 / 503 / 504` | Client retries with exponential backoff: 100 ms → 200 ms → 400 ms → 800 ms, up to **3 attempts**            | ✅ auto |
 | **Whole-batch reject**| HTTP status: `400 / 401 / 403 / 404 / 413`, etc.                              | Not retried; all records in the batch are dropped, an error is logged via `OnError`                        | ❌ drop |
 | **Per-item failure**  | 200 OK with per-item error: version conflict, mapping error, document too large| Not retried; only the failed item is dropped, `OnFailure` logs `index/id/status/type/reason`               | ❌ drop |
-| **Per-item success**  | 200 OK with per-item success                                                  | Considered durably indexed                                                                                 | —        |
+| **Per-item success**  | 200 OK with per-item success                                                  | Primary write succeeded; replica failures produce a warning with index, document ID, and failed shard count | —        |
 
 **Why this design**: 429/5xx and transport errors signal transient remote unavailability where retries are effective; 4xx (except 429) and per-item errors are client-side semantic issues (data shape, permissions) where retries would only amplify the failure — they should be surfaced via logs for human investigation.
+
+### Batched Reads
+
+`Query(ctx, query, consume)` calls the consumer synchronously for each nonempty
+batch. `Limit` caps the total records delivered after `Offset` matching records
+are skipped. `storage.Store.Query` requires a positive Limit and non-negative
+Offset and BatchSize before calling a backend; backends consume validated input.
+`BatchSize` controls each batch, defaults to 100 when zero, and is capped by the
+remaining total. Callers must supply a positive total limit when they need data.
+`Count` and `Values` use only `Filters` from the query and ignore `Sorts`, `Limit`,
+`Offset`, and `BatchSize`, including zero and negative pagination values. `Count`
+counts all matching records. `Values` uses its separate `size` argument, whose
+non-negative constraint is checked by `storage.Store.Values` before dispatch;
+backends do not repeat pagination or size validation for these operations.
+Local file storage remains write-only.
+
+SQLite streams one `SELECT ... LIMIT ... OFFSET ...` through rows. A consumer
+must not query the same SQLite backend synchronously while rows hold its single
+connection. Job recovery reads 1000 Jobs at a time using ascending IDs, then
+starts their supervisors after the read closes; status changes cannot shift the
+next page. Elasticsearch 7/8 and OpenSearch use Scroll snapshots, including for
+offsets beyond the result window. Deep offsets still require reading and
+skipping earlier records. Separate API calls do not share a snapshot.
+
+Each batch has independent ownership. Callback errors, decoding errors, backend
+errors, and cancellation stop the query immediately; earlier callback effects
+are not rolled back. Scroll cleanup uses a separate bounded context even after
+cancellation. Query requests are not retried because a lost Scroll response may
+already have advanced the cursor. Write retry behavior is unchanged.
+
+API defaults apply only when `limit` is omitted: Job lists default to 100 with a
+maximum of 1000; raw Profile pages default to 20 with a maximum of 100 and retain
+the 64 MiB response budget. Explicit zero, negative, or oversized limits are rejected. One additional
+record is fetched to determine `has_more`.
+
+Profile flamegraphs merge batches as they arrive, with a total budget of 100000
+windows. One extra record detects overflow and rejects the query with an
+instruction to narrow its time range or filters. Read or merge failure never
+returns a partial flamegraph. Input batches can be released as processing
+advances; the merged profile still grows with distinct stacks.
+
+#### Response Errors
+
+HTTP success does not guarantee a complete result. `Query` and `Values` return
+an error when a search times out or a shard fails. `Query` stops before
+delivering the failing page; already consumed batches remain consumed. `Values`
+does not return partial results.
+`Count` returns zero and an error on shard failure. A search timeout takes
+precedence over shard failures. Shard errors include the failed shard count and
+the first failure's available type, reason, and nested causes.
+
+After an HTTP success response, `DeleteByQuery` checks for timeouts and failures
+in that order and returns the first error with the reported deleted count. HTTP errors
+return zero and an error, except that a missing index returns zero without an error.
+Any completed deletions are not rolled back.
+Direct writes and deletes retain primary-operation success when replicas fail;
+they log a warning with the available failure details. Bulk writes also report
+replica failures through warnings, without retrying the successful primary write.
+
+HTTP errors include the response status and available Elasticsearch error details.
+Unrecognized or oversized error bodies are reported as text, limited to 4 KiB
+plus a truncation marker.
 
 #### Data-Loss Scenarios
 

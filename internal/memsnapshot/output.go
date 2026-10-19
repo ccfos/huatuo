@@ -27,7 +27,7 @@ const (
 	// MaxSnapshotBytes leaves storage metadata headroom around the embedded snapshot.
 	MaxSnapshotBytes       = 512 << 10
 	maxRuntimeVersionBytes = 256
-	maxReasonBytes         = 4 << 10
+	maxStatusReasonBytes   = 4 << 10
 	maxEntryKindBytes      = 64
 	maxEntryNameBytes      = 4 << 10
 	maxStackFrames         = 64
@@ -46,12 +46,12 @@ func LimitOutput(snapshot *Snapshot, topK int) error {
 	var truncated bool
 	snapshot.RuntimeVersion, truncated = limitString(snapshot.RuntimeVersion,
 		maxRuntimeVersionBytes)
-	snapshot.HasOmittedData = snapshot.HasOmittedData || truncated
-	snapshot.Reason, truncated = limitString(snapshot.Reason, maxReasonBytes)
-	snapshot.HasOmittedData = snapshot.HasOmittedData || truncated
+	snapshot.OutputTruncated = snapshot.OutputTruncated || truncated
+	snapshot.StatusReason, truncated = limitString(snapshot.StatusReason, maxStatusReasonBytes)
+	snapshot.OutputTruncated = snapshot.OutputTruncated || truncated
 	if len(snapshot.Entries) > topK {
 		snapshot.Entries = snapshot.Entries[:topK]
-		snapshot.HasOmittedData = true
+		snapshot.OutputTruncated = true
 	}
 	// Own the retained prefix even when it was already within TopK. Providers
 	// may return a short view backed by a much larger allocation.
@@ -60,15 +60,15 @@ func LimitOutput(snapshot *Snapshot, topK int) error {
 		entry := &snapshot.Entries[index]
 		entry.Kind, truncated = limitString(entry.Kind, maxEntryKindBytes)
 		if truncated {
-			snapshot.HasOmittedData = true
+			snapshot.OutputTruncated = true
 		}
 		entry.Name, truncated = limitString(entry.Name, maxEntryNameBytes)
 		if truncated {
-			snapshot.HasOmittedData = true
+			snapshot.OutputTruncated = true
 		}
 		if len(entry.Stack) > maxStackFrames {
 			entry.Stack = entry.Stack[:maxStackFrames]
-			snapshot.HasOmittedData = true
+			snapshot.OutputTruncated = true
 		}
 		// Detach a retained stack prefix from provider-owned backing storage even
 		// when its length did not require truncation.
@@ -77,7 +77,7 @@ func LimitOutput(snapshot *Snapshot, topK int) error {
 			entry.Stack[frameIndex], truncated = limitString(entry.Stack[frameIndex],
 				maxStackFrameBytes)
 			if truncated {
-				snapshot.HasOmittedData = true
+				snapshot.OutputTruncated = true
 			}
 		}
 	}
@@ -99,7 +99,7 @@ func LimitOutput(snapshot *Snapshot, topK int) error {
 		return nil
 	}
 
-	snapshot.HasOmittedData = true
+	snapshot.OutputTruncated = true
 	baseSize, err = snapshotBaseSize(snapshot)
 	if err != nil {
 		return err

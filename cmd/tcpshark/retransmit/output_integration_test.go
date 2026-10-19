@@ -36,7 +36,11 @@ func TestSocketWriterPreservesCorrelationResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	received := make(chan *types.TCPRetransmitTracing, 1)
-	toolstream.Register(server, "tcpshark", func(_ *toolstream.Session, event *types.TCPRetransmitTracing) error {
+	toolstream.Register(server, "tcpshark", func(_ context.Context, request *toolstream.Request[types.TCPRetransmitTracing]) error {
+		if request.Data == nil {
+			return nil
+		}
+		event := request.Data
 		select {
 		case received <- event:
 			return nil

@@ -35,11 +35,11 @@ _server_pid=""
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/net-rx-latency.XXXXXX")
 cleanup_all() {
 	[[ -n "${_server_pid}" ]] && stop_by_pid "${_server_pid}" 2 || true
-	tcp_namespace_cleanup
+	namespace_cleanup
 }
 trap cleanup_all EXIT
 
-tcp_namespace_setup rxlat "${SERVER_IP}" "${CLIENT_IP}"
+namespace_setup_with_pair rxlat "${SERVER_IP}" "${CLIENT_IP}"
 sleep 0.5
 
 integration_huatuo_bamai_start \
@@ -53,16 +53,16 @@ compile_user_fixture \
 	"${ROOT_DIR}/integration/testdata/test_net_rx_latency_user.c" \
 	"${SLOW_TCP_SERVER}"
 
-ip netns exec "${TCP_NS_SERVER}" "${SLOW_TCP_SERVER}" \
+ip netns exec "${NETNS_SERVER}" "${SLOW_TCP_SERVER}" \
 	> "${WORK_DIR}/testserver.log" 2>&1 &
 server_pid=$!
 _server_pid="${server_pid}"
 sleep 0.5
 
 for i in $(seq 1 5); do
-	log_info "curl request #${i} to ${TCP_NS_SERVER_ADDR}:${TEST_PORT}"
-	ip netns exec "${TCP_NS_CLIENT}" curl -s --connect-timeout 1 --max-time 2 \
-		http://${TCP_NS_SERVER_ADDR}:${TEST_PORT}/ \
+	log_info "curl request #${i} to ${NETNS_SERVER_ADDR}:${TEST_PORT}"
+	ip netns exec "${NETNS_CLIENT}" curl -s --connect-timeout 1 --max-time 2 \
+		http://${NETNS_SERVER_ADDR}:${TEST_PORT}/ \
 		>> "${WORK_DIR}/curl.log" 2>&1 || true
 done
 
@@ -72,7 +72,7 @@ EVENTS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/events/net_rx_latency"
 [[ -f "${EVENTS_FILE}" ]] || fatal "no events file: ${EVENTS_FILE}"
 
 # Filter events matching our veth IP pair, then validate.
-MATCHED=$(jq -s --arg saddr "${TCP_NS_CLIENT_ADDR}" --arg daddr "${TCP_NS_SERVER_ADDR}" \
+MATCHED=$(jq -s --arg saddr "${NETNS_CLIENT_ADDR}" --arg daddr "${NETNS_SERVER_ADDR}" \
 	'[.[] | select(
 		(.tracer_data.tcp_saddr == $saddr)
 		and (.tracer_data.tcp_daddr == $daddr)
@@ -91,7 +91,7 @@ MATCHED=$(jq -s --arg saddr "${TCP_NS_CLIENT_ADDR}" --arg daddr "${TCP_NS_SERVER
 
 event_count=$(echo "${MATCHED}" | jq 'length' 2> /dev/null || echo 0)
 event_count=$(echo "${event_count}" | tr -d '[:space:]')
-log_info "net_rx_latency events (${TCP_NS_CLIENT_ADDR} -> ${TCP_NS_SERVER_ADDR}): ${event_count}"
+log_info "net_rx_latency events (${NETNS_CLIENT_ADDR} -> ${NETNS_SERVER_ADDR}): ${event_count}"
 
 if [[ "${event_count}" -eq 0 ]]; then
 	fatal "no matching net_rx_latency events found"
