@@ -27,10 +27,13 @@ type Stack struct {
 type processor struct {
 	frames   []frame
 	maxDepth int
-	// indexes holds one name→position map per depth level, replacing the
-	// linear findFrame scan per processed stack frame.
-	indexes []map[string]int
+	// childIndexes holds one name→position map per parent frame (root is
+	// keyed by rootIndex), replacing the linear findFrame scan per
+	// processed stack frame.
+	childIndexes map[int]map[string]int
 }
+
+const rootIndex = -1
 
 func (p *processor) Process(stack Stack) {
 	frames := &p.frames
@@ -40,11 +43,12 @@ func (p *processor) Process(stack Stack) {
 		p.maxDepth = n
 	}
 
+	parent := rootIndex
 	for depth, name := range stack.Names {
-		if depth == len(p.indexes) {
-			p.indexes = append(p.indexes, make(map[string]int))
+		if p.childIndexes == nil {
+			p.childIndexes = make(map[int]map[string]int)
 		}
-		level := p.indexes[depth]
+		level := p.childIndexes[parent]
 
 		index, ok := level[name]
 		if !ok {
@@ -54,11 +58,16 @@ func (p *processor) Process(stack Stack) {
 			}
 			*frames = append(*frames, f)
 			index = len(*frames) - 1
+			if level == nil {
+				level = make(map[string]int)
+				p.childIndexes[parent] = level
+			}
 			level[name] = index
 		}
 		fr := &(*frames)[index]
 		fr.SampleCount += stack.Samples
 		frames = &fr.Children
+		parent = index
 	}
 }
 
