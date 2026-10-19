@@ -23,14 +23,9 @@ source "${ROOT_DIR}/integration/lib.sh"
 readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/TestProfilerJavaMemory.java"
 readonly PROFILER_DURATION=10
-readonly PROFILER_AGGR_INTERVAL=10
 readonly EXPECTED_METHOD="TestProfilerJavaMemory.allocateHotMethod"
 
-command -v java > /dev/null || skip "java is not installed"
-command -v javac > /dev/null || skip "javac is not installed"
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -x "${PROFILER_TOOL_DIR}/bin/asprof" ]] \
-	|| skip "asprof missing: ${PROFILER_TOOL_DIR}/bin/asprof"
+require_commands jq java javac "${PROFILER_TOOL_DIR}/bin/asprof"
 [[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
 	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 
@@ -54,12 +49,14 @@ java_fixture_is_ready() {
 
 run_profile_case() {
 	local mode=$1
+	local aggr_interval=$2
 	local out_dir="${WORK_DIR}/${mode}"
 	local captured_bytes
 	local folded_file
 
 	mkdir -p "${out_dir}"
-	java \
+	# Force outside-TLAB allocation, whose legacy _[k] suffix resembles a kernel frame.
+	java -XX:-UseTLAB -Xmx256m \
 		-XX:CompileCommand=dontinline,TestProfilerJavaMemory.allocateHotMethod \
 		-cp "${WORK_DIR}" TestProfilerJavaMemory \
 		> "${out_dir}/java.out" 2> "${out_dir}/java.err" &
@@ -76,12 +73,16 @@ run_profile_case() {
 		--pid "${PROFILER_TARGET_PID}" \
 		--tool-path "${PROFILER_TOOL_DIR}" \
 		--duration "${PROFILER_DURATION}" \
-		--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
+		--aggr-interval "${aggr_interval}" \
 		--output-format collapsed \
 		--output-path "${out_dir}" \
 		> "${out_dir}/profiler.out" 2> "${out_dir}/profiler.err"; then
 		fatal "Java memory profiler failed for mode=${mode}"
 	fi
+
+	assert_java_profiler_streams "${out_dir}/streaming" "${TOOL_BIN}" \
+		--type memory --language java --memory-mode "${mode}" \
+		--pid "${PROFILER_TARGET_PID}" --tool-path "${PROFILER_TOOL_DIR}"
 
 	stop_by_pid "${PROFILER_TARGET_PID}" 5
 	PROFILER_TARGET_PID=""
@@ -91,12 +92,17 @@ run_profile_case() {
 		'index($0, method) { total += $NF } END { printf "%.0f", total }' \
 		"${folded_file}")
 	((captured_bytes > 0)) || fatal "no allocation bytes captured for mode=${mode}"
+	grep -Eq ';byte\[\] [0-9]+$' "${folded_file}" \
+		|| fatal "missing unannotated byte[] allocation frame for mode=${mode}: $(cat "${folded_file}")"
+	if grep -Eq '_\[(k|i)\]' "${folded_file}"; then
+		fatal "allocation frame retains a color suffix for mode=${mode}: $(cat "${folded_file}")"
+	fi
 	log_info "Java memory profiler mode=${mode} captured_bytes=${captured_bytes}"
 }
 
-for mode in object_alloc object_usage; do
-	run_profile_case "${mode}"
-done
+# Cover periodic output and a session that only emits its final output.
+run_profile_case object_alloc 3
+run_profile_case object_usage "${PROFILER_DURATION}"
 
 # Sampling windows and GC timing are nondeterministic, so object_usage is not
 # required to be less than object_alloc. Each mode only needs a positive value.

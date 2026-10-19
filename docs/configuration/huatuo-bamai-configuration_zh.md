@@ -705,7 +705,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 | RunTracingToolTimeout | Go、Java、Python 统一使用的协作式采集超时时间，单位秒，默认 2，必须为正数 |
 | MaxMemoryObjectEntries | 单次快照最多保留的内存对象排序条目数，范围 1–100，默认 10；最终 JSON 上限为 512 KiB，超限会裁剪 |
 
-运行时识别另有固定的 1 秒预算，保存时间不计入采集预算。
+运行时识别和保存时间不计入采集预算，运行时识别没有独立超时限制。
 超时不能中断正在执行的同步读取，因此不是整个操作的耗时上限。
 
 **触发条件：**
@@ -721,13 +721,57 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 不进行周期采样。同一目标的重复通知会合并，不逐次统计跨越，也不提供水位恢复通知。
 抓取前会重新检查当前水位和目标身份。
 
-容器增删复用共享 CSS 通知，不携带完整路径。快照 watcher 在自身处理循环中通过
-InitPid 读取实际 memory cgroup 路径并保存；路径暂不可用或通知丢失时，
-复用延迟目录扫描恢复监听。恢复前可能漏掉内存压力触发。
+该功能依赖已启用的 pod 管理器。pod 根据共享 CSS 生命周期线索主动更新容器视图，
+向快照模块提供存量容器及包含实例代次、InitPID、memory cgroup 路径的增删事件。
+快照模块不再扫描 cgroup 树；订阅溢出后通过 pod 的完整视图恢复。
+上游同步失败时暂停采集，不能把失败视为容器全部删除。
+
+监控范围包括运行中的普通容器和可重启 init sidecar，不包括临时调试容器及普通 init 容器。
+普通注册失败或达到监听数量上限时记录日志并跳过该目录实例；监听失效后注销，不自动重试或补位。
+重复事件、全量更新和容器代次变化不会恢复失败的监听。目录实例替换、原容器退出后
+建立新的跟踪状态，或重启 huatuo-bamai 后可重新尝试。宿主机资源耗尽等致命错误仍会停止当前监听流程。
+每个被监控容器必须拥有独立的 memory cgroup 目录；监听和采集事件直接绑定一个容器实例。
+注册时若发现返回的监听已属于其他容器，则停止该功能、取消采集并释放监听；
+修正容器 cgroup 隔离后需重启 huatuo-bamai，不自动重试该冲突。
+目录实例替换通过 watcher 的移除通知使旧注册失效。
+采集及保存前核验容器代次和实际绑定、目录身份，以及目标进程身份和
+cgroup 归属。记录中的内存使用量和限额属于该容器的 cgroup。
 
 部署限制和结果查询见第 14 节。
 
-#### 7.7 已知问题过滤（IssuesList）
+#### 7.7 IRQTracing 自动追踪
+
+该模块检测单个 CPU 的 irq+softirq 利用率异常，并调用 `irqtracing` 采集
+softirq source 和 victim 调用栈。IRQ 结果统一写入 profiling 存储，需要
+配置 Elasticsearch。窗口可查询且发布标记保存成功后，任务才成功；仅配置
+LocalFile 不足以保存该结果。
+
+```bash
+[AutoTracing.IRQTracing]
+    Interval = 2
+    RunTracingToolTimeout = 3
+    IntervalTracing = 300
+    MaxEventsPerSecond = 1000
+    MinCPUs = 3
+    DeltaUsageThreshold = 20
+    RelativeIncreaseThreshold = 30
+    SustainedIntervals = 10
+    UsageThreshold = 80
+```
+
+- **Interval**：`/proc/stat` 中每 CPU irq+softirq 利用率的采样间隔，默认 2s。
+- **RunTracingToolTimeout**：单次 `irqtracing` 采集时长，默认 3s。
+- **IntervalTracing**：两次触发之间的最小间隔，默认 300s。
+- **MaxEventsPerSecond**：在被跟踪 CPU 上每秒采集的 source 和 victim 栈
+  样本总上限，默认 1000。守护进程将额度尽量均分给 `softirq_raise` 和
+  `softirq_entry`；默认每条流 500/s。该值必须在 2 到 8589934590 之间。
+- **MinCPUs**、**DeltaUsageThreshold** 和 **RelativeIncreaseThreshold**：
+  控制多 CPU irq+softirq 利用率突增规则；两个阈值分别表示利用率增加的
+  百分点和相对上一采样值的增长百分比。
+- **SustainedIntervals** 和 **UsageThreshold**：控制单 CPU
+  irq+softirq 持续高利用率规则的连续采样次数和利用率阈值。
+
+#### 7.8 已知问题过滤（IssuesList）
 
 ```bash
 # Autotracing configuration.
@@ -1303,10 +1347,12 @@ huatuo-bamai --region <region> [选项]
   v1 还需写入 `cgroup.event_control`。安全策略可能阻止访问。
 - 仅选择该 cgroup 的直接成员，排除 `oom_score_adj = -1000` 的进程。
   超过 4096 个 PID、64 KiB PID 数据或 1 秒预算时跳过选择。
-- 最多扫描 8192 个目录、监听 4096 个容器。通知丢失或注册失败时，
-  延迟约 1 秒补扫描，每轮最多三次；正常不周期扫描。
-  告警可能意味着部分容器未被覆盖，补扫描不能找回已遗漏的压力事件。
+- 最多监听 4096 个容器，目标由 pod 事件提供，不扫描 cgroup 树。
+  普通注册失败或容量不足时记录日志并跳过，监听失效后注销，不自动重试或补位。
+  同一实例不会因资源恢复或全量更新而重新注册，可能持续缺少压力监控。
 - 身份校验失败或容器元数据缺失时，不采集或不保存。
+- 进程选择与采集统一使用 Huatuo 所在 PID 命名空间的 `/proc`；
+  `--procfs-prefix` 不会重定向内存快照读取。
 
 下表为实验性实现范围，不代表所有版本均已验证：
 
@@ -1321,13 +1367,16 @@ huatuo-bamai --region <region> [选项]
 
 #### 14.2 输出与排障
 
-Info 日志记录监听状态，以及采集各阶段的开始、结束、耗时和结果。
-按容器/PID 找到采集记录，用 `capture_id` 关联各阶段。
-若只有开始而没有结束，使用 bamai 的 `/debug/pprof/goroutine?debug=2`
+Info 日志记录监听状态和采集尝试。
+进程选择和保存细节记录在 Debug 日志中。
+按容器/cgroup 找到采集记录，通过进程选择日志确定 PID；
+运行时诊断查看已保存快照的状态和原因字段。
+若采集只有开始而没有结束，使用 bamai 的 `/debug/pprof/goroutine?debug=2`
 （需相应权限）确认阻塞栈；没有日志不代表监听已停止。
 
-`tracer_data.process_memory` 每次触发读取一次 `/proc/<pid>/status`，
-也适用于 C/C++。运行时快照失败不影响已取得的摘要；
+`tracer_data.process_memory` 在运行时探测无错误返回后读取一次 `/proc/<pid>/status`，
+也适用于 C/C++ 等未识别的运行时。provider 失败会生成 `failed` 快照并保留已取得的摘要。
+探测或输出处理出错时不保存结果，错误原因查看采集日志；
 身份变化或任务取消时丢弃结果。不提供 PSS、映射排名或分配调用栈。
 
 | 字段（字节） | 来源 / 含义 |
@@ -1341,23 +1390,95 @@ Info 日志记录监听状态，以及采集各阶段的开始、结束、耗时
 | `page_table_bytes` | VmPTE，页表内存 |
 
 缺失或无效字段省略，不填 0；状态为 `partial`，完全无法读取时为
-`unavailable`，附带 `reason`。这些近似值不是 OOM 瞬间快照，也不能直接证明泄漏；
+`unavailable`，附带 `status_reason`。这些近似值不是 OOM 瞬间快照，也不能直接证明泄漏；
 候选进程不保证是最终 OOM victim。
 
 结果沿用现有 `[Storage]` 配置，见第 6 节，无需另配存储。
 LocalFile 文件名为 `memory_threshold_snapshot`；在 `tracing_documents` 中可按
 `tracer_name = memory_threshold_snapshot`、`tracer_type = autotracing` 查询。
 
-`started_timestamp` 记录采集尝试的开始时间，
-`observed_timestamp` 记录采集器给出的快照采集时间。
+`started_timestamp` 记录采集尝试的开始时间，位于目标进程选择之前。
+`observed_timestamp` 记录快照采集流程的开始时间，位于目标进程选定之后、
+运行时识别之前。
+
+`tracer_data.snapshot.entries` 的 `kind` 和统计口径如下：
+
+| 运行时 | `kind` | `objects` | `bytes` |
+|--------|--------|-----------|---------|
+| Go | `inuse_space_objects` | 根据已发布统计，按完整分配栈聚合、经采样校正的未释放对象数量估计 | 对应的未释放字节数估计 |
+| Java | `object_class` | 按类汇总的实例数量估计 | 对象自身占用的堆内存估计（shallow heap） |
+| Python | `gc_tracked_object_type` | 按类型汇总的 GC 跟踪对象数量 | 这些对象的浅层内存大小估计（shallow size） |
+
+Go 的 `bytes` 和 `objects` 分别对应 pprof 的 `inuse_space` 和
+`inuse_objects` 统计口径。Java 未计算 retained heap；Python 只覆盖 GC 跟踪对象，
+不能代表整个 Python 堆。历史记录中，Go 和 Java 的 `kind` 可能分别为
+`allocation_site` 和 `object_type`；读取历史记录的消费方应兼容这些旧值。
+
+Go 条目的 `name` 保留首个非 runtime 栈帧的纯函数名；全部为 runtime 栈帧时，
+取第一帧。`stack` 仍为字符串数组，按分配位置到上层调用者的顺序保存栈帧。
+文件和行号可用时，每帧使用 `函数名, 源文件:行号` 格式，逗号后留一个空格。例如：
+
+```json
+{
+  "kind": "inuse_space_objects",
+  "name": "example/cache.allocate",
+  "bytes": 131072,
+  "objects": 32,
+  "average_bytes": 4096,
+  "stack": [
+    "example/cache.allocate, example/cache/cache.go:123",
+    "example/service.load, example/service/load.go:58",
+    "main.main, example/cmd/server/main.go:42"
+  ]
+}
+```
+
+位置来自二进制的 Go 行号表，无需目标机器保存源码。路径保留编译元数据中的值，
+可能受 `-trimpath` 影响，不保证对应目标机器上的实际文件。缺少文件或有效行号时，
+栈帧只显示函数名；函数也无法解析时，保留十六进制 PC。历史记录的栈帧可能只有
+函数名或地址，消费方应兼容；函数名和路径本身也可能包含逗号，不能按逗号任意拆分。
+源码位置用于分配归因，不表示对象持有位置，也不保证完整展开内联调用链。
+
+Go 仅使用 runtime 已发布的 `active` 计数计算分配量与释放量之差，再进行采样校正，
+不合并尚未发布的 `future[0..2]`。runtime 延迟发布以等待相应的 GC 清扫释放统计，
+因此近期分配峰值可能尚未反映在结果中；结果是已发布堆画像的外部采样，
+不能代表触发瞬间的堆占用。采集不获取 runtime 锁、不主动发布计数，
+也不触发目标进程 GC，字段或 bucket 仍可能处于不同发布阶段，不能保证与 pprof 原子一致。
+
+完整扫描未观察到任何非零 `active` 计数时，返回 `unavailable`，
+`status_reason` 为 `Go heap profile has no published statistics`，不回退到 `future`。
+这可能发生在尚未 GC 的进程中，并不表示没有堆对象。
+已有发布计数但样本全部释放时，完整扫描仍可返回 `complete` 和空条目。
+扫描因其他问题中断时保留 `partial` 及其原因，不将未扫描到数据解释为尚未发布。
+
+Go 使用完整栈作为聚合键：Go 1.18–1.22 最多 32 帧，Go 1.23–1.26 最多 1024 帧；统一输出限制可将展示栈缩短到 64 帧，并设置 `output_truncated`。bucket 类型无效、栈深度超过读取上限或 bucket 链表成环时，扫描以 `partial` 结束，重复 bucket 不会再次累计。
+
+扫描遇到导致 `partial` 的问题后停止遍历后续 bucket，保留此前及当前批次中已读取且聚合预算允许的有效样本，再按内存字节数降序排列，最多保留 `MaxMemoryObjectEntries` 条结果。`status_reason` 只记录首次原因，收尾时不追加其他原因。
+
+任何 bucket 头、记录或栈读取失败（包括短读）都会使本次 Go 采集失败，丢弃所有运行时条目，包括此前批次的数据。采集器输出 `failed` 和读取错误，不逐区间重试。
+
+栈深度为 0 的样本不生成调用栈条目，也不会因空栈被标记为 `partial`。
+
+Go 快照要求采样率已知、采样已启用且 bucket 链表非空。采样率未知、采样已禁用或 bucket 链表为空时返回 `unavailable`，附带 `status_reason`，不返回条目。
+
+Go 采集在运行时读取、扫描、排序和条目生成阶段共用一个请求超时预算。
+超时后丢弃运行时条目，由采集器输出 `failed` 和超时原因，仍尝试读取进程内存摘要。
+取消采用协作方式，正在执行的系统调用或不支持取消的解析步骤可能在截止时间之后才结束。
 
 查看 `tracer_data.snapshot.status`（`complete`、`partial`、
-`unavailable`、`failed`），结合 `reason`、`runtime_version`、
+`unavailable`、`failed`），结合 `status_reason`、`runtime_version`、
 `duration_ms` 和 `output_truncated` 判断结果。
+
+`status_reason` 解释采集处于 `partial`、`unavailable` 或 `failed` 状态的原因，
+为空时省略。`snapshot` 和 `process_memory` 均使用该字段。
+历史记录可能使用 `reason`；同时读取新旧记录的消费方应兼容两种字段名。
+
+`duration_ms` 统计 provider 阶段耗时，向上取整为毫秒；成功、失败及超时快照
+使用相同口径，不包含运行时探测、进程内存摘要读取、输出处理和保存时间。
 
 | 问题 | 检查项 |
 |------|--------|
 | 没有输出 | 是否启用并重启、是否被 BlackList 禁用；v2 触发条件见 7.6 |
 | 有事件但没有候选进程 | 进程是否直接属于该 cgroup、是否允许 OOM kill、是否超过枚举限制 |
-| `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `reason` |
+| `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `status_reason` |
 | 资源耗尽后事件停止 | 检查 `RLIMIT_NOFILE`、`fs.inotify.max_user_watches`、`fs.inotify.max_user_instances`，调整后重启；其他事件不受此停止影响 |

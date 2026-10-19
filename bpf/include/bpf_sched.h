@@ -6,6 +6,9 @@
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 
+/* include/linux/sched.h */
+#define PF_KTHREAD 0x00200000
+
 struct task_struct___5_14 {
 	unsigned int __state;
 } __attribute__((preserve_access_index));

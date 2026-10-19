@@ -73,6 +73,7 @@ var (
 	// avoid GC
 	cgroupCssBpfInternal   *bpf.BPF
 	cgroupCssBpfCancelFunc context.CancelFunc
+	cgroupLifecycleDone    <-chan struct{}
 )
 
 type containerCssMetaData struct {
@@ -161,11 +162,11 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, 
 					if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
 						log.WithError(err).Warn("lost BPF perf event samples")
 						if lifecycle {
-							resyncMemoryCgroups()
+							requestContainerRefresh("", false)
 						}
 						continue
 					}
-					if !errors.Is(err, types.ErrExitByCancelCtx) {
+					if ctx.Err() == nil && !errors.Is(err, types.ErrExitByCancelCtx) {
 						log.Errorf("cgroup css sync read events: %v", err)
 					}
 					return
@@ -173,10 +174,6 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, 
 
 				// Parse once: lifecycle notifications and the CSS cache share the ID.
 				containerID := extractContainerID(bytesutil.ToStr(data.KnodeName[:]))
-				// Cache discovery is not a container creation notification.
-				if lifecycle {
-					publishMemoryCgroupChange(&data, containerID)
-				}
 
 				log.Debugf("sync container css data: %+v", &data)
 
@@ -187,6 +184,10 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, 
 					_ = cgroupDeleteCssData(&data, containerID)
 				default:
 					log.Errorf("unsupported cgroup CSS operation: %+v", data)
+				}
+				if lifecycle && containerID != "" &&
+					(data.Operation == abi.CgroupCSSOperationUpdate || data.Operation == abi.CgroupCSSOperationRemove) {
+					requestContainerRefresh(containerID, data.Operation == abi.CgroupCSSOperationRemove)
 				}
 			}
 		}
@@ -359,14 +360,15 @@ func cgroupCssInitEventSync() error {
 	cgroupLifecycleDone = done
 	go func() {
 		defer close(done)
-		superviseCgroupReader(childCtx, reader, func() (bpf.PerfEventReader, error) {
+		superviseCgroupCssEventLoop(childCtx, reader, func() (bpf.PerfEventReader, error) {
 			return cssBpf.EventPipeByName(childCtx, "cgroup_perf_events", bpf.DefaultPerfEventBufferBytes)
 		})
 	}()
 	return nil
 }
 
-func superviseCgroupReader(ctx context.Context, reader bpf.PerfEventReader,
+// superviseCgroupCssEventLoop maintains CSS event delivery with reader recovery until cancellation.
+func superviseCgroupCssEventLoop(ctx context.Context, reader bpf.PerfEventReader,
 	reopen func() (bpf.PerfEventReader, error),
 ) {
 	for {
@@ -378,7 +380,7 @@ func superviseCgroupReader(ctx context.Context, reader bpf.PerfEventReader,
 		if ctx.Err() != nil {
 			return
 		}
-		resyncMemoryCgroups()
+		requestContainerRefresh("", false)
 		for delay := time.Second; ; {
 			timer := time.NewTimer(delay)
 			select {
@@ -392,7 +394,7 @@ func superviseCgroupReader(ctx context.Context, reader bpf.PerfEventReader,
 			if err == nil {
 				log.Info("cgroup CSS event pipe recovered")
 				// Recover changes lost while the event pipe was unavailable.
-				resyncMemoryCgroups()
+				requestContainerRefresh("", false)
 				break
 			}
 			log.WithError(err).Warn("reopen cgroup CSS event pipe")
@@ -430,7 +432,8 @@ func cgroupCssExistedSync() error {
 	}
 	defer reader.Close()
 
-	cgroupCssEventSyncHandler(childCtx, reader, false)
+	done := cgroupCssEventSyncHandler(childCtx, reader, false)
+	defer func() { cancel(); _ = reader.Close(); <-done }()
 	time.Sleep(100 * time.Millisecond)
 
 	cgroupCssNotifyFile()
@@ -451,11 +454,14 @@ func containerCgroupCssInit() error {
 	if cgroupPodLifecycleOwned {
 		return nil
 	}
-	if err := acquireCgroupLifecycle(); err != nil {
+	if err := cgroupInitSubSysIDs(); err != nil {
+		return err
+	}
+	if err := cgroupCssInitEventSync(); err != nil {
 		return err
 	}
 	if err := cgroupCssExistedSync(); err != nil {
-		releaseCgroupLifecycle()
+		closeCgroupLifecycle()
 		return err
 	}
 	cgroupPodLifecycleOwned = true
@@ -475,7 +481,7 @@ func containerCgroupCssRelease() {
 	defer cgroupPodLifecycleMu.Unlock()
 	if cgroupPodLifecycleOwned {
 		cgroupPodLifecycleOwned = false
-		releaseCgroupLifecycle()
+		closeCgroupLifecycle()
 	}
 }
 
@@ -653,7 +659,8 @@ func triggerContainerCSSSync(cgroupPath string) error {
 	defer reader.Close()
 
 	// Start event handler
-	cgroupCssEventSyncHandler(childCtx, reader, false)
+	done := cgroupCssEventSyncHandler(childCtx, reader, false)
+	defer func() { cancel(); _ = reader.Close(); <-done }()
 
 	// Give BPF time to initialize
 	time.Sleep(100 * time.Millisecond)

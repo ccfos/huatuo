@@ -15,7 +15,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -109,7 +111,7 @@ func (s *jsonWriter) Write(ev *types.DropWatchTracing) error {
 type socketWriter struct{ client *toolstream.Client }
 
 func (s *socketWriter) Write(ev *types.DropWatchTracing) error {
-	return s.client.Send(ev)
+	return s.client.Send(context.Background(), ev, toolstream.SendOptions{})
 }
 
 type writerOptions struct {
@@ -122,16 +124,18 @@ type writerOptions struct {
 
 func newWriter(output io.Writer, options *writerOptions) (writer, func() error, error) {
 	if options.socketPath != "" {
-		client, err := toolstream.NewClient(toolstream.ClientOptions{
-			SockPath: options.socketPath,
-			ToolName: options.toolName,
-			Version:  options.version,
-			TaskID:   options.taskID,
+		client, err := toolstream.NewClient(&toolstream.ClientOptions{
+			SockPath:    options.socketPath,
+			ServiceName: options.toolName,
+			Version:     options.version,
+			TaskID:      options.taskID,
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("create event sink: %w", err)
 		}
-		return &socketWriter{client: client}, client.End, nil
+		return &socketWriter{client: client}, func() error {
+			return errors.Join(client.Send(context.Background(), nil, toolstream.SendOptions{End: true}), client.Close())
+		}, nil
 	}
 
 	switch options.outputFormat {
@@ -160,7 +164,6 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropwatch.ReasonNames, sour
 	metadata := dropwatch.ResolveMetadata(&ev.Meta, names)
 
 	return &types.DropWatchTracing{
-		KtimeNS:                 ev.Meta.KernelObservedNS,
 		ObservedTimestamp:       observedTimestamp,
 		KernelObservedTimestamp: &kernelObservedTimestamp,
 		DropSource:              metadata.Source,

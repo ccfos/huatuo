@@ -27,7 +27,7 @@ import (
 	"github.com/ccfos/huatuo/internal/timeutil"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
 	"github.com/ccfos/huatuo/internal/randomid"
@@ -56,12 +56,16 @@ type pendingIOTracingReason struct {
 
 func init() {
 	tracing.RegisterEventTracing(iotracingToolName, newIOTracing)
-	toolstream.RegisterDefault[*types.IOTracingSnapshot](iotracingToolName, handleIotracingEvent)
+	toolstream.RegisterDefault[types.IOTracingSnapshot](iotracingToolName, handleIotracingEvent)
 }
 
-func handleIotracingEvent(sess *toolstream.Session, ev *types.IOTracingSnapshot) error {
+func handleIotracingEvent(_ context.Context, request *toolstream.Request[types.IOTracingSnapshot]) error {
+	if request.Data == nil {
+		return nil
+	}
+	ev := request.Data
 	var pending *pendingIOTracingReason
-	if v, ok := pendingReasons.LoadAndDelete(sess.TaskID); ok {
+	if v, ok := pendingReasons.LoadAndDelete(request.TaskID); ok {
 		pending = v.(*pendingIOTracingReason)
 		close(pending.received)
 	}
@@ -441,29 +445,18 @@ func (i *ioTracing) Start(ctx context.Context) error {
 		"--max-files-per-process", strconv.Itoa(i.maxFilesPerProcess),
 	}
 
-	process, err := exec.New(exec.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, iotracingToolName),
 		Args: args,
 	})
 	if err != nil {
 		pendingReasons.Delete(taskID)
-		return fmt.Errorf("build iotracing command: %w", err)
-	}
-	if err := process.Run(ctx); err != nil {
-		pendingReasons.Delete(taskID)
-		if errors.Is(err, exec.ErrStopFailed) {
-			stopErr := process.Stop(ctx)
-			if stopErr == nil {
-				log.Info("iotracing stopped")
-				return nil
-			}
-			err = errors.Join(err, fmt.Errorf("retry stop iotracing: %w", stopErr))
-		} else if ctx.Err() != nil {
+		if errors.Is(err, executil.ErrRunCanceled) || errors.Is(err, executil.ErrRunTimeout) {
 			log.Info("iotracing stopped")
 			return nil
 		}
-		if stderr := process.Stderr(); len(stderr) > 0 {
-			return fmt.Errorf("run iotracing: %w; stderr: %s", err, stderr)
+		if len(result.Stderr) > 0 {
+			return fmt.Errorf("run iotracing: %w; stderr: %s", err, result.Stderr)
 		}
 		return fmt.Errorf("run iotracing: %w", err)
 	}

@@ -15,20 +15,17 @@
 package java
 
 import (
-	"bufio"
 	"context"
 	"debug/elf"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
-	"golang.org/x/sys/unix"
+	"github.com/ccfos/huatuo/internal/symbol"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
@@ -50,8 +47,6 @@ type vmImage struct {
 	symbols     map[string]uint64
 	readable    []addressRange
 }
-
-const maxJavaReleaseBytes = 64 << 10
 
 func (image *vmImage) displayVersion() string {
 	if image == nil {
@@ -122,7 +117,13 @@ func discoverVM(ctx context.Context, procRoot string, pid int) (*vmImage, error)
 		return nil, fmt.Errorf("open target libjvm.so: %w", err)
 	}
 	defer imageFile.Close()
-	file, err := memsnapshot.ReadELFMetadata(ctx, imageFile)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	file, err := elf.NewFile(imageFile)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read target libjvm.so ELF metadata: %w", err)
 	}
@@ -133,17 +134,17 @@ func discoverVM(ctx context.Context, procRoot string, pid int) (*vmImage, error)
 	}
 	loadBias, err := memsnapshot.FindELFLoadBias(file, mappings, &selectedMap)
 	if err != nil {
-		return nil, fmt.Errorf("%w: cannot determine libjvm.so load bias",
-			errHotSpotUnavailable)
+		return nil, fmt.Errorf("determine libjvm.so load bias: %w", err)
 	}
-	dynamicSymbols, err := memsnapshot.ReadELFSymbols(ctx, file, elf.SHT_DYNSYM,
+	dynamicSymbols, err := symbol.ReadELFSymbols(ctx, file, elf.SHT_DYNSYM,
 		maxELFMetadataBytes, maxELFSymbols, func(name string) bool {
 			return strings.HasPrefix(name, "gHotSpotVM")
 		})
 	if err != nil {
-		return nil, unsupportedHotSpot(
-			"libjvm.so dynamic symbols are unavailable",
-		)
+		if errors.Is(err, elf.ErrNoSymbols) {
+			return nil, unsupportedHotSpot("libjvm.so has no dynamic symbols")
+		}
+		return nil, fmt.Errorf("read libjvm.so dynamic symbols: %w", err)
 	}
 	symbols := make(map[string]uint64, len(dynamicSymbols))
 	for _, symbol := range dynamicSymbols {
@@ -162,127 +163,4 @@ func discoverVM(ctx context.Context, procRoot string, pid int) (*vmImage, error)
 	return &vmImage{
 		javaVersion: version, symbols: symbols, readable: readable,
 	}, nil
-}
-
-// Reopen only an already validated regular inode; no target pathname is followed.
-func reopenPinnedRegular(pinned *os.File) (*os.File, error) {
-	path := fmt.Sprintf("/proc/self/fd/%d", pinned.Fd())
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-	return os.NewFile(uintptr(fd), pinned.Name()), nil
-}
-
-// openJavaRelease walks beneath the pinned target root, rejecting symlinks and
-// special files. O_PATH pins the inode without opening a device or FIFO for I/O. Regular
-// filesystem I/O can still block in the kernel; this is not a hard deadline.
-func openJavaRelease(ctx context.Context, root, relative string) (*os.File, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, "../") {
-		return nil, errors.New("Java release path escapes target root")
-	}
-	fd, err := unix.Open(root, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = unix.Close(fd) }()
-	parts := strings.Split(filepath.Clean(relative), string(filepath.Separator))
-	for index, part := range parts {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if index == len(parts)-1 {
-			releaseFD, err := unix.Openat(fd, part, unix.O_PATH|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-			if err != nil {
-				return nil, err
-			}
-			file := os.NewFile(uintptr(releaseFD), relative)
-			stat, err := file.Stat()
-			if err == nil && !stat.Mode().IsRegular() {
-				err = errors.New("Java release is not a regular file")
-			}
-			if err == nil && stat.Size() > maxJavaReleaseBytes {
-				err = errors.New("Java release exceeds byte budget")
-			}
-			if err != nil {
-				_ = file.Close()
-				return nil, err
-			}
-			readable, err := reopenPinnedRegular(file)
-			_ = file.Close()
-			return readable, err
-		}
-		next, err := unix.Openat(fd, part, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-		if err != nil {
-			return nil, err
-		}
-		_ = unix.Close(fd)
-		fd = next
-	}
-	return nil, errors.New("empty Java release path")
-}
-
-// The release file only supplements display metadata. Unreadable or rejected
-// candidates must not prevent capture; displayVersion can use the VM release.
-// Cancellation still terminates discovery instead of becoming a missing version.
-func readJavaVersion(ctx context.Context, procRoot string, pid int, libjvmPath string) (string, error) {
-	root := filepath.Join(procRoot, strconv.Itoa(pid), "root")
-	directory := filepath.Dir(libjvmPath)
-	for depth := 0; depth < 6; depth++ {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		relative := filepath.Join(strings.TrimPrefix(directory, "/"), "release")
-		release, err := openJavaRelease(ctx, root, relative)
-		if err == nil {
-			version, readErr := parseJavaRelease(ctx, release)
-			_ = release.Close()
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-			if readErr == nil && version != "" {
-				return version, nil
-			}
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			break
-		}
-		directory = parent
-	}
-	return "", ctx.Err()
-}
-
-func parseJavaRelease(ctx context.Context, reader io.Reader) (string, error) {
-	limited := &io.LimitedReader{R: reader, N: maxJavaReleaseBytes + 1}
-	scanner := bufio.NewScanner(limited)
-	scanner.Buffer(make([]byte, 1024), 4096)
-	version := ""
-	lines := 0
-	for {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		if !scanner.Scan() {
-			break
-		}
-		lines++
-		if lines > 256 || limited.N == 0 {
-			return "", errors.New("Java release exceeds metadata budget")
-		}
-		key, value, found := strings.Cut(scanner.Text(), "=")
-		if found && key == "JAVA_VERSION" {
-			version = strings.Trim(value, "\"")
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return "", err
-	}
-	if limited.N == 0 {
-		return "", errors.New("Java release exceeds byte budget")
-	}
-	return version, ctx.Err()
 }

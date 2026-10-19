@@ -164,10 +164,23 @@ func (b *testBackend) Delete(_ context.Context, id string) error {
 	return b.deleteErr
 }
 
-func (b *testBackend) Query(_ context.Context, q driver.Query) ([]driver.Record, error) {
+func (b *testBackend) Query(_ context.Context, q driver.Query, consume func([]driver.Record) error) error {
 	b.queryCalls++
 	b.lastQuery = q
-	return b.queryRecords, b.queryErr
+	if b.queryErr != nil {
+		return b.queryErr
+	}
+	if q.Limit == 0 || len(b.queryRecords) == 0 {
+		return nil
+	}
+	for start := 0; start < min(len(b.queryRecords), q.Limit); {
+		end := min(start+q.ReadSize(), len(b.queryRecords), q.Limit)
+		if err := consume(b.queryRecords[start:end]); err != nil {
+			return err
+		}
+		start = end
+	}
+	return nil
 }
 
 func (b *testBackend) Count(_ context.Context, q driver.Query) (int64, error) {
@@ -814,6 +827,7 @@ func TestStoreQuery(t *testing.T) {
 			backend: &testBackend{queryErr: queryErr},
 			query: driver.Query{
 				Filters: []driver.Filter{{Field: "status", Op: driver.OpEq, Value: "running"}},
+				Limit:   1,
 			},
 			mapper: newTestMapper(),
 			validate: func(t *testing.T, entities []testEntity, err error, backend *testBackend) {
@@ -837,6 +851,7 @@ func TestStoreQuery(t *testing.T) {
 			},
 			query: driver.Query{
 				Filters: []driver.Filter{{Field: "status", Op: driver.OpEq, Value: "running"}},
+				Limit:   1,
 			},
 			mapper: &testMapper{
 				indexes:   newTestMapper().indexes,
@@ -864,13 +879,16 @@ func TestStoreQuery(t *testing.T) {
 				return
 			}
 
-			entities, queryErr := store.Query(t.Context(), tc.query)
+			var entities []testEntity
+			queryErr := store.Query(t.Context(), tc.query, func(batch []testEntity) error {
+				entities = append(entities, batch...)
+				return nil
+			})
 			tc.validate(t, entities, queryErr, tc.backend)
 		})
 	}
 }
 
-// TestStoreCount covers the Count path: verifies valid queries are forwarded to the backend, invalid pagination is rejected early, and backend errors are propagated.
 func TestStoreCount(t *testing.T) {
 	countErr := errors.New("count failed")
 
@@ -897,24 +915,6 @@ func TestStoreCount(t *testing.T) {
 				}
 				if backend.countCalls != 1 {
 					t.Errorf("backend Count() call count = %d, want 1", backend.countCalls)
-				}
-			},
-		},
-		{
-			name:    "invalid query",
-			backend: &testBackend{},
-			query: driver.Query{
-				Limit: -1,
-			},
-			validate: func(t *testing.T, count int64, err error, backend *testBackend) {
-				if !errors.Is(err, driver.ErrInvalidQuery) {
-					t.Errorf("Count() error = %v, want ErrInvalidQuery", err)
-				}
-				if count != 0 {
-					t.Errorf("Count() = %d, want 0", count)
-				}
-				if backend.countCalls != 0 {
-					t.Errorf("backend Count() call count = %d, want 0", backend.countCalls)
 				}
 			},
 		},
@@ -1041,6 +1041,128 @@ func TestStoreTerms(t *testing.T) {
 
 			terms, valuesErr := store.Values(t.Context(), tc.field, tc.query, tc.size)
 			tc.validate(t, terms, valuesErr, tc.backend)
+		})
+	}
+}
+
+func TestStoreAggregationsIgnorePagination(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		query driver.Query
+	}{
+		{name: "zero pagination"},
+		{name: "positive pagination", query: driver.Query{Limit: 1, Offset: 100, BatchSize: 1}},
+		{name: "negative pagination", query: driver.Query{Limit: -1, Offset: -1, BatchSize: -1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &testBackend{countValue: 3, valuesValue: []string{"pending", "running"}}
+			store, err := NewStore[testEntity](t.Context(), "test", backend, "jobs", newTestMapper())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			query := tc.query
+			query.Filters = []driver.Filter{{Field: "user_id", Op: driver.OpEq, Value: "user-1"}}
+			count, err := store.Count(t.Context(), query)
+			if err != nil || count != 3 || backend.countCalls != 1 {
+				t.Fatalf("Count() = (%d, %v), calls = %d; want (3, nil), one call", count, err, backend.countCalls)
+			}
+			if !reflect.DeepEqual(backend.lastQuery.Filters, query.Filters) {
+				t.Fatalf("Count() filters = %v, want %v", backend.lastQuery.Filters, query.Filters)
+			}
+
+			values, err := store.Values(t.Context(), "status", query, 2)
+			if err != nil || !reflect.DeepEqual(values, backend.valuesValue) || backend.valuesCalls != 1 {
+				t.Fatalf("Values() = (%v, %v), calls = %d; want %v, nil, one call",
+					values, err, backend.valuesCalls, backend.valuesValue)
+			}
+			if !reflect.DeepEqual(backend.lastQuery.Filters, query.Filters) || backend.valuesSize != 2 {
+				t.Fatalf("Values() filters = %v, size = %d; want %v, 2",
+					backend.lastQuery.Filters, backend.valuesSize, query.Filters)
+			}
+		})
+	}
+}
+
+func TestStoreQueryStopsAfterConsumerOrDecodeFailure(t *testing.T) {
+	for _, failure := range []string{"consumer", "decode", "cancel", "none"} {
+		t.Run(failure, func(t *testing.T) {
+			backend := &testBackend{queryRecords: []driver.Record{
+				{ID: "first", Data: []byte(`{"id":"first"}`)},
+				{ID: "second", Data: []byte(`{"id":"second"}`)},
+				{ID: "third", Data: []byte(`{"id":"third"}`)},
+			}}
+			mapper := newTestMapper()
+			store, err := NewStore[testEntity](t.Context(), "sqlite", backend, "jobs", mapper)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			failureErr := errors.New("injected failure")
+			var batches [][]testEntity
+			err = store.Query(ctx, driver.Query{Limit: 3, BatchSize: 1}, func(batch []testEntity) error {
+				batches = append(batches, batch)
+				switch failure {
+				case "consumer":
+					return failureErr
+				case "decode":
+					mapper.decodeErr = failureErr
+				case "cancel":
+					cancel()
+				}
+				return nil
+			})
+			if failure == "none" {
+				if err != nil || len(batches) != 3 {
+					t.Fatalf("batches=%v error=%v", batches, err)
+				}
+				if batches[0][0].ID != "first" || batches[1][0].ID != "second" {
+					t.Fatal("earlier batch was overwritten")
+				}
+				return
+			}
+			want := failureErr
+			if failure == "decode" {
+				want = driver.ErrDecodeFailed
+			}
+			if failure == "cancel" {
+				want = context.Canceled
+			}
+			if !errors.Is(err, want) || len(batches) != 1 {
+				t.Fatalf("batches=%d error=%v, want one batch and %v", len(batches), err, want)
+			}
+		})
+	}
+}
+
+func TestStoreQueryValidatesBeforeBackend(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		query       driver.Query
+		nilConsumer bool
+		want        error
+	}{
+		{"negative limit", driver.Query{Limit: -1}, false, driver.ErrInvalidQuery},
+		{"negative offset", driver.Query{Limit: 1, Offset: -1}, false, driver.ErrInvalidQuery},
+		{"negative batch size", driver.Query{Limit: 1, BatchSize: -1}, false, driver.ErrInvalidQuery},
+		{"missing consumer", driver.Query{Limit: 1}, true, driver.ErrInvalidQuery},
+		{"zero limit", driver.Query{}, false, driver.ErrInvalidQuery},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &testBackend{}
+			store, err := NewStore[testEntity](t.Context(), "sqlite", backend, "jobs", newTestMapper())
+			if err != nil {
+				t.Fatal(err)
+			}
+			consumer := func([]testEntity) error { t.Error("invalid query called consumer"); return nil }
+			if tc.nilConsumer {
+				consumer = nil
+			}
+			err = store.Query(t.Context(), tc.query, consumer)
+			if !errors.Is(err, tc.want) || backend.queryCalls != 0 {
+				t.Fatalf("error=%v calls=%d, want %v without backend call", err, backend.queryCalls, tc.want)
+			}
 		})
 	}
 }

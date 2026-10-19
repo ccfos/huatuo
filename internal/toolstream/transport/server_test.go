@@ -15,7 +15,6 @@
 package transport
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -29,7 +28,7 @@ import (
 type recordedChunk struct {
 	Session Session
 	Data    []byte
-	Flush   bool
+	Commit  bool
 	End     bool
 	Error   string
 }
@@ -46,7 +45,7 @@ func (r *recorder) handler(sess *Session, chunk ChunkMsg) {
 	r.captured = append(r.captured, recordedChunk{
 		Session: *sess,
 		Data:    append([]byte(nil), chunk.Data...),
-		Flush:   chunk.Flush,
+		Commit:  chunk.Commit,
 		End:     chunk.End,
 		Error:   chunk.Err,
 	})
@@ -93,13 +92,13 @@ func newPipedServer(t *testing.T) (rawClient net.Conn, clientEnc *capnp.Encoder,
 }
 
 // handshake sends a Connect frame via enc using Client.handshake.
-func handshake(t *testing.T, enc *capnp.Encoder, rawClient net.Conn, toolName, version, taskID string) error {
+func handshake(t *testing.T, enc *capnp.Encoder, rawClient net.Conn, serviceName, version, taskID string) error {
 	t.Helper()
-	return (&Client{encoder: enc, conn: rawClient}).handshake(toolName, version, taskID)
+	return (&Client{encoder: enc, conn: rawClient}).handshake(serviceName, "", version, taskID)
 }
 
 // sendChunk sends a Chunk frame via enc.
-func sendChunk(t *testing.T, enc *capnp.Encoder, data []byte, flush, end bool, errStr string) error {
+func sendChunk(t *testing.T, enc *capnp.Encoder, data []byte, commit, end bool, errStr string) error {
 	t.Helper()
 	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err != nil {
@@ -118,7 +117,7 @@ func sendChunk(t *testing.T, enc *capnp.Encoder, data []byte, flush, end bool, e
 			return fmt.Errorf("send chunk set data: %w", err)
 		}
 	}
-	chunk.SetFlush(flush)
+	chunk.SetCommit(commit)
 	chunk.SetEnd(end)
 	if errStr != "" {
 		if err := chunk.SetError(errStr); err != nil {
@@ -140,11 +139,11 @@ func TestNormalPath(t *testing.T) {
 			t.Logf("send connect: %v", err)
 			return
 		}
-		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c1","x":1}`), true, false, ""); err != nil {
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c1","x":1}`), false, false, ""); err != nil {
 			t.Errorf("sendChunk 1: %v", err)
 			return
 		}
-		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c2","x":2}`), true, false, ""); err != nil {
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c2","x":2}`), false, false, ""); err != nil {
 			t.Errorf("sendChunk 2: %v", err)
 			return
 		}
@@ -159,8 +158,8 @@ func TestNormalPath(t *testing.T) {
 		t.Fatalf("want 3 handler calls, got %d", len(got))
 	}
 	for i, c := range got {
-		if c.Session.ToolName != "dropwatch" {
-			t.Errorf("call %d ToolName=%q want %q", i, c.Session.ToolName, "dropwatch")
+		if c.Session.ServiceName != "dropwatch" {
+			t.Errorf("call %d ServiceName=%q want %q", i, c.Session.ServiceName, "dropwatch")
 		}
 		if c.Session.Version != "1.0" {
 			t.Errorf("call %d Version=%q want %q", i, c.Session.Version, "1.0")
@@ -210,7 +209,7 @@ func TestDataAndEndCombined(t *testing.T) {
 			t.Logf("send connect: %v", err)
 			return
 		}
-		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, true, ""); err != nil {
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), false, true, ""); err != nil {
 			t.Errorf("sendChunk: %v", err)
 		}
 	}()
@@ -237,7 +236,7 @@ func TestUnexpectedClose(t *testing.T) {
 			t.Logf("send connect: %v", err)
 			return
 		}
-		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, false, ""); err != nil {
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), false, false, ""); err != nil {
 			t.Errorf("sendChunk: %v", err)
 		}
 	}()
@@ -255,7 +254,7 @@ func TestInvalidFirstFrame(t *testing.T) {
 	go func() {
 		defer rawClient.Close()
 		// Send a chunk frame instead of a connect frame.
-		if err := sendChunk(t, clientEnc, []byte("payload"), true, false, ""); err != nil {
+		if err := sendChunk(t, clientEnc, []byte("payload"), false, false, ""); err != nil {
 			t.Errorf("sendChunk: %v", err)
 		}
 	}()
@@ -266,7 +265,7 @@ func TestInvalidFirstFrame(t *testing.T) {
 	}
 }
 
-func TestEmptyToolName(t *testing.T) {
+func TestEmptyServiceName(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
@@ -283,12 +282,12 @@ func TestEmptyToolName(t *testing.T) {
 	}
 }
 
-// TestEmptyToolNameClosesEarly pins that empty ToolName causes handleConn to
+// TestEmptyServiceNameClosesEarly pins that empty ServiceName causes handleConn to
 // return immediately rather than entering the Decode loop. Without this guard
 // the server would block waiting for a chunk forever; the test deliberately
 // omits the client-side close so that "accept-then-loop" behavior would hang
 // here until wait() trips its 2s timeout.
-func TestEmptyToolNameClosesEarly(t *testing.T) {
+func TestEmptyServiceNameClosesEarly(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	if err := handshake(t, clientEnc, rawClient, "", "v", ""); err != nil {
@@ -325,7 +324,7 @@ func TestDecodeFailureAfterConnect(t *testing.T) {
 	}
 }
 
-// TestClientRoundTrip verifies that newClient + SendChunk + SendEnd round-trip
+// TestClientRoundTrip verifies that NewClient + Send round-trip
 // produces the expected handler calls through a real UDS socket.
 func TestClientRoundTrip(t *testing.T) {
 	dir := t.TempDir()
@@ -347,7 +346,7 @@ func TestClientRoundTrip(t *testing.T) {
 	var c *Client
 
 	for range 20 {
-		c, err = NewClient(sockPath, "client-tool", "9.9", "task-rt")
+		c, err = NewClient(sockPath, "client-tool", "", "9.9", "task-rt")
 		if err == nil {
 			break
 		}
@@ -359,11 +358,11 @@ func TestClientRoundTrip(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	if err := c.SendChunk([]byte(`{"container_id":"abc","k":"v"}`), true); err != nil {
-		t.Fatalf("SendChunk: %v", err)
+	if err := c.Send(t.Context(), []byte(`{"container_id":"abc","k":"v"}`), SendOptions{}); err != nil {
+		t.Fatalf("send data: %v", err)
 	}
-	if err := c.SendEnd(); err != nil {
-		t.Fatalf("SendEnd: %v", err)
+	if err := c.Send(t.Context(), nil, SendOptions{End: true}); err != nil {
+		t.Fatalf("send end: %v", err)
 	}
 	_ = c.Close()
 
@@ -379,8 +378,8 @@ func TestClientRoundTrip(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("want 2 handler calls, got %d", len(got))
 	}
-	if got[0].Session.ToolName != "client-tool" {
-		t.Errorf("ToolName=%q want %q", got[0].Session.ToolName, "client-tool")
+	if got[0].Session.ServiceName != "client-tool" {
+		t.Errorf("ServiceName=%q want %q", got[0].Session.ServiceName, "client-tool")
 	}
 	if got[0].Session.Version != "9.9" {
 		t.Errorf("Version=%q want %q", got[0].Session.Version, "9.9")
@@ -391,67 +390,82 @@ func TestClientRoundTrip(t *testing.T) {
 	if string(got[0].Data) != `{"container_id":"abc","k":"v"}` {
 		t.Errorf("Data=%q unexpected", string(got[0].Data))
 	}
-	if !got[0].Flush {
-		t.Errorf("first chunk Flush=false want true")
+	if got[0].Commit {
+		t.Errorf("first chunk Commit=true want false")
 	}
 	if !got[1].End {
 		t.Errorf("second chunk End=false want true")
 	}
 }
 
-type singleConnListener struct {
-	conn net.Conn
-}
-
-func (l *singleConnListener) Accept() (net.Conn, error) {
-	if l.conn == nil {
-		return nil, net.ErrClosed
+func TestParseSessionRejectsPreviousProtocol(t *testing.T) {
+	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	conn := l.conn
-	l.conn = nil
-	return conn, nil
-}
-
-func (l *singleConnListener) Close() error {
-	return nil
-}
-
-func (l *singleConnListener) Addr() net.Addr {
-	return dummyAddr("test")
-}
-
-type dummyAddr string
-
-func (a dummyAddr) Network() string { return string(a) }
-func (a dummyAddr) String() string  { return string(a) }
-
-func TestAcceptLoopRejectsConnectionsAfterShutdown(t *testing.T) {
-	serverConn, clientConn := net.Pipe()
-	defer clientConn.Close()
-
-	srv := &Server{
-		listener:    &singleConnListener{conn: serverConn},
-		connections: make(map[net.Conn]struct{}),
-		closing:     true,
+	defer msg.Release()
+	root, err := NewRootMessage(seg)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() {
-		srv.acceptLoop(ctx)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("acceptLoop did not stop after rejecting a late connection")
+	connect, err := root.NewConnect()
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, version := range []uint32{1, 2, 4} {
+		connect.SetProtoVersion(version)
+		if _, err := parseSession(msg); err == nil {
+			t.Fatalf("accepted unsupported protocol %d", version)
+		}
+	}
+}
 
-	if _, err := clientConn.Write([]byte("probe")); err == nil {
-		t.Fatal("late connection remained open after shutdown")
+func TestTaskOwnershipReleasedAfterConnectionEnds(t *testing.T) {
+	for _, abrupt := range []bool{false, true} {
+		t.Run(fmt.Sprint(abrupt), func(t *testing.T) {
+			rec := &recorder{}
+			server := &Server{handler: rec.handler}
+			for attempt := range 2 {
+				client, peer := net.Pipe()
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					defer peer.Close()
+					server.handleConn(t.Context(), peer)
+				}()
+				encoder := capnp.NewEncoder(client)
+				if err := handshake(t, encoder, client, "profiler", "test", "same-task"); err != nil {
+					t.Fatal(err)
+				}
+				if !abrupt || attempt == 1 {
+					if err := sendChunk(t, encoder, nil, true, true, ""); err != nil {
+						t.Fatal(err)
+					}
+					message, err := capnp.NewDecoder(client).Decode()
+					if err != nil {
+						t.Fatal(err)
+					}
+					root, err := ReadRootMessage(message)
+					if err != nil {
+						t.Fatal(err)
+					}
+					result, err := root.Result()
+					if err != nil {
+						t.Fatal(err)
+					}
+					failure, err := result.Error()
+					if err != nil || failure != "" {
+						t.Fatalf("commit: %q, %v", failure, err)
+					}
+					message.Release()
+				}
+				_ = client.Close()
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("connection did not finish")
+				}
+			}
+		})
 	}
 }

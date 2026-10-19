@@ -82,6 +82,9 @@ make check # Run linting and formatting checks
 
 > **Note**: `make test` requires `/etc/kubernetes/pki` for E2E tests. If you don't have a K8s cluster, use `make unit` instead.
 
+To test or debug on another distribution without a local VM, use
+[GitHub Actions VM debugging](/docs/development/vm-debugging_en.md).
+
 ---
 
 ## Contribution Workflow

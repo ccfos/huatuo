@@ -27,11 +27,7 @@ readonly PROFILER_DURATION=10
 readonly PROFILER_FREQ=99
 readonly PROFILER_AGGR_INTERVAL=5
 
-command -v java > /dev/null || skip "java is not installed"
-command -v javac > /dev/null || skip "javac is not installed"
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -x "${PROFILER_TOOL_DIR}/bin/asprof" ]] \
-	|| skip "asprof missing: ${PROFILER_TOOL_DIR}/bin/asprof"
+require_commands jq java javac "${PROFILER_TOOL_DIR}/bin/asprof"
 [[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
 	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 
@@ -84,20 +80,29 @@ fi
 mapfile -t FOLDED_FILES < <(find "${WORK_DIR}" -maxdepth 1 -name 'perf_*.folded' -type f)
 [[ ${#FOLDED_FILES[@]} -gt 0 ]] || fatal "no perf_*.folded file produced"
 
-grep -qh "process ${PROFILER_TARGET_PID0};" "${FOLDED_FILES[@]}" \
-	|| fatal "PID ${PROFILER_TARGET_PID0} root not found"
-grep -qh "process ${PROFILER_TARGET_PID1};" "${FOLDED_FILES[@]}" \
-	|| fatal "PID ${PROFILER_TARGET_PID1} root not found"
-grep -qh "process ${PROFILER_TARGET_PID0};.*alphaHotMethod" "${FOLDED_FILES[@]}" \
-	|| fatal "alpha workload stack not found for PID ${PROFILER_TARGET_PID0}"
-grep -qh "process ${PROFILER_TARGET_PID1};.*betaHotMethod" "${FOLDED_FILES[@]}" \
-	|| fatal "beta workload stack not found for PID ${PROFILER_TARGET_PID1}"
+assert_java_process_roots() {
+	grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID0}\";" "${FOLDED_FILES[@]}" \
+		|| fatal "PID ${PROFILER_TARGET_PID0} root not found"
+	grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID1}\";" "${FOLDED_FILES[@]}" \
+		|| fatal "PID ${PROFILER_TARGET_PID1} root not found"
+	grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID0}\";.*alphaHotMethod" "${FOLDED_FILES[@]}" \
+		|| fatal "alpha workload stack not found for PID ${PROFILER_TARGET_PID0}"
+	grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID1}\";.*betaHotMethod" "${FOLDED_FILES[@]}" \
+		|| fatal "beta workload stack not found for PID ${PROFILER_TARGET_PID1}"
 
-if grep -qh "process ${PROFILER_TARGET_PID0};.*betaHotMethod" "${FOLDED_FILES[@]}"; then
-	fatal "beta workload was attributed to PID ${PROFILER_TARGET_PID0}"
-fi
-if grep -qh "process ${PROFILER_TARGET_PID1};.*alphaHotMethod" "${FOLDED_FILES[@]}"; then
-	fatal "alpha workload was attributed to PID ${PROFILER_TARGET_PID1}"
-fi
+	if grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID0}\";.*betaHotMethod" "${FOLDED_FILES[@]}"; then
+		fatal "beta workload was attributed to PID ${PROFILER_TARGET_PID0}"
+	fi
+	if grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID1}\";.*alphaHotMethod" "${FOLDED_FILES[@]}"; then
+		fatal "alpha workload was attributed to PID ${PROFILER_TARGET_PID1}"
+	fi
+
+}
+assert_java_process_roots
 
 log_info "both Java PIDs produced distinct correctly attributed stacks"
+
+assert_java_profiler_streams "${WORK_DIR}/streaming" "${TOOL_BIN}" \
+	--type cpu --language java \
+	--pid "${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1}" \
+	--tool-path "${PROFILER_TOOL_DIR}" --freq "${PROFILER_FREQ}"

@@ -27,11 +27,7 @@ config_error_file=""
 config_curl_status=0
 config_http_status=""
 
-command -v curl > /dev/null || skip "curl command is not installed"
-command -v jq > /dev/null || skip "jq command is not installed"
-command -v ss > /dev/null || skip "ss command is not installed"
-[[ -x "${HUATUO_BAMAI_BIN}" ]] \
-	|| fatal "huatuo-bamai binary missing: ${HUATUO_BAMAI_BIN}"
+require_commands curl jq ss
 
 CONFIG_API_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate a huatuo-bamai API port"

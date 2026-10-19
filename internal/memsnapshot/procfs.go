@@ -21,9 +21,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 const (
@@ -32,64 +33,34 @@ const (
 	defaultMaxProcMaps = 1 << 18
 )
 
-// ReadIdentity reads the stable identity from /proc/<pid>/stat.
-func ReadIdentity(pid int) (ProcessIdentity, error) {
-	if pid <= 0 {
-		return ProcessIdentity{}, errors.New("pid must be greater than zero")
-	}
-	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+// ReadProcessInstanceID reads the process identity from the default procfs mount.
+// The raw start-time tick count is preserved, including zero.
+func ReadProcessInstanceID(pid int) (ProcessInstanceID, error) {
+	fs, err := procfs.NewDefaultFS()
 	if err != nil {
-		return ProcessIdentity{}, fmt.Errorf("read process stat: %w", err)
+		return ProcessInstanceID{}, fmt.Errorf("open procfs: %w", err)
 	}
-	starttime, err := ParseProcStatStartTime(stat)
+	process, err := fs.Proc(pid)
 	if err != nil {
-		return ProcessIdentity{}, err
+		return ProcessInstanceID{}, fmt.Errorf("open process %d: %w", pid, err)
 	}
-	identity := ProcessIdentity{TGID: pid, StartTimeTicks: starttime}
-	return identity, nil
+	stat, err := process.Stat()
+	if err != nil {
+		return ProcessInstanceID{}, fmt.Errorf("read process %d stat: %w", pid, err)
+	}
+	return ProcessInstanceID{TGID: pid, StartTimeTicks: stat.Starttime}, nil
 }
 
-// ValidateIdentity rejects an invalid identity or a reused PID.
-func ValidateIdentity(procRoot string, identity ProcessIdentity) error {
-	if identity.TGID <= 0 || identity.StartTimeTicks == 0 {
-		return errors.New("process identity is invalid")
-	}
-	stat, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(identity.TGID),
-		"stat"))
+// ValidateProcessInstanceID rejects an invalid identity or a reused PID.
+func ValidateProcessInstanceID(identity ProcessInstanceID) error {
+	current, err := ReadProcessInstanceID(identity.TGID)
 	if err != nil {
-		return fmt.Errorf("read process identity: %w", err)
+		return err
 	}
-	startTime, err := ParseProcStatStartTime(stat)
-	if err != nil {
-		return fmt.Errorf("parse process identity: %w", err)
-	}
-	if startTime != identity.StartTimeTicks {
-		return fmt.Errorf("process identity changed: start time %d, want %d",
-			startTime, identity.StartTimeTicks)
+	if current.StartTimeTicks != identity.StartTimeTicks {
+		return fmt.Errorf("process identity changed: start time %d, want %d", current.StartTimeTicks, identity.StartTimeTicks)
 	}
 	return nil
-}
-
-// ParseProcStatStartTime handles spaces and parentheses in comm by parsing
-// fields only after the final ')' delimiter. starttime is proc field 22.
-func ParseProcStatStartTime(stat []byte) (uint64, error) {
-	closing := strings.LastIndexByte(string(stat), ')')
-	if closing < 0 || closing+1 >= len(stat) {
-		return 0, errors.New("process stat has no comm terminator")
-	}
-	fields := strings.Fields(string(stat[closing+1:]))
-	// The first suffix field is field 3 (state), so starttime is index 19.
-	if len(fields) <= 19 {
-		return 0, fmt.Errorf("process stat has %d suffix fields, need at least 20", len(fields))
-	}
-	starttime, err := strconv.ParseUint(fields[19], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse process starttime %q: %w", fields[19], err)
-	}
-	if starttime == 0 {
-		return 0, errors.New("process starttime must be greater than zero")
-	}
-	return starttime, nil
 }
 
 // ProcMap is the subset of one /proc/<pid>/maps entry used by runtime readers.
