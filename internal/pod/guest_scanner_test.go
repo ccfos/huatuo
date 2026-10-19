@@ -242,13 +242,103 @@ func TestGuestScannerFailureAndReplacement(t *testing.T) {
 
 func TestGuestScannerAmbiguousPath(t *testing.T) {
 	s := guestFixture(t)
-	for _, prefix := range []string{"/first/", "/second/"} {
-		guestDirectory(t, s.options.CgroupRoot, prefix+guestCheckoutID)
-	}
-	guestProc(t, s, 150, 1, 100, "0::/../"+guestCheckoutID+"\n")
+	path := "/workloads/" + guestCheckoutID
+	guestDirectory(t, s.options.CgroupRoot, path)
+	guestProc(t, s, 150, 1, 100, "0::"+path+"\n")
+
+	store := newTestContainerStore()
 	snap, err := s.scan(t.Context())
-	if err == nil || snap.isComplete || snap.records[guestCheckoutID] != nil {
-		t.Errorf("ambiguous scan=%+v, %v", snap, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.commit(snap, nil)
+	previous := store.records[guestCheckoutID]
+	if previous == nil {
+		t.Fatal("healthy container was not published")
+	}
+
+	// A namespace-relative path matching two directories cannot be bound, but
+	// the container ID is still known.
+	guestDirectory(t, s.options.CgroupRoot, "/other/"+guestCheckoutID)
+	guestFile(t, s.options.ProcRoot, "150/cgroup", "0::/../"+guestCheckoutID+"\n")
+	snap, err = s.scan(t.Context())
+	if err != nil {
+		t.Fatalf("binding metadata must not fail the scan: %v", err)
+	}
+	if !snap.isComplete {
+		t.Fatal("known container ID must keep the membership view complete")
+	}
+	if snap.records[guestCheckoutID] != nil {
+		t.Fatal("ambiguous binding must stay pending")
+	}
+	store.commit(snap, nil)
+	if store.records[guestCheckoutID] != previous {
+		t.Fatal("pending metadata replaced the live instance")
+	}
+	if store.err != nil {
+		t.Fatalf("view became unavailable: %v", store.err)
+	}
+
+	// Removing the ambiguity lets the next scan bind again.
+	if err := os.RemoveAll(filepath.Join(s.options.CgroupRoot, "other")); err != nil {
+		t.Fatal(err)
+	}
+	snap, err = s.scan(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.commit(snap, nil)
+	if store.records[guestCheckoutID] == nil {
+		t.Fatal("metadata did not recover")
+	}
+}
+
+func TestGuestScannerBindingFailureKeepsMembership(t *testing.T) {
+	s := guestFixture(t)
+	healthyPath := "/workloads/" + guestCheckoutID
+	guestDirectory(t, s.options.CgroupRoot, healthyPath)
+	guestProc(t, s, 150, 1, 100, "0::"+healthyPath+"\n")
+
+	missingID := strings.Repeat("c", 64)
+	guestProc(t, s, 200, 1, 200, "0::/missing/"+missingID+"\n")
+
+	store := newTestContainerStore()
+	snap, err := s.scan(t.Context())
+	if err != nil {
+		t.Fatalf("unresolvable container must not fail the scan: %v", err)
+	}
+	if !snap.isComplete {
+		t.Fatal("known container IDs must keep the membership view complete")
+	}
+	if snap.records[missingID] != nil {
+		t.Fatal("missing cgroup produced a record")
+	}
+	if snap.records[guestCheckoutID] == nil {
+		t.Fatal("healthy container was not bound")
+	}
+	store.commit(snap, nil)
+	if store.err != nil {
+		t.Fatalf("view became unavailable: %v", store.err)
+	}
+	if store.records[guestCheckoutID] == nil {
+		t.Fatal("healthy container was not published")
+	}
+
+	// The healthy container exits while another container stays unresolvable;
+	// deletion must still proceed for the known-exited ID.
+	if err := os.RemoveAll(filepath.Join(s.options.ProcRoot, "150")); err != nil {
+		t.Fatal(err)
+	}
+	snap, err = s.scan(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.commit(snap, nil)
+	if _, ok := store.records[guestCheckoutID]; ok {
+		t.Fatal("exited container was not deleted")
+	}
+	if store.err != nil {
+		t.Fatalf("view became unavailable: %v", store.err)
 	}
 }
 
