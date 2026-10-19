@@ -56,12 +56,16 @@ type pendingIOTracingReason struct {
 
 func init() {
 	tracing.RegisterEventTracing(iotracingToolName, newIOTracing)
-	toolstream.RegisterDefault[*types.IOTracingSnapshot](iotracingToolName, handleIotracingEvent)
+	toolstream.RegisterDefault[types.IOTracingSnapshot](iotracingToolName, handleIotracingEvent)
 }
 
-func handleIotracingEvent(sess *toolstream.Session, ev *types.IOTracingSnapshot) error {
+func handleIotracingEvent(_ context.Context, request *toolstream.Request[types.IOTracingSnapshot]) error {
+	if request.Data == nil {
+		return nil
+	}
+	ev := request.Data
 	var pending *pendingIOTracingReason
-	if v, ok := pendingReasons.LoadAndDelete(sess.TaskID); ok {
+	if v, ok := pendingReasons.LoadAndDelete(request.TaskID); ok {
 		pending = v.(*pendingIOTracingReason)
 		close(pending.received)
 	}
