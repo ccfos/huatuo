@@ -241,7 +241,7 @@ func (p *loopProfiler) Stop() error {
 	return p.stopErr
 }
 
-func TestRunCompletionRequiresSuccessfulCollection(t *testing.T) {
+func TestRunCompletion(t *testing.T) {
 	failure := errors.New("read samples failed")
 	stopFailure := errors.New("stop collector failed")
 	for _, tc := range []struct {
