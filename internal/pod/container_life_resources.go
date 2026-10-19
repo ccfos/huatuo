@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,7 +32,8 @@ var lifeResourcesTpl sync.Map
 //	data := map[string]int{"acct": 0, "usage": 0}
 //	RegisterContainerLifeResources("cpu", reflect.TypeOf(data))
 func RegisterContainerLifeResources(key string, anythingType reflect.Type) error {
-	if anythingType.Kind() != reflect.Pointer && anythingType.Elem().Kind() != reflect.Struct {
+	if anythingType == nil || anythingType.Kind() != reflect.Pointer ||
+		anythingType.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("invalid anythingType: %v, only support pointer of struct", anythingType)
 	}
 
