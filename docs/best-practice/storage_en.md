@@ -513,6 +513,11 @@ remaining total. Callers must supply a positive total limit when they need data.
 counts all matching records. `Values` uses its separate `size` argument, whose
 non-negative constraint is checked by `storage.Store.Values` before dispatch;
 backends do not repeat pagination or size validation for these operations.
+Elasticsearch/OpenSearch `Values` preserves integer term keys without converting
+them through floating point, including `unsigned_long` values returned by
+OpenSearch. String keys remain literal and floating-point terms retain their
+existing formatting. Values already rounded by the server (for example after
+numeric type promotion across indexes) cannot be recovered by the client.
 Local file storage remains write-only.
 
 SQLite streams one `SELECT ... LIMIT ... OFFSET ...` through rows. A consumer

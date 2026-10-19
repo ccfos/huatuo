@@ -502,6 +502,9 @@ Bulk 请求的失败语义分为两层，重试范围不同：
 `Filters`，忽略 `Sorts`、`Limit`、`Offset` 和 `BatchSize`，包括零值及负数分页参数。
 `Count` 统计全部匹配记录；`Values` 使用独立的 `size` 参数，由 `storage.Store.Values`
 在调用后端前校验其非负约束，后端不再重复校验这两个操作的分页参数或 `size`。
+Elasticsearch/OpenSearch 的 `Values` 保留整数聚合键，不经过浮点数转换，包括
+OpenSearch 返回的 `unsigned_long` 值。字符串键保持原文，浮点聚合键沿用原有格式。
+若服务端已发生舍入（例如跨索引查询时数值类型提升），客户端无法恢复丢失的精度。
 本地文件存储仍不支持查询。
 
 SQLite 使用一条带 `LIMIT/OFFSET` 的 SELECT 逐行读取。回调期间查询占用唯一数据库
