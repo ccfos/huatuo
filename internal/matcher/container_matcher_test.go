@@ -187,3 +187,31 @@ func TestNewContainerMatcherFromRules_InvalidPattern(t *testing.T) {
 	)
 	require.Error(t, err)
 }
+
+func TestNewContainerMatcherFromRules_RejectsUnknownField(t *testing.T) {
+	tests := []struct {
+		name    string
+		include []*Rule
+		exclude []*Rule
+		want    string
+	}{
+		{
+			name:    "include",
+			include: []*Rule{{Field: "container_hostnam", Pattern: ".*"}},
+			want:    "include container rules",
+		},
+		{
+			name:    "exclude",
+			exclude: []*Rule{{Field: "container_hostnam", Pattern: ".*"}},
+			want:    "exclude container rules",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewContainerMatcherFromRules(test.include, test.exclude)
+			require.ErrorContains(t, err, test.want)
+			require.ErrorContains(t, err, "container_hostnam")
+		})
+	}
+}
