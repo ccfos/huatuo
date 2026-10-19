@@ -88,3 +88,17 @@ func TestNativeProfilersRejectMultiplePIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestJavaCPUIntervalMatchesProfilePeriod(t *testing.T) {
+	tests := []struct {
+		frequency int
+		want      string
+	}{
+		{1, "1000000000ns"}, {99, "10101010ns"}, {333, "3003003ns"}, {750, "1333333ns"}, {1000, "1000000ns"},
+	}
+	for _, tt := range tests {
+		if got := javaCPUInterval(tt.frequency); got != tt.want {
+			t.Errorf("frequency %d: interval=%s, want %s", tt.frequency, got, tt.want)
+		}
+	}
+}

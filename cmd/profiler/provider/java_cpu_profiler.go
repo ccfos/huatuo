@@ -90,7 +90,7 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	baseArgs := []string{
 		"--libpath", "/tmp/libasyncProfiler.so",
-		"-i", fmt.Sprintf("%dms", 1000/pctx.Freq),
+		"-i", javaCPUInterval(pctx.Freq),
 		"-j", "256",
 	}
 
@@ -129,4 +129,9 @@ func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) e
 		return fmt.Errorf("read Java CPU profile: profiler is not started")
 	}
 	return javaruntime.ReadAsprofDataLoop(ctx, p.samplingOpt, p.profileOutFile, enqueue)
+}
+
+// Use the same nanosecond period as pprof scaling, without millisecond rounding.
+func javaCPUInterval(frequency int) string {
+	return fmt.Sprintf("%dns", int64(time.Second)/int64(frequency))
 }

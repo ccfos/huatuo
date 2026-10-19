@@ -750,3 +750,5 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="Official WeChat account QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+Java CPU profiling uses a nanosecond-resolution sampling period derived from `--freq`. The same period is used to convert sample counts to CPU time, including frequencies that do not divide 1000.

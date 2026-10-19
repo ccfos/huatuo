@@ -741,3 +741,5 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+Java CPU 剖析按 `--freq` 计算纳秒精度的采样周期，并使用同一周期将样本数换算为 CPU 时间；频率不必整除 1000。
