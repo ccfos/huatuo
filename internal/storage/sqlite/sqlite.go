@@ -34,20 +34,22 @@ type Storage struct {
 	table string
 
 	stmtMu    sync.Mutex
-	saveStmts map[driver.SaveMode]*sql.Stmt
+	saveStmts map[string]*sql.Stmt
 }
 
-// saveStmt returns a cached prepared statement for the save mode, preparing
-// it on first use. database/sql multiplexes one *sql.Stmt over the pool, so
-// the hot per-event Save path skips re-preparing SQL on every call.
-func (s *Storage) saveStmt(ctx context.Context, mode driver.SaveMode, statement string) (*sql.Stmt, error) {
+// saveStmt returns a cached prepared statement for the exact SQL text,
+// preparing it on first use. database/sql multiplexes one *sql.Stmt over
+// the pool, so the hot per-event Save path skips re-preparing SQL on
+// every call. Conditional saves build different SQL per condition shape,
+// so the statement text itself is the cache key.
+func (s *Storage) saveStmt(ctx context.Context, statement string) (*sql.Stmt, error) {
 	s.stmtMu.Lock()
 	defer s.stmtMu.Unlock()
 
 	if s.saveStmts == nil {
-		s.saveStmts = make(map[driver.SaveMode]*sql.Stmt)
+		s.saveStmts = make(map[string]*sql.Stmt)
 	}
-	if stmt, ok := s.saveStmts[mode]; ok {
+	if stmt, ok := s.saveStmts[statement]; ok {
 		return stmt, nil
 	}
 
@@ -55,7 +57,7 @@ func (s *Storage) saveStmt(ctx context.Context, mode driver.SaveMode, statement 
 	if err != nil {
 		return nil, err
 	}
-	s.saveStmts[mode] = stmt
+	s.saveStmts[statement] = stmt
 	return stmt, nil
 }
 
@@ -184,7 +186,7 @@ func (s *Storage) Save(
 		return fmt.Errorf("%w: unsupported save mode %d", driver.ErrInvalidQuery, options.Mode)
 	}
 
-	stmt, err := s.saveStmt(ctx, options.Mode, statement)
+	stmt, err := s.saveStmt(ctx, statement)
 	if err != nil {
 		return fmt.Errorf("sqlite backend prepare save into %s: %w", s.table, err)
 	}
