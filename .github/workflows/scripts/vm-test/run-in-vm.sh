@@ -241,6 +241,10 @@ git config --global --add safe.directory /mnt/host
 vm_log '⬅️⬅️⬅️ Running tests...'
 
 make install-tools
+APISERVER_TEST_NODE=$(kubectl --request-timeout=30s get nodes -o json \
+	| jq -er '.items | if length == 1 then .[0].metadata.name else error("VM tests require exactly one Kubernetes node") end')
+export APISERVER_TEST_NODE
+vm_log "profiling matrix node: $APISERVER_TEST_NODE"
 make test
 
 vm_log '✅✅✅ Tests passed.'
