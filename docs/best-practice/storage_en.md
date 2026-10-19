@@ -440,6 +440,13 @@ Nil, pointers, objects, nested collections, and non-finite numbers return
 `driver.ErrInvalidQuery`. Integer range bounds retain their original JSON
 precision; each backend's supported numeric domain and field mapping still apply.
 
+`json.Number` values, including numbers read back in SQLite record fields, can
+also be reused in comparisons, membership filters, and conditional saves.
+Integer literals are converted to `int64` or `uint64` without floating-point
+rounding; decimal and exponent forms use finite `float64` values. Malformed,
+non-finite, and out-of-range numbers return `driver.ErrInvalidQuery`. Backend
+numeric limits still apply; SQLite cannot bind integers above `math.MaxInt64`.
+
 For Elasticsearch, callers must supply the exact indexed field: use the original
 field for a `keyword` mapping, or an explicitly configured keyword subfield such
 as `hostname.keyword` for a `text` mapping. The backend neither guesses subfields

@@ -434,6 +434,12 @@ graph TB
 `driver.ErrInvalidQuery`。整数范围边界保留原始 JSON 精度，实际支持的数值范围
 仍受后端和字段映射约束。
 
+`json.Number`（包括 SQLite 记录字段中读回的数字）也可直接用于比较、
+成员筛选和条件保存。整数字面量转换为 `int64` 或 `uint64`，不经过浮点舍入；
+小数和指数形式转换为有限 `float64`。格式无效、非有限或超出支持范围的数字
+返回 `driver.ErrInvalidQuery`。后端数值范围限制仍然有效，例如 SQLite
+无法绑定大于 `math.MaxInt64` 的整数。
+
 Elasticsearch 调用方必须指定实际用于精确比较的索引字段：`keyword` 映射使用
 原字段；`text` 映射使用明确配置的 keyword 子字段，例如 `hostname.keyword`。
 后端不会猜测子字段，也不会将 text 与 keyword 查询进行 OR 组合。
