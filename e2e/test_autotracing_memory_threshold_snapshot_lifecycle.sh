@@ -23,10 +23,11 @@ assert_lifecycle_logs() {
 	go_snapshot_stage="${lifecycle_mode}: validate ${phase} daemon logs"
 	if [[ ${phase} != negative && ${phase} != interrupted ]]; then
 		# Only this daemon run's validated snapshot can prove sample-loss recovery.
-		assert_snapshot_daemon_logs "${file}" "${go_snapshot_case_dir}/snapshot.json" \
+		assert_snapshot_daemon_logs "${file}" "${go_snapshot_case_dir}/snapshot.json" "${go_snapshot_container_id}" \
 			|| fatal "unexpected warning/error in ${file}"
 	else
-		assert_snapshot_daemon_logs "${file}" "" "${lifecycle_watch_verified_at}" "${lifecycle_recovery_checkpoint}" \
+		assert_snapshot_daemon_logs "${file}" "" "${go_snapshot_container_id}" \
+			"${lifecycle_watch_verified_at}" "${lifecycle_recovery_checkpoint}" \
 			|| fatal "unexpected warning/error in ${file}"
 	fi
 }
@@ -81,7 +82,7 @@ lifecycle_stop() {
 	if [[ ${phase} == negative || ${signal} == KILL ]]; then
 		# Recheck after the suppression window, in the same daemon run.
 		if [[ ${lifecycle_mode} != blacklist ]]; then
-			go_snapshot_watch_is_ready || fatal "target watch disappeared during negative assertion"
+			go_snapshot_watch_is_ready || fatal "could not confirm target watch is present during negative assertion"
 			lifecycle_recovery_checkpoint="revalidated target watch"
 		else
 			huatuo_bamai_containers_present "${GO_SNAPSHOT_NAMESPACE}" "^${go_snapshot_pod}$" 1 \
@@ -124,7 +125,7 @@ lifecycle_workload() {
 	mkfifo "${go_snapshot_case_dir}/commands-${phase}"
 	exec {go_snapshot_input_fd}<> "${go_snapshot_case_dir}/commands-${phase}"
 	(
-		echo "${BASHPID}" > "${go_snapshot_cgroup}/cgroup.procs"
+		snapshot_join_container_cgroup
 		echo 1000 > /proc/self/oom_score_adj
 		exec "${GO_SNAPSHOT_BIN}" 1
 	) < "${go_snapshot_case_dir}/commands-${phase}" > "${go_snapshot_case_dir}/workload-${phase}.log" 2>&1 &
@@ -139,13 +140,13 @@ lifecycle_trigger() {
 	local phase=$1
 	if [[ -e ${go_snapshot_cgroup}/memory.max ]]; then
 		lifecycle_high_before=$(awk '$1=="high" {print $2}' "${go_snapshot_cgroup}/memory.events")
-		echo $((72 * 1024 * 1024)) > "${go_snapshot_cgroup}/memory.high"
+		snapshot_set_memory_high $((72 * 1024 * 1024))
 	fi
 	lifecycle_triggered_at=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')
 	printf p >&"${go_snapshot_input_fd}"
 	if [[ -e ${go_snapshot_cgroup}/memory.max ]]; then
 		wait_until 15 0.1 awk -v n="${lifecycle_high_before}" '$1=="high" {v=$2} END {exit !(v>n)}' "${go_snapshot_cgroup}/memory.events" || fatal "no real memory.high notification"
-		echo max > "${go_snapshot_cgroup}/memory.high"
+		snapshot_set_memory_high max
 	fi
 	wait_until 30 0.1 grep -qx 'pressure ready' "${go_snapshot_case_dir}/workload-${phase}.log" || fatal "pressure incomplete"
 	[[ $(< "${lifecycle_usage}") -ge ${GO_SNAPSHOT_THRESHOLD} ]] || fatal "pressure did not cross 50 percent"
@@ -315,14 +316,15 @@ lifecycle_contention() {
 		lifecycle_contention_input high
 		wait_until 10 .01 snapshot_read_barrier_ready || fatal "host target was not captured among the top three processes"
 		if [[ ${lifecycle_mode} == contention_cancel ]]; then
-			go_snapshot_watch_is_ready || fatal "target watch disappeared before cancellation"
+			go_snapshot_watch_is_ready || fatal "could not confirm target watch is present before cancellation"
 			lifecycle_watch_verified_at=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')
 			kill -TERM "$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")"
 			wait_until 10 .01 grep -Fq 'msg="Caller request to stop"' "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" || fatal "memburst did not observe context cancellation"
 			touch "${MEMSNAP_READ_BARRIER_DIR}/release"
 			huatuo_bamai_stop_with_signal TERM sent
 			assert_contention_canceled
-			assert_snapshot_daemon_logs "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "" "${lifecycle_watch_verified_at}" "revalidated target watch" || fatal "unexpected cancellation warning/error"
+			assert_snapshot_daemon_logs "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "" "${go_snapshot_container_id}" \
+				"${lifecycle_watch_verified_at}" "revalidated target watch" || fatal "unexpected cancellation warning/error"
 			mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${go_snapshot_case_dir}/daemon-canceled.log"
 			lifecycle_contention_input low
 			lifecycle_start
@@ -387,6 +389,9 @@ lifecycle_case() (
 	go_snapshot_container_id=$(kubelet_container_ids "${GO_SNAPSHOT_NAMESPACE}" "^${go_snapshot_pod}$")
 	cgroup_root=$(cgroup_memory_root) || fatal "memory cgroup mount missing"
 	go_snapshot_cgroup=$(cgroup_find_container "${cgroup_root}" "${go_snapshot_container_id}") || fatal "container memory cgroup missing"
+	if [[ ${go_snapshot_cgroup} == *.scope ]]; then
+		require_commands busctl
+	fi
 	go_snapshot_cgroup_path=${go_snapshot_cgroup#"${cgroup_root}"}
 	cgroup_configure_memory "${go_snapshot_cgroup}" "${GO_SNAPSHOT_LIMIT}" || fatal "cannot configure test cgroup"
 	go_snapshot_limit_file="${go_snapshot_cgroup}/memory.limit_in_bytes"

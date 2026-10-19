@@ -21,6 +21,8 @@ import (
 	"os"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/stats"
 	"github.com/ccfos/huatuo/internal/log"
@@ -349,7 +351,8 @@ func (c *cpuIdleTracing) updateContainerCPUStates(sampledAt time.Time) error {
 	for _, state := range c.containers {
 		usage, capacity, err := c.readContainerCPUSample(state)
 		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
+			// Deletion can return ENODEV when the cgroup disappears after open.
+			if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, unix.ENODEV) {
 				return err
 			}
 
