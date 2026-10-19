@@ -15,6 +15,7 @@
 package v1
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,6 +23,43 @@ import (
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 )
+
+func TestCpuStatRaw(t *testing.T) {
+	oldRoot := paths.RootfsDefaultPath
+	paths.RootfsDefaultPath = t.TempDir()
+	t.Cleanup(func() { paths.RootfsDefaultPath = oldRoot })
+
+	const stat = "nr_periods 12\nnr_throttled 3\nthrottled_time 5000\nwait_sum 9000\nnr_burst 2\nburst_time 7000\n"
+	want := map[string]uint64{
+		"nr_periods":     12,
+		"nr_throttled":   3,
+		"throttled_time": 5000,
+		"wait_sum":       9000,
+		"nr_burst":       2,
+		"burst_time":     7000,
+	}
+	for _, tc := range []struct {
+		name, extra string
+		wantErr     bool
+	}{
+		{"standard", "", false},
+		{"unlimited", "current_bw -1\n", false},
+		{"limited", "current_bw 5000000\n", false},
+		{"unsigned-unlimited", "current_bw 18446744073709551615\n", false},
+		{"negative-counter", "current_bw -1\nnr_throttled -1\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeCgroupFile(t, paths.Path(subsystem.SubsystemCPU, tc.name, "cpu.stat"), stat+tc.extra)
+			got, err := (&CgroupV1{}).CpuStatRaw(tc.name)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("CpuStatRaw() error=%v, wantErr=%t", err, tc.wantErr)
+			}
+			if !tc.wantErr && !maps.Equal(got, want) {
+				t.Fatalf("CpuStatRaw()=%v, want %v", got, want)
+			}
+		})
+	}
+}
 
 func TestCpuUsageReadsCPUAcctSubsystem(t *testing.T) {
 	root := t.TempDir()

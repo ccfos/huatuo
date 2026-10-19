@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -53,8 +54,7 @@ func ReadInt(path string) (int64, error) {
 	return strconv.ParseInt(strings.TrimSpace(val), 10, 64)
 }
 
-func parseKV(raw string) (string, uint64, error) {
-	parts := strings.Fields(raw)
+func parseKV(parts []string) (string, uint64, error) {
 	switch len(parts) {
 	case 2:
 		v, err := strconv.ParseUint(parts[1], 10, 64)
@@ -67,8 +67,8 @@ func parseKV(raw string) (string, uint64, error) {
 	}
 }
 
-// RawKV parse the kv cgroup file
-func RawKV(path string) (map[string]uint64, error) {
+// RawKV parses a key-value file, skipping ignoredKeys before value parsing.
+func RawKV(path string, ignoredKeys ...string) (map[string]uint64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -81,7 +81,11 @@ func RawKV(path string) (map[string]uint64, error) {
 	)
 
 	for sc.Scan() {
-		key, v, err := parseKV(sc.Text())
+		parts := strings.Fields(sc.Text())
+		if len(parts) == 2 && slices.Contains(ignoredKeys, parts[0]) {
+			continue
+		}
+		key, v, err := parseKV(parts)
 		if err != nil {
 			return nil, err
 		}
@@ -108,5 +112,5 @@ func KV(path string) (string, uint64, error) {
 		return "", 0, err
 	}
 
-	return parseKV(scanner.Text())
+	return parseKV(strings.Fields(scanner.Text()))
 }
