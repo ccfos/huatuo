@@ -741,3 +741,5 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+Java/Python 本地 collapsed 和 SVG 输出仅保留聚合结果，不额外保留全部原始工具输出；远端输出仍保留用于 profile 转换的原始输入。

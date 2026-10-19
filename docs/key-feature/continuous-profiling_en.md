@@ -750,3 +750,5 @@ flowchart LR
 <img src="/img/contact-weixin.png" alt="Official WeChat account QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+Local Java/Python collapsed and SVG exports retain the folded result without keeping a second history of raw tool output. Remote export retains its raw input until profile conversion.

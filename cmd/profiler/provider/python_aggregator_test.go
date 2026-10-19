@@ -57,10 +57,7 @@ func TestPythonAggregatorKeepsProcessRoots(t *testing.T) {
 		"process 100;hot (a.py:1) 3\nprocess 200;hot (a.py:1) 4\n",
 		folded.String(),
 	)
-	require.Equal(t, []profiler.SampleOutput{
-		{PID: 100, Output: "process 100;hot (a.py:1) 3\n"},
-		{PID: 200, Output: "process 200;hot (a.py:1) 4\n"},
-	}, aggr.sampleOutput)
+	require.Empty(t, aggr.sampleOutput)
 }
 
 func TestPythonCPUProfilerReadDataLoopExcludesStatusSamples(t *testing.T) {

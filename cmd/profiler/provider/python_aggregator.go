@@ -69,8 +69,8 @@ func (a *pythonAggregator) Aggregate(rec any) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.sampleOutput = append(a.sampleOutput, so)
 	if a.formatter == nil {
+		a.sampleOutput = append(a.sampleOutput, so)
 		return
 	}
 
