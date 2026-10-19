@@ -129,6 +129,13 @@ func (d *dloadTracing) reconcileContainers(containers map[string]*pod.Container)
 	for _, container := range containers {
 		info, ok := d.containers[container.ID]
 		if ok {
+			if info.cgroupName != container.CgroupPath {
+				// A new cgroup must not inherit the old path's measurements.
+				info.runnableAvg = [2]uint64{}
+				info.loadAvg = [2]float64{}
+				info.dLoadAvg = [2]uint64{}
+				info.dLoad = [2]float64{}
+			}
 			info.cgroupName = container.CgroupPath
 			info.cpuPath = paths.Path(subsystem.SubsystemCPU, container.CgroupPath)
 			info.container = container
