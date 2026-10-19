@@ -118,7 +118,7 @@ func (s *guestScanner) scan(ctx context.Context) (containerSnapshot, error) {
 		return containerSnapshot{}, fmt.Errorf("resolve guest sidecar identity: %w", err)
 	}
 	processes := make(map[int]guestProcess)
-	var scanErr error
+	var membershipErr error
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return containerSnapshot{}, err
@@ -130,7 +130,7 @@ func (s *guestScanner) scan(ctx context.Context) (containerSnapshot, error) {
 		process, err := s.readProcess(pid)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				scanErr = errors.Join(scanErr, err)
+				membershipErr = errors.Join(membershipErr, err)
 			}
 			continue
 		}
@@ -146,18 +146,31 @@ func (s *guestScanner) scan(ctx context.Context) (containerSnapshot, error) {
 	}
 	snapshot := containerSnapshot{records: make(map[string]*containerRecord, len(grouped))}
 	for id, group := range grouped {
+		if err := ctx.Err(); err != nil {
+			return containerSnapshot{}, err
+		}
+		// Membership is known from the process scan. A nil record keeps the
+		// previous instance and prevents deletion while metadata is pending.
 		snapshot.records[id] = nil
 		process := representativeGuestProcess(group, processes)
 		record, err := s.bind(ctx, &process)
 		if err != nil {
-			scanErr = errors.Join(scanErr, err)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return containerSnapshot{}, ctxErr
+			}
+			// Binding is retried on the next scan; it is metadata, not
+			// membership, so it must not block deletions for other containers.
+			log.WithError(err).WithField("container", id).
+				Debug("guest container metadata unavailable")
 			continue
 		}
 		snapshot.records[id] = record
 	}
-	// Partial observations must never turn unreadable processes into deletions.
-	snapshot.isComplete = scanErr == nil
-	return snapshot, scanErr
+	// Only unreadable process entries can hide containers from the membership
+	// view. Known containers whose binding failed stay present with a nil
+	// record and are retried without freezing the whole view.
+	snapshot.isComplete = membershipErr == nil
+	return snapshot, membershipErr
 }
 
 func (s *guestScanner) readProcess(pid int) (guestProcess, error) {
