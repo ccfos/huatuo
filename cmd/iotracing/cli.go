@@ -17,6 +17,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -135,6 +136,7 @@ func loadConfig(c *cli.Context) (ioConfig, map[string]any, error) {
 
 	filters := map[string]any{
 		bpfFilterEventTimeout: cfg.scheduleThreshold * 1000 * 1000,
+		bpfKernelPageSize:     uint64(os.Getpagesize()),
 	}
 
 	if deviceStr := c.String(cliFlagDevice); deviceStr != "" {
