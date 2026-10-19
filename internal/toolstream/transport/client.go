@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -76,28 +77,28 @@ func (c *Client) handshake(serviceName, toolName, version, taskID string, protoV
 	return c.encoder.Encode(m)
 }
 
-func (c *Client) writeFrame(setup func(Chunk) error) error {
+func encodeFrame(setup func(Chunk) error) ([]byte, error) {
 	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer m.Release()
 
 	root, err := NewRootMessage(seg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	chunk, err := root.NewChunk()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := setup(chunk); err != nil {
-		return err
+		return nil, err
 	}
 
-	return c.encoder.Encode(m)
+	return m.Marshal()
 }
 
 // SendOptions controls stream termination and acknowledgement.
@@ -112,15 +113,18 @@ func (c *Client) Send(data []byte, opts SendOptions) error {
 	if opts.Commit && !opts.End {
 		return errors.New("toolstream: commit requires end")
 	}
-
-	if err := c.writeFrame(func(chunk Chunk) error {
+	frame, err := encodeFrame(func(chunk Chunk) error {
 		chunk.SetEnd(opts.End)
 		chunk.SetCommit(opts.Commit)
 		if len(data) != 0 {
 			return chunk.SetData(data)
 		}
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
+		return err
+	}
+	if err := c.SendFrame(frame); err != nil {
 		return fmt.Errorf("send frame: %w", err)
 	}
 	if !opts.Commit {
@@ -132,6 +136,23 @@ func (c *Client) Send(data []byte, opts SendOptions) error {
 // SetDeadline applies to both pending and subsequent protocol reads and writes.
 func (c *Client) SetDeadline(deadline time.Time) error {
 	return c.conn.SetDeadline(deadline)
+}
+
+// SendFrame writes one chunk frame previously returned by EncodeChunkFrame.
+// Queueing senders encode once and reuse the frame instead of re-encoding the
+// payload for every write attempt.
+func (c *Client) SendFrame(frame []byte) error {
+	for len(frame) > 0 {
+		n, err := c.conn.Write(frame)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrShortWrite
+		}
+		frame = frame[n:]
+	}
+	return nil
 }
 
 // Close releases the connection without sending a protocol frame.
@@ -214,31 +235,16 @@ func NewClientWithConnContext(ctx context.Context, conn net.Conn, toolName, vers
 	return c, nil
 }
 
-// ChunkFrameSize returns the encoded Cap'n Proto frame size for one data chunk.
-func ChunkFrameSize(data []byte) (int, error) {
-	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
-	if err != nil {
-		return 0, err
-	}
-	defer m.Release()
+// EncodeChunkFrame returns one complete Chunk frame with the given payload.
+// The returned slice is owned by the caller.
+func EncodeChunkFrame(data []byte) ([]byte, error) {
 
-	root, err := NewRootMessage(seg)
-	if err != nil {
-		return 0, err
-	}
-	chunk, err := root.NewChunk()
-	if err != nil {
-		return 0, err
-	}
-	if len(data) > 0 {
-		if err := chunk.SetData(data); err != nil {
-			return 0, err
+	return encodeFrame(func(chunk Chunk) error {
+		if len(data) > 0 {
+			if err := chunk.SetData(data); err != nil {
+				return err
+			}
 		}
-	}
-
-	frame, err := m.Marshal()
-	if err != nil {
-		return 0, err
-	}
-	return len(frame), nil
+		return nil
+	})
 }
