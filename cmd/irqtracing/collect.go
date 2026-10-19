@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
+	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -109,41 +110,6 @@ func sumUint64Slots(raw []byte) (uint64, error) {
 	return total, nil
 }
 
-// readStackTrace resolves a stack id (from bpf_get_stackid) into the raw u64
-// frame addresses stored in the stack_traces map. The ABI sentinel
-// means the capture failed inside the kernel and resolves to no frames;
-// read or decode failures of a real id are real errors the caller must
-// surface, not silently turn into a stackless entry.
-func readStackTrace(b bpf.BPF, stackMapID, id uint32) ([symbol.KsymStackMaxDepth]uint64, bool, error) {
-	var stack [symbol.KsymStackMaxDepth]uint64
-	if id == uint32(bpfabi.IrqtracingStackIDNone) {
-		return stack, false, nil
-	}
-
-	keyBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(keyBytes, id)
-
-	valBytes, err := b.ReadMap(stackMapID, keyBytes)
-	if err != nil {
-		return stack, false, fmt.Errorf("read stack_traces[%d]: %w", id, err)
-	}
-
-	if len(valBytes) != symbol.KsymStackMaxDepth*8 {
-		return stack, false, fmt.Errorf(
-			"read stack_traces[%d]: value size %d, want %d",
-			id,
-			len(valBytes),
-			symbol.KsymStackMaxDepth*8,
-		)
-	}
-
-	if err := binary.Read(bytes.NewReader(valBytes), binary.LittleEndian, &stack); err != nil {
-		return stack, false, fmt.Errorf("decode stack_traces[%d]: %w", id, err)
-	}
-
-	return stack, true, nil
-}
-
 // enqueueStackMap retains CPU identity and counts each per-CPU slot once.
 // Symbolization is shared across slots, but the immutable frames are never
 // changed after being handed to the pipeline.
@@ -176,15 +142,21 @@ func enqueueStackMap(
 		}
 
 		var user, kernel []types.ProfileFrame
-		if stack, ok, err := readStackTrace(b, stackMapID, key.UstackID); err != nil {
-			return err
-		} else if ok {
+		if key.UstackID != uint32(bpfabi.IrqtracingStackIDNone) {
+			stack, err := bpfmap.ReadStackTrace(b, stackMapID, key.UstackID)
+			if err != nil {
+				return err
+			}
+
 			user = irqFrames(stack[:], u.UsymStackStrsReversed(key.PID, stack[:], len(stack)))
 		}
 
-		if stack, ok, err := readStackTrace(b, stackMapID, key.KstackID); err != nil {
-			return err
-		} else if ok {
+		if key.KstackID != uint32(bpfabi.IrqtracingStackIDNone) {
+			stack, err := bpfmap.ReadStackTrace(b, stackMapID, key.KstackID)
+			if err != nil {
+				return err
+			}
+
 			kernel = irqFrames(stack[:], symbol.KsymStackStrsReversed(stack[:], len(stack)))
 		}
 
