@@ -224,18 +224,15 @@ func finishAsprofSampling(
 	opt *AsprofSamplingOption,
 	collector *collapsedFileCollector,
 ) error {
-	stopErr := stopAsprofSampling(ctx, opt)
-	if stopErr != nil {
-		return stopErr
+	if err := stopAsprofSampling(ctx, opt); err != nil {
+		return err
 	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := collector.scanOutputFiles(true); err != nil {
-		return errors.Join(stopErr, err)
-	}
 
-	return stopErr
+	return collector.scanOutputFiles(true)
 }
 
 func stopAsprofSampling(
