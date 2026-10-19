@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The HuaTuo Authors.
+
+obj-m += memory_reclaim_events_mock.o
+memory_reclaim_events_mock-y := memory_reclaim_events_mock_kmod.o
+ccflags-y += -I$(obj)
+clean-files += memory_reclaim_events_hook.h
+.DELETE_ON_ERROR:
+
+# Preserve the target declaration, including nodemask constness and header moves.
+$(obj)/memory_reclaim_events_hook.h: $(wildcard $(srctree)/include/linux/swap.h $(srctree)/mm/internal.h)
+	awk '/^(extern[[:space:]]+)?unsigned long try_to_free_pages\(/ { \
+		found = 1; sub(/^.*try_to_free_pages/, ""); print "#define RECLAIM_MOCK_HOOK_ARGS \\" } \
+		found { complete = /;/; sub(/;.*/, ""); print $$0 (complete ? "" : " \\"); if (complete) exit } \
+		END { if (!complete) { print "try_to_free_pages declaration missing; provide the target kernel source" > "/dev/stderr"; exit 1 } }' $^ > $@
+
+$(obj)/memory_reclaim_events_mock_kmod.o: $(obj)/memory_reclaim_events_hook.h
