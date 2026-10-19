@@ -29,7 +29,6 @@ import (
 const (
 	guestSidecarID  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	guestCheckoutID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	guestPaymentID  = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 )
 
 func guestFile(t testing.TB, root, name, content string) {
