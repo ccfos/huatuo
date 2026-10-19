@@ -16,6 +16,7 @@ package executil
 
 import (
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -46,6 +47,7 @@ func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
 			spec:    Spec{Path: "/bin/true", Args: []string{"bad\x00arg"}},
 			wantErr: "argument 0 contains a null byte",
 		},
+		{name: "unsupported stop signal", spec: Spec{Path: "/bin/true", StopSignal: syscall.SIGKILL}, wantErr: "stop signal must be SIGTERM or SIGINT"},
 		{
 			name:    "negative stop grace period",
 			spec:    Spec{Path: "/bin/true", StopGracePeriod: -time.Second},
