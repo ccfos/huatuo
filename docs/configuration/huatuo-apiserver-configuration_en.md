@@ -236,6 +236,10 @@ change job ownership because tokens are never used as principal IDs.
 `/readyz`, `/metrics`, and `/version` are public.
 `/debug/pprof/**` and `/v1/profiling/flamegraph/**` require an administrator.
 
+Process and Go runtime metrics on `/metrics` carry the apiserver's operating
+system hostname in the `host` label. Their `region` label is empty because
+the apiserver has no region setting.
+
 ### 7. Profiling
 
 ```toml
