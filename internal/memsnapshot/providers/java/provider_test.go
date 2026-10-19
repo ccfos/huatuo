@@ -23,13 +23,13 @@ import (
 )
 
 func TestJavaFailureClassification(t *testing.T) {
-	identity, err := memsnapshot.ReadProcessInstance(os.Getpid())
+	identity, err := memsnapshot.ReadProcessInstanceID(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := memsnapshot.Request{Process: identity, TopK: 10}
+	request := memsnapshot.Request{Process: identity, MaxMemoryObjectEntries: 10}
 	snapshot, err := New().Snapshot(t.Context(), request)
-	if err != nil || snapshot == nil || snapshot.Status != memsnapshot.StatusUnavailable {
+	if err != nil || snapshot == nil || snapshot.Status != memsnapshot.SnapshotStatusUnavailable {
 		t.Fatalf("non-JVM result: %+v, %v", snapshot, err)
 	}
 	request.Process.StartTimeTicks++
@@ -42,7 +42,7 @@ func TestJavaFailureClassification(t *testing.T) {
 func TestSnapshotReadFailure(t *testing.T) {
 	missingPID := int(^uint(0) >> 1)
 	result, err := New().Snapshot(t.Context(), memsnapshot.Request{
-		Process: memsnapshot.ProcessInstance{TGID: missingPID, StartTimeTicks: 1}, TopK: 10,
+		Process: memsnapshot.ProcessInstanceID{TGID: missingPID, StartTimeTicks: 1}, MaxMemoryObjectEntries: 10,
 	})
 	if result != nil || !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("snapshot = %+v, %v, want no snapshot and missing process", result, err)

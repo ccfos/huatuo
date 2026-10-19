@@ -126,10 +126,12 @@ assert_log_has_no_failure() {
 }
 
 allocate_available_port() {
-	local attempt port
+	local protocol=${1:-tcp} attempt port
+	[[ ${protocol} == tcp || ${protocol} == udp ]] \
+		|| fatal "unsupported port protocol: ${protocol}; expected tcp or udp"
 	for ((attempt = 0; attempt < 20; attempt++)); do
 		port=$((20000 + RANDOM % 20001))
-		if ! ss -H -tan | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
+		if ! ss -H -an "--${protocol}" | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
 			echo "${port}"
 			return 0
 		fi
@@ -303,7 +305,8 @@ stop_by_pid() {
 }
 
 stop_and_wait_by_pid() {
-	local pid=$1 timeout=${2:-10}
+	local pid=${1:-} timeout=${2:-10}
+	[[ -n "${pid}" ]] || return 0
 	stop_by_pid "${pid}" "${timeout}"
 	wait "${pid}"
 }
@@ -356,6 +359,8 @@ is_virtual_machine() {
 # ----------------------------- huatuo-bamai ----------------------------------
 
 huatuo_bamai_start() {
+	[[ -f "${HUATUO_BAMAI_BIN}" && -x "${HUATUO_BAMAI_BIN}" ]] \
+		|| fatal "huatuo-bamai binary missing or not executable: ${HUATUO_BAMAI_BIN}; run make build"
 	log_info "starting huatuo-bamai: $*"
 	"${HUATUO_BAMAI_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" 2>&1 &
 	local pid=$!
@@ -574,3 +579,32 @@ assert_kernel_observation_timestamps() {
 		|| fatal "invalid kernel/userspace observation timestamps: ${events_file}"
 	log_info "event with UTC observation timestamps: $(head -n 1 "${events_file}")"
 }
+
+# Verify periodic JSON publication while the profiling command is still running.
+# The command arguments supply the target and sampling mode.
+assert_java_profiler_streams() (
+	local out_dir=$1
+	shift
+	local profiler_pid=""
+	mkdir -p "${out_dir}"
+	trap '[[ -z "${profiler_pid}" ]] || stop_and_wait_by_pid "${profiler_pid}" 5 || true' EXIT
+	"$@" --duration 12 --aggr-interval 2 --output-format json --output-path - \
+		> "${out_dir}/windows.json" 2> "${out_dir}/profiler.err" &
+	profiler_pid=$!
+
+	profile_window_is_ready() {
+		jq -se 'length > 0 and any(.[]; (.profile.sample | length) > 0)' \
+			"${out_dir}/windows.json" > /dev/null 2>&1
+	}
+	wait_until 10 0.1 profile_window_is_ready \
+		|| fatal "no Java window published during collection (see ${out_dir}/profiler.err)"
+	kill -0 "${profiler_pid}" 2> /dev/null \
+		|| fatal "Java profiler exited before streaming output was observed"
+	local status=0
+	wait "${profiler_pid}" || status=$?
+	profiler_pid=""
+	[[ ${status} -eq 0 ]] || fatal "Java streaming profiler exited ${status} (see ${out_dir}/profiler.err)"
+	jq -se '[.[] | select((.profile.sample | length) > 0)] | length >= 2' \
+		"${out_dir}/windows.json" > /dev/null \
+		|| fatal "expected multiple non-empty Java windows in ${out_dir}/windows.json"
+)

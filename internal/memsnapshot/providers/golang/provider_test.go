@@ -28,7 +28,8 @@ import (
 func TestSnapshotReadFailure(t *testing.T) {
 	p := New()
 	result, err := p.Snapshot(t.Context(), memsnapshot.Request{
-		Process: memsnapshot.ProcessInstance{TGID: int(^uint32(0) >> 1), StartTimeTicks: 1}, TopK: 10,
+		Process:                memsnapshot.ProcessInstanceID{TGID: int(^uint32(0) >> 1), StartTimeTicks: 1},
+		MaxMemoryObjectEntries: 10,
 	})
 	if result != nil || !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("snapshot = %+v, %v, want no snapshot and missing process", result, err)
@@ -38,19 +39,19 @@ func TestSnapshotReadFailure(t *testing.T) {
 func TestSnapshotCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	result, err := New().Snapshot(ctx, memsnapshot.Request{TopK: 1})
+	result, err := New().Snapshot(ctx, memsnapshot.Request{MaxMemoryObjectEntries: 1})
 	if result != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled snapshot = %+v, %v", result, err)
 	}
 }
 
 func TestSnapshotIdentityChanged(t *testing.T) {
-	identity, err := memsnapshot.ReadProcessInstance(os.Getpid())
+	identity, err := memsnapshot.ReadProcessInstanceID(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
 	identity.StartTimeTicks++
-	result, err := New().Snapshot(t.Context(), memsnapshot.Request{Process: identity, TopK: 1})
+	result, err := New().Snapshot(t.Context(), memsnapshot.Request{Process: identity, MaxMemoryObjectEntries: 1})
 	if result != nil || err == nil || !strings.Contains(err.Error(), "identity changed") {
 		t.Fatalf("identity mismatch: %+v %v", result, err)
 	}
@@ -59,7 +60,7 @@ func TestSnapshotIdentityChanged(t *testing.T) {
 func TestSnapshotDeadline(t *testing.T) {
 	ctx, cancel := context.WithDeadline(t.Context(), time.Unix(1, 0))
 	defer cancel()
-	result, err := New().Snapshot(ctx, memsnapshot.Request{TopK: 1})
+	result, err := New().Snapshot(ctx, memsnapshot.Request{MaxMemoryObjectEntries: 1})
 	if result != nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expired snapshot = %+v, %v", result, err)
 	}

@@ -17,7 +17,6 @@ package golang
 import (
 	"context"
 	"encoding/binary"
-	"strings"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
@@ -31,13 +30,13 @@ func buildEntries(ctx context.Context,
 			return nil, err
 		}
 
-		stack := symbols.resolveStack([]byte(candidate.key), order)
+		name, stack := symbols.resolveStack([]byte(candidate.key), order)
 		average := float64(0)
 		if candidate.inuseObjects != 0 {
 			average = float64(candidate.inuseBytes) / float64(candidate.inuseObjects)
 		}
 		entries = append(entries, memsnapshot.Entry{
-			Kind: "allocation_site", Name: allocationSiteName(stack),
+			Kind: "inuse_space_objects", Name: name,
 			Bytes: uint64(candidate.inuseBytes), Objects: uint64(candidate.inuseObjects), AverageBytes: average, Stack: stack,
 		})
 	}
@@ -46,17 +45,4 @@ func buildEntries(ctx context.Context,
 	}
 
 	return entries, nil
-}
-
-// allocationSiteName follows runtime/pprof's presentation rule for allocation
-// traces: hide leading runtime implementation frames when a caller frame is
-// available, but preserve the complete raw stack in the emitted Entry.
-func allocationSiteName(stack []string) string {
-	for _, frame := range stack {
-		if !strings.HasPrefix(frame, "runtime.") &&
-			!strings.HasPrefix(frame, "internal/runtime/") {
-			return frame
-		}
-	}
-	return stack[0]
 }

@@ -36,7 +36,7 @@ type dropWatchTracing struct{}
 
 func init() {
 	tracing.RegisterEventTracing("dropwatch", newDropWatch)
-	toolstream.RegisterDefault[*types.DropWatchTracing]("dropwatch", handleDropwatchEvent)
+	toolstream.RegisterDefault[types.DropWatchTracing]("dropwatch", handleDropwatchEvent)
 }
 
 func newDropWatch() (*tracing.EventTracingAttr, error) {
@@ -59,36 +59,27 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 		"--source-types", toolstream.SourceTypeEvent,
 	}
 
-	process, err := executil.New(executil.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, "dropwatch"),
 		Args: args,
 	})
 	if err != nil {
-		return fmt.Errorf("create dropwatch process: %w", err)
-	}
-	runErr := process.Run(ctx)
-	_, outputErr := process.Stdout()
-	if err := errors.Join(runErr, outputErr); err != nil {
-		if errors.Is(err, executil.ErrStopFailed) {
-			stopErr := process.Stop(ctx)
-			if stopErr == nil && errors.Is(err, context.Canceled) {
-				return nil
-			}
-			if stopErr != nil {
-				err = errors.Join(err, fmt.Errorf("retry stop dropwatch: %w", stopErr))
-			}
-		} else if errors.Is(err, context.Canceled) {
+		if errors.Is(err, executil.ErrRunCanceled) {
 			return nil
 		}
-		if stderr := process.Stderr(); len(stderr) > 0 {
-			return fmt.Errorf("run dropwatch: %w; stderr: %s", err, stderr)
+		if len(result.Stderr) > 0 {
+			return fmt.Errorf("run dropwatch: %w; stderr: %s", err, result.Stderr)
 		}
 		return fmt.Errorf("run dropwatch: %w", err)
 	}
 	return nil
 }
 
-func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
+func handleDropwatchEvent(_ context.Context, request *toolstream.Request[types.DropWatchTracing]) error {
+	if request.Data == nil {
+		return nil
+	}
+	ev := request.Data
 	if ignoreDropwatch(ev) {
 		return nil
 	}

@@ -136,7 +136,7 @@ func TestBackendUnsupportedOperations(t *testing.T) {
 	if _, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{}); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.DeleteByQuery() error = %v, want ErrUnsupported", err)
 	}
-	if _, err := backend.Query(t.Context(), driver.Query{}); !errors.Is(err, driver.ErrUnsupported) {
+	if err := backend.Query(t.Context(), driver.Query{Limit: 1}, func([]driver.Record) error { return nil }); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.Query() error = %v, want ErrUnsupported", err)
 	}
 	if _, err := backend.Count(t.Context(), driver.Query{}); !errors.Is(err, driver.ErrUnsupported) {

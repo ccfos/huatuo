@@ -50,12 +50,12 @@ func newProvider(language memsnapshot.Language) provider {
 // Normalize failures before recording duration so replacement snapshots retain
 // the provider-stage elapsed time. The caller handles parent cancellation.
 func snapshotProvider(ctx context.Context, p provider,
-	identity memsnapshot.ProcessInstance, topK int,
+	process memsnapshot.ProcessInstanceID, maxMemoryObjectEntries int,
 ) (snapshot *memsnapshot.Snapshot) {
 	started := time.Now()
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			log.WithField("pid", identity.TGID).
+			log.WithField("pid", process.TGID).
 				WithField("panic", recovered).
 				WithField("stack", string(debug.Stack())).
 				Error("runtime snapshot panicked")
@@ -71,7 +71,9 @@ func snapshotProvider(ctx context.Context, p provider,
 	}
 
 	request := memsnapshot.Request{
-		Process: identity, TopK: topK, SamplingSeed: uint64(started.UnixNano()),
+		Process:                process,
+		MaxMemoryObjectEntries: maxMemoryObjectEntries,
+		SamplingSeed:           uint64(started.UnixNano()),
 	}
 	snapshot, err := p.Snapshot(ctx, request)
 	if err != nil {

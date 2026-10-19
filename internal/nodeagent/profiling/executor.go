@@ -21,72 +21,54 @@ import (
 
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
-	"github.com/ccfos/huatuo/internal/toolstream"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type executor struct {
-	process   *executil.Process
-	stream    *toolstream.Server
-	publisher ResultPublisher
-	requestID string
+	process *executil.Process
 }
 
-func newExecutor(
-	process *executil.Process,
-	stream *toolstream.Server,
-	publisher ResultPublisher,
-	requestID string,
-) *executor {
-	return &executor{
-		process:   process,
-		stream:    stream,
-		publisher: publisher,
-		requestID: requestID,
-	}
+func newExecutor(process *executil.Process) *executor {
+	return &executor{process: process}
 }
 
 func (e *executor) Start(ctx context.Context) error {
-	if err := e.stream.ExpectSession(types.ProfilingToolName, e.requestID); err != nil {
-		return fmt.Errorf("expect profiler result stream: %w", err)
-	}
 	if err := e.process.Start(ctx); err != nil {
-		e.stream.CancelSession(types.ProfilingToolName, e.requestID)
-		return e.withOutput("start profiler", err)
+		closeErr := e.process.Close()
+		if !errors.Is(err, executil.ErrProcessAlreadyStarted) {
+			select {
+			case <-e.process.Done():
+				err = e.process.Wait()
+			default:
+			}
+		}
+		return e.withOutput("start profiler", errors.Join(err, closeErr))
 	}
 	return nil
 }
 
 func (e *executor) Wait() error {
 	err := e.process.Wait()
-	if errors.Is(err, executil.ErrStopped) {
+	if err == executil.ErrStopped { //nolint:errorlint // Wrapped or joined stop markers can contain independent failures.
 		err = errors.Join(operation.ErrStopped, err)
 	}
 	return e.withOutput("wait for profiler", err)
 }
 
 func (e *executor) Stop(ctx context.Context) error {
-	if err := e.process.Stop(ctx); err != nil {
-		return e.withOutput("stop profiler", err)
-	}
-	return nil
+	return e.withOutput("stop profiler", e.process.Stop(ctx))
 }
 
-func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) error {
+func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) (err error) {
+	defer func() {
+		err = errors.Join(err, e.process.Close())
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("finalize profiler: %w", err)
 	}
 	switch mode {
-	case operation.FinalizePublish:
-		if err := e.stream.AwaitSession(ctx, types.ProfilingToolName, e.requestID); err != nil {
-			return fmt.Errorf("finalize profiler result stream: %w", err)
-		}
-		if err := e.publisher.Publish(ctx, e.requestID); err != nil {
-			return fmt.Errorf("finalize profiler publication: %w", err)
-		}
-		return nil
-	case operation.FinalizeDiscard:
-		e.stream.CancelSession(types.ProfilingToolName, e.requestID)
+	case operation.FinalizePublish, operation.FinalizeDiscard:
+		// The CLI waits for the commit ACK before exiting successfully.
 		return nil
 	default:
 		return fmt.Errorf("finalize profiler: unsupported mode %d", mode)
@@ -94,11 +76,10 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) er
 }
 
 func (e *executor) withOutput(action string, err error) error {
-	output, outputErr := e.process.Stdout()
-	err = errors.Join(err, outputErr)
 	if err == nil {
 		return nil
 	}
+	output := e.process.Stdout()
 	if stderr := e.process.Stderr(); len(stderr) > 0 {
 		if len(output) > 0 {
 			output = append(output, '\n')
