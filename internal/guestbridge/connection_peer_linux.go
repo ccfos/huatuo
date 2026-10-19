@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/ccfos/huatuo/internal/utils/fileutil"
 )
 
 func (b *Bridge) waitConnectionPeer(ctx context.Context, conn net.Conn, sandboxID string) (PeerIdentity, error) {
@@ -86,7 +88,7 @@ func removeStaleSocket(path string) error {
 	if !errors.Is(err, syscall.ECONNREFUSED) {
 		return err
 	}
-	return os.Remove(path)
+	return fileutil.RemoveIfSame(path, info)
 }
 
 // Linux limits sockaddr_un to 108 bytes. Open the actual parent directory and
@@ -102,16 +104,15 @@ func socketAddress(path string) (*os.File, string, error) {
 
 type socketListener struct {
 	*net.UnixListener
-	path string
+	path     string
+	fileInfo os.FileInfo
 }
 
+// Close only unlinks the socket this listener bound. A replacement bound by
+// another process at the same path must survive our shutdown.
 func (l *socketListener) Close() error {
 	err := l.UnixListener.Close()
-	removeErr := os.Remove(l.path)
-	if errors.Is(removeErr, os.ErrNotExist) {
-		removeErr = nil
-	}
-	return errors.Join(err, removeErr)
+	return errors.Join(err, fileutil.RemoveIfSame(l.path, l.fileInfo))
 }
 
 func listenFirecracker(path string) (net.Listener, error) {
@@ -126,7 +127,12 @@ func listenFirecracker(path string) (net.Listener, error) {
 	}
 	// The fd path expires after bind. Cleanup must use the canonical socket path.
 	listener.SetUnlinkOnClose(false)
-	wrapped := &socketListener{UnixListener: listener, path: path}
+	info, err := os.Lstat(path)
+	if err != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf("guestbridge: inspect bound socket %s: %w", path, err)
+	}
+	wrapped := &socketListener{UnixListener: listener, path: path, fileInfo: info}
 	// Access is restricted by the runtime directory and verified Unix peer PID.
 	//nolint:gosec
 	if err := os.Chmod(path, 0o666); err != nil {
