@@ -17,7 +17,7 @@ package profile
 import (
 	"context"
 
-	"github.com/ccfos/huatuo/internal/profiling/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -28,21 +28,19 @@ type ProfilerMeta struct {
 	Implementation profiling.Implementation
 	Description    string
 
-	Impl            Profiler
-	AggregationMode aggregator.AggregationMode
-	Aggregator      aggregator.Aggregator
+	Impl              Profiler
+	AggregationMode   pipeline.AggregationMode
+	AggregationConfig pipeline.AggregationConfig
 }
 
-// Profiler is the sampling lifecycle. Aggregator ownership stays with Run
-// so streaming (eBPF, async-profiler tail) and one-shot (py-spy) providers
-// share one shape. Streaming providers initialize their event inputs in Start,
-// so ReadDataLoop only consumes data. ReadDataLoop returns when ctx is canceled
-// or sampling completes naturally. Streaming providers return nil after a clean
-// requested stop; incomplete one-shot results and collection failures return an
-// error. Run propagates every loop error and handles external cancellation
-// separately, even when the loop stops cleanly.
+// Profiler owns sampling resources; Run owns the pipeline and formatter.
+// ReadDataLoop receives one context. IsNormalStop permits bounded final delivery
+// using WithoutCancel; other cancellation causes abort collection. Real errors
+// must always be returned, even after a normal stop. No enqueue may outlive the
+// loop. Stop releases resources even after cancellation; implementations own
+// timeouts for external cleanup operations.
 type Profiler interface {
 	Start(ctx context.Context) error
-	ReadDataLoop(ctx context.Context, enqueue func(any)) error
-	Stop(ctx context.Context) error
+	ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error
+	Stop() error
 }

@@ -24,6 +24,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 )
 
 func TestSignalContextCleanup(t *testing.T) {
@@ -84,5 +86,31 @@ func TestSignalContextHandlesTermination(t *testing.T) {
 	cleanup()
 	if !strings.Contains(logs.String(), "[signal] caught signal: terminated, canceling context") {
 		t.Fatalf("missing signal diagnostic: %q", logs.String())
+	}
+}
+
+func TestSignalContextHandlesUserStop(t *testing.T) {
+	const childEnv = "HUATUO_PROFILER_INTERRUPT_TEST"
+	if os.Getenv(childEnv) != "1" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSignalContextHandlesUserStop$")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("signal subprocess: %v\n%s", err, output)
+		}
+		return
+	}
+	var logs bytes.Buffer
+	ctx, cleanup := newSignalContext(t.Context(), &logs)
+	defer cleanup()
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("SIGINT did not stop collection")
+	}
+	if !profile.IsNormalStop(ctx) {
+		t.Fatalf("cause=%v", context.Cause(ctx))
 	}
 }

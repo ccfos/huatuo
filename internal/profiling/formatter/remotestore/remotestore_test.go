@@ -28,7 +28,6 @@ import (
 	"github.com/ccfos/huatuo/internal/profiling/formatter/remotestore"
 
 	capnp "capnproto.org/go/capnp/v3"
-	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/toolstream"
@@ -42,48 +41,68 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("toolstream.NewServer() error = %v", err)
 	}
-	received := make(chan *types.ProfilingWindow, 1)
+
+	received := make(chan *types.AggregationWindow, 1)
 	var commits atomic.Int32
-	toolstream.Register(server, profilingapi.StoreServiceName, func(_ context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
+	toolstream.Register(server, profilingapi.StoreServiceName, func(
+		_ context.Context,
+		request *toolstream.Request[types.AggregationWindow],
+	) error {
 		if request.Commit {
 			commits.Add(1)
 		}
-		if request.Version != "1" {
+
+		if request.Version != "3" {
 			t.Errorf("version = %q", request.Version)
 		}
+
 		if request.ServiceName != profilingapi.StoreServiceName || request.ToolName != "irqtracing" {
 			t.Errorf("service=%q tool=%q", request.ServiceName, request.ToolName)
 		}
+
 		if request.Data == nil {
 			return nil
 		}
+
 		result := request.Data
 		if request.TaskID != "task-1" {
 			t.Errorf("TaskID = %q, want task-1", request.TaskID)
 		}
+
 		received <- result
+
 		return nil
 	})
 	if err := server.Start(); err != nil {
 		t.Fatalf("server.Start() error = %v", err)
 	}
+
 	t.Cleanup(func() {
 		if err := server.Close(); err != nil {
 			t.Errorf("server.Close() error = %v", err)
 		}
 	})
 
-	formatter, err := remotestore.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: sockPath, TaskID: "task-1", ToolName: "irqtracing"})
+	formatter, err := remotestore.NewFormatter(output.Config{
+		Format:      output.FormatRemoteStore,
+		Destination: sockPath,
+		TaskID:      "task-1",
+		ToolName:    "irqtracing",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() {
 		if err := formatter.Close(); err != nil {
 			t.Error(err)
 		}
 	})
 
-	result := &types.ProfilingWindow{Profile: &profilev1.Profile{}, DroppedSamples: map[string]uint64{types.DropReasonCollection: 3}}
+	result := &types.AggregationWindow{
+		ProfileType:    "irqtracing:irq:count:irq:count",
+		DroppedSamples: map[string]uint64{types.DropReasonCollection: 3},
+	}
 
 	if err := formatter.Add(t.Context(), result); err != nil {
 		t.Fatal(err)
@@ -96,6 +115,7 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 	if commits.Load() != 1 {
 		t.Fatalf("commits = %d, want 1", commits.Load())
 	}
+
 	select {
 	case got := <-received:
 		if got.DroppedSamples[types.DropReasonCollection] != 3 {
@@ -112,32 +132,44 @@ func TestRemoteStoreFormatterCloseDoesNotCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer listener.Close()
-	formatter, err := remotestore.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path, TaskID: "task", ToolName: "profiler"})
+	formatter, err := remotestore.NewFormatter(output.Config{
+		Format:      output.FormatRemoteStore,
+		Destination: path,
+		TaskID:      "task",
+		ToolName:    "profiler",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	conn, err := listener.Accept()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer conn.Close()
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := formatter.Close(); err != nil {
 		t.Fatal(err)
 	}
+
 	decoder := capnp.NewDecoder(conn)
 	message, err := decoder.Decode()
 	if err != nil {
 		t.Fatalf("read handshake: %v", err)
 	}
+
 	message.Release()
 	if message, err := decoder.Decode(); !errors.Is(err, io.EOF) {
 		if message != nil {
 			message.Release()
 		}
+
 		t.Fatalf("Close sent a frame or left connection open: %v", err)
 	}
 }
@@ -156,7 +188,11 @@ func TestRemoteStoreFormatterRejectsNonSocket(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := remotestore.NewFormatter(output.FormatterConfig{Format: output.FormatRemoteStore, Destination: path}); err == nil {
+
+			if _, err := remotestore.NewFormatter(output.Config{
+				Format:      output.FormatRemoteStore,
+				Destination: path,
+			}); err == nil {
 				t.Fatal("accepted non-socket remote destination")
 			}
 		})
@@ -169,28 +205,38 @@ func TestRemoteStoreFormatterReturnsCommitFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var commits atomic.Int32
-	toolstream.Register(server, profilingapi.StoreServiceName, func(_ context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
+	toolstream.Register(server, profilingapi.StoreServiceName, func(
+		_ context.Context,
+		request *toolstream.Request[types.AggregationWindow],
+	) error {
 		if request.Commit {
 			commits.Add(1)
 			return errors.New("store commit rejected")
 		}
+
 		return nil
 	})
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() {
 		if err := server.Close(); err != nil {
 			t.Error(err)
 		}
 	})
-	f, err := remotestore.NewFormatter(output.FormatterConfig{
-		Format: output.FormatRemoteStore, Destination: path, TaskID: "failed-commit", ToolName: "profiler",
+	f, err := remotestore.NewFormatter(output.Config{
+		Format:      output.FormatRemoteStore,
+		Destination: path,
+		TaskID:      "failed-commit",
+		ToolName:    "profiler",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() {
 		if err := f.Close(); err != nil {
 			t.Error(err)
@@ -200,6 +246,7 @@ func TestRemoteStoreFormatterReturnsCommitFailure(t *testing.T) {
 	if first == nil {
 		t.Fatal("commit rejection was ignored")
 	}
+
 	if commits.Load() != 1 {
 		t.Fatalf("commit attempts = %d", commits.Load())
 	}

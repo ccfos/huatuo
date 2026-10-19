@@ -70,7 +70,7 @@ func TestCreateOutputFileUsesUniqueNames(t *testing.T) {
 func TestLocalDestinationCreatesDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "profiles")
 
-	destination, err := NewLocalDestination(FormatterConfig{Format: FormatSVG, Destination: dir + "/"})
+	destination, err := NewLocalDestination(Config{Format: FormatSVG, Destination: dir + "/"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +113,9 @@ func TestWriteAndClosePropagatesOutputFailures(t *testing.T) {
 					t.Fatalf("output error %v does not include %v", err, failure)
 				}
 			}
-			if tc.writeErr == nil && tc.closeErr == nil && err != nil {
-				t.Fatal(err)
+			//nolint:errorlint // Successful cleanup preserves the write error unchanged.
+			if tc.closeErr == nil && err != tc.writeErr {
+				t.Fatalf("write error was wrapped: %v", err)
 			}
 		})
 	}
@@ -154,7 +155,7 @@ func TestLocalDestinationResolvesPaths(t *testing.T) {
 			} else if tc.directory {
 				path += "/"
 			}
-			destination, err := NewLocalDestination(FormatterConfig{Format: FormatCollapsed, Destination: path})
+			destination, err := NewLocalDestination(Config{Format: FormatCollapsed, Destination: path})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -187,14 +188,14 @@ func TestLocalDestinationRejectsSpecialFiles(t *testing.T) {
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewLocalDestination(FormatterConfig{Destination: path}); err == nil {
+	if _, err := NewLocalDestination(Config{Destination: path}); err == nil {
 		t.Fatal("accepted FIFO destination")
 	}
 }
 
 func TestLocalDestinationRejectsChangedFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profile")
-	destination, err := NewLocalDestination(FormatterConfig{Destination: path})
+	destination, err := NewLocalDestination(Config{Destination: path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +208,7 @@ func TestLocalDestinationRejectsChangedFile(t *testing.T) {
 }
 
 func TestLocalDestinationReportsCloseFailureOnce(t *testing.T) {
-	destination, err := NewLocalDestination(FormatterConfig{Format: FormatJSON, Destination: filepath.Join(t.TempDir(), "profile")})
+	destination, err := NewLocalDestination(Config{Format: FormatJSON, Destination: filepath.Join(t.TempDir(), "profile")})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -51,14 +52,27 @@ func mainAction(cliCtx *cli.Context) error {
 	}
 	defer bpf.Shutdown()
 
-	ctx, cancel := signal.NotifyContext(cliCtx.Context, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(cliCtx.Context)
+	defer cancel(nil)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case sig := <-signals:
+			if sig == syscall.SIGINT {
+				cancel(profile.ErrStopRequested)
+			} else {
+				cancel(context.Canceled)
+			}
+		}
+	}()
 
 	duration := time.Duration(cfg.duration) * time.Second
 	task := newIRQProfiler(&collector{
 		bpfPath:                  cfg.bpfPath,
 		cpuId:                    cfg.targetCPU,
-		duration:                 duration,
 		maxEventsPerSecondPerCPU: cfg.maxEventsPerSecondPerCPU,
 	})
 	return profile.Run(ctx, profile.RunConfig{

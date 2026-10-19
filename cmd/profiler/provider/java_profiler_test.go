@@ -54,23 +54,20 @@ func TestNativeProfilersRejectMultiplePIDs(t *testing.T) {
 	}
 }
 
-func TestJavaAggregatorCapturesConfiguration(t *testing.T) {
-	cfg := &Config{Type: profiling.TypeCPU, Freq: 100, ContainerID: "original-container"}
-	aggr, err := newJavaAggregator(cfg)
+func TestJavaProfilerCapturesConfiguration(t *testing.T) {
+	cfg := &Config{
+		Type:        profiling.TypeCPU,
+		Freq:        100,
+		ContainerID: "original-container",
+	}
+	task, err := New(profiling.ImplementationJava, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Type = "unsupported"
+
 	cfg.Freq = 1
 	cfg.ContainerID = "changed-container"
-	window, err := aggr.Snapshot(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if window.ContainerID != "original-container" {
-		t.Fatalf("container ID = %q", window.ContainerID)
-	}
-	if window.Profile.Period != 10000000 {
-		t.Fatalf("sample period = %d, want 10000000", window.Profile.Period)
+	if task.AggregationConfig.ContainerID != "original-container" || task.Impl.(*cpuJavaProfiler).config.Freq != 100 {
+		t.Fatal("task aliases configuration")
 	}
 }

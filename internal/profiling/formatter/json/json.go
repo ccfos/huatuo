@@ -19,6 +19,7 @@ import (
 	stdjson "encoding/json"
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
+	profilewindow "github.com/ccfos/huatuo/internal/profiling/window"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -26,7 +27,7 @@ type formatter struct {
 	destination *output.LocalDestination
 }
 
-func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) error {
+func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -36,7 +37,17 @@ func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) erro
 		return err
 	}
 
-	return stdjson.NewEncoder(writer).Encode(window)
+	p, err := profilewindow.BuildProfile(ctx, window)
+	if err != nil {
+		return err
+	}
+
+	return stdjson.NewEncoder(writer).Encode(&types.ProfilingWindow{
+		ContainerID:    window.ContainerID,
+		ProfileType:    window.ProfileType,
+		Profile:        p,
+		DroppedSamples: window.DroppedSamples,
+	})
 }
 
 func (f *formatter) Complete(ctx context.Context) error {
@@ -48,12 +59,13 @@ func (f *formatter) Complete(ctx context.Context) error {
 }
 
 // NewFormatter initializes window JSON output.
-func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
+func NewFormatter(cfg output.Config) (output.Formatter, error) {
 	cfg.Format = output.FormatJSON
 	destination, err := output.NewLocalDestination(cfg)
 	if err != nil {
 		return nil, err
 	}
+
 	return &formatter{destination: destination}, nil
 }
 

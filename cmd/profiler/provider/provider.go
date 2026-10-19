@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/ccfos/huatuo/internal/profiling/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	profile "github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
@@ -28,44 +28,66 @@ func New(implementation profiling.Implementation, config *Config) (*profile.Prof
 	cfg := *config
 	cfg.PIDs = slices.Clone(config.PIDs)
 	cfg.CPUIDs = slices.Clone(config.CPUIDs)
-	meta := &profile.ProfilerMeta{ToolName: "profiler", Type: cfg.Type, Implementation: implementation}
+	meta := &profile.ProfilerMeta{
+		ToolName:       "profiler",
+		Type:           cfg.Type,
+		Implementation: implementation,
+	}
 	var err error
+	meta.AggregationConfig.ContainerID = cfg.ContainerID
+	meta.AggregationConfig.ProfileType, err = sampleType(&cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	switch {
 	case implementation == profiling.ImplementationNative && cfg.Type == profiling.TypeCPU:
 		meta.Description = "Native CPU profiler using eBPF"
 		meta.Impl = &cpuNativeProfiler{config: cfg}
-		meta.Aggregator, err = newNativeAggregator(&cfg)
 	case implementation == profiling.ImplementationNative && cfg.Type == profiling.TypeMemory:
 		mode, modeErr := resolveMemMode(cfg.Mode)
 		if modeErr != nil {
 			return nil, modeErr
 		}
+
 		if mode == profiling.ModePhysicalUsage {
-			meta.AggregationMode = aggregator.AggregationModeOneShot
+			meta.AggregationMode = pipeline.AggregationModeOneShot
 		}
+
 		meta.Description = "Native memory profiler using eBPF"
 		meta.Impl = &memNativeProfiler{config: cfg}
-		meta.Aggregator, err = newNativeAggregator(&cfg)
 	case implementation == profiling.ImplementationJava && cfg.Type == profiling.TypeCPU:
 		meta.Description = "Java CPU profiler using async-profiler"
 		meta.Impl = &cpuJavaProfiler{config: cfg}
-		meta.AggregationMode = aggregator.AggregationModeOneShot
-		meta.Aggregator, err = newJavaAggregator(&cfg)
+		meta.AggregationMode = pipeline.AggregationModeOneShot
 	case implementation == profiling.ImplementationJava && cfg.Type == profiling.TypeMemory:
 		meta.Description = "Java memory profiler using async-profiler"
 		meta.Impl = &javaMemoryProfiler{config: cfg}
-		meta.AggregationMode = aggregator.AggregationModeOneShot
-		meta.Aggregator, err = newJavaAggregator(&cfg)
+		meta.AggregationMode = pipeline.AggregationModeOneShot
 	case implementation == profiling.ImplementationPython && cfg.Type == profiling.TypeCPU:
 		meta.Description = "Python CPU profiler using py-spy"
 		meta.Impl = &pythonCPUProfiler{config: cfg}
-		meta.AggregationMode = aggregator.AggregationModeOneShot
-		meta.Aggregator, err = newPythonCPUAggregator(&cfg)
+		meta.AggregationMode = pipeline.AggregationModeOneShot
 	default:
 		return nil, fmt.Errorf("no profiler for implementation=%q type=%q", implementation, cfg.Type)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("create %s %s aggregator: %w", implementation, cfg.Type, err)
-	}
+
 	return meta, nil
+}
+
+func sampleType(cfg *Config) (string, error) {
+	switch cfg.Type {
+	case profiling.TypeCPU:
+		if cfg.Mode == profiling.ModeOffCPU {
+			return profile.ProfileTypeOffCpuSample, nil
+		}
+
+		return profile.ProfileTypeCpuSample, nil
+	case profiling.TypeMemory:
+		return profile.ProfileTypeMemSample, nil
+	case profiling.TypeLock:
+		return profile.ProfileTypeLockTimeSample, nil
+	default:
+		return "", fmt.Errorf("unsupported profile type %q", cfg.Type)
+	}
 }

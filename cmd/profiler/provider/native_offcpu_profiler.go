@@ -22,6 +22,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/profiling/aggregation"
+
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
@@ -37,18 +41,28 @@ const (
 	offCPUCPUSetWordCount = 128
 )
 
-type offCPUStackKey struct {
-	Stack    rawStackIDs
-	Category string
-}
-
 func nativeOffCPUAttachOptions() []bpf.AttachOption {
 	return []bpf.AttachOption{
-		{ProgramName: "native_offcpu_switch", Symbol: "sched_switch"},
-		{ProgramName: "native_offcpu_wakeup", Symbol: "sched_wakeup"},
-		{ProgramName: "native_offcpu_wakeup_new", Symbol: "sched_wakeup_new"},
-		{ProgramName: "native_offcpu_exit", Symbol: "sched_process_exit"},
-		{ProgramName: "native_offcpu_free", Symbol: "sched_process_free"},
+		{
+			ProgramName: "native_offcpu_switch",
+			Symbol:      "sched_switch",
+		},
+		{
+			ProgramName: "native_offcpu_wakeup",
+			Symbol:      "sched_wakeup",
+		},
+		{
+			ProgramName: "native_offcpu_wakeup_new",
+			Symbol:      "sched_wakeup_new",
+		},
+		{
+			ProgramName: "native_offcpu_exit",
+			Symbol:      "sched_process_exit",
+		},
+		{
+			ProgramName: "native_offcpu_free",
+			Symbol:      "sched_process_free",
+		},
 	}
 }
 
@@ -61,9 +75,11 @@ func newNativeOffCPUBPFConstants(cfg *Config, cssAddr uint64) map[string]any {
 	if len(cfg.CPUIDs) != 0 {
 		constants["profiler_offcpu_cpu_set_enabled"] = uint32(1)
 	}
+
 	if cfg.OffCPUStatsEnabled {
 		constants["profiler_offcpu_stats_enabled"] = uint32(1)
 	}
+
 	return constants
 }
 
@@ -81,9 +97,11 @@ func configureOffCPUSet(obj bpf.BPF, cpuIDs []int) error {
 	if err != nil {
 		return err
 	}
+
 	if err := obj.WriteMapItems(mapID, items); err != nil {
 		return fmt.Errorf("write BPF map %q: %w", offCPUCPUSetMapName, err)
 	}
+
 	return nil
 }
 
@@ -94,6 +112,7 @@ func offCPUCPUSetItems(cpuIDs []int) ([]bpf.MapItem, error) {
 			return nil, fmt.Errorf("cpuid %d exceeds off-CPU filter limit %d",
 				cpuID, offCPUCPUSetWordBits*offCPUCPUSetWordCount-1)
 		}
+
 		word := cpuID / offCPUCPUSetWordBits
 		masks[word] |= uint64(1) << uint(cpuID%offCPUCPUSetWordBits)
 	}
@@ -103,12 +122,17 @@ func offCPUCPUSetItems(cpuIDs []int) ([]bpf.MapItem, error) {
 		if mask == 0 {
 			continue
 		}
+
 		key := make([]byte, 4)
 		binary.LittleEndian.PutUint32(key, uint32(word))
 		value := make([]byte, 8)
 		binary.LittleEndian.PutUint64(value, mask)
-		items = append(items, bpf.MapItem{Key: key, Value: value})
+		items = append(items, bpf.MapItem{
+			Key:   key,
+			Value: value,
+		})
 	}
+
 	return items, nil
 }
 
@@ -128,21 +152,28 @@ func microsecondsToNanoseconds(value uint64) uint64 {
 	if value > ^uint64(0)/nsPerMicrosecond {
 		return ^uint64(0)
 	}
+
 	return value * nsPerMicrosecond
 }
 
 func (p *cpuNativeProfiler) readOffCPUDataLoop(
 	ctx context.Context,
-	enqueue func(any),
+	enqueue func(*pipeline.SampleBatch) error,
 ) error {
 	ringCtx := p.ringCtx
 
 	for {
 		batch, err := ringCtx.readerA.ReadBatch(func() any { return &abi.ProfilerOffCPUEvent{} })
-		ringCtx.aggregateOffCPUBatch(batch.Events, enqueue)
+		if err := ringCtx.enqueueOffCPUBatch(batch.Events, enqueue); err != nil {
+			return err
+		}
 
 		if batch.LostSamples != 0 {
-			log.Warnf("off-CPU perf event samples lost: %d", batch.LostSamples)
+			if err := enqueue(&pipeline.SampleBatch{
+				DroppedSamples: map[string]uint64{types.DropReasonCollection: batch.LostSamples},
+			}); err != nil {
+				return err
+			}
 		}
 
 		if err != nil {
@@ -164,67 +195,45 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(
 	}
 }
 
-func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any)) {
-	countsByProcess := make(map[processKey]map[offCPUStackKey]int64)
-	for _, record := range batch {
+func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipeline.SampleBatch) error) error {
+	var builder pipeline.BatchBuilder
+	for _, record := range events {
 		event, ok := record.(*abi.ProfilerOffCPUEvent)
 		if !ok {
-			log.Warnf("unexpected off-CPU event type %T", record)
-			continue
-		}
-		if event.Base.Value <= 0 {
-			continue
-		}
-		if !validateStackID(event.Base.Kernstack) && !validateStackID(event.Base.Userstack) {
-			continue
+			return fmt.Errorf("unexpected off-CPU event %T", record)
 		}
 
-		process := processKey{
-			PID:  uint32(event.Base.PIDTGID >> 32),
-			Comm: taskCommString(event.Base.Comm),
+		pid := uint32(event.Base.PIDTGID >> 32)
+		labels := append(
+			nativeLabels(pid, taskCommString(event.Base.Comm)),
+			types.ProfileStringLabel("offcpu_category", offCPUCategory(event.Kind)),
+		)
+		labels, err := types.NormalizeLabels(labels)
+		if err != nil {
+			return err
 		}
-		stack := offCPUStackKey{
-			Category: offCPUCategory(event.Kind),
-			Stack: rawStackIDs{
-				KernelStackID: event.Base.Kernstack,
-				UserStackID:   event.Base.Userstack,
-			},
+
+		sample := aggregation.Sample{
+			UserFrames:   r.resolveUserStack(r.stackMapAID, event.Base.Userstack, pid),
+			KernelFrames: r.resolveKernelStack(r.stackMapAID, event.Base.Kernstack),
+			Labels:       labels,
+			Value:        event.Base.Value,
 		}
-		if countsByProcess[process] == nil {
-			countsByProcess[process] = make(map[offCPUStackKey]int64)
+		if err := builder.Append(&sample, enqueue); err != nil {
+			return err
 		}
-		countsByProcess[process][stack] += event.Base.Value
 	}
 
-	for process, stacks := range countsByProcess {
-		for stack, duration := range stacks {
-			enqueue(&stackSample{
-				Process: process,
-				StackTrace: symbolizedStackTrace{
-					UserFrames: r.resolveUserStack(
-						r.stackMapAID,
-						stack.Stack.UserStackID,
-						process.PID,
-					),
-					KernelFrames: r.resolveKernelStack(
-						r.stackMapAID,
-						stack.Stack.KernelStackID,
-					),
-				},
-				Value:    duration,
-				Category: stack.Category,
-			})
-		}
-	}
+	return builder.Flush(enqueue)
 }
 
 var offCPUCategories = [...]string{
-	abi.ProfilerOffCPUEventUnknown:              "off-CPU unknown",
-	abi.ProfilerOffCPUEventBlocked:              "off-CPU blocked",
-	abi.ProfilerOffCPUEventRunqueue:             "scheduling delay",
-	abi.ProfilerOffCPUEventRunqueuePreempted:    "scheduling delay (preempted)",
-	abi.ProfilerOffCPUEventRunqueueYielded:      "scheduling delay (yielded)",
-	abi.ProfilerOffCPUEventRunqueueMissedWakeup: "scheduling delay (wakeup not observed)",
+	abi.ProfilerOffCPUEventUnknown:              "unknown",
+	abi.ProfilerOffCPUEventBlocked:              "blocked",
+	abi.ProfilerOffCPUEventRunqueue:             "runqueue",
+	abi.ProfilerOffCPUEventRunqueuePreempted:    "runqueue_preempted",
+	abi.ProfilerOffCPUEventRunqueueYielded:      "runqueue_yielded",
+	abi.ProfilerOffCPUEventRunqueueMissedWakeup: "runqueue_missed_wakeup",
 }
 
 func offCPUCategory(kind abi.ProfilerOffCPUEventKind) string {
@@ -232,6 +241,7 @@ func offCPUCategory(kind abi.ProfilerOffCPUEventKind) string {
 	if index >= uint64(len(offCPUCategories)) {
 		return offCPUCategories[abi.ProfilerOffCPUEventUnknown]
 	}
+
 	return offCPUCategories[index]
 }
 
@@ -247,6 +257,7 @@ func logOffCPUBPFStats(obj bpf.BPF) {
 	if obj == nil {
 		return
 	}
+
 	mapID := obj.MapIDByName("offcpu_stats")
 	if mapID == 0 {
 		return
@@ -261,11 +272,14 @@ func logOffCPUBPFStats(obj bpf.BPF) {
 			log.Warnf("read off-CPU stat %s: %v", name, err)
 			continue
 		}
+
 		var total uint64
 		for offset := 0; offset+8 <= len(value); offset += 8 {
 			total += binary.LittleEndian.Uint64(value[offset : offset+8])
 		}
+
 		stats = append(stats, fmt.Sprintf("%s=%d", name, total))
 	}
+
 	log.Infof("off-CPU stats: %s", strings.Join(stats, " "))
 }

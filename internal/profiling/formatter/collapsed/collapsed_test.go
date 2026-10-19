@@ -26,18 +26,20 @@ func TestStacksAdd_RemovesBalancedStack(t *testing.T) {
 	if err := formatter.Add(frames, 4096); err != nil {
 		t.Fatalf("add allocation sample: %v", err)
 	}
+
 	if err := formatter.Add(frames, -4096); err != nil {
 		t.Fatalf("add free sample: %v", err)
 	}
 
 	if !formatter.IsEmpty() {
-		t.Fatalf("balanced stack retained in formatter: %v", formatter.Counts())
+		t.Fatalf("balanced stack retained in formatter: %v", formatter.counts)
 	}
 
 	var got bytes.Buffer
 	if err := formatter.Write(&got); err != nil {
 		t.Fatalf("write formatter: %v", err)
 	}
+
 	if got.Len() != 0 {
 		t.Fatalf("balanced stack output = %q, want empty", got.String())
 	}
@@ -85,8 +87,14 @@ func TestStacksAddMergesNormalizationCollisions(t *testing.T) {
 		Frames []string
 		Count  int64
 	}{
-		{Frames: []string{"root", "foo;bar"}, Count: 2},
-		{Frames: []string{"root", "foo:bar"}, Count: 3},
+		{
+			Frames: []string{"root", "foo;bar"},
+			Count:  2,
+		},
+		{
+			Frames: []string{"root", "foo:bar"},
+			Count:  3,
+		},
 	}
 	for _, sample := range samples {
 		if err := formatter.Add(sample.Frames, sample.Count); err != nil {

@@ -12,20 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package aggregator
+package profile
 
 import (
 	"context"
-
-	"github.com/ccfos/huatuo/pkg/types"
+	"errors"
+	"time"
 )
 
-//go:generate mockery --config /dev/null --name=Aggregator --dir=. --filename=mock_aggregator_test.go --inpackage --case=underscore
+var (
+	ErrCollectionDurationElapsed = errors.New("collection duration elapsed")
+	ErrStopRequested             = errors.New("collection stop requested")
+)
 
-// Aggregator converts provider records into a common profiling window.
-// Pipeline serializes Aggregate, Snapshot and Reset at each window boundary.
-type Aggregator interface {
-	Aggregate(rec any)
-	Snapshot(ctx context.Context) (*types.ProfilingWindow, error)
-	Reset()
+// FinalizationTimeout bounds collector final output and publication.
+const FinalizationTimeout = 30 * time.Second
+
+// IsNormalStop accepts only control causes, never an error joined with a failure.
+func IsNormalStop(ctx context.Context) bool {
+	cause := context.Cause(ctx)
+	return cause == ErrCollectionDurationElapsed || cause == ErrStopRequested //nolint:errorlint // Joined failures must not count as control causes.
 }

@@ -28,7 +28,7 @@ import (
 )
 
 // NewFormatter initializes one task's output. The caller must Close it on every exit path.
-func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
+func NewFormatter(cfg output.Config) (output.Formatter, error) {
 	switch cfg.Format {
 	case "", output.FormatCollapsed:
 		return collapsed.NewFormatter(cfg)

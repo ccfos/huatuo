@@ -21,10 +21,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiling/window"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -60,7 +63,7 @@ type memNativeProfiler struct {
 
 var hasKprobeFunction = bpf.HasKprobeFunction
 
-func (p *memNativeProfiler) Stop(_ context.Context) error {
+func (p *memNativeProfiler) Stop() error {
 	if p.ringCtx != nil {
 		p.ringCtx.Close()
 		p.ringCtx = nil
@@ -68,6 +71,7 @@ func (p *memNativeProfiler) Stop(_ context.Context) error {
 
 	err := closeBPF(p.bpf)
 	p.bpf = nil
+
 	return err
 }
 
@@ -76,6 +80,7 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 	if err := validateNativePIDs("memory", cfg.PIDs); err != nil {
 		return err
 	}
+
 	if err := requireRoot(); err != nil {
 		return err
 	}
@@ -102,7 +107,13 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 		return err
 	}
 
-	loadConfig, err := newNativeMemoryBPFLoadConfig(p.internalMode, cfg.PID(), cssAddr, cfg.ThreadGroup, p.probability)
+	loadConfig, err := newNativeMemoryBPFLoadConfig(
+		p.internalMode,
+		cfg.PID(),
+		cssAddr,
+		cfg.ThreadGroup,
+		p.probability,
+	)
 	if err != nil {
 		return err
 	}
@@ -115,7 +126,12 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 	}
 
 	needsFallback := p.internalMode == profiling.ModePhysicalUsage
-	ringCtx, err := newRingBufferContext(b, ctx, 4096*257, needsFallback)
+	ringCtx, err := newRingBufferContext(
+		b,
+		ctx,
+		4096*257,
+		needsFallback,
+	)
 	if err != nil {
 		readerErr := fmt.Errorf("create native memory event readers: %w", err)
 		if closeErr := b.Close(); closeErr != nil {
@@ -124,6 +140,7 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 				fmt.Errorf("close BPF after reader creation failure: %w", closeErr),
 			)
 		}
+
 		return readerErr
 	}
 
@@ -155,7 +172,13 @@ type nativeMemoryBPFLoadConfig struct {
 
 // newNativeMemoryBPFLoadConfig creates a BPF load configuration based on the profiler mode.
 // It returns the appropriate object file, constants, and attachment options for the given mode.
-func newNativeMemoryBPFLoadConfig(internalMode profiling.Mode, pid int, cssAddr uint64, threadGroup bool, probability uint) (*nativeMemoryBPFLoadConfig, error) {
+func newNativeMemoryBPFLoadConfig(
+	internalMode profiling.Mode,
+	pid int,
+	cssAddr uint64,
+	threadGroup bool,
+	probability uint,
+) (*nativeMemoryBPFLoadConfig, error) {
 	constants := newNativeBPFConstants(pid, cssAddr, threadGroup)
 
 	switch internalMode {
@@ -164,7 +187,10 @@ func newNativeMemoryBPFLoadConfig(internalMode profiling.Mode, pid int, cssAddr 
 			ObjectFile: "native_virtual_alloc.o",
 			Constants:  constants,
 			AttachOpts: []bpf.AttachOption{
-				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
+				{
+					ProgramName: "trace_mmap",
+					Symbol:      "do_mmap",
+				},
 			},
 		}, nil
 	case profiling.ModePhysicalUsage:
@@ -175,6 +201,7 @@ func newNativeMemoryBPFLoadConfig(internalMode profiling.Mode, pid int, cssAddr 
 
 		constants["profiler_sampling_prob"] = uint8(probability)
 		constants["profiler_folio_npages"] = attachCfg.CountFolioPages
+
 		return &nativeMemoryBPFLoadConfig{
 			ObjectFile: "native_physical_usage.o",
 			Constants:  constants,
@@ -188,6 +215,7 @@ func newNativeMemoryBPFLoadConfig(internalMode profiling.Mode, pid int, cssAddr 
 
 		constants["profiler_sampling_prob"] = uint8(probability)
 		constants["profiler_folio_npages"] = attachOpt.Symbol == symbolFolioAddNewAnonRmap
+
 		return &nativeMemoryBPFLoadConfig{
 			ObjectFile: "native_physical_alloc.o",
 			Constants:  constants,
@@ -221,8 +249,14 @@ func newPhysicalUsageAttachConfig() (physicalUsageAttachConfig, error) {
 	if hasKprobeFunction(symbolFolioAddNewAnonRmap) && hasKprobeFunction(symbolFolioRemoveRmapPtes) {
 		return physicalUsageAttachConfig{
 			AttachOpts: []bpf.AttachOption{
-				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-				{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+				{
+					ProgramName: programTracePageAlloc,
+					Symbol:      symbolFolioAddNewAnonRmap,
+				},
+				{
+					ProgramName: programTracePageFree,
+					Symbol:      symbolFolioRemoveRmapPtes,
+				},
 			},
 			CountFolioPages: true,
 		}, nil
@@ -231,8 +265,14 @@ func newPhysicalUsageAttachConfig() (physicalUsageAttachConfig, error) {
 	if hasKprobeFunction(symbolFolioAddNewAnonRmap) && hasKprobeFunction(symbolPageRemoveRmap) {
 		return physicalUsageAttachConfig{
 			AttachOpts: []bpf.AttachOption{
-				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+				{
+					ProgramName: programTracePageAlloc,
+					Symbol:      symbolFolioAddNewAnonRmap,
+				},
+				{
+					ProgramName: programTracePageFree,
+					Symbol:      symbolPageRemoveRmap,
+				},
 			},
 		}, nil
 	}
@@ -240,19 +280,30 @@ func newPhysicalUsageAttachConfig() (physicalUsageAttachConfig, error) {
 	if hasKprobeFunction(symbolPageAddNewAnonRmap) && hasKprobeFunction(symbolPageRemoveRmap) {
 		return physicalUsageAttachConfig{
 			AttachOpts: []bpf.AttachOption{
-				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
-				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+				{
+					ProgramName: programTracePageAlloc,
+					Symbol:      symbolPageAddNewAnonRmap,
+				},
+				{
+					ProgramName: programTracePageFree,
+					Symbol:      symbolPageRemoveRmap,
+				},
 			},
 		}, nil
 	}
 
-	return physicalUsageAttachConfig{}, fmt.Errorf("no supported physical usage kprobe pair found: tried %s/%s, %s/%s, %s/%s",
-		symbolFolioAddNewAnonRmap, symbolFolioRemoveRmapPtes,
-		symbolFolioAddNewAnonRmap, symbolPageRemoveRmap,
-		symbolPageAddNewAnonRmap, symbolPageRemoveRmap)
+	return physicalUsageAttachConfig{}, fmt.Errorf(
+		"no supported physical usage kprobe pair found: tried %s/%s, %s/%s, %s/%s",
+		symbolFolioAddNewAnonRmap,
+		symbolFolioRemoveRmapPtes,
+		symbolFolioAddNewAnonRmap,
+		symbolPageRemoveRmap,
+		symbolPageAddNewAnonRmap,
+		symbolPageRemoveRmap,
+	)
 }
 
-func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
+func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
 	ringCtx := p.ringCtx
 	if ringCtx == nil {
 		return errors.New("native memory event readers are not initialized; call Start before ReadDataLoop")
@@ -268,34 +319,38 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		case <-ticker.C:
 		}
 
-		// Use unified drainFrozenRingBuffer with Memory event factory
-		sampleCountsByProcess, ring, err := ringCtx.drainFrozenRingBuffer(
-			func() any { return &abi.ProfilerEventBase{} },
-		)
+		err := ringCtx.drainFrozenRingBuffer(func() any { return &abi.ProfilerEventBase{} }, enqueue, p.convertValueToBytes)
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
 
-			log.Warn("drain failed", "error", err)
-			continue
-		}
-
-		if len(sampleCountsByProcess) > 0 {
-			ringCtx.aggregateStacksAndEnqueue(sampleCountsByProcess, ring, enqueue, p.convertValueToBytes)
+			return fmt.Errorf("drain native samples: %w", err)
 		}
 	}
 }
 
-func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
+func (p *memNativeProfiler) convertValueToBytes(value int64) (int64, error) {
 	switch p.internalMode {
 	case profiling.ModeVirtualAlloc:
-		return v
+		return value, nil
 	case profiling.ModePhysicalAlloc, profiling.ModePhysicalUsage:
-		return v * p.pageSize * 100 / int64(p.probability)
+		bytes, err := window.ScaleValue(value, p.pageSize)
+		if err != nil {
+			return 0, err
+		}
+
+		bytes, err = window.ScaleValue(bytes, 100)
+		if err != nil {
+			return 0, err
+		}
+
+		if p.probability == 0 {
+			return 0, fmt.Errorf("physical memory sampling probability must be positive")
+		}
+
+		return bytes / int64(p.probability), nil
+	default:
+		return 0, fmt.Errorf("unsupported memory mode %q", p.internalMode)
 	}
-
-	log.Warn("unknown mem mode, value treated as zero", "mode", p.internalMode)
-
-	return 0
 }

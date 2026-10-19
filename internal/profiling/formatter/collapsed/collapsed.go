@@ -20,6 +20,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/ccfos/huatuo/internal/profiling/window"
 )
 
 // Stacks accumulates folded stack weights. Its zero value is ready to use.
@@ -38,7 +40,12 @@ func (s *Stacks) Add(frames []string, weight int64) error {
 	}
 
 	key := foldedStackKey(frames)
-	s.counts[key] += weight
+	value, err := window.AddValues(s.counts[key], weight)
+	if err != nil {
+		return err
+	}
+
+	s.counts[key] = value
 	// Balanced allocations have no visual weight and must not create output.
 	if s.counts[key] == 0 {
 		delete(s.counts, key)
@@ -63,8 +70,10 @@ func foldedStackKey(frames []string) string {
 		if index > 0 {
 			key.WriteByte(';')
 		}
+
 		writeFoldedFrame(&key, frame)
 	}
+
 	return key.String()
 }
 
@@ -85,6 +94,7 @@ func writeFoldedFrame(key *strings.Builder, frame string) {
 		key.WriteByte(replacement)
 		start = index + 1
 	}
+
 	key.WriteString(frame[start:])
 }
 
@@ -98,7 +108,12 @@ func (s *Stacks) Write(w io.Writer) error {
 	sort.Strings(keys)
 
 	for _, k := range keys {
-		if _, err := fmt.Fprintf(w, "%s %d\n", k, s.counts[k]); err != nil {
+		if _, err := fmt.Fprintf(
+			w,
+			"%s %d\n",
+			k,
+			s.counts[k],
+		); err != nil {
 			return err
 		}
 	}
@@ -109,10 +124,4 @@ func (s *Stacks) Write(w io.Writer) error {
 // IsEmpty reports whether all stack weights are zero.
 func (s *Stacks) IsEmpty() bool {
 	return len(s.counts) == 0
-}
-
-// Counts returns the accumulated stack-to-count map. The returned map
-// must not be modified; callers should treat it as read-only.
-func (s *Stacks) Counts() map[string]int64 {
-	return s.counts
 }

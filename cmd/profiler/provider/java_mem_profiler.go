@@ -18,6 +18,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
+	"github.com/ccfos/huatuo/pkg/types"
+
 	javaruntime "github.com/ccfos/huatuo/cmd/profiler/runtime/java"
 	"github.com/ccfos/huatuo/internal/profiling/toolpath"
 	"github.com/ccfos/huatuo/pkg/profiling"
@@ -31,6 +35,7 @@ const (
 type javaMemoryProfiler struct {
 	config         Config
 	profileOutFile map[int]string
+	labels         map[int][]types.ProfileLabel
 	samplingOpt    *javaruntime.AsprofSamplingOption
 }
 
@@ -51,13 +56,16 @@ func (p *javaMemoryProfiler) Start(ctx context.Context) error {
 			return err
 		}
 	}
+
 	if err := validateResolvedPIDs("Java", pids); err != nil {
 		return err
 	}
+
 	if len(cfg.PIDs) > 0 {
 		if err := validateProcessExecutables("Java", "java", pids); err != nil {
 			return err
 		}
+
 		if err := validateExpectedExecPath(pids, cfg.ExecPath); err != nil {
 			return err
 		}
@@ -70,6 +78,22 @@ func (p *javaMemoryProfiler) Start(ctx context.Context) error {
 	extraArgs, err := validateJavaMemoryMode(cfg.Mode)
 	if err != nil {
 		return err
+	}
+
+	p.labels = make(map[int][]types.ProfileLabel, len(pids))
+	for _, pid := range pids {
+		labels, err := readProcessLabels(pid)
+		if err != nil {
+			return fmt.Errorf("read Java process %d metadata: %w", pid, err)
+		}
+
+		entry, err := javaProcessName(pid)
+		if err != nil {
+			return err
+		}
+
+		labels = append(labels, types.ProfileStringLabel("java_entry", entry))
+		p.labels[pid] = labels
 	}
 
 	for _, pid := range pids {
@@ -101,16 +125,31 @@ func (p *javaMemoryProfiler) Start(ctx context.Context) error {
 
 	p.profileOutFile = profileOutFile
 	p.samplingOpt = opt
+
 	return nil
 }
 
-func (p *javaMemoryProfiler) Stop(ctx context.Context) error {
-	return javaruntime.StopJavaProfiler(ctx, p.samplingOpt)
+func (p *javaMemoryProfiler) Stop() error {
+	return javaruntime.StopJavaProfiler(p.samplingOpt)
 }
 
-func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
+func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
 	if p.samplingOpt == nil {
 		return fmt.Errorf("read Java memory profile: profiler is not started")
 	}
-	return javaruntime.ReadAsprofDataLoop(ctx, p.samplingOpt, p.profileOutFile, enqueue)
+
+	return javaruntime.ReadAsprofDataLoop(
+		ctx,
+		p.samplingOpt,
+		p.profileOutFile,
+		func(output profile.SampleOutput) error {
+			return enqueueFolded(
+				output,
+				p.labels[output.PID],
+				1,
+				profiling.LanguageJava,
+				enqueue,
+			)
+		},
+	)
 }

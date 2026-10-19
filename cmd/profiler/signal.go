@@ -22,10 +22,12 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 )
 
 func newSignalContext(parent context.Context, logBuf *bytes.Buffer) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancelCause(parent)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
 	done := make(chan struct{})
@@ -34,7 +36,11 @@ func newSignalContext(parent context.Context, logBuf *bytes.Buffer) (context.Con
 		select {
 		case <-ctx.Done():
 		case sig := <-signals:
-			cancel()
+			if sig == syscall.SIGINT {
+				cancel(profile.ErrStopRequested)
+			} else {
+				cancel(context.Canceled)
+			}
 			fmt.Fprintf(logBuf, "[signal] caught signal: %s, canceling context\n", sig)
 		}
 	}()
@@ -42,7 +48,7 @@ func newSignalContext(parent context.Context, logBuf *bytes.Buffer) (context.Con
 	cleanup := func() {
 		once.Do(func() {
 			signal.Stop(signals)
-			cancel()
+			cancel(nil)
 			// The caller may read logBuf as soon as cleanup returns.
 			<-done
 		})

@@ -15,7 +15,6 @@
 package provider
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -23,7 +22,6 @@ import (
 	"github.com/shirou/gopsutil/process"
 
 	hostprocess "github.com/ccfos/huatuo/internal/process"
-	"github.com/ccfos/huatuo/internal/profiling/profile"
 )
 
 func pythonProcessName(pid int) (string, error) {
@@ -46,6 +44,7 @@ func pythonProcessName(pid int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	if len(cmdline) == 0 {
 		return "", fmt.Errorf("empty cmdline for PID %d", pid)
 	}
@@ -58,22 +57,4 @@ func pythonProcessName(pid int) (string, error) {
 	}
 
 	return "", fmt.Errorf("couldn't get python thread name")
-}
-
-// Multi-process py-spy data already carries its process frames.
-func pythonProcessNames(ctx context.Context, outputs []profile.SampleOutput, fallbackPID int) (map[int]string, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	for _, output := range outputs {
-		if output.PID != 0 {
-			continue
-		}
-		name, err := pythonProcessName(fallbackPID)
-		if err != nil {
-			return nil, fmt.Errorf("extract thread name error: %w", err)
-		}
-		return map[int]string{fallbackPID: name}, nil
-	}
-	return nil, nil
 }

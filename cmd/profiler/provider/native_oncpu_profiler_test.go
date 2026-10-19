@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/pkg/profiling"
 
@@ -26,7 +28,7 @@ import (
 )
 
 func TestNativeCPUReadDataLoopRequiresStart(t *testing.T) {
-	err := (&cpuNativeProfiler{}).ReadDataLoop(t.Context(), func(any) {})
+	err := (&cpuNativeProfiler{}).ReadDataLoop(t.Context(), func(*pipeline.SampleBatch) error { return nil })
 	require.EqualError(t, err, "native CPU event readers are not initialized; call Start before ReadDataLoop")
 }
 
@@ -44,7 +46,10 @@ func TestNativeOnCPUAttachOptions(t *testing.T) {
 	t.Parallel()
 
 	options := nativeOnCPUAttachOptions(
-		&Config{Freq: 199, CPUIDs: []int{1, 3}},
+		&Config{
+			Freq:   199,
+			CPUIDs: []int{1, 3},
+		},
 		unix.PERF_TYPE_HARDWARE,
 		unix.PERF_COUNT_HW_CPU_CYCLES,
 	)
@@ -133,6 +138,7 @@ func TestAttachNativeOnCPU(t *testing.T) {
 					calls[1][0].PerfEvent.Config,
 				)
 			}
+
 			if tt.wantErr == nil {
 				require.NoError(t, err)
 				return

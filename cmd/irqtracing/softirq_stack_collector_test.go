@@ -19,9 +19,10 @@ import (
 	"errors"
 	"math"
 	"testing"
-	"time"
 
-	"github.com/ccfos/huatuo/internal/profiling/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
+
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 )
 
 func TestIRQTracingBPFConstants(t *testing.T) {
@@ -37,6 +38,7 @@ func TestIRQTracingBPFConstants(t *testing.T) {
 		if got := constants[sourceRateLimitConstant]; got != uint32(500) {
 			t.Fatalf("source rate = %v, want 500", got)
 		}
+
 		if got := constants[victimRateLimitConstant]; got != uint32(500) {
 			t.Fatalf("victim rate = %v, want 500", got)
 		}
@@ -47,6 +49,7 @@ func TestIRQTracingBPFConstants(t *testing.T) {
 		if got := constants[sourceRateLimitConstant]; got != uint32(501) {
 			t.Fatalf("source rate = %v, want 501", got)
 		}
+
 		if got := constants[victimRateLimitConstant]; got != uint32(500) {
 			t.Fatalf("victim rate = %v, want 500", got)
 		}
@@ -57,6 +60,7 @@ func TestIRQTracingBPFConstants(t *testing.T) {
 		if got := constants[sourceRateLimitConstant]; got != uint32(math.MaxUint32) {
 			t.Fatalf("source rate = %v, want %d", got, uint32(math.MaxUint32))
 		}
+
 		if got := constants[victimRateLimitConstant]; got != uint32(math.MaxUint32) {
 			t.Fatalf("victim rate = %v, want %d", got, uint32(math.MaxUint32))
 		}
@@ -66,9 +70,9 @@ func TestIRQTracingBPFConstants(t *testing.T) {
 func TestSoftIRQCancellationDoesNotSubmitPartialBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	c := &collector{duration: time.Hour}
+	c := &collector{}
 	submitted := false
-	err := c.ReadDataLoop(ctx, func(any) { submitted = true })
+	err := c.ReadDataLoop(ctx, func(*pipeline.SampleBatch) error { submitted = true; return nil })
 	if !errors.Is(err, context.Canceled) || submitted {
 		t.Fatalf("error=%v submitted=%v", err, submitted)
 	}
@@ -76,10 +80,22 @@ func TestSoftIRQCancellationDoesNotSubmitPartialBatch(t *testing.T) {
 
 func TestNewIRQProfilerUsesOneShotAggregation(t *testing.T) {
 	task := newIRQProfiler(&collector{})
-	if task.AggregationMode != aggregator.AggregationModeOneShot {
+	if task.AggregationMode != pipeline.AggregationModeOneShot {
 		t.Fatalf("aggregation mode=%v", task.AggregationMode)
 	}
-	if _, ok := task.Impl.(interface{ ManagesDuration() }); !ok {
-		t.Fatal("IRQ collector must own its duration")
+}
+
+func TestSoftIRQNormalStopPreservesDetachFailure(t *testing.T) {
+	failure := errors.New("detach probes failed")
+	for _, cause := range []error{profile.ErrCollectionDurationElapsed, profile.ErrStopRequested} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			cancel(cause)
+			c := &collector{bpfObj: &orderMockBPF{detachErr: failure}}
+			err := c.ReadDataLoop(ctx, func(*pipeline.SampleBatch) error { t.Fatal("delivered after detach failure"); return nil })
+			if !errors.Is(err, failure) {
+				t.Fatalf("error=%v", err)
+			}
+		})
 	}
 }

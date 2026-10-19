@@ -26,18 +26,27 @@ import (
 
 // Register initializes result storage before exposing the shared tool handlers.
 // Stop the server before calling the returned cleanup function.
-func Register(ctx context.Context, server *toolstream.Server, cfg profilingstore.Config, region string) (func(context.Context) error, error) {
+func Register(
+	ctx context.Context,
+	server *toolstream.Server,
+	cfg profilingstore.Config,
+	region string,
+) (func(context.Context) error, error) {
 	if server == nil {
 		return nil, errors.New("register profiling: server is required")
 	}
+
 	store, err := profilingstore.NewFromConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
+
 	writer, err := NewDocumentWriter(store, document.New(region))
 	if err != nil {
 		return nil, errors.Join(err, store.Close(ctx))
 	}
-	toolstream.Register(server, profiling.StoreServiceName, writer.Handle)
+
+	toolstream.Register(server, profiling.StoreServiceName, writer.HandleStream)
+
 	return store.Close, nil
 }

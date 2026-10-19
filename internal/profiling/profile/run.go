@@ -21,23 +21,22 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiling/aggregator"
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/factory"
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	"github.com/ccfos/huatuo/internal/randomid"
 )
 
 // Run blocks until cleanup completes so resources are guaranteed released.
-// ReadDataLoop returning on its own is a legitimate stop reason — one-shot
-// samplers (py-spy) finish before the duration timer fires.
+// Duration and explicit stop requests preserve final samples; failures forbid completion.
 func Run(
 	ctx context.Context,
 	cfg RunConfig,
 	p *ProfilerMeta,
-) error {
+) (returnErr error) {
 	cfg.ID = randomid.NewIfEmpty(cfg.ID)
 
-	formatter, err := factory.NewFormatter(output.FormatterConfig{
+	formatter, err := factory.NewFormatter(output.Config{
 		Format:      cfg.OutputFormat,
 		Destination: cfg.OutputDestination,
 		TaskID:      cfg.ID,
@@ -46,94 +45,96 @@ func Run(
 	if err != nil {
 		return fmt.Errorf("create profiling formatter: %w", err)
 	}
-	return runProfile(ctx, cfg, p, formatter)
-}
 
-// runProfile owns the initialized formatter until collection and cleanup finish.
-func runProfile(ctx context.Context, cfg RunConfig, p *ProfilerMeta, formatter output.Formatter) (returnErr error) {
-	collectionCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	defer func() { returnErr = errors.Join(returnErr, formatter.Close()) }()
 
-	pipe := aggregator.NewPipeline(aggregator.PipelineConfig{
+	// Collection stop must not cancel aggregation or publication.
+	processCtx, cancelProcess := context.WithCancelCause(context.WithoutCancel(ctx))
+	defer cancelProcess(nil)
+	collectionCtx, cancelCollection := context.WithCancelCause(processCtx)
+	defer cancelCollection(nil)
+	propagateCancellation := func() {
+		if IsNormalStop(ctx) {
+			cancelCollection(context.Cause(ctx))
+		} else {
+			cancelProcess(context.Cause(ctx))
+		}
+	}
+	stopPropagation := context.AfterFunc(ctx, propagateCancellation)
+	defer stopPropagation()
+	if ctx.Err() != nil {
+		propagateCancellation()
+	}
+
+	pipelineConfig := pipeline.PipelineConfig{
+		AggregationConfig:   p.AggregationConfig,
 		AggregationMode:     p.AggregationMode,
 		AggregationInterval: cfg.AggregationInterval,
 		TracerID:            cfg.ID,
-		Aggregator:          p.Aggregator,
 		Formatter:           formatter,
-		OnFailure:           cancel,
-	})
-
-	if err := p.Impl.Start(collectionCtx); err != nil {
-		cleanupErr := pipe.Abort()
-		cancel()
-
-		return fmt.Errorf("start profiler: %w", errors.Join(err, cleanupErr))
+	}
+	if err := pipelineConfig.Validate(); err != nil {
+		return err
 	}
 
-	pipe.Start(collectionCtx)
+	pipe := pipeline.NewPipeline(&pipelineConfig)
+	if err := p.Impl.Start(collectionCtx); err != nil {
+		return fmt.Errorf("start profiler: %w", err)
+	}
+
+	pipelineDone := make(chan error, 1)
+	go func() {
+		err := pipe.Run(processCtx)
+		if err != nil {
+			cancelProcess(err)
+		}
+
+		pipelineDone <- err
+	}()
 	log.Info("aggregator started")
 
-	loopDone := make(chan error, 1)
-	go func() {
-		var deliveryErr error
-		// Collectors may deliver final records after the stop signal. The
-		// pipeline keeps draining until this loop exits, even on abort.
-		deliveryCtx := context.WithoutCancel(collectionCtx)
-		enqueue := func(data any) {
-			if deliveryErr == nil {
-				deliveryErr = pipe.Enqueue(deliveryCtx, data)
-			}
-		}
-		loopErr := p.Impl.ReadDataLoop(collectionCtx, enqueue)
-		loopDone <- errors.Join(loopErr, deliveryErr)
-	}()
-	// Native integration tests use this exact message as the barrier before
-	// releasing target workloads. Do not remove, rename, or move this log.
+	var timer *time.Timer
+	if cfg.Duration > 0 {
+		timer = time.AfterFunc(cfg.Duration, func() {
+			cancelCollection(ErrCollectionDurationElapsed)
+		})
+	}
+
+	// Integration workloads wait for this exact readiness barrier.
 	log.Info("data reading loop started")
-
-	var deadline <-chan time.Time
-
-	// ManagesDuration only suppresses this timer; it never suppresses errors.
-	_, managesDuration := p.Impl.(interface{ ManagesDuration() })
-	if cfg.Duration > 0 && !managesDuration {
-		t := time.NewTimer(cfg.Duration)
-		defer t.Stop()
-
-		deadline = t.C
+	loopErr := p.Impl.ReadDataLoop(collectionCtx, func(batch *pipeline.SampleBatch) error {
+		return pipe.Enqueue(processCtx, batch)
+	})
+	if timer != nil {
+		timer.Stop()
 	}
-
-	var (
-		loopErr error
-		looped  bool
-	)
-
-	select {
-	case <-deadline:
+	if errors.Is(context.Cause(collectionCtx), ErrCollectionDurationElapsed) {
 		log.Info("profiler auto-stop by duration")
-	case <-collectionCtx.Done():
-		log.Infof("profiler stop by context: %v", collectionCtx.Err())
-	case loopErr = <-loopDone:
-		looped = true
-		log.Infof("profiler stop by loop exit: %v", loopErr)
 	}
 
-	// Cancel first so ReadDataLoop exits before Stop closes BPF/file handles
-	// the loop may still be reading from.
-	cancel()
-
-	if !looped {
-		loopErr = <-loopDone
-	}
 	log.Info("data reading loop ended")
 
-	stopErr := p.Impl.Stop(collectionCtx)
-	// A failed collector must never turn its partial state into a successful
-	// final window. Check the caller after cleanup to include cancellation
-	// during Stop; our normal-stop signal only cancels collectionCtx.
-	// Previously exported windows remain unpublished.
-	if err := errors.Join(ctx.Err(), loopErr, stopErr); err != nil {
-		return errors.Join(err, pipe.Abort())
+	if loopErr != nil {
+		cancelProcess(loopErr)
 	}
-	return pipe.Stop()
+	stopErr := p.Impl.Stop()
+	if stopErr != nil {
+		cancelProcess(stopErr)
+	}
+
+	// The producer has exited, so closing input cannot race an enqueue.
+	pipe.Close()
+	pipelineErr := <-pipelineDone
+	// Observe the caller directly as AfterFunc may not have run yet.
+	if ctx.Err() != nil && !IsNormalStop(ctx) {
+		cancelProcess(context.Cause(ctx))
+	}
+	if err := errors.Join(context.Cause(processCtx), loopErr, stopErr, pipelineErr); err != nil {
+		return err
+	}
+
+	completeCtx, cancelComplete := context.WithTimeout(processCtx, FinalizationTimeout)
+	defer cancelComplete()
+
+	return formatter.Complete(completeCtx)
 }

@@ -21,8 +21,9 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
-	"github.com/ccfos/huatuo/internal/profiling/aggregator"
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	profile "github.com/ccfos/huatuo/internal/profiling/profile"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const (
@@ -34,7 +35,6 @@ const (
 type collector struct {
 	bpfPath                  string
 	cpuId                    int32
-	duration                 time.Duration
 	maxEventsPerSecondPerCPU uint64
 	bpfObj                   bpf.BPF
 }
@@ -42,45 +42,57 @@ type collector struct {
 // newIRQProfiler binds one IRQ collection to the common runner.
 func newIRQProfiler(c *collector) *profile.ProfilerMeta {
 	return &profile.ProfilerMeta{
-		ToolName:        irqTracingToolName,
-		Description:     "softirq profiling",
-		Impl:            c,
-		AggregationMode: aggregator.AggregationModeOneShot,
-		Aggregator:      &irqAggregator{},
+		ToolName:          irqTracingToolName,
+		Description:       "softirq profiling",
+		Impl:              c,
+		AggregationMode:   pipeline.AggregationModeOneShot,
+		AggregationConfig: pipeline.AggregationConfig{ProfileType: profile.ProfileTypeIRQTracingSample},
 	}
 }
-
-func (*collector) ManagesDuration() {}
 
 func (c *collector) Start(_ context.Context) error {
 	data, err := os.ReadFile(c.bpfPath)
 	if err != nil {
 		return fmt.Errorf("read IRQ BPF object: %w", err)
 	}
+
 	object, err := bpf.LoadBPFFromBytes(fmt.Sprintf("irqtracing_%d.o", time.Now().UnixNano()), data,
 		irqTracingBPFConstants(c.cpuId, c.maxEventsPerSecondPerCPU))
 	if err != nil {
 		return fmt.Errorf("load IRQ BPF: %w", err)
 	}
+
 	if err := object.AttachWithOptions([]bpf.AttachOption{
-		{ProgramName: "probe_softirq_raise", Symbol: "irq/softirq_raise"},
-		{ProgramName: "probe_softirq_entry", Symbol: "irq/softirq_entry"},
+		{
+			ProgramName: "probe_softirq_raise",
+			Symbol:      "irq/softirq_raise",
+		},
+		{
+			ProgramName: "probe_softirq_entry",
+			Symbol:      "irq/softirq_entry",
+		},
 	}); err != nil {
 		object.Close()
 		return fmt.Errorf("attach IRQ probes: %w", err)
 	}
+
 	c.bpfObj = object
+
 	return nil
 }
 
-func (c *collector) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	timer := time.NewTimer(c.duration)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("IRQ collection stopped: %w", ctx.Err())
-	case <-timer.C:
+func (c *collector) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	<-ctx.Done()
+	if !profile.IsNormalStop(ctx) {
+		return fmt.Errorf("IRQ collection stopped: %w", context.Cause(ctx))
+	}
+	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), profile.FinalizationTimeout)
+	defer cancel()
+	deliver := func(batch *pipeline.SampleBatch) error {
+		if err := finalCtx.Err(); err != nil {
+			return err
+		}
+		return enqueue(batch)
 	}
 
 	dropped, err := detachAndReadDroppedSamples(c.bpfObj)
@@ -88,20 +100,19 @@ func (c *collector) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
 		return err
 	}
 
-	data, err := buildProfile(c.bpfObj)
-	if err != nil {
-		return fmt.Errorf("build IRQ profile: %w", err)
+	if err := enqueueIRQStacks(c.bpfObj, deliver); err != nil {
+		return fmt.Errorf("decode IRQ stacks: %w", err)
 	}
 
-	enqueue(&softIRQBatch{profile: data, dropped: dropped, targetCPU: c.cpuId})
-	return nil
+	return deliver(&pipeline.SampleBatch{DroppedSamples: map[string]uint64{types.DropReasonCollection: dropped}})
 }
 
-func (c *collector) Stop(_ context.Context) error {
+func (c *collector) Stop() error {
 	if c.bpfObj != nil {
 		c.bpfObj.Close()
 		c.bpfObj = nil
 	}
+
 	return nil
 }
 
@@ -111,5 +122,6 @@ func irqTracingBPFConstants(targetCPU int32, maxEventsPerSecondPerCPU uint64) ma
 		constants[sourceRateLimitConstant] = uint32(maxEventsPerSecondPerCPU/2 + maxEventsPerSecondPerCPU%2)
 		constants[victimRateLimitConstant] = uint32(maxEventsPerSecondPerCPU / 2)
 	}
+
 	return constants
 }

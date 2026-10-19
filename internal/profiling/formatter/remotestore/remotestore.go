@@ -29,7 +29,7 @@ type formatter struct {
 	client *toolstream.Client
 }
 
-func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) error {
+func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -42,14 +42,18 @@ func (f *formatter) Complete(ctx context.Context) error {
 		return err
 	}
 
-	return f.client.Send(ctx, nil, toolstream.SendOptions{End: true, Commit: true})
+	return f.client.Send(ctx, nil, toolstream.SendOptions{
+		End:    true,
+		Commit: true,
+	})
 }
 
 // NewFormatter connects remote output.
-func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
+func NewFormatter(cfg output.Config) (output.Formatter, error) {
 	if err := output.ValidateDestination(cfg.Destination); err != nil {
 		return nil, err
 	}
+
 	path := cfg.Destination
 	info, err := os.Stat(path)
 	if err != nil {
@@ -59,12 +63,13 @@ func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
 	if info.Mode()&os.ModeSocket == 0 {
 		return nil, fmt.Errorf("remote profiling destination %q must be a Unix socket", path)
 	}
+
 	client, err := toolstream.NewClient(&toolstream.ClientOptions{
 		SockPath:    path,
 		ServiceName: profiling.StoreServiceName,
 		ToolName:    cfg.ToolName,
 		TaskID:      cfg.TaskID,
-		Version:     "1",
+		Version:     "3",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connect remote profiling destination %q: %w", path, err)

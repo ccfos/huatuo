@@ -31,7 +31,7 @@ import (
 type commandConfig struct {
 	Provider provider.Config
 	Language profiling.Language
-	Output   output.FormatterConfig
+	Output   output.Config
 	TaskID   string
 }
 
@@ -109,7 +109,7 @@ func loadConfig(cliCtx *cli.Context) (*commandConfig, error) {
 			PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
 		},
 		Language: language,
-		Output:   output.FormatterConfig{Format: outputFormat, Destination: outputPath},
+		Output:   output.Config{Format: outputFormat, Destination: outputPath},
 		TaskID:   cliCtx.String("task-id"),
 	}
 	return cfg, nil

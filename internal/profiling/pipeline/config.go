@@ -12,34 +12,61 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package aggregator
+package pipeline
 
 import (
+	"fmt"
 	"time"
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
+	"github.com/ccfos/huatuo/internal/profiling/window"
 )
 
-// AggregationMode controls snapshot scheduling and queue backpressure.
 type AggregationMode uint8
 
 const (
-	// AggregationModeStreaming is the zero-value default. It exports periodically
-	// and discards records when the queue is full.
+	// Streaming is the established default and emits periodic windows.
 	AggregationModeStreaming AggregationMode = iota
-	// AggregationModeOneShot exports at completion and waits for queue space.
 	AggregationModeOneShot
 )
 
-// PipelineConfig binds collection settings and dependencies for one execution.
-// Aggregator and Formatter must be initialized before constructing the pipeline.
+const (
+	MaxBatchSamples   = 256
+	MaxBatchTextBytes = 1 << 20
+	MaxSampleFrames   = 4096
+	MaxSampleLabels   = 64
+)
+
+type AggregationConfig struct {
+	ContainerID string
+	ProfileType string
+}
+
 type PipelineConfig struct {
+	AggregationConfig
 	AggregationMode     AggregationMode
 	AggregationInterval time.Duration
 	TracerID            string
-	Aggregator          Aggregator
 	Formatter           output.Formatter
-	// OnFailure notifies the runner to stop collection after an export failure.
-	// It runs on the worker and must not wait for Pipeline.Stop.
-	OnFailure func()
+}
+
+// Validate establishes fixed configuration before any collector starts.
+func (c *PipelineConfig) Validate() error {
+	if _, err := window.Metadata(c.ProfileType); err != nil {
+		return err
+	}
+
+	if c.AggregationMode != AggregationModeStreaming && c.AggregationMode != AggregationModeOneShot {
+		return fmt.Errorf("unsupported profiling aggregation mode %d", c.AggregationMode)
+	}
+
+	if c.Formatter == nil {
+		return fmt.Errorf("profiling formatter is required")
+	}
+
+	if c.AggregationInterval < 0 {
+		return fmt.Errorf("profiling aggregation interval must not be negative")
+	}
+
+	return nil
 }

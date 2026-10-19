@@ -19,6 +19,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
+	"github.com/ccfos/huatuo/pkg/types"
+
 	javaruntime "github.com/ccfos/huatuo/cmd/profiler/runtime/java"
 	"github.com/ccfos/huatuo/internal/profiling/toolpath"
 	"github.com/ccfos/huatuo/pkg/profiling"
@@ -27,6 +31,7 @@ import (
 type cpuJavaProfiler struct {
 	config         Config
 	profileOutFile map[int]string
+	labels         map[int][]types.ProfileLabel
 	samplingOpt    *javaruntime.AsprofSamplingOption
 }
 
@@ -35,6 +40,7 @@ func (p *cpuJavaProfiler) Start(ctx context.Context) error {
 	if err := validateJavaFrequency(cfg.Freq); err != nil {
 		return err
 	}
+
 	if err := toolpath.Validate(profiling.LanguageJava, cfg.ToolDir); err != nil {
 		return err
 	}
@@ -50,13 +56,16 @@ func (p *cpuJavaProfiler) Start(ctx context.Context) error {
 			return err
 		}
 	}
+
 	if err := validateResolvedPIDs("Java", pids); err != nil {
 		return err
 	}
+
 	if len(cfg.PIDs) > 0 {
 		if err := validateProcessExecutables("Java", "java", pids); err != nil {
 			return err
 		}
+
 		if err := validateExpectedExecPath(pids, cfg.ExecPath); err != nil {
 			return err
 		}
@@ -64,6 +73,22 @@ func (p *cpuJavaProfiler) Start(ctx context.Context) error {
 
 	if err := validateMaxProfilerProcesses("Java", pids, cfg.MaxProfilerProcesses); err != nil {
 		return err
+	}
+
+	p.labels = make(map[int][]types.ProfileLabel, len(pids))
+	for _, pid := range pids {
+		labels, err := readProcessLabels(pid)
+		if err != nil {
+			return fmt.Errorf("read Java process %d metadata: %w", pid, err)
+		}
+
+		entry, err := javaProcessName(pid)
+		if err != nil {
+			return err
+		}
+
+		labels = append(labels, types.ProfileStringLabel("java_entry", entry))
+		p.labels[pid] = labels
 	}
 
 	for _, pid := range pids {
@@ -93,11 +118,12 @@ func (p *cpuJavaProfiler) Start(ctx context.Context) error {
 
 	p.profileOutFile = profileOutFile
 	p.samplingOpt = opt
+
 	return nil
 }
 
-func (p *cpuJavaProfiler) Stop(ctx context.Context) error {
-	return javaruntime.StopJavaProfiler(ctx, p.samplingOpt)
+func (p *cpuJavaProfiler) Stop() error {
+	return javaruntime.StopJavaProfiler(p.samplingOpt)
 }
 
 func javaAggregationInterval(cfg *Config) time.Duration {
@@ -105,12 +131,27 @@ func javaAggregationInterval(cfg *Config) time.Duration {
 	if interval <= 0 {
 		return 10 * time.Second
 	}
+
 	return interval
 }
 
-func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
+func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
 	if p.samplingOpt == nil {
 		return fmt.Errorf("read Java CPU profile: profiler is not started")
 	}
-	return javaruntime.ReadAsprofDataLoop(ctx, p.samplingOpt, p.profileOutFile, enqueue)
+
+	return javaruntime.ReadAsprofDataLoop(
+		ctx,
+		p.samplingOpt,
+		p.profileOutFile,
+		func(output profile.SampleOutput) error {
+			return enqueueFolded(
+				output,
+				p.labels[output.PID],
+				int64(1000/p.config.Freq)*int64(time.Millisecond),
+				profiling.LanguageJava,
+				enqueue,
+			)
+		},
+	)
 }

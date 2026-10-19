@@ -88,11 +88,11 @@ assert_profiler_output_file() {
 assert_profiler_output_file "${WORK_DIR}/python.folded"
 FOLDED_FILES=("${WORK_DIR}/python.folded")
 
-grep -qh "process ${PROFILER_PARENT_PID}.*parent_hot_method" "${FOLDED_FILES[@]}" \
+grep -qh "pid=\"${PROFILER_PARENT_PID}\";.*parent_hot_method" "${FOLDED_FILES[@]}" \
 	|| fatal "parent workload stack not found for PID ${PROFILER_PARENT_PID}"
-grep -qh "process ${PROFILER_CHILD_PID}.*child_hot_method" "${FOLDED_FILES[@]}" \
+grep -qh "pid=\"${PROFILER_CHILD_PID}\";.*child_hot_method" "${FOLDED_FILES[@]}" \
 	|| fatal "child workload stack not found for PID ${PROFILER_CHILD_PID}"
-grep -qh "process ${PROFILER_INDEPENDENT_PID}.*independent_hot_method" "${FOLDED_FILES[@]}" \
+grep -qh "pid=\"${PROFILER_INDEPENDENT_PID}\";.*independent_hot_method" "${FOLDED_FILES[@]}" \
 	|| fatal "independent workload stack not found for PID ${PROFILER_INDEPENDENT_PID}"
 
 if grep -Eq 'py-spy>|Wrote raw flamegraph data|Sampling process .* times a second|You can use the flamegraph\.pl' "${FOLDED_FILES[@]}"; then

@@ -225,7 +225,7 @@ CPU profiling supports `oncpu` and `offcpu` for `c`, `c++`, and `go`;
 | --- | --- | --- |
 | `c`, `c++`, `go` | `virtual_alloc` | Virtual address-space allocation |
 | `c`, `c++`, `go` | `physical_alloc` | Physical page allocation |
-| `c`, `c++`, `go` | `physical_usage` | Current physical page residency |
+| `c`, `c++`, `go` | `physical_usage` | Signed physical-memory net change during collection |
 | `java` | `object_alloc` | JVM object allocation |
 | `java` | `object_usage` | JVM live objects |
 
@@ -595,7 +595,7 @@ Native memory profiling supports these dimensions:
 | --- | --- | --- |
 | `virtual_alloc` | Virtual address-space allocation and its call stacks | Excessive `mmap` activity and address-space growth |
 | `physical_alloc` | Physical memory newly allocated during the collection window | Physical page allocation triggered by page faults and allocation-rate analysis |
-| `physical_usage` | Physical memory still resident at collection time | Sources of resident memory and paths retaining physical pages |
+| `physical_usage` | Signed physical-memory net change during collection | Allocation/release balance; not current occupancy |
 
 ```bash
 sudo _output/bin/profiler \
@@ -737,64 +737,47 @@ flowchart LR
     Aggregate --> Remote[Remote upload through Unix socket]
 ```
 
-`--duration` controls the collection lifetime, while `--aggr-interval` controls the snapshot interval. `json` writes each common profiling window as one JSON line, so streaming collection can emit multiple lines. Local `collapsed`, `flamegraph`, and `svg` modes write the final aggregate when collection ends. `remote-store` uploads periodic snapshots in streaming mode and one final window in one-shot mode. The queue decouples collection from symbolization, aggregation, and output so file rendering does not block the sampling path.
+`--duration` controls the collection lifetime, while `--aggr-interval` controls the snapshot interval. `json` writes each common profiling window as one JSON line, so streaming collection can emit multiple lines. Local `collapsed`, `flamegraph`, and `svg` modes write the final aggregate when collection ends. `remote-store` uploads periodic snapshots in streaming mode and one final window in one-shot mode. Providers symbolize before enqueueing; full input queues return an error in every aggregation mode.
 
 ## Common profiling windows
 
-Profiler and irqtracing share the collection runner, Pipeline and `types.ProfilingWindow`. IRQ business logic lives in `cmd/irqtracing`; Java, Python and Native aggregators live in `cmd/profiler/provider`. Target discovery and language metadata lookup belong to `cmd/profiler/provider`; parsers receive data and resolved process names. Java agent lifecycle and output collection live in `cmd/profiler/runtime/java`, and tool execution lives in `cmd/profiler/exec`. BPF map helpers and tool path validation remain in `internal/profiling/bpfmap` and `internal/profiling/toolpath`. Both profiler and IRQ tracing use `internal/profiling/profile.Run`. Values follow profile units, such as nanoseconds for CPU and counts for IRQ. Java process roots use `process PID:MainClass`.
+Profiler and irqtracing share `internal/profiling/profile.Run`, Pipeline, and `types.AggregationWindow`. Providers collect, decode, symbolize, convert units, and normalize labels before submitting `SampleBatch`. Pipeline aggregates by user stack, kernel stack, and the complete label set. Java agent lifecycle lives in `cmd/profiler/runtime/java`; tool execution lives in `cmd/profiler/exec`.
 
-Parsers return the common `profilev1.Profile` model. `profile.NewWindow` copies it into an independent window and clears parser timestamps; Pipeline assigns the aggregation interval.
+Windows contain structured frames (Name/File/Line), root-to-leaf stacks, label sets, signed int64 weights, and timestamps. Frame IDs start at zero; stack and label IDs start at one, with zero meaning empty. Providers submit final units: nanoseconds for CPU and lock wait, bytes for memory, and event counts for IRQ source/victim. Negative values and cancellation to zero are retained. New windows have no Period or output-time sampling multiplier. Physical usage reports signed net change during collection, not current occupancy.
 
-### Configuration and aggregation intervals
+Built-in single-value labels are `pid`, `cpu`, `comm`, `lock_address`, `irq`, `softirq_vector`, and `offcpu_category`. PID/CPU use canonical decimal strings; lock addresses use canonical hexadecimal. Comm is the process command name; Java/Python entry information uses `java_entry`/`python_entry`. Off-CPU categories are unknown, blocked, runqueue, runqueue_preempted, runqueue_yielded, and runqueue_missed_wakeup. Labels remain separate from shared stacks. Missing labels, empty strings, and numeric zero are distinct.
 
-The entry point assembles the collector and Aggregator. Before starting collection, the runner creates the Formatter, constructs Pipeline with `aggregator.PipelineConfig`, and passes the runtime context through `Start(ctx)`. Invalid output configuration fails before collection starts. Each aggregator captures its business settings at construction and implements `Aggregate`, `Snapshot(context.Context)` and `Reset`. Pipeline receives runtime settings through configuration and a standard `context.Context` through method parameters. File creation, naming, writing, and closing belong to `internal/profiling/formatter`.
+Local formatters consume the common window. JSON and the receiving handler use the shared pprof builder, preserving source positions, signed values, and sample labels. The JSON envelope and ES document structure remain unchanged. A separate legacy full-pprof input retains multiple metrics, mappings, inline locations, and original sampling metadata.
 
-`FormatterConfig` contains `Format`, `Destination`, `TaskID`, and `ToolName`. Local targets accept files, directories, or stdout (`stdout`, `-`, or standard fd aliases); remote targets require a Unix socket. New paths denote files unless they end in `/`; directory output uses unique filenames. Existing files are replaced only when written, empty tasks create no result, and stdout stays open. Initialization checks do not guarantee later writes; terminal output, redirection, and logs may expose data.
+### Configuration, queues, and timestamps
 
-Task IDs and source tools come from `profile.RunConfig.ID` and `ProfilerMeta.ToolName`. RemoteStore manages toolstream internally, using service `profiling_store_service` and version `1`.
+The runner validates fixed configuration and creates the formatter before collection. `provider.New` copies configuration and creates a collector per task. Task ID and tool name come from `RunConfig.ID` and `ProfilerMeta.ToolName`; an ID is generated only when absent. `formatter.Config` contains Format, Destination, TaskID, and ToolName. Formatters own file creation and cleanup.
 
-`cmd/profiler` owns CLI parsing and signal handling. `provider.New` creates a fresh collector for each task and copies its business configuration. `profile.RunConfig` contains the task ID, collection duration and aggregation interval; both durations use `time.Duration`. The runner generates an ID only when absent and uses the same ID for aggregation and remote commits. Output format and destination are supplied through `RunConfig.OutputFormat` and `RunConfig.OutputDestination`. The runner constructs the formatter layer’s `FormatterConfig`; the formatter layer does not depend on `RunConfig`. CLI duration flags still accept integer seconds, with range checks before conversion.
+Native CPU and memory allocation use Streaming, with periodic output and a final drain. Native physical_usage, Java, Python, and IRQ use OneShot. Java still reads external results periodically; Run manages collection duration for every provider. The input queue capacity is 16 batches. A single worker aggregates samples and outputs windows sequentially. Batches permit at most 256 samples and 1 MiB of frame/label text; each sample permits 4096 frames per stack side and 64 labels. Oversized input fails explicitly. The 16 queued batches can contain up to 4096 samples and 16 MiB of accounted text, excluding frame structures and retained allocations; this is not a total memory limit. Window identity cardinality has no fixed limit, so high-cardinality collection can still grow memory.
 
-Task construction selects the aggregation policy; aggregator constructors do not modify configuration. Native CPU and memory allocation use Streaming; native physical_usage, Java, Python, and IRQ use OneShot. Java runtime still reads results periodically, independently of Pipeline's one-shot export policy. Python and IRQ implement `ManagesDuration` only to disable the runner's duration timer; no errors are exempted.
+A nil return from `Enqueue(ctx, batch)` means the batch was queued and all slice/map ownership transferred; it does not guarantee aggregation or output. Enqueue never waits for queue space. Every mode returns `ErrQueueFull` on overload; canceled contexts reject delivery. Errors leave ownership with the caller. Providers must not reuse delivered batches or retry automatically; the runner cancels processing on delivery errors and does not complete failed tasks. Synchronous output pauses input consumption. The larger queue absorbs short bursts, but sustained overload still fails.
 
-Aggregation modes are defined in `internal/profiling/aggregator/config.go`:
-
-| Mode | Export timing | Full queue |
-| --- | --- | --- |
-| `AggregationModeStreaming` (zero-value default) | Periodically and for remaining data at shutdown | Count and discard records |
-| `AggregationModeOneShot` | At collection completion | Wait for space or delivery-context cancellation |
-
-Both modes use a queue capacity of 65536 and accept records through `Enqueue(ctx, data) error` only while Pipeline is running.
-
-Pipeline owns profile timestamps for every language and mode. `Start(ctx)` initializes `aggregationStartTime`; `exportAggregationWindow` assigns pprof `time_nanos` and `duration_nanos`. Successful export and reset advance the start to the snapshot end; empty snapshots and failed exports do not advance it. These fields describe the aggregation interval, including snapshot processing, rather than the exact underlying sampling interval.
+The first effective batch's timestamp, taken before Enqueue attempts delivery, starts a window. Snapshot fixes its end before calling Add synchronously. Sealing replaces all data and indexes before Add; the next effective batch starts a new interval. Windows may have gaps or overlap. A collection-loss-only batch also establishes the window start. These fields describe reception and aggregation, not exact sampling intervals.
 
 ### Output and errors
 
-`factory.NewFormatter` selects the format; each package’s `NewFormatter` initializes output, and can also be called directly. Pipeline serializes Add calls and calls Complete at most once after successful output. The runner always calls Close to release resources. Direct callers must follow the same sequence and stop on error.
+Collapsed projects labels into virtual roots and combines display stacks. SVG rejects negative weights. JSON preserves signed values and writes each window; remote-store sends the common window. Speedscope groups by complete label sets, preserves source positions, and checks nonnegative weights and browser integer limits. Chrome Trace accepts time units only and converts to microseconds for an estimated timeline; it does not recover event order. Speedscope and Chrome Trace support factory construction but have no CLI options.
 
-Collapsed/SVG write accumulated stack weights at Complete. JSON/remote output write each window; Complete closes JSON files or commits remote output and waits for ACK. Stack output preserves unsymbolized addresses. Write and close errors propagate; Complete is not retried automatically, and written data is not guaranteed to roll back. Export and Complete each have a separate 30-second timeout, independent of collection-context cancellation during normal cleanup.
+Pipeline.Close only closes input; it does not wait or release the formatter. The runner calls it once after the producer exits, so closing input cannot race an enqueue. Run is also called once; repeated calls and enqueueing after Close are unsupported. Add and Complete each have a 30-second timeout. Cancellation does not undo output already written. Pure formatter cancellation and timeout errors remain unwrapped; independent I/O and cleanup errors remain visible.
 
-[speedscope](https://www.speedscope.app/file-format-schema.json) and [chrometrace](https://perfetto.dev/docs/getting-started/other-formats#chrome-json-format) support factory construction but have no CLI options. Directory files use `.speedscope.json` and `.chrometrace.json`, respectively. Speedscope preserves aggregate weights, units, source positions, and label grouping. Chrome Trace places stacks in aggregate order, converts time to microseconds, and estimates count durations at 100 Hz. Neither reconstructs observation order.
+Pipeline.Run processes batches synchronously and returns on aggregation or Add failure without retrying. The runner executes collection synchronously and explicitly starts only the pipeline worker. After Start succeeds, a timer cancels the original collection context; the timer is stopped when collection returns. Once collection exits and collector cleanup finishes, it closes pipeline input exactly once and waits for processing to finish. Stop() takes no context; collectors own external cleanup timeouts so resources are released even after task cancellation. Only successful collection, cleanup, and processing permit Complete; Formatter.Close runs after workers exit. Pipeline has no lifecycle state machine, error callback, or formatter completion logic. Duration expiry and Ctrl+C (SIGINT) stop collection normally and permit publication after successful final delivery. Ordinary cancellation, a caller deadline that causes the first cancellation, SIGTERM/SIGHUP/SIGQUIT, and actual failures forbid publication. Current CLI callers set no deadline. Run does not restore the detached deadline: if a normal stop occurs first, the original deadline no longer aborts subsequent processing. ReadDataLoop retains one context and distinguishes cancellation causes; normal finalization uses an internally bounded context detached from collection cancellation. Python stops py-spy with SIGINT and waits for its completed file; IRQ detaches before reading its snapshot; Java stops sampling before reading final files. Subsequent processing failures reject enqueue and forbid publication, but do not immediately interrupt detached finalization I/O. Providers must finish all enqueue calls before their collection loop returns. The nodeagent Stop operation retains its existing abort-and-discard behavior.
 
-Pipeline stores failures in `runErr`, notifies the runner through `OnFailure func()`, and returns the error from `Stop()`. Snapshot or output failure prevents further exports and Complete. The runner preserves all read-loop and stop errors; collection failures or external cancellation cause Abort and prevent completion.
+### Remote protocol, storage, and visibility
 
-The runner derives a private collection context; normal completion cancels collection without canceling the caller. After the read loop exits and Stop finishes, the runner checks the caller context before starting final output, so external cancellation during cleanup still causes Abort. Cancellation after final output begins does not guarantee rollback of committed results. Read loops may still deliver final batches after the stop signal, and Pipeline keeps consuming until the loop exits. Delivery is independent of collection-context cancellation.
+Remote-store uses the shared Toolstream service `profiling_store_service` with business version `3`. The receiver accepts common windows only with version 3 and legacy full pprof only with versions 1/2. Old aggregate representations and unknown fields are rejected. Upgrade receivers before senders. Business versions are independent of Toolstream transport versions.
 
-### Storage and visibility
+The handler validates external windows, builds pprof, and calls `SaveSync`. Labels retain their sample associations; the tool name becomes tracer_name. Complete sends `End + Commit` and waits for ACK. Plain End, disconnect, and failure do not write completion markers or roll back existing windows. Ordinary data frames have no ACK; receive/storage errors are returned in the commit ACK.
 
-The daemon initializes storage through `internal/profiling.Register` before registering the shared `profiling_store_service` handler. Required `ServiceName` selects the handler; optional `ToolName` identifies the business source. Profiling storage requires a non-empty tool name and preserves `profiler` or `irqtracing` in document `tracer_name`; other services may omit `ToolName`. `ProfilingWindow` does not duplicate tool identity.
-
-Tools send data and control frames with `Send(ctx, event, SendOptions)`. End marks the final frame; Commit requires End and waits for the server ACK. The final window may share a frame with these flags; a nil event carries no payload. Remote Formatter sends an empty `End + Commit` from Complete. Close releases the connection separately; canceling an in-flight send closes it to interrupt I/O.
-
-Handlers receive `Handle(ctx, *toolstream.Request[T])`, containing connection metadata, optional Data, End/Commit, prior-frame errors in PriorErr and current-frame errors in Err. Later frames still reach the handler after an earlier failure. The profiling handler saves valid windows through `pkg/profiling/store.SaveSync` and calls Commit to write the durable completion marker only after successful request processing. Plain End, disconnects and failures do not publish results.
-
-Ordinary data frames have no ACK; missing handlers and storage errors are reported by the commit ACK. The CLI exits successfully after Complete receives a successful ACK, and bamai uses that exit status for the task result. A lost ACK means the client cannot confirm the outcome; it does not roll back stored data.
-
-Transport binds each non-empty `(serviceName, taskID)` to its active connection, rejects concurrent duplicate connections for that task, and releases ownership when connection handling finishes. Different tool names cannot claim the same task within a service. Different service handlers run independently. Persisted task IDs must be globally unique; existing completion-marker IDs retain compatibility. Toolstream uses protocol version 3, requiring tools and daemon to be upgraded together; old protocols are explicitly rejected. The handshake preserves existing field ordinals and appends `serviceName` at `@4`.
+JSON can write files during Add; local output has no transactional rollback. Existing flamegraph queries do not filter all windows by completion markers. Persisted labels do not imply label indexing or sample-filter APIs. ES label queries, output publication, and a switch from upload time to collection time remain separate work.
 
 ### Dropped samples
 
-`ProfilingWindow.DroppedSamples` uses the common keys in `pkg/types/profiling.go`: `collection` for collection loss and `aggregation_queue` for loss caused by a full aggregation queue. Pipeline tracks the latter with `queueDroppedSamples`. Values are stored in `profile_data.metrics.dropped_samples`.
+The new Pipeline only produces `collection` in `DroppedSamples`, stored in `profile_data.metrics.dropped_samples`. Providers submit collection deltas, which are added directly under the assumption that their sum fits in uint64, without an overflow check or early output. Full queues return errors without silently dropping batches or producing `aggregation_queue` counts. That category remains supported for historical window and storage compatibility. Loss-only windows are emitted; cancellation does not guarantee final statistics.
 
 ## 🌟 Conclusion
 

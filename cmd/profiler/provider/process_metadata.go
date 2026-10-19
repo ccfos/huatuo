@@ -12,16 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package profile
+package provider
 
-import "github.com/ccfos/huatuo/pkg/types"
+import (
+	"fmt"
 
-// NewWindow owns a copy so window timestamps and labels cannot mutate parser data
-// or another snapshot of the same collection.
-func NewWindow(data *Data, containerID string) *types.ProfilingWindow {
-	p := data.Profile.CloneVT()
-	// Pipeline owns the aggregation interval, independently of parser metadata.
-	p.TimeNanos = 0
-	p.DurationNanos = 0
-	return &types.ProfilingWindow{ContainerID: containerID, ProfileType: data.ProfileType, Profile: p}
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/pkg/types"
+)
+
+func readProcessLabels(pid int) ([]types.ProfileLabel, error) {
+	if pid <= 0 || uint64(pid) > uint64(^uint32(0)) {
+		return nil, fmt.Errorf("invalid profiling pid %d", pid)
+	}
+
+	labels := []types.ProfileLabel{types.ProfilePIDLabel(uint32(pid))}
+	proc, err := procfs.NewProc(pid)
+	if err != nil {
+		return nil, err
+	}
+
+	stat, err := proc.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	labels = append(labels, types.ProfileStringLabel("comm", stat.Comm))
+
+	return labels, nil
 }

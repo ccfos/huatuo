@@ -35,22 +35,23 @@ const (
 	FormatRemoteStore OutputFormat = "remote-store" // upload to a remote storage backend
 )
 
-// Formatter receives complete windows and finalizes one collection task.
-// The owner serializes calls and stops on the first error. Add borrows a non-nil
-// window with a non-nil profile until return. Complete is called at most once,
-// after successful Adds. Close must be called once on every exit path, including
-// after Complete; it releases resources without completing output. Instances are
-// not reused, and repeated Complete or Close calls are not guaranteed.
+// Formatter borrows immutable windows until Add returns. Add errors are not
+// retried. The runner calls Complete at most once, after collection, collector
+// cleanup, and pipeline processing all succeed. The runner calls Close on every
+// exit path after workers finish; Close releases resources without publishing.
+// Add and Complete return context.Canceled or context.DeadlineExceeded unwrapped
+// when cancellation or timeout is the only failure. Independent I/O or cleanup
+// failures must remain visible, including when joined with cancellation.
 type Formatter interface {
-	Add(ctx context.Context, window *types.ProfilingWindow) error
+	Add(ctx context.Context, window *types.AggregationWindow) error
 	Complete(ctx context.Context) error
 	Close() error
 }
 
-// FormatterConfig selects the representation and its filesystem destination.
+// Config selects the representation and its filesystem destination.
 // Existing paths retain their type. A missing path denotes a file unless it
 // ends in a separator, which requests a directory. "stdout" or "-" denotes standard output.
-type FormatterConfig struct {
+type Config struct {
 	Format      OutputFormat
 	Destination string
 	TaskID      string

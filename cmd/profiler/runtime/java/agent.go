@@ -46,6 +46,7 @@ func HostViewPath(pid int, pathInTarget string) string {
 	if err == nil && inTargetNamespace {
 		return fmt.Sprintf("/proc/%d/root%s", pid, pathInTarget)
 	}
+
 	return pathInTarget
 }
 
@@ -54,17 +55,29 @@ func ReadAsprofDataLoop(
 	ctx context.Context,
 	opt *AsprofSamplingOption,
 	pidToPath map[int]string,
-	enqueue func(any),
+	enqueue func(profile.SampleOutput) error,
 ) error {
 	collector := newCollapsedFileCollector(
 		opt.Pids,
 		pidToPath,
-		func(output profile.SampleOutput) { enqueue(output) },
+		enqueue,
 	)
 	if err := collector.run(ctx); err != nil {
 		return err
 	}
-	return finishAsprofSampling(ctx, opt, collector)
+
+	if !profile.IsNormalStop(ctx) {
+		return context.Cause(ctx)
+	}
+	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), profile.FinalizationTimeout)
+	defer cancel()
+	collector.enqueueSample = func(output profile.SampleOutput) error {
+		if err := finalCtx.Err(); err != nil {
+			return err
+		}
+		return enqueue(output)
+	}
+	return finishAsprofSampling(finalCtx, opt, collector)
 }
 
 type AsprofSamplingOption struct {
@@ -91,6 +104,7 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 	if opt.AggrInterval <= 0 {
 		return nil, fmt.Errorf("start async-profiler: aggregation interval must be positive")
 	}
+
 	if opt.Duration <= 0 {
 		return nil, fmt.Errorf("start async-profiler: duration must be positive")
 	}
@@ -99,6 +113,7 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 	if err != nil {
 		return nil, fmt.Errorf("start async-profiler: allocate session ID: %w", err)
 	}
+
 	opt.SessionID = sessionID
 	opt.activePIDs = make(map[int]bool, len(opt.Pids))
 	opt.outputFileCount = asprofOutputFileCount(opt.Duration, opt.AggrInterval)
@@ -119,9 +134,14 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 
 	asprofBin := asprofPath(opt.ToolPath)
 	startCtx, cancel := context.WithTimeout(ctx, asprofCommandTimeout)
-	cmdResults := RunAsyncProfiler(startCtx, opt.Pids, asprofBin, func(pid int) []string {
-		return argsByPID[pid]
-	})
+	cmdResults := RunAsyncProfiler(
+		startCtx,
+		opt.Pids,
+		asprofBin,
+		func(pid int) []string {
+			return argsByPID[pid]
+		},
+	)
 	startCtxErr := startCtx.Err()
 	cancel()
 
@@ -133,7 +153,7 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 
 	verifyErr := profilerexec.Verify(cmdResults)
 	if startCtxErr != nil || verifyErr != nil {
-		cleanupErr := stopActiveAsprofProcesses(ctx, opt)
+		cleanupErr := stopActiveAsprofProcesses(opt)
 		return nil, errors.Join(
 			fmt.Errorf("start async-profiler: %w", firstError(startCtxErr, verifyErr)),
 			cleanupErr,
@@ -149,6 +169,7 @@ func firstError(errs ...error) error {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -164,17 +185,34 @@ func startAsprofCallback(
 		args := make([]string, len(baseArgs)+1, len(baseArgs)+8)
 		args[0] = "start"
 		copy(args[1:], baseArgs)
-		outFile := loopOutputPath(sessionID, outFilePrefix, pid, outputFileCount)
+		outFile := loopOutputPath(
+			sessionID,
+			outFilePrefix,
+			pid,
+			outputFileCount,
+		)
+		if outFilePrefix == "mem" {
+			args = append(args, "--total")
+		}
+
 		args = append(
 			args,
-			"--loop", formatAsprofDuration(aggrInterval),
-			"-o", "collapsed",
-			"-f", outFile,
+			"--loop",
+			formatAsprofDuration(aggrInterval),
+			"-o",
+			"collapsed",
+			"-f",
+			outFile,
 			strconv.Itoa(pid),
 		)
 
 		sequencePattern := fmt.Sprintf("%%n{%d}", outputFileCount)
-		profileOutFile[pid] = HostViewPath(pid, strings.Replace(outFile, sequencePattern, "*", 1))
+		profileOutFile[pid] = HostViewPath(pid, strings.Replace(
+			outFile,
+			sequencePattern,
+			"*",
+			1,
+		))
 
 		return args
 	}
@@ -189,6 +227,7 @@ func asprofOutputFileCount(duration, aggregationInterval time.Duration) uint64 {
 	if duration%aggregationInterval != 0 {
 		windowCount++
 	}
+
 	return uint64(windowCount) + asprofOutputFileHeadroom
 }
 
@@ -213,37 +252,51 @@ func finalOutputPath(sessionID, outFilePrefix string, pid int, sequence uint64) 
 }
 
 func stopWithOutputArgs(pid int, sessionID, outFilePrefix string, sequence uint64) []string {
-	return []string{
+	args := []string{
 		"stop",
 		"--libpath", "/tmp/libasyncProfiler.so",
 		"-o", "collapsed",
-		"-f", finalOutputPath(sessionID, outFilePrefix, pid, sequence),
+		"-f", finalOutputPath(
+			sessionID,
+			outFilePrefix,
+			pid,
+			sequence,
+		),
 		strconv.Itoa(pid),
 	}
+	if outFilePrefix == "mem" {
+		args = append(args[:len(args)-1], "--total", strconv.Itoa(pid))
+	}
+
+	return args
 }
 
-func StopJavaProfiler(ctx context.Context, opt *AsprofSamplingOption) error {
+func StopJavaProfiler(opt *AsprofSamplingOption) error {
 	if opt == nil {
 		return nil
 	}
-	return stopActiveAsprofProcesses(ctx, opt)
+
+	return stopActiveAsprofProcesses(opt)
 }
 
-func stopActiveAsprofProcesses(ctx context.Context, opt *AsprofSamplingOption) error {
-	stopCtx, cancel := context.WithTimeout(
-		context.WithoutCancel(ctx),
-		asprofCommandTimeout,
-	)
+func stopActiveAsprofProcesses(opt *AsprofSamplingOption) error {
+	// Cleanup must still run after collection or startup fails.
+	stopCtx, cancel := context.WithTimeout(context.Background(), asprofCommandTimeout)
 	defer cancel()
 
 	activePIDs := opt.activePIDList()
-	results := RunAsyncProfiler(stopCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
-		return []string{
-			"stop",
-			"--libpath", "/tmp/libasyncProfiler.so",
-			strconv.Itoa(pid),
-		}
-	})
+	results := RunAsyncProfiler(
+		stopCtx,
+		activePIDs,
+		asprofPath(opt.ToolPath),
+		func(pid int) []string {
+			return []string{
+				"stop",
+				"--libpath", "/tmp/libasyncProfiler.so",
+				strconv.Itoa(pid),
+			}
+		},
+	)
 	opt.markStopped(results)
 
 	var cleanupErrs []error
@@ -266,6 +319,7 @@ func (opt *AsprofSamplingOption) activePIDList() []int {
 			pids = append(pids, pid)
 		}
 	}
+
 	return pids
 }
 
@@ -288,6 +342,7 @@ func PrepareJavaAgent(pid int, toolPath string) error {
 	if hasDifferentMountNamespace {
 		targetTmp = fmt.Sprintf("/proc/%d/root/tmp", pid)
 	}
+
 	log.WithField("pid", pid).
 		WithField("path", targetTmp).
 		Debug("using Java agent directory")
@@ -312,8 +367,10 @@ func CleanupJavaAgent(pid int) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
+
 		return fmt.Errorf("remove Java agent %q: %w", agentPath, err)
 	}
+
 	log.WithField("pid", pid).
 		WithField("path", agentPath).
 		Debug("removed Java agent")
@@ -327,6 +384,7 @@ func copyAgentLib(toolPath, targetDir string) error {
 	if err != nil {
 		return fmt.Errorf("open Java agent source %q: %w", sourcePath, err)
 	}
+
 	defer func() {
 		_ = source.Close()
 	}()
@@ -335,6 +393,7 @@ func copyAgentLib(toolPath, targetDir string) error {
 	if err != nil {
 		return fmt.Errorf("stat Java agent source %q: %w", sourcePath, err)
 	}
+
 	requiredSpace := uint64(sourceInfo.Size()) + agentCopySpaceHeadroom
 	if err := checkAgentDirSpace(targetDir, requiredSpace); err != nil {
 		return err
@@ -345,6 +404,7 @@ func copyAgentLib(toolPath, targetDir string) error {
 	if err != nil {
 		return fmt.Errorf("create temporary Java agent in %q: %w", targetDir, err)
 	}
+
 	tempPath := temp.Name()
 	defer func() {
 		_ = temp.Close()
@@ -354,9 +414,11 @@ func copyAgentLib(toolPath, targetDir string) error {
 	if _, err := io.Copy(temp, source); err != nil {
 		return fmt.Errorf("copy Java agent to temporary file %q: %w", tempPath, err)
 	}
+
 	if err := temp.Chmod(sourceInfo.Mode()); err != nil {
 		return fmt.Errorf("chmod temporary Java agent %q: %w", tempPath, err)
 	}
+
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("close temporary Java agent %q: %w", tempPath, err)
 	}
@@ -364,6 +426,7 @@ func copyAgentLib(toolPath, targetDir string) error {
 	if err := os.Rename(tempPath, targetPath); err != nil {
 		return fmt.Errorf("install Java agent %q: %w", targetPath, err)
 	}
+
 	return nil
 }
 
@@ -372,6 +435,7 @@ func checkAgentDirSpace(dirPath string, minRequired uint64) error {
 	if err := unix.Statfs(dirPath, &stat); err != nil {
 		return fmt.Errorf("statfs Java agent directory %q: %w", dirPath, err)
 	}
+
 	availableSpace := stat.Bavail * uint64(stat.Bsize)
 	if availableSpace < minRequired {
 		return fmt.Errorf(
@@ -381,5 +445,6 @@ func checkAgentDirSpace(dirPath string, minRequired uint64) error {
 			minRequired,
 		)
 	}
+
 	return nil
 }

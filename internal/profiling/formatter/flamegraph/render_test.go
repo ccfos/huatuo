@@ -20,14 +20,17 @@ import (
 	"testing"
 )
 
-func TestRenderStyleKeepsSymbolsOutOfJavaScript(t *testing.T) {
+func TestRenderKeepsSymbolsOutOfJavaScript(t *testing.T) {
 	symbol := `');alert(1);//<script>alert(2)</script>`
-	var output bytes.Buffer
-	if err := RenderStyle([]Stack{{
+	var proc processor
+	proc.Process(Stack{
 		Names:   []string{"root", symbol},
 		Samples: 1,
-	}}, &output, DefaultStyle); err != nil {
-		t.Fatalf("RenderStyle() error = %v", err)
+	})
+
+	var output bytes.Buffer
+	if err := proc.render(&output, DefaultStyle); err != nil {
+		t.Fatalf("render flame graph: %v", err)
 	}
 
 	content := output.String()
@@ -35,8 +38,29 @@ func TestRenderStyleKeepsSymbolsOutOfJavaScript(t *testing.T) {
 		strings.Contains(content, "<script>alert(2)</script>") {
 		t.Fatalf("SVG embeds an untrusted symbol as executable markup: %s", content)
 	}
+
 	if !strings.Contains(content, `data-title="`) ||
 		!strings.Contains(content, "&lt;script&gt;alert(2)&lt;/script&gt;") {
 		t.Fatalf("SVG does not preserve the escaped symbol as data: %s", content)
+	}
+}
+
+func TestCanceledStacksDoNotIncreaseGraphHeight(t *testing.T) {
+	var p processor
+	p.Process(Stack{
+		Names:   []string{"root", "deep", "leaf"},
+		Samples: 7,
+	})
+	p.Process(Stack{
+		Names:   []string{"root", "deep", "leaf"},
+		Samples: -7,
+	})
+	p.Process(Stack{
+		Names:   []string{"other"},
+		Samples: 1,
+	})
+	p.prune()
+	if p.maxDepth != 1 || len(p.frames) != 1 || p.frames[0].Name != "other" {
+		t.Fatalf("canceled stack retained in layout: %+v", p)
 	}
 }

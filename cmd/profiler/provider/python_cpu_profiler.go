@@ -22,7 +22,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 
 	profilerexec "github.com/ccfos/huatuo/cmd/profiler/exec"
 	"github.com/ccfos/huatuo/internal/executil"
@@ -30,21 +33,21 @@ import (
 	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/profiling/toolpath"
 	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type pythonCPUProfiler struct {
 	config Config
 	pids   []int
+	labels map[int][]types.ProfileLabel
 }
-
-// ManagesDuration marks py-spy as self-terminating after record --duration.
-func (*pythonCPUProfiler) ManagesDuration() {}
 
 func (p *pythonCPUProfiler) Start(_ context.Context) error {
 	cfg := &p.config
 	if err := toolpath.Validate(profiling.LanguagePython, cfg.ToolDir); err != nil {
 		return err
 	}
+
 	if err := validatePythonAggregationWindow(cfg.Duration, cfg.AggregationInterval); err != nil {
 		return err
 	}
@@ -57,23 +60,43 @@ func (p *pythonCPUProfiler) Start(_ context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	if err := validateResolvedPIDs("Python", pids); err != nil {
 		return err
 	}
+
 	if len(cfg.PIDs) > 0 {
 		if err := validateProcessExecutables("Python", "python", pids); err != nil {
 			return err
 		}
+
 		if err := validateExpectedExecPath(pids, cfg.ExecPath); err != nil {
 			return err
 		}
 	}
+
 	pids, err = pythonRootPids(pids, process.PPID)
 	if err != nil {
 		return err
 	}
+
 	if err := validateMaxProfilerProcesses("Python", pids, cfg.MaxProfilerProcesses); err != nil {
 		return err
+	}
+
+	p.labels = make(map[int][]types.ProfileLabel, len(pids))
+	for _, pid := range pids {
+		labels, err := readProcessLabels(pid)
+		if err != nil {
+			return fmt.Errorf("read Python process %d metadata: %w", pid, err)
+		}
+
+		entry, err := pythonProcessName(pid)
+		if err != nil {
+			return err
+		}
+
+		p.labels[pid] = append(labels, types.ProfileStringLabel("python_entry", entry))
 	}
 
 	p.pids = pids
@@ -81,8 +104,26 @@ func (p *pythonCPUProfiler) Start(_ context.Context) error {
 	return nil
 }
 
-func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	cmdResults := runPySpy(ctx, p.pids, p.config.Duration, p.config.Freq, p.config.ToolDir)
+func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	cmdResults := runPySpy(
+		ctx,
+		p.pids,
+		p.config.Freq,
+		p.config.ToolDir,
+	)
+
+	deliveryCtx := ctx
+	if profile.IsNormalStop(ctx) {
+		var cancel context.CancelFunc
+		deliveryCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), profile.FinalizationTimeout)
+		defer cancel()
+	}
+	deliver := func(batch *pipeline.SampleBatch) error {
+		if err := deliveryCtx.Err(); err != nil {
+			return err
+		}
+		return enqueue(batch)
+	}
 
 	var errorMessages []string
 
@@ -107,10 +148,19 @@ func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 				fmt.Sprintf("PID[%d] sampling failed: no samples collected", targetPid))
 			continue
 		}
-		enqueue(profile.SampleOutput{
-			PID:    targetPid,
-			Output: string(cmdRes.Output),
-		})
+
+		if err := enqueueFolded(
+			profile.SampleOutput{
+				PID:    targetPid,
+				Output: string(cmdRes.Output),
+			},
+			p.labels[targetPid],
+			1000000000/int64(p.config.Freq),
+			profiling.LanguagePython,
+			deliver,
+		); err != nil {
+			return err
+		}
 	}
 
 	if len(errorMessages) > 0 {
@@ -120,7 +170,7 @@ func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	return nil
 }
 
-func (p *pythonCPUProfiler) Stop(_ context.Context) error {
+func (p *pythonCPUProfiler) Stop() error {
 	return nil
 }
 
@@ -147,23 +197,30 @@ func resolvePythonPids(cfg *Config) ([]int, error) {
 func runPySpy(
 	ctx context.Context,
 	pids []int,
-	duration time.Duration,
 	freq int,
 	pyspyPath string,
 ) []*profilerexec.Result {
 	pyspyBin := filepath.Join(pyspyPath, "py-spy")
-	durStr := strconv.FormatInt(int64(duration/time.Second), 10)
 	freqStr := strconv.Itoa(freq)
 
-	return profilerexec.RunWithMemfd(ctx, pids, pyspyBin, func(pid int, outputPath string) []string {
-		return buildPySpyArgs(pid, durStr, freqStr, outputPath)
-	}, executil.WithStdout(io.Discard))
+	return profilerexec.RunWithMemfd(
+		ctx,
+		pids,
+		&executil.Spec{Path: pyspyBin, StopSignal: syscall.SIGINT},
+		func(pid int, outputPath string) []string {
+			return buildPySpyArgs(
+				pid,
+				freqStr,
+				outputPath,
+			)
+		},
+		executil.WithStdout(io.Discard),
+	)
 }
 
-func buildPySpyArgs(pid int, duration, frequency, outputPath string) []string {
+func buildPySpyArgs(pid int, frequency, outputPath string) []string {
 	return []string{
 		"record",
-		"-d", duration,
 		"-f", "raw",
 		"-r", frequency,
 		"--subprocesses",

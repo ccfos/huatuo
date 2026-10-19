@@ -30,7 +30,7 @@ type formatter struct {
 var _ output.Formatter = (*formatter)(nil)
 
 // NewFormatter initializes collapsed output.
-func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
+func NewFormatter(cfg output.Config) (output.Formatter, error) {
 	cfg.Format = output.FormatCollapsed
 	destination, err := output.NewLocalDestination(cfg)
 	if err != nil {
@@ -40,12 +40,12 @@ func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
 	return &formatter{destination: destination}, nil
 }
 
-func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) error {
+func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	return output.WalkProfile(ctx, window.Profile, f.stacks.Add)
+	return output.WalkWindow(ctx, window, f.stacks.Add)
 }
 
 func (f *formatter) Complete(ctx context.Context) error {

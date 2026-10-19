@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"io"
 
+	profilewindow "github.com/ccfos/huatuo/internal/profiling/window"
+
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -48,7 +50,7 @@ const maxExactInteger int64 = 1<<53 - 1
 var _ output.Formatter = (*formatter)(nil)
 
 // NewFormatter initializes chrometrace output.
-func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
+func NewFormatter(cfg output.Config) (output.Formatter, error) {
 	cfg.Format = output.FormatChromeTrace
 	destination, err := output.NewLocalDestination(cfg)
 	if err != nil {
@@ -58,27 +60,24 @@ func NewFormatter(cfg output.FormatterConfig) (output.Formatter, error) {
 	return &formatter{destination: destination}, nil
 }
 
-func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) error {
+func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	p := window.Profile
-	if len(p.Sample) == 0 {
+	if len(window.Aggregated.Samples) == 0 {
 		return nil
 	}
 
-	if len(p.SampleType) == 0 || p.SampleType[0] == nil {
-		return fmt.Errorf("chrometrace: first sample type is required")
+	parts, err := profilewindow.Metadata(window.ProfileType)
+	if err != nil {
+		return err
 	}
 
-	index := p.SampleType[0].Unit
-	if index < 0 || index >= int64(len(p.StringTable)) {
-		return fmt.Errorf("chrometrace: invalid sample unit index %d", index)
-	}
+	unit := parts[2]
 
 	multiplier, divisor := int64(1), int64(1)
-	switch unit := p.StringTable[index]; unit {
+	switch unit {
 	case "nanoseconds":
 		divisor = 1000
 	case "microseconds":
@@ -86,14 +85,11 @@ func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) erro
 		multiplier = 1000
 	case "seconds":
 		multiplier = 1000000
-	case "count", "counts":
-		// Preserve the legacy 100 Hz estimate only for count-valued profiles.
-		multiplier = 10000
 	default:
 		return fmt.Errorf("chrometrace: cannot estimate duration from unit %q", unit)
 	}
 
-	return output.WalkProfile(ctx, p, func(frames []string, value int64) error {
+	return output.WalkWindow(ctx, window, func(frames []string, value int64) error {
 		if value < 0 {
 			return fmt.Errorf("chrometrace: negative sample weight %d", value)
 		}
@@ -109,12 +105,24 @@ func (f *formatter) Add(ctx context.Context, window *types.ProfilingWindow) erro
 
 		duration *= multiplier
 		if len(f.events) == 0 {
-			f.events = append(f.events, event{Name: "thread_name", Phase: "M", Args: map[string]string{"name": "aggregated (estimated)"}})
+			f.events = append(f.events, event{
+				Name:  "thread_name",
+				Phase: "M",
+				Args:  map[string]string{"name": "aggregated (estimated)"},
+			})
 		}
+
 		for _, name := range frames {
-			f.events = append(f.events, event{Name: name, Phase: "X", TimestampUS: f.endUS, DurationUS: &duration})
+			f.events = append(f.events, event{
+				Name:        name,
+				Phase:       "X",
+				TimestampUS: f.endUS,
+				DurationUS:  &duration,
+			})
 		}
+
 		f.endUS += duration
+
 		return nil
 	})
 }
@@ -133,6 +141,7 @@ func (f *formatter) Complete(ctx context.Context) error {
 		if events == nil {
 			events = []event{}
 		}
+
 		return json.NewEncoder(w).Encode(struct {
 			Events []event `json:"traceEvents"`
 		}{Events: events})

@@ -14,12 +14,6 @@
 
 package profile
 
-import (
-	"time"
-
-	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
-)
-
 const (
 	// ProfileTypeCpuSample is the profile type for CPU sample.
 	ProfileTypeCpuSample        = "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
@@ -29,33 +23,6 @@ const (
 	ProfileTypeLockTimeSample   = "process_lock:lock:nanoseconds:lock:nanoseconds"
 	ProfileTypeIRQTracingSample = "irqtracing:irq:count:irq:count"
 )
-
-// Data owns the parsed profile in the common wire and output model.
-type Data struct {
-	ProfileType string
-	Profile     *profilev1.Profile
-}
-
-// ParseInput holds the input parameters for ParseCollapsedData and ParseRawData.
-type ParseInput struct {
-	StartTime   time.Time
-	ProfileType string
-	Data        []byte
-	Opt         *ParseOption
-	// ProcessNames contains names resolved by the provider. Missing entries are errors
-	// only on paths that prepend a process frame; an empty resolved name is valid.
-	ProcessNames map[int]string
-	PID          int
-}
-
-// ParseOption is the option for ParseTree.
-type ParseOption struct {
-	// SampleRate is only used for CPU sample.
-	SampleRate int64
-}
-
-// NoSampleRate indicates that sampling rate is disabled, used for event-driven sampling types.
-const NoSampleRate int64 = 0
 
 // Profiling output for each PID.
 type SampleOutput struct {

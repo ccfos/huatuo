@@ -14,41 +14,84 @@
 
 package flamegraph
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
-// Stack represents a single stack trace with a sample count.
+// Stack represents a single stack trace with an aggregate sample weight.
 type Stack struct {
 	// Names holds function names from outermost (index 0) to innermost.
 	Names []string
-	// Samples is the number of times this stack appeared.
+	// Samples holds the aggregate weight in the profile's selected unit.
 	Samples int64
 }
 
+var foldedReplacer = strings.NewReplacer(
+	";",
+	":",
+	"\r",
+	" ",
+	"\n",
+	" ",
+)
+
 type processor struct {
 	frames   []frame
+	index    map[string]int
 	maxDepth int
 }
 
 func (p *processor) Process(stack Stack) {
 	frames := &p.frames
+	index := &p.index
 
-	n := len(stack.Names)
-	if n > p.maxDepth {
-		p.maxDepth = n
-	}
+	depth := 0
+	for _, name := range stack.Names {
+		// Preserve folded output normalization without encoding and splitting stacks.
+		name = strings.TrimSpace(foldedReplacer.Replace(name))
+		if name == "" {
+			continue
+		}
 
-	for depth, name := range stack.Names {
-		fr := findFrame(*frames, name)
+		// Small fan-outs avoid a map allocation; wide trees use indexed lookup.
+		if *index == nil && len(*frames) > 8 {
+			*index = make(map[string]int, len(*frames))
+			for i := range *frames {
+				(*index)[(*frames)[i].Name] = i
+			}
+		}
+
+		var fr *frame
+		if *index != nil {
+			if i, ok := (*index)[name]; ok {
+				fr = &(*frames)[i]
+			}
+		} else {
+			fr = findFrame(*frames, name)
+		}
+
 		if fr == nil {
 			f := frame{
 				Name:  name,
 				Depth: depth,
 			}
 			*frames = append(*frames, f)
+			if *index != nil {
+				(*index)[name] = len(*frames) - 1
+			}
+
 			fr = &(*frames)[len(*frames)-1]
 		}
+
 		fr.SampleCount += stack.Samples
 		frames = &fr.Children
+		index = &fr.childIndex
+		depth++
+	}
+
+	if depth > p.maxDepth {
+		p.maxDepth = depth
 	}
 }
 
@@ -104,4 +147,24 @@ func findFrame(frames []frame, name string) *frame {
 	}
 
 	return nil
+}
+
+func (p *processor) prune() { p.frames, p.maxDepth = pruneFrames(p.frames) }
+
+func pruneFrames(frames []frame) ([]frame, int) {
+	result := frames[:0]
+	maxDepth := 0
+	for i := range frames {
+		fr := &frames[i]
+		var childDepth int
+		fr.Children, childDepth = pruneFrames(fr.Children)
+		if fr.SampleCount != 0 || len(fr.Children) != 0 {
+			result = append(result, *fr)
+			maxDepth = max(maxDepth, fr.Depth+1, childDepth)
+		}
+	}
+
+	clear(frames[len(result):])
+
+	return result, maxDepth
 }

@@ -23,6 +23,7 @@ import (
 
 type frame struct {
 	Children      []frame
+	childIndex    map[string]int
 	Name          string
 	SampleCount   int64
 	Depth         int     // 0 = outermost frame
@@ -49,7 +50,12 @@ func (s Style) Color(name string) string {
 	g := int(230 * v)
 	b := int(55 * v)
 
-	return fmt.Sprintf("rgb(%d,%d,%d)", r, g, b)
+	return fmt.Sprintf(
+		"rgb(%d,%d,%d)",
+		r,
+		g,
+		b,
+	)
 }
 
 // DefaultStyle is the out-of-the-box SVG style.
@@ -74,6 +80,7 @@ func (ew *errWriter) printf(format string, args ...any) {
 	if ew.err != nil {
 		return
 	}
+
 	_, ew.err = fmt.Fprintf(ew.w, format, args...)
 }
 
@@ -81,6 +88,7 @@ func (ew *errWriter) println(s string) {
 	if ew.err != nil {
 		return
 	}
+
 	_, ew.err = fmt.Fprintln(ew.w, s)
 }
 
@@ -108,7 +116,14 @@ func (r *renderer) Start(ew *errWriter) {
 
 	ew.println(`<?xml version="1.0" standalone="no"?>`)
 	ew.println(`<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">`)
-	ew.printf(`<svg version="1.1" width="%d" height="%d" onload="init(evt)" viewBox="0 0 %d %d" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">`+"\n", w, h, w, h)
+	ew.printf(
+		`<svg version="1.1" width="%d" height="%d" onload="init(evt)" viewBox="0 0 %d %d" `+
+			`xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">`+"\n",
+		w,
+		h,
+		w,
+		h,
+	)
 	ew.println(`<defs >
 	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
 		<stop stop-color="#eeeeee" offset="5%" />
@@ -124,29 +139,69 @@ func (r *renderer) Start(ew *errWriter) {
 	ew.println("]]>")
 	ew.println("</script>")
 	ew.printf(`<rect x="0.0" y="0" width="%d" height="%d" fill="url(#background)"/>`+"\n", w, h)
-	ew.printf(`<text text-anchor="middle" x="%d" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)">Flame Graph</text>`+"\n", r.style.ImageWidth/2, r.style.FontSize*2, r.style.FontSize*3/2, r.style.FontFamily)
-	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="details" > </text>`+"\n", r.style.XMargin, h-topMargin/2, r.style.FontSize, r.style.FontFamily)
-	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="unzoom" onclick="unzoom()" style="opacity:0.0;cursor:pointer" >Reset Zoom</text>`+"\n", r.style.XMargin, r.style.FontSize*2, r.style.FontSize, r.style.FontFamily)
-	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="search" onmouseover="searchover()" onmouseout="searchout()" onclick="search_prompt()" style="opacity:0.1;cursor:pointer" >Search</text>`+"\n", float32(r.style.ImageWidth)-r.style.XMargin-100, r.style.FontSize*2, r.style.FontSize, r.style.FontFamily)
-	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="matched" > </text>`+"\n", float32(r.style.ImageWidth)-r.style.XMargin-100, h-bottomMargin/2, r.style.FontSize, r.style.FontFamily)
+	ew.printf(
+		`<text text-anchor="middle" x="%d" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)">Flame Graph</text>`+"\n",
+		r.style.ImageWidth/2,
+		r.style.FontSize*2,
+		r.style.FontSize*3/2,
+		r.style.FontFamily,
+	)
+	ew.printf(
+		`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="details" > </text>`+"\n",
+		r.style.XMargin,
+		h-topMargin/2,
+		r.style.FontSize,
+		r.style.FontFamily,
+	)
+	ew.printf(
+		`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" `+
+			`id="unzoom" onclick="unzoom()" style="opacity:0.0;cursor:pointer" >Reset Zoom</text>`+"\n",
+		r.style.XMargin,
+		r.style.FontSize*2,
+		r.style.FontSize,
+		r.style.FontFamily,
+	)
+	ew.printf(
+		`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" `+
+			`id="search" onmouseover="searchover()" onmouseout="searchout()" onclick="search_prompt()" `+
+			`style="opacity:0.1;cursor:pointer" >Search</text>`+"\n",
+		float32(r.style.ImageWidth)-r.style.XMargin-100,
+		r.style.FontSize*2,
+		r.style.FontSize,
+		r.style.FontFamily,
+	)
+	ew.printf(
+		`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="matched" > </text>`+"\n",
+		float32(r.style.ImageWidth)-r.style.XMargin-100,
+		h-bottomMargin/2,
+		r.style.FontSize,
+		r.style.FontFamily,
+	)
 }
 
 func (r *renderer) End(ew *errWriter) {
 	ew.println(`</svg>`)
 }
 
-func (r *renderer) DrawFrame(root frame, ew *errWriter) {
-	queue := make([]frame, 0, 64)
+func (r *renderer) DrawFrame(root *frame, ew *errWriter) {
+	queue := make([]*frame, 0, 64)
 	queue = append(queue, root)
 
 	for i := 0; i < len(queue); i++ {
 		r.drawFrame(queue[i], ew)
-		queue = append(queue, queue[i].Children...)
+		for j := range queue[i].Children {
+			queue = append(queue, &queue[i].Children[j])
+		}
 	}
 }
 
-func (r *renderer) drawFrame(f frame, ew *errWriter) {
-	title := fmt.Sprintf("%s (%d samples, %.2f%%)", f.Name, f.SampleCount, f.SamplePercent)
+func (r *renderer) drawFrame(f *frame, ew *errWriter) {
+	title := fmt.Sprintf(
+		"%s (%d samples, %.2f%%)",
+		f.Name,
+		f.SampleCount,
+		f.SamplePercent,
+	)
 	color := r.style.Color(f.Name)
 
 	usableWidth := float32(r.style.ImageWidth) - r.style.XMargin*2
@@ -161,15 +216,31 @@ func (r *renderer) drawFrame(f frame, ew *errWriter) {
 	// prevent a crafted symbol from terminating that string.
 	attributeTitle := html.EscapeString(title)
 
-	ew.printf(`<g class="func_g" data-title="%s" onmouseover="s(this.getAttribute('data-title'))" onmouseout="c()" onclick="zoom(this)">`+"\n", attributeTitle)
+	ew.printf(
+		`<g class="func_g" data-title="%s" onmouseover="s(this.getAttribute('data-title'))" `+
+			`onmouseout="c()" onclick="zoom(this)">`+"\n",
+		attributeTitle,
+	)
 	ew.printf("  <title>%s</title>\n", html.EscapeString(title))
-	ew.printf(`  <rect x="%.1f" y="%d" width="%.1f" height="%d" fill="%s" rx="2" ry="2"/>`+"\n",
-		x, y, w, h, color)
+	ew.printf(
+		`  <rect x="%.1f" y="%d" width="%.1f" height="%d" fill="%s" rx="2" ry="2"/>`+"\n",
+		x,
+		y,
+		w,
+		h,
+		color,
+	)
 
 	text := r.fitText(f.Name, w)
 
-	ew.printf(`  <text text-anchor="" x="%.1f" y="%.1f" font-size="%d" font-family="%s" fill="rgb(0,0,0)">%s</text>`+"\n",
-		x+3, 3+float32(y)+float32(h)/2, r.style.FontSize, r.style.FontFamily, text)
+	ew.printf(
+		`  <text text-anchor="" x="%.1f" y="%.1f" font-size="%d" font-family="%s" fill="rgb(0,0,0)">%s</text>`+"\n",
+		x+3,
+		3+float32(y)+float32(h)/2,
+		r.style.FontSize,
+		r.style.FontFamily,
+		text,
+	)
 
 	ew.printf("</g>\n")
 }
@@ -182,6 +253,7 @@ func nameHash(n string) float32 {
 		h ^= uint32(n[i])
 		h *= 16777619
 	}
+
 	return float32(h&0xFFFF) / 0x10000
 }
 
@@ -198,14 +270,7 @@ func (r *renderer) fitText(text string, width float32) string {
 	return html.EscapeString(text[:avail-2]) + ".."
 }
 
-// RenderStyle writes a flame graph SVG for stacks using the given style.
-func RenderStyle(stacks []Stack, out io.Writer, style Style) error {
-	var proc processor
-
-	for i := range stacks {
-		proc.Process(stacks[i])
-	}
-
+func (proc *processor) render(out io.Writer, style Style) error {
 	proc.Finalize()
 
 	frames, maxDepth := proc.Result()
@@ -215,7 +280,7 @@ func RenderStyle(stacks []Stack, out io.Writer, style Style) error {
 	render.Start(ew)
 
 	for i := range frames {
-		render.DrawFrame(frames[i], ew)
+		render.DrawFrame(&frames[i], ew)
 	}
 
 	render.End(ew)

@@ -15,13 +15,10 @@
 package provider
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
 	"github.com/shirou/gopsutil/process"
-
-	"github.com/ccfos/huatuo/internal/profiling/profile"
 )
 
 func javaProcessName(pid int) (string, error) {
@@ -34,6 +31,7 @@ func javaProcessName(pid int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	if len(cmdlineSlice) == 0 {
 		return "", fmt.Errorf("empty cmdline for PID %d", pid)
 	}
@@ -87,36 +85,9 @@ func javaProcessName(pid int) (string, error) {
 		if len(parts) > 0 {
 			return parts[len(parts)-1], nil
 		}
+
 		return "", fmt.Errorf("couldn't get java thread name")
 	}
 
 	return res, nil
-}
-
-// javaProcessNames resolves only records that require a process frame.
-func javaProcessNames(ctx context.Context, outputs []profile.SampleOutput, fallbackPID int) (map[int]string, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	for _, output := range outputs {
-		if output.PID == 0 {
-			name, err := javaProcessName(fallbackPID)
-			if err != nil {
-				return nil, fmt.Errorf("extract thread name error: %w", err)
-			}
-			return map[int]string{fallbackPID: name}, nil
-		}
-	}
-	names := make(map[int]string, len(outputs))
-	for _, output := range outputs {
-		if output.Output == "" {
-			continue
-		}
-		name, err := javaProcessName(output.PID)
-		if err != nil {
-			return nil, fmt.Errorf("get header frame for PID %d failed: %w", output.PID, err)
-		}
-		names[output.PID] = name
-	}
-	return names, nil
 }

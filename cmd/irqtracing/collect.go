@@ -18,35 +18,20 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"strconv"
-	"time"
+	"strings"
+
+	"github.com/ccfos/huatuo/internal/profiling/aggregation"
+
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	bpfabi "github.com/ccfos/huatuo/internal/bpf/abi"
-	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
-
-var softirqVecNames = map[uint32]string{
-	0: "HI",
-	1: "TIMER",
-	2: "NET_TX",
-	3: "NET_RX",
-	4: "BLOCK",
-	5: "IRQ_POLL",
-	6: "TASKLET",
-	7: "SCHED",
-	8: "HRTIMER",
-	9: "RCU",
-}
-
-func vecName(vec uint32) string {
-	if name, ok := softirqVecNames[vec]; ok {
-		return name
-	}
-	return "VEC" + strconv.FormatUint(uint64(vec), 10)
-}
 
 // mapSnapshotter is the narrow backend surface used to detach the probes and
 // read the final drop counters.
@@ -77,14 +62,31 @@ func readDroppedSamples(b mapSnapshotter) (uint64, error) {
 		binary.LittleEndian.PutUint32(key, uint32(stream))
 		raw, err := b.ReadMap(mapID, key)
 		if err != nil {
-			return 0, fmt.Errorf("read %s[%d]: %w", droppedSamplesMap, stream, err)
+			return 0, fmt.Errorf(
+				"read %s[%d]: %w",
+				droppedSamplesMap,
+				stream,
+				err,
+			)
 		}
+
 		count, err := sumUint64Slots(raw)
 		if err != nil {
-			return 0, fmt.Errorf("decode %s[%d]: %w", droppedSamplesMap, stream, err)
+			return 0, fmt.Errorf(
+				"decode %s[%d]: %w",
+				droppedSamplesMap,
+				stream,
+				err,
+			)
 		}
+
+		if count > math.MaxUint64-total {
+			return 0, fmt.Errorf("IRQ dropped sample count overflows uint64")
+		}
+
 		total += count
 	}
+
 	return total, nil
 }
 
@@ -95,9 +97,15 @@ func sumUint64Slots(raw []byte) (uint64, error) {
 
 	var total uint64
 	for len(raw) > 0 {
-		total += binary.LittleEndian.Uint64(raw)
+		count := binary.LittleEndian.Uint64(raw)
+		if count > math.MaxUint64-total {
+			return 0, fmt.Errorf("IRQ per-CPU count overflows uint64")
+		}
+
+		total += count
 		raw = raw[8:]
 	}
+
 	return total, nil
 }
 
@@ -119,85 +127,113 @@ func readStackTrace(b bpf.BPF, stackMapID, id uint32) ([symbol.KsymStackMaxDepth
 	if err != nil {
 		return stack, false, fmt.Errorf("read stack_traces[%d]: %w", id, err)
 	}
+
 	if len(valBytes) != symbol.KsymStackMaxDepth*8 {
-		return stack, false, fmt.Errorf("read stack_traces[%d]: value size %d, want %d",
-			id, len(valBytes), symbol.KsymStackMaxDepth*8)
+		return stack, false, fmt.Errorf(
+			"read stack_traces[%d]: value size %d, want %d",
+			id,
+			len(valBytes),
+			symbol.KsymStackMaxDepth*8,
+		)
 	}
+
 	if err := binary.Read(bytes.NewReader(valBytes), binary.LittleEndian, &stack); err != nil {
 		return stack, false, fmt.Errorf("decode stack_traces[%d]: %w", id, err)
 	}
+
 	return stack, true, nil
 }
 
-// processStackMap reads a per-CPU BPF stack-counts map, sums its CPU slots,
-// converts each entry into profile.TreeItem stack frames, and appends it to
-// items. When provided,
-// labelFn produces the per-entry leaf label (e.g. "source[comm,HI]") and
-// rootLabel is prepended as the root frame (e.g. "source" or "victim").
-func processStackMap(b bpf.BPF, mapName string, u *symbol.UsymResolver,
-	items []*profile.TreeItem,
-	labelFn func(key bpfabi.IrqtracingStackKey) string,
-	rootLabel string,
-) ([]*profile.TreeItem, error) {
-	mapItems, err := b.DumpMapByName(mapName)
+// enqueueStackMap retains CPU identity and counts each per-CPU slot once.
+// Symbolization is shared across slots, but the immutable frames are never
+// changed after being handed to the pipeline.
+func enqueueStackMap(
+	b bpf.BPF,
+	mapName, role string,
+	u *symbol.UsymResolver,
+	enqueue func(*pipeline.SampleBatch) error,
+) error {
+	items, err := b.DumpMapByName(mapName)
 	if err != nil {
-		return items, err
+		return err
 	}
 
 	stackMapID := b.MapIDByName("stack_traces")
+	var builder pipeline.BatchBuilder
+	for i := range items {
+		item := &items[i]
+		if len(item.Key) != bpfabi.IrqtracingStackKeySize {
+			return fmt.Errorf("invalid %s key size %d", mapName, len(item.Key))
+		}
 
-	for _, it := range mapItems {
 		var key bpfabi.IrqtracingStackKey
-		if err := binary.Read(bytes.NewReader(it.Key), binary.LittleEndian, &key); err != nil {
-			return items, err
-		}
-		count, err := sumUint64Slots(it.Value)
-		if err != nil {
-			return items, fmt.Errorf("decode %s count: %w", mapName, err)
+		if err := binary.Read(bytes.NewReader(item.Key), binary.LittleEndian, &key); err != nil {
+			return err
 		}
 
-		// Top-down order: root -> per-entry label -> ustack (outermost first)
-		// -> kstack (outermost first). UsymStackStrsReversed and
-		// KsymStackStrsReversed already return the earliest-called frame first.
-		prefixes := make([]string, 0, 2)
-		if rootLabel != "" {
-			prefixes = append(prefixes, rootLabel)
-		}
-		if labelFn != nil {
-			if label := labelFn(key); label != "" {
-				prefixes = append(prefixes, label)
-			}
+		if len(item.Value) == 0 || len(item.Value)%8 != 0 {
+			return fmt.Errorf("invalid %s per-CPU value size %d", mapName, len(item.Value))
 		}
 
-		var userFrames []string
-		if ustack, ok, err := readStackTrace(b, stackMapID, key.UstackID); err != nil {
-			return items, err
+		var user, kernel []types.ProfileFrame
+		if stack, ok, err := readStackTrace(b, stackMapID, key.UstackID); err != nil {
+			return err
 		} else if ok {
-			resolved := u.UsymStackStrsReversed(key.PID, ustack[:], symbol.KsymStackMaxDepth)
-			userFrames = resolved[:0]
-			for _, f := range resolved {
-				if f != "" {
-					userFrames = append(userFrames, f)
-				}
-			}
+			user = irqFrames(stack[:], u.UsymStackStrsReversed(key.PID, stack[:], len(stack)))
 		}
 
-		var kernelFrames []string
-		if kstack, ok, err := readStackTrace(b, stackMapID, key.KstackID); err != nil {
-			return items, err
+		if stack, ok, err := readStackTrace(b, stackMapID, key.KstackID); err != nil {
+			return err
 		} else if ok {
-			resolved := symbol.KsymStackStrsReversed(kstack[:], symbol.KsymStackMaxDepth)
-			kernelFrames = resolved[:0]
-			for _, f := range resolved {
-				if f != "" {
-					kernelFrames = append(kernelFrames, f+"_[k]")
-				}
-			}
+			kernel = irqFrames(stack[:], symbol.KsymStackStrsReversed(stack[:], len(stack)))
 		}
 
-		items = append(items, profile.BuildTreeItem(prefixes, userFrames, kernelFrames, count))
+		for offset := 0; offset < len(item.Value); offset += 8 {
+			count := binary.LittleEndian.Uint64(item.Value[offset:])
+			if count == 0 {
+				continue
+			}
+
+			if count > math.MaxInt64 {
+				return fmt.Errorf("IRQ %s count exceeds int64", role)
+			}
+
+			labels, err := types.NormalizeLabels([]types.ProfileLabel{
+				types.ProfilePIDLabel(key.PID), types.ProfileCPULabel(uint32(offset / 8)),
+				types.ProfileStringLabel("comm", bytesutil.ToStr(key.Comm[:])),
+				types.ProfileStringLabel("irq", role),
+				types.ProfileStringLabel("softirq_vector", strconv.FormatUint(uint64(key.Vec), 10)),
+			})
+			if err != nil {
+				return err
+			}
+
+			sample := aggregation.Sample{
+				UserFrames:   user,
+				KernelFrames: kernel,
+				Labels:       labels,
+				Value:        int64(count),
+			}
+			if err := builder.Append(&sample, enqueue); err != nil {
+				return err
+			}
+		}
 	}
-	return items, nil
+
+	return builder.Flush(enqueue)
+}
+
+func irqFrames(addresses []uint64, names []string) []types.ProfileFrame {
+	frames := make([]types.ProfileFrame, len(names))
+	for i, name := range names {
+		if name == "" || name == "unknown" || strings.HasPrefix(name, "unknown ") || strings.HasPrefix(name, "[unknown]/") {
+			name = fmt.Sprintf("0x%x", addresses[len(names)-1-i])
+		}
+
+		frames[i] = types.ProfileFrame{Name: name}
+	}
+
+	return frames
 }
 
 // detachAndReadDroppedSamples freezes the collection point before reading the
@@ -214,44 +250,27 @@ func detachAndReadDroppedSamples(b mapSnapshotter) (uint64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("read dropped samples: %w", err)
 	}
+
 	return nmissed, nil
 }
 
-// buildProfile merges the source and victim stack maps into a Data
-// tree, prefixing each stack with "source" / "victim" roots.
-func buildProfile(b bpf.BPF) (*profile.Data, error) {
-	u := symbol.NewUsymResolver()
-
-	var items []*profile.TreeItem
-	var err error
-
-	items, err = processStackMap(
-		b, "source_counts", u, items,
-		func(key bpfabi.IrqtracingStackKey) string {
-			return fmt.Sprintf("source[%s,%s]", bytesutil.ToStr(key.Comm[:]), vecName(key.Vec))
-		},
+func enqueueIRQStacks(b bpf.BPF, enqueue func(*pipeline.SampleBatch) error) error {
+	resolver := symbol.NewUsymResolver()
+	if err := enqueueStackMap(
+		b,
+		"source_counts",
 		"source",
-	)
-	if err != nil {
-		return nil, err
+		resolver,
+		enqueue,
+	); err != nil {
+		return err
 	}
 
-	items, err = processStackMap(
-		b, "victim_counts", u, items,
-		func(key bpfabi.IrqtracingStackKey) string {
-			return fmt.Sprintf("victim[%s(%d),%s]",
-				bytesutil.ToStr(key.Comm[:]), key.PID, vecName(key.Vec))
-		},
+	return enqueueStackMap(
+		b,
+		"victim_counts",
 		"victim",
+		resolver,
+		enqueue,
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	data, err := profile.ParseTree(time.Time{}, profile.ProfileTypeIRQTracingSample,
-		items, &profile.ParseOption{SampleRate: profile.NoSampleRate})
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
 }

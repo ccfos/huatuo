@@ -38,7 +38,7 @@ type LocalDestination struct {
 }
 
 // NewLocalDestination resolves the target without opening or truncating a result.
-func NewLocalDestination(cfg FormatterConfig) (*LocalDestination, error) {
+func NewLocalDestination(cfg Config) (*LocalDestination, error) {
 	if err := ValidateDestination(cfg.Destination); err != nil {
 		return nil, err
 	}
@@ -161,10 +161,12 @@ func createOutputFile(dir, prefix, ext string) (*os.File, error) {
 func writeAndClose(file io.WriteCloser, write func(io.Writer) error) error {
 	writeErr := write(file)
 	closeErr := file.Close()
-	if closeErr != nil {
-		closeErr = fmt.Errorf("close profiling output: %w", closeErr)
+	if closeErr == nil {
+		// Preserve the exact cancellation sentinel when cleanup succeeds.
+		return writeErr
 	}
-	return errors.Join(writeErr, closeErr)
+
+	return errors.Join(writeErr, fmt.Errorf("close profiling output: %w", closeErr))
 }
 
 // IsStdout reports whether empty output may be written without creating a file.

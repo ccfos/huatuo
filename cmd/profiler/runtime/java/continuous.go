@@ -51,7 +51,7 @@ type collapsedFile struct {
 type collapsedFileCollector struct {
 	pids           []int
 	pidsToFilePath map[int]string
-	enqueueSample  func(profile.SampleOutput)
+	enqueueSample  func(profile.SampleOutput) error
 	observedFiles  map[string]observedFile
 	retainedFiles  map[string]fileSignature
 }
@@ -59,7 +59,7 @@ type collapsedFileCollector struct {
 func newCollapsedFileCollector(
 	pids []int,
 	pidsToFilePath map[int]string,
-	enqueueSample func(profile.SampleOutput),
+	enqueueSample func(profile.SampleOutput) error,
 ) *collapsedFileCollector {
 	return &collapsedFileCollector{
 		pids:           append([]int(nil), pids...),
@@ -92,6 +92,7 @@ func (c *collapsedFileCollector) scanOutputFiles(force bool) error {
 		if err != nil {
 			return err
 		}
+
 		for _, file := range files {
 			if err := c.observeOutputFile(pid, file, force); err != nil {
 				return err
@@ -114,13 +115,16 @@ func (c *collapsedFileCollector) listSortedFiles(pid int) ([]collapsedFile, erro
 		if err != nil {
 			return nil, err
 		}
+
 		info, err := os.Stat(path)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
+
 			return nil, fmt.Errorf("stat output for pid %d: %w", pid, err)
 		}
+
 		files = append(files, collapsedFile{
 			path:      path,
 			sequence:  sequence,
@@ -131,6 +135,7 @@ func (c *collapsedFileCollector) listSortedFiles(pid int) ([]collapsedFile, erro
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].sequence < files[j].sequence
 	})
+
 	return files, nil
 }
 
@@ -140,6 +145,7 @@ func collapsedFileSequence(path string) (uint64, error) {
 	if !ok {
 		return 0, fmt.Errorf("collapsed output %q has no sequence", path)
 	}
+
 	separator := strings.LastIndexByte(stem, '-')
 	if separator < 0 || separator == len(stem)-1 {
 		return 0, fmt.Errorf("collapsed output %q has no sequence", path)
@@ -148,8 +154,14 @@ func collapsedFileSequence(path string) (uint64, error) {
 	sequenceText := stem[separator+1:]
 	sequence, err := strconv.ParseUint(sequenceText, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid sequence %q in collapsed output %q: %w", sequenceText, path, err)
+		return 0, fmt.Errorf(
+			"invalid sequence %q in collapsed output %q: %w",
+			sequenceText,
+			path,
+			err,
+		)
 	}
+
 	return sequence, nil
 }
 
@@ -162,8 +174,12 @@ func (c *collapsedFileCollector) observeOutputFile(pid int, file collapsedFile, 
 	if observation.signature == file.signature {
 		observation.stable++
 	} else {
-		observation = observedFile{signature: file.signature, stable: 1}
+		observation = observedFile{
+			signature: file.signature,
+			stable:    1,
+		}
 	}
+
 	c.observedFiles[file.path] = observation
 
 	if !force && observation.stable < stablePollCount {
@@ -174,6 +190,7 @@ func (c *collapsedFileCollector) observeOutputFile(pid int, file collapsedFile, 
 	if err != nil {
 		return fmt.Errorf("read output for pid %d: %w", pid, err)
 	}
+
 	removeErr := os.Remove(file.path)
 	if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 		log.WithError(removeErr).
@@ -184,13 +201,21 @@ func (c *collapsedFileCollector) observeOutputFile(pid int, file collapsedFile, 
 	} else {
 		delete(c.retainedFiles, file.path)
 	}
+
 	delete(c.observedFiles, file.path)
 
-	c.enqueueSample(profile.SampleOutput{PID: pid, Output: string(collapsedData)})
+	if err := c.enqueueSample(profile.SampleOutput{
+		PID:    pid,
+		Output: string(collapsedData),
+	}); err != nil {
+		return err
+	}
+
 	log.WithField("pid", pid).
 		WithField("sequence", file.sequence).
 		WithField("output_bytes", len(collapsedData)).
 		Debug("collected async-profiler output")
+
 	return nil
 }
 
@@ -200,9 +225,16 @@ func finishAsprofSampling(
 	collector *collapsedFileCollector,
 ) error {
 	stopErr := stopAsprofSampling(ctx, opt)
+	if stopErr != nil {
+		return stopErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := collector.scanOutputFiles(true); err != nil {
 		return errors.Join(stopErr, err)
 	}
+
 	return stopErr
 }
 
@@ -210,13 +242,23 @@ func stopAsprofSampling(
 	ctx context.Context,
 	opt *AsprofSamplingOption,
 ) error {
-	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), asprofCommandTimeout)
+	finalCtx, cancel := context.WithTimeout(ctx, asprofCommandTimeout)
 	defer cancel()
 
 	activePIDs := opt.activePIDList()
-	results := RunAsyncProfiler(finalCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
-		return stopWithOutputArgs(pid, opt.SessionID, opt.OutFilePrefix, opt.outputFileCount)
-	})
+	results := RunAsyncProfiler(
+		finalCtx,
+		activePIDs,
+		asprofPath(opt.ToolPath),
+		func(pid int) []string {
+			return stopWithOutputArgs(
+				pid,
+				opt.SessionID,
+				opt.OutFilePrefix,
+				opt.outputFileCount,
+			)
+		},
+	)
 	finalCtxErr := finalCtx.Err()
 	opt.markStopped(results)
 
@@ -224,6 +266,7 @@ func stopAsprofSampling(
 	if finalCtxErr != nil {
 		timeoutErr = fmt.Errorf("stop async-profiler after cancellation: %w", finalCtxErr)
 	}
+
 	return errors.Join(
 		timeoutErr,
 		profilerexec.Verify(results),

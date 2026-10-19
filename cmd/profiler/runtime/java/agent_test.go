@@ -17,12 +17,15 @@ package java
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 )
 
 func TestStartAsprofSamplingValidatesDuration(t *testing.T) {
@@ -43,6 +46,7 @@ func TestAsyncProfilerPaths(t *testing.T) {
 	if got, want := asprofPath(toolPath), filepath.Join(toolPath, "bin", "asprof"); got != want {
 		t.Fatalf("asprofPath()=%q, want %q", got, want)
 	}
+
 	if got, want := agentLibraryPath(toolPath), filepath.Join(toolPath, "lib", "libasyncProfiler.so"); got != want {
 		t.Fatalf("agentLibraryPath()=%q, want %q", got, want)
 	}
@@ -71,7 +75,12 @@ func TestCopyAgentLibPreservesSourceMode(t *testing.T) {
 			t.Parallel()
 
 			toolPath := t.TempDir()
-			writeAgentSource(t, toolPath, want, tt.sourceMode)
+			writeAgentSource(
+				t,
+				toolPath,
+				want,
+				tt.sourceMode,
+			)
 
 			targetDir := t.TempDir()
 			target := filepath.Join(targetDir, "libasyncProfiler.so")
@@ -84,9 +93,11 @@ func TestCopyAgentLibPreservesSourceMode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadFile(%q) error=%v", target, err)
 			}
+
 			if !bytes.Equal(got, want) {
 				t.Fatalf("copied agent=%q, want %q", got, want)
 			}
+
 			assertFileMode(t, target, tt.sourceMode)
 		})
 	}
@@ -97,16 +108,31 @@ func TestCopyAgentLibReplacesSymlink(t *testing.T) {
 
 	want := []byte("async-profiler-agent")
 	toolPath := t.TempDir()
-	writeAgentSource(t, toolPath, want, 0o755)
+	writeAgentSource(
+		t,
+		toolPath,
+		want,
+		0o755,
+	)
 
 	externalPath := filepath.Join(t.TempDir(), "external")
 	externalContent := []byte("do-not-overwrite")
-	writeFileWithMode(t, externalPath, externalContent, 0o600)
+	writeFileWithMode(
+		t,
+		externalPath,
+		externalContent,
+		0o600,
+	)
 
 	targetDir := t.TempDir()
 	targetPath := filepath.Join(targetDir, "libasyncProfiler.so")
 	if err := os.Symlink(externalPath, targetPath); err != nil {
-		t.Fatalf("Symlink(%q, %q) error=%v", externalPath, targetPath, err)
+		t.Fatalf(
+			"Symlink(%q, %q) error=%v",
+			externalPath,
+			targetPath,
+			err,
+		)
 	}
 
 	if err := copyAgentLib(toolPath, targetDir); err != nil {
@@ -117,20 +143,25 @@ func TestCopyAgentLibReplacesSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lstat(%q) error=%v", targetPath, err)
 	}
+
 	if targetInfo.Mode()&os.ModeSymlink != 0 {
 		t.Fatalf("copyAgentLib() target mode=%v, want regular file", targetInfo.Mode())
 	}
+
 	got, err := os.ReadFile(targetPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%q) error=%v", targetPath, err)
 	}
+
 	if !bytes.Equal(got, want) {
 		t.Fatalf("copied agent=%q, want %q", got, want)
 	}
+
 	externalGot, err := os.ReadFile(externalPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%q) error=%v", externalPath, err)
 	}
+
 	if !bytes.Equal(externalGot, externalContent) {
 		t.Fatalf("external file=%q, want %q", externalGot, externalContent)
 	}
@@ -140,16 +171,23 @@ func TestCopyAgentLibRemovesTempFileAfterInstallFailure(t *testing.T) {
 	t.Parallel()
 
 	toolPath := t.TempDir()
-	writeAgentSource(t, toolPath, []byte("async-profiler-agent"), 0o755)
+	writeAgentSource(
+		t,
+		toolPath,
+		[]byte("async-profiler-agent"),
+		0o755,
+	)
 
 	targetDir := t.TempDir()
 	targetPath := filepath.Join(targetDir, "libasyncProfiler.so")
 	if err := os.Mkdir(targetPath, 0o755); err != nil {
 		t.Fatalf("Mkdir(%q) error=%v", targetPath, err)
 	}
+
 	if err := copyAgentLib(toolPath, targetDir); err == nil {
 		t.Fatal("copyAgentLib() error=nil, want non-nil")
 	}
+
 	assertNoAgentTempFiles(t, targetDir)
 }
 
@@ -189,6 +227,7 @@ func TestStartAsprofCallbackBuildsStartCommand(t *testing.T) {
 	if !slices.Equal(args, wantArgs) {
 		t.Fatalf("startAsprofCallback() args=%q, want %q", args, wantArgs)
 	}
+
 	if got, want := profileOutFile[999999999], "/tmp/huatuo-asprof-session123-cpu-999999999-*.collapsed"; got != want {
 		t.Fatalf("profile output path=%q, want %q", got, want)
 	}
@@ -203,9 +242,24 @@ func TestAsprofOutputFileCount(t *testing.T) {
 		aggregationInterval time.Duration
 		want                uint64
 	}{
-		{name: "exact windows", duration: 20 * time.Second, aggregationInterval: 10 * time.Second, want: 4},
-		{name: "partial window", duration: 21 * time.Second, aggregationInterval: 10 * time.Second, want: 5},
-		{name: "duration below interval", duration: time.Second, aggregationInterval: 10 * time.Second, want: 3},
+		{
+			name:                "exact windows",
+			duration:            20 * time.Second,
+			aggregationInterval: 10 * time.Second,
+			want:                4,
+		},
+		{
+			name:                "partial window",
+			duration:            21 * time.Second,
+			aggregationInterval: 10 * time.Second,
+			want:                5,
+		},
+		{
+			name:                "duration below interval",
+			duration:            time.Second,
+			aggregationInterval: 10 * time.Second,
+			want:                3,
+		},
 	}
 
 	for _, tt := range tests {
@@ -223,12 +277,18 @@ func TestAsprofOutputFileCount(t *testing.T) {
 func TestStopWithOutputArgsBuildsCollapsedOutputCommand(t *testing.T) {
 	t.Parallel()
 
-	got := stopWithOutputArgs(1234, "session123", "mem", 4)
+	got := stopWithOutputArgs(
+		1234,
+		"session123",
+		"mem",
+		4,
+	)
 	want := []string{
 		"stop",
 		"--libpath", "/tmp/libasyncProfiler.so",
 		"-o", "collapsed",
 		"-f", "/tmp/huatuo-asprof-session123-mem-1234-4.collapsed",
+		"--total",
 		"1234",
 	}
 	if !slices.Equal(got, want) {
@@ -242,7 +302,13 @@ func writeAgentSource(t *testing.T, toolPath string, content []byte, mode os.Fil
 	if err := os.Mkdir(libDir, 0o755); err != nil {
 		t.Fatalf("Mkdir(%q) error=%v", libDir, err)
 	}
-	writeFileWithMode(t, filepath.Join(libDir, "libasyncProfiler.so"), content, mode)
+
+	writeFileWithMode(
+		t,
+		filepath.Join(libDir, "libasyncProfiler.so"),
+		content,
+		mode,
+	)
 }
 
 func writeFileWithMode(t *testing.T, path string, content []byte, mode os.FileMode) {
@@ -250,6 +316,7 @@ func writeFileWithMode(t *testing.T, path string, content []byte, mode os.FileMo
 	if err := os.WriteFile(path, content, mode); err != nil {
 		t.Fatalf("WriteFile(%q) error=%v", path, err)
 	}
+
 	if err := os.Chmod(path, mode); err != nil {
 		t.Fatalf("Chmod(%q) error=%v", path, err)
 	}
@@ -261,8 +328,14 @@ func assertFileMode(t *testing.T, path string, want os.FileMode) {
 	if err != nil {
 		t.Fatalf("Stat(%q) error=%v", path, err)
 	}
+
 	if got := info.Mode().Perm(); got != want.Perm() {
-		t.Fatalf("%s mode=%04o, want %04o", path, got, want.Perm())
+		t.Fatalf(
+			"%s mode=%04o, want %04o",
+			path,
+			got,
+			want.Perm(),
+		)
 	}
 }
 
@@ -272,7 +345,42 @@ func assertNoAgentTempFiles(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf("Glob() error=%v", err)
 	}
+
 	if len(tempFiles) != 0 {
 		t.Fatalf("temporary Java agent files=%q, want none", tempFiles)
+	}
+}
+
+func TestReadAsprofDataLoopStopContract(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cause       error
+		wantSamples int
+	}{
+		{"duration", profile.ErrCollectionDurationElapsed, 1},
+		{"requested", profile.ErrStopRequested, 1},
+		{"failure", context.Canceled, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "profile-0.collapsed")
+			if err := os.WriteFile(path, []byte("root;leaf 7\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancelCause(t.Context())
+			cancel(tc.cause)
+			count := 0
+			err := ReadAsprofDataLoop(ctx, &AsprofSamplingOption{Pids: []int{123}, activePIDs: map[int]bool{}}, map[int]string{123: filepath.Join(filepath.Dir(path), "profile-*.collapsed")}, func(profile.SampleOutput) error { count++; return nil })
+			// No active external profiler needs stopping; only the final file is consumed.
+			if tc.wantSamples == 0 {
+				if !errors.Is(err, tc.cause) {
+					t.Fatalf("error=%v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if count != tc.wantSamples {
+				t.Fatalf("samples=%d want=%d", count, tc.wantSamples)
+			}
+		})
 	}
 }

@@ -42,6 +42,7 @@ func TestDocumentWriterRequiresRequest(t *testing.T) {
 	if err := writer.Handle(t.Context(), nil); err == nil {
 		t.Fatal("nil request accepted")
 	}
+
 	if err := writer.Handle(t.Context(), &toolstream.Request[types.ProfilingWindow]{}); err == nil {
 		t.Fatal("empty task ID accepted")
 	}
@@ -50,12 +51,16 @@ func TestDocumentWriterRequiresRequest(t *testing.T) {
 func TestDocumentWriterPersistsWindowSynchronously(t *testing.T) {
 	const toolName = "custom-profiler"
 	writer, backend := newPersistentDocumentWriter(t)
-	session := &toolstream.Request[types.ProfilingWindow]{ToolName: toolName, TaskID: "profile-task-1"}
+	session := &toolstream.Request[types.ProfilingWindow]{
+		ToolName: toolName,
+		TaskID:   "profile-task-1",
+	}
 
 	session.Data = validProfilingWindow()
 	if err := writer.Handle(t.Context(), session); err != nil {
 		t.Fatalf("DocumentWriter.Handle() error = %v", err)
 	}
+
 	if backend.syncWrites != 1 || backend.asyncWrites != 0 {
 		t.Fatalf(
 			"profile writes = (sync=%d, async=%d), want (1, 0)",
@@ -63,22 +68,28 @@ func TestDocumentWriterPersistsWindowSynchronously(t *testing.T) {
 			backend.asyncWrites,
 		)
 	}
+
 	if got := backend.lastRecord.Fields[types.DocumentFieldTracerID]; got != "profile-task-1" {
 		t.Fatalf("document tracer ID = %q, want %q", got, "profile-task-1")
 	}
+
 	if got := backend.lastRecord.Fields[types.DocumentFieldTracerName]; got != toolName {
 		t.Fatalf("document tracer name = %q, want %q", got, toolName)
 	}
+
 	if got := backend.lastRecord.Fields[types.DocumentFieldTracerType]; got != types.TracerRunTypeProfiling {
 		t.Fatalf("document tracer type = %q, want %q", got, types.TracerRunTypeProfiling)
 	}
+
 	var document profilingstore.Document
 	if err := json.Unmarshal(backend.lastRecord.Data, &document); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
+
 	if got := document.ProfileData.ProfileType; got != "process_cpu:cpu:nanoseconds:cpu:nanoseconds" {
 		t.Fatalf("document profile type = %q", got)
 	}
+
 	if got := document.ProfileData.Metrics.DroppedSamples[types.DropReasonAggregationQueue]; got != 7 {
 		t.Fatalf("document dropped sample count = %d, want 7", got)
 	}
@@ -86,7 +97,10 @@ func TestDocumentWriterPersistsWindowSynchronously(t *testing.T) {
 
 func TestDocumentWriterPersistsEveryWindowSynchronously(t *testing.T) {
 	writer, backend := newPersistentDocumentWriter(t)
-	session := &toolstream.Request[types.ProfilingWindow]{ToolName: "profiler", TaskID: "profile-task-1"}
+	session := &toolstream.Request[types.ProfilingWindow]{
+		ToolName: "profiler",
+		TaskID:   "profile-task-1",
+	}
 
 	for i := range 2 {
 		window := validProfilingWindow()
@@ -96,6 +110,7 @@ func TestDocumentWriterPersistsEveryWindowSynchronously(t *testing.T) {
 			t.Fatalf("DocumentWriter.Handle() error = %v", err)
 		}
 	}
+
 	if backend.syncWrites != 2 || backend.asyncWrites != 0 {
 		t.Fatalf(
 			"profile writes = (sync=%d, async=%d), want (2, 0)",
@@ -137,7 +152,10 @@ func TestDocumentWriterRejectsIncompleteWindow(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			writer, backend := newPersistentDocumentWriter(t)
-			session := &toolstream.Request[types.ProfilingWindow]{ToolName: "profiler", TaskID: "profile-task-1"}
+			session := &toolstream.Request[types.ProfilingWindow]{
+				ToolName: "profiler",
+				TaskID:   "profile-task-1",
+			}
 			window := validProfilingWindow()
 			test.modify(window)
 
@@ -146,9 +164,11 @@ func TestDocumentWriterRejectsIncompleteWindow(t *testing.T) {
 			if err == nil {
 				t.Fatal("DocumentWriter.Handle() error = nil")
 			}
+
 			if !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("DocumentWriter.Handle() error = %q, want containing %q", err, test.want)
 			}
+
 			if backend.syncWrites != 0 || backend.asyncWrites != 0 {
 				t.Fatalf(
 					"profile writes = (sync=%d, async=%d), want (0, 0)",
@@ -164,7 +184,16 @@ func validProfilingWindow() *types.ProfilingWindow {
 	return &types.ProfilingWindow{
 		ProfileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
 		Profile: &profilev1.Profile{
-			TimeNanos: time.Date(2026, 8, 28, 2, 30, 0, 0, time.UTC).UnixNano(),
+			TimeNanos: time.Date(
+				2026,
+				8,
+				28,
+				2,
+				30,
+				0,
+				0,
+				time.UTC,
+			).UnixNano(),
 		},
 		DroppedSamples: map[string]uint64{types.DropReasonAggregationQueue: 7},
 	}
@@ -190,12 +219,15 @@ func (b *profileBackend) Save(
 		b.commits++
 		return b.commitErr
 	}
+
 	if options.WaitForVisibility {
 		b.syncWrites++
 	} else {
 		b.asyncWrites++
 	}
+
 	b.lastRecord = record
+
 	return b.saveErr
 }
 
@@ -234,6 +266,7 @@ func newPersistentDocumentWriter(t *testing.T) (*DocumentWriter, *profileBackend
 	if err != nil {
 		t.Fatalf("profilingstore.NewFromConfig() error = %v", err)
 	}
+
 	writer, err := NewDocumentWriter(
 		store,
 		document.New("test"),
@@ -249,7 +282,13 @@ func TestHandleStoresFinalWindowBeforeConditionalCommit(t *testing.T) {
 	for _, failure := range []string{"", "prior", "current", "write", "commit", "missing-commit"} {
 		t.Run(failure, func(t *testing.T) {
 			writer, backend := newPersistentDocumentWriter(t)
-			request := &toolstream.Request[types.ProfilingWindow]{ToolName: "profiler", TaskID: "task", Data: validProfilingWindow(), End: true, Commit: true}
+			request := &toolstream.Request[types.ProfilingWindow]{
+				ToolName: "profiler",
+				TaskID:   "task",
+				Data:     validProfilingWindow(),
+				End:      true,
+				Commit:   true,
+			}
 			sentinel := errors.New("storage failure")
 			switch failure {
 			case "prior":
@@ -263,18 +302,22 @@ func TestHandleStoresFinalWindowBeforeConditionalCommit(t *testing.T) {
 			case "missing-commit":
 				request.Commit = false
 			}
+
 			err := writer.Handle(t.Context(), request)
 			wantErr := failure == "write" || failure == "commit" || failure == "missing-commit"
 			if (err != nil) != wantErr {
 				t.Fatalf("Handle: %v", err)
 			}
+
 			if backend.syncWrites != 1 {
 				t.Fatalf("window writes=%d", backend.syncWrites)
 			}
+
 			wantCommits := 0
 			if failure == "" || failure == "commit" {
 				wantCommits = 1
 			}
+
 			if backend.commits != wantCommits {
 				t.Fatalf("commits=%d want=%d", backend.commits, wantCommits)
 			}
@@ -284,12 +327,84 @@ func TestHandleStoresFinalWindowBeforeConditionalCommit(t *testing.T) {
 
 func TestDocumentWriterRequiresToolName(t *testing.T) {
 	writer, backend := newPersistentDocumentWriter(t)
-	request := &toolstream.Request[types.ProfilingWindow]{TaskID: "task", Data: validProfilingWindow(), End: true, Commit: true}
+	request := &toolstream.Request[types.ProfilingWindow]{
+		TaskID: "task",
+		Data:   validProfilingWindow(),
+		End:    true,
+		Commit: true,
+	}
 	err := writer.Handle(t.Context(), request)
 	if err == nil || !strings.Contains(err.Error(), "tool name is required") {
 		t.Fatalf("Handle() error = %v", err)
 	}
+
 	if backend.syncWrites != 0 || backend.commits != 0 {
 		t.Fatalf("writes=%d commits=%d", backend.syncWrites, backend.commits)
+	}
+}
+
+func TestDocumentWriterRejectsInvalidAggregatesBeforeStorage(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		version string
+		modify  func(*types.AggregationWindow)
+	}{
+		{
+			name:    "old protocol",
+			version: "1",
+			modify:  func(*types.AggregationWindow) {},
+		},
+		{
+			name:    "old aggregate protocol",
+			version: "2",
+			modify:  func(*types.AggregationWindow) {},
+		},
+		{
+			name:    "missing frame",
+			version: "3",
+			modify:  func(w *types.AggregationWindow) { w.Aggregated.Stacks = [][]uint32{{3}} },
+		},
+		{
+			name:    "missing stack",
+			version: "3",
+			modify:  func(w *types.AggregationWindow) { w.Aggregated.Samples[0].UserStack = 2 },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writer, backend := newPersistentDocumentWriter(t)
+			w := &types.AggregationWindow{
+				ProfileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+				Aggregated: types.AggregatedProfile{
+					TimeNanos: 123,
+					Frames:    []types.ProfileFrame{{Name: "work"}},
+					Stacks:    [][]uint32{{0}},
+					Samples: []types.AggregatedSample{{
+						UserStack: 1,
+						Value:     7,
+					}},
+				},
+			}
+			tc.modify(w)
+			raw, err := json.Marshal(w)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			payload := json.RawMessage(raw)
+			if err := writer.HandleStream(t.Context(), &toolstream.Request[json.RawMessage]{
+				ToolName: "profiler",
+				TaskID:   "task",
+				Version:  tc.version,
+				Data:     &payload,
+				End:      true,
+				Commit:   true,
+			}); err == nil {
+				t.Fatal("invalid aggregate accepted")
+			}
+
+			if backend.syncWrites != 0 || backend.commits != 0 {
+				t.Fatal("invalid aggregate reached storage")
+			}
+		})
 	}
 }

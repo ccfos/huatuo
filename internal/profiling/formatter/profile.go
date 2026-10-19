@@ -16,134 +16,64 @@ package formatter
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 
-	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
+	"github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
-// ProfileReader borrows one profile while resolving its stacks and strings.
-// The caller must not mutate the profile during use.
-type ProfileReader struct {
-	profile   *profilev1.Profile
-	functions map[uint64]*profilev1.Function
-	locations map[uint64]*profilev1.Location
+// DisplayLabels projects labels only at the presentation boundary. Quoting
+// prevents multi-value and numeric labels from becoming ambiguous prefixes.
+func DisplayLabels(dst []string, labels []types.ProfileLabel) []string {
+	for i := range labels {
+		label := &labels[i]
+		value := strconv.Quote(label.StringValue)
+		if label.Kind == types.ProfileLabelNumber {
+			value = strconv.FormatInt(label.NumberValue, 10) + " " + strconv.Quote(label.NumberUnit)
+		}
+
+		if label.Name == "softirq_vector" {
+			names := [...]string{"HI", "TIMER", "NET_TX", "NET_RX", "BLOCK", "IRQ_POLL", "TASKLET", "SCHED", "HRTIMER", "RCU"}
+			n, err := strconv.ParseUint(label.StringValue, 10, 32)
+			if err == nil && n < uint64(len(names)) {
+				value = strconv.Quote(names[n])
+			}
+		}
+
+		dst = append(dst, label.Name+"="+value)
+	}
+
+	return dst
 }
 
-func NewProfileReader(profile *profilev1.Profile) (*ProfileReader, error) {
-	if profile == nil {
-		return nil, fmt.Errorf("format profile: profile is required")
-	}
-
-	r := &ProfileReader{
-		profile:   profile,
-		functions: make(map[uint64]*profilev1.Function, len(profile.Function)),
-		locations: make(map[uint64]*profilev1.Location, len(profile.Location)),
-	}
-	for _, function := range profile.Function {
-		if function == nil || function.Id == 0 || r.functions[function.Id] != nil {
-			return nil, fmt.Errorf("format profile: function ids must be nonzero and unique")
-		}
-
-		r.functions[function.Id] = function
-	}
-
-	for _, location := range profile.Location {
-		if location == nil || location.Id == 0 || r.locations[location.Id] != nil {
-			return nil, fmt.Errorf("format profile: location ids must be nonzero and unique")
-		}
-
-		r.locations[location.Id] = location
-	}
-
-	return r, nil
-}
-
-func (r *ProfileReader) Text(index int64) (string, error) {
-	if index < 0 || index >= int64(len(r.profile.StringTable)) {
-		return "", fmt.Errorf("format profile: invalid string index %d", index)
-	}
-
-	return r.profile.StringTable[index], nil
-}
-
-// WalkStack visits caller-first frames, retaining addresses without symbols.
-// File and line are empty/zero when no source position is available.
-func (r *ProfileReader) WalkStack(sample *profilev1.Sample, visit func(name, file string, line int64) error) error {
-	if sample == nil {
-		return fmt.Errorf("format profile: sample is required")
-	}
-
-	for i := len(sample.LocationId) - 1; i >= 0; i-- {
-		id := sample.LocationId[i]
-		location := r.locations[id]
-		if location == nil {
-			return fmt.Errorf("format profile: location %d is missing", id)
-		}
-
-		if len(location.Line) == 0 {
-			if err := visit(fmt.Sprintf("0x%x", location.Address), "", 0); err != nil {
-				return err
-			}
-
-			continue
-		}
-
-		for j := len(location.Line) - 1; j >= 0; j-- {
-			line := location.Line[j]
-			if line == nil {
-				return fmt.Errorf("format profile: nil line in location %d", id)
-			}
-
-			function := r.functions[line.FunctionId]
-			if function == nil {
-				return fmt.Errorf("format profile: function %d is missing", line.FunctionId)
-			}
-
-			name, err := r.Text(function.Name)
-			if err != nil {
-				return err
-			}
-
-			file, err := r.Text(function.Filename)
-			if err != nil {
-				return err
-			}
-
-			if err := visit(name, file, line.Line); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// WalkProfile visits caller-first stacks with the first sample value, without
-// rescaling its unit. The callback may borrow frames only until it returns.
-func WalkProfile(ctx context.Context, profile *profilev1.Profile, visit func([]string, int64) error) error {
-	reader, err := NewProfileReader(profile)
-	if err != nil {
-		return err
-	}
-
-	for _, sample := range profile.Sample {
+// WalkWindow creates display frames without changing shared frame identities.
+func WalkWindow(ctx context.Context, w *types.AggregationWindow, visit func([]string, int64) error) error {
+	var frames []string
+	a := &w.Aggregated
+	for i := range a.Samples {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		if sample == nil || len(sample.Value) == 0 {
-			return fmt.Errorf("format profile: sample value is required")
+		sample := &a.Samples[i]
+		frames = DisplayLabels(frames[:0], window.Labels(a, sample))
+		if sample.UserStack != 0 {
+			for _, id := range a.Stacks[sample.UserStack-1] {
+				frames = append(frames, a.Frames[id].Name)
+			}
 		}
 
-		var frames []string
-		if err := reader.WalkStack(sample, func(name, _ string, _ int64) error {
-			frames = append(frames, name)
-			return nil
-		}); err != nil {
-			return err
+		if sample.KernelStack != 0 {
+			for _, id := range a.Stacks[sample.KernelStack-1] {
+				frames = append(frames, a.Frames[id].Name+"_[k]")
+			}
 		}
 
-		if err := visit(frames, sample.Value[0]); err != nil {
+		if sample.UserStack == 0 && sample.KernelStack == 0 {
+			frames = append(frames, "[unknown]")
+		}
+
+		if err := visit(frames, sample.Value); err != nil {
 			return err
 		}
 	}

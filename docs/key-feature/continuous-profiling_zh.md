@@ -227,7 +227,7 @@ curl -sS \
 | --- | --- | --- |
 | `c`、`c++`、`go` | `virtual_alloc` | 虚拟地址空间分配 |
 | `c`、`c++`、`go` | `physical_alloc` | 物理页分配 |
-| `c`、`c++`、`go` | `physical_usage` | 当前物理页驻留 |
+| `c`、`c++`、`go` | `physical_usage` | 采集期间物理内存有符号净变化 |
 | `java` | `object_alloc` | JVM 对象分配 |
 | `java` | `object_usage` | JVM 存活对象 |
 
@@ -440,7 +440,7 @@ C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU
 
 ### 2. 原生进程内存归因
 
-对 C、C++ 和 Go 进程分别观测虚拟地址空间分配、物理页分配和当前物理页驻留。三种模式区分“申请了多少地址空间”“实际分配了多少物理页”和“当前仍驻留多少物理页”，用于定位 `mmap`、缺页分配和常驻内存增长的调用路径。
+对 C、C++ 和 Go 进程分别观测虚拟地址空间分配、物理页分配和采集期间物理内存有符号净变化。三种模式区分“申请了多少地址空间”“实际分配了多少物理页”和“当前仍驻留多少物理页”，用于定位 `mmap`、缺页分配和常驻内存增长的调用路径。
 
 ### 3. JVM 对象分配与存活对象分析
 
@@ -586,7 +586,7 @@ off-CPU 是事件驱动采集，因此不使用 `--freq`。指定 `--cpuid` 时�
 | --- | --- | --- |
 | `virtual_alloc` | 虚拟地址空间分配量及其调用栈 | `mmap` 等虚拟内存申请过多、地址空间增长 |
 | `physical_alloc` | 采集窗口内新分配的物理内存量 | 缺页触发的物理页分配热点、分配速率分析 |
-| `physical_usage` | 采集时仍驻留的物理内存量 | 常驻内存来源、物理页未释放路径 |
+| `physical_usage` | 采集期间物理内存有符号净变化 | 分配与释放差额，不能推断当前占用 |
 
 ```bash
 sudo _output/bin/profiler \
@@ -728,64 +728,47 @@ flowchart LR
     Aggregate --> Remote[Unix socket 远端上传]
 ```
 
-`--duration` 控制采集生命周期，`--aggr-interval` 控制快照周期。`json` 将每个公共采集窗口写成一行 JSON，因此流式采集可能输出多行。本地 `collapsed`、`flamegraph` 和 `svg` 在采集结束时写出最终聚合结果；`remote-store` 在流式模式下周期上传快照，在单次模式下于采集结束后上传。队列将采集与符号化、聚合和输出解耦，避免文件渲染阻塞采样路径。
+`--duration` 控制采集生命周期，`--aggr-interval` 控制快照周期。`json` 将每个公共采集窗口写成一行 JSON，因此流式采集可能输出多行。本地 `collapsed`、`flamegraph` 和 `svg` 在采集结束时写出最终聚合结果；`remote-store` 在流式模式下周期上传快照，在单次模式下于采集结束后上传。provider 在入队前完成符号化；所有聚合模式在输入队列满时均返回错误。
 
 ## 公共采集窗口
 
-profiler 与 irqtracing 共用 `internal/profiling/profile.Run`、Pipeline 和 `types.ProfilingWindow`。IRQ 业务实现位于 `cmd/irqtracing`；Java、Python 和 Native 聚合器位于 `cmd/profiler/provider`。目标进程发现和语言元数据查询也由 provider 负责，解析器只接收数据和已取得的进程名称。Java agent 生命周期与输出文件收集位于 `cmd/profiler/runtime/java`，工具执行位于 `cmd/profiler/exec`；BPF map 辅助能力和工具路径校验分别保留在 `internal/profiling/bpfmap`、`internal/profiling/toolpath`。样本数值遵循 profile 单位，例如 CPU 使用纳秒、IRQ 使用次数；Java 进程根帧使用 `process PID:MainClass`。
+profiler 与 irqtracing 共用 `internal/profiling/profile.Run`、Pipeline 和 `types.AggregationWindow`。provider 负责采集、解码、符号化、单位换算及标签规范化，提交 `SampleBatch`；Pipeline 按用户栈、内核栈和完整标签组累计。Java agent 生命周期位于 `cmd/profiler/runtime/java`，工具执行位于 `cmd/profiler/exec`。
 
-解析器直接返回公共 `profilev1.Profile` 模型。`profile.NewWindow` 深拷贝为独立窗口并清除解析时间，由 Pipeline 填写聚合周期。
+窗口包含结构化帧（Name/File/Line）、root → leaf 栈表、标签组、带符号 int64 权重及时间。帧 ID 从 0 开始，栈和标签组 ID 从 1 开始，0 表示空。provider 提交最终单位，CPU/锁等待使用纳秒，内存使用字节，IRQ source/victim 使用事件次数；Pipeline 保留负数及相消后的零值。新路径没有 Period，不在输出时再次缩放。physical_usage 表示采集期间有符号净变化，不代表当前占用。
 
-### 配置和聚合周期
+`pid`、`cpu`、`comm`、`lock_address`、`irq`、`softirq_vector` 和 `offcpu_category` 是单值标签；PID/CPU 使用规范十进制字符串，锁地址使用规范十六进制。comm 仅表示进程命令名，Java/Python 入口分别保存为 `java_entry`、`python_entry`。offcpu 类别为 unknown、blocked、runqueue、runqueue_preempted、runqueue_yielded、runqueue_missed_wakeup。标签不固定进入公共栈；缺失、空字符串和数字零互不等价。
 
-入口装配采集器和 Aggregator，执行器在启动采集前创建 Formatter，通过 `aggregator.PipelineConfig` 初始化 Pipeline，再用 `Start(ctx)` 传入运行上下文。无效的输出配置会在采集启动前返回错误。具体聚合器在初始化时保存业务配置，实现 `Aggregate`、`Snapshot(context.Context)` 和 `Reset`；Pipeline 通过配置接收运行参数，通过方法参数接收标准 `context.Context`。文件创建、命名、写入和关闭由 `internal/profiling/formatter` 负责。
+本地 formatter 直接读取统一窗口；JSON 和服务端 handler 使用公共 builder 构建完整 pprof，保留源位置、带符号值及 sample labels。JSON 外层和 ES 文档结构不变。旧完整 pprof 通过独立兼容入口保留多指标、mapping、inline 和原采样元数据。
 
-`FormatterConfig` 包含 `Format`、`Destination`、`TaskID`、`ToolName`。本地目标支持普通文件、目录和标准输出（`stdout`、`-` 或标准 fd 别名），远端目标须为 Unix socket。新路径默认表示文件，以 `/` 结尾则创建目录；目录内自动生成唯一文件名。已有文件仅在写入时覆盖，空任务不创建结果文件，标准输出不关闭。初始化检查不保证后续写入成功；终端、重定向和日志捕获可能暴露数据。
+### 配置、队列和时间
 
-任务 ID 和工具来源分别取自 `profile.RunConfig.ID`、`ProfilerMeta.ToolName`。RemoteStore 内部管理 toolstream，固定使用服务名 `profiling_store_service` 和版本 `1`。
+runner 在启动采集前校验固定配置并创建 Formatter。`provider.New` 为每次任务复制配置并创建独立采集器。任务 ID、工具名分别来自 `RunConfig.ID`、`ProfilerMeta.ToolName`；仅缺失 ID 时生成。`formatter.Config` 包含 Format、Destination、TaskID、ToolName，文件创建与关闭由 formatter 管理。
 
-CLI 解析和信号监听由 `cmd/profiler` 管理。`provider.New` 为每次任务创建独立采集器，复制并绑定业务配置；`profile.RunConfig` 包含任务 ID，以及 `time.Duration` 类型的采集时长和聚合周期。执行器仅在任务 ID 为空时生成 ID，聚合与远程提交使用同一个 ID。输出格式和目标通过同一个 `RunConfig` 的 `OutputFormat`、`OutputDestination` 传入，由执行器构造 formatter 层的 `FormatterConfig`；formatter 层不依赖 `RunConfig`。CLI 时长参数仍以整数秒表示，并在转换前检查范围。
+Native CPU 和 memory alloc 使用 Streaming，周期输出并在停止时排空；native physical_usage、Java、Python 和 IRQ 使用 OneShot，采集结束后输出。Java 仍周期读取外部工具结果。Run 统一管理所有 provider 的采集时长。输入队列容量为 16 个批次，聚合与输出由同一个 worker 顺序执行；每批最多 256 样本、1 MiB 帧和标签文本，每个样本每侧最多 4096 帧、64 标签。超限返回明确错误。16 批最多包含 4096 样本、16 MiB 计量文本，帧结构及底层分配另计；这不是总内存上限。单窗口身份数量尚未设限，高基数采集仍可能增长内存。
 
-聚合策略在任务构造时确定，聚合器构造不修改配置。native CPU 和 memory alloc 使用 Streaming；native physical_usage、Java、Python 和 IRQ 使用 OneShot。Java runtime 仍按配置周期读取结果，这与 Pipeline 的单次导出策略独立。Python 和 IRQ 的 `ManagesDuration` 仅关闭执行器时长定时器，不豁免任何错误。
+`Enqueue(ctx, batch)` 返回 nil 表示成功入队并转移底层切片/map 所有权，不保证已经聚合或输出。所有模式均非阻塞入队；队列满返回 `ErrQueueFull`，context 取消时拒绝交付，错误时批次仍归调用者。provider 不复用已交付批次、不自动重试；runner 收到入队错误后取消处理，失败任务不 Complete。同步输出期间暂停消费输入，较大的队列只能吸收短暂突发，持续过载仍会失败。
 
-聚合模式定义在 `internal/profiling/aggregator/config.go`：
+首个有效批次在 Enqueue 尝试交付前取得的时间成为窗口起点，snapshot 在同步调用 Add 之前确定终点。封存窗口后、调用 Add 前替换所有窗口数据和索引，下一有效批次重新建立起点；相邻窗口允许空闲或重叠。纯 collection 丢样批次同样建立窗口起点。这些时间描述接收和聚合区间，不是精确采样区间。
 
-| 模式 | 导出时机 | 队列满时 |
-| --- | --- | --- |
-| `AggregationModeStreaming`（零值默认） | 周期导出，停止时导出剩余数据 | 统计并丢弃记录 |
-| `AggregationModeOneShot` | 采集结束后导出 | 等待空位或交付上下文取消 |
+### 输出和错误
 
-两种模式使用容量为 65536 的队列，通过统一的 `Enqueue(ctx, data) error` 入队，仅在 Pipeline 运行期间接收数据。
+collapsed 将标签投影为虚拟根帧并累计展示栈；SVG 拒绝负权重。JSON 保留有符号值并逐窗口写出；remote-store 发送统一窗口。Speedscope 按完整标签组分组，保留源码位置并检查非负权重和浏览器整数范围。Chrome Trace 仅接受时间单位，换算微秒形成估算时间线，不恢复真实事件顺序。后两者支持工厂构造，暂无 CLI 选项。
 
-所有语言和模式的 profile 时间均由 Pipeline 管理。`Start(ctx)` 初始化 `aggregationStartTime`；`exportAggregationWindow` 统一填写 pprof 的 `time_nanos` 和 `duration_nanos`。成功导出并重置聚合器后，起点推进到本次快照结束时间；空快照或导出失败不推进起点。这些字段表示包含快照处理耗时的聚合周期，而非底层采样器的精确采样区间。
+Pipeline.Close 仅关闭输入，不等待或释放 Formatter。runner 在生产者退出后调用一次，因此关闭输入不会与入队并发。Run 同样仅调用一次，不支持重复调用或关闭后入队。Add/Complete 各有 30 秒超时，取消不撤销已经写出的内容。Formatter 纯取消及超时错误保持原值，独立 I/O 与清理错误仍保留。
 
-### 输出和错误处理
+Pipeline.Run 同步处理批次，聚合或 Add 失败直接返回，不重试。runner 同步执行采集循环，仅显式启动 pipeline 处理 goroutine；Start 成功后由定时器取消原有采集 context，采集返回即停止计时器。采集循环退出、collector 清理后，仅关闭一次 pipeline 输入并等待处理结果。Stop() 无需 context；collector 自行管理外部清理超时，确保任务取消后仍执行资源释放。采集、清理和处理全部成功才调用 Complete，工作循环退出后调用 Formatter.Close。Pipeline 不维护生命周期状态机、错误回调或 Formatter 完成逻辑。Run 统一管理采集时长。时长到期和 Ctrl+C（SIGINT）正常结束采集，完成尾部数据交付后允许提交；普通取消、作为首次取消原因的调用方 deadline、SIGTERM/SIGHUP/SIGQUIT 或真实错误禁止提交。当前 CLI 调用链不设置 deadline；Run 不恢复已分离的 deadline，正常停止先发生时不会再由原 deadline 中止后续处理。ReadDataLoop 保留单个 context，通过取消原因区分停止语义；正常收尾在内部使用有超时的独立 context。Python 用 SIGINT 停止 py-spy 并等待完整文件，IRQ 先 detach 再读快照，Java 停止采样后读最后文件。后续处理失败会拒绝入队并禁止提交，但不会立即打断已开始的独立收尾 I/O。provider 必须在采集循环返回前结束所有入队调用。nodeagent 原有 Stop 中止并丢弃任务的行为不变。
 
-`factory.NewFormatter` 选择格式；各子包的 `NewFormatter` 完成初始化，也可直接调用。Pipeline 串行执行 Add，仅在输出成功后调用一次 Complete；执行器始终调用 Close 释放资源。直接调用者须遵守相同顺序，遇错即停。
+### 远端协议、存储与可见性
 
-collapsed/SVG 在 Complete 时写出累计栈权重；JSON/远程输出逐窗口写入，分别在 Complete 时关闭文件、提交并等待 ACK。栈输出保留无符号地址。写入和关闭错误均返回，Complete 不自动重试，已写数据不保证回滚。导出和 Complete 各有独立的 30 秒超时，正常收尾不受采集上下文取消影响。
+remote-store 复用 Toolstream 服务 `profiling_store_service`，使用业务版本 `3`。接收端仅在版本 3 接收统一窗口，版本 1/2 仅接收旧完整 pprof；旧版本的轻量聚合表示及未知字段明确拒绝。先升级接收端，再升级发送端。业务版本与 Toolstream 传输版本独立。
 
-[speedscope](https://www.speedscope.app/file-format-schema.json) 和 [chrometrace](https://perfetto.dev/docs/getting-started/other-formats#chrome-json-format) 支持工厂构造，暂无 CLI 选项；目录文件后缀分别为 `.speedscope.json`、`.chrometrace.json`。前者保留聚合权重、单位、源位置和标签分组；后者按聚合顺序排列栈，时间换算为微秒，次数按 100 Hz 估算时长。两者均不还原真实采样时序。
+handler 完整校验外部窗口，通过公共 builder 构建 pprof 并 `SaveSync`。sample labels 与样本对应落盘；工具名写入 tracer_name。Complete 发送 `End + Commit` 并等待 ACK；普通 End、断连或失败不写完成标记，已写窗口不回滚。普通数据帧无 ACK，接收或保存错误由提交 ACK 返回。
 
-Pipeline 用 `runErr` 保存运行错误，通过 `OnFailure func()` 通知执行器停止采集，并通过 `Stop()` 返回错误。快照或输出失败后停止导出，不再调用 Complete。执行器保留读循环和停止操作的全部错误；任一采集错误或外部取消都会 Abort，阻止完成提交。
-
-执行器派生私有采集上下文；正常结束只取消采集，不取消调用方。读循环退出并完成 Stop 后、进入最终输出流程前，再检查调用方上下文，因此收尾期间的外部取消仍会 Abort。最终输出流程开始后的取消不保证回滚已经提交的结果。读循环收到停止信号后仍可交付最终批次，Pipeline 在读循环退出前持续消费；交付不受采集上下文取消影响。
-
-### 存储和可见性
-
-守护进程通过 `internal/profiling.Register` 初始化存储，再注册共享的 `profiling_store_service` 入口。toolstream 的必填 `ServiceName` 用于路由；可选 `ToolName` 仅表示业务来源。profiling 存储要求非空工具名称，并将 `profiler` 或 `irqtracing` 写入 document 的 `tracer_name`；其他服务可以不传 `ToolName`。`ProfilingWindow` 不重复携带工具标识。
-
-工具使用 `Send(ctx, event, SendOptions)` 发送数据和控制帧。`End` 标记最后一帧，`Commit` 必须同时设置 End，并等待服务端 ACK。最后一份数据可以与提交标记共用一帧；nil event 不携带数据。远端 Formatter 的 Complete 发送无数据的 `End + Commit`。Close 单独释放连接，取消进行中的发送会关闭连接以中断 I/O。
-
-handler 接收 `Handle(ctx, *toolstream.Request[T])`，包含连接元数据、可选 Data、End/Commit、此前帧累计错误 PriorErr 和当前帧错误 Err。即使前帧失败，后续帧仍会交给 handler。profiling handler 通过 `pkg/profiling/store.SaveSync` 保存有效窗口，仅在整次请求处理成功后调用 Commit 写入持久化完成标记。普通 End、断连或失败不发布结果。
-
-普通数据帧没有 ACK，未注册入口及存储错误通过提交 ACK 返回。CLI 在 Complete 收到成功 ACK 后正常退出，bamai 根据退出状态判断任务结果。ACK 丢失表示客户端无法确认结果，不会回滚已写入数据。
-
-transport 将非空 `(serviceName, taskID)` 绑定到活动连接，拒绝并发连接写入或提交同一任务，连接处理结束时释放归属。同一服务内不能通过不同工具名称重复占用任务；不同服务的 handler 独立运行。持久化任务 ID 必须全局唯一；既有完成标记 ID 保留兼容性。toolstream 使用协议版本 3，工具与守护进程需同时升级；旧协议被明确拒绝。握手保留既有字段编号，在 `@4` 追加 `serviceName`。
+JSON 可在 Add 写文件，其他本地输出也不提供事务回滚。现有火焰图查询不以完成标记过滤全部窗口；标签持久化不表示已支持标签索引或样本过滤。ES 标签查询、输出发布及上传时间切换采集时间的规则仍需独立落实。
 
 ### 丢样统计
 
-`ProfilingWindow.DroppedSamples` 使用 `pkg/types/profiling.go` 中的公共键：`collection` 表示采集阶段丢样，`aggregation_queue` 表示聚合队列满导致丢样。Pipeline 的 `queueDroppedSamples` 记录后者。数据存入 `profile_data.metrics.dropped_samples`。
+新 Pipeline 的 `DroppedSamples` 仅产生 `collection`，存入 `profile_data.metrics.dropped_samples`。provider 提交采集丢样增量；按累计不会超过 uint64 范围的业务前提直接相加，不做溢出判断或提前输出。队列满返回错误，不静默丢弃或产生 `aggregation_queue` 计数；该分类仍支持历史窗口读取和存储兼容。仅有丢样的窗口仍输出，取消不保证导出最终统计。
 
 ## 🌟 结尾
 

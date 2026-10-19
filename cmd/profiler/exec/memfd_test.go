@@ -15,17 +15,25 @@
 package exec
 
 import (
+	"bufio"
+	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 
 	"github.com/ccfos/huatuo/internal/executil"
 )
 
 func TestRunWithMemfdInvalidConfiguration(t *testing.T) {
-	results := RunWithMemfd(t.Context(), []int{123}, "", func(_ int, _ string) []string {
+	results := RunWithMemfd(t.Context(), []int{123}, &executil.Spec{}, func(_ int, _ string) []string {
 		t.Error("argument builder called for invalid configuration")
 		return nil
 	})
@@ -39,7 +47,7 @@ func TestRunWithMemfdInvalidConfiguration(t *testing.T) {
 }
 
 func TestRunWithMemfdKeepsPIDOutputsSeparate(t *testing.T) {
-	results := RunWithMemfd(t.Context(), []int{123, 456}, "/bin/sh", func(pid int, outputPath string) []string {
+	results := RunWithMemfd(t.Context(), []int{123, 456}, &executil.Spec{Path: "/bin/sh"}, func(pid int, outputPath string) []string {
 		return []string{
 			"-c", `printf 'process %s;work 3\n' "$1" > "$2"; printf 'status'; printf 'warning' >&2`,
 			"memfd-test", strconv.Itoa(pid), outputPath,
@@ -68,7 +76,7 @@ func TestRunWithMemfdKeepsPIDOutputsSeparate(t *testing.T) {
 }
 
 func TestRunWithMemfdEnforcesProfilerLimit(t *testing.T) {
-	results := RunWithMemfd(t.Context(), []int{123}, "/bin/sh", func(_ int, outputPath string) []string {
+	results := RunWithMemfd(t.Context(), []int{123}, &executil.Spec{Path: "/bin/sh"}, func(_ int, outputPath string) []string {
 		return []string{
 			"-c", `truncate -s "$1" "$2"`, "memfd-test", strconv.Itoa(profilerOutputLimit + 1), outputPath,
 		}
@@ -86,10 +94,88 @@ func TestRunWithMemfdEnforcesProfilerLimit(t *testing.T) {
 }
 
 func TestRunWithMemfdDiscardsOutputAfterCommandFailure(t *testing.T) {
-	results := RunWithMemfd(t.Context(), []int{123}, "/bin/sh", func(_ int, path string) []string {
+	results := RunWithMemfd(t.Context(), []int{123}, &executil.Spec{Path: "/bin/sh"}, func(_ int, path string) []string {
 		return []string{"-c", `printf partial > "$1"; printf failure >&2; exit 7`, "test", path}
 	})
 	if len(results) != 1 || results[0].Err == nil || len(results[0].Output) != 0 || string(results[0].Diagnostics) != "failure" {
 		t.Fatalf("results: %+v", results)
+	}
+}
+
+// The child installs its handler before reporting readiness, avoiding signal races.
+func TestCollectorCommandSignalChild(t *testing.T) {
+	if os.Getenv("HUATUO_COLLECTOR_SIGNAL_CHILD") != "1" {
+		return
+	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT)
+	defer signal.Stop(signals)
+	fmt.Println("ready")
+	<-signals
+	if os.Getenv("HUATUO_COLLECTOR_IGNORE_STOP") == "1" {
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+	if err := os.WriteFile(os.Getenv("HUATUO_COLLECTOR_OUTPUT"), []byte("root;leaf 7\n"), 0o600); err != nil {
+		os.Exit(2)
+	}
+	os.Exit(0)
+}
+
+func TestRunWithMemfdStopContract(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cause       error
+		ignore      bool
+		wantSuccess bool
+	}{
+		{name: "duration", cause: profile.ErrCollectionDurationElapsed, wantSuccess: true},
+		{name: "requested", cause: profile.ErrStopRequested, wantSuccess: true},
+		{name: "canceled", cause: context.Canceled},
+		{name: "forced kill", cause: profile.ErrStopRequested, ignore: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			defer writer.Close()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, err := bufio.NewReader(reader).ReadString('\n')
+				if err == nil {
+					cancel(tc.cause)
+				}
+			}()
+			defer func() { reader.Close(); <-done }()
+			env := append(os.Environ(), "HUATUO_COLLECTOR_SIGNAL_CHILD=1", "HUATUO_COLLECTOR_OUTPUT=/proc/self/fd/3")
+			if tc.ignore {
+				env = append(env, "HUATUO_COLLECTOR_IGNORE_STOP=1")
+			}
+			grace := 5 * time.Second
+			if tc.ignore {
+				grace = 100 * time.Millisecond
+			}
+			results := RunWithMemfd(ctx, []int{123}, &executil.Spec{Path: os.Args[0], Env: env, StopSignal: syscall.SIGINT, StopGracePeriod: grace}, func(_ int, _ string) []string { return []string{"-test.run=^TestCollectorCommandSignalChild$"} }, executil.WithStdout(writer))
+			if len(results) != 1 {
+				t.Fatalf("results=%v", results)
+			}
+			result := results[0]
+			if tc.ignore && !errors.Is(result.Err, executil.ErrStopped) {
+				t.Fatalf("forced stop error=%v", result.Err)
+			}
+			if tc.wantSuccess {
+				if result.Err != nil || string(result.Output) != "root;leaf 7\n" {
+					t.Fatalf("error=%v output=%q", result.Err, result.Output)
+				}
+			} else if result.Err == nil || len(result.Output) != 0 {
+				t.Fatalf("error=%v output=%q", result.Err, result.Output)
+			}
+		})
 	}
 }

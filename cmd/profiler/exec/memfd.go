@@ -16,10 +16,12 @@ package exec
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 )
 
 const profilerOutputLimit = 16 << 20
@@ -29,19 +31,19 @@ const profilerOutputLimit = 16 << 20
 func RunWithMemfd(
 	ctx context.Context,
 	pids []int,
-	path string,
+	spec *executil.Spec,
 	argsForPID func(pid int, outputPath string) []string,
 	options ...executil.Option,
 ) []*Result {
 	return RunForPIDs(pids, func(pid int) *Result {
-		result := &Result{PID: pid, Command: path}
+		result := &Result{PID: pid, Command: spec.Path}
 		commandOptions := append(slices.Clone(options), executil.WithMemfdOutput(profilerOutputLimit, func(outputPath string) []string {
 			args := argsForPID(pid, outputPath)
-			result.Command = formatCommand(path, args)
+			result.Command = formatCommand(spec.Path, args)
 			log.Debugf("executing command: %s", result.Command)
 			return args
 		}))
-		output, err := executil.Run(ctx, executil.Spec{Path: path}, commandOptions...)
+		output, err := runCollectorCommand(ctx, spec, commandOptions...)
 		result.Err = err
 		result.Diagnostics = output.Stderr
 		if err == nil {
@@ -50,4 +52,44 @@ func RunWithMemfd(
 		}
 		return result
 	})
+}
+
+// Only explicit collection stops permit output from a gracefully stopped tool.
+// Generic executil.Run keeps its ordinary cancellation-is-failure contract.
+func runCollectorCommand(ctx context.Context, spec *executil.Spec, options ...executil.Option) (result *executil.Result, returnErr error) {
+	result = &executil.Result{}
+	process, err := executil.New(*spec, options...)
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, process.Close())
+		result.Stderr = process.Stderr()
+	}()
+	if err := process.Start(ctx); err != nil {
+		return result, err
+	}
+	select {
+	case <-process.Done():
+	case <-ctx.Done():
+		finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), profile.FinalizationTimeout)
+		defer cancel()
+		stopErr := process.Stop(finalCtx)
+		if !profile.IsNormalStop(ctx) {
+			if stopErr != nil {
+				return result, errors.Join(context.Cause(ctx), stopErr)
+			}
+			return result, errors.Join(context.Cause(ctx), process.Wait())
+		}
+		if err := errors.Join(stopErr, finalCtx.Err()); err != nil {
+			return result, err
+		}
+	}
+	result.Stderr = process.Stderr()
+	// A signal exit (including forced SIGKILL) is not a completed capture.
+	if err := process.Wait(); err != nil {
+		return result, err
+	}
+	result.Memfd, err = process.MemfdOutput()
+	return result, err
 }
