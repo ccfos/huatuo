@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
@@ -41,6 +42,10 @@ func (c *Container) HostKataSandboxID() string {
 	return ""
 }
 
+// populateKataContainer binds a Host Kata record to its hypervisor. The CPU
+// CSS is sampling metadata, not discovery identity: when the controller or a
+// refresh event is missing, publish the container without CSS and retry on the
+// next refresh instead of degrading the whole container view.
 func populateKataContainer(container *Container, info *containerdRuntimeInfo) error {
 	if info.PID <= 0 {
 		return fmt.Errorf("invalid Kata hypervisor pid %d for container %s", info.PID, container.ID)
@@ -52,15 +57,23 @@ func populateKataContainer(container *Container, info *containerdRuntimeInfo) er
 	if err != nil {
 		return fmt.Errorf("resolve Kata hypervisor cgroup: %w", err)
 	}
-	css, err := parseCgroupCPUCSS(cgroupPath)
-	if err != nil {
-		return fmt.Errorf("resolve Kata hypervisor CPU CSS: %w", err)
-	}
+	css, cssErr := parseCgroupCPUCSS(cgroupPath)
 	container.InitPid = info.PID
 	container.SandboxID = info.SandboxID
 	container.CgroupPath = cgroupPath
-	// The VM's net namespace is not the Guest container's net namespace.
+	// The VM's net namespace is not the Guest container's net namespace, so
+	// NetNamespaceInum stays zero for Host Kata records.
+	if css == nil {
+		css = map[string]uint64{}
+	}
 	container.CgroupCss = css
+	if cssErr != nil {
+		// Debug level: refresh runs periodically for every Kata container.
+		log.WithError(cssErr).
+			WithField("container", container.ID).
+			WithField("cgroup", cgroupPath).
+			Debug("Kata CPU CSS unavailable; container published without CPU sampling")
+	}
 	return nil
 }
 
