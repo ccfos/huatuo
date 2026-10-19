@@ -40,15 +40,15 @@ func newProcessSelectorForTest(t *testing.T) (*processSelector, cgroupRef) {
 	return &processSelector{source: source, procRoot: snapshotProcRootForTest(t)}, cgroupRefForTest(t, source, "/processes")
 }
 
-func writeProcessForTest(t *testing.T, root string, identity memsnapshot.ProcessInstance, rssKiB uint64, adj int) {
+func writeProcessForTest(t *testing.T, root string, process memsnapshot.ProcessInstanceID, rssKiB uint64, adj int) {
 	t.Helper()
-	directory := filepath.Join(root, strconv.Itoa(identity.TGID))
+	directory := filepath.Join(root, strconv.Itoa(process.TGID))
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	fields := strings.Fields(strings.Repeat("0 ", 52))
-	fields[0], fields[1], fields[2] = strconv.Itoa(identity.TGID), "(worker)", "S"
-	fields[21] = strconv.FormatUint(identity.StartTimeTicks, 10)
+	fields[0], fields[1], fields[2] = strconv.Itoa(process.TGID), "(worker)", "S"
+	fields[21] = strconv.FormatUint(process.StartTimeTicks, 10)
 	writeMemoryEventsForTest(t, filepath.Join(directory, "stat"), strings.Join(fields, " "))
 	writeMemoryEventsForTest(t, filepath.Join(directory, "status"), fmt.Sprintf("Name:\tworker\nVmRSS:\t%d kB\nVmSwap:\t0 kB\nVmPTE:\t4 kB\n", rssKiB))
 	writeMemoryEventsForTest(t, filepath.Join(directory, "oom_score_adj"), strconv.Itoa(adj))
@@ -56,16 +56,16 @@ func writeProcessForTest(t *testing.T, root string, identity memsnapshot.Process
 
 func TestProcessSelectorSelect(t *testing.T) {
 	s, group := newProcessSelectorForTest(t)
-	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 11, StartTimeTicks: 100}, 100, 0)
-	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 22, StartTimeTicks: 200}, 200, 0)
-	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 33, StartTimeTicks: 300}, 300, -1000)
-	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 55}, 1000, 0)
+	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstanceID{TGID: 11, StartTimeTicks: 100}, 100, 0)
+	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstanceID{TGID: 22, StartTimeTicks: 200}, 200, 0)
+	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstanceID{TGID: 33, StartTimeTicks: 300}, 300, -1000)
+	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstanceID{TGID: 55}, 1000, 0)
 	writeMemoryEventsForTest(t, filepath.Join(s.source.memcgDir(group.Path), "cgroup.procs"), "11\n22\n33\n44\n55\n")
 	process, err := s.Select(t.Context(), group, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := selectedProcess{identity: memsnapshot.ProcessInstance{TGID: 55}, comm: "worker"}
+	want := selectedProcess{instance: memsnapshot.ProcessInstanceID{TGID: 55}, comm: "worker"}
 	if process != want {
 		t.Fatalf("selected process = %+v, want %+v", process, want)
 	}
@@ -88,7 +88,7 @@ func TestSelectProcessRequiresCompleteEnumeration(t *testing.T) {
 					return processCandidate{}, reason
 				}
 				return processCandidate{process: selectedProcess{
-					identity: memsnapshot.ProcessInstance{TGID: pid, StartTimeTicks: 100},
+					instance: memsnapshot.ProcessInstanceID{TGID: pid, StartTimeTicks: 100},
 				}}, nil
 			})
 			if errors.Is(reason, failure) || errors.Is(reason, os.ErrPermission) {
@@ -97,7 +97,7 @@ func TestSelectProcessRequiresCompleteEnumeration(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || process.identity.TGID != 11 {
+			if err != nil || process.instance.TGID != 11 {
 				t.Fatalf("ineligible process prevented selection: %+v, %v", process, err)
 			}
 		})
@@ -107,7 +107,7 @@ func TestSelectProcessRequiresCompleteEnumeration(t *testing.T) {
 func TestProcessSelectorNoEligibleProcess(t *testing.T) {
 	for _, members := range []string{"", "11\n", "22\n"} {
 		s, group := newProcessSelectorForTest(t)
-		writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 11, StartTimeTicks: 100}, 100, -1000)
+		writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstanceID{TGID: 11, StartTimeTicks: 100}, 100, -1000)
 		writeMemoryEventsForTest(t, filepath.Join(s.source.memcgDir(group.Path), "cgroup.procs"), members)
 		process, err := s.Select(t.Context(), group, 1<<20)
 		if !errors.Is(err, errNoSnapshotProcess) || process != (selectedProcess{}) {
@@ -120,8 +120,8 @@ func TestProcessSelectorRejectsStaleBinding(t *testing.T) {
 	for _, change := range []string{"unchanged", "moved", "reused", "directory replaced", "canceled", "deadline"} {
 		t.Run(change, func(t *testing.T) {
 			s, group := newProcessSelectorForTest(t)
-			identity := memsnapshot.ProcessInstance{TGID: 11, StartTimeTicks: 100}
-			writeProcessForTest(t, s.procRoot, identity, 100, 0)
+			process := memsnapshot.ProcessInstanceID{TGID: 11, StartTimeTicks: 100}
+			writeProcessForTest(t, s.procRoot, process, 100, 0)
 			members := filepath.Join(s.source.memcgDir(group.Path), "cgroup.procs")
 			writeMemoryEventsForTest(t, members, "11\n")
 			ctx := t.Context()
@@ -132,7 +132,7 @@ func TestProcessSelectorRejectsStaleBinding(t *testing.T) {
 			case "moved":
 				writeMemoryEventsForTest(t, members, "22\n")
 			case "reused":
-				writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 11, StartTimeTicks: 101}, 100, 0)
+				writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstanceID{TGID: 11, StartTimeTicks: 101}, 100, 0)
 			case "directory replaced":
 				if err := os.Rename(s.source.memcgDir(group.Path), s.source.memcgDir("/old")); err != nil {
 					t.Fatal(err)
@@ -152,7 +152,7 @@ func TestProcessSelectorRejectsStaleBinding(t *testing.T) {
 				defer cancel()
 				wantErr = context.DeadlineExceeded
 			}
-			if err := s.Validate(ctx, group, identity); !errors.Is(err, wantErr) {
+			if err := s.Validate(ctx, group, process); !errors.Is(err, wantErr) {
 				t.Fatalf("validation = %v, want %v", err, wantErr)
 			}
 			if change == "directory replaced" || change == "canceled" || change == "deadline" {

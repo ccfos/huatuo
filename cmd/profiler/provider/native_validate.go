@@ -15,10 +15,23 @@
 package provider
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
+
+// ErrRootRequired indicates the operation requires root privileges.
+var ErrRootRequired = errors.New("native profiler requires root privileges")
+
+func requireRoot() error {
+	if os.Geteuid() != 0 {
+		return ErrRootRequired
+	}
+
+	return nil
+}
 
 func validateNativePIDs(profileType string, pids []int) error {
 	if len(pids) > 1 {

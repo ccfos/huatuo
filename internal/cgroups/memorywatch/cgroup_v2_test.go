@@ -54,14 +54,28 @@ func TestWatcherV2NativeCountersAndLimit(t *testing.T) {
 func TestWatcherFailedReadRetainsCounterBaseline(t *testing.T) {
 	w, f := newWatchFixture(t, cgroups.Unified, 2)
 	f.create(t, "/a", 80, 100)
+	events, err := os.OpenFile(filepath.Join(f.root, "a/memory.events"), os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = events.Close() })
+	writeCounters := func() {
+		t.Helper()
+		// Keep the fixture length unchanged: truncation exposes invalid counters
+		// and can replace an unread threshold event with TargetUnavailable.
+		if _, err := events.WriteAt([]byte("high 1\nmax 0\noom 0\n"), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	if _, err := w.Add(t.Context(), "/a", f.stat(t, "/a")); err != nil {
 		t.Fatal(err)
 	}
 	f.write(t, "/a", "memory.current", "invalid")
-	f.write(t, "/a", "memory.events", "high 1\nmax 0\n")
+	writeCounters()
 	readWatchEvent(t, w, TargetUnavailable)
 	f.write(t, "/a", "memory.current", "95")
-	f.write(t, "/a", "memory.events", "high 1\nmax 0\n")
+	writeCounters()
 	if event := readWatchEvent(t, w, ThresholdObserved); event.UsageBytes != 95 {
 		t.Fatalf("retry lost cumulative event: %+v", event)
 	}

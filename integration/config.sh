@@ -234,8 +234,11 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
     SustainedIntervals = 10
     UsageThreshold = 100
 
-[Storage.LocalFile]
-    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+[Storage.Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "integration"
+    Password = "integration"
+    Index = "irqtracing-integration"
 EOF
 }
 
@@ -255,6 +258,19 @@ write_apiserver_apis_config() {
     ID = "integration-admin-user"
     BearerToken = "${API_TOKEN}"
     Admin = true
+EOF
+}
+
+# The profile filter case supplies its API settings and isolated storage index.
+write_profile_query_apiserver_config() {
+	write_apiserver_apis_config
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
+
+[Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "elastic"
+    Password = "profile-filter-test"
+    Index = "${PROFILE_FILTER_INDEX}"
 EOF
 }
 

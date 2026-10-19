@@ -22,7 +22,6 @@ import (
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/trace"
 	"github.com/ccfos/huatuo/internal/job"
-	"github.com/ccfos/huatuo/internal/profiling/publication"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
 	"github.com/ccfos/huatuo/internal/server"
 	"github.com/ccfos/huatuo/internal/server/response"
@@ -40,7 +39,6 @@ type ServerOptions struct {
 	JobManager          *job.Manager
 	ProfileStorage      *profilingstore.Store
 	ProfileQueryService *profilequery.ProfileQueryService
-	ProfilePublications *publication.Store
 	ProfilingConfig     profiling.Config
 	AuthUsers           []server.UserConfig
 	EnablePProf         bool
@@ -63,7 +61,7 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 	profilingService, err := profiling.NewService(
 		opts.JobManager,
 		opts.ProfileStorage,
-		opts.ProfilePublications,
+
 		opts.ProfilingConfig,
 	)
 	if err != nil {

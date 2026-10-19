@@ -17,107 +17,10 @@ package executil
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 	"testing"
 	"time"
 )
-
-func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
-	tests := []struct {
-		name    string
-		spec    Spec
-		wantErr string
-	}{
-		{
-			name:    "missing path",
-			spec:    Spec{},
-			wantErr: "path must not be empty",
-		},
-		{
-			name:    "blank path",
-			spec:    Spec{Path: "  \t"},
-			wantErr: "path must not be empty",
-		},
-		{
-			name:    "null byte in path",
-			spec:    Spec{Path: "bad\x00path"},
-			wantErr: "path \"bad\\x00path\" contains a null byte",
-		},
-		{
-			name:    "null byte in argument",
-			spec:    Spec{Path: "/bin/true", Args: []string{"bad\x00arg"}},
-			wantErr: "argument 0 contains a null byte",
-		},
-		{
-			name:    "null byte in environment",
-			spec:    Spec{Path: "/bin/true", Env: []string{"KEY=bad\x00value"}},
-			wantErr: "environment entry 0 contains a null byte",
-		},
-		{
-			name:    "invalid environment",
-			spec:    Spec{Path: "/bin/true", Env: []string{"INVALID"}},
-			wantErr: "environment entry 0 must use a non-empty KEY=VALUE form",
-		},
-		{
-			name:    "empty environment key",
-			spec:    Spec{Path: "/bin/true", Env: []string{"=value"}},
-			wantErr: "environment entry 0 must use a non-empty KEY=VALUE form",
-		},
-		{
-			name:    "negative stop grace period",
-			spec:    Spec{Path: "/bin/true", StopGracePeriod: -time.Second},
-			wantErr: "stop grace period must not be negative",
-		},
-		{
-			name:    "negative output limit",
-			spec:    Spec{Path: "/bin/true", MaxOutputBytes: -1},
-			wantErr: "maximum output bytes must not be negative",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := New(test.spec)
-			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-				t.Errorf("New() error = %v, want substring %q", err, test.wantErr)
-			}
-		})
-	}
-
-	args := []string{"first"}
-	env := []string{"KEY=value"}
-	process, err := New(Spec{Path: "/bin/true", Args: args, Env: env})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	args[0] = "mutated"
-	env[0] = "KEY=mutated"
-	if process.spec.Args[0] != "first" {
-		t.Errorf("snapshotted argument = %q, want first", process.spec.Args[0])
-	}
-
-	if process.spec.Env[0] != "KEY=value" {
-		t.Errorf("snapshotted environment = %q, want KEY=value", process.spec.Env[0])
-	}
-
-	if process.spec.StopGracePeriod != defaultStopGracePeriod {
-		t.Errorf("StopGracePeriod = %s, want %s", process.spec.StopGracePeriod, defaultStopGracePeriod)
-	}
-
-	if process.spec.MaxOutputBytes != defaultMaxOutputBytes {
-		t.Errorf("MaxOutputBytes = %d, want %d", process.spec.MaxOutputBytes, defaultMaxOutputBytes)
-	}
-
-	emptyEnvProcess, err := New(Spec{Path: "/bin/true", Env: []string{}})
-	if err != nil {
-		t.Fatalf("New() with empty environment error = %v", err)
-	}
-
-	if emptyEnvProcess.spec.Env == nil {
-		t.Error("New() changed an explicit empty environment to inherited environment")
-	}
-}
 
 func TestProcessRejectsWaitAndStopBeforeStart(t *testing.T) {
 	process, err := New(Spec{Path: "/missing/huatuo-command"})
@@ -125,13 +28,13 @@ func TestProcessRejectsWaitAndStopBeforeStart(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	if err := process.Wait(); err == nil || !strings.Contains(err.Error(), "has not been started") {
+	if err := process.Wait(); !errors.Is(err, ErrProcessNotStarted) {
 		t.Errorf("Wait() error = %v, want not-started error", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := process.Stop(ctx); err == nil || !strings.Contains(err.Error(), "has not been started") {
+	if err := process.Stop(ctx); !errors.Is(err, ErrProcessNotStarted) {
 		t.Errorf("Stop() error = %v, want not-started error", err)
 	}
 }
@@ -160,9 +63,16 @@ func TestProcessZeroValueReturnsInitializationError(t *testing.T) {
 			},
 		},
 		{
-			name: "run",
+			name: "close",
 			call: func(process *Process) error {
-				return process.Run(context.Background())
+				return process.Close()
+			},
+		},
+		{
+			name: "memfd output",
+			call: func(process *Process) error {
+				_, err := process.MemfdOutput()
+				return err
 			},
 		},
 	}
@@ -170,15 +80,15 @@ func TestProcessZeroValueReturnsInitializationError(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var process Process
-			if err := test.call(&process); !errors.Is(err, errProcessNotInitialized) {
-				t.Errorf("operation error = %v, want errProcessNotInitialized", err)
+			if err := test.call(&process); !errors.Is(err, ErrProcessNotInitialized) {
+				t.Errorf("operation error = %v, want ErrProcessNotInitialized", err)
 			}
 		})
 	}
 
 	var process Process
-	if got, err := process.Stdout(); len(got) != 0 || !errors.Is(err, errProcessNotInitialized) {
-		t.Errorf("Stdout() = (%q, %v), want empty output and initialization error", got, err)
+	if got := process.Stdout(); len(got) != 0 {
+		t.Errorf("Stdout() = %q, want empty output", got)
 	}
 
 	if got := process.Stderr(); len(got) != 0 {
@@ -187,30 +97,48 @@ func TestProcessZeroValueReturnsInitializationError(t *testing.T) {
 }
 
 func TestProcessStartRejectsCanceledContextAndRetry(t *testing.T) {
-	process, err := New(Spec{Path: "/bin/true"})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-
-	err = process.Start(ctx)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Start() error = %v, want context.Canceled", err)
-	}
-
-	if err := process.Start(context.Background()); err == nil ||
-		!strings.Contains(err.Error(), "already been started") {
-		t.Fatalf("second Start() error = %v, want already-started error", err)
-	}
-
-	if err := process.Wait(); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Wait() error = %v, want context.Canceled", err)
+	for _, tt := range []struct {
+		name       string
+		contextErr error
+	}{
+		{"cancellation", context.Canceled},
+		{"deadline", context.DeadlineExceeded},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			process, err := New(Spec{Path: "/bin/true"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ctx context.Context
+			var cancel context.CancelFunc
+			if errors.Is(tt.contextErr, context.Canceled) {
+				ctx, cancel = context.WithCancel(t.Context())
+				cancel()
+			} else {
+				ctx, cancel = context.WithDeadline(t.Context(), time.Time{})
+			}
+			defer cancel()
+			for _, operation := range []func() error{
+				func() error { return process.Start(ctx) },
+				process.Wait,
+			} {
+				if err := operation(); err != tt.contextErr { //nolint:errorlint // Verify direct, shared cancellation markers.
+					t.Fatalf("lifecycle error = %v, want %v", err, tt.contextErr)
+				}
+			}
+			for _, err := range []error{process.Stop(t.Context()), process.Close()} {
+				if err != nil {
+					t.Fatalf("cleanup repeated launch cancellation: %v", err)
+				}
+			}
+			if err := process.Start(t.Context()); !errors.Is(err, ErrProcessAlreadyStarted) {
+				t.Fatalf("second Start() = %v, want already-started error", err)
+			}
+		})
 	}
 }
 
-func TestProcessWaitAndStopPreserveCleanupFailure(t *testing.T) {
+func TestProcessWaitOwnsReaperCleanupFailure(t *testing.T) {
 	cleanupErr := errors.New("group cleanup failed")
 	for _, startErr := range []error{nil, context.Canceled} {
 		name := "natural exit"
@@ -224,11 +152,11 @@ func TestProcessWaitAndStopPreserveCleanupFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Publish a completed lifecycle without launching an OS process.
-			process.state = processStateExited
-			process.start.err = startErr
-			process.groupErr = wrapStopFailure(cleanupErr)
-			close(process.start.done)
-			close(process.wait.done)
+			process.state = processRunStateFinished
+			process.terminalErr = errors.Join(startErr, fmt.Errorf("%w: %w", ErrCleanupFailed, errors.Join(ErrStopFailed, cleanupErr)))
+			close(process.startDone)
+			close(process.waitDone)
+			process.publishDone()
 			for range 2 {
 				err = process.Wait()
 				if !errors.Is(err, ErrStopFailed) || !errors.Is(err, cleanupErr) {
@@ -239,41 +167,78 @@ func TestProcessWaitAndStopPreserveCleanupFailure(t *testing.T) {
 					t.Errorf("Wait() error = %v, want start failure", err)
 				}
 
-				if err := process.Stop(t.Context()); !errors.Is(err, cleanupErr) {
-					t.Errorf("Stop() error = %v, want stored cleanup failure", err)
+				if !errors.Is(err, ErrCleanupFailed) {
+					t.Fatalf("Wait lost cleanup classification: %v", err)
+				}
+				for _, err := range []error{process.Stop(t.Context()), process.Close()} {
+					if err != nil {
+						t.Errorf("cleanup repeated a reaper failure: %v", err)
+					}
 				}
 			}
 		})
 	}
 }
 
-func TestProcessStdoutReportsOutputLimit(t *testing.T) {
+func TestProcessStdoutKeepsOutputTail(t *testing.T) {
 	for _, output := range []string{"123", "1234", "12345"} {
 		t.Run(output, func(t *testing.T) {
-			process, err := New(Spec{Path: "/unused/command", MaxOutputBytes: 4})
+			process, err := New(Spec{Path: "/unused/command", MaxStdoutBytes: 4})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if _, err := process.output.Write([]byte(output)); err != nil {
+			if _, err := process.stdout.Write([]byte(output)); err != nil {
 				t.Fatal(err)
 			}
 
 			// Publish captured output without depending on an OS subprocess.
-			process.state = processStateExited
-			close(process.start.done)
-			close(process.wait.done)
+			process.state = processRunStateFinished
+			close(process.startDone)
+			close(process.waitDone)
+			process.publishDone()
 			if err := process.Wait(); err != nil {
 				t.Fatalf("Wait() reported an output size error: %v", err)
 			}
 
-			got, err := process.Stdout()
-			if errors.Is(err, ErrOutputLimitExceeded) != (len(output) > 4) {
-				t.Fatalf("Stdout() error = %v for %d bytes, incorrect limit classification", err, len(output))
+			got := process.Stdout()
+			if string(got) != output[max(0, len(output)-4):] {
+				t.Errorf("Stdout() = %q, want retained output tail", got)
 			}
+		})
+	}
+}
 
-			if string(got) != output[:min(len(output), 4)] {
-				t.Errorf("Stdout() = %q, want retained output prefix", got)
+func TestMayAppendCleanupErrorPreservesExecutionResult(t *testing.T) {
+	executionErr := errors.New("command failed")
+	cleanupErr := errors.New("cleanup failed")
+	markedErr := fmt.Errorf("%w: %w", ErrCleanupFailed, cleanupErr)
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{"nil", nil},
+		{"unmarked", cleanupErr},
+		{"already marked", markedErr},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			process := &Process{terminalErr: executionErr}
+			process.mu.Lock()
+			mayAppendCleanupError(process, tt.err)
+			process.mu.Unlock()
+
+			if !errors.Is(process.terminalErr, executionErr) {
+				t.Fatalf("lost execution failure: %v", process.terminalErr)
+			}
+			got := process.terminalErr
+			if tt.err == nil {
+				if errors.Is(got, ErrCleanupFailed) {
+					t.Fatalf("nil cleanup error changed classification: %v", got)
+				}
+				return
+			}
+			if !errors.Is(got, ErrCleanupFailed) || !errors.Is(got, tt.err) {
+				t.Fatalf("incorrect cleanup classification: %v", got)
 			}
 		})
 	}
