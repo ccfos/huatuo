@@ -1349,3 +1349,5 @@ Configuration: remove `mthreads_gpu` from `BlackList` to enable. Metric groups a
 |huatuo_bamai_mthreads_gpu_mtlink_state|GPU MtLink state (0=DOWN,1=UP,2=DOWNGRADE).|-|gpu, link|mtml.Device.MtLinkState|
 |huatuo_bamai_mthreads_gpu_mtlink_link_bandwidth_gb_s|GPU MtLink per-link max bandwidth (device static spec, not live throughput).|GB/s|gpu|mtml.Device.MtLinkSpec|
 |huatuo_bamai_mthreads_gpu_mtlink_link_count|GPU MtLink max number of supported links (device static spec).|links|gpu|mtml.Device.MtLinkSpec|
+
+The `/metrics` endpoint permits two in-flight collections, including collections whose HTTP requests have timed out or been canceled. Additional scrapes receive HTTP 503 until a collection finishes. A 30-second HTTP timeout does not interrupt a blocked hardware call.
