@@ -18,6 +18,7 @@ package randomid
 import (
 	"crypto/rand"
 	"fmt"
+	"io"
 )
 
 const (
@@ -29,15 +30,24 @@ const (
 
 // New returns a cryptographically random identifier.
 //
-// It samples raw bytes in one crypto/rand read and maps them onto charset
-// with rejection sampling, instead of one big.Int allocation per character,
-// so generating an ID stays cheap on event-path callers.
+// It samples raw bytes in batched crypto/rand reads and maps them onto
+// charset with rejection sampling, instead of one big.Int allocation per
+// character, so generating an ID stays cheap on event-path callers.
+// Bytes at or above maxByte are rejected and refilled, so a first batch
+// may be followed by additional reads when several bytes are rejected
+// in a row.
 func New() (string, error) {
+	return generate(rand.Reader)
+}
+
+// generate builds an ID from the injected reader, keeping the rejection,
+// refill, and error paths deterministic for tests.
+func generate(r io.Reader) (string, error) {
 	buf := make([]byte, length)
 	needed := length
 	for needed > 0 {
 		raw := make([]byte, needed)
-		if _, err := rand.Read(raw); err != nil {
+		if _, err := io.ReadFull(r, raw); err != nil {
 			return "", fmt.Errorf("generate random ID: %w", err)
 		}
 		for _, b := range raw {
