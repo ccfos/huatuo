@@ -74,6 +74,73 @@ func TestLevelsToTreeEmpty(t *testing.T) {
 	}
 }
 
+func TestLevelsToTreeShortRootLevel(t *testing.T) {
+	// Root level with fewer than ItemOffest (4) values must not panic.
+	tree := LevelsToTree([]*Level{{Values: []int64{0, 100}}}, []string{"root"})
+	if tree != nil {
+		t.Errorf("LevelsToTree(short root) = %v, want nil", tree)
+	}
+}
+
+func TestLevelsToTreeTruncatedChildLevel(t *testing.T) {
+	// Child level with a partial trailing item (not a multiple of 4) must not panic.
+	levels := []*Level{
+		{Values: []int64{0, 100, 0, 0}},
+		{Values: []int64{0, 60, 10, 1, 0, 40}}, // second item truncated
+	}
+	names := []string{"root", "child"}
+
+	tree := LevelsToTree(levels, names)
+	if tree == nil {
+		t.Fatal("LevelsToTree() = nil, want non-nil")
+	}
+	if len(tree.Nodes) != 1 {
+		t.Fatalf("len(root.Nodes) = %d, want 1 (truncated item skipped)", len(tree.Nodes))
+	}
+	if tree.Nodes[0].Name != "child" {
+		t.Errorf("child.Name = %q, want %q", tree.Nodes[0].Name, "child")
+	}
+}
+
+func TestLevelsToTreeNameIndexOutOfBounds(t *testing.T) {
+	// A name index beyond the names slice must yield an empty name, not a panic.
+	levels := []*Level{
+		{Values: []int64{0, 100, 0, 99}},
+		{Values: []int64{0, 100, 50, 42}},
+	}
+	names := []string{"root", "child"}
+
+	tree := LevelsToTree(levels, names)
+	if tree == nil {
+		t.Fatal("LevelsToTree() = nil, want non-nil")
+	}
+	if tree.Name != "" {
+		t.Errorf("root.Name = %q, want empty for out-of-range index", tree.Name)
+	}
+	if len(tree.Nodes) != 1 {
+		t.Fatalf("len(root.Nodes) = %d, want 1", len(tree.Nodes))
+	}
+	if tree.Nodes[0].Name != "" {
+		t.Errorf("child.Name = %q, want empty for out-of-range index", tree.Nodes[0].Name)
+	}
+}
+
+func TestLevelsToTreeNegativeNameIndex(t *testing.T) {
+	// A negative name index must not panic.
+	levels := []*Level{
+		{Values: []int64{0, 100, 0, -1}},
+	}
+	names := []string{"root"}
+
+	tree := LevelsToTree(levels, names)
+	if tree == nil {
+		t.Fatal("LevelsToTree() = nil, want non-nil")
+	}
+	if tree.Name != "" {
+		t.Errorf("root.Name = %q, want empty for negative index", tree.Name)
+	}
+}
+
 func TestLevelsToTreeMultiLevel(t *testing.T) {
 	// Three-level flamebearer with adjacent siblings.
 	// Flamebearer start offsets are relative to previous item's end.
