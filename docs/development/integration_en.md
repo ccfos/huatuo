@@ -54,6 +54,19 @@ bash e2e/run.sh test_metrics.sh 2
 
 Both suites run in isolated UTS and mount namespaces, with hostname `huatuo-dev` and private mount propagation. Integration cases start their own services. E2E starts the default bamai before each case, then stops it and checks logs. Integration removes the working directory after a pass or skip and retains it on failure; E2E retains it for all outcomes.
 
+The apiserver lifecycle and Kubernetes profiling matrix live in
+`e2e/test_apiserver_profiling.sh` and `e2e/test_apiserver_profiling_matrix.sh`.
+Both are discovered by `make e2e`. The matrix requires `APISERVER_TEST_NODE`
+and kubelet credentials. The remaining eight functional cases are discovered by
+`make integration` through `integration/test_apiserver_profiling.sh`.
+Load and long-running stability tests keep an explicit standalone entry point.
+See the
+[apiserver test instructions](../../integration/apiserver/README.md).
+
+The same e2e directory also contains
+`test_apiserver_profiling_{stop,concurrent,recovery,node_recovery}.sh`, covering
+task stop, concurrent sampling, apiserver restart, and recovery after Node loss.
+
 The runner checks only that `_output` exists, not individual binaries or BPF artifacts. Run `make build` before invoking scripts directly. An existing directory does not imply a complete build; missing artifacts fail when used.
 
 Cases use one helper to check commands on PATH or executable paths and skip if they are missing:

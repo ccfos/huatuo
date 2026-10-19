@@ -58,6 +58,15 @@ bash e2e/run.sh test_metrics.sh 2
 结束时停止服务并检查日志。integration 成功或跳过后删除工作目录，失败时保留；
 e2e 保留工作目录。
 
+apiserver 的完整采样链路和 Kubernetes 多语言矩阵位于
+`e2e/test_apiserver_profiling.sh`、`e2e/test_apiserver_profiling_matrix.sh`，
+由 `make e2e` 自动发现。矩阵需设置 `APISERVER_TEST_NODE` 并提供 kubelet 凭证。
+停止、同机并发、apiserver 重启恢复和 Node 故障恢复分别由同目录下的
+`test_apiserver_profiling_{stop,concurrent,recovery,node_recovery}.sh` 验证。
+其余 8 项 apiserver 功能由 `integration/test_apiserver_profiling.sh` 接入
+`make integration`。压测和长时间稳定性测试保留显式入口，不随默认流程运行。
+运行要求和命令见 [apiserver 测试](../../integration/apiserver/README.md)。
+
 runner 只检查 `_output` 目录是否存在，不逐个检查项目二进制和 BPF 产物。
 直接运行脚本前先执行 `make build`；
 目录存在不代表构建完整，缺失产物会在实际使用时导致失败。
