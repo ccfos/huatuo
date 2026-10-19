@@ -102,6 +102,7 @@ func newRenderer(style Style, maxFrameDepth int) renderer {
 func (r *renderer) Start(ew *errWriter) {
 	topMargin := r.style.FontSize * 3
 	bottomMargin := r.style.FontSize*2 + 10
+	fontFamily := html.EscapeString(r.style.FontFamily)
 
 	h := r.maxFrameDepth*r.style.FrameHeight + r.style.FramesYOffset + topMargin + bottomMargin
 	w := r.style.ImageWidth
@@ -124,11 +125,11 @@ func (r *renderer) Start(ew *errWriter) {
 	ew.println("]]>")
 	ew.println("</script>")
 	ew.printf(`<rect x="0.0" y="0" width="%d" height="%d" fill="url(#background)"/>`+"\n", w, h)
-	ew.printf(`<text text-anchor="middle" x="%d" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)">Flame Graph</text>`+"\n", r.style.ImageWidth/2, r.style.FontSize*2, r.style.FontSize*3/2, r.style.FontFamily)
-	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="details" > </text>`+"\n", r.style.XMargin, h-topMargin/2, r.style.FontSize, r.style.FontFamily)
-	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="unzoom" onclick="unzoom()" style="opacity:0.0;cursor:pointer" >Reset Zoom</text>`+"\n", r.style.XMargin, r.style.FontSize*2, r.style.FontSize, r.style.FontFamily)
-	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="search" onmouseover="searchover()" onmouseout="searchout()" onclick="search_prompt()" style="opacity:0.1;cursor:pointer" >Search</text>`+"\n", float32(r.style.ImageWidth)-r.style.XMargin-100, r.style.FontSize*2, r.style.FontSize, r.style.FontFamily)
-	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="matched" > </text>`+"\n", float32(r.style.ImageWidth)-r.style.XMargin-100, h-bottomMargin/2, r.style.FontSize, r.style.FontFamily)
+	ew.printf(`<text text-anchor="middle" x="%d" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)">Flame Graph</text>`+"\n", r.style.ImageWidth/2, r.style.FontSize*2, r.style.FontSize*3/2, fontFamily)
+	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="details" > </text>`+"\n", r.style.XMargin, h-topMargin/2, r.style.FontSize, fontFamily)
+	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="unzoom" onclick="unzoom()" style="opacity:0.0;cursor:pointer" >Reset Zoom</text>`+"\n", r.style.XMargin, r.style.FontSize*2, r.style.FontSize, fontFamily)
+	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="search" onmouseover="searchover()" onmouseout="searchout()" onclick="search_prompt()" style="opacity:0.1;cursor:pointer" >Search</text>`+"\n", float32(r.style.ImageWidth)-r.style.XMargin-100, r.style.FontSize*2, r.style.FontSize, fontFamily)
+	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="matched" > </text>`+"\n", float32(r.style.ImageWidth)-r.style.XMargin-100, h-bottomMargin/2, r.style.FontSize, fontFamily)
 }
 
 func (r *renderer) End(ew *errWriter) {
@@ -169,7 +170,7 @@ func (r *renderer) drawFrame(f frame, ew *errWriter) {
 	text := r.fitText(f.Name, w)
 
 	ew.printf(`  <text text-anchor="" x="%.1f" y="%.1f" font-size="%d" font-family="%s" fill="rgb(0,0,0)">%s</text>`+"\n",
-		x+3, 3+float32(y)+float32(h)/2, r.style.FontSize, r.style.FontFamily, text)
+		x+3, 3+float32(y)+float32(h)/2, r.style.FontSize, html.EscapeString(r.style.FontFamily), text)
 
 	ew.printf("</g>\n")
 }
