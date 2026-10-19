@@ -177,7 +177,8 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 
 	inode = BPF_CORE_READ(bio, bi_io_vec, bv_page, mapping, host);
 	info.inode = BPF_CORE_READ(inode, i_ino);
-	if (!info.inode)
+	/* Block-device inodes use bdevfs, whose s_dev is not the IO device. */
+	if (!info.inode || BPF_CORE_READ(inode, i_rdev))
 		info.dev = key.dev;
 	else
 		info.dev = BPF_CORE_READ(inode, i_sb, s_dev);
