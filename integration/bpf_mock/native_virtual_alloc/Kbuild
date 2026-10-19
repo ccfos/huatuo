@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The HuaTuo Authors.
+obj-m += native_virtual_alloc_mock.o
+native_virtual_alloc_mock-y := native_virtual_alloc_mock_kmod.o
+ccflags-y += -I$(obj)
+clean-files += native_virtual_alloc_hook.h
+.DELETE_ON_ERROR:
+$(obj)/native_virtual_alloc_hook.h: $(srctree)/include/linux/mm.h $(src)/kernel_hook.awk
+	awk -v symbol=do_mmap -v inputs=3 -v optional=0 -v body='asm volatile("" ::: "memory"); return 0' -f $(src)/kernel_hook.awk $< > $@
+$(obj)/native_virtual_alloc_mock_kmod.o: $(obj)/native_virtual_alloc_hook.h
