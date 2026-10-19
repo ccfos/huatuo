@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* Shared IO device notifications and throttle/IOCOST wait word.
+/* Shared IO device notifications and blk-throttle/IOCOST wait word.
  * Publish one aligned word so every IO's
  * count stays paired with its wait. Each episode loses less than 10us.
  * The independent moduli are 67,108,864 IOs and 2,748,779.06944s of wait per

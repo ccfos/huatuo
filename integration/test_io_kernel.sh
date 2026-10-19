@@ -93,7 +93,7 @@ prepare_scsi_disks() {
 # Compile before acquiring disks. Run each top-level test separately so a
 # signal received during successful cleanup cannot start another fixture.
 packages=(core/metrics internal/iohealth core/autotracing)
-pattern='^(TestIOLatency(ArgumentProbeKernel|ReadMetricsKernel|CryptoProbeKernel)|TestThrotl(StartAttachSmoke|KernelThrottleLifecycle|KernelPendingCapacityFailure)|TestIOHealth(FreezeKernel|Real(CommandEvidence|TargetResolution))|TestMDWatcherMonitorsMdadmLoopArray|TestIOTracingRealDiskstatsMetrics)$'
+pattern='^(TestIOLatency(ArgumentProbeKernel|ReadMetricsKernel|CryptoProbeKernel)|TestBlkThrotl(StartAttachSmoke|KernelThrottleLifecycle|KernelPendingCapacityFailure)|TestIOHealth(FreezeKernel|Real(CommandEvidence|TargetResolution))|TestMDWatcherMonitorsMdadmLoopArray|TestIOTracingRealDiskstatsMetrics)$'
 cd "${ROOT_DIR}"
 for package in "${packages[@]}"; do
 	go test -mod=vendor -p=1 -c \

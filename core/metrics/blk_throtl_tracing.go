@@ -36,53 +36,53 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/throtl_tracing.c -o $BPF_DIR/throtl_tracing.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/blk_throtl_tracing.c -o $BPF_DIR/blk_throtl_tracing.o
 
 const (
-	throtlTracingName      = "blk_throtl"
-	throtlWaitAggregateMap = "throtl_wait_agg_map"
-	throtlPendingMap       = "throtl_pending_map"
+	blkThrotlTracingName      = "blk_throtl"
+	blkThrotlWaitAggregateMap = "blk_throtl_wait_agg_map"
+	blkThrotlPendingMap       = "blk_throtl_pending_map"
 
-	throtlTrackedCallerStart  = "throtl_tracked_caller_start"
-	throtlTrackedCallerEnd    = "throtl_tracked_caller_end"
-	throtlIgnoredCallerStart  = "throtl_ignored_caller_start"
-	throtlIgnoredCallerEnd    = "throtl_ignored_caller_end"
-	throtlAddBioSymbol        = "throtl_add_bio_tg"
-	throtlPopQueuedSymbol     = "throtl_pop_queued"
-	throtlPDFreeSymbol        = "throtl_pd_free"
-	throtlTrackedCaller       = "__blk_throtl_bio"
-	throtlLegacyTrackedCaller = "blk_throtl_bio"
-	throtlIgnoredCaller       = "tg_dispatch_one_bio"
+	blkThrotlTrackedCallerStart  = "blk_throtl_tracked_caller_start"
+	blkThrotlTrackedCallerEnd    = "blk_throtl_tracked_caller_end"
+	blkThrotlIgnoredCallerStart  = "blk_throtl_ignored_caller_start"
+	blkThrotlIgnoredCallerEnd    = "blk_throtl_ignored_caller_end"
+	blkThrotlAddBioSymbol        = "throtl_add_bio_tg"
+	blkThrotlPopQueuedSymbol     = "throtl_pop_queued"
+	blkThrotlPDFreeSymbol        = "throtl_pd_free"
+	blkThrotlTrackedCaller       = "__blk_throtl_bio"
+	blkThrotlLegacyTrackedCaller = "blk_throtl_bio"
+	blkThrotlIgnoredCaller       = "tg_dispatch_one_bio"
 )
 
 func init() {
-	tracing.RegisterEventTracing(throtlTracingName, newThrotl)
+	tracing.RegisterEventTracing(blkThrotlTracingName, newBlkThrotl)
 }
 
-func newThrotl() (*tracing.EventTracingAttr, error) {
+func newBlkThrotl() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
-		TracingData: &throtlTracing{},
+		TracingData: &blkThrotlTracing{},
 		Interval:    10,
 		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }
 
-var errThrotlSessionUnhealthy = fmt.Errorf("%w: blk_throtl BPF session is unhealthy",
+var errBlkThrotlSessionUnhealthy = fmt.Errorf("%w: blk_throtl BPF session is unhealthy",
 	types.ErrTracingStopped)
 
 const (
-	throtlFailurePendingCollision = uint32(abi.ThrotlFailurePendingCollision)
-	throtlFailurePendingInsert    = uint32(abi.ThrotlFailurePendingInsert)
-	throtlFailurePendingDelete    = uint32(abi.ThrotlFailurePendingDelete)
-	throtlFailureOwner            = uint32(abi.ThrotlFailureOwner)
-	throtlFailureAggregate        = uint32(abi.ThrotlFailureAggregate)
-	throtlFailureUnknownCaller    = uint32(abi.ThrotlFailureUnknownCaller)
-	throtlFailureTimeRollback     = uint32(abi.ThrotlFailureTimeRollback)
-	throtlFailurePopState         = uint32(abi.ThrotlFailurePopState)
+	blkThrotlFailurePendingCollision = uint32(abi.BlkThrotlFailurePendingCollision)
+	blkThrotlFailurePendingInsert    = uint32(abi.BlkThrotlFailurePendingInsert)
+	blkThrotlFailurePendingDelete    = uint32(abi.BlkThrotlFailurePendingDelete)
+	blkThrotlFailureOwner            = uint32(abi.BlkThrotlFailureOwner)
+	blkThrotlFailureAggregate        = uint32(abi.BlkThrotlFailureAggregate)
+	blkThrotlFailureUnknownCaller    = uint32(abi.BlkThrotlFailureUnknownCaller)
+	blkThrotlFailureTimeRollback     = uint32(abi.BlkThrotlFailureTimeRollback)
+	blkThrotlFailurePopState         = uint32(abi.BlkThrotlFailurePopState)
 )
 
 // A nonzero reason stops this BPF object. Reason and errno share one word.
-func throtlFailure(failure uint64) error {
+func blkThrotlFailure(failure uint64) error {
 	reasonID := uint32(failure >> 32)
 	errno := int32(failure)
 	if reasonID == 0 {
@@ -90,24 +90,24 @@ func throtlFailure(failure uint64) error {
 	}
 	var reason string
 	switch reasonID {
-	case throtlFailurePendingCollision:
+	case blkThrotlFailurePendingCollision:
 		reason = "bio already has pending state; duplicate admission"
-	case throtlFailurePendingInsert:
+	case blkThrotlFailurePendingInsert:
 		reason = "pending insertion failed"
 		if errno == -int32(unix.E2BIG) {
-			reason = "throtl_pending_map capacity exhausted (10240 entries)"
+			reason = "blk_throtl_pending_map capacity exhausted (10240 entries)"
 		}
-	case throtlFailurePendingDelete:
+	case blkThrotlFailurePendingDelete:
 		reason = "pending deletion failed"
-	case throtlFailureOwner:
+	case blkThrotlFailureOwner:
 		reason = "blkg owner lookup, creation or deletion failed"
-	case throtlFailureAggregate:
+	case blkThrotlFailureAggregate:
 		reason = "aggregate creation, lookup or deletion failed"
-	case throtlFailureUnknownCaller:
+	case blkThrotlFailureUnknownCaller:
 		reason = "unrecognized throtl_add_bio_tg caller"
-	case throtlFailureTimeRollback:
+	case blkThrotlFailureTimeRollback:
 		reason = "wait end precedes its recorded start"
-	case throtlFailurePopState:
+	case blkThrotlFailurePopState:
 		reason = "pop entry/return state violates the hook contract"
 	default:
 		reason = fmt.Sprintf("unknown BPF stop reason %d", reasonID)
@@ -116,15 +116,15 @@ func throtlFailure(failure uint64) error {
 		reason += fmt.Sprintf(": helper returned %d (%s)",
 			errno, unix.Errno(-errno))
 	}
-	return fmt.Errorf("%w: %s", errThrotlSessionUnhealthy, reason)
+	return fmt.Errorf("%w: %s", errBlkThrotlSessionUnhealthy, reason)
 }
 
-type throtlHooks struct {
+type blkThrotlHooks struct {
 	trackedRange symbol.KsymbolRange
 	ignoredRange symbol.KsymbolRange
 }
 
-type throtlSession struct {
+type blkThrotlSession struct {
 	object          bpf.BPF
 	possibleCPUs    int
 	previous        ioControlWaitSnapshot
@@ -134,16 +134,16 @@ type throtlSession struct {
 	containerSource ioControlContainerSource
 }
 
-type throtlTracing struct {
+type blkThrotlTracing struct {
 	mu      sync.Mutex
-	session *throtlSession
+	session *blkThrotlSession
 }
 
-func (c *throtlTracing) Start(ctx context.Context) error {
+func (c *blkThrotlTracing) Start(ctx context.Context) error {
 	if runtime.GOARCH != "amd64" {
 		return fmt.Errorf("%w: blk_throtl requires amd64", types.ErrNotSupported)
 	}
-	hooks, err := loadThrotlHooks()
+	hooks, err := loadBlkThrotlHooks()
 	if err != nil {
 		return err
 	}
@@ -160,10 +160,10 @@ func (c *throtlTracing) Start(ctx context.Context) error {
 	)
 }
 
-func (c *throtlTracing) startWithAttribution(
+func (c *blkThrotlTracing) startWithAttribution(
 	ctx context.Context,
 	loadBPF ioControlBPFLoader,
-	hooks *throtlHooks,
+	hooks *blkThrotlHooks,
 	possibleCPUs int,
 	containerSource ioControlContainerSource,
 ) (retErr error) {
@@ -171,7 +171,7 @@ func (c *throtlTracing) startWithAttribution(
 		return fmt.Errorf("invalid possible CPU count: %d", possibleCPUs)
 	}
 	childCtx, cancel := context.WithCancelCause(ctx)
-	session := &throtlSession{
+	session := &blkThrotlSession{
 		possibleCPUs:    possibleCPUs,
 		previous:        make(ioControlWaitSnapshot),
 		breaker:         childCtx,
@@ -201,7 +201,7 @@ func (c *throtlTracing) startWithAttribution(
 	}
 	session.object = object
 	if err := retryIOControlAttach(childCtx, ioControlAttachRetryInterval, func() error {
-		return attachThrotlHooks(object)
+		return attachBlkThrotlHooks(object)
 	}); err != nil {
 		if errors.Is(err, types.ErrNotSupported) {
 			log.Warnf("blk_throtl: required hooks unavailable: %v", err)
@@ -215,7 +215,7 @@ func (c *throtlTracing) startWithAttribution(
 	return nil
 }
 
-func (c *throtlTracing) publishSession(session *throtlSession) {
+func (c *blkThrotlTracing) publishSession(session *blkThrotlSession) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.session = session
@@ -223,30 +223,30 @@ func (c *throtlTracing) publishSession(session *throtlSession) {
 
 // withdrawSession removes a session under the same lock used by collection.
 // The caller closes the BPF object only after this function returns.
-func (c *throtlTracing) withdrawSession() {
+func (c *blkThrotlTracing) withdrawSession() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.session = nil
 }
 
-func attachThrotlHooks(object bpf.BPF) error {
+func attachBlkThrotlHooks(object bpf.BPF) error {
 	options := append(ioControlDeviceHooks(), []bpf.AttachOption{
 		{
-			ProgramName: "kprobe_throtl_pd_free",
-			Symbol:      throtlPDFreeSymbol,
+			ProgramName: "kprobe_blk_throtl_pd_free",
+			Symbol:      blkThrotlPDFreeSymbol,
 		},
 		{
-			ProgramName: "kretprobe_throtl_pop_queued",
-			Symbol:      throtlPopQueuedSymbol,
+			ProgramName: "kretprobe_blk_throtl_pop_queued",
+			Symbol:      blkThrotlPopQueuedSymbol,
 		},
 		{
-			ProgramName: "kprobe_throtl_pop_queued",
-			Symbol:      throtlPopQueuedSymbol,
+			ProgramName: "kprobe_blk_throtl_pop_queued",
+			Symbol:      blkThrotlPopQueuedSymbol,
 		},
 		{
 			// Attach start last so every observed episode has an exit hook.
-			ProgramName: "kprobe_throtl_add_bio_tg",
-			Symbol:      throtlAddBioSymbol,
+			ProgramName: "kprobe_blk_throtl_add_bio_tg",
+			Symbol:      blkThrotlAddBioSymbol,
 		},
 	}...)
 
@@ -256,17 +256,17 @@ func attachThrotlHooks(object bpf.BPF) error {
 	return nil
 }
 
-func (hooks *throtlHooks) constants() map[string]any {
+func (hooks *blkThrotlHooks) constants() map[string]any {
 	return map[string]any{
-		throtlTrackedCallerStart: hooks.trackedRange.Start,
-		throtlTrackedCallerEnd:   hooks.trackedRange.End,
-		throtlIgnoredCallerStart: hooks.ignoredRange.Start,
-		throtlIgnoredCallerEnd:   hooks.ignoredRange.End,
+		blkThrotlTrackedCallerStart: hooks.trackedRange.Start,
+		blkThrotlTrackedCallerEnd:   hooks.trackedRange.End,
+		blkThrotlIgnoredCallerStart: hooks.ignoredRange.Start,
+		blkThrotlIgnoredCallerEnd:   hooks.ignoredRange.End,
 	}
 }
 
-func loadThrotlHooks() (*throtlHooks, error) {
-	hooks, err := resolveThrotlHooks(
+func loadBlkThrotlHooks() (*blkThrotlHooks, error) {
+	hooks, err := resolveBlkThrotlHooks(
 		symbol.KsymbolSearchProfile,
 	)
 	if err != nil {
@@ -275,30 +275,30 @@ func loadThrotlHooks() (*throtlHooks, error) {
 	return hooks, nil
 }
 
-func resolveThrotlHooks(
+func resolveBlkThrotlHooks(
 	search func([]string, []string) (symbol.KsymbolProfile, error),
-) (*throtlHooks, error) {
+) (*blkThrotlHooks, error) {
 	profile, err := search(
 		[]string{
-			throtlAddBioSymbol,
-			throtlPopQueuedSymbol,
-			throtlPDFreeSymbol,
+			blkThrotlAddBioSymbol,
+			blkThrotlPopQueuedSymbol,
+			blkThrotlPDFreeSymbol,
 		},
 		[]string{
-			throtlTrackedCaller,
-			throtlLegacyTrackedCaller,
-			throtlIgnoredCaller,
+			blkThrotlTrackedCaller,
+			blkThrotlLegacyTrackedCaller,
+			blkThrotlIgnoredCaller,
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("read kernel symbol profile: %w", err)
 	}
 
-	trackedSymbol := throtlTrackedCaller
-	tracked, modernErr := throtlHookRange(profile, trackedSymbol)
+	trackedSymbol := blkThrotlTrackedCaller
+	tracked, modernErr := blkThrotlHookRange(profile, trackedSymbol)
 	if modernErr != nil {
-		trackedSymbol = throtlLegacyTrackedCaller
-		legacy, legacyErr := throtlHookRange(profile, trackedSymbol)
+		trackedSymbol = blkThrotlLegacyTrackedCaller
+		legacy, legacyErr := blkThrotlHookRange(profile, trackedSymbol)
 		if legacyErr != nil {
 			return nil, fmt.Errorf("%w: resolve tracked caller: %w",
 				types.ErrNotSupported, errors.Join(modernErr, legacyErr))
@@ -306,24 +306,24 @@ func resolveThrotlHooks(
 		tracked = legacy
 	}
 
-	hooks := &throtlHooks{
+	hooks := &blkThrotlHooks{
 		trackedRange: tracked,
 	}
-	ignored, err := throtlHookRange(profile, throtlIgnoredCaller)
+	ignored, err := blkThrotlHookRange(profile, blkThrotlIgnoredCaller)
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve ignored caller %s: %w",
-			types.ErrNotSupported, throtlIgnoredCaller, err)
+			types.ErrNotSupported, blkThrotlIgnoredCaller, err)
 	}
 	if tracked.Start < ignored.End && ignored.Start < tracked.End {
 		return nil, fmt.Errorf("%w: caller ranges %s and %s overlap",
-			types.ErrNotSupported, trackedSymbol, throtlIgnoredCaller)
+			types.ErrNotSupported, trackedSymbol, blkThrotlIgnoredCaller)
 	}
 	hooks.ignoredRange = ignored
 
 	for _, name := range []string{
-		throtlAddBioSymbol,
-		throtlPopQueuedSymbol,
-		throtlPDFreeSymbol,
+		blkThrotlAddBioSymbol,
+		blkThrotlPopQueuedSymbol,
+		blkThrotlPDFreeSymbol,
 	} {
 		_, exists := profile.Addresses[name]
 		if !exists {
@@ -334,7 +334,7 @@ func resolveThrotlHooks(
 	return hooks, nil
 }
 
-func throtlHookRange(
+func blkThrotlHookRange(
 	profile symbol.KsymbolProfile,
 	name string,
 ) (symbol.KsymbolRange, error) {

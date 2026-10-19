@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This file owns throttle collection boundaries and recovery. Shared IO
+// This file owns blk-throttle collection boundaries and recovery. Shared IO
 // helpers decode the cumulative CSS/device counters and attribute intervals.
 
 package collector
@@ -29,23 +29,23 @@ import (
 )
 
 const (
-	throtlDelayedCountName = "delayed_io_count"
-	throtlAverageWaitName  = "average_wait_ms"
-	throtlDelayedCountHelp = "Number of blk-throttle delayed IO episodes " +
+	blkThrotlDelayedCountName = "delayed_io_count"
+	blkThrotlAverageWaitName  = "average_wait_ms"
+	blkThrotlDelayedCountHelp = "Number of blk-throttle delayed IO episodes " +
 		"released between consecutive successful blk_throtl collections."
-	throtlAverageWaitHelp = "Average blk-throttle queue wait in milliseconds " +
+	blkThrotlAverageWaitHelp = "Average blk-throttle queue wait in milliseconds " +
 		"for delayed IO episodes released between consecutive successful " +
 		"blk_throtl collections."
 )
 
-var throtlWaitMetrics = ioControlWaitMetrics{
-	countName: throtlDelayedCountName, countHelp: throtlDelayedCountHelp,
-	averageName: throtlAverageWaitName, averageHelp: throtlAverageWaitHelp,
+var blkThrotlWaitMetrics = ioControlWaitMetrics{
+	countName: blkThrotlDelayedCountName, countHelp: blkThrotlDelayedCountHelp,
+	averageName: blkThrotlAverageWaitName, averageHelp: blkThrotlAverageWaitHelp,
 }
 
-var _ metric.Collector = (*throtlTracing)(nil)
+var _ metric.Collector = (*blkThrotlTracing)(nil)
 
-func (c *throtlTracing) Update() ([]*metric.Data, error) {
+func (c *blkThrotlTracing) Update() ([]*metric.Data, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -61,7 +61,7 @@ func (c *throtlTracing) Update() ([]*metric.Data, error) {
 	}
 
 	current, err := captureIOControlWaitSnapshot(session.object,
-		&session.hashReader, throtlWaitAggregateMap, session.possibleCPUs)
+		&session.hashReader, blkThrotlWaitAggregateMap, session.possibleCPUs)
 	if err != nil {
 		return nil, session.collectionFailure(fmt.Errorf("capture blk_throtl counters: %w", err))
 	}
@@ -71,7 +71,7 @@ func (c *throtlTracing) Update() ([]*metric.Data, error) {
 	}
 	changed := status.DevicesChanged != 0
 	if !changed {
-		if err := throtlFailure(status.Failure); err != nil {
+		if err := blkThrotlFailure(status.Failure); err != nil {
 			return nil, session.collectionFailure(err)
 		}
 	}
@@ -94,7 +94,7 @@ func (c *throtlTracing) Update() ([]*metric.Data, error) {
 			current,
 			pod.BuildCssContainers(containers, subsystem.SubsystemBlkIO),
 			disks,
-			throtlWaitMetrics,
+			blkThrotlWaitMetrics,
 		)
 		if err != nil {
 			return nil, session.collectionFailure(err)
@@ -114,14 +114,14 @@ func (c *throtlTracing) Update() ([]*metric.Data, error) {
 	return metrics, nil
 }
 
-func (s *throtlSession) checkBreaker() error {
+func (s *blkThrotlSession) checkBreaker() error {
 	if s.breaker == nil || s.breaker.Err() == nil {
 		return nil
 	}
 	return fmt.Errorf("blk_throtl BPF session ended: %w", context.Cause(s.breaker))
 }
 
-func (s *throtlSession) collectionFailure(cause error) error {
+func (s *blkThrotlSession) collectionFailure(cause error) error {
 	if errors.Is(cause, types.ErrTracingStopped) {
 		// Device retirement can cause a concurrent map failure. Re-read the
 		// sticky flag so that transition restarts the session.
