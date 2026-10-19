@@ -36,7 +36,7 @@ type dropWatchTracing struct{}
 
 func init() {
 	tracing.RegisterEventTracing("dropwatch", newDropWatch)
-	toolstream.RegisterDefault[*types.DropWatchTracing]("dropwatch", handleDropwatchEvent)
+	toolstream.RegisterDefault[types.DropWatchTracing]("dropwatch", handleDropwatchEvent)
 }
 
 func newDropWatch() (*tracing.EventTracingAttr, error) {
@@ -50,13 +50,6 @@ func newDropWatch() (*tracing.EventTracingAttr, error) {
 // Start launches dropwatch as a subprocess and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *dropWatchTracing) Start(ctx context.Context) error {
-	return c.start(ctx, executil.Run)
-}
-
-func (c *dropWatchTracing) start(
-	ctx context.Context,
-	run func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error),
-) error {
 	cfg := configSnapshot()
 	args := []string{
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "net_dropwatch.o"),
@@ -66,16 +59,15 @@ func (c *dropWatchTracing) start(
 		"--source-types", toolstream.SourceTypeEvent,
 	}
 
-	result, err := run(ctx, executil.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, "dropwatch"),
 		Args: args,
 	})
 	if err != nil {
-		var runErr *executil.RunError
-		if errors.As(err, &runErr) && runErr.IsCancellation() && errors.Is(err, context.Canceled) {
+		if errors.Is(err, executil.ErrRunCanceled) {
 			return nil
 		}
-		if result != nil && len(result.Stderr) > 0 {
+		if len(result.Stderr) > 0 {
 			return fmt.Errorf("run dropwatch: %w; stderr: %s", err, result.Stderr)
 		}
 		return fmt.Errorf("run dropwatch: %w", err)
@@ -83,7 +75,11 @@ func (c *dropWatchTracing) start(
 	return nil
 }
 
-func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
+func handleDropwatchEvent(_ context.Context, request *toolstream.Request[types.DropWatchTracing]) error {
+	if request.Data == nil {
+		return nil
+	}
+	ev := request.Data
 	if ignoreDropwatch(ev) {
 		return nil
 	}

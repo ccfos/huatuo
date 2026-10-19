@@ -17,118 +17,100 @@ package executil
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // Result owns output snapshots that remain valid after the command is closed.
 // Redirected streams are empty. Memfd is empty unless WithMemfdOutput was used.
-// Failed commands can return partial output; a limit error makes it incomplete.
+// Stdout and Stderr retain only their configured tails. Failed commands can
+// return partial output; a memfd read limit error makes Memfd incomplete.
 type Result struct {
-	Stdout          []byte
-	Stderr          []byte
-	Memfd           []byte
-	StderrTruncated bool
+	Stdout []byte
+	Stderr []byte
+	Memfd  []byte
 }
 
-// RunError separates cancellation from independent failures. errors.Is and
-// errors.As inspect all causes. Expected signal exits caused by cancellation
-// are omitted; nonzero exits and output drain failures remain in ExecutionErr.
-type RunError struct {
-	ContextErr   error
-	ExecutionErr error
-	OutputErr    error
-	CleanupErr   error
-	// Process transfers recovery ownership when Run's final Close fails.
-	// Retry Close before discarding it. Wait still observes the single reaper;
-	// a group cleanup failure after reaping remains an error, since signaling
-	// the retired PID again would risk killing an unrelated process group.
-	Process *Process
-}
-
-func (e *RunError) Error() string {
-	if err := errors.Join(e.Unwrap()...); err != nil {
-		return err.Error()
-	}
-	return ""
-}
-
-// Unwrap preserves every independent failure for errors.Is and errors.As.
-func (e *RunError) Unwrap() []error {
-	var causes []error
-	for _, err := range []error{e.ContextErr, e.ExecutionErr, e.OutputErr, e.CleanupErr} {
-		if err != nil {
-			causes = append(causes, err)
-		}
-	}
-	return causes
-}
-
-// IsCancellation reports cancellation or a deadline with no independent failure.
-// Callers decide whether either context error means a successful business stop.
-func (e *RunError) IsCancellation() bool {
-	return e.ContextErr != nil && e.ExecutionErr == nil && e.OutputErr == nil && e.CleanupErr == nil
-}
-
-// Run executes, captures output and closes one command. Invalid configuration
-// returns a nil Result; all other failures return the available snapshots.
+// Run executes, captures output and closes one command. It always returns a
+// non-nil Result, which is empty for invalid configuration. Other failures
+// return the available output snapshots.
+// Pure cancellation and timeout errors match ErrRunCanceled and ErrRunTimeout,
+// respectively, after output collection and cleanup finish.
 // Cancellation is an error. A failed stop gets a final forceful cleanup attempt;
-// earlier stop failures remain reported even if recovery succeeds. A failed
-// final Close returns its Process in RunError for explicit recovery by the caller.
-func Run(ctx context.Context, spec Spec, options ...Option) (*Result, error) { //nolint:gocritic // Spec is within the 80-byte value limit.
-	process, err := New(spec, options...)
+// earlier stop failures remain reported even if recovery succeeds. Actual
+// cleanup failures match ErrCleanupFailed.
+func Run(ctx context.Context, spec Spec, options ...Option) (*Result, error) { //nolint:gocritic // Preserve value semantics for command configuration.
+	p, err := New(spec, options...)
 	if err != nil {
-		return nil, &RunError{ExecutionErr: err}
+		return &Result{}, err
 	}
 
-	return collectResult(process, process.Run(ctx))
+	if err := p.Start(ctx); err != nil {
+		return finishRun(p, nil, nil)
+	}
+
+	select {
+	case <-p.Done():
+		return finishRun(p, nil, nil)
+	case <-ctx.Done():
+	}
+
+	// Completion wins over a cancellation observed after the final result.
+	select {
+	case <-p.Done():
+		return finishRun(p, nil, nil)
+	default:
+	}
+
+	contextErr := fmt.Errorf("run command %q: %w", spec.Path, ctx.Err())
+	stopErr := p.Stop(context.WithoutCancel(ctx))
+	return finishRun(p, contextErr, stopErr)
 }
 
-func collectResult(process *Process, runErr error) (*Result, error) {
-	failure := &RunError{}
-	if runErr != nil {
-		var classified *RunError
-		if errors.As(runErr, &classified) {
-			*failure = *classified
-		} else {
-			failure.ExecutionErr = runErr
-		}
-	}
+func finishRun(p *Process, contextErr, stopErr error) (*Result, error) {
+	failureErr := stopErr
 
 	// A failed stop can return while the reaper is still running. Retry before
 	// reading the file so that a successful recovery preserves its final output.
 	select {
-	case <-process.wait.done:
+	case <-p.waitDone:
 	default:
-		failure.CleanupErr = errors.Join(failure.CleanupErr,
-			wrapStopFailure(process.forceStopAndWait(process.wait.done)))
+		if err := p.forceStopAndWait(); err != nil {
+			failureErr = errors.Join(failureErr, fmt.Errorf("%w: %w", ErrCleanupFailed, err))
+		}
 	}
 
-	result := &Result{}
-	result.Stdout, failure.OutputErr = process.Stdout()
-	result.Stderr, result.StderrTruncated = process.stderr.Snapshot()
-	process.mu.Lock()
-	hasMemfd := process.memfd != nil && process.memfd.file != nil
-	process.mu.Unlock()
+	result := &Result{Stdout: p.Stdout(), Stderr: p.Stderr()}
+	p.mu.Lock()
+	hasMemfd := p.memfd != nil && p.memfd.file != nil
+	p.mu.Unlock()
 	if hasMemfd {
 		var outputErr error
-		result.Memfd, outputErr = process.MemfdOutput()
-		failure.OutputErr = errors.Join(failure.OutputErr, outputErr)
+		result.Memfd, outputErr = p.MemfdOutput()
+		failureErr = errors.Join(failureErr, outputErr)
 	}
 
-	if err := process.Close(); err != nil {
-		failure.CleanupErr = errors.Join(failure.CleanupErr, err)
-		failure.Process = process
+	failureErr = errors.Join(failureErr, p.Close())
+	p.mu.Lock()
+	terminalErr := p.terminalErr
+	startCancelErr := p.startCancelErr
+	p.mu.Unlock()
+	// A direct marker means launch cancellation had no independent failures.
+	if startCancelErr != nil && terminalErr == startCancelErr { //nolint:errorlint // Compare the marker recorded by Start, not wrapped writer errors.
+		contextErr = startCancelErr
+	} else if contextErr == nil || terminalErr != ErrStopped { //nolint:errorlint // Only the direct lifecycle marker is an expected stop.
+		failureErr = errors.Join(failureErr, terminalErr)
 	}
-	process.mu.Lock()
-	waitErr := process.wait.err
-	if errors.Is(process.start.err, waitErr) || (failure.ContextErr != nil && errors.Is(waitErr, ErrStopped)) {
-		waitErr = nil
+
+	if failureErr != nil {
+		return result, errors.Join(contextErr, failureErr)
 	}
-	if waitErr != nil && !errors.Is(failure.ExecutionErr, waitErr) {
-		failure.ExecutionErr = errors.Join(failure.ExecutionErr, waitErr)
+
+	switch {
+	case errors.Is(contextErr, context.Canceled):
+		return result, ErrRunCanceled
+	case errors.Is(contextErr, context.DeadlineExceeded):
+		return result, ErrRunTimeout
+	default:
+		return result, contextErr
 	}
-	process.mu.Unlock()
-	if len(failure.Unwrap()) == 0 {
-		return result, nil
-	}
-	return result, failure
 }

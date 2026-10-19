@@ -21,7 +21,7 @@ require (
 	github.com/google/cadvisor v0.50.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
-	github.com/gopacket/gopacket v1.2.0
+	github.com/gopacket/gopacket v1.4.0
 	github.com/grafana/grafana-plugin-sdk-go v0.251.0
 	github.com/grafana/pyroscope v1.7.1
 	github.com/grafana/pyroscope/api v0.4.0

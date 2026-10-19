@@ -29,8 +29,6 @@ import (
 
 const (
 	perfCompletionGracePeriod = 30 * time.Second
-	maxPerfOutputBytes        = 16 << 20
-	maxPerfErrorOutputLen     = 4096
 	maxTimerDurationSeconds   = int64(time.Duration(1<<63-1) / time.Second)
 	maxPerfDurationSeconds    = int64(
 		(time.Duration(1<<63-1) - perfCompletionGracePeriod) / time.Second,
@@ -56,19 +54,16 @@ func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error)
 		args = append(args, "--container-id", request.containerID)
 	}
 
+	var stdout bytes.Buffer
 	result, err := executil.Run(ctx, executil.Spec{
 		Path:           filepath.Join(internalconfig.CoreBinDir, "perf"),
 		Args:           args,
-		MaxOutputBytes: maxPerfOutputBytes,
-	})
+		MaxStderrBytes: 4 << 10,
+	}, executil.WithStdout(&stdout))
 	if err != nil {
-		var diagnostic []byte
-		if result != nil {
-			diagnostic = result.Stderr
-		}
-		return nil, perfCommandError(request.containerID, diagnostic, err)
+		return nil, perfCommandError(request.containerID, result.Stderr, err)
 	}
-	output := result.Stdout
+	output := stdout.Bytes()
 	if len(bytes.TrimSpace(output)) == 0 {
 		return nil, perfCommandError(
 			request.containerID,
@@ -87,20 +82,8 @@ func perfCommandError(containerID string, output []byte, err error) error {
 	}
 
 	diagnostic := bytes.TrimSpace(output)
-	isTruncated := len(diagnostic) > maxPerfErrorOutputLen
-	if isTruncated {
-		diagnostic = diagnostic[:maxPerfErrorOutputLen]
-	}
 	if len(diagnostic) == 0 {
 		return fmt.Errorf("run %s perf: %w", target, err)
-	}
-	if isTruncated {
-		return fmt.Errorf(
-			"run %s perf: %w: output=%q (truncated)",
-			target,
-			err,
-			diagnostic,
-		)
 	}
 
 	return fmt.Errorf("run %s perf: %w: output=%q", target, err, diagnostic)

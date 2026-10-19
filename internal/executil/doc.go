@@ -16,18 +16,25 @@
 // Paths and arguments are passed directly to os/exec; shell syntax requires an
 // explicit shell command. Context arguments must be non-nil.
 //
-// Use Run for synchronous execution and owned output snapshots. A non-nil
-// RunError distinguishes cancellation, execution, output and cleanup failures.
-// IsCancellation permits business layers to recognize a pure cancellation;
-// errors.Is(err, context.Canceled) alone does not exclude other failures.
-// Earlier stop failures remain visible after successful cleanup. If final Close
-// fails, RunError.Process transfers ownership of any further cleanup attempts.
+// Use Run for synchronous execution and owned output snapshots. Run always
+// returns a non-nil Result, even for invalid configuration. errors.Is and
+// errors.As inspect the underlying execution, output and cleanup failures.
+// Run adds ErrRunCanceled or ErrRunTimeout only when cancellation or timeout has
+// no independent execution, output or cleanup failure. Match these markers with
+// errors.Is to recognize a normal context stop; matching context.Canceled alone
+// does not exclude other failures. Process.Start does not add these markers
+// because output collection and final cleanup are caller-owned. Start returns
+// context.Canceled or context.DeadlineExceeded for launch cancellation;
+// independent failures remain joined to the context error. Run cancellation
+// markers also match their standard context error.
+// Earlier stop failures remain visible after successful cleanup. ErrCleanupFailed
+// identifies actual cleanup failures; Run errors do not retain a Process handle.
 //
 // Use New and Start for asynchronous execution. Start's context only controls
 // launch. Wait or Done observes completion; canceling Start's context after it
-// returns does not stop the command. Process.Run controls the entire lifetime.
-// Stop sends SIGTERM, then SIGKILL at the earlier of StopGracePeriod (five seconds
-// by default) and its context's cancellation. Run cancellation uses the configured
+// returns does not stop the command. Run controls the entire lifetime.
+// Stop sends StopSignal (default SIGTERM), then SIGKILL at the earlier of
+// StopGracePeriod (five seconds by default) and its context's cancellation. Run cancellation uses the configured
 // grace period independently of the canceled run context. Close immediately
 // forces termination. Neither cancellation nor Close can impose a hard return
 // deadline on kernel reaping or a blocked caller-provided writer.
@@ -36,16 +43,34 @@
 // preserve memfd output. Close releases owned files even if stopping fails;
 // repeated Close is safe, signal failures can be retried, and file close errors
 // are cached. Close before Start permanently closes the process and publishes
-// os.ErrClosed to Wait. Close during Start waits for launch to settle. Done is
-// open before Start and closes once both launch and reaping results are final.
-// The zero Process is invalid; its Done returns nil.
+// ErrProcessClosed to Start and Wait; Close and Stop return nil. Close during
+// Start waits for launch to settle. Done is open before Start and closes once
+// both launch and reaping results are final. Wait returns the lifecycle result, including reaper group
+// cleanup and output drain failures. Stop and Close return only their own
+// operation failures; Close excludes cleanup failures already published by Start.
+// Combine Wait and Close results when both execution and release errors matter.
+// An expected signal stop makes Wait return ErrStopped without the original
+// exec.ExitError.
+// Other nonzero exits and external signal exits retain their exec.ExitError.
+// Compare directly with ErrStopped to recognize a stop without independent
+// failures; errors.Is may also match a stop marker inside an independent error.
+// Concurrent Stop calls execute independently, and failed attempts can be retried.
+// The zero Process is invalid; error-returning methods return
+// ErrProcessNotInitialized, and Done returns nil. Start returns
+// ErrProcessAlreadyStarted after a previous or unfinished launch.
+// Wait before Start and Stop before completed launch return ErrProcessNotStarted.
+// Match these process state errors with errors.Is.
 //
 // One internal reaper owns cmd.Wait. Process methods support concurrent use;
 // configuration options apply only during New, and Process must not be copied.
-// Stop rejects an unfinished Start. Output methods return independent snapshots;
-// wait for completion to obtain final output. Default stdout retains a 64 KiB
-// prefix and reports overflow; stderr retains a 64 KiB tail. Memfd limits bound
-// reads, not file growth. Borrowed writers and ExtraFiles remain caller-owned.
+// Stop rejects an unfinished Start. Stdout and Stderr return byte slices;
+// MemfdOutput also reports read errors. Output methods return independent snapshots;
+// wait for completion to obtain final output. Default stdout and stderr each
+// retain a 64 KiB tail; Spec.MaxStdoutBytes and Spec.MaxStderrBytes override
+// these limits independently. Older bytes are discarded without error. Use
+// WithStdout or WithStderr with a caller-owned writer when complete output is required.
+// Memfd limits bound reads, not file growth. Borrowed writers and ExtraFiles
+// remain caller-owned.
 //
 // The leader's exit ends the command lifetime. Remaining group members are
 // killed before reaping the leader to prevent signaling a reused PID. Descendants
