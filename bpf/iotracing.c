@@ -60,7 +60,7 @@ struct io_key {
 struct file_io_start {
 	struct io_key key;
 	u64 requested;
-	bool is_write;
+	u64 is_write;
 };
 
 struct {
