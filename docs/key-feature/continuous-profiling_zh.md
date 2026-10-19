@@ -734,6 +734,8 @@ flowchart LR
 
 ## 公共采集窗口
 
+Chrome Trace 导出将聚合调用栈排列在估算时间线上，不重建实际观测顺序。JSON 的时间戳和时长以微秒为单位，最多保留三位小数，因此 500 纳秒的权重保留为 `0.5` 微秒。跨窗口及单位换算采用整数纳秒运算；负权重、非时间单位和超过 `2^53-1` 微秒的时间线仍返回错误。JSON 保留小数值，浏览器查看器仍受 IEEE-754 数值精度限制。
+
 profiler 与 irqtracing 共用 `internal/profiling/profile.Run`、Pipeline 和 `types.AggregationWindow`。provider 负责采集、解码、符号化、单位换算及标签规范化，提交 `SampleBatch`；Pipeline 按用户栈、内核栈和完整标签组累计。Java agent 生命周期位于 `cmd/profiler/runtime/java`，工具执行位于 `cmd/profiler/exec`。
 
 窗口包含结构化帧（Name/File/Line）、root → leaf 栈表、标签组、带符号 int64 权重及时间。帧 ID 从 0 开始，栈和标签组 ID 从 1 开始，0 表示空。provider 提交最终单位，CPU/锁等待使用纳秒，内存使用字节，IRQ source/victim 使用事件次数；Pipeline 保留负数及相消后的零值。新路径没有 Period，不在输出时再次缩放。physical_usage 表示采集期间有符号净变化，不代表当前占用。

@@ -751,6 +751,8 @@ Built-in single-value labels are `pid`, `cpu`, `comm`, `lock_address`, `irq`, `s
 
 Local formatters consume the common window. JSON and the receiving handler use the shared pprof builder, preserving source positions, signed values, and sample labels. The JSON envelope and ES document structure remain unchanged. A separate legacy full-pprof input retains multiple metrics, mappings, inline locations, and original sampling metadata.
 
+Chrome Trace output places aggregate stacks on an estimated timeline, rather than reconstructing observation order. Timestamps and durations are JSON microseconds with up to three fractional digits, so a 500-nanosecond weight remains `0.5` microseconds. Timeline arithmetic retains integer nanoseconds across windows and unit conversions. Negative weights, non-time units, and a timeline beyond `2^53-1` microseconds remain errors. JSON preserves the fractional values; browser viewers still use IEEE-754 numbers.
+
 ### Configuration, queues, and timestamps
 
 The runner validates fixed configuration and creates the formatter before collection. `provider.New` copies configuration and creates a collector per task. Task ID and tool name come from `RunConfig.ID` and `ProfilerMeta.ToolName`; an ID is generated only when absent. `formatter.Config` contains Format, Destination, TaskID, and ToolName. Formatters own file creation and cleanup.
