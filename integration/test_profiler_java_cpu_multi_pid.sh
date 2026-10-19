@@ -27,7 +27,7 @@ readonly PROFILER_DURATION=10
 readonly PROFILER_FREQ=99
 readonly PROFILER_AGGR_INTERVAL=5
 
-require_commands java javac "${PROFILER_TOOL_DIR}/bin/asprof"
+require_commands jq java javac "${PROFILER_TOOL_DIR}/bin/asprof"
 [[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
 	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 
@@ -101,3 +101,8 @@ assert_java_process_roots() {
 assert_java_process_roots
 
 log_info "both Java PIDs produced distinct correctly attributed stacks"
+
+assert_java_profiler_streams "${WORK_DIR}/streaming" "${TOOL_BIN}" \
+	--type cpu --language java \
+	--pid "${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1}" \
+	--tool-path "${PROFILER_TOOL_DIR}" --freq "${PROFILER_FREQ}"

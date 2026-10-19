@@ -59,11 +59,9 @@ func New(implementation profiling.Implementation, config *Config) (*profile.Prof
 	case implementation == profiling.ImplementationJava && cfg.Type == profiling.TypeCPU:
 		meta.Description = "Java CPU profiler using async-profiler"
 		meta.Impl = &javaProfiler{config: cfg}
-		meta.AggregationMode = pipeline.AggregationModeOneShot
 	case implementation == profiling.ImplementationJava && cfg.Type == profiling.TypeMemory:
 		meta.Description = "Java memory profiler using async-profiler"
 		meta.Impl = &javaProfiler{config: cfg}
-		meta.AggregationMode = pipeline.AggregationModeOneShot
 	case implementation == profiling.ImplementationPython && cfg.Type == profiling.TypeCPU:
 		meta.Description = "Python CPU profiler using py-spy"
 		meta.Impl = &pythonCPUProfiler{config: cfg}

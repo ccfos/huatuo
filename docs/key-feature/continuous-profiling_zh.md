@@ -746,7 +746,7 @@ profiler 与 irqtracing 共用 `internal/profiling/profile.Run`、Pipeline 和 `
 
 runner 在启动采集前校验固定配置并创建 Formatter。`provider.New` 为每次任务复制配置并创建独立采集器。任务 ID、工具名分别来自 `RunConfig.ID`、`ProfilerMeta.ToolName`；仅缺失 ID 时生成。`formatter.Config` 包含 Format、Destination、TaskID、ToolName，文件创建与关闭由 formatter 管理。
 
-Native CPU 和 memory alloc 使用 Streaming，周期输出并在停止时排空；native physical_usage、Java、Python 和 IRQ 使用 OneShot，采集结束后输出。Java 仍周期读取外部工具结果。Run 统一管理所有 provider 的采集时长。输入队列容量为 16 个批次，聚合与输出由同一个 worker 顺序执行；每批最多 256 样本、1 MiB 帧和标签文本，每个样本每侧最多 4096 帧、64 标签。超限返回明确错误。16 批最多包含 4096 样本、16 MiB 计量文本，帧结构及底层分配另计；这不是总内存上限。单窗口身份数量尚未设限，高基数采集仍可能增长内存。
+Native CPU、memory alloc 和 Java（CPU、object_alloc、object_usage）使用 Streaming，周期输出并在停止时排空；native physical_usage、Python 和 IRQ 使用 OneShot，采集结束后输出。Run 统一管理所有 provider 的采集时长。输入队列容量为 16 个批次，聚合与输出由同一个 worker 顺序执行；每批最多 256 样本、1 MiB 帧和标签文本，每个样本每侧最多 4096 帧、64 标签。超限返回明确错误。16 批最多包含 4096 样本、16 MiB 计量文本，帧结构及底层分配另计；这不是总内存上限。单窗口身份数量尚未设限，高基数采集仍可能增长内存。
 
 `Enqueue(ctx, batch)` 返回 nil 表示成功入队并转移底层切片/map 所有权，不保证已经聚合或输出。所有模式均非阻塞入队；队列满返回 `ErrQueueFull`，context 取消时拒绝交付，错误时批次仍归调用者。provider 不复用已交付批次、不自动重试；runner 收到入队错误后取消处理，失败任务不 Complete。同步输出期间暂停消费输入，较大的队列只能吸收短暂突发，持续过载仍会失败。
 

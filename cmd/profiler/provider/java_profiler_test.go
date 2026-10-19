@@ -16,15 +16,18 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	javaruntime "github.com/ccfos/huatuo/cmd/profiler/runtime/java"
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestNativeProfilersRejectMultiplePIDs(t *testing.T) {
@@ -191,6 +194,124 @@ func TestJavaProfilerSampleWeights(t *testing.T) {
 			}
 			if count != 1 {
 				t.Fatalf("sample count = %d, want 1", count)
+			}
+		})
+	}
+}
+
+// javaWindowOutput exposes completed windows without racing the pipeline worker.
+type javaWindowOutput struct {
+	windows chan *types.AggregationWindow
+}
+
+func (f *javaWindowOutput) Add(ctx context.Context, w *types.AggregationWindow) error {
+	select {
+	case f.windows <- w:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (*javaWindowOutput) Complete(context.Context) error { return nil }
+func (*javaWindowOutput) Close() error                   { return nil }
+
+func TestJavaProfilerStreamsAndDrainsFinalFile(t *testing.T) {
+	for _, cfg := range []Config{
+		{
+			Type: profiling.TypeCPU,
+			Freq: 100,
+		},
+		{
+			Type: profiling.TypeMemory,
+			Mode: profiling.ModeObjectAlloc,
+		},
+		{
+			Type: profiling.TypeMemory,
+			Mode: profiling.ModeObjectUsage,
+		},
+	} {
+		t.Run(string(cfg.Type)+"/"+string(cfg.Mode), func(t *testing.T) {
+			t.Parallel()
+			task, err := New(profiling.ImplementationJava, &cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			dir := t.TempDir()
+			writeFile := func(sequence, value int) {
+				t.Helper()
+				path := filepath.Join(dir, fmt.Sprintf("profile-%d.collapsed", sequence))
+				if err := os.WriteFile(path, fmt.Appendf(nil, "root;leaf %d\n", value), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p := task.Impl.(*javaProfiler)
+			p.samplingOpt = &javaruntime.AsprofSamplingOption{Pids: []int{123}}
+			p.profileOutFile = map[int]string{123: filepath.Join(dir, "profile-*.collapsed")}
+			p.labels = map[int][]types.ProfileLabel{123: {types.ProfileStringLabel("pid", "123")}}
+			output := &javaWindowOutput{windows: make(chan *types.AggregationWindow)}
+			pipe := pipeline.NewPipeline(&pipeline.PipelineConfig{
+				AggregationConfig:   task.AggregationConfig,
+				AggregationMode:     task.AggregationMode,
+				AggregationInterval: 10 * time.Millisecond,
+				Formatter:           output,
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			collectCtx, stop := context.WithCancelCause(ctx)
+			defer stop(context.Canceled)
+			pipelineDone := make(chan error, 1)
+			readerDone := make(chan error, 1)
+			go func() { pipelineDone <- pipe.Run(ctx) }()
+			go func() {
+				readerDone <- p.ReadDataLoop(collectCtx, func(batch *pipeline.SampleBatch) error {
+					return pipe.Enqueue(ctx, batch)
+				})
+			}()
+			defer func() {
+				cancel()
+				if readerDone != nil {
+					<-readerDone
+				}
+				if pipelineDone != nil {
+					<-pipelineDone
+				}
+			}()
+
+			checkWindow := func(want int64) {
+				t.Helper()
+				select {
+				case w := <-output.windows:
+					if cfg.Type == profiling.TypeCPU {
+						want *= int64(10 * time.Millisecond)
+					}
+					if len(w.Aggregated.Samples) != 1 || w.Aggregated.Samples[0].Value != want {
+						t.Fatalf("samples = %+v, want one sample with weight %d", w.Aggregated.Samples, want)
+					}
+					if len(w.Aggregated.LabelSets) != 1 || len(w.Aggregated.LabelSets[0]) != 1 || w.Aggregated.LabelSets[0][0].StringValue != "123" {
+						t.Fatalf("labels = %+v, want PID 123", w.Aggregated.LabelSets)
+					}
+				case <-ctx.Done():
+					t.Fatal("timed out waiting for Java aggregation window")
+				}
+			}
+			writeFile(0, 7)
+			checkWindow(7)
+			// A normal stop must consume a file that has not passed stability polling.
+			writeFile(1, 3)
+			stop(profile.ErrCollectionDurationElapsed)
+			err = <-readerDone
+			readerDone = nil
+			if err != nil {
+				t.Fatal(err)
+			}
+			pipe.Close()
+			checkWindow(3)
+			err = <-pipelineDone
+			pipelineDone = nil
+			if err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

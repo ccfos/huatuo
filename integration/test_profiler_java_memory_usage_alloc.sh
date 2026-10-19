@@ -25,7 +25,7 @@ readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/TestProfilerJavaMemory.ja
 readonly PROFILER_DURATION=10
 readonly EXPECTED_METHOD="TestProfilerJavaMemory.allocateHotMethod"
 
-require_commands java javac "${PROFILER_TOOL_DIR}/bin/asprof"
+require_commands jq java javac "${PROFILER_TOOL_DIR}/bin/asprof"
 [[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
 	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 
@@ -80,6 +80,10 @@ run_profile_case() {
 		fatal "Java memory profiler failed for mode=${mode}"
 	fi
 
+	assert_java_profiler_streams "${out_dir}/streaming" "${TOOL_BIN}" \
+		--type memory --language java --memory-mode "${mode}" \
+		--pid "${PROFILER_TARGET_PID}" --tool-path "${PROFILER_TOOL_DIR}"
+
 	stop_by_pid "${PROFILER_TARGET_PID}" 5
 	PROFILER_TARGET_PID=""
 	folded_file=$(find "${out_dir}" -maxdepth 1 -name 'perf_*.folded' -type f -size +0c -print -quit)
@@ -98,7 +102,7 @@ run_profile_case() {
 
 # Cover periodic output and a session that only emits its final output.
 run_profile_case object_alloc 3
-run_profile_case object_usage 30
+run_profile_case object_usage "${PROFILER_DURATION}"
 
 # Sampling windows and GC timing are nondeterministic, so object_usage is not
 # required to be less than object_alloc. Each mode only needs a positive value.
