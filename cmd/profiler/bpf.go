@@ -23,10 +23,15 @@ import (
 
 // initBpfManager prepares shared BPF resources for native profilers. The
 // returned cleanup must run on exit so map FDs and pinned objects are released.
-func initBpfManager(duration time.Duration) (func(), error) {
-	if err := bpf.Init(&bpf.Option{
-		KeepaliveTimeout: int(duration / time.Second),
-	}); err != nil {
+func initBpfManager(cfg *commandConfig) (func(), error) {
+	option := &bpf.Option{
+		KeepaliveTimeout: int(cfg.Provider.Duration / time.Second),
+		Mock:             cfg.BPFMock,
+	}
+	if option.Mock {
+		option.MockObjects = []string{"native_" + string(cfg.Provider.Mode) + ".o"}
+	}
+	if err := bpf.Init(option); err != nil {
 		return nil, fmt.Errorf("init bpf: %w", err)
 	}
 

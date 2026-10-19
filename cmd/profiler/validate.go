@@ -186,6 +186,13 @@ func validateSinglePID(ctx *cli.Context, profilerName string) error {
 }
 
 func validateCommonOptions(ctx *cli.Context) error {
+	if ctx.Bool("bpf-mock") {
+		impl, _ := profiling.ImplementationFor(profiling.Language(ctx.String("language")), profiling.Type(ctx.String("type")))
+		if ctx.String("type") != "memory" || impl != profiling.ImplementationNative {
+			return fmt.Errorf("--bpf-mock requires native memory profiling")
+		}
+	}
+
 	if err := validateNumericOptions(
 		profiling.Type(ctx.String("type")),
 		ctx.Int("freq"),
