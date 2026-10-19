@@ -65,7 +65,7 @@ func fetch(method, url string, body []byte) ([]byte, error) {
 
 func run() error {
 	if len(os.Args) < 3 {
-		return fmt.Errorf("usage: probe capabilities URL | flamegraph URL JOB RAW_JSON")
+		return fmt.Errorf("usage: probe capabilities URL | flamegraph URL JOB RAW_JSON PROFILE_TYPE")
 	}
 	base := os.Args[2]
 	switch os.Args[1] {
@@ -95,15 +95,21 @@ func run() error {
 			for i, scope := range c.SupportedScopes {
 				scopes[i] = string(scope)
 			}
-			want = append(want, capability{c.Type, c.Language, c.Modes, scopes, c.SupportsBinaryMatch})
+			want = append(want, capability{
+				Type:     c.Type,
+				Language: c.Language,
+				Modes:    c.Modes,
+				Scopes:   scopes,
+				Binary:   c.SupportsBinaryMatch,
+			})
 		}
 		if !reflect.DeepEqual(response.Data.Items, want) {
 			return fmt.Errorf("capability API differs from pkg/profiling: got %+v, want %+v", response.Data.Items, want)
 		}
 		fmt.Println(string(data))
 	case "flamegraph":
-		if len(os.Args) != 5 {
-			return fmt.Errorf("flamegraph requires URL JOB RAW_JSON")
+		if len(os.Args) != 6 {
+			return fmt.Errorf("flamegraph requires URL JOB RAW_JSON PROFILE_TYPE")
 		}
 		raw, err := os.ReadFile(os.Args[4])
 		if err != nil {
@@ -134,8 +140,10 @@ func run() error {
 			}
 		}
 		req := &querier.SelectMergeStacktracesRequest{
-			ProfileTypeID: page.Data.Items[0].Type,
-			LabelSelector: fmt.Sprintf("{id=%q}", os.Args[3]), Start: start.Add(-time.Second).UnixMilli(), End: end.Add(time.Second).UnixMilli(),
+			ProfileTypeID: os.Args[5],
+			LabelSelector: fmt.Sprintf("{id=%q}", os.Args[3]),
+			Start:         start.Add(-time.Second).UnixMilli(),
+			End:           end.Add(time.Second).UnixMilli(),
 		}
 		body, err := proto.Marshal(req)
 		if err != nil {
@@ -150,7 +158,11 @@ func run() error {
 			return err
 		}
 		graph := result.GetFlamegraph()
-		if graph == nil || graph.Total <= 0 || len(graph.Names) == 0 || len(graph.Levels) == 0 {
+		if graph == nil {
+			return fmt.Errorf("missing flamegraph for job %s", os.Args[3])
+		}
+		hasStacks := len(graph.Names) > 0 && len(graph.Levels) > 0
+		if graph.Total <= 0 || !hasStacks {
 			return fmt.Errorf("empty flamegraph for job %s", os.Args[3])
 		}
 		data, err = protojson.Marshal(&result)

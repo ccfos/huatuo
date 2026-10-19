@@ -34,7 +34,13 @@ func main() {
 	next := 0
 	for {
 		hotLoop()
-		data, err := syscall.Mmap(-1, 0, 1024*1024, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_PRIVATE|syscall.MAP_ANON)
+		data, err := syscall.Mmap(
+			-1,
+			0,
+			1024*1024,
+			syscall.PROT_READ|syscall.PROT_WRITE,
+			syscall.MAP_PRIVATE|syscall.MAP_ANON,
+		)
 		if err != nil {
 			panic(err)
 		}
