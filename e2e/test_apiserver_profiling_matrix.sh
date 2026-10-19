@@ -88,7 +88,12 @@ for language in c c++ go java python; do
 		extra=$(jq -nc --arg language "$language" --arg type "$typ" --arg mode "$mode" --arg id "$container_id" \
 			'{language:$language,type:$type,mode:$mode,scope:"container",container_id:$id}')
 		create 15 "$extra"
-		verify_result "$JOB_ID" 1
+		case "$typ/$mode" in
+		cpu/oncpu) expected_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds ;;
+		cpu/offcpu) expected_type=process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds ;;
+		memory/*) expected_type=memory:alloc_space:bytes:space:bytes ;;
+		esac
+		verify_result "$JOB_ID" 1 "$expected_type"
 		jq -e --arg id "$container_id" 'all(.data.items[]; .container_id == $id)' \
 			"${HUATUO_BAMAI_TEST_TMPDIR}/raw-${JOB_ID}.json" > /dev/null || fatal 'raw result belongs to another container'
 		pass

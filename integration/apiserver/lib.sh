@@ -181,12 +181,13 @@ wait_job() {
 assert_error() { jq -e --arg code "$1" '.error.code == $code' "$RESPONSE" > /dev/null || fatal "unexpected error: $(cat "$RESPONSE")"; }
 assert_reason() { jq -e --arg reason "$2" '.data.terminal.reason == $reason' "${HUATUO_BAMAI_TEST_TMPDIR}/status-$1.json" > /dev/null || fatal "job $1 did not fail with $2"; }
 verify_result() {
-	local id=$1 minimum=${2:-2}
+	local id=$1 minimum=${2:-2} expected_type=${3:-process_cpu:cpu:nanoseconds:cpu:nanoseconds}
 	wait_job "$id" completed
 	request GET "/v1/profiling/$id/raw?limit=100" 200
 	cp "$RESPONSE" "${HUATUO_BAMAI_TEST_TMPDIR}/raw-${id}.json"
 	jq -e --argjson minimum "$minimum" '(.data.items | length) >= $minimum and all(.data.items[]; .profile != null and .profile_type != null)' "$RESPONSE" > /dev/null || fatal "missing profiling windows for $id"
-	"$PROBE" flamegraph "$APISERVER_ADDR" "$id" "$RESPONSE" > "${HUATUO_BAMAI_TEST_TMPDIR}/flamegraph-${id}.json"
+	jq -e --arg expected "$expected_type" 'all(.data.items[]; .profile_type == $expected)' "$RESPONSE" > /dev/null || fatal "unexpected profile type for $id: expected $expected_type"
+	"$PROBE" flamegraph "$APISERVER_ADDR" "$id" "$RESPONSE" "$expected_type" > "${HUATUO_BAMAI_TEST_TMPDIR}/flamegraph-${id}.json"
 }
 stop_job() {
 	request POST "/v1/profiling/$1/stop" 200
