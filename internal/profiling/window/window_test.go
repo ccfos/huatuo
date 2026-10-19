@@ -76,7 +76,7 @@ func TestBuildProfilePreservesSamplesAndMetadata(t *testing.T) {
 				names = append(names, got.StringTable[got.Function[location.Line[0].FunctionId-1].Name])
 			}
 
-			expected := [][]string{{"leaf", "main"}, {"leaf"}, {"leaf", "main"}, {"other"}, {"other"}, {"leaf", "main"}}
+			expected := [][]string{{"leaf", "main"}, {"leaf"}, {"leaf_[k]", "main"}, {"other"}, {"other"}, {"leaf", "main"}}
 			if !reflect.DeepEqual(names, expected[i]) {
 				t.Fatalf("frames %v want %v", names, expected[i])
 			}

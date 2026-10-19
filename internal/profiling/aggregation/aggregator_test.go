@@ -124,7 +124,7 @@ func TestAggregatorDrainResolvesStackTraceIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, name := range []string{"app", "12", "main", "work", "entry_SYSCALL_64_after_hwframe"} {
+	for _, name := range []string{"app", "12", "main", "work", "entry_SYSCALL_64_after_hwframe_[k]"} {
 		if !slices.Contains(got.StringTable, name) {
 			t.Fatal(name)
 		}

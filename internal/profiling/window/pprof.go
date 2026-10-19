@@ -56,27 +56,12 @@ func BuildProfile(ctx context.Context, w *types.AggregationWindow) (*profilev1.P
 		Type: intern(parts[1]),
 		Unit: intern(parts[2]),
 	}}
-	for i := range a.Frames {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		f := &a.Frames[i]
-		id := uint64(i) + 1
-		p.Function = append(p.Function, &profilev1.Function{
-			Id:         id,
-			Name:       intern(f.Name),
-			SystemName: intern(f.Name),
-			Filename:   intern(f.File),
-		})
-		p.Location = append(p.Location, &profilev1.Location{
-			Id: id,
-			Line: []*profilev1.Line{{
-				FunctionId: id,
-				Line:       f.Line,
-			}},
-		})
+	// The same dictionary frame can occur in both user and kernel stacks.
+	type locationKey struct {
+		frameID  uint32
+		isKernel bool
 	}
+	locations := make(map[locationKey]uint64, len(a.Frames))
 
 	var emptyLabelString int64
 	p.Sample = make([]*profilev1.Sample, 0, len(a.Samples))
@@ -87,14 +72,43 @@ func BuildProfile(ctx context.Context, w *types.AggregationWindow) (*profilev1.P
 
 		s := &a.Samples[i]
 		sample := &profilev1.Sample{Value: []int64{s.Value}}
-		for _, stackID := range [2]uint32{s.KernelStack, s.UserStack} {
+		for stackIndex, stackID := range [2]uint32{s.KernelStack, s.UserStack} {
 			if stackID == 0 {
 				continue
 			}
 
 			stack := a.Stacks[stackID-1]
 			for j := len(stack) - 1; j >= 0; j-- {
-				sample.LocationId = append(sample.LocationId, uint64(stack[j])+1)
+				key := locationKey{
+					frameID:  stack[j],
+					isKernel: stackIndex == 0,
+				}
+				id := locations[key]
+				if id == 0 {
+					f := &a.Frames[key.frameID]
+					name := f.Name
+					if key.isKernel {
+						name += "_[k]"
+					}
+
+					id = uint64(len(p.Location)) + 1
+					locations[key] = id
+					p.Function = append(p.Function, &profilev1.Function{
+						Id:         id,
+						Name:       intern(name),
+						SystemName: intern(name),
+						Filename:   intern(f.File),
+					})
+					p.Location = append(p.Location, &profilev1.Location{
+						Id: id,
+						Line: []*profilev1.Line{{
+							FunctionId: id,
+							Line:       f.Line,
+						}},
+					})
+				}
+
+				sample.LocationId = append(sample.LocationId, id)
 			}
 		}
 
