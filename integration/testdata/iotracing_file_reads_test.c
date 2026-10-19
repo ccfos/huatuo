@@ -41,6 +41,7 @@ struct inode {
 	struct super_block *i_sb;
 	u64 padding[TEST_INODE_PADDING];
 	u64 i_ino;
+	dev_t i_rdev;
 };
 
 struct file {
