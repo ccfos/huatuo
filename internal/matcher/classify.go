@@ -18,28 +18,43 @@ import (
 	"fmt"
 	"regexp"
 	"sync"
+	"sync/atomic"
 )
 
-// compiledCache memoizes compiled regular expressions. Configurations carry a
-// fixed, small set of patterns, so the cache stays bounded by config size.
-// Invalid expressions cache their compile error, so a bad pattern costs one
-// failed compile instead of one per classified event.
+// compiledCache memoizes compiled regular expressions. Configurations carry
+// a fixed, small set of patterns, so the cache stays bounded by config size.
+// Compile failures are not retained: a rejected config recompiles on its
+// next validation attempt instead of leaking the failed entry forever.
 var compiledCache sync.Map // map[string]compiledEntry
+
+// compiledCacheSize tracks retained entries for the generation reset.
+var compiledCacheSize int64
+
+// compiledCacheMax bounds retained entries; exceeded, the whole cache is
+// dropped (patterns recompile once) so process lifetime memory stays flat.
+const compiledCacheMax = 4096
 
 type compiledEntry struct {
 	reg *regexp.Regexp
-	err error
 }
 
 func compile(expression string) (*regexp.Regexp, error) {
 	if cached, ok := compiledCache.Load(expression); ok {
-		entry := cached.(compiledEntry)
-		return entry.reg, entry.err
+		return cached.(compiledEntry).reg, nil
 	}
 
 	reg, err := regexp.Compile(expression)
-	compiledCache.Store(expression, compiledEntry{reg: reg, err: err})
-	return reg, err
+	if err != nil {
+		return nil, err
+	}
+	if n := atomic.AddInt64(&compiledCacheSize, 1); n > compiledCacheMax {
+		// Generation reset: drop the whole cache rather than tracking
+		// LRU state; entries rebuild from the active config on next use.
+		compiledCache = sync.Map{}
+		atomic.StoreInt64(&compiledCacheSize, 0)
+	}
+	compiledCache.Store(expression, compiledEntry{reg: reg})
+	return reg, nil
 }
 
 // ValidateClassifications validates the name and regular expression in every
