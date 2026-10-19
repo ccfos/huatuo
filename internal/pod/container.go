@@ -229,12 +229,9 @@ func containerByNetNamespace(cookie, inum uint64) (*Container, error) {
 		return c, nil
 	}
 	containerView.mu.RUnlock()
-	containers, err := containersByTypeQos(ContainerTypeNormal, ContainerQosLevelMin)
-	if err != nil {
-		return nil, err
-	}
-
 	// Re-check under the write lock: another goroutine may have built it.
+	// Build from the committed records while holding the lock so the
+	// index revision and its contents cannot straddle a commit.
 	containerView.mu.Lock()
 	if containerView.netns != nil && containerView.netns.revision == containerView.revision {
 		idx := containerView.netns
@@ -251,7 +248,11 @@ func containerByNetNamespace(cookie, inum uint64) (*Container, error) {
 		byCookie: make(map[uint64]*Container),
 		byInum:   make(map[uint64]*Container),
 	}
-	for _, c := range containers {
+	for _, record := range containerView.records {
+		c := record.container
+		if c.Type&ContainerTypeNormal == 0 {
+			continue
+		}
 		if c.NetNamespaceCookie != 0 {
 			idx.byCookie[c.NetNamespaceCookie] = c
 		}
