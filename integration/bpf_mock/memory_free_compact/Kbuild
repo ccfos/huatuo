@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The HuaTuo Authors.
+obj-m += memory_free_compact_mock.o
+memory_free_compact_mock-y := memory_free_compact_mock_kmod.o
+ccflags-y += -I$(src) -I$(obj)
+clean-files += memory_free_compact_hook.h memory_free_compact_event.h
+.DELETE_ON_ERROR:
+
+$(obj)/memory_free_compact_hook.h: $(srctree)/include/linux/compaction.h $(src)/kernel_hook.awk
+	awk -v symbol=try_to_compact_pages -v inputs=0 -v body='msleep(FREE_COMPACT_DELAY_MS); return COMPACT_SKIPPED' -f $(src)/kernel_hook.awk $< > $@
+
+$(obj)/memory_free_compact_event.h: $(srctree)/include/trace/events/vmscan.h $(src)/memory_free_compact_event.awk
+	awk -f $(src)/memory_free_compact_event.awk $< > $@
+
+$(obj)/memory_free_compact_mock_kmod.o: $(obj)/memory_free_compact_hook.h $(obj)/memory_free_compact_event.h
