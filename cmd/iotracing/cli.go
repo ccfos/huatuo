@@ -117,10 +117,23 @@ func validateFlags(c *cli.Context) error {
 // filter map is a separate return because it crosses the BPF ABI; keeping
 // it out of ioConfig avoids accidental mutation by the data layer.
 func loadConfig(c *cli.Context) (ioConfig, map[string]any, error) {
+	maxStack, err := positiveDisplayLimit(c, cliFlagMaxStack)
+	if err != nil {
+		return ioConfig{}, nil, err
+	}
+	maxProcess, err := positiveDisplayLimit(c, cliFlagMaxProcess)
+	if err != nil {
+		return ioConfig{}, nil, err
+	}
+	maxFilesPerProcess, err := positiveDisplayLimit(c, cliFlagMaxFilesPerPid)
+	if err != nil {
+		return ioConfig{}, nil, err
+	}
+
 	cfg := ioConfig{
-		maxStack:           c.Uint64(cliFlagMaxStack),
-		maxProcess:         c.Uint64(cliFlagMaxProcess),
-		maxFilesPerProcess: c.Uint64(cliFlagMaxFilesPerPid),
+		maxStack:           maxStack,
+		maxProcess:         maxProcess,
+		maxFilesPerProcess: maxFilesPerProcess,
 		scheduleThreshold:  c.Uint64(cliFlagSchedThreshold),
 		durationSecond:     c.Uint64(cliFlagDuration),
 	}
@@ -151,6 +164,15 @@ func loadConfig(c *cli.Context) (ioConfig, map[string]any, error) {
 	}
 
 	return cfg, filters, nil
+}
+
+func positiveDisplayLimit(c *cli.Context, flagName string) (uint64, error) {
+	value := c.Int(flagName)
+	if value <= 0 {
+		return 0, fmt.Errorf("--%s must be greater than zero", flagName)
+	}
+
+	return uint64(value), nil
 }
 
 // parseDeviceNumbers turns a "major:minor[,major:minor]" string into the
