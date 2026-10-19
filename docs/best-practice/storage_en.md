@@ -608,3 +608,5 @@ another. Older documents and events without kernel timestamps omit the new
 field; historical data is not migrated automatically. The raw
 `kernel_observed_ns` stays in process for correlation and is not
 written to new documents.
+
+Each Elasticsearch/OpenSearch HTTP attempt has a 30-second timeout that includes response-body reads. A shorter caller deadline takes precedence. HTTP redirects are returned to the caller rather than followed. SDK retries can make the total operation longer than one attempt.
