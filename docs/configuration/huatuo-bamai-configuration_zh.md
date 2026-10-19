@@ -742,7 +742,9 @@ cgroup 归属。记录中的内存使用量和限额属于该容器的 cgroup。
 #### 7.7 IRQTracing 自动追踪
 
 该模块检测单个 CPU 的 irq+softirq 利用率异常，并调用 `irqtracing` 采集
-softirq source 和 victim 调用栈。
+softirq source 和 victim 调用栈。IRQ 结果统一写入 profiling 存储，需要
+配置 Elasticsearch。窗口可查询且发布标记保存成功后，任务才成功；仅配置
+LocalFile 不足以保存该结果。
 
 ```bash
 [AutoTracing.IRQTracing]

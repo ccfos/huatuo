@@ -759,7 +759,9 @@ See section 14 for deployment limitations and output lookup.
 #### 7.7 IRQTracing AutoTracing
 
 This module detects abnormal irq+softirq utilization on one CPU and invokes
-`irqtracing` to collect softirq source and victim stacks.
+`irqtracing` to collect softirq source and victim stacks. IRQ results use the
+profiling store and require Elasticsearch. A task succeeds after its window is
+query-visible and its publication marker is saved; LocalFile alone is insufficient.
 
 ```bash
 [AutoTracing.IRQTracing]

@@ -26,7 +26,7 @@ Metrics 通过 procfs、sysfs 或 eBPF 周期采集系统状态，以 Prometheus
 - CPU：sys、usr、util、load、nr_running 等。
 - 内存：vmstat、memory_stat、directreclaim、asyncreclaim 等。
 - IO：d2c、q2c、freeze、flush 等。
-- 网络：ARP、socket memory、qdisc、netstat、netdev、sockstat 等。
+- 网络：ARP、socket memory、qdisc、netstat、netdev、sockstat、conntrack 表项数与上限等。
 
 ### Event
 
