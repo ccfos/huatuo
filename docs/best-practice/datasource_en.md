@@ -23,13 +23,14 @@ cd build/docker
 docker compose up -d
 ```
 
-This starts four services on the host network:
+This starts five services on the host network:
 
 | Service | Port | Purpose |
 |---|---|---|
 | Elasticsearch | 9200 | Log storage |
 | Prometheus | 9090 | Metrics collection |
 | Grafana | 3000 | Visualization |
+| huatuo-apiserver | 12740 | Profiling/tracing job API and flamegraph queries |
 | huatuo-bamai | 19704 | Agent (metrics + tracing) |
 
 **Default credentials:**
@@ -66,13 +67,15 @@ The following data sources are created automatically via `build/docker/grafana/d
 | huatuo-bamai-prom | Prometheus | `huatuo-bamai-prom` |
 | huatuo-bamai-es | Elasticsearch | `huatuo-bamai-es` |
 | huatuo-bamai-infinity | Infinity | `huatuo-bamai-infinity-auto-flamegraph` |
+| huatuo-apiserver-pyroscope | Pyroscope | `huatuo-apiserver-pyroscope` |
 
 ### Provisioned Dashboards
 
-Six dashboards are loaded from `build/docker/grafana/dashboards/`:
+Seven dashboards are loaded from `build/docker/grafana/dashboards/`:
 
 - Metric Dashboard — Host View
 - Metric Dashboard — Container View
+- Disk IO — Continuous Monitoring
 - HuaTuo Root Cause Analysis AutoTracing
 - Continuous Profiling (Host)
 - Continuous Profiling (Container)
@@ -198,12 +201,12 @@ Configure via Grafana UI or provisioning:
 - **Authentication**: Basic Authentication
 - **Username**: `elastic`
 - **Password**: `<your-elasticsearch-password>`
-- **Index name**: `huatuo_bamai`
+- **Index name**: `huatuo_bamai*`
 - **Time field name**: `uploaded_timestamp`
 
 ## Dashboard Import
 
-When using Docker Compose, dashboards are provisioned automatically. To import additional dashboards from the HUAUO console:
+When using Docker Compose, dashboards are provisioned automatically. To import additional dashboards from the HUATUO console:
 
 1. Access `http://console.huatuo.tech/dashboards` (Username: `huatuo`, Password: `huatuo1024`)
 2. Select the desired dashboard

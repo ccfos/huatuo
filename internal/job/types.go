@@ -138,6 +138,9 @@ type Query struct {
 	Sort        string
 	Limit       int
 	Offset      int
+	// lastReadID resumes ID-ascending pagination after the previous batch.
+	// Empty starts from the beginning; the referenced record is excluded.
+	lastReadID string
 }
 
 // Page contains one Job page and whether another page is available.

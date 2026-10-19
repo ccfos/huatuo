@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	capnp "capnproto.org/go/capnp/v3"
 
@@ -32,6 +33,7 @@ type Server struct {
 	mutex       sync.Mutex
 	waitGroup   sync.WaitGroup
 	connections map[net.Conn]struct{}
+	tasks       map[[2]string]*Session
 	listener    net.Listener
 	handler     func(*Session, ChunkMsg)
 	cancel      context.CancelFunc
@@ -113,17 +115,43 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	// Empty ToolName violates the protocol: with no name the connection cannot
+	// Empty ServiceName violates the protocol: with no name the connection cannot
 	// be routed to any handler. Log at Error level so the producer side notices.
-	if sess.ToolName == "" {
-		log.Errorf("connect: empty tool name, closing connection")
+	if sess.ServiceName == "" {
+		log.Errorf("connect: empty service name, closing connection")
 		return
 	}
 
-	log.Infof("connected tool=%s version=%s task_id=%s",
-		sess.ToolName, sess.Version, sess.TaskID)
-	defer log.Infof("disconnected tool=%s task_id=%s",
-		sess.ToolName, sess.TaskID)
+	sess.Context = ctx
+
+	// Ownership lasts through handler completion and ACK, including a peer disconnect.
+	var ownershipErr error
+	if sess.TaskID != "" {
+		key := [2]string{sess.ServiceName, sess.TaskID}
+		s.mutex.Lock()
+		if s.tasks == nil {
+			s.tasks = make(map[[2]string]*Session)
+		}
+		if s.tasks[key] != nil {
+			ownershipErr = fmt.Errorf("toolstream: session %s/%s already belongs to another connection", sess.ServiceName, sess.TaskID)
+			sess.Err = ownershipErr
+		} else {
+			s.tasks[key] = sess
+		}
+		s.mutex.Unlock()
+		if ownershipErr == nil {
+			defer func() {
+				s.mutex.Lock()
+				delete(s.tasks, key)
+				s.mutex.Unlock()
+			}()
+		}
+	}
+
+	log.Infof("connected service=%s version=%s task_id=%s",
+		sess.ServiceName, sess.Version, sess.TaskID)
+	defer log.Infof("disconnected service=%s task_id=%s",
+		sess.ServiceName, sess.TaskID)
 
 	for {
 		if ctx.Err() != nil {
@@ -133,7 +161,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		msg, err := frameDecoder.Decode()
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				log.Warnf("%s: recv: %v", sess.ToolName, err)
+				log.Warnf("%s: recv: %v", sess.ServiceName, err)
 			}
 
 			return
@@ -142,16 +170,29 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		chunk, err := parseChunk(msg)
 		if err != nil {
 			msg.Release()
-			log.Warnf("%s: recv: %v", sess.ToolName, err)
+			log.Warnf("%s: recv: %v", sess.ServiceName, err)
 			return
 		}
 
-		s.handler(sess, chunk)
-
-		// The handler has consumed Data; return the decoded frame to Cap'n Proto's pool.
-		end := chunk.End
+		if chunk.Commit && (!chunk.End || chunk.Err != "") {
+			chunk.Err = "commit requires end and no tool error"
+			chunk.End = true
+		}
+		if ownershipErr == nil {
+			s.handler(sess, chunk)
+		}
+		// Data belongs to the frame and remains valid until the handler returns.
 		msg.Release()
-		if end {
+		if chunk.Commit {
+			if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				return
+			}
+			if err := sendCommitResult(conn, sess.Err); err != nil {
+				log.Warnf("%s: commit acknowledgement: %v", sess.ServiceName, err)
+			}
+		}
+
+		if chunk.End {
 			return
 		}
 	}
@@ -173,14 +214,19 @@ func parseSession(msg *capnp.Message) (*Session, error) {
 		return nil, fmt.Errorf("transport: decode connect: %w", err)
 	}
 
+	if connect.ProtoVersion() != 3 {
+		return nil, fmt.Errorf("unsupported toolstream protocol %d; require 3", connect.ProtoVersion())
+	}
+	serviceName, _ := connect.ServiceName()
 	toolName, _ := connect.ToolName()
 	version, _ := connect.Version()
 	taskID, _ := connect.TaskID()
 
 	return &Session{
-		ToolName: toolName,
-		Version:  version,
-		TaskID:   taskID,
+		ServiceName: serviceName,
+		ToolName:    toolName,
+		Version:     version,
+		TaskID:      taskID,
 	}, nil
 }
 
@@ -211,10 +257,10 @@ func parseChunk(msg *capnp.Message) (ChunkMsg, error) {
 	}
 
 	return ChunkMsg{
-		Data:  data,
-		Flush: chunk.Flush(),
-		End:   chunk.End(),
-		Err:   errStr,
+		Data:   data,
+		Commit: chunk.Commit(),
+		End:    chunk.End(),
+		Err:    errStr,
 	}, nil
 }
 
@@ -251,4 +297,26 @@ func (s *Server) Close() error {
 	s.waitGroup.Wait()
 
 	return errors.Join(errs...)
+}
+
+func sendCommitResult(conn net.Conn, failure error) error {
+	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil {
+		return err
+	}
+	defer msg.Release()
+	root, err := NewRootMessage(seg)
+	if err != nil {
+		return err
+	}
+	result, err := root.NewResult()
+	if err != nil {
+		return err
+	}
+	if failure != nil {
+		if err := result.SetError(failure.Error()); err != nil {
+			return err
+		}
+	}
+	return capnp.NewEncoder(conn).Encode(msg)
 }
