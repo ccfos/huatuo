@@ -71,8 +71,11 @@ var (
 	cgroupCssMetaDataMap      sync.Map
 	// cgroupCssByContainerID indexes CSS addresses by container ID so
 	// cgroupListCssDataByKnode does not range over every CSS entry for each
-	// container during the 30s resync (O(N^2) -> O(N)).
+	// container during the 30s resync (O(N^2) -> O(N)). The sets behind
+	// each entry are guarded by cgroupCssIndexMu; sync.Map only protects
+	// publication of the set pointer itself.
 	cgroupCssByContainerID sync.Map
+	cgroupCssIndexMu       sync.RWMutex
 
 	// avoid GC
 	cgroupCssBpfInternal   *bpf.BPF
@@ -97,6 +100,7 @@ func cgroupListCssDataByKnode(containerID string) []*containerCssMetaData {
 	if !ok {
 		return res
 	}
+	cgroupCssIndexMu.RLock()
 	for addr := range *addrsAny.(*map[uint64]struct{}) {
 		if v, loaded := cgroupCssMetaDataMap.Load(addr); loaded {
 			if m, ok := v.(*containerCssMetaData); ok && m.ContainerID == containerID {
@@ -130,7 +134,9 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent, containerID string
 			cgroupCssMetaDataMap.Store(css, m)
 			addrsAny, _ := cgroupCssByContainerID.LoadOrStore(containerID, &map[uint64]struct{}{})
 			addrs := addrsAny.(*map[uint64]struct{})
+			cgroupCssIndexMu.Lock()
 			(*addrs)[css] = struct{}{}
+			cgroupCssIndexMu.Unlock()
 		}
 	}
 
@@ -154,8 +160,11 @@ func cgroupDeleteCssData(data *containerCssPerfEvent, containerID string) error 
 				if mm, ok := m.(*containerCssMetaData); ok {
 					if addrsAny, found := cgroupCssByContainerID.Load(mm.ContainerID); found {
 						addrs := addrsAny.(*map[uint64]struct{})
+						cgroupCssIndexMu.Lock()
 						delete(*addrs, css)
-						if len(*addrs) == 0 {
+						remaining := len(*addrs)
+						cgroupCssIndexMu.Unlock()
+						if remaining == 0 {
 							cgroupCssByContainerID.CompareAndDelete(mm.ContainerID, addrsAny)
 						}
 					}
