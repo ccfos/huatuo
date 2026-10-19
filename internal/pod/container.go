@@ -324,9 +324,13 @@ func ContainerByCSS(css uint64, subsys string) (*Container, error) {
 	if _, err := containerByNetNamespace(0, 0); err != nil {
 		return nil, err
 	}
-	// containerByNetNamespace above builds the index.
+	// containerByNetNamespace built the index, but a commit may have
+	// dropped it before this reader re-acquires the lock; revalidate
+	// instead of dereferencing a possibly nil index.
 	containerView.mu.RLock()
-	c = containerView.netns.byCSS[subsys][css]
+	if idx := containerView.netns; idx != nil && idx.revision == containerView.revision {
+		c = idx.byCSS[subsys][css]
+	}
 	containerView.mu.RUnlock()
 	return c, nil
 }
