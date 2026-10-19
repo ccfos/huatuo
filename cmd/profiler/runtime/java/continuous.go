@@ -272,3 +272,33 @@ func stopAsprofSampling(
 		profilerexec.Verify(results),
 	)
 }
+
+// ReadAsprofDataLoop consumes complete files produced by async-profiler's loop.
+func ReadAsprofDataLoop(
+	ctx context.Context,
+	opt *AsprofSamplingOption,
+	pidToPath map[int]string,
+	enqueue func(profile.SampleOutput) error,
+) error {
+	collector := newCollapsedFileCollector(
+		opt.Pids,
+		pidToPath,
+		enqueue,
+	)
+	if err := collector.run(ctx); err != nil {
+		return err
+	}
+
+	if !profile.IsNormalStop(ctx) {
+		return context.Cause(ctx)
+	}
+	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), profile.FinalizationTimeout)
+	defer cancel()
+	collector.enqueueSample = func(output profile.SampleOutput) error {
+		if err := finalCtx.Err(); err != nil {
+			return err
+		}
+		return enqueue(output)
+	}
+	return finishAsprofSampling(finalCtx, opt, collector)
+}

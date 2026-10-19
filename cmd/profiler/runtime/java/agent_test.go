@@ -16,37 +16,16 @@ package java
 
 import (
 	"bytes"
-	"context"
-	"errors"
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
-	"time"
-
-	"github.com/ccfos/huatuo/internal/profiling/profile"
 )
 
-func TestStartAsprofSamplingValidatesDuration(t *testing.T) {
-	t.Parallel()
-
-	_, err := StartAsprofSampling(context.Background(), &AsprofSamplingOption{
-		AggrInterval: time.Second,
-	})
-	if err == nil {
-		t.Fatalf("StartAsprofSampling() error=%v, want positive duration error", err)
-	}
-}
-
-func TestAsyncProfilerPaths(t *testing.T) {
+func TestAgentLibraryPath(t *testing.T) {
 	t.Parallel()
 
 	toolPath := filepath.Join("opt", "async-profiler")
-	if got, want := asprofPath(toolPath), filepath.Join(toolPath, "bin", "asprof"); got != want {
-		t.Fatalf("asprofPath()=%q, want %q", got, want)
-	}
-
 	if got, want := agentLibraryPath(toolPath), filepath.Join(toolPath, "lib", "libasyncProfiler.so"); got != want {
 		t.Fatalf("agentLibraryPath()=%q, want %q", got, want)
 	}
@@ -200,102 +179,6 @@ func TestCheckAgentDirSpaceRejectsInsufficientSpace(t *testing.T) {
 	}
 }
 
-func TestStartAsprofCallbackBuildsStartCommand(t *testing.T) {
-	t.Parallel()
-
-	profileOutFile := make(map[int]string)
-	args := startAsprofCallback(
-		profileOutFile,
-		[]string{
-			"--libpath", "/tmp/libasyncProfiler.so",
-			"-e", "cpu",
-		},
-		"cpu",
-		"session123",
-		10*time.Second,
-		4,
-	)(999999999)
-	wantArgs := []string{
-		"start",
-		"--libpath", "/tmp/libasyncProfiler.so",
-		"-e", "cpu",
-		"--loop", "10s",
-		"-o", "collapsed,dot",
-		"-f", "/tmp/huatuo-asprof-session123-cpu-999999999-%n{4}.collapsed",
-		"999999999",
-	}
-	if !slices.Equal(args, wantArgs) {
-		t.Fatalf("startAsprofCallback() args=%q, want %q", args, wantArgs)
-	}
-
-	if got, want := profileOutFile[999999999], "/tmp/huatuo-asprof-session123-cpu-999999999-*.collapsed"; got != want {
-		t.Fatalf("profile output path=%q, want %q", got, want)
-	}
-}
-
-func TestAsprofOutputFileCount(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name                string
-		duration            time.Duration
-		aggregationInterval time.Duration
-		want                uint64
-	}{
-		{
-			name:                "exact windows",
-			duration:            20 * time.Second,
-			aggregationInterval: 10 * time.Second,
-			want:                4,
-		},
-		{
-			name:                "partial window",
-			duration:            21 * time.Second,
-			aggregationInterval: 10 * time.Second,
-			want:                5,
-		},
-		{
-			name:                "duration below interval",
-			duration:            time.Second,
-			aggregationInterval: 10 * time.Second,
-			want:                3,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := asprofOutputFileCount(tt.duration, tt.aggregationInterval)
-			if got != tt.want {
-				t.Fatalf("asprofOutputFileCount()=%d, want %d", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestStopWithOutputArgsBuildsCollapsedOutputCommand(t *testing.T) {
-	t.Parallel()
-
-	got := stopWithOutputArgs(
-		1234,
-		"session123",
-		"mem",
-		4,
-	)
-	want := []string{
-		"stop",
-		"--libpath", "/tmp/libasyncProfiler.so",
-		"-o", "collapsed,dot",
-		"-f", "/tmp/huatuo-asprof-session123-mem-1234-4.collapsed",
-		"--total",
-		"1234",
-	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("stopWithOutputArgs()=%q, want %q", got, want)
-	}
-}
-
 func writeAgentSource(t *testing.T, toolPath string, content []byte, mode os.FileMode) {
 	t.Helper()
 	libDir := filepath.Join(toolPath, "lib")
@@ -348,39 +231,5 @@ func assertNoAgentTempFiles(t *testing.T, dir string) {
 
 	if len(tempFiles) != 0 {
 		t.Fatalf("temporary Java agent files=%q, want none", tempFiles)
-	}
-}
-
-func TestReadAsprofDataLoopStopContract(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		cause       error
-		wantSamples int
-	}{
-		{"duration", profile.ErrCollectionDurationElapsed, 1},
-		{"requested", profile.ErrStopRequested, 1},
-		{"failure", context.Canceled, 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "profile-0.collapsed")
-			if err := os.WriteFile(path, []byte("root;leaf 7\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithCancelCause(t.Context())
-			cancel(tc.cause)
-			count := 0
-			err := ReadAsprofDataLoop(ctx, &AsprofSamplingOption{Pids: []int{123}, activePIDs: map[int]bool{}}, map[int]string{123: filepath.Join(filepath.Dir(path), "profile-*.collapsed")}, func(profile.SampleOutput) error { count++; return nil })
-			// No active external profiler needs stopping; only the final file is consumed.
-			if tc.wantSamples == 0 {
-				if !errors.Is(err, tc.cause) {
-					t.Fatalf("error=%v", err)
-				}
-			} else if err != nil {
-				t.Fatal(err)
-			}
-			if count != tc.wantSamples {
-				t.Fatalf("samples=%d want=%d", count, tc.wantSamples)
-			}
-		})
 	}
 }

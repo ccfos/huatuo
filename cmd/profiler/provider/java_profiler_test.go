@@ -16,8 +16,14 @@ package provider
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	javaruntime "github.com/ccfos/huatuo/cmd/profiler/runtime/java"
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -67,7 +73,125 @@ func TestJavaProfilerCapturesConfiguration(t *testing.T) {
 
 	cfg.Freq = 1
 	cfg.ContainerID = "changed-container"
-	if task.AggregationConfig.ContainerID != "original-container" || task.Impl.(*cpuJavaProfiler).config.Freq != 100 {
+	if task.AggregationConfig.ContainerID != "original-container" || task.Impl.(*javaProfiler).config.Freq != 100 {
 		t.Fatal("task aliases configuration")
+	}
+}
+
+func TestPrepareJavaSamplingRejectsInvalidInputs(t *testing.T) {
+	t.Parallel()
+	toolDir := t.TempDir()
+	for _, name := range []string{"bin/asprof", "lib/libasyncProfiler.so"} {
+		path := filepath.Join(toolDir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if name == "bin/asprof" {
+			if err := os.Chmod(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		toolDir   string
+		wantError string
+	}{
+		{
+			name:      "missing tools",
+			wantError: "tool directory is not configured",
+		},
+		{
+			name:      "non-java process",
+			toolDir:   toolDir,
+			wantError: `want prefix "java"`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pids, labels, err := prepareJavaSampling(&Config{
+				ToolDir: tc.toolDir,
+				PIDs:    []int{os.Getpid()},
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("prepareJavaSampling() error=%v, want %q", err, tc.wantError)
+			}
+			if pids != nil || labels != nil {
+				t.Fatalf("failed preparation returned pids=%v labels=%v", pids, labels)
+			}
+		})
+	}
+}
+
+func TestJavaProfilerSampleWeights(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		config Config
+		want   int64
+	}{
+		{
+			name: "cpu nanoseconds",
+			config: Config{
+				Type: profiling.TypeCPU,
+				Freq: 99,
+			},
+			want: 70000000,
+		},
+		{
+			name: "allocated bytes",
+			config: Config{
+				Type: profiling.TypeMemory,
+				Mode: profiling.ModeObjectAlloc,
+			},
+			want: 7,
+		},
+		{
+			name: "live bytes",
+			config: Config{
+				Type: profiling.TypeMemory,
+				Mode: profiling.ModeObjectUsage,
+			},
+			want: 7,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			task, err := New(profiling.ImplementationJava, &tc.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, ok := task.Impl.(*javaProfiler)
+			if !ok {
+				t.Fatalf("Java implementation = %T, want *javaProfiler", task.Impl)
+			}
+			path := filepath.Join(t.TempDir(), "profile-0.collapsed")
+			if err := os.WriteFile(path, []byte("root;leaf 7\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			// No external sampler is active; normal stopping drains this final file.
+			p.samplingOpt = &javaruntime.AsprofSamplingOption{Pids: []int{123}}
+			p.profileOutFile = map[int]string{123: path}
+			ctx, cancel := context.WithCancelCause(t.Context())
+			cancel(profile.ErrCollectionDurationElapsed)
+			var count int
+			err = p.ReadDataLoop(ctx, func(batch *pipeline.SampleBatch) error {
+				for i := range batch.Samples {
+					count++
+					if got := batch.Samples[i].Value; got != tc.want {
+						t.Errorf("sample weight = %d, want %d", got, tc.want)
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count != 1 {
+				t.Fatalf("sample count = %d, want 1", count)
+			}
+		})
 	}
 }

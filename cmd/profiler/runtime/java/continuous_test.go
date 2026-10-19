@@ -15,6 +15,8 @@
 package java
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -242,4 +244,52 @@ func newTestCollapsedFileCollector(
 	)
 
 	return samples, collector
+}
+
+func TestReadAsprofDataLoopStopContract(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cause       error
+		wantSamples int
+	}{
+		{
+			name:        "duration",
+			cause:       profile.ErrCollectionDurationElapsed,
+			wantSamples: 1,
+		},
+		{
+			name:        "requested",
+			cause:       profile.ErrStopRequested,
+			wantSamples: 1,
+		},
+		{
+			name:  "failure",
+			cause: context.Canceled,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "profile-0.collapsed")
+			if err := os.WriteFile(path, []byte("root;leaf 7\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancelCause(t.Context())
+			cancel(tc.cause)
+			count := 0
+			err := ReadAsprofDataLoop(ctx, &AsprofSamplingOption{
+				Pids:       []int{123},
+				activePIDs: map[int]bool{},
+			}, map[int]string{123: filepath.Join(filepath.Dir(path), "profile-*.collapsed")}, func(profile.SampleOutput) error { count++; return nil })
+			// No active external profiler needs stopping; only the final file is consumed.
+			if tc.wantSamples == 0 {
+				if !errors.Is(err, tc.cause) {
+					t.Fatalf("error=%v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if count != tc.wantSamples {
+				t.Fatalf("samples=%d want=%d", count, tc.wantSamples)
+			}
+		})
+	}
 }
