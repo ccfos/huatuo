@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Throttle tests keep statistics, hook compatibility, and BPF lifecycle contracts together.
+// Blk-throttle tests keep statistics, hook compatibility, and BPF lifecycle contracts together.
 package collector
 
 import (
@@ -43,16 +43,16 @@ import (
 
 // Per-CPU snapshot and metric fixtures.
 
-const throtlBLKGOwnerMap = "throtl_blkg_owner_map"
+const blkThrotlBLKGOwnerMap = "blk_throtl_blkg_owner_map"
 
-type throtlTestDump struct {
+type blkThrotlTestDump struct {
 	items []bpf.MapItem
 	err   error
 }
 
-type fakeThrotlCollectorBPF struct {
+type fakeBlkThrotlCollectorBPF struct {
 	bpf.BPF
-	dumps           []throtlTestDump
+	dumps           []blkThrotlTestDump
 	statusMapID     uint32
 	aggregateMapID  uint32
 	statusValue     []byte
@@ -63,18 +63,18 @@ type fakeThrotlCollectorBPF struct {
 	statusCalls     int
 }
 
-func newFakeThrotlCollectorBPF() *fakeThrotlCollectorBPF {
-	return &fakeThrotlCollectorBPF{
+func newFakeBlkThrotlCollectorBPF() *fakeBlkThrotlCollectorBPF {
+	return &fakeBlkThrotlCollectorBPF{
 		statusMapID:    1,
 		aggregateMapID: 2,
 		statusValue:    make([]byte, binary.Size(ioControlStatus{})),
 	}
 }
 
-func (b *fakeThrotlCollectorBPF) DumpMapByName(
+func (b *fakeBlkThrotlCollectorBPF) DumpMapByName(
 	name string,
 ) ([]bpf.MapItem, error) {
-	if name != throtlWaitAggregateMap {
+	if name != blkThrotlWaitAggregateMap {
 		return nil, fmt.Errorf("unexpected map %q", name)
 	}
 	b.dumpCalls++
@@ -86,27 +86,27 @@ func (b *fakeThrotlCollectorBPF) DumpMapByName(
 	return result.items, result.err
 }
 
-func (b *fakeThrotlCollectorBPF) dumpBatch(
+func (b *fakeBlkThrotlCollectorBPF) dumpBatch(
 	mapID uint32,
 ) ([]bpf.MapItem, error) {
-	if mapID != b.MapIDByName(throtlWaitAggregateMap) {
+	if mapID != b.MapIDByName(blkThrotlWaitAggregateMap) {
 		return nil, fmt.Errorf("unexpected batch map ID %d", mapID)
 	}
-	return b.DumpMapByName(throtlWaitAggregateMap)
+	return b.DumpMapByName(blkThrotlWaitAggregateMap)
 }
 
-func (b *fakeThrotlCollectorBPF) MapIDByName(name string) uint32 {
+func (b *fakeBlkThrotlCollectorBPF) MapIDByName(name string) uint32 {
 	switch name {
 	case ioControlStatusMap:
 		return b.statusMapID
-	case throtlWaitAggregateMap:
+	case blkThrotlWaitAggregateMap:
 		return b.aggregateMapID
 	default:
 		return 0
 	}
 }
 
-func (b *fakeThrotlCollectorBPF) ReadMap(
+func (b *fakeBlkThrotlCollectorBPF) ReadMap(
 	mapID uint32,
 	key []byte,
 ) ([]byte, error) {
@@ -120,10 +120,10 @@ func (b *fakeThrotlCollectorBPF) ReadMap(
 	if b.statusErr != nil && (b.statusErrAtCall == 0 || b.statusCalls == b.statusErrAtCall) {
 		return nil, b.statusErr
 	}
-	return throtlTestStatusValue(b.statusValue, &b.deviceChanges), nil
+	return blkThrotlTestStatusValue(b.statusValue, &b.deviceChanges), nil
 }
 
-func nextThrotlTestDeviceChange(values *[]uint64) uint64 {
+func nextBlkThrotlTestDeviceChange(values *[]uint64) uint64 {
 	if len(*values) == 0 {
 		return 0
 	}
@@ -134,30 +134,30 @@ func nextThrotlTestDeviceChange(values *[]uint64) uint64 {
 	return value
 }
 
-func (b *fakeThrotlCollectorBPF) setDumps(results ...throtlTestDump) {
-	b.dumps = append([]throtlTestDump(nil), results...)
+func (b *fakeBlkThrotlCollectorBPF) setDumps(results ...blkThrotlTestDump) {
+	b.dumps = append([]blkThrotlTestDump(nil), results...)
 }
 
-type reusedThrotlCollectorBPF struct {
-	*fakeThrotlCollectorBPF
-	batchDumps []throtlTestDump
+type reusedBlkThrotlCollectorBPF struct {
+	*fakeBlkThrotlCollectorBPF
+	batchDumps []blkThrotlTestDump
 }
 
-func (b *reusedThrotlCollectorBPF) dumpBatch(
+func (b *reusedBlkThrotlCollectorBPF) dumpBatch(
 	mapID uint32,
 ) ([]bpf.MapItem, error) {
-	if mapID != b.MapIDByName(throtlWaitAggregateMap) {
+	if mapID != b.MapIDByName(blkThrotlWaitAggregateMap) {
 		return nil, fmt.Errorf("unexpected batch map ID %d", mapID)
 	}
 	if len(b.batchDumps) == 0 {
-		return nil, fmt.Errorf("unexpected extra %s batch dump", throtlWaitAggregateMap)
+		return nil, fmt.Errorf("unexpected extra %s batch dump", blkThrotlWaitAggregateMap)
 	}
 	result := b.batchDumps[0]
 	b.batchDumps = b.batchDumps[1:]
 	return result.items, result.err
 }
 
-type throtlTestKey struct {
+type blkThrotlTestKey struct {
 	serial    uint64
 	css       uint64
 	major     uint32
@@ -165,23 +165,23 @@ type throtlTestKey struct {
 	operation uint32
 }
 
-type throtlTestLane = ioControlWaitCounters
+type blkThrotlTestLane = ioControlWaitCounters
 
-type throtlTestBLKGOwner struct {
+type blkThrotlTestBLKGOwner struct {
 	CSS       uint64
 	CSSSerial uint64
 	Major     uint32
 	Minor     uint32
 }
 
-func stableThrotlTestLane(count, wait10US uint64) throtlTestLane {
-	return throtlTestLane{
+func stableBlkThrotlTestLane(count, wait10US uint64) blkThrotlTestLane {
+	return blkThrotlTestLane{
 		IOCount:  count,
 		Wait10US: wait10US,
 	}
 }
 
-func throtlTestRawKey(key throtlTestKey) ioControlWaitKey {
+func blkThrotlTestRawKey(key blkThrotlTestKey) ioControlWaitKey {
 	if key.serial == 0 {
 		key.serial = key.css
 	}
@@ -194,38 +194,38 @@ func throtlTestRawKey(key throtlTestKey) ioControlWaitKey {
 	}
 }
 
-func throtlTestItem(
-	key throtlTestKey,
-	lanes ...throtlTestLane,
+func blkThrotlTestItem(
+	key blkThrotlTestKey,
+	lanes ...blkThrotlTestLane,
 ) bpf.MapItem {
-	return ioControlWaitTestItem(throtlTestRawKey(key), lanes...)
+	return ioControlWaitTestItem(blkThrotlTestRawKey(key), lanes...)
 }
 
-func newThrotlTestCollector(
+func newBlkThrotlTestCollector(
 	t *testing.T,
 	object ioControlTestBPF,
 	possibleCPUs int,
-) *throtlTracing {
+) *blkThrotlTracing {
 	t.Helper()
 	ioControlTestDiskstats(t)
 	breaker, cancel := context.WithCancelCause(t.Context())
 	t.Cleanup(func() { cancel(nil) })
-	return &throtlTracing{session: &throtlSession{
+	return &blkThrotlTracing{session: &blkThrotlSession{
 		object:          object,
 		hashReader:      ioControlHashReader{lookupBatch: object.dumpBatch},
 		possibleCPUs:    possibleCPUs,
 		previous:        make(ioControlWaitSnapshot),
 		breaker:         breaker,
 		cancel:          cancel,
-		containerSource: emptyThrotlTestContainerSource,
+		containerSource: emptyBlkThrotlTestContainerSource,
 	}}
 }
 
-func emptyThrotlTestContainerSource() (map[string]*pod.Container, error) {
+func emptyBlkThrotlTestContainerSource() (map[string]*pod.Container, error) {
 	return nil, nil
 }
 
-func throtlMetricByNameAndScope(
+func blkThrotlMetricByNameAndScope(
 	t *testing.T,
 	metrics []*metric.Data,
 	wantName string,
@@ -242,7 +242,7 @@ func throtlMetricByNameAndScope(
 	return matches[0]
 }
 
-func throtlCustomLabels(labels map[string]string) map[string]string {
+func blkThrotlCustomLabels(labels map[string]string) map[string]string {
 	result := make(map[string]string, len(labels))
 	for key, value := range labels {
 		if key == metric.LabelHost || key == metric.LabelRegion {
@@ -253,7 +253,7 @@ func throtlCustomLabels(labels map[string]string) map[string]string {
 	return result
 }
 
-func requireThrotlHostAndOtherMetrics(
+func requireBlkThrotlHostAndOtherMetrics(
 	t *testing.T,
 	metrics []*metric.Data,
 	device string,
@@ -270,97 +270,97 @@ func requireThrotlHostAndOtherMetrics(
 			"scope":     scope,
 		}
 
-		count := throtlMetricByNameAndScope(t, metrics,
+		count := blkThrotlMetricByNameAndScope(t, metrics,
 			"delayed_io_count", scope)
 		require.Equal(t, metric.MetricTypeGauge, count.Type())
 		require.Equal(t, wantCount, count.Value)
-		require.Equal(t, wantLabels, throtlCustomLabels(count.Labels()))
+		require.Equal(t, wantLabels, blkThrotlCustomLabels(count.Labels()))
 		require.NotEmpty(t, count.Help())
-		require.Contains(t, strings.ToLower(count.Help()), "throttle")
+		require.Contains(t, strings.ToLower(count.Help()), "blk-throttle")
 
-		average := throtlMetricByNameAndScope(t, metrics,
+		average := blkThrotlMetricByNameAndScope(t, metrics,
 			"average_wait_ms", scope)
 		require.Equal(t, metric.MetricTypeGauge, average.Type())
 		require.Equal(t, wantAverageMS, average.Value)
-		require.Equal(t, wantLabels, throtlCustomLabels(average.Labels()))
+		require.Equal(t, wantLabels, blkThrotlCustomLabels(average.Labels()))
 		require.NotEmpty(t, average.Help())
-		require.Contains(t, strings.ToLower(average.Help()), "throttle")
+		require.Contains(t, strings.ToLower(average.Help()), "blk-throttle")
 	}
 }
 
 // Strict map decoding and raw collection boundaries.
 
-func TestThrotlSnapshotRetriesCounterTraversal(t *testing.T) {
-	key := throtlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
-	baseline := throtlTestItem(key, stableThrotlTestLane(10, 1_000))
-	current := throtlTestItem(key, stableThrotlTestLane(15, 2_000))
-	object := newFakeThrotlCollectorBPF()
-	collector := newThrotlTestCollector(t, object, 1)
-	object.setDumps(throtlTestDump{items: []bpf.MapItem{baseline}})
+func TestBlkThrotlSnapshotRetriesCounterTraversal(t *testing.T) {
+	key := blkThrotlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
+	baseline := blkThrotlTestItem(key, stableBlkThrotlTestLane(10, 1_000))
+	current := blkThrotlTestItem(key, stableBlkThrotlTestLane(15, 2_000))
+	object := newFakeBlkThrotlCollectorBPF()
+	collector := newBlkThrotlTestCollector(t, object, 1)
+	object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{baseline}})
 	_, err := collector.Update()
 	require.NoError(t, err)
 
 	object.setDumps(
-		throtlTestDump{items: []bpf.MapItem{
-			throtlTestItem(key, stableThrotlTestLane(1_000, 100_000)),
-			throtlTestItem(key, stableThrotlTestLane(1_001, 100_100)),
+		blkThrotlTestDump{items: []bpf.MapItem{
+			blkThrotlTestItem(key, stableBlkThrotlTestLane(1_000, 100_000)),
+			blkThrotlTestItem(key, stableBlkThrotlTestLane(1_001, 100_100)),
 		}},
-		throtlTestDump{items: []bpf.MapItem{current}},
+		blkThrotlTestDump{items: []bpf.MapItem{current}},
 	)
 	metrics, err := collector.Update()
 	require.NoError(t, err)
 	require.Nil(t, context.Cause(collector.session.breaker))
-	requireThrotlHostAndOtherMetrics(t, metrics, "sda", "read", 5, 2)
+	requireBlkThrotlHostAndOtherMetrics(t, metrics, "sda", "read", 5, 2)
 }
 
 // Interval baselines, retries, health stops, and per-CPU wrap.
 
-func TestThrotlIntervalStartsFromEmptyMapAndRestarts(t *testing.T) {
-	var unstarted throtlTracing
+func TestBlkThrotlIntervalStartsFromEmptyMapAndRestarts(t *testing.T) {
+	var unstarted blkThrotlTracing
 	metrics, err := unstarted.Update()
 	require.ErrorIs(t, err, metric.ErrNoData)
 	require.Nil(t, metrics)
 
-	key := throtlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
-	object := newFakeThrotlCollectorBPF()
-	collector := newThrotlTestCollector(t, object, 1)
+	key := blkThrotlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
+	object := newFakeBlkThrotlCollectorBPF()
+	collector := newBlkThrotlTestCollector(t, object, 1)
 
 	// Every BPF object owns a freshly-created empty aggregate map. Completed
 	// episodes before its first scrape therefore have a known zero predecessor.
-	object.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(key, stableThrotlTestLane(3, 900)),
+	object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(key, stableBlkThrotlTestLane(3, 900)),
 	}})
 	metrics, err = collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndOtherMetrics(t, metrics,
+	requireBlkThrotlHostAndOtherMetrics(t, metrics,
 		"sda", "read", 3, 3)
 
-	object.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(key, stableThrotlTestLane(5, 1_500)),
+	object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(key, stableBlkThrotlTestLane(5, 1_500)),
 	}})
 	metrics, err = collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndOtherMetrics(t, metrics,
+	requireBlkThrotlHostAndOtherMetrics(t, metrics,
 		"sda", "read", 2, 3)
 
 	// A replacement object starts another known-zero counter generation.
-	replacementObject := newFakeThrotlCollectorBPF()
-	replacement := newThrotlTestCollector(t, replacementObject, 1).session
+	replacementObject := newFakeBlkThrotlCollectorBPF()
+	replacement := newBlkThrotlTestCollector(t, replacementObject, 1).session
 	collector.session = replacement
-	replacementObject.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(key, stableThrotlTestLane(100, 30_000)),
+	replacementObject.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(key, stableBlkThrotlTestLane(100, 30_000)),
 	}})
 	metrics, err = collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndOtherMetrics(t, metrics,
+	requireBlkThrotlHostAndOtherMetrics(t, metrics,
 		"sda", "read", 100, 3)
 
-	replacementObject.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(key, stableThrotlTestLane(102, 30_600)),
+	replacementObject.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(key, stableBlkThrotlTestLane(102, 30_600)),
 	}})
 	metrics, err = collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndOtherMetrics(t, metrics,
+	requireBlkThrotlHostAndOtherMetrics(t, metrics,
 		"sda", "read", 2, 3)
 
 	collector.session = nil
@@ -369,55 +369,55 @@ func TestThrotlIntervalStartsFromEmptyMapAndRestarts(t *testing.T) {
 	require.Empty(t, metrics)
 }
 
-func TestThrotlRetryableIntervalFailuresRebuildBaseline(t *testing.T) {
-	key := throtlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
-	baseline := throtlTestItem(key,
-		stableThrotlTestLane(10, 1_000))
-	current := throtlTestItem(key,
-		stableThrotlTestLane(15, 2_000))
-	next := throtlTestItem(key,
-		stableThrotlTestLane(17, 2_800))
+func TestBlkThrotlRetryableIntervalFailuresRebuildBaseline(t *testing.T) {
+	key := blkThrotlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
+	baseline := blkThrotlTestItem(key,
+		stableBlkThrotlTestLane(10, 1_000))
+	current := blkThrotlTestItem(key,
+		stableBlkThrotlTestLane(15, 2_000))
+	next := blkThrotlTestItem(key,
+		stableBlkThrotlTestLane(17, 2_800))
 
 	for _, test := range []struct {
 		name      string
 		initial   bool
-		configure func(*fakeThrotlCollectorBPF)
-		failure   throtlTestDump
+		configure func(*fakeBlkThrotlCollectorBPF)
+		failure   blkThrotlTestDump
 	}{
 		{
 			name:    "initial aggregate dump",
 			initial: true,
-			failure: throtlTestDump{err: errors.New("aggregate dump failed")},
+			failure: blkThrotlTestDump{err: errors.New("aggregate dump failed")},
 		},
 		{
 			name:    "aggregate dump",
-			failure: throtlTestDump{err: errors.New("aggregate dump failed")},
+			failure: blkThrotlTestDump{err: errors.New("aggregate dump failed")},
 		},
 		{
 			name:    "aggregate traversal",
-			failure: throtlTestDump{items: []bpf.MapItem{current, current}},
+			failure: blkThrotlTestDump{items: []bpf.MapItem{current, current}},
 		},
 		{
 			name: "health status read",
-			configure: func(object *fakeThrotlCollectorBPF) {
+			configure: func(object *fakeBlkThrotlCollectorBPF) {
 				object.statusErr = errors.New("status read failed")
 				object.statusErrAtCall = object.statusCalls + 2
 			},
-			failure: throtlTestDump{items: []bpf.MapItem{current}},
+			failure: blkThrotlTestDump{items: []bpf.MapItem{current}},
 		},
 		{
 			name: "entry status read",
-			configure: func(object *fakeThrotlCollectorBPF) {
+			configure: func(object *fakeBlkThrotlCollectorBPF) {
 				object.statusErr = errors.New("device change read failed")
 			},
-			failure: throtlTestDump{items: []bpf.MapItem{current}},
+			failure: blkThrotlTestDump{items: []bpf.MapItem{current}},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			object := newFakeThrotlCollectorBPF()
-			collector := newThrotlTestCollector(t, object, 1)
+			object := newFakeBlkThrotlCollectorBPF()
+			collector := newBlkThrotlTestCollector(t, object, 1)
 			if !test.initial {
-				object.setDumps(throtlTestDump{items: []bpf.MapItem{baseline}})
+				object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{baseline}})
 				_, err := collector.Update()
 				require.NoError(t, err)
 			}
@@ -437,48 +437,48 @@ func TestThrotlRetryableIntervalFailuresRebuildBaseline(t *testing.T) {
 			object.statusErr = nil
 			object.statusErrAtCall = 0
 			object.statusValue = make([]byte, binary.Size(ioControlStatus{}))
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{current}})
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{current}})
 			metrics, err := collector.Update()
 			require.ErrorIs(t, err, metric.ErrNoData)
 			require.Empty(t, metrics)
 			require.Nil(t, context.Cause(collector.session.breaker))
 
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{next}})
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{next}})
 			metrics, err = collector.Update()
 			require.NoError(t, err)
-			requireThrotlHostAndOtherMetrics(t, metrics,
+			requireBlkThrotlHostAndOtherMetrics(t, metrics,
 				"sda", "read", 2, 4)
 		})
 	}
 }
 
-func TestThrotlDeviceChangeDiscardsInterval(t *testing.T) {
-	key := throtlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
-	baseline := throtlTestItem(key, stableThrotlTestLane(10, 1_000))
-	current := throtlTestItem(key, stableThrotlTestLane(15, 2_000))
+func TestBlkThrotlDeviceChangeDiscardsInterval(t *testing.T) {
+	key := blkThrotlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
+	baseline := blkThrotlTestItem(key, stableBlkThrotlTestLane(10, 1_000))
+	current := blkThrotlTestItem(key, stableBlkThrotlTestLane(15, 2_000))
 	for _, test := range []struct {
 		name      string
 		changes   []uint64
-		configure func(*fakeThrotlCollectorBPF)
+		configure func(*fakeBlkThrotlCollectorBPF)
 	}{
 		{name: "before snapshot", changes: []uint64{1}},
 		{
 			name: "BPF error during transition", changes: []uint64{0, 1},
-			configure: func(object *fakeThrotlCollectorBPF) {
-				object.statusValue = ioControlTestBytes(ioControlTestStatus(throtlFailureOwner, 0))
+			configure: func(object *fakeBlkThrotlCollectorBPF) {
+				object.statusValue = ioControlTestBytes(ioControlTestStatus(blkThrotlFailureOwner, 0))
 			},
 		},
 		{
 			name: "invalid map during transition", changes: []uint64{0, 1},
-			configure: func(object *fakeThrotlCollectorBPF) {
+			configure: func(object *fakeBlkThrotlCollectorBPF) {
 				object.aggregateMapID = 0
 			},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			object := newFakeThrotlCollectorBPF()
-			collector := newThrotlTestCollector(t, object, 1)
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{baseline}})
+			object := newFakeBlkThrotlCollectorBPF()
+			collector := newBlkThrotlTestCollector(t, object, 1)
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{baseline}})
 			_, err := collector.Update()
 			require.NoError(t, err)
 			previous := collector.session.previous
@@ -487,12 +487,12 @@ func TestThrotlDeviceChangeDiscardsInterval(t *testing.T) {
 			if test.configure != nil {
 				test.configure(object)
 			}
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{current}})
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{current}})
 			metrics, err := collector.Update()
 			require.ErrorIs(t, err, errIOControlDevicesChanged)
 			require.NotErrorIs(t, err, types.ErrTracingStopped)
 			if test.name == "BPF error during transition" {
-				requireThrotlHostAndOtherMetrics(t, metrics, "sda", "read", 0, 0)
+				requireBlkThrotlHostAndOtherMetrics(t, metrics, "sda", "read", 0, 0)
 			} else {
 				require.Nil(t, metrics)
 			}
@@ -502,26 +502,26 @@ func TestThrotlDeviceChangeDiscardsInterval(t *testing.T) {
 	}
 }
 
-func TestThrotlDeviceChangeZerosCapturedInterval(t *testing.T) {
+func TestBlkThrotlDeviceChangeZerosCapturedInterval(t *testing.T) {
 	for _, count := range []uint64{1, 100} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
-			key := throtlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
-			object := newFakeThrotlCollectorBPF()
-			collector := newThrotlTestCollector(t, object, 1)
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{
-				throtlTestItem(key, stableThrotlTestLane(100, 1_000)),
+			key := blkThrotlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
+			object := newFakeBlkThrotlCollectorBPF()
+			collector := newBlkThrotlTestCollector(t, object, 1)
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+				blkThrotlTestItem(key, stableBlkThrotlTestLane(100, 1_000)),
 			}})
 			_, err := collector.Update()
 			require.NoError(t, err)
 			previous := collector.session.previous
 
 			object.deviceChanges = []uint64{0, 1}
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{
-				throtlTestItem(key, stableThrotlTestLane(count, 10)),
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+				blkThrotlTestItem(key, stableBlkThrotlTestLane(count, 10)),
 			}})
 			metrics, err := collector.Update()
 			require.ErrorIs(t, err, errIOControlDevicesChanged)
-			requireThrotlHostAndOtherMetrics(t, metrics, "sda", "read", 0, 0)
+			requireBlkThrotlHostAndOtherMetrics(t, metrics, "sda", "read", 0, 0)
 			require.ErrorIs(t, context.Cause(collector.session.breaker), errIOControlDevicesChanged)
 
 			metrics, err = collector.Update()
@@ -532,13 +532,13 @@ func TestThrotlDeviceChangeZerosCapturedInterval(t *testing.T) {
 	}
 }
 
-func TestThrotlDeviceReadFailureDefersTerminalStop(t *testing.T) {
-	object := newFakeThrotlCollectorBPF()
-	object.statusValue = ioControlTestBytes(ioControlTestStatus(throtlFailureOwner, 0))
+func TestBlkThrotlDeviceReadFailureDefersTerminalStop(t *testing.T) {
+	object := newFakeBlkThrotlCollectorBPF()
+	object.statusValue = ioControlTestBytes(ioControlTestStatus(blkThrotlFailureOwner, 0))
 	object.statusErr = unix.EIO
 	object.statusErrAtCall = 3
-	collector := newThrotlTestCollector(t, object, 1)
-	object.setDumps(throtlTestDump{})
+	collector := newBlkThrotlTestCollector(t, object, 1)
+	object.setDumps(blkThrotlTestDump{})
 
 	metrics, err := collector.Update()
 	require.ErrorIs(t, err, unix.EIO)
@@ -548,18 +548,18 @@ func TestThrotlDeviceReadFailureDefersTerminalStop(t *testing.T) {
 	require.Empty(t, collector.session.previous)
 
 	object.statusErr = nil
-	object.setDumps(throtlTestDump{})
+	object.setDumps(blkThrotlTestDump{})
 	metrics, err = collector.Update()
 	require.ErrorIs(t, err, types.ErrTracingStopped)
 	require.Empty(t, metrics)
 	require.ErrorIs(t, context.Cause(collector.session.breaker), types.ErrTracingStopped)
 }
 
-func TestThrotlBatchErrorsDoNotFallbackOrAdvanceBaseline(t *testing.T) {
-	key := throtlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
-	baseline := throtlTestItem(key, stableThrotlTestLane(10, 1_000))
-	current := throtlTestItem(key, stableThrotlTestLane(15, 2_000))
-	next := throtlTestItem(key, stableThrotlTestLane(17, 2_800))
+func TestBlkThrotlBatchErrorsDoNotFallbackOrAdvanceBaseline(t *testing.T) {
+	key := blkThrotlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
+	baseline := blkThrotlTestItem(key, stableBlkThrotlTestLane(10, 1_000))
+	current := blkThrotlTestItem(key, stableBlkThrotlTestLane(15, 2_000))
+	next := blkThrotlTestItem(key, stableBlkThrotlTestLane(17, 2_800))
 	for _, failure := range []struct {
 		name string
 		err  error
@@ -577,27 +577,27 @@ func TestThrotlBatchErrorsDoNotFallbackOrAdvanceBaseline(t *testing.T) {
 			{
 				name: "after partial rows",
 				items: []bpf.MapItem{
-					throtlTestItem(key, stableThrotlTestLane(0, 0)),
+					blkThrotlTestItem(key, stableBlkThrotlTestLane(0, 0)),
 				},
 			},
 		} {
 			t.Run(failure.name+"/"+partial.name, func(t *testing.T) {
-				object := &reusedThrotlCollectorBPF{
-					fakeThrotlCollectorBPF: newFakeThrotlCollectorBPF(),
-					batchDumps: []throtlTestDump{
+				object := &reusedBlkThrotlCollectorBPF{
+					fakeBlkThrotlCollectorBPF: newFakeBlkThrotlCollectorBPF(),
+					batchDumps: []blkThrotlTestDump{
 						{items: []bpf.MapItem{baseline}},
 						{items: partial.items, err: failure.err},
 						{items: []bpf.MapItem{current}},
 						{items: []bpf.MapItem{next}},
 					},
 				}
-				collector := newThrotlTestCollector(t, object, 1)
+				collector := newBlkThrotlTestCollector(t, object, 1)
 				_, err := collector.Update()
 				require.NoError(t, err)
 
 				// An available single-key dump must not hide an unrelated
 				// batch failure or commit the partial rows as a baseline.
-				object.setDumps(throtlTestDump{items: []bpf.MapItem{current}})
+				object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{current}})
 				metrics, err := collector.Update()
 				require.ErrorIs(t, err, failure.err)
 				require.Empty(t, metrics)
@@ -612,7 +612,7 @@ func TestThrotlBatchErrorsDoNotFallbackOrAdvanceBaseline(t *testing.T) {
 
 				metrics, err = collector.Update()
 				require.NoError(t, err)
-				requireThrotlHostAndOtherMetrics(t, metrics,
+				requireBlkThrotlHostAndOtherMetrics(t, metrics,
 					"sda", "read", 2, 4)
 				require.Zero(t, object.dumpCalls)
 			})
@@ -620,24 +620,24 @@ func TestThrotlBatchErrorsDoNotFallbackOrAdvanceBaseline(t *testing.T) {
 	}
 }
 
-func TestThrotlTerminalHealthFailuresStopSession(t *testing.T) {
-	key := throtlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
-	current := throtlTestItem(key,
-		stableThrotlTestLane(15, 2_000))
+func TestBlkThrotlTerminalHealthFailuresStopSession(t *testing.T) {
+	key := blkThrotlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
+	current := blkThrotlTestItem(key,
+		stableBlkThrotlTestLane(15, 2_000))
 
 	for _, test := range []struct {
 		name      string
-		configure func(*fakeThrotlCollectorBPF)
+		configure func(*fakeBlkThrotlCollectorBPF)
 	}{
 		{
 			name: "missing status map",
-			configure: func(object *fakeThrotlCollectorBPF) {
+			configure: func(object *fakeBlkThrotlCollectorBPF) {
 				object.statusMapID = 0
 			},
 		},
 		{
 			name: "short status",
-			configure: func(object *fakeThrotlCollectorBPF) {
+			configure: func(object *fakeBlkThrotlCollectorBPF) {
 				object.statusValue = make(
 					[]byte, binary.Size(ioControlStatus{})-1,
 				)
@@ -645,7 +645,7 @@ func TestThrotlTerminalHealthFailuresStopSession(t *testing.T) {
 		},
 		{
 			name: "long status",
-			configure: func(object *fakeThrotlCollectorBPF) {
+			configure: func(object *fakeBlkThrotlCollectorBPF) {
 				object.statusValue = make(
 					[]byte, binary.Size(ioControlStatus{})+1,
 				)
@@ -653,16 +653,16 @@ func TestThrotlTerminalHealthFailuresStopSession(t *testing.T) {
 		},
 		{
 			name: "unhealthy status",
-			configure: func(object *fakeThrotlCollectorBPF) {
-				object.statusValue = ioControlTestBytes(ioControlTestStatus(throtlFailureOwner, 0))
+			configure: func(object *fakeBlkThrotlCollectorBPF) {
+				object.statusValue = ioControlTestBytes(ioControlTestStatus(blkThrotlFailureOwner, 0))
 			},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			object := newFakeThrotlCollectorBPF()
-			collector := newThrotlTestCollector(t, object, 1)
+			object := newFakeBlkThrotlCollectorBPF()
+			collector := newBlkThrotlTestCollector(t, object, 1)
 			test.configure(object)
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{current}})
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{current}})
 
 			_, err := collector.Update()
 			require.Error(t, err)
@@ -672,52 +672,52 @@ func TestThrotlTerminalHealthFailuresStopSession(t *testing.T) {
 	}
 }
 
-func TestThrotlIntervalRejectsWaitWithoutDelayedIO(t *testing.T) {
-	key := throtlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
+func TestBlkThrotlIntervalRejectsWaitWithoutDelayedIO(t *testing.T) {
+	key := blkThrotlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
 
 	t.Run("delta", func(t *testing.T) {
-		object := newFakeThrotlCollectorBPF()
-		collector := newThrotlTestCollector(t, object, 1)
-		object.setDumps(throtlTestDump{items: []bpf.MapItem{
-			throtlTestItem(key,
-				stableThrotlTestLane(10, 1_000)),
+		object := newFakeBlkThrotlCollectorBPF()
+		collector := newBlkThrotlTestCollector(t, object, 1)
+		object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+			blkThrotlTestItem(key,
+				stableBlkThrotlTestLane(10, 1_000)),
 		}})
 		_, err := collector.Update()
 		require.NoError(t, err)
 
-		object.setDumps(throtlTestDump{items: []bpf.MapItem{
-			throtlTestItem(key,
-				stableThrotlTestLane(10, 1_100)),
+		object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+			blkThrotlTestItem(key,
+				stableBlkThrotlTestLane(10, 1_100)),
 		}})
 		_, err = collector.Update()
 		require.Error(t, err)
 
-		object.setDumps(throtlTestDump{items: []bpf.MapItem{
-			throtlTestItem(key,
-				stableThrotlTestLane(15, 2_000)),
+		object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+			blkThrotlTestItem(key,
+				stableBlkThrotlTestLane(15, 2_000)),
 		}})
 		metrics, err := collector.Update()
 		require.ErrorIs(t, err, metric.ErrNoData)
 		require.Empty(t, metrics)
 
-		object.setDumps(throtlTestDump{items: []bpf.MapItem{
-			throtlTestItem(key,
-				stableThrotlTestLane(17, 2_800)),
+		object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+			blkThrotlTestItem(key,
+				stableBlkThrotlTestLane(17, 2_800)),
 		}})
 		metrics, err = collector.Update()
 		require.NoError(t, err)
-		requireThrotlHostAndOtherMetrics(t, metrics,
+		requireBlkThrotlHostAndOtherMetrics(t, metrics,
 			"sda", "read", 2, 4)
 	})
 }
 
-func TestThrotlSnapshotDoesNotReadReusedAggregateValue(t *testing.T) {
-	key := throtlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
-	baseline := throtlTestItem(key, stableThrotlTestLane(100, 10_000))
-	current := throtlTestItem(key, stableThrotlTestLane(101, 10_200))
-	object := &reusedThrotlCollectorBPF{
-		fakeThrotlCollectorBPF: newFakeThrotlCollectorBPF(),
-		batchDumps: []throtlTestDump{
+func TestBlkThrotlSnapshotDoesNotReadReusedAggregateValue(t *testing.T) {
+	key := blkThrotlTestKey{css: 1, major: 4095, minor: 1, operation: 0}
+	baseline := blkThrotlTestItem(key, stableBlkThrotlTestLane(100, 10_000))
+	current := blkThrotlTestItem(key, stableBlkThrotlTestLane(101, 10_200))
+	object := &reusedBlkThrotlCollectorBPF{
+		fakeBlkThrotlCollectorBPF: newFakeBlkThrotlCollectorBPF(),
+		batchDumps: []blkThrotlTestDump{
 			{items: []bpf.MapItem{baseline}},
 			{items: []bpf.MapItem{current}},
 		},
@@ -725,46 +725,46 @@ func TestThrotlSnapshotDoesNotReadReusedAggregateValue(t *testing.T) {
 	// A single-key lookup can retain the old key while its map storage is
 	// deleted and reused for a new counter. Batch copying keeps them paired.
 	object.setDumps(
-		throtlTestDump{items: []bpf.MapItem{baseline}},
-		throtlTestDump{items: []bpf.MapItem{
-			throtlTestItem(key, stableThrotlTestLane(0, 0)),
+		blkThrotlTestDump{items: []bpf.MapItem{baseline}},
+		blkThrotlTestDump{items: []bpf.MapItem{
+			blkThrotlTestItem(key, stableBlkThrotlTestLane(0, 0)),
 		}},
 	)
-	collector := newThrotlTestCollector(t, object, 1)
+	collector := newBlkThrotlTestCollector(t, object, 1)
 	metrics, err := collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndOtherMetrics(t, metrics,
+	requireBlkThrotlHostAndOtherMetrics(t, metrics,
 		"sda", "read", 100, 1)
 
 	metrics, err = collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndOtherMetrics(t, metrics,
+	requireBlkThrotlHostAndOtherMetrics(t, metrics,
 		"sda", "read", 1, 2)
 }
 
 // Host metrics preserve weighted aggregates and dump-order independence.
 
-func TestThrotlAggregateMetricsIgnoreDumpOrder(t *testing.T) {
-	keys := []throtlTestKey{
+func TestBlkThrotlAggregateMetricsIgnoreDumpOrder(t *testing.T) {
+	keys := []blkThrotlTestKey{
 		{css: 3, major: 4095, minor: 1, operation: 1},
 		{css: 2, major: 4094, minor: 2, operation: 0},
 		{css: 1, major: 4095, minor: 1, operation: 0},
 	}
-	object := newFakeThrotlCollectorBPF()
-	collector := newThrotlTestCollector(t, object, 1)
-	object.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(keys[0], stableThrotlTestLane(10, 1_000)),
-		throtlTestItem(keys[1], stableThrotlTestLane(20, 2_000)),
-		throtlTestItem(keys[2], stableThrotlTestLane(30, 3_000)),
+	object := newFakeBlkThrotlCollectorBPF()
+	collector := newBlkThrotlTestCollector(t, object, 1)
+	object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(keys[0], stableBlkThrotlTestLane(10, 1_000)),
+		blkThrotlTestItem(keys[1], stableBlkThrotlTestLane(20, 2_000)),
+		blkThrotlTestItem(keys[2], stableBlkThrotlTestLane(30, 3_000)),
 	}})
 	_, err := collector.Update()
 	require.NoError(t, err)
 
 	// Reversing raw rows must preserve every series and its interval values.
-	object.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(keys[2], stableThrotlTestLane(31, 3_200)),
-		throtlTestItem(keys[1], stableThrotlTestLane(21, 2_200)),
-		throtlTestItem(keys[0], stableThrotlTestLane(11, 1_200)),
+	object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(keys[2], stableBlkThrotlTestLane(31, 3_200)),
+		blkThrotlTestItem(keys[1], stableBlkThrotlTestLane(21, 2_200)),
+		blkThrotlTestItem(keys[0], stableBlkThrotlTestLane(11, 1_200)),
 	}})
 	metrics, err := collector.Update()
 	require.NoError(t, err)
@@ -772,13 +772,13 @@ func TestThrotlAggregateMetricsIgnoreDumpOrder(t *testing.T) {
 
 	var signatures []string
 	wantValues := map[string]float64{
-		throtlDelayedCountName: 1,
-		throtlAverageWaitName:  2,
+		blkThrotlDelayedCountName: 1,
+		blkThrotlAverageWaitName:  2,
 	}
 	for _, data := range metrics {
 		got := data
 		require.Equal(t, wantValues[got.Name()], got.Value)
-		labels := throtlCustomLabels(got.Labels())
+		labels := blkThrotlCustomLabels(got.Labels())
 		signatures = append(signatures, fmt.Sprintf("%s|%s|%s|%s",
 			labels["disk"], labels["operation"], got.Name(),
 			labels["scope"]))
@@ -801,18 +801,18 @@ func TestThrotlAggregateMetricsIgnoreDumpOrder(t *testing.T) {
 
 // CSS attribution and serial-aware baseline fixtures.
 
-func newThrotlAttributedTestCollector(
+func newBlkThrotlAttributedTestCollector(
 	t *testing.T,
-	object *fakeThrotlCollectorBPF,
+	object *fakeBlkThrotlCollectorBPF,
 	source *ioControlAttributionTestSource,
-) *throtlTracing {
+) *blkThrotlTracing {
 	t.Helper()
-	collector := newThrotlTestCollector(t, object, 1)
+	collector := newBlkThrotlTestCollector(t, object, 1)
 	collector.session.containerSource = source.read
 	return collector
 }
 
-func throtlAttributionMetricValues(
+func blkThrotlAttributionMetricValues(
 	t *testing.T,
 	metrics []*metric.Data,
 ) map[string]float64 {
@@ -820,7 +820,7 @@ func throtlAttributionMetricValues(
 	values := make(map[string]float64, len(metrics))
 	for _, data := range metrics {
 		got := data
-		labels := throtlCustomLabels(got.Labels())
+		labels := blkThrotlCustomLabels(got.Labels())
 		kind := labels["scope"]
 		if strings.HasPrefix(got.Name(), "container_") {
 			kind = "container"
@@ -830,7 +830,7 @@ func throtlAttributionMetricValues(
 	return values
 }
 
-func requireThrotlHostAndOtherInterval(
+func requireBlkThrotlHostAndOtherInterval(
 	t *testing.T,
 	metrics []*metric.Data,
 	count float64,
@@ -842,10 +842,10 @@ func requireThrotlHostAndOtherInterval(
 		"host/average_wait_ms":   averageMS,
 		"other/delayed_io_count": count,
 		"other/average_wait_ms":  averageMS,
-	}, throtlAttributionMetricValues(t, metrics))
+	}, blkThrotlAttributionMetricValues(t, metrics))
 }
 
-func requireThrotlHostAndContainerInterval(
+func requireBlkThrotlHostAndContainerInterval(
 	t *testing.T,
 	metrics []*metric.Data,
 	count float64,
@@ -857,12 +857,12 @@ func requireThrotlHostAndContainerInterval(
 		"host/average_wait_ms":                 averageMS,
 		"container/container_delayed_io_count": count,
 		"container/container_average_wait_ms":  averageMS,
-	}, throtlAttributionMetricValues(t, metrics))
+	}, blkThrotlAttributionMetricValues(t, metrics))
 }
 
 // Public Other/container accounting and equal-label aggregation.
 
-func TestThrotlRemovedLateCompletionNeverDeletesActiveAggregate(
+func TestBlkThrotlRemovedLateCompletionNeverDeletesActiveAggregate(
 	t *testing.T,
 ) {
 	container := newIOControlAttributionTestContainer(
@@ -873,43 +873,43 @@ func TestThrotlRemovedLateCompletionNeverDeletesActiveAggregate(
 	source := &ioControlAttributionTestSource{containers: map[string]*pod.Container{
 		container.ID: container,
 	}}
-	object := newFakeThrotlCollectorBPF()
-	collector := newThrotlAttributedTestCollector(t, object, source)
-	key := throtlTestKey{
+	object := newFakeBlkThrotlCollectorBPF()
+	collector := newBlkThrotlAttributedTestCollector(t, object, source)
+	key := blkThrotlTestKey{
 		css: 0x11, major: 4095, minor: 1, operation: 0,
 	}
-	waitKey := throtlTestRawKey(key)
+	waitKey := blkThrotlTestRawKey(key)
 
-	object.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(key, stableThrotlTestLane(10, 1_000)),
+	object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(key, stableBlkThrotlTestLane(10, 1_000)),
 	}})
 	metrics, err := collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndContainerInterval(t, metrics, 10, 1)
+	requireBlkThrotlHostAndContainerInterval(t, metrics, 10, 1)
 
 	// Once the shared query stops returning the container, its completions go
 	// to Other. The raw aggregate remains live while old bios can complete.
 	source.containers = nil
-	object.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(key, stableThrotlTestLane(11, 1_100)),
+	object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(key, stableBlkThrotlTestLane(11, 1_100)),
 	}})
 	metrics, err = collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndOtherInterval(t, metrics, 1, 1)
+	requireBlkThrotlHostAndOtherInterval(t, metrics, 1, 1)
 
-	object.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(key, stableThrotlTestLane(12, 1_400)),
+	object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(key, stableBlkThrotlTestLane(12, 1_400)),
 	}})
 	metrics, err = collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndOtherInterval(t, metrics, 1, 3)
+	requireBlkThrotlHostAndOtherInterval(t, metrics, 1, 3)
 
-	object.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(key, stableThrotlTestLane(13, 1_900)),
+	object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(key, stableBlkThrotlTestLane(13, 1_900)),
 	}})
 	metrics, err = collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndOtherInterval(t, metrics, 1, 5)
+	requireBlkThrotlHostAndOtherInterval(t, metrics, 1, 5)
 	_, retained := collector.session.previous[waitKey]
 	require.True(t, retained, "a live raw series must remain in the baseline")
 }
@@ -918,7 +918,7 @@ func TestThrotlRemovedLateCompletionNeverDeletesActiveAggregate(
 
 // Reusing the CSS address changes only the serial. The new
 // cumulative row starts at zero even when the public CSS mapping is unchanged.
-func TestThrotlCSSSerialKeepsCounterBaselinesSeparate(t *testing.T) {
+func TestBlkThrotlCSSSerialKeepsCounterBaselinesSeparate(t *testing.T) {
 	for _, mapped := range []bool{true, false} {
 		t.Run(map[bool]string{true: "container", false: "other"}[mapped], func(t *testing.T) {
 			source := &ioControlAttributionTestSource{}
@@ -928,35 +928,35 @@ func TestThrotlCSSSerialKeepsCounterBaselinesSeparate(t *testing.T) {
 				)
 				source.containers = map[string]*pod.Container{container.ID: container}
 			}
-			object := newFakeThrotlCollectorBPF()
-			collector := newThrotlAttributedTestCollector(t, object, source)
-			key := throtlTestKey{
+			object := newFakeBlkThrotlCollectorBPF()
+			collector := newBlkThrotlAttributedTestCollector(t, object, source)
+			key := blkThrotlTestKey{
 				css: 0x11, serial: 7, major: 4095, minor: 1,
 			}
-			requireInterval := requireThrotlHostAndOtherInterval
+			requireInterval := requireBlkThrotlHostAndOtherInterval
 			if mapped {
-				requireInterval = requireThrotlHostAndContainerInterval
+				requireInterval = requireBlkThrotlHostAndContainerInterval
 			}
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{
-				throtlTestItem(key, stableThrotlTestLane(10, 1_000)),
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+				blkThrotlTestItem(key, stableBlkThrotlTestLane(10, 1_000)),
 			}})
 			metrics, err := collector.Update()
 			require.NoError(t, err)
 			requireInterval(t, metrics, 10, 1)
-			oldKey := throtlTestRawKey(key)
+			oldKey := blkThrotlTestRawKey(key)
 
 			key.serial++
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{
-				throtlTestItem(key, stableThrotlTestLane(1, 200)),
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+				blkThrotlTestItem(key, stableBlkThrotlTestLane(1, 200)),
 			}})
 			metrics, err = collector.Update()
 			require.NoError(t, err)
 			requireInterval(t, metrics, 1, 2)
 			require.NotContains(t, collector.session.previous, oldKey)
-			require.Contains(t, collector.session.previous, throtlTestRawKey(key))
+			require.Contains(t, collector.session.previous, blkThrotlTestRawKey(key))
 
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{
-				throtlTestItem(key, stableThrotlTestLane(2, 500)),
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+				blkThrotlTestItem(key, stableBlkThrotlTestLane(2, 500)),
 			}})
 			metrics, err = collector.Update()
 			require.NoError(t, err)
@@ -967,16 +967,16 @@ func TestThrotlCSSSerialKeepsCounterBaselinesSeparate(t *testing.T) {
 
 // Container failures preserve Host while raw counter baselines advance.
 
-func TestThrotlContainerFailuresPreserveHostIntervals(t *testing.T) {
+func TestBlkThrotlContainerFailuresPreserveHostIntervals(t *testing.T) {
 	for _, failure := range []string{"query", "labels", "empty"} {
 		t.Run(failure, func(t *testing.T) {
 			container := newIOControlAttributionTestContainer("container", 0x11, time.Unix(100, 0))
 			source := &ioControlAttributionTestSource{
 				containers: map[string]*pod.Container{container.ID: container},
 			}
-			object := newFakeThrotlCollectorBPF()
-			collector := newThrotlAttributedTestCollector(t, object, source)
-			key := throtlTestKey{css: 0x11, major: 4095, minor: 1}
+			object := newFakeBlkThrotlCollectorBPF()
+			collector := newBlkThrotlAttributedTestCollector(t, object, source)
+			key := blkThrotlTestKey{css: 0x11, major: 4095, minor: 1}
 			switch failure {
 			case "query":
 				// A failed source can still return data; none of it is trusted.
@@ -987,41 +987,41 @@ func TestThrotlContainerFailuresPreserveHostIntervals(t *testing.T) {
 				source.containers = nil
 			}
 			for count := uint64(3); count <= 6; count += 3 {
-				object.setDumps(throtlTestDump{items: []bpf.MapItem{
-					throtlTestItem(key, stableThrotlTestLane(count, count*300)),
+				object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+					blkThrotlTestItem(key, stableBlkThrotlTestLane(count, count*300)),
 				}})
 				metrics, err := collector.Update()
 				require.NoError(t, err)
-				requireThrotlHostAndOtherInterval(t, metrics, 3, 3)
+				requireBlkThrotlHostAndOtherInterval(t, metrics, 3, 3)
 			}
 
 			container.Labels[ioControlHostNamespaceKey] = "shared-namespace"
 			source.err = nil
 			source.containers = map[string]*pod.Container{container.ID: container}
-			object.setDumps(throtlTestDump{items: []bpf.MapItem{
-				throtlTestItem(key, stableThrotlTestLane(8, 2_600)),
+			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+				blkThrotlTestItem(key, stableBlkThrotlTestLane(8, 2_600)),
 			}})
 			metrics, err := collector.Update()
 			require.NoError(t, err)
-			requireThrotlHostAndContainerInterval(t, metrics, 2, 4)
+			requireBlkThrotlHostAndContainerInterval(t, metrics, 2, 4)
 		})
 	}
 }
 
-func TestThrotlAttributionFailuresRebuildBaseline(t *testing.T) {
+func TestBlkThrotlAttributionFailuresRebuildBaseline(t *testing.T) {
 	t.Run("aggregate snapshot failure", func(t *testing.T) {
-		collector, object, source, key := newThrotlAttributionFailureFixture(t)
+		collector, object, source, key := newBlkThrotlAttributionFailureFixture(t)
 		source.containers = nil
 		aggregateFailure := errors.New("aggregate dump failed")
-		object.setDumps(throtlTestDump{err: aggregateFailure})
+		object.setDumps(blkThrotlTestDump{err: aggregateFailure})
 		metrics, err := collector.Update()
 		require.ErrorIs(t, err, aggregateFailure)
 		require.Empty(t, metrics)
 		require.Nil(t, collector.session.previous)
 
-		object.setDumps(throtlTestDump{items: []bpf.MapItem{
-			throtlTestItem(key,
-				stableThrotlTestLane(13, 1_900)),
+		object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+			blkThrotlTestItem(key,
+				stableBlkThrotlTestLane(13, 1_900)),
 		}})
 		metrics, err = collector.Update()
 		require.ErrorIs(t, err, metric.ErrNoData)
@@ -1029,21 +1029,21 @@ func TestThrotlAttributionFailuresRebuildBaseline(t *testing.T) {
 
 		container := newIOControlAttributionTestContainer("new-container", 0x11, time.Unix(200, 0))
 		source.containers = map[string]*pod.Container{container.ID: container}
-		object.setDumps(throtlTestDump{items: []bpf.MapItem{
-			throtlTestItem(key,
-				stableThrotlTestLane(15, 2_700)),
+		object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+			blkThrotlTestItem(key,
+				stableBlkThrotlTestLane(15, 2_700)),
 		}})
 		metrics, err = collector.Update()
 		require.NoError(t, err)
-		requireThrotlHostAndContainerInterval(t, metrics, 2, 4)
+		requireBlkThrotlHostAndContainerInterval(t, metrics, 2, 4)
 	})
 }
 
-func newThrotlAttributionFailureFixture(t *testing.T) (
-	*throtlTracing,
-	*fakeThrotlCollectorBPF,
+func newBlkThrotlAttributionFailureFixture(t *testing.T) (
+	*blkThrotlTracing,
+	*fakeBlkThrotlCollectorBPF,
 	*ioControlAttributionTestSource,
-	throtlTestKey,
+	blkThrotlTestKey,
 ) {
 	t.Helper()
 	container := newIOControlAttributionTestContainer(
@@ -1054,18 +1054,18 @@ func newThrotlAttributionFailureFixture(t *testing.T) (
 	source := &ioControlAttributionTestSource{
 		containers: map[string]*pod.Container{container.ID: container},
 	}
-	object := newFakeThrotlCollectorBPF()
-	collector := newThrotlAttributedTestCollector(t, object, source)
-	key := throtlTestKey{
+	object := newFakeBlkThrotlCollectorBPF()
+	collector := newBlkThrotlAttributedTestCollector(t, object, source)
+	key := blkThrotlTestKey{
 		css: 0x11, major: 4095, minor: 1, operation: 0,
 	}
-	object.setDumps(throtlTestDump{items: []bpf.MapItem{
-		throtlTestItem(key,
-			stableThrotlTestLane(10, 1_000)),
+	object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{
+		blkThrotlTestItem(key,
+			stableBlkThrotlTestLane(10, 1_000)),
 	}})
 	metrics, err := collector.Update()
 	require.NoError(t, err)
-	requireThrotlHostAndContainerInterval(t, metrics, 10, 1)
+	requireBlkThrotlHostAndContainerInterval(t, metrics, 10, 1)
 	return collector, object, source, key
 }
 
@@ -1074,11 +1074,11 @@ func newThrotlAttributionFailureFixture(t *testing.T) (
 // BPF ownership and startup fixtures.
 
 const (
-	throtlObjectEntries  = 4096
-	throtlPendingEntries = 10240
+	blkThrotlObjectEntries  = 4096
+	blkThrotlPendingEntries = 10240
 )
 
-type fakeThrotlBPF struct {
+type fakeBlkThrotlBPF struct {
 	bpf.BPF
 	options       []bpf.AttachOption
 	attachErr     error
@@ -1090,46 +1090,46 @@ type fakeThrotlBPF struct {
 	closeCalls    int
 }
 
-func (b *fakeThrotlBPF) AttachWithOptions(options []bpf.AttachOption) error {
+func (b *fakeBlkThrotlBPF) AttachWithOptions(options []bpf.AttachOption) error {
 	b.options = append(b.options, options...)
 	return b.attachErr
 }
 
-func (b *fakeThrotlBPF) MapIDByName(name string) uint32 {
+func (b *fakeBlkThrotlBPF) MapIDByName(name string) uint32 {
 	switch name {
 	case ioControlStatusMap:
 		return b.mapID
-	case throtlWaitAggregateMap:
+	case blkThrotlWaitAggregateMap:
 		return 2
-	case throtlPendingMap:
+	case blkThrotlPendingMap:
 		return 4
 	default:
 		return 0
 	}
 }
 
-func (b *fakeThrotlBPF) ReadMap(_ uint32, _ []byte) ([]byte, error) {
-	return throtlTestStatusValue(b.value, &b.deviceChanges), b.readErr
+func (b *fakeBlkThrotlBPF) ReadMap(_ uint32, _ []byte) ([]byte, error) {
+	return blkThrotlTestStatusValue(b.value, &b.deviceChanges), b.readErr
 }
 
-func testThrotlHooks() *throtlHooks {
-	return &throtlHooks{
+func testBlkThrotlHooks() *blkThrotlHooks {
+	return &blkThrotlHooks{
 		trackedRange: symbol.KsymbolRange{Start: 0x1000, End: 0x1100},
 		ignoredRange: symbol.KsymbolRange{Start: 0x2000, End: 0x2100},
 	}
 }
 
-func (b *fakeThrotlBPF) Close() error {
+func (b *fakeBlkThrotlBPF) Close() error {
 	b.closeCalls++
 	return b.closeErr
 }
 
-func emptyThrotlContainerSource() (map[string]*pod.Container, error) {
+func emptyBlkThrotlContainerSource() (map[string]*pod.Container, error) {
 	return nil, nil
 }
 
-type blockingThrotlBPF struct {
-	fakeThrotlBPF
+type blockingBlkThrotlBPF struct {
+	fakeBlkThrotlBPF
 	mu             sync.Mutex
 	dumpStarted    chan struct{}
 	releaseDump    chan struct{}
@@ -1140,9 +1140,9 @@ type blockingThrotlBPF struct {
 	readAfterClose bool
 }
 
-func newBlockingThrotlBPF() *blockingThrotlBPF {
-	return &blockingThrotlBPF{
-		fakeThrotlBPF: fakeThrotlBPF{
+func newBlockingBlkThrotlBPF() *blockingBlkThrotlBPF {
+	return &blockingBlkThrotlBPF{
+		fakeBlkThrotlBPF: fakeBlkThrotlBPF{
 			mapID: 7,
 			value: make([]byte, binary.Size(ioControlStatus{})),
 		},
@@ -1152,7 +1152,7 @@ func newBlockingThrotlBPF() *blockingThrotlBPF {
 	}
 }
 
-func (b *blockingThrotlBPF) markRead() {
+func (b *blockingBlkThrotlBPF) markRead() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closedFlag {
@@ -1160,44 +1160,44 @@ func (b *blockingThrotlBPF) markRead() {
 	}
 }
 
-func (b *blockingThrotlBPF) DumpMapByName(
+func (b *blockingBlkThrotlBPF) DumpMapByName(
 	name string,
 ) ([]bpf.MapItem, error) {
 	b.markRead()
-	if name == throtlWaitAggregateMap {
+	if name == blkThrotlWaitAggregateMap {
 		b.dumpOnce.Do(func() { close(b.dumpStarted) })
 		<-b.releaseDump
 		return nil, nil
 	}
-	if name == throtlPendingMap {
+	if name == blkThrotlPendingMap {
 		return nil, nil
 	}
 	return nil, fmt.Errorf("unexpected map %q", name)
 }
 
-func (b *blockingThrotlBPF) dumpBatch(
+func (b *blockingBlkThrotlBPF) dumpBatch(
 	mapID uint32,
 ) ([]bpf.MapItem, error) {
-	if mapID != b.MapIDByName(throtlWaitAggregateMap) {
+	if mapID != b.MapIDByName(blkThrotlWaitAggregateMap) {
 		return nil, fmt.Errorf("unexpected batch map ID %d", mapID)
 	}
-	return b.DumpMapByName(throtlWaitAggregateMap)
+	return b.DumpMapByName(blkThrotlWaitAggregateMap)
 }
 
-func (b *blockingThrotlBPF) MapIDByName(name string) uint32 {
+func (b *blockingBlkThrotlBPF) MapIDByName(name string) uint32 {
 	b.markRead()
-	return b.fakeThrotlBPF.MapIDByName(name)
+	return b.fakeBlkThrotlBPF.MapIDByName(name)
 }
 
-func (b *blockingThrotlBPF) ReadMap(
+func (b *blockingBlkThrotlBPF) ReadMap(
 	mapID uint32,
 	key []byte,
 ) ([]byte, error) {
 	b.markRead()
-	return b.fakeThrotlBPF.ReadMap(mapID, key)
+	return b.fakeBlkThrotlBPF.ReadMap(mapID, key)
 }
 
-func (b *blockingThrotlBPF) Close() error {
+func (b *blockingBlkThrotlBPF) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.closeOnce.Do(func() {
@@ -1208,7 +1208,7 @@ func (b *blockingThrotlBPF) Close() error {
 	return b.closeErr
 }
 
-func (b *blockingThrotlBPF) closeState() (int, bool) {
+func (b *blockingBlkThrotlBPF) closeState() (int, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.closeCalls, b.readAfterClose
@@ -1216,7 +1216,7 @@ func (b *blockingThrotlBPF) closeState() (int, bool) {
 
 // Object contracts, status decoding, and required attachment paths.
 
-func requireThrotlTestSession(t *testing.T, collector *throtlTracing) {
+func requireBlkThrotlTestSession(t *testing.T, collector *blkThrotlTracing) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		collector.mu.Lock()
@@ -1230,18 +1230,18 @@ func requireThrotlTestSession(t *testing.T, collector *throtlTracing) {
 	}, time.Second, time.Millisecond, "blk_throtl session was not published")
 }
 
-func throtlTestStatusValue(value []byte, changes *[]uint64) []byte {
+func blkThrotlTestStatusValue(value []byte, changes *[]uint64) []byte {
 	if len(value) != binary.Size(ioControlStatus{}) || len(*changes) == 0 {
 		return value
 	}
 	result := append([]byte(nil), value...)
-	binary.LittleEndian.PutUint64(result[8:], nextThrotlTestDeviceChange(changes))
+	binary.LittleEndian.PutUint64(result[8:], nextBlkThrotlTestDeviceChange(changes))
 	return result
 }
 
-func TestThrotlObjectContract(t *testing.T) {
+func TestBlkThrotlObjectContract(t *testing.T) {
 	object := filepath.Join("..", "..", "bpf",
-		"throtl_tracing.o")
+		"blk_throtl_tracing.o")
 	spec, err := ebpf.LoadCollectionSpec(object)
 	require.NoError(t, err)
 
@@ -1249,10 +1249,10 @@ func TestThrotlObjectContract(t *testing.T) {
 		"io_control_device_removed",
 		"io_control_device_changed",
 		"io_control_disk_added",
-		"kprobe_throtl_pd_free",
-		"kretprobe_throtl_pop_queued",
-		"kprobe_throtl_pop_queued",
-		"kprobe_throtl_add_bio_tg",
+		"kprobe_blk_throtl_pd_free",
+		"kretprobe_blk_throtl_pop_queued",
+		"kprobe_blk_throtl_pop_queued",
+		"kprobe_blk_throtl_add_bio_tg",
 	}
 	programNames := make([]string, 0, len(spec.Programs))
 	for name := range spec.Programs {
@@ -1262,20 +1262,20 @@ func TestThrotlObjectContract(t *testing.T) {
 
 	maps := []ioControlTestMapContract{
 		{
-			name: "throtl_blkg_owner_map", typeID: ebpf.Hash, keySize: 8,
-			valueSize: 24, maxEntries: throtlObjectEntries,
+			name: "blk_throtl_blkg_owner_map", typeID: ebpf.Hash, keySize: 8,
+			valueSize: 24, maxEntries: blkThrotlObjectEntries,
 		},
 		{
-			name: "throtl_pending_map", typeID: ebpf.Hash, keySize: 8,
-			valueSize: 8, maxEntries: throtlPendingEntries,
+			name: "blk_throtl_pending_map", typeID: ebpf.Hash, keySize: 8,
+			valueSize: 8, maxEntries: blkThrotlPendingEntries,
 		},
 		{
-			name: "throtl_pop_call_map", typeID: ebpf.Hash, keySize: 8,
-			valueSize: 1, maxEntries: throtlObjectEntries,
+			name: "blk_throtl_pop_call_map", typeID: ebpf.Hash, keySize: 8,
+			valueSize: 1, maxEntries: blkThrotlObjectEntries,
 		},
 		{
-			name: "throtl_wait_agg_map", typeID: ebpf.PerCPUHash, keySize: 32,
-			valueSize: 8, maxEntries: throtlObjectEntries * 2,
+			name: "blk_throtl_wait_agg_map", typeID: ebpf.PerCPUHash, keySize: 32,
+			valueSize: 8, maxEntries: blkThrotlObjectEntries * 2,
 			flags: unix.BPF_F_NO_PREALLOC,
 		},
 		{
@@ -1287,27 +1287,27 @@ func TestThrotlObjectContract(t *testing.T) {
 		requireIOControlTestMap(t, spec, expected)
 	}
 	require.NoError(t, spec.RewriteConstants(map[string]any{
-		"throtl_tracked_caller_start": uint64(1),
-		"throtl_tracked_caller_end":   uint64(2),
-		"throtl_ignored_caller_start": uint64(3),
-		"throtl_ignored_caller_end":   uint64(4),
+		"blk_throtl_tracked_caller_start": uint64(1),
+		"blk_throtl_tracked_caller_end":   uint64(2),
+		"blk_throtl_ignored_caller_start": uint64(3),
+		"blk_throtl_ignored_caller_end":   uint64(4),
 	}))
 }
 
-func TestThrotlAttachHooks(t *testing.T) {
+func TestBlkThrotlAttachHooks(t *testing.T) {
 	want := append(ioControlDeviceHooks(), []bpf.AttachOption{
-		{ProgramName: "kprobe_throtl_pd_free", Symbol: "throtl_pd_free"},
-		{ProgramName: "kretprobe_throtl_pop_queued", Symbol: "throtl_pop_queued"},
-		{ProgramName: "kprobe_throtl_pop_queued", Symbol: "throtl_pop_queued"},
-		{ProgramName: "kprobe_throtl_add_bio_tg", Symbol: "throtl_add_bio_tg"},
+		{ProgramName: "kprobe_blk_throtl_pd_free", Symbol: "throtl_pd_free"},
+		{ProgramName: "kretprobe_blk_throtl_pop_queued", Symbol: "throtl_pop_queued"},
+		{ProgramName: "kprobe_blk_throtl_pop_queued", Symbol: "throtl_pop_queued"},
+		{ProgramName: "kprobe_blk_throtl_add_bio_tg", Symbol: "throtl_add_bio_tg"},
 	}...)
 
-	object := &fakeThrotlBPF{}
-	require.NoError(t, attachThrotlHooks(object))
+	object := &fakeBlkThrotlBPF{}
+	require.NoError(t, attachBlkThrotlHooks(object))
 	require.Equal(t, want, object.options)
 
-	failing := &fakeThrotlBPF{attachErr: errors.New("attach failed")}
-	err := attachThrotlHooks(failing)
+	failing := &fakeBlkThrotlBPF{attachErr: errors.New("attach failed")}
+	err := attachBlkThrotlHooks(failing)
 	require.ErrorContains(t, err, "attach blk-throttle hooks")
 	require.ErrorIs(t, err, failing.attachErr)
 	require.Equal(t, want, failing.options)
@@ -1315,23 +1315,23 @@ func TestThrotlAttachHooks(t *testing.T) {
 
 // Startup, permanent-stop, retry, and in-flight cancellation boundaries.
 
-func TestThrotlStartWithHooks(t *testing.T) {
-	hooks := testThrotlHooks()
+func TestBlkThrotlStartWithHooks(t *testing.T) {
+	hooks := testBlkThrotlHooks()
 	wantConstants := map[string]any{
-		"throtl_tracked_caller_start": uint64(0x1000),
-		"throtl_tracked_caller_end":   uint64(0x1100),
-		"throtl_ignored_caller_start": uint64(0x2000),
-		"throtl_ignored_caller_end":   uint64(0x2100),
+		"blk_throtl_tracked_caller_start": uint64(0x1000),
+		"blk_throtl_tracked_caller_end":   uint64(0x1100),
+		"blk_throtl_ignored_caller_start": uint64(0x2000),
+		"blk_throtl_ignored_caller_end":   uint64(0x2100),
 	}
 	wantOptions := append(ioControlDeviceHooks(), []bpf.AttachOption{
-		{ProgramName: "kprobe_throtl_pd_free", Symbol: "throtl_pd_free"},
-		{ProgramName: "kretprobe_throtl_pop_queued", Symbol: "throtl_pop_queued"},
-		{ProgramName: "kprobe_throtl_pop_queued", Symbol: "throtl_pop_queued"},
-		{ProgramName: "kprobe_throtl_add_bio_tg", Symbol: "throtl_add_bio_tg"},
+		{ProgramName: "kprobe_blk_throtl_pd_free", Symbol: "throtl_pd_free"},
+		{ProgramName: "kretprobe_blk_throtl_pop_queued", Symbol: "throtl_pop_queued"},
+		{ProgramName: "kprobe_blk_throtl_pop_queued", Symbol: "throtl_pop_queued"},
+		{ProgramName: "kprobe_blk_throtl_add_bio_tg", Symbol: "throtl_add_bio_tg"},
 	}...)
 
 	t.Run("loads rodata and attaches the complete group", func(t *testing.T) {
-		object := &fakeThrotlBPF{}
+		object := &fakeBlkThrotlBPF{}
 		var gotConstants map[string]any
 		load := func(_ string, constants map[string]any) (bpf.BPF, error) {
 			gotConstants = constants
@@ -1340,13 +1340,13 @@ func TestThrotlStartWithHooks(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
-		tracing := &throtlTracing{}
+		tracing := &blkThrotlTracing{}
 		require.NoError(t, tracing.startWithAttribution(
 			ctx,
 			load,
 			hooks,
 			1,
-			emptyThrotlContainerSource,
+			emptyBlkThrotlContainerSource,
 		))
 		require.Equal(t, wantConstants, gotConstants)
 		require.Equal(t, wantOptions, object.options)
@@ -1355,19 +1355,19 @@ func TestThrotlStartWithHooks(t *testing.T) {
 	})
 
 	t.Run("closes object after group attach failure", func(t *testing.T) {
-		object := &fakeThrotlBPF{attachErr: fmt.Errorf("attach failed: %w", unix.EPERM)}
+		object := &fakeBlkThrotlBPF{attachErr: fmt.Errorf("attach failed: %w", unix.EPERM)}
 		load := func(_ string, constants map[string]any) (bpf.BPF, error) {
 			require.Equal(t, wantConstants, constants)
 			return object, nil
 		}
 
-		tracing := &throtlTracing{}
+		tracing := &blkThrotlTracing{}
 		err := tracing.startWithAttribution(
 			t.Context(),
 			load,
 			hooks,
 			1,
-			emptyThrotlContainerSource,
+			emptyBlkThrotlContainerSource,
 		)
 		require.ErrorContains(t, err, "attach blk-throttle hooks")
 		require.Equal(t, wantOptions, object.options)
@@ -1377,7 +1377,7 @@ func TestThrotlStartWithHooks(t *testing.T) {
 }
 
 // A terminal status read must release Start only after the BPF object is closed.
-func TestThrotlFatalUpdateStopsStart(t *testing.T) {
+func TestBlkThrotlFatalUpdateStopsStart(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		status   ioControlStatus
@@ -1386,39 +1386,39 @@ func TestThrotlFatalUpdateStopsStart(t *testing.T) {
 	}{
 		{
 			name: "duplicate pending", reason: "duplicate admission",
-			status: ioControlTestStatus(throtlFailurePendingCollision, -int32(unix.EEXIST)),
+			status: ioControlTestStatus(blkThrotlFailurePendingCollision, -int32(unix.EEXIST)),
 		},
 		{
 			name: "unknown caller", reason: "unrecognized throtl_add_bio_tg caller",
-			status: ioControlTestStatus(throtlFailureUnknownCaller, 0),
+			status: ioControlTestStatus(blkThrotlFailureUnknownCaller, 0),
 		},
 		{
 			name: "map capacity", reason: "capacity exhausted (10240 entries)",
-			status: ioControlTestStatus(throtlFailurePendingInsert, -int32(unix.E2BIG)),
+			status: ioControlTestStatus(blkThrotlFailurePendingInsert, -int32(unix.E2BIG)),
 		},
 		{
 			name: "pending insertion", reason: "pending insertion failed: helper returned -12",
-			status: ioControlTestStatus(throtlFailurePendingInsert, -int32(unix.ENOMEM)),
+			status: ioControlTestStatus(blkThrotlFailurePendingInsert, -int32(unix.ENOMEM)),
 		},
 		{
 			name: "pending deletion", reason: "pending deletion failed: helper returned -5",
-			status: ioControlTestStatus(throtlFailurePendingDelete, -int32(unix.EIO)),
+			status: ioControlTestStatus(blkThrotlFailurePendingDelete, -int32(unix.EIO)),
 		},
 		{
 			name: "owner creation", reason: "blkg owner",
-			status: ioControlTestStatus(throtlFailureOwner, -int32(unix.E2BIG)),
+			status: ioControlTestStatus(blkThrotlFailureOwner, -int32(unix.E2BIG)),
 		},
 		{
 			name: "aggregate allocation", reason: "helper returned -12",
-			status: ioControlTestStatus(throtlFailureAggregate, -int32(unix.ENOMEM)),
+			status: ioControlTestStatus(blkThrotlFailureAggregate, -int32(unix.ENOMEM)),
 		},
 		{
 			name: "pop state", reason: "helper returned -17",
-			status: ioControlTestStatus(throtlFailurePopState, -int32(unix.EEXIST)),
+			status: ioControlTestStatus(blkThrotlFailurePopState, -int32(unix.EEXIST)),
 		},
 		{
 			name: "time rollback", reason: "wait end precedes",
-			status: ioControlTestStatus(throtlFailureTimeRollback, 0),
+			status: ioControlTestStatus(blkThrotlFailureTimeRollback, 0),
 		},
 		{
 			name: "unknown stop reason", reason: "unknown BPF stop reason 99",
@@ -1426,25 +1426,25 @@ func TestThrotlFatalUpdateStopsStart(t *testing.T) {
 		},
 		{
 			name: "cleanup failure", reason: "duplicate admission",
-			status:   ioControlTestStatus(throtlFailurePendingCollision, -int32(unix.EEXIST)),
+			status:   ioControlTestStatus(blkThrotlFailurePendingCollision, -int32(unix.EEXIST)),
 			closeErr: errors.New("close failed"),
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			object := newBlockingThrotlBPF()
+			object := newBlockingBlkThrotlBPF()
 			object.value = ioControlTestBytes(test.status)
 			object.closeErr = test.closeErr
 			close(object.releaseDump)
-			collector := &throtlTracing{}
+			collector := &blkThrotlTracing{}
 			startErrors := make(chan error, 1)
 			ctx, cancelRun := context.WithCancel(t.Context())
 			t.Cleanup(cancelRun)
 			go func() {
 				startErrors <- collector.startWithAttribution(ctx,
 					func(string, map[string]any) (bpf.BPF, error) { return object, nil },
-					testThrotlHooks(), 1, emptyThrotlContainerSource)
+					testBlkThrotlHooks(), 1, emptyBlkThrotlContainerSource)
 			}()
-			requireThrotlTestSession(t, collector)
+			requireBlkThrotlTestSession(t, collector)
 			metrics, err := collector.Update()
 			require.Nil(t, metrics)
 			require.ErrorIs(t, err, types.ErrTracingStopped)
@@ -1452,7 +1452,7 @@ func TestThrotlFatalUpdateStopsStart(t *testing.T) {
 			if int32(test.status.Failure) != 0 {
 				require.ErrorContains(t, err, fmt.Sprintf("helper returned %d", int32(test.status.Failure)))
 			}
-			if test.status.Failure>>32 != uint64(throtlFailurePendingInsert) || int32(test.status.Failure) != -int32(unix.E2BIG) {
+			if test.status.Failure>>32 != uint64(blkThrotlFailurePendingInsert) || int32(test.status.Failure) != -int32(unix.E2BIG) {
 				require.NotContains(t, err.Error(), "capacity exhausted")
 			}
 			select {
@@ -1479,21 +1479,21 @@ func TestThrotlFatalUpdateStopsStart(t *testing.T) {
 	}
 }
 
-func TestThrotlDeviceChangeAllowsSessionRestart(t *testing.T) {
-	object := newBlockingThrotlBPF()
+func TestBlkThrotlDeviceChangeAllowsSessionRestart(t *testing.T) {
+	object := newBlockingBlkThrotlBPF()
 	object.deviceChanges = []uint64{0, 1}
-	object.value = ioControlTestBytes(ioControlTestStatus(throtlFailureOwner, 0))
+	object.value = ioControlTestBytes(ioControlTestStatus(blkThrotlFailureOwner, 0))
 	close(object.releaseDump)
-	collector := &throtlTracing{}
+	collector := &blkThrotlTracing{}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
 		done <- collector.startWithAttribution(ctx,
 			func(string, map[string]any) (bpf.BPF, error) { return object, nil },
-			testThrotlHooks(), 1, emptyThrotlContainerSource)
+			testBlkThrotlHooks(), 1, emptyBlkThrotlContainerSource)
 	}()
-	requireThrotlTestSession(t, collector)
+	requireBlkThrotlTestSession(t, collector)
 
 	metrics, err := collector.Update()
 	require.ErrorIs(t, err, errIOControlDevicesChanged)
@@ -1510,14 +1510,14 @@ func TestThrotlDeviceChangeAllowsSessionRestart(t *testing.T) {
 	require.False(t, readAfterClose)
 	require.Nil(t, collector.session)
 
-	replacement := newBlockingThrotlBPF()
+	replacement := newBlockingBlkThrotlBPF()
 	close(replacement.releaseDump)
 	go func() {
 		done <- collector.startWithAttribution(ctx,
 			func(string, map[string]any) (bpf.BPF, error) { return replacement, nil },
-			testThrotlHooks(), 1, emptyThrotlContainerSource)
+			testBlkThrotlHooks(), 1, emptyBlkThrotlContainerSource)
 	}()
-	requireThrotlTestSession(t, collector)
+	requireBlkThrotlTestSession(t, collector)
 	metrics, err = collector.Update()
 	require.NoError(t, err)
 	require.Empty(t, metrics)
@@ -1533,11 +1533,11 @@ func TestThrotlDeviceChangeAllowsSessionRestart(t *testing.T) {
 	require.False(t, readAfterClose)
 }
 
-func TestThrotlStartIgnoresContainerDiscovery(
+func TestBlkThrotlStartIgnoresContainerDiscovery(
 	t *testing.T,
 ) {
-	hooks := testThrotlHooks()
-	object := &fakeThrotlBPF{}
+	hooks := testBlkThrotlHooks()
+	object := &fakeBlkThrotlBPF{}
 	load := func(string, map[string]any) (bpf.BPF, error) {
 		return object, nil
 	}
@@ -1547,7 +1547,7 @@ func TestThrotlStartIgnoresContainerDiscovery(
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	tracing := &throtlTracing{}
+	tracing := &blkThrotlTracing{}
 	require.NoError(t, tracing.startWithAttribution(
 		ctx,
 		load,
@@ -1558,16 +1558,16 @@ func TestThrotlStartIgnoresContainerDiscovery(
 	require.Nil(t, tracing.session)
 }
 
-func TestThrotlIntervalCancelWaitsForInFlightCollection(t *testing.T) {
-	object := newBlockingThrotlBPF()
+func TestBlkThrotlIntervalCancelWaitsForInFlightCollection(t *testing.T) {
+	object := newBlockingBlkThrotlBPF()
 	load := func(string, map[string]any) (bpf.BPF, error) {
 		return object, nil
 	}
-	hooks := testThrotlHooks()
+	hooks := testBlkThrotlHooks()
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	tracing := &throtlTracing{}
+	tracing := &blkThrotlTracing{}
 	startDone := make(chan error, 1)
 	go func() {
 		startDone <- tracing.startWithAttribution(
@@ -1575,11 +1575,11 @@ func TestThrotlIntervalCancelWaitsForInFlightCollection(t *testing.T) {
 			load,
 			hooks,
 			1,
-			emptyThrotlContainerSource,
+			emptyBlkThrotlContainerSource,
 		)
 	}()
 
-	requireThrotlTestSession(t, tracing)
+	requireBlkThrotlTestSession(t, tracing)
 	tracing.mu.Lock()
 	session := tracing.session
 	tracing.mu.Unlock()
@@ -1656,8 +1656,8 @@ func TestThrotlIntervalCancelWaitsForInFlightCollection(t *testing.T) {
 
 // Opt-in production attach qualification.
 
-// Run with TEST_INTEGRATION=true after building bpf/throtl_tracing.o.
-func TestThrotlStartAttachSmoke(t *testing.T) {
+// Run with TEST_INTEGRATION=true after building bpf/blk_throtl_tracing.o.
+func TestBlkThrotlStartAttachSmoke(t *testing.T) {
 	if os.Getenv("TEST_INTEGRATION") != "true" {
 		t.Skip("Set TEST_INTEGRATION=true to run the real blk_throtl attach smoke")
 	}
@@ -1669,7 +1669,7 @@ func TestThrotlStartAttachSmoke(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	tracing := &throtlTracing{}
+	tracing := &blkThrotlTracing{}
 	err := tracing.Start(ctx)
 	if errors.Is(err, types.ErrNotSupported) && os.Getenv("TEST_BLK_THROTL_REQUIRED") != "1" {
 		t.Skip(err)
@@ -1680,29 +1680,29 @@ func TestThrotlStartAttachSmoke(t *testing.T) {
 
 // Runtime hook selection and incomplete-profile rejection.
 
-func TestResolveThrotlHooks(t *testing.T) {
+func TestResolveBlkThrotlHooks(t *testing.T) {
 	tests := []struct {
 		name    string
 		profile symbol.KsymbolProfile
-		want    throtlHooks
+		want    blkThrotlHooks
 	}{
 		{
 			name: "modern tracked caller is preferred",
-			profile: throtlHookProfileForTest(map[string]symbol.KsymbolRange{
+			profile: blkThrotlHookProfileForTest(map[string]symbol.KsymbolRange{
 				"__blk_throtl_bio": {Start: 0x1000, End: 0x1100},
 				"blk_throtl_bio":   {Start: 0x1800, End: 0x1900},
 			}),
-			want: throtlHooks{
+			want: blkThrotlHooks{
 				trackedRange: symbol.KsymbolRange{Start: 0x1000, End: 0x1100},
 				ignoredRange: symbol.KsymbolRange{Start: 0x2000, End: 0x2100},
 			},
 		},
 		{
 			name: "legacy tracked caller is the fallback",
-			profile: throtlHookProfileForTest(map[string]symbol.KsymbolRange{
+			profile: blkThrotlHookProfileForTest(map[string]symbol.KsymbolRange{
 				"blk_throtl_bio": {Start: 0x1000, End: 0x1100},
 			}),
-			want: throtlHooks{
+			want: blkThrotlHooks{
 				trackedRange: symbol.KsymbolRange{Start: 0x1000, End: 0x1100},
 				ignoredRange: symbol.KsymbolRange{Start: 0x2000, End: 0x2100},
 			},
@@ -1711,7 +1711,7 @@ func TestResolveThrotlHooks(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := resolveThrotlHooks(
+			got, err := resolveBlkThrotlHooks(
 				func(addresses, ranges []string) (symbol.KsymbolProfile, error) {
 					require.ElementsMatch(t, []string{
 						"throtl_add_bio_tg",
@@ -1732,7 +1732,7 @@ func TestResolveThrotlHooks(t *testing.T) {
 	}
 }
 
-func TestResolveThrotlHooksRejectsIncompleteProfile(t *testing.T) {
+func TestResolveBlkThrotlHooksRejectsIncompleteProfile(t *testing.T) {
 	tests := []struct {
 		name        string
 		missing     string
@@ -1747,12 +1747,12 @@ func TestResolveThrotlHooksRejectsIncompleteProfile(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			profile := throtlHookProfileForTest(map[string]symbol.KsymbolRange{
+			profile := blkThrotlHookProfileForTest(map[string]symbol.KsymbolRange{
 				"blk_throtl_bio": {Start: 0x1000, End: 0x1100},
 			})
 			delete(profile.Addresses, test.missing)
 			delete(profile.Ranges, test.missing)
-			got, err := resolveThrotlHooks(
+			got, err := resolveBlkThrotlHooks(
 				func([]string, []string) (symbol.KsymbolProfile, error) {
 					return profile, nil
 				},
@@ -1763,15 +1763,15 @@ func TestResolveThrotlHooksRejectsIncompleteProfile(t *testing.T) {
 	}
 }
 
-func TestResolveThrotlHooksRejectsOverlappingCallers(t *testing.T) {
-	profile := throtlHookProfileForTest(map[string]symbol.KsymbolRange{
+func TestResolveBlkThrotlHooksRejectsOverlappingCallers(t *testing.T) {
+	profile := blkThrotlHookProfileForTest(map[string]symbol.KsymbolRange{
 		"blk_throtl_bio": {Start: 0x1000, End: 0x1100},
 	})
 	profile.Ranges["tg_dispatch_one_bio"] = symbol.KsymbolRange{
 		Start: 0x1080,
 		End:   0x1180,
 	}
-	got, err := resolveThrotlHooks(
+	got, err := resolveBlkThrotlHooks(
 		func([]string, []string) (symbol.KsymbolProfile, error) {
 			return profile, nil
 		},
@@ -1780,11 +1780,11 @@ func TestResolveThrotlHooksRejectsOverlappingCallers(t *testing.T) {
 	require.Nil(t, got)
 }
 
-func TestResolveThrotlHooksPropagatesProfileFailure(
+func TestResolveBlkThrotlHooksPropagatesProfileFailure(
 	t *testing.T,
 ) {
 	failure := errors.New("scan failed")
-	got, err := resolveThrotlHooks(
+	got, err := resolveBlkThrotlHooks(
 		func([]string, []string) (symbol.KsymbolProfile, error) {
 			return symbol.KsymbolProfile{}, failure
 		},
@@ -1793,14 +1793,14 @@ func TestResolveThrotlHooksPropagatesProfileFailure(
 	require.Nil(t, got)
 }
 
-func TestLoadThrotlHooksRetriesSymbolReadFailure(t *testing.T) {
+func TestLoadBlkThrotlHooksRetriesSymbolReadFailure(t *testing.T) {
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
 	procfs.RootPrefix(t.TempDir())
 	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
 	path := procfs.Path("kallsyms")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 
-	hooks, err := loadThrotlHooks()
+	hooks, err := loadBlkThrotlHooks()
 	require.Nil(t, hooks)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	require.NotErrorIs(t, err, types.ErrNotSupported,
@@ -1808,7 +1808,7 @@ func TestLoadThrotlHooksRetriesSymbolReadFailure(t *testing.T) {
 
 	// A successful read with missing required hooks proves unsupported.
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
-	hooks, err = loadThrotlHooks()
+	hooks, err = loadBlkThrotlHooks()
 	require.Nil(t, hooks)
 	require.ErrorIs(t, err, types.ErrNotSupported)
 
@@ -1821,12 +1821,12 @@ func TestLoadThrotlHooksRetriesSymbolReadFailure(t *testing.T) {
 0000000000005000 t throtl_pd_free
 `
 	require.NoError(t, os.WriteFile(path, []byte(kallsyms), 0o600))
-	hooks, err = loadThrotlHooks()
+	hooks, err = loadBlkThrotlHooks()
 	require.NoError(t, err)
 	require.NotNil(t, hooks)
 }
 
-func throtlHookProfileForTest(
+func blkThrotlHookProfileForTest(
 	extra map[string]symbol.KsymbolRange,
 ) symbol.KsymbolProfile {
 	profile := symbol.KsymbolProfile{

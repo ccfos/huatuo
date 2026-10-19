@@ -1132,7 +1132,7 @@ huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
 ## IO
 
 IO monitoring combines disk performance, block IO latency and size
-distributions, throttle and IOCOST waits, and device health events.
+distributions, blk-throttle and IOCOST waits, and device health events.
 
 ### Configuration
 

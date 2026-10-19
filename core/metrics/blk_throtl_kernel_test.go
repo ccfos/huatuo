@@ -46,15 +46,15 @@ import (
 // Real-kernel fixture bounds and ownership.
 
 const (
-	throtlKernelRequiredEnvironment   = "TEST_BLK_THROTL_REQUIRED"
-	throtlKernelCgroupRootEnvironment = "TEST_BLK_THROTL_CGROUP_ROOT"
-	throtlKernelIOPS                  = 2
-	throtlKernelOperations            = 4
-	throtlKernelCommandTimeout        = 15 * time.Second
-	throtlKernelStateTimeout          = 10 * time.Second
+	blkThrotlKernelRequiredEnvironment   = "TEST_BLK_THROTL_REQUIRED"
+	blkThrotlKernelCgroupRootEnvironment = "TEST_BLK_THROTL_CGROUP_ROOT"
+	blkThrotlKernelIOPS                  = 2
+	blkThrotlKernelOperations            = 4
+	blkThrotlKernelCommandTimeout        = 15 * time.Second
+	blkThrotlKernelStateTimeout          = 10 * time.Second
 )
 
-type throtlKernelDisk struct {
+type blkThrotlKernelDisk struct {
 	uuid   string
 	path   string
 	device string
@@ -62,14 +62,14 @@ type throtlKernelDisk struct {
 	minor  uint32
 }
 
-type throtlKernelFixture struct {
+type blkThrotlKernelFixture struct {
 	ctx     context.Context
 	backing string
 	loop    string
-	disk    *throtlKernelDisk
+	disk    *blkThrotlKernelDisk
 }
 
-type throtlKernelCgroup struct {
+type blkThrotlKernelCgroup struct {
 	ctx       context.Context
 	path      string
 	moveFile  string
@@ -80,7 +80,7 @@ type throtlKernelCgroup struct {
 	readFile  string
 }
 
-type throtlKernelRows struct {
+type blkThrotlKernelRows struct {
 	aggregate int
 	owner     int
 }
@@ -89,149 +89,149 @@ type throtlKernelRows struct {
 
 // Integration owns the block and cgroup objects. Required mode also fails
 // when the kernel lacks blk-throttle, instead of reporting a skipped test.
-func TestThrotlKernelThrottleLifecycle(t *testing.T) {
-	requireThrotlKernelTest(t)
-	fixture := newThrotlKernelFixture(t)
-	tracing, session := startThrotlKernelSession(t, fixture.ctx)
+func TestBlkThrotlKernelThrottleLifecycle(t *testing.T) {
+	requireBlkThrotlKernelTest(t)
+	fixture := newBlkThrotlKernelFixture(t)
+	tracing, session := startBlkThrotlKernelSession(t, fixture.ctx)
 	disk := fixture.createDisk(t)
-	cgroup := newThrotlKernelCgroup(t, fixture.ctx, disk.device)
-	requireThrotlKernelDeviceRestart(t, tracing, session)
-	tracing, session = startThrotlKernelSession(t, fixture.ctx)
+	cgroup := newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+	requireBlkThrotlKernelDeviceRestart(t, tracing, session)
+	tracing, session = startBlkThrotlKernelSession(t, fixture.ctx)
 
 	// Establish the initial interval, then prove ordinary direct IO does not
-	// produce a throttle metric.
+	// produce a blk-throttle metric.
 	metrics, err := tracing.Update()
 	require.NoError(t, err)
-	requireThrotlKernelMetricAbsent(t, metrics, disk.path, "write")
+	requireBlkThrotlKernelMetricAbsent(t, metrics, disk.path, "write")
 
-	runThrotlKernelWorkload(t, cgroup, disk.path, "write", 2)
+	runBlkThrotlKernelWorkload(t, cgroup, disk.path, "write", 2)
 	metrics, err = tracing.Update()
 	require.NoError(t, err)
-	requireThrotlKernelMetricAbsent(t, metrics, disk.path, "write")
+	requireBlkThrotlKernelMetricAbsent(t, metrics, disk.path, "write")
 
 	// Fixed-rate serial IO gives an exact delayed count and makes total wait
 	// comparable with workload wall time. The empty updates prove interval
 	// deltas are emitted once.
-	cgroup.setIOPS(t, "write", throtlKernelIOPS)
-	elapsed := runThrotlKernelWorkload(
-		t, cgroup, disk.path, "write", throtlKernelOperations,
+	cgroup.setIOPS(t, "write", blkThrotlKernelIOPS)
+	elapsed := runBlkThrotlKernelWorkload(
+		t, cgroup, disk.path, "write", blkThrotlKernelOperations,
 	)
 	metrics, err = tracing.Update()
 	require.NoError(t, err)
-	requireThrotlKernelInterval(
-		t, metrics, disk.path, "write", throtlKernelOperations, elapsed,
+	requireBlkThrotlKernelInterval(
+		t, metrics, disk.path, "write", blkThrotlKernelOperations, elapsed,
 	)
-	requireThrotlKernelHealthy(t, session)
+	requireBlkThrotlKernelHealthy(t, session)
 
 	metrics, err = tracing.Update()
 	require.NoError(t, err)
-	requireThrotlKernelInterval(t, metrics, disk.path, "write", 0, 0)
+	requireBlkThrotlKernelInterval(t, metrics, disk.path, "write", 0, 0)
 
 	// Confirm the first group's counters before removing its directory.
-	rows := readThrotlKernelRows(t, session, disk)
+	rows := readBlkThrotlKernelRows(t, session, disk)
 	require.Equal(t, 1, rows.aggregate)
 	require.Equal(t, 1, rows.owner)
 	cgroup.remove(t)
-	requireThrotlKernelHealthy(t, session)
+	requireBlkThrotlKernelHealthy(t, session)
 
 	// rmdir does not wait for RCU and pd_free. The old rows may still exist;
 	// the replacement must publish its own interval without inheriting them.
-	cgroup = newThrotlKernelCgroup(t, fixture.ctx, disk.device)
-	cgroup.setIOPS(t, "read", throtlKernelIOPS)
-	elapsed = runThrotlKernelWorkload(
-		t, cgroup, disk.path, "read", throtlKernelOperations,
+	cgroup = newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+	cgroup.setIOPS(t, "read", blkThrotlKernelIOPS)
+	elapsed = runBlkThrotlKernelWorkload(
+		t, cgroup, disk.path, "read", blkThrotlKernelOperations,
 	)
 	metrics, err = tracing.Update()
 	require.NoError(t, err)
-	requireThrotlKernelInterval(
-		t, metrics, disk.path, "read", throtlKernelOperations, elapsed,
+	requireBlkThrotlKernelInterval(
+		t, metrics, disk.path, "read", blkThrotlKernelOperations, elapsed,
 	)
-	requireThrotlKernelHealthy(t, session)
+	requireBlkThrotlKernelHealthy(t, session)
 	metrics, err = tracing.Update()
 	require.NoError(t, err)
-	requireThrotlKernelInterval(t, metrics, disk.path, "read", 0, 0)
+	requireBlkThrotlKernelInterval(t, metrics, disk.path, "read", 0, 0)
 
 	// Removing a disk with a live owner discards the whole session's interval.
 	fixture.removeDisk(t)
-	requireThrotlKernelDeviceRestart(t, tracing, session)
+	requireBlkThrotlKernelDeviceRestart(t, tracing, session)
 	cgroup.remove(t)
 
 	// A replacement disk collects fresh data in a new session.
 	disk = fixture.createDisk(t)
-	cgroup = newThrotlKernelCgroup(t, fixture.ctx, disk.device)
-	cgroup.setIOPS(t, "write", throtlKernelIOPS)
-	tracing, session = startThrotlKernelSession(t, fixture.ctx)
-	elapsed = runThrotlKernelWorkload(t, cgroup, disk.path, "write", 2)
+	cgroup = newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+	cgroup.setIOPS(t, "write", blkThrotlKernelIOPS)
+	tracing, session = startBlkThrotlKernelSession(t, fixture.ctx)
+	elapsed = runBlkThrotlKernelWorkload(t, cgroup, disk.path, "write", 2)
 	metrics, err = tracing.Update()
 	require.NoError(t, err)
-	requireThrotlKernelInterval(
+	requireBlkThrotlKernelInterval(
 		t, metrics, disk.path, "write", 2, elapsed,
 	)
-	rows = readThrotlKernelRows(t, session, disk)
+	rows = readBlkThrotlKernelRows(t, session, disk)
 	require.Equal(t, 1, rows.aggregate)
 	require.Equal(t, 1, rows.owner)
-	requireThrotlKernelHealthy(t, session)
+	requireBlkThrotlKernelHealthy(t, session)
 
 	cgroup.remove(t)
 	fixture.removeDisk(t)
-	requireThrotlKernelDeviceRestart(t, tracing, session)
+	requireBlkThrotlKernelDeviceRestart(t, tracing, session)
 }
 
 // Pending-map capacity failure qualification.
 
-// Fill the test session's pending map so a real throttle admission receives
+// Fill the test session's pending map so a real blk-throttle admission receives
 // E2BIG from the kernel helper. Production BPF must publish the stop reason.
-func TestThrotlKernelPendingCapacityFailure(t *testing.T) {
-	requireThrotlKernelTest(t)
-	fixture := newThrotlKernelFixture(t)
+func TestBlkThrotlKernelPendingCapacityFailure(t *testing.T) {
+	requireBlkThrotlKernelTest(t)
+	fixture := newBlkThrotlKernelFixture(t)
 	disk := fixture.createDisk(t)
-	cgroup := newThrotlKernelCgroup(t, fixture.ctx, disk.device)
-	cgroup.setIOPS(t, "write", throtlKernelIOPS)
-	hooks, err := loadThrotlHooks()
-	if errors.Is(err, types.ErrNotSupported) && os.Getenv(throtlKernelRequiredEnvironment) != "1" {
+	cgroup := newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+	cgroup.setIOPS(t, "write", blkThrotlKernelIOPS)
+	hooks, err := loadBlkThrotlHooks()
+	if errors.Is(err, types.ErrNotSupported) && os.Getenv(blkThrotlKernelRequiredEnvironment) != "1" {
 		t.Skip(err)
 	}
 	require.NoError(t, err)
 	oldDir := bpf.DefaultObjDir
 	bpf.DefaultObjDir = filepath.Join("..", "..", "bpf")
 	t.Cleanup(func() { bpf.DefaultObjDir = oldDir })
-	object, err := loadIOControlBPF("throtl_tracing.o", hooks.constants())
+	object, err := loadIOControlBPF("blk_throtl_tracing.o", hooks.constants())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, object.Close()) })
 
-	// Fill before attaching: unrelated throttle admissions must not consume
+	// Fill before attaching: unrelated blk-throttle admissions must not consume
 	// slots during setup. Once attached, any real admission must report E2BIG.
-	items := make([]bpf.MapItem, throtlPendingEntries)
+	items := make([]bpf.MapItem, blkThrotlPendingEntries)
 	for index := range items {
 		items[index] = bpf.MapItem{
 			Key:   ioControlTestBytes(uint64(index + 1)),
 			Value: ioControlTestBytes(uint64(0)),
 		}
 	}
-	mapID := object.MapIDByName(throtlPendingMap)
+	mapID := object.MapIDByName(blkThrotlPendingMap)
 	require.NotZero(t, mapID)
 	require.NoError(t, object.WriteMapItems(mapID, items))
-	require.NoError(t, attachThrotlHooks(object))
-	runThrotlKernelWorkload(t, cgroup, disk.path, "write", 1)
+	require.NoError(t, attachBlkThrotlHooks(object))
+	runBlkThrotlKernelWorkload(t, cgroup, disk.path, "write", 1)
 
 	status, err := readIOControlStatus(object)
 	require.NoError(t, err)
-	require.Equal(t, ioControlTestStatus(throtlFailurePendingInsert, -int32(unix.E2BIG)), status)
-	require.ErrorIs(t, throtlFailure(status.Failure), types.ErrTracingStopped)
-	require.ErrorContains(t, throtlFailure(status.Failure), "capacity exhausted (10240 entries)")
+	require.Equal(t, ioControlTestStatus(blkThrotlFailurePendingInsert, -int32(unix.E2BIG)), status)
+	require.ErrorIs(t, blkThrotlFailure(status.Failure), types.ErrTracingStopped)
+	require.ErrorContains(t, blkThrotlFailure(status.Failure), "capacity exhausted (10240 entries)")
 }
 
 // Disposable device, cgroup, and workload helpers.
 
-func requireThrotlKernelTest(t *testing.T) {
+func requireBlkThrotlKernelTest(t *testing.T) {
 	t.Helper()
-	required := os.Getenv(throtlKernelRequiredEnvironment)
+	required := os.Getenv(blkThrotlKernelRequiredEnvironment)
 	if required == "" && os.Getenv("TEST_INTEGRATION") != "true" {
 		t.Skip("run make integration for live blk-throttle qualification")
 	}
 	if required != "" && required != "1" {
 		t.Fatalf("%s must be exactly 1, got %q",
-			throtlKernelRequiredEnvironment, required)
+			blkThrotlKernelRequiredEnvironment, required)
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Fatalf("blk-throttle qualification requires linux/amd64, got %s/%s",
@@ -254,13 +254,13 @@ func requireThrotlKernelTest(t *testing.T) {
 	t.Cleanup(bpf.Shutdown)
 }
 
-func startThrotlKernelSession(
+func startBlkThrotlKernelSession(
 	t *testing.T,
 	parent context.Context,
-) (*throtlTracing, *throtlSession) {
+) (*blkThrotlTracing, *blkThrotlSession) {
 	t.Helper()
-	hooks, err := loadThrotlHooks()
-	if errors.Is(err, types.ErrNotSupported) && os.Getenv(throtlKernelRequiredEnvironment) != "1" {
+	hooks, err := loadBlkThrotlHooks()
+	if errors.Is(err, types.ErrNotSupported) && os.Getenv(blkThrotlKernelRequiredEnvironment) != "1" {
 		t.Skip(err)
 	}
 	require.NoError(t, err)
@@ -271,7 +271,7 @@ func startThrotlKernelSession(
 	bpf.DefaultObjDir = filepath.Join("..", "..", "bpf")
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan error, 1)
-	tracing := &throtlTracing{}
+	tracing := &blkThrotlTracing{}
 	go func() {
 		done <- tracing.startWithAttribution(
 			ctx,
@@ -291,14 +291,14 @@ func startThrotlKernelSession(
 				if err != nil {
 					t.Errorf("stop blk-throttle session: %v", err)
 				}
-			case <-time.After(throtlKernelStateTimeout):
+			case <-time.After(blkThrotlKernelStateTimeout):
 				t.Error("timeout stopping blk-throttle session")
 			}
 		}
 		bpf.DefaultObjDir = oldDir
 	})
 
-	var session *throtlSession
+	var session *blkThrotlSession
 	waitIOControlKernelState(t, ctx, "blk-throttle session publication", func() bool {
 		select {
 		case err := <-done:
@@ -317,7 +317,7 @@ func startThrotlKernelSession(
 	return tracing, session
 }
 
-func newThrotlKernelFixture(t *testing.T) *throtlKernelFixture {
+func newBlkThrotlKernelFixture(t *testing.T) *blkThrotlKernelFixture {
 	t.Helper()
 	ctx := ioControlKernelContext(t)
 	directory := t.TempDir()
@@ -328,17 +328,17 @@ func newThrotlKernelFixture(t *testing.T) *throtlKernelFixture {
 	require.NoError(t, file.Close())
 	// Setup can fail after binding a loop. Keep its private backing identity
 	// available to cleanup even when no device name is returned.
-	fixture := &throtlKernelFixture{ctx: ctx, backing: backing}
+	fixture := &blkThrotlKernelFixture{ctx: ctx, backing: backing}
 	t.Cleanup(func() { fixture.cleanup(t) })
 	t.Logf("blk-throttle owned resources: backing=%s", backing)
 	fixture.loop = runIOControlKernelCommand(
-		t, ctx, throtlKernelCommandTimeout,
+		t, ctx, blkThrotlKernelCommandTimeout,
 		"losetup", "--find", "--show", backing,
 	)
 	return fixture
 }
 
-func (f *throtlKernelFixture) createDisk(t *testing.T) *throtlKernelDisk {
+func (f *blkThrotlKernelFixture) createDisk(t *testing.T) *blkThrotlKernelDisk {
 	t.Helper()
 	require.NoError(t, f.ctx.Err())
 	require.Nil(t, f.disk)
@@ -346,17 +346,17 @@ func (f *throtlKernelFixture) createDisk(t *testing.T) *throtlKernelDisk {
 	table := fmt.Sprintf("0 %d linear %s 0", (64<<20)/512, f.loop)
 	// Creation can time out after DM exists. Register ownership before the
 	// command and remove by UUID so a name collision cannot remove another disk.
-	disk := &throtlKernelDisk{
+	disk := &blkThrotlKernelDisk{
 		uuid: fmt.Sprintf("HUATUO-BLK-THROTL-%d-%d", os.Getpid(), time.Now().UnixNano()),
 	}
 	f.disk = disk
 	t.Logf("blk-throttle owned DM: name=%s uuid=%s", name, disk.uuid)
 	runIOControlKernelCommand(
-		t, f.ctx, throtlKernelCommandTimeout,
+		t, f.ctx, blkThrotlKernelCommandTimeout,
 		"dmsetup", "create", name, "--uuid", disk.uuid, "--table", table,
 	)
 	info := runIOControlKernelCommand(
-		t, f.ctx, throtlKernelCommandTimeout,
+		t, f.ctx, blkThrotlKernelCommandTimeout,
 		"dmsetup", "info", "--columns", "--noheadings", "--separator", ":",
 		"-o", "major,minor", name,
 	)
@@ -380,17 +380,17 @@ func (f *throtlKernelFixture) createDisk(t *testing.T) *throtlKernelDisk {
 	return disk
 }
 
-func (f *throtlKernelFixture) removeDisk(t *testing.T) {
+func (f *blkThrotlKernelFixture) removeDisk(t *testing.T) {
 	t.Helper()
 	require.NotNil(t, f.disk)
 	runIOControlKernelCommand(
-		t, f.ctx, throtlKernelCommandTimeout,
+		t, f.ctx, blkThrotlKernelCommandTimeout,
 		"dmsetup", "remove", "--retry", "--uuid", f.disk.uuid,
 	)
 	f.disk = nil
 }
 
-func (f *throtlKernelFixture) cleanup(t *testing.T) {
+func (f *blkThrotlKernelFixture) cleanup(t *testing.T) {
 	t.Helper()
 	if f.disk != nil {
 		if err := cleanupIOControlKernelCommand(
@@ -400,7 +400,7 @@ func (f *throtlKernelFixture) cleanup(t *testing.T) {
 		}
 		f.disk = nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), throtlKernelCommandTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), blkThrotlKernelCommandTimeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, "losetup",
 		"--associated", f.backing, "--list", "--noheadings", "--output", "NAME")
@@ -421,14 +421,14 @@ func (f *throtlKernelFixture) cleanup(t *testing.T) {
 	f.loop = ""
 }
 
-func newThrotlKernelCgroup(
+func newBlkThrotlKernelCgroup(
 	t *testing.T,
 	ctx context.Context,
 	device string,
-) *throtlKernelCgroup {
+) *blkThrotlKernelCgroup {
 	t.Helper()
 	require.NoError(t, ctx.Err())
-	root := os.Getenv(throtlKernelCgroupRootEnvironment)
+	root := os.Getenv(blkThrotlKernelCgroupRootEnvironment)
 	if root == "" {
 		root = "/sys/fs/cgroup/blkio"
 		if _, err := os.Stat(filepath.Join(
@@ -441,7 +441,7 @@ func newThrotlKernelCgroup(
 	require.NoError(t, err)
 	if controllers, err := os.ReadFile(filepath.Join(root, "cgroup.controllers")); err == nil {
 		if !slices.Contains(strings.Fields(string(controllers)), "io") {
-			if os.Getenv(throtlKernelRequiredEnvironment) == "1" {
+			if os.Getenv(blkThrotlKernelRequiredEnvironment) == "1" {
 				t.Fatal("cgroup v2 io controller is unavailable")
 			}
 			t.Skip("cgroup v2 io controller is unavailable")
@@ -459,7 +459,7 @@ func newThrotlKernelCgroup(
 	path := filepath.Join(root, name)
 	require.NoError(t, os.Mkdir(path, 0o755))
 
-	cgroup := &throtlKernelCgroup{ctx: ctx, path: path, device: device}
+	cgroup := &blkThrotlKernelCgroup{ctx: ctx, path: path, device: device}
 	if _, err := os.Stat(filepath.Join(path, "io.max")); err == nil {
 		cgroup.unified = true
 		cgroup.moveFile = filepath.Join(path, "cgroup.procs")
@@ -487,7 +487,7 @@ func newThrotlKernelCgroup(
 	return cgroup
 }
 
-func (c *throtlKernelCgroup) setIOPS(
+func (c *blkThrotlKernelCgroup) setIOPS(
 	t *testing.T,
 	operation string,
 	iops int,
@@ -507,7 +507,7 @@ func (c *throtlKernelCgroup) setIOPS(
 	require.NoError(t, os.WriteFile(file, []byte(value), 0o600))
 }
 
-func (c *throtlKernelCgroup) cleanup(t *testing.T) {
+func (c *blkThrotlKernelCgroup) cleanup(t *testing.T) {
 	t.Helper()
 	if c.removed {
 		return
@@ -518,16 +518,16 @@ func (c *throtlKernelCgroup) cleanup(t *testing.T) {
 	c.removed = true
 }
 
-func (c *throtlKernelCgroup) remove(t *testing.T) {
+func (c *blkThrotlKernelCgroup) remove(t *testing.T) {
 	t.Helper()
 	require.False(t, c.removed)
 	require.NoError(t, os.Remove(c.path))
 	c.removed = true
 }
 
-func runThrotlKernelWorkload(
+func runBlkThrotlKernelWorkload(
 	t *testing.T,
-	cgroup *throtlKernelCgroup,
+	cgroup *blkThrotlKernelCgroup,
 	device string,
 	operation string,
 	operations int,
@@ -554,7 +554,7 @@ func runThrotlKernelWorkload(
 		"--output-format=json",
 	}
 	output := runIOControlKernelCommand(
-		t, cgroup.ctx, throtlKernelCommandTimeout,
+		t, cgroup.ctx, blkThrotlKernelCommandTimeout,
 		"bash", arguments...,
 	)
 	// Compare wait time with the IO job, excluding fio startup and calibration.
@@ -568,7 +568,7 @@ func runThrotlKernelWorkload(
 	return time.Duration(result.Jobs[0].RuntimeMS) * time.Millisecond
 }
 
-func requireThrotlKernelMetricAbsent(
+func requireBlkThrotlKernelMetricAbsent(
 	t *testing.T,
 	metrics []*metric.Data,
 	device string,
@@ -577,8 +577,8 @@ func requireThrotlKernelMetricAbsent(
 	t.Helper()
 	for _, data := range metrics {
 		got := data
-		if (got.Name() == throtlDelayedCountName ||
-			got.Name() == throtlAverageWaitName) &&
+		if (got.Name() == blkThrotlDelayedCountName ||
+			got.Name() == blkThrotlAverageWaitName) &&
 			got.Labels()["disk"] == filepath.Base(device) &&
 			got.Labels()["operation"] == operation {
 			t.Fatalf("unexpected blk-throttle metric for %s %s: %+v",
@@ -587,7 +587,7 @@ func requireThrotlKernelMetricAbsent(
 	}
 }
 
-func requireThrotlKernelInterval(
+func requireBlkThrotlKernelInterval(
 	t *testing.T,
 	metrics []*metric.Data,
 	device string,
@@ -603,8 +603,8 @@ func requireThrotlKernelInterval(
 			got.Labels()["operation"] != operation {
 			continue
 		}
-		if got.Name() != throtlDelayedCountName &&
-			got.Name() != throtlAverageWaitName {
+		if got.Name() != blkThrotlDelayedCountName &&
+			got.Name() != blkThrotlAverageWaitName {
 			continue
 		}
 		scope := got.Labels()["scope"]
@@ -615,31 +615,31 @@ func requireThrotlKernelInterval(
 	}
 	for _, scope := range []string{ioControlHostScope, ioControlOtherScope} {
 		require.Contains(t, values, scope)
-		require.Contains(t, values[scope], throtlDelayedCountName)
-		require.Contains(t, values[scope], throtlAverageWaitName)
+		require.Contains(t, values[scope], blkThrotlDelayedCountName)
+		require.Contains(t, values[scope], blkThrotlAverageWaitName)
 		require.Equal(t, float64(wantCount),
-			values[scope][throtlDelayedCountName])
+			values[scope][blkThrotlDelayedCountName])
 		if wantCount == 0 {
-			require.Zero(t, values[scope][throtlAverageWaitName])
+			require.Zero(t, values[scope][blkThrotlAverageWaitName])
 		}
 	}
-	hostAverage := values[ioControlHostScope][throtlAverageWaitName]
+	hostAverage := values[ioControlHostScope][blkThrotlAverageWaitName]
 	require.Equal(t, hostAverage,
-		values[ioControlOtherScope][throtlAverageWaitName])
+		values[ioControlOtherScope][blkThrotlAverageWaitName])
 	if wantCount == 0 {
 		return
 	}
 	require.Greater(t, hostAverage, float64(100),
-		"2 IOPS must produce an observable throttle wait")
+		"2 IOPS must produce an observable blk-throttle wait")
 	accountedMS := hostAverage * float64(wantCount)
 	elapsedMS := float64(elapsed.Microseconds()) / 1000
 	require.GreaterOrEqual(t, accountedMS, elapsedMS*0.5)
 	require.LessOrEqual(t, accountedMS, elapsedMS+250)
 }
 
-func requireThrotlKernelHealthy(
+func requireBlkThrotlKernelHealthy(
 	t *testing.T,
-	session *throtlSession,
+	session *blkThrotlSession,
 ) {
 	t.Helper()
 	status, err := readIOControlStatus(session.object)
@@ -647,15 +647,15 @@ func requireThrotlKernelHealthy(
 	require.Equal(t, ioControlStatus{}, status)
 }
 
-func readThrotlKernelRows(
+func readBlkThrotlKernelRows(
 	t *testing.T,
-	session *throtlSession,
-	disk *throtlKernelDisk,
-) throtlKernelRows {
+	session *blkThrotlSession,
+	disk *blkThrotlKernelDisk,
+) blkThrotlKernelRows {
 	t.Helper()
-	var rows throtlKernelRows
+	var rows blkThrotlKernelRows
 
-	aggregates, err := session.object.DumpMapByName(throtlWaitAggregateMap)
+	aggregates, err := session.object.DumpMapByName(blkThrotlWaitAggregateMap)
 	require.NoError(t, err)
 	for _, item := range aggregates {
 		var key ioControlWaitKey
@@ -665,10 +665,10 @@ func readThrotlKernelRows(
 		}
 	}
 
-	owners, err := session.object.DumpMapByName(throtlBLKGOwnerMap)
+	owners, err := session.object.DumpMapByName(blkThrotlBLKGOwnerMap)
 	require.NoError(t, err)
 	for _, item := range owners {
-		var owner throtlTestBLKGOwner
+		var owner blkThrotlTestBLKGOwner
 		require.NoError(t, decodeBPFMapData(item.Value, &owner))
 		if owner.Major == disk.major && owner.Minor == disk.minor {
 			rows.owner++
@@ -680,10 +680,10 @@ func readThrotlKernelRows(
 	return rows
 }
 
-func requireThrotlKernelDeviceRestart(
+func requireBlkThrotlKernelDeviceRestart(
 	t *testing.T,
-	tracing *throtlTracing,
-	session *throtlSession,
+	tracing *blkThrotlTracing,
+	session *blkThrotlSession,
 ) {
 	t.Helper()
 	waitIOControlKernelState(t, session.breaker, "block device change", func() bool {
