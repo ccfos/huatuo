@@ -43,6 +43,11 @@ storage_target_port=$(allocate_available_port udp) || fatal "failed to allocate 
 HUATUO_BAMAI_ADDR="http://127.0.0.1:${storage_http_port}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
+# Keep this LocalFile-only case independent of inherited backend credentials.
+STORAGE_ADDR=""
+STORAGE_USERNAME=""
+STORAGE_PASSWORD=""
+
 storage_rotation_first_backup=""
 storage_rotation_backups=()
 trap huatuo_bamai_stop EXIT

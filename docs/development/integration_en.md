@@ -106,15 +106,15 @@ all selected executions as SKIP.
 
 ### Storage Tests
 
-`test_basic_elasticsearch_config.sh` covers all eight combinations of Elasticsearch
-Address, Username, and Password. Partial configurations must exit with the
-configuration error; empty and complete configurations must reach readiness.
+`test_basic_storage_elasticsearch_config.sh` covers all eight combinations of
+Elasticsearch Address, Username, and Password. Partial configurations must exit
+with the configuration error; empty and complete configurations must reach readiness.
 The complete case uses `--disable-storage` to isolate configuration validation
 from Elasticsearch availability.
 
-`test_basic_localfile_rotation.sh` reuses the storage consistency test's UDP sender and
-configuration helper with only LocalFile enabled. It sends packets to a closed
-UDP port until Dropwatch events rotate the local file and evict the first
+`test_basic_storage_localfile_rotation.sh` reuses the storage consistency test's UDP
+sender and configuration helper with only LocalFile enabled. It sends packets to
+a closed UDP port until Dropwatch events rotate the local file and evict the first
 observed backup, then checks file sizes, valid JSON, and the limit of two backups
 plus one active file. It requires kernel BTF, the `skb/kfree_skb` tracepoint,
 and the Dropwatch binary and BPF object. Neither storage test requires
