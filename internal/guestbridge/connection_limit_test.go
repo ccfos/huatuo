@@ -37,7 +37,8 @@ func waitForConnectionLimitCondition(timeout time.Duration, condition func() boo
 }
 
 // TestConnectionLimiterRejectsOnlyNewConnections verifies the global connection limit:
-// only new connections are closed at capacity; existing connections are unaffected, and their slots can be reused after they exit.
+// only new connections are closed at capacity; existing connections are unaffected, and their slots can be reused
+// after they exit.
 func TestConnectionLimiterRejectsOnlyNewConnections(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -134,7 +135,10 @@ func TestHandshakeTimeoutReleasesConnectionSlot(t *testing.T) {
 		t.Fatalf("NewDecodeBudget: %v", err)
 	}
 	received := make(chan struct{}, 1)
-	server, err := transport.ServeWithOptions(limiter.wrap(listener), func(_ *transport.Session, chunk transport.ChunkMsg) {
+	server, err := transport.ServeWithOptions(limiter.wrap(listener), func(
+		_ *transport.Session,
+		chunk transport.ChunkMsg,
+	) {
 		if len(chunk.Data) > 0 {
 			received <- struct{}{}
 		}
@@ -172,7 +176,10 @@ func TestHandshakeTimeoutReleasesConnectionSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial valid client: %v", err)
 	}
-	validClient, err := transport.NewClientWithConn(validConnection, "test", "1.0", "", transport.ProtocolVersion)
+	validClient, err := transport.NewClientWithConn(
+		validConnection,
+		transport.ClientMetadata{ToolName: "test", Version: "1.0", TaskID: ""},
+	)
 	if err != nil {
 		t.Fatalf("NewClientWithConn: %v", err)
 	}

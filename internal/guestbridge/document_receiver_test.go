@@ -36,19 +36,47 @@ import (
 )
 
 func TestAttributionRejectsForeignContainer(t *testing.T) {
-	container := &pod.Container{ID: "orders", SandboxID: "orders-vm", RuntimeType: "io.containerd.kata-qemu.v2", Hostname: "trusted-pod", Labels: map[string]any{"HostNamespace": "application"}}
-	receiver := &DocumentReceiver{Hostname: "trusted-node", Region: "trusted-region", LookupContainer: func(string) (*pod.Container, error) { return container, nil }}
+	container := &pod.Container{
+		ID:          "orders",
+		SandboxID:   "orders-vm",
+		RuntimeType: "io.containerd.kata-qemu.v2",
+		Hostname:    "trusted-pod",
+		Labels:      map[string]any{"HostNamespace": "application"},
+	}
+	receiver := &DocumentReceiver{
+		Hostname:        "trusted-node",
+		Region:          "trusted-region",
+		LookupContainer: func(string) (*pod.Container, error) { return container, nil },
+	}
 	observed := timeutil.Now()
-	original := types.Document{TracerID: "guest-id", TracerName: "cpu", TracerRunType: types.TracerRunTypeEvent, ObservedTimestamp: &observed, ContainerID: "orders", ContainerHostname: "forged", Hostname: "forged", Region: "forged"}
+	original := types.Document{
+		TracerID:          "guest-id",
+		TracerName:        "cpu",
+		TracerRunType:     types.TracerRunTypeEvent,
+		ObservedTimestamp: &observed,
+		ContainerID:       "orders",
+		ContainerHostname: "forged",
+		Hostname:          "forged",
+		Region:            "forged",
+	}
 	for _, tc := range []struct {
 		name, sandbox, namespace string
 		valid                    bool
 	}{
-		{"same sandbox", "orders-vm", "application", true}, {"foreign sandbox", "payments-vm", "application", false}, {"foreign namespace", "orders-vm", "system", false},
+		{"same sandbox", "orders-vm", "application", true}, {
+			"foreign sandbox",
+			"payments-vm",
+			"application",
+			false,
+		}, {"foreign namespace", "orders-vm", "system", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := original
-			ctx := context.WithValue(t.Context(), peerIdentityKey{}, PeerIdentity{SandboxID: tc.sandbox, Namespace: tc.namespace})
+			ctx := context.WithValue(
+				t.Context(),
+				peerIdentityKey{},
+				PeerIdentity{SandboxID: tc.sandbox, Namespace: tc.namespace},
+			)
 			err := receiver.attribute(ctx, &d)
 			if !tc.valid {
 				if !errors.Is(err, ErrUntrustedPeer) {
@@ -59,7 +87,12 @@ func TestAttributionRejectsForeignContainer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if d.Hostname != "trusted-node" || d.Region != "trusted-region" || d.ContainerHostname != "trusted-pod" || d.SourceType != types.DocumentSourceKataGuest || d.TracerID == original.TracerID || d.ObservedTimestamp != original.ObservedTimestamp {
+			if d.Hostname != "trusted-node" ||
+				d.Region != "trusted-region" ||
+				d.ContainerHostname != "trusted-pod" ||
+				d.SourceType != types.DocumentSourceKataGuest ||
+				d.TracerID == original.TracerID ||
+				d.ObservedTimestamp != original.ObservedTimestamp {
 				t.Errorf("attribution=%+v", d)
 			}
 		})
@@ -73,13 +106,22 @@ func TestAttributionRejectsForeignContainer(t *testing.T) {
 	first.ContainerType = "forged"
 	first.ContainerQoS = "forged"
 	second := first
-	if err := receiver.attribute(context.WithValue(t.Context(), peerIdentityKey{}, PeerIdentity{SandboxID: "orders-vm", Namespace: "application"}), &first); err != nil {
+	if err := receiver.attribute(
+		context.WithValue(t.Context(), peerIdentityKey{}, PeerIdentity{SandboxID: "orders-vm", Namespace: "application"}),
+		&first,
+	); err != nil {
 		t.Fatal(err)
 	}
-	if err := receiver.attribute(context.WithValue(t.Context(), peerIdentityKey{}, PeerIdentity{SandboxID: "payments-vm", Namespace: "application"}), &second); err != nil {
+	if err := receiver.attribute(
+		context.WithValue(t.Context(), peerIdentityKey{}, PeerIdentity{SandboxID: "payments-vm", Namespace: "application"}),
+		&second,
+	); err != nil {
 		t.Fatal(err)
 	}
-	if first.TracerID == second.TracerID || first.ContainerHostname != "" || first.ContainerType != "" || first.ContainerQoS != "" {
+	if first.TracerID == second.TracerID ||
+		first.ContainerHostname != "" ||
+		first.ContainerType != "" ||
+		first.ContainerQoS != "" {
 		t.Errorf("VM attribution=%+v / %+v", first, second)
 	}
 }
@@ -88,7 +130,10 @@ func TestAuthenticatedStreamToLocalFile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	dir := t.TempDir()
-	store, err := tracingstore.NewFromConfig(ctx, tracingstore.Config{LocalFile: &tracingstore.LocalFileConfig{Path: dir, RotationSizeMiB: 1, MaxRotatedFiles: 1}})
+	store, err := tracingstore.NewFromConfig(
+		ctx,
+		tracingstore.Config{LocalFile: &tracingstore.LocalFileConfig{Path: dir, RotationSizeMiB: 1, MaxRotatedFiles: 1}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,12 +146,19 @@ func TestAuthenticatedStreamToLocalFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var resolutions atomic.Int32
-	bridge, err := New(Options{Receiver: receiver, Registerer: prometheus.NewRegistry(), FirecrackerRoot: t.TempDir(), QEMUListen: func(uint32) (net.Listener, error) { return listener, nil }, ResolvePeer: func(net.Addr, string) (PeerIdentity, error) {
-		if resolutions.Add(1) == 1 {
-			return PeerIdentity{}, errUnknownPeerSandbox
-		}
-		return PeerIdentity{SandboxID: "orders-vm", Namespace: "application"}, nil
-	}})
+	bridge, err := New(Options{
+		Receiver:        receiver,
+		Registerer:      prometheus.NewRegistry(),
+		FirecrackerRoot: t.TempDir(),
+		QEMUListen: func(uint32) (net.Listener, error) {
+			return listener, nil
+		}, ResolvePeer: func(net.Addr, string) (PeerIdentity, error) {
+			if resolutions.Add(1) == 1 {
+				return PeerIdentity{}, errUnknownPeerSandbox
+			}
+			return PeerIdentity{SandboxID: "orders-vm", Namespace: "application"}, nil
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,12 +171,20 @@ func TestAuthenticatedStreamToLocalFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := transport.NewClientWithConnContext(ctx, conn, vsock.TracingTool, "test", "", transport.ProtocolVersion)
+	client, err := transport.NewClientWithConnContext(
+		ctx,
+		conn,
+		transport.ClientMetadata{ToolName: vsock.TracingTool, Version: "test", TaskID: ""},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	raw := []byte(`{"hostname":"forged","region":"forged","tracer_id":"guest-event","tracer_name":"cpu","tracer_type":"event","observed_timestamp":"2026-10-16T01:00:00Z","tracer_data":{"counter":18446744073709551615}}`)
+	raw := []byte(
+		`{"hostname":"forged","region":"forged","tracer_id":"guest-event","tracer_name":"cpu",` +
+			`"tracer_type":"event","observed_timestamp":"2026-10-16T01:00:00Z",` +
+			`"tracer_data":{"counter":18446744073709551615}}`,
+	)
 	if err := client.SendChunk(raw, false); err != nil {
 		t.Fatal(err)
 	}

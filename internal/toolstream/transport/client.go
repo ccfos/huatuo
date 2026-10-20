@@ -195,6 +195,15 @@ func (c *Client) receiveCommitResult() error {
 	return nil
 }
 
+// ClientMetadata identifies the tool and task in the connection handshake.
+// Clients always send the protocol version implemented by this package.
+type ClientMetadata struct {
+	ServiceName string
+	ToolName    string
+	Version     string
+	TaskID      string
+}
+
 // NewClient dials path, sends the handshake, and returns a ready Client.
 func NewClient(path, serviceName, toolName, version, taskID string) (*Client, error) {
 	conn, err := DialUDS(path)
@@ -202,24 +211,17 @@ func NewClient(path, serviceName, toolName, version, taskID string) (*Client, er
 		return nil, err
 	}
 
-	c := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
-	if err := c.handshake(serviceName, toolName, version, taskID, ProtocolVersion); err != nil {
-		// The caller never sees the connection, so it must not leak.
-		_ = c.Close()
-		return nil, fmt.Errorf("transport: send connect: %w", err)
-	}
-
-	return c, nil
+	return NewClientWithConn(conn, ClientMetadata{ServiceName: serviceName, ToolName: toolName, Version: version, TaskID: taskID})
 }
 
 // NewClientWithConn takes ownership of conn, including handshake failures.
-func NewClientWithConn(conn net.Conn, toolName, version, taskID string, protoVersion uint32) (*Client, error) {
-	return NewClientWithConnContext(context.Background(), conn, toolName, version, taskID, protoVersion)
+func NewClientWithConn(conn net.Conn, metadata ClientMetadata) (*Client, error) {
+	return NewClientWithConnContext(context.Background(), conn, metadata)
 }
 
 // NewClientWithConnContext closes conn when ctx is canceled, interrupting
 // both handshake writes and later sends. The caller owns ctx's lifetime.
-func NewClientWithConnContext(ctx context.Context, conn net.Conn, toolName, version, taskID string, protoVersion uint32) (*Client, error) {
+func NewClientWithConnContext(ctx context.Context, conn net.Conn, metadata ClientMetadata) (*Client, error) {
 	if conn == nil {
 		return nil, errors.New("transport: connection must not be nil")
 	}
@@ -229,7 +231,7 @@ func NewClientWithConnContext(ctx context.Context, conn net.Conn, toolName, vers
 	}
 	c := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
 	c.stop = context.AfterFunc(ctx, func() { _ = conn.Close() })
-	if err := c.handshake(toolName, toolName, version, taskID, protoVersion); err != nil {
+	if err := c.handshake(metadata.ServiceName, metadata.ToolName, metadata.Version, metadata.TaskID, ProtocolVersion); err != nil {
 		_ = c.Close()
 		return nil, fmt.Errorf("transport: send connect: %w", errors.Join(err, ctx.Err()))
 	}

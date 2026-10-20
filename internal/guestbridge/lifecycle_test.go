@@ -69,7 +69,11 @@ func TestShutdownWaitsBeforeStorageClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bridge, err := New(Options{Registerer: prometheus.NewRegistry(), FirecrackerRoot: t.TempDir(), QEMUListen: func(uint32) (net.Listener, error) { return listener, nil }, ResolvePeer: func(net.Addr, string) (PeerIdentity, error) {
+	bridge, err := New(Options{Registerer: prometheus.NewRegistry(), FirecrackerRoot: t.TempDir(), QEMUListen: func(
+		uint32,
+	) (net.Listener, error) {
+		return listener, nil
+	}, ResolvePeer: func(net.Addr, string) (PeerIdentity, error) {
 		return PeerIdentity{SandboxID: "orders-vm", Namespace: "application"}, nil
 	}, Receiver: &DocumentReceiver{LookupContainer: func(string) (*pod.Container, error) {
 		close(entered)
@@ -86,12 +90,18 @@ func TestShutdownWaitsBeforeStorageClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := transport.NewClientWithConn(conn, vsock.TracingTool, "test", "", transport.ProtocolVersion)
+	client, err := transport.NewClientWithConn(
+		conn,
+		transport.ClientMetadata{ToolName: vsock.TracingTool, Version: "test", TaskID: ""},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	raw := []byte(`{"container_id":"orders","tracer_id":"guest-event","tracer_name":"cpu","tracer_type":"event","observed_timestamp":"2026-10-16T01:00:00Z"}`)
+	raw := []byte(
+		`{"container_id":"orders","tracer_id":"guest-event","tracer_name":"cpu",` +
+			`"tracer_type":"event","observed_timestamp":"2026-10-16T01:00:00Z"}`,
+	)
 	if err := client.SendChunk(raw, false); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +133,15 @@ func TestFirecrackerListenerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bridge, err := New(Options{Receiver: &DocumentReceiver{}, Registerer: prometheus.NewRegistry(), FirecrackerRoot: root, FirecrackerInterval: 5 * time.Millisecond, QEMUListen: func(uint32) (net.Listener, error) { return nil, errors.New("no qemu") }})
+	bridge, err := New(
+		Options{
+			Receiver:            &DocumentReceiver{},
+			Registerer:          prometheus.NewRegistry(),
+			FirecrackerRoot:     root,
+			FirecrackerInterval: 5 * time.Millisecond,
+			QEMUListen:          func(uint32) (net.Listener, error) { return nil, errors.New("no qemu") },
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
