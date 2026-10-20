@@ -155,6 +155,48 @@ func TestCommandLine(t *testing.T) {
 	}
 }
 
+func TestHostnameSwitchingUTSRestoresCallingNamespace(t *testing.T) {
+	var transitions []int
+	setns := func(fd, _ int) error {
+		transitions = append(transitions, fd)
+		return nil
+	}
+
+	got, err := hostnameSwitchingUTS(101, 202, setns, func() (string, error) {
+		return "target-host", nil
+	})
+	if err != nil {
+		t.Fatalf("hostnameSwitchingUTS() error = %v", err)
+	}
+	if got != "target-host" {
+		t.Fatalf("hostnameSwitchingUTS() = %q, want %q", got, "target-host")
+	}
+	// The target namespace must be entered and the caller's namespace restored.
+	if len(transitions) != 2 || transitions[0] != 101 || transitions[1] != 202 {
+		t.Fatalf("namespace transitions = %v, want [101 202]", transitions)
+	}
+}
+
+func TestHostnameSwitchingUTSReportsRestoreFailure(t *testing.T) {
+	calls := 0
+	setns := func(int, int) error {
+		calls++
+		if calls == 2 {
+			return syscall.EPERM
+		}
+		return nil
+	}
+
+	if _, err := hostnameSwitchingUTS(1, 2, setns, func() (string, error) {
+		return "target-host", nil
+	}); !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("hostnameSwitchingUTS() error = %v, want EPERM", err)
+	}
+	if calls != 2 {
+		t.Fatalf("setns calls = %d, want 2", calls)
+	}
+}
+
 func TestHostname(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("UTS namespace lookup requires Linux")
