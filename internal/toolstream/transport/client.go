@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 
 	capnp "capnproto.org/go/capnp/v3"
@@ -227,6 +228,18 @@ func NewClientWithConnContext(ctx context.Context, conn net.Conn, toolName, vers
 		return nil, fmt.Errorf("transport: send connect: %w", errors.Join(err, ctx.Err()))
 	}
 	return c, nil
+}
+
+// ChunkFrameSize returns the encoded size without allocating a payload buffer.
+// A single-segment frame has an 8-byte header, an 8-byte root pointer,
+// a 16-byte Message and a 32-byte Chunk. Data is padded to an 8-byte word.
+func ChunkFrameSize(dataSize int) (int, error) {
+	const overhead = 64
+	const wordSize = 8
+	if dataSize < 0 || dataSize > math.MaxInt-overhead-(wordSize-1) {
+		return 0, fmt.Errorf("invalid chunk payload size %d", dataSize)
+	}
+	return overhead + (dataSize+wordSize-1)/wordSize*wordSize, nil
 }
 
 // EncodeChunkFrame returns one complete Chunk frame with the given payload.
