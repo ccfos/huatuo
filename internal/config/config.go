@@ -52,9 +52,22 @@ func Load(path string, dst any) error {
 	return toml.NewDecoder(f).Strict(true).Decode(dst)
 }
 
-// Sync atomically replaces path with the TOML encoding of src. Callers must
-// prevent concurrent mutation of src until Sync returns.
+// Sync atomically replaces the configuration target with the TOML encoding of
+// src, following existing symlinks. Callers must prevent concurrent mutation of
+// src until Sync returns.
 func Sync(path string, src any) (retErr error) {
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil && info.Mode()&os.ModeSymlink != 0:
+		// Replace the file loaded through the link, preserving deployment indirection.
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return fmt.Errorf("resolving config symlink %q: %w", path, err)
+		}
+		path = resolved
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("inspecting config path %q: %w", path, err)
+	}
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -74,7 +87,7 @@ func Sync(path string, src any) (retErr error) {
 	}()
 
 	mode := os.FileMode(0o600)
-	info, err := os.Stat(path)
+	info, err = os.Stat(path)
 	switch {
 	case err == nil:
 		mode = info.Mode().Perm()

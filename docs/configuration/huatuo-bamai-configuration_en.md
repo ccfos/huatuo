@@ -184,6 +184,8 @@ and only then publishes the new in-memory snapshot. Validation or persistence
 failure leaves the current snapshot unchanged. Unknown keys, invalid value
 types, and empty update objects return `400 Bad Request`.
 
+When the configuration path is a symbolic link, successful updates replace the resolved target file atomically and preserve the link, including relative links and link chains. Broken links are rejected without replacing them.
+
 Components that read configuration dynamically can observe the new snapshot
 without a restart. Settings consumed during startup, including the HTTP
 listener and authentication, storage initialization, and cgroup setup, are
