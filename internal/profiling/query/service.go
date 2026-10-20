@@ -208,7 +208,7 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 
 	// convert phlaremodel.Tree to FlameGraph
 	return &querierv1.SelectMergeStacktracesResponse{
-		Flamegraph: phlaremodel.NewFlameGraph(phlaremodelTree, -1),
+		Flamegraph: phlaremodel.NewFlameGraph(phlaremodelTree, req.GetMaxNodes()),
 	}, nil
 }
 

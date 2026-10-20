@@ -25,7 +25,6 @@ import (
 
 	"github.com/ccfos/huatuo/internal/auth"
 	"github.com/ccfos/huatuo/internal/job"
-	"github.com/ccfos/huatuo/internal/profiling/publication"
 	"github.com/ccfos/huatuo/internal/server"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
@@ -91,7 +90,6 @@ type RawProfilePage struct {
 type Service struct {
 	jobs             *job.Manager
 	profileStore     *profilingstore.Store
-	publications     *publication.Store
 	dashboardBaseURL string
 }
 
@@ -99,21 +97,15 @@ type Service struct {
 func NewService(
 	jobs *job.Manager,
 	profileStore *profilingstore.Store,
-	publications *publication.Store,
 	config Config,
 ) (*Service, error) {
 	if jobs == nil {
 		return nil, errors.New("create profiling service: job manager is required")
 	}
-	if (profileStore == nil) != (publications == nil) {
-		return nil, errors.New(
-			"create profiling service: profile storage and publication store must be configured together",
-		)
-	}
+
 	return &Service{
 		jobs:             jobs,
 		profileStore:     profileStore,
-		publications:     publications,
 		dashboardBaseURL: config.DashboardBaseURL,
 	}, nil
 }
@@ -221,7 +213,7 @@ func (s *Service) RawProfiles(
 	default:
 		return nil, fmt.Errorf("unsupported Job status %q", currentJob.Status)
 	}
-	if s.profileStore == nil || s.publications == nil {
+	if s.profileStore == nil {
 		return nil, ErrResultUnavailable
 	}
 	published, err := s.isPublished(ctx, requestID)
@@ -290,7 +282,7 @@ func (s *Service) ResultURL(
 			resultJob.Terminal.Outcome != job.OutcomeUnknown) {
 		return nil, nil
 	}
-	if s.publications == nil {
+	if s.profileStore == nil {
 		return nil, nil
 	}
 	published, err := s.isPublished(ctx, resultJob.ID)
@@ -304,7 +296,7 @@ func (s *Service) ResultURL(
 }
 
 func (s *Service) isPublished(ctx context.Context, requestID string) (bool, error) {
-	published, err := s.publications.IsPublished(ctx, requestID)
+	published, err := s.profileStore.IsCommitted(ctx, requestID)
 	if err != nil {
 		return false, fmt.Errorf(
 			"%w: query publication for request %q: %w",

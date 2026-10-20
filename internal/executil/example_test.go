@@ -51,11 +51,6 @@ func ExampleProcess_Done() {
 		fmt.Println(err)
 		return
 	}
-	output, err := process.Stdout()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	fmt.Print(string(output))
+	fmt.Print(string(process.Stdout()))
 	// Output: ready
 }
