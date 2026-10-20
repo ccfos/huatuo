@@ -25,8 +25,9 @@ integration_huatuo_bamai_start
 
 huatuo_bamai_await_metrics
 
-for f in "${HUATUO_BAMAI_TEST_EXPECTED}"/*.txt; do
+for f in "${HUATUO_BAMAI_TEST_EXPECTED}"/test_*.txt; do
 	prefix="$(basename "$f" .txt)"
+	prefix=${prefix#test_}
 
 	missing_metrics=$(
 		grep -v '^[[:space:]]*\(#\|$\)' "${f}" \

@@ -35,6 +35,7 @@ func TestRunPerfCommand(t *testing.T) {
 		script           string
 		request          perfRequest
 		wantOutput       []string
+		wantOutputBytes  int
 		wantError        string
 		wantMissing      string
 		wantErrorMissing string
@@ -63,6 +64,19 @@ func TestRunPerfCommand(t *testing.T) {
 			},
 		},
 		{
+			name: "complete output exceeds default capture limit",
+			script: `#!/bin/sh
+printf 'first\n'
+head -c 65536 /dev/zero
+printf 'last\n'
+`,
+			request: perfRequest{
+				duration: time.Second,
+			},
+			wantOutput:      []string{"first", "last"},
+			wantOutputBytes: 65536 + len("first\nlast\n"),
+		},
+		{
 			name: "empty output",
 			script: `#!/bin/sh
 exit 0
@@ -73,16 +87,20 @@ exit 0
 			wantError: "run system-wide perf: empty output",
 		},
 		{
-			name: "failed command truncates diagnostics",
+			name: "failed command keeps stderr tail",
 			script: `#!/bin/sh
+printf 'stderr-start\n' >&2
 head -c 5000 /dev/zero | tr '\000' x >&2
+printf 'stderr-tail\n' >&2
 exit 2
 `,
 			request: perfRequest{
 				duration:    time.Second,
 				containerID: "0123456789ab",
 			},
-			wantError: "(truncated)",
+			wantError: "output=\"" + strings.Repeat("x", (4<<10)-len("stderr-tail\n")) +
+				"stderr-tail\"",
+			wantErrorMissing: "(truncated)",
 		},
 		{
 			name: "failed command uses stderr diagnostics",
@@ -134,6 +152,9 @@ exit 2
 			}
 
 			actual := string(output)
+			if tt.wantOutputBytes != 0 && len(output) != tt.wantOutputBytes {
+				t.Errorf("runPerfCommand() output length = %d, want %d", len(output), tt.wantOutputBytes)
+			}
 			for _, expected := range tt.wantOutput {
 				if !strings.Contains(actual, expected+"\n") {
 					t.Errorf("runPerfCommand() output = %q, want contain %q", actual, expected)

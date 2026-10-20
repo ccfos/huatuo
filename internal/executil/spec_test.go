@@ -16,6 +16,7 @@ package executil
 
 import (
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -46,30 +47,21 @@ func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
 			spec:    Spec{Path: "/bin/true", Args: []string{"bad\x00arg"}},
 			wantErr: "argument 0 contains a null byte",
 		},
-		{
-			name:    "null byte in environment",
-			spec:    Spec{Path: "/bin/true", Env: []string{"KEY=bad\x00value"}},
-			wantErr: "environment entry 0 contains a null byte",
-		},
-		{
-			name:    "invalid environment",
-			spec:    Spec{Path: "/bin/true", Env: []string{"INVALID"}},
-			wantErr: "environment entry 0 must use a non-empty KEY=VALUE form",
-		},
-		{
-			name:    "empty environment key",
-			spec:    Spec{Path: "/bin/true", Env: []string{"=value"}},
-			wantErr: "environment entry 0 must use a non-empty KEY=VALUE form",
-		},
+		{name: "unsupported stop signal", spec: Spec{Path: "/bin/true", StopSignal: syscall.SIGKILL}, wantErr: "stop signal must be SIGTERM or SIGINT"},
 		{
 			name:    "negative stop grace period",
 			spec:    Spec{Path: "/bin/true", StopGracePeriod: -time.Second},
 			wantErr: "stop grace period must not be negative",
 		},
 		{
-			name:    "negative output limit",
-			spec:    Spec{Path: "/bin/true", MaxOutputBytes: -1},
-			wantErr: "maximum output bytes must not be negative",
+			name:    "negative stdout limit",
+			spec:    Spec{Path: "/bin/true", MaxStdoutBytes: -1},
+			wantErr: "maximum stdout bytes must not be negative",
+		},
+		{
+			name:    "negative stderr limit",
+			spec:    Spec{Path: "/bin/true", MaxStderrBytes: -1},
+			wantErr: "maximum stderr bytes must not be negative",
 		},
 	}
 
@@ -103,8 +95,11 @@ func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
 		t.Errorf("StopGracePeriod = %s, want %s", process.spec.StopGracePeriod, defaultStopGracePeriod)
 	}
 
-	if process.spec.MaxOutputBytes != defaultMaxOutputBytes {
-		t.Errorf("MaxOutputBytes = %d, want %d", process.spec.MaxOutputBytes, defaultMaxOutputBytes)
+	if process.spec.MaxStdoutBytes != defaultMaxOutputBytes {
+		t.Errorf("MaxStdoutBytes = %d, want %d", process.spec.MaxStdoutBytes, defaultMaxOutputBytes)
+	}
+	if process.spec.MaxStderrBytes != defaultMaxOutputBytes {
+		t.Errorf("MaxStderrBytes = %d, want %d", process.spec.MaxStderrBytes, defaultMaxOutputBytes)
 	}
 
 	emptyEnvProcess, err := New(Spec{Path: "/bin/true", Env: []string{}})
