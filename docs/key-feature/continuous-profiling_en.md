@@ -791,3 +791,5 @@ The new Pipeline only produces `collection` in `DroppedSamples`, stored in `prof
 <img src="/img/contact-weixin.png" alt="Official WeChat account QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+JSON output opens its destination only after window conversion succeeds; conversion errors preserve an existing result and do not create an empty result file.

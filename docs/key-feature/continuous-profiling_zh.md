@@ -782,3 +782,5 @@ JSON 可在 Add 写文件，其他本地输出也不提供事务回滚。现有�
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+JSON 输出在窗口转换成功后才打开目标文件；转换失败会保留已有结果，也不会创建空的结果文件。
