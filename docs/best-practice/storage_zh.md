@@ -582,3 +582,7 @@ HTTP 错误包含响应状态码和可用的 Elasticsearch 错误详情。无法
 `observed_timestamp` 是用户态观测时刻，`uploaded_timestamp` 是存储写入时刻。
 三者不互相补填。旧文档及没有内核时间的事件省略新增字段；历史数据不自动迁移。
 原始 `kernel_observed_ns` 仅用于进程内事件关联，不写入新文档。
+
+### Profiling 时间筛选
+
+Profiling 搜索和标签值聚合按 `started_timestamp` 做闭区间筛选，上传延迟不会将结果移到入库时段。`uploaded_timestamp` 保留用于入库诊断和原始结果分页排序。开始于查询区间之前的窗口不会仅因采样区间重叠而被纳入。已有 `started_timestamp` 的记录无需迁移 schema。

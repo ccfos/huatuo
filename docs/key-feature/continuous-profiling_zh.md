@@ -766,7 +766,7 @@ remote-store 复用 Toolstream 服务 `profiling_store_service`，使用业务�
 
 handler 完整校验外部窗口，通过公共 builder 构建 pprof 并 `SaveSync`。sample labels 与样本对应落盘；工具名写入 tracer_name。Complete 发送 `End + Commit` 并等待 ACK；普通 End、断连或失败不写完成标记，已写窗口不回滚。普通数据帧无 ACK，接收或保存错误由提交 ACK 返回。
 
-JSON 可在 Add 写文件，其他本地输出也不提供事务回滚。现有火焰图查询不以完成标记过滤全部窗口；标签持久化不表示已支持标签索引或样本过滤。ES 标签查询、输出发布及上传时间切换采集时间的规则仍需独立落实。
+JSON 可在 Add 写文件，其他本地输出也不提供事务回滚。现有火焰图查询不以完成标记过滤全部窗口；标签持久化不表示已支持标签索引或样本过滤。时间范围搜索和标签值聚合按 `started_timestamp`（窗口开始时间）做闭区间筛选；`uploaded_timestamp` 保留为入库元数据和原始结果分页排序键。开始于区间之前的窗口不会仅因重叠而被纳入。已有开始时间的历史记录无需迁移；旧发送端记录的交付时间无法追溯修正。
 
 ### 丢样统计
 

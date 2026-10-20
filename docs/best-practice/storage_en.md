@@ -608,3 +608,13 @@ another. Older documents and events without kernel timestamps omit the new
 field; historical data is not migrated automatically. The raw
 `kernel_observed_ns` stays in process for correlation and is not
 written to new documents.
+
+### Profiling time selection
+
+Profiling searches and distinct-value queries select windows whose
+`started_timestamp` falls within the inclusive requested range. Upload delays
+do not move results into the ingestion period. `uploaded_timestamp` remains
+available for ingestion diagnostics and raw-result pagination ordering.
+Windows that start before the range are not included merely because their
+sampling interval overlaps it. Existing records with `started_timestamp`
+need no schema migration.

@@ -775,7 +775,7 @@ Remote-store uses the shared Toolstream service `profiling_store_service` with b
 
 The handler validates external windows, builds pprof, and calls `SaveSync`. Labels retain their sample associations; the tool name becomes tracer_name. Complete sends `End + Commit` and waits for ACK. Plain End, disconnect, and failure do not write completion markers or roll back existing windows. Ordinary data frames have no ACK; receive/storage errors are returned in the commit ACK.
 
-JSON can write files during Add; local output has no transactional rollback. Existing flamegraph queries do not filter all windows by completion markers. Persisted labels do not imply label indexing or sample-filter APIs. ES label queries, output publication, and a switch from upload time to collection time remain separate work.
+JSON can write files during Add; local output has no transactional rollback. Existing flamegraph queries do not filter all windows by completion markers. Persisted labels do not imply label indexing or sample-filter APIs. Time-range searches and distinct-value queries inclusively select window starts using `started_timestamp`; `uploaded_timestamp` remains ingestion metadata and the raw-result pagination sort key. Windows starting before the range are not included merely because they overlap it. Existing records with start timestamps need no migration; delivery-time timestamps from older senders cannot be corrected retroactively.
 
 ### Dropped samples
 
