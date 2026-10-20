@@ -23,6 +23,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
@@ -98,11 +99,17 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		}
 	}
 
+	latestOnly := filter.ProfileType == profiling.ProfileTypePhysicalUsage
+	if latestOnly && filter.ID == "" {
+		return nil, fmt.Errorf("%w: physical usage requires a single task id", ErrInvalidQuery)
+	}
+
 	if filter.ID == "" && filter.Hostname == "" && filter.ContainerID == "" && filter.ContainerHostname == "" {
 		return nil, fmt.Errorf("%w: id, hostname, or container must be specified", ErrInvalidQuery)
 	}
 
 	var profilesMerge pprof.ProfileMerge
+	var latest *googlev1.Profile
 	consumed := 0
 	err = s.profileStorage.Search(ctx, filter, func(batch []*profilingstore.Document) error {
 		if len(batch) > maxProfileQueryRecords-consumed {
@@ -131,6 +138,13 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 			if !matchesSampleType {
 				return fmt.Errorf("stored profile lacks sample type %q with unit %q", profileTypes[1], profileTypes[2])
 			}
+			if latestOnly {
+				if latest == nil || profile.TimeNanos > latest.TimeNanos {
+					latest = profile
+				}
+				continue
+			}
+
 			// Both legacy and new samples already carry final weights. Period
 			// metadata is irrelevant to this query, but the merger requires a type.
 			profile.PeriodType = &googlev1.ValueType{}
@@ -148,7 +162,12 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	if consumed == 0 {
 		return nil, ErrProfilesAbsent
 	}
-	profile := profilesMerge.Profile()
+	var profile *googlev1.Profile
+	if latestOnly {
+		profile = latest
+	} else {
+		profile = profilesMerge.Profile()
+	}
 	if profile == nil {
 		return nil, ErrProfilesAbsent
 	}
@@ -321,7 +340,7 @@ func (s *ProfileQueryService) ProfileTypes(ctx context.Context, req *querierv1.P
 //	response: typesv1.LabelNamesResponse
 func (s *ProfileQueryService) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
+		Names: []string{"id", "region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
 	}
 	return response, nil
 }

@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/log"
+
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -108,7 +110,7 @@ func TestFormatterWeightsAndOwnership(t *testing.T) {
 	}
 
 	p := file.Profiles[0]
-	if len(p.Samples) != 2 || p.Unit != "nanoseconds" || p.EndValue != 14000000000 || p.Weights[0] != 7000000000 {
+	if len(p.Samples) != 1 || p.Unit != "nanoseconds" || p.EndValue != 14000000000 || p.Weights[0] != 14000000000 {
 		t.Fatalf("weights expanded or rescaled: %+v", p)
 	}
 
@@ -181,14 +183,6 @@ func TestFormatterRejectsInvalidProfiles(t *testing.T) {
 			change: func(w *types.AggregationWindow) { w.ProfileType = "process_cpu:cpu:widgets:cpu:widgets" },
 		},
 		{
-			name:   "negative weight",
-			change: func(w *types.AggregationWindow) { w.Aggregated.Samples[0].Value = -1 },
-		},
-		{
-			name:   "inexact weight",
-			change: func(w *types.AggregationWindow) { w.Aggregated.Samples[0].Value = 1 << 53 },
-		},
-		{
 			name:   "missing sample type",
 			change: func(w *types.AggregationWindow) { w.ProfileType = "" },
 		},
@@ -216,8 +210,18 @@ func TestFormatterRejectsMixedUnitsAndOverflow(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := f.Add(t.Context(), testWindow(unit, 1)); err == nil {
-				t.Fatal("accepted mixed unit or overflowing total")
+			err := f.Add(t.Context(), testWindow(unit, 1))
+			if unit == "nanoseconds" {
+				if err == nil {
+					t.Fatal("accepted mixed units")
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := f.Complete(t.Context()); err == nil {
+					t.Fatal("accepted inexact final weight")
+				}
 			}
 		})
 	}
@@ -249,14 +253,14 @@ func TestFormatterEmptyAndDirectory(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if (weight == 0 && len(files) != 0) || (weight != 0 && len(files) != 1) {
+			if len(files) != 1 {
 				t.Fatalf("files: %v", files)
 			}
 		})
 	}
 }
 
-func TestAggregatedZeroWeightsDoNotCreateOutput(t *testing.T) {
+func TestAggregatedZeroWeightsCreateEmptyOutput(t *testing.T) {
 	f, path := testFormatter(t)
 	w := &types.AggregationWindow{
 		ProfileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
@@ -274,7 +278,42 @@ func TestAggregatedZeroWeightsDoNotCreateOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("zero-weight window created output: %v", err)
+	file := readFile(t, path)
+	if len(file.Profiles) != 1 || file.Profiles[0].EndValue != 0 || len(file.Profiles[0].Samples) != 0 {
+		t.Fatalf("invalid zero result: %+v", file)
+	}
+}
+
+func TestCompleteCombinesNegativeWarningsAcrossGroups(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stdout) })
+	f, path := testFormatter(t)
+	for i := range 8 {
+		w := testWindow("bytes", -int64(i+1))
+		w.ContainerID = strings.Repeat("x", i+1)
+		if err := f.Add(t.Context(), w); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := f.Complete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	text := logs.String()
+	if strings.Count(text, `level="warning"`) != 1 || !strings.Contains(text, `negative_samples="8"`) || !strings.Contains(text, `minimum_value="-8"`) || strings.Count(text, "value=-") != 3 {
+		t.Fatalf("expected one bounded warning across all groups: %s", text)
+	}
+
+	file := readFile(t, path)
+	if len(file.Profiles) != 8 {
+		t.Fatalf("groups lost: %d", len(file.Profiles))
+	}
+
+	for i := range file.Profiles {
+		if file.Profiles[i].EndValue != 0 || len(file.Profiles[i].Samples) != 0 {
+			t.Fatalf("negative group emitted: %+v", file.Profiles[i])
+		}
 	}
 }

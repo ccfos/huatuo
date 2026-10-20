@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 	profilewindow "github.com/ccfos/huatuo/internal/profiling/window"
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
@@ -59,13 +60,24 @@ type sampledProfile struct {
 // formatter retains owned frame indices and weights, never caller profile buffers.
 // Samples describe aggregate weights, not the chronological order of observations.
 type formatter struct {
-	destination *output.LocalDestination
-	frames      map[frame]int
-	frameList   []frame
-	profiles    []sampledProfile
-	groups      map[string]int
-	sampleType  string
-	sampleUnit  string
+	taskID       string
+	pending      []pendingProfile
+	pendingIndex map[[2]string]int
+	destination  *output.LocalDestination
+	frames       map[frame]int
+	frameList    []frame
+	profiles     []sampledProfile
+	groups       map[string]int
+	sampleType   string
+	sampleUnit   string
+}
+
+// Keep container/profile grouping until presentation; window dictionary IDs
+// and display frame names cannot identify samples across windows.
+type pendingProfile struct {
+	containerID string
+	profileType string
+	aggregator  *aggregation.Aggregator
 }
 
 var _ output.Formatter = (*formatter)(nil)
@@ -79,15 +91,44 @@ func NewFormatter(cfg output.Config) (output.Formatter, error) {
 	}
 
 	return &formatter{
-		destination: destination,
-		frames:      make(map[frame]int),
-		groups:      make(map[string]int),
+		destination:  destination,
+		taskID:       cfg.TaskID,
+		pendingIndex: make(map[[2]string]int),
+		frameList:    []frame{},
+		frames:       make(map[frame]int),
+		groups:       make(map[string]int),
 	}, nil
 }
+
+func (*formatter) Name() output.OutputFormat { return output.FormatSpeedscope }
 
 func (f *formatter) Complete(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+
+	windows := make([]types.AggregationWindow, 0, len(f.pending))
+	profiles := make([]*types.AggregatedProfile, 0, len(f.pending))
+	for i := range f.pending {
+		pending := &f.pending[i]
+		if pending.aggregator.Empty() {
+			continue
+		}
+
+		w := types.AggregationWindow{
+			ContainerID: pending.containerID,
+			ProfileType: pending.profileType,
+			Aggregated:  pending.aggregator.Drain(),
+		}
+		windows = append(windows, w)
+		profiles = append(profiles, &windows[len(windows)-1].Aggregated)
+	}
+
+	output.ClampNegativeSamples(f.taskID, profiles...)
+	for i := range windows {
+		if err := f.appendProfile(ctx, &windows[i]); err != nil {
+			return err
+		}
 	}
 
 	if len(f.profiles) == 0 {
@@ -115,9 +156,6 @@ func (f *formatter) Complete(ctx context.Context) error {
 
 func (f *formatter) Close() error { return f.destination.Close() }
 
-// Browser viewers use IEEE-754 numbers for both weights and source lines.
-const maxExactInteger int64 = 1<<53 - 1
-
 func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -129,13 +167,10 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 	}
 
 	sampleType, sampleUnit := parts[1], parts[2]
-	unit := sampleUnit
-	switch unit {
-	case "count", "counts":
-		unit = "none"
-	case "nanoseconds", "microseconds", "milliseconds", "seconds", "bytes", "none":
+	switch sampleUnit {
+	case "count", "counts", "nanoseconds", "microseconds", "milliseconds", "seconds", "bytes", "none":
 	default:
-		return fmt.Errorf("speedscope: unsupported sample unit %q", unit)
+		return fmt.Errorf("speedscope: unsupported sample unit %q", sampleUnit)
 	}
 
 	if f.sampleType != "" && (f.sampleType != sampleType || f.sampleUnit != sampleUnit) {
@@ -143,6 +178,50 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 	}
 
 	f.sampleType, f.sampleUnit = sampleType, sampleUnit
+	key := [2]string{w.ContainerID, w.ProfileType}
+	index, ok := f.pendingIndex[key]
+	if !ok {
+		index = len(f.pending)
+		f.pendingIndex[key] = index
+		f.pending = append(f.pending, pendingProfile{
+			containerID: w.ContainerID,
+			profileType: w.ProfileType,
+			aggregator:  aggregation.New(),
+		})
+	}
+
+	var frames []types.ProfileFrame
+	a := &w.Aggregated
+	for i := range a.Samples {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		sample := &a.Samples[i]
+		var kernelStart int
+		frames, kernelStart = profilewindow.AppendFrames(frames[:0], a, sample)
+		if err := f.pending[index].aggregator.Add(&aggregation.Sample{
+			UserFrames:   frames[:kernelStart],
+			KernelFrames: frames[kernelStart:],
+			Labels:       profilewindow.Labels(a, sample),
+			Value:        sample.Value,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Browser viewers use IEEE-754 numbers for both weights and source lines.
+const maxExactInteger int64 = 1<<53 - 1
+
+func (f *formatter) appendProfile(ctx context.Context, w *types.AggregationWindow) error {
+	unit := f.sampleUnit
+	if unit == "count" || unit == "counts" {
+		unit = "none"
+	}
+
 	a := &w.Aggregated
 	var sourceFrames []types.ProfileFrame
 	for i := range a.Samples {
@@ -154,10 +233,6 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 		weight := sample.Value
 		if weight < 0 || weight > maxExactInteger {
 			return fmt.Errorf("speedscope: weight %d is outside [0, 2^53-1]", weight)
-		}
-
-		if weight == 0 {
-			continue
 		}
 
 		labels := profilewindow.Labels(a, sample)
@@ -180,10 +255,16 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 			index = len(f.profiles)
 			f.groups[key] = index
 			f.profiles = append(f.profiles, sampledProfile{
-				Type: "sampled",
-				Name: key,
-				Unit: unit,
+				Type:    "sampled",
+				Name:    key,
+				Unit:    unit,
+				Samples: [][]int{},
+				Weights: []int64{},
 			})
+		}
+
+		if weight == 0 {
+			continue
 		}
 
 		target := &f.profiles[index]
