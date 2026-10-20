@@ -49,9 +49,23 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
+  changes:
+    name: Classify changes
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    outputs:
+      run-tests: ${{ steps.changes.outputs.run-tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changes
+        run: python3 .github/workflows/scripts/ci-changes.py
+
   # Build the target matrix: all distros by default, or a selected subset.
   distro-matrix:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    needs: changes
+    if: needs.changes.outputs.run-tests == 'true'
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.build.outputs.matrix }}
