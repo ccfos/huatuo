@@ -7,6 +7,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   changes:
     name: Classify changes
@@ -25,6 +29,9 @@ jobs:
     name: Build, Lint and Vendor
     needs: changes
     if: needs.changes.outputs.run-tests == 'true'
+    concurrency:
+      group: ${{ github.workflow }}-author-${{ github.event.pull_request.user.login || github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
