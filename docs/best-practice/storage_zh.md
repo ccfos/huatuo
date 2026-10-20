@@ -582,3 +582,7 @@ HTTP 错误包含响应状态码和可用的 Elasticsearch 错误详情。无法
 `observed_timestamp` 是用户态观测时刻，`uploaded_timestamp` 是存储写入时刻。
 三者不互相补填。旧文档及没有内核时间的事件省略新增字段；历史数据不自动迁移。
 原始 `kernel_observed_ns` 仅用于进程内事件关联，不写入新文档。
+
+### Timestamp JSON 范围
+
+`timeutil.Timestamp` JSON 使用保留九位小数的 UTC 时间。UTC 年份超出 RFC3339 的 0000..9999 范围时，编码返回错误；合法本地时间在转为 UTC 后越过年份边界也会被拒绝，避免写入无法读取的时间戳。已有范围内记录的格式不变。
