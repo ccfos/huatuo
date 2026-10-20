@@ -69,11 +69,15 @@ func hostMemorySnapshot() (*OOMMemorySnapshot, error) {
 }
 
 func cgroupMemorySnapshot(cgroup cgroups.Cgroup, container *pod.Container) (*OOMCgroupMemorySnapshot, error) {
+	memoryPath := container.MemoryCgroupPath()
+	if memoryPath == "" {
+		return nil, fmt.Errorf("container %q has no memory cgroup binding", container.ID)
+	}
 	snapshot := &OOMCgroupMemorySnapshot{
-		Path: container.CgroupPath,
+		Path: memoryPath,
 	}
 
-	usage, err := cgroup.MemoryUsage(container.CgroupPath)
+	usage, err := cgroup.MemoryUsage(memoryPath)
 	if err != nil {
 		return nil, fmt.Errorf("memory usage: %w", err)
 	}
@@ -82,13 +86,13 @@ func cgroupMemorySnapshot(cgroup cgroups.Cgroup, container *pod.Container) (*OOM
 		snapshot.Max = usage.MaxLimited
 	}
 
-	stat, err := cgroup.MemoryStatRaw(container.CgroupPath)
+	stat, err := cgroup.MemoryStatRaw(memoryPath)
 	if err != nil {
 		return nil, fmt.Errorf("memory.stat: %w", err)
 	}
 	snapshot.Stat = stat
 
-	events, err := cgroup.MemoryEventRaw(container.CgroupPath)
+	events, err := cgroup.MemoryEventRaw(memoryPath)
 	if err != nil {
 		return nil, fmt.Errorf("memory.events: %w", err)
 	}

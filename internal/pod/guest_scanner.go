@@ -194,7 +194,15 @@ func (s *guestScanner) readProcess(pid int) (guestProcess, error) {
 	if err != nil {
 		return guestProcess{}, err
 	}
-	return guestProcess{pid: pid, parentPID: stat.PPID, startTime: stat.Starttime, containerID: id, cpuPath: cpu, memoryPath: memory, legacy: legacy}, nil
+	return guestProcess{
+		pid:         pid,
+		parentPID:   stat.PPID,
+		startTime:   stat.Starttime,
+		containerID: id,
+		cpuPath:     cpu,
+		memoryPath:  memory,
+		legacy:      legacy,
+	}, nil
 }
 
 func parseGuestCgroups(content string) (id, cpu, memory string, legacy bool) {
@@ -329,7 +337,10 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 	if err != nil {
 		return nil, err
 	}
-	if current.startTime != process.startTime || current.containerID != process.containerID || current.cpuPath != process.cpuPath || current.memoryPath != process.memoryPath {
+	if current.startTime != process.startTime ||
+		current.containerID != process.containerID ||
+		current.cpuPath != process.cpuPath ||
+		current.memoryPath != process.memoryPath {
 		return nil, fmt.Errorf("guest process %d changed during discovery", process.pid)
 	}
 	qos := corev1.PodQOSClass("")
@@ -344,9 +355,29 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 	level, _ := parseContainerQos(ContainerTypeNormal, &corev1.Pod{Status: corev1.PodStatus{QOSClass: qos}})
 	css, _ := parseContainerCSS(process.containerID)
 	now := time.Now()
-	container := &Container{ID: process.containerID, Name: process.containerID[:12], Hostname: s.options.PodName, Type: ContainerTypeNormal, Qos: level, InitPid: process.pid, CgroupPath: cpu, CgroupCss: css, StartedAt: now, SyncedAt: now, Labels: map[string]any{labelHostNamespace: s.options.PodNamespace}, lifeResources: make(map[string]any)}
+	container := &Container{
+		ID:            process.containerID,
+		Name:          process.containerID[:12],
+		Hostname:      s.options.PodName,
+		Type:          ContainerTypeNormal,
+		Qos:           level,
+		InitPid:       process.pid,
+		CgroupPath:    cpu,
+		CgroupCss:     css,
+		StartedAt:     now,
+		SyncedAt:      now,
+		Labels:        map[string]any{labelHostNamespace: s.options.PodNamespace},
+		lifeResources: make(map[string]any),
+	}
+	container.memoryCgroupPath = &memory
 	createContainerLifeResources(container)
-	return &containerRecord{container: container, ref: ContainerRef{Key: ContainerKey{ID: process.containerID}, InitPID: process.pid, MemoryCgroupPath: memory}, startTime: process.startTime, directory: directory, guest: s}, nil
+	return &containerRecord{
+		container: container,
+		ref:       ContainerRef{Key: ContainerKey{ID: process.containerID}, InitPID: process.pid, MemoryCgroupPath: memory},
+		startTime: process.startTime,
+		directory: directory,
+		guest:     s,
+	}, nil
 }
 
 func representativeGuestProcess(group []guestProcess, all map[int]guestProcess) guestProcess {
