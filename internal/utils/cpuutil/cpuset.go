@@ -116,3 +116,40 @@ func BoundCores(quota, period, effective, fallback uint64) (float64, error) {
 	}
 	return min(float64(effective), float64(quota)/float64(period)), nil
 }
+
+// OnlineCPUMask reads current CPU membership, bounded by the per-CPU map size.
+func OnlineCPUMask(path string, possible int) ([]bool, error) {
+	if possible <= 0 {
+		return nil, fmt.Errorf("possible CPU count must be positive: %d", possible)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read online CPUs from %q: %w", path, err)
+	}
+	list := strings.TrimSpace(string(data))
+	if list == "" {
+		return nil, fmt.Errorf("online CPU list %q is empty", path)
+	}
+	mask := make([]bool, possible)
+	for item := range strings.SplitSeq(list, ",") {
+		firstText, lastText, isRange := strings.Cut(item, "-")
+		first, err := strconv.Atoi(firstText)
+		if err != nil {
+			return nil, fmt.Errorf("parse online CPU %q: %w", item, err)
+		}
+		last := first
+		if isRange {
+			last, err = strconv.Atoi(lastText)
+			if err != nil {
+				return nil, fmt.Errorf("parse online CPU range %q: %w", item, err)
+			}
+		}
+		if first < 0 || last < first || last >= possible {
+			return nil, fmt.Errorf("online CPU range %q must fit possible CPU IDs 0-%d", item, possible-1)
+		}
+		for id := first; id <= last; id++ {
+			mask[id] = true
+		}
+	}
+	return mask, nil
+}

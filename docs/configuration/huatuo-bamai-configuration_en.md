@@ -1520,3 +1520,12 @@ detection, process memory summary reads, output processing, and persistence.
 | Event without a candidate | Check direct cgroup membership, OOM-kill eligibility, and enumeration limits |
 | `unavailable` / `failed` | Check runtime/layout restrictions, access permissions, container metadata, and target exit; inspect `status_reason` |
 | Event stops after resource exhaustion | Check `RLIMIT_NOFILE`, `fs.inotify.max_user_watches`, and `fs.inotify.max_user_instances`; adjust and restart; this stop does not stop other events |
+
+### Softirq CPU hotplug
+
+The `softirq` collector refreshes `/sys/devices/system/cpu/online` on each
+scrape. Newly online CPUs appear without restarting the daemon; offline CPUs
+are omitted, including holes in the CPU list. Online CPU IDs must fit the
+possible-CPU BPF map capacity. An unreadable, empty or invalid CPU list fails
+the scrape instead of reusing stale topology. A CPU transition during a scrape
+is reflected by the next successful topology read.
