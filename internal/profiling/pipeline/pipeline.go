@@ -210,7 +210,9 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 	if retain {
 		sealed.Aggregated = p.aggregator.CopyProfile()
 		sealed.Aggregated.TimeNanos = end.UnixNano()
-		output.ClampNegativeSamples(p.tracerID, &sealed.Aggregated)
+		if err := output.ClampNegativeSamples(ctx, p.tracerID, &sealed.Aggregated); err != nil {
+			return err
+		}
 	} else {
 		sealed.Aggregated = p.aggregator.Drain()
 		sealed.Aggregated.TimeNanos = start.UnixNano()

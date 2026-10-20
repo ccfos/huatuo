@@ -94,7 +94,9 @@ func (f *formatter) Complete(ctx context.Context) error {
 	}
 
 	w := types.AggregationWindow{Aggregated: f.aggregator.Drain()}
-	output.ClampNegativeSamples(f.taskID, &w.Aggregated)
+	if err := output.ClampNegativeSamples(ctx, f.taskID, &w.Aggregated); err != nil {
+		return err
+	}
 	var tree processor
 	var total int64
 	if err := output.WalkWindow(ctx, &w, func(frames []string, value int64) error {

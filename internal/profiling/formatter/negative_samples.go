@@ -15,7 +15,9 @@
 package formatter
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -23,40 +25,77 @@ import (
 
 // ClampNegativeSamples prepares owned results and emits one bounded warning. Callers
 // retaining signed totals must pass a copy so late events can still cancel them.
-func ClampNegativeSamples(taskID string, profiles ...*types.AggregatedProfile) {
+// Cancellation can leave results partially clamped; callers must discard them.
+func ClampNegativeSamples(ctx context.Context, taskID string, profiles ...*types.AggregatedProfile) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	count := 0
 	var minimum int64
 	var examples []string
 	for _, profile := range profiles {
-		for i := range profile.Samples {
-			sample := &profile.Samples[i]
-			if sample.Value >= 0 {
-				continue
+		// Amortize cancellation checks without scanning an entire large profile first.
+		for start := 0; start < len(profile.Samples); start += 256 {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			count++
-			minimum = min(minimum, sample.Value)
-			if len(examples) < 3 {
-				example := fmt.Sprintf("value=%d", sample.Value)
-				for _, stack := range []uint32{sample.UserStack, sample.KernelStack} {
-					if stack != 0 {
-						for _, id := range profile.Stacks[stack-1][:min(3, len(profile.Stacks[stack-1]))] {
-							example += fmt.Sprintf(" frame=%.128s", profile.Frames[id].Name)
-						}
-					}
+
+			end := min(start+256, len(profile.Samples))
+			for i := start; i < end; i++ {
+				sample := &profile.Samples[i]
+				if sample.Value >= 0 {
+					continue
 				}
-				if sample.LabelSet != 0 {
-					labels := profile.LabelSets[sample.LabelSet-1]
-					for j := range labels[:min(3, len(labels))] {
-						label := &labels[j]
-						example += fmt.Sprintf(" label=%.64s:%.128s:%d", label.Name, label.StringValue, label.NumberValue)
-					}
+
+				count++
+				minimum = min(minimum, sample.Value)
+				if len(examples) < 3 {
+					examples = append(examples, formatNegativeSample(profile, sample))
 				}
-				examples = append(examples, example)
+
+				sample.Value = 0
 			}
-			sample.Value = 0
 		}
 	}
-	if count > 0 {
-		log.WithField("task_id", taskID).WithField("negative_samples", count).WithField("minimum_value", minimum).WithField("examples", examples).Warn("negative accumulated profile values clamped to zero")
+
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+
+	if count > 0 {
+		log.WithField("task_id", taskID).
+			WithField("negative_samples", count).
+			WithField("minimum_value", minimum).
+			WithField("examples", examples).
+			Warn("negative accumulated profile values clamped to zero")
+	}
+
+	return nil
+}
+
+func formatNegativeSample(profile *types.AggregatedProfile, sample *types.AggregatedSample) string {
+	// Bound both traversal and text; stacks and labels may contain large strings.
+	var example strings.Builder
+	fmt.Fprintf(&example, "value=%d", sample.Value)
+	for _, stack := range []uint32{sample.UserStack, sample.KernelStack} {
+		if stack == 0 {
+			continue
+		}
+
+		frames := profile.Stacks[stack-1]
+		for _, id := range frames[:min(3, len(frames))] {
+			fmt.Fprintf(&example, " frame=%.128s", profile.Frames[id].Name)
+		}
+	}
+
+	if sample.LabelSet != 0 {
+		labels := profile.LabelSets[sample.LabelSet-1]
+		for j := range labels[:min(3, len(labels))] {
+			label := &labels[j]
+			fmt.Fprintf(&example, " label=%.64s:%.128s:%d", label.Name, label.StringValue, label.NumberValue)
+		}
+	}
+
+	return example.String()
 }

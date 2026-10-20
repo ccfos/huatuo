@@ -88,7 +88,9 @@ func (f *formatter) Complete(ctx context.Context) error {
 	}
 
 	w := types.AggregationWindow{Aggregated: f.aggregator.Drain()}
-	output.ClampNegativeSamples(f.taskID, &w.Aggregated)
+	if err := output.ClampNegativeSamples(ctx, f.taskID, &w.Aggregated); err != nil {
+		return err
+	}
 	var stacks Stacks
 	if err := output.WalkWindow(ctx, &w, stacks.Add); err != nil {
 		return err

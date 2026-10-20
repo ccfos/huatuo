@@ -86,7 +86,9 @@ func (f *formatter) Complete(ctx context.Context) error {
 		profiles = append(profiles, &windows[len(windows)-1].Aggregated)
 	}
 
-	output.ClampNegativeSamples(f.taskID, profiles...)
+	if err := output.ClampNegativeSamples(ctx, f.taskID, profiles...); err != nil {
+		return err
+	}
 	result := encoder{
 		unit:      f.sampleUnit,
 		frames:    make(map[frame]int),

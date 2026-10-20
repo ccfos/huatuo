@@ -16,9 +16,12 @@ package formatter
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -43,7 +46,9 @@ func TestClampNegativeSamplesBoundsDiagnostics(t *testing.T) {
 	}
 
 	profile.Samples = append(profile.Samples, types.AggregatedSample{Value: 8192})
-	ClampNegativeSamples("task-test", &profile)
+	if err := ClampNegativeSamples(t.Context(), "task-test", &profile); err != nil {
+		t.Fatal(err)
+	}
 	for i := range 100 {
 		if profile.Samples[i].Value != 0 {
 			t.Fatal("negative output retained")
@@ -68,8 +73,125 @@ func TestClampNegativeSamplesBoundsDiagnostics(t *testing.T) {
 	}
 
 	logs.Reset()
-	ClampNegativeSamples("task-test", &profile)
+	if err := ClampNegativeSamples(t.Context(), "task-test", &profile); err != nil {
+		t.Fatal(err)
+	}
 	if logs.Len() != 0 {
 		t.Fatal("nonnegative output warned")
+	}
+}
+
+func TestClampNegativeSamplesRejectsCanceledContext(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		deadline bool
+	}{
+		{name: "canceled"},
+		{
+			name:     "deadline",
+			deadline: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			want := context.Canceled
+			if tc.deadline {
+				cancel()
+				ctx, cancel = context.WithDeadline(t.Context(), time.Unix(0, 0))
+				want = context.DeadlineExceeded
+			}
+			cancel()
+			profile := types.AggregatedProfile{Samples: []types.AggregatedSample{{Value: -1}}}
+			if err := ClampNegativeSamples(ctx, "canceled", &profile); !errors.Is(err, want) {
+				t.Fatalf("error = %v, want %v", err, want)
+			}
+			if profile.Samples[0].Value != -1 {
+				t.Fatal("canceled call modified samples")
+			}
+			if err := ClampNegativeSamples(ctx, "empty"); !errors.Is(err, want) {
+				t.Fatalf("empty call error = %v, want %v", err, want)
+			}
+		})
+	}
+}
+
+// Cancel after observing progress, without timing-dependent goroutines.
+type clampProgressContext struct {
+	context.Context
+	cancel  context.CancelFunc
+	samples []types.AggregatedSample
+}
+
+func (c *clampProgressContext) Err() error {
+	if c.samples[0].Value == 0 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestClampNegativeSamplesStopsDuringScan(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stdout) })
+	profile := types.AggregatedProfile{Samples: make([]types.AggregatedSample, 4096)}
+	for i := range profile.Samples {
+		profile.Samples[i].Value = -1
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	progress := &clampProgressContext{
+		Context: ctx,
+		cancel:  cancel,
+		samples: profile.Samples,
+	}
+	if err := ClampNegativeSamples(progress, "canceled", &profile); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if profile.Samples[0].Value != 0 || profile.Samples[len(profile.Samples)-1].Value != -1 {
+		t.Fatal("scan did not stop after partial progress")
+	}
+	if logs.Len() != 0 {
+		t.Fatal("canceled scan emitted a completion warning")
+	}
+}
+
+func TestFormatNegativeSampleBoundsUnicode(t *testing.T) {
+	profile := types.AggregatedProfile{
+		Frames: []types.ProfileFrame{{Name: strings.Repeat("界", 200)}},
+		Stacks: [][]uint32{{0, 0, 0, 0}},
+		LabelSets: [][]types.ProfileLabel{{
+			{
+				Name:        strings.Repeat("名", 100),
+				Kind:        types.ProfileLabelString,
+				StringValue: strings.Repeat("值", 200),
+			},
+			{
+				Name:        "size",
+				Kind:        types.ProfileLabelNumber,
+				NumberValue: 42,
+			},
+			{
+				Name: "empty",
+				Kind: types.ProfileLabelString,
+			},
+			{
+				Name: "excluded",
+				Kind: types.ProfileLabelString,
+			},
+		}},
+	}
+	sample := types.AggregatedSample{
+		UserStack:   1,
+		KernelStack: 1,
+		LabelSet:    1,
+		Value:       -7,
+	}
+	want := "value=-7" + strings.Repeat(" frame="+strings.Repeat("界", 128), 6) +
+		" label=" + strings.Repeat("名", 64) + ":" + strings.Repeat("值", 128) + ":0 label=size::42 label=empty::0"
+	if got := formatNegativeSample(&profile, &sample); got != want {
+		t.Fatalf("diagnostic = %q, want %q", got, want)
+	}
+	if sample.Value != -7 {
+		t.Fatal("formatting modified the sample")
 	}
 }
