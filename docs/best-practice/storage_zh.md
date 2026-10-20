@@ -582,3 +582,7 @@ HTTP 错误包含响应状态码和可用的 Elasticsearch 错误详情。无法
 `observed_timestamp` 是用户态观测时刻，`uploaded_timestamp` 是存储写入时刻。
 三者不互相补填。旧文档及没有内核时间的事件省略新增字段；历史数据不自动迁移。
 原始 `kernel_observed_ns` 仅用于进程内事件关联，不写入新文档。
+
+### Save 输入所有权
+
+存储 Save 仅在调用期间借用记录输入。异步后端会复制返回后仍需使用的 payload 字节。调用方可在 Save 返回后复用编码缓冲区，但不可在调用期间修改。Elasticsearch bulk 在入队前复制 payload；返回成功仍仅表示已入队，不表示持久化完成。直接写入路径仍为同步调用。

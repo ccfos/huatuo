@@ -179,6 +179,8 @@ type Mapper[T any] interface {
 // once and never reused; calling Save after Close is undefined.
 type Backend interface {
 	Init(ctx context.Context, collection string, indexes []Index) error
+	// Save borrows rec for the call. Async backends must copy retained payload
+	// bytes before returning so callers and mappers can reuse encoding buffers.
 	Save(ctx context.Context, rec Record, options SaveOptions) error
 	Get(ctx context.Context, id string) (Record, error)
 	Delete(ctx context.Context, id string) error
