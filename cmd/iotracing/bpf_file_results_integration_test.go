@@ -26,7 +26,6 @@ import (
 	"testing"
 
 	"github.com/cilium/ebpf"
-	"github.com/cilium/ebpf/link"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
@@ -77,15 +76,8 @@ func attachFileResultProbes(t *testing.T, path string) (*ebpf.Collection, fileRe
 	for _, operation := range []string{"read", "write"} {
 		program := "bpf_anyfs_file_" + operation + "_iter"
 		symbol := prefix + "_file_" + operation + "_iter"
-		options := fileIterReturnOption(program+"_return", symbol)
-		ret, err := link.Kretprobe(symbol, coll.Programs[program+"_return"], &link.KprobeOptions{
-			RetprobeMaxActive: options.Kprobe.RetprobeMaxActive,
-		})
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = ret.Close() })
-		entry, err := link.Kprobe(symbol, coll.Programs[program], nil)
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = entry.Close() })
+		attachFileIOReturnProbe(t, program+"_return", symbol, coll.Programs[program+"_return"])
+		attachFileIOProbe(t, symbol, coll.Programs[program])
 	}
 	return coll, key
 }
