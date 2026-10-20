@@ -51,13 +51,13 @@ for storage_config_case in 000 001 010 011 100 101 110 111; do
 	000 | 111)
 		storage_config_args=(--region dev --disable-kubelet --procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}")
 		[[ ${storage_config_case} == 000 ]] || storage_config_args+=(--disable-storage)
-		integration_huatuo_bamai_start write_storage_config "${storage_config_args[@]}"
+		integration_huatuo_bamai_start write_elasticsearch_config "${storage_config_args[@]}"
 		huatuo_bamai_stop
 		cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${storage_config_log}"
 		assert_log_has_no_failure "${storage_config_log}" "Elasticsearch ${storage_config_case}"
 		;;
 	*)
-		write_storage_config
+		write_elasticsearch_config
 		storage_config_status=0
 		# Invalid configuration must exit before any daemon resources are started.
 		timeout --kill-after=2 10 "${HUATUO_BAMAI_BIN}" \
