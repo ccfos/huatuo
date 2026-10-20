@@ -157,3 +157,5 @@ sudo systemctl enable --now huatuo-bamai
 ```
 
 > 完整的 RPM 安装指引请参阅 [https://mp.weixin.qq.com/s/Gmst4_FsbXUIhuJw1BXNnQ](https://mp.weixin.qq.com/s/Gmst4_FsbXUIhuJw1BXNnQ)。
+
+守护进程通过 `/var/run/huatuo-bamai.pid` 和 `/var/run/huatuo-apiserver.pid` 防止重复启动。正常退出会清空 PID 并保留空文件，使重叠的启动过程仍竞争同一把锁。文件存在不代表进程正在运行，重启期间不要删除这些文件。

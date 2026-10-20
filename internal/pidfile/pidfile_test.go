@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,18 +82,22 @@ func TestLock_AlreadyLocked(t *testing.T) {
 	assert.Contains(t, err.Error(), "already running")
 }
 
-func TestUnlock_RemovesFile(t *testing.T) {
+func TestUnlock_ClearsPID(t *testing.T) {
 	redirectPidDir(t)
 
-	name := "toremove"
+	name := "toclear"
 	lk, err := Lock(name)
 	require.NoError(t, err)
 
+	before, err := os.Stat(path(name))
+	require.NoError(t, err)
 	lk.Unlock()
-
-	if _, err := os.Stat(path(name)); !os.IsNotExist(err) {
-		t.Errorf("Stat after Unlock: err = %v, want IsNotExist", err)
-	}
+	after, err := os.Stat(path(name))
+	require.NoError(t, err)
+	require.True(t, os.SameFile(before, after), "Unlock replaced the lock inode")
+	data, err := os.ReadFile(path(name))
+	require.NoError(t, err)
+	require.Empty(t, data, "released PID file must not retain the previous PID")
 }
 
 func TestUnlock_Idempotent(t *testing.T) {
@@ -173,4 +178,32 @@ func TestRead_NotExist(t *testing.T) {
 	_, err := Read("/this/file/does/not/exist.pid")
 	require.Error(t, err)
 	assert.True(t, os.IsNotExist(err))
+}
+
+// A contender can open the inode before the owner releases it, then acquire
+// its flock after Unlock. New callers must still contend on that same inode.
+func TestUnlockPreservesMutualExclusion(t *testing.T) {
+	redirectPidDir(t)
+	const name = "handover"
+	owner, err := Lock(name)
+	require.NoError(t, err)
+	t.Cleanup(owner.Unlock)
+	contender, err := os.OpenFile(path(name), os.O_RDWR, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, contender.Close()) })
+
+	owner.Unlock()
+	require.NoError(t, syscall.Flock(int(contender.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+	t.Cleanup(func() { require.NoError(t, syscall.Flock(int(contender.Fd()), syscall.LOCK_UN)) })
+
+	newcomer, err := Lock(name)
+	if err == nil {
+		newcomer.Unlock()
+		t.Fatal("two contenders acquired locks for the same PID file")
+	}
+	require.Contains(t, err.Error(), "already running")
+	require.NoError(t, syscall.Flock(int(contender.Fd()), syscall.LOCK_UN))
+	successor, err := Lock(name)
+	require.NoError(t, err)
+	t.Cleanup(successor.Unlock)
 }
