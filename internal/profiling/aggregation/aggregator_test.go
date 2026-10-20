@@ -519,3 +519,35 @@ func TestAggregatorAddStackCombinations(t *testing.T) {
 		})
 	}
 }
+
+func TestAggregatorCopyProfileOwnsAllSlices(t *testing.T) {
+	a := New()
+	sample := Sample{
+		UserFrames:   frames("allocate"),
+		KernelFrames: frames("fault"),
+		Labels:       []types.ProfileLabel{types.ProfilePIDLabel(42)},
+		Value:        -4096,
+	}
+
+	add(t, a, &sample)
+	first := a.CopyProfile()
+	changed := a.CopyProfile()
+	changed.Frames[0].Name = "changed"
+	changed.Stacks[0][0] = 1
+	changed.LabelSets[0][0].NumberValue = 99
+	changed.Samples[0].Value = 0
+	if diff := cmp.Diff(first, a.CopyProfile()); diff != "" {
+		t.Fatalf("copy aliases retained state (-want +got):\n%s", diff)
+	}
+
+	sample.Value = 4096
+	add(t, a, &sample)
+	if a.Empty() || a.CopyProfile().Samples[0].Value != 0 || first.Samples[0].Value != -4096 {
+		t.Fatal("copy reset state, discarded zero identity, or changed after Add")
+	}
+
+	drained := a.Drain()
+	if !a.Empty() || len(drained.Samples) != 1 || first.Frames[0].Name != "allocate" {
+		t.Fatal("Drain changed a prior copy")
+	}
+}

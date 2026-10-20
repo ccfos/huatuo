@@ -338,7 +338,9 @@ func (p *memNativeProfiler) convertValueToBytes(value int64) (int64, error) {
 	switch p.internalMode {
 	case profiling.ModeVirtualAlloc:
 		return value, nil
-	case profiling.ModePhysicalAlloc, profiling.ModePhysicalUsage:
+	case profiling.ModePhysicalUsage:
+		return window.ScaleValue(value, p.pageSize)
+	case profiling.ModePhysicalAlloc:
 		bytes, err := window.ScaleValue(value, p.pageSize)
 		if err != nil {
 			return 0, err

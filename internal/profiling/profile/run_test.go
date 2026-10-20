@@ -49,7 +49,7 @@ func (fakeProfiler) ReadDataLoop(_ context.Context, enqueue func(*pipeline.Sampl
 func (fakeProfiler) Stop() error { return nil }
 
 func testAggregationConfig() pipeline.AggregationConfig {
-	return pipeline.AggregationConfig{ProfileType: ProfileTypeCpuSample}
+	return pipeline.AggregationConfig{ProfileType: profiling.ProfileTypeCpuSample}
 }
 
 func newMeta(implementation profiling.Implementation, typ profiling.Type) *ProfilerMeta {
@@ -241,7 +241,7 @@ func (p *loopProfiler) Stop() error {
 	return p.stopErr
 }
 
-func TestRunCompletionRequiresSuccessfulCollection(t *testing.T) {
+func TestRunCompletion(t *testing.T) {
 	failure := errors.New("read samples failed")
 	stopFailure := errors.New("stop collector failed")
 	for _, tc := range []struct {
@@ -595,15 +595,15 @@ func TestRunAggregationFailureStopsCollectionWithoutCommit(t *testing.T) {
 	}
 }
 
-func TestRunFinalWindowFailurePreventsCommit(t *testing.T) {
+func TestRunFinalFormatFailurePreventsPublication(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "result.svg")
 	collector := &loopProfiler{
 		read: func(_ context.Context, enqueue func(*pipeline.SampleBatch) error) error {
-			// The first stack is retained before Add rejects the second stack. Complete
-			// would publish that partial result, so absence of the file checks the gate.
+			// Distinct stacks fit int64 individually but overflow the SVG total.
+			// Complete must reject the result before publishing any file.
 			return enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{
 				{UserFrames: []types.ProfileFrame{{Name: "accepted"}}, Value: 1},
-				{UserFrames: []types.ProfileFrame{{Name: "rejected"}}, Value: -1},
+				{UserFrames: []types.ProfileFrame{{Name: "rejected"}}, Value: math.MaxInt64},
 			}})
 		},
 	}
@@ -615,7 +615,7 @@ func TestRunFinalWindowFailurePreventsCommit(t *testing.T) {
 		AggregationMode:   pipeline.AggregationModeOneShot,
 		AggregationConfig: testAggregationConfig(),
 	})
-	if err == nil || !strings.Contains(err.Error(), "negative sample weight") {
+	if err == nil || !strings.Contains(err.Error(), "total weight overflows") {
 		t.Fatalf("Run() = %v, want final window failure", err)
 	}
 	if !collector.stopped {
@@ -765,5 +765,106 @@ func TestRunNaturalCompletionStopsDurationTimerBeforeCleanup(t *testing.T) {
 	err := Run(t.Context(), cfg, &ProfilerMeta{Impl: collector, AggregationConfig: testAggregationConfig()})
 	if err != nil || received.commits.Load() != 1 {
 		t.Fatalf("error=%v commits=%d", err, received.commits.Load())
+	}
+}
+
+func TestRunRemotePhysicalUsagePublishesRetainedTotals(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	path := filepath.Join(t.TempDir(), "live.sock")
+	server, err := toolstream.NewServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	values := make(chan int64, 16)
+	var commits atomic.Int64
+	toolstream.Register(server, profiling.StoreServiceName, func(
+		ctx context.Context,
+		request *toolstream.Request[types.AggregationWindow],
+	) error {
+		if request.Commit {
+			commits.Add(1)
+		}
+
+		if request.Data == nil {
+			return nil
+		}
+
+		w := request.Data
+		if w.ProfileType != profiling.ProfileTypePhysicalUsage || w.Aggregated.DurationNanos != 0 || w.Aggregated.TimeNanos <= 0 {
+			return errors.New("remote physical usage metadata is not a snapshot")
+		}
+
+		var total int64
+		for _, sample := range w.Aggregated.Samples {
+			total += sample.Value
+		}
+
+		select {
+		case values <- total:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	waitForValue := func(want int64) error {
+		for {
+			select {
+			case got := <-values:
+				if got == want {
+					return nil
+				}
+			case <-ctx.Done():
+				return fmt.Errorf("wait for remote live value %d: %w", want, ctx.Err())
+			}
+		}
+	}
+	collector := &loopProfiler{read: func(_ context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+		if err := waitForValue(0); err != nil {
+			return err
+		}
+
+		if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 8192}}}); err != nil {
+			return err
+		}
+
+		// Two successive windows with no new events must both carry the live total.
+		for range 2 {
+			if err := waitForValue(8192); err != nil {
+				return err
+			}
+		}
+
+		if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: -8192}}}); err != nil {
+			return err
+		}
+
+		return waitForValue(0)
+	}}
+	err = Run(ctx, RunConfig{
+		OutputFormat:        output.FormatRemoteStore,
+		OutputDestination:   path,
+		AggregationInterval: time.Millisecond,
+	}, &ProfilerMeta{
+		Impl:              collector,
+		AggregationMode:   pipeline.AggregationModeStreaming,
+		AggregationConfig: pipeline.AggregationConfig{ProfileType: profiling.ProfileTypePhysicalUsage},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if commits.Load() != 1 || !collector.stopped {
+		t.Fatalf("commits=%d stopped=%t", commits.Load(), collector.stopped)
 	}
 }

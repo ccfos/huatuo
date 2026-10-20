@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -29,6 +30,8 @@ type blockingOutput struct {
 	total     int64
 	completed bool
 }
+
+func (*blockingOutput) Name() output.OutputFormat { return output.FormatJSON }
 
 func (f *blockingOutput) Add(ctx context.Context, w *types.AggregationWindow) error {
 	if f.total == 0 {
