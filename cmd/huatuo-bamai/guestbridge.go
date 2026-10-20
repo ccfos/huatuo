@@ -37,10 +37,18 @@ func startGuestBridge(d *Daemon) (func(context.Context) error, error) {
 		return nil, fmt.Errorf("guestbridge: Host hostname: %w", err)
 	}
 	bridge, err := guestbridge.New(guestbridge.Options{
-		Port: cfg.Port, MaxConnections: cfg.MaxConnections, MaxMessageSize: cfg.MaxMessageBytes, MaxInFlightBytes: cfg.MaxInFlightBytes,
+		Port:             cfg.Port,
+		MaxConnections:   cfg.MaxConnections,
+		MaxMessageSize:   cfg.MaxMessageBytes,
+		MaxInFlightBytes: cfg.MaxInFlightBytes,
 		HandshakeTimeout: time.Duration(cfg.HandshakeTimeoutSeconds) * time.Second, FirecrackerRoot: cfg.FirecrackerRoot,
 		Registerer: d.metrics,
-		Receiver:   &guestbridge.DocumentReceiver{Hostname: hostname, Region: d.opts.Region, Tracing: d.tracingStore, Profiling: d.profileStore},
+		Receiver: &guestbridge.DocumentReceiver{
+			Hostname:  hostname,
+			Region:    d.opts.Region,
+			Tracing:   d.tracingStore,
+			Profiling: d.profileStore,
+		},
 	})
 	if err != nil {
 		return nil, err

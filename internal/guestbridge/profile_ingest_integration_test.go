@@ -64,7 +64,10 @@ func newProfileFixture(t *testing.T) (*profilingstore.Store, <-chan []byte) {
 		http.Error(w, "unexpected profile storage request", http.StatusNotFound)
 	}))
 	t.Cleanup(server.Close)
-	store, err := profilingstore.NewFromConfig(t.Context(), profilingstore.Config{Addresses: []string{server.URL}, Index: "kata_profiles"})
+	store, err := profilingstore.NewFromConfig(
+		t.Context(),
+		profilingstore.Config{Addresses: []string{server.URL}, Index: "kata_profiles"},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +78,16 @@ func newProfileFixture(t *testing.T) (*profilingstore.Store, <-chan []byte) {
 func TestTypedProfileIngress(t *testing.T) {
 	store, records := newProfileFixture(t)
 	receiver := &DocumentReceiver{Hostname: "trusted-node", Region: "region", Profiling: store}
-	ctx := context.WithValue(t.Context(), peerIdentityKey{}, PeerIdentity{SandboxID: "orders-vm", Namespace: "application"})
-	raw := []byte(`{"tracer_id":"profile-window","tracer_name":"profiler","tracer_type":"profiling","started_timestamp":"2026-10-16T01:00:00Z","profile_data":{"profile_type":"cpu","profile":{"time_nanos":9007199254740993,"sample":[{"value":[9007199254740993]}]}}}`)
+	ctx := context.WithValue(
+		t.Context(),
+		peerIdentityKey{},
+		PeerIdentity{SandboxID: "orders-vm", Namespace: "application"},
+	)
+	raw := []byte(
+		`{"tracer_id":"profile-window","tracer_name":"profiler","tracer_type":"profiling",` +
+			`"started_timestamp":"2026-10-16T01:00:00Z","profile_data":{"profile_type":"cpu",` +
+			`"profile":{"time_nanos":9007199254740993,"sample":[{"value":[9007199254740993]}]}}}`,
+	)
 	if err := receiver.Handle(ctx, vsock.ProfilingTool, raw); err != nil {
 		t.Fatal(err)
 	}

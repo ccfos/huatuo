@@ -46,7 +46,9 @@ func (b *Bridge) waitConnectionPeer(ctx context.Context, conn net.Conn, sandboxI
 	}
 	var cred *unix.Ucred
 	var credErr error
-	if err := raw.Control(func(fd uintptr) { cred, credErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED) }); err != nil {
+	if err := raw.Control(
+		func(fd uintptr) { cred, credErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED) },
+	); err != nil {
 		return PeerIdentity{}, err
 	}
 	if credErr != nil {

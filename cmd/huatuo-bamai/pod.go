@@ -28,7 +28,14 @@ import (
 
 func setupPodManager(d *Daemon) (func(context.Context) error, error) {
 	if d.opts.Mode == runmode.Sandbox {
-		if err := pod.InitGuestManager(pod.GuestScannerOptions{ProcRoot: procfs.DefaultPath(), CgroupRoot: filepath.Join(procfs.DefaultPathByType("sys"), "fs", "cgroup"), PodName: d.opts.GuestIdentity.PodName, PodNamespace: d.opts.GuestIdentity.PodNamespace}); err != nil {
+		if err := pod.InitGuestManager(
+			pod.GuestScannerOptions{
+				ProcRoot:     procfs.DefaultPath(),
+				CgroupRoot:   filepath.Join(procfs.DefaultPathByType("sys"), "fs", "cgroup"),
+				PodName:      d.opts.GuestIdentity.PodName,
+				PodNamespace: d.opts.GuestIdentity.PodNamespace,
+			},
+		); err != nil {
 			return nil, err
 		}
 		return func(context.Context) error { pod.ReleaseManager(); return nil }, nil

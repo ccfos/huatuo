@@ -28,7 +28,15 @@ import (
 
 func TestCPUIdleVMCooldownSurvivesBusinessGap(t *testing.T) {
 	tracer := &cpuIdleTracing{containers: map[string]*containerCPUState{}, minTraceInterval: time.Minute}
-	agent := &pod.Container{ID: "agent", Type: pod.ContainerTypeSidecar, RuntimeType: "io.containerd.kata-qemu.v2", SandboxID: "orders-vm", SyncedAt: time.Unix(1, 0), CgroupPath: "/kata/orders", CgroupCss: map[string]uint64{"cpu": 10}}
+	agent := &pod.Container{
+		ID:          "agent",
+		Type:        pod.ContainerTypeSidecar,
+		RuntimeType: "io.containerd.kata-qemu.v2",
+		SandboxID:   "orders-vm",
+		SyncedAt:    time.Unix(1, 0),
+		CgroupPath:  "/kata/orders",
+		CgroupCss:   map[string]uint64{"cpu": 10},
+	}
 	business := *agent
 	business.ID = "checkout"
 	business.Type = pod.ContainerTypeNormal
@@ -45,7 +53,9 @@ func TestCPUIdleVMCooldownSurvivesBusinessGap(t *testing.T) {
 	state.hasPercent = true
 	delete(members, business.ID)
 	tracer.reconcileContainerStates(members)
-	if tracer.containers["kata:orders-vm"] != state || state.containerID != "" || !state.lastTraceAt.Equal(at) || state.hasUsage {
+	if tracer.containers["kata:orders-vm"] != state || state.containerID != "" || !state.lastTraceAt.Equal(
+		at,
+	) || state.hasUsage {
 		t.Fatalf("business gap lost VM cooldown: %+v", state)
 	}
 	if err := tracer.updateContainerCPUStates(at.Add(time.Second)); err != nil {
@@ -87,12 +97,25 @@ func TestCPUIdleReservesCooldownBeforePerfFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Unix(100, 0)
-	state := &containerCPUState{containerID: "checkout", sandboxID: "orders-vm", hasPercent: true, currentPercent: cpuUsageBreakdown[int64]{user: 90}, percentDelta: cpuUsageBreakdown[int64]{user: 60}, lastSampleAt: at}
-	tracer := &cpuIdleTracing{containers: map[string]*containerCPUState{"kata:orders-vm": state}, minTraceInterval: time.Minute}
+	state := &containerCPUState{
+		containerID:    "checkout",
+		sandboxID:      "orders-vm",
+		hasPercent:     true,
+		currentPercent: cpuUsageBreakdown[int64]{user: 90},
+		percentDelta:   cpuUsageBreakdown[int64]{user: 60},
+		lastSampleAt:   at,
+	}
+	tracer := &cpuIdleTracing{
+		containers:       map[string]*containerCPUState{"kata:orders-vm": state},
+		minTraceInterval: time.Minute,
+	}
 	if tracer.selectTraceTarget(at) != state {
 		t.Fatal("CPU spike was not selected")
 	}
-	if _, err := runPerfCommand(t.Context(), perfRequest{duration: time.Second, containerID: state.containerID}); err == nil {
+	if _, err := runPerfCommand(
+		t.Context(),
+		perfRequest{duration: time.Second, containerID: state.containerID},
+	); err == nil {
 		t.Fatal("expected actual perf command failure")
 	}
 	state.lastSampleAt = at.Add(20 * time.Second)
@@ -114,7 +137,13 @@ func TestCPUIdleReservesCooldownBeforePerfFailure(t *testing.T) {
 
 func TestCPUIdleReservesCooldownBeforeInvalidResult(t *testing.T) {
 	at := time.Unix(100, 0)
-	state := &containerCPUState{containerID: "checkout", hasPercent: true, currentPercent: cpuUsageBreakdown[int64]{user: 90}, percentDelta: cpuUsageBreakdown[int64]{user: 60}, lastSampleAt: at}
+	state := &containerCPUState{
+		containerID:    "checkout",
+		hasPercent:     true,
+		currentPercent: cpuUsageBreakdown[int64]{user: 90},
+		percentDelta:   cpuUsageBreakdown[int64]{user: 60},
+		lastSampleAt:   at,
+	}
 	tracer := &cpuIdleTracing{containers: map[string]*containerCPUState{"checkout": state}, minTraceInterval: time.Minute}
 	if tracer.selectTraceTarget(at) != state {
 		t.Fatal("CPU spike was not selected")
@@ -130,10 +159,19 @@ func TestCPUIdleReservesCooldownBeforeInvalidResult(t *testing.T) {
 
 func TestCPUIdleIndependentVMCooldowns(t *testing.T) {
 	at := time.Unix(100, 0)
-	first := &containerCPUState{containerID: "checkout", hasPercent: true, currentPercent: cpuUsageBreakdown[int64]{user: 90}, percentDelta: cpuUsageBreakdown[int64]{user: 60}, lastSampleAt: at}
+	first := &containerCPUState{
+		containerID:    "checkout",
+		hasPercent:     true,
+		currentPercent: cpuUsageBreakdown[int64]{user: 90},
+		percentDelta:   cpuUsageBreakdown[int64]{user: 60},
+		lastSampleAt:   at,
+	}
 	second := *first
 	second.containerID = "payments"
-	tracer := &cpuIdleTracing{containers: map[string]*containerCPUState{"kata:orders-vm": first, "kata:payments-vm": &second}, minTraceInterval: time.Minute}
+	tracer := &cpuIdleTracing{
+		containers:       map[string]*containerCPUState{"kata:orders-vm": first, "kata:payments-vm": &second},
+		minTraceInterval: time.Minute,
+	}
 	if tracer.selectTraceTarget(at) != first {
 		t.Fatal("expected deterministic first business target")
 	}

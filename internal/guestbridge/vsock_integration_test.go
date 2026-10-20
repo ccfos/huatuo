@@ -60,7 +60,12 @@ func TestKataVSOCKIntegration(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 	defer cancel()
-	traces, err := tracingstore.NewFromConfig(ctx, tracingstore.Config{LocalFile: &tracingstore.LocalFileConfig{Path: t.TempDir(), RotationSizeMiB: 1, MaxRotatedFiles: 1}})
+	traces, err := tracingstore.NewFromConfig(
+		ctx,
+		tracingstore.Config{
+			LocalFile: &tracingstore.LocalFileConfig{Path: t.TempDir(), RotationSizeMiB: 1, MaxRotatedFiles: 1},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,15 +73,21 @@ func TestKataVSOCKIntegration(t *testing.T) {
 	events, unsubscribe := traces.Subscribe()
 	defer unsubscribe()
 	profiles, records := newProfileFixture(t)
-	bridge, err := New(Options{Receiver: &DocumentReceiver{Hostname: "verified-host", Region: "integration", Tracing: traces, Profiling: profiles, LookupContainer: func(id string) (*pod.Container, error) {
-		c := containers[id]
-		if c == nil {
-			return nil, fmt.Errorf("unknown container")
-		}
-		return c, nil
-	}}, Registerer: prometheus.NewRegistry(), ResolvePeer: func(addr net.Addr, sandbox string) (PeerIdentity, error) {
-		return resolvePeerFromContainers(addr, sandbox, containers, os.ReadFile)
-	}})
+	bridge, err := New(Options{
+		Receiver: &DocumentReceiver{
+			Hostname: "verified-host", Region: "integration",
+			Tracing: traces, Profiling: profiles,
+			LookupContainer: func(id string) (*pod.Container, error) {
+				c := containers[id]
+				if c == nil {
+					return nil, fmt.Errorf("unknown container")
+				}
+				return c, nil
+			},
+		}, Registerer: prometheus.NewRegistry(), ResolvePeer: func(addr net.Addr, sandbox string) (PeerIdentity, error) {
+			return resolvePeerFromContainers(addr, sandbox, containers, os.ReadFile)
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,5 +157,10 @@ func TestKataVSOCKIntegration(t *testing.T) {
 	if metric.GetCounter().GetValue() < 1 {
 		t.Fatal("foreign container was not rejected")
 	}
-	t.Logf("channel=%s sandbox=%s pid=%d: real event/profile received; foreign container rejected", os.Getenv("HUATUO_KATA_BRIDGE_CHANNEL"), selected.SandboxID, selected.InitPid)
+	t.Logf(
+		"channel=%s sandbox=%s pid=%d: real event/profile received; foreign container rejected",
+		os.Getenv("HUATUO_KATA_BRIDGE_CHANNEL"),
+		selected.SandboxID,
+		selected.InitPid,
+	)
 }

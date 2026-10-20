@@ -45,7 +45,8 @@ func (listener *delayedAcceptListener) Close() error {
 }
 
 // TestShutdownRejectsLateAcceptedConnection verifies the race between shutdown and Accept returning a connection:
-// the first Shutdown may time out; a late connection is closed without entering the handler, and a second Shutdown waits for actual cleanup.
+// the first Shutdown may time out; a late connection is closed without entering the handler, and a second Shutdown
+// waits for actual cleanup.
 func TestShutdownRejectsLateAcceptedConnection(t *testing.T) {
 	clientConnection, serverConnection := net.Pipe()
 	t.Cleanup(func() { _ = clientConnection.Close() })

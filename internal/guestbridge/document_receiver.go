@@ -62,7 +62,11 @@ func (r *DocumentReceiver) attribute(ctx context.Context, d *types.Document) err
 			lookup = pod.ContainerByID
 		}
 		container, err := lookup(d.ContainerID)
-		if err != nil || container == nil || container.ID != d.ContainerID || container.HostKataSandboxID() != peer.SandboxID || container.Labels["HostNamespace"] != peer.Namespace {
+		if err != nil ||
+			container == nil ||
+			container.ID != d.ContainerID ||
+			container.HostKataSandboxID() != peer.SandboxID ||
+			container.Labels["HostNamespace"] != peer.Namespace {
 			return ErrUntrustedPeer
 		}
 		d.ContainerHostname = container.Hostname
@@ -89,7 +93,9 @@ func (r *DocumentReceiver) Handle(ctx context.Context, tool string, raw []byte) 
 		if err != nil {
 			return err
 		}
-		if d.TracerRunType != types.TracerRunTypeEvent && d.TracerRunType != types.TracerRunTypeAutotracing && d.TracerRunType != types.TracerRunTypeTracing {
+		if d.TracerRunType != types.TracerRunTypeEvent &&
+			d.TracerRunType != types.TracerRunTypeAutotracing &&
+			d.TracerRunType != types.TracerRunTypeTracing {
 			return ErrUnsupportedType
 		}
 		if err := r.attribute(ctx, &d.Document); err != nil {

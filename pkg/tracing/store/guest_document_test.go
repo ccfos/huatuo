@@ -25,13 +25,20 @@ import (
 )
 
 func TestDecodeDocumentPreservesGuestNumbers(t *testing.T) {
-	data := []byte(`{"source_type":"kata_guest","tracer_type":"event","tracer_id":"guest-1","observed_timestamp":"2026-10-16T01:02:03.123456789Z","uploaded_timestamp":"2026-10-16T01:02:04.000000000Z","tracer_data":{"counter":18446744073709551615,"nested":[9007199254740993]}}`)
+	data := []byte(
+		`{"source_type":"kata_guest","tracer_type":"event","tracer_id":"guest-1",` +
+			`"observed_timestamp":"2026-10-16T01:02:03.123456789Z",` +
+			`"uploaded_timestamp":"2026-10-16T01:02:04.000000000Z",` +
+			`"tracer_data":{"counter":18446744073709551615,"nested":[9007199254740993]}}`,
+	)
 	doc, err := DecodeDocument(data)
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := doc.TracerData.(map[string]any)
-	if values["counter"] != json.Number("18446744073709551615") || values["nested"].([]any)[0] != json.Number("9007199254740993") {
+	if values["counter"] != json.Number(
+		"18446744073709551615",
+	) || values["nested"].([]any)[0] != json.Number("9007199254740993") {
 		t.Errorf("JSON numbers rounded: %+v", values)
 	}
 	mapped, err := (mapper{}).Decode(driver.Record{Data: data})
@@ -63,7 +70,12 @@ func TestDecodeDocumentPreservesGuestNumbers(t *testing.T) {
 	if err := store.Save(doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.UploadedTimestamp.Equal(oldUpload) || doc.ObservedTimestamp.FormatUTC() != "2026-10-16T01:02:03.123456789Z" || doc.KernelObservedTimestamp != nil || doc.StartedTimestamp != nil {
+	if doc.UploadedTimestamp.Equal(
+		oldUpload,
+	) ||
+		doc.ObservedTimestamp.FormatUTC() != "2026-10-16T01:02:03.123456789Z" ||
+		doc.KernelObservedTimestamp != nil ||
+		doc.StartedTimestamp != nil {
 		t.Errorf("clock ownership changed: %+v", doc.Document)
 	}
 	select {

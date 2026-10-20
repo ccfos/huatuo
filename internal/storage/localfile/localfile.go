@@ -74,7 +74,10 @@ func (b *Storage) Save(
 		return driver.ErrUnsupportedOp
 	}
 	filename := tracerFilename(rec)
-	if !filepath.IsLocal(filename) || filename == "." || filepath.Base(filename) != filename || strings.ContainsAny(filename, "\\\x00") {
+	if !filepath.IsLocal(filename) || filename == "." || filepath.Base(filename) != filename || strings.ContainsAny(
+		filename,
+		"\\\x00",
+	) {
 		return driver.ErrInvalidField
 	}
 

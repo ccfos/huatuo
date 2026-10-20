@@ -48,7 +48,9 @@ func (c *Config) validateGuestTransport() error {
 		if c.Mode != runmode.Sandbox {
 			return errors.New("GuestTransport requires sandbox mode")
 		}
-		if g.Port <= 2 || g.Port == ^uint32(0) || g.MaxMessageBytes < 128 || g.MaxPendingBytes < g.MaxMessageBytes || g.IOTimeoutSeconds <= 0 {
+		if g.Port <= 2 || g.Port == ^uint32(
+			0,
+		) || g.MaxMessageBytes < 128 || g.MaxPendingBytes < g.MaxMessageBytes || g.IOTimeoutSeconds <= 0 {
 			return errors.New("GuestTransport has invalid port, byte limits or timeout")
 		}
 	}
@@ -57,10 +59,20 @@ func (c *Config) validateGuestTransport() error {
 		if c.Mode == runmode.Sandbox {
 			return errors.New("GuestBridge requires Host mode")
 		}
-		if g.Port <= 2 || g.Port == ^uint32(0) || g.MaxConnections <= 0 || g.MaxMessageBytes < 128 || g.MaxInFlightBytes < g.MaxMessageBytes || g.MaxInFlightBytes > (^uint64(0)>>1) || g.HandshakeTimeoutSeconds <= 0 {
+		if g.Port <= 2 || g.Port == ^uint32(
+			0,
+		) ||
+			g.MaxConnections <= 0 ||
+			g.MaxMessageBytes < 128 ||
+			g.MaxInFlightBytes < g.MaxMessageBytes ||
+			g.MaxInFlightBytes > (^uint64(
+				0,
+			)>>1) || g.HandshakeTimeoutSeconds <= 0 {
 			return errors.New("GuestBridge has invalid port, byte limits or timeout")
 		}
-		if !filepath.IsAbs(g.FirecrackerRoot) || filepath.Clean(g.FirecrackerRoot) != g.FirecrackerRoot || g.FirecrackerRoot == "/" {
+		if !filepath.IsAbs(
+			g.FirecrackerRoot,
+		) || filepath.Clean(g.FirecrackerRoot) != g.FirecrackerRoot || g.FirecrackerRoot == "/" {
 			return fmt.Errorf("GuestBridge.FirecrackerRoot must be a clean absolute runtime directory")
 		}
 	}

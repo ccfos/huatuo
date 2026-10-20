@@ -45,7 +45,11 @@ type pidRuntimeService struct {
 	verbose     bool
 }
 
-func (s *pidRuntimeService) ContainerStatus(_ context.Context, id string, verbose bool) (*runtimeapi.ContainerStatusResponse, error) {
+func (s *pidRuntimeService) ContainerStatus(
+	_ context.Context,
+	id string,
+	verbose bool,
+) (*runtimeapi.ContainerStatusResponse, error) {
 	s.calls++
 	s.containerID = id
 	s.verbose = verbose
@@ -72,8 +76,14 @@ func TestReadContainerdRuntimeInfo(t *testing.T) {
 		err      error
 		wantErr  string
 	}{
-		{name: "Kata", response: runningRuntimeResponse(`{"pid":1234,"runtimeType":"io.containerd.kata-qemu.v2","sandboxID":"sandbox"}`)},
-		{name: "runc", response: runningRuntimeResponse(`{"pid":1234,"runtimeType":"io.containerd.runc.v2","sandboxID":"sandbox"}`)},
+		{
+			name:     "Kata",
+			response: runningRuntimeResponse(`{"pid":1234,"runtimeType":"io.containerd.kata-qemu.v2","sandboxID":"sandbox"}`),
+		},
+		{
+			name:     "runc",
+			response: runningRuntimeResponse(`{"pid":1234,"runtimeType":"io.containerd.runc.v2","sandboxID":"sandbox"}`),
+		},
 		{name: "missing runtime", response: runningRuntimeResponse(`{"pid":1234}`), wantErr: "no CRI runtime type"},
 		{name: "missing info", response: runningRuntimeResponse(""), wantErr: "decode containerd container info"},
 		{name: "bad JSON", response: runningRuntimeResponse("invalid"), wantErr: "decode containerd container info"},
@@ -108,9 +118,11 @@ func TestReadContainerdRuntimeInfo(t *testing.T) {
 }
 
 func TestKubeletUpdateContainerRuntimeRouting(t *testing.T) {
-	oldClient, oldProvider, oldDir, oldDriver := containerdClient, currContainerProvider, containerdStateDir, kubeletPodCgroupDriver
+	oldClient, oldProvider := containerdClient, currContainerProvider
+	oldDir, oldDriver := containerdStateDir, kubeletPodCgroupDriver
 	t.Cleanup(func() {
-		containerdClient, currContainerProvider, containerdStateDir, kubeletPodCgroupDriver = oldClient, oldProvider, oldDir, oldDriver
+		containerdClient, currContainerProvider = oldClient, oldProvider
+		containerdStateDir, kubeletPodCgroupDriver = oldDir, oldDriver
 	})
 	currContainerProvider = containerProviderContainerd
 	kubeletPodCgroupDriver = "systemd"
@@ -122,13 +134,30 @@ func TestKubeletUpdateContainerRuntimeRouting(t *testing.T) {
 	if err := os.WriteFile(pidFile, []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "test-ns", UID: "pod-uid"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, QOSClass: corev1.PodQOSBurstable}}
-	status := &corev1.ContainerStatus{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now())}}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "test-ns", UID: "pod-uid"},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, QOSClass: corev1.PodQOSBurstable},
+	}
+	status := &corev1.ContainerStatus{
+		State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now())}},
+	}
 	for _, tt := range []struct{ name, info, wantErr string }{
 		{name: "runc uses pid file", info: `{"pid":999999,"runtimeType":"io.containerd.runc.v2"}`},
-		{name: "Kata ignores existing pid file", info: `{"pid":0,"runtimeType":"io.containerd.kata-qemu.v2","sandboxID":"sandbox"}`, wantErr: "invalid Kata hypervisor pid"},
-		{name: "Kata needs sandbox ID", info: `{"pid":1234,"runtimeType":"io.containerd.kata.v2"}`, wantErr: "has no sandbox ID"},
-		{name: "Kata process has exited", info: `{"pid":2147483647,"runtimeType":"io.containerd.kata.v2","sandboxID":"sandbox"}`, wantErr: "resolve Kata hypervisor cgroup"},
+		{
+			name:    "Kata ignores existing pid file",
+			info:    `{"pid":0,"runtimeType":"io.containerd.kata-qemu.v2","sandboxID":"sandbox"}`,
+			wantErr: "invalid Kata hypervisor pid",
+		},
+		{
+			name:    "Kata needs sandbox ID",
+			info:    `{"pid":1234,"runtimeType":"io.containerd.kata.v2"}`,
+			wantErr: "has no sandbox ID",
+		},
+		{
+			name:    "Kata process has exited",
+			info:    `{"pid":2147483647,"runtimeType":"io.containerd.kata.v2","sandboxID":"sandbox"}`,
+			wantErr: "resolve Kata hypervisor cgroup",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &pidRuntimeService{response: runningRuntimeResponse(tt.info)}
@@ -145,7 +174,11 @@ func TestKubeletUpdateContainerRuntimeRouting(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			} else {
 				wantPath := "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-podpod_uid.slice/cri-containerd-test.scope"
-				if c.InitPid != os.Getpid() || c.CgroupPath != wantPath || c.RuntimeType != "io.containerd.runc.v2" || c.Hostname != "test-pod" || c.LabelHostNamespace() != "test-ns" {
+				if c.InitPid != os.Getpid() ||
+					c.CgroupPath != wantPath ||
+					c.RuntimeType != "io.containerd.runc.v2" ||
+					c.Hostname != "test-pod" ||
+					c.LabelHostNamespace() != "test-ns" {
 					t.Errorf("unexpected container: %+v", c)
 				}
 			}
@@ -207,7 +240,12 @@ func TestPopulateKataContainerUsesHostBinding(t *testing.T) {
 	if err := populateKataContainer(c, &containerdRuntimeInfo{PID: 4321, SandboxID: "sandbox"}); err != nil {
 		t.Fatal(err)
 	}
-	if c.InitPid != 4321 || c.SandboxID != "sandbox" || c.CgroupPath != "/kata/workload" || c.CgroupCss[subsystem.SubsystemCPU] != e.CSS[0] || c.NetNamespaceInum != 0 || c.NetNamespaceCookie != 0 {
+	if c.InitPid != 4321 ||
+		c.SandboxID != "sandbox" ||
+		c.CgroupPath != "/kata/workload" ||
+		c.CgroupCss[subsystem.SubsystemCPU] != e.CSS[0] ||
+		c.NetNamespaceInum != 0 ||
+		c.NetNamespaceCookie != 0 {
 		t.Errorf("unexpected Host binding: %+v", c)
 	}
 	// Published Kata members must never fall back to their Guest init.pid.
@@ -221,9 +259,22 @@ func TestPopulateKataContainerUsesHostBinding(t *testing.T) {
 	if pid, err := containerInitPIDByID(c.ID); err != nil || pid != 4321 {
 		t.Errorf("Kata PID=%d err=%v", pid, err)
 	}
-	guestPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: "payments"}, Spec: corev1.PodSpec{NodeName: "worker-96"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
-	spec := &corev1.Container{Name: "collector", Env: []corev1.EnvVar{{Name: "BAMAI_POD_NAME", Value: "orders"}, {Name: "BAMAI_POD_NAMESPACE", Value: "payments"}, {Name: "BAMAI_NODE_NAME", Value: "worker-96"}}}
-	status := &corev1.ContainerStatus{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now())}}}
+	guestPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: "payments"},
+		Spec:       corev1.PodSpec{NodeName: "worker-96"},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	spec := &corev1.Container{
+		Name: "collector",
+		Env: []corev1.EnvVar{
+			{Name: "BAMAI_POD_NAME", Value: "orders"},
+			{Name: "BAMAI_POD_NAMESPACE", Value: "payments"},
+			{Name: "BAMAI_NODE_NAME", Value: "worker-96"},
+		},
+	}
+	status := &corev1.ContainerStatus{
+		State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now())}},
+	}
 	classified, err := kubeletContainer(c.ID, spec, status, guestPod)
 	if err != nil || classified == nil || classified.Type != ContainerTypeSidecar {
 		t.Fatalf("Kata Guest agent classification=%+v err=%v", classified, err)

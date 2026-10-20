@@ -29,7 +29,11 @@ func BenchmarkBuildCPURepresentatives(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			members := make(map[string]*Container, 1024)
 			for i := range 1024 {
-				c := &Container{ID: fmt.Sprint(i), CgroupCss: map[string]uint64{"cpu": uint64(i + 1)}, SyncedAt: time.Unix(int64(i), 0)}
+				c := &Container{
+					ID:        fmt.Sprint(i),
+					CgroupCss: map[string]uint64{"cpu": uint64(i + 1)},
+					SyncedAt:  time.Unix(int64(i), 0),
+				}
 				if kata {
 					c.RuntimeType = "io.containerd.kata-qemu.v2"
 					c.SandboxID = fmt.Sprint(i / 4)

@@ -102,7 +102,13 @@ func TestKataHostDoesNotPublishApplicationMemoryTarget(t *testing.T) {
 		{name: "Guest", available: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			container := &Container{ID: strings.Repeat("a", 64), InitPid: os.Getpid(), RuntimeType: test.runtime, SandboxID: test.sandbox, CgroupPath: "/preserved-vm-cpu-path"}
+			container := &Container{
+				ID:          strings.Repeat("a", 64),
+				InitPid:     os.Getpid(),
+				RuntimeType: test.runtime,
+				SandboxID:   test.sandbox,
+				CgroupPath:  "/preserved-vm-cpu-path",
+			}
 			record, err := containerMemoryBinding(container)
 			if err != nil {
 				t.Fatal(err)
@@ -110,7 +116,9 @@ func TestKataHostDoesNotPublishApplicationMemoryTarget(t *testing.T) {
 			if got := record.ref.MemoryCgroupPath != ""; got != test.available {
 				t.Errorf("memory target available=%t, want %t", got, test.available)
 			}
-			if record.ref.InitPID != container.InitPid || container.CgroupPath != "/preserved-vm-cpu-path" || record.directory == nil {
+			if record.ref.InitPID != container.InitPid ||
+				container.CgroupPath != "/preserved-vm-cpu-path" ||
+				record.directory == nil {
 				t.Error("memory exclusion changed process or CPU identity")
 			}
 		})

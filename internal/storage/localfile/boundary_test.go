@@ -26,11 +26,24 @@ import (
 )
 
 func TestInvalidFilenameHasNoFilesystemSideEffects(t *testing.T) {
-	for _, name := range []string{"", ".", "..", "../escape", "nested/trace", "/absolute", "nested\\trace", "bad\x00name"} {
+	for _, name := range []string{
+		"",
+		".",
+		"..",
+		"../escape",
+		"nested/trace",
+		"/absolute",
+		"nested\\trace",
+		"bad\x00name",
+	} {
 		t.Run(fmt.Sprintf("%q", name), func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "not-created")
 			backend := NewBackend(dir, 1, 2)
-			err := backend.Save(t.Context(), driver.Record{Data: []byte(`{}`), Fields: map[string]any{"tracer_name": name}}, driver.SaveOptions{})
+			err := backend.Save(
+				t.Context(),
+				driver.Record{Data: []byte(`{}`), Fields: map[string]any{"tracer_name": name}},
+				driver.SaveOptions{},
+			)
 			if !errors.Is(err, driver.ErrInvalidField) {
 				t.Errorf("filename=%q error=%v", name, err)
 			}
@@ -51,7 +64,11 @@ func TestConcurrentTracerWriters(t *testing.T) {
 			defer workers.Done()
 			<-start
 			for range 4 {
-				err := backend.Save(t.Context(), driver.Record{Data: []byte(`{}`), Fields: map[string]any{"tracer_name": fmt.Sprintf("tracer_%d", i)}}, driver.SaveOptions{})
+				err := backend.Save(
+					t.Context(),
+					driver.Record{Data: []byte(`{}`), Fields: map[string]any{"tracer_name": fmt.Sprintf("tracer_%d", i)}},
+					driver.SaveOptions{},
+				)
 				if err != nil {
 					t.Errorf("concurrent Save: %v", err)
 					return

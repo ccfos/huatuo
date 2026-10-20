@@ -37,7 +37,8 @@ func TestGuestProfilingDocumentRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.ProfileData.Profile.TimeNanos != 9007199254740993 || decoded.ProfileData.Profile.Sample[0].Value[0] != 9007199254740993 {
+	if decoded.ProfileData.Profile.TimeNanos != 9007199254740993 ||
+		decoded.ProfileData.Profile.Sample[0].Value[0] != 9007199254740993 {
 		t.Errorf("profile integers rounded: %+v", decoded.ProfileData.Profile)
 	}
 	store, backend := newTestStore(t)
@@ -45,7 +46,9 @@ func TestGuestProfilingDocumentRoundTrip(t *testing.T) {
 	if err := store.SaveSync(t.Context(), decoded); err != nil {
 		t.Fatal(err)
 	}
-	if backend.syncSaves != 1 || decoded.UploadedTimestamp.IsZero() || !decoded.StartedTimestamp.Equal(started.Time) || decoded.ObservedTimestamp != nil {
+	if backend.syncSaves != 1 || decoded.UploadedTimestamp.IsZero() || !decoded.StartedTimestamp.Equal(
+		started.Time,
+	) || decoded.ObservedTimestamp != nil {
 		t.Errorf("profiling save lost ownership: %+v", decoded.Document)
 	}
 	fields, err := (mapper{}).Fields(decoded)

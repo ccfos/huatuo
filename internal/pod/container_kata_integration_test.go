@@ -71,7 +71,10 @@ func TestKataRuntimeIntegration(t *testing.T) {
 		if err := populateKataContainer(peer, peerInfo); err != nil {
 			t.Fatal(err)
 		}
-		if peer.InitPid != c.InitPid || peer.SandboxID != c.SandboxID || peer.CgroupPath != c.CgroupPath || peer.CgroupCss[subsystem.SubsystemCPU] != c.CgroupCss[subsystem.SubsystemCPU] {
+		if peer.InitPid != c.InitPid ||
+			peer.SandboxID != c.SandboxID ||
+			peer.CgroupPath != c.CgroupPath ||
+			peer.CgroupCss[subsystem.SubsystemCPU] != c.CgroupCss[subsystem.SubsystemCPU] {
 			t.Fatalf("shared VM has different Host binding: first=%+v peer=%+v", c, peer)
 		}
 		c.SyncedAt = time.Unix(1, 0)
@@ -90,5 +93,12 @@ func TestKataRuntimeIntegration(t *testing.T) {
 		t.Logf("shared VM peer=%s matched the same PID, sandbox, path and CPU CSS", peer.ID)
 	}
 
-	t.Logf("runtime=%s pid=%d sandbox=%s path=%s cpu_css=%#x", c.RuntimeType, c.InitPid, c.SandboxID, c.CgroupPath, c.CgroupCss[subsystem.SubsystemCPU])
+	t.Logf(
+		"runtime=%s pid=%d sandbox=%s path=%s cpu_css=%#x",
+		c.RuntimeType,
+		c.InitPid,
+		c.SandboxID,
+		c.CgroupPath,
+		c.CgroupCss[subsystem.SubsystemCPU],
+	)
 }

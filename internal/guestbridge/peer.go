@@ -76,7 +76,12 @@ func resolvePeer(addr net.Addr, sandboxID string) (PeerIdentity, error) {
 	return resolvePeerFromContainers(addr, sandboxID, containers, os.ReadFile)
 }
 
-func resolvePeerFromContainers(addr net.Addr, sandboxID string, containers map[string]*pod.Container, readFile func(string) ([]byte, error)) (PeerIdentity, error) {
+func resolvePeerFromContainers(
+	addr net.Addr,
+	sandboxID string,
+	containers map[string]*pod.Container,
+	readFile func(string) ([]byte, error),
+) (PeerIdentity, error) {
 	var cid uint32
 	if sandboxID == "" {
 		peer, ok := addr.(*vsock.Addr)
@@ -122,7 +127,10 @@ func resolvePeerFromContainers(addr net.Addr, sandboxID string, containers map[s
 		if !ok || namespace == "" {
 			continue
 		}
-		if identity.SandboxID != "" && (identity.SandboxID != candidate || identity.Namespace != namespace || identity.HypervisorPID != container.InitPid) {
+		if identity.SandboxID != "" &&
+			(identity.SandboxID != candidate ||
+				identity.Namespace != namespace ||
+				identity.HypervisorPID != container.InitPid) {
 			return PeerIdentity{}, fmt.Errorf("guestbridge: ambiguous peer identity")
 		}
 		identity = PeerIdentity{SandboxID: candidate, Namespace: namespace, HypervisorPID: container.InitPid}

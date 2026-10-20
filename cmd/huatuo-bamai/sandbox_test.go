@@ -23,12 +23,18 @@ import (
 )
 
 func TestSandboxDocumentNodeIdentity(t *testing.T) {
-	opts := &Options{Mode: runmode.Sandbox, Region: "test", GuestIdentity: runmode.GuestIdentity{NodeName: "physical-node"}}
+	opts := &Options{
+		Mode:          runmode.Sandbox,
+		Region:        "test",
+		GuestIdentity: runmode.GuestIdentity{NodeName: "physical-node"},
+	}
 	metadata, err := newDocumentBuilder(opts).Build(&document.Input{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata.Hostname != "physical-node" || metadata.Region != "test" || metadata.SourceType != types.DocumentSourceKataGuest {
+	if metadata.Hostname != "physical-node" ||
+		metadata.Region != "test" ||
+		metadata.SourceType != types.DocumentSourceKataGuest {
 		t.Errorf("Guest document metadata=%+v", metadata)
 	}
 }

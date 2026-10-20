@@ -46,7 +46,10 @@ func TestReconnectAfterBrokenStream(t *testing.T) {
 	breakFirst := make(chan struct{})
 	firstClosed := make(chan struct{})
 	var attempts atomic.Int32
-	b, err := New(Options{ToolName: TracingTool, RetryInterval: time.Millisecond, DialContext: func(ctx context.Context, _ uint32) (net.Conn, error) {
+	b, err := New(Options{ToolName: TracingTool, RetryInterval: time.Millisecond, DialContext: func(
+		ctx context.Context,
+		_ uint32,
+	) (net.Conn, error) {
 		if attempts.Add(1) > 1 {
 			return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
 		}
