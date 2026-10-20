@@ -46,7 +46,11 @@ type GuestIdentity struct {
 }
 
 func LoadGuestIdentity() (GuestIdentity, error) {
-	identity := GuestIdentity{PodName: strings.TrimSpace(os.Getenv("BAMAI_POD_NAME")), PodNamespace: strings.TrimSpace(os.Getenv("BAMAI_POD_NAMESPACE")), NodeName: strings.TrimSpace(os.Getenv("BAMAI_NODE_NAME"))}
+	identity := GuestIdentity{
+		PodName:      strings.TrimSpace(os.Getenv("BAMAI_POD_NAME")),
+		PodNamespace: strings.TrimSpace(os.Getenv("BAMAI_POD_NAMESPACE")),
+		NodeName:     strings.TrimSpace(os.Getenv("BAMAI_NODE_NAME")),
+	}
 	for _, field := range []struct{ name, value string }{
 		{"BAMAI_POD_NAME", identity.PodName},
 		{"BAMAI_POD_NAMESPACE", identity.PodNamespace},

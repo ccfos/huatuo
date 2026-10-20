@@ -23,12 +23,28 @@ import (
 )
 
 func TestGuestAgentIdentity(t *testing.T) {
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: "payments"}, Spec: corev1.PodSpec{NodeName: "worker-96"}}
-	literal := []corev1.EnvVar{{Name: "BAMAI_POD_NAME", Value: "orders"}, {Name: "BAMAI_POD_NAMESPACE", Value: "payments"}, {Name: "BAMAI_NODE_NAME", Value: "worker-96"}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "orders", Namespace: "payments"},
+		Spec:       corev1.PodSpec{NodeName: "worker-96"},
+	}
+	literal := []corev1.EnvVar{
+		{Name: "BAMAI_POD_NAME", Value: "orders"},
+		{Name: "BAMAI_POD_NAMESPACE", Value: "payments"},
+		{Name: "BAMAI_NODE_NAME", Value: "worker-96"},
+	}
 	downward := []corev1.EnvVar{
-		{Name: "BAMAI_POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
-		{Name: "BAMAI_POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
-		{Name: "BAMAI_NODE_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"}}},
+		{
+			Name:      "BAMAI_POD_NAME",
+			ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}},
+		},
+		{
+			Name:      "BAMAI_POD_NAMESPACE",
+			ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}},
+		},
+		{
+			Name:      "BAMAI_NODE_NAME",
+			ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"}},
+		},
 	}
 	for _, test := range []struct {
 		name string
@@ -41,7 +57,18 @@ func TestGuestAgentIdentity(t *testing.T) {
 		{"partial identity", literal[:2], false},
 		{"duplicate identity", append(append([]corev1.EnvVar(nil), literal...), literal[0]), false},
 		{"wrong pod", []corev1.EnvVar{{Name: "BAMAI_POD_NAME", Value: "other"}, literal[1], literal[2]}, false},
-		{"wrong field", []corev1.EnvVar{{Name: "BAMAI_POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}}, literal[1], literal[2]}, false},
+		{
+			"wrong field",
+			[]corev1.EnvVar{
+				{
+					Name:      "BAMAI_POD_NAME",
+					ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}},
+				},
+				literal[1],
+				literal[2],
+			},
+			false,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			container := &corev1.Container{Name: "agent", Env: test.env}
@@ -53,7 +80,14 @@ func TestGuestAgentIdentity(t *testing.T) {
 }
 
 func TestKataRepresentativePrefersBusinessOverGuestAgent(t *testing.T) {
-	agent := &Container{ID: "agent-first", Type: ContainerTypeSidecar, RuntimeType: "io.containerd.kata-qemu.v2", SandboxID: "orders-vm", SyncedAt: time.Unix(1, 0), CgroupCss: map[string]uint64{"cpu": 10}}
+	agent := &Container{
+		ID:          "agent-first",
+		Type:        ContainerTypeSidecar,
+		RuntimeType: "io.containerd.kata-qemu.v2",
+		SandboxID:   "orders-vm",
+		SyncedAt:    time.Unix(1, 0),
+		CgroupCss:   map[string]uint64{"cpu": 10},
+	}
 	business := *agent
 	business.ID = "checkout"
 	business.Type = ContainerTypeNormal

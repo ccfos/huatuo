@@ -102,7 +102,10 @@ func cgroupCssInitEventSync() error {
 		{ProgramName: "bpf_cgroup_rmdir_prog", Symbol: "cgroup_rmdir"},
 	}
 	if cgroups.CgroupMode() == cgroups.Unified {
-		opts = append(opts, bpf.AttachOption{ProgramName: "bpf_cgroup_cpu_weight_nice_prog", Symbol: "cpu_weight_nice_read_s64", Optional: true})
+		opts = append(
+			opts,
+			bpf.AttachOption{ProgramName: "bpf_cgroup_cpu_weight_nice_prog", Symbol: "cpu_weight_nice_read_s64", Optional: true},
+		)
 	}
 	if err := cssBpf.AttachWithOptions(opts); err != nil {
 		cancel()

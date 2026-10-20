@@ -152,7 +152,13 @@ func New(options Options) (*Bridge, error) {
 	if options.Port == 0 {
 		options.Port = DefaultPort
 	}
-	if options.MaxConnections < 0 || options.HandshakeTimeout < 0 || options.FirecrackerInterval < 0 || options.ListenerRetry < 0 || options.Port == ^uint32(0) {
+	if options.MaxConnections < 0 ||
+		options.HandshakeTimeout < 0 ||
+		options.FirecrackerInterval < 0 ||
+		options.ListenerRetry < 0 ||
+		options.Port == ^uint32(
+			0,
+		) {
 		return nil, fmt.Errorf("guestbridge: invalid limits, port or timeouts")
 	}
 	if options.MaxConnections == 0 {

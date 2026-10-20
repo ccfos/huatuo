@@ -335,7 +335,8 @@ func update(values map[string]any, persist bool) error {
 		return fmt.Errorf("%w: %w", ErrInvalidUpdate, err)
 	}
 
-	if next.GuestTransport != configState.current.Load().GuestTransport || next.GuestBridge != configState.current.Load().GuestBridge {
+	if next.GuestTransport != configState.current.Load().GuestTransport ||
+		next.GuestBridge != configState.current.Load().GuestBridge {
 		return fmt.Errorf("%w: changing Guest transport or bridge requires a restart", ErrInvalidUpdate)
 	}
 	if next.Mode != configState.current.Load().Mode {

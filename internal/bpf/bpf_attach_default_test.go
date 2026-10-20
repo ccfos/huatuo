@@ -301,7 +301,10 @@ func TestOptionalAttachPreservesRequiredHooks(t *testing.T) {
 		t.Run(map[bool]string{false: "required", true: "optional"}[optional], func(t *testing.T) {
 			existing := &optionalProbeLink{}
 			b := &defaultBPF{
-				programsByID:     map[uint32]*loadedProgram{1: {name: "existing", programType: ebpf.Kprobe, links: map[string]link.Link{"kept": existing}}, 2: {name: "unavailable", programType: ebpf.Kprobe}},
+				programsByID: map[uint32]*loadedProgram{
+					1: {name: "existing", programType: ebpf.Kprobe, links: map[string]link.Link{"kept": existing}},
+					2: {name: "unavailable", programType: ebpf.Kprobe},
+				},
 				programIDsByName: map[string]uint32{"existing": 1, "unavailable": 2},
 			}
 			err := b.AttachWithOptions([]AttachOption{{ProgramName: "unavailable", Symbol: "", Optional: optional}})
