@@ -26,24 +26,6 @@ BlackList = ["memory_threshold_snapshot", "metax_gpu", "ascend_npu", "softlockup
 EOF
 }
 
-# Storage configuration tests supply the port and backend fields.
-write_storage_config() {
-	write_default_config
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-
-[HTTPServer]
-    ListenAddress = "127.0.0.1:${STORAGE_HTTP_PORT}"
-
-[Storage.Elasticsearch]
-    Address = "${storage_address:-}"
-    Username = "${storage_username:-}"
-    Password = "${storage_password:-}"
-
-[Storage.LocalFile]
-    Path = "${storage_path:-}"
-EOF
-}
-
 # write_include_filter_config writes a config with metric include filters.
 write_include_filter_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << 'EOF'
@@ -401,5 +383,23 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
 
 [Storage.LocalFile]
     Path = "${go_snapshot_case_dir}/events"
+EOF
+}
+
+# The Elasticsearch config test supplies the port and credential fields.
+write_elasticsearch_config() {
+	write_default_config
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${STORAGE_HTTP_PORT}"
+
+[Storage.Elasticsearch]
+    Address = "${storage_address:-}"
+    Username = "${storage_username:-}"
+    Password = "${storage_password:-}"
+
+[Storage.LocalFile]
+    Path = "${storage_path:-}"
 EOF
 }
