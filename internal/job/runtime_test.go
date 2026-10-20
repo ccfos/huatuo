@@ -19,6 +19,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 )
 
 func TestRuntimeStopReadsStateAfterCurrentTransition(t *testing.T) {
@@ -191,5 +193,53 @@ func TestRuntimeReloadFromStoreUsesPersistedState(t *testing.T) {
 	if got.Status != StatusTerminal || got.Terminal == nil ||
 		got.Terminal.Outcome != OutcomeCompleted {
 		t.Fatalf("reloaded Job = (%q, %+v), want succeeded terminal Job", got.Status, got.Terminal)
+	}
+}
+
+// TestRuntimeFailedTransitionKeepsPersistedState verifies that a Job transition is
+// committed in memory only after the Store accepted it. A failed save must leave both
+// the runtime snapshot and the durable row at the previous status, so the next
+// supervision poll observes a pending Job and retries the transition instead of
+// assuming an already-running Job that was never persisted.
+func TestRuntimeFailedTransitionKeepsPersistedState(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	pendingJob := testJob("job-1", StatusPending, now)
+	store := newMemoryStore(pendingJob)
+	saveErr := errors.New("job store down")
+	store.saveHook = func(*Job, int64) error { return saveErr }
+	manager := testManager(store, &stubNodeClient{})
+	setManagerNow(manager, func() time.Time { return now.Add(time.Second) })
+	runtime := testRuntime(manager, pendingJob)
+
+	terminal, shouldStop, err := runtime.reconcileJobWithOperation(
+		t.Context(),
+		operation(pendingJob.ID, nodeapi.OperationStatusRunning),
+	)
+	if !errors.Is(err, ErrPersistence) {
+		t.Fatalf("reconcileJobWithOperation() error = %v, want ErrPersistence", err)
+	}
+	if terminal || shouldStop {
+		t.Fatalf("reconcileJobWithOperation() = (%t, %t), want (false, false)", terminal, shouldStop)
+	}
+
+	snapshot := runtime.snapshot()
+	if snapshot.Status != StatusPending {
+		t.Fatalf("in-memory status = %q, want %q after a failed save", snapshot.Status, StatusPending)
+	}
+	if !snapshot.StartedAt.IsZero() || !snapshot.ExecutionDeadline.IsZero() {
+		t.Fatalf(
+			"in-memory Job = (%v, %v), want no start markers after a failed save",
+			snapshot.StartedAt, snapshot.ExecutionDeadline,
+		)
+	}
+	stored, storedErr := store.Get(t.Context(), pendingJob.ID)
+	if storedErr != nil {
+		t.Fatalf("store.Get() error = %v", storedErr)
+	}
+	if stored.Status != StatusPending {
+		t.Fatalf("persisted status = %q, want %q", stored.Status, StatusPending)
+	}
+	if got := manager.Stats().PersistenceFailures; got != 1 {
+		t.Fatalf("PersistenceFailures = %d, want 1", got)
 	}
 }
