@@ -1,0 +1,77 @@
+name: OS Distro QEMU CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  workflow_dispatch:
+    inputs:
+      os:
+        description: >-
+          Enter comma-separated distro names. Use "all" to select every
+          supported distro. Available: ubuntu26.04, ubuntu24.04, ubuntu22.04,
+          ubuntu20.04, debian12, debian13, rocky8, rocky9, fedora44,
+          openeuler22.03, openeuler24.03, anolis8.10, opencloudos9
+        type: string
+        required: true
+        default: ubuntu24.04
+      debug_mode:
+        description: 'Debug VM: retain when'
+        type: choice
+        required: false
+        default: After test on failure
+        options:
+          - Disabled
+          - Before test
+          - After test on failure
+          - After test always
+      debug_timeout_minutes:
+        description: 'Debug VM: retention (minutes)'
+        type: choice
+        required: false
+        default: '90'
+        options:
+          - '15'
+          - '30'
+          - '60'
+          - '90'
+          - '120'
+          - '150'
+          - '180'
+          - '240'
+          - '300'
+          - '330'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  changes:
+    name: Classify changes
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    outputs:
+      run-tests: ${{ steps.changes.outputs.run-tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changes
+        run: python3 .github/workflows/scripts/ci-changes.py
+
+  qemu-tests:
+    name: QEMU tests
+    needs: changes
+    if: needs.changes.outputs.run-tests == 'true'
+    # Hold the author slot for the entire matrix, not for each distro job.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event_name }}-author-${{ github.event.pull_request.user.login || github.ref }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/os-distro-qemu-test-reusable.yml
+    with:
+      os: ${{ inputs.os || 'all' }}
+      debug_mode: ${{ inputs.debug_mode || 'Disabled' }}
+      debug_timeout_minutes: ${{ inputs.debug_timeout_minutes || '90' }}

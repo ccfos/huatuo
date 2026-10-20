@@ -94,23 +94,56 @@ summary: total=5 passed=3 skipped=2 failed=0
 - 显示验证成功的``metrics`` 列表
 ---
 
+### 后台进程清理
+
+`stop_and_wait_by_pid PID [TIMEOUT]` 停止并等待子进程，返回其退出码。
+未传入 PID 或 PID 为空时立即返回成功，调用方可以直接传入已初始化的 PID 变量。
+等待结束后清空变量；尽力清理时使用 `|| true`，退出码属于测试契约时应进行断言。
+
+### 网络命名空间辅助函数
+
+网络测试可以在加载 `lib.sh` 后加载 `integration/lib_namespace.sh`：
+
+- `namespace_setup NAME` 创建一个网络命名空间，通过 `NETNS` 暴露名称。
+  调用方负责启用 `lo` 并配置所需地址。
+- `namespace_setup_with_pair PREFIX SERVER_ADDR CLIENT_ADDR [PREFIX_LENGTH]`
+  创建通过 veth 连接的两个命名空间，配置地址并启用接口，地址前缀长度默认为 24。
+  命名空间、接口和地址通过 `NETNS_SERVER`、`NETNS_CLIENT`、
+  `NETNS_VETH_SERVER`、`NETNS_VETH_CLIENT`、`NETNS_SERVER_ADDR`、
+  `NETNS_CLIENT_ADDR` 暴露。
+- `namespace_cleanup` 删除上述函数创建的命名空间并清空状态，支持重复调用。
+  用例应在 `EXIT` 清理中先停止命名空间内的进程，再调用该函数。
+
+### 共用发包程序
+
+需要构造原始报文的测试统一复用 `integration/testdata/test_packet_sender.py`，
+新增场景在该程序中扩展。程序依赖 Python 3 和 raw socket 权限，支持
+`ipv4-options`（TCP/UDP EOL options，包含最大 IHL）与 `icmpv6-echo`。
+通过子命令的 `--help` 查看地址、端口或 Echo 标识参数。
+程序每 100 ms 重复发包，收到 SIGTERM 后正常退出。
+Shell 用例负责命名空间、丢包规则、断言、日志和进程清理。
+需要真实 TCP 连接的负载继续使用 `testdata/tcp_server.py`。
+
 ### 如何新增指标测试
 #### 第一步：新增或更新模拟数据
 如果新增的指标依赖 ``/proc`` 或 ``/sys`` 文件内容，请在以下目录中新增或修改模拟数据：
 ```bash
 integration/fixtures/
 ```
-目录结构需与真实内核文件系统保持一致。
+此目录仅保留内核文件系统镜像（`proc/`、`sys/`、`dev/`），保持原始路径和文件名。
+工具夹具放在 `integration/testdata/tools/`，文件名以 `test_` 或 `Test` 开头。
+例如，测试启动前将 `test_perf.sh` 复制到临时工具目录并命名为 `perf`。
 
 #### 第二步：添加预期指标
 在以下目录中新建一个文件：
 ```bash
-integration/fixtures/expected_metrics/
-├── cpu.txt
-├── memory.txt
+integration/testdata/expected_metrics/
+├── test_cpu.txt
+├── test_memory.txt
 └── ...
 ```
-每一行（非空、非注释行）表示一条期望的 Prometheus 指标，指标内容必须与 ``/metrics`` 接口返回结果完全一致，新增的``*.txt`` 文件会被测试脚本自动加载并参与校验。
+每个非空、非注释行表示一条预期的 Prometheus 指标，必须与 `/metrics` 返回的指标行完全一致。
+测试自动加载 `test_*.txt`，从文件名去掉 `test_` 前缀后确定指标前缀。
 
 #### 第三步：运行测试
 ```bash

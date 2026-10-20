@@ -49,10 +49,8 @@ cleanup() {
 			[[ ! -r "${go_snapshot_cgroup}/${file}" ]] || cat "${go_snapshot_cgroup}/${file}" >&2 || true
 		done
 	fi
-	if [[ -n "${go_snapshot_pid}" ]]; then
-		stop_and_wait_by_pid "${go_snapshot_pid}" || true
-		go_snapshot_pid=""
-	fi
+	stop_and_wait_by_pid "${go_snapshot_pid}" || true
+	go_snapshot_pid=""
 	k8s_delete_pod "${GO_SNAPSHOT_NAMESPACE}" "${go_snapshot_pod_label}" || status=1
 	return "${status}"
 }
@@ -77,25 +75,26 @@ go_snapshot_assert_statistics() {
 	local mode=$1
 	jq -e --arg mode "${mode}" '
 		def allocation($caller; $bytes; $objects):
-			.kind == "allocation_site"
+			.kind == "inuse_space_objects"
 			and .name == "main.allocateBlock"
 			and .bytes == $bytes
 			and .objects == $objects
 			and .average_bytes == ($bytes / $objects)
-			and ([.stack[] | select(startswith("main."))]
-				== ["main.allocateBlock", $caller, "main.main"]);
+			and ([.stack[] | select(startswith("main."))] as $frames |
+				[$frames[] | split(", ")[0]] == ["main.allocateBlock", $caller, "main.main"]
+				and all($frames[]; test(", .*/memory_threshold_snapshot_golang\\.go:[1-9][0-9]*$")));
 		.tracer_data.snapshot as $snapshot |
 		if $mode == "disabled" then
 			$snapshot.status == "unavailable"
-			and ($snapshot.reason | contains("MemProfileRate=0"))
+			and ($snapshot.status_reason | contains("MemProfileRate=0"))
 			and (($snapshot.entries // []) | length == 0)
 			and (($snapshot.output_truncated // false) == false)
 		else
 			$snapshot.status == "complete"
-			and ($snapshot.reason // "") == ""
+			and ($snapshot.status_reason // "") == ""
 			and ($snapshot.entries[0] | allocation("main.allocatePrimary"; 16777216; 6))
 			and ([$snapshot.entries[].bytes] == ([$snapshot.entries[].bytes] | sort | reverse))
-			and ([$snapshot.entries[].stack[] | select(. == "main.allocateReleased")] | length == 0)
+			and ([$snapshot.entries[].stack[] | select(startswith("main.allocateReleased, "))] | length == 0)
 			and (if $mode == "topk" then
 				($snapshot.entries | length == 1) and $snapshot.output_truncated == true
 			else

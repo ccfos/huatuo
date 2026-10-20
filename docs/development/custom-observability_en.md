@@ -28,7 +28,8 @@ long-term trend analysis. Built-in collectors cover:
 - CPU: sys, usr, util, load, nr_running, and related metrics.
 - Memory: vmstat, memory_stat, directreclaim, and asyncreclaim.
 - I/O: d2c, q2c, freeze, and flush.
-- Networking: ARP, socket memory, qdisc, netstat, netdev, and sockstat.
+- Networking: ARP, socket memory, qdisc, netstat, netdev, sockstat, and the
+  nf_conntrack table size and occupancy.
 
 ### Event
 
