@@ -223,9 +223,10 @@ func (c *containerController) run(ctx context.Context) {
 	}
 }
 
-// refresh retries unresolved instances without re-resolving healthy records.
+// refresh retries unresolved instances without re-resolving healthy non-Kata records.
 // Upstream query failures retry with capped backoff; individual readiness
-// failures stop after three attempts and remain visible until another hint.
+// failures for new instances stop after three attempts until another hint.
+// Known Kata instances keep retrying because runtime outages are recoverable.
 // Deletion hints keep retrying until kubelet confirms absence.
 func (c *containerController) refresh(ctx context.Context, hints map[string]bool, full bool) (containerSnapshot, error, bool) {
 	if c.scan != nil {
@@ -299,7 +300,14 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 				pending := c.retries[id]
 				removing := pending != nil && pending.awaitingRemoval
 				retry = retry || removing
-				if (pending == nil || removing) && previous != nil && previous.container.HostKataSandboxID() == "" && !c.needsFull && previous.container.StartedAt.Equal(status.State.Running.StartedAt.Time) {
+				if (pending == nil ||
+					removing) &&
+					previous != nil &&
+					previous.container.HostKataSandboxID() == "" &&
+					!c.needsFull &&
+					previous.container.StartedAt.Equal(
+						status.State.Running.StartedAt.Time,
+					) {
 					continue
 				}
 				if pending == nil {
@@ -307,16 +315,19 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 					c.retries[id] = pending
 				}
 				pending.awaitingCreation = false
-				if pending.attempts >= 3 {
+				isKnownKata := previous != nil && previous.container.HostKataSandboxID() != ""
+				if pending.attempts >= 3 && !isKnownKata {
 					syncErr = pending.err
 					continue
 				}
 				record, err := c.resolve(id, spec, status, p)
 				if err != nil {
-					pending.attempts++
+					if pending.attempts < 3 {
+						pending.attempts++
+					}
 					pending.err = fmt.Errorf("resolve container %q: %w", id, err)
 					syncErr = pending.err
-					retry = retry || pending.attempts < 3
+					retry = retry || isKnownKata || pending.attempts < 3
 					if previous == nil && record != nil {
 						records[id] = record
 					}
