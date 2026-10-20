@@ -172,12 +172,18 @@ func TestSelectMergeStacktracesConsumesAllBatches(t *testing.T) {
 	}
 }
 
-func TestSelectMergeStacktracesPeriodMetadata(t *testing.T) {
+func TestSelectMergeStacktracesProfileCompatibility(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		profileType string
-		legacy      [2]bool
-		invalidUnit bool
+		name                string
+		profileType         string
+		legacy              [2]bool
+		differentPeriodUnit bool
+		emptyPeriod         bool
+		selector            string
+		declaredType        string
+		sampleName          string
+		sampleUnit          string
+		wantErr             string
 	}{
 		{name: "periodless CPU", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds"},
 		{name: "periodless off-CPU", profileType: "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds"},
@@ -196,8 +202,41 @@ func TestSelectMergeStacktracesPeriodMetadata(t *testing.T) {
 			legacy: [2]bool{false, true},
 		},
 		{
-			name: "incompatible legacy metadata", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-			legacy: [2]bool{false, true}, invalidUnit: true,
+			name: "different period metadata", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			legacy: [2]bool{false, true}, differentPeriodUnit: true,
+		},
+		{
+			name: "different legacy periods", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			legacy: [2]bool{true, true}, differentPeriodUnit: true,
+		},
+		{
+			name: "mixed memory count windows", profileType: "memory:alloc_objects:count:space:bytes",
+			legacy: [2]bool{true, false},
+		},
+		{
+			name: "empty period metadata", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			emptyPeriod: true,
+		},
+		{
+			name: "matching selector", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			selector: `{id="job-1",__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds"}`,
+		},
+		{
+			name: "matching repeated selector", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			selector: `{id="job-1",__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds",` +
+				`__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds"}`,
+		},
+		{
+			name: "wrong document type", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			declaredType: "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds", wantErr: "does not match query type",
+		},
+		{
+			name: "wrong sample name", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			sampleName: "offcpu", wantErr: "stored profile lacks sample type",
+		},
+		{
+			name: "wrong sample unit", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			sampleUnit: "milliseconds", wantErr: "stored profile lacks sample type",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -217,7 +256,7 @@ func TestSelectMergeStacktracesPeriodMetadata(t *testing.T) {
 				}
 				if tc.legacy[i] {
 					parts := strings.Split(tc.profileType, ":")
-					if tc.invalidUnit {
+					if tc.differentPeriodUnit && i == 1 {
 						parts[4] = "milliseconds"
 					}
 					profile.PeriodType = &googlev1.ValueType{
@@ -227,12 +266,27 @@ func TestSelectMergeStacktracesPeriodMetadata(t *testing.T) {
 					profile.StringTable = append(profile.StringTable, parts[3], parts[4])
 					profile.Period = 10000000
 				}
+				if tc.emptyPeriod {
+					profile.PeriodType = &googlev1.ValueType{}
+				}
+				declaredType := tc.profileType
+				if i == 1 {
+					if tc.declaredType != "" {
+						declaredType = tc.declaredType
+					}
+					if tc.sampleName != "" {
+						profile.StringTable[profile.SampleType[0].Type] = tc.sampleName
+					}
+					if tc.sampleUnit != "" {
+						profile.StringTable[profile.SampleType[0].Unit] = tc.sampleUnit
+					}
+				}
 				document, err := json.Marshal(map[string]any{
 					"hostname": "node-1", "region": "test", "tracer_id": "job-1",
 					"uploaded_timestamp": "2026-10-08T00:00:00Z",
 					"started_timestamp":  "2026-10-08T00:00:00Z",
 					"tracer_type":        "profiling",
-					"profile_data":       profilingstore.ProfileData{ProfileType: tc.profileType, Profile: profile},
+					"profile_data":       profilingstore.ProfileData{ProfileType: declaredType, Profile: profile},
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -249,14 +303,21 @@ func TestSelectMergeStacktracesPeriodMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			selector := tc.selector
+			if selector == "" {
+				selector = `{id="job-1"}`
+			}
 			result, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
-				LabelSelector: `{id="job-1"}`,
+				LabelSelector: selector,
 				ProfileTypeID: tc.profileType,
 			})
-			if tc.invalidUnit {
-				incompatible := err != nil && strings.Contains(err.Error(), "incompatible period types")
-				if !incompatible || result != nil {
-					t.Errorf("result=%v, error=%v; want incompatible period types error", result, err)
+			if tc.wantErr != "" {
+				matchesError := err != nil && strings.Contains(err.Error(), tc.wantErr)
+				if !matchesError || result != nil {
+					t.Errorf("result=%v, error=%v; want %q without partial flamegraph", result, err, tc.wantErr)
+				}
+				if errors.Is(err, ErrInvalidQuery) {
+					t.Errorf("stored data error classified as invalid query: %v", err)
 				}
 				return
 			}
@@ -265,6 +326,74 @@ func TestSelectMergeStacktracesPeriodMetadata(t *testing.T) {
 			}
 			if result.GetFlamegraph().GetTotal() != 18 {
 				t.Errorf("flamegraph total=%d, want 18 without rescaling", result.GetFlamegraph().GetTotal())
+			}
+		})
+	}
+}
+
+func TestSelectMergeStacktracesRejectsConflictingProfileTypes(t *testing.T) {
+	const cpuType = "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+	const offCPUType = "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds"
+	for _, tc := range []struct {
+		name        string
+		profileType string
+		selector    string
+	}{
+		{name: "empty request type", selector: `{id="job-1"}`},
+		{
+			name: "conflicting selector", profileType: cpuType,
+			selector: `{id="job-1",__profile_type__="` + offCPUType + `"}`,
+		},
+		{
+			name: "conflicting repeated selector", profileType: cpuType,
+			selector: `{id="job-1",__profile_type__="` + offCPUType + `",__profile_type__="` + cpuType + `"}`,
+		},
+		{
+			name: "empty selector type", profileType: cpuType,
+			selector: `{id="job-1",__profile_type__=""}`,
+		},
+		{
+			name: "wildcard selector type", profileType: cpuType,
+			selector: `{id="job-1",__profile_type__="*"}`,
+		},
+		{
+			name: "regex selector type", profileType: cpuType,
+			selector: `{id="job-1",__profile_type__=~".*"}`,
+		},
+		{
+			name: "negative selector type", profileType: cpuType,
+			selector: `{id="job-1",__profile_type__!="` + cpuType + `"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// An uninitialized store also proves invalid types fail before a search.
+			service, err := NewProfileQueryService(&profilingstore.Store{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
+				ProfileTypeID: tc.profileType,
+				LabelSelector: tc.selector,
+			})
+			if !errors.Is(err, ErrInvalidQuery) || result != nil {
+				t.Errorf("result=%v, error=%v; want invalid query without a search", result, err)
+			}
+		})
+	}
+	for i := range 5 {
+		t.Run(fmt.Sprintf("empty component %d", i), func(t *testing.T) {
+			parts := strings.Split(cpuType, ":")
+			parts[i] = ""
+			service, err := NewProfileQueryService(&profilingstore.Store{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
+				ProfileTypeID: strings.Join(parts, ":"),
+				LabelSelector: `{id="job-1"}`,
+			})
+			if !errors.Is(err, ErrInvalidQuery) || result != nil {
+				t.Errorf("result=%v, error=%v; want invalid query for empty component %d", result, err, i)
 			}
 		})
 	}
