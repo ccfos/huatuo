@@ -60,7 +60,14 @@ func guestProc(t testing.TB, s *guestScanner, pid, parent int, start uint64, mem
 
 func guestFixture(t testing.TB) *guestScanner {
 	t.Helper()
-	s := &guestScanner{options: GuestScannerOptions{ProcRoot: t.TempDir(), CgroupRoot: t.TempDir(), PodName: "checkout-api", PodNamespace: "payments"}}
+	s := &guestScanner{
+		options: GuestScannerOptions{
+			ProcRoot:     t.TempDir(),
+			CgroupRoot:   t.TempDir(),
+			PodName:      "checkout-api",
+			PodNamespace: "payments",
+		},
+	}
 	guestFile(t, s.options.ProcRoot, "self/cgroup", "0::/"+guestSidecarID+"\n")
 	return s
 }
@@ -118,10 +125,16 @@ func TestGuestScannerDiscovery(t *testing.T) {
 	if len(snapshot.records) != 1 || !snapshot.isComplete || record == nil {
 		t.Fatalf("snapshot=%+v", snapshot)
 	}
-	if record.container.InitPid != 150 || record.container.CgroupPath != path || record.ref.MemoryCgroupPath != path || record.startTime != 100 || record.directory == nil {
+	if record.container.InitPid != 150 ||
+		record.container.CgroupPath != path ||
+		record.ref.MemoryCgroupPath != path ||
+		record.startTime != 100 ||
+		record.directory == nil {
 		t.Errorf("binding=%+v", record)
 	}
-	if record.container.Hostname != "checkout-api" || record.container.LabelHostNamespace() != "payments" || record.container.Qos.String() != "burstable" {
+	if record.container.Hostname != "checkout-api" ||
+		record.container.LabelHostNamespace() != "payments" ||
+		record.container.Qos.String() != "burstable" {
 		t.Errorf("metadata=%+v", record.container)
 	}
 }
@@ -149,27 +162,53 @@ func TestGuestScannerCgroupNamespaces(t *testing.T) {
 	}
 }
 
+// TestGuestScannerLegacyCgroups 验证 CPU 与 memory 分属不同 v1 路径时，
+// 容器和生命周期引用保留 memory 路径；缺少 memory 控制器时不回退到 CPU 路径。
 func TestGuestScannerLegacyCgroups(t *testing.T) {
-	s := guestFixture(t)
-	cpu := "/cpu-group/" + guestCheckoutID
-	memory := "/memory-group/" + guestCheckoutID
-	guestDirectory(t, s.options.CgroupRoot, "cpu,cpuacct"+cpu)
-	guestDirectory(t, s.options.CgroupRoot, "memory"+memory)
-	guestProc(t, s, 150, 1, 100, "2:cpu,cpuacct:"+cpu+"\n3:memory:"+memory+"\n")
-	snap, err := s.scan(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	record := snap.records[guestCheckoutID]
-	if record.container.CgroupPath != cpu || record.ref.MemoryCgroupPath != memory {
-		t.Errorf("binding=%+v", record)
+	for _, tc := range []struct {
+		name      string
+		hasMemory bool
+	}{
+		{name: "separate-hierarchies", hasMemory: true},
+		{name: "no-memory-controller"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scanner := guestFixture(t)
+			cpu := "/cpu-group/" + guestCheckoutID
+			var memory string
+			membership := "2:cpu,cpuacct:" + cpu + "\n"
+			guestDirectory(t, scanner.options.CgroupRoot, "cpu,cpuacct"+cpu)
+			if tc.hasMemory {
+				memory = "/memory-group/" + guestCheckoutID
+				guestDirectory(t, scanner.options.CgroupRoot, "memory"+memory)
+				membership += "3:memory:" + memory + "\n"
+			}
+			guestProc(t, scanner, 150, 1, 100, membership)
+			snapshot, err := scanner.scan(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := snapshot.records[guestCheckoutID]
+			if record == nil {
+				t.Fatal("Guest container not discovered")
+			}
+			if record.container.CgroupPath != cpu || record.container.MemoryCgroupPath() != memory ||
+				record.ref.MemoryCgroupPath != memory {
+				t.Fatalf("incorrect memory binding: %+v", record)
+			}
+		})
 	}
 }
 
 func TestGuestScannerMountIdentity(t *testing.T) {
 	s := guestFixture(t)
 	guestFile(t, s.options.ProcRoot, "self/cgroup", "0::/\n")
-	guestFile(t, s.options.ProcRoot, "self/mountinfo", "30 1 0:20 /containers/"+guestSidecarID+"/rootfs / rw - virtiofs rootfs rw\n")
+	guestFile(
+		t,
+		s.options.ProcRoot,
+		"self/mountinfo",
+		"30 1 0:20 /containers/"+guestSidecarID+"/rootfs / rw - virtiofs rootfs rw\n",
+	)
 	guestDirectory(t, s.options.CgroupRoot, "/"+guestCheckoutID)
 	guestProc(t, s, 150, 1, 100, "0::/"+guestCheckoutID+"\n")
 	snap, err := s.scan(t.Context())
@@ -200,7 +239,10 @@ func TestGuestScannerFailureAndReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.commit(snap, nil)
-	if store.records[guestCheckoutID].ref.Key != previous.ref.Key || !store.records[guestCheckoutID].container.StartedAt.Equal(previous.container.StartedAt) {
+	if store.records[guestCheckoutID].ref.Key != previous.ref.Key ||
+		!store.records[guestCheckoutID].container.StartedAt.Equal(
+			previous.container.StartedAt,
+		) {
 		t.Error("healthy refresh replaced live instance")
 	}
 	// An unreadable process must not be published as a deletion.
