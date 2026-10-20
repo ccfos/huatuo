@@ -42,6 +42,16 @@ type Container struct {
 	SyncedAt           time.Time         `json:"synced_at"`
 	Labels             map[string]any    `json:"labels"` // custom labels
 	lifeResources      map[string]any
+	memoryCgroupPath   *string
+}
+
+// MemoryCgroupPath returns the memory hierarchy binding. An empty Guest binding
+// means the memory controller is unavailable; legacy Host records share CgroupPath.
+func (c *Container) MemoryCgroupPath() string {
+	if c.memoryCgroupPath != nil {
+		return *c.memoryCgroupPath
+	}
+	return c.CgroupPath
 }
 
 func (c *Container) String() string {

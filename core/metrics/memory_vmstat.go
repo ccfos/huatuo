@@ -78,9 +78,13 @@ func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
 
 	var metrics []*metric.Data
 	for _, container := range containers {
-		raw, err := c.cgroup.MemoryStatRaw(container.CgroupPath)
+		memoryPath := container.MemoryCgroupPath()
+		if memoryPath == "" {
+			continue
+		}
+		raw, err := c.cgroup.MemoryStatRaw(memoryPath)
 		if err != nil {
-			log.Infof("parse %s memory.stat %v", container.CgroupPath, err)
+			log.Infof("parse %s memory.stat %v", memoryPath, err)
 			continue
 		}
 
