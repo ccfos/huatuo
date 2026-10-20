@@ -156,10 +156,6 @@ func kubeletGetPodList(ctx context.Context) (corev1.PodList, error) {
 	return kubeletFetchPodList(ctx, kubeletPodListClient, kubeletPodListURL)
 }
 
-func kubeletPodListDoRequest(client *http.Client, kubeletPodListURL string) (corev1.PodList, error) {
-	return kubeletFetchPodList(context.Background(), client, kubeletPodListURL)
-}
-
 func kubeletFetchPodList(ctx context.Context, client *http.Client, url string) (corev1.PodList, error) {
 	podList := corev1.PodList{}
 	body, err := httpRequestContext(ctx, client, url)
@@ -185,7 +181,7 @@ func kubeletConfigDoRequest(
 ) (kubeletConfiguration, error) {
 	empty := kubeletConfiguration{}
 
-	body, err := httpDoRequest(client, kubeletConfigURL)
+	body, err := httpRequestContext(context.Background(), client, kubeletConfigURL)
 	if err != nil {
 		return empty, err
 	}
@@ -201,10 +197,6 @@ func kubeletConfigDoRequest(
 	}
 
 	return config.Kubeletconfig, nil
-}
-
-func httpDoRequest(client *http.Client, url string) ([]byte, error) {
-	return httpRequestContext(context.Background(), client, url)
 }
 
 func httpRequestContext(ctx context.Context, client *http.Client, url string) ([]byte, error) {

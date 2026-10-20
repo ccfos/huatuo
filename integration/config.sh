@@ -234,8 +234,11 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
     SustainedIntervals = 10
     UsageThreshold = 100
 
-[Storage.LocalFile]
-    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+[Storage.Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "integration"
+    Password = "integration"
+    Index = "irqtracing-integration"
 EOF
 }
 

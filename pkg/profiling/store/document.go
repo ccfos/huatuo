@@ -32,7 +32,7 @@ type Document struct {
 
 // Metrics contains diagnostics captured for one aggregation window.
 type Metrics struct {
-	AggrOverflowCount int `json:"aggr_overflow_count"`
+	DroppedSamples map[string]uint64 `json:"dropped_samples,omitempty"`
 }
 
 // ProfileData contains one Pyroscope-compatible profile and its diagnostics.

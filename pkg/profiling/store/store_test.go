@@ -30,20 +30,6 @@ import (
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
-func TestStoreSaveUsesAsynchronousWrite(t *testing.T) {
-	store, backend := newTestStore(t)
-
-	if err := store.Save(t.Context(), validDocument()); err != nil {
-		t.Fatalf("Store.Save() error = %v", err)
-	}
-	if backend.asyncSaves != 1 {
-		t.Fatalf("asynchronous saves = %d, want 1", backend.asyncSaves)
-	}
-	if backend.syncSaves != 0 {
-		t.Fatalf("synchronous saves = %d, want 0", backend.syncSaves)
-	}
-}
-
 func TestStoreSaveSyncUsesVisibilityBarrier(t *testing.T) {
 	store, backend := newTestStore(t)
 
@@ -58,11 +44,11 @@ func TestStoreSaveSyncUsesVisibilityBarrier(t *testing.T) {
 	}
 }
 
-func TestStoreSaveRejectsIncompleteDocument(t *testing.T) {
+func TestStoreSaveSyncRejectsIncompleteDocument(t *testing.T) {
 	store, backend := newTestStore(t)
 
-	if err := store.Save(t.Context(), &Document{}); err == nil {
-		t.Fatal("Store.Save() error = nil, want validation error")
+	if err := store.SaveSync(t.Context(), &Document{}); err == nil {
+		t.Fatal("Store.SaveSync() error = nil, want validation error")
 	}
 	if backend.asyncSaves != 0 {
 		t.Fatalf("asynchronous saves = %d, want 0", backend.asyncSaves)

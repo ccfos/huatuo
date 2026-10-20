@@ -19,13 +19,17 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/profiling/aggregation"
+
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func TestNativeMemoryReadDataLoopRequiresStart(t *testing.T) {
-	err := (&memNativeProfiler{}).ReadDataLoop(t.Context(), func(any) {})
+	err := (&memNativeProfiler{}).ReadDataLoop(t.Context(), func(*pipeline.SampleBatch) error { return nil })
 	if err == nil || err.Error() != "native memory event readers are not initialized; call Start before ReadDataLoop" {
 		t.Fatalf("ReadDataLoop() error = %v, want uninitialized-reader error", err)
 	}
@@ -44,6 +48,7 @@ func (s *memoryPipelineBPFStub) ReadMap(mapID uint32, key []byte) ([]byte, error
 	idx := binary.LittleEndian.Uint32(key)
 	value := make([]byte, 8)
 	binary.LittleEndian.PutUint64(value, s.state[idx])
+
 	return value, nil
 }
 
@@ -56,6 +61,7 @@ func (s *memoryPipelineBPFStub) WriteMapItems(mapID uint32, items []bpf.MapItem)
 		idx := binary.LittleEndian.Uint32(item.Key)
 		s.state[idx] = binary.LittleEndian.Uint64(item.Value)
 	}
+
 	return nil
 }
 
@@ -70,6 +76,7 @@ func (s *memoryPipelineReaderStub) ReadInto(any) error {
 func (s *memoryPipelineReaderStub) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
 	batch := s.batch
 	s.batch = bpf.PerfEventBatch{}
+
 	return batch, nil
 }
 
@@ -77,7 +84,7 @@ func (s *memoryPipelineReaderStub) Close() error {
 	return nil
 }
 
-func TestMemoryValueConvertedOnceAfterAggregation(t *testing.T) {
+func TestMemorySamplesUseBytes(t *testing.T) {
 	const pageSize = int64(4096)
 
 	tests := []struct {
@@ -86,9 +93,24 @@ func TestMemoryValueConvertedOnceAfterAggregation(t *testing.T) {
 		raw  int64
 		want int64
 	}{
-		{name: "physical alloc page", mode: profiling.ModePhysicalAlloc, raw: 1, want: pageSize},
-		{name: "physical usage freed page", mode: profiling.ModePhysicalUsage, raw: -1, want: -pageSize},
-		{name: "virtual alloc bytes", mode: profiling.ModeVirtualAlloc, raw: 1234, want: 1234},
+		{
+			name: "physical alloc page",
+			mode: profiling.ModePhysicalAlloc,
+			raw:  1,
+			want: pageSize,
+		},
+		{
+			name: "physical usage freed page",
+			mode: profiling.ModePhysicalUsage,
+			raw:  -1,
+			want: -pageSize,
+		},
+		{
+			name: "virtual alloc bytes",
+			mode: profiling.ModeVirtualAlloc,
+			raw:  1234,
+			want: 1234,
+		},
 	}
 
 	for _, tt := range tests {
@@ -118,21 +140,20 @@ func TestMemoryValueConvertedOnceAfterAggregation(t *testing.T) {
 				pageSize:     pageSize,
 			}
 
-			counts, ring, err := ringCtx.drainFrozenRingBuffer(
+			var samples []aggregation.Sample
+			err := ringCtx.drainFrozenRingBuffer(
 				func() any { return &abi.ProfilerEventBase{} },
+				func(batch *pipeline.SampleBatch) error { samples = append(samples, batch.Samples...); return nil },
+				profiler.convertValueToBytes,
 			)
 			if err != nil {
-				t.Fatalf("drainFrozenRingBuffer() error = %v", err)
+				t.Fatal(err)
 			}
-
-			var samples []*stackSample
-			ringCtx.aggregateStacksAndEnqueue(counts, ring, func(record any) {
-				samples = append(samples, record.(*stackSample))
-			}, profiler.convertValueToBytes)
 
 			if len(samples) != 1 {
 				t.Fatalf("sample count = %d, want 1", len(samples))
 			}
+
 			if got := samples[0].Value; got != tt.want {
 				t.Fatalf("sample value = %d, want %d", got, tt.want)
 			}
@@ -155,7 +176,10 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			mode:       profiling.ModeVirtualAlloc,
 			wantObject: "native_virtual_alloc.o",
 			wantAttach: []bpf.AttachOption{
-				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
+				{
+					ProgramName: "trace_mmap",
+					Symbol:      "do_mmap",
+				},
 			},
 		},
 		{
@@ -168,8 +192,14 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			wantObject:      "native_physical_usage.o",
 			wantProbability: true,
 			wantAttach: []bpf.AttachOption{
-				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
-				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+				{
+					ProgramName: programTracePageAlloc,
+					Symbol:      symbolPageAddNewAnonRmap,
+				},
+				{
+					ProgramName: programTracePageFree,
+					Symbol:      symbolPageRemoveRmap,
+				},
 			},
 			wantConstants: map[string]any{
 				"profiler_folio_npages": false,
@@ -185,8 +215,14 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			wantObject:      "native_physical_usage.o",
 			wantProbability: true,
 			wantAttach: []bpf.AttachOption{
-				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-				{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+				{
+					ProgramName: programTracePageAlloc,
+					Symbol:      symbolFolioAddNewAnonRmap,
+				},
+				{
+					ProgramName: programTracePageFree,
+					Symbol:      symbolFolioRemoveRmapPtes,
+				},
 			},
 			wantConstants: map[string]any{
 				"profiler_folio_npages": true,
@@ -201,7 +237,10 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			wantObject:      "native_physical_alloc.o",
 			wantProbability: true,
 			wantAttach: []bpf.AttachOption{
-				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
+				{
+					ProgramName: programTracePageAlloc,
+					Symbol:      symbolPageAddNewAnonRmap,
+				},
 			},
 			wantConstants: map[string]any{
 				"profiler_folio_npages": false,
@@ -216,7 +255,10 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			wantObject:      "native_physical_alloc.o",
 			wantProbability: true,
 			wantAttach: []bpf.AttachOption{
-				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+				{
+					ProgramName: programTracePageAlloc,
+					Symbol:      symbolFolioAddNewAnonRmap,
+				},
 			},
 			wantConstants: map[string]any{
 				"profiler_folio_npages": true,
@@ -232,7 +274,13 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			})
 			defer restore()
 
-			cfg, err := newNativeMemoryBPFLoadConfig(tc.mode, 123, 456, true, 42)
+			cfg, err := newNativeMemoryBPFLoadConfig(
+				tc.mode,
+				123,
+				456,
+				true,
+				42,
+			)
 			if err != nil {
 				t.Fatalf("newNativeMemoryBPFLoadConfig() error = %v", err)
 			}
@@ -249,14 +297,22 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			if ok != tc.wantProbability {
 				t.Fatalf("profiler_sampling_prob present = %t, want %t", ok, tc.wantProbability)
 			}
+
 			if tc.wantProbability && probability != uint8(42) {
 				t.Fatalf("profiler_sampling_prob = %v, want 42", probability)
 			}
+
 			for key, want := range tc.wantConstants {
 				if got := cfg.Constants[key]; !reflect.DeepEqual(got, want) {
-					t.Fatalf("Constants[%q] = %#v, want %#v", key, got, want)
+					t.Fatalf(
+						"Constants[%q] = %#v, want %#v",
+						key,
+						got,
+						want,
+					)
 				}
 			}
+
 			if tc.mode == profiling.ModePhysicalUsage {
 				for _, key := range []string{
 					"profiler_alloc_reads_folio_nr_pages",
@@ -277,15 +333,25 @@ func TestNewBpfLoadConfigThreadFilter(t *testing.T) {
 		threadGroup bool
 	}{
 		{name: "target thread"},
-		{name: "thread group", threadGroup: true},
+		{
+			name:        "thread group",
+			threadGroup: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := newNativeMemoryBPFLoadConfig(profiling.ModeVirtualAlloc, 123, 0, tt.threadGroup, 100)
+			cfg, err := newNativeMemoryBPFLoadConfig(
+				profiling.ModeVirtualAlloc,
+				123,
+				0,
+				tt.threadGroup,
+				100,
+			)
 			if err != nil {
 				t.Fatalf("newNativeMemoryBPFLoadConfig() error = %v", err)
 			}
+
 			if got := cfg.Constants["profiler_filter_threads"]; got != tt.threadGroup {
 				t.Fatalf("profiler_filter_threads = %v, want %v", got, tt.threadGroup)
 			}
@@ -305,14 +371,20 @@ func TestNewPhysicalAllocAttachOption(t *testing.T) {
 			available: map[string]bool{
 				symbolPageAddNewAnonRmap: true,
 			},
-			want: bpf.AttachOption{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
+			want: bpf.AttachOption{
+				ProgramName: programTracePageAlloc,
+				Symbol:      symbolPageAddNewAnonRmap,
+			},
 		},
 		{
 			name: "folio rmap",
 			available: map[string]bool{
 				symbolFolioAddNewAnonRmap: true,
 			},
-			want: bpf.AttachOption{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+			want: bpf.AttachOption{
+				ProgramName: programTracePageAlloc,
+				Symbol:      symbolFolioAddNewAnonRmap,
+			},
 		},
 		{
 			name: "mixed rmap",
@@ -320,7 +392,10 @@ func TestNewPhysicalAllocAttachOption(t *testing.T) {
 				symbolPageAddNewAnonRmap:  true,
 				symbolFolioAddNewAnonRmap: true,
 			},
-			want: bpf.AttachOption{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+			want: bpf.AttachOption{
+				ProgramName: programTracePageAlloc,
+				Symbol:      symbolFolioAddNewAnonRmap,
+			},
 		},
 		{
 			name:    "missing hooks",
@@ -341,11 +416,14 @@ func TestNewPhysicalAllocAttachOption(t *testing.T) {
 				if err == nil {
 					t.Fatal("newPhysicalAllocAttachOption() error = nil, want non-nil")
 				}
+
 				return
 			}
+
 			if err != nil {
 				t.Fatalf("newPhysicalAllocAttachOption() error = %v", err)
 			}
+
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("newPhysicalAllocAttachOption() = %#v, want %#v", got, tc.want)
 			}
@@ -368,8 +446,14 @@ func TestNewPhysicalUsageAttachConfig(t *testing.T) {
 			},
 			want: physicalUsageAttachConfig{
 				AttachOpts: []bpf.AttachOption{
-					{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
-					{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+					{
+						ProgramName: programTracePageAlloc,
+						Symbol:      symbolPageAddNewAnonRmap,
+					},
+					{
+						ProgramName: programTracePageFree,
+						Symbol:      symbolPageRemoveRmap,
+					},
 				},
 			},
 		},
@@ -381,8 +465,14 @@ func TestNewPhysicalUsageAttachConfig(t *testing.T) {
 			},
 			want: physicalUsageAttachConfig{
 				AttachOpts: []bpf.AttachOption{
-					{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-					{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+					{
+						ProgramName: programTracePageAlloc,
+						Symbol:      symbolFolioAddNewAnonRmap,
+					},
+					{
+						ProgramName: programTracePageFree,
+						Symbol:      symbolFolioRemoveRmapPtes,
+					},
 				},
 				CountFolioPages: true,
 			},
@@ -395,8 +485,14 @@ func TestNewPhysicalUsageAttachConfig(t *testing.T) {
 			},
 			want: physicalUsageAttachConfig{
 				AttachOpts: []bpf.AttachOption{
-					{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-					{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+					{
+						ProgramName: programTracePageAlloc,
+						Symbol:      symbolFolioAddNewAnonRmap,
+					},
+					{
+						ProgramName: programTracePageFree,
+						Symbol:      symbolPageRemoveRmap,
+					},
 				},
 			},
 		},
@@ -409,8 +505,14 @@ func TestNewPhysicalUsageAttachConfig(t *testing.T) {
 			},
 			want: physicalUsageAttachConfig{
 				AttachOpts: []bpf.AttachOption{
-					{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-					{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+					{
+						ProgramName: programTracePageAlloc,
+						Symbol:      symbolFolioAddNewAnonRmap,
+					},
+					{
+						ProgramName: programTracePageFree,
+						Symbol:      symbolFolioRemoveRmapPtes,
+					},
 				},
 				CountFolioPages: true,
 			},
@@ -424,8 +526,14 @@ func TestNewPhysicalUsageAttachConfig(t *testing.T) {
 			},
 			want: physicalUsageAttachConfig{
 				AttachOpts: []bpf.AttachOption{
-					{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-					{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+					{
+						ProgramName: programTracePageAlloc,
+						Symbol:      symbolFolioAddNewAnonRmap,
+					},
+					{
+						ProgramName: programTracePageFree,
+						Symbol:      symbolPageRemoveRmap,
+					},
 				},
 			},
 		},
@@ -451,11 +559,14 @@ func TestNewPhysicalUsageAttachConfig(t *testing.T) {
 				if err == nil {
 					t.Fatal("newPhysicalUsageAttachConfig() error = nil, want non-nil")
 				}
+
 				return
 			}
+
 			if err != nil {
 				t.Fatalf("newPhysicalUsageAttachConfig() error = %v", err)
 			}
+
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("newPhysicalUsageAttachConfig() = %#v, want %#v", got, tc.want)
 			}
@@ -466,6 +577,7 @@ func TestNewPhysicalUsageAttachConfig(t *testing.T) {
 func stubHasKprobeFunction(fn func(string) bool) func() {
 	old := hasKprobeFunction
 	hasKprobeFunction = fn
+
 	return func() {
 		hasKprobeFunction = old
 	}
