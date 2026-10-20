@@ -153,6 +153,24 @@ $ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
 
 其他更多丰富维度的剖析任务参考 Profiling API。
 
+### 6. 火焰图查询的标签选择器规则
+
+Grafana 火焰图面板使用 Prometheus 风格的标签选择器查询
+`/v1/profiling/flamegraph/...`，查询层支持 `id`、`region`、`hostname`、
+`container_id`、`container_hostname` 和 `__profile_type__`，每个标签只接受一个等值条件：
+
+- `{hostname="node-01"}` 选择单台机器；`hostname="*"`、`hostname="all"` 和
+  `hostname=""` 只会移除 hostname 限制：当查询中还有另一个具体选择器（例如
+  `id` 或 `container_id`）时会被接受；若没有任何具体的 `id`、`hostname`、
+  `container_id` 或 `container_hostname`，请求会返回 `400`
+- 同名标签出现不同取值的等值条件（例如
+  `{hostname="host-a",hostname="host-b"}`）是逻辑矛盾，会被拒绝并返回 `400`，
+  错误信息中会给出两个取值
+- 重复相同的条件，例如 `{hostname="host-a",hostname="host-a"}`，会被接受，
+  效果等同于单个条件
+
+`=` 之外的运算符同样会返回 `400`。
+
 
 ## 🌐 Profiling API
 
