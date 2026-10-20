@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiling/window"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
@@ -69,18 +70,24 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 
 	log.Debugf("SelectMergeStacktracesRequest: %+v", req)
 
-	profileTypes := strings.Split(filter.ProfileType, ":")
-	if len(profileTypes) != 5 {
-		return nil, fmt.Errorf("%w: invalid profile type %q", ErrInvalidQuery, filter.ProfileType)
+	profileTypes, err := window.Metadata(req.ProfileTypeID)
+	if err != nil {
+		return nil, errors.Join(ErrInvalidQuery, err)
 	}
 
 	// labels
-	labels, err := parser.ParseMetricSelector(req.LabelSelector)
+	matchers, err := parser.ParseMetricSelector(req.LabelSelector)
 	if err != nil {
 		return nil, errors.Join(ErrInvalidQuery, fmt.Errorf("parse matchers: %w", err))
 	}
 
-	for _, label := range labels {
+	for _, label := range matchers {
+		if label.Name == "__profile_type__" {
+			if label.Type != labels.MatchEqual || label.Value != req.ProfileTypeID {
+				return nil, fmt.Errorf("%w: __profile_type__ must equal ProfileTypeID %q", ErrInvalidQuery, req.ProfileTypeID)
+			}
+			continue
+		}
 		// skip empty or "All"
 		if label.Value == "" || label.Value == "all" || label.Value == "All" || label.Value == "*" {
 			continue
@@ -105,16 +112,29 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			profile := document.ProfileData.Profile
-			if profile != nil && profile.PeriodType == nil {
-				// New windows carry final sample weights without a period. The
-				// merger still requires type metadata; do not rescale the values.
-				profile.PeriodType = &googlev1.ValueType{
-					Type: int64(len(profile.StringTable)),
-					Unit: int64(len(profile.StringTable) + 1),
-				}
-				profile.StringTable = append(profile.StringTable, profileTypes[3], profileTypes[4])
+			if document.ProfileData.ProfileType != filter.ProfileType {
+				return fmt.Errorf("stored profile type %q does not match query type %q", document.ProfileData.ProfileType, filter.ProfileType)
 			}
+			profile := document.ProfileData.Profile
+			matchesSampleType := false
+			for _, st := range profile.SampleType {
+				if st == nil {
+					continue
+				}
+				name, _ := profileString(profile.StringTable, st.Type)
+				unit, _ := profileString(profile.StringTable, st.Unit)
+				if name == profileTypes[1] && unit == profileTypes[2] {
+					matchesSampleType = true
+					break
+				}
+			}
+			if !matchesSampleType {
+				return fmt.Errorf("stored profile lacks sample type %q with unit %q", profileTypes[1], profileTypes[2])
+			}
+			// Both legacy and new samples already carry final weights. Period
+			// metadata is irrelevant to this query, but the merger requires a type.
+			profile.PeriodType = &googlev1.ValueType{}
+			profile.Period = 0
 			if err := profilesMerge.Merge(profile); err != nil {
 				return fmt.Errorf("merge profile: %w", err)
 			}
@@ -143,7 +163,9 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		if st == nil {
 			continue
 		}
-		if value, ok := profileString(profile.StringTable, st.Type); ok && value == sampleType {
+		name, _ := profileString(profile.StringTable, st.Type)
+		unit, _ := profileString(profile.StringTable, st.Unit)
+		if name == sampleType && unit == profileTypes[2] {
 			sampleTypeIndex = i
 			break
 		}
