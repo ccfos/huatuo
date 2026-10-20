@@ -23,7 +23,8 @@ import (
 )
 
 // TestServerConnectionContext verifies that connection metadata is bound before the handshake:
-// valid handlers read the Host-provided context independently of Guest TaskID; identity resolution failures prevent handshake reads and data dispatch.
+// valid handlers read the Host-provided context independently of Guest TaskID; identity resolution failures
+// prevent handshake reads and data dispatch.
 func TestServerConnectionContext(t *testing.T) {
 	for _, reject := range []bool{false, true} {
 		name := "trusted connection"
@@ -59,7 +60,10 @@ func TestServerConnectionContext(t *testing.T) {
 			}
 			done := make(chan struct{})
 			go func() { defer close(done); defer serverConn.Close(); srv.handleConn(t.Context(), serverConn) }()
-			client, err := NewClientWithConn(clientConn, "guest-document", "2.2.0", "forged-sandbox", ProtocolVersion)
+			client, err := NewClientWithConn(
+				clientConn,
+				ClientMetadata{ToolName: "guest-document", Version: "2.2.0", TaskID: "forged-sandbox"},
+			)
 			if reject {
 				if err == nil {
 					t.Errorf("rejected connection completed handshake")

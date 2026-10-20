@@ -30,7 +30,11 @@ func TestClientHandshakeCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		_, err := NewClientWithConnContext(ctx, client, "guest-document", "1", "task", ProtocolVersion)
+		_, err := NewClientWithConnContext(
+			ctx,
+			client,
+			ClientMetadata{ToolName: "guest-document", Version: "1", TaskID: "task"},
+		)
 		done <- err
 	}()
 	cancel()
@@ -49,10 +53,13 @@ func TestConnectionContextCancellationInterruptsIdleRead(t *testing.T) {
 	defer client.Close()
 	defer peer.Close()
 	ctx, cancel := context.WithCancel(t.Context())
-	server := &Server{connContext: func(context.Context, net.Conn) (context.Context, error) { return ctx, nil }, handler: func(*Session, ChunkMsg) { t.Error("idle connection dispatched data") }}
+	server := &Server{
+		connContext: func(context.Context, net.Conn) (context.Context, error) { return ctx, nil },
+		handler:     func(*Session, ChunkMsg) { t.Error("idle connection dispatched data") },
+	}
 	done := make(chan struct{})
 	go func() { defer close(done); server.handleConn(t.Context(), peer) }()
-	connection, err := NewClientWithConn(client, "guest-document", "1", "task", ProtocolVersion)
+	connection, err := NewClientWithConn(client, ClientMetadata{ToolName: "guest-document", Version: "1", TaskID: "task"})
 	if err != nil {
 		t.Fatal(err)
 	}

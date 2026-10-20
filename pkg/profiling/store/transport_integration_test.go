@@ -57,7 +57,10 @@ func TestDocumentTransportIntegration(t *testing.T) {
 	profiles := &Store{store: backend}
 	defer profiles.Close(ctx)
 	dir := t.TempDir()
-	traces, err := tracingstore.NewFromConfig(ctx, tracingstore.Config{LocalFile: &tracingstore.LocalFileConfig{Path: dir, RotationSizeMiB: 1, MaxRotatedFiles: 1}})
+	traces, err := tracingstore.NewFromConfig(
+		ctx,
+		tracingstore.Config{LocalFile: &tracingstore.LocalFileConfig{Path: dir, RotationSizeMiB: 1, MaxRotatedFiles: 1}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,13 +97,23 @@ func TestDocumentTransportIntegration(t *testing.T) {
 		default:
 			t.Errorf("unexpected route %q", session.ToolName)
 		}
-	}, transport.ServerOptions{MaxMessageSize: 1 << 20, DecodeBudget: budget, HandshakeTimeout: time.Second, FrameReadTimeout: time.Second})
+	}, transport.ServerOptions{
+		MaxMessageSize:   1 << 20,
+		DecodeBudget:     budget,
+		HandshakeTimeout: time.Second,
+		FrameReadTimeout: time.Second,
+	})
 	if err != nil {
 		listener.Close()
 		t.Fatal(err)
 	}
 	defer server.Close()
-	trace := []byte(`{"source_type":"kata_guest","tracer_type":"event","tracer_name":"kernel_sched_tick","tracer_id":"guest-event","uploaded_timestamp":"2026-01-01T00:00:00Z","observed_timestamp":"2026-01-01T00:00:01.123456789Z","tracer_data":{"counter":18446744073709551615}}`)
+	trace := []byte(
+		`{"source_type":"kata_guest","tracer_type":"event","tracer_name":"kernel_sched_tick",` +
+			`"tracer_id":"guest-event","uploaded_timestamp":"2026-01-01T00:00:00Z",` +
+			`"observed_timestamp":"2026-01-01T00:00:01.123456789Z",` +
+			`"tracer_data":{"counter":18446744073709551615}}`,
+	)
 	profile := validDocument()
 	profile.SourceType = types.DocumentSourceKataGuest
 	profile.ProfileData.Profile.TimeNanos = 9007199254740993
@@ -116,7 +129,11 @@ func TestDocumentTransportIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		client, err := transport.NewClientWithConnContext(ctx, conn, item.name, "1", "task", transport.ProtocolVersion)
+		client, err := transport.NewClientWithConnContext(
+			ctx,
+			conn,
+			transport.ClientMetadata{ToolName: item.name, Version: "1", TaskID: "task"},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,7 +163,12 @@ func TestDocumentTransportIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if document.SourceType != types.DocumentSourceKataGuest || document.TracerData.(map[string]any)["counter"] != json.Number("18446744073709551615") || document.ObservedTimestamp.FormatUTC() != "2026-01-01T00:00:01.123456789Z" || document.UploadedTimestamp.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) {
+	if document.SourceType != types.DocumentSourceKataGuest ||
+		document.TracerData.(map[string]any)["counter"] != json.Number(
+			"18446744073709551615",
+		) || document.ObservedTimestamp.FormatUTC() != "2026-01-01T00:00:01.123456789Z" || document.UploadedTimestamp.Equal(
+		time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	) {
 		t.Errorf("event changed in transport/persistence: %+v", document)
 	}
 	select {
@@ -163,7 +185,10 @@ func TestDocumentTransportIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if saved.SourceType != types.DocumentSourceKataGuest || saved.ProfileData.Profile.TimeNanos != 9007199254740993 || saved.StartedTimestamp == nil || saved.UploadedTimestamp.IsZero() {
+		if saved.SourceType != types.DocumentSourceKataGuest ||
+			saved.ProfileData.Profile.TimeNanos != 9007199254740993 ||
+			saved.StartedTimestamp == nil ||
+			saved.UploadedTimestamp.IsZero() {
 			t.Errorf("profile changed in transport/persistence: %+v", saved)
 		}
 	case <-ctx.Done():
@@ -205,13 +230,22 @@ func TestGuestNativeStoresToTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profiles.Close(ctx)
-	event, err := tracingstore.DecodeDocument([]byte(`{"tracer_id":"guest-event","tracer_name":"cpu","tracer_type":"event","observed_timestamp":"2026-10-16T01:00:00Z","source_type":"kata_guest","tracer_data":{"counter":18446744073709551615}}`))
+	event, err := tracingstore.DecodeDocument(
+		[]byte(
+			`{"tracer_id":"guest-event","tracer_name":"cpu","tracer_type":"event",` +
+				`"observed_timestamp":"2026-10-16T01:00:00Z","source_type":"kata_guest",` +
+				`"tracer_data":{"counter":18446744073709551615}}`,
+		),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile := validDocument()
 	profile.SourceType = types.DocumentSourceKataGuest
-	for _, save := range []func() error{func() error { return traces.Save(event) }, func() error { return profiles.Save(ctx, profile) }} {
+	for _, save := range []func() error{
+		func() error { return traces.Save(event) },
+		func() error { return profiles.Save(ctx, profile) },
+	} {
 		for {
 			err := save()
 			if err == nil {
@@ -238,7 +272,8 @@ func TestGuestNativeStoresToTransport(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if d.SourceType != types.DocumentSourceKataGuest || d.TracerData.(map[string]any)["counter"].(json.Number).String() != "18446744073709551615" {
+				if d.SourceType != types.DocumentSourceKataGuest ||
+					d.TracerData.(map[string]any)["counter"].(json.Number).String() != "18446744073709551615" {
 					t.Errorf("event=%+v", d)
 				}
 			case vsock.ProfilingTool:

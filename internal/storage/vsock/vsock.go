@@ -217,7 +217,11 @@ func (b *Backend) run(ctx context.Context) {
 func (b *Backend) send(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
 	_ = conn.SetWriteDeadline(time.Now().Add(b.options.IOTimeout))
-	client, err := transport.NewClientWithConnContext(ctx, conn, b.options.ToolName, b.options.Version, "", transport.ProtocolVersion)
+	client, err := transport.NewClientWithConnContext(
+		ctx,
+		conn,
+		transport.ClientMetadata{ToolName: b.options.ToolName, Version: b.options.Version, TaskID: ""},
+	)
 	if err != nil {
 		return err
 	}
