@@ -69,6 +69,13 @@ var (
 	cgroupv2NotifyFile        = "memory.current"
 	cgroupCssID2SubSysNameMap = map[int]string{}
 	cgroupCssMetaDataMap      sync.Map
+	// cgroupCssByContainerID indexes CSS addresses by container ID so
+	// cgroupListCssDataByKnode does not range over every CSS entry for each
+	// container during the 30s resync (O(N^2) -> O(N)). The sets behind
+	// each entry are guarded by cgroupCssIndexMu; sync.Map only protects
+	// publication of the set pointer itself.
+	cgroupCssByContainerID sync.Map
+	cgroupCssIndexMu       sync.RWMutex
 
 	// avoid GC
 	cgroupCssBpfInternal   *bpf.BPF
@@ -89,14 +96,18 @@ type containerCssPerfEvent = abi.CgroupCSSEvent
 
 func cgroupListCssDataByKnode(containerID string) []*containerCssMetaData {
 	res := []*containerCssMetaData{}
-	cgroupCssMetaDataMap.Range(func(k, v any) bool {
-		if m, ok := v.(*containerCssMetaData); ok {
-			if m.ContainerID == containerID {
+	addrsAny, ok := cgroupCssByContainerID.Load(containerID)
+	if !ok {
+		return res
+	}
+	cgroupCssIndexMu.RLock()
+	for addr := range *addrsAny.(*map[uint64]struct{}) {
+		if v, loaded := cgroupCssMetaDataMap.Load(addr); loaded {
+			if m, ok := v.(*containerCssMetaData); ok && m.ContainerID == containerID {
 				res = append(res, m)
 			}
 		}
-		return true
-	})
+	}
 	return res
 }
 
@@ -121,6 +132,11 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent, containerID string
 			}
 			log.Debugf("update container css data: %+v", m)
 			cgroupCssMetaDataMap.Store(css, m)
+			addrsAny, _ := cgroupCssByContainerID.LoadOrStore(containerID, &map[uint64]struct{}{})
+			addrs := addrsAny.(*map[uint64]struct{})
+			cgroupCssIndexMu.Lock()
+			(*addrs)[css] = struct{}{}
+			cgroupCssIndexMu.Unlock()
 		}
 	}
 
@@ -141,6 +157,18 @@ func cgroupDeleteCssData(data *containerCssPerfEvent, containerID string) error 
 			m, loaded := cgroupCssMetaDataMap.LoadAndDelete(css)
 			if loaded {
 				log.Debugf("delete container css data: %+v", m)
+				if mm, ok := m.(*containerCssMetaData); ok {
+					if addrsAny, found := cgroupCssByContainerID.Load(mm.ContainerID); found {
+						addrs := addrsAny.(*map[uint64]struct{})
+						cgroupCssIndexMu.Lock()
+						delete(*addrs, css)
+						remaining := len(*addrs)
+						cgroupCssIndexMu.Unlock()
+						if remaining == 0 {
+							cgroupCssByContainerID.CompareAndDelete(mm.ContainerID, addrsAny)
+						}
+					}
+				}
 			}
 		}
 	}
