@@ -23,7 +23,7 @@ import (
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
-func setupTempProcRoot(t *testing.T) string {
+func setupTempProcRoot(t testing.TB) string {
 	t.Helper()
 	tmpRoot := t.TempDir()
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
@@ -32,14 +32,14 @@ func setupTempProcRoot(t *testing.T) string {
 	return tmpRoot
 }
 
-func mustMkdirAll(t *testing.T, path string) {
+func mustMkdirAll(t testing.TB, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatalf("MkdirAll(%q): %v", path, err)
 	}
 }
 
-func mustWriteFile(t *testing.T, path, content string) {
+func mustWriteFile(t testing.TB, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile(%q): %v", path, err)

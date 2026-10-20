@@ -22,7 +22,7 @@ import (
 	"testing"
 )
 
-func resetKernelSymbolFixture(t *testing.T, lines []string) {
+func resetKernelSymbolFixture(t testing.TB, lines []string) {
 	t.Helper()
 	tmpRoot := setupTempProcRoot(t)
 	procDir := filepath.Join(tmpRoot, "proc")
@@ -35,6 +35,7 @@ func resetKernelSymbolFixture(t *testing.T, lines []string) {
 
 	ksymTable = symbols{}
 	ksymLoadOnce = sync.Once{}
+	clear(ksymFrameCache)
 	t.Cleanup(func() {
 		ksymTable = symbols{}
 		ksymLoadOnce = sync.Once{}
@@ -160,6 +161,7 @@ func TestDumpKernelBackTraceKsymNotFound(t *testing.T) {
 	// triggering the ksym-not-found failFrame path.
 	ksymTable = symbols{}
 	ksymLoadOnce = sync.Once{}
+	clear(ksymFrameCache)
 	ksymLoadOnce.Do(func() {}) // mark done so ensureKsymsLoaded is a no-op
 	t.Cleanup(func() {
 		ksymTable = symbols{}
