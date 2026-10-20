@@ -21,6 +21,9 @@
 - Update existing unit tests only; do not create new unit test files. Add integration tests for components with external dependencies.
 - Update docs when changing storage schemas, config options, features, or APIs.
 - Surgical changes: touch what the task needs, match local style, don't refactor unrelated code.
+- Preserve existing function groups and order in shared shell helpers.
+  Add related functions at the end of their group and independent helpers after
+  the existing function groups; keep definitions before any top-level invocation.
 - Define verifiable success criteria for non-trivial work; iterate until checks pass or blockers are explicit.
 - Performance-sensitive paths (BPF event processing, metric loops) require benchmark justification.
 - Comments, logs, and error messages: concise and focused — highlight what matters.
