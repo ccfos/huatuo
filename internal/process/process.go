@@ -15,6 +15,7 @@
 package process
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -25,6 +26,10 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+// setns switches the calling thread into the namespace referred to by fd.
+// It is a variable so tests can observe the enter and restore sequence.
+var setns = unix.Setns
 
 // Executable returns pid's executable path.
 func Executable(pid int) (string, error) {
@@ -80,18 +85,41 @@ func CommandLine(pid int) (string, error) {
 }
 
 // Hostname returns the hostname from pid's UTS namespace.
-func Hostname(pid int) (string, error) {
-	fd, err := os.Open(procfs.Path(strconv.Itoa(pid), "ns/uts"))
+//
+// The calling OS thread is locked before the caller's own namespace is read, so
+// the namespace that is restored belongs to the very thread that runs setns, and
+// it is restored while that thread is still locked: an unrestored thread would
+// keep reporting the container hostname for every later hostname read scheduled
+// on it.
+func Hostname(pid int) (hostname string, returnedErr error) {
+	targetNS, err := os.Open(procfs.Path(strconv.Itoa(pid), "ns/uts"))
 	if err != nil {
 		return "", err
 	}
-	defer fd.Close()
+	defer targetNS.Close()
 
+	// The thread is locked first: /proc/self describes the thread group, so only
+	// /proc/thread-self is guaranteed to name the namespace of the thread that
+	// executes setns below.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	if err := unix.Setns(int(fd.Fd()), unix.CLONE_NEWUTS); err != nil {
+	currentNS, err := os.Open(procfs.Path("thread-self", "ns/uts"))
+	if err != nil {
 		return "", err
 	}
+	defer currentNS.Close()
+
+	if err := setns(int(targetNS.Fd()), unix.CLONE_NEWUTS); err != nil {
+		return "", err
+	}
+	// Registered after UnlockOSThread so it runs while the thread is still
+	// locked, and before the namespace file descriptors are closed.
+	defer func() {
+		if err := setns(int(currentNS.Fd()), unix.CLONE_NEWUTS); err != nil {
+			returnedErr = errors.Join(returnedErr, fmt.Errorf("restore UTS namespace: %w", err))
+		}
+	}()
+
 	return os.Hostname()
 }
