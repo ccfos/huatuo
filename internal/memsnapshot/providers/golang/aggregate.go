@@ -110,7 +110,8 @@ func scaleHeapSample(count, size, rate int64) (int64, int64) {
 		return count, size
 	}
 	averageSize := float64(size) / float64(count)
-	scale := 1 / (1 - math.Exp(-averageSize/float64(rate)))
+	// Expm1 preserves small inclusion probabilities that 1-Exp would round to zero.
+	scale := 1 / -math.Expm1(-averageSize/float64(rate))
 
 	// Clamp positive estimates before conversion: values >= 2^63, including
 	// +Inf, have implementation-dependent int64 results.
