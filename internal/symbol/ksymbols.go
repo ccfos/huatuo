@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -246,8 +247,11 @@ func ensureKsymsLoaded(isBestEffort bool) (symbols, error) {
 		log.Warnf("symbol: failed to load kallsyms: %v", err)
 		return nil, err
 	}
+	// floorSym selects the last alias. Reverse ties so address lookup
+	// preserves kallsyms' first name while name lookup retains all aliases.
+	slices.Reverse(table)
+	sort.SliceStable(table, func(i, j int) bool { return table[i].Addr < table[j].Addr })
 	table = append(symbols{ksymUnknown}, table...)
-	table[1:].sort()
 	ksymTable.Store(&table)
 	return table, nil
 }
