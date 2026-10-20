@@ -157,16 +157,18 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 	}
 
 	groups := make(map[string]*pendingELFPCs)
+	// Invariants of the loop: process path, procfs root prefix, and the
+	// proc-maps snapshot do not change between stack addresses of one PID.
+	path := r.processes[pid].path
+	module := strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid)))
+	rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
+	_ = r.loadProcMaps(pid)
 	for index, addr := range addrs {
-		path := r.processes[pid].path
-		module := strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid)))
 		if cache.typ == elf.ET_DYN && module != "" {
-			if err = r.loadProcMaps(pid); err == nil {
-				if m := r.procmaps[pid].find(addr); m != nil && m.Pathname == module {
-					baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
-					addPendingELFPC(groups, path, &cache.symbols, addr-baseAddr, index, failFrame("elf-no-sym", ""))
-					continue
-				}
+			if m := r.procmaps[pid].find(addr); m != nil && m.Pathname == module {
+				baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
+				addPendingELFPC(groups, path, &cache.symbols, addr-baseAddr, index, failFrame("elf-no-sym", ""))
+				continue
 			}
 		}
 		if cache.sections.find(addr) != nil {
@@ -188,7 +190,6 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 			continue
 		}
 
-		rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
 		libPath := filepath.Join(rootDir, m.Pathname)
 
 		libCache, loadErr := r.loadLibCache(pid, libPath)
