@@ -20,7 +20,8 @@
 #include <unistd.h>
 
 #define KEEP_FRAME __attribute__((noinline, noclone))
-#define PAGES_PER_ITERATION 64
+/* Bound full-rate events while preserving time for userspace symbolization. */
+#define PAGES_PER_ITERATION 4
 #define ITERATIONS 300
 #define ITERATION_DELAY_US 10000
 
