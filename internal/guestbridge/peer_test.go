@@ -35,13 +35,59 @@ func TestQemuGuestCID(t *testing.T) {
 		args  []string
 		valid bool
 	}{
-		{"pci", []string{"/opt/kata/bin/qemu-system-x86_64", "-name", "sandbox-workload", "-device", "vhost-vsock-pci,guest-cid=4105"}, true},
-		{"mmio", []string{"qemu-system-aarch64", "-name", "guest=sandbox-workload,debug-threads=on", "-device", "vhost-vsock-device,guest-cid=4105"}, true},
-		{"different sandbox", []string{"qemu-system-x86_64", "-name", "sandbox-other", "-device", "vhost-vsock-pci,guest-cid=4105"}, false},
-		{"different executable", []string{"workload", "-name", "sandbox-workload", "-device", "vhost-vsock-pci,guest-cid=4105"}, false},
-		{"host CID", []string{"qemu-system-x86_64", "-name", "sandbox-workload", "-device", "vhost-vsock-pci,guest-cid=2"}, false},
-		{"overflow CID", []string{"qemu-system-x86_64", "-name", "sandbox-workload", "-device", "vhost-vsock-pci,guest-cid=4294967296"}, false},
-		{"duplicate CID", []string{"qemu-system-x86_64", "-name", "sandbox-workload", "-device", "vhost-vsock-pci,guest-cid=4105,guest-cid=4106"}, false},
+		{
+			"pci",
+			[]string{
+				"/opt/kata/bin/qemu-system-x86_64",
+				"-name",
+				"sandbox-workload",
+				"-device",
+				"vhost-vsock-pci,guest-cid=4105",
+			},
+			true,
+		},
+		{
+			"mmio",
+			[]string{
+				"qemu-system-aarch64",
+				"-name",
+				"guest=sandbox-workload,debug-threads=on",
+				"-device",
+				"vhost-vsock-device,guest-cid=4105",
+			},
+			true,
+		},
+		{
+			"different sandbox",
+			[]string{"qemu-system-x86_64", "-name", "sandbox-other", "-device", "vhost-vsock-pci,guest-cid=4105"},
+			false,
+		},
+		{
+			"different executable",
+			[]string{"workload", "-name", "sandbox-workload", "-device", "vhost-vsock-pci,guest-cid=4105"},
+			false,
+		},
+		{
+			"host CID",
+			[]string{"qemu-system-x86_64", "-name", "sandbox-workload", "-device", "vhost-vsock-pci,guest-cid=2"},
+			false,
+		},
+		{
+			"overflow CID",
+			[]string{"qemu-system-x86_64", "-name", "sandbox-workload", "-device", "vhost-vsock-pci,guest-cid=4294967296"},
+			false,
+		},
+		{
+			"duplicate CID",
+			[]string{
+				"qemu-system-x86_64",
+				"-name",
+				"sandbox-workload",
+				"-device",
+				"vhost-vsock-pci,guest-cid=4105,guest-cid=4106",
+			},
+			false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,25 +107,52 @@ func TestQemuGuestCID(t *testing.T) {
 // Firecracker uses the listener directory identity, and unknown CIDs or CIDs shared by multiple Sandboxes are rejected.
 func TestPeerResolution(t *testing.T) {
 	containers := map[string]*pod.Container{
-		"orders":   {ID: "orders", InitPid: 4105, SandboxID: "orders-vm", RuntimeType: "io.containerd.kata-qemu.v2", Labels: map[string]any{"HostNamespace": "application"}},
-		"payments": {ID: "payments", InitPid: 4106, SandboxID: "payments-vm", RuntimeType: "io.containerd.kata-qemu.v2", Labels: map[string]any{"HostNamespace": "application"}},
+		"orders": {
+			ID:          "orders",
+			InitPid:     4105,
+			SandboxID:   "orders-vm",
+			RuntimeType: "io.containerd.kata-qemu.v2",
+			Labels:      map[string]any{"HostNamespace": "application"},
+		},
+		"payments": {
+			ID:          "payments",
+			InitPid:     4106,
+			SandboxID:   "payments-vm",
+			RuntimeType: "io.containerd.kata-qemu.v2",
+			Labels:      map[string]any{"HostNamespace": "application"},
+		},
 	}
 	readFile := func(path string) ([]byte, error) {
 		sandbox, cid := "orders-vm", "5105"
 		if path == "/proc/4106/cmdline" {
 			sandbox, cid = "payments-vm", "5106"
 		}
-		return []byte(strings.Join([]string{"qemu-system-x86_64", "-name", "sandbox-" + sandbox, "-device", "vhost-vsock-pci,guest-cid=" + cid}, "\x00")), nil
+		return []byte(
+			strings.Join(
+				[]string{"qemu-system-x86_64", "-name", "sandbox-" + sandbox, "-device", "vhost-vsock-pci,guest-cid=" + cid},
+				"\x00",
+			),
+		), nil
 	}
 	peer, err := resolvePeerFromContainers(&vsock.Addr{ContextID: 5105}, "", containers, readFile)
 	if err != nil || peer.SandboxID != "orders-vm" || peer.Namespace != "application" {
 		t.Errorf("peer=%+v err=%v", peer, err)
 	}
-	peer, err = resolvePeerFromContainers(&net.UnixAddr{Name: "kata.hvsock", Net: "unix"}, "payments-vm", containers, readFile)
+	peer, err = resolvePeerFromContainers(
+		&net.UnixAddr{Name: "kata.hvsock", Net: "unix"},
+		"payments-vm",
+		containers,
+		readFile,
+	)
 	if err != nil || peer.SandboxID != "payments-vm" {
 		t.Errorf("Firecracker peer=%+v err=%v", peer, err)
 	}
-	if _, err := resolvePeerFromContainers(&vsock.Addr{ContextID: 5999}, "", containers, readFile); !errors.Is(err, errUnknownPeerSandbox) {
+	if _, err := resolvePeerFromContainers(
+		&vsock.Addr{ContextID: 5999},
+		"",
+		containers,
+		readFile,
+	); !errors.Is(err, errUnknownPeerSandbox) {
 		t.Errorf("unknown CID error=%v", err)
 	}
 	duplicate := func(path string) ([]byte, error) {
@@ -129,14 +202,30 @@ func TestWaitPeerStops(t *testing.T) {
 
 func TestPIDReuseDoesNotReuseAnotherSandboxCID(t *testing.T) {
 	containers := map[string]*pod.Container{
-		"old":    {ID: "old", InitPid: 4105, SandboxID: "orders-vm", RuntimeType: "io.containerd.kata-qemu.v2"},
-		"reused": {ID: "reused", InitPid: 4105, SandboxID: "payments-vm", RuntimeType: "io.containerd.kata-qemu.v2", Labels: map[string]any{"HostNamespace": "application"}},
+		"old": {ID: "old", InitPid: 4105, SandboxID: "orders-vm", RuntimeType: "io.containerd.kata-qemu.v2"},
+		"reused": {
+			ID:          "reused",
+			InitPid:     4105,
+			SandboxID:   "payments-vm",
+			RuntimeType: "io.containerd.kata-qemu.v2",
+			Labels:      map[string]any{"HostNamespace": "application"},
+		},
 	}
 	readFile := func(string) ([]byte, error) {
-		return []byte(strings.Join([]string{"qemu-system-x86_64", "-name", "sandbox-orders-vm", "-device", "vhost-vsock-pci,guest-cid=5105"}, "\x00")), nil
+		return []byte(
+			strings.Join(
+				[]string{"qemu-system-x86_64", "-name", "sandbox-orders-vm", "-device", "vhost-vsock-pci,guest-cid=5105"},
+				"\x00",
+			),
+		), nil
 	}
 	for range 100 {
-		if _, err := resolvePeerFromContainers(&vsock.Addr{ContextID: 5105}, "", containers, readFile); !errors.Is(err, errUnknownPeerSandbox) {
+		if _, err := resolvePeerFromContainers(
+			&vsock.Addr{ContextID: 5105},
+			"",
+			containers,
+			readFile,
+		); !errors.Is(err, errUnknownPeerSandbox) {
 			t.Fatalf("stale PID attributed to another sandbox: %v", err)
 		}
 	}

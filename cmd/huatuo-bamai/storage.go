@@ -34,7 +34,7 @@ import (
 func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	var (
 		tracingStore *tracingstore.Store
-	profileStore *profilingstore.Store
+		profileStore *profilingstore.Store
 		err          error
 	)
 
@@ -71,7 +71,7 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 func initStorage(
 	cfg *config.Config,
 ) (
-	tracingStore *tracingstore.Store
+	tracingStore *tracingstore.Store,
 	profileStore *profilingstore.Store,
 	returnedErr error,
 ) {
@@ -90,7 +90,13 @@ func initStorage(
 
 	if cfg.GuestTransport.Enabled {
 		g := cfg.GuestTransport
-		options := &vsock.Options{Port: g.Port, Version: AppVersion, MaxMessageSize: g.MaxMessageBytes, MaxPendingBytes: g.MaxPendingBytes, IOTimeout: time.Duration(g.IOTimeoutSeconds) * time.Second}
+		options := &vsock.Options{
+			Port:            g.Port,
+			Version:         AppVersion,
+			MaxMessageSize:  g.MaxMessageBytes,
+			MaxPendingBytes: g.MaxPendingBytes,
+			IOTimeout:       time.Duration(g.IOTimeoutSeconds) * time.Second,
+		}
 		tracingStore, err := tracingstore.NewFromConfig(context.Background(), tracingstore.Config{VSOCK: options})
 		if err != nil {
 			return nil, nil, err
@@ -128,20 +134,24 @@ func initStorage(
 	tracingStore = initializedTracingStore
 
 	if cfg.Storage.Elasticsearch.Enabled() {
-        es := cfg.Storage.Elasticsearch
-        profileStore, returnedErr = profilingstore.NewFromConfig(context.Background(), profilingstore.Config{
-            Addresses: strutil.SplitCommaList(es.Address), Username: es.Username,
-            Password: es.Password, Index: es.Index,
-        })
-    }
-    return tracingStore, profileStore, returnedErr
+		es := cfg.Storage.Elasticsearch
+		profileStore, returnedErr = profilingstore.NewFromConfig(context.Background(), profilingstore.Config{
+			Addresses: strutil.SplitCommaList(es.Address), Username: es.Username,
+			Password: es.Password, Index: es.Index,
+		})
+	}
+	return tracingStore, profileStore, returnedErr
 }
 
 func closeStores(ctx context.Context, tracingStore *tracingstore.Store, profileStore *profilingstore.Store) error {
-    var errs []error
-    if tracingStore != nil { errs = append(errs, tracingStore.Close(ctx)) }
-    if profileStore != nil { errs = append(errs, profileStore.Close(ctx)) }
-    return errors.Join(errs...)
+	var errs []error
+	if tracingStore != nil {
+		errs = append(errs, tracingStore.Close(ctx))
+	}
+	if profileStore != nil {
+		errs = append(errs, profileStore.Close(ctx))
+	}
+	return errors.Join(errs...)
 }
 
 func newDocumentBuilder(opts *Options) *document.Builder {

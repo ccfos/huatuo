@@ -113,8 +113,10 @@ func TestBudgetedDecoderFrameTimeout(t *testing.T) {
 	}
 }
 
-// TestBudgetedDecoderIdleConnection verifies that waiting for the first or next frame does not consume the receive timeout:
-// a connection idle beyond the frame timeout can still receive a full frame, and the previous frame's read deadline does not affect the next frame.
+// TestBudgetedDecoderIdleConnection verifies that waiting for the first or next frame does not consume the receive
+// timeout:
+// a connection idle beyond the frame timeout can still receive a full frame, and the previous frame's read
+// deadline does not affect the next frame.
 func TestBudgetedDecoderIdleConnection(t *testing.T) {
 	frame := marshalChunk(t, []byte("kernel_sched_tick"))
 	budget, err := NewDecodeBudget(uint64(len(frame)))

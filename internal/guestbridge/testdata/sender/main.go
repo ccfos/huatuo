@@ -45,19 +45,43 @@ func send() error {
 	if os.Args[4] == "profiling" {
 		tool = vsock.ProfilingTool
 	}
-	b, err := vsock.New(vsock.Options{Port: uint32(port), ToolName: tool, Version: "integration", IOTimeout: 3 * time.Second, RetryInterval: 100 * time.Millisecond})
+	b, err := vsock.New(
+		vsock.Options{
+			Port:          uint32(port),
+			ToolName:      tool,
+			Version:       "integration",
+			IOTimeout:     3 * time.Second,
+			RetryInterval: 100 * time.Millisecond,
+		},
+	)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	defer b.Close(ctx)
-	base := map[string]any{"tracer_id": "guest-test", "tracer_name": "cpu", "hostname": "forged", "region": "forged", "source_type": "host", "container_id": os.Args[2], "tracer_type": "event", "observed_timestamp": "2026-10-16T01:00:00Z", "tracer_data": map[string]any{"counter": json.Number("18446744073709551615")}}
+	base := map[string]any{
+		"tracer_id":          "guest-test",
+		"tracer_name":        "cpu",
+		"hostname":           "forged",
+		"region":             "forged",
+		"source_type":        "host",
+		"container_id":       os.Args[2],
+		"tracer_type":        "event",
+		"observed_timestamp": "2026-10-16T01:00:00Z",
+		"tracer_data":        map[string]any{"counter": json.Number("18446744073709551615")},
+	}
 	if tool == vsock.ProfilingTool {
 		base["tracer_type"] = "profiling"
 		base["started_timestamp"] = "2026-10-16T01:00:00Z"
 		delete(base, "tracer_data")
-		base["profile_data"] = map[string]any{"profile_type": "cpu", "profile": map[string]any{"time_nanos": json.Number("9007199254740993"), "sample": []any{map[string]any{"value": []any{json.Number("9007199254740993")}}}}}
+		base["profile_data"] = map[string]any{
+			"profile_type": "cpu",
+			"profile": map[string]any{
+				"time_nanos": json.Number("9007199254740993"),
+				"sample":     []any{map[string]any{"value": []any{json.Number("9007199254740993")}}},
+			},
+		}
 	}
 	// Send an impersonation attempt first, then the valid observation on the same
 	// authenticated connection. The Host must reject the first without misrouting it.

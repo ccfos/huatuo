@@ -32,7 +32,13 @@ func BenchmarkReconcileCPUStates(b *testing.B) {
 			tracer := &cpuIdleTracing{containers: make(map[string]*containerCPUState)}
 			members := make(map[string]*pod.Container, 1024)
 			for i := range 1024 {
-				c := &pod.Container{ID: fmt.Sprint(i), Type: pod.ContainerTypeNormal, CgroupPath: fmt.Sprintf("/cpu/%d", i), CgroupCss: map[string]uint64{"cpu": uint64(i + 1)}, SyncedAt: time.Unix(int64(i), 0)}
+				c := &pod.Container{
+					ID:         fmt.Sprint(i),
+					Type:       pod.ContainerTypeNormal,
+					CgroupPath: fmt.Sprintf("/cpu/%d", i),
+					CgroupCss:  map[string]uint64{"cpu": uint64(i + 1)},
+					SyncedAt:   time.Unix(int64(i), 0),
+				}
 				if kata {
 					c.RuntimeType = "io.containerd.kata-qemu.v2"
 					c.SandboxID = fmt.Sprint(i / 4)

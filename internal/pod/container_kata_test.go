@@ -74,18 +74,50 @@ func TestKataCgroupPath(t *testing.T) {
 		missingFile      bool
 		wantErr          bool
 	}{
-		{name: "literal colon path", proc: "0::/pod.slice:cri-containerd:sandbox\n", want: "/pod.slice:cri-containerd:sandbox", mode: cgroups.Unified},
-		{name: "systemd nested path", proc: "0::/kubepods.slice/pod.slice/cri-containerd-sandbox.scope\n", want: "/kubepods.slice/pod.slice/cri-containerd-sandbox.scope", mode: cgroups.Unified},
-		{name: "cgroup v1", proc: "2:cpu,cpuacct:/kata/sandbox\n3:memory:/kata/sandbox\n", want: "/kata/sandbox", mode: cgroups.Legacy},
-		{name: "hybrid uses v1 controllers", proc: "0::/unified\n2:cpu,cpuacct:/kata/sandbox\n3:memory:/kata/sandbox\n", want: "/kata/sandbox", mode: cgroups.Hybrid},
-		{name: "missing stat file", proc: "0::/kata/sandbox\n", want: "/kata/sandbox", mode: cgroups.Unified, missingFile: true, wantErr: true},
+		{
+			name: "literal colon path",
+			proc: "0::/pod.slice:cri-containerd:sandbox\n",
+			want: "/pod.slice:cri-containerd:sandbox",
+			mode: cgroups.Unified,
+		},
+		{
+			name: "systemd nested path",
+			proc: "0::/kubepods.slice/pod.slice/cri-containerd-sandbox.scope\n",
+			want: "/kubepods.slice/pod.slice/cri-containerd-sandbox.scope",
+			mode: cgroups.Unified,
+		},
+		{
+			name: "cgroup v1",
+			proc: "2:cpu,cpuacct:/kata/sandbox\n3:memory:/kata/sandbox\n",
+			want: "/kata/sandbox",
+			mode: cgroups.Legacy,
+		},
+		{
+			name: "hybrid uses v1 controllers",
+			proc: "0::/unified\n2:cpu,cpuacct:/kata/sandbox\n3:memory:/kata/sandbox\n",
+			want: "/kata/sandbox",
+			mode: cgroups.Hybrid,
+		},
+		{
+			name:        "missing stat file",
+			proc:        "0::/kata/sandbox\n",
+			want:        "/kata/sandbox",
+			mode:        cgroups.Unified,
+			missingFile: true,
+			wantErr:     true,
+		},
 		{name: "empty path", proc: "0::\n", mode: cgroups.Unified, wantErr: true},
 		{name: "root cgroup", proc: "0::/\n", mode: cgroups.Unified, wantErr: true},
 		{name: "relative path", proc: "0::kata/sandbox\n", mode: cgroups.Unified, wantErr: true},
 		{name: "namespace relative path", proc: "0::/../sandbox\n", mode: cgroups.Unified, wantErr: true},
 		{name: "malformed record", proc: "invalid\n", mode: cgroups.Unified, wantErr: true},
 		{name: "v1 cannot stand in for v2", proc: "2:cpu,cpuacct:/kata/sandbox\n", mode: cgroups.Unified, wantErr: true},
-		{name: "different controller paths", proc: "2:cpu,cpuacct:/kata/sandbox\n3:memory:/another\n", mode: cgroups.Legacy, wantErr: true},
+		{
+			name:    "different controller paths",
+			proc:    "2:cpu,cpuacct:/kata/sandbox\n3:memory:/another\n",
+			mode:    cgroups.Legacy,
+			wantErr: true,
+		},
 		{name: "unsupported mode", proc: "0::/kata/sandbox\n", mode: cgroups.Unavailable, wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,9 +163,28 @@ func TestKataCgroupPath(t *testing.T) {
 func TestKataCSSRepresentative(t *testing.T) {
 	oldView := containerView
 	t.Cleanup(func() { containerView = oldView })
-	first := &Container{ID: "z-first", RuntimeType: "io.containerd.kata-qemu.v2", SandboxID: "vm", Type: ContainerTypeNormal, SyncedAt: time.Unix(1, 0), CgroupCss: map[string]uint64{subsystem.SubsystemCPU: 10}}
-	second := &Container{ID: "a-second", RuntimeType: first.RuntimeType, SandboxID: "vm", Type: ContainerTypeNormal, SyncedAt: time.Unix(2, 0), CgroupCss: map[string]uint64{subsystem.SubsystemCPU: 10}}
-	runc := &Container{ID: "runc", RuntimeType: "io.containerd.runc.v2", Type: ContainerTypeNormal, CgroupCss: map[string]uint64{subsystem.SubsystemCPU: 20}}
+	first := &Container{
+		ID:          "z-first",
+		RuntimeType: "io.containerd.kata-qemu.v2",
+		SandboxID:   "vm",
+		Type:        ContainerTypeNormal,
+		SyncedAt:    time.Unix(1, 0),
+		CgroupCss:   map[string]uint64{subsystem.SubsystemCPU: 10},
+	}
+	second := &Container{
+		ID:          "a-second",
+		RuntimeType: first.RuntimeType,
+		SandboxID:   "vm",
+		Type:        ContainerTypeNormal,
+		SyncedAt:    time.Unix(2, 0),
+		CgroupCss:   map[string]uint64{subsystem.SubsystemCPU: 10},
+	}
+	runc := &Container{
+		ID:          "runc",
+		RuntimeType: "io.containerd.runc.v2",
+		Type:        ContainerTypeNormal,
+		CgroupCss:   map[string]uint64{subsystem.SubsystemCPU: 20},
+	}
 	members := map[string]*Container{first.ID: first, second.ID: second, runc.ID: runc}
 	check := func(want *Container) {
 		t.Helper()
