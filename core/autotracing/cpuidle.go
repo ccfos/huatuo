@@ -77,6 +77,8 @@ type cpuIdleTracing struct {
 	filter           *matcher.ContainerMatcher
 	containers       map[string]*containerCPUState
 	hostCPUCount     uint64
+	matchedKata      map[string]*pod.Container
+	cssContainers    map[uint64]*pod.Container
 }
 
 type containerCPUState struct {
@@ -168,7 +170,10 @@ func (c *cpuIdleTracing) reconcileContainerStates(containers map[string]*pod.Con
 		state.containerID = ""
 	}
 
-	var cssContainers map[uint64]*pod.Container
+	// Clear pointers to departed containers while retaining map capacity.
+	clear(c.matchedKata)
+	clear(c.cssContainers)
+	var hasRepresentatives bool
 	for _, container := range containers {
 		// VM lifetime is independent of which business member can be sampled.
 		if sandboxID := container.HostKataSandboxID(); sandboxID != "" {
@@ -185,16 +190,20 @@ func (c *cpuIdleTracing) reconcileContainerStates(containers map[string]*pod.Con
 		var state *containerCPUState
 		if sandboxID != "" {
 			css = container.CgroupCss["cpu"]
-			if cssContainers == nil {
-				matched := make(map[string]*pod.Container)
+			if !hasRepresentatives {
+				if c.matchedKata == nil {
+					c.matchedKata = make(map[string]*pod.Container)
+					c.cssContainers = make(map[uint64]*pod.Container)
+				}
 				for id, member := range containers {
 					if member.HostKataSandboxID() != "" && member.Type.IsNormal() && c.filter.Match(member) {
-						matched[id] = member
+						c.matchedKata[id] = member
 					}
 				}
-				cssContainers = pod.BuildCssContainers(matched, "cpu")
+				pod.FillCssContainers(c.matchedKata, "cpu", c.cssContainers)
+				hasRepresentatives = true
 			}
-			if css == 0 || cssContainers[css] != container {
+			if css == 0 || c.cssContainers[css] != container {
 				continue
 			}
 			state = c.containers["kata:"+sandboxID]
