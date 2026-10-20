@@ -97,6 +97,47 @@ func TestServiceAuthenticateReturnsCopy(t *testing.T) {
 	require.Equal(t, Permission("GET /v1/profiling/**"), fresh.Permissions[0])
 }
 
+func TestServiceAuthenticateToken(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService()
+
+	viewer, ok := service.Authenticate("viewer-secret")
+	require.True(t, ok)
+	require.Equal(t, "viewer-2026", viewer.ID)
+	require.False(t, viewer.IsAdmin)
+	require.Equal(
+		t,
+		[]Permission{"GET /v1/profiling/**", "/v1/tracing/:id"},
+		viewer.Permissions,
+	)
+
+	admin, ok := service.Authenticate("admin-secret")
+	require.True(t, ok)
+	require.Equal(t, "admin-2026", admin.ID)
+	require.True(t, admin.IsAdmin)
+
+	_, ok = service.Authenticate("unknown-secret")
+	require.False(t, ok)
+
+	_, ok = NewService(nil).Authenticate("viewer-secret")
+	require.False(t, ok)
+}
+
+func TestServiceDuplicateBearerTokenLastWins(t *testing.T) {
+	t.Parallel()
+
+	service := NewService([]UserConfig{
+		{ID: "first", BearerToken: "shared-secret"},
+		{ID: "second", BearerToken: "shared-secret", IsAdmin: true},
+	})
+
+	principal, ok := service.Authenticate("shared-secret")
+	require.True(t, ok)
+	require.Equal(t, "second", principal.ID)
+	require.True(t, principal.IsAdmin)
+}
+
 func TestServiceAuthorize(t *testing.T) {
 	t.Parallel()
 
