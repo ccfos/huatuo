@@ -23,47 +23,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"sync"
 	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs"
-	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/randomid"
-	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-const (
-	irqTracingToolName          = "irqtracing"
-	maxIRQTracingOutputBytes    = 64 << 10
-	maxIRQTracingErrorOutputLen = 4096
-)
-
-var pendingIRQTracingResults sync.Map
-
-type pendingIRQTracingResult struct {
-	result chan *irqTracingCLIResult
-}
+const irqTracingToolName = "irqtracing"
 
 func init() {
 	tracing.RegisterEventTracing(irqTracingToolName, newIRQTracing)
-	toolstream.RegisterDefault[*irqTracingCLIResult](irqTracingToolName, handleIRQTracingResult)
-}
-
-func handleIRQTracingResult(sess *toolstream.Session, result *irqTracingCLIResult) error {
-	value, ok := pendingIRQTracingResults.LoadAndDelete(sess.TaskID)
-	if !ok {
-		return fmt.Errorf("irqtracing result has no pending request for task %q", sess.TaskID)
-	}
-
-	pending := value.(*pendingIRQTracingResult)
-	pending.result <- result
-	return nil
 }
 
 func newIRQTracing() (*tracing.EventTracingAttr, error) {
@@ -112,22 +87,6 @@ type HitCPUInfo struct {
 	PrevUtil  int64 `json:"prev_util"`
 	NowUtil   int64 `json:"now_util"`
 	DeltaUtil int64 `json:"delta_util"`
-}
-
-// IRQTracingData is the data saved on each trigger.
-type IRQTracingData struct {
-	Rule          string                `json:"rule"`
-	TriggerCPU    int                   `json:"trigger_cpu"`
-	TraceDuration int64                 `json:"trace_duration"`
-	HitCPUs       []HitCPUInfo          `json:"hit_cpus"`
-	FlameData     *profiler.ProfileData `json:"flamedata"`
-	NMissed       uint64                `json:"nmissed"`
-}
-
-// irqTracingCLIResult is the payload produced by the irqtracing CLI.
-type irqTracingCLIResult struct {
-	FlameData *profiler.ProfileData `json:"flamedata"`
-	NMissed   uint64                `json:"nmissed"`
 }
 
 func readCPUIrqRaw(fs procfs.FS) ([]cpuIrqRaw, error) {
@@ -418,152 +377,64 @@ func (c *irqTracing) Start(ctx context.Context) error {
 			c.lastTraceAt = sampledAt
 			log.WithField("rule", rule).
 				WithField("trigger_cpu", triggerCPU).
-				WithField("hit_cpus", len(hits)).
+				WithField("hit_cpus", hits).
 				Info("irqtracing triggered")
 
-			if err := c.traceAndSave(ctx, rule, triggerCPU, hits); err != nil {
+			if err := runIRQTracingCLI(ctx, triggerCPU, int64(c.traceDuration/time.Second), c.maxEventsPerSecond); err != nil {
 				log.Warnf("irqtracing trace cpu %d: %v", triggerCPU, err)
 			}
 		}
 	}
 }
 
-// traceAndSave runs the irqtracing CLI to collect the flame graph on triggerCPU
-// and stores the assembled tracing data.
-func (c *irqTracing) traceAndSave(ctx context.Context, rule string, triggerCPU int, hits []HitCPUInfo) error {
-	startedAt := timeutil.Now()
-	result, err := runIRQTracingCLI(
-		ctx,
-		triggerCPU,
-		int64(c.traceDuration/time.Second),
-		c.maxEventsPerSecond,
-	)
-	if err != nil {
-		return err
-	}
-
-	// A non-zero nmissed means samples were dropped during the window (sample
-	// budget or full counts maps): the saved flame graph is a partial
-	// profile, not a complete count, so surface it explicitly.
-	if result.NMissed > 0 {
-		log.Warnf("irqtracing trace cpu %d: %d samples dropped, saved flame graph is incomplete",
-			triggerCPU, result.NMissed)
-	}
-
-	if err := tracing.Save(&tracing.WriteRequest{
-		TracerName:       irqTracingToolName,
-		StartedTimestamp: startedAt,
-		TracerRunType:    types.TracerRunTypeAutotracing,
-		TracerData: &IRQTracingData{
-			Rule:          rule,
-			TriggerCPU:    triggerCPU,
-			TraceDuration: int64(c.traceDuration / time.Second),
-			HitCPUs:       hits,
-			FlameData:     result.FlameData,
-			NMissed:       result.NMissed,
-		},
-	}); err != nil {
-		// Storage failure is non-fatal: the flame graph was already collected,
-		// so we only log and keep the tracer loop running.
-		log.Warnf("failed to save tracing data: %v", err)
-	}
-
-	return nil
-}
-
-// runIRQTracingCLI runs the irqtracing tool on the target cpu and receives its
-// result over the daemon's Toolstream server.
+// runIRQTracingCLI waits for query-visible profiling windows and their publication marker.
 func runIRQTracingCLI(
 	parent context.Context,
 	triggerCPU int,
 	runTracingToolTimeout int64,
 	maxEventsPerSecond uint64,
-) (*irqTracingCLIResult, error) {
+) error {
 	taskID, err := randomid.New()
 	if err != nil {
-		return nil, fmt.Errorf("allocate irqtracing task id: %w", err)
+		return fmt.Errorf("allocate irqtracing task id: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(parent, time.Duration(runTracingToolTimeout+30)*time.Second)
 	defer cancel()
 
-	stream, err := toolstream.NewServerDefault()
-	if err != nil {
-		return nil, fmt.Errorf("get Toolstream server: %w", err)
-	}
-	if err := stream.ExpectSession(irqTracingToolName, taskID); err != nil {
-		return nil, fmt.Errorf("expect irqtracing result stream: %w", err)
-	}
-	defer stream.CancelSession(irqTracingToolName, taskID)
-
-	pending := &pendingIRQTracingResult{result: make(chan *irqTracingCLIResult, 1)}
-	pendingIRQTracingResults.Store(taskID, pending)
-	defer pendingIRQTracingResults.Delete(taskID)
-
-	args := irqTracingCLIArgs(triggerCPU, runTracingToolTimeout, maxEventsPerSecond, taskID)
-
-	if err := runIRQTracingProcess(ctx, args); err != nil {
-		return nil, err
-	}
-
-	if err := stream.AwaitSession(ctx, irqTracingToolName, taskID); err != nil {
-		return nil, fmt.Errorf("await irqtracing result stream: %w", err)
-	}
-
-	select {
-	case result := <-pending.result:
-		return result, nil
-	default:
-		return nil, errors.New("irqtracing exited without sending a result")
-	}
-}
-
-func runIRQTracingProcess(ctx context.Context, args []string) error {
-	process, err := exec.New(exec.Spec{
-		Path:           filepath.Join(internalconfig.CoreBinDir, irqTracingToolName),
-		Args:           args,
-		MaxOutputBytes: maxIRQTracingOutputBytes,
-	})
-	if err != nil {
-		return fmt.Errorf("create irqtracing command: %w", err)
-	}
-
-	if err := process.Run(ctx); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("irqtracing timed out: %w", err)
-		}
-		return irqTracingCommandError(process.Stderr(), err)
-	}
-	return nil
-}
-
-func irqTracingCommandError(output []byte, err error) error {
-	diagnostic := bytes.TrimSpace(output)
-	isTruncated := len(diagnostic) > maxIRQTracingErrorOutputLen
-	if isTruncated {
-		diagnostic = diagnostic[:maxIRQTracingErrorOutputLen]
-	}
-	if len(diagnostic) == 0 {
-		return fmt.Errorf("irqtracing failed: %w", err)
-	}
-	if isTruncated {
-		return fmt.Errorf("irqtracing failed: %w: output=%q (truncated)", err, diagnostic)
-	}
-	return fmt.Errorf("irqtracing failed: %w: output=%q", err, diagnostic)
-}
-
-func irqTracingCLIArgs(
-	triggerCPU int,
-	runTracingToolTimeout int64,
-	maxEventsPerSecond uint64,
-	taskID string,
-) []string {
-	return []string{
+	args := []string{
 		"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "irqtracing.o"),
 		"--target-cpu", strconv.Itoa(triggerCPU),
 		"--duration", strconv.FormatInt(runTracingToolTimeout, 10),
 		"--max-events-per-second-per-cpu", strconv.FormatUint(maxEventsPerSecond, 10),
-		"--output-storage", toolstream.DefaultSockPath,
+		"--output-format", "remote-store",
+		"--output-path", toolstream.DefaultSockPath,
 		"--task-id", taskID,
 	}
+
+	if err := runIRQTracingProcess(ctx, args); err != nil {
+		return err
+	}
+
+	log.WithField("task_id", taskID).WithField("trigger_cpu", triggerCPU).Info("IRQ profiling result published")
+	return nil
+}
+
+func runIRQTracingProcess(ctx context.Context, args []string) error {
+	result, err := executil.Run(ctx, executil.Spec{
+		Path:           filepath.Join(internalconfig.CoreBinDir, irqTracingToolName),
+		Args:           args,
+		MaxStderrBytes: 4 << 10,
+	})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("irqtracing timed out: %w", err)
+		}
+		diagnostic := bytes.TrimSpace(result.Stderr)
+		if len(diagnostic) == 0 {
+			return fmt.Errorf("irqtracing failed: %w", err)
+		}
+		return fmt.Errorf("irqtracing failed: %w: output=%q", err, diagnostic)
+	}
+	return nil
 }

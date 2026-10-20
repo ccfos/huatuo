@@ -21,12 +21,15 @@
 # JSON with the expected top-level schema and the dd workload we drive
 # shows up under per-file attribution. Skipped on hosts without a
 # writable ext4/xfs mount, since anyfsAttachOptions only hooks those.
+# Real BPF contracts additionally cover accounting, metadata, capacity,
+# device filters and complete object loading and attach.
 # Path-validation rules are covered by internal/bpf TestValidateName.
 
 set -exuo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
+require_commands go
 bpf_tool_setup iotracing
 readonly DURATION=8
 io_test_dir=""
@@ -107,3 +110,10 @@ MATCHED_IO=$(jq -ce --arg dir "${io_test_dir}/" '
 
 log_info "matched dd-attributed writes:"
 echo "${MATCHED_IO}" | jq '.'
+
+# Reuse this test's owned filesystem directory after the CLI capture exits.
+stop_by_pid "${WORKLOAD_PID}" 5
+WORKLOAD_PID=""
+TMPDIR="${io_test_dir}" TEST_IOTRACING_FILE_BPF="${TOOL_BPF}" \
+	timeout --kill-after=5s 240s go test -mod=vendor -tags=integration ./cmd/iotracing \
+	-run '^TestIOTracing' -count=1 -v -timeout=230s

@@ -15,6 +15,7 @@
 package toolstream
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -23,30 +24,32 @@ import (
 
 // ClientOptions configures a Client connection.
 type ClientOptions struct {
-	SockPath string
-	ToolName string
-	Version  string
-	TaskID   string
+	SockPath    string
+	ServiceName string // Required handler route.
+	ToolName    string // Optional business source; never used for routing.
+	Version     string
+	TaskID      string
 }
 
 // Client is the tool-side peer; use NewClient to create one.
+// Serialize Send calls; Close may interrupt an in-flight send.
 type Client struct {
 	inner *transport.Client
 }
 
 // NewClient connects to the server and returns a ready Client.
-func NewClient(opts ClientOptions) (*Client, error) {
+func NewClient(opts *ClientOptions) (*Client, error) {
 	if opts.SockPath == "" {
 		return nil, fmt.Errorf("SockPath must not be empty")
 	}
-	if opts.ToolName == "" {
-		return nil, fmt.Errorf("ToolName must not be empty")
+	if opts.ServiceName == "" {
+		return nil, fmt.Errorf("ServiceName must not be empty")
 	}
 	if opts.Version == "" {
 		return nil, fmt.Errorf("Version must not be empty")
 	}
 
-	conn, err := transport.NewClient(opts.SockPath, opts.ToolName, opts.Version, opts.TaskID)
+	conn, err := transport.NewClient(opts.SockPath, opts.ServiceName, opts.ToolName, opts.Version, opts.TaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -54,22 +57,25 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	return &Client{inner: conn}, nil
 }
 
-// Send encodes event and sends it as a payload frame.
-func (c *Client) Send(event any) error {
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
+// SendOptions controls the protocol flags on a payload frame.
+type SendOptions = transport.SendOptions
+
+// Send encodes an optional event and sends it with the requested protocol flags.
+// Commit waits for the server acknowledgement; Close releases the connection.
+func (c *Client) Send(ctx context.Context, event any, opts SendOptions) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	return c.inner.SendChunk(payload, false)
+	var payload []byte
+	if event != nil {
+		var err error
+		payload, err = json.Marshal(event)
+		if err != nil {
+			return fmt.Errorf("marshal: %w", err)
+		}
+	}
+	return c.inner.Send(ctx, payload, opts)
 }
 
-// End sends the end-of-stream marker and closes the connection.
-func (c *Client) End() error {
-	return c.inner.End()
-}
-
-// Close closes the connection without sending an end frame; prefer End.
-func (c *Client) Close() error {
-	return c.inner.Close()
-}
+// Close releases the connection without sending a protocol frame.
+func (c *Client) Close() error { return c.inner.Close() }

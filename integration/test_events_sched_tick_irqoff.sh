@@ -47,12 +47,9 @@ start_sched_tick_test() {
 		--log-debug
 }
 
-command -v jq > /dev/null || skip "jq command is not installed"
-command -v taskset > /dev/null || skip "taskset command is not installed"
+require_commands jq taskset
 taskset -c 0 true > /dev/null 2>&1 \
 	|| skip "CPU 0 is not available to the test process"
-[[ -r "${ROOT_DIR}/_output/bpf/sched_tick.o" ]] \
-	|| fatal "sched_tick BPF object not found: ${ROOT_DIR}/_output/bpf/sched_tick.o"
 
 kprobe_available account_process_tick \
 	|| skip "account_process_tick is not available for kprobe"

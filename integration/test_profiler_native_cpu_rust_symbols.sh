@@ -21,7 +21,7 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-command -v rustc > /dev/null || skip "rustc command is not installed"
+require_commands rustc
 
 readonly RUST_SYMBOL_RUSTC_VERSION=$(rustc --version | awk '{ print $2 }')
 if [[ ! "${RUST_SYMBOL_RUSTC_VERSION}" =~ ^([0-9]+)\.([0-9]+)\. ]]; then

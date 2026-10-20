@@ -16,7 +16,7 @@
 
 # Verify irqtracing's completeness contract on a real kernel: under a softirq
 # flood on the target cpu the result must not pretend to be complete —
-# nmissed > 0 and flamedata present. The drop counter is read after detach;
+# dropped_samples.collection > 0 and profile present. The drop counter is read after detach;
 # that contract is covered by TestDetachAndReadDroppedSamplesDetachBeforeReads.
 
 set -exuo pipefail
@@ -33,10 +33,7 @@ readonly MAX_EVENTS_PER_SECOND_PER_CPU=2
 readonly FLOOD_READY="${OUT_DIR}/flood.ready"
 
 [[ $EUID -eq 0 ]] || fatal "requires root (BPF requires CAP_BPF/CAP_SYS_ADMIN)"
-[[ -x ${TOOL_BIN} ]] || fatal "missing irqtracing binary: ${TOOL_BIN}"
-[[ -f ${TOOL_BPF} ]] || fatal "missing irqtracing bpf object: ${TOOL_BPF}"
-command -v jq > /dev/null 2>&1 || fatal "jq required"
-command -v taskset > /dev/null 2>&1 || fatal "taskset required"
+require_commands jq taskset
 tracepoint_available irq softirq_raise || skip "irq/softirq_raise is unavailable"
 tracepoint_available irq softirq_entry || skip "irq/softirq_entry is unavailable"
 
@@ -105,7 +102,7 @@ tool_has_exited() {
 }
 
 readonly TOOL_DEADLINE=$((DURATION + 30))
-log_info "irqtracing: flood cpu ${TARGET_CPU}, expect nmissed > 0 and flamedata"
+log_info "irqtracing: flood cpu ${TARGET_CPU}, expect collection loss and a profile"
 
 rm -f "${FLOOD_READY}"
 flood_udp "${TARGET_CPU}" &
@@ -118,7 +115,8 @@ wait_until 5 0.1 flood_is_ready \
 	--target-cpu "${TARGET_CPU}" \
 	--duration "${DURATION}" \
 	--max-events-per-second-per-cpu "${MAX_EVENTS_PER_SECOND_PER_CPU}" \
-	--output json > "${OUT_DIR}/result.json" 2> "${OUT_DIR}/err.txt" &
+	--output-format json --output-path "${OUT_DIR}/result.json" \
+	2> "${OUT_DIR}/err.txt" &
 tool_pid=$!
 
 wait_until "${TOOL_DEADLINE}" 1 tool_has_exited \
@@ -133,16 +131,18 @@ wait "${flood_pid}" || true
 flood_pid=""
 tool_pid=""
 
-result_file="${OUT_DIR}/result.json"
-nmissed=$(jq -r '.nmissed' "${result_file}")
-flamedata_null=$(jq -r '.flamedata == null' "${result_file}")
-
-log_info "irqtracing: result=${result_file} nmissed=${nmissed} flamedata_null=${flamedata_null}"
-
-((nmissed > 0)) || fatal "expected nmissed > 0 under flood, got ${nmissed}"
-[[ "${flamedata_null}" == "false" ]] || fatal "expected flamedata under flood"
-if grep -q 'victim\[ksoftirqd' "${result_file}"; then
-	fatal "ksoftirqd was recorded as a victim"
-fi
-
+assert_irqtracing_dropped_samples() {
+	local result_file="${OUT_DIR}/result.json"
+	jq -e '.profile_type == "irqtracing:irq:count:irq:count" and
+        .dropped_samples.collection > 0 and
+        (.profile.sample | length) > 0 and .profile.duration_nanos > 0' \
+		"${result_file}" > /dev/null \
+		|| fatal "expected a profile with collection loss under flood: $(< "${result_file}")"
+	grep -q 'profiling samples dropped; profile is incomplete' "${OUT_DIR}/err.txt" \
+		|| fatal "expected a dropped-sample warning on stderr"
+	if grep -q 'victim\[ksoftirqd' "${result_file}"; then
+		fatal "ksoftirqd was recorded as a victim"
+	fi
+}
+assert_irqtracing_dropped_samples
 log_info "PASS"

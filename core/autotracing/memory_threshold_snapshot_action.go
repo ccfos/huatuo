@@ -307,8 +307,8 @@ func (b *actionBatch) rankCgroupTargets(ctx context.Context) ([]memcgCandidate, 
 type actionBatchOps struct {
 	selectProcess         func(context.Context, cgroupRef, uint64) (selectedProcess, error)
 	validateContainer     func(pod.ContainerRef) error
-	validateProcess       func(context.Context, cgroupRef, memsnapshot.ProcessInstance) error
-	snapshotProcessMemory func(context.Context, memsnapshot.ProcessInstance, collector.Options) (*collector.Result, error)
+	validateProcess       func(context.Context, cgroupRef, memsnapshot.ProcessInstanceID) error
+	snapshotProcessMemory func(context.Context, memsnapshot.ProcessInstanceID, collector.Options) (*collector.Result, error)
 	save                  func(*tracing.WriteRequest) error
 }
 
@@ -339,44 +339,44 @@ func (b *actionBatch) snapshotCandidate(ctx context.Context, candidate *memcgCan
 
 	selectionCtx, cancelSelection := context.WithTimeout(ctx, processSelectionTimeout)
 	selectionStarted := time.Now()
-	process, err := ops.selectProcess(selectionCtx, observation.Cgroup, candidate.max)
+	selected, err := ops.selectProcess(selectionCtx, observation.Cgroup, candidate.max)
 	cancelSelection()
 	if err != nil {
 		return fmt.Errorf("select process: %w", err)
 	}
 	log.WithField("cgroup", observation.Cgroup.Path).
-		WithField("pid", process.identity.TGID).
-		WithField("start_time_ticks", process.identity.StartTimeTicks).
+		WithField("pid", selected.instance.TGID).
+		WithField("start_time_ticks", selected.instance.StartTimeTicks).
 		WithField("elapsed_ms", time.Since(selectionStarted).Milliseconds()).
 		Debug("memory threshold snapshot process selection finished")
 
-	checkTarget := func(checkCtx context.Context, identity memsnapshot.ProcessInstance) error {
+	checkTarget := func(checkCtx context.Context, process memsnapshot.ProcessInstanceID) error {
 		if err := checkCtx.Err(); err != nil {
 			return err
 		}
 		if err := ops.validateContainer(observation.Container); err != nil {
 			return err
 		}
-		return ops.validateProcess(checkCtx, observation.Cgroup, identity)
+		return ops.validateProcess(checkCtx, observation.Cgroup, process)
 	}
-	if err := checkTarget(ctx, process.identity); err != nil {
+	if err := checkTarget(ctx, selected.instance); err != nil {
 		return fmt.Errorf("validate process before capture: %w", err)
 	}
-	result, err := ops.snapshotProcessMemory(ctx, process.identity, collector.Options{
-		TopK:            cfg.MaxMemoryObjectEntries,
-		SnapshotTimeout: time.Duration(cfg.RunTracingToolTimeout) * time.Second,
+	result, err := ops.snapshotProcessMemory(ctx, selected.instance, collector.Options{
+		MaxMemoryObjectEntries: cfg.MaxMemoryObjectEntries,
+		SnapshotTimeout:        time.Duration(cfg.RunTracingToolTimeout) * time.Second,
 	})
 	if err != nil {
 		return fmt.Errorf("capture process memory: %w", err)
 	}
-	if err := checkTarget(ctx, process.identity); err != nil {
+	if err := checkTarget(ctx, selected.instance); err != nil {
 		return fmt.Errorf("validate process before persistence: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	return b.saveSnapshot(candidate, process, result, started)
+	return b.saveSnapshot(candidate, selected, result, started)
 }
 
 func (b *actionBatch) saveSnapshot(candidate *memcgCandidate, process selectedProcess,
@@ -384,20 +384,20 @@ func (b *actionBatch) saveSnapshot(candidate *memcgCandidate, process selectedPr
 ) error {
 	observation := candidate.observation
 	saveStarted := time.Now()
-	log.WithField("pid", process.identity.TGID).
+	log.WithField("pid", process.instance.TGID).
 		Debug("memory threshold snapshot save started")
 	err := b.ops.save(&tracing.WriteRequest{
 		TracerName:        memoryThresholdSnapshotTracer,
 		ContainerID:       observation.Container.Key.ID,
 		TracerRunType:     types.TracerRunTypeAutotracing,
 		StartedTimestamp:  timeutil.Timestamp{Time: started.UTC()},
-		ObservedTimestamp: timeutil.Timestamp{Time: result.SnapshotTime},
+		ObservedTimestamp: timeutil.Timestamp{Time: result.SnapshotStartedAt},
 		TracerData: &memoryThresholdSnapshotData{
 			CgroupPath:         observation.Cgroup.Path,
 			MemoryCurrent:      candidate.current,
 			MemoryMax:          candidate.max,
 			MemoryUsagePercent: candidate.ratio * 100,
-			VictimPID:          process.identity.TGID,
+			VictimPID:          process.instance.TGID,
 			VictimProcessName:  process.comm,
 			VictimOOMScoreAdj:  process.oomScoreAdj,
 			Language:           result.Language,
@@ -405,7 +405,7 @@ func (b *actionBatch) saveSnapshot(candidate *memcgCandidate, process selectedPr
 			ProcessMemory:      result.ProcessMemory,
 		},
 	})
-	log.WithField("pid", process.identity.TGID).
+	log.WithField("pid", process.instance.TGID).
 		WithField("elapsed_ms", time.Since(saveStarted).Milliseconds()).
 		WithError(err).
 		Debug("memory threshold snapshot save finished")

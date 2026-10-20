@@ -16,6 +16,7 @@
 package toolstream
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,15 +26,23 @@ import (
 	"github.com/ccfos/huatuo/internal/toolstream/transport"
 )
 
-// Session carries per-connection metadata from the Connect handshake.
-type Session struct {
-	*transport.Session
-	// IsExpected identifies a stream registered as part of an Operation result.
-	IsExpected bool
+// Request is one frame and a snapshot of its connection metadata.
+// Data is nil for control-only frames or decoding failures.
+type Request[T any] struct {
+	ServiceName string
+	ToolName    string
+	Version     string
+	TaskID      string
+	Data        *T
+	End         bool
+	Commit      bool
+	// PriorErr contains failures from earlier frames only.
+	PriorErr error
+	// Err contains tool, protocol or decoding failures for this frame.
+	Err error
 }
 
-// untypedHandler is the codec-erased internal dispatch signature.
-type untypedHandler func(sess *Session, payload []byte) error
+type untypedHandler func(context.Context, *transport.Session, transport.ChunkMsg) error
 
 // DefaultSockPath is the Unix socket path used by the default server.
 const DefaultSockPath = "/var/run/huatuo-toolstream.sock"
@@ -58,8 +67,6 @@ type Server struct {
 	// Handler registry:
 	handlersMu sync.RWMutex
 	handlers   map[string]untypedHandler
-	sessionsMu sync.Mutex
-	sessions   map[sessionKey]*expectedSession
 
 	// Lifecycle of the underlying transport:
 	innerMu sync.Mutex
@@ -75,7 +82,6 @@ func NewServer(sockPath string) (*Server, error) {
 	return &Server{
 		sockPath: sockPath,
 		handlers: make(map[string]untypedHandler),
-		sessions: make(map[sessionKey]*expectedSession),
 	}, nil
 }
 
@@ -96,32 +102,38 @@ func NewServerDefault() (*Server, error) {
 	return defaultServer, nil
 }
 
-// Register binds a typed handler for events from toolName; safe for concurrent use.
-func Register[T any](
-	srv *Server,
-	toolName string,
-	handler func(sess *Session, event T) error,
-) {
+// Register binds a typed handler for events from serviceName; safe for concurrent use.
+func Register[T any](srv *Server, serviceName string, handler func(context.Context, *Request[T]) error) {
 	srv.handlersMu.Lock()
 	defer srv.handlersMu.Unlock()
-
-	srv.handlers[toolName] = func(sess *Session, payload []byte) error {
-		var ev T
-		if err := json.Unmarshal(payload, &ev); err != nil {
-			return fmt.Errorf("unmarshal for %s: %w", toolName, err)
+	srv.handlers[serviceName] = func(ctx context.Context, session *transport.Session, chunk transport.ChunkMsg) error {
+		request := &Request[T]{
+			ServiceName: session.ServiceName, ToolName: session.ToolName, Version: session.Version,
+			TaskID: session.TaskID, End: chunk.End, Commit: chunk.Commit, PriorErr: session.Err,
 		}
-
-		return handler(sess, ev)
+		if chunk.Err != "" {
+			request.Err = errors.New(chunk.Err)
+		}
+		if len(chunk.Data) != 0 {
+			if err := json.Unmarshal(chunk.Data, &request.Data); err != nil {
+				request.Data = nil
+				request.Err = errors.Join(request.Err, fmt.Errorf("unmarshal for %s: %w", serviceName, err))
+			} else if request.Data == nil {
+				request.Err = errors.Join(request.Err, errors.New("event payload must not be null"))
+			}
+		}
+		frameErr := request.Err
+		return errors.Join(frameErr, handler(ctx, request))
 	}
 }
 
-// RegisterDefault binds a typed handler for events from toolName on the default server.
-func RegisterDefault[T any](toolName string, handler func(sess *Session, event T) error) {
+// RegisterDefault binds a typed handler on the default server.
+func RegisterDefault[T any](serviceName string, handler func(context.Context, *Request[T]) error) {
 	srv, err := NewServerDefault()
 	if err != nil {
 		log.Fatalf("default server: %v", err)
 	}
-	Register(srv, toolName, handler)
+	Register(srv, serviceName, handler)
 }
 
 // Start listens in the background; call Close to stop.
@@ -170,32 +182,21 @@ func (s *Server) Close() error {
 	return inner.Close()
 }
 
-func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {
-	sess := &Session{Session: tsess, IsExpected: s.isExpectedSession(tsess)}
-	if chunk.Err != "" {
-		s.recordSessionError(sess, errors.New(chunk.Err))
-		log.Warnf("%s: tool error: %s", tsess.ToolName, chunk.Err)
-		if chunk.End {
-			s.finishSession(sess)
+func (s *Server) dispatch(session *transport.Session, chunk transport.ChunkMsg) {
+	s.handlersMu.RLock()
+	handler := s.handlers[session.ServiceName]
+	s.handlersMu.RUnlock()
+	var err error
+	if handler == nil {
+		err = errors.New("no handler registered")
+		if chunk.Err != "" {
+			err = errors.Join(errors.New(chunk.Err), err)
 		}
-		return
+	} else {
+		err = handler(session.Context, session, chunk)
 	}
-
-	if len(chunk.Data) != 0 {
-		s.handlersMu.RLock()
-		handler := s.handlers[tsess.ToolName]
-		s.handlersMu.RUnlock()
-
-		if handler == nil {
-			s.recordSessionError(sess, errors.New("no handler registered"))
-			log.Warnf("%s: no handler", tsess.ToolName)
-		} else if err := handler(sess, chunk.Data); err != nil {
-			s.recordSessionError(sess, err)
-			log.Warnf("%s: handler: %v", tsess.ToolName, err)
-		}
-	}
-
-	if chunk.End {
-		s.finishSession(sess)
+	if err != nil {
+		session.Err = errors.Join(session.Err, err)
+		log.Warnf("%s: handler: %v", session.ServiceName, err)
 	}
 }

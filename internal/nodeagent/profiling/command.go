@@ -18,12 +18,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
-func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
+func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) {
 	durationSeconds := int64(request.Duration / time.Second)
 	aggregationInterval := min(config.AggregationInterval, request.Duration)
 	if request.Spec.Language == profilingdomain.LanguagePython {
@@ -36,9 +36,9 @@ func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
 		"--duration", strconv.FormatInt(durationSeconds, 10),
 		"--aggr-interval", strconv.FormatInt(int64(aggregationInterval/time.Second), 10),
 		"--max-concurrent-procs", strconv.Itoa(config.MaxConcurrentProcesses),
-		"--output-format", "remote",
-		"--output-storage", config.ToolstreamSocketPath,
-		"--tracer-id", request.RequestID,
+		"--output-format", "remote-store",
+		"--output-path", config.ToolstreamSocketPath,
+		"--task-id", request.RequestID,
 		"--huatuo-api-address", config.NodeAPIAddress,
 		"--tool-path", config.ToolDir,
 	}
@@ -57,9 +57,9 @@ func buildCommand(request *StartRequest, config *Config) (exec.Spec, error) {
 		args = append(args, "--binary-match-path", request.Spec.BinaryMatchPath)
 	}
 
-	return exec.Spec{
+	return executil.Spec{
 		Path:           config.ProfilerPath,
 		Args:           args,
-		MaxOutputBytes: config.CommandOutputLimitBytes,
+		MaxStdoutBytes: config.CommandOutputLimitBytes,
 	}, nil
 }

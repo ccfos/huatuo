@@ -552,6 +552,14 @@ huatuo_bamai_netdev_hw_rx_dropped{device="eth0",driver="mlx5_core",host="hostnam
 
 ### Netdev
 
+Network device counters collected through proc or netlink. Shared counters follow [Linux `/proc/net/dev`](https://github.com/torvalds/linux/blob/v6.6/net/core/net-procfs.c#L72-L92):
+
+- `receive_dropped`: `rx_dropped + rx_missed_errors`.
+- `receive_frame_errors`: `rx_length_errors + rx_over_errors + rx_crc_errors + rx_frame_errors`.
+- `transmit_carrier_errors`: `tx_carrier_errors + tx_aborted_errors + tx_window_errors + tx_heartbeat_errors`.
+
+Netlink also exposes detailed error counters and `receive_nohandler`. Error details may overlap with the aggregates above.
+
 ```bash
 # HELP huatuo_bamai_netdev_container_receive_bytes_total Network device statistic receive_bytes.
 # TYPE huatuo_bamai_netdev_container_receive_bytes_total counter
@@ -565,12 +573,12 @@ huatuo_bamai_netdev_container_receive_dropped_total{container_host="coredns-855c
 # HELP huatuo_bamai_netdev_container_receive_errors_total Network device statistic receive_errors.
 # TYPE huatuo_bamai_netdev_container_receive_errors_total counter
 huatuo_bamai_netdev_container_receive_errors_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_netdev_container_receive_fifo_total Network device statistic receive_fifo.
-# TYPE huatuo_bamai_netdev_container_receive_fifo_total counter
-huatuo_bamai_netdev_container_receive_fifo_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_netdev_container_receive_frame_total Network device statistic receive_frame.
-# TYPE huatuo_bamai_netdev_container_receive_frame_total counter
-huatuo_bamai_netdev_container_receive_frame_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_receive_fifo_errors_total Network device statistic receive_fifo_errors.
+# TYPE huatuo_bamai_netdev_container_receive_fifo_errors_total counter
+huatuo_bamai_netdev_container_receive_fifo_errors_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_receive_frame_errors_total Network device statistic receive_frame_errors.
+# TYPE huatuo_bamai_netdev_container_receive_frame_errors_total counter
+huatuo_bamai_netdev_container_receive_frame_errors_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
 # HELP huatuo_bamai_netdev_container_receive_multicast_total Network device statistic receive_multicast.
 # TYPE huatuo_bamai_netdev_container_receive_multicast_total counter
 huatuo_bamai_netdev_container_receive_multicast_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
@@ -580,12 +588,12 @@ huatuo_bamai_netdev_container_receive_packets_total{container_host="coredns-855c
 # HELP huatuo_bamai_netdev_container_transmit_bytes_total Network device statistic transmit_bytes.
 # TYPE huatuo_bamai_netdev_container_transmit_bytes_total counter
 huatuo_bamai_netdev_container_transmit_bytes_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 6.2347911e+07
-# HELP huatuo_bamai_netdev_container_transmit_carrier_total Network device statistic transmit_carrier.
-# TYPE huatuo_bamai_netdev_container_transmit_carrier_total counter
-huatuo_bamai_netdev_container_transmit_carrier_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_netdev_container_transmit_colls_total Network device statistic transmit_colls.
-# TYPE huatuo_bamai_netdev_container_transmit_colls_total counter
-huatuo_bamai_netdev_container_transmit_colls_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_transmit_carrier_errors_total Network device statistic transmit_carrier_errors.
+# TYPE huatuo_bamai_netdev_container_transmit_carrier_errors_total counter
+huatuo_bamai_netdev_container_transmit_carrier_errors_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_transmit_collisions_total Network device statistic transmit_collisions.
+# TYPE huatuo_bamai_netdev_container_transmit_collisions_total counter
+huatuo_bamai_netdev_container_transmit_collisions_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
 # HELP huatuo_bamai_netdev_container_transmit_compressed_total Network device statistic transmit_compressed.
 # TYPE huatuo_bamai_netdev_container_transmit_compressed_total counter
 huatuo_bamai_netdev_container_transmit_compressed_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
@@ -595,9 +603,9 @@ huatuo_bamai_netdev_container_transmit_dropped_total{container_host="coredns-855
 # HELP huatuo_bamai_netdev_container_transmit_errors_total Network device statistic transmit_errors.
 # TYPE huatuo_bamai_netdev_container_transmit_errors_total counter
 huatuo_bamai_netdev_container_transmit_errors_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_netdev_container_transmit_fifo_total Network device statistic transmit_fifo.
-# TYPE huatuo_bamai_netdev_container_transmit_fifo_total counter
-huatuo_bamai_netdev_container_transmit_fifo_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_transmit_fifo_errors_total Network device statistic transmit_fifo_errors.
+# TYPE huatuo_bamai_netdev_container_transmit_fifo_errors_total counter
+huatuo_bamai_netdev_container_transmit_fifo_errors_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
 # HELP huatuo_bamai_netdev_container_transmit_packets_total Network device statistic transmit_packets.
 # TYPE huatuo_bamai_netdev_container_transmit_packets_total counter
 huatuo_bamai_netdev_container_transmit_packets_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 660218
@@ -607,17 +615,19 @@ huatuo_bamai_netdev_container_transmit_packets_total{container_host="coredns-855
 |---|---|---|---|---|
 |netdev_receive_bytes_total|Total number of bytes successfully received|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 |netdev_receive_packets_total|Total number of packets successfully received|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_receive_multicast_total|Multicast packets received|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 |netdev_receive_compressed_total|Number of compressed packets received|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
-|netdev_receive_frame_total|Number of frame alignment errors on receive|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_receive_frame_errors_total|Sum of receive length, overrun, CRC, and frame alignment errors|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 |netdev_receive_errors_total|Total number of receive errors|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
-|netdev_receive_dropped_total|Number of received packets dropped by kernel or driver (various reasons)|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
-|netdev_receive_fifo_total|Number of receive FIFO/ring buffer overflow errors|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_receive_dropped_total|Receive drops including missed packets|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_receive_fifo_errors_total|Number of receive FIFO/ring buffer overflow errors|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 |netdev_transmit_bytes_total|Total number of bytes successfully transmitted|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 |netdev_transmit_packets_total|Total number of packets successfully transmitted|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_transmit_collisions_total|Transmit collisions|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 |netdev_transmit_errors_total|Total number of transmit errors|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 |netdev_transmit_dropped_total|Number of packets dropped during transmission (queue full, policy, etc.)|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
-|netdev_transmit_fifo_total|Number of transmit FIFO/ring buffer errors|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
-|netdev_transmit_carrier_total|Number of carrier errors (link down or cable issues during transmission)|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_transmit_fifo_errors_total|Number of transmit FIFO/ring buffer errors|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_transmit_carrier_errors_total|Sum of transmit carrier, aborted, window, and heartbeat errors|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 |netdev_transmit_compressed_total|Number of compressed packets transmitted|count|Host, Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 
 
@@ -639,6 +649,26 @@ huatuo_bamai_tcp_memory_usage_pages{host="hostname",region="dev"} 0
 # TYPE huatuo_bamai_tcp_memory_usage_percent gauge
 huatuo_bamai_tcp_memory_usage_percent{host="hostname",region="dev"} 0
 ```
+
+### Conntrack
+
+Host nf_conntrack table occupancy and size, from
+`/proc/sys/net/netfilter/nf_conntrack_count` and
+`/proc/sys/net/netfilter/nf_conntrack_max`:
+
+```bash
+# HELP huatuo_bamai_net_conntrack_entry_count number of entries currently tracked in the nf_conntrack table
+# TYPE huatuo_bamai_net_conntrack_entry_count gauge
+huatuo_bamai_net_conntrack_entry_count{host="hostname",region="dev"} 1024
+# HELP huatuo_bamai_net_conntrack_entry_max maximum number of entries the nf_conntrack table can hold
+# TYPE huatuo_bamai_net_conntrack_entry_max gauge
+huatuo_bamai_net_conntrack_entry_max{host="hostname",region="dev"} 65536
+```
+
+|Metric|Description|Unit|Scope| Labels |
+|---|---|---|---|---|
+|net_conntrack_entry_count|Number of entries currently tracked in the nf_conntrack table|count|Host| host, region |
+|net_conntrack_entry_max|Maximum number of entries the nf_conntrack table can hold|count|Host| host, region |
 
 ### TcpExt
 
@@ -1196,6 +1226,26 @@ huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
 |io_in_progress|Current number of I/O requests in flight, i.e. queue depth (field 12)|count|Host|host, region, device|
 |disk_iowait_percent|CPU time spent waiting for I/O during the collection interval|percent|Host|host, region|
 
+
+### XFS Filesystem Statistics
+
+`xfs` collects per-device statistics from sysfs. Metrics use the
+`huatuo_bamai_xfs_` prefix and `device`, `host`, `region` labels.
+`log_free_bytes` is a gauge; `_total` metrics are cumulative counters.
+
+|Metric suffix|Description|Unit|
+|---|---|---|
+|log_free_bytes|Available log space|bytes|
+|log_space_sleep_total|Cumulative waits for log space|count|
+|alloc_blocks_total|Cumulative allocated blocks|blocks|
+|alloc_extents_total|Cumulative allocated extents|count|
+|inode_attempts_total|Cumulative inode cache requests|count|
+|inode_missed_total|Cumulative inode cache misses|count|
+|buf_busy_locked_total|Cumulative busy-locked buffer events|count|
+|buf_locked_waited_total|Cumulative waits for buffer locks|count|
+
+`log_free_bytes` is omitted when log-space information is unavailable.
+Restart the daemon after adding XFS mounts.
 
 ## General System
 

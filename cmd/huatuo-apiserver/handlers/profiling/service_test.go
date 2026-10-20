@@ -71,7 +71,6 @@ func TestResultURLRequiresPublishedCompleteResult(t *testing.T) {
 	service, err := NewService(
 		&job.Manager{},
 		nil,
-		nil,
 		Config{DashboardBaseURL: "https://grafana.example/d"},
 	)
 	if err != nil {
@@ -224,8 +223,16 @@ func TestNormalizePage(t *testing.T) {
 }
 
 func TestNewServiceRequiresJobManager(t *testing.T) {
-	_, err := NewService(nil, nil, nil, Config{})
+	_, err := NewService(nil, nil, Config{})
 	if err == nil || !strings.Contains(err.Error(), "job manager is required") {
 		t.Fatalf("NewService() error = %v", err)
+	}
+}
+
+func TestNormalizePagePreservesExplicitZero(t *testing.T) {
+	zero := 0
+	limit, offset := NormalizePage(&zero, &zero)
+	if limit != 0 || offset != 0 {
+		t.Fatalf("explicit zero normalized to limit=%d offset=%d", limit, offset)
 	}
 }

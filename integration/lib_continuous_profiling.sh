@@ -24,19 +24,9 @@ readonly __HUATUO_LIB_CONTINUOUS_PROFILING_SH_LOADED=1
 CONTINUOUS_PROFILE_DIAGNOSTIC="no raw profile request made"
 
 continuous_profiling_requirements() {
-	command -v docker > /dev/null || skip "docker command is not installed"
+	require_commands docker
 	docker info > /dev/null 2>&1 || skip "docker daemon is unavailable"
-	command -v jq > /dev/null || skip "jq command is not installed"
-	command -v ss > /dev/null || skip "ss command is not installed"
-	command -v timeout > /dev/null || fatal "timeout command is not installed"
-	[[ -x "${HUATUO_APISERVER_BIN}" ]] \
-		|| fatal "huatuo-apiserver binary missing"
-	[[ -x "${ROOT_DIR}/_output/bin/huatuo-bamai" ]] \
-		|| fatal "huatuo-bamai binary missing"
-	[[ -x "${ROOT_DIR}/_output/bin/profiler" ]] \
-		|| fatal "profiler binary missing"
-	[[ -r "${ROOT_DIR}/_output/bpf/native_oncpu_profiler.o" ]] \
-		|| fatal "native CPU profiler BPF object missing"
+	require_commands jq ss timeout
 	[[ -r /proc/sys/kernel/perf_event_paranoid ]] \
 		|| skip "perf_event is unavailable"
 
@@ -52,11 +42,11 @@ continuous_profiling_cleanup() {
 	[[ -n "${target_pid}" ]] && stop_by_pid "${target_pid}" 5 || true
 	huatuo_apiserver_stop
 	huatuo_bamai_stop "${HUATUO_BAMAI_TEST_TMPDIR}" || true
-	if [[ -n "${ELASTICSEARCH_CONTAINER_ID}" ]]; then
+	if [[ -n "${STORAGE_CONTAINER_ID}" ]]; then
 		if [[ ${status} -ne 0 ]]; then
-			elasticsearch_dump_logs || true
+			storage_dump_logs || true
 		fi
-		elasticsearch_stop || true
+		storage_stop || true
 	fi
 }
 
@@ -147,7 +137,7 @@ continuous_profile_windows_are_stored() {
 }
 
 continuous_profiling_start_stack() {
-	elasticsearch_start
+	storage_start
 	integration_huatuo_bamai_start \
 		write_continuous_profiling_bamai_config \
 		--region integration \
