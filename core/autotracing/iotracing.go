@@ -56,12 +56,16 @@ type pendingIOTracingReason struct {
 
 func init() {
 	tracing.RegisterEventTracing(iotracingToolName, newIOTracing)
-	toolstream.RegisterDefault[*types.IOTracingSnapshot](iotracingToolName, handleIotracingEvent)
+	toolstream.RegisterDefault[types.IOTracingSnapshot](iotracingToolName, handleIotracingEvent)
 }
 
-func handleIotracingEvent(sess *toolstream.Session, ev *types.IOTracingSnapshot) error {
+func handleIotracingEvent(_ context.Context, request *toolstream.Request[types.IOTracingSnapshot]) error {
+	if request.Data == nil {
+		return nil
+	}
+	ev := request.Data
 	var pending *pendingIOTracingReason
-	if v, ok := pendingReasons.LoadAndDelete(sess.TaskID); ok {
+	if v, ok := pendingReasons.LoadAndDelete(request.TaskID); ok {
 		pending = v.(*pendingIOTracingReason)
 		close(pending.received)
 	}
@@ -419,21 +423,13 @@ func (i *ioTracing) Start(ctx context.Context) error {
 	log.WithField("reason_snapshot", reasonSnapshot).
 		Debug("detected disk io event")
 
-	return i.runSnapshot(ctx, reasonSnapshot, executil.Run)
-}
-
-func (i *ioTracing) runSnapshot(
-	ctx context.Context,
-	reason *reasonSnapshot,
-	run func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error),
-) error {
 	taskID, err := randomid.New()
 	if err != nil {
 		return fmt.Errorf("allocate iotracing task id: %w", err)
 	}
 
 	pending := &pendingIOTracingReason{
-		reason:           reason,
+		reason:           reasonSnapshot,
 		startedTimestamp: timeutil.Now(),
 		received:         make(chan struct{}),
 		result:           make(chan error, 1),
@@ -449,18 +445,17 @@ func (i *ioTracing) runSnapshot(
 		"--max-files-per-process", strconv.Itoa(i.maxFilesPerProcess),
 	}
 
-	result, err := run(ctx, executil.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, iotracingToolName),
 		Args: args,
 	})
 	if err != nil {
 		pendingReasons.Delete(taskID)
-		var runErr *executil.RunError
-		if errors.As(err, &runErr) && runErr.IsCancellation() {
+		if errors.Is(err, executil.ErrRunCanceled) || errors.Is(err, executil.ErrRunTimeout) {
 			log.Info("iotracing stopped")
 			return nil
 		}
-		if result != nil && len(result.Stderr) > 0 {
+		if len(result.Stderr) > 0 {
 			return fmt.Errorf("run iotracing: %w; stderr: %s", err, result.Stderr)
 		}
 		return fmt.Errorf("run iotracing: %w", err)

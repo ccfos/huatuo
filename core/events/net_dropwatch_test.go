@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +45,28 @@ func TestTCPRetransmitStartTreatsCancellationAsExpectedStop(t *testing.T) {
 
 	if err := (&tcpRetransmitTracing{}).Start(ctx); err != nil {
 		t.Fatalf("Start() error = %v", err)
+	}
+}
+
+func TestEventCommandsPreserveTimeouts(t *testing.T) {
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	for _, command := range []struct {
+		name  string
+		start func(context.Context) error
+	}{
+		{"dropwatch", (&dropWatchTracing{}).Start},
+		{"tcpshark", (&tcpRetransmitTracing{}).Start},
+	} {
+		t.Run(command.name, func(t *testing.T) {
+			err := command.start(ctx)
+			if !errors.Is(err, executil.ErrRunTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Start() error = %v, want command timeout", err)
+			}
+			if errors.Is(err, executil.ErrRunCanceled) {
+				t.Fatalf("Start() incorrectly marked timeout as cancellation: %v", err)
+			}
+		})
 	}
 }
 
@@ -74,6 +96,19 @@ func TestDropWatchStartIncludesDiagnosticOutput(t *testing.T) {
 	}
 }
 
+// Run first observes Done after Start acknowledges launch. The child can
+// publish its marker earlier, so that marker alone cannot gate cancellation.
+type commandLaunchContext struct {
+	context.Context
+	launched chan struct{}
+	once     sync.Once
+}
+
+func (c *commandLaunchContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.launched) })
+	return c.Context.Done()
+}
+
 func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 	original := internalconfig.CoreBinDir
 	t.Cleanup(func() { internalconfig.CoreBinDir = original })
@@ -86,16 +121,16 @@ func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 	}
 	for _, command := range commands {
 		t.Run(command.name, func(t *testing.T) {
-			for _, failure := range []string{"none", "output", "execution"} {
-				t.Run(failure, func(t *testing.T) {
+			for _, scenario := range []string{"none", "stdout tail", "execution"} {
+				t.Run(scenario, func(t *testing.T) {
 					internalconfig.CoreBinDir = t.TempDir()
 					marker := filepath.Join(t.TempDir(), "ready")
 					exitCode := 0
-					if failure == "execution" {
+					if scenario == "execution" {
 						exitCode = 7
 					}
 					output := ""
-					if failure == "output" {
+					if scenario == "stdout tail" {
 						output = "head -c 65537 /dev/zero"
 					}
 					script := fmt.Sprintf("#!/bin/sh\ntrap 'exit %d' TERM\n%s\ntouch %q\nwhile :; do :; done\n", exitCode, output, marker)
@@ -106,8 +141,9 @@ func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 					if err := os.Chmod(tool, 0o700); err != nil {
 						t.Fatal(err)
 					}
-					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+					baseCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 					defer cancel()
+					ctx := &commandLaunchContext{Context: baseCtx, launched: make(chan struct{})}
 					result := make(chan error, 1)
 					go func() { result <- command.start(ctx) }()
 					deadline := time.Now().Add(3 * time.Second)
@@ -121,9 +157,14 @@ func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 						}
 						time.Sleep(time.Millisecond)
 					}
+					select {
+					case <-ctx.launched:
+					case <-baseCtx.Done():
+						t.Fatal("command did not acknowledge launch")
+					}
 					cancel()
 					err := <-result
-					if failure == "none" {
+					if scenario != "execution" {
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -132,66 +173,8 @@ func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 					if err == nil {
 						t.Fatal("independent failure was swallowed")
 					}
-					if failure == "output" && !errors.Is(err, executil.ErrOutputLimitExceeded) {
-						t.Fatalf("output error: %v", err)
-					}
-					if failure == "execution" && !strings.Contains(err.Error(), "exit status 7") {
+					if !strings.Contains(err.Error(), "exit status 7") {
 						t.Fatalf("execution error: %v", err)
-					}
-				})
-			}
-		})
-	}
-}
-
-func TestEventCommandsPreserveCleanupFailureDuringCancellation(t *testing.T) {
-	commands := []struct {
-		name  string
-		start func(context.Context, func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error)) error
-	}{
-		{"dropwatch", (&dropWatchTracing{}).start},
-		{"tcpshark", (&tcpRetransmitTracing{}).start},
-	}
-	for _, command := range commands {
-		t.Run(command.name, func(t *testing.T) {
-			for _, diagnostic := range []string{"", "tool cleanup diagnostic"} {
-				name := "without output"
-				if diagnostic != "" {
-					name = "with stderr"
-				}
-				t.Run(name, func(t *testing.T) {
-					ctx, cancel := context.WithCancel(t.Context())
-					defer cancel()
-					failure := &executil.RunError{
-						ContextErr: context.Canceled,
-						CleanupErr: fmt.Errorf("signal process group: %w", errors.Join(executil.ErrStopFailed, syscall.EPERM)),
-					}
-					calls := 0
-					err := command.start(ctx, func(runCtx context.Context, spec executil.Spec, _ ...executil.Option) (*executil.Result, error) {
-						calls++
-						if runCtx != ctx || filepath.Base(spec.Path) != command.name {
-							t.Fatalf("unexpected command context or path: %s", spec.Path)
-						}
-						cancel()
-						if diagnostic == "" {
-							return nil, failure
-						}
-						return &executil.Result{Stderr: []byte(diagnostic)}, failure
-					})
-					if calls != 1 {
-						t.Fatalf("command ran %d times, want 1", calls)
-					}
-					for _, cause := range []error{context.Canceled, executil.ErrStopFailed, syscall.EPERM} {
-						if !errors.Is(err, cause) {
-							t.Errorf("lost %v: %v", cause, err)
-						}
-					}
-					var got *executil.RunError
-					if !errors.As(err, &got) || got != failure {
-						t.Fatalf("lost RunError: %v", err)
-					}
-					if diagnostic != "" && !strings.Contains(err.Error(), diagnostic) {
-						t.Fatalf("lost diagnostic: %v", err)
 					}
 				})
 			}

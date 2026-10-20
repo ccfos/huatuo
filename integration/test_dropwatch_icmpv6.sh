@@ -41,24 +41,9 @@ trap cleanup EXIT
 
 send_echo() {
 	# Keep the background PID attached to the sender so cleanup can terminate it.
-	exec ip netns exec "${NETNS}" python3 - "${ICMPV6_CLIENT_ADDR}" "${ICMPV6_SERVER_ADDR}" "$1" "$2" << 'PY'
-import signal
-import socket
-import struct
-import sys
-import time
-
-signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-source, destination = sys.argv[1:3]
-identifier, sequence = int(sys.argv[3]), int(sys.argv[4])
-packet = struct.pack("!BBHHH", 128, 0, 0, identifier, sequence) + b"huatuo"
-# Linux computes the mandatory checksum for IPPROTO_ICMPV6 raw sockets.
-with socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6) as sock:
-    sock.bind((source, 0))
-    while True:
-        sock.sendto(packet, (destination, 0))
-        time.sleep(0.1)
-PY
+	exec ip netns exec "${NETNS}" python3 "${ROOT_DIR}/integration/testdata/test_packet_sender.py" icmpv6-echo \
+		--source "${ICMPV6_CLIENT_ADDR}" --destination "${ICMPV6_SERVER_ADDR}" \
+		--identifier "$1" --sequence "$2"
 }
 
 assert_icmpv6_json() {
@@ -114,6 +99,8 @@ run_case() {
 	stop_and_wait_by_pid "${icmpv6_traffic_pid}" || traffic_status=$?
 	icmpv6_traffic_pid=""
 	ip netns exec "${NETNS}" ip6tables -D INPUT "${rule[@]}"
+	assert_eq "${dropwatch_status}" 0 "dropwatch exit status" || fatal "dropwatch failed; see ${err}"
+	assert_eq "${traffic_status}" 0 "traffic generator exit status" || fatal "traffic generator failed; see ${traffic_log}"
 
 	if [[ ${output} == json ]]; then
 		assert_icmpv6_json "${out}" "${typ}" "${source}" "${destination}" "${identifier}" "${sequence}"
