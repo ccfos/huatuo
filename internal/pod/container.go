@@ -177,7 +177,10 @@ func GetCSSToContainerID(subsys string) (map[uint64]string, error) {
 func BuildCssContainersID(containers map[string]*Container, subsys string) map[uint64]string {
 	cssToContainerMap := make(map[uint64]string, len(containers))
 	for _, container := range containers {
-		if addr := container.CgroupCss[subsys]; addr != 0 && (container.HostKataSandboxID() == "" || !keepKataRepresentative(containers[cssToContainerMap[addr]], container)) {
+		if addr := container.CgroupCss[subsys]; addr != 0 && (container.HostKataSandboxID() == "" || !keepKataRepresentative(
+			containers[cssToContainerMap[addr]],
+			container,
+		)) {
 			cssToContainerMap[addr] = container.ID
 		}
 	}
@@ -187,12 +190,21 @@ func BuildCssContainersID(containers map[string]*Container, subsys string) map[u
 // BuildCssContainers builds a css-address map from the provided containers to container pointers.
 func BuildCssContainers(containers map[string]*Container, subsys string) map[uint64]*Container {
 	cssToContainerMap := make(map[uint64]*Container, len(containers))
+	FillCssContainers(containers, subsys, cssToContainerMap)
+	return cssToContainerMap
+}
+
+// FillCssContainers replaces destination with the current CSS representatives.
+// Callers that reconcile repeatedly can reuse destination's allocated capacity.
+// Destination must be initialized.
+func FillCssContainers(containers map[string]*Container, subsys string, destination map[uint64]*Container) {
+	clear(destination)
 	for _, container := range containers {
-		if addr := container.CgroupCss[subsys]; addr != 0 && (container.HostKataSandboxID() == "" || !keepKataRepresentative(cssToContainerMap[addr], container)) {
-			cssToContainerMap[addr] = container
+		if addr := container.CgroupCss[subsys]; addr != 0 &&
+			(container.HostKataSandboxID() == "" || !keepKataRepresentative(destination[addr], container)) {
+			destination[addr] = container
 		}
 	}
-	return cssToContainerMap
 }
 
 // ContainerByCSS returns the container whose cgroup subsystem state address

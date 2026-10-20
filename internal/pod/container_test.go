@@ -16,6 +16,7 @@ package pod
 
 import (
 	"testing"
+	"time"
 )
 
 // TestContainerMemoryCgroupPath 验证 Host 兼容路径、Guest 独立路径、统一路径，
@@ -39,5 +40,33 @@ func TestContainerMemoryCgroupPath(t *testing.T) {
 				t.Fatalf("memory path=%q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestFillCssContainers 验证复用的映射会删除旧 CSS，选择最早发现的 Kata 成员，
+// 并在代表成员离开后切换，最后清除所有已离开的容器引用。
+func TestFillCssContainers(t *testing.T) {
+	first := &Container{
+		ID: "checkout", RuntimeType: "io.containerd.kata.v2", SandboxID: "checkout-vm",
+		Type: ContainerTypeNormal, SyncedAt: time.Unix(10, 0), CgroupCss: map[string]uint64{"cpu": 10},
+	}
+	second := *first
+	second.ID = "checkout-sidecar"
+	second.SyncedAt = time.Unix(20, 0)
+	members := map[string]*Container{first.ID: first, second.ID: &second}
+	destination := map[uint64]*Container{99: first}
+	FillCssContainers(members, "cpu", destination)
+	if len(destination) != 1 || destination[10] != first {
+		t.Fatalf("representatives=%v", destination)
+	}
+	delete(members, first.ID)
+	FillCssContainers(members, "cpu", destination)
+	if len(destination) != 1 || destination[10] != &second {
+		t.Fatalf("handoff=%v", destination)
+	}
+	clear(members)
+	FillCssContainers(members, "cpu", destination)
+	if len(destination) != 0 {
+		t.Fatalf("stale containers=%v", destination)
 	}
 }
