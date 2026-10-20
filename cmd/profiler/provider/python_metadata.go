@@ -49,5 +49,12 @@ func pythonProcessName(pid int) (string, error) {
 		return "", fmt.Errorf("empty cmdline for PID %d", pid)
 	}
 
-	return pythonEntryName(cmdline), nil
+	for _, arg := range cmdline[1:] {
+		if !strings.HasPrefix(arg, "-") {
+			return arg, nil
+		}
+	}
+
+	// Stdin and interactive sessions do not require a script argument.
+	return filepath.Base(cmdline[0]), nil
 }
