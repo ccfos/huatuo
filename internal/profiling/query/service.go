@@ -105,7 +105,17 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := profilesMerge.Merge(document.ProfileData.Profile); err != nil {
+			profile := document.ProfileData.Profile
+			if profile != nil && profile.PeriodType == nil {
+				// New windows carry final sample weights without a period. The
+				// merger still requires type metadata; do not rescale the values.
+				profile.PeriodType = &googlev1.ValueType{
+					Type: int64(len(profile.StringTable)),
+					Unit: int64(len(profile.StringTable) + 1),
+				}
+				profile.StringTable = append(profile.StringTable, profileTypes[3], profileTypes[4])
+			}
+			if err := profilesMerge.Merge(profile); err != nil {
 				return fmt.Errorf("merge profile: %w", err)
 			}
 		}
