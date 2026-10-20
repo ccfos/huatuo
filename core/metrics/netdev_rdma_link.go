@@ -15,6 +15,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -29,7 +30,8 @@ func init() {
 }
 
 type rdmaLink struct {
-	rdmaList []*netlink.RdmaLink
+	rdmaList  []*netlink.RdmaLink
+	readStats func(*netlink.RdmaLink) (*netlink.RdmaDeviceStatistic, error)
 }
 
 func newRdmaLink() (*tracing.EventTracingAttr, error) {
@@ -39,17 +41,19 @@ func newRdmaLink() (*tracing.EventTracingAttr, error) {
 	}
 
 	return &tracing.EventTracingAttr{
-		TracingData: &rdmaLink{rdmaList: lists},
+		TracingData: &rdmaLink{rdmaList: lists, readStats: netlink.RdmaStatistic},
 		Flag:        tracing.FlagMetric,
 	}, nil
 }
 
 func (r *rdmaLink) Update() ([]*metric.Data, error) {
 	var data []*metric.Data
+	var failures []error
 
 	for _, rdma := range r.rdmaList {
-		stats, err := netlink.RdmaStatistic(rdma)
+		stats, err := r.readStats(rdma)
 		if err != nil {
+			failures = append(failures, fmt.Errorf("read RDMA statistics for device %q (index %d): %w", rdma.Attrs.Name, rdma.Attrs.Index, err))
 			continue
 		}
 
@@ -68,5 +72,5 @@ func (r *rdmaLink) Update() ([]*metric.Data, error) {
 		}
 	}
 
-	return data, nil
+	return data, errors.Join(failures...)
 }
