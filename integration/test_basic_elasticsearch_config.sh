@@ -25,8 +25,6 @@ source "${ROOT_DIR}/integration/config.sh"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
 require_commands curl ss timeout
-[[ -x "${HUATUO_BAMAI_BIN}" ]] \
-	|| fatal "huatuo-bamai binary missing: ${HUATUO_BAMAI_BIN}"
 
 STORAGE_HTTP_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate a huatuo-bamai API port"
@@ -35,6 +33,14 @@ HUATUO_BAMAI_ADDR="http://127.0.0.1:${STORAGE_HTTP_PORT}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 trap huatuo_bamai_stop EXIT
+
+assert_storage_config_error() {
+	local log_file=$1 actual
+	local expected='validating Elasticsearch config: address, username, and password must be configured together'
+	grep -Fq "${expected}" "${log_file}" && return 0
+	actual=$(tail -c 2048 "${log_file}" 2>&1) || true
+	fatal "Elasticsearch configuration error: expected='${expected}', actual (log tail)='${actual}': ${log_file}"
+}
 
 # Each digit says whether Address, Username, or Password is configured.
 for storage_config_case in 000 001 010 011 100 101 110 111; do
@@ -65,9 +71,7 @@ for storage_config_case in 000 001 010 011 100 101 110 111; do
 			> "${storage_config_log}" 2>&1 || storage_config_status=$?
 		assert_eq "${storage_config_status}" 1 "Elasticsearch ${storage_config_case} exit status" \
 			|| fatal "partial Elasticsearch configuration did not fail: ${storage_config_log}"
-		grep -Fq 'validating Elasticsearch config: address, username, and password must be configured together' \
-			"${storage_config_log}" \
-			|| fatal "partial Elasticsearch configuration did not report the missing fields: ${storage_config_log}"
+		assert_storage_config_error "${storage_config_log}"
 		;;
 	esac
 done
