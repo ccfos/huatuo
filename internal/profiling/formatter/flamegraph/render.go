@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"strings"
 )
 
 type frame struct {
@@ -196,9 +197,10 @@ func (r *renderer) DrawFrame(root *frame, ew *errWriter) {
 }
 
 func (r *renderer) drawFrame(f *frame, ew *errWriter) {
+	name := xmlFrameName(f.Name)
 	title := fmt.Sprintf(
 		"%s (%d samples, %.2f%%)",
-		f.Name,
+		name,
 		f.SampleCount,
 		f.SamplePercent,
 	)
@@ -231,7 +233,7 @@ func (r *renderer) drawFrame(f *frame, ew *errWriter) {
 		color,
 	)
 
-	text := r.fitText(f.Name, w)
+	text := r.fitText(name, w)
 
 	ew.printf(
 		`  <text text-anchor="" x="%.1f" y="%.1f" font-size="%d" font-family="%s" fill="rgb(0,0,0)">%s</text>`+"\n",
@@ -286,4 +288,16 @@ func (proc *processor) render(out io.Writer, style Style) error {
 	render.End(ew)
 
 	return ew.err
+}
+
+// HTML escaping does not remove characters forbidden by XML 1.0.
+func xmlFrameName(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' ||
+			(r >= 0x20 && r <= 0xd7ff) || (r >= 0xe000 && r <= 0xfffd) ||
+			(r >= 0x10000 && r <= 0x10ffff) {
+			return r
+		}
+		return '\ufffd'
+	}, name)
 }

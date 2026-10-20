@@ -782,3 +782,7 @@ JSON 可在 Add 写文件，其他本地输出也不提供事务回滚。现有�
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+### SVG 栈帧文本
+
+SVG 渲染将栈帧名中 XML 1.0 禁止的字符替换为 U+FFFD（Unicode 替换字符），再写入提示、data-title 属性和可见标签。合法 Unicode 保留，标记字符仍做转义。该处理仅发生在渲染阶段，不改变存储中的帧标识或其他输出格式。
