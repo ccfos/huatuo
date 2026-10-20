@@ -54,9 +54,7 @@ storage_local_event_ready() {
 		return 0
 	fi
 	# Keep supplying input until storage receives an event, including collector startup.
-	printf 'huatuo-storage-drop' 2>> "${HUATUO_BAMAI_TEST_TMPDIR}/traffic.log" \
-		> "/dev/udp/127.0.0.99/${storage_target_port}" \
-		|| fatal "failed to send UDP packet to 127.0.0.99:${storage_target_port}"
+	storage_send_udp_packets "${storage_target_port}"
 	return 1
 }
 
@@ -131,7 +129,7 @@ storage_run_backend() {
 	jq -e '.acknowledged == true' "${STORAGE_RESPONSE}" > /dev/null \
 		|| fatal "storage did not acknowledge index creation"
 
-	integration_huatuo_bamai_start write_storage_consistency_config \
+	integration_huatuo_bamai_start write_storage_events_config \
 		--region integration --disable-kubelet --log-debug
 	wait_until 20 0.2 storage_local_event_ready || fatal "localfile storage did not receive an event"
 	assert_storage_async_write
