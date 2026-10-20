@@ -19,6 +19,8 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 const (
@@ -40,4 +42,19 @@ func New() (string, error) {
 	}
 
 	return string(result), nil
+}
+
+// NewIfEmpty returns id unchanged when non-empty, otherwise it generates a new ID.
+// It logs generation failures and returns an empty string.
+func NewIfEmpty(id string) string {
+	if id != "" {
+		return id
+	}
+
+	id, err := New()
+	if err != nil {
+		log.WithError(err).Error("generate random ID")
+	}
+
+	return id
 }

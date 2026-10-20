@@ -128,6 +128,17 @@ Network tests can source `integration/lib_namespace.sh` after `lib.sh`:
   clears their state. Call it from the test's `EXIT` cleanup after stopping
   processes in those namespaces. Repeated cleanup calls are supported.
 
+### Shared Packet Sender
+
+Tests that construct raw packets should reuse
+`integration/testdata/test_packet_sender.py` and extend it for new workloads.
+It requires Python 3 and raw-socket privileges, and supports `ipv4-options`
+(TCP/UDP EOL options, including maximum IHL) and `icmpv6-echo`.
+Run a subcommand with `--help` for its address, port, or Echo identity arguments.
+The sender repeats traffic every 100 ms until SIGTERM and exits successfully.
+Shell tests own namespaces, drop rules, assertions, logs, and process cleanup.
+Workloads requiring real TCP connections continue to use `testdata/tcp_server.py`.
+
 ### How to Add New Metrics Tests
 #### 1: Add or Update Fixture Data
 

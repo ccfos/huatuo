@@ -114,6 +114,16 @@ summary: total=5 passed=3 skipped=2 failed=0
 - `namespace_cleanup` 删除上述函数创建的命名空间并清空状态，支持重复调用。
   用例应在 `EXIT` 清理中先停止命名空间内的进程，再调用该函数。
 
+### 共用发包程序
+
+需要构造原始报文的测试统一复用 `integration/testdata/test_packet_sender.py`，
+新增场景在该程序中扩展。程序依赖 Python 3 和 raw socket 权限，支持
+`ipv4-options`（TCP/UDP EOL options，包含最大 IHL）与 `icmpv6-echo`。
+通过子命令的 `--help` 查看地址、端口或 Echo 标识参数。
+程序每 100 ms 重复发包，收到 SIGTERM 后正常退出。
+Shell 用例负责命名空间、丢包规则、断言、日志和进程清理。
+需要真实 TCP 连接的负载继续使用 `testdata/tcp_server.py`。
+
 ### 如何新增指标测试
 #### 第一步：新增或更新模拟数据
 如果新增的指标依赖 ``/proc`` 或 ``/sys`` 文件内容，请在以下目录中新增或修改模拟数据：
