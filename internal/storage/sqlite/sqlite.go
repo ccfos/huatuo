@@ -316,7 +316,8 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	}
 	defer rows.Close()
 
-	terms := make([]string, 0, size)
+	// The requested limit need not reflect the number of matching values.
+	terms := make([]string, 0, min(size, driver.DefaultBatchSize))
 	for rows.Next() {
 		var value any
 		if err := rows.Scan(&value); err != nil {
