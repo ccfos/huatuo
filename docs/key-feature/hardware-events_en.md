@@ -263,8 +263,8 @@ graph TB
   | `sec_type` | **Error section type GUID (16 bytes, hexadecimal string)**. Defined by the UEFI specification and hardware vendors. Identifies the hardware category of the error record (e.g., memory error section, PCIe error section, ARM processor error section). |
   | `fru_id` | **FRU (Field Replaceable Unit) identifier GUID (16 bytes, hexadecimal string)**. Uniquely identifies the replaceable hardware component where the error occurred (e.g., a specific DIMM or PCIe card). |
   | `fru_text` | **Human-readable FRU description string** (e.g., `"CPU0_DIMM_A1"`). |
-  | `data_len` | **Raw error data payload length (in bytes)**. |
-  | `raw_data` | **Hexadecimal dump of raw error data** (space-separated bytes). Used for in-depth diagnostics; must be interpreted with the relevant hardware vendor documentation. |
+  | `data_len` | **Raw error data payload length (in bytes), exactly as reported by the kernel** (the `len` field of the tracepoint record). It is deliberately not clamped to the capture window, so it may exceed the number of bytes listed in `raw_data` for large CPER sections (NVDIMM, CXL and vendor sections are routinely 1 KiB or larger). |
+  | `raw_data` | **Hexadecimal dump of raw error data** (space-separated bytes). The agent captures a fixed 456-byte window of the record (`DETAIL_INFO_SIZE_ACPI` = 512 - 56), so dumps of larger sections are truncated to the captured bytes and the decoder degrades gracefully instead of panicking. Used for in-depth diagnostics; must be interpreted with the relevant hardware vendor documentation. |
 
 - **PCIe AER**
 
