@@ -343,10 +343,14 @@ func (m *Manager) recover(ctx context.Context) error {
 		}
 		// Starting runtimes changes statuses; offsets would skip unprocessed Jobs.
 		query.lastReadID = jobs[len(jobs)-1].ID
+		// Validate the whole batch before starting anything: a Job rejected here
+		// must not leave the earlier entries of the same batch supervised.
 		for _, storedJob := range jobs {
 			if _, ok := m.config.policy(storedJob.Kind); !ok {
 				return fmt.Errorf("Job %q has no policy for kind %q", storedJob.ID, storedJob.Kind)
 			}
+		}
+		for _, storedJob := range jobs {
 			supervisorCtx, cancel := context.WithCancel(context.Background())
 			runtime := newRuntime(storedJob, true, cancel, &m.runtimeDeps)
 			m.mu.Lock()
