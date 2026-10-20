@@ -10,6 +10,23 @@ limited to `docs/**` and `**/*.md` skip expensive jobs; mixed changes run normal
 Manual QEMU runs always execute the selected distro tests. Main pushes use the
 same documentation filter, without the PR draft restriction.
 
+PR QEMU runs select five representative guests:
+
+| Guest | Kernel | Cgroup |
+| --- | --- | --- |
+| Rocky Linux 8.10 | 4.18 | v1 |
+| openEuler 22.03 LTS-SP4 | 5.10 | v1 |
+| openEuler 24.03 LTS-SP4 | 6.6 | v1 |
+| Ubuntu 26.04 LTS | 7.0 | v2 |
+| Ubuntu 20.04.6 LTS | 5.4 | hybrid |
+
+These guests cover older and newer kernels, cgroup v1/v2/hybrid, and RPM/DEB
+environments. Main pushes run all 13 guests. Compatibility failures on guests
+outside the PR subset can therefore surface after merge. Manual runs still
+support individual guests, comma-separated selections, and `all` for pre-merge
+full validation. Kernel versions and cgroup modes above follow the documented
+guest matrix and should be reviewed when guest images change.
+
 Each workflow cancels previous runs for the same PR when a new commit arrives
 or the PR becomes a draft. A separate job-level concurrency group per author
 keeps one running task and at most one pending task across different PRs. A newer
@@ -30,8 +47,8 @@ deletions and additions so moving code into documentation cannot skip tests.
 Skipped build and QEMU jobs do not validate code; branch protection must not
 require successful execution on documentation-only or draft PRs.
 
-Run classification tests with:
+Run CI selection tests with:
 
 ```sh
-python3 -B -m unittest discover -s .github/workflows/scripts -p 'test_ci_changes.py'
+python3 -B -m unittest discover -s .github/workflows/scripts -p 'test_*.py'
 ```

@@ -20,7 +20,7 @@ on:
         default: '90'
 
 jobs:
-  # Build the target matrix: all distros by default, or a selected subset.
+  # PRs cover representative kernels and cgroup modes; main runs every distro.
   distro-matrix:
     runs-on: ubuntu-24.04
     outputs:
@@ -32,7 +32,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_OS: ${{ inputs.os }}
         run: |
-          if [[ "$EVENT_NAME" != "workflow_dispatch" ]]; then
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            INPUT_OS=rocky8,openeuler22.03,openeuler24.03,ubuntu26.04,ubuntu20.04
+          elif [[ "$EVENT_NAME" != "workflow_dispatch" ]]; then
             INPUT_OS=all
           elif [[ -z "${INPUT_OS//[[:space:]]/}" ]]; then
             echo "os is required for manual runs" >&2
