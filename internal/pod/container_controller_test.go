@@ -419,7 +419,12 @@ func TestControllerRefreshesKataRuntimeBinding(t *testing.T) {
 	controller := newContainerController(store)
 	controller.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
 	resolves := 0
-	controller.resolve = func(id string, _ *corev1.Container, status *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+	controller.resolve = func(
+		id string,
+		_ *corev1.Container,
+		status *corev1.ContainerStatus,
+		_ *corev1.Pod,
+	) (*containerRecord, error) {
 		resolves++
 		record := containerRecordForTest(id)
 		record.container.RuntimeType = "io.containerd.kata-qemu.v2"
@@ -440,5 +445,56 @@ func TestControllerRefreshesKataRuntimeBinding(t *testing.T) {
 	}
 	if !store.records[id].container.SyncedAt.Equal(time.Unix(1, 0)) {
 		t.Error("refresh changed representative priority")
+	}
+}
+
+// TestContainerControllerKataRefreshRecovery 验证已发现 Kata 容器的周期恢复：
+// 首次发布成功，随后五次运行时查询失败，运行时恢复后应重新查询并清除不可用状态。
+func TestContainerControllerKataRefreshRecovery(t *testing.T) {
+	useContainerdForTest(t)
+	id := strings.Repeat("cafe", 16)
+	list := runningPodListForTest(id)
+	store := newTestContainerStore()
+	controller := newContainerController(store)
+	controller.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
+	var isUnavailable bool
+	var calls int
+	controller.resolve = func(
+		id string, _ *corev1.Container, status *corev1.ContainerStatus, _ *corev1.Pod,
+	) (*containerRecord, error) {
+		calls++
+		if isUnavailable {
+			return nil, errors.New("runtime temporarily unavailable")
+		}
+		record := containerRecordForTest(id)
+		record.container.RuntimeType = "io.containerd.kata-qemu.v2"
+		record.container.SandboxID = "checkout-sandbox"
+		record.container.StartedAt = status.State.Running.StartedAt.Time
+		return record, nil
+	}
+	snapshot, err, _ := controller.refresh(t.Context(), make(map[string]bool), true)
+	if err != nil {
+		t.Fatalf("initial discovery: %v", err)
+	}
+	store.commit(snapshot, nil)
+	isUnavailable = true
+	for range 5 {
+		var retry bool
+		snapshot, err, retry = controller.refresh(t.Context(), make(map[string]bool), false)
+		if !retry {
+			t.Fatal("known Kata instance stopped retrying")
+		}
+		if err == nil {
+			t.Fatal("runtime outage was not observed")
+		}
+		store.commit(snapshot, err)
+	}
+	isUnavailable = false
+	beforeRecovery := calls
+	snapshot, err, _ = controller.refresh(t.Context(), make(map[string]bool), false)
+	store.commit(snapshot, err)
+	if err != nil || calls == beforeRecovery || store.err != nil {
+		t.Fatalf("healthy runtime never retried: calls before=%d after=%d refresh=%v view=%v",
+			beforeRecovery, calls, err, store.err)
 	}
 }
