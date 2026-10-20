@@ -16,9 +16,11 @@
 package vsock
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -96,9 +98,17 @@ func TestQueueAndCloseDrain(t *testing.T) {
 }
 
 func TestQueueLimitsAndUnsupportedGuarantees(t *testing.T) {
-	b := &Backend{options: Options{MaxMessageSize: 128, MaxPendingBytes: 128}, connected: true, notify: make(chan struct{}, 1)}
+	b := &Backend{
+		options:   Options{MaxMessageSize: 128, MaxPendingBytes: 128},
+		connected: true,
+		notify:    make(chan struct{}, 1),
+	}
 	rec := driver.Record{Data: []byte(`{"value":"bounded"}`)}
-	if err := b.Save(context.Background(), rec, driver.SaveOptions{WaitForVisibility: true}); !errors.Is(err, driver.ErrUnsupportedOp) {
+	if err := b.Save(
+		context.Background(),
+		rec,
+		driver.SaveOptions{WaitForVisibility: true},
+	); !errors.Is(err, driver.ErrUnsupportedOp) {
 		t.Errorf("visibility=%v", err)
 	}
 	if err := b.Save(context.Background(), rec, driver.SaveOptions{}); err != nil {
@@ -216,5 +226,117 @@ func TestReconnectAndConcurrentSave(t *testing.T) {
 	defer cancel()
 	if err := b.Close(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSaveAdmissionBeforeEncoding 验证断线、关闭、队列已满和其他编码占满容量时，
+// 大载荷被拒绝且不分配载荷大小的缓冲区，不改变已有的容量计数。
+func TestSaveAdmissionBeforeEncoding(t *testing.T) {
+	const payloadSize = 8 << 20
+	frameSize, err := transport.ChunkFrameSize(payloadSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := driver.Record{Data: bytes.Repeat([]byte("d"), payloadSize)}
+	for _, tc := range []struct {
+		name              string
+		connected, closed bool
+		pending, encoding int
+	}{
+		{name: "disconnected"},
+		{name: "closed", connected: true, closed: true},
+		{name: "queue-full", connected: true, pending: frameSize},
+		{name: "encoding-full", connected: true, encoding: frameSize},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &Backend{
+				options:   Options{MaxMessageSize: frameSize, MaxPendingBytes: frameSize},
+				connected: tc.connected, closed: tc.closed, pendingBytes: tc.pending, encodingBytes: tc.encoding,
+			}
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			err := backend.Save(t.Context(), record, driver.SaveOptions{})
+			runtime.ReadMemStats(&after)
+			if err == nil {
+				t.Fatal("unavailable capacity accepted")
+			}
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated >= payloadSize {
+				t.Fatalf("rejected payload allocated %d bytes", allocated)
+			}
+			if backend.pendingBytes != tc.pending || backend.encodingBytes != tc.encoding || len(backend.pending) != 0 {
+				t.Fatalf("rejection changed queue accounting: pending=%d encoding=%d", backend.pendingBytes, backend.encodingBytes)
+			}
+		})
+	}
+}
+
+// TestSaveExactCapacity 验证刚好填满容量的帧成功排队、预留计数被释放，
+// 后续写入被拒绝，并且编码结果不引用调用方的可变缓冲区。
+func TestSaveExactCapacity(t *testing.T) {
+	record := driver.Record{Data: []byte("checkout-document")}
+	frame, err := transport.EncodeChunkFrame(record.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &Backend{
+		options:   Options{MaxMessageSize: len(frame), MaxPendingBytes: len(frame)},
+		connected: true, notify: make(chan struct{}, 1),
+	}
+	if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	record.Data[0] = '!'
+	if backend.pendingBytes != len(frame) || backend.encodingBytes != 0 || len(backend.pending) != 1 ||
+		!bytes.Equal(backend.pending[0].frame, frame) {
+		t.Fatal("accepted frame or byte accounting is incorrect")
+	}
+	if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err == nil {
+		t.Fatal("full queue accepted document")
+	}
+}
+
+func BenchmarkSaveRejected(b *testing.B) {
+	record := driver.Record{Data: make([]byte, 8<<20)}
+	backend := &Backend{options: Options{MaxMessageSize: 16 << 20, MaxPendingBytes: 64 << 20}}
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := backend.Save(b.Context(), record, driver.SaveOptions{}); err == nil {
+			b.Fatal("disconnected save succeeded")
+		}
+	}
+}
+
+// TestConcurrentSaveCapacity 验证多个生产者竞争有限容量时，仅允许容量内的帧入队，
+// 拒绝其余写入，且所有编码结束后没有遗留的预留计数。
+func TestConcurrentSaveCapacity(t *testing.T) {
+	const capacity = 2
+	record := driver.Record{Data: bytes.Repeat([]byte("d"), 1<<20)}
+	frameSize, err := transport.ChunkFrameSize(len(record.Data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &Backend{
+		options:   Options{MaxMessageSize: frameSize, MaxPendingBytes: capacity * frameSize},
+		connected: true, notify: make(chan struct{}, 1),
+	}
+	results := make(chan error, 16)
+	start := make(chan struct{})
+	for range cap(results) {
+		go func() {
+			<-start
+			results <- backend.Save(t.Context(), record, driver.SaveOptions{})
+		}()
+	}
+	close(start)
+	var accepted int
+	for range cap(results) {
+		if <-results == nil {
+			accepted++
+		}
+	}
+	if accepted != capacity || len(backend.pending) != capacity || backend.encodingBytes != 0 ||
+		backend.pendingBytes != capacity*frameSize {
+		t.Fatalf("accepted=%d queued=%d pending=%d encoding=%d", accepted, len(backend.pending),
+			backend.pendingBytes, backend.encodingBytes)
 	}
 }

@@ -17,7 +17,9 @@ package transport
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"math"
 	"net"
 	"testing"
 	"time"
@@ -97,3 +99,29 @@ func (*shortWriteConn) RemoteAddr() net.Addr             { return nil }
 func (*shortWriteConn) SetDeadline(time.Time) error      { return nil }
 func (*shortWriteConn) SetReadDeadline(time.Time) error  { return nil }
 func (*shortWriteConn) SetWriteDeadline(time.Time) error { return nil }
+
+// TestChunkFrameSize 验证空载荷、字对齐边界和大载荷的预估值与编码一致，
+// 并拒绝负数和整数溢出的输入。
+func TestChunkFrameSize(t *testing.T) {
+	for _, size := range []int{0, 1, 7, 8, 9, 127, 128, 64 << 10, 8 << 20, -1, math.MaxInt} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			estimated, err := ChunkFrameSize(size)
+			if size < 0 || size == math.MaxInt {
+				if err == nil {
+					t.Fatal("invalid payload size accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			frame, err := EncodeChunkFrame(make([]byte, size))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(frame) != estimated {
+				t.Fatalf("encoded=%d, reserved=%d", len(frame), estimated)
+			}
+		})
+	}
+}
