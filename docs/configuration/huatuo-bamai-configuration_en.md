@@ -23,12 +23,12 @@ The configuration file uses **TOML** format and includes multiple sections such 
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
+BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
 ```
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
-  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, Moore Threads GPU metrics, and Moore Threads GPU XID event tracing. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs, or `mthreads_xid` to enable Moore Threads GPU XID event tracing on hosts with the MUSA driver. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
+  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, nf_conntrack table statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, Moore Threads GPU metrics, and Moore Threads GPU XID event tracing. Remove `net_conntrack` to enable nf_conntrack table metrics on hosts that load the connection tracking module, `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs, or `mthreads_xid` to enable Moore Threads GPU XID event tracing on hosts with the MUSA driver. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
 
 ### 3. Logging
 
@@ -1340,6 +1340,10 @@ This section configures how to fetch Pod information from kubelet to enable cont
 - **KubeletClientCertPath**: Path to kubelet client certificate and private key. Supports comma-separated files or single PEM file.
 
   **Description**: Used for mTLS authentication on the HTTPS port. In non-Kubernetes (bare-metal) environments, set both ports to 0 to disable Pod fetching.
+
+- **DockerAPIVersion**: Docker API version used when the container controller creates its Docker client for metadata lookups.
+
+  Default: `1.24`. Set this only when the Docker daemon requires a different API version.
 
 ### 11. CLI Flags
 

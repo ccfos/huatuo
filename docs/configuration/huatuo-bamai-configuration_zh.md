@@ -23,12 +23,12 @@ weight: 4
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
+BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
 ```
 
 - **BlackList**：全局追踪与指标黑名单。
 
-  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]`，即全局禁用网络设备硬件层（netdev_hw）、队列调度统计（netdev_qdisc）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标、TCP 重传追踪、摩尔线程 GPU 监控和摩尔线程 GPU XID 事件追踪。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪时移除 `tcp_retransmit`；需要启用摩尔线程 GPU 指标采集时移除 `mthreads_gpu`（要求已安装 MTML 库）；需要启用摩尔线程 GPU XID 事件追踪时移除 `mthreads_xid`（要求已安装 MUSA 驱动）。local 关联不依赖 standalone `dropwatch` tracer。
+  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]`，即全局禁用网络设备硬件层（netdev_hw）、队列调度统计（netdev_qdisc）、nf_conntrack 表统计（net_conntrack）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标、TCP 重传追踪、摩尔线程 GPU 监控和摩尔线程 GPU XID 事件追踪。需要启用 nf_conntrack 表指标时移除 `net_conntrack`（要求内核加载连接跟踪模块）；需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪时移除 `tcp_retransmit`；需要启用摩尔线程 GPU 指标采集时移除 `mthreads_gpu`（要求已安装 MTML 库）；需要启用摩尔线程 GPU XID 事件追踪时移除 `mthreads_xid`（要求已安装 MUSA 驱动）。local 关联不依赖 standalone `dropwatch` tracer。
 
   **说明**：添加黑名单项可有效降低资源消耗，尤其在特定硬件环境中；支持数组格式，可根据实际业务扩展。
 
@@ -1332,6 +1332,10 @@ softirq source 和 victim 调用栈。
   支持格式："/path/to/xxx-kubelet-client.crt,/path/to/xxx-kubelet-client.key" 或单文件 PEM 格式。 
 
   **说明**：参考 Kubernetes 证书最佳实践，用于 HTTPS 端口的 mTLS 认证。在裸金属或非 Kubernetes 环境中可通过将两个端口设为 0 来禁用 Pod 获取功能。
+
+- **DockerAPIVersion**：容器控制器创建 Docker 客户端查询容器元数据时使用的 Docker API 版本。
+
+  默认 `1.24`。仅在 Docker daemon 要求不同 API 版本时修改。
 
 ### 11. 命令行参数
 
