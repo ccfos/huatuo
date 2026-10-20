@@ -1520,3 +1520,10 @@ detection, process memory summary reads, output processing, and persistence.
 | Event without a candidate | Check direct cgroup membership, OOM-kill eligibility, and enumeration limits |
 | `unavailable` / `failed` | Check runtime/layout restrictions, access permissions, container metadata, and target exit; inspect `status_reason` |
 | Event stops after resource exhaustion | Check `RLIMIT_NOFILE`, `fs.inotify.max_user_watches`, and `fs.inotify.max_user_instances`; adjust and restart; this stop does not stop other events |
+
+### Stopping during operation launch
+
+Stopping a pending operation cancels its launch. Cancellation alone produces
+`stopped`; an independent launch or resource cleanup failure, including one
+joined with cancellation, produces `failed` with `execution_start_failed`.
+Launch deadline failures continue to use `launch_timeout`.

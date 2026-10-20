@@ -555,3 +555,44 @@ func equalStrings(left, right []string) bool {
 	}
 	return true
 }
+
+func TestManagerPendingStopPreservesLaunchFailures(t *testing.T) {
+	cleanupErr := errors.New("release profiler resources: cleanup failed")
+	for _, tc := range []struct {
+		name     string
+		startErr error
+		want     Outcome
+	}{
+		{"canceled", context.Canceled, OutcomeStopped},
+		{"wrapped cancellation", fmt.Errorf("start: %w", context.Canceled), OutcomeStopped},
+		{"joined cancellations", errors.Join(context.Canceled, fmt.Errorf("launch: %w", context.Canceled)), OutcomeStopped},
+		{"cleanup failure", errors.Join(context.Canceled, cleanupErr), OutcomeFailed},
+		{"wrapped cleanup failure", fmt.Errorf("start: %w", errors.Join(context.Canceled, cleanupErr)), OutcomeFailed},
+		{"nested cleanup failure", errors.Join(context.Canceled, errors.Join(cleanupErr, context.Canceled)), OutcomeFailed},
+		{"independent start failure", cleanupErr, OutcomeFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := newTestManager(t, testConfig())
+			entered := make(chan struct{})
+			executor := &fakeExecutor{startFn: func(ctx context.Context) error {
+				close(entered)
+				<-ctx.Done()
+				return tc.startErr
+			}}
+			if _, _, err := manager.Start(StartRequest{RequestID: "request", Kind: KindProfiling, Executor: executor}); err != nil {
+				t.Fatal(err)
+			}
+			waitClosed(t, entered, "executor Start")
+			if _, _, err := manager.StopByID("request"); err != nil {
+				t.Fatal(err)
+			}
+			operation := waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
+			if operation.Terminal == nil || operation.Terminal.Outcome != tc.want {
+				t.Fatalf("terminal = %+v, want %s", operation.Terminal, tc.want)
+			}
+			if tc.want == OutcomeFailed && operation.Terminal.Reason != FailureReasonExecutionStartFailed {
+				t.Fatalf("reason = %s, want execution_start_failed", operation.Terminal.Reason)
+			}
+		})
+	}
+}
