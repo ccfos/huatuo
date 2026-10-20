@@ -316,6 +316,8 @@ func BenchmarkPipelineBatchCycle(b *testing.B) {
 
 type benchmarkSink struct{ total int64 }
 
+func (*benchmarkSink) Name() output.OutputFormat { return output.FormatJSON }
+
 func (s *benchmarkSink) Add(_ context.Context, w *types.AggregationWindow) error {
 	for i := range w.Aggregated.Samples {
 		s.total += w.Aggregated.Samples[i].Value

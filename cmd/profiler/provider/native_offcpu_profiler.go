@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cilium/ebpf"
+
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
@@ -223,7 +225,11 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 		}
 		user := userCache[userKey]
 		if user == nil {
-			user = r.resolveUserStack(r.stackMapAID, event.Base.Userstack, pid)
+			user, err = r.resolveUserStack(r.stackMapAID, event.Base.Userstack, pid)
+			if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				return err
+			}
+
 			if len(user) != 0 {
 				userCache[userKey] = user
 			}
@@ -231,7 +237,11 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 
 		kernel := kernelCache[event.Base.Kernstack]
 		if kernel == nil {
-			kernel = r.resolveKernelStack(r.stackMapAID, event.Base.Kernstack)
+			kernel, err = r.resolveKernelStack(r.stackMapAID, event.Base.Kernstack)
+			if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				return err
+			}
+
 			if len(kernel) != 0 {
 				kernelCache[event.Base.Kernstack] = kernel
 			}
