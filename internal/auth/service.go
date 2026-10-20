@@ -169,6 +169,8 @@ func MatchesAnyPath(patterns []string, path string) bool {
 }
 
 // MatchesPath matches complete path segments, including *, **, and :parameter.
+// It evaluates an iterative DP table instead of map-memoized recursion, so a
+// per-request authorization does not allocate two maps and a closure per call.
 func MatchesPath(permission, path string) bool {
 	if permission == path {
 		return true
@@ -176,40 +178,36 @@ func MatchesPath(permission, path string) bool {
 
 	permissionSegments := strings.Split(strings.Trim(permission, "/"), "/")
 	pathSegments := strings.Split(strings.Trim(path, "/"), "/")
-	memo := make(map[[2]int]bool)
-	visited := make(map[[2]int]bool)
 
-	var match func(int, int) bool
-	match = func(permissionIndex, pathIndex int) bool {
-		position := [2]int{permissionIndex, pathIndex}
-		if visited[position] {
-			return memo[position]
+	permLen, pathLen := len(permissionSegments), len(pathSegments)
+	// next[i] = dp[p+1][i], current[i] = dp[p][i]; dp[p][i] reports whether
+	// permissionSegments[p:] matches pathSegments[i:].
+	next := make([]bool, pathLen+1)
+	current := make([]bool, pathLen+1)
+
+	// dp[permLen][i] = (i == pathLen)
+	next[pathLen] = true
+
+	for p := permLen - 1; p >= 0; p-- {
+		segment := permissionSegments[p]
+		for i := pathLen; i >= 0; i-- {
+			var matched bool
+			switch {
+			case segment == "**":
+				// Wildcards consume a descendant segment so collection
+				// permissions remain explicit.
+				matched = i < pathLen && (next[i+1] || current[i+1])
+			case i < pathLen:
+				matched = (segment == pathSegments[i] ||
+					segment == "*" ||
+					strings.HasPrefix(segment, ":")) && next[i+1]
+			}
+			current[i] = matched
 		}
-		visited[position] = true
-
-		matched := false
-		switch {
-		case permissionIndex == len(permissionSegments):
-			matched = pathIndex == len(pathSegments)
-		case permissionSegments[permissionIndex] == "**":
-			// Recursive wildcards consume a descendant segment so collection
-			// permissions remain explicit.
-			matched = pathIndex < len(pathSegments) &&
-				(match(permissionIndex+1, pathIndex+1) ||
-					match(permissionIndex, pathIndex+1))
-		case pathIndex < len(pathSegments):
-			permissionSegment := permissionSegments[permissionIndex]
-			matched = (permissionSegment == pathSegments[pathIndex] ||
-				permissionSegment == "*" ||
-				strings.HasPrefix(permissionSegment, ":")) &&
-				match(permissionIndex+1, pathIndex+1)
-		}
-
-		memo[position] = matched
-		return matched
+		next, current = current, next
 	}
 
-	return match(0, 0)
+	return next[0]
 }
 
 // ParseBearerToken extracts a token from an HTTP Authorization header.
