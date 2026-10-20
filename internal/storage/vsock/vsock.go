@@ -55,15 +55,17 @@ type queuedDocument struct {
 // Backend is a write-only, byte-bounded, reconnecting document sender.
 // Documents accepted while connected may still be lost: the protocol has no ACK.
 type Backend struct {
-	options      Options
-	mutex        sync.Mutex
-	pending      []queuedDocument
-	pendingBytes int
-	connected    bool
-	closed       bool
-	notify       chan struct{}
-	cancel       context.CancelFunc
-	done         chan struct{}
+	options       Options
+	mutex         sync.Mutex
+	pending       []queuedDocument
+	pendingBytes  int
+	encodingBytes int
+	connection    uint64
+	connected     bool
+	closed        bool
+	notify        chan struct{}
+	cancel        context.CancelFunc
+	done          chan struct{}
 }
 
 // New starts a sender. Separate instances carry tracing and profiling documents.
@@ -91,7 +93,13 @@ func New(options Options) (*Backend, error) {
 	if options.RetryInterval == 0 {
 		options.RetryInterval = time.Second
 	}
-	if options.Port == ^uint32(0) || options.MaxMessageSize < 128 || options.MaxPendingBytes < options.MaxMessageSize || options.IOTimeout < 0 || options.RetryInterval < 0 {
+	if options.Port == ^uint32(
+		0,
+	) ||
+		options.MaxMessageSize < 128 ||
+		options.MaxPendingBytes < options.MaxMessageSize ||
+		options.IOTimeout < 0 ||
+		options.RetryInterval < 0 {
 		return nil, errors.New("vsock storage: invalid port, byte limits or timeouts")
 	}
 	if options.DialContext == nil {
@@ -118,23 +126,48 @@ func (b *Backend) Save(ctx context.Context, rec driver.Record, options driver.Sa
 	if len(rec.Data) > b.options.MaxMessageSize {
 		return fmt.Errorf("vsock storage: message too large")
 	}
-	frame, err := transport.EncodeChunkFrame(rec.Data)
+	frameSize, err := transport.ChunkFrameSize(len(rec.Data))
 	if err != nil {
 		return err
 	}
-	if len(frame) > b.options.MaxMessageSize {
+	if frameSize > b.options.MaxMessageSize {
 		return fmt.Errorf("vsock storage: frame too large")
 	}
 	b.mutex.Lock()
-	defer b.mutex.Unlock()
 	if b.closed {
+		b.mutex.Unlock()
 		return ErrClosed
 	}
 	if !b.connected {
+		b.mutex.Unlock()
 		return fmt.Errorf("vsock storage: disconnected; document dropped")
 	}
-	if len(frame) > b.options.MaxPendingBytes-b.pendingBytes {
+	if frameSize > b.options.MaxPendingBytes-b.pendingBytes-b.encodingBytes {
+		b.mutex.Unlock()
 		return fmt.Errorf("vsock storage: queue full; document dropped")
+	}
+	connection := b.connection
+	b.encodingBytes += frameSize
+	b.mutex.Unlock()
+
+	frame, err := transport.EncodeChunkFrame(rec.Data)
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.encodingBytes -= frameSize
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if b.closed {
+		return ErrClosed
+	}
+	if !b.connected || b.connection != connection {
+		return fmt.Errorf("vsock storage: connection changed; document dropped")
+	}
+	if len(frame) != frameSize {
+		return fmt.Errorf("vsock storage: encoded frame size %d differs from reserved %d", len(frame), frameSize)
 	}
 	b.pending = append(b.pending, queuedDocument{frame: frame})
 	b.pendingBytes += len(frame)
@@ -190,6 +223,7 @@ func (b *Backend) send(ctx context.Context, conn net.Conn) error {
 	}
 	defer client.Close()
 	b.mutex.Lock()
+	b.connection++
 	b.connected = true
 	b.mutex.Unlock()
 	defer func() {
