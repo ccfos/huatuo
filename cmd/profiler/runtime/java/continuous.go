@@ -49,11 +49,12 @@ type collapsedFile struct {
 }
 
 type collapsedFileCollector struct {
-	pids           []int
-	pidsToFilePath map[int]string
-	enqueueSample  func(profile.SampleOutput) error
-	observedFiles  map[string]observedFile
-	retainedFiles  map[string]fileSignature
+	pids             []int
+	pidsToFilePath   map[int]string
+	enqueueSample    func(profile.SampleOutput) error
+	observedFiles    map[string]observedFile
+	retainedFiles    map[string]fileSignature
+	collectionStarts map[int]time.Time
 }
 
 func newCollapsedFileCollector(
@@ -204,9 +205,20 @@ func (c *collapsedFileCollector) observeOutputFile(pid int, file collapsedFile, 
 
 	delete(c.observedFiles, file.path)
 
+	var start, end time.Time
+	if previous := c.collectionStarts[pid]; !previous.IsZero() {
+		start = previous
+		end = time.Unix(0, file.signature[1])
+		if end.Before(start) {
+			return fmt.Errorf("async-profiler output for pid %d predates collection start", pid)
+		}
+		c.collectionStarts[pid] = end
+	}
 	if err := c.enqueueSample(profile.SampleOutput{
-		PID:    pid,
-		Output: string(collapsedData),
+		StartedAt: start,
+		EndedAt:   end,
+		PID:       pid,
+		Output:    string(collapsedData),
 	}); err != nil {
 		return err
 	}
@@ -282,6 +294,10 @@ func ReadAsprofDataLoop(
 		pidToPath,
 		enqueue,
 	)
+	collector.collectionStarts = make(map[int]time.Time, len(opt.Pids))
+	for _, pid := range opt.Pids {
+		collector.collectionStarts[pid] = opt.startedAt
+	}
 	if err := collector.run(ctx); err != nil {
 		return err
 	}

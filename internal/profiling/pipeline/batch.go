@@ -16,6 +16,7 @@ package pipeline
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -24,6 +25,9 @@ import (
 // SampleBatch transfers all backing storage only when Enqueue succeeds.
 // Providers must not reuse delivered batches or retry automatically.
 type SampleBatch struct {
+	// Completed providers retain collection time independently of delivery latency.
+	StartedAt      time.Time
+	EndedAt        time.Time
 	Samples        []aggregation.Sample
 	DroppedSamples map[string]uint64
 }
@@ -68,6 +72,11 @@ func (b *BatchBuilder) Flush(enqueue func(*SampleBatch) error) error {
 func validateBatch(batch *SampleBatch) error {
 	if batch == nil {
 		return fmt.Errorf("profiling sample batch is required")
+	}
+
+	if batch.StartedAt.IsZero() != batch.EndedAt.IsZero() ||
+		(!batch.StartedAt.IsZero() && batch.EndedAt.Before(batch.StartedAt)) {
+		return fmt.Errorf("profiling batch requires ordered collection start and end times")
 	}
 
 	if len(batch.Samples) > MaxBatchSamples {

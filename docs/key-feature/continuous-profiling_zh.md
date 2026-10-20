@@ -750,7 +750,7 @@ Native CPU、memory alloc 和 Java（CPU、object_alloc、object_usage）使用 
 
 `Enqueue(ctx, batch)` 返回 nil 表示成功入队并转移底层切片/map 所有权，不保证已经聚合或输出。所有模式均非阻塞入队；队列满返回 `ErrQueueFull`，context 取消时拒绝交付，错误时批次仍归调用者。provider 不复用已交付批次、不自动重试；runner 收到入队错误后取消处理，失败任务不 Complete。同步输出期间暂停消费输入，较大的队列只能吸收短暂突发，持续过载仍会失败。
 
-首个有效批次在 Enqueue 尝试交付前取得的时间成为窗口起点，snapshot 在同步调用 Add 之前确定终点。封存窗口后、调用 Add 前替换所有窗口数据和索引，下一有效批次重新建立起点；相邻窗口允许空闲或重叠。纯 collection 丢样批次同样建立窗口起点。这些时间描述接收和聚合区间，不是精确采样区间。
+Java 和 Python 的完整 batch 携带采集起止时间，Pipeline 使用最早开始与最晚结束时间封装窗口，解析、排队及输出延迟不计入 profile 时长。Python 使用 py-spy 执行区间；Java 使用会话开始与连续输出文件的修改时间，包含 profiler dump 开销。未提供采集时间的 provider 保留接收时间回退规则，仅有丢样的 batch 也会建立窗口起点。
 
 ### 输出和错误
 

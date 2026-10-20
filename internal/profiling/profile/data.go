@@ -14,6 +14,8 @@
 
 package profile
 
+import "time"
+
 const (
 	// ProfileTypeCpuSample is the profile type for CPU sample.
 	ProfileTypeCpuSample        = "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
@@ -26,6 +28,8 @@ const (
 
 // Profiling output for each PID.
 type SampleOutput struct {
-	PID    int    `json:"pid"`
-	Output string `json:"output"`
+	StartedAt time.Time `json:"started_at,omitempty"`
+	EndedAt   time.Time `json:"ended_at,omitempty"`
+	PID       int       `json:"pid"`
+	Output    string    `json:"output"`
 }

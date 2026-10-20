@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
@@ -223,5 +224,29 @@ func TestFoldedFramesPreserveFieldsAndOwnStrings(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFoldedBatchesRetainCollectionInterval(t *testing.T) {
+	start := time.Unix(1700000000, 0)
+	end := start.Add(30 * time.Second)
+	for _, language := range []profiling.Language{profiling.LanguageJava, profiling.LanguagePython} {
+		batches := 0
+		err := enqueueFolded(profile.SampleOutput{
+			StartedAt: start, EndedAt: end, PID: 100,
+			Output: strings.Repeat("work 1\n", pipeline.MaxBatchSamples+1),
+		}, nil, 1, language, func(batch *pipeline.SampleBatch) error {
+			batches++
+			if !batch.StartedAt.Equal(start) || !batch.EndedAt.Equal(end) {
+				t.Fatal("folded batch lost collection interval")
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if batches != 2 {
+			t.Fatalf("batches = %d, want 2", batches)
+		}
 	}
 }

@@ -105,12 +105,15 @@ func (p *pythonCPUProfiler) Start(_ context.Context) error {
 }
 
 func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	startedAt := time.Now()
 	cmdResults := runPySpy(
 		ctx,
 		p.pids,
 		p.config.Freq,
 		p.config.ToolDir,
 	)
+
+	endedAt := time.Now()
 
 	deliveryCtx := ctx
 	if profile.IsNormalStop(ctx) {
@@ -151,8 +154,10 @@ func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipe
 
 		if err := enqueueFolded(
 			profile.SampleOutput{
-				PID:    targetPid,
-				Output: string(cmdRes.Output),
+				StartedAt: startedAt,
+				EndedAt:   endedAt,
+				PID:       targetPid,
+				Output:    string(cmdRes.Output),
 			},
 			p.labels[targetPid],
 			1000000000/int64(p.config.Freq),
