@@ -19,12 +19,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 )
+
+var errIndexNotFound = errors.New("Elasticsearch index not found")
 
 func checkSearchStatus(payload *essearch.Response) error {
 	// HTTP success can still carry incomplete hits or aggregations.
@@ -66,8 +69,12 @@ func responseError(action, target string, res *esapi.Response) error {
 	if len(body) <= maxBodyBytes && json.Unmarshal(body, &payload) == nil &&
 		(payload.ErrorCause.Type != "" || payload.ErrorCause.Reason != nil ||
 			payload.ErrorCause.CausedBy != nil || len(payload.ErrorCause.RootCause) > 0) {
-		return fmt.Errorf("elasticsearch %s %s: status %d: %s",
+		detail := fmt.Errorf("elasticsearch %s %s: status %d: %s",
 			action, target, res.StatusCode, formatErrorCause(&payload.ErrorCause))
+		if res.StatusCode == http.StatusNotFound && payload.ErrorCause.Type == "index_not_found_exception" {
+			return fmt.Errorf("%w: %w", errIndexNotFound, detail)
+		}
+		return detail
 	}
 
 	if len(body) > maxBodyBytes {

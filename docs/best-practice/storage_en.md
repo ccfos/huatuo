@@ -608,3 +608,5 @@ another. Older documents and events without kernel timestamps omit the new
 field; historical data is not migrated automatically. The raw
 `kernel_observed_ns` stays in process for correlation and is not
 written to new documents.
+
+Elasticsearch/OpenSearch query, count, distinct-value, and delete-by-query operations treat HTTP 404 as an empty result only when the response identifies `index_not_found_exception`. Other 404 responses, including proxy routing failures and malformed error bodies, are returned as errors. A failed scroll continuation remains an error.
