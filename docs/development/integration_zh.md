@@ -96,11 +96,11 @@ summary: total=5 passed=3 skipped=2 failed=0
 
 ### 存储测试
 
-`test_storage_config.sh` 覆盖 Elasticsearch Address、Username、Password
+`test_basic_elasticsearch_config.sh` 覆盖 Elasticsearch Address、Username、Password
 的全部八种组合。部分配置必须以明确的配置错误退出；全空、全配必须启动就绪。
 全配用例使用 `--disable-storage`，将配置校验与 Elasticsearch 可用性隔离。
 
-`test_storage_rotation.sh` 复用存储一致性测试的 UDP 发包和配置函数，只启用
+`test_basic_localfile_rotation.sh` 复用存储一致性测试的 UDP 发包和配置函数，只启用
 LocalFile。持续向未监听的 UDP 端口分批发包，直到 Dropwatch 事件触发轮转并淘汰
 首个观测到的备份，再检查文件大小、JSON 完整性和两个备份加一个活动文件的数量
 上限。依赖内核 BTF、`skb/kfree_skb` tracepoint，以及 Dropwatch 二进制和 BPF
