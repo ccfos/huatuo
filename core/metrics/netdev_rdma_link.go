@@ -29,26 +29,31 @@ func init() {
 }
 
 type rdmaLink struct {
-	rdmaList []*netlink.RdmaLink
+	listLinks func() ([]*netlink.RdmaLink, error)
+	readStats func(*netlink.RdmaLink) (*netlink.RdmaDeviceStatistic, error)
 }
 
 func newRdmaLink() (*tracing.EventTracingAttr, error) {
-	lists, err := netlink.RdmaLinkList()
+	_, err := netlink.RdmaLinkList()
 	if err != nil {
 		return nil, err
 	}
 
 	return &tracing.EventTracingAttr{
-		TracingData: &rdmaLink{rdmaList: lists},
+		TracingData: &rdmaLink{listLinks: netlink.RdmaLinkList, readStats: netlink.RdmaStatistic},
 		Flag:        tracing.FlagMetric,
 	}, nil
 }
 
 func (r *rdmaLink) Update() ([]*metric.Data, error) {
+	links, err := r.listLinks()
+	if err != nil {
+		return nil, fmt.Errorf("discover RDMA links: %w", err)
+	}
 	var data []*metric.Data
 
-	for _, rdma := range r.rdmaList {
-		stats, err := netlink.RdmaStatistic(rdma)
+	for _, rdma := range links {
+		stats, err := r.readStats(rdma)
 		if err != nil {
 			continue
 		}

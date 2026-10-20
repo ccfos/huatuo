@@ -1520,3 +1520,10 @@ detection, process memory summary reads, output processing, and persistence.
 | Event without a candidate | Check direct cgroup membership, OOM-kill eligibility, and enumeration limits |
 | `unavailable` / `failed` | Check runtime/layout restrictions, access permissions, container metadata, and target exit; inspect `status_reason` |
 | Event stops after resource exhaustion | Check `RLIMIT_NOFILE`, `fs.inotify.max_user_watches`, and `fs.inotify.max_user_instances`; adjust and restart; this stop does not stop other events |
+
+### RDMA device discovery
+
+`netdev_rdma_link` refreshes the RDMA device list on every scrape, so added,
+removed and re-registered devices are reflected without restarting HUATUO.
+Each scrape uses current device attributes. Discovery errors fail that scrape;
+an empty successfully discovered list is valid on a host without RDMA devices.
