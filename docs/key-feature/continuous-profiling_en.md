@@ -775,7 +775,7 @@ Remote-store uses the shared Toolstream service `profiling_store_service` with b
 
 The handler validates external windows, builds pprof, and calls `SaveSync`. Labels retain their sample associations; the tool name becomes tracer_name. Complete sends `End + Commit` and waits for ACK. Plain End, disconnect, and failure do not write completion markers or roll back existing windows. Ordinary data frames have no ACK; receive/storage errors are returned in the commit ACK.
 
-JSON can write files during Add; local output has no transactional rollback. Existing flamegraph queries do not filter all windows by completion markers. Persisted labels do not imply label indexing or sample-filter APIs. ES label queries, output publication, and a switch from upload time to collection time remain separate work.
+JSON opens the destination only after the first window converts successfully. Cancellation during conversion, including the Pipeline's 30-second output timeout, preserves an existing result and creates no empty result file. Subsequent write failures still have no transactional rollback. JSON can write files during Add; local output has no transactional rollback. Existing flamegraph queries do not filter all windows by completion markers. Persisted labels do not imply label indexing or sample-filter APIs. ES label queries, output publication, and a switch from upload time to collection time remain separate work.
 
 ### Dropped samples
 
@@ -791,5 +791,3 @@ The new Pipeline only produces `collection` in `DroppedSamples`, stored in `prof
 <img src="/img/contact-weixin.png" alt="Official WeChat account QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
-
-JSON output opens its destination only after window conversion succeeds; conversion errors preserve an existing result and do not create an empty result file.

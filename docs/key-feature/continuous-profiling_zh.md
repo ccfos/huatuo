@@ -766,7 +766,7 @@ remote-store 复用 Toolstream 服务 `profiling_store_service`，使用业务�
 
 handler 完整校验外部窗口，通过公共 builder 构建 pprof 并 `SaveSync`。sample labels 与样本对应落盘；工具名写入 tracer_name。Complete 发送 `End + Commit` 并等待 ACK；普通 End、断连或失败不写完成标记，已写窗口不回滚。普通数据帧无 ACK，接收或保存错误由提交 ACK 返回。
 
-JSON 可在 Add 写文件，其他本地输出也不提供事务回滚。现有火焰图查询不以完成标记过滤全部窗口；标签持久化不表示已支持标签索引或样本过滤。ES 标签查询、输出发布及上传时间切换采集时间的规则仍需独立落实。
+JSON 在首个窗口转换成功后才打开目标文件。转换期间取消或超过 Pipeline 的 30 秒输出超时，不会截断已有结果，也不会创建空结果文件；后续写入失败仍不提供事务回滚。 JSON 可在 Add 写文件，其他本地输出也不提供事务回滚。现有火焰图查询不以完成标记过滤全部窗口；标签持久化不表示已支持标签索引或样本过滤。ES 标签查询、输出发布及上传时间切换采集时间的规则仍需独立落实。
 
 ### 丢样统计
 
@@ -782,5 +782,3 @@ JSON 可在 Add 写文件，其他本地输出也不提供事务回滚。现有�
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
-
-JSON 输出在窗口转换成功后才打开目标文件；转换失败会保留已有结果，也不会创建空的结果文件。
