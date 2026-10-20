@@ -2,7 +2,8 @@
 
 The existing Unix socket client and `Serve` continue to use protocol version 1.
 The wire schema is unchanged. `NewClientWithConn` accepts ownership of any
-`net.Conn`; `NewClientWithConnContext` additionally closes it on cancellation,
+`net.Conn` and a `ClientMetadata` value (tool name, version and task ID).
+The protocol version is supplied by the transport package. `NewClientWithConnContext` additionally closes it on cancellation,
 including during a blocked handshake or send. `End` still reports send and
 close errors. `EncodeChunkFrame` returns one complete encoded chunk frame,
 including framing, without writing it; queueing senders encode a payload once
