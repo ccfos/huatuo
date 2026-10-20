@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"runtime"
 	"sync"
@@ -44,6 +45,14 @@ func waitConnected(t *testing.T, b *Backend) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("sender did not connect")
+}
+
+// TestBackendInit 验证写入型后端接受集合和索引初始化，无需创建本地资源。
+func TestBackendInit(t *testing.T) {
+	backend := &Backend{}
+	if err := backend.Init(t.Context(), "checkout-traces", []driver.Index{}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestQueueAndCloseDrain(t *testing.T) {
@@ -187,45 +196,102 @@ func TestCloseDeadlineInterruptsBlockedSend(t *testing.T) {
 	}
 }
 
+// TestReconnectAndConcurrentSave 验证首次连接失败后的重连、并发保存全部成功，
+// 并在关闭排空后逐条核对接收内容，拒绝丢失、重复和额外的文档。
 func TestReconnectAndConcurrentSave(t *testing.T) {
+	const documentCount = 16
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := transport.Serve(listener, func(*transport.Session, transport.ChunkMsg) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer server.Close()
-	var mutex sync.Mutex
-	attempts := 0
-	b, err := New(Options{ToolName: ProfilingTool, RetryInterval: time.Millisecond, DialContext: func(ctx context.Context, _ uint32) (net.Conn, error) {
-		mutex.Lock()
-		attempts++
-		attempt := attempts
-		mutex.Unlock()
-		if attempt == 1 {
-			return nil, errors.New("host restarting")
+	var receivedMutex sync.Mutex
+	received := make(map[string]int)
+	server, err := transport.Serve(listener, func(_ *transport.Session, chunk transport.ChunkMsg) {
+		if len(chunk.Data) == 0 {
+			return
 		}
-		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
-	}})
+		receivedMutex.Lock()
+		received[string(chunk.Data)]++
+		receivedMutex.Unlock()
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitConnected(t, b)
-	var writers sync.WaitGroup
-	for range 16 {
-		writers.Add(1)
+	t.Cleanup(func() { _ = server.Close() })
+	var mutex sync.Mutex
+	var attempts int
+	backend, err := New(Options{
+		ToolName: ProfilingTool, RetryInterval: time.Millisecond,
+		DialContext: func(ctx context.Context, _ uint32) (net.Conn, error) {
+			mutex.Lock()
+			attempts++
+			attempt := attempts
+			mutex.Unlock()
+			if attempt == 1 {
+				return nil, errors.New("host restarting")
+			}
+			return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = backend.Close(ctx)
+	})
+	waitConnected(t, backend)
+	expected := make(map[string]int, documentCount)
+	results := make(chan error, documentCount)
+	for index := range documentCount {
+		document := fmt.Sprintf(`{"document":"checkout-%d"}`, index)
+		expected[document] = 1
 		go func() {
-			defer writers.Done()
-			_ = b.Save(context.Background(), driver.Record{Data: []byte(`{"value":1}`)}, driver.SaveOptions{})
+			results <- backend.Save(t.Context(), driver.Record{Data: []byte(document)}, driver.SaveOptions{})
 		}()
 	}
-	writers.Wait()
+	for range documentCount {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("concurrent save: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("concurrent save did not finish")
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := b.Close(ctx); err != nil {
+	if err := backend.Close(ctx); err != nil {
 		t.Fatal(err)
+	}
+	// Closing the sender drains writes, but the receiver may still be dispatching them.
+	for {
+		receivedMutex.Lock()
+		isComplete := len(received) == len(expected)
+		receivedMutex.Unlock()
+		if isComplete {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("receiver did not receive every document")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if err := server.Close(); err != nil {
+		t.Fatal(err)
+	}
+	receivedMutex.Lock()
+	defer receivedMutex.Unlock()
+	if len(received) != len(expected) {
+		t.Fatalf("received %d distinct documents, want %d", len(received), len(expected))
+	}
+	for document, count := range expected {
+		if received[document] != count {
+			t.Fatalf("document %q received %d times, want %d", document, received[document], count)
+		}
 	}
 }
 
@@ -338,5 +404,45 @@ func TestConcurrentSaveCapacity(t *testing.T) {
 		backend.pendingBytes != capacity*frameSize {
 		t.Fatalf("accepted=%d queued=%d pending=%d encoding=%d", accepted, len(backend.pending),
 			backend.pendingBytes, backend.encodingBytes)
+	}
+}
+
+// TestBackendUnsupportedOperations 验证六个不支持的读取、删除及查询接口
+// 返回统一哨兵错误；Query 不得调用消费回调。
+func TestBackendUnsupportedOperations(t *testing.T) {
+	backend := &Backend{}
+	for _, tc := range []struct {
+		name string
+		call func(t *testing.T) error
+	}{
+		{"Get", func(t *testing.T) error {
+			_, err := backend.Get(t.Context(), "checkout-trace")
+			return err
+		}},
+		{"Delete", func(t *testing.T) error { return backend.Delete(t.Context(), "checkout-trace") }},
+		{"DeleteByQuery", func(t *testing.T) error {
+			_, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{})
+			return err
+		}},
+		{"Query", func(t *testing.T) error {
+			return backend.Query(t.Context(), driver.Query{}, func([]driver.Record) error {
+				t.Fatal("unsupported query invoked consumer")
+				return nil
+			})
+		}},
+		{"Count", func(t *testing.T) error {
+			_, err := backend.Count(t.Context(), driver.Query{})
+			return err
+		}},
+		{"Values", func(t *testing.T) error {
+			_, err := backend.Values(t.Context(), "tracer_name", driver.Query{}, 10)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(t); !errors.Is(err, driver.ErrUnsupportedOp) {
+				t.Fatalf("error=%v, want ErrUnsupportedOp", err)
+			}
+		})
 	}
 }
