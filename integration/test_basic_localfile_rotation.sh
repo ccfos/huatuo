@@ -19,7 +19,6 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
-source "${ROOT_DIR}/integration/lib_storage.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
 readonly STORAGE_ROTATION_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/dropwatch"
@@ -30,15 +29,9 @@ readonly STORAGE_EVENT_RATE=1000
 readonly STORAGE_ROTATION_SIZE_BYTES=$((STORAGE_ROTATION_MIB * 1024 * 1024))
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
-require_commands jq ss curl unshare mount stat readlink
+require_commands jq ss curl unshare mount stat
 require_readable /sys/kernel/btf/vmlinux
 tracepoint_available skb kfree_skb || skip "skb/kfree_skb tracepoint is unavailable"
-storage_rotation_binary=$(readlink -f "${HUATUO_BAMAI_BIN}") || fatal "failed to resolve bamai binary path"
-storage_rotation_bin_dir=${storage_rotation_binary%/*}
-[[ -x ${storage_rotation_bin_dir}/dropwatch ]] \
-	|| fatal "dropwatch binary missing or not executable: ${storage_rotation_bin_dir}/dropwatch; run make build"
-[[ -r ${storage_rotation_bin_dir}/../bpf/net_dropwatch.o ]] \
-	|| fatal "dropwatch BPF object missing: ${storage_rotation_bin_dir}/../bpf/net_dropwatch.o; run make build"
 
 # Isolate the daemon's fixed socket and PID paths from other running daemons.
 if [[ ${1:-} != --isolated ]]; then
@@ -69,6 +62,22 @@ storage_rotation_retention_is_settled() {
 	return 1
 }
 
+assert_storage_rotation_file() {
+	local file=$1 size actual
+	size=$(stat -c %s "${file}") || fatal "failed to read rotated file size: ${file}"
+	((size > 0 && size <= STORAGE_ROTATION_SIZE_BYTES)) \
+		|| fatal "rotated file size: ${file}: expected 1..${STORAGE_ROTATION_SIZE_BYTES} bytes, actual=${size}"
+	actual=$(jq -s -e --argjson port "${storage_target_port}" 'length > 0 and all(.[];
+		if .tracer_name == "dropwatch" and .tracer_type == "event"
+			and .tracer_data.layers.ipv4.daddr == "127.0.0.99"
+			and .tracer_data.layers.udp.dport == $port then true
+		else error({tracer_name, tracer_type,
+			daddr: .tracer_data.layers.ipv4.daddr,
+			dport: .tracer_data.layers.udp.dport} | tostring)
+		end)' "${file}" 2>&1) \
+		|| fatal "persisted events: ${file}: expected nonempty dropwatch/event records for 127.0.0.99:${storage_target_port}, actual=${actual}"
+}
+
 mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}/run"
 mount --bind "${HUATUO_BAMAI_TEST_TMPDIR}/run" /var/run
 integration_huatuo_bamai_start write_storage_events_config \
@@ -82,15 +91,7 @@ storage_rotation_files=("${STORAGE_ROTATION_EVENT}" "${STORAGE_ROTATION_EVENT}"-
 assert_eq "${#storage_rotation_files[@]}" "$((STORAGE_MAX_FILES + 1))" "local event file count" \
 	|| fatal "expected one active file and ${STORAGE_MAX_FILES} backups"
 for storage_rotation_file in "${storage_rotation_files[@]}"; do
-	storage_rotation_size=$(stat -c %s "${storage_rotation_file}")
-	((storage_rotation_size > 0 && storage_rotation_size <= STORAGE_ROTATION_SIZE_BYTES)) \
-		|| fatal "invalid rotated file size: ${storage_rotation_file}: ${storage_rotation_size} bytes"
-	jq -s -e --argjson port "${storage_target_port}" 'length > 0 and all(.[];
-		.tracer_name == "dropwatch" and .tracer_type == "event"
-		and .tracer_data.layers.ipv4.daddr == "127.0.0.99"
-		and .tracer_data.layers.udp.dport == $port)' \
-		"${storage_rotation_file}" > /dev/null \
-		|| fatal "invalid persisted events: ${storage_rotation_file}"
+	assert_storage_rotation_file "${storage_rotation_file}"
 done
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" huatuo-bamai
 jq -s -c '.[-1] | {tracer_name, tracer_type, layers: .tracer_data.layers}' "${STORAGE_ROTATION_EVENT}"

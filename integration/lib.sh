@@ -608,3 +608,12 @@ assert_java_profiler_streams() (
 		"${out_dir}/windows.json" > /dev/null \
 		|| fatal "expected multiple non-empty Java windows in ${out_dir}/windows.json"
 )
+
+storage_send_udp_packets() {
+	local port=$1 count=${2:-1} packet
+	for ((packet = 0; packet < count; packet++)); do
+		printf 'huatuo-storage-drop' 2>> "${HUATUO_BAMAI_TEST_TMPDIR}/traffic.log" \
+			> "/dev/udp/127.0.0.99/${port}" \
+			|| fatal "failed to send UDP packet to 127.0.0.99:${port}"
+	done
+}
