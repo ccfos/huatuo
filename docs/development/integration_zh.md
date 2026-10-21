@@ -106,6 +106,12 @@ LocalFile。持续向未监听的 UDP 端口分批发包，直到 Dropwatch 事�
 上限。依赖内核 BTF、`skb/kfree_skb` tracepoint，以及 Dropwatch 二进制和 BPF
 对象。两个存储测试均不需要 Elasticsearch。
 
+两个用例在启动 daemon 前调用 `integration_isolate_run_directory`，隔离 PID 锁和
+Toolstream socket。配置、轮转和后端一致性测试在最终数据和日志检查前调用
+`assert_huatuo_bamai_shutdown`，EXIT trap 仍负责尽力清理。
+`write_storage_events_config` 的调用方必须设置 `STORAGE_EVENT_RATE`、
+`STORAGE_ROTATION_MIB` 和 `STORAGE_MAX_ROTATED_FILES`。
+
 ### 后台进程清理
 
 `stop_and_wait_by_pid PID [TIMEOUT]` 停止并等待子进程，返回其退出码。

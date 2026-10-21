@@ -26,6 +26,9 @@ source "${ROOT_DIR}/integration/config.sh"
 # Bash does not export the runner's timeout array to child shells.
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 readonly STORAGE_INDEX=huatuo_storage_consistency
+readonly STORAGE_EVENT_RATE=100
+readonly STORAGE_ROTATION_MIB=100
+readonly STORAGE_MAX_ROTATED_FILES=10
 
 require_commands docker curl jq timeout ss
 # These dependencies apply to all backends; a missing one skips the whole matrix.
@@ -69,13 +72,6 @@ assert_storage_request() {
 	report_http_response "${operation}" "${STORAGE_RESPONSE}" "${STORAGE_ERRORS}"
 	assert_eq "${status}" 0 "${operation} curl status" || fatal "${operation} request failed"
 	assert_eq "${http_status}" 200 "${operation} HTTP status" || fatal "${operation} returned HTTP ${http_status}"
-}
-
-assert_storage_shutdown() {
-	local bamai_pid
-	bamai_pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
-	huatuo_bamai_stop
-	wait "${bamai_pid}" || fatal "huatuo-bamai did not flush storage and exit successfully"
 }
 
 storage_remote_has_events() {
@@ -133,7 +129,7 @@ storage_run_backend() {
 		--region integration --disable-kubelet --log-debug
 	wait_until 20 0.2 storage_local_event_ready || fatal "localfile storage did not receive an event"
 	assert_storage_async_write
-	assert_storage_shutdown
+	assert_huatuo_bamai_shutdown
 	assert_storage_event_counts
 	assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"
 }
