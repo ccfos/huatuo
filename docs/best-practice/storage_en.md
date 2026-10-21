@@ -485,7 +485,7 @@ sequenceDiagram
 | `FlushBytes`      | 5 MB                | Flush when accumulated bytes reach the threshold |
 | `FlushInterval`   | 1 s                 | Force-flush 1 second after the previous flush    |
 | `NumWorkers`      | 4                   | Concurrent workers submitting Bulk requests      |
-| Process shutdown  | `Close(ctx)`        | SIGTERM/SIGINT triggers a 10 s bounded drain     |
+| Process shutdown  | `Close(ctx)`        | SIGTERM/SIGINT run all cleanup stages with a 60 s shared budget     |
 
 #### Two-Tier Retry Policy
 
@@ -567,7 +567,7 @@ plus a truncation marker.
 In all three scenarios below, `Save` returns `nil` but the event never reaches the index:
 
 1. **Abnormal process exit**: `SIGKILL` or host power loss drops whatever is still buffered in the BulkIndexer (the local directory still keeps a copy).
-   - Mitigation: SIGTERM/SIGINT trigger graceful shutdown; `Close` force-flushes the buffer with a 10 s deadline.
+   - Mitigation: SIGTERM/SIGINT trigger graceful shutdown; `Close` force-flushes the buffer within the daemon's 60 s shutdown budget.
 2. **Whole-batch permanent rejection**: 4xx (non-429) errors discard every record in the batch. Common causes: disabled index, expired credentials, document exceeding the cluster's `http.max_content_length`.
    - Diagnosis: `OnError` log includes ES's `type` and `reason`.
 3. **Permanent per-item failure**: mapping conflict, version conflict, malformed document.

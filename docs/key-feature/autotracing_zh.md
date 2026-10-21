@@ -19,7 +19,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 采集内容包括 eBPF 火焰图（`perf` 工具系统级或容器级 CPU 调用栈采样）、D 状态进程内核调用栈、磁盘 IO 调用栈、进程内存使用排行等。为避免持续触发导致的数据冗余，各事件均内置冷却策略（默认 30 分钟），确保在事件风暴期间仅保留关键快照。
 
-当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（内存突发分配）。
+当前支持 7 类事件：`cpusys`（物理机 CPU sys 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（内存突发分配）、`irqtracing`（按 CPU 的 IRQ/软中断利用率突增）、`memory_threshold_snapshot`（容器内存压力下的 Go/HotSpot/CPython 内存快照）。
 
 ## 🎯 场景
 
@@ -79,6 +79,10 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 | `dload` | 容器 | 不可中断进程负载 EMA > 5 | D 状态进程堆积、IO 阻塞 |
 | `iotracing` | 物理机 | 磁盘 IO 指标连续两次超阈值 | 磁盘 IO 打满、IO 等待高延迟 |
 | `memburst` | 物理机 | 匿名内存 ≥ 窗口最早值 2 倍且占总内存 ≥ 70% | 内存突发分配、OOM 前兆 |
+| `irqtracing` | 物理机（按 CPU） | 至少 `MinCPUs` 个 CPU 同时出现 IRQ/软中断利用率上升，或单个 CPU 持续高于 `UsageThreshold` | 中断风暴、软中断热点 |
+| `memory_threshold_snapshot` | 容器 | 容器内存达到配置阈值（默认 90%）或收到内存压力通知 | OOM 前保存内存对象快照（Go/HotSpot/CPython） |
+
+irqtracing 的使用方式与规则配置请参考 [irqtracing 文档](/docs/best-practice/irqtracing_zh.md)。memory_threshold_snapshot 的参数与触发条件请参考[配置指南](/docs/configuration/huatuo-bamai-configuration_zh.md)（7.6 节）。
 
 ### 通用字段说明
 

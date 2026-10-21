@@ -99,10 +99,10 @@ User space emits each debug event at Debug level with these fields:
 - `line`: source line number.
 - `ts`: event timestamp converted to UTC wall-clock time.
 - `msg`: debug message.
-- `args`: up to three `u64` arguments, omitted when all values are zero.
+- `args`: the four `u64` slots of the debug event, omitted entirely when all are zero. The `bpf_dbg` macro accepts up to three arguments and zero-fills the rest.
 
 ```text
-bpf_dbg: file=native_oncpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456Z msg=enter prog args=[0x1f4 0xffff8881 0x0]
+bpf_dbg: file=native_oncpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456000Z msg=enter prog args=[0x1f4 0xffff8881 0x0 0x0]
 ```
 
 Debug output requires both a build with `BPF_DEBUG=1` and the runtime

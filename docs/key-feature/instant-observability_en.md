@@ -19,7 +19,7 @@ HUATUO uses eBPF technology to observe anomalous events in real time across core
 
 Compared to traditional kernel log (dmesg/syslog) collection, eBPF-based event observation reduces the risk of data loss from log buffer overflow; it can capture transient anomalies that never appear in kernel logs (such as excessive scheduler tick intervals); and it provides container-level event correlation for precise root-cause analysis in cloud-native environments.
 
-Twelve event types are continuously observed, covering CPU scheduling health (sched_tick, softlockup, hungtask), memory pressure (memory_oom_kill, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
+Thirteen event types are continuously observed, covering CPU scheduling health (sched_tick, softlockup, hungtask), memory pressure (memory_oom_kill, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras, mthreads_xid).
 
 ## 🎯 Use Cases
 
@@ -69,8 +69,11 @@ All events provide default values and are operational without any configuration.
 | `netdev_events` | netlink | NIC link state change | Physical NIC link failures |
 | `netdev_bonding_lacp` | kprobe | LACP protocol state change (IEEE 802.3ad mode only) | Fault boundary between physical machines and switches |
 | `netdev_txqueue_timeout` | kprobe | NIC transmit queue timeout | NIC transmit queue hardware failure |
+| `mthreads_xid` | MUSA driver poll | Moore Threads GPU XID error at or above the configured severity (reported only after `MthreadsXidLevel` is set) | GPU driver and hardware fault detection |
 
 For tcp_retransmit usage, fields, classification, and drop correlation, refer to the [tcpshark documentation](/docs/best-practice/tcpshark_en.md).
+
+For mthreads_xid severity levels, enabling, and prerequisites, refer to the [configuration reference](/docs/configuration/huatuo-bamai-configuration_en.md).
 
 ### Fields
 
@@ -398,7 +401,7 @@ The OOM kill tracer is named `memory_oom_kill` (previously `memory_oom`, and ear
 
 ### 8. ras
 
-**Description** Detects hardware errors from CPU, memory, and PCIe subsystems via kernel tracepoints. Supports five hardware error sources: MCE (Machine Check Exception), EDAC (memory controller), ACPI/GHES (non-standard hardware errors), PCIe AER (Advanced Error Reporting), and MCE threshold interrupts (THR). Errors are classified by severity: `Corrected`, `UncorrectedRecoverable`, `UncorrectedDeferred`, and `UncorrectedFatal`. MCE threshold interrupt events use a cooldown period (default 30 minutes) to suppress interrupt storm-driven duplicate reports.
+**Description** Detects hardware errors from CPU, memory, and PCIe subsystems via kernel tracepoints. Supports six hardware error sources: MCE (Machine Check Exception), EDAC (memory controller), ACPI/GHES (non-standard hardware errors), PCIe AER (Advanced Error Reporting), MCE threshold interrupts (THR), and ARM processor errors (ARM GHES, the CPER ARM processor error section, arm64 only). Errors are classified by severity: `Corrected`, `UncorrectedRecoverable`, `UncorrectedDeferred`, and `UncorrectedFatal`. MCE threshold interrupt events use a cooldown period (default 30 minutes) to suppress interrupt storm-driven duplicate reports.
 
 **Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
 
@@ -432,8 +435,8 @@ The OOM kill tracer is named `memory_oom_kill` (previously `memory_oom`, and ear
 **Fields**
 
 - **dev**: Hardware device where the error occurred (e.g., `CPU/MEM`, `PCIe 0000:3b:00.0`)
-- **event**: Error type (`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`)
-- **type**: Error severity (`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`)
+- **event**: Error type (`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD` / `ARM_GHES`)
+- **type**: Error severity (`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info` / `unknown`)
 - **observed_timestamp**: Top-level UTC userspace observation time; `kernel_observed_timestamp` records UTC kernel observation time
 - **info**: JSON-formatted detailed error information; content varies by event type
 
