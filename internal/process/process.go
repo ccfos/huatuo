@@ -15,6 +15,7 @@
 package process
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -79,19 +80,50 @@ func CommandLine(pid int) (string, error) {
 	return string(data), nil
 }
 
+// threadUTSNamespace is the UTS namespace of the calling thread.
+const threadUTSNamespace = "/proc/thread-self/ns/uts"
+
 // Hostname returns the hostname from pid's UTS namespace.
 func Hostname(pid int) (string, error) {
-	fd, err := os.Open(procfs.Path(strconv.Itoa(pid), "ns/uts"))
+	target, err := os.Open(procfs.Path(strconv.Itoa(pid), "ns/uts"))
 	if err != nil {
 		return "", err
 	}
-	defer fd.Close()
+	defer target.Close()
 
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	if err := unix.Setns(int(fd.Fd()), unix.CLONE_NEWUTS); err != nil {
+	current, err := os.Open(threadUTSNamespace)
+	if err != nil {
 		return "", err
 	}
-	return os.Hostname()
+	defer current.Close()
+
+	return hostnameSwitchingUTS(int(target.Fd()), int(current.Fd()), unix.Setns, os.Hostname)
+}
+
+// hostnameSwitchingUTS runs hostname inside the target UTS namespace and
+// restores the calling thread's namespace before returning. The thread stays
+// locked when the restore fails, so an unrestorable thread exits with this
+// goroutine instead of serving later callers with the target hostname.
+func hostnameSwitchingUTS(
+	targetFd, currentFd int,
+	setns func(int, int) error,
+	hostname func() (string, error),
+) (string, error) {
+	runtime.LockOSThread()
+	restored := false
+	defer func() {
+		if restored {
+			runtime.UnlockOSThread()
+		}
+	}()
+
+	if err := setns(targetFd, unix.CLONE_NEWUTS); err != nil {
+		return "", err
+	}
+	value, hostnameErr := hostname()
+	if err := setns(currentFd, unix.CLONE_NEWUTS); err != nil {
+		return "", errors.Join(hostnameErr, err)
+	}
+	restored = true
+	return value, hostnameErr
 }
