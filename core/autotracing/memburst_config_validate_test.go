@@ -14,7 +14,10 @@
 
 package autotracing
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 func TestValidateMemBurst(t *testing.T) {
 	valid := MemBurstConfig{
@@ -27,9 +30,10 @@ func TestValidateMemBurst(t *testing.T) {
 	}
 
 	cases := []struct {
-		name    string
-		modify  func(*MemBurstConfig)
-		wantErr bool
+		name          string
+		modify        func(*MemBurstConfig)
+		wantErr       bool
+		requires64Bit bool
 	}{
 		{name: "valid", modify: func(*MemBurstConfig) {}},
 		{name: "zero delta memory burst", modify: func(c *MemBurstConfig) { c.DeltaMemoryBurst = 0 }, wantErr: true},
@@ -39,6 +43,22 @@ func TestValidateMemBurst(t *testing.T) {
 		{name: "anon threshold at zero", modify: func(c *MemBurstConfig) { c.DeltaAnonThreshold = 0 }},
 		{name: "anon threshold at hundred", modify: func(c *MemBurstConfig) { c.DeltaAnonThreshold = 100 }},
 		{name: "zero interval", modify: func(c *MemBurstConfig) { c.Interval = 0 }, wantErr: true},
+		{
+			name: "maximum interval",
+			modify: func(c *MemBurstConfig) {
+				limit := maxTimerDurationSeconds
+				c.Interval = int(limit)
+			},
+			requires64Bit: true,
+		},
+		{
+			name: "interval overflow",
+			modify: func(c *MemBurstConfig) {
+				limit := maxTimerDurationSeconds
+				c.Interval = int(limit + 1)
+			},
+			wantErr: true, requires64Bit: true,
+		},
 		{name: "zero interval tracing", modify: func(c *MemBurstConfig) { c.IntervalTracing = 0 }, wantErr: true},
 		{name: "zero sliding window", modify: func(c *MemBurstConfig) { c.SlidingWindowLength = 0 }, wantErr: true},
 		{name: "zero dump process max num", modify: func(c *MemBurstConfig) { c.DumpProcessMaxNum = 0 }, wantErr: true},
@@ -46,6 +66,9 @@ func TestValidateMemBurst(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.requires64Bit && strconv.IntSize != 64 {
+				t.Skip("duration overflow requires 64-bit int")
+			}
 			c := valid
 			tc.modify(&c)
 			err := validateMemBurst(&c)

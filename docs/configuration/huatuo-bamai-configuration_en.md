@@ -534,11 +534,12 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
 - **Interval**: Monitoring interval.
 
-  Default: 10s.
+  Default: 10s. Must be between 1 and 9223372036 seconds.
 
 - **IntervalTracing**: Minimum time between consecutive tracings.
 
-  Default: 1800s (30 minutes).
+  Default: 1800s (30 minutes). May be zero to disable the cooldown;
+  values above 9223372036 seconds are rejected.
 
 #### 7.4 IOTracing AutoTracing — Container IO Performance Profiling
 
@@ -668,7 +669,7 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
 - **Interval**: Memory usage sampling interval (seconds).
 
-  Default: 10s.
+  Default: 10s. Must be between 1 and 9223372036 seconds.
 
 - **IntervalTracing**: Minimum interval between runs (seconds).
 
