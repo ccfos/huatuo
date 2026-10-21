@@ -16,6 +16,7 @@ package cgroups
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
 
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
@@ -28,6 +29,13 @@ import (
 )
 
 var cpuPeriod uint64 = 100000
+
+// CPUQuotaRepresentable reports whether ToSpec can convert cores into a
+// positive, signed 64-bit quota without rounding it to zero or overflowing.
+func CPUQuotaRepresentable(cores float64) bool {
+	quota := cores * float64(cpuPeriod)
+	return quota >= 1 && quota < float64(math.MaxInt64)
+}
 
 // Mode is the cgroups mode of the host system
 type Mode int

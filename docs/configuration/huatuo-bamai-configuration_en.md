@@ -89,6 +89,9 @@ Huatuo does not create its own cgroup by default. This section applies only when
 
 The configured values remain in their documented units. Memory is converted
 to bytes only when the cgroup limit is applied.
+CPU limits must produce a positive, representable microsecond quota; non-finite
+values and limits smaller than one quota microsecond are rejected. Memory limits
+must not exceed `8796093022207` MiB so the conversion to bytes cannot overflow.
 
 ### 5. HTTP Server and On-demand Operations
 

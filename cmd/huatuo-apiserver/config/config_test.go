@@ -15,11 +15,52 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ccfos/huatuo/internal/cgroups"
 )
+
+func TestRuntimeConfigRejectsUnrepresentableCgroupLimits(t *testing.T) {
+	const maxMemoryMiB = math.MaxInt64 / (1024 * 1024)
+	const maxCores = math.MaxInt64 / 100000
+
+	tests := []struct {
+		name    string
+		cpu     int64
+		memory  int64
+		wantErr string
+	}{
+		{name: "largest representable limits", cpu: maxCores, memory: maxMemoryMiB},
+		{name: "CPU quota overflow", cpu: maxCores + 1, memory: 4096, wantErr: "cpu limit"},
+		{name: "memory byte overflow", cpu: 20, memory: maxMemoryMiB + 1, wantErr: "memory limit"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := RuntimeConfig{CPULimitCores: tt.cpu, MemoryLimitMiB: tt.memory}
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				if quota := cgroups.ToSpec(float64(cfg.CPULimitCores), 0).CPU.Quota; quota == nil || *quota <= 0 {
+					t.Fatalf("valid CPU limit produced quota %v", quota)
+				}
+				if got := cfg.MemoryLimitMiB * 1024 * 1024; got <= 0 {
+					t.Fatalf("valid memory limit produced %d bytes", got)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
 
 const requiredConfig = `
 [Agent.Auth]

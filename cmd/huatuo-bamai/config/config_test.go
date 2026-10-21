@@ -17,14 +17,131 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/cgroups"
 	testutils "github.com/ccfos/huatuo/internal/testing"
 )
+
+func TestRuntimeConfigRejectsUnrepresentableCgroupLimits(t *testing.T) {
+	const maxMemoryMiB = math.MaxInt64 / (1024 * 1024)
+	maxCores := math.Nextafter(float64(math.MaxInt64)/100000, 0)
+
+	tests := []struct {
+		name    string
+		change  func(*RuntimeConfig)
+		wantErr string
+	}{
+		{
+			name: "largest representable limits",
+			change: func(c *RuntimeConfig) {
+				c.StartupCPULimitCores = maxCores
+				c.CPULimitCores = maxCores
+				c.MemoryLimitMiB = maxMemoryMiB
+			},
+		},
+		{
+			name: "startup CPU NaN",
+			change: func(c *RuntimeConfig) {
+				c.StartupCPULimitCores = math.NaN()
+			},
+			wantErr: "startup cpu limit",
+		},
+		{
+			name: "startup CPU infinity",
+			change: func(c *RuntimeConfig) {
+				c.StartupCPULimitCores = math.Inf(1)
+			},
+			wantErr: "startup cpu limit",
+		},
+		{
+			name: "startup CPU quota overflow",
+			change: func(c *RuntimeConfig) {
+				c.StartupCPULimitCores = float64(math.MaxInt64) / 100000
+			},
+			wantErr: "startup cpu limit",
+		},
+		{
+			name: "CPU NaN",
+			change: func(c *RuntimeConfig) {
+				c.CPULimitCores = math.NaN()
+			},
+			wantErr: "cpu limit",
+		},
+		{
+			name: "CPU infinity",
+			change: func(c *RuntimeConfig) {
+				c.CPULimitCores = math.Inf(1)
+			},
+			wantErr: "cpu limit",
+		},
+		{
+			name: "CPU quota overflow",
+			change: func(c *RuntimeConfig) {
+				c.CPULimitCores = float64(math.MaxInt64) / 100000
+			},
+			wantErr: "cpu limit",
+		},
+		{
+			name: "sub-microsecond CPU quota",
+			change: func(c *RuntimeConfig) {
+				c.CPULimitCores = 0.000001
+			},
+			wantErr: "cpu limit",
+		},
+		{
+			name: "memory byte overflow",
+			change: func(c *RuntimeConfig) {
+				c.MemoryLimitMiB = maxMemoryMiB + 1
+			},
+			wantErr: "memory limit",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := RuntimeConfig{
+				StartupCPULimitCores: 0.5,
+				CPULimitCores:        2,
+				MemoryLimitMiB:       2048,
+			}
+			tt.change(&cfg)
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				if quota := cgroups.ToSpec(cfg.CPULimitCores, 0).CPU.Quota; quota == nil || *quota <= 0 {
+					t.Fatalf("valid CPU limit produced quota %v", quota)
+				}
+				if got := cfg.MemoryLimitMiB * 1024 * 1024; got <= 0 {
+					t.Fatalf("valid memory limit produced %d bytes", got)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsNonFiniteRuntimeCPU(t *testing.T) {
+	for _, value := range []string{"nan", "inf"} {
+		t.Run(value, func(t *testing.T) {
+			path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf",
+				"[Runtime]\nStartupCPULimitCores = "+value+"\n")
+			if err := Load(path); err == nil || !strings.Contains(err.Error(), "startup cpu limit") {
+				t.Fatalf("Load() error = %v, want startup cpu limit error", err)
+			}
+		})
+	}
+}
 
 func writeConfigFile(t *testing.T, dir, name, content string) string {
 	t.Helper()

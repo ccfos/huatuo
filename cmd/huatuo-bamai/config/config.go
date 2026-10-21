@@ -17,6 +17,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"slices"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/ccfos/huatuo/core/autotracing"
 	"github.com/ccfos/huatuo/core/events"
 	collector "github.com/ccfos/huatuo/core/metrics"
+	"github.com/ccfos/huatuo/internal/cgroups"
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 )
 
@@ -194,11 +196,20 @@ func (c RuntimeConfig) Validate() error {
 	if c.StartupCPULimitCores <= 0 {
 		return errors.New("startup cpu limit must be greater than zero cores")
 	}
+	if !cgroups.CPUQuotaRepresentable(c.StartupCPULimitCores) {
+		return errors.New("startup cpu limit must produce a positive, representable cgroup quota")
+	}
 	if c.CPULimitCores <= 0 {
 		return errors.New("cpu limit must be greater than zero cores")
 	}
+	if !cgroups.CPUQuotaRepresentable(c.CPULimitCores) {
+		return errors.New("cpu limit must produce a positive, representable cgroup quota")
+	}
 	if c.MemoryLimitMiB <= 0 {
 		return errors.New("memory limit must be greater than zero MiB")
+	}
+	if c.MemoryLimitMiB > math.MaxInt64/(1024*1024) {
+		return fmt.Errorf("memory limit must not exceed %d MiB", math.MaxInt64/(1024*1024))
 	}
 	return nil
 }

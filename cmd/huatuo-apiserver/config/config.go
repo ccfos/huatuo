@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/cgroups"
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 )
 
@@ -207,8 +208,14 @@ func (c RuntimeConfig) Validate() error {
 	if c.CPULimitCores <= 0 {
 		return errors.New("cpu limit must be greater than zero cores")
 	}
+	if !cgroups.CPUQuotaRepresentable(float64(c.CPULimitCores)) {
+		return errors.New("cpu limit must produce a positive, representable cgroup quota")
+	}
 	if c.MemoryLimitMiB <= 0 {
 		return errors.New("memory limit must be greater than zero MiB")
+	}
+	if c.MemoryLimitMiB > math.MaxInt64/(1024*1024) {
+		return fmt.Errorf("memory limit must not exceed %d MiB", math.MaxInt64/(1024*1024))
 	}
 	return nil
 }

@@ -67,6 +67,30 @@ func SetupRuntimeCgroupWithClean(t *testing.T) (Cgroup, string) {
 	return cgr, runtimePath
 }
 
+func TestCPUQuotaRepresentable(t *testing.T) {
+	maxCores := math.Nextafter(float64(math.MaxInt64)/float64(cpuPeriod), 0)
+	tests := []struct {
+		name  string
+		cores float64
+		want  bool
+	}{
+		{name: "one core", cores: 1, want: true},
+		{name: "one quota microsecond", cores: 1 / float64(cpuPeriod), want: true},
+		{name: "largest representable quota", cores: maxCores, want: true},
+		{name: "zero quota", cores: 0.5 / float64(cpuPeriod)},
+		{name: "overflowing quota", cores: math.Nextafter(maxCores, math.Inf(1))},
+		{name: "NaN", cores: math.NaN()},
+		{name: "infinity", cores: math.Inf(1)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CPUQuotaRepresentable(tt.cores); got != tt.want {
+				t.Fatalf("CPUQuotaRepresentable(%v) = %t, want %t", tt.cores, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestToSpec covers the primary resource-translation paths of ToSpec.
 func TestToSpec(t *testing.T) {
 	// cpuPeriod is the package-level constant (100000).
