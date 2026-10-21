@@ -211,7 +211,7 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 
 #### 3.1 文本输出格式
 
-文本输出保留面向终端的可读布局，同时覆盖与 JSON 相同的事件变量。可选变量仅在非零或非空时显示，字符串值不添加 JSON 引号或转义。为兼容原文本格式，`state`、`skb`、`seq`、`end`、`ack`、`flags`、`ca`、`retrans` 和 `reason` 分别对应 JSON 中的 `tcp_state`、`skb_addr`、`tcp_seq`、`tcp_end_seq`、`tcp_ack_seq`、`tcp_flags`、`ca_state`、`icsk_retransmits` 和 `correlation_reason`。
+文本输出保留面向终端的可读布局，同时覆盖与 JSON 相同的事件变量。可选变量仅在非零或非空时显示，字符串值不添加 JSON 引号。`comm` 中的控制字符会显示为可见转义（例如换行显示为 `\n`），使事件首行保持完整。为兼容原文本格式，`state`、`skb`、`seq`、`end`、`ack`、`flags`、`ca`、`retrans` 和 `reason` 分别对应 JSON 中的 `tcp_state`、`skb_addr`、`tcp_seq`、`tcp_end_seq`、`tcp_ack_seq`、`tcp_flags`、`ca_state`、`icsk_retransmits` 和 `correlation_reason`。
 
 ```text
 <timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [kernel_observed_timestamp=<UTC>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [drop_source=<SOURCE>] [drop_reason=<REASON>] [drop_reason_group=<GROUP>] [reason=<REASON>] [matched_net_namespace=true] [dropwatch_map_counters_available=<true|false> dropwatch_perf_lost=<N> dropwatch_lost_samples=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
