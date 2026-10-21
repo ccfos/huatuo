@@ -19,6 +19,8 @@ import (
 	"sync"
 	"testing"
 
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/ccfos/huatuo/internal/pod"
 )
 
@@ -410,5 +412,59 @@ func TestPrometheusMetric(t *testing.T) {
 		t.Run(tests[i].name, func(t *testing.T) {
 			tests[i].validate(t, tests[i].build().prometheusMetric("collector"))
 		})
+	}
+}
+
+func TestPrometheusMetricCacheSeparatesLabelSchemas(t *testing.T) {
+	const metricName = "label_schema_test"
+	first := NewGaugeData(metricName, 1, "schema test", map[string]string{"device": "sda"})
+	second := NewGaugeData(metricName, 2, "schema test", map[string]string{"interface": "eth0"})
+	third := NewGaugeData(metricName, 3, "schema test", map[string]string{
+		"device": "sdb", "interface": "eth1",
+	})
+
+	for _, tc := range []struct {
+		name   string
+		data   *Data
+		labels map[string]string
+	}{
+		{name: "first schema", data: first, labels: map[string]string{"device": "sda"}},
+		{name: "same count, different key", data: second, labels: map[string]string{"interface": "eth0"}},
+		{name: "additional key", data: third, labels: map[string]string{
+			"device": "sdb", "interface": "eth1",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var wire dto.Metric
+			if err := tc.data.prometheusMetric("schema").Write(&wire); err != nil {
+				t.Fatalf("write metric: %v", err)
+			}
+
+			got := make(map[string]string, len(wire.Label))
+			for _, label := range wire.Label {
+				got[label.GetName()] = label.GetValue()
+			}
+			for key, value := range tc.labels {
+				if got[key] != value {
+					t.Errorf("label %q = %q; want %q", key, got[key], value)
+				}
+			}
+			for _, key := range []string{"device", "interface"} {
+				if _, want := tc.labels[key]; !want {
+					if _, present := got[key]; present {
+						t.Errorf("unexpected label %q in %v", key, got)
+					}
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkPrometheusMetricCachedDescriptor(b *testing.B) {
+	data := NewGaugeData("cache_benchmark", 1, "cache benchmark", map[string]string{
+		"device": "sda", "zone": "a",
+	})
+	for b.Loop() {
+		data.prometheusMetric("benchmark")
 	}
 }
