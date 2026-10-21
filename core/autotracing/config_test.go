@@ -84,6 +84,17 @@ func TestConfigValidate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{IRQTracing: validIRQTracingConfig()}
+			cfg.CPUIdle.Interval = 10
+			cfg.CPUIdle.IntervalTracing = 1800
+			cfg.CPUIdle.RunTracingToolTimeout = 10
+			cfg.CPUSys.Interval = 10
+			cfg.CPUSys.IntervalTracing = 1800
+			cfg.CPUSys.RunTracingToolTimeout = 10
+			cfg.Dload.Interval = 10
+			cfg.MemoryBurst = MemBurstConfig{
+				DeltaMemoryBurst: 100, DeltaAnonThreshold: 70, Interval: 10,
+				IntervalTracing: 1800, SlidingWindowLength: 60, DumpProcessMaxNum: 10,
+			}
 			cfg.MemoryThresholdSnapshot.ThresholdPercent = 90
 			cfg.MemoryThresholdSnapshot.IntervalTracing = 300
 			cfg.MemoryThresholdSnapshot.RunTracingToolTimeout = 2

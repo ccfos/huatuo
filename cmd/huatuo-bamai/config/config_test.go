@@ -660,3 +660,81 @@ func TestUpdatePublishesConsistentSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAutoTracingConfigAdmission(t *testing.T) {
+	tests := []struct {
+		family, field string
+		value         int
+	}{
+		{"CPUIdle", "Interval", 0},
+		{"CPUIdle", "UserThreshold", 101},
+		{"CPUSys", "Interval", 0},
+		{"CPUSys", "SysThreshold", 101},
+		{"Dload", "Interval", 0},
+		{"Dload", "ThresholdLoad", -1},
+		{"MemoryBurst", "Interval", 0},
+		{"MemoryBurst", "SlidingWindowLength", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.family+"/"+tt.field, func(t *testing.T) {
+			loadConfigDefaults(t)
+			before := Get()
+			path := writeConfigFile(t, t.TempDir(), "invalid.conf", fmt.Sprintf("[AutoTracing.%s]\n%s = %d\n", tt.family, tt.field, tt.value))
+			if err := Load(path); err == nil {
+				t.Error("Load accepted invalid tracer configuration")
+			}
+			if Get() != before {
+				t.Error("invalid Load published config")
+			}
+			loadConfigDefaults(t)
+			before = Get()
+			var value any = int64(tt.value)
+			if tt.family == "MemoryBurst" {
+				value = tt.value
+			}
+			err := Update(map[string]any{"AutoTracing." + tt.family + "." + tt.field: value})
+			if !errors.Is(err, ErrInvalidUpdate) || !strings.Contains(err.Error(), "validating autotracing config") {
+				t.Errorf("Update error = %v, want ErrInvalidUpdate", err)
+			}
+			if Get() != before {
+				t.Error("invalid Update published config")
+			}
+		})
+	}
+}
+
+func TestAutoTracingConfigValidBoundaries(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "valid.conf", "")
+	if err := Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateAndSync(map[string]any{
+		"AutoTracing.CPUIdle.Interval":      int64(7),
+		"AutoTracing.CPUSys.Interval":       int64(7),
+		"AutoTracing.Dload.Interval":        int64(7),
+		"AutoTracing.Dload.IntervalTracing": int64(0),
+		"AutoTracing.Dload.ThresholdLoad":   int64(0),
+		"AutoTracing.MemoryBurst.Interval":  7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Load(path); err != nil {
+		t.Fatal(err)
+	}
+	c := Get().AutoTracing
+	if c.CPUIdle.Interval != 7 || c.CPUSys.Interval != 7 || c.Dload.Interval != 7 || c.MemoryBurst.Interval != 7 || c.Dload.IntervalTracing != 0 || c.Dload.ThresholdLoad != 0 {
+		t.Fatal("valid settings did not survive persistence")
+	}
+}
+
+func TestAutoTracingConfigRejectsInvalidFilterWhenBlacklisted(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "invalid-filter.conf", `
+BlackList = ["cpuidle"]
+[[AutoTracing.CPUIdle.Filter.Included]]
+Field = "container_hostname"
+Pattern = "["
+`)
+	if err := Load(path); err == nil || !strings.Contains(err.Error(), "cpu idle filter") {
+		t.Fatalf("Load error = %v, want cpu idle filter validation", err)
+	}
+}

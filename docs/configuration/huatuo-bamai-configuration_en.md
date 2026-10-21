@@ -308,6 +308,12 @@ idle timeout; 15–60 seconds is typical.
 
 ### 7. Automatic Tracing
 
+CPUIdle, CPUSys, Dload and MemoryBurst settings are validated when loading
+configuration and applying updates, even when the tracer is blacklisted.
+Invalid intervals, thresholds or CPUIdle filter regular expressions are rejected before
+publication or persistence. Sampling intervals must be positive; Dload still
+allows a zero tracing interval (no cooldown) and a zero load threshold.
+
 The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.
 
 #### 7.1 CPUIdle Automatic Tracing — Sudden High CPU Usage in Containers
