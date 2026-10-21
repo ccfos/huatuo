@@ -91,6 +91,7 @@ for language in c c++ go java python; do
 		case "$typ/$mode" in
 		cpu/oncpu) expected_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds ;;
 		cpu/offcpu) expected_type=process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds ;;
+		memory/physical_usage) expected_type=memory:physical_usage:bytes:space:bytes ;;
 		memory/*) expected_type=memory:alloc_space:bytes:space:bytes ;;
 		esac
 		verify_result "$JOB_ID" 1 "$expected_type"

@@ -37,17 +37,18 @@ func main() {
 		data, err := syscall.Mmap(
 			-1,
 			0,
-			1024*1024,
+			64*1024,
 			syscall.PROT_READ|syscall.PROT_WRITE,
 			syscall.MAP_PRIVATE|syscall.MAP_ANON,
 		)
 		if err != nil {
 			panic(err)
 		}
+		// Pace page faults to keep functional sampling within CI capacity.
 		for i := 0; i < len(data); i += 4096 {
 			data[i] = 1
+			time.Sleep(time.Millisecond)
 		}
-		time.Sleep(time.Millisecond)
 		if retained[next] != nil {
 			if err := syscall.Munmap(retained[next]); err != nil {
 				panic(err)
