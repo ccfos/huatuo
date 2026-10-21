@@ -66,7 +66,11 @@ func runCollectorCommand(ctx context.Context, spec *executil.Spec, options ...ex
 		returnErr = errors.Join(returnErr, process.Close())
 		result.Stderr = process.Stderr()
 	}()
-	if err := process.Start(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	// Once launch begins, collection stops must preserve the tool's final output.
+	if err := process.Start(context.WithoutCancel(ctx)); err != nil {
 		return result, err
 	}
 	select {
