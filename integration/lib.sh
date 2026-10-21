@@ -393,6 +393,19 @@ huatuo_bamai_stop() {
 	rm -f "${test_workspace}/huatuo-bamai.pid"
 }
 
+# Call in the shell that started the daemon so wait returns its exit status.
+assert_huatuo_bamai_shutdown() {
+	local pid_file="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
+	local pid status=0
+	[[ -r "${pid_file}" ]] || fatal "huatuo-bamai PID file is not readable: ${pid_file}"
+	pid=$(< "${pid_file}")
+	[[ -n "${pid}" ]] || fatal "huatuo-bamai PID file is empty: ${pid_file}"
+	huatuo_bamai_stop || fatal "failed to stop huatuo-bamai pid=${pid}"
+	wait "${pid}" || status=$?
+	assert_eq "${status}" 0 "huatuo-bamai pid=${pid} shutdown exit status" \
+		|| fatal "huatuo-bamai pid=${pid} did not exit successfully: status=${status}"
+}
+
 # --------------------------- huatuo-apiserver -------------------------------
 
 huatuo_apiserver_start() {
@@ -616,4 +629,15 @@ storage_send_udp_packets() {
 			> "/dev/udp/127.0.0.99/${port}" \
 			|| fatal "failed to send UDP packet to 127.0.0.99:${port}"
 	done
+}
+
+# Keep fixed PID and socket paths private to this case and its child processes.
+integration_isolate_run_directory() {
+	[[ /var/run -ef "${HUATUO_BAMAI_TEST_TMPDIR}/run" ]] && return 0
+	require_commands unshare mount
+	exec unshare --mount --propagation private bash -euc '
+		mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}/run"
+		mount --bind "${HUATUO_BAMAI_TEST_TMPDIR}/run" /var/run
+		exec bash "$@"
+	' bash "$0" "$@"
 }

@@ -120,6 +120,13 @@ plus one active file. It requires kernel BTF, the `skb/kfree_skb` tracepoint,
 and the Dropwatch binary and BPF object. Neither storage test requires
 Elasticsearch.
 
+Both cases call `integration_isolate_run_directory` before starting the daemon
+to isolate its PID lock and Toolstream socket from existing instances. These
+cases and the backend-consistency case use `assert_huatuo_bamai_shutdown` before
+final data and log checks; EXIT traps retain best-effort cleanup.
+Callers of `write_storage_events_config` must
+set `STORAGE_EVENT_RATE`, `STORAGE_ROTATION_MIB`, and `STORAGE_MAX_ROTATED_FILES`.
+
 ### Background Process Cleanup
 
 `stop_and_wait_by_pid PID [TIMEOUT]` stops and waits for a child process,

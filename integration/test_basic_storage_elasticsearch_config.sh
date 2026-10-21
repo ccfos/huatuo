@@ -25,6 +25,7 @@ source "${ROOT_DIR}/integration/config.sh"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
 require_commands curl ss timeout
+integration_isolate_run_directory "$@"
 
 STORAGE_HTTP_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate a huatuo-bamai API port"
@@ -58,7 +59,7 @@ for storage_config_case in 000 001 010 011 100 101 110 111; do
 		storage_config_args=(--region dev --disable-kubelet --procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}")
 		[[ ${storage_config_case} == 000 ]] || storage_config_args+=(--disable-storage)
 		integration_huatuo_bamai_start write_elasticsearch_config "${storage_config_args[@]}"
-		huatuo_bamai_stop
+		assert_huatuo_bamai_shutdown
 		cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${storage_config_log}"
 		assert_log_has_no_failure "${storage_config_log}" "Elasticsearch ${storage_config_case}"
 		;;

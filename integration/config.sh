@@ -139,11 +139,11 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
     BearerToken = "integration-node-token"
 [EventTracing.Dropwatch]
     Filter = "udp and dst host 127.0.0.99 and dst port ${storage_target_port}"
-    MaxEventsPerSecond = ${STORAGE_EVENT_RATE:-100}
+    MaxEventsPerSecond = ${STORAGE_EVENT_RATE}
 [Storage.LocalFile]
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
-    RotationSizeMiB = ${STORAGE_ROTATION_MIB:-100}
-    MaxRotatedFiles = ${STORAGE_MAX_FILES:-10}
+    RotationSizeMiB = ${STORAGE_ROTATION_MIB}
+    MaxRotatedFiles = ${STORAGE_MAX_ROTATED_FILES}
 [Storage.Elasticsearch]
     Address = "${STORAGE_ADDR:-}"
     Username = "${STORAGE_USERNAME:-}"
@@ -400,6 +400,6 @@ write_elasticsearch_config() {
     Password = "${storage_password:-}"
 
 [Storage.LocalFile]
-    Path = "${storage_path:-}"
+    Path = ""
 EOF
 }
