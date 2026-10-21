@@ -321,7 +321,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
     # - UsageThreshold
     # The total cpu usage (system + user cpu usage) threshold, when reaching
     # this threshold, cpu performance tracing will be triggered.
-    # Default: 45%
+    # Default: 90%
     #
     # - DeltaUserThreshold
     # The range of this user cpu changes within a short period of time.

@@ -477,7 +477,7 @@ sequenceDiagram
 | `FlushBytes`      | 5 MB                | 缓冲累计达到该字节数立即刷新     |
 | `FlushInterval`   | 1 s                 | 距上次刷新满 1 秒后强制刷新      |
 | `NumWorkers`      | 4                   | 并发提交 Bulk 请求的后台 goroutine 数 |
-| 进程退出          | `Close(ctx)`        | SIGTERM/SIGINT 触发，限时 10 s 内排空缓冲 |
+| 进程退出          | `Close(ctx)`        | SIGTERM/SIGINT 触发，全部清理阶段共享 60 s 预算 |
 
 #### 两级重试策略
 
@@ -544,7 +544,7 @@ HTTP 错误包含响应状态码和可用的 Elasticsearch 错误详情。无法
 下列三种情况下，调用方调用 `Save` 时返回 `nil`，但事件最终未进入索引：
 
 1. **进程异常退出**：`SIGKILL` 或宿主机断电时，BulkIndexer 内存缓冲尚未刷新的部分直接丢失（仅本地目录保留副本）。
-   - 缓解：SIGTERM/SIGINT 走优雅退出路径，shutdown 时调用 `Close` 强制 flush，最长等待 10 秒。
+   - 缓解：SIGTERM/SIGINT 走优雅退出路径，shutdown 时调用 `Close` 强制 flush，全部清理阶段共享 60 秒预算。
 2. **整批被永久拒绝**：4xx（非 429）类错误一次性丢弃整批所有记录。常见诱因：索引被禁用、密码失效、单条文档超过集群 `http.max_content_length`。
    - 排查：`OnError` 错误日志包含 ES 返回的 `type` 与 `reason`。
 3. **单条永久失败**：mapping 冲突、版本冲突、文档语法错误。

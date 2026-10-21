@@ -331,7 +331,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
     # - UsageThreshold
     # The total cpu usage (system + user cpu usage) threshold, when reaching
     # this threshold, cpu performance tracing will be triggered.
-    # Default: 45%
+    # Default: 90%
     #
     # - DeltaUserThreshold
     # The range of this user cpu changes within a short period of time.
