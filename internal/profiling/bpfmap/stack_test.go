@@ -75,7 +75,12 @@ func TestReadStackTrace(t *testing.T) {
 			wantErr: readErr,
 		},
 		{
+			name:    "missing ID returned as nil",
+			wantErr: ebpf.ErrKeyNotExist,
+		},
+		{
 			name:    "empty value",
+			raw:     []byte{},
 			wantErr: ErrInvalidStackData,
 		},
 		{
@@ -117,5 +122,18 @@ func TestReadStackTrace(t *testing.T) {
 				t.Fatal("stack aliases backend data")
 			}
 		})
+	}
+}
+
+func BenchmarkReadStackTrace(b *testing.B) {
+	raw := make([]byte, StackTraceLen*8)
+	raw[0] = 1
+	obj := &stackMapStub{raw: raw}
+	b.ReportAllocs()
+	for b.Loop() {
+		stack, err := ReadStackTrace(obj, 7, 42)
+		if err != nil || stack[0] != 1 {
+			b.Fatalf("stack[0] = %d, error = %v", stack[0], err)
+		}
 	}
 }
