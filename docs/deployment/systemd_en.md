@@ -31,6 +31,19 @@ systemctl status huatuo-bamai --no-pager
 systemd-cgls --unit huatuo-bamai.service
 ```
 
+## Apply configuration changes
+
+After editing the configuration file, restart the service:
+
+```bash
+sudo systemctl restart huatuo-bamai
+```
+
+The daemon treats SIGHUP as a shutdown signal, so the service does not support
+`systemctl reload`. To update settings that support live changes, use the
+[Node configuration API](/docs/configuration/huatuo-bamai-configuration_en.md#51-update-configuration-through-the-node-api).
+Settings consumed at startup still require a restart.
+
 ## Binary
 
 The HUATUO release provides static Linux tar packages for amd64 and arm64. The tar package contains the `huatuo-bamai` and `huatuo-apiserver` binaries, configuration files, and BPF objects.

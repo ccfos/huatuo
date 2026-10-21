@@ -31,6 +31,19 @@ systemctl status huatuo-bamai --no-pager
 systemd-cgls --unit huatuo-bamai.service
 ```
 
+## 应用配置变更
+
+编辑配置文件后，重启服务：
+
+```bash
+sudo systemctl restart huatuo-bamai
+```
+
+守护进程会将 SIGHUP 作为退出信号处理，因此服务不支持 `systemctl reload`。
+对于支持动态更新的配置项，可以使用
+[Node 配置 API](/docs/configuration/huatuo-bamai-configuration_zh.md)。
+启动时读取的配置仍需重启服务才能生效。
+
 ## 二进制
 
 HUATUO Release 提供 amd64 和 arm64 的 Linux 静态 tar 包。tar 包包含 `huatuo-bamai` 和 `huatuo-apiserver` 二进制文件、配置文件和 BPF 对象。
