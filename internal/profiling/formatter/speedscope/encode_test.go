@@ -31,7 +31,6 @@ import (
 func TestEncoderKeepsGroupsSeparate(t *testing.T) {
 	e := encoder{
 		unit:      "bytes",
-		frames:    make(map[frameKey]int),
 		frameList: []frame{},
 	}
 	inputs := []struct {
@@ -108,8 +107,7 @@ func TestEncoderKeepsGroupsSeparate(t *testing.T) {
 
 func TestEncoderFrameIdentity(t *testing.T) {
 	e := encoder{
-		unit:   "bytes",
-		frames: make(map[frameKey]int),
+		unit: "bytes",
 	}
 	w := testWindow("bytes", 1)
 	w.Aggregated.Frames = []types.ProfileFrame{{Name: "work_[k]"}, {Name: "work"}}
@@ -216,10 +214,7 @@ func TestEncoderWeightAndSourceLimits(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := encoder{
-				unit:   "bytes",
-				frames: make(map[frameKey]int),
-			}
+			e := encoder{unit: "bytes"}
 			w := testWindow("bytes", tc.weight)
 			w.ContainerID = "container"
 			w.Aggregated.Frames[0].Line = tc.line
@@ -245,6 +240,31 @@ func TestEncoderWeightAndSourceLimits(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEncoderUnknownStack(t *testing.T) {
+	e := encoder{unit: "bytes"}
+	w := testWindow("bytes", 5)
+	w.Aggregated.Frames = nil
+	w.Aggregated.Stacks = nil
+	w.Aggregated.Samples[0].UserStack = 0
+	if err := e.appendProfiles(t.Context(), w); err != nil {
+		t.Fatal(err)
+	}
+	var data bytes.Buffer
+	if err := e.write(t.Context(), &data); err != nil {
+		t.Fatal(err)
+	}
+	var got speedscopeFile
+	if err := json.Unmarshal(data.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Shared.Frames) != 1 || got.Shared.Frames[0].Name != "[unknown]" || len(got.Profiles) != 1 {
+		t.Fatalf("unknown stack lost: %+v", got)
+	}
+	if diff := cmp.Diff([][]int{{0}}, got.Profiles[0].Samples); diff != "" {
+		t.Fatalf("samples (-want +got):\n%s", diff)
 	}
 }
 

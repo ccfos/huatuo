@@ -43,13 +43,59 @@ func BenchmarkAppendProfiles(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				f := encoder{
-					unit:   "bytes",
-					frames: make(map[frameKey]int),
+					unit: "bytes",
 				}
 				if err := f.appendProfiles(b.Context(), &w); err != nil {
 					b.Fatal(err)
 				}
 			}
 		})
+	}
+}
+
+func BenchmarkAppendSharedFrames(b *testing.B) {
+	for _, labelCount := range []int{4, 1024} {
+		for _, kernel := range []bool{false, true} {
+			b.Run(fmt.Sprintf("labels=%d/kernel=%t", labelCount, kernel), func(b *testing.B) {
+				w := types.AggregationWindow{
+					ContainerID: "container",
+					ProfileType: "memory:physical_usage:bytes:space:bytes",
+				}
+				a := &w.Aggregated
+				for i := range labelCount {
+					a.LabelSets = append(a.LabelSets, []types.ProfileLabel{types.ProfilePIDLabel(uint32(i + 1))})
+				}
+				for i := range 31 {
+					a.Frames = append(a.Frames, types.ProfileFrame{Name: fmt.Sprintf("shared%d", i)})
+				}
+				for i := range 1024 {
+					a.Frames = append(a.Frames, types.ProfileFrame{Name: fmt.Sprintf("leaf%d", i)})
+					stack := make([]uint32, 32)
+					for j := range 31 {
+						stack[j] = uint32(j)
+					}
+					stack[31] = uint32(len(a.Frames) - 1)
+					a.Stacks = append(a.Stacks, stack)
+					sample := types.AggregatedSample{
+						UserStack: uint32(i + 1),
+						LabelSet:  uint32(i%labelCount + 1),
+						Value:     1,
+					}
+					if kernel {
+						sample.KernelStack = 1
+					}
+					a.Samples = append(a.Samples, sample)
+				}
+				b.ReportAllocs()
+				for b.Loop() {
+					e := encoder{
+						unit: "bytes",
+					}
+					if err := e.appendProfiles(b.Context(), &w); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
 	}
 }
