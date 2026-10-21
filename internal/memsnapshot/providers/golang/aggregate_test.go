@@ -221,6 +221,10 @@ func TestScaleHeapSample(t *testing.T) {
 			name: "infinite estimate", count: 1, size: 1, rate: math.MaxInt64,
 			wantObjects: math.MaxInt64, wantBytes: math.MaxInt64,
 		},
+		{
+			name: "small inclusion probability", count: 1, size: 16, rate: 1 << 58,
+			wantObjects: 18014398509481984, wantBytes: 288230376151711744,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			objects, bytes := scaleHeapSample(test.count, test.size, test.rate)
