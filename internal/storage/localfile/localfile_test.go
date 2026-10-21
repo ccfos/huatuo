@@ -54,6 +54,29 @@ func TestBackendSave(t *testing.T) {
 	}
 }
 
+func TestBackendSaveRejectsInvalidTracerNames(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+
+	for _, name := range []string{"", ".", "..", "../outside", "sub/dir", `sub\dir`, "/absolute"} {
+		err := backend.Save(t.Context(), driver.Record{
+			Data:   []byte("{\"tracer_name\":\"payload\"}"),
+			Fields: map[string]any{"tracer_name": name},
+		}, driver.SaveOptions{})
+		if !errors.Is(err, driver.ErrInvalidField) {
+			t.Errorf("Save with tracer_name %q returned %v, want ErrInvalidField", name, err)
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%q) = %v", dir, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("storage directory contains %d entries after rejected saves, want 0", len(entries))
+	}
+}
+
 // TestBackendSaveMkdirAllError verifies that Save returns an error when
 // the storage directory cannot be created (e.g., permission denied).
 // Before the fix, os.MkdirAll errors were silently discarded.

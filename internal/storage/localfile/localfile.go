@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strings"
 	"sync"
 
 	"github.com/ccfos/huatuo/internal/filerotate"
@@ -73,7 +74,7 @@ func (b *Storage) Save(
 		return driver.ErrUnsupportedOp
 	}
 	filename := tracerFilename(rec)
-	if filename == "" {
+	if !validTracerFilename(filename) {
 		return driver.ErrInvalidField
 	}
 
@@ -162,6 +163,15 @@ func tracerFilename(rec driver.Record) string {
 		}
 	}
 	return ""
+}
+
+// validTracerFilename accepts a single path component so a tracer name cannot
+// escape the configured storage directory.
+func validTracerFilename(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	return !strings.ContainsAny(name, `/\`)
 }
 
 func formatDocumentJSON(data []byte) ([]byte, error) {
