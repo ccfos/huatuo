@@ -1428,3 +1428,5 @@ huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
 |huatuo_bamai_mthreads_gpu_mtlink_state|GPU MtLink 状态（0=DOWN,1=UP,2=DOWNGRADE）|-|gpu, link|mtml.Device.MtLinkState|
 |huatuo_bamai_mthreads_gpu_mtlink_link_bandwidth_gb_s|GPU MtLink 每链路最大带宽（设备静态规格，非实时吞吐）|GB/s|gpu|mtml.Device.MtLinkSpec|
 |huatuo_bamai_mthreads_gpu_mtlink_link_count|GPU MtLink 最大支持链路数（设备静态规格）|links|gpu|mtml.Device.MtLinkSpec|
+
+`/metrics` 最多允许两个尚未结束的采集任务；HTTP 请求超时或被取消后，后台采集仍占用名额。额外抓取返回 HTTP 503，直到已有采集结束。30 秒 HTTP 超时不会中断已阻塞的硬件调用。

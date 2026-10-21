@@ -32,6 +32,8 @@ func (s *Server) metricsHandler() ErrHandlerContextFunc {
 	h := promhttp.HandlerFor(s.promRegistry, promhttp.HandlerOpts{
 		ErrorHandling: promhttp.ContinueOnError,
 		Timeout:       30 * time.Second,
+		// Timed-out HTTP requests must not admit more still-running gathers.
+		MaxRequestsInFlight: 2,
 	})
 	return func(ctx *Context) error {
 		h.ServeHTTP(ctx.Writer(), ctx.Request())
