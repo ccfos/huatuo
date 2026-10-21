@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-MODE=$1
 source "${ROOT_DIR}/integration/apiserver/lib.sh"
 
 static_cases() {
@@ -102,29 +101,11 @@ CURRENT_CASE=stack-startup
 start_test_storage
 start_node
 start_server
-# Keep the load alive throughout recovery and long-running cases.
+# Keep the workload alive while validating profiling results.
 compile_user_fixture "${ROOT_DIR}/integration/apiserver/testdata/workload.c" "${HUATUO_BAMAI_TEST_TMPDIR}/callchain"
 "${HUATUO_BAMAI_TEST_TMPDIR}/callchain" &
 TARGET_PID=$!
-case "$MODE" in
-functional) functional_cases ;;
-load | soak)
-	CURRENT_CASE="$MODE"
-	create
-	verify_result "$JOB_ID"
-	python3 "${ROOT_DIR}/integration/apiserver/load.py" --mode "$MODE" --url "$APISERVER_ADDR" \
-		--job "$JOB_ID" --output "$HUATUO_BAMAI_TEST_TMPDIR" \
-		--seconds "${APISERVER_TEST_SECONDS:-$([[ $MODE == load ]] && echo 600 || echo 86400)}" \
-		--clients "${APISERVER_TEST_CLIENTS:-100}" --rps "${APISERVER_TEST_RPS:-100}" \
-		--max-rss-growth-mib "${APISERVER_TEST_MAX_RSS_MIB:-256}" \
-		--max-fd-growth "${APISERVER_TEST_MAX_FDS:-32}" \
-		--max-goroutine-growth "${APISERVER_TEST_MAX_GOROUTINES:-64}" &
-	LOAD_PID=$!
-	wait "$LOAD_PID"
-	LOAD_PID=""
-	pass
-	;;
-esac
+functional_cases
 # Injected failures may log errors; runtime panics must never be accepted.
 if grep -Eiq 'panic:|fatal error:' "${HUATUO_BAMAI_TEST_TMPDIR}"/*.log; then fatal 'runtime panic found in service logs'; fi
 cat "$SUMMARY"

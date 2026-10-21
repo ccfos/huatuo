@@ -3,4 +3,4 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-exec bash "${ROOT_DIR}/integration/apiserver/cases.sh" functional
+exec bash "${ROOT_DIR}/integration/apiserver/cases.sh"

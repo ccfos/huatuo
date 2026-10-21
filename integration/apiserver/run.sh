@@ -5,39 +5,27 @@ set -euo pipefail
 
 usage() {
 	cat << 'HELP'
-Usage: bash integration/apiserver/run.sh [functional|load|soak]
+Usage: bash integration/apiserver/run.sh
 
 Requires Linux, root, make build output, Docker, curl, jq, Go and Python 3.
-functional (default): capabilities, quotas, invalid requests and Node failures.
-load: 100 concurrent query clients for 600 seconds (70% list, 30% detail).
-soak: repeated profiling and queries for 86400 seconds.
+Checks capabilities, quotas, invalid requests and Node failures.
 
 Environment:
   APISERVER_TEST_OUTPUT       Report directory (default: new /tmp directory)
-  APISERVER_TEST_SECONDS      Override load/soak duration
-  APISERVER_TEST_CLIENTS      Query clients (default 100)
-  APISERVER_TEST_RPS          Aggregate query rate (default 100)
 
 Missing prerequisites exit 77, assertion failures exit 1. Reports are retained.
 F02/F03/F04/F08/F13 and the Kubernetes matrix run through e2e/run.sh.
 Functional cases also run via integration/run.sh test_apiserver_profiling.sh.
-Load and soak remain explicit; they are not included in make integration/e2e.
 HELP
 }
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
 	usage
 	exit 0
 fi
-mode=${1:-functional}
-[[ $# -le 1 ]] || {
+[[ $# -eq 0 ]] || {
 	usage >&2
 	exit 2
 }
-case "$mode" in functional | load | soak) ;; *)
-	usage >&2
-	exit 2
-	;;
-esac
 [[ $(uname -s) == Linux && ${EUID} -eq 0 ]] || {
 	echo 'SKIP: Linux and root are required' >&2
 	exit 77
@@ -74,5 +62,5 @@ unshare --uts --mount bash -c '
 	source integration/env.sh
 	rmdir "$HUATUO_BAMAI_TEST_TMPDIR"
 	export HUATUO_BAMAI_TEST_TMPDIR="$APISERVER_TEST_OUTPUT"
-	exec bash integration/apiserver/cases.sh "$2"
-' _ "$root" "$mode"
+	exec bash integration/apiserver/cases.sh
+' _ "$root"

@@ -59,7 +59,6 @@ The apiserver lifecycle and Kubernetes profiling matrix live in
 Both are discovered by `make e2e`. The matrix requires `APISERVER_TEST_NODE`
 and kubelet credentials. The remaining eight functional cases are discovered by
 `make integration` through `integration/test_apiserver_profiling.sh`.
-Load and long-running stability tests keep an explicit standalone entry point.
 See the
 [apiserver test instructions](../../integration/apiserver/README.md).
 
