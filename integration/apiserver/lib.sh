@@ -12,7 +12,6 @@ readonly API_TOKEN=integration-admin OTHER_API_TOKEN=integration-other
 readonly ES_PASSWORD=huatuo-integration PROFILE_INTERVAL=5
 CURL_TIMEOUT=(--connect-timeout 2 --max-time 5)
 TARGET_PID=""
-LOAD_PID=""
 POD_NAMESPACE=""
 ORPHAN_PIDS=()
 REQUEST_NO=0
@@ -41,10 +40,6 @@ cleanup() {
 	local status=$?
 	trap - EXIT
 	set +e
-	[[ -z "$LOAD_PID" ]] || {
-		kill -TERM "$LOAD_PID" 2> /dev/null
-		wait "$LOAD_PID"
-	}
 	[[ -z "$TARGET_PID" ]] || {
 		stop_by_pid "$TARGET_PID" 5
 		wait "$TARGET_PID"
