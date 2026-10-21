@@ -212,7 +212,8 @@ After the connection is established, the server continuously pushes events in SS
 data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom_kill",...}\n\n
 ```
 
-The server also sends periodic heartbeat comment lines to keep the connection alive:
+The server sends an initial heartbeat comment as soon as the subscription is
+established, then periodic heartbeat comments to keep the connection alive:
 
 ```text
 : ping\n
