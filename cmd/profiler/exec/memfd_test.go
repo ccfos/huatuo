@@ -179,3 +179,78 @@ func TestRunWithMemfdStopContract(t *testing.T) {
 		})
 	}
 }
+
+type collectorLaunchContext struct {
+	context.Context
+	ready  <-chan struct{}
+	checks int
+}
+
+func TestRunWithMemfdCanceledBeforeLaunch(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	results := RunWithMemfd(ctx, []int{123}, &executil.Spec{Path: os.Args[0]}, func(_ int, _ string) []string {
+		t.Error("argument builder called after cancellation")
+		return nil
+	})
+	if len(results) != 1 || !errors.Is(results[0].Err, context.Canceled) || len(results[0].Output) != 0 {
+		t.Fatalf("results=%v", results)
+	}
+}
+
+func (c *collectorLaunchContext) Err() error {
+	c.checks++
+	// Hold the post-launch check until the real child has installed its handler.
+	if c.checks == 3 {
+		<-c.ready
+	}
+	return c.Context.Err()
+}
+
+func TestRunWithMemfdStopDuringLaunch(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause error
+	}{
+		{"duration", profile.ErrCollectionDurationElapsed},
+		{"requested", profile.ErrStopRequested},
+		{"canceled", context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			defer writer.Close()
+			ready := make(chan struct{})
+			go func() {
+				defer close(ready)
+				if _, err := bufio.NewReader(reader).ReadString('\n'); err == nil {
+					cancel(tc.cause)
+				}
+			}()
+			defer func() { reader.Close(); <-ready }()
+			launchCtx := &collectorLaunchContext{Context: ctx, ready: ready}
+			env := append(os.Environ(), "HUATUO_COLLECTOR_SIGNAL_CHILD=1", "HUATUO_COLLECTOR_OUTPUT=/proc/self/fd/3")
+			results := RunWithMemfd(launchCtx, []int{123}, &executil.Spec{
+				Path: os.Args[0], Env: env, StopSignal: syscall.SIGINT,
+			}, func(_ int, _ string) []string {
+				return []string{"-test.run=^TestCollectorCommandSignalChild$"}
+			}, executil.WithStdout(writer))
+			if len(results) != 1 {
+				t.Fatalf("results=%v", results)
+			}
+			result := results[0]
+			if tc.cause == context.Canceled { //nolint:errorlint // Only the exact control causes permit a completed capture.
+				if !errors.Is(result.Err, context.Canceled) || len(result.Output) != 0 {
+					t.Fatalf("error=%v output=%q", result.Err, result.Output)
+				}
+			} else if result.Err != nil || string(result.Output) != "root;leaf 7\n" {
+				t.Fatalf("error=%v output=%q", result.Err, result.Output)
+			}
+		})
+	}
+}
