@@ -134,7 +134,8 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 	}
 
 	if f.sampleType != "" && (f.sampleType != sampleType || f.sampleUnit != sampleUnit) {
-		return fmt.Errorf("speedscope: cannot mix sample types or units")
+		return fmt.Errorf("speedscope: cannot mix sample type %q unit %q with type %q unit %q",
+			f.sampleType, f.sampleUnit, sampleType, sampleUnit)
 	}
 
 	f.sampleType, f.sampleUnit = sampleType, sampleUnit

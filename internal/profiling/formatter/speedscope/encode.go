@@ -88,7 +88,8 @@ func (e *encoder) appendProfiles(ctx context.Context, w *types.AggregationWindow
 		sample := &a.Samples[i]
 		weight := sample.Value
 		if weight < 0 || weight > maxExactInteger {
-			return fmt.Errorf("speedscope: weight %d is outside [0, 2^53-1]", weight)
+			return fmt.Errorf("speedscope: container %q profile %q label set %d: weight %d is outside [0, 2^53-1]",
+				w.ContainerID, w.ProfileType, sample.LabelSet, weight)
 		}
 
 		index, exists := groups[sample.LabelSet]
@@ -123,7 +124,8 @@ func (e *encoder) appendProfiles(ctx context.Context, w *types.AggregationWindow
 
 		target := &e.profiles[index]
 		if weight > maxExactInteger-target.EndValue {
-			return fmt.Errorf("speedscope: total weight exceeds 2^53-1")
+			return fmt.Errorf("speedscope: container %q profile %q label set %d: total weight exceeds 2^53-1",
+				w.ContainerID, w.ProfileType, sample.LabelSet)
 		}
 
 		var kernelStart int
@@ -145,7 +147,8 @@ func (e *encoder) appendProfiles(ctx context.Context, w *types.AggregationWindow
 				isKernel: j >= kernelStart,
 			})
 			if err != nil {
-				return err
+				return fmt.Errorf("speedscope: container %q profile %q label set %d: %w",
+					w.ContainerID, w.ProfileType, sample.LabelSet, err)
 			}
 
 			indices[j] = id

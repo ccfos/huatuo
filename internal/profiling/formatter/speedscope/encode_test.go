@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -165,6 +166,85 @@ func TestEncoderFrameIdentity(t *testing.T) {
 		if diff := cmp.Diff([]int64{1, 2, 3, 4}, got.Profiles[i].Weights); diff != "" {
 			t.Fatalf("weights (-want +got):\n%s", diff)
 		}
+	}
+}
+
+func TestEncoderWeightAndSourceLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		weight   int64
+		line     int64
+		errText  string
+		addExtra bool
+	}{
+		{
+			name:   "maximum exact values",
+			weight: maxExactInteger,
+			line:   maxExactInteger,
+		},
+		{
+			name:    "negative weight",
+			weight:  -1,
+			errText: "weight -1 is outside",
+		},
+		{
+			name:    "inexact weight",
+			weight:  maxExactInteger + 1,
+			errText: "is outside [0, 2^53-1]",
+		},
+		{
+			name:     "inexact group total",
+			weight:   maxExactInteger,
+			errText:  "total weight exceeds",
+			addExtra: true,
+		},
+		{
+			name:    "negative source line",
+			weight:  1,
+			line:    -1,
+			errText: "invalid source line -1",
+		},
+		{
+			name:    "inexact source line",
+			weight:  1,
+			line:    maxExactInteger + 1,
+			errText: "invalid source line",
+		},
+		{
+			name: "zero weight omits source",
+			line: -1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := encoder{
+				unit:   "bytes",
+				frames: make(map[frameKey]int),
+			}
+			w := testWindow("bytes", tc.weight)
+			w.ContainerID = "container"
+			w.Aggregated.Frames[0].Line = tc.line
+			if tc.addExtra {
+				w.Aggregated.Samples = append(w.Aggregated.Samples, types.AggregatedSample{
+					KernelStack: 1,
+					Value:       1,
+				})
+			}
+			err := e.appendProfiles(t.Context(), w)
+			if tc.errText == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("invalid sample accepted")
+			}
+			for _, part := range []string{tc.errText, `container "container"`, `profile "` + w.ProfileType + `"`, "label set 0"} {
+				if !strings.Contains(err.Error(), part) {
+					t.Fatalf("error %q lacks %q", err, part)
+				}
+			}
+		})
 	}
 }
 
