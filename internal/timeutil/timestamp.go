@@ -14,7 +14,10 @@
 
 package timeutil
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Timestamp stores a time value and emits JSON in UTC with nine fractional digits.
 // The embedded time.Time accepts RFC3339 JSON through its UnmarshalJSON method.
@@ -34,6 +37,10 @@ func (t Timestamp) FormatUTC() string {
 }
 
 func (t Timestamp) MarshalJSON() ([]byte, error) {
+	utc := t.UTC()
+	if year := utc.Year(); year < 0 || year > 9999 {
+		return nil, fmt.Errorf("timeutil: timestamp year %d in UTC is outside 0000..9999", year)
+	}
 	// FormatUTC contains only date digits and separators, so no JSON escaping is needed.
-	return []byte(`"` + t.FormatUTC() + `"`), nil
+	return []byte(`"` + FormatUTC(utc) + `"`), nil
 }

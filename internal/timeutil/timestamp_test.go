@@ -65,6 +65,63 @@ func TestTimestampJSONInvalid(t *testing.T) {
 	}
 }
 
+func TestTimestampJSONOutOfRangeYear(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value time.Time
+	}{
+		{name: "negative year", value: time.Date(-1, time.January, 1, 0, 0, 0, 0, time.UTC)},
+		{name: "year 10000", value: time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)},
+		// 9999-12-31T23:00:00-02:00 is valid RFC 3339 but canonicalizes to year 10000 in UTC.
+		{name: "negative offset crossing into year 10000", value: time.Date(9999, time.December, 31, 23, 0, 0, 0, time.FixedZone("UTC-2", -2*3600))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := json.Marshal(Timestamp{Time: tc.value}); err == nil {
+				t.Fatalf("marshaled out-of-range timestamp %v", tc.value)
+			}
+		})
+	}
+
+	var timestamp Timestamp
+	if err := json.Unmarshal([]byte(`"9999-12-31T23:00:00-02:00"`), &timestamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := json.Marshal(timestamp); err == nil {
+		t.Fatal("marshaled RFC 3339 input whose UTC year is 10000")
+	}
+}
+
+func TestTimestampJSONYearBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   time.Time
+		wantUTC string
+	}{
+		{name: "year zero", value: time.Date(0, time.January, 1, 0, 0, 0, 0, time.UTC), wantUTC: "0000-01-01T00:00:00.000000000Z"},
+		{name: "last nanosecond", value: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC), wantUTC: "9999-12-31T23:59:59.999999999Z"},
+		// A local year outside 0000..9999 still serializes when UTC is in range.
+		{name: "positive offset crossing back into year 9999", value: time.Date(10000, time.January, 1, 1, 0, 0, 0, time.FixedZone("UTC+2", 2*3600)), wantUTC: "9999-12-31T23:00:00.000000000Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := json.Marshal(Timestamp{Time: tc.value})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := `"` + tc.wantUTC + `"`; string(encoded) != want {
+				t.Fatalf("JSON = %s, want %s", encoded, want)
+			}
+
+			var roundTrip Timestamp
+			if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+				t.Fatalf("round trip: %v", err)
+			}
+			if !roundTrip.Equal(tc.value) {
+				t.Fatalf("round trip = %v, want %v", roundTrip.Time, tc.value)
+			}
+		})
+	}
+}
+
 func TestTimestampJSONNull(t *testing.T) {
 	var value struct {
 		Timestamp *Timestamp `json:"timestamp,omitempty"`
