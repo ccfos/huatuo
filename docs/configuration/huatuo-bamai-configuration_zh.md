@@ -147,6 +147,8 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
   直接拒绝新 Operation，不在 Node 排队。
 - 四个 Operation 时间参数分别限制进程启动、优雅停止、结果收尾和终态保留，不能
   合并为一个通用 timeout。
+- SSE 心跳间隔、四个 Operation 时间参数及 `Profiling.AggregationIntervalSeconds`
+  均须为 1～9,223,372,036 秒。
 - **Profiling.ToolDir** 是外部采样工具的统一根目录，原样传给 profiler 的
   `--tool-path`。Java 使用该目录下的 `bin/asprof` 和
   `lib/libasyncProfiler.so`，Python 使用 `py-spy`。
