@@ -1,0 +1,46 @@
+tracers:
+  ras:
+    description: 硬件错误（MCE/EDAC/AER/GHES）
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      type:
+        description: 错误严重程度（Corrected/UncorrectedRecoverable/UncorrectedDeferred/UncorrectedFatal）
+      event:
+        description: 错误来源（MCE/EDAC/NON_STANDARD/AER/MCE_THRESHOLD）
+      dev:
+        description: 设备信息
+      info:
+        description: 错误详情
+    match_field:
+      host: hostname
+    metric_keywords: [ras]
+  lacp:
+    description: Bond LACP 事件
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      content:
+        description: bond 状态原始文本（/proc/net/bonding 内容）
+    match_field:
+      host: hostname
+    metric_keywords: [netdev]
+  netdev_events:
+    description: 网卡 link 状态变更
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      ifname:
+        description: 网卡接口名
+      linkstatus:
+        description: link up/down 状态
+      driver:
+        description: 驱动名
+    match_field:
+      host: hostname
+    metric_keywords: [netdev]
+
+related_tracers:
+  ras: []
+  lacp: [netdev_events]
+  netdev_events: [lacp, dropwatch]

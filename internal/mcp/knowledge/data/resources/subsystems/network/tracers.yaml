@@ -1,0 +1,59 @@
+tracers:
+  dropwatch:
+    description: 网络丢包（内核 drop 点）
+    target_type: [host, container]
+    has_profiler: false
+    key_fields:
+      type:
+        description: 丢包类型（如 kfree_skb）
+      drop_reason:
+        description: 丢包原因
+      comm:
+        description: 丢包进程名
+      netdev_name:
+        description: 网卡设备名
+    match_field:
+      host: hostname
+      container: container_hostname
+    metric_keywords: [netdev, netdev_qdisc, softirq]
+  net_rx_latency:
+    description: 网络 rx 延迟异常
+    target_type: [host, container]
+    has_profiler: false
+    key_fields:
+      latency_ms:
+        description: 接收延迟(ms)
+        abnormal_threshold: 100
+      where:
+        description: 延迟发生位置（如 TO_NETIF_RCV）
+      saddr:
+        description: 源 IP
+      daddr:
+        description: 目的 IP
+      sport:
+        description: 源端口
+      dport:
+        description: 目的端口
+    match_field:
+      host: hostname
+      container: container_hostname
+    metric_keywords: [netdev, netdev_qdisc]
+  netdev_txqueue_timeout:
+    description: 网卡发送队列超时
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      device_name:
+        description: 网卡设备名
+      queue_index:
+        description: 超时的发送队列号
+      driver_name:
+        description: 驱动名
+    match_field:
+      host: hostname
+    metric_keywords: [netdev, netdev_qdisc]
+
+related_tracers:
+  dropwatch: [cpusys, net_rx_latency]
+  net_rx_latency: [dropwatch]
+  netdev_txqueue_timeout: [dropwatch]

@@ -1,0 +1,63 @@
+tracers:
+  cpusys:
+    description: 宿主机 CPU 系统态突增
+    target_type: [host]
+    has_profiler: true
+    key_fields:
+      sys:
+        description: 当前 sys% 值
+        abnormal_threshold: 30
+      deltasys:
+        description: sys 增量百分比
+    match_field:
+      host: hostname
+    metric_keywords: [cpu_util, runqlat, loadavg]
+  cpuidle:
+    description: 容器 CPU idle 掉底
+    target_type: [container]
+    has_profiler: true
+    key_fields:
+      usage:
+        description: CPU 总使用率
+        abnormal_threshold: 90
+      user:
+        description: 用户态占比
+      sys:
+        description: 系统态占比
+        abnormal_threshold: 30
+    match_field:
+      container: container_hostname
+    metric_keywords: [cpu_util, runqlat]
+  dload:
+    description: D 状态负载异常（进程卡在不可中断睡眠）
+    target_type: [container]
+    has_profiler: false
+    key_fields:
+      nr_uninterruptible:
+        description: D 状态进程数
+        abnormal_threshold: 5
+      load_avg:
+        description: load average
+      dload_avg:
+        description: D load average（等于 nr_uninterruptible）
+    match_field:
+      container: container_hostname
+    metric_keywords: [loadavg]
+  softlockup:
+    description: CPU soft lockup（软死锁）
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      cpu:
+        description: lockup 的 CPU 编号
+      pid:
+        description: lockup 的进程 PID
+    match_field:
+      host: hostname
+    metric_keywords: [softlockup]
+
+related_tracers:
+  cpusys: [cpuidle, iotracing, memburst, softlockup]
+  cpuidle: [cpusys]
+  dload: [cpuidle, iotracing]
+  softlockup: [cpusys]

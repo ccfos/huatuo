@@ -17,11 +17,13 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/trace"
 	"github.com/ccfos/huatuo/internal/job"
+	"github.com/ccfos/huatuo/internal/mcp/constant"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
 	"github.com/ccfos/huatuo/internal/server"
 	"github.com/ccfos/huatuo/internal/server/response"
@@ -44,6 +46,7 @@ type ServerOptions struct {
 	EnablePProf         bool
 	VersionInfo         *version.Info
 	RateLimit           *server.RateLimitConfig
+	MCPHandler          http.Handler
 }
 
 // Start starts the API service with generated business routes.
@@ -95,6 +98,17 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 			response.LegacyHTTPStatusForErrorCode,
 		),
 	})
+	if opts.MCPHandler != nil {
+		handler := func(ctx *server.Context) error {
+			opts.MCPHandler.ServeHTTP(ctx.Writer(), ctx.Request())
+			return nil
+		}
+		httpServer.MustRegisterRoutes("", []server.Route{
+			{Method: http.MethodPost, Path: constant.Endpoint, Handler: handler},
+			{Method: http.MethodGet, Path: constant.Endpoint, Handler: handler},
+			{Method: http.MethodDelete, Path: constant.Endpoint, Handler: handler},
+		})
+	}
 
 	errorHandlers := httpServer.StrictErrorHandlers()
 	strictHandler := serverapi.NewStrictHandlerWithOptions(

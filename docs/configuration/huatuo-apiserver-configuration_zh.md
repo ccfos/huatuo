@@ -243,3 +243,112 @@ Agent 请求传输保护使用客户端内部默认值。Job 轮询、各阶段 
   或结果未知的任务不生成 Dashboard URL。
 
 Profiler 执行和聚合参数只在 Node 本地配置中维护。
+
+### 8. Model Context Protocol
+
+MCP 当前提供只读访问，可接入支持 MCP 的任意 Agent，查询已有的异常
+上下文、Profile 证据和时序指标。以下地址、索引及认证信息应替换为实际部署配置；
+未配置的后端不注册对应数据 Tool，`diagnostic_guide` 始终可用。
+
+```toml
+[MCP]
+    Enabled = false
+    KnowledgeOverlayDir = ""
+
+[MCP.Events]
+    Type = "elasticsearch" # 或 "opensearch"
+
+[MCP.Events.ESCompatible]
+    Address = "http://127.0.0.1:9200"
+    Index = "huatuo_events"
+    AuthType = "none"
+
+[MCP.Prometheus]
+    Address = "http://127.0.0.1:9090"
+    AuthType = "none"
+    MetricPrefix = "huatuo_"
+```
+
+#### 接入与后端
+
+- **入口**：`/v1/mcp` 使用无状态 Streamable HTTP，与 API server 共用端口和 Bearer
+  认证。默认关闭，可通过 `Enabled=true`、`--enable-mcp` 或 `ENABLE_MCP=true` 启用。
+  非管理员用户的 `Permissions` 需包含 `POST /v1/mcp`、`GET /v1/mcp`、`DELETE /v1/mcp`。
+- **事件后端**：`escompatible` 适配已有 Elasticsearch/OpenSearch 数据，使用
+  `[MCP.Events.ESCompatible]` 的地址和索引，独立于全局 `[Elasticsearch]`。
+  `Type` 默认 `elasticsearch`；切换 OpenSearch 时填写 `opensearch`，连接节名称不变。
+- **后端认证**：ES-compatible 使用 `AuthType="basic"` 配合 `Username`、`Password`；
+  `AuthType="none"` 清除凭据。Prometheus 使用 `none`/空值匿名访问、`bearer` 配合
+  `AuthToken`，或 `basic` 配合 `AuthUser`、`AuthPass`。后端凭据不返回给 MCP 客户端。
+- **注册与启动**：配置采用严格解析；无效配置阻止启动。后端按有效配置注册，不在
+  启动时探测连通性；运行时查询失败会明确返回，恢复后无需重启服务。
+
+#### 查询预算
+
+下表为默认值；标有上限的预算只能调低。`ToolTimeout`、`MaxQueryTimeRange` 单位为秒，
+速率限制单位为后端请求/分钟。
+
+| 配置项 | 默认值 | 约束与含义 |
+|--------|-------:|------------|
+| `MCP.MaxConcurrentRequests` | 128 | 单进程并发请求，上限 128 |
+| `MCP.MaxQueryTimeRange` | 2592000 | 30 天；`0` 关闭跨度上限 |
+| `MCP.MaxRegionsPerQuery` | 5 | 单次调用 region 数，上限 5 |
+| `MCP.UserRateLimit` | 120 | 认证用户跨后端共享额度；`0` 关闭 |
+| `MCP.Events.BackendRateLimit` | 300 | 事件后端共享额度；`0` 关闭 |
+| `MCP.Events.MaxDocumentsPerQuery` | 500 | 事件/Profile 源文档总预算，上限 500 |
+| `MCP.Events.ToolTimeout` | 60 | 事件/Profile Tool 总超时，必须为正 |
+| `MCP.Prometheus.BackendRateLimit` | 300 | 指标后端共享额度；`0` 关闭 |
+| `MCP.Prometheus.MaxSeriesPerQuery` | 3000 | 查询返回序列总预算，上限 3000 |
+| `MCP.Prometheus.MaxMetricsPerDiscovery` | 800 | 指标发现总预算，上限 800 |
+| `MCP.Prometheus.ToolTimeout` | 60 | 指标 Tool 总超时，必须为正 |
+
+每次后端尝试（含重试）均计入额度，同类后端的默认连接与 region 连接共享预算。
+临时错误在 Tool 总超时内最多重试 10 次；参数、认证、日期解析等永久错误不原样重试。
+MCP 内部设置普通 HTTP 响应写 deadline 为两类 Tool 超时较大值加 5 秒，默认 65 秒；
+GET 通知流清除写 deadline，退出时取消活跃请求并释放连接。
+
+#### 多 region
+
+先配置默认后端，再添加覆盖项。匹配顺序为精确名称、声明顺序的正则表达式、默认
+后端；未设置字段只继承 MCP 内同类后端的默认连接与策略。
+
+```toml
+[[MCP.Events.Regions]]
+    NamePattern = "^cn-"
+    Type = "opensearch"
+[MCP.Events.Regions.ESCompatible]
+    Address = "http://cn-events:9200"
+
+[[MCP.Prometheus.Regions]]
+    NamePattern = "^cn-"
+    Address = "http://cn-prometheus:9090"
+    MetricPrefix = "huatuo_cn_"
+```
+
+ES-compatible region 使用 `AuthType="none"` 清除继承凭据；Prometheus region 可通过
+显式空值清除 `AuthToken`、`MetricPrefix` 等策略，匿名访问也可设置 `AuthType="none"`。
+
+#### 查询契约与结果
+
+- 五个数据 Tool 均要求精确 `region` 数组和 `time_range`，支持 Go 时长、RFC3339
+  起始时间或 `start/end`。事件/Profile 查询还需目标条件；`query_metrics` 要求单个
+  `host` 或 `container_host`，PromQL 包含同值目标 matcher、满足 `MetricPrefix`，
+  region 由服务端注入。
+- PromQL 最小 step 为 15 秒，每序列最多 11000 个时间点，matrix range 最长 1 小时，
+  不支持 subquery、offset 或 `@`。Profile 最多返回 1000 个热点，每热点 20 条路径、
+  每路径 32 层。ES 解压后响应上限 8 MiB，Tool 结果上限 4 MiB。
+- `discover_metrics` 默认返回 `availability=unknown` 的候选名称；可传入最多 5 个
+  精确 `metric_names` 核验 `present`/`absent`/`unknown`，并获取可用标签及 HELP/TYPE/UNIT。
+- 总结果预算按 region 分配；预算小于 region 数时拒绝请求。缓存、计数感知分批和
+  有界并行查询控制查询成本，不创建 Scroll 游标或 bulk writer，也不触发新的采集。
+- 查询失败返回 `isError=true` 和具体原因；部分结果返回 `status=partial`，保留
+  `errors`、`warnings`、`query_status` 和截断标记。计数失败后的回退会说明总数未知，
+  重试记录通过 `backend_diagnostics` 返回。失败或未知结果不能解释为“无数据”。
+
+#### 文本知识库
+
+`KnowledgeOverlayDir` 默认使用内嵌知识库。设置外部目录后，可按 `prompts/`、
+`resources/` 层级更新 Markdown/YAML 文件；现有文件内容下次读取即生效，无需重新
+编译。缺失文件回退到内嵌版本，新增 Resource 后重启以刷新注册目录。
+
+Tool 清单、时间字段兼容规则和知识库用法见 [MCP 诊断能力](/docs/key-feature/mcp_zh.md)。
