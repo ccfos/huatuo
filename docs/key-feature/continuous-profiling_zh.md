@@ -491,8 +491,8 @@ sudo _output/bin/profiler \
 | `--language`, `-l` | 无 | 全部 | 目标语言：`c`、`c++`、`go`、`java` 或 `python`，必填 |
 | `--pid`, `-p` | 无 | 全部 | 目标 PID；Java、Python 可使用逗号分隔多个 PID，原生采集最多一个 PID |
 | `--container-id` | 无 | 全部 | 目标容器 ID；不能与 `--pid` 同时使用 |
-| `--duration`, `-d` | `10` | 全部 | 总采集时长，单位为秒，最小为 1 |
-| `--aggr-interval` | `10` | 全部 | 聚合周期，单位为秒，不得大于采集时长 |
+| `--duration`, `-d` | `10` | 全部 | 总采集时长：1～9,223,372,036 秒 |
+| `--aggr-interval` | `10` | 全部 | 聚合周期：1～9,223,372,036 秒，且不得大于采集时长 |
 | `--freq`, `-F` | `99` | CPU | 每秒采样次数；Java 最大为 1000 |
 | `--output-path` | 必填 | 全部 | 本地文件、目录或 `stdout`，`remote-store` 时为 Unix socket；新目录路径以 `/` 结尾。危险使用提醒：stdout 可能暴露采集数据 |
 | `--output-format` | `collapsed`（必须显式指定） | 全部 | `collapsed`、`flamegraph`、`svg`、`json` 或 `remote-store`；必须与 `--output-path` 同时使用 |
