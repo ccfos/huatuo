@@ -19,6 +19,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/cilium/ebpf"
+
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
@@ -42,7 +44,7 @@ type memoryPipelineBPFStub struct {
 
 func (s *memoryPipelineBPFStub) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 	if mapID != 1 {
-		return nil, nil
+		return nil, ebpf.ErrKeyNotExist
 	}
 
 	idx := binary.LittleEndian.Uint32(key)
@@ -580,5 +582,22 @@ func stubHasKprobeFunction(fn func(string) bool) func() {
 
 	return func() {
 		hasKprobeFunction = old
+	}
+}
+
+func TestPhysicalUsageDoesNotExtrapolateSamples(t *testing.T) {
+	for _, probability := range []uint{1, 10, 100} {
+		p := memNativeProfiler{
+			internalMode: profiling.ModePhysicalUsage,
+			pageSize:     4096,
+			probability:  probability,
+		}
+
+		for _, pages := range []int64{-2, 0, 2} {
+			got, err := p.convertValueToBytes(pages)
+			if err != nil || got != pages*4096 {
+				t.Fatalf("probability=%d pages=%d bytes=%d error=%v", probability, pages, got, err)
+			}
+		}
 	}
 }

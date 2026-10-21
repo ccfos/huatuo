@@ -45,13 +45,8 @@ func New(implementation profiling.Implementation, config *Config) (*profile.Prof
 		meta.Description = "Native CPU profiler using eBPF"
 		meta.Impl = &cpuNativeProfiler{config: cfg}
 	case implementation == profiling.ImplementationNative && cfg.Type == profiling.TypeMemory:
-		mode, modeErr := resolveMemMode(cfg.Mode)
-		if modeErr != nil {
-			return nil, modeErr
-		}
-
-		if mode == profiling.ModePhysicalUsage {
-			meta.AggregationMode = pipeline.AggregationModeOneShot
+		if _, err := resolveMemMode(cfg.Mode); err != nil {
+			return nil, err
 		}
 
 		meta.Description = "Native memory profiler using eBPF"
@@ -77,14 +72,18 @@ func sampleType(cfg *Config) (string, error) {
 	switch cfg.Type {
 	case profiling.TypeCPU:
 		if cfg.Mode == profiling.ModeOffCPU {
-			return profile.ProfileTypeOffCpuSample, nil
+			return profiling.ProfileTypeOffCpuSample, nil
 		}
 
-		return profile.ProfileTypeCpuSample, nil
+		return profiling.ProfileTypeCpuSample, nil
 	case profiling.TypeMemory:
-		return profile.ProfileTypeMemSample, nil
+		if cfg.Mode == profiling.ModePhysicalUsage {
+			return profiling.ProfileTypePhysicalUsage, nil
+		}
+
+		return profiling.ProfileTypeMemSample, nil
 	case profiling.TypeLock:
-		return profile.ProfileTypeLockTimeSample, nil
+		return profiling.ProfileTypeLockTimeSample, nil
 	default:
 		return "", fmt.Errorf("unsupported profile type %q", cfg.Type)
 	}

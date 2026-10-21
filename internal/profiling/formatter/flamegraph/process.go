@@ -148,23 +148,3 @@ func findFrame(frames []frame, name string) *frame {
 
 	return nil
 }
-
-func (p *processor) prune() { p.frames, p.maxDepth = pruneFrames(p.frames) }
-
-func pruneFrames(frames []frame) ([]frame, int) {
-	result := frames[:0]
-	maxDepth := 0
-	for i := range frames {
-		fr := &frames[i]
-		var childDepth int
-		fr.Children, childDepth = pruneFrames(fr.Children)
-		if fr.SampleCount != 0 || len(fr.Children) != 0 {
-			result = append(result, *fr)
-			maxDepth = max(maxDepth, fr.Depth+1, childDepth)
-		}
-	}
-
-	clear(frames[len(result):])
-
-	return result, maxDepth
-}

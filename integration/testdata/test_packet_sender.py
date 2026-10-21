@@ -94,7 +94,8 @@ def uint16(value):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    workloads = parser.add_subparsers(dest="workload", required=True)
+    workloads = parser.add_subparsers(dest="workload")
+    workloads.required = True
     ipv4 = workloads.add_parser("ipv4-options", help="send warm-up UDP and TCP/UDP EOL options")
     ipv4.add_argument("--warmup-source", required=True)
     ipv4.add_argument("--source-port", type=uint16, required=True)

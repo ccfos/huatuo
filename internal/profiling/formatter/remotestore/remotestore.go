@@ -29,6 +29,8 @@ type formatter struct {
 	client *toolstream.Client
 }
 
+func (*formatter) Name() output.OutputFormat { return output.FormatRemoteStore }
+
 func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err

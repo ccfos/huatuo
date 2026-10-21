@@ -242,3 +242,24 @@ func TestBuildProfileHostQueryUsesMissingContainer(t *testing.T) {
 		t.Fatalf("host filters = %#v, want %#v", query.Filters, want)
 	}
 }
+
+func TestPhysicalUsageQueryUsesObservationTime(t *testing.T) {
+	start := time.Unix(100, 0)
+	query := buildSearchQuery(&Filter{
+		ProfileType: "memory:physical_usage:bytes:space:bytes",
+		ID:          "task",
+		StartTime:   start,
+		EndTime:     start.Add(time.Second),
+	})
+	if len(query.Sorts) != 1 || query.Sorts[0].Field != types.DocumentFieldStartedTimestamp || !query.Sorts[0].Desc {
+		t.Fatalf("sorts=%+v", query.Sorts)
+	}
+
+	for _, filter := range query.Filters {
+		if filter.Op == driver.OpGte || filter.Op == driver.OpLte {
+			if filter.Field != types.DocumentFieldStartedTimestamp {
+				t.Fatalf("time filter=%+v", filter)
+			}
+		}
+	}
+}

@@ -585,4 +585,4 @@ HTTP 错误包含响应状态码和可用的 Elasticsearch 错误详情。无法
 
 ### Profiling 时间筛选
 
-Profiling 搜索和标签值聚合按 `started_timestamp` 做闭区间筛选，上传延迟不会将结果移到入库时段。`uploaded_timestamp` 保留用于入库诊断和原始结果分页排序。开始于查询区间之前的窗口不会仅因采样区间重叠而被纳入。已有 `started_timestamp` 的记录无需迁移 schema。
+Profiling 搜索和标签值聚合按 `started_timestamp` 做闭区间筛选，上传延迟不会将结果移到入库时段。`uploaded_timestamp` 保留用于入库诊断和原始结果分页的默认排序；`physical_usage` 快照按观测时间排序。开始于查询区间之前的窗口不会仅因采样区间重叠而被纳入。已有 `started_timestamp` 的记录无需迁移 schema。

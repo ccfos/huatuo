@@ -614,7 +614,8 @@ written to new documents.
 Profiling searches and distinct-value queries select windows whose
 `started_timestamp` falls within the inclusive requested range. Upload delays
 do not move results into the ingestion period. `uploaded_timestamp` remains
-available for ingestion diagnostics and raw-result pagination ordering.
+available for ingestion diagnostics and default raw-result pagination ordering.
+`physical_usage` snapshots instead sort by their observation timestamp.
 Windows that start before the range are not included merely because their
 sampling interval overlaps it. Existing records with `started_timestamp`
 need no schema migration.

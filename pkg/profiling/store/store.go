@@ -24,6 +24,7 @@ import (
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -175,7 +176,11 @@ func buildSearchQuery(filter *Filter) driver.Query {
 		query.BatchSize = filter.BatchSize
 		query.Offset = filter.Offset
 	}
-	query.Sorts = []driver.Sort{{Field: types.DocumentFieldUploadedTimestamp, Desc: true}}
+	timestampField := types.DocumentFieldUploadedTimestamp
+	if filter != nil && filter.ProfileType == profiling.ProfileTypePhysicalUsage {
+		timestampField = types.DocumentFieldStartedTimestamp
+	}
+	query.Sorts = []driver.Sort{{Field: timestampField, Desc: true}}
 	return query
 }
 

@@ -7,7 +7,7 @@ date: 2026-09-29
 weight: 6
 ---
 
-Use the `OS Distro QEMU Test` workflow to test a branch in a supported Linux
+Use the `OS Distro QEMU CI` workflow to test a branch in a supported Linux
 VM. No local VM setup is required.
 
 ## Prepare Your Fork
@@ -20,7 +20,7 @@ VM. No local VM setup is required.
 
 ## Start a VM
 
-1. Open **Actions > OS Distro QEMU Test > Run workflow** in your fork.
+1. Open **Actions > OS Distro QEMU CI > Run workflow** in your fork.
 2. Select your branch.
 3. Keep the default `ubuntu24.04`, enter comma-separated distributions, or
    use `all` to select every supported distribution.

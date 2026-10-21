@@ -24,6 +24,7 @@ import (
 	"time"
 
 	javaruntime "github.com/ccfos/huatuo/cmd/profiler/runtime/java"
+	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/profiling"
@@ -203,6 +204,8 @@ func TestJavaProfilerSampleWeights(t *testing.T) {
 type javaWindowOutput struct {
 	windows chan *types.AggregationWindow
 }
+
+func (*javaWindowOutput) Name() output.OutputFormat { return output.FormatJSON }
 
 func (f *javaWindowOutput) Add(ctx context.Context, w *types.AggregationWindow) error {
 	select {

@@ -27,6 +27,8 @@ type formatter struct {
 	destination *output.LocalDestination
 }
 
+func (*formatter) Name() output.OutputFormat { return output.FormatJSON }
+
 func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err

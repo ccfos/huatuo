@@ -120,8 +120,3 @@ func (s *Stacks) Write(w io.Writer) error {
 
 	return nil
 }
-
-// IsEmpty reports whether all stack weights are zero.
-func (s *Stacks) IsEmpty() bool {
-	return len(s.counts) == 0
-}
