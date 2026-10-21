@@ -43,6 +43,35 @@ func writeConfigFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
+// mustSymlink creates link pointing at target, failing the test on error.
+func mustSymlink(t *testing.T, target, link string) {
+	t.Helper()
+
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("create symlink %s -> %s: %v", link, target, err)
+	}
+}
+
+// linkText returns how a link stores target: verbatim when absolute, or as a
+// bare base name because every test link lives beside its target.
+func linkText(target string, absolute bool) string {
+	if absolute {
+		return target
+	}
+	return filepath.Base(target)
+}
+
+// configTempFiles lists the atomic-write scratch files left in dir.
+func configTempFiles(t *testing.T, dir string) []string {
+	t.Helper()
+
+	matches, err := filepath.Glob(filepath.Join(dir, ".*.tmp-*"))
+	if err != nil {
+		t.Fatalf("find temporary files: %v", err)
+	}
+	return matches
+}
+
 func TestCoreBinDir(t *testing.T) {
 	if CoreBinDir == "" {
 		t.Errorf("CoreBinDir should not be empty")
@@ -253,5 +282,175 @@ func TestSyncPreservesOriginalOnEncodeFailure(t *testing.T) {
 	}
 	if len(temps) != 0 {
 		t.Fatalf("temporary config files remain: %v", temps)
+	}
+}
+
+func TestSyncThroughDanglingSymbolicLink(t *testing.T) {
+	tests := []struct {
+		name     string
+		absolute bool
+	}{
+		{name: "absolute-target", absolute: true},
+		{name: "relative-target", absolute: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, "missing.toml")
+			link := filepath.Join(dir, "active.toml")
+			mustSymlink(t, linkText(target, tt.absolute), link)
+
+			cfg := &sampleConfig{Name: "bootstrap", Count: 1}
+			if err := Sync(link, cfg); err != nil {
+				t.Fatalf("Sync() error = %v, want target created", err)
+			}
+
+			info, err := os.Lstat(link)
+			if err != nil {
+				t.Fatalf("inspect link: %v", err)
+			}
+			if info.Mode()&os.ModeSymlink == 0 {
+				t.Fatal("Sync() replaced the configured symlink")
+			}
+
+			reloaded := &sampleConfig{}
+			if err := Load(link, reloaded); err != nil {
+				t.Fatalf("Load through link: %v", err)
+			}
+			if reloaded.Name != "bootstrap" || reloaded.Count != 1 {
+				t.Fatalf("reloaded config = %+v, want bootstrap/1", reloaded)
+			}
+
+			if temps := configTempFiles(t, dir); len(temps) != 0 {
+				t.Fatalf("temporary config files remain: %v", temps)
+			}
+		})
+	}
+}
+
+func TestSyncCreatesDanglingSymbolicLinkTargetWithDefaults(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "active.toml")
+	mustSymlink(t, "missing.toml", link)
+
+	if err := Sync(link, &sampleConfig{Name: "fresh"}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(dir, "missing.toml"))
+	if err != nil {
+		t.Fatalf("stat created target: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("created target mode = %o, want 600", got)
+	}
+}
+
+func TestSyncThroughSymbolicLinkChain(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(target, []byte("name = \"old\"\n"), 0o400); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	middle := filepath.Join(dir, "middle.toml")
+	link := filepath.Join(dir, "active.toml")
+	mustSymlink(t, "config.toml", middle)
+	mustSymlink(t, "middle.toml", link)
+
+	if err := Sync(link, &sampleConfig{Name: "chained"}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	for _, path := range []string{link, middle} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("inspect %s: %v", path, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("Sync() replaced symlink %s", path)
+		}
+	}
+
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat target: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o400 {
+		t.Fatalf("target mode = %o, want 400", got)
+	}
+
+	reloaded := &sampleConfig{}
+	if err := Load(target, reloaded); err != nil {
+		t.Fatalf("load target: %v", err)
+	}
+	if reloaded.Name != "chained" {
+		t.Fatalf("target name = %q, want chained", reloaded.Name)
+	}
+}
+
+func TestSyncRejectsSymbolicLinkLoop(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "active.toml")
+	other := filepath.Join(dir, "other.toml")
+	mustSymlink(t, "other.toml", link)
+	mustSymlink(t, "active.toml", other)
+
+	err := Sync(link, &sampleConfig{Name: "loop"})
+	if err == nil {
+		t.Fatal("Sync() error = nil, want symbolic link loop error")
+	}
+	if !strings.Contains(err.Error(), link) {
+		t.Fatalf("error %q does not name the config path %q", err, link)
+	}
+
+	if temps := configTempFiles(t, dir); len(temps) != 0 {
+		t.Fatalf("temporary config files remain: %v", temps)
+	}
+}
+
+func TestSyncRejectsSelfReferentialSymbolicLink(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "active.toml")
+	mustSymlink(t, "active.toml", link)
+
+	err := Sync(link, &sampleConfig{Name: "self"})
+	if err == nil {
+		t.Fatal("Sync() error = nil, want symbolic link loop error")
+	}
+	if !strings.Contains(err.Error(), link) {
+		t.Fatalf("error %q does not name the config path %q", err, link)
+	}
+}
+
+func TestSyncKeepsRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	path := writeConfigFile(t, dir, "config.toml", "name = \"plain\"\n")
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatalf("chmod config: %v", err)
+	}
+
+	if err := Sync(path, &sampleConfig{Name: "updated"}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("inspect config: %v", err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("config mode = %v, want regular file", info.Mode())
+	}
+	if got := info.Mode().Perm(); got != 0o400 {
+		t.Fatalf("config mode = %o, want 400", got)
+	}
+
+	reloaded := &sampleConfig{}
+	if err := Load(path, reloaded); err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if reloaded.Name != "updated" {
+		t.Fatalf("config name = %q, want updated", reloaded.Name)
 	}
 }
