@@ -248,13 +248,16 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 			stack = append(stack, funcName)
 		}
 
-		// Insert stack into tree (leaf is at stack[0], so we need to reverse for phlaremodel.Tree)
-		if len(stack) > 0 {
-			for i, j := 0, len(stack)-1; i < j; i, j = i+1, j-1 {
-				stack[i], stack[j] = stack[j], stack[i]
-			}
-			phlaremodelTree.InsertStack(value, stack...)
+		// A missing stack still carries observed weight, as in local formatters.
+		if len(stack) == 0 {
+			stack = append(stack, "[unknown]")
 		}
+
+		// Insert stack into tree (leaf is at stack[0], so we need to reverse for phlaremodel.Tree)
+		for i, j := 0, len(stack)-1; i < j; i, j = i+1, j-1 {
+			stack[i], stack[j] = stack[j], stack[i]
+		}
+		phlaremodelTree.InsertStack(value, stack...)
 	}
 
 	// convert phlaremodel.Tree to FlameGraph
