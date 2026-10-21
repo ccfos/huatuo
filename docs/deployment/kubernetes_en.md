@@ -147,6 +147,14 @@ hostPaths:
 
 ### 2.4 Validate the Helm Chart
 
+`config.content` is required. Supply a non-empty configuration file with
+`--set-file config.content=./huatuo-bamai.conf`; rendering fails for empty or
+whitespace-only content. Validate the configuration values before deploying.
+
+By default, the ConfigMap name follows the release's full name, allowing separate
+releases in the same namespace. When upgrading a release that used the old default
+name, set `config.name: huatuo-bamai-config` in your values file to retain that name.
+
 ```bash
 helm lint ./build/charts \
   -f ./values-production.yaml \
