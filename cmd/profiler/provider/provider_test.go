@@ -60,7 +60,7 @@ func TestNewSelectsAggregationPolicy(t *testing.T) {
 			implementation: profiling.ImplementationNative,
 			typ:            profiling.TypeMemory,
 			mode:           profiling.ModePhysicalUsage,
-			aggregation:    pipeline.AggregationModeOneShot,
+			aggregation:    pipeline.AggregationModeStreaming,
 		},
 		{
 			name:           "java cpu",
@@ -196,5 +196,26 @@ func TestNewRejectsUnsupportedProvider(t *testing.T) {
 				t.Fatal("expected unsupported provider error")
 			}
 		})
+	}
+}
+
+func TestSampleTypeSeparatesPhysicalUsage(t *testing.T) {
+	for _, mode := range []profiling.Mode{profiling.ModePhysicalUsage, profiling.ModePhysicalAlloc, profiling.ModeVirtualAlloc} {
+		got, err := sampleType(&Config{
+			Type: profiling.TypeMemory,
+			Mode: mode,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := profiling.ProfileTypeMemSample
+		if mode == profiling.ModePhysicalUsage {
+			want = profiling.ProfileTypePhysicalUsage
+		}
+
+		if got != want {
+			t.Fatalf("mode=%s type=%s, want %s", mode, got, want)
+		}
 	}
 }

@@ -46,12 +46,15 @@ func pipelineConfig(f output.Formatter) *PipelineConfig {
 }
 
 type captureOutput struct {
+	name         output.OutputFormat
 	windows      []*types.AggregationWindow
 	completions  int
 	closes       int
 	err          error
 	contextCheck func(context.Context)
 }
+
+func (f *captureOutput) Name() output.OutputFormat { return f.name }
 
 func (f *captureOutput) Add(ctx context.Context, w *types.AggregationWindow) error {
 	if f.contextCheck != nil {
@@ -491,6 +494,110 @@ func TestPipelineSnapshotTransfersDroppedSamples(t *testing.T) {
 
 	if len(f.windows) != 2 {
 		t.Fatal("empty window was exported")
+	}
+}
+
+func TestPipelineSnapshotRetainsPhysicalUsage(t *testing.T) {
+	for _, format := range []output.OutputFormat{output.FormatRemoteStore, output.FormatJSON} {
+		t.Run(string(format), func(t *testing.T) {
+			f := &captureOutput{name: format}
+			cfg := pipelineConfig(f)
+			cfg.ProfileType = "memory:physical_usage:bytes:space:bytes"
+			p := NewPipeline(cfg)
+			end := time.Unix(100, 0)
+			deltas := []int64{8192, 0, -4096, -4096, -4096, 4096}
+			totals := []int64{8192, 8192, 4096, 0, 0, 0}
+			for i, delta := range deltas {
+				if err := p.consumeBatch(t.Context(), queuedBatch{
+					batch:      testBatch(delta),
+					enqueuedAt: end,
+				}); err != nil {
+					t.Fatal(err)
+				}
+
+				end = end.Add(time.Second)
+				if err := p.snapshot(t.Context(), end); err != nil {
+					t.Fatal(err)
+				}
+
+				got := &f.windows[i].Aggregated
+				want := delta
+				if format == output.FormatRemoteStore {
+					want = totals[i]
+					if got.TimeNanos != end.UnixNano() || got.DurationNanos != 0 {
+						t.Fatal("retained result is not timestamped at observation")
+					}
+				}
+
+				if got.Samples[0].Value != want {
+					t.Fatalf("window %d value=%d, want %d", i, got.Samples[0].Value, want)
+				}
+			}
+
+			if f.windows[0].Aggregated.Samples[0].Value != 8192 {
+				t.Fatal("later windows mutated earlier output")
+			}
+
+			if err := p.snapshot(t.Context(), end.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+
+			wantWindows := len(deltas)
+			if format == output.FormatRemoteStore {
+				wantWindows++
+			}
+
+			if len(f.windows) != wantWindows {
+				t.Fatalf("idle windows=%d, want %d", len(f.windows), wantWindows)
+			}
+		})
+	}
+}
+
+func TestPipelineSnapshotEmitsInitialZeroAndRejectsLoss(t *testing.T) {
+	f := &captureOutput{name: output.FormatRemoteStore}
+	cfg := pipelineConfig(f)
+	cfg.ProfileType = "memory:physical_usage:bytes:space:bytes"
+	p := NewPipeline(cfg)
+	if err := p.snapshot(t.Context(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(f.windows) != 1 || len(f.windows[0].Aggregated.Samples) != 0 {
+		t.Fatal("initial zero state missing")
+	}
+
+	p.droppedSamples = map[string]uint64{types.DropReasonCollection: 1}
+	if err := p.snapshot(t.Context(), time.Now()); err == nil || len(f.windows) != 1 {
+		t.Fatal("collection loss published a live result")
+	}
+}
+
+func TestPipelinePhysicalUsageKeepsObservationTime(t *testing.T) {
+	f := &captureOutput{name: output.FormatRemoteStore}
+	cfg := pipelineConfig(f)
+	cfg.ProfileType = "memory:physical_usage:bytes:space:bytes"
+	p := NewPipeline(cfg)
+	collected := time.Unix(100, 0)
+	batch := testBatch(1)
+	batch.StartedAt, batch.EndedAt = collected.Add(-30*time.Second), collected
+	if err := p.consumeBatch(t.Context(), queuedBatch{
+		batch:      batch,
+		enqueuedAt: collected.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range 2 {
+		observed := collected.Add(time.Duration(i+2) * time.Minute)
+		if err := p.snapshot(t.Context(), observed); err != nil {
+			t.Fatal(err)
+		}
+
+		got := &f.windows[i].Aggregated
+		if got.TimeNanos != observed.UnixNano() || got.DurationNanos != 0 {
+			t.Fatalf("snapshot interval = %d/%d, want observation %d/0", got.TimeNanos, got.DurationNanos, observed.UnixNano())
+		}
 	}
 }
 

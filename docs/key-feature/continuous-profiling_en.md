@@ -225,7 +225,7 @@ CPU profiling supports `oncpu` and `offcpu` for `c`, `c++`, and `go`;
 | --- | --- | --- |
 | `c`, `c++`, `go` | `virtual_alloc` | Virtual address-space allocation |
 | `c`, `c++`, `go` | `physical_alloc` | Physical page allocation |
-| `c`, `c++`, `go` | `physical_usage` | Signed physical-memory net change during collection |
+| `c`, `c++`, `go` | `physical_usage` | Live bytes of physical pages tracked by this sampling session |
 | `java` | `object_alloc` | JVM object allocation |
 | `java` | `object_usage` | JVM live objects |
 
@@ -595,7 +595,7 @@ Native memory profiling supports these dimensions:
 | --- | --- | --- |
 | `virtual_alloc` | Virtual address-space allocation and its call stacks | Excessive `mmap` activity and address-space growth |
 | `physical_alloc` | Physical memory newly allocated during the collection window | Physical page allocation triggered by page faults and allocation-rate analysis |
-| `physical_usage` | Signed physical-memory net change during collection | Allocation/release balance; not current occupancy |
+| `physical_usage` | Live bytes of physical pages tracked by this sampling session | Sampled surviving pages by allocation stack; not full RSS |
 
 ```bash
 sudo _output/bin/profiler \
@@ -611,7 +611,7 @@ sudo _output/bin/profiler \
   --output-path ./profiles/native-memory/
 ```
 
-`--physical-memory-probability` applies only to `physical_alloc` and `physical_usage`. Lowering it reduces processing for high-frequency memory events, but flame-graph values are then estimates based on sampled events rather than counts of every event.
+`--physical-memory-probability` applies only to `physical_alloc` and `physical_usage`. Lowering it reduces processing for high-frequency memory events. `physical_alloc` estimates allocation totals from the sampling probability; `physical_usage` counts only sampled, tracked pages, without inverse-probability scaling or pages allocated before collection.
 
 ### 4. Observing Java
 
@@ -684,7 +684,7 @@ Python does not support `--type memory`. Use a separate memory analysis tool for
 | `svg` | The same interactive SVG as `flamegraph` | Compatibility with callers that explicitly request SVG; currently equivalent to `flamegraph` |
 | `remote-store` | No local flame graph; uploads pprof-compatible data through a Unix socket | Integration with the HUATUO storage pipeline; not suitable for offline viewing |
 
-A flame graph shows the call direction from bottom to top. Rectangle width represents the cumulative value for that call stack in the selected profiling mode. For CPU profiles, width represents the proportion of CPU time derived from sample counts. For memory profiles, it represents virtual allocation, physical allocation, physical residency, Java object allocation, or live-object volume, depending on the selected mode. Horizontal position does not represent chronological order.
+A flame graph shows the call direction from bottom to top. Rectangle width represents the cumulative value for that call stack in the selected profiling mode. For CPU profiles, width represents the proportion of CPU time derived from sample counts. For memory profiles, it represents virtual allocation, physical allocation, sampled live physical-page bytes, Java object allocation, or live-object volume, depending on the selected mode. Horizontal position does not represent chronological order.
 
 Example folded stacks:
 
@@ -745,7 +745,7 @@ flowchart LR
 
 Profiler and irqtracing share `internal/profiling/profile.Run`, Pipeline, and `types.AggregationWindow`. Providers collect, decode, symbolize, convert units, and normalize labels before submitting `SampleBatch`. Pipeline aggregates by user stack, kernel stack, and the complete label set. Java agent lifecycle lives in `cmd/profiler/runtime/java`; tool execution lives in `cmd/profiler/exec`.
 
-Windows contain structured frames (Name/File/Line), root-to-leaf stacks, label sets, signed int64 weights, and timestamps. Frame IDs start at zero; stack and label IDs start at one, with zero meaning empty. Providers submit final units: nanoseconds for CPU and lock wait, bytes for memory, and event counts for IRQ source/victim. Negative values and cancellation to zero are retained. New windows have no Period or output-time sampling multiplier. Physical usage reports signed net change during collection, not current occupancy.
+Windows contain structured frames (Name/File/Line), root-to-leaf stacks, label sets, signed int64 weights, and timestamps. Frame IDs start at zero; stack and label IDs start at one, with zero meaning empty. Providers submit final units: nanoseconds for CPU and lock wait, bytes for memory, and event counts for IRQ source/victim. Negative values and cancellation to zero are retained. New windows have no Period or output-time sampling multiplier.
 
 Built-in single-value labels are `pid`, `cpu`, `comm`, `lock_address`, `irq`, `softirq_vector`, and `offcpu_category`. PID/CPU use canonical decimal strings; lock addresses use canonical hexadecimal. Comm is the process command name; Java/Python entry information uses `java_entry`/`python_entry`. Off-CPU categories are unknown, blocked, runqueue, runqueue_preempted, runqueue_yielded, and runqueue_missed_wakeup. Labels remain separate from shared stacks. Missing labels, empty strings, and numeric zero are distinct.
 
@@ -755,15 +755,15 @@ Local formatters consume the common window. JSON and the receiving handler use t
 
 The runner validates fixed configuration and creates the formatter before collection. `provider.New` copies configuration and creates a collector per task. Task ID and tool name come from `RunConfig.ID` and `ProfilerMeta.ToolName`; an ID is generated only when absent. `formatter.Config` contains Format, Destination, TaskID, and ToolName. Formatters own file creation and cleanup.
 
-Native CPU, memory allocation, and Java (CPU, object_alloc, and object_usage) use Streaming, with periodic output and a final drain. Native physical_usage, Python, and IRQ use OneShot. Run manages collection duration for every provider. The input queue capacity is 16 batches. A single worker aggregates samples and outputs windows sequentially. Batches permit at most 256 samples and 1 MiB of frame/label text; each sample permits 4096 frames per stack side and 64 labels. Oversized input fails explicitly. The 16 queued batches can contain up to 4096 samples and 16 MiB of accounted text, excluding frame structures and retained allocations; this is not a total memory limit. Window identity cardinality has no fixed limit, so high-cardinality collection can still grow memory.
+Native CPU, memory (including `physical_usage`), and Java (CPU, `object_alloc`, and `object_usage`) use Streaming mode, with periodic output and final processing of delivered batches. Python and IRQ use OneShot mode. Run manages collection duration for every provider. The input queue capacity is 16 batches. A single worker aggregates samples and outputs windows sequentially. Batches permit at most 256 samples and 1 MiB of frame/label text; each sample permits 4096 frames per stack side and 64 labels. Oversized input fails explicitly. The 16 queued batches can contain up to 4096 samples and 16 MiB of accounted text, excluding frame structures and retained allocations; this is not a total memory limit. Window identity cardinality has no fixed limit, so high-cardinality collection can still grow memory.
 
 A nil return from `Enqueue(ctx, batch)` means the batch was queued and all slice/map ownership transferred; it does not guarantee aggregation or output. Enqueue never waits for queue space. Every mode returns `ErrQueueFull` on overload; canceled contexts reject delivery. Errors leave ownership with the caller. Providers must not reuse delivered batches or retry automatically; the runner cancels processing on delivery errors and does not complete failed tasks. Synchronous output pauses input consumption. The larger queue absorbs short bursts, but sustained overload still fails.
 
-Completed Java and Python batches carry collection start and end times. Pipeline seals their earliest start and latest end, so parsing, queueing, and output delays do not change profile duration. Python uses the py-spy execution interval; Java uses session start and successive output-file modification times, which include profiler dump overhead. Providers without collection timestamps retain the reception-time fallback. A collection-loss-only batch also establishes the window start.
+For interval deltas, completed Java and Python batches carry collection start and end times. Pipeline seals their earliest start and latest end, so parsing, queueing, and output delays do not change profile duration. Python uses the py-spy execution interval; Java uses session start and successive output-file modification times, which include profiler dump overhead. Providers without collection timestamps retain the reception-time fallback: the window starts at the first effective batch's timestamp, taken before enqueueing, and ends just before the synchronous `Add` call. Those fallback fields describe reception and aggregation, not exact sampling intervals. Sealing replaces all data and indexes before Add; the next effective batch starts a new interval. Windows may have gaps or overlap. A collection-loss-only batch also establishes the window start.
 
 ### Output and errors
 
-Collapsed projects labels into virtual roots and combines display stacks. SVG rejects negative weights. JSON preserves signed values and writes each window; remote-store sends the common window. Speedscope groups by complete label sets, preserves source positions, and checks nonnegative weights and browser integer limits. Chrome Trace accepts time units only and converts to microseconds for an estimated timeline; it does not recover event order. Speedscope and Chrome Trace support factory construction but have no CLI options.
+SVG, collapsed, and speedscope accumulate interval deltas by user stack, kernel stack, and complete label set. Frame identity includes function name, file, and line. At `Complete`, they clamp each negative sample total to zero and log a summary warning before converting to display data. This prevents distinct samples with identical display names from canceling each other. Collapsed converts labels to virtual roots and merges display stacks. JSON preserves signed values and writes each window; remote-store sends the common window. Speedscope groups by complete label sets, preserves source positions, and checks nonnegative weights and browser integer limits. Chrome Trace accepts time units only and converts to microseconds for an estimated timeline; it does not recover event order. Speedscope and Chrome Trace support factory construction but have no CLI options.
 
 Pipeline.Close only closes input; it does not wait or release the formatter. The runner calls it once after the producer exits, so closing input cannot race an enqueue. Run is also called once; repeated calls and enqueueing after Close are unsupported. Add and Complete each have a 30-second timeout. Cancellation does not undo output already written. Pure formatter cancellation and timeout errors remain unwrapped; independent I/O and cleanup errors remain visible.
 
@@ -775,11 +775,21 @@ Remote-store uses the shared Toolstream service `profiling_store_service` with b
 
 The handler validates external windows, builds pprof, and calls `SaveSync`. Labels retain their sample associations; the tool name becomes tracer_name. Complete sends `End + Commit` and waits for ACK. Plain End, disconnect, and failure do not write completion markers or roll back existing windows. Ordinary data frames have no ACK; receive/storage errors are returned in the commit ACK.
 
-JSON can write files during Add; local output has no transactional rollback. Existing flamegraph queries do not filter all windows by completion markers. Persisted labels do not imply label indexing or sample-filter APIs. ES label queries, output publication, and a switch from upload time to collection time remain separate work.
+JSON can write files during Add; local output has no transactional rollback. Existing flamegraph queries do not filter all windows by completion markers. Persisted labels do not imply label indexing or sample-filter APIs. Queries for types other than `physical_usage` filter by upload time and merge windows.
+
+### physical_usage output contract
+
+The remote type is `memory:physical_usage:bytes:space:bytes`. Each output interval publishes the current live bytes of sampled, tracked pages, including idle and zero states. Each snapshot uses the observation timestamp and has zero duration. Queries require one task ID and select the latest snapshot in the range, including zero, without adding snapshots together. Use the Task ID field in Grafana.
+
+SVG, collapsed, and speedscope write files at `Complete`. Samples that cancel produce a valid empty result; a session receiving no samples creates no file. JSON preserves signed interval deltas. Chrome Trace does not support `physical_usage`.
+
+Remote snapshots also clamp negative sample totals to zero and log a summary warning, while retaining signed totals internally for later deltas to offset. Samples with zero totals remain until task completion, so memory use grows with the number of distinct samples.
+
+Stack matching across intervals, detection of actual and partial physical-page releases, and collection of remaining data at normal shutdown still need validation and improvement. The result must not be treated as exact physical residency.
 
 ### Dropped samples
 
-The new Pipeline only produces `collection` in `DroppedSamples`, stored in `profile_data.metrics.dropped_samples`. Providers submit collection deltas, which are added directly under the assumption that their sum fits in uint64, without an overflow check or early output. Full queues return errors without silently dropping batches or producing `aggregation_queue` counts. That category remains supported for historical window and storage compatibility. Loss-only windows are emitted; cancellation does not guarantee final statistics.
+The new Pipeline only produces `collection` in `DroppedSamples`, stored in `profile_data.metrics.dropped_samples`. Providers submit collection deltas, which are added directly under the assumption that their sum fits in uint64, without an overflow check or early output. Full queues return errors without silently dropping batches or producing `aggregation_queue` counts. That category remains supported for historical window and storage compatibility. Physical usage fails on explicit collection loss; other types still emit loss-only windows. Cancellation does not guarantee final statistics.
 
 ## 🌟 Conclusion
 

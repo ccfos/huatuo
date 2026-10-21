@@ -24,6 +24,7 @@ import (
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/randomid"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -185,11 +186,14 @@ func (p *Pipeline) consumeBatch(ctx context.Context, item queuedBatch) error {
 }
 
 func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
-	if p.aggregator.Empty() && len(p.droppedSamples) == 0 {
+	// Remote storage currently needs live totals; future snapshot destinations
+	// can reuse this state while local summary formats continue receiving deltas.
+	retain := p.profileType == profiling.ProfileTypePhysicalUsage && p.formatter.Name() == output.FormatRemoteStore
+	if !retain && p.aggregator.Empty() && len(p.droppedSamples) == 0 {
 		return nil
 	}
 
-	if !p.windowUntimed && !p.windowEnd.IsZero() {
+	if !retain && !p.windowUntimed && !p.windowEnd.IsZero() {
 		end = p.windowEnd
 	}
 
@@ -199,6 +203,10 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 	}
 
 	if len(p.droppedSamples) > 0 {
+		if p.profileType == profiling.ProfileTypePhysicalUsage {
+			return fmt.Errorf("physical usage collection lost samples: %v", p.droppedSamples)
+		}
+
 		log.WithField("tracer_id", p.tracerID).
 			WithField("dropped_samples", p.droppedSamples).
 			Warn("profiling samples dropped; profile is incomplete")
@@ -212,10 +220,18 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 		ContainerID:    p.containerID,
 		ProfileType:    p.profileType,
 		DroppedSamples: p.droppedSamples,
-		Aggregated:     p.aggregator.Drain(),
 	}
-	sealed.Aggregated.TimeNanos = start.UnixNano()
-	sealed.Aggregated.DurationNanos = end.Sub(start).Nanoseconds()
+	if retain {
+		sealed.Aggregated = p.aggregator.CopyProfile()
+		sealed.Aggregated.TimeNanos = end.UnixNano()
+		if err := output.ClampNegativeSamples(ctx, p.tracerID, &sealed.Aggregated); err != nil {
+			return err
+		}
+	} else {
+		sealed.Aggregated = p.aggregator.Drain()
+		sealed.Aggregated.TimeNanos = start.UnixNano()
+		sealed.Aggregated.DurationNanos = end.Sub(start).Nanoseconds()
+	}
 	p.windowStart = time.Time{}
 	p.windowEnd = time.Time{}
 	p.windowUntimed = false
