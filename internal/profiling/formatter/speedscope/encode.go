@@ -179,7 +179,11 @@ func (e *encoder) internFrame(key frameKey) (int, error) {
 	return id, nil
 }
 
-func (e *encoder) write(w io.Writer) error {
+func (e *encoder) write(ctx context.Context, w io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	active := 0
 	for i := range e.profiles {
 		if e.profiles[i].EndValue > e.profiles[active].EndValue {
@@ -187,7 +191,22 @@ func (e *encoder) write(w io.Writer) error {
 		}
 	}
 
-	return json.NewEncoder(w).Encode(speedscopeFile{
+	// Encode buffers the whole value before Write; check cancellation again
+	// there so a deadline during encoding cannot publish a successful result.
+	writer := writeFunc(func(data []byte) (int, error) {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+
+		n, err := w.Write(data)
+		if err != nil {
+			return n, err
+		}
+
+		return n, ctx.Err()
+	})
+
+	return json.NewEncoder(writer).Encode(speedscopeFile{
 		Schema:           "https://www.speedscope.app/file-format-schema.json",
 		Shared:           sharedData{Frames: e.frameList},
 		Profiles:         e.profiles,
@@ -196,3 +215,7 @@ func (e *encoder) write(w io.Writer) error {
 		Name:             "aggregated profile",
 	})
 }
+
+type writeFunc func([]byte) (int, error)
+
+func (f writeFunc) Write(data []byte) (int, error) { return f(data) }

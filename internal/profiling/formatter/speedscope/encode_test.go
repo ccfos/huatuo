@@ -16,7 +16,10 @@ package speedscope
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -64,7 +67,7 @@ func TestEncoderKeepsGroupsSeparate(t *testing.T) {
 		}
 	}
 	var data bytes.Buffer
-	if err := e.write(&data); err != nil {
+	if err := e.write(t.Context(), &data); err != nil {
 		t.Fatal(err)
 	}
 	var got speedscopeFile
@@ -142,7 +145,7 @@ func TestEncoderFrameIdentity(t *testing.T) {
 	}
 
 	var data bytes.Buffer
-	if err := e.write(&data); err != nil {
+	if err := e.write(t.Context(), &data); err != nil {
 		t.Fatal(err)
 	}
 	var got speedscopeFile
@@ -162,5 +165,50 @@ func TestEncoderFrameIdentity(t *testing.T) {
 		if diff := cmp.Diff([]int64{1, 2, 3, 4}, got.Profiles[i].Weights); diff != "" {
 			t.Fatalf("weights (-want +got):\n%s", diff)
 		}
+	}
+}
+
+func TestEncoderWriteCancellation(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		cancelBefore  bool
+		writeErr      error
+		expectedError error
+	}{
+		{
+			name:          "before encoding",
+			cancelBefore:  true,
+			expectedError: context.Canceled,
+		},
+		{
+			name:          "during write",
+			expectedError: context.Canceled,
+		},
+		{
+			name:          "write failure during cancellation",
+			writeErr:      io.ErrClosedPipe,
+			expectedError: io.ErrClosedPipe,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tc.cancelBefore {
+				cancel()
+			}
+			written := false
+			writer := writeFunc(func(data []byte) (int, error) {
+				written = true
+				cancel()
+				return len(data), tc.writeErr
+			})
+			e := encoder{}
+			if err := e.write(ctx, writer); !errors.Is(err, tc.expectedError) {
+				t.Fatalf("write error = %v, want %v", err, tc.expectedError)
+			}
+			if written == tc.cancelBefore {
+				t.Fatalf("written = %t, canceled before encoding = %t", written, tc.cancelBefore)
+			}
+		})
 	}
 }
