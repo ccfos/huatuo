@@ -18,6 +18,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/cilium/ebpf"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 )
 
@@ -34,6 +36,11 @@ func ReadStackTrace(b bpf.BPF, mapID, stackID uint32) ([StackTraceLen]uint64, er
 	raw, err := b.ReadMap(mapID, key[:])
 	if err != nil {
 		return stack, fmt.Errorf("read stack map %d ID %d: %w", mapID, stackID, err)
+	}
+
+	// LookupBytes reports missing keys as (nil, nil). Preserve fallback semantics.
+	if raw == nil {
+		return stack, fmt.Errorf("read stack map %d ID %d: %w", mapID, stackID, ebpf.ErrKeyNotExist)
 	}
 
 	if len(raw) != StackTraceLen*8 {
