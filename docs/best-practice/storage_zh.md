@@ -582,3 +582,5 @@ HTTP 错误包含响应状态码和可用的 Elasticsearch 错误详情。无法
 `observed_timestamp` 是用户态观测时刻，`uploaded_timestamp` 是存储写入时刻。
 三者不互相补填。旧文档及没有内核时间的事件省略新增字段；历史数据不自动迁移。
 原始 `kernel_observed_ns` 仅用于进程内事件关联，不写入新文档。
+
+Elasticsearch/OpenSearch 每次 HTTP 尝试的超时为 30 秒，包含响应体读取；调用方更短的截止时间优先。HTTP 重定向不会被自动跟随。SDK 重试可能使整个操作超过单次尝试的时长。

@@ -71,7 +71,13 @@ func (t *productHeaderTransport) RoundTrip(req *http.Request) (*http.Response, e
 		}
 		req.Header.Set("Accept", "application/json")
 	}
-	resp, err := t.inner.RoundTrip(req)
+	// The timeout must cover body reads as well as dialing and response headers.
+	client := http.Client{
+		Transport:     t.inner,
+		Timeout:       30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
