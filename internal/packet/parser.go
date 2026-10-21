@@ -37,7 +37,7 @@ type decoder struct {
 	eth       layers.Ethernet
 	ipv4      layers.IPv4
 	ipv6      layers.IPv6
-	tcp       layers.TCP
+	tcp       boundedTCP
 	udp       layers.UDP
 	icmp4     layers.ICMPv4
 	icmp6     layers.ICMPv6
@@ -63,6 +63,37 @@ var decoderPool = sync.Pool{
 
 		return dec
 	},
+}
+
+type boundedTCP struct {
+	layers.TCP
+}
+
+func (tcp *boundedTCP) DecodeFromBytes(data []byte, feedback gopacket.DecodeFeedback) error {
+	if len(data) >= 20 {
+		end := int(data[12]>>4) * 4
+		if end >= 20 && end <= len(data) {
+			// The dependency's MPTCP path can accept a zero length and never advance.
+			for options := data[20:end]; len(options) > 0; {
+				kind := layers.TCPOptionKind(options[0])
+				if kind == layers.TCPOptionKindEndList {
+					break
+				}
+				if kind == layers.TCPOptionKindNop {
+					options = options[1:]
+					continue
+				}
+				if len(options) < 2 || options[1] < 2 || int(options[1]) > len(options) {
+					return errors.New("TCP option length exceeds captured header or makes no progress")
+				}
+				if kind == layers.TCPOptionKindMultipathTCP && options[1] < 3 {
+					return errors.New("MPTCP option lacks subtype")
+				}
+				options = options[options[1]:]
+			}
+		}
+	}
+	return tcp.TCP.DecodeFromBytes(data, feedback)
 }
 
 // Parse decodes pkt into a layered *Packet. The set of non-nil
@@ -147,7 +178,7 @@ func Parse(pkt *Hdr) (*Packet, error) {
 				Daddr:        slices.Clone(dec.ipv6.DstIP),
 			}
 		case layers.LayerTypeTCP:
-			rawFlags := tcpFlagsRaw(&dec.tcp)
+			rawFlags := tcpFlagsRaw(&dec.tcp.TCP)
 			out.TCP = &TCP{
 				Sport:      uint16(dec.tcp.SrcPort),
 				Dport:      uint16(dec.tcp.DstPort),
