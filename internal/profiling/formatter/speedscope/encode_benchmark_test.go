@@ -44,7 +44,7 @@ func BenchmarkAppendProfiles(b *testing.B) {
 			for b.Loop() {
 				f := encoder{
 					unit:   "bytes",
-					frames: make(map[frame]int),
+					frames: make(map[frameKey]int),
 				}
 				if err := f.appendProfiles(b.Context(), &w); err != nil {
 					b.Fatal(err)

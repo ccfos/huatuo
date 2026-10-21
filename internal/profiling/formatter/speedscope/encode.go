@@ -43,6 +43,12 @@ type frame struct {
 	Line int64  `json:"line,omitempty"`
 }
 
+// Display suffixes are not identities: a user symbol may already end in _[k].
+type frameKey struct {
+	frame
+	isKernel bool
+}
+
 type sampledProfile struct {
 	Type       string  `json:"type"`
 	Name       string  `json:"name"`
@@ -56,7 +62,7 @@ type sampledProfile struct {
 // encoder owns presentation data only for the duration of Complete.
 type encoder struct {
 	unit      string
-	frames    map[frame]int
+	frames    map[frameKey]int
 	frameList []frame
 	profiles  []sampledProfile
 }
@@ -130,24 +136,16 @@ func (e *encoder) appendProfiles(ctx context.Context, w *types.AggregationWindow
 		indices := make([]int, len(sourceFrames))
 		for j := range sourceFrames {
 			source := &sourceFrames[j]
-			if source.Line < 0 || source.Line > maxExactInteger {
-				return fmt.Errorf("speedscope: invalid source line %d", source.Line)
-			}
-
-			item := frame{
-				Name: source.Name,
-				File: source.File,
-				Line: source.Line,
-			}
-			if j >= kernelStart {
-				item.Name += "_[k]"
-			}
-
-			id, ok := e.frames[item]
-			if !ok {
-				id = len(e.frameList)
-				e.frames[item] = id
-				e.frameList = append(e.frameList, item)
+			id, err := e.internFrame(frameKey{
+				frame: frame{
+					Name: source.Name,
+					File: source.File,
+					Line: source.Line,
+				},
+				isKernel: j >= kernelStart,
+			})
+			if err != nil {
+				return err
 			}
 
 			indices[j] = id
@@ -159,6 +157,26 @@ func (e *encoder) appendProfiles(ctx context.Context, w *types.AggregationWindow
 	}
 
 	return nil
+}
+
+func (e *encoder) internFrame(key frameKey) (int, error) {
+	if key.Line < 0 || key.Line > maxExactInteger {
+		return 0, fmt.Errorf("invalid source line %d for frame %q", key.Line, key.Name)
+	}
+
+	if id, ok := e.frames[key]; ok {
+		return id, nil
+	}
+
+	id := len(e.frameList)
+	e.frames[key] = id
+	item := key.frame
+	if key.isKernel {
+		item.Name += "_[k]"
+	}
+	e.frameList = append(e.frameList, item)
+
+	return id, nil
 }
 
 func (e *encoder) write(w io.Writer) error {

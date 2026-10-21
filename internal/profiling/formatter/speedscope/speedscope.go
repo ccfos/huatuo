@@ -91,7 +91,7 @@ func (f *formatter) Complete(ctx context.Context) error {
 	}
 	result := encoder{
 		unit:      f.sampleUnit,
-		frames:    make(map[frame]int),
+		frames:    make(map[frameKey]int),
 		frameList: []frame{},
 	}
 	for i := range windows {

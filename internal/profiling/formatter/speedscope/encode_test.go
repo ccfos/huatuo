@@ -19,13 +19,15 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestEncoderKeepsGroupsSeparate(t *testing.T) {
 	e := encoder{
 		unit:      "bytes",
-		frames:    make(map[frame]int),
+		frames:    make(map[frameKey]int),
 		frameList: []frame{},
 	}
 	inputs := []struct {
@@ -96,6 +98,69 @@ func TestEncoderKeepsGroupsSeparate(t *testing.T) {
 			} else if name.Labels != nil || profile.EndValue != 0 || profile.Samples == nil || len(profile.Samples) != 0 || profile.Weights == nil || len(profile.Weights) != 0 {
 				t.Fatalf("empty group = %+v, labels = %+v", profile, name.Labels)
 			}
+		}
+	}
+}
+
+func TestEncoderFrameIdentity(t *testing.T) {
+	e := encoder{
+		unit:   "bytes",
+		frames: make(map[frameKey]int),
+	}
+	w := testWindow("bytes", 1)
+	w.Aggregated.Frames = []types.ProfileFrame{{Name: "work_[k]"}, {Name: "work"}}
+	w.Aggregated.Stacks = [][]uint32{{0}, {1}}
+	w.Aggregated.Samples = []types.AggregatedSample{
+		{
+			UserStack: 1,
+			Value:     1,
+		},
+		{
+			KernelStack: 2,
+			Value:       2,
+		},
+		{
+			UserStack: 2,
+			Value:     3,
+		},
+		{
+			UserStack:   1,
+			KernelStack: 2,
+			Value:       4,
+		},
+	}
+	if err := e.appendProfiles(t.Context(), w); err != nil {
+		t.Fatal(err)
+	}
+
+	// Dictionary IDs change across windows; semantic frame IDs must not.
+	w.ContainerID = "other"
+	w.Aggregated.Frames[0], w.Aggregated.Frames[1] = w.Aggregated.Frames[1], w.Aggregated.Frames[0]
+	w.Aggregated.Stacks = [][]uint32{{1}, {0}}
+	if err := e.appendProfiles(t.Context(), w); err != nil {
+		t.Fatal(err)
+	}
+
+	var data bytes.Buffer
+	if err := e.write(&data); err != nil {
+		t.Fatal(err)
+	}
+	var got speedscopeFile
+	if err := json.Unmarshal(data.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Shared.Frames) != 3 || len(got.Profiles) != 2 {
+		t.Fatalf("frame identity lost: %+v", got)
+	}
+	if got.Shared.Frames[0].Name != "work_[k]" || got.Shared.Frames[1].Name != "work_[k]" {
+		t.Fatalf("display names changed: %+v", got.Shared.Frames)
+	}
+	for i := range got.Profiles {
+		if diff := cmp.Diff([][]int{{0}, {1}, {2}, {0, 1}}, got.Profiles[i].Samples); diff != "" {
+			t.Fatalf("samples (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff([]int64{1, 2, 3, 4}, got.Profiles[i].Weights); diff != "" {
+			t.Fatalf("weights (-want +got):\n%s", diff)
 		}
 	}
 }
