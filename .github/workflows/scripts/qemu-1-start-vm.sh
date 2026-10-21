@@ -16,7 +16,7 @@
 #
 
 # Purpose: Extract a verified VM package, start the VM, and sync the source tree.
-# Caller: GitHub workflow os-distro-qemu-test.yml, as the qemu-1 step; qemu-local-test.sh locally.
+# Caller: os-distro-qemu-test-reusable.yml, as the qemu-1 step; qemu-local-test.sh locally.
 # Environment:
 # - VM_IMAGE_REF: Image reference; defaults from DISTRO and ARCH.
 # - VM_IMAGE_PULL: Image pull policy, always (default) or never.

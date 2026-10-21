@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cilium/ebpf"
+
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
@@ -226,15 +228,26 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 				PID:     pid,
 				StackID: base.Userstack,
 			}
+			// Missing IDs preserve the sample weight; malformed data and I/O failures abort collection.
 			user, ok := userCache[userKey]
 			if !ok {
-				user = r.resolveUserStackWithFallback(ring, base.Userstack, pid)
+				var err error
+				user, err = r.resolveUserStackWithFallback(ring, base.Userstack, pid)
+				if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+					return err
+				}
+
 				userCache[userKey] = user
 			}
 
 			kernel, ok := kernelCache[base.Kernstack]
 			if !ok {
-				kernel = r.resolveKernelStackWithFallback(ring, base.Kernstack)
+				var err error
+				kernel, err = r.resolveKernelStackWithFallback(ring, base.Kernstack)
+				if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+					return err
+				}
+
 				kernelCache[base.Kernstack] = kernel
 			}
 
@@ -302,69 +315,56 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 	)
 }
 
-// resolveKernelStackWithFallback resolves kernel stack with fallback support.
-// Fast path: lookup primary stackMapID (90-95% hit rate).
-// Slow path: fallback to another stackMapID if primary lookup fails.
+// Only missing IDs can belong to the other retained-memory stack map.
 func (r *ringBufferContext) resolveKernelStackWithFallback(
 	ring frozenRingBuffer,
 	kernelStackID int32,
-) []types.ProfileFrame {
-	stack := r.resolveKernelStack(ring.stackMapID, kernelStackID)
-	if len(stack) > 0 {
-		return stack
-	}
-
-	if ring.fallbackStackMapID != 0 {
+) ([]types.ProfileFrame, error) {
+	stack, err := r.resolveKernelStack(ring.stackMapID, kernelStackID)
+	if errors.Is(err, ebpf.ErrKeyNotExist) && ring.fallbackStackMapID != 0 {
 		return r.resolveKernelStack(ring.fallbackStackMapID, kernelStackID)
 	}
 
-	return nil
+	return stack, err
 }
 
-// resolveUserStackWithFallback resolves user stack with fallback support.
-// Fast path: lookup primary stackMapID (90-95% hit rate).
-// Slow path: fallback to another stackMapID if primary lookup fails.
 func (r *ringBufferContext) resolveUserStackWithFallback(
 	ring frozenRingBuffer,
 	userStackID int32,
 	pid uint32,
-) []types.ProfileFrame {
-	stack := r.resolveUserStack(ring.stackMapID, userStackID, pid)
-	if len(stack) > 0 {
-		return stack
-	}
-
-	if ring.fallbackStackMapID != 0 {
+) ([]types.ProfileFrame, error) {
+	stack, err := r.resolveUserStack(ring.stackMapID, userStackID, pid)
+	if errors.Is(err, ebpf.ErrKeyNotExist) && ring.fallbackStackMapID != 0 {
 		return r.resolveUserStack(ring.fallbackStackMapID, userStackID, pid)
 	}
 
-	return nil
+	return stack, err
 }
 
-func (r *ringBufferContext) resolveKernelStack(stackMapID uint32, stackID int32) []types.ProfileFrame {
+func (r *ringBufferContext) resolveKernelStack(stackMapID uint32, stackID int32) ([]types.ProfileFrame, error) {
 	if !validateStackID(stackID) {
-		return nil
+		return nil, nil
 	}
 
-	trace, ok := readStackTrace(r.bpf, stackMapID, stackID)
-	if !ok {
-		return nil
+	trace, err := bpfmap.ReadStackTrace(r.bpf, stackMapID, uint32(stackID))
+	if err != nil {
+		return nil, err
 	}
 
-	return symbolizedFrames(trace[:], symbol.KsymStackStrsReversed(trace[:], len(trace)))
+	return symbolizedFrames(trace[:], symbol.KsymStackStrsReversed(trace[:], len(trace))), nil
 }
 
-func (r *ringBufferContext) resolveUserStack(stackMapID uint32, stackID int32, pid uint32) []types.ProfileFrame {
+func (r *ringBufferContext) resolveUserStack(stackMapID uint32, stackID int32, pid uint32) ([]types.ProfileFrame, error) {
 	if !validateStackID(stackID) {
-		return nil
+		return nil, nil
 	}
 
-	trace, ok := readStackTrace(r.bpf, stackMapID, stackID)
-	if !ok {
-		return nil
+	trace, err := bpfmap.ReadStackTrace(r.bpf, stackMapID, uint32(stackID))
+	if err != nil {
+		return nil, err
 	}
 
-	return symbolizedFrames(trace[:], r.usym.UsymStackStrsReversed(pid, trace[:], len(trace)))
+	return symbolizedFrames(trace[:], r.usym.UsymStackStrsReversed(pid, trace[:], len(trace))), nil
 }
 
 func closeBPF(b bpf.BPF) error {

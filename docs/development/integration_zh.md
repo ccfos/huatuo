@@ -130,17 +130,20 @@ Shell 用例负责命名空间、丢包规则、断言、日志和进程清理�
 ```bash
 integration/fixtures/
 ```
-目录结构需与真实内核文件系统保持一致。
+此目录仅保留内核文件系统镜像（`proc/`、`sys/`、`dev/`），保持原始路径和文件名。
+工具夹具放在 `integration/testdata/tools/`，文件名以 `test_` 或 `Test` 开头。
+例如，测试启动前将 `test_perf.sh` 复制到临时工具目录并命名为 `perf`。
 
 #### 第二步：添加预期指标
 在以下目录中新建一个文件：
 ```bash
-integration/fixtures/expected_metrics/
-├── cpu.txt
-├── memory.txt
+integration/testdata/expected_metrics/
+├── test_cpu.txt
+├── test_memory.txt
 └── ...
 ```
-每一行（非空、非注释行）表示一条期望的 Prometheus 指标，指标内容必须与 ``/metrics`` 接口返回结果完全一致，新增的``*.txt`` 文件会被测试脚本自动加载并参与校验。
+每个非空、非注释行表示一条预期的 Prometheus 指标，必须与 `/metrics` 返回的指标行完全一致。
+测试自动加载 `test_*.txt`，从文件名去掉 `test_` 前缀后确定指标前缀。
 
 #### 第三步：运行测试
 ```bash

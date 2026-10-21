@@ -147,21 +147,26 @@ If the metric depends on /proc or /sys, add or update mock data under:
 integration/fixtures/
 ```
 
-The directory structure should match the real kernel filesystem layout.
+Only kernel filesystem mirrors (`proc/`, `sys/`, and `dev/`) belong here;
+preserve their original paths and filenames. Store tool fixtures under
+`integration/testdata/tools/` with a `test_` or `Test` filename prefix.
+For example, copy `test_perf.sh` to the temporary tool directory as `perf`
+before starting the test.
 #### 2: Add Expected Metrics
 
 Create a new file under:
 ```bash
-integration/fixtures/expected_metrics/
-├── cpu.txt
-├── memory.txt
+integration/testdata/expected_metrics/
+├── test_cpu.txt
+├── test_memory.txt
 └── ...
 ```
 
 Each non-empty, non-comment line represents one expected Prometheus metric line
 and must match the /metrics output exactly.
 
-New *.txt files are automatically picked up by the test.
+The test automatically loads `test_*.txt` files and strips `test_` from the
+filename when deriving the metric prefix.
 
 #### 3: Run the Test
 ```bash

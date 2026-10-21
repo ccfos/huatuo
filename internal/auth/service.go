@@ -54,7 +54,13 @@ type UserConfig struct {
 
 // Service authenticates immutable, statically configured identities.
 type Service struct {
-	usersByToken map[string]Principal
+	usersByToken []tokenPrincipal
+}
+
+// tokenPrincipal pairs a bearer-token digest with its configured identity.
+type tokenPrincipal struct {
+	tokenDigest [sha256.Size]byte
+	principal   Principal
 }
 
 // TokenAuthenticator authenticates bearer tokens without creating identities.
@@ -90,28 +96,47 @@ func (a *TokenAuthenticator) AuthenticateBearer(header string) error {
 
 // NewService constructs an authentication service from static user configuration.
 func NewService(users []UserConfig) *Service {
-	usersByToken := make(map[string]Principal, len(users))
+	// Digests are deduplicated so later configuration wins, matching the
+	// previous map-assignment semantics for duplicate bearer tokens.
+	usersByDigest := make(map[[sha256.Size]byte]Principal, len(users))
 	for _, user := range users {
 		permissions := make([]Permission, len(user.Permissions))
 		for i := range user.Permissions {
 			permissions[i] = Permission(user.Permissions[i])
 		}
-		usersByToken[user.BearerToken] = Principal{
+		usersByDigest[sha256.Sum256([]byte(user.BearerToken))] = Principal{
 			ID:          user.ID,
 			Permissions: permissions,
 			IsAdmin:     user.IsAdmin,
 		}
 	}
+	usersByToken := make([]tokenPrincipal, 0, len(usersByDigest))
+	for tokenDigest, principal := range usersByDigest {
+		usersByToken = append(usersByToken, tokenPrincipal{
+			tokenDigest: tokenDigest,
+			principal:   principal,
+		})
+	}
 	return &Service{usersByToken: usersByToken}
 }
 
 // Authenticate returns the principal associated with a raw bearer token.
+// The token digest is compared against every configured digest in constant
+// time, mirroring TokenAuthenticator, so authentication latency does not
+// depend on the token contents.
 func (s *Service) Authenticate(token string) (Principal, bool) {
-	principal, ok := s.usersByToken[token]
-	if !ok {
+	tokenDigest := sha256.Sum256([]byte(token))
+	matched := 0
+	selected := 0
+	for i := range s.usersByToken {
+		equal := subtle.ConstantTimeCompare(tokenDigest[:], s.usersByToken[i].tokenDigest[:])
+		matched |= equal
+		selected = subtle.ConstantTimeSelect(equal, i, selected)
+	}
+	if matched == 0 {
 		return Principal{}, false
 	}
-	return clonePrincipal(principal), true
+	return clonePrincipal(s.usersByToken[selected].principal), true
 }
 
 // AuthenticateBearer authenticates an HTTP Authorization header.

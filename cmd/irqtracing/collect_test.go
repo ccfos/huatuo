@@ -18,10 +18,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
+	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -465,4 +467,27 @@ func collectStackSamples(b bpf.BPF) ([]aggregation.Sample, error) {
 	)
 
 	return samples, err
+}
+
+func TestEnqueueStackMapRejectsInvalidStackData(t *testing.T) {
+	for _, user := range []bool{false, true} {
+		t.Run(fmt.Sprintf("user=%t", user), func(t *testing.T) {
+			key := &bpfabi.IrqtracingStackKey{
+				UstackID: uint32(bpfabi.IrqtracingStackIDNone),
+				KstackID: 0,
+			}
+			if user {
+				key.UstackID, key.KstackID = 0, uint32(bpfabi.IrqtracingStackIDNone)
+			}
+			obj := &mockBPF{
+				items:      map[string][]bpf.MapItem{"source_counts": {mapItem(key, 1)}},
+				stacks:     map[uint32][]byte{0: {1}},
+				stackMapID: 99,
+			}
+			_, err := collectStackSamples(obj)
+			if !errors.Is(err, bpfmap.ErrInvalidStackData) {
+				t.Fatalf("error = %v, want ErrInvalidStackData", err)
+			}
+		})
+	}
 }
