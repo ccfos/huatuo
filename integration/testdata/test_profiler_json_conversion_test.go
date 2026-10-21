@@ -25,8 +25,8 @@ import (
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/factory"
-	"github.com/ccfos/huatuo/internal/profiling/profile"
 	profilewindow "github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -48,7 +48,7 @@ func (c *conversionCancelContext) Err() error {
 
 func TestJSONConversionCancellationPreservesOutput(t *testing.T) {
 	w := &types.AggregationWindow{
-		ProfileType: profile.ProfileTypeCpuSample,
+		ProfileType: profiling.ProfileTypeCpuSample,
 		Aggregated: types.AggregatedProfile{
 			TimeNanos: 1,
 			Samples:   []types.AggregatedSample{{Value: 1}},

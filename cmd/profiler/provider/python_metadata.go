@@ -31,7 +31,7 @@ func pythonProcessName(pid int) (string, error) {
 	}
 
 	base := filepath.Base(resolvedExe)
-	if !strings.HasPrefix(base, "python") {
+	if !hasExecutablePrefix(base, "python") {
 		return "", fmt.Errorf("process %d exe is %q, not a python process", pid, base)
 	}
 

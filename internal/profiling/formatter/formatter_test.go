@@ -17,6 +17,7 @@ package formatter_test
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"os"
 	"path/filepath"
@@ -25,13 +26,13 @@ import (
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/factory"
-	"github.com/ccfos/huatuo/internal/profiling/profile"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestFormatterCollapsedOutput(t *testing.T) {
 	window := &types.AggregationWindow{
-		ProfileType: profile.ProfileTypeIRQTracingSample,
+		ProfileType: profiling.ProfileTypeIRQTracingSample,
 		Aggregated: types.AggregatedProfile{
 			Frames: []types.ProfileFrame{{Name: "source"}, {Name: "raise;net\nrx"}, {Name: "raise:net rx"}},
 			Stacks: [][]uint32{{0, 1}, {0, 2}},
@@ -80,7 +81,7 @@ func TestFormatterFlameGraphOutput(t *testing.T) {
 
 func TestFormatterJSONOutput(t *testing.T) {
 	window := &types.AggregationWindow{
-		ProfileType:    profile.ProfileTypeCpuSample,
+		ProfileType:    profiling.ProfileTypeCpuSample,
 		DroppedSamples: map[string]uint64{types.DropReasonCollection: 3},
 	}
 	destination := filepath.Join(t.TempDir(), "profile")
@@ -96,6 +97,47 @@ func TestFormatterJSONOutput(t *testing.T) {
 
 	if got.DroppedSamples[types.DropReasonCollection] != 3 {
 		t.Fatalf("window = %+v", got)
+	}
+}
+
+func TestFormatterJSONConversionFailurePreservesDestination(t *testing.T) {
+	for _, kind := range []string{"existing", "absent", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "profile.json")
+			const original = "previous result\n"
+			if kind == "existing" {
+				if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if kind == "directory" {
+				path = dir
+			}
+
+			formatter := createFormatter(t, output.FormatJSON, path)
+			if err := formatter.Add(t.Context(), &types.AggregationWindow{ProfileType: "invalid"}); err == nil {
+				t.Fatal("expected profile conversion error")
+			}
+
+			switch kind {
+			case "existing":
+				if data := readDestination(t, path); string(data) != original {
+					t.Fatalf("previous result changed to %q", data)
+				}
+			case "absent":
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("output created after failed conversion: %v", err)
+				}
+			case "directory":
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(entries) != 0 {
+					t.Fatalf("created %d result files after failed conversion", len(entries))
+				}
+			}
+		})
 	}
 }
 
@@ -139,7 +181,7 @@ func TestFormatterCancellationDoesNotCreateFile(t *testing.T) {
 					cancel()
 					var err error
 					if operation == "add" {
-						err = formatter.Add(ctx, &types.AggregationWindow{ProfileType: profile.ProfileTypeCpuSample})
+						err = formatter.Add(ctx, &types.AggregationWindow{ProfileType: profiling.ProfileTypeCpuSample})
 					} else {
 						err = formatter.Complete(ctx)
 					}
@@ -221,7 +263,7 @@ func TestFormatterStandardOutputIsNotClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := formatter.Add(t.Context(), &types.AggregationWindow{ProfileType: profile.ProfileTypeCpuSample}); err != nil {
+	if err := formatter.Add(t.Context(), &types.AggregationWindow{ProfileType: profiling.ProfileTypeCpuSample}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -275,11 +317,136 @@ func sampleWindow(value int64, names ...string) *types.AggregationWindow {
 	}
 
 	return &types.AggregationWindow{
-		ProfileType: profile.ProfileTypeIRQTracingSample,
+		ProfileType: profiling.ProfileTypeIRQTracingSample,
 		Aggregated: types.AggregatedProfile{
 			Frames:  frames,
 			Stacks:  [][]uint32{stack},
 			Samples: []types.AggregatedSample{{UserStack: 1, Value: value}},
 		},
+	}
+}
+
+func TestSummaryFormattersAccumulateSignedFullIdentities(t *testing.T) {
+	for _, format := range []output.OutputFormat{output.FormatCollapsed, output.FormatSVG, output.FormatSpeedscope} {
+		t.Run(string(format), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "profile")
+			f := createFormatter(t, format, path)
+			for _, value := range []int64{-4096, 8192, -4096} {
+				w := sampleWindow(value, "work")
+				if err := f.Add(t.Context(), w); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Identical display names with different source locations must not cancel
+			// before negative results are clamped at completion.
+			w := sampleWindow(8192, "other")
+			w.Aggregated.Frames[0].File = "positive.go"
+			if err := f.Add(t.Context(), w); err != nil {
+				t.Fatal(err)
+			}
+
+			w.Aggregated.Frames[0].File = "negative.go"
+			w.Aggregated.Samples[0].Value = -4096
+			if err := f.Add(t.Context(), w); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatal("published before Complete")
+			}
+
+			if err := f.Complete(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+
+			data := string(readDestination(t, path))
+			switch format {
+			case output.FormatCollapsed:
+				if data != "other 8192\n" {
+					t.Fatalf("weights: %q", data)
+				}
+			case output.FormatSVG:
+				if !strings.Contains(data, "8192") {
+					t.Fatal("live weight missing")
+				}
+			case output.FormatSpeedscope:
+				var result struct {
+					Profiles []struct {
+						EndValue int64 `json:"endValue"`
+					} `json:"profiles"`
+				}
+
+				if err := json.Unmarshal([]byte(data), &result); err != nil {
+					t.Fatal(err)
+				}
+
+				if len(result.Profiles) != 1 || result.Profiles[0].EndValue != 8192 {
+					t.Fatalf("weights: %+v", result)
+				}
+			}
+		})
+	}
+}
+
+func TestSummaryFormattersPublishCanceledSamples(t *testing.T) {
+	for _, format := range []output.OutputFormat{output.FormatCollapsed, output.FormatSVG, output.FormatSpeedscope} {
+		t.Run(string(format), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "profile")
+			f := createFormatter(t, format, path)
+			for _, value := range []int64{4096, -4096} {
+				if err := f.Add(t.Context(), sampleWindow(value, "work")); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := f.Complete(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("zero result missing: %v", err)
+			}
+		})
+	}
+}
+
+func TestSVGCancelingDeepStacksDoesNotIncreaseHeight(t *testing.T) {
+	var heights []int
+	for _, canceled := range []bool{false, true} {
+		path := filepath.Join(t.TempDir(), "profile.svg")
+		f := createFormatter(t, output.FormatSVG, path)
+		if canceled {
+			for _, value := range []int64{7, -7} {
+				if err := f.Add(t.Context(), sampleWindow(value, "root", "deep", "leaf")); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+
+		if err := f.Add(t.Context(), sampleWindow(1, "other")); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := f.Complete(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		data := readDestination(t, path)
+		var svg struct {
+			Height int `xml:"height,attr"`
+		}
+		if err := xml.Unmarshal(data, &svg); err != nil {
+			t.Fatal(err)
+		}
+
+		if strings.Contains(string(data), `data-title="deep`) {
+			t.Fatal("canceled stack rendered")
+		}
+
+		heights = append(heights, svg.Height)
+	}
+
+	if heights[0] == 0 || heights[0] != heights[1] {
+		t.Fatalf("canceled stack changed height: %v", heights)
 	}
 }

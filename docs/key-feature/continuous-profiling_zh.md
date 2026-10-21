@@ -227,7 +227,7 @@ curl -sS \
 | --- | --- | --- |
 | `c`、`c++`、`go` | `virtual_alloc` | 虚拟地址空间分配 |
 | `c`、`c++`、`go` | `physical_alloc` | 物理页分配 |
-| `c`、`c++`、`go` | `physical_usage` | 采集期间物理内存有符号净变化 |
+| `c`、`c++`、`go` | `physical_usage` | 本次采样跟踪的物理页存活字节数 |
 | `java` | `object_alloc` | JVM 对象分配 |
 | `java` | `object_usage` | JVM 存活对象 |
 
@@ -440,7 +440,7 @@ C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU
 
 ### 2. 原生进程内存归因
 
-对 C、C++ 和 Go 进程分别观测虚拟地址空间分配、物理页分配和采集期间物理内存有符号净变化。三种模式区分“申请了多少地址空间”“实际分配了多少物理页”和“当前仍驻留多少物理页”，用于定位 `mmap`、缺页分配和常驻内存增长的调用路径。
+对 C、C++ 和 Go 进程分别观测虚拟地址空间分配、物理页分配和本次采样跟踪的物理页存活字节数。三种模式区分“申请了多少地址空间”“实际分配了多少物理页”和“本次采样跟踪的页还存活多少”，用于定位 `mmap`、缺页分配和常驻内存增长的调用路径。
 
 ### 3. JVM 对象分配与存活对象分析
 
@@ -586,7 +586,7 @@ off-CPU 是事件驱动采集，因此不使用 `--freq`。指定 `--cpuid` 时�
 | --- | --- | --- |
 | `virtual_alloc` | 虚拟地址空间分配量及其调用栈 | `mmap` 等虚拟内存申请过多、地址空间增长 |
 | `physical_alloc` | 采集窗口内新分配的物理内存量 | 缺页触发的物理页分配热点、分配速率分析 |
-| `physical_usage` | 采集期间物理内存有符号净变化 | 分配与释放差额，不能推断当前占用 |
+| `physical_usage` | 本次采样跟踪的物理页存活字节数 | 按分配栈定位采样存活页，不代表完整 RSS |
 
 ```bash
 sudo _output/bin/profiler \
@@ -602,7 +602,7 @@ sudo _output/bin/profiler \
   --output-path ./profiles/native-memory/
 ```
 
-`--physical-memory-probability` 仅适用于 `physical_alloc` 和 `physical_usage`。降低该值可减少高频内存事件的处理量，但火焰图中的值由采样事件估算，不再是逐事件统计。
+`--physical-memory-probability` 仅适用于 `physical_alloc` 和 `physical_usage`。降低该值可减少高频内存事件的处理量。`physical_alloc` 按采样概率估算分配量；`physical_usage` 只统计采样跟踪的页，不按概率倒数放大，也不包含采集前分配的页。
 
 ### 4. Java 观测
 
@@ -675,7 +675,7 @@ Python 不支持 `--type memory`。若需要 Python 内存分析，应使用独�
 | `svg` | 与 `flamegraph` 相同的交互式 SVG | 兼容显式要求 SVG 的调用方；当前实现与 `flamegraph` 等价 |
 | `remote-store` | 不生成本地火焰图，通过 Unix socket 上传 pprof 兼容数据 | 接入 HUATUO 存储链路时使用，不适合离线查看 |
 
-火焰图从下到上表示调用方向，矩形宽度表示该调用栈在当前观测维度中的累计值。不同类型的宽度含义不同：CPU 表示采样次数折算的 CPU 时间占比；内存模式表示相应的虚拟分配、物理分配、物理驻留、Java 对象分配或存活对象量。横向位置不表示时间先后。
+火焰图从下到上表示调用方向，矩形宽度表示该调用栈在当前观测维度中的累计值。不同类型的宽度含义不同：CPU 表示采样次数折算的 CPU 时间占比；内存模式表示相应的虚拟分配、物理分配、采样跟踪的物理页存活量、Java 对象分配或存活对象量。横向位置不表示时间先后。
 
 折叠栈示例：
 
@@ -736,7 +736,7 @@ flowchart LR
 
 profiler 与 irqtracing 共用 `internal/profiling/profile.Run`、Pipeline 和 `types.AggregationWindow`。provider 负责采集、解码、符号化、单位换算及标签规范化，提交 `SampleBatch`；Pipeline 按用户栈、内核栈和完整标签组累计。Java agent 生命周期位于 `cmd/profiler/runtime/java`，工具执行位于 `cmd/profiler/exec`。
 
-窗口包含结构化帧（Name/File/Line）、root → leaf 栈表、标签组、带符号 int64 权重及时间。帧 ID 从 0 开始，栈和标签组 ID 从 1 开始，0 表示空。provider 提交最终单位，CPU/锁等待使用纳秒，内存使用字节，IRQ source/victim 使用事件次数；Pipeline 保留负数及相消后的零值。新路径没有 Period，不在输出时再次缩放。physical_usage 表示采集期间有符号净变化，不代表当前占用。
+窗口包含结构化帧（Name/File/Line）、root → leaf 栈表、标签组、带符号 int64 权重及时间。帧 ID 从 0 开始，栈和标签组 ID 从 1 开始，0 表示空。provider 提交最终单位，CPU/锁等待使用纳秒，内存使用字节，IRQ source/victim 使用事件次数；Pipeline 保留负数及相消后的零值。新路径没有 Period，不在输出时再次缩放。
 
 `pid`、`cpu`、`comm`、`lock_address`、`irq`、`softirq_vector` 和 `offcpu_category` 是单值标签；PID/CPU 使用规范十进制字符串，锁地址使用规范十六进制。comm 仅表示进程命令名，Java/Python 入口分别保存为 `java_entry`、`python_entry`。offcpu 类别为 unknown、blocked、runqueue、runqueue_preempted、runqueue_yielded、runqueue_missed_wakeup。标签不固定进入公共栈；缺失、空字符串和数字零互不等价。
 
@@ -746,15 +746,15 @@ profiler 与 irqtracing 共用 `internal/profiling/profile.Run`、Pipeline 和 `
 
 runner 在启动采集前校验固定配置并创建 Formatter。`provider.New` 为每次任务复制配置并创建独立采集器。任务 ID、工具名分别来自 `RunConfig.ID`、`ProfilerMeta.ToolName`；仅缺失 ID 时生成。`formatter.Config` 包含 Format、Destination、TaskID、ToolName，文件创建与关闭由 formatter 管理。
 
-Native CPU、memory alloc 和 Java（CPU、object_alloc、object_usage）使用 Streaming，周期输出并在停止时排空；native physical_usage、Python 和 IRQ 使用 OneShot，采集结束后输出。Run 统一管理所有 provider 的采集时长。输入队列容量为 16 个批次，聚合与输出由同一个 worker 顺序执行；每批最多 256 样本、1 MiB 帧和标签文本，每个样本每侧最多 4096 帧、64 标签。超限返回明确错误。16 批最多包含 4096 样本、16 MiB 计量文本，帧结构及底层分配另计；这不是总内存上限。单窗口身份数量尚未设限，高基数采集仍可能增长内存。
+原生 CPU、内存（包括 `physical_usage`）和 Java（CPU、`object_alloc`、`object_usage`）使用 Streaming 模式，周期输出并在停止时处理已交付批次；Python 和 IRQ 使用 OneShot 模式，采集结束后输出。Run 统一管理所有 provider 的采集时长。输入队列容量为 16 个批次，聚合与输出由同一个 worker 顺序执行；每批最多 256 样本、1 MiB 帧和标签文本，每个样本每侧最多 4096 帧、64 标签。超限返回明确错误。16 批最多包含 4096 样本、16 MiB 计量文本，帧结构及底层分配另计；这不是总内存上限。单窗口身份数量尚未设限，高基数采集仍可能增长内存。
 
 `Enqueue(ctx, batch)` 返回 nil 表示成功入队并转移底层切片/map 所有权，不保证已经聚合或输出。所有模式均非阻塞入队；队列满返回 `ErrQueueFull`，context 取消时拒绝交付，错误时批次仍归调用者。provider 不复用已交付批次、不自动重试；runner 收到入队错误后取消处理，失败任务不 Complete。同步输出期间暂停消费输入，较大的队列只能吸收短暂突发，持续过载仍会失败。
 
-首个有效批次在 Enqueue 尝试交付前取得的时间成为窗口起点，snapshot 在同步调用 Add 之前确定终点。封存窗口后、调用 Add 前替换所有窗口数据和索引，下一有效批次重新建立起点；相邻窗口允许空闲或重叠。纯 collection 丢样批次同样建立窗口起点。这些时间描述接收和聚合区间，不是精确采样区间。
+对于周期增量输出，窗口起点取首个有效批次尝试入队前的时间，终点在同步调用 `Add` 前确定。封存窗口后、调用 Add 前替换所有窗口数据和索引，下一有效批次重新建立起点；相邻窗口允许空闲或重叠。纯 collection 丢样批次同样建立窗口起点。这些时间描述接收和聚合区间，不是精确采样区间。
 
 ### 输出和错误
 
-collapsed 将标签投影为虚拟根帧并累计展示栈；SVG 拒绝负权重。JSON 保留有符号值并逐窗口写出；remote-store 发送统一窗口。Speedscope 按完整标签组分组，保留源码位置并检查非负权重和浏览器整数范围。Chrome Trace 仅接受时间单位，换算微秒形成估算时间线，不恢复真实事件顺序。后两者支持工厂构造，暂无 CLI 选项。
+SVG、collapsed 和 speedscope 按用户栈、内核栈及完整标签组累计各周期增量。栈帧身份包含函数名、文件和行号。在 `Complete` 时，先将每个样本的负累计值归零并汇总记录警告，再生成展示结果，避免不同样本因展示名称相同而错误抵消。collapsed 将标签转换为虚拟根帧并合并展示栈。JSON 保留有符号值并逐窗口写出；remote-store 发送统一窗口。Speedscope 按完整标签组分组，保留源码位置并检查非负权重和浏览器整数范围。Chrome Trace 仅接受时间单位，换算微秒形成估算时间线，不恢复真实事件顺序。后两者支持工厂构造，暂无 CLI 选项。
 
 Pipeline.Close 仅关闭输入，不等待或释放 Formatter。runner 在生产者退出后调用一次，因此关闭输入不会与入队并发。Run 同样仅调用一次，不支持重复调用或关闭后入队。Add/Complete 各有 30 秒超时，取消不撤销已经写出的内容。Formatter 纯取消及超时错误保持原值，独立 I/O 与清理错误仍保留。
 
@@ -766,11 +766,21 @@ remote-store 复用 Toolstream 服务 `profiling_store_service`，使用业务�
 
 handler 完整校验外部窗口，通过公共 builder 构建 pprof 并 `SaveSync`。sample labels 与样本对应落盘；工具名写入 tracer_name。Complete 发送 `End + Commit` 并等待 ACK；普通 End、断连或失败不写完成标记，已写窗口不回滚。普通数据帧无 ACK，接收或保存错误由提交 ACK 返回。
 
-JSON 在首个窗口转换成功后才打开目标文件。转换期间取消或超过 Pipeline 的 30 秒输出超时，不会截断已有结果，也不会创建空结果文件；后续写入失败仍不提供事务回滚。 JSON 可在 Add 写文件，其他本地输出也不提供事务回滚。现有火焰图查询不以完成标记过滤全部窗口；标签持久化不表示已支持标签索引或样本过滤。ES 标签查询、输出发布及上传时间切换采集时间的规则仍需独立落实。
+JSON 在 `Add` 中首个窗口转换成功后才打开目标文件。该次转换失败或取消（包括 Pipeline 的 30 秒输出超时）时，不会截断已有结果，也不会创建空结果文件。后续写入失败及其他本地输出仍不提供事务回滚。现有火焰图查询不以完成标记过滤全部窗口；标签持久化不表示已支持标签索引或样本过滤。除 `physical_usage` 外，其他类型的查询按上传时间筛选并合并窗口。
+
+### physical_usage 输出约定
+
+远端类型为 `memory:physical_usage:bytes:space:bytes`。每个输出周期发送采样跟踪页的当前存活字节数，包括空闲和零值状态。快照以观测时间标记，持续时间为零。查询必须指定单个任务 ID，只取时间范围内最新快照，不相加、不回退到旧非零结果；Grafana 中使用 Task ID 输入框。
+
+SVG、collapsed 和 speedscope 在 `Complete` 时生成文件。样本全部抵消后仍生成有效空结果；从未收到样本则不创建文件。JSON 保留各周期的有符号增量。Chrome Trace 不支持 `physical_usage`。
+
+远端快照中的负累计值同样归零并汇总记录警告，内部保留有符号累计值供后续增量抵消。累计结果为零的样本仍保留至任务结束，内存占用随不同样本的数量增长。
+
+跨周期栈匹配、实际物理页释放与部分释放的识别、正常停止时的剩余数据收集仍待验证和完善。当前结果不能视为精确物理驻留量。
 
 ### 丢样统计
 
-新 Pipeline 的 `DroppedSamples` 仅产生 `collection`，存入 `profile_data.metrics.dropped_samples`。provider 提交采集丢样增量；按累计不会超过 uint64 范围的业务前提直接相加，不做溢出判断或提前输出。队列满返回错误，不静默丢弃或产生 `aggregation_queue` 计数；该分类仍支持历史窗口读取和存储兼容。仅有丢样的窗口仍输出，取消不保证导出最终统计。
+新 Pipeline 的 `DroppedSamples` 仅产生 `collection`，存入 `profile_data.metrics.dropped_samples`。provider 提交采集丢样增量；按累计不会超过 uint64 范围的业务前提直接相加，不做溢出判断或提前输出。队列满返回错误，不静默丢弃或产生 `aggregation_queue` 计数；该分类仍支持历史窗口读取和存储兼容。physical_usage 遇到明确丢样时失败；其他类型仅有丢样的窗口仍输出。取消不保证导出最终统计。
 
 ## 🌟 结尾
 

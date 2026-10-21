@@ -20,6 +20,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/ccfos/huatuo/pkg/profiling"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	profile "github.com/ccfos/huatuo/internal/profiling/profile"
@@ -46,7 +48,7 @@ func newIRQProfiler(c *collector) *profile.ProfilerMeta {
 		Description:       "softirq profiling",
 		Impl:              c,
 		AggregationMode:   pipeline.AggregationModeOneShot,
-		AggregationConfig: pipeline.AggregationConfig{ProfileType: profile.ProfileTypeIRQTracingSample},
+		AggregationConfig: pipeline.AggregationConfig{ProfileType: profiling.ProfileTypeIRQTracingSample},
 	}
 }
 

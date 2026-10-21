@@ -7,7 +7,7 @@ date: 2026-09-29
 weight: 6
 ---
 
-使用 `OS Distro QEMU Test` workflow 可以在支持的 Linux 虚拟机中测试分支，
+使用 `OS Distro QEMU CI` workflow 可以在支持的 Linux 虚拟机中测试分支，
 无需在本地准备虚拟机。
 
 ## 准备 Fork 仓库
@@ -20,7 +20,7 @@ weight: 6
 
 ## 启动虚拟机
 
-1. 在 fork 仓库中打开 **Actions > OS Distro QEMU Test > Run workflow**。
+1. 在 fork 仓库中打开 **Actions > OS Distro QEMU CI > Run workflow**。
 2. 选择需要调试的分支。
 3. 保留默认值 `ubuntu24.04`、填写以逗号分隔的多个发行版，或者使用 `all`
    选择所有支持的发行版。
