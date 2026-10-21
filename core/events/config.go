@@ -17,9 +17,11 @@ package events
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/matcher"
 )
@@ -74,6 +76,8 @@ type Config struct {
 
 var currentConfig atomic.Pointer[Config]
 
+const maxRasBackoffSeconds = math.MaxInt64 / int64(time.Second)
+
 func init() {
 	currentConfig.Store(&Config{})
 }
@@ -93,6 +97,9 @@ func (c *Config) Validate() error {
 	if c.SchedTick.IntervalThreshold == 0 {
 		return errors.New("scheduler tick interval threshold must be greater than zero")
 	}
+	if err := validateRasBackoffSeconds(c.Ras.MceThrBackoff); err != nil {
+		return err
+	}
 	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
 		return fmt.Errorf("validating issues list: %w", err)
 	}
@@ -103,6 +110,13 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("mthreads_xid report level %q invalid", level)
 	}
 
+	return nil
+}
+
+func validateRasBackoffSeconds(seconds int64) error {
+	if seconds > maxRasBackoffSeconds {
+		return fmt.Errorf("ras MCE threshold backoff %d seconds exceeds maximum %d", seconds, maxRasBackoffSeconds)
+	}
 	return nil
 }
 
