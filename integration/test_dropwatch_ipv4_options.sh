@@ -74,7 +74,7 @@ bpf_tool_setup dropwatch net_dropwatch dropwatch-ipv4-options
 namespace_setup "dw4_${BASHPID}"
 ip -n "${NETNS}" link set lo up
 for protocol in tcp udp; do
-	ip netns exec "${NETNS}" iptables -A INPUT -i lo \
+	ip netns exec "${NETNS}" iptables -w 5 -A INPUT -i lo \
 		-d "${IPV4_OPTIONS_DESTINATION}" -p "${protocol}" \
 		--dport "${ipv4_options_destination_port}" -j DROP \
 		|| skip "IPv4 ${protocol} netfilter DROP rules are unavailable"

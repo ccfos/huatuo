@@ -54,7 +54,7 @@ log_info "tcp retrans rate limit: rate=${RATE}/s, duration=${DURATION}s, determi
 
 namespace_setup_with_pair rl "${S_ADDR}" "${C_ADDR}"
 ip netns exec "${NETNS_SERVER}" ip link set dev "${NETNS_VETH_SERVER}" gso_max_segs 1
-ip netns exec "${NETNS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
+ip netns exec "${NETNS_CLIENT}" iptables -w 5 -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
 	-m connbytes --connbytes 30:60 --connbytes-dir reply \
 	--connbytes-mode packets -j DROP
 
