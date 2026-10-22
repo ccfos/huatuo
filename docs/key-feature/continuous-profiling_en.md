@@ -801,3 +801,5 @@ The new Pipeline only produces `collection` in `DroppedSamples`, stored in `prof
 <img src="/img/contact-weixin.png" alt="Official WeChat account QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+Python processes reading code from standard input or running an interactive session do not require a script argument for profiling. When no entry argument is available, `python_entry` uses the command-line interpreter basename (for example, `python3`).

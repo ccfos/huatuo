@@ -49,12 +49,12 @@ func pythonProcessName(pid int) (string, error) {
 		return "", fmt.Errorf("empty cmdline for PID %d", pid)
 	}
 
-	// Extract main script，skip -u -m flags and etc.
 	for _, arg := range cmdline[1:] {
 		if !strings.HasPrefix(arg, "-") {
-			return arg, err
+			return arg, nil
 		}
 	}
 
-	return "", fmt.Errorf("couldn't get python thread name")
+	// Stdin and interactive sessions do not require a script argument.
+	return filepath.Base(cmdline[0]), nil
 }

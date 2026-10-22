@@ -792,3 +792,5 @@ SVG、collapsed 和 speedscope 在 `Complete` 时生成文件。样本全部抵�
 <img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+对从标准输入读取代码或运行交互会话的 Python 进程采样时，无需提供脚本参数。没有入口参数时，`python_entry` 使用命令行中的解释器文件名（例如 `python3`）。
