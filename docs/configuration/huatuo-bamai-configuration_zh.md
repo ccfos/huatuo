@@ -1481,3 +1481,7 @@ Go 采集在运行时读取、扫描、排序和条目生成阶段共用一个�
 | 有事件但没有候选进程 | 进程是否直接属于该 cgroup、是否允许 OOM kill、是否超过枚举限制 |
 | `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `status_reason` |
 | 资源耗尽后事件停止 | 检查 `RLIMIT_NOFILE`、`fs.inotify.max_user_watches`、`fs.inotify.max_user_instances`，调整后重启；其他事件不受此停止影响 |
+
+### RDMA 设备发现
+
+`netdev_rdma_link` 每次采集刷新 RDMA 设备列表，无需重启即可反映新增、移除和重新注册的设备，并使用当前设备属性。设备发现失败会使本次采集报错；成功发现的空列表适用于没有 RDMA 设备的主机。
