@@ -29,7 +29,7 @@ import (
 	apiv1 "github.com/ccfos/huatuo/apis/v1"
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
-	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 )
 
 func TestUpdateConfigUpdatesTypedValues(t *testing.T) {

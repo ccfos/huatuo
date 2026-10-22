@@ -19,12 +19,12 @@ import (
 	"time"
 
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/internal/httpserver"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
 	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
-	"github.com/ccfos/huatuo/internal/server"
-	"github.com/ccfos/huatuo/internal/server/response"
 	"github.com/ccfos/huatuo/internal/version"
 
 	httpGin "github.com/gin-gonic/gin"
@@ -45,7 +45,7 @@ type ServerOptions struct {
 }
 
 // Start starts the HTTP server with all handlers registered.
-func Start(opts *ServerOptions) (*server.Server, error) {
+func Start(opts *ServerOptions) (*httpserver.Server, error) {
 	nodeHandler, err := NewNodeAPIHandler(&NodeAPIHandlerOptions{
 		OperationManager:             opts.OperationManager,
 		ProfilingService:             opts.ProfilingService,
@@ -67,10 +67,10 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 	return s, nil
 }
 
-func newHTTPServer(opts *ServerOptions, nodeHandler *NodeAPIHandler) (*server.Server, error) {
-	s := server.NewServer(&server.Config{
+func newHTTPServer(opts *ServerOptions, nodeHandler *NodeAPIHandler) (*httpserver.Server, error) {
+	s := httpserver.NewServer(&httpserver.Config{
 		EnablePProf: true,
-		RateLimit: &server.RateLimitConfig{
+		RateLimit: &httpserver.RateLimitConfig{
 			RequestsPerSecond: 200,
 			Burst:             200,
 		},

@@ -22,8 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cilium/ebpf"
-
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
@@ -233,7 +231,7 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 			if !ok {
 				var err error
 				user, err = r.resolveUserStackWithFallback(ring, base.Userstack, pid)
-				if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
 					return err
 				}
 
@@ -244,7 +242,7 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 			if !ok {
 				var err error
 				kernel, err = r.resolveKernelStackWithFallback(ring, base.Kernstack)
-				if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
 					return err
 				}
 
@@ -321,7 +319,7 @@ func (r *ringBufferContext) resolveKernelStackWithFallback(
 	kernelStackID int32,
 ) ([]types.ProfileFrame, error) {
 	stack, err := r.resolveKernelStack(ring.stackMapID, kernelStackID)
-	if errors.Is(err, ebpf.ErrKeyNotExist) && ring.fallbackStackMapID != 0 {
+	if errors.Is(err, bpfmap.ErrStackNotFound) && ring.fallbackStackMapID != 0 {
 		return r.resolveKernelStack(ring.fallbackStackMapID, kernelStackID)
 	}
 
@@ -334,7 +332,7 @@ func (r *ringBufferContext) resolveUserStackWithFallback(
 	pid uint32,
 ) ([]types.ProfileFrame, error) {
 	stack, err := r.resolveUserStack(ring.stackMapID, userStackID, pid)
-	if errors.Is(err, ebpf.ErrKeyNotExist) && ring.fallbackStackMapID != 0 {
+	if errors.Is(err, bpfmap.ErrStackNotFound) && ring.fallbackStackMapID != 0 {
 		return r.resolveUserStack(ring.fallbackStackMapID, userStackID, pid)
 	}
 

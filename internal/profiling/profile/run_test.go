@@ -572,15 +572,20 @@ func TestRunAggregationFailureStopsCollectionWithoutCommit(t *testing.T) {
 	defer cancel()
 	collector := &loopProfiler{
 		stopErr: stopFailure,
-		read: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+		read: func(_ context.Context, enqueue func(*pipeline.SampleBatch) error) error {
 			if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{
 				Labels: []types.ProfileLabel{{Name: "invalid"}},
 				Value:  1,
 			}}}); err != nil {
 				return err
 			}
-			<-ctx.Done()
-			return nil
+
+			// A failed consumer must release a producer waiting on a full queue.
+			for {
+				if err := enqueue(&pipeline.SampleBatch{}); err != nil {
+					return err
+				}
+			}
 		},
 	}
 	err := Run(ctx, cfg, &ProfilerMeta{
@@ -636,6 +641,20 @@ func TestRunRequestedStopPublishesFinalSamples(t *testing.T) {
 		if !IsNormalStop(ctx) {
 			return context.Cause(ctx)
 		}
+
+		// Final delivery can exceed the queue capacity after collection stops.
+		for range 128 {
+			if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 4096}}}); err != nil {
+				return err
+			}
+		}
+
+		for range 128 {
+			if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: -4096}}}); err != nil {
+				return err
+			}
+		}
+
 		return enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 7}}})
 	}}
 	err := Run(ctx, cfg, &ProfilerMeta{Impl: collector, AggregationMode: pipeline.AggregationModeOneShot, AggregationConfig: testAggregationConfig()})
@@ -665,7 +684,7 @@ func TestRunFailureDuringNormalFinalizationForbidsCommit(t *testing.T) {
 			case <-deadline.C:
 				return errors.New("pipeline did not reject final delivery after failure")
 			case <-ticker.C:
-				if err := enqueue(&pipeline.SampleBatch{}); err != nil && !errors.Is(err, pipeline.ErrQueueFull) {
+				if err := enqueue(&pipeline.SampleBatch{}); err != nil {
 					return err
 				}
 			}
