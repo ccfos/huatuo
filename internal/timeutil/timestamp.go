@@ -14,10 +14,14 @@
 
 package timeutil
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Timestamp stores a time value and emits JSON in UTC with nine fractional digits.
 // The embedded time.Time accepts RFC3339 JSON through its UnmarshalJSON method.
+// JSON encoding rejects years outside 0000..9999 after conversion to UTC.
 // Use Time when passing the value to APIs that require time.Time.
 type Timestamp struct {
 	time.Time
@@ -34,6 +38,15 @@ func (t Timestamp) FormatUTC() string {
 }
 
 func (t Timestamp) MarshalJSON() ([]byte, error) {
+	utc := t.UTC()
+	// UTC conversion can cross the RFC3339 year boundary even for valid input.
+	if year := utc.Year(); year < 0 || year > 9999 {
+		return nil, fmt.Errorf("serialize timestamp: UTC year %d is outside RFC3339 range 0000..9999", year)
+	}
+
 	// FormatUTC contains only date digits and separators, so no JSON escaping is needed.
-	return []byte(`"` + t.FormatUTC() + `"`), nil
+	encoded := make([]byte, 1, 32)
+	encoded[0] = '"'
+	encoded = utc.AppendFormat(encoded, Layout)
+	return append(encoded, '"'), nil
 }

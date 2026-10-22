@@ -608,3 +608,11 @@ another. Older documents and events without kernel timestamps omit the new
 field; historical data is not migrated automatically. The raw
 `kernel_observed_ns` stays in process for correlation and is not
 written to new documents.
+
+### Timestamp JSON range
+
+`timeutil.Timestamp` JSON uses UTC with nine fractional digits. Encoding fails
+when the UTC year is outside RFC3339's 0000..9999 range, including when a valid
+local timestamp crosses that boundary during UTC conversion. This prevents
+writing timestamps that RFC3339 readers cannot decode; existing in-range
+records keep their format.

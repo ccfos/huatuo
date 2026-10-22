@@ -80,3 +80,58 @@ func TestTimestampJSONNull(t *testing.T) {
 		t.Fatalf("absent timestamp = %s", encoded)
 	}
 }
+
+func TestTimestampJSONRejectsUnrepresentableUTCYear(t *testing.T) {
+	for _, input := range []time.Time{
+		time.Date(-1, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(0, 1, 1, 0, 0, 0, 0, time.FixedZone("east", 3600)),
+		time.Date(9999, 12, 31, 23, 0, 0, 0, time.FixedZone("west", -7200)),
+	} {
+		timestamp := Timestamp{Time: input}
+		if encoded, err := json.Marshal(timestamp); err == nil {
+			t.Fatalf("encoded unrepresentable UTC year %d as %s", input.UTC().Year(), encoded)
+		}
+	}
+}
+
+func TestTimestampJSONBoundaryYearsRoundTrip(t *testing.T) {
+	for _, input := range []time.Time{
+		time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC),
+		time.Date(10000, 1, 1, 0, 0, 0, 0, time.FixedZone("east", 3600)),
+		time.Date(-1, 12, 31, 23, 0, 0, 0, time.FixedZone("west", -7200)),
+	} {
+		encoded, err := json.Marshal(Timestamp{Time: input})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded Timestamp
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatalf("cannot read serialized timestamp %s: %v", encoded, err)
+		}
+		if !decoded.Equal(input) {
+			t.Fatalf("roundtrip=%v, want %v", decoded.Time, input)
+		}
+	}
+}
+
+func TestTimestampJSONTimezoneInputOutsideUTCYearRange(t *testing.T) {
+	var timestamp Timestamp
+	if err := json.Unmarshal([]byte(`"9999-12-31T23:00:00-02:00"`), &timestamp); err != nil {
+		t.Fatal(err)
+	}
+	if encoded, err := json.Marshal(timestamp); err == nil {
+		t.Fatalf("accepted UTC year 10000: %s", encoded)
+	}
+}
+
+func BenchmarkTimestampMarshalJSON(b *testing.B) {
+	timestamp := Timestamp{Time: time.Date(2026, 10, 19, 12, 34, 56, 123456789, time.UTC)}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := timestamp.MarshalJSON(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
