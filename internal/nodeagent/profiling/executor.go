@@ -21,37 +21,18 @@ import (
 
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
-	"github.com/ccfos/huatuo/internal/toolstream"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type executor struct {
-	process   *executil.Process
-	stream    *toolstream.Server
-	publisher ResultPublisher
-	requestID string
+	process *executil.Process
 }
 
-func newExecutor(
-	process *executil.Process,
-	stream *toolstream.Server,
-	publisher ResultPublisher,
-	requestID string,
-) *executor {
-	return &executor{
-		process:   process,
-		stream:    stream,
-		publisher: publisher,
-		requestID: requestID,
-	}
+func newExecutor(process *executil.Process) *executor {
+	return &executor{process: process}
 }
 
 func (e *executor) Start(ctx context.Context) error {
-	if err := e.stream.ExpectSession(types.ProfilingToolName, e.requestID); err != nil {
-		return fmt.Errorf("expect profiler result stream: %w", errors.Join(err, e.process.Close()))
-	}
 	if err := e.process.Start(ctx); err != nil {
-		e.stream.CancelSession(types.ProfilingToolName, e.requestID)
 		closeErr := e.process.Close()
 		if !errors.Is(err, executil.ErrProcessAlreadyStarted) {
 			select {
@@ -86,16 +67,8 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) (e
 		return fmt.Errorf("finalize profiler: %w", err)
 	}
 	switch mode {
-	case operation.FinalizePublish:
-		if err := e.stream.AwaitSession(ctx, types.ProfilingToolName, e.requestID); err != nil {
-			return fmt.Errorf("finalize profiler result stream: %w", err)
-		}
-		if err := e.publisher.Publish(ctx, e.requestID); err != nil {
-			return fmt.Errorf("finalize profiler publication: %w", err)
-		}
-		return nil
-	case operation.FinalizeDiscard:
-		e.stream.CancelSession(types.ProfilingToolName, e.requestID)
+	case operation.FinalizePublish, operation.FinalizeDiscard:
+		// The CLI waits for the commit ACK before exiting successfully.
 		return nil
 	default:
 		return fmt.Errorf("finalize profiler: unsupported mode %d", mode)

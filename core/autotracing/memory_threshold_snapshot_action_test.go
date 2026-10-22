@@ -988,3 +988,39 @@ func TestActionBatchSnapshotSequenceAndFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestThresholdRetriesAfterBurstContention(t *testing.T) {
+	for _, outcome := range []string{"released", "pressure recovered", "canceled"} {
+		t.Run(outcome, func(t *testing.T) {
+			batch := newRunnerActionBatchForTest(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			batch.ctx = ctx
+			calls, saves := 0, 0
+			batch.ops.save = func(*tracing.WriteRequest) error { saves++; return nil }
+			batch.ops.snapshotProcessMemory = func(context.Context, memsnapshot.ProcessInstanceID, collector.Options) (*collector.Result, error) {
+				calls++
+				if calls == 1 {
+					if outcome == "canceled" {
+						cancel()
+					}
+					if outcome == "pressure recovered" {
+						for _, target := range batch.targets {
+							createMemoryCgroupForTest(t, batch.source.root, target.Cgroup.Path, 1)
+						}
+					}
+					return nil, collector.ErrCaptureBusy
+				}
+				return &collector.Result{SnapshotStartedAt: time.Now()}, nil
+			}
+			finished := batch.Run()
+			if outcome == "released" {
+				if calls != 2 || saves != 1 || finished.IsZero() {
+					t.Fatalf("retry lost: calls=%d saves=%d finished=%v", calls, saves, finished)
+				}
+			} else if calls != 1 || saves != 0 || !finished.IsZero() {
+				t.Fatalf("invalid retry: calls=%d saves=%d", calls, saves)
+			}
+		})
+	}
+}

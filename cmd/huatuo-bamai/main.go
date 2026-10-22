@@ -24,16 +24,13 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/httpserver"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
 	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
 	"github.com/ccfos/huatuo/internal/pidfile"
-	"github.com/ccfos/huatuo/internal/profiling/publication"
-	"github.com/ccfos/huatuo/internal/server"
-	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/version"
-	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -87,11 +84,8 @@ type Daemon struct {
 	operationManager *operation.Manager
 	profilingService *nodeprofiling.Service
 	tracingService   *nodetracing.Service
-	toolstreamServer *toolstream.Server
 	tracingStore     *tracingstore.Store
-	profileStore     *profilingstore.Store
-	publications     *publication.Store
-	apiServer        *server.Server
+	apiServer        *httpserver.Server
 }
 
 func NewDaemon(opts *Options) *Daemon {

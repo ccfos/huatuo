@@ -24,6 +24,7 @@ import (
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -57,7 +58,8 @@ type Filter struct {
 
 // Store persists and queries profiling aggregation windows.
 type Store struct {
-	store *storage.Store[*Document]
+	store   *storage.Store[*Document]
+	commits *commitStore
 }
 
 // NewFromConfig creates profiling storage backed by Elasticsearch.
@@ -75,15 +77,14 @@ func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
 	log.WithField("driver", "elasticsearch").WithField("index", config.Index).Info(
 		"initialized profile storage",
 	)
-	return &Store{store: profileStore}, nil
-}
-
-// Save queues a profiling window for asynchronous persistence.
-func (s *Store) Save(ctx context.Context, document *Document) error {
-	if err := s.prepareDocument(document); err != nil {
-		return err
+	commits, err := newCommitStore(ctx, &driver.Config{
+		Driver: "elasticsearch", ESAddresses: config.Addresses, ESUsername: config.Username,
+		ESPassword: config.Password, ESIndex: config.Index,
+	})
+	if err != nil {
+		return nil, errors.Join(err, profileStore.Close(context.WithoutCancel(ctx)))
 	}
-	return s.store.Save(ctx, document, driver.SaveOptions{})
+	return &Store{store: profileStore, commits: commits}, nil
 }
 
 // SaveSync persists a profiling window and waits until subsequent queries can see it.
@@ -99,7 +100,7 @@ func (s *Store) Close(ctx context.Context) error {
 	if s == nil || s.store == nil {
 		return nil
 	}
-	return s.store.Close(ctx)
+	return errors.Join(s.store.Close(ctx), s.commits.Close(ctx))
 }
 
 // Ready checks whether the backing store can serve queries.
@@ -109,6 +110,9 @@ func (s *Store) Ready(ctx context.Context) error {
 	}
 	if _, err := s.store.Count(ctx, driver.Query{Limit: 1}); err != nil {
 		return fmt.Errorf("profile storage readiness: %w", err)
+	}
+	if s.commits != nil {
+		return s.commits.Ready(ctx)
 	}
 	return nil
 }
@@ -171,7 +175,11 @@ func buildSearchQuery(filter *Filter) driver.Query {
 		query.BatchSize = filter.BatchSize
 		query.Offset = filter.Offset
 	}
-	query.Sorts = []driver.Sort{{Field: types.DocumentFieldUploadedTimestamp, Desc: true}}
+	timestampField := types.DocumentFieldUploadedTimestamp
+	if filter != nil && filter.ProfileType == profiling.ProfileTypePhysicalUsage {
+		timestampField = types.DocumentFieldStartedTimestamp
+	}
+	query.Sorts = []driver.Sort{{Field: timestampField, Desc: true}}
 	return query
 }
 
@@ -180,16 +188,21 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 	if filter == nil {
 		return query
 	}
+	// Live snapshots are selected by observation time, independent of delivery lag.
+	timestampField := types.DocumentFieldUploadedTimestamp
+	if filter.ProfileType == profiling.ProfileTypePhysicalUsage {
+		timestampField = types.DocumentFieldStartedTimestamp
+	}
 	if !filter.StartTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: types.DocumentFieldUploadedTimestamp,
+			Field: timestampField,
 			Op:    driver.OpGte,
 			Value: timeutil.FormatUTC(filter.StartTime),
 		})
 	}
 	if !filter.EndTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: types.DocumentFieldUploadedTimestamp,
+			Field: timestampField,
 			Op:    driver.OpLte,
 			Value: timeutil.FormatUTC(filter.EndTime),
 		})
@@ -266,4 +279,23 @@ func (s *Store) prepareDocument(document *Document) error {
 		document.UploadedTimestamp = timeutil.Now()
 	}
 	return nil
+}
+
+// Commit publishes a task after its caller has persisted all windows successfully.
+func (s *Store) Commit(ctx context.Context, taskID string) error {
+	if s == nil || s.commits == nil {
+		return errors.New("profiling commit store is not initialized")
+	}
+	if taskID == "" {
+		return errors.New("profiling commit requires task ID")
+	}
+	return s.commits.Commit(ctx, taskID)
+}
+
+// IsCommitted reports whether a task has a durable completion marker.
+func (s *Store) IsCommitted(ctx context.Context, taskID string) (bool, error) {
+	if s == nil || s.commits == nil {
+		return false, errors.New("profiling commit store is not initialized")
+	}
+	return s.commits.IsCommitted(ctx, taskID)
 }

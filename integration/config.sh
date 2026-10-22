@@ -128,8 +128,8 @@ write_sched_tick_irqoff_config() {
 	write_sched_tick_config_with_threshold 1
 }
 
-write_storage_consistency_config() {
-	# The case supplies the isolated ports, packet filter and backend credentials.
+write_storage_events_config() {
+	# Tests supply isolated ports, packet filter, event limits and optional backend credentials.
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status"]
 
@@ -139,14 +139,16 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
     BearerToken = "integration-node-token"
 [EventTracing.Dropwatch]
     Filter = "udp and dst host 127.0.0.99 and dst port ${storage_target_port}"
-    MaxEventsPerSecond = 100
+    MaxEventsPerSecond = ${STORAGE_EVENT_RATE}
 [Storage.LocalFile]
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+    RotationSizeMiB = ${STORAGE_ROTATION_MIB}
+    MaxRotatedFiles = ${STORAGE_MAX_ROTATED_FILES}
 [Storage.Elasticsearch]
-    Address = "${STORAGE_ADDR}"
-    Username = "${STORAGE_USERNAME}"
-    Password = "${STORAGE_PASSWORD}"
-    Index = "${STORAGE_INDEX}"
+    Address = "${STORAGE_ADDR:-}"
+    Username = "${STORAGE_USERNAME:-}"
+    Password = "${STORAGE_PASSWORD:-}"
+    Index = "${STORAGE_INDEX:-huatuo_storage_consistency}"
 EOF
 }
 
@@ -176,10 +178,14 @@ write_cpusys_autotracing_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["arp", "ascend_npu", "memory_threshold_snapshot", "cpu_stat", "cpu_util", "cpuidle", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tracing_status"]
 
+[HTTPServer]
+    ListenAddress = "${HUATUO_BAMAI_ADDR#http://}"
+
 [HTTPServer.Auth]
     BearerToken = "integration-node-token"
 
 [AutoTracing.CPUSys]
+    Tool = "${CPUSYS_TOOL:-perf}"
     SysThreshold = 45
     DeltaSysThreshold = 20
     Interval = 1
@@ -187,6 +193,20 @@ BlackList = ["arp", "ascend_npu", "memory_threshold_snapshot", "cpu_stat", "cpu_
 
 [Storage.LocalFile]
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}
+
+# The CPU profiler test supplies storage and uses the same trigger configuration.
+write_cpusys_profiler_config() {
+	local CPUSYS_TOOL=profiler
+	write_cpusys_autotracing_config
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+
+[Storage.Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "integration"
+    Password = "integration"
+    Index = "cpu-profiler-integration"
 EOF
 }
 
@@ -234,8 +254,11 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
     SustainedIntervals = 10
     UsageThreshold = 100
 
-[Storage.LocalFile]
-    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+[Storage.Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "integration"
+    Password = "integration"
+    Index = "irqtracing-integration"
 EOF
 }
 
@@ -358,7 +381,7 @@ EOF
 # The caller supplies the real kubelet endpoint, certificates, and output limits.
 write_memory_threshold_snapshot_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status"]
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
 
 [HTTPServer]
     ListenAddress = "127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
@@ -378,5 +401,23 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
 
 [Storage.LocalFile]
     Path = "${go_snapshot_case_dir}/events"
+EOF
+}
+
+# The Elasticsearch config test supplies the port and credential fields.
+write_elasticsearch_config() {
+	write_default_config
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${STORAGE_HTTP_PORT}"
+
+[Storage.Elasticsearch]
+    Address = "${storage_address:-}"
+    Username = "${storage_username:-}"
+    Password = "${storage_password:-}"
+
+[Storage.LocalFile]
+    Path = ""
 EOF
 }

@@ -99,18 +99,12 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-path",
-		Usage: "Output path for profiling",
-		Value: ".",
+		Usage: "Output path: file|directory|socket|stdout (WARNING: stdout may expose data)",
 	},
 	&cli.StringFlag{
 		Name:  "output-format",
-		Usage: "Output format for profiling: collapsed|flamegraph|svg|remote",
+		Usage: "Output format: collapsed|flamegraph|svg|json|remote-store",
 		Value: "collapsed",
-	},
-	&cli.StringFlag{
-		Name:  "output-storage",
-		Usage: "Unix socket path for remote upload (used with --output-format=remote)",
-		Value: "/var/run/huatuo-toolstream.sock",
 	},
 	&cli.StringFlag{
 		Name:  "log-level",
@@ -153,7 +147,7 @@ var appFlags = []cli.Flag{
 		Value: "127.0.0.1:19704",
 	},
 	&cli.StringFlag{
-		Name:  "tracer-id",
-		Usage: "Tracing task ID; generated automatically when empty",
+		Name:  "task-id",
+		Usage: "Profiling task ID; required for remote output, generated when empty for local output",
 	},
 }
