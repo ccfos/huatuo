@@ -50,7 +50,8 @@ while :; do
 $command
 EOF
 		case "$mode" in idle | user | system | mixed | burst) ;; *) fail "unsupported mode: $mode" ;; esac
-		case "$count" in 1 | 2 | 3) ;; *) fail "workers must be 1, 2 or 3: $count" ;; esac
+		case "$count" in '' | *[!0-9]*) fail "workers must be between 1 and 128: $count" ;; esac
+		[ "$count" -ge 1 ] && [ "$count" -le 128 ] || fail "workers must be between 1 and 128: $count"
 		[ "$milli" -ge 0 ] && [ "$milli" -le 2000 ] || fail "millicpu must be between 0 and 2000: $milli"
 		stop_load
 		set -- --timeout 1h --abort --metrics-brief --temp-path /tmp --keep-name
@@ -87,12 +88,14 @@ EOF
 			# The host reference must measure the worker, not its supervisor.
 			children=
 			attempt=0
-			while [ -z "$children" ] && [ "$attempt" -lt 50 ]; do
+			while [ "$attempt" -lt 50 ]; do
 				read -r children < "/proc/$load_pid/task/$load_pid/children" || true
-				[ -n "$children" ] || sleep 0.1
+				set -- $children
+				[ "$#" -ne "$count" ] || break
+				sleep 0.1
 				attempt=$((attempt + 1))
 			done
-			[ -n "$children" ] || fail 'stress-ng created no workers; inspect its diagnostics'
+			[ "$#" -eq "$count" ] || fail "stress-ng did not create $count workers; inspect its diagnostics"
 			printf 'workers %s %s\n' "$generation" "$children"
 		fi
 		previous=$command
