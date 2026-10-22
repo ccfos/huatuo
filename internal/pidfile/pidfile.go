@@ -30,13 +30,11 @@ func path(name string) string {
 }
 
 // Handle owns an acquired pid file: an open fd holding the exclusive
-// flock, plus the on-disk path to remove on Unlock. The fd must stay
-// reachable for the whole lifetime of the lock — Linux flock is bound
-// to the open file description, so if Handle is garbage-collected the
+// flock. The fd must stay reachable for the whole lock lifetime: Linux flock
+// is bound to the open file description, so if Handle is garbage-collected the
 // kernel silently releases the flock while the pid file is still on disk.
 type Handle struct {
 	file *os.File
-	path string
 }
 
 // Lock takes an exclusive, non-blocking flock on the pid file for name.
@@ -65,26 +63,28 @@ func Lock(name string) (*Handle, error) {
 	}
 
 	if _, err := fmt.Fprintf(f, "%d", os.Getpid()); err != nil {
+		_ = f.Truncate(0)
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
-		_ = os.Remove(p)
 
 		return nil, err
 	}
 
-	return &Handle{file: f, path: p}, nil
+	return &Handle{file: f}, nil
 }
 
-// Unlock unlocks, closes, and removes the pid file. Calling Unlock more
-// than once is a no-op.
+// Unlock clears the PID and releases the lock. The empty file remains so
+// contenders that already opened it and new callers lock the same inode.
+// Calling Unlock more than once is a no-op.
 func (h *Handle) Unlock() {
 	if h.file == nil {
 		return
 	}
 
+	// Clear the record while still holding the lock, before another owner writes.
+	_ = h.file.Truncate(0)
 	_ = syscall.Flock(int(h.file.Fd()), syscall.LOCK_UN)
 	_ = h.file.Close()
-	_ = os.Remove(h.path)
 	h.file = nil
 }
 

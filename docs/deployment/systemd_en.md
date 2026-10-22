@@ -157,3 +157,5 @@ sudo systemctl enable --now huatuo-bamai
 ```
 
 > For complete RPM installation instructions, see [https://mp.weixin.qq.com/s/Gmst4_FsbXUIhuJw1BXNnQ](https://mp.weixin.qq.com/s/Gmst4_FsbXUIhuJw1BXNnQ).
+
+The daemons use `/var/run/huatuo-bamai.pid` and `/var/run/huatuo-apiserver.pid` for instance locking. Clean shutdown clears the PID but retains the empty file so overlapping starts contend on the same lock. File existence alone does not indicate a running daemon; do not delete these files during a restart.
