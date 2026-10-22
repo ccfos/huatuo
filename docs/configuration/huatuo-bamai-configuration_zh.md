@@ -1481,3 +1481,7 @@ Go 采集在运行时读取、扫描、排序和条目生成阶段共用一个�
 | 有事件但没有候选进程 | 进程是否直接属于该 cgroup、是否允许 OOM kill、是否超过枚举限制 |
 | `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `status_reason` |
 | 资源耗尽后事件停止 | 检查 `RLIMIT_NOFILE`、`fs.inotify.max_user_watches`、`fs.inotify.max_user_instances`，调整后重启；其他事件不受此停止影响 |
+
+### Softirq CPU 热插拔
+
+`softirq` 每次采集刷新 `/sys/devices/system/cpu/online`。新上线 CPU 无需重启 daemon 即可导出；离线 CPU（包括列表中的空洞）不再导出。在线 ID 必须落在 BPF possible-CPU map 的容量范围内。在线列表无法读取、为空或格式无效时，本次采集报错，不复用过期拓扑。采集期间发生的 CPU 状态变化会在下次成功读取拓扑时体现。
