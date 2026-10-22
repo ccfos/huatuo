@@ -10,10 +10,15 @@ cascade:
   version: "latest"
 ---
 
-# Kernel Versions
+## Introduction
 
-HUATUO supports Linux kernel 4.18 and later. The following guest environments
-are covered by the distribution test matrix:
+HUATUO is an operating-system observability project open sourced by DiDi and incubated by the China Computer Federation (CCF). It provides kernel metrics, abnormal events, automatic tracing, and profiling for cloud-native, AI computing, and bare-metal environments.
+
+Start with [Quick Start](/docs/quick-start_en.md), choose capabilities in [Key Features](/docs/key-feature/_index_en.md), and see [Deployment](/docs/deployment/_index_en.md) and [Practical Guides](/docs/best-practice/_index_en.md) for deployment and integration.
+
+## Kernel Versions
+
+The target kernel version is 4.18 or later. Individual features also depend on kernel interfaces, configuration, and drivers. The distribution test matrix includes these virtual machine environments:
 
 | No. | OS | Kernel | Cgroup | Clang | libbpf | glibc | gcc | make | Python | Java | Rust |
 | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -30,3 +35,9 @@ are covered by the distribution test matrix:
 | 11 | openEuler 22.03 LTS-SP4 | `5.10.0-216.0.0.115.oe2203sp4.x86_64` | v1 | 12.0.1 | 0.8.1 | 2.34 | 10.3.1 | 4.3 | 3.9.9 | 17.0.20.1+1 | 1.82.0 |
 | 12 | Anolis OS 8.10 | `5.10.134-18.an8.x86_64` | v1 | 18.1.8 | 0.5.0 | 2.28 | 8.5.0 | 4.2.1 | 3.6.8 | 17.0.20.1 | 1.79.0 |
 | 13 | OpenCloudOS 9.6 | `6.6.119-51.5.oc9.x86_64` | v2 | 17.0.6 | 1.2.2 | 2.38 | 12.3.1 | 4.4.1 | 3.11.6 | 17.0.20.1 | 1.96.0 |
+
+## Contact
+
+- WeChat group (include your name and organization when joining) and official account:
+
+![WeChat group and official account QR codes](/docs/img/contact-weixin.png)

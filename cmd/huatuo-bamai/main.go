@@ -24,12 +24,12 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/httpserver"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
 	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
 	"github.com/ccfos/huatuo/internal/pidfile"
-	"github.com/ccfos/huatuo/internal/server"
 	"github.com/ccfos/huatuo/internal/version"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 
@@ -85,7 +85,7 @@ type Daemon struct {
 	profilingService *nodeprofiling.Service
 	tracingService   *nodetracing.Service
 	tracingStore     *tracingstore.Store
-	apiServer        *server.Server
+	apiServer        *httpserver.Server
 }
 
 func NewDaemon(opts *Options) *Daemon {

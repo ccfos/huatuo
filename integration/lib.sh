@@ -393,6 +393,48 @@ huatuo_bamai_stop() {
 	rm -f "${test_workspace}/huatuo-bamai.pid"
 }
 
+# Call in the shell that started the daemon so wait returns its exit status.
+assert_huatuo_bamai_shutdown() {
+	local pid_file="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
+	local pid status=0
+	[[ -r "${pid_file}" ]] || fatal "huatuo-bamai PID file is not readable: ${pid_file}"
+	pid=$(< "${pid_file}")
+	[[ -n "${pid}" ]] || fatal "huatuo-bamai PID file is empty: ${pid_file}"
+	huatuo_bamai_stop || fatal "failed to stop huatuo-bamai pid=${pid}"
+	wait "${pid}" || status=$?
+	assert_eq "${status}" 0 "huatuo-bamai pid=${pid} shutdown exit status" \
+		|| fatal "huatuo-bamai pid=${pid} did not exit successfully: status=${status}"
+}
+
+# process_exited <pid>
+# Bash may reap a child between the procfs existence check and the read.
+process_exited() {
+	local state
+	state=$(awk '{print $3}' "/proc/$1/stat" 2> /dev/null) || return 0
+	[[ ${state} == Z ]]
+}
+
+# huatuo_bamai_stop_with_signal <TERM|KILL> [sent]
+# Lifecycle tests require the real exit status instead of best-effort teardown.
+huatuo_bamai_stop_with_signal() {
+	local signal=$1 already_sent=${2:-} pid status=0 expected
+	case ${signal} in
+	TERM) expected=0 ;;
+	KILL) expected=137 ;;
+	*) fatal "unsupported daemon stop signal: ${signal}" ;;
+	esac
+	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
+	[[ ${already_sent} == sent ]] || kill -"${signal}" "${pid}"
+	if ! wait_until 65 0.1 process_exited "${pid}"; then
+		kill -KILL "${pid}" 2> /dev/null || true
+		wait "${pid}" 2> /dev/null || true
+		fatal "daemon did not stop after ${signal} within 65 seconds"
+	fi
+	wait "${pid}" || status=$?
+	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
+	[[ ${status} == "${expected}" ]] || fatal "daemon ${signal} exit status ${status}, expected ${expected}"
+}
+
 # --------------------------- huatuo-apiserver -------------------------------
 
 huatuo_apiserver_start() {
@@ -608,3 +650,23 @@ assert_java_profiler_streams() (
 		"${out_dir}/windows.json" > /dev/null \
 		|| fatal "expected multiple non-empty Java windows in ${out_dir}/windows.json"
 )
+
+storage_send_udp_packets() {
+	local port=$1 count=${2:-1} packet
+	for ((packet = 0; packet < count; packet++)); do
+		printf 'huatuo-storage-drop' 2>> "${HUATUO_BAMAI_TEST_TMPDIR}/traffic.log" \
+			> "/dev/udp/127.0.0.99/${port}" \
+			|| fatal "failed to send UDP packet to 127.0.0.99:${port}"
+	done
+}
+
+# Keep fixed PID and socket paths private to this case and its child processes.
+integration_isolate_run_directory() {
+	[[ /var/run -ef "${HUATUO_BAMAI_TEST_TMPDIR}/run" ]] && return 0
+	require_commands unshare mount
+	exec unshare --mount --propagation private bash -euc '
+		mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}/run"
+		mount --bind "${HUATUO_BAMAI_TEST_TMPDIR}/run" /var/run
+		exec bash "$@"
+	' bash "$0" "$@"
+}

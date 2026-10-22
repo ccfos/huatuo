@@ -20,7 +20,6 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
-	"strings"
 	"syscall"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
@@ -32,7 +31,8 @@ import (
 type executableFilter struct {
 	// ExecutableName matches the executable basename exactly.
 	ExecutableName string
-	// ExecutablePrefix matches the beginning of the executable basename.
+	// ExecutablePrefix matches the beginning of the executable basename and
+	// accepts the RHEL platform-python alias for the python prefix.
 	ExecutablePrefix string
 	// ExecutablePath matches either the executable or an exact command-line argument.
 	ExecutablePath string
@@ -83,7 +83,9 @@ func (f executableFilter) matchesName(name string) bool {
 		return name == f.ExecutableName
 	}
 
-	return strings.HasPrefix(name, f.ExecutablePrefix)
+	// Discovery must accept the executables that validation accepts, so the
+	// RHEL platform-python alias is included here too.
+	return hasExecutablePrefix(name, f.ExecutablePrefix)
 }
 
 // findProcessesInCgroups keeps one root per matching process tree so callers

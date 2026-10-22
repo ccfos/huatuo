@@ -7,10 +7,9 @@ date: 2026-01-11
 weight: 1
 ---
 
-### 镜像下载
-镜像仓库地址：https://hub.docker.com/r/huatuo/huatuo-bamai/tags
+本文说明使用 Docker 运行采集器，或通过 Compose 启动完整环境。镜像版本见[镜像仓库](https://hub.docker.com/r/huatuo/huatuo-bamai/tags)。
 
-### 使用 Docker 启动容器
+## Docker
 
 ```bash
 docker run --detach \
@@ -44,7 +43,7 @@ docker stats huatuo-bamai
 
 示例值为初始基线，应根据节点规格、采集任务和资源峰值调整。
 
-### 使用 Docker Compose 启动容器
+## Docker Compose
 
 通过 [Docker Compose](https://docs.docker.com/compose/) 可在本地快速搭建一套完整环境，自行管理采集器、Elasticsearch、Prometheus、Grafana 等组件。
 
@@ -52,4 +51,4 @@ docker stats huatuo-bamai
 $ docker compose --project-directory ./build/docker up
 ```
 
-> Docker Compose 安装方法请参阅 https://docs.docker.com/compose/install/linux/。
+Docker Compose 安装方法见[安装说明](https://docs.docker.com/compose/install/linux/)。
