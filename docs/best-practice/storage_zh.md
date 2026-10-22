@@ -582,3 +582,5 @@ HTTP 错误包含响应状态码和可用的 Elasticsearch 错误详情。无法
 `observed_timestamp` 是用户态观测时刻，`uploaded_timestamp` 是存储写入时刻。
 三者不互相补填。旧文档及没有内核时间的事件省略新增字段；历史数据不自动迁移。
 原始 `kernel_observed_ns` 仅用于进程内事件关联，不写入新文档。
+
+Elasticsearch/OpenSearch 的查询、计数、去重取值和按条件删除操作，仅在 HTTP 404 响应明确包含 `index_not_found_exception` 时返回空结果。代理路由失败、格式错误的错误响应等其他 404 会返回错误；滚动查询续页失败仍返回错误。

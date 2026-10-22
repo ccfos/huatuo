@@ -320,11 +320,12 @@ func (s *Storage) DeleteByQuery(ctx context.Context, query driver.DeleteQuery) (
 	}
 	defer res.Body.Close()
 
-	if res.StatusCode == http.StatusNotFound {
-		return 0, nil
-	}
 	if res.IsError() {
-		return 0, responseError("delete documents by query", s.index, res)
+		err := responseError("delete documents by query", s.index, res)
+		if errors.Is(err, errIndexNotFound) {
+			return 0, nil
+		}
+		return 0, err
 	}
 
 	var payload esdeletebyquery.Response
@@ -365,11 +366,12 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	}
 	defer res.Body.Close()
 
-	if res.StatusCode == http.StatusNotFound {
-		return 0, nil
-	}
 	if res.IsError() {
-		return 0, responseError("count documents", s.index, res)
+		err := responseError("count documents", s.index, res)
+		if errors.Is(err, errIndexNotFound) {
+			return 0, nil
+		}
+		return 0, err
 	}
 
 	var payload escount.Response
@@ -401,11 +403,12 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	}
 	defer res.Body.Close()
 
-	if res.StatusCode == http.StatusNotFound {
-		return nil, nil
-	}
 	if res.IsError() {
-		return nil, responseError("terms aggregation", s.index, res)
+		err := responseError("terms aggregation", s.index, res)
+		if errors.Is(err, errIndexNotFound) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
 	var payload essearch.Response

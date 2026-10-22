@@ -18,8 +18,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v8/esapi"
@@ -95,14 +95,13 @@ func (s *Storage) Query(ctx context.Context, q driver.Query, consume func([]driv
 			return fmt.Errorf("elasticsearch backend query %s: %w", s.index, err)
 		}
 
-		if scrollID == "" && res.StatusCode == http.StatusNotFound {
-			res.Body.Close()
-			return nil
-		}
-
 		if res.IsError() {
 			err = responseError("query documents", s.index, res)
 			res.Body.Close()
+			// Only an absent index on the initial search represents an empty result.
+			if scrollID == "" && errors.Is(err, errIndexNotFound) {
+				return nil
+			}
 			return err
 		}
 
