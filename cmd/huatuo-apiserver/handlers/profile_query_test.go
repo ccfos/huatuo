@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
-	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
 	"github.com/ccfos/huatuo/internal/httpserver/response"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
 

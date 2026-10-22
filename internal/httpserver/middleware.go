@@ -22,7 +22,7 @@ import (
 	"time"
 
 	v1 "github.com/ccfos/huatuo/apis/v1"
-	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
 	"github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/log"
 

@@ -22,7 +22,7 @@ import (
 
 	httpGin "github.com/gin-gonic/gin"
 
-	authn "github.com/ccfos/huatuo/internal/auth"
+	authn "github.com/ccfos/huatuo/internal/httpserver/auth"
 )
 
 func TestAuthServiceAuthenticate(t *testing.T) {

@@ -27,7 +27,7 @@ import (
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
 	profilinghandler "github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
 	tracehandler "github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/trace"
-	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
 	"github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/job"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"

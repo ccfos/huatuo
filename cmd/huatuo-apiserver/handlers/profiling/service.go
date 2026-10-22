@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/auth"
 	"github.com/ccfos/huatuo/internal/httpserver"
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
 	"github.com/ccfos/huatuo/internal/job"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"

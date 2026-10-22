@@ -17,7 +17,7 @@ package httpserver
 import (
 	"errors"
 
-	authn "github.com/ccfos/huatuo/internal/auth"
+	authn "github.com/ccfos/huatuo/internal/httpserver/auth"
 	"github.com/ccfos/huatuo/internal/httpserver/response"
 )
 
