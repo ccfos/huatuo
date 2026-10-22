@@ -801,3 +801,11 @@ The new Pipeline only produces `collection` in `DroppedSamples`, stored in `prof
 <img src="/img/contact-weixin.png" alt="Official WeChat account QR code" style="max-width: 200px; margin-top: 10px;">
 </div>
 {{% /alert %}}
+
+### SVG frame text
+
+SVG output replaces XML 1.0 forbidden characters in frame names with U+FFFD
+(the Unicode replacement character) before writing tooltips, data-title
+attributes and visible labels. Valid Unicode is preserved and markup remains
+escaped. Normalization happens at rendering time; stored frame identities and
+other output formats are unchanged.
