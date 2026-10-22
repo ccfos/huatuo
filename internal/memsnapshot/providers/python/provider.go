@@ -50,7 +50,7 @@ func New() *Provider {
 }
 
 // Snapshot counts CPython objects currently tracked by the cyclic garbage
-// collector and returns at most request.TopK ranked type aggregates.
+// collector and returns at most request.MaxMemoryObjectEntries ranked type aggregates.
 // Unavailable or partial data is a snapshot; fatal read failures and cancellation
 // return an error without a snapshot.
 func (p *Provider) Snapshot(ctx context.Context,
@@ -78,7 +78,7 @@ func snapshotResult(snapshot *memsnapshot.Snapshot, err error) (*memsnapshot.Sna
 	if snapshot == nil {
 		return nil, errors.New("Python external census returned a nil response")
 	}
-	snapshot.Reason = boundedReason(snapshot.Reason)
+	snapshot.StatusReason = boundedReason(snapshot.StatusReason)
 	return snapshot, nil
 }
 

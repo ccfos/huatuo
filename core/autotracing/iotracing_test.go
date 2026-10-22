@@ -22,7 +22,6 @@ import (
 
 	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
 	"github.com/ccfos/huatuo/internal/toolstream"
-	"github.com/ccfos/huatuo/internal/toolstream/transport"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -39,14 +38,7 @@ func TestHandleIotracingEventReturnsPendingResult(t *testing.T) {
 		pendingReasons.Delete(taskID)
 	})
 
-	err := handleIotracingEvent(
-		&toolstream.Session{
-			Session: &transport.Session{
-				TaskID: taskID,
-			},
-		},
-		&types.IOTracingSnapshot{},
-	)
+	err := handleIotracingEvent(t.Context(), &toolstream.Request[types.IOTracingSnapshot]{TaskID: taskID, Data: &types.IOTracingSnapshot{}})
 	if err != nil {
 		t.Fatalf("handleIotracingEvent() error = %v", err)
 	}

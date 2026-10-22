@@ -160,7 +160,7 @@ if err := reader.ReadInto(&event); err != nil {
 
 C 名称按下划线转换为 Go 导出名称，例如 `sample_event` 转换为
 `SampleEvent`，`kernel_observed_ns` 转换为 `KernelObservedNS`。字段语义和跨层命名遵循
-[事件字段命名规范](event-field-naming_zh.md)。避免使用会映射为相同 Go 名称的
+[字段规范](/docs/development/event-field-naming_zh.md)。避免使用会映射为相同 Go 名称的
 C 名称，例如 `sample_id` 和 `sample_i_d`。
 
 ## 验证

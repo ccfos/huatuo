@@ -3,12 +3,35 @@ name: build, lint and vendor codes
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    name: Classify changes
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    outputs:
+      run-tests: ${{ steps.changes.outputs.run-tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changes
+        run: python3 .github/workflows/scripts/ci-changes.py
+
   lint-vendor-build:
     name: Build, Lint and Vendor
+    needs: changes
+    if: needs.changes.outputs.run-tests == 'true'
+    concurrency:
+      group: ${{ github.workflow }}-author-${{ github.event.pull_request.user.login || github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

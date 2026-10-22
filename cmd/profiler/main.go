@@ -22,8 +22,6 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/internal/version"
-
-	_ "github.com/ccfos/huatuo/cmd/profiler/provider"
 )
 
 const profilerToolName = "profiler"
