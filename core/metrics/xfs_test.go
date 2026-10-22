@@ -16,10 +16,13 @@
 package collector
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,11 +53,9 @@ func newXFSFixture(t testing.TB, devices int) (*xfsCollector, string) {
 	}
 
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
-	originalLogSizes := xfsLogSizeMap
 	procfs.RootPrefix(root)
 	t.Cleanup(func() {
 		procfs.RootPrefix(originalPrefix)
-		xfsLogSizeMap = originalLogSizes
 	})
 	attr, err := newXFSCollector()
 	require.NoError(t, err)
@@ -207,7 +208,7 @@ func TestXFSUpdateFullLog(t *testing.T) {
 	c, root := newXFSFixture(t, 1)
 	logPath := filepath.Join(root, "sys/fs/xfs/sda0/log")
 	require.NoError(t, os.WriteFile(filepath.Join(logPath, "log_tail_lsn"), []byte("1:0\n"), 0o600))
-	head := []byte(fmt.Sprintf("1:%.0f\n", xfsLogSizeMap["sda0"]))
+	head := []byte(fmt.Sprintf("1:%.0f\n", c.logSizes["sda0"]))
 	require.NoError(t, os.WriteFile(filepath.Join(logPath, "reserve_grant_head"), head, 0o600))
 	metrics, err := c.Update()
 	require.NoError(t, err)
@@ -244,5 +245,195 @@ func TestXFSLogFreeBytes(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
 		})
+	}
+}
+
+// Add the same production procfs/sysfs/device fixture after initialization.
+func addXFSHotplugFixture(t testing.TB, root, name string) {
+	t.Helper()
+	for target, source := range map[string]string{
+		filepath.Join("dev", name):                                  "dev/sda0",
+		filepath.Join("sys/fs/xfs", name, "stats/stats"):            "sys/fs/xfs/sda0/stats/stats",
+		filepath.Join("sys/fs/xfs", name, "log/log_tail_lsn"):       "sys/fs/xfs/sda0/log/log_tail_lsn",
+		filepath.Join("sys/fs/xfs", name, "log/reserve_grant_head"): "sys/fs/xfs/sda0/log/reserve_grant_head",
+	} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "integration", "fixtures", source))
+		require.NoError(t, err)
+		path := filepath.Join(root, target)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+	}
+}
+
+func xfsHotplugMetrics(metrics []*metric.Data, device string) map[string]float64 {
+	values := make(map[string]float64)
+	for _, m := range metrics {
+		if m.Labels()["device"] == device {
+			values[m.Name()] = m.Value
+		}
+	}
+	return values
+}
+
+func TestXFSUpdateNewMount(t *testing.T) {
+	for _, initial := range []int{0, 1} {
+		t.Run(fmt.Sprintf("initial_devices_%d", initial), func(t *testing.T) {
+			c, root := newXFSFixture(t, initial)
+			first, err := c.Update()
+			require.NoError(t, err)
+			require.Len(t, first, initial*metricsPerDevice)
+			addXFSHotplugFixture(t, root, "hotplug")
+			got, err := c.Update()
+			require.NoError(t, err)
+			require.Len(t, got, (initial+1)*metricsPerDevice)
+			values := xfsHotplugMetrics(got, "hotplug")
+			require.Len(t, values, metricsPerDevice)
+			require.Equal(t, float64(10466800), values["log_free_bytes"])
+			require.Equal(t, float64(201138642), values["alloc_blocks_total"])
+			for _, m := range first {
+				require.Equal(t, "sda0", m.Labels()["device"])
+			}
+		})
+	}
+}
+
+func TestXFSUpdateRemountReloadsLogSize(t *testing.T) {
+	c, root := newXFSFixture(t, 1)
+	first, err := c.Update()
+	require.NoError(t, err)
+	originalSize, err := xfsLogSize(filepath.Join(root, "dev/sda0"))
+	require.NoError(t, err)
+	stats := filepath.Join(root, "sys/fs/xfs/sda0/stats/stats")
+	contents, err := os.ReadFile(stats)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(stats))
+	missing, err := c.Update()
+	require.NoError(t, err)
+	require.Empty(t, missing)
+
+	device, err := os.OpenFile(filepath.Join(root, "dev/sda0"), os.O_RDWR, 0)
+	require.NoError(t, err)
+	var sb xfsSuperBlock
+	require.NoError(t, binary.Read(device, binary.BigEndian, &sb))
+	sb.SbLogblocks *= 2
+	_, err = device.Seek(0, 0)
+	require.NoError(t, err)
+	require.NoError(t, binary.Write(device, binary.BigEndian, &sb))
+	require.NoError(t, device.Close())
+	require.NoError(t, os.WriteFile(stats, contents, 0o600))
+	got, err := c.Update()
+	require.NoError(t, err)
+	require.Len(t, got, metricsPerDevice)
+	want := xfsHotplugMetrics(first, "sda0")["log_free_bytes"] + originalSize
+	require.Equal(t, want, xfsHotplugMetrics(got, "sda0")["log_free_bytes"])
+}
+
+func TestXFSUpdateDeviceNodeBecomesAvailable(t *testing.T) {
+	c, root := newXFSFixture(t, 0)
+	addXFSHotplugFixture(t, root, "hotplug")
+	devicePath := filepath.Join(root, "dev/hotplug")
+	contents, err := os.ReadFile(devicePath)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(devicePath))
+	first, err := c.Update()
+	require.NoError(t, err)
+	values := xfsHotplugMetrics(first, "hotplug")
+	require.Len(t, values, metricsPerDevice-1)
+	require.NotContains(t, values, "log_free_bytes")
+	require.NoError(t, os.WriteFile(devicePath, contents, 0o600))
+	got, err := c.Update()
+	require.NoError(t, err)
+	values = xfsHotplugMetrics(got, "hotplug")
+	require.Len(t, values, metricsPerDevice)
+	require.Equal(t, float64(10466800), values["log_free_bytes"])
+}
+
+func TestXFSUpdateConcurrentNewMount(t *testing.T) {
+	c, root := newXFSFixture(t, 0)
+	addXFSHotplugFixture(t, root, "hotplug")
+	var wg sync.WaitGroup
+	results := make([][]*metric.Data, 4)
+	errors := make([]error, len(results))
+	for i := range results {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			results[index], errors[index] = c.Update()
+		}(i)
+	}
+	wg.Wait()
+	for i := range results {
+		require.NoError(t, errors[i])
+		require.Len(t, results[i], metricsPerDevice)
+		require.Equal(t, float64(10466800), xfsHotplugMetrics(results[i], "hotplug")["log_free_bytes"])
+	}
+}
+
+func BenchmarkXFSUpdate(b *testing.B) {
+	for _, devices := range []int{1, 16} {
+		b.Run(fmt.Sprintf("devices_%d", devices), func(b *testing.B) {
+			c, _ := newXFSFixture(b, devices)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				data, err := c.Update()
+				if err != nil || len(data) != devices*metricsPerDevice {
+					b.Fatalf("scrape: %d metrics, error %v", len(data), err)
+				}
+			}
+		})
+	}
+}
+
+// This opt-in integration case mounts only the caller's private loop device.
+func TestXFSHotplugIntegration(t *testing.T) {
+	device := os.Getenv("HUATUO_XFS_HOTPLUG_DEVICE")
+	if device == "" {
+		t.Skip("set HUATUO_XFS_HOTPLUG_DEVICE to a private, formatted, unmounted loop device")
+	}
+	require.Equal(t, 0, os.Geteuid(), "real XFS mount requires root")
+	require.True(t, strings.HasPrefix(device, "/dev/loop"), "private loop device required")
+	name := filepath.Base(device)
+	attr, err := newXFSCollector()
+	require.NoError(t, err)
+	c := attr.TracingData.(*xfsCollector)
+	before, err := c.Update()
+	require.NoError(t, err)
+	require.Empty(t, xfsHotplugMetrics(before, name), "device must start unmounted")
+	mountpoint := t.TempDir()
+	mounted := false
+	t.Cleanup(func() {
+		if mounted {
+			out, err := exec.Command("umount", mountpoint).CombinedOutput()
+			require.NoError(t, err, string(out))
+		}
+	})
+	for round := 0; round < 2; round++ {
+		out, err := exec.Command("mount", device, mountpoint).CombinedOutput()
+		require.NoError(t, err, string(out))
+		mounted = true
+		after, err := c.Update()
+		require.NoError(t, err)
+		values := xfsHotplugMetrics(after, name)
+		_, legacyLogErr := os.Stat(filepath.Join("/sys/fs/xfs", name, "log/reserve_grant_head"))
+		if os.IsNotExist(legacyLogErr) {
+			// The separate 6.11+ grant ABI correction is tracked in #1243.
+			require.Len(t, values, metricsPerDevice-1, "new XFS device counters must be exported")
+			require.NotContains(t, values, "log_free_bytes")
+		} else {
+			require.NoError(t, legacyLogErr)
+			require.Len(t, values, metricsPerDevice, "newly mounted XFS device must be exported")
+			require.GreaterOrEqual(t, values["log_free_bytes"], float64(0))
+		}
+		for _, counter := range []string{"log_space_sleep_total", "alloc_blocks_total", "alloc_extents_total", "inode_missed_total", "inode_attempts_total", "buf_busy_locked_total", "buf_locked_waited_total"} {
+			require.Contains(t, values, counter)
+		}
+		t.Logf("mounted %s: %d metrics, legacy log interface present: %v", name, len(values), legacyLogErr == nil)
+		out, err = exec.Command("umount", mountpoint).CombinedOutput()
+		require.NoError(t, err, string(out))
+		mounted = false
+		missing, err := c.Update()
+		require.NoError(t, err)
+		require.Empty(t, xfsHotplugMetrics(missing, name))
 	}
 }
