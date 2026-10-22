@@ -40,7 +40,8 @@ type Config struct {
 	Index     string
 }
 
-// Filter selects profiling aggregation windows.
+// Filter selects profiling aggregation windows. StartTime and EndTime
+// inclusively select collection start timestamps.
 type Filter struct {
 	ID                string
 	Region            string
@@ -188,21 +189,16 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 	if filter == nil {
 		return query
 	}
-	// Live snapshots are selected by observation time, independent of delivery lag.
-	timestampField := types.DocumentFieldUploadedTimestamp
-	if filter.ProfileType == profiling.ProfileTypePhysicalUsage {
-		timestampField = types.DocumentFieldStartedTimestamp
-	}
 	if !filter.StartTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: timestampField,
+			Field: types.DocumentFieldStartedTimestamp,
 			Op:    driver.OpGte,
 			Value: timeutil.FormatUTC(filter.StartTime),
 		})
 	}
 	if !filter.EndTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: timestampField,
+			Field: types.DocumentFieldStartedTimestamp,
 			Op:    driver.OpLte,
 			Value: timeutil.FormatUTC(filter.EndTime),
 		})
