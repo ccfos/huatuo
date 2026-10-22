@@ -42,7 +42,7 @@ type javaProfiler struct {
 
 func (p *javaProfiler) Start(ctx context.Context) error {
 	cfg := &p.config
-	baseArgs := []string{"--libpath", "/tmp/libasyncProfiler.so"}
+	var baseArgs []string
 	var outFilePrefix string
 	switch cfg.Type {
 	case profiling.TypeCPU:
