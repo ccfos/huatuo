@@ -180,3 +180,23 @@ func BenchmarkAggregatorNewKernel(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkAggregatorCopyProfile(b *testing.B) {
+	a := New()
+	for i := range 1024 {
+		add(b, a, &Sample{
+			UserFrames: frames("main", strconv.Itoa(i)),
+			Labels:     []types.ProfileLabel{types.ProfilePIDLabel(uint32(i))},
+			Value:      4096,
+		})
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		profile := a.CopyProfile()
+		if len(profile.Samples) != 1024 {
+			b.Fatal(len(profile.Samples))
+		}
+	}
+}

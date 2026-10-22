@@ -20,15 +20,15 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestBuildProfilePreservesSamplesAndMetadata(t *testing.T) {
 	for _, multiplier := range []int64{10000000, 1} {
 		w := &types.AggregationWindow{
-			ProfileType: profile.ProfileTypeCpuSample,
+			ProfileType: profiling.ProfileTypeCpuSample,
 			Aggregated: types.AggregatedProfile{
 				TimeNanos:     123,
 				DurationNanos: 456,
@@ -108,7 +108,7 @@ func TestValidateRejectsInvalidWindows(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &types.AggregationWindow{
-				ProfileType: profile.ProfileTypeCpuSample,
+				ProfileType: profiling.ProfileTypeCpuSample,
 				Aggregated:  types.AggregatedProfile{TimeNanos: 1},
 			}
 			tc.modify(w)
@@ -122,7 +122,7 @@ func TestValidateRejectsInvalidWindows(t *testing.T) {
 func TestBuildProfileCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err := window.BuildProfile(ctx, &types.AggregationWindow{ProfileType: profile.ProfileTypeCpuSample})
+	_, err := window.BuildProfile(ctx, &types.AggregationWindow{ProfileType: profiling.ProfileTypeCpuSample})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error %v", err)
 	}

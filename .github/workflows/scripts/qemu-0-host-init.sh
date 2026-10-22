@@ -16,7 +16,7 @@
 #
 
 # Purpose: Validate the architecture and Docker/system-libvirt host environment.
-# Caller: GitHub workflow os-distro-qemu-test.yml, as the qemu-0 step; qemu-local-test.sh locally.
+# Caller: os-distro-qemu-test-reusable.yml, as the qemu-0 step; qemu-local-test.sh locally.
 # Environment:
 # - LIBVIRT_URI: Libvirt connection URI; defaults to qemu:///system.
 # - GITHUB_ACTIONS: GitHub-provided flag used to grant the hosted runner KVM access.

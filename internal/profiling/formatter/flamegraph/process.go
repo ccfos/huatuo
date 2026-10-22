@@ -97,7 +97,13 @@ func (p *processor) Process(stack Stack) {
 
 func (p *processor) Finalize() {
 	p.sort(p.frames)
-	p.calcPcts(p.frames, 100, 0)
+
+	var total int64
+	for i := range p.frames {
+		total += p.frames[i].SampleCount
+	}
+
+	p.calcPcts(p.frames, total, 0)
 }
 
 func (p *processor) Result() (frames []frame, maxDepth int) {
@@ -114,13 +120,11 @@ func (p *processor) sort(frames []frame) {
 	}
 }
 
-func (p *processor) calcPcts(frames []frame, totalPct, leftPct float32) {
-	var total int64
-
-	for i := range frames {
-		total += frames[i].SampleCount
-	}
-
+// calcPcts expresses every frame as a share of the whole profile, because the
+// renderer turns SamplePercent/LeftPercent into absolute pixel offsets. Summing
+// one level at a time stretches children across the parent's full span and makes
+// the "N samples, P%" title disagree with its own sample count.
+func (p *processor) calcPcts(frames []frame, total int64, leftPct float32) {
 	if total == 0 {
 		return
 	}
@@ -128,14 +132,14 @@ func (p *processor) calcPcts(frames []frame, totalPct, leftPct float32) {
 	d := leftPct
 
 	for i := range frames {
-		pct := float32(frames[i].SampleCount) / float32(total) * totalPct
+		pct := float32(frames[i].SampleCount) / float32(total) * 100
 		frames[i].SamplePercent = pct
 		frames[i].LeftPercent = d
 		d += pct
 	}
 
 	for i := range frames {
-		p.calcPcts(frames[i].Children, frames[i].SamplePercent, frames[i].LeftPercent)
+		p.calcPcts(frames[i].Children, total, frames[i].LeftPercent)
 	}
 }
 
@@ -147,24 +151,4 @@ func findFrame(frames []frame, name string) *frame {
 	}
 
 	return nil
-}
-
-func (p *processor) prune() { p.frames, p.maxDepth = pruneFrames(p.frames) }
-
-func pruneFrames(frames []frame) ([]frame, int) {
-	result := frames[:0]
-	maxDepth := 0
-	for i := range frames {
-		fr := &frames[i]
-		var childDepth int
-		fr.Children, childDepth = pruneFrames(fr.Children)
-		if fr.SampleCount != 0 || len(fr.Children) != 0 {
-			result = append(result, *fr)
-			maxDepth = max(maxDepth, fr.Depth+1, childDepth)
-		}
-	}
-
-	clear(frames[len(result):])
-
-	return result, maxDepth
 }
