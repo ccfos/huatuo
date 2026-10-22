@@ -47,13 +47,13 @@ func (r *processReader) Close() error {
 
 // newProcessReader keeps the inspected executable pinned until symbolization finishes.
 func newProcessReader(ctx context.Context,
-	identity memsnapshot.ProcessInstance,
+	identity memsnapshot.ProcessInstanceID,
 ) (*processReader, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	pid := identity.TGID
-	if err := memsnapshot.ValidateProcessInstance(identity); err != nil {
+	if err := memsnapshot.ValidateProcessInstanceID(identity); err != nil {
 		return nil, err
 	}
 

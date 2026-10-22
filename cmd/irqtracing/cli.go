@@ -15,14 +15,13 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"time"
 
 	"github.com/urfave/cli/v2"
 
-	profileroutput "github.com/ccfos/huatuo/internal/profiler/output"
+	profileroutput "github.com/ccfos/huatuo/internal/profiling/formatter"
 )
 
 // Older Clang versions emit the negative BTF enum as unsigned.
@@ -33,17 +32,12 @@ const (
 	cliFlagTargetCPU                = "target-cpu"
 	cliFlagDuration                 = "duration"
 	cliFlagMaxEventsPerSecondPerCPU = "max-events-per-second-per-cpu"
-	cliFlagOutput                   = "output"
-	cliFlagOutputStorage            = "output-storage"
+	cliFlagOutputFormat             = "output-format"
+	cliFlagOutputPath               = "output-path"
 	cliFlagTaskID                   = "task-id"
 	defaultMaxEventsPerSecondPerCPU = uint64(0)
 	maxEventsPerSecondPerCPULimit   = uint64(math.MaxUint32) * 2
 	maxDurationSeconds              = int64(math.MaxInt64) / int64(time.Second)
-	outputText                      = "text"
-	outputJSON                      = "json"
-	outputCollapsed                 = string(profileroutput.FormatCollapsed)
-	outputFlameGraph                = string(profileroutput.FormatFlameGraph)
-	outputSVG                       = string(profileroutput.FormatSVG)
 )
 
 type irqTracingConfig struct {
@@ -51,7 +45,7 @@ type irqTracingConfig struct {
 	targetCPU                int32
 	duration                 int
 	maxEventsPerSecondPerCPU uint64
-	output                   string
+	output                   profileroutput.OutputFormat
 }
 
 func appFlags() []cli.Flag {
@@ -77,17 +71,17 @@ func appFlags() []cli.Flag {
 			Usage: "limit source and victim stack samples to N events/sec per traced CPU (0 = unlimited)",
 		},
 		&cli.StringFlag{
-			Name:  cliFlagOutput,
-			Value: outputText,
-			Usage: "local output format: text|collapsed|flamegraph|svg|json (text aliases collapsed; flamegraph and svg emit SVG); ignored when --output-storage is set",
+			Name:  cliFlagOutputPath,
+			Usage: "Output path: file|directory|socket|stdout (WARNING: stdout may expose data)",
 		},
 		&cli.StringFlag{
-			Name:  cliFlagOutputStorage,
-			Usage: "Toolstream Unix socket path; requires --task-id and overrides local output",
+			Name:  cliFlagOutputFormat,
+			Value: string(profileroutput.FormatCollapsed),
+			Usage: "Output format: collapsed|flamegraph|svg|json|remote-store",
 		},
 		&cli.StringFlag{
 			Name:  cliFlagTaskID,
-			Usage: "Toolstream task ID; requires --output-storage",
+			Usage: "Profiling task ID; required when --output-format=remote-store",
 		},
 	}
 }
@@ -96,29 +90,21 @@ func validateFlags(c *cli.Context) error {
 	if c.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %q", c.Args().Slice())
 	}
-	outputFormat := c.String(cliFlagOutput)
-	switch outputFormat {
-	case outputText, outputCollapsed, outputFlameGraph, outputSVG, outputJSON:
+	if !c.IsSet(cliFlagOutputPath) || !c.IsSet(cliFlagOutputFormat) {
+		return fmt.Errorf("--output-path and --output-format must both be specified")
+	}
+	path := c.String(cliFlagOutputPath)
+	if err := profileroutput.ValidateDestination(path); err != nil {
+		return err
+	}
+	format := profileroutput.OutputFormat(c.String(cliFlagOutputFormat))
+	switch format {
+	case profileroutput.FormatCollapsed, profileroutput.FormatFlameGraph, profileroutput.FormatSVG, profileroutput.FormatJSON, profileroutput.FormatRemoteStore:
 	default:
-		return fmt.Errorf(
-			"invalid --output %q; want text, collapsed, flamegraph, svg, or json",
-			outputFormat,
-		)
+		return fmt.Errorf("unsupported output format %q", format)
 	}
-
-	storage := c.String(cliFlagOutputStorage)
-	taskID := c.String(cliFlagTaskID)
-	if storage == "" && taskID != "" {
-		return errors.New("--task-id requires --output-storage")
-	}
-	if storage != "" && taskID == "" {
-		return errors.New("--task-id is required with --output-storage")
-	}
-	if storage != "" && c.IsSet(cliFlagOutput) {
-		if _, err := fmt.Fprintln(c.App.ErrWriter,
-			"warning: --output is ignored because --output-storage is set"); err != nil {
-			return fmt.Errorf("write warning: %w", err)
-		}
+	if format == profileroutput.FormatRemoteStore && c.String(cliFlagTaskID) == "" {
+		return fmt.Errorf("--task-id must not be empty when --output-format=remote-store")
 	}
 
 	return nil
@@ -145,7 +131,7 @@ func loadConfig(c *cli.Context) (irqTracingConfig, error) {
 		targetCPU:                int32(targetCPU),
 		duration:                 duration,
 		maxEventsPerSecondPerCPU: limit,
-		output:                   c.String(cliFlagOutput),
+		output:                   profileroutput.OutputFormat(c.String(cliFlagOutputFormat)),
 	}, nil
 }
 

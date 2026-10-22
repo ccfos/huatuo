@@ -33,20 +33,18 @@
 
 ## What is HUATUO
 
-**HUATUO** is a cloud-native operating system observability project open-sourced by **DIDI** and incubated under the **CCF**. It delivers kernel-level observability for general-purpose cloud-native computing, AI computing, and bare-metal infrastructure services.
-By integrating Linux kernel dynamic tracing technologies like **kprobe**, **tracepoint**, **ftrace**, and **eBPF**, HUATUO provides kernel-wide insights: finer-grained metrics, automatic context capture from kernel runtime, and intelligent tracing.
-Deployed at scale in Didi’s production environment, HUATUO plays a key role in troubleshooting system failures, enhancing the high availability and performance of cloud-native operating systems.
+**HUATUO**, named after Hua Tuo, a legendary physician in ancient China, is a cloud-native OS observability project open-sourced by DiDi and incubated under the CCF. It provides kernel-level observability for general-purpose cloud-native computing, AI computing, and bare-metal infrastructure services. By integrating Linux kernel dynamic tracing technologies such as **kprobes**, **tracepoints**, **ftrace**, and **eBPF**, HUATUO provides kernel-wide visibility through finer-grained metrics, automatic runtime context capture in the kernel, and intelligent tracing. Deployed at scale in DiDi's production environment, HUATUO helps troubleshoot system failures and improves the high availability and performance of cloud-native operating systems.
 
 HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=observability-and-analysis--observability--huatuo).
 
 ## Key Features
 
-- **Kernel-Wide Insight**: Leverages BPF to maintain performance overhead below 1%, delivering full-stack, low-level observability insights into Linux kernel subsystems like MM, CPU scheduling, networking, and block I/O.
+- **Kernel-Wide Insight**: Leverages eBPF to keep performance overhead below 1%, delivering full-stack, low-level observability insights into Linux kernel subsystems such as memory management, CPU scheduling, networking, and block I/O.
 - **Instant Observability**: An event-driven runtime context capture mechanism that instruments kernel slow paths. It automatically triggers on events such as page faults, scheduling delays, generating detailed data for immediate analysis.
-- **AutoTracing**: Employs automated snapshot retention to resolve performance jitters typical in cloud‑native and AI infrastructure environments, tackling issues such as CPU idle drops, CPU sys spikes, I/O surges, and Loadavg spikes.
+- **AutoTracing**: Employs automated snapshot retention to resolve performance jitter typical in cloud‑native and AI infrastructure environments, addressing issues such as CPU idle drops, CPU system-time spikes, I/O surges, and load average spikes.
 - **Continuous Profiling**: A comprehensive and continuous performance profiling of the operating system and applications, covering CPU, Memory, I/O, and Locks. This drives business innovation and plays a key role in Chaos, HA and Stability Engineering.
 - **Heterogeneous Computing Hardware**: Encompassing core system components such as CPUs, memory, PCIe interconnects, network adapters, and storage, alongside specialized AI accelerators including GPUs and NPUs.
-- **Ecosystem Integration**: Integration with mainstream open-source observability stacks like Prometheus, Grafana, Pyroscope, and Elasticsearch. It automatically associates K8s container labels/annotations. Achieved through zero-instrumentation, kernel-level programming with eBPF, ensuring broad compatibility across hardware platforms and Linux distributions.
+- **Ecosystem Integration**: Integrates with mainstream open-source observability stacks such as Prometheus, Grafana, Pyroscope, and Elasticsearch, and automatically associates Kubernetes container labels/annotations. This is achieved through zero-instrumentation, kernel-level eBPF programming, ensuring broad compatibility across hardware platforms and Linux distributions.
 
 ## Big Picture
 

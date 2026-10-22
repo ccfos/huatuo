@@ -1,5 +1,5 @@
 ---
-title: 事件字段规范
+title: 字段规范
 type: docs
 author: HUATUO Team
 date: 2026-08-19
@@ -28,19 +28,6 @@ weight: 31
 | 父进程 ID | 父进程 TGID | `parent_tgid` | `ParentTGID` 或输出层 `ParentPID` | `parent_pid` | `PPID` |
 | task comm | 内核 task 的 `comm`，可能是线程名 | `comm` | `Comm` | `comm` | `COMM` |
 
-## 时间和数值单位
-
-| 概念 | 定义 | BPF C | Go | JSON |
-| --- | --- | --- | --- | --- |
-| 内核观测原始时间 | `CLOCK_MONOTONIC` 纳秒读数，不含系统挂起时间 | `kernel_observed_ns` | `KernelObservedNS` | 不序列化，仅用于内部关联 |
-| 内核观测时间 | 原始单调时间转换后的 UTC 时间 | 不适用 | `KernelObservedTimestamp` | `kernel_observed_timestamp` |
-| 用户态观测时间 | 事件生产者在用户态观测事件的 UTC 时间 | 不适用 | `ObservedTimestamp` | `observed_timestamp` |
-| Unix 纳秒时间 | Unix 纳秒时间 | `timestamp_ns` | `TimestampNS` | `timestamp_ns` |
-| 纳秒时长 | 两个时间点的差值 | `<name>_ns` | `<Name>NS` | `<name>_ns` |
-| 纳秒阈值 | 触发条件对应的时长 | `<name>_threshold_ns` | `<Name>ThresholdNS` | `<name>_threshold_ns` |
-| 计数 | 无单位的累计值 | `<name>_count` | `<Name>Count` | `<name>_count` |
-| 字节数 | 数据大小，不是位数 | `<name>_bytes` | `<Name>Bytes` | `<name>_bytes` |
-
 ## 容器、cgroup 和网络命名空间
 
 | 概念 | BPF C | Go | JSON | CLI |
@@ -56,22 +43,66 @@ weight: 31
 `IfIndex`。面向用户的 Go 和 JSON 字段将 `netns` 展开为
 `NetNamespace` 和 `net_namespace`。
 
-## 观测时间与兼容性
+<a id="时间和数值单位"></a>
 
-`kernel_observed_timestamp`、`observed_timestamp` 和 `uploaded_timestamp`
-分别表示内核观测、用户态观测和存储写入时刻。内核观测表示 hook 执行时刻，
-不保证等同于物理硬件错误或网络故障开始的时刻。
+## 数值单位
 
-Document 顶层保存 UTC 时间，不保存 `kernel_observed_ns`。
-没有内核时间的生产者及旧文档省略 `kernel_observed_timestamp`，不得用
-用户态时间或写入时间补填。历史 RAS 文档的 `observed_timestamp` 曾表示
-内核观测时刻，不能据此推算历史用户态观测时刻。
+| 概念 | 定义 | BPF C | Go | JSON |
+| --- | --- | --- | --- | --- |
+| 纳秒时长 | 两个时间点的差值 | `<name>_ns` | `<Name>NS` | `<name>_ns` |
+| 纳秒阈值 | 触发条件对应的时长 | `<name>_threshold_ns` | `<Name>ThresholdNS` | `<name>_threshold_ns` |
+| 计数 | 无单位的累计值 | `<name>_count` | `<Name>Count` | `<name>_count` |
+| 字节数 | 数据大小，不是位数 | `<name>_bytes` | `<Name>Bytes` | `<name>_bytes` |
 
-tcpshark 和 dropwatch 的 JSON/文本输出使用 `kernel_observed_timestamp` 表示内核观测时间。
-工具和 Agent 应一起升级；旧文档保持原样，不自动回填或重写。
-单调时钟与 UTC 的转换要求相同主机、同一次启动及主机时间命名空间。
-跨越校时跳变或系统挂起的历史事件，仅凭单调时间不能精确恢复 UTC。
+## 时间字段
 
-UTC 转换缓存单调时钟到实时钟的偏移：距上次成功采样满 1 小时后，由下一次
-调用刷新，普通调用不延长缓存期限。采样失败返回错误，下次调用重试。
-系统校时跳变或挂起不会提前触发刷新，偏移会在缓存到期后的下一次调用更新。
+### 字段语义
+
+| 概念 | 定义 | BPF C | Go | JSON |
+| --- | --- | --- | --- | --- |
+| 内核观测原始时间 | `CLOCK_MONOTONIC` 纳秒读数，不含系统挂起时间 | `kernel_observed_ns` | `KernelObservedNS` | 不序列化，仅用于内部关联 |
+| 内核观测时间 | 原始单调时间转换后的 UTC 时间 | 不适用 | `KernelObservedTimestamp` | `kernel_observed_timestamp` |
+| 用户态观测时间 | 事件生产者在用户态观测事件的 UTC 时间 | 不适用 | `ObservedTimestamp` | `observed_timestamp` |
+| Unix 纳秒时间 | Unix 纳秒时间 | `timestamp_ns` | `TimestampNS` | `timestamp_ns` |
+
+`kernel_observed_timestamp`、`observed_timestamp` 和 `uploaded_timestamp` 分别表示内核观测、用户态观测和存储写入时刻。内核观测表示 hook 执行时刻，不保证等同于物理硬件错误或网络故障开始的时刻。
+
+### 序列化与读写
+
+HUATUO 统一以 UTC 和固定九位纳秒精度序列化时间戳：
+
+```text
+2006-01-02T15:04:05.000000000Z
+```
+
+例如，UTC 时间 2026 年 7 月 22 日 00:30:00.123456789 会写为：
+
+```text
+2026-07-22T00:30:00.123456789Z
+```
+
+- 所有主机都使用 `Z` 时区，分布式查询无需处理不同的本地时区。
+- 九位小数使字符串宽度固定，因此字典序与时间序一致，便于日志文件和关键字索引存储排序。
+- 纳秒精度能够保留 Go `time.Time` 与事件追踪流水线提供的时间信息。
+
+向 HUATUO 写入数据时，请使用统一辅助函数：
+
+```go
+timestamp := timeutil.FormatUTC(time.Now())
+```
+
+读取时间戳时使用 `timeutil.Parse`。它既支持统一格式，也支持包含 0 到 9 位小数的 RFC 3339 旧数据；返回值始终会规范化为 UTC。
+
+只有在两侧均由 `FormatUTC` 生成字符串时，才应直接按字符串比较时间。第三方 RFC 3339 值可能使用可变小数精度或非 UTC 偏移。
+
+### 时钟转换
+
+单调时钟与 UTC 的转换要求相同主机、同一次启动及主机时间命名空间。跨越校时跳变或系统挂起的历史事件，仅凭单调时间不能精确恢复 UTC。
+
+UTC 转换缓存单调时钟到实时钟的偏移：距上次成功采样满 1 小时后，由下一次调用刷新，普通调用不延长缓存期限。采样失败返回错误，下次调用重试。系统校时跳变或挂起不会提前触发刷新，偏移会在缓存到期后的下一次调用更新。
+
+### 观测时间与兼容性
+
+Document 顶层保存 UTC 时间，不保存 `kernel_observed_ns`。没有内核时间的生产者及旧文档省略 `kernel_observed_timestamp`，不得用用户态时间或写入时间补填。历史 RAS 文档的 `observed_timestamp` 曾表示内核观测时刻，不能据此推算历史用户态观测时刻。
+
+tcpshark 和 dropwatch 的 JSON/文本输出使用 `kernel_observed_timestamp` 表示内核观测时间。工具和 Agent 应一起升级；旧文档保持原样，不自动回填或重写。
