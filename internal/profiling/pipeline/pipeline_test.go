@@ -279,6 +279,23 @@ func TestPipelineReportsDroppedSamples(t *testing.T) {
 	}
 }
 
+func TestPipelineAccountsQueueFullDrops(t *testing.T) {
+	f := &captureOutput{}
+	p := NewPipeline(pipelineConfig(f))
+	p.RecordQueueFull(3)
+
+	p.Close()
+
+	if err := p.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	got := f.windows[0].DroppedSamples
+	if got[types.DropReasonCollection] != 3 {
+		t.Fatalf("dropped samples = %v, want %d", got, 3)
+	}
+}
+
 func TestPipelineFinalSnapshotUsesRuntimeContext(t *testing.T) {
 	type key struct{}
 	ctx := context.WithValue(t.Context(), key{}, "task")

@@ -27,6 +27,24 @@ import (
 	"github.com/ccfos/huatuo/internal/randomid"
 )
 
+// enqueueBatch hands one batch to the pipeline. The input queue is bounded and
+// the producer must not block, so a rejected batch is accounted as a dropped
+// sample instead of aborting the whole collection.
+func enqueueBatch(pipe *pipeline.Pipeline, processCtx context.Context, batch *pipeline.SampleBatch) error {
+	err := pipe.Enqueue(processCtx, batch)
+	if !errors.Is(err, pipeline.ErrQueueFull) {
+		return err
+	}
+
+	dropped := uint64(len(batch.Samples))
+	for _, count := range batch.DroppedSamples {
+		dropped += count
+	}
+	pipe.RecordQueueFull(dropped)
+
+	return nil
+}
+
 // Run blocks until cleanup completes so resources are guaranteed released.
 // Duration and explicit stop requests preserve final samples; failures forbid completion.
 func Run(
@@ -103,7 +121,7 @@ func Run(
 	// Integration workloads wait for this exact readiness barrier.
 	log.Info("data reading loop started")
 	loopErr := p.Impl.ReadDataLoop(collectionCtx, func(batch *pipeline.SampleBatch) error {
-		return pipe.Enqueue(processCtx, batch)
+		return enqueueBatch(pipe, processCtx, batch)
 	})
 	if timer != nil {
 		timer.Stop()

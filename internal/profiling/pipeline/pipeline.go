@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -57,6 +58,10 @@ type Pipeline struct {
 	aggregator     *aggregation.Aggregator
 	windowStart    time.Time
 	droppedSamples map[string]uint64
+	// queuedDrops counts samples the producer lost because the input queue
+	// was full. The producer cannot block, so the batch is dropped instead of
+	// stalling the ring buffer reader.
+	queuedDrops atomic.Uint64
 }
 
 // NewPipeline requires configuration validated by the runner before collection.
@@ -107,6 +112,15 @@ func (p *Pipeline) Enqueue(ctx context.Context, batch *SampleBatch) error {
 // Close closes input after the producer has exited. It must be called exactly once.
 // It does not wait for Run or close the formatter.
 func (p *Pipeline) Close() { close(p.queue) }
+
+// RecordQueueFull accounts samples the producer lost because Enqueue rejected
+// the batch. The next snapshot reports them as dropped collection samples.
+func (p *Pipeline) RecordQueueFull(samples uint64) {
+	if samples == 0 {
+		return
+	}
+	p.queuedDrops.Add(samples)
+}
 
 // Run processes batches synchronously until input is drained, processing fails,
 // or ctx is canceled. The caller invokes Run exactly once and owns completion
@@ -179,6 +193,12 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 	// Remote storage currently needs live totals; future snapshot destinations
 	// can reuse this state while local summary formats continue receiving deltas.
 	retain := p.profileType == profiling.ProfileTypePhysicalUsage && p.formatter.Name() == output.FormatRemoteStore
+	if queued := p.queuedDrops.Swap(0); queued != 0 {
+		if p.droppedSamples == nil {
+			p.droppedSamples = make(map[string]uint64, 1)
+		}
+		p.droppedSamples[types.DropReasonCollection] += queued
+	}
 	if !retain && p.aggregator.Empty() && len(p.droppedSamples) == 0 {
 		return nil
 	}

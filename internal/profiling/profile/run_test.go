@@ -33,6 +33,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/log"
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
+	"github.com/ccfos/huatuo/internal/profiling/formatter/factory"
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/profiling"
@@ -239,6 +240,39 @@ func (p *loopProfiler) Stop() error {
 	p.stopped = true
 
 	return p.stopErr
+}
+
+func TestEnqueueBatchAccountsFullQueueDrops(t *testing.T) {
+	formatter, err := factory.NewFormatter(output.Config{
+		Format:      output.FormatJSON,
+		Destination: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer formatter.Close()
+
+	pipe := pipeline.NewPipeline(&pipeline.PipelineConfig{
+		AggregationConfig: testAggregationConfig(),
+		AggregationMode:   pipeline.AggregationModeOneShot,
+		Formatter:         formatter,
+	})
+
+	batch := &pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 1}}}
+	for {
+		err := pipe.Enqueue(t.Context(), batch)
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, pipeline.ErrQueueFull) {
+			t.Fatalf("fill queue error = %v, want %v", err, pipeline.ErrQueueFull)
+		}
+		break
+	}
+
+	if err := enqueueBatch(pipe, t.Context(), batch); err != nil {
+		t.Fatalf("enqueueBatch() error = %v, want nil", err)
+	}
 }
 
 func TestRunCompletion(t *testing.T) {
