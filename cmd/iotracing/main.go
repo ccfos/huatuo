@@ -15,10 +15,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -104,7 +106,9 @@ func mainAction(c *cli.Context) (returnErr error) {
 
 	if client != nil {
 		defer func() {
-			if err := client.End(); err != nil {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Context), 5*time.Second)
+			defer cancel()
+			if err := errors.Join(client.Send(ctx, nil, toolstream.SendOptions{End: true}), client.Close()); err != nil {
 				returnErr = errors.Join(
 					returnErr,
 					fmt.Errorf("close toolstream: %w", err),
@@ -141,11 +145,11 @@ func openToolstream(c *cli.Context) (*toolstream.Client, error) {
 		return nil, nil
 	}
 
-	client, err := toolstream.NewClient(toolstream.ClientOptions{
-		SockPath: path,
-		ToolName: iotracingToolName,
-		Version:  versionInfo.Version,
-		TaskID:   c.String(cliFlagTaskID),
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    path,
+		ServiceName: iotracingToolName,
+		Version:     versionInfo.Version,
+		TaskID:      c.String(cliFlagTaskID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("--output-storage: %w", err)

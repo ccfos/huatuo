@@ -17,18 +17,12 @@ package provider
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
-	"errors"
 	"fmt"
-
-	"github.com/cilium/ebpf"
 
 	"github.com/ccfos/huatuo/client"
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
-	"github.com/ccfos/huatuo/internal/profiler/bpfmap"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 )
 
@@ -52,26 +46,26 @@ func taskCommString(comm [bpf.TaskCommLen]byte) string {
 // It first attempts to get CSS via huatuo-bamai API, and falls back to local BPF-based
 // method if the API is unavailable. The subsysName parameter specifies the cgroup subsystem
 // (e.g., "memory", "cpu").
-func resolveContainerCgroupCss(pctx *pcontext.ProfilerContext, subsysName string) (uint64, error) {
-	if pctx.ContainerID == "" {
+func resolveContainerCgroupCss(ctx context.Context, cfg *Config, subsysName string) (uint64, error) {
+	if cfg.ContainerID == "" {
 		return 0, nil
 	}
 
 	// Try API method first
 	cssAddr, err := resolveContainerCgroupCssByAPI(
-		pctx.Ctx,
-		pctx.ServerAddress,
-		pctx.ContainerID,
+		ctx,
+		cfg.ServerAddress,
+		cfg.ContainerID,
 		subsysName,
 	)
 	if err == nil {
 		return cssAddr, nil
 	}
 
-	log.Warn("API method failed, falling back to local method", "error", err, "container_id", pctx.ContainerID, "subsystem", subsysName)
+	log.Warn("API method failed, falling back to local method", "error", err, "container_id", cfg.ContainerID, "subsystem", subsysName)
 
 	// Fallback to local BPF-based method
-	cssAddr, err = resolveContainerCgroupCssByLocal(pctx.ContainerID, subsysName)
+	cssAddr, err = resolveContainerCgroupCssByLocal(cfg.ContainerID, subsysName)
 	if err != nil {
 		return 0, fmt.Errorf("both API and local methods failed for subsystem %s: %w", subsysName, err)
 	}
@@ -115,31 +109,4 @@ func resolveContainerCgroupCssByLocal(containerID, subsysName string) (uint64, e
 	}
 
 	return cssAddr, nil
-}
-
-// readStackTrace reads a stack trace from the BPF stack map by ID.
-// Returns the stack trace as an array of instruction pointers and a success flag.
-func readStackTrace(b bpf.BPF, mapID uint32, id int32) ([bpfmap.StackTraceLen]uint64, bool) {
-	keyBuf := make([]byte, 4)
-	binary.LittleEndian.PutUint32(keyBuf, uint32(id))
-
-	val, err := b.ReadMap(mapID, keyBuf)
-	if err != nil {
-		if !errors.Is(err, ebpf.ErrKeyNotExist) {
-			log.Warnf("stack map lookup for ID %d: %v", id, err)
-		}
-		return [bpfmap.StackTraceLen]uint64{}, false
-	}
-
-	if len(val) != bpfmap.StackTraceLen*8 {
-		return [bpfmap.StackTraceLen]uint64{}, false
-	}
-
-	var trace [bpfmap.StackTraceLen]uint64
-	reader := bytes.NewReader(val)
-	if err := binary.Read(reader, binary.LittleEndian, &trace); err != nil {
-		return [bpfmap.StackTraceLen]uint64{}, false
-	}
-
-	return trace, true
 }

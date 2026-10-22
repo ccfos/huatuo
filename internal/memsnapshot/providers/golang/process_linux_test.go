@@ -18,10 +18,12 @@ import (
 	"context"
 	"debug/elf"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
@@ -55,23 +57,38 @@ func TestExecutableMappingIdentity(t *testing.T) {
 func TestNewProcessReader(t *testing.T) {
 	directory := t.TempDir()
 	source := filepath.Join(directory, "main.go")
-	if err := os.WriteFile(source, []byte("package main\nimport (\"os\"; \"runtime\")\nfunc main(){runtime.GC(); var stop [1]byte; os.Stdin.Read(stop[:])}\n"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("package main\nimport (\"os\"; \"runtime\")\nfunc main(){runtime.GC(); if _, err := os.Stdout.Write([]byte{'R'}); err != nil {os.Exit(1)}; var stop [1]byte; os.Stdin.Read(stop[:])}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	executable := filepath.Join(directory, "fixture")
 	if output, err := exec.Command("go", "build", "-o", executable, source).CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v: %s", err, output)
 	}
-	command := exec.CommandContext(t.Context(), executable)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, executable)
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer stdin.Close()
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = stdin.Close(); _ = command.Wait() }()
+	// Start can return before exec has mapped the fixture. Wait for main
+	// to finish runtime initialization before reading its memory.
+	var ready [1]byte
+	if _, err := io.ReadFull(stdout, ready[:]); err != nil {
+		t.Fatalf("wait for fixture readiness: %v (context: %v)", err, ctx.Err())
+	}
+	if ready[0] != 'R' {
+		t.Fatalf("unexpected fixture readiness signal: %q", ready[:])
+	}
 	identity, err := memsnapshot.ReadProcessInstanceID(command.Process.Pid)
 	if err != nil {
 		t.Fatal(err)

@@ -35,7 +35,7 @@ mkdir -p "${CPUSYS_FIXTURE_ROOT}/proc" "${CPUSYS_FIXTURE_ROOT}/sys" "${CPUSYS_FI
 # Sample 1: user=100, nice=0, system=100, idle=800, total=1000.
 # The daemon reads this initial value before starting its sampling ticker.
 cp "${HUATUO_BAMAI_TEST_FIXTURES}/proc/stat" "${CPUSYS_PROC_STAT}"
-cp "${HUATUO_BAMAI_TEST_FIXTURES}/tools/perf" "${CPUSYS_FIXTURE_ROOT}/tools/perf"
+cp "${ROOT_DIR}/integration/testdata/tools/test_perf.sh" "${CPUSYS_FIXTURE_ROOT}/tools/perf"
 
 # $1 contains cumulative user, nice, system, and idle ticks in /proc/stat
 # order. cpusys calculates total as their sum and system usage from deltas.

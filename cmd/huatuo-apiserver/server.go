@@ -21,7 +21,7 @@ import (
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers"
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
-	"github.com/ccfos/huatuo/internal/server"
+	"github.com/ccfos/huatuo/internal/httpserver"
 )
 
 func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {
@@ -31,14 +31,13 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 		JobManager:          d.jobManager,
 		ProfileStorage:      d.profileStorage,
 		ProfileQueryService: d.profileQueryService,
-		ProfilePublications: d.publications,
 		ProfilingConfig: profiling.Config{
 			DashboardBaseURL: d.opts.Config.Profiling.DashboardBaseURL,
 		},
 		AuthUsers:   authUsers(d.opts.Config.Auth.Users),
 		EnablePProf: d.opts.EnablePProf,
 		VersionInfo: &d.opts.VersionInfo,
-		RateLimit: &server.RateLimitConfig{
+		RateLimit: &httpserver.RateLimitConfig{
 			RequestsPerSecond: d.opts.Config.APIServer.RateLimit.RequestsPerSecond,
 			Burst:             d.opts.Config.APIServer.RateLimit.Burst,
 		},
@@ -52,10 +51,10 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 	return runningServer.Shutdown, nil
 }
 
-func authUsers(users []config.UserConfig) []server.UserConfig {
-	result := make([]server.UserConfig, 0, len(users))
+func authUsers(users []config.UserConfig) []httpserver.UserConfig {
+	result := make([]httpserver.UserConfig, 0, len(users))
 	for _, user := range users {
-		result = append(result, server.UserConfig{
+		result = append(result, httpserver.UserConfig{
 			ID:          user.ID,
 			BearerToken: user.BearerToken,
 			Permissions: user.Permissions,

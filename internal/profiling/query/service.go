@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
@@ -69,18 +71,24 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 
 	log.Debugf("SelectMergeStacktracesRequest: %+v", req)
 
-	profileTypes := strings.Split(filter.ProfileType, ":")
-	if len(profileTypes) != 5 {
-		return nil, fmt.Errorf("%w: invalid profile type %q", ErrInvalidQuery, filter.ProfileType)
+	profileTypes, err := window.Metadata(req.ProfileTypeID)
+	if err != nil {
+		return nil, errors.Join(ErrInvalidQuery, err)
 	}
 
 	// labels
-	labels, err := parser.ParseMetricSelector(req.LabelSelector)
+	matchers, err := parser.ParseMetricSelector(req.LabelSelector)
 	if err != nil {
 		return nil, errors.Join(ErrInvalidQuery, fmt.Errorf("parse matchers: %w", err))
 	}
 
-	for _, label := range labels {
+	for _, label := range matchers {
+		if label.Name == "__profile_type__" {
+			if label.Type != labels.MatchEqual || label.Value != req.ProfileTypeID {
+				return nil, fmt.Errorf("%w: __profile_type__ must equal ProfileTypeID %q", ErrInvalidQuery, req.ProfileTypeID)
+			}
+			continue
+		}
 		// skip empty or "All"
 		if label.Value == "" || label.Value == "all" || label.Value == "All" || label.Value == "*" {
 			continue
@@ -91,11 +99,17 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		}
 	}
 
+	latestOnly := filter.ProfileType == profiling.ProfileTypePhysicalUsage
+	if latestOnly && filter.ID == "" {
+		return nil, fmt.Errorf("%w: physical usage requires a single task id", ErrInvalidQuery)
+	}
+
 	if filter.ID == "" && filter.Hostname == "" && filter.ContainerID == "" && filter.ContainerHostname == "" {
 		return nil, fmt.Errorf("%w: id, hostname, or container must be specified", ErrInvalidQuery)
 	}
 
 	var profilesMerge pprof.ProfileMerge
+	var latest *googlev1.Profile
 	consumed := 0
 	err = s.profileStorage.Search(ctx, filter, func(batch []*profilingstore.Document) error {
 		if len(batch) > maxProfileQueryRecords-consumed {
@@ -105,7 +119,37 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := profilesMerge.Merge(document.ProfileData.Profile); err != nil {
+			if document.ProfileData.ProfileType != filter.ProfileType {
+				return fmt.Errorf("stored profile type %q does not match query type %q", document.ProfileData.ProfileType, filter.ProfileType)
+			}
+			profile := document.ProfileData.Profile
+			matchesSampleType := false
+			for _, st := range profile.SampleType {
+				if st == nil {
+					continue
+				}
+				name, _ := profileString(profile.StringTable, st.Type)
+				unit, _ := profileString(profile.StringTable, st.Unit)
+				if name == profileTypes[1] && unit == profileTypes[2] {
+					matchesSampleType = true
+					break
+				}
+			}
+			if !matchesSampleType {
+				return fmt.Errorf("stored profile lacks sample type %q with unit %q", profileTypes[1], profileTypes[2])
+			}
+			if latestOnly {
+				if latest == nil || profile.TimeNanos > latest.TimeNanos {
+					latest = profile
+				}
+				continue
+			}
+
+			// Both legacy and new samples already carry final weights. Period
+			// metadata is irrelevant to this query, but the merger requires a type.
+			profile.PeriodType = &googlev1.ValueType{}
+			profile.Period = 0
+			if err := profilesMerge.Merge(profile); err != nil {
 				return fmt.Errorf("merge profile: %w", err)
 			}
 		}
@@ -118,7 +162,12 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	if consumed == 0 {
 		return nil, ErrProfilesAbsent
 	}
-	profile := profilesMerge.Profile()
+	var profile *googlev1.Profile
+	if latestOnly {
+		profile = latest
+	} else {
+		profile = profilesMerge.Profile()
+	}
 	if profile == nil {
 		return nil, ErrProfilesAbsent
 	}
@@ -133,7 +182,9 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		if st == nil {
 			continue
 		}
-		if value, ok := profileString(profile.StringTable, st.Type); ok && value == sampleType {
+		name, _ := profileString(profile.StringTable, st.Type)
+		unit, _ := profileString(profile.StringTable, st.Unit)
+		if name == sampleType && unit == profileTypes[2] {
 			sampleTypeIndex = i
 			break
 		}
@@ -208,7 +259,7 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 
 	// convert phlaremodel.Tree to FlameGraph
 	return &querierv1.SelectMergeStacktracesResponse{
-		Flamegraph: phlaremodel.NewFlameGraph(phlaremodelTree, -1),
+		Flamegraph: phlaremodel.NewFlameGraph(phlaremodelTree, req.GetMaxNodes()),
 	}, nil
 }
 
@@ -289,7 +340,7 @@ func (s *ProfileQueryService) ProfileTypes(ctx context.Context, req *querierv1.P
 //	response: typesv1.LabelNamesResponse
 func (s *ProfileQueryService) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
+		Names: []string{"id", "region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
 	}
 	return response, nil
 }

@@ -55,7 +55,7 @@ func (p *Process) signalProcessGroup(signal syscall.Signal) error {
 	return err
 }
 
-func exitedOnStopSignal(err error) bool {
+func exitedOnStopSignal(err error, stopSignal syscall.Signal) bool {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
 		return false
@@ -67,5 +67,5 @@ func exitedOnStopSignal(err error) bool {
 	}
 
 	signal := waitStatus.Signal()
-	return signal == syscall.SIGTERM || signal == syscall.SIGKILL
+	return signal == stopSignal || signal == syscall.SIGKILL
 }
