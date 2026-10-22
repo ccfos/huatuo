@@ -18,15 +18,15 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestBuildProfilePreservesUserAndKernelFrames(t *testing.T) {
 	t.Parallel()
 	w := &types.AggregationWindow{
-		ProfileType: profile.ProfileTypeCpuSample,
+		ProfileType: profiling.ProfileTypeCpuSample,
 		Aggregated: types.AggregatedProfile{
 			TimeNanos: 1,
 			Frames: []types.ProfileFrame{{

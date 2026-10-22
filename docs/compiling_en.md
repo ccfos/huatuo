@@ -7,14 +7,16 @@ date: 2026-01-11
 weight: 3
 ---
 
-### 1. Container Build
+This guide covers container and host builds. Run all commands from the repository root. See `go.mod` for the required Go version.
 
-Run the following command to build the project and run static code checks.
+## Container Build
+
+Run the script to build in a container and perform static checks:
 ```bash
 $ sh build/build-run-testing-image.sh
 ```
 
-Or run each step separately:
+Or run the steps separately:
 
 **1. Prepare the build environment**
 ```bash
@@ -31,17 +33,17 @@ $ docker run -it --pid=host --privileged --cgroupns=host --network=host -v $(pwd
 $ make
 ```
 
-### 2. Publishing the Image
+## Runtime Image
 
-Use `docker build` to publish the latest binary container image.
+The following command builds a local runtime image. It does not push the image to a registry:
 
 ```bash
 docker build --network host -t huatuo/huatuo-bamai:latest .
 ```
 
-### 3. Bare-Metal Build
+## Host Build
 
-#### 3.1 Install Dependencies
+### Install Dependencies
 
 Ubuntu 24.04:
 ```bash
@@ -62,18 +64,18 @@ go install github.com/vektra/mockery/v2@v2.53.6
 go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
 ```
 
-#### 3.2 Build
+### Build
+
 ```bash
 $ make
 ```
 
-### 4. BPF Debug Build
+## BPF Debug Build
 
-Set `BPF_DEBUG=1` to pass `-DDEBUG_BPF` to clang and compile the debug code into the BPF object:
+Set `BPF_DEBUG=1` to pass `-DDEBUG_BPF` to Clang and compile debug code into the BPF object:
 
 ```bash
 $ make BPF_DEBUG=1     # Or regenerate artifacts only: make BPF_DEBUG=1 gen-build
 ```
 
-See [Debugging](development/debugging_en.md) for trace points, runtime switches,
-and log output.
+See [Debugging](/docs/development/debugging_en.md) for instrumentation, runtime switches, and logs.
