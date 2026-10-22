@@ -39,6 +39,11 @@ func enqueueFolded(
 	language profiling.Language,
 	enqueue func(*pipeline.SampleBatch) error,
 ) error {
+	deliver := func(batch *pipeline.SampleBatch) error {
+		batch.StartedAt = output.StartedAt
+		batch.EndedAt = output.EndedAt
+		return enqueue(batch)
+	}
 	var builder pipeline.BatchBuilder
 	for line := range strings.SplitSeq(output.Output, "\n") {
 		line = strings.TrimSpace(line)
@@ -117,12 +122,12 @@ func enqueueFolded(
 			}
 		}
 
-		if err := builder.Append(&sample, enqueue); err != nil {
+		if err := builder.Append(&sample, deliver); err != nil {
 			return err
 		}
 	}
 
-	return builder.Flush(enqueue)
+	return builder.Flush(deliver)
 }
 
 func decodeFoldedLine(line string) ([]string, string, error) {

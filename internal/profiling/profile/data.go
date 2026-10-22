@@ -14,8 +14,12 @@
 
 package profile
 
+import "time"
+
 // Profiling output for each PID.
 type SampleOutput struct {
-	PID    int    `json:"pid"`
-	Output string `json:"output"`
+	StartedAt time.Time `json:"started_at,omitempty"`
+	EndedAt   time.Time `json:"ended_at,omitempty"`
+	PID       int       `json:"pid"`
+	Output    string    `json:"output"`
 }

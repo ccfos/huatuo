@@ -56,6 +56,8 @@ type Pipeline struct {
 
 	aggregator     *aggregation.Aggregator
 	windowStart    time.Time
+	windowEnd      time.Time
+	windowUntimed  bool
 	droppedSamples map[string]uint64
 }
 
@@ -150,8 +152,16 @@ func (p *Pipeline) consumeBatch(ctx context.Context, item queuedBatch) error {
 		return nil
 	}
 
-	if p.windowStart.IsZero() {
-		p.windowStart = item.enqueuedAt
+	start := batch.StartedAt
+	if start.IsZero() {
+		start = item.enqueuedAt
+		p.windowUntimed = true
+	}
+	if p.windowStart.IsZero() || start.Before(p.windowStart) {
+		p.windowStart = start
+	}
+	if batch.EndedAt.After(p.windowEnd) {
+		p.windowEnd = batch.EndedAt
 	}
 
 	if dropped != 0 {
@@ -181,6 +191,10 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 	retain := p.profileType == profiling.ProfileTypePhysicalUsage && p.formatter.Name() == output.FormatRemoteStore
 	if !retain && p.aggregator.Empty() && len(p.droppedSamples) == 0 {
 		return nil
+	}
+
+	if !retain && !p.windowUntimed && !p.windowEnd.IsZero() {
+		end = p.windowEnd
 	}
 
 	start := p.windowStart
@@ -219,6 +233,8 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 		sealed.Aggregated.DurationNanos = end.Sub(start).Nanoseconds()
 	}
 	p.windowStart = time.Time{}
+	p.windowEnd = time.Time{}
+	p.windowUntimed = false
 	p.droppedSamples = nil
 
 	outputCtx, cancel := context.WithTimeout(ctx, 30*time.Second)

@@ -127,7 +127,12 @@ func TestPythonCPUProfilerReadDataLoopUsesOnlyMemfdSamples(t *testing.T) {
 			var samples []aggregation.Sample
 			err := p.ReadDataLoop(
 				t.Context(),
-				func(batch *pipeline.SampleBatch) error { samples = append(samples, batch.Samples...); return nil },
+				func(batch *pipeline.SampleBatch) error {
+					require.False(t, batch.StartedAt.IsZero())
+					require.False(t, batch.EndedAt.Before(batch.StartedAt))
+					samples = append(samples, batch.Samples...)
+					return nil
+				},
 			)
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)

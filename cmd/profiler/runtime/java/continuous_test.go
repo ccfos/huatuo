@@ -19,7 +19,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/profiling/profile"
 )
@@ -291,5 +294,33 @@ func TestReadAsprofDataLoopStopContract(t *testing.T) {
 				t.Fatalf("samples=%d want=%d", count, tc.wantSamples)
 			}
 		})
+	}
+}
+
+func TestCollapsedFileCollectorRetainsCollectionInterval(t *testing.T) {
+	start := time.Unix(1700000000, 0)
+	samples, collector := newTestCollapsedFileCollector(t, []int{123}, nil)
+	collector.collectionStarts = map[int]time.Time{123: start}
+	for sequence := range 2 {
+		end := start.Add(time.Duration(sequence+1) * 10 * time.Second)
+		path := strings.Replace(collector.pidsToFilePath[123], "*", strconv.Itoa(sequence), 1)
+		if err := os.WriteFile(path, []byte("work 1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, end, end); err != nil {
+			t.Fatal(err)
+		}
+		if err := collector.scanOutputFiles(true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(*samples) != 2 {
+		t.Fatalf("samples = %d, want 2", len(*samples))
+	}
+	for i, sample := range *samples {
+		expected := start.Add(time.Duration(i) * 10 * time.Second)
+		if !sample.StartedAt.Equal(expected) || !sample.EndedAt.Equal(expected.Add(10*time.Second)) {
+			t.Fatalf("sample %d interval = %v to %v", i, sample.StartedAt, sample.EndedAt)
+		}
 	}
 }

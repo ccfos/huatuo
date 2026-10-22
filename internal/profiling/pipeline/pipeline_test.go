@@ -572,3 +572,74 @@ func TestPipelineSnapshotEmitsInitialZeroAndRejectsLoss(t *testing.T) {
 		t.Fatal("collection loss published a live result")
 	}
 }
+
+func TestPipelinePhysicalUsageKeepsObservationTime(t *testing.T) {
+	f := &captureOutput{name: output.FormatRemoteStore}
+	cfg := pipelineConfig(f)
+	cfg.ProfileType = "memory:physical_usage:bytes:space:bytes"
+	p := NewPipeline(cfg)
+	collected := time.Unix(100, 0)
+	batch := testBatch(1)
+	batch.StartedAt, batch.EndedAt = collected.Add(-30*time.Second), collected
+	if err := p.consumeBatch(t.Context(), queuedBatch{
+		batch:      batch,
+		enqueuedAt: collected.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range 2 {
+		observed := collected.Add(time.Duration(i+2) * time.Minute)
+		if err := p.snapshot(t.Context(), observed); err != nil {
+			t.Fatal(err)
+		}
+
+		got := &f.windows[i].Aggregated
+		if got.TimeNanos != observed.UnixNano() || got.DurationNanos != 0 {
+			t.Fatalf("snapshot interval = %d/%d, want observation %d/0", got.TimeNanos, got.DurationNanos, observed.UnixNano())
+		}
+	}
+}
+
+func TestPipelineRetainsDelayedCollectionInterval(t *testing.T) {
+	for _, mode := range []AggregationMode{AggregationModeStreaming, AggregationModeOneShot} {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			f := &captureOutput{}
+			cfg := pipelineConfig(f)
+			cfg.AggregationMode = mode
+			p := NewPipeline(cfg)
+			start := time.Unix(1700000000, 0)
+			end := start.Add(30 * time.Second)
+			for range 2 {
+				batch := testBatch(1)
+				batch.StartedAt, batch.EndedAt = start, end
+				if err := p.Enqueue(t.Context(), batch); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p.Close()
+			if err := p.Run(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.windows) != 1 {
+				t.Fatalf("windows = %d, want 1", len(f.windows))
+			}
+			got := f.windows[0].Aggregated
+			if got.TimeNanos != start.UnixNano() || got.DurationNanos != int64(30*time.Second) {
+				t.Fatalf("window interval = %d/%d, want original 30-second collection", got.TimeNanos, got.DurationNanos)
+			}
+		})
+	}
+}
+
+func TestPipelineRejectsInvalidCollectionInterval(t *testing.T) {
+	p := NewPipeline(pipelineConfig(&captureOutput{}))
+	start := time.Now()
+	for _, interval := range [][2]time.Time{{start, {}}, {{}, start}, {start, start.Add(-time.Second)}} {
+		batch := testBatch(1)
+		batch.StartedAt, batch.EndedAt = interval[0], interval[1]
+		if err := p.Enqueue(t.Context(), batch); err == nil {
+			t.Fatal("invalid collection interval accepted")
+		}
+	}
+}

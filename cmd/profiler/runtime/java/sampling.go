@@ -45,6 +45,7 @@ type AsprofSamplingOption struct {
 	AggrInterval     time.Duration
 	Duration         time.Duration
 	SessionID        string
+	startedAt        time.Time
 	agentDirectories []*os.File
 	activePIDs       map[int]bool
 	outputFileCount  uint64
@@ -93,6 +94,7 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 
 	asprofBin := asprofPath(opt.ToolPath)
 	startCtx, cancel := context.WithTimeout(ctx, asprofCommandTimeout)
+	opt.startedAt = time.Now()
 	cmdResults := RunAsyncProfiler(
 		startCtx,
 		opt.Pids,
