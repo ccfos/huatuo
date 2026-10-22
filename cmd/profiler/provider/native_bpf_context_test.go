@@ -309,8 +309,18 @@ func TestResolveStackWithFallback(t *testing.T) {
 		{
 			name:       "missing without fallback",
 			primaryErr: ebpf.ErrKeyNotExist,
-			wantErr:    ebpf.ErrKeyNotExist,
+			wantErr:    bpfmap.ErrStackNotFound,
 			wantMaps:   []uint32{2},
+		},
+		{
+			name:     "nil lookup without fallback",
+			wantErr:  bpfmap.ErrStackNotFound,
+			wantMaps: []uint32{2},
+		},
+		{
+			name:     "nil lookup uses fallback",
+			fallback: true,
+			wantMaps: []uint32{2, 3},
 		},
 		{
 			name:       "wrapped missing uses fallback",
@@ -323,7 +333,7 @@ func TestResolveStackWithFallback(t *testing.T) {
 			primaryErr:  ebpf.ErrKeyNotExist,
 			fallback:    true,
 			fallbackErr: ebpf.ErrKeyNotExist,
-			wantErr:     ebpf.ErrKeyNotExist,
+			wantErr:     bpfmap.ErrStackNotFound,
 			wantMaps:    []uint32{2, 3},
 		},
 		{
@@ -335,10 +345,11 @@ func TestResolveStackWithFallback(t *testing.T) {
 			wantMaps:    []uint32{2, 3},
 		},
 		{
-			name:     "malformed is not missing",
-			fallback: true,
-			wantErr:  bpfmap.ErrInvalidStackData,
-			wantMaps: []uint32{2},
+			name:       "malformed is not missing",
+			primaryRaw: []byte{},
+			fallback:   true,
+			wantErr:    bpfmap.ErrInvalidStackData,
+			wantMaps:   []uint32{2},
 		},
 		{
 			name:       "read failure is not missing",
@@ -390,6 +401,7 @@ func TestNativeBatchesHandleStackErrors(t *testing.T) {
 	readErr := errors.New("stack read denied")
 	for _, tt := range []struct {
 		name    string
+		raw     []byte
 		readErr error
 		wantErr error
 	}{
@@ -398,7 +410,11 @@ func TestNativeBatchesHandleStackErrors(t *testing.T) {
 			readErr: ebpf.ErrKeyNotExist,
 		},
 		{
+			name: "missing stack returned as nil",
+		},
+		{
 			name:    "malformed stack",
+			raw:     []byte{},
 			wantErr: bpfmap.ErrInvalidStackData,
 		},
 		{
@@ -412,7 +428,7 @@ func TestNativeBatchesHandleStackErrors(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/offcpu=%t/user=%t", tt.name, offCPU, user), func(t *testing.T) {
 					obj := &stackResolutionBPF{
 						frozenRingBPFStub: frozenRingBPFStub{values: map[uint32]uint64{bpfmap.SampleCountAIdx: 1}},
-						readStack:         func(uint32, []byte) ([]byte, error) { return nil, tt.readErr },
+						readStack:         func(uint32, []byte) ([]byte, error) { return tt.raw, tt.readErr },
 					}
 					base := abi.ProfilerEventBase{
 						Userstack: -1,

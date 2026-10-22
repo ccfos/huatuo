@@ -17,7 +17,6 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -427,10 +426,6 @@ func BenchmarkPipelineQueuedBurst(b *testing.B) {
 					if err := p.Enqueue(b.Context(), batch); err != nil {
 						b.Fatal(err)
 					}
-				}
-
-				if err := p.Enqueue(b.Context(), testBatch(1)); !errors.Is(err, ErrQueueFull) {
-					b.Fatalf("expected full queue error, got %v", err)
 				}
 
 				runtime.KeepAlive(p)

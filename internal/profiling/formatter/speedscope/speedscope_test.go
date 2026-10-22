@@ -215,6 +215,11 @@ func TestFormatterRejectsMixedUnitsAndOverflow(t *testing.T) {
 				if err == nil {
 					t.Fatal("accepted mixed units")
 				}
+				for _, part := range []string{`type "cpu"`, `unit "bytes"`, `unit "nanoseconds"`} {
+					if !strings.Contains(err.Error(), part) {
+						t.Fatalf("error %q lacks %q", err, part)
+					}
+				}
 			} else {
 				if err != nil {
 					t.Fatal(err)
