@@ -420,18 +420,22 @@ func (m *Model) barWidth(value, rootValue int64) int {
 	if available < 10 {
 		available = 10
 	}
+
 	if rootValue <= 0 || value <= 0 {
 		return barMinWidth
 	}
+
 	if value >= rootValue {
 		return available
 	}
+
 	// Keep integer rounding without overflowing on large profile weights.
 	hi, lo := bits.Mul64(uint64(value), uint64(available))
 	width, _ := bits.Div64(hi, lo, uint64(rootValue))
 	if width < barMinWidth {
 		return barMinWidth
 	}
+
 	return int(width)
 }
 
