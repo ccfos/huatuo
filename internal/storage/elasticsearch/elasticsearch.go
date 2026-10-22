@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	elasticsearch "github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 	"github.com/elastic/go-elasticsearch/v8/esutil"
 	escount "github.com/elastic/go-elasticsearch/v8/typedapi/core/count"
@@ -41,8 +42,6 @@ import (
 )
 
 const (
-	defaultQuerySize = 10000
-
 	// Bulk indexer tuning. 5MB / 1s matches the upstream defaults and is a
 	// safe starting point for ES/OpenSearch single-node and small clusters.
 	// Adjust if write rate or per-event size drifts significantly.
@@ -67,9 +66,10 @@ type Config struct {
 // whole-batch failures (429, 5xx, transport errors) are retried by the client.
 // Call Close on shutdown to flush any pending events.
 type Storage struct {
-	transport esapi.Transport
-	bulk      esutil.BulkIndexer
-	index     string
+	transport      esapi.Transport
+	queryTransport esapi.Transport
+	bulk           esutil.BulkIndexer
+	index          string
 }
 
 var _ driver.Backend = (*Storage)(nil)
@@ -92,9 +92,26 @@ func NewBackend(cfg *Config) (*Storage, error) {
 	if strings.TrimSpace(cfg.Index) == "" {
 		return nil, errors.New("elasticsearch backend: index is required")
 	}
-	client, err := newCompatClient(cfg.Addresses, cfg.Username, cfg.Password)
+	clientConfig := elasticsearch.Config{Addresses: cfg.Addresses, Username: cfg.Username, Password: cfg.Password}
+	client, err := newCompatClient(&clientConfig)
 	if err != nil {
 		return nil, err
+	}
+
+	// A lost Scroll response may already have advanced the server cursor.
+	// Separate clients avoid changing retry policy during concurrent writes.
+	clientConfig.DisableRetry = true
+	queryClient, err := newCompatClient(&clientConfig)
+	if err != nil {
+		return nil, err
+	}
+	res, err := client.Info()
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch client info: %w", err)
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return nil, fmt.Errorf("elasticsearch client info: status %d", res.StatusCode)
 	}
 
 	bulk, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
@@ -111,7 +128,7 @@ func NewBackend(cfg *Config) (*Storage, error) {
 		return nil, fmt.Errorf("elasticsearch bulk indexer: %w", err)
 	}
 
-	return &Storage{transport: client, bulk: bulk, index: cfg.Index}, nil
+	return &Storage{transport: client, queryTransport: queryClient, bulk: bulk, index: cfg.Index}, nil
 }
 
 // Close flushes any pending bulk operations and stops the indexer workers.
@@ -333,46 +350,6 @@ func (s *Storage) DeleteByQuery(ctx context.Context, query driver.DeleteQuery) (
 		)
 	}
 	return deleted, nil
-}
-
-func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, error) {
-	body, err := buildSearchRequest(q)
-	if err != nil {
-		return nil, err
-	}
-
-	req := esapi.SearchRequest{Index: []string{s.index}, Body: bytes.NewReader(body)}
-	res, err := req.Do(ctx, s.transport)
-	if err != nil {
-		return nil, fmt.Errorf("elasticsearch backend query %s: %w", s.index, err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode == http.StatusNotFound {
-		return nil, nil
-	}
-	if res.IsError() {
-		return nil, responseError("query documents", s.index, res)
-	}
-
-	var payload essearch.Response
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("elasticsearch backend query %s: decode: %w", s.index, err)
-	}
-	if err := checkSearchStatus(&payload); err != nil {
-		return nil, fmt.Errorf("elasticsearch backend query %s: %w", s.index, err)
-	}
-
-	records := make([]driver.Record, 0, len(payload.Hits.Hits))
-	for i := range payload.Hits.Hits {
-		hit := &payload.Hits.Hits[i]
-		id := ""
-		if hit.Id_ != nil {
-			id = *hit.Id_
-		}
-		records = append(records, driver.Record{ID: id, Data: driver.CloneBytes(hit.Source_)})
-	}
-	return records, nil
 }
 
 func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {

@@ -16,6 +16,11 @@ package golang
 
 import (
 	"debug/elf"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,11 +59,71 @@ func TestBuildSymbolizerStrippedExecutable(t *testing.T) {
 		}
 		var stack [programCounterBytes]byte
 		file.ByteOrder.PutUint64(stack[:], fn.Entry+reader.runtime.loadBias+1)
-		if resolved := symbols.resolveStack(stack[:], file.ByteOrder); len(resolved) != 1 || resolved[0] != "runtime.MemProfile" {
-			t.Fatalf("stripped stack after closing executable = %v", resolved)
+		name, resolved := symbols.resolveStack(stack[:], file.ByteOrder)
+		if name != "runtime.MemProfile" || len(resolved) != 1 ||
+			!strings.HasPrefix(resolved[0], "runtime.MemProfile, ") ||
+			!strings.Contains(resolved[0], "/runtime/mprof.go:") {
+			t.Fatalf("stripped stack after closing executable = %q, %v", name, resolved)
 		}
 	}
 	if symbols, err := reader.buildSymbolizer(t.Context()); symbols != nil || err == nil {
 		t.Fatalf("closed executable construction = %v, %v; want no symbolizer and a read error", symbols, err)
+	}
+}
+
+func TestBuildSymbolizerSourceLocations(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "source, files")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(directory, "main.go")
+	code := `package main
+import "runtime"
+//go:noinline
+func allocate() []byte {
+    return make([]byte, 4096)
+}
+func main() { runtime.KeepAlive(allocate()) }
+`
+	if err := os.WriteFile(source, []byte(code), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"exe", "pie", "stripped"} {
+		t.Run(mode, func(t *testing.T) {
+			executable := filepath.Join(directory, mode)
+			args := []string{"build", "-o", executable}
+			if mode == "pie" {
+				args = append(args, "-buildmode=pie")
+			}
+			if mode == "stripped" {
+				args = append(args, "-ldflags=-s -w")
+			}
+			args = append(args, source)
+			if output, err := exec.CommandContext(t.Context(), "go", args...).CombinedOutput(); err != nil {
+				t.Fatalf("build source-location fixture: %v: %s", err, output)
+			}
+			file, err := elf.Open(executable)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = file.Close() })
+			reader := &processReader{elfFile: file, runtime: &runtimeInfo{loadBias: 0x100000}}
+			symbols, err := reader.buildSymbolizer(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Query the allocation statement, not the function's declaration line.
+			pc, _, err := symbols.table.LineToPC(source, 5)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stack [programCounterBytes]byte
+			file.ByteOrder.PutUint64(stack[:], pc+reader.runtime.loadBias+1)
+			name, frames := symbols.resolveStack(stack[:], file.ByteOrder)
+			wantFrame := fmt.Sprintf("main.allocate, %s:5", source)
+			if name != "main.allocate" || len(frames) != 1 || frames[0] != wantFrame {
+				t.Fatalf("source location = %q, %v; want main.allocate, [%q]", name, frames, wantFrame)
+			}
+		})
 	}
 }

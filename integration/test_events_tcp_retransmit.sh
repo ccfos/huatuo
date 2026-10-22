@@ -52,9 +52,7 @@ tcp_retrans_workload_pid=""
 tcp_retrans_netns_created=false
 
 cleanup() {
-	if [[ -n ${tcp_retrans_workload_pid} ]]; then
-		stop_and_wait_by_pid "${tcp_retrans_workload_pid}" 2 || true
-	fi
+	stop_and_wait_by_pid "${tcp_retrans_workload_pid}" 2 || true
 	huatuo_bamai_stop || true
 	[[ -z ${tcp_retrans_child_pid} ]] || stop_by_pid "${tcp_retrans_child_pid}" 2 || true
 	if [[ ${tcp_retrans_netns_created} == true ]]; then

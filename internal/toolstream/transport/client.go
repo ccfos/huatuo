@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -31,7 +32,7 @@ type Client struct {
 // handshake writes the one-shot ConnectRequest frame. UDS has no handshake;
 // the server reads this frame, parses metadata, and starts dispatching chunks.
 // There is no server ack.
-func (c *Client) handshake(toolName, version, taskID string) error {
+func (c *Client) handshake(serviceName, toolName, version, taskID string) error {
 	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err != nil {
 		return err
@@ -48,6 +49,10 @@ func (c *Client) handshake(toolName, version, taskID string) error {
 		return err
 	}
 
+	if err := connect.SetServiceName(serviceName); err != nil {
+		return err
+	}
+
 	if err := connect.SetToolName(toolName); err != nil {
 		return err
 	}
@@ -60,7 +65,7 @@ func (c *Client) handshake(toolName, version, taskID string) error {
 		return err
 	}
 
-	connect.SetProtoVersion(1)
+	connect.SetProtoVersion(3)
 
 	return c.encoder.Encode(m)
 }
@@ -89,58 +94,81 @@ func (c *Client) writeFrame(setup func(Chunk) error) error {
 	return c.encoder.Encode(m)
 }
 
-// SendChunk sends a single data frame.
-// flush is reserved for future buffered-flush handlers.
-func (c *Client) SendChunk(data []byte, flush bool) error {
-	return c.writeFrame(func(chunk Chunk) error {
-		if len(data) > 0 {
-			if err := chunk.SetData(data); err != nil {
-				return err
-			}
+// SendOptions controls stream termination and acknowledgement.
+type SendOptions struct {
+	End    bool
+	Commit bool
+}
+
+// Send writes one frame. Commit requires End and waits for its acknowledgement.
+// Cancellation closes the connection; callers serialize sends on each client.
+func (c *Client) Send(ctx context.Context, data []byte, opts SendOptions) error {
+	if opts.Commit && !opts.End {
+		return errors.New("toolstream: commit requires end")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Event writers may use a non-cancelable context on every sample.
+	if ctx.Done() != nil {
+		stop := context.AfterFunc(ctx, func() { _ = c.conn.Close() })
+		defer stop()
+	}
+	if err := c.writeFrame(func(chunk Chunk) error {
+		chunk.SetEnd(opts.End)
+		chunk.SetCommit(opts.Commit)
+		if len(data) != 0 {
+			return chunk.SetData(data)
 		}
-
-		chunk.SetFlush(flush)
-
 		return nil
-	})
-}
-
-// SendEnd signals a normal end of stream.
-func (c *Client) SendEnd() error {
-	return c.writeFrame(func(chunk Chunk) error {
-		chunk.SetEnd(true)
-
+	}); err != nil {
+		return fmt.Errorf("send frame: %w", errors.Join(err, ctx.Err()))
+	}
+	if !opts.Commit {
 		return nil
-	})
+	}
+	return c.receiveCommitResult(ctx)
 }
 
-// Close closes the connection; call SendEnd first for a clean shutdown.
-func (c *Client) Close() error {
-	return c.conn.Close()
-}
+// Close releases the connection without sending a protocol frame.
+func (c *Client) Close() error { return c.conn.Close() }
 
-// End sends the end marker and closes the connection.
-func (c *Client) End() error {
-	sendErr := c.SendEnd()
-	if sendErr != nil {
-		sendErr = fmt.Errorf("send end frame: %w", sendErr)
+func (c *Client) receiveCommitResult(ctx context.Context) error {
+	msg, err := capnp.NewDecoder(c.conn).Decode()
+	if err != nil {
+		return fmt.Errorf("receive commit result (outcome unconfirmed): %w", errors.Join(err, ctx.Err()))
 	}
-	closeErr := c.Close()
-	if closeErr != nil {
-		closeErr = fmt.Errorf("close connection: %w", closeErr)
+	defer msg.Release()
+	result, err := ReadRootMessage(msg)
+	if err != nil {
+		return err
 	}
-	return errors.Join(sendErr, closeErr)
+	if result.Which() != Message_Which_result {
+		return errors.New("receive commit result: unexpected frame")
+	}
+	ack, err := result.Result()
+	if err != nil {
+		return err
+	}
+	failure, err := ack.Error()
+	if err != nil {
+		return err
+	}
+	if failure != "" {
+		return fmt.Errorf("remote commit failed: %s", failure)
+	}
+	return nil
 }
 
 // NewClient dials path, sends the handshake, and returns a ready Client.
-func NewClient(path, toolName, version, taskID string) (*Client, error) {
+func NewClient(path, serviceName, toolName, version, taskID string) (*Client, error) {
 	conn, err := DialUDS(path)
 	if err != nil {
 		return nil, err
 	}
 
 	c := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
-	if err := c.handshake(toolName, version, taskID); err != nil {
+	if err := c.handshake(serviceName, toolName, version, taskID); err != nil {
 		// The caller never sees the connection, so it must not leak.
 		_ = conn.Close()
 		return nil, fmt.Errorf("transport: send connect: %w", err)

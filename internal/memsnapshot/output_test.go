@@ -24,8 +24,8 @@ func TestLimitOutputBoundsStringsAndEncodedBytes(t *testing.T) {
 	large := strings.Repeat("x", MaxSnapshotBytes)
 	snapshot := &Snapshot{
 		RuntimeVersion: large,
-		Status:         StatusPartial,
-		Reason:         large,
+		Status:         SnapshotStatusPartial,
+		StatusReason:   large,
 		Entries: []Entry{
 			{Kind: large, Name: large, Stack: []string{large}},
 			{Kind: large, Name: large, Stack: []string{large}},
@@ -41,8 +41,8 @@ func TestLimitOutputBoundsStringsAndEncodedBytes(t *testing.T) {
 	if len(raw) > MaxSnapshotBytes {
 		t.Fatalf("encoded snapshot bytes = %d, want <= %d", len(raw), MaxSnapshotBytes)
 	}
-	if !snapshot.HasOmittedData || len(snapshot.RuntimeVersion) > maxRuntimeVersionBytes ||
-		len(snapshot.Reason) > maxReasonBytes || len(snapshot.Entries[0].Name) > maxEntryNameBytes ||
+	if !snapshot.OutputTruncated || len(snapshot.RuntimeVersion) > maxRuntimeVersionBytes ||
+		len(snapshot.StatusReason) > maxStatusReasonBytes || len(snapshot.Entries[0].Name) > maxEntryNameBytes ||
 		len(snapshot.Entries[0].Stack[0]) > maxStackFrameBytes {
 		t.Fatalf("snapshot was not bounded: %+v", snapshot)
 	}
@@ -58,7 +58,7 @@ func TestLimitOutputDropsEntriesToEncodedLimit(t *testing.T) {
 	for index := range entries {
 		entries[index] = Entry{Name: "entry", Stack: append([]string(nil), stack...)}
 	}
-	snapshot := &Snapshot{Status: StatusComplete, Entries: entries}
+	snapshot := &Snapshot{Status: SnapshotStatusComplete, Entries: entries}
 	if err := LimitOutput(snapshot, MaxMemoryObjectEntries); err != nil {
 		t.Fatal(err)
 	}
@@ -67,15 +67,15 @@ func TestLimitOutputDropsEntriesToEncodedLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(raw) > MaxSnapshotBytes || len(snapshot.Entries) >= MaxMemoryObjectEntries ||
-		!snapshot.HasOmittedData {
+		!snapshot.OutputTruncated {
 		t.Fatalf("bounded snapshot bytes=%d entries=%d truncated=%v",
-			len(raw), len(snapshot.Entries), snapshot.HasOmittedData)
+			len(raw), len(snapshot.Entries), snapshot.OutputTruncated)
 	}
 }
 
-func TestHasOmittedDataJSONCompatibility(t *testing.T) {
+func TestOutputTruncatedJSONCompatibility(t *testing.T) {
 	for _, omitted := range []bool{false, true} {
-		snapshot := Snapshot{Status: StatusComplete, HasOmittedData: omitted}
+		snapshot := Snapshot{Status: SnapshotStatusComplete, OutputTruncated: omitted}
 		raw, err := json.Marshal(snapshot)
 		if err != nil {
 			t.Fatal(err)
@@ -92,7 +92,7 @@ func TestHasOmittedDataJSONCompatibility(t *testing.T) {
 			t.Fatalf("unexpected JSON key migration: %s", raw)
 		}
 		var decoded Snapshot
-		if err := json.Unmarshal(raw, &decoded); err != nil || decoded.HasOmittedData != omitted {
+		if err := json.Unmarshal(raw, &decoded); err != nil || decoded.OutputTruncated != omitted {
 			t.Fatalf("round trip = %+v, %v", decoded, err)
 		}
 	}

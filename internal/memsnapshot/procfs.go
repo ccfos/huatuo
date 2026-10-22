@@ -33,27 +33,27 @@ const (
 	defaultMaxProcMaps = 1 << 18
 )
 
-// ReadProcessInstance reads the process identity from the default procfs mount.
+// ReadProcessInstanceID reads the process identity from the default procfs mount.
 // The raw start-time tick count is preserved, including zero.
-func ReadProcessInstance(pid int) (ProcessInstance, error) {
+func ReadProcessInstanceID(pid int) (ProcessInstanceID, error) {
 	fs, err := procfs.NewDefaultFS()
 	if err != nil {
-		return ProcessInstance{}, fmt.Errorf("open procfs: %w", err)
+		return ProcessInstanceID{}, fmt.Errorf("open procfs: %w", err)
 	}
 	process, err := fs.Proc(pid)
 	if err != nil {
-		return ProcessInstance{}, fmt.Errorf("open process %d: %w", pid, err)
+		return ProcessInstanceID{}, fmt.Errorf("open process %d: %w", pid, err)
 	}
 	stat, err := process.Stat()
 	if err != nil {
-		return ProcessInstance{}, fmt.Errorf("read process %d stat: %w", pid, err)
+		return ProcessInstanceID{}, fmt.Errorf("read process %d stat: %w", pid, err)
 	}
-	return ProcessInstance{TGID: pid, StartTimeTicks: stat.Starttime}, nil
+	return ProcessInstanceID{TGID: pid, StartTimeTicks: stat.Starttime}, nil
 }
 
-// ValidateProcessInstance rejects an invalid identity or a reused PID.
-func ValidateProcessInstance(identity ProcessInstance) error {
-	current, err := ReadProcessInstance(identity.TGID)
+// ValidateProcessInstanceID rejects an invalid identity or a reused PID.
+func ValidateProcessInstanceID(identity ProcessInstanceID) error {
+	current, err := ReadProcessInstanceID(identity.TGID)
 	if err != nil {
 		return err
 	}

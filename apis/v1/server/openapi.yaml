@@ -494,6 +494,7 @@ components:
     Limit:
       name: limit
       in: query
+      description: Maximum items in this page. Must be positive; omission uses the default.
       schema:
         type: integer
         minimum: 1
@@ -502,6 +503,7 @@ components:
     RawProfileLimit:
       name: limit
       in: query
+      description: Maximum raw profiles in this page. Must be positive; omission uses the default.
       schema:
         type: integer
         minimum: 1
