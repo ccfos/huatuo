@@ -402,7 +402,7 @@ main;handleRequest;writeResponse 172
 
 ### 丢样
 
-采集丢样记录在 `profile_data.metrics.dropped_samples` 的 `collection` 分类。队列满会返回错误，不会静默丢弃；`aggregation_queue` 仅用于历史数据兼容。`physical_usage` 遇到明确丢样时失败，其他类型可保留丢样统计。取消不保证导出最终统计，因此空结果或缺少丢样字段不能单独证明没有丢样。
+采集丢样记录在 `profile_data.metrics.dropped_samples` 的 `collection` 分类。用户态队列满时等待聚合消费，处理上下文取消时终止等待，不会静默丢弃；`aggregation_queue` 仅用于历史数据兼容。`physical_usage` 遇到明确丢样时失败，其他类型可保留丢样统计。取消不保证导出最终统计，因此空结果或缺少丢样字段不能单独证明没有丢样。
 
 ## Profiling API
 

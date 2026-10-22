@@ -86,7 +86,7 @@ sudo ./_output/bin/irqtracing \
 
 `profile` 与 profiler 工具使用相同的 `types.ProfilingWindow` 格式。示例为空窗口；有样本的窗口还包含 sample、location 和 function 数据。没有样本时仍返回有效 profile，保留开始时间和实际采集时长。调用栈保留 `source` / `victim` 根及进程、中断向量分组，其后是用户态和带 `_[k]` 后缀的内核态栈帧。指定的目标 CPU 同时写入样本标签。
 
-`dropped_samples.collection` 记录内核采样预算或 counts map 已满导致的丢样总数，当前计数器无法区分两种原因。非零表示 profile 不完整，并在 stderr 输出告警；读取计数器失败会使采集失败。profiler 用户态队列满时返回错误，采集失败；`dropped_samples.aggregation_queue` 仅保留用于兼容历史数据。
+`dropped_samples.collection` 记录内核采样预算或 counts map 已满导致的丢样总数，当前计数器无法区分两种原因。非零表示 profile 不完整，并在 stderr 输出告警；读取计数器失败会使采集失败。profiler 用户态队列满时等待聚合消费，处理上下文取消时终止等待；`dropped_samples.aggregation_queue` 仅保留用于兼容历史数据。
 
 ## 由 huatuo-bamai 调用
 
