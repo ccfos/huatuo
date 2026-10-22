@@ -1,118 +1,73 @@
 ---
-title: Challenges of TCP Retransmission and dropwatch Correlation
+title: Retransmission and Drop Correlation Design
 type: docs
 author: HUATUO Team
 date: 2026-08-21
 weight: 8
 ---
 
-This document describes the evidence boundaries and the implementation of
-local correlation. The two event streams share no common event ID, so
-correlation can only make conservative inferences from the namespace, the
-4-tuple, TCP sequence/ACK evidence, and monotonic time.
+This guide explains the design, evidence limits, state management, and resource lifecycle of local TCP retransmission/drop correlation for developers and maintainers.
+
+The two streams have no shared event ID, so correlation makes conservative inferences from namespaces, four-tuples, TCP sequence/ACK evidence, and monotonic time.
 
 ## 1. Result Semantics
 
 | Result | Meaning |
 | --- | --- |
-| `software` | A host software drop was found that satisfies all strict conditions and has not been consumed yet. |
-| `hardware` | A devlink DROP trap record was found that satisfies the same strict conditions. |
-| `unknown` | No strict match was found, or the matched record's source enumeration is unknown; `correlation_reason` explicitly distinguishes matched from unmatched terminal outcomes. |
+| `software` | An unconsumed host software drop satisfies every strict condition. |
+| `hardware` | A devlink DROP trap record satisfies the same strict conditions. |
+| `unknown` | No strict match, or the matched record has an unknown source enum; `correlation_reason` distinguishes matched and unmatched terminal states. |
 
-A no-match does not prove that the problem is in the network or in hardware.
-The drop may have happened before capture started, in another network
-namespace, or the record may have been delivered without the TCP matching
-fields.
+No match does not prove a network or hardware problem. The drop may predate collection, belong to another network namespace, or arrive without the TCP fields required for matching.
 
-Shutdown processes the waiting entries with a single time snapshot: expired
-entries receive `warmup` or `wait_timeout`, and entries that have not expired
-receive `interrupted`. All of these unmatched results report
-`drop_location=unknown` plus independent diagnostics.
+Shutdown finalizes waits according to whether they have expired; see [Shutdown](#8-shutdown).
 
-## 2. Three Operating Scenarios
+## 2. Operating Modes
 
-1. `tcpshark --bpf-path <tcp_retransmit.o>` only captures and directly outputs
-   retransmissions.
-2. `tcpshark --with-dropwatch --bpf-path-dir <dir>` loads `tcp_retransmit.o`
-   and `net_dropwatch.o` inside one process, which owns both perf inputs, the
-   timer, the output, and shutdown.
-3. The huatuo-bamai standalone dropwatch still runs independently through
-   `cmd/dropwatch`, outputs only raw `DropWatchTracing`, and shares no state
-   with the embedded source.
+See [Retransmission Tracing](/docs/best-practice/tcpshark_en.md) for setup, full parameters, and command examples. The modes below define responsibilities and state ownership.
 
-All three retransmit hooks use the synthetic L3 filter in both modes.
-Correlation mode uses only `EventTracing.TCPRetransmit.Filter`; an empty value
-is normalized to `tcp`, and the same expression is passed to both BPF objects.
-Expressions that depend on Ethernet addresses and cannot run equivalently on
-synthetic L3 input are rejected before startup.
-`EventTracing.Dropwatch.Filter` controls only standalone dropwatch.
+1. Without correlation, tcpshark loads `tcp_retransmit.o` and collects and directly outputs retransmissions only.
+2. With correlation, tcpshark loads `tcp_retransmit.o` and `net_dropwatch.o` in one process, which owns both perf inputs, the timer, output, and shutdown.
+3. huatuo-bamai's standalone dropwatch runs independently through `cmd/dropwatch`, emits only raw `DropWatchTracing`, and shares no state with the embedded source.
 
-Both commands use `HardwareAuto` to auto-detect devlink trap support. When the
-tracepoint is unavailable, they log a warning and continue software capture;
-when it is available, they accept only driver-reported DROP traps.
-`--device` / `--device-excluded` share their names with standalone dropwatch
-and are mutually exclusive; they filter only the embedded source's software and
-hardware records and require `--with-dropwatch`. The retransmit input still
-uses the shared L3 filter.
+All three retransmission hooks use synthetic L3 filters in both modes. Correlation uses only `EventTracing.TCPRetransmit.Filter`: an empty value becomes `tcp`, and the same expression goes to both BPF objects. Expressions depending on Ethernet addresses that cannot be evaluated equivalently on synthetic L3 input are rejected before startup. `EventTracing.Dropwatch.Filter` controls only standalone dropwatch.
 
-Drop source and reason are resolved uniformly by
-`internal/dropwatch.ResolveMetadata`. Software reasons are looked up in a BTF
-table loaded once per session; unknown values are decimal numbers, and kernels
-without support yield `NOT_SUPPORTED`. Hardware reasons and groups come from
-the trap name and the trap group respectively and do not consult the software
-reason table. The reader keeps independent source and reason strings and does
-not borrow the reusable ABI buffer. After a strict match, the output carries
-`drop_source`, `drop_reason`, and `drop_reason_group`; a no-match omits these
-fields and outputs the single correlation terminal reason plus independent
-diagnostics. `drop_location` echoes `drop_source` on a match and is `unknown`
-otherwise; it expresses the correlation classification and differs from the
-standalone dropwatch kernel address. An unknown source is never inferred from a
-reason or a stack. Strict matching cannot be established when a hardware record
-lacks the namespace or TCP matching fields.
+Both commands use `HardwareAuto` to detect devlink trap support. If the tracepoint is unavailable, they warn and continue software collection. If available, they accept only driver-reported DROP traps. `--device` and `--device-excluded` have the same names as in standalone dropwatch, are mutually exclusive, and filter only the embedded source's software and hardware records. They require `--with-dropwatch`. Retransmissions use the shared L3 filter.
 
-## 3. The Two Time Constraints
+`internal/dropwatch.ResolveMetadata` resolves drop sources and reasons. Software reasons come from a BTF table loaded once per session; unknown values are decimal numbers, and unsupported older kernels use `NOT_SUPPORTED`. Hardware reasons and groups come from trap names and groups, not the software table. Readers own source and reason strings independently of reusable ABI buffers.
 
-dropwatch and retransmit use different perf readers, and events can also come
-from different CPUs, so the userspace arrival order does not equal the kernel
-occurrence order:
+Matches output `drop_source`, `drop_reason`, and `drop_reason_group`. Unmatched records omit them and carry one correlation outcome plus separate diagnostics. On a match, `drop_location` uses `drop_source`; otherwise it is `unknown`. This is a correlation classification, unlike standalone dropwatch's kernel address. Unknown sources are not inferred from reasons or stacks. Hardware records missing namespace or TCP match fields cannot match strictly.
+
+## 3. Time Windows
+
+dropwatch and retransmission use separate perf readers, and events may come from different CPUs. User-space arrival order therefore differs from kernel occurrence order:
 
 ```text
-CPU 2: drop       monotonic_ns=180, held back in the dropwatch ring
-CPU 0: retransmit monotonic_ns=200, reaches userspace first
-userspace: retransmit(200) -> drop(180)
+CPU 2: drop       monotonic_ns=180, still in the dropwatch ring
+CPU 0: retransmit monotonic_ns=200, reaches user space first
+User space: retransmit(200) -> drop(180)
 ```
 
-The implementation uses two windows on different dimensions:
+The implementation uses two windows for different purposes:
 
 ```go
 retransmitRetentionDuration = 100 * time.Millisecond
 maxDropToRetransmitAge     = time.Second
 ```
 
-- 100 ms is the userspace out-of-order delivery budget. When a retransmission
-  arrives first, it enters the wait queue; if it is still unmatched when the
-  wait expires, it is reported as `unknown`. Records whose deadline has already
-  passed are finalized before any new event is processed; the timer is only
-  responsible for waking the loop and does not define the deadline semantics.
-- 1s is the causal candidate age, judged with the BPF `kernel_observed_ns`. A
-  candidate must satisfy:
+- 100ms is the user-space delivery reordering budget. A retransmission arriving first enters a waiting queue and outputs `unknown` if still unmatched at expiry. Expired records are finalized before each new event is processed; the timer only wakes the loop and does not define deadline semantics.
+- 1s is the maximum causal candidate age, checked using BPF `kernel_observed_ns`. Candidates must satisfy:
 
 ```text
 drop.kernel_observed_ns <= retransmit.kernel_observed_ns
 retransmit.kernel_observed_ns - drop.kernel_observed_ns <= 1s
 ```
 
-`observed_timestamp` is userspace wall time, affected by scheduling and system
-time adjustments, and does not participate in matching. The fixed 1s is the
-currently supported contract and is not a theoretical bound for all Linux RTOs;
-results outside the window stay `unknown`.
+`observed_timestamp` is user-space wall time, affected by scheduling and clock adjustments, and is not used for matching. The fixed 1s window is the supported scope, not a theoretical upper bound for every Linux RTO. Results outside it remain `unknown`.
 
 ## 4. Bounded State
 
-Waiting retransmissions and not-yet-matched drops share the in-package generic
-store `store[T]`, each holding an independent instance. The container is
-responsible only for capacity, TTL, the flow index, and deletion; strict
-matching and result finalization belong to the correlator.
+Waiting retransmissions and unmatched drops use separate instances of the package-local generic `store[T]`. The container handles capacity, TTL, flow indexing, and deletion; the correlator handles strict matching and finalization.
 
 ```go
 type storeEntry[T any] struct {
@@ -132,148 +87,70 @@ type store[T any] struct {
 }
 ```
 
-| Instance | Stored value | Capacity | TTL |
+| Instance | Stored Value | Capacity | TTL |
 | --- | --- | --- | --- |
-| `retransmitStore` | `waitingRetransmit`, inlined in the entry | 1024 | 100ms |
+| `retransmitStore` | `waitingRetransmit`, inline in the entry | 1024 | 100ms |
 | `dropStore` | `*dropEvent` | 4096 | 1s + 100ms |
 
-`waitingRetransmit` contains only the raw event, the matching fields, and the
-cross-namespace candidate flag; it no longer holds a list node, a deadline, or
-an independent ID. Drops likewise need no extra cache wrapper type. The list's
-`Element.Value` and the flow bucket reference the same `*storeEntry[T]`, and
-the entry's `node` points back to its list element. The entry references the
-flow from the business data, which is never modified, avoiding a duplicate
-address. Deletion unreferences both indexes at once and clears the tail of the
-flow slice; an empty bucket is removed after its last entry is deleted.
+`waitingRetransmit` contains only the raw event, matching fields, and cross-namespace candidate flags. `storeEntry` manages list nodes, deadlines, and insertion sequence; drops use `*dropEvent` directly. The list's `Element.Value` and flow bucket reference the same `*storeEntry[T]`, whose `node` points back to the list element. Entries reference read-only flow data to avoid copying addresses. Deletion removes both index references and clears the flow slice tail; removing the final entry deletes the empty bucket.
 
-The flow index is keyed by the canonical order of the two `AddrPort` values, so
-both directions share one bucket; the original direction is kept in the
-business data for strict matching. The namespace is not part of the index key,
-so similar cross-namespace candidates can still set the diagnostic flag. Match
-scans and slice deletions are O(k), where k is the number of candidates for
-that flow; locating the earliest deadline and unlinking from the list are O(1).
+Flow keys canonically order two `AddrPort` values so both directions share one bucket. Original direction remains in event data for strict matching. Namespace is excluded from the key so similar candidates across namespaces can set diagnostic flags. Matching scans and slice deletion are O(k), where k is the flow's candidate count. Finding the earliest deadline and removing a list node are O(1).
 
-Each instance has a fixed TTL, and the correlation loop passes a monotonically
-non-decreasing processing time, so list insertion order is also deadline order.
-The list serves expiry cleanup and capacity eviction and exposes no FIFO
-consumption interface to business code. When the wait capacity is full, the
-record with the earliest deadline is finalized as `queue_full`; when the drop
-capacity is full, the candidate with the earliest deadline is evicted directly.
-Causal decisions still use `kernel_observed_ns`.
+Each instance has a fixed TTL, and the loop supplies nondecreasing processing time, so insertion order also orders deadlines. The list supports expiry and capacity eviction without exposing a FIFO consumer interface. When the waiting queue is full, the earliest-deadline record is finalized as `queue_full`. A full drop cache simply evicts its earliest-deadline candidate. Causal checks use `kernel_observed_ns`.
 
-The two readers deliver events through unbuffered channels, and the container
-is accessed only by a single correlation loop, with no locks and no separate
-cleanup goroutine. One timer always takes the earliest deadline of the two
-instances, so cleanup happens on schedule even when only the drop cache holds
-data and no retransmission is waiting. On every input and timer wakeup, expired
-entries are cleaned first, then matching and capacity checks run;
-`now >= deadline` means expired. The 100 ms is the matching deadline; blocking
-in synchronous output can still delay actual cleanup and result delivery.
+Two readers deliver events through unbuffered channels. A single correlation loop accesses the stores, with no locks or separate cleanup goroutine. One timer always targets the earliest deadline across both stores, ensuring cleanup even when only cached drops exist. Each input or timer wakeup expires entries before matching and capacity checks; `now >= deadline` means expired. 100ms is the matching deadline, but blocking synchronous output can delay actual cleanup and delivery.
 
 ## 5. Strict Matching
 
-A forward segment candidate requires:
+Forward segment candidates require:
 
-- the same network namespace, address family, and direction 4-tuple;
-- a drop no later than the retransmission, with a time difference of at most 1s;
-- an overlap between the TCP SYN/data/FIN sequence range and the retransmitted
-  range;
-- RST and unsupported retransmission types produce no forward match.
+- The same network namespace, address family, and directional four-tuple.
+- A drop no later than the retransmission, with a difference of at most 1s.
+- Overlapping TCP SYN/data/FIN and retransmission sequence ranges.
+- No positive match for RST or unsupported retransmission types.
 
-A reverse ACK candidate uses the reverse 4-tuple and requires the ACK to cover
-the retransmitted sequence end. SYN and SYN-ACK use their own stricter ACK/SYN
-conditions.
+Reverse ACK candidates use the reverse four-tuple and require an ACK covering the retransmission sequence end. SYN and SYN-ACK apply their own stricter ACK/SYN conditions.
 
-Among multiple drop candidates, the largest `drop.kernel_observed_ns` is
-selected first; on a time tie, the larger insertion sequence number wins. When
-a drop arrives late, it selects the strictly matched retransmission with the
-smallest insertion sequence number while scanning the remaining candidates to
-record each retransmission's namespace-match status. After a strict match, the
-entry is removed from both the deadline and flow indexes immediately and can be
-consumed only once. Forward segment and reverse ACK share the flow index; the
-namespace is checked first, then the packet and time conditions.
+Among drop candidates, choose the greatest `drop.kernel_observed_ns`, breaking ties by larger insertion sequence. When a drop arrives later, choose the strict-matching retransmission with the smallest insertion sequence while scanning remaining candidates to record namespace-match state. A strict match is immediately removed from both deadline and flow indexes and consumed once. Forward segments and reverse ACKs share the flow index; namespace checks precede packet and time checks.
 
-When a drop with the same namespace appears on the same flow, `netNamespace`
-is set to true; the flag is retained even when time or sequence fails the
-strict conditions, and later non-matching candidates do not clear it. A strict
-match always yields true. With no candidates, only other namespaces, or an
-incomparable namespace, the value is false, meaning no match was observed; it
-does not establish that the namespaces differ. The output preserves this
-status through `NetNamespace`; the JSON and text field is
-`matched_net_namespace`, omitted when false.
+A same-namespace drop in the same flow sets `netNamespace` to true even if time or sequence checks fail. Later nonmatching candidates do not clear it. Strict matches always have true. No candidates, only other namespaces, or incomparable namespaces leave false: no match was observed, rather than different namespaces being proven.
 
-## 6. Mutually Exclusive Correlation Outcomes
+`NetNamespace` preserves this state in output. JSON and text use `matched_net_namespace`, omitted when false.
 
-`types.CorrelationReason` is a string type; each correlation outputs exactly
-one `correlation_reason`:
+## 6. Terminal States
 
-| Go constant | JSON value | Meaning |
+`types.CorrelationReason` is a string type. Each correlation outputs one `correlation_reason`:
+
+| Go Constant | JSON Value | Meaning |
 |---------|---------|------|
-| `CorrelationMatched` | `matched` | Strict match succeeded, including drops whose source is unknown. |
-| `CorrelationUnsupported` | `unsupported` | The current rules cannot handle this retransmission; it does not enter the wait queue. |
-| `CorrelationWarmup` | `warmup` | The wait expired without a match, and the retransmission predates source readiness. |
-| `CorrelationWaitTimeout` | `wait_timeout` | The wait expired without a match, and the retransmission occurred at or after source readiness. |
-| `CorrelationQueueFull` | `queue_full` | The retransmission was evicted before expiry because the wait queue was full. |
-| `CorrelationInterrupted` | `interrupted` | The correlation loop exited, and the unexpired wait was interrupted early. |
+| `CorrelationMatched` | `matched` | Strict match, including a drop with an unknown source. |
+| `CorrelationUnsupported` | `unsupported` | Current rules cannot handle this retransmission; it never enters the waiting queue. |
+| `CorrelationWarmup` | `warmup` | Wait expired without a match; retransmission predates source readiness. |
+| `CorrelationWaitTimeout` | `wait_timeout` | Wait expired without a match; retransmission is at or after source readiness. |
+| `CorrelationQueueFull` | `queue_full` | The full waiting queue evicted this retransmission before expiry. |
+| `CorrelationInterrupted` | `interrupted` | The loop exited and interrupted an unexpired wait. |
 
-Each terminal branch assigns `correlationResult.reason` directly. The output
-side uses this enum to classify results and validates that `matched` must carry
-a drop while the other five outcomes must not; empty values, unknown values, or
-contradictory combinations return an error. Correlation-disabled output omits
-the field; once correlation is enabled, every finalized event contains one
-valid terminal outcome. The scalar field replaces the previous reason array;
-tools and receivers migrate in lockstep.
+Each terminal branch assigns `correlationResult.reason` directly. Output uses the enum and validates that `matched` has a drop and the other five states do not. Empty, unknown, or contradictory values return errors. Fields are omitted when correlation is disabled; all finalized events have a valid state when enabled. Upgrade tools and receivers together when migrating from the reason array to the single field.
 
-On wait expiry, the terminal outcome is chosen by the retransmission's kernel
-time: earlier than source readiness yields `warmup`, at or after readiness
-yields `wait_timeout`, including waits under 1s after readiness. The 1s
-drop-to-retransmit limit applies only to candidate matching and plays no part
-in the warmup decision. Userspace processing delay does not change the
-classification. This decision runs only in the expiry branch; strict matches,
-unsupported events, queue evictions, and early interruptions keep their own
-reasons. Warmup neither blocks matching nor ends the wait early.
+At expiry, kernel retransmission time determines the state: `warmup` before source readiness, otherwise `wait_timeout`, including within 1s after readiness. The 1s drop-to-retransmission bound applies only to matching candidates, not warmup. User-space delays do not change classification. Only the expiry branch applies this rule; strict matches, unsupported events, eviction, and interruption retain their own reasons. Warmup neither prevents matches nor ends waits early.
 
-`matched_net_namespace` remains an independent diagnostic flag: a drop with the
-same namespace was observed on the same flow, independent of the packet and
-time conditions; it cannot substitute for `correlation_reason=matched`.
+`matched_net_namespace` independently indicates a same-namespace drop in the same flow, regardless of packet and time conditions. It cannot replace `correlation_reason=matched`.
 
-The flag can coexist with rate limiting and loss counters without changing the
-single terminal outcome. Drops that fail normalization and drop-cache capacity
-evictions do not directly end a retransmission wait and do not produce a
-retransmission-level reason.
+The flag can coexist with loss and rate-limit counters without changing the single terminal state. Unnormalizable drops and drop-cache eviction neither end a retransmission wait directly nor produce retransmission-level reasons.
 
-## 7. Perf Status
+## 7. Sample Loss and Rate Limiting
 
-The status consists of three independent channels; each reports on its own and
-none is summed with another:
+Three independent channels report status separately; do not add them together:
 
-- `perf_lost`: the cumulative per-CPU `bpf_perf_out_dropwatch` map (the common
-  perf output accounting facility `bpf_perf_output.h`); BPF increments it when
-  `bpf_perf_event_output` returns a negative value (for example, when the
-  current CPU has no attached reader).
-- `lost_samples`: the userspace cumulative count of ring buffer overflows
-  reported by `PERF_RECORD_LOST`, visible only while the reader runs, and
-  queryable through ReadStatus once the lost records are processed.
-- `rate_limited`: the `total_missed` value of the rate-limit status map
-  `bpf_rlimit_dropwatch`.
+- `perf_lost`: sum of per-CPU `bpf_perf_out_dropwatch` map counters, using the shared perf-output counter facility `bpf_perf_output.h`. BPF increments by 1 when `bpf_perf_event_output` returns a negative value, for example when no reader is attached on the current CPU.
+- `lost_samples`: ring-buffer overflow counts accumulated from user-space `PERF_RECORD_LOST`, visible only while the reader runs and queryable through ReadStatus after processing the loss record.
+- `rate_limited`: `total_missed` in the `bpf_rlimit_dropwatch` rate-limit status map.
 
-On success, `ReadStatus` sets `HasMapCounters=true`, serialized as
-`map_counters_available=true`. On error the flag is false and `PerfLost` and
-`RateLimited` are zero, meaning unavailable rather than an absence of loss or
-rate limiting; `LostSamples` remains valid and the output keeps that snapshot.
-These values are per-instance cumulative counters, sampled separately by the
-map and the reader, and cannot explain why any individual retransmission failed
-to match.
+Successful `ReadStatus` sets `HasMapCounters=true`, serialized as `map_counters_available=true`. On error, the flag is false and `PerfLost` and `RateLimited` are zero, meaning unavailable rather than no loss or throttling. `LostSamples` remains valid and the snapshot is retained. These are instance-wide cumulative counters; maps and readers are sampled separately and cannot establish why an individual retransmission was unmatched.
 
-Userspace sums perf_lost across all CPUs and returns the current snapshot each
-time; it does not check for counter regressions or uint64 addition overflow.
-This status describes evidence integrity only and never promotes a no-match
-into a deterministic network classification. The old active-epoch, dual-slot,
-inflight, frontier, and drain watermark mechanisms have been removed.
+User space sums `perf_lost` across CPUs and returns the current snapshot without checking counter rollback or uint64 addition overflow. This describes evidence completeness and cannot classify the network fault behind an unmatched event.
 
-The correlation side computes the TCP sequence span from the IPv4 total length
-or the IPv6 payload length. Under GSO/offload the IP header length may not
-cover the whole skb; matching is not widened on that basis today.
+The correlator derives TCP sequence spans from IPv4 total length or IPv6 payload length. With GSO/offload, IP header lengths may not cover the full skb; matching scope is not expanded on that basis.
 
 The dropwatch hot path is:
 
@@ -284,155 +161,95 @@ hardware: device/pcap filter -> status map lookup -> bpf_ktime_get_ns()
           -> rate limit -> perf output
 ```
 
-Consequently, events rejected by the filter pay no status lookup, event-time
-helper, or counter update cost; a software drop first consumes any existing
-hardware dedup marker so rejected kfree paths leave no marker behind.
+Filter-rejected events therefore perform no status lookup, event-time read, or counter update. Software drops first consume any hardware dedup marker so a rejected kfree path does not leave it behind.
 
 ## 8. Shutdown
 
-`tcpshark` uses one `errgroup.WithContext` to manage the retransmit rate-limit
-reader, the retransmit reader, the embedded dropwatch reader, and the
-correlation loop. All command workers share the same `groupCtx`; when any
-worker returns an error the rest are canceled, and `Wait` returns the first
-worker error. Resource close errors are merged by each owner with
-`errors.Join`; shutdown no longer maintains a private error-aggregating group.
+### Session and Resource Ownership
 
-`internal/dropwatch.Tracer` owns the dropwatch object, the readers, and the
-rate-limit alert worker. The instance context derives from `groupCtx`; a
-rate-limit alert failure cancels instance reads, and the concrete error is
-returned by `Close`. `ReadInto` checks close and cancellation causes before
-reading; once the underlying read is entered, the read result is returned
-as-is and is no longer overwritten by a subsequent close or cancellation.
-`ReadStatus` can still read the final counters after the context is canceled.
-`Close` first cancels the instance, detaches, and closes the event and alert
-readers, then waits for the alert worker to exit, and finally releases the
-object; closing the alert reader wakes an idle read, so no polling deadline
-needs to elapse. The status type is `types.DropwatchStatus`, the output field
-is `drop_perf_status`, and it includes the map-counter availability flag.
+The command layer manages process-wide `bpf.Init/Shutdown` and runtime timeouts. `retransmit.Run` creates output before attaching probes and finishes finalization, worker waits, Tracer closure, and output completion before returning. Configuration failure, cancellation, and runtime failure release acquired resources. Global BPF resources close after session cleanup.
 
-On normal completion or worker failure:
+`tcpshark` uses one `errgroup.WithContext` for the retransmission rate-limit reader, retransmission reader, embedded dropwatch reader, and correlation loop. All command workers share `groupCtx`. A worker error cancels the others, and `Wait` returns the first worker error. Resource owners combine close errors with `errors.Join`.
 
-1. Cancel the shared `groupCtx`;
-2. the two `ReadInto` readers and the correlation loop exit;
-3. records still in the dropwatch perf ring that were never handed to the
-   correlator are no longer read;
-4. `drainRetransmits(now)` is called to finalize expired entries with the same
-   time snapshot, then clear the unexpired ones, writing output in deadline
-   order;
-5. after all workers exit, the dropwatch and retransmit Tracers are closed,
-   collecting internal alert-worker and resource-release errors;
-6. finally the socket output is finished; the caller-provided io.Writer is not
-   closed by the session.
+`retransmit.Tracer` and `internal/dropwatch.Tracer` each own their BPF objects, readers, and rate-limit alert workers. Failed `Open` rolls back acquired resources. Callers must still call `Close` after session context cancellation. An alert-worker failure cancels its collector, and `Close` returns the original error.
 
-At shutdown, expired entries report `warmup` or `wait_timeout` and unexpired
-entries report `interrupted`, all retaining `drop_location=unknown`, the
-diagnostic flags, and the perf status. Already matched or already evicted
-events are never finalized twice. Tail drops can still be lost, so a
-retransmission that could have matched may also be ended early.
+### Read and Close Contracts
+
+`ReadInto` checks closure or cancellation before reading. Once a low-level read starts, its result is preserved rather than replaced by later closure or cancellation. `Close` can interrupt reads; callers must serialize `Close` calls on an instance.
+
+`internal/dropwatch.Tracer` also has these constraints:
+
+- Its context derives from `groupCtx`. Each instance allows one `ReadInto` caller; status reads and closure can run concurrently.
+- `ReadStatus` can read final counters after context cancellation. The status type is `types.DropwatchStatus`; output uses `drop_perf_status`, including map-counter availability.
+- `Close` cancels the instance, detaches and closes event and alert readers, waits for the alert worker, then releases the BPF object. Closing the alert reader wakes idle reads without waiting for the polling deadline.
+- The first `Close` returns cleanup errors. Later calls return nil without retrying cleanup or replaying the first error.
+
+### Finalization on Exit
+
+On normal termination or worker failure:
+
+1. Cancel the shared `groupCtx`.
+2. Both `ReadInto` readers and the correlation loop exit. Stop reading dropwatch perf-ring records not yet delivered to the correlator.
+3. Call `drainRetransmits(now)` with one timestamp: finalize expired entries, then clear unexpired entries, writing output in deadline order.
+4. After all workers exit, close both Tracers and collect internal alert-worker and resource-release errors.
+5. Finish socket output last. The session does not close the caller's `io.Writer`.
+
+Expired items output `warmup` or `wait_timeout`; unexpired items output `interrupted`. All retain `drop_location=unknown`, diagnostic flags, and perf status. Matched or evicted events are not finalized again.
+
+Shutdown does not guarantee draining kernel buffers. Trailing drops may be lost, ending otherwise matchable retransmissions early.
 
 ## 9. File Responsibilities
 
 ```text
 cmd/tcpshark/
-├── main.go                         # signals, version, CLI entry point
-├── cli.go                          # argument validation, path and filter normalization
-├── run.go                          # global BPF lifecycle, timeout, feature dispatch
-└── retransmit/                     # retransmit feature package
-    ├── config.go                   # Config, RunConfig
-    ├── run.go                      # Run: resource assembly, execution, and cleanup
-    ├── tracer.go                   # Open, ReadInto, Close, and the rate-limit worker
-    ├── bpf_load.go                 # loadBPF, attachBPF, and probe selection
-    ├── event_reader.go             # dual-stream reading, conversion, and channel delivery
-    ├── correlation_loop.go         # select, timer, and exit finalization
-    ├── correlation.go              # correlation state machine, expiry finalization
-    ├── correlation_match.go        # candidate selection, consumption, and namespace-match status
-    ├── match.go                    # matching types: namespace/flow/sequence/ktime
-    ├── store.go                    # entry storage, flow index, capacity and expiry management
-    ├── event.go                    # conversion of the two ABI record types
-    ├── classify.go                 # retransmission classification
-    ├── correlation_output.go       # status completion, symbolization, correlation output fields
-    └── output.go                   # text, JSON, and socket output
+├── main.go                         # Signals, version, CLI entry
+├── cli.go                          # Argument validation, path and filter normalization
+├── run.go                          # Global BPF lifecycle, timeout, feature dispatch
+└── retransmit/                     # Retransmission feature package
+    ├── config.go                   # Config、RunConfig
+    ├── run.go                      # Run: resource composition, execution, cleanup
+    ├── tracer.go                   # Open, ReadInto, Close, rate-limit worker
+    ├── bpf_load.go                 # loadBPF, attachBPF, probe selection
+    ├── event_reader.go             # Dual-stream reads, conversion, channel delivery
+    ├── correlation_loop.go         # select, timer, exit finalization
+    ├── correlation.go              # Correlation state machine, expiry finalization
+    ├── correlation_match.go        # Candidate selection, consumption, namespace match state
+    ├── match.go                    # Match types, namespace/flow/sequence/ktime
+    ├── store.go                    # Entries, flow index, capacity and expiry management
+    ├── event.go                    # Conversion of both ABI record types
+    ├── classify.go                 # Retransmission classification
+    ├── correlation_output.go       # Status completion, symbol resolution, correlation fields
+    └── output.go                   # Text, JSON, socket output
 ```
 
-The top level runs the retransmit feature through
-`retransmit.Run(ctx, *RunConfig)` and does not touch ABI records, channels, the
-correlation timer, or status counters. The CLI validates scalars and argument
-combinations first, then compile-checks the filter. When a non-empty
-`--output-storage` is set, the `--output` value is not validated; if the latter
-is given explicitly, a note on stderr says it is ignored. Without storage, only
-json or text is accepted. `RunConfig.Tracing` is the capture configuration;
-when Dropwatch is nil, it reads and outputs directly; when non-nil, it uses two
-read workers and a single correlation loop. The correlation capability is a
-composition of the retransmit feature, not a general capture framework.
+The top level invokes `retransmit.Run(ctx, *RunConfig)` without handling ABI records, channels, correlation timers, or status counters.
 
-Run builds the output before attaching probes and, before returning, completes
-waiting for all session workers, final finalization, Tracer closing, and output
-completion. Configuration failures, cancellation, and run failures all release
-the resources already acquired. Draining kernel buffers at close is not
-guaranteed. Plain mode creates no correlation channels or timers.
+The CLI validates scalar values and argument combinations before compiling the filter. A nonempty `--output-storage` skips validation of `--output` and warns on stderr if the latter was explicitly set. Without storage, only json and text are accepted. RunConfig.Tracing defines collection settings. A nil Dropwatch reads and outputs directly; otherwise two read workers and one correlation loop run. Correlation composes the retransmission feature rather than forming a general collection framework.
 
-`retransmit.Tracer` still owns only the retransmit BPF object, the readers, and
-the rate-limit alert worker; event conversion, classification, correlation, and
-output belong to the feature session in the same package and stay out of the
-Tracer. An `Open` failure rolls back every acquired resource; `Close` is still
-required after the session context is canceled. A rate-limit worker failure
-cancels the capture, and the original error is also preserved by `Close`. Once
-reading has started, `ReadInto` keeps the underlying result as-is and no longer
-checks close or cancellation state. `Close` may interrupt a read, but callers
-must serialize `Close` calls. Process-level `bpf.Init/Shutdown` and the run
-timeout are managed centrally at the command layer.
+Ordinary mode creates no correlation channels or timers. The feature session handles conversion, classification, correlation, and output; Tracer owns low-level collection resources. See [Shutdown](#8-shutdown) for lifecycle details.
 
-The correlator uniformly cleans up expired candidates while handling each input
-and timer wakeup; the caches do not repeat expiry checks. The correlator
-returns match evidence, a single terminal outcome, and diagnostic flags, and
-does not modify output fields; correlation_output.go builds the final output in
-one place. Each non-empty output batch reads the dropwatch status once at its
-entry, and empty batches read nothing; symbols are resolved only for matched
-drops. Status is read even when the whole batch is matches; on a read failure
-the batch is still written out and the status error is returned afterwards; if
-the write fails, batch output stops and the write error is merged with the
-status error. Only no-match events carry the status snapshot and diagnostic
-flags; a failed read still keeps valid reader counters, and matched events do
-not carry these fields. Internal retransmission events keep only the ABI record
-and the observedAt from a successful read; the wait queue does not store full
-presentation objects. Matching constructs netip addresses directly from ABI
-addresses and uses the ABI event enums, with no string conversions.
-IPv4-mapped IPv6 is still normalized to IPv4. Single-event reads handle
-lost-record retries and read times in one place; plain mode reuses the event
-and outputs synchronously, while correlation mode reads into a dedicated event
-before sending it, avoiding overwriting data that is still waiting. run.go
-creates the channels and starts the read workers in one place, and the sender
-closes the channels; read functions start no goroutines and use neither
-consumer callbacks nor borrowed-event contracts. TCPRetransmitTracing is
-constructed only at final output; ObservedTimestamp uses the original read
-time, not the correlation end time. The ABI, SYNACK flag completion, and
-matching rules stay unchanged.
+The correlator expires candidates before processing each input or timer; stores do not repeat expiry checks. It returns matching evidence, one terminal state, and diagnostic flags without modifying output fields. `correlation_output.go` constructs final output.
 
-`cmd/tcpshark/retransmit` does not enforce a Go `internal` import restriction;
-the convention is that only tcpshark uses it, and it does not depend back on
-the command layer. The capture implementation shared by the two commands lives
-in:
+Each nonempty output batch reads dropwatch status once at entry; empty batches do not. Only matched drops undergo symbol resolution. Status is read even for an all-matched batch. On read failure, events are still written before returning the status error. Write failure stops the batch and combines both errors. Only unmatched events carry status snapshots and diagnostic flags; valid reader counters survive status-read failure. Matched events do not receive these fields.
+
+Internal retransmission events retain only the ABI record and successful-read observedAt. Waiting queues do not store full display objects. Matching constructs netip addresses directly from ABI data and uses ABI enums without string conversion. IPv4-mapped IPv6 normalizes to IPv4. Single-event reads handle loss retries and read time consistently. Ordinary mode reuses an event with synchronous output; correlation mode reads into independent events before delivery to avoid overwriting pending data.
+
+`run.go` creates channels and starts read workers; senders close channels. Read functions run synchronously and deliver correlation events through channels. Receivers own events independently of the sender's reusable buffer. TCPRetransmitTracing is created only for final output; ObservedTimestamp uses the original read time, not correlation completion time. SYNACK conversion fills TCP flags with SYN and ACK.
+
+`cmd/tcpshark/retransmit` has no Go `internal` import restriction but is reserved by convention for tcpshark and must not depend back on the command layer. The two commands share collection code in:
 
 ```text
 internal/dropwatch/
-├── config.go    # Config, HardwareMode, and configuration validation
-├── tracer.go    # Tracer API, newTracer resource takeover, rollback, and worker lifecycle
-├── load.go      # loadBPF, attachBPF: loading, map/reader preparation, and probe attachment
-├── netdev.go    # device filtering and map configuration
-├── status.go    # ReadStatus: output failures, ring loss, and rate-limit counters
+├── config.go    # Config, HardwareMode, configuration validation
+├── tracer.go    # Tracer API, newTracer ownership, rollback, worker lifecycle
+├── load.go      # loadBPF, attachBPF: loading, map/reader setup, probe attachment
+├── netdev.go    # Device filtering and map configuration
+├── status.go    # ReadStatus: output failures, ring loss, rate-limit counters
 ├── reason.go    # LoadReasonNames: kernel BTF reason table and numeric fallback
 ├── metadata.go  # ResolveMetadata: source, software reason, hardware trap/group
 └── decode.go    # DecodePacket: ABI header adaptation and packet.Parse
 ```
 
-`Open(ctx, *Config)` returns a concrete `*Tracer`. Each instance allows only
-one `ReadInto` caller; status reads and closing may run concurrently, but
-`Close` on the same instance must be serialized by the resource owner. The
-first close returns cleanup errors; later calls return nil, never retry
-cleanup, and never return the first error again. The caller owns global BPF
-initialization and shutdown, and must close the Tracer after the final
-finalization. `DecodePacket` results do not borrow the original record memory.
-Symbolization and the `DropWatchTracing` presentation conversion stay in the
-standalone command; TCP correlation keeps KernelObservedNS, the namespace,
-stack PCs, and the resolved drop source and reason directly from the ABI. No
-general BPF consumption-loop interface is introduced.
+`Open(ctx, *Config)` returns a concrete `*Tracer`; see [Shutdown](#8-shutdown) for read and close contracts. `DecodePacket` results do not borrow raw record memory.
+
+Symbol resolution and `DropWatchTracing` display conversion belong to standalone dropwatch. TCP correlation directly retains ABI KernelObservedNS, namespace, stack PCs, and resolved drop sources and reasons.

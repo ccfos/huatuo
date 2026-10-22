@@ -1,5 +1,5 @@
 ---
-title: huatuo-bamai Configuration
+title: Node Configuration
 type: docs
 description:
 author: HUATUO Team
@@ -9,30 +9,52 @@ weight: 4
 
 ### 1. Overview
 
-`huatuo-bamai` is the core collector of HUATUO (a BPF-based metrics and anomaly inspector). Its configuration file defines the data collection scope, probe enablement strategy, metric output format, anomaly detection rules, and logging behavior.
+`huatuo-bamai.conf` configures huatuo-bamai's collection scope, tracing rules, resource limits, storage, and logging.
 
-The configuration file uses **TOML** format and includes multiple sections such as global blacklist, logging, runtime resource limits, storage configuration, and AutoTracing. Each configuration item comes with detailed comments explaining its purpose, default value, and important notes. This document provides a clear and detailed English explanation for **every configuration item** to help users understand and safely customize the settings.
+This document quotes `huatuo-bamai.conf` from the repository and describes its fields in tables. It distinguishes three kinds of values:
 
-**Note**: Most parameters are provided as commented defaults (prefixed with `#`). Uncomment and adjust as needed. Changes take effect after restarting `huatuo-bamai`. In production, avoid enabling high-overhead features unnecessarily.
+- **Built-in defaults**: Values supplied by the program when a field is omitted. “Default” below refers to these values.
+- **Explicit configuration values**: Uncommented assignments that override built-in defaults when the file is loaded.
+- **Commented examples**: Assignments prefixed with `#`. They are not loaded and may differ from built-in defaults.
 
-### 2. Global Blacklist
+You do not need to uncomment a field to use its built-in default. Restart after editing the configuration file manually. For updates through the Node API, see Section 5.1 for when changes take effect.
 
-```bash
+### 2. Global blacklist
+
+```toml
 # Global tracing and metrics configuration.
+# Default comments describe built-in values used when a field is omitted.
+# Uncommented assignments override those values; commented assignments are
+# inactive examples and may differ from the built-in defaults.
 #
 # - BlackList
 # Global blacklist for tracing and metrics.
+# Default: [] (empty). The list below explicitly disables these modules.
 #
-BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]
+BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
 ```
 
-- **BlackList**: Global blacklist for tracing and metrics.
+| Field | Description |
+| --- | --- |
+| `BlackList` | Array of tracer and metric collector names to disable. The built-in default is `[]`. To enable a module, remove its name, satisfy its dependencies and enablement conditions, and restart to register it. |
 
-  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, and Moore Threads GPU. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, or `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
+The configuration file explicitly disables these modules:
+
+| Blacklist entry | Function |
+| --- | --- |
+| `netdev_hw` | Network interface hardware statistics |
+| `netdev_qdisc` | Queue statistics |
+| `net_conntrack` | Connection tracking statistics |
+| `metax_gpu` | Metax GPU metrics |
+| `ascend_npu` | Ascend NPU metrics |
+| `diskio` | Disk I/O metrics |
+| `tcp_retransmit` | TCP retransmission tracing |
+| `mthreads_gpu` | Moore Threads GPU metrics |
+| `mthreads_xid` | Moore Threads GPU XID events |
 
 ### 3. Logging
 
-```bash
+```toml
 # Log Configuration
 [Log]
     # - Level
@@ -48,21 +70,16 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
     # File = ""
 ```
 
-- **Level**: Log verbosity. Values: Debug, Info, Warn, Error, Panic. Default: Info. Use Info or Warn in production; Debug for troubleshooting.
+| Field | Description |
+| --- | --- |
+| `Level` | Log level. Default: `Info`. Options: `Debug`, `Info`, `Warn`, `Error`, and `Panic`. Use `Info` or `Warn` in production; `Debug` produces more output and is intended for troubleshooting. |
+| `File` | Log file path. Default: `""`, which disables file output. Set this field to write logs to a file. |
 
-- **File**: Log file path.
+### 4. Resource limits
 
-  Specifies the path to the log file. If left empty, logs are not written to any file (output goes to stdout or system logs).
+Huatuo does not create its own cgroup by default. These settings take effect only when `--enable-cgroup` is explicitly supplied. Kubernetes and systemd deployments should use their respective resource controls.
 
-  Default: empty.
-
-  **Description**: In containerized deployments, configure a specific path and integrate with a log collection system for persistence.
-
-### 4. Runtime Resource Limits
-
-Huatuo does not create its own cgroup by default. This section applies only when `--enable-cgroup` is passed; Kubernetes and systemd deployments should use their native resource controls.
-
-```bash
+```toml
 # Runtime limits for the huatuo-bamai process.
 [Runtime]
     # - StartupCPULimitCores
@@ -82,15 +99,15 @@ Huatuo does not create its own cgroup by default. This section applies only when
     # MemoryLimitMiB = 2048
 ```
 
-- **StartupCPULimitCores** limits CPU usage during initialization. Default:
-  `0.5` cores.
-- **CPULimitCores** limits CPU usage after startup. Default: `2.0` cores.
-- **MemoryLimitMiB** limits process memory. Default: `2048` MiB.
+| Field | Description |
+| --- | --- |
+| `StartupCPULimitCores` | CPU limit during initialization. Default: `0.5` cores. |
+| `CPULimitCores` | CPU limit after startup. Default: `2.0` cores. |
+| `MemoryLimitMiB` | Process memory limit. Default: `2048` MiB. |
 
-The configured values remain in their documented units. Memory is converted
-to bytes only when the cgroup limit is applied.
+### 5. HTTP service
 
-### 5. HTTP Server and On-demand Operations
+The HTTP service provides configuration updates, on-demand operation management, and event subscriptions.
 
 ```toml
 # HTTP server configuration.
@@ -108,62 +125,31 @@ to bytes only when the cgroup limit is applied.
     # - EventStreamKeepAliveIntervalSeconds
     # Interval in seconds at which the server sends an SSE comment ping to each
     # connected client. The ping keeps the connection alive through load
-    # balancers and proxies that would otherwise time out idle connections. If
-    # writing the ping fails three consecutive times, the server closes the
-    # connection.
+    # balancers and proxies that would otherwise time out idle connections.
     # Default: 30
     #
     # ListenAddress = ":19704"
     # MaxEventStreamClients = 100
     # EventStreamKeepAliveIntervalSeconds = 30
 
-[HTTPServer.Auth]
-    # Required service credential used by huatuo-apiserver.
-    BearerToken = "REPLACE_WITH_RANDOM_HEX"
-
-# Shared lifecycle policy for Profiling and Tracing operations.
-[Operations]
-    # MaxConcurrent = 10
-    # LaunchTimeoutSeconds = 10
-    # StopGracePeriodSeconds = 5
-    # FinalizationTimeoutSeconds = 30
-    # TerminalRetentionPeriodSeconds = 600
-
-# Node-local profiler execution settings.
-[Profiling]
-    # AggregationIntervalSeconds = 10
-    # MaxConcurrentProcesses = 10
-    # CommandOutputLimitBytes = 65536
-    # ToolDir = "/opt/huatuo/tools"
-
+    [HTTPServer.Auth]
+        # Shared service credential used by huatuo-apiserver.
+        # Default: "" (invalid). Replace the placeholder before starting.
+        BearerToken = "REPLACE_WITH_RANDOM_HEX"
 ```
 
-- **ListenAddress** uses `host:port` form. An empty host listens on all
-  interfaces.
-- **HTTPServer.Auth.BearerToken** is required and must match the independent
-  Node credential configured for huatuo-apiserver. Replace the example value
-  before deployment.
-- **Operations.MaxConcurrent** is one process-wide limit shared by Profiling
-  and Tracing. New operations are rejected instead of queued when it is full.
-- The four operation time settings independently limit process launch,
-  graceful stop, result finalization, and terminal-state retention.
-- **Profiling.ToolDir** is the shared external tool root, passed unchanged as
-  profiler `--tool-path`. Java requires `bin/asprof` and
-  `lib/libasyncProfiler.so` beneath this root; Python requires
-  `py-spy`. Only the requested language's tools are checked. Native profiling
-  does not require this setting. Unsupported node environments reject the request
-  without creating an operation.
+| Field | Description |
+| --- | --- |
+| `ListenAddress` | Listen address in `host:port` format. Default: `":19704"`. An empty host listens on all interfaces. |
+| `MaxEventStreamClients` | Maximum concurrent connections to `POST /v1/events/watch`. Default: `100`; must be a positive integer. New connections receive HTTP 429 when the limit is reached. |
+| `EventStreamKeepAliveIntervalSeconds` | SSE comment heartbeat interval in seconds. Default: `30`; must be a positive integer. Set it below the upstream proxy's idle timeout. |
+| `Auth.BearerToken` | Service authentication credential. The built-in default is `""`; a nonempty value without whitespace is required. It must match the Node credential configured in huatuo-apiserver. Replace the placeholder before deployment. |
 
-The generated Node API exposes its contract at `GET /openapi.json`. Profiling
-and Tracing Start, Get, and Stop routes, `POST /v1/events/watch`, and
-`PUT /v1/config` require the service bearer token. `/readyz`, metrics, version,
-and the OpenAPI document remain public.
+Configuration updates, Operations, and event subscriptions require `Authorization: Bearer <token>`. `/readyz`, metrics, version information, and `GET /openapi.json` remain public. Retrieve the complete API definition through `GET /openapi.json`.
 
-#### 5.1 Update Configuration through the Node API
+#### 5.1 Update configuration through the API
 
-`PUT /v1/config` accepts one non-empty `config` object. Keys use the same
-dot-separated paths as the TOML structure, while values retain their JSON
-types:
+`PUT /v1/config` accepts a nonempty `config` object. Keys use dot-separated paths matching the TOML structure; values retain their JSON types:
 
 ```bash
 curl -i -X PUT 'http://127.0.0.1:19704/v1/config' \
@@ -178,34 +164,76 @@ curl -i -X PUT 'http://127.0.0.1:19704/v1/config' \
   }'
 ```
 
-A successful update returns `204 No Content`. The Node Agent validates the
-complete candidate configuration, atomically replaces the configuration file,
-and only then publishes the new in-memory snapshot. Validation or persistence
-failure leaves the current snapshot unchanged. Unknown keys, invalid value
-types, and empty update objects return `400 Bad Request`.
+A successful update returns `204 No Content`. The Node Agent validates the complete configuration, atomically replaces the configuration file, and then updates the in-memory configuration. If validation or persistence fails, it continues using the previous configuration.
+Unknown keys, invalid value types, and empty update objects return `400 Bad Request`.
 
-Components that read configuration dynamically can observe the new snapshot
-without a restart. Settings consumed during startup, including the HTTP
-listener and authentication, storage initialization, and cgroup setup, are
-persisted but take effect only after restarting `huatuo-bamai`.
+Components that read configuration dynamically can use the new values without restarting. Settings read only at startup, such as HTTP listening and authentication, storage initialization, and cgroup settings, are written to the file but take effect only after restarting `huatuo-bamai`.
 
-The event stream settings control `POST /v1/events/watch`. When
-`MaxEventStreamClients` is reached, new streams receive HTTP 429.
-`EventStreamKeepAliveIntervalSeconds` controls SSE heartbeat comments used to
-keep proxy and load-balancer connections alive. After three consecutive write
-failures, the server closes the stream. Set the interval below any upstream
-idle timeout; 15–60 seconds is typical.
+#### 5.2 On-demand task management (Operations)
 
-### 6. Storage
+`Operations` provides shared management for Profiling and Tracing on a node, including concurrency limits, launch, stop, finalization, and terminal record retention. On-demand Tracing currently has no executor: new start requests that pass parameter validation return `501` without creating an operation.
 
-#### 6.1 Elasticsearch and OpenSearch Storage
+```toml
+# Shared lifecycle policy for on-demand operations.
+[Operations]
+    # MaxConcurrent = 10
+    # LaunchTimeoutSeconds = 10
+    # StopGracePeriodSeconds = 5
+    # FinalizationTimeoutSeconds = 30
+    # TerminalRetentionPeriodSeconds = 600
+```
 
-```bash
+| Field | Description |
+| --- | --- |
+| `MaxConcurrent` | Limit on unfinished operations, shared by Profiling and Tracing. Default: `10`; must be a positive integer. New operations are rejected rather than queued when the limit is reached. |
+| `LaunchTimeoutSeconds` | Operation executor launch timeout in seconds. Default: `10`; must be a positive integer. |
+| `StopGracePeriodSeconds` | Wait deadline when stopping an operation, in seconds. Default: `5`; must be a positive integer. |
+| `FinalizationTimeoutSeconds` | Executor finalization timeout in seconds. Default: `30`; must be a positive integer. |
+| `TerminalRetentionPeriodSeconds` | Time to retain an operation's terminal record in node memory after completion, in seconds. Default: `600`; must be a positive integer. The record is no longer available through the operation API after it expires. |
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /v1/operations` | Create an operation. Returns `202` for a new operation, `200` for an existing idempotent operation, or `429` when the concurrency limit is reached. |
+| `GET /v1/operations/{request_id}` | Query operation status. Returns `404` if the record does not exist or has expired. |
+| `POST /v1/operations/{request_id}/stop` | Request an operation to stop. Returns `202` when the stop request is accepted, or `200` if the operation is already stopping or terminal. |
+
+Start requests select `profiling` or `tracing` through `kind` and specify the execution duration through `duration_seconds`. The launch, stop, and finalization timeouts apply to their respective stages; they do not replace the execution duration.
+
+#### 5.3 Profiling
+
+Start profiling through `POST /v1/operations`. Provide `request_id`, `duration_seconds`, and `scope`; set `kind = "profiling"`; and include `type`, `language`, and `mode` in `spec`. Container scope also requires `container_id`. Use the shared operation endpoints in Section 5.2 to query or stop the operation.
+
+```toml
+# Node-local on-demand profiling settings.
+[Profiling]
+    # AggregationIntervalSeconds = 10
+    # MaxConcurrentProcesses = 10
+    # CommandOutputLimitBytes = 65536
+    # Java uses bin/asprof and lib/libasyncProfiler.so; Python uses py-spy.
+    # ToolDir defaults to ""; the path below is an example.
+    # ToolDir = "/opt/huatuo/tools"
+```
+
+| Field | Description |
+| --- | --- |
+| `AggregationIntervalSeconds` | Sample aggregation interval in seconds. Default: `10`; must be a positive integer. The effective interval does not exceed the request duration. Python uses the entire request duration as its aggregation window. |
+| `MaxConcurrentProcesses` | Maximum concurrent profiling subprocesses within one profiler execution. Default: `10`; must be a nonnegative integer. `0` means unlimited. Total operation concurrency remains subject to `Operations.MaxConcurrent`. |
+| `CommandOutputLimitBytes` | Maximum profiler stdout bytes retained by the Node. Default: `65536`; must be a positive integer. When exceeded, the most recent output is retained for error diagnostics. This setting does not limit profiling result size. |
+| `ToolDir` | Root directory for external profiling tools. The built-in default is `""`; `/opt/huatuo/tools` is an inactive commented example. Passed to the profiler's `--tool-path`. |
+
+Java uses `bin/asprof` and `lib/libasyncProfiler.so` under `ToolDir`; Python uses `py-spy`. Native profiling does not require these external tools. Only tools required by the requested language are checked. Missing tools cause the request to be rejected without creating an operation.
+
+`Operations` and `Profiling` settings are read at service startup. Changes made through the API require restarting `huatuo-bamai` to take effect.
+
+### 6. Data storage
+
+#### 6.1 Elasticsearch/OpenSearch
+
+```toml
 # Storage configuration
 [Storage]
     # Elasticsearch and OpenSearch Storage
     #
-    # Disable ES/OS storage if one of Address, Username, Password is empty.
     # Store the tracing and events data of linux kernel to ES/OS.
     #
     # - Address
@@ -214,6 +242,9 @@ idle timeout; 15–60 seconds is typical.
     # http://127.0.0.1:9200
     # https://127.0.0.1:9200
     #
+    # Address, Username, and Password must be either all empty (disabled) or
+    # all configured (enabled). Partial connection settings are invalid.
+    #
     # - Index
     # Elasticsearch or OpenSearch index, a logical namespace that holds a collection of
     # documents for huatuo-bamai.
@@ -221,8 +252,7 @@ idle timeout; 15–60 seconds is typical.
     #
     # - Username
     # - Password
-    # Address, Username, and Password must be either all empty (disabled) or
-    # all configured (enabled). Partial connection settings are invalid.
+    # There are no default connection credentials.
     #
     [Storage.Elasticsearch]
         # Address = "http://127.0.0.1:9200"
@@ -231,38 +261,16 @@ idle timeout; 15–60 seconds is typical.
         # Password = "REPLACE_WITH_PASSWORD"
 ```
 
-- **Address**: ElasticSearch/OpenSearch service address.
+| Field | Description |
+| --- | --- |
+| `Address` | Elasticsearch/OpenSearch service address, supporting HTTP/HTTPS. Empty by default. This backend is disabled when `Address`, `Username`, and `Password` are all empty. To enable it, configure all three; a partial configuration prevents startup. |
+| `Index` | Index for tracing and event data. Default: `huatuo_bamai`. |
+| `Username` | Basic Auth username. Empty by default. |
+| `Password` | Basic Auth password. Empty by default. Use a strong password and enable HTTPS in production. |
 
-  No default value.
+#### 6.2 Local files
 
-  **Description**: Used to store kernel tracing and event data. ES/OS storage
-  is disabled when Address, Username, and Password are all empty. All three
-  values are required when storage is enabled; a partial configuration
-  prevents startup.
-
-- **Index**: Index name.
-
-  Default: huatuo_bamai.
-
-  **Description**: Logical namespace for organizing huatuo-bamai tracing and event documents.
-
-- **Username**: Authentication username.
-
-  No default value.
-
-  **Description**: Used for Basic Auth.
-
-- **Password**: Authentication password.
-
-  No default value.
-
-  **Description**: Used together with the username. In production, use a strong password and enable TLS encryption.
-
-**Overall**: ES/OS storage persists kernel tracing and event data for later search and analysis.
-
-#### 6.2 Local File Storage
-
-```bash
+```toml
 # LocalFile Storage
 #
 # Store data to local directory for troubleshooting on the host machine.
@@ -272,9 +280,9 @@ idle timeout; 15–60 seconds is typical.
 # Default: "huatuo-local"
 #
 # - RotationSizeMiB
-# The maximum size in Megabytes of a record file before it gets rotated
-# per kernel tracer.
-# Default: 100MB
+# The maximum size in MiB of a record file before it gets rotated
+# for per linux kernel tracer.
+# Default: 100 MiB
 #
 # - MaxRotatedFiles
 # The maximum number of old log files to retain for per tracer.
@@ -286,177 +294,172 @@ idle timeout; 15–60 seconds is typical.
     # MaxRotatedFiles = 10
 ```
 
-- **Path**: Local data storage directory.
+| Field | Description |
+| --- | --- |
+| `Path` | Local data directory. Default: `huatuo-local`. An empty string disables local file storage. Use an absolute path when enabled. |
+| `RotationSizeMiB` | Rotation size for each tracer's record file, in MiB. Default: `100`. |
+| `MaxRotatedFiles` | Maximum historical files retained per tracer. Default: `10`. The oldest files are deleted when this limit is exceeded. |
 
-  Default: huatuo-local. If empty, local file storage is disabled.
+### 7. Automatic tracing
 
-  **Description**: Stores data locally on the host for on-site troubleshooting. Use an absolute path.
+Automatic tracing triggers performance collection based on resource usage and configured thresholds.
 
-- **RotationSizeMiB**: Single file rotation size.
+`AutoTracing.CPUIdle.Tool` and `AutoTracing.CPUSys.Tool` independently accept `perf` or `profiler`, defaulting to `perf`. Empty strings and other values are invalid. Updates affect the next collection; running collections retain their selected tool.
 
-  Maximum size of a record file before rotation (per tracer).
+- `perf`: preserves inline event `flamedata`; visualization does not require huatuo-apiserver.
+- `profiler`: uses native CPU on-CPU collection, stores profiles separately in Elasticsearch, and displays them through the huatuo-apiserver Pyroscope-compatible interface. Enable bamai Elasticsearch storage and do not use `--disable-storage`. Events retain trigger metrics with `flamedata: null`.
 
-  Default: 100 MB.
+Both tools use `RunTracingToolTimeout` as the collection duration in seconds. Failures do not switch tools.
 
-  **Description**: Prevents any single file from growing too large and consuming excessive disk space.
+To view profiler results, open the Continuous Profiling host or container dashboard for the target. Set Task ID to the event `tracer_id`, set `type` to `process_cpu:cpu:nanoseconds:cpu:nanoseconds`, and select a time range covering collection. See [View the Flame Graph](/docs/best-practice/continuous-profiling_en.md#5-view-the-flame-graph) for dashboard access and interactions.
 
-- **MaxRotatedFiles**: Maximum number of rotated files to retain.
+#### 7.1 Container CPU spikes
 
-  Default: 10.
-
-  **Description**: Oldest files are automatically deleted once the limit is reached, controlling disk usage.
-
-### 7. Automatic Tracing
-
-The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.
-
-#### 7.1 CPUIdle Automatic Tracing — Sudden High CPU Usage in Containers
-
-```bash
-# Autotracing configuration 
-[AutoTracing]
-    # cpuidle
-    #
-    # For sudden high CPU usage in containers.
-    #
-    # - UserThreshold
-    # User CPU usage threshold, when cpu usage reaches this threshold, cpu
-    # performance tracing will be triggered.
-    # Default: 75%
-    #
-    # - SysThreshold
-    # System CPU usage threshold, when reaching this threshold, cpu performance
-    # tracing will be triggered.
-    # Default: 45%
-    #
-    # - UsageThreshold
-    # The total cpu usage (system + user cpu usage) threshold, when reaching
-    # this threshold, cpu performance tracing will be triggered.
-    # Default: 45%
-    #
-    # - DeltaUserThreshold
-    # The range of this user cpu changes within a short period of time.
-    # Default: 45%
-    #
-    # - DeltaSysThreshold
-    # The range of this system cpu changes within a short period of time.
-    # Default: 20%
-    #
-    # - DeltaUsageThreshold
-    # The range of this cpu usage changes within a short period of time.
-    # Default: 55%
-    #
-    # - Interval
-    # The sample interval of the cpu usage for all containers.
-    # Default: 10s
-    #
-    # - IntervalTracing
-    # Time since last run. Avoid frequently executing this tracing to prevent
-    # performance impact.
-    # Default: 1800s
-    #
-    # - RunTracingToolTimeout
-    # Execution timeout of this tracing tool (seconds).
-    # Default: 10s
-    # 
-# NOTE:
-# Profiling triggers when:
-# 1. UserThreshold AND DeltaUserThreshold are exceeded, or
-# 2. SysThreshold AND DeltaSysThreshold are exceeded, or
-# 3. UsageThreshold AND DeltaUsageThreshold are exceeded
-    #
-    [AutoTracing.CPUIdle]
-        # UserThreshold = 75
-        # SysThreshold = 45
-        # UsageThreshold = 90
-        # DeltaUserThreshold = 45
-        # DeltaSysThreshold = 20
-        # DeltaUsageThreshold = 55
-        # Interval = 10
-        # IntervalTracing = 1800
-        # RunTracingToolTimeout = 10
-```
-
-- **UserThreshold**: User-mode CPU usage threshold (%).
-
-  Default: 75%.
-
-- **SysThreshold**: System-mode CPU usage threshold (%).
-
-  Default: 45%.
-
-- **UsageThreshold**: Total CPU usage threshold (%).
-
-  Default: 90% (as shown in comments).
-
-- **DeltaUserThreshold**: Short-term user CPU change threshold (%).
-
-  Default: 45%.
-
-- **DeltaSysThreshold**: Short-term system CPU change threshold (%).
-
-  Default: 20%.
-
-- **DeltaUsageThreshold**: Short-term total CPU change threshold (%).
-
-  Default: 55%.
-
-- **Interval**: CPU usage sampling interval (seconds).
-
-  Default: 10s.
-
-- **IntervalTracing**: Minimum interval between runs (seconds).
-
-  Default: 1800s (30 minutes).
-
-- **RunTracingToolTimeout**: Single tracing execution timeout (seconds).
-
-  Default: 10s.
-
-**Trigger Logic**: Tracing runs when any of the following is true:
-
-1. Both UserThreshold and DeltaUserThreshold are met, or
-2. Both SysThreshold and DeltaSysThreshold are met, or
-3. Both UsageThreshold and DeltaUsageThreshold are met.
-
-**Filter Container Filtering**: Use Included/Excluded rule arrays to control monitoring scope.
-
-```bash
-    # Each rule contains Field (filter field) and Pattern (regex).
-    # Field: container_host_namespace | container_hostname | container_qos
-    #
-    # [[AutoTracing.CPUIdle.Filter.Excluded]]
-    #     Field = "container_qos"
-    #     Pattern = "besteffort"
-    # [[AutoTracing.CPUIdle.Filter.Included]]
-    #     Field = "container_host_namespace"
-    #     Pattern = "^application-"
-```
-
-- **Filter**: Container filtering rules. Defined using `[[double-bracket]]` syntax with multiple rules, each containing `Field` (filter field) and `Pattern` (regex). Filtering logic:
-
-  - No rules: monitor all containers
-  - `Excluded` only: blacklist, skip matched containers
-  - `Included` only: whitelist, only monitor matched containers
-  - Both: must match Included AND not match Excluded
-
-  Default: no rules, all containers monitored.
-
-#### 7.2 CPUSys Automatic Tracing — Sudden High System CPU on Host
-
-```bash
-# cpusys
+```toml
+# cpuidle
 #
-# For sudden high system cpu usage on the host machine.
+# For a high cpu usage all of a sudden in containers.
+#
+# - UserThreshold
+# User CPU usage must exceed this threshold and its increase must exceed
+# DeltaUserThreshold.
+# Default: 75%
 #
 # - SysThreshold
-# System CPU usage threshold, when reaching this threshold, cpu performance
-# tracing will be triggered.
+# System CPU usage must exceed this threshold and its increase must exceed
+# DeltaSysThreshold.
+# Default: 45%
+#
+# - UsageThreshold
+# Total CPU usage (system + user) must exceed this threshold and
+# its increase must exceed DeltaUsageThreshold.
+# Default: 90%
+#
+# - DeltaUserThreshold
+# User CPU usage increase from the previous sample, in percentage points.
+# Default: 45 percentage points
+#
+# - DeltaSysThreshold
+# System CPU usage increase from the previous sample, in percentage points.
+# Default: 20 percentage points
+#
+# - DeltaUsageThreshold
+# Total CPU usage increase from the previous sample, in percentage points.
+# Default: 55 percentage points
+#
+# - Interval
+# The sample interval of the cpu usage for all containers.
+# Default: 10s
+#
+# - IntervalTracing
+# Time since last run. Avoid frequently executing this tracing to prevent
+# damage to the system.
+# Default: 1800s
+#
+# - RunTracingToolTimeout
+# The executing time of this tracing program.
+# Default: 10s
+#
+# NOTE:
+# Running this performance tool, when:
+# 1. UserThreshold and DeltaUserThreshold are true, or
+# 2. SysThreshold and DeltaSysThreshold are true, or
+# 3. UsageThreshold and DeltaUsageThreshold
+#
+[AutoTracing.CPUIdle]
+    # Tool: perf (default) or profiler. Both use RunTracingToolTimeout.
+    # Tool = "perf"
+    # UserThreshold = 75
+    # SysThreshold = 45
+    # UsageThreshold = 90
+    # DeltaUserThreshold = 45
+    # DeltaSysThreshold = 20
+    # DeltaUsageThreshold = 55
+    # Interval = 10
+    # IntervalTracing = 1800
+    # RunTracingToolTimeout = 10
+```
+
+| Field | Description |
+| --- | --- |
+| `UserThreshold` | User-mode CPU utilization threshold. Default: `75%`. |
+| `SysThreshold` | System-mode CPU utilization threshold. Default: `45%`. |
+| `UsageThreshold` | Total CPU utilization threshold. Default: `90%`. |
+| `DeltaUserThreshold` | User-mode CPU utilization increase over the previous sample. Default: `45` percentage points. |
+| `DeltaSysThreshold` | System-mode CPU utilization increase over the previous sample. Default: `20` percentage points. |
+| `DeltaUsageThreshold` | Total CPU utilization increase over the previous sample. Default: `55` percentage points. |
+| `Interval` | Container CPU utilization sampling interval in seconds. Default: `10`. |
+| `IntervalTracing` | Minimum interval between automatic traces, in seconds. Default: `1800` (30 minutes). |
+| `RunTracingToolTimeout` | Collection duration in seconds. Default: `10`. |
+
+**Trigger conditions**: Once the tracing interval has elapsed, a container becomes a tracing candidate if both utilization and its increase strictly exceed the corresponding thresholds in any one of these pairs:
+
+- `UserThreshold` and `DeltaUserThreshold`;
+- `SysThreshold` and `DeltaSysThreshold`;
+- `UsageThreshold` and `DeltaUsageThreshold`.
+
+**Container filtering**: Use the `Included` and `Excluded` rule arrays to control the monitoring scope.
+
+```toml
+# CPUIdle-specific filtering rules (array form, supports multiple rules)
+# Use [[double-bracket]] syntax to define each rule entry.
+#
+# Supported fields:
+# - container_host_namespace: namespace label of the container
+# - container_hostname: hostname of the container
+# - container_qos: qos level (guaranteed, burstable, besteffort)
+#
+# Pattern uses regex matching.
+#
+# Logic:
+# - No rules: all containers are monitored
+# - Excluded only: blacklist, matched containers are skipped
+# - Included only: whitelist, only matched containers are monitored
+# - Both: containers must match Included AND not match Excluded
+#
+# Examples:
+# # Blacklist: ignore besteffort containers
+# [[AutoTracing.CPUIdle.Filter.Excluded]]
+#     Field = "container_qos"
+#     Pattern = "besteffort"
+#
+# # Whitelist: only monitor application namespaces
+# [[AutoTracing.CPUIdle.Filter.Included]]
+#     Field = "container_host_namespace"
+#     Pattern = "^application-"
+#
+# # Combine: monitor application namespaces except kube-system
+# [[AutoTracing.CPUIdle.Filter.Included]]
+#     Field = "container_host_namespace"
+#     Pattern = ".*"
+# [[AutoTracing.CPUIdle.Filter.Excluded]]
+#     Field = "container_host_namespace"
+#     Pattern = "^kube-system$"
+```
+
+| Field | Description |
+| --- | --- |
+| `Filter` | Container filtering rules. No rules are configured by default, so all containers are monitored. Define rules using TOML arrays of tables (`[[...]]`), each containing a target field `Field` and a regular expression `Pattern`. |
+
+- `Excluded` only: Exclude matching containers.
+- `Included` only: Monitor only matching containers.
+- Both: Monitor containers that match `Included` and do not match `Excluded`.
+
+#### 7.2 Host system CPU spikes
+
+```toml
+# cpusys
+#
+# For a high system cpu usage all of a sudden on host machine.
+#
+# - SysThreshold
+# System CPU usage must exceed this threshold and its increase must exceed
+# DeltaSysThreshold.
 # Default: 45%
 #
 # - DeltaSysThreshold
-# The range of system cpu changes within a short period of time.
-# Default: 20%
+# System CPU usage increase from the previous sample, in percentage points.
+# Default: 20 percentage points
 #
 # - Interval
 # The sample interval of the cpu usage for host machine.
@@ -467,50 +470,45 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 # Default: 1800s
 #
 # - RunTracingToolTimeout
-# Execution timeout of this tracing tool (seconds).
+# The executing time of this tracing program.
 # Default: 10s
 #
 # NOTE:
-# Profiling triggers when:
-# SysThreshold AND DeltaSysThreshold are exceeded.
+# Running this performance tool, when:
+# SysThreshold and DeltaSysThreshold are true.
 #
 [AutoTracing.CPUSys]
-	# SysThreshold = 45
-	# DeltaSysThreshold = 20
-	# Interval = 10
-	# IntervalTracing = 1800
-	# RunTracingToolTimeout = 10
+    # Tool: perf (default) or profiler. Both use RunTracingToolTimeout.
+    # Tool = "perf"
+    # SysThreshold = 45
+    # DeltaSysThreshold = 20
+    # Interval = 10
+    # IntervalTracing = 1800
+    # RunTracingToolTimeout = 10
 ```
 
-- **SysThreshold**: System CPU usage threshold (%).
+| Field | Description |
+| --- | --- |
+| `SysThreshold` | Host system-mode CPU utilization threshold. Default: `45%`. |
+| `DeltaSysThreshold` | System-mode CPU utilization increase over the previous sample. Default: `20` percentage points. |
+| `Interval` | Host CPU utilization sampling interval in seconds. Default: `10`. |
+| `IntervalTracing` | Minimum interval between traces, in seconds. Default: `1800`. |
+| `RunTracingToolTimeout` | Collection duration in seconds. Default: `10`. |
 
-  Default: 45%.
+**Trigger conditions**: Once the tracing interval has elapsed, tracing starts when system-mode CPU utilization strictly exceeds `SysThreshold` and its increase strictly exceeds `DeltaSysThreshold`.
 
-- **DeltaSysThreshold**: Short-term system CPU change threshold (%).
+#### 7.3 Container D-state load
 
-  Default: 20%.
+This tracer requires the cgroup v1 load statistics interface and is skipped on cgroup v2.
 
-- **Interval**: Host CPU usage sampling interval (seconds).
-
-  Default: 10s.
-
-- **IntervalTracing**: Minimum time between profiling runs. Default: 1800s.
-
-- **RunTracingToolTimeout**: Tracing execution timeout (seconds).
-
-  Default: 10s.
-
-**Trigger Logic**: Tracing is triggered when both SysThreshold and DeltaSysThreshold are satisfied.
-
-#### 7.3 Dload AutoTracing — D-State Task Profiling for Containers
-
-```bash
+```toml
 # dload
 #
 # linux tasks D state profiling for containers.
 #
 # - ThresholdLoad
-# Load average threshold. When exceeded, D-state profiling triggers.
+# D-state load average threshold for each container. Profiling is triggered
+# when D-state load exceeds this value and IntervalTracing has elapsed.
 # Default: 5
 #
 # - Interval
@@ -519,54 +517,57 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 #
 # - IntervalTracing
 # Time since last run. Avoid frequently executing this tracing to prevent
-# performance impact.
+# damage to the system.
 # Default: 1800s
 #
+# - EnableDebug
+# Bypass ThresholdLoad and IntervalTracing; include task stacks regardless
+# of task state. For debugging only.
+# Default: false
+#
 [AutoTracing.Dload]
-	# ThresholdLoad = 5
-	# Interval = 10
-	# IntervalTracing = 1800
+    # ThresholdLoad = 5
+    # Interval = 10
+    # IntervalTracing = 1800
+    # EnableDebug = false
 ```
 
-- **ThresholdLoad**: System load average (loadavg) threshold for containers.
+| Field | Description |
+| --- | --- |
+| `ThresholdLoad` | Load average threshold for container tasks in D state (uninterruptible sleep). Default: `5`. Tracing starts when D-state load strictly exceeds this value and `IntervalTracing` has elapsed. The decision does not use total load, which includes runnable tasks. |
+| `Interval` | Container load sampling interval in seconds. Default: `10`. |
+| `IntervalTracing` | Minimum interval between automatic traces, in seconds. Default: `1800` (30 minutes). |
+| `EnableDebug` | Debug switch. Default: `false`. Bypasses load threshold and minimum tracing interval checks and attempts to collect stacks for tasks in all states in the container and on the host. May increase overhead; use only for debugging. |
 
-  Default: 5. Triggers D-state (uninterruptible sleep) task profiling when loadavg reaches this value.
+#### 7.4 Container I/O performance
 
-- **Interval**: Monitoring interval.
-
-  Default: 10s.
-
-- **IntervalTracing**: Minimum time between consecutive tracings.
-
-  Default: 1800s (30 minutes).
-
-#### 7.4 IOTracing AutoTracing — Container IO Performance Profiling
-
-```bash
+```toml
 # iotracing
 #
 # io profiling for containers.
 #
 # - WbpsThreshold
-# Max write bytes per second threshold. When exceeded, iotracing is triggered.
-# For NVMe devices, UtilThreshold must also be met.
-# Default: 1500 MB/s
+# NVMe write throughput threshold in MiB/s. Both throughput and utilization
+# must exceed their thresholds for two consecutive samples.
+# Default: 1500 MiB/s
 #
 # - RbpsThreshold
-# Max read bytes per second threshold. When exceeded, iotracing is triggered.
-# For NVMe devices, UtilThreshold must also be met.
-# Default: 2000 MB/s
+# NVMe read throughput threshold in MiB/s. Both throughput and utilization
+# must exceed their thresholds for two consecutive samples.
+# Default: 2000 MiB/s
 #
 # - UtilThreshold
-# Disk utilization (%). Consistently above 80-90% indicates a bottleneck.
+# Disk busy time percentage. Two consecutive samples must exceed this value.
+# NVMe devices also require RbpsThreshold or WbpsThreshold to be exceeded.
 # Default: 90%
 #
 # - AwaitThreshold
-# Await (Average IO wait time in ms): High values indicate slow disk response times.
+# Average read or write IO wait time in ms. Two consecutive samples exceeding
+# this threshold trigger tracing independently of utilization and throughput.
 # Default: 100ms
 #
 # - RunTracingToolTimeout
-# Execution timeout of this tracing tool (seconds).
+# The executing time of this tracing tool.
 # Default: 10s
 #
 # - MaxProcDump
@@ -578,122 +579,90 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 # Default: 5
 #
 [AutoTracing.IOTracing]
-	# WbpsThreshold = 1500
-	# RbpsThreshold = 2000
-	# UtilThreshold = 90
-	# AwaitThreshold = 100
-	# RunTracingToolTimeout = 10
-	# MaxProcDump = 10
-	# MaxFilesPerProcDump = 5
+    # WbpsThreshold = 1500
+    # RbpsThreshold = 2000
+    # UtilThreshold = 90
+    # AwaitThreshold = 100
+    # RunTracingToolTimeout = 10
+    # MaxProcDump = 10
+    # MaxFilesPerProcDump = 5
 ```
 
-- **WbpsThreshold**: Max write bytes per second threshold (MB/s).
+| Field | Description |
+| --- | --- |
+| `WbpsThreshold` | NVMe write throughput threshold in MiB/s. Default: `1500`. Write throughput and disk utilization must both exceed their thresholds for two consecutive samples. |
+| `RbpsThreshold` | NVMe read throughput threshold in MiB/s. Default: `2000`. Read throughput and disk utilization must both exceed their thresholds for two consecutive samples. |
+| `UtilThreshold` | Disk busy-time percentage threshold. Default: `90`. Non-NVMe devices trigger tracing after two consecutive samples exceed it; NVMe devices must also meet the read or write throughput condition. |
+| `AwaitThreshold` | Average read or write I/O wait time threshold in ms. Default: `100`. Read wait or write wait exceeding this threshold for two consecutive samples triggers tracing independently of utilization and throughput. |
+| `RunTracingToolTimeout` | I/O tracing tool execution timeout in seconds. Default: `10`. |
+| `MaxProcDump` | Maximum processes shown in I/O tracing results. Default: `10`. |
+| `MaxFilesPerProcDump` | Maximum files shown per process. Default: `5`. |
 
-  Default: 1500. (For NVMe, must also meet UtilThreshold.)
+#### 7.5 Host anonymous memory spikes
 
-- **RbpsThreshold**: Max read bytes per second threshold (MB/s).
+This module detects host anonymous memory spikes, records process information ranked by RSS, and attempts runtime memory snapshots. Anonymous memory is the sum of `Active(anon)` and `Inactive(anon)` in `/proc/meminfo`. Once the history window is full, both the growth ratio and the share of total memory must reach their thresholds, and the tracing interval must have elapsed, before a report is emitted.
 
-  Default: 2000.
-
-- **UtilThreshold**: Disk utilization threshold (%).
-
-  Default: 90%.
-
-- **AwaitThreshold**: Average IO wait time threshold (ms).
-
-  Default: 100ms.
-
-- **RunIOTracingTimeout**: IO tracing tool timeout (seconds).
-
-  Default: 10s.
-
-- **MaxProcDump**: Maximum number of processes to display.
-
-  Default: 10.
-
-- **MaxFilesPerProcDump**: Maximum files per process to display.
-
-  Default: 5.
-
-**Description**: Used for diagnosing IO hotspots in containers, especially under high disk load.
-
-#### 7.5 MemoryBurst AutoTracing
-
-This module detects sudden memory usage spikes on the host and automatically captures kernel context to help diagnose memory pressure events.
-
-```bash
+```toml
 # memory burst
 #
-# Capture kernel context on sudden host memory usage spikes.
+# Detect host anonymous-memory bursts and capture snapshots of top RSS processes.
 #
 # - Interval
-# Memory usage sampling interval (seconds).
+# The sample interval of Active(anon) + Inactive(anon) from /proc/meminfo.
 # Default: 10s
 #
 # - DeltaMemoryBurst
-# Growth percentage threshold for memory usage. 100% means, e.g.,
-# memory usage increased from 200MB to 400MB.
+# Anonymous-memory growth relative to the oldest sample in the full history
+# window. 100% means doubling, e.g., from 200 MiB to 400 MiB.
 # Default: 100%
 #
 # - DeltaAnonThreshold
-# Growth percentage threshold for anonymous memory. 100% means, e.g.,
-# anon memory increased from 200MB to 400MB.
+# Active(anon) + Inactive(anon) as a percentage of host MemTotal.
+# Both this threshold and DeltaMemoryBurst must be reached to report a burst.
 # Default: 70%
 #
 # - IntervalTracing
 # Time since last run. Avoid frequently executing this tracing
-# to prevent performance impact.
+# to prevent damage to the system.
 # Default: 1800s
 #
 # - DumpProcessMaxNum
-# Number of processes to dump when triggered.
+# Maximum RSS-ranked processes retained in the event.
+# Runtime snapshots follow this ranking, capped at 3 processes.
 # Default: 10
 #
 [AutoTracing.MemoryBurst]
-	# DeltaMemoryBurst = 100
-	# DeltaAnonThreshold = 70
-	# Interval = 10
-	# IntervalTracing = 1800
-	# SlidingWindowLength = 60
-	# DumpProcessMaxNum = 10
+    # DeltaMemoryBurst = 100
+    # DeltaAnonThreshold = 70
+    # Interval = 10
+    # IntervalTracing = 1800
+    # DumpProcessMaxNum = 10
 ```
 
-- **DeltaMemoryBurst**: Memory usage burst growth percentage threshold.
+| Field | Description |
+| --- | --- |
+| `DeltaMemoryBurst` | Anonymous memory growth threshold relative to the oldest sample in the history window. Default: `100%`, meaning at least a doubling, for example from 200 MiB to 400 MiB. |
+| `DeltaAnonThreshold` | Anonymous memory as a percentage of host `MemTotal`. Default: `70%`; range: `0–100`. This is a share of total memory, not a growth ratio. |
+| `Interval` | Host anonymous memory sampling interval in seconds. Default: `10`. |
+| `IntervalTracing` | Minimum interval between memory burst traces, in seconds. Default: `1800` (30 minutes). |
+| `DumpProcessMaxNum` | Maximum processes retained in descending RSS order. Default: `10`. Runtime snapshots are attempted for the first `min(DumpProcessMaxNum, 3)` processes; values above `3` only increase the ranking size. |
 
-  Default: 100%.
+For snapshot support, capture budgets, and output truncation, see [Automatic Tracing Fields](/docs/reference/autotracing_en.md#host-anonymous-memory).
 
-- **DeltaAnonThreshold**: Anonymous memory burst growth percentage threshold.
+#### 7.6 Container memory threshold snapshots
 
-  Default: 70%.
-
-- **Interval**: Memory usage sampling interval (seconds).
-
-  Default: 10s.
-
-- **IntervalTracing**: Minimum interval between runs (seconds).
-
-  Default: 1800s.
-
-- **SlidingWindowLength**: Sliding window length (seconds).
-
-  Default: 60s.
-
-- **DumpProcessMaxNum**: Maximum processes to dump on trigger.
-
-  Default: 10.
-
-#### 7.6 Memory Threshold Runtime Snapshots
-
-`memory_threshold_snapshot` is enabled by default. Add it to the global `BlackList`
-and restart huatuo-bamai to disable it.
-This feature attempts a Go, HotSpot, or CPython snapshot
-after a container memory-pressure notification; completion before OOM is not
-guaranteed. Candidates are ranked by an approximate kernel OOM score.
-
-The persisted `victim_pid`, `victim_process_name`, and `victim_oom_score_adj`
-fields describe the process selected for snapshot capture.
+Attempts to capture a Go, HotSpot, or CPython runtime snapshot when container memory meets the trigger conditions. Enabled by default; add `memory_threshold_snapshot` to the global `BlackList` and restart the `huatuo-bamai` service to disable it. Runtime support is experimental and requires validation on the target version. Capture is not guaranteed to finish before OOM.
 
 ```toml
+# Capture Go/Java/Python snapshots under container memory pressure.
+# Add memory_threshold_snapshot to the global BlackList and restart to disable it.
+# v1 uses a usage threshold; v2 checks usage after native high/max events.
+# Registration and hard-limit changes also trigger a usage check.
+# memory.high is never changed; v2 cannot notify at arbitrary percentages.
+# IntervalTracing is the node-wide minimum interval in seconds after each
+# successful or failed capture attempt.
+# RunTracingToolTimeout is the capture timeout in seconds for all runtimes.
+# Timeouts cannot interrupt synchronous syscalls; capture may delay shutdown.
 [AutoTracing.MemoryThresholdSnapshot]
     # ThresholdPercent = 90
     # IntervalTracing = 300
@@ -701,98 +670,83 @@ fields describe the process selected for snapshot capture.
     # MaxMemoryObjectEntries = 10
 ```
 
-Commented values are defaults.
+| Field | Description |
+| --- | --- |
+| `ThresholdPercent` | Container memory usage as a percentage of its limit. Default: `90`; range: `1–100`. Trigger behavior depends on the cgroup version, as described below. |
+| `IntervalTracing` | Node-wide minimum interval after a successful or failed capture attempt finishes, in seconds. Default: `300`; must be positive. |
+| `RunTracingToolTimeout` | Runtime capture timeout in seconds. Default: `2`; must be positive. Cancellation is cooperative, excludes runtime identification and storage time, and cannot interrupt synchronous system calls. It is not an upper bound on the entire operation. |
+| `MaxMemoryObjectEntries` | Maximum ranked memory object entries retained per snapshot. Default: `10`; range: `1–100`. Final JSON output is limited to 512 KiB and is trimmed if it exceeds this limit. |
 
-| Parameter | Meaning |
-|-----------|---------|
-| ThresholdPercent | Required memory usage-to-limit percentage, from 1 to 100 |
-| IntervalTracing | Node-wide minimum interval after a successful or failed capture attempt, in seconds; defaults to 300 and must be positive |
-| RunTracingToolTimeout | Cooperative capture timeout shared by Go, Java, and Python, in seconds; defaults to 2 and must be positive |
-| MaxMemoryObjectEntries | Maximum number of ranked memory object entries in a snapshot, from 1 to 100; defaults to 10; final JSON is trimmed to at most 512 KiB |
+**Trigger conditions**: cgroup v1 registers a memory threshold corresponding to the configured percentage. cgroup v2 checks the current usage-to-limit ratio after `high` or `max` events; it does not set `memory.high` and cannot guarantee notification at exactly the configured percentage. Both versions check usage at registration and when the hard limit changes.
 
-Runtime detection and persistence are not included in the capture budget.
-Runtime detection has no separate timeout. Timeouts cannot interrupt synchronous reads
-already executing, so they do not bound the total operation time.
+**Requirements**: Linux, memory cgroups, an enabled Pod manager, kubelet metadata, host PID/procfs/cgroup views, kernel BTF, and permission to use BPF and access target process memory. `--procfs-prefix` does not redirect process memory reads for snapshots.
 
-**Trigger conditions:**
+Monitoring covers running regular containers and restartable init sidecars. Each container requires its own memory cgroup. Up to 4096 containers can be monitored. Registration failures and invalidated watches are not retried automatically; check the logs, fix the cause, and restart the `huatuo-bamai` service.
 
-- **Cgroup v1**: Registers the memory threshold corresponding to
-  `ThresholdPercent` through `cgroup.event_control`.
-- **Cgroup v2**: Watches increases in the `high` or `max` counters of
-  `memory.events.local` (falling back to `memory.events` when absent), then
-  checks `memory.current / memory.max` against the configured percentage.
-  This feature does not set `memory.high`. When it is `max`, the hard-limit
-  `max` counter can still trigger a check. This is a late notification and
-  does not guarantee detection at the configured percentage or before OOM.
+#### 7.7 Interrupt utilization anomalies
 
-Both versions check usage once after registration and when the hard limit
-changes. One watcher manages all targets without periodic sampling. Repeated
-notifications for a target are coalesced; they do not count every crossing or
-report recovery below the threshold. Capture rechecks current usage and identity.
+This module detects per-CPU irq+softirq utilization anomalies and invokes `irqtracing` to collect softirq source and victim call stacks. IRQ results use profiling storage, which requires Elasticsearch. An operation succeeds only after its window is queryable and its publication marker is saved. LocalFile alone cannot store these results.
 
-This feature requires the pod manager. It actively maintains the container view
-from shared CSS lifecycle hints and supplies an initial view followed by events
-with instance generations, init PIDs, and memory cgroup paths. The snapshot module
-no longer scans the cgroup tree. Subscription overflow recovers from a complete
-pod view; synchronization failure suspends capture and never implies deletion.
-
-Running ordinary containers and restartable init sidecars are monitored;
-ephemeral debug containers and ordinary init containers are excluded. Ordinary
-registration errors and target capacity exhaustion are logged and the directory
-instance is skipped. Invalidated registrations are removed without automatic
-retries or backfilling. Repeated events, full views, and container generation changes
-do not restore a failed watch. A replacement directory, a new tracking lifetime
-after the previous container departs, or a huatuo-bamai restart allows a new attempt.
-Fatal errors such as host resource exhaustion still stop the current watcher.
-Each monitored container must have its own memory cgroup directory. A watch
-and its capture observations bind directly to one container instance. If registration
-returns a watch already owned by another container, the feature stops, cancels capture,
-and releases its watches. Correct the cgroup isolation and restart huatuo-bamai;
-the feature does not retry this conflict. Directory replacement invalidates the old
-registration through the watcher's removal notification.
-Before capture and saving, the feature verifies the container generation and live
-binding, directory identity, and selected process identity and cgroup membership.
-Recorded memory usage and limits belong to that container's cgroup.
-
-See section 14 for deployment limitations and output lookup.
-
-#### 7.7 IRQTracing AutoTracing
-
-This module detects abnormal irq+softirq utilization on one CPU and invokes
-`irqtracing` to collect softirq source and victim stacks.
-
-```bash
+```toml
+# irqtracing
+#
+# Detect per-cpu irq+softirq utilization spikes. When enough cpus rise at
+# the same time (see Rules), an eBPF program is attached for
+# RunTracingToolTimeout seconds to capture the softirq source/victim stacks
+# and a flame graph.
+#
+# - Interval
+# The sample interval of /proc/stat per-cpu irq+softirq utilization.
+# Default: 2s
+#
+# - RunTracingToolTimeout
+# The executing time of this tracing program.
+# Default: 3s
+#
+# - IntervalTracing
+# Time since last run. Avoid frequently executing this tracing to prevent
+# damage to the system.
+# Default: 300s
+#
+# - MaxEventsPerSecond
+# Maximum source and victim stack samples collected per second on the
+# traced CPU. The budget is divided between softirq raise and entry probes.
+# Default: 1000
+#
+# - Rules
+# Trigger conditions. Evaluated in order; the first match wins.
+#
+# Spike rule: fires when >= MinCPUs cpus simultaneously rise by >=
+# DeltaUsageThreshold percentage points and >= RelativeIncreaseThreshold%
+# relative to the previous sample.
+#
+# Sustained rule: fires when a single CPU's irq+softirq util stays >=
+# UsageThreshold for SustainedIntervals consecutive samples.
+#
 [AutoTracing.IRQTracing]
-    Interval = 2
-    RunTracingToolTimeout = 3
-    IntervalTracing = 300
-    MaxEventsPerSecond = 1000
-    MinCPUs = 3
-    DeltaUsageThreshold = 20
-    RelativeIncreaseThreshold = 30
-    SustainedIntervals = 10
-    UsageThreshold = 80
+    # Interval = 2
+    # RunTracingToolTimeout = 3
+    # IntervalTracing = 300
+    # MaxEventsPerSecond = 1000
+    # MinCPUs = 3
+    # DeltaUsageThreshold = 20
+    # RelativeIncreaseThreshold = 30
+    # SustainedIntervals = 10
+    # UsageThreshold = 80
 ```
 
-- **Interval**: Sampling interval for per-CPU irq+softirq utilization from
-  `/proc/stat`. Default: 2s.
-- **RunTracingToolTimeout**: Duration of one `irqtracing` collection. Default:
-  3s.
-- **IntervalTracing**: Minimum interval between triggers. Default: 300s.
-- **MaxEventsPerSecond**: Combined source and victim stack-sample limit per
-  second on the traced CPU. Default: 1000. The daemon divides it as evenly as
-  possible between `softirq_raise` and `softirq_entry`; the default is 500
-  events/s per stream. The value must be between 2 and 8589934590.
-- **MinCPUs**, **DeltaUsageThreshold**, and **RelativeIncreaseThreshold**:
-  Configure the multi-CPU irq+softirq spike rule. The two thresholds are the
-  increase in percentage points and the increase relative to the previous
-  sample, respectively.
-- **SustainedIntervals** and **UsageThreshold**: Configure the consecutive
-  sample count and utilization threshold for the single-CPU sustained rule.
+| Field | Description |
+| --- | --- |
+| `Interval` | Per-CPU irq+softirq utilization sampling interval in seconds, using `/proc/stat`. Default: `2`. |
+| `RunTracingToolTimeout` | Duration of one `irqtracing` capture in seconds. Default: `3`. |
+| `IntervalTracing` | Minimum interval between triggers, in seconds. Default: `300`. |
+| `MaxEventsPerSecond` | Combined limit on source and victim stack samples per second across the traced CPUs. Default: `1000`; range: `2–8589934590`. The quota is divided as evenly as possible between `softirq_raise` and `softirq_entry`, with `500` samples per second each by default. |
+| `MinCPUs`, `DeltaUsageThreshold`, and `RelativeIncreaseThreshold` | Control the rule for irq+softirq utilization spikes across multiple CPUs. The thresholds specify the increase in percentage points and the percentage increase relative to the previous sample. |
+| `SustainedIntervals` and `UsageThreshold` | Set the consecutive sample count and utilization threshold for sustained high irq+softirq utilization on a single CPU. |
 
-#### 7.8 Known Issue Filtering (IssuesList)
+#### 7.8 Known issue labeling
 
-```bash
+```toml
 # Autotracing configuration.
 #
 # - IssuesList
@@ -802,43 +756,37 @@ This module detects abnormal irq+softirq utilization on one CPU and invokes
     IssuesList = []
 ```
 
-- **IssuesList**: Known issue filter. Format: `[["name", "regex"], ...]`. When a collected stack trace matches the regex, it is labeled with the issue name. Default `[]`.
+| Field | Description |
+| --- | --- |
+| `IssuesList` | Known issue filter in the form `[["issue name", "regex"], ...]`. Matching captured stacks are labeled with the corresponding issue name. Default: `[]`. Currently used by dload tracing. Example: `IssuesList = [["known_issue1", "softlockup"], ["known_issue2", "alloc_pages.*failed"]]`. |
 
-  Example: `IssuesList = [["known_issue1", "softlockup"], ["known_issue2", "alloc_pages.*failed"]]`
+### 8. Event tracing
 
-**Note**: Only supports `dload` tracing of known issues filtering, other events are not supported.
+This section configures collection conditions for scheduling, memory reclaim, network, and hardware events.
 
-### 8. Event Tracing
+#### 8.1 Scheduler tick intervals
 
-This section captures key kernel events and latency, including scheduler tick intervals, memory reclaim, network receive latency, network device events, and packet drops. It is the core module for kernel-level anomaly context collection in HUATUO.
-
-#### 8.1 Scheduler Tick Interval Tracing
-
-```bash
-# linux kernel events capturing configuration
-[EventTracing]
-	# scheduler tick
-	#
-	# Trace long scheduler tick intervals.
-	#
-	# - IntervalThreshold
-	# When the scheduler tick interval reaches the threshold, huatuo-bamai
-	# will collect kernel context.
-	# Default: 10000000 in nanoseconds, 10ms
-	#
-	[EventTracing.SchedTick]
-		# IntervalThreshold = 10000000
+```toml
+# scheduler tick interval
+#
+# Trace long scheduler tick intervals.
+#
+# - IntervalThreshold
+# When the scheduler tick interval reaches the threshold, huatuo-bamai
+# will collect kernel context.
+# Default: 10000000 in nanoseconds, 10ms
+#
+[EventTracing.SchedTick]
+    # IntervalThreshold = 10000000
 ```
 
-- **IntervalThreshold**: Scheduler tick interval threshold, in nanoseconds.
+| Field | Description |
+| --- | --- |
+| `IntervalThreshold` | Scheduler tick interval threshold in nanoseconds. Default: `10000000` (10 ms). An event is collected when the threshold is reached. An unusually long tick interval can indicate a CPU stall, but does not by itself prove that softirqs were disabled. |
 
-  Default: 10,000,000 ns (10ms).
+#### 8.2 Memory reclaim blocking
 
-  **Description**: The event infers CPU stalls from long scheduler tick intervals. It does not by itself prove that softirqs were disabled.
-
-#### 8.2 Memory Reclaim Blocking Tracing
-
-```bash
+```toml
 # memreclaim
 #
 # The memory reclaim may block the process, if one process is blocked
@@ -849,18 +797,16 @@ This section captures key kernel events and latency, including scheduler tick in
 # Default: 900000000ns, 900ms
 #
 [EventTracing.MemoryReclaim]
-	# BlockedThreshold = 900000000
+    # BlockedThreshold = 900000000
 ```
 
-- **BlockedThreshold**: Memory reclaim blocking time threshold (nanoseconds).
+| Field | Description |
+| --- | --- |
+| `BlockedThreshold` | Memory reclaim blocking threshold in nanoseconds. Default: `900000000` (900 ms). An event is reported with context when a process is blocked by memory reclaim for longer than this threshold. |
 
-  Default: 900,000,000 ns (900ms). When a process is blocked by memory reclaim for longer than this time, an event is reported to userspace with context.
+#### 8.3 Network receive latency
 
-  **Description**: Memory reclaim blocking is a common cause of process stalls, especially in memory-constrained cloud-native environments.
-
-#### 8.3 Network Receive Latency Tracing
-
-```bash
+```toml
 # networking rx latency
 #
 # linux net stack rx latency for every tcp skbs.
@@ -878,128 +824,102 @@ This section captures key kernel events and latency, including scheduler tick in
 # Default: 115ms
 #
 # - ExcludedContainerQos
-# Blacklist: skip containers whose qos level matches.
+# Blacklist: skip containers whose qos level matches any entry in this list.
 # Values: "guaranteed", "burstable", "besteffort" (case-insensitive).
 # Default: [].
 #
 # - ExcludedHostNetnamespace
-# Exclude packets in the host network namespace.
+# Don't care the skbs, packets in the host net namespace.
 # Default: true
 #
 [EventTracing.NetRxLatency]
-	# Driver2NetRx = 5
-	# Driver2TCP = 10
-	# Driver2Userspace = 115
-	# ExcludedContainerQos = []
-	ExcludedContainerQos = ["besteffort"]
-	# ExcludedHostNetnamespace = true
+    # Driver2NetRx = 5
+    # Driver2TCP = 10
+    # Driver2Userspace = 115
+    # ExcludedContainerQos = []
+    ExcludedContainerQos = ["besteffort"]
+    # ExcludedHostNetnamespace = true
 ```
 
-- **Driver2NetRx**: Latency threshold from driver to network receive layer (e.g., netif_receive_skb).
+| Field | Description |
+| --- | --- |
+| `Driver2NetRx` | Latency threshold from the driver to network-layer reception, in milliseconds. Default: `5`, for example the latency to `netif_receive_skb`. |
+| `Driver2TCP` | Latency threshold from the driver to TCP stack reception, in milliseconds. Default: `10`, for example the latency to `tcp_v4_rcv`. |
+| `Driver2Userspace` | Latency threshold from the driver to the userspace data copy, in milliseconds. Default: `115`, for example the latency to `skb_copy_datagram_iovec`. |
+| `ExcludedContainerQos` | Container QoS classes to exclude. The built-in default is `[]`; the configuration file explicitly sets `["besteffort"]`. Supports `guaranteed`, `burstable`, and `besteffort`, case-insensitively. |
+| `ExcludedHostNetnamespace` | Whether to exclude packet latency in the host network namespace. Default: `true`. |
 
-  Default: 5ms.
-
-- **Driver2TCP**: Latency threshold from driver to TCP receive (e.g., tcp_v4_rcv).
-
-  Default: 10ms.
-
-- **Driver2Userspace**: Latency threshold from driver to userspace data copy (e.g., skb_copy_datagram_iovec).
-
-  Default: 115ms.
-
-- **ExcludedContainerQos**: Container QoS levels to exclude (blacklist).
-
-  Default: []. Corresponds to Kubernetes Pod QoS levels (Guaranteed, Burstable, BestEffort).
-
-- **ExcludedHostNetnamespace**: Whether to exclude packets in the host network namespace.
-
-  Default: true.
-
-#### 8.4 Network Device Event Monitoring
-
-```bash
-# netdev events
-#
-# Monitor network device events.
-#
-# - DeviceList
-# The net devices we monitor.
-# Default: [] (empty, meaning no devices).
-#
-[EventTracing.Netdev]
-	DeviceList = ["eth0", "eth1", "bond4", "lo"]
-```
-
-- **DeviceList**: List of network device full-match regex patterns to monitor. Literal names such as `"eth0"` keep exact-match behavior; patterns such as `"bond[0-9]+"` can select multiple devices.
-
-  Default example includes "eth0", "eth1", "bond4", "lo". An empty list means no devices are monitored.
-
-  **Description**: Monitors physical link status events for specified network interfaces.
-
-#### 8.5 Packet Drop Monitoring
+#### 8.4 Network interface events
 
 ```toml
+# netdev events
+#
+# monitor the net device events.
+#
+# - DeviceList
+# Full-match regex patterns for the net devices we take care of.
+# Literal names such as "eth0" keep exact-match behavior.
+# Default: [] is empty, meaning no devices.
+#
+[EventTracing.Netdev]
+    DeviceList = ["eth0", "eth1", "bond4", "lo"]
+```
+
+| Field | Description |
+| --- | --- |
+| `DeviceList` | Full-match regular expressions for interfaces whose events are monitored. The built-in default is `[]`, meaning no devices are monitored. The configuration file explicitly sets `["eth0", "eth1", "bond4", "lo"]`. Literal names such as `"eth0"` match exactly; patterns such as `"bond[0-9]+"` can match multiple interfaces. |
+
+#### 8.5 Packet drops
+
+```toml
+# dropwatch
+#
+# monitor packets dropped events in the Linux kernel.
+#
+
+# NOT supported (go-pcap limitation):
+# icmp, icmp6, igmp, vrrp, ah, esp, pim and other raw IP protocol keywords
+# CIDR prefix length notation (e.g. /24) is not supported for subnet masks;
+# use dotted-decimal notation instead (e.g. mask 255.255.255.0)
 [EventTracing.Dropwatch]
-    # Filter for standalone dropwatch.
-    # Default: "tcp"
     Filter = "tcp"
-
-    # Forwarded to dropwatch --max-events-per-second.
-    # Default: 100; 0 disables rate limiting.
-    MaxEventsPerSecond = 100
-
-    # Reserved configuration field. It is not currently consumed by the
-    # dropwatch event path and therefore has no filtering effect.
-    # Default: []
-    ExcludeContainers = []
 ```
 
-- **Filter**: tcpdump-style packet filter passed only to standalone dropwatch. TCP retransmission correlation uses `TCPRetransmit.Filter` for both of its inputs.
+| Field | Description |
+| --- | --- |
+| `Filter` | Tcpdump-style filter expression for the standalone `dropwatch` tracer. Default: `"tcp"`. TCP retransmission correlation uses `TCPRetransmit.Filter`. |
+| `MaxEventsPerSecond` | Maximum dropwatch events emitted by BPF per second. Default: `100`; `0` means unlimited. |
+| `ExcludeContainers` | Reserved container exclusion list. Default: `[]`; currently has no effect. Use `EventTracing.IssuesList` to suppress drop events by call stack. |
 
-  Default: `"tcp"`.
+#### 8.6 TCP retransmissions
 
-- **MaxEventsPerSecond**: Maximum number of dropwatch events emitted by BPF per second.
-
-  Default: `100`. Set to `0` to disable rate limiting.
-
-- **ExcludeContainers**: Reserved container-exclusion list.
-
-  Default: `[]`. The field exists in the configuration schema, but the current dropwatch event path does not read or forward it, so configuring it has no effect. Use `EventTracing.IssuesList` for operator-defined dropwatch call-stack suppression.
-
-#### 8.6 TCP Retransmission Tracing ([EventTracing.TCPRetransmit])
-
-```bash
+```toml
+# TCP retransmission tracing through tcpshark --mode retransmit. When local
+# dropwatch correlation is enabled, the embedded collector uses the exact
+# EventTracing.TCPRetransmit.Filter expression and does not emit raw drops.
+# Tail Loss Probe collection is disabled by default.
+# MaxEventsPerSecond limits events emitted by the BPF program; 0 disables
+# rate limiting.
 [EventTracing.TCPRetransmit]
-    # Retransmission filter. Local correlation applies it to both inputs.
-    # Default: empty (no flag when disabled; "tcp" when enabled).
-    Filter = ""
-
-    # Forwarded as tcpshark --enable-tlp. Default: false.
-    EnableTLP = false
-
-    # Run tcpshark with an embedded dropwatch source. Default: false.
-    EnableDropwatch = false
-
-    # Forwarded as tcpshark --max-events-per-second.
-    # Default: 100; 0 disables rate limiting.
-    MaxEventsPerSecond = 100
+    # Retransmission filter. Local correlation applies the same expression
+    # to both inputs. Empty defaults to "tcp" in local mode and passes no
+    # --filter flag when correlation is disabled.
+    # Filter = ""
+    # EnableTLP = false
+    # EnableDropwatch = false
+    # MaxEventsPerSecond = 100
 ```
 
-- **EnableTLP**: Whether to collect `tcp_send_loss_probe` events.
+| Field | Description |
+| --- | --- |
+| `EnableTLP` | Whether to collect `tcp_send_loss_probe` events. Default: `false`. |
+| `Filter` | TCP retransmission filter expression. With local drop correlation enabled, both inputs use the same normalized expression; an empty value falls back to `tcp`. With correlation disabled, an empty value omits `--filter`. `Dropwatch.Filter` controls only the standalone dropwatch tracer. |
+| `EnableDropwatch` | Whether to correlate retransmissions and drops within tcpshark. Default: `false`. Remove `tcp_retransmit` from `BlackList`; the standalone `dropwatch` tracer may remain disabled. Correlation uses the same `Filter` and does not emit raw drop events separately. |
+| `MaxEventsPerSecond` | Maximum TCP retransmission events emitted by BPF per second. Default: `100`; `0` means unlimited. In correlation mode, embedded dropwatch uses the same value with an independent rate limit, so each input is limited to `100` events per second by default. Exceeding the limit produces a `rate limit hit` log. |
 
-  Default: false.
+#### 8.7 Hardware errors (RAS)
 
-- **Filter**: Tcpdump-style retransmission filter used in both modes. Local correlation applies the normalized expression to both tcpshark inputs and defaults an empty value to `tcp`. When correlation is disabled, an empty value passes no `--filter` flag. `Dropwatch.Filter` independently controls standalone dropwatch.
-
-- **EnableDropwatch**: Whether tcpshark should load a private dropwatch source and finalize retransmissions locally. The default is false. `tcp_retransmit` must be removed from `BlackList`; standalone `dropwatch` may remain blacklisted. Retransmissions wait up to 100 ms for delayed delivery, and candidate drops must precede them by no more than one second in kernel monotonic time. The embedded source automatically detects and enables devlink DROP traps. A strict same-namespace match reports `software` or `hardware` according to source, with the same `drop_source`, `drop_reason`, and hardware `drop_reason_group` semantics as dropwatch; every finalized event has one `correlation_reason` (`matched`, `unsupported`, `warmup`, `wait_timeout`, `queue_full`, or `interrupted`). `warmup` applies only to expired waits whose retransmit timestamp predates source readiness; retransmissions at or after readiness receive `wait_timeout` on expiry, and other termination paths retain their own reasons. Unmatched events report `drop_location=unknown` with the namespace diagnostic and dropwatch counters, including map-counter availability.
-
-- **MaxEventsPerSecond**: Maximum TCP retransmission events emitted by BPF per second. Correlation mode gives embedded dropwatch an independent limiter with the same value, so `100` permits up to 100 events/s on each input.
-
-  Default: 100. Set to 0 for unlimited output. When the limit is exceeded, `tcpshark` logs `rate limit hit`.
-
-#### 8.7 Hardware Error Event Tracing (EventTracing.Ras)
-
-```bash
+```toml
 # ras
 #
 # Hardware error event tracing (RAS: Reliability, Availability, Serviceability).
@@ -1015,33 +935,44 @@ This section captures key kernel events and latency, including scheduler tick in
     # MceThrBackoff = 1800
 ```
 
-- **MceThrBackoff**: Minimum cooldown in seconds between MCE threshold (THR) event saves.
+| Field | Description |
+| --- | --- |
+| `MceThrBackoff` | Minimum storage interval for MCE threshold interrupt (THR) events, in seconds. Default: `1800` (30 minutes). THR is triggered by a CPU local APIC threshold interrupt, and corrected hardware errors can produce many events. Shorter intervals increase record volume and storage load. |
 
-  Default: 1800s (30 minutes).
+#### 8.8 Moore Threads GPU XID events
 
-  **Description**: THR events are generated by the CPU's local-APIC threshold interrupt when correctable hardware errors accumulate. These can fire at very high frequency during hardware degradation. The backoff suppresses redundant saves while ensuring at least one record is captured per interval. Lower values provide more granular event records at the cost of higher storage throughput; in environments with frequent correctable errors, consider raising this value to reduce noise.
-
-#### 8.8 Moore Threads GPU Event Tracing (EventTracing.MthreadsGPU)
-
-```bash
-# mthreads_gpu
+```toml
+# Mthreads GPU event tracing
 #
-# Moore Threads GPU XID error event tracing.
+# Groups all event-tracing knobs that target the Mthreads / MUSA
+# GPU stack. New GPU-side tracers should be added under this
+# section.
+#
+# - MthreadsXidLevel
+# Minimum XID severity level that the mthreads_xid tracer will
+# report. Anything strictly below this threshold is silently
+# dropped. The tracer polls /proc/driver/musa/gpu<idx>/event_report
+# every 1s. Valid values:
+#   ""        — disabled; no event_report polling is processed
+#   "notify"  — report all severities (most verbose)
+#   "warning" — drop notify-level events
+#   "fatal"   — only report fatal events (quietest)
+# Default: "" (disabled)
+#
 [EventTracing.MthreadsGPU]
-    # MthreadsXidLevel = ""
+    # Example severity; leaving it commented keeps XID reporting disabled.
+    # MthreadsXidLevel = "warning"
 ```
 
-- **MthreadsXidLevel**: Minimum severity level for XID error reporting.
+| Field | Description |
+| --- | --- |
+| `MthreadsXidLevel` | Minimum severity for reporting XID events. Options: `""` (disabled), `"notify"`, `"warning"`, and `"fatal"`. Events below the selected level are filtered out. The built-in default is `""`; the commented `"warning"` value is only an example. |
 
-  Valid values: `""` (disabled), `"notify"`, `"warning"`, `"fatal"`.
+To enable XID reporting, install the MUSA driver, remove `mthreads_xid` from the global `BlackList`, and set `MthreadsXidLevel` to a valid nonempty level. The tracer polls `/proc/driver/musa/gpu*/event_report` every second. Events include UUID, XID ID, severity, scope, PCI BDF, process ID, and additional context.
 
-  Default: `""` (disabled).
+#### 8.9 Known issue suppression
 
-  **Description**: Controls which XID error events are reported. Set to enable XID error tracking for Moore Threads GPUs. XID errors below the specified severity level are filtered out. To enable this feature, ensure that `mthreads_xid` is removed from the global `BlackList` (if present) and set this field to one of the valid severity levels (`"notify"`, `"warning"`, `"fatal"`). Additionally, the MUSA driver must be installed on the host. The feature polls `/proc/driver/musa/gpu*/event_report` files every second to capture XID error events. Each XID event contains detailed information including UUID, XID ID, severity, scope, PCI BDF, process ID, and additional context.
-
-#### 8.9 Known Issue Filtering (IssuesList)
-
-```bash
+```toml
 # Linux kernel event tracing configuration.
 #
 # - IssuesList
@@ -1051,113 +982,115 @@ This section captures key kernel events and latency, including scheduler tick in
     IssuesList = []
 ```
 
-- **IssuesList**: Known-issue suppression rules in the form `[["name", "regex"], ...]`. Default `[]`.
+| Field | Description |
+| --- | --- |
+| `IssuesList` | Known issue suppression rules in the form `[["name", "regex"], ...]`. Default: `[]`. For `net_rx_latency`, the expression matches the generated event title; for `dropwatch`, it matches the kernel call stack joined with newlines. Matching events are discarded. Names identify rules only and are not written to saved events. Example: `IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`. |
 
-  For `net_rx_latency`, each regex is matched against the generated event title. For `dropwatch`, it is matched against the newline-joined kernel call stack. A match causes the event to be discarded; the configured name identifies the rule but is not added to the saved event.
+### 9. Metric collection
 
-  Example: `IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
+This section configures system, network, and device metrics. `Included` and `Excluded` use regular expressions with the following rules:
 
-### 9. Metric Collector
+- No rules: Collect all items.
+- `Excluded` only: Exclude matching items.
+- `Included` only: Collect only matching items.
+- Both: Collect items that match `Included` and do not match `Excluded`.
 
-This section defines collection rules for various system and network metrics. All `Included`/`Excluded` fields share the same filter logic (regex):
+#### 9.1 Basic network interface statistics
 
-- No rules: all items are collected
-- Excluded only: blacklist, matched items are skipped
-- Included only: whitelist, only matched items are collected
-- Both: must match Included AND not match Excluded
-
-#### 9.1 Netdev Statistics
-
-```bash
-# Metric Collector
-[MetricCollector]
-	# Netdev statistic
-	#
-	# - EnableNetlink
-	# Use netlink instead of procfs net/dev to get netdev statistic.
-	# Only support the host environment to use `netlink` now.
-	# Default is "false".
-	#
-	# - DeviceIncluded
-	# Accept special devices in netdev statistic.
-	# Default: "" (empty), meaning include all.
-	#
-	# - DeviceExcluded
-	# Exclude special devices in netdev statistic.
-	# Default: "" (empty), meaning exclude nothing.
-	#
-	# Filter logic see MetricCollector section header.
-	#
-	[MetricCollector.NetdevStats]
-		# EnableNetlink = false
-		# DeviceIncluded = ""
-		DeviceExcluded = "^(lo)|(docker\\w*)|(veth\\w*)$"
+```toml
+# Netdev statistic
+#
+# - EnableNetlink
+# Use netlink instead of procfs net/dev to get netdev statistic.
+# Query the target host or container network namespace.
+# Default is "false".
+#
+# - DeviceIncluded
+# Accept special devices in netdev statistic.
+# Default: "" (empty), meaning include all.
+#
+# - DeviceExcluded
+# Exclude special devices in netdev statistic.
+# Default: "" (empty), meaning exclude nothing.
+#
+# Filter logic (applies to all Included/Excluded below):
+# - No rules: all items are collected
+# - Excluded only: blacklist, matched items are skipped
+# - Included only: whitelist, only matched items are collected
+# - Both: items must match Included AND not match Excluded
+#
+[MetricCollector.NetdevStats]
+    # EnableNetlink = false
+    # DeviceIncluded = ""
+    DeviceExcluded = "^(lo)|(docker\\w*)|(veth\\w*)$"
 ```
 
-- **EnableNetlink**: Use netlink instead of procfs to collect netdev statistics.
+| Field | Description |
+| --- | --- |
+| `EnableNetlink` | Whether to read network interface statistics through Netlink instead of procfs. Default: `false`. Netlink queries the target host or container network namespace and requires permission to access it. |
+| `DeviceIncluded` | Regular expression for interface names to include. Default: `""` (no inclusion restriction). |
+| `DeviceExcluded` | Regular expression for interfaces to exclude. The built-in default is `""` (exclude nothing). The configuration file explicitly uses the expression above to exclude matching lo, docker, and veth interfaces. |
 
-  Default: false. Currently only supported on the host.
+#### 9.2 Priority flow control (PFC)
 
-- **DeviceIncluded**: Regex to include specific devices. Default: include all.
-
-- **DeviceExcluded**: Regex to exclude devices. Example: "^(lo)|(docker\\w*)|(veth\\w*)$", meaning exclude loopback, docker, and veth interfaces.
-
-#### 9.2 Netdev DCB Collection
-
-```bash
+```toml
 # netdev dcb, DCB (Data Center Bridging)
 #
 # Collecting the DCB PFC (Priority-based Flow Control).
 #
 # - DeviceList
-# The net devices we monitor.
-# Default: [] (empty, meaning no devices).
+# Full-match regex patterns for the net devices we take care of.
+# Literal names such as "eth0" keep exact-match behavior.
+# Default: [] is empty, meaning no devices.
 #
 [MetricCollector.NetdevDCB]
-	DeviceList = ["eth0", "eth1"]
+    DeviceList = ["eth0", "eth1"]
 ```
 
-- **DeviceList**: List of network device full-match regex patterns for which DCB (Data Center Bridging) PFC information is collected.
+| Field | Description |
+| --- | --- |
+| `DeviceList` | Full-match regular expressions for interfaces whose DCB PFC information is collected. The built-in default is `[]` (no devices); the configuration file explicitly sets `["eth0", "eth1"]`. |
 
-  Default: empty.
+#### 9.3 Network interface hardware statistics
 
-#### 9.3 Netdev Hardware Statistics
-
-```bash
+```toml
 # netdev hardware statistic
 #
 # Collecting the hardware statistic of net devices, e.g, rx_dropped.
 #
 # - DeviceList
-# The net devices we monitor.
-# Default: [] (empty, meaning no devices).
+# Full-match regex patterns for the net devices we take care of.
+# Literal names such as "eth0" keep exact-match behavior.
+# Default: [] is empty, meaning no devices.
 #
 [MetricCollector.NetdevHW]
-	DeviceList = ["eth0", "eth1"]
+    DeviceList = ["eth0", "eth1"]
 ```
 
-- **DeviceList**: List of network device full-match regex patterns for hardware-level statistics (e.g., rx_dropped).
+| Field | Description |
+| --- | --- |
+| `DeviceList` | Full-match regular expressions for interfaces whose hardware statistics, such as rx_dropped, are collected. The built-in default is `[]` (no devices); the configuration file explicitly sets `["eth0", "eth1"]`. |
 
-  Default: empty.
+#### 9.4 Network queue statistics (Qdisc)
 
-#### 9.4 Qdisc Collection
-
-```bash
+```toml
 # Qdisc
 #
 # - DeviceIncluded / DeviceExcluded
 # Same as above.
 #
 [MetricCollector.Qdisc]
-	# DeviceIncluded = ""
-	DeviceExcluded = "^(lo)|(docker\\w*)|(veth\\w*)$"
+    # DeviceIncluded = ""
+    DeviceExcluded = "^(lo)|(docker\\w*)|(veth\\w*)$"
 ```
 
-- **DeviceIncluded / DeviceExcluded**: Same as above.
+| Field | Description |
+| --- | --- |
+| `DeviceIncluded` / `DeviceExcluded` | Interface filtering expressions. Both default to `""`, imposing no restrictions. The configuration file explicitly sets `DeviceExcluded` to the expression above. See the filtering rules at the start of this section. |
 
-#### 9.5 vmstat Metric Collection
+#### 9.5 Virtual memory statistics (vmstat)
 
-```bash
+```toml
 # vmstat
 #
 # This metric supports host vmstat and cgroup vmstat.
@@ -1165,58 +1098,69 @@ This section defines collection rules for various system and network metrics. Al
 # - IncludedOnContainer / ExcludedOnContainer: same, for cgroup containers memory.stat.
 #
 [MetricCollector.Vmstat]
-	IncludedOnHost = "allocstall|nr_active_anon|nr_active_file|nr_boost_pages|nr_dirty|nr_free_pages|nr_inactive_anon|nr_inactive_file|nr_kswapd_boost|nr_mlock|nr_shmem|nr_slab_reclaimable|nr_slab_unreclaimable|nr_unevictable|nr_writeback|numa_pages_migrated|pgdeactivate|pgrefill|pgscan_direct|pgscan_kswapd|pgsteal_direct|pgsteal_kswapd"
-	ExcludedOnHost = "total"
-	IncludedOnContainer = "active_anon|active_file|dirty|inactive_anon|inactive_file|pgdeactivate|pgrefill|pgscan_direct|pgscan_kswapd|pgsteal_direct|pgsteal_kswapd|shmem|unevictable|writeback|pgscan_globaldirect|pgscan_globalkswapd|pgscan_cswapd|pgsteal_cswapd|pgsteal_globaldirect|pgsteal_globalkswapd"
-	ExcludedOnContainer = "total"
+    IncludedOnHost = "allocstall|nr_active_anon|nr_active_file|nr_boost_pages|nr_dirty|nr_free_pages|nr_inactive_anon|nr_inactive_file|nr_kswapd_boost|nr_mlock|nr_shmem|nr_slab_reclaimable|nr_slab_unreclaimable|nr_unevictable|nr_writeback|numa_pages_migrated|pgdeactivate|pgrefill|pgscan_direct|pgscan_kswapd|pgsteal_direct|pgsteal_kswapd"
+    ExcludedOnHost = "total"
+    IncludedOnContainer = "active_anon|active_file|dirty|inactive_anon|inactive_file|pgdeactivate|pgrefill|pgscan_direct|pgscan_kswapd|pgsteal_direct|pgsteal_kswapd|shmem|unevictable|writeback|pgscan_globaldirect|pgscan_globalkswapd|pgscan_cswapd|pgsteal_cswapd|pgsteal_globaldirect|pgsteal_globalkswapd"
+    ExcludedOnContainer = "total"
 ```
 
-- **IncludedOnHost / ExcludedOnHost**: Filter fields for host /proc/vmstat.
+| Field | Description |
+| --- | --- |
+| `IncludedOnHost` / `ExcludedOnHost` | Field filtering expressions for host `/proc/vmstat`. Both default to `""`. The configuration file explicitly sets the inclusion list above and excludes fields matching `total`. |
+| `IncludedOnContainer` / `ExcludedOnContainer` | Field filtering expressions for container cgroup `memory.stat`. Both default to `""`. The configuration file explicitly sets the inclusion list above and excludes fields matching `total`. |
 
-- **IncludedOnContainer / ExcludedOnContainer**: Filter fields for container cgroup memory.stat.
+#### 9.6 Memory events
 
-#### 9.6 Other Metric Collections
-
-```bash
+```toml
 # MemoryEvents/Netstat/MountPointStat
 #
-# - Included / Excluded: same as above.
+# - Included / Excluded: Same as above.
 # - MountPointsIncluded: whitelist only (no Excluded), same logic.
 #
 [MetricCollector.MemoryEvents]
-	Included = "watermark_inc|watermark_dec"
-	# Excluded = ""
-[MetricCollector.Netstat]
-	# Excluded = ""
-	# Included = ""
-
-# MountPointStat
-[MetricCollector.MountPointStat]
-	MountPointsIncluded = "(^/home$)|(^/$)|(^/boot$)"
+    Included = "watermark_inc|watermark_dec"
+    # Excluded = ""
 ```
 
-- **Included / Excluded**: Same as above.
+| Field | Description |
+| --- | --- |
+| `Included` / `Excluded` | Memory event field filtering expressions. Both default to `""`. The configuration file explicitly sets `Included` to select fields matching `watermark_inc` or `watermark_dec`. |
 
-- **MountPointsIncluded**: Regex for mount points to collect. Default includes /, /home, /boot.
+#### 9.7 Network protocol statistics
 
-#### 9.7 Moore Threads GPU Metrics
+```toml
+[MetricCollector.Netstat]
+    # Excluded = ""
+    # Included = ""
+```
 
-```bash
-# MetricCollector.Mthreads
-#
-# Moore Threads GPU metric collection via the MTML (Moore Threads Management
-# Library) shared library. The library is discovered automatically at startup
-# using SONAME search (libmtml.so.2, then libmtml.so) through the system
-# dynamic linker; no hardcoded path is required.
-#
-# Remove "mthreads_gpu" from BlackList to enable this collector.
+| Field | Description |
+| --- | --- |
+| `Included` / `Excluded` | Network protocol statistics field filtering expressions. Both default to `""`, imposing no restrictions. The configuration file does not explicitly set them. |
+
+#### 9.8 Mount point statistics
+
+```toml
+# MountPointStat
+[MetricCollector.MountPointStat]
+    MountPointsIncluded = "(^/home$)|(^/$)|(^/boot$)"
+```
+
+| Field | Description |
+| --- | --- |
+| `MountPointsIncluded` | Mount point path filtering expression. The built-in default is `""` (no restriction). The configuration file explicitly uses the expression above to collect only `/`, `/home`, and `/boot`. |
+
+#### 9.9 Moore Threads GPU
+
+```toml
+# Moore Threads (MTT) GPU fine-grained toggles
 #
 # - EnableHealth
-# Enable health metrics: temperature, power, utilization, clocks, fans, pstate, VPU.
-# Default: true
+# Enable health metrics: temperature, power, voltage, utilization, memory,
+# clocks, fans, pstate, VPU. Default: true
 #
 # - EnablePCIe
-# Enable PCIe link metrics: current speed/width and replay counter.
+# Enable PCIe link metrics: current/max speed and width, replay counter.
 # Default: false
 #
 # - EnableMTLink
@@ -1229,29 +1173,56 @@ This section defines collection rules for various system and network metrics. Al
     # EnableMTLink = false
 ```
 
-- **EnableHealth**: Controls collection of health-related metrics.
+| Field | Description |
+| --- | --- |
+| `EnableHealth` | Health metrics switch. Default: `true`. Includes temperature, power, voltage, utilization, memory capacity, clocks, fans, performance state, and VPU metrics. |
+| `EnablePCIe` | PCIe link metrics switch. Default: `false`. Includes current and maximum link speed and width, and replay counters. |
+| `EnableMTLink` | MtLink interconnect metrics switch. Default: `false`. Includes per-link bandwidth, link count, and link state. |
 
-  Default: true. When enabled, collects: GPU/memory temperature (`gpu_temperature_celsius`, `memory_temperature_celsius`), power usage and limits (`device_power_watts`, `gpu_power_limit_watts`, `gpu_power_default_limit_watts`), GPU/memory utilization (`gpu_utilization_percent`, `memory_utilization_percent`), clock frequencies (`gpu_clock_mhz`, `gpu_max_clock_mhz`, `memory_clock_mhz`, `memory_max_clock_mhz`), voltage (`gpu_voltage_volts`), memory capacity (`memory_total_bytes`, `memory_used_bytes`), fan speed (`fan_rpm`, `fan_speed_percent`), performance state (`gpu_pstate`), and VPU metrics (`vpu_utilization_percent`, `vpu_encoder_utilization_percent`, `vpu_decoder_utilization_percent`, `vpu_clock_mhz`).
+**Requirements**: Remove `mthreads_gpu` from the global `BlackList`, install `libmtml.so.2` or `libmtml.so` where the system dynamic linker can find it, and restart the `huatuo-bamai` service. A missing library at startup disables the collector. Restart the `huatuo-bamai` service after installing the library or changing `LD_LIBRARY_PATH`.
 
-- **EnablePCIe**: Controls collection of PCIe link metrics.
+**Configuration updates**: All three switches read the latest configuration on each collection. Changes made through the Node API take effect on the next collection.
 
-  Default: false. When enabled, collects: current PCIe link speed and width (`pcie_link_speed_gt_per_sec`, `pcie_link_width_lanes`), max capability (`pcie_link_max_speed_gt_per_sec`, `pcie_link_max_width_lanes`), and replay counter (`pcie_replay_total`).
+#### 9.10 Ascend NPU
 
-- **EnableMTLink**: Controls collection of MtLink interconnect metrics.
+Remove `ascend_npu` from the global `BlackList` and restart the `huatuo-bamai` service to enable the collector. The node requires an available Ascend NPU and `/usr/local/dcmi/libdcmi.so`. Device discovery still requires DCMI initialization when `EnableDCMI` is disabled.
 
-  Default: false. When enabled, collects: device-level static specs (per-link bandwidth `mtlink_link_bandwidth_gb_s` and link count `mtlink_link_count`) and per-link state (`mtlink_state`).
+```toml
+# Ascend NPU fine-grained toggles
+# Remove ascend_npu from BlackList and restart to enable the collector.
+# DCMI initialization is required even when EnableDCMI is false.
+#
+# - EnableDCMI
+# Enable DCMI metrics: health, power, temp, voltage, util, freq,
+# network health, HBM, and ECC info. Default: true
+#
+# - EnablePCIe
+# Enable PCIe link metrics: capability and status (speed/width).
+# Default: false
+#
+# - EnableHCCN
+# Enable HCCN network metrics via hccn_tool subprocesses.
+# Default: false
+#
+[MetricCollector.AscendNPU]
+    # EnableDCMI = true
+    # EnablePCIe = false
+    # EnableHCCN = false
+```
 
-**Library discovery**: At startup, the collector searches for `libmtml.so.2` then `libmtml.so` via the system dynamic linker (respecting `LD_LIBRARY_PATH` and `/etc/ld.so.cache`). If no library is found, the collector logs a warning and is disabled for the lifetime of the process. Library discovery is performed only at startup: changing `LD_LIBRARY_PATH` or installing a new MTML version also requires a restart.
+| Field | Description |
+| --- | --- |
+| `EnableDCMI` | Boolean. Default: `true`. Collects health, power, temperature, voltage, utilization, frequency, network health, HBM, and ECC metrics. |
+| `EnablePCIe` | Boolean. Default: `false`. Collects maximum and current PCIe link speed and width. |
+| `EnableHCCN` | Boolean. Default: `false`. Collects network link, traffic, counter, and optical module metrics through `/usr/local/Ascend/driver/tools/hccn_tool` subprocesses. Ensure the tool is available before enabling it. |
 
-**Hot-reload semantics**: `EnableHealth`, `EnablePCIe`, and `EnableMTLink` are read from the latest config snapshot on every scrape, so toggling them takes effect on the next Prometheus scrape without restarting `huatuo-bamai`. A `false → true → false` transition emits and suppresses the corresponding metric groups on the next scrape after each change.
+These switches read the latest configuration on each collection. Changes made through the Node API take effect on the next collection.
 
-Note: enabling the collector itself (i.e. removing `mthreads_gpu` from `BlackList` after the process has already started with the collector disabled because `libmtml.so` was missing at startup) requires a restart. The collector factory runs only during initialization, so a successful late library load will not register a new collector.
+### 10. Pod and container information
 
-### 10. Pod
+This section configures the ports and credentials used to retrieve Pod information from kubelet and associate container and Pod labels.
 
-This section configures how to fetch Pod information from kubelet to enable container/Pod-level labeling and metric isolation.
-
-```bash
+```toml
 # Pod Configuration
 #
 # Configure these parameters for fetching pods from kubelet.
@@ -1273,248 +1244,56 @@ This section configures how to fetch Pod information from kubelet to enable cont
 # Client certificate and private key file name. One file or two files:
 # "/path/to/xxx-kubelet-client.crt,/path/to/xxx-kubelet-client.key",
 # "/path/to/kubelet-client-current.pem"
+# Default: "". The assignment below supplies explicit deployment paths.
 #
 # You can disable this kubelet fetching pods, for bare metal service, by
 # KubeletReadOnlyPort = 0, and KubeletAuthorizedPort = 0.
 #
 [Pod]
-	KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
+    KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
 ```
 
-- **KubeletReadOnlyPort**: Kubelet read-only port.
+| Field | Description |
+| --- | --- |
+| `KubeletReadOnlyPort` | Kubelet read-only port for retrieving the Pod list without authentication. Default: `10255`; port range: `1–65535`. Set to `0` to disable this method. |
+| `KubeletAuthorizedPort` | Kubelet HTTPS port for retrieving Pod information using certificate authentication. Default: `10250`; port range: `1–65535`. Set to `0` to disable this method. Recommended for production. |
+| `KubeletClientCertPath` | Kubelet client certificate and private key paths. The built-in default is `""`. Accepts two comma-separated paths or one PEM file containing both. The configuration file explicitly uses the paths under `/etc/kubernetes/pki/` shown above; verify them for your deployment. In non-Kubernetes environments, set both kubelet ports to `0` to disable Pod discovery. |
 
-  Default: 10255. Set to 0 to disable this method.
+### 11. Command-line options
 
-- **KubeletAuthorizedPort**: Kubelet HTTPS authorized port.
-
-  Default: 10250. Set to 0 to disable.
-
-- **KubeletClientCertPath**: Path to kubelet client certificate and private key. Supports comma-separated files or single PEM file.
-
-  **Description**: Used for mTLS authentication on the HTTPS port. In non-Kubernetes (bare-metal) environments, set both ports to 0 to disable Pod fetching.
-
-### 11. CLI Flags
-
-`huatuo-bamai` supports the following command-line flags:
+`huatuo-bamai` supports these command-line options:
 
 ```bash
 huatuo-bamai --region <region> [options]
 ```
 
-| Flag | Description | Default |
-|------|-------------|---------|
+| Option | Description | Default |
+|------|------|--------|
 | `--config` | Configuration file name | `huatuo-bamai.conf` |
-| `--config-dir` | Configuration file directory | `conf` |
-| `--bpf-dir` | BPF object file directory | `bpf` |
+| `--config-dir` | Configuration directory | `conf` |
+| `--bpf-dir` | BPF object directory | `bpf` |
 | `--tools-bin-dir` | Tracing tool binary directory | `bin` |
 | `--region` | Deployment region (required) | - |
-| `--disable-kubelet` | Disable kubelet Pod fetching | `false` |
+| `--disable-kubelet` | Disable Pod discovery through kubelet | `false` |
 | `--disable-storage` | Disable storage backends | `false` |
-| `--enable-cgroup` | Enable self cgroup resource limits (disabled by default) | `false` |
-| `--disable-tracing` | Disable specified tracing modules (may be repeated) | - |
-| `--log-debug` | Force log level to Debug | `false` |
-| `--dry-run` | Load-only test; exit gracefully after startup | `false` |
-| `--procfs-prefix` | procfs mount point prefix | - |
+| `--enable-cgroup` | Enable resource limits in Huatuo's own cgroup (disabled by default) | `false` |
+| `--disable-tracing` | Disable a specified tracer; may be repeated | - |
+| `--log-debug` | Force the log level to Debug | `false` |
+| `--dry-run` | Test loading only; exit gracefully after startup | `false` |
+| `--procfs-prefix` | Procfs mount prefix | - |
 
-### 12. Configuration Override Precedence
+### 12. Override rules
 
-When the same configuration item is set in both command-line flags and the configuration file, the following precedence applies:
+Explicit configuration assignments override built-in defaults; comments are not loaded. Command-line options apply according to their own semantics rather than universally overriding the configuration file.
 
-**CLI flag > Configuration file > Built-in default**
+- **Log level**: `--log-debug` forces `Debug`. Otherwise, `Log.Level` is used, with `Info` as the default when omitted.
+- **Tracing blacklist**: `--disable-tracing` is merged with the configuration file's `BlackList`.
+- **Independent switches**: `--disable-kubelet` and `--disable-storage` disable Pod synchronization and storage backends, respectively. They have no same-named TOML fields, and enabling them does not bypass configuration validation.
 
-Specific rules:
+### 13. Configuration recommendations
 
-1. **Log level**: `--log-debug` > config file `[Log] Level` > built-in default `Info`
-   - `--log-debug` has the highest priority and forces the log level to `Debug` regardless of the `Level` value in the configuration file.
-   - An explicit `Level` in the configuration file overrides the built-in default.
-   - If neither is set, the default `Info` is used.
-
-2. **Tracing blacklist**: `--disable-tracing` is merged with the configuration file `BlackList` (they complement each other rather than override).
-
-3. **Other boolean switches** (`--disable-kubelet`, `--disable-storage`): When explicitly set on the command line, they override the configuration file.
-
-### 13. Best Practices and Important Notes
-
-- **Resource Control**: Kubernetes uses Pod resources and systemd uses service limits.
-  Use `--enable-cgroup` and `[Runtime]` only for direct execution without an
-  external manager.
-- **Storage Choice**: For small-scale deployments, prefer [Storage.LocalFile] for local troubleshooting. For large clusters, configure Elasticsearch for centralized storage and querying.
-- **AutoTracing Tuning**: Adjust thresholds based on workload characteristics. Thresholds that are too low cause frequent triggering; thresholds that are too high may miss issues. Validate gradually in a test environment.
-- **Security**: Use strong passwords for ES configuration and consider enabling HTTPS. Avoid hard-coding sensitive information in the configuration file.
-- **Compatibility**: Configuration parameters may be affected by kernel version and hardware environment. Always verify with the official HUATUO documentation for your specific setup.
-
-By properly configuring huatuo-bamai.conf, you can fully leverage HUATUO’s capabilities in kernel-level anomaly detection and intelligent tracing, significantly improving observability and troubleshooting efficiency in cloud-native systems.
-
-If you need deeper customization for a specific scenario, feel free to provide more details about your environment.
-
-### 14. Memory Threshold Snapshot Deployment and Troubleshooting
-
-#### 14.1 Requirements and Limitations
-
-- Requires Linux, memory cgroup v1/v2, host PID/procfs/cgroup views,
-  kubelet metadata, kernel BTF, and BPF load/attach permissions.
-- Requires target-memory read permission (usually `CAP_SYS_PTRACE`),
-  procfs/cgroup access, and v1 `cgroup.event_control` write access.
-  Yama, SELinux, or AppArmor may block access.
-- Selects only direct cgroup members, excluding `oom_score_adj = -1000`.
-  Selection is skipped above 4096 PIDs, 64 KiB of PID data, or a one-second budget.
-- At most 4096 containers are watched. Targets come from pod events without
-  scanning the cgroup tree. Ordinary registration errors and capacity exhaustion
-  are logged and skipped; invalidated registrations are removed without retries
-  or backfilling. Resource recovery or a full view does not re-register the same
-  instance, so pressure monitoring may remain unavailable for that instance.
-- Failed identity checks or missing container metadata prevent capture or saving.
-- Process selection and capture both use `/proc` in Huatuo's PID namespace.
-  Changing `--procfs-prefix` does not redirect memory snapshot reads.
-
-This table describes experimental implementation coverage, not validation of
-every listed version:
-
-| Runtime | Experimental coverage | Main limitations |
-|---------|-----------------------|------------------|
-| Go | Go 1.18–1.26, 64-bit ELF | Instruction recovery for stripped executables is x86-64 only |
-| Java | Java 8+, little-endian 64-bit ELF HotSpot, G1 GC | Requires recognizable VMStruct/VMType metadata |
-| Python | CPython 3.8–3.14, little-endian 64-bit ELF | Requires discoverable `_PyRuntime` and recognizable version/layout |
-
-Recorded manual validation: x86-64 Linux, cgroup v1 (legacy/hybrid), Go 1.24.0.
-Verify pressure-triggered, non-empty snapshots in your environment;
-skipped tests and `unavailable` results do not prove compatibility.
-
-#### 14.2 Output and Troubleshooting
-
-Info logs record watcher state and capture attempts.
-Process selection and persistence details use Debug logs. Locate attempts by
-container/cgroup and use process-selection logs to identify the PID. Inspect
-stored snapshot `status` and `status_reason` fields for runtime diagnostics.
-If a capture attempt starts but does not finish, inspect bamai's
-`/debug/pprof/goroutine?debug=2` with appropriate authorization for the blocked stack.
-No logs alone do not prove that monitoring has stopped.
-
-`tracer_data.process_memory` reads `/proc/<pid>/status` once after runtime detection
-returns without error, including for unrecognized runtimes such as C/C++.
-Provider failures produce a `failed` snapshot and retain this summary.
-Detection or output-processing errors prevent persistence; inspect the capture
-attempt logs for the error. Target identity changes or cancellation discard the result.
-It provides no PSS, mapping rankings, or allocation stacks.
-
-| Field (bytes) | Source / meaning |
-|------|--------|
-| `virtual_bytes` | VmSize, virtual address space, not physical memory usage |
-| `rss_bytes` | VmRSS, resident memory |
-| `rss_anon_bytes` | RssAnon, anonymous resident memory |
-| `rss_file_bytes` | RssFile, file-backed resident memory |
-| `rss_shmem_bytes` | RssShmem, shared resident memory |
-| `swap_bytes` | VmSwap, swapped private anonymous memory, excluding shmem swap |
-| `page_table_bytes` | VmPTE, page-table memory |
-
-Missing/invalid fields are omitted, not zero-filled: status is `partial`,
-or `unavailable` with `status_reason` if nothing can be read.
-Values are approximate, not an OOM-time snapshot or proof of a leak.
-The selected process may not be the eventual OOM victim.
-
-Results use the existing `[Storage]` configuration (section 6); no separate
-storage setup is needed. The LocalFile filename is `memory_threshold_snapshot`.
-Query `tracing_documents` with `tracer_name = memory_threshold_snapshot` and
-`tracer_type = autotracing`.
-
-`started_timestamp` records when the capture attempt starts, before process selection.
-`observed_timestamp` records when snapshot collection starts, after process selection
-and before runtime detection.
-
-The `kind` and measurement semantics of `tracer_data.snapshot.entries` are:
-
-| Runtime | `kind` | `objects` | `bytes` |
-|---------|--------|-----------|---------|
-| Go | `inuse_space_objects` | Estimated unfreed object count from published statistics, corrected for sampling and grouped by complete allocation stack | Estimated unfreed bytes for those objects |
-| Java | `object_class` | Estimated instance count grouped by class | Estimated memory occupied by the objects themselves (shallow heap) |
-| Python | `gc_tracked_object_type` | GC-tracked object count grouped by type | Estimated shallow size of those objects |
-
-Go's `bytes` and `objects` correspond to pprof's `inuse_space` and `inuse_objects`
-metrics. Java does not compute retained heap; Python covers only GC-tracked
-objects, not the entire Python heap. Older records may use `allocation_site`
-for Go and `object_type` for Java; consumers reading historical records should
-accept those values.
-
-For Go entries, `name` remains the plain function name of the first non-runtime
-frame, or the first frame when all frames belong to the runtime. `stack` remains
-a string array ordered from the allocation site toward its callers. When both
-file and line are available, each frame uses `function, source_file:line`, with
-one space after the comma. For example:
-
-```json
-{
-  "kind": "inuse_space_objects",
-  "name": "example/cache.allocate",
-  "bytes": 131072,
-  "objects": 32,
-  "average_bytes": 4096,
-  "stack": [
-    "example/cache.allocate, example/cache/cache.go:123",
-    "example/service.load, example/service/load.go:58",
-    "main.main, example/cmd/server/main.go:42"
-  ]
-}
-```
-
-Locations come from the binary's Go line table; source files need not exist on
-the target machine. Paths retain their compiled values, which may reflect
-`-trimpath` and may not identify files on the target machine. A missing file or
-an invalid line leaves only the function name; an unresolved function leaves the
-hexadecimal PC. Consumers should also accept historical frames containing only
-names or addresses. Function names and paths may themselves contain commas, so
-splitting indiscriminately on commas is not reliable. Source locations identify
-allocation sites, not object owners, and do not guarantee a fully expanded
-inline call chain.
-
-Go subtracts frees from allocations using only the runtime's published `active`
-counters, then corrects for sampling. Unpublished `future[0..2]` counters are
-excluded. Publication is delayed until the corresponding GC sweep frees are
-accounted for, so recent allocation spikes may be absent. Results are external
-samples of the published heap profile, not heap usage at the trigger instant.
-Collection does not acquire runtime locks, flush counters, or trigger GC in the
-target. Fields or buckets may still reflect different publication stages, so
-the result does not provide pprof's atomic consistency.
-
-If a complete scan observes no nonzero `active` counters, it returns `unavailable`
-with `status_reason` set to `Go heap profile has no published statistics`, without
-falling back to `future`. This can occur before the first GC and does not mean
-that the process has no heap objects. Published counters whose sampled objects
-have all been freed can still produce `complete` with empty entries. An
-interrupted scan preserves `partial` and its reason rather than treating
-unobserved data as unpublished.
-
-Go aggregates complete stack keys up to 32 frames for Go 1.18–1.22 and 1024 frames for Go 1.23–1.26; the shared output limit may shorten displayed stacks to 64 frames and sets `output_truncated`. An invalid bucket type, an excessive stack depth, or a cyclic bucket chain stops the scan with `partial`; repeated buckets are never counted twice.
-
-Once a scan becomes partial, it stops traversing further buckets and selects at most `MaxMemoryObjectEntries` entries by descending byte count from the valid samples retained from earlier batches and the current batch, within the aggregation budget. The `status_reason` records only the first cause; finishing the current batch does not append further causes.
-
-Any bucket header, record, or stack read failure, including a short read, fails the entire Go collection attempt and discards all runtime entries, including those from earlier batches. The collector reports `failed` with the read error; individual ranges are not retried.
-
-Samples with a stack depth of zero produce no allocation-site entry; an empty stack alone does not make the scan `partial`.
-
-Go snapshots require a known, enabled sampling rate and a nonempty bucket list. An unknown or disabled rate, or an empty bucket list, yields `unavailable` with a `status_reason` and no entries.
-
-Go collection uses a single request timeout across runtime reads, scanning,
-ranking, and entry construction. When it expires, runtime entries are discarded
-and the collector emits `failed` with a timeout reason; it still attempts to
-read the process memory summary. Cancellation is cooperative, so an in-flight
-system call or non-cancelable parsing step can finish after the deadline.
-
-Inspect `tracer_data.snapshot.status` (`complete`, `partial`,
-`unavailable`, or `failed`) together with `status_reason`, `runtime_version`,
-`duration_ms`, and `output_truncated`.
-
-`status_reason` explains why collection is `partial`, `unavailable`, or `failed`;
-it is omitted when empty. Both `snapshot` and `process_memory` use this field.
-Older records may use `reason`; readers of historical and new records should
-accept both names.
-
-`duration_ms` measures the provider stage, rounded up to milliseconds, for both
-successful and failed snapshots, including timeouts. It excludes runtime
-detection, process memory summary reads, output processing, and persistence.
-
-| Problem | Checks |
-|---------|--------|
-| No output | Enable and restart; check BlackList; see section 7.6 for v2 trigger conditions |
-| Event without a candidate | Check direct cgroup membership, OOM-kill eligibility, and enumeration limits |
-| `unavailable` / `failed` | Check runtime/layout restrictions, access permissions, container metadata, and target exit; inspect `status_reason` |
-| Event stops after resource exhaustion | Check `RLIMIT_NOFILE`, `fs.inotify.max_user_watches`, and `fs.inotify.max_user_instances`; adjust and restart; this stop does not stop other events |
+- **Resource control**: Use Pod resource limits in Kubernetes and service resource limits in systemd. For direct execution without an external manager, use `--enable-cgroup` and `[Runtime]`.
+- **Storage**: Prefer LocalFile for local troubleshooting in small deployments. For large clusters, use Elasticsearch for centralized storage and queries.
+- **Automatic tracing**: Tune thresholds for the workload. Low thresholds trigger frequent traces; high thresholds may miss problems. Validate changes incrementally in a test environment.
+- **Security**: Use a strong password for Elasticsearch and consider enabling HTTPS. Avoid hard-coding sensitive information in configuration files.
+- **Compatibility**: Check the required kernel capabilities, hardware, and runtime dependencies before enabling a feature.
