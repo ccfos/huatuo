@@ -31,9 +31,8 @@ snapshot_build_runtime_fixtures() {
 	if command -v gcc > /dev/null; then
 		gcc -O0 -o "${HUATUO_BAMAI_TEST_TMPDIR}/c-snapshot" "${HUATUO_BAMAI_TEST_TMPDIR}/snapshot.c"
 	fi
-	cp "${ROOT_DIR}/integration/testdata/test_memsnapshot.cc" "${HUATUO_BAMAI_TEST_TMPDIR}/snapshot.cc"
 	if command -v g++ > /dev/null; then
-		g++ -O0 -o "${HUATUO_BAMAI_TEST_TMPDIR}/cpp-snapshot" "${HUATUO_BAMAI_TEST_TMPDIR}/snapshot.cc"
+		g++ -x c++ -O0 -o "${HUATUO_BAMAI_TEST_TMPDIR}/cpp-snapshot" "${HUATUO_BAMAI_TEST_TMPDIR}/snapshot.c"
 	fi
 }
 
