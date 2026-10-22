@@ -27,7 +27,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
-	"github.com/ccfos/huatuo/internal/flamegraph"
+	"github.com/ccfos/huatuo/internal/profiling/flamegraph"
 	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
