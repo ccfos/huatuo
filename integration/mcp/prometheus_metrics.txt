@@ -1,0 +1,11 @@
+# HELP huatuo_mcp_test_value Fixed MCP integration gauge.
+# TYPE huatuo_mcp_test_value gauge
+huatuo_mcp_test_value{region="test-a",host="node-a"} 10
+huatuo_mcp_test_value{region="test-b",host="node-a"} 20
+huatuo_mcp_test_value{region="test-a",host="node-b"} 30
+huatuo_mcp_test_value{region="test-a",host="node-c"} 40
+huatuo_mcp_untyped_value{region="test-a",host="node-a"} 7
+huatuo_mcp_many_value{region="test-a",host="node-a",lane="1"} 1
+huatuo_mcp_many_value{region="test-a",host="node-a",lane="2"} 2
+huatuo_mcp_many_value{region="test-a",host="node-a",lane="3"} 3
+other_test_value{region="test-a",host="node-a"} 99

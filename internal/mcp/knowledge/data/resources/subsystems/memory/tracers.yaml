@@ -1,0 +1,61 @@
+tracers:
+  memburst:
+    description: 内存突增
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      top_memory_usage:
+        description: 内存占用最高的进程列表
+    match_field:
+      host: hostname
+    metric_keywords: [memory_vmstat, memory_free, memory_events, memory_reclaim]
+  oom:
+    description: OOM Kill 事件
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      victim_pid:
+        description: 被杀进程 PID
+      victim_process_name:
+        description: 被杀进程名
+      victim_container_hostname:
+        description: 被杀进程所在容器主机名
+      trigger_pid:
+        description: 触发 OOM 的进程 PID
+      trigger_process_name:
+        description: 触发 OOM 的进程名
+    match_field:
+      host: hostname
+    metric_keywords: [oom]
+  memory_reclaim:
+    description: 容器直接内存回收延迟
+    target_type: [container]
+    has_profiler: false
+    key_fields:
+      deltatime:
+        description: 回收延迟时长
+      comm:
+        description: 进程名
+      pid:
+        description: 进程 PID
+    match_field:
+      container: container_hostname
+    metric_keywords: [memory_reclaim, memory_others]
+  hungtask:
+    description: 内核 hung task（D 状态超时）
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      pid:
+        description: hung task PID
+      comm:
+        description: hung task 命令名
+    match_field:
+      host: hostname
+    metric_keywords: [hungtask]
+
+related_tracers:
+  memburst: [cpusys, iotracing, oom, memory_reclaim]
+  oom: [memburst, memory_reclaim]
+  memory_reclaim: [memburst, oom]
+  hungtask: [dload, iotracing]

@@ -26,6 +26,7 @@ import (
 	"github.com/ccfos/huatuo/client"
 	"github.com/ccfos/huatuo/internal/job"
 	"github.com/ccfos/huatuo/internal/log"
+	huatuomcp "github.com/ccfos/huatuo/internal/mcp"
 	"github.com/ccfos/huatuo/internal/pidfile"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
 	"github.com/ccfos/huatuo/internal/server"
@@ -85,6 +86,7 @@ type Daemon struct {
 	profileQueryService *profilequery.ProfileQueryService
 	agentObserver       client.NodeRequestObserver
 	apiServer           *server.Server
+	mcpServer           *huatuomcp.Server
 	steps               []daemonStep
 }
 
@@ -97,6 +99,7 @@ func NewDaemon(opts *Options) *Daemon {
 			{name: "profile-query-service", setup: setupProfileQueryService},
 			{name: "metrics", setup: setupMetrics},
 			{name: "job-managers", setup: setupJobManagers},
+			{name: "mcp", setup: setupMCP},
 			{name: "handlers", setup: startHandlers},
 		},
 	}

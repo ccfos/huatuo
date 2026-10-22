@@ -20,10 +20,14 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/mcp/backend"
+	"github.com/ccfos/huatuo/internal/mcp/backend/escompatible"
+	"github.com/ccfos/huatuo/internal/mcp/constant"
 )
 
 // LogConfig controls process logging.
@@ -67,6 +71,69 @@ type AuthConfig struct {
 	Users []UserConfig
 }
 
+// MCPConfig controls the Model Context Protocol endpoint.
+type MCPConfig struct {
+	Enabled               bool
+	MaxConcurrentRequests int
+	MaxQueryTimeRange     int
+	MaxRegionsPerQuery    int
+	KnowledgeOverlayDir   string
+	UserRateLimit         int
+	Events                MCPEventsConfig
+	Prometheus            MCPPrometheusConfig
+}
+
+// MCPEventsConfig selects a logical event reader and its resource policy.
+type MCPEventsConfig struct {
+	Type                 string
+	BackendRateLimit     int
+	MaxDocumentsPerQuery int
+	ToolTimeout          int
+	ESCompatible         escompatible.Connection
+	Regions              []MCPEventRegionConfig
+}
+
+type MCPEventRegionConfig struct {
+	NamePattern  string
+	Type         string
+	ESCompatible escompatible.Connection
+}
+
+func (c *MCPEventsConfig) ReaderConfig() backend.EventConfig {
+	return backend.EventConfig{Type: c.Type, ESCompatible: c.ESCompatible}
+}
+
+func (c *MCPEventRegionConfig) ReaderConfig() backend.EventConfig {
+	return backend.EventConfig{Type: c.Type, ESCompatible: c.ESCompatible}
+}
+
+// MCPPrometheusConfig controls the metrics backend exposed through MCP.
+type MCPPrometheusConfig struct {
+	Address                string
+	AuthType               string
+	AuthToken              string
+	AuthUser               string
+	AuthPass               string
+	MetricPrefix           string
+	BackendRateLimit       int
+	MaxSeriesPerQuery      int
+	MaxMetricsPerDiscovery int
+	ToolTimeout            int
+	Regions                []MCPPrometheusRegionConfig
+}
+
+// MCPPrometheusRegionConfig overrides default fields for a region pattern.
+// Pointer fields distinguish inheritance (nil) from an explicit empty value.
+type MCPPrometheusRegionConfig struct {
+	NamePattern  string
+	Address      string
+	AuthType     *string
+	AuthToken    *string
+	AuthUser     *string
+	AuthPass     *string
+	MetricPrefix *string
+}
+
 // JobQuotaConfig controls active jobs for one job category.
 type JobQuotaConfig struct {
 	MaxConcurrentPerHost int
@@ -107,6 +174,7 @@ type Config struct {
 	Runtime       RuntimeConfig
 	APIServer     APIServerConfig
 	Auth          AuthConfig
+	MCP           MCPConfig
 	Jobs          JobsConfig
 	Agent         AgentConfig
 	Elasticsearch internalconfig.ElasticsearchConfig
@@ -151,6 +219,25 @@ func defaultConfig() Config {
 			HTTPPort: 19704,
 		},
 		Profiling: ProfilingConfig{},
+		MCP: MCPConfig{
+			MaxConcurrentRequests: 128,
+			MaxQueryTimeRange:     30 * 24 * 60 * 60,
+			MaxRegionsPerQuery:    5,
+			UserRateLimit:         120,
+			Events: MCPEventsConfig{
+				Type:                 "elasticsearch",
+				BackendRateLimit:     300,
+				MaxDocumentsPerQuery: 500,
+				ToolTimeout:          60,
+			},
+			Prometheus: MCPPrometheusConfig{
+				MetricPrefix:           "huatuo_",
+				BackendRateLimit:       300,
+				MaxSeriesPerQuery:      3000,
+				MaxMetricsPerDiscovery: 800,
+				ToolTimeout:            60,
+			},
+		},
 	}
 }
 
@@ -179,6 +266,120 @@ func (c *Config) Validate() error {
 	}
 	if err := c.Elasticsearch.Validate(); err != nil {
 		return fmt.Errorf("validating Elasticsearch config: %w", err)
+	}
+	if err := c.MCP.Validate(); err != nil {
+		return fmt.Errorf("validating MCP config: %w", err)
+	}
+	return nil
+}
+
+// Validate rejects invalid MCP resource limits.
+func (c *MCPConfig) Validate() error {
+	events := c.Events
+	for _, bound := range []struct {
+		name           string
+		value, maximum int
+	}{
+		{"maximum concurrent requests", c.MaxConcurrentRequests, constant.MaxConcurrent},
+		{"maximum regions per query", c.MaxRegionsPerQuery, constant.MaxRegions},
+		{"event document limit", events.MaxDocumentsPerQuery, constant.MaxDocuments},
+		{"Prometheus series limit", c.Prometheus.MaxSeriesPerQuery, constant.MaxSeries},
+		{"Prometheus discovery limit", c.Prometheus.MaxMetricsPerDiscovery, constant.MaxMetrics},
+	} {
+		if bound.value > bound.maximum {
+			return fmt.Errorf("%s must not exceed %d", bound.name, bound.maximum)
+		}
+	}
+	if c.MaxConcurrentRequests <= 0 {
+		return errors.New("maximum concurrent requests must be greater than zero")
+	}
+	if c.MaxQueryTimeRange < 0 {
+		return errors.New("maximum query range must not be negative")
+	}
+	if c.MaxRegionsPerQuery <= 0 {
+		return errors.New("maximum regions per query must be greater than zero")
+	}
+	if c.UserRateLimit < 0 || events.BackendRateLimit < 0 || c.Prometheus.BackendRateLimit < 0 {
+		return errors.New("rate limits must not be negative")
+	}
+	if events.MaxDocumentsPerQuery <= 0 || events.ToolTimeout <= 0 {
+		return errors.New("event document limit and Tool timeout must be positive")
+	}
+	if c.Prometheus.MaxSeriesPerQuery <= 0 || c.Prometheus.MaxMetricsPerDiscovery <= 0 ||
+		c.Prometheus.ToolTimeout <= 0 {
+		return errors.New("Prometheus query limits and Tool timeout must be positive")
+	}
+	maximumSeconds := math.MaxInt64 / int64(time.Second)
+	for _, value := range []struct {
+		name    string
+		seconds int
+	}{
+		{name: "maximum query range", seconds: c.MaxQueryTimeRange},
+		{name: "event Tool timeout", seconds: events.ToolTimeout},
+		{name: "Prometheus Tool timeout", seconds: c.Prometheus.ToolTimeout},
+	} {
+		if int64(value.seconds) > maximumSeconds {
+			return fmt.Errorf("%s is outside the supported range", value.name)
+		}
+	}
+	if c.Prometheus.Address != "" {
+		address, err := url.Parse(c.Prometheus.Address)
+		if err != nil || (address.Scheme != "http" && address.Scheme != "https") || address.Host == "" {
+			return errors.New("Prometheus address must be an absolute HTTP URL")
+		}
+	}
+	if len(c.Prometheus.Regions) > 0 && c.Prometheus.Address == "" {
+		return errors.New("default Prometheus address is required when regions are configured")
+	}
+	promNames := make([]string, 0, len(c.Prometheus.Regions))
+	for _, region := range c.Prometheus.Regions {
+		promNames = append(promNames, region.NamePattern)
+		if region.Address != "" {
+			address, err := url.Parse(region.Address)
+			if err != nil || (address.Scheme != "http" && address.Scheme != "https") || address.Host == "" {
+				return fmt.Errorf("Prometheus region %q address must be an absolute HTTP URL", region.NamePattern)
+			}
+		}
+	}
+	if err := validateRegionPatterns(promNames); err != nil {
+		return fmt.Errorf("Prometheus regions: %w", err)
+	}
+
+	input := events.ReaderConfig()
+	resolved, err := backend.ResolveEventConfig(&input, nil)
+	if err != nil {
+		return fmt.Errorf("default event backend: %w", err)
+	}
+	if len(events.Regions) > 0 && !backend.EventReaderConfigured(&resolved) {
+		return errors.New("default event connection is required when event regions are configured")
+	}
+	eventNames := make([]string, 0, len(events.Regions))
+	for _, region := range events.Regions {
+		eventNames = append(eventNames, region.NamePattern)
+		override := region.ReaderConfig()
+		if _, err := backend.ResolveEventConfig(&override, &resolved); err != nil {
+			return fmt.Errorf("event region %q: %w", region.NamePattern, err)
+		}
+	}
+	if err := validateRegionPatterns(eventNames); err != nil {
+		return fmt.Errorf("event regions: %w", err)
+	}
+	return nil
+}
+
+func validateRegionPatterns(names []string) error {
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name == "" {
+			return errors.New("region name is required")
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("duplicate region name %q", name)
+		}
+		seen[name] = struct{}{}
+		if _, err := regexp.Compile(name); err != nil {
+			return fmt.Errorf("invalid region pattern %q: %w", name, err)
+		}
 	}
 	return nil
 }

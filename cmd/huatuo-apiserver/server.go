@@ -16,7 +16,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers"
@@ -25,6 +27,10 @@ import (
 )
 
 func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {
+	var mcpHandler http.Handler
+	if d.mcpServer != nil {
+		mcpHandler = d.mcpServer
+	}
 	runningServer, err := handlers.Start(&handlers.ServerOptions{
 		Addr:                d.opts.Config.APIServer.ListenAddress,
 		PromReg:             d.metrics,
@@ -41,6 +47,7 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 			RequestsPerSecond: d.opts.Config.APIServer.RateLimit.RequestsPerSecond,
 			Burst:             d.opts.Config.APIServer.RateLimit.Burst,
 		},
+		MCPHandler: mcpHandler,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start api server: %w", err)
@@ -48,7 +55,13 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 
 	d.apiServer = runningServer
 
-	return runningServer.Shutdown, nil
+	return func(ctx context.Context) error {
+		var mcpErr error
+		if d.mcpServer != nil {
+			mcpErr = d.mcpServer.Shutdown(ctx)
+		}
+		return errors.Join(mcpErr, runningServer.Shutdown(ctx))
+	}, nil
 }
 
 func authUsers(users []config.UserConfig) []server.UserConfig {

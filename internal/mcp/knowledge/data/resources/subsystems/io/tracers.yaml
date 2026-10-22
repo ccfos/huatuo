@@ -1,0 +1,17 @@
+tracers:
+  iotracing:
+    description: IO 异常（延迟型，含内核栈）
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      reason_snapshot:
+        description: IO 异常快照，含 type/device/iostatus(io_util/read_bps/read_await/write_bps/write_await 等)
+      process_file_io_stats:
+        description: 进程文件 IO 统计列表
+      io_schedule_timeout_stacks:
+        description: IO 调度超时调用栈列表
+    match_field:
+      host: hostname
+    metric_keywords: [iolatency]
+related_tracers:
+  iotracing: [memburst, cpusys]
