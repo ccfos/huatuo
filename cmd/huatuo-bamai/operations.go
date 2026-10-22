@@ -25,7 +25,6 @@ import (
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
 	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
-	"github.com/ccfos/huatuo/internal/profiling/publication"
 	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
@@ -68,8 +67,6 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 			time.Second,
 		MaxConcurrentProcesses:  cfg.Profiling.MaxConcurrentProcesses,
 		CommandOutputLimitBytes: cfg.Profiling.CommandOutputLimitBytes,
-		ToolstreamServer:        d.toolstreamServer,
-		ResultPublisher:         toResultPublisher(d.publications),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create profiling operation service: %w", err)
@@ -84,14 +81,6 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 	d.tracingService = tracingService
 	initialized = true
 	return manager.Shutdown, nil
-}
-
-// toResultPublisher preserves a nil interface so storage availability checks work.
-func toResultPublisher(store *publication.Store) nodeprofiling.ResultPublisher {
-	if store == nil {
-		return nil
-	}
-	return store
 }
 
 func localAPIAddress(listenAddress string) (string, error) {

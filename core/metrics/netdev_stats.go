@@ -123,6 +123,10 @@ func (c *netdevCollector) netlinkStats(container *pod.Container, f *matcher.Valu
 		return nil, err
 	}
 
+	return netdevStatsFromNetlink(links, f), nil
+}
+
+func netdevStatsFromNetlink(links []rtnetlink.LinkMessage, f *matcher.ValueMatcher) netdevStats {
 	metrics := netdevStats{}
 	for _, msg := range links {
 		if msg.Attributes == nil {
@@ -171,30 +175,33 @@ func (c *netdevCollector) netlinkStats(container *pod.Container, f *matcher.Valu
 			continue
 		}
 
-		// https://github.com/torvalds/linux/blob/master/include/uapi/linux/if_link.h#L42-L246
+		// Match the proc aggregates so switching backends preserves metric meaning.
+		// https://github.com/torvalds/linux/blob/v6.6/net/core/net-procfs.c#L72-L92
 		metrics[name] = map[string]uint64{
-			"receive_packets":  stats.RXPackets,
-			"transmit_packets": stats.TXPackets,
-			"receive_bytes":    stats.RXBytes,
-			"transmit_bytes":   stats.TXBytes,
-			"receive_errors":   stats.RXErrors,
-			"transmit_errors":  stats.TXErrors,
-			"receive_dropped":  stats.RXDropped,
-			"transmit_dropped": stats.TXDropped,
-			"multicast":        stats.Multicast,
-			"collisions":       stats.Collisions,
+			"receive_packets":     stats.RXPackets,
+			"receive_bytes":       stats.RXBytes,
+			"receive_dropped":     stats.RXDropped + stats.RXMissedErrors,
+			"receive_errors":      stats.RXErrors,
+			"receive_multicast":   stats.Multicast,
+			"transmit_collisions": stats.Collisions,
+			"transmit_packets":    stats.TXPackets,
+			"transmit_bytes":      stats.TXBytes,
+			"transmit_dropped":    stats.TXDropped,
+			"transmit_errors":     stats.TXErrors,
 
-			// detailed rx_errors
+			// Receive errors include the proc frame aggregate.
 			"receive_length_errors": stats.RXLengthErrors,
 			"receive_over_errors":   stats.RXOverErrors,
 			"receive_crc_errors":    stats.RXCRCErrors,
-			"receive_frame_errors":  stats.RXFrameErrors,
+			"receive_frame_errors": stats.RXLengthErrors + stats.RXOverErrors +
+				stats.RXCRCErrors + stats.RXFrameErrors,
 			"receive_fifo_errors":   stats.RXFIFOErrors,
 			"receive_missed_errors": stats.RXMissedErrors,
 
-			// detailed tx_errors
-			"transmit_aborted_errors":   stats.TXAbortedErrors,
-			"transmit_carrier_errors":   stats.TXCarrierErrors,
+			// Transmit errors include the proc carrier aggregate.
+			"transmit_aborted_errors": stats.TXAbortedErrors,
+			"transmit_carrier_errors": stats.TXCarrierErrors + stats.TXAbortedErrors +
+				stats.TXWindowErrors + stats.TXHeartbeatErrors,
 			"transmit_fifo_errors":      stats.TXFIFOErrors,
 			"transmit_heartbeat_errors": stats.TXHeartbeatErrors,
 			"transmit_window_errors":    stats.TXWindowErrors,
@@ -205,7 +212,8 @@ func (c *netdevCollector) netlinkStats(container *pod.Container, f *matcher.Valu
 			"receive_nohandler":   stats.RXNoHandler,
 		}
 	}
-	return metrics, nil
+
+	return metrics
 }
 
 func (c *netdevCollector) procStats(container *pod.Container, f *matcher.ValueMatcher) (netdevStats, error) {
@@ -230,22 +238,22 @@ func (c *netdevCollector) procStats(container *pod.Container, f *matcher.ValueMa
 		}
 
 		metrics[name] = map[string]uint64{
-			"receive_bytes":       stats.RxBytes,
-			"receive_packets":     stats.RxPackets,
-			"receive_errors":      stats.RxErrors,
-			"receive_dropped":     stats.RxDropped,
-			"receive_fifo":        stats.RxFIFO,
-			"receive_frame":       stats.RxFrame,
-			"receive_compressed":  stats.RxCompressed,
-			"receive_multicast":   stats.RxMulticast,
-			"transmit_bytes":      stats.TxBytes,
-			"transmit_packets":    stats.TxPackets,
-			"transmit_errors":     stats.TxErrors,
-			"transmit_dropped":    stats.TxDropped,
-			"transmit_fifo":       stats.TxFIFO,
-			"transmit_colls":      stats.TxCollisions,
-			"transmit_carrier":    stats.TxCarrier,
-			"transmit_compressed": stats.TxCompressed,
+			"receive_bytes":           stats.RxBytes,
+			"receive_packets":         stats.RxPackets,
+			"receive_errors":          stats.RxErrors,
+			"receive_dropped":         stats.RxDropped,
+			"receive_fifo_errors":     stats.RxFIFO,
+			"receive_frame_errors":    stats.RxFrame,
+			"receive_compressed":      stats.RxCompressed,
+			"receive_multicast":       stats.RxMulticast,
+			"transmit_bytes":          stats.TxBytes,
+			"transmit_packets":        stats.TxPackets,
+			"transmit_errors":         stats.TxErrors,
+			"transmit_dropped":        stats.TxDropped,
+			"transmit_fifo_errors":    stats.TxFIFO,
+			"transmit_collisions":     stats.TxCollisions,
+			"transmit_carrier_errors": stats.TxCarrier,
+			"transmit_compressed":     stats.TxCompressed,
 		}
 	}
 

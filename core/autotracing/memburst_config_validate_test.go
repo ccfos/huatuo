@@ -31,6 +31,18 @@ func TestValidateMemBurst(t *testing.T) {
 		modify  func(*MemBurstConfig)
 		wantErr bool
 	}{
+		{
+			name:   "minimum ranking",
+			modify: func(c *MemBurstConfig) { c.DumpProcessMaxNum = 1 },
+		},
+		{
+			name:   "ranking ten",
+			modify: func(c *MemBurstConfig) { c.DumpProcessMaxNum = 10 },
+		},
+		{
+			name:   "ranking above snapshot cap",
+			modify: func(c *MemBurstConfig) { c.DumpProcessMaxNum = 11 },
+		},
 		{name: "valid", modify: func(*MemBurstConfig) {}},
 		{name: "zero delta memory burst", modify: func(c *MemBurstConfig) { c.DeltaMemoryBurst = 0 }, wantErr: true},
 		{name: "negative delta memory burst", modify: func(c *MemBurstConfig) { c.DeltaMemoryBurst = -1 }, wantErr: true},
@@ -41,6 +53,11 @@ func TestValidateMemBurst(t *testing.T) {
 		{name: "zero interval", modify: func(c *MemBurstConfig) { c.Interval = 0 }, wantErr: true},
 		{name: "zero interval tracing", modify: func(c *MemBurstConfig) { c.IntervalTracing = 0 }, wantErr: true},
 		{name: "zero sliding window", modify: func(c *MemBurstConfig) { c.SlidingWindowLength = 0 }, wantErr: true},
+		{
+			name:    "negative dump process max num",
+			modify:  func(c *MemBurstConfig) { c.DumpProcessMaxNum = -1 },
+			wantErr: true,
+		},
 		{name: "zero dump process max num", modify: func(c *MemBurstConfig) { c.DumpProcessMaxNum = 0 }, wantErr: true},
 	}
 

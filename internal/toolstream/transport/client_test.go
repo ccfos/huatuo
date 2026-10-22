@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -24,20 +25,23 @@ import (
 	capnp "capnproto.org/go/capnp/v3"
 )
 
-func TestClientEndReturnsSendAndCloseErrors(t *testing.T) {
-	t.Parallel()
-
+func TestSendDoesNotOwnConnectionCleanup(t *testing.T) {
 	writeErr := errors.New("write failed")
 	closeErr := errors.New("close failed")
 	conn := &failingConn{writeErr: writeErr, closeErr: closeErr}
 	client := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
-
-	err := client.End()
-	if !errors.Is(err, writeErr) || !errors.Is(err, closeErr) {
-		t.Fatalf("End() error = %v, want write and close errors", err)
+	err := client.Send(t.Context(), nil, SendOptions{End: true})
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("Send: %v", err)
+	}
+	if conn.closeCalls != 0 {
+		t.Fatal("Send closed caller-owned connection")
+	}
+	if err := client.Close(); !errors.Is(err, closeErr) {
+		t.Fatalf("Close: %v", err)
 	}
 	if conn.closeCalls != 1 {
-		t.Fatalf("Close() calls = %d, want 1", conn.closeCalls)
+		t.Fatalf("Close calls=%d", conn.closeCalls)
 	}
 }
 
@@ -78,4 +82,33 @@ func (*failingConn) SetReadDeadline(time.Time) error {
 
 func (*failingConn) SetWriteDeadline(time.Time) error {
 	return nil
+}
+
+func TestSendCancellationInterruptsBlockedWrite(t *testing.T) {
+	local, remote := net.Pipe()
+	defer local.Close()
+	defer remote.Close()
+	client := &Client{encoder: capnp.NewEncoder(local), conn: local}
+	deadline, stop := context.WithTimeout(t.Context(), time.Second)
+	defer stop()
+	ctx, cancel := context.WithCancel(deadline)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- client.Send(ctx, []byte("payload"), SendOptions{}) }()
+	if err := remote.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	// Reading just one byte leaves the frame write blocked on the pipe.
+	if _, err := io.ReadFull(remote, make([]byte, 1)); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Send: %v", err)
+		}
+	case <-deadline.Done():
+		t.Fatal("cancellation did not unblock Send")
+	}
 }

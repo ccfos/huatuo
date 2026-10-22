@@ -23,7 +23,6 @@ import (
 
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
-	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
@@ -45,13 +44,6 @@ type Config struct {
 	AggregationInterval     time.Duration
 	MaxConcurrentProcesses  int
 	CommandOutputLimitBytes int
-	ToolstreamServer        *toolstream.Server
-	ResultPublisher         ResultPublisher
-}
-
-// ResultPublisher owns the durable result commit marker.
-type ResultPublisher interface {
-	Publish(ctx context.Context, requestID string) error
 }
 
 // StartRequest contains one validated profiling operation request.
@@ -112,11 +104,6 @@ func (s *Service) Start(
 	return s.manager.Start(operation.StartRequest{
 		RequestID: request.RequestID,
 		Kind:      operation.KindProfiling,
-		Executor: newExecutor(
-			process,
-			s.config.ToolstreamServer,
-			s.config.ResultPublisher,
-			request.RequestID,
-		),
+		Executor:  newExecutor(process),
 	})
 }
