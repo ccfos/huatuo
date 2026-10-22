@@ -21,13 +21,13 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/flamegraph"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	ingestv1 "github.com/grafana/pyroscope/api/gen/proto/go/ingester/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	phlaremodel "github.com/grafana/pyroscope/pkg/model"
@@ -166,7 +166,7 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 	flame := phlaremodel.NewFlameGraph(m.Tree(), -1)
 	convertedLevels := convertLevels(flame.Levels)
 	tree := flamegraph.LevelsToTree(convertedLevels, flame.Names)
-	frame, label := flamegraph.TreeToNestedSetDataFrame(tree, "")
+	frame, _ := flamegraph.TreeToNestedSetDataFrame(tree, "")
 
 	level := *frame.Fields[0]
 	value := *frame.Fields[1]
@@ -192,16 +192,13 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 		selfarr = append(selfarr, self.At(i).(int64))
 	}
 
-	labelVmp := label.GetValuesMap()
-	keys := make([]string, len(labelVmp))
-	for k, v := range labelVmp {
-		keys[v] = k
-	}
-
 	for i := 0; i < labelf.Len(); i++ {
-		formattedNum := fmt.Sprintf("%d", labelf.At(i))
-		number, _ := strconv.ParseInt(formattedNum, 10, 64)
-		labelarr = append(labelarr, keys[number])
+		switch v := labelf.At(i).(type) {
+		case string:
+			labelarr = append(labelarr, v)
+		case data.EnumItemIndex:
+			labelarr = append(labelarr, labelf.Config.TypeConfig.Enum.Text[v])
+		}
 	}
 
 	dataSize := len(levelarr)

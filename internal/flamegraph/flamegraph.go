@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025-2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -167,11 +167,11 @@ func TreeToNestedSetDataFrame(tree *ProfileTree, unit string) (*data.Frame, *Enu
 	return frame, labelField
 }
 
-// EnumField label struct
+// EnumField stores labels as enum indices, falling back to strings when the
+// number of distinct labels exceeds the uint16 enum index capacity.
 type EnumField struct {
 	field     *data.Field
 	valuesMap map[string]data.EnumItemIndex
-	counter   data.EnumItemIndex
 }
 
 // NewEnumField add a new label field
@@ -182,24 +182,42 @@ func NewEnumField(name string, labels data.Labels) *EnumField {
 	}
 }
 
-// GetValuesMap get label.valuesMap
+// GetValuesMap returns the enum dictionary, or nil after falling back to strings.
 func (e *EnumField) GetValuesMap() map[string]data.EnumItemIndex {
 	return e.valuesMap
 }
 
 // Append data
 func (e *EnumField) Append(value string) {
+	if e.valuesMap == nil {
+		e.field.Append(value)
+		return
+	}
 	if valueIndex, ok := e.valuesMap[value]; ok {
 		e.field.Append(valueIndex)
 	} else {
-		e.valuesMap[value] = e.counter
-		e.field.Append(e.counter)
-		e.counter++
+		if len(e.valuesMap) == 1<<16 {
+			// A new enum index would wrap and silently alias an earlier label.
+			text := e.GetField().Config.TypeConfig.Enum.Text
+			values := make([]string, e.field.Len(), e.field.Len()+1)
+			for i := range values {
+				values[i] = text[e.field.At(i).(data.EnumItemIndex)]
+			}
+			e.field = data.NewField(e.field.Name, e.field.Labels, append(values, value))
+			e.valuesMap = nil
+			return
+		}
+		index := data.EnumItemIndex(len(e.valuesMap))
+		e.valuesMap[value] = index
+		e.field.Append(index)
 	}
 }
 
 // GetField get fields
 func (e *EnumField) GetField() *data.Field {
+	if e.valuesMap == nil {
+		return e.field
+	}
 	s := make([]string, len(e.valuesMap))
 	for k, v := range e.valuesMap {
 		s[v] = k
