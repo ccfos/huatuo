@@ -475,3 +475,46 @@ BlackList = [${runqlat_blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "c
     KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
 EOF
 }
+
+write_cpuidle_autotracing_config() {
+	local blacklist="" es_config=""
+	[[ ${CPUIDLE_DISABLED} != true ]] || blacklist='"cpuidle", '
+	if [[ -n ${STORAGE_ADDR} ]]; then
+		es_config="[Storage.Elasticsearch]
+    Address = \"${STORAGE_ADDR}\"
+    Username = \"${STORAGE_USERNAME}\"
+    Password = \"${STORAGE_PASSWORD}\"
+    Index = \"${CPUIDLE_INDEX}\""
+	fi
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${CPUIDLE_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${CPUIDLE_KUBELET_PORT}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+[AutoTracing.CPUIdle]
+    UserThreshold = ${CPUIDLE_THRESHOLDS[0]}
+    SysThreshold = ${CPUIDLE_THRESHOLDS[1]}
+    UsageThreshold = ${CPUIDLE_THRESHOLDS[2]}
+    DeltaUserThreshold = ${CPUIDLE_THRESHOLDS[3]}
+    DeltaSysThreshold = ${CPUIDLE_THRESHOLDS[4]}
+    DeltaUsageThreshold = ${CPUIDLE_THRESHOLDS[5]}
+    Interval = ${CPUIDLE_INTERVAL}
+    IntervalTracing = ${CPUIDLE_COOLDOWN}
+    RunTracingToolTimeout = ${CPUIDLE_DURATION}
+[[AutoTracing.CPUIdle.Filter.Included]]
+    Field = "${CPUIDLE_INCLUDE_FIELD}"
+    Pattern = "${CPUIDLE_INCLUDE}"
+[[AutoTracing.CPUIdle.Filter.Excluded]]
+    Field = "${CPUIDLE_EXCLUDE_FIELD}"
+    Pattern = "${CPUIDLE_EXCLUDE}"
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+${es_config}
+EOF
+}
