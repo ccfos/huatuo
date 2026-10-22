@@ -11,7 +11,9 @@ weight: 2
 
 ## 结果
 
-结果按已启用的存储配置写入 Elasticsearch 或本地文件。可通过 `tracer_type=autotracing`、`tracer_name`、主机或容器标识及时间范围筛选。下列 JSON 为说明字段结构的示例，并非实测结果。
+自动追踪事件按已启用的存储配置写入 Elasticsearch 或本地文件。可通过 `tracer_type=autotracing`、`tracer_name`、主机或容器标识及时间范围筛选。下列 JSON 为说明字段结构的示例，并非实测结果。
+
+CPU 示例使用 `perf`。使用 `profiler` 时，事件保留触发指标，profile 独立存入 Elasticsearch，并与事件共用 `tracer_id`。存储要求与查看方式见[节点配置](/docs/configuration/huatuo-bamai-configuration_zh.md#7-自动追踪)。
 
 ### 公共字段
 
@@ -35,9 +37,9 @@ weight: 2
 
 ### 宿主机系统态 CPU
 
-追踪器：`cpusys`。
+追踪器：`cpusys`。通过 `AutoTracing.CPUSys.Tool` 选择 `perf`（默认）或 `profiler`。
 
-周期性读取 `/proc/stat`，计算宿主机 CPU 系统态占用率及相邻两次采样的增量。占用率超过 45% 且增量超过 20 个百分点时，触发宿主机 `perf` 采样，生成 CPU 火焰图。
+周期性读取 `/proc/stat`，计算宿主机 CPU 系统态占用率及相邻两次采样的增量。占用率超过 45% 且增量超过 20 个百分点时，触发宿主机 CPU 采样，生成 CPU 火焰图。
 
 以上为内置默认阈值，全局默认冷却时间为 30 分钟。
 
@@ -65,7 +67,7 @@ weight: 2
 | `system_percent_threshold` | 系统态占用率触发阈值（%） |
 | `system_percent_delta` | 相邻两次采样的系统态占用率增量（百分点） |
 | `system_percent_delta_threshold` | 系统态增量触发阈值（百分点） |
-| `flamedata` | perf 采样生成的火焰图帧数据列表，每帧包含： |
+| `flamedata` | `perf`：火焰图帧列表，帧字段见下文；`profiler`：`null`，通过事件的 `tracer_id` 查询独立存储的 profile |
 | `flamedata.level` | 调用栈层级深度 |
 | `flamedata.value` | 该帧（含子帧）的采样计数 |
 | `flamedata.self` | 该帧自身（不含子帧）的采样计数 |
@@ -73,9 +75,9 @@ weight: 2
 
 ### 容器 CPU
 
-追踪器：`cpuidle`。
+追踪器：`cpuidle`。通过 `AutoTracing.CPUIdle.Tool` 选择 `perf`（默认）或 `profiler`。
 
-周期性读取容器 cgroup CPU 统计。用户态、系统态或总占用率中的任一项同时超过占用率阈值和相邻采样增量阈值时，触发容器级 `perf` 采样。
+周期性读取容器 cgroup CPU 统计。用户态、系统态或总占用率中的任一项同时超过占用率阈值和相邻采样增量阈值时，触发容器级 CPU 采样。
 
 同一容器默认冷却 30 分钟，目标范围由 `AutoTracing.CPUIdle.Filter` 控制。内置默认阈值如下：
 
@@ -119,7 +121,7 @@ weight: 2
 | `system_percent_delta` / `system_percent_delta_threshold` | 系统态占用率增量（百分点）及其阈值 |
 | `total_percent` / `total_percent_threshold` | 触发时容器 CPU 总占用率（%）及其阈值 |
 | `total_percent_delta` / `total_percent_delta_threshold` | 总占用率增量（百分点）及其阈值 |
-| `flamedata` | 容器级 perf 采样火焰图帧数据，字段含义同 `cpusys` |
+| `flamedata` | `perf`：容器火焰图帧列表，帧字段同 `cpusys`；`profiler`：`null`，通过事件的 `tracer_id` 查询独立存储的 profile |
 
 ### 容器 D 状态负载
 

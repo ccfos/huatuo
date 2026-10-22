@@ -304,6 +304,15 @@ Java uses `bin/asprof` and `lib/libasyncProfiler.so` under `ToolDir`; Python use
 
 Automatic tracing triggers performance collection based on resource usage and configured thresholds.
 
+`AutoTracing.CPUIdle.Tool` and `AutoTracing.CPUSys.Tool` independently accept `perf` or `profiler`, defaulting to `perf`. Empty strings and other values are invalid. Updates affect the next collection; running collections retain their selected tool.
+
+- `perf`: preserves inline event `flamedata`; visualization does not require huatuo-apiserver.
+- `profiler`: uses native CPU on-CPU collection, stores profiles separately in Elasticsearch, and displays them through the huatuo-apiserver Pyroscope-compatible interface. Enable bamai Elasticsearch storage and do not use `--disable-storage`. Events retain trigger metrics with `flamedata: null`.
+
+Both tools use `RunTracingToolTimeout` as the collection duration in seconds. Failures do not switch tools.
+
+To view profiler results, open the Continuous Profiling host or container dashboard for the target. Set Task ID to the event `tracer_id`, set `type` to `process_cpu:cpu:nanoseconds:cpu:nanoseconds`, and select a time range covering collection. See [View the Flame Graph](/docs/best-practice/continuous-profiling_en.md#5-view-the-flame-graph) for dashboard access and interactions.
+
 #### 7.1 Container CPU spikes
 
 ```toml
@@ -358,6 +367,8 @@ Automatic tracing triggers performance collection based on resource usage and co
 # 3. UsageThreshold and DeltaUsageThreshold
 #
 [AutoTracing.CPUIdle]
+    # Tool: perf (default) or profiler. Both use RunTracingToolTimeout.
+    # Tool = "perf"
     # UserThreshold = 75
     # SysThreshold = 45
     # UsageThreshold = 90
@@ -379,7 +390,7 @@ Automatic tracing triggers performance collection based on resource usage and co
 | `DeltaUsageThreshold` | Total CPU utilization increase over the previous sample. Default: `55` percentage points. |
 | `Interval` | Container CPU utilization sampling interval in seconds. Default: `10`. |
 | `IntervalTracing` | Minimum interval between automatic traces, in seconds. Default: `1800` (30 minutes). |
-| `RunTracingToolTimeout` | Execution timeout for one performance trace, in seconds. Default: `10`. |
+| `RunTracingToolTimeout` | Collection duration in seconds. Default: `10`. |
 
 **Trigger conditions**: Once the tracing interval has elapsed, a container becomes a tracing candidate if both utilization and its increase strictly exceed the corresponding thresholds in any one of these pairs:
 
@@ -467,6 +478,8 @@ Automatic tracing triggers performance collection based on resource usage and co
 # SysThreshold and DeltaSysThreshold are true.
 #
 [AutoTracing.CPUSys]
+    # Tool: perf (default) or profiler. Both use RunTracingToolTimeout.
+    # Tool = "perf"
     # SysThreshold = 45
     # DeltaSysThreshold = 20
     # Interval = 10
@@ -480,7 +493,7 @@ Automatic tracing triggers performance collection based on resource usage and co
 | `DeltaSysThreshold` | System-mode CPU utilization increase over the previous sample. Default: `20` percentage points. |
 | `Interval` | Host CPU utilization sampling interval in seconds. Default: `10`. |
 | `IntervalTracing` | Minimum interval between traces, in seconds. Default: `1800`. |
-| `RunTracingToolTimeout` | Execution timeout for one trace, in seconds. Default: `10`. |
+| `RunTracingToolTimeout` | Collection duration in seconds. Default: `10`. |
 
 **Trigger conditions**: Once the tracing interval has elapsed, tracing starts when system-mode CPU utilization strictly exceeds `SysThreshold` and its increase strictly exceeds `DeltaSysThreshold`.
 

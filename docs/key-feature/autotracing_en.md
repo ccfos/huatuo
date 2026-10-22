@@ -9,7 +9,7 @@ weight: 3
 
 ## Overview
 
-AutoTracing starts collecting diagnostics when metrics meet configured conditions, helping investigate intermittent CPU, I/O, load, and memory anomalies. CPU spikes trigger `perf` sampling; other scenarios collect process states, call stacks, memory usage rankings, or runtime snapshots as needed.
+AutoTracing starts collecting diagnostics when metrics meet configured conditions, helping investigate intermittent CPU, I/O, load, and memory anomalies. CPU spikes trigger the configured `perf` or `profiler` tool; other scenarios collect process states, call stacks, memory usage rankings, or runtime snapshots as needed.
 
 | Problem | Tracer | Results |
 | --- | --- | --- |
@@ -39,7 +39,9 @@ Node Configuration also covers interrupt utilization anomalies and container mem
 
 ## Results
 
-Results are written to Elasticsearch or local files according to the enabled storage configuration. Filter by host, container, time range, and tracer, then correlate results with application requests.
+Automatic tracing events are written to Elasticsearch or local files according to the enabled storage configuration. Filter by host, container, time range, and tracer, then correlate results with application requests.
+
+For CPU collection, `perf` embeds flame graph data in the event. With `profiler`, the event retains trigger metrics; profiles are stored separately in Elasticsearch and linked by the same `tracer_id`. See [Node Configuration](/docs/configuration/huatuo-bamai-configuration_en.md#7-automatic-tracing) for storage requirements and viewing instructions.
 
 ### Common fields
 
@@ -55,9 +57,9 @@ For the full record structure, see [Automatic Tracing Fields](/docs/reference/au
 
 ### Host system CPU
 
-Tracer: `cpusys`.
+Tracer: `cpusys`. Select the tool with `AutoTracing.CPUSys.Tool` (default: `perf`).
 
-Host `perf` sampling starts when both system CPU utilization and its increase between consecutive samples exceed their thresholds. The default thresholds are 45% and 20 percentage points, respectively, with a 30-minute cooldown.
+Host CPU sampling starts when both system CPU utilization and its increase between consecutive samples exceed their thresholds. The default thresholds are 45% and 20 percentage points, respectively, with a 30-minute cooldown.
 
 Results include the triggering metrics and a CPU flame graph for identifying call paths with high system CPU usage.
 
@@ -65,9 +67,9 @@ For fields and examples, see [Automatic Tracing Fields](/docs/reference/autotrac
 
 ### Container CPU
 
-Tracer: `cpuidle`.
+Tracer: `cpuidle`. Select the tool with `AutoTracing.CPUIdle.Tool` (default: `perf`).
 
-Container-level `perf` sampling starts when any one of user, system, or total CPU utilization exceeds both its utilization threshold and its increase threshold. The default cooldown is 30 minutes. `AutoTracing.CPUIdle.Filter` controls the target scope.
+Container-level CPU sampling starts when any one of user, system, or total CPU utilization exceeds both its utilization threshold and its increase threshold. The default cooldown is 30 minutes. `AutoTracing.CPUIdle.Filter` controls the target scope.
 
 Results include utilization values, their increases, and a container CPU flame graph for examining CPU hotspots within the container.
 

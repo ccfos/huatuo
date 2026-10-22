@@ -305,6 +305,15 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 
 自动追踪根据资源使用情况和配置阈值触发性能采集。
 
+`AutoTracing.CPUIdle.Tool` 和 `AutoTracing.CPUSys.Tool` 可分别设为 `perf` 或 `profiler`，缺省为 `perf`；空字符串及其他值无效。配置更新后，下一次触发使用新工具，运行中的采集不变。
+
+- `perf`：沿用事件中的 `flamedata`，展示无需 huatuo-apiserver。
+- `profiler`：使用原生 CPU on-CPU 采集，将 profile 独立存入 Elasticsearch，通过 huatuo-apiserver 的 Pyroscope 兼容接口展示。需要启用 bamai 的 Elasticsearch 存储，且不能使用 `--disable-storage`。事件保留触发指标，`flamedata` 为 `null`。
+
+两种工具均使用 `RunTracingToolTimeout` 指定采集秒数。工具失败时不自动切换。
+
+查看 profiler 结果时，打开目标对应的 Continuous Profiling 宿主机或容器面板，将 Task ID 设为事件的 `tracer_id`，`type` 设为 `process_cpu:cpu:nanoseconds:cpu:nanoseconds`，时间范围覆盖采样时段。面板入口和交互操作见[查看火焰图](/docs/best-practice/continuous-profiling_zh.md#5-查看火焰图)。
+
 #### 7.1 容器 CPU 突增
 
 ```toml
@@ -359,6 +368,8 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 # 3. UsageThreshold and DeltaUsageThreshold
 #
 [AutoTracing.CPUIdle]
+    # Tool: perf (default) or profiler. Both use RunTracingToolTimeout.
+    # Tool = "perf"
     # UserThreshold = 75
     # SysThreshold = 45
     # UsageThreshold = 90
@@ -380,7 +391,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 | `DeltaUsageThreshold` | 总 CPU 使用率相对上次采样的增量阈值，默认 `55` 个百分点。 |
 | `Interval` | 容器 CPU 使用率采样间隔，单位秒，默认 `10`。 |
 | `IntervalTracing` | 两次自动追踪之间的最小间隔，单位秒，默认 `1800`（30 分钟）。 |
-| `RunTracingToolTimeout` | 单次性能追踪执行超时，单位秒，默认 `10`。 |
+| `RunTracingToolTimeout` | 采集时长，单位秒，默认 `10`。 |
 
 **触发条件**：满足追踪间隔后，以下任一组的使用率及其增量均严格大于对应阈值时，容器成为追踪候选：
 
@@ -468,6 +479,8 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 # SysThreshold and DeltaSysThreshold are true.
 #
 [AutoTracing.CPUSys]
+    # Tool: perf (default) or profiler. Both use RunTracingToolTimeout.
+    # Tool = "perf"
     # SysThreshold = 45
     # DeltaSysThreshold = 20
     # Interval = 10
@@ -481,7 +494,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 | `DeltaSysThreshold` | 系统态 CPU 使用率相对上次采样的增量阈值，默认 `20` 个百分点。 |
 | `Interval` | 宿主机 CPU 使用率采样间隔，单位秒，默认 `10`。 |
 | `IntervalTracing` | 两次追踪之间的最小间隔，单位秒，默认 `1800`。 |
-| `RunTracingToolTimeout` | 单次追踪执行超时，单位秒，默认 `10`。 |
+| `RunTracingToolTimeout` | 采集时长，单位秒，默认 `10`。 |
 
 **触发条件**：满足追踪间隔后，系统态 CPU 使用率严格大于 `SysThreshold`，且其增量严格大于 `DeltaSysThreshold` 时触发。
 

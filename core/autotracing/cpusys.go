@@ -17,7 +17,6 @@ package autotracing
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -46,7 +45,7 @@ func newCPUSys() (*tracing.EventTracingAttr, error) {
 	cfg := configSnapshot()
 	intervalSeconds := cfg.CPUSys.Interval
 	minTraceIntervalSeconds := cfg.CPUSys.IntervalTracing
-	perfDurationSeconds := cfg.CPUSys.RunTracingToolTimeout
+	traceDurationSeconds := cfg.CPUSys.RunTracingToolTimeout
 	threshold := cpuSysThreshold{
 		delta: cfg.CPUSys.DeltaSysThreshold,
 		usage: cfg.CPUSys.SysThreshold,
@@ -54,7 +53,7 @@ func newCPUSys() (*tracing.EventTracingAttr, error) {
 	if err := validateCPUConfig(cpuTracingConfig{
 		intervalSeconds:         intervalSeconds,
 		minTraceIntervalSeconds: minTraceIntervalSeconds,
-		perfDurationSeconds:     perfDurationSeconds,
+		traceDurationSeconds:    traceDurationSeconds,
 		systemThreshold:         threshold.usage,
 		systemDeltaThreshold:    threshold.delta,
 	}); err != nil {
@@ -65,7 +64,7 @@ func newCPUSys() (*tracing.EventTracingAttr, error) {
 		TracingData: &cpuSysTracing{
 			interval:         time.Duration(intervalSeconds) * time.Second,
 			minTraceInterval: time.Duration(minTraceIntervalSeconds) * time.Second,
-			perfDuration:     time.Duration(perfDurationSeconds) * time.Second,
+			traceDuration:    time.Duration(traceDurationSeconds) * time.Second,
 			threshold:        threshold,
 		},
 		Interval: 20,
@@ -81,7 +80,7 @@ type cpuUsage struct {
 type cpuSysTracing struct {
 	interval         time.Duration
 	minTraceInterval time.Duration
-	perfDuration     time.Duration
+	traceDuration    time.Duration
 	threshold        cpuSysThreshold
 	lastTraceAt      time.Time
 }
@@ -238,22 +237,20 @@ func (c *cpuSysTracing) shouldTrace(state cpuSysState, sampledAt time.Time) bool
 func (c *cpuSysTracing) saveCPUSysTrace(
 	traceTime timeutil.Timestamp,
 	state cpuSysState,
-	flameData []byte,
+	result profileResult,
 ) error {
 	tracerData := cpuSysTracingData{
 		SystemPercent:               state.systemPercent,
 		SystemPercentThreshold:      c.threshold.usage,
 		SystemPercentDelta:          state.systemPercentDelta,
 		SystemPercentDeltaThreshold: c.threshold.delta,
-	}
-
-	if err := json.Unmarshal(flameData, &tracerData.FlameData); err != nil {
-		return fmt.Errorf("decode system-wide perf output: %w", err)
+		FlameData:                   result.flameData,
 	}
 
 	if err := tracing.Save(&tracing.WriteRequest{
 		TracerName:       cpuSysTracerName,
 		StartedTimestamp: traceTime,
+		TracerID:         result.taskID,
 		TracerData:       &tracerData,
 		TracerRunType:    types.TracerRunTypeAutotracing,
 	}); err != nil {
@@ -287,18 +284,21 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 			}
 
 			traceTime := timeutil.Now()
+			tool := configSnapshot().CPUSys.Tool
 			log.WithField("cpu_system_percent", state.systemPercent).
+				WithField("tool", tool).
 				WithField("cpu_system_delta", state.systemPercentDelta).
-				WithField("duration_seconds", int64(c.perfDuration/time.Second)).
+				WithField("duration_seconds", int64(c.traceDuration/time.Second)).
 				Info("starting system-wide cpu profiling")
 
-			flameData, err := runPerfCommand(ctx, perfRequest{
-				duration: c.perfDuration,
+			result, err := runProfileCommand(ctx, profileRequest{
+				tool:     tool,
+				duration: c.traceDuration,
 			})
 			if err != nil {
 				return err
 			}
-			if err := c.saveCPUSysTrace(traceTime, state, flameData); err != nil {
+			if err := c.saveCPUSysTrace(traceTime, state, result); err != nil {
 				return err
 			}
 			c.lastTraceAt = traceTime.Time

@@ -26,7 +26,6 @@ import (
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/stats"
 	"github.com/ccfos/huatuo/internal/pod"
-	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 )
 
@@ -81,8 +80,8 @@ func TestNewCPUIdleTracingBindsConfig(t *testing.T) {
 	if tracer.minTraceInterval != 300*time.Second {
 		t.Errorf("minTraceInterval = %s, want 5m0s", tracer.minTraceInterval)
 	}
-	if tracer.perfDuration != 7*time.Second {
-		t.Errorf("perfDuration = %s, want 7s", tracer.perfDuration)
+	if tracer.traceDuration != 7*time.Second {
+		t.Errorf("traceDuration = %s, want 7s", tracer.traceDuration)
 	}
 	if tracer.threshold.percent != (cpuUsageBreakdown[int64]{user: 75, system: 45, total: 90}) {
 		t.Errorf("percent threshold = %+v, want user=75 system=45 total=90", tracer.threshold.percent)
@@ -113,7 +112,7 @@ func TestValidateCPUIdleConfig(t *testing.T) {
 			config: cpuTracingConfig{
 				intervalSeconds:         10,
 				minTraceIntervalSeconds: 1800,
-				perfDurationSeconds:     10,
+				traceDurationSeconds:    10,
 				systemThreshold:         45,
 				systemDeltaThreshold:    20,
 			},
@@ -124,7 +123,7 @@ func TestValidateCPUIdleConfig(t *testing.T) {
 			config: cpuTracingConfig{
 				intervalSeconds:         10,
 				minTraceIntervalSeconds: 1800,
-				perfDurationSeconds:     10,
+				traceDurationSeconds:    10,
 			},
 			threshold: cpuIdleThreshold{
 				percent: cpuUsageBreakdown[int64]{user: -1},
@@ -136,7 +135,7 @@ func TestValidateCPUIdleConfig(t *testing.T) {
 			config: cpuTracingConfig{
 				intervalSeconds:         10,
 				minTraceIntervalSeconds: 1800,
-				perfDurationSeconds:     10,
+				traceDurationSeconds:    10,
 			},
 			threshold: cpuIdleThreshold{
 				delta: cpuUsageBreakdown[int64]{total: 101},
@@ -152,7 +151,7 @@ func TestValidateCPUIdleConfig(t *testing.T) {
 			err := validateCPUIdleConfig(
 				tt.config.intervalSeconds,
 				tt.config.minTraceIntervalSeconds,
-				tt.config.perfDurationSeconds,
+				tt.config.traceDurationSeconds,
 				tt.threshold,
 			)
 			if tt.wantError == "" {
@@ -586,19 +585,5 @@ func TestCPUIdleTracingDataJSON(t *testing.T) {
 		if actualValue, ok := actual[field]; !ok || string(actualValue) != expectedValue {
 			t.Errorf("JSON field %q = %s, want %s", field, actualValue, expectedValue)
 		}
-	}
-}
-
-func TestSaveCPUIdleTraceRejectsInvalidPerfOutput(t *testing.T) {
-	t.Parallel()
-
-	tracer := &cpuIdleTracing{}
-	err := tracer.saveCPUIdleTrace(
-		&containerCPUState{},
-		timeutil.Timestamp{Time: time.Unix(100, 0)},
-		[]byte("not-json"),
-	)
-	if err == nil || !strings.Contains(err.Error(), "decode container perf output") {
-		t.Fatalf("saveCPUIdleTrace() error = %v, want decode error", err)
 	}
 }
