@@ -66,8 +66,13 @@ func TestReadStackTrace(t *testing.T) {
 		},
 		{
 			name:    "missing ID",
+			err:     ebpf.ErrKeyNotExist,
+			wantErr: ErrStackNotFound,
+		},
+		{
+			name:    "wrapped missing ID",
 			err:     fmt.Errorf("lookup: %w", ebpf.ErrKeyNotExist),
-			wantErr: ebpf.ErrKeyNotExist,
+			wantErr: ErrStackNotFound,
 		},
 		{
 			name:    "backend failure",
@@ -76,7 +81,7 @@ func TestReadStackTrace(t *testing.T) {
 		},
 		{
 			name:    "missing ID returned as nil",
-			wantErr: ebpf.ErrKeyNotExist,
+			wantErr: ErrStackNotFound,
 		},
 		{
 			name:    "empty value",

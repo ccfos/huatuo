@@ -309,12 +309,12 @@ func TestResolveStackWithFallback(t *testing.T) {
 		{
 			name:       "missing without fallback",
 			primaryErr: ebpf.ErrKeyNotExist,
-			wantErr:    ebpf.ErrKeyNotExist,
+			wantErr:    bpfmap.ErrStackNotFound,
 			wantMaps:   []uint32{2},
 		},
 		{
 			name:     "nil lookup without fallback",
-			wantErr:  ebpf.ErrKeyNotExist,
+			wantErr:  bpfmap.ErrStackNotFound,
 			wantMaps: []uint32{2},
 		},
 		{
@@ -333,7 +333,7 @@ func TestResolveStackWithFallback(t *testing.T) {
 			primaryErr:  ebpf.ErrKeyNotExist,
 			fallback:    true,
 			fallbackErr: ebpf.ErrKeyNotExist,
-			wantErr:     ebpf.ErrKeyNotExist,
+			wantErr:     bpfmap.ErrStackNotFound,
 			wantMaps:    []uint32{2, 3},
 		},
 		{
