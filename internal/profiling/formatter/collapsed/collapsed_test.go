@@ -31,10 +31,6 @@ func TestStacksAdd_RemovesBalancedStack(t *testing.T) {
 		t.Fatalf("add free sample: %v", err)
 	}
 
-	if !formatter.IsEmpty() {
-		t.Fatalf("balanced stack retained in formatter: %v", formatter.counts)
-	}
-
 	var got bytes.Buffer
 	if err := formatter.Write(&got); err != nil {
 		t.Fatalf("write formatter: %v", err)

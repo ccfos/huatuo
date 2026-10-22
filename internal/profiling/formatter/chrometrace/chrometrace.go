@@ -79,6 +79,8 @@ func NewFormatter(cfg output.Config) (output.Formatter, error) {
 	return &formatter{destination: destination}, nil
 }
 
+func (*formatter) Name() output.OutputFormat { return output.FormatChromeTrace }
+
 func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err

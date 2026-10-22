@@ -43,6 +43,8 @@ const (
 // when cancellation or timeout is the only failure. Independent I/O or cleanup
 // failures must remain visible, including when joined with cancellation.
 type Formatter interface {
+	// Name returns the canonical format, independent of constructor aliases.
+	Name() OutputFormat
 	Add(ctx context.Context, window *types.AggregationWindow) error
 	Complete(ctx context.Context) error
 	Close() error

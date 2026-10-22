@@ -91,10 +91,11 @@ storage_start
 assert_profile_storage_request "create index" "${HUATUO_BAMAI_TEST_TMPDIR}/create-index.json" \
 	-X PUT "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}" \
 	-H 'Content-Type: application/json' -d '{"mappings":{"properties":{
-  "tracer_id":{"type":"keyword"},
+  "tracer_id":{"type":"keyword","fields":{"keyword":{"type":"keyword"}}},
   "hostname":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
   "container_hostname":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
   "uploaded_timestamp":{"type":"date"},
+  "started_timestamp":{"type":"date"},
   "profile_data":{"properties":{"profile_type":{"type":"text","fields":{"keyword":{"type":"keyword"}}}}}
  }}}'
 
@@ -129,4 +130,51 @@ assert_profile_filter \
 assert_profile_filter \
 	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",container_hostname=\"pod-a\"}" \
 	'\012\017container-exact'
+# Observation order differs from delivery order. An out-of-range observation
+# delivered inside the range must not replace the latest zero snapshot.
+jq -cn '
+ [
+  {id:"live-old",observed:"1970-01-01T00:00:00.100Z",uploaded:"1970-01-01T00:00:05Z",time:100000000,value:8192},
+  {id:"live-zero",observed:"1970-01-01T00:00:00.200Z",uploaded:"1970-01-01T00:00:06Z",time:200000000,value:0},
+  {id:"live-outside",observed:"1970-01-01T00:00:02Z",uploaded:"1970-01-01T00:00:00.300Z",time:2000000000,value:4096}
+ ][] | {index:{_id:.id}}, {
+  tracer_id:"live-task",tracer_type:"profiling",hostname:"host-a",
+  started_timestamp:.observed,uploaded_timestamp:.uploaded,
+  profile_data:{profile_type:"memory:physical_usage:bytes:space:bytes",profile:{
+   time_nanos:.time,string_table:["","physical_usage","bytes","work"],
+   sample_type:[{type:1,unit:2}],function:[{id:1,name:3}],
+   location:[{id:1,line:[{function_id:1}]}],
+   sample:(if .value == 0 then [] else [{location_id:[1],value:[.value]}] end)
+  }}
+ }
+' > "${HUATUO_BAMAI_TEST_TMPDIR}/live-profiles.ndjson"
+assert_profile_storage_request "seed live snapshots" "${HUATUO_BAMAI_TEST_TMPDIR}/seed-live.json" \
+	-X POST "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}/_bulk?refresh=true" \
+	-H 'Content-Type: application/x-ndjson' \
+	--data-binary "@${HUATUO_BAMAI_TEST_TMPDIR}/live-profiles.ndjson"
+assert_eq "$(jq -r '.errors' "${HUATUO_BAMAI_TEST_TMPDIR}/seed-live.json")" \
+	false "seed live snapshots" || fatal "live snapshot writes failed"
+
+assert_latest_zero_snapshot() {
+	local profile_type="memory:physical_usage:bytes:space:bytes" matcher='{id="live-task"}'
+	local type_length matcher_length status curl_status=0
+	printf -v type_length '%03o' "${#profile_type}"
+	printf -v matcher_length '%03o' "${#matcher}"
+	# SelectMergeStacktracesRequest fields 1/2; end=1000 milliseconds, start=0.
+	printf '\012%b%s\022%b%s\040\350\007' \
+		"\\${type_length}" "${profile_type}" "\\${matcher_length}" "${matcher}" > "${PROFILE_FILTER_REQUEST}"
+	# Empty flamegraph: one total root with four zero coordinates and no weight.
+	printf '\012\017\012\005total\022\006\012\004\000\000\000\000' > "${PROFILE_FILTER_EXPECTED}"
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
+		-H "Authorization: Bearer ${PROFILE_FILTER_TOKEN}" -H 'Content-Type: application/proto' \
+		--data-binary "@${PROFILE_FILTER_REQUEST}" -o "${PROFILE_FILTER_RESPONSE}" -w '%{http_code}' \
+		"${PROFILE_FILTER_ADDR}/v1/profiling/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces") || curl_status=$?
+	log_info "latest snapshot status=${status}, curl=${curl_status}"
+	od -An -tx1c "${PROFILE_FILTER_RESPONSE}" || true
+	assert_eq "${curl_status}" 0 "latest snapshot transport" || fatal "latest snapshot request failed"
+	assert_eq "${status}" 200 "latest snapshot status" || fatal "latest snapshot query failed"
+	cmp -s "${PROFILE_FILTER_EXPECTED}" "${PROFILE_FILTER_RESPONSE}" \
+		|| fatal "latest zero snapshot was merged, filtered by delivery time, or replaced by an older result"
+}
+assert_latest_zero_snapshot
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" "huatuo-apiserver"
