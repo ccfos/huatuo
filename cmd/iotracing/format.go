@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,7 +54,7 @@ func (s *jsonWriter) Write(snapshot *types.IOTracingSnapshot) error {
 type socketWriter struct{ client *toolstream.Client }
 
 func (s *socketWriter) Write(snapshot *types.IOTracingSnapshot) error {
-	return s.client.Send(snapshot)
+	return s.client.Send(context.Background(), snapshot, toolstream.SendOptions{})
 }
 
 // newWriter returns the appropriate writer based on flags. client may be nil.

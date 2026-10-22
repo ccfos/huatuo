@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/toolstream"
+
 	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
@@ -54,14 +56,14 @@ func TestToolEventsPersistSeparateObservationTimes(t *testing.T) {
 				return err
 			}
 			event.KernelObservedNS = 12345
-			return handleTCPRetransmitEvent(nil, &event)
+			return handleTCPRetransmitEvent(t.Context(), &toolstream.Request[types.TCPRetransmitTracing]{Data: &event})
 		}},
 		{name: "dropwatch", send: func(timestamp string) error {
 			var event types.DropWatchTracing
 			if err := json.Unmarshal([]byte(`{"observed_timestamp":"`+observed+`","kernel_observed_timestamp":"`+timestamp+`"}`), &event); err != nil {
 				return err
 			}
-			return handleDropwatchEvent(nil, &event)
+			return handleDropwatchEvent(t.Context(), &toolstream.Request[types.DropWatchTracing]{Data: &event})
 		}},
 	}
 	for _, tt := range tests {
@@ -117,10 +119,10 @@ func TestRASKernelObservationTime(t *testing.T) {
 }
 
 func TestToolEventsRequireObservationTime(t *testing.T) {
-	if err := handleDropwatchEvent(nil, &types.DropWatchTracing{}); err == nil {
+	if err := handleDropwatchEvent(t.Context(), &toolstream.Request[types.DropWatchTracing]{Data: &types.DropWatchTracing{}}); err == nil {
 		t.Fatal("dropwatch event without observation time accepted")
 	}
-	if err := handleTCPRetransmitEvent(nil, &types.TCPRetransmitTracing{}); err == nil {
+	if err := handleTCPRetransmitEvent(t.Context(), &toolstream.Request[types.TCPRetransmitTracing]{Data: &types.TCPRetransmitTracing{}}); err == nil {
 		t.Fatal("TCP retransmit event without observation time accepted")
 	}
 }

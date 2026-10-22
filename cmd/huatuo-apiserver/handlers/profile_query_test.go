@@ -21,9 +21,9 @@ import (
 	"testing"
 
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
-	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
-	"github.com/ccfos/huatuo/internal/server/response"
 
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"

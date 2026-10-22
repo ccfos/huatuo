@@ -30,14 +30,14 @@ import (
 func readProcessMemory(pid int) *memsnapshot.ProcessMemory {
 	f, err := os.Open(fmt.Sprintf("/proc/%d/status", pid))
 	if err != nil {
-		return &memsnapshot.ProcessMemory{Status: memsnapshot.StatusUnavailable, Reason: err.Error()}
+		return &memsnapshot.ProcessMemory{Status: memsnapshot.SnapshotStatusUnavailable, StatusReason: err.Error()}
 	}
 	defer f.Close()
 	return parseProcessMemory(f)
 }
 
 func parseProcessMemory(r io.Reader) *memsnapshot.ProcessMemory {
-	m := &memsnapshot.ProcessMemory{Status: memsnapshot.StatusComplete}
+	m := &memsnapshot.ProcessMemory{Status: memsnapshot.SnapshotStatusComplete}
 	fields := map[string]**uint64{
 		"VmSize:": &m.VirtualBytes, "VmRSS:": &m.RSSBytes,
 		"RssAnon:": &m.RSSAnonBytes, "RssFile:": &m.RSSFileBytes,
@@ -68,15 +68,15 @@ func parseProcessMemory(r io.Reader) *memsnapshot.ProcessMemory {
 		}
 	}
 	if available != len(fields) {
-		m.Status, m.Reason = memsnapshot.StatusPartial, "process memory fields are missing or invalid"
+		m.Status, m.StatusReason = memsnapshot.SnapshotStatusPartial, "process memory fields are missing or invalid"
 		if available == 0 {
-			m.Status = memsnapshot.StatusUnavailable
+			m.Status = memsnapshot.SnapshotStatusUnavailable
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		m.Status, m.Reason = memsnapshot.StatusPartial, "read process status: "+err.Error()
+		m.Status, m.StatusReason = memsnapshot.SnapshotStatusPartial, "read process status: "+err.Error()
 		if available == 0 {
-			m.Status = memsnapshot.StatusUnavailable
+			m.Status = memsnapshot.SnapshotStatusUnavailable
 		}
 	}
 	return m

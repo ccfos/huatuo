@@ -50,6 +50,57 @@ print_sys_info() {
 	kubectl get pods -A || true
 }
 
+# Some images (e.g. anolis8.10) neither run cloud-init nor auto-grow their
+# root partition, so the extra space requested with --disk-size stays
+# invisible to the guest. Grow the root partition and filesystem to fill the
+# disk. Best effort: distros that already grew report NOCHANGE.
+grow_root_filesystem() {
+	local root_device filesystem parent partition output
+	filesystem=$(findmnt -n -o FSTYPE /)
+	case "$filesystem" in
+	ext4 | xfs) ;;
+	*)
+		vm_log "rootfs grow skipped: unsupported filesystem $filesystem"
+		return 0
+		;;
+	esac
+	root_device=$(findmnt -n -o SOURCE /)
+	# findmnt reports a btrfs root as "/dev/vda3[/root]"; never let that
+	# suffix reach readlink -f, which treats the embedded "/" as a path
+	# separator and fails (fatal under set -e).
+	root_device=${root_device%%\[*}
+	root_device=$(readlink -f "$root_device" 2> /dev/null || printf '%s' "$root_device")
+	if [[ ! -f /sys/class/block/${root_device##*/}/partition ]]; then
+		vm_log "rootfs grow skipped: $root_device is not a direct partition"
+		return 0
+	fi
+	if ! command -v growpart > /dev/null 2>&1; then
+		vm_log_error "rootfs grow skipped: growpart is not installed"
+		return 0
+	fi
+	parent=$(lsblk -n -o PKNAME "$root_device")
+	partition=$(< "/sys/class/block/${root_device##*/}/partition")
+	[[ -n "$parent" && "$partition" =~ ^[0-9]+$ ]] || {
+		vm_log_error "cannot identify root partition for $root_device"
+		return 1
+	}
+	vm_log "growing root partition $root_device on /dev/$parent"
+	if output=$(growpart "/dev/$parent" "$partition" 2>&1); then
+		vm_log "$output"
+	elif [[ "$output" == NOCHANGE:* ]]; then
+		vm_log "$output"
+	else
+		vm_log_error "root partition expansion failed: $output"
+		return 1
+	fi
+	case "$filesystem" in
+	ext4) resize2fs "$root_device" ;;
+	xfs) xfs_growfs / ;;
+	esac
+	lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT "/dev/$parent"
+	df -h /
+}
+
 configure_proxy() {
 	local guest_hostname guest_ip proxy_port=11008
 	if ! timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/$1' _ "$proxy_port" 2> /dev/null; then
@@ -112,14 +163,23 @@ install_test_dependencies() {
 		if [[ "$os_id" == rocky ]]; then
 			package_options+=(--disablerepo='epel*')
 		fi
-		# openEuler publishes kernel-devel in its binary OS repositories.
+		# openEuler publishes kernel-devel/kernel-headers in its binary OS
+		# repositories. Its update and everything repositories carry very
+		# large metadata (tens of MB) served by slow mirrors, so skip them
+		# and only fall back to the full set if a build dependency is missing
+		# from the restricted repositories.
 		if [[ "$os_id" == openeuler ]]; then
 			package_options+=(
 				--disablerepo=EPOL --disablerepo=debuginfo --disablerepo=source
-				--disablerepo=update-source
+				--disablerepo=update-source --disablerepo=update
+				--disablerepo=everything
 			)
 		fi
-		"$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"
+		if ! "$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"; then
+			((${#package_options[@]})) || return 1
+			vm_log "install with restricted repositories failed; retrying with all repositories"
+			"$package_manager" install -y "${missing_packages[@]}"
+		fi
 		;;
 	*)
 		vm_log_error "unsupported guest package family: ID=$ID ID_LIKE=${ID_LIKE:-}"
@@ -162,6 +222,7 @@ install_temporary_go_tools() {
 }
 
 configure_proxy
+grow_root_filesystem
 print_sys_info
 export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
 install_test_dependencies

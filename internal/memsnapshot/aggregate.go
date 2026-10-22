@@ -37,7 +37,7 @@ func EntriesFromObjects(objects []ObjectAggregate) []Entry {
 	for index := range objects {
 		object := &objects[index]
 		entries = append(entries, Entry{
-			Kind: "object_type", Name: object.TypeName, Bytes: object.ShallowBytes,
+			Kind: "object_class", Name: object.TypeName, Bytes: object.ShallowBytes,
 			Objects: object.Count, AverageBytes: object.AverageBytes,
 		})
 	}
