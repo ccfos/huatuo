@@ -27,8 +27,8 @@ import (
 
 	"github.com/ccfos/huatuo/client"
 	"github.com/ccfos/huatuo/internal/bpf"
-	flamegraphtui "github.com/ccfos/huatuo/internal/flamegraph/tui"
 	"github.com/ccfos/huatuo/internal/log"
+	flamegraphtui "github.com/ccfos/huatuo/internal/profiling/flamegraph/tui"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 	"github.com/ccfos/huatuo/internal/version"
 )

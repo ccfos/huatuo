@@ -45,12 +45,12 @@ func TestProcessSelectorIncludesDescendants(t *testing.T) {
 			writeSubgroupProcesses(t, directory, test.direct)
 			writeSubgroupProcesses(t, filepath.Join(directory, "workers"), "")
 			writeSubgroupProcesses(t, filepath.Join(directory, "workers", "child"), "22\n")
-			writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 11, StartTimeTicks: 100}, 100, 0)
-			identity := memsnapshot.ProcessInstance{TGID: 22, StartTimeTicks: 200}
+			writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstanceID{TGID: 11, StartTimeTicks: 100}, 100, 0)
+			identity := memsnapshot.ProcessInstanceID{TGID: 22, StartTimeTicks: 200}
 			writeProcessForTest(t, s.procRoot, identity, 200, 0)
 
 			selected, err := s.Select(t.Context(), group, 1<<20)
-			if err != nil || selected.identity != identity {
+			if err != nil || selected.instance != identity {
 				t.Fatalf("selected = %+v, %v, want descendant %+v", selected, err, identity)
 			}
 			if err := s.Validate(t.Context(), group, identity); err != nil {
@@ -160,7 +160,7 @@ func TestProcessSelectorRejectsIncompleteDescendantList(t *testing.T) {
 	directory := s.source.memcgDir(group.Path)
 	writeSubgroupProcesses(t, directory, "11\n")
 	writeSubgroupProcesses(t, filepath.Join(directory, "child"), "invalid\n")
-	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstance{TGID: 11, StartTimeTicks: 100}, 100, 0)
+	writeProcessForTest(t, s.procRoot, memsnapshot.ProcessInstanceID{TGID: 11, StartTimeTicks: 100}, 100, 0)
 
 	selected, err := s.Select(t.Context(), group, 1<<20)
 	if err == nil || selected != (selectedProcess{}) {

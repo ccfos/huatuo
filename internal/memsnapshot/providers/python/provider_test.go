@@ -34,18 +34,18 @@ func TestSnapshotResult(t *testing.T) {
 		wantStatus memsnapshot.Status
 	}{
 		{
-			name: "complete", input: &memsnapshot.Snapshot{Status: memsnapshot.StatusComplete},
-			wantStatus: memsnapshot.StatusComplete,
+			name: "complete", input: &memsnapshot.Snapshot{Status: memsnapshot.SnapshotStatusComplete},
+			wantStatus: memsnapshot.SnapshotStatusComplete,
 		},
 		{
 			name: "partial", input: &memsnapshot.Snapshot{
-				Status: memsnapshot.StatusPartial, Reason: "read budget reached",
+				Status: memsnapshot.SnapshotStatusPartial, StatusReason: "read budget reached",
 			},
-			wantStatus: memsnapshot.StatusPartial,
+			wantStatus: memsnapshot.SnapshotStatusPartial,
 		},
 		{
 			name: "unsupported runtime", readErr: unsupportedRuntime("unknown layout"),
-			wantStatus: memsnapshot.StatusUnavailable,
+			wantStatus: memsnapshot.SnapshotStatusUnavailable,
 		},
 		{name: "read failure", readErr: readErr},
 		{name: "reader returned no snapshot"},
@@ -64,7 +64,7 @@ func TestSnapshotResult(t *testing.T) {
 			if err != nil || result == nil || result.Status != test.wantStatus {
 				t.Fatalf("snapshot = %+v, %v, want status %s", result, err, test.wantStatus)
 			}
-			if test.wantStatus != memsnapshot.StatusComplete && result.Reason == "" {
+			if test.wantStatus != memsnapshot.SnapshotStatusComplete && result.StatusReason == "" {
 				t.Fatal("degraded snapshot has no reason")
 			}
 		})
@@ -91,7 +91,8 @@ func TestSnapshotErrorBoundsPreserveCause(t *testing.T) {
 func TestSnapshotReadFailure(t *testing.T) {
 	p := New()
 	result, err := p.Snapshot(t.Context(), memsnapshot.Request{
-		Process: memsnapshot.ProcessInstance{TGID: int(^uint32(0) >> 1), StartTimeTicks: 1}, TopK: 10,
+		Process:                memsnapshot.ProcessInstanceID{TGID: int(^uint32(0) >> 1), StartTimeTicks: 1},
+		MaxMemoryObjectEntries: 10,
 	})
 	if result != nil || !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("snapshot = %+v, %v, want no snapshot and missing process", result, err)

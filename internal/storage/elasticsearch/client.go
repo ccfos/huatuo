@@ -81,41 +81,18 @@ func (t *productHeaderTransport) RoundTrip(req *http.Request) (*http.Response, e
 	return resp, nil
 }
 
-// newCompatClient returns an *elasticsearch.Client that connects to ES v7 or
-// ES v8 without any caller-side branching.
-//
-//   - ES v8:         native support.
-//   - ES v7 ≥ 7.14: CompatibilityMode headers + native product header.
-//   - ES v7 < 7.14: CompatibilityMode headers + injected product header.
-//   - OpenSearch:    returns X-Elastic-Product natively; no separate client needed.
-func newCompatClient(addresses []string, username, password string) (*elasticsearch.Client, error) {
-	client, err := elasticsearch.NewClient(elasticsearch.Config{
-		Addresses:               addresses,
-		Username:                username,
-		Password:                password,
-		EnableCompatibilityMode: true,
-		Transport:               &productHeaderTransport{inner: defaultTransport},
-		// Whole-batch retry: covers transport failures and 429/5xx returned for
-		// the entire bulk request. Per-item failures inside a 200 response are
-		// surfaced through BulkIndexerItem.OnFailure instead.
-		RetryOnStatus: []int{429, 502, 503, 504},
-		MaxRetries:    3,
-		RetryBackoff: func(attempt int) time.Duration {
-			return time.Duration(100<<attempt) * time.Millisecond
-		},
-	})
+// newCompatClient shares wire compatibility and connections across retry policies.
+func newCompatClient(cfg *elasticsearch.Config) (*elasticsearch.Client, error) {
+	cfg.EnableCompatibilityMode = true
+	cfg.Transport = &productHeaderTransport{inner: defaultTransport}
+	// DisableRetry takes precedence for Scroll queries. Writes keep whole-batch
+	// retries; item failures inside a successful response remain with OnFailure.
+	cfg.RetryOnStatus = []int{429, 502, 503, 504}
+	cfg.MaxRetries = 3
+	cfg.RetryBackoff = func(attempt int) time.Duration { return time.Duration(100<<attempt) * time.Millisecond }
+	client, err := elasticsearch.NewClient(*cfg)
 	if err != nil {
 		return nil, fmt.Errorf("elasticsearch new client: %w", err)
-	}
-
-	res, err := client.Info()
-	if err != nil {
-		return nil, fmt.Errorf("elasticsearch client info: %w", err)
-	}
-	defer res.Body.Close()
-
-	if res.IsError() {
-		return nil, fmt.Errorf("elasticsearch client info: status %d", res.StatusCode)
 	}
 	return client, nil
 }
