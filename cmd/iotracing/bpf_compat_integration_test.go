@@ -18,10 +18,16 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -32,6 +38,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 // TestIOTracingBlockDevice observes real file IO on an ext4/XFS TMPDIR.
@@ -322,8 +329,128 @@ func TestIOTracingFullObject(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	reader, err := attachAndEventPipe(ctx, program)
+	reader, err := attachAndEventPipe(ctx, &ioTracingProbeQualifier{BPF: program})
+	if errors.Is(err, errXFSKprobeUnsupported) {
+		t.Skipf("XFS qualification unavailable: %v", err)
+	}
 	require.NoError(t, err, "all production attach options must succeed")
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	require.NoError(t, program.Detach())
+}
+
+// Keep the production attach order while identifying the rejected probe.
+// Only qualification classifies unavailable XFS; production retains the error.
+type ioTracingProbeQualifier struct {
+	bpf.BPF
+}
+
+func (b *ioTracingProbeQualifier) AttachWithOptions(options []bpf.AttachOption) error {
+	for _, option := range options {
+		if err := b.BPF.AttachWithOptions([]bpf.AttachOption{option}); err != nil {
+			return xfsKprobeFailure(option.Symbol, err)
+		}
+	}
+	return nil
+}
+
+var errXFSKprobeUnsupported = errors.New("XFS module name-based kprobes are unsupported")
+
+func isXFSFileProbe(name string) bool {
+	switch name {
+	case "xfs_file_read_iter", "xfs_file_write_iter", "xfs_filemap_page_mkwrite":
+		return true
+	default:
+		return false
+	}
+}
+
+// A kernel may count one module symbol twice when registering a named kprobe.
+// Skip only with unique, visible XFS symbols; real ambiguity must remain a failure.
+func xfsKprobeFailure(name string, attachErr error) error {
+	if !isXFSFileProbe(name) || !errors.Is(attachErr, syscall.EADDRNOTAVAIL) {
+		return attachErr
+	}
+	path := procfs.Path("kallsyms")
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("inspect XFS symbols after (%w): %w", attachErr, err)
+	}
+	defer file.Close()
+
+	matches := map[string][]string{
+		"xfs_file_read_iter": nil, "xfs_file_write_iter": nil, "xfs_filemap_page_mkwrite": nil,
+	}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 3 && isXFSFileProbe(fields[2]) {
+			// Count every exact name, including other modules and equal addresses.
+			matches[fields[2]] = append(matches[fields[2]], scanner.Text())
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read XFS symbols after (%w): %w", attachErr, err)
+	}
+	for symbol, entries := range matches {
+		if len(entries) == 0 {
+			return fmt.Errorf(
+				"missing symbol %q in %s after (%w)",
+				symbol,
+				path,
+				attachErr,
+			)
+		}
+		if len(entries) != 1 {
+			return fmt.Errorf(
+				"multiple entries for %q in %s after (%w)",
+				symbol,
+				path,
+				attachErr,
+			)
+		}
+		fields := strings.Fields(entries[0])
+		if len(fields) != 3 && len(fields) != 4 {
+			return fmt.Errorf(
+				"malformed symbol %q in %s after (%w)",
+				symbol,
+				path,
+				attachErr,
+			)
+		}
+		if fields[1] != "t" && fields[1] != "T" {
+			return fmt.Errorf(
+				"symbol %q is not text in %s after (%w)",
+				symbol,
+				path,
+				attachErr,
+			)
+		}
+		address, err := strconv.ParseUint(fields[0], 16, 64)
+		if err != nil {
+			return fmt.Errorf(
+				"parse %q address after (%w): %w",
+				symbol,
+				attachErr,
+				err,
+			)
+		}
+		if address == 0 {
+			return fmt.Errorf(
+				"hidden address for %q in %s after (%w)",
+				symbol,
+				path,
+				attachErr,
+			)
+		}
+		if len(fields) != 4 || fields[3] != "[xfs]" {
+			return fmt.Errorf("symbol %q is not in the XFS module after (%w)", symbol, attachErr)
+		}
+	}
+	// This proves name-based attachment is unavailable, not the kernel bug's cause.
+	return fmt.Errorf(
+		"%w: %s: %w",
+		errXFSKprobeUnsupported,
+		name,
+		attachErr,
+	)
 }

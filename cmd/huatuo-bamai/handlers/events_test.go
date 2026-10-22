@@ -26,8 +26,8 @@ import (
 
 	apiv1 "github.com/ccfos/huatuo/apis/v1"
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
-	"github.com/ccfos/huatuo/internal/server/response"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"

@@ -85,6 +85,9 @@ func New(spec Spec, options ...Option) (*Process, error) { //nolint:gocritic // 
 		}
 	}
 
+	if process.spec.StopSignal == 0 {
+		process.spec.StopSignal = syscall.SIGTERM
+	}
 	if process.spec.StopGracePeriod == 0 {
 		process.spec.StopGracePeriod = defaultStopGracePeriod
 	}
@@ -276,7 +279,7 @@ func (p *Process) reap(cmd *exec.Cmd) {
 
 	cleanupErr := groupErr
 	switch {
-	case groupErr == nil && p.isStopRequested && exitedOnStopSignal(waitErr):
+	case groupErr == nil && p.isStopRequested && exitedOnStopSignal(waitErr, p.spec.StopSignal):
 		// Launch cancellation already explains the requested signal exit.
 		waitErr = nil
 		if p.startCancelErr == nil {

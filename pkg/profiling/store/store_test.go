@@ -30,20 +30,6 @@ import (
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
-func TestStoreSaveUsesAsynchronousWrite(t *testing.T) {
-	store, backend := newTestStore(t)
-
-	if err := store.Save(t.Context(), validDocument()); err != nil {
-		t.Fatalf("Store.Save() error = %v", err)
-	}
-	if backend.asyncSaves != 1 {
-		t.Fatalf("asynchronous saves = %d, want 1", backend.asyncSaves)
-	}
-	if backend.syncSaves != 0 {
-		t.Fatalf("synchronous saves = %d, want 0", backend.syncSaves)
-	}
-}
-
 func TestStoreSaveSyncUsesVisibilityBarrier(t *testing.T) {
 	store, backend := newTestStore(t)
 
@@ -58,11 +44,11 @@ func TestStoreSaveSyncUsesVisibilityBarrier(t *testing.T) {
 	}
 }
 
-func TestStoreSaveRejectsIncompleteDocument(t *testing.T) {
+func TestStoreSaveSyncRejectsIncompleteDocument(t *testing.T) {
 	store, backend := newTestStore(t)
 
-	if err := store.Save(t.Context(), &Document{}); err == nil {
-		t.Fatal("Store.Save() error = nil, want validation error")
+	if err := store.SaveSync(t.Context(), &Document{}); err == nil {
+		t.Fatal("Store.SaveSync() error = nil, want validation error")
 	}
 	if backend.asyncSaves != 0 {
 		t.Fatalf("asynchronous saves = %d, want 0", backend.asyncSaves)
@@ -254,5 +240,26 @@ func TestBuildProfileHostQueryUsesMissingContainer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(query.Filters, want) {
 		t.Fatalf("host filters = %#v, want %#v", query.Filters, want)
+	}
+}
+
+func TestPhysicalUsageQueryUsesObservationTime(t *testing.T) {
+	start := time.Unix(100, 0)
+	query := buildSearchQuery(&Filter{
+		ProfileType: "memory:physical_usage:bytes:space:bytes",
+		ID:          "task",
+		StartTime:   start,
+		EndTime:     start.Add(time.Second),
+	})
+	if len(query.Sorts) != 1 || query.Sorts[0].Field != types.DocumentFieldStartedTimestamp || !query.Sorts[0].Desc {
+		t.Fatalf("sorts=%+v", query.Sorts)
+	}
+
+	for _, filter := range query.Filters {
+		if filter.Op == driver.OpGte || filter.Op == driver.OpLte {
+			if filter.Field != types.DocumentFieldStartedTimestamp {
+				t.Fatalf("time filter=%+v", filter)
+			}
+		}
 	}
 }

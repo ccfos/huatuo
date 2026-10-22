@@ -63,8 +63,8 @@ func TestNewCPUSysBindsConfig(t *testing.T) {
 	if tracer.minTraceInterval != 300*time.Second {
 		t.Errorf("minTraceInterval = %s, want 5m0s", tracer.minTraceInterval)
 	}
-	if tracer.perfDuration != 7*time.Second {
-		t.Errorf("perfDuration = %s, want 7s", tracer.perfDuration)
+	if tracer.traceDuration != 7*time.Second {
+		t.Errorf("traceDuration = %s, want 7s", tracer.traceDuration)
 	}
 	if tracer.threshold != (cpuSysThreshold{usage: 50, delta: 15}) {
 		t.Errorf("threshold = %+v, want usage=50 delta=15", tracer.threshold)

@@ -19,8 +19,8 @@ import (
 	"testing"
 
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	serverresponse "github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/pod"
-	serverresponse "github.com/ccfos/huatuo/internal/server/response"
 )
 
 const testContainerID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
