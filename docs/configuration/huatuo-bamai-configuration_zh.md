@@ -1481,3 +1481,7 @@ Go 采集在运行时读取、扫描、排序和条目生成阶段共用一个�
 | 有事件但没有候选进程 | 进程是否直接属于该 cgroup、是否允许 OOM kill、是否超过枚举限制 |
 | `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `status_reason` |
 | 资源耗尽后事件停止 | 检查 `RLIMIT_NOFILE`、`fs.inotify.max_user_watches`、`fs.inotify.max_user_instances`，调整后重启；其他事件不受此停止影响 |
+
+### 启动期间停止 Operation
+
+停止 pending Operation 会取消启动。仅有取消错误时返回 `stopped`；若同时存在独立的启动或资源清理失败（包括与取消合并的错误），则返回 `failed`，原因为 `execution_start_failed`。启动超时继续使用 `launch_timeout`。

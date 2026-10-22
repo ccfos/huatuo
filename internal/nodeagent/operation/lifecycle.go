@@ -120,7 +120,7 @@ func (m *Manager) finishStartFailure(
 	runtime.launchCancel = nil
 	stopRequested := managed.state.Status == StatusStopping
 
-	if stopRequested && errors.Is(startErr, context.Canceled) &&
+	if stopRequested && isLaunchCancellation(startErr) &&
 		!errors.Is(launchContextErr, context.DeadlineExceeded) {
 		m.commitTerminalLocked(managed, runtime, OutcomeStopped, nil)
 		m.mu.Unlock()
@@ -241,4 +241,28 @@ func (m *Manager) logFailure(requestID string, kind Kind, failure *lifecycleFail
 		WithField("kind", kind).
 		WithField("phase", failure.phase).
 		Error("operation lifecycle failed")
+}
+
+// A joined cancellation can still contain an independent resource cleanup failure.
+func isLaunchCancellation(err error) bool {
+	if err == context.Canceled { //nolint:errorlint // Only a cancellation leaf can be safely discarded.
+		return true
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		causes := wrapped.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !isLaunchCancellation(cause) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return isLaunchCancellation(wrapped.Unwrap())
+	default:
+		return false
+	}
 }
