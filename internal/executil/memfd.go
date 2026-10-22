@@ -30,7 +30,7 @@ import (
 // During Start, argsForOutput receives its child-visible /proc/self/fd path and
 // returns arguments to append to Spec.Args. It must be non-nil.
 // This does not redirect stdout or stderr. New allocates no file; Wait and Run
-// preserve it for MemfdOutput, and Stop closes it. Linux and /proc/self/fd are required.
+// preserve it for MemfdOutput, and Close closes it. Linux and /proc/self/fd are required.
 func WithMemfdOutput(maxBytes int, argsForOutput func(outputPath string) []string) Option {
 	return func(process *Process) {
 		process.memfd = &memfdOutput{limit: maxBytes, argsForOutput: argsForOutput}
@@ -41,35 +41,25 @@ func WithMemfdOutput(maxBytes int, argsForOutput func(outputPath string) []strin
 // configured limit returns that many prefix bytes and ErrOutputLimitExceeded.
 // Read errors preserve any bytes already read and may accompany the limit error.
 // Wait first for complete output. The returned data remains valid after Stop;
-// subsequent reads after Stop return an error wrapping os.ErrClosed.
+// subsequent reads after Close return an error wrapping os.ErrClosed.
 // Reading requires WithMemfdOutput and a successfully completed Start.
 func (p *Process) MemfdOutput() ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.state == processStateInvalid {
-		return nil, fmt.Errorf("read command memfd output: %w", errProcessNotInitialized)
+	if p.state == processRunStateInvalid {
+		return nil, ErrProcessNotInitialized
 	}
 
 	if p.memfd == nil {
 		return nil, fmt.Errorf("read command %q memfd output: WithMemfdOutput is not configured", p.spec.Path)
 	}
 
-	if p.state == processStateNew || p.state == processStateStarting {
-		return nil, fmt.Errorf("read command %q memfd output: process has not been started", p.spec.Path)
+	if p.state == processRunStateNew || p.state == processRunStateStarting {
+		return nil, ErrProcessNotStarted
 	}
 
-	if p.memfd.file == nil {
-		return nil, fmt.Errorf("read command %q memfd output: %w", p.spec.Path, os.ErrClosed)
-	}
-
-	// Serialize the entire read with close; expose no borrowed file descriptor.
-	info, err := p.memfd.file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("stat command %q memfd output: %w", p.spec.Path, err)
-	}
-
-	data, err := readMemfdOutput(p.memfd.file, info.Size(), p.memfd.limit)
+	data, err := p.memfd.read()
 	if err != nil {
 		return data, fmt.Errorf("read command %q memfd output: %w", p.spec.Path, err)
 	}
@@ -99,6 +89,18 @@ type memfdOutput struct {
 	closeErr      error
 }
 
+func (m *memfdOutput) validate() error {
+	if m.argsForOutput == nil {
+		return errors.New("output argument builder must not be nil")
+	}
+
+	if m.limit <= 0 {
+		return errors.New("maximum memfd output bytes must be positive")
+	}
+
+	return nil
+}
+
 func (m *memfdOutput) prepare(cmd *exec.Cmd) error {
 	fd, err := unix.MemfdCreate("huatuo-executil", unix.MFD_CLOEXEC)
 	if err != nil {
@@ -117,6 +119,20 @@ func (m *memfdOutput) prepare(cmd *exec.Cmd) error {
 	return nil
 }
 
+// read is called under Process.mu to serialize reads with close.
+func (m *memfdOutput) read() ([]byte, error) {
+	if m.file == nil {
+		return nil, os.ErrClosed
+	}
+
+	info, err := m.file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	return readMemfdOutput(m.file, info.Size(), m.limit)
+}
+
 // close is called under Process.mu, including after a failed start.
 func (m *memfdOutput) close() error {
 	if m.file != nil {
@@ -130,12 +146,22 @@ func (m *memfdOutput) close() error {
 	return m.closeErr
 }
 
-func (p *Process) closeMemfd() error {
+// releaseResources leaves lifecycle publication to Start and the reaper.
+func releaseResources(p *Process) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.closeMemfdLocked()
+}
+
+func (p *Process) closeMemfdLocked() error {
 	if p.memfd == nil {
 		return nil
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.memfd.close()
+	err := p.memfd.close()
+	if err != nil && !errors.Is(err, ErrCleanupFailed) {
+		p.memfd.closeErr = fmt.Errorf("%w: %w", ErrCleanupFailed, err)
+	}
+
+	return p.memfd.closeErr
 }

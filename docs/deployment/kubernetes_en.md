@@ -1,27 +1,27 @@
 ---
-title: Kubernetes
+title: Cluster Deployment
 type: docs
 description:
-author: HUATUO Team
+author: HUATUO Team, hao022
 date: 2026-01-11
 weight: 2
 ---
 
-This document describes how to deploy the Huatuo collector to a Kubernetes cluster using a DaemonSet.
+Deploy the collector on Kubernetes nodes as a DaemonSet, using either manifests or Helm. The administration machine needs kubectl and access to the target cluster.
 
-## 1. Kubernetes Manifest Deployment
+## 1. Deploy with Manifests
 
-### 1.1 Download the configuration file
+### 1.1 Download the Configuration
 
 ```bash
 curl -L -o huatuo-bamai.conf https://github.com/ccfos/huatuo/raw/main/huatuo-bamai.conf
 ```
 
-### 1.2 Modify the configuration file
+### 1.2 Edit the Configuration
 
-Modify the configuration file for the deployment environment. For example, configure the storage backend and the method used to obtain Pod information. See the [Configuration Guide](/docs/configuration/huatuo-bamai-configuration_en.md) for details.
+Adjust the configuration for your environment, including the storage backend and Pod information source. See the [configuration guide](/docs/configuration/huatuo-bamai-configuration_en.md).
 
-### 1.3 Create the ConfigMap
+### 1.3 Create a ConfigMap
 
 ```bash
 kubectl create configmap huatuo-bamai-config \
@@ -31,7 +31,7 @@ kubectl create configmap huatuo-bamai-config \
 kubectl apply -f -
 ```
 
-### 1.4 Deploy the collector
+### 1.4 Deploy the Collector
 
 Download the DaemonSet manifest:
 
@@ -40,8 +40,7 @@ curl -L -o huatuo-daemonset.yaml \
   https://raw.githubusercontent.com/ccfos/huatuo/main/build/huatuo-daemonset.minimal.yaml
 ```
 
-Before deploying to production, set the `huatuo` container resources to this
-initial baseline:
+Before deploying to production, set `resources` for the `huatuo` container to the following baseline:
 
 ```yaml
 resources:
@@ -53,22 +52,17 @@ resources:
     memory: 2Gi
 ```
 
-Apply the modified manifest:
+Apply the updated manifest:
 
 ```bash
 kubectl apply -f ./huatuo-daemonset.yaml
 ```
 
-`requests` provide scheduling guarantees, while `limits` are enforced by the
-Pod cgroup managed by kubelet. Huatuo does not create its own cgroup by default,
-so it remains under `kubepods` and can be reclaimed normally after containerd
-restart or Pod deletion.
+`requests` reserve resources for scheduling. The kubelet writes `limits` to the Pod cgroup to enforce Huatuo's CPU and memory limits. Huatuo does not create its own cgroup by default, so its processes remain in the `kubepods` hierarchy and can be reclaimed when containerd restarts or the Pod is deleted.
 
-These values are an initial baseline with matching requests and limits, so the
-Pod has Guaranteed QoS. `[Runtime]` applies only when `--enable-cgroup` is
-explicitly passed; do not pass that flag in Kubernetes.
+These values are a starting point. Equal requests and limits give the Pod Guaranteed QoS. `[Runtime]` takes effect only when `--enable-cgroup` is explicitly passed; do not pass this flag in Kubernetes deployments.
 
-### 1.5 Verify the deployment
+### 1.5 Verify the Deployment
 
 ```bash
 kubectl rollout status daemonset/huatuo \
@@ -85,19 +79,19 @@ kubectl get daemonset huatuo \
   --output jsonpath='{.spec.template.spec.containers[?(@.name=="huatuo")].resources}'
 ```
 
-After updating `huatuo-bamai.conf`, rerun section 1.3 to update the ConfigMap, then manually restart the DaemonSet:
+After updating `huatuo-bamai.conf`, repeat section 1.3 to update the ConfigMap, then trigger a rolling update manually:
 
 ```bash
 kubectl rollout restart daemonset/huatuo --namespace default
 ```
 
-## 2. Helm Deployment
+## 2. Deploy with Helm
 
-The Helm Chart is located at `build/charts/`.
+The Helm chart is in `build/charts/`.
 
-### 2.1 Check the deployment environment
+### 2.1 Check the Environment
 
-Helm and kubectl must be installed on the management host, which must be able to access the target Kubernetes cluster.
+The administration machine needs Helm, kubectl, and access to the target Kubernetes cluster.
 
 ```bash
 (command -v helm || curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash) && helm version
@@ -106,20 +100,20 @@ TARGET_CONTEXT="$(kubectl config get-contexts -o name | sed -n '1p')"
 kubectl --context "${TARGET_CONTEXT}" get nodes
 ```
 
-Verify that the target Nodes are `Ready`.
+Confirm that the target nodes are `Ready`.
 
-### 2.2 Prepare the configuration file
+### 2.2 Prepare the Configuration
 
-Download and modify `huatuo-bamai.conf` as described in sections 1.1 and 1.2.
+Follow sections 1.1 and 1.2 to download and edit `huatuo-bamai.conf`.
 
-### 2.3 Configure deployment values
+### 2.3 Set Deployment Parameters
 
 Create `values-production.yaml`:
 
 ```yaml
 image:
   repository: <registry-accessible-to-all-nodes>/huatuo-bamai
-  tag: "<release-version>"
+  tag: "<pinned-release-version>"
   pullPolicy: IfNotPresent
 
 resources:
@@ -159,7 +153,7 @@ helm template huatuo ./build/charts \
   >/dev/null
 ```
 
-### 2.5 Deploy the collector
+### 2.5 Deploy the Collector
 
 ```bash
 helm upgrade --install huatuo ./build/charts \
@@ -172,7 +166,7 @@ helm upgrade --install huatuo ./build/charts \
   --timeout 10m
 ```
 
-### 2.6 Verify the deployment
+### 2.6 Verify the Deployment
 
 ```bash
 helm status huatuo \
@@ -200,18 +194,18 @@ kubectl --context "${TARGET_CONTEXT}" \
   --tail=100
 ```
 
-### 2.7 Upgrade and roll back
+### 2.7 Update and Roll Back
 
 After changing the image version or `huatuo-bamai.conf`, rerun the command in section 2.5.
 
-List the release history and roll back to a selected revision:
+View the release history and roll back to a specific revision:
 
 ```bash
 helm history huatuo \
   --kube-context "${TARGET_CONTEXT}" \
   --namespace huatuo
 
-helm rollback huatuo <revision> \
+helm rollback huatuo <Revision> \
   --kube-context "${TARGET_CONTEXT}" \
   --namespace huatuo \
   --wait \

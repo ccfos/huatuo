@@ -41,7 +41,7 @@ const (
 
 func init() {
 	tracing.RegisterEventTracing(tcpRetransmitTracerName, newTCPRetransmit)
-	toolstream.RegisterDefault[*types.TCPRetransmitTracing](tcpSharkToolName, handleTCPRetransmitEvent)
+	toolstream.RegisterDefault[types.TCPRetransmitTracing](tcpSharkToolName, handleTCPRetransmitEvent)
 }
 
 func newTCPRetransmit() (*tracing.EventTracingAttr, error) {
@@ -71,34 +71,18 @@ func validateTCPRetransmitFilter(config *Config) error {
 // Start launches tcpshark in retransmit mode and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
-	process, err := executil.New(executil.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, tcpSharkToolName),
 		Args: tcpRetransmitArgs(configSnapshot()),
 	})
 	if err != nil {
-		return fmt.Errorf("create %s process: %w", tcpSharkToolName, err)
-	}
-	runErr := process.Run(ctx)
-	_, outputErr := process.Stdout()
-	if err := errors.Join(runErr, outputErr); err != nil {
-		if errors.Is(err, executil.ErrStopFailed) {
-			stopErr := process.Stop(ctx)
-			if stopErr == nil && errors.Is(err, context.Canceled) {
-				return nil
-			}
-			if stopErr != nil {
-				err = errors.Join(
-					err,
-					fmt.Errorf("retry stop %s: %w", tcpSharkToolName, stopErr),
-				)
-			}
-		} else if errors.Is(err, context.Canceled) {
+		if errors.Is(err, executil.ErrRunCanceled) {
 			return nil
 		}
-		if stderr := process.Stderr(); len(stderr) > 0 {
-			return fmt.Errorf("run %s: %w; stderr: %s", tcpSharkToolName, err, stderr)
+		if len(result.Stderr) > 0 {
+			return fmt.Errorf("run tcpshark: %w; stderr: %s", err, result.Stderr)
 		}
-		return fmt.Errorf("run %s: %w", tcpSharkToolName, err)
+		return fmt.Errorf("run tcpshark: %w", err)
 	}
 	return nil
 }
@@ -131,7 +115,11 @@ func tcpRetransmitArgs(config *Config) []string {
 	return args
 }
 
-func handleTCPRetransmitEvent(_ *toolstream.Session, ev *types.TCPRetransmitTracing) error {
+func handleTCPRetransmitEvent(_ context.Context, request *toolstream.Request[types.TCPRetransmitTracing]) error {
+	if request.Data == nil {
+		return nil
+	}
+	ev := request.Data
 	if ev.ContainerID == "" {
 		ev.ContainerID = pod.ContainerIDByCgroupNetNamespace(pod.ContainerCgroupNetNamespace{
 			MemoryCgroupCSSAddr: kernaddr.ParseOrZero(ev.MemoryCgroupCSSAddr),

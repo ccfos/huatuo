@@ -17,6 +17,8 @@ package job
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -93,6 +95,9 @@ func (s *memoryStore) List(_ context.Context, query *Query) ([]*Job, error) {
 	defer s.mu.Unlock()
 	jobs := make([]*Job, 0, len(s.jobs))
 	for _, storedJob := range s.jobs {
+		if query != nil && storedJob.ID <= query.lastReadID {
+			continue
+		}
 		if query != nil && len(query.Statuses) != 0 {
 			matched := false
 			for _, status := range query.Statuses {
@@ -107,11 +112,12 @@ func (s *memoryStore) List(_ context.Context, query *Query) ([]*Job, error) {
 	if query == nil {
 		return jobs, nil
 	}
+	if query.Sort == storageKeyFieldID {
+		sort.Slice(jobs, func(i, j int) bool { return jobs[i].ID < jobs[j].ID })
+	}
 	start := min(query.Offset, len(jobs))
 	end := len(jobs)
-	if query.Limit > 0 {
-		end = min(start+query.Limit, end)
-	}
+	end = start + min(query.Limit, end-start)
 	return jobs[start:end], nil
 }
 
@@ -413,5 +419,60 @@ func TestManagerStopRejectsActiveJobWithoutRuntime(t *testing.T) {
 	}
 	if errors.Is(err, ErrPersistence) {
 		t.Fatalf("Stop() error = %v, must not be ErrPersistence", err)
+	}
+}
+
+type recoveringStore struct {
+	*memoryStore
+	pages int
+}
+
+func (s *recoveringStore) List(ctx context.Context, query *Query) ([]*Job, error) {
+	jobs, err := s.memoryStore.List(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	s.pages++
+	// Completed Jobs disappear from the next query while recovery is in progress.
+	s.mu.Lock()
+	for _, job := range jobs {
+		s.jobs[job.ID].Status = StatusTerminal
+	}
+	s.mu.Unlock()
+	return jobs, nil
+}
+
+func TestManagerRecoversAllBatchesWhileStatusesChange(t *testing.T) {
+	const count = 2001
+	jobs := make([]*Job, 0, count)
+	for i := 0; i < count; i++ {
+		jobs = append(jobs, testJob(fmt.Sprintf("job-%05d", i), StatusRunning, time.Now()))
+	}
+	store := &recoveringStore{memoryStore: newMemoryStore(jobs...)}
+	manager := testManager(store, &stubNodeClient{})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := manager.Shutdown(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := manager.recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.recoveredJobs.Load(); got != count {
+		t.Fatalf("recovered=%d, want %d", got, count)
+	}
+	if store.pages != 3 {
+		t.Fatalf("read %d batches, want 3", store.pages)
+	}
+}
+
+func TestManagerListPageZeroDoesNotReadProbe(t *testing.T) {
+	store := &recoveringStore{memoryStore: newMemoryStore(testJob("job-1", StatusRunning, time.Now()))}
+	manager := testManager(store, &stubNodeClient{})
+	page, err := manager.ListPage(t.Context(), &Query{Limit: 0})
+	if !errors.Is(err, ErrInvalidQuery) || page != nil || store.pages != 0 {
+		t.Fatalf("page=%+v error=%v reads=%d", page, err, store.pages)
 	}
 }
