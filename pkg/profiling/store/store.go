@@ -24,6 +24,7 @@ import (
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -174,7 +175,11 @@ func buildSearchQuery(filter *Filter) driver.Query {
 		query.BatchSize = filter.BatchSize
 		query.Offset = filter.Offset
 	}
-	query.Sorts = []driver.Sort{{Field: types.DocumentFieldUploadedTimestamp, Desc: true}}
+	timestampField := types.DocumentFieldUploadedTimestamp
+	if filter != nil && filter.ProfileType == profiling.ProfileTypePhysicalUsage {
+		timestampField = types.DocumentFieldStartedTimestamp
+	}
+	query.Sorts = []driver.Sort{{Field: timestampField, Desc: true}}
 	return query
 }
 
@@ -183,16 +188,21 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 	if filter == nil {
 		return query
 	}
+	// Live snapshots are selected by observation time, independent of delivery lag.
+	timestampField := types.DocumentFieldUploadedTimestamp
+	if filter.ProfileType == profiling.ProfileTypePhysicalUsage {
+		timestampField = types.DocumentFieldStartedTimestamp
+	}
 	if !filter.StartTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: types.DocumentFieldUploadedTimestamp,
+			Field: timestampField,
 			Op:    driver.OpGte,
 			Value: timeutil.FormatUTC(filter.StartTime),
 		})
 	}
 	if !filter.EndTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: types.DocumentFieldUploadedTimestamp,
+			Field: timestampField,
 			Op:    driver.OpLte,
 			Value: timeutil.FormatUTC(filter.EndTime),
 		})

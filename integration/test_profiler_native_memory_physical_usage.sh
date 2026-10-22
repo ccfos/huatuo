@@ -18,8 +18,6 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-is_container && skip "native memory profiler requires bare-metal cgroup/PMU access"
-
 bpf_tool_setup profiler native_physical_usage profiler-physical-usage
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_physical_usage.user.c"
 readonly PROFILER_DURATION=6
@@ -141,10 +139,14 @@ log_info "physical_alloc captured ${ALLOC_CAPTURED_BYTES} bytes without overcoun
 
 USAGE_DIR="${WORK_DIR}/physical_usage"
 run_profile_case physical_usage "${USAGE_DIR}"
-USAGE_LINES=$(folded_line_count "${USAGE_DIR}")
-if [[ "${USAGE_LINES}" -ne 0 ]]; then
-	log_error "physical_usage should emit no folded symbols for balanced alloc/free; lines=${USAGE_LINES}"
-	fatal "physical_usage balance verification failed"
-fi
-
-log_info "physical_usage balanced alloc/free produced no folded symbols"
+assert_usage_zero_result() {
+	local lines file_count
+	lines=$(folded_line_count "${USAGE_DIR}")
+	file_count=$(find "${USAGE_DIR}" -maxdepth 1 -name 'perf_*.folded' -type f | wc -l)
+	assert_eq "${lines}" 0 "balanced physical usage folded symbols" \
+		|| fatal "physical_usage balance verification failed"
+	assert_eq "${file_count}" 1 "balanced physical usage output files" \
+		|| fatal "physical_usage must publish an empty result after cancellation"
+}
+assert_usage_zero_result
+log_info "physical_usage balanced alloc/free published an empty result"

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package aggregation deduplicates profiling samples within a single window.
+// Package aggregation deduplicates profiling samples by complete stack and label identity.
 package aggregation
 
 import (
@@ -24,7 +24,7 @@ import (
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-// Aggregator owns a window's dictionaries and accumulated values. Create it with
+// Aggregator owns dictionaries and accumulated values. Create it with
 // New and use it from one goroutine; methods do not synchronize access.
 type Aggregator struct {
 	profile          types.AggregatedProfile
@@ -57,6 +57,25 @@ func (a *Aggregator) Empty() bool {
 func (a *Aggregator) Drain() types.AggregatedProfile {
 	profile := a.profile
 	a.reset()
+
+	return profile
+}
+
+// CopyProfile deep-copies the accumulated profile without resetting state.
+// The caller owns all returned slices, including nested dictionary entries.
+func (a *Aggregator) CopyProfile() types.AggregatedProfile {
+	profile := a.profile
+	profile.Frames = slices.Clone(profile.Frames)
+	profile.Samples = slices.Clone(profile.Samples)
+	profile.Stacks = slices.Clone(profile.Stacks)
+	for i := range profile.Stacks {
+		profile.Stacks[i] = slices.Clone(profile.Stacks[i])
+	}
+
+	profile.LabelSets = slices.Clone(profile.LabelSets)
+	for i := range profile.LabelSets {
+		profile.LabelSets[i] = slices.Clone(profile.LabelSets[i])
+	}
 
 	return profile
 }
