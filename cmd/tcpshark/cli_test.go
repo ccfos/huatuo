@@ -18,11 +18,14 @@ import (
 	"bytes"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/ccfos/huatuo/cmd/tcpshark/retransmit"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
@@ -227,7 +230,7 @@ func TestAppBPFPathAndFilterValidation(t *testing.T) {
 	}
 }
 
-func TestEffectiveFilter(t *testing.T) {
+func TestResolveFilterExpression(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -257,7 +260,7 @@ func TestEffectiveFilter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var got string
 			app := newTestApp(func(c *cli.Context) error {
-				got = effectiveFilter(c)
+				got = resolveFilterExpression(c)
 				return nil
 			})
 			args := []string{"tcpshark", "--mode", "retransmit"}
@@ -269,7 +272,7 @@ func TestEffectiveFilter(t *testing.T) {
 				t.Fatalf("Run() error = %v", err)
 			}
 			if got != tt.want {
-				t.Fatalf("effectiveFilter() = %q, want %q", got, tt.want)
+				t.Fatalf("resolveFilterExpression() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -334,6 +337,21 @@ func TestAppRejectsInvalidFlags(t *testing.T) {
 			wantError: "invalid --duration -1",
 		},
 		{
+			name:      "blank bpf path",
+			args:      []string{"--bpf-path", " \t "},
+			wantError: "--bpf-path is required",
+		},
+		{
+			name:      "blank bpf directory",
+			args:      []string{"--bpf-path", "", "--with-dropwatch", "--bpf-path-dir", " \t "},
+			wantError: "--bpf-path-dir is required",
+		},
+		{
+			name:      "source validated before filter compilation",
+			args:      []string{"--source-types", "unknown", "--filter", "("},
+			wantError: "invalid --source-types",
+		},
+		{
 			name:      "task id without storage",
 			args:      []string{"--task-id", "task-1"},
 			wantError: "--task-id requires --output-storage",
@@ -385,27 +403,54 @@ func TestAppRejectsInvalidFlags(t *testing.T) {
 }
 
 func TestAppWritesOutputStorageWarningToStderr(t *testing.T) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	app := newTestApp(func(_ *cli.Context) error { return nil })
-	app.Writer = &stdout
-	app.ErrWriter = &stderr
+	for _, output := range []string{"json", "yaml", ""} {
+		t.Run(output, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			app := newTestApp(func(_ *cli.Context) error { return nil })
+			app.Writer = &stdout
+			app.ErrWriter = &stderr
 
-	err := app.Run([]string{
-		"tcpshark",
-		"--mode", "retransmit",
-		"--bpf-path", "unused.o",
-		"--output", "json",
-		"--output-storage", "/tmp/unused.sock",
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+			err := app.Run([]string{
+				"tcpshark",
+				"--mode", "retransmit",
+				"--bpf-path", "unused.o",
+				"--output", output,
+				"--output-storage", "/tmp/unused.sock",
+			})
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if got := stdout.String(); got != "" {
+				t.Fatalf("stdout = %q, want empty", got)
+			}
+			if got := stderr.String(); got != "warning: --output is ignored because --output-storage is set\n" {
+				t.Fatalf("stderr = %q, want output warning", got)
+			}
+		})
 	}
-	if got := stdout.String(); got != "" {
-		t.Fatalf("stdout = %q, want empty", got)
+}
+
+func TestAppDurationUpperBound(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("duration bound exceeds the platform int range")
 	}
-	if got := stderr.String(); got != "warning: --output is ignored because --output-storage is set\n" {
-		t.Fatalf("stderr = %q, want output warning", got)
+	for _, seconds := range []int64{maxDurationSeconds, maxDurationSeconds + 1} {
+		t.Run(strconv.FormatInt(seconds, 10), func(t *testing.T) {
+			called := false
+			app := newTestApp(func(_ *cli.Context) error { called = true; return nil })
+			err := app.Run([]string{
+				"tcpshark", "--mode", "retransmit", "--bpf-path", "unused.o",
+				"--duration", strconv.FormatInt(seconds, 10),
+			})
+			if seconds == maxDurationSeconds {
+				if err != nil || !called {
+					t.Fatalf("maximum duration: called=%t, error=%v", called, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "invalid --duration") || called {
+				t.Fatalf("overflow duration: called=%t, error=%v", called, err)
+			}
+		})
 	}
 }
 
@@ -417,5 +462,117 @@ func newTestApp(action cli.ActionFunc) *cli.App {
 		Before:    validateFlags,
 		Writer:    io.Discard,
 		ErrWriter: io.Discard,
+	}
+}
+
+func TestResolveRunOptions(t *testing.T) {
+	tests := []struct {
+		name          string
+		args          []string
+		wantPath      string
+		wantFilter    string
+		wantDropwatch bool
+	}{
+		{
+			name:     "retransmit only",
+			args:     []string{"--bpf-path", "/objects/tcp_retransmit.o"},
+			wantPath: "/objects/tcp_retransmit.o",
+		},
+		{
+			name:          "correlation default filter",
+			args:          []string{"--with-dropwatch", "--bpf-path-dir", "/objects"},
+			wantPath:      "/objects/tcp_retransmit.o",
+			wantFilter:    "tcp",
+			wantDropwatch: true,
+		},
+		{
+			name:          "correlation explicit filter",
+			args:          []string{"--with-dropwatch", "--bpf-path-dir", "/objects", "--filter", " tcp port 80 "},
+			wantPath:      "/objects/tcp_retransmit.o",
+			wantFilter:    "tcp port 80",
+			wantDropwatch: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var options runOptions
+			var output bytes.Buffer
+			app := newTestApp(func(c *cli.Context) error {
+				options = resolveRunOptions(c, "test-version")
+				return nil
+			})
+			app.Writer = &output
+			args := []string{
+				"tcpshark", "--mode", "retransmit", "--enable-tlp",
+				"--duration", "8", "--max-events-per-second", "12", "--output", "json",
+			}
+			args = append(args, test.args...)
+			if err := app.Run(args); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &options.retransmit
+			if options.mode != modeRetransmit || options.durationSeconds != 8 {
+				t.Fatalf("run options = %+v", options)
+			}
+			if cfg.Tracing.BPFPath != test.wantPath || cfg.Tracing.FilterExpression != test.wantFilter ||
+				cfg.Tracing.MaxEventsPerSecond != 12 || !cfg.Tracing.TLPEnabled {
+				t.Fatalf("tracing config = %+v", cfg.Tracing)
+			}
+			if cfg.Output != &output || cfg.OutputFormat != retransmit.OutputJSON ||
+				cfg.ToolName != tcpSharkToolName || cfg.Version != "test-version" ||
+				cfg.SourceType != toolstream.SourceTypeTool {
+				t.Fatalf("session config = %+v", cfg)
+			}
+			if (cfg.Dropwatch != nil) != test.wantDropwatch {
+				t.Fatalf("dropwatch config = %+v, enabled = %t", cfg.Dropwatch, test.wantDropwatch)
+			}
+			if cfg.Dropwatch != nil && (cfg.Dropwatch.BPFPath != "/objects/net_dropwatch.o" ||
+				cfg.Dropwatch.FilterExpression != cfg.Tracing.FilterExpression ||
+				cfg.Dropwatch.MaxEventsPerSecond != cfg.Tracing.MaxEventsPerSecond ||
+				cfg.Dropwatch.HardwareMode != dropwatch.HardwareAuto) {
+				t.Fatalf("dropwatch config = %+v", cfg.Dropwatch)
+			}
+		})
+	}
+}
+
+func TestDropwatchDeviceFlags(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		include   []string
+		exclude   []string
+		wantError string
+	}{
+		{name: "include devices", args: []string{"--with-dropwatch", "--bpf-path-dir", "bpf", "--device", "eth0,eth1"}, include: []string{"eth0", "eth1"}},
+		{name: "exclude devices", args: []string{"--with-dropwatch", "--bpf-path-dir", "bpf", "--device-excluded", "lo,eth2"}, exclude: []string{"lo", "eth2"}},
+		{name: "mutually exclusive", args: []string{"--with-dropwatch", "--bpf-path-dir", "bpf", "--device", "eth0", "--device-excluded", "lo"}, wantError: "--device and --device-excluded are mutually exclusive"},
+		{name: "include requires dropwatch", args: []string{"--bpf-path", "unused.o", "--device", "eth0"}, wantError: "require --with-dropwatch"},
+		{name: "exclude requires dropwatch", args: []string{"--bpf-path", "unused.o", "--device-excluded", "lo"}, wantError: "require --with-dropwatch"},
+	}
+	for i := range tests {
+		test := &tests[i]
+		t.Run(test.name, func(t *testing.T) {
+			var cfg *dropwatch.Config
+			app := newTestApp(func(c *cli.Context) error {
+				cfg = resolveRunOptions(c, "test").retransmit.Dropwatch
+				return nil
+			})
+			args := append([]string{"tcpshark", "--mode", "retransmit"}, test.args...)
+			err := app.Run(args)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("Run() = %v, want containing %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg == nil || !slices.Equal(cfg.IncludeDevices, test.include) ||
+				!slices.Equal(cfg.ExcludeDevices, test.exclude) || cfg.HardwareMode != dropwatch.HardwareAuto {
+				t.Fatalf("dropwatch config = %+v", cfg)
+			}
+		})
 	}
 }

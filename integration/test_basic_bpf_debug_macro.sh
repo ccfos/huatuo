@@ -29,7 +29,7 @@ FIXTURE="${ROOT_DIR}/integration/testdata/test_bpf_dbg.bpf.c"
 BASE_MARKER="HUATUO_BPF_DBG_BASE_MARKER_V1"
 DEBUG_MARKER="HUATUO_BPF_DBG_DEBUG_MARKER_V1"
 
-command -v strings > /dev/null || fatal "strings(1) not found in PATH"
+require_commands strings
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/bpf-debug.XXXXXX")
 

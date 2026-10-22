@@ -88,7 +88,38 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 			if diff := cmp.Diff(tc.pkt, got.Layers); diff != "" {
 				t.Errorf("Layers mismatch (-want +got):\n%s", diff)
 			}
+			if !got.ObservedTimestamp.Equal(ev.ObservedTimestamp.Time) {
+				t.Errorf("ObservedTimestamp = %v, want %v", got.ObservedTimestamp, ev.ObservedTimestamp)
+			}
+			if got.KernelObservedTimestamp == nil || !got.KernelObservedTimestamp.Equal(ev.KernelObservedTimestamp.Time) {
+				t.Errorf("KernelObservedTimestamp = %v, want %v", got.KernelObservedTimestamp, ev.KernelObservedTimestamp)
+			}
 		})
+	}
+}
+
+func TestDropWatchTracingJSONExcludesMonotonicClock(t *testing.T) {
+	const observed = "2026-06-13T00:00:00.123456789Z"
+	const kernel = "2026-06-12T23:59:59.987654321Z"
+	data := []byte(`{"observed_timestamp":"` + observed + `","kernel_observed_timestamp":"` + kernel + `"}`)
+	var event DropWatchTracing
+	if err := json.Unmarshal(data, &event); err != nil {
+		t.Fatal(err)
+	}
+
+	encoded, err := json.Marshal(&event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["observed_timestamp"] != observed || fields["kernel_observed_timestamp"] != kernel {
+		t.Fatalf("observation timestamps changed: %s", encoded)
+	}
+	if _, exists := fields["kernel_observed_ns"]; exists {
+		t.Error("internal clock kernel_observed_ns leaked into JSON")
 	}
 }
 

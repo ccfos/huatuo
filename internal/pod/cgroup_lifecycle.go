@@ -1,4 +1,4 @@
-// Copyright 2026 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,171 +12,202 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !didi
-
 package pod
 
 import (
-	"bufio"
+	"context"
+	"errors"
 	"fmt"
-	"os"
+	"regexp"
 	"sync"
-	"sync/atomic"
+	"time"
 
+	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
-	"github.com/ccfos/huatuo/internal/cgroups"
-	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/utils/bytesutil"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
-const cgroupChangeQueueSize = 256
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/cgroup_css_events.c -o $BPF_DIR/cgroup_css_events.o
 
-// MemoryCgroupChange leaves path resolution to the subscriber.
-type MemoryCgroupChange struct {
-	ContainerID string
-	Removed     bool
-}
-
-// MemoryCgroupSubscription shares the existing CSS lifecycle probes.
-// The wake callback must be nonblocking; Close waits for callbacks to finish.
-type MemoryCgroupSubscription struct {
-	changes   chan MemoryCgroupChange
-	wake      func()
-	hierarchy int32
-	resync    atomic.Bool
-}
+type containerCssPerfEvent = abi.CgroupCSSEvent
 
 var (
-	cgroupLifecycleMu         sync.Mutex
-	cgroupLifecycleUsers      int
-	cgroupLifecycleDone       <-chan struct{}
-	memoryCgroupSubscribersMu sync.RWMutex
-	memoryCgroupSubscribers   = make(map[*MemoryCgroupSubscription]struct{})
+	kubeletContainerIDRegexp = regexp.MustCompile(`(?:cri-containerd-)?([0-9a-f]{64})(?:\.scope)?`)
+	cgroupCssBpfInternal     *bpf.BPF
+	cgroupCssBpfCancelFunc   context.CancelFunc
+	cgroupLifecycleDone      <-chan struct{}
+
+	// The default backend registers its local CSS cache at package initialization.
+	// Lifecycle notifications do not require CSS address discovery.
+	cgroupCSSCacheInit  func() error
+	cgroupCSSCacheSync  func() error
+	cgroupCSSCacheEvent func(*containerCssPerfEvent, string)
 )
 
-func acquireCgroupLifecycle() error {
-	cgroupLifecycleMu.Lock()
-	defer cgroupLifecycleMu.Unlock()
-	if cgroupLifecycleUsers == 0 {
-		if err := cgroupInitSubSysIDs(); err != nil {
-			return err
+func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, lifecycle bool) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				var data containerCssPerfEvent
+				if err := reader.ReadInto(&data); err != nil {
+					if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+						log.WithError(err).Warn("lost BPF perf event samples")
+						if lifecycle {
+							requestContainerRefresh("", false)
+						}
+						continue
+					}
+					if ctx.Err() == nil && !errors.Is(err, types.ErrExitByCancelCtx) {
+						log.Errorf("cgroup css sync read events: %v", err)
+					}
+					return
+				}
+
+				// Parse once: lifecycle notifications and the CSS cache share the ID.
+				containerID := extractContainerID(bytesutil.ToStr(data.KnodeName[:]))
+
+				if cgroupCSSCacheEvent != nil {
+					cgroupCSSCacheEvent(&data, containerID)
+				}
+				if lifecycle && containerID != "" &&
+					(data.Operation == abi.CgroupCSSOperationUpdate || data.Operation == abi.CgroupCSSOperationRemove) {
+					requestContainerRefresh(containerID, data.Operation == abi.CgroupCSSOperationRemove)
+				}
+			}
 		}
-		if err := cgroupCssInitEventSync(); err != nil {
-			return err
-		}
+	}()
+	return done
+}
+
+func cgroupCssInitEventSync() error {
+	cssBpf, err := bpf.LoadBPF("cgroup_css_events.o", nil)
+	if err != nil {
+		return fmt.Errorf("load bpf: %w", err)
 	}
-	cgroupLifecycleUsers++
+	cgroupCssBpfInternal = &cssBpf
+
+	childCtx, cancel := context.WithCancel(context.Background())
+	cgroupCssBpfCancelFunc = cancel
+
+	reader, err := cssBpf.AttachAndEventPipe(childCtx, "cgroup_perf_events", bpf.DefaultPerfEventBufferBytes)
+	if err != nil {
+		cancel()
+		cssBpf.Close()
+		cgroupCssBpfInternal = nil
+		cgroupCssBpfCancelFunc = nil
+		return err
+	}
+	done := make(chan struct{})
+	cgroupLifecycleDone = done
+	go func() {
+		defer close(done)
+		superviseCgroupCssEventLoop(childCtx, reader, func() (bpf.PerfEventReader, error) {
+			return cssBpf.EventPipeByName(childCtx, "cgroup_perf_events", bpf.DefaultPerfEventBufferBytes)
+		})
+	}()
 	return nil
 }
 
-func releaseCgroupLifecycle() {
-	cgroupLifecycleMu.Lock()
-	defer cgroupLifecycleMu.Unlock()
-	if cgroupLifecycleUsers == 0 {
-		return
+// superviseCgroupCssEventLoop maintains CSS event delivery with reader recovery until cancellation.
+func superviseCgroupCssEventLoop(ctx context.Context, reader bpf.PerfEventReader,
+	reopen func() (bpf.PerfEventReader, error),
+) {
+	for {
+		current := reader
+		stop := context.AfterFunc(ctx, func() { _ = current.Close() })
+		<-cgroupCssEventSyncHandler(ctx, reader, true)
+		stop()
+		_ = reader.Close()
+		if ctx.Err() != nil {
+			return
+		}
+		requestContainerRefresh("", false)
+		for delay := time.Second; ; {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			var err error
+			reader, err = reopen()
+			if err == nil {
+				log.Info("cgroup CSS event pipe recovered")
+				// Recover changes lost while the event pipe was unavailable.
+				requestContainerRefresh("", false)
+				break
+			}
+			log.WithError(err).Warn("reopen cgroup CSS event pipe")
+			delay = min(delay*2, 30*time.Second)
+		}
 	}
-	cgroupLifecycleUsers--
-	if cgroupLifecycleUsers == 0 {
+}
+
+var (
+	cgroupPodLifecycleMu    sync.Mutex
+	cgroupPodLifecycleOwned bool
+)
+
+func initCgroupLifecycle() error {
+	cgroupPodLifecycleMu.Lock()
+	defer cgroupPodLifecycleMu.Unlock()
+	if cgroupPodLifecycleOwned {
+		return nil
+	}
+	if cgroupCSSCacheInit != nil {
+		if err := cgroupCSSCacheInit(); err != nil {
+			return err
+		}
+	}
+	if err := cgroupCssInitEventSync(); err != nil {
+		return err
+	}
+	if cgroupCSSCacheSync != nil {
+		if err := cgroupCSSCacheSync(); err != nil {
+			closeCgroupLifecycle()
+			return err
+		}
+	}
+	cgroupPodLifecycleOwned = true
+	return nil
+}
+
+func extractContainerID(fileName string) string {
+	got := kubeletContainerIDRegexp.FindStringSubmatch(fileName)
+	if len(got) > 0 {
+		return got[1]
+	}
+	return ""
+}
+
+func releaseCgroupLifecycle() {
+	cgroupPodLifecycleMu.Lock()
+	defer cgroupPodLifecycleMu.Unlock()
+	if cgroupPodLifecycleOwned {
+		cgroupPodLifecycleOwned = false
 		closeCgroupLifecycle()
 	}
 }
 
-func SubscribeMemoryCgroups(wake func()) (*MemoryCgroupSubscription, error) {
-	hierarchy, err := memoryCgroupHierarchy()
-	if err != nil {
-		return nil, err
+func closeCgroupLifecycle() {
+	if cgroupCssBpfCancelFunc != nil {
+		cgroupCssBpfCancelFunc()
+		cgroupCssBpfCancelFunc = nil
 	}
-	if err := acquireCgroupLifecycle(); err != nil {
-		return nil, err
+	if cgroupLifecycleDone != nil {
+		<-cgroupLifecycleDone
+		cgroupLifecycleDone = nil
 	}
-	s := &MemoryCgroupSubscription{
-		changes: make(chan MemoryCgroupChange, cgroupChangeQueueSize),
-		wake:    wake, hierarchy: hierarchy,
-	}
-	memoryCgroupSubscribersMu.Lock()
-	memoryCgroupSubscribers[s] = struct{}{}
-	memoryCgroupSubscribersMu.Unlock()
-	return s, nil
-}
-
-func (s *MemoryCgroupSubscription) Changes() <-chan MemoryCgroupChange {
-	return s.changes
-}
-
-// TakeResync consumes only the current request; losses during a scan remain pending.
-func (s *MemoryCgroupSubscription) TakeResync() bool {
-	return s.resync.Swap(false)
-}
-
-func (s *MemoryCgroupSubscription) requestResync() {
-	if !s.resync.Swap(true) {
-		s.wake()
-	}
-}
-
-func resyncMemoryCgroups() {
-	memoryCgroupSubscribersMu.RLock()
-	defer memoryCgroupSubscribersMu.RUnlock()
-	for s := range memoryCgroupSubscribers {
-		s.requestResync()
-	}
-}
-
-func (s *MemoryCgroupSubscription) Close() {
-	memoryCgroupSubscribersMu.Lock()
-	_, exists := memoryCgroupSubscribers[s]
-	delete(memoryCgroupSubscribers, s)
-	memoryCgroupSubscribersMu.Unlock()
-	if exists {
-		releaseCgroupLifecycle()
-	}
-}
-
-func memoryCgroupHierarchy() (int32, error) {
-	if cgroups.CgroupMode() == cgroups.Unified {
-		return 0, nil
-	}
-	file, err := os.Open(procfs.Path("cgroups"))
-	if err != nil {
-		return 0, err
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		var name string
-		var hierarchy, count, enabled int32
-		if _, err := fmt.Sscanf(scanner.Text(), "%s %d %d %d", &name, &hierarchy, &count, &enabled); err == nil &&
-			name == "memory" && hierarchy > 0 && enabled != 0 {
-			return hierarchy, nil
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return 0, err
-	}
-	return 0, fmt.Errorf("memory controller has no active cgroup v1 hierarchy")
-}
-
-func publishMemoryCgroupChange(data *containerCssPerfEvent, id string) {
-	if data.Operation != abi.CgroupCSSOperationUpdate && data.Operation != abi.CgroupCSSOperationRemove {
-		return
-	}
-	memoryCgroupSubscribersMu.RLock()
-	defer memoryCgroupSubscribersMu.RUnlock()
-	if len(memoryCgroupSubscribers) == 0 {
-		return
-	}
-	if id == "" {
-		return
-	}
-	change := MemoryCgroupChange{ContainerID: id, Removed: data.Operation == abi.CgroupCSSOperationRemove}
-	for s := range memoryCgroupSubscribers {
-		if data.CgroupRoot != s.hierarchy {
-			continue
-		}
-		select {
-		case s.changes <- change:
-			s.wake()
-		default:
-			s.requestResync()
-		}
+	if cgroupCssBpfInternal != nil {
+		(*cgroupCssBpfInternal).Close()
+		cgroupCssBpfInternal = nil
 	}
 }

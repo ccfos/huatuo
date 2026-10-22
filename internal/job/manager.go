@@ -28,8 +28,8 @@ import (
 )
 
 const (
-	jobCleanupInterval  = time.Hour
-	jobCleanupBatchSize = 1000
+	jobCleanupInterval = time.Hour
+	jobBatchSize       = 1000
 )
 
 // Policy limits active Jobs for one service Kind.
@@ -325,28 +325,41 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 }
 
 func (m *Manager) recover(ctx context.Context) error {
-	jobs, err := m.store.List(ctx, &Query{Statuses: []Status{
-		StatusPending,
-		StatusRunning,
-		StatusStopping,
-	}})
-	if err != nil {
-		return err
+	query := &Query{
+		Statuses: []Status{StatusPending, StatusRunning, StatusStopping},
+		Sort:     storageKeyFieldID,
+		Limit:    jobBatchSize,
 	}
-	for _, storedJob := range jobs {
-		if _, ok := m.config.policy(storedJob.Kind); !ok {
-			return fmt.Errorf("Job %q has no policy for kind %q", storedJob.ID, storedJob.Kind)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		supervisorCtx, cancel := context.WithCancel(context.Background())
-		runtime := newRuntime(storedJob, true, cancel, &m.runtimeDeps)
-		m.mu.Lock()
-		m.registerLocked(runtime)
-		m.wg.Add(1)
-		m.mu.Unlock()
-		go m.runJobRuntime(supervisorCtx, runtime)
+		jobs, err := m.store.List(ctx, query)
+		if err != nil {
+			return err
+		}
+		if len(jobs) == 0 {
+			return nil
+		}
+		// Starting runtimes changes statuses; offsets would skip unprocessed Jobs.
+		query.lastReadID = jobs[len(jobs)-1].ID
+		for _, storedJob := range jobs {
+			if _, ok := m.config.policy(storedJob.Kind); !ok {
+				return fmt.Errorf("Job %q has no policy for kind %q", storedJob.ID, storedJob.Kind)
+			}
+			supervisorCtx, cancel := context.WithCancel(context.Background())
+			runtime := newRuntime(storedJob, true, cancel, &m.runtimeDeps)
+			m.mu.Lock()
+			m.registerLocked(runtime)
+			m.wg.Add(1)
+			m.mu.Unlock()
+			go m.runJobRuntime(supervisorCtx, runtime)
+		}
+		m.recoveredJobs.Add(uint64(len(jobs)))
+		if len(jobs) < query.Limit {
+			return nil
+		}
 	}
-	m.recoveredJobs.Add(uint64(len(jobs)))
-	return nil
 }
 
 func (m *Manager) startCleanup() {
@@ -366,7 +379,7 @@ func (m *Manager) startCleanup() {
 				if _, err := m.store.DeleteTerminalBefore(
 					ctx,
 					endedBefore,
-					jobCleanupBatchSize,
+					jobBatchSize,
 				); err != nil {
 					log.WithError(err).Error("failed to clean up terminal Jobs")
 				}

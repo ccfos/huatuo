@@ -16,7 +16,7 @@
 #
 
 # Purpose: Own the always-run cleanup of VM state and the extracted package.
-# Caller: GitHub workflow os-distro-qemu-test.yml, as the qemu-3 step; qemu-local-test.sh locally.
+# Caller: os-distro-qemu-test-reusable.yml, as the qemu-3 step; qemu-local-test.sh locally.
 # Environment:
 # - VM_ENV_FILE: Optional qemu-1 environment file; an unset value is a successful no-op.
 # Parameters:

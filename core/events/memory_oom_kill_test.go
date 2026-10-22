@@ -25,7 +25,8 @@ func TestMemoryEventsBlacklist(t *testing.T) {
 	blacklist := []string{
 		"dropwatch", "hungtask", "memory_oom_kill", "memory_reclaim_events",
 		"net_rx_latency", "netdev_bonding_lacp", "netdev_events",
-		"netdev_txqueue_timeout", "ras", "sched_tick", "softlockup", "tcp_retransmit",
+		"netdev_txqueue_timeout", "ras", "sched_tick", "softlockup",
+		"tcp_retransmit", "mthreads_xid",
 	}
 	registered, err := tracing.NewRegister(blacklist)
 	if err != nil {
