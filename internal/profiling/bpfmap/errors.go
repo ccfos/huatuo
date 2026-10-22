@@ -16,5 +16,8 @@ package bpfmap
 
 import "errors"
 
+// ErrStackNotFound indicates an absent stack ID in a BPF stack map.
+var ErrStackNotFound = errors.New("stack not found")
+
 // ErrInvalidStackData indicates a stack map value with an invalid byte length.
 var ErrInvalidStackData = errors.New("invalid stack data")
