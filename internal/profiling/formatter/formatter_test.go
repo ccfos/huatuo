@@ -100,6 +100,47 @@ func TestFormatterJSONOutput(t *testing.T) {
 	}
 }
 
+func TestFormatterJSONConversionFailurePreservesDestination(t *testing.T) {
+	for _, kind := range []string{"existing", "absent", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "profile.json")
+			const original = "previous result\n"
+			if kind == "existing" {
+				if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if kind == "directory" {
+				path = dir
+			}
+
+			formatter := createFormatter(t, output.FormatJSON, path)
+			if err := formatter.Add(t.Context(), &types.AggregationWindow{ProfileType: "invalid"}); err == nil {
+				t.Fatal("expected profile conversion error")
+			}
+
+			switch kind {
+			case "existing":
+				if data := readDestination(t, path); string(data) != original {
+					t.Fatalf("previous result changed to %q", data)
+				}
+			case "absent":
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("output created after failed conversion: %v", err)
+				}
+			case "directory":
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(entries) != 0 {
+					t.Fatalf("created %d result files after failed conversion", len(entries))
+				}
+			}
+		})
+	}
+}
+
 func TestFormatterCombinesWindows(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "profile")
 	formatter := createFormatter(t, output.FormatCollapsed, destination)
