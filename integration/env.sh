@@ -35,7 +35,7 @@ HUATUO_BAMAI_MATCH_KEYWORDS='level="?(error|panic|fatal)"?|panic:'
 export HUATUO_BAMAI_MATCH_KEYWORDS
 HUATUO_BAMAI_TEST_FIXTURES="${ROOT_DIR}/integration/fixtures"
 export HUATUO_BAMAI_TEST_FIXTURES
-HUATUO_BAMAI_TEST_EXPECTED="${ROOT_DIR}/integration/fixtures/expected_metrics"
+HUATUO_BAMAI_TEST_EXPECTED="${ROOT_DIR}/integration/testdata/expected_metrics"
 export HUATUO_BAMAI_TEST_EXPECTED
 HUATUO_BAMAI_ARGS_E2E=(
 	"--config-dir" "${ROOT_DIR}/_output/conf/"

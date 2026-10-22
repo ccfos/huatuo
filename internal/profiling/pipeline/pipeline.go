@@ -16,7 +16,6 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/randomid"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -32,9 +32,6 @@ const (
 	// Bound queued bursts to 16 batches; sample data is allocated by providers.
 	pipelineQueueCapacity = 16
 )
-
-// ErrQueueFull leaves ownership of the rejected batch with the caller.
-var ErrQueueFull = errors.New("profiling input queue is full")
 
 type queuedBatch struct {
 	batch      *SampleBatch
@@ -80,7 +77,9 @@ func NewPipeline(config *PipelineConfig) *Pipeline {
 }
 
 // Enqueue returning nil transfers ownership of the batch to the pipeline.
-// It never waits for queue space; errors leave the entire batch with the caller.
+// It waits for queue space or context cancellation so bursts do not lose samples.
+// Errors leave the entire batch with the caller. The caller must cancel ctx if
+// the consumer exits before input is closed.
 // The producer must finish all Enqueue calls before Close.
 func (p *Pipeline) Enqueue(ctx context.Context, batch *SampleBatch) error {
 	if err := validateBatch(batch); err != nil {
@@ -98,8 +97,8 @@ func (p *Pipeline) Enqueue(ctx context.Context, batch *SampleBatch) error {
 	select {
 	case p.queue <- item:
 		return nil
-	default:
-		return ErrQueueFull
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -175,7 +174,10 @@ func (p *Pipeline) consumeBatch(ctx context.Context, item queuedBatch) error {
 }
 
 func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
-	if p.aggregator.Empty() && len(p.droppedSamples) == 0 {
+	// Remote storage currently needs live totals; future snapshot destinations
+	// can reuse this state while local summary formats continue receiving deltas.
+	retain := p.profileType == profiling.ProfileTypePhysicalUsage && p.formatter.Name() == output.FormatRemoteStore
+	if !retain && p.aggregator.Empty() && len(p.droppedSamples) == 0 {
 		return nil
 	}
 
@@ -185,6 +187,10 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 	}
 
 	if len(p.droppedSamples) > 0 {
+		if p.profileType == profiling.ProfileTypePhysicalUsage {
+			return fmt.Errorf("physical usage collection lost samples: %v", p.droppedSamples)
+		}
+
 		log.WithField("tracer_id", p.tracerID).
 			WithField("dropped_samples", p.droppedSamples).
 			Warn("profiling samples dropped; profile is incomplete")
@@ -198,10 +204,18 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 		ContainerID:    p.containerID,
 		ProfileType:    p.profileType,
 		DroppedSamples: p.droppedSamples,
-		Aggregated:     p.aggregator.Drain(),
 	}
-	sealed.Aggregated.TimeNanos = start.UnixNano()
-	sealed.Aggregated.DurationNanos = end.Sub(start).Nanoseconds()
+	if retain {
+		sealed.Aggregated = p.aggregator.CopyProfile()
+		sealed.Aggregated.TimeNanos = end.UnixNano()
+		if err := output.ClampNegativeSamples(ctx, p.tracerID, &sealed.Aggregated); err != nil {
+			return err
+		}
+	} else {
+		sealed.Aggregated = p.aggregator.Drain()
+		sealed.Aggregated.TimeNanos = start.UnixNano()
+		sealed.Aggregated.DurationNanos = end.Sub(start).Nanoseconds()
+	}
 	p.windowStart = time.Time{}
 	p.droppedSamples = nil
 

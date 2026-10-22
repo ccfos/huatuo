@@ -238,6 +238,24 @@ func TestSelectMergeStacktracesProfileCompatibility(t *testing.T) {
 			name: "wrong sample unit", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
 			sampleUnit: "milliseconds", wantErr: "stored profile lacks sample type",
 		},
+		{
+			name:         "physical usage wrong document type",
+			profileType:  "memory:physical_usage:bytes:space:bytes",
+			declaredType: "memory:alloc_space:bytes:space:bytes",
+			wantErr:      "does not match query type",
+		},
+		{
+			name:        "physical usage wrong sample name",
+			profileType: "memory:physical_usage:bytes:space:bytes",
+			sampleName:  "alloc_space",
+			wantErr:     "stored profile lacks sample type",
+		},
+		{
+			name:        "physical usage wrong sample unit",
+			profileType: "memory:physical_usage:bytes:space:bytes",
+			sampleUnit:  "count",
+			wantErr:     "stored profile lacks sample type",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var documents []json.RawMessage
@@ -439,5 +457,47 @@ func BenchmarkProfileQueryMerge(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func TestSelectMergeStacktracesPhysicalUsageSelectsLatestIncludingZero(t *testing.T) {
+	for _, latestValue := range []int64{0, 4096} {
+		t.Run(fmt.Sprint(latestValue), func(t *testing.T) {
+			document := func(observed, uploaded, value int64) json.RawMessage {
+				return json.RawMessage(fmt.Sprintf(`{"hostname":"node-1","uploaded_timestamp":"2026-10-08T00:00:0%dZ","started_timestamp":"2026-10-08T00:00:0%dZ","tracer_type":"profiling","tracer_id":"job-1","profile_data":{"profile_type":"memory:physical_usage:bytes:space:bytes","profile":{"time_nanos":%d,"string_table":["","physical_usage","bytes","work"],"sample_type":[{"type":1,"unit":2}],"function":[{"id":1,"name":3}],"location":[{"id":1,"line":[{"function_id":1}]}],"sample":[{"location_id":[1],"value":[%d]}]}}}`, uploaded, observed, observed*1000000000, value))
+			}
+			// Delivery order differs from observation order. The latest zero must win.
+			store := newProfileQueryStore(t, 3, false,
+				document(1, 5, 8192), document(3, 3, latestValue), document(2, 4, 4096))
+			service, err := NewProfileQueryService(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			response, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
+				LabelSelector: `{id="job-1"}`,
+				ProfileTypeID: "memory:physical_usage:bytes:space:bytes",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if response.Flamegraph.Total != latestValue {
+				t.Fatalf("total=%d, want latest %d", response.Flamegraph.Total, latestValue)
+			}
+		})
+	}
+}
+
+func TestSelectMergeStacktracesPhysicalUsageRequiresTask(t *testing.T) {
+	service := &ProfileQueryService{}
+	for _, selector := range []string{`{hostname="node-1"}`, `{hostname="node-1",__profile_type__="memory:physical_usage:bytes:space:bytes"}`} {
+		_, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
+			LabelSelector: selector,
+			ProfileTypeID: "memory:physical_usage:bytes:space:bytes",
+		})
+		if !errors.Is(err, ErrInvalidQuery) {
+			t.Fatalf("error=%v", err)
+		}
 	}
 }
