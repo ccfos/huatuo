@@ -124,7 +124,7 @@ func loadBPFFromReader(bpfName string, rd io.ReaderAt, consts map[string]any) (B
 	return loadBPFFromCollectionSpec(bpfName, specs, consts)
 }
 
-func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
+func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, consts map[string]any) (_ BPF, retErr error) {
 	// RewriteConstants
 	if consts != nil {
 		if err := specs.RewriteConstants(consts); err != nil {
@@ -144,6 +144,13 @@ func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 		mapsByID:     make(map[uint32]loadedMap),
 		programsByID: make(map[uint32]*loadedProgram),
 	}
+	// The collection owns the originals; b owns each successfully cloned FD.
+	// Release partial ownership before returning a later info or clone error.
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, b.Close())
+		}
+	}()
 
 	// maps
 	for name, spec := range specs.Maps {
