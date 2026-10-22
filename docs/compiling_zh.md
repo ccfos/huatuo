@@ -7,9 +7,11 @@ date: 2026-01-11
 weight: 3
 ---
 
-### 1. 容器编译
+本文说明容器和宿主机上的构建方法。以下命令均在项目根目录执行；Go 版本要求以 `go.mod` 为准。
 
-可以执行如下命令，完成编译，静态代码检查。
+## 容器编译
+
+运行脚本，执行容器构建和静态检查：
 ```bash
 $ sh build/build-run-testing-image.sh
 ```
@@ -31,17 +33,17 @@ $ docker run -it --pid=host --privileged --cgroupns=host --network=host -v $(pwd
 $ make
 ```
 
-### 2. 镜像发布
+## 构建运行镜像
 
-通过 docker build 方式能够快速的发布，最新二进制容器镜像。
+以下命令构建本地运行镜像，不会推送到镜像仓库：
 
 ```bash
 docker build --network host -t huatuo/huatuo-bamai:latest .
 ```
 
-### 3. 物理机编译
+## 宿主机编译
 
-#### 3.1 安装依赖
+### 安装依赖
 
 Ubuntu 24.04:
 ```bash
@@ -62,17 +64,18 @@ go install github.com/vektra/mockery/v2@v2.53.6
 go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
 ```
 
-#### 3.2 编译
+### 编译
+
 ```bash
 $ make
 ```
 
-### 4. BPF 调试编译
+## BPF 调试编译
 
-通过 `BPF_DEBUG=1` 将 `-DDEBUG_BPF` 传给 clang，把调试代码编译进 BPF 对象：
+通过 `BPF_DEBUG=1` 将 `-DDEBUG_BPF` 传给 Clang，把调试代码编译进 BPF 对象：
 
 ```bash
 $ make BPF_DEBUG=1     # 或只重新生成构建产物：make BPF_DEBUG=1 gen-build
 ```
 
-埋点、运行时开关和日志说明参见[调试](development/debugging_zh.md)。
+埋点、运行时开关和日志说明参见[调试](/docs/development/debugging_zh.md)。

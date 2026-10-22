@@ -48,6 +48,8 @@ type bucketBatch struct {
 	ranges       [mbucketBatchSize]remoteRange
 	stackBuckets [mbucketBatchSize]int
 	stackStorage []byte
+
+	hasPublishedCounters bool
 }
 
 func (batch *bucketBatch) appendBucket(d bucketDescriptor) {
@@ -67,22 +69,18 @@ func (batch *bucketBatch) readRuntimeLayoutSamples(ctx context.Context,
 		return err
 	}
 	err := batch.readMemRecords(memory, layout)
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
-	}
 	if err != nil {
 		return err
 	}
-
-	err = batch.readStackPCs(memory)
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
-	return err
+	return batch.readStackPCs(memory)
 }
 
 func (batch *bucketBatch) readMemRecords(memory *processMemory, layout runtimeLayout) error {
+	batch.hasPublishedCounters = false
 	buckets := batch.buckets
 	ranges := batch.ranges[:len(buckets)]
 	for i := range buckets {
@@ -96,7 +94,9 @@ func (batch *bucketBatch) readMemRecords(memory *processMemory, layout runtimeLa
 
 	for i := range buckets {
 		bucket := &buckets[i]
-		bucket.objects, bucket.bytes = layout.decodeCounters(&batch.records[i])
+		var published bool
+		bucket.objects, bucket.bytes, published = layout.decodeCounters(&batch.records[i])
+		batch.hasPublishedCounters = batch.hasPublishedCounters || published
 	}
 
 	return nil

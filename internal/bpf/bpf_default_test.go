@@ -595,6 +595,8 @@ func TestDefaultBPF_DetachOnContextDone(t *testing.T) {
 	require.NoError(t, err)
 
 	hasLinks := func() bool {
+		b.mu.RLock()
+		defer b.mu.RUnlock()
 		for _, p := range b.programsByID {
 			if len(p.links) != 0 {
 				return true

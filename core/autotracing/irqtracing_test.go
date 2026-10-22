@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,49 +29,9 @@ import (
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/toolstream"
-	"github.com/ccfos/huatuo/internal/toolstream/transport"
+	profilingapi "github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
-
-func TestHandleIRQTracingResultReturnsPendingResult(t *testing.T) {
-	const taskID = "irqtracing-test-task"
-	pending := &pendingIRQTracingResult{
-		result: make(chan *irqTracingCLIResult, 1),
-	}
-	pendingIRQTracingResults.Store(taskID, pending)
-	t.Cleanup(func() { pendingIRQTracingResults.Delete(taskID) })
-
-	want := &irqTracingCLIResult{NMissed: 3}
-	err := handleIRQTracingResult(
-		&toolstream.Session{Session: &transport.Session{TaskID: taskID}},
-		want,
-	)
-	if err != nil {
-		t.Fatalf("handleIRQTracingResult() error = %v", err)
-	}
-
-	select {
-	case got := <-pending.result:
-		if got != want {
-			t.Fatalf("result = %p, want %p", got, want)
-		}
-	default:
-		t.Fatal("handleIRQTracingResult() did not return the pending result")
-	}
-	if _, ok := pendingIRQTracingResults.Load(taskID); ok {
-		t.Fatal("handleIRQTracingResult() left the pending result registered")
-	}
-}
-
-func TestHandleIRQTracingResultRejectsUnknownTask(t *testing.T) {
-	err := handleIRQTracingResult(
-		&toolstream.Session{Session: &transport.Session{TaskID: "missing"}},
-		&irqTracingCLIResult{},
-	)
-	if err == nil || !strings.Contains(err.Error(), `task "missing"`) {
-		t.Fatalf("handleIRQTracingResult() error = %v", err)
-	}
-}
 
 func validIRQTracingConfig() IRQTracingConfig {
 	return IRQTracingConfig{
@@ -98,8 +59,8 @@ func TestValidateIRQTracingConfig(t *testing.T) {
 		{name: "sampling interval overflow", mutate: func(c *IRQTracingConfig) { c.Interval = maxTimerDurationSeconds + 1 }, wantErr: "sampling interval"},
 		{name: "zero trace interval", mutate: func(c *IRQTracingConfig) { c.IntervalTracing = 0 }, wantErr: "minimum trace interval"},
 		{name: "trace interval overflow", mutate: func(c *IRQTracingConfig) { c.IntervalTracing = maxTimerDurationSeconds + 1 }, wantErr: "minimum trace interval"},
-		{name: "zero trace duration", mutate: func(c *IRQTracingConfig) { c.RunTracingToolTimeout = 0 }, wantErr: "perf duration"},
-		{name: "trace duration overflow", mutate: func(c *IRQTracingConfig) { c.RunTracingToolTimeout = maxPerfDurationSeconds + 1 }, wantErr: "perf duration"},
+		{name: "zero trace duration", mutate: func(c *IRQTracingConfig) { c.RunTracingToolTimeout = 0 }, wantErr: "profile duration"},
+		{name: "trace duration overflow", mutate: func(c *IRQTracingConfig) { c.RunTracingToolTimeout = maxProfileDurationSeconds + 1 }, wantErr: "profile duration"},
 		{name: "zero rate limit", mutate: func(c *IRQTracingConfig) { c.MaxEventsPerSecond = 0 }, wantErr: "max events per second"},
 		{name: "rate limit of one", mutate: func(c *IRQTracingConfig) { c.MaxEventsPerSecond = 1 }, wantErr: "max events per second"},
 		{name: "rate limit overflow", mutate: func(c *IRQTracingConfig) { c.MaxEventsPerSecond = maxIRQTracingEventsPerSecond + 1 }, wantErr: "max events per second"},
@@ -132,29 +93,51 @@ func TestValidateIRQTracingConfig(t *testing.T) {
 	}
 }
 
-func TestIRQTracingCLIArgsIncludesRateLimit(t *testing.T) {
-	args := irqTracingCLIArgs(4, 3, 1000, "task-1")
+func TestRunIRQTracingCLIPassesArguments(t *testing.T) {
+	stream, err := toolstream.NewServerDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolstream.Register(stream, profilingapi.StoreServiceName, func(context.Context, *toolstream.Request[types.ProfilingWindow]) error { return nil })
+	originalCoreBinDir := internalconfig.CoreBinDir
+	t.Cleanup(func() { internalconfig.CoreBinDir = originalCoreBinDir })
+	internalconfig.CoreBinDir = t.TempDir()
+	path := filepath.Join(internalconfig.CoreBinDir, irqTracingToolName)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nexit 2\n"
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatalf("write fake irqtracing: %v", err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatalf("make fake irqtracing executable: %v", err)
+	}
+
+	err = runIRQTracingCLI(t.Context(), 4, 3, 1000)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("runIRQTracingCLI() error = %v, want exit code 2", err)
+	}
+	output, err := os.ReadFile(path + ".args")
+	if err != nil {
+		t.Fatalf("read irqtracing arguments: %v", err)
+	}
+	args := strings.Split(strings.TrimSuffix(string(output), "\n"), "\n")
 	want := []string{
+		"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "irqtracing.o"),
 		"--target-cpu", "4",
 		"--duration", "3",
 		"--max-events-per-second-per-cpu", "1000",
-		"--task-id", "task-1",
+		"--output-format", "remote-store",
+		"--output-path", toolstream.DefaultSockPath,
+		"--task-id",
 	}
-	for i := 0; i < len(want); i += 2 {
-		found := false
-		for j := 0; j+1 < len(args); j += 2 {
-			if args[j] == want[i] && args[j+1] == want[i+1] {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("args = %v, missing %s %s", args, want[i], want[i+1])
-		}
+	if len(args) != len(want)+1 {
+		t.Fatalf("args = %v, want %d arguments", args, len(want)+1)
 	}
+	assert.Equal(t, want, args[:len(want)])
+	assert.NotEmpty(t, args[len(want)], "task ID must be generated")
 }
 
-func TestRunIRQTracingProcessBoundsOutput(t *testing.T) {
+func TestRunIRQTracingProcessKeepsStderrTail(t *testing.T) {
 	originalCoreBinDir := internalconfig.CoreBinDir
 	t.Cleanup(func() { internalconfig.CoreBinDir = originalCoreBinDir })
 
@@ -162,7 +145,9 @@ func TestRunIRQTracingProcessBoundsOutput(t *testing.T) {
 	path := filepath.Join(internalconfig.CoreBinDir, irqTracingToolName)
 	script := `#!/bin/sh
 head -c 70000 /dev/zero | tr '\000' x
+printf 'stderr-start\n' >&2
 head -c 70000 /dev/zero | tr '\000' y >&2
+printf 'stderr-tail\n' >&2
 exit 2
 `
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
@@ -176,13 +161,22 @@ exit 2
 	if err == nil {
 		t.Fatal("runIRQTracingProcess() error = nil")
 	}
-	for _, want := range []string{"stdout exceeds", "(truncated)"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("runIRQTracingProcess() error = %v, want containing %q", err, want)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("runIRQTracingProcess() error = %v, want exit code 2", err)
+	}
+	message := err.Error()
+	wantDiagnostic := strings.Repeat("y", (4<<10)-len("stderr-tail\n")) + "stderr-tail"
+	if !strings.Contains(message, "output=\""+wantDiagnostic+"\"") {
+		t.Fatalf("runIRQTracingProcess() error = %v, want the final 4 KiB of stderr", err)
+	}
+	for _, unwanted := range []string{"stderr-start", "(truncated)"} {
+		if strings.Contains(message, unwanted) {
+			t.Fatalf("runIRQTracingProcess() error contains %q", unwanted)
 		}
 	}
-	if len(err.Error()) > maxIRQTracingErrorOutputLen+1024 {
-		t.Fatalf("runIRQTracingProcess() error length = %d", len(err.Error()))
+	if len(message) > (4<<10)+1024 {
+		t.Fatalf("runIRQTracingProcess() error length = %d", len(message))
 	}
 }
 

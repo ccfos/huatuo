@@ -19,6 +19,7 @@ package pcapfilter
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -295,5 +296,21 @@ func TestRawIPFilterKeepsPortAndEthertypeComparisonsDistinct(t *testing.T) {
 	}
 	if verdict == 0 {
 		t.Fatal("port 2048 comparison was rewritten as an IPv4 version test")
+	}
+}
+
+func TestCompileMalformedNetReturnsInvalidFilter(t *testing.T) {
+	for _, expr := range []string{
+		"udp or net 1.2.3.4/33",
+		"udp or net 1.2.3/8",
+		"udp or net 1.2.3.4/",
+		"port 80 or net 999.0.0.0/8",
+	} {
+		t.Run(expr, func(t *testing.T) {
+			_, _, err := buildL2L3FilterInsts(expr)
+			if !errors.Is(err, ErrInvalidFilter) {
+				t.Fatalf("buildL2L3FilterInsts(%q) error = %v, want ErrInvalidFilter", expr, err)
+			}
+		})
 	}
 }

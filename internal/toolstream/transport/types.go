@@ -14,6 +14,8 @@
 
 package transport
 
+import "context"
+
 //go:generate sh -c "capnp compile -I$(GOFLAGS=-mod=mod go list -m -f '{{.Dir}}' capnproto.org/go/capnp/v3)/std -ogo:. event.capnp"
 
 // ChunkMsg carries a data payload or end-of-stream/error signal.
@@ -24,15 +26,20 @@ package transport
 // queue Data, hand it to another goroutine, or retain it past the handler
 // return must copy it first.
 type ChunkMsg struct {
-	Data  []byte
-	Flush bool
-	End   bool
-	Err   string
+	Data   []byte
+	Commit bool
+	End    bool
+	Err    string
 }
 
 // Session holds per-connection state populated from the Connect frame.
 type Session struct {
-	ToolName string
-	Version  string
-	TaskID   string
+	ServiceName string
+	ToolName    string
+	Version     string
+	TaskID      string
+	// Err accumulates synchronous handler failures for this connection.
+	Err error
+	// Context is canceled when the transport server shuts down.
+	Context context.Context
 }

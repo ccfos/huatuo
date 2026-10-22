@@ -4,11 +4,7 @@ type: docs
 weight: 1
 ---
 
-# HUATUO 贡献指南
-
-感谢你对 HUATUO 的关注！本指南将帮助你快速上手。
-
----
+本文说明开发环境、验证要求和提交流程。一次变更应围绕一个明确问题，便于审查和回退。
 
 ## 贡献方式
 
@@ -20,15 +16,13 @@ weight: 1
 - **eBPF** — 添加新的内核探针、改进内核兼容性
 - **审查** — 审查其他贡献者的 Pull Request
 
----
-
 ## 开发环境
 
 ### 前置条件
 
 | 工具 | 要求 | 说明 |
 |------|------|------|
-| **Go** | 1.24+ | 项目主体使用 Go 编写 |
+| **Go** | 以 `go.mod` 为准（当前为 1.24.3） | 项目主体使用 Go 编写 |
 | **Linux** | 内核 4.18+ | eBPF 程序需要 Linux 内核 |
 | **Clang/LLVM** | 任意较新版本 | 编译 eBPF C 程序所需 |
 | **Kernel headers** | linux-headers | BPF 编译所需 |
@@ -43,8 +37,6 @@ git clone https://github.com/YOUR_USERNAME/huatuo.git
 cd huatuo
 git remote add upstream https://github.com/ccfos/huatuo.git
 ```
-
----
 
 ## 构建与测试
 
@@ -82,9 +74,7 @@ make check # 运行代码风格和格式化检查
 > **注意**：`make test` 需要 `/etc/kubernetes/pki` 来运行 E2E 测试。如果没有 K8s 集群，请使用 `make unit`。
 
 无需本地虚拟机即可在其他发行版中测试或调试，具体步骤参见
-[GitHub Actions 虚拟机调试](/docs/development/vm-debugging_zh.md)。
-
----
+[GitHub Actions 虚拟机调试](/docs/development/debugging_zh.md#虚拟机调试)。
 
 ## 贡献流程
 
@@ -115,7 +105,8 @@ git checkout -b fix/short-description
 ### 3. 编写代码
 
 - 一次只解决一个问题
-- 编写或更新与变更对应的测试
+- 更新已有单元测试；涉及外部依赖的组件补充集成测试。
+- 修改配置、接口、存储结构或功能时，同步更新文档。
 - 运行 `make check` 检查代码风格
 - 运行 `make unit` 验证测试通过
 
@@ -150,16 +141,14 @@ git push origin your-branch-name
 - 修改期间可将 PR 设为 Draft，完成后再次点击 **Ready for review**
 - 通过后维护者会合入你的 PR
 
----
-
 ## 提交信息规范
 
-HUATUO 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
+提交信息使用 `type(scope): summary` 格式，遵循仓库 `AGENTS.md` 的约束。正文必须解释修改原因，每行不超过 80 个字符；每次提交只包含一个逻辑变更，不添加 `Co-authored-by:`。
 
 ```text
 <type>(<scope>): <description>
 
-[可选正文]
+说明修改原因（每行不超过 80 个字符）
 
 [可选脚注]
 ```
@@ -170,22 +159,16 @@ HUATUO 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规�
 |------|------|
 | `fix` | Bug 修复 |
 | `feat` | 新功能 |
-| `docs` | 文档变更 |
-| `test` | 测试相关 |
 | `refactor` | 不改变行为的代码重构 |
-| `chore` | 构建、依赖等 |
-| `perf` | 性能优化 |
 
 ### 示例
 
 ```text
 fix(pod): preserve response body read errors in httpDoRequest
 feat(bpf): add probe for kernel scheduling latency
-docs(contributing): add development setup guide
-test(request): verify response body is readable after doRequest
+fix(docs): clarify development setup requirements
+fix(request): cover response body reads after doRequest
 ```
-
----
 
 ## 代码风格
 
@@ -197,8 +180,6 @@ test(request): verify response body is readable after doRequest
 | **YAML/JSON** | 2 空格缩进 |
 
 每次提交前运行 `make check` 确保代码符合规范。
-
----
 
 ## DCO 签名
 
@@ -214,14 +195,8 @@ Signed-off-by: Your Name <your.email@example.com>
 
 签名表明你是代码的作者，或有权在此项目的 Apache 2.0 许可证下贡献此代码。
 
----
-
 ## 社区
 
 - **GitHub Issues** — 报告 Bug 和提功能需求
 - **GitHub Discussions** — 提问和分享想法
 - **微信** — 扫描 [README](https://github.com/ccfos/huatuo) 中的二维码加入微信群
-
----
-
-**感谢你为 HUATUO 做出贡献！**

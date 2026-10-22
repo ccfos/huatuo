@@ -7,52 +7,29 @@ date: 2026-06-05
 weight: 4
 ---
 
-{{% alert color="info" title="🎯 关于 HUATUO（华佗）" %}}
-<div style="text-align: left;">
-HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵化的操作系统深度观测项目，广泛应用于AI 计算、AI 沙箱、云原生通用计算、云服务、基础架构服务等场景。
-</div>
-{{% /alert %}}
-
-## 📖 概述
+## 概述
 
 dropwatch 是 HUATUO 提供的网络丢包观测工具。它通过 `tracepoint/skb/kfree_skb` 采集软件丢包，并通过 `raw_tracepoint/devlink_trap_report` 采集支持 devlink trap 的硬件丢包，输出协议类型、IP 五元组、网络设备、丢包原因和内核调用栈。
 
-dropwatch 支持基于 tcpdump 风格过滤表达式的内核侧过滤，过滤逻辑由内置的纯 Go pcap 编译器 `internal/pcapfilter` 在加载时编译为 eBPF 字节码，过滤完全在内核态执行，只有匹配的数据包才会上报到用户空间，降低对宿主机的性能影响。
+dropwatch 使用内置的 `internal/pcapfilter` 编译 tcpdump 风格表达式，在内核侧过滤报文，仅将匹配的事件上报到用户态。
 
 此外，dropwatch 支持设备白名单/黑名单过滤、全局上报限速，并可与 huatuo-bamai 集成，将丢包事件存储至 Elasticsearch 进行长期分析。
 
+## 适用场景
 
----
+- 按协议、地址、端口或设备筛选丢包，排查业务连接异常。
+- 结合调用栈和丢包原因，分析网络延迟或吞吐变化。
+- 将记录接入 HUATUO 存储，与资源指标和应用异常按时间关联。
 
-## 🎯 场景
+丢包记录提供观测位置和上下文，不能单独确定业务故障根因。硬件可见性受内核、驱动和 devlink trap 配置限制，详见“硬件丢包”。
 
-### 1. Kubernetes 云原生网络丢包诊断
+## 过滤表达式
 
-在容器漂移、Pod 频繁重启、Service 端口冲突等场景下，通过 dropwatch 实时捕获 `kfree_skb` 事件并关联到具体容器，快速定位丢包根因。结合 `--filter "tcp and port <service-port>"` 过滤特定业务流量，将平均故障定位时间从小时级降低至分钟级。
+过滤表达式支持 tcpdump 语法的子集，在加载时编译为 eBPF 字节码。只有匹配的报文才会上报到用户态。
 
-### 2. 网络性能毛刺分析
+### 支持的表达式
 
-针对间歇性网络延迟突增、吞吐下降等问题，通过 dropwatch 采集丢包事件，结合内核调用栈定位丢包发生的具体内核函数（如 `tcp_v4_rcv`、`ip_output` 等），辅助区分是防火墙丢弃、路由失败还是缓冲区溢出等原因。
-
-### 3. 多租户环境网络隔离故障排查
-
-在共享网络命名空间或 veth 设备的容器环境中，通过 `--device` 过滤指定网络设备，结合 `--filter` 过滤特定协议，精确采集目标容器的丢包事件，避免其他租户流量干扰诊断结果。
-
-### 4. 与可观测性平台集成
-
-通过 `--output-storage` 将丢包事件发送给 huatuo-bamai，存储至 Elasticsearch 后与指标、日志进行多维关联分析。将丢包事件叠加到 Grafana 时间线上，与应用错误率、延迟曲线对齐，实现内核丢包与应用异常的精确关联。
-
----
-
-## 🚀 使用
-
-### 1. 过滤表达式
-
-过滤表达式采用 tcpdump 语法，由内置的纯 Go pcap 编译器 `internal/pcapfilter` 在加载时编译为 eBPF 字节码，过滤完全在内核侧执行，降低对宿主机影响，只有匹配的数据包才会上报到用户空间。
-
-#### 1.1 支持的表达式
-
-`internal/pcapfilter` 支持 tcpdump 标准语法的一个子集，下列原语可以可靠使用：
+支持以下过滤原语：
 
 **协议**
 
@@ -102,7 +79,7 @@ tcp and (port 80 or port 443)
 ip and src net 192.168.1.0/24 and tcp dst port 3306
 ```
 
-#### 1.2 不支持的表达式
+### 不支持的表达式
 
 下列表达式**不支持**，使用后会导致编译失败或产生错误的匹配结果：
 
@@ -118,7 +95,7 @@ ip and src net 192.168.1.0/24 and tcp dst port 3306
 | `vlan`、`mpls`、`pppoes`                            | 不支持隧道/封装关键字                                       |
 | `gateway`                                           | 不支持                                                      |
 
-#### 1.3 推荐写法示例
+### 推荐写法示例
 
 ```bash
 # 监控所有 TCP 丢包（默认值——L2 和 L3 上下文均可靠）
@@ -146,11 +123,9 @@ ip and src net 192.168.1.0/24 and tcp dst port 3306
 --filter "arp"
 ```
 
-> **`--filter "ip"` / `--filter "ip6"` 现可正确匹配对应 IP 协议族**（L2 按 EtherType、L3 按版本 nibble）。若只关心特定传输层或主机，仍建议用更精确的 `tcp`、`udp`、`host` 或 `ip proto <name>`。
+> **`--filter "ip"` / `--filter "ip6"` 匹配对应 IP 协议族**（L2 按 EtherType、L3 按版本 nibble）。若只关心特定传输层或主机，仍建议用更精确的 `tcp`、`udp`、`host` 或 `ip proto <name>`。
 
----
-
-### 2. 运行 dropwatch
+## 运行 dropwatch
 
 ```bash
 dropwatch [flags]
@@ -172,7 +147,7 @@ dropwatch [flags]
 
 dropwatch 启动时自动检测 `devlink:devlink_trap_report`。内核支持时同时加载软硬件丢包探针；不支持时记录 warning 并仅加载软件丢包探针。硬件丢包采集还要求网卡驱动注册 devlink drop trap，并将目标 trap action 配置为 `trap`。action 为 `drop` 时硬件不会向 CPU 提供报文副本，dropwatch 无法获取报文。
 
-#### devlink 硬件丢包检测
+### 硬件丢包
 
 dropwatch 无需额外启动参数。使用前确认内核、驱动和目标 trap 均满足条件：
 
@@ -201,7 +176,7 @@ sudo dropwatch --bpf-path bpf/net_dropwatch.o --output json 2>/dev/null | \
 
 `tcpshark --with-dropwatch` 复用相同的来源分类和 reason 解析，也自动启用可用的硬件采集；成功关联时保留相同的 `drop_source`、`drop_reason` 和 `drop_reason_group`。参见 [重传关联说明](/docs/best-practice/tcpshark_zh.md)。
 
-#### 常用命令
+### 常用命令
 
 ```bash
 # 文本格式输出，监控所有设备的 TCP 丢包
@@ -229,11 +204,11 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -
 sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -c 'del(.stack)'
 ```
 
-`jq -c` 会把每条匹配事件压缩成单行 JSON，便于保存为 NDJSON 或继续用管道处理。`test("ip_finish_output")` 判断 `stack` 是否匹配该正则，`not` 会把结果取反，因此上面的命令会排除包含 `ip_finish_output` 的调用栈；去掉 `| not` 后，就是只保留包含 `ip_finish_output` 的事件。`del(.stack)` 只从 jq 输出中删除 `stack` 字段，适合只查看时间、设备、进程、`packet_*` 元数据和 `layers` 协议字段。如需在存储前由用户态按调用栈过滤，可通过 huatuo-bamai 配置 `EventTracing.IssuesList` 实现（参见第 4 节）。
+`jq -c` 会把每条匹配事件压缩成单行 JSON，便于保存为 NDJSON 或继续用管道处理。`test("ip_finish_output")` 判断 `stack` 是否匹配该正则，`not` 会把结果取反，因此上面的命令会排除包含 `ip_finish_output` 的调用栈；去掉 `| not` 后，就是只保留包含 `ip_finish_output` 的事件。
 
----
+`del(.stack)` 只从 jq 输出中删除 `stack` 字段，适合只查看时间、设备、进程、`packet_*` 元数据和 `layers` 协议字段。如需在存储前由用户态按调用栈过滤，可通过 huatuo-bamai 配置 `EventTracing.IssuesList` 实现（见“与 huatuo-bamai 集成”）。
 
-### 3. 事件数据结构
+## 事件字段
 
 每条丢包事件以 NDJSON 对象（`types.DropWatchTracing`）表示。
 
@@ -275,12 +250,18 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/net_dropwatch.o | jq -
 | `layers.ipv6`  | IPv6 字段：`version`、`traffic_class`、`flow_label`、`len`、`next_header`、`hop_limit`、`saddr`、`daddr` |
 | `layers.tcp`   | TCP 字段：`sport`、`dport`、`seq`、`ack_seq`、`data_offset`、`window`、`checksum`、`urgent`、`sk_state` |
 | `layers.udp`   | UDP 字段：`sport`、`dport`、`len`、`checksum`                |
-| `layers.icmp`  | ICMP/ICMPv6 字段：`type`、`code`、`checksum`、`id`、`seq`    |
+| `layers.icmp`  | ICMP/ICMPv6 字段：`type`、`code`、`checksum`、`id`、`seq`；ICMPv6 Echo 请求/应答包含标识符和序号，其他 ICMPv6 消息省略这两个字段 |
 | `layers.arp`   | ARP 字段：`addr_type`、`protocol`、`hw_address_size`、`prot_address_size`、`operation`、`sender_mac`、`sender_ip`、`target_mac`、`target_ip` |
 
----
+ICMPv6 Echo Request/Reply（类型 128/129）仅在捕获完整四字节 Echo 字段时
+填充 `id`、`seq`。Echo 字段截断时保留通用 ICMPv6 字段，ID/Seq 为零；
+通用头也被截断时仍保留已解码的 IPv6 层，`layers.icmp` 不存在。
+其他 ICMPv6 消息类型不填充 Echo 字段。
 
-### 4. 与 huatuo-bamai 集成
+JSON 分别省略值为零的 `id`、`seq`；文本仅在两者都为零时省略它们。
+因此，输出字段缺失无法区分未包含或截断的 Echo 字段与合法的零值。
+
+## 与 huatuo-bamai 集成
 
 huatuo-bamai 以子进程形式启动 `dropwatch`，并通过 `--output-storage` 将事件发送到内置处理流程，并最终存储到 Elasticsearch。典型参数如下：
 
@@ -291,7 +272,7 @@ dropwatch \
   --filter "tcp"
 ```
 
-#### 4.1 配置项参考（`huatuo-bamai.conf`）
+### 配置项
 
 ```toml
 [EventTracing]
@@ -315,7 +296,7 @@ dropwatch \
 
 standalone dropwatch 始终输出 raw `DropWatchTracing`。TCP 重传 local 关联会加载另一份 `net_dropwatch.o`，两个输入统一使用 `EventTracing.TCPRetransmit.Filter`，并且只输出定型后的 `TCPRetransmitTracing` 结果。两种模式可以并行；embedded drop 不会重复保存成 raw event。
 
-#### 4.2 噪声过滤
+### 噪声过滤
 
 默认不启用任何调用栈噪声过滤。配置 `EventTracing.IssuesList` 后，huatuo-bamai 才会丢弃匹配事件。下表是可由运维人员配置的候选模式；启用前应结合本机内核和工作负载验证：
 
@@ -323,16 +304,3 @@ standalone dropwatch 始终输出 raw `DropWatchTracing`。TCP 重传 local 关�
 | ------------------------------------- | ---------------------------------- | ------------------------------------------------------------ |
 | ARP/邻居表到期                        | `neigh_invalidate/`                | 邻居表项到期清理，不影响任何活跃数据流。可从 `EventTracing.IssuesList` 移除对应规则以关闭过滤。 |
 | bnxt 网卡 TX 完成                     | `bnxt_tx_int/` 或 `__bnxt_tx_int/` | Broadcom bnxt 网卡驱动在 DMA 发送完成后调用 `kfree_skb` 释放 SKB，此为正常行为，非丢包。 |
-
----
-
-## 🌟 结尾
-
-{{% alert color="info" %}}
-<div style="text-align: center;">
-🌟 欢迎 Star: <a href="https://github.com/ccfos/huatuo" target="_blank">https://github.com/ccfos/huatuo</a>
-<br><br>
-👀 欢迎订阅官方微信公众号<br>
-<img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
-</div>
-{{% /alert %}}
