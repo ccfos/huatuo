@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,10 +60,10 @@ func TestEventCommandsPreserveTimeouts(t *testing.T) {
 	} {
 		t.Run(command.name, func(t *testing.T) {
 			err := command.start(ctx)
-			if !errors.Is(err, executil.ErrCmdTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+			if !errors.Is(err, executil.ErrRunTimeout) || !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("Start() error = %v, want command timeout", err)
 			}
-			if errors.Is(err, executil.ErrCmdCanceled) {
+			if errors.Is(err, executil.ErrRunCanceled) {
 				t.Fatalf("Start() incorrectly marked timeout as cancellation: %v", err)
 			}
 		})
@@ -93,6 +94,19 @@ func TestDropWatchStartIncludesDiagnosticOutput(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "tool diagnostic") {
 		t.Fatalf("Start() error = %v, want diagnostic output", err)
 	}
+}
+
+// Run first observes Done after Start acknowledges launch. The child can
+// publish its marker earlier, so that marker alone cannot gate cancellation.
+type commandLaunchContext struct {
+	context.Context
+	launched chan struct{}
+	once     sync.Once
+}
+
+func (c *commandLaunchContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.launched) })
+	return c.Context.Done()
 }
 
 func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
@@ -127,8 +141,9 @@ func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 					if err := os.Chmod(tool, 0o700); err != nil {
 						t.Fatal(err)
 					}
-					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+					baseCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 					defer cancel()
+					ctx := &commandLaunchContext{Context: baseCtx, launched: make(chan struct{})}
 					result := make(chan error, 1)
 					go func() { result <- command.start(ctx) }()
 					deadline := time.Now().Add(3 * time.Second)
@@ -141,6 +156,11 @@ func TestEventCommandsPreserveFailuresDuringCancellation(t *testing.T) {
 							t.Fatalf("tool did not become ready: %v", <-result)
 						}
 						time.Sleep(time.Millisecond)
+					}
+					select {
+					case <-ctx.launched:
+					case <-baseCtx.Done():
+						t.Fatal("command did not acknowledge launch")
 					}
 					cancel()
 					err := <-result

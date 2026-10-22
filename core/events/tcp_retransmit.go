@@ -41,7 +41,7 @@ const (
 
 func init() {
 	tracing.RegisterEventTracing(tcpRetransmitTracerName, newTCPRetransmit)
-	toolstream.RegisterDefault[*types.TCPRetransmitTracing](tcpSharkToolName, handleTCPRetransmitEvent)
+	toolstream.RegisterDefault[types.TCPRetransmitTracing](tcpSharkToolName, handleTCPRetransmitEvent)
 }
 
 func newTCPRetransmit() (*tracing.EventTracingAttr, error) {
@@ -76,7 +76,7 @@ func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
 		Args: tcpRetransmitArgs(configSnapshot()),
 	})
 	if err != nil {
-		if errors.Is(err, executil.ErrCmdCanceled) {
+		if errors.Is(err, executil.ErrRunCanceled) {
 			return nil
 		}
 		if len(result.Stderr) > 0 {
@@ -115,7 +115,11 @@ func tcpRetransmitArgs(config *Config) []string {
 	return args
 }
 
-func handleTCPRetransmitEvent(_ *toolstream.Session, ev *types.TCPRetransmitTracing) error {
+func handleTCPRetransmitEvent(_ context.Context, request *toolstream.Request[types.TCPRetransmitTracing]) error {
+	if request.Data == nil {
+		return nil
+	}
+	ev := request.Data
 	if ev.ContainerID == "" {
 		ev.ContainerID = pod.ContainerIDByCgroupNetNamespace(pod.ContainerCgroupNetNamespace{
 			MemoryCgroupCSSAddr: kernaddr.ParseOrZero(ev.MemoryCgroupCSSAddr),

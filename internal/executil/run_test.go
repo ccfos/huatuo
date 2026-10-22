@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -66,8 +67,7 @@ func TestRunResultAvailability(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := Run(t.Context(), tt.spec, tt.options...)
-			var failure *RunError
-			if result == nil || !errors.As(err, &failure) || failure.ExecutionErr == nil {
+			if result == nil || err == nil {
 				t.Fatalf("Run() = (%+v,%v), want non-nil result and configuration error", result, err)
 			}
 			if len(result.Stdout) != 0 || len(result.Stderr) != 0 || len(result.Memfd) != 0 {
@@ -82,9 +82,8 @@ func TestRunResultAvailability(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	result, err = Run(ctx, Spec{Path: "/bin/true"})
-	var failure *RunError
-	if result == nil || !errors.As(err, &failure) || !errors.Is(err, context.Canceled) ||
-		!errors.Is(err, ErrCmdCanceled) || errors.Is(err, ErrCmdTimeout) {
+	if result == nil || !errors.Is(err, context.Canceled) ||
+		!errors.Is(err, ErrRunCanceled) || errors.Is(err, ErrRunTimeout) {
 		t.Fatalf("canceled start = (%+v,%v)", result, err)
 	}
 }
@@ -215,23 +214,32 @@ func TestRunCancellationPreservesIndependentFailures(t *testing.T) {
 			defer cancel()
 			_, err := Run(
 				ctx, Spec{Path: "/bin/sh", StopGracePeriod: 50 * time.Millisecond, MaxStdoutBytes: 4},
-				WithStderr(cancelOutput{cancel: cancel}),
+				func(process *Process) {
+					// Output can precede Start's launch result; cancel only after launch.
+					process.stderr = cancelOutput{cancel: func() {
+						<-process.startDone
+						cancel()
+					}}
+				},
 				WithMemfdOutput(4, func(path string) []string {
 					return []string{"-c", tt.script, "test", path}
 				}),
 			)
-			var failure *RunError
-			if !errors.Is(err, context.Canceled) || !errors.As(err, &failure) {
+			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("Run(): %v", err)
 			}
-			if errors.Is(err, ErrCmdCanceled) == (tt.outputLimit || tt.exitFailure) || errors.Is(err, ErrCmdTimeout) {
+			if errors.Is(err, ErrRunCanceled) == (tt.outputLimit || tt.exitFailure) || errors.Is(err, ErrRunTimeout) {
 				t.Fatalf("incorrect cancellation classification: %v", err)
 			}
-			if errors.Is(failure.OutputErr, ErrOutputLimitExceeded) != tt.outputLimit {
-				t.Fatalf("OutputErr: %v", failure.OutputErr)
+			if errors.Is(err, ErrOutputLimitExceeded) != tt.outputLimit {
+				t.Fatalf("output error: %v", err)
 			}
-			if (failure.ExecutionErr != nil) != tt.exitFailure {
-				t.Fatalf("ExecutionErr: %v", failure.ExecutionErr)
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) != tt.exitFailure {
+				t.Fatalf("exit error: %v", err)
+			}
+			if exitErr != nil && exitErr.ExitCode() != 7 {
+				t.Fatalf("exit code = %d, want 7", exitErr.ExitCode())
 			}
 		})
 	}
@@ -241,14 +249,13 @@ func TestRunDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	_, err := Run(ctx, Spec{Path: "/bin/sh", Args: []string{"-c", "sleep 30"}, StopGracePeriod: time.Millisecond}, WithStdout(io.Discard))
-	var failure *RunError
-	if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &failure) ||
-		!errors.Is(err, ErrCmdTimeout) || errors.Is(err, ErrCmdCanceled) {
+	if !errors.Is(err, context.DeadlineExceeded) ||
+		!errors.Is(err, ErrRunTimeout) || errors.Is(err, ErrRunCanceled) {
 		t.Fatalf("Run(): %v", err)
 	}
 }
 
-func TestCollectResultRejectsContextStopWithCleanupFailure(t *testing.T) {
+func TestFinishRunRejectsContextStopWithCleanupFailure(t *testing.T) {
 	cleanupErr := errors.New("close output failed")
 	for _, contextErr := range []error{context.Canceled, context.DeadlineExceeded} {
 		t.Run(contextErr.Error(), func(t *testing.T) {
@@ -256,26 +263,25 @@ func TestCollectResultRejectsContextStopWithCleanupFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			process.state = processStateFinished
+			process.state = processRunStateFinished
 			process.memfd = &memfdOutput{closeErr: cleanupErr}
-			close(process.start.done)
-			close(process.wait.done)
+			close(process.startDone)
+			close(process.waitDone)
 			process.publishDone()
 
-			_, err = collectResult(process, &RunError{ContextErr: contextErr})
-			var failure *RunError
-			if !errors.As(err, &failure) || failure.Process != process ||
+			_, err = finishRun(process, contextErr, nil)
+			if !errors.Is(err, ErrCleanupFailed) ||
 				!errors.Is(err, contextErr) || !errors.Is(err, cleanupErr) {
-				t.Fatalf("collectResult() error = %v, want context and cleanup failure with recovery ownership", err)
+				t.Fatalf("finishRun() error = %v, want context and cleanup failure", err)
 			}
-			if errors.Is(err, ErrCmdCanceled) || errors.Is(err, ErrCmdTimeout) {
-				t.Fatalf("collectResult() incorrectly marked a cleanup failure as a normal context stop: %v", err)
+			if errors.Is(err, ErrRunCanceled) || errors.Is(err, ErrRunTimeout) {
+				t.Fatalf("finishRun() incorrectly marked a cleanup failure as a normal context stop: %v", err)
 			}
 		})
 	}
 }
 
-func TestCollectResultPreservesCleanupOwnership(t *testing.T) {
+func TestFinishRunPreservesCleanupCauses(t *testing.T) {
 	cleanupErr := errors.New("close output failed")
 	executionErr := errors.New("exit failed independently")
 	process, err := New(Spec{Path: "/unused/command", MaxStdoutBytes: 4})
@@ -283,89 +289,31 @@ func TestCollectResultPreservesCleanupOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Inject an OS cleanup failure after publishing a completed lifecycle.
-	process.state = processStateFinished
+	process.state = processRunStateFinished
 	process.memfd = &memfdOutput{closeErr: cleanupErr}
-	process.wait.err = executionErr
-	close(process.start.done)
-	close(process.wait.done)
+	process.terminalErr = executionErr
+	close(process.startDone)
+	close(process.waitDone)
 	process.publishDone()
 	if _, err := process.stdout.Write([]byte("12345")); err != nil {
 		t.Fatal(err)
 	}
-	result, err := collectResult(process, &RunError{ContextErr: context.Canceled})
-	var failure *RunError
-	if result == nil || !errors.As(err, &failure) || failure.Process != process ||
-		errors.Is(err, ErrCmdCanceled) || errors.Is(err, ErrCmdTimeout) {
+	result, err := finishRun(process, context.Canceled, nil)
+	if result == nil || !errors.Is(err, ErrCleanupFailed) ||
+		errors.Is(err, ErrRunCanceled) || errors.Is(err, ErrRunTimeout) {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
-	if string(result.Stdout) != "2345" || failure.OutputErr != nil {
-		t.Fatalf("stdout = %q, output error = %v", result.Stdout, failure.OutputErr)
+	if string(result.Stdout) != "2345" {
+		t.Fatalf("stdout = %q, want 2345", result.Stdout)
 	}
 	for _, cause := range []error{context.Canceled, executionErr, cleanupErr} {
 		if !errors.Is(err, cause) {
 			t.Errorf("lost %v: %v", cause, err)
 		}
 	}
-	if err := failure.Process.Close(); !errors.Is(err, cleanupErr) {
+
+	if err := process.Close(); !errors.Is(err, cleanupErr) {
 		t.Fatalf("retry Close(): %v", err)
-	}
-}
-
-func TestCollectResultClassifiesContextErrors(t *testing.T) {
-	failureErr := errors.New("independent failure")
-	tests := []struct {
-		name    string
-		failure RunError
-		marker  error
-	}{
-		{"cancellation", RunError{ContextErr: context.Canceled}, ErrCmdCanceled},
-		{"deadline", RunError{ContextErr: context.DeadlineExceeded}, ErrCmdTimeout},
-		{"cancellation and execution failure", RunError{ContextErr: context.Canceled, ExecutionErr: failureErr}, nil},
-		{"cancellation and output failure", RunError{ContextErr: context.Canceled, OutputErr: failureErr}, nil},
-		{"cancellation and cleanup failure", RunError{ContextErr: context.Canceled, CleanupErr: failureErr}, nil},
-		{"deadline and execution failure", RunError{ContextErr: context.DeadlineExceeded, ExecutionErr: failureErr}, nil},
-		{"deadline and output failure", RunError{ContextErr: context.DeadlineExceeded, OutputErr: failureErr}, nil},
-		{"deadline and cleanup failure", RunError{ContextErr: context.DeadlineExceeded, CleanupErr: failureErr}, nil},
-		{"execution failure", RunError{ExecutionErr: failureErr}, nil},
-		{"no error", RunError{}, nil},
-	}
-	for i := range tests {
-		tt := &tests[i]
-		t.Run(tt.name, func(t *testing.T) {
-			process, err := New(Spec{Path: "/unused/command"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			process.state = processStateFinished
-			close(process.start.done)
-			close(process.wait.done)
-			process.publishDone()
-
-			result, err := collectResult(process, &tt.failure)
-			if result == nil {
-				t.Fatal("collectResult() returned a nil result")
-			}
-			if errors.Is(err, ErrCmdCanceled) != errors.Is(tt.marker, ErrCmdCanceled) ||
-				errors.Is(err, ErrCmdTimeout) != errors.Is(tt.marker, ErrCmdTimeout) {
-				t.Fatalf("collectResult() error = %v, want marker %v", err, tt.marker)
-			}
-			causes := tt.failure.Unwrap()
-			if len(causes) == 0 {
-				if err != nil {
-					t.Fatalf("collectResult() error = %v, want nil", err)
-				}
-				return
-			}
-			var failure *RunError
-			if !errors.As(err, &failure) {
-				t.Fatalf("collectResult() error = %v, want RunError", err)
-			}
-			for _, cause := range causes {
-				if !errors.Is(err, cause) {
-					t.Errorf("collectResult() lost cause %v: %v", cause, err)
-				}
-			}
-		})
 	}
 }
 
@@ -374,23 +322,141 @@ func TestCanceledLaunchPreservesLaterExitFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stopErr := wrapStopFailure(errors.New("signal failed during launch"))
+	stopErr := errors.Join(ErrStopFailed, errors.New("signal failed during launch"))
 	exitErr := errors.New("command exited with a separate failure")
-	process.state = processStateFinished
-	process.start.err = &RunError{ContextErr: context.Canceled, CleanupErr: stopErr}
-	process.wait.err = exitErr
-	close(process.start.done)
-	close(process.wait.done)
+	launchErr := errors.Join(context.Canceled, stopErr)
+	process.startCancelErr = context.Canceled
+	process.terminalErr = launchErr
+	process.terminalErr = errors.Join(process.terminalErr, exitErr)
+	process.state = processRunStateFinished
+	close(process.startDone)
+	close(process.waitDone)
 	process.publishDone()
 	if err := process.Wait(); !errors.Is(err, exitErr) || !errors.Is(err, context.Canceled) || !errors.Is(err, stopErr) {
 		t.Fatalf("Wait(): %v", err)
 	}
-	_, err = collectResult(process, process.start.err)
-	var failure *RunError
-	if !errors.As(err, &failure) || !errors.Is(failure.ExecutionErr, exitErr) || !errors.Is(failure.CleanupErr, stopErr) || failure.Process != nil {
+	_, err = finishRun(process, nil, nil)
+	if !errors.Is(err, exitErr) || !errors.Is(err, stopErr) || errors.Is(err, ErrCleanupFailed) {
 		t.Fatalf("recovered result: %v", err)
 	}
-	if errors.Is(err, ErrCmdCanceled) || errors.Is(err, ErrCmdTimeout) {
+	if errors.Is(err, ErrRunCanceled) || errors.Is(err, ErrRunTimeout) {
 		t.Fatalf("recovered result incorrectly marked as a normal context stop: %v", err)
+	}
+	if errors.Is(launchErr, exitErr) {
+		t.Fatal("later completion mutated the published launch error")
+	}
+}
+
+type failingOutput struct {
+	err error
+}
+
+func (w failingOutput) Write([]byte) (int, error) { return 0, w.err }
+
+func TestRunDoesNotClassifyWriterFailureAsLaunchCancellation(t *testing.T) {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded, fmt.Errorf("%w: %w", ErrCleanupFailed, context.Canceled)} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			for _, tt := range []struct {
+				name string
+				err  error
+			}{
+				{"direct", cause},
+				{"wrapped", fmt.Errorf("writer rejected output: %w", cause)},
+				{"joined", errors.Join(cause, errors.New("writer failed"))},
+				{"multiple wrapped causes", fmt.Errorf("writer: %w: %w", cause, errors.New("writer failed"))},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					_, err := Run(t.Context(), Spec{Path: "/bin/sh", Args: []string{"-c", "printf output"}}, WithStdout(failingOutput{err: tt.err}))
+					if !errors.Is(err, tt.err) || !errors.Is(err, cause) {
+						t.Fatalf("Run lost the independent writer failure: %v", err)
+					}
+					if errors.Is(err, ErrRunCanceled) || errors.Is(err, ErrRunTimeout) {
+						t.Fatalf("Run classified independent error metadata as launch cancellation: %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestFinishRunPreservesLaunchCancellationFailures(t *testing.T) {
+	independentErr := errors.New("command failed independently")
+	cleanupErr := fmt.Errorf("%w: %w", ErrCleanupFailed, independentErr)
+	for _, marker := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(marker.Error(), func(t *testing.T) {
+			for _, failure := range []struct {
+				name string
+				err  error
+			}{
+				{"execution", independentErr},
+				{"cleanup", cleanupErr},
+			} {
+				t.Run(failure.name, func(t *testing.T) {
+					process, err := New(Spec{Path: "/unused/command"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					process.startCancelErr = marker
+					process.terminalErr = errors.Join(marker, failure.err)
+					process.state = processRunStateFinished
+					close(process.startDone)
+					close(process.waitDone)
+					process.publishDone()
+
+					_, err = finishRun(process, nil, nil)
+					if !errors.Is(err, marker) || !errors.Is(err, failure.err) {
+						t.Fatalf("finishRun lost cancellation or failure: %v", err)
+					}
+					if errors.Is(err, ErrRunCanceled) || errors.Is(err, ErrRunTimeout) {
+						t.Fatalf("finishRun suppressed an independent failure: %v", err)
+					}
+					if errors.Is(err, ErrCleanupFailed) != errors.Is(failure.err, ErrCleanupFailed) {
+						t.Fatalf("finishRun changed cleanup classification: %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestFinishRunClassifiesCancellationAfterCleanup(t *testing.T) {
+	pathErr := &os.PathError{Op: "close", Path: "memfd", Err: os.ErrClosed}
+	for _, contextErr := range []error{nil, context.Canceled, context.DeadlineExceeded} {
+		for _, failureErr := range []error{
+			nil,
+			pathErr,
+			ErrOutputLimitExceeded,
+			fmt.Errorf("%w: %w", ErrCleanupFailed, pathErr),
+			context.Canceled,
+			fmt.Errorf("writer failed: %w", ErrStopped),
+			errors.Join(ErrStopped, pathErr),
+			fmt.Errorf("%w: %w", ErrCleanupFailed, ErrStopped),
+		} {
+			name := fmt.Sprintf("context=%v/failure=%v", contextErr, failureErr)
+			t.Run(name, func(t *testing.T) {
+				process, err := New(Spec{Path: "/unused/command"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				process.state = processRunStateFinished
+				process.terminalErr = failureErr
+				close(process.startDone)
+				close(process.waitDone)
+				process.publishDone()
+				_, err = finishRun(process, contextErr, nil)
+				if errors.Is(err, ErrRunCanceled) != (contextErr != nil && errors.Is(contextErr, context.Canceled) && failureErr == nil) ||
+					errors.Is(err, ErrRunTimeout) != (contextErr != nil && errors.Is(contextErr, context.DeadlineExceeded) && failureErr == nil) {
+					t.Fatalf("incorrect final cancellation marker: %v", err)
+				}
+				for _, cause := range []error{contextErr, failureErr} {
+					if cause != nil && !errors.Is(err, cause) {
+						t.Errorf("lost cause %v: %v", cause, err)
+					}
+				}
+				if contextErr == nil && failureErr == nil && err != nil {
+					t.Fatalf("finishRun() = %v, want nil", err)
+				}
+			})
+		}
 	}
 }

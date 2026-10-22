@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -83,7 +84,47 @@ func TestMemfdOptionDefersCreationUntilStart(t *testing.T) {
 	}
 }
 
-func TestClosePreservesMemfdAndGroupCleanupErrors(t *testing.T) {
+func TestReleaseResourcesPreservesLifecycleAndCachesFailure(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "owned-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	process, err := New(Spec{Path: "/unused/command"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A starting lifecycle must remain unpublished while its resources close.
+	process.state = processRunStateStarting
+	process.terminalErr = context.Canceled
+	process.memfd = &memfdOutput{file: file}
+	cleanupErr := releaseResources(process)
+	var pathErr *os.PathError
+	if !errors.Is(cleanupErr, ErrCleanupFailed) || !errors.Is(cleanupErr, os.ErrClosed) || !errors.As(cleanupErr, &pathErr) {
+		t.Fatalf("releaseResources() lost cleanup classification or cause: %v", cleanupErr)
+	}
+	if process.memfd.file != nil {
+		t.Fatal("releaseResources() retained the file")
+	}
+	if got := releaseResources(process); got != cleanupErr { //nolint:errorlint // Cached identity allows cleanup reports to be deduplicated.
+		t.Fatalf("second releaseResources() = %v, want cached error %v", got, cleanupErr)
+	}
+	if process.state != processRunStateStarting || process.terminalErr != context.Canceled { //nolint:errorlint // Resource release must preserve the launch marker itself.
+		t.Fatal("releaseResources() changed the lifecycle result")
+	}
+	for _, done := range []<-chan struct{}{process.startDone, process.waitDone, process.Done()} {
+		select {
+		case <-done:
+			t.Fatal("releaseResources() published lifecycle completion")
+		default:
+		}
+	}
+}
+
+func TestCloseReportsMemfdFailureSeparatelyFromReaperFailure(t *testing.T) {
 	closeErr := errors.New("close memfd failed")
 	groupErr := errors.New("terminate group failed")
 	for _, cleanupErr := range []error{nil, groupErr} {
@@ -98,11 +139,13 @@ func TestClosePreservesMemfdAndGroupCleanupErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Publish failures without requiring an OS close or signal failure.
-			process.state = processStateFinished
+			process.state = processRunStateFinished
 			process.memfd = &memfdOutput{closeErr: closeErr}
-			process.groupErr = wrapStopFailure(cleanupErr)
-			close(process.start.done)
-			close(process.wait.done)
+			if cleanupErr != nil {
+				process.terminalErr = fmt.Errorf("%w: %w", ErrCleanupFailed, errors.Join(ErrStopFailed, cleanupErr))
+			}
+			close(process.startDone)
+			close(process.waitDone)
 			process.publishDone()
 			for range 2 {
 				err := process.Close()
@@ -110,12 +153,12 @@ func TestClosePreservesMemfdAndGroupCleanupErrors(t *testing.T) {
 					t.Fatalf("Close() error = %v, want stored close error", err)
 				}
 
-				if errors.Is(err, ErrStopFailed) != (cleanupErr != nil) {
+				if errors.Is(err, ErrStopFailed) {
 					t.Fatalf("Close() error = %v, incorrect process group failure classification", err)
 				}
 
-				if cleanupErr != nil && !errors.Is(err, cleanupErr) {
-					t.Fatalf("Close() error = %v, want group cleanup error", err)
+				if cleanupErr != nil && !errors.Is(process.Wait(), cleanupErr) {
+					t.Fatalf("Wait() lost group cleanup error: %v", process.Wait())
 				}
 			}
 
@@ -191,7 +234,7 @@ func TestReadMemfdOutputPreservesLimitAndReadErrors(t *testing.T) {
 
 func TestMemfdOutputRejectsUnavailableFile(t *testing.T) {
 	var zero Process
-	if _, err := zero.MemfdOutput(); !errors.Is(err, errProcessNotInitialized) {
+	if _, err := zero.MemfdOutput(); !errors.Is(err, ErrProcessNotInitialized) {
 		t.Fatalf("zero Process.MemfdOutput() error = %v", err)
 	}
 
@@ -205,15 +248,67 @@ func TestMemfdOutputRejectsUnavailableFile(t *testing.T) {
 	}
 
 	process.memfd = &memfdOutput{limit: 4}
-	for _, state := range []processState{processStateNew, processStateStarting, processStateFinished} {
+	for _, state := range []processState{processRunStateNew, processRunStateStarting, processRunStateFinished} {
 		process.state = state
 		_, err := process.MemfdOutput()
 		if err == nil {
 			t.Fatalf("MemfdOutput() in state %d succeeded", state)
 		}
 
-		if state == processStateFinished && !errors.Is(err, os.ErrClosed) {
+		if state == processRunStateFinished && !errors.Is(err, os.ErrClosed) {
 			t.Fatalf("MemfdOutput() error = %v, want os.ErrClosed", err)
+		}
+	}
+}
+
+func TestCloseDoesNotChangePublishedExecutionError(t *testing.T) {
+	process, err := New(Spec{Path: "/unused/command"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executionErr := errors.New("execution failed")
+	fileErr := errors.New("file close failed")
+	process.state = processRunStateFinished
+	process.terminalErr = executionErr
+	process.memfd = &memfdOutput{closeErr: fileErr}
+	close(process.startDone)
+	close(process.waitDone)
+	process.publishDone()
+	for range 2 {
+		closeErr := process.Close()
+		if errors.Is(closeErr, executionErr) || !errors.Is(closeErr, fileErr) {
+			t.Fatalf("Close() lost a cause: %v", closeErr)
+		}
+		cleanupErr := closeErr
+		if !errors.Is(cleanupErr, fileErr) || errors.Is(cleanupErr, executionErr) {
+			t.Fatalf("incorrect cleanup classification: %v", cleanupErr)
+		}
+		if got := process.Wait(); got != executionErr { //nolint:errorlint // Verify Close leaves the published object unchanged.
+			t.Fatalf("Wait() changed after Close: %v", got)
+		}
+	}
+}
+
+func TestCloseDoesNotRepeatFailedStartCleanup(t *testing.T) {
+	process, err := New(Spec{Path: "/unused/command"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileErr := errors.New("file close failed")
+	process.memfd = &memfdOutput{closeErr: fileErr}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	startErr := process.Start(ctx)
+	if !errors.Is(startErr, context.Canceled) || !errors.Is(startErr, ErrCleanupFailed) || !errors.Is(startErr, fileErr) {
+		t.Fatalf("Start lost cancellation or cleanup failure: %v", startErr)
+	}
+	for range 2 {
+		if err := process.Close(); err != nil {
+			t.Fatalf("Close repeated a cleanup failure owned by Start: %v", err)
+		}
+		if got := process.Wait(); got != startErr { //nolint:errorlint // Closing must preserve the published lifecycle result.
+			t.Fatalf("Wait() = %v, want published result %v", got, startErr)
 		}
 	}
 }

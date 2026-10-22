@@ -47,7 +47,8 @@ type MemBurstConfig struct {
 	Interval            int `default:"10"`
 	IntervalTracing     int `default:"1800"`
 	SlidingWindowLength int `default:"60"`
-	DumpProcessMaxNum   int `default:"10"`
+	// DumpProcessMaxNum bounds the RSS ranking; snapshots cover at most the first 3.
+	DumpProcessMaxNum int `default:"10"`
 }
 
 // IRQTracingConfig holds irq spike tracing configuration.
@@ -71,6 +72,7 @@ type IRQTracingConfig struct {
 // Config holds autotracing configuration.
 type Config struct {
 	CPUIdle struct {
+		Tool                  string                 `default:"perf"`
 		UserThreshold         int64                  `default:"75"`
 		SysThreshold          int64                  `default:"45"`
 		UsageThreshold        int64                  `default:"90"`
@@ -84,11 +86,12 @@ type Config struct {
 	}
 
 	CPUSys struct {
-		SysThreshold          int64 `default:"45"`
-		DeltaSysThreshold     int64 `default:"20"`
-		Interval              int64 `default:"10"`
-		IntervalTracing       int64 `default:"1800"`
-		RunTracingToolTimeout int64 `default:"10"`
+		Tool                  string `default:"perf"`
+		SysThreshold          int64  `default:"45"`
+		DeltaSysThreshold     int64  `default:"20"`
+		Interval              int64  `default:"10"`
+		IntervalTracing       int64  `default:"1800"`
+		RunTracingToolTimeout int64  `default:"10"`
 	}
 
 	Dload struct {
@@ -141,6 +144,28 @@ func configSnapshot() *Config {
 
 // Validate rejects invalid autotracing settings.
 func (c *Config) Validate() error {
+	for _, entry := range []struct {
+		name string
+		tool string
+	}{
+		{
+			name: "CPUIdle",
+			tool: c.CPUIdle.Tool,
+		},
+		{
+			name: "CPUSys",
+			tool: c.CPUSys.Tool,
+		},
+	} {
+		if entry.tool != cpuToolPerf && entry.tool != cpuToolProfiler {
+			return fmt.Errorf("AutoTracing.%s.Tool must be %q or %q, got %q",
+				entry.name, cpuToolPerf, cpuToolProfiler, entry.tool)
+		}
+	}
+
+	if err := validateMemBurst(&c.MemoryBurst); err != nil {
+		return fmt.Errorf("validating memory burst: %w", err)
+	}
 	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
 		return fmt.Errorf("validating issues list: %w", err)
 	}

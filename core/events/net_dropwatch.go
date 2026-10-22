@@ -36,7 +36,7 @@ type dropWatchTracing struct{}
 
 func init() {
 	tracing.RegisterEventTracing("dropwatch", newDropWatch)
-	toolstream.RegisterDefault[*types.DropWatchTracing]("dropwatch", handleDropwatchEvent)
+	toolstream.RegisterDefault[types.DropWatchTracing]("dropwatch", handleDropwatchEvent)
 }
 
 func newDropWatch() (*tracing.EventTracingAttr, error) {
@@ -64,7 +64,7 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 		Args: args,
 	})
 	if err != nil {
-		if errors.Is(err, executil.ErrCmdCanceled) {
+		if errors.Is(err, executil.ErrRunCanceled) {
 			return nil
 		}
 		if len(result.Stderr) > 0 {
@@ -75,7 +75,11 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 	return nil
 }
 
-func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
+func handleDropwatchEvent(_ context.Context, request *toolstream.Request[types.DropWatchTracing]) error {
+	if request.Data == nil {
+		return nil
+	}
+	ev := request.Data
 	if ignoreDropwatch(ev) {
 		return nil
 	}

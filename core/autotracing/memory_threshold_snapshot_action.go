@@ -219,18 +219,35 @@ type memoryThresholdSnapshotData struct {
 	ProcessMemory      *memsnapshot.ProcessMemory `json:"process_memory"`
 }
 
-// Run returns zero for skipped or canceled attempts, so they do not start cooldown.
+// Run retains threshold work across collector contention. Every retry rechecks
+// cgroup pressure and process identity; lifecycle invalidation cancels the batch.
 func (b *actionBatch) Run() time.Time {
+	for {
+		finished, retry := b.runAttempt()
+		if !retry {
+			return finished
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-b.ctx.Done():
+			timer.Stop()
+			return time.Time{}
+		case <-timer.C:
+		}
+	}
+}
+
+func (b *actionBatch) runAttempt() (time.Time, bool) {
 	ctx := b.ctx
 	ordered, err := b.rankCgroupTargets(ctx)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			log.WithError(err).Debug("memory threshold snapshot pressure event skipped")
 		}
-		return time.Time{}
+		return time.Time{}, false
 	}
 	if len(ordered) == 0 {
-		return time.Time{}
+		return time.Time{}, false
 	}
 
 	for i := 1; i < len(ordered); i++ {
@@ -246,17 +263,20 @@ func (b *actionBatch) Run() time.Time {
 
 	c := &ordered[0]
 	if c.ratio < float64(b.config.MemoryThresholdSnapshot.ThresholdPercent)/100 {
-		return time.Time{}
+		return time.Time{}, false
 	}
 	err = b.snapshotCandidate(ctx, c)
+	if errors.Is(err, collector.ErrCaptureBusy) {
+		return time.Time{}, true
+	}
 	if errors.Is(err, context.Canceled) {
-		return time.Time{}
+		return time.Time{}, false
 	}
 	if err != nil {
 		log.WithField("cgroup", c.observation.Cgroup.Path).
 			WithError(err).Warn("memory threshold snapshot skipped")
 	}
-	return time.Now()
+	return time.Now(), false
 }
 
 // rankCgroupTargets retains below-threshold targets so logs include the full ranking.
@@ -365,6 +385,7 @@ func (b *actionBatch) snapshotCandidate(ctx context.Context, candidate *memcgCan
 	result, err := ops.snapshotProcessMemory(ctx, selected.instance, collector.Options{
 		MaxMemoryObjectEntries: cfg.MaxMemoryObjectEntries,
 		SnapshotTimeout:        time.Duration(cfg.RunTracingToolTimeout) * time.Second,
+		WaitForCapture:         true,
 	})
 	if err != nil {
 		return fmt.Errorf("capture process memory: %w", err)

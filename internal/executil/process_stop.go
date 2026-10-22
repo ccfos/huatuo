@@ -18,116 +18,90 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
+	"syscall"
 )
 
-// Stop sends SIGTERM to the process group. The leader's exit, ctx expiration or
-// Spec.StopGracePeriod ends the grace period and escalates to SIGKILL.
-// Reaping and bounded output draining remain internal to Process.
-// Stop preserves output, including memfd. Call Close after reading it.
-// Failed process group termination can be retried. Stop rejects an unfinished
-// Start; Close instead waits for that Start before forcing cleanup.
+// Stop sends StopSignal (default SIGTERM), escalating to SIGKILL when the
+// context or StopGracePeriod expires. It returns only stopping failures; use
+// Wait for the lifecycle result. Signal failures return promptly and can be retried.
+// Concurrent callers stop independently. Stop preserves output and rejects
+// an unfinished Start; Close instead waits for launch to settle.
 func (p *Process) Stop(ctx context.Context) error {
+	p.mu.Lock()
+	if p.state == processRunStateInvalid {
+		p.mu.Unlock()
+		return ErrProcessNotInitialized
+	}
+	if p.state == processRunStateNew || p.state == processRunStateStarting {
+		p.mu.Unlock()
+		return ErrProcessNotStarted
+	}
+	p.isStopRequested = true
+	p.mu.Unlock()
+
 	ctx, cancel := context.WithTimeout(ctx, p.spec.StopGracePeriod)
 	defer cancel()
-
-	p.mu.Lock()
-	if p.state == processStateInvalid {
-		p.mu.Unlock()
-		return fmt.Errorf("stop command: %w", errProcessNotInitialized)
+	if err := p.stopProcessGroup(ctx); err != nil {
+		return fmt.Errorf("%w: %w", ErrCleanupFailed, err)
 	}
 
-	switch p.state {
-	case processStateNew, processStateStarting:
-		p.mu.Unlock()
-		return fmt.Errorf("stop command %q: process has not been started", p.spec.Path)
-	}
-
-	if p.state == processStateFinished || p.state == processStateClosedBeforeStart {
-		p.mu.Unlock()
-		return p.stopResult()
-	}
-
-	if attempt := p.stopAttempt; attempt != nil {
-		select {
-		case <-attempt.done:
-			if attempt.err == nil {
-				p.mu.Unlock()
-				return nil
-			}
-		default:
-			p.mu.Unlock()
-			return p.waitForStopAttempt(ctx, attempt)
-		}
-	}
-
-	p.isStopRequested = true
-	attempt := &lifecycleResult{done: make(chan struct{})}
-	p.stopAttempt = attempt
-	p.mu.Unlock()
-
-	err := wrapStopFailure(p.stopProcessGroup(ctx))
-
-	p.mu.Lock()
-	attempt.err = err
-	close(attempt.done)
-	p.mu.Unlock()
-	return err
+	return nil
 }
 
-func (p *Process) waitForStopAttempt(ctx context.Context, attempt *lifecycleResult) error {
-	select {
-	case <-attempt.done:
-		return attempt.err
-	case <-ctx.Done():
-		return wrapStopFailure(p.forceStopAndWait())
-	}
-}
-
-// Close forcefully stops and reaps a running command, then releases owned files.
-// It waits for an in-progress Start. Calling Close before Start permanently
-// closes the process; Wait then returns os.ErrClosed. Concurrent and repeated
-// calls are safe. Signal failures can be retried; file close failures are cached.
-// Borrowed writers and ExtraFiles are never closed. Close does not report an
-// ordinary exit failure: use Wait to obtain the execution result.
+// Close forcefully stops and reaps a command, then releases owned files. It
+// returns only failures of these operations; use Wait for the lifecycle result,
+// including reaper cleanup failures. Close waits for an unfinished Start.
+// Closing before Start succeeds and publishes ErrProcessClosed to Wait.
+// Concurrent and repeated calls are safe. Signal failures can be retried;
+// file close errors are cached without changing Wait's immutable result.
+// Cleanup errors already published by a failed Start are not returned again.
+// Borrowed writers and ExtraFiles remain caller-owned.
 func (p *Process) Close() error {
 	p.mu.Lock()
-	if p.state == processStateInvalid {
+	if p.state == processRunStateInvalid {
 		p.mu.Unlock()
-		return fmt.Errorf("close command: %w", errProcessNotInitialized)
+		return ErrProcessNotInitialized
 	}
-	if p.state == processStateNew {
-		p.state = processStateClosedBeforeStart
-		p.start.err = fmt.Errorf("command %q closed before start: %w", p.spec.Path, os.ErrClosed)
-		p.wait.err = p.start.err
-		close(p.start.done)
-		close(p.wait.done)
+	if p.state == processRunStateStarting {
+		p.mu.Unlock()
+		<-p.startDone
+		p.mu.Lock()
+	}
+
+	if p.state == processRunStateNew {
+		p.state = processRunStateClosedBeforeStart
+		p.terminalErr = ErrProcessClosed
+		close(p.startDone)
+		close(p.waitDone)
 		p.publishDone()
 	}
-	p.mu.Unlock()
-
-	<-p.start.done
-	p.mu.Lock()
 	p.isStopRequested = true
 	p.mu.Unlock()
 
-	stopErr := wrapStopFailure(p.forceStopAndWait())
-	return errors.Join(stopErr, p.closeMemfd())
+	stopErr := p.forceStopAndWait()
+	if stopErr != nil {
+		stopErr = fmt.Errorf("%w: %w", ErrCleanupFailed, stopErr)
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	fileErr := p.closeMemfdLocked()
+	// A failed launch may have already reported this cached file close failure.
+	if fileErr != nil && errors.Is(p.terminalErr, fileErr) {
+		fileErr = nil
+	}
+
+	return errors.Join(stopErr, fileErr)
 }
 
 func (p *Process) stopProcessGroup(ctx context.Context) error {
-	gracefulErr := p.signalProcessGroup(gracefulStopProcessGroup)
-	if processGroupMissing(gracefulErr) {
-		<-p.wait.done
-		return p.stopResult()
-	}
-
+	gracefulErr := p.signalProcessGroup(p.spec.StopSignal)
 	if gracefulErr != nil {
 		forceErr := p.forceStopAndWait()
 		if forceErr != nil {
 			return errors.Join(
-				wrapSignalError("gracefully stop", p.spec.Path, gracefulErr),
+				fmt.Errorf("gracefully stop command %q process group: %w", p.spec.Path, gracefulErr),
 				forceErr,
 			)
 		}
@@ -136,70 +110,18 @@ func (p *Process) stopProcessGroup(ctx context.Context) error {
 	}
 
 	select {
-	case <-p.wait.done:
-		return p.stopResult()
+	case <-p.waitDone:
+		return nil
 	case <-ctx.Done():
 		return p.forceStopAndWait()
 	}
 }
 
 func (p *Process) forceStopAndWait() error {
-	err := p.signalProcessGroup(forceStopProcessGroup)
-	if processGroupMissing(err) {
-		err = nil
+	if err := p.signalProcessGroup(syscall.SIGKILL); err != nil {
+		return fmt.Errorf("%w: force stop command %q process group: %w", ErrStopFailed, p.spec.Path, err)
 	}
 
-	if err != nil {
-		return wrapSignalError("force stop", p.spec.Path, err)
-	}
-
-	<-p.wait.done
-	return p.stopResult()
-}
-
-func (p *Process) signalProcessGroup(signal func(int) error) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.pid == 0 {
-		return nil
-	}
-
-	return signal(p.pid)
-}
-
-func (p *Process) stopResult() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if errors.Is(p.wait.err, exec.ErrWaitDelay) {
-		return errors.Join(p.groupErr, p.wait.err)
-	}
-
-	return p.groupErr
-}
-
-func wrapSignalError(action, path string, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	return fmt.Errorf(
-		"%s command %q process group: %w",
-		action,
-		path,
-		err,
-	)
-}
-
-func wrapStopFailure(err error) error {
-	if err == nil || errors.Is(err, ErrStopFailed) {
-		return err
-	}
-
-	if errors.Is(err, exec.ErrWaitDelay) {
-		return err
-	}
-
-	return fmt.Errorf("%w: %w", ErrStopFailed, err)
+	<-p.waitDone
+	return nil
 }

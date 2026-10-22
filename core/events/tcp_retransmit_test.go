@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/toolstream"
+
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -33,7 +35,7 @@ func TestHandleTCPRetransmitEventPreservesCorrelationResult(t *testing.T) {
 		DropPerfStatus:    perfStatus,
 		DropStack:         "kfree_skb/1",
 	}
-	if err := handleTCPRetransmitEvent(nil, event); err != nil {
+	if err := handleTCPRetransmitEvent(t.Context(), &toolstream.Request[types.TCPRetransmitTracing]{Data: event}); err != nil {
 		t.Fatal(err)
 	}
 	if event.DropLocation != "unknown" {

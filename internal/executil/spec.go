@@ -20,6 +20,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -33,8 +34,11 @@ type Spec struct {
 	Path string
 	Args []string
 	// Env replaces the child environment. A nil Env inherits the parent environment.
+	// Entries follow os/exec semantics and are validated during Start, not New.
 	Env []string
-	// StopGracePeriod controls when Stop and Run escalate from SIGTERM to SIGKILL.
+	// StopSignal selects SIGTERM (the default) or SIGINT for graceful shutdown.
+	StopSignal syscall.Signal
+	// StopGracePeriod controls when Stop and Run escalate to SIGKILL.
 	// A zero value uses five seconds.
 	StopGracePeriod time.Duration
 	// MaxStdoutBytes keeps this many newest stdout bytes. A zero value uses 64 KiB.
@@ -67,17 +71,8 @@ func (s *Spec) validate() error {
 		return err
 	}
 
-	for index, value := range s.Env {
-		if strings.IndexByte(value, 0) >= 0 {
-			return fmt.Errorf("command environment entry %d contains a null byte", index)
-		}
-
-		if strings.IndexByte(value, '=') <= 0 {
-			return fmt.Errorf(
-				"command environment entry %d must use a non-empty KEY=VALUE form",
-				index,
-			)
-		}
+	if s.StopSignal != 0 && s.StopSignal != syscall.SIGTERM && s.StopSignal != syscall.SIGINT {
+		return errors.New("stop signal must be SIGTERM or SIGINT")
 	}
 
 	if s.StopGracePeriod < 0 {

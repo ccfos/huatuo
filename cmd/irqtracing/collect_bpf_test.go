@@ -36,8 +36,7 @@ import (
 )
 
 // irqTracingBPFObjectPath is the committed BPF object next to bpf/irqtracing.c.
-// The test package runs with cmd/irqtracing as its working directory, so the
-// repository bpf dir is two levels up.
+// The test package runs with cmd/irqtracing as its working directory.
 const irqTracingBPFObjectPath = "../../bpf/irqtracing.o"
 
 // loadTestBPF reads the compiled irqtracing.o and loads it with the given
