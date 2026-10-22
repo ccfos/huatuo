@@ -120,9 +120,9 @@ configure_proxy() {
 
 install_test_dependencies() {
 	local os_id os_like package_manager package
-	local -a deb_packages=(curl gdb build-essential libelf-dev kmod "linux-headers-$(uname -r)")
+	local -a deb_packages=(curl gdb build-essential libelf-dev kmod stress-ng "linux-headers-$(uname -r)")
 	local -a rpm_packages=(
-		curl gdb gcc make elfutils-libelf-devel kmod kernel-headers
+		curl gdb gcc make elfutils-libelf-devel kmod kernel-headers stress-ng
 		"kernel-devel-$(uname -r)"
 	)
 	local -a missing_packages=()
@@ -163,14 +163,11 @@ install_test_dependencies() {
 		if [[ "$os_id" == rocky ]]; then
 			package_options+=(--disablerepo='epel*')
 		fi
-		# openEuler publishes kernel-devel/kernel-headers in its binary OS
-		# repositories. Its update and everything repositories carry very
-		# large metadata (tens of MB) served by slow mirrors, so skip them
-		# and only fall back to the full set if a build dependency is missing
-		# from the restricted repositories.
+		# Keep EPOL available for stress-ng, but avoid slow repositories unless
+		# a dependency is missing from OS and EPOL.
 		if [[ "$os_id" == openeuler ]]; then
 			package_options+=(
-				--disablerepo=EPOL --disablerepo=debuginfo --disablerepo=source
+				--disablerepo=debuginfo --disablerepo=source
 				--disablerepo=update-source --disablerepo=update
 				--disablerepo=everything
 			)
@@ -236,6 +233,13 @@ cd /mnt/host
 pwd
 ls -alh .
 git config --global --add safe.directory /mnt/host
+
+(
+	source integration/lib.sh
+	source e2e/lib_cpu_load.sh
+	stress-ng --version
+	cpu_load_prepare_image
+)
 
 # This is the single entry point for all guest test targets.
 vm_log '⬅️⬅️⬅️ Running tests...'
