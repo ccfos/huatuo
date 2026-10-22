@@ -21,17 +21,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func testProfilingConfig(t *testing.T) *Config {
 	t.Helper()
-	stream, err := toolstream.NewServer(t.TempDir() + "/toolstream.sock")
-	if err != nil {
-		t.Fatalf("toolstream.NewServer() error = %v", err)
-	}
 	return &Config{
 		ProfilerPath:            "/opt/huatuo/profiler",
 		ToolstreamSocketPath:    "/var/run/huatuo-toolstream.sock",
@@ -40,7 +35,6 @@ func testProfilingConfig(t *testing.T) *Config {
 		AggregationInterval:     10 * time.Second,
 		MaxConcurrentProcesses:  4,
 		CommandOutputLimitBytes: 4096,
-		ToolstreamServer:        stream,
 	}
 }
 
@@ -73,9 +67,9 @@ func TestBuildCommandUsesTypedRequestWithoutShellExpansion(t *testing.T) {
 		"--duration", "60",
 		"--aggr-interval", "10",
 		"--max-concurrent-procs", "4",
-		"--output-format", "remote",
-		"--output-storage", "/var/run/huatuo-toolstream.sock",
-		"--tracer-id", "job-1",
+		"--output-format", "remote-store",
+		"--output-path", "/var/run/huatuo-toolstream.sock",
+		"--task-id", "job-1",
 		"--huatuo-api-address", "127.0.0.1:19704",
 		"--tool-path", "/opt/huatuo/tools",
 		"--cpu-mode", "offcpu",
