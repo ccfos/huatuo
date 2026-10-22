@@ -1,5 +1,5 @@
 ---
-title: Bare-Metal
+title: Host Deployment
 type: docs
 description:
 author: HUATUO Team, HAO022
@@ -7,9 +7,138 @@ date: 2026-01-11
 weight: 3
 ---
 
-## Production resource limits
+This guide covers installing HUATUO from a tar archive or RPM and managing it with systemd. Check the [resource limits](#resource-limits-and-verification) before starting, then verify the service status after installation.
 
-systemd owns resource limits and process lifecycle for `huatuo-bamai.service`. The service unit disables Huatuo self-managed cgroups and uses native controls:
+## Tar Archive
+
+HUATUO releases provide static Linux tar archives for amd64 and arm64. Each archive contains the `huatuo-bamai` and `huatuo-apiserver` binaries, configuration files, and BPF objects.
+
+These commands apply to releases with assets named `huatuo-bamai-<version>-static-linux-<arch>.tar.gz`. This naming scheme starts with `v2.2.0`; archives for `v2.0.0` and `v2.1.0` have different names and cannot use these commands unchanged.
+
+Set `HUATUO_VERSION` to the target release, such as `v2.2.0`:
+
+```bash
+HUATUO_VERSION="<release-version>"
+```
+
+### 1. Download the Archive
+
+On x86_64 hosts, download the amd64 archive:
+
+```bash
+wget "https://github.com/ccfos/huatuo/releases/download/${HUATUO_VERSION}/huatuo-bamai-${HUATUO_VERSION}-static-linux-amd64.tar.gz"
+```
+
+On aarch64 hosts, download the arm64 archive:
+
+```bash
+wget "https://github.com/ccfos/huatuo/releases/download/${HUATUO_VERSION}/huatuo-bamai-${HUATUO_VERSION}-static-linux-arm64.tar.gz"
+```
+
+### 2. Install the Archive
+
+Create the installation, log, and data directories:
+
+```bash
+sudo install -d -m 0755 /opt/huatuo-bamai /var/log/huatuo-bamai /var/lib/huatuo-bamai
+```
+
+amd64：
+
+```bash
+sudo tar -xzf "huatuo-bamai-${HUATUO_VERSION}-static-linux-amd64.tar.gz" --strip-components=1 --no-same-owner -C /opt/huatuo-bamai
+```
+
+arm64：
+
+```bash
+sudo tar -xzf "huatuo-bamai-${HUATUO_VERSION}-static-linux-arm64.tar.gz" --strip-components=1 --no-same-owner -C /opt/huatuo-bamai
+```
+
+### 3. Install Service Units
+
+Download the service units from the corresponding source release:
+
+```bash
+sudo wget -O /etc/systemd/system/huatuo-bamai.service "https://raw.githubusercontent.com/ccfos/huatuo/${HUATUO_VERSION}/build/rpm/huatuo-bamai.service"
+sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubusercontent.com/ccfos/huatuo/${HUATUO_VERSION}/build/rpm/huatuo-apiserver.service"
+```
+
+### 4. Edit the Configuration
+
+Edit `/opt/huatuo-bamai/conf/huatuo-bamai.conf` and `/opt/huatuo-bamai/conf/huatuo-apiserver.conf` for your environment. See the [`huatuo-bamai` configuration](/docs/configuration/huatuo-bamai-configuration_en.md) and [`huatuo-apiserver` configuration](/docs/configuration/huatuo-apiserver-configuration_en.md) for field details.
+
+Set resource limits with `CPUQuota`, `MemoryMax`, and `TasksMax` in the service unit. Configure `[Runtime]` only when running directly with `--enable-cgroup`.
+
+### 5. Reload Service Configuration
+
+Reload the systemd configuration:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+### 6. Start the Services
+
+Start the services and enable them at boot:
+
+```bash
+sudo systemctl enable --now huatuo-bamai huatuo-apiserver
+```
+
+## RPM Package
+
+The OpenCloudOS repository provides HUATUO v2.1.0 RPM packages for x86_64 and aarch64. These packages install the HUATUO files and systemd service units.
+
+### 1. Download the RPM
+
+Download the package for your host architecture:
+
+x86_64：
+
+```bash
+wget https://mirrors.opencloudos.tech/epol/9/Everything/x86_64/os/Packages/huatuo-bamai-2.1.0-2.oc9.x86_64.rpm
+```
+
+aarch64：
+
+```bash
+wget https://mirrors.opencloudos.tech/epol/9/Everything/aarch64/os/Packages/huatuo-bamai-2.1.0-2.oc9.aarch64.rpm
+```
+
+### 2. Install the RPM
+
+x86_64：
+
+```bash
+sudo dnf install ./huatuo-bamai-2.1.0-2.oc9.x86_64.rpm
+```
+
+aarch64：
+
+```bash
+sudo dnf install ./huatuo-bamai-2.1.0-2.oc9.aarch64.rpm
+```
+
+### 3. Edit the Configuration
+
+Edit `/etc/huatuo-bamai/huatuo-bamai.conf` for your environment. See the [`huatuo-bamai` configuration](/docs/configuration/huatuo-bamai-configuration_en.md) for field details.
+
+Set resource limits with `CPUQuota`, `MemoryMax`, and `TasksMax` in the service unit. Configure `[Runtime]` only when running directly with `--enable-cgroup`.
+
+### 4. Start the Service
+
+The RPM installs `huatuo-bamai.service`. Start the service and enable it at boot:
+
+```bash
+sudo systemctl enable --now huatuo-bamai
+```
+
+> See the [RPM installation guide](https://mp.weixin.qq.com/s/Gmst4_FsbXUIhuJw1BXNnQ) for the full instructions.
+
+## Resource Limits and Verification
+
+Systemd manages resource limits and the process lifecycle for `huatuo-bamai.service`. The service unit does not enable Huatuo's own cgroup by default. It uses these native settings:
 
 ```ini
 [Service]
@@ -22,7 +151,7 @@ TasksMax=32768
 KillMode=control-group
 ```
 
-`CPUQuota=200%` allows up to 2 CPU cores and `MemoryMax=2G` caps service memory. Adjust these values for the host, collection jobs, and observed peaks. Do not pass `--enable-cgroup` in a systemd deployment; it would move the process out of the service cgroup.
+`CPUQuota=200%` allows up to 2 CPU cores; `MemoryMax=2G` limits service memory. Adjust these values for host capacity, collection tasks, and peak usage. Do not pass `--enable-cgroup` in systemd deployments, as it moves the process out of the service cgroup.
 
 After starting the service, check its status and cgroup:
 
@@ -30,130 +159,3 @@ After starting the service, check its status and cgroup:
 systemctl status huatuo-bamai --no-pager
 systemd-cgls --unit huatuo-bamai.service
 ```
-
-## Binary
-
-The HUATUO release provides static Linux tar packages for amd64 and arm64. The tar package contains the `huatuo-bamai` and `huatuo-apiserver` binaries, configuration files, and BPF objects.
-
-This section applies to releases that provide assets named `huatuo-bamai-<version>-static-linux-<arch>.tar.gz`. This naming starts with `v2.2.0` in the current releases. The `v2.0.0` and `v2.1.0` tar packages use different names, so the commands below do not apply to them directly.
-
-The commands below use `HUATUO_VERSION` for the target version. Change it to the release version you want to install, for example `v2.2.0`:
-
-```bash
-HUATUO_VERSION="<release-version>"
-```
-
-### 1. Download the tar package
-
-For x86_64 hosts, download the amd64 package:
-
-```bash
-wget "https://github.com/ccfos/huatuo/releases/download/${HUATUO_VERSION}/huatuo-bamai-${HUATUO_VERSION}-static-linux-amd64.tar.gz"
-```
-
-For aarch64 hosts, download the arm64 package:
-
-```bash
-wget "https://github.com/ccfos/huatuo/releases/download/${HUATUO_VERSION}/huatuo-bamai-${HUATUO_VERSION}-static-linux-arm64.tar.gz"
-```
-
-### 2. Install the tar package
-
-Create the installation, log, and data directories:
-
-```bash
-sudo install -d -m 0755 /opt/huatuo-bamai /var/log/huatuo-bamai /var/lib/huatuo-bamai
-```
-
-For amd64:
-
-```bash
-sudo tar -xzf "huatuo-bamai-${HUATUO_VERSION}-static-linux-amd64.tar.gz" --strip-components=1 --no-same-owner -C /opt/huatuo-bamai
-```
-
-For arm64:
-
-```bash
-sudo tar -xzf "huatuo-bamai-${HUATUO_VERSION}-static-linux-arm64.tar.gz" --strip-components=1 --no-same-owner -C /opt/huatuo-bamai
-```
-
-### 3. Install the service unit files
-
-Download the service unit files from the matching source version:
-
-```bash
-sudo wget -O /etc/systemd/system/huatuo-bamai.service "https://raw.githubusercontent.com/ccfos/huatuo/${HUATUO_VERSION}/build/rpm/huatuo-bamai.service"
-sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubusercontent.com/ccfos/huatuo/${HUATUO_VERSION}/build/rpm/huatuo-apiserver.service"
-```
-
-### 4. Modify the configurations
-
-Edit `/opt/huatuo-bamai/conf/huatuo-bamai.conf` and `/opt/huatuo-bamai/conf/huatuo-apiserver.conf` to match the deployment environment. For detailed configuration options, see the [`huatuo-bamai` configuration](/docs/configuration/huatuo-bamai-configuration_en.md) and [`huatuo-apiserver` configuration](/docs/configuration/huatuo-apiserver-configuration_en.md).
-
-Set `CPUQuota`, `MemoryMax`, and `TasksMax` in the service unit. Configure `[Runtime]` only for direct execution with `--enable-cgroup`.
-
-### 5. Register the HUATUO services
-
-Reload the systemd configuration:
-
-```bash
-sudo systemctl daemon-reload
-```
-
-### 6. Start the HUATUO services
-
-Start the services and enable them at system startup:
-
-```bash
-sudo systemctl enable --now huatuo-bamai huatuo-apiserver
-```
-
-## RPM Package
-
-The OpenCloudOS repository provides HUATUO v2.1.0 RPM packages for x86_64 and aarch64. The RPM package installs the HUATUO files and systemd service unit file.
-
-### 1. Download the RPM package
-
-Download the package for the host architecture:
-
-For x86_64:
-
-```bash
-wget https://mirrors.opencloudos.tech/epol/9/Everything/x86_64/os/Packages/huatuo-bamai-2.1.0-2.oc9.x86_64.rpm
-```
-
-For aarch64:
-
-```bash
-wget https://mirrors.opencloudos.tech/epol/9/Everything/aarch64/os/Packages/huatuo-bamai-2.1.0-2.oc9.aarch64.rpm
-```
-
-### 2. Install the RPM package
-
-For x86_64:
-
-```bash
-sudo dnf install ./huatuo-bamai-2.1.0-2.oc9.x86_64.rpm
-```
-
-For aarch64:
-
-```bash
-sudo dnf install ./huatuo-bamai-2.1.0-2.oc9.aarch64.rpm
-```
-
-### 3. Modify the configuration
-
-Edit `/etc/huatuo-bamai/huatuo-bamai.conf` to match the deployment environment. For detailed configuration options, see the [`huatuo-bamai` configuration](/docs/configuration/huatuo-bamai-configuration_en.md).
-
-Set `CPUQuota`, `MemoryMax`, and `TasksMax` in the service unit. Configure `[Runtime]` only for direct execution with `--enable-cgroup`.
-
-### 4. Start the HUATUO service
-
-The RPM package installs the `huatuo-bamai.service` service unit file. Start the service and enable it at system startup:
-
-```bash
-sudo systemctl enable --now huatuo-bamai
-```
-
-> For complete RPM installation instructions, see [https://mp.weixin.qq.com/s/Gmst4_FsbXUIhuJw1BXNnQ](https://mp.weixin.qq.com/s/Gmst4_FsbXUIhuJw1BXNnQ).

@@ -35,34 +35,42 @@ import (
 func TestNewFormatterFormats(t *testing.T) {
 	for _, tc := range []struct {
 		format output.OutputFormat
+		name   output.OutputFormat
 		suffix string
 	}{
 		{
 			format: "",
+			name:   output.FormatCollapsed,
 			suffix: ".folded",
 		},
 		{
 			format: output.FormatCollapsed,
+			name:   output.FormatCollapsed,
 			suffix: ".folded",
 		},
 		{
 			format: output.FormatFlameGraph,
+			name:   output.FormatSVG,
 			suffix: ".svg",
 		},
 		{
 			format: output.FormatSVG,
+			name:   output.FormatSVG,
 			suffix: ".svg",
 		},
 		{
 			format: output.FormatJSON,
+			name:   output.FormatJSON,
 			suffix: ".json",
 		},
 		{
 			format: output.FormatSpeedscope,
+			name:   output.FormatSpeedscope,
 			suffix: ".speedscope.json",
 		},
 		{
 			format: output.FormatChromeTrace,
+			name:   output.FormatChromeTrace,
 			suffix: ".chrometrace.json",
 		},
 	} {
@@ -81,6 +89,10 @@ func TestNewFormatterFormats(t *testing.T) {
 					t.Error(err)
 				}
 			})
+			if got := f.Name(); got != tc.name {
+				t.Fatalf("format name = %q, want %q", got, tc.name)
+			}
+
 			window := &types.AggregationWindow{
 				ProfileType: "profiler:cpu:nanoseconds:cpu:nanoseconds",
 				Aggregated: types.AggregatedProfile{
@@ -200,6 +212,10 @@ func TestNewFormatterRemoteStore(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if f.Name() != output.FormatRemoteStore {
+		t.Fatalf("remote formatter name = %q", f.Name())
 	}
 
 	if err := f.Close(); err != nil {
