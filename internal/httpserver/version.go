@@ -12,29 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package httpserver
 
 import (
-	"net/http"
-	"time"
-
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
+	"github.com/ccfos/huatuo/internal/version"
 )
 
-func (s *Server) metricsHandler() ErrHandlerContextFunc {
-	if s.promRegistry == nil {
-		return func(ctx *Context) error {
-			ctx.JSON(http.StatusNotImplemented, map[string]any{"status": "Prometheus registry not supported now"})
-			return nil
-		}
-	}
-
-	h := promhttp.HandlerFor(s.promRegistry, promhttp.HandlerOpts{
-		ErrorHandling: promhttp.ContinueOnError,
-		Timeout:       30 * time.Second,
-	})
+func newVersionHandler(info *version.Info) ErrHandlerContextFunc {
 	return func(ctx *Context) error {
-		h.ServeHTTP(ctx.Writer(), ctx.Request())
+		response.Success(ctx, info)
 		return nil
 	}
 }

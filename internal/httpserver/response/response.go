@@ -25,7 +25,7 @@ import (
 type HTTPStatusMapper func(code v1.ErrorCode) (int, bool)
 
 // JSONWriter is the minimal interface required for writing JSON responses.
-// *server.Context implements this interface.
+// *httpserver.Context implements this interface.
 type JSONWriter interface {
 	JSON(code int, obj any)
 }

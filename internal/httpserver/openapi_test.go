@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package httpserver
 
 import (
 	"context"
@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
-	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/routers/legacy"

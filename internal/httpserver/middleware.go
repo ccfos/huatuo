@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package httpserver
 
 import (
 	"net"
@@ -23,8 +23,8 @@ import (
 
 	v1 "github.com/ccfos/huatuo/apis/v1"
 	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/server/response"
 
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"

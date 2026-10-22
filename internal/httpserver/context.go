@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package httpserver
 
 import (
 	"fmt"
 	"net/http"
 	"strconv"
 
-	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 
 	httpGin "github.com/gin-gonic/gin"
 	httpBinding "github.com/gin-gonic/gin/binding"
