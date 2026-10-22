@@ -295,6 +295,7 @@ print_sys_info() { echo info >> "$TEST_GUEST_WORK/calls"; }
 install_test_dependencies() { echo dependencies >> "$TEST_GUEST_WORK/calls"; }
 grow_root_filesystem() { echo grow >> "$TEST_GUEST_WORK/calls"; }
 install_temporary_go_tools() { exit 99; }
+prepare_cpu_workload() { echo workload >> "$TEST_GUEST_WORK/calls"; }
 make() { echo "make $*" >> "$TEST_GUEST_WORK/calls"; }
 git() { :; }
 prefetch_storage_images() { :; }
@@ -303,7 +304,7 @@ run_guest_tests "$@"
 SH
 	guest_expected=proxy
 	if [[ ${guest_mode} != --test-only ]]; then guest_expected+=$'\ngrow\ninfo\ndependencies'; fi
-	if [[ ${guest_mode} != --prepare-only ]]; then guest_expected+=$'\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1'; fi
+	if [[ ${guest_mode} != --prepare-only ]]; then guest_expected+=$'\nworkload\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1'; fi
 	assert_eq "$(cat "${guest_work}/calls")" "${guest_expected}" "${guest_mode}: guest phases"
 done
 log_info "VM cache transport and guest phase checks passed"
