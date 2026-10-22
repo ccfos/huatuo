@@ -1521,3 +1521,11 @@ detection, process memory summary reads, output processing, and persistence.
 | Event without a candidate | Check direct cgroup membership, OOM-kill eligibility, and enumeration limits |
 | `unavailable` / `failed` | Check runtime/layout restrictions, access permissions, container metadata, and target exit; inspect `status_reason` |
 | Event stops after resource exhaustion | Check `RLIMIT_NOFILE`, `fs.inotify.max_user_watches`, and `fs.inotify.max_user_instances`; adjust and restart; this stop does not stop other events |
+
+### RDMA statistics failures
+
+`netdev_rdma_link` preserves metrics from healthy devices when another device
+fails. A statistics read failure returns an error containing the device name
+and index, so `huatuo_bamai_scrape_collector_success{collector="netdev_rdma_link"}`
+is 0 even when partial metrics are available. An empty device list without
+read errors remains a successful scrape.

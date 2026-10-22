@@ -1481,3 +1481,7 @@ Go 采集在运行时读取、扫描、排序和条目生成阶段共用一个�
 | 有事件但没有候选进程 | 进程是否直接属于该 cgroup、是否允许 OOM kill、是否超过枚举限制 |
 | `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `status_reason` |
 | 资源耗尽后事件停止 | 检查 `RLIMIT_NOFILE`、`fs.inotify.max_user_watches`、`fs.inotify.max_user_instances`，调整后重启；其他事件不受此停止影响 |
+
+### RDMA 统计读取失败
+
+`netdev_rdma_link` 在某个设备读取失败时保留健康设备的指标，并返回包含失败设备名称和 index 的错误。因此即使仍有部分指标，`huatuo_bamai_scrape_collector_success{collector="netdev_rdma_link"}` 也为 0。没有设备且没有读取错误的空列表仍算成功。
