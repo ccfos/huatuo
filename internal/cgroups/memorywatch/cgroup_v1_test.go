@@ -31,7 +31,7 @@ func TestWatcherV1EventFDAndRearm(t *testing.T) {
 	}
 	w, f := newWatchFixture(t, cgroups.Legacy, 4)
 	f.create(t, "/a", 80, 100)
-	id, err := w.Add(t.Context(), "/a")
+	id, err := w.Add(t.Context(), "/a", f.stat(t, "/a"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestWatcherV1ChecksUsageAfterRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = w.Close() })
-	id, err := w.Add(t.Context(), "/a")
+	id, err := w.Add(t.Context(), "/a", f.stat(t, "/a"))
 	if err != nil {
 		t.Fatal(err)
 	}

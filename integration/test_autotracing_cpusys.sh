@@ -24,20 +24,18 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-command -v jq > /dev/null || skip "jq command is not installed"
-[[ -x "${HUATUO_BAMAI_BIN}" ]] \
-	|| fatal "huatuo-bamai binary missing: ${HUATUO_BAMAI_BIN}"
+require_commands jq
 
 readonly CPUSYS_FIXTURE_ROOT="${HUATUO_BAMAI_TEST_TMPDIR}/cpusys-fixture"
 readonly CPUSYS_PROC_STAT="${CPUSYS_FIXTURE_ROOT}/proc/stat"
 readonly CPUSYS_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/cpusys"
 export CPUSYS_PERF_CALLS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/perf.calls"
 
-mkdir -p "${CPUSYS_FIXTURE_ROOT}/proc" "${CPUSYS_FIXTURE_ROOT}/tools"
+mkdir -p "${CPUSYS_FIXTURE_ROOT}/proc" "${CPUSYS_FIXTURE_ROOT}/sys" "${CPUSYS_FIXTURE_ROOT}/tools"
 # Sample 1: user=100, nice=0, system=100, idle=800, total=1000.
 # The daemon reads this initial value before starting its sampling ticker.
 cp "${HUATUO_BAMAI_TEST_FIXTURES}/proc/stat" "${CPUSYS_PROC_STAT}"
-cp "${HUATUO_BAMAI_TEST_FIXTURES}/tools/perf" "${CPUSYS_FIXTURE_ROOT}/tools/perf"
+cp "${ROOT_DIR}/integration/testdata/tools/test_perf.sh" "${CPUSYS_FIXTURE_ROOT}/tools/perf"
 
 # $1 contains cumulative user, nice, system, and idle ticks in /proc/stat
 # order. cpusys calculates total as their sum and system usage from deltas.

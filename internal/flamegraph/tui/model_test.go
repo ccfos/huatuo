@@ -113,3 +113,47 @@ func TestTruncateKeepsUTF8(t *testing.T) {
 		t.Fatalf("truncate() = %q, want 函数...", got)
 	}
 }
+
+// TestSearchRefreshesAfterZoomOut verifies a zoom-out re-runs the active
+// search so matches in newly visible sibling branches are discoverable.
+func TestSearchRefreshesAfterZoomOut(t *testing.T) {
+	frames := []flamegraph.FrameData{
+		{Level: 0, Value: 100, Self: 0, Label: "root"},
+		{Level: 1, Value: 50, Self: 0, Label: "request-a"},
+		{Level: 2, Value: 50, Self: 50, Label: "handle-a"},
+		{Level: 1, Value: 50, Self: 0, Label: "request-b"},
+		{Level: 2, Value: 50, Self: 50, Label: "handle-b"},
+	}
+	model := NewModel(frames)
+	model.width = 80
+	model.height = 20
+
+	// Zoom into request-a and search for "handle".
+	model, _ = model.updateKey(tea.KeyMsg{Type: tea.KeyDown})
+	model, _ = model.updateKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if model.focus.Label != "request-a" {
+		t.Fatalf("focus = %q, want request-a", model.focus.Label)
+	}
+	model.query = "handle"
+	model.applySearch()
+	if len(model.matches) != 1 {
+		t.Fatalf("matches while zoomed = %d, want 1", len(model.matches))
+	}
+
+	// Zoom out: handle-b is now visible and must be discovered.
+	model, _ = model.updateKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	if model.focus.Label != "root" {
+		t.Fatalf("focus after zoom out = %q, want root", model.focus.Label)
+	}
+	if len(model.matches) != 2 {
+		t.Fatalf("matches after zoom out = %d, want 2", len(model.matches))
+	}
+
+	// n navigates to the second distinct match.
+	first := model.selectedNode()
+	model.nextMatch()
+	second := model.selectedNode()
+	if second == first {
+		t.Fatalf("nextMatch stayed on %v; matches not navigable after zoom out", first.Label)
+	}
+}

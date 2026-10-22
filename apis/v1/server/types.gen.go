@@ -431,18 +431,21 @@ type bearerAuthContextKey string
 
 // ListProfilingJobsParams defines parameters for ListProfilingJobs.
 type ListProfilingJobsParams struct {
+	// Limit Maximum items in this page. Must be positive; omission uses the default.
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
 // GetRawProfilesParams defines parameters for GetRawProfiles.
 type GetRawProfilesParams struct {
+	// Limit Maximum raw profiles in this page. Must be positive; omission uses the default.
 	Limit  *RawProfileLimit `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *Offset          `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
 // ListTracingJobsParams defines parameters for ListTracingJobs.
 type ListTracingJobsParams struct {
+	// Limit Maximum items in this page. Must be positive; omission uses the default.
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
 }

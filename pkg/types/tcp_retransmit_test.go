@@ -60,15 +60,28 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 				TCPFlags:                "ACK|FIN",
 				SkbAddr:                 "0xffff888012345678",
 				DropLocation:            "unknown",
-				CorrelationReasons: []CorrelationReason{
-					CorrelationReasonStartupHistoryIncomplete,
-					CorrelationReasonPerfEventsLost,
-				},
-				DropwatchPerfStatus: &DropwatchPerfStatus{
-					PerfLost:    1,
-					RateLimited: 2,
+				CorrelationReason:       CorrelationWarmup,
+				NetNamespace:            true,
+				DropPerfStatus: &DropwatchStatus{
+					HasMapCounters: true,
+					PerfLost:       1,
+					RateLimited:    2,
 				},
 				DropStack: "kfree_skb_reason+0x1",
+			},
+		},
+		{
+			name: "matched software drop",
+			ev: &TCPRetransmitTracing{
+				CorrelationReason: CorrelationMatched,
+				DropSource:        "software", DropReason: "SKB_DROP_REASON_TCP_CSUM", DropLocation: "software",
+			},
+		},
+		{
+			name: "matched hardware drop",
+			ev: &TCPRetransmitTracing{
+				CorrelationReason: CorrelationMatched,
+				DropSource:        "hardware", DropReason: "ingress_vlan_filter", DropReasonGroup: "l2_drops", DropLocation: "hardware",
 			},
 		},
 		{
@@ -192,13 +205,89 @@ func TestTCPRetransmitTracingOmitEmpty(t *testing.T) {
 		"kernel_observed_ns", "kernel_observed_timestamp",
 		"container_id", "memory_cgroup_css_addr", "net_namespace_cookie", "net_namespace_inum",
 		"reord_seen", "dsack_dups", "tcp_end_seq", "tcp_flags",
-		"skb_addr", "drop_location", "correlation_reasons",
-		"dropwatch_perf_status", "drop_stack", "source",
+		"skb_addr", "drop_location", "drop_source", "drop_reason", "drop_reason_group", "correlation_reason",
+		"matched_net_namespace",
+		"drop_perf_status", "drop_stack", "source",
 	}
 	for _, f := range omitFields {
 		if _, ok := raw[f]; ok {
 			t.Errorf("omitempty field %q should be absent, got %v", f, raw[f])
 		}
+	}
+}
+
+func TestTCPRetransmitCorrelationJSON(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		reason CorrelationReason
+		want   string
+	}{
+		{name: "disabled"},
+		{name: "matched", reason: CorrelationMatched, want: "matched"},
+		{name: "unsupported", reason: CorrelationUnsupported, want: "unsupported"},
+		{name: "warmup", reason: CorrelationWarmup, want: "warmup"},
+		{name: "timeout", reason: CorrelationWaitTimeout, want: "wait_timeout"},
+		{name: "capacity", reason: CorrelationQueueFull, want: "queue_full"},
+		{name: "interrupted", reason: CorrelationInterrupted, want: "interrupted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			event := TCPRetransmitTracing{
+				CorrelationReason: test.reason,
+				NetNamespace:      test.reason == CorrelationMatched,
+			}
+			encoded, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := fields["correlation_reasons"]; ok {
+				t.Fatal("obsolete correlation reason array is present")
+			}
+			if _, ok := fields["startup_history_incomplete"]; ok {
+				t.Fatal("obsolete startup history diagnostic is present")
+			}
+			if _, ok := fields["cross_netns_candidate"]; ok {
+				t.Fatal("obsolete cross-namespace diagnostic is present")
+			}
+			matched, exists := fields["matched_net_namespace"]
+			if exists != event.NetNamespace || (exists && matched != true) {
+				t.Fatalf("namespace diagnostic = %v, want present only when true", matched)
+			}
+			got, exists := fields["correlation_reason"]
+			if test.want == "" {
+				if exists {
+					t.Fatalf("disabled correlation has reason %v", got)
+				}
+			} else if got != test.want {
+				t.Fatalf("correlation_reason = %v, want string %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestTCPRetransmitPartialDropStatusJSON(t *testing.T) {
+	event := TCPRetransmitTracing{
+		CorrelationReason: CorrelationWarmup,
+		NetNamespace:      true,
+		DropPerfStatus:    &DropwatchStatus{LostSamples: 5},
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["correlation_reason"] != "warmup" || fields["matched_net_namespace"] != true {
+		t.Fatalf("diagnostics = %s, want warmup with a namespace match", encoded)
+	}
+	status, ok := fields["drop_perf_status"].(map[string]any)
+	if !ok || status["map_counters_available"] != false || status["lost_samples"] != float64(5) {
+		t.Fatalf("partial status = %s, want unavailable maps and five lost reader samples", encoded)
 	}
 }
 
@@ -269,9 +358,7 @@ func TestTCPRetransmitJSONExcludesMonotonicClock(t *testing.T) {
 	if raw["kernel_observed_timestamp"] != event.KernelObservedTimestamp.FormatUTC() {
 		t.Fatalf("JSON = %s", data)
 	}
-	for _, field := range []string{"ktime_ns", "kernel_observed_ns"} {
-		if _, ok := raw[field]; ok {
-			t.Fatalf("internal clock %q leaked into JSON", field)
-		}
+	if _, ok := raw["kernel_observed_ns"]; ok {
+		t.Fatal("internal clock kernel_observed_ns leaked into JSON")
 	}
 }

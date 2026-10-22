@@ -146,7 +146,7 @@ func TestSetPublishesConsistentSnapshots(t *testing.T) {
 func TestLocalCorrelationDoesNotUseStandaloneDropwatchFilter(t *testing.T) {
 	config := &Config{}
 	config.Dropwatch.Filter = " tcp and port 443 "
-	config.TCPRetransmit.EnableDropwatchCorrelation = true
+	config.TCPRetransmit.EnableDropwatch = true
 	config.TCPRetransmit.Filter = " tcp and port 80 "
 
 	retransmitFilter := flagArgument(t, tcpRetransmitArgs(config), "--filter")
@@ -184,7 +184,7 @@ func TestTCPRetransmitFilterSelection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &Config{}
-			config.TCPRetransmit.EnableDropwatchCorrelation = tt.correlation
+			config.TCPRetransmit.EnableDropwatch = tt.correlation
 			config.TCPRetransmit.Filter = tt.tcpFilter
 			config.Dropwatch.Filter = tt.dropFilter
 			got, present := findFlagArgument(tcpRetransmitArgs(config), "--filter")
@@ -205,7 +205,7 @@ func TestNewTCPRetransmitAllowsIndependentDropwatchFilter(t *testing.T) {
 	previous := configSnapshot()
 	t.Cleanup(func() { Set(previous) })
 	config := &Config{}
-	config.TCPRetransmit.EnableDropwatchCorrelation = true
+	config.TCPRetransmit.EnableDropwatch = true
 	config.TCPRetransmit.Filter = "tcp port 80"
 	config.Dropwatch.Filter = "tcp port 443"
 	Set(config)
@@ -219,7 +219,7 @@ func TestNewTCPRetransmitRejectsL2LocalFilter(t *testing.T) {
 	previous := configSnapshot()
 	t.Cleanup(func() { Set(previous) })
 	config := &Config{}
-	config.TCPRetransmit.EnableDropwatchCorrelation = true
+	config.TCPRetransmit.EnableDropwatch = true
 	config.TCPRetransmit.Filter = "ether host 02:00:00:00:00:01"
 	Set(config)
 
@@ -236,7 +236,7 @@ func TestTCPRetransmitArgsDropwatchCorrelation(t *testing.T) {
 		config := &Config{}
 		config.TCPRetransmit.Filter = "tcp and port 443"
 		config.TCPRetransmit.MaxEventsPerSecond = 321
-		config.TCPRetransmit.EnableDropwatchCorrelation = enabled
+		config.TCPRetransmit.EnableDropwatch = enabled
 		args := tcpRetransmitArgs(config)
 		if got := slices.Contains(args, "--with-dropwatch"); got != enabled {
 			t.Fatalf("enabled=%t: --with-dropwatch present = %t", enabled, got)

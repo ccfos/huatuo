@@ -3,12 +3,10 @@ title: BPF ABI Guide
 type: docs
 author: HUATUO Team
 date: 2026-03-04
-weight: 6
+weight: 7
 ---
 
-The C structures on the BPF side are the source of truth for the perf event
-ABI. Go types are generated automatically from BTF in the BPF objects. Do not
-maintain equivalent structures manually.
+C structures on the BPF side are the single source of truth for the perf event ABI. Go types are generated from BTF in BPF objects; do not maintain equivalent structures manually.
 
 ## Conventions
 
@@ -21,9 +19,7 @@ Each ABI domain maps to one C header and one generated Go file:
 | C structure prefix | `<domain>_` |
 | Generated Go file | `internal/bpf/abi/<domain>_types_generated.go` |
 
-`<domain>` must start with a lowercase letter and contain only lowercase
-letters, digits, and underscores. Avoid domains with overlapping prefixes,
-such as `net` and `net_rx`.
+`<domain>` must start with a lowercase letter and contain only lowercase letters, digits, and underscores. Avoid overlapping domain prefixes such as `net` and `net_rx`.
 
 ## Implementation
 
@@ -77,17 +73,13 @@ BPF_ABI_EXPORT(sample_event);
 Requirements:
 
 - Structure names must use the `<domain>_` prefix.
-- Every structure that requires a generated Go type must call
-  `BPF_ABI_EXPORT(<type>)`, including nested structures.
-- The header must contain only ABI types and related constants. Do not add BPF
-  programs, maps, or business logic.
-- Array lengths must be compile-time constants and remain consistent across
-  all BPF compilation units.
+- Every structure that needs a generated Go type must call `BPF_ABI_EXPORT(<type>)`, including nested structures.
+- Headers define ABI types and related constants only, with no BPF programs, maps, or business logic.
+- Array lengths must be compile-time constants and consistent across all BPF compilation units.
 
-### 2. Use the Header in a BPF Program
+### 2. Use the Types in BPF
 
-The ABI header depends on base types such as `u8` and `u16`. Include it after
-`vmlinux.h` and the project base headers:
+ABI headers depend on base types such as `u8` and `u16`. Include them after `vmlinux.h` and the project's base headers:
 
 ```c
 #include "vmlinux.h"
@@ -96,7 +88,7 @@ The ABI header depends on base types such as `u8` and `u16`. Include it after
 #include "abi/sample_types.h"
 ```
 
-Use the ABI structure directly when emitting a perf event:
+Use the ABI structure directly when sending a perf event:
 
 ```c
 struct sample_event event = {};
@@ -109,25 +101,23 @@ bpf_perf_event_output(ctx, &events, COMPAT_BPF_F_CURRENT_CPU,
 		      &event, sizeof(event));
 ```
 
-The event must be zero-initialized to prevent uninitialized padding from being
-written to the perf buffer. Any structure passed to `bpf_perf_event_output`
-must be defined in an ABI header.
+Zero-initialize events to avoid writing uninitialized padding to the perf buffer. Structures passed to `bpf_perf_event_output` must be defined in an ABI header.
 
-### 3. Generate and Use the Go Type
+### 3. Generate and Use Go Types
 
-Run the following command from the repository root:
+Run from the repository root:
 
 ```bash
 make gen-build
 ```
 
-The generated file is located at:
+The generated file is:
 
 ```text
 internal/bpf/abi/sample_types_generated.go
 ```
 
-Reference the generated type directly from Go code:
+Reference the generated type directly in Go:
 
 ```go
 import "github.com/ccfos/huatuo/internal/bpf/abi"
@@ -138,42 +128,34 @@ if err := reader.ReadInto(&event); err != nil {
 }
 ```
 
-The generated file contains the structure, the `SampleEventSize` size
-constant, and layout assertions based on `unsafe.Sizeof` and
-`unsafe.Offsetof`. Generated files are read-only. Do not edit them manually.
+The generated file contains structures, the `SampleEventSize` constant, and layout assertions based on `unsafe.Sizeof` and `unsafe.Offsetof`. Generated files are read-only; do not edit them manually.
 
 ## Types and Layout
 
 | Type | Support |
 | --- | --- |
 | Fixed-width integers of 1, 2, 4, or 8 bytes | Supported |
-| Fixed-length arrays with a nonzero length | Supported |
-| Nested structures that meet the same constraints | Supported |
+| Fixed-length arrays with nonzero length | Supported |
+| Nested structures satisfying the same constraints | Supported |
 | `typedef` with a supported target type | Supported |
-| Pointers, `union`, `enum`, and floating-point types | Unsupported |
-| Bit fields and `_Bool` | Unsupported |
-| Zero-length and flexible arrays | Unsupported |
+| Pointers, `union`, `enum`, floating-point types | Unsupported |
+| Bit fields, `_Bool` | Unsupported |
+| Zero-length or flexible arrays | Unsupported |
 | Recursive structures, overlapping fields, or non-byte-aligned structures | Unsupported |
 
 Layout requirements:
 
 - Use fixed-width integers such as `u8`, `s16`, `u32`, and `s64`.
-- Order fields according to their alignment requirements. Use `u8 pad[N]` to
-  make padding explicit when necessary.
+- Order fields for alignment, adding explicit `u8 pad[N]` padding where needed.
 - Do not use platform-dependent types such as `long` or `unsigned long`.
-- Do not use `__attribute__((packed))` to bypass layout validation.
-- If a structure with the same name appears in multiple BPF objects, its
-  fields, offsets, and size must match exactly.
+- Do not bypass layout validation with `__attribute__((packed))`.
+- Structures with the same name in multiple BPF objects must have identical fields, offsets, and sizes.
 
-C names are converted to exported Go names by splitting on underscores. For
-example, `sample_event` becomes `SampleEvent`, and `kernel_observed_ns` becomes
-`KernelObservedNS`. Field semantics and cross-layer names follow
-[Event Field Naming](event-field-naming_en.md). Avoid C names that map to the
-same Go name, such as `sample_id` and `sample_i_d`.
+C names are converted from underscore-separated names to exported Go names: `sample_event` becomes `SampleEvent`, and `kernel_observed_ns` becomes `KernelObservedNS`. Follow the [field conventions](/docs/development/event-field-naming_en.md) for semantics and naming across layers. Avoid C names that map to the same Go name, such as `sample_id` and `sample_i_d`.
 
-## Verification
+## Validation
 
-Run the following commands after adding or modifying an ABI:
+After adding or changing an ABI, run:
 
 ```bash
 make gen-build
@@ -181,19 +163,19 @@ go test ./build/bpfabi-tool
 make check
 ```
 
-Add a decoding test for each new perf event. At a minimum, cover:
+For new perf events, also add decoding coverage for at least:
 
 - Integer boundary values and native byte order.
 - Nested structures and the first and last array elements.
 - Fields before and after padding.
-- The sample size and the generated `<GoType>Size` constant.
+- Sample size against the generated `<GoType>Size` constant.
 
 ## Common Errors
 
 | Error | Check |
 | --- | --- |
-| `has no "<domain>_" btf anchors` | Confirm that a BPF source includes the header and that the type calls `BPF_ABI_EXPORT` |
-| `without matching abi header` | Confirm that the header name matches the structure prefix and that domain prefixes do not overlap |
-| `differs between objects` | Check whether conditional compilation, array length macros, or included headers change the layout |
+| `has no "<domain>_" btf anchors` | Is the header included by a BPF source file? Does the type call `BPF_ABI_EXPORT`? |
+| `without matching abi header` | Do the header name and structure prefix match? Do domain prefixes overlap? |
+| `differs between objects` | Do conditional compilation, array-length macros, or included headers change the layout? |
 | `go offset is ... btf offset is ...` | Reorder fields or add explicit padding; do not use `packed` |
 | `go type name ... collides` | Rename C types or fields that map to the same Go name |

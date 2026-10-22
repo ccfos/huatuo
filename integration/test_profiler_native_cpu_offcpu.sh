@@ -16,7 +16,7 @@ is_container && skip "native off-CPU PID filtering requires host PID namespace"
 bpf_tool_setup profiler native_offcpu_profiler profiler-offcpu
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_offcpu.user.c"
 
-command -v taskset > /dev/null || skip "taskset(1) not in PATH"
+require_commands taskset
 
 allowed_cpu_ids() {
 	local allowed_list segment start end cpu
@@ -72,7 +72,7 @@ verify_offcpu_cpuid() {
 	mkdir -p "${output_dir}"
 	taskset -c "${SELECTED_CPU}" "${FIXTURE_BIN}" > /dev/null 2>&1 &
 	TARGET_PID=$!
-	blocked_prefix="process ${TARGET_PID}:offcpu-fixture;off-CPU blocked;"
+	blocked_prefix="comm=\"offcpu-fixture\";offcpu_category=\"blocked\";pid=\"${TARGET_PID}\";"
 	kill -0 "${TARGET_PID}" 2> /dev/null || fatal "fixture exited immediately (pid=${TARGET_PID})"
 
 	log_info "fixture on CPU ${SELECTED_CPU}; profiler --cpuid ${cpuid}; expect ${expected} event"

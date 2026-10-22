@@ -24,10 +24,7 @@ source "${ROOT_DIR}/integration/config.sh"
 # The config writer reads the token from the calling test's scope.
 readonly API_TOKEN="integration-admin"
 
-command -v curl > /dev/null || skip "curl command is not installed"
-command -v ss > /dev/null || skip "ss command is not installed"
-[[ -x "${HUATUO_APISERVER_BIN}" ]] \
-	|| fatal "huatuo-apiserver binary missing: ${HUATUO_APISERVER_BIN}"
+require_commands curl ss
 
 APISERVER_PORT=$(allocate_available_port) || fatal "failed to allocate an apiserver port"
 readonly APISERVER_PORT

@@ -15,16 +15,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/linkstatus"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/packet"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
@@ -109,7 +111,7 @@ func (s *jsonWriter) Write(ev *types.DropWatchTracing) error {
 type socketWriter struct{ client *toolstream.Client }
 
 func (s *socketWriter) Write(ev *types.DropWatchTracing) error {
-	return s.client.Send(ev)
+	return s.client.Send(context.Background(), ev, toolstream.SendOptions{})
 }
 
 type writerOptions struct {
@@ -122,16 +124,18 @@ type writerOptions struct {
 
 func newWriter(output io.Writer, options *writerOptions) (writer, func() error, error) {
 	if options.socketPath != "" {
-		client, err := toolstream.NewClient(toolstream.ClientOptions{
-			SockPath: options.socketPath,
-			ToolName: options.toolName,
-			Version:  options.version,
-			TaskID:   options.taskID,
+		client, err := toolstream.NewClient(&toolstream.ClientOptions{
+			SockPath:    options.socketPath,
+			ServiceName: options.toolName,
+			Version:     options.version,
+			TaskID:      options.taskID,
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("create event sink: %w", err)
 		}
-		return &socketWriter{client: client}, client.End, nil
+		return &socketWriter{client: client}, func() error {
+			return errors.Join(client.Send(context.Background(), nil, toolstream.SendOptions{End: true}), client.Close())
+		}, nil
 	}
 
 	switch options.outputFormat {
@@ -144,40 +148,27 @@ func newWriter(output io.Writer, options *writerOptions) (writer, func() error, 
 	}
 }
 
-func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType string) (*types.DropWatchTracing, error) {
+func formatEvent(ev *abi.DropwatchPacketEvent, names dropwatch.ReasonNames, sourceType string) (*types.DropWatchTracing, error) {
 	observedTimestamp := timeutil.Now()
 	kernelObservedTimestamp, err := timeutil.KtimeToTimestamp(ev.Meta.KernelObservedNS)
 	if err != nil {
 		return nil, fmt.Errorf("convert dropwatch kernel observation time: %w", err)
 	}
-	pkt := packet.Hdr{
-		EthProto:  ev.PktHdr.EthProto,
-		RawLen:    uint8(ev.PktHdr.RawLen),
-		HasEthHdr: uint8(ev.PktHdr.HasEthHdr),
-		SkState:   uint8(ev.PktHdr.SkState),
-		Raw:       ev.PktHdr.Raw,
-	}
-
-	p, err := packet.Parse(&pkt)
+	p, err := dropwatch.DecodePacket(ev)
 	if err != nil {
 		log.WithError(err).Debug("parse dropwatch packet")
 	}
 
 	frames := symbol.KsymStackStrs(ev.Stack[:], symbol.KsymStackMaxDepth)
 	stackStr := strings.Join(frames, "\n")
-	dropSourceValue := abi.DropwatchDropSource(ev.Meta.DropSource)
-	dropSource := dropSourceName(dropSourceValue)
-	dropReason := names.Resolve(ev.Meta.DropReason)
-	if dropSourceValue == abi.DropwatchDropSourceHardware {
-		dropReason = bytesutil.ToStr(ev.Meta.TrapName[:])
-	}
+	metadata := dropwatch.ResolveMetadata(&ev.Meta, names)
 
 	return &types.DropWatchTracing{
 		ObservedTimestamp:       observedTimestamp,
 		KernelObservedTimestamp: &kernelObservedTimestamp,
-		DropSource:              dropSource,
-		DropReason:              dropReason,
-		DropReasonGroup:         bytesutil.ToStr(ev.Meta.TrapGroupName[:]),
+		DropSource:              metadata.Source,
+		DropReason:              metadata.Reason,
+		DropReasonGroup:         metadata.ReasonGroup,
 		DropLocation:            kernaddr.Format(ev.Meta.DropLocation),
 		Comm:                    bytesutil.ToStr(ev.Meta.Comm[:]),
 		PID:                     ev.Meta.TGIDPID >> 32,
@@ -195,15 +186,4 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType stri
 		Stack:                   stackStr,
 		Source:                  sourceType,
 	}, nil
-}
-
-func dropSourceName(source abi.DropwatchDropSource) string {
-	switch source {
-	case abi.DropwatchDropSourceSoftware:
-		return dropSourceSoftware
-	case abi.DropwatchDropSourceHardware:
-		return dropSourceHardware
-	default:
-		return "unknown"
-	}
 }
