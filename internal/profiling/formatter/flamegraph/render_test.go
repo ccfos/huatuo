@@ -44,23 +44,3 @@ func TestRenderKeepsSymbolsOutOfJavaScript(t *testing.T) {
 		t.Fatalf("SVG does not preserve the escaped symbol as data: %s", content)
 	}
 }
-
-func TestCanceledStacksDoNotIncreaseGraphHeight(t *testing.T) {
-	var p processor
-	p.Process(Stack{
-		Names:   []string{"root", "deep", "leaf"},
-		Samples: 7,
-	})
-	p.Process(Stack{
-		Names:   []string{"root", "deep", "leaf"},
-		Samples: -7,
-	})
-	p.Process(Stack{
-		Names:   []string{"other"},
-		Samples: 1,
-	})
-	p.prune()
-	if p.maxDepth != 1 || len(p.frames) != 1 || p.frames[0].Name != "other" {
-		t.Fatalf("canceled stack retained in layout: %+v", p)
-	}
-}

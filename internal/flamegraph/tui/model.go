@@ -17,6 +17,7 @@ package tui
 
 import (
 	"fmt"
+	"math/bits"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -422,14 +423,16 @@ func (m *Model) barWidth(value, rootValue int64) int {
 	if rootValue <= 0 || value <= 0 {
 		return barMinWidth
 	}
-	width := int(value * int64(available) / rootValue)
+	if value >= rootValue {
+		return available
+	}
+	// Keep integer rounding without overflowing on large profile weights.
+	hi, lo := bits.Mul64(uint64(value), uint64(available))
+	width, _ := bits.Div64(hi, lo, uint64(rootValue))
 	if width < barMinWidth {
 		return barMinWidth
 	}
-	if width > available {
-		return available
-	}
-	return width
+	return int(width)
 }
 
 func percent(value, total int64) float64 {
