@@ -608,3 +608,11 @@ another. Older documents and events without kernel timestamps omit the new
 field; historical data is not migrated automatically. The raw
 `kernel_observed_ns` stays in process for correlation and is not
 written to new documents.
+
+### Save input ownership
+
+Storage Save borrows record inputs until the call returns. An asynchronous
+backend owns a copy of payload bytes retained for later delivery. Callers may
+reuse an encoding buffer after Save returns, but must not mutate it during the
+call. Elasticsearch bulk writes copy the payload before queueing it; success
+still means queued, not persisted. Direct writes remain synchronous.

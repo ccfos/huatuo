@@ -163,6 +163,8 @@ func (s *Storage) Save(
 	if options.Mode != driver.SaveModeUpsert || len(options.Conditions) != 0 {
 		return driver.ErrInvalidQuery
 	}
+	// The worker can read after Save returns, when callers may reuse Data.
+	rec.Data = driver.CloneBytes(rec.Data)
 	item := esutil.BulkIndexerItem{
 		Index:      s.index,
 		Action:     "index",
