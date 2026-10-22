@@ -25,7 +25,7 @@ func TestValidateCPUConfig(t *testing.T) {
 	valid := cpuTracingConfig{
 		intervalSeconds:         10,
 		minTraceIntervalSeconds: 1800,
-		perfDurationSeconds:     10,
+		traceDurationSeconds:    10,
 		systemThreshold:         45,
 		systemDeltaThreshold:    20,
 	}
@@ -62,16 +62,16 @@ func TestValidateCPUConfig(t *testing.T) {
 			wantError: "minimum trace interval: timer duration must not exceed",
 		},
 		{
-			name:      "zero perf duration",
-			modify:    func(c *cpuTracingConfig) { c.perfDurationSeconds = 0 },
-			wantError: "perf duration must be positive",
+			name:      "zero profile duration",
+			modify:    func(c *cpuTracingConfig) { c.traceDurationSeconds = 0 },
+			wantError: "profile duration must be positive",
 		},
 		{
-			name: "perf duration overflow",
+			name: "profile duration overflow",
 			modify: func(c *cpuTracingConfig) {
-				c.perfDurationSeconds = maxPerfDurationSeconds + 1
+				c.traceDurationSeconds = maxProfileDurationSeconds + 1
 			},
-			wantError: "perf duration must not exceed",
+			wantError: "profile duration must not exceed",
 		},
 		{
 			name:      "negative system threshold",

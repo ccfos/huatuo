@@ -46,12 +46,15 @@ func pipelineConfig(f output.Formatter) *PipelineConfig {
 }
 
 type captureOutput struct {
+	name         output.OutputFormat
 	windows      []*types.AggregationWindow
 	completions  int
 	closes       int
 	err          error
 	contextCheck func(context.Context)
 }
+
+func (f *captureOutput) Name() output.OutputFormat { return f.name }
 
 func (f *captureOutput) Add(ctx context.Context, w *types.AggregationWindow) error {
 	if f.contextCheck != nil {
@@ -115,18 +118,73 @@ func TestPipelineEnqueueFullQueue(t *testing.T) {
 			cfg := pipelineConfig(f)
 			cfg.AggregationMode = mode
 			p := NewPipeline(cfg)
-			// Freeze consumption without a production hook; this test exercises only
-			// the synchronous enqueue ownership boundary.
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			// Delay the consumer so the next delivery must wait for queue space.
 			for range cap(p.queue) {
 				if err := p.Enqueue(t.Context(), testBatch(1)); err != nil {
 					t.Fatal(err)
 				}
 			}
 
-			if err := p.Enqueue(t.Context(), testBatch(1)); !errors.Is(err, ErrQueueFull) {
-				t.Fatalf("expected full queue error, got %v", err)
+			enqueued := make(chan error, 1)
+			go func() {
+				enqueued <- p.Enqueue(ctx, testBatch(7))
+				close(enqueued)
+			}()
+			defer func() { cancel(); <-enqueued }()
+			select {
+			case err := <-enqueued:
+				t.Fatalf("full queue delivery returned before consumption: %v", err)
+			case <-time.After(20 * time.Millisecond):
+			}
+
+			done := make(chan error, 1)
+			go func() {
+				done <- p.Run(ctx)
+				close(done)
+			}()
+			defer func() { cancel(); <-done }()
+			if err := <-enqueued; err != nil {
+				t.Fatal(err)
+			}
+
+			p.Close()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+
+			var total int64
+			for _, w := range f.windows {
+				for i := range w.Aggregated.Samples {
+					total += w.Aggregated.Samples[i].Value
+				}
+			}
+
+			if want := int64(cap(p.queue)) + 7; total != want {
+				t.Fatalf("delivered weight = %d, want %d", total, want)
 			}
 		})
+	}
+}
+
+func TestPipelineEnqueueFullQueueDeadline(t *testing.T) {
+	p := NewPipeline(pipelineConfig(&captureOutput{}))
+	for range cap(p.queue) {
+		if err := p.Enqueue(t.Context(), testBatch(1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	batch := testBatch(7)
+	if err := p.Enqueue(ctx, batch); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocked Enqueue() = %v, want deadline exceeded", err)
+	}
+
+	if len(p.queue) != cap(p.queue) || batch.Samples[0].Value != 7 {
+		t.Fatal("canceled delivery changed the queue or rejected batch")
 	}
 }
 
@@ -491,5 +549,81 @@ func TestPipelineSnapshotTransfersDroppedSamples(t *testing.T) {
 
 	if len(f.windows) != 2 {
 		t.Fatal("empty window was exported")
+	}
+}
+
+func TestPipelineSnapshotRetainsPhysicalUsage(t *testing.T) {
+	for _, format := range []output.OutputFormat{output.FormatRemoteStore, output.FormatJSON} {
+		t.Run(string(format), func(t *testing.T) {
+			f := &captureOutput{name: format}
+			cfg := pipelineConfig(f)
+			cfg.ProfileType = "memory:physical_usage:bytes:space:bytes"
+			p := NewPipeline(cfg)
+			end := time.Unix(100, 0)
+			deltas := []int64{8192, 0, -4096, -4096, -4096, 4096}
+			totals := []int64{8192, 8192, 4096, 0, 0, 0}
+			for i, delta := range deltas {
+				if err := p.consumeBatch(t.Context(), queuedBatch{
+					batch:      testBatch(delta),
+					enqueuedAt: end,
+				}); err != nil {
+					t.Fatal(err)
+				}
+
+				end = end.Add(time.Second)
+				if err := p.snapshot(t.Context(), end); err != nil {
+					t.Fatal(err)
+				}
+
+				got := &f.windows[i].Aggregated
+				want := delta
+				if format == output.FormatRemoteStore {
+					want = totals[i]
+					if got.TimeNanos != end.UnixNano() || got.DurationNanos != 0 {
+						t.Fatal("retained result is not timestamped at observation")
+					}
+				}
+
+				if got.Samples[0].Value != want {
+					t.Fatalf("window %d value=%d, want %d", i, got.Samples[0].Value, want)
+				}
+			}
+
+			if f.windows[0].Aggregated.Samples[0].Value != 8192 {
+				t.Fatal("later windows mutated earlier output")
+			}
+
+			if err := p.snapshot(t.Context(), end.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+
+			wantWindows := len(deltas)
+			if format == output.FormatRemoteStore {
+				wantWindows++
+			}
+
+			if len(f.windows) != wantWindows {
+				t.Fatalf("idle windows=%d, want %d", len(f.windows), wantWindows)
+			}
+		})
+	}
+}
+
+func TestPipelineSnapshotEmitsInitialZeroAndRejectsLoss(t *testing.T) {
+	f := &captureOutput{name: output.FormatRemoteStore}
+	cfg := pipelineConfig(f)
+	cfg.ProfileType = "memory:physical_usage:bytes:space:bytes"
+	p := NewPipeline(cfg)
+	if err := p.snapshot(t.Context(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(f.windows) != 1 || len(f.windows[0].Aggregated.Samples) != 0 {
+		t.Fatal("initial zero state missing")
+	}
+
+	p.droppedSamples = map[string]uint64{types.DropReasonCollection: 1}
+	if err := p.snapshot(t.Context(), time.Now()); err == nil || len(f.windows) != 1 {
+		t.Fatal("collection loss published a live result")
 	}
 }

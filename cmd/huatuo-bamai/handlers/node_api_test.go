@@ -24,10 +24,10 @@ import (
 
 	apiv1 "github.com/ccfos/huatuo/apis/v1"
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
 	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
-	"github.com/ccfos/huatuo/internal/server/response"
 )
 
 func newTestOperationManager(t *testing.T) *operation.Manager {
