@@ -27,8 +27,6 @@ import (
 	"github.com/ccfos/huatuo/internal/tracing"
 )
 
-const defaultMemBurstHistorySamples = 60
-
 func init() {
 	tracing.RegisterEventTracing("memburst", newMemBurst)
 }
@@ -126,7 +124,7 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 
 	var err error
 
-	historySamples := defaultMemBurstHistorySamples
+	historySamples := cfg.MemoryBurst.SlidingWindowLength
 	sampleInterval := cfg.MemoryBurst.Interval
 	intervalTracing := cfg.MemoryBurst.IntervalTracing
 	topNProcesses := cfg.MemoryBurst.DumpProcessMaxNum

@@ -42,10 +42,11 @@ func (c *ContainerFilterConfig) Build() (*matcher.ContainerMatcher, error) {
 
 // MemBurstConfig holds memory burst autotracing configuration.
 type MemBurstConfig struct {
-	DeltaMemoryBurst   int `default:"100"`
-	DeltaAnonThreshold int `default:"70"`
-	Interval           int `default:"10"`
-	IntervalTracing    int `default:"1800"`
+	DeltaMemoryBurst    int `default:"100"`
+	DeltaAnonThreshold  int `default:"70"`
+	Interval            int `default:"10"`
+	IntervalTracing     int `default:"1800"`
+	SlidingWindowLength int `default:"60"`
 	// DumpProcessMaxNum bounds the RSS ranking; snapshots cover at most the first 3.
 	DumpProcessMaxNum int `default:"10"`
 }
