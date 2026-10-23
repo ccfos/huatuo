@@ -371,7 +371,7 @@ if [[ $TEST_MODE == compatibility ]]; then
  for profile in elasticsearch_v7 elasticsearch_v8 opensearch_v2; do run_case "$profile" "$profile"; done
 fi
 SH
-for storage_mode in shared private bound_data failure skip compatibility stop_failure state_failure; do
+for storage_mode in shared concurrent private bound_data failure skip compatibility stop_failure state_failure; do
 	storage_work="${HUATUO_BAMAI_TEST_TMPDIR}/storage-${storage_mode}"
 	mkdir -p "${storage_work}"
 	storage_expected_status=0 storage_expected_starts=1
@@ -438,3 +438,61 @@ log_info "shared and private storage lifecycles, isolation and failure cleanup p
 	done
 )
 log_info "profiling node and apiserver storage configs agree and isolate workspaces"
+
+(
+	work="${HUATUO_BAMAI_TEST_TMPDIR}/worker-ports"
+	mkdir -p "${work}"
+	ss() { echo 'LISTEN 0 128 127.0.0.1:20000 0.0.0.0:*'; }
+	export INTEGRATION_PORT_BASE=20000 INTEGRATION_PORT_DIR="${work}/ports"
+	pids=()
+	for ((i = 0; i < 12; i++)); do
+		allocate_available_port > "${work}/port-${i}" &
+		pids+=("$!")
+	done
+	for pid in "${pids[@]}"; do wait "${pid}"; done
+	assert_eq "$(sort -u "${work}/"port-* | wc -l)" 12 "concurrent port uniqueness"
+	for file in "${work}/"port-*; do
+		port=$(cat "${file}")
+		((port > 20000 && port < 21000)) || fatal "worker port outside its block: ${port}"
+	done
+	assert_eq "$(INTEGRATION_PORT_BASE=21000 INTEGRATION_PORT_DIR="${work}/other" allocate_available_port)" 21000 "separate worker block"
+	ss() { return 1; }
+	if allocate_available_port; then fatal "allocation ignored failed socket query"; fi
+)
+
+for config_mode in auth_only empty_server explicit_address; do
+	config_work="${HUATUO_BAMAI_TEST_TMPDIR}/worker-config-${config_mode}"
+	mkdir -p "${config_work}"
+	config_address=127.0.0.1:21001
+	{
+		if [[ ${config_mode} != auth_only ]]; then echo '[HTTPServer]'; fi
+		if [[ ${config_mode} == explicit_address ]]; then
+			config_address=127.0.0.1:23456
+			echo 'ListenAddress = "127.0.0.1:23456"'
+		fi
+		printf '[HTTPServer.Auth]\nBearerToken = "secret"\n'
+	} > "${config_work}/bamai.conf"
+	HUATUO_BAMAI_TEST_TMPDIR="${config_work}" HUATUO_BAMAI_ADDR="http://${config_address}" bash -eu -s << 'SH'
+source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/integration/config.sh"
+source "$ROOT_DIR/integration/lib_storage.sh"
+configure_worker_bamai_address
+APISERVER_PORT=21100 API_TOKEN=admin OTHER_API_TOKEN=reader ES_PASSWORD=test STORAGE_ADDR=http://127.0.0.1:9200 PROFILE_FILTER_INDEX=profile-filter
+for writer in write_apiserver_apis_config write_apiserver_without_profile_storage_config write_continuous_profiling_apiserver_config write_profile_query_apiserver_config; do
+ "$writer"
+ cp "$HUATUO_BAMAI_TEST_TMPDIR/apiserver.conf" "$HUATUO_BAMAI_TEST_TMPDIR/$writer.conf"
+done
+NODE_PORT=${HUATUO_BAMAI_ADDR##*:} MAX_HOST=2 MAX_TOTAL=4
+for WITH_STORAGE in false true; do
+ write_apiserver_profiling_config
+ cp "$HUATUO_BAMAI_TEST_TMPDIR/apiserver.conf" "$HUATUO_BAMAI_TEST_TMPDIR/write_apiserver_profiling_${WITH_STORAGE}.conf"
+done
+SH
+	assert_eq "$(grep -cF "ListenAddress = \"${config_address}\"" "${config_work}/bamai.conf")" 1 "worker listen address"
+	grep -Fxq 'BearerToken = "secret"' "${config_work}/bamai.conf" || fatal "config update lost authentication"
+	for config_file in "${config_work}/"write_*.conf; do
+		assert_eq "$(grep -cFx '[Agent]' "${config_file}")" 1 "Agent section count: ${config_file}"
+		assert_eq "$(grep -cFx "    HTTPPort = ${config_address##*:}" "${config_file}")" 1 "Agent port: ${config_file}"
+	done
+done
+log_info "concurrent port reservations and worker config checks passed"
