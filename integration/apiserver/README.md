@@ -4,7 +4,7 @@
 标准入口为 `make integration` 和 `make e2e`。直接运行脚本前执行：
 
 ```bash
-make build test-build
+make build
 ```
 
 ## 集成测试

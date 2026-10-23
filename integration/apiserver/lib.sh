@@ -84,7 +84,7 @@ HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 export APISERVER_ADDR API_TOKEN
 
 PROBE="${ROOT_DIR}/_output/tests/apiserver-probe"
-[[ -x $PROBE ]] || fatal 'missing apiserver probe; run make test-build'
+[[ -x $PROBE ]] || fatal 'missing apiserver probe; run make build'
 
 write_server_config() {
 	write_apiserver_apis_config

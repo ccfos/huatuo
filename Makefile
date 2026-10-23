@@ -160,7 +160,9 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			go generate -run BPF_COMPILE {}'
 	@touch $@
 
-build: $(APP_CMD_BIN_TARGETS)
+build: $(APP_CMD_BIN_TARGETS) \
+	_output/tests/apiserver-probe \
+	_output/tests/apiserver-go-workload
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
 	@cp *.conf $(APP_CMD_OUTPUT)/conf/
@@ -221,13 +223,11 @@ _output/tests/apiserver-go-workload: integration/testdata/test_apiserver_profili
 	@mkdir -p $(@D)
 	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
 
-test-build: _output/tests/apiserver-probe _output/tests/apiserver-go-workload
-
-integration: build test-build
+integration: build
 	go build -o $(PPROF_TOOL) ./build/pprof-tool
 	@bash integration/run.sh
 
-e2e: build test-build
+e2e: build
 	@bash e2e/run.sh
 
-.PHONY: test-build build install-tools gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: build install-tools gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

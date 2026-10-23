@@ -64,7 +64,7 @@ The remaining seven functional cases are discovered by
 `make integration` through `integration/test_apiserver_profiling.sh`.
 Static capability, authentication, and no-storage API checks run separately
 in `integration/test_apiserver_profile_disabled.sh`. Test clients and the Go
-workload are built by `make test-build`, a prerequisite of both suites.
+workload are built by `make build`, a prerequisite of both suites.
 See the
 [apiserver test instructions](../../integration/apiserver/README.md).
 
