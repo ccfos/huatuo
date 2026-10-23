@@ -421,3 +421,19 @@ write_elasticsearch_config() {
     Path = ""
 EOF
 }
+
+# The baseline keeps XFS enabled so its device fixture can gate initialization.
+write_runtime_limits_config() {
+	local port=$1 startup_cpu=$2 cpu=$3 memory_mib=$4
+
+	write_default_config
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+
+[Runtime]
+    StartupCPULimitCores = ${startup_cpu}
+    CPULimitCores = ${cpu}
+    MemoryLimitMiB = ${memory_mib}
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${port}"
+EOF
+}

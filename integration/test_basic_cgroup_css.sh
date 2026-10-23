@@ -19,6 +19,7 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_cgroup.sh"
 
 readonly PROBE_SOURCE="${ROOT_DIR}/integration/testdata/test_cgroup_css_probe.go"
 readonly PROBE_BIN="${HUATUO_BAMAI_TEST_TMPDIR}/cgroup-css-probe"
@@ -61,20 +62,8 @@ tracepoint_available cgroup cgroup_mkdir \
 tracepoint_available cgroup cgroup_rmdir \
 	|| skip "cgroup/cgroup_rmdir tracepoint is not available"
 
-if [[ -r /sys/fs/cgroup/cgroup.controllers ]]; then
-	readonly CGROUP_ROOT=/sys/fs/cgroup
-	readonly SYNC_SYMBOL=memory_current_read
-	readonly NOTIFY_FILE=memory.current
-elif [[ -d /sys/fs/cgroup/memory ]]; then
-	readonly CGROUP_ROOT=/sys/fs/cgroup/memory
-	readonly SYNC_SYMBOL=cgroup_clone_children_read
-	readonly NOTIFY_FILE=cgroup.clone_children
-else
-	skip "supported cgroup v1/v2 hierarchy is not available"
-fi
-
-kprobe_available "${SYNC_SYMBOL}" \
-	|| skip "${SYNC_SYMBOL} is not available for kprobe"
+cgroup_css_require_environment CGROUP_ROOT SYNC_SYMBOL NOTIFY_FILE
+readonly CGROUP_ROOT SYNC_SYMBOL NOTIFY_FILE
 
 parent_uuid=$(< /proc/sys/kernel/random/uuid)
 cgroup_parent="${CGROUP_ROOT}/huatuo-css-test-${parent_uuid}"

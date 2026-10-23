@@ -290,6 +290,31 @@ dump_text_files() {
 	done < <(find "${dir}" -type f -size +0c -print0)
 }
 
+# Call from the child's parent shell so wait can verify its exit status.
+# Unlike cleanup, a shutdown assertion must not hide a timeout with SIGKILL.
+stop_gracefully_by_pid() {
+	local pid=${1:-} timeout=${2:-10} status=0
+	if [[ ! ${pid} =~ ^[1-9][0-9]*$ || ! ${timeout} =~ ^[1-9][0-9]*$ ]]; then
+		log_error "invalid stop arguments: pid=${pid}, timeout=${timeout}; expected positive integers"
+		return 1
+	fi
+
+	if ! kill -TERM "${pid}" 2> /dev/null; then
+		log_error "failed to send SIGTERM to pid=${pid}"
+		return 1
+	fi
+	if ! wait_until "${timeout}" 0.1 process_exited "${pid}"; then
+		log_error "pid=${pid} did not exit within ${timeout}s after SIGTERM"
+		return 1
+	fi
+
+	wait "${pid}" || status=$?
+	if [[ ${status} -ne 0 ]]; then
+		log_error "pid=${pid} exited with status ${status} after SIGTERM"
+	fi
+	return "${status}"
+}
+
 # SIGTERM with graceful polling, then SIGKILL as fallback.
 # $1=pid  $2=timeout_seconds (default 10).
 stop_by_pid() {
