@@ -17,11 +17,16 @@ package collector
 import (
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/procfs/sysfs"
 	"github.com/ccfos/huatuo/internal/qdisc"
 	"github.com/ccfos/huatuo/pkg/metric"
 )
@@ -79,6 +84,63 @@ func TestQdiscCollectorUpdate(t *testing.T) {
 	if diff := cmp.Diff(want, summarizeQdiscMetrics(metrics)); diff != "" {
 		t.Fatalf("qdisc metrics mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func TestNewNetdevHwClosesEthtoolSocket(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ethtool socket accounting requires Linux procfs")
+	}
+
+	originalConfig := configSnapshot()
+	t.Cleanup(func() { Set(originalConfig) })
+	originalRoot := filepath.Dir(sysfs.DefaultPath())
+	t.Cleanup(func() { procfs.RootPrefix(originalRoot) })
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "sys", "class", "net"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	procfs.RootPrefix(root)
+
+	Set(&Config{})
+	before := countSocketFDs(t)
+	for range 8 {
+		if _, err := newNetdevHw(); err != nil {
+			t.Fatalf("newNetdevHw() error = %v", err)
+		}
+	}
+	if got := countSocketFDs(t); got != before {
+		t.Fatalf("socket descriptors after successful construction = %d, want %d", got, before)
+	}
+
+	invalid := &Config{}
+	invalid.NetdevHW.DeviceList = "["
+	Set(invalid)
+	for range 8 {
+		if _, err := newNetdevHw(); err == nil {
+			t.Fatal("newNetdevHw() error = nil, want invalid device filter error")
+		}
+	}
+	if got := countSocketFDs(t); got != before {
+		t.Fatalf("socket descriptors after failed construction = %d, want %d", got, before)
+	}
+}
+
+func countSocketFDs(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := 0
+	for _, entry := range entries {
+		target, err := os.Readlink(filepath.Join("/proc/self/fd", entry.Name()))
+		if err == nil && strings.HasPrefix(target, "socket:[") {
+			count++
+		}
+	}
+	return count
 }
 
 func TestQdiscCollectorUpdateReadError(t *testing.T) {
