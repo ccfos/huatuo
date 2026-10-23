@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 
@@ -122,56 +121,4 @@ func metricJSON(families map[string]*dto.MetricFamily) map[string]metricFamily {
 		result[name] = f
 	}
 	return result
-}
-
-func validateLabels(actual, expected map[string]string) error {
-	if len(actual) != len(expected) {
-		return fmt.Errorf("labels=%v, want %v", actual, expected)
-	}
-	for name, want := range expected {
-		if value, ok := actual[name]; !ok || value != want {
-			return fmt.Errorf("label %s=%q, want %q", name, value, want)
-		}
-	}
-	return nil
-}
-
-func gaugeValue(family *dto.MetricFamily, expected map[string]string) (float64, error) {
-	if family == nil || family.GetType() != dto.MetricType_GAUGE || family.GetHelp() == "" {
-		return 0, fmt.Errorf("%s: missing Gauge/HELP", family.GetName())
-	}
-	count, value := 0, 0.0
-	for _, metric := range family.GetMetric() {
-		values := labels(metric)
-		if _, container := expected["container_host"]; container &&
-			!matchesContainer(values, expected["container_host"], expected["container_name"], expected["container_hostnamespace"]) {
-			continue
-		}
-		if err := validateLabels(values, expected); err != nil {
-			return 0, fmt.Errorf("%s: %w", family.GetName(), err)
-		}
-		count++
-		value = metric.GetGauge().GetValue()
-	}
-	if count != 1 || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
-		return 0, fmt.Errorf("%s: expected one finite Gauge sample, got %d, value=%g", family.GetName(), count, value)
-	}
-	return value, nil
-}
-
-func validateCollector(families map[string]*dto.MetricFamily, collector string) error {
-	count := 0
-	for _, metric := range families["huatuo_bamai_scrape_collector_success"].GetMetric() {
-		if labels(metric)["collector"] != collector {
-			continue
-		}
-		count++
-		if metric.GetGauge().GetValue() != 1 {
-			return fmt.Errorf("%s scrape_collector_success is not 1", collector)
-		}
-	}
-	if count != 1 {
-		return fmt.Errorf("expected one %s scrape success, got %d", collector, count)
-	}
-	return nil
 }
