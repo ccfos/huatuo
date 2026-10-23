@@ -179,6 +179,9 @@ sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 
 Container, thread-group, and CPU-specific examples are in `test_profiler_native_cpu_container.sh`, `test_profiler_native_cpu_thread_group.sh`, and `test_profiler_native_cpu_cpuid.sh`.
 
+The native CPU thread-group test keeps both five-second profiling windows and
+stops its worker normally after capture, avoiding the remaining workload tail.
+
 ## Storage Tests
 
 Neither of these cases requires an Elasticsearch service:

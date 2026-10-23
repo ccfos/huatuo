@@ -14,6 +14,8 @@
 
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -22,6 +24,7 @@
 #define WORK_DURATION_SECONDS 8
 
 static volatile unsigned long sink;
+static atomic_bool stop_requested;
 
 static double monotonic_seconds(void) {
 	struct timespec ts;
@@ -34,38 +37,39 @@ static KEEP_FRAME void thread_group_cpu_loop(void) {
 	const double deadline = monotonic_seconds() + WORK_DURATION_SECONDS;
 	unsigned long value = 1;
 
-	while (monotonic_seconds() < deadline) {
+	while (!atomic_load(&stop_requested) && monotonic_seconds() < deadline) {
 		value = value * 1664525UL + 1013904223UL;
 		sink = value;
 	}
 }
 
-static void block_start_signal(void) {
+static void block_control_signals(void) {
 	sigset_t set;
 
 	sigemptyset(&set);
 	sigaddset(&set, SIGUSR1);
+	sigaddset(&set, SIGUSR2);
 	if (pthread_sigmask(SIG_BLOCK, &set, NULL) != 0) {
-		fprintf(stderr, "failed blocking SIGUSR1\n");
+		fprintf(stderr, "failed blocking control signals\n");
 		exit(1);
 	}
 }
 
-static void wait_for_start_signal(void) {
+static void wait_for_signal(int expected) {
 	sigset_t set;
 	int signo;
 
 	sigemptyset(&set);
-	sigaddset(&set, SIGUSR1);
-	if (sigwait(&set, &signo) != 0 || signo != SIGUSR1) {
-		fprintf(stderr, "failed waiting for SIGUSR1\n");
+	sigaddset(&set, expected);
+	if (sigwait(&set, &signo) != 0 || signo != expected) {
+		fprintf(stderr, "failed waiting for signal %d\n", expected);
 		exit(1);
 	}
 }
 
 static void *cpu_worker(void *arg) {
 	(void)arg;
-	wait_for_start_signal();
+	wait_for_signal(SIGUSR1);
 	thread_group_cpu_loop();
 	return NULL;
 }
@@ -73,11 +77,13 @@ static void *cpu_worker(void *arg) {
 int main(void) {
 	pthread_t worker;
 
-	block_start_signal();
+	block_control_signals();
 	if (pthread_create(&worker, NULL, cpu_worker, NULL) != 0) {
 		fprintf(stderr, "pthread_create failed\n");
 		return 1;
 	}
+	wait_for_signal(SIGUSR2);
+	atomic_store(&stop_requested, true);
 	if (pthread_join(worker, NULL) != 0) {
 		fprintf(stderr, "pthread_join failed\n");
 		return 1;
