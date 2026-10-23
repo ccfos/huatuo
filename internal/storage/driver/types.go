@@ -56,6 +56,9 @@ type Config struct {
 	ESUsername  string
 	ESPassword  string
 	ESIndex     string
+	// ESDisableBulk defaults to true when nil; only explicit false enables async writes.
+	ESDisableBulk    *bool
+	ESBulkNumWorkers int
 }
 
 // Op is a storage query operator.

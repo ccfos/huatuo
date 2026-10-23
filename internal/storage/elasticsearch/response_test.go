@@ -35,7 +35,7 @@ import (
 	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
-func newResponseBackend(t *testing.T, status int, body string) *Storage {
+func newResponseBackend(t *testing.T, status int, body string, enableBulk ...bool) *Storage {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -47,7 +47,12 @@ func newResponseBackend(t *testing.T, status int, body string) *Storage {
 		_, _ = io.WriteString(w, body)
 	}))
 	t.Cleanup(server.Close)
-	backend, err := NewBackend(&Config{Addresses: []string{server.URL}, Index: "profiles"})
+	config := &Config{Addresses: []string{server.URL}, Index: "profiles"}
+	if len(enableBulk) > 0 {
+		disabled := !enableBulk[0]
+		config.DisableBulk = &disabled
+	}
+	backend, err := NewBackend(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +291,7 @@ func TestStorageBulkReplicaFailure(t *testing.T) {
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(os.Stdout) })
 	backend := newResponseBackend(t, http.StatusOK,
-		`{"errors":false,"items":[{"index":{"_index":"profiles","_id":"one","status":201,"_shards":{"total":2,"successful":1,"failed":1}}}]}`)
+		`{"errors":false,"items":[{"index":{"_index":"profiles","_id":"one","status":201,"_shards":{"total":2,"successful":1,"failed":1}}}]}`, true)
 	if err := backend.Save(t.Context(), driver.Record{ID: "one", Data: []byte(`{}`)}, driver.SaveOptions{}); err != nil {
 		t.Fatal(err)
 	}

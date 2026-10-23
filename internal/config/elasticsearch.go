@@ -28,17 +28,26 @@ type ElasticsearchConfig struct {
 	Username string
 	Password string
 	Index    string `default:"huatuo_bamai"`
+	// DisableBulk controls writes only. True waits for each indexing response;
+	// false acknowledges enqueueing and logs later server failures asynchronously.
+	DisableBulk bool `default:"true"`
+	// BulkNumWorkers applies only when bulk is enabled, per backend instance.
+	// Zero selects 4; more workers increase concurrent server bulk requests.
+	BulkNumWorkers int `default:"4"`
 }
 
 // Enabled reports whether all connection fields opt in to Elasticsearch.
-func (c ElasticsearchConfig) Enabled() bool {
+func (c *ElasticsearchConfig) Enabled() bool {
 	return strings.TrimSpace(c.Address) != "" &&
 		strings.TrimSpace(c.Username) != "" &&
 		strings.TrimSpace(c.Password) != ""
 }
 
 // Validate accepts either a complete connection or no connection fields.
-func (c ElasticsearchConfig) Validate() error {
+func (c *ElasticsearchConfig) Validate() error {
+	if !c.DisableBulk && c.BulkNumWorkers < 0 {
+		return errors.New("bulk worker count must be positive or zero for the default")
+	}
 	fields := []string{c.Address, c.Username, c.Password}
 	configured := 0
 	for _, field := range fields {

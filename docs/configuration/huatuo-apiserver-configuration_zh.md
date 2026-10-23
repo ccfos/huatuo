@@ -260,6 +260,9 @@ Elasticsearch/OpenSearch 用于查询节点写入的剖析数据，与 `Jobs.Sto
 ```toml
 # Optional Elasticsearch/OpenSearch backend for querying profiling data.
 [Elasticsearch]
+    # 仅用于写入；默认关闭异步 bulk。
+    # DisableBulk = true
+    # BulkNumWorkers = 4
     # Address, Username, and Password must be configured together to enable
     # this backend.
     #
@@ -290,6 +293,14 @@ Elasticsearch/OpenSearch 用于查询节点写入的剖析数据，与 `Jobs.Sto
 | `Index` | 字符串，默认 `"huatuo_bamai"`。启用查询后端时不能为空，需与节点写入剖析数据的索引一致。 |
 
 未启用后端时，相关接口仍注册，但无法查询原始 Profile 和火焰图数据。
+
+`DisableBulk=true` 默认同步单条写入，Save 等待服务端响应并返回错误；
+`false` 启用异步 `_bulk`，Save 仅确认入队，后续失败只记日志。两种模式均
+不强制刷新，成功不代表立即可搜索。bulk 每个 worker 达到 5 MiB、每秒或正常
+Close 时刷新队列；崩溃可能丢失排队数据，Close 不返回逐条失败。
+`BulkNumWorkers` 每个后端实例默认 4（0 也选择 4），仅启用 bulk 时生效，
+增大会增加服务端并发压力。同步单条写入会增加请求数和调用延迟。
+这些选项不改变查询行为或 SDK 重试策略。
 
 #### 8.2 结果链接
 

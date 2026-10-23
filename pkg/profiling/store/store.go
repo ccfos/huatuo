@@ -38,6 +38,11 @@ type Config struct {
 	Username  string
 	Password  string
 	Index     string
+	// Nil keeps synchronous writes; only explicit false enables asynchronous bulk.
+	DisableBulk *bool
+	// BulkNumWorkers sets per-backend write concurrency only when bulk is enabled;
+	// zero selects 4. Async failures are logged, not returned to Save callers.
+	BulkNumWorkers int
 }
 
 // Filter selects profiling aggregation windows.
@@ -63,13 +68,18 @@ type Store struct {
 }
 
 // NewFromConfig creates profiling storage backed by Elasticsearch.
-func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
+func NewFromConfig(ctx context.Context, config *Config) (*Store, error) {
+	if config == nil {
+		return nil, errors.New("profiling store: configuration is required")
+	}
 	profileStore, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
-		Driver:      "elasticsearch",
-		ESAddresses: config.Addresses,
-		ESUsername:  config.Username,
-		ESPassword:  config.Password,
-		ESIndex:     config.Index,
+		Driver:           "elasticsearch",
+		ESAddresses:      config.Addresses,
+		ESUsername:       config.Username,
+		ESPassword:       config.Password,
+		ESIndex:          config.Index,
+		ESDisableBulk:    config.DisableBulk,
+		ESBulkNumWorkers: config.BulkNumWorkers,
 	}, Collection, mapper{})
 	if err != nil {
 		return nil, err
@@ -80,6 +90,7 @@ func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
 	commits, err := newCommitStore(ctx, &driver.Config{
 		Driver: "elasticsearch", ESAddresses: config.Addresses, ESUsername: config.Username,
 		ESPassword: config.Password, ESIndex: config.Index,
+		ESDisableBulk: config.DisableBulk, ESBulkNumWorkers: config.BulkNumWorkers,
 	})
 	if err != nil {
 		return nil, errors.Join(err, profileStore.Close(context.WithoutCancel(ctx)))

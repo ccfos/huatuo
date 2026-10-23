@@ -44,6 +44,11 @@ type ElasticsearchConfig struct {
 	Username  string
 	Password  string
 	Index     string
+	// Nil keeps synchronous writes; only explicit false enables asynchronous bulk.
+	DisableBulk *bool
+	// BulkNumWorkers sets per-backend write concurrency only when bulk is enabled;
+	// zero selects 4. Async failures are logged, not returned to Save callers.
+	BulkNumWorkers int
 }
 
 // LocalFileConfig contains local file backend settings.
@@ -91,11 +96,13 @@ func NewFromConfig(
 	if config.Elasticsearch != nil {
 		backendConfig := config.Elasticsearch
 		backend, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
-			Driver:      "elasticsearch",
-			ESAddresses: backendConfig.Addresses,
-			ESUsername:  backendConfig.Username,
-			ESPassword:  backendConfig.Password,
-			ESIndex:     backendConfig.Index,
+			Driver:           "elasticsearch",
+			ESAddresses:      backendConfig.Addresses,
+			ESUsername:       backendConfig.Username,
+			ESPassword:       backendConfig.Password,
+			ESIndex:          backendConfig.Index,
+			ESDisableBulk:    backendConfig.DisableBulk,
+			ESBulkNumWorkers: backendConfig.BulkNumWorkers,
 		}, Collection, mapper{})
 		if err != nil {
 			return nil, fmt.Errorf("new tracing document store (elasticsearch): %w", err)

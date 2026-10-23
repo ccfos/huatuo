@@ -82,12 +82,12 @@ storage_remote_has_events() {
 	jq -e '._shards.failed == 0 and .count > 0' "${STORAGE_RESPONSE}" > /dev/null 2>&1
 }
 
-assert_storage_async_write() {
+assert_storage_live_write() {
 	if ! wait_until 30 0.5 storage_remote_has_events; then
-		report_http_response "async write count" "${STORAGE_RESPONSE}" "${STORAGE_ERRORS}"
+		report_http_response "live write count" "${STORAGE_RESPONSE}" "${STORAGE_ERRORS}"
 		fatal "no events visible while bamai is running: curl=${storage_curl_status}, HTTP=${storage_http_status}"
 	fi
-	log_info "async writes visible before shutdown: $(< "${STORAGE_RESPONSE}")"
+	log_info "writes visible before shutdown: $(< "${STORAGE_RESPONSE}")"
 }
 
 assert_storage_event_counts() {
@@ -107,7 +107,7 @@ assert_storage_event_counts() {
 
 storage_run_backend() {
 	local backend=$1
-	HUATUO_BAMAI_TEST_TMPDIR="${HUATUO_BAMAI_TEST_TMPDIR}/${backend}"
+	HUATUO_BAMAI_TEST_TMPDIR="${HUATUO_BAMAI_TEST_TMPDIR}/${backend}-disable-bulk-${storage_disable_bulk}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
 	readonly STORAGE_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/dropwatch"
 	readonly STORAGE_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/storage-response.json"
@@ -128,36 +128,38 @@ storage_run_backend() {
 	integration_huatuo_bamai_start write_storage_events_config \
 		--region integration --disable-kubelet --log-debug
 	wait_until 20 0.2 storage_local_event_ready || fatal "localfile storage did not receive an event"
-	assert_storage_async_write
+	assert_storage_live_write
 	assert_huatuo_bamai_shutdown
 	assert_storage_event_counts
 	assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"
 }
 
 storage_result=0
-for storage_backend in opensearch_v2 elasticsearch_v8 elasticsearch_v7; do
-	# An if/|| around the subshell would disable errexit inside its functions.
-	set +e
-	(
+for storage_disable_bulk in true false; do
+	for storage_backend in opensearch_v2 elasticsearch_v8 elasticsearch_v7; do
+		# An if/|| around the subshell would disable errexit inside its functions.
+		set +e
+		(
+			set -e
+			storage_run_backend "${storage_backend}"
+		)
+		storage_status=$?
 		set -e
-		storage_run_backend "${storage_backend}"
-	)
-	storage_status=$?
-	set -e
-	case ${storage_status} in
-	0)
-		log_info "PASS: ${storage_backend}"
-		;;
-	77)
-		log_info "SKIP: ${storage_backend}"
-		if ((storage_result == 0)); then
-			storage_result=77
-		fi
-		;;
-	*)
-		log_error "FAIL: ${storage_backend} (exit ${storage_status})"
-		storage_result=1
-		;;
-	esac
+		case ${storage_status} in
+		0)
+			log_info "PASS: ${storage_backend}"
+			;;
+		77)
+			log_info "SKIP: ${storage_backend}"
+			if ((storage_result == 0)); then
+				storage_result=77
+			fi
+			;;
+		*)
+			log_error "FAIL: ${storage_backend} (exit ${storage_status})"
+			storage_result=1
+			;;
+		esac
+	done
 done
 exit "${storage_result}"
