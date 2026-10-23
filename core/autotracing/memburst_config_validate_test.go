@@ -14,7 +14,20 @@
 
 package autotracing
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestParseMemInfoRequiresRequestedKeys(t *testing.T) {
+	_, err := parseMemInfo(strings.NewReader("Active(anon): 10 kB\n"), map[string]bool{
+		"Active(anon)":   true,
+		"Inactive(anon)": true,
+	})
+	if err == nil || !strings.Contains(err.Error(), `"Inactive(anon)"`) {
+		t.Fatalf("parseMemInfo() error = %v, want missing-key error", err)
+	}
+}
 
 func TestValidateMemBurst(t *testing.T) {
 	valid := MemBurstConfig{
