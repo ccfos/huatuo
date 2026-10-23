@@ -31,14 +31,14 @@ func TestReadGoTable(t *testing.T) {
 	if err := os.WriteFile(source, []byte("package main\nfunc main() {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"exe", "pie", "stripped"} {
+	for _, mode := range []string{"exe", "pie", "stripped", "stripped-pie"} {
 		t.Run(mode, func(t *testing.T) {
 			path := filepath.Join(dir, mode)
 			args := []string{"build", "-o", path}
-			if mode == "pie" {
+			if mode == "pie" || mode == "stripped-pie" {
 				args = append(args, "-buildmode=pie")
 			}
-			if mode == "stripped" {
+			if mode == "stripped" || mode == "stripped-pie" {
 				args = append(args, "-ldflags=-s -w")
 			}
 			args = append(args, source)
@@ -57,6 +57,50 @@ func TestReadGoTable(t *testing.T) {
 			fn := table.LookupFunc("main.main")
 			if fn == nil || table.PCToFunc(fn.Entry) != fn {
 				t.Fatal("missing main.main at link-time PC")
+			}
+			resolver := NewUsymResolver()
+			cache := &elfSymbolCache{}
+			pcs := []uint64{fn.Entry, fn.Entry}
+			for range 2 {
+				names, err := resolver.resolveELFPCs(path, cache, pcs)
+				if err != nil || names[fn.Entry] != "main.main" {
+					t.Fatalf("resolve Go PCs: names=%v err=%v", names, err)
+				}
+			}
+			if mode == "stripped" || mode == "stripped-pie" {
+				if cache.goTable == nil || len(cache.namesByELFPC) != 1 {
+					t.Fatal("Go fallback table or deduplicated PC was not cached")
+				}
+				if cache.state.metadataBytes > resolver.elfSymbolLimits.MaxMetadataBytes ||
+					cache.state.nameBytes > resolver.elfSymbolLimits.MaxNameBytes ||
+					cache.state.symbolCount > resolver.elfSymbolLimits.MaxSymbolAndCacheCount {
+					t.Fatal("Go fallback exceeded shared ELF budgets")
+				}
+				for _, resource := range []string{"metadata", "count", "names", "length"} {
+					t.Run(resource, func(t *testing.T) {
+						limits := DefaultELFSymbolLimits()
+						switch resource {
+						case "metadata":
+							limits.MaxMetadataBytes = 0
+						case "count":
+							limits.MaxSymbolAndCacheCount = 0
+						case "names":
+							limits.MaxNameBytes = 0
+						case "length":
+							limits.MaxNameLength = 0
+						}
+						bounded := NewUsymResolver(WithELFSymbolLimits(limits))
+						failed := &elfSymbolCache{}
+						names, err := bounded.resolveELFPCs(path, failed, pcs)
+						if !errors.Is(err, errELFSymbolLimit) || len(names) != 0 || failed.goTable != nil {
+							t.Fatalf("Go budget not enforced: names=%v err=%v", names, err)
+						}
+						_, again := bounded.resolveELFPCs(path, failed, pcs)
+						if !errors.Is(again, errELFSymbolLimit) || !failed.goTableChecked {
+							t.Fatalf("Go budget failure was not retained: %v", again)
+						}
+					})
+				}
 			}
 			if _, err := file.Section(".text").Data(); err != nil {
 				t.Fatalf("caller file closed: %v", err)

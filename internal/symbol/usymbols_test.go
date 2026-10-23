@@ -404,26 +404,58 @@ func TestUsymResolverBatchesAndRelocatesPIEAddresses(t *testing.T) {
 		baseAddr = uint64(0x70000000)
 		module   = "/usr/bin/huatuo-pie"
 	)
+	for _, linkBase := range []uint64{0, 0x400000} {
+		t.Run(strconv.FormatUint(linkBase, 16), func(t *testing.T) {
+			key := cacheKey{inode: 1}
+			cache := &executableCache{
+				symbols:         elfSymbolCache{namesByELFPC: map[uint64]string{linkBase + 0x1001: "pie_func"}},
+				typ:             elf.ET_DYN,
+				textVaddrOffset: linkBase,
+			}
+			resolver := NewUsymResolver()
+			resolver.processes[pid] = processELF{cacheKey: key, path: module}
+			resolver.exeCache[key] = cache
+			resolver.procmaps[pid] = sections{&procfs.ProcMap{
+				StartAddr: uintptr(baseAddr + 0x1000),
+				EndAddr:   uintptr(baseAddr + 0x2000),
+				Offset:    0x1000,
+				Pathname:  module,
+			}}
+
+			got := resolver.resolveAddrs(pid, []uint64{baseAddr + 0x1001, baseAddr + 0x1001})
+			if !slices.Equal(got, []string{"pie_func", "pie_func"}) {
+				t.Fatalf("resolveAddrs(PIE): got %v, want duplicate pie_func frames", got)
+			}
+			if len(cache.symbols.namesByELFPC) != 1 {
+				t.Fatalf("resolveAddrs(PIE): cached %d PCs, want one deduplicated PC", len(cache.symbols.namesByELFPC))
+			}
+		})
+	}
+}
+
+func BenchmarkUsymResolverPIEAddresses(b *testing.B) {
+	const (
+		pid      = uint32(1001)
+		baseAddr = uint64(0x70000000)
+		module   = "/usr/bin/huatuo-pie"
+	)
 	key := cacheKey{inode: 1}
-	cache := &executableCache{
+	resolver := NewUsymResolver()
+	resolver.processes[pid] = processELF{cacheKey: key, path: module}
+	resolver.exeCache[key] = &executableCache{
 		symbols: elfSymbolCache{namesByELFPC: map[uint64]string{0x1001: "pie_func"}},
 		typ:     elf.ET_DYN,
 	}
-	resolver := NewUsymResolver()
-	resolver.processes[pid] = processELF{cacheKey: key, path: module}
-	resolver.exeCache[key] = cache
 	resolver.procmaps[pid] = sections{&procfs.ProcMap{
 		StartAddr: uintptr(baseAddr),
 		EndAddr:   uintptr(baseAddr + 0x2000),
 		Pathname:  module,
 	}}
-
-	got := resolver.resolveAddrs(pid, []uint64{baseAddr + 0x1001, baseAddr + 0x1001})
-	if !slices.Equal(got, []string{"pie_func", "pie_func"}) {
-		t.Fatalf("resolveAddrs(PIE): got %v, want duplicate pie_func frames", got)
-	}
-	if len(cache.symbols.namesByELFPC) != 1 {
-		t.Fatalf("resolveAddrs(PIE): cached %d PCs, want one deduplicated PC", len(cache.symbols.namesByELFPC))
+	stack := []uint64{baseAddr + 0x1001, baseAddr + 0x1001}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		resolver.resolveAddrs(pid, stack)
 	}
 }
 

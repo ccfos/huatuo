@@ -31,33 +31,50 @@ const (
 // ReadGoTable reads and validates Go function metadata without taking ownership of file.
 // Returned tables contain link-time PCs; callers own relocation and return-PC handling.
 func ReadGoTable(ctx context.Context, file *elf.File) (*gosym.Table, error) {
+	table, _, err := readGoTable(ctx, file, ELFSymbolLimits{
+		MaxMetadataBytes:       maxGoSymbolBytes,
+		MaxSymbolAndCacheCount: maxGoSymbolEntries,
+		MaxNameBytes:           maxGoSymbolNames,
+		MaxNameLength:          maxGoSymbolName,
+	})
+	return table, err
+}
+
+type goSymbolUsage struct {
+	metadataBytes uint64
+	nameBytes     uint64
+	symbolCount   uint64
+}
+
+func readGoTable(ctx context.Context, file *elf.File, limits ELFSymbolLimits) (*gosym.Table, goSymbolUsage, error) {
+	var usage goSymbolUsage
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, usage, err
 	}
-	pcln, err := readPCLN(ctx, file)
+	pcln, err := readPCLN(ctx, file, limits.MaxMetadataBytes)
 	if err != nil {
-		return nil, err
+		return nil, usage, err
 	}
-	if err := validatePCLN(ctx, pcln, file.ByteOrder); err != nil {
-		return nil, err
+	if err := validatePCLN(ctx, pcln, file.ByteOrder, limits, &usage); err != nil {
+		return nil, usage, err
 	}
 	textStart, err := goTextStart(file, pcln)
 	if err != nil {
-		return nil, err
+		return nil, usage, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, usage, err
 	}
 	// Supported Go releases (1.18+) keep symbols in pclntab. Do not parse
 	// obsolete .gosymtab records, whose names can expand during decoding.
 	table, err := gosym.NewTable(nil, gosym.NewLineTable(pcln, textStart))
 	if err != nil {
-		return nil, fmt.Errorf("parse Go symbol table: %w", err)
+		return nil, usage, fmt.Errorf("parse Go symbol table: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, usage, err
 	}
-	return table, nil
+	return table, usage, nil
 }
 
 const (
@@ -87,7 +104,7 @@ func goSymbolBudget(rawBytes, functions, files uint64) (uint64, error) {
 
 // File-byte limits alone do not bound gosym's count-driven allocations or
 // overlapping names. Validate the supported layout before invoking the parser.
-func validatePCLN(ctx context.Context, data []byte, order binary.ByteOrder) error {
+func validatePCLN(ctx context.Context, data []byte, order binary.ByteOrder, limits ELFSymbolLimits, usage *goSymbolUsage) error {
 	if _, err := pclnTextStart(data, order); err != nil {
 		return err
 	}
@@ -112,6 +129,12 @@ func validatePCLN(ctx context.Context, data []byte, order binary.ByteOrder) erro
 	if err != nil {
 		return err
 	}
+	metadataBytes := uint64(maxGoSymbolBytes) - budget
+	if metadataBytes > limits.MaxMetadataBytes || nfunc > limits.MaxSymbolAndCacheCount {
+		return fmt.Errorf("%w: Go function metadata exceeds configured budget", errELFSymbolLimit)
+	}
+	budget = min(budget, limits.MaxMetadataBytes-metadataBytes)
+	initialBudget := budget
 	previous := uint64(headerSize)
 	for index := 3; index <= 7; index++ {
 		offset := word(index)
@@ -125,25 +148,27 @@ func validatePCLN(ctx context.Context, data []byte, order binary.ByteOrder) erro
 		return fmt.Errorf("Go pclntab function table is truncated")
 	}
 	names := data[word(3):word(4)]
-	remaining := maxGoSymbolNames
+	remaining := min(uint64(maxGoSymbolNames), limits.MaxNameBytes)
+	initialNames := remaining
 	checkName := func(table []byte, offset uint64) (int, error) {
 		if offset >= uint64(len(table)) {
 			return 0, fmt.Errorf("Go pclntab name offset is out of bounds")
 		}
 		tail := table[offset:]
-		if len(tail) > maxGoSymbolName+1 {
-			tail = tail[:maxGoSymbolName+1]
+		maxLength := min(uint64(maxGoSymbolName), limits.MaxNameLength)
+		if uint64(len(tail)) > maxLength+1 {
+			tail = tail[:maxLength+1]
 		}
 		size := bytes.IndexByte(tail, 0)
-		if size < 0 || size+1 > remaining {
-			return 0, fmt.Errorf("Go pclntab names exceed safety limit")
+		if size < 0 || uint64(size+1) > remaining {
+			return 0, fmt.Errorf("%w: Go pclntab names exceed configured budget", errELFSymbolLimit)
 		}
-		remaining -= size + 1
+		remaining -= uint64(size + 1)
 		// Charge each decoded name, even when offsets overlap, with room
 		// for allocator rounding of short strings.
 		charge := uint64(size + 16)
 		if charge > budget {
-			return 0, fmt.Errorf("Go symbol metadata exceeds total memory budget")
+			return 0, fmt.Errorf("%w: Go symbol metadata exceeds total memory budget", errELFSymbolLimit)
 		}
 		budget -= charge
 		return size + 1, nil
@@ -171,6 +196,11 @@ func validatePCLN(ctx context.Context, data []byte, order binary.ByteOrder) erro
 			return err
 		}
 		position += uint64(size)
+	}
+	*usage = goSymbolUsage{
+		metadataBytes: metadataBytes + initialBudget - budget,
+		nameBytes:     initialNames - remaining,
+		symbolCount:   nfunc,
 	}
 	return nil
 }
@@ -213,14 +243,18 @@ func pclnTextStart(pcln []byte, byteOrder binary.ByteOrder) (uint64, error) {
 	return byteOrder.Uint64(pcln[offset : offset+pointerSize]), nil
 }
 
-func readPCLN(ctx context.Context, file *elf.File) ([]byte, error) {
+func readPCLN(ctx context.Context, file *elf.File, maxBytes uint64) ([]byte, error) {
+	maxBytes = min(maxBytes, uint64(maxGoSymbolBytes))
+	if maxBytes < goSymbolFixedBytes {
+		return nil, fmt.Errorf("%w: Go pclntab parser exceeds configured budget", errELFSymbolLimit)
+	}
 	section := file.Section(".gopclntab")
 	if section == nil {
 		section = file.Section(".data.rel.ro.gopclntab")
 	}
 	if section != nil {
-		if section.Size > maxGoSymbolBytes-goSymbolFixedBytes {
-			return nil, fmt.Errorf("Go pclntab exceeds total memory budget")
+		if section.Flags&elf.SHF_COMPRESSED != 0 || section.Size > maxBytes-goSymbolFixedBytes {
+			return nil, fmt.Errorf("%w: Go pclntab is compressed or exceeds metadata budget", errELFSymbolLimit)
 		}
 		data, err := section.Data()
 		if err != nil {
@@ -235,7 +269,7 @@ func readPCLN(ctx context.Context, file *elf.File) ([]byte, error) {
 		return nil, err
 	}
 	symbols, err := ReadELFSymbols(ctx, file, elf.SHT_SYMTAB,
-		maxGoELFMetadataBytes, maxGoELFSymbols, func(name string) bool {
+		min(maxGoELFMetadataBytes, maxBytes), maxGoELFSymbols, func(name string) bool {
 			return name == "runtime.pclntab" || name == "runtime.epclntab"
 		})
 	if err != nil {
@@ -260,10 +294,10 @@ func readPCLN(ctx context.Context, file *elf.File) ([]byte, error) {
 	if end <= start {
 		return nil, fmt.Errorf("invalid pclntab range %#x-%#x", start, end)
 	}
-	if end-start > maxGoSymbolBytes-goSymbolFixedBytes {
-		return nil, fmt.Errorf("Go pclntab exceeds total memory budget")
+	if end-start > maxBytes-goSymbolFixedBytes {
+		return nil, fmt.Errorf("%w: Go pclntab exceeds metadata budget", errELFSymbolLimit)
 	}
-	data, err := ReadELFVirtualRange(file, start, end-start, maxGoELFMetadataBytes)
+	data, err := ReadELFVirtualRange(file, start, end-start, min(maxGoELFMetadataBytes, maxBytes))
 	if err != nil {
 		return nil, err
 	}
