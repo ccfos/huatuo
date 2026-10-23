@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,6 +28,7 @@ func readJSON(path string, dst any) error {
 	if err != nil {
 		return err
 	}
+
 	return json.Unmarshal(data, dst)
 }
 
@@ -35,10 +37,12 @@ func writeJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
+
 	if path == "" {
 		fmt.Println(string(data))
 		return nil
 	}
+
 	return os.WriteFile(path, data, 0o600)
 }
 
@@ -65,4 +69,33 @@ func runConcurrent(workers, rounds int, interval time.Duration, check func() err
 	close(errs)
 
 	return <-errs
+}
+
+func collectConcurrent[T any](
+	workers, rounds int,
+	interval time.Duration,
+	collect func(index int) (T, error),
+) ([]T, error) {
+	var mu sync.Mutex
+	var index atomic.Uint64
+	samples := make([]T, 0, workers*rounds)
+	err := runConcurrent(
+		workers,
+		rounds,
+		interval,
+		func() error {
+			sample, err := collect(int(index.Add(1)) - 1)
+			if err != nil {
+				return err
+			}
+
+			mu.Lock()
+			samples = append(samples, sample)
+			mu.Unlock()
+
+			return nil
+		},
+	)
+
+	return samples, err
 }

@@ -38,16 +38,23 @@ cpu_load_ready() {
 	grep -Fxq "ready $2" "$1"
 }
 
-cpu_load_worker_pid() {
+cpu_load_worker_pids() {
 	awk -v generation="$2" '
 		$1 == "workers" && $2 == generation {
-			if (NF != 3) exit 1
-			print $3
+			if (NF < 3) exit 1
+			for (i=3; i<=NF; i++) print $i
 			found=1
 			exit
 		}
 		END { if (!found) exit 1 }
 	' "$1"
+}
+
+cpu_load_worker_pid() {
+	local pids
+	pids=$(cpu_load_worker_pids "$@") || return 1
+	[[ ${pids} != *$'\n'* ]] || return 1
+	printf '%s\n' "${pids}"
 }
 
 cpu_load_prepare_host() {

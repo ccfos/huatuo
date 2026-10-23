@@ -56,6 +56,7 @@ EOF
 		[ "$count" -ge 1 ] && [ "$count" -le 128 ] || fail "workers must be between 1 and 128: $count"
 		[ "$milli" -ge 0 ] && [ "$milli" -le 2000 ] || fail "millicpu must be between 0 and 2000: $milli"
 		stop_load
+		worker_count=$count
 		set -- --timeout 1h --abort --metrics-brief --temp-path /tmp --keep-name
 		case "$mode" in
 		user)
@@ -72,6 +73,14 @@ EOF
 				[ "$milli" -eq 0 ] || [ "$milli" -eq $((1000 * count)) ] \
 					|| fail 'host syscall workloads require one full CPU per worker'
 				set -- "$@" --null "$count"
+				if [ "$mode" = mixed ]; then
+					[ "$count" -eq 1 ] || fail 'host mixed workload requires one CPU'
+					cpu=$(awk '/^Cpus_allowed_list:/ {n=split($2, cpus, /[-,]/); print cpus[n]}' /proc/self/status)
+					# Equal-weight workers share one CPU to keep both CPU modes visible.
+					set -- "$@" --cpu 1 --cpu-method int64 --taskset "$cpu"
+					worker_count=2
+					printf 'host mixed cpu=%s workers=%s\n' "$cpu" "$worker_count"
+				fi
 			else
 				percent=100
 				[ "$milli" -eq 0 ] || percent=$((milli / 10 / count))
@@ -93,11 +102,11 @@ EOF
 			while [ "$attempt" -lt 50 ]; do
 				read -r children < "/proc/$load_pid/task/$load_pid/children" || true
 				set -- $children
-				[ "$#" -ne "$count" ] || break
+				[ "$#" -ne "$worker_count" ] || break
 				sleep 0.1
 				attempt=$((attempt + 1))
 			done
-			[ "$#" -eq "$count" ] || fail "stress-ng did not create $count workers; inspect its diagnostics"
+			[ "$#" -eq "$worker_count" ] || fail "stress-ng did not create $worker_count workers; inspect its diagnostics"
 			printf 'workers %s %s\n' "$generation" "$children"
 		fi
 		previous=$command
