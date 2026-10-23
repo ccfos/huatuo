@@ -182,6 +182,10 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 					ProgramName: "trace_mmap",
 					Symbol:      "do_mmap",
 				},
+				{
+					ProgramName: "trace_mmap_return",
+					Symbol:      "do_mmap",
+				},
 			},
 		},
 		{
