@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	testutils "github.com/ccfos/huatuo/internal/testing"
 	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
@@ -88,7 +89,7 @@ func (r *eventRecorder) waitN(t *testing.T, n int) []capturedEvent {
 func newTestServer(t *testing.T) (*toolstream.Server, string) {
 	t.Helper()
 
-	sockPath := t.TempDir() + "/test.sock"
+	sockPath := testutils.SocketPath(t)
 
 	srv, err := toolstream.NewServer(sockPath)
 	if err != nil {

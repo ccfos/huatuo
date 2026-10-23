@@ -17,21 +17,370 @@ package toolstream_test
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	capnp "capnproto.org/go/capnp/v3"
+
+	testutils "github.com/ccfos/huatuo/internal/testing"
 	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
 )
+
+func TestClientEventCancellationUnblocksBackpressure(t *testing.T) {
+	path := testutils.SocketPath(t)
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:     path,
+		ServiceName:  "events",
+		Version:      "test",
+		EventContext: ctx,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peer, err := listener.Accept()
+	if err != nil {
+		_ = client.Close()
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	defer client.Close()
+	finished := make(chan error, 1)
+	go func() { finished <- client.SendEvent(strings.Repeat("x", 1<<20)) }()
+
+	select {
+	case err := <-finished:
+		t.Fatalf("Write completed without a reader: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	cancel()
+
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Write = %v, want cancellation", err)
+		}
+	case <-time.After(toolstream.EventCloseTimeout + time.Second):
+		t.Fatal("cancellation did not interrupt Write")
+	}
+
+	if err := client.FinishEvents(); err != nil {
+		t.Fatalf("Close after cancellation: %v", err)
+	}
+
+	if err := client.FinishEvents(); err != nil {
+		t.Fatalf("repeated Close: %v", err)
+	}
+
+	if err := client.Send(t.Context(), nil, toolstream.SendOptions{}); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("client connection remained open: %v", err)
+	}
+}
+
+func TestClientEventCanceledFinalWriteUnblocksBackpressure(t *testing.T) {
+	path := testutils.SocketPath(t)
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:     path,
+		ServiceName:  "events",
+		Version:      "test",
+		EventContext: ctx,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peer, err := listener.Accept()
+	if err != nil {
+		_ = client.Close()
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	defer client.Close()
+	cancel()
+
+	finished := make(chan error, 1)
+	go func() { finished <- client.SendEvent(strings.Repeat("x", 1<<20)) }()
+
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("final Write = %v, want cancellation", err)
+		}
+	case <-time.After(toolstream.EventCloseTimeout + 2*time.Second):
+		// Join the sender before deferred Close can touch its encoder.
+		_ = peer.Close()
+		<-finished
+		t.Fatal("canceled final event exceeded its finalization budget")
+	}
+
+	for range 2 {
+		if err := client.FinishEvents(); err != nil {
+			t.Fatalf("Close after canceled final event: %v", err)
+		}
+	}
+}
+
+func TestClientEventCancellationFinishesActiveFrame(t *testing.T) {
+	path := testutils.SocketPath(t)
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:     path,
+		ServiceName:  "events",
+		Version:      "test",
+		EventContext: ctx,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peer, err := listener.Accept()
+	if err != nil {
+		_ = client.Close()
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	if err := peer.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	decoder := capnp.NewDecoder(peer)
+	// Consume the handshake before withholding reads from a live payload.
+	handshake, err := decoder.Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handshake.Release()
+	defer client.Close()
+	finished := make(chan error, 1)
+	go func() { finished <- client.SendEvent(strings.Repeat("x", 1<<20)) }()
+
+	select {
+	case err := <-finished:
+		t.Fatalf("large frame unexpectedly completed while receiver was paused: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	cancel()
+
+	// A receiver that resumes within the grace must receive the whole frame;
+	// closing immediately on cancellation would corrupt its Cap'n Proto payload.
+	message, err := decoder.Decode()
+	if err != nil {
+		t.Fatalf("cancellation truncated the active frame: %v", err)
+	}
+
+	message.Release()
+	if err := <-finished; err != nil {
+		t.Fatalf("healthy receiver could not finish active frame: %v", err)
+	}
+
+	if err := client.SendEvent("final event"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.FinishEvents(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, wantEnd := range []bool{false, true} {
+		message, err := decoder.Decode()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		root, err := transport.ReadRootMessage(message)
+		if err != nil {
+			message.Release()
+			t.Fatal(err)
+		}
+
+		chunk, err := root.Chunk()
+		if err != nil {
+			message.Release()
+			t.Fatal(err)
+		}
+
+		gotEnd := chunk.End()
+		message.Release()
+		if gotEnd != wantEnd {
+			t.Fatalf("final frame End=%t, want %t", gotEnd, wantEnd)
+		}
+	}
+}
+
+func TestClientEventFinishSendsEnd(t *testing.T) {
+	path := testutils.SocketPath(t)
+	server, err := toolstream.NewServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ended := make(chan struct{}, 1)
+	toolstream.Register(server, "events", func(_ context.Context, request *toolstream.Request[string]) error {
+		if request.End {
+			ended <- struct{}{}
+		}
+
+		return nil
+	})
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:     path,
+		ServiceName:  "events",
+		Version:      "test",
+		EventContext: ctx,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.SendEvent("event"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.FinishEvents(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-ended:
+	case <-time.After(2 * time.Second):
+		t.Fatal("FinishEvents did not send End")
+	}
+
+	if err := client.Send(t.Context(), nil, toolstream.SendOptions{}); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("FinishEvents did not release connection: %v", err)
+	}
+}
+
+func TestClientEventEndFailureStillClosesConnection(t *testing.T) {
+	path := testutils.SocketPath(t)
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:     path,
+		ServiceName:  "events",
+		Version:      "test",
+		EventContext: ctx,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peer, err := listener.Accept()
+	if err != nil {
+		_ = client.Close()
+		t.Fatal(err)
+	}
+
+	if err := peer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	closeErr := client.FinishEvents()
+	if closeErr == nil {
+		t.Fatal("Close accepted an End frame after peer closed")
+	}
+
+	if err := client.FinishEvents(); !errors.Is(err, closeErr) {
+		t.Fatalf("repeated Close = %v, want original error %v", err, closeErr)
+	}
+
+	if err := client.Send(t.Context(), nil, toolstream.SendOptions{}); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("failed End did not release connection: %v", err)
+	}
+}
+
+func BenchmarkClientEventOutput(b *testing.B) {
+	for _, mode := range []string{"background send", "event output"} {
+		b.Run(mode, func(b *testing.B) {
+			path := testutils.SocketPath(b)
+			server, err := toolstream.NewServer(path)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			toolstream.Register(server, "events", func(context.Context, *toolstream.Request[string]) error {
+				return nil
+			})
+			if err := server.Start(); err != nil {
+				b.Fatal(err)
+			}
+			defer server.Close()
+			ctx, cancel := context.WithCancel(b.Context())
+			defer cancel()
+			client, err := toolstream.NewClient(&toolstream.ClientOptions{
+				SockPath:     path,
+				ServiceName:  "events",
+				Version:      "benchmark",
+				EventContext: ctx,
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			defer func() {
+				if err := client.FinishEvents(); err != nil {
+					b.Errorf("FinishEvents: %v", err)
+				}
+			}()
+			write := client.SendEvent
+			if mode == "background send" {
+				write = func(event any) error { return client.Send(context.Background(), event, toolstream.SendOptions{}) }
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := write("event payload"); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
 
 func TestCommitAcknowledgesAllWindowsAndPublication(t *testing.T) {
 	for _, failure := range []string{"", "window", "publish", "end"} {
 		name := failure
 		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "commit.sock")
+			path := testutils.SocketPath(t)
 			server, err := toolstream.NewServer(path)
 			if err != nil {
 				t.Fatal(err)
@@ -105,7 +454,7 @@ func TestCommitAcknowledgesAllWindowsAndPublication(t *testing.T) {
 }
 
 func TestCommitCancellationDoesNotClaimRollback(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "commit.sock")
+	path := testutils.SocketPath(t)
 	server, err := toolstream.NewServer(path)
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +500,7 @@ func TestConcurrentServicesAndDuplicateConnection(t *testing.T) {
 			name = "failed window"
 		}
 		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "commit.sock")
+			path := testutils.SocketPath(t)
 			server, err := toolstream.NewServer(path)
 			if err != nil {
 				t.Fatal(err)
@@ -228,7 +577,7 @@ func TestConcurrentServicesAndDuplicateConnection(t *testing.T) {
 }
 
 func TestSendFinalDataAndCommitInOneFrame(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "commit.sock")
+	path := testutils.SocketPath(t)
 	server, err := toolstream.NewServer(path)
 	if err != nil {
 		t.Fatal(err)

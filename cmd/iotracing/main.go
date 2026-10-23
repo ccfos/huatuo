@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -119,16 +118,9 @@ func mainAction(c *cli.Context) (returnErr error) {
 	}
 
 	if client != nil {
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Context), 5*time.Second)
-			defer cancel()
-			if err := errors.Join(client.Send(ctx, nil, toolstream.SendOptions{End: true}), client.Close()); err != nil {
-				returnErr = errors.Join(
-					returnErr,
-					fmt.Errorf("close toolstream: %w", err),
-				)
-			}
-		}()
+		// The final report writer closes this connection; this fallback also
+		// covers setup failures before ownership reaches that writer.
+		defer client.Close()
 	}
 
 	if err := bpf.Init(&bpf.Option{
@@ -139,7 +131,37 @@ func mainAction(c *cli.Context) (returnErr error) {
 	defer bpf.Shutdown()
 
 	result, err := runTrace(c.Context, c.String(cliFlagBpfPath), cfg, filters)
-	return writeReport(newWriter(c.String(cliFlagOutput), client), result, err)
+	if client != nil {
+		return writeToolstreamReport(
+			c.Context,
+			client,
+			result,
+			err,
+		)
+	}
+
+	return writeReport(newWriter(c.String(cliFlagOutput), nil), result, err)
+}
+
+func writeToolstreamReport(
+	ctx context.Context,
+	client *toolstream.Client,
+	result *types.IOTracingSnapshot,
+	traceErr error,
+) (returnErr error) {
+	// A stopped collection still publishes its final snapshot, but neither a
+	// blocked report nor its End frame may hold shutdown indefinitely.
+	if err := client.BeginFinalReport(context.WithoutCancel(ctx)); err != nil {
+		return err
+	}
+
+	defer func() {
+		if err := client.FinishEvents(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close toolstream: %w", err))
+		}
+	}()
+
+	return writeReport(newWriter("", client), result, traceErr)
 }
 
 // Publish captured observations before returning a collection failure.
@@ -152,11 +174,12 @@ func writeReport(sink writer, result *types.IOTracingSnapshot, traceErr error) e
 	if writeErr != nil {
 		writeErr = fmt.Errorf("write output: %w", writeErr)
 	}
+
 	return errors.Join(traceErr, writeErr)
 }
 
-// openToolstream returns a connected toolstream client when
-// --output-storage is set, or nil otherwise. The caller owns End().
+// openToolstream returns a connected client when --output-storage is set.
+// The caller owns the connection until it transfers it to the final report writer.
 func openToolstream(c *cli.Context) (*toolstream.Client, error) {
 	path := c.String(cliFlagOutputStorage)
 	if path == "" {

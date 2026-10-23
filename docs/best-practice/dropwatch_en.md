@@ -271,6 +271,8 @@ dropwatch \
   --filter "tcp"
 ```
 
+After cancellation, Unix socket output gives the active event and final End one shared five-second budget. A stalled receiver is disconnected when the budget expires; unsent events and End may be lost. Exhausting this budget is a normal stop; independent encoding and transport errors remain reported.
+
 ### Configuration
 
 ```toml

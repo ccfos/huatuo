@@ -218,10 +218,22 @@ func (l *library) DcGetDeviceNetWorkHealth(ctx context.Context, cardId, deviceId
 	}
 
 	ch := make(chan result, 1)
+	l.Lock()
+	l.pendingNetworkRequests.Add(1)
+	l.Unlock()
+
 	go func() {
 		var health uint32
 		ret := dcGetDeviceNetWorkHealth(cardId, deviceId, &health)
-		ch <- result{health, checkReturnCode("dcmi_get_device_network_health", ret)}
+
+		// Receiving a result must also mean the native request no longer
+		// blocks reinitialization.
+		l.pendingNetworkRequests.Add(-1)
+
+		ch <- result{
+			health: health,
+			err:    checkReturnCode("dcmi_get_device_network_health", ret),
+		}
 	}()
 
 	select {

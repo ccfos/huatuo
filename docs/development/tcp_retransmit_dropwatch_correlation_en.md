@@ -198,6 +198,8 @@ Expired items output `warmup` or `wait_timeout`; unexpired items output `interru
 
 Shutdown does not guarantee draining kernel buffers. Trailing drops may be lost, ending otherwise matchable retransmissions early.
 
+After cancellation, Unix socket output shares one five-second finalization budget across the active send, pending results, and End; each event does not restart it. A healthy receiver gets the trailing results followed by one End. When the budget expires, the connection closes and pending user-space results and End may be lost. Exhausting the cancellation budget is a normal stop; independent encoding, transport, and status-read errors remain reported.
+
 ## 9. File Responsibilities
 
 ```text

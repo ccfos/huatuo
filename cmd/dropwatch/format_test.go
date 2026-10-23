@@ -16,19 +16,136 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/packet"
+	testutils "github.com/ccfos/huatuo/internal/testing"
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
+
+func TestSocketWriterCancellationUnblocksBackpressure(t *testing.T) {
+	path := testutils.SocketPath(t)
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sink, cleanup, err := newWriter(ctx, nil, &writerOptions{
+		socketPath: path,
+		toolName:   "dropwatch",
+		version:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cleanup() }()
+	peer, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	finished := make(chan error, 1)
+	go func() { finished <- sink.Write(&types.DropWatchTracing{Stack: strings.Repeat("x", 1<<20)}) }()
+
+	select {
+	case err := <-finished:
+		t.Fatalf("Write completed without a reader: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	cancel()
+
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Write = %v, want cancellation", err)
+		}
+	case <-time.After(toolstream.EventCloseTimeout + time.Second):
+		t.Fatal("run cancellation did not interrupt socket writer")
+	}
+
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup after normal cancellation: %v", err)
+	}
+}
+
+func TestSocketWriterPreservesMarshalFailureAfterCancellation(t *testing.T) {
+	// The packet parser retains an ARP protocol address of length one, which
+	// net.IP cannot marshal. Keep that real producer-to-output boundary covered.
+	header := packet.Hdr{
+		EthProto: 0x0806,
+		RawLen:   22,
+	}
+	copy(header.Raw[:], []byte{0, 1, 8, 0, 6, 1, 0, 1})
+	layers, err := packet.Parse(&header)
+	if err != nil || layers.ARP == nil || len(layers.ARP.SenderIP) != 1 {
+		t.Fatalf("Parse malformed ARP = %+v, %v", layers, err)
+	}
+
+	path := testutils.SocketPath(t)
+	server, err := toolstream.NewServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ended := make(chan struct{}, 1)
+	toolstream.Register(server, "dropwatch", func(_ context.Context, request *toolstream.Request[types.DropWatchTracing]) error {
+		if request.End {
+			ended <- struct{}{}
+		}
+
+		return nil
+	})
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sink, cleanup, err := newWriter(ctx, nil, &writerOptions{
+		socketPath: path,
+		toolName:   "dropwatch",
+		version:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cleanup() }()
+	cancel()
+
+	err = sink.Write(&types.DropWatchTracing{Layers: layers})
+	if err == nil || !strings.Contains(err.Error(), "invalid IP address") {
+		t.Fatalf("Write after cancellation = %v, want independent marshal failure", err)
+	}
+
+	if errors.Is(err, ctx.Err()) || errors.Is(err, toolstream.ErrEventOutputCanceled) {
+		t.Fatalf("marshal failure was classified as cancellation: %v", err)
+	}
+
+	if err := cleanup(); err != nil {
+		t.Fatalf("Close after marshal failure = %v, want healthy End delivery", err)
+	}
+
+	select {
+	case <-ended:
+	case <-time.After(time.Second):
+		t.Fatal("healthy receiver did not receive End after marshal failure")
+	}
+}
 
 // errWriter always fails Write with the configured error. Used to verify that
 // the dropwatch writers propagate IO errors instead of swallowing them.

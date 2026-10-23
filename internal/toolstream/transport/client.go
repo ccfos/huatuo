@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 
 	capnp "capnproto.org/go/capnp/v3"
@@ -106,14 +107,17 @@ func (c *Client) Send(ctx context.Context, data []byte, opts SendOptions) error 
 	if opts.Commit && !opts.End {
 		return errors.New("toolstream: commit requires end")
 	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	// Event writers may use a non-cancelable context on every sample.
 	if ctx.Done() != nil {
 		stop := context.AfterFunc(ctx, func() { _ = c.conn.Close() })
 		defer stop()
 	}
+
 	if err := c.writeFrame(func(chunk Chunk) error {
 		chunk.SetEnd(opts.End)
 		chunk.SetCommit(opts.Commit)
@@ -122,11 +126,20 @@ func (c *Client) Send(ctx context.Context, data []byte, opts SendOptions) error 
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("send frame: %w", errors.Join(err, ctx.Err()))
+		// Only a locally interrupted write is a context failure. A concurrent
+		// cancellation must not relabel independent encoding or peer failures.
+		isClosed := errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe)
+		if ctx.Err() != nil && isClosed {
+			return ctx.Err()
+		}
+
+		return fmt.Errorf("send frame: %w", err)
 	}
+
 	if !opts.Commit {
 		return nil
 	}
+
 	return c.receiveCommitResult(ctx)
 }
 
