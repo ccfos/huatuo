@@ -79,6 +79,26 @@ func TestFormatterFlameGraphOutput(t *testing.T) {
 	}
 }
 
+func TestFormatterFlameGraphUsesMemoryUnits(t *testing.T) {
+	for _, format := range []output.OutputFormat{output.FormatFlameGraph, output.FormatSVG} {
+		t.Run(string(format), func(t *testing.T) {
+			destination := filepath.Join(t.TempDir(), "profile")
+			formatter := createFormatter(t, format, destination)
+			window := sampleWindow(1024, "allocate")
+			window.ProfileType = profiling.ProfileTypeMemSample
+			if err := formatter.Add(t.Context(), window); err != nil {
+				t.Fatal(err)
+			}
+			if err := formatter.Complete(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := string(readDestination(t, destination)); !strings.Contains(got, "allocate (1024 bytes, 100.00%)") {
+				t.Fatalf("SVG does not label memory in bytes: %s", got)
+			}
+		})
+	}
+}
+
 func TestFormatterJSONOutput(t *testing.T) {
 	window := &types.AggregationWindow{
 		ProfileType:    profiling.ProfileTypeCpuSample,
