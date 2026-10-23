@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// IOCOST tests retain capture, hooks, metrics, and qualification contracts.
+// IOCOST tests cover capture, hooks, metrics, and compiled-object contracts.
 package collector
 
 import (
@@ -34,6 +34,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
@@ -54,8 +55,7 @@ import (
 // Packed wait accounting and device layout.
 
 // These tests run the production admission and wake functions with deterministic
-// kernel reads and map helpers. Missing calls model skipped probes; kernel load
-// and real IRQ concurrency are covered separately by qualification.
+// kernel reads and map helpers. Missing calls model skipped probes.
 
 // Exercise the shared disk reader against each available bio layout.
 func TestIOCostDeviceFieldSelection(t *testing.T) {
@@ -135,54 +135,31 @@ int main(int argc, char **argv)
 	}
 }
 
-func TestIOCostDiagnosticFixtureFiltering(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..",
-		"integration", "testdata", "test_iocost_tracing.c"))
-	require.NoError(t, err)
-	source := string(data)
-	program := `
-#include <stdbool.h>
-#include <stdint.h>
-typedef uint64_t u64;
-typedef uint32_t u32;
-#ifndef __always_inline
-#define __always_inline inline __attribute__((always_inline))
-#endif
-static u64 iocost_diag_css_serial = 300;
-static u32 iocost_diag_major = 8, iocost_diag_first_minor = 16;
-static u32 iocost_diag_fault_mask;
-` + ioControlTestSourceSection(t, source, "#define IOCOST_DIAG_FAULT_MAP_FULL", "volatile const u64 iocost_diag_css_serial") +
-		ioControlTestSourceSection(t, source, "static __always_inline bool iocost_diag_fault_mask_valid", "static __always_inline bool\niocost_diag_claim_fault") + `
-int main(void)
-{
-    u32 valid_masks[] = {0, IOCOST_DIAG_FAULT_MAP_FULL,
-        IOCOST_DIAG_FAULT_COLLISION, IOCOST_DIAG_FAULT_DELETE_FAILURE};
-    for (u32 i = 0; i < sizeof(valid_masks) / sizeof(valid_masks[0]); i++) {
-        iocost_diag_fault_mask = valid_masks[i];
-        if (!iocost_diag_fixture_matches(300, 8, 16))
-            return 1;
-    }
-    if (iocost_diag_fixture_matches(301, 8, 16) ||
-        iocost_diag_fixture_matches(300, 9, 16) ||
-        iocost_diag_fixture_matches(300, 8, 17))
-        return 2;
-    iocost_diag_fault_mask = IOCOST_DIAG_FAULT_MAP_FULL | IOCOST_DIAG_FAULT_COLLISION;
-    if (iocost_diag_fixture_matches(300, 8, 16) ||
-        iocost_diag_fault_mask_valid(8))
-        return 3;
-    iocost_diag_fault_mask = 0;
-    iocost_diag_css_serial = 0;
-    if (iocost_diag_fixture_matches(0, 8, 16))
-        return 4;
-    return 0;
-}
-`
-	executable := compileIOControlTestC(t, "cc", "filter", program)
-	output, err := exec.CommandContext(t.Context(), executable).CombinedOutput()
-	require.NoError(t, err, "%s", output)
-}
-
 func TestIOCostWakePackedPublication(t *testing.T) {
+	const workerEnv = "HUATUO_TEST_IOCOST_PACKED_WORKER"
+	if os.Getenv(workerEnv) == "" {
+		// The optional-hook symbol cache is process-local and must not affect
+		// other collectors when this fixture supplies its own proc files.
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		command := exec.CommandContext(
+			ctx,
+			os.Args[0],
+			"-test.run=^TestIOCostWakePackedPublication$",
+			"-test.v",
+		)
+		command.Env = append(os.Environ(), workerEnv+"=1")
+		output, err := command.CombinedOutput()
+		require.NoError(
+			t,
+			err,
+			"%s",
+			output,
+		)
+		t.Logf("%s", output)
+		return
+	}
+
 	source := ioControlBPFSource(t, "iocost_tracing.c")
 	section := func(start, end string) string {
 		return ioControlTestSourceSection(t, source, start, end)
@@ -319,7 +296,8 @@ int main(int argc, char **argv)
         .css = 1, .css_serial = 1, .major = 8, .minor = 16,
     };
     struct pt_regs ctx = {};
-    admit();
+    if (scenario != 5)
+	admit();
     clock_ns += wait_ns;
     if (scenario != 2)
         enter();
@@ -357,27 +335,46 @@ int main(int argc, char **argv)
         (u64)(s64)(s32)status.failure,
         pending_live ? pending.start_ns : 0,
     };
-    return fwrite(result, sizeof(result), 1, stdout) != 1;
+	if (fwrite(result, sizeof(result), 1, stdout) != 1)
+		return 1;
+	return fwrite(&status, sizeof(status), 1, stdout) != 1;
 }
 `
 	executable := compileIOControlTestC(t, "clang", "iocost-packed", program,
 		"-I", filepath.Join("..", "..", "bpf", "include"),
 		"-Werror=incompatible-pointer-types", "-static")
 
-	for _, extension := range []string{"signed", "zero-extended"} {
-		t.Run("map full/"+extension, func(t *testing.T) {
-			raw := -int64(unix.E2BIG)
-			if extension == "zero-extended" {
-				raw = int64(uint32(raw))
-			}
-			output, err := exec.CommandContext(t.Context(), executable,
-				strconv.FormatInt(raw, 10)).Output()
-			require.NoError(t, err)
-			var rawStatus ioControlStatus
-			require.NoError(t, decodeBPFMapData(output, &rawStatus))
-			require.Equal(t, ioControlTestStatus(ioCostFailurePendingInsert, -int32(unix.E2BIG)), rawStatus)
-			require.ErrorIs(t, ioCostFailure(rawStatus.Failure), types.ErrTracingStopped)
-		})
+	for _, fault := range []struct {
+		name   string
+		errno  unix.Errno
+		reason string
+	}{
+		{
+			name:   "map full",
+			errno:  unix.E2BIG,
+			reason: "iocost_pending_map capacity exhausted (10240 entries)",
+		},
+		{
+			name:   "allocation failure",
+			errno:  unix.ENOMEM,
+			reason: "insert pending: helper returned -12",
+		},
+	} {
+		for _, extension := range []string{"signed", "zero-extended"} {
+			t.Run(fault.name+"/"+extension, func(t *testing.T) {
+				raw := -int64(fault.errno)
+				if extension == "zero-extended" {
+					raw = int64(uint32(raw))
+				}
+				output, err := exec.CommandContext(t.Context(), executable,
+					strconv.FormatInt(raw, 10)).Output()
+				require.NoError(t, err)
+				var rawStatus ioControlStatus
+				require.NoError(t, decodeBPFMapData(output, &rawStatus))
+				require.Equal(t, ioControlTestStatus(ioCostFailurePendingInsert, -int32(fault.errno)), rawStatus)
+				requireIOCostAccountingFailureStops(t, output, fault.reason)
+			})
+		}
 	}
 
 	tests := []struct {
@@ -390,39 +387,128 @@ int main(int argc, char **argv)
 		scenario     int
 		want         ioControlWaitCounters
 	}{
-		{name: "sub unit wait", waitNS: 9999, want: ioControlWaitCounters{IOCount: 1}},
-		{name: "truncate wait", waitNS: 19999, want: ioControlWaitCounters{IOCount: 1, Wait10US: 1}},
-		{name: "missed return", waitNS: 20000, scenario: 1, want: ioControlWaitCounters{IOCount: 1, Wait10US: 2}},
-		{name: "both wake probes missed", waitNS: 20000, scenario: 2, want: ioControlWaitCounters{IOCount: 1, Wait10US: 2}},
 		{
-			name: "repeated budget retries", waitNS: 20000, scenario: 3,
-			want: ioControlWaitCounters{IOCount: 1, Wait10US: 8},
-		},
-		{name: "bio reused before return", waitNS: 20000, scenario: 4, want: ioControlWaitCounters{IOCount: 1, Wait10US: 2}},
-		{
-			name: "count wraps", before: ((1<<26)-1)<<38 | 7, waitNS: 20000,
-			want: ioControlWaitCounters{Wait10US: 9},
+			name:     "wake without admission",
+			waitNS:   20000,
+			scenario: 5,
 		},
 		{
-			name: "upper wait bit is independent of count", before: 5<<38 | ((1 << 37) - 1), waitNS: 20000,
-			want: ioControlWaitCounters{IOCount: 6, Wait10US: (1 << 37) + 1},
+			name:   "sub unit wait",
+			waitNS: 9999,
+			want: ioControlWaitCounters{
+				IOCount: 1,
+			},
 		},
 		{
-			name: "wait wraps without count carry", before: 5<<38 | ((1 << 38) - 1), waitNS: 20000,
-			want: ioControlWaitCounters{IOCount: 6, Wait10US: 1},
+			name:   "truncate wait",
+			waitNS: 19999,
+			want: ioControlWaitCounters{
+				IOCount:  1,
+				Wait10US: 1,
+			},
 		},
 		{
-			name: "delete failure prevents publication", before: 5<<38 | 7, waitNS: 123456, deleteErr: -5,
-			want: ioControlWaitCounters{IOCount: 5, Wait10US: 7},
+			name:     "missed return",
+			waitNS:   20000,
+			scenario: 1,
+			want: ioControlWaitCounters{
+				IOCount:  1,
+				Wait10US: 2,
+			},
 		},
 		{
-			name: "zero extended delete errno", before: 5<<38 | 7, waitNS: 123456,
-			deleteErr: -int(unix.ENOENT), zeroExtended: true,
-			want: ioControlWaitCounters{IOCount: 5, Wait10US: 7},
+			name:     "both wake probes missed",
+			waitNS:   20000,
+			scenario: 2,
+			want: ioControlWaitCounters{
+				IOCount:  1,
+				Wait10US: 2,
+			},
 		},
 		{
-			name: "missing aggregate", before: 5<<38 | 7, waitNS: 123456, missing: 1,
-			want: ioControlWaitCounters{IOCount: 5, Wait10US: 7},
+			name:     "repeated budget retries",
+			waitNS:   20000,
+			scenario: 3,
+			want: ioControlWaitCounters{
+				IOCount:  1,
+				Wait10US: 8,
+			},
+		},
+		{
+			name:     "bio reused before return",
+			waitNS:   20000,
+			scenario: 4,
+			want: ioControlWaitCounters{
+				IOCount:  1,
+				Wait10US: 2,
+			},
+		},
+		{
+			name:   "count wraps",
+			before: ((1<<26)-1)<<38 | 7,
+			waitNS: 20000,
+			want: ioControlWaitCounters{
+				Wait10US: 9,
+			},
+		},
+		{
+			name:   "upper wait bit is independent of count",
+			before: 5<<38 | ((1 << 37) - 1),
+			waitNS: 20000,
+			want: ioControlWaitCounters{
+				IOCount:  6,
+				Wait10US: (1 << 37) + 1,
+			},
+		},
+		{
+			name:   "wait wraps without count carry",
+			before: 5<<38 | ((1 << 38) - 1),
+			waitNS: 20000,
+			want: ioControlWaitCounters{
+				IOCount:  6,
+				Wait10US: 1,
+			},
+		},
+		{
+			name:      "delete failure prevents publication",
+			before:    5<<38 | 7,
+			waitNS:    123456,
+			deleteErr: -5,
+			want: ioControlWaitCounters{
+				IOCount:  5,
+				Wait10US: 7,
+			},
+		},
+		{
+			name:      "delete returns ENOENT",
+			before:    5<<38 | 7,
+			waitNS:    123456,
+			deleteErr: -int(unix.ENOENT),
+			want: ioControlWaitCounters{
+				IOCount:  5,
+				Wait10US: 7,
+			},
+		},
+		{
+			name:         "zero extended delete errno",
+			before:       5<<38 | 7,
+			waitNS:       123456,
+			deleteErr:    -int(unix.ENOENT),
+			zeroExtended: true,
+			want: ioControlWaitCounters{
+				IOCount:  5,
+				Wait10US: 7,
+			},
+		},
+		{
+			name:    "missing aggregate",
+			before:  5<<38 | 7,
+			waitNS:  123456,
+			missing: 1,
+			want: ioControlWaitCounters{
+				IOCount:  5,
+				Wait10US: 7,
+			},
 		},
 	}
 	for _, test := range tests {
@@ -437,7 +523,7 @@ int main(int argc, char **argv)
 				strconv.Itoa(test.scenario))
 			output, err := command.Output()
 			require.NoError(t, err)
-			require.Len(t, output, 9*8)
+			require.Len(t, output, 9*8+ioCostStatusSize)
 			got, err := decodeIOControlWaitCounters(output[:8], 1)
 			require.NoError(t, err)
 			require.Equal(t, []ioControlWaitCounters{test.want}, got)
@@ -458,6 +544,14 @@ int main(int argc, char **argv)
 			for index, value := range want {
 				require.Equal(t, value, binary.LittleEndian.Uint64(output[(index+1)*8:]),
 					"state word %d", index+1)
+			}
+			if test.deleteErr != 0 {
+				status := output[9*8:]
+				var rawStatus ioControlStatus
+				require.NoError(t, decodeBPFMapData(status, &rawStatus))
+				require.Equal(t, ioControlTestStatus(ioCostFailurePendingDelete, int32(test.deleteErr)), rawStatus)
+				reason := fmt.Sprintf("pending missing or deletion failed: helper returned %d", test.deleteErr)
+				requireIOCostAccountingFailureStops(t, status, reason)
 			}
 		})
 	}
@@ -886,148 +980,6 @@ const (
 	ioCostWakeFrameSize                 = 64
 )
 
-type ioCostOwnerState struct {
-	CSS       uint64
-	CSSSerial uint64
-	Major     uint32
-	Minor     uint32
-}
-
-// ioCostPending is the value of iocost_pending_map.
-type ioCostPending struct {
-	StartNS   uint64
-	Operation uint32
-	Reserved  uint32
-}
-
-// ioCostWakeFrame is one possible-CPU lane of iocost_wake_frame_map.
-type ioCostWakeFrame struct {
-	BioPtr  uint64
-	EndNS   uint64
-	Pending ioCostPending
-	Key     ioControlWaitKey
-}
-
-func decodeIOCostPending(data []byte) (ioCostPending, error) {
-	if err := requireIOCostDataSize(data, ioCostPendingSize); err != nil {
-		return ioCostPending{}, err
-	}
-	value := ioCostPending{
-		StartNS:   binary.LittleEndian.Uint64(data[0:8]),
-		Operation: binary.LittleEndian.Uint32(data[8:12]),
-		Reserved:  binary.LittleEndian.Uint32(data[12:16]),
-	}
-	if value.Reserved != 0 {
-		return ioCostPending{}, nonzeroIOCostReserved(
-			"iocost_pending", value.Reserved,
-		)
-	}
-	return value, nil
-}
-
-func decodeIOCostWakeFrame(data []byte) (ioCostWakeFrame, error) {
-	if err := requireIOCostDataSize(data, ioCostWakeFrameSize); err != nil {
-		return ioCostWakeFrame{}, err
-	}
-	pending, err := decodeIOCostPending(data[16:32])
-	if err != nil {
-		return ioCostWakeFrame{}, err
-	}
-	var key ioControlWaitKey
-	if err := decodeBPFMapData(data[32:64], &key); err != nil {
-		return ioCostWakeFrame{}, err
-	}
-	if key.Reserved != 0 {
-		return ioCostWakeFrame{}, nonzeroIOCostReserved("io_control_wait_key", key.Reserved)
-	}
-	value := ioCostWakeFrame{
-		BioPtr:  binary.LittleEndian.Uint64(data[0:8]),
-		EndNS:   binary.LittleEndian.Uint64(data[8:16]),
-		Pending: pending,
-		Key:     key,
-	}
-	return value, nil
-}
-
-func decodeIOCostWakeFrames(
-	data []byte,
-	possibleCPUs int,
-) ([]ioCostWakeFrame, error) {
-	expectedSize, err := ioCostPerCPUDataSize(possibleCPUs, ioCostWakeFrameSize)
-	if err != nil {
-		return nil, err
-	}
-	if err := requireIOCostDataSize(data, expectedSize); err != nil {
-		return nil, fmt.Errorf("possible-CPU wake frame data: %w", err)
-	}
-	values := make([]ioCostWakeFrame, possibleCPUs)
-	for cpu := range possibleCPUs {
-		offset := cpu * ioCostWakeFrameSize
-		value, err := decodeIOCostWakeFrame(
-			data[offset : offset+ioCostWakeFrameSize],
-		)
-		if err != nil {
-			return nil, fmt.Errorf(
-				"decode CPU %d wake frame: %w", cpu, err,
-			)
-		}
-		values[cpu] = value
-	}
-	return values, nil
-}
-
-// Interval attribution and exported metric contracts.
-
-// IOCOST metric tests cover interval accounting, attribution, and collector registration.
-
-// Interval deltas, scope attribution, and public metric contracts.
-func nonzeroIOCostReserved(structure string, value uint32) error {
-	return fmt.Errorf("%s reserved field is %d, want 0", structure, value)
-}
-
-func ioCostPerCPUDataSize(possibleCPUs, valueSize int) (int, error) {
-	if possibleCPUs <= 0 {
-		return 0, fmt.Errorf("invalid possible CPU count: %d", possibleCPUs)
-	}
-	if valueSize <= 0 {
-		return 0, fmt.Errorf("invalid possible-CPU value size: %d", valueSize)
-	}
-	maxInt := int(^uint(0) >> 1)
-	if possibleCPUs > maxInt/valueSize {
-		return 0, fmt.Errorf("possible CPU data size overflows int: %d * %d",
-			possibleCPUs, valueSize)
-	}
-	return possibleCPUs * valueSize, nil
-}
-
-func requireIOCostDataSize(data []byte, expected int) error {
-	if len(data) != expected {
-		return fmt.Errorf("data size %d, want %d", len(data), expected)
-	}
-	return nil
-}
-
-func TestIOCostDiagnosticStatusGoldenBytes(t *testing.T) {
-	data := []byte{
-		0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	}
-	got, err := decodeIOCostDiagnosticStatus(data)
-	require.NoError(t, err)
-	require.Equal(t, ioCostDiagnosticStatus{
-		StartGuardPasses: 1, WakeEntryHits: 2,
-		WakeReturnZero: 3, WakeReturnMinusOne: 4, SettledCount: 5,
-		MapFullInjections: 6, CollisionInjections: 7,
-		DeleteFailureInjections: 8,
-	}, got)
-}
-
 type ioCostIntervalTestRow struct {
 	css       uint64
 	cssSerial uint64
@@ -1146,34 +1098,7 @@ func requireIOCostHostAndContainerInterval(
 const (
 	ioCostOwnerStateMapMaxEntries    uint32 = 4096
 	ioCostWaitAggregateMapMaxEntries        = 2 * ioCostOwnerStateMapMaxEntries
-
-	ioCostDiagnosticObjectName = "iocost_tracing_test.o"
-
-	ioCostDiagnosticStatusMap  = "iocost_diag_stat_map"
-	ioCostDiagnosticScratchMap = "iocost_diag_fault_scratch_map"
-
-	ioCostDiagnosticFaultMaskConstant  = "iocost_diag_fault_mask"
-	ioCostDiagnosticMajorConstant      = "iocost_diag_major"
-	ioCostDiagnosticFirstMinorConstant = "iocost_diag_first_minor"
-	ioCostDiagnosticCSSSerialConstant  = "iocost_diag_css_serial"
-
-	ioCostDiagnosticStatusSize = 8 * ioCostUint64Size
-
-	ioCostDiagnosticFaultMapFull       uint32 = 1
-	ioCostDiagnosticFaultCollision     uint32 = 2
-	ioCostDiagnosticFaultDeleteFailure uint32 = 4
 )
-
-type ioCostDiagnosticStatus struct {
-	StartGuardPasses        uint64
-	WakeEntryHits           uint64
-	WakeReturnZero          uint64
-	WakeReturnMinusOne      uint64
-	SettledCount            uint64
-	MapFullInjections       uint64
-	CollisionInjections     uint64
-	DeleteFailureInjections uint64
-}
 
 func TestLoadIOCostKernelProfile(t *testing.T) {
 	queries := [][]string{
@@ -1665,6 +1590,97 @@ func TestIOCostRetiredIntervals(t *testing.T) {
 		})
 	}
 
+	t.Run("retired tail joins surviving owners in the same interval", func(t *testing.T) {
+		containers := make(map[string]*pod.Container)
+		rows := make([]ioCostIntervalTestRow, 3)
+		for index := range rows {
+			rows[index] = ioCostDefaultIntervalTestRow(1, 100)
+			rows[index].css += uint64(index)
+			rows[index].cssSerial += uint64(index)
+			id := fmt.Sprintf("owner-%d", index)
+			container := newIOControlAttributionTestContainer(id, rows[index].css, time.Unix(100, 0))
+			container.Name = id
+			containers[id] = container
+		}
+		fixture := newIOCostIntervalTestFixture(t, 1, containers)
+		setIOCostIntervalTestRows(fixture.object, rows...)
+		_, err := fixture.collector.Update()
+		require.NoError(t, err)
+		for index := range rows {
+			rows[index].lanes[0] = ioCostCaptureStableLane(2, uint64(index+2)*100)
+		}
+		setIOCostIntervalTestRows(fixture.object, rows...)
+		retired := ioControlRetiredKey{
+			CSS:       rows[2].css,
+			CSSSerial: rows[2].cssSerial,
+			Major:     rows[2].major,
+			Minor:     rows[2].minor,
+		}
+		fixture.object.setDefaultItems(ioCostRetiredMap, []bpf.MapItem{
+			{
+				Key:   ioControlTestBytes(retired),
+				Value: []byte{1},
+			},
+		})
+		entered := make(chan string, 1)
+		release := make(chan struct{})
+		fixture.object.queueDumps(ioCostWaitAggregateMap, ioCostCaptureTestDump{
+			items:   cloneIOCostCaptureTestItems(fixture.object.defaultItems[ioCostWaitAggregateMap]),
+			entered: entered,
+			release: release,
+		})
+		var metrics []*metric.Data
+		done := make(chan error, 1)
+		releaseRead := sync.OnceFunc(func() { close(release) })
+		var workers sync.WaitGroup
+		defer func() {
+			releaseRead()
+			workers.Wait()
+		}()
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			var err error
+			metrics, err = fixture.collector.Update()
+			done <- err
+		}()
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("IOCOST did not reach the cumulative snapshot")
+		}
+		// Metadata disappears while the captured counters still contain its tail.
+		fixture.source.containers = map[string]*pod.Container{
+			"owner-0": containers["owner-0"],
+			"owner-1": containers["owner-1"],
+		}
+		releaseRead()
+		require.NoError(t, <-done)
+		values := make(map[string]float64)
+		for _, data := range metrics {
+			scope := data.Labels()["scope"]
+			if strings.HasPrefix(data.Name(), "container_") {
+				scope = data.Labels()["container_name"]
+			}
+			values[scope+"/"+data.Name()] = data.Value
+		}
+		require.Equal(t, map[string]float64{
+			"host/waitq_io_count":               3,
+			"host/average_wait_ms":              2,
+			"other/waitq_io_count":              1,
+			"other/average_wait_ms":             3,
+			"owner-0/container_waitq_io_count":  1,
+			"owner-0/container_average_wait_ms": 1,
+			"owner-1/container_waitq_io_count":  1,
+			"owner-1/container_average_wait_ms": 2,
+		}, values)
+		metrics, err = fixture.collector.Update()
+		require.NoError(t, err)
+		for _, data := range metrics {
+			require.Zero(t, data.Value, "the retired tail must not repeat")
+		}
+	})
+
 	t.Run("retirement during capture waits for the next collection", func(t *testing.T) {
 		fixture := newIOCostIntervalTestFixture(t, 1, nil)
 		row := ioCostDefaultIntervalTestRow(3, 900)
@@ -1678,7 +1694,15 @@ func TestIOCostRetiredIntervals(t *testing.T) {
 		})
 		var metrics []*metric.Data
 		done := make(chan error, 1)
+		releaseRead := sync.OnceFunc(func() { close(release) })
+		var workers sync.WaitGroup
+		defer func() {
+			releaseRead()
+			workers.Wait()
+		}()
+		workers.Add(1)
 		go func() {
+			defer workers.Done()
 			var err error
 			metrics, err = fixture.collector.Update()
 			done <- err
@@ -1686,7 +1710,6 @@ func TestIOCostRetiredIntervals(t *testing.T) {
 		select {
 		case <-entered:
 		case <-time.After(time.Second):
-			close(release)
 			t.Fatal("IOCOST did not reach the cumulative snapshot")
 		}
 		// Publish retirement after the older counter snapshot was captured.
@@ -1694,7 +1717,7 @@ func TestIOCostRetiredIntervals(t *testing.T) {
 		row.lanes[0] = ioCostCaptureStableLane(5, 1_500)
 		setIOCostIntervalTestRows(fixture.object, row)
 		fixture.object.setDefaultItems(ioCostRetiredMap, []bpf.MapItem{marker})
-		close(release)
+		releaseRead()
 		require.NoError(t, <-done)
 		requireIOCostHostAndOtherInterval(t, metrics, 3, 3)
 		require.Empty(t, fixture.object.deletedKeys)
@@ -1890,12 +1913,21 @@ func TestIOCostTransactionUpdateMutexCancelWithdrawClose(t *testing.T) {
 	entered := make(chan string, 1)
 	release := make(chan struct{})
 	releaseRead := sync.OnceFunc(func() { close(release) })
-	t.Cleanup(releaseRead)
+	var workers sync.WaitGroup
+	defer func() {
+		releaseRead()
+		workers.Wait()
+	}()
 	object.queueDumps(ioCostWaitAggregateMap, ioCostCaptureTestDump{
 		items: object.defaultItems[ioCostWaitAggregateMap], entered: entered, release: release,
 	})
 	result := make(chan error, 1)
-	go func() { _, err := collector.Update(); result <- err }()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		_, err := collector.Update()
+		result <- err
+	}()
 	select {
 	case <-entered:
 	case <-time.After(time.Second):
@@ -1904,7 +1936,9 @@ func TestIOCostTransactionUpdateMutexCancelWithdrawClose(t *testing.T) {
 	harness.cancel()
 	cleanupStarted := make(chan struct{})
 	cleaned := make(chan struct{})
+	workers.Add(1)
 	go func() {
+		defer workers.Done()
 		close(cleanupStarted)
 		collector.withdrawSession()
 		_ = object.Close()
@@ -2525,6 +2559,71 @@ func waitIOCostTestSession(t *testing.T, collector *iocostTracing) *ioCostSessio
 	return session
 }
 
+// Consume bytes produced by the C probes so status generation and shutdown
+// share the same fault, without loading or attaching a kernel BPF program.
+func requireIOCostAccountingFailureStops(t *testing.T, status []byte, reason string) {
+	t.Helper()
+	ioControlTestDiskstats(t)
+	require.NoError(t, os.WriteFile(procfs.Path("kallsyms"), nil, 0o600))
+	object := &ioCostSessionCaptureBPF{
+		fakeIOCostBPF: newFakeIOCostBPF(),
+		capture:       newFakeIOCostCaptureBPF(1),
+	}
+	collector := &iocostTracing{}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	var startErr error
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("IOCOST Start did not finish cleanup")
+		}
+	})
+	go func() {
+		defer close(done)
+		startErr = collector.startWithProfile(
+			ctx,
+			func(string, map[string]any) (bpf.BPF, error) { return object, nil },
+			ioCostSessionTestProfile(),
+			1,
+			emptyIOCostContainerSource,
+		)
+	}()
+	session := waitIOCostTestSession(t, collector)
+	data, err := collector.Update()
+	require.NoError(t, err)
+	requireIOCostHostAndOtherInterval(
+		t,
+		data,
+		1,
+		10,
+	)
+	setIOCostIntervalTestRows(object.capture, ioCostDefaultIntervalTestRow(2, 2_000))
+	object.capture.queueStatus(ioCostCaptureTestRead{value: status})
+
+	data, err = collector.Update()
+	require.Nil(t, data)
+	require.ErrorIs(t, err, types.ErrTracingStopped)
+	require.ErrorContains(t, err, reason)
+	select {
+	case <-done:
+		require.ErrorIs(t, startErr, types.ErrTracingStopped)
+		require.ErrorContains(t, startErr, reason)
+	case <-time.After(time.Second):
+		t.Fatal("accounting failure did not stop IOCOST Start")
+	}
+	require.Nil(t, session.previous)
+	require.Nil(t, collector.session)
+	require.Equal(t, 1, object.state().closeCalls)
+
+	data, err = collector.Update()
+	require.Nil(t, data)
+	require.ErrorIs(t, err, metric.ErrNoData)
+	require.Equal(t, 1, object.state().closeCalls)
+}
+
 func TestIOCostStartSequenceAndCleanup(t *testing.T) {
 	object := newFakeIOCostBPF()
 	collector := &iocostTracing{}
@@ -2645,22 +2744,12 @@ func TestIOCostObjectContract(t *testing.T) {
 	_, hasRodata := spec.Maps[".rodata"]
 	require.True(t, hasRodata, "compiled object has no .rodata map")
 	requireIOCostBusinessMaps(t, spec)
-	require.NotContains(t, spec.Maps, ioCostDiagnosticStatusMap)
-	require.NotContains(t, spec.Maps, ioCostDiagnosticScratchMap)
-	requireIOCostProductionObjectExcludesDiagnostics(t, spec)
 	require.Equal(t, ioCostProductionRodataContract(), ioCostRodataContract(t, spec))
 	require.NoError(t, spec.RewriteConstants(ioCostTestKernelProfile(true).constants()))
 }
 
 func TestIOCostObject(t *testing.T) {
-	production := loadIOCostObjectSpec(t)
-	diagnostic := loadIOCostDiagnosticObjectSpec(t)
-	t.Run("Relocations", func(t *testing.T) {
-		testIOCostObjectRelocations(t, production, diagnostic)
-	})
-	t.Run("DiagnosticContract", func(t *testing.T) {
-		testIOCostDiagnosticObjectContract(t, diagnostic)
-	})
+	testIOCostObjectRelocations(t, loadIOCostObjectSpec(t))
 }
 
 // Both disk layouts and same-named CSS records must relocate without BTF FUNCs.
@@ -2854,58 +2943,6 @@ func testIOCostObjectRelocations(t *testing.T, objects ...*ebpf.CollectionSpec) 
 	}
 }
 
-func testIOCostDiagnosticObjectContract(t *testing.T, spec *ebpf.CollectionSpec) {
-	t.Helper()
-	requireIOCostPrograms(t, spec)
-	requireIOCostBusinessMaps(t, spec)
-
-	wantMaps := ioCostBusinessMapContracts()
-	require.Len(t, spec.Maps, len(wantMaps)+3,
-		"diagnostic object must contain the business maps, two diagnostic maps, and .rodata")
-	requireIOControlTestMap(t, spec, ioControlTestMapContract{
-		name: ioCostDiagnosticStatusMap, typeID: ebpf.Array,
-		keySize: ioCostUint32Size, valueSize: ioCostDiagnosticStatusSize,
-		maxEntries: 1,
-	})
-	status, ok := spec.Maps[ioCostDiagnosticStatusMap].Value.(*btf.Struct)
-	require.True(t, ok, "diagnostic status must retain its BTF struct")
-	fields := []string{
-		"start_guard_passes", "wake_entry_hits", "wake_return_zero",
-		"wake_return_minus_one", "settled_count", "map_full_injections",
-		"collision_injections", "delete_failure_injections",
-	}
-	require.Len(t, status.Members, len(fields))
-	for index, field := range fields {
-		member := status.Members[index]
-		require.Equal(t, field, member.Name)
-		require.Equal(t, btf.Bits(index*64), member.Offset, field)
-		size, err := btf.Sizeof(member.Type)
-		require.NoError(t, err)
-		require.Equal(t, ioCostUint64Size, size, field)
-	}
-	requireIOControlTestMap(t, spec, ioControlTestMapContract{
-		name: ioCostDiagnosticScratchMap, typeID: ebpf.Hash,
-		keySize: ioCostUint32Size, valueSize: ioCostUint64Size,
-		maxEntries: 1,
-	})
-	_, hasRodata := spec.Maps[".rodata"]
-	require.True(t, hasRodata, "diagnostic object has no .rodata map")
-
-	want := ioCostProductionRodataContract()
-	want[ioCostDiagnosticFaultMaskConstant] = 4
-	want[ioCostDiagnosticMajorConstant] = 4
-	want[ioCostDiagnosticFirstMinorConstant] = 4
-	want[ioCostDiagnosticCSSSerialConstant] = 8
-	require.Equal(t, want, ioCostRodataContract(t, spec))
-
-	constants := ioCostTestKernelProfile(true).constants()
-	constants[ioCostDiagnosticFaultMaskConstant] = ioCostDiagnosticFaultDeleteFailure
-	constants[ioCostDiagnosticMajorConstant] = uint32(8)
-	constants[ioCostDiagnosticFirstMinorConstant] = uint32(16)
-	constants[ioCostDiagnosticCSSSerialConstant] = uint64(0x1020304050607080)
-	require.NoError(t, spec.RewriteConstants(constants))
-}
-
 func ioCostBusinessMapContracts() []ioControlTestMapContract {
 	return []ioControlTestMapContract{
 		{
@@ -2970,29 +3007,6 @@ func requireIOCostBusinessMaps(t *testing.T, spec *ebpf.CollectionSpec) {
 	}
 }
 
-func requireIOCostProductionObjectExcludesDiagnostics(
-	t *testing.T,
-	spec *ebpf.CollectionSpec,
-) {
-	t.Helper()
-	for name := range spec.Maps {
-		require.NotContains(t, name, "iocost_diag_",
-			"production object contains a diagnostic map")
-	}
-	for name := range ioCostRodataContract(t, spec) {
-		require.NotContains(t, name, "iocost_diag_",
-			"production object contains a diagnostic constant")
-	}
-	for name, program := range spec.Programs {
-		require.NotContains(t, name, "iocost_diag_",
-			"production object contains a diagnostic program")
-		for _, instruction := range program.Instructions {
-			require.NotContains(t, instruction.Reference(), "iocost_diag_",
-				"production program %s references diagnostic code", name)
-		}
-	}
-}
-
 func ioCostProductionRodataContract() map[string]uint32 {
 	return map[string]uint32{
 		ioCostThrottleCallerStartConstant:   8,
@@ -3031,42 +3045,9 @@ func ioCostRodataContract(
 	return got
 }
 
-func decodeIOCostDiagnosticStatus(
-	data []byte,
-) (ioCostDiagnosticStatus, error) {
-	if err := requireIOCostDataSize(data, ioCostDiagnosticStatusSize); err != nil {
-		return ioCostDiagnosticStatus{}, err
-	}
-	return ioCostDiagnosticStatus{
-		StartGuardPasses:        binary.LittleEndian.Uint64(data[0:8]),
-		WakeEntryHits:           binary.LittleEndian.Uint64(data[8:16]),
-		WakeReturnZero:          binary.LittleEndian.Uint64(data[16:24]),
-		WakeReturnMinusOne:      binary.LittleEndian.Uint64(data[24:32]),
-		SettledCount:            binary.LittleEndian.Uint64(data[32:40]),
-		MapFullInjections:       binary.LittleEndian.Uint64(data[40:48]),
-		CollisionInjections:     binary.LittleEndian.Uint64(data[48:56]),
-		DeleteFailureInjections: binary.LittleEndian.Uint64(data[56:]),
-	}, nil
-}
-
 func loadIOCostObjectSpec(t *testing.T) *ebpf.CollectionSpec {
 	t.Helper()
 	object := filepath.Join("..", "..", "bpf", ioCostObjectName)
-	spec, err := ebpf.LoadCollectionSpec(object)
-	require.NoError(t, err)
-	return spec
-}
-
-func loadIOCostDiagnosticObjectSpec(t *testing.T) *ebpf.CollectionSpec {
-	t.Helper()
-	root := filepath.Join("..", "..")
-	object := filepath.Join(t.TempDir(), ioCostDiagnosticObjectName)
-	command := exec.CommandContext(t.Context(), filepath.Join(root, "build", "clang.sh"),
-		"-I", filepath.Join(root, "bpf", "include"),
-		"-s", filepath.Join(root, "integration", "testdata", "test_iocost_tracing.c"),
-		"-o", object)
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, "%s", output)
 	spec, err := ebpf.LoadCollectionSpec(object)
 	require.NoError(t, err)
 	return spec

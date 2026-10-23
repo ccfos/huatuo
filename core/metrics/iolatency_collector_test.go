@@ -245,6 +245,195 @@ func TestIOLatencyCollectionHealth(t *testing.T) {
 	}
 }
 
+// Decode native probe output through the map boundary before comparing the
+// resulting series, keeping layout inputs independent of selected constants.
+func assertIOLatencyRemapMetrics(t *testing.T, scenario string, output []byte) {
+	t.Helper()
+	reader := bytes.NewBuffer(output)
+	var css [2]uint64
+	require.NoError(t, binary.Read(reader, binary.LittleEndian, &css))
+	require.NotZero(t, css[0])
+	require.NotZero(t, css[1])
+	require.NotEqual(t, css[0], css[1])
+	object := &fakeIOLatencyMapBPF{maps: make(map[string][]bpf.MapItem)}
+	for range 2 {
+		key := make([]byte, 8)
+		value := make([]byte, binary.Size(ioLatencyDiskCounters{}))
+		require.Equal(t, len(key), copy(key, reader.Next(len(key))))
+		require.Equal(t, len(value), copy(value, reader.Next(len(value))))
+		if binary.LittleEndian.Uint64(key) != 0 {
+			object.maps[blkDiskBucketMap] = append(object.maps[blkDiskBucketMap], bpf.MapItem{
+				Key:   key,
+				Value: value,
+			})
+		}
+	}
+	for reader.Len() != 0 {
+		key := make([]byte, binary.Size(ioLatencyContainerKey{}))
+		value := make([]byte, binary.Size(ioLatencyCounters{}))
+		require.Equal(t, len(key), copy(key, reader.Next(len(key))))
+		require.Equal(t, len(value), copy(value, reader.Next(len(value))))
+		object.maps[blkContainerBucketMap] = append(object.maps[blkContainerBucketMap], bpf.MapItem{
+			Key:   key,
+			Value: value,
+		})
+	}
+
+	var lower, upper, first, second ioLatencyCounters
+	operation := uint32(1)
+	switch scenario {
+	case "remap":
+		lower.Buckets[ioLatencyStageQ2G][8] = 1
+		lower.Buckets[ioLatencyStageQ2G][10] = 1
+		lower.Buckets[ioLatencyStageQ2D][9] = 1
+		lower.Buckets[ioLatencyStageQ2D][12] = 1
+		lower.Buckets[ioLatencyStageD2C][11] = 1
+		lower.Buckets[ioLatencyStageD2C][12] = 1
+		lower.QueuedSize[0] = 2
+		lower.IssuedSize[0] = 2
+		upper.QueuedSize[0] = 1
+		first = upper
+		second = lower
+	case "partition-remap":
+		operation = 0
+		lower.QueuedSize[0] = 4
+	case "request":
+		lower.Buckets[ioLatencyStageQ2G][11] = 2
+		lower.Buckets[ioLatencyStageQ2D][12] = 2
+		lower.Buckets[ioLatencyStageD2C][13] = 2
+		lower.QueuedSize[0] = 2
+		lower.IssuedSize[1] = 1
+		first.Buckets[ioLatencyStageQ2G][11] = 1
+		first.Buckets[ioLatencyStageQ2D][12] = 1
+		first.Buckets[ioLatencyStageD2C][13] = 1
+		first.QueuedSize[0] = 1
+		second = first
+		second.IssuedSize[1] = 1
+	default:
+		t.Fatalf("unknown remap scenario %q", scenario)
+	}
+	wantHost := map[ioLatencyHostKey]ioLatencyCounters{
+		{
+			Major:     8,
+			Minor:     16,
+			Operation: operation,
+		}: lower,
+	}
+	if scenario == "remap" {
+		wantHost[ioLatencyHostKey{
+			Major:     9,
+			Operation: 1,
+		}] = upper
+	}
+	wantContainers := make(map[ioLatencyContainerKey]*ioLatencyCounters)
+	if scenario != "partition-remap" {
+		firstKey := ioLatencyContainerKey{
+			Blkcg:     css[0],
+			Serial:    1,
+			Major:     8,
+			Minor:     16,
+			Operation: 1,
+		}
+		if scenario == "remap" {
+			firstKey.Major = 9
+			firstKey.Minor = 0
+		}
+		wantContainers[firstKey] = &first
+		wantContainers[ioLatencyContainerKey{
+			Blkcg:     css[1],
+			Serial:    2,
+			Major:     8,
+			Minor:     16,
+			Operation: 1,
+		}] = &second
+	}
+
+	session := &ioLatencySession{object: object}
+	host, err := session.captureHostLatency()
+	require.NoError(t, err)
+	for key := range wantHost {
+		require.Contains(t, host, key)
+		require.Equal(t, wantHost[key], *host[key])
+	}
+	devices := map[[2]uint32]string{{8, 16}: "sdb", {9, 0}: "md0"}
+	for key, counters := range host {
+		require.Contains(t, devices, [2]uint32{key.Major, key.Minor})
+		require.LessOrEqual(t, key.Operation, uint32(1))
+		require.Equal(t, wantHost[key], *counters)
+	}
+	containers, err := session.captureContainerLatency()
+	require.NoError(t, err)
+	require.Len(t, containers, len(wantContainers))
+	for key, counters := range wantContainers {
+		require.Contains(t, containers, key)
+		require.Equal(t, *counters, *containers[key])
+	}
+	cssContainers := make(map[uint64]*pod.Container)
+	for index, id := range css {
+		cssContainers[id] = &pod.Container{
+			ID:       fmt.Sprintf("container-%d", index+1),
+			Name:     fmt.Sprintf("writer-%d", index+1),
+			Hostname: "node",
+			Type:     pod.ContainerTypeNormal,
+			Qos:      pod.ContainerQosLevelMin,
+			Labels:   map[string]any{"HostNamespace": "namespace"},
+		}
+	}
+	current := &ioLatencySnapshot{
+		host:       host,
+		containers: containers,
+	}
+	previous := &ioLatencySnapshot{
+		host:       make(map[ioLatencyHostKey]*ioLatencyCounters),
+		containers: make(map[ioLatencyContainerKey]*ioLatencyCounters),
+	}
+	// The enrolled disks had zero counters before the controlled IO.
+	for key := range host {
+		previous.host[key] = &ioLatencyCounters{}
+	}
+	got := appendIOLatencyIntervalMetrics(
+		nil,
+		previous,
+		current,
+		devices,
+		cssContainers,
+	)
+	var want []*metric.Data
+	for key := range host {
+		counters := wantHost[key]
+		want = appendIOLatencySeries(
+			want,
+			nil,
+			devices[[2]uint32{key.Major, key.Minor}],
+			[]string{"read", "write"}[key.Operation],
+			&counters,
+		)
+	}
+	for key, counters := range wantContainers {
+		want = appendIOLatencySeries(
+			want,
+			cssContainers[key.Blkcg],
+			devices[[2]uint32{key.Major, key.Minor}],
+			"write",
+			counters,
+		)
+	}
+	require.NotEmpty(t, got)
+	require.Len(t, got, len(want))
+	for _, expected := range want {
+		require.True(
+			t,
+			slices.ContainsFunc(got, func(data *metric.Data) bool {
+				return reflect.DeepEqual(data, expected)
+			}),
+			"missing %s=%v labels=%v",
+			expected.Name(),
+			expected.Value,
+			expected.Labels(),
+		)
+	}
+}
+
 func TestIOLatencyIntervalBuckets(t *testing.T) {
 	previous := ioLatencyCounters{}
 	current := ioLatencyCounters{}

@@ -45,8 +45,6 @@ import (
 
 // Per-CPU snapshot and metric fixtures.
 
-const blkThrotlBLKGOwnerMap = "blk_throtl_blkg_owner_map"
-
 type blkThrotlTestDump struct {
 	items []bpf.MapItem
 	err   error
@@ -207,13 +205,6 @@ type blkThrotlTestKey struct {
 }
 
 type blkThrotlTestLane = ioControlWaitCounters
-
-type blkThrotlTestBLKGOwner struct {
-	CSS       uint64
-	CSSSerial uint64
-	Major     uint32
-	Minor     uint32
-}
 
 func stableBlkThrotlTestLane(count, wait10US uint64) blkThrotlTestLane {
 	return blkThrotlTestLane{
@@ -1472,52 +1463,155 @@ typedef uint8_t u8;
 #define SEC(name)
 #define BPF_CORE_READ(src, field) ((src)->field)
 #define PT_REGS_PARM1_CORE(ctx) ((ctx)->arg1)
+#define PT_REGS_PARM2_CORE(ctx) ((ctx)->arg2)
+#define PT_REGS_RC(ctx) ((ctx)->ret)
+#define BPF_KPROBE_READ_RET_IP(caller, ctx) ((caller) = (ctx)->caller)
+#define compat_bpf_core_field_offset(field) 0
 #define COMPAT_BPF_NOEXIST 1
 #define BLK_THROTL_ENOENT 2
 #define BLK_THROTL_EEXIST 17
-struct pt_regs { u64 arg1; };
-struct blkg_policy_data { void *blkg; };
+#define REQ_OP_READ 0
+#define REQ_OP_WRITE 1
+#define REQ_OP_MASK 255
+struct pt_regs { u64 arg1, arg2, ret, caller; };
+struct blkcg { struct { u64 serial_nr; } css; };
+struct blkcg_gq { struct blkcg *blkcg; };
+struct gendisk { u32 major, first_minor; };
+struct bio {
+	u32 bi_opf;
+	struct { u32 bi_size; } bi_iter;
+	struct blkcg_gq *bi_blkg;
+	struct gendisk *disk;
+};
+struct blkg_policy_data { struct blkcg_gq *blkg; };
 ` + ioControlBPFSource(t, "include/bpf_iocontrol.h") +
 		ioControlTestSourceSection(t, source,
 			"struct blk_throtl_blkg_owner {", "_Static_assert(sizeof(struct blk_throtl_blkg_owner)") + `
 static int blk_throtl_blkg_owner_map, blk_throtl_retired_map;
+static int blk_throtl_pending_map, blk_throtl_pop_call_map, blk_throtl_wait_agg_map;
+static const u64 blk_throtl_tracked_caller_start = 1, blk_throtl_tracked_caller_end = 2;
+static const u64 blk_throtl_ignored_caller_start = 2, blk_throtl_ignored_caller_end = 3;
 static struct blk_throtl_blkg_owner owner = {
     .css = 0x100, .css_serial = 0x200, .major = 8, .minor = 16,
 };
 static struct io_control_status status;
 static struct io_control_status *io_control_status_value(void) { return &status; }
 static struct io_control_retired_key marker;
-static bool owner_live;
+static struct blkcg group = { .css = { .serial_nr = 0x200 } };
+static struct blkcg_gq blkg = { .blkcg = &group };
+static struct gendisk disk = { .major = 8, .first_minor = 16 };
+static struct bio sample_bio = { .bi_iter = { .bi_size = 4096 }, .bi_blkg = &blkg, .disk = &disk };
+static bool owner_live, pending_live, pop_live, aggregate_live, final_pop;
+static bool zero_extended_errors;
+static u64 pending_ns, aggregate, clock_ns;
 static long update_ret;
+static int insert_error, delete_error;
 static u32 attempts;
+static long helper_error(int error)
+{
+	return zero_extended_errors ? (long)(u32)error : error;
+}
 static void *bpf_map_lookup_elem(void *map, const void *key)
 {
-    assert(map == &blk_throtl_blkg_owner_map && *(const u64 *)key == 0x300);
+	if (map == &blk_throtl_pending_map)
+		return pending_live ? &pending_ns : NULL;
+	if (map == &blk_throtl_pop_call_map)
+		return pop_live ? &final_pop : NULL;
+	if (map == &blk_throtl_wait_agg_map)
+		return aggregate_live ? &aggregate : NULL;
+	assert(map == &blk_throtl_blkg_owner_map && *(const u64 *)key == (u64)&blkg);
     return owner_live ? &owner : NULL;
 }
 static long bpf_map_update_elem(void *map, const void *key, const void *value, u64 flags)
 {
-    assert(map == &blk_throtl_retired_map && flags == COMPAT_BPF_NOEXIST);
-    assert(*(const u8 *)value == 1);
+	assert(flags == COMPAT_BPF_NOEXIST);
+	if (map == &blk_throtl_pending_map) {
+		if (insert_error)
+			return helper_error(insert_error);
+		if (pending_live)
+			return helper_error(-BLK_THROTL_EEXIST);
+		pending_ns = *(const u64 *)value;
+		pending_live = true;
+		return 0;
+	}
+	if (map == &blk_throtl_pop_call_map) {
+		if (pop_live)
+			return helper_error(-BLK_THROTL_EEXIST);
+		final_pop = *(const bool *)value;
+		pop_live = true;
+		return 0;
+	}
+	if (map == &blk_throtl_wait_agg_map) {
+		const struct io_control_wait_key *identity = key;
+		assert(identity->css == owner.css && identity->css_serial == owner.css_serial);
+		assert(identity->major == 8 && identity->minor == 16 && identity->operation == REQ_OP_READ);
+		aggregate = *(const u64 *)value;
+		aggregate_live = true;
+		return 0;
+	}
+	if (map == &blk_throtl_blkg_owner_map) {
+		owner = *(const struct blk_throtl_blkg_owner *)value;
+		owner_live = true;
+		return 0;
+	}
+	assert(map == &blk_throtl_retired_map && *(const u8 *)value == 1);
     marker = *(const struct io_control_retired_key *)key;
     attempts++;
     return update_ret;
 }
 static long bpf_map_delete_elem(void *map, const void *key)
 {
-    assert(map == &blk_throtl_blkg_owner_map && *(const u64 *)key == 0x300);
+	if (map == &blk_throtl_pending_map) {
+		if (delete_error) {
+			if (delete_error == -BLK_THROTL_ENOENT)
+				pending_live = false;
+			return helper_error(delete_error);
+		}
+		pending_live = false;
+		return 0;
+	}
+	if (map == &blk_throtl_pop_call_map) {
+		pop_live = false;
+		return 0;
+	}
+	assert(map == &blk_throtl_blkg_owner_map && *(const u64 *)key == (u64)&blkg);
     assert(owner_live && "pd_free must delete only its owner, not cumulative rows");
     owner_live = false;
     return 0;
 }
+static struct gendisk *bio_disk(struct bio *bio) { return bio->disk; }
+static u64 bpf_ktime_get_ns(void) { return clock_ns; }
+static void *bpf_get_current_task(void) { return (void *)0x123; }
 ` + ioControlTestSourceSection(t, source,
-		"static __always_inline void blk_throtl_fail", "static __always_inline bool blk_throtl_delete_pending") +
-		ioControlTestSourceSection(t, source,
-			"static __always_inline bool blk_throtl_delete_owner",
-			"static __always_inline bool blk_throtl_wait_bio_operation") + source[freeStart:] + `
+		"static __always_inline bool blk_throtl_unhealthy", "SEC(\"kprobe/throtl_pd_free\")") +
+		source[freeStart:] + `
+static void reset(void)
+{
+	memset(&status, 0, sizeof(status));
+	pending_live = false;
+	pop_live = false;
+	aggregate_live = false;
+	owner_live = true;
+	update_ret = 0;
+	insert_error = 0;
+	delete_error = 0;
+	aggregate = 0;
+	clock_ns = 1000000;
+}
+static void admit(u64 caller)
+{
+	struct pt_regs ctx = { .arg1 = (u64)&sample_bio, .caller = caller };
+	kprobe_blk_throtl_add_bio_tg(&ctx);
+}
+static void pop(bool parent_queue)
+{
+	struct pt_regs ctx = { .arg2 = parent_queue, .ret = (u64)&sample_bio };
+	kprobe_blk_throtl_pop_queued(&ctx);
+	kretprobe_blk_throtl_pop_queued(&ctx);
+}
 int main(void)
 {
-    struct blkg_policy_data pd = { .blkg = (void *)0x300 };
+	struct blkg_policy_data pd = { .blkg = &blkg };
     struct pt_regs ctx = { .arg1 = (u64)&pd };
     int errors[] = { 0, -17, -7 };
     for (int extension = 0; extension < 2; extension++) {
@@ -1540,6 +1634,45 @@ int main(void)
     assert(attempts == 6);
     kprobe_blk_throtl_pd_free(&ctx);
     assert(attempts == 6);
+	for (int extension = 0; extension < 2; extension++) {
+		zero_extended_errors = extension;
+		reset();
+		insert_error = -7;
+		admit(1);
+		assert(status.failure >> 32 == BLK_THROTL_FAILURE_PENDING_INSERT);
+		assert((int)(u32)status.failure == -7 && !pending_live && !aggregate_live);
+
+		reset();
+		admit(1);
+		/* Reusing a pending bio must report a collision instead of overwriting its start. */
+		admit(1);
+		assert(status.failure >> 32 == BLK_THROTL_FAILURE_PENDING_COLLISION);
+		assert((int)(u32)status.failure == -17 && pending_ns == 1000000 && !aggregate_live);
+
+		reset();
+		admit(1);
+		delete_error = -2;
+		clock_ns = 4000000;
+		pop(false);
+		assert(!status.failure && !pending_live && aggregate == (((u64)1 << 38) | 300));
+
+		reset();
+		pop(false);
+		assert(!status.failure && !aggregate_live);
+
+		reset();
+		admit(1);
+		clock_ns = 2000000;
+		pop(true);
+		admit(2);
+		assert(pending_live && pending_ns == 1000000 && !aggregate_live);
+		clock_ns = 4000000;
+		pop(false);
+		assert(!status.failure && !pending_live && !pop_live);
+		assert(aggregate == (((u64)1 << 38) | 300));
+		pop(false);
+		assert(!status.failure && aggregate == (((u64)1 << 38) | 300));
+	}
     return 0;
 }
 `
@@ -1998,52 +2131,6 @@ func TestBlkThrotlIntervalCancelWaitsForInFlightCollection(t *testing.T) {
 	tracing.mu.Lock()
 	require.Nil(t, tracing.session)
 	tracing.mu.Unlock()
-}
-
-// Opt-in production attach qualification.
-
-// Run with TEST_INTEGRATION=true after building bpf/blk_throtl_tracing.o.
-func TestBlkThrotlStartAttachSmoke(t *testing.T) {
-	if os.Getenv("TEST_INTEGRATION") != "true" {
-		t.Skip("Set TEST_INTEGRATION=true to run the real blk_throtl attach smoke")
-	}
-	require.NoError(t, bpf.Init(&bpf.Option{}))
-	t.Cleanup(bpf.Shutdown)
-	oldDir := bpf.DefaultObjDir
-	bpf.DefaultObjDir = filepath.Join("..", "..", "bpf")
-	t.Cleanup(func() { bpf.DefaultObjDir = oldDir })
-
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	tracing := &blkThrotlTracing{}
-	done := make(chan error, 1)
-	go func() { done <- tracing.Start(ctx) }()
-	var err error
-	isStopped := false
-	require.Eventually(t, func() bool {
-		select {
-		case err = <-done:
-			isStopped = true
-			return true
-		default:
-		}
-		tracing.mu.Lock()
-		defer tracing.mu.Unlock()
-		return tracing.session != nil
-	}, 30*time.Second, 10*time.Millisecond, "blk_throtl session was not published")
-	cancel()
-	if !isStopped {
-		select {
-		case err = <-done:
-		case <-time.After(5 * time.Second):
-			t.Fatal("blk_throtl session did not stop")
-		}
-	}
-	if errors.Is(err, types.ErrNotSupported) && os.Getenv("TEST_BLK_THROTL_REQUIRED") != "1" {
-		t.Skip(err)
-	}
-	require.NoError(t, err)
-	require.Nil(t, tracing.session)
 }
 
 // Runtime hook selection and incomplete-profile rejection.

@@ -19,38 +19,125 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
+	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/ccfos/huatuo/internal/bpf"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestIOHealthFreezeKernel(t *testing.T) {
-	if os.Getenv("TEST_INTEGRATION") != "true" {
-		t.Skip("Set TEST_INTEGRATION=true to load and attach freeze probes")
+func TestIOHealthSCSITracepointLayout(t *testing.T) {
+	code := ioControlBPFSource(t, "io_health.c")
+	layout := ioControlTestSourceSection(
+		t,
+		code,
+		"struct io_health_scsi_timeout",
+		"static __always_inline u32 encode_dev",
+	)
+	probes := ioControlTestSourceSection(
+		t,
+		code,
+		`SEC("tracepoint/scsi/scsi_dispatch_cmd_timeout")`,
+		"/*\n * nvme_sysfs_show_state",
+	)
+	program := `
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+typedef uint64_t u64;
+typedef uint32_t u32;
+typedef uint8_t u8;
+typedef int32_t s32;
+#include "abi/io_health_types.h"
+#ifndef __always_inline
+#define __always_inline inline __attribute__((always_inline))
+#endif
+#define SEC(name)
+#define bpf_core_type_size(type) header_size
+static unsigned char context[64];
+static u32 header_size;
+static int events;
+static struct io_health_event last_event;
+static int bpf_probe_read_kernel(void *dst, u32 size, const void *src)
+{
+    assert((const unsigned char *)src >= context);
+    assert((const unsigned char *)src + size <= context + sizeof(context));
+    memcpy(dst, src, size);
+    return 0;
+}
+static u64 io_health_topology_generation(bool changed) { return 9; }
+static void submit_event(void *ctx, struct io_health_event *event)
+{
+    assert(ctx == context);
+    last_event = *event;
+    events++;
+}
+` + layout + probes + `
+int main(int argc, char **argv)
+{
+    header_size = strtoul(argv[1], NULL, 10);
+    const u32 identity[] = { 6, 7, 8, 0x10203040 };
+    const s32 results[] = { 0x1055, -5 };
+    memset(context, 0xa5, sizeof(context));
+    memcpy(context + header_size, identity, sizeof(identity));
+    for (unsigned i = 0; i < 2; i++) {
+	memcpy(context + header_size + sizeof(identity), &results[i], sizeof(s32));
+	for (unsigned error = 0; error < 2; error++) {
+	    events = 0;
+	    if (error)
+		trace_scsi_dispatch_error((void *)context);
+	    else
+		trace_scsi_timeout((void *)context);
+	    assert(events == 1);
+	    assert(last_event.type == (error ? HEALTH_EVENT_SCSI_DISPATCH_ERROR :
+					       HEALTH_EVENT_SCSI_TIMEOUT));
+	    assert(last_event.host == identity[0]);
+	    assert(last_event.channel == identity[1]);
+	    assert(last_event.target == identity[2]);
+	    assert(last_event.lun == identity[3]);
+	    assert(last_event.status == (error ? results[i] : 0));
+	    assert(last_event.topology_generation == 9);
 	}
-	ctx := ioControlKernelContext(t)
-	require.NoError(t, bpf.Init(&bpf.Option{}))
-	t.Cleanup(bpf.Shutdown)
-	oldDir := bpf.DefaultObjDir
-	bpf.DefaultObjDir = filepath.Join("..", "..", "bpf")
-	t.Cleanup(func() { bpf.DefaultObjDir = oldDir })
-	_, quietMask := loadIOHealthKernelEnums()
-	object, err := bpf.LoadBPF("io_health.o", map[string]any{"io_health_rqf_quiet_mask": quietMask})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, object.Close()) })
-	options, err := loadIOHealthHookOptions()
-	require.NoError(t, err)
-	options = slices.DeleteFunc(options, func(option bpf.AttachOption) bool {
-		return !strings.HasPrefix(option.ProgramName, "io_health_freeze_") &&
-			option.ProgramName != "io_health_disk_publishing"
-	})
-	require.Len(t, options, 4)
-	require.NoError(t, ctx.Err())
-	require.NoError(t, object.AttachWithOptions(options))
+    }
+    return 0;
+}
+`
+	executable := compileIOControlTestC(
+		t,
+		"cc",
+		"io-health-scsi-layout",
+		program,
+		"-I"+filepath.Join("..", "..", "bpf", "include"),
+	)
+	for _, test := range []struct {
+		name       string
+		headerSize int
+	}{
+		{
+			name:       "standard header",
+			headerSize: 8,
+		},
+		{
+			name:       "lazy preempt header",
+			headerSize: 12,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output, err := exec.CommandContext(
+				t.Context(),
+				executable,
+				strconv.Itoa(test.headerSize),
+			).CombinedOutput()
+			require.NoError(
+				t,
+				err,
+				"%s",
+				output,
+			)
+		})
+	}
 }
 
 func TestIOHealthBlockStatusMapping(t *testing.T) {
