@@ -142,7 +142,7 @@ assert_readiness_endpoint() {
 
 assert_log_has_no_failure() {
 	local log_file=$1 component=$2
-	local failure_pattern='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
+	local failure_pattern='panic:|fatal|level="?(error|panic|fatal)"?|"level"[[:space:]]*:[[:space:]]*"(error|panic|fatal)"'
 
 	[[ -r "${log_file}" ]] || fatal "${component} log is not readable: ${log_file}"
 	! grep -qiE "${failure_pattern}" "${log_file}" \
