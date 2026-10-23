@@ -197,3 +197,52 @@ source "${ROOT_DIR}/integration/lib_network_capture.sh"
 )
 
 log_info "process shutdown, Java streaming and network capture completion checks passed"
+
+# Exercise generation guards without compiling or touching the checkout.
+# Exercise the Makefile entry point without compiling or touching the checkout.
+(
+	for mode in valid stale_revision missing_source missing_marker dirty_source; do
+		work="${HUATUO_BAMAI_TEST_TMPDIR}/generation-${mode}"
+		mkdir -p "${work}"/{build,bpf,cmd,bin,_output}
+		cp "${ROOT_DIR}/Makefile" "${work}/Makefile"
+		: > "${work}/build/clang.sh"
+		printf '_output/\nbin/\npkg/\ninternal/\n' > "${work}/.gitignore"
+		(
+			cd "${work}"
+			make APP_COMMIT=fixture --no-print-directory \
+				'--eval=print-portable:;@echo $(PORTABLE_GENERATED_FILES)' print-portable > sources
+			read -r -a generated_files < sources
+			((${#generated_files[@]})) || fatal "portable source list is empty"
+			for file in "${generated_files[@]}"; do
+				mkdir -p "$(dirname "${file}")"
+				touch "${file}"
+			done
+			git init -q
+			git add .
+			git -c user.name=Test -c user.email=test@example.com commit -qm fixture
+			git rev-parse HEAD > _output/portable-generated.commit
+			case ${mode} in
+			stale_revision) echo stale > _output/portable-generated.commit ;;
+			missing_source) rm "${generated_files[-1]}" ;;
+			missing_marker) rm _output/portable-generated.commit ;;
+			dirty_source) echo '# modified' > build/clang.sh ;;
+			esac
+			cat > bin/go << 'STUB'
+#!/bin/sh
+[ "$*" = 'run ./build/bpfabi-tool' ] || exit 9
+echo abi >> _output/calls
+STUB
+			chmod +x bin/go
+			touch _output/.bpf-build-stamp-0
+			status=0
+			PATH="${work}/bin:${PATH}" make gen-build SKIP_PORTABLE_GENERATION=1 > output.log 2>&1 || status=$?
+			if [[ ${mode} == valid ]]; then
+				assert_eq "${status}" 0 "${mode}: generation guard; see ${work}/output.log"
+				assert_eq "$(cat _output/calls)" abi "guest ABI generation"
+			else
+				[[ ${status} != 0 && ! -e _output/calls ]] || fatal "${mode}: invalid sources reached ABI generation"
+			fi
+		)
+	done
+)
+log_info "portable generated source guards passed"

@@ -102,6 +102,10 @@ OPENAPI_DERIVED_FILES := \
 	apis/v1/node/http_status.gen.go \
 	apis/v1/node/openapi.gen.json
 OPENAPI_GENERATED_FILES := $(OPENAPI_CODEGEN_FILES) $(OPENAPI_DERIVED_FILES)
+PORTABLE_GENERATED_FILES := $(OPENAPI_GENERATED_FILES) \
+	pkg/metric/mock_collector_test.go \
+	internal/toolstream/transport/event.capnp.go
+SKIP_PORTABLE_GENERATION ?= 0
 
 define generate-openapi
 	output_root="$(1)"; \
@@ -120,8 +124,8 @@ endef
 
 define generate-non-openapi
 	go run ./build/bpfabi-tool; \
-	go generate -run "mockery.*" -x ./...; \
-	go generate -run "capnp.*" ./...
+	go generate -run "capnp.*" ./...; \
+	go generate -run "mockery.*" -x ./...
 endef
 
 define check-openapi
@@ -209,8 +213,24 @@ clean:
 		$(FIND_EXCLUDE_PATHS) -delete
 
 gen-build: $(BPF_BUILD_STAMP)
+ifeq ($(SKIP_PORTABLE_GENERATION),1)
+	@test "$$(cat $(APP_CMD_OUTPUT)/portable-generated.commit)" = "$$(git rev-parse HEAD)" \
+		|| { echo 'portable generated sources do not match this revision' >&2; exit 1; }
+	@git diff HEAD --exit-code
+	@for file in $(PORTABLE_GENERATED_FILES); do \
+		test -f "$$file" || { echo "missing generated source: $$file" >&2; exit 1; }; \
+	done
+	@go run ./build/bpfabi-tool
+else
 	@set -eu; $(call generate-openapi,.)
 	@set -eu; $(generate-non-openapi)
+endif
+
+portable-generated: gen-build
+	@git diff HEAD --exit-code
+	@git rev-parse HEAD > $(APP_CMD_OUTPUT)/portable-generated.commit
+	@tar -cf $(APP_CMD_OUTPUT)/portable-generated.tar \
+		$(PORTABLE_GENERATED_FILES) $(APP_CMD_OUTPUT)/portable-generated.commit
 
 test: unit integration e2e
 
@@ -233,4 +253,4 @@ integration: build
 e2e: build
 	@bash e2e/run.sh
 
-.PHONY: build install-tools gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: build install-tools gen-build portable-generated check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

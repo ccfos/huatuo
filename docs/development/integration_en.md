@@ -328,3 +328,11 @@ cd integration
 ```bash
 bash run.sh test_node_runtime_limits.sh
 ```
+
+### VM Build Reuse
+
+CI generates architecture-independent OpenAPI, mock, and Cap’n Proto sources
+once per workflow and transfers them to each VM. The artifact must match the
+checkout’s commit and contain every required source; tracked files must be clean.
+BPF objects and their Go ABI types are still generated inside each VM.
+Local builds continue to run all generators.

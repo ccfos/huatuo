@@ -226,7 +226,9 @@ grow_root_filesystem
 print_sys_info
 export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
 install_test_dependencies
-install_temporary_go_tools
+if [[ ! -f /mnt/host/_output/portable-generated.commit ]]; then
+	install_temporary_go_tools
+fi
 export JAVA_PROFILER_DOCKER_IMAGE=eclipse-temurin:17-jdk
 export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
 export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
@@ -241,6 +243,10 @@ git config --global --add safe.directory /mnt/host
 vm_log '⬅️⬅️⬅️ Running tests...'
 
 make install-tools
-make test
+if [[ -f _output/portable-generated.commit ]]; then
+	make test SKIP_PORTABLE_GENERATION=1
+else
+	make test
+fi
 
 vm_log '✅✅✅ Tests passed.'
