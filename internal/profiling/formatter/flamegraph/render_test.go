@@ -16,6 +16,8 @@ package flamegraph
 
 import (
 	"bytes"
+	"encoding/xml"
+	"io"
 	"strings"
 	"testing"
 )
@@ -42,5 +44,38 @@ func TestRenderKeepsSymbolsOutOfJavaScript(t *testing.T) {
 	if !strings.Contains(content, `data-title="`) ||
 		!strings.Contains(content, "&lt;script&gt;alert(2)&lt;/script&gt;") {
 		t.Fatalf("SVG does not preserve the escaped symbol as data: %s", content)
+	}
+}
+
+func TestRenderStripsXMLForbiddenCharacters(t *testing.T) {
+	for _, symbol := range []string{
+		"work\x00name",
+		"work\x01name",
+		"work\x1bname",
+		"work\uFFFEname",
+		"work\uFFFFname",
+	} {
+		t.Run(symbol, func(t *testing.T) {
+			var proc processor
+			proc.Process(Stack{Names: []string{"root", symbol + "<&"}, Samples: 1})
+
+			var output bytes.Buffer
+			if err := proc.render(&output, DefaultStyle); err != nil {
+				t.Fatalf("render flame graph: %v", err)
+			}
+
+			decoder := xml.NewDecoder(bytes.NewReader(output.Bytes()))
+			for {
+				if _, err := decoder.Token(); err != nil {
+					if err == io.EOF {
+						break
+					}
+					t.Fatalf("decode SVG: %v", err)
+				}
+			}
+			if !strings.Contains(output.String(), "&lt;&amp;") {
+				t.Fatalf("escaped valid symbol missing from SVG: %s", output.String())
+			}
+		})
 	}
 }

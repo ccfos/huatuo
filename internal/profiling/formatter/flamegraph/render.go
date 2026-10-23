@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"strings"
 )
 
 type frame struct {
@@ -214,14 +215,14 @@ func (r *renderer) drawFrame(f *frame, ew *errWriter) {
 	// Keep symbol data out of JavaScript source. XML entities are decoded
 	// before event handlers run, so escaping a quote inside s('...') would not
 	// prevent a crafted symbol from terminating that string.
-	attributeTitle := html.EscapeString(title)
+	attributeTitle := escapeXML(title)
 
 	ew.printf(
 		`<g class="func_g" data-title="%s" onmouseover="s(this.getAttribute('data-title'))" `+
 			`onmouseout="c()" onclick="zoom(this)">`+"\n",
 		attributeTitle,
 	)
-	ew.printf("  <title>%s</title>\n", html.EscapeString(title))
+	ew.printf("  <title>%s</title>\n", escapeXML(title))
 	ew.printf(
 		`  <rect x="%.1f" y="%d" width="%.1f" height="%d" fill="%s" rx="2" ry="2"/>`+"\n",
 		x,
@@ -258,6 +259,7 @@ func nameHash(n string) float32 {
 }
 
 func (r *renderer) fitText(text string, width float32) string {
+	text = stripXMLForbidden(text)
 	avail := int(width / (float32(r.style.FontSize) * r.style.FontWidth))
 	if avail < 3 {
 		return ""
@@ -268,6 +270,22 @@ func (r *renderer) fitText(text string, width float32) string {
 	}
 
 	return html.EscapeString(text[:avail-2]) + ".."
+}
+
+func escapeXML(text string) string {
+	return html.EscapeString(stripXMLForbidden(text))
+}
+
+func stripXMLForbidden(text string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' ||
+			(r >= 0x20 && r <= 0xD7FF) ||
+			(r >= 0xE000 && r <= 0xFFFD) ||
+			(r >= 0x10000 && r <= 0x10FFFF) {
+			return r
+		}
+		return -1
+	}, text)
 }
 
 func (proc *processor) render(out io.Writer, style Style) error {
