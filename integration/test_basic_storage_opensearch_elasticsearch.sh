@@ -66,7 +66,9 @@ assert_storage_request() {
 	local status=0 http_status
 	local -a arguments=(-X "${method}" -H 'Content-Type: application/json')
 	[[ -z ${body} ]] || arguments+=(--data "${body}")
-	http_status=$(storage_curl "${arguments[@]}" \
+	# Cluster metadata updates can outlast the short readiness probes on CI.
+	# Override only this request's deadline; polling keeps CURL_TIMEOUT.
+	http_status=$(storage_curl --max-time 30 "${arguments[@]}" \
 		-o "${STORAGE_RESPONSE}" -w '%{http_code}' \
 		"${STORAGE_ADDR}/${path}" 2> "${STORAGE_ERRORS}") || status=$?
 	report_http_response "${operation}" "${STORAGE_RESPONSE}" "${STORAGE_ERRORS}"
