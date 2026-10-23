@@ -173,9 +173,9 @@ $(APP_CMD_OUTPUT)/bin/%:
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
 	$(GO_BUILD_IMPL) -o $@ ./$(APP_CMD_DIR)/$*
 
-$(PPROF_TOOL): $(GO_SRCS)
+$(PPROF_TOOL): $(GO_SRCS) Makefile
 	@mkdir -p $(dir $@)
-	go build -o $@ ./build/pprof-tool
+	CGO_ENABLED=0 go build -o $@ ./build/pprof-tool
 
 docker-build:
 	@docker build --network=host --no-cache --build-arg BUILD_MODE=$(BUILD_MODE) -t $(IMAGE) -f Dockerfile .
