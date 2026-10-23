@@ -14,7 +14,7 @@ __attribute__((noinline)) static void hot_loop(void)
 
 int main(void)
 {
-	const struct timespec delay = {.tv_nsec = 1000000};
+	const struct timespec delay = {.tv_sec = 0, .tv_nsec = 1000000};
 	// Keep live mappings so retained-memory snapshots have a stable target.
 	void *retained[16] = {0};
 	unsigned int next = 0;

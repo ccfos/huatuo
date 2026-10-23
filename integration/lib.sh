@@ -329,6 +329,19 @@ stop_by_pid() {
 	kill -KILL "${pid}" 2> /dev/null || true
 }
 
+# Sampling tools start separate process groups that can outlive their daemon.
+stop_by_process_group() {
+	local pgid=$1 timeout=${2:-5} waited=0
+	[[ ${pgid} =~ ^[0-9]+$ && ${pgid} -gt 1 ]] \
+		|| fatal "invalid process group ID: ${pgid}"
+	kill -TERM -- "-${pgid}" 2> /dev/null || return 0
+	while kill -0 -- "-${pgid}" 2> /dev/null && ((waited < timeout)); do
+		sleep 1
+		waited=$((waited + 1))
+	done
+	kill -KILL -- "-${pgid}" 2> /dev/null || true
+}
+
 stop_and_wait_by_pid() {
 	local pid=${1:-} timeout=${2:-10}
 	[[ -n "${pid}" ]] || return 0
@@ -439,30 +452,42 @@ process_exited() {
 	[[ ${state} == Z ]]
 }
 
-# huatuo_bamai_stop_with_signal <TERM|KILL> [sent]
-# Lifecycle tests require the real exit status instead of best-effort teardown.
-huatuo_bamai_stop_with_signal() {
-	local signal=$1 already_sent=${2:-} pid status=0 expected
+# Call in the shell that started the daemon to verify its actual exit status.
+# stop_daemon_with_signal <pid_file> <TERM|KILL> [sent] [timeout_seconds]
+stop_daemon_with_signal() {
+	local pid_file=$1 signal=$2 already_sent=${3:-} timeout=${4:-65}
+	local pid status=0 expected
 	case ${signal} in
 	TERM) expected=0 ;;
 	KILL) expected=137 ;;
 	*) fatal "unsupported daemon stop signal: ${signal}" ;;
 	esac
-	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
+	[[ -r ${pid_file} ]] || fatal "daemon PID file is not readable: ${pid_file}"
+	pid=$(< "${pid_file}")
+	[[ ${pid} =~ ^[0-9]+$ && ${pid} -gt 1 ]] || fatal "invalid daemon PID in ${pid_file}: ${pid}"
 	[[ ${already_sent} == sent ]] || kill -"${signal}" "${pid}"
-	if ! wait_until 65 0.1 process_exited "${pid}"; then
+	if ! wait_until "${timeout}" 0.1 process_exited "${pid}"; then
 		kill -KILL "${pid}" 2> /dev/null || true
 		wait "${pid}" 2> /dev/null || true
-		fatal "daemon did not stop after ${signal} within 65 seconds"
+		rm -f "${pid_file}"
+		fatal "daemon pid=${pid} did not stop after ${signal} within ${timeout} seconds"
 	fi
 	wait "${pid}" || status=$?
-	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
-	[[ ${status} == "${expected}" ]] || fatal "daemon ${signal} exit status ${status}, expected ${expected}"
+	rm -f "${pid_file}"
+	[[ ${status} == "${expected}" ]] || fatal "daemon pid=${pid} ${signal} exit status ${status}, expected ${expected}"
+}
+
+# huatuo_bamai_stop_with_signal <TERM|KILL> [sent]
+# Lifecycle tests require the real exit status instead of best-effort teardown.
+huatuo_bamai_stop_with_signal() {
+	stop_daemon_with_signal "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" "$@"
 }
 
 # --------------------------- huatuo-apiserver -------------------------------
 
 huatuo_apiserver_start() {
+	[[ -f "${HUATUO_APISERVER_BIN}" && -x "${HUATUO_APISERVER_BIN}" ]] \
+		|| fatal "huatuo-apiserver binary missing or not executable: ${HUATUO_APISERVER_BIN}; run make build"
 	log_info "starting huatuo-apiserver: $*"
 	"${HUATUO_APISERVER_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" 2>&1 &
 	local pid=$!
@@ -493,6 +518,11 @@ huatuo_apiserver_stop() {
 	pid=$(cat "${test_workspace}/huatuo-apiserver.pid" 2> /dev/null || echo "")
 	[[ -n "$pid" ]] && stop_by_pid "${pid}"
 	rm -f "${test_workspace}/huatuo-apiserver.pid"
+}
+
+# Recovery checks must finish before the still-running sampling task ends.
+huatuo_apiserver_stop_with_signal() {
+	stop_daemon_with_signal "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid" "$1" "${2:-}" 20
 }
 
 # integration_huatuo_apiserver_start [config_writer_func] [apiserver args...]
