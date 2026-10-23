@@ -165,6 +165,35 @@ runner_status=0
 (ROOT_DIR="${RUNNER_FIXTURE}/missing" require_build_output) > "${HUATUO_BAMAI_TEST_TMPDIR}/missing-output.log" 2>&1 || runner_status=$?
 [[ ${runner_status} == 1 ]] || fatal "missing build output did not fail: exit=${runner_status}"
 
+# Memray's own build artifacts must fail the suite, unlike external tools.
+cp "${ROOT_DIR}/integration/lib_profiler_python_memory.sh" "${RUNNER_FIXTURE}/integration/"
+mkdir -p "${RUNNER_FIXTURE}/_output/bin" "${RUNNER_FIXTURE}/_output/tools/memray/runtimes/py3.12/python/memray"
+cat > "${RUNNER_FIXTURE}/integration/test_memory_artifacts.sh" << 'EOF'
+set -euo pipefail
+source "${ROOT_DIR}/integration/lib.sh"
+PROFILER_TOOL_DIR="${ROOT_DIR}/_output/tools"
+source "${ROOT_DIR}/integration/lib_profiler_python_memory.sh"
+memory_require_profiler
+memory_require_runtime "${RUNNER_MEMORY_PYTHON_VERSION:-3.12}"
+EOF
+runner_check integration missing_memory_profiler 1 'total=1 passed=0 skipped=0 failed=1' test_memory_artifacts.sh
+grep -q 'profiler build artifact missing' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-missing_memory_profiler.log" \
+	|| fatal "missing profiler failed for an unrelated reason"
+cp "${runner_tool}" "${RUNNER_FIXTURE}/_output/bin/profiler"
+runner_check integration nonexecutable_memory_profiler 1 'total=1 passed=0 skipped=0 failed=1' test_memory_artifacts.sh
+chmod +x "${RUNNER_FIXTURE}/_output/bin/profiler"
+runner_check integration missing_memory_extension 1 'total=1 passed=0 skipped=0 failed=1' test_memory_artifacts.sh
+grep -q 'Memray runtime for Python 3.12 missing' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-missing_memory_extension.log" \
+	|| fatal "missing Memray extension failed for an unrelated reason"
+touch "${RUNNER_FIXTURE}/_output/tools/memray/runtimes/py3.12/python/memray/_memray.fixture.so"
+runner_check integration missing_memory_injector 1 'total=1 passed=0 skipped=0 failed=1' test_memory_artifacts.sh
+grep -q 'Memray injector for Python 3.12 missing' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-missing_memory_injector.log" \
+	|| fatal "missing Memray injector failed for an unrelated reason"
+touch "${RUNNER_FIXTURE}/_output/tools/memray/runtimes/py3.12/python/memray/_inject.fixture.so"
+runner_check integration complete_memory_artifacts 0 'total=1 passed=1 skipped=0 failed=0' test_memory_artifacts.sh
+RUNNER_MEMORY_PYTHON_VERSION=3.6 runner_check integration unsupported_memory_python_old 0 'total=1 passed=0 skipped=1 failed=0' test_memory_artifacts.sh
+RUNNER_MEMORY_PYTHON_VERSION=3.15 runner_check integration unsupported_memory_python_new 0 'total=1 passed=0 skipped=1 failed=0' test_memory_artifacts.sh
+
 # Parallel cases have independent PID files, toolstream paths, and HTTP ports.
 rm -f "${RUNNER_FIXTURE}/integration/"test_*.sh
 RUNNER_SOCKET_ID=""
