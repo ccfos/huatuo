@@ -35,6 +35,8 @@ type Config struct {
 	ExecPath                  string
 	ThreadGroup               bool
 	ToolDir                   string
+	PythonMemoryStackMode     string
+	PythonMemoryMergeThreads  bool
 	LogBpfDebug               bool
 	Mode                      profiling.Mode
 	OffCPUPhase               profiling.OffCPUPhase

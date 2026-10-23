@@ -61,6 +61,10 @@ func New(implementation profiling.Implementation, config *Config) (*profile.Prof
 		meta.Description = "Python CPU profiler using py-spy"
 		meta.Impl = &pythonCPUProfiler{config: cfg}
 		meta.AggregationMode = pipeline.AggregationModeOneShot
+	case implementation == profiling.ImplementationPython && cfg.Type == profiling.TypeMemory:
+		meta.Description = "Python memory profiler using Memray"
+		meta.Impl = &pythonMemoryProfiler{config: cfg}
+		meta.AggregationMode = pipeline.AggregationModeOneShot
 	default:
 		return nil, fmt.Errorf("no profiler for implementation=%q type=%q", implementation, cfg.Type)
 	}
