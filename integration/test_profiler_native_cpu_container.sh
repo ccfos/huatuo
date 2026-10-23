@@ -21,7 +21,13 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
+# Missing tracefs metadata does not imply that perf-kprobe attachment is unavailable.
+if [[ -r /sys/kernel/tracing/available_filter_functions ||
+	-r /sys/kernel/debug/tracing/available_filter_functions ]]; then
+	if ! kprobe_available memory_current_read && ! kprobe_available cgroup_clone_children_read; then
+		skip "cgroup CSS lookup requires memory_current_read or cgroup_clone_children_read kprobe"
+	fi
+fi
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-native-container
 readonly PROFILER_BIN=${TOOL_BIN}
@@ -33,11 +39,7 @@ readonly CONTAINERD_NAMESPACE="k8s.io"
 readonly PROFILER_DURATION=5
 readonly CHAIN_PATTERN=';f1;f2;f3 [0-9]+$'
 
-[[ -r /proc/sys/kernel/perf_event_paranoid ]] \
-	|| skip "perf_event_paranoid not readable: perf unavailable"
-readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
-[[ "${PARANOID}" -le 2 ]] \
-	|| skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
+require_readable /proc/sys/kernel/perf_event_paranoid
 
 WORK_DIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${WORK_DIR}/callchain"

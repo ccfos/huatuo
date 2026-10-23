@@ -20,8 +20,6 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
-
 bpf_tool_setup profiler native_oncpu_profiler profiler-cpu-thread-group
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_cpu_thread_group.user.c"
 readonly WORKER_SYMBOL="thread_group_cpu_loop"
@@ -29,9 +27,7 @@ readonly PROFILER_DURATION=5
 readonly PROFILER_FREQ=99
 readonly PROFILER_AGGR_INTERVAL=2
 
-[[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip "perf_event_paranoid not readable: perf unavailable"
-readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
-[[ "${PARANOID}" -le 2 ]] || skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
+require_readable /proc/sys/kernel/perf_event_paranoid
 
 WORK_DIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${WORK_DIR}/thread_group_workload"

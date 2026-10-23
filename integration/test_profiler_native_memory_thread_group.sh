@@ -20,7 +20,11 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-is_container && skip "native memory profiler requires bare-metal cgroup/PMU access"
+# Missing tracefs metadata does not imply that perf-kprobe attachment is unavailable.
+if [[ -r /sys/kernel/tracing/available_filter_functions ||
+	-r /sys/kernel/debug/tracing/available_filter_functions ]]; then
+	kprobe_available do_mmap || skip "do_mmap is not available for kprobe"
+fi
 
 bpf_tool_setup profiler native_virtual_alloc profiler-thread-group
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_thread_group.user.c"

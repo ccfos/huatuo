@@ -22,15 +22,9 @@ readonly CPU_LIMIT_PERCENT=10
 readonly SAMPLE_SECONDS=5
 readonly PROFILER_DURATION=15
 
-is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
-
 bpf_tool_setup profiler native_oncpu_profiler profiler-selfcpu
 readonly PROFILER_BIN=${TOOL_BIN}
-perf_event_paranoid=$(cat /proc/sys/kernel/perf_event_paranoid) || fatal \
-	"perf_event_paranoid not readable: perf unavailable"
-if ((perf_event_paranoid > 2)); then
-	skip "kernel.perf_event_paranoid=${perf_event_paranoid} blocks CPU profiling"
-fi
+require_readable /proc/sys/kernel/perf_event_paranoid
 
 clock_ticks=$(getconf CLK_TCK) || fatal "cannot determine kernel clock tick rate"
 [[ "${clock_ticks}" =~ ^[1-9][0-9]*$ ]] || fatal \

@@ -11,8 +11,6 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-is_container && skip "native off-CPU PID filtering requires host PID namespace"
-
 bpf_tool_setup profiler native_offcpu_profiler profiler-offcpu
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_offcpu.user.c"
 

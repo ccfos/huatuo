@@ -19,26 +19,6 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-# Btrfs roots also belong to hosts and VMs; filesystem type alone is insufficient.
-(
-	findmnt() { printf '%s\n' "${runner_fstype}"; }
-	systemd-detect-virt() {
-		printf '%s\n' "${runner_container}"
-		[[ ${runner_container} != none ]]
-	}
-	for runner_fstype in btrfs ext4; do
-		runner_container=none
-		if is_container; then
-			fatal "${runner_fstype} host was detected as a container"
-		fi
-		runner_container=docker
-		is_container || fatal "${runner_fstype} container was detected as a host"
-	done
-	runner_fstype=overlay
-	runner_container=none
-	is_container || fatal "overlay container detection changed"
-)
-
 readonly RUNNER_FIXTURE="${HUATUO_BAMAI_TEST_TMPDIR}/runner"
 [[ ${EUID} -eq 0 ]] || skip "runner tests require root for integration namespaces"
 require_commands unshare mount findmnt readlink
