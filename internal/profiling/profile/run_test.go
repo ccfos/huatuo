@@ -157,6 +157,7 @@ func TestRunPropagatesFailures(t *testing.T) {
 type runOutput struct {
 	commits atomic.Int64
 	records atomic.Int64
+	windows atomic.Int64
 }
 
 // Observe completion through the public output boundary, including empty runs.
@@ -188,6 +189,7 @@ func newRunOutput(t *testing.T) (RunConfig, *runOutput) {
 			received.commits.Add(1)
 		}
 		if request.Data != nil {
+			received.windows.Add(1)
 			for _, sample := range request.Data.Aggregated.Samples {
 				received.records.Add(sample.Value)
 			}
@@ -206,6 +208,47 @@ func newRunOutput(t *testing.T) (RunConfig, *runOutput) {
 		OutputFormat:      output.FormatRemoteStore,
 		OutputDestination: path,
 	}, received
+}
+
+func TestRunPublishesEmptyRetainedCaptureOnlyOnSuccess(t *testing.T) {
+	incomplete := errors.New("incomplete Memray capture before trailer")
+	for _, test := range []struct {
+		name   string
+		values []int64
+		err    error
+	}{
+		{name: "no allocations"},
+		{name: "all allocations freed", values: []int64{4096, -4096}},
+		{name: "missing trailer", err: incomplete},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, received := newRunOutput(t)
+			collector := &loopProfiler{read: func(_ context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+				for _, value := range test.values {
+					if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: value}}}); err != nil {
+						return err
+					}
+				}
+				return test.err
+			}}
+			err := Run(t.Context(), cfg, &ProfilerMeta{
+				Impl:              collector,
+				AggregationMode:   pipeline.AggregationModeOneShot,
+				AggregationConfig: pipeline.AggregationConfig{ProfileType: profiling.ProfileTypeInUseSpace},
+			})
+			if !errors.Is(err, test.err) {
+				t.Fatalf("Run() = %v, want %v", err, test.err)
+			}
+			want := int64(1)
+			if test.err != nil {
+				want = 0
+			}
+			if received.windows.Load() != want || received.commits.Load() != want || received.records.Load() != 0 {
+				t.Fatalf("windows=%d, commits=%d, bytes=%d; want %d windows/commits and zero bytes",
+					received.windows.Load(), received.commits.Load(), received.records.Load(), want)
+			}
+		})
+	}
 }
 
 func TestRunPropagatesOutputFailure(t *testing.T) {

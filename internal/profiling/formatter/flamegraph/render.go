@@ -40,6 +40,7 @@ type Style struct {
 	XMargin       float32
 	FramesYOffset int
 	FrameHeight   int
+	ValueUnit     string
 }
 
 // Color returns a deterministic warm color for the given frame name.
@@ -196,10 +197,15 @@ func (r *renderer) DrawFrame(root *frame, ew *errWriter) {
 }
 
 func (r *renderer) drawFrame(f *frame, ew *errWriter) {
+	unit := r.style.ValueUnit
+	if unit == "" {
+		unit = "samples"
+	}
 	title := fmt.Sprintf(
-		"%s (%d samples, %.2f%%)",
+		"%s (%d %s, %.2f%%)",
 		f.Name,
 		f.SampleCount,
+		unit,
 		f.SamplePercent,
 	)
 	color := r.style.Color(f.Name)

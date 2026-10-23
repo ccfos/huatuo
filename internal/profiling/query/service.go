@@ -97,9 +97,9 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		return nil, fmt.Errorf("%w: container scope requires a container id or task id", ErrInvalidQuery)
 	}
 
-	latestOnly := filter.ProfileType == profiling.ProfileTypePhysicalUsage
+	latestOnly := filter.ProfileType == profiling.ProfileTypePhysicalUsage || filter.ProfileType == profiling.ProfileTypeInUseSpace
 	if latestOnly && filter.ID == "" {
-		return nil, fmt.Errorf("%w: physical usage requires a single task id", ErrInvalidQuery)
+		return nil, fmt.Errorf("%w: %s requires a single task id", ErrInvalidQuery, filter.ProfileType)
 	}
 
 	if filter.ID == "" && filter.Hostname == "" && filter.ContainerID == "" && filter.ContainerHostname == "" {
