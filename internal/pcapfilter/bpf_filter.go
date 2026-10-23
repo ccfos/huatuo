@@ -30,6 +30,8 @@ package pcapfilter
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/cilium/ebpf/asm"
 	"github.com/cloudflare/cbpfc"
@@ -245,6 +247,49 @@ func patchPacketLoads(insts asm.Instructions, resultLabel string) (asm.Instructi
 	return insts, nil
 }
 
+// unimplementedProtocolPrimitives are bare protocol keywords that go-pcap's
+// compiler turns into an always-true term: the protocol constraint silently
+// disappears from conjunctions ("host 10.0.0.1 and icmp" compiles to the
+// program of "host 10.0.0.1", instruction for instruction) and disjunctions
+// degenerate to a match-all filter. Until go-pcap implements these
+// primitives, reject expressions that use them instead of installing a filter
+// that captures more than the expression requests.
+var unimplementedProtocolPrimitives = map[string]struct{}{
+	"icmp": {}, "icmp6": {}, "igmp": {}, "esp": {}, "ah": {}, "pim": {},
+	"vrrp": {},
+}
+
+// filterNameQualifiers are keywords that directly precede a name argument, so
+// a following token is a host or service name ("host icmp"), not a standalone
+// protocol primitive.
+var filterNameQualifiers = map[string]struct{}{
+	"host": {}, "net": {}, "port": {}, "portrange": {}, "gateway": {},
+	"sport": {}, "dport": {}, "sportrange": {}, "dportrange": {},
+	"src": {}, "dst": {}, "proto": {}, "ether": {}, "ip": {}, "ip6": {},
+	"arp": {}, "rarp": {}, "vlan": {}, "mpls": {}, "stp": {},
+}
+
+func rejectUnimplementedPrimitives(expr string) error {
+	tokens := strings.FieldsFunc(expr, func(r rune) bool {
+		return unicode.IsSpace(r) || r == '(' || r == ')'
+	})
+	for i, token := range tokens {
+		if _, broken := unimplementedProtocolPrimitives[token]; !broken {
+			continue
+		}
+		if i > 0 {
+			if _, qualifier := filterNameQualifiers[tokens[i-1]]; qualifier {
+				continue
+			}
+		}
+		return fmt.Errorf(
+			"%w: %q uses the %q protocol primitive, which the packet filter compiler does not implement",
+			ErrInvalidFilter, expr, token,
+		)
+	}
+	return nil
+}
+
 // compileGoPcap compiles expr with go-pcap's parser and compiler. The upstream
 // compiler dereferences a nil network for a malformed net operand inside a
 // composite expression, so recover and report that input as an invalid filter.
@@ -255,6 +300,10 @@ func compileGoPcap(expr string) (insns []cbpf.Instruction, err error) {
 			err = fmt.Errorf("%w: %q: %v", ErrInvalidFilter, expr, r)
 		}
 	}()
+
+	if err := rejectUnimplementedPrimitives(expr); err != nil {
+		return nil, err
+	}
 
 	e := filter.NewExpression(expr)
 	if e == nil {
