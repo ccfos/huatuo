@@ -85,7 +85,7 @@ Use `--output-format json --output-path irqtracing.json` to save the same window
 
 `profile` uses the same `types.ProfilingWindow` format as the profiler tool. The example is an empty window; populated windows also contain sample, location, and function data. An empty window still returns a valid profile with its start time and actual collection duration. Stacks retain `source` / `victim` roots and process and interrupt-vector grouping, followed by user-space frames and kernel frames with the `_[k]` suffix. The selected target CPU is also recorded in sample labels.
 
-`dropped_samples.collection` counts samples dropped because the kernel sampling budget or counts map is full; the current counter cannot distinguish these causes. A nonzero value means the profile is incomplete and produces a stderr warning. Failure to read the counter fails collection. A full profiler user-space queue returns an error and fails collection; `dropped_samples.aggregation_queue` is retained only for historical data compatibility.
+`dropped_samples.collection` counts samples dropped because the kernel sampling budget or counts map is full; the current counter cannot distinguish these causes. A nonzero value means the profile is incomplete and produces a stderr warning. Failure to read the counter fails collection. When the profiler user-space queue is full, rejected batches are also counted under `collection` and collection continues with an incomplete profile; `dropped_samples.aggregation_queue` is retained only for historical data compatibility.
 
 ## Invocation by huatuo-bamai
 

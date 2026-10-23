@@ -398,7 +398,7 @@ Remote results receive a completion marker only after `remote-store` commits the
 
 ### Sample Loss
 
-Collection loss is recorded under `collection` in `profile_data.metrics.dropped_samples`. Full queues return errors rather than silently dropping data; `aggregation_queue` exists only for historical compatibility. `physical_usage` fails on explicit sample loss; other types may retain loss statistics. Cancellation does not guarantee export of final statistics, so empty results or missing loss fields do not alone prove no loss.
+Collection loss is recorded under `collection` in `profile_data.metrics.dropped_samples`. Batches rejected by a full user-space queue are counted under this category and collection continues with an incomplete result; `aggregation_queue` exists only for historical compatibility. `physical_usage` fails on explicit sample loss; other types may retain loss statistics. Cancellation does not guarantee export of final statistics, so empty results or missing loss fields do not alone prove no loss.
 
 ## Profiling API
 
