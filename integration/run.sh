@@ -125,6 +125,7 @@ unshare --uts --mount bash -c '
 
 	runner_test_exit() {
 		local status=$1
+		find "${active_test_workspace}" -type f -name timings.log -exec cat {} + || true
 		if [[ ${test_suite} == e2e ]]; then
 			HUATUO_BAMAI_TEST_TMPDIR="${active_test_workspace}" e2e_test_teardown "${status}" || status=1
 			if [[ ${status} -ne 0 && ${status} -ne 77 ]]; then

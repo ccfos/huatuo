@@ -32,6 +32,14 @@ log_error() {
 	printf '[%s][%s][ERROR] %s\n' \
 		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
 }
+
+# Keep phase timings separate so the runner can show them on successful cases.
+record_test_timing() {
+	printf '[TIMING] case=%s subject=%s phase=%s duration=%ss\n' \
+		"${HUATUO_BAMAI_TEST_TMPDIR##*/}" "$1" "$2" "$((SECONDS - $3))" \
+		>> "${HUATUO_BAMAI_TEST_TMPDIR}/timings.log"
+}
+
 fatal() {
 	printf '[%s][%s][FAIL] %s\n' \
 		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2

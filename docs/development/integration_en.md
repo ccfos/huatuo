@@ -188,6 +188,10 @@ stops its worker normally after capture, avoiding the remaining workload tail.
 
 ## Storage Tests
 
+Storage phase timings separate image pulls, startup lock waits, container start,
+readiness, verification and cleanup. The runner prints `timings.log` files before
+removing successful workspaces.
+
 Continuous-profiling API, profile-filter, IRQ autotracing, and storage-values
 cases share one default Elasticsearch instance per suite repetition. Each case
 uses workspace-scoped indices. The runner owns shutdown, including on failure;

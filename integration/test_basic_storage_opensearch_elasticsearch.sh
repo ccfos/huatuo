@@ -41,13 +41,14 @@ storage_curl_status=0
 storage_http_status=""
 
 storage_cleanup() {
-	local status=$?
+	local status=$? started=${SECONDS}
 	trap - EXIT
 	huatuo_bamai_stop || status=1
 	if ((status != 0 && status != 77)); then
 		storage_dump_logs || true
 	fi
 	storage_stop || status=1
+	record_test_timing "storage:${storage_backend}" cleanup "${started}"
 	exit "${status}"
 }
 
@@ -108,7 +109,7 @@ assert_storage_event_counts() {
 }
 
 storage_run_backend() {
-	local backend=$1
+	local backend=$1 started
 	HUATUO_BAMAI_TEST_TMPDIR="${HUATUO_BAMAI_TEST_TMPDIR}/${backend}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
 	readonly STORAGE_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/dropwatch"
@@ -122,17 +123,29 @@ storage_run_backend() {
 	HUATUO_BAMAI_ADDR="http://127.0.0.1:${storage_http_port}"
 	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
+	started=${SECONDS}
 	assert_storage_request "create index" PUT "${STORAGE_INDEX}" \
 		'{"settings":{"number_of_shards":1,"number_of_replicas":0}}'
 	jq -e '.acknowledged == true' "${STORAGE_RESPONSE}" > /dev/null \
 		|| fatal "storage did not acknowledge index creation"
+	record_test_timing "storage:${backend}" index_create "${started}"
 
+	started=${SECONDS}
 	integration_huatuo_bamai_start write_storage_events_config \
 		--region integration --disable-kubelet --log-debug
+	record_test_timing "storage:${backend}" daemon_ready "${started}"
+	started=${SECONDS}
 	wait_until 20 0.2 storage_local_event_ready || fatal "localfile storage did not receive an event"
+	record_test_timing "storage:${backend}" local_event "${started}"
+	started=${SECONDS}
 	assert_storage_async_write
+	record_test_timing "storage:${backend}" async_write "${started}"
+	started=${SECONDS}
 	assert_huatuo_bamai_shutdown
+	record_test_timing "storage:${backend}" daemon_flush "${started}"
+	started=${SECONDS}
 	assert_storage_event_counts
+	record_test_timing "storage:${backend}" count_verification "${started}"
 	assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"
 }
 
