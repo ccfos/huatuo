@@ -125,6 +125,16 @@ func TestParseIPv4TCP(t *testing.T) {
 	}
 }
 
+func TestParseNilHeader(t *testing.T) {
+	parsed, err := Parse(nil)
+	if parsed != nil {
+		t.Fatalf("Parse(nil) packet = %+v, want nil", parsed)
+	}
+	if err == nil || err.Error() != "packet: header is nil" {
+		t.Fatalf("Parse(nil) error = %v, want header error", err)
+	}
+}
+
 func TestParseTCPFlagsJSONCompatibility(t *testing.T) {
 	pkt := buildIPv4TCPSYNHdr()
 	pkt.Raw[33] = TCPFlagSYN | TCPFlagACK

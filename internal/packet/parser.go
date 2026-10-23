@@ -76,6 +76,10 @@ var decoderPool = sync.Pool{
 // Layer values are deep-copied out of the parser pool, so the returned
 // *Packet is safe to retain after this call.
 func Parse(pkt *Hdr) (*Packet, error) {
+	if pkt == nil {
+		return nil, errors.New("packet: header is nil")
+	}
+
 	dec := decoderPool.Get().(*decoder)
 	defer decoderPool.Put(dec)
 
