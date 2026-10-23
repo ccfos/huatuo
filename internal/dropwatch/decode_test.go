@@ -66,3 +66,21 @@ func TestDecodePacketPartialAndInvalid(t *testing.T) {
 		t.Fatalf("empty packet: %v, %v", decoded, err)
 	}
 }
+
+func TestDecodePacketRejectsInvalidEthernetHeaderFlags(t *testing.T) {
+	for _, flag := range []uint16{2, 255, 256, 257, 65535} {
+		record := tcpRecord()
+		record.PktHdr.HasEthHdr = flag
+		if decoded, err := DecodePacket(record); err == nil || decoded != nil {
+			t.Fatalf("flag %d: DecodePacket() = (%v, %v), want error", flag, decoded, err)
+		}
+	}
+
+	for _, flag := range []uint16{0, 1} {
+		record := tcpRecord()
+		record.PktHdr.HasEthHdr = flag
+		if decoded, err := DecodePacket(record); err != nil || decoded == nil {
+			t.Fatalf("flag %d: DecodePacket() = (%v, %v), want success", flag, decoded, err)
+		}
+	}
+}

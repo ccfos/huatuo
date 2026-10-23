@@ -16,6 +16,7 @@ package dropwatch
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/packet"
@@ -27,6 +28,9 @@ import (
 func DecodePacket(record *abi.DropwatchPacketEvent) (*packet.Packet, error) {
 	if record == nil {
 		return nil, errors.New("decode dropwatch packet: nil record")
+	}
+	if record.PktHdr.HasEthHdr > 1 {
+		return nil, fmt.Errorf("decode dropwatch packet: invalid ethernet header flag %d", record.PktHdr.HasEthHdr)
 	}
 	rawLength := min(record.PktHdr.RawLen, uint16(packet.RawCapacity))
 	header := packet.Hdr{
