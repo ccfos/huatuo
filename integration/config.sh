@@ -518,3 +518,38 @@ BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpusys", 
 ${es_config}
 EOF
 }
+
+# The dload case owns its Pod, IO device, endpoint and storage index.
+write_dload_autotracing_config() {
+	local blacklist="" es_config=""
+	[[ ${DLOAD_DISABLED} != true ]] || blacklist='"dload", '
+	if [[ -n ${STORAGE_ADDR} ]]; then
+		es_config="[Storage.Elasticsearch]
+    Address = \"${STORAGE_ADDR}\"
+    Username = \"${STORAGE_USERNAME}\"
+    Password = \"${STORAGE_PASSWORD}\"
+    Index = \"${DLOAD_INDEX}\""
+	fi
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${DLOAD_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${DLOAD_KUBELET_PORT}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+[AutoTracing]
+    IssuesList = ${DLOAD_ISSUES}
+[AutoTracing.Dload]
+    Interval = ${DLOAD_INTERVAL}
+    IntervalTracing = ${DLOAD_COOLDOWN}
+    ThresholdLoad = ${DLOAD_THRESHOLD}
+    EnableDebug = ${DLOAD_DEBUG}
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+${es_config}
+EOF
+}
