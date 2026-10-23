@@ -18,13 +18,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/vsock"
 	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 	"github.com/ccfos/huatuo/pkg/types"
 
@@ -406,5 +409,74 @@ func TestDocumentWriterRejectsInvalidAggregatesBeforeStorage(t *testing.T) {
 				t.Fatal("invalid aggregate reached storage")
 			}
 		})
+	}
+}
+
+// TestGuestWriterForwardsWithoutCompletion 验证 Guest writer 转发有效窗口，
+// 保留工具和任务标识，但不会把入队成功当作持久化完成确认。
+func TestGuestWriterForwardsWithoutCompletion(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	received := make(chan []byte, 1)
+	server, err := transport.Serve(listener, func(_ *transport.Session, chunk transport.ChunkMsg) {
+		if len(chunk.Data) != 0 {
+			received <- append([]byte(nil), chunk.Data...)
+		}
+	})
+	if err != nil {
+		listener.Close()
+		t.Fatal(err)
+	}
+	defer server.Close()
+	store, err := profilingstore.NewFromConfig(ctx, profilingstore.Config{VSOCK: &vsock.Options{
+		DialContext: func(ctx context.Context, _ uint32) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close(context.Background())
+	writer, err := NewDocumentWriter(
+		store,
+		document.NewWithSource("huatuo-region", "huatuo-dev", types.DocumentSourceKataGuest),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &toolstream.Request[types.ProfilingWindow]{
+		ToolName: "profiler", TaskID: "checkout-profile", Data: validProfilingWindow(),
+	}
+	for {
+		if err := writer.Handle(ctx, request); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	select {
+	case raw := <-received:
+		profile, err := profilingstore.DecodeDocument(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if profile.TracerID != request.TaskID || profile.TracerName != request.ToolName ||
+			profile.SourceType != types.DocumentSourceKataGuest {
+			t.Errorf("forwarded metadata=%+v", profile.Document)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	request.Data = nil
+	request.End, request.Commit = true, true
+	if err := writer.Handle(ctx, request); !errors.Is(err, driver.ErrUnsupportedOp) {
+		t.Errorf("completion acknowledgement=%v", err)
 	}
 }

@@ -17,10 +17,9 @@
 package guestbridge
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,7 +30,7 @@ import (
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 )
 
-// The fixture exercises the native Elasticsearch encoder and bulk flush without
+// The fixture exercises the native Elasticsearch encoder and synchronous writes without
 // claiming validation against an actual Elasticsearch server.
 func newProfileFixture(t *testing.T) (*profilingstore.Store, <-chan []byte) {
 	t.Helper()
@@ -43,22 +42,18 @@ func newProfileFixture(t *testing.T) (*profilingstore.Store, <-chan []byte) {
 			_, _ = fmt.Fprint(w, `{"version":{"number":"8.12.0"}}`)
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, "/_bulk") || r.URL.Path == "/_bulk" {
-			scanner := bufio.NewScanner(r.Body)
-			scanner.Buffer(make([]byte, 4096), 2<<20)
-			var items []map[string]any
-			for scanner.Scan() {
-				if !scanner.Scan() {
-					t.Error("incomplete bulk document")
-					break
-				}
-				records <- append([]byte(nil), scanner.Bytes()...)
-				items = append(items, map[string]any{"index": map[string]any{"status": 201, "_id": "profile-window"}})
+		if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/_doc/") {
+			if r.URL.Query().Get("refresh") != "wait_for" {
+				t.Error("profile write did not wait for query visibility")
 			}
-			if err := scanner.Err(); err != nil {
-				t.Errorf("bulk read: %v", err)
+			data, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read profile document: %v", err)
+				http.Error(w, "read document", http.StatusBadRequest)
+				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"errors": false, "items": items})
+			records <- data
+			_, _ = fmt.Fprint(w, `{"result":"created","_shards":{"total":1,"successful":1,"failed":0}}`)
 			return
 		}
 		http.Error(w, "unexpected profile storage request", http.StatusNotFound)
@@ -75,6 +70,7 @@ func newProfileFixture(t *testing.T) (*profilingstore.Store, <-chan []byte) {
 	return store, records
 }
 
+// TestTypedProfileIngress 验证 Host 使用同步写入接收 Guest profile，保留整数精度并覆盖可信归属信息。
 func TestTypedProfileIngress(t *testing.T) {
 	store, records := newProfileFixture(t)
 	receiver := &DocumentReceiver{Hostname: "trusted-node", Region: "region", Profiling: store}
@@ -101,6 +97,6 @@ func TestTypedProfileIngress(t *testing.T) {
 			t.Errorf("profile=%+v", document)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("profile did not reach native bulk storage")
+		t.Fatal("profile did not reach native synchronous storage")
 	}
 }

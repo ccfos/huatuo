@@ -46,8 +46,8 @@ func TestEncodeChunkFrameRoundTrip(t *testing.T) {
 	if !bytes.Equal(chunk.Data, payload) {
 		t.Fatalf("payload = %q, want %q", chunk.Data, payload)
 	}
-	if chunk.Flush || chunk.End || chunk.Err != "" {
-		t.Fatalf("unexpected flags: flush=%t end=%t err=%q", chunk.Flush, chunk.End, chunk.Err)
+	if chunk.Commit || chunk.End || chunk.Err != "" {
+		t.Fatalf("unexpected flags: commit=%t end=%t err=%q", chunk.Commit, chunk.End, chunk.Err)
 	}
 }
 

@@ -38,10 +38,10 @@ func TestKataRuntimeIntegration(t *testing.T) {
 	if err := initContainerProviderEnv(containerProviderContainerd, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := containerCgroupCssInit(); err != nil {
+	if err := initCgroupLifecycle(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(containerCgroupCssRelease)
+	t.Cleanup(releaseCgroupLifecycle)
 	info, err := readContainerdRuntimeInfo(id)
 	if err != nil {
 		t.Fatal(err)

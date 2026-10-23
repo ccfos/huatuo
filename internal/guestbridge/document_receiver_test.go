@@ -28,6 +28,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/storage/vsock"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/toolstream/transport"
@@ -174,7 +175,7 @@ func TestAuthenticatedStreamToLocalFile(t *testing.T) {
 	client, err := transport.NewClientWithConnContext(
 		ctx,
 		conn,
-		transport.ClientMetadata{ToolName: vsock.TracingTool, Version: "test", TaskID: ""},
+		transport.ClientMetadata{ServiceName: vsock.TracingTool, ToolName: vsock.TracingTool, Version: "test", TaskID: ""},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -185,7 +186,7 @@ func TestAuthenticatedStreamToLocalFile(t *testing.T) {
 			`"tracer_type":"event","observed_timestamp":"2026-10-16T01:00:00Z",` +
 			`"tracer_data":{"counter":18446744073709551615}}`,
 	)
-	if err := client.SendChunk(raw, false); err != nil {
+	if err := client.Send(t.Context(), raw, transport.SendOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -240,4 +241,17 @@ func TestFirecrackerCredentialAndSocketBoundary(t *testing.T) {
 		t.Error("removed active listener")
 	}
 	_ = listener.Close()
+}
+
+// TestGuestBridgeRejectsCommit 验证空完成帧和带数据的完成帧都返回不支持，
+// 不会向调用方发送虚假的成功确认，也不会调用接收器保存该帧。
+func TestGuestBridgeRejectsCommit(t *testing.T) {
+	for _, data := range [][]byte{nil, []byte("profile-document")} {
+		session := &transport.Session{Context: t.Context()}
+		bridge := &Bridge{}
+		bridge.handleDocument(session, transport.ChunkMsg{Data: data, End: true, Commit: true})
+		if !errors.Is(session.Err, driver.ErrUnsupportedOp) {
+			t.Errorf("commit error=%v", session.Err)
+		}
+	}
 }
