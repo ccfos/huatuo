@@ -51,19 +51,12 @@ func newNetdevCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netdevCollector) Update() ([]*metric.Data, error) {
-	// normal containers
-	containers, err := pod.NormalContainers()
+	// Containers plus the host ("" key, nil container); the map is a private
+	// copy safe to extend.
+	containers, err := pod.NormalContainersWithHost()
 	if err != nil {
 		return nil, fmt.Errorf("GetNormalContainers: %w", err)
 	}
-
-	// support the empty container
-	if containers == nil {
-		containers = make(map[string]*pod.Container)
-	}
-
-	// append host into containers
-	containers[""] = nil
 
 	var metrics []*metric.Data
 	for _, container := range containers {
