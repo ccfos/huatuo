@@ -21,9 +21,9 @@
 # - HOME: Used to add the user's Go binary directory to PATH.
 # - PATH: Extended with system and user Go binary directories.
 # Parameters:
-# - None.
+# - Optional --prepare-only or --test-only; omitted runs both phases.
 # Examples:
-# - run-in-vm.sh  # prepare the guest and run make e2e
+# - run-in-vm.sh  # prepare the guest and run make test
 
 set -euo pipefail
 
@@ -221,32 +221,42 @@ install_temporary_go_tools() {
 	done
 }
 
-configure_proxy
-grow_root_filesystem
-print_sys_info
-export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
-install_test_dependencies
-if [[ ! -f /mnt/host/_output/portable-generated.commit ]]; then
-	install_temporary_go_tools
-fi
-export JAVA_PROFILER_DOCKER_IMAGE=eclipse-temurin:17-jdk
-export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
-export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
-export NATIVE_PROFILER_CONTAINERD_IMAGE=docker.io/library/busybox:1.36.1
+run_guest_tests() {
+	configure_proxy
+	export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
+	export GOCACHE=/root/.cache/go-build
+	if [[ ${1:-} != --test-only ]]; then
+		grow_root_filesystem
+		print_sys_info
+		install_test_dependencies
+	fi
+	# CI restores the Go cache after growing the filesystem, before any Go builds.
+	if [[ ${1:-} == --prepare-only ]]; then exit 0; fi
+	cd /mnt/host
+	if [[ ! -f _output/portable-generated.commit ]]; then
+		install_temporary_go_tools
+	fi
+	export JAVA_PROFILER_DOCKER_IMAGE=eclipse-temurin:17-jdk
+	export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
+	export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
+	export NATIVE_PROFILER_CONTAINERD_IMAGE=docker.io/library/busybox:1.36.1
 
-cd /mnt/host
-pwd
-ls -alh .
-git config --global --add safe.directory /mnt/host
+	pwd
+	ls -alh .
+	git config --global --add safe.directory /mnt/host
 
-# This is the single entry point for all guest test targets.
-vm_log '⬅️⬅️⬅️ Running tests...'
+	# This is the single entry point for all guest test targets.
+	vm_log '⬅️⬅️⬅️ Running tests...'
 
-make install-tools
-if [[ -f _output/portable-generated.commit ]]; then
-	make test SKIP_PORTABLE_GENERATION=1
-else
-	make test
-fi
+	make install-tools
+	if [[ -f _output/portable-generated.commit ]]; then
+		make test SKIP_PORTABLE_GENERATION=1
+	else
+		make test
+	fi
 
-vm_log '✅✅✅ Tests passed.'
+	vm_log '✅✅✅ Tests passed.'
+}
+
+# Also support sourcing the entry function in local regression fixtures.
+if [[ ${BASH_SOURCE[0]:-$0} == "$0" ]]; then run_guest_tests "$@"; fi

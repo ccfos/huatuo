@@ -121,6 +121,33 @@ jobs:
           gh run download "$GITHUB_RUN_ID" --name portable-generated --dir "$generated_dir"
           .github/workflows/scripts/vm-test/sync-generated-to-vm.sh "$generated_dir/portable-generated.tar"
 
+      - name: Prepare VM
+        id: prepare-in-vm
+        timeout-minutes: 20
+        run: .github/workflows/scripts/qemu-2-run-in-vm.sh --prepare-only
+
+      - name: Read VM Go cache key
+        id: go-cache-key
+        continue-on-error: true
+        env:
+          VM_IMAGE_REF: ${{ matrix.image }}
+        run: .github/workflows/scripts/vm-test/go-cache.sh key >> "$GITHUB_OUTPUT"
+
+      - name: Cache VM Go build
+        id: go-cache
+        if: steps.go-cache-key.outputs.key != ''
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/huatuo-go-build
+          key: vm-go-v1-${{ steps.go-cache-key.outputs.key }}-${{ hashFiles('go.mod', 'go.sum', 'Makefile') }}-${{ github.sha }}
+          restore-keys: |
+            vm-go-v1-${{ steps.go-cache-key.outputs.key }}-
+
+      - name: Restore Go cache into VM
+        if: steps.go-cache-key.outputs.key != ''
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh restore
+
       - name: 'Debug VM: Start session before test'
         id: upterm-before
         if: >-
@@ -148,7 +175,12 @@ jobs:
         id: run-in-vm
         timeout-minutes: 90
         run: |
-          .github/workflows/scripts/qemu-2-run-in-vm.sh
+          .github/workflows/scripts/qemu-2-run-in-vm.sh --test-only
+
+      - name: Collect VM Go cache
+        if: steps.run-in-vm.outcome == 'success' && steps.go-cache-key.outputs.key != '' && steps.go-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh save
 
       - name: 'Debug VM: Start session after test'
         id: upterm-after
@@ -160,7 +192,7 @@ jobs:
             inputs.debug_mode == 'After test always' ||
             (
               inputs.debug_mode == 'After test on failure' &&
-              steps.run-in-vm.outcome == 'failure'
+              (steps.prepare-in-vm.outcome == 'failure' || steps.run-in-vm.outcome == 'failure')
             )
           )
         continue-on-error: true

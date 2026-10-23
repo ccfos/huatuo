@@ -336,3 +336,11 @@ once per workflow and transfers them to each VM. The artifact must match the
 checkout’s commit and contain every required source; tracked files must be clean.
 BPF objects and their Go ABI types are still generated inside each VM.
 Local builds continue to run all generators.
+
+After guest setup expands the root filesystem, each VM restores a Go build
+cache scoped to its image and toolchain. Cache misses
+or transfer failures fall back to compilation. Unit tests use
+`-count=1` so cached test results never replace execution.
+
+Measure both a cold run and a warm run when evaluating CI time: the first run
+populates the persistent cache, and cache download/upload time also counts.
