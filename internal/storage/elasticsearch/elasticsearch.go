@@ -149,6 +149,9 @@ func (s *Storage) Init(_ context.Context, _ string, indexes []driver.Index) erro
 	return nil
 }
 
+// Save borrows rec.Data for the duration of the call. Asynchronous bulk saves
+// clone the payload before queueing it, so callers may reuse the buffer after
+// Save returns.
 func (s *Storage) Save(
 	ctx context.Context,
 	rec driver.Record,
@@ -167,7 +170,7 @@ func (s *Storage) Save(
 		Index:      s.index,
 		Action:     "index",
 		DocumentID: rec.ID,
-		Body:       bytes.NewReader(rec.Data),
+		Body:       bytes.NewReader(driver.CloneBytes(rec.Data)),
 		OnSuccess: func(_ context.Context, item esutil.BulkIndexerItem, res esutil.BulkIndexerResponseItem) {
 			// The indexer treats successful items with replica failures as successes.
 			if res.Shards.Failed > 0 {

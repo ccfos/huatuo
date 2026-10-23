@@ -302,6 +302,25 @@ func TestStorageBulkReplicaFailure(t *testing.T) {
 	}
 }
 
+func TestStorageSaveCopiesBulkPayload(t *testing.T) {
+	indexer := &benchmarkBulkIndexer{}
+	backend := &Storage{index: "profiles", bulk: indexer}
+	data := []byte(`{"value":"original"}`)
+
+	if err := backend.Save(t.Context(), driver.Record{ID: "one", Data: data}, driver.SaveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	copy(data, []byte(`{"value":"modified"}`))
+
+	got, err := io.ReadAll(indexer.item.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"value":"original"}` {
+		t.Fatalf("queued bulk payload = %q, want original payload", got)
+	}
+}
+
 func TestResponseError(t *testing.T) {
 	tests := []struct {
 		name     string
