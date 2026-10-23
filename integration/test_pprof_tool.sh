@@ -21,6 +21,7 @@ source "${ROOT_DIR}/integration/lib.sh"
 require_commands python3
 require_readable "${PPROF_TOOL_BIN}"
 
+readonly TOOL_WORK_DIR="$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/pprof-tool.XXXXXX")"
 readonly SERVER_PORT_FILE="${TOOL_WORK_DIR}/pprof-server.port"
 readonly SERVER_LOG="${TOOL_WORK_DIR}/pprof-server.log"
 server_pid=""
