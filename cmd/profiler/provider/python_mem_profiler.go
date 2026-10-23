@@ -1060,10 +1060,13 @@ func (p *pythonMemoryProfiler) runMemraySession(
 
 	flush := func() error {
 		deltas := dec.FlushDelta("")
-		if len(deltas) == 0 {
-			return nil
+		if len(deltas) != 0 {
+			if err := recordFn(deltas); err != nil {
+				return err
+			}
 		}
-		return recordFn(deltas)
+		log.Debugf("memray deltas flushed pid=%d stacks=%d", pid, len(deltas))
+		return nil
 	}
 
 	ctxDone := ctx.Done()
