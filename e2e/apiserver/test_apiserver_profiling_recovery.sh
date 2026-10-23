@@ -10,7 +10,7 @@ huatuo_bamai_stop
 start_test_storage
 start_node
 start_server
-continuous_profiling_start_native_cpu_fixture TARGET_PID "${ROOT_DIR}/integration/apiserver/testdata/workload.c"
+continuous_profiling_start_native_cpu_fixture TARGET_PID "${ROOT_DIR}/integration/testdata/test_apiserver_profiling_workload.c"
 
 CURRENT_CASE=graceful-recovery
 create 40

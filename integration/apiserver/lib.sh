@@ -72,7 +72,7 @@ pass() {
 }
 
 continuous_profiling_requirements
-require_commands curl python3 go gcc ss pgrep
+require_commands curl python3 gcc ss pgrep
 require_build_output
 require_commands "$HUATUO_APISERVER_BIN" "$HUATUO_BAMAI_BIN"
 APISERVER_PORT=$(allocate_available_port)
@@ -83,8 +83,8 @@ HUATUO_BAMAI_ADDR="http://127.0.0.1:${NODE_PORT}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 export APISERVER_ADDR API_TOKEN
 
-go build -o "${HUATUO_BAMAI_TEST_TMPDIR}/probe" ./integration/apiserver/probe.go
-PROBE="${HUATUO_BAMAI_TEST_TMPDIR}/probe"
+PROBE="${ROOT_DIR}/_output/tests/apiserver-probe"
+[[ -x $PROBE ]] || fatal 'missing apiserver probe; run make test-build'
 
 write_server_config() {
 	write_apiserver_apis_config
@@ -183,6 +183,8 @@ verify_result() {
 	jq -e --argjson minimum "$minimum" '(.data.items | length) >= $minimum and all(.data.items[]; .profile != null and .profile_type != null)' "$RESPONSE" > /dev/null || fatal "missing profiling windows for $id"
 	jq -e --arg expected "$expected_type" 'all(.data.items[]; .profile_type == $expected)' "$RESPONSE" > /dev/null || fatal "unexpected profile type for $id: expected $expected_type"
 	"$PROBE" flamegraph "$APISERVER_ADDR" "$id" "$RESPONSE" "$expected_type" > "${HUATUO_BAMAI_TEST_TMPDIR}/flamegraph-${id}.json"
+	jq -e '.flamegraph | (.total | tonumber) > 0 and (.names | length) > 0 and (.levels | length) > 0' \
+		"${HUATUO_BAMAI_TEST_TMPDIR}/flamegraph-${id}.json" > /dev/null || fatal "empty flamegraph for $id"
 }
 stop_job() {
 	request POST "/v1/profiling/$1/stop" 200
@@ -191,20 +193,6 @@ stop_job() {
 }
 
 start_test_storage() {
-	local image=${STORAGE_TEST_IMAGE:-$STORAGE_DEFAULT_IMAGE} port
-	if ! docker image inspect "$image" > /dev/null 2>&1; then
-		timeout 5m docker pull "$image" > "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-pull.log" 2>&1 || skip "cannot pull $image"
-	fi
-	# Keep ES data on the report filesystem; Docker's writable layer may be full.
-	mkdir "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-data"
-	chown 1000:0 "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-data"
-	chmod 0770 "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-data"
-	STORAGE_CONTAINER_ID=$(docker run --detach --publish 127.0.0.1::9200 \
-		--mount "type=bind,source=${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-data,target=/usr/share/elasticsearch/data" \
-		--env discovery.type=single-node --env xpack.security.enabled=false \
-		--env ES_JAVA_OPTS='-Xms512m -Xmx512m' "$image")
-	port=$(docker port "$STORAGE_CONTAINER_ID" 9200/tcp | awk -F: 'NR == 1 {print $NF}')
-	[[ -n "$port" ]] || fatal 'ES container has no published port'
-	STORAGE_ADDR="http://127.0.0.1:$port"
-	wait_until 120 2 storage_ready || fatal "ES not ready at $STORAGE_ADDR"
+	# Keep ES data on the report filesystem rather than Docker's writable layer.
+	storage_start default "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-data"
 }

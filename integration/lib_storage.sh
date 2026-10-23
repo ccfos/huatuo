@@ -29,7 +29,8 @@ STORAGE_USERNAME=""
 STORAGE_PASSWORD=""
 
 storage_start() {
-	local profile=${1:-default} scheme=http
+	local profile=${1:-default} data_dir=${2:-} scheme=http
+	local -a mounts=()
 	local image="${STORAGE_TEST_IMAGE:-${STORAGE_DEFAULT_IMAGE}}"
 	# Tiny test indexes need fixed free-space reserves on shared Docker disks.
 	local -a environment=(
@@ -78,10 +79,18 @@ storage_start() {
 		fi
 	fi
 
+	if [[ -n ${data_dir} ]]; then
+		[[ ${profile} == default ]] || fatal "data directory binding requires the default storage profile"
+		mkdir -p "${data_dir}"
+		chown 1000:0 "${data_dir}"
+		chmod 0770 "${data_dir}"
+		mounts=(--mount "type=bind,source=${data_dir},target=/usr/share/elasticsearch/data")
+	fi
+
 	# Keep failed containers available for diagnostics until explicit cleanup.
 	STORAGE_CONTAINER_ID=$(docker run --detach \
 		--publish 127.0.0.1::9200 \
-		"${environment[@]}" \
+		"${environment[@]}" "${mounts[@]}" \
 		"${image}" \
 		2> "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-run.log") || {
 		cat "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-run.log" >&2

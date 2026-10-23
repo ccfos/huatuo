@@ -213,11 +213,21 @@ unit: gen-build
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
-integration: build
+_output/tests/apiserver-probe: integration/apiserver/probe.go go.mod go.sum
+	@mkdir -p $(@D)
+	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
+
+_output/tests/apiserver-go-workload: integration/testdata/test_apiserver_profiling_workload.go
+	@mkdir -p $(@D)
+	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
+
+test-build: _output/tests/apiserver-probe _output/tests/apiserver-go-workload
+
+integration: build test-build
 	go build -o $(PPROF_TOOL) ./build/pprof-tool
 	@bash integration/run.sh
 
-e2e: build
+e2e: build test-build
 	@bash e2e/run.sh
 
-.PHONY: build install-tools gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: test-build build install-tools gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

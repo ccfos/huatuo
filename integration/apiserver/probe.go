@@ -21,14 +21,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"reflect"
 	"time"
 
 	querier "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
-
-	profiling "github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func main() {
@@ -65,48 +62,10 @@ func fetch(method, url string, body []byte) ([]byte, error) {
 
 func run() error {
 	if len(os.Args) < 3 {
-		return fmt.Errorf("usage: probe capabilities URL | flamegraph URL JOB RAW_JSON PROFILE_TYPE")
+		return fmt.Errorf("usage: probe flamegraph URL JOB RAW_JSON PROFILE_TYPE")
 	}
 	base := os.Args[2]
 	switch os.Args[1] {
-	case "capabilities":
-		data, err := fetch("GET", base+"/v1/profiling/capabilities", nil)
-		if err != nil {
-			return err
-		}
-		type capability struct {
-			Type     profiling.Type     `json:"type"`
-			Language profiling.Language `json:"language"`
-			Modes    []profiling.Mode   `json:"modes"`
-			Scopes   []string           `json:"supported_scopes"`
-			Binary   bool               `json:"supports_binary_match"`
-		}
-		var response struct {
-			Data struct {
-				Items []capability `json:"items"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(data, &response); err != nil {
-			return err
-		}
-		want := make([]capability, 0)
-		for _, c := range profiling.Capabilities() {
-			scopes := make([]string, len(c.SupportedScopes))
-			for i, scope := range c.SupportedScopes {
-				scopes[i] = string(scope)
-			}
-			want = append(want, capability{
-				Type:     c.Type,
-				Language: c.Language,
-				Modes:    c.Modes,
-				Scopes:   scopes,
-				Binary:   c.SupportsBinaryMatch,
-			})
-		}
-		if !reflect.DeepEqual(response.Data.Items, want) {
-			return fmt.Errorf("capability API differs from pkg/profiling: got %+v, want %+v", response.Data.Items, want)
-		}
-		fmt.Println(string(data))
 	case "flamegraph":
 		if len(os.Args) != 6 {
 			return fmt.Errorf("flamegraph requires URL JOB RAW_JSON PROFILE_TYPE")
@@ -156,14 +115,6 @@ func run() error {
 		var result querier.SelectMergeStacktracesResponse
 		if err := proto.Unmarshal(data, &result); err != nil {
 			return err
-		}
-		graph := result.GetFlamegraph()
-		if graph == nil {
-			return fmt.Errorf("missing flamegraph for job %s", os.Args[3])
-		}
-		hasStacks := len(graph.Names) > 0 && len(graph.Levels) > 0
-		if graph.Total <= 0 || !hasStacks {
-			return fmt.Errorf("empty flamegraph for job %s", os.Args[3])
 		}
 		data, err = protojson.Marshal(&result)
 		if err != nil {

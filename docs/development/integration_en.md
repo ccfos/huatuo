@@ -55,10 +55,16 @@ bash e2e/run.sh test_metrics.sh 2
 Both suites run in isolated UTS and mount namespaces, with hostname `huatuo-dev` and private mount propagation. Integration cases start their own services. E2E starts the default bamai before each case, then stops it and checks logs. Integration removes the working directory after a pass or skip and retains it on failure; E2E retains it for all outcomes.
 
 The apiserver lifecycle and Kubernetes profiling matrix live in
-`e2e/test_apiserver_profiling.sh` and `e2e/test_apiserver_profiling_matrix.sh`.
-Both are discovered by `make e2e`. The matrix requires `APISERVER_TEST_NODE`
-and kubelet credentials. The remaining eight functional cases are discovered by
+`e2e/apiserver/test_apiserver_profiling.sh` and `e2e/apiserver/test_apiserver_profiling_matrix.sh`.
+The `e2e/test_apiserver.sh` group entry expands these into isolated cases
+for `make e2e`; individual cases accept the `apiserver/test_*.sh` path.
+The matrix discovers the local Kubernetes node, accepts an explicit
+`APISERVER_TEST_NODE` override, and requires kubelet credentials.
+The remaining seven functional cases are discovered by
 `make integration` through `integration/test_apiserver_profiling.sh`.
+Static capability, authentication, and no-storage API checks run separately
+in `integration/test_apiserver_profile_disabled.sh`. Test clients and the Go
+workload are built by `make test-build`, a prerequisite of both suites.
 See the
 [apiserver test instructions](../../integration/apiserver/README.md).
 
