@@ -120,15 +120,7 @@ runqlat_restart() {
 		if [[ -f ${RUNQLAT_DIR}/objects-${runqlat_daemon_generation}.json ]]; then
 			"${RUNQLAT_BIN}" inspect --pid "${pid}" --output "${RUNQLAT_DIR}/objects-${runqlat_daemon_generation}.json"
 		fi
-		if [[ ${signal} == KILL ]]; then
-			kill -KILL "${pid}"
-			if wait "${pid}"; then
-				fatal "SIGKILL did not terminate the owned daemon"
-			else
-				[[ $? -eq 137 ]] || fatal "owned daemon did not exit from SIGKILL"
-			fi
-		fi
-		huatuo_bamai_stop
+		huatuo_bamai_stop_with_signal "${signal}"
 		runqlat_log_check
 		cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${RUNQLAT_DIR}/daemon-${runqlat_daemon_generation}.log"
 		if [[ -f ${RUNQLAT_DIR}/objects-${runqlat_daemon_generation}.json ]]; then

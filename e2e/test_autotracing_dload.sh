@@ -191,10 +191,7 @@ dload_start() {
 }
 
 dload_stop() {
-	local pid
-	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
-	huatuo_bamai_stop
-	wait "${pid}" || fatal "bamai did not exit successfully and flush storage"
+	huatuo_bamai_stop_with_signal TERM
 	dload_log_check
 }
 

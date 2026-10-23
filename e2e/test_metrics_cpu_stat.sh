@@ -117,18 +117,9 @@ HUATUO_BAMAI_ADDR="http://127.0.0.1:${CPU_STAT_PORT}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 cpu_stat_restart_daemon() {
-	local signal=${1:-TERM} pid
+	local signal=${1:-TERM}
 	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid ]]; then
-		pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
-		if [[ ${signal} == KILL ]]; then
-			kill -KILL "${pid}"
-			if wait "${pid}"; then
-				fatal "SIGKILL did not terminate the owned daemon"
-			else
-				[[ $? -eq 137 ]] || fatal "owned daemon did not exit from SIGKILL"
-			fi
-		fi
-		huatuo_bamai_stop
+		huatuo_bamai_stop_with_signal "${signal}"
 		huatuo_bamai_log_check || fatal "cpu_stat daemon has unexpected errors"
 		cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${CPU_STAT_DIR}/daemon-${cpu_stat_daemon_generation}.log"
 	fi

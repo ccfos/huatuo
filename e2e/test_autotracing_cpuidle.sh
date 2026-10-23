@@ -229,20 +229,12 @@ cpuidle_start() {
 }
 
 cpuidle_finish() {
-	local signal=${1:-TERM} pid
-	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
+	local signal=${1:-TERM}
 	if [[ ${signal} == KILL ]]; then
 		# SIGKILL tests recovery, not persistence of records still queued for upload.
 		wait_until 15 1 cpuidle_compare_storage || fatal "cannot confirm completed cpuidle records before SIGKILL"
-		kill -KILL "${pid}"
-		if wait "${pid}"; then
-			fatal "SIGKILL did not terminate owned bamai"
-		else
-			[[ $? -eq 137 ]] || fatal "owned bamai did not exit from SIGKILL"
-		fi
 	fi
-	huatuo_bamai_stop
-	if [[ ${signal} == TERM ]]; then wait "${pid}" || fatal "cpuidle daemon did not flush storage on exit"; fi
+	huatuo_bamai_stop_with_signal "${signal}"
 	cpuidle_log_check
 	wait_until 15 1 cpuidle_compare_storage || fatal "cpuidle local/ES events differ"
 	log_info "cpuidle storage: phase=${cpuidle_phase} local=$(jq length "${HUATUO_BAMAI_TEST_TMPDIR}/local.json") ES=$(jq length "${HUATUO_BAMAI_TEST_TMPDIR}/remote.json")"
