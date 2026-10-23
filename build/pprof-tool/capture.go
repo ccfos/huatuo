@@ -38,10 +38,12 @@ func capture(ctx context.Context, opts *captureOptions) (returnErr error) {
 	if err := os.Mkdir(opts.directory, 0o700); err != nil {
 		return err
 	}
+
 	defer func() {
 		if returnErr == nil {
 			return
 		}
+
 		returnErr = errors.Join(returnErr, os.RemoveAll(opts.directory))
 	}()
 

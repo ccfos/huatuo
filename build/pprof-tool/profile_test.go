@@ -38,9 +38,13 @@ func TestCaptureDirectoryLifecycle(t *testing.T) {
 		}
 		if r.URL.Query().Get("fail") == "1" {
 			http.Error(w, "capture failed", http.StatusBadGateway)
+
 			return
 		}
-		_, _ = w.Write([]byte("heap profile"))
+
+		if _, err := w.Write([]byte("heap profile")); err != nil {
+			t.Errorf("write heap profile: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -61,6 +65,7 @@ func TestCaptureDirectoryLifecycle(t *testing.T) {
 		if err == nil {
 			t.Fatal("capture() error = nil, want HTTP error")
 		}
+
 		if _, statErr := os.Stat(directory); !os.IsNotExist(statErr) {
 			t.Fatalf("failed capture directory stat error = %v, want not-exist", statErr)
 		}
@@ -72,6 +77,7 @@ func TestCaptureDirectoryLifecycle(t *testing.T) {
 		if err := capture(t.Context(), &opts); err != nil {
 			t.Fatalf("capture() error = %v", err)
 		}
+
 		for _, name := range []string{"heap.pprof", "capture.json"} {
 			if _, err := os.Stat(filepath.Join(directory, name)); err != nil {
 				t.Fatalf("published file %q: %v", name, err)
