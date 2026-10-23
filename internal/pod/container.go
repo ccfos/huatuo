@@ -23,6 +23,28 @@ import (
 // containerIDRegexp matches a 12-64 character hex container ID.
 var containerIDRegexp = regexp.MustCompile(`^[0-9a-fA-F]{12,64}$`)
 
+// containerViewKey identifies one cached containersByTypeQos result.
+type containerViewKey struct {
+	typeMask ContainerType //nolint:unused // read via map key equality
+	minLevel ContainerQos  //nolint:unused // read via map key equality
+}
+
+// containerViewEntry is a cached view pinned to the store revision it was
+// built from.
+type containerViewEntry struct {
+	revision   uint64
+	containers map[string]*Container
+}
+
+// netnsIndexes caches net-namespace lookup tables (cookie and inode numbers)
+// pinned to the store revision they were built from, so per-event BPF
+// paths stop scanning every container linearly.
+type netnsIndexes struct {
+	revision uint64
+	byCookie map[uint64]*Container
+	byInum   map[uint64]*Container
+}
+
 // Container object
 type Container struct {
 	ID                 string            `json:"id"`
@@ -64,10 +86,29 @@ func (c *Container) InitPidOrInitnsPid() int {
 	return 1
 }
 
-// containersByTypeQos returns the containers by type and level.
+// containersByTypeQos returns the containers by type and level. The returned
+// map is cached per (typeMask, minLevel) and must be treated as read-only: it
+// is rebuilt only when the container store commits a change, so per-event
+// callers (e.g. container lookups on BPF event paths) stop paying a full
+// map rebuild on every call.
 func containersByTypeQos(typeMask ContainerType, minLevel ContainerQos) (map[string]*Container, error) {
+	key := containerViewKey{typeMask: typeMask, minLevel: minLevel}
+
 	containerView.mu.RLock()
-	defer containerView.mu.RUnlock()
+	if view, ok := containerView.views[key]; ok && view.revision == containerView.revision {
+		containerView.mu.RUnlock()
+		return view.containers, nil
+	}
+	containerView.mu.RUnlock()
+
+	containerView.mu.Lock()
+	defer containerView.mu.Unlock()
+
+	// Re-check under the write lock: another goroutine may have rebuilt it.
+	if view, ok := containerView.views[key]; ok && view.revision == containerView.revision {
+		return view.containers, nil
+	}
+
 	res := make(map[string]*Container)
 	for _, record := range containerView.records {
 		c := record.container
@@ -82,6 +123,14 @@ func containersByTypeQos(typeMask ContainerType, minLevel ContainerQos) (map[str
 		}
 
 		res[c.ID] = c
+	}
+
+	if containerView.views == nil {
+		containerView.views = make(map[containerViewKey]*containerViewEntry)
+	}
+	containerView.views[key] = &containerViewEntry{
+		revision:   containerView.revision,
+		containers: res,
 	}
 
 	return res, nil
@@ -119,7 +168,26 @@ func NormalContainers() (map[string]*Container, error) {
 
 // NormalSidecarContainers returns the normal and sidecar containers.
 func NormalSidecarContainers() (map[string]*Container, error) {
-	return ContainersByType(ContainerTypeNormal | ContainerTypeSidecar)
+	return containersByTypeQos(ContainerTypeNormal|ContainerTypeSidecar, ContainerQosLevelMin)
+}
+
+// NormalContainersWithHost returns the normal containers plus a "" key with a
+// nil container representing the host (init) network namespace. The returned
+// map is a private copy; callers may mutate it freely. Collectors that sample
+// both containers and the host use this so they never mutate the shared
+// container view returned by NormalContainers.
+func NormalContainersWithHost() (map[string]*Container, error) {
+	containers, err := containersByTypeQos(ContainerTypeNormal, ContainerQosLevelMin)
+	if err != nil {
+		return nil, err
+	}
+
+	withHost := make(map[string]*Container, len(containers)+1)
+	for id, container := range containers {
+		withHost[id] = container
+	}
+	withHost[""] = nil
+	return withHost, nil
 }
 
 // Containers returns the last committed metadata, including during a refresh
@@ -147,9 +215,64 @@ func containerBy[T comparable](selector func(*Container) T, val T) (*Container, 
 	return nil, nil
 }
 
+// containerByNetNamespace resolves a container by network namespace cookie
+// or inode number using a revision-pinned index; a nil result (without
+// error) means no container matches.
+func containerByNetNamespace(cookie, inum uint64) (*Container, error) {
+	containerView.mu.RLock()
+	if idx := containerView.netns; idx != nil && idx.revision == containerView.revision {
+		c := idx.byCookie[cookie]
+		if c == nil {
+			c = idx.byInum[inum]
+		}
+		containerView.mu.RUnlock()
+		return c, nil
+	}
+	containerView.mu.RUnlock()
+	// Re-check under the write lock: another goroutine may have built it.
+	// Build from the committed records while holding the lock so the
+	// index revision and its contents cannot straddle a commit.
+	containerView.mu.Lock()
+	if containerView.netns != nil && containerView.netns.revision == containerView.revision {
+		idx := containerView.netns
+		c := idx.byCookie[cookie]
+		if c == nil {
+			c = idx.byInum[inum]
+		}
+		containerView.mu.Unlock()
+		return c, nil
+	}
+
+	idx := &netnsIndexes{
+		revision: containerView.revision,
+		byCookie: make(map[uint64]*Container),
+		byInum:   make(map[uint64]*Container),
+	}
+	for _, record := range containerView.records {
+		c := record.container
+		if c.Type&ContainerTypeNormal == 0 {
+			continue
+		}
+		if c.NetNamespaceCookie != 0 {
+			idx.byCookie[c.NetNamespaceCookie] = c
+		}
+		if c.NetNamespaceInum != 0 {
+			idx.byInum[c.NetNamespaceInum] = c
+		}
+	}
+	containerView.netns = idx
+
+	c := idx.byCookie[cookie]
+	if c == nil {
+		c = idx.byInum[inum]
+	}
+	containerView.mu.Unlock()
+	return c, nil
+}
+
 // ContainerByNetNamespaceInum returns the container whose network namespace inum matches.
 func ContainerByNetNamespaceInum(inum uint64) (*Container, error) {
-	return containerBy(func(c *Container) uint64 { return c.NetNamespaceInum }, inum)
+	return containerByNetNamespace(0, inum)
 }
 
 // GetCSSToContainerID builds a mapping from cgroup subsystem address to container ID.
@@ -197,5 +320,5 @@ func ContainerByNetNamespaceCookie(cookie uint64) (*Container, error) {
 	if cookie == 0 {
 		return nil, nil
 	}
-	return containerBy(func(c *Container) uint64 { return c.NetNamespaceCookie }, cookie)
+	return containerByNetNamespace(cookie, 0)
 }
