@@ -115,6 +115,12 @@ func TestApply(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsNilCollectionSpec(t *testing.T) {
+	if err := Apply(nil, "tcp"); err == nil {
+		t.Fatal("Apply(nil) error = nil, want collection-spec error")
+	}
+}
+
 func TestCompileL2L3L2Predicates(t *testing.T) {
 	l2Insts, l3Insts, err := buildL2L3FilterInsts("arp")
 	if err != nil {
