@@ -100,7 +100,7 @@ func initDockerProviderEnv(apiVersion string) error {
 }
 
 func initContainerdProviderEnv() error {
-	client, err := k8sremote.NewRemoteRuntimeService(kubeletRuntimeEndpoint, 5*time.Second, nil, nil)
+	client, err := k8sremote.NewRemoteRuntimeService(kubeletRuntimeSnapshot().runtimeEndpoint, 5*time.Second, nil, nil)
 	if err != nil {
 		return fmt.Errorf("create containerd client: %w", err)
 	}
