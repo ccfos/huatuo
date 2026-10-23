@@ -42,6 +42,50 @@ Or use the Makefile:
 make integration
 ```
 
+## Profiler Exception Tests
+
+`test_profiler_config.sh` checks invalid flags, incompatible modes, target
+conflicts, and numeric bounds before collection starts. It does not require
+profiling tools or running Java/Python workloads.
+
+`test_profiler_java_exceptions.sh` and `test_profiler_python_exceptions.sh` use
+real workloads and profiler tools. Shell scripts own process startup, fault
+injection, assertions, diagnostics, and cleanup; shared pipe and profile helpers
+live in `integration/lib.sh`. Python only supplies the controlled CPU workload.
+Pipes acknowledge workload readiness and completed CPU work; a FIFO exposes the
+real py-spy attachment message. Collector shutdown requires both FIFO EOF and
+exit of every recorded PID/start-time pair within one deadline, before fallback
+cleanup runs. Java target-loss cases wait for sampled workload stacks before
+injecting a fault, then command the surviving JVM to run a distinct method.
+Only samples containing that method prove collection continued after the fault;
+old buffered windows cannot satisfy the assertion. Python's surviving target
+must acknowledge another workload checkpoint. All waits are bounded, without
+fixed startup delays.
+
+`test_profiler_exit_deadline.sh` checks that stdout EOF does not imply process
+exit. Output draining and exit confirmation share one deadline; a child that
+closes stdout but stays alive must time out and be reaped by cleanup. The
+regression uses a short deadline for both profiler and collector assertions,
+checks the expected profiler exit status, and models a reused collector PID.
+`test_profiler_sample_phases.sh` buffers an old window before an IPC barrier:
+that window alone must fail, while a subsequent window with the new method passes.
+
+Java target loss is reported when stopping its agent. Python target loss can
+complete successfully when py-spy flushes its collected samples. Killing py-spy
+must fail the capture. The late-interrupt case races a stop against natural
+completion after target exit; the provider unit test deterministically stops
+between two final deliveries. SIGINT preserves final samples and SIGTERM aborts.
+The Java SIGINT case waits for attachment and CPU-work acknowledgments, then
+interrupts with a long aggregation interval. It must finish before the first
+periodic window, so its samples can only come from final flushing. Python's
+SIGKILL case verifies collector exit and a subsequent successful capture. Java
+cases also check agent library cleanup and reattach to a surviving target.
+
+The Java and native CPU container tests additionally destroy each available
+Docker/containerd target after a sampled window appears. Java must report the
+lost target; native collection must stop safely. These cases reuse the existing
+containers and installed images without pulling additional images.
+
 ## Prerequisites and Results
 
 Both suites share `integration/run.sh`, which runs integration tests by default; `e2e/run.sh` forwards to `--suite e2e`. The `make integration`, `make e2e`, and single-case entry points remain available:

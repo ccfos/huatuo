@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import multiprocessing
+import select
 import sys
 
 
@@ -42,11 +43,29 @@ def independent_hot_method():
         value = (value * 29 + 23) % 1_000_003
 
 
+def controlled_hot_method():
+    print("ready", flush=True)
+    value = 1
+    while True:
+        for _ in range(100_000):
+            value = (value * 29 + 23) % 1_000_003
+        if select.select([sys.stdin], [], [], 0)[0]:
+            command = sys.stdin.readline().strip()
+            if command != "checkpoint":
+                raise SystemExit(f"unsupported command: {command}")
+            # Acknowledge CPU work after attachment so stop tests have samples.
+            for _ in range(2_000_000):
+                value = (value * 29 + 23) % 1_000_003
+            print("checkpoint", flush=True)
+
+
 if __name__ == "__main__":
     mode = sys.argv[1]
     if mode == "parent":
         parent_hot_method(sys.argv[2])
     elif mode == "independent":
         independent_hot_method()
+    elif mode == "controlled":
+        controlled_hot_method()
     else:
         raise SystemExit(f"unsupported mode: {mode}")

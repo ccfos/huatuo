@@ -42,6 +42,42 @@ bash integration/run.sh test_metrics_exclude_filter.sh 10
 make integration
 ```
 
+## Profiler 异常测试
+
+`test_profiler_config.sh` 校验非法参数、模式不匹配、目标冲突和数值边界，
+要求在开始采集前失败，无需 profiler 工具或运行中的 Java/Python 工作负载。
+
+`test_profiler_java_exceptions.sh` 和 `test_profiler_python_exceptions.sh`
+运行真实工作负载及采集工具。Shell 脚本负责进程启动、故障注入、断言、诊断
+和清理；共用的管道和 profile 处理函数放在 `integration/lib.sh`。Python
+只提供受控 CPU 工作负载。管道确认工作负载就绪和 CPU 工作完成；FIFO
+传递真实 py-spy 的附加成功消息。采集器退出必须在同一截止时间内同时满足
+FIFO EOF 和所有已记录 PID/启动时间对应的进程已退出，并在兜底清理前验证。
+Java 目标丢失场景先等待预期调用栈，再注入故障并通过管道命令存活 JVM
+切换到不同的方法。只有包含该方法的样本才能证明故障后仍在采集，缓冲的旧
+窗口不能满足断言。Python 存活目标必须响应下一次工作负载检查点。所有等待
+均有超时，不使用固定启动延迟。
+
+`test_profiler_exit_deadline.sh` 验证 stdout EOF 不代表进程已退出。输出读取和
+退出确认共用同一截止时间；关闭 stdout 后仍存活的子进程必须触发超时，并由
+清理逻辑回收。该回归用例对 profiler 和采集器断言使用较短期限，同时验证
+profiler 的预期退出码，并模拟采集器 PID 被复用的情况。
+`test_profiler_sample_phases.sh` 在 IPC 屏障前缓冲旧窗口：仅有旧窗口时必须
+失败，随后出现包含新方法的窗口才通过。
+
+Java 目标退出时，停止 agent 应报告目标丢失。Python 目标退出时，若 py-spy
+成功保存已采集的样本，则允许成功完成。延迟 SIGINT 用例在目标退出后与
+自然完成竞争；provider 单元测试则在两次最终投递之间确定性地发出停止请求，
+验证最后的样本不会丢失。直接杀死 py-spy 必须导致采集失败。
+SIGINT 保存最后的样本，SIGTERM 中止采集。Java SIGINT 用例等待附加完成和
+CPU 工作确认后中断采集，使用较长聚合间隔，并要求在首个周期窗口之前完成，
+确保样本只能来自停止时的最终输出。Python SIGKILL 用例确认采集器退出，
+并验证后续采集可正常完成。Java 用例还检查 agent 库清理并重新附加到存活目标。
+
+Java 和原生 CPU 容器测试在出现采样窗口后销毁可用的 Docker/containerd
+目标。Java 必须报告目标丢失，原生采集必须安全停止。这些用例复用已有容器
+和已安装镜像，不额外拉取镜像。
+
 ## 前置检查与结果汇总
 
 两套测试共用 `integration/run.sh`，默认运行 integration；`e2e/run.sh` 转发到

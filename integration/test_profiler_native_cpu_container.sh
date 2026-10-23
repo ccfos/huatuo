@@ -24,6 +24,7 @@ source "${ROOT_DIR}/integration/lib.sh"
 is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-native-container
+require_commands jq mkfifo setsid timeout
 readonly PROFILER_BIN=${TOOL_BIN}
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 readonly DEFAULT_CONTAINER_IMAGE="${NATIVE_PROFILER_CONTAINER_IMAGE:-busybox:1.36.1}"
@@ -89,6 +90,23 @@ run_profile_case() {
 		|| fatal "native stack missing for runtime=${runtime} container ID"
 }
 
+assert_destroyed_container() (
+	local runtime=$1 container_id=$2
+	trap cleanup_piped_processes EXIT
+	log_info "destroying a profiled native container: ${runtime}"
+	start_exception_profiler "${WORK_DIR}/${runtime}/destroyed" c 30 1 \
+		--container-id "${container_id}"
+	assert_profiler_samples_before_deadline '*' f3
+	if [[ ${runtime} == docker ]]; then
+		timeout 15 docker rm -f "${container_id}"
+	else
+		timeout 15 ctr --namespace "${CONTAINERD_NAMESPACE}" tasks delete --force "${container_id}"
+		timeout 15 ctr --namespace "${CONTAINERD_NAMESPACE}" containers delete "${container_id}"
+	fi
+	kill -INT "${PROFILER_PID}"
+	assert_profiler_exit 0
+)
+
 test_docker() {
 	if ! command -v docker > /dev/null; then
 		log_warn "skipping docker: command is not installed"
@@ -110,7 +128,7 @@ test_docker() {
 	docker inspect --format '{{.State.Running}}' "${DOCKER_CONTAINER_ID}" | grep -qx true \
 		|| fatal "docker native container exited before profiling: ${DOCKER_CONTAINER_ID}"
 	run_profile_case docker "${DOCKER_CONTAINER_ID}"
-	docker rm -f "${DOCKER_CONTAINER_ID}" > /dev/null
+	assert_destroyed_container docker "${DOCKER_CONTAINER_ID}"
 	DOCKER_CONTAINER_ID=""
 	RUNTIMES_TESTED=$((RUNTIMES_TESTED + 1))
 }
@@ -144,10 +162,7 @@ test_containerd() {
 			'$1 == id && $3 == "RUNNING" { found = 1 } END { exit !found }' \
 		|| fatal "containerd native container exited before profiling: ${CONTAINERD_CONTAINER_ID}"
 	run_profile_case containerd "${CONTAINERD_CONTAINER_ID}"
-	ctr --namespace "${CONTAINERD_NAMESPACE}" tasks delete --force \
-		"${CONTAINERD_CONTAINER_ID}" > /dev/null 2>&1
-	ctr --namespace "${CONTAINERD_NAMESPACE}" containers delete \
-		"${CONTAINERD_CONTAINER_ID}" > /dev/null 2>&1
+	assert_destroyed_container containerd "${CONTAINERD_CONTAINER_ID}"
 	CONTAINERD_CONTAINER_ID=""
 	RUNTIMES_TESTED=$((RUNTIMES_TESTED + 1))
 }
