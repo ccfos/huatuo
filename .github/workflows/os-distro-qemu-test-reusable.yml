@@ -80,7 +80,7 @@ jobs:
     needs: distro-matrix
     env:
       ACT_RUN: false
-      INTEGRATION_JOBS: 2
+      INTEGRATION_JOBS: 3
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.distro-matrix.outputs.matrix) }}
