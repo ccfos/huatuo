@@ -519,14 +519,15 @@ func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
 	if err := b.acquireReadLock(); err != nil {
 		return nil, err
 	}
-	defer b.mu.RUnlock()
 
 	m, err := b.mapByID(mapID)
 	if err != nil {
+		b.mu.RUnlock()
 		return nil, err
 	}
 
 	items, err := b.dumpMap(m)
+	b.mu.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("dump map %d: %w", mapID, err)
 	}
@@ -602,14 +603,15 @@ func (b *defaultBPF) DumpMapByName(mapName string) ([]MapItem, error) {
 	if err := b.acquireReadLock(); err != nil {
 		return nil, err
 	}
-	defer b.mu.RUnlock()
 
 	m, err := b.mapByName(mapName)
 	if err != nil {
+		b.mu.RUnlock()
 		return nil, err
 	}
 
 	items, err := b.dumpMap(m)
+	b.mu.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("dump map %q: %w", mapName, err)
 	}
