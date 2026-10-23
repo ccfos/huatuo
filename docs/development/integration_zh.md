@@ -196,3 +196,36 @@ integration/testdata/expected_metrics/
 bash integration/run.sh
 ```
 当任意一个预期指标缺失或不匹配时，测试将失败。
+
+### Daemon cgroup 资源限额
+
+`test_node_runtime_limits.sh` 先验证默认启动继承测试进程的 cgroup。启用
+`--enable-cgroup` 后，通过 `/proc/PID/cgroup` 和 `cgroup.procs` 验证实际归属，
+读取启动、运行两阶段的 CPU 限额，并验证 `MemoryLimitMiB` 到字节的换算。
+正常停止后修改三个 Runtime 配置项，重启并重复验证，同时检查退出状态、
+daemon cgroup 删除及日志中没有 error/panic/fatal。
+这里验证内核限额与配置一致，不测试 CPU 吞吐或 OOM 行为。
+
+用例复制 fixture，仅将副本中的 XFS 设备文件替换为 FIFO。观察进程等待 XFS
+打开该设备后检查启动限额，再写入 fixture 数据放行初始化。启动和观察进程完成
+均有超时；同步点未被使用时测试失败。这依赖 XFS 构造函数在运行 CPU 限额生效前
+同步执行。完整的 512 字节 fixture 一次写入：XFS 读完超级块就关闭 FIFO，
+后续写入可能在初始化成功后失败。不增加生产代码测试钩子，也不修改真实设备文件。
+
+在隔离的 Linux 测试 VM 中运行，需要可写的 CPU、memory 控制器。
+同一套断言在 v1/hybrid 上读取 quota/period、memory 限额文件，在纯 v2 上读取
+`cpu.max`/`memory.max`；v2 还需要可访问的 systemd manager。
+主机级锁防止该用例并发运行；锁已占用、缺少能力或已有 bamai runtime cgroup 时
+报告 SKIP。由 daemon 清理自身 cgroup；若仍有残留，则保留并使测试失败，
+因为仅凭组名无法确认归属。
+必须分别在两种层级上运行，才能确认 v1、v2 覆盖。用例禁用存储和 kubelet。
+
+构建完成后，进入 integration 目录单独运行：
+
+```bash
+cd integration
+```
+
+```bash
+bash run.sh test_node_runtime_limits.sh
+```

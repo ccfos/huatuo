@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Memory-controller helpers for test cgroups.
+# Helpers for test cgroups and daemon resource limits.
 set -euo pipefail
 
 # Prefer v1 on hybrid hosts, where it owns the memory controller.
@@ -76,4 +76,70 @@ cgroup_run() {
 # Delete only empty cgroups; the caller owns workload termination and reaping.
 cgroup_delete() {
 	rmdir "$1"
+}
+
+# cgroup_css_require_environment <root-var> <symbol-var> <notify-file-var>.
+# The notification file must trigger the selected kernel read function.
+# Outputs belong to the caller; this check never creates or configures cgroups.
+cgroup_css_require_environment() {
+	local _css_root _css_symbol _css_notify_file
+	if [[ -r /sys/fs/cgroup/cgroup.controllers ]]; then
+		_css_root=/sys/fs/cgroup
+		_css_symbol=memory_current_read
+		_css_notify_file=memory.current
+	elif [[ -d /sys/fs/cgroup/memory ]]; then
+		_css_root=/sys/fs/cgroup/memory
+		_css_symbol=cgroup_clone_children_read
+		_css_notify_file=cgroup.clone_children
+	else
+		skip "supported cgroup v1/v2 hierarchy is not available"
+	fi
+
+	kprobe_available "${_css_symbol}" \
+		|| skip "${_css_symbol} is not available for kprobe"
+
+	printf -v "$1" '%s' "${_css_root}"
+	printf -v "$2" '%s' "${_css_symbol}"
+	printf -v "$3" '%s' "${_css_notify_file}"
+}
+
+# Call once before startup, in the current shell. Reject existing leaf groups;
+# absence is only a precondition, not proof of ownership during later cleanup.
+# This check never creates or configures cgroups.
+huatuo_bamai_require_cgroup() {
+	local controller root
+	require_commands findmnt
+
+	if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
+		require_commands systemctl timeout
+		timeout --kill-after=1 10 systemctl show --property=Version > /dev/null 2>&1 \
+			|| skip "cgroup v2 runtime limits require the systemd manager"
+		for controller in cpu memory; do
+			grep -qw "${controller}" /sys/fs/cgroup/cgroup.controllers \
+				|| skip "cgroup v2 ${controller} controller is unavailable"
+		done
+
+		readonly RUNTIME_CGROUP_MODE=v2
+		readonly RUNTIME_CGROUP_CPU_ROOT=/sys/fs/cgroup
+		readonly RUNTIME_CGROUP_MEMORY_ROOT=/sys/fs/cgroup
+		readonly RUNTIME_CGROUP_PATH=/huatuo.slice/huatuo-bamai.slice
+		readonly RUNTIME_CGROUP_ROOTS=(/sys/fs/cgroup)
+	else
+		readonly RUNTIME_CGROUP_MODE=v1
+		RUNTIME_CGROUP_CPU_ROOT=$(findmnt -rn -t cgroup -O cpu -o TARGET) \
+			|| skip "cgroup v1 CPU controller is unavailable"
+		RUNTIME_CGROUP_MEMORY_ROOT=$(cgroup_memory_root) \
+			|| skip "cgroup memory controller is unavailable"
+		readonly RUNTIME_CGROUP_CPU_ROOT RUNTIME_CGROUP_MEMORY_ROOT
+		readonly RUNTIME_CGROUP_PATH=/huatuo-bamai
+		mapfile -t RUNTIME_CGROUP_ROOTS < <(findmnt -rn -t cgroup -o TARGET)
+		readonly RUNTIME_CGROUP_ROOTS
+	fi
+
+	for root in "${RUNTIME_CGROUP_ROOTS[@]}"; do
+		[[ ! -d "${root}${RUNTIME_CGROUP_PATH}" ]] \
+			|| skip "runtime cgroup already exists: ${root}${RUNTIME_CGROUP_PATH}"
+	done
+	[[ -w "${RUNTIME_CGROUP_CPU_ROOT}" && -w "${RUNTIME_CGROUP_MEMORY_ROOT}" ]] \
+		|| skip "CPU and memory cgroup roots must be writable"
 }
