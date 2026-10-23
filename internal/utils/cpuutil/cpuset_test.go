@@ -19,6 +19,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -64,6 +65,38 @@ func TestParseOnlineCores(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("ParseOnlineCores() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadOnlineCPUs(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []int
+		wantErr bool
+	}{
+		{name: "ranges", content: "0-3,8,10-11\n", want: []int{0, 1, 2, 3, 8, 10, 11}},
+		{name: "single", content: "7\n", want: []int{7}},
+		{name: "empty", content: "\n", want: nil},
+		{name: "invalid range", content: "3-1\n", wantErr: true},
+		{name: "invalid cpu", content: "1-x\n", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "online")
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := ReadOnlineCPUs(path)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ReadOnlineCPUs() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("ReadOnlineCPUs() = %v, want %v", got, tt.want)
 			}
 		})
 	}

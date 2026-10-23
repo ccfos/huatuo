@@ -37,20 +37,16 @@ func init() {
 func newSoftirq() (*tracing.EventTracingAttr, error) {
 	cpuPossible, err := numcpus.GetPossible()
 	if err != nil {
-		return nil, fmt.Errorf("fetch possible cpu num")
+		return nil, fmt.Errorf("fetch possible cpu count: %w", err)
 	}
-	maxOnlineCPUID := cpuutil.MaxOnlineCPU(cpuutil.SystemCPUOnlinePath)
-	if maxOnlineCPUID < 0 {
-		return nil, fmt.Errorf("fetch maximum online CPU ID")
-	}
-	if maxOnlineCPUID >= cpuPossible {
-		return nil, fmt.Errorf("maximum online CPU ID %d exceeds possible CPUs %d", maxOnlineCPUID, cpuPossible)
+	if _, err := onlineCPUIDs(cpuutil.SystemCPUOnlinePath, cpuPossible); err != nil {
+		return nil, err
 	}
 
 	return &tracing.EventTracingAttr{
 		TracingData: &softirqLatency{
-			cpuPossible:    cpuPossible,
-			maxOnlineCPUID: maxOnlineCPUID,
+			cpuPossible:   cpuPossible,
+			onlineCPUPath: cpuutil.SystemCPUOnlinePath,
 		},
 		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
@@ -60,9 +56,9 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/system_softirq.c -o $BPF_DIR/system_softirq.o
 
 type softirqLatency struct {
-	bpf            bpf.Reference
-	cpuPossible    int
-	maxOnlineCPUID int
+	bpf          bpf.Reference
+	cpuPossible  int
+	onlineCPUPath string
 }
 
 type softirqLatencyData struct {
@@ -122,6 +118,11 @@ func irqAllowed(id int) bool {
 }
 
 func (s *softirqLatency) Update() ([]*metric.Data, error) {
+	onlineCPUs, err := onlineCPUIDs(s.onlineCPUPath, s.cpuPossible)
+	if err != nil {
+		return nil, err
+	}
+
 	lease, ok := s.bpf.Acquire()
 	if !ok {
 		return nil, nil
@@ -155,10 +156,8 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 
 		labels["type"] = irqTypeName(int(irqVector))
 
-		for cpuid, lat := range latencyOnAllCPU {
-			if cpuid > s.maxOnlineCPUID {
-				break
-			}
+		for _, cpuid := range onlineCPUs {
+			lat := latencyOnAllCPU[cpuid]
 			labels["cpuid"] = strconv.Itoa(cpuid)
 			for zoneid, zone := range lat.LatencyCounts {
 				labels["zone"] = strconv.Itoa(zoneid)
@@ -168,6 +167,19 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 	}
 
 	return metricData, nil
+}
+
+func onlineCPUIDs(path string, possible int) ([]int, error) {
+	online, err := cpuutil.ReadOnlineCPUs(path)
+	if err != nil {
+		return nil, fmt.Errorf("read online CPUs from %q: %w", path, err)
+	}
+	for _, cpuid := range online {
+		if cpuid < 0 || cpuid >= possible {
+			return nil, fmt.Errorf("online CPU ID %d exceeds possible CPUs %d", cpuid, possible)
+		}
+	}
+	return online, nil
 }
 
 func (s *softirqLatency) Start(ctx context.Context) (retErr error) {

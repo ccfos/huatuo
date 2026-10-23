@@ -38,6 +38,33 @@ func ParseOnlineCores(path string) (uint64, error) {
 		return 0, nil
 	}
 
+	return parseCPUList(list, nil)
+}
+
+// ReadOnlineCPUs reads a Linux CPU list file and returns the online IDs.
+func ReadOnlineCPUs(path string) ([]int, error) {
+	v, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	list := strings.TrimSpace(string(v))
+	var cpus []int
+	if _, err := parseCPUList(list, func(cpu int) error {
+		cpus = append(cpus, cpu)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return cpus, nil
+}
+
+func parseCPUList(list string, visit func(int) error) (uint64, error) {
+	if list == "" {
+		return 0, nil
+	}
+
+	maxInt := uint64(^uint(0) >> 1)
 	var count uint64
 	for _, item := range strings.Split(list, ",") {
 		if item == "" {
@@ -50,25 +77,40 @@ func ParseOnlineCores(path string) (uint64, error) {
 			return 0, fmt.Errorf("parse CPU %q: %w", item, err)
 		}
 
-		size := uint64(1)
+		last := first
 		if isRange {
-			last, err := strconv.ParseUint(lastText, 10, 64)
+			last, err = strconv.ParseUint(lastText, 10, 64)
 			if err != nil {
 				return 0, fmt.Errorf("parse CPU range %q: %w", item, err)
 			}
 			if last < first {
 				return 0, fmt.Errorf("invalid CPU range %q", item)
 			}
-			width := last - first
-			if width == math.MaxUint64 {
-				return 0, errors.New("cpu count overflow")
-			}
-			size = width + 1
 		}
-		if count > math.MaxUint64-size {
+		if last > maxInt {
+			return 0, errors.New("CPU ID exceeds int range")
+		}
+
+		width := last - first
+		if width == math.MaxUint64 {
 			return 0, errors.New("cpu count overflow")
 		}
-		count += size
+		width++
+		if count > math.MaxUint64-width {
+			return 0, errors.New("cpu count overflow")
+		}
+
+		if visit != nil {
+			for cpu := first; ; cpu++ {
+				if err := visit(int(cpu)); err != nil {
+					return 0, err
+				}
+				if cpu == last {
+					break
+				}
+			}
+		}
+		count += width
 	}
 
 	return count, nil
