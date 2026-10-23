@@ -98,14 +98,14 @@ container_burst_config() {
  DeltaMemoryBurst = 1
  DeltaAnonThreshold = 0
  Interval = 1
- SlidingWindowLength = 2
  IntervalTracing = 1
  DumpProcessMaxNum = 10
 CONFIG
 }
 integration_huatuo_bamai_start container_burst_config --region e2e --disable-kubelet --log-debug
 assert_memsnapshot_tracing_metrics memburst e2e 1
-memsnapshot_wait_memburst_samples 0 2
+wait_until 90 .2 memsnapshot_memburst_samples_ready 0 60 \
+	|| fatal "memburst did not fill its fixed history window"
 memburst_triggered_at=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')
 printf p >&"${memburst_container_input}"
 wait_until 30 0.1 grep -qx 'pressure ready' "${go_snapshot_case_dir}/workload.log" || fatal "container pressure did not finish"

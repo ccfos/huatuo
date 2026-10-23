@@ -83,6 +83,15 @@ burst_wait_samples() {
 	memsnapshot_wait_memburst_samples "${burst_sample_offset}" "${count}" "${active}"
 }
 
+# Keep each synthetic burst to one observed sample; the fixed window retains
+# low samples for longer than the short cooldown used by runtime scenarios.
+burst_pulse() {
+	burst_input high
+	[[ ${burst_blacklist} == 0 ]] || return 0
+	burst_wait_samples high 1
+	burst_input low
+}
+
 burst_count() {
 	if [[ ! -s ${HUATUO_BAMAI_TEST_TMPDIR}/events/memburst ]]; then
 		echo 0
@@ -119,7 +128,6 @@ burst_threshold=10
 burst_anon=0
 burst_blacklist=0
 burst_cooldown=30
-burst_window=2
 burst_write_config() {
 	go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
 	write_memory_threshold_snapshot_config
@@ -130,7 +138,6 @@ burst_write_config() {
  DeltaMemoryBurst = ${burst_threshold}
  DeltaAnonThreshold = ${burst_anon}
  Interval = 1
- SlidingWindowLength = ${burst_window}
  IntervalTracing = ${burst_cooldown}
  DumpProcessMaxNum = ${burst_top}
 CONFIG
@@ -142,6 +149,12 @@ burst_start() {
 	local enabled=1
 	[[ ${burst_blacklist} == 0 ]] || enabled=0
 	assert_memsnapshot_tracing_metrics memburst integration "${enabled}"
+	if [[ ${enabled} == 1 ]]; then
+		# The production detector now requires its fixed 60-sample history.
+		log_info "warming memburst history: waiting for 60 samples"
+		wait_until 90 .2 memsnapshot_memburst_samples_ready 0 60 \
+			|| fatal "memburst did not fill its fixed history window"
+	fi
 }
 burst_stop() {
 	local signal=$1
@@ -204,8 +217,6 @@ interval-zero|Interval|0|memory burst interval must be positive
 interval-negative|Interval|-1|memory burst interval must be positive
 cooldown-zero|IntervalTracing|0|memory burst tracing interval must be positive
 cooldown-negative|IntervalTracing|-1|memory burst tracing interval must be positive
-window-zero|SlidingWindowLength|0|memory burst sliding window length must be positive
-window-negative|SlidingWindowLength|-1|memory burst sliding window length must be positive
 ranking-zero|DumpProcessMaxNum|0|memory burst dump process max num must be positive
 ranking-negative|DumpProcessMaxNum|-1|memory burst dump process max num must be positive
 wrong-type|DumpProcessMaxNum|"invalid"|invalid(string) to int
@@ -223,15 +234,13 @@ for i in 1 2 3; do
 	wait_until 20 .1 grep -qx 'pressure ready' "${MEMBURST_ROOT_WORKSPACE}/workload-${i}.log" || fatal "real allocation pressure failed"
 done
 huatuo_bamai_stop
-for memburst_scenario in normal threshold anon_threshold anon_maximum window_minimum blacklist top1 top2 top3 top11; do
+for memburst_scenario in normal threshold anon_threshold anon_maximum blacklist top1 top2 top3 top11; do
 	HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/${memburst_scenario}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
 	burst_top=10
 	burst_threshold=10
 	burst_anon=0
 	burst_blacklist=0
-	burst_window=2
-	[[ ${memburst_scenario} != window_minimum ]] || burst_window=1
 	[[ ${memburst_scenario} != anon_maximum ]] || burst_anon=100
 	[[ ${memburst_scenario} != top1 ]] || burst_top=1
 	[[ ${memburst_scenario} != top2 ]] || burst_top=2
@@ -244,9 +253,9 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	burst_start
 	[[ ${burst_blacklist} == 1 ]] || burst_wait_samples low
 	assert_burst_count 0 "event without burst"
-	burst_input high
-	if [[ ${memburst_scenario} == threshold || ${memburst_scenario} == anon_threshold || ${memburst_scenario} == anon_maximum || ${memburst_scenario} == window_minimum || ${memburst_scenario} == blacklist ]]; then
-		[[ ${burst_blacklist} == 1 ]] || burst_wait_samples high 3
+	burst_pulse
+	if [[ ${memburst_scenario} == threshold || ${memburst_scenario} == anon_threshold || ${memburst_scenario} == anon_maximum || ${memburst_scenario} == blacklist ]]; then
+		[[ ${burst_blacklist} == 1 ]] || burst_wait_samples low 3
 		huatuo_bamai_ready || fatal "daemon unavailable during suppression assertion"
 		assert_burst_count 0 "suppressed burst produced event"
 		local_enabled=1
@@ -260,13 +269,13 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 			memburst_first_started=$(date -d "$(jq -sr 'last.started_timestamp' "${HUATUO_BAMAI_TEST_TMPDIR}/events/memburst")" +%s)
 			burst_input low
 			burst_wait_samples low
-			burst_input high
-			burst_wait_samples high 3
+			burst_pulse
+			burst_wait_samples low 3
 			assert_burst_cooldown
 			burst_input low
 			wait_until 35 .2 memsnapshot_cooldown_elapsed "${memburst_first_at}" 31 \
 				|| fatal "memburst cooldown deadline was not reached"
-			burst_input high
+			burst_pulse
 			wait_until 20 .1 burst_expected_count 2 || fatal "capture did not recover after cooldown"
 			assert_burst_event
 		fi
@@ -288,7 +297,7 @@ for memburst_signal in TERM KILL; do
 	burst_input low
 	burst_start
 	burst_wait_samples low
-	burst_input high
+	burst_pulse
 	wait_until 20 .1 burst_expected_count 1 || fatal "daemon did not persist event before ${memburst_signal}"
 	assert_burst_event
 	cp "${HUATUO_BAMAI_TEST_TMPDIR}/events/memburst" "${HUATUO_BAMAI_TEST_TMPDIR}/before-stop"
@@ -298,7 +307,7 @@ for memburst_signal in TERM KILL; do
 	burst_input low
 	burst_start
 	burst_wait_samples low
-	burst_input high
+	burst_pulse
 	wait_until 20 .1 burst_expected_count 2 || fatal "daemon did not recover after ${memburst_signal}"
 	assert_burst_event
 	assert_memsnapshot_event_prefix "${HUATUO_BAMAI_TEST_TMPDIR}/before-stop" "${HUATUO_BAMAI_TEST_TMPDIR}/events/memburst" \
@@ -421,7 +430,7 @@ for memburst_runtime in go disabled churn python java c cpp; do
 		if [[ -d ${HUATUO_BAMAI_TEST_TMPDIR}/events ]]; then rmdir "${HUATUO_BAMAI_TEST_TMPDIR}/events"; fi
 		: > "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 		burst_wait_samples low
-		burst_input high
+		burst_pulse
 		wait_until 30 .1 grep -Fq 'msg="save memburst snapshot"' "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
 			|| fatal "storage obstruction did not produce a diagnostic"
 		assert_burst_storage_failure
@@ -434,7 +443,7 @@ for memburst_runtime in go disabled churn python java c cpp; do
 	[[ ${memburst_runtime} != churn ]] || burst_rounds=12
 	for ((burst_round = 1; burst_round <= burst_rounds; burst_round++)); do
 		burst_wait_samples low
-		burst_input high
+		burst_pulse
 		wait_until 30 .1 burst_expected_count "${burst_round}" || fatal "${memburst_runtime}: capture ${burst_round} missing"
 		assert_burst_runtime "${memburst_runtime}" "${burst_round}"
 		if [[ ${memburst_runtime} == churn ]]; then
@@ -454,7 +463,7 @@ for memburst_runtime in go disabled churn python java c cpp; do
 	mv "${HUATUO_BAMAI_TEST_TMPDIR}/commands" "${HUATUO_BAMAI_TEST_TMPDIR}/old-commands"
 	burst_start_runtime go
 	burst_wait_samples low
-	burst_input high
+	burst_pulse
 	wait_until 30 .1 burst_expected_count "$((burst_rounds + 1))" || fatal "capture did not recover after ${memburst_runtime} exit"
 	assert_burst_runtime go "$((burst_rounds + 1))"
 	assert_memsnapshot_event_prefix "${HUATUO_BAMAI_TEST_TMPDIR}/before-target-exit" \
@@ -501,7 +510,7 @@ burst_cooldown=1
 burst_input low
 burst_start
 burst_wait_samples low
-burst_input high
+burst_pulse
 wait_until 30 .1 burst_expected_count 1 || fatal "oversized-ranking event missing"
 assert_burst_payload_budget
 burst_stop TERM

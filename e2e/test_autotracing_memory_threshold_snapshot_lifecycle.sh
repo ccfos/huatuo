@@ -47,7 +47,6 @@ lifecycle_write_config() {
  DeltaMemoryBurst = 10
  DeltaAnonThreshold = 0
  Interval = 1
- SlidingWindowLength = 2
  IntervalTracing = 1
  DumpProcessMaxNum = 10
 CONFIG
@@ -204,6 +203,13 @@ lifecycle_contention_input() {
 	lifecycle_meminfo_mounts=$((lifecycle_meminfo_mounts + 1))
 }
 
+# One high sample triggers one job while the fixed history still contains lows.
+lifecycle_contention_burst() {
+	lifecycle_contention_input high
+	memsnapshot_wait_memburst_samples "${lifecycle_sample_offset}" 1 400000
+	lifecycle_contention_input low
+}
+
 lifecycle_contention_cleanup() {
 	local status=$?
 	[[ -z ${MEMSNAP_READ_BARRIER_DIR:-} ]] || touch "${MEMSNAP_READ_BARRIER_DIR}/release"
@@ -305,14 +311,15 @@ lifecycle_contention() {
 	mkdir -p "${MEMSNAP_READ_BARRIER_DIR}"
 	HUATUO_BAMAI_BIN=${lifecycle_capture_bin}
 	lifecycle_start
-	memsnapshot_wait_memburst_samples 0 2 100000
+	wait_until 90 .2 memsnapshot_memburst_samples_ready 0 60 100000 \
+		|| fatal "memburst did not fill its fixed history window"
 	if [[ ${lifecycle_mode} == contention_threshold ]]; then
 		lifecycle_trigger 1
 		wait_until 10 .01 snapshot_read_barrier_ready || fatal "threshold did not enter remote read"
-		lifecycle_contention_input high
+		lifecycle_contention_burst
 		assert_contention_burst 1 busy
 	else
-		lifecycle_contention_input high
+		lifecycle_contention_burst
 		wait_until 10 .01 snapshot_read_barrier_ready || fatal "host target was not captured among the top three processes"
 		if [[ ${lifecycle_mode} == contention_cancel ]]; then
 			go_snapshot_watch_is_ready || fatal "target watch disappeared before cancellation"
@@ -326,8 +333,9 @@ lifecycle_contention() {
 			mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${go_snapshot_case_dir}/daemon-canceled.log"
 			lifecycle_contention_input low
 			lifecycle_start
-			memsnapshot_wait_memburst_samples 0 2 100000
-			lifecycle_contention_input high
+			wait_until 90 .2 memsnapshot_memburst_samples_ready 0 60 100000 \
+				|| fatal "memburst did not fill its fixed history window"
+			lifecycle_contention_burst
 			assert_contention_burst 2 recovered
 			lifecycle_trigger 1
 			assert_lifecycle_latest 1
@@ -357,7 +365,7 @@ lifecycle_contention() {
 	cp "${go_snapshot_case_dir}/events/memburst" "${go_snapshot_case_dir}/before-recovery"
 	lifecycle_contention_input low
 	memsnapshot_wait_memburst_samples "${lifecycle_sample_offset}" 2 100000
-	lifecycle_contention_input high
+	lifecycle_contention_burst
 	assert_contention_burst 2 recovered
 	assert_memsnapshot_event_prefix "${go_snapshot_case_dir}/before-recovery" "${go_snapshot_case_dir}/events/memburst" "recovery changed previous contention event"
 	lifecycle_stop TERM contention
