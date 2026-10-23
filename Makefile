@@ -215,7 +215,7 @@ unit: gen-build
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
-_output/tests/apiserver-probe: integration/apiserver/probe.go go.mod go.sum
+_output/tests/apiserver-probe: integration/testdata/test_apiserver_profiling_probe.go go.mod go.sum
 	@mkdir -p $(@D)
 	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
 

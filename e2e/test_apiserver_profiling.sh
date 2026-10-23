@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-source "${ROOT_DIR}/integration/apiserver/lib.sh"
+source "${ROOT_DIR}/integration/lib_apiserver.sh"
 
 # The e2e runner starts a baseline daemon; this case needs profiling storage.
 huatuo_bamai_stop

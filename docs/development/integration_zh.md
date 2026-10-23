@@ -58,18 +58,53 @@ bash e2e/run.sh test_metrics.sh 2
 结束时停止服务并检查日志。integration 成功或跳过后删除工作目录，失败时保留；
 e2e 保留工作目录。
 
-apiserver 的完整采样链路和 Kubernetes 多语言矩阵位于
-`e2e/apiserver/test_apiserver_profiling.sh`、`e2e/apiserver/test_apiserver_profiling_matrix.sh`，
-由 `e2e/test_apiserver.sh` 分组入口接入 `make e2e`，逐场景隔离执行。
-矩阵自动匹配本机 Kubernetes 节点，也可用 `APISERVER_TEST_NODE` 显式指定；
-需要 kubelet 凭证。
-停止、同机并发、apiserver 重启恢复和 Node 故障恢复分别由同目录下的
-`test_apiserver_profiling_{stop,concurrent,recovery,node_recovery}.sh` 验证。
-其余 7 项 apiserver 功能由 `integration/test_apiserver_profiling.sh` 接入
-`make integration`。
-静态能力表、认证和无存储检查在 `integration/test_apiserver_profile_disabled.sh` 独立运行。
-两套测试依赖 `make build`，提前构建协议客户端和 Go 负载。
-运行要求和命令见 [apiserver 测试](../../integration/apiserver/README.md)。
+apiserver 测试遵循相同的平铺目录约定：
+
+- `integration/test_apiserver_profile_disabled.sh`：能力表、认证和无存储 API。
+- `integration/test_apiserver_profiling.sh`：主机/全局配额、Node 容量、参数校验、
+  容器不存在、主机不可达和 Node 离线，共 7 项功能检查。
+- `e2e/test_apiserver_profiling.sh`：任务完成、list/raw 分页、火焰图和 agent 指标。
+- `e2e/test_apiserver_profiling_{stop,concurrent,recovery,node_recovery}.sh`：
+  停止、同机并发、apiserver 重启恢复和 Node 故障恢复。
+- `e2e/test_apiserver_profiling_matrix.sh`：19 个语言/采样模式组合。
+
+公共服务配置、请求、断言和清理由 `integration/lib_apiserver.sh` 提供，
+并复用 `integration/lib_storage.sh` 和 `integration/lib_continuous_profiling.sh`。
+协议客户端和源码夹具位于 `integration/testdata/`；`make build` 提前构建
+`_output/tests/apiserver-probe` 和静态 Go 负载 `apiserver-go-workload`。
+
+```bash
+make build
+sudo bash integration/run.sh test_apiserver_profile_disabled.sh
+sudo bash integration/run.sh test_apiserver_profiling.sh
+sudo bash e2e/run.sh test_apiserver_profiling.sh
+sudo bash e2e/run.sh test_apiserver_profiling_matrix.sh
+# 上述脚本也由标准入口自动发现；支持脚本名后加重复次数
+sudo make integration
+sudo make e2e
+```
+
+静态 API 检查不依赖 Docker、perf 或编译器。采样检查需要 Linux、root、Docker、
+Python 3、gcc、curl、jq、ss、pgrep、允许采样的 perf 配置及已构建的 BPF/profiler 工具。
+ES 数据绑定到工作目录的 `elasticsearch-data/`；报告包含请求响应、采样结果、日志及
+`summary.tsv`。生成配置含测试 token，仅供测试环境使用。
+
+矩阵还需要 kubectl 管理权限、crictl、本机 kubelet 凭证和已打包的 asprof/py-spy。
+通过节点 InternalIP 自动匹配本机节点；`APISERVER_TEST_NODE` 可显式指定，仍须属于
+本机。使用 `KUBELET_CERT`、`KUBELET_KEY` 覆盖凭证路径。无法唯一匹配节点时失败。
+先通过本机 CRI 集中准备镜像，再以 `imagePullPolicy: Never` 启动 Pod；
+下载失败保留独立日志。默认镜像为 gcc:14、golang:1.24、eclipse-temurin:17-jdk、
+python:3.11-slim，可用 `APISERVER_TEST_{NATIVE,GO,JAVA,PYTHON}_IMAGE` 替换。
+
+每次只运行一个负载 Pod，依次覆盖 C/C++/Go 的 oncpu、offcpu 和三种内存模式、
+Java CPU/两种内存模式及 Python CPU。Go Pod 只读挂载预编译静态负载；
+C/C++ 和 Java 在对应运行时镜像中准备负载。原生负载保留 16 个 64 KiB 映射，
+使最终快照仍有存活内存。矩阵的 `summary.tsv` 逐项记录 19 个组合。
+
+结果检查包括类型、容器归属、非空采样结果和正采样值火焰图；Python 只有整个任务
+时长的采集窗口，不要求多个窗口。临时 namespace、ConfigMap、Pod 在退出时清理。
+Node 故障恢复主动 SIGKILL 测试 Node，验证原任务失败及恢复后新任务可用。
+故障期间允许预期错误日志，仍拒绝 runtime panic；不验证 Grafana 页面渲染。
 
 runner 只检查 `_output` 目录是否存在，不逐个检查项目二进制和 BPF 产物。
 直接运行脚本前先执行 `make build`；
