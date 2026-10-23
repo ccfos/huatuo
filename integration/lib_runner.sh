@@ -38,7 +38,6 @@ declare -A runner_test_groups=(
 	["test_dropwatch_icmpv6.sh"]=network
 	["test_dropwatch_ipv4_options.sh"]=network
 	["test_dropwatch_netdevsim.sh"]=network
-	["test_dropwatch_ratelimit.sh"]=network
 	["test_dropwatch_reason.sh"]=network
 	["test_events_net_rx_latency.sh"]=network
 	["test_events_tcp_retransmit.sh"]=network
@@ -48,10 +47,19 @@ declare -A runner_test_groups=(
 	["test_node_cloud_events_api.sh"]=independent
 	["test_node_config_api.sh"]=independent
 	["test_profiler_config.sh"]=independent
+	["test_profiler_java_cpu_container.sh"]=profiler-java
+	["test_profiler_java_cpu_multi_pid.sh"]=profiler-java
+	["test_profiler_java_memory_usage_alloc.sh"]=profiler-java
+	["test_profiler_native_cpu.sh"]=profiler
+	["test_profiler_native_cpu_container.sh"]=profiler
+	["test_profiler_native_cpu_cpp_symbols.sh"]=profiler
+	["test_profiler_native_cpu_rust_symbols.sh"]=profiler
+	["test_profiler_native_cpu_thread_group.sh"]=profiler
 	["test_profiler_native_memory_physical_usage.sh"]=independent
 	["test_profiler_native_memory_thread_group.sh"]=independent
 	["test_profiler_native_memory_virtual_alloc.sh"]=independent
 	["test_profiler_output_flags.sh"]=independent
+	["test_profiler_python_cpu_multi_pid.sh"]=profiler
 	["test_profiler_user_kernel_frames.sh"]=independent
 	["test_tcp_retransmit_ratelimit.sh"]=network
 	["test_tcp_retransmit_syn.sh"]=network
@@ -64,7 +72,7 @@ declare -A runner_test_groups=(
 runner_test_group() {
 	local name=${1##*/} group
 	group=${runner_test_groups[${name}]:-exclusive}
-	if [[ ${group} == independent ]]; then group=${name}; fi
+	if [[ ${group} == independent || ${group} == profiler ]]; then group=${name}; fi
 	printf '%s\n' "${group}"
 }
 
@@ -155,6 +163,8 @@ runner_cleanup() {
 }
 
 runner_parallel_cases() {
+	local jobs=$1
+	shift
 	local -a pending=("$@")
 	local slot index group busy running_group
 	while ((${#pending[@]} || ${#runner_pids[@]})); do
@@ -163,7 +173,7 @@ runner_parallel_cases() {
 			if ! kill -0 "${runner_pids[slot]}" 2> /dev/null; then runner_finish_case "${slot}"; fi
 		done
 		((runner_failed == 0)) || return 1
-		for ((slot = 0; slot < runner_jobs; slot++)); do
+		for ((slot = 0; slot < jobs; slot++)); do
 			[[ -z ${runner_pids[slot]:-} ]] || continue
 			for index in "${!pending[@]}"; do
 				group=$(runner_test_group "${pending[index]}")
@@ -187,7 +197,7 @@ runner_parallel_cases() {
 run_test_suite() {
 	runner_repeats=$1 runner_suite=$2 runner_jobs=$3
 	shift 3
-	local -a scripts=("$@") parallel=() exclusive=()
+	local -a scripts=("$@") parallel=() profilers=() exclusive=()
 	local script group
 	runner_last_storage="" runner_failed=0
 	declare -ga runner_pids=() runner_workspaces=() runner_names=() runner_started=() runner_groups=()
@@ -198,8 +208,12 @@ run_test_suite() {
 			test_apiserver_continuous_profiling_*.sh | test_apiserver_job_recovery.sh | test_apiserver_profile_filters.sh | test_autotracing_irqtracing.sh | test_basic_storage_elasticsearch_values.sh) runner_last_storage=${script} ;;
 			esac
 		fi
-		group=$(runner_test_group "${script}")
-		if [[ ${group} == exclusive ]]; then exclusive+=("${script}"); else parallel+=("${script}"); fi
+		group=${runner_test_groups[${script##*/}]:-exclusive}
+		case ${group} in
+		exclusive) exclusive+=("${script}") ;;
+		profiler | profiler-java) profilers+=("${script}") ;;
+		*) parallel+=("${script}") ;;
+		esac
 	done
 	if [[ -n ${runner_last_storage} ]]; then
 		export STORAGE_SHARED_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/default-es"
@@ -212,9 +226,13 @@ run_test_suite() {
 	for ((runner_round = 1; runner_round <= runner_repeats; runner_round++)); do
 		if ((runner_jobs > 1)); then
 			rm -rf -- "${HUATUO_BAMAI_TEST_TMPDIR}/ports"
-			runner_parallel_cases "${parallel[@]}"
+			runner_parallel_cases "${runner_jobs}" "${parallel[@]}"
 			runner_stop_storage 0
 			((runner_failed == 0)) || exit 1
+			# PID/container-isolated profilers run after ES shuts down, with at most
+			# two cases competing for CPU. Benchmarks and CPU-pinned cases stay alone.
+			# Java cases share an agent library path and serialize within this pool.
+			runner_parallel_cases 2 "${profilers[@]}"
 			for script in "${exclusive[@]}"; do
 				runner_start_case "${script}" 0 exclusive
 				runner_finish_case 0
