@@ -115,8 +115,8 @@ static __always_inline int q2c_latency_index(struct bio *bio, u64 now)
 	u64 bi_issue, val;
 
 	/*
-	 * pre-7.0: bio::bi_issue (struct bio_issue, low bits packed timestamp)
-	 * 7.0+:    bio::issue_time_ns (plain u64 nanosecond timestamp)
+	 * bio::bi_issue packs the timestamp into the low bits of struct bio_issue;
+	 * newer kernels use bio::issue_time_ns, a plain u64 nanosecond timestamp.
 	 */
 	if (bpf_core_field_exists(bio->bi_issue)) {
 		if (bpf_probe_read(&val, sizeof(val), &bio->bi_issue))
@@ -130,7 +130,8 @@ static __always_inline int q2c_latency_index(struct bio *bio, u64 now)
 
 	bi_issue = val & TIMESTAMP_MASK;
 
-	int q2c = now - bi_issue;
+	/* Keep nanoseconds full-width and handle the 51-bit clock wrapping. */
+	u64 q2c = (now - bi_issue) & TIMESTAMP_MASK;
 	return zone_index(q2c);
 }
 
@@ -146,8 +147,8 @@ static __always_inline int d2c_latency_index(struct bio *bio, u64 now)
 	bi_start = *start_time;
 	bpf_map_delete_elem(&bio_start_time, &bio_addr);
 
-	// That d2c may be negative, it is safe.
-	int d2c = now - bi_start;
+	/* Both timestamps use the same wrapping 51-bit clock. */
+	u64 d2c = (now - bi_start) & TIMESTAMP_MASK;
 	return zone_index(d2c);
 }
 
