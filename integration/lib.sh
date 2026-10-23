@@ -318,7 +318,7 @@ dump_text_files() {
 	while IFS= read -r -d '' file; do
 		grep -Iq '' "${file}" || continue
 		log_error "----- FILE (${file}) -----"
-		sed -n '1,160p' "${file}" >&2
+		if [[ ${file##*/} == test.log ]]; then cat "${file}" >&2; else sed -n '1,160p' "${file}" >&2; fi
 	done < <(find "${dir}" -type f -size +0c -print0)
 }
 

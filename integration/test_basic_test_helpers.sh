@@ -539,3 +539,238 @@ SH
 	done < "${prefetch_work}/children"
 done
 log_info "optional image prefetch preserves status and cleans up owned downloads"
+
+# Exercise scheduling with local cases; namespace isolation is checked separately.
+runner_work="${HUATUO_BAMAI_TEST_TMPDIR}/scheduler"
+mkdir -p "${runner_work}/bin"
+cat > "${runner_work}/bin/unshare" << 'STUB'
+#!/bin/sh
+[ "$1" = --mount ] || exit 99
+shift
+exec "$@"
+STUB
+printf '#!/bin/sh\nexit 0\n' > "${runner_work}/bin/mount"
+chmod +x "${runner_work}/bin/"*
+cat > "${runner_work}/fixture.sh" << 'SH'
+set -euo pipefail
+source "$ROOT_DIR/integration/lib.sh"
+name=${0##*/}
+wait_for() {
+ for ((i=0;i<300;i++)); do [[ -f $1 ]] && return 0; sleep 0.01; done
+ echo "timed out: $1" >&2; return 1
+}
+if [[ $TEST_MODE == profiler ]]; then
+ if [[ $name == test_profiler_* && $name != test_profiler_native_cpu_hardware_pmu.sh ]]; then
+  exec 8> "$TEST_STATE/profiler-slot-1"
+  exec 9> "$TEST_STATE/profiler-slot-2"
+  flock -n 8 || flock -n 9 || fatal "more than two profiler fixtures overlap"
+ fi
+ case $name in
+  test_metrics.sh) touch "$TEST_STATE/pool-done";;
+  test_profiler_java_cpu_multi_pid.sh)
+   [[ -f $TEST_STATE/pool-done ]]
+   touch "$TEST_STATE/first-started"
+   wait_for "$TEST_STATE/second-started"
+   touch "$TEST_STATE/first-done";;
+  test_profiler_native_cpu.sh)
+   [[ -f $TEST_STATE/pool-done ]]
+   touch "$TEST_STATE/second-started"
+   wait_for "$TEST_STATE/first-started"
+   touch "$TEST_STATE/second-done";;
+  test_profiler_java_memory_usage_alloc.sh)
+   [[ -f $TEST_STATE/first-done ]]
+   touch "$TEST_STATE/third-done";;
+  test_profiler_native_cpu_cpp_symbols.sh)
+   [[ -f $TEST_STATE/first-done || -f $TEST_STATE/second-done ]]
+   touch "$TEST_STATE/fourth-done";;
+  test_profiler_native_cpu_hardware_pmu.sh)
+   [[ -f $TEST_STATE/first-done && -f $TEST_STATE/second-done && -f $TEST_STATE/third-done && -f $TEST_STATE/fourth-done ]]
+   touch "$TEST_STATE/exclusive-done";;
+ esac
+ exit 0
+fi
+case $name in
+ test_metrics.sh|test_dropwatch_devlink.sh|test_basic_storage_opensearch_elasticsearch.sh)
+  if [[ $TEST_MODE == failure ]]; then for ((n=0;n<180;n++)); do echo fixture-progress; done; fi
+  echo diagnostic-from-first-case
+  record_test_timing fixture verification "$SECONDS"
+  touch "$TEST_STATE/first-started"
+  if [[ $TEST_MODE == refill || $TEST_MODE == failure ]]; then wait_for "$TEST_STATE/second-started"; fi
+  if [[ $TEST_MODE == failure ]]; then exit 42; fi
+  if [[ $TEST_MODE == refill ]]; then wait_for "$TEST_STATE/third-done"; fi
+  if [[ $TEST_MODE == resource ]]; then wait_for "$TEST_STATE/third-started"; fi
+  if [[ $TEST_MODE == storage ]]; then
+   wait_for "$TEST_STATE/third-started"
+   wait_for "$TEST_STATE/fourth-started"
+   [[ ! -f $TEST_STATE/second-started ]]
+  fi
+  touch "$TEST_STATE/first-done"
+  if [[ $TEST_MODE == skip ]]; then exit 77; fi
+  ;;
+ test_node_config_api.sh|test_dropwatch_reason.sh|test_dropwatch_icmpv6.sh)
+  if [[ $TEST_MODE == serial || $TEST_MODE == resource || $TEST_MODE == storage ]]; then [[ -f $TEST_STATE/first-done ]]; fi
+  touch "$TEST_STATE/second-started"
+  trap 'touch "$TEST_STATE/second-cleaned"' EXIT
+  if [[ $TEST_MODE == failure ]]; then wait_for "$TEST_STATE/first-cleaned"; fi
+  touch "$TEST_STATE/second-done"
+  ;;
+ test_metrics_include_filter.sh|test_metrics_exclude_filter.sh)
+  [[ $TEST_MODE != failure ]] || touch "$TEST_STATE/unexpected-start"
+  touch "$TEST_STATE/third-started"
+  if [[ $TEST_MODE == storage ]]; then wait_for "$TEST_STATE/fourth-started"; fi
+  if [[ $TEST_MODE == refill ]]; then [[ -f $TEST_STATE/second-done && ! -f $TEST_STATE/first-done ]]; fi
+  touch "$TEST_STATE/third-done"
+  ;;
+ test_node_cloud_events_api.sh)
+  touch "$TEST_STATE/fourth-started"
+  wait_for "$TEST_STATE/third-started"
+  touch "$TEST_STATE/fourth-done"
+  ;;
+ test_unknown.sh)
+  [[ -f $TEST_STATE/first-done && -f $TEST_STATE/second-done && -f $TEST_STATE/third-done ]]
+  if [[ $TEST_MODE == storage ]]; then [[ -f $TEST_STATE/fourth-done ]]; fi
+  touch "$TEST_STATE/exclusive-done"
+  ;;
+esac
+SH
+cat > "${runner_work}/launch.sh" << 'SH'
+set -euo pipefail
+source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/integration/lib_runner.sh"
+if [[ $TEST_MODE == failure ]]; then
+ huatuo_bamai_stop() {
+  if [[ $1 == */test_metrics.* ]]; then touch "$TEST_STATE/first-cleaned"; fi
+ }
+elif [[ $TEST_MODE == cleanup_failure ]]; then huatuo_bamai_stop() { return 1; }; fi
+run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
+SH
+for runner_mode in refill resource failure skip serial repeated cleanup_failure; do
+	runner_state="${runner_work}/${runner_mode}"
+	mkdir -p "${runner_state}/workspace"
+	runner_names=(test_metrics.sh test_node_config_api.sh test_metrics_include_filter.sh test_unknown.sh)
+	runner_jobs=2 runner_repeats=1 runner_expected_status=0 runner_skipped=0
+	case ${runner_mode} in
+	resource) runner_names=(test_dropwatch_devlink.sh test_dropwatch_reason.sh test_metrics_exclude_filter.sh test_unknown.sh) ;;
+	storage)
+		runner_jobs=3
+		runner_names=(test_basic_storage_opensearch_elasticsearch.sh test_dropwatch_icmpv6.sh test_metrics_include_filter.sh test_node_cloud_events_api.sh test_unknown.sh)
+		;;
+	profiler)
+		runner_jobs=3
+		runner_names=(test_metrics.sh test_profiler_java_cpu_multi_pid.sh test_profiler_java_memory_usage_alloc.sh test_profiler_native_cpu.sh test_profiler_native_cpu_cpp_symbols.sh test_profiler_native_cpu_hardware_pmu.sh)
+		;;
+	serial) runner_jobs=1 ;;
+	repeated) runner_repeats=2 ;;
+	failure | cleanup_failure) runner_expected_status=1 ;;
+	skip) runner_skipped=1 ;;
+	esac
+	runner_cases=()
+	for runner_name in "${runner_names[@]}"; do
+		cp "${runner_work}/fixture.sh" "${runner_state}/${runner_name}"
+		runner_cases+=("${runner_state}/${runner_name}")
+	done
+	runner_status=0
+	HUATUO_BAMAI_TEST_TMPDIR="${runner_state}/workspace" TEST_STATE="${runner_state}" TEST_MODE="${runner_mode}" \
+		TEST_JOBS="${runner_jobs}" TEST_REPEATS="${runner_repeats}" STORAGE_SHARED_DIR='' PATH="${runner_work}/bin:${PATH}" \
+		timeout 20 bash "${runner_work}/launch.sh" "${runner_cases[@]}" > "${runner_state}/test.log" 2>&1 || runner_status=$?
+	assert_eq "${runner_status}" "${runner_expected_status}" "${runner_mode}: runner exit; see ${runner_state}/test.log"
+	if [[ ${runner_expected_status} == 1 ]]; then
+		[[ ! -e ${runner_state}/unexpected-start ]] || fatal "${runner_mode}: scheduled after failure"
+		if [[ ${runner_mode} == failure ]]; then
+			grep -Fq 'total=2 passed=1 skipped=0 failed=1' "${runner_state}/test.log" || fatal "incorrect failure summary"
+			grep -Fq diagnostic-from-first-case "${runner_state}/test.log" || fatal "failure log lost early diagnostics"
+			[[ -f ${runner_state}/second-cleaned ]] || fatal "failure bypassed in-flight cleanup"
+		fi
+	else
+		runner_count=$((${#runner_names[@]} * runner_repeats))
+		grep -Fq "total=${runner_count} passed=$((runner_count - runner_skipped)) skipped=${runner_skipped} failed=0" \
+			"${runner_state}/test.log" || fatal "${runner_mode}: incorrect summary"
+		if [[ ${runner_mode} != profiler ]]; then
+			grep -Fq 'subject=fixture phase=verification duration=' "${runner_state}/test.log" || fatal "timing log missing"
+		fi
+		[[ -f ${runner_state}/exclusive-done && ! -e ${runner_state}/workspace ]] || fatal "${runner_mode}: exclusive case or cleanup missing"
+	fi
+done
+log_info "scheduler refill, resource exclusion, failure draining, skips and cleanup passed"
+
+# INT/TERM must cancel both serial and parallel cases, including their children.
+cat > "${runner_work}/cancel-case.sh" << 'SH'
+set -euo pipefail
+name=${0##*/}
+echo "$BASHPID" > "$TEST_STATE/$name.pid"
+sleep 30 &
+child=$!
+echo "$child" > "$TEST_STATE/$name.child"
+if [[ $TEST_CANCEL_MODE == forced ]]; then
+ trap '' TERM
+ mkfifo "$TEST_STATE/$name.pipe"
+ exec 9<> "$TEST_STATE/$name.pipe"
+fi
+cleanup() {
+ kill "$child" 2>/dev/null || true
+ wait "$child" 2>/dev/null || true
+ touch "$TEST_STATE/$name.cleaned"
+}
+trap cleanup EXIT
+if [[ $TEST_CANCEL_MODE == graceful ]]; then trap 'exit 143' TERM; fi
+touch "$TEST_STATE/$name.ready"
+wait "$child" || true
+# Keep the stubborn shell alive without orphaning an un-reapable sleep process.
+if [[ $TEST_CANCEL_MODE == forced ]]; then read -r -t 30 -u 9 unused || true; fi
+SH
+
+assert_runner_cancellation() (
+	local jobs=$1 signal=$2 mode=$3 pid='' status=0 started name case_pid
+	local state="${runner_work}/cancel-${jobs}-${signal}-${mode}"
+	mkdir -p "${state}/workspace"
+	# Reclaim only processes created by this fixture, even if an assertion fails.
+	trap '
+		if [[ -n ${pid} ]]; then kill -KILL -- "-${pid}" 2>/dev/null || true; wait "${pid}" 2>/dev/null || true; fi
+		for file in "${state}/"*.pid; do
+			[[ -f ${file} ]] || continue
+			kill -KILL -- "-$(cat "${file}")" 2>/dev/null || true
+		done
+	' EXIT
+	local -a names=(test_metrics.sh) cases=()
+	if ((jobs == 2)); then names+=(test_node_config_api.sh); fi
+	for name in "${names[@]}"; do
+		cp "${runner_work}/cancel-case.sh" "${state}/${name}"
+		cases+=("${state}/${name}")
+	done
+	set -m
+	HUATUO_BAMAI_TEST_TMPDIR="${state}/workspace" TEST_STATE="${state}" TEST_MODE=cancellation \
+		TEST_CANCEL_MODE="${mode}" TEST_JOBS="${jobs}" TEST_REPEATS=1 STORAGE_SHARED_DIR='' PATH="${runner_work}/bin:${PATH}" \
+		bash "${runner_work}/launch.sh" "${cases[@]}" > "${state}/test.log" 2>&1 &
+	pid=$!
+	set +m
+	for name in "${names[@]}"; do wait_until 5 0.05 test -f "${state}/${name}.ready" > "${state}/wait.log" 2>&1 || fatal "cancellation fixture did not start"; done
+	started=${SECONDS}
+	if [[ ${signal} == INT ]]; then kill -INT -- "-${pid}"; else kill -TERM "${pid}"; fi
+	wait_until 8 0.05 process_exited "${pid}" > "${state}/wait.log" 2>&1 || fatal "runner cancellation exceeded grace period; see ${state}/test.log"
+	wait "${pid}" || status=$?
+	pid=''
+	grep -Fq "total=${jobs} passed=0 skipped=0 failed=${jobs}" "${state}/test.log" || fatal "incorrect cancellation summary"
+	local expected_status=143
+	if [[ ${signal} == INT ]]; then expected_status=130; fi
+	assert_eq "${status}" "${expected_status}" "${jobs} workers / ${signal} / ${mode}: cancellation exit"
+	if [[ ${mode} == graceful ]]; then
+		((SECONDS - started < 5)) || fatal "cooperative cancellation consumed the force-kill grace period"
+	fi
+	for name in "${names[@]}"; do
+		case_pid=$(cat "${state}/${name}.pid")
+		! kill -0 "${case_pid}" 2> /dev/null || fatal "cancelled case survived: ${case_pid}"
+		! kill -0 "$(cat "${state}/${name}.child")" 2> /dev/null || fatal "cancelled workload survived"
+		! kill -0 -- "-${case_pid}" 2> /dev/null || fatal "cancelled process group survived"
+		if [[ ${mode} == graceful ]]; then
+			[[ -f ${state}/${name}.cleaned ]] || fatal "cancellation bypassed case EXIT cleanup"
+		fi
+	done
+)
+for cancel_jobs in 1 2; do
+	for cancel_signal in INT TERM; do
+		assert_runner_cancellation "${cancel_jobs}" "${cancel_signal}" graceful
+	done
+done
+assert_runner_cancellation 1 TERM forced
+assert_runner_cancellation 2 INT forced
+log_info "serial and parallel cancellation, exit status, cleanup and forced termination passed"

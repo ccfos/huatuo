@@ -42,6 +42,24 @@ Or use the Makefile:
 make integration
 ```
 
+### Parallel Integration Tests
+
+Local runs default to one worker; use `bash integration/run.sh -j 2` or
+`INTEGRATION_JOBS=2 make integration` to enable parallel execution. VM CI uses
+two workers. Reviewed tests run in a bounded pool; network cases share a resource
+group. CPU-sensitive and unreviewed cases run alone after the pool drains.
+E2E stays serial even when `INTEGRATION_JOBS` is set.
+
+Each parallel case has private Huatuo PID files and toolstream sockets and a
+worker-specific port range. Host container runtime access is preserved. Run one
+suite runner per host. Shared Elasticsearch remains alive until the batch drains.
+On failure, scheduling stops and active cases finish their cleanup. Per-case
+`test.log` files are printed on failure, and results include elapsed durations.
+INT or TERM cancels each active case's process group with TERM, allowing five
+seconds for EXIT cleanup before KILL. The runner preserves exit status 130 or 143.
+New tests default to serial execution; review shared state before adding them
+to `integration/lib_runner.sh`.
+
 ## Prerequisites and Results
 
 Both suites share `integration/run.sh`, which runs integration tests by default; `e2e/run.sh` forwards to `--suite e2e`. The `make integration`, `make e2e`, and single-case entry points remain available:
@@ -226,7 +244,8 @@ Java streaming completion, shutdown failures, missing windows and complete
 network capture predicates using local process and packet fixtures. Shell owns
 the orchestration and assertions; Python supplies only process workloads. Capture
 predicates live in `lib_network_capture.sh`, shared with the live tests. The helper
-test requires Python 3 and jq, without a JVM or BPF attachment.
+test also checks build/cache contracts, storage ownership, scheduling and bounded
+serial/parallel cancellation. It requires Python 3 and jq, without a JVM or BPF attachment.
 
 ## IO tests
 

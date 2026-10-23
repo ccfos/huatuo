@@ -49,13 +49,13 @@ log_info "idle Pod grace period and lifecycle failures checked"
 
 readonly RUNNER_FIXTURE="${HUATUO_BAMAI_TEST_TMPDIR}/runner"
 [[ ${EUID} -eq 0 ]] || skip "runner tests require root for integration namespaces"
-require_commands unshare mount findmnt readlink
+require_commands unshare mount findmnt readlink flock ss stat
 RUNNER_PARENT_UTS=$(readlink /proc/self/ns/uts)
 RUNNER_PARENT_MOUNT=$(readlink /proc/self/ns/mnt)
 export RUNNER_PARENT_UTS RUNNER_PARENT_MOUNT
 
 mkdir -p "${RUNNER_FIXTURE}"/{integration,e2e,_output}
-cp "${ROOT_DIR}/integration/"{run.sh,lib.sh} "${RUNNER_FIXTURE}/integration/"
+cp "${ROOT_DIR}/integration/"{run.sh,lib.sh,lib_runner.sh,exec_case.sh} "${RUNNER_FIXTURE}/integration/"
 cp "${ROOT_DIR}/e2e/"{run.sh,lib.sh} "${RUNNER_FIXTURE}/e2e/"
 cat > "${RUNNER_FIXTURE}/integration/env.sh" << 'EOF'
 export ROOT_DIR=$PWD
@@ -80,7 +80,7 @@ runner_check() {
 	local log="${HUATUO_BAMAI_TEST_TMPDIR}/${suite}-${label}.log" summary_count=1
 	(
 		cd /
-		bash "${RUNNER_FIXTURE}/${suite}/run.sh" "$@"
+		INTEGRATION_JOBS=1 bash "${RUNNER_FIXTURE}/${suite}/run.sh" "$@"
 	) > "${log}" 2>&1 || status=$?
 	if [[ ${status} != "${expected_status}" ]] || { [[ -n "${expected_summary}" ]] && ! grep -Fq "summary: ${expected_summary}" "${log}"; }; then
 		cat "${log}"
@@ -141,6 +141,10 @@ cp "${RUNNER_FIXTURE}/e2e/test_pass.sh" "${RUNNER_FIXTURE}/e2e/test_e2e_only.sh"
 runner_check integration e2e_suite 0 'total=2 passed=2 skipped=0 failed=0' --suite e2e test_e2e_only.sh 2
 runner_check integration missing_suite 2 '' --suite
 runner_check integration invalid_suite 2 '' --suite unknown
+runner_check integration missing_jobs 2 '' -j
+runner_check integration invalid_jobs 2 '' -j 0
+runner_check integration invalid_jobs_large 2 '' -j 9
+runner_check integration e2e_parallel 2 '' --suite e2e -j 2
 runner_check integration invalid_repeat 2 '' --suite e2e test_pass.sh 0
 runner_check integration invalid_path 2 '' --suite e2e ../e2e/test_pass.sh
 runner_check e2e invalid_repeat 2 '' test_pass.sh 0
@@ -160,6 +164,49 @@ runner_status=0
 runner_status=0
 (ROOT_DIR="${RUNNER_FIXTURE}/missing" require_build_output) > "${HUATUO_BAMAI_TEST_TMPDIR}/missing-output.log" 2>&1 || runner_status=$?
 [[ ${runner_status} == 1 ]] || fatal "missing build output did not fail: exit=${runner_status}"
+
+# Parallel cases have independent PID files, toolstream paths, and HTTP ports.
+rm -f "${RUNNER_FIXTURE}/integration/"test_*.sh
+RUNNER_SOCKET_ID=""
+if [[ -S /var/run/docker.sock ]]; then RUNNER_SOCKET_ID=$(stat -Lc '%d:%i' /var/run/docker.sock); fi
+RUNNER_NESTED_MOUNT="" RUNNER_NESTED_ID=""
+runner_runtime_root=$(readlink -f /var/run)
+while IFS= read -r runner_mount; do
+	[[ ${runner_mount} == "${runner_runtime_root}/"* ]] || continue
+	RUNNER_NESTED_MOUNT=${runner_mount#"${runner_runtime_root}"}
+	RUNNER_NESTED_ID=$(stat -Lc '%d:%i' "${runner_mount}")
+	break
+done < <(findmnt -rn -o TARGET)
+export RUNNER_SOCKET_ID RUNNER_NESTED_MOUNT RUNNER_NESTED_ID
+cat > "${RUNNER_FIXTURE}/integration/test_metrics.sh" << 'EOF'
+set -euo pipefail
+source "${ROOT_DIR}/integration/lib.sh"
+name=${0##*/}
+exec 8>/var/run/huatuo-bamai.pid
+exec 9>/var/run/huatuo-apiserver.pid
+flock -n 8 || fatal "bamai PID lock was shared between workers"
+flock -n 9 || fatal "apiserver PID lock was shared between workers"
+for file in huatuo-bamai.pid huatuo-apiserver.pid huatuo-toolstream.sock; do
+ printf '%s' "$name" > "/var/run/$file"
+done
+if [[ -n $RUNNER_SOCKET_ID ]]; then
+ [[ $(stat -Lc '%d:%i' /var/run/docker.sock) == "$RUNNER_SOCKET_ID" ]] || fatal "host Docker socket was hidden"
+fi
+if [[ -n $RUNNER_NESTED_MOUNT ]]; then
+ [[ $(stat -Lc '%d:%i' "/var/run$RUNNER_NESTED_MOUNT") == "$RUNNER_NESTED_ID" ]] || fatal "nested runtime mount was hidden"
+fi
+printf '%s\n' "$HUATUO_BAMAI_ADDR" > "$ROOT_DIR/$name.address"
+touch "$ROOT_DIR/$name.started"
+peer=test_metrics.sh
+[[ $name != test_metrics.sh ]] || peer=test_node_config_api.sh
+wait_until 5 0.05 test -f "$ROOT_DIR/$peer.started"
+for file in huatuo-bamai.pid huatuo-apiserver.pid huatuo-toolstream.sock; do
+ [[ $(< "/var/run/$file") == "$name" ]] || fatal "worker overwrote another case runtime file"
+done
+EOF
+cp "${RUNNER_FIXTURE}/integration/"test_{metrics,node_config_api}.sh
+runner_check integration parallel_isolation 0 'total=2 passed=2 skipped=0 failed=0' -j 2
+[[ $(cat "${RUNNER_FIXTURE}/"*.address | sort -u | wc -l) == 2 ]] || fatal "parallel workers shared a daemon port"
 
 # Keep the earlier minimal fixtures independent of storage helpers.
 rm -f "${RUNNER_FIXTURE}/integration/"test_*.sh
