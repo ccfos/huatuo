@@ -513,20 +513,22 @@ func remapL3JumpSkip(
 	return uint32(newSkip), nil
 }
 
-// boundJumps rewrites out-of-bounds jump offsets to land on the last instruction.
-// go-pcap follows libpcap convention where jumps past the end mean implicit drop;
-// cbpfc requires all targets to be in-bounds. The last instruction is guaranteed
-// to be RetConstant{Val:0}, so clamped jumps preserve the drop semantics.
+// boundJumps rewrites out-of-bounds jump offsets to land on the last
+// instruction. go-pcap emits jumps past the end of the program whose intended
+// target is the program's final return: remapL3JumpSkip already resolves them
+// that way when retargeting to L3, so clamping to the same final return here
+// keeps the L2 and the L3 stubs equivalent ("not ip" accepts non-IPv4 frames
+// on both paths instead of dropping every frame on L2). A trailing drop
+// return is appended only when the program does not already end in a return.
 func boundJumps(insns []cbpf.Instruction) []cbpf.Instruction {
 	if len(insns) == 0 {
 		return insns
 	}
-	// Defensive: ensure the trailing instruction is a drop, so clamped
-	// jumps land on a drop (libpcap-style fall-through semantics).
-	if r, ok := insns[len(insns)-1].(cbpf.RetConstant); !ok || r.Val != 0 {
-		insns = append(insns, cbpf.RetConstant{Val: 0})
-	}
 	lastIdx := len(insns) - 1
+	if _, ok := insns[lastIdx].(cbpf.RetConstant); !ok {
+		insns = append(insns, cbpf.RetConstant{Val: 0})
+		lastIdx = len(insns) - 1
+	}
 	out := make([]cbpf.Instruction, len(insns))
 	copy(out, insns)
 	for i := range out {
