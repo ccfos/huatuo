@@ -81,6 +81,19 @@ func TestClampNegativeSamplesBoundsDiagnostics(t *testing.T) {
 	}
 }
 
+func TestFormatNegativeSampleSkipsInvalidReferences(t *testing.T) {
+	profile := types.AggregatedProfile{
+		Frames:    []types.ProfileFrame{{Name: "valid"}},
+		Stacks:    [][]uint32{{0, 99}},
+		LabelSets: [][]types.ProfileLabel{{types.ProfileStringLabel("key", "value")}},
+	}
+	sample := types.AggregatedSample{UserStack: 1, KernelStack: 99, LabelSet: 99, Value: -1}
+
+	if got, want := formatNegativeSample(&profile, &sample), "value=-1 frame=valid"; got != want {
+		t.Fatalf("formatNegativeSample() = %q, want %q", got, want)
+	}
+}
+
 func TestClampNegativeSamplesRejectsCanceledContext(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
