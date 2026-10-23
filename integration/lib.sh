@@ -315,15 +315,15 @@ stop_gracefully_by_pid() {
 	return "${status}"
 }
 
-# SIGTERM with graceful polling, then SIGKILL as fallback.
-# $1=pid  $2=timeout_seconds (default 10).
+# Signal with graceful polling, then SIGKILL as fallback.
+# $1=pid  $2=timeout_seconds (default 10)  $3=signal (default TERM).
 stop_by_pid() {
-	local pid=$1 timeout=${2:-10}
+	local pid=$1 timeout=${2:-10} signal=${3:-TERM}
 	kill -0 "${pid}" 2> /dev/null || return 0
-	kill -TERM "${pid}" 2> /dev/null || true
+	kill -"${signal}" "${pid}" 2> /dev/null || true
 	local waited=0
-	while kill -0 "${pid}" 2> /dev/null && [[ ${waited} -lt ${timeout} ]]; do
-		sleep 1
+	while kill -0 "${pid}" 2> /dev/null && ((waited < timeout * 10)); do
+		sleep 0.1
 		waited=$((waited + 1))
 	done
 	kill -KILL "${pid}" 2> /dev/null || true
@@ -343,9 +343,9 @@ stop_by_process_group() {
 }
 
 stop_and_wait_by_pid() {
-	local pid=${1:-} timeout=${2:-10}
+	local pid=${1:-} timeout=${2:-10} signal=${3:-TERM}
 	[[ -n "${pid}" ]] || return 0
-	stop_by_pid "${pid}" "${timeout}"
+	stop_by_pid "${pid}" "${timeout}" "${signal}"
 	wait "${pid}"
 }
 
@@ -405,7 +405,6 @@ huatuo_bamai_start() {
 	echo "$pid" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
 	log_info "huatuo-bamai pid: ${pid}"
 
-	sleep 0.5
 	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" "${WAIT_HUATUO_BAMAI_INTERVAL}" \
 		huatuo_bamai_ready
 }
@@ -494,7 +493,6 @@ huatuo_apiserver_start() {
 	echo "$pid" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"
 	log_info "huatuo-apiserver pid: ${pid}"
 
-	sleep 0.5
 	wait_until "${WAIT_HUATUO_APISERVER_TIMEOUT}" "${WAIT_HUATUO_APISERVER_INTERVAL}" \
 		huatuo_apiserver_ready
 }
@@ -689,16 +687,16 @@ assert_java_profiler_streams() (
 		> "${out_dir}/windows.json" 2> "${out_dir}/profiler.err" &
 	profiler_pid=$!
 
-	profile_window_is_ready() {
-		jq -se 'length > 0 and any(.[]; (.profile.sample | length) > 0)' \
+	profile_windows_are_ready() {
+		jq -se '[.[] | select((.profile.sample | length) > 0)] | length >= 2' \
 			"${out_dir}/windows.json" > /dev/null 2>&1
 	}
-	wait_until 10 0.1 profile_window_is_ready \
-		|| fatal "no Java window published during collection (see ${out_dir}/profiler.err)"
+	wait_until 10 0.1 profile_windows_are_ready \
+		|| fatal "two Java windows not published during collection (see ${out_dir}/profiler.err)"
 	kill -0 "${profiler_pid}" 2> /dev/null \
 		|| fatal "Java profiler exited before streaming output was observed"
 	local status=0
-	wait "${profiler_pid}" || status=$?
+	stop_and_wait_by_pid "${profiler_pid}" 5 INT || status=$?
 	profiler_pid=""
 	[[ ${status} -eq 0 ]] || fatal "Java streaming profiler exited ${status} (see ${out_dir}/profiler.err)"
 	jq -se '[.[] | select((.profile.sample | length) > 0)] | length >= 2' \
