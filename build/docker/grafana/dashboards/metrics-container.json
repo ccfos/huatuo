@@ -134,7 +134,7 @@
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "$metric{container_host=~\"$container_host\",region=~\"$region\",container_type!=\"Sidecar\"}",
+          "expr": "$metric{container_host=~\"$container_host\",region=~\"$region\",container_type!=\"sidecar\"}",
           "interval": "",
           "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
           "range": true,
