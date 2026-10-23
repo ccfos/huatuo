@@ -54,23 +54,65 @@ bash e2e/run.sh test_metrics.sh 2
 
 Both suites run in isolated UTS and mount namespaces, with hostname `huatuo-dev` and private mount propagation. Integration cases start their own services. E2E starts the default bamai before each case, then stops it and checks logs. Integration removes the working directory after a pass or skip and retains it on failure; E2E retains it for all outcomes.
 
-The apiserver lifecycle and Kubernetes profiling matrix live in
-`e2e/apiserver/test_apiserver_profiling.sh` and `e2e/apiserver/test_apiserver_profiling_matrix.sh`.
-The `e2e/test_apiserver.sh` group entry expands these into isolated cases
-for `make e2e`; individual cases accept the `apiserver/test_*.sh` path.
-The matrix discovers the local Kubernetes node, accepts an explicit
-`APISERVER_TEST_NODE` override, and requires kubelet credentials.
-The remaining seven functional cases are discovered by
-`make integration` through `integration/test_apiserver_profiling.sh`.
-Static capability, authentication, and no-storage API checks run separately
-in `integration/test_apiserver_profile_disabled.sh`. Test clients and the Go
-workload are built by `make build`, a prerequisite of both suites.
-See the
-[apiserver test instructions](../../integration/apiserver/README.md).
+Apiserver tests follow the same flat layout:
 
-The same e2e directory also contains
-`test_apiserver_profiling_{stop,concurrent,recovery,node_recovery}.sh`, covering
-task stop, concurrent sampling, apiserver restart, and recovery after Node loss.
+- `integration/test_apiserver_profile_disabled.sh`: capabilities, authentication,
+  and APIs without result storage.
+- `integration/test_apiserver_profiling.sh`: seven functional checks covering
+  host/global quotas, Node capacity, validation, missing containers, unreachable
+  hosts, and offline Nodes.
+- `e2e/test_apiserver_profiling.sh`: completion, exact list/raw pagination,
+  flamegraphs, and agent metrics.
+- `e2e/test_apiserver_profiling_{stop,concurrent,recovery,node_recovery}.sh`:
+  stopping, concurrency, apiserver restart, and recovery after Node failure.
+- `e2e/test_apiserver_profiling_matrix.sh`: 19 language/mode combinations.
+
+`integration/lib_apiserver.sh` shares service configuration, requests, assertions,
+and cleanup across both suites, reusing the existing storage and continuous
+profiling helpers. The protocol client and workloads live in
+`integration/testdata/`. `make build` prepares `_output/tests/apiserver-probe`
+and the static `apiserver-go-workload` binary before tests run.
+
+```bash
+make build
+sudo bash integration/run.sh test_apiserver_profile_disabled.sh
+sudo bash integration/run.sh test_apiserver_profiling.sh
+sudo bash e2e/run.sh test_apiserver_profiling.sh
+sudo bash e2e/run.sh test_apiserver_profiling_matrix.sh
+# Standard targets discover these scripts; a script name can take a repeat count.
+sudo make integration
+sudo make e2e
+```
+
+Static API checks do not require Docker, perf, or a compiler. Sampling requires
+Linux, root, Docker, Python 3, gcc, curl, jq, ss, pgrep, sampling-enabled perf
+settings, and built BPF/profiler tools. ES data is bound to `elasticsearch-data/`
+in the case workspace. Reports include requests, responses, profiles, logs, and
+`summary.tsv`. Generated configurations contain test tokens and belong only in
+test environments.
+
+The matrix also requires kubectl administration, crictl, local kubelet
+credentials, and packaged asprof/py-spy tools. It matches Node InternalIP against
+local addresses. `APISERVER_TEST_NODE` can select a Node explicitly but must still
+identify this machine; an absent or ambiguous match fails. Override credential
+paths with `KUBELET_CERT` and `KUBELET_KEY`. Images are prepared together through
+the local CRI before Pods start with `imagePullPolicy: Never`; failed pulls retain
+separate logs. Defaults are gcc:14, golang:1.24, eclipse-temurin:17-jdk, and
+python:3.11-slim. Override them with
+`APISERVER_TEST_{NATIVE,GO,JAVA,PYTHON}_IMAGE`.
+
+One workload Pod runs at a time, covering C/C++/Go oncpu, offcpu, and three memory
+modes; Java CPU and two memory modes; and Python CPU. Go runs a read-only mounted,
+prebuilt static binary. C/C++ and Java prepare workloads in their runtime images.
+Native workloads retain sixteen 64 KiB mappings for final physical-usage
+snapshots. The matrix summary records each of the 19 combinations separately.
+
+Assertions verify profile types, container ownership, nonempty results, and
+positive flamegraph totals. Python has one collection window for the task duration.
+Temporary namespaces, ConfigMaps, and Pods are cleaned on exit. Node recovery
+kills the test Node and verifies both the old task's failure and a new task after
+restart. Expected fault logs are allowed; runtime panics are rejected. Grafana
+page rendering is outside this coverage.
 
 The runner checks only that `_output` exists, not individual binaries or BPF artifacts. Run `make build` before invoking scripts directly. An existing directory does not imply a complete build; missing artifacts fail when used.
 

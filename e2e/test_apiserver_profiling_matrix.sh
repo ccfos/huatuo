@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-source "${ROOT_DIR}/integration/apiserver/lib.sh"
+source "${ROOT_DIR}/integration/lib_apiserver.sh"
 
 # Replace the runner baseline with the kubelet-enabled profiling daemon.
 huatuo_bamai_stop
