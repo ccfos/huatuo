@@ -15,6 +15,7 @@
 package formatter
 
 import (
+	"context"
 	"strconv"
 	"testing"
 
@@ -89,5 +90,18 @@ func TestDisplayLabelsNamesSoftIRQVectors(t *testing.T) {
 		if got[0] != "softirq_vector="+strconv.Quote(tt.want) {
 			t.Fatal(got)
 		}
+	}
+}
+
+func TestWalkWindowRejectsInvalidReferences(t *testing.T) {
+	window := &types.AggregationWindow{
+		Aggregated: types.AggregatedProfile{
+			Frames:  []types.ProfileFrame{{Name: "valid"}},
+			Stacks:  [][]uint32{{1}},
+			Samples: []types.AggregatedSample{{UserStack: 1}},
+		},
+	}
+	if err := WalkWindow(context.Background(), window, func([]string, int64) error { return nil }); err == nil {
+		t.Fatal("WalkWindow() accepted an out-of-range frame ID")
 	}
 }

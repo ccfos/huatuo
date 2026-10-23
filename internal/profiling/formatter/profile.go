@@ -16,6 +16,7 @@ package formatter
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/ccfos/huatuo/internal/profiling/window"
@@ -48,6 +49,12 @@ func DisplayLabels(dst []string, labels []types.ProfileLabel) []string {
 
 // WalkWindow creates display frames without changing shared frame identities.
 func WalkWindow(ctx context.Context, w *types.AggregationWindow, visit func([]string, int64) error) error {
+	if w == nil {
+		return fmt.Errorf("profiling aggregation window is required")
+	}
+	if visit == nil {
+		return fmt.Errorf("profile visitor is required")
+	}
 	var frames []string
 	a := &w.Aggregated
 	for i := range a.Samples {
@@ -56,15 +63,28 @@ func WalkWindow(ctx context.Context, w *types.AggregationWindow, visit func([]st
 		}
 
 		sample := &a.Samples[i]
+		if uint64(sample.UserStack) > uint64(len(a.Stacks)) ||
+			uint64(sample.KernelStack) > uint64(len(a.Stacks)) {
+			return fmt.Errorf("sample %d references a missing stack", i)
+		}
+		if uint64(sample.LabelSet) > uint64(len(a.LabelSets)) {
+			return fmt.Errorf("sample %d references a missing label set", i)
+		}
 		frames = DisplayLabels(frames[:0], window.Labels(a, sample))
 		if sample.UserStack != 0 {
 			for _, id := range a.Stacks[sample.UserStack-1] {
+				if uint64(id) >= uint64(len(a.Frames)) {
+					return fmt.Errorf("sample %d references a missing frame %d", i, id)
+				}
 				frames = append(frames, a.Frames[id].Name)
 			}
 		}
 
 		if sample.KernelStack != 0 {
 			for _, id := range a.Stacks[sample.KernelStack-1] {
+				if uint64(id) >= uint64(len(a.Frames)) {
+					return fmt.Errorf("sample %d references a missing frame %d", i, id)
+				}
 				frames = append(frames, a.Frames[id].Name+"_[k]")
 			}
 		}
