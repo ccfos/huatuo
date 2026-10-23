@@ -17,7 +17,6 @@ package retransmit
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -187,10 +186,10 @@ func (s *jsonWriter) Write(ev *types.TCPRetransmitTracing) error {
 	return err
 }
 
-type socketWriter struct{ client *toolstream.Client }
+type socketWriter struct{ events *toolstream.EventWriter }
 
 func (s *socketWriter) Write(ev *types.TCPRetransmitTracing) error {
-	return s.client.Send(context.Background(), ev, toolstream.SendOptions{})
+	return s.events.Write(ev)
 }
 
 type writerOptions struct {
@@ -201,7 +200,7 @@ type writerOptions struct {
 	taskID       string
 }
 
-func newWriter(output io.Writer, options *writerOptions) (writer, func() error, error) {
+func newWriter(ctx context.Context, output io.Writer, options *writerOptions) (writer, func() error, error) {
 	if options.socketPath != "" {
 		client, err := toolstream.NewClient(&toolstream.ClientOptions{
 			SockPath:    options.socketPath,
@@ -212,10 +211,11 @@ func newWriter(output io.Writer, options *writerOptions) (writer, func() error, 
 		if err != nil {
 			return nil, nil, fmt.Errorf("--output-storage: %w", err)
 		}
-		return &socketWriter{client: client}, func() error {
-			return errors.Join(client.Send(context.Background(), nil, toolstream.SendOptions{End: true}), client.Close())
-		}, nil
+
+		events := toolstream.NewEventWriter(ctx, client)
+		return &socketWriter{events: events}, events.Close, nil
 	}
+
 	if output == nil {
 		return nil, nil, fmt.Errorf("output is nil")
 	}

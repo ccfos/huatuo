@@ -25,6 +25,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -119,6 +120,44 @@ func TestWriteRetransmitEventsReturnsOutputError(t *testing.T) {
 	}), "tools")
 	if !errors.Is(err, consumeErr) || reader.readCalls != 1 {
 		t.Fatalf("read = %v after %d calls; want consumer error after one read", err, reader.readCalls)
+	}
+}
+
+func TestWriteRetransmitEventsTreatsCanceledSocketAsNormalStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	reader := &retransmitReaderStub{read: func(any) error { return nil }}
+	err := writeRetransmitEvents(
+		ctx,
+		reader.readInto,
+		testEventWriter(func(*types.TCPRetransmitTracing) error {
+			cancel()
+
+			return errors.Join(toolstream.ErrEventOutputCanceled, ctx.Err())
+		}),
+		"tools",
+	)
+	if err != nil {
+		t.Fatalf("writeRetransmitEvents canceled output = %v, want normal stop", err)
+	}
+}
+
+func TestWriteRetransmitEventsPreservesFailureDuringCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	writeErr := errors.New("encode event failed")
+	err := writeRetransmitEvents(
+		ctx,
+		func(*abi.TCPRetransmitEvent) error { return nil },
+		testEventWriter(func(*types.TCPRetransmitTracing) error {
+			cancel()
+
+			return errors.Join(writeErr, ctx.Err())
+		}),
+		"tools",
+	)
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("write after cancellation = %v, want independent failure %v", err, writeErr)
 	}
 }
 

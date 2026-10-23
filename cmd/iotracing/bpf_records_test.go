@@ -16,18 +16,174 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"net"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestSocketWriterCancellationUnblocksBackpressure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    path,
+		ServiceName: "iotracing",
+		Version:     "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peer, err := listener.Accept()
+	if err != nil {
+		_ = client.Close()
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	events := toolstream.NewEventWriter(ctx, client)
+	defer events.Close()
+	sink := newWriter("", events)
+	finished := make(chan error, 1)
+	go func() {
+		finished <- sink.Write(&types.IOTracingSnapshot{FailureReason: strings.Repeat("x", 1<<20)})
+	}()
+
+	select {
+	case err := <-finished:
+		t.Fatalf("Write completed without a reader: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	cancel()
+
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Write = %v, want cancellation", err)
+		}
+	case <-time.After(toolstream.EventCloseTimeout + time.Second):
+		t.Fatal("output cancellation did not interrupt socket writer")
+	}
+
+	if err := events.Close(); err != nil {
+		t.Fatalf("Close after cancellation: %v", err)
+	}
+}
+
+func TestWriteToolstreamReportPublishesSnapshotAfterCollectionCancellation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.sock")
+	server, err := toolstream.NewServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requests := make(chan bool, 2)
+	toolstream.Register(server, "iotracing", func(_ context.Context, request *toolstream.Request[types.IOTracingSnapshot]) error {
+		requests <- request.End
+		return nil
+	})
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    path,
+		ServiceName: "iotracing",
+		Version:     "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if err := writeToolstreamReport(
+		ctx,
+		client,
+		&types.IOTracingSnapshot{},
+		nil,
+	); err != nil {
+		t.Fatalf("final report after collection cancellation: %v", err)
+	}
+
+	for _, wantEnd := range []bool{false, true} {
+		select {
+		case gotEnd := <-requests:
+			if gotEnd != wantEnd {
+				t.Fatalf("received End=%t, want %t", gotEnd, wantEnd)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("final snapshot or End was not delivered")
+		}
+	}
+}
+
+func TestWriteToolstreamReportDeadlineUnblocksBackpressure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    path,
+		ServiceName: "iotracing",
+		Version:     "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	peer, err := listener.Accept()
+	if err != nil {
+		_ = client.Close()
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	finished := make(chan error, 1)
+	go func() {
+		finished <- writeToolstreamReport(
+			t.Context(),
+			client,
+			&types.IOTracingSnapshot{
+				FailureReason: strings.Repeat("x", 1<<20),
+			},
+			nil,
+		)
+	}()
+
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("final report = %v, want output deadline", err)
+		}
+	case <-time.After(toolstream.EventCloseTimeout + 2*time.Second):
+		t.Fatal("blocked final report exceeded its shutdown budget")
+	}
+
+	if err := client.Close(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("timed-out report did not release connection: %v", err)
+	}
+}
 
 func TestBPFFilesystemIOLayout(t *testing.T) {
 	t.Parallel()
@@ -126,29 +282,62 @@ func TestCollectReportWritesPartialOutput(t *testing.T) {
 		wantStalls    int
 		wantReason    string
 	}{
-		{name: "error before first event", beforeRead: true, readErr: readerErr, wantReason: types.IOTracingFailureReader},
-		{name: "error after event", readErr: readerErr, wantStalls: 1, wantReason: types.IOTracingFailureReader},
-		{name: "normal cancellation", readErr: types.ErrExitByCancelCtx, wantStalls: 1},
-		{name: "sample loss", hasSampleLoss: true, readErr: types.ErrExitByCancelCtx, wantStalls: 1},
+		{
+			name:       "error before first event",
+			beforeRead: true,
+			readErr:    readerErr,
+			wantReason: types.IOTracingFailureReader,
+		},
+		{
+			name:       "error after event",
+			readErr:    readerErr,
+			wantStalls: 1,
+			wantReason: types.IOTracingFailureReader,
+		},
+		{
+			name:       "normal cancellation",
+			readErr:    types.ErrExitByCancelCtx,
+			wantStalls: 1,
+		},
+		{
+			name:          "sample loss",
+			hasSampleLoss: true,
+			readErr:       types.ErrExitByCancelCtx,
+			wantStalls:    1,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var row bytes.Buffer
 			record := bpfFilesystemIO{
-				TGID: 1, FsReadBytes: 8192, FsWriteBytes: 16384,
-				BlockReadBytes: 2048, BlockWriteBytes: 4096,
+				TGID:            1,
+				FsReadBytes:     8192,
+				FsWriteBytes:    16384,
+				BlockReadBytes:  2048,
+				BlockWriteBytes: 4096,
 			}
 			if err := binary.Write(&row, binary.LittleEndian, &record); err != nil {
 				t.Fatal(err)
 			}
-			object := &reportTestBPF{t: t, rows: []bpf.MapItem{{Value: row.Bytes()}}}
+
+			object := &reportTestBPF{
+				t:    t,
+				rows: []bpf.MapItem{{Value: row.Bytes()}},
+			}
 			const sampled = 250 * time.Millisecond
 			started := time.Now().Add(-sampled)
 			report, traceErr := collectReport(
 				object,
 				&reportTestReader{
-					hasRead: test.beforeRead, hasSampleLoss: test.hasSampleLoss, readErr: test.readErr,
+					hasRead:       test.beforeRead,
+					hasSampleLoss: test.hasSampleLoss,
+					readErr:       test.readErr,
 				},
-				ioConfig{durationSecond: 10, maxProcess: 1, maxFilesPerProcess: 1, maxStack: 2},
+				ioConfig{
+					durationSecond:     10,
+					maxProcess:         1,
+					maxFilesPerProcess: 1,
+					maxStack:           2,
+				},
 				started,
 			)
 			elapsed := time.Since(started)
@@ -190,10 +379,26 @@ func TestCollectReportWritesPartialOutput(t *testing.T) {
 			for _, rate := range []struct {
 				bytes, process, file uint64
 			}{
-				{bytes: record.FsReadBytes, process: process.TotalFsReadBps, file: file.FsReadBps},
-				{bytes: record.FsWriteBytes, process: process.TotalFsWriteBps, file: file.FsWriteBps},
-				{bytes: record.BlockReadBytes, process: process.TotalDiskReadBps, file: file.DiskReadBps},
-				{bytes: record.BlockWriteBytes, process: process.TotalDiskWriteBps, file: file.DiskWriteBps},
+				{
+					bytes:   record.FsReadBytes,
+					process: process.TotalFsReadBps,
+					file:    file.FsReadBps,
+				},
+				{
+					bytes:   record.FsWriteBytes,
+					process: process.TotalFsWriteBps,
+					file:    file.FsWriteBps,
+				},
+				{
+					bytes:   record.BlockReadBytes,
+					process: process.TotalDiskReadBps,
+					file:    file.DiskReadBps,
+				},
+				{
+					bytes:   record.BlockWriteBytes,
+					process: process.TotalDiskWriteBps,
+					file:    file.DiskWriteBps,
+				},
 			} {
 				minimum := uint64(float64(rate.bytes) / elapsed.Seconds())
 				maximum := uint64(float64(rate.bytes) / sampled.Seconds())
@@ -201,6 +406,7 @@ func TestCollectReportWritesPartialOutput(t *testing.T) {
 					t.Fatalf("partial rate = %+v, want [%d, %d] B/s", rate, minimum, maximum)
 				}
 			}
+
 			err = writeReport(&jsonWriter{w: failingReportOutput{outputErr}}, report, traceErr)
 			if !errors.Is(err, outputErr) || (traceErr != nil && !errors.Is(err, readerErr)) {
 				t.Fatalf("combined output/reader error = %v", err)

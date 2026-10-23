@@ -17,6 +17,7 @@ package retransmit
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -25,6 +26,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -274,6 +276,111 @@ func TestRetransmitDropCancellationFinalizesPendingEvents(t *testing.T) {
 		sink.events[0].CorrelationReason != types.CorrelationInterrupted ||
 		sink.events[0].DropPerfStatus == nil || sink.events[0].DropStack != "" {
 		t.Fatalf("finalized retransmission = %+v, want unknown no-match result", retransmit)
+	}
+}
+
+func TestRetransmitDropCancellationFinalizesSocketPendingEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.sock")
+	server, err := toolstream.NewServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	received := make(chan *types.TCPRetransmitTracing, 1)
+	ended := make(chan struct{}, 1)
+	toolstream.Register(server, "tcpshark", func(_ context.Context, request *toolstream.Request[types.TCPRetransmitTracing]) error {
+		if request.End {
+			ended <- struct{}{}
+		}
+
+		if request.Data != nil {
+			select {
+			case received <- request.Data:
+			case <-t.Context().Done():
+				return t.Context().Err()
+			}
+		}
+
+		return nil
+	})
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sink, cleanup, err := newWriter(ctx, nil, &writerOptions{
+		socketPath: path,
+		toolName:   "tcpshark",
+		version:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cleanup() }()
+	retransmitEvents := make(chan *retransmitEvent)
+	done := make(chan error, 1)
+	source := newTraceTestDropwatchStatus(t, types.DropwatchStatus{})
+	go func() {
+		done <- runRetransmitDropCorrelation(ctx, &retransmitDropSession{
+			retransmitEvents:    retransmitEvents,
+			dropwatchEvents:     make(chan *dropEvent),
+			readDropwatchStatus: source.ReadStatus,
+			sink:                sink,
+		})
+	}()
+
+	for i := range 2 {
+		event := testRetransmitEvent(
+			uint64(time.Second)+uint64(i)+1,
+			"10.0.0.1",
+			"10.0.0.2",
+			1000,
+			80,
+			uint32(100+i),
+			uint32(200+i),
+		)
+		select {
+		case retransmitEvents <- event:
+		case <-time.After(time.Second):
+			t.Fatal("correlator did not accept the pending event")
+		}
+	}
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("correlation cancellation did not finish")
+	}
+
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
+
+	seen := make(map[uint32]bool)
+	for range 2 {
+		select {
+		case event := <-received:
+			if seen[event.TCPSeq] || (event.TCPSeq != 100 && event.TCPSeq != 101) ||
+				event.CorrelationReason != types.CorrelationInterrupted {
+				t.Fatalf("unexpected or duplicated final event: %+v", event)
+			}
+
+			seen[event.TCPSeq] = true
+		case <-time.After(time.Second):
+			t.Fatal("healthy socket receiver lost a pending final event")
+		}
+	}
+
+	select {
+	case <-ended:
+	case <-time.After(time.Second):
+		t.Fatal("final events were not followed by End")
 	}
 }
 
