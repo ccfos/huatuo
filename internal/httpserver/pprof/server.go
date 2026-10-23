@@ -28,7 +28,7 @@ import (
 
 const readHeaderTimeout = 5 * time.Second
 
-// Server serves Go runtime profiles on a caller-owned listener.
+// Server serves Go runtime profiles and owns its listener.
 type Server struct {
 	httpServer         *http.Server
 	serveErr           <-chan error
@@ -48,13 +48,21 @@ func Handler() http.Handler {
 	return mux
 }
 
-// Start serves pprof until ctx is canceled or Server.Close is called.
-func Start(ctx context.Context, listener net.Listener) (*Server, error) {
-	if listener == nil {
-		return nil, fmt.Errorf("start pprof server: listener is nil")
+// StartDefault serves pprof on 127.0.0.1:6000 until ctx is canceled or
+// Server.Close is called. The caller must close the returned server.
+func StartDefault(ctx context.Context) (*Server, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:6000")
+	if err != nil {
+		return nil, fmt.Errorf("listen for pprof server on 127.0.0.1:6000: %w", err)
 	}
 
+	return start(ctx, listener), nil
+}
+
+// start takes ownership of listener until the returned server is closed.
+func start(ctx context.Context, listener net.Listener) *Server {
 	httpServer := &http.Server{
+		Addr:              listener.Addr().String(),
 		Handler:           Handler(),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
@@ -80,7 +88,7 @@ func Start(ctx context.Context, listener net.Listener) (*Server, error) {
 		}
 	}()
 
-	return server, nil
+	return server
 }
 
 // Close stops the server and waits for its serving goroutine to exit.

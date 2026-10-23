@@ -88,6 +88,10 @@ sudo ./_output/bin/irqtracing \
 
 `dropped_samples.collection` 记录内核采样预算或 counts map 已满导致的丢样总数，当前计数器无法区分两种原因。非零表示 profile 不完整，并在 stderr 输出告警；读取计数器失败会使采集失败。profiler 用户态队列满时等待聚合消费，处理上下文取消时终止等待；`dropped_samples.aggregation_queue` 仅保留用于兼容历史数据。
 
+## 工具自身的 Go runtime profile
+
+`--enable-pprof` 默认 false，表示关闭。启用后监听 `127.0.0.1:6000`，端口被占用时启动失败。这里采集的是 irqtracing 进程自身，不是 IRQ/softIRQ 栈，也不是 huatuo-bamai。采集期间须保持工具运行。
+
 ## 由 huatuo-bamai 调用
 
 守护进程的 `AutoTracing.IRQTracing` tracer 在其规则检测到某个 CPU 出现 irq/softirq 突增或持续高利用率时，会调用守护进程可执行文件旁的 `irqtracing` 二进制（`CoreBinDir` 由守护进程自身路径推导；源码构建树中即 `_output/bin/irqtracing`）。

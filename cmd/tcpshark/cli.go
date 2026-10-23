@@ -44,6 +44,7 @@ const (
 	cliFlagTaskID             = "task-id"
 	cliFlagMaxEventsPerSecond = "max-events-per-second"
 	cliFlagSourceTypes        = "source-types"
+	cliFlagEnablePProf        = "enable-pprof"
 )
 
 const (
@@ -117,6 +118,10 @@ func appFlags() []cli.Flag {
 			Name:   cliFlagSourceTypes,
 			Value:  toolstream.SourceTypeTool,
 			Hidden: true,
+		},
+		&cli.BoolFlag{
+			Name:  cliFlagEnablePProf,
+			Usage: "serve this process's Go runtime profiles on 127.0.0.1:6000",
 		},
 	}
 }
