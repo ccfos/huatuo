@@ -174,3 +174,41 @@ func TestRead_NotExist(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, os.IsNotExist(err))
 }
+
+// TestLock_AlreadyLockedKeepsRecordedPID guards the regression where Lock
+// opened the pid file with O_TRUNC before taking the flock: starting a second
+// instance truncated the running instance's pid file, so the "already running"
+// diagnostic lost the pid and the on-disk record was destroyed.
+func TestLock_AlreadyLockedKeepsRecordedPID(t *testing.T) {
+	redirectPidDir(t)
+
+	name := "keep-pid"
+	lk, err := Lock(name)
+	require.NoError(t, err)
+	t.Cleanup(lk.Unlock)
+
+	_, err = Lock(name)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), strconv.Itoa(os.Getpid()))
+
+	data, err := os.ReadFile(path(name))
+	require.NoError(t, err)
+	assert.Equal(t, strconv.Itoa(os.Getpid()), string(data))
+}
+
+// TestLock_ReplacesStaleRecord checks that an acquired lock still rewrites the
+// file it locked, without leaving bytes from the previous record behind.
+func TestLock_ReplacesStaleRecord(t *testing.T) {
+	redirectPidDir(t)
+
+	name := "stale-record"
+	require.NoError(t, os.WriteFile(path(name), []byte("999999999"), 0o600))
+
+	lk, err := Lock(name)
+	require.NoError(t, err)
+	t.Cleanup(lk.Unlock)
+
+	data, err := os.ReadFile(path(name))
+	require.NoError(t, err)
+	assert.Equal(t, strconv.Itoa(os.Getpid()), string(data))
+}
