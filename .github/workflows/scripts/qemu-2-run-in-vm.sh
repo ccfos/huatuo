@@ -22,7 +22,7 @@
 # - VM_PROXY_HOST: Optional host proxy address; requires VM_PROXY_PORT.
 # - VM_PROXY_PORT: Optional host proxy port; requires VM_PROXY_HOST.
 # Parameters:
-# - None.
+# - Optional --prepare-only or --test-only; omitted runs both phases.
 # Examples:
 # - VM_ENV_FILE=/tmp/run/vm.env qemu-2-run-in-vm.sh
 
@@ -31,8 +31,8 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 source "$ROOT_DIR/.github/workflows/scripts/vm-test/logging.sh"
 trap 'vm_phase_result qemu-2 "$?"' EXIT
-(($# == 0)) || {
-	vm_log_error 'usage: qemu-2-run-in-vm.sh'
+(($# == 0)) || [[ $# == 1 && ($1 == --prepare-only || $1 == --test-only) ]] || {
+	vm_log_error 'usage: qemu-2-run-in-vm.sh [--prepare-only|--test-only]'
 	exit 2
 }
 : "${VM_ENV_FILE:?VM_ENV_FILE is required; run qemu-1-start-vm.sh first}"
@@ -83,5 +83,5 @@ fi
 
 # The streamed script owns all guest setup and test commands; qemu-2 only provides transport.
 vm_log "running guest tests on $VM_IP"
-ssh "${ssh_opts[@]}" "root@$VM_IP" bash -s \
+ssh "${ssh_opts[@]}" "root@$VM_IP" bash -s -- "$@" \
 	< "$ROOT_DIR/.github/workflows/scripts/vm-test/run-in-vm.sh"

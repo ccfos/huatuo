@@ -246,3 +246,64 @@ STUB
 	done
 )
 log_info "portable generated source guards passed"
+
+(
+	work="${HUATUO_BAMAI_TEST_TMPDIR}/vm-cache"
+	mkdir -p "${work}/bin"
+	printf 'VM_IP=192.0.2.1\nVM_SSH_KEY=/tmp/test-key\n' > "${work}/vm.env"
+	cat > "${work}/bin/ssh" << 'STUB'
+#!/bin/sh
+if [ "$TEST_MODE" = key ]; then printf '%s\n' "$TEST_METADATA"; fi
+STUB
+	cat > "${work}/bin/rsync" << 'STUB'
+#!/bin/sh
+printf '%s\n' "$@" > "$RUNNER_TEMP/rsync-args"
+STUB
+	chmod +x "${work}/bin/"*
+	export PATH="${work}/bin:${PATH}" VM_ENV_FILE="${work}/vm.env" RUNNER_TEMP="${work}"
+	export TEST_MODE=key VM_IMAGE_REF=image-a TEST_METADATA='go1.24 gcc14'
+	cache_script="${ROOT_DIR}/.github/workflows/scripts/vm-test/go-cache.sh"
+	key=$(bash "${cache_script}" key)
+	assert_eq "$(bash "${cache_script}" key)" "${key}" "stable cache key"
+	[[ $(VM_IMAGE_REF=image-b bash "${cache_script}" key) != "${key}" ]] || fatal "cache key ignores VM image"
+	[[ $(TEST_METADATA='go1.25 gcc14' bash "${cache_script}" key) != "${key}" ]] || fatal "cache key ignores toolchain"
+	for TEST_MODE in restore save; do
+		bash "${cache_script}" "${TEST_MODE}" > "${work}/${TEST_MODE}.log"
+		mapfile -t args < "${work}/rsync-args"
+		local_path="${work}/huatuo-go-build/" remote_path=root@192.0.2.1:/root/.cache/go-build/
+		if [[ ${TEST_MODE} == restore ]]; then
+			assert_eq "${args[-2]}" "${local_path}" "cache restore source"
+			assert_eq "${args[-1]}" "${remote_path}" "cache restore destination"
+			! grep -Fxq -- --delete "${work}/rsync-args" || fatal "restore deletes guest cache"
+		else
+			assert_eq "${args[-2]}" "${remote_path}" "cache save source"
+			assert_eq "${args[-1]}" "${local_path}" "cache save destination"
+			grep -Fxq -- --delete "${work}/rsync-args" || fatal "save retains stale cache files"
+		fi
+	done
+)
+
+# Call the real guest entry function; stub only operations requiring a VM.
+for guest_mode in --prepare-only --test-only combined; do
+	guest_work="${HUATUO_BAMAI_TEST_TMPDIR}/guest-${guest_mode}"
+	mkdir -p "${guest_work}/_output"
+	touch "${guest_work}/_output/portable-generated.commit"
+	TEST_GUEST_WORK="${guest_work}" bash -eu -s -- "${guest_mode}" << 'SH'
+source "$ROOT_DIR/.github/workflows/scripts/vm-test/run-in-vm.sh"
+configure_proxy() { echo proxy >> "$TEST_GUEST_WORK/calls"; }
+print_sys_info() { echo info >> "$TEST_GUEST_WORK/calls"; }
+install_test_dependencies() { echo dependencies >> "$TEST_GUEST_WORK/calls"; }
+grow_root_filesystem() { echo grow >> "$TEST_GUEST_WORK/calls"; }
+install_temporary_go_tools() { exit 99; }
+make() { echo "make $*" >> "$TEST_GUEST_WORK/calls"; }
+git() { :; }
+prefetch_storage_images() { :; }
+cd() { builtin cd "$TEST_GUEST_WORK"; }
+run_guest_tests "$@"
+SH
+	guest_expected=proxy
+	if [[ ${guest_mode} != --test-only ]]; then guest_expected+=$'\ngrow\ninfo\ndependencies'; fi
+	if [[ ${guest_mode} != --prepare-only ]]; then guest_expected+=$'\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1'; fi
+	assert_eq "$(cat "${guest_work}/calls")" "${guest_expected}" "${guest_mode}: guest phases"
+done
+log_info "VM cache transport and guest phase checks passed"
