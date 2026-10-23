@@ -100,6 +100,71 @@ func TestFormatterJSONOutput(t *testing.T) {
 	}
 }
 
+func TestFormatterJSONConversionFailurePreservesDestination(t *testing.T) {
+	tests := []struct {
+		name string
+		setup func(t *testing.T) (string, func(*testing.T))
+	}{
+		{
+			name: "existing file",
+			setup: func(t *testing.T) (string, func(*testing.T)) {
+				path := filepath.Join(t.TempDir(), "profile.json")
+				want := []byte(`{"previous":true}`)
+				if err := os.WriteFile(path, want, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return path, func(t *testing.T) {
+					got, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if string(got) != string(want) {
+						t.Fatalf("destination = %q, want %q", got, want)
+					}
+				}
+			},
+		},
+		{
+			name: "absent file",
+			setup: func(t *testing.T) (string, func(*testing.T)) {
+				path := filepath.Join(t.TempDir(), "profile.json")
+				return path, func(t *testing.T) {
+					if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("destination stat error = %v, want not exists", err)
+					}
+				}
+			},
+		},
+		{
+			name: "directory",
+			setup: func(t *testing.T) (string, func(*testing.T)) {
+				path := t.TempDir()
+				return path, func(t *testing.T) {
+					entries, err := os.ReadDir(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(entries) != 0 {
+						t.Fatalf("directory entries = %v, want empty", entries)
+					}
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, verify := tt.setup(t)
+			formatter := createFormatter(t, output.FormatJSON, path)
+			err := formatter.Add(t.Context(), &types.AggregationWindow{ProfileType: "invalid"})
+			if err == nil {
+				t.Fatal("Formatter.Add() error = nil, want conversion error")
+			}
+			verify(t)
+		})
+	}
+}
+
 func TestFormatterCombinesWindows(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "profile")
 	formatter := createFormatter(t, output.FormatCollapsed, destination)
