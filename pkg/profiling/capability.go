@@ -91,6 +91,13 @@ var capabilities = []Capability{
 		SupportedScopes: []observation.Scope{observation.ScopeContainer},
 		implementation:  ImplementationJava,
 	},
+	{
+		Type:            TypeMemory,
+		Language:        LanguagePython,
+		Modes:           []Mode{ModeObjectUsage},
+		SupportedScopes: []observation.Scope{observation.ScopeContainer},
+		implementation:  ImplementationPython,
+	},
 }
 
 func newNativeCapability(language Language, typ Type) Capability {

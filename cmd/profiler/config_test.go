@@ -130,3 +130,19 @@ func TestParseSeconds(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadPythonMemoryConfig(t *testing.T) {
+	app := &cli.App{Flags: appFlags, Action: func(ctx *cli.Context) error {
+		cfg, err := loadConfig(ctx)
+		if err != nil {
+			return err
+		}
+		if cfg.Provider.Mode != profiling.ModeObjectUsage || cfg.Provider.PythonMemoryStackMode != "hybrid" || !cfg.Provider.PythonMemoryMergeThreads {
+			t.Fatalf("lost Python memory configuration: %+v", cfg.Provider)
+		}
+		return nil
+	}}
+	if err := app.Run([]string{"profiler", "--type", "memory", "--language", "python", "--python-memory-stack", "hybrid", "--python-memory-merge-threads"}); err != nil {
+		t.Fatal(err)
+	}
+}

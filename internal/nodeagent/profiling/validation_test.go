@@ -60,3 +60,32 @@ func TestValidateEnvironmentUsesSharedToolDir(t *testing.T) {
 		t.Fatalf("native environment without ToolDir: %v", err)
 	}
 }
+
+func TestPythonMemoryEnvironmentRequiresGDBInsteadOfPySpy(t *testing.T) {
+	config := testProfilingConfig(t)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ProfilerPath = executable
+	config.ToolDir = ""
+	request := testProfilingRequest()
+	request.Spec.Language = profilingdomain.LanguagePython
+	request.Spec.Type = profilingdomain.TypeMemory
+	request.Spec.Mode = profilingdomain.ModeObjectUsage
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	if err := validateEnvironment(request, config); !errors.Is(err, ErrEnvironmentUnsupported) || !strings.Contains(err.Error(), "gdb") {
+		t.Fatalf("environment without GDB: %v", err)
+	}
+	gdb := filepath.Join(binDir, "gdb")
+	if err := os.WriteFile(gdb, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(gdb, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateEnvironment(request, config); err != nil {
+		t.Fatalf("Memray environment with GDB and no py-spy: %v", err)
+	}
+}
