@@ -16,6 +16,7 @@ package window
 
 import (
 	"context"
+	"fmt"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 
@@ -27,6 +28,9 @@ import (
 func BuildProfile(ctx context.Context, w *types.AggregationWindow) (*profilev1.Profile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if w == nil {
+		return nil, fmt.Errorf("profiling aggregation window is required")
 	}
 
 	parts, err := Metadata(w.ProfileType)

@@ -127,3 +127,9 @@ func TestBuildProfileCancellation(t *testing.T) {
 		t.Fatalf("error %v", err)
 	}
 }
+
+func TestBuildProfileRejectsNilWindow(t *testing.T) {
+	if profile, err := window.BuildProfile(t.Context(), nil); profile != nil || err == nil {
+		t.Fatalf("BuildProfile(nil) = (%v, %v), want nil profile and error", profile, err)
+	}
+}
