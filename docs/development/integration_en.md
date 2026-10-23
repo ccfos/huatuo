@@ -148,6 +148,10 @@ If root privileges or namespace commands are unavailable, both suites mark every
 
 - The list of successfully verified metrics is displayed.
 
+Go fixture builds reuse the inherited `GOCACHE` or Go's default build cache.
+Temporary build files and test outputs stay in each case workspace. Live Go
+tests retain `-count=1` so cached dependencies never skip test execution.
+
 ## Profiling
 
 Run `make build` first and configure Java or Python tool paths according to `integration/env.sh`.
