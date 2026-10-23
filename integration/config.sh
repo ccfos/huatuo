@@ -509,10 +509,10 @@ BlackList = ["dropwatch", "arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle"
 EOF
 }
 
-write_cpu_util_config() {
+write_config_cpu_util() {
 	local cpu_blacklist=""
-	[[ ${CPU_UTIL_DISABLED} != true ]] || cpu_blacklist='"cpu_util", '
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+	[[ ${cpu_util_disabled} != true ]] || cpu_blacklist='"cpu_util", '
+	cat << EOF
 BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_stat", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
 
 [HTTPServer]
@@ -527,10 +527,10 @@ BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_stat", "cpuidle", "cpusys
 EOF
 }
 
-write_cpu_stat_config() {
+write_config_cpu_stat() {
 	local cpu_blacklist=""
-	[[ ${CPU_STAT_DISABLED} != true ]] || cpu_blacklist='"cpu_stat", '
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+	[[ ${cpu_stat_disabled} != true ]] || cpu_blacklist='"cpu_stat", '
+	cat << EOF
 BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
 
 [HTTPServer]
@@ -545,10 +545,10 @@ BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_util", "cpuidle", "cpusys
 EOF
 }
 
-write_runqlat_config() {
+write_config_runqlat() {
 	local runqlat_blacklist=""
-	[[ ${RUNQLAT_DISABLED} != true ]] || runqlat_blacklist='"runqlat", '
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+	[[ ${runqlat_disabled} != true ]] || runqlat_blacklist='"runqlat", '
+	cat << EOF
 BlackList = [${runqlat_blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
 
 [HTTPServer]
@@ -563,9 +563,9 @@ BlackList = [${runqlat_blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "c
 EOF
 }
 
-write_cpuidle_autotracing_config() {
+write_config_cpuidle_autotracing() {
 	local blacklist="" es_config=""
-	[[ ${CPUIDLE_DISABLED} != true ]] || blacklist='"cpuidle", '
+	[[ ${cpuidle_disabled} != true ]] || blacklist='"cpuidle", '
 	if [[ -n ${STORAGE_ADDR} ]]; then
 		es_config="[Storage.Elasticsearch]
     Address = \"${STORAGE_ADDR}\"
@@ -573,7 +573,7 @@ write_cpuidle_autotracing_config() {
     Password = \"${STORAGE_PASSWORD}\"
     Index = \"${CPUIDLE_INDEX}\""
 	fi
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+	cat << EOF
 BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
 
 [HTTPServer]
@@ -585,21 +585,21 @@ BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpusys", 
     KubeletAuthorizedPort = ${CPUIDLE_KUBELET_PORT}
     KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
 [AutoTracing.CPUIdle]
-    UserThreshold = ${CPUIDLE_THRESHOLDS[0]}
-    SysThreshold = ${CPUIDLE_THRESHOLDS[1]}
-    UsageThreshold = ${CPUIDLE_THRESHOLDS[2]}
-    DeltaUserThreshold = ${CPUIDLE_THRESHOLDS[3]}
-    DeltaSysThreshold = ${CPUIDLE_THRESHOLDS[4]}
-    DeltaUsageThreshold = ${CPUIDLE_THRESHOLDS[5]}
-    Interval = ${CPUIDLE_INTERVAL}
-    IntervalTracing = ${CPUIDLE_COOLDOWN}
-    RunTracingToolTimeout = ${CPUIDLE_DURATION}
+    UserThreshold = ${cpuidle_thresholds[0]}
+    SysThreshold = ${cpuidle_thresholds[1]}
+    UsageThreshold = ${cpuidle_thresholds[2]}
+    DeltaUserThreshold = ${cpuidle_thresholds[3]}
+    DeltaSysThreshold = ${cpuidle_thresholds[4]}
+    DeltaUsageThreshold = ${cpuidle_thresholds[5]}
+    Interval = ${cpuidle_interval}
+    IntervalTracing = ${cpuidle_cooldown}
+    RunTracingToolTimeout = ${cpuidle_duration}
 [[AutoTracing.CPUIdle.Filter.Included]]
-    Field = "${CPUIDLE_INCLUDE_FIELD}"
-    Pattern = "${CPUIDLE_INCLUDE}"
+    Field = "${cpuidle_include_field}"
+    Pattern = "${cpuidle_include}"
 [[AutoTracing.CPUIdle.Filter.Excluded]]
-    Field = "${CPUIDLE_EXCLUDE_FIELD}"
-    Pattern = "${CPUIDLE_EXCLUDE}"
+    Field = "${cpuidle_exclude_field}"
+    Pattern = "${cpuidle_exclude}"
 [Storage.LocalFile]
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 ${es_config}
@@ -607,9 +607,9 @@ EOF
 }
 
 # The dload case owns its Pod, IO device, endpoint and storage index.
-write_dload_autotracing_config() {
+write_config_dload_autotracing() {
 	local blacklist="" es_config=""
-	[[ ${DLOAD_DISABLED} != true ]] || blacklist='"dload", '
+	[[ ${dload_disabled} != true ]] || blacklist='"dload", '
 	if [[ -n ${STORAGE_ADDR} ]]; then
 		es_config="[Storage.Elasticsearch]
     Address = \"${STORAGE_ADDR}\"
@@ -617,7 +617,7 @@ write_dload_autotracing_config() {
     Password = \"${STORAGE_PASSWORD}\"
     Index = \"${DLOAD_INDEX}\""
 	fi
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+	cat << EOF
 BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
 
 [HTTPServer]
@@ -629,12 +629,12 @@ BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle",
     KubeletAuthorizedPort = ${DLOAD_KUBELET_PORT}
     KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
 [AutoTracing]
-    IssuesList = ${DLOAD_ISSUES}
+    IssuesList = ${dload_issues}
 [AutoTracing.Dload]
-    Interval = ${DLOAD_INTERVAL}
-    IntervalTracing = ${DLOAD_COOLDOWN}
-    ThresholdLoad = ${DLOAD_THRESHOLD}
-    EnableDebug = ${DLOAD_DEBUG}
+    Interval = ${dload_interval}
+    IntervalTracing = ${dload_cooldown}
+    ThresholdLoad = ${dload_threshold}
+    EnableDebug = ${dload_debug}
 [Storage.LocalFile]
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 ${es_config}

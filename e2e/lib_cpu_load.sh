@@ -28,9 +28,7 @@ cpu_load_prepare_image() {
 }
 
 cpu_load_prepare() {
-	local directory=$1 binary=${STRESS_NG_BIN:-stress-ng}
-	require_commands "${binary}"
-	"${binary}" --version | tee "${directory}/host-stress-ng-version.txt"
+	local directory=$1
 	cpu_load_prepare_image
 	cp "${ROOT_DIR}/integration/testdata/test_cpu_load.sh" "${directory}/cpu-load"
 	chmod 755 "${directory}/cpu-load"
@@ -50,4 +48,10 @@ cpu_load_worker_pid() {
 		}
 		END { if (!found) exit 1 }
 	' "$1"
+}
+
+cpu_load_prepare_host() {
+	local directory=$1 binary=${STRESS_NG_BIN:-stress-ng}
+	require_commands "${binary}"
+	"${binary}" --version | tee "${directory}/host-stress-ng-version.txt"
 }

@@ -160,6 +160,25 @@ storage_curl() {
 	curl -sS "${CURL_TIMEOUT[@]}" "${authentication[@]}" "$@"
 }
 
+storage_request() {
+	local response_file=$1 http_status transport_status=0
+	shift
+	# A failed connection must not leave a previous response in the file.
+	: > "${response_file}"
+	http_status=$(storage_curl --output "${response_file}" --write-out '%{http_code}' \
+		"$@" 2> "${response_file}.err") || transport_status=$?
+	printf 'curl_exit=%s\nhttp_status=%s\n' "${transport_status}" "${http_status}" > "${response_file}.http"
+	if ((transport_status != 0)) || [[ ${http_status} != 2?? ]]; then
+		log_error "storage request failed: curl_exit=${transport_status} HTTP=${http_status}; see ${response_file}"
+		report_http_response storage "${response_file}" "${response_file}.err"
+		return 1
+	fi
+}
+
+assert_storage_index_created() {
+	jq -e '.acknowledged == true' "$1" > /dev/null || fatal "ES did not acknowledge index creation; inspect $1"
+}
+
 storage_ready() {
 	[[ -n "${STORAGE_ADDR}" ]] || return 1
 	storage_curl --fail \

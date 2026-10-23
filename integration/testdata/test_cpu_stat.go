@@ -107,7 +107,7 @@ func run(args []string) error {
 			workerPID: *workerPID, workerCPU: *workerCPU, ticks: *ticks,
 		})
 	case "absent", "disabled":
-		_, families, err := fetch(client, *url)
+		families, err := fetch(client, *url, "")
 		if err != nil {
 			return err
 		}
@@ -269,7 +269,7 @@ func processCPU(pid int, ticks float64) (float64, error) {
 }
 
 func concurrentSample(client *http.Client, url string, targets []target, wait bool) (bool, error) {
-	_, families, err := fetch(client, url)
+	families, err := fetch(client, url, "")
 	if err != nil {
 		return false, err
 	}
@@ -323,14 +323,9 @@ func readSample(client *http.Client, url string, targets []target, wait bool, wo
 			return sample{}, fmt.Errorf("%s: wait_sum present=%t, expected %t", targets[i].Pod, present, wait)
 		}
 	}
-	data, families, err := fetch(client, url)
+	families, err := fetch(client, url, filepath.Join(output, fmt.Sprintf("%02d.prom", index)))
 	if err != nil {
 		return sample{}, err
-	}
-	if output != "" {
-		if err := os.WriteFile(filepath.Join(output, fmt.Sprintf("%02d.prom", index)), data, 0o600); err != nil {
-			return sample{}, err
-		}
 	}
 	if err := validateCollector(families, "cpu_stat"); err != nil {
 		return sample{}, err
@@ -455,8 +450,8 @@ func measure(client *http.Client, url string, targets []target, output string, o
 	if options.counterMode == "settled" {
 		warmups, samples = 1, 2
 	}
-	for range warmups {
-		if _, _, err := fetch(client, url); err != nil {
+	for i := range warmups {
+		if _, err := fetch(client, url, filepath.Join(output, fmt.Sprintf("warmup-%02d.prom", i))); err != nil {
 			return err
 		}
 		time.Sleep(2 * time.Second)

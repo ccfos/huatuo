@@ -25,7 +25,7 @@ source "${ROOT_DIR}/e2e/lib_cpu_load.sh"
 require_commands kubectl jq findmnt ss getconf
 require_readable "${KUBELET_CERT}" "${KUBELET_KEY}"
 readonly CPU_UTIL_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-util"
-readonly CPU_UTIL_BIN="${CPU_UTIL_DIR}/cpu-util"
+readonly CPU_UTIL_BIN=${CPU_UTIL_HELPER_BIN:-${ROOT_DIR}/_output/tests/cpu-util}
 readonly CPU_UTIL_LOAD="${CPU_UTIL_DIR}/cpu-load"
 readonly CPU_UTIL_NS="${BUSINESS_POD_NS}"
 readonly CPU_UTIL_PREFIX="cpu-util-${BASHPID}-${RANDOM}"
@@ -39,7 +39,7 @@ cpu_util_host_pid=""
 cpu_util_concurrent_pid=""
 cpu_util_generation=0
 cpu_util_daemon_generation=0
-CPU_UTIL_DISABLED=false
+cpu_util_disabled=false
 
 cpu_util_cleanup() {
 	local status=$?
@@ -57,16 +57,8 @@ cpu_util_cleanup() {
 }
 trap cpu_util_cleanup EXIT
 
-if [[ -n ${CPU_UTIL_HELPER_BIN:-} ]]; then
-	require_commands "${CPU_UTIL_HELPER_BIN}"
-	cp "${CPU_UTIL_HELPER_BIN}" "${CPU_UTIL_BIN}"
-else
-	require_commands go
-	CGO_ENABLED=0 go build -mod=vendor -o "${CPU_UTIL_BIN}" "${ROOT_DIR}/e2e/testdata/test_cpu_util.go" \
-		"${ROOT_DIR}/e2e/testdata/metrics_helpers.go" "${ROOT_DIR}/e2e/testdata/proc_helpers.go" "${ROOT_DIR}/e2e/testdata/fixture_helpers.go"
-fi
-
 cpu_load_prepare "${CPU_UTIL_DIR}"
+cpu_load_prepare_host "${CPU_UTIL_DIR}"
 
 # The runner changes the UTS hostname; kubelet identifies the actual local node.
 CPU_UTIL_NODE=$(kubelet_pods_json | jq -er '[.items[].spec.nodeName] | unique | if length == 1 then .[0] else error("cannot identify local kubelet node") end')
@@ -105,7 +97,9 @@ cpu_util_restart_daemon() {
 		cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${CPU_UTIL_DIR}/daemon-${cpu_util_daemon_generation}.log"
 	fi
 	cpu_util_daemon_generation=$((cpu_util_daemon_generation + 1))
-	integration_huatuo_bamai_start write_cpu_util_config --region e2e --disable-storage
+	write_config_cpu_util > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	huatuo_bamai_start --config-dir "${HUATUO_BAMAI_TEST_TMPDIR}" --config bamai.conf \
+		--region e2e --disable-storage
 }
 
 cpu_util_command() {
@@ -190,7 +184,7 @@ cpu_util_host_target() {
 		'{Name: "host", UsagePath: $path, ExpectedMilli: -1, Mode: "", WorkerPID: $pid, WorkerMode: $mode, WorkerExpectedMilli: $expected}'
 }
 
-cpu_util_assert_logs() {
+assert_cpu_util_logs() {
 	local start=$1
 	tail -n "+${start}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" > "${CPU_UTIL_DIR}/steady.log"
 	! grep -E 'cpu (quota|capacity|usage|cache):|host cpu usage:|level="?(error|panic|fatal)"?|panic:' "${CPU_UTIL_DIR}/steady.log" \
@@ -208,7 +202,7 @@ cpu_util_measure() {
 	"${CPU_UTIL_BIN}" measure --url "${HUATUO_BAMAI_METRICS_API}" --targets "${targets}" \
 		--ticks "${CPU_UTIL_TICKS}" --output "${CPU_UTIL_DIR}/${phase}" \
 		2>&1 | tee "${CPU_UTIL_DIR}/${phase}.log"
-	cpu_util_assert_logs "${start}"
+	assert_cpu_util_logs "${start}"
 }
 
 cpu_util_container_phase() {
@@ -293,7 +287,7 @@ cpu_util_concurrent_start=$(($(wc -l < "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log")
 cpu_util_concurrent_pid=$!
 wait "${cpu_util_concurrent_pid}" || fatal "concurrent metrics queries failed"
 cpu_util_concurrent_pid=""
-cpu_util_assert_logs "${cpu_util_concurrent_start}"
+assert_cpu_util_logs "${cpu_util_concurrent_start}"
 # Parallel scrapes refresh the cache between samples, invalidating the reference window.
 cpu_util_measure concurrent "$(cpu_util_host_target idle -1)" "$(cpu_util_target "${half_pod}" half 500 mixed 250)"
 
@@ -336,10 +330,10 @@ cpu_util_create Pod "${CPU_UTIL_PREFIX}-half" 500m half
 half_pod=$(cpu_util_pod "${CPU_UTIL_PREFIX}-half")
 cpu_util_container_phase pod-recreated "${half_pod}" half 500 user 250 250
 
-CPU_UTIL_DISABLED=true
+cpu_util_disabled=true
 cpu_util_restart_daemon
 "${CPU_UTIL_BIN}" disabled --url "${HUATUO_BAMAI_METRICS_API}"
-CPU_UTIL_DISABLED=false
+cpu_util_disabled=false
 cpu_util_restart_daemon
 cpu_util_container_phase blacklist-reenabled "${half_pod}" half 500 user 250 250
 log_info "cpu_util E2E passed; artifacts: ${CPU_UTIL_DIR}"

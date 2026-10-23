@@ -106,7 +106,7 @@ func run(args []string) error {
 	case "measure":
 		return measure(client, *url, targets, *ticks, *samples, *output)
 	case "check", "absent", "disabled":
-		_, families, err := fetch(client, *url)
+		families, err := fetch(client, *url, "")
 		if err != nil {
 			return err
 		}
@@ -140,7 +140,7 @@ func run(args []string) error {
 		return err
 	case "concurrent":
 		return runConcurrent(4, 40, 500*time.Millisecond, func() error {
-			_, families, err := fetch(client, *url)
+			families, err := fetch(client, *url, "")
 			if err != nil {
 				return err
 			}
@@ -433,18 +433,15 @@ func measure(client *http.Client, url string, targets []target, ticks float64, i
 		return err
 	}
 	// Discard startup and transition samples; the collector updates at >=1s.
-	for range 2 {
-		if _, _, err := fetch(client, url); err != nil {
+	for i := range 2 {
+		if _, err := fetch(client, url, filepath.Join(output, fmt.Sprintf("warmup-%02d.prom", i))); err != nil {
 			return err
 		}
 		time.Sleep(2 * time.Second)
 	}
 	readSample := func(index int) (sample, error) {
-		data, families, err := fetch(client, url)
+		families, err := fetch(client, url, filepath.Join(output, fmt.Sprintf("%02d.prom", index)))
 		if err != nil {
-			return sample{}, err
-		}
-		if err := os.WriteFile(filepath.Join(output, fmt.Sprintf("%02d.prom", index)), data, 0o600); err != nil {
 			return sample{}, err
 		}
 		s := sample{At: time.Now(), Usage: make([]usage, len(targets)), Workers: make([]usage, len(targets))}

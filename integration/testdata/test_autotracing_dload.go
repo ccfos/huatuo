@@ -77,7 +77,11 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := json.NewEncoder(os.Stdout).Encode(sample{ElapsedMS: time.Since(start).Milliseconds(), Stats: stats, Tasks: tasks}); err != nil {
+		if err := json.NewEncoder(os.Stdout).Encode(sample{
+			ElapsedMS: time.Since(start).Milliseconds(),
+			Stats:     stats,
+			Tasks:     tasks,
+		}); err != nil {
 			return err
 		}
 		if time.Since(start) >= *duration {
@@ -124,7 +128,10 @@ func readTasks(path string) ([]task, error) {
 		if err != nil {
 			return nil, err
 		}
-		t := task{TID: tid, State: state}
+		t := task{
+			TID:   tid,
+			State: state,
+		}
 		if state == "D" {
 			stack, err := os.ReadFile(filepath.Join(root, "stack"))
 			if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {

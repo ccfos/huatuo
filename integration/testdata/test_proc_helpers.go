@@ -28,10 +28,12 @@ func processCPUTime(pid int, ticks float64) (float64, float64, error) {
 	if err != nil {
 		return 0, 0, err
 	}
+
 	user, system, err := parseProcessCPUTime(data, ticks)
 	if err != nil {
 		return 0, 0, fmt.Errorf("worker %d: %w", pid, err)
 	}
+
 	return user, system, nil
 }
 
@@ -40,13 +42,16 @@ func parseProcessCPUTime(data []byte, ticks float64) (float64, float64, error) {
 	if len(fields) < 13 {
 		return 0, 0, fmt.Errorf("invalid process stat: missing CPU fields")
 	}
+
 	user, err := strconv.ParseFloat(fields[11], 64)
 	if err != nil {
 		return 0, 0, err
 	}
+
 	system, err := strconv.ParseFloat(fields[12], 64)
 	if err != nil {
 		return 0, 0, err
 	}
+
 	return user / ticks, system / ticks, nil
 }

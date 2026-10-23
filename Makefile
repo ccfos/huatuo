@@ -27,6 +27,8 @@ APP_VERSION = "2.3.0"
 APP_CMD_DIR := cmd
 APP_CMD_OUTPUT := _output
 PPROF_TOOL := $(APP_CMD_OUTPUT)/tools/pprof-tool
+CPU_TEST_HELPERS := $(addprefix $(APP_CMD_OUTPUT)/tests/,cpu-metrics cpu-util cpu-stat cpuidle-reference dload-reference)
+CPU_TEST_COMMON := $(addprefix integration/testdata/,test_metrics_helpers.go test_proc_helpers.go test_fixture_helpers.go)
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
 GO_BUILD_PARALLELISM ?= 2
 APP_CMD_BIN_TARGETS := $(patsubst %,$(APP_CMD_OUTPUT)/bin/%,$(notdir $(APP_CMD_SUBDIRS)))
@@ -167,7 +169,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 
 build: gen-build $(GO_SRCS) \
 	_output/tests/apiserver-probe \
-	_output/tests/apiserver-go-workload
+	_output/tests/apiserver-go-workload $(CPU_TEST_HELPERS)
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
 	$(GO_BUILD_IMPL) -p $(GO_BUILD_PARALLELISM) -o $(APP_CMD_OUTPUT)/bin/ $(addprefix ./,$(APP_CMD_SUBDIRS))
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
@@ -245,6 +247,20 @@ _output/tests/apiserver-probe: integration/testdata/test_apiserver_profiling_pro
 _output/tests/apiserver-go-workload: integration/testdata/test_apiserver_profiling_workload.go
 	@mkdir -p $(@D)
 	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
+
+_output/tests/cpu-metrics: integration/testdata/test_metrics.go integration/testdata/test_metrics_helpers.go go.mod go.sum
+
+_output/tests/cpu-util: integration/testdata/test_cpu_util.go $(CPU_TEST_COMMON) go.mod go.sum
+
+_output/tests/cpu-stat: integration/testdata/test_cpu_stat.go $(CPU_TEST_COMMON) go.mod go.sum
+
+_output/tests/cpuidle-reference: integration/testdata/test_autotracing_cpuidle.go go.mod go.sum
+
+_output/tests/dload-reference: integration/testdata/test_autotracing_dload.go go.mod go.sum
+
+$(CPU_TEST_HELPERS):
+	@mkdir -p $(@D)
+	CGO_ENABLED=0 go build -mod=vendor -o $@ $(filter %.go,$^)
 
 integration: build
 	go build -o $(PPROF_TOOL) ./build/pprof-tool

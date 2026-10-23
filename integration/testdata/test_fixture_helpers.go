@@ -55,11 +55,14 @@ func runConcurrent(workers, rounds int, interval time.Duration, check func() err
 					errs <- err
 					return
 				}
+
 				time.Sleep(interval)
 			}
 		}()
 	}
+
 	wg.Wait()
 	close(errs)
+
 	return <-errs
 }
