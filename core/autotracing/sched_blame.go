@@ -62,6 +62,18 @@ type schedBlameEventWriter func(
 	request *tracing.WriteRequest,
 ) error
 
+// RunSchedBlame runs the tracer with the published autotracing configuration
+// and delivers anomaly events to write instead of the daemon's storage writer.
+func RunSchedBlame(
+	ctx context.Context,
+	write func(context.Context, *tracing.WriteRequest) error,
+) error {
+	if write == nil {
+		return errors.New("sched-blame: event writer is required")
+	}
+	return (&schedBlameTracing{eventWriter: write}).Start(ctx)
+}
+
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/sched_blame.c -o $BPF_DIR/sched_blame.o
 
 const (

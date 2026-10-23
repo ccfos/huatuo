@@ -108,6 +108,10 @@ func newSchedBlameStateForTest(
 	return state
 }
 
+func TestRunSchedBlameRequiresEventWriter(t *testing.T) {
+	require.ErrorContains(t, RunSchedBlame(context.Background(), nil), "event writer is required")
+}
+
 func TestSchedBlameWireLayout(t *testing.T) {
 	assert.Equal(t, 8*(1+schedBlameExtraBitmapU64Count),
 		schedBlameSliceSize)
