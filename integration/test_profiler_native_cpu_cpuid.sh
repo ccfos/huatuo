@@ -22,6 +22,8 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 # --- preconditions -----------------------------------------------------------
 
+require_host_pid_namespace
+
 bpf_tool_setup profiler native_oncpu_profiler profiler-cpuid
 readonly PROFILER_BIN=${TOOL_BIN}
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"

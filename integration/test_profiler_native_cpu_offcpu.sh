@@ -11,6 +11,8 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
+require_host_pid_namespace
+
 bpf_tool_setup profiler native_offcpu_profiler profiler-offcpu
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_offcpu.user.c"
 

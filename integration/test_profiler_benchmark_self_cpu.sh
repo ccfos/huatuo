@@ -22,6 +22,8 @@ readonly CPU_LIMIT_PERCENT=10
 readonly SAMPLE_SECONDS=5
 readonly PROFILER_DURATION=15
 
+require_host_pid_namespace
+
 bpf_tool_setup profiler native_oncpu_profiler profiler-selfcpu
 readonly PROFILER_BIN=${TOOL_BIN}
 require_readable /proc/sys/kernel/perf_event_paranoid

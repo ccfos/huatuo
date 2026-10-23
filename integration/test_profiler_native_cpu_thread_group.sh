@@ -20,6 +20,8 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
+require_host_pid_namespace
+
 bpf_tool_setup profiler native_oncpu_profiler profiler-cpu-thread-group
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_cpu_thread_group.user.c"
 readonly WORKER_SYMBOL="thread_group_cpu_loop"

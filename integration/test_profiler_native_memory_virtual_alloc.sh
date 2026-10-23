@@ -23,11 +23,7 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 # --- preconditions -----------------------------------------------------------
 
-# Missing tracefs metadata does not imply that perf-kprobe attachment is unavailable.
-if [[ -r /sys/kernel/tracing/available_filter_functions ||
-	-r /sys/kernel/debug/tracing/available_filter_functions ]]; then
-	kprobe_available do_mmap || skip "do_mmap is not available for kprobe"
-fi
+require_host_pid_namespace
 
 bpf_tool_setup profiler native_virtual_alloc profiler-mem
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_mmap.user.c"

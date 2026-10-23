@@ -105,6 +105,29 @@ require_readable() {
 	done
 }
 
+# Kernel PID 2 (kthreadd) anchors the initial PID namespace and host procfs.
+# Matching /proc/1 or a single NSpid value cannot establish either property.
+require_host_pid_namespace() {
+	require_commands readlink
+	local process_stat host_namespace current_namespace
+	local -a fields
+
+	read -r process_stat < /proc/2/stat 2> /dev/null \
+		|| skip "native PID filtering requires host procfs: cannot read /proc/2/stat"
+	read -r -a fields <<< "${process_stat##*) }"
+	# stat fields start at state (3); PPid is 4 and flags is 9.
+	if [[ ${fields[1]:-} != 0 || ! ${fields[6]:-} =~ ^[0-9]+$ ]] \
+		|| (((fields[6] & 0x00200000) == 0)); then # PF_KTHREAD
+		skip "native PID filtering requires host procfs: kernel PID 2 is not visible"
+	fi
+	host_namespace=$(readlink /proc/2/ns/pid) \
+		|| skip "cannot read the host PID namespace through /proc/2/ns/pid"
+	current_namespace=$(readlink /proc/self/ns/pid) \
+		|| skip "cannot read the current PID namespace through /proc/self/ns/pid"
+	[[ ${current_namespace} == "${host_namespace}" ]] \
+		|| skip "native PID filtering requires the host PID namespace"
+}
+
 require_build_output() {
 	[[ -d "${ROOT_DIR}/_output" ]] || fatal "build output directory missing: ${ROOT_DIR}/_output; run make build"
 }

@@ -21,7 +21,9 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
+require_host_pid_namespace
 require_commands clang
+
 bpf_tool_setup profiler native_oncpu_profiler profiler-cpp-symbols
 readonly CPP_SYMBOL_FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_cpp_symbols.user.cc"
 readonly CPP_SYMBOL_DURATION=10

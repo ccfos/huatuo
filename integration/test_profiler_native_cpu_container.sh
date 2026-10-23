@@ -21,14 +21,6 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-# Missing tracefs metadata does not imply that perf-kprobe attachment is unavailable.
-if [[ -r /sys/kernel/tracing/available_filter_functions ||
-	-r /sys/kernel/debug/tracing/available_filter_functions ]]; then
-	if ! kprobe_available memory_current_read && ! kprobe_available cgroup_clone_children_read; then
-		skip "cgroup CSS lookup requires memory_current_read or cgroup_clone_children_read kprobe"
-	fi
-fi
-
 bpf_tool_setup profiler native_oncpu_profiler profiler-native-container
 readonly PROFILER_BIN=${TOOL_BIN}
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
