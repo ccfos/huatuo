@@ -19,6 +19,34 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
+# Check idle Pod manifests and lifecycle errors without requiring a cluster.
+for pod_failure in none run delete; do
+	pod_calls="${HUATUO_BAMAI_TEST_TMPDIR}/pods-${pod_failure}.log"
+	pod_status=0
+	TEST_POD_CALLS="${pod_calls}" TEST_POD_FAILURE="${pod_failure}" bash -euc '
+source "$ROOT_DIR/e2e/lib.sh"
+kubectl() {
+ printf "%s\n" "$*" >> "$TEST_POD_CALLS"
+ [[ $1 != "$TEST_POD_FAILURE" ]] || return 42
+}
+k8s_create_pod fixtures test busybox:1.36.1 app=test 2 || exit $?
+k8s_delete_pod fixtures app=test
+' > /dev/null 2>&1 || pod_status=$?
+	if [[ ${pod_failure} == none ]]; then
+		[[ ${pod_status} == 0 ]] || fatal "idle Pod lifecycle failed: exit=${pod_status}"
+		[[ $(grep -cF -- '--overrides={"spec":{"terminationGracePeriodSeconds":1}}' "${pod_calls}") == 2 ]] \
+			|| fatal "idle Pods must use a one-second termination grace period"
+		grep -Fxq 'delete pod --namespace fixtures -l app=test' "${pod_calls}" \
+			|| fatal "Pod deletion must retain default synchronous waiting"
+	else
+		[[ ${pod_status} == 42 ]] || fatal "kubectl ${pod_failure} failure was lost: exit=${pod_status}"
+		if [[ ${pod_failure} == run ]]; then
+			[[ $(wc -l < "${pod_calls}") == 1 ]] || fatal "Pod creation continued after failure"
+		fi
+	fi
+done
+log_info "idle Pod grace period and lifecycle failures checked"
+
 readonly RUNNER_FIXTURE="${HUATUO_BAMAI_TEST_TMPDIR}/runner"
 [[ ${EUID} -eq 0 ]] || skip "runner tests require root for integration namespaces"
 require_commands unshare mount findmnt readlink
