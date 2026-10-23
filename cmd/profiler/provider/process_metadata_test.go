@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -84,4 +85,72 @@ func TestPythonProcessNameExecutableNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJavaProcessName(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("procfs is required for the live process test")
+	}
+
+	self, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "add-modules",
+			args: []string{"--add-modules", "java.sql", "-cp", ".", "Main"},
+			want: "Main",
+		},
+		{
+			name: "class-path",
+			args: []string{"--class-path", ".", "-jar", "app.jar"},
+			want: "app.jar",
+		},
+		{
+			name: "main-class",
+			args: []string{"-Xmx256m", "com.example.Main", "arg"},
+			want: "com.example.Main",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			executable := filepath.Join(t.TempDir(), "java")
+			if err := os.Symlink(self, executable); err != nil {
+				t.Fatal(err)
+			}
+
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			args := append([]string{"-test.run=TestJavaProcessNameHelper", "--"}, tt.args...)
+			cmd := exec.CommandContext(ctx, executable, args...)
+			cmd.Env = append(os.Environ(), "HUATUO_TEST_JAVA_PROCESS=1")
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				cancel()
+				_ = cmd.Wait()
+			}()
+
+			entry, err := javaProcessName(cmd.Process.Pid)
+			if err != nil || entry != tt.want {
+				t.Fatalf("entry=%q, err=%v; want %q", entry, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestJavaProcessNameHelper(t *testing.T) {
+	if os.Getenv("HUATUO_TEST_JAVA_PROCESS") != "1" {
+		return
+	}
+
+	time.Sleep(30 * time.Second)
 }
