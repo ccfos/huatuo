@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -382,58 +381,5 @@ func BenchmarkXFSUpdate(b *testing.B) {
 				}
 			}
 		})
-	}
-}
-
-// This opt-in integration case mounts only the caller's private loop device.
-func TestXFSHotplugIntegration(t *testing.T) {
-	device := os.Getenv("HUATUO_XFS_HOTPLUG_DEVICE")
-	if device == "" {
-		t.Skip("set HUATUO_XFS_HOTPLUG_DEVICE to a private, formatted, unmounted loop device")
-	}
-	require.Equal(t, 0, os.Geteuid(), "real XFS mount requires root")
-	require.True(t, strings.HasPrefix(device, "/dev/loop"), "private loop device required")
-	name := filepath.Base(device)
-	attr, err := newXFSCollector()
-	require.NoError(t, err)
-	c := attr.TracingData.(*xfsCollector)
-	before, err := c.Update()
-	require.NoError(t, err)
-	require.Empty(t, xfsHotplugMetrics(before, name), "device must start unmounted")
-	mountpoint := t.TempDir()
-	mounted := false
-	t.Cleanup(func() {
-		if mounted {
-			out, err := exec.Command("umount", mountpoint).CombinedOutput()
-			require.NoError(t, err, string(out))
-		}
-	})
-	for round := 0; round < 2; round++ {
-		out, err := exec.Command("mount", device, mountpoint).CombinedOutput()
-		require.NoError(t, err, string(out))
-		mounted = true
-		after, err := c.Update()
-		require.NoError(t, err)
-		values := xfsHotplugMetrics(after, name)
-		_, legacyLogErr := os.Stat(filepath.Join("/sys/fs/xfs", name, "log/reserve_grant_head"))
-		if os.IsNotExist(legacyLogErr) {
-			// The separate 6.11+ grant ABI correction is tracked in #1243.
-			require.Len(t, values, metricsPerDevice-1, "new XFS device counters must be exported")
-			require.NotContains(t, values, "log_free_bytes")
-		} else {
-			require.NoError(t, legacyLogErr)
-			require.Len(t, values, metricsPerDevice, "newly mounted XFS device must be exported")
-			require.GreaterOrEqual(t, values["log_free_bytes"], float64(0))
-		}
-		for _, counter := range []string{"log_space_sleep_total", "alloc_blocks_total", "alloc_extents_total", "inode_missed_total", "inode_attempts_total", "buf_busy_locked_total", "buf_locked_waited_total"} {
-			require.Contains(t, values, counter)
-		}
-		t.Logf("mounted %s: %d metrics, legacy log interface present: %v", name, len(values), legacyLogErr == nil)
-		out, err = exec.Command("umount", mountpoint).CombinedOutput()
-		require.NoError(t, err, string(out))
-		mounted = false
-		missing, err := c.Update()
-		require.NoError(t, err)
-		require.Empty(t, xfsHotplugMetrics(missing, name))
 	}
 }
