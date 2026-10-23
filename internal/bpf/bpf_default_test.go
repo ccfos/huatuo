@@ -607,6 +607,258 @@ func TestDefaultBPF_InfoSortsMetadataByID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []uint32{2, 9}, []uint32{info.MapsInfo[0].ID, info.MapsInfo[1].ID})
 	require.Equal(t, []uint32{1, 8}, []uint32{info.ProgramsInfo[0].ID, info.ProgramsInfo[1].ID})
+
+	repeated, err := b.Info()
+	require.NoError(t, err)
+	require.Equal(t, info, repeated)
+
+	empty := &defaultBPF{
+		mapsByID:     map[uint32]loadedMap{},
+		programsByID: map[uint32]*loadedProgram{},
+	}
+	emptyInfo, err := empty.Info()
+	require.NoError(t, err)
+	require.Empty(t, emptyInfo.MapsInfo)
+	require.Empty(t, emptyInfo.ProgramsInfo)
+}
+
+func TestDefaultBPF_DumpMapSortsItems(t *testing.T) {
+	requireBPFPermission(t)
+
+	keys := [][]byte{
+		{0x10, 0x00},
+		{0x02, 0xff},
+		{0x02, 0x01},
+	}
+	wantKeys := [][]byte{
+		{0x02, 0x01},
+		{0x02, 0xff},
+		{0x10, 0x00},
+	}
+	wantValues := []byte{3, 2, 1}
+
+	hash, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.Hash,
+		KeySize:    2,
+		ValueSize:  1,
+		MaxEntries: uint32(len(keys)),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, hash.Close()) })
+	for i, key := range keys {
+		require.NoError(t, hash.Put(key, []byte{byte(i + 1)}))
+	}
+
+	perCPUHash, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.PerCPUHash,
+		KeySize:    2,
+		ValueSize:  8,
+		MaxEntries: uint32(len(keys)),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, perCPUHash.Close()) })
+	possibleCPUs, err := ebpf.PossibleCPU()
+	require.NoError(t, err)
+	for i, key := range keys {
+		values := make([]uint64, possibleCPUs)
+		for cpu := range values {
+			values[cpu] = uint64(i + 1)
+		}
+		require.NoError(t, perCPUHash.Put(key, values))
+	}
+
+	empty, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.Hash,
+		KeySize:    2,
+		ValueSize:  1,
+		MaxEntries: 1,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, empty.Close()) })
+
+	b := &defaultBPF{
+		mapsByID: map[uint32]loadedMap{
+			1: {name: "hash", handle: hash},
+			2: {name: "per_cpu_hash", handle: perCPUHash},
+			3: {name: "empty", handle: empty},
+		},
+		mapIDsByName: map[string]uint32{
+			"hash":         1,
+			"per_cpu_hash": 2,
+			"empty":        3,
+		},
+	}
+
+	assertDump := func(t *testing.T, items []MapItem, perCPU bool) {
+		t.Helper()
+		require.Len(t, items, len(wantKeys))
+		for i := range items {
+			require.Equal(t, wantKeys[i], items[i].Key)
+			if perCPU {
+				require.Equal(t, uint64(wantValues[i]), binary.LittleEndian.Uint64(items[i].Value))
+				continue
+			}
+			require.Equal(t, []byte{wantValues[i]}, items[i].Value)
+		}
+	}
+
+	items, err := b.DumpMap(1)
+	require.NoError(t, err)
+	assertDump(t, items, false)
+	items, err = b.DumpMap(1)
+	require.NoError(t, err)
+	assertDump(t, items, false)
+	items, err = b.DumpMapByName("hash")
+	require.NoError(t, err)
+	assertDump(t, items, false)
+	items, err = b.DumpMapByName("hash")
+	require.NoError(t, err)
+	assertDump(t, items, false)
+	items, err = b.DumpMap(2)
+	require.NoError(t, err)
+	assertDump(t, items, true)
+	items, err = b.DumpMap(2)
+	require.NoError(t, err)
+	assertDump(t, items, true)
+	items, err = b.DumpMapByName("per_cpu_hash")
+	require.NoError(t, err)
+	assertDump(t, items, true)
+	items, err = b.DumpMapByName("per_cpu_hash")
+	require.NoError(t, err)
+	assertDump(t, items, true)
+
+	items, err = b.DumpMap(3)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	items, err = b.DumpMapByName("empty")
+	require.NoError(t, err)
+	require.Empty(t, items)
+}
+
+func TestSortMapItemsPreservesDuplicateOrder(t *testing.T) {
+	items := []MapItem{
+		{Key: []byte{1}, Value: []byte{1}},
+		{Key: []byte{1}, Value: []byte{2}},
+		{Key: []byte{0}, Value: []byte{3}},
+	}
+
+	sortMapItems(items)
+	require.Equal(t, []byte{0}, items[0].Key)
+	require.Equal(t, []byte{3}, items[0].Value)
+	require.Equal(t, []byte{1}, items[1].Value)
+	require.Equal(t, []byte{2}, items[2].Value)
+}
+
+func BenchmarkSortMapItems(b *testing.B) {
+	for _, size := range []int{16, 1024, 10000, 10240} {
+		for _, keySize := range []int{4, 16, 64} {
+			name := fmt.Sprintf("items=%d/key_bytes=%d", size, keySize)
+			b.Run(name+"/copy_and_sort", func(b *testing.B) {
+				source := make([]MapItem, size)
+				for i := range source {
+					source[i].Key = make([]byte, keySize)
+					binary.BigEndian.PutUint32(
+						source[i].Key[keySize-4:],
+						uint32(size-i),
+					)
+				}
+
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					items := append([]MapItem(nil), source...)
+					sortMapItems(items)
+				}
+			})
+			b.Run(name+"/sort_only", func(b *testing.B) {
+				source := make([]MapItem, size)
+				for i := range source {
+					source[i].Key = make([]byte, keySize)
+					binary.BigEndian.PutUint32(
+						source[i].Key[keySize-4:],
+						uint32(size-i),
+					)
+				}
+				items := append([]MapItem(nil), source...)
+
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					b.StopTimer()
+					copy(items, source)
+					b.StartTimer()
+					sortMapItems(items)
+				}
+			})
+		}
+	}
+}
+
+func BenchmarkDefaultBPF_DumpMap(b *testing.B) {
+	requireBPFPermission(b)
+
+	for _, mapType := range []struct {
+		name   string
+		typ    ebpf.MapType
+		perCPU bool
+	}{
+		{name: "hash", typ: ebpf.Hash},
+		{name: "per_cpu_hash", typ: ebpf.PerCPUHash, perCPU: true},
+	} {
+		for _, size := range []int{16, 1024, 10000, 10240} {
+			b.Run(fmt.Sprintf("%s/items=%d", mapType.name, size), func(b *testing.B) {
+				m, err := ebpf.NewMap(&ebpf.MapSpec{
+					Type:       mapType.typ,
+					KeySize:    4,
+					ValueSize:  8,
+					MaxEntries: uint32(size),
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.Cleanup(func() { _ = m.Close() })
+
+				possibleCPUs := 1
+				if mapType.perCPU {
+					possibleCPUs, err = ebpf.PossibleCPU()
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+				for i := 0; i < size; i++ {
+					key := make([]byte, 4)
+					binary.BigEndian.PutUint32(key, uint32(size-i))
+					if mapType.perCPU {
+						values := make([]uint64, possibleCPUs)
+						for cpu := range values {
+							values[cpu] = uint64(i)
+						}
+						err = m.Put(key, values)
+					} else {
+						value := make([]byte, 8)
+						binary.LittleEndian.PutUint64(value, uint64(i))
+						err = m.Put(key, value)
+					}
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+
+				fixture := &defaultBPF{
+					mapsByID: map[uint32]loadedMap{
+						1: {name: mapType.name, handle: m},
+					},
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if _, err := fixture.DumpMap(1); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
 }
 
 func loadMinimalObjBytes(t *testing.T) []byte {
