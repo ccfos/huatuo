@@ -141,6 +141,13 @@ func TestRawKV(t *testing.T) {
 			wantErrContains: `duplicate key "key"`,
 		},
 		{
+			name:            "invalid value takes precedence over duplicate key",
+			content:         "key 1\nkey invalid\n",
+			want:            nil,
+			wantErr:         true,
+			wantErrContains: "invalid syntax",
+		},
+		{
 			name: "empty",
 			want: map[string]uint64{},
 		},
