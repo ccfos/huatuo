@@ -70,6 +70,9 @@ func loadConfig(cliCtx *cli.Context) (*commandConfig, error) {
 	modeValue := cliCtx.String("cpu-mode")
 	if typ == profiling.TypeMemory {
 		modeValue = cliCtx.String("memory-mode")
+		if modeValue == "" && language == profiling.LanguagePython {
+			modeValue = string(profiling.ModeObjectUsage)
+		}
 	} else if modeValue == "" {
 		modeValue = string(profiling.ModeOnCPU)
 	}
@@ -101,6 +104,8 @@ func loadConfig(cliCtx *cli.Context) (*commandConfig, error) {
 			ExecPath:                  cliCtx.String("binary-match-path"),
 			ThreadGroup:               cliCtx.Bool("thread-group"),
 			ToolDir:                   cliCtx.String("tool-path"),
+			PythonMemoryStackMode:     cliCtx.String("python-memory-stack"),
+			PythonMemoryMergeThreads:  cliCtx.Bool("python-memory-merge-threads"),
 			LogBpfDebug:               cliCtx.Bool("log-bpf-debug"),
 			Mode:                      mode,
 			OffCPUPhase:               offCPUPhase,

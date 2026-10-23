@@ -67,9 +67,9 @@ func TestCapabilities(t *testing.T) {
 		{
 			LanguagePython,
 			ImplementationPython,
-			[]Type{TypeCPU},
+			[]Type{TypeCPU, TypeMemory},
 			[]Mode{ModeOnCPU},
-			nil,
+			[]Mode{ModeObjectUsage},
 		},
 	}
 
