@@ -188,6 +188,11 @@ stops its worker normally after capture, avoiding the remaining workload tail.
 
 ## Storage Tests
 
+Continuous-profiling API, profile-filter, IRQ autotracing, and storage-values
+cases share one default Elasticsearch instance per suite repetition. Each case
+uses workspace-scoped indices. The runner owns shutdown, including on failure;
+standalone scripts and compatibility profiles retain their own instances.
+
 Neither of these cases requires an Elasticsearch service:
 
 | Test | Checks |

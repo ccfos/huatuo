@@ -27,10 +27,22 @@ STORAGE_CONTAINER_ID=""
 STORAGE_ADDR=""
 STORAGE_USERNAME=""
 STORAGE_PASSWORD=""
+STORAGE_SHARED=false
+
+storage_test_index() {
+	local workspace=${HUATUO_BAMAI_TEST_TMPDIR##*/}
+	printf '%s_%s' "$1" "${workspace,,}"
+}
 
 storage_start() {
 	local profile=${1:-default} data_dir=${2:-} scheme=http
 	local -a mounts=()
+	STORAGE_SHARED=false
+	if [[ ${profile} == default && -z ${data_dir} && -n ${STORAGE_SHARED_DIR:-} && -f ${STORAGE_SHARED_DIR}/es.env ]]; then
+		source "${STORAGE_SHARED_DIR}/es.env"
+		STORAGE_SHARED=true
+		return 0
+	fi
 	local image="${STORAGE_TEST_IMAGE:-${STORAGE_DEFAULT_IMAGE}}"
 	# Tiny test indexes need fixed free-space reserves on shared Docker disks.
 	local -a environment=(
@@ -106,6 +118,14 @@ storage_start() {
 	# readiness so faster hosts proceed immediately within this bounded wait.
 	wait_until 300 2 storage_ready \
 		|| fatal "storage did not become ready at ${STORAGE_ADDR}"
+	if [[ ${profile} == default && -z ${data_dir} && -n ${STORAGE_SHARED_DIR:-} ]]; then
+		mkdir -p "${STORAGE_SHARED_DIR}" || return 1
+		printf 'STORAGE_CONTAINER_ID=%q\nSTORAGE_ADDR=%q\nSTORAGE_USERNAME=%q\nSTORAGE_PASSWORD=%q\n' \
+			"${STORAGE_CONTAINER_ID}" "${STORAGE_ADDR}" "${STORAGE_USERNAME}" "${STORAGE_PASSWORD}" \
+			> "${STORAGE_SHARED_DIR}/es.env.tmp" || return 1
+		mv "${STORAGE_SHARED_DIR}/es.env.tmp" "${STORAGE_SHARED_DIR}/es.env" || return 1
+		STORAGE_SHARED=true
+	fi
 }
 
 storage_curl() {
@@ -137,9 +157,30 @@ storage_dump_logs() {
 
 storage_stop() {
 	[[ -n "${STORAGE_CONTAINER_ID}" ]] || return 0
-	docker rm -fv "${STORAGE_CONTAINER_ID}" > /dev/null 2>&1 || return 1
+	# Case cleanup releases its handle; the runner owns the shared container.
+	if [[ ${STORAGE_SHARED} != true ]]; then
+		docker rm -fv "${STORAGE_CONTAINER_ID}" > /dev/null 2>&1 || return 1
+	fi
 	STORAGE_CONTAINER_ID=""
 	STORAGE_ADDR=""
 	STORAGE_USERNAME=""
 	STORAGE_PASSWORD=""
+	STORAGE_SHARED=false
+}
+
+stop_shared_storage() {
+	local status=$1
+	[[ -d ${STORAGE_SHARED_DIR} ]] || return 0
+	if [[ -f ${STORAGE_SHARED_DIR}/es.env ]]; then
+		source "${STORAGE_SHARED_DIR}/es.env"
+		STORAGE_SHARED=false
+		if [[ ${status} -ne 0 && ${status} -ne 77 ]]; then
+			storage_dump_logs "${STORAGE_SHARED_DIR}/elasticsearch.log" || true
+			log_error "shared storage artifacts: ${STORAGE_SHARED_DIR}"
+		fi
+		storage_stop || return 1
+	fi
+	if [[ ${status} -eq 0 || ${status} -eq 77 ]]; then
+		rm -rf -- "${STORAGE_SHARED_DIR}"
+	fi
 }

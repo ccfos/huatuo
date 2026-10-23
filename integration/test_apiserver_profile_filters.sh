@@ -23,7 +23,7 @@ source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_storage.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-readonly PROFILE_FILTER_INDEX="huatuo_profile_filters"
+readonly PROFILE_FILTER_INDEX=$(storage_test_index huatuo_profile_filters)
 readonly PROFILE_FILTER_TOKEN="profile-filter-admin"
 readonly PROFILE_FILTER_TYPE="process_cpu:cpu:nanoseconds:cpu:nanoseconds"
 readonly PROFILE_FILTER_ENDPOINT="/v1/profiling/flamegraph/querier.v1.QuerierService/LabelValues"

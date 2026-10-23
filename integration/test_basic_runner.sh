@@ -161,4 +161,55 @@ runner_status=0
 (ROOT_DIR="${RUNNER_FIXTURE}/missing" require_build_output) > "${HUATUO_BAMAI_TEST_TMPDIR}/missing-output.log" 2>&1 || runner_status=$?
 [[ ${runner_status} == 1 ]] || fatal "missing build output did not fail: exit=${runner_status}"
 
-log_info "runner prerequisites, result counts, fail-fast behavior, and cleanup passed"
+# Keep the earlier minimal fixtures independent of storage helpers.
+rm -f "${RUNNER_FIXTURE}/integration/"test_*.sh
+cp "${ROOT_DIR}/integration/lib_storage.sh" "${RUNNER_FIXTURE}/integration/"
+cat >> "${RUNNER_FIXTURE}/integration/lib_storage.sh" << 'EOF'
+docker() {
+    case $1 in
+    run) printf 'start\n' >> "${ROOT_DIR}/storage-lifecycle"; printf 'fixture-es\n';;
+    port) printf '127.0.0.1:19200\n';;
+    rm) printf 'stop\n' >> "${ROOT_DIR}/storage-lifecycle";;
+    logs) printf 'fixture storage diagnostics\n';;
+    image) return 0;;
+    *) return 1;;
+    esac
+}
+storage_ready() { return 0; }
+EOF
+cat > "${RUNNER_FIXTURE}/integration/test_apiserver_continuous_profiling_api.sh" << 'EOF'
+set -euo pipefail
+source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_storage.sh"
+trap 'status=$?; storage_stop || status=1; exit "$status"' EXIT
+storage_start
+printf '%s\n' "$(storage_test_index profiles)" >> "${ROOT_DIR}/storage-indices"
+case ${RUNNER_STORAGE_MODE} in
+skip) skip "fixture skip after storage startup";;
+failure) fatal "fixture failure after storage startup";;
+esac
+EOF
+cp "${RUNNER_FIXTURE}/integration/"test_apiserver_continuous_profiling_{api,control}.sh
+for mode in success skip failure; do
+	export RUNNER_STORAGE_MODE=${mode}
+	: > "${RUNNER_FIXTURE}/storage-lifecycle"
+	: > "${RUNNER_FIXTURE}/storage-indices"
+	case ${mode} in
+	success) runner_check integration shared_storage 0 'total=2 passed=2 skipped=0 failed=0' ;;
+	skip) runner_check integration shared_storage_skip 0 'total=2 passed=0 skipped=2 failed=0' ;;
+	failure) runner_check integration shared_storage_failure 1 'total=1 passed=0 skipped=0 failed=1' ;;
+	esac
+	[[ $(grep -c '^start$' "${RUNNER_FIXTURE}/storage-lifecycle") == 1 ]] || fatal "${mode}: shared storage did not start once"
+	[[ $(grep -c '^stop$' "${RUNNER_FIXTURE}/storage-lifecycle") == 1 ]] || fatal "${mode}: shared storage did not stop once"
+	if [[ ${mode} == success ]]; then
+		[[ $(sort -u "${RUNNER_FIXTURE}/storage-indices" | wc -l) == 2 ]] || fatal "shared storage reused an index"
+	fi
+done
+export RUNNER_STORAGE_MODE=success
+: > "${RUNNER_FIXTURE}/storage-lifecycle"
+runner_check integration repeated_storage 0 'total=2 passed=2 skipped=0 failed=0' test_apiserver_continuous_profiling_api.sh 2
+[[ $(grep -c '^start$' "${RUNNER_FIXTURE}/storage-lifecycle") == 2 ]] || fatal "repeated storage reused the previous round"
+[[ $(grep -c '^stop$' "${RUNNER_FIXTURE}/storage-lifecycle") == 2 ]] || fatal "repeated storage cleanup did not run"
+unset RUNNER_STORAGE_MODE
+
+log_info "runner prerequisites, result counts, fail-fast behavior, storage sharing, and cleanup passed"

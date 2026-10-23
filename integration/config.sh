@@ -258,7 +258,7 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
     Address = "${STORAGE_ADDR}"
     Username = "integration"
     Password = "integration"
-    Index = "irqtracing-integration"
+    Index = "$(storage_test_index irqtracing-integration)"
 EOF
 }
 
@@ -329,7 +329,7 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
     Address = "${STORAGE_ADDR}"
     Username = "elastic"
     Password = "${ES_PASSWORD}"
-    Index = "huatuo_continuous_profiling_test"
+    Index = "$(storage_test_index huatuo_continuous_profiling_test)"
 
 [Storage.LocalFile]
     Path = ""
@@ -346,7 +346,7 @@ write_continuous_profiling_apiserver_config() {
     Address = "${STORAGE_ADDR}"
     Username = "elastic"
     Password = "${ES_PASSWORD}"
-    Index = "huatuo_continuous_profiling_test"
+    Index = "$(storage_test_index huatuo_continuous_profiling_test)"
 
 [[Auth.Users]]
     ID = "integration-admin-user"
@@ -389,7 +389,7 @@ CONFIG
     Address = "${STORAGE_ADDR}"
     Username = "elastic"
     Password = "${ES_PASSWORD}"
-    Index = "huatuo_continuous_profiling_test"
+    Index = "$(storage_test_index huatuo_continuous_profiling_test)"
 CONFIG
 	fi
 }
