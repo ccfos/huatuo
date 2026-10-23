@@ -194,7 +194,20 @@ Both cases call `integration_isolate_run_directory` before starting the service 
 
 ## Background Process Cleanup
 
-`stop_and_wait_by_pid PID [TIMEOUT]` stops and waits for a child process, returning its exit status. A missing or empty PID returns success immediately, so callers can pass initialized PID variables directly. Clear the variable after waiting. Use `|| true` for best-effort cleanup; assert the exit status when it is part of the test contract.
+Daemon readiness is checked immediately and polled every 100 ms, retaining the
+120-second startup deadlines. Java streaming checks stop normally with SIGINT
+after two nonempty windows; separate captures still test duration expiry.
+
+`stop_and_wait_by_pid PID [TIMEOUT] [SIGNAL]` stops and waits for a child
+process, returning its exit status. The signal defaults to TERM; the helper
+polls every 100 ms and uses KILL after the timeout if needed. A missing or empty
+PID returns success immediately. Clear the variable after waiting. Use
+`|| true` for best-effort cleanup; assert the exit status when it is part of
+the test contract.
+
+`test_basic_test_helpers.sh` checks graceful/forced shutdown, custom signals,
+Java streaming completion, shutdown failures, and missing windows using local
+process fixtures. It requires Python 3 and jq, without a JVM or BPF attachment.
 
 ## IO tests
 
