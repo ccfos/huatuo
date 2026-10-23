@@ -644,7 +644,7 @@ if [[ $TEST_MODE == failure ]]; then
 elif [[ $TEST_MODE == cleanup_failure ]]; then huatuo_bamai_stop() { return 1; }; fi
 run_test_suite "$TEST_REPEATS" integration "$TEST_JOBS" "$@"
 SH
-for runner_mode in refill resource storage failure skip serial repeated cleanup_failure; do
+for runner_mode in refill resource storage profiler failure skip serial repeated cleanup_failure; do
 	runner_state="${runner_work}/${runner_mode}"
 	mkdir -p "${runner_state}/workspace"
 	runner_names=(test_metrics.sh test_node_config_api.sh test_metrics_include_filter.sh test_unknown.sh)

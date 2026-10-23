@@ -49,6 +49,10 @@ Local runs default to one worker; use `bash integration/run.sh -j 2` or
 three workers. Reviewed tests run in a bounded pool; network cases share a resource
 group, including storage compatibility because it generates network events.
 CPU-sensitive and unreviewed cases run alone after the pool drains.
+A separate profiler batch runs after shared Elasticsearch stops, with at most
+two concurrent cases. Java cases serialize because they share an agent library.
+CPU-pinned, benchmark, hardware PMU and dropwatch resource-budget cases remain
+exclusive.
 E2E stays serial even when `INTEGRATION_JOBS` is set.
 
 Each parallel case has private Huatuo PID files and toolstream sockets and a
