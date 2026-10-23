@@ -93,7 +93,9 @@ storage_start() {
 	[[ -n "${port}" ]] || fatal "failed to resolve storage port"
 
 	STORAGE_ADDR="${scheme}://127.0.0.1:${port}"
-	wait_until 120 2 storage_ready \
+	# Cold JVM startup can exceed two minutes in the distro VMs. Poll actual
+	# readiness so faster hosts proceed immediately within this bounded wait.
+	wait_until 300 2 storage_ready \
 		|| fatal "storage did not become ready at ${STORAGE_ADDR}"
 }
 
