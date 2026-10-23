@@ -124,7 +124,7 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 
 	var err error
 
-	historyWindowLength := cfg.MemoryBurst.SlidingWindowLength
+	historyWindowLength := 60
 	sampleInterval := cfg.MemoryBurst.Interval
 	intervalTracing := cfg.MemoryBurst.IntervalTracing
 	topNProcesses := cfg.MemoryBurst.DumpProcessMaxNum

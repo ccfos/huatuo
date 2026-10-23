@@ -86,12 +86,11 @@ func TestConfigValidate(t *testing.T) {
 			cfg := &Config{
 				IRQTracing: validIRQTracingConfig(),
 				MemoryBurst: MemBurstConfig{
-					DeltaMemoryBurst:    100,
-					DeltaAnonThreshold:  70,
-					Interval:            10,
-					IntervalTracing:     1800,
-					SlidingWindowLength: 60,
-					DumpProcessMaxNum:   10,
+					DeltaMemoryBurst:   100,
+					DeltaAnonThreshold: 70,
+					Interval:           10,
+					IntervalTracing:    1800,
+					DumpProcessMaxNum:  10,
 				},
 			}
 			cfg.MemoryThresholdSnapshot.ThresholdPercent = 90
