@@ -171,6 +171,35 @@ func TestRunPySpyPreservesExitError(t *testing.T) {
 	require.Equal(t, "tool warning\n", string(results[0].Diagnostics))
 }
 
+func TestPythonCPUProfilerStopDuringFinalDelivery(t *testing.T) {
+	for _, cause := range []error{profile.ErrStopRequested, profile.ErrCollectionDurationElapsed, context.Canceled} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			p := &pythonCPUProfiler{
+				config: Config{
+					Freq:    99,
+					ToolDir: writeFakePySpy(t, "work (app.py:10) 3\n", 0),
+				},
+				pids: []int{123, 456},
+			}
+			delivered := 0
+			err := p.ReadDataLoop(ctx, func(*pipeline.SampleBatch) error {
+				delivered++
+				cancel(cause)
+				return nil
+			})
+			if errors.Is(cause, context.Canceled) {
+				require.ErrorIs(t, err, context.Canceled)
+				require.Equal(t, 1, delivered)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, 2, delivered)
+			}
+		})
+	}
+}
+
 func writeFakePySpy(t *testing.T, sample string, exitCode int) string {
 	t.Helper()
 	dir := t.TempDir()

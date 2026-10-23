@@ -112,16 +112,19 @@ func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipe
 		p.config.ToolDir,
 	)
 
-	deliveryCtx := ctx
-	if profile.IsNormalStop(ctx) {
-		var cancel context.CancelFunc
-		deliveryCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), profile.FinalizationTimeout)
-		defer cancel()
-	}
+	deliveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), profile.FinalizationTimeout)
+	defer cancel()
+
 	deliver := func(batch *pipeline.SampleBatch) error {
+		// A normal stop may arrive after py-spy exits, during final delivery.
+		if ctx.Err() != nil && !profile.IsNormalStop(ctx) {
+			return context.Cause(ctx)
+		}
+
 		if err := deliveryCtx.Err(); err != nil {
 			return err
 		}
+
 		return enqueue(batch)
 	}
 
