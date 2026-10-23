@@ -22,6 +22,8 @@ fi
 readonly __HUATUO_LIB_STORAGE_SH_LOADED=1
 
 readonly STORAGE_DEFAULT_IMAGE="docker.elastic.co/elasticsearch/elasticsearch:8.15.5"
+readonly STORAGE_ES7_IMAGE="docker.elastic.co/elasticsearch/elasticsearch:7.10.1"
+readonly STORAGE_OPENSEARCH_IMAGE="opensearchproject/opensearch:2.6.0"
 
 STORAGE_CONTAINER_ID=""
 STORAGE_ADDR=""
@@ -70,7 +72,7 @@ storage_start_locked() {
 		environment+=(--env xpack.security.enabled=false --env ES_JAVA_OPTS=-Xms512m\ -Xmx512m)
 		;;
 	elasticsearch_v7)
-		image="docker.elastic.co/elasticsearch/elasticsearch:7.10.1"
+		image="${STORAGE_ES7_IMAGE}"
 		STORAGE_USERNAME=elastic
 		STORAGE_PASSWORD=123456
 		environment+=(--env xpack.security.enabled=true --env ELASTIC_PASSWORD=123456
@@ -84,7 +86,7 @@ storage_start_locked() {
 		environment+=(--env ELASTIC_PASSWORD=123456 --env ES_JAVA_OPTS=-Xms512m\ -Xmx512m)
 		;;
 	opensearch_v2)
-		image="opensearchproject/opensearch:2.6.0"
+		image="${STORAGE_OPENSEARCH_IMAGE}"
 		scheme=https
 		STORAGE_USERNAME=admin
 		STORAGE_PASSWORD=admin

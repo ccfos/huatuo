@@ -496,3 +496,46 @@ SH
 	done
 done
 log_info "concurrent port reservations and worker config checks passed"
+
+for prefetch_mode in success pull_failure test_failure; do
+	prefetch_work="${HUATUO_BAMAI_TEST_TMPDIR}/prefetch-${prefetch_mode}"
+	mkdir -p "${prefetch_work}/bin" "${prefetch_work}/integration"
+	cp "${ROOT_DIR}/integration/lib_storage.sh" "${prefetch_work}/integration/"
+	cat > "${prefetch_work}/bin/docker" << 'STUB'
+#!/bin/bash
+echo "$$" >> "$TEST_STATE/children"
+touch "$TEST_STATE/${2##*/}.started"
+while [[ ! -f $TEST_STATE/release ]]; do sleep 0.01; done
+[[ $TEST_MODE != pull_failure ]]
+STUB
+	chmod +x "${prefetch_work}/bin/docker"
+	prefetch_status=0
+	PATH="${prefetch_work}/bin:${PATH}" TEST_STATE="${prefetch_work}" TEST_MODE="${prefetch_mode}" \
+		bash -eu -s > "${prefetch_work}/test.log" 2>&1 << 'SH' || prefetch_status=$?
+source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/.github/workflows/scripts/vm-test/run-in-vm.sh"
+cd "$TEST_STATE"
+storage_prefetch_pids=()
+trap stop_storage_image_prefetch EXIT
+prefetch_storage_images
+wait_until 5 0.05 test -f "$TEST_STATE/${STORAGE_ES7_IMAGE##*/}.started"
+wait_until 5 0.05 test -f "$TEST_STATE/${STORAGE_OPENSEARCH_IMAGE##*/}.started"
+assert_eq "${#storage_prefetch_pids[@]}" 2 "parallel image downloads"
+[[ $TEST_MODE != test_failure ]] || exit 42
+touch "$TEST_STATE/release"
+for pid in "${storage_prefetch_pids[@]}"; do
+ status=0
+ wait "$pid" || status=$?
+ expected_status=0
+ if [[ $TEST_MODE == pull_failure ]]; then expected_status=1; fi
+ assert_eq "$status" "$expected_status" "download status"
+done
+SH
+	prefetch_expected_status=0
+	if [[ ${prefetch_mode} == test_failure ]]; then prefetch_expected_status=42; fi
+	assert_eq "${prefetch_status}" "${prefetch_expected_status}" "${prefetch_mode}: optional prefetch; see ${prefetch_work}/test.log"
+	while read -r prefetch_pid; do
+		! kill -0 "${prefetch_pid}" 2> /dev/null || fatal "prefetch left Docker process ${prefetch_pid}"
+	done < "${prefetch_work}/children"
+done
+log_info "optional image prefetch preserves status and cleans up owned downloads"

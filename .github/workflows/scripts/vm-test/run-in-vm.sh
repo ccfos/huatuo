@@ -221,6 +221,28 @@ install_temporary_go_tools() {
 	done
 }
 
+prefetch_storage_images() {
+	source integration/lib_storage.sh
+	local image
+	mkdir -p _output/storage-image-prefetch
+	for image in "${STORAGE_ES7_IMAGE}" "${STORAGE_OPENSEARCH_IMAGE}"; do
+		vm_log "preloading storage image: ${image}"
+		timeout 5m docker pull "${image}" > "_output/storage-image-prefetch/${image##*/}.log" 2>&1 &
+		storage_prefetch_pids+=("$!")
+	done
+}
+
+stop_storage_image_prefetch() {
+	local status=$? pid
+	trap - EXIT
+	for pid in "${storage_prefetch_pids[@]}"; do
+		# Only signal jobs still owned by this shell; completed PIDs may be reused.
+		if jobs -pr | grep -qx "${pid}"; then kill "${pid}" 2> /dev/null || true; fi
+		wait "${pid}" 2> /dev/null || vm_log "storage image prefetch did not finish successfully; see _output/storage-image-prefetch"
+	done
+	exit "${status}"
+}
+
 run_guest_tests() {
 	configure_proxy
 	export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
@@ -248,6 +270,11 @@ run_guest_tests() {
 	# This is the single entry point for all guest test targets.
 	vm_log '⬅️⬅️⬅️ Running tests...'
 
+	# Hide image downloads behind compilation and unit tests. Compatibility cases
+	# still perform their normal pull checks, including when prefetch fails.
+	storage_prefetch_pids=()
+	trap stop_storage_image_prefetch EXIT
+	prefetch_storage_images
 	make install-tools
 	if [[ -f _output/portable-generated.commit ]]; then
 		make test SKIP_PORTABLE_GENERATION=1
