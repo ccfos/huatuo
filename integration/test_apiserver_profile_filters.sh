@@ -98,6 +98,8 @@ assert_profile_storage_request "create index" "${HUATUO_BAMAI_TEST_TMPDIR}/creat
   "started_timestamp":{"type":"date"},
   "profile_data":{"properties":{"profile_type":{"type":"text","fields":{"keyword":{"type":"keyword"}}}}}
  }}}'
+assert_eq "$(jq -r '.shards_acknowledged' "${HUATUO_BAMAI_TEST_TMPDIR}/create-index.json")" \
+	true "profile index primary shard ready" || fatal "profile index primary shard is not active; check storage allocation and disk space"
 
 jq -cn --arg type "${PROFILE_FILTER_TYPE}" '
  [
