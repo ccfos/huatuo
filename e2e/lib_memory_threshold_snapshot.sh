@@ -41,6 +41,23 @@ memory_threshold_snapshot_setup() {
 	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 }
 
+# Handle TERM in PID 1 so successful cases do not spend the Pod grace period.
+snapshot_create_pod() {
+	kubectl run "${go_snapshot_pod}" --namespace "${GO_SNAPSHOT_NAMESPACE}" \
+		--image="${BUSINESS_POD_IMAGE}" --image-pull-policy=Never \
+		--restart=Never -l "${go_snapshot_pod_label}" --command -- sh -c '
+		sleep infinity &
+		child=$!
+		stop() {
+			kill -TERM "$child" 2>/dev/null || true
+			wait "$child" 2>/dev/null || true
+			exit 0
+		}
+		trap stop TERM INT
+		wait "$child"
+	'
+}
+
 memory_threshold_snapshot_cleanup() {
 	local status=$? diagnosed=0
 	if [[ ${status} -ne 0 ]]; then
