@@ -446,6 +446,38 @@ EOF
 EOF
 }
 
+write_config_bamai_python_memory() {
+	# Keep Toolstream, the Node API and kubelet discovery, not unrelated tracers.
+	cat << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_threshold_snapshot", "memory_vmstat", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched-blame", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs", "iocost", "blk_throtl", "io_health"]
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+[Profiling]
+    AggregationIntervalSeconds = ${PROFILE_INTERVAL}
+    MaxConcurrentProcesses = 10
+[Storage.Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "elastic"
+    Password = "${ES_PASSWORD}"
+    Index = "$(storage_test_index huatuo_continuous_profiling_test)"
+[Storage.LocalFile]
+    Path = ""
+EOF
+}
+
+write_config_apiserver_python_memory() {
+	write_config_apiserver_continuous_profiling
+	cat << EOF
+[Jobs.Profiling]
+    MaxConcurrentPerHost = 3
+[Jobs.Controller]
+    StatusPollIntervalSeconds = 1
+EOF
+}
+
 # Profiling workflow cases supply controller limits and isolated service ports.
 write_config_apiserver_profiling() {
 	write_config_apiserver_base

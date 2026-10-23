@@ -109,6 +109,8 @@ assert_profile_api_without_storage \
 			modes:["physical_alloc", "physical_usage", "virtual_alloc"],
 			supported_scopes:["container"], supports_binary_match:false}),
 		{type:"memory", language:"java", modes:["object_alloc", "object_usage"],
+			supported_scopes:["container"], supports_binary_match:false},
+		{type:"memory", language:"python", modes:["object_usage"],
 			supported_scopes:["container"], supports_binary_match:false}
 	] | sort_by(.type, .language))' \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/profile-capabilities.json"

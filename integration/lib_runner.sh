@@ -31,6 +31,7 @@ declare -A runner_test_groups=(
 	["test_autotracing_irqtracing.sh"]=independent
 	["test_basic_bpf_debug_macro.sh"]=independent
 	["test_basic_dockerfile_check.sh"]=independent
+	["test_basic_memray_bundle.sh"]=independent
 	["test_basic_storage_elasticsearch_values.sh"]=independent
 	["test_basic_storage_opensearch_elasticsearch.sh"]=network
 	["test_basic_startup_log.sh"]=independent

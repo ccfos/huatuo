@@ -1017,10 +1017,13 @@ func (p *pythonMemoryProfiler) runMemraySession(
 
 	flush := func() error {
 		lines := dec.FlushDelta("")
-		if len(lines) == 0 {
-			return nil
+		if len(lines) != 0 {
+			if err := recordFn(lines); err != nil {
+				return err
+			}
 		}
-		return recordFn(lines)
+		log.Debugf("memray deltas flushed pid=%d lines=%d", pid, len(lines))
+		return nil
 	}
 
 	ctxDone := ctx.Done()
