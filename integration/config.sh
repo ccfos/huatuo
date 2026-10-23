@@ -271,6 +271,9 @@ write_apiserver_apis_config() {
 [Jobs]
     StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
 
+[Agent]
+    HTTPPort = ${HUATUO_BAMAI_ADDR##*:}
+
 [Agent.Auth]
     BearerToken = "integration-node-token"
 
@@ -302,6 +305,9 @@ write_apiserver_without_profile_storage_config() {
 
 [Jobs]
     StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
+
+[Agent]
+    HTTPPort = ${HUATUO_BAMAI_ADDR##*:}
 
 [Agent.Auth]
     BearerToken = "integration-node-token"
@@ -358,6 +364,9 @@ write_continuous_profiling_apiserver_config() {
     BearerToken = "${OTHER_API_TOKEN}"
     Permissions = ["/v1/profiling", "/v1/profiling/**"]
 
+[Agent]
+    HTTPPort = ${HUATUO_BAMAI_ADDR##*:}
+
 [Agent.Auth]
     BearerToken = "integration-node-token"
 
@@ -370,8 +379,6 @@ EOF
 write_apiserver_profiling_config() {
 	write_apiserver_apis_config
 	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << CONFIG
-[Agent]
-    HTTPPort = ${NODE_PORT}
 [Jobs.Profiling]
     MaxConcurrentPerHost = ${MAX_HOST}
     MaxConcurrent = ${MAX_TOTAL}

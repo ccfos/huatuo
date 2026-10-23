@@ -126,16 +126,40 @@ assert_log_has_no_failure() {
 }
 
 allocate_available_port() {
-	local protocol=${1:-tcp} attempt port
+	local protocol=${1:-tcp} attempt port sockets
 	[[ ${protocol} == tcp || ${protocol} == udp ]] \
 		|| fatal "unsupported port protocol: ${protocol}; expected tcp or udp"
+	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
+		mkdir -p "${INTEGRATION_PORT_DIR}"
+		allocate_worker_port "${protocol}" 9> "${INTEGRATION_PORT_DIR}/lock"
+		return
+	fi
+	sockets=$(ss -H -an "--${protocol}") || return 1
 	for ((attempt = 0; attempt < 20; attempt++)); do
 		port=$((20000 + RANDOM % 20001))
-		if ! ss -H -an "--${protocol}" | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
+		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
 			echo "${port}"
 			return 0
 		fi
 	done
+	return 1
+}
+
+# The counter reserves ports across command substitutions and test subprocesses.
+allocate_worker_port() {
+	local protocol=$1 port=${INTEGRATION_PORT_BASE:?worker port base is missing} sockets
+	flock 9
+	sockets=$(ss -H -an "--${protocol}") || return 1
+	if [[ -f ${INTEGRATION_PORT_DIR}/next ]]; then read -r port < "${INTEGRATION_PORT_DIR}/next"; fi
+	while ((port < INTEGRATION_PORT_BASE + 1000)); do
+		printf '%s\n' "$((port + 1))" > "${INTEGRATION_PORT_DIR}/next"
+		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
+			echo "${port}"
+			return 0
+		fi
+		port=$((port + 1))
+	done
+	log_error "worker port range is exhausted: ${INTEGRATION_PORT_BASE}"
 	return 1
 }
 
@@ -605,7 +629,28 @@ integration_huatuo_bamai_start() {
 	fi
 
 	"$config_writer"
+	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
+		configure_worker_bamai_address
+	fi
 	huatuo_bamai_start "${runtime_args[@]}"
+}
+
+# Explicit addresses are already chosen by API and container config writers.
+configure_worker_bamai_address() {
+	local config="${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" port=${HUATUO_BAMAI_ADDR##*:}
+	if awk '
+		/^[[:space:]]*\[HTTPServer\][[:space:]]*$/ { http = 1; next }
+		/^[[:space:]]*\[/ { http = 0 }
+		http && /^[[:space:]]*ListenAddress[[:space:]]*=/ { found = 1 }
+		END { exit !found }
+	' "${config}"; then return 0; fi
+	if grep -Eq '^[[:space:]]*\[HTTPServer\][[:space:]]*$' "${config}"; then
+		sed -i "/^[[:space:]]*\\[HTTPServer\\][[:space:]]*$/a\\    ListenAddress = \"127.0.0.1:${port}\"" "${config}"
+	else
+		printf '\n[HTTPServer]\n    ListenAddress = "127.0.0.1:%s"\n' "${port}" >> "${config}"
+	fi
+	HUATUO_BAMAI_ADDR="http://127.0.0.1:${port}"
+	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 }
 
 # huatuo_bamai_collect_metrics saves /metrics output to the temp metrics file.
