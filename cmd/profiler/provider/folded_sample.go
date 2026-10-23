@@ -142,6 +142,37 @@ func decodeFoldedLine(line string) ([]string, string, error) {
 	return frames, line[index+1:], nil
 }
 
+// Memray weights are signed byte deltas. Preserve them until the one-shot
+// pipeline has combined allocations and frees from every delivery interval.
+func enqueueMemrayDeltas(
+	lines []string,
+	labels []types.ProfileLabel,
+	enqueue func(*pipeline.SampleBatch) error,
+) error {
+	var builder pipeline.BatchBuilder
+	for _, line := range lines {
+		names, weight, err := decodeFoldedLine(line)
+		if err != nil {
+			return err
+		}
+		value, err := strconv.ParseInt(weight, 10, 64)
+		if err != nil {
+			return fmt.Errorf("decode Memray byte delta %q: %w", weight, err)
+		}
+		sample := aggregation.Sample{
+			Labels: append([]types.ProfileLabel(nil), labels...),
+			Value:  value,
+		}
+		for _, name := range names {
+			sample.UserFrames = append(sample.UserFrames, types.ProfileFrame{Name: strings.Clone(name)})
+		}
+		if err := builder.Append(&sample, enqueue); err != nil {
+			return err
+		}
+	}
+	return builder.Flush(enqueue)
+}
+
 func pythonProcessHeader(name string) (int, string, bool) {
 	rest, ok := strings.CutPrefix(name, "process ")
 	if !ok {

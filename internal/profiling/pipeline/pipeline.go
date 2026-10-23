@@ -216,6 +216,11 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 		sealed.Aggregated.TimeNanos = start.UnixNano()
 		sealed.Aggregated.DurationNanos = end.Sub(start).Nanoseconds()
 	}
+	if p.aggregationMode == AggregationModeOneShot && p.profileType == profiling.ProfileTypeMemSample {
+		if err := output.ClampNegativeSamples(ctx, p.tracerID, &sealed.Aggregated); err != nil {
+			return err
+		}
+	}
 	p.windowStart = time.Time{}
 	p.droppedSamples = nil
 
