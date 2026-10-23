@@ -88,6 +88,13 @@ func TestNewSelectsAggregationPolicy(t *testing.T) {
 			typ:            profiling.TypeCPU,
 			aggregation:    pipeline.AggregationModeOneShot,
 		},
+		{
+			name:           "python retained memory",
+			implementation: profiling.ImplementationPython,
+			typ:            profiling.TypeMemory,
+			mode:           profiling.ModeObjectUsage,
+			aggregation:    pipeline.AggregationModeOneShot,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Config{
@@ -105,6 +112,10 @@ func TestNewSelectsAggregationPolicy(t *testing.T) {
 
 			if task.AggregationMode != tc.aggregation {
 				t.Fatalf("mode = %v, want %v", task.AggregationMode, tc.aggregation)
+			}
+			if tc.implementation == profiling.ImplementationPython && tc.typ == profiling.TypeMemory &&
+				task.AggregationConfig.ProfileType != profiling.ProfileTypeInUseSpace {
+				t.Fatalf("Python retained profile type = %q", task.AggregationConfig.ProfileType)
 			}
 
 			if !reflect.DeepEqual(cfg, before) {
@@ -188,7 +199,7 @@ func TestNewRejectsUnsupportedProvider(t *testing.T) {
 		{
 			name: "unsupported type",
 			impl: profiling.ImplementationPython,
-			typ:  profiling.TypeMemory,
+			typ:  profiling.TypeLock,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -199,23 +210,30 @@ func TestNewRejectsUnsupportedProvider(t *testing.T) {
 	}
 }
 
-func TestSampleTypeSeparatesPhysicalUsage(t *testing.T) {
-	for _, mode := range []profiling.Mode{profiling.ModePhysicalUsage, profiling.ModePhysicalAlloc, profiling.ModeVirtualAlloc} {
-		got, err := sampleType(&Config{
+func TestSampleTypeSeparatesMemorySemantics(t *testing.T) {
+	for _, test := range []struct {
+		implementation profiling.Implementation
+		mode           profiling.Mode
+		want           string
+	}{
+		{profiling.ImplementationNative, profiling.ModePhysicalUsage, profiling.ProfileTypePhysicalUsage},
+		{profiling.ImplementationNative, profiling.ModePhysicalAlloc, profiling.ProfileTypeMemSample},
+		{profiling.ImplementationNative, profiling.ModeVirtualAlloc, profiling.ProfileTypeMemSample},
+		{profiling.ImplementationJava, profiling.ModeObjectAlloc, profiling.ProfileTypeMemSample},
+		{profiling.ImplementationJava, profiling.ModeObjectUsage, profiling.ProfileTypeMemSample},
+		{profiling.ImplementationPython, profiling.ModeObjectUsage, profiling.ProfileTypeInUseSpace},
+		{profiling.ImplementationPython, "", profiling.ProfileTypeInUseSpace},
+	} {
+		got, err := sampleType(test.implementation, &Config{
 			Type: profiling.TypeMemory,
-			Mode: mode,
+			Mode: test.mode,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		want := profiling.ProfileTypeMemSample
-		if mode == profiling.ModePhysicalUsage {
-			want = profiling.ProfileTypePhysicalUsage
-		}
-
-		if got != want {
-			t.Fatalf("mode=%s type=%s, want %s", mode, got, want)
+		if got != test.want {
+			t.Fatalf("implementation=%s mode=%s type=%s, want %s", test.implementation, test.mode, got, test.want)
 		}
 	}
 }
