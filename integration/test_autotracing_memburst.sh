@@ -130,10 +130,12 @@ burst_write_config() {
  DeltaMemoryBurst = ${burst_threshold}
  DeltaAnonThreshold = ${burst_anon}
  Interval = 1
- SlidingWindowLength = ${burst_window}
  IntervalTracing = ${burst_cooldown}
  DumpProcessMaxNum = ${burst_top}
 CONFIG
+	if [[ -n ${burst_window} ]]; then
+		printf ' SlidingWindowLength = %s\n' "${burst_window}" >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	fi
 }
 burst_start() {
 	local pid
@@ -206,6 +208,7 @@ cooldown-zero|IntervalTracing|0|memory burst tracing interval must be positive
 cooldown-negative|IntervalTracing|-1|memory burst tracing interval must be positive
 window-zero|SlidingWindowLength|0|memory burst sliding window length must be positive
 window-negative|SlidingWindowLength|-1|memory burst sliding window length must be positive
+window-over|SlidingWindowLength|86401|memory burst sliding window length must not exceed 86400 samples
 ranking-zero|DumpProcessMaxNum|0|memory burst dump process max num must be positive
 ranking-negative|DumpProcessMaxNum|-1|memory burst dump process max num must be positive
 wrong-type|DumpProcessMaxNum|"invalid"|invalid(string) to int
@@ -223,7 +226,7 @@ for i in 1 2 3; do
 	wait_until 20 .1 grep -qx 'pressure ready' "${MEMBURST_ROOT_WORKSPACE}/workload-${i}.log" || fatal "real allocation pressure failed"
 done
 huatuo_bamai_stop
-for memburst_scenario in normal threshold anon_threshold anon_maximum window_minimum blacklist top1 top2 top3 top11; do
+for memburst_scenario in normal threshold anon_threshold anon_maximum window_minimum blacklist top1 top2 top3 top11 default_window; do
 	HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/${memburst_scenario}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
 	burst_top=10
@@ -232,6 +235,7 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	burst_blacklist=0
 	burst_window=2
 	[[ ${memburst_scenario} != window_minimum ]] || burst_window=1
+	[[ ${memburst_scenario} != default_window ]] || burst_window=""
 	[[ ${memburst_scenario} != anon_maximum ]] || burst_anon=100
 	[[ ${memburst_scenario} != top1 ]] || burst_top=1
 	[[ ${memburst_scenario} != top2 ]] || burst_top=2
@@ -242,6 +246,16 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	[[ ${memburst_scenario} != blacklist ]] || burst_blacklist=1
 	burst_input low
 	burst_start
+	if [[ ${memburst_scenario} == default_window ]]; then
+		# Omit the setting: an early burst must not bypass the default history.
+		burst_wait_samples low
+		burst_input high
+		burst_wait_samples high 3
+		assert_burst_count 0 "default history triggered before filling"
+		burst_input low
+		wait_until 90 .2 memsnapshot_memburst_samples_ready "${burst_sample_offset}" 60 100000 \
+			|| fatal "default memburst history did not fill"
+	fi
 	[[ ${burst_blacklist} == 1 ]] || burst_wait_samples low
 	assert_burst_count 0 "event without burst"
 	burst_input high
@@ -275,6 +289,7 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	log_info "PASS: memburst ${memburst_scenario}"
 done
 log_info "PASS: memburst controlled-input scenarios"
+burst_window=2
 
 # Restart acceptance uses the standard daemon.
 # The standard daemon must retain completed events and recover after TERM/KILL.
