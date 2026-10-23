@@ -17,7 +17,7 @@
 set -euo pipefail
 
 usage() {
-	echo "usage: $0 [--suite integration|e2e] [test_*.sh] [repeat-count]" >&2
+	echo "usage: $0 [--suite integration|e2e] [test_*.sh|group|group/test_*.sh] [repeat-count]" >&2
 }
 
 TEST_SUITE=integration
@@ -50,12 +50,12 @@ readonly ROOT_DIR=$(cd "${INTEGRATION_DIR}/.." && pwd)
 readonly TEST_DIR="${ROOT_DIR}/${TEST_SUITE}"
 
 if [[ -n "${REQUESTED_TEST}" ]]; then
-	[[ "${REQUESTED_TEST}" == test_*.sh && "${REQUESTED_TEST}" != */* ]] || {
-		echo "${TEST_SUITE} test must be a test_*.sh file name: ${REQUESTED_TEST}" >&2
+	[[ ${REQUESTED_TEST} =~ ^([a-zA-Z0-9_]+/)?test_[a-zA-Z0-9_]+\.sh$ || ${REQUESTED_TEST} =~ ^[a-zA-Z0-9_]+$ ]] || {
+		echo "invalid ${TEST_SUITE} test or group: ${REQUESTED_TEST}" >&2
 		exit 2
 	}
-	[[ -f "${TEST_DIR}/${REQUESTED_TEST}" ]] || {
-		echo "${TEST_SUITE} test not found: ${REQUESTED_TEST}" >&2
+	[[ -f "${TEST_DIR}/${REQUESTED_TEST}" || -d "${TEST_DIR}/${REQUESTED_TEST}" ]] || {
+		echo "${TEST_SUITE} test or group not found: ${REQUESTED_TEST}" >&2
 		exit 2
 	}
 fi
@@ -70,10 +70,24 @@ source "${INTEGRATION_DIR}/lib.sh"
 test_results_init
 shopt -s nullglob
 if [[ -n "${REQUESTED_TEST}" ]]; then
-	test_scripts=("${TEST_DIR}/${REQUESTED_TEST}")
+	test_entries=("${TEST_DIR}/${REQUESTED_TEST}")
 else
-	test_scripts=("${TEST_DIR}"/test_*.sh)
+	test_entries=("${TEST_DIR}"/test_*.sh)
 fi
+test_scripts=()
+for entry in "${test_entries[@]}"; do
+	# A test_<group>.sh entry exposes a directory of independently run cases.
+	group=$(basename "${entry}" .sh)
+	group="${TEST_DIR}/${group#test_}"
+	if [[ -d ${entry} ]]; then
+		test_scripts+=("${entry}"/test_*.sh)
+	elif [[ -d ${group} ]]; then
+		test_scripts+=("${group}"/test_*.sh)
+	else
+		test_scripts+=("${entry}")
+	fi
+done
+((${#test_scripts[@]} > 0)) || fatal "no ${TEST_SUITE} tests found"
 
 # The runner creates UTS and mount namespaces before executing any case.
 if [[ ${EUID} -ne 0 ]]; then

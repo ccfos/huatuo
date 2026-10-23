@@ -59,12 +59,16 @@ bash e2e/run.sh test_metrics.sh 2
 e2e 保留工作目录。
 
 apiserver 的完整采样链路和 Kubernetes 多语言矩阵位于
-`e2e/test_apiserver_profiling.sh`、`e2e/test_apiserver_profiling_matrix.sh`，
-由 `make e2e` 自动发现。矩阵需设置 `APISERVER_TEST_NODE` 并提供 kubelet 凭证。
+`e2e/apiserver/test_apiserver_profiling.sh`、`e2e/apiserver/test_apiserver_profiling_matrix.sh`，
+由 `e2e/test_apiserver.sh` 分组入口接入 `make e2e`，逐场景隔离执行。
+矩阵自动匹配本机 Kubernetes 节点，也可用 `APISERVER_TEST_NODE` 显式指定；
+需要 kubelet 凭证。
 停止、同机并发、apiserver 重启恢复和 Node 故障恢复分别由同目录下的
 `test_apiserver_profiling_{stop,concurrent,recovery,node_recovery}.sh` 验证。
-其余 8 项 apiserver 功能由 `integration/test_apiserver_profiling.sh` 接入
+其余 7 项 apiserver 功能由 `integration/test_apiserver_profiling.sh` 接入
 `make integration`。
+静态能力表、认证和无存储检查在 `integration/test_apiserver_profile_disabled.sh` 独立运行。
+两套测试依赖 `make test-build`，提前构建协议客户端和 Go 负载。
 运行要求和命令见 [apiserver 测试](../../integration/apiserver/README.md)。
 
 runner 只检查 `_output` 目录是否存在，不逐个检查项目二进制和 BPF 产物。

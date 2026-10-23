@@ -5,21 +5,6 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/apiserver/lib.sh"
 
-static_cases() {
-	CURRENT_CASE=capabilities-and-no-result-storage
-	WITH_STORAGE=false
-	start_server
-	"$PROBE" capabilities "$APISERVER_ADDR" > "${HUATUO_BAMAI_TEST_TMPDIR}/capabilities.json"
-	request GET /readyz 204
-	request GET /v1/profiling 200
-	jq -e '.data.items == []' "$RESPONSE" > /dev/null
-	local status
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${HUATUO_BAMAI_TEST_TMPDIR}/unauthenticated.json" -w '%{http_code}' "$APISERVER_ADDR/v1/profiling")
-	assert_eq "$status" 401 || fatal 'profiling endpoint accepted an unauthenticated request'
-	huatuo_apiserver_stop
-	WITH_STORAGE=true
-	pass
-}
 functional_cases() {
 	local quota first
 	for quota in host global; do
@@ -96,13 +81,12 @@ functional_cases() {
 	pass
 }
 
-static_cases
 CURRENT_CASE=stack-startup
 start_test_storage
 start_node
 start_server
 # Keep the workload alive while validating profiling results.
-compile_user_fixture "${ROOT_DIR}/integration/apiserver/testdata/workload.c" "${HUATUO_BAMAI_TEST_TMPDIR}/callchain"
+compile_user_fixture "${ROOT_DIR}/integration/testdata/test_apiserver_profiling_workload.c" "${HUATUO_BAMAI_TEST_TMPDIR}/callchain"
 "${HUATUO_BAMAI_TEST_TMPDIR}/callchain" &
 TARGET_PID=$!
 functional_cases

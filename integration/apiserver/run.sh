@@ -7,8 +7,8 @@ usage() {
 	cat << 'HELP'
 Usage: bash integration/apiserver/run.sh
 
-Requires Linux, root, make build output, Docker, curl, jq, Go and Python 3.
-Checks capabilities, quotas, invalid requests and Node failures.
+Requires Linux, root, make build test-build output, Docker, curl, jq and Python 3.
+Checks quotas, invalid requests and Node failures.
 
 Environment:
   APISERVER_TEST_OUTPUT       Report directory (default: new /tmp directory)
