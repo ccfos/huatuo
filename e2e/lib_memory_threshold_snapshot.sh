@@ -61,6 +61,22 @@ snapshot_create_pod() {
 	' | kubectl create --namespace "${GO_SNAPSHOT_NAMESPACE}" -f -
 }
 
+# Keep the test scope's systemd configuration and cgroup value consistent.
+# Direct writes can be undone when systemd reapplies resource controls.
+snapshot_set_memory_high() {
+	local value=$1 property=$1 unit=${go_snapshot_cgroup##*/}
+	if [[ ${unit} == *.scope ]]; then
+		require_commands systemctl timeout
+		[[ ${value} != max ]] || property=infinity
+		timeout --kill-after=1 10 systemctl set-property --runtime "${unit}" "MemoryHigh=${property}" \
+			|| fatal "cannot configure MemoryHigh for snapshot scope ${unit}"
+	else
+		echo "${value}" > "${go_snapshot_cgroup}/memory.high"
+	fi
+	[[ $(< "${go_snapshot_cgroup}/memory.high") == "${value}" ]] \
+		|| fatal "snapshot memory.high does not match ${value}"
+}
+
 memory_threshold_snapshot_cleanup() {
 	local status=$? diagnosed=0
 	if [[ ${status} -ne 0 ]]; then
