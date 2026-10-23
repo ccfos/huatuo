@@ -23,7 +23,7 @@ source "${ROOT_DIR}/integration/lib_storage.sh"
 require_commands docker go jq curl
 docker info > /dev/null 2>&1 || skip "docker daemon is unavailable"
 
-readonly VALUES_INDEX="huatuo_storage_values_test"
+readonly VALUES_INDEX=$(storage_test_index huatuo_storage_values_test)
 readonly VALUES_BIN="${HUATUO_BAMAI_TEST_TMPDIR}/storage-values"
 readonly VALUES_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/values.json"
 readonly VALUES_ERRORS="${HUATUO_BAMAI_TEST_TMPDIR}/values-errors.log"

@@ -307,3 +307,134 @@ SH
 	assert_eq "$(cat "${guest_work}/calls")" "${guest_expected}" "${guest_mode}: guest phases"
 done
 log_info "VM cache transport and guest phase checks passed"
+
+# Real storage ownership and cleanup with Docker replaced by a local fixture.
+cat > "${HUATUO_BAMAI_TEST_TMPDIR}/storage-fixture.sh" << 'SH'
+set -euo pipefail
+source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/integration/lib_storage.sh"
+if [[ $TEST_MODE != private ]]; then export STORAGE_SHARED_DIR="$HUATUO_BAMAI_TEST_TMPDIR/shared"; fi
+docker() {
+ case $1 in
+ run) printf "%s\n" "$@" >> "$TEST_LOG.args"; [[ $TEST_MODE != concurrent ]] || sleep 0.05; printf 'start\n' >> "$TEST_LOG"; printf 'container-%s\n' "${HUATUO_BAMAI_TEST_TMPDIR##*/}";;
+ port) printf '127.0.0.1:19200\n';;
+ rm) printf 'stop\n' >> "$TEST_LOG"; [[ $TEST_MODE != stop_failure ]];;
+ logs) printf 'shared storage diagnostics\n';;
+ image|pull) return 0;;
+ *) return 1;;
+ esac
+}
+printf() {
+ if [[ $TEST_MODE == state_failure && $1 == STORAGE_CONTAINER_ID=* ]]; then
+  builtin printf "STORAGE_CONTAINER_ID='"
+  return 1
+ fi
+ builtin printf "$@"
+}
+storage_ready() { return 0; }
+chown() { :; }
+timeout() { shift; "$@"; }
+finish() {
+ local status=$?
+ [[ -z ${STORAGE_SHARED_DIR:-} ]] || stop_shared_storage "$status" || exit 1
+}
+trap finish EXIT
+run_case() (
+ export HUATUO_BAMAI_TEST_TMPDIR="$HUATUO_BAMAI_TEST_TMPDIR/$1"
+ mkdir -p "$HUATUO_BAMAI_TEST_TMPDIR"
+ trap storage_stop EXIT
+ storage_start "${2:-default}" "${3:-}"
+ if [[ -n ${3:-} ]]; then [[ $STORAGE_SHARED == false ]]; fi
+ if [[ ${2:-default} == default ]]; then
+  [[ $STORAGE_ADDR == http://* && -z $STORAGE_USERNAME && -z $STORAGE_PASSWORD ]]
+ else
+  [[ $STORAGE_SHARED == false && -n $STORAGE_USERNAME && -n $STORAGE_PASSWORD ]]
+ fi
+ storage_test_index profiles >> "$HUATUO_BAMAI_TEST_TMPDIR/index"
+ [[ $TEST_MODE != failure ]] || exit 42
+ [[ $TEST_MODE != skip ]] || exit 77
+)
+if [[ $TEST_MODE == concurrent ]]; then
+ run_case case-one.Abc & first=$!
+ run_case case-two.Xyz & second=$!
+ wait "$first"
+ wait "$second"
+else
+ run_case case-one.Abc
+ if [[ $TEST_MODE == bound_data ]]; then
+  run_case case-two.Xyz default "$HUATUO_BAMAI_TEST_TMPDIR/bound-data"
+ else
+  run_case case-two.Xyz
+ fi
+fi
+if [[ $TEST_MODE == compatibility ]]; then
+ for profile in elasticsearch_v7 elasticsearch_v8 opensearch_v2; do run_case "$profile" "$profile"; done
+fi
+SH
+for storage_mode in shared private bound_data failure skip compatibility stop_failure state_failure; do
+	storage_work="${HUATUO_BAMAI_TEST_TMPDIR}/storage-${storage_mode}"
+	mkdir -p "${storage_work}"
+	storage_expected_status=0 storage_expected_starts=1
+	case ${storage_mode} in
+	private | bound_data) storage_expected_starts=2 ;;
+	failure) storage_expected_status=42 ;;
+	skip) storage_expected_status=77 ;;
+	compatibility) storage_expected_starts=4 ;;
+	stop_failure | state_failure) storage_expected_status=1 ;;
+	esac
+	storage_status=0
+	HUATUO_BAMAI_TEST_TMPDIR="${storage_work}" STORAGE_SHARED_DIR='' \
+		TEST_LOG="${storage_work}/lifecycle.log" TEST_MODE="${storage_mode}" \
+		bash "${HUATUO_BAMAI_TEST_TMPDIR}/storage-fixture.sh" > "${storage_work}/test.log" 2>&1 || storage_status=$?
+	assert_eq "${storage_status}" "${storage_expected_status}" "${storage_mode}: storage status; see ${storage_work}/test.log"
+	assert_eq "$(grep -c '^start$' "${storage_work}/lifecycle.log")" "${storage_expected_starts}" "${storage_mode}: starts"
+	assert_eq "$(grep -c '^stop$' "${storage_work}/lifecycle.log")" "${storage_expected_starts}" "${storage_mode}: stops"
+	case ${storage_mode} in
+	failure | stop_failure) [[ -f ${storage_work}/shared/es.env ]] || fatal "${storage_mode}: diagnostics were removed" ;;
+	*) [[ ! -e ${storage_work}/shared/es.env ]] || fatal "${storage_mode}: shared storage state survived cleanup" ;;
+	esac
+	if [[ ${storage_mode} == bound_data ]]; then
+		grep -Fxq "type=bind,source=${storage_work}/bound-data,target=/usr/share/elasticsearch/data" "${storage_work}/lifecycle.log.args" || fatal "private ES lost its data directory"
+	fi
+	case ${storage_mode} in
+	shared | concurrent | private)
+		for storage_case in case-one.Abc case-two.Xyz; do
+			assert_eq "$(cat "${storage_work}/${storage_case}/index")" "profiles_${storage_case,,}" "workspace index isolation"
+		done
+		;;
+	esac
+done
+log_info "shared and private storage lifecycles, isolation and failure cleanup passed"
+
+(
+	source "${ROOT_DIR}/integration/config.sh"
+	source "${ROOT_DIR}/integration/lib_storage.sh"
+	config_root="${HUATUO_BAMAI_TEST_TMPDIR}/profiling-config"
+	APISERVER_PORT=21100 NODE_PORT=21001 PROFILE_INTERVAL=2
+	HUATUO_BAMAI_ADDR="http://127.0.0.1:${NODE_PORT}"
+	API_TOKEN=admin OTHER_API_TOKEN=reader ES_PASSWORD=test STORAGE_ADDR=http://127.0.0.1:9200
+	MAX_HOST=2 MAX_TOTAL=4 NODE_CAPACITY=4 PROFILER_TOOL_DIR=/fixture/tools POD_NAMESPACE=''
+	for workspace in case-one.Abc case-two.Xyz; do
+		HUATUO_BAMAI_TEST_TMPDIR="${config_root}/${workspace}"
+		mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
+		expected_index="huatuo_continuous_profiling_test_${workspace,,}"
+		for config_mode in continuous workflow_storage workflow_no_storage; do
+			WITH_STORAGE=true
+			if [[ ${config_mode} == continuous ]]; then
+				write_continuous_profiling_bamai_config
+				write_continuous_profiling_apiserver_config
+			else
+				if [[ ${config_mode} == workflow_no_storage ]]; then WITH_STORAGE=false; fi
+				write_apiserver_profiling_bamai_config
+				write_apiserver_profiling_config
+			fi
+			assert_eq "$(grep -cFx "    Index = \"${expected_index}\"" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf")" 1 "${config_mode}: node index"
+			if [[ ${WITH_STORAGE} == true ]]; then
+				assert_eq "$(grep -cFx "    Index = \"${expected_index}\"" "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf")" 1 "${config_mode}: apiserver index"
+			else
+				if grep -Fxq '[Elasticsearch]' "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf"; then fatal "storage disabled but configured"; fi
+			fi
+		done
+	done
+)
+log_info "profiling node and apiserver storage configs agree and isolate workspaces"
