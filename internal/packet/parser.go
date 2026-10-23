@@ -233,6 +233,9 @@ func TCPSequenceSpan(packet *Packet) (uint32, bool) {
 }
 
 func tcpPayloadLength(packet *Packet) (uint32, bool) {
+	if packet.TCP.DataOffset < 5 || packet.TCP.DataOffset > 15 {
+		return 0, false
+	}
 	tcpHeaderLength := uint32(packet.TCP.DataOffset) * 4
 
 	switch {
