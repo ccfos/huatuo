@@ -46,8 +46,9 @@ make integration
 
 Local runs default to one worker; use `bash integration/run.sh -j 2` or
 `INTEGRATION_JOBS=2 make integration` to enable parallel execution. VM CI uses
-two workers. Reviewed tests run in a bounded pool; network cases share a resource
-group. CPU-sensitive and unreviewed cases run alone after the pool drains.
+three workers. Reviewed tests run in a bounded pool; network cases share a resource
+group, including storage compatibility because it generates network events.
+CPU-sensitive and unreviewed cases run alone after the pool drains.
 E2E stays serial even when `INTEGRATION_JOBS` is set.
 
 Each parallel case has private Huatuo PID files and toolstream sockets and a

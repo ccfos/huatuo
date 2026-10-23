@@ -32,6 +32,7 @@ declare -A runner_test_groups=(
 	["test_basic_bpf_debug_macro.sh"]=independent
 	["test_basic_dockerfile_check.sh"]=independent
 	["test_basic_storage_elasticsearch_values.sh"]=independent
+	["test_basic_storage_opensearch_elasticsearch.sh"]=network
 	["test_basic_startup_log.sh"]=independent
 	["test_dropwatch_devlink.sh"]=network
 	["test_dropwatch_icmpv6.sh"]=network
