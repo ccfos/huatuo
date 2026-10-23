@@ -16,6 +16,7 @@ package v1
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"math"
 	"syscall"
@@ -140,6 +141,9 @@ func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 			Period:            period,
 			EffectiveCPUCount: effectiveCPUCount,
 		}, nil
+	}
+	if quota < -1 {
+		return nil, fmt.Errorf("invalid cpu quota %d", quota)
 	}
 
 	return &stats.CpuQuota{
