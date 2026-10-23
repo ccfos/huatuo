@@ -91,6 +91,9 @@ func sumSampleValues(p *profile.Profile) ([]sampleTotal, error) {
 	}
 
 	for i, kind := range p.SampleType {
+		if kind == nil {
+			return nil, fmt.Errorf("sample type %d is nil", i)
+		}
 		if kind.Type == "" || kind.Unit == "" {
 			return nil, errors.New("sample type and unit must not be empty")
 		}
@@ -105,7 +108,19 @@ func sumSampleValues(p *profile.Profile) ([]sampleTotal, error) {
 			Type: kind.Type,
 			Unit: kind.Unit,
 		}
-		for _, sample := range p.Sample {
+		for sampleIndex, sample := range p.Sample {
+			if sample == nil {
+				return nil, fmt.Errorf("sample %d is nil", sampleIndex)
+			}
+			if len(sample.Value) != len(p.SampleType) {
+				return nil, fmt.Errorf(
+					"sample %d has %d values, want %d",
+					sampleIndex,
+					len(sample.Value),
+					len(p.SampleType),
+				)
+			}
+
 			value, total := sample.Value[i], totals[i].Total
 			overflows := value > 0 && total > math.MaxInt64-value
 			underflows := value < 0 && total < math.MinInt64-value

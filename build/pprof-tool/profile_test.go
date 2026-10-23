@@ -408,6 +408,34 @@ func TestSumSampleValuesRejectsInvalidProfiles(t *testing.T) {
 			},
 		},
 		{
+			name:  "nil sample type",
+			types: []*profile.ValueType{nil},
+		},
+		{
+			name: "nil sample",
+			types: []*profile.ValueType{{
+				Type: "samples",
+				Unit: "count",
+			}},
+			samples: []*profile.Sample{nil},
+		},
+		{
+			name: "short sample values",
+			types: []*profile.ValueType{
+				{Type: "samples", Unit: "count"},
+				{Type: "cpu", Unit: "nanoseconds"},
+			},
+			samples: []*profile.Sample{{Value: []int64{1}}},
+		},
+		{
+			name: "long sample values",
+			types: []*profile.ValueType{{
+				Type: "samples",
+				Unit: "count",
+			}},
+			samples: []*profile.Sample{{Value: []int64{1, 2}}},
+		},
+		{
 			name: "positive overflow",
 			types: []*profile.ValueType{{
 				Type: "samples",
