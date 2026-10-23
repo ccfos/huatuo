@@ -76,9 +76,21 @@ func TestLock_AlreadyLocked(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(lk.Unlock)
 
+	// Record a foreign pid so a lost file cannot be masked by os.Getpid().
+	const ownerPid = 4242
+	require.NoError(t, os.WriteFile(path(name), []byte(strconv.Itoa(ownerPid)), 0o644))
+
 	_, err = Lock(name)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already running")
+	// The failed attempt must report and keep the pid that holds the lock:
+	// truncating the file before the flock wipes it, so operators see
+	// "pid=" with no way to find the process still running.
+	assert.Contains(t, err.Error(), strconv.Itoa(ownerPid))
+
+	data, err := os.ReadFile(path(name))
+	require.NoError(t, err)
+	assert.Equal(t, strconv.Itoa(ownerPid), string(data))
 }
 
 func TestUnlock_RemovesFile(t *testing.T) {
