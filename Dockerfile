@@ -48,7 +48,7 @@ RUN set -x; \
 #
 FROM alpine:3.22.0 AS run-static
 ARG RUN_PATH="/home/huatuo-bamai"
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl gdb
 COPY --from=build ${RUN_PATH} ${RUN_PATH}
 WORKDIR ${RUN_PATH}
 
@@ -59,7 +59,7 @@ WORKDIR ${RUN_PATH}
 #
 FROM golang:1.24 AS run-nostatic
 ARG RUN_PATH="/home/huatuo-bamai"
-RUN apt-get update && apt-get install -y --no-install-recommends curl libelf1 libnuma1 &&\
+RUN apt-get update && apt-get install -y --no-install-recommends curl gdb libelf1 libnuma1 &&\
     rm -rf /var/lib/apt/lists/*
 ENV LD_LIBRARY_PATH=/usr/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/dcmi
 COPY --from=build ${RUN_PATH} ${RUN_PATH}

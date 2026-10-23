@@ -476,14 +476,32 @@ func TestRunNormalStopPreservesCollectorErrors(t *testing.T) {
 		{name: "complete"}, {
 			name:      "failed",
 			readError: errors.Join(context.Canceled, failure),
+		}, {
+			name:      "truncated record",
+			readError: fmt.Errorf("decode memray stream: %w", io.ErrUnexpectedEOF),
+		}, {
+			name:      "decoder EOF is not completion",
+			readError: fmt.Errorf("decode memray stream: %w", io.EOF),
+		}, {
+			name:      "watchdog closed socket before trailer",
+			readError: fmt.Errorf("incomplete Memray capture before trailer: %w", net.ErrClosed),
+		}, {
+			name:      "watchdog closed pipe before trailer",
+			readError: fmt.Errorf("incomplete Memray capture before trailer: %w", io.ErrClosedPipe),
+		}, {
+			name:      "startup canceled before capture",
+			readError: fmt.Errorf("collect Memray session: %w", context.Canceled),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, received := newRunOutput(t)
 			collector := &loopProfiler{read: func(
 				ctx context.Context,
-				_ func(*pipeline.SampleBatch) error,
+				enqueue func(*pipeline.SampleBatch) error,
 			) error {
+				if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 64}}}); err != nil {
+					return err
+				}
 				<-ctx.Done()
 				if !IsNormalStop(ctx) {
 					return context.Cause(ctx)
@@ -505,7 +523,7 @@ func TestRunNormalStopPreservesCollectorErrors(t *testing.T) {
 				if err != nil || received.commits.Load() != 1 {
 					t.Fatalf("error=%v completions=%d", err, received.commits.Load())
 				}
-			} else if !errors.Is(err, failure) || !errors.Is(err, context.Canceled) || received.commits.Load() != 0 {
+			} else if !errors.Is(err, tc.readError) || received.commits.Load() != 0 {
 				t.Fatalf("error=%v completions=%d", err, received.commits.Load())
 			}
 		})

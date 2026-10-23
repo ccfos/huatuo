@@ -34,6 +34,7 @@ BuildRequires: unzip
 # Runtime dependencies
 Requires: systemd
 Requires: glibc >= 2.17
+Requires: gdb
 Requires(post): systemd
 Requires(preun): systemd
 Requires(postun): systemd

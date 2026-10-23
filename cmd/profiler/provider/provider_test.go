@@ -88,6 +88,12 @@ func TestNewSelectsAggregationPolicy(t *testing.T) {
 			typ:            profiling.TypeCPU,
 			aggregation:    pipeline.AggregationModeOneShot,
 		},
+		{
+			name:           "python retained memory",
+			implementation: profiling.ImplementationPython,
+			typ:            profiling.TypeMemory,
+			aggregation:    pipeline.AggregationModeOneShot,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Config{
@@ -188,7 +194,7 @@ func TestNewRejectsUnsupportedProvider(t *testing.T) {
 		{
 			name: "unsupported type",
 			impl: profiling.ImplementationPython,
-			typ:  profiling.TypeMemory,
+			typ:  profiling.TypeLock,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
