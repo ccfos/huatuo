@@ -353,3 +353,7 @@ or transfer failures fall back to compilation. Unit tests use
 
 Measure both a cold run and a warm run when evaluating CI time: the first run
 populates the persistent cache, and cache download/upload time also counts.
+
+VM CI preloads ES7 and OpenSearch images during compilation and unit tests.
+Compatibility tests still check pullability. Prefetch logs are saved under
+`_output/storage-image-prefetch`; prefetch failures do not replace normal checks.
