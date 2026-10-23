@@ -366,6 +366,18 @@ write_continuous_profiling_apiserver_config() {
 EOF
 }
 
+write_netdev_txqueue_timeout_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mthreads_gpu", "mthreads_xid", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
+
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}
+
 write_memory_oom_kill_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "sched_tick", "ras", "runqlat", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
