@@ -127,7 +127,7 @@ func readOOMHostMemInfo(path string, required map[string]bool) (map[string]uint6
 
 func parseKiBField(value string) (uint64, bool) {
 	parsed, ok := parseUintField(value)
-	if !ok {
+	if !ok || parsed > ^uint64(0)/1024 {
 		return 0, false
 	}
 	return parsed * 1024, true
