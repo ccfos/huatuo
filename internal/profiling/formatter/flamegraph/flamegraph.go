@@ -60,6 +60,9 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := output.RequireWindow(w); err != nil {
+		return err
+	}
 
 	var frames []types.ProfileFrame
 	a := &w.Aggregated
