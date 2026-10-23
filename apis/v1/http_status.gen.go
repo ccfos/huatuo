@@ -27,6 +27,8 @@ func HTTPStatusForErrorCode(code ErrorCode) (int, bool) {
 		return 405, true
 	case ErrorCodePermissionDenied:
 		return 403, true
+	case ErrorCodeRateLimited:
+		return 429, true
 	case ErrorCodeRequestTooLarge:
 		return 413, true
 	case ErrorCodeRouteNotFound:
