@@ -600,7 +600,7 @@ This tracer requires the cgroup v1 load statistics interface and is skipped on c
 
 #### 7.5 Host anonymous memory spikes
 
-This module detects host anonymous memory spikes, records process information ranked by RSS, and attempts runtime memory snapshots. Anonymous memory is the sum of `Active(anon)` and `Inactive(anon)` in `/proc/meminfo`. The history window has a fixed length of 60 samples. Once it is full, both the growth ratio and the share of total memory must reach their thresholds, and the tracing interval must have elapsed, before a report is emitted.
+This module detects host anonymous memory spikes, records process information ranked by RSS, and attempts runtime memory snapshots. Anonymous memory is the sum of `Active(anon)` and `Inactive(anon)` in `/proc/meminfo`. Once the history window is full, both the growth ratio and the share of total memory must reach their thresholds, and the tracing interval must have elapsed, before a report is emitted.
 
 ```toml
 # memory burst
@@ -609,7 +609,6 @@ This module detects host anonymous memory spikes, records process information ra
 #
 # - Interval
 # The sample interval of Active(anon) + Inactive(anon) from /proc/meminfo.
-# The history window has a fixed length of 60 samples.
 # Default: 10s
 #
 # - DeltaMemoryBurst
