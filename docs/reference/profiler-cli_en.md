@@ -24,7 +24,7 @@ Both `--output-path` and `--output-format` must be explicit. The declared defaul
 | `--output-path` | Required | All | Local file, directory, or `stdout`; Unix socket for `remote-store`. End new directory paths with `/` |
 | `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, `json`, or `remote-store`; must be explicit together with `--output-path` |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collection child processes; `0` is unlimited |
-| `--tool-path` | None | Java, Python | Shared root directory for external tools; required |
+| `--tool-path` | None | Java, Python | Required shared tool root for Java/Python CPU; Python memory defaults to `../tools/memray` beside the executable and accepts a bundle-root override |
 | `--binary-match-path` | None | Java, Python | Match target container processes by executable path |
 | `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address for resolving container metadata |
 | `--task-id` | Empty; generated internally for local output | All; required for `remote-store` | Stable collection task ID shared by toolstream and remote storage |
@@ -39,7 +39,9 @@ These pprof endpoints describe the profiler process's own Go runtime, not the `-
 
 | Parameter | Default | Applies To | Description |
 | --- | --- | --- | --- |
-| `--memory-mode` | None | Native and Java memory | Memory measurement; required with `--type memory` |
+| `--memory-mode` | `object_usage` for Python | Memory | Required for native/Java memory; Python supports only retained `object_usage` |
+| `--python-memory-stack` | `python` | Python memory | Stack view: `python`, `native`, or `hybrid` |
+| `--python-memory-merge-threads` | `false` | Python memory | Merge allocations from different threads |
 | `--cpuid` | All CPUs | Native CPU | CPU list or ranges; off-CPU filtering uses the CPU where the task switches out |
 | `--cpu-mode` | `oncpu` | Native CPU | `oncpu` samples by frequency; `offcpu` attributes blocked and runnable scheduling delays |
 | `--require-hardware-pmu` | `false` | Native on-CPU | Require hardware PMU sampling; fail if unavailable without falling back to software CPU clock |

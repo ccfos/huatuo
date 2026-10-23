@@ -43,9 +43,15 @@ weight: 4
 | `physical_alloc` | C、C++、Go | 采集窗口内的物理内存分配量 |
 | `physical_usage` | C、C++、Go | 本次采集跟踪的物理页存活字节数 |
 | `object_alloc` | Java | 对象分配量及分配调用栈 |
-| `object_usage` | Java | 存活对象及分配调用栈 |
+| `object_usage` | Java、Python | JVM 存活对象，或 Python 进程存活分配的字节数及分配调用栈 |
 
-Python 当前仅支持 CPU 剖析。`physical_usage` 不包含采集前分配的页，也不按采样概率倒数放大，不能作为进程完整 RSS。其页释放识别等边界仍待验证和完善，具体限制见[性能剖析实践](/docs/best-practice/continuous-profiling_zh.md#物理内存存活量)。
+Python 内存采集使用预编译 Memray 运行时，支持 Linux glibc、x86-64 和 AArch64 上的 CPython 3.7–3.14。结果是附加之后分配、采集结束时仍未释放的字节数，不包含更早的分配，也不等同于 RSS。运行 profiler 的环境必须在 `PATH` 中提供 `gdb`，并允许通过 `ptrace` 附加目标；seccomp 和 Yama `ptrace_scope` 不能阻止附加。命令行可选择 Python、原生或混合调用栈。
+
+同一个 Python 进程同时只能有一个 Memray 会话；重复请求会失败，不会中断已有采集。向容器复制运行时时会拒绝绝对符号链接和越过目标根目录的链接，请使用目录或不越界的相对链接。
+
+Python 内存结果只有在收到运行时的流结束标记（trailer）后才会发布。取消采集后最多等待两秒读完剩余记录；强制关闭连接或未收到结束标记就遇到 EOF 时，采集失败，不会发布不完整的存活内存结果。目标进程等待初始数据连接的时间上限为十秒，收到取消请求也会退出等待。
+
+`physical_usage` 不包含采集前分配的页，也不按采样概率倒数放大，不能作为进程完整 RSS。其页释放识别等边界仍待验证和完善，具体限制见[性能剖析实践](/docs/best-practice/continuous-profiling_zh.md#物理内存存活量)。
 
 ## 采集方式
 
