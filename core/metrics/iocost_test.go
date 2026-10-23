@@ -173,6 +173,11 @@ int main(void)
     iocost_diag_css_serial = 0;
     if (iocost_diag_fixture_matches(0, 8, 16))
         return 4;
+    if (!iocost_diag_fixture_matches(300, 8, 16))
+        return 5;
+    iocost_diag_fault_mask = IOCOST_DIAG_FAULT_MAP_FULL;
+    if (iocost_diag_fixture_matches(300, 8, 16))
+        return 6;
     return 0;
 }
 `
@@ -1146,6 +1151,7 @@ const (
 
 	ioCostDiagnosticStatusMap  = "iocost_diag_stat_map"
 	ioCostDiagnosticScratchMap = "iocost_diag_fault_scratch_map"
+	ioCostDiagnosticPendingMap = "iocost_diag_pending_map"
 
 	ioCostDiagnosticFaultMaskConstant  = "iocost_diag_fault_mask"
 	ioCostDiagnosticMajorConstant      = "iocost_diag_major"
@@ -2825,8 +2831,12 @@ func testIOCostDiagnosticObjectContract(t *testing.T, spec *ebpf.CollectionSpec)
 	requireIOCostBusinessMaps(t, spec)
 
 	wantMaps := ioCostBusinessMapContracts()
-	require.Len(t, spec.Maps, len(wantMaps)+3,
-		"diagnostic object must contain the business maps, two diagnostic maps, and .rodata")
+	require.Len(
+		t,
+		spec.Maps,
+		len(wantMaps)+4,
+		"diagnostic object must contain the business maps, three diagnostic maps, and .rodata",
+	)
 	requireIOControlTestMap(t, spec, ioControlTestMapContract{
 		name: ioCostDiagnosticStatusMap, typeID: ebpf.Array,
 		keySize: ioCostUint32Size, valueSize: ioCostDiagnosticStatusSize,
@@ -2852,6 +2862,13 @@ func testIOCostDiagnosticObjectContract(t *testing.T, spec *ebpf.CollectionSpec)
 		name: ioCostDiagnosticScratchMap, typeID: ebpf.Hash,
 		keySize: ioCostUint32Size, valueSize: ioCostUint64Size,
 		maxEntries: 1,
+	})
+	requireIOControlTestMap(t, spec, ioControlTestMapContract{
+		name:       ioCostDiagnosticPendingMap,
+		typeID:     ebpf.Hash,
+		keySize:    ioCostUint64Size,
+		valueSize:  ioCostUint64Size,
+		maxEntries: ioCostPendingMapMaxEntries,
 	})
 	_, hasRodata := spec.Maps[".rodata"]
 	require.True(t, hasRodata, "diagnostic object has no .rodata map")

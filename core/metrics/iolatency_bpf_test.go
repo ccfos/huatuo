@@ -330,6 +330,7 @@ func TestIOLatencyRemapAccounting(t *testing.T) {
 #include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -352,7 +353,6 @@ typedef int64_t s64;
 #define CORE_READ2(object, first, second) CORE_READ1(CORE_READ1(object, first), second)
 #define CORE_SELECT(_1, _2, _3, name, ...) name
 #define BPF_CORE_READ(...) CORE_SELECT(__VA_ARGS__, CORE_READ2, CORE_READ1)(__VA_ARGS__)
-#define compat_bpf_core_field_offset(field) ((uintptr_t)&(field))
 #define bpf_core_field_exists(field) _Generic(&(field), \
     struct bio_issue *: bio_has_bi_issue, u64 *: bio_has_issue_time_ns, \
     u8 *: bio_has_partno, u16 *: request_has_stats_sectors, default: request_has_disk)
@@ -385,6 +385,9 @@ struct bio_issue { u64 value; };
 struct bio {
     struct bio *bi_next;
     struct gendisk *bi_disk;
+#ifdef IO_LATENCY_TEST_BIO_DEVICE_GAP
+    u64 device_padding;
+#endif
     u32 bi_opf;
     u16 bi_flags;
     struct bio_issue bi_issue;
@@ -440,10 +443,14 @@ static bool zero_extend_errno;
 static void *update_error_map;
 static int blkdisk_lat_map, blkcg_lat_map, io_latency_group_map;
 static const void *read_error_source;
+static const void *queue_snapshot_source;
+static unsigned queue_snapshots;
 static int bpf_core_read(void *destination, size_t size, const void *source)
 {
     if (source == read_error_source)
         return -EFAULT;
+    if (source == queue_snapshot_source)
+        queue_snapshots++;
     memcpy(destination, source, size);
     return 0;
 }
@@ -728,6 +735,23 @@ static void test_queue_time(void)
     io.issue_time_ns = 100;
     bio_has_issue_time_ns = false;
     assert(!io_latency_bio_queue_ns((u64)&io, 200));
+}
+
+static void test_queue_layout(void)
+{
+    struct gendisk disk = { .major = 8 };
+    register_host(&disk);
+    struct bio io = { .bi_disk = &disk, .bi_opf = REQ_OP_WRITE, .bi_iter.bi_size = 4096 };
+    struct bpf_raw_tracepoint_args event = { .args = { (u64)&io } };
+    queue_snapshot_source = &io.bi_disk;
+    trace_bio_queue(&event);
+#ifdef IO_LATENCY_TEST_BIO_DEVICE_GAP
+    assert(queue_snapshots == 0);
+#else
+    assert(queue_snapshots == 1);
+#endif
+    assert(host[8].counters[1].queued_size[0] == 1);
+    assert(host[8].counters[0].queued_size[0] == 0 && !status_value.failure);
 }
 
 static void test_missing_queue(void)
@@ -1045,7 +1069,7 @@ static void test_aux_request_size(void)
  * 512-bio walk. Four bios have Q timestamps; every completed bio has D2C.
  * A partial C stops at its current bio; final C accounts issued size once.
  */
-static void test_completion_chunks(bool partial)
+static void test_completion_chunks(u32 count, bool partial)
 {
     struct gendisk disk = { .major = 8 };
     register_host(&disk);
@@ -1053,8 +1077,7 @@ static void test_completion_chunks(bool partial)
     struct request_queue___iolatency queue = { .disk = &disk };
     struct blkcg_gq first_group = { .blkcg = &test_groups[1] };
     struct blkcg_gq second_group = { .blkcg = &test_groups[2] };
-    struct bio chain[IO_LATENCY_REQUEST_SCAN_BUDGET] = {};
-    const u32 count = partial ? 65 : IO_LATENCY_REQUEST_SCAN_BUDGET;
+    struct bio chain[IO_LATENCY_REQUEST_SCAN_BUDGET + 1] = {};
     const u32 tracked[] = { 0, 32, partial ? 33 : 480, count - 1 };
     struct request req = {
         .bio = chain, .biotail = &chain[count - 1], .rq_disk = &disk,
@@ -1089,6 +1112,10 @@ static void test_completion_chunks(bool partial)
         clock_ns = 1200000000;
     }
     finish_request(&req, req.__data_len);
+    if (count > IO_LATENCY_REQUEST_SCAN_BUDGET) {
+        assert(status_value.failure == (u64)IO_LATENCY_CHAIN_OVERFLOW << 32);
+        return;
+    }
     assert(!status_value.failure);
     assert(host[8].counters[0].buckets[IO_LATENCY_STAGE_Q2G][9] == 4 &&
         host[8].counters[0].buckets[IO_LATENCY_STAGE_Q2D][10] == 4);
@@ -1466,7 +1493,9 @@ int main(int argc, char **argv)
         test_bucket_boundaries(true);
         return 0;
     }
-    if (!strcmp(argv[2], "queue-time"))
+    if (!strcmp(argv[2], "queue-layout"))
+        test_queue_layout();
+    else if (!strcmp(argv[2], "queue-time"))
         test_queue_time();
     else if (!strcmp(argv[2], "missing-queue"))
         test_missing_queue();
@@ -1491,9 +1520,11 @@ int main(int argc, char **argv)
     else if (!strcmp(argv[2], "aux-request-size"))
         test_aux_request_size();
     else if (!strcmp(argv[2], "completion-chunks"))
-        test_completion_chunks(false);
+        test_completion_chunks(IO_LATENCY_REQUEST_SCAN_BUDGET, false);
     else if (!strcmp(argv[2], "completion-chunks-partial"))
-        test_completion_chunks(true);
+        test_completion_chunks(65, true);
+    else if (!strcmp(argv[2], "completion-overflow"))
+        test_completion_chunks(IO_LATENCY_REQUEST_SCAN_BUDGET + 1, false);
     else if (!strcmp(argv[2], "remap"))
         test_remap();
     else if (!strcmp(argv[2], "remap-bit-six")) {
@@ -1515,6 +1546,17 @@ int main(int argc, char **argv)
     return 0;
 }
 `
+	// Native fixtures need member offsets, not the addresses of live objects.
+	program = strings.NewReplacer(
+		"compat_bpf_core_field_offset(bio->",
+		"offsetof(struct bio, ",
+		"compat_bpf_core_field_offset(req->",
+		"offsetof(struct request, ",
+		"compat_bpf_core_field_offset(\n\t\t((struct blkcg *)0)->css)",
+		"offsetof(struct blkcg, css)",
+		"compat_bpf_core_field_offset(\n\t\t\t((struct bio___5_12 *)bio)->bi_bdev)",
+		"offsetof(struct bio, bi_bdev)",
+	).Replace(program)
 	// Preserve the branch semantics when compiling BPF's asm goto for the host.
 	program = strings.ReplaceAll(program,
 		`asm goto("if %0 != 0 goto %l[with_queue]" : : "r"(queue_ns) : : with_queue);`,
@@ -1530,14 +1572,21 @@ int main(int argc, char **argv)
 		program,
 		abiIncludeFlag,
 	)
-	for _, scenario := range []string{"classifier-buckets", "queue-time"} {
+	for _, scenario := range []string{"classifier-buckets", "queue-time", "queue-layout"} {
 		t.Run(scenario, func(t *testing.T) {
 			output, err := exec.CommandContext(t.Context(), executable,
 				"0", scenario, "rq-disk", "sign-extended").CombinedOutput()
 			require.NoError(t, err, "%s", output)
 		})
 	}
-	for _, scenario := range []string{"remap", "remap-bit-six", "partition-remap", "request", "missing-queue", "busy-container", "css-release", "css-release-failure", "current-css", "container-allocation", "large-request", "root-blkcg", "root-blkcg-unknown", "request-time", "unselected-disk", "single-completion", "partial-completion", "aux-request-size", "completion-chunks", "completion-chunks-partial", "completion-buckets"} {
+	for _, scenario := range []string{
+		"remap", "remap-bit-six", "partition-remap", "request", "missing-queue",
+		"busy-container", "css-release", "css-release-failure", "current-css",
+		"container-allocation", "large-request", "root-blkcg", "root-blkcg-unknown",
+		"request-time", "unselected-disk", "single-completion", "partial-completion",
+		"aux-request-size", "completion-chunks", "completion-chunks-partial",
+		"completion-overflow", "completion-buckets",
+	} {
 		slots, layouts, errnos := []string{"0"}, []string{"rq-disk"}, []string{"sign-extended"}
 		// Raw event scenarios cover argument slots; request remap covers both
 		// disk layouts. Errno width matters only when a helper returns an error.
@@ -1563,6 +1612,30 @@ int main(int argc, char **argv)
 			}
 		}
 	}
+	t.Run("non-adjacent-bio-device", func(t *testing.T) {
+		executable := compileIOControlTestC(
+			t,
+			"cc",
+			"iolatency-device-gap",
+			program,
+			abiIncludeFlag,
+			"-DIO_LATENCY_TEST_BIO_DEVICE_GAP",
+		)
+		output, err := exec.CommandContext(
+			t.Context(),
+			executable,
+			"0",
+			"queue-layout",
+			"rq-disk",
+			"sign-extended",
+		).CombinedOutput()
+		require.NoError(
+			t,
+			err,
+			"%s",
+			output,
+		)
+	})
 	t.Run("non-adjacent-bio-tail", func(t *testing.T) {
 		executable := compileIOControlTestC(
 			t,
