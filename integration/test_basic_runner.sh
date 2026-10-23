@@ -19,6 +19,27 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
+# The logger quotes text fields; exercise both text variants and JSON output.
+for runner_log_format in text quoted json json-spaced; do
+	for runner_log_level in info error panic fatal; do
+		runner_log_probe="${HUATUO_BAMAI_TEST_TMPDIR}/log-${runner_log_format}-${runner_log_level}.log"
+		case ${runner_log_format} in
+		text) printf 'level=%s msg=probe\n' "${runner_log_level}" > "${runner_log_probe}" ;;
+		quoted) printf 'level="%s" msg="probe"\n' "${runner_log_level}" > "${runner_log_probe}" ;;
+		json) printf '{"level":"%s","msg":"probe"}\n' "${runner_log_level}" > "${runner_log_probe}" ;;
+		json-spaced) printf '{"level": "%s", "msg": "probe"}\n' "${runner_log_level}" > "${runner_log_probe}" ;;
+		esac
+		runner_log_status=0
+		(assert_log_has_no_failure "${runner_log_probe}" fixture) \
+			> "${runner_log_probe}.assertion" 2>&1 || runner_log_status=$?
+		runner_log_expected=1
+		[[ ${runner_log_level} != info ]] || runner_log_expected=0
+		assert_eq "${runner_log_status}" "${runner_log_expected}" "${runner_log_format}/${runner_log_level}" \
+			|| fatal "log assertion misclassified ${runner_log_probe}; see ${runner_log_probe}.assertion"
+	done
+done
+log_info "text and JSON log levels checked"
+
 # Check idle Pod manifests and lifecycle errors without requiring a cluster.
 for pod_failure in none run delete; do
 	pod_calls="${HUATUO_BAMAI_TEST_TMPDIR}/pods-${pod_failure}.log"
