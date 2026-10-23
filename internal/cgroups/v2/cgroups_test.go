@@ -63,6 +63,16 @@ func TestSpecToSystemdProperties(t *testing.T) {
 		wantValues map[string]uint64
 	}{
 		{
+			name: "cpu-large-quota-saturates",
+			spec: &specs.LinuxResources{
+				CPU: &specs.LinuxCPU{
+					Quota:  i64ptr(1 << 62),
+					Period: u64ptr(1),
+				},
+			},
+			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": ^uint64(0)},
+		},
+		{
 			// Baseline: 1 core (quota=100000, period=100000) -> 1_000_000 usec/sec.
 			// Exact multiple of 10000, so the rounding branch is not taken.
 			name: "cpu-one-core-exact",
