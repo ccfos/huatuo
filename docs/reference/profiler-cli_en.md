@@ -28,7 +28,8 @@ Both `--output-path` and `--output-format` must be explicit. The declared defaul
 | `--binary-match-path` | None | Java, Python | Match target container processes by executable path |
 | `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address for resolving container metadata |
 | `--task-id` | Empty; generated internally for local output | All; required for `remote-store` | Stable collection task ID shared by toolstream and remote storage |
-| `--enable-pprof` | `false` | The tool itself | Expose the profiler process's own Go pprof interface on `:6000` |
+| `--enable-pprof` | `false` | The tool itself | Expose the profiler process's own Go pprof interface on the address from `--pprof-address` |
+| `--pprof-address` | `127.0.0.1:6000` | The tool itself | Listen address for the pprof server enabled by `--enable-pprof`; loopback by default, use a non-loopback address only for deliberate remote access |
 | `--version-format` | `text` | Version queries | Format for `--version`: `text`, `json`, or `short` |
 | `--help`, `-h` | - | All | Show command help |
 | `--version`, `-v` | - | All | Show version and build information |
