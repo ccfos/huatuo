@@ -68,7 +68,7 @@ apiserver 的完整采样链路和 Kubernetes 多语言矩阵位于
 其余 7 项 apiserver 功能由 `integration/test_apiserver_profiling.sh` 接入
 `make integration`。
 静态能力表、认证和无存储检查在 `integration/test_apiserver_profile_disabled.sh` 独立运行。
-两套测试依赖 `make test-build`，提前构建协议客户端和 Go 负载。
+两套测试依赖 `make build`，提前构建协议客户端和 Go 负载。
 运行要求和命令见 [apiserver 测试](../../integration/apiserver/README.md)。
 
 runner 只检查 `_output` 目录是否存在，不逐个检查项目二进制和 BPF 产物。
