@@ -226,10 +226,12 @@ func TestCommandLineStopsAtPrefix(t *testing.T) {
 		result, readErr = CommandLine(100)
 		close(done)
 	}()
+
 	writer, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() {
 		_ = writer.Close()
 		select {
@@ -238,10 +240,12 @@ func TestCommandLineStopsAtPrefix(t *testing.T) {
 			t.Error("command-line reader did not stop after writer cleanup")
 		}
 	})
+
 	prefix := bytes.Repeat([]byte("arg\x00"), 32)
 	if _, err := writer.Write(prefix); err != nil {
 		t.Fatal(err)
 	}
+
 	// Keep the writer open: returning must depend on the prefix, not EOF.
 	select {
 	case <-done:
@@ -258,6 +262,7 @@ func TestCommandLineReadError(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "proc", "100", "cmdline"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	if result, err := CommandLine(100); result != "" || !errors.Is(err, syscall.EISDIR) {
 		t.Fatalf("CommandLine(directory) = %q, %v, want EISDIR", result, err)
 	}
@@ -269,35 +274,47 @@ func TestCommandLineRealProcess(t *testing.T) {
 		time.Sleep(30 * time.Second)
 		return
 	}
+
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
 	procfs.RootPrefix("/")
 	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
 
-	child := exec.CommandContext(t.Context(), os.Args[0],
-		"-test.run=^TestCommandLineRealProcess$", "--", strings.Repeat("x", 64*1024))
+	child := exec.CommandContext(
+		t.Context(),
+		os.Args[0],
+		"-test.run=^TestCommandLineRealProcess$",
+		"--",
+		strings.Repeat("x", 64*1024),
+	)
 	child.Env = append(os.Environ(), "HUATUO_COMMANDLINE_CHILD=1")
 	stdout, err := child.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() {
 		_ = child.Process.Kill()
 		_ = child.Wait()
 	})
+
 	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "ready\n" {
 		t.Fatalf("child ready = %q, %v", line, err)
 	}
+
 	pid := child.Process.Pid
 	raw, err := os.ReadFile(procfs.Path(strconv.Itoa(pid), "cmdline"))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(raw) <= 64*1024 {
 		t.Fatalf("child command line has only %d bytes", len(raw))
 	}
+
 	want := string(bytes.ReplaceAll(raw[:128], []byte{0}, []byte{' '}))
 	if result, err := CommandLine(pid); err != nil || result != want {
 		t.Fatalf("CommandLine(real child) = %q, %v, want %q", result, err, want)
@@ -309,8 +326,14 @@ func BenchmarkCommandLinePrefix(b *testing.B) {
 		name  string
 		bytes int
 	}{
-		{name: "short", bytes: 128},
-		{name: "large", bytes: 1024 * 1024},
+		{
+			name:  "short",
+			bytes: 128,
+		},
+		{
+			name:  "large",
+			bytes: 1024 * 1024,
+		},
 	} {
 		b.Run(size.name, func(b *testing.B) {
 			root := setProcRoot(b)
@@ -318,12 +341,13 @@ func BenchmarkCommandLinePrefix(b *testing.B) {
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				b.Fatal(err)
 			}
+
 			if err := os.WriteFile(path, bytes.Repeat([]byte{'x'}, size.bytes), 0o600); err != nil {
 				b.Fatal(err)
 			}
+
 			b.ReportAllocs()
-			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				if result, err := CommandLine(100); err != nil || len(result) != 128 {
 					b.Fatalf("CommandLine() returned %d bytes, %v", len(result), err)
 				}

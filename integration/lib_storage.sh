@@ -31,7 +31,13 @@ STORAGE_PASSWORD=""
 storage_start() {
 	local profile=${1:-default} scheme=http
 	local image="${STORAGE_TEST_IMAGE:-${STORAGE_DEFAULT_IMAGE}}"
-	local -a environment=(--env discovery.type=single-node)
+	# Tiny test indexes need fixed free-space reserves on shared Docker disks.
+	local -a environment=(
+		--env discovery.type=single-node
+		--env cluster.routing.allocation.disk.watermark.low=1gb
+		--env cluster.routing.allocation.disk.watermark.high=512mb
+		--env cluster.routing.allocation.disk.watermark.flood_stage=256mb
+	)
 	STORAGE_USERNAME=""
 	STORAGE_PASSWORD=""
 	case ${profile} in

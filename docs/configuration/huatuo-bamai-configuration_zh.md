@@ -601,7 +601,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 
 #### 7.5 宿主机匿名内存突增
 
-该模块检测宿主机匿名内存突增，触发后记录按 RSS 排序的进程信息，并尝试采集运行时内存快照。匿名内存取 `/proc/meminfo` 中 `Active(anon)` 与 `Inactive(anon)` 之和。历史采样窗口填满后，增长比例和占总内存比例必须同时达到阈值，并满足追踪间隔才会上报。
+该模块检测宿主机匿名内存突增，触发后记录按 RSS 排序的进程信息，并尝试采集运行时内存快照。匿名内存取 `/proc/meminfo` 中 `Active(anon)` 与 `Inactive(anon)` 之和。历史采样窗口固定为 60 个采样点，填满后，增长比例和占总内存比例必须同时达到阈值，并满足追踪间隔才会上报。
 
 ```toml
 # memory burst
@@ -610,6 +610,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 #
 # - Interval
 # The sample interval of Active(anon) + Inactive(anon) from /proc/meminfo.
+# The history window has a fixed length of 60 samples.
 # Default: 10s
 #
 # - DeltaMemoryBurst

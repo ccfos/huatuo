@@ -18,12 +18,12 @@ import "testing"
 
 func TestValidateMemBurst(t *testing.T) {
 	valid := MemBurstConfig{
-		DeltaMemoryBurst:    100,
-		DeltaAnonThreshold:  70,
-		Interval:            10,
-		IntervalTracing:     1800,
-		SlidingWindowLength: 60,
-		DumpProcessMaxNum:   10,
+		DeltaMemoryBurst:   100,
+		DeltaAnonThreshold: 70,
+		Interval:           10,
+		IntervalTracing:    1800,
+
+		DumpProcessMaxNum: 10,
 	}
 
 	cases := []struct {
@@ -52,7 +52,7 @@ func TestValidateMemBurst(t *testing.T) {
 		{name: "anon threshold at hundred", modify: func(c *MemBurstConfig) { c.DeltaAnonThreshold = 100 }},
 		{name: "zero interval", modify: func(c *MemBurstConfig) { c.Interval = 0 }, wantErr: true},
 		{name: "zero interval tracing", modify: func(c *MemBurstConfig) { c.IntervalTracing = 0 }, wantErr: true},
-		{name: "zero sliding window", modify: func(c *MemBurstConfig) { c.SlidingWindowLength = 0 }, wantErr: true},
+
 		{
 			name:    "negative dump process max num",
 			modify:  func(c *MemBurstConfig) { c.DumpProcessMaxNum = -1 },

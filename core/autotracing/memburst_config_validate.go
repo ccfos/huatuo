@@ -29,9 +29,7 @@ func validateMemBurst(c *MemBurstConfig) error {
 	if c.IntervalTracing <= 0 {
 		return fmt.Errorf("memory burst tracing interval must be positive, got %d", c.IntervalTracing)
 	}
-	if c.SlidingWindowLength <= 0 {
-		return fmt.Errorf("memory burst sliding window length must be positive, got %d", c.SlidingWindowLength)
-	}
+
 	if c.DumpProcessMaxNum <= 0 {
 		return fmt.Errorf("memory burst dump process max num must be positive, got %d", c.DumpProcessMaxNum)
 	}

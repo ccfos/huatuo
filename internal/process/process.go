@@ -76,6 +76,7 @@ func CommandLine(pid int) (string, error) {
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return "", err
 	}
+
 	data = data[:n]
 	for i := range data {
 		if data[i] == 0 {
