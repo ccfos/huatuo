@@ -21,7 +21,27 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-require_readable /sys/kernel/btf/vmlinux
+require_commands jq mkfifo setsid timeout awk findmnt
+[[ ${EUID} -eq 0 ]] || skip "native CPU container profiling requires root"
+
+# Tracing BPF needs CAP_BPF (39) and CAP_PERFMON (38), or CAP_SYS_ADMIN (21).
+NATIVE_EFFECTIVE_CAPS=$(awk '$1 == "CapEff:" { print $2 }' "/proc/$$/status")
+[[ ${NATIVE_EFFECTIVE_CAPS} =~ ^[0-9a-fA-F]+$ ]] || fatal "cannot read effective capabilities"
+readonly NATIVE_EFFECTIVE_CAPS
+(((16#${NATIVE_EFFECTIVE_CAPS} & ((1 << 21) | (1 << 39))) != 0)) \
+	|| skip "BPF tracing requires CAP_BPF or CAP_SYS_ADMIN"
+(((16#${NATIVE_EFFECTIVE_CAPS} & ((1 << 21) | (1 << 38))) != 0)) \
+	|| skip "perf tracing requires CAP_PERFMON or CAP_SYS_ADMIN"
+require_readable /sys/kernel/btf/vmlinux /proc/sys/kernel/perf_event_paranoid
+if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
+	grep -qw cpu /sys/fs/cgroup/cgroup.controllers \
+		|| skip "CPU controller is unavailable in cgroup v2"
+else
+	findmnt -rn -t cgroup -o OPTIONS | grep -E '(^|,)cpu(,|$)' > /dev/null \
+		|| skip "CPU controller is not mounted in cgroup v1"
+fi
+# These perf capabilities bypass perf_event_paranoid, even when it exceeds 2.
+log_info "native CPU container prerequisites: perf_event_paranoid=$(< /proc/sys/kernel/perf_event_paranoid), CapEff=${NATIVE_EFFECTIVE_CAPS}"
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-native-container
 readonly PROFILER_BIN=${TOOL_BIN}
@@ -32,12 +52,6 @@ readonly CONTAINERD_IMAGE="${NATIVE_PROFILER_CONTAINERD_IMAGE:-${DEFAULT_CONTAIN
 readonly CONTAINERD_NAMESPACE="k8s.io"
 readonly PROFILER_DURATION=5
 readonly CHAIN_PATTERN=';f1;f2;f3 [0-9]+$'
-
-[[ -r /proc/sys/kernel/perf_event_paranoid ]] \
-	|| skip "perf_event_paranoid not readable: perf unavailable"
-readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
-[[ "${PARANOID}" -le 2 ]] \
-	|| skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
 
 WORK_DIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${WORK_DIR}/callchain"
@@ -89,7 +103,90 @@ run_profile_case() {
 		|| fatal "native stack missing for runtime=${runtime} container ID"
 }
 
+assert_outside_pid_excluded() (
+	local runtime=$1 container_id=$2 container_pid=$3 container_start_time=$4
+	local outside_pid outside_start_time
+	[[ ${container_pid} =~ ^[1-9][0-9]*$ ]] || fatal "invalid ${runtime} container PID: ${container_pid}"
+	trap cleanup_piped_processes EXIT
+	log_info "checking native PID/container intersection: ${runtime}"
+	start_piped_process "${WORK_DIR}/${runtime}/outside" "${FIXTURE_BIN}"
+	outside_pid=${PROCESS_PID}
+	outside_start_time=${PROCESS_START_TIME}
+	exec {PROCESS_INPUT_FD}>&-
+	exec {PROCESS_OUTPUT_FD}<&-
+	# Prove the outside workload is sampled before checking that CSS excludes it.
+	start_exception_profiler "${WORK_DIR}/${runtime}/outside-control" c 30 1 --pid "${outside_pid}"
+	assert_profiler_samples_before_deadline "${outside_pid}" f3
+	kill -INT "${PROFILER_PID}"
+	assert_profiler_exit 0
+	start_exception_profiler "${WORK_DIR}/${runtime}/outside-excluded" c 2 2 \
+		--pid "${outside_pid}" --container-id "${container_id}"
+	assert_process_message "${PROFILER_OUTPUT_FD}" "${PROFILER_OUT}" 'data reading loop started'
+	assert_profiler_exit 0
+	assert_process_alive "${outside_pid}" "${outside_start_time}" "outside workload during filter check"
+	assert_process_alive "${container_pid}" "${container_start_time}" "container workload during filter check"
+	[[ ! -s ${PROFILER_STACKS} ]] || fatal "combined PID/container filters accepted a nonmember PID"
+)
+
+assert_destroyed_container() (
+	local runtime=$1 container_id=$2 container_pid=$3
+	trap cleanup_piped_processes EXIT
+	log_info "destroying a profiled native container: ${runtime}"
+	start_exception_profiler "${WORK_DIR}/${runtime}/destroyed" c 30 1 \
+		--container-id "${container_id}" --pid "${container_pid}"
+	assert_profiler_samples_before_deadline "${container_pid}" f3
+	if [[ ${runtime} == docker ]]; then
+		timeout 15 docker rm -f "${container_id}"
+	else
+		timeout 15 ctr --namespace "${CONTAINERD_NAMESPACE}" tasks delete --force "${container_id}"
+		timeout 15 ctr --namespace "${CONTAINERD_NAMESPACE}" containers delete "${container_id}"
+	fi
+	kill -INT "${PROFILER_PID}"
+	assert_profiler_exit 0
+)
+
+assert_privileged_container() (
+	local container_name="huatuo-native-privileged-${WORK_DIR##*/}" root_dir path status=0
+	local started=${SECONDS}
+	local -a tool_mounts=()
+	root_dir=$(cd "${ROOT_DIR}" && pwd -P)
+	mkdir "${WORK_DIR}/privileged"
+	trap 'timeout --kill-after=2 15 docker rm -f "${container_name}" > /dev/null 2>&1 || true' EXIT
+	# Reuse the VM toolchain and preloaded image; keep the container overlay root.
+	# Shared paths let the host daemon bind the fixtures created by this runner.
+	for path in /bin /sbin /usr /lib /lib64 /etc; do
+		[[ ! -e ${path} ]] || tool_mounts+=(--mount "type=bind,src=${path},dst=${path},readonly")
+	done
+	log_info "running native intersection and destruction cases inside a privileged container"
+	timeout --kill-after=20 180 docker run --rm --name "${container_name}" \
+		--privileged --pid=host --network=host --cgroupns=host --ulimit memlock=-1:-1 \
+		"${tool_mounts[@]}" \
+		--mount "type=bind,src=${root_dir},dst=${root_dir},readonly" \
+		--mount type=bind,src=/tmp,dst=/tmp \
+		--mount type=bind,src=/run,dst=/run \
+		--mount type=bind,src=/var/run,dst=/var/run \
+		--mount type=bind,src=/sys,dst=/sys \
+		--workdir "${root_dir}" \
+		--env "ROOT_DIR=${root_dir}" \
+		--env "HUATUO_BAMAI_TEST_TMPDIR=${WORK_DIR}/privileged" \
+		--env "NATIVE_PROFILER_DOCKER_IMAGE=${DOCKER_IMAGE}" \
+		--env "NATIVE_PROFILER_CONTAINERD_IMAGE=${CONTAINERD_IMAGE}" \
+		--env NATIVE_PROFILER_TEST_PRIVILEGED_CONTAINER=0 \
+		--entrypoint /bin/bash "${DOCKER_IMAGE}" -euc '
+			source "$ROOT_DIR/integration/lib.sh"
+			[[ -f /.dockerenv ]] || fatal "privileged validation did not start in a Docker container"
+			bash "$ROOT_DIR/integration/run.sh" -j 1 test_profiler_native_cpu_container.sh 2>&1 \
+				| tee "$HUATUO_BAMAI_TEST_TMPDIR/runner.log"
+			grep -qF "summary: total=1 passed=1 skipped=0 failed=0" "$HUATUO_BAMAI_TEST_TMPDIR/runner.log" \
+				|| fatal "privileged native container case did not pass without skips"
+		' || status=$?
+	assert_eq "${status}" 0 "privileged native container cases" \
+		|| fatal "privileged native container cases failed or skipped (exit ${status})"
+	record_test_timing native-container privileged "${started}"
+)
+
 test_docker() {
+	local container_pid container_start_time
 	if ! command -v docker > /dev/null; then
 		log_warn "skipping docker: command is not installed"
 		return
@@ -109,14 +206,20 @@ test_docker() {
 		"${DOCKER_IMAGE}")
 	docker inspect --format '{{.State.Running}}' "${DOCKER_CONTAINER_ID}" | grep -qx true \
 		|| fatal "docker native container exited before profiling: ${DOCKER_CONTAINER_ID}"
+	container_pid=$(docker inspect --format '{{.State.Pid}}' "${DOCKER_CONTAINER_ID}")
+	container_start_time=$(process_start_time "${container_pid}") || fatal "docker container identity unavailable"
 	run_profile_case docker "${DOCKER_CONTAINER_ID}"
-	docker rm -f "${DOCKER_CONTAINER_ID}" > /dev/null
+	assert_outside_pid_excluded docker "${DOCKER_CONTAINER_ID}" "${container_pid}" "${container_start_time}"
+	assert_destroyed_container docker "${DOCKER_CONTAINER_ID}" "${container_pid}"
 	DOCKER_CONTAINER_ID=""
+	if [[ ${NATIVE_PROFILER_TEST_PRIVILEGED_CONTAINER:-0} == 1 ]]; then
+		assert_privileged_container
+	fi
 	RUNTIMES_TESTED=$((RUNTIMES_TESTED + 1))
 }
 
 test_containerd() {
-	local random_id
+	local random_id container_pid container_start_time
 
 	if ! command -v ctr > /dev/null; then
 		log_warn "skipping containerd: ctr is not installed"
@@ -139,15 +242,14 @@ test_containerd() {
 		"${CONTAINERD_IMAGE}" \
 		"${CONTAINERD_CONTAINER_ID}" \
 		/work/callchain
-	ctr --namespace "${CONTAINERD_NAMESPACE}" tasks list \
+	container_pid=$(ctr --namespace "${CONTAINERD_NAMESPACE}" tasks list \
 		| awk -v id="${CONTAINERD_CONTAINER_ID}" \
-			'$1 == id && $3 == "RUNNING" { found = 1 } END { exit !found }' \
+			'$1 == id && $3 == "RUNNING" { print $2; found = 1 } END { exit !found }') \
 		|| fatal "containerd native container exited before profiling: ${CONTAINERD_CONTAINER_ID}"
+	container_start_time=$(process_start_time "${container_pid}") || fatal "containerd container identity unavailable"
 	run_profile_case containerd "${CONTAINERD_CONTAINER_ID}"
-	ctr --namespace "${CONTAINERD_NAMESPACE}" tasks delete --force \
-		"${CONTAINERD_CONTAINER_ID}" > /dev/null 2>&1
-	ctr --namespace "${CONTAINERD_NAMESPACE}" containers delete \
-		"${CONTAINERD_CONTAINER_ID}" > /dev/null 2>&1
+	assert_outside_pid_excluded containerd "${CONTAINERD_CONTAINER_ID}" "${container_pid}" "${container_start_time}"
+	assert_destroyed_container containerd "${CONTAINERD_CONTAINER_ID}" "${container_pid}"
 	CONTAINERD_CONTAINER_ID=""
 	RUNTIMES_TESTED=$((RUNTIMES_TESTED + 1))
 }
