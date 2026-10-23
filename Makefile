@@ -26,6 +26,7 @@ APP_BUILD_TIME = $(shell date "+%Y%m%d%H%M%S")
 APP_VERSION = "2.3.0"
 APP_CMD_DIR := cmd
 APP_CMD_OUTPUT := _output
+PPROF_TOOL := $(APP_CMD_OUTPUT)/tools/pprof-tool
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
 APP_CMD_BIN_TARGETS := $(patsubst %,$(APP_CMD_OUTPUT)/bin/%,$(notdir $(APP_CMD_SUBDIRS)))
 
@@ -213,6 +214,7 @@ unit: gen-build
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
 integration: build
+	go build -o $(PPROF_TOOL) ./build/pprof-tool
 	@bash integration/run.sh
 
 e2e: build

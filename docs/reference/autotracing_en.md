@@ -170,6 +170,8 @@ Tracer: `iotracing`.
 
 Reads `/proc/diskstats` every 5 seconds. A trigger condition must hold for two consecutive intervals. Non-NVMe devices check utilization; NVMe devices require both utilization and either read or write throughput to exceed thresholds. Each device also checks mean read and write wait times independently. Results include process and file I/O rates and I/O scheduling wait stacks.
 
+When running `iotracing` directly, `--enable-pprof` (disabled by default) serves profiles at `http://127.0.0.1:6000/debug/pprof/`; if the address is already in use, the command fails to start. These profiles describe only the `iotracing` process's Go runtime, not `huatuo-bamai` or the application processes performing disk I/O. Automatic tracing does not enable this option.
+
 Example with some common fields omitted:
 
 ```json

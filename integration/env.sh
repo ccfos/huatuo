@@ -58,6 +58,8 @@ WAIT_HUATUO_APISERVER_INTERVAL=2 # second
 export WAIT_HUATUO_APISERVER_INTERVAL
 PROFILER_TOOL_DIR=${PROFILER_TOOL_DIR:-${ROOT_DIR}/_output/tools}
 export PROFILER_TOOL_DIR
+PPROF_TOOL_BIN=${PPROF_TOOL_BIN:-${ROOT_DIR}/_output/tools/pprof-tool}
+export PPROF_TOOL_BIN
 
 # Arrays cannot be exported to child processes via environment variables.
 # Convert the E2E array to a string for reconstruction in child processes.
