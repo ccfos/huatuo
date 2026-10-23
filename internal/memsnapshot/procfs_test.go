@@ -68,6 +68,9 @@ func TestFindLoadBiasMappingIdentity(t *testing.T) {
 	if _, err := FindLoadBias(maps, &target, 0, 0x90000000); err == nil {
 		t.Fatal("accepted an underflowing relocation")
 	}
+	if _, err := FindLoadBias(maps, nil, 0, 0); err == nil {
+		t.Fatal("accepted a nil target mapping")
+	}
 }
 
 func TestReadProcessInstanceIDStat(t *testing.T) {

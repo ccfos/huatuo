@@ -157,6 +157,10 @@ func ReadProcMapsContext(ctx context.Context, path string,
 func FindLoadBias(mappings []ProcMap, target *ProcMap,
 	loadOffset, loadAddress uint64,
 ) (uint64, error) {
+	if target == nil {
+		return 0, errors.New("ELF load bias target mapping is required")
+	}
+
 	for index := range mappings {
 		mapping := &mappings[index]
 		if mapping.Inode == target.Inode && mapping.DevMajor == target.DevMajor &&
