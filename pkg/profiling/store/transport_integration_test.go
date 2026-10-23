@@ -132,16 +132,16 @@ func TestDocumentTransportIntegration(t *testing.T) {
 		client, err := transport.NewClientWithConnContext(
 			ctx,
 			conn,
-			transport.ClientMetadata{ToolName: item.name, Version: "1", TaskID: "task"},
+			transport.ClientMetadata{ServiceName: item.name, ToolName: item.name, Version: "1", TaskID: "task"},
 		)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := client.SendChunk(item.data, false); err != nil {
+		if err := client.Send(t.Context(), item.data, transport.SendOptions{}); err != nil {
 			client.Close()
 			t.Fatal(err)
 		}
-		if err := client.End(); err != nil {
+		if err := client.Send(t.Context(), nil, transport.SendOptions{End: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -257,6 +257,9 @@ func TestGuestNativeStoresToTransport(t *testing.T) {
 			case <-time.After(time.Millisecond):
 			}
 		}
+	}
+	if err := profiles.Commit(ctx, "checkout-profile"); !errors.Is(err, driver.ErrUnsupportedOp) {
+		t.Errorf("completion acknowledgement=%v", err)
 	}
 	if err := profiles.SaveSync(ctx, profile); !errors.Is(err, driver.ErrUnsupportedOp) {
 		t.Errorf("remote visibility guarantee=%v", err)

@@ -119,7 +119,7 @@ func (r *DocumentReceiver) Handle(ctx context.Context, tool string, raw []byte) 
 		if r.Profiling == nil {
 			return fmt.Errorf("guestbridge: profiling storage unavailable")
 		}
-		return r.Profiling.Save(ctx, d)
+		return r.Profiling.SaveSync(ctx, d)
 	default:
 		return ErrUnsupportedType
 	}

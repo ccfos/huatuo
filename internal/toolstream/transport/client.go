@@ -211,7 +211,12 @@ func NewClient(path, serviceName, toolName, version, taskID string) (*Client, er
 		return nil, err
 	}
 
-	return NewClientWithConn(conn, ClientMetadata{ServiceName: serviceName, ToolName: toolName, Version: version, TaskID: taskID})
+	return NewClientWithConn(conn, ClientMetadata{
+		ServiceName: serviceName,
+		ToolName:    toolName,
+		Version:     version,
+		TaskID:      taskID,
+	})
 }
 
 // NewClientWithConn takes ownership of conn, including handshake failures.
@@ -253,7 +258,6 @@ func ChunkFrameSize(dataSize int) (int, error) {
 // EncodeChunkFrame returns one complete Chunk frame with the given payload.
 // The returned slice is owned by the caller.
 func EncodeChunkFrame(data []byte) ([]byte, error) {
-
 	return encodeFrame(func(chunk Chunk) error {
 		if len(data) > 0 {
 			if err := chunk.SetData(data); err != nil {

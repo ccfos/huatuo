@@ -60,8 +60,9 @@ type Filter struct {
 
 // Store persists and queries profiling aggregation windows.
 type Store struct {
-	store   *storage.Store[*Document]
-	commits *commitStore
+	store            *storage.Store[*Document]
+	commits          *commitStore
+	isGuestTransport bool
 }
 
 // NewFromConfig creates profiling storage using the selected backend.
@@ -83,7 +84,7 @@ func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
 			_ = backend.Close(context.Background())
 			return nil, err
 		}
-		return &Store{store: store}, nil
+		return &Store{store: store, isGuestTransport: true}, nil
 	}
 
 	profileStore, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
@@ -107,6 +108,18 @@ func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
 		return nil, errors.Join(err, profileStore.Close(context.WithoutCancel(ctx)))
 	}
 	return &Store{store: profileStore, commits: commits}, nil
+}
+
+// Save persists a window on Host, or queues it for best-effort Guest forwarding.
+// Guest success does not confirm delivery, visibility, or task completion.
+func (s *Store) Save(ctx context.Context, document *Document) error {
+	if !s.isGuestTransport {
+		return s.SaveSync(ctx, document)
+	}
+	if err := s.prepareDocument(document); err != nil {
+		return err
+	}
+	return s.store.Save(ctx, document, driver.SaveOptions{})
 }
 
 // SaveSync persists a profiling window and waits until subsequent queries can see it.
@@ -306,6 +319,9 @@ func (s *Store) prepareDocument(document *Document) error {
 
 // Commit publishes a task after its caller has persisted all windows successfully.
 func (s *Store) Commit(ctx context.Context, taskID string) error {
+	if s != nil && s.isGuestTransport {
+		return fmt.Errorf("guest profiling completion acknowledgement: %w", driver.ErrUnsupportedOp)
+	}
 	if s == nil || s.commits == nil {
 		return errors.New("profiling commit store is not initialized")
 	}
@@ -317,6 +333,9 @@ func (s *Store) Commit(ctx context.Context, taskID string) error {
 
 // IsCommitted reports whether a task has a durable completion marker.
 func (s *Store) IsCommitted(ctx context.Context, taskID string) (bool, error) {
+	if s != nil && s.isGuestTransport {
+		return false, fmt.Errorf("guest profiling completion acknowledgement: %w", driver.ErrUnsupportedOp)
+	}
 	if s == nil || s.commits == nil {
 		return false, errors.New("profiling commit store is not initialized")
 	}

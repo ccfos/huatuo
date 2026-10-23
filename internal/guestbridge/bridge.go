@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/toolstream/transport"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -425,12 +426,22 @@ func (bridge *Bridge) serve(
 }
 
 func (bridge *Bridge) handleDocument(session *transport.Session, chunk transport.ChunkMsg) {
+	if chunk.Commit {
+		session.Err = errors.Join(
+			session.Err,
+			fmt.Errorf("guest document completion acknowledgement: %w", driver.ErrUnsupportedOp),
+		)
+		return
+	}
 	if len(chunk.Data) == 0 {
 		return
 	}
 	started := time.Now()
 	defer func() { bridge.metrics.ingestDuration.Observe(time.Since(started).Seconds()) }()
-	if err := bridge.receiver.Handle(session.Context, session.ToolName, chunk.Data); err != nil {
+	if err := bridge.receiver.Handle(session.Context, session.ServiceName, chunk.Data); err != nil {
+		if session.Err == nil {
+			session.Err = err
+		}
 		bridge.metrics.dropped.WithLabelValues(documentDropReason(err)).Inc()
 		log.Warnf("guestbridge: rejected document: %v", err)
 		return

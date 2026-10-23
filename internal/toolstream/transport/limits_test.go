@@ -33,7 +33,7 @@ func TestClientHandshakeCancellation(t *testing.T) {
 		_, err := NewClientWithConnContext(
 			ctx,
 			client,
-			ClientMetadata{ToolName: "guest-document", Version: "1", TaskID: "task"},
+			ClientMetadata{ServiceName: "guest-document", ToolName: "guest-document", Version: "1", TaskID: "task"},
 		)
 		done <- err
 	}()
@@ -59,7 +59,12 @@ func TestConnectionContextCancellationInterruptsIdleRead(t *testing.T) {
 	}
 	done := make(chan struct{})
 	go func() { defer close(done); server.handleConn(t.Context(), peer) }()
-	connection, err := NewClientWithConn(client, ClientMetadata{ToolName: "guest-document", Version: "1", TaskID: "task"})
+	connection, err := NewClientWithConn(client, ClientMetadata{
+		ServiceName: "guest-document",
+		ToolName:    "guest-document",
+		Version:     "1",
+		TaskID:      "task",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

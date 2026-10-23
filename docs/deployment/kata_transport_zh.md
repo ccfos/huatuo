@@ -60,3 +60,9 @@ Host 根据运行时信息认证连接，再检查容器所属 Sandbox 和命名
 
 `FirecrackerRoot` 必须与实际运行目录一致，例如较新 Kata 安装可能使用
 `/run/kata/firecracker`。
+
+Guest profiling 保留尽力转发：写入成功仅表示窗口进入本地队列，断线、退出或
+Host 存储失败仍可能丢失。Host 对收到的 profiling 窗口采用同步存储，但不会
+向 Guest 返回持久化完成确认。查询可见性保证和完成标记操作明确返回不支持。
+因此，需要完成确认的 profiling 任务会报告失败，即使部分窗口已经写入 Host；
+不能据此认为任务已可靠完成。GuestBridge 会拒绝带 Commit 标记的完成帧。

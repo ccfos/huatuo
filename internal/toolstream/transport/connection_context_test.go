@@ -62,7 +62,12 @@ func TestServerConnectionContext(t *testing.T) {
 			go func() { defer close(done); defer serverConn.Close(); srv.handleConn(t.Context(), serverConn) }()
 			client, err := NewClientWithConn(
 				clientConn,
-				ClientMetadata{ToolName: "guest-document", Version: "2.2.0", TaskID: "forged-sandbox"},
+				ClientMetadata{
+					ServiceName: "guest-document",
+					ToolName:    "guest-document",
+					Version:     "2.2.0",
+					TaskID:      "forged-sandbox",
+				},
 			)
 			if reject {
 				if err == nil {
@@ -81,7 +86,7 @@ func TestServerConnectionContext(t *testing.T) {
 					t.Errorf("handshake: %v", err)
 					return
 				}
-				if err := client.SendChunk([]byte("document"), false); err != nil {
+				if err := client.Send(t.Context(), []byte("document"), SendOptions{}); err != nil {
 					t.Errorf("SendChunk: %v", err)
 					return
 				}

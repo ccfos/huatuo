@@ -222,10 +222,6 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	if sess.ProtoVersion != ProtocolVersion {
-		s.reportReceiveError(fmt.Errorf("transport: unsupported protocol version %d", sess.ProtoVersion))
-		return
-	}
 	sess.Context = ctx
 
 	// Ownership lasts through handler completion and ACK, including a peer disconnect.
@@ -329,6 +325,9 @@ func parseSession(msg *capnp.Message) (*Session, error) {
 		return nil, fmt.Errorf("transport: decode connect: %w", err)
 	}
 
+	if connect.ProtoVersion() != ProtocolVersion {
+		return nil, fmt.Errorf("unsupported toolstream protocol %d; require %d", connect.ProtoVersion(), ProtocolVersion)
+	}
 	serviceName, err := connect.ServiceName()
 	if err != nil {
 		return nil, fmt.Errorf("transport: connect service name: %w", err)
