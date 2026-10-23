@@ -26,18 +26,22 @@ static __always_inline void
 update_metric_map(u64 free_duration_ns, u64 compact_duration_ns)
 {
 	struct mm_free_compact_entry *valp;
+	struct mm_free_compact_entry new_metrics = {};
 	int key = 0;
 
+	/*
+	 * The map holds one entry that every CPU accumulates into, so two of
+	 * them can arrive here together. Create it empty, and only while it is
+	 * missing: replacing it would drop the duration the other CPU stored
+	 * and zero the field it was not measuring. The duration of this CPU is
+	 * added below in both cases, so it is counted exactly once.
+	 */
+	bpf_map_update_elem(&mm_free_compact_map, &key, &new_metrics,
+			    COMPAT_BPF_NOEXIST);
+
 	valp = bpf_map_lookup_elem(&mm_free_compact_map, &key);
-	if (!valp) {
-		struct mm_free_compact_entry new_metrics = {
-			.allocstall_stat = free_duration_ns,
-			.compaction_stat = compact_duration_ns,
-		};
-		bpf_map_update_elem(&mm_free_compact_map, &key, &new_metrics,
-				    COMPAT_BPF_ANY);
+	if (!valp)
 		return;
-	}
 
 	if (free_duration_ns)
 		__sync_fetch_and_add(&valp->allocstall_stat, free_duration_ns);
