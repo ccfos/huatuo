@@ -54,3 +54,28 @@ func TestBPFFilesystemIOPathName(t *testing.T) {
 		assert.Equal(t, "/huatuo-iotracing.test/io", record.PathName())
 	})
 }
+
+func TestBPFFilesystemIOIsDirect(t *testing.T) {
+	t.Parallel()
+
+	// directBit is the modern (>= 5.10) value; IsDirect must never test the
+	// legacy bit 2, which is IOCB_SYNC on those kernels.
+	const directBit = iocbDirectModern
+
+	t.Run("block-path direct IO has no inode", func(t *testing.T) {
+		record := bpfFilesystemIO{Ino: 0, Flags: 0}
+		assert.True(t, record.IsDirect(directBit), "Ino == 0 must be direct regardless of Flags")
+	})
+
+	t.Run("buffered O_SYNC write is not direct", func(t *testing.T) {
+		// On >= 5.10 bit 2 is IOCB_SYNC (= RWF_SYNC), set for buffered
+		// __O_SYNC opens; it must not be reported as direct IO.
+		record := bpfFilesystemIO{Ino: 42, Flags: 0x4}
+		assert.False(t, record.IsDirect(directBit), "IOCB_SYNC (bit 2) is not direct IO")
+	})
+
+	t.Run("real O_DIRECT write is direct", func(t *testing.T) {
+		record := bpfFilesystemIO{Ino: 42, Flags: 1 << 17}
+		assert.True(t, record.IsDirect(directBit), "IOCB_DIRECT (bit 17) must be direct")
+	})
+}

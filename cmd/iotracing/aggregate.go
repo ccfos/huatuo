@@ -80,7 +80,7 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 			DevName:      blockDevName(major, minor),
 			Inode:        record.Ino,
 			Path:         record.PathName(),
-			IsDirect:     record.IsDirect(),
+			IsDirect:     record.IsDirect(cfg.iocbDirectBit),
 			FsReadBps:    rbps,
 			FsWriteBps:   wbps,
 			DiskReadBps:  drbps,
