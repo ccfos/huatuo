@@ -178,13 +178,13 @@ func TestHandshakeTimeoutReleasesConnectionSlot(t *testing.T) {
 	}
 	validClient, err := transport.NewClientWithConn(
 		validConnection,
-		transport.ClientMetadata{ToolName: "test", Version: "1.0", TaskID: ""},
+		transport.ClientMetadata{ServiceName: "test", ToolName: "test", Version: "1.0", TaskID: ""},
 	)
 	if err != nil {
 		t.Fatalf("NewClientWithConn: %v", err)
 	}
-	t.Cleanup(func() { _ = validClient.End() })
-	if err := validClient.SendChunk([]byte(`{"status":"ok"}`), false); err != nil {
+	t.Cleanup(func() { _ = validClient.Close() })
+	if err := validClient.Send(t.Context(), []byte(`{"status":"ok"}`), transport.SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	select {

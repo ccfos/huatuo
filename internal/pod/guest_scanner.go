@@ -84,7 +84,7 @@ func InitGuestManager(options GuestScannerOptions) error {
 	// Populate the CSS cache before discovery publishes BPF sampling targets.
 	// Missing kernel capabilities must not disable basic Guest discovery.
 	controller.initialize = func(context.Context) error {
-		if err := containerCgroupCssInit(); err != nil {
+		if err := initCgroupLifecycle(); err != nil {
 			log.WithError(err).Warn("Guest cgroup CSS unavailable; container BPF sampling is limited")
 		}
 		return nil

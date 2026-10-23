@@ -26,6 +26,8 @@ import (
 
 // Register initializes result storage before exposing the shared tool handlers.
 // Stop the server before calling the returned cleanup function.
+//
+//nolint:gocritic // Startup configuration is copied once and remains immutable.
 func Register(
 	ctx context.Context,
 	server *toolstream.Server,

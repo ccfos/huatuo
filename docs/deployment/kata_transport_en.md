@@ -71,3 +71,12 @@ it does not replace validation against a real Elasticsearch deployment.
 
 FirecrackerRoot must match the runtime directory (for example, newer Kata
 installations may use `/run/kata/firecracker`).
+
+Guest profiling remains best-effort: a successful write only means the window
+entered the local queue. Disconnects, shutdown, or Host storage failures may
+lose it. The Host uses synchronous storage for received profiling windows, but
+no durable completion acknowledgement is returned to the Guest. Visibility
+requests and completion-marker operations return an unsupported-operation
+error. A profiling task that requires a commit acknowledgement therefore
+reports failure even if some windows have reached Host storage. Do not treat
+that task as durably completed. Commit frames sent to GuestBridge are rejected.

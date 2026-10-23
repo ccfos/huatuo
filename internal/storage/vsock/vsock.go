@@ -220,7 +220,12 @@ func (b *Backend) send(ctx context.Context, conn net.Conn) error {
 	client, err := transport.NewClientWithConnContext(
 		ctx,
 		conn,
-		transport.ClientMetadata{ToolName: b.options.ToolName, Version: b.options.Version, TaskID: ""},
+		transport.ClientMetadata{
+			ServiceName: b.options.ToolName,
+			ToolName:    b.options.ToolName,
+			Version:     b.options.Version,
+			TaskID:      "",
+		},
 	)
 	if err != nil {
 		return err

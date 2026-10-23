@@ -32,10 +32,10 @@ func TestCgroupCPUInodeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(bpf.Shutdown)
-	if err := containerCgroupCssInit(); err != nil {
+	if err := initCgroupLifecycle(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(containerCgroupCssRelease)
+	t.Cleanup(releaseCgroupLifecycle)
 	paths, err := cgroups.PathsForPID(1)
 	if err != nil {
 		t.Fatal(err)

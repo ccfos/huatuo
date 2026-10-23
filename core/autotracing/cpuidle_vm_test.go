@@ -23,7 +23,6 @@ import (
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/pod"
-	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 func TestCPUIdleVMCooldownSurvivesBusinessGap(t *testing.T) {
@@ -83,77 +82,64 @@ func TestCPUIdleVMCooldownSurvivesBusinessGap(t *testing.T) {
 	}
 }
 
+// TestCPUIdleReservesCooldownBeforePerfFailure 验证 perf 命令失败及输出无法解析时，
+// 同一 VM 在冷却期内不会再次采样，且冷却期结束后恢复采样资格。
 func TestCPUIdleReservesCooldownBeforePerfFailure(t *testing.T) {
-	original := internalconfig.CoreBinDir
-	internalconfig.CoreBinDir = t.TempDir()
-	t.Cleanup(func() { internalconfig.CoreBinDir = original })
-	count := filepath.Join(t.TempDir(), "perf-executions")
-	t.Setenv("HUATUO_CPU_IDLE_EXECUTIONS", count)
-	script := "#!/bin/sh\necho invocation >> \"$HUATUO_CPU_IDLE_EXECUTIONS\"\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(internalconfig.CoreBinDir, "perf"), []byte(script), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(filepath.Join(internalconfig.CoreBinDir, "perf"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	at := time.Unix(100, 0)
-	state := &containerCPUState{
-		containerID:    "checkout",
-		sandboxID:      "orders-vm",
-		hasPercent:     true,
-		currentPercent: cpuUsageBreakdown[int64]{user: 90},
-		percentDelta:   cpuUsageBreakdown[int64]{user: 60},
-		lastSampleAt:   at,
-	}
-	tracer := &cpuIdleTracing{
-		containers:       map[string]*containerCPUState{"kata:orders-vm": state},
-		minTraceInterval: time.Minute,
-	}
-	if tracer.selectTraceTarget(at) != state {
-		t.Fatal("CPU spike was not selected")
-	}
-	if _, err := runPerfCommand(
-		t.Context(),
-		perfRequest{duration: time.Second, containerID: state.containerID},
-	); err == nil {
-		t.Fatal("expected actual perf command failure")
-	}
-	state.lastSampleAt = at.Add(20 * time.Second)
-	if tracer.selectTraceTarget(state.lastSampleAt) != nil {
-		t.Error("perf failure allowed another VM capture")
-	}
-	data, err := os.ReadFile(count)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Count(string(data), "invocation"); got != 1 {
-		t.Errorf("perf executions=%d, want 1", got)
-	}
-	state.lastSampleAt = at.Add(time.Minute)
-	if tracer.selectTraceTarget(state.lastSampleAt) != state {
-		t.Error("VM did not become eligible after cooldown")
-	}
-}
-
-func TestCPUIdleReservesCooldownBeforeInvalidResult(t *testing.T) {
-	at := time.Unix(100, 0)
-	state := &containerCPUState{
-		containerID:    "checkout",
-		hasPercent:     true,
-		currentPercent: cpuUsageBreakdown[int64]{user: 90},
-		percentDelta:   cpuUsageBreakdown[int64]{user: 60},
-		lastSampleAt:   at,
-	}
-	tracer := &cpuIdleTracing{containers: map[string]*containerCPUState{"checkout": state}, minTraceInterval: time.Minute}
-	if tracer.selectTraceTarget(at) != state {
-		t.Fatal("CPU spike was not selected")
-	}
-	if err := tracer.saveCPUIdleTrace(state, timeutil.Timestamp{Time: at}, []byte("invalid")); err == nil {
-		t.Fatal("expected malformed result error")
-	}
-	state.lastSampleAt = at.Add(time.Second)
-	if tracer.selectTraceTarget(state.lastSampleAt) != nil {
-		t.Error("invalid result allowed another capture")
+	for _, tc := range []struct{ name, output string }{
+		{"command-failure", "exit 1"},
+		{"invalid-output", "echo invalid-profile-json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := internalconfig.CoreBinDir
+			internalconfig.CoreBinDir = t.TempDir()
+			t.Cleanup(func() { internalconfig.CoreBinDir = original })
+			count := filepath.Join(t.TempDir(), "perf-executions")
+			t.Setenv("HUATUO_CPU_IDLE_EXECUTIONS", count)
+			script := "#!/bin/sh\necho invocation >> \"$HUATUO_CPU_IDLE_EXECUTIONS\"\n" + tc.output + "\n"
+			if err := os.WriteFile(filepath.Join(internalconfig.CoreBinDir, "perf"), []byte(script), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(internalconfig.CoreBinDir, "perf"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			at := time.Unix(100, 0)
+			state := &containerCPUState{
+				containerID:    "checkout",
+				sandboxID:      "orders-vm",
+				hasPercent:     true,
+				currentPercent: cpuUsageBreakdown[int64]{user: 90},
+				percentDelta:   cpuUsageBreakdown[int64]{user: 60},
+				lastSampleAt:   at,
+			}
+			tracer := &cpuIdleTracing{
+				containers:       map[string]*containerCPUState{"kata:orders-vm": state},
+				minTraceInterval: time.Minute,
+			}
+			if tracer.selectTraceTarget(at) != state {
+				t.Fatal("CPU spike was not selected")
+			}
+			if _, err := runPerfCommand(
+				t.Context(),
+				profileRequest{duration: time.Second, containerID: state.containerID},
+			); err == nil {
+				t.Fatal("expected actual perf command failure")
+			}
+			state.lastSampleAt = at.Add(20 * time.Second)
+			if tracer.selectTraceTarget(state.lastSampleAt) != nil {
+				t.Error("perf failure allowed another VM capture")
+			}
+			data, err := os.ReadFile(count)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Count(string(data), "invocation"); got != 1 {
+				t.Errorf("perf executions=%d, want 1", got)
+			}
+			state.lastSampleAt = at.Add(time.Minute)
+			if tracer.selectTraceTarget(state.lastSampleAt) != state {
+				t.Error("VM did not become eligible after cooldown")
+			}
+		})
 	}
 }
 

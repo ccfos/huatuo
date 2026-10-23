@@ -1,13 +1,17 @@
 # Toolstream transport boundaries
 
-The existing Unix socket client and `Serve` continue to use protocol version 1.
-The wire schema is unchanged. `NewClientWithConn` accepts ownership of any
-`net.Conn` and a `ClientMetadata` value (tool name, version and task ID).
-The protocol version is supplied by the transport package. `NewClientWithConnContext` additionally closes it on cancellation,
-including during a blocked handshake or send. `End` still reports send and
-close errors. `EncodeChunkFrame` returns one complete encoded chunk frame,
-including framing, without writing it; queueing senders encode a payload once
-and pass the frame to `SendFrame`. `SendChunk` encodes once for direct callers.
+The Unix socket client and `Serve` use protocol version 3. Service names route
+connections independently of tool identity. `NewClientWithConn` accepts ownership
+of any `net.Conn` and a `ClientMetadata` value (service name, tool name, version
+and task ID). The transport package supplies the protocol version.
+`NewClientWithConnContext` additionally closes the connection on cancellation,
+including during a blocked handshake or send. `Send` accepts `SendOptions`;
+`Commit` requires `End` and waits for the server's acknowledgement. `Close`
+releases the connection without sending a frame.
+
+`EncodeChunkFrame` returns one complete encoded data frame, including framing,
+without writing it. Queueing senders encode a payload once and pass the frame
+to `SendFrame`. These data frames do not request a commit acknowledgement.
 
 `ServeWithOptions` adds opt-in connection context, handshake timeout, maximum
 message size, shared decoding byte budget and per-frame receive timeout.

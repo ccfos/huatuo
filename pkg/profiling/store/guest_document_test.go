@@ -16,6 +16,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
@@ -72,5 +73,37 @@ func TestProfilingDecodeRejectsTrailingAndNullJSON(t *testing.T) {
 		if _, err := DecodeDocument([]byte(data)); err == nil {
 			t.Errorf("DecodeDocument(%q) accepted invalid document", data)
 		}
+	}
+}
+
+// TestSaveDeliveryContract 验证 Host 保持同步可见性写入，Guest 仅入队，
+// 并明确拒绝提交完成标记和查询完成状态。
+func TestSaveDeliveryContract(t *testing.T) {
+	for _, guest := range []bool{false, true} {
+		name := "host"
+		if guest {
+			name = "guest"
+		}
+		t.Run(name, func(t *testing.T) {
+			store, backend := newTestStore(t)
+			store.isGuestTransport = guest
+			if err := store.Save(t.Context(), validDocument()); err != nil {
+				t.Fatal(err)
+			}
+			if guest {
+				if backend.asyncSaves != 1 || backend.syncSaves != 0 {
+					t.Fatalf("guest writes=%+v", backend)
+				}
+				if err := store.Commit(t.Context(), "checkout-profile"); !errors.Is(err, driver.ErrUnsupportedOp) {
+					t.Errorf("Commit=%v", err)
+				}
+				committed, err := store.IsCommitted(t.Context(), "checkout-profile")
+				if committed || !errors.Is(err, driver.ErrUnsupportedOp) {
+					t.Errorf("IsCommitted=%t, %v", committed, err)
+				}
+			} else if backend.syncSaves != 1 || backend.asyncSaves != 0 {
+				t.Errorf("host writes=%+v", backend)
+			}
+		})
 	}
 }

@@ -151,15 +151,20 @@ func TestClientMetadataHandshake(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			conn, _, received, wait := newPipedServer(t)
 			t.Cleanup(func() { _ = conn.Close(); wait() })
-			metadata := ClientMetadata{ToolName: "checkout-profiler", Version: "2.3.0", TaskID: "checkout-profile"}
+			metadata := ClientMetadata{
+				ServiceName: "profiling-store",
+				ToolName:    "checkout-profiler",
+				Version:     "2.3.0",
+				TaskID:      "checkout-profile",
+			}
 			client, err := tc.connect(t.Context(), conn, metadata)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := client.SendChunk([]byte("checkout-sample"), false); err != nil {
+			if err := client.Send(t.Context(), []byte("checkout-sample"), SendOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			if err := client.End(); err != nil {
+			if err := client.Send(t.Context(), nil, SendOptions{End: true}); err != nil {
 				t.Fatal(err)
 			}
 			wait()
@@ -168,7 +173,8 @@ func TestClientMetadataHandshake(t *testing.T) {
 				t.Fatalf("unexpected frames: %+v", chunks)
 			}
 			session := chunks[0].Session
-			if session.ToolName != metadata.ToolName || session.Version != metadata.Version ||
+			if session.ServiceName != metadata.ServiceName || session.ToolName != metadata.ToolName ||
+				session.Version != metadata.Version ||
 				session.TaskID != metadata.TaskID || session.ProtoVersion != ProtocolVersion {
 				t.Fatalf("handshake metadata=%+v", session)
 			}
