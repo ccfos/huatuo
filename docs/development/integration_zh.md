@@ -303,3 +303,34 @@ cd integration
 ```bash
 bash run.sh test_node_runtime_limits.sh
 ```
+
+## SchedBlame 真实采集
+
+`test_sched_blame.sh` 运行已构建的 `_output/bin/sched-blame`，使用真实 BPF
+对象、调度钩子、perf 传输和 kubelet 容器发现，不再用 Shell 包装 Go 组件测试，
+也不注入伪造 perf 记录。
+
+用例在本机节点创建两个名称唯一的 Pod，将负载绑定到同一个 CPU，依次采集
+目标独占、存在竞争、竞争容器删除三个阶段，再删除并重建高亮目标。每个阶段
+留出两秒稳定时间，随后至少获得五个运行时间非零的有效样本。检查目标身份、
+dense ID、比例计算、目标替换后的历史清零，以及传输没有丢失。竞争阶段的外部
+竞争比例应比前后两个安静阶段至少高五个百分点，不断言精确比例。SIGTERM
+必须让命令成功退出，最后必须完成测试 namespace 的删除。
+
+需要隔离的 Linux 4.18 至 6.5 环境、BTF、所需的调度和 cgroup 钩子、本机
+Kubernetes 节点、可认证访问的 kubelet，以及已缓存的 `BUSINESS_POD_IMAGE`。
+缺少前置条件时报告 SKIP；环境准备完成后，启动、采集、断言和清理失败均使
+测试失败。较新的不支持内核会直接跳过，不加载 SchedBlame BPF。不根据容器
+身份或根文件系统类型判断资格；满足前置条件的容器和 btrfs 主机不会因此跳过。
+
+CI 构建完成后，可以单独运行：
+
+```bash
+sudo bash integration/run.sh test_sched_blame.sh
+```
+
+成功日志为 `sched-blame live collection verified`。失败时保留 CSV、阶段时间窗、
+命令日志和 Pod 诊断信息。用例控制 CPU 负载，因此保持默认独占执行。CSV 断言
+不等待 60 个样本的异常基线；精确归因、P99、异常数据、上传、丢失计数和最终
+队列排空仍由普通 Go 组件测试验证。真实采集用例不证明精确记账，也不保证
+dense ID 复用时的事件代次隔离；后者仍是设计接受的近似。

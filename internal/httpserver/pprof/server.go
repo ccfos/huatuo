@@ -59,6 +59,14 @@ func StartDefault(ctx context.Context) (*Server, error) {
 	return start(ctx, listener), nil
 }
 
+// Start serves pprof on listener and takes ownership of it until Close.
+func Start(ctx context.Context, listener net.Listener) (*Server, error) {
+	if listener == nil {
+		return nil, errors.New("start pprof server: listener is required")
+	}
+	return start(ctx, listener), nil
+}
+
 // start takes ownership of listener until the returned server is closed.
 func start(ctx context.Context, listener net.Listener) *Server {
 	httpServer := &http.Server{

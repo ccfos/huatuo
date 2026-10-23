@@ -6,6 +6,9 @@ and compare that recording with the same container's SchedBlame measurements.
 The script uses only the Python 3 standard library. Open the generated HTML in
 Chrome; the browser loads Plotly from its public CDN.
 
+To capture data without starting the daemon, use the
+[standalone SchedBlame command](sched-blame-standalone.md).
+
 ## Chart SchedBlame Ratios
 
 Enable recording in the Huatuo configuration:

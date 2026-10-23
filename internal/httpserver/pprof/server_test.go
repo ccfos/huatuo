@@ -63,7 +63,11 @@ func TestServerServesProfiles(t *testing.T) {
 		t.Fatalf("listen for pprof server: %v", err)
 	}
 
-	server := start(t.Context(), listener)
+	server, err := Start(t.Context(), listener)
+	if err != nil {
+		_ = listener.Close()
+		t.Fatalf("start pprof server: %v", err)
+	}
 	t.Cleanup(func() {
 		if err := server.Close(); err != nil {
 			t.Errorf("close pprof server: %v", err)

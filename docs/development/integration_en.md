@@ -381,3 +381,43 @@ populates the persistent cache, and cache download/upload time also counts.
 VM CI preloads ES7 and OpenSearch images during compilation and unit tests.
 Compatibility tests still check pullability. Prefetch logs are saved under
 `_output/storage-image-prefetch`; prefetch failures do not replace normal checks.
+
+## SchedBlame Live Collection
+
+`test_sched_blame.sh` runs the built `_output/bin/sched-blame` with real BPF
+objects, scheduler hooks, perf transport, and kubelet container discovery.
+It does not wrap a Go component test or inject synthetic perf records.
+
+The case creates two uniquely named pods on the local node and pins their
+workloads to the same CPU. It records target-only, competing, and
+competitor-removed phases, then deletes and recreates the highlighted target.
+Each phase must produce at least five valid runtime samples after a two-second
+settling interval. The checker validates target identities, dense-slot ownership,
+ratio arithmetic, history reset on replacement, and absence of transport loss.
+The competing phase must exceed both quiet phases by five percentage points;
+the test does not require an exact contention ratio. SIGTERM must stop the
+command successfully, and namespace deletion must complete.
+
+Run in an isolated Linux 4.18 through 6.5 environment with BTF, the required
+scheduler and cgroup hooks, a local Kubernetes node, authenticated kubelet
+access, and the preloaded `BUSINESS_POD_IMAGE`. The test reports SKIP for
+unavailable prerequisites. Once setup succeeds, tracer startup, collection,
+validation, and cleanup failures fail the case. Unsupported newer kernels are skipped
+without loading SchedBlame BPF. Container identity and root filesystem type
+do not determine eligibility; capable containers and btrfs hosts are not
+excluded by those properties.
+
+After CI has built the checkout, run:
+
+```bash
+sudo bash integration/run.sh test_sched_blame.sh
+```
+
+Success prints `sched-blame live collection verified`. Failed runs retain the
+CSV, phase windows, command log, and pod diagnostics in the case workspace.
+The case stays in the runner's default exclusive group because it controls CPU
+load. CSV assertions do not wait for the 60-sample anomaly baseline. Ordinary
+Go component tests retain deterministic coverage for exact attribution, P99,
+anomaly payloads, upload, loss counters, and final queue draining. Live coverage
+does not establish exact accounting accuracy or generation isolation across
+dense-slot reuse, which remains an accepted approximation.
