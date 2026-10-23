@@ -23,6 +23,7 @@ source "${ROOT_DIR}/integration/lib_cgroup.sh"
 source "${ROOT_DIR}/integration/lib_storage.sh"
 source "${ROOT_DIR}/e2e/lib.sh"
 source "${ROOT_DIR}/e2e/lib_cpu_load.sh"
+source "${ROOT_DIR}/e2e/lib_cpu_metrics.sh"
 
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 5)
 readonly DLOAD_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/dload"
@@ -134,11 +135,18 @@ if [[ -n ${DLOAD_HELPER_BIN:-} ]]; then
 	cp "${DLOAD_HELPER_BIN}" "${DLOAD_BIN}"
 else
 	require_commands go
-	CGO_ENABLED=0 go build -mod=vendor -o "${DLOAD_BIN}" "${ROOT_DIR}/e2e/testdata/test_autotracing_dload.go" \
-		"${ROOT_DIR}/e2e/testdata/metrics_helpers.go"
+	CGO_ENABLED=0 go build -mod=vendor -o "${DLOAD_BIN}" "${ROOT_DIR}/e2e/testdata/test_autotracing_dload.go"
 fi
-DLOAD_MODE=$("${DLOAD_BIN}" mode)
-DLOAD_FIXTURE_ISSUES=$("${DLOAD_BIN}" issues)
+cpu_metrics_prepare "${DLOAD_DIR}"
+if [[ $(stat -fc %T /sys/fs/cgroup) == cgroup2fs ]]; then
+	DLOAD_MODE=unified
+elif [[ $(stat -fc %T /sys/fs/cgroup/unified 2> /dev/null || true) == cgroup2fs ]]; then
+	DLOAD_MODE=hybrid
+else
+	DLOAD_MODE=legacy
+fi
+# Match test workers without depending on kernel-specific stack frames.
+DLOAD_FIXTURE_ISSUES='[["e2e-unmatched","(?m)^Comm: dload-unmatched\\tPid: [0-9]+$"],["e2e-dload","(?m)^Comm: stress-ng-hdd\\tPid: [0-9]+$"]]'
 DLOAD_PORT=$(allocate_available_port) || fatal "cannot allocate dload metrics port"
 DLOAD_KUBELET_PORT=${KUBELET_PODS_API##*:}
 DLOAD_KUBELET_PORT=${DLOAD_KUBELET_PORT%%/*}
@@ -153,9 +161,9 @@ HUATUO_BAMAI_ADDR="http://127.0.0.1:${DLOAD_PORT}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 dload_status() {
-	local args=()
-	[[ ${DLOAD_DISABLED} != true ]] || args+=(--disabled)
-	"${DLOAD_BIN}" status --url "${HUATUO_BAMAI_METRICS_API}" "${args[@]}"
+	local enabled=1
+	[[ ${DLOAD_DISABLED} != true ]] || enabled=0
+	assert_cpu_tracing_status dload "${enabled}"
 }
 
 dload_concurrent_status() {
@@ -219,14 +227,22 @@ dload_invalid_config interval 'dload sampling interval must be positive'
 dload_invalid_config threshold 'dload threshold must be non-negative'
 dload_invalid_config cooldown 'dload tracing interval must be non-negative'
 
+dload_unsupported_logged() {
+	grep -Fq 'skipping dload tracing because cgroup v2 lacks load statistics' \
+		"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+}
+
+assert_dload_unsupported() {
+	[[ ! -s ${HUATUO_BAMAI_TEST_TMPDIR}/events/dload ]] && dload_status
+}
+
 if [[ ${DLOAD_MODE} != legacy ]]; then
 	HUATUO_BAMAI_TEST_TMPDIR="${DLOAD_DIR}/unsupported"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
 	dload_start
-	sleep 2
-	grep -Fq 'skipping dload tracing because cgroup v2 lacks load statistics' \
-		"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" || fatal "${DLOAD_MODE}: missing unsupported-mode log"
-	[[ ! -s ${HUATUO_BAMAI_TEST_TMPDIR}/events/dload ]] || fatal "${DLOAD_MODE}: unsupported mode saved dload events"
+	wait_until 10 0.5 dload_unsupported_logged || fatal "${DLOAD_MODE}: missing unsupported-mode log"
+	cpu_metrics_observe "$((DLOAD_INTERVAL * 2))" 0.5 assert_dload_unsupported \
+		|| fatal "${DLOAD_MODE}: unsupported mode saved events or changed lifecycle status"
 	dload_stop
 	skip "dload unsupported-mode behavior verified; functional/ES cases require Legacy cgroup (actual=${DLOAD_MODE})"
 fi
@@ -339,8 +355,16 @@ dload_local_ready() {
 
 dload_debug_ready() {
 	dload_local_events > "${dload_work}/local.json" || return 1
-	"${DLOAD_BIN}" debug --cooldown "${DLOAD_COOLDOWN}s" < "${dload_work}/local.json" \
-		2> "${dload_work}/debug-check.err"
+	jq -e --argjson cooldown "${DLOAD_COOLDOWN}" '
+		def event_time:
+			capture("^(?<seconds>[^.]+)(?<fraction>\\.[0-9]+)?Z$") |
+			(.seconds + "Z" | fromdateiso8601) + ((.fraction // "0") | tonumber);
+		any(.[]; .tracer_data.dload_avg <= .tracer_data.threshold)
+		and (group_by(.container_id) | any(.[];
+			map(.started_timestamp | event_time) | sort |
+			. as $times | any(range(1; length); . as $i |
+				($times[$i] - $times[$i - 1]) as $elapsed | $elapsed > 0 and $elapsed < $cooldown)))
+	' "${dload_work}/local.json" > /dev/null 2> "${dload_work}/debug-check.err"
 }
 
 dload_remote_events() {
@@ -492,6 +516,16 @@ dload_new_remote_event() {
 	' "${dload_work}/remote.json" > /dev/null
 }
 
+assert_dload_idle() {
+	dload_snapshot "${dload_work}/idle-sample.json" || return 1
+	jq -e '.stats.nr_uninterruptible == 0' "${dload_work}/idle-sample.json" > /dev/null || return 1
+	dload_local_events > "${dload_work}/baseline-events.json" || return 1
+	jq -e 'length == 0' "${dload_work}/baseline-events.json" > /dev/null || return 1
+	dload_remote_events || return 1
+	jq -e 'length == 0' "${dload_work}/remote.json" > /dev/null || return 1
+	dload_status
+}
+
 dload_run_case() (
 	local name=$1 issue=none pid started_ms old_id
 	HUATUO_BAMAI_TEST_TMPDIR="${DLOAD_DIR}/${name}"
@@ -535,11 +569,8 @@ dload_run_case() (
 		dload_debug_ready || fatal "saved debug events did not bypass threshold/cooldown; inspect ${dload_work}/debug-check.err"
 		return
 	fi
-	sleep 2
-	dload_local_events > "${dload_work}/baseline-events.json"
-	jq -e 'length == 0' "${dload_work}/baseline-events.json" > /dev/null || fatal "idle container unexpectedly triggered dload"
-	dload_remote_events || fatal "cannot query baseline events from ES"
-	jq -e 'length == 0' "${dload_work}/remote.json" > /dev/null || fatal "idle container has ES events"
+	cpu_metrics_observe "$((DLOAD_INTERVAL * 2))" 0.5 assert_dload_idle \
+		|| fatal "idle container has D tasks, unexpected events or invalid lifecycle status"
 	timeout 25 "${DLOAD_BIN}" sample --cgroup "${dload_cgroup}" --duration 18s \
 		> "${dload_work}/samples.jsonl" 2> "${dload_work}/reference.err" &
 	dload_reference_pid=$!

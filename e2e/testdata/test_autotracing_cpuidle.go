@@ -20,17 +20,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
-
-	dto "github.com/prometheus/client_model/go"
-	"github.com/prometheus/common/expfmt"
-
-	"github.com/ccfos/huatuo/internal/profiling/flamegraph"
 )
 
 func main() {
@@ -41,96 +35,21 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 {
-		return errors.New("use status, sample, or flame")
+	if len(args) == 0 || args[0] != "sample" {
+		return errors.New("use sample")
 	}
-	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	url := flags.String("url", "", "bamai metrics URL")
-	disabled := flags.Bool("disabled", false, "require cpuidle to be absent")
+	flags := flag.NewFlagSet("sample", flag.ContinueOnError)
 	path := flags.String("cgroup", "", "CPU accounting cgroup directory")
 	cores := flags.Float64("cores", 0, "independently measured CPU capacity")
 	ticks := flags.Float64("ticks", 100, "getconf CLK_TCK")
 	duration := flags.Duration("duration", 4*time.Second, "CPU reference sampling duration")
-	file := flags.String("file", "", "events JSON file")
-	comm := flags.String("comm", "", "expected worker comm")
-	forbid := flags.String("forbid", "", "unrelated worker comm")
-	kernel := flags.Bool("kernel", false, "require a sampled kernel frame")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
-	switch args[0] {
-	case "status":
-		client := &http.Client{Timeout: 5 * time.Second}
-		response, err := client.Get(*url)
-		if err != nil {
-			return err
-		}
-		defer response.Body.Close()
-		if response.StatusCode != http.StatusOK {
-			return fmt.Errorf("metrics HTTP status %d", response.StatusCode)
-		}
-		return checkStatus(response.Body, *disabled)
-	case "sample":
-		if *path == "" || *cores <= 0 || *ticks <= 0 || *duration <= 0 {
-			return errors.New("sample requires a cgroup, positive cores, ticks and duration")
-		}
-		return sampleUsage(*path, *cores, *ticks, *duration, os.Stdout)
-	case "flame":
-		data, err := os.ReadFile(*file)
-		if err != nil {
-			return err
-		}
-		return checkFlames(data, *comm, *forbid, *kernel)
-	default:
-		return fmt.Errorf("unknown command %q", args[0])
+	if *path == "" || *cores <= 0 || *ticks <= 0 || *duration <= 0 {
+		return errors.New("sample requires a cgroup, positive cores, ticks and duration")
 	}
-}
-
-func checkStatus(reader io.Reader, disabled bool) error {
-	var parser expfmt.TextParser
-	families, err := parser.TextToMetricFamilies(reader)
-	if err != nil {
-		return err
-	}
-	for _, name := range []string{"huatuo_bamai_tracing_status_running", "huatuo_bamai_tracing_status_hitcount"} {
-		if family := families[name]; family != nil && family.GetType() != dto.MetricType_GAUGE {
-			return fmt.Errorf("%s must be a gauge", name)
-		}
-	}
-	found := false
-	for _, metric := range families["huatuo_bamai_tracing_status_hitcount"].GetMetric() {
-		labels := make(map[string]string)
-		for _, pair := range metric.GetLabel() {
-			labels[pair.GetName()] = pair.GetValue()
-		}
-		if labels["tracing"] != "cpuidle" {
-			continue
-		}
-		found = true
-		if labels["host"] != "huatuo-dev" || labels["region"] != "e2e" ||
-			metric.GetGauge().GetValue() != 0 {
-			return errors.New("cpuidle lifecycle labels are incorrect or its sampling loop restarted")
-		}
-	}
-	if found == disabled {
-		return fmt.Errorf("cpuidle lifecycle presence=%t, disabled=%t", found, disabled)
-	}
-	running := families["huatuo_bamai_tracing_status_running"].GetMetric()
-	want := float64(1)
-	if disabled {
-		want = 0
-	}
-	if len(running) != 1 || running[0].GetGauge().GetValue() != want {
-		return fmt.Errorf("running tracer count must be %g", want)
-	}
-	labels := make(map[string]string)
-	for _, pair := range running[0].GetLabel() {
-		labels[pair.GetName()] = pair.GetValue()
-	}
-	if labels["host"] != "huatuo-dev" || labels["region"] != "e2e" {
-		return errors.New("running tracer count has incorrect host/region labels")
-	}
-	return nil
+	return sampleUsage(*path, *cores, *ticks, *duration, os.Stdout)
 }
 
 type usage struct {
@@ -211,46 +130,4 @@ func sampleUsage(path string, cores, ticks float64, duration time.Duration, writ
 		Cores   float64   `json:"cores"`
 		Percent usage     `json:"percent"`
 	}{now, seconds, cores, percent})
-}
-
-func checkFlames(data []byte, comm, forbid string, kernel bool) error {
-	var events []struct {
-		TracerData struct {
-			FlameData []flamegraph.FrameData `json:"flamedata"`
-		} `json:"tracer_data"`
-	}
-	if err := json.Unmarshal(data, &events); err != nil {
-		return err
-	}
-	if len(events) == 0 || comm == "" {
-		return errors.New("flame validation requires events and an expected worker comm")
-	}
-	for i := range events {
-		if err := checkFrames(events[i].TracerData.FlameData, comm, forbid, kernel); err != nil {
-			return fmt.Errorf("event %d: %w", i, err)
-		}
-	}
-	return nil
-}
-
-func checkFrames(frames []flamegraph.FrameData, comm, forbid string, kernel bool) error {
-	if len(frames) < 2 || frames[0].Level != 0 || frames[0].Value <= 0 {
-		return errors.New("flame graph has no positive root and sampled worker")
-	}
-	foundComm, foundKernel := false, false
-	for i := range frames {
-		frame := &frames[i]
-		if frame.Level < 0 || frame.Value <= 0 || frame.Self < 0 || frame.Self > frame.Value || frame.Label == "" {
-			return fmt.Errorf("invalid flame frame %d: %+v", i, frame)
-		}
-		foundComm = foundComm || frame.Label == comm
-		foundKernel = foundKernel || strings.HasSuffix(frame.Label, "_[k]")
-		if forbid != "" && frame.Label == forbid {
-			return fmt.Errorf("unrelated worker %q appears in the target flame graph", forbid)
-		}
-	}
-	if !foundComm || (kernel && !foundKernel) {
-		return fmt.Errorf("flame graph worker=%t kernel=%t, expected comm=%q require-kernel=%t", foundComm, foundKernel, comm, kernel)
-	}
-	return nil
 }

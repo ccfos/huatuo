@@ -22,6 +22,7 @@ source "${ROOT_DIR}/integration/lib_cgroup.sh"
 source "${ROOT_DIR}/integration/lib_storage.sh"
 source "${ROOT_DIR}/e2e/lib.sh"
 source "${ROOT_DIR}/e2e/lib_cpu_load.sh"
+source "${ROOT_DIR}/e2e/lib_cpu_metrics.sh"
 
 require_commands kubectl jq findmnt getconf docker timeout
 require_readable "${KUBELET_CERT}" "${KUBELET_KEY}"
@@ -84,9 +85,9 @@ else
 		"${ROOT_DIR}/e2e/testdata/metrics_helpers.go" "${ROOT_DIR}/e2e/testdata/proc_helpers.go" "${ROOT_DIR}/e2e/testdata/fixture_helpers.go"
 fi
 cpu_load_prepare "${CPUIDLE_DIR}"
+cpu_metrics_prepare "${CPUIDLE_DIR}"
 
-# perf resolves containers through bamai's default API address.
-CPUIDLE_PORT=19704
+CPUIDLE_PORT=$(allocate_available_port) || fatal "cannot allocate cpuidle API port"
 CPUIDLE_KUBELET_PORT=${KUBELET_PODS_API##*:}
 CPUIDLE_KUBELET_PORT=${CPUIDLE_KUBELET_PORT%%/*}
 CPUIDLE_NODE=$(kubelet_pods_json | jq -er '[.items[].spec.nodeName] | unique | if length == 1 then .[0] else error("cannot identify local node") end')
@@ -110,9 +111,9 @@ HUATUO_BAMAI_ADDR="http://127.0.0.1:${CPUIDLE_PORT}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 cpuidle_status() {
-	local args=()
-	[[ ${CPUIDLE_DISABLED} != true ]] || args+=(--disabled)
-	"${CPUIDLE_BIN}" status --url "${HUATUO_BAMAI_METRICS_API}" "${args[@]}"
+	local enabled=1
+	[[ ${CPUIDLE_DISABLED} != true ]] || enabled=0
+	assert_cpu_tracing_status cpuidle "${enabled}"
 }
 
 cpuidle_command() {
@@ -270,9 +271,9 @@ cpuidle_begin() {
 }
 
 cpuidle_assert_events() {
-	local suffix=$1 channel=$2 forbid=b kernel=()
+	local suffix=$1 channel=$2 forbid=b kernel=false
 	[[ ${suffix} != b ]] || forbid=a
-	[[ ${channel} != system ]] || kernel=(--kernel)
+	[[ ${channel} != system ]] || kernel=true
 	cpuidle_local_events | jq --arg id "$(< "${CPUIDLE_DIR}/${suffix}.id")" '[.[] | select(.container_id == $id)]' \
 		> "${HUATUO_BAMAI_TEST_TMPDIR}/${suffix}.events.json"
 	jq -e --arg pod "${CPUIDLE_PREFIX}-${suffix}" --arg ns "${CPUIDLE_NS}" --arg host "$(hostname)" \
@@ -299,8 +300,17 @@ cpuidle_assert_events() {
 				and .[$channel + "_percent"] > .[$channel + "_percent_threshold"]
 				and .[$channel + "_percent_delta"] > .[$channel + "_percent_delta_threshold"]))
 	' "${HUATUO_BAMAI_TEST_TMPDIR}/${suffix}.events.json" > /dev/null || fatal "${cpuidle_phase}: invalid metadata, thresholds or trigger data"
-	"${CPUIDLE_BIN}" flame --file "${HUATUO_BAMAI_TEST_TMPDIR}/${suffix}.events.json" \
-		--comm "cpuidle-${suffix}" --forbid "cpuidle-${forbid}" "${kernel[@]}"
+	jq -e --arg comm "cpuidle-${suffix}" --arg forbid "cpuidle-${forbid}" --argjson kernel "${kernel}" '
+		all(.[]; .tracer_data.flamedata |
+			length >= 2 and .[0].level == 0 and .[0].value > 0
+			and all(.[]; (.level | type == "number" and . >= 0)
+				and (.value | type == "number" and . > 0)
+				and (.self | type == "number" and . >= 0) and .self <= .value
+				and (.label | type == "string" and length > 0) and .label != $forbid)
+			and any(.[]; .label == $comm)
+			and (if $kernel then any(.[]; .label | endswith("_[k]")) else true end))
+	' "${HUATUO_BAMAI_TEST_TMPDIR}/${suffix}.events.json" > /dev/null \
+		|| fatal "${cpuidle_phase}: invalid flame graph or unexpected worker"
 	jq -r '.[] | "cpuidle event: pod=\(.container_hostname) started_at=\(.started_timestamp) usr=\(.tracer_data.user_percent)% sys=\(.tracer_data.system_percent)% total=\(.tracer_data.total_percent)% delta_usr=\(.tracer_data.user_percent_delta) delta_sys=\(.tracer_data.system_percent_delta) delta_total=\(.tracer_data.total_percent_delta) samples=\(.tracer_data.flamedata[0].value)"' \
 		"${HUATUO_BAMAI_TEST_TMPDIR}/${suffix}.events.json"
 }
