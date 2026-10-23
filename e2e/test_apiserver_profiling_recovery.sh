@@ -16,12 +16,7 @@ CURRENT_CASE=graceful-recovery
 create 40
 first=$JOB_ID
 wait_job "$first" running
-restarting_pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid")
-kill -TERM "$restarting_pid"
-server_exited() { ! kill -0 "$restarting_pid" 2> /dev/null; }
-wait_until 20 1 server_exited || fatal 'apiserver did not exit on SIGTERM'
-wait "$restarting_pid" || fatal 'apiserver graceful exit returned a failure'
-rm "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"
+huatuo_apiserver_stop_with_signal TERM
 curl -fsS "${CURL_TIMEOUT[@]}" -H 'Authorization: Bearer integration-node-token' "$HUATUO_BAMAI_ADDR/v1/operations/$first" > "${HUATUO_BAMAI_TEST_TMPDIR}/operation-before-restart.json"
 jq -e '.data.status == "running"' "${HUATUO_BAMAI_TEST_TMPDIR}/operation-before-restart.json" > /dev/null
 start_server

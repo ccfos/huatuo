@@ -366,6 +366,55 @@ write_continuous_profiling_apiserver_config() {
 EOF
 }
 
+# Profiling workflow cases supply controller limits and isolated service ports.
+write_apiserver_profiling_config() {
+	write_apiserver_apis_config
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << CONFIG
+[Agent]
+    HTTPPort = ${NODE_PORT}
+[Jobs.Profiling]
+    MaxConcurrentPerHost = ${MAX_HOST}
+    MaxConcurrent = ${MAX_TOTAL}
+[Jobs.Controller]
+    StatusPollIntervalSeconds = 1
+    PendingTimeoutSeconds = 10
+    CompletionGracePeriodSeconds = 20
+    NodeUnavailableGracePeriodSeconds = 5
+[Profiling]
+    DashboardBaseURL = "http://grafana.invalid/d"
+CONFIG
+	if [[ $WITH_STORAGE == true ]]; then
+		cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << CONFIG
+[Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "elastic"
+    Password = "${ES_PASSWORD}"
+    Index = "huatuo_continuous_profiling_test"
+CONFIG
+	fi
+}
+
+# The matrix supplies kubelet credentials; host-only cases leave POD_NAMESPACE empty.
+write_apiserver_profiling_bamai_config() {
+	write_continuous_profiling_bamai_config
+	# External runtimes must use the same bundled tools as direct profiler tests.
+	sed -i '/MaxConcurrentProcesses = 10/a\    ToolDir = "'"${PROFILER_TOOL_DIR}"'"' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << CONFIG
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${NODE_PORT}"
+[Operations]
+    MaxConcurrent = ${NODE_CAPACITY}
+CONFIG
+	if [[ -n "$POD_NAMESPACE" ]]; then
+		cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << CONFIG
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = 10250
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+CONFIG
+	fi
+}
+
 write_memory_oom_kill_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "sched_tick", "ras", "runqlat", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]

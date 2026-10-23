@@ -25,14 +25,9 @@ readonly SUMMARY="${HUATUO_BAMAI_TEST_TMPDIR}/summary.tsv"
 printf 'case\tresult\n' > "$SUMMARY"
 CURRENT_CASE=setup
 stop_orphans() {
-	local pid attempt
-	for pid in "${ORPHAN_PIDS[@]}"; do
-		kill -TERM -- "-$pid" 2> /dev/null || continue
-		for ((attempt = 0; attempt < 5; attempt++)); do
-			kill -0 -- "-$pid" 2> /dev/null || break
-			sleep 1
-		done
-		kill -KILL -- "-$pid" 2> /dev/null || true
+	local pgid
+	for pgid in "${ORPHAN_PIDS[@]}"; do
+		stop_by_process_group "$pgid" 5
 	done
 	ORPHAN_PIDS=()
 }
@@ -73,8 +68,6 @@ pass() {
 
 continuous_profiling_requirements
 require_commands curl python3 gcc ss pgrep
-require_build_output
-require_commands "$HUATUO_APISERVER_BIN" "$HUATUO_BAMAI_BIN"
 APISERVER_PORT=$(allocate_available_port)
 NODE_PORT=$(allocate_available_port)
 while [[ $NODE_PORT == "$APISERVER_PORT" ]]; do NODE_PORT=$(allocate_available_port); done
@@ -86,62 +79,17 @@ export APISERVER_ADDR API_TOKEN
 PROBE="${ROOT_DIR}/_output/tests/apiserver-probe"
 [[ -x $PROBE ]] || fatal 'missing apiserver probe; run make build'
 
-write_server_config() {
-	write_apiserver_apis_config
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << CONFIG
-[Agent]
-    HTTPPort = ${NODE_PORT}
-[Jobs.Profiling]
-    MaxConcurrentPerHost = ${MAX_HOST}
-    MaxConcurrent = ${MAX_TOTAL}
-[Jobs.Controller]
-    StatusPollIntervalSeconds = 1
-    PendingTimeoutSeconds = 10
-    CompletionGracePeriodSeconds = 20
-    NodeUnavailableGracePeriodSeconds = 5
-[Profiling]
-    DashboardBaseURL = "http://grafana.invalid/d"
-CONFIG
-	if [[ $WITH_STORAGE == true ]]; then
-		cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << CONFIG
-[Elasticsearch]
-    Address = "${STORAGE_ADDR}"
-    Username = "elastic"
-    Password = "${ES_PASSWORD}"
-    Index = "huatuo_continuous_profiling_test"
-CONFIG
-	fi
-}
-write_node_config() {
-	write_continuous_profiling_bamai_config
-	# External runtimes must use the same bundled tools as direct profiler tests.
-	sed -i '/MaxConcurrentProcesses = 10/a\    ToolDir = "'"${PROFILER_TOOL_DIR}"'"' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << CONFIG
-[HTTPServer]
-    ListenAddress = "127.0.0.1:${NODE_PORT}"
-[Operations]
-    MaxConcurrent = ${NODE_CAPACITY}
-CONFIG
-	if [[ -n "$POD_NAMESPACE" ]]; then
-		cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << CONFIG
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = 10250
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
-CONFIG
-	fi
-}
 start_server() {
 	[[ ! -f "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" ]] || cp "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver-${APISERVER_GENERATION}.log"
 	APISERVER_GENERATION=$((APISERVER_GENERATION + 1))
-	integration_huatuo_apiserver_start write_server_config
+	integration_huatuo_apiserver_start write_apiserver_profiling_config
 }
 start_node() {
 	[[ ! -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" ]] || cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai-${BAMAI_GENERATION}.log"
 	BAMAI_GENERATION=$((BAMAI_GENERATION + 1))
 	local args=(--region "${TEST_LOG_TAG,,}")
 	[[ -n "$POD_NAMESPACE" ]] || args+=(--disable-kubelet)
-	integration_huatuo_bamai_start write_node_config "${args[@]}"
+	integration_huatuo_bamai_start write_apiserver_profiling_bamai_config "${args[@]}"
 }
 request() {
 	local method=$1 path=$2 expected=$3 body=${4:-}
