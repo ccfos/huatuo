@@ -39,7 +39,7 @@ type Config struct {
 	ProfilerPath         string
 	ToolstreamSocketPath string
 	NodeAPIAddress       string
-	// ToolDir is the shared root of external profiling tools.
+	// ToolDir is the shared tool root; Python memory uses its memray subdirectory.
 	ToolDir                 string
 	AggregationInterval     time.Duration
 	MaxConcurrentProcesses  int
