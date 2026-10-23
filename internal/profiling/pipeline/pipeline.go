@@ -119,6 +119,7 @@ func (p *Pipeline) RecordQueueFull(samples uint64) {
 	if samples == 0 {
 		return
 	}
+
 	p.queuedDrops.Add(samples)
 }
 
@@ -199,6 +200,7 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 		}
 		p.droppedSamples[types.DropReasonCollection] += queued
 	}
+
 	if !retain && p.aggregator.Empty() && len(p.droppedSamples) == 0 {
 		return nil
 	}

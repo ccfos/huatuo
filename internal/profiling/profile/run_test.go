@@ -33,7 +33,6 @@ import (
 
 	"github.com/ccfos/huatuo/internal/log"
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
-	"github.com/ccfos/huatuo/internal/profiling/formatter/factory"
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/profiling"
@@ -52,6 +51,23 @@ func (fakeProfiler) Stop() error { return nil }
 func testAggregationConfig() pipeline.AggregationConfig {
 	return pipeline.AggregationConfig{ProfileType: profiling.ProfileTypeCpuSample}
 }
+
+// recordingFormatter keeps published windows so tests can assert what the
+// pipeline actually delivered instead of only its return values.
+type recordingFormatter struct {
+	name    output.OutputFormat
+	windows []*types.AggregationWindow
+}
+
+func (f *recordingFormatter) Name() output.OutputFormat { return f.name }
+
+func (f *recordingFormatter) Add(_ context.Context, window *types.AggregationWindow) error {
+	f.windows = append(f.windows, window)
+	return nil
+}
+
+func (f *recordingFormatter) Complete(context.Context) error { return nil }
+func (f *recordingFormatter) Close() error                   { return nil }
 
 func newMeta(implementation profiling.Implementation, typ profiling.Type) *ProfilerMeta {
 	return &ProfilerMeta{
@@ -243,35 +259,107 @@ func (p *loopProfiler) Stop() error {
 }
 
 func TestEnqueueBatchAccountsFullQueueDrops(t *testing.T) {
-	formatter, err := factory.NewFormatter(output.Config{
-		Format:      output.FormatJSON,
-		Destination: t.TempDir(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer formatter.Close()
-
+	formatter := &recordingFormatter{name: output.FormatJSON}
 	pipe := pipeline.NewPipeline(&pipeline.PipelineConfig{
 		AggregationConfig: testAggregationConfig(),
 		AggregationMode:   pipeline.AggregationModeOneShot,
 		Formatter:         formatter,
 	})
 
-	batch := &pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 1}}}
+	accepted := &pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 1}}}
 	for {
-		err := pipe.Enqueue(t.Context(), batch)
+		err := pipe.Enqueue(t.Context(), accepted)
 		if err == nil {
 			continue
 		}
+
 		if !errors.Is(err, pipeline.ErrQueueFull) {
 			t.Fatalf("fill queue error = %v, want %v", err, pipeline.ErrQueueFull)
 		}
+
 		break
 	}
 
-	if err := enqueueBatch(pipe, t.Context(), batch); err != nil {
+	rejected := &pipeline.SampleBatch{
+		Samples:        []aggregation.Sample{{Value: 2}, {Value: 3}},
+		DroppedSamples: map[string]uint64{types.DropReasonCollection: 3},
+	}
+	if err := enqueueBatch(t.Context(), pipe, rejected); err != nil {
 		t.Fatalf("enqueueBatch() error = %v, want nil", err)
+	}
+
+	pipe.Close()
+
+	if err := pipe.Run(t.Context()); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+
+	if len(formatter.windows) != 1 {
+		t.Fatalf("windows = %d, want 1", len(formatter.windows))
+	}
+
+	window := formatter.windows[0]
+	if got := window.DroppedSamples[types.DropReasonCollection]; got != 5 {
+		t.Fatalf("dropped samples = %v, want %d", window.DroppedSamples, 5)
+	}
+
+	if len(window.Aggregated.Samples) == 0 {
+		t.Fatal("accepted samples were not published")
+	}
+}
+
+func TestEnqueueBatchPropagatesNonQueueError(t *testing.T) {
+	pipe := pipeline.NewPipeline(&pipeline.PipelineConfig{
+		AggregationConfig: testAggregationConfig(),
+		AggregationMode:   pipeline.AggregationModeOneShot,
+		Formatter:         &recordingFormatter{name: output.FormatJSON},
+	})
+	t.Cleanup(pipe.Close)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := enqueueBatch(ctx, pipe, &pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 1}}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("enqueueBatch() error = %v, want %v", err, context.Canceled)
+	}
+}
+
+func TestEnqueueBatchPhysicalUsageStillFailsOnLoss(t *testing.T) {
+	formatter := &recordingFormatter{name: output.FormatJSON}
+	pipe := pipeline.NewPipeline(&pipeline.PipelineConfig{
+		AggregationConfig: pipeline.AggregationConfig{ProfileType: profiling.ProfileTypePhysicalUsage},
+		AggregationMode:   pipeline.AggregationModeOneShot,
+		Formatter:         formatter,
+	})
+
+	accepted := &pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 1}}}
+	for {
+		err := pipe.Enqueue(t.Context(), accepted)
+		if err == nil {
+			continue
+		}
+
+		if !errors.Is(err, pipeline.ErrQueueFull) {
+			t.Fatalf("fill queue error = %v, want %v", err, pipeline.ErrQueueFull)
+		}
+
+		break
+	}
+
+	rejected := &pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 2}}}
+	if err := enqueueBatch(t.Context(), pipe, rejected); err != nil {
+		t.Fatalf("enqueueBatch() error = %v, want nil", err)
+	}
+
+	pipe.Close()
+
+	if err := pipe.Run(t.Context()); err == nil {
+		t.Fatal("Run() error = nil, want sample loss failure")
+	}
+
+	if len(formatter.windows) != 0 {
+		t.Fatalf("windows = %d, want 0", len(formatter.windows))
 	}
 }
 

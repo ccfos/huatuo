@@ -30,8 +30,8 @@ import (
 // enqueueBatch hands one batch to the pipeline. The input queue is bounded and
 // the producer must not block, so a rejected batch is accounted as a dropped
 // sample instead of aborting the whole collection.
-func enqueueBatch(pipe *pipeline.Pipeline, processCtx context.Context, batch *pipeline.SampleBatch) error {
-	err := pipe.Enqueue(processCtx, batch)
+func enqueueBatch(ctx context.Context, pipe *pipeline.Pipeline, batch *pipeline.SampleBatch) error {
+	err := pipe.Enqueue(ctx, batch)
 	if !errors.Is(err, pipeline.ErrQueueFull) {
 		return err
 	}
@@ -40,6 +40,7 @@ func enqueueBatch(pipe *pipeline.Pipeline, processCtx context.Context, batch *pi
 	for _, count := range batch.DroppedSamples {
 		dropped += count
 	}
+
 	pipe.RecordQueueFull(dropped)
 
 	return nil
@@ -121,7 +122,7 @@ func Run(
 	// Integration workloads wait for this exact readiness barrier.
 	log.Info("data reading loop started")
 	loopErr := p.Impl.ReadDataLoop(collectionCtx, func(batch *pipeline.SampleBatch) error {
-		return enqueueBatch(pipe, processCtx, batch)
+		return enqueueBatch(processCtx, pipe, batch)
 	})
 	if timer != nil {
 		timer.Stop()
