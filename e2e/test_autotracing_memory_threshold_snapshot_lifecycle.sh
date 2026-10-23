@@ -42,13 +42,13 @@ lifecycle_write_config() {
 		if [[ ${lifecycle_mode} == contention_burst || ${lifecycle_mode} == contention_target_exit ]]; then
 			sed -i 's/RunTracingToolTimeout = 10/RunTracingToolTimeout = 1/' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 		fi
+		# Keep one event per burst while the fixed history still contains low samples.
 		cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << CONFIG
 [AutoTracing.MemoryBurst]
  DeltaMemoryBurst = 10
  DeltaAnonThreshold = 0
  Interval = 1
- SlidingWindowLength = 2
- IntervalTracing = 1
+ IntervalTracing = 60
  DumpProcessMaxNum = 10
 CONFIG
 	fi
@@ -305,7 +305,7 @@ lifecycle_contention() {
 	mkdir -p "${MEMSNAP_READ_BARRIER_DIR}"
 	HUATUO_BAMAI_BIN=${lifecycle_capture_bin}
 	lifecycle_start
-	memsnapshot_wait_memburst_samples 0 2 100000
+	memsnapshot_wait_memburst_samples 0 60 100000
 	if [[ ${lifecycle_mode} == contention_threshold ]]; then
 		lifecycle_trigger 1
 		wait_until 10 .01 snapshot_read_barrier_ready || fatal "threshold did not enter remote read"
@@ -326,7 +326,7 @@ lifecycle_contention() {
 			mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${go_snapshot_case_dir}/daemon-canceled.log"
 			lifecycle_contention_input low
 			lifecycle_start
-			memsnapshot_wait_memburst_samples 0 2 100000
+			memsnapshot_wait_memburst_samples 0 60 100000
 			lifecycle_contention_input high
 			assert_contention_burst 2 recovered
 			lifecycle_trigger 1
@@ -356,7 +356,7 @@ lifecycle_contention() {
 	fi
 	cp "${go_snapshot_case_dir}/events/memburst" "${go_snapshot_case_dir}/before-recovery"
 	lifecycle_contention_input low
-	memsnapshot_wait_memburst_samples "${lifecycle_sample_offset}" 2 100000
+	memsnapshot_wait_memburst_samples "${lifecycle_sample_offset}" 60 100000
 	lifecycle_contention_input high
 	assert_contention_burst 2 recovered
 	assert_memsnapshot_event_prefix "${go_snapshot_case_dir}/before-recovery" "${go_snapshot_case_dir}/events/memburst" "recovery changed previous contention event"

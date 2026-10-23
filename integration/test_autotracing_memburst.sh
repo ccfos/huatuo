@@ -78,7 +78,7 @@ burst_input() {
 }
 
 burst_wait_samples() {
-	local memburst_input_level=$1 count=${2:-2} active=100000
+	local memburst_input_level=$1 count=${2:-60} active=100000
 	[[ ${memburst_input_level} != high ]] || active=400000
 	memsnapshot_wait_memburst_samples "${burst_sample_offset}" "${count}" "${active}"
 }
@@ -119,7 +119,6 @@ burst_threshold=10
 burst_anon=0
 burst_blacklist=0
 burst_cooldown=30
-burst_window=2
 burst_write_config() {
 	go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
 	write_memory_threshold_snapshot_config
@@ -130,7 +129,6 @@ burst_write_config() {
  DeltaMemoryBurst = ${burst_threshold}
  DeltaAnonThreshold = ${burst_anon}
  Interval = 1
- SlidingWindowLength = ${burst_window}
  IntervalTracing = ${burst_cooldown}
  DumpProcessMaxNum = ${burst_top}
 CONFIG
@@ -204,8 +202,6 @@ interval-zero|Interval|0|memory burst interval must be positive
 interval-negative|Interval|-1|memory burst interval must be positive
 cooldown-zero|IntervalTracing|0|memory burst tracing interval must be positive
 cooldown-negative|IntervalTracing|-1|memory burst tracing interval must be positive
-window-zero|SlidingWindowLength|0|memory burst sliding window length must be positive
-window-negative|SlidingWindowLength|-1|memory burst sliding window length must be positive
 ranking-zero|DumpProcessMaxNum|0|memory burst dump process max num must be positive
 ranking-negative|DumpProcessMaxNum|-1|memory burst dump process max num must be positive
 wrong-type|DumpProcessMaxNum|"invalid"|invalid(string) to int
@@ -223,15 +219,13 @@ for i in 1 2 3; do
 	wait_until 20 .1 grep -qx 'pressure ready' "${MEMBURST_ROOT_WORKSPACE}/workload-${i}.log" || fatal "real allocation pressure failed"
 done
 huatuo_bamai_stop
-for memburst_scenario in normal threshold anon_threshold anon_maximum window_minimum blacklist top1 top2 top3 top11; do
+for memburst_scenario in normal threshold anon_threshold anon_maximum blacklist top1 top2 top3 top11; do
 	HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/${memburst_scenario}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
 	burst_top=10
 	burst_threshold=10
 	burst_anon=0
 	burst_blacklist=0
-	burst_window=2
-	[[ ${memburst_scenario} != window_minimum ]] || burst_window=1
 	[[ ${memburst_scenario} != anon_maximum ]] || burst_anon=100
 	[[ ${memburst_scenario} != top1 ]] || burst_top=1
 	[[ ${memburst_scenario} != top2 ]] || burst_top=2
@@ -245,7 +239,7 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	[[ ${burst_blacklist} == 1 ]] || burst_wait_samples low
 	assert_burst_count 0 "event without burst"
 	burst_input high
-	if [[ ${memburst_scenario} == threshold || ${memburst_scenario} == anon_threshold || ${memburst_scenario} == anon_maximum || ${memburst_scenario} == window_minimum || ${memburst_scenario} == blacklist ]]; then
+	if [[ ${memburst_scenario} == threshold || ${memburst_scenario} == anon_threshold || ${memburst_scenario} == anon_maximum || ${memburst_scenario} == blacklist ]]; then
 		[[ ${burst_blacklist} == 1 ]] || burst_wait_samples high 3
 		huatuo_bamai_ready || fatal "daemon unavailable during suppression assertion"
 		assert_burst_count 0 "suppressed burst produced event"
@@ -259,7 +253,7 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 			memburst_first_at=${SECONDS}
 			memburst_first_started=$(date -d "$(jq -sr 'last.started_timestamp' "${HUATUO_BAMAI_TEST_TMPDIR}/events/memburst")" +%s)
 			burst_input low
-			burst_wait_samples low
+			burst_wait_samples low 2
 			burst_input high
 			burst_wait_samples high 3
 			assert_burst_cooldown
@@ -414,7 +408,8 @@ for memburst_runtime in go disabled churn python java c cpp; do
 	burst_threshold=10
 	burst_anon=0
 	burst_blacklist=0
-	burst_cooldown=1
+	# A sustained high sample can trigger again while older low samples remain.
+	burst_cooldown=60
 	burst_input low
 	burst_start
 	if [[ ${memburst_runtime} == go ]]; then
@@ -497,7 +492,7 @@ burst_top=1000
 burst_threshold=10
 burst_anon=0
 burst_blacklist=0
-burst_cooldown=1
+burst_cooldown=60
 burst_input low
 burst_start
 burst_wait_samples low
@@ -541,7 +536,7 @@ for i in 4 5 6 7 8 9; do
 	pressure_fds+=("${fd}")
 done
 burst_start
-memsnapshot_wait_memburst_samples 0 2
+memsnapshot_wait_memburst_samples 0 60
 real_before=$(burst_count)
 real_triggered_at=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')
 # Synchronize allocation instead of spreading process startup across samples.

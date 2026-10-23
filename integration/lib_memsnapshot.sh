@@ -89,7 +89,8 @@ memsnapshot_memburst_samples_ready() {
 }
 
 memsnapshot_wait_memburst_samples() {
-	wait_until 30 0.1 memsnapshot_memburst_samples_ready "$@" || fatal "memburst did not complete the expected samples"
+	# Memburst scenarios sample once per second; allow a full 60-sample history.
+	wait_until "$(($2 + 30))" 0.1 memsnapshot_memburst_samples_ready "$@" || fatal "memburst did not complete the expected samples"
 }
 
 # Build the shared test-only remote-read barrier source.

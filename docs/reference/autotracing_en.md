@@ -245,7 +245,7 @@ Example with some common fields omitted:
 
 Tracer: `memburst`.
 
-By default, samples host anonymous memory every 10 seconds and evaluates after filling a 60-sample sliding window. It triggers when current anonymous memory reaches twice the oldest window value and at least 70% of total host memory. The default cooldown is 30 minutes.
+By default, samples host anonymous memory every 10 seconds and evaluates after filling a fixed 60-sample sliding window. It triggers when current anonymous memory reaches twice the oldest window value and at least 70% of total host memory. The default cooldown is 30 minutes.
 
 Results list the top N processes by descending RSS (default: 10) and attempt runtime snapshots serially for the first `min(N, 3)` processes. Go, HotSpot, and CPython use their respective providers. Unsupported runtimes report `unavailable` and retain process memory counters when available. A failed capture does not mean zero memory usage.
 
