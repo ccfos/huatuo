@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
-	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 )
 

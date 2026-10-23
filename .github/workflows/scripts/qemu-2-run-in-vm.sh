@@ -16,7 +16,7 @@
 #
 
 # Purpose: Stream the repository-owned guest test script into the running VM.
-# Caller: GitHub workflow os-distro-qemu-test.yml, as the qemu-2 step; qemu-local-test.sh locally.
+# Caller: os-distro-qemu-test-reusable.yml, as the qemu-2 step; qemu-local-test.sh locally.
 # Environment:
 # - VM_ENV_FILE: Required qemu-1 environment file containing VM connection state.
 # - VM_PROXY_HOST: Optional host proxy address; requires VM_PROXY_PORT.
