@@ -316,6 +316,14 @@ cpuidle_capture() {
 	cpuidle_status
 }
 
+cpuidle_cooldown_elapsed() {
+	cpuidle_local_events | jq -e --arg id "$(< "${CPUIDLE_DIR}/a.id")" --argjson cooldown "${CPUIDLE_COOLDOWN}" '
+		[.[] | select(.container_id == $id) | .started_timestamp |
+		 sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601] | max as $started |
+		$started != null and now >= $started + $cooldown + 1
+	' > /dev/null
+}
+
 cpuidle_invalid_config() (
 	local name=$1 expected=$2 status=0
 	HUATUO_BAMAI_TEST_TMPDIR="${CPUIDLE_DIR}/invalid-${name}"
@@ -389,7 +397,8 @@ cpuidle_phase=steady-high
 HUATUO_BAMAI_TEST_TMPDIR="${CPUIDLE_DIR}/${cpuidle_phase}"
 mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
 cpuidle_command a user 300
-sleep 4
+cpuidle_reference a steady-ready-1 2
+cpuidle_reference a steady-ready-2 2
 cpuidle_start
 cpuidle_target a 500
 cpuidle_reference a steady 8
@@ -408,7 +417,8 @@ cpuidle_reference a cooldown-high 4
 cpuidle_capture b user 600 total
 cpuidle_command a idle 0
 cpuidle_reference a recovery-idle 8
-sleep 12
+wait_until "$((CPUIDLE_COOLDOWN + CPUIDLE_INTERVAL))" 0.5 cpuidle_cooldown_elapsed \
+	|| fatal "first cpuidle event did not reach its cooldown deadline"
 cpuidle_capture a user 300 total
 cpuidle_local_events | jq -e --arg id "$(< "${CPUIDLE_DIR}/a.id")" --argjson cooldown "${CPUIDLE_COOLDOWN}" '
 	[.[] | select(.container_id == $id) | .started_timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601] | sort |

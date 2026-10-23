@@ -222,6 +222,17 @@ runqlat_targets() {
 	done | jq -s '.' > "${RUNQLAT_DIR}/targets.json"
 }
 
+runqlat_stopped() {
+	local pid status
+	for pid in "${runqlat_paused[@]}"; do
+		for status in /proc/"${pid}"/task/*/status; do
+			[[ -e ${status} ]] || continue
+			awk '/^State:/ {exit ($2 != "T" && $2 != "t" && $2 != "Z")}' "${status}" \
+				|| { [[ ! -e ${status} ]] || return 1; }
+		done
+	done
+}
+
 runqlat_pause() {
 	local name pid
 	for name in "${runqlat_pods[@]}"; do
@@ -234,8 +245,7 @@ runqlat_pause() {
 			fi
 		done < "$(< "${RUNQLAT_DIR}/${name}.cgroup")/cgroup.procs"
 	done
-	# SIGSTOP is asynchronous; wait for the last switch-out to finish.
-	sleep 0.2
+	wait_until 10 0.1 runqlat_stopped || fatal "Pod threads did not stop before the stable counter check"
 }
 
 runqlat_check() {
