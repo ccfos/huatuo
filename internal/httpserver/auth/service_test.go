@@ -37,6 +37,8 @@ func TestServiceAuthenticateBearer(t *testing.T) {
 		{name: "missing", wantErr: ErrMissingBearerToken},
 		{name: "wrong scheme", header: "Basic viewer-secret", wantErr: ErrMissingBearerToken},
 		{name: "empty token", header: "Bearer ", wantErr: ErrMissingBearerToken},
+		{name: "token contains space", header: "Bearer viewer secret", wantErr: ErrMissingBearerToken},
+		{name: "token contains tab", header: "Bearer viewer\tsecret", wantErr: ErrMissingBearerToken},
 		{name: "invalid", header: "Bearer unknown", wantErr: ErrInvalidBearerToken},
 	}
 
