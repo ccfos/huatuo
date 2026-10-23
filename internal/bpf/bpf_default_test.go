@@ -591,6 +591,24 @@ func TestDefaultBPF_DetachOnContextDone(t *testing.T) {
 	b.DetachOnContextDone(ctx, cancel)
 }
 
+func TestDefaultBPF_InfoSortsMetadataByID(t *testing.T) {
+	b := &defaultBPF{
+		mapsByID: map[uint32]loadedMap{
+			9: {name: "map-nine"},
+			2: {name: "map-two"},
+		},
+		programsByID: map[uint32]*loadedProgram{
+			8: {name: "program-eight"},
+			1: {name: "program-one"},
+		},
+	}
+
+	info, err := b.Info()
+	require.NoError(t, err)
+	require.Equal(t, []uint32{2, 9}, []uint32{info.MapsInfo[0].ID, info.MapsInfo[1].ID})
+	require.Equal(t, []uint32{1, 8}, []uint32{info.ProgramsInfo[0].ID, info.ProgramsInfo[1].ID})
+}
+
 func loadMinimalObjBytes(t *testing.T) []byte {
 	t.Helper()
 
