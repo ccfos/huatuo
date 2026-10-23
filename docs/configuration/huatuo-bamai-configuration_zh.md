@@ -789,7 +789,8 @@ SchedBlame 估算所选容器 CPU cgroup 的外部 CPU 竞争。当当前一秒�
 - **PollIntervalMs**：执行有界队列排空和评估检查的间隔。有效范围
   `1..1000`，默认 `100`。
 - **ExternalRatioDebugFile**：可选的 CSV 路径，用于记录每个目标每秒的比例
-  诊断数据。默认为空。
+  诊断数据。默认为空。交互式图表和 SuperMonitor 对比方法见
+  [SchedBlame Analysis](../sched-blame-analysis.md)。
 
 #### 7.9 已知问题标记
 

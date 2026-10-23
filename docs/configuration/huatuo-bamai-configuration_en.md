@@ -788,7 +788,8 @@ ratio exceeds the target's adaptive historical threshold.
 - **PollIntervalMs**: Interval for bounded queue draining and evaluation
   checks. Valid range `1..1000`; default `100`.
 - **ExternalRatioDebugFile**: Optional CSV path for per-target one-second
-  ratio diagnostics. Default empty.
+  ratio diagnostics. Default empty. See [SchedBlame Analysis](../sched-blame-analysis.md)
+  for interactive charts and SuperMonitor comparisons.
 
 #### 7.9 Known issue labeling
 
