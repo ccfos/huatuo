@@ -72,9 +72,14 @@ func KsymbolSearchAddr(name string) (uint64, error) {
 }
 
 // dumpKernelBackTrace resolves kernel addresses into stackFrames up to maxDepth frames.
+// Non-positive depths return no frames without loading kernel symbols.
 // reversed=true returns outermost frame first (original BPF order reversed);
 // reversed=false returns innermost frame first (top-of-stack first).
 func dumpKernelBackTrace(stack []uint64, maxDepth int, out outType, reversed bool) stackFrames {
+	if maxDepth <= 0 {
+		return stackFrames{}
+	}
+
 	if len(stack) > maxDepth {
 		stack = stack[:maxDepth]
 	}

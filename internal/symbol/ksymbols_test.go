@@ -122,6 +122,16 @@ func TestDumpKernelBackTrace(t *testing.T) {
 				"kernel_entry/+16 [kernel]",
 			},
 		},
+		{
+			name:     "negative-depth-returns-empty",
+			stack:    []uint64{0xffffffff81000010},
+			maxDepth: -1,
+		},
+		{
+			name:     "zero-depth-returns-empty",
+			stack:    []uint64{0xffffffff81000010},
+			maxDepth: 0,
+		},
 	}
 
 	for _, tt := range tests {
