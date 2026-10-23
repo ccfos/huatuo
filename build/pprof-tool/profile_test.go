@@ -15,13 +15,52 @@
 package main
 
 import (
+	"bytes"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/pprof/profile"
 )
+
+func TestFetchReportsHTTPStatusBeforeBodyLimit(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, strings.Repeat("diagnostic", 1024), http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	var dst bytes.Buffer
+	err := fetch(t.Context(), server.Client(), server.URL, &dst, 4)
+	if err == nil || !strings.Contains(err.Error(), "HTTP status 502") {
+		t.Fatalf("fetch() error = %v, want HTTP status 502", err)
+	}
+	if dst.Len() != 0 {
+		t.Fatalf("fetch() wrote %d error bytes, want none", dst.Len())
+	}
+}
+
+func TestFetchAcceptsResponseAtLimit(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("1234"))
+	}))
+	defer server.Close()
+
+	var dst bytes.Buffer
+	if err := fetch(t.Context(), server.Client(), server.URL, &dst, 4); err != nil {
+		t.Fatalf("fetch() error = %v", err)
+	}
+	if got := dst.String(); got != "1234" {
+		t.Fatalf("fetch() body = %q, want %q", got, "1234")
+	}
+}
 
 func TestAddProfileCPU(t *testing.T) {
 	t.Parallel()
