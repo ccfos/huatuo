@@ -172,7 +172,7 @@ Build the complete artifacts from the repository root:
 make build
 ```
 
-The binary is `_output/bin/profiler`. Native collection requires Linux eBPF, perf events, and the project's built BPF objects. It usually requires root privileges and a `kernel.perf_event_paranoid` setting that allows sampling. Java requires async-profiler; `--tool-path` points to a shared tool root containing `bin/asprof` and `lib/libasyncProfiler.so`. Python uses `py-spy` under the same root.
+The binary is `_output/bin/profiler`. Native collection requires Linux eBPF, perf events, and the project's built BPF objects. It usually requires root privileges and a `kernel.perf_event_paranoid` setting that allows sampling. Java requires async-profiler; `--tool-path` points to a shared tool root containing `bin/asprof` and `lib/libasyncProfiler.so`. Python CPU uses `py-spy` under the same root. Python memory uses the prebuilt Memray runtime downloaded to `_output/tools/memray` during the build. It requires `gdb` in `PATH` and ptrace permission, normally root or `CAP_SYS_PTRACE`; seccomp and Yama `ptrace_scope` must allow attachment.
 
 View full help for the current version:
 
@@ -319,7 +319,7 @@ Verify the output: [Local Results](#verify-local-results).
 
 ### Python
 
-Python currently supports CPU observation only. `--aggr-interval` must equal `--duration`, producing one aggregation window per collection. `--tool-path` points to the shared tool root containing `py-spy`.
+For Python CPU, `--aggr-interval` must equal `--duration`, producing one aggregation window per collection. `--tool-path` points to the shared tool root containing `py-spy`.
 
 ```bash
 _output/bin/profiler \
@@ -334,6 +334,68 @@ _output/bin/profiler \
   --output-format flamegraph \
   --output-path ./profiles/python-cpu/
 ```
+
+Python memory collection through either the CLI or API injects code into the
+running target using GDB. Attachment can pause, crash, or deadlock the target;
+[Memray recommends development-machine use](https://bloomberg.github.io/memray/attach.html#caveats).
+Try a development or staging replica first. Production use requires the service
+owner's approval, a target that can be taken out of traffic, and a recovery plan.
+A successful capture does not guarantee that the target was unaffected.
+
+If attachment fails or the target becomes unresponsive, do not repeatedly retry.
+Check the target's liveness and service health, preserve profiler and application
+logs and any available core dump, then follow the service's failover or restart
+procedure if needed. A failed or canceled capture does not confirm recovery.
+
+For targets in a different mount namespace, profiler stages the runtime under
+the target's `/tmp/memray`. The profiler must be able to create and write that
+directory, and the target must be able to read and load the staged runtime.
+A read-only container root needs a writable `/tmp` mount, such as a tmpfs;
+without it, runtime preparation fails before injection.
+
+For Python memory, exercise the workload after tracking starts:
+
+```bash
+sudo _output/bin/profiler \
+  --type memory --language python \
+  --pid 12345 \
+  --duration 60 --aggr-interval 10 \
+  --python-memory-stack hybrid \
+  --python-memory-merge-threads \
+  --output-format flamegraph \
+  --output-path ./profiles/python-memory/
+```
+
+The supported runtime matrix is CPython 3.7–3.14 on Linux glibc, x86-64 and
+AArch64. Keep the profiler and its matching runtime together when copying
+artifacts to another node. `--tool-path /path/to/memray` overrides the bundle
+root. Bundle preparation and offline downloads are documented in
+[Building from Source](/docs/compiling_en.md#memray-runtime-bundle).
+
+Python memory supports only retained `object_usage`, the default when
+`--memory-mode` is omitted. Allocations add bytes; frees subtract them from
+the original allocation stack. The final result includes allocations made
+after attachment that remain live when collection ends. It excludes earlier
+allocations, does not measure RSS, and does not count only GC-reachable
+Python objects. Small-object allocator pools can remain live after individual
+objects are freed. `--python-memory-stack python` hides native interpreter
+frames; `native` shows native frames only. Allocations without an available
+native stack appear under `[unknown native stack]`, not Python frames.
+
+Python frames in both `python` and `hybrid` views use function names only,
+without filenames, line numbers, or instruction offsets. When rendered call
+chains match, same-named functions in different files and allocations at
+different lines within one function can be combined. These views do not
+distinguish precise source-level allocation sites.
+
+`--aggr-interval` controls internal delta delivery for memory collection;
+all output formats receive one final retained result. All targets share the
+host duration deadline. If the number of selected targets exceeds a positive
+`--max-concurrent-procs` limit, the request fails before attachment rather than
+queueing targets that might never be sampled. Raise the limit, use `0` for
+unlimited concurrency, or profile smaller groups separately. Only one Memray
+capture may own a PID at a time; a duplicate request fails without interrupting
+the active capture.
 
 ### Verify Local Results
 

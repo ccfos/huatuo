@@ -173,7 +173,7 @@ curl -fsS -H "Authorization: Bearer ${API_TOKEN}" \
 make build
 ```
 
-生成的命令位于 `_output/bin/profiler`。原生采集依赖 Linux eBPF、perf event 和仓库构建出的 BPF 对象，通常需要 root 权限，并要求 `kernel.perf_event_paranoid` 允许采样。Java 需要 async-profiler，`--tool-path` 指向统一工具根目录，其中包含 `bin/asprof` 和 `lib/libasyncProfiler.so`。Python 使用同一根目录下的 `py-spy`。
+生成的命令位于 `_output/bin/profiler`。原生采集依赖 Linux eBPF、perf event 和仓库构建出的 BPF 对象，通常需要 root 权限，并要求 `kernel.perf_event_paranoid` 允许采样。Java 需要 async-profiler，`--tool-path` 指向统一工具根目录，其中包含 `bin/asprof` 和 `lib/libasyncProfiler.so`。Python CPU 使用同一根目录下的 `py-spy`。Python 内存使用构建时下载到 `_output/tools/memray` 的预编译运行时，还需要 `PATH` 中的 `gdb` 及 ptrace 权限，通常为 root 或 `CAP_SYS_PTRACE`；seccomp 和 Yama `ptrace_scope` 必须允许附加。
 
 查看当前版本的完整帮助：
 
@@ -322,7 +322,7 @@ _output/bin/profiler \
 
 ### Python
 
-Python 当前仅支持 CPU 观测。`--aggr-interval` 必须与 `--duration` 相等，即一次采集只生成一个聚合窗口。`--tool-path` 指向包含 `py-spy` 的统一工具根目录。
+Python CPU 采集的 `--aggr-interval` 必须与 `--duration` 相等，即一次采集只生成一个聚合窗口。`--tool-path` 指向包含 `py-spy` 的统一工具根目录。
 
 ```bash
 _output/bin/profiler \
@@ -339,6 +339,56 @@ _output/bin/profiler \
 ```
 
 采集结束后，按[验证本地结果](#验证本地结果)检查输出。
+
+无论通过 CLI 还是 API，Python 内存采集都会使用 GDB 向运行中的目标注入代码。
+附加可能使目标暂停、崩溃或死锁；[Memray 官方建议在开发机器上使用](https://bloomberg.github.io/memray/attach.html#caveats)。
+请先在开发或预发布副本上验证。生产环境使用需经业务负责人确认，选择可摘流的
+实例并准备恢复方案。采集成功并不保证目标进程未受影响。
+
+附加失败或目标无响应时，不要反复重试。检查目标进程存活状态和服务健康情况，
+保留 profiler、业务日志及可用的 core dump；必要时按业务的故障切换或重启流程
+恢复服务。采集失败或取消并不代表目标已经恢复。
+
+目标位于不同挂载命名空间时，profiler 会将运行时暂存到目标的 `/tmp/memray`。
+profiler 必须能够创建并写入该目录，目标进程也必须能够读取、加载暂存的运行时。
+只读根文件系统的容器需要单独挂载可写的 `/tmp`（例如 tmpfs），否则会在注入前
+因运行时准备失败而退出。
+
+Python 内存采集示例，在 tracking 启动后运行待分析负载：
+
+```bash
+sudo _output/bin/profiler \
+  --type memory --language python \
+  --pid 12345 \
+  --duration 60 --aggr-interval 10 \
+  --python-memory-stack hybrid \
+  --python-memory-merge-threads \
+  --output-format flamegraph \
+  --output-path ./profiles/python-memory/
+```
+
+运行时支持 Linux glibc、x86-64 和 AArch64 上的 CPython 3.7–3.14。
+将产物复制到其他节点时，需要同时带上 profiler 和匹配的运行时。
+`--tool-path /path/to/memray` 可指定其他包根目录。下载和离线准备方法见
+[源码编译](/docs/compiling_zh.md#memray-运行时包)。
+
+Python 内存仅支持存活分配模式 `object_usage`，省略 `--memory-mode` 时
+默认使用该模式。分配增加字节数，释放从原分配栈扣除。最终结果包含附加后
+分配、结束时仍未释放的内存，不包含更早的分配，也不等同于 RSS 或 GC 可达
+Python 对象的大小。小对象被释放后，分配器的 pool 仍可能存活。
+`--python-memory-stack python` 隐藏原生解释器栈，`native` 仅显示原生栈。
+无法获取原生栈的分配显示为 `[unknown native stack]`，不回退到 Python 栈。
+
+`python` 和 `hybrid` 视图中的 Python 帧仅使用函数名，不包含文件名、行号或
+指令偏移。显示出的调用链相同时，不同文件中的同名函数、同一函数内不同行的
+分配可能合并到同一个栈，不能据此区分精确的源码分配位置。
+
+内存采集的 `--aggr-interval` 只控制内部增量传递，所有输出格式均在结束时
+生成一次存活结果。所有目标共用宿主机时长限制；目标数超过正数
+`--max-concurrent-procs` 上限时，请求会在附加前失败，不会排队后静默漏采。
+可提高上限、设置为 `0` 取消并发限制，或将目标分成较小的组分别采集。
+同一个 PID 同时只能有一个 Memray 采集会话，重复请求会失败，不会中断
+已有采集。
 
 ### 验证本地结果
 
