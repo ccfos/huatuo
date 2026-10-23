@@ -209,8 +209,11 @@ PID returns success immediately. Clear the variable after waiting. Use
 the test contract.
 
 `test_basic_test_helpers.sh` checks graceful/forced shutdown, custom signals,
-Java streaming completion, shutdown failures, and missing windows using local
-process fixtures. It requires Python 3 and jq, without a JVM or BPF attachment.
+Java streaming completion, shutdown failures, missing windows and complete
+network capture predicates using local process and packet fixtures. Shell owns
+the orchestration and assertions; Python supplies only process workloads. Capture
+predicates live in `lib_network_capture.sh`, shared with the live tests. The helper
+test requires Python 3 and jq, without a JVM or BPF attachment.
 
 ## IO tests
 
@@ -249,6 +252,10 @@ Network tests can source `integration/lib_namespace.sh` after `lib.sh`:
 - `namespace_cleanup` deletes namespaces created by these helpers and clears state. Repeated calls are supported. In `EXIT` cleanup, stop processes inside the namespaces before calling it.
 
 ## Shared Packet Sender
+
+Positive capture tests wait for their complete matching event predicates, then
+stop and drain collectors and traffic generators. They recheck final output and
+exit status; negative-result and rate-limit observation windows stay unchanged.
 
 Tests requiring raw packets reuse `integration/testdata/test_packet_sender.py`; extend it for new scenarios. It requires Python 3 and raw socket privileges and supports `ipv4-options` (TCP/UDP EOL options, including maximum IHL) and `icmpv6-echo`. Use each subcommand's `--help` for address, port, or Echo identifier parameters. The program sends packets every 100 ms and exits normally on SIGTERM. Shell cases manage namespaces, drop rules, assertions, logs, and process cleanup. Workloads needing real TCP connections continue to use `testdata/tcp_server.py`.
 
