@@ -79,6 +79,10 @@ func TestMaxOnlineCPU(t *testing.T) {
 		{name: "single", content: "7\n", want: 7},
 		{name: "empty", content: "\n", want: -1},
 		{name: "invalid last ID", content: "0,x\n", want: -1},
+		{name: "invalid range end", content: "0-\n", want: -1},
+		{name: "descending range", content: "3-1\n", want: -1},
+		{name: "extra range separator", content: "0-1-2\n", want: -1},
+		{name: "invalid earlier item", content: "0-3,8-\n", want: -1},
 	}
 
 	for _, tt := range tests {

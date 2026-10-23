@@ -86,15 +86,31 @@ func MaxOnlineCPU(path string) int {
 		return -1
 	}
 
-	parts := strings.Split(list, ",")
-	last := parts[len(parts)-1]
-	if idx := strings.LastIndex(last, "-"); idx != -1 {
-		last = last[idx+1:]
-	}
+	maxID := -1
+	maxInt := uint64(^uint(0) >> 1)
+	for _, item := range strings.Split(list, ",") {
+		if item == "" {
+			return -1
+		}
 
-	maxID, err := strconv.Atoi(last)
-	if err != nil {
-		return -1
+		firstText, lastText, isRange := strings.Cut(item, "-")
+		first, err := strconv.ParseUint(firstText, 10, 64)
+		if err != nil || first > maxInt {
+			return -1
+		}
+		last := first
+		if isRange {
+			if strings.Contains(lastText, "-") {
+				return -1
+			}
+			last, err = strconv.ParseUint(lastText, 10, 64)
+			if err != nil || last < first || last > maxInt {
+				return -1
+			}
+		}
+		if int(last) > maxID {
+			maxID = int(last)
+		}
 	}
 	return maxID
 }
