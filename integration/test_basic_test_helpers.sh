@@ -103,4 +103,97 @@ jq -se "last.final == true" "$1/windows.json"
 	assert_streaming_result "${helper_status}" "${helper_error}" "${HUATUO_BAMAI_TEST_TMPDIR}/${helper_case}.log"
 done
 
-log_info "process shutdown and Java streaming completion checks passed"
+source "${ROOT_DIR}/integration/lib_network_capture.sh"
+(
+	OUTPUT_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/network-capture"
+	mkdir -p "${OUTPUT_DIR}"
+	TOOL_OUT="${OUTPUT_DIR}/events.json" EVENTS_FILE="${OUTPUT_DIR}/events.json"
+	IPV4_OPTIONS_SOURCE=127.0.0.2 IPV4_OPTIONS_DESTINATION=127.0.0.1
+	ipv4_options_source_port=20001 ipv4_options_destination_port=20002
+	NETNS_CLIENT_ADDR=192.0.2.1 NETNS_SERVER_ADDR=192.0.2.2 TEST_PORT=19998
+	ipv4_tcp='{"drop_source":"software","netdev_name":"lo","layers":{"label":"IPv4/TCP","ipv4":{"version":4,"ihl":6,"len":44,"tos":16,"id":4885,"flags":"DF","ttl":64,"saddr":"127.0.0.2","daddr":"127.0.0.1","protocol":"TCP"},"tcp":{"sport":20001,"dport":20002,"flags":"SYN","seq":1,"data_offset":5}}}'
+	ipv4_udp='{"drop_source":"software","netdev_name":"lo","layers":{"label":"IPv4/UDP","ipv4":{"version":4,"ihl":6,"len":32,"tos":16,"id":4885,"flags":"DF","ttl":64,"saddr":"127.0.0.2","daddr":"127.0.0.1","protocol":"UDP"},"udp":{"sport":20001,"dport":20002,"len":8}}}'
+	icmp_request='{"layers":{"label":"IPv6/ICMPv6","icmp":{"type":"EchoRequest","id":4660,"seq":7},"ipv6":{"saddr":"2001:db8::2","daddr":"2001:db8::1"}}}'
+	icmp_zero='{"layers":{"label":"IPv6/ICMPv6","icmp":{"type":"EchoRequest"},"ipv6":{"saddr":"2001:db8::2","daddr":"2001:db8::1"}}}'
+	latency_event='{"tracer_data":{"tcp_saddr":"192.0.2.1","tcp_daddr":"192.0.2.2","latency_stage":"receive","latency_ms":2,"latency_threshold_ms":1,"packet_len_bytes":64,"net_namespace_inum":1,"net_namespace_cookie":1}}'
+	ipv4_max_tcp=${ipv4_tcp/\"ihl\":6/\"ihl\":15}
+	ipv4_max_tcp=${ipv4_max_tcp/\"len\":44/\"len\":80}
+	ipv4_packets="${ipv4_tcp}"$'\n'"${ipv4_udp}"$'\n'"${ipv4_max_tcp}"
+	icmp_text='timestamp IPv6/ICMPv6 2001:db8::1 > 2001:db8::2 type=EchoReply id=4660 seq=7 stack'
+	fast_event='{"tcp_sport":19998,"tcp_reason":"fast_retransmit"}'
+	assert_capture() {
+		local content=$1 expected_match=$2 status=0
+		shift 2
+		printf '%s\n' "${content}" > "${TOOL_OUT}"
+		("$@") > "${OUTPUT_DIR}/matcher.log" 2>&1 || status=$?
+		if [[ ${expected_match} == yes ]]; then
+			assert_eq "${status}" 0 "${1}: valid capture; see ${OUTPUT_DIR}/matcher.log"
+		else
+			[[ ${status} != 0 ]] || fatal "${1}: incomplete or incorrect capture accepted: ${content}"
+		fi
+	}
+	assert_capture "${ipv4_packets}" yes assert_ipv4_options_capture
+	assert_capture "${ipv4_tcp}" no assert_ipv4_options_capture
+	assert_capture "${icmp_request}" yes assert_icmpv6_echo_identity json "${TOOL_OUT}" EchoRequest 2001:db8::2 2001:db8::1 4660 7
+	assert_capture "${icmp_request}" no assert_icmpv6_echo_identity json "${TOOL_OUT}" EchoRequest 2001:db8::2 2001:db8::1 4661 7
+	assert_capture "${icmp_zero}" yes assert_icmpv6_echo_identity json "${TOOL_OUT}" EchoRequest 2001:db8::2 2001:db8::1 0 0
+	assert_capture "${icmp_text}" yes assert_icmpv6_echo_identity text "${TOOL_OUT}" EchoReply 2001:db8::1 2001:db8::2 4660 7
+	assert_capture '' no assert_icmpv6_echo_identity text "${TOOL_OUT}" EchoReply 2001:db8::1 2001:db8::2 4660 7
+
+	for capture in ipv4 icmp_json icmp_zero icmp_text fast latency; do
+		case ${capture} in
+		ipv4)
+			valid=${ipv4_packets}
+			matcher=(ipv4_options_capture_is_complete)
+			;;
+		icmp_json)
+			valid=${icmp_request}
+			matcher=(icmpv6_json_matches "${TOOL_OUT}" EchoRequest 2001:db8::2 2001:db8::1 4660 7)
+			;;
+		icmp_zero)
+			valid=${icmp_zero}
+			matcher=(icmpv6_json_matches "${TOOL_OUT}" EchoRequest 2001:db8::2 2001:db8::1 0 0)
+			;;
+		icmp_text)
+			valid=${icmp_text}
+			matcher=(icmpv6_text_matches "${TOOL_OUT}" EchoReply 2001:db8::1 2001:db8::2 4660 7)
+			;;
+		fast)
+			valid=${fast_event}
+			matcher=(fast_retransmit_is_stored)
+			;;
+		latency)
+			valid=${latency_event}
+			matcher=(net_rx_latency_event_is_stored)
+			;;
+		esac
+		assert_capture "${valid}" yes "${matcher[@]}"
+		assert_capture '' no "${matcher[@]}"
+		if [[ ${capture} != icmp_text ]]; then assert_capture "${valid}"$'\n{' no "${matcher[@]}"; fi
+		case ${capture} in
+		ipv4)
+			assert_capture "${ipv4_tcp}"$'\n'"${ipv4_udp}" no "${matcher[@]}"
+			assert_capture "${ipv4_tcp}"$'\n'"${ipv4_max_tcp}" no "${matcher[@]}"
+			assert_capture "${valid//20002/20003}" no "${matcher[@]}"
+			;;
+		icmp_json)
+			assert_capture "${valid/4660/4661}" no "${matcher[@]}"
+			assert_capture "${valid/EchoRequest/EchoReply}" no "${matcher[@]}"
+			;;
+		icmp_zero) assert_capture "$(jq '.layers.icmp.id=0' <<< "${valid}")" no "${matcher[@]}" ;;
+		icmp_text) assert_capture 'timestamp IPv6/ICMPv6 2001:db8::2 > 2001:db8::1 type=EchoReply id=4660 seq=7 stack' no "${matcher[@]}" ;;
+		fast)
+			assert_capture "${valid/19998/19999}" no "${matcher[@]}"
+			assert_capture "${valid/fast_retransmit/unknown}" no "${matcher[@]}"
+			assert_capture "${valid/fast_retransmit/RTO}" no "${matcher[@]}"
+			assert_capture '{"tcp_sport":19998,"ca_state":3}' no "${matcher[@]}"
+			;;
+		latency)
+			assert_capture "$(jq '.tracer_data.latency_stage=null' <<< "${valid}")" no "${matcher[@]}"
+			assert_capture "${valid/192.0.2.1/192.0.2.3}" no "${matcher[@]}"
+			;;
+		esac
+	done
+)
+
+log_info "process shutdown, Java streaming and network capture completion checks passed"
