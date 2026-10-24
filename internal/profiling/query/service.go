@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -311,8 +310,8 @@ func (s *ProfileQueryService) ProfileTypes(ctx context.Context, req *querierv1.P
 
 	resp := &querierv1.ProfileTypesResponse{}
 	for _, t := range types {
-		ts := strings.Split(t, ":")
-		if len(ts) != 5 {
+		ts, err := window.Metadata(t)
+		if err != nil {
 			continue
 		}
 

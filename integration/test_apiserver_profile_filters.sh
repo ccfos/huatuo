@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Exercise profiling filters through the apiserver and real Elasticsearch.
-# LabelValues avoids coupling storage filtering to pprof decoding or sampling.
+# Exercise profiling filters and profile type discovery through the apiserver
+# and real Elasticsearch without coupling the filter checks to pprof sampling.
 
 set -euo pipefail
 
@@ -27,6 +27,7 @@ readonly PROFILE_FILTER_INDEX="huatuo_profile_filters"
 readonly PROFILE_FILTER_TOKEN="profile-filter-admin"
 readonly PROFILE_FILTER_TYPE="process_cpu:cpu:nanoseconds:cpu:nanoseconds"
 readonly PROFILE_FILTER_ENDPOINT="/v1/profiling/flamegraph/querier.v1.QuerierService/LabelValues"
+readonly PROFILE_TYPES_ENDPOINT="/v1/profiling/flamegraph/querier.v1.QuerierService/ProfileTypes"
 readonly PROFILE_FILTER_REQUEST="${HUATUO_BAMAI_TEST_TMPDIR}/filter-request.proto"
 readonly PROFILE_FILTER_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/filter-response.proto"
 readonly PROFILE_FILTER_EXPECTED="${HUATUO_BAMAI_TEST_TMPDIR}/filter-expected.proto"
@@ -87,6 +88,47 @@ assert_profile_filter() {
 	fi
 }
 
+assert_profile_types() {
+	local profile_type="${PROFILE_FILTER_TYPE}" name="process_cpu"
+	local sample_type="cpu" sample_unit="nanoseconds"
+	local period_type="cpu" period_unit="nanoseconds"
+	local type_length name_length sample_type_length sample_unit_length
+	local period_type_length period_unit_length body_length body
+	local status curl_status=0
+
+	printf -v type_length '%03o' "${#profile_type}"
+	printf -v name_length '%03o' "${#name}"
+	printf -v sample_type_length '%03o' "${#sample_type}"
+	printf -v sample_unit_length '%03o' "${#sample_unit}"
+	printf -v period_type_length '%03o' "${#period_type}"
+	printf -v period_unit_length '%03o' "${#period_unit}"
+	printf -v body '\012%b%s\022%b%s\042%b%s\052%b%s\062%b%s\072%b%s' \
+		"\\${type_length}" "${profile_type}" \
+		"\\${name_length}" "${name}" \
+		"\\${sample_type_length}" "${sample_type}" \
+		"\\${sample_unit_length}" "${sample_unit}" \
+		"\\${period_type_length}" "${period_type}" \
+		"\\${period_unit_length}" "${period_unit}"
+	printf -v body_length '%03o' "${#body}"
+	printf '\012%b%s' "\\${body_length}" "${body}" > "${PROFILE_FILTER_EXPECTED}"
+	: > "${PROFILE_FILTER_REQUEST}"
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
+		-H "Authorization: Bearer ${PROFILE_FILTER_TOKEN}" \
+		-H 'Content-Type: application/proto' \
+		--data-binary "@${PROFILE_FILTER_REQUEST}" \
+		-o "${PROFILE_FILTER_RESPONSE}" -w '%{http_code}' \
+		"${PROFILE_FILTER_ADDR}${PROFILE_TYPES_ENDPOINT}") || curl_status=$?
+	log_info "profile types status=${status}, curl=${curl_status}"
+	od -An -tx1c "${PROFILE_FILTER_RESPONSE}" || true
+	assert_eq "${curl_status}" "0" "profile types transport" || fatal "profile types request failed"
+	assert_eq "${status}" "200" "profile types HTTP status" || fatal "profile types response is not successful"
+	if ! cmp -s "${PROFILE_FILTER_EXPECTED}" "${PROFILE_FILTER_RESPONSE}"; then
+		log_error "expected ProfileTypes response:"
+		od -An -tx1c "${PROFILE_FILTER_EXPECTED}"
+		fatal "profile types returned malformed or incomplete entries"
+	fi
+}
+
 storage_start
 assert_profile_storage_request "create index" "${HUATUO_BAMAI_TEST_TMPDIR}/create-index.json" \
 	-X PUT "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}" \
@@ -122,10 +164,31 @@ assert_profile_storage_request "seed profiles" "${HUATUO_BAMAI_TEST_TMPDIR}/seed
 assert_eq "$(jq -r '.errors' "${HUATUO_BAMAI_TEST_TMPDIR}/seed-profiles.json")" \
 	"false" "seed profile documents" || fatal "profile fixture writes failed"
 
+jq -cn '
+ [
+  {tracer_id:"type-empty-name",profile_type:":cpu:nanoseconds:cpu:nanoseconds"},
+  {tracer_id:"type-empty-sample",profile_type:"process_cpu::nanoseconds:cpu:nanoseconds"},
+  {tracer_id:"type-empty-period",profile_type:"process_cpu:cpu:nanoseconds::nanoseconds"},
+  {tracer_id:"type-too-short",profile_type:"process_cpu:cpu:nanoseconds"}
+ ][] | {index:{_id:.tracer_id}}, {
+  tracer_id:.tracer_id,tracer_type:"profiling",hostname:"host-a",
+  uploaded_timestamp:"1970-01-01T00:00:00.000Z",
+  started_timestamp:"1970-01-01T00:00:00.000Z",
+  profile_data:{profile_type:.profile_type}
+ }
+' > "${HUATUO_BAMAI_TEST_TMPDIR}/malformed-profile-types.ndjson"
+assert_profile_storage_request "seed malformed profile types" "${HUATUO_BAMAI_TEST_TMPDIR}/seed-malformed-profile-types.json" \
+	-X POST "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}/_bulk?refresh=true" \
+	-H 'Content-Type: application/x-ndjson' \
+	--data-binary "@${HUATUO_BAMAI_TEST_TMPDIR}/malformed-profile-types.ndjson"
+assert_eq "$(jq -r '.errors' "${HUATUO_BAMAI_TEST_TMPDIR}/seed-malformed-profile-types.json")" \
+	"false" "seed malformed profile types" || fatal "malformed profile type fixtures failed"
+
 APISERVER_PORT="${PROFILE_FILTER_PORT}" APISERVER_ADDR="${PROFILE_FILTER_ADDR}" \
 	API_TOKEN="${PROFILE_FILTER_TOKEN}" \
 	integration_huatuo_apiserver_start write_profile_query_apiserver_config
 
+assert_profile_types
 assert_profile_filter \
 	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",hostname=\"host-a\"}" \
 	'\012\013host-absent\012\011host-null'
