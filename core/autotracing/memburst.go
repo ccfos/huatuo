@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -57,8 +58,12 @@ func readMemInfo(requiredKeys map[string]bool) (map[string]int, error) {
 		return nil, err
 	}
 	defer file.Close()
+	return parseMemInfo(file, requiredKeys)
+}
+
+func parseMemInfo(reader io.Reader, requiredKeys map[string]bool) (map[string]int, error) {
 	results := make(map[string]int)
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Fields(line)
@@ -80,6 +85,13 @@ func readMemInfo(requiredKeys map[string]bool) (map[string]int, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+
+	for key := range requiredKeys {
+		if _, ok := results[key]; !ok {
+			return nil, fmt.Errorf("required memory info key %q is missing", key)
+		}
+	}
+
 	return results, nil
 }
 
