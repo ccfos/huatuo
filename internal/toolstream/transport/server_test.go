@@ -469,3 +469,112 @@ func TestTaskOwnershipReleasedAfterConnectionEnds(t *testing.T) {
 		})
 	}
 }
+
+// lateAcceptListener lets the test decide exactly when Accept returns. Close
+// still unblocks the server's accept loop only through the release channel,
+// modelling a connection that was accepted just as shutdown began.
+type lateAcceptListener struct {
+	conn    net.Conn
+	release <-chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	used    bool
+}
+
+func (l *lateAcceptListener) Accept() (net.Conn, error) {
+	<-l.release
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.used {
+		return nil, net.ErrClosed
+	}
+	l.used = true
+	return l.conn, nil
+}
+
+func (l *lateAcceptListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return nil
+}
+
+func (l *lateAcceptListener) Addr() net.Addr { return l.conn.LocalAddr() }
+
+// TestCloseRejectsConnectionAcceptedDuringShutdown pins the ordering between
+// registering an accepted connection and Close's snapshot. Accept returns only
+// after that snapshot, so without a closing flag the connection is inserted
+// afterwards, remains open, and its silent peer keeps handleConn blocked in
+// Decode forever, which makes Close hang in waitGroup.Wait.
+func TestCloseRejectsConnectionAcceptedDuringShutdown(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	})
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+
+	listener := &lateAcceptListener{
+		conn:    serverConn,
+		release: release,
+		closed:  make(chan struct{}),
+	}
+	rec := &recorder{}
+	srv, err := Serve(listener, rec.handler)
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+
+	// A sentinel in the map lets the test observe that Close has taken and
+	// cleared its snapshot before accepting the silent connection.
+	sentinelServer, sentinelClient := net.Pipe()
+	t.Cleanup(func() {
+		_ = sentinelClient.Close()
+		_ = sentinelServer.Close()
+	})
+	srv.mutex.Lock()
+	srv.connections[sentinelServer] = struct{}{}
+	srv.mutex.Unlock()
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- srv.Close() }()
+
+	select {
+	case <-listener.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not close the listener")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		srv.mutex.Lock()
+		_, registered := srv.connections[sentinelServer]
+		srv.mutex.Unlock()
+		if !registered {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Close did not snapshot connections")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	unblock()
+
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close blocked on a connection accepted during shutdown")
+	}
+
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Fatalf("want 0 handler calls, got %d", len(got))
+	}
+}
