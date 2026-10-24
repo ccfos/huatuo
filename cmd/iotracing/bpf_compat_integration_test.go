@@ -41,6 +41,17 @@ import (
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
+func TestIOTracingRequestMapKey(t *testing.T) {
+	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
+	require.NotEmpty(t, object, "run make integration to supply the production BPF object")
+
+	spec, err := ebpf.LoadCollectionSpec(object)
+	require.NoError(t, err)
+	require.NotNil(t, spec.Maps["start_info_map"])
+	require.Equal(t, uint32(8), spec.Maps["start_info_map"].KeySize,
+		"request tracking must use the request identity as its key")
+}
+
 // TestIOTracingBlockDevice observes real file IO on an ext4/XFS TMPDIR.
 func TestIOTracingBlockDevice(t *testing.T) {
 	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
@@ -74,9 +85,7 @@ func TestIOTracingBlockDevice(t *testing.T) {
 		Inode uint64
 	}
 	type requestKey struct {
-		Dev    uint32
-		Pad    uint32
-		Sector uint64
+		Request uint64
 	}
 	type requestInfo struct {
 		Inode   uint64
