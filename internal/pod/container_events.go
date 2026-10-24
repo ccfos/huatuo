@@ -47,7 +47,8 @@ type ContainerKey struct {
 }
 
 // ContainerRef is an immutable instance description. An empty memory path
-// means the binding is pending; consumers must wait for a replacement event.
+// means per-container memory is unavailable or pending. Host Kata VM cgroups
+// are deliberately excluded; Guest discovery publishes application bindings.
 type ContainerRef struct {
 	Key              ContainerKey
 	InitPID          int
@@ -91,6 +92,7 @@ type containerRecord struct {
 	container *Container
 	ref       ContainerRef
 	startTime uint64
+	guest     *guestScanner
 	directory os.FileInfo
 }
 
@@ -297,6 +299,12 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 			continue
 		}
 		if previous != nil && previous.sameInstance(record) {
+			if record.guest != nil ||
+				(record.container.HostKataSandboxID() != "" &&
+					record.container.HostKataSandboxID() == previous.container.HostKataSandboxID()) {
+				record.container.StartedAt = previous.container.StartedAt
+				record.container.SyncedAt = previous.container.SyncedAt
+			}
 			record.ref.Key = previous.ref.Key
 			record.container.lifeResources = previous.container.lifeResources
 			v.records[id] = record

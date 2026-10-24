@@ -33,13 +33,25 @@ type Container struct {
 	IPAddress          string            `json:"net_ip_address"`
 	NetNamespaceInum   uint64            `json:"net_namespace_inum"`
 	NetNamespaceCookie uint64            `json:"net_namespace_cookie"`
-	InitPid            int               `json:"init_pid"`
+	InitPid            int               `json:"init_pid"` // Host Kata uses the hypervisor PID.
+	RuntimeType        string            `json:"runtime_type,omitempty"`
+	SandboxID          string            `json:"sandbox_id,omitempty"`
 	CgroupPath         string            `json:"cgroup_path"`
 	CgroupCss          map[string]uint64 `json:"cgroup_css"` // map for: subSysName -> structAddress
 	StartedAt          time.Time         `json:"started_at"`
 	SyncedAt           time.Time         `json:"synced_at"`
 	Labels             map[string]any    `json:"labels"` // custom labels
 	lifeResources      map[string]any
+	memoryCgroupPath   *string
+}
+
+// MemoryCgroupPath returns the memory hierarchy binding. An empty Guest binding
+// means the memory controller is unavailable; legacy Host records share CgroupPath.
+func (c *Container) MemoryCgroupPath() string {
+	if c.memoryCgroupPath != nil {
+		return *c.memoryCgroupPath
+	}
+	return c.CgroupPath
 }
 
 func (c *Container) String() string {
@@ -165,7 +177,10 @@ func GetCSSToContainerID(subsys string) (map[uint64]string, error) {
 func BuildCssContainersID(containers map[string]*Container, subsys string) map[uint64]string {
 	cssToContainerMap := make(map[uint64]string, len(containers))
 	for _, container := range containers {
-		if addr, ok := container.CgroupCss[subsys]; ok {
+		if addr := container.CgroupCss[subsys]; addr != 0 && (container.HostKataSandboxID() == "" || !keepKataRepresentative(
+			containers[cssToContainerMap[addr]],
+			container,
+		)) {
 			cssToContainerMap[addr] = container.ID
 		}
 	}
@@ -175,12 +190,21 @@ func BuildCssContainersID(containers map[string]*Container, subsys string) map[u
 // BuildCssContainers builds a css-address map from the provided containers to container pointers.
 func BuildCssContainers(containers map[string]*Container, subsys string) map[uint64]*Container {
 	cssToContainerMap := make(map[uint64]*Container, len(containers))
+	FillCssContainers(containers, subsys, cssToContainerMap)
+	return cssToContainerMap
+}
+
+// FillCssContainers replaces destination with the current CSS representatives.
+// Callers that reconcile repeatedly can reuse destination's allocated capacity.
+// Destination must be initialized.
+func FillCssContainers(containers map[string]*Container, subsys string, destination map[uint64]*Container) {
+	clear(destination)
 	for _, container := range containers {
-		if addr, ok := container.CgroupCss[subsys]; ok {
-			cssToContainerMap[addr] = container
+		if addr := container.CgroupCss[subsys]; addr != 0 &&
+			(container.HostKataSandboxID() == "" || !keepKataRepresentative(destination[addr], container)) {
+			destination[addr] = container
 		}
 	}
-	return cssToContainerMap
 }
 
 // ContainerByCSS returns the container whose cgroup subsystem state address
@@ -189,7 +213,17 @@ func ContainerByCSS(css uint64, subsys string) (*Container, error) {
 	if css == 0 {
 		return nil, nil
 	}
-	return containerBy(func(c *Container) uint64 { return c.CgroupCss[subsys] }, css)
+	containers, err := NormalContainers()
+	if err != nil {
+		return nil, err
+	}
+	var selected *Container
+	for _, container := range containers {
+		if container.CgroupCss[subsys] == css && !keepKataRepresentative(selected, container) {
+			selected = container
+		}
+	}
+	return selected, nil
 }
 
 // ContainerByNetNamespaceCookie returns the container whose network namespace cookie matches.

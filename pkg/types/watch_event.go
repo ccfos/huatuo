@@ -31,6 +31,7 @@ type WatchEvent struct {
 // It exposes a curated subset of internal Document fields so that internal
 // storage changes do not affect the public API contract.
 type WatchEventData struct {
+	SourceType              string `json:"source_type,omitempty"`
 	Hostname                string `json:"hostname"`
 	Region                  string `json:"region"`
 	ObservedTimestamp       string `json:"observed_timestamp"`

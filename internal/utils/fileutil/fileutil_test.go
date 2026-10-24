@@ -16,6 +16,7 @@ package fileutil
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -43,4 +44,88 @@ func TestStatInodeMissingFile(t *testing.T) {
 	if !os.IsNotExist(err) {
 		t.Errorf("StatInode() error = %v, want os.IsNotExist error", err)
 	}
+}
+
+func TestRemoveIfSame(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T, path string) os.FileInfo
+		wantExists bool
+	}{
+		{
+			name: "removes the expected file",
+			setup: func(t *testing.T, path string) os.FileInfo {
+				t.Helper()
+				writeFile(t, path, "first")
+				return statFile(t, path)
+			},
+		},
+		{
+			name: "keeps a replaced file",
+			setup: func(t *testing.T, path string) os.FileInfo {
+				t.Helper()
+				writeFile(t, path, "first")
+				expected := statFile(t, path)
+				replacement := path + ".replacement"
+				writeFile(t, replacement, "second")
+				if err := os.Rename(replacement, path); err != nil {
+					t.Fatalf("replace file: %v", err)
+				}
+				return expected
+			},
+			wantExists: true,
+		},
+		{
+			name: "ignores a missing path",
+			setup: func(t *testing.T, path string) os.FileInfo {
+				t.Helper()
+				writeFile(t, path, "first")
+				expected := statFile(t, path)
+				if err := os.Remove(path); err != nil {
+					t.Fatalf("remove first file: %v", err)
+				}
+				return expected
+			},
+		},
+		{
+			name: "ignores a nil expectation",
+			setup: func(t *testing.T, path string) os.FileInfo {
+				t.Helper()
+				writeFile(t, path, "first")
+				return nil
+			},
+			wantExists: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "owned")
+			expected := tt.setup(t, path)
+
+			if err := RemoveIfSame(path, expected); err != nil {
+				t.Fatalf("RemoveIfSame() error = %v", err)
+			}
+			_, err := os.Lstat(path)
+			if got := err == nil; got != tt.wantExists {
+				t.Fatalf("RemoveIfSame() exists = %t, want %t (err=%v)", got, tt.wantExists, err)
+			}
+		})
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func statFile(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return info
 }

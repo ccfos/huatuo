@@ -22,6 +22,13 @@ import (
 )
 
 const (
+	// DocumentSourceHost identifies observations produced on the node.
+	DocumentSourceHost = "host"
+	// DocumentSourceKataGuest identifies observations produced inside a Kata VM.
+	DocumentSourceKataGuest = "kata_guest"
+)
+
+const (
 	// TracerRunTypeProfiling identifies an API-requested profiling observation.
 	TracerRunTypeProfiling = "profiling"
 	// TracerRunTypeTracing identifies an API-requested tracing observation.
@@ -35,6 +42,7 @@ const (
 // Document field names are shared so storage indexes cannot drift from the
 // serialized contract.
 const (
+	DocumentFieldSourceType              = "source_type"
 	DocumentFieldHostname                = "hostname"
 	DocumentFieldRegion                  = "region"
 	DocumentFieldUploadedTimestamp       = "uploaded_timestamp"
@@ -64,6 +72,8 @@ const (
 //
 // TracerRunType determines which producer-owned timestamp is required.
 type Document struct {
+	// Empty source_type is retained for historical documents with unknown origin.
+	SourceType              string              `json:"source_type,omitempty"`
 	Hostname                string              `json:"hostname"`
 	Region                  string              `json:"region"`
 	UploadedTimestamp       timeutil.Timestamp  `json:"uploaded_timestamp"`
@@ -86,6 +96,11 @@ type Document struct {
 func (d *Document) Validate() error {
 	if d == nil {
 		return errors.New("document is required")
+	}
+	switch d.SourceType {
+	case "", DocumentSourceHost, DocumentSourceKataGuest:
+	default:
+		return fmt.Errorf("document source type %q is not supported", d.SourceType)
 	}
 	if d.UploadedTimestamp.IsZero() {
 		return errors.New("document uploaded timestamp is required")

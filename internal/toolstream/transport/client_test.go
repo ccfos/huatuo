@@ -112,3 +112,49 @@ func TestSendCancellationInterruptsBlockedWrite(t *testing.T) {
 		t.Fatal("cancellation did not unblock Send")
 	}
 }
+
+// TestClientMetadataHandshake 验证带与不带 context 的连接构造函数，
+// 均传递完整工具/任务元数据并使用当前协议版本，且数据与结束帧可以正常接收。
+func TestClientMetadataHandshake(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		connect func(context.Context, net.Conn, ClientMetadata) (*Client, error)
+	}{
+		{"connection", func(_ context.Context, conn net.Conn, metadata ClientMetadata) (*Client, error) {
+			return NewClientWithConn(conn, metadata)
+		}},
+		{"context", NewClientWithConnContext},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, _, received, wait := newPipedServer(t)
+			t.Cleanup(func() { _ = conn.Close(); wait() })
+			metadata := ClientMetadata{
+				ServiceName: "profiling-store",
+				ToolName:    "checkout-profiler",
+				Version:     "2.3.0",
+				TaskID:      "checkout-profile",
+			}
+			client, err := tc.connect(t.Context(), conn, metadata)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := client.Send(t.Context(), []byte("checkout-sample"), SendOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := client.Send(t.Context(), nil, SendOptions{End: true}); err != nil {
+				t.Fatal(err)
+			}
+			wait()
+			chunks := received.snapshot()
+			if len(chunks) != 2 || string(chunks[0].Data) != "checkout-sample" || !chunks[1].End {
+				t.Fatalf("unexpected frames: %+v", chunks)
+			}
+			session := chunks[0].Session
+			if session.ServiceName != metadata.ServiceName || session.ToolName != metadata.ToolName ||
+				session.Version != metadata.Version ||
+				session.TaskID != metadata.TaskID || session.ProtoVersion != ProtocolVersion {
+				t.Fatalf("handshake metadata=%+v", session)
+			}
+		})
+	}
+}

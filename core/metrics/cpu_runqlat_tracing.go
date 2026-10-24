@@ -186,7 +186,9 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 		// Skip containers with no CPU cgroup address: they are absent from
 		// cssContainer and therefore never updated by updateContainerDataCache.
 		// Reporting their zero/stale cache would produce misleading metrics.
-		if _, ok := container.CgroupCss[subsystem.SubsystemCPU]; !ok {
+		if css := container.CgroupCss[subsystem.SubsystemCPU]; css == 0 ||
+			(container.HostKataSandboxID() != "" &&
+				cssContainer[css] != container) {
 			continue
 		}
 

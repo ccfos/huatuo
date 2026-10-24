@@ -193,63 +193,74 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 		}
 	}()
 
-	for _, opt := range opts {
-		progID := b.ProgramIDByName(opt.ProgramName)
-		program, ok := b.programsByID[progID]
-		if !ok {
-			return fmt.Errorf("unknown BPF program %q", opt.ProgramName)
-		}
-
-		switch program.programType {
-		case ebpf.TracePoint:
-			attachOpts, parseErr := parseTracepointAttachOptions(program, opt.Symbol)
-			if parseErr != nil {
-				return parseErr
-			}
-			if err = b.attachTracepoint(attachOpts); err != nil {
+	for i := range opts {
+		opt := &opts[i]
+		if err := b.attachOption(opt); err != nil {
+			if !opt.Optional {
 				return err
 			}
-		case ebpf.Kprobe:
-			attachOpts, parseErr := parseKprobeAttachOptions(
-				program,
-				opt.Symbol,
-				program.sectionPrefix == "kretprobe",
-				opt.Kprobe.RetprobeMaxActive,
-			)
-			if parseErr != nil {
-				return parseErr
-			}
-			if err = b.attachKprobe(attachOpts); err != nil {
-				return err
-			}
-		case ebpf.RawTracepoint:
-			attachOpts, parseErr := parseRawTracepointAttachOptions(program, opt.Symbol)
-			if parseErr != nil {
-				return parseErr
-			}
-			if err = b.attachRawTracepoint(attachOpts); err != nil {
-				return err
-			}
-		case ebpf.PerfEvent:
-			attachOpts, parseErr := parsePerfEventAttachOptions(
-				program,
-				opt.PerfEvent.SamplePeriod,
-				opt.PerfEvent.SampleFreq,
-				opt.PerfEvent.CPUIDs,
-				opt.PerfEvent.Type,
-				opt.PerfEvent.Config,
-			)
-			if parseErr != nil {
-				return parseErr
-			}
-			if err = b.attachPerfEvent(attachOpts); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unsupported BPF program type %q", program.programType)
+			log.WithError(err).WithField("symbol", opt.Symbol).
+				Warn("optional BPF hook unavailable")
 		}
 	}
+	return nil
+}
 
+func (b *defaultBPF) attachOption(opt *AttachOption) error {
+	progID := b.ProgramIDByName(opt.ProgramName)
+	program, ok := b.programsByID[progID]
+	if !ok {
+		return fmt.Errorf("unknown BPF program %q", opt.ProgramName)
+	}
+
+	switch program.programType {
+	case ebpf.TracePoint:
+		attachOpts, parseErr := parseTracepointAttachOptions(program, opt.Symbol)
+		if parseErr != nil {
+			return parseErr
+		}
+		if err := b.attachTracepoint(attachOpts); err != nil {
+			return err
+		}
+	case ebpf.Kprobe:
+		attachOpts, parseErr := parseKprobeAttachOptions(
+			program,
+			opt.Symbol,
+			program.sectionPrefix == "kretprobe",
+			opt.Kprobe.RetprobeMaxActive,
+		)
+		if parseErr != nil {
+			return parseErr
+		}
+		if err := b.attachKprobe(attachOpts); err != nil {
+			return err
+		}
+	case ebpf.RawTracepoint:
+		attachOpts, parseErr := parseRawTracepointAttachOptions(program, opt.Symbol)
+		if parseErr != nil {
+			return parseErr
+		}
+		if err := b.attachRawTracepoint(attachOpts); err != nil {
+			return err
+		}
+	case ebpf.PerfEvent:
+		attachOpts, parseErr := parsePerfEventAttachOptions(
+			program,
+			opt.PerfEvent.SamplePeriod,
+			opt.PerfEvent.SampleFreq,
+			opt.PerfEvent.CPUIDs,
+			opt.PerfEvent.Type,
+			opt.PerfEvent.Config,
+		)
+		if parseErr != nil {
+			return parseErr
+		}
+		if err := b.attachPerfEvent(attachOpts); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported BPF program type %q", program.programType)
+	}
 	return nil
 }
 

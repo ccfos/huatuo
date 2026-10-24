@@ -107,8 +107,12 @@ func (c *memOthersCollector) Update() ([]*metric.Data, error) {
 	metrics := []*metric.Data{}
 
 	for _, container := range containers {
+		memoryPath := container.MemoryCgroupPath()
+		if memoryPath == "" {
+			continue
+		}
 		for _, spec := range didiMemcgMetricSpecs {
-			value, err := parseValueWithKey(container.CgroupPath, spec.path, spec.key)
+			value, err := parseValueWithKey(memoryPath, spec.path, spec.key)
 			if err != nil {
 				// FIXME: os maynot support this metric
 				continue
