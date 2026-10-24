@@ -11,7 +11,6 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 
 #define FILEPATH_MAX_DEPTH 8
 #define DNAME_INLINE_LEN   32
-#define PAGE_SIZE	   4096
 #define FILTER_DEV_MAX	   16
 
 /* Linux UAPI errno-base.h; libc headers are unsuitable for the BPF target. */
@@ -25,6 +24,8 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 volatile const u32 FILTER_DEV_IDS[FILTER_DEV_MAX] = {};
 volatile const u32 FILTER_DEV_COUNT = 0;
 volatile const u64 FILTER_EVENT_TIMEOUT = 100000000;
+/* Userspace supplies the running kernel's base page size before loading. */
+volatile const u64 KERNEL_PAGE_SIZE = 4096;
 /* Selected from request.part's BTF pointee before the object is loaded. */
 volatile const bool REQUEST_PART_BLOCK_DEVICE = false;
 
@@ -434,7 +435,7 @@ static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 	if (!entry)
 		return 0;
 
-	entry->fs_write_bytes += PAGE_SIZE;
+	entry->fs_write_bytes += KERNEL_PAGE_SIZE;
 
 	return 0;
 }
@@ -466,7 +467,7 @@ int bpf_filemap_fault(struct pt_regs *ctx)
 	entry = get_file_io_entry(&key, file);
 	if (!entry)
 		return 0;
-	entry->fs_read_bytes += PAGE_SIZE;
+	entry->fs_read_bytes += KERNEL_PAGE_SIZE;
 
 	return 0;
 }

@@ -28,10 +28,34 @@ import (
 	"testing"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/btf"
 	"github.com/cilium/ebpf/link"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
+
+func TestIOTracingPageSizeConstant(t *testing.T) {
+	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
+	require.NotEmpty(t, object, "run make integration to supply the production BPF object")
+	for _, size := range []uint64{4096, 16384, 65536} {
+		t.Run(strconv.FormatUint(size, 10), func(t *testing.T) {
+			spec, err := ebpf.LoadCollectionSpec(object)
+			require.NoError(t, err)
+			require.NoError(t, spec.RewriteConstants(map[string]any{bpfKernelPageSize: size}))
+			var section *btf.Datasec
+			require.NoError(t, spec.Types.TypeByName(".rodata", &section))
+			for _, entry := range section.Vars {
+				if entry.Type.(*btf.Var).Name == bpfKernelPageSize {
+					require.Equal(t, uint32(8), entry.Size)
+					data := spec.Maps[".rodata"].Contents[0].Value.([]byte)
+					require.Equal(t, size, spec.ByteOrder.Uint64(data[entry.Offset:entry.Offset+entry.Size]))
+					return
+				}
+			}
+			t.Fatal("kernel page size is absent from BPF read-only data")
+		})
+	}
+}
 
 func TestIOTracingFileReadLayouts(t *testing.T) {
 	compiler := strings.Fields(os.Getenv("CC"))
@@ -586,8 +610,8 @@ func TestIOTracingFileMetadata(t *testing.T) {
 	}{
 		{name: "read", program: "bpf_anyfs_file_read_iter", symbol: filesystem + "_file_read_iter", read: 17},
 		{name: "write", program: "bpf_anyfs_file_write_iter", symbol: filesystem + "_file_write_iter", write: 29},
-		{name: "private_fault", program: "bpf_filemap_fault", symbol: "filemap_fault", mapping: unix.MAP_PRIVATE, read: 4096},
-		{name: "shared_mkwrite", program: "bpf_anyfs_filemap_page_mkwrite", symbol: mkwrite, mapping: unix.MAP_SHARED, write: 4096},
+		{name: "private_fault", program: "bpf_filemap_fault", symbol: "filemap_fault", mapping: unix.MAP_PRIVATE, read: uint64(os.Getpagesize())},
+		{name: "shared_mkwrite", program: "bpf_anyfs_filemap_page_mkwrite", symbol: mkwrite, mapping: unix.MAP_SHARED, write: uint64(os.Getpagesize())},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			type testFile struct {
@@ -649,6 +673,7 @@ func TestIOTracingFileMetadata(t *testing.T) {
 			require.NoError(t, spec.RewriteConstants(map[string]any{
 				"FILTER_DEV_COUNT": uint32(1),
 				"FILTER_DEV_IDS":   [16]uint32{files[0].key.Dev},
+				bpfKernelPageSize:  uint64(os.Getpagesize()),
 			}))
 			coll, err := ebpf.NewCollection(spec)
 			require.NoError(t, err, "production file program must relocate and load")

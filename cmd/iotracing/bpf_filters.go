@@ -23,6 +23,7 @@ const (
 	bpfFilterDevCount         = "FILTER_DEV_COUNT"
 	bpfFilterDevMaxNums       = 16
 	bpfRequestPartBlockDevice = "REQUEST_PART_BLOCK_DEVICE"
+	bpfKernelPageSize         = "KERNEL_PAGE_SIZE"
 
 	// bpfPerfMapName / bpfSourceMapName are map names exposed by the BPF
 	// object; the tool dumps the latter and reads events from the former.
