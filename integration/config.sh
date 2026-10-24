@@ -422,15 +422,69 @@ CONFIG
 	fi
 }
 
-write_memory_oom_kill_config() {
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "sched_tick", "ras", "runqlat", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "iocost", "blk_throtl", "io_health"]
+# Keep event tests isolated with one shared collector list.
+write_single_event_config() {
+	local enabled=$1 tracer separator=""
+	local storage_path="${2-${HUATUO_BAMAI_TEST_TMPDIR}/events}"
+	local tracers=(
+		arp ascend_npu cpu_stat cpu_util cpuidle
+		cpusys diskio dload dropwatch hungtask
+		iocost blk_throtl io_health iolatency iotracing irqtracing loadavg memburst
+		memory_buddyinfo memory_events memory_free memory_oom_kill memory_others
+		memory_reclaim memory_reclaim_events memory_threshold_snapshot memory_vmstat metax_gpu
+		mountpoint_perm mthreads_gpu mthreads_xid net_conntrack net_rx_latency netdev
+		netdev_bonding_lacp netdev_dcb netdev_events netdev_hw netdev_qdisc
+		netdev_rdma_link netdev_txqueue_timeout netstat ras runqlat
+		sched_tick sockstat softirq softlockup tcp_memory
+		tcp_retransmit tracing_status xfs
+	)
+
+	{
+		printf 'BlackList = ['
+		for tracer in "${tracers[@]}"; do
+			[[ "${tracer}" == "${enabled}" ]] && continue
+			printf '%s"%s"' "${separator}" "${tracer}"
+			separator=', '
+		done
+		printf ']\n'
+		cat << EOF
 
 [HTTPServer.Auth]
     BearerToken = "integration-node-token"
 
 [Storage.LocalFile]
-    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+    Path = "${storage_path}"
+EOF
+	} > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+}
+
+write_memory_oom_kill_config() {
+	write_single_event_config memory_oom_kill
+}
+
+write_bpf_mock_es_config() {
+	write_single_event_config "$1" ""
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+
+[Storage.Elasticsearch]
+    Address = "${STORAGE_ADDR}"
+    Username = "${STORAGE_USERNAME}"
+    Password = "${STORAGE_PASSWORD}"
+    Index = "${STORAGE_INDEX}"
+EOF
+}
+
+write_bpf_mock_container_config() {
+	local port=$1 kubelet_port=${KUBELET_PODS_API##*:}
+	kubelet_port=${kubelet_port%%/*}
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${port}"
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${kubelet_port}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
 EOF
 }
 

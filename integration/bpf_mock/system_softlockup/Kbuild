@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The HuaTuo Authors.
+
+obj-m += system_softlockup_mock.o
+system_softlockup_mock-y := system_softlockup_mock_kmod.o

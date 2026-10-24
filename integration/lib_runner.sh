@@ -17,7 +17,7 @@
 # Test execution inside the runner's UTS and mount namespaces.
 
 # Unreviewed tests run alone. A group serializes cases sharing kernel resources.
-# Network tests share traffic and devices.
+# Physical allocation/usage mocks share rmap symbols; network tests share traffic.
 declare -A runner_test_groups=(
 	["test_apiserver_continuous_profiling_api.sh"]=independent
 	["test_apiserver_continuous_profiling_concurrent_jobs.sh"]=independent
@@ -31,19 +31,25 @@ declare -A runner_test_groups=(
 	["test_autotracing_irqtracing.sh"]=independent
 	["test_basic_bpf_debug_macro.sh"]=independent
 	["test_basic_dockerfile_check.sh"]=independent
+	["test_basic_startup_log.sh"]=independent
 	["test_basic_storage_elasticsearch_values.sh"]=independent
 	["test_basic_storage_opensearch_elasticsearch.sh"]=network
-	["test_basic_startup_log.sh"]=independent
 	["test_dropwatch_devlink.sh"]=network
 	["test_dropwatch_icmpv6.sh"]=network
 	["test_dropwatch_ipv4_options.sh"]=network
 	["test_dropwatch_netdevsim.sh"]=network
 	["test_dropwatch_reason.sh"]=network
+	["test_events_memory_oom_kill_mock.sh"]=mock-oom
+	["test_events_memory_oom_kill_mock_container.sh"]=mock-oom
+	["test_events_memory_reclaim_events_mock_container.sh"]=mock-reclaim
 	["test_events_net_rx_latency.sh"]=network
+	["test_events_system_hungtask_mock.sh"]=mock-hungtask
+	["test_events_system_softlockup_mock.sh"]=mock-softlockup
 	["test_events_tcp_retransmit.sh"]=network
 	["test_metrics.sh"]=independent
 	["test_metrics_exclude_filter.sh"]=independent
 	["test_metrics_include_filter.sh"]=independent
+	["test_metrics_memory_free_compact_mock.sh"]=mock-compaction
 	["test_node_cloud_events_api.sh"]=independent
 	["test_node_config_api.sh"]=independent
 	["test_profiler_config.sh"]=independent
@@ -58,6 +64,12 @@ declare -A runner_test_groups=(
 	["test_profiler_native_memory_physical_usage.sh"]=independent
 	["test_profiler_native_memory_thread_group.sh"]=independent
 	["test_profiler_native_memory_virtual_alloc.sh"]=independent
+	["test_profiler_native_physical_alloc_mock.sh"]=mock-physical-rmap
+	["test_profiler_native_physical_alloc_mock_container.sh"]=mock-physical-rmap
+	["test_profiler_native_physical_usage_mock.sh"]=mock-physical-rmap
+	["test_profiler_native_physical_usage_mock_container.sh"]=mock-physical-rmap
+	["test_profiler_native_virtual_alloc_mock.sh"]=mock-virtual
+	["test_profiler_native_virtual_alloc_mock_container.sh"]=mock-virtual
 	["test_profiler_output_flags.sh"]=independent
 	["test_profiler_python_cpu_multi_pid.sh"]=profiler
 	["test_profiler_user_kernel_frames.sh"]=independent
@@ -129,6 +141,7 @@ runner_finish_case() {
 runner_stop_storage() {
 	local status=$1
 	if [[ -n ${runner_last_storage} ]]; then stop_shared_storage "${status}" || runner_failed=1; fi
+	if [[ -n ${runner_last_auth_storage} ]]; then stop_shared_storage "${status}" "${STORAGE_AUTH_SHARED_DIR}" || runner_failed=1; fi
 }
 
 runner_cleanup() {
@@ -154,7 +167,7 @@ runner_cleanup() {
 	runner_stop_storage "${status}"
 	if ((runner_failed)) && [[ ${status} != 130 && ${status} != 143 ]]; then status=1; fi
 	if [[ ${runner_suite} == integration && ${status} -eq 0 ]]; then
-		rm -rf -- "${HUATUO_BAMAI_TEST_TMPDIR}/ports"
+		rm -rf -- "${HUATUO_BAMAI_TEST_TMPDIR}/ports" "${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-build"
 		rmdir -- "${HUATUO_BAMAI_TEST_TMPDIR}" || status=1
 	fi
 	test_results_summary
@@ -199,12 +212,19 @@ run_test_suite() {
 	shift 3
 	local -a scripts=("$@") parallel=() profilers=() exclusive=()
 	local script group
-	runner_last_storage="" runner_failed=0
+	runner_last_storage="" runner_last_bpf_mock="" runner_last_auth_storage="" runner_failed=0
 	declare -ga runner_pids=() runner_workspaces=() runner_names=() runner_started=() runner_groups=()
-	if [[ ${runner_suite} == e2e ]]; then source "${ROOT_DIR}/e2e/lib.sh"; fi
+	if [[ ${runner_suite} == e2e ]]; then source "${ROOT_DIR}/e2e/lib.sh"; else
+		source "${ROOT_DIR}/integration/bpf_mock/common/core.sh"
+	fi
 	for script in "${scripts[@]}"; do
 		if [[ ${runner_suite} == integration ]]; then
+			if is_bpf_mock_test "${script}"; then
+				runner_last_bpf_mock=${script}
+				runner_last_auth_storage=${script}
+			fi
 			case ${script##*/} in
+			test_basic_storage_opensearch_elasticsearch.sh) runner_last_auth_storage=${script} ;;
 			test_apiserver_continuous_profiling_*.sh | test_apiserver_job_recovery.sh | test_apiserver_profile_filters.sh | test_autotracing_irqtracing.sh | test_basic_storage_elasticsearch_values.sh) runner_last_storage=${script} ;;
 			esac
 		fi
@@ -217,6 +237,13 @@ run_test_suite() {
 	done
 	if [[ -n ${runner_last_storage} ]]; then
 		export STORAGE_SHARED_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/default-es"
+		source "${ROOT_DIR}/integration/lib_storage.sh"
+	fi
+	if [[ -n ${runner_last_bpf_mock} ]]; then
+		export BPF_MOCK_BUILD_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-build"
+	fi
+	if [[ -n ${runner_last_auth_storage} ]]; then
+		export STORAGE_AUTH_SHARED_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/authenticated-es"
 		source "${ROOT_DIR}/integration/lib_storage.sh"
 	fi
 	test_results_init
@@ -237,6 +264,7 @@ run_test_suite() {
 				runner_start_case "${script}" 0 exclusive
 				runner_finish_case 0
 				((runner_failed == 0)) || exit 1
+				if [[ ${script} == "${runner_last_auth_storage}" ]]; then stop_shared_storage 0 "${STORAGE_AUTH_SHARED_DIR}"; fi
 			done
 			runner_stop_storage 0
 		else
@@ -244,6 +272,7 @@ run_test_suite() {
 				runner_start_case "${script}" 0 exclusive
 				runner_finish_case 0
 				((runner_failed == 0)) || exit 1
+				if [[ ${script} == "${runner_last_auth_storage}" ]]; then stop_shared_storage 0 "${STORAGE_AUTH_SHARED_DIR}"; fi
 				if [[ ${script} == "${runner_last_storage}" ]]; then stop_shared_storage 0; fi
 			done
 		fi

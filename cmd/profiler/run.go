@@ -43,7 +43,7 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 	ctx, cancel := newSignalContext(cliCtx.Context, signalLog)
 	defer cancel()
 	if implementation == profiling.ImplementationNative {
-		cleanup, err := initBpfManager(cfg.Provider.Duration)
+		cleanup, err := initBpfManager(cfg)
 		if err != nil {
 			return err
 		}

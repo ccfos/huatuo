@@ -30,6 +30,8 @@ PPROF_TOOL := $(APP_CMD_OUTPUT)/tools/pprof-tool
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
 GO_BUILD_PARALLELISM ?= 2
 APP_CMD_BIN_TARGETS := $(patsubst %,$(APP_CMD_OUTPUT)/bin/%,$(notdir $(APP_CMD_SUBDIRS)))
+BPF_MOCK_CHECKER_DIRS := $(wildcard integration/bpf_mock/*/checker)
+BPF_MOCK_CHECKER_TARGETS := $(patsubst integration/bpf_mock/%/checker,$(APP_CMD_OUTPUT)/tests/%-mock-checker,$(BPF_MOCK_CHECKER_DIRS))
 
 GO_BUILD_FLAGS := CGO_ENABLED=1 go build -tags "netgo osusergo" -gcflags=all="-N -l"
 GO_BUILD_LDFLAGS := \
@@ -167,7 +169,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 
 build: gen-build $(GO_SRCS) \
 	_output/tests/apiserver-probe \
-	_output/tests/apiserver-go-workload
+	_output/tests/apiserver-go-workload $(BPF_MOCK_CHECKER_TARGETS)
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
 	$(GO_BUILD_IMPL) -p $(GO_BUILD_PARALLELISM) -o $(APP_CMD_OUTPUT)/bin/ $(addprefix ./,$(APP_CMD_SUBDIRS))
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
@@ -246,8 +248,13 @@ _output/tests/apiserver-go-workload: integration/testdata/test_apiserver_profili
 	@mkdir -p $(@D)
 	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
 
+$(BPF_MOCK_CHECKER_TARGETS): $(APP_CMD_OUTPUT)/tests/%-mock-checker: $(GO_SRCS) Makefile
+	@mkdir -p $(@D)
+	CGO_ENABLED=0 go build -mod=vendor -tags integration -p $(GO_BUILD_PARALLELISM) -o $@ ./integration/bpf_mock/$*/checker
+
 integration: build
 	go build -o $(PPROF_TOOL) ./build/pprof-tool
+	go test -v -tags integration ./integration/bpf_mock/...
 	@bash integration/run.sh
 
 e2e: build

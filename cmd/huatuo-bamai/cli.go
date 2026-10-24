@@ -15,6 +15,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,8 @@ const (
 	cliFlagLogDebug       = "log-debug"
 	cliFlagDryRun         = "dry-run"
 	cliFlagProcfsPrefix   = "procfs-prefix"
+	cliFlagBPFMock        = "bpf-mock"
+	cliFlagBPFMockObject  = "bpf-mock-object"
 )
 
 // Options holds all CLI-derived configuration. Populated by FromContext
@@ -60,6 +63,8 @@ type Options struct {
 	LogDebug       bool
 	DryRun         bool
 	ProcfsPrefix   string
+	BPFMock        bool
+	BPFMockObjects []string
 	VersionInfo    version.Info
 }
 
@@ -146,6 +151,14 @@ func (o *Options) AddFlags(app *cli.App) {
 			Name:  cliFlagProcfsPrefix,
 			Usage: "procfs prefix for default mountpoint e.g. /proc /sys and /dev",
 		},
+		&cli.BoolFlag{
+			Name:  cliFlagBPFMock,
+			Usage: "testing only: attach kprobes, kretprobes, and tracepoints to <symbol>_mock",
+		},
+		&cli.StringSliceFlag{
+			Name:  cliFlagBPFMockObject,
+			Usage: "testing only: restrict --bpf-mock to these BPF object names (repeatable)",
+		},
 	}
 }
 
@@ -160,6 +173,11 @@ func (o *Options) FromContext(ctx *cli.Context) error {
 	o.LogDebug = ctx.Bool(cliFlagLogDebug)
 	o.DryRun = ctx.Bool(cliFlagDryRun)
 	o.ProcfsPrefix = ctx.String(cliFlagProcfsPrefix)
+	o.BPFMock = ctx.Bool(cliFlagBPFMock)
+	o.BPFMockObjects = ctx.StringSlice(cliFlagBPFMockObject)
+	if len(o.BPFMockObjects) > 0 && !o.BPFMock {
+		return errors.New("--bpf-mock-object requires --bpf-mock")
+	}
 
 	var err error
 	if o.ConfigDir, err = resolveOptionDir(ctx, cliFlagConfigDir); err != nil {

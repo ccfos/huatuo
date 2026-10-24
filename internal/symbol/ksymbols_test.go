@@ -17,6 +17,7 @@ package symbol
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -390,5 +391,36 @@ func TestDumpKernelBackTraceKsymNotFound(t *testing.T) {
 	want := "unknown ksym-not-found"
 	if got[0] != want {
 		t.Errorf("dumpKernelBackTrace ksym-not-found: got %q, want %q", got[0], want)
+	}
+}
+
+func TestKernelSymbolAliasPrecedence(t *testing.T) {
+	for _, fixture := range []struct {
+		name, first, alias, module, aliasModule string
+	}{
+		{"module", "folio_add_new_anon_rmap_mock", "dummy_init_module", "[native_physical_usage_mock]", "[dummy]"},
+		{"kernel", "kernel_entry", "kernel_entry_alias", "[kernel]", "[kernel]"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			const address = uint64(0xffffffffc0b9a010)
+			resetKernelSymbolFixture(t, []string{
+				fmt.Sprintf("%x t %s %s", address, fixture.first, fixture.module),
+				fmt.Sprintf("%x T following_symbol", address+0x100),
+				fmt.Sprintf("%x T %s %s", address, fixture.alias, fixture.aliasModule),
+			})
+			for _, offset := range []uint64{0, 1, 5} {
+				got := KsymStackStrs([]uint64{address + offset}, 1)
+				want := fmt.Sprintf("%s/+%d %s", fixture.first, offset, fixture.module)
+				if len(got) != 1 || got[0] != want {
+					t.Errorf("offset %d: got %q, want %q", offset, got, want)
+				}
+			}
+			for _, name := range []string{fixture.first, fixture.alias} {
+				got, err := KsymbolSearchAddr([]string{name}, KsymbolLookupDefault)
+				if err != nil || got[name].Start != address {
+					t.Errorf("KsymbolSearchAddr(%q) = %#v, %v; want address %#x, nil", name, got, err, address)
+				}
+			}
+		})
 	}
 }

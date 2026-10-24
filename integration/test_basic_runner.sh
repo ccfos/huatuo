@@ -54,8 +54,9 @@ RUNNER_PARENT_UTS=$(readlink /proc/self/ns/uts)
 RUNNER_PARENT_MOUNT=$(readlink /proc/self/ns/mnt)
 export RUNNER_PARENT_UTS RUNNER_PARENT_MOUNT
 
-mkdir -p "${RUNNER_FIXTURE}"/{integration,e2e,_output}
+mkdir -p "${RUNNER_FIXTURE}"/{integration/bpf_mock/common,e2e,_output}
 cp "${ROOT_DIR}/integration/"{run.sh,lib.sh,lib_runner.sh,exec_case.sh} "${RUNNER_FIXTURE}/integration/"
+cp "${ROOT_DIR}/integration/bpf_mock/common/core.sh" "${RUNNER_FIXTURE}/integration/bpf_mock/common/"
 cp "${ROOT_DIR}/e2e/"{run.sh,lib.sh} "${RUNNER_FIXTURE}/e2e/"
 cat > "${RUNNER_FIXTURE}/integration/env.sh" << 'EOF'
 export ROOT_DIR=$PWD
@@ -218,11 +219,12 @@ docker() {
     port) printf '127.0.0.1:19200\n';;
     rm) printf 'stop\n' >> "${ROOT_DIR}/storage-lifecycle";;
     logs) printf 'fixture storage diagnostics\n';;
-    image) return 0;;
+    image|pull) return 0;;
     *) return 1;;
     esac
 }
 storage_ready() { return 0; }
+timeout() { shift; "$@"; }
 EOF
 cat > "${RUNNER_FIXTURE}/integration/test_apiserver_continuous_profiling_api.sh" << 'EOF'
 set -euo pipefail
@@ -258,5 +260,54 @@ runner_check integration repeated_storage 0 'total=2 passed=2 skipped=0 failed=0
 [[ $(grep -c '^start$' "${RUNNER_FIXTURE}/storage-lifecycle") == 2 ]] || fatal "repeated storage reused the previous round"
 [[ $(grep -c '^stop$' "${RUNNER_FIXTURE}/storage-lifecycle") == 2 ]] || fatal "repeated storage cleanup did not run"
 unset RUNNER_STORAGE_MODE
+
+# Mock cases share authenticated storage and builds, but not kernel ownership.
+rm -f "${RUNNER_FIXTURE}/integration/"test_*.sh
+cat > "${RUNNER_FIXTURE}/integration/test_events_memory_oom_kill_mock.sh" << 'EOF'
+set -euo pipefail
+source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_storage.sh"
+name=${0##*/}
+group=oom
+[[ $name != test_events_system_softlockup_mock.sh ]] || group=softlockup
+exec 8>"${ROOT_DIR}/${group}.lock"
+flock -n 8 || fatal "mock cases sharing a module overlapped"
+touch "${ROOT_DIR}/${group}.started"
+if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
+ peer=softlockup
+ [[ $group != softlockup ]] || peer=oom
+ wait_until 5 0.05 test -f "${ROOT_DIR}/${peer}.started"
+fi
+trap 'status=$?; storage_stop || status=1; exit "$status"' EXIT
+storage_start elasticsearch_v8
+[[ $STORAGE_SHARED == true && $STORAGE_ADDR == https://* && $STORAGE_USERNAME == elastic ]]
+printf '%s\n' "$(storage_test_index mock)" >> "${ROOT_DIR}/storage-indices"
+mkdir -p "$BPF_MOCK_BUILD_DIR"
+touch "$BPF_MOCK_BUILD_DIR/fixture"
+EOF
+cp "${RUNNER_FIXTURE}/integration/"test_events_memory_oom_kill_mock{,_container}.sh
+cp "${RUNNER_FIXTURE}/integration/"test_events_{memory_oom_kill,system_softlockup}_mock.sh
+for jobs in 1 3; do
+	: > "${RUNNER_FIXTURE}/storage-lifecycle"
+	: > "${RUNNER_FIXTURE}/storage-indices"
+	rm -f "${RUNNER_FIXTURE}/"{oom,softlockup}.started
+	runner_check integration "mock_shared_${jobs}" 0 'total=3 passed=3 skipped=0 failed=0' -j "${jobs}"
+	[[ $(grep -c '^start$' "${RUNNER_FIXTURE}/storage-lifecycle") == 1 ]] || fatal "mock storage did not start once"
+	[[ $(grep -c '^stop$' "${RUNNER_FIXTURE}/storage-lifecycle") == 1 ]] || fatal "mock storage did not stop once"
+	[[ $(sort -u "${RUNNER_FIXTURE}/storage-indices" | wc -l) == 3 ]] || fatal "mock cases reused an index"
+	if compgen -G "${RUNNER_FIXTURE}/workspace.*/bpf-mock-build" > /dev/null; then
+		fatal "mock build cache survived successful suite cleanup"
+	fi
+done
+(
+	source "${ROOT_DIR}/integration/lib_runner.sh"
+	for feature in alloc usage; do
+		for scope in '' _container; do
+			[[ $(runner_test_group "test_profiler_native_physical_${feature}_mock${scope}.sh") == mock-physical-rmap ]] \
+				|| fatal "physical memory mocks sharing rmap hooks must serialize"
+		done
+	done
+	[[ $(runner_test_group test_unreviewed_mock.sh) == exclusive ]] || fatal "unreviewed mock ran in parallel"
+)
 
 log_info "runner prerequisites, result counts, fail-fast behavior, storage sharing, and cleanup passed"

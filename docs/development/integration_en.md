@@ -9,6 +9,10 @@ weight: 5
 
 Integration tests run real programs to verify behavior across collectors, interfaces, and external dependencies. Metric tests use simulated `/proc` and `/sys` filesystems and check `/metrics` output. Other cases prepare processes, networking, or collection environments as needed.
 
+[Kernel mock tests for BPF](ebpf-integration-mock_en.md) exercise event
+collectors, compaction metrics, and native memory profiles using production
+userspace handling.
+
 Run `make build` before invoking test scripts directly. This guide covers entry points, result interpretation, and adding metric tests.
 
 ## Metric Test Flow
@@ -52,7 +56,8 @@ CPU-sensitive and unreviewed cases run alone after the pool drains.
 A separate profiler batch runs after shared Elasticsearch stops, with at most
 two concurrent cases. Java cases serialize because they share an agent library.
 CPU-pinned, benchmark, hardware PMU and dropwatch resource-budget cases remain
-exclusive.
+exclusive. BPF mock cases use seven resource groups: host/container variants
+serialize, and physical allocation/usage cases share the rmap group.
 E2E stays serial even when `INTEGRATION_JOBS` is set.
 
 Each parallel case has private Huatuo PID files and toolstream sockets and a
@@ -218,7 +223,9 @@ removing successful workspaces.
 Continuous-profiling API, profile-filter, IRQ autotracing, and storage-values
 cases share one default Elasticsearch instance per suite repetition. Each case
 uses workspace-scoped indices. The runner owns shutdown, including on failure;
-standalone scripts and compatibility profiles retain their own instances.
+standalone scripts retain their own instances. BPF mock events and ES8
+compatibility share a separate authenticated instance with isolated indices.
+ES7, OpenSearch, and cases with private data directories remain independent.
 
 Neither of these cases requires an Elasticsearch service:
 
@@ -381,3 +388,10 @@ populates the persistent cache, and cache download/upload time also counts.
 VM CI preloads ES7 and OpenSearch images during compilation and unit tests.
 Compatibility tests still check pullability. Prefetch logs are saved under
 `_output/storage-image-prefetch`; prefetch failures do not replace normal checks.
+
+### VM Disk Capacity
+
+VM CI requests a 40 GB disk. Guest setup expands partition-backed XFS/ext4 root
+filesystems to use the available space before running tests. It installs
+`cloud-guest-utils` on Debian/Ubuntu or `cloud-utils-growpart` on RPM systems.
+Partition or filesystem growth failures stop setup; pod evictions remain failures.
