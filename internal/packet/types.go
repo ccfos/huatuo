@@ -211,7 +211,12 @@ func (p *Packet) String() string {
 
 	var b strings.Builder
 
-	b.WriteString(p.Label)
+	label := p.Label
+	if label == "" {
+		label = labelOf(p)
+	}
+
+	b.WriteString(label)
 
 	if p.Ether != nil {
 		fmt.Fprintf(&b, " smac=%s dmac=%s", p.Ether.Saddr, p.Ether.Daddr)
