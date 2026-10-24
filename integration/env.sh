@@ -70,7 +70,7 @@ export HUATUO_BAMAI_E2E_ARGS_STR
 # huatuo-bamai: name == ct-hostname, hostname == pod-name == metadata.name
 BUSINESS_POD_NS="default"
 export BUSINESS_POD_NS
-BUSINESS_POD_IMAGE="busybox:1.36.1"
+BUSINESS_POD_IMAGE="docker.io/library/busybox:1.36.1"
 export BUSINESS_POD_IMAGE
 BUSINESS_DEFAULT_POD_NAME="busybox-business"
 export BUSINESS_DEFAULT_POD_NAME
