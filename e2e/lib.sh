@@ -19,24 +19,6 @@ set -euo pipefail
 source ${ROOT_DIR}/integration/lib.sh
 
 # k8s
-k8s_create_pod() {
-	local ns=$1
-	local name=$2
-	local image=$3
-	local label=$4
-	local num=$5
-
-	for i in $(seq 1 ${num}); do
-		kubectl run "${name}-${i}" \
-			-n ${ns} \
-			--image=${image} \
-			--image-pull-policy=Never \
-			--restart=Never \
-			-l ${label} \
-			-- sleep infinity
-	done
-}
-
 k8s_delete_pod() {
 	local ns=$1
 	local label=$2

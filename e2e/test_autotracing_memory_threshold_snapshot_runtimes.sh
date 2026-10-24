@@ -73,6 +73,9 @@ snapshot_run_case() (
 	cgroup_root=$(cgroup_memory_root) || fatal "${mode}: memory cgroup mount not found"
 	go_snapshot_cgroup=$(cgroup_find_container "${cgroup_root}" "${go_snapshot_container_id}") \
 		|| fatal "${mode}: memory cgroup not found for container ${go_snapshot_container_id}"
+	if [[ ${go_snapshot_cgroup} == *.scope ]]; then
+		require_commands busctl
+	fi
 	go_snapshot_cgroup_path=${go_snapshot_cgroup#"${cgroup_root}"}
 	cgroup_configure_memory "${go_snapshot_cgroup}" "${GO_SNAPSHOT_LIMIT}" \
 		|| fatal "${mode}: cannot set container memory limit with swap disabled"
@@ -81,8 +84,6 @@ snapshot_run_case() (
 	if [[ -e "${go_snapshot_cgroup}/memory.max" ]]; then
 		go_snapshot_limit_file="${go_snapshot_cgroup}/memory.max"
 		usage_file="${go_snapshot_cgroup}/memory.current"
-		# V2 requires a high/max notification. Only this test Pod gets a high limit.
-		echo $((72 * 1024 * 1024)) > "${go_snapshot_cgroup}/memory.high"
 	fi
 
 	go_snapshot_stage="${mode}: start daemon and prepare workload"
@@ -94,8 +95,8 @@ snapshot_run_case() (
 	# The case subshell closes this descriptor on exit.
 	exec {go_snapshot_input_fd}<> "${go_snapshot_case_dir}/commands"
 	(
-		echo "${BASHPID}" > "${go_snapshot_cgroup}/cgroup.procs"
-		# Match the BestEffort Pod's sleep process so the larger Go RSS wins.
+		snapshot_join_container_cgroup
+		# Prefer the pressure workload over the Pod's sleep process on OOM.
 		echo 1000 > /proc/self/oom_score_adj
 		exec "${workload[@]}"
 	) < "${go_snapshot_case_dir}/commands" > "${go_snapshot_case_dir}/workload.log" 2>&1 &
@@ -109,6 +110,8 @@ snapshot_run_case() (
 	wait_until 30 0.1 go_snapshot_watch_is_ready || fatal "${mode}: memory cgroup watch was not registered"
 	if [[ -e "${go_snapshot_cgroup}/memory.max" ]]; then
 		high_before=$(awk '$1 == "high" { print $2 }' "${go_snapshot_cgroup}/memory.events")
+		# V2 requires a high/max notification. Only this test Pod gets a high limit.
+		snapshot_set_memory_high $((72 * 1024 * 1024))
 	fi
 
 	go_snapshot_stage="${mode}: trigger memory pressure"
@@ -118,7 +121,7 @@ snapshot_run_case() (
 		wait_until 15 0.1 awk -v before="${high_before}" '$1 == "high" { high = $2 } END { exit !(high > before) }' \
 			"${go_snapshot_cgroup}/memory.events" || fatal "${mode}: no kernel memory.high event"
 		# Release reclaim throttling after notification so the workload can finish.
-		echo max > "${go_snapshot_cgroup}/memory.high"
+		snapshot_set_memory_high max
 	fi
 	go_snapshot_stage="${mode}: wait for persisted snapshot"
 	wait_until 30 0.1 go_snapshot_read_event || fatal "${mode}: daemon did not persist a memory snapshot"

@@ -303,3 +303,32 @@ cd integration
 ```bash
 bash run.sh test_node_runtime_limits.sh
 ```
+
+### 容器批量创建销毁 E2E
+
+在本地 kubelet 可访问的 Kubernetes 节点执行，容器运行时需要预先准备
+`busybox:1.36.1` 镜像：
+
+```bash
+bash e2e/run.sh test_node_container_lifecycle.sh
+```
+
+用例先检查已有容器的发现，再向本节点一次性提交一批 50 个单容器 Pod。
+每个 Pod 设置 128 MiB 内存上限、1 MiB 内存请求；有限上限也会启用 v1 内存
+阈值 eventfd。容器全部运行后，记录各自 memory cgroup 监听目标的设备号和
+inode，等待 bamai 自身 fdinfo 中出现全部目标：v1 检查内存上限文件，v2 同时
+检查内存上限和事件文件。
+
+这些 watch 全部建立后立即删除 Pod，再确认元数据和已记录的 watch 全部消失。
+因此，bamai 从未监控这批容器时，不能仅凭容器 API 返回 404 就通过。这个时序
+验证已被监控的容器生命周期，不再专门覆盖发现之前就被删除的场景。
+
+创建前每两秒请求 metrics 并采样 FD，连续五次 FD 数相同时确定基线，
+让 HTTP 就绪后仍在异步初始化的 tracer 完成资源建立。删除后要求在
+120 秒内连续五次采样不超过基线，期间 bamai 必须保持为同一进程。出现非预期
+error、panic 或 fatal 日志时测试失败。检查范围是选定的内存 watch 和有界
+FD 回归，不代表所有资源类型；v2 watch 共用 inotify FD，不要求每个容器都
+使 FD 数量增加。
+
+FD 数量和指向、watch 身份和快照、Pod 快照、容器 ID 和 kubelet HTTP 诊断
+均保存在测试工作目录。每批使用独立清理标签，部分创建失败时也会清理本轮 Pod。

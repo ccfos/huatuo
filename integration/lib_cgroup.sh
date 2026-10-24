@@ -143,3 +143,41 @@ huatuo_bamai_require_cgroup() {
 	[[ -w "${RUNTIME_CGROUP_CPU_ROOT}" && -w "${RUNTIME_CGROUP_MEMORY_ROOT}" ]] \
 		|| skip "CPU and memory cgroup roots must be writable"
 }
+
+# Preserve the file identity before deletion so watch removal can be checked later.
+cgroup_watch_identity() {
+	local identity inode device major minor
+	identity=$(stat -L -c '%i %d' "$1") || return 1
+	read -r inode device <<< "$identity"
+	# fdinfo prints the kernel dev_t; stat returns the userspace encoding.
+	major=$(((device >> 8) & 0xfff))
+	minor=$(((device & 0xff) | ((device >> 12) & 0xfff00)))
+	printf 'ino:%x sdev:%x\n' "$inode" "$(((major << 20) | minor))"
+}
+
+# Snapshot only watches held by this process; an unreadable snapshot is not empty.
+cgroup_read_inotify_watches() {
+	local pid=$1 output=$2 fd target watches
+	local fd_dir="/proc/${pid}/fd"
+	[[ -d "$fd_dir" && -r "$fd_dir" && -x "$fd_dir" ]] || return 1
+	local -a fds=("${fd_dir}"/*)
+	((${#fds[@]} > 0)) && [[ ${fds[0]} != *'*'* ]] || return 1
+	: > "$output" || return 1
+	for fd in "${fds[@]}"; do
+		if target=$(readlink "$fd"); then
+			[[ "$target" == anon_inode:inotify ]] || continue
+			if watches=$(awk '/^inotify / { print $3, $4 }' "/proc/${pid}/fdinfo/${fd##*/}"); then
+				if [[ -n "$watches" ]]; then
+					printf '%s\n' "$watches" >> "$output" || return 1
+				fi
+				continue
+			fi
+		fi
+		# Descriptors can close after enumeration or before fdinfo is read.
+		# Only a vanished descriptor is safe to skip; other read failures are not.
+		[[ ! -L "$fd" && -r "$fd_dir" && -x "$fd_dir" ]] || return 1
+	done
+	[[ -d "$fd_dir" && -r "$fd_dir" && -x "$fd_dir" ]] || return 1
+	# A zombie can retain its fd directory after every descriptor has closed.
+	compgen -G "${fd_dir}/[0-9]*" > /dev/null
+}
