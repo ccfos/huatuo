@@ -77,9 +77,6 @@ func ClampNegativeSamples(ctx context.Context, taskID string, profiles ...*types
 func formatNegativeSample(profile *types.AggregatedProfile, sample *types.AggregatedSample) string {
 	// Bound both traversal and text; stacks and labels may contain large strings.
 	var example strings.Builder
-	if profile == nil || sample == nil {
-		return "value=invalid"
-	}
 	fmt.Fprintf(&example, "value=%d", sample.Value)
 	for _, stack := range []uint32{sample.UserStack, sample.KernelStack} {
 		if stack == 0 || uint64(stack) > uint64(len(profile.Stacks)) {
@@ -91,6 +88,7 @@ func formatNegativeSample(profile *types.AggregatedProfile, sample *types.Aggreg
 			if uint64(id) >= uint64(len(profile.Frames)) {
 				continue
 			}
+
 			fmt.Fprintf(&example, " frame=%.128s", profile.Frames[id].Name)
 		}
 	}
