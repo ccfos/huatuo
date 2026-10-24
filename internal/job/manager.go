@@ -376,11 +376,7 @@ func (m *Manager) startCleanup() {
 			select {
 			case <-ticker.C:
 				endedBefore := m.runtimeDeps.now().Add(-m.config.JobRetentionPeriod)
-				if _, err := m.store.DeleteTerminalBefore(
-					ctx,
-					endedBefore,
-					jobBatchSize,
-				); err != nil {
+				if err := m.drainTerminalBefore(ctx, endedBefore); err != nil {
 					log.WithError(err).Error("failed to clean up terminal Jobs")
 				}
 			case <-ctx.Done():
@@ -388,6 +384,25 @@ func (m *Manager) startCleanup() {
 			}
 		}
 	}(cleanupCtx)
+}
+
+// drainTerminalBefore deletes expired terminal Jobs in bounded batches until a
+// batch comes back short. One round can otherwise only remove jobBatchSize
+// rows, so a faster expiry rate accumulates a permanent backlog.
+func (m *Manager) drainTerminalBefore(ctx context.Context, endedBefore time.Time) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		deleted, err := m.store.DeleteTerminalBefore(ctx, endedBefore, jobBatchSize)
+		if err != nil {
+			return err
+		}
+		if deleted < jobBatchSize {
+			return nil
+		}
+	}
 }
 
 func (m *Manager) registerLocked(runtime *runtime) {
