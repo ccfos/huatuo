@@ -125,6 +125,17 @@ func TestParseIPv4TCP(t *testing.T) {
 	}
 }
 
+func TestParseRejectsInvalidEthernetHeaderFlag(t *testing.T) {
+	pkt := Hdr{HasEthHdr: 2}
+	parsed, err := Parse(&pkt)
+	if parsed != nil {
+		t.Fatalf("Parse() packet = %+v, want nil", parsed)
+	}
+	if err == nil || err.Error() != "packet: invalid ethernet header flag 2" {
+		t.Fatalf("Parse() error = %v, want invalid flag error", err)
+	}
+}
+
 func TestParseTCPFlagsJSONCompatibility(t *testing.T) {
 	pkt := buildIPv4TCPSYNHdr()
 	pkt.Raw[33] = TCPFlagSYN | TCPFlagACK
