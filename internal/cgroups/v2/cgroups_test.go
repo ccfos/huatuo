@@ -63,6 +63,16 @@ func TestSpecToSystemdProperties(t *testing.T) {
 		wantValues map[string]uint64
 	}{
 		{
+			name: "cpu-large-quota-saturates",
+			spec: &specs.LinuxResources{
+				CPU: &specs.LinuxCPU{
+					Quota:  i64ptr(1 << 62),
+					Period: u64ptr(1),
+				},
+			},
+			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": ^uint64(0)},
+		},
+		{
 			// Baseline: 1 core (quota=100000, period=100000) -> 1_000_000 usec/sec.
 			// Exact multiple of 10000, so the rounding branch is not taken.
 			name: "cpu-one-core-exact",
@@ -112,6 +122,38 @@ func TestSpecToSystemdProperties(t *testing.T) {
 				},
 			},
 			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": 130000},
+		},
+		{
+			// A truncated quotient that is already a granularity multiple must
+			// not be rounded again because the exact quotient has a remainder.
+			name: "cpu-truncated-exact-granularity",
+			spec: &specs.LinuxResources{
+				CPU: &specs.LinuxCPU{
+					Quota:  i64ptr(10000),
+					Period: u64ptr(999999),
+				},
+			},
+			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": 10000},
+		},
+		{
+			name: "cpu-last-rounded-value",
+			spec: &specs.LinuxResources{
+				CPU: &specs.LinuxCPU{
+					Quota:  i64ptr(18446744073709549),
+					Period: u64ptr(1000),
+				},
+			},
+			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": 18446744073709550000},
+		},
+		{
+			name: "cpu-rounded-value-overflow-saturates",
+			spec: &specs.LinuxResources{
+				CPU: &specs.LinuxCPU{
+					Quota:  i64ptr(18446744073709551),
+					Period: u64ptr(1000),
+				},
+			},
+			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": ^uint64(0)},
 		},
 		{
 			// CPU section present but Quota <= 0 must be ignored: systemd
