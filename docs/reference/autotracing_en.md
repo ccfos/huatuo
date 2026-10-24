@@ -329,3 +329,108 @@ Example (some common fields omitted):
 | `virtual_bytes` / `rss_bytes` | Virtual memory / RSS |
 | `rss_anon_bytes` / `rss_file_bytes` / `rss_shmem_bytes` | Anonymous / file-backed / shared memory in RSS |
 | `swap_bytes` / `page_table_bytes` | Swap space / page table memory |
+
+### collect cgroup v2 task states with a BPF iterator
+
+Kubernetes deployments must run Huatuo with `hostPID: true`. Without host PID namespace visibility, cgroup v2 dload is reported as unsupported instead of returning misleading zero counts.
+
+### enable v2 load stats for metrics and dload
+
+**Description** Reads container process states through netlink on cgroup v1 and through a batched BPF task iterator on cgroup v2. It computes an exponential weighted moving average (EMA) of the load contribution from uninterruptible (D-state) processes per container. When the EMA exceeds the threshold (default 5), kernel call stacks are collected for all D-state processes inside the container and on the host. Known-issue filtering (`issues_list`) reduces false positives. A 30-minute per-container cooldown applies. The cgroup v2 path walks all host tasks per sample; it requires readable kernel BTF and the BPF `task` iterator. Counts are non-hierarchical and include only tasks directly attached to each target cgroup. When task iterator support is definitively unavailable, the first sample marks `dload` as unsupported and stops this detector without periodic reload attempts. Verifier and other ordinary loading errors are not cached as unsupported; subsequent sampling attempts retry and report the error.
+
+### trigger host dload independently
+
+| Parameter | Default | Description |
+| --------- | ------- | ----------- |
+| `dload.host_threshold_load` | `5` | Host D-state task count's one-minute EMA threshold |
+| `dload.interval_tracing` | `1800` (s) | Independent cooldown for each container and the host trigger |
+
+| Feature | Configuration | Implementation |
+| --- | --- | --- |
+| Host `dload` | `HostThresholdLoad=5` | Shared BPF task iterator counts whole-host D-state threads; reuse the existing interval-based EMA and stack capture. Threshold and cooldown state are independent of container triggers. |
+
+Five event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (memory burst allocation).
+
+Host and container triggers run whenever `dload` is enabled. Events retain their existing name and data layout.
+
+Host dload includes container threads; it is not a non-container-only count.
+It requires the same BPF task iterator/BTF/privileges and host PID visibility as
+the existing host D-state metric (upstream iterator foundation: Linux 5.8).
+It works with either cgroup version. On v2, a single iterator snapshot supplies
+both host and container scopes. On unsupported v1 kernels, only the new host trigger stops;
+the existing netlink container path remains. D-load is a sampled estimate,
+not `/proc/loadavg`. Host stacks include threads, not only process leaders.
+Simultaneous host/container threshold crossings produce separate events.
+
+Costs: no new BPF probes/maps. Host dload enables the existing full task walk
+once per sample unless a compatible fresh snapshot is already available.
+
+Validation on the 5.10 test VM: with debug off, a bounded `vfork` worker stays
+in D state until its child exits. A one-second sample and host threshold zero
+produce D=1 and D-load=0.02, trigger independently without container discovery,
+and persist a LocalFile record containing the worker's kernel stack. The existing
+debug capture test also reads the local file rather than accepting an unconfigured
+`Save` as proof. `integration/test_autotracing_dload.sh` uses standard build artifacts and
+creates two bounded D-state workers itself. It runs from the default integration
+runner on disposable VMs with task-iterator support.
+
+Sampling follows `AutoTracing.Dload.Interval` (default 10 seconds), not `MetricCollector.Loadavg.Interval`.
+
+### add host user and total CPU burst triggers
+
+| Parameter | Default | Description |
+| --------- | ------- | ----------- |
+| `cpusys.user_threshold` | `0` (%) | User utilization threshold; 0 disables the user trigger |
+| `cpusys.delta_user_threshold` | `0` (percentage points) | User utilization increase threshold |
+| `cpusys.usage_threshold` | `0` (%) | Total executing CPU utilization threshold; 0 disables the total trigger |
+| `cpusys.delta_usage_threshold` | `0` (percentage points) | Total executing CPU utilization increase threshold |
+| `cpusys` | Host | Default: sys > 45% and delta_sys > 20%. Optional user/total triggers require both utilization and its increase to exceed their configured thresholds. | Host CPU spikes and hotspots |
+| Trigger | Numerator |
+| Existing system | `system` |
+| Total executing | `user + nice + system + irq + softirq` |
+
+Five event types are supported: `cpusys` (host CPU sys spike, user/total CPU spikes), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (host memory bursts).
+Host dload runs whenever its tracer is enabled and prerequisites are met. The additional cpusys user/total triggers also require a positive `UserThreshold`/`UsageThreshold`, respectively; both default to disabled. Table parameter names are shorthand; use the TOML keys in the [configuration reference](../configuration/huatuo-bamai-configuration_en.md).
+
+`cpusys` can additionally trigger on host user CPU or total executing CPU.
+It reuses the existing `/proc/stat` sampling loop, the CPU profiling tool
+selected by `AutoTracing.CPUSys.Tool` (`perf` by default, or `profiler`),
+and the `cpusys` storage record. No new tracer, probe or periodic reader is added.
+
+```toml
+[AutoTracing.CPUSys]
+UserThreshold = 75
+DeltaUserThreshold = 45
+UsageThreshold = 90
+DeltaUsageThreshold = 55
+```
+
+Existing system thresholds, sampling interval, capture duration and cooldown
+remain unchanged. The four user/total thresholds default to 0; a positive
+`UserThreshold` or `UsageThreshold` enables the corresponding trigger, as in
+the example above. Omitted settings preserve system-only triggering.
+Each trigger requires both the percentage and its increase from the
+previous interval to **exceed** their thresholds. This detects bursts, not every
+case of sustained high usage. The first percentage sample establishes a baseline.
+
+All percentages use the delta of aggregate CPU time as their denominator:
+
+
+The denominator sums the first eight `/proc/stat` CPU counters. Guest time is
+already included in user/nice and is not counted twice. Idle, iowait and steal
+are excluded from total executing time: local on-CPU profiling cannot explain
+waiting or time stolen by a hypervisor. This is whole-machine utilization,
+including container work, not a container's quota-normalized utilization.
+
+All three triggers share one capture and cooldown. Simultaneous crossings do
+not launch repeated captures. `container_id` stays empty. Existing system JSON fields
+are preserved. Records also include `user_percent*`, `total_percent*` and
+`trigger_reasons` (`user`, `total`, `system`); zero-valued additional fields are omitted.
+
+Verification: existing unit tests check CPU parsing and system-trigger behavior.
+The default `integration/test_autotracing_cpusys_live.sh` CPU scenario starts the standard
+daemon, waits for a sampled baseline, releases a bounded CPU workload, and checks
+user/total trigger reasons, real perf output, and local persistence. It uses the standard `_output/bin/perf` executable. The daemon's normal
+BPF directory must contain `perf.o`. Run only in a disposable VM with BPF/perf privileges. Dedicated
+regression coverage for independent user/total crossings and their boundaries
+remains pending.

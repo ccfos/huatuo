@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,4 +30,13 @@ type CpuQuota struct {
 type MemoryUsage struct {
 	Usage      uint64
 	MaxLimited uint64
+}
+
+// LoadStats contains instantaneous task state counts for a cgroup.
+type LoadStats struct {
+	NrSleeping        uint64
+	NrRunning         uint64
+	NrStopped         uint64
+	NrUninterruptible uint64
+	NrIoWait          uint64
 }

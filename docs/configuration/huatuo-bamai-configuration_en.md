@@ -445,7 +445,7 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 - `Included` only: Monitor only matching containers.
 - Both: Monitor containers that match `Included` and do not match `Excluded`.
 
-#### 7.2 Host system CPU spikes
+#### 7.2 Host CPU bursts
 
 ```toml
 # cpusys
@@ -495,11 +495,27 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 | `IntervalTracing` | Minimum interval between traces, in seconds. Default: `1800`. |
 | `RunTracingToolTimeout` | Collection duration in seconds. Default: `10`. |
 
-**Trigger conditions**: Once the tracing interval has elapsed, tracing starts when system-mode CPU utilization strictly exceeds `SysThreshold` and its increase strictly exceeds `DeltaSysThreshold`.
+**Trigger conditions**: Once the shared cooldown has elapsed, profiling starts when any enabled system/user/total threshold pair is exceeded. System-only behavior remains the default; optional user/total triggers are described below.
 
-#### 7.3 Container D-state load
 
-This tracer requires the cgroup v1 load statistics interface and is skipped on cgroup v2.
+User/total triggers are optional and share the system trigger's profiling tool
+and cooldown. Each requires both utilization and its positive increase to
+strictly exceed its thresholds. Utilization is percent; delta is percentage
+points. All four values must be in [0, 100].
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `UserThreshold` | `0` | User CPU utilization; zero disables this trigger. |
+| `DeltaUserThreshold` | `0` | User utilization increase; zero still requires a positive increase. |
+| `UsageThreshold` | `0` | Total executing CPU utilization; zero disables this trigger. |
+| `DeltaUsageThreshold` | `0` | Total utilization increase; zero still requires a positive increase. |
+
+#### 7.3 Container and host D-state load
+
+Container D-state counts use netlink on cgroup v1 and the BPF task iterator on v2.
+Host counts use the iterator on either cgroup version. Readable kernel BTF,
+BPF privileges and host PID visibility are required (`hostPID: true` in Kubernetes).
+Unsupported iterator kernels retain the existing v1 container path.
 
 ```toml
 # dload
@@ -526,6 +542,7 @@ This tracer requires the cgroup v1 load statistics interface and is skipped on c
 # Default: false
 #
 [AutoTracing.Dload]
+    # HostThresholdLoad = 5
     # ThresholdLoad = 5
     # Interval = 10
     # IntervalTracing = 1800
@@ -538,6 +555,7 @@ This tracer requires the cgroup v1 load statistics interface and is skipped on c
 | `Interval` | Container load sampling interval in seconds. Default: `10`. |
 | `IntervalTracing` | Minimum interval between automatic traces, in seconds. Default: `1800` (30 minutes). |
 | `EnableDebug` | Debug switch. Default: `false`. Bypasses load threshold and minimum tracing interval checks and attempts to collect stacks for tasks in all states in the container and on the host. May increase overhead; use only for debugging. |
+| `HostThresholdLoad` | Whole-host D-state task count one-minute EMA threshold, including container threads. Default `5`; non-negative, and `0` triggers on any positive EMA. Host and each container maintain separate `IntervalTracing` cooldowns. |
 
 #### 7.4 Container I/O performance
 
@@ -803,6 +821,12 @@ This section configures collection conditions for scheduling, memory reclaim, ne
 | Field | Description |
 | --- | --- |
 | `BlockedThreshold` | Memory reclaim blocking threshold in nanoseconds. Default: `900000000` (900 ms). An event is reported with context when a process is blocked by memory reclaim for longer than this threshold. |
+
+Unresolved slow direct-reclaim events are retained in the host stream with
+`container_attribution="unresolved"`; an empty ID does not prove host-only origin.
+Known containers emit one container event. Unresolved output is limited to one
+event per second per tracer, with excess counted in
+`huatuo_bamai_memory_reclaim_events_unresolved_suppressed_total`.
 
 #### 8.3 Network receive latency
 
@@ -1217,6 +1241,22 @@ Remove `ascend_npu` from the global `BlackList` and restart the `huatuo-bamai` s
 | `EnableHCCN` | Boolean. Default: `false`. Collects network link, traffic, counter, and optical module metrics through `/usr/local/Ascend/driver/tools/hccn_tool` subprocesses. Ensure the tool is available before enabling it. |
 
 These switches read the latest configuration on each collection. Changes made through the Node API take effect on the next collection.
+
+#### 9.11 Load averages and host D-state counts
+
+```toml
+[MetricCollector.Loadavg]
+    # Interval = 15
+```
+
+Enabling `loadavg` starts background sampling automatically. `Interval` is in
+seconds; `0` selects the default of 15, and negative values are rejected.
+It controls container load and whole-host D-state sampling. Prometheus scrapes
+read the cached values; host procfs load and `AutoTracing.Dload.Interval` are
+independent. The v2 iterator counts directly attached tasks, not descendants.
+Host D-state sampling also works on v1 when the iterator is supported.
+Unavailable iterator capability omits that metric while retaining procfs host
+load and existing v1 container metrics. Kubernetes requires `hostPID: true`.
 
 ### 10. Pod and container information
 

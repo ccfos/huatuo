@@ -15,9 +15,19 @@
 package v2
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/cilium/ebpf"
+
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
 
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
 
@@ -351,5 +361,416 @@ func writeCgroupFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A recording collector keeps time and failures controllable without BPF/root.
+type loadStatsFixture struct {
+	capacity uint32
+	calls    [][]uint64
+	scan     func([]uint64) error
+	closeFn  func() error
+	closed   int
+}
+
+func (f *loadStatsFixture) Snapshot(ids []uint64) (map[uint64]stats.LoadStats, error) {
+	f.calls = append(f.calls, slices.Clone(ids))
+	if f.scan != nil {
+		if err := f.scan(ids); err != nil {
+			return nil, err
+		}
+	}
+	out := make(map[uint64]stats.LoadStats, len(ids))
+	for _, id := range ids {
+		out[id] = stats.LoadStats{NrRunning: uint64(len(f.calls))}
+	}
+	return out, nil
+}
+func (f *loadStatsFixture) Capacity() uint32 { return f.capacity }
+func (f *loadStatsFixture) Close() error {
+	f.closed++
+	if f.closeFn != nil {
+		return f.closeFn()
+	}
+	return nil
+}
+
+func loadStatsSnapshot(t *testing.T, s *sharedTaskLoadSnapshotter, consumer LoadStatsConsumer, ids ...uint64) map[uint64]stats.LoadStats {
+	t.Helper()
+	result, err := s.Snapshot(consumer, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestSharedLoadStatsGenerations(t *testing.T) {
+	f := &loadStatsFixture{}
+	now := time.Unix(100, 0)
+	s := &sharedTaskLoadSnapshotter{snapshotter: f, now: func() time.Time { return now }}
+	loadStatsSnapshot(t, s, LoadStatsConsumerLoadavg, 1, 2)
+	if got := loadStatsSnapshot(t, s, LoadStatsConsumerDload, 2); got[2].NrRunning != 1 || len(f.calls) != 1 {
+		t.Fatalf("second consumer did not reuse the first generation: %v calls=%v", got, f.calls)
+	}
+	if got := loadStatsSnapshot(t, s, LoadStatsConsumerDload, 2); got[2].NrRunning != 2 || len(f.calls) != 2 {
+		t.Fatalf("same consumer reused a generation: %v calls=%v", got, f.calls)
+	}
+	if got := loadStatsSnapshot(t, s, LoadStatsConsumerLoadavg, 1); got[1].NrRunning != 2 || len(f.calls) != 2 {
+		t.Fatalf("first consumer missed the newer generation: %v calls=%v", got, f.calls)
+	}
+}
+
+func TestSharedLoadStatsReuseDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		age   time.Duration
+		calls int
+	}{
+		{"fresh", 100*time.Millisecond - time.Nanosecond, 1},
+		{"exact-expiry", 100 * time.Millisecond, 2},
+		{"expired", 101 * time.Millisecond, 2},
+		{"backwards-clock", -time.Nanosecond, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &loadStatsFixture{}
+			now := time.Unix(100, 0)
+			s := &sharedTaskLoadSnapshotter{snapshotter: f, now: func() time.Time { return now }}
+			loadStatsSnapshot(t, s, LoadStatsConsumerLoadavg, 1)
+			now = now.Add(tc.age)
+			loadStatsSnapshot(t, s, LoadStatsConsumerDload, 1)
+			if len(f.calls) != tc.calls {
+				t.Fatalf("scans=%d want=%d", len(f.calls), tc.calls)
+			}
+		})
+	}
+	t.Run("scan-time-counts-towards-expiry", func(t *testing.T) {
+		now := time.Unix(100, 0)
+		f := &loadStatsFixture{scan: func([]uint64) error { now = now.Add(100 * time.Millisecond); return nil }}
+		s := &sharedTaskLoadSnapshotter{snapshotter: f, now: func() time.Time { return now }}
+		loadStatsSnapshot(t, s, LoadStatsConsumerLoadavg, 1)
+		loadStatsSnapshot(t, s, LoadStatsConsumerDload, 1)
+		if len(f.calls) != 2 {
+			t.Fatal("slow scan extended the reuse deadline")
+		}
+	})
+}
+
+func TestSharedLoadStatsTargetsAndForget(t *testing.T) {
+	f := &loadStatsFixture{}
+	s := &sharedTaskLoadSnapshotter{snapshotter: f, now: func() time.Time { return time.Unix(100, 0) }}
+	ids := []uint64{1, 2, 2}
+	loadStatsSnapshot(t, s, LoadStatsConsumerLoadavg, ids...)
+	ids[0] = 99 // Caller-owned input cannot change another consumer's target union.
+	loadStatsSnapshot(t, s, LoadStatsConsumerDload, 2, 3)
+	loadStatsSnapshot(t, s, LoadStatsConsumerLoadavg, 4)
+	want := [][]uint64{{1, 2}, {1, 2, 3}, {4, 2, 3}}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Fatalf("target scans=%v want=%v", f.calls, want)
+	}
+	s.Forget(LoadStatsConsumerDload)
+	loadStatsSnapshot(t, s, LoadStatsConsumerLoadavg, 4)
+	if !slices.Equal(f.calls[len(f.calls)-1], []uint64{4}) {
+		t.Fatal("forgotten targets remain in scans")
+	}
+	s.Forget(LoadStatsConsumerLoadavg)
+	if len(s.consumers) != 0 || s.generation != 0 || s.snapshot != nil || s.snapshotIDs != nil || !s.sampledAt.IsZero() {
+		t.Fatal("last consumer did not clear cached state")
+	}
+	calls := len(f.calls)
+	if got := loadStatsSnapshot(t, s, LoadStatsConsumerLoadavg); len(got) != 0 || len(f.calls) != calls {
+		t.Fatal("empty request scanned tasks")
+	}
+	if _, err := s.Snapshot(0, []uint64{1}); err == nil {
+		t.Fatal("invalid consumer accepted")
+	}
+}
+
+func TestSharedLoadStatsFailedScanDoesNotPublish(t *testing.T) {
+	f := &loadStatsFixture{}
+	s := &sharedTaskLoadSnapshotter{snapshotter: f, now: func() time.Time { return time.Unix(100, 0) }}
+	loadStatsSnapshot(t, s, LoadStatsConsumerLoadavg, 1)
+	generation, at := s.generation, s.sampledAt
+	failure := errors.New("scan failed")
+	f.scan = func([]uint64) error { return failure }
+	if got, err := s.Snapshot(LoadStatsConsumerDload, []uint64{2}); !errors.Is(err, failure) || got != nil {
+		t.Fatalf("got=%v err=%v", got, err)
+	}
+	if s.generation != generation || !s.sampledAt.Equal(at) || s.snapshot[1].NrRunning != 1 || s.consumers[LoadStatsConsumerDload].lastGeneration != 0 {
+		t.Fatal("failed scan published or consumed a generation")
+	}
+	f.scan = nil
+	got := loadStatsSnapshot(t, s, LoadStatsConsumerDload, 2)
+	if s.generation != generation+1 || got[2].NrRunning != 3 || len(f.calls) != 3 {
+		t.Fatal("failed scan was cached instead of retried")
+	}
+}
+
+func TestLazyLoadStatsResizeRecovery(t *testing.T) {
+	old := &loadStatsFixture{capacity: 128}
+	next := &loadStatsFixture{capacity: 256}
+	failure := errors.New("allocation failed")
+	var attempts int
+	s := &lazyTaskLoadSnapshotter{newCollector: func(capacity uint32) (loadCollector, error) {
+		attempts++
+		switch attempts {
+		case 1:
+			if capacity != 128 {
+				t.Fatalf("initial capacity=%d", capacity)
+			}
+			return old, nil
+		case 2:
+			return nil, failure
+		default:
+			if capacity != 256 {
+				t.Fatalf("resized capacity=%d", capacity)
+			}
+			return next, nil
+		}
+	}}
+	if _, err := s.Snapshot([]uint64{1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Snapshot(make([]uint64, 129)); !errors.Is(err, failure) {
+		t.Fatalf("resize err=%v", err)
+	}
+	if old.closed != 0 || s.collector != old {
+		t.Fatal("failed resize discarded working collector")
+	}
+	if _, err := s.Snapshot([]uint64{1}); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatal("small request needlessly reallocated after resize failure")
+	}
+	if _, err := s.Snapshot(make([]uint64, 129)); err != nil {
+		t.Fatal(err)
+	}
+	if old.closed != 1 || s.collector != next || len(next.calls) != 1 {
+		t.Fatal("successful resize did not replace collector")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if next.closed != 1 || s.collector != nil {
+		t.Fatal("close did not release the collector exactly once")
+	}
+}
+
+func TestLazyLoadStatsErrorPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		failure  error
+		attempts int
+	}{
+		{"ordinary-retry", errors.New("missing object"), 2},
+		{"unsupported-cache", fmt.Errorf("kernel: %w", ErrTaskIteratorNotSupported), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attempts := 0
+			f := &loadStatsFixture{capacity: 128}
+			s := &lazyTaskLoadSnapshotter{newCollector: func(uint32) (loadCollector, error) { attempts++; return nil, tc.failure }}
+			for range 2 {
+				if _, err := s.Snapshot([]uint64{1}); !errors.Is(err, tc.failure) {
+					t.Fatalf("err=%v", err)
+				}
+			}
+			if attempts != tc.attempts {
+				t.Fatalf("attempts=%d want=%d", attempts, tc.attempts)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s.newCollector = func(uint32) (loadCollector, error) { attempts++; return f, nil }
+			if _, err := s.Snapshot([]uint64{1}); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.calls) != 1 || s.unsupportedErr != nil {
+				t.Fatal("close did not reset support cache")
+			}
+		})
+	}
+	verifier := &ebpf.VerifierError{}
+	if isTaskIteratorLoadUnsupported(errors.Join(ebpf.ErrNotSupported, verifier)) {
+		t.Fatal("verifier error classified as unsupported")
+	}
+}
+
+func TestLoadStatsCapacityBounds(t *testing.T) {
+	for _, tc := range []struct {
+		entries int
+		want    uint32
+	}{
+		{1, 128}, {128, 128}, {129, 256}, {65536, 65536}, {65537, 65537},
+	} {
+		got, err := loadStatsMapCapacity(tc.entries)
+		if err != nil || got != tc.want {
+			t.Fatalf("capacity(%d)=%d err=%v want=%d", tc.entries, got, err, tc.want)
+		}
+	}
+	if _, err := loadStatsMapCapacity(65538); err == nil {
+		t.Fatal("capacity limit not enforced")
+	}
+}
+
+func TestLoadStatsCloseSerializesWithScan(t *testing.T) {
+	for _, kind := range []string{"shared", "lazy"} {
+		t.Run(kind, func(t *testing.T) {
+			entered, release, closed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			f := &loadStatsFixture{capacity: 128, scan: func([]uint64) error { close(entered); <-release; return nil }, closeFn: func() error { close(closed); return nil }}
+			var snapshot func() error
+			var closeCollector func() error
+			var unlocked func() bool
+			if kind == "shared" {
+				s := &sharedTaskLoadSnapshotter{snapshotter: f}
+				snapshot = func() error { _, err := s.Snapshot(LoadStatsConsumerLoadavg, []uint64{1}); return err }
+				closeCollector = s.Close
+				unlocked = func() bool {
+					if s.mu.TryLock() {
+						s.mu.Unlock()
+						return true
+					}
+					return false
+				}
+			} else {
+				s := &lazyTaskLoadSnapshotter{newCollector: func(uint32) (loadCollector, error) { return f, nil }}
+				snapshot = func() error { _, err := s.Snapshot([]uint64{1}); return err }
+				closeCollector = s.Close
+				unlocked = func() bool {
+					if s.mu.TryLock() {
+						s.mu.Unlock()
+						return true
+					}
+					return false
+				}
+			}
+			scanDone := make(chan error, 1)
+			go func() { scanDone <- snapshot() }()
+			<-entered
+			if unlocked() {
+				close(release)
+				<-scanDone
+				t.Fatal("scan does not own lifecycle lock")
+			}
+			closeStarted, closeDone := make(chan struct{}), make(chan error, 1)
+			go func() { close(closeStarted); closeDone <- closeCollector() }()
+			<-closeStarted
+			select {
+			case <-closed:
+				close(release)
+				<-scanDone
+				<-closeDone
+				t.Fatal("collector closed during scan")
+			default:
+			}
+			close(release)
+			if err := <-scanDone; err != nil {
+				t.Fatal(err)
+			}
+			if err := <-closeDone; err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-closed:
+			default:
+				t.Fatal("collector was not closed")
+			}
+			if f.closed != 1 {
+				t.Fatalf("close count=%d", f.closed)
+			}
+		})
+	}
+}
+
+// A sequential close proves ownership independently of a concurrent scanner.
+func TestLoadStatsCloseOwnsLifecycleLock(t *testing.T) {
+	for _, kind := range []string{"shared", "lazy"} {
+		t.Run(kind, func(t *testing.T) {
+			f := &loadStatsFixture{capacity: 128}
+			var mu *sync.Mutex
+			var closeCollector func() error
+			if kind == "shared" {
+				s := &sharedTaskLoadSnapshotter{snapshotter: f}
+				mu, closeCollector = &s.mu, s.Close
+			} else {
+				s := &lazyTaskLoadSnapshotter{collector: f}
+				mu, closeCollector = &s.mu, s.Close
+			}
+			f.closeFn = func() error {
+				if mu.TryLock() {
+					mu.Unlock()
+					t.Error("Close does not own lifecycle lock")
+				}
+				return nil
+			}
+			if err := closeCollector(); err != nil {
+				t.Fatal(err)
+			}
+			if f.closed != 1 {
+				t.Fatalf("close count=%d", f.closed)
+			}
+		})
+	}
+}
+
+func TestSharedLoadStatsCloseResetsState(t *testing.T) {
+	failure := errors.New("close failed")
+	first := &loadStatsFixture{capacity: 128, closeFn: func() error { return failure }}
+	second := &loadStatsFixture{capacity: 128}
+	attempts := 0
+	lazy := &lazyTaskLoadSnapshotter{newCollector: func(uint32) (loadCollector, error) {
+		attempts++
+		if attempts == 1 {
+			return first, nil
+		}
+		return second, nil
+	}}
+	s := &sharedTaskLoadSnapshotter{snapshotter: lazy, now: func() time.Time { return time.Unix(100, 0) }}
+	loadStatsSnapshot(t, s, LoadStatsConsumerLoadavg, 1)
+	loadStatsSnapshot(t, s, LoadStatsConsumerDload, 1)
+	if err := s.Close(); !errors.Is(err, failure) {
+		t.Fatalf("close err=%v", err)
+	}
+	if s.generation != 0 || s.snapshot != nil || s.snapshotIDs != nil || len(s.consumers) != 0 || !s.sampledAt.IsZero() || lazy.collector != nil {
+		t.Fatal("close failure left shared state or collector published")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got := loadStatsSnapshot(t, s, LoadStatsConsumerDload, 2)
+	if s.generation != 1 || got[2].NrRunning != 1 || first.closed != 1 || !reflect.DeepEqual(second.calls, [][]uint64{{2}}) {
+		t.Fatal("reinitialized consumer inherited the closed iterator's state")
+	}
+}
+
+func TestLazyLoadStatsCachesRuntimeUnsupported(t *testing.T) {
+	for _, failure := range []error{ErrTaskIteratorNotSupported, errors.New("transient scan failure")} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			f := &loadStatsFixture{capacity: 128, scan: func([]uint64) error { return failure }}
+			s := &lazyTaskLoadSnapshotter{newCollector: func(uint32) (loadCollector, error) { return f, nil }}
+			for i := 0; i < 2; i++ {
+				if _, err := s.Snapshot([]uint64{1}); !errors.Is(err, failure) {
+					t.Fatalf("snapshot error=%v", err)
+				}
+			}
+			want := 2
+			if errors.Is(failure, ErrTaskIteratorNotSupported) {
+				want = 1
+			}
+			if len(f.calls) != want {
+				t.Fatalf("scans=%d want=%d", len(f.calls), want)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Snapshot([]uint64{1}); !errors.Is(err, failure) {
+				t.Fatalf("recheck error=%v", err)
+			}
+			if len(f.calls) != want+1 {
+				t.Fatal("Close did not permit recheck")
+			}
+		})
 	}
 }

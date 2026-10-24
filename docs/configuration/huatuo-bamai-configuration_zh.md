@@ -496,11 +496,25 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 | `IntervalTracing` | 两次追踪之间的最小间隔，单位秒，默认 `1800`。 |
 | `RunTracingToolTimeout` | 采集时长，单位秒，默认 `10`。 |
 
-**触发条件**：满足追踪间隔后，系统态 CPU 使用率严格大于 `SysThreshold`，且其增量严格大于 `DeltaSysThreshold` 时触发。
+**触发条件**：共用冷却结束后，任一已启用的 system/user/total 条件组同时超过使用率和增幅阈值即可触发；默认仍只启用 system 条件，可选 user/total 配置见下表。
 
-#### 7.3 容器 D 状态负载
 
-依赖 cgroup v1 的负载统计接口；cgroup v2 下跳过该追踪器。
+user/total 触发为可选项，与 system 触发共用配置的采集工具和冷却时间。
+每种条件均要求使用率和正向增幅同时严格超过对应阈值；使用率单位为百分比，
+增幅单位为百分点，四项取值均须在 [0, 100] 范围内。
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `UserThreshold` | `0` | 用户态 CPU 使用率；0 关闭此触发。 |
+| `DeltaUserThreshold` | `0` | 用户态使用率增幅；0 仍要求正向增长。 |
+| `UsageThreshold` | `0` | 实际执行 CPU 总使用率；0 关闭此触发。 |
+| `DeltaUsageThreshold` | `0` | 总使用率增幅；0 仍要求正向增长。 |
+
+#### 7.3 容器与整机 D 状态负载
+
+容器 D 状态计数在 cgroup v1 使用 netlink，在 v2 使用 BPF task iterator；
+整机计数在两个版本均使用 iterator。要求内核 BTF 可读、BPF 权限和主机 PID 可见性
+（Kubernetes 设置 `hostPID: true`）。不支持 iterator 的内核仍保留原有 v1 容器路径。
 
 ```toml
 # dload
@@ -527,6 +541,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 # Default: false
 #
 [AutoTracing.Dload]
+    # HostThresholdLoad = 5
     # ThresholdLoad = 5
     # Interval = 10
     # IntervalTracing = 1800
@@ -539,6 +554,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 | `Interval` | 容器负载采样间隔，单位秒，默认 `10`。 |
 | `IntervalTracing` | 两次自动追踪之间的最小间隔，单位秒，默认 `1800`（30 分钟）。 |
 | `EnableDebug` | 调试开关，默认 `false`。启用后跳过负载阈值和最小追踪间隔检查，尝试采集容器及宿主机各状态任务的栈，可能增加开销，仅用于调试。 |
+| `HostThresholdLoad` | 整机 D 状态任务计数的一分钟 EMA 阈值，包含容器线程。默认 `5`，须非负，`0` 在任意正 EMA 时触发；整机与各容器独立维护 `IntervalTracing` 冷却。 |
 
 #### 7.4 容器 I/O 性能
 
@@ -807,6 +823,11 @@ LocalFile 不足以保存该结果。
 | 字段 | 说明 |
 | --- | --- |
 | `BlockedThreshold` | 内存回收阻塞时间阈值，单位纳秒，默认 `900000000`（900 ms）。进程因内存回收阻塞超过该时间时，上报事件并采集上下文。 |
+
+未解析容器归属的慢直接回收事件经冷却后保留到主机流，标记
+`container_attribution="unresolved"`；空 ID 不代表一定来自主机服务。
+已识别容器仅输出一条容器事件。未归属事件每个 tracer 每秒最多输出一条，
+其余事件计入 `huatuo_bamai_memory_reclaim_events_unresolved_suppressed_total`。
 
 #### 8.3 网络接收延迟
 
@@ -1221,6 +1242,20 @@ LocalFile 不足以保存该结果。
 | `EnableHCCN` | 布尔值，默认 `false`。通过 `/usr/local/Ascend/driver/tools/hccn_tool` 子进程采集网络链路、流量、计数器和光模块指标，启用前需确保工具可用。 |
 
 以上开关在每次指标采集时读取最新配置；使用 Node API 更新后，下次采集生效。
+
+#### 9.11 负载均值与整机 D 状态计数
+
+```toml
+[MetricCollector.Loadavg]
+    # Interval = 15
+```
+
+启用 `loadavg` 后自动后台采样。`Interval` 单位为秒，`0` 使用默认 15 秒，
+负值无效；控制容器负载和整机 D 状态采样。Prometheus 抓取读取缓存，
+不改变主机 procfs 负载采集或 `AutoTracing.Dload.Interval`。
+v2 iterator 仅统计直接挂到目标 cgroup 的任务，不含子 cgroup。
+支持 iterator 时，整机 D 状态采样也可用于 v1；不支持则省略该指标，
+保留 procfs 主机负载和原有 v1 容器指标。Kubernetes 要求 `hostPID: true`。
 
 ### 10. Pod 容器信息
 

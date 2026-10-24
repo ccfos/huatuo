@@ -329,3 +329,63 @@ CPU 示例使用 `perf`。使用 `profiler` 时，事件保留触发指标，pro
 | `virtual_bytes` / `rss_bytes` | 虚拟内存 / RSS |
 | `rss_anon_bytes` / `rss_file_bytes` / `rss_shmem_bytes` | RSS 中的匿名页 / 文件页 / 共享内存 |
 | `swap_bytes` / `page_table_bytes` | 交换空间 / 页表内存 |
+
+### collect cgroup v2 task states with a BPF iterator
+
+Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机 PID namespace 时，cgroup v2 dload 会被标记为不支持，而不是返回有误导性的全零计数。
+
+### enable v2 load stats for metrics and dload
+
+**功能描述** cgroup v1 通过 netlink 读取容器内进程状态；cgroup v2 通过 BPF task iterator 批量读取。随后对不可中断（D 状态）进程的负载贡献进行指数加权移动平均（EMA）计算。当容器 D 状态负载 EMA 超过阈值（默认 5）时，采集容器内及宿主机中所有 D 状态进程的内核调用栈，支持已知问题过滤（`issues_list`）降低误报率。同一容器默认 30 分钟冷却。cgroup v2 路径每次采样都会遍历一次宿主机全部任务，它要求内核 BTF 可读并支持 BPF `task` iterator。统计为非层级统计，只包含直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。确认内核不支持 task iterator 时，首次采样会将 `dload` 标记为不支持并停止该检测项，不周期性重试加载。verifier 错误及其他普通加载错误不会被缓存为不支持，后续采样会重试并报告错误。
+
+### trigger host dload independently
+
+| 参数 | 默认值 | 说明 |
+| ---- | ------ | ---- |
+| `dload.host_threshold_load` | `5` | 物理机 D 状态任务数的一分钟 EMA 阈值 |
+| `dload.interval_tracing` | `1800`（秒） | 各容器与物理机触发分别独立冷却 |
+
+当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器及物理机 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（内存突发分配）。
+`dload` 启用后独立检测包含容器线程的整机 D 状态负载，不是仅统计非容器任务。`HostThresholdLoad` 默认 5，主机一分钟 D 状态 EMA 超过阈值后抓取堆栈，与容器触发分别维护阈值和冷却；事件名和数据结构不变。
+
+主机路径在 cgroup v1/v2 下均复用已有 BPF task iterator，需要内核 BTF、BPF 权限及宿主机 PID 可见性（上游 iterator 基础支持始于 Linux 5.8）。v2 的一次 iterator 快照同时提供主机和容器统计；不支持 iterator 的 v1 内核只停止主机触发，保留原 netlink 容器路径。D-load 是采样估计值，不是 `/proc/loadavg`；主机堆栈覆盖线程，不限于进程组长。主机与容器同时越线时分别输出事件。
+
+采样遵循 `AutoTracing.Dload.Interval`（默认 10 秒），不使用 `MetricCollector.Loadavg.Interval`。不增加 BPF 探针或 map；除可复用兼容的新鲜快照外，每次采样遍历一次主机任务。
+
+验证范围：5.10 测试虚拟机中，有界 `vfork` worker 在子进程退出前保持 D 状态。关闭 debug、采样间隔设为 1 秒、主机阈值设为 0 时，采集到 D=1、D-load=0.02，无需容器发现即可独立触发，并在 LocalFile 本地文件中确认包含 worker 内核堆栈的记录。debug 抓取测试也读取本地文件，不将未配置的 `Save` 当作持久化证据。默认集成入口 `integration/test_autotracing_dload.sh` 使用标准构建产物，自动创建两条有超时保护的 D 状态负载；只在支持 task iterator 的可丢弃虚拟机中运行。
+
+### add host user and total CPU burst triggers
+
+| 参数 | 默认值 | 说明 |
+| ---- | ------ | ---- |
+| `cpusys.user_threshold` | `0`（%） | user 占用率阈值；0 关闭 user 触发 |
+| `cpusys.delta_user_threshold` | `0`（百分点） | user 占用率增量阈值 |
+| `cpusys.usage_threshold` | `0`（%） | 总执行 CPU 占用率阈值；0 关闭 total 触发 |
+| `cpusys.delta_usage_threshold` | `0`（百分点） | 总执行 CPU 占用率增量阈值 |
+| `cpusys` | 物理机 | 默认：sys > 45% 且 delta_sys > 20%。可选 user/total 触发要求占用率及其增量同时超过各自配置阈值。 | 物理机 CPU 突增、热点分析 |
+| 触发类型 | CPU 时间分子 |
+| 原有 system | `system` |
+| user | `user + nice` |
+| 总执行 CPU | `user + nice + system + irq + softirq` |
+
+当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增，user/总 CPU 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器及物理机 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（物理机内存突增）。
+主机 dload 在对应 tracer 启用且满足依赖时运行。cpusys 新增的 user/总 CPU 触发还分别要求 `UserThreshold`/`UsageThreshold` 为正值，默认均关闭。表中参数名为简写，实际 TOML 配置键见[配置文档](../configuration/huatuo-bamai-configuration_zh.md)。
+
+启用 `cpusys` 后，可通过下列配置额外检测主机 user 和总执行 CPU 突增，复用原有 `/proc/stat` 采样、`AutoTracing.CPUSys.Tool` 配置的 CPU 采集工具（默认 `perf`，也支持 `profiler`）、`cpusys` 存储格式与共享冷却，不增加 tracer、探针或周期读取。四个新增阈值默认均为 0；`UserThreshold` 或 `UsageThreshold` 为正值时才启用对应触发，未配置时保持原有仅 system 触发的行为。
+
+```toml
+[AutoTracing.CPUSys]
+UserThreshold = 75
+DeltaUserThreshold = 45
+UsageThreshold = 90
+DeltaUsageThreshold = 55
+```
+
+每组都要求占用率及相对上次采样的增量**同时超过**对应阈值；检测的是突增，不是所有持续高使用率。首个使用率样本只建立基线，原 system 阈值、采样间隔、抓取时长与冷却保持不变。
+
+
+分母为 `/proc/stat` 前八个 CPU 时间计数器之和的增量；guest 已包含在 user/nice 中，不重复累计。总执行时间排除 idle、iowait 和 steal，因为本机 on-CPU 抓取无法解释等待或被虚拟机管理器占用的时间。口径是包含容器工作的整机占用率，不是按容器配额归一化的使用率。
+
+三组同时越线只抓取一次，共享冷却。`container_id` 仍为空，保留原 system JSON 字段，新增 `user_percent*`、`total_percent*` 和 `trigger_reasons`（`user`、`total`、`system`），零值新增字段省略。
+
+验证范围：已有单元测试检查 CPU 解析及 system 触发行为。默认的 `integration/test_autotracing_cpusys_live.sh` CPU 场景启动标准 daemon，等待实际采样基线后释放有界 CPU 负载，并校验 user/total 触发原因、真实 perf 输出及本地落盘。使用标准 `_output/bin/perf`，daemon 的正常 BPF 目录应包含 `perf.o`；仅在具备 BPF/perf 权限的可丢弃虚拟机中运行。user/total 独立触发及阈值边界的专门回归覆盖仍待补充。

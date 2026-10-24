@@ -486,3 +486,46 @@ write_runtime_limits_config() {
     ListenAddress = "127.0.0.1:${port}"
 EOF
 }
+
+# observability_component selects the single component under acceptance.
+write_observability_config() {
+	local component
+	local components=(iocost blk_throtl io_health arp ascend_npu cpu_stat cpu_util cpuidle cpusys diskio dload
+		dropwatch hungtask iolatency iotracing irqtracing loadavg memburst
+		memory_buddyinfo memory_events memory_free memory_others memory_reclaim
+		memory_reclaim_events memory_threshold_snapshot memory_vmstat metax_gpu
+		mountpoint_perm mthreads_gpu mthreads_xid net_rx_latency netdev
+		netdev_bonding_lacp netdev_dcb netdev_events netdev_hw netdev_qdisc
+		netdev_rdma_link netdev_txqueue_timeout netstat memory_oom_kill ras runqlat
+		sched_tick sockstat softirq softlockup tcp_memory tcp_retransmit)
+	{
+		printf 'BlackList = ['
+		for component in "${components[@]}"; do
+			[[ "${component}" == "${observability_component}" ]] || printf '"%s",' "${component}"
+		done
+		printf ']\n'
+		cat << EOF
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+[AutoTracing.CPUSys]
+    Interval = 1
+    IntervalTracing = 180
+    RunTracingToolTimeout = 1
+    SysThreshold = 100
+    DeltaSysThreshold = 100
+    UserThreshold = 10
+    DeltaUserThreshold = 5
+    UsageThreshold = 10
+    DeltaUsageThreshold = 5
+[AutoTracing.Dload]
+    Interval = 1
+    IntervalTracing = 180
+    HostThresholdLoad = 1
+    ThresholdLoad = 100
+[MetricCollector.Loadavg]
+    Interval = 1
+EOF
+	} > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+}

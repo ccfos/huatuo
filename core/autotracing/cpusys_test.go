@@ -85,12 +85,12 @@ func TestParseCPUUsage(t *testing.T) {
 		{
 			name:     "all counters",
 			input:    "cpu 100 10 30 860 5 2 3 1 50 4\n",
-			expected: cpuUsage{system: 30, total: 1011},
+			expected: cpuUsage{system: 30, total: 1011, user: 110, busy: 145},
 		},
 		{
 			name:     "minimum counters",
 			input:    "cpu 1 2 3 4\n",
-			expected: cpuUsage{system: 3, total: 10},
+			expected: cpuUsage{system: 3, total: 10, user: 3, busy: 6},
 		},
 		{
 			name:      "empty input",
@@ -167,7 +167,7 @@ func TestReadCPUUsageUsesProcfsPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readCPUUsage() error = %v", err)
 	}
-	expected := cpuUsage{system: 30, total: 1000}
+	expected := cpuUsage{system: 30, total: 1000, user: 110, busy: 140}
 	if actual != expected {
 		t.Fatalf("readCPUUsage() = %+v, want %+v", actual, expected)
 	}
@@ -319,7 +319,7 @@ func TestCPUSysTracingShouldTrace(t *testing.T) {
 				threshold:        cpuSysThreshold{usage: 45, delta: 20},
 				lastTraceAt:      tt.lastTraceAt,
 			}
-			if actual := tracer.shouldTrace(state, sampledAt); actual != tt.expected {
+			if actual := tracer.shouldTrace(&state, sampledAt); actual != tt.expected {
 				t.Fatalf("shouldTrace() = %t, want %t", actual, tt.expected)
 			}
 		})
@@ -367,6 +367,47 @@ func BenchmarkParseCPUUsage(b *testing.B) {
 	for b.Loop() {
 		if _, err := parseCPUUsage(strings.NewReader(input)); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func TestCPUAdditionalTriggersIndependently(t *testing.T) {
+	for _, kind := range []string{"user", "total"} {
+		for _, tc := range []struct {
+			name                     string
+			usage, delta             int64
+			disabled, cooldown, want bool
+		}{
+			{name: "exceeds", usage: 51, delta: 21, want: true},
+			{name: "usage boundary", usage: 50, delta: 21},
+			{name: "delta boundary", usage: 51, delta: 20},
+			{name: "disabled", usage: 51, delta: 21, disabled: true},
+			{name: "cooldown", usage: 51, delta: 21, cooldown: true},
+		} {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				now := time.Unix(1000, 0)
+				c := cpuSysTracing{threshold: cpuSysThreshold{usage: 100, delta: 100}, minTraceInterval: time.Minute}
+				state := cpuSysState{}
+				threshold := cpuSysThreshold{usage: 50, delta: 20}
+				if tc.disabled {
+					threshold.usage = 0
+				}
+				if kind == "user" {
+					c.userThreshold = threshold
+					state.userPercent = tc.usage
+					state.userPercentDelta = tc.delta
+				} else {
+					c.totalThreshold = threshold
+					state.totalPercent = tc.usage
+					state.totalPercentDelta = tc.delta
+				}
+				if tc.cooldown {
+					c.lastTraceAt = now.Add(-time.Second)
+				}
+				if got := c.shouldTrace(&state, now); got != tc.want {
+					t.Fatalf("trigger=%v want=%v", got, tc.want)
+				}
+			})
 		}
 	}
 }
