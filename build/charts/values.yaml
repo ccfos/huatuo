@@ -18,6 +18,8 @@ podAnnotations:
   prometheus.io/port: "19704"
   prometheus.io/path: /metrics
 
+# Additional Pod labels. The chart's app and app.kubernetes.io/name/instance
+# selector labels take precedence over conflicting values here.
 podLabels: {}
 
 hostNetwork: true
