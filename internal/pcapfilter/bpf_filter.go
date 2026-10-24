@@ -262,34 +262,28 @@ var unimplementedProtocolPrimitives = map[string]struct{}{
 	"lat": {}, "modpl": {}, "morpc": {}, "iso": {}, "ipx": {}, "netbeui": {},
 }
 
-// filterNameQualifiers are keywords that directly precede a name argument, so
-// a following token is a host or service name ("host icmp"), not a standalone
-// protocol primitive. "proto" is deliberately absent: the token after proto
-// is always a protocol condition ("ip proto \icmp"), never a name.
-var filterNameQualifiers = map[string]struct{}{
-	"host": {}, "net": {}, "port": {}, "portrange": {}, "gateway": {},
-	"sport": {}, "dport": {}, "sportrange": {}, "dportrange": {},
-	"src": {}, "dst": {}, "ether": {}, "ip": {}, "ip6": {},
-	"arp": {}, "rarp": {}, "vlan": {}, "mpls": {}, "stp": {},
+// filterTokens splits an expression the way tcpdump's lexer does: on
+// whitespace, parentheses and the "!" operator, each kept as its own token.
+// tcpdump accepts "!!icmp" (chained negation) and "and!icmp" (adjacent
+// operator), and its man page quotes protocol names after proto with a
+// leading backslash ("proto \icmp"); all of those still name the primitive.
+func filterTokens(expr string) []string {
+	return strings.FieldsFunc(expr, func(r rune) bool {
+		return unicode.IsSpace(r) || r == '(' || r == ')' || r == '!'
+	})
 }
 
 func rejectUnimplementedPrimitives(expr string) error {
-	tokens := strings.FieldsFunc(expr, func(r rune) bool {
-		return unicode.IsSpace(r) || r == '(' || r == ')'
-	})
-	for i, token := range tokens {
-		// "!" negates without whitespace ("!icmp") and tcpdump's man page
-		// quotes protocol names after proto with a leading backslash
-		// ("proto \icmp"); both spellings still name the primitive.
-		token = strings.TrimPrefix(strings.TrimPrefix(token, "!"), "\\")
+	for _, token := range filterTokens(expr) {
+		token = strings.TrimPrefix(token, "\\")
 		if _, broken := unimplementedProtocolPrimitives[token]; !broken {
 			continue
 		}
-		if i > 0 {
-			if _, qualifier := filterNameQualifiers[tokens[i-1]]; qualifier {
-				continue
-			}
-		}
+		// No name-position exemption: go-pcap does not resolve a protocol
+		// keyword as a host or service name ("host icmp" fails with "blank
+		// host"), and expressions like "ip (icmp)" or "port (icmp)" are
+		// syntax errors in tcpdump, so the token is always a protocol
+		// condition that the compiler would silently ignore.
 		return fmt.Errorf(
 			"%w: %q uses the %q protocol primitive, which the packet filter compiler does not implement",
 			ErrInvalidFilter, expr, token,
