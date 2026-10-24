@@ -25,7 +25,7 @@ source "${ROOT_DIR}/integration/config.sh"
 
 # Bash does not export the runner's timeout array to child shells.
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
-readonly STORAGE_INDEX=huatuo_storage_consistency
+readonly STORAGE_INDEX=$(storage_test_index huatuo_storage_consistency)
 readonly STORAGE_EVENT_RATE=100
 readonly STORAGE_ROTATION_MIB=100
 readonly STORAGE_MAX_ROTATED_FILES=10
