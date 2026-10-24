@@ -237,6 +237,10 @@ func tcpPayloadLength(packet *Packet) (uint32, bool) {
 
 	switch {
 	case packet.IPv4 != nil:
+		if packet.IPv4.Protocol != "TCP" {
+			return 0, false
+		}
+
 		ipHeaderLength := uint32(packet.IPv4.IHL) * 4
 		totalLength := uint32(packet.IPv4.Length)
 		if ipHeaderLength+tcpHeaderLength > totalLength {
