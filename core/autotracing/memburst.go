@@ -85,11 +85,13 @@ func parseMemInfo(reader io.Reader, requiredKeys map[string]bool) (map[string]in
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+
 	for key := range requiredKeys {
 		if _, ok := results[key]; !ok {
 			return nil, fmt.Errorf("required memory info key %q is missing", key)
 		}
 	}
+
 	return results, nil
 }
 
