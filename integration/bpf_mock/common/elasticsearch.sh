@@ -26,19 +26,7 @@ start_bpf_mock_es() {
 	require_commands docker curl jq timeout
 	docker info > "${HUATUO_BAMAI_TEST_TMPDIR}/docker-info.log" 2>&1 \
 		|| skip "dockerd is unavailable or the Docker socket is inaccessible"
-	if [[ -n ${BPF_MOCK_ES_DIR:-} && -f ${BPF_MOCK_ES_DIR}/es.env ]]; then
-		source "${BPF_MOCK_ES_DIR}/es.env"
-	else
-		storage_start elasticsearch_v8
-		if [[ -n ${BPF_MOCK_ES_DIR:-} ]]; then
-			mkdir -p "${BPF_MOCK_ES_DIR}"
-			# Transfer ownership only after the complete state file is published.
-			printf 'STORAGE_CONTAINER_ID=%q\nSTORAGE_ADDR=%q\nSTORAGE_USERNAME=%q\nSTORAGE_PASSWORD=%q\n' \
-				"${STORAGE_CONTAINER_ID}" "${STORAGE_ADDR}" "${STORAGE_USERNAME}" "${STORAGE_PASSWORD}" \
-				> "${BPF_MOCK_ES_DIR}/es.env.tmp"
-			mv "${BPF_MOCK_ES_DIR}/es.env.tmp" "${BPF_MOCK_ES_DIR}/es.env"
-		fi
-	fi
+	storage_start elasticsearch_v8
 	storage_curl --fail -X PUT -H 'Content-Type: application/json' \
 		--data '{"settings":{"number_of_shards":1,"number_of_replicas":0}}' \
 		"${STORAGE_ADDR}/${STORAGE_INDEX}" > "${HUATUO_BAMAI_TEST_TMPDIR}/es-index.json"
@@ -48,7 +36,6 @@ start_bpf_mock_es() {
 
 # The runner owns shared storage; direct script execution owns its own instance.
 stop_bpf_mock_es() {
-	[[ -z ${BPF_MOCK_ES_DIR:-} || ! -f ${BPF_MOCK_ES_DIR}/es.env ]] || return 0
 	storage_stop
 }
 
@@ -61,22 +48,6 @@ cleanup_bpf_mock_es() {
 	fi
 	stop_bpf_mock_es || status=1
 	return "${status}"
-}
-
-stop_shared_bpf_mock_es() {
-	local status=$1
-	[[ -d ${BPF_MOCK_ES_DIR} ]] || return 0
-	if [[ -f ${BPF_MOCK_ES_DIR}/es.env ]]; then
-		source "${BPF_MOCK_ES_DIR}/es.env" || return 1
-		if [[ ${status} -ne 0 && ${status} -ne 77 ]]; then
-			storage_dump_logs "${BPF_MOCK_ES_DIR}/elasticsearch.log" || true
-			log_error "shared Elasticsearch artifacts: ${BPF_MOCK_ES_DIR}"
-		fi
-		storage_stop || return 1
-	fi
-	if [[ ${status} -eq 0 || ${status} -eq 77 ]]; then
-		rm -rf -- "${BPF_MOCK_ES_DIR}"
-	fi
 }
 
 # Refresh also exposes writes flushed by the daemon during shutdown.
