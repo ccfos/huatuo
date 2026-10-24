@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,16 @@ func TestNewRejectsInvalidMemfdLimit(t *testing.T) {
 		if process != nil || err == nil || !strings.Contains(err.Error(), "maximum memfd output bytes must be positive") {
 			t.Fatalf("New() with memfd limit %d = (%v, %v), want invalid limit error", limit, process, err)
 		}
+	}
+}
+
+func TestMemfdPrepareClosesFileWhenArgumentsAreInvalid(t *testing.T) {
+	output := &memfdOutput{argsForOutput: func(string) []string { return []string{"bad\x00arg"} }}
+	if err := output.prepare(&exec.Cmd{}); err == nil {
+		t.Fatal("prepare() accepted an argument containing a NUL byte")
+	}
+	if output.file != nil {
+		t.Fatal("prepare() retained the memfd after argument validation failed")
 	}
 }
 
