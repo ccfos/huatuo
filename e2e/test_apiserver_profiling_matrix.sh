@@ -10,7 +10,7 @@ source "${ROOT_DIR}/integration/lib_apiserver.sh"
 huatuo_bamai_stop
 
 CURRENT_CASE=matrix-environment
-require_commands kubectl ip crictl
+require_commands kubectl ip crictl python3
 require_readable "$KUBELET_CERT" "$KUBELET_KEY"
 ip -j address > "${HUATUO_BAMAI_TEST_TMPDIR}/addresses.json"
 kubectl --request-timeout=30s get nodes -o json > "${HUATUO_BAMAI_TEST_TMPDIR}/nodes.json"

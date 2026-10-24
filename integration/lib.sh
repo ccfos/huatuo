@@ -116,6 +116,22 @@ assert_eq() {
 	return 1
 }
 
+assert_readiness_endpoint() {
+	local body="${HUATUO_BAMAI_TEST_TMPDIR}/readyz.body"
+	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/readyz.curl-error"
+	local curl_status=0 status
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${body}" -w '%{http_code}' \
+		"${APISERVER_ADDR}/readyz" 2> "${error_file}") || curl_status=$?
+	log_info "GET /readyz: curl exit=${curl_status}, HTTP status=${status}"
+	report_http_response "GET /readyz" "${body}" "${error_file}"
+	[[ ${curl_status} -eq 0 ]] || fatal "GET /readyz: curl exited ${curl_status}"
+	assert_eq "${status}" "204" "GET /readyz status" \
+		|| fatal "GET /readyz returned status ${status}, expected 204"
+	if [[ -s "${body}" ]]; then
+		fatal "GET /readyz returned a non-empty response body"
+	fi
+}
+
 assert_log_has_no_failure() {
 	local log_file=$1 component=$2
 	local failure_pattern='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
