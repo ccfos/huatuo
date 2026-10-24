@@ -75,6 +75,11 @@ func outputForError(output []byte) string {
 func Verify(results []*Result) error {
 	failures := make([]error, 0)
 	for _, result := range results {
+		if result == nil {
+			failures = append(failures, errors.New("profiler result is nil"))
+			continue
+		}
+
 		if result.Succeeded() {
 			continue
 		}
