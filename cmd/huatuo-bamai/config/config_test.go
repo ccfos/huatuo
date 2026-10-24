@@ -195,6 +195,9 @@ ExcludedOnContainer = "writeback"
 	if Get().Storage.Elasticsearch.Enabled() {
 		t.Error("Elasticsearch is enabled without connection settings")
 	}
+	if !Get().Storage.Elasticsearch.DisableBulk || Get().Storage.Elasticsearch.BulkNumWorkers != 4 {
+		t.Error("Elasticsearch writes must default to disabled bulk with 4 workers when enabled")
+	}
 }
 
 func TestLoadAcceptsTCPRetransmitFilter(t *testing.T) {

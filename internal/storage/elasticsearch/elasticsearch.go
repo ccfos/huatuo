@@ -47,7 +47,8 @@ const (
 	// Adjust if write rate or per-event size drifts significantly.
 	bulkFlushBytes    = 5 * 1024 * 1024
 	bulkFlushInterval = time.Second
-	bulkNumWorkers    = 4
+	// DefaultBulkNumWorkers applies per explicitly enabled bulk indexer.
+	DefaultBulkNumWorkers = 4
 )
 
 // Config contains Elasticsearch backend settings.
@@ -56,15 +57,20 @@ type Config struct {
 	Username  string
 	Password  string
 	Index     string
+	// DisableBulk controls writes only. Nil defaults to true: Save waits for a
+	// single indexing response without forcing a refresh. False enables async bulk.
+	DisableBulk *bool
+	// BulkNumWorkers is per backend instance; zero selects 4. Ignored when bulk
+	// is disabled. Async Save confirms enqueueing, not server-side persistence.
+	BulkNumWorkers int
 }
 
 // Storage stores records in Elasticsearch, OpenSearch, or any compatible backend.
 //
-// Save is asynchronous: items are queued in bulk and flushed by size, time, or
-// Close. A nil error from Save means the item was buffered, not that it landed
-// in the index. Permanent per-item failures are logged via OnFailure; transient
-// whole-batch failures (429, 5xx, transport errors) are retried by the client.
-// Call Close on shutdown to flush any pending events.
+// Save writes synchronously by default. Explicitly enabled bulk queues items and
+// flushes by size, time, or Close; nil then confirms enqueueing, not persistence.
+// Async failures are logged and are not returned to the original caller.
+// Call Close to drain bulk workers during graceful shutdown.
 type Storage struct {
 	transport      esapi.Transport
 	queryTransport esapi.Transport
@@ -77,10 +83,12 @@ var _ driver.Backend = (*Storage)(nil)
 func init() {
 	factory := func(cfg *driver.Config) (driver.Backend, error) {
 		return NewBackend(&Config{
-			Addresses: cfg.ESAddresses,
-			Username:  cfg.ESUsername,
-			Password:  cfg.ESPassword,
-			Index:     cfg.ESIndex,
+			Addresses:      cfg.ESAddresses,
+			Username:       cfg.ESUsername,
+			Password:       cfg.ESPassword,
+			Index:          cfg.ESIndex,
+			DisableBulk:    cfg.ESDisableBulk,
+			BulkNumWorkers: cfg.ESBulkNumWorkers,
 		})
 	}
 	driver.RegisterBackend("elasticsearch", factory)
@@ -89,8 +97,16 @@ func init() {
 
 // NewBackend creates a backend that connects to Elasticsearch v7/v8 or OpenSearch.
 func NewBackend(cfg *Config) (*Storage, error) {
-	if strings.TrimSpace(cfg.Index) == "" {
+	if cfg == nil || strings.TrimSpace(cfg.Index) == "" {
 		return nil, errors.New("elasticsearch backend: index is required")
+	}
+	bulkEnabled := cfg.DisableBulk != nil && !*cfg.DisableBulk
+	workers := cfg.BulkNumWorkers
+	if workers == 0 {
+		workers = DefaultBulkNumWorkers
+	}
+	if bulkEnabled && workers < 0 {
+		return nil, errors.New("elasticsearch backend: bulk worker count must be positive")
 	}
 	clientConfig := elasticsearch.Config{Addresses: cfg.Addresses, Username: cfg.Username, Password: cfg.Password}
 	client, err := newCompatClient(&clientConfig)
@@ -113,11 +129,15 @@ func NewBackend(cfg *Config) (*Storage, error) {
 	if res.IsError() {
 		return nil, fmt.Errorf("elasticsearch client info: status %d", res.StatusCode)
 	}
+	backend := &Storage{transport: client, queryTransport: queryClient, index: cfg.Index}
+	if !bulkEnabled {
+		return backend, nil
+	}
 
 	bulk, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
 		Client:        client,
 		Index:         cfg.Index,
-		NumWorkers:    bulkNumWorkers,
+		NumWorkers:    workers,
 		FlushBytes:    bulkFlushBytes,
 		FlushInterval: bulkFlushInterval,
 		OnError: func(_ context.Context, err error) {
@@ -128,11 +148,12 @@ func NewBackend(cfg *Config) (*Storage, error) {
 		return nil, fmt.Errorf("elasticsearch bulk indexer: %w", err)
 	}
 
-	return &Storage{transport: client, queryTransport: queryClient, bulk: bulk, index: cfg.Index}, nil
+	backend.bulk = bulk
+	return backend, nil
 }
 
 // Close flushes any pending bulk operations and stops the indexer workers.
-// After Close, Save will panic; the Storage must not be reused.
+// The Storage must not be reused after Close.
 func (s *Storage) Close(ctx context.Context) error {
 	if s.bulk == nil {
 		return nil
@@ -157,11 +178,11 @@ func (s *Storage) Save(
 	if options.Mode == driver.SaveModeConditional {
 		return driver.ErrUnsupportedOp
 	}
-	if options.Mode == driver.SaveModeCreateOnly || options.WaitForVisibility {
-		return s.saveDirect(ctx, rec, options)
-	}
-	if options.Mode != driver.SaveModeUpsert || len(options.Conditions) != 0 {
+	if options.Mode != driver.SaveModeUpsert && options.Mode != driver.SaveModeCreateOnly || len(options.Conditions) != 0 {
 		return driver.ErrInvalidQuery
+	}
+	if s.bulk == nil || options.Mode == driver.SaveModeCreateOnly || options.WaitForVisibility {
+		return s.saveDirect(ctx, rec, options)
 	}
 	item := esutil.BulkIndexerItem{
 		Index:      s.index,
@@ -177,9 +198,8 @@ func (s *Storage) Save(
 			}
 		},
 		OnFailure: func(_ context.Context, _ esutil.BulkIndexerItem, res esutil.BulkIndexerResponseItem, err error) {
-			// Reached only after client-level retries are exhausted, or the
-			// failure is per-item (parsing, mapping, version conflict). The
-			// item is dropped — caller does not learn about this synchronously.
+			// Async failures cannot reach the original Save caller. Do not retry
+			// here: callers needing write confirmation must disable bulk.
 			if err != nil {
 				log.Errorf("elasticsearch bulk save %s/%s: %v", s.index, rec.ID, err)
 				return

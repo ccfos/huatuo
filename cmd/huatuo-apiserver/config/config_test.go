@@ -64,6 +64,9 @@ func TestLoadFileDefaults(t *testing.T) {
 	if config.Elasticsearch.Index != "huatuo_bamai" {
 		t.Fatalf("Elasticsearch.Index = %q, want huatuo_bamai", config.Elasticsearch.Index)
 	}
+	if !config.Elasticsearch.DisableBulk || config.Elasticsearch.BulkNumWorkers != 4 {
+		t.Error("Elasticsearch writes must default to disabled bulk with 4 workers when enabled")
+	}
 	if config.Profiling.DashboardBaseURL != "" {
 		t.Fatalf("Profiling = %+v", config.Profiling)
 	}

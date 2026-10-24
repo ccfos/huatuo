@@ -30,6 +30,15 @@ func TestElasticsearchConfigValidate(t *testing.T) {
 			name: "disabled",
 		},
 		{
+			name:      "negative bulk workers",
+			config:    ElasticsearchConfig{BulkNumWorkers: -1},
+			wantError: "bulk worker count must be positive",
+		},
+		{
+			name:   "disabled bulk ignores workers",
+			config: ElasticsearchConfig{DisableBulk: true, BulkNumWorkers: -1},
+		},
+		{
 			name: "enabled",
 			config: ElasticsearchConfig{
 				Address:  "http://127.0.0.1:9200",

@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -810,10 +811,76 @@ func newBackendForTest(t *testing.T, server *mockElasticsearchServer) *Storage {
 	return backend
 }
 
-// flushBackend forces the bulk indexer to drain pending items. Save buffers
-// asynchronously, so tests must flush before issuing a read that depends on a
-// just-saved record. After flushing the indexer is closed; tests that need to
-// keep saving must rebuild the backend.
+func TestBackendWriteModes(t *testing.T) {
+	disabled, enabled := true, false
+	for _, tt := range []struct {
+		name    string
+		disable *bool
+		workers int
+		status  int
+	}{
+		{name: "default synchronous", status: http.StatusCreated},
+		{name: "explicit synchronous", disable: &disabled, workers: -1, status: http.StatusCreated},
+		{name: "synchronous failure", status: http.StatusBadRequest},
+		{name: "bulk default workers", disable: &enabled, status: http.StatusCreated},
+		{name: "bulk custom workers", disable: &enabled, workers: 2, status: http.StatusCreated},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			bulkEnabled := tt.disable != nil && !*tt.disable
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/" {
+					_, _ = io.WriteString(w, `{"version":{"number":"8.17.1"}}`)
+					return
+				}
+				attempts.Add(1)
+				if r.URL.Query().Get("refresh") != "" {
+					t.Error("ordinary Save must not force refresh")
+				}
+				if bulkEnabled {
+					if !strings.HasSuffix(r.URL.Path, "/_bulk") {
+						t.Errorf("expected bulk request, got %s", r.URL.Path)
+					}
+					_, _ = io.WriteString(w, `{"errors":false,"items":[{"index":{"status":201}}]}`)
+					return
+				}
+				if r.URL.Path != "/profiles/_doc/one" {
+					t.Errorf("unexpected write path: %s", r.URL.Path)
+				}
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, `{}`)
+			}))
+			defer server.Close()
+			backend, err := NewBackend(&Config{Addresses: []string{server.URL}, Index: "profiles", DisableBulk: tt.disable, BulkNumWorkers: tt.workers})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (backend.bulk != nil) != bulkEnabled {
+				t.Fatalf("bulk enabled = %t, want %t", backend.bulk != nil, bulkEnabled)
+			}
+			err = backend.Save(t.Context(), driver.Record{ID: "one", Data: []byte(`{}`)}, driver.SaveOptions{})
+			if (err != nil) != (tt.status >= 400) {
+				t.Errorf("Save() error = %v, status = %d", err, tt.status)
+			}
+			if !bulkEnabled && attempts.Load() != 1 {
+				t.Errorf("synchronous attempts = %d, want 1", attempts.Load())
+			}
+			if err := backend.Close(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if attempts.Load() != 1 {
+				t.Errorf("total attempts = %d, want 1", attempts.Load())
+			}
+		})
+	}
+	if _, err := NewBackend(&Config{Index: "profiles", DisableBulk: &enabled, BulkNumWorkers: -1}); err == nil {
+		t.Error("negative bulk worker count must be rejected")
+	}
+}
+
+// flushBackend drains an explicitly enabled bulk writer. Synchronous backends
+// need no flush; an asynchronous backend must not be reused after this call.
 func flushBackend(t *testing.T, backend *Storage) {
 	t.Helper()
 	if err := backend.Close(t.Context()); err != nil {

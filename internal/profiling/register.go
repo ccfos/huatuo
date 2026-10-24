@@ -29,7 +29,7 @@ import (
 func Register(
 	ctx context.Context,
 	server *toolstream.Server,
-	cfg profilingstore.Config,
+	cfg *profilingstore.Config,
 	region string,
 ) (func(context.Context) error, error) {
 	if server == nil {

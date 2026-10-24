@@ -260,6 +260,9 @@ Elasticsearch/OpenSearch provides queries for profiling data written by nodes. T
 ```toml
 # Optional Elasticsearch/OpenSearch backend for querying profiling data.
 [Elasticsearch]
+    # Write-only options; bulk is opt-in.
+    # DisableBulk = true
+    # BulkNumWorkers = 4
     # Address, Username, and Password must be configured together to enable
     # this backend.
     #
@@ -290,6 +293,16 @@ Elasticsearch/OpenSearch provides queries for profiling data written by nodes. T
 | `Index` | String. Default: `"huatuo_bamai"`. Must not be empty when the query backend is enabled. Must match the index to which nodes write profiling data. |
 
 When the backend is disabled, the endpoints remain registered, but raw Profile and flame graph data cannot be queried.
+
+`DisableBulk=true` defaults to synchronous single-document writes: Save waits
+for the server response and returns errors. `false` enables asynchronous `_bulk`;
+Save only confirms enqueueing and later failures are logged. Neither mode forces
+refresh; successful writes may not yet be searchable. Bulk flushes at 5 MiB per
+worker, every second, or on graceful Close. Crashes can lose queued data; Close
+does not report per-item failures. `BulkNumWorkers` defaults to 4 per backend
+instance (0 also selects 4), is ignored when bulk is disabled, and raises
+concurrent server load when increased. Direct writes increase request volume
+and caller latency. These options do not change query behavior or SDK retries.
 
 #### 8.2 Result Links
 

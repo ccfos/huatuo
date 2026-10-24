@@ -70,10 +70,12 @@ func initStorage(
 	tracingConfig := tracingstore.Config{}
 	if cfg.Storage.Elasticsearch.Enabled() {
 		tracingConfig.Elasticsearch = &tracingstore.ElasticsearchConfig{
-			Addresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
-			Username:  cfg.Storage.Elasticsearch.Username,
-			Password:  cfg.Storage.Elasticsearch.Password,
-			Index:     cfg.Storage.Elasticsearch.Index,
+			Addresses:      strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
+			Username:       cfg.Storage.Elasticsearch.Username,
+			Password:       cfg.Storage.Elasticsearch.Password,
+			Index:          cfg.Storage.Elasticsearch.Index,
+			DisableBulk:    &cfg.Storage.Elasticsearch.DisableBulk,
+			BulkNumWorkers: cfg.Storage.Elasticsearch.BulkNumWorkers,
 		}
 	}
 	if cfg.Storage.LocalFile.Path != "" {

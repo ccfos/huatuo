@@ -149,6 +149,8 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "
     Username = "${STORAGE_USERNAME:-}"
     Password = "${STORAGE_PASSWORD:-}"
     Index = "${STORAGE_INDEX:-huatuo_storage_consistency}"
+    DisableBulk = ${storage_disable_bulk:-true}
+    BulkNumWorkers = 2
 EOF
 }
 

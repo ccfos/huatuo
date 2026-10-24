@@ -255,6 +255,9 @@ Java uses `bin/asprof` and `lib/libasyncProfiler.so` under `ToolDir`; Python use
     # There are no default connection credentials.
     #
     [Storage.Elasticsearch]
+        # Write-only options; bulk is opt-in.
+        # DisableBulk = true
+        # BulkNumWorkers = 4
         # Address = "http://127.0.0.1:9200"
         # Index = "huatuo_bamai"
         # Username = "elastic"
@@ -267,6 +270,20 @@ Java uses `bin/asprof` and `lib/libasyncProfiler.so` under `ToolDir`; Python use
 | `Index` | Index for tracing and event data. Default: `huatuo_bamai`. |
 | `Username` | Basic Auth username. Empty by default. |
 | `Password` | Basic Auth password. Empty by default. Use a strong password and enable HTTPS in production. |
+| `DisableBulk` | Write-only. Default: `true` for synchronous single-document writes; `false` enables asynchronous bulk. |
+| `BulkNumWorkers` | Write-only. Default: `4` per backend instance; `0` also selects `4`. Ignored when bulk is disabled. |
+
+- **Write mode**: `DisableBulk=true` (default) waits for each `_doc` response
+  and returns failures to the caller. `false` queues asynchronous `_bulk` writes;
+  nil from Save confirms enqueueing only. Later failures are logged, not returned.
+  Neither mode forces refresh: a successful write may not yet be
+  searchable. `WaitForVisibility` explicitly waits for refresh and bypasses bulk.
+  Bulk flushes at 5 MiB per worker, every second, or on graceful Close; queued
+  data may be lost on crashes. Close drains workers but does not report item
+  failures. `BulkNumWorkers` defaults to 4 per backend instance (0 also selects
+  4), applies only with bulk enabled, and increases concurrent server load.
+  Direct writes avoid buffering but increase request volume and caller latency.
+
 
 #### 6.2 Local files
 

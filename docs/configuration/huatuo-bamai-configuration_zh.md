@@ -256,6 +256,9 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
     # There are no default connection credentials.
     #
     [Storage.Elasticsearch]
+        # 仅用于写入；默认不启用异步 bulk。
+        # DisableBulk = true
+        # BulkNumWorkers = 4
         # Address = "http://127.0.0.1:9200"
         # Index = "huatuo_bamai"
         # Username = "elastic"
@@ -268,6 +271,17 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 | `Index` | 保存追踪与事件数据的索引名称，默认 `huatuo_bamai`。 |
 | `Username` | Basic Auth 用户名，默认为空。 |
 | `Password` | Basic Auth 密码，默认为空。生产环境建议使用强密码并启用 HTTPS。 |
+| `DisableBulk` | 仅用于写入。默认 `true`，同步单条写入；`false` 启用异步 bulk。 |
+| `BulkNumWorkers` | 仅用于写入，每个后端实例默认 `4`，`0` 也选择 `4`。关闭 bulk 时忽略。 |
+
+- **写入模式**：`DisableBulk=true`（默认）等待每次 `_doc` 响应并向调用方返回失败；
+  `false` 使用异步 `_bulk`，Save 返回 nil 仅代表入队，后续失败只记日志。
+  两种模式均不强制刷新，成功不代表立即可搜索；`WaitForVisibility`
+  显式等待刷新并绕过 bulk。bulk 每个 worker 达到 5 MiB、每秒或正常 Close 时刷新队列，
+  崩溃可能丢失排队数据；Close 等待 worker 退出，但不返回逐条写入失败。
+  `BulkNumWorkers` 每个后端实例默认 4（0 也选择 4），仅启用 bulk 时生效，
+  增大会增加服务端并发压力。同步单条写入不缓冲，但请求数和调用延迟更高。
+
 
 #### 6.2 本地文件
 
