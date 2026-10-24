@@ -70,10 +70,38 @@ func TestProfileStringRejectsInvalidIndex(t *testing.T) {
 	}
 }
 
+func TestProfileTypesFiltersMalformedValues(t *testing.T) {
+	store := newProfileQueryStore(t, 0, false)
+	service, err := NewProfileQueryService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := service.ProfileTypes(context.Background(), &querierv1.ProfileTypesRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.ProfileTypes) != 1 {
+		t.Fatalf("ProfileTypes() returned %d values, want one valid value: %+v", len(response.ProfileTypes), response.ProfileTypes)
+	}
+
+	got := response.ProfileTypes[0]
+	if got.ID != "process_cpu:cpu:nanoseconds:cpu:nanoseconds" {
+		t.Errorf("ProfileTypes()[0].ID = %q, want valid profile type", got.ID)
+	}
+	if got.Name != "process_cpu" || got.SampleType != "cpu" {
+		t.Errorf("ProfileTypes()[0] name/sample type = %q/%q, want process_cpu/cpu", got.Name, got.SampleType)
+	}
+	if got.SampleUnit != "nanoseconds" || got.PeriodType != "cpu" || got.PeriodUnit != "nanoseconds" {
+		t.Errorf("ProfileTypes()[0] units = %q/%q/%q, want nanoseconds/cpu/nanoseconds", got.SampleUnit, got.PeriodType, got.PeriodUnit)
+	}
+}
+
 // The fake exercises the production mapper, batched storage, and aggregation together.
 func newProfileQueryStore(t testing.TB, total int, fail bool, documents ...json.RawMessage) *profilingstore.Store {
 	t.Helper()
 	var cleared atomic.Bool
+	var scrollStarted atomic.Bool
 	position, size := 0, 0
 	document := json.RawMessage(`{"hostname":"node-1","region":"test","uploaded_timestamp":"2026-10-08T00:00:00Z","started_timestamp":"2026-10-08T00:00:00Z","tracer_type":"profiling","tracer_id":"job-1","profile_data":{"profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds","profile":{"string_table":["","cpu","nanoseconds","work"],"sample_type":[{"type":1,"unit":2}],"period_type":{"type":1,"unit":2},"function":[{"id":1,"name":3}],"location":[{"id":1,"line":[{"function_id":1}]}],"sample":[{"location_id":[1],"value":[1]}]}}}`)
 	if len(documents) == 0 {
@@ -91,13 +119,25 @@ func newProfileQueryStore(t testing.TB, total int, fail bool, documents ...json.
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/_search") {
-			var request struct {
-				Size int `json:"size"`
-			}
+			var request map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Error(err)
 			}
-			size = request.Size
+			if _, ok := request["aggregations"]; ok {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"aggregations": map[string]any{
+						"terms": map[string]any{"buckets": []map[string]any{
+							{"key": "process_cpu:cpu:nanoseconds:cpu:nanoseconds", "doc_count": 1},
+							{"key": "process_cpu::nanoseconds:cpu:nanoseconds", "doc_count": 1},
+						}},
+					},
+				})
+				return
+			}
+			scrollStarted.Store(true)
+			if rawSize, ok := request["size"].(float64); ok {
+				size = int(rawSize)
+			}
 			position = 0
 		} else if r.URL.Path != "/_search/scroll" {
 			http.Error(w, "unexpected path", http.StatusBadRequest)
@@ -125,7 +165,7 @@ func newProfileQueryStore(t testing.TB, total int, fail bool, documents ...json.
 		if err := store.Close(context.Background()); err != nil {
 			t.Error(err)
 		}
-		if !cleared.Load() {
+		if scrollStarted.Load() && !cleared.Load() {
 			t.Error("query did not release its scroll")
 		}
 	})
