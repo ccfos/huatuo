@@ -17,6 +17,7 @@ package events
 import (
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
 )
 
@@ -43,5 +44,31 @@ func TestMemoryEventsBlacklist(t *testing.T) {
 		if _, ok := status[name]; ok {
 			t.Errorf("legacy %s tracer is still registered", name)
 		}
+	}
+}
+
+func TestPruneOOMCounterContainers(t *testing.T) {
+	mutex.Lock()
+	outOfMemoryCounterContainer = map[string]*oomMetric{
+		"keep": {count: 3, latestVictimComm: "keep-comm"},
+		"gone": {count: 1, latestVictimComm: "gone-comm"},
+	}
+	defer func() {
+		outOfMemoryCounterContainer = make(map[string]*oomMetric)
+		mutex.Unlock()
+	}()
+
+	containers := map[string]*pod.Container{"keep": {ID: "keep"}}
+	pruneOOMCounterContainers(containers)
+
+	kept, ok := outOfMemoryCounterContainer["keep"]
+	if !ok {
+		t.Fatal(`counter for existing container "keep" was pruned`)
+	}
+	if kept.count != 3 || kept.latestVictimComm != "keep-comm" {
+		t.Errorf("retained counter = %+v, want count 3 and comm keep-comm", kept)
+	}
+	if _, ok := outOfMemoryCounterContainer["gone"]; ok {
+		t.Error(`counter for removed container "gone" was not pruned`)
 	}
 }
