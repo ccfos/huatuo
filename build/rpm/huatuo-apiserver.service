@@ -1,0 +1,42 @@
+[Unit]
+Description=Huatuo Apiserver - API entry point for profiling and tracing jobs
+Documentation=https://huatuo.tech/
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/huatuo-bamai
+# A relative --config is resolved against /opt/huatuo-bamai/conf, because the
+# default --config-dir is anchored to the parent directory of the binary.
+ExecStart=/opt/huatuo-bamai/bin/huatuo-apiserver --config huatuo-apiserver.conf
+# SIGHUP is mapped to a graceful shutdown by huatuo-apiserver (it is registered
+# together with SIGTERM), so this unit deliberately declares no ExecReload.
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=huatuo-apiserver
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/log /var/lib/huatuo-bamai /var/run /tmp
+ProtectHome=true
+
+# Resource limits
+LimitNOFILE=65536
+
+CPUAccounting=yes
+CPUQuota=2000%
+MemoryAccounting=yes
+MemoryMax=4G
+TasksAccounting=yes
+TasksMax=8192
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target
