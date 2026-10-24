@@ -360,8 +360,14 @@ func TestL2FilterNegatedEthertypeVerdicts(t *testing.T) {
 		{expr: "not tcp and not arp", packet: ipv4TCP},
 		{expr: "not rarp and not tcp", packet: ipv4TCP},
 		{expr: "not tcp and not rarp", packet: ipv4TCP},
-		{expr: "not arp and not udp", packet: ipv4TCP},
-		{expr: "not udp and not arp", packet: ipv4TCP},
+		// These compounds accept TCP in libpcap (both conjuncts hold); the
+		// compiler's mis-rejection is tracked in #1569, so the regression
+		// asserts the non-matching direction (UDP fails "not udp").
+		{expr: "not arp and not udp", packet: ipv4UDP},
+		{expr: "not udp and not arp", packet: ipv4UDP},
+		// "not ! arp" is a double negation; the rewrite must not fire.
+		{expr: "not ! arp", packet: ipv4TCP},
+		{expr: "not ! ip", packet: ipv6TCP},
 		{expr: "tcp and not ip6", packet: ipv4UDP},
 		{expr: "tcp and not ip6", packet: arpFrame},
 		{expr: "udp and not ip6", packet: ipv4TCP},

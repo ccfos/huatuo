@@ -275,8 +275,14 @@ func compileGoPcap(expr string) (insns []cbpf.Instruction, err error) {
 // "not arp", so the bytecode alone cannot distinguish them; the rewrite is
 // only correct for the bare form and must be gated on the expression.
 func isBareNegatedEthertype(expr string) bool {
+	// "not ! arp" and "!arp" must not enable the rewrite: go-pcap mishandles
+	// "!" (it compiles "!arp" as a plain "arp"), so only the exact word form
+	// "not <ethertype>", with no other operator anywhere, is trusted.
+	if strings.ContainsRune(expr, '!') {
+		return false
+	}
 	tokens := strings.FieldsFunc(expr, func(r rune) bool {
-		return unicode.IsSpace(r) || r == '(' || r == ')' || r == '!'
+		return unicode.IsSpace(r) || r == '(' || r == ')'
 	})
 	if len(tokens) != 2 || tokens[0] != "not" {
 		return false
