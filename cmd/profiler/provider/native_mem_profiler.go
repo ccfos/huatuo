@@ -315,7 +315,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipe
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ringCtx.drainFinal(ctx, func() any { return &abi.ProfilerEventBase{} }, enqueue, p.convertValueToBytes)
 		case <-ticker.C:
 		}
 

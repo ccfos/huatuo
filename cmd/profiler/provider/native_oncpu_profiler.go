@@ -256,7 +256,7 @@ func (p *cpuNativeProfiler) readOnCPUDataLoop(
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ringCtx.drainFinal(ctx, func() any { return &abi.ProfilerOnCPUEvent{} }, enqueue, p.convertCPUValue)
 		case <-ticker.C:
 		}
 
