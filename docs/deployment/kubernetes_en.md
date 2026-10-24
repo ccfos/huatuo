@@ -141,6 +141,10 @@ hostPaths:
 
 ### 2.4 Validate the Helm Chart
 
+`config.mountPath` is the full configuration file path inside the container.
+The chart passes its directory and basename to the collector. `config.fileName`
+is the ConfigMap key and may differ from the mounted filename.
+
 ```bash
 helm lint ./build/charts \
   -f ./values-production.yaml \
