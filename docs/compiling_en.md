@@ -25,7 +25,7 @@ $ docker build --network host -t huatuo/huatuo-bamai-dev:latest -f ./Dockerfile.
 
 **2. Start the build container**
 ```bash
-$ docker run -it --pid=host --privileged --cgroupns=host --network=host -v $(pwd):/go/huatuo-bamai huatuo/huatuo-bamai-dev:latest sh
+$ docker run -it --pid=host --privileged --cgroupns=host --network=host -v "$(pwd):/go/huatuo-bamai" -w /go/huatuo-bamai huatuo/huatuo-bamai-dev:latest sh
 ```
 
 **3. Build inside the container**
