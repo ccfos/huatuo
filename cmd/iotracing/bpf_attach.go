@@ -150,6 +150,8 @@ func anyfsAttachOptions() []bpf.AttachOption {
 	if hasFilesystem("ext4") {
 		opts = append(
 			opts,
+			fileIterReturnOption("bpf_anyfs_file_read_iter_return", "ext4_file_read_iter"),
+			fileIterReturnOption("bpf_anyfs_file_write_iter_return", "ext4_file_write_iter"),
 			bpf.AttachOption{ProgramName: "bpf_anyfs_file_read_iter", Symbol: "ext4_file_read_iter"},
 			bpf.AttachOption{ProgramName: "bpf_anyfs_file_write_iter", Symbol: "ext4_file_write_iter"},
 			bpf.AttachOption{ProgramName: "bpf_anyfs_filemap_page_mkwrite", Symbol: "ext4_page_mkwrite"},
@@ -159,6 +161,8 @@ func anyfsAttachOptions() []bpf.AttachOption {
 	if hasFilesystem("xfs") {
 		opts = append(
 			opts,
+			fileIterReturnOption("bpf_anyfs_file_read_iter_return", "xfs_file_read_iter"),
+			fileIterReturnOption("bpf_anyfs_file_write_iter_return", "xfs_file_write_iter"),
 			bpf.AttachOption{ProgramName: "bpf_anyfs_file_read_iter", Symbol: "xfs_file_read_iter"},
 			bpf.AttachOption{ProgramName: "bpf_anyfs_file_write_iter", Symbol: "xfs_file_write_iter"},
 			bpf.AttachOption{ProgramName: "bpf_anyfs_filemap_page_mkwrite", Symbol: "xfs_filemap_page_mkwrite"},
@@ -166,4 +170,12 @@ func anyfsAttachOptions() []bpf.AttachOption {
 	}
 
 	return opts
+}
+
+func fileIterReturnOption(program, symbol string) bpf.AttachOption {
+	option := bpf.AttachOption{ProgramName: program, Symbol: symbol}
+	// File I/O can sleep, so use the pending map's capacity instead of the
+	// kernel default that scales only with online CPUs.
+	option.Kprobe.RetprobeMaxActive = 4096
+	return option
 }

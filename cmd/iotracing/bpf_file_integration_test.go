@@ -395,7 +395,7 @@ func TestIOTracingFilemapDeviceFilter(t *testing.T) {
 }
 
 // TestIOTracingReadWrite requires TEST_IOTRACING_FILE_BPF and an explicit
-// ext4/XFS TMPDIR. It isolates the two file-entry programs, not the full trace.
+// ext4/XFS TMPDIR. It isolates the file entry/return pairs, not the full trace.
 func TestIOTracingReadWrite(t *testing.T) {
 	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
 	require.NotEmpty(t, object, "run make integration to supply the production BPF object")
@@ -445,11 +445,12 @@ func TestIOTracingReadWrite(t *testing.T) {
 	spec, err := ebpf.LoadCollectionSpec(object)
 	require.NoError(t, err)
 	for name := range spec.Programs {
-		if name != "bpf_anyfs_file_read_iter" && name != "bpf_anyfs_file_write_iter" {
+		if name != "bpf_anyfs_file_read_iter" && name != "bpf_anyfs_file_write_iter" &&
+			name != "bpf_anyfs_file_read_iter_return" && name != "bpf_anyfs_file_write_iter_return" {
 			delete(spec.Programs, name)
 		}
 	}
-	require.Len(t, spec.Programs, 2)
+	require.Len(t, spec.Programs, 4)
 	require.NoError(t, spec.RewriteConstants(map[string]any{
 		"FILTER_DEV_COUNT": uint32(1),
 		"FILTER_DEV_IDS":   [16]uint32{key.Dev},
@@ -459,6 +460,11 @@ func TestIOTracingReadWrite(t *testing.T) {
 	t.Cleanup(coll.Close)
 	source := coll.Maps[bpfSourceMapName]
 	require.NotNil(t, source)
+	for _, operation := range []string{"read", "write"} {
+		name := "bpf_anyfs_file_" + operation + "_iter_return"
+		symbol := filesystem + "_file_" + operation + "_iter"
+		attachFileIOReturnProbe(t, name, symbol, coll.Programs[name])
+	}
 	attachFileIOProbe(t, filesystem+"_file_read_iter", coll.Programs["bpf_anyfs_file_read_iter"])
 	attachFileIOProbe(t, filesystem+"_file_write_iter", coll.Programs["bpf_anyfs_file_write_iter"])
 
@@ -484,8 +490,8 @@ func TestIOTracingReadWrite(t *testing.T) {
 		wantWrite += write
 		var record bpfFilesystemIO
 		require.NoError(t, source.Lookup(key, &record), step)
-		require.Equal(t, wantRead, record.FsReadBytes, "%s: requested read bytes", step)
-		require.Equal(t, wantWrite, record.FsWriteBytes, "%s: requested write bytes", step)
+		require.Equal(t, wantRead, record.FsReadBytes, "%s: completed read bytes", step)
+		require.Equal(t, wantWrite, record.FsWriteBytes, "%s: completed write bytes", step)
 		require.Equal(t, key.Dev, record.DevID, step)
 		require.Equal(t, key.Inode, record.Ino, step)
 		require.Equal(t, uint32(os.Getpid()), record.TGID, step)
@@ -498,9 +504,7 @@ func TestIOTracingReadWrite(t *testing.T) {
 		return record
 	}
 
-	// In 4.18/5.10 fs/read_write.c, new_sync_read/write passes len as
-	// iov_iter.count to these hooks. Use one syscall per step, including
-	// short/EOF reads and Direct IO rejected later by alignment checks.
+	// Short reads and failed Direct IO must not be charged for requested bytes.
 	n, err = unix.Pread(fd, data[:513], 0)
 	require.NoError(t, err)
 	require.Equal(t, 513, n)
@@ -513,11 +517,11 @@ func TestIOTracingReadWrite(t *testing.T) {
 	n, err = unix.Pread(fd, data[:2048], 3072)
 	require.NoError(t, err)
 	require.Equal(t, 1024, n)
-	require.Equal(t, normalRead.Flags, check("short read", 2048, 0).Flags)
+	require.Equal(t, normalRead.Flags, check("short read", 1024, 0).Flags)
 	n, err = unix.Pread(fd, data[:256], 4096)
 	require.NoError(t, err)
 	require.Zero(t, n)
-	require.Equal(t, normalRead.Flags, check("EOF read", 256, 0).Flags)
+	require.Equal(t, normalRead.Flags, check("EOF read", 0, 0).Flags)
 
 	// IOCB_DIRECT's bit position differs across target kernel backports.
 	// Check raw flags change for Direct IO and return to the ordinary value.
@@ -543,10 +547,10 @@ func TestIOTracingReadWrite(t *testing.T) {
 
 	_, err = unix.Pread(directFD, aligned, 1)
 	require.ErrorIs(t, err, unix.EINVAL, "non-aligned Direct read must reach the failing entry")
-	require.Equal(t, directRead.Flags, check("failed Direct read", 4096, 0).Flags)
+	require.Equal(t, directRead.Flags, check("failed Direct read", 0, 0).Flags)
 	_, err = unix.Pwrite(directFD, aligned, 1)
 	require.ErrorIs(t, err, unix.EINVAL, "non-aligned Direct write must reach the failing entry")
-	last := check("failed Direct write", 0, 4096)
+	last := check("failed Direct write", 0, 0)
 	require.Equal(t, directWrite.Flags, last.Flags)
 	require.Equal(t, normalRead.Comm, last.Comm)
 	require.Equal(t, normalRead.PathSegs, last.PathSegs)
@@ -640,12 +644,15 @@ func TestIOTracingFileMetadata(t *testing.T) {
 
 			spec, err := ebpf.LoadCollectionSpec(object)
 			require.NoError(t, err)
+			retName := ""
+			if tc.mapping == 0 {
+				retName = tc.program + "_return"
+			}
 			for name := range spec.Programs {
-				if name != tc.program {
+				if name != tc.program && name != retName {
 					delete(spec.Programs, name)
 				}
 			}
-			require.Len(t, spec.Programs, 1)
 			require.NoError(t, spec.RewriteConstants(map[string]any{
 				"FILTER_DEV_COUNT": uint32(1),
 				"FILTER_DEV_IDS":   [16]uint32{files[0].key.Dev},
@@ -658,6 +665,9 @@ func TestIOTracingFileMetadata(t *testing.T) {
 			var absent bpfFilesystemIO
 			require.ErrorIs(t, source.Lookup(files[0].key, &absent), ebpf.ErrKeyNotExist)
 			require.NoError(t, source.Update(files[1].key, files[1].seed, ebpf.UpdateNoExist))
+			if retName != "" {
+				attachFileIOReturnProbe(t, retName, tc.symbol, coll.Programs[retName])
+			}
 			attachFileIOProbe(t, tc.symbol, coll.Programs[tc.program])
 			runtime.LockOSThread()
 			defer runtime.UnlockOSThread()
@@ -732,5 +742,21 @@ func attachFileIOProbe(t *testing.T, name string, program *ebpf.Program) {
 		"attach file IO probe %s",
 		name,
 	)
+	t.Cleanup(func() { _ = probe.Close() })
+}
+
+func attachFileIOReturnProbe(t *testing.T, name, symbol string, program *ebpf.Program) {
+	t.Helper()
+	option := fileIterReturnOption(name, symbol)
+	probe, err := link.Kretprobe(symbol, program, &link.KprobeOptions{
+		RetprobeMaxActive: option.Kprobe.RetprobeMaxActive,
+	})
+	if err != nil {
+		err = xfsKprobeFailure(symbol, err)
+		if errors.Is(err, errXFSKprobeUnsupported) {
+			t.Skipf("XFS qualification unavailable: %v", err)
+		}
+	}
+	require.NoError(t, err, "attach file IO return probe %s", symbol)
 	t.Cleanup(func() { _ = probe.Close() })
 }
