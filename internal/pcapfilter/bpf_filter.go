@@ -267,6 +267,48 @@ func compileGoPcap(expr string) (insns []cbpf.Instruction, err error) {
 	return f.Compile()
 }
 
+// fixNegatedEthertype rewrites the match branch of the bare negated
+// ethertype programs go-pcap emits ("not ip", "not ip6"). The program loads
+// the ethertype, jumps to the trailing drop return when it matches, and
+// jumps past the end of the program when it does not - and that past-end
+// branch must reach the final accept return. boundJumps resolves past-end
+// jumps as drops, so the L2 stub rejected every frame while the retargeted
+// L3 stub accepted non-matching frames. The template is deliberately narrow
+// - an equality test against an ethertype whose false branch lands
+// past the end of a program ending in drop-then-accept - because compound expressions and plain ethertype
+// tests also jump past the end and rely on the drop convention, which is
+// correct for them.
+func fixNegatedEthertype(insns []cbpf.Instruction) {
+	last := len(insns) - 1
+	if last < 3 {
+		return
+	}
+	if ret, ok := insns[last].(cbpf.RetConstant); !ok || ret.Val == 0 {
+		return
+	}
+	if ret, ok := insns[last-1].(cbpf.RetConstant); !ok || ret.Val != 0 {
+		return
+	}
+	jump, ok := insns[1].(cbpf.JumpIf)
+	if !ok || jump.Cond != cbpf.JumpEqual {
+		return
+	}
+	switch jump.Val {
+	case etherTypeIPv4, etherTypeIPv6, 0x0806, 0x8035: // arp, rarp
+	default:
+		return
+	}
+	if load, ok := insns[0].(cbpf.LoadAbsolute); !ok || load.Off != 12 || load.Size != 2 {
+		return
+	}
+	falseTarget := uint64(1) + 1 + uint64(jump.SkipFalse)
+	if falseTarget <= uint64(last) {
+		return
+	}
+	jump.SkipFalse = uint8(last - 2)
+	insns[1] = jump
+}
+
 // compileCBPF compiles expr to cBPF via go-pcap (pure Go, no libpcap dependency).
 // When l3 is true, packet offsets are retargeted from Ethernet-relative to raw-IP.
 func compileCBPF(expr string, l3 bool) ([]cbpf.Instruction, error) {
@@ -279,6 +321,7 @@ func compileCBPF(expr string, l3 bool) ([]cbpf.Instruction, error) {
 		return nil, fmt.Errorf("go-pcap compile: %w", err)
 	}
 
+	fixNegatedEthertype(insns)
 	if l3 {
 		insns, err = retargetToL3(insns)
 		if err != nil {
@@ -513,22 +556,20 @@ func remapL3JumpSkip(
 	return uint32(newSkip), nil
 }
 
-// boundJumps rewrites out-of-bounds jump offsets to land on the last
-// instruction. go-pcap emits jumps past the end of the program whose intended
-// target is the program's final return: remapL3JumpSkip already resolves them
-// that way when retargeting to L3, so clamping to the same final return here
-// keeps the L2 and the L3 stubs equivalent ("not ip" accepts non-IPv4 frames
-// on both paths instead of dropping every frame on L2). A trailing drop
-// return is appended only when the program does not already end in a return.
+// boundJumps rewrites out-of-bounds jump offsets to land on the last instruction.
+// go-pcap follows libpcap convention where jumps past the end mean implicit drop;
+// cbpfc requires all targets to be in-bounds. The last instruction is guaranteed
+// to be RetConstant{Val:0}, so clamped jumps preserve the drop semantics.
 func boundJumps(insns []cbpf.Instruction) []cbpf.Instruction {
 	if len(insns) == 0 {
 		return insns
 	}
-	lastIdx := len(insns) - 1
-	if _, ok := insns[lastIdx].(cbpf.RetConstant); !ok {
+	// Defensive: ensure the trailing instruction is a drop, so clamped
+	// jumps land on a drop (libpcap-style fall-through semantics).
+	if r, ok := insns[len(insns)-1].(cbpf.RetConstant); !ok || r.Val != 0 {
 		insns = append(insns, cbpf.RetConstant{Val: 0})
-		lastIdx = len(insns) - 1
 	}
+	lastIdx := len(insns) - 1
 	out := make([]cbpf.Instruction, len(insns))
 	copy(out, insns)
 	for i := range out {
