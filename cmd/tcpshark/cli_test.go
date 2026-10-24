@@ -177,7 +177,7 @@ func TestAppBPFPathAndFilterValidation(t *testing.T) {
 				"--bpf-path-dir", "bpf",
 				"--filter", "ether host 02:00:00:00:00:01",
 			},
-			wantError: "ethernet header fields are unavailable",
+			wantError: "Ethernet byte",
 		},
 		{
 			name: "retransmit rejects Ethernet addresses",

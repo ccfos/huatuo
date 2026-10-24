@@ -81,18 +81,16 @@ ip and src net 192.168.1.0/24 and tcp dst port 3306
 
 ### 不支持的表达式
 
-下列表达式**不支持**，使用后会导致编译失败或产生错误的匹配结果：
+下列表达式在 tracing 过滤路径中不可用，启动时会被拒绝：
 
 | 表达式                                              | 原因                                                        |
 | --------------------------------------------------- | ----------------------------------------------------------- |
-| `tcp[tcpflags] & tcp-syn != 0`、`ip[8]`、`tcp[0:4]` | 字节偏移表达式（`proto[offset:size]`）未实现                |
+| `tcp[tcpflags] & tcp-syn != 0`、`ip[8] = 64`、`tcp[0:4] = 80` | 需要报文长度指令；tracing 无法提供完整报文长度语义                |
 | `ip proto 6`、`ip6 proto 17`                        | 不支持数字协议号，请改用协议名（如 `ip proto tcp`）         |
 | `ether proto 0x0800`                                | 不支持十六进制 EtherType，请改用名字（如 `ether proto ip`） |
-| `sctp`                                              | 关键字未识别                                                |
-| `portrange 80-90`、`tcp portrange 1-100`            | 不支持端口范围                                              |
-| `less N`、`greater N`                               | 不支持按报文长度过滤                                        |
+| `len > 40`、`less N`、`greater N` | 无法按完整报文长度过滤 |
 | `ip broadcast`、`ether broadcast`                   | 不支持广播匹配                                              |
-| `vlan`、`mpls`、`pppoes`                            | 不支持隧道/封装关键字                                       |
+| `pppoes` | 不支持 PPPoE session 匹配 |
 | `gateway`                                           | 不支持                                                      |
 
 ### 推荐写法示例

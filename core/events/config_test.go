@@ -15,6 +15,7 @@
 package events
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"slices"
@@ -23,6 +24,7 @@ import (
 	"testing"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/pcapfilter"
 	testutils "github.com/ccfos/huatuo/internal/testing"
 )
 
@@ -223,10 +225,7 @@ func TestNewTCPRetransmitRejectsL2LocalFilter(t *testing.T) {
 	config.TCPRetransmit.Filter = "ether host 02:00:00:00:00:01"
 	Set(config)
 
-	if _, err := newTCPRetransmit(); err == nil || !strings.Contains(
-		err.Error(),
-		"filter requires ethernet header fields unavailable to local correlation",
-	) {
+	if _, err := newTCPRetransmit(); !errors.Is(err, pcapfilter.ErrL3IncompatibleFilter) {
 		t.Fatalf("newTCPRetransmit() error = %v, want L3 compatibility error", err)
 	}
 }

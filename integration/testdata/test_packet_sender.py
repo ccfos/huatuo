@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared raw-packet workloads; assertions and namespace ownership stay in Bash."""
+"""Shared network workloads; assertions and namespace ownership stay in Bash."""
 
 import argparse
 import signal
@@ -85,6 +85,19 @@ def send_icmpv6_echo(args):
         send_frames(sock, args.destination, [frame])
 
 
+def connect_tcp(args):
+    # Raw SYN packets do not create a retransmitting kernel TCP socket.
+    while True:
+        family = socket.AF_INET6 if ":" in args.source else socket.AF_INET
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.bind((args.source, 0))
+            sock.settimeout(3)
+            try:
+                sock.connect((args.destination, args.destination_port))
+            except (socket.timeout, ConnectionRefusedError):
+                pass
+
+
 def uint16(value):
     number = int(value)
     if not 0 <= number <= 65535:
@@ -105,7 +118,10 @@ def main():
     icmpv6.add_argument("--identifier", type=uint16, required=True)
     icmpv6.add_argument("--sequence", type=uint16, required=True)
     icmpv6.set_defaults(send=send_icmpv6_echo)
-    for workload in (ipv4, icmpv6):
+    tcp = workloads.add_parser("tcp-connect", help="repeat TCP connection attempts")
+    tcp.add_argument("--destination-port", type=uint16, required=True)
+    tcp.set_defaults(send=connect_tcp)
+    for workload in (ipv4, icmpv6, tcp):
         workload.add_argument("--source", required=True)
         workload.add_argument("--destination", required=True)
     args = parser.parse_args()

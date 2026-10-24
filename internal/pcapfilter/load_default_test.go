@@ -30,6 +30,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
+	"github.com/huatuo-ai/go-pcap/filter"
 	cbpf "golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
 )
@@ -150,7 +151,7 @@ func TestRawIPFilterPreservesL2PredicateNegation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			insts, err := compileCBPF(tt.expr, true)
+			insts, err := compileCBPF(tt.expr, filter.LinkTypeRaw)
 			if err != nil {
 				t.Fatalf("compileCBPF: %v", err)
 			}
@@ -207,7 +208,7 @@ func TestApplyPatchesEveryProgram(t *testing.T) {
 
 func TestRawIPFilterMatchesSyntheticTCPHeader(t *testing.T) {
 	const port = 19997
-	insts, err := compileCBPF("tcp and port 19997", true)
+	insts, err := compileCBPF("tcp and port 19997", filter.LinkTypeRaw)
 	if err != nil {
 		t.Fatalf("compileCBPF: %v", err)
 	}
@@ -278,11 +279,11 @@ func TestRawIPFilterKeepsPortAndEthertypeComparisonsDistinct(t *testing.T) {
 	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
 	packet[8] = 64
 	packet[9] = unix.IPPROTO_TCP
-	binary.BigEndian.PutUint16(packet[20:22], etherTypeIPv4)
+	binary.BigEndian.PutUint16(packet[20:22], 2048)
 	binary.BigEndian.PutUint16(packet[22:24], 40000)
 	packet[32] = 5 << 4
 
-	insts, err := compileCBPF("tcp and port 2048", true)
+	insts, err := compileCBPF("tcp and port 2048", filter.LinkTypeRaw)
 	if err != nil {
 		t.Fatalf("compileCBPF: %v", err)
 	}
@@ -312,5 +313,246 @@ func TestCompileMalformedNetReturnsInvalidFilter(t *testing.T) {
 				t.Fatalf("buildL2L3FilterInsts(%q) error = %v, want ErrInvalidFilter", expr, err)
 			}
 		})
+	}
+}
+
+// makeTCPFilterPacket represents the tuple provided to both filtering consumers.
+func makeTCPFilterPacket(version byte, port uint16) []byte {
+	headerLength := 20
+	if version == 6 {
+		headerLength = 40
+	}
+
+	packet := make([]byte, headerLength+20)
+	if version == 6 {
+		packet[0] = 6 << 4
+		binary.BigEndian.PutUint16(packet[4:6], 20)
+		packet[6] = unix.IPPROTO_TCP
+		packet[7] = 64
+		copy(packet[8:24], []byte{0x20, 1, 0x0d, 0xb8})
+		copy(packet[24:40], packet[8:24])
+		packet[23] = 1
+		packet[39] = 2
+	} else {
+		packet[0] = 4<<4 | 5
+		binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
+		packet[8] = 64
+		packet[9] = unix.IPPROTO_TCP
+		copy(packet[12:16], []byte{10, 0, 0, 1})
+		copy(packet[16:20], []byte{10, 0, 0, 2})
+	}
+
+	binary.BigEndian.PutUint16(packet[headerLength:headerLength+2], 12345)
+	binary.BigEndian.PutUint16(packet[headerLength+2:headerLength+4], port)
+	packet[headerLength+12] = 5 << 4
+
+	return packet
+}
+
+func TestCompileCBPFBooleanVerdicts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		expr string
+		port uint16
+		want bool
+	}{
+		{
+			name: "qualified host accepts both ip versions",
+			expr: "tcp src host 10.0.0.1 or tcp src host 2001:db8::1",
+			port: 80,
+			want: true,
+		},
+		{
+			name: "qualified host excludes another address",
+			expr: "tcp src host 192.0.2.1 or tcp src host 2001:db9::1",
+			port: 80,
+		},
+		{
+			name: "qualified network accepts both ip versions",
+			expr: "tcp src net 10.0.0.0/24 or tcp src net 2001:db8::/64",
+			port: 80,
+			want: true,
+		},
+		{
+			name: "qualified network excludes another prefix",
+			expr: "tcp src net 192.0.2.0/24 or tcp src net 2001:db9::/64",
+			port: 80,
+		},
+		{
+			name: "negated group accepts another port",
+			expr: "not (port 443 or port 22)",
+			port: 80,
+			want: true,
+		},
+		{
+			name: "negated group rejects matching port",
+			expr: "not (port 443 or port 22)",
+			port: 443,
+		},
+		{
+			name: "grouped port alternatives accept",
+			expr: "tcp and (port 80 or port 443)",
+			port: 443,
+			want: true,
+		},
+		{
+			name: "grouped port alternatives reject",
+			expr: "tcp and (port 80 or port 443)",
+			port: 2048,
+		},
+		{
+			name: "l2 predicate mixed with tcp",
+			expr: "arp or tcp",
+			port: 80,
+			want: true,
+		},
+		{
+			name: "negated l2 predicate",
+			expr: "not arp and tcp",
+			port: 80,
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, version := range []byte{4, 6} {
+				for _, linkType := range []filter.LinkType{filter.LinkTypeEthernet, filter.LinkTypeRaw} {
+					packet := makeTCPFilterPacket(version, tt.port)
+					if linkType == filter.LinkTypeEthernet {
+						frame := make([]byte, ethernetHeaderLen)
+						etherType := uint16(0x0800)
+						if version == 6 {
+							etherType = 0x86dd
+						}
+						binary.BigEndian.PutUint16(frame[12:14], etherType)
+						packet = append(frame, packet...)
+					}
+
+					instructions, err := compileCBPF(tt.expr, linkType)
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					vm, err := cbpf.NewVM(instructions)
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					got, err := vm.Run(packet)
+					if err != nil || (got != 0) != tt.want {
+						t.Fatalf("IPv%d link %v verdict=%d error=%v, want accept=%t", version, linkType, got, err, tt.want)
+					}
+
+					if _, err := buildFilterInsts(tt.expr, "_test", linkType); err != nil {
+						t.Fatalf("translate IPv%d link %v: %v", version, linkType, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestValidateL3CompatiblePacketFields(t *testing.T) {
+	t.Parallel()
+
+	for _, expression := range []string{
+		"ether host 02:00:00:00:00:01",
+		"tcp[13] & 2 != 0", "ip [ 8 ] = 64", "TCP[13] = 2",
+		"tcp and (ip[8] = 64 or udp)",
+		"len > 40", "LEN >= 60", "tcp and (len > 40 or udp)",
+	} {
+		t.Run(expression, func(t *testing.T) {
+			if err := ValidateL3Compatible(expression); !errors.Is(err, ErrL3IncompatibleFilter) {
+				t.Fatalf("ValidateL3Compatible(%q)=%v, want ErrL3IncompatibleFilter", expression, err)
+			}
+		})
+	}
+
+	for _, expression := range []string{"ether proto ip and tcp", "ether proto ip6 and tcp", "not arp and tcp", "tcp and (port 80 or port 443)"} {
+		t.Run(expression, func(t *testing.T) {
+			if err := ValidateL3Compatible(expression); err != nil {
+				t.Fatalf("ValidateL3Compatible(%q): %v", expression, err)
+			}
+		})
+	}
+}
+
+func TestBuildFilterRejectsPacketLength(t *testing.T) {
+	t.Parallel()
+
+	for _, expression := range []string{"len > 40", "tcp[13] = 2", "ip[8] = 64"} {
+		t.Run(expression, func(t *testing.T) {
+			for _, linkType := range []filter.LinkType{filter.LinkTypeEthernet, filter.LinkTypeRaw} {
+				if _, err := buildFilterInsts(expression, "_test", linkType); !errors.Is(err, ErrInvalidFilter) {
+					t.Fatalf("buildFilterInsts(%q, %v)=%v, want ErrInvalidFilter", expression, linkType, err)
+				}
+			}
+		})
+	}
+}
+
+func TestCompileCBPFGroupedARP(t *testing.T) {
+	t.Parallel()
+
+	packet := make([]byte, ethernetHeaderLen+28)
+	binary.BigEndian.PutUint16(packet[12:14], 0x0806)
+	instructions, err := compileCBPF("(arp or tcp) and udp", filter.LinkTypeEthernet)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm, err := cbpf.NewVM(instructions)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verdict, err := vm.Run(packet)
+	if err != nil || verdict != 0 {
+		t.Fatalf("(arp or tcp) and udp on ARP verdict=%d error=%v, want reject", verdict, err)
+	}
+}
+
+func TestCompileCBPFIPv6Port(t *testing.T) {
+	t.Parallel()
+
+	instructions, err := compileCBPF("ip6 and tcp port 80", filter.LinkTypeRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm, err := cbpf.NewVM(instructions)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, version := range []byte{4, 6} {
+		verdict, err := vm.Run(makeTCPFilterPacket(version, 80))
+		if err != nil || (verdict != 0) != (version == 6) {
+			t.Fatalf("IPv%d verdict=%d error=%v, want accept=%t", version, verdict, err, version == 6)
+		}
+	}
+}
+
+func TestCompileCBPFGroupedHostAndPort(t *testing.T) {
+	t.Parallel()
+
+	instructions, err := compileCBPF("(src host 10.0.0.1 and dst port 80) or dst port 443", filter.LinkTypeRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm, err := cbpf.NewVM(instructions)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, port := range []uint16{80, 443, 2048} {
+		verdict, err := vm.Run(makeTCPFilterPacket(4, port))
+		if err != nil || (verdict != 0) != (port != 2048) {
+			t.Fatalf("port %d verdict=%d error=%v, want accept=%t", port, verdict, err, port != 2048)
+		}
 	}
 }

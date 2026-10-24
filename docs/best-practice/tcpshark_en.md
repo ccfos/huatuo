@@ -13,7 +13,7 @@ weight: 5
 
 The user-space classifier derives connection phases and reason labels from the event type, `sk_state`, `ca_state`, and reordering counters. These labels are operational heuristics, not conclusive evidence of a packet-drop cause.
 
-`internal/pcapfilter` compiles filters at load time for execution in the kernel. With or without local correlation, the SKB, SYN-ACK, and TLP hooks filter the same synthetic L3 TCP packet representation. Protocol, address, network, and port conditions are supported; Ethernet addresses, payloads, actual packet lengths, IP/TCP options, and raw byte-offset semantics are not. Safe EtherType checks such as `ether proto ip` are translated into L3 checks. A pair of IPv4-mapped IPv6 socket addresses is filtered as IPv4; the raw perf record retains AF_INET6, and user space normalizes addresses before matching. Local correlation applies the identical expression to embedded dropwatch. Use a direction-symmetric expression to retain reverse ACK or SYN-ACK evidence.
+`internal/pcapfilter` compiles filters at load time for execution in the kernel. With or without local correlation, the SKB, SYN-ACK, and TLP hooks filter the same synthetic L3 TCP packet representation. Protocol, address, network, and port conditions are supported; Ethernet addresses, payloads, actual packet lengths, IP/TCP options, and raw byte-offset semantics are not. Safe EtherType checks such as `ether proto ip` are compiled using the raw-IP layout. A pair of IPv4-mapped IPv6 socket addresses is filtered as IPv4; the raw perf record retains AF_INET6, and user space normalizes addresses before matching. Local correlation applies the identical expression to embedded dropwatch. Use a direction-symmetric expression to retain reverse ACK or SYN-ACK evidence.
 
 ## Use Cases
 
@@ -135,7 +135,7 @@ tcpshark uses the same tcpdump-style filter expressions as dropwatch. See the [d
 
 > In local mode, the same expression must cover both directions. Directional selectors can exclude reverse ACK or SYN-ACK drop evidence, weakening the available evidence.
 
-> Local mode rejects primitives depending on Ethernet addresses, such as `ether host 02:00:00:00:00:01`. `ether proto ip` and `ether proto ip6` are supported because they can be translated into raw-IP version checks.
+> Both modes reject primitives depending on Ethernet addresses, such as `ether host 02:00:00:00:00:01`. `ether proto ip` and `ether proto ip6` are supported because they compile to raw-IP version checks.
 
 ## Event Fields
 

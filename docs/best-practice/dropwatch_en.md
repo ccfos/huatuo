@@ -81,18 +81,16 @@ ip and src net 192.168.1.0/24 and tcp dst port 3306
 
 ### Unsupported Expressions
 
-The following expressions are **unsupported** and cause compilation failures or incorrect matches:
+The following expressions are unavailable in the tracing filter path and are rejected at startup:
 
 | Expression | Reason |
 | --------------------------------------------------- | ----------------------------------------------------------- |
-| `tcp[tcpflags] & tcp-syn != 0`, `ip[8]`, `tcp[0:4]` | Byte-offset expressions (`proto[offset:size]`) are not implemented |
+| `tcp[tcpflags] & tcp-syn != 0`, `ip[8] = 64`, `tcp[0:4] = 80` | Require packet-length instructions; tracing cannot provide full-packet length semantics |
 | `ip proto 6`, `ip6 proto 17` | Numeric protocol IDs are unsupported; use names such as `ip proto tcp` |
 | `ether proto 0x0800` | Hexadecimal EtherTypes are unsupported; use names such as `ether proto ip` |
-| `sctp` | Unrecognized keyword |
-| `portrange 80-90`, `tcp portrange 1-100` | Port ranges are unsupported |
-| `less N`, `greater N` | Packet-length filtering is unsupported |
+| `len > 40`, `less N`, `greater N` | Full-packet length filtering is unavailable |
 | `ip broadcast`, `ether broadcast` | Broadcast matching is unsupported |
-| `vlan`, `mpls`, `pppoes` | Tunnel/encapsulation keywords are unsupported |
+| `pppoes` | PPPoE session matching is unsupported |
 | `gateway` | Unsupported |
 
 ### Recommended Examples

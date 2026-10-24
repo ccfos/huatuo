@@ -184,11 +184,6 @@ func validateFlags(c *cli.Context) error {
 	}
 	if filter := resolveFilterExpression(c); filter != "" {
 		if err := pcapfilter.ValidateL3Compatible(filter); err != nil {
-			if errors.Is(err, pcapfilter.ErrL3IncompatibleFilter) {
-				return errors.New(
-					"invalid --filter for synthetic retransmit packet: ethernet header fields are unavailable",
-				)
-			}
 			return fmt.Errorf("invalid --filter for synthetic retransmit packet: %w", err)
 		}
 	}

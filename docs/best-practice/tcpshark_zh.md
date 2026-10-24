@@ -13,7 +13,7 @@ weight: 5
 
 用户态分类器根据事件类型、`sk_state`、`ca_state` 和乱序计数器生成连接阶段与原因标签。这些标签是用于运维分析的启发式分类，不是丢包根因的确定性证据。
 
-过滤表达式由 `internal/pcapfilter` 在加载时编译并在内核中执行。无论是否开启 local 关联，SKB、SYN-ACK 和 TLP 三个 hook 都对同一种合成 L3 TCP 报文执行过滤。支持协议、地址、网段和端口条件；不提供以太网地址、payload、真实包长、IP/TCP options 或原始 byte-offset 语义。`ether proto ip` 等安全的 ethertype 判断会转换为 L3 判断。一对 IPv4-mapped IPv6 socket 地址按 IPv4 执行过滤；原始 perf record 仍保留 AF_INET6，用户态在匹配前规范化地址。local 关联模式还会把完全相同的表达式用于 embedded dropwatch。需要保留反向 ACK 或 SYN-ACK 证据时，应使用方向对称的表达式。
+过滤表达式由 `internal/pcapfilter` 在加载时编译并在内核中执行。无论是否开启 local 关联，SKB、SYN-ACK 和 TLP 三个 hook 都对同一种合成 L3 TCP 报文执行过滤。支持协议、地址、网段和端口条件；不提供以太网地址、payload、真实包长、IP/TCP options 或原始 byte-offset 语义。`ether proto ip` 等安全的 ethertype 判断按 raw-IP 布局编译为版本判断。一对 IPv4-mapped IPv6 socket 地址按 IPv4 执行过滤；原始 perf record 仍保留 AF_INET6，用户态在匹配前规范化地址。local 关联模式还会把完全相同的表达式用于 embedded dropwatch。需要保留反向 ACK 或 SYN-ACK 证据时，应使用方向对称的表达式。
 
 ## 适用场景
 
@@ -140,7 +140,7 @@ tcpshark 使用与 dropwatch 相同的 tcpdump 风格过滤表达式。完整语
 
 > local 模式下，同一个表达式必须覆盖两个流量方向。方向性 selector 可能排除反向 ACK 或 SYN-ACK drop 证据，降低结果可信度。
 
-> local 模式拒绝 `ether host 02:00:00:00:00:01` 等依赖以太网地址的 primitive。`ether proto ip` 和 `ether proto ip6` 可转换为 raw-IP version 判断，因此受支持。
+> 两种模式都拒绝 `ether host 02:00:00:00:00:01` 等依赖以太网地址的 primitive。`ether proto ip` 和 `ether proto ip6` 按 raw-IP 布局编译为 version 判断，因此受支持。
 
 ## 事件字段
 
