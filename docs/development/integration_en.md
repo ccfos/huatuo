@@ -232,6 +232,29 @@ Network tests can source `integration/lib_namespace.sh` after `lib.sh`:
 
 Tests requiring raw packets reuse `integration/testdata/test_packet_sender.py`; extend it for new scenarios. It requires Python 3 and raw socket privileges and supports `ipv4-options` (TCP/UDP EOL options, including maximum IHL) and `icmpv6-echo`. Use each subcommand's `--help` for address, port, or Echo identifier parameters. The program sends packets every 100 ms and exits normally on SIGTERM. Shell cases manage namespaces, drop rules, assertions, logs, and process cleanup. Workloads needing real TCP connections continue to use `testdata/tcp_server.py`.
 
+### Network hardware drop metrics
+
+`test_metrics_netdev_hw.sh` runs the real daemon, ethtool discovery and BPF
+software-drop snapshots. It checks driver/device labels, the counter type and
+device exclusion through `/metrics`, including its `text/plain` response type.
+An observed per-device BPF map snapshot is required even when the counter is
+zero. Device exclusion also requires the discovery decision for each previously
+accepted NIC, so an empty scrape before
+BPF publication cannot satisfy the exclusion check.
+
+When supported physical NICs (`mlx5_core`, `i40e`, `ixgbe`, `bnxt_en`) are present,
+the case uses their live counters. Otherwise it uses real `virtio_net` devices
+with controlled statistics files. The fixture retains links to real
+`carrier_down_count` attributes so reads execute the production BPF hook.
+The case explicitly skips when `curl`, `ss`, the `carrier_down_count_show`
+probe, or a supported physical or virtio device is unavailable.
+
+Unit tests cover all supported driver names, selection failures, counter
+precedence, consecutive nonzero BPF snapshots, software-drop subtraction and
+underflow boundaries. A virtio run
+does not establish compatibility with the four physical drivers; each needs
+its own hardware run.
+
 ## Add a Metric Test
 
 ### 1. Prepare Simulated Data

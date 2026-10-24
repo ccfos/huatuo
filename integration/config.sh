@@ -486,3 +486,15 @@ write_runtime_limits_config() {
     ListenAddress = "127.0.0.1:${port}"
 EOF
 }
+
+# The netdev_hw case supplies its port and device selection before startup.
+write_netdev_hw_config() {
+	write_default_config
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${NETDEV_HW_PORT}"
+[MetricCollector.NetdevHW]
+    DeviceList = ["${netdev_hw_pattern}"]
+EOF
+}

@@ -36,7 +36,7 @@ import (
 	"github.com/safchain/ethtool"
 )
 
-// currently supports mlx5_core, i40e, ixgbe, bnxt_en; will be removed in future
+// Driver accounting differs; keep hardware-drop estimates behind an allowlist.
 var deviceDriverList = []string{"mlx5_core", "i40e", "ixgbe", "bnxt_en", "virtio_net"}
 
 type netdevHw struct {
@@ -69,12 +69,35 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 		return nil, fmt.Errorf("netdev hw device list: %w", err)
 	}
 
-	ifaceList := make(map[string]*ethtool.DrvInfo)
+	ifaceList := discoverNetdevHwDevices(ifaces, deviceMatcher, eth.DriverInfo)
 	ifaceSwCounter := make(map[string]uint64)
+	for iface := range ifaceList {
+		ifaceSwCounter[iface] = 0
+	}
+
+	return &tracing.EventTracingAttr{
+		TracingData: &netdevHw{
+			ifaceList:             ifaceList,
+			ifaceSwDroppedCounter: ifaceSwCounter,
+			sysNetPath:            sysfs.Path("class/net"),
+		},
+		Interval: 10,
+		Flag:     tracing.FlagTracing | tracing.FlagMetric,
+	}, nil
+}
+
+// Keep driver discovery at the ethtool boundary so selection can be checked
+// without requiring every supported physical NIC in the test environment.
+func discoverNetdevHwDevices(
+	ifaces []string,
+	deviceMatcher *matcher.ListMatcher,
+	driverInfo func(string) (ethtool.DrvInfo, error),
+) map[string]*ethtool.DrvInfo {
+	ifaceList := make(map[string]*ethtool.DrvInfo)
 
 	log.Infof("processing interfaces: %v", ifaces)
 	for _, iface := range ifaces {
-		drv, err := eth.DriverInfo(iface)
+		drv, err := driverInfo(iface)
 		if err != nil {
 			continue
 		}
@@ -87,19 +110,10 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 		}
 
 		ifaceList[iface] = &drv
-		ifaceSwCounter[iface] = 0
 		log.Debugf("support iface %s [%s] hardware rx_dropped", iface, drv.Driver)
 	}
 
-	return &tracing.EventTracingAttr{
-		TracingData: &netdevHw{
-			ifaceList:             ifaceList,
-			ifaceSwDroppedCounter: ifaceSwCounter,
-			sysNetPath:            sysfs.Path("class/net"),
-		},
-		Interval: 10,
-		Flag:     tracing.FlagTracing | tracing.FlagMetric,
-	}, nil
+	return ifaceList
 }
 
 // Update the drop statistics metrics
