@@ -138,3 +138,36 @@ func TestBuildCommandPassesSharedToolDir(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildPythonMemoryCommandUsesBundledRuntime(t *testing.T) {
+	config := testProfilingConfig(t)
+	request := testProfilingRequest()
+	request.Scope = observation.ScopeContainer
+	request.ContainerID = strings.Repeat("a", 64)
+	request.Spec = profilingdomain.Spec{
+		Type:     profilingdomain.TypeMemory,
+		Language: profilingdomain.LanguagePython,
+		Mode:     profilingdomain.ModeObjectUsage,
+	}
+	if err := validateRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	command, err := buildCommand(request, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(command.Args, "--tool-path") {
+		t.Fatalf("Memray command overrides the bundled runtime: %q", command.Args)
+	}
+	joined := strings.Join(command.Args, " ")
+	for _, want := range []string{
+		"--container-id " + request.ContainerID,
+		"--memory-mode object_usage",
+		"--output-format remote-store",
+		"--aggr-interval 10",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("command %q does not contain %q", command.Args, want)
+		}
+	}
+}

@@ -19,7 +19,7 @@ FROM golang:1.24-alpine3.22 AS base
 # To accelerate the build process, you may uncomment this section.
 # RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 #
-RUN apk add --no-cache make clang15 libbpf-dev curl git \
+RUN apk add --no-cache bash make clang15 libbpf-dev curl git \
     musl-dev capnproto-dev binutils-gold # for golangci-lint, capnp compile
 
 ENV GOPATH="/go"
@@ -49,7 +49,7 @@ RUN --mount=type=cache,target=${GOCACHE} \
 
 FROM alpine:3.22.0 AS dev-runtime
 ARG RUN_PATH=/home/huatuo-bamai
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl gdb
 COPY --from=dev-build /tmp/huatuo-bamai ${RUN_PATH}
 WORKDIR ${RUN_PATH}
 

@@ -70,6 +70,28 @@ go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
 $ make
 ```
 
+## Memray 运行时包
+
+`make` 和 `make build` 默认下载固定版本的 Memray 包到
+`_output/tools/memray`，包含 Linux glibc、x86-64 和 AArch64 上的
+CPython 3.7–3.14 运行时。无需 Python 编译依赖或 Memray 源码，下载需要
+`curl`、`tar` 和 `sha256sum`，每种架构都有固定校验值。
+
+仅准备运行时，或使用已下载的发布归档：
+
+```bash
+make prep-memray-bundle
+MEMRAY_BUNDLE_ARCHIVE=/path/to/memray-huatuo.tar.gz make prep-memray-bundle
+```
+
+不需要 Python 内存采集时，可用 `MEMRAY_BUNDLE_ENABLED=0 make build`
+跳过下载。之后采集内存前，仍需在默认目录或 `--tool-path` 指定的位置提供
+运行时包。更换版本需同时设置 `MEMRAY_BUNDLE_VERSION` 和对应的
+`MEMRAY_BUNDLE_SHA256`；发布镜像地址通过 `MEMRAY_BUNDLE_REPOSITORY` 指定。
+
+实际运行 profiler 的环境还需要 `gdb` 和 ptrace 附加权限。目标 Python
+必须使用 glibc，当前发布包不支持 musl 或 free-threaded CPython。
+
 ## BPF 调试编译
 
 通过 `BPF_DEBUG=1` 将 `-DDEBUG_BPF` 传给 Clang，把调试代码编译进 BPF 对象：

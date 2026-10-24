@@ -43,9 +43,15 @@ Native collection uses eBPF; Java uses async-profiler; Python uses py-spy. Off-C
 | `physical_alloc` | C, C++, Go | Physical memory allocated within the collection window |
 | `physical_usage` | C, C++, Go | Bytes in live physical pages tracked during this collection |
 | `object_alloc` | Java | Object allocation volume and allocation call stacks |
-| `object_usage` | Java | Live objects and allocation call stacks |
+| `object_usage` | Java, Python | JVM live objects, or retained Python-process allocation bytes and their allocation stacks |
 
-Python currently supports only CPU profiling. `physical_usage` excludes pages allocated before collection and does not scale values by the inverse sampling probability. It cannot represent a process's full RSS. Page-free detection and other limitations still require validation and improvement; see [Profiling in Practice](/docs/best-practice/continuous-profiling_en.md#live-physical-memory).
+Python memory collection uses the prebuilt Memray runtime for CPython 3.7–3.14 on Linux glibc, x86-64 or AArch64. It reports allocations made after attachment that remain live when collection ends. It excludes earlier allocations and measures allocation bytes rather than RSS. The running profiler requires `gdb` in `PATH` and permission to attach through `ptrace`; seccomp and Yama `ptrace_scope` must allow attachment. Python-only, native, and hybrid stack views are available through the CLI.
+
+Only one Memray session may profile a Python process at a time; a competing request fails without interrupting the active capture. Container runtime staging rejects absolute symlinks and links escaping the target root. Use directories or relative links that remain within the target root.
+
+A Python memory result is published only after the runtime sends its stream trailer. Cancellation allows two seconds to drain pending records; a forced socket close or EOF without a trailer fails the capture instead of publishing an incomplete retained-memory result. The target also bounds the initial data-connection wait to ten seconds and aborts it when cancellation is requested.
+
+`physical_usage` excludes pages allocated before collection and does not scale values by the inverse sampling probability. It cannot represent a process's full RSS. Page-free detection and other limitations still require validation and improvement; see [Profiling in Practice](/docs/best-practice/continuous-profiling_en.md#live-physical-memory).
 
 ## Collection methods
 

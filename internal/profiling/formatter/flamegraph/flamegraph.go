@@ -60,6 +60,11 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	metadata, err := profilewindow.Metadata(w.ProfileType)
+	if err != nil {
+		return err
+	}
+	f.style.ValueUnit = metadata[2]
 
 	var frames []types.ProfileFrame
 	a := &w.Aggregated

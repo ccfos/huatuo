@@ -82,6 +82,14 @@ curl -sS \
 | `c`、`c++`、`go` | `physical_usage` | 本次采样跟踪的物理页存活字节数 |
 | `java` | `object_alloc` | JVM 对象分配 |
 | `java` | `object_usage` | JVM 存活对象 |
+| `python` | `object_usage` | Memray 附加后分配、采集结束时仍存活的字节数，不等同于 RSS |
+
+Python 内存任务使用节点上安装的 Memray 运行时，需要 `gdb` 和 ptrace
+权限，并在结束时上传一次存活分配结果。API 默认使用纯 Python 栈。可将
+下方 Java 内存请求改为 `"language": "python"`，保留
+`"mode": "object_usage"` 和 `"scope": "container"`。选中的 Python 进程数
+超过节点配置的正数 `Profiling.MaxConcurrentProcesses` 上限时，任务会在
+附加前失败。同一个 Python 进程的并发内存任务会被拒绝，不会中断已有采集。
 
 ## 创建任务
 

@@ -70,6 +70,31 @@ go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
 $ make
 ```
 
+## Memray Runtime Bundle
+
+`make` and `make build` download the pinned Memray bundle into
+`_output/tools/memray`. The bundle contains CPython 3.7–3.14 runtimes for
+Linux glibc on x86-64 or AArch64. No Python build dependencies or Memray
+source checkout are needed. The download requires `curl`, `tar`, and
+`sha256sum`; each architecture has a pinned checksum.
+
+Prepare just the runtime, or use a previously downloaded release archive:
+
+```bash
+make prep-memray-bundle
+MEMRAY_BUNDLE_ARCHIVE=/path/to/memray-huatuo.tar.gz make prep-memray-bundle
+```
+
+Use `MEMRAY_BUNDLE_ENABLED=0 make build` when building without Python memory
+support. The binary still builds, but memory attachment requires a runtime
+bundle supplied later, either at the default path or through `--tool-path`.
+To change the release, set `MEMRAY_BUNDLE_VERSION` and its matching
+`MEMRAY_BUNDLE_SHA256`; use `MEMRAY_BUNDLE_REPOSITORY` for a release mirror.
+
+Python memory collection needs `gdb` and ptrace permission in the running
+profiler environment. The target Python process must use glibc; musl and
+free-threaded CPython are outside this bundle's support matrix.
+
 ## BPF Debug Build
 
 Set `BPF_DEBUG=1` to pass `-DDEBUG_BPF` to Clang and compile debug code into the BPF object:
