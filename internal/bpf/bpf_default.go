@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -309,6 +310,12 @@ func (b *defaultBPF) Info() (*Info, error) {
 			SectionName: p.sectionName,
 		})
 	}
+	sort.Slice(info.MapsInfo, func(i, j int) bool {
+		return info.MapsInfo[i].ID < info.MapsInfo[j].ID
+	})
+	sort.Slice(info.ProgramsInfo, func(i, j int) bool {
+		return info.ProgramsInfo[i].ID < info.ProgramsInfo[j].ID
+	})
 
 	return info, nil
 }
@@ -512,17 +519,19 @@ func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
 	if err := b.acquireReadLock(); err != nil {
 		return nil, err
 	}
-	defer b.mu.RUnlock()
 
 	m, err := b.mapByID(mapID)
 	if err != nil {
+		b.mu.RUnlock()
 		return nil, err
 	}
 
 	items, err := b.dumpMap(m)
+	b.mu.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("dump map %d: %w", mapID, err)
 	}
+	sortMapItems(items)
 
 	return items, nil
 }
@@ -594,19 +603,27 @@ func (b *defaultBPF) DumpMapByName(mapName string) ([]MapItem, error) {
 	if err := b.acquireReadLock(); err != nil {
 		return nil, err
 	}
-	defer b.mu.RUnlock()
 
 	m, err := b.mapByName(mapName)
 	if err != nil {
+		b.mu.RUnlock()
 		return nil, err
 	}
 
 	items, err := b.dumpMap(m)
+	b.mu.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("dump map %q: %w", mapName, err)
 	}
+	sortMapItems(items)
 
 	return items, nil
+}
+
+func sortMapItems(items []MapItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		return bytes.Compare(items[i].Key, items[j].Key) < 0
+	})
 }
 
 // DetachOnContextDone is a hook for context-driven detach handling.
