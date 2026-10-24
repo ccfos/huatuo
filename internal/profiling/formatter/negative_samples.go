@@ -79,17 +79,21 @@ func formatNegativeSample(profile *types.AggregatedProfile, sample *types.Aggreg
 	var example strings.Builder
 	fmt.Fprintf(&example, "value=%d", sample.Value)
 	for _, stack := range []uint32{sample.UserStack, sample.KernelStack} {
-		if stack == 0 {
+		if stack == 0 || uint64(stack) > uint64(len(profile.Stacks)) {
 			continue
 		}
 
 		frames := profile.Stacks[stack-1]
 		for _, id := range frames[:min(3, len(frames))] {
+			if uint64(id) >= uint64(len(profile.Frames)) {
+				continue
+			}
+
 			fmt.Fprintf(&example, " frame=%.128s", profile.Frames[id].Name)
 		}
 	}
 
-	if sample.LabelSet != 0 {
+	if sample.LabelSet != 0 && uint64(sample.LabelSet) <= uint64(len(profile.LabelSets)) {
 		labels := profile.LabelSets[sample.LabelSet-1]
 		for j := range labels[:min(3, len(labels))] {
 			label := &labels[j]
