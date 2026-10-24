@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -85,6 +85,11 @@ func RawKV(path string) (map[string]uint64, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		if _, ok := raw[key]; ok {
+			return nil, fmt.Errorf("duplicate key %q", key)
+		}
+
 		raw[key] = v
 	}
 
