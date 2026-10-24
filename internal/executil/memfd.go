@@ -111,7 +111,7 @@ func (m *memfdOutput) prepare(cmd *exec.Cmd) error {
 	outputPath := "/proc/self/fd/" + strconv.Itoa(3+len(cmd.ExtraFiles))
 	args := m.argsForOutput(outputPath)
 	if err := validateArgs(args); err != nil {
-		return fmt.Errorf("memfd output arguments: %w", err)
+		return errors.Join(fmt.Errorf("memfd output arguments: %w", err), m.close())
 	}
 
 	cmd.Args = append(cmd.Args, args...)
