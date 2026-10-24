@@ -50,57 +50,6 @@ print_sys_info() {
 	kubectl get pods -A || true
 }
 
-# Some images (e.g. anolis8.10) neither run cloud-init nor auto-grow their
-# root partition, so the extra space requested with --disk-size stays
-# invisible to the guest. Grow the root partition and filesystem to fill the
-# disk. Best effort: distros that already grew report NOCHANGE.
-grow_root_filesystem() {
-	local root_device filesystem parent partition output
-	filesystem=$(findmnt -n -o FSTYPE /)
-	case "$filesystem" in
-	ext4 | xfs) ;;
-	*)
-		vm_log "rootfs grow skipped: unsupported filesystem $filesystem"
-		return 0
-		;;
-	esac
-	root_device=$(findmnt -n -o SOURCE /)
-	# findmnt reports a btrfs root as "/dev/vda3[/root]"; never let that
-	# suffix reach readlink -f, which treats the embedded "/" as a path
-	# separator and fails (fatal under set -e).
-	root_device=${root_device%%\[*}
-	root_device=$(readlink -f "$root_device" 2> /dev/null || printf '%s' "$root_device")
-	if [[ ! -f /sys/class/block/${root_device##*/}/partition ]]; then
-		vm_log "rootfs grow skipped: $root_device is not a direct partition"
-		return 0
-	fi
-	if ! command -v growpart > /dev/null 2>&1; then
-		vm_log_error "rootfs grow skipped: growpart is not installed"
-		return 0
-	fi
-	parent=$(lsblk -n -o PKNAME "$root_device")
-	partition=$(< "/sys/class/block/${root_device##*/}/partition")
-	[[ -n "$parent" && "$partition" =~ ^[0-9]+$ ]] || {
-		vm_log_error "cannot identify root partition for $root_device"
-		return 1
-	}
-	vm_log "growing root partition $root_device on /dev/$parent"
-	if output=$(growpart "/dev/$parent" "$partition" 2>&1); then
-		vm_log "$output"
-	elif [[ "$output" == NOCHANGE:* ]]; then
-		vm_log "$output"
-	else
-		vm_log_error "root partition expansion failed: $output"
-		return 1
-	fi
-	case "$filesystem" in
-	ext4) resize2fs "$root_device" ;;
-	xfs) xfs_growfs / ;;
-	esac
-	lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT "/dev/$parent"
-	df -h /
-}
-
 configure_proxy() {
 	local guest_hostname guest_ip proxy_port=11008
 	if ! timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/$1' _ "$proxy_port" 2> /dev/null; then
@@ -120,9 +69,9 @@ configure_proxy() {
 
 install_test_dependencies() {
 	local os_id os_like package_manager package
-	local -a deb_packages=(curl gdb fio mdadm xfsprogs build-essential libelf-dev kmod "linux-headers-$(uname -r)")
+	local -a deb_packages=(curl gdb fio mdadm xfsprogs build-essential libelf-dev kmod cloud-guest-utils "linux-headers-$(uname -r)")
 	local -a rpm_packages=(
-		curl gdb fio mdadm xfsprogs gcc make elfutils-libelf-devel kmod kernel-headers
+		curl gdb fio mdadm xfsprogs gcc make elfutils-libelf-devel kmod cloud-utils-growpart kernel-headers
 		"kernel-devel-$(uname -r)"
 	)
 	local -a missing_packages=()
@@ -188,6 +137,34 @@ install_test_dependencies() {
 	esac
 }
 
+grow_root_filesystem() {
+	local device filesystem parent block_type partition output status=0
+	device=$(findmnt -n -o SOURCE /)
+	filesystem=$(findmnt -n -o FSTYPE /)
+	case "$filesystem" in xfs | ext4) ;; *) return 0 ;; esac
+	device=$(readlink -f "$device" 2> /dev/null || printf '%s' "$device")
+	read -r parent block_type < <(lsblk -ndo PKNAME,TYPE "$device")
+	[[ "$block_type" == part ]] || return 0
+	partition=${device##*/}
+	partition=${partition#"$parent"}
+	partition=${partition#p}
+	[[ -n "$parent" && "$partition" =~ ^[0-9]+$ ]] || {
+		vm_log_error "cannot identify root partition: $device"
+		return 1
+	}
+	# Enlarging the virtual disk does not grow every image's root filesystem.
+	output=$(LC_ALL=C growpart "/dev/$parent" "$partition" 2>&1) || status=$?
+	printf '%s\n' "$output"
+	if [[ "$status" != 0 && !( "$status" == 1 && "$output" == NOCHANGE:* ) ]]; then
+		return "$status"
+	fi
+	case "$filesystem" in
+	xfs) xfs_growfs / || return ;;
+	ext4) resize2fs "$device" || return ;;
+	esac
+	df -h /
+}
+
 install_temporary_go_tools() {
 	local tool command_name package attempt installed version
 	local -a tools=(
@@ -248,9 +225,9 @@ run_guest_tests() {
 	export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
 	export GOCACHE=/root/.cache/go-build
 	if [[ ${1:-} != --test-only ]]; then
-		grow_root_filesystem
 		print_sys_info
 		install_test_dependencies
+		grow_root_filesystem
 	fi
 	# CI restores the Go cache after growing the filesystem, before any Go builds.
 	if [[ ${1:-} == --prepare-only ]]; then exit 0; fi

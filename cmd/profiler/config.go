@@ -33,6 +33,7 @@ type commandConfig struct {
 	Language profiling.Language
 	Output   output.Config
 	TaskID   string
+	BPFMock  bool
 }
 
 func loadConfig(cliCtx *cli.Context) (*commandConfig, error) {
@@ -111,6 +112,7 @@ func loadConfig(cliCtx *cli.Context) (*commandConfig, error) {
 		Language: language,
 		Output:   output.Config{Format: outputFormat, Destination: outputPath},
 		TaskID:   cliCtx.String("task-id"),
+		BPFMock:  cliCtx.Bool("bpf-mock"),
 	}
 	return cfg, nil
 }

@@ -17,6 +17,7 @@ package main
 import "github.com/urfave/cli/v2"
 
 var appFlags = []cli.Flag{
+	&cli.BoolFlag{Name: "bpf-mock", Usage: "testing only: attach native memory BPF hooks to matching _mock targets"},
 	&cli.StringFlag{
 		Name:    "type",
 		Aliases: []string{"t"},

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The HuaTuo Authors.
+obj-m += native_physical_alloc_mock.o
+native_physical_alloc_mock-y := native_physical_alloc_mock_kmod.o
+ccflags-y += -I$(obj)
+clean-files += native_physical_alloc_hook.h
+.DELETE_ON_ERROR:
+$(obj)/native_physical_alloc_hook.h: $(srctree)/include/linux/rmap.h $(src)/kernel_hook.awk
+	awk -v symbol=page_add_new_anon_rmap -v inputs=1 -v optional=1 -v body='asm volatile("" ::: "memory")' -f $(src)/kernel_hook.awk $< > $@
+	awk -v symbol=folio_add_new_anon_rmap -v inputs=1 -v optional=1 -v body='asm volatile("" ::: "memory")' -f $(src)/kernel_hook.awk $< >> $@
+$(obj)/native_physical_alloc_mock_kmod.o: $(obj)/native_physical_alloc_hook.h

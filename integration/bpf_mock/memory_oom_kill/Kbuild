@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The HuaTuo Authors.
+
+obj-m += memory_oom_kill_mock.o
+memory_oom_kill_mock-y := memory_oom_kill_mock_kmod.o

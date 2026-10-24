@@ -248,6 +248,7 @@ _output/tests/apiserver-go-workload: integration/testdata/test_apiserver_profili
 
 integration: build
 	go build -o $(PPROF_TOOL) ./build/pprof-tool
+	go test -v -tags integration ./integration/bpf_mock/...
 	@bash integration/run.sh
 
 e2e: build

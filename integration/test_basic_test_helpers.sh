@@ -302,7 +302,7 @@ cd() { builtin cd "$TEST_GUEST_WORK"; }
 run_guest_tests "$@"
 SH
 	guest_expected=proxy
-	if [[ ${guest_mode} != --test-only ]]; then guest_expected+=$'\ngrow\ninfo\ndependencies'; fi
+	if [[ ${guest_mode} != --test-only ]]; then guest_expected+=$'\ninfo\ndependencies\ngrow'; fi
 	if [[ ${guest_mode} != --prepare-only ]]; then guest_expected+=$'\nmake install-tools\nmake test SKIP_PORTABLE_GENERATION=1'; fi
 	assert_eq "$(cat "${guest_work}/calls")" "${guest_expected}" "${guest_mode}: guest phases"
 done
@@ -383,7 +383,7 @@ for storage_mode in shared concurrent private bound_data failure skip compatibil
 	stop_failure | state_failure) storage_expected_status=1 ;;
 	esac
 	storage_status=0
-	HUATUO_BAMAI_TEST_TMPDIR="${storage_work}" STORAGE_SHARED_DIR='' \
+	HUATUO_BAMAI_TEST_TMPDIR="${storage_work}" STORAGE_SHARED_DIR='' STORAGE_AUTH_SHARED_DIR='' \
 		TEST_LOG="${storage_work}/lifecycle.log" TEST_MODE="${storage_mode}" \
 		bash "${HUATUO_BAMAI_TEST_TMPDIR}/storage-fixture.sh" > "${storage_work}/test.log" 2>&1 || storage_status=$?
 	assert_eq "${storage_status}" "${storage_expected_status}" "${storage_mode}: storage status; see ${storage_work}/test.log"
