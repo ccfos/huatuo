@@ -17,7 +17,7 @@
 # Test execution inside the runner's UTS and mount namespaces.
 
 # Unreviewed tests run alone. A group serializes cases sharing kernel resources.
-# Network tests share traffic and devices.
+# Physical allocation/usage mocks share rmap symbols; network tests share traffic.
 declare -A runner_test_groups=(
 	["test_apiserver_continuous_profiling_api.sh"]=independent
 	["test_apiserver_continuous_profiling_concurrent_jobs.sh"]=independent
@@ -31,19 +31,25 @@ declare -A runner_test_groups=(
 	["test_autotracing_irqtracing.sh"]=independent
 	["test_basic_bpf_debug_macro.sh"]=independent
 	["test_basic_dockerfile_check.sh"]=independent
+	["test_basic_startup_log.sh"]=independent
 	["test_basic_storage_elasticsearch_values.sh"]=independent
 	["test_basic_storage_opensearch_elasticsearch.sh"]=network
-	["test_basic_startup_log.sh"]=independent
 	["test_dropwatch_devlink.sh"]=network
 	["test_dropwatch_icmpv6.sh"]=network
 	["test_dropwatch_ipv4_options.sh"]=network
 	["test_dropwatch_netdevsim.sh"]=network
 	["test_dropwatch_reason.sh"]=network
+	["test_events_memory_oom_kill_mock.sh"]=mock-oom
+	["test_events_memory_oom_kill_mock_container.sh"]=mock-oom
+	["test_events_memory_reclaim_events_mock_container.sh"]=mock-reclaim
 	["test_events_net_rx_latency.sh"]=network
+	["test_events_system_hungtask_mock.sh"]=mock-hungtask
+	["test_events_system_softlockup_mock.sh"]=mock-softlockup
 	["test_events_tcp_retransmit.sh"]=network
 	["test_metrics.sh"]=independent
 	["test_metrics_exclude_filter.sh"]=independent
 	["test_metrics_include_filter.sh"]=independent
+	["test_metrics_memory_free_compact_mock.sh"]=mock-compaction
 	["test_node_cloud_events_api.sh"]=independent
 	["test_node_config_api.sh"]=independent
 	["test_profiler_config.sh"]=independent
@@ -58,6 +64,12 @@ declare -A runner_test_groups=(
 	["test_profiler_native_memory_physical_usage.sh"]=independent
 	["test_profiler_native_memory_thread_group.sh"]=independent
 	["test_profiler_native_memory_virtual_alloc.sh"]=independent
+	["test_profiler_native_physical_alloc_mock.sh"]=mock-physical-rmap
+	["test_profiler_native_physical_alloc_mock_container.sh"]=mock-physical-rmap
+	["test_profiler_native_physical_usage_mock.sh"]=mock-physical-rmap
+	["test_profiler_native_physical_usage_mock_container.sh"]=mock-physical-rmap
+	["test_profiler_native_virtual_alloc_mock.sh"]=mock-virtual
+	["test_profiler_native_virtual_alloc_mock_container.sh"]=mock-virtual
 	["test_profiler_output_flags.sh"]=independent
 	["test_profiler_python_cpu_multi_pid.sh"]=profiler
 	["test_profiler_user_kernel_frames.sh"]=independent
@@ -242,7 +254,7 @@ run_test_suite() {
 		if ((runner_jobs > 1)); then
 			rm -rf -- "${HUATUO_BAMAI_TEST_TMPDIR}/ports"
 			runner_parallel_cases "${runner_jobs}" "${parallel[@]}"
-			if [[ -n ${runner_last_storage} ]]; then stop_shared_storage 0; fi
+			runner_stop_storage 0
 			((runner_failed == 0)) || exit 1
 			# PID/container-isolated profilers run after ES shuts down, with at most
 			# two cases competing for CPU. Benchmarks and CPU-pinned cases stay alone.
