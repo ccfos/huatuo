@@ -88,6 +88,16 @@ struct {
 	__uint(max_entries, 1);
 } iocost_diag_fault_scratch_map SEC(".maps");
 
+/* Keep each observed wait's identity so qualification can distinguish an
+ * unreclaimed pending row from a later bio which reused the same address.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, u64);
+	__type(value, u64);
+	__uint(max_entries, IOCOST_PENDING_ENTRIES);
+} iocost_diag_pending_map SEC(".maps");
+
 static __always_inline struct iocost_diag_stat *iocost_diag_stat_value(void)
 {
 	u32 zero = 0;
@@ -107,9 +117,15 @@ static __always_inline bool iocost_diag_fixture_matches(u64 css_serial,
 						       u32 major,
 						       u32 first_minor)
 {
-	return iocost_diag_css_serial != 0 &&
+	/* Faults require an exact owner. Observation-only qualification may
+	 * include all cgroups on its private, explicitly selected disk.
+	 */
+	bool matches_css = css_serial != 0 &&
+		(css_serial == iocost_diag_css_serial ||
+		 (!iocost_diag_css_serial && !iocost_diag_fault_mask));
+
+	return matches_css &&
 	       iocost_diag_fault_mask_valid(iocost_diag_fault_mask) &&
-	       css_serial == iocost_diag_css_serial &&
 	       major == iocost_diag_major &&
 	       first_minor == iocost_diag_first_minor;
 }
@@ -154,6 +170,9 @@ static __always_inline bool iocost_diag_inject_start_fault(
 					 first_minor))
 		return false;
 	stat = iocost_diag_stat_value();
+	if (fault_mask == 0)
+		bpf_map_update_elem(&iocost_diag_pending_map, &bio_ptr,
+				    &pending->start_ns, COMPAT_BPF_ANY);
 	if (stat)
 		__sync_fetch_and_add(&stat->start_guard_passes, 1);
 	if (fault_mask == 0 || fault_mask == IOCOST_DIAG_FAULT_DELETE_FAILURE)

@@ -48,13 +48,13 @@ func TestIOTracingFileReadLayouts(t *testing.T) {
 	includes = append(includes, "-I"+filepath.Join(bpfDir, "include"), "-I"+bpfDir)
 	source := filepath.Join("..", "..", "integration", "testdata", "iotracing_file_reads_test.c")
 
-	for _, iocb := range []string{"3", "2"} {
+	for _, file := range []string{"3", "2"} {
 		for _, inode := range []string{"2", "1"} {
-			t.Run("iocb_"+iocb+"_inode_"+inode, func(t *testing.T) {
+			t.Run("file_"+file+"_inode_"+inode, func(t *testing.T) {
 				binary := filepath.Join(t.TempDir(), "file-reads")
 				args := []string{
 					"-std=gnu11", "-O2", "-Wno-attributes", "-Wno-incompatible-pointer-types",
-					"-D__TARGET_ARCH_" + arch, "-DTEST_IOCB_PADDING=" + iocb, "-DTEST_INODE_PADDING=" + inode,
+					"-D__TARGET_ARCH_" + arch, "-DTEST_FILE_PADDING=" + file, "-DTEST_INODE_PADDING=" + inode,
 				}
 				args = append(args, includes...)
 				args = append(args, source, "-o", binary)
@@ -91,7 +91,7 @@ func pinIOTracingPageCache(t *testing.T, file *os.File) {
 // This capacity gate requires an object with io_source_full.
 func TestIOTracingFilemapCapacity(t *testing.T) {
 	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
-	require.NotEmpty(t, object, "run make integration to supply the production BPF object")
+	require.NotEmpty(t, object, "run make test to supply the production BPF object")
 	require.Equal(t, 0, os.Geteuid(), "live filemap qualification requires root")
 	require.NotEmpty(t, os.Getenv("TMPDIR"), "set TMPDIR to an ext4/XFS test directory")
 	require.NoError(t, unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
@@ -274,7 +274,7 @@ func TestIOTracingFilemapCapacity(t *testing.T) {
 
 func TestIOTracingFilemapDeviceFilter(t *testing.T) {
 	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
-	require.NotEmpty(t, object, "run make integration to supply the production BPF object")
+	require.NotEmpty(t, object, "run make test to supply the production BPF object")
 	require.Equal(
 		t,
 		0,
@@ -349,7 +349,7 @@ func TestIOTracingFilemapDeviceFilter(t *testing.T) {
 	t.Cleanup(func() { _ = probe.Close() })
 
 	otherFS := os.Getenv("TEST_IOTRACING_OTHER_FS")
-	require.NotEmpty(t, otherFS, "run make integration to supply the excluded filesystem")
+	require.NotEmpty(t, otherFS, "run make test to supply the excluded filesystem")
 	otherDir, err := os.MkdirTemp(otherFS, "filemap-background-")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(otherDir)) })
@@ -398,7 +398,7 @@ func TestIOTracingFilemapDeviceFilter(t *testing.T) {
 // ext4/XFS TMPDIR. It isolates the two file-entry programs, not the full trace.
 func TestIOTracingReadWrite(t *testing.T) {
 	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
-	require.NotEmpty(t, object, "run make integration to supply the production BPF object")
+	require.NotEmpty(t, object, "run make test to supply the production BPF object")
 	require.Equal(t, 0, os.Geteuid(), "live read/write qualification requires root")
 	require.NotEmpty(t, os.Getenv("TMPDIR"), "set TMPDIR to an ext4/XFS test directory")
 	require.NoError(t, unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
@@ -519,8 +519,7 @@ func TestIOTracingReadWrite(t *testing.T) {
 	require.Zero(t, n)
 	require.Equal(t, normalRead.Flags, check("EOF read", 256, 0).Flags)
 
-	// IOCB_DIRECT's bit position differs across target kernel backports.
-	// Check raw flags change for Direct IO and return to the ordinary value.
+	// Check file open flags change for Direct IO and return to the ordinary value.
 	n, err = unix.Pread(directFD, aligned, 0)
 	require.NoError(t, err)
 	require.Equal(t, len(aligned), n)
@@ -558,7 +557,7 @@ func TestIOTracingReadWrite(t *testing.T) {
 // ext4/XFS TMPDIR. Capacity qualification is separate.
 func TestIOTracingFileMetadata(t *testing.T) {
 	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
-	require.NotEmpty(t, object, "run make integration to supply the production BPF object")
+	require.NotEmpty(t, object, "run make test to supply the production BPF object")
 	require.Equal(t, 0, os.Geteuid(), "live file metadata qualification requires root")
 	require.NotEmpty(t, os.Getenv("TMPDIR"), "set TMPDIR to an ext4/XFS test directory")
 	require.NoError(t, unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{

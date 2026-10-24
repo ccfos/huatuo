@@ -14,147 +14,177 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Qualify IO components on the live kernel; existing disks are never written.
+# Run internal Go/BPF qualifications separately from public IO contracts.
+# Wait for the test binary itself so cancellation cannot bypass owned cleanup.
 set -euo pipefail
-
 source "${ROOT_DIR}/integration/lib.sh"
-source "${ROOT_DIR}/integration/lib_io.sh"
-require_commands go timeout setsid
+require_commands go setsid unshare ps
 
-unset TEST_IO_MULTILEAF_DEVICE TEST_IO_UNIQUE_DEVICE
-unset TEST_IOLATENCY_IO_DEVICE TEST_IOLATENCY_DISK_CANDIDATES
+readonly WORK_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/io-kernel"
+readonly EXECUTION_SECONDS=${TEST_IO_KERNEL_TIMEOUT_SECONDS:-300}
+readonly CLEANUP_SECONDS=${TEST_IO_KERNEL_CLEANUP_TIMEOUT_SECONDS:-60}
+[[ ${EXECUTION_SECONDS} =~ ^[1-9][0-9]*$ && ${CLEANUP_SECONDS} =~ ^[1-9][0-9]*$ ]] \
+	|| fatal "IO kernel execution and cleanup budgets must be positive integers"
+mkdir -p "${WORK_DIR}/build"
 
-dm_name=""
-dm_uuid=""
-signal_status=0
 test_pid=""
-retain_resources=0
-results_file="${HUATUO_BAMAI_TEST_TMPDIR}/io-kernel-results.log"
-cleanup() {
-	local status=$?
-	local uuid
-	((signal_status == 0)) || status=${signal_status}
-	trap - EXIT
-	trap '' INT TERM
-	if ((retain_resources)); then
-		log_error "IO test cleanup did not complete; retaining dm=${dm_name} uuid=${dm_uuid} scsi_owner=${io_test_scsi_owner}; results=${results_file}"
-		exit "${status}"
-	fi
-	if [[ -n ${dm_name} ]]; then
-		if uuid=$(timeout 10s dmsetup info -c --noheadings -o uuid "${dm_name}") \
-			&& [[ ${uuid//[[:space:]]/} == "${dm_uuid}" ]]; then
-			timeout 10s dmsetup remove --retry "${dm_name}" || status=1
-		else
-			status=1
+interrupted=0
+trap 'interrupted=130' INT
+trap 'interrupted=143' TERM
+
+io_kernel_session_active() {
+	ps -eo sid=,stat= | awk -v session="$1" '
+		$1 == session && $2 !~ /^Z/ { found = 1 }
+		END { exit !found }
+	'
+}
+
+signal_io_kernel_session() {
+	local signal=$1 group
+	# fio can create its own process group inside the test-owned session.
+	while read -r group; do
+		kill "-${signal}" -- "-${group}" 2> /dev/null || true
+	done < <(ps -eo sid=,pgid= | awk -v session="${test_pid}" '$1 == session && !seen[$2]++ { print $2 }')
+}
+
+wait_io_kernel_command() {
+	local deadline=$((SECONDS + $1)) stop_status=0 cleanup_deadline=0 status=0 failed=0
+	while ! process_exited "${test_pid}"; do
+		if ((stop_status == 0)); then
+			if ((interrupted)); then
+				stop_status=${interrupted}
+			elif ((SECONDS >= deadline)); then
+				stop_status=124
+			fi
+			if ((stop_status)); then
+				# Signal only the binary first; its cleanup commands need to finish.
+				kill -TERM "${test_pid}" 2> /dev/null || true
+				cleanup_deadline=$((SECONDS + CLEANUP_SECONDS))
+			fi
+		elif ((SECONDS >= cleanup_deadline)); then
+			log_error "IO kernel cleanup exceeded ${CLEANUP_SECONDS}s: pid=${test_pid}; inspect ${WORK_DIR} before reclaiming owned resources"
+			signal_io_kernel_session KILL
+			failed=1
+			break
+		fi
+		sleep 0.1 || true
+	done
+
+	# A finished leader must not leave workload descendants behind.
+	if io_kernel_session_active "${test_pid}"; then
+		failed=1
+		signal_io_kernel_session TERM
+		((cleanup_deadline > 0)) || cleanup_deadline=$((SECONDS + CLEANUP_SECONDS))
+		while io_kernel_session_active "${test_pid}" && ((SECONDS < cleanup_deadline)); do
+			sleep 0.1 || true
+		done
+		if io_kernel_session_active "${test_pid}"; then
+			signal_io_kernel_session KILL
+			wait_until 2 0.1 io_kernel_session_stopped "${test_pid}" || true
 		fi
 	fi
-	io_test_cleanup_disks || status=1
+	if ! process_exited "${test_pid}" || io_kernel_session_active "${test_pid}"; then
+		ps -eo pid=,ppid=,sid=,pgid=,stat=,args= | awk -v session="${test_pid}" '$3 == session' \
+			> "${WORK_DIR}/retained-processes.txt"
+		log_error "IO kernel processes remain in session ${test_pid}; retain owned resources and inspect ${WORK_DIR}"
+		status=1
+	else
+		# Trapped signals can interrupt wait before the child has been reaped.
+		while true; do
+			if wait "${test_pid}"; then status=0; else status=$?; fi
+			process_exited "${test_pid}" && break
+		done
+	fi
+	printf 'pid=%s test_status=%s stop_status=%s cleanup_failed=%s\n' \
+		"${test_pid}" "${status}" "${stop_status}" "${failed}" >> "${WORK_DIR}/resources.txt"
+	test_pid=""
+	((failed == 0)) || return 1
+	((stop_status == 0)) || return "${stop_status}"
+	((status == 0)) || return "${status}"
+	((interrupted == 0)) || return "${interrupted}"
+}
+
+io_kernel_session_stopped() {
+	! io_kernel_session_active "$1"
+}
+
+cleanup_io_kernel() {
+	local status=$?
+	trap - EXIT
+	if ((status == 0 && interrupted)); then status=${interrupted}; fi
+	if [[ -n ${test_pid} ]]; then
+		interrupted=143
+		wait_io_kernel_command 0 || status=1
+	fi
+	if ((status)); then
+		log_error "IO kernel qualification failed (${status}); final test and cleanup results: ${WORK_DIR}"
+	fi
 	exit "${status}"
 }
-trap cleanup EXIT
-# Defer interruption until a successful creation has recorded its owner.
-forward_interrupt() {
-	signal_status=$1
-	[[ -z ${test_pid} ]] || kill -TERM "${test_pid}" 2> /dev/null || true
-}
-trap 'forward_interrupt 130' INT
-trap 'forward_interrupt 143' TERM
+trap cleanup_io_kernel EXIT
 
-prepare_scsi_disks() {
-	local name
-	io_test_prepare_disks 2
-	trap 'forward_interrupt 130' INT
-	trap 'forward_interrupt 143' TERM
-	if ((${#io_test_disks[@]} == 0)); then
-		return
-	fi
-	require_commands fio
-	# Hardware evidence commands support SCSI/NVMe, not virtio-blk.
-	if [[ ${io_test_disks[0]} == sd* || ${io_test_disks[0]} == nvme* ]]; then
-		export TEST_IO_UNIQUE_DEVICE=${io_test_disks[0]}
-	fi
-	export TEST_IOLATENCY_DISK_CANDIDATES="${io_test_disks[*]}"
-	# Reconfiguration and DM topology changes are limited to owned disks.
-	((io_test_scsi_owned)) || return 0
-	require_commands dmsetup
-	# The second disk gives target discovery a genuine multi-leaf DM topology.
-	name="huatuo-io-kernel-$$"
-	# DM can exist even if dmsetup subsequently times out waiting for udev.
-	dm_name=${name}
-	dm_uuid="HUATUO-IO-KERNEL-$(< /proc/sys/kernel/random/uuid)"
-	setsid timeout 10s dmsetup create "${name}" --uuid "${dm_uuid}" --table \
-		"0 131072 linear /dev/${io_test_disks[0]} 0
-131072 131072 linear /dev/${io_test_disks[1]} 0"
-	((signal_status == 0)) || exit "${signal_status}"
-	export TEST_IO_MULTILEAF_DEVICE
-	TEST_IO_MULTILEAF_DEVICE=$(basename "$(readlink -f "/dev/mapper/${dm_name}")")
+run_io_kernel_command() {
+	local label=$1 budget=$2 directory=$3 status=0
+	shift 3
+	((interrupted == 0)) || exit "${interrupted}"
+	printf 'command=%s\n' "${label}" >> "${WORK_DIR}/resources.txt"
+	(
+		cd "${directory}"
+		exec setsid "$@"
+	) > "${WORK_DIR}/${label}.log" 2>&1 &
+	test_pid=$!
+	wait_io_kernel_command "${budget}" || status=$?
+	cat "${WORK_DIR}/${label}.log"
+	((status == 0)) || exit "${status}"
 }
 
-# Compile before acquiring disks. Run each top-level test separately so a
-# signal received during successful cleanup cannot start another fixture.
-packages=(core/metrics internal/iohealth)
-pattern='^(TestIOLatency(ArgumentProbeKernel|CryptoProbeKernel)|TestBlkThrotl(StartAttachSmoke|KernelThrottleLifecycle|KernelPendingCapacityFailure)|TestIOHealth(FreezeKernel|Real(CommandEvidence|TargetResolution))|TestMDWatcherMonitorsMdadmLoopArray)$'
-cd "${ROOT_DIR}"
-for package in "${packages[@]}"; do
-	go test -mod=vendor -p=1 -c \
-		-o "${HUATUO_BAMAI_TEST_TMPDIR}/${package##*/}.test" "./${package}"
-	((signal_status == 0)) || exit "${signal_status}"
+collectors=(
+	core/metrics:TestBlkThrotlKernelThrottleLifecycle
+	core/metrics:TestBlkThrotlKernelPendingCapacityFailure
+	core/metrics:TestBlkThrotlStartAttachSmoke
+	core/metrics:TestIOHealthFreezeKernel
+	core/metrics:TestIOHealthRealCommandEvidence
+	core/metrics:TestIOHealthRealTargetResolution
+	core/metrics:TestIOLatencyArgumentProbeKernel
+	core/metrics:TestIOLatencyCryptoProbeKernel
+)
+iocost=(
+	core/metrics:TestIOCostKernelFunctional
+	core/metrics:TestIOCostKernelCompatibility
+	core/metrics:TestIOCostKernelFaults
+	core/metrics:TestIOCostKernelLifecycle
+	core/metrics:TestIOCostKernelPressure
+)
+md=(internal/iohealth:TestMDWatcherMonitorsMdadmLoopArray)
+iotracing=(cmd/iotracing:TestIOTracingKernel)
+case ${TEST_IO_KERNEL_MODE:-all} in
+all) tests=("${collectors[@]}" "${md[@]}" "${iotracing[@]}" "${iocost[@]}") ;;
+collectors) tests=("${collectors[@]}") ;;
+md) tests=("${md[@]}") ;;
+iotracing) tests=("${iotracing[@]}") ;;
+iocost) tests=("${iocost[@]}") ;;
+*) fatal "TEST_IO_KERNEL_MODE must be all, collectors, md, iotracing or iocost" ;;
+esac
+
+# Compile before any Go fixture creates devices. Shared packages build once.
+for entry in "${tests[@]}"; do
+	package=${entry%:*}
+	binary="${WORK_DIR}/${package//\//.}.test"
+	[[ ! -x ${binary} ]] || continue
+	run_io_kernel_command "build-${package//\//.}" 120 "${ROOT_DIR}" \
+		env GOTMPDIR="${WORK_DIR}/build" go test -mod=vendor -p=1 -tags=integration \
+		-c -o "${binary}" "./${package}"
 done
-prepare_scsi_disks
-((signal_status == 0)) || exit "${signal_status}"
-export TEST_INTEGRATION=true
-deadline=$((SECONDS + 290))
-: > "${results_file}"
-status=0
-for package in "${packages[@]}"; do
-	binary="${HUATUO_BAMAI_TEST_TMPDIR}/${package##*/}.test"
-	test_names=$("${binary}" -test.list "${pattern}")
-	while IFS= read -r test_name; do
-		[[ ${test_name} == Test* ]] || continue
-		((signal_status == 0)) || break
-		remaining=$((deadline - SECONDS))
-		((remaining <= 240)) || remaining=240
-		if ((remaining <= 60)); then
-			log_error "IO qualification deadline reached before ${test_name}"
-			status=124
-			break
-		fi
-		# Isolate the test from the runner's process-group signals. timeout
-		# signals only Go; body contexts stop IO, leaving cleanup commands alive.
-		(
-			cd "${ROOT_DIR}/${package}"
-			exec setsid timeout --foreground --kill-after=60s "$((remaining - 60))s" \
-				"${binary}" -test.count=1 -test.v -test.failfast \
-				-test.timeout="${remaining}s" -test.run="^${test_name}$"
-		) >> "${results_file}" 2>&1 &
-		test_pid=$!
-		if ((signal_status)); then
-			kill -TERM "${test_pid}" 2> /dev/null || true
-		fi
-		while true; do
-			if wait "${test_pid}"; then
-				status=0
-				break
-			else
-				status=$?
-			fi
-			# A trapped signal interrupts wait before owned cleanup finishes.
-			kill -0 "${test_pid}" 2> /dev/null || break
-		done
-		test_pid=""
-		if ((status == 137)) || grep -q '^panic: test timed out after ' "${results_file}"; then
-			retain_resources=1
-		fi
-		if ((signal_status || status)); then
-			break
-		fi
-	done <<< "${test_names}"
-	if ((signal_status || status)); then
-		break
-	fi
+
+deadline=$((SECONDS + EXECUTION_SECONDS))
+for entry in "${tests[@]}"; do
+	remaining=$((deadline - SECONDS))
+	((remaining > 0)) || exit 124
+	package=${entry%:*}
+	name=${entry#*:}
+	run_io_kernel_command "${name}" "${remaining}" "${ROOT_DIR}/${package}" \
+		unshare --mount --propagation private env TEST_INTEGRATION=true \
+		"${WORK_DIR}/${package//\//.}.test" -test.count=1 -test.v -test.failfast \
+		-test.timeout="$((remaining + CLEANUP_SECONDS + 5))s" -test.run="^${name}$"
 done
-cat "${results_file}"
-if ((signal_status)); then
-	exit "${signal_status}"
-fi
-exit "${status}"
+log_info "IO internal Go/BPF qualifications completed; public CLI contracts have separate cases"

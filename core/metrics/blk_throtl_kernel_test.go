@@ -203,6 +203,224 @@ func TestBlkThrotlKernelThrottleLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	requireBlkThrotlKernelInterval(t, metrics, disk.path, "read", 0, 0)
 
+	t.Run("concurrent cgroup hierarchy", func(t *testing.T) {
+		parent := newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+		parent.setIOPS(t, "read", 1)
+		parent.setIOPS(t, "write", 1)
+		t.Setenv(blkThrotlKernelCgroupRootEnvironment, parent.path)
+		reader := newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+		writer := newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+		reader.setIOPS(t, "read", 2)
+		writer.setIOPS(t, "write", 2)
+		if !parent.unified {
+			t.Log("cgroup v1 is flat: qualifying concurrent leaves, not parent queue transfers")
+		}
+		finishRead, readDone := startBlkThrotlKernelWorkload(
+			t,
+			reader,
+			disk.path,
+			"read",
+			8,
+		)
+		// A live fio process may still be initializing. Require actual read
+		// progress before starting the short writer and retiring its cgroup.
+		waitIOControlKernelState(
+			t,
+			fixture.ctx,
+			"reader entered throttled IO",
+			func() bool {
+				tracing.mu.Lock()
+				defer tracing.mu.Unlock()
+				current, err := captureIOControlWaitSnapshot(
+					session.object,
+					&session.hashReader,
+					blkThrotlWaitAggregateMap,
+					session.possibleCPUs,
+				)
+				require.NoError(t, err)
+				for key, lanes := range current {
+					if key.Major != disk.major || key.Minor != disk.minor || key.Operation != 0 {
+						continue
+					}
+					count, err := deltaIOControlWaitCounters(session.previous[key], lanes)
+					require.NoError(t, err)
+					if count.IOCount > 0 {
+						return true
+					}
+				}
+				return false
+			},
+		)
+		finishWrite, _ := startBlkThrotlKernelWorkload(
+			t,
+			writer,
+			disk.path,
+			"write",
+			2,
+		)
+		writeElapsed := finishWrite()
+		first, err := tracing.Update()
+		require.NoError(t, err)
+		requireBlkThrotlKernelInterval(
+			t,
+			first,
+			disk.path,
+			"write",
+			2,
+			writeElapsed,
+		)
+		select {
+		case <-readDone:
+			t.Fatalf("reader finished before the concurrent cgroup retirement: runtime=%s", finishRead())
+		default:
+		}
+		writer.remove(t)
+		replacement := newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+		replacement.setIOPS(t, "write", 2)
+		finishReplacement, _ := startBlkThrotlKernelWorkload(
+			t,
+			replacement,
+			disk.path,
+			"write",
+			1,
+		)
+		finishReplacement()
+		finishRead()
+		second, err := tracing.Update()
+		require.NoError(t, err)
+		// Sum completed episodes across scrapes. A bio transferred through
+		// both v2 queues must still contribute once, not once per level.
+		counts := make(map[string]float64)
+		waitMS := make(map[string]float64)
+		for _, interval := range [][]*metric.Data{first, second} {
+			intervalCounts := make(map[string]float64)
+			intervalAverages := make(map[string]float64)
+			for _, data := range interval {
+				if data.Labels()["disk"] != filepath.Base(disk.path) {
+					continue
+				}
+				key := data.Labels()["scope"] + "/" + data.Labels()["operation"]
+				switch data.Name() {
+				case blkThrotlDelayedCountName:
+					intervalCounts[key] = data.Value
+				case blkThrotlAverageWaitName:
+					intervalAverages[key] = data.Value
+				}
+			}
+			for key, count := range intervalCounts {
+				counts[key] += count
+				waitMS[key] += count * intervalAverages[key]
+			}
+		}
+		for _, scope := range []string{ioControlHostScope, ioControlOtherScope} {
+			require.Equal(t, float64(8), counts[scope+"/read"])
+			require.Equal(t, float64(3), counts[scope+"/write"])
+		}
+		for _, operation := range []string{"read", "write"} {
+			require.Greater(t, waitMS[ioControlHostScope+"/"+operation], float64(0))
+			require.Equal(t, waitMS[ioControlHostScope+"/"+operation], waitMS[ioControlOtherScope+"/"+operation])
+		}
+		requireBlkThrotlKernelHealthy(t, session)
+		empty, err := tracing.Update()
+		require.NoError(t, err)
+		for _, data := range empty {
+			if data.Labels()["disk"] == filepath.Base(disk.path) {
+				require.Zero(t, data.Value, "completed episodes must not be replayed")
+			}
+		}
+	})
+
+	t.Run("hierarchy wait time", func(t *testing.T) {
+		baseline := newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+		if !baseline.unified {
+			t.Skip("cgroup v1 has flat limits, not parent-child queue transfers")
+		}
+		baseline.setIOPS(t, "read", 8)
+		baselineElapsed := runBlkThrotlKernelWorkload(
+			t,
+			baseline,
+			disk.path,
+			"read",
+			8,
+		)
+		_, err := tracing.Update()
+		require.NoError(t, err)
+
+		for _, test := range []struct {
+			name       string
+			parentIOPS int
+			leafIOPS   int
+		}{
+			{
+				name:       "parent wait",
+				parentIOPS: 1,
+				leafIOPS:   8,
+			},
+			{
+				name:       "child wait",
+				parentIOPS: 8,
+				leafIOPS:   1,
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				// Fresh queues avoid carrying slice credit between controls.
+				parent := newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+				parent.setIOPS(t, "read", test.parentIOPS)
+				t.Setenv(blkThrotlKernelCgroupRootEnvironment, parent.path)
+				leaf := newBlkThrotlKernelCgroup(t, fixture.ctx, disk.device)
+				leaf.setIOPS(t, "read", test.leafIOPS)
+				elapsed := runBlkThrotlKernelWorkload(
+					t,
+					leaf,
+					disk.path,
+					"read",
+					8,
+				)
+				metrics, err := tracing.Update()
+				require.NoError(t, err)
+				// Opposite dominant queues catch loss of either level's wait.
+				// Use this job's runtime as a consistency bound, not a 1%
+				// reference obtained by subtracting a different workload.
+				requireBlkThrotlKernelInterval(
+					t,
+					metrics,
+					disk.path,
+					"read",
+					8,
+					elapsed,
+				)
+				if test.parentIOPS == 1 {
+					// The 8:1 limits separate the workloads despite throttle
+					// slice rounding; a 2:1 ratio does not provide that margin.
+					require.Greater(
+						t,
+						elapsed,
+						baselineElapsed*2,
+						"parent limit did not slow the unchanged 8-IOPS leaf",
+					)
+				}
+				t.Logf(
+					"parent=%d leaf=%d IOPS: runtime=%s, leaf-only control=%s",
+					test.parentIOPS,
+					test.leafIOPS,
+					elapsed,
+					baselineElapsed,
+				)
+				requireBlkThrotlKernelHealthy(t, session)
+				metrics, err = tracing.Update()
+				require.NoError(t, err)
+				requireBlkThrotlKernelInterval(
+					t,
+					metrics,
+					disk.path,
+					"read",
+					0,
+					0,
+				)
+			})
+		}
+	})
+
 	// Removing a disk with a live owner discards the whole session's interval.
 	fixture.removeDisk(t)
 	requireBlkThrotlKernelDeviceRestart(t, tracing, session)
@@ -279,7 +497,7 @@ func requireBlkThrotlKernelTest(t *testing.T) {
 	t.Helper()
 	required := os.Getenv(blkThrotlKernelRequiredEnvironment)
 	if required == "" && os.Getenv("TEST_INTEGRATION") != "true" {
-		t.Skip("run make integration for live blk-throttle qualification")
+		t.Skip("run make test for live blk-throttle qualification")
 	}
 	if required != "" && required != "1" {
 		t.Fatalf("%s must be exactly 1, got %q",
@@ -586,6 +804,24 @@ func runBlkThrotlKernelWorkload(
 	operations int,
 ) time.Duration {
 	t.Helper()
+	finish, _ := startBlkThrotlKernelWorkload(
+		t,
+		cgroup,
+		device,
+		operation,
+		operations,
+	)
+	return finish()
+}
+
+func startBlkThrotlKernelWorkload(
+	t *testing.T,
+	cgroup *blkThrotlKernelCgroup,
+	device string,
+	operation string,
+	operations int,
+) (func() time.Duration, <-chan struct{}) {
+	t.Helper()
 	if operation != "read" && operation != "write" {
 		t.Fatalf("unsupported workload operation %q", operation)
 	}
@@ -606,19 +842,40 @@ func runBlkThrotlKernelWorkload(
 		"--eta=never",
 		"--output-format=json",
 	}
-	output := runIOControlKernelCommand(
-		t, cgroup.ctx, blkThrotlKernelCommandTimeout,
-		"bash", arguments...,
-	)
-	// Compare wait time with the IO job, excluding fio startup and calibration.
-	var result struct {
-		Jobs []struct {
-			RuntimeMS int64 `json:"job_runtime"`
-		} `json:"jobs"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(output), &result))
-	require.Len(t, result.Jobs, 1)
-	return time.Duration(result.Jobs[0].RuntimeMS) * time.Millisecond
+	ctx, cancel := context.WithTimeout(cgroup.ctx, blkThrotlKernelCommandTimeout)
+	t.Cleanup(cancel)
+	command := exec.CommandContext(ctx, "bash", arguments...)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	require.NoError(t, command.Start())
+	done := make(chan struct{})
+	var waitErr error
+	go func() {
+		waitErr = command.Wait()
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	return func() time.Duration {
+		<-done
+		require.NoError(
+			t,
+			waitErr,
+			"%s",
+			stderr.String(),
+		)
+		// Compare with the IO job, excluding fio startup and calibration.
+		var result struct {
+			Jobs []struct {
+				RuntimeMS int64 `json:"job_runtime"`
+			} `json:"jobs"`
+		}
+		require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+		require.Len(t, result.Jobs, 1)
+		return time.Duration(result.Jobs[0].RuntimeMS) * time.Millisecond
+	}, done
 }
 
 func requireBlkThrotlKernelMetricAbsent(

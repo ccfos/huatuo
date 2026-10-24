@@ -740,6 +740,7 @@ func TestEvidenceWorkerStaleGenerationDoesNotReplaceCurrentCooldown(t *testing.T
 		result.Reasons[0] != CollectionReasonTargetChanged {
 		t.Fatalf("stale-generation result = %#v", result)
 	}
+	waitEvidenceWorkerIdle(t, worker)
 	if worker.Submit(request("generation-2")) {
 		t.Fatal("stale generation replaced the current generation cooldown")
 	}
@@ -755,6 +756,7 @@ func TestEvidenceWorkerStaleGenerationDoesNotReplaceCurrentCooldown(t *testing.T
 		result.Reasons[0] != CollectionReasonTargetUnresolved {
 		t.Fatalf("unresolved result = %#v", result)
 	}
+	waitEvidenceWorkerIdle(t, worker)
 	if worker.Submit(request("generation-2")) {
 		t.Fatal("unresolved request replaced the current generation cooldown")
 	}
@@ -855,20 +857,6 @@ func TestEvidenceWorkerBoundsAndExpiresCooldownTargets(t *testing.T) {
 			Reason:   CollectionReasonTargetUnsupported,
 		}
 	}
-	waitIdle := func() {
-		t.Helper()
-		deadline := time.Now().Add(time.Second)
-		for time.Now().Before(deadline) {
-			worker.mu.Lock()
-			idle := len(worker.inflight) == 0
-			worker.mu.Unlock()
-			if idle {
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
-		t.Fatal("evidence requests did not finish")
-	}
 
 	if !worker.Submit(request("dm-live", "old")) {
 		t.Fatal("first target was not accepted")
@@ -886,7 +874,7 @@ func TestEvidenceWorkerBoundsAndExpiresCooldownTargets(t *testing.T) {
 	for i := 1; i < evidenceQueueCapacity; i++ {
 		receiveEvidenceResult(t, results)
 	}
-	waitIdle()
+	waitEvidenceWorkerIdle(t, worker)
 	if worker.Submit(request("dm-overflow", "old")) {
 		t.Fatal("completed requests released live cooldown capacity")
 	}
@@ -896,13 +884,13 @@ func TestEvidenceWorkerBoundsAndExpiresCooldownTargets(t *testing.T) {
 		t.Fatal("a replacement inherited the old generation's cooldown")
 	}
 	receiveEvidenceResult(t, results)
-	waitIdle()
+	waitEvidenceWorkerIdle(t, worker)
 	clock.Advance(evidenceCooldown / 2)
 	if !worker.Submit(request("dm-fresh", "new")) {
 		t.Fatal("expired targets did not free capacity")
 	}
 	receiveEvidenceResult(t, results)
-	waitIdle()
+	waitEvidenceWorkerIdle(t, worker)
 	worker.mu.Lock()
 	retained := len(worker.cooldownUntil)
 	worker.mu.Unlock()
@@ -916,7 +904,7 @@ func TestEvidenceWorkerBoundsAndExpiresCooldownTargets(t *testing.T) {
 			t.Fatal("expired cooldown blocked a new target")
 		}
 		receiveEvidenceResult(t, results)
-		waitIdle()
+		waitEvidenceWorkerIdle(t, worker)
 		worker.mu.Lock()
 		retained = len(worker.cooldownUntil)
 		worker.mu.Unlock()
@@ -1096,6 +1084,21 @@ func (c *fakeEvidenceClock) Advance(duration time.Duration) {
 	c.mu.Lock()
 	c.now = c.now.Add(duration)
 	c.mu.Unlock()
+}
+
+func waitEvidenceWorkerIdle(t *testing.T, worker *EvidenceWorker) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		worker.mu.Lock()
+		isIdle := len(worker.inflight) == 0
+		worker.mu.Unlock()
+		if isIdle {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("evidence requests did not finish")
 }
 
 func receiveEvidenceResult(

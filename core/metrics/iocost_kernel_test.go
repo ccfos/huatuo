@@ -94,11 +94,20 @@ type ioCostKernelWrite struct {
 func requireIOCostKernel(t *testing.T) *ioCostKernelFixture {
 	t.Helper()
 	if os.Getenv("TEST_INTEGRATION") != "true" {
-		t.Skip("run make integration for live IOCOST qualification")
+		t.Skip("run make test for live IOCOST qualification")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || os.Geteuid() != 0 {
 		t.Skip("IOCOST kernel qualification requires Linux x86_64 and root")
 	}
+	require.NoError(t, os.MkdirAll("/run/huatuo-iocost-test", 0o755))
+	lock, err := os.OpenFile("/run/huatuo-iocost-test/runner.lock", os.O_CREATE|os.O_RDWR, 0o600)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lock.Close()) })
+	require.NoError(
+		t,
+		unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB),
+		"another IOCOST qualification is running",
+	)
 	f := &ioCostKernelFixture{cgroupRoot: ioCostKernelCgroupRoot, controlPrefix: "io"}
 	if _, err := os.Stat(filepath.Join(f.cgroupRoot, "cgroup.controllers")); os.IsNotExist(err) {
 		f.cgroupRoot = filepath.Join(f.cgroupRoot, "blkio")
@@ -189,6 +198,9 @@ func requireIOCostKernel(t *testing.T) *ioCostKernelFixture {
 	}
 	f.leaf = f.cgroup(t, "leaf")
 	f.parking = f.cgroup(t, "parking")
+	if os.Getenv("TEST_IOCOST_DIAGNOSTIC_OBJECT") == "" {
+		t.Setenv("TEST_IOCOST_DIAGNOSTIC_OBJECT", compileIOCostDiagnosticObject(t))
+	}
 	t.Logf("IOCOST owned resources: work=%s nodes=%s cgroup=%s", f.directory, f.nodes, f.parent)
 	return f
 }
@@ -619,22 +631,28 @@ func (s *ioCostKernelSession) update(t *testing.T, disks ...*ioCostKernelDisk) [
 	t.Helper()
 	require.NotEmpty(t, disks)
 	s.drain(t, disks...)
-	previous := s.session.previous
-	metrics, err := s.tracing.Update()
+	// Owned issuers have completed and their wake frames have drained. Capture
+	// their stable counters before Update can reclaim retired cgroup rows.
+	snapshot, err := captureIOControlWaitSnapshot(
+		s.session.object,
+		&s.session.hashReader,
+		ioCostWaitAggregateMap,
+		s.session.possibleCPUs,
+	)
 	require.NoError(t, err)
-	// Compare the committed snapshot with its public interval. A separate
-	// global walk could observe another generation of unrelated traffic.
 	totals := make(map[string]ioControlWaitCounters)
-	for key, lanes := range s.session.previous {
+	for key, lanes := range snapshot {
 		if !ioCostKernelOwnsDevice(key, disks) {
 			continue
 		}
 		require.Equal(t, uint32(1), key.Operation, "unexpected non-write IOCOST series: %+v", key)
-		delta, err := deltaIOControlWaitCounters(previous[key], lanes)
+		delta, err := deltaIOControlWaitCounters(s.session.previous[key], lanes)
 		require.NoError(t, err)
 		disk := ioControlDeviceName(key.Major, key.Minor)
 		totals[disk] = addIOControlWaitCounters(totals[disk], delta)
 	}
+	metrics, err := s.tracing.Update()
+	require.NoError(t, err)
 	for device, total := range totals {
 		name, err := os.Readlink(filepath.Join("/sys/dev/block", device))
 		require.NoError(t, err)
@@ -647,6 +665,7 @@ func (s *ioCostKernelSession) update(t *testing.T, disks ...*ioCostKernelDisk) [
 	return metrics
 }
 
+// These sessions have no container metadata, so Host and Other cover the same IO.
 func requireIOCostKernelInterval(t *testing.T, metrics []*metric.Data, disk string, count int, lower, upper float64) float64 {
 	t.Helper()
 	values := make(map[string]map[string]float64)
@@ -777,6 +796,24 @@ func (s *ioCostKernelSession) diagnostics(t *testing.T, disk *ioCostKernelDisk) 
 	status, err := decodeIOCostDiagnosticStatus(data)
 	require.NoError(t, err)
 	return status
+}
+
+func (s *ioCostKernelSession) livePending(t *testing.T, waits []bpf.MapItem) int {
+	t.Helper()
+	live := 0
+	for _, wait := range waits {
+		data, err := s.session.object.ReadMap(s.session.object.MapIDByName(ioCostPendingMap), wait.Key)
+		if errors.Is(err, unix.ENOENT) || (err == nil && len(data) == 0) {
+			continue
+		}
+		require.NoError(t, err)
+		pending, err := decodeIOCostPending(data)
+		require.NoError(t, err)
+		if bytes.Equal(ioControlTestBytes(pending.StartNS), wait.Value) {
+			live++
+		}
+	}
+	return live
 }
 
 func TestIOCostKernelCompatibility(t *testing.T) {
@@ -1030,15 +1067,106 @@ func TestIOCostKernelPressure(t *testing.T) {
 	}
 	requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
 
-	// Fresh cgroups exercise owner growth. This cohort is deliberately serial,
-	// unlike the preceding concurrent no-wait workload.
+	// Prepare before spending idle credit so all four issuers enter the same
+	// low-budget window. Observe real pending identities, not transient D states.
+	writers = writers[:0]
+	for range 4 {
+		writers = append(writers, f.prepare(
+			t,
+			d,
+			f.leaf,
+			"write",
+			4096,
+		))
+	}
+	f.condition(
+		t,
+		d,
+		f.leaf,
+		1024,
+		1,
+	)
+	owner := s.identity(t, d)
+	s.stop(t)
+	s = f.diagnostic(
+		t,
+		d,
+		owner,
+		0,
+	)
+	for _, w := range writers {
+		w.release(t)
+	}
+	waits := []bpf.MapItem{}
+	f.wait(t, "four simultaneous IOCOST waits", func() bool {
+		status := s.diagnostics(t, d)
+		if status.StartGuardPasses != 4 || status.SettledCount != 0 || status.WakeReturnZero != 0 {
+			return false
+		}
+		var err error
+		waits, err = s.session.object.DumpMapByName(ioCostDiagnosticPendingMap)
+		require.NoError(t, err)
+		return len(waits) == 4 && s.livePending(t, waits) == 4
+	})
+	for range 2 {
+		metrics, err := s.tracing.Update()
+		require.NoError(t, err)
+		requireIOCostKernelInterval(
+			t,
+			metrics,
+			d.name,
+			0,
+			0,
+			0,
+		)
+		status := s.diagnostics(t, d)
+		require.Zero(t, status.SettledCount, "scrape must overlap all four waits")
+		require.Zero(t, status.WakeReturnZero)
+	}
+	var concurrentElapsed time.Duration
+	for _, w := range writers {
+		concurrentElapsed += w.finish(t)
+	}
+	status := s.diagnostics(t, d)
+	require.Equal(t, uint64(4), status.StartGuardPasses)
+	require.Equal(t, uint64(4), status.SettledCount)
+	require.Equal(t, status.SettledCount, status.WakeReturnZero)
+	require.Equal(t, status.WakeEntryHits, status.WakeReturnZero+status.WakeReturnMinusOne)
+	require.Zero(t, s.livePending(t, waits), "the observed wait generations must be reclaimed")
+	t.Logf(
+		"concurrent IOCOST cohort: waiters=%d settled=%d successful_wakes=%d",
+		len(waits),
+		status.SettledCount,
+		status.WakeReturnZero,
+	)
+	lower, upper := ioCostKernelBounds(concurrentElapsed / 4)
+	requireIOCostKernelInterval(
+		t,
+		s.update(t, d),
+		d.name,
+		4,
+		lower,
+		upper,
+	)
+	requireIOCostKernelInterval(
+		t,
+		s.update(t, d),
+		d.name,
+		0,
+		0,
+		0,
+	)
+	s.stop(t)
+	s = f.start(t, nil)
+
+	// Fresh cgroups exercise owner growth independently of both concurrent cohorts.
 	d.rates(t, 65536, 16)
 	var total time.Duration
 	for index := range 64 {
 		group := f.cgroup(t, fmt.Sprintf("short-%d", index))
 		total += f.write(t, d, group, 4096)
 	}
-	lower, upper := ioCostKernelBounds(total / 64)
+	lower, upper = ioCostKernelBounds(total / 64)
 	requireIOCostKernelInterval(t, s.update(t, d), d.name, 64, lower, upper)
 	requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
 
@@ -1071,4 +1199,178 @@ func TestIOCostKernelPressure(t *testing.T) {
 	for _, disk := range []*ioCostKernelDisk{d, other} {
 		requireIOCostKernelInterval(t, metrics, disk.name, 0, 0, 0)
 	}
+	s.stop(t)
+
+	// Publish the retired peer's final wait alongside the three surviving waits,
+	// then reclaim its baseline without replaying the completed interval.
+	topology := f.disk(t)
+	retiring := f.cgroup(t, "retiring-concurrent")
+	writers = writers[:0]
+	for range 3 {
+		writers = append(writers, f.prepare(
+			t,
+			d,
+			f.leaf,
+			"write",
+			4096,
+		))
+	}
+	peer := f.prepare(
+		t,
+		d,
+		retiring,
+		"write",
+		4096,
+	)
+	f.condition(
+		t,
+		d,
+		f.leaf,
+		1024,
+		1,
+	)
+	s = f.diagnostic(
+		t,
+		d,
+		ioCostOwnerState{},
+		0,
+	)
+	for _, w := range writers {
+		w.release(t)
+	}
+	peer.release(t)
+	f.wait(t, "concurrent IOCOST cohort before cgroup retirement", func() bool {
+		status := s.diagnostics(t, d)
+		if status.StartGuardPasses != 4 || status.SettledCount != 0 || status.WakeReturnZero != 0 {
+			return false
+		}
+		var err error
+		waits, err = s.session.object.DumpMapByName(ioCostDiagnosticPendingMap)
+		require.NoError(t, err)
+		return len(waits) == 4 && s.livePending(t, waits) == 4
+	})
+	require.NoError(t, os.WriteFile(filepath.Join(f.parking, "cgroup.procs"),
+		[]byte(strconv.Itoa(peer.command.Process.Pid)), 0o600))
+	require.NoError(t, os.Remove(retiring))
+	concurrentElapsed = peer.finish(t)
+	for _, w := range writers {
+		concurrentElapsed += w.finish(t)
+	}
+	status = s.diagnostics(t, d)
+	require.Equal(t, uint64(len(writers)+1), status.SettledCount)
+	require.Equal(t, status.WakeEntryHits, status.WakeReturnZero+status.WakeReturnMinusOne)
+	require.Zero(t, s.livePending(t, waits), "retirement must not strand observed wait generations")
+	lower, upper = ioCostKernelBounds(concurrentElapsed / time.Duration(len(writers)+1))
+	requireIOCostKernelInterval(
+		t,
+		s.update(t, d),
+		d.name,
+		len(writers)+1,
+		lower,
+		upper,
+	)
+	var survivorCount uint64
+	for key, lanes := range s.session.previous {
+		if key.CSS != owner.CSS || key.CSSSerial != owner.CSSSerial ||
+			key.Major != d.major || key.Minor != d.minor || key.Operation != 1 {
+			continue
+		}
+		count, err := deltaIOControlWaitCounters(nil, lanes)
+		require.NoError(t, err)
+		survivorCount += count.IOCount
+	}
+	require.Equal(
+		t,
+		uint64(3),
+		survivorCount,
+		"every surviving wait must be published before teardown",
+	)
+	requireIOCostKernelInterval(
+		t,
+		s.update(t, d),
+		d.name,
+		0,
+		0,
+		0,
+	)
+	s.stop(t)
+
+	// Device changes deliberately discard in-flight data. Use a fresh cohort
+	// so that this allowed discard cannot hide a cgroup-retirement regression.
+	writers = writers[:0]
+	for range 3 {
+		writers = append(writers, f.prepare(
+			t,
+			d,
+			f.leaf,
+			"write",
+			4096,
+		))
+	}
+	f.condition(
+		t,
+		d,
+		f.leaf,
+		1024,
+		1,
+	)
+	s = f.diagnostic(
+		t,
+		d,
+		owner,
+		0,
+	)
+	for _, w := range writers {
+		w.release(t)
+	}
+	f.wait(t, "three live IOCOST waits before device change", func() bool {
+		status := s.diagnostics(t, d)
+		if status.StartGuardPasses != 3 || status.SettledCount != 0 || status.WakeReturnZero != 0 {
+			return false
+		}
+		var err error
+		waits, err = s.session.object.DumpMapByName(ioCostDiagnosticPendingMap)
+		require.NoError(t, err)
+		return len(waits) == 3 && s.livePending(t, waits) == 3
+	})
+	topology.remove(t)
+	metrics, err := s.tracing.Update()
+	require.ErrorIs(t, err, errIOControlDevicesChanged)
+	require.NotErrorIs(t, err, types.ErrTracingStopped)
+	requireIOCostKernelInterval(
+		t,
+		metrics,
+		d.name,
+		0,
+		0,
+		0,
+	)
+	s.stop(t)
+	for _, w := range writers {
+		w.finish(t)
+	}
+	s = f.start(t, nil)
+	elapsed = f.write(
+		t,
+		d,
+		f.leaf,
+		4096,
+	)
+	lower, upper = ioCostKernelBounds(elapsed)
+	requireIOCostKernelInterval(
+		t,
+		s.update(t, d),
+		d.name,
+		1,
+		lower,
+		upper,
+	)
+	requireIOCostKernelInterval(
+		t,
+		s.update(t, d),
+		d.name,
+		0,
+		0,
+		0,
+	)
 }

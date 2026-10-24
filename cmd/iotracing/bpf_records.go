@@ -17,13 +17,11 @@ package main
 import (
 	"strings"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
-
-// iocbDirect mirrors the kernel IOCB_DIRECT flag in iocb.ki_flags;
-// captured by the BPF program into bpfFilesystemIO.Flags.
-const iocbDirect = 1 << 2
 
 // bpfBlockLatency mirrors the per-IO latency aggregate written by the BPF
 // program; field order matches the C struct so binary.Read works.
@@ -41,7 +39,7 @@ type bpfFilesystemIO struct {
 	TGID            uint32
 	PathInitialized uint32
 	DevID           uint32
-	Flags           uint32
+	Flags           uint32 // file.f_flags of the last captured file read/write.
 	FsWriteBytes    uint64
 	FsReadBytes     uint64
 	BlockWriteBytes uint64
@@ -57,7 +55,7 @@ type bpfScheduleDelay = abi.IotracingScheduleDelayEvent
 
 // IsDirect reports whether the IO bypassed the page cache.
 func (r *bpfFilesystemIO) IsDirect() bool {
-	return r.Ino == 0 || r.Flags&iocbDirect != 0
+	return r.Ino == 0 || r.Flags&unix.O_DIRECT != 0
 }
 
 // PathName reconstructs the absolute file path from the BPF dentry walk.

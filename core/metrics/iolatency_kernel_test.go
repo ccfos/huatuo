@@ -17,6 +17,7 @@ package collector
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -34,11 +35,12 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/btf"
+	"github.com/prometheus/procfs/blockdevice"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
 
-// Live kernel argument qualification, selected by make integration.
+// Live kernel argument qualification, selected by make test.
 
 // TEST_INTEGRATION=true exercises the active backend against the live kernel.
 func TestIOLatencyArgumentProbeKernel(t *testing.T) {
@@ -46,6 +48,14 @@ func TestIOLatencyArgumentProbeKernel(t *testing.T) {
 		t.Skip("Set TEST_INTEGRATION=true to probe live block tracepoints")
 	}
 	ctx := ioControlKernelContext(t)
+	if os.Getenv("TEST_IOLATENCY_IO_DEVICE") == "" && os.Getenv("TEST_IOLATENCY_DISK_CANDIDATES") == "" {
+		disks, isOwned := prepareIOKernelDisks(t, ctx)
+		t.Setenv("TEST_IOLATENCY_DISK_CANDIDATES", strings.Join(disks, " "))
+		t.Setenv("TEST_IOLATENCY_IO_EXCLUSIVE", "")
+		if isOwned {
+			t.Setenv("TEST_IOLATENCY_IO_EXCLUSIVE", "1")
+		}
+	}
 	if err := bpf.Init(&bpf.Option{}); err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +263,7 @@ func runIOLatencyReadQualification(t *testing.T, parent context.Context, session
 	_, err = os.Stat(filepath.Join(sysPath, "partition"))
 	require.ErrorIs(t, err, os.ErrNotExist, "qualification requires a whole disk, not a partition")
 
-	drain := func() {
+	drain := func(t *testing.T) {
 		t.Helper()
 		// Shared disks may keep servicing unrelated IO after fio exits.
 		// Only fixtures created by the test require full-device quiescence.
@@ -288,7 +298,7 @@ func runIOLatencyReadQualification(t *testing.T, parent context.Context, session
 			}
 		}
 	}
-	snapshot := func(round int) ioLatencyCounters {
+	snapshot := func(t *testing.T) ioLatencyCounters {
 		t.Helper()
 		require.NoError(t, ctx.Err())
 		require.NoError(t, session.checkHealth())
@@ -305,9 +315,8 @@ func runIOLatencyReadQualification(t *testing.T, parent context.Context, session
 	requireQueue := ioLatencyKernelRequiresQueueSamples(t)
 	t.Logf("read-only qualification: device=%s (%d:%d), latency_bounds=%v, size_bounds=%v",
 		device, major, minor, ioLatencyBucketLabels, ioSizeBucketLabels)
-	t.Log("fio request sizes/counts do not establish bio-chain coverage; observe bi_next separately")
-	drain()
-	previous := snapshot(0)
+	drain(t)
+	previous := snapshot(t)
 	for round := 1; round <= 3; round++ {
 		command := exec.CommandContext(ctx, "timeout", "--kill-after=5s", "30s", "fio",
 			"--name=global", "--readonly", "--filename="+device, "--allow_file_create=0",
@@ -324,8 +333,8 @@ func runIOLatencyReadQualification(t *testing.T, parent context.Context, session
 		output, err := command.CombinedOutput()
 		t.Logf("round=%d fio: %s", round, output)
 		require.NoError(t, err, "read-only fio round %d", round)
-		drain()
-		current := snapshot(round)
+		drain(t)
+		current := snapshot(t)
 		delta, monotonic := ioLatencyCountersDelta(&previous, &current)
 		require.True(t, monotonic, "production counters decreased in round %d", round)
 		for stage, definition := range ioLatencyStageMetrics {
@@ -343,4 +352,94 @@ func runIOLatencyReadQualification(t *testing.T, parent context.Context, session
 			round, major, minor, delta.QueuedSize, delta.IssuedSize)
 		previous = current
 	}
+	t.Run("long bio chain", func(t *testing.T) {
+		if os.Getenv("TEST_IOLATENCY_IO_EXCLUSIVE") != "1" {
+			t.Skip("long-chain qualification requires a test-owned exclusive disk")
+		}
+		for name, want := range map[string]string{"logical_block_size": "512", "nomerges": "0"} {
+			value, err := os.ReadFile(filepath.Join(sysPath, "queue", name))
+			require.NoError(t, err)
+			if strings.TrimSpace(string(value)) != want {
+				t.Skipf("long-chain qualification requires %s=%s", name, want)
+			}
+		}
+		fs, err := blockdevice.NewFS(procfs.DefaultPath(), procfs.DefaultPathByType("sys"))
+		require.NoError(t, err)
+		for attempt := 1; attempt <= 3; attempt++ {
+			drain(t)
+			before, _, err := fs.SysBlockDeviceStat(filepath.Base(device))
+			require.NoError(t, err)
+			previous := snapshot(t)
+			arguments := []string{
+				"--name=long-chain", "--readonly", "--filename=" + device,
+				"--allow_file_create=0", "--rw=read", "--bs=512", "--size=256k",
+				"--number_ios=512", "--ioengine=libaio", "--direct=1", "--numjobs=1", "--thread=1",
+				"--iodepth=512", "--iodepth_batch_submit=512",
+				"--iodepth_batch_complete_min=512", "--iodepth_batch_complete_max=512",
+				"--output-format=json",
+			}
+			output := runIOControlKernelCommand(
+				t,
+				ctx,
+				15*time.Second,
+				"fio",
+				arguments...,
+			)
+			var result struct {
+				Jobs []struct {
+					Read struct {
+						TotalIOs uint64 `json:"total_ios"`
+					} `json:"read"`
+				} `json:"jobs"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(output), &result))
+			require.Len(t, result.Jobs, 1)
+			require.Equal(t, uint64(512), result.Jobs[0].Read.TotalIOs)
+			drain(t)
+			current := snapshot(t)
+			after, _, err := fs.SysBlockDeviceStat(filepath.Base(device))
+			require.NoError(t, err)
+			requests := after.ReadIOs - before.ReadIOs
+			sectors := after.ReadSectors - before.ReadSectors
+			t.Logf(
+				"long-chain attempt=%d: requests=%d sectors=%d merges=%d",
+				attempt,
+				requests,
+				sectors,
+				after.ReadMerges-before.ReadMerges,
+			)
+			// Each aligned 512-byte direct IO produces one bio. With exactly
+			// 512 sectors completed in at most three requests, at least one
+			// request contains >128 bios, and none can exceed the 512-bio bound.
+			// fio parameters alone are not evidence that merging occurred.
+			if sectors != 512 || requests == 0 || requests > 3 {
+				continue
+			}
+			delta, monotonic := ioLatencyCountersDelta(&previous, &current)
+			require.True(t, monotonic)
+			for stage := range ioLatencyStageMetrics {
+				if stage != ioLatencyStageD2C && !requireQueue {
+					continue
+				}
+				var count uint64
+				for _, value := range delta.Buckets[stage] {
+					count += value
+				}
+				require.Equal(
+					t,
+					uint64(512),
+					count,
+					"stage %d must account for every completed bio",
+					stage,
+				)
+			}
+			var issued uint64
+			for _, value := range delta.IssuedSize {
+				issued += value
+			}
+			require.Equal(t, requests, issued)
+			return
+		}
+		t.Skip("no >128-bio request was established by the independent disk counters")
+	})
 }
