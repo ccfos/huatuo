@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -241,5 +242,87 @@ func TestMayAppendCleanupErrorPreservesExecutionResult(t *testing.T) {
 				t.Fatalf("incorrect cleanup classification: %v", got)
 			}
 		})
+	}
+}
+
+// errGateContext blocks Err on the nth call so a test can land exactly in the
+// window between cmd.Start and the process being marked running.
+type errGateContext struct {
+	context.Context
+
+	gateAt  int
+	reached chan struct{}
+	release chan struct{}
+
+	once  sync.Once
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *errGateContext) Err() error {
+	c.mu.Lock()
+	c.calls++
+	calls := c.calls
+	c.mu.Unlock()
+
+	if calls == c.gateAt {
+		c.once.Do(func() { close(c.reached) })
+		<-c.release
+
+		return context.Canceled
+	}
+
+	return c.Context.Err()
+}
+
+// A stop that wins the race against the launch must be reported instead of
+// being turned into a successful start whose process nobody tracks.
+func TestProcessStartReportsStopRacingTheLaunch(t *testing.T) {
+	process, err := New(Spec{Path: "/bin/sleep", Args: []string{"30"}})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx := &errGateContext{
+		Context: t.Context(),
+		gateAt:  3,
+		reached: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+
+	startErr := make(chan error, 1)
+	go func() { startErr <- process.Start(ctx) }()
+
+	select {
+	case <-ctx.reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() never reached the post-Start launch window")
+	}
+
+	select {
+	case <-process.Done():
+		t.Fatal("process reached a terminal state while the launch window was open")
+	default:
+	}
+
+	close(ctx.release)
+
+	select {
+	case err := <-startErr:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Start() error = %v, want %v", err, context.Canceled)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() did not return after the launch cancellation")
+	}
+
+	select {
+	case <-process.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("process did not reach a terminal state after the cancelled launch")
+	}
+
+	if err := process.Wait(); err == nil {
+		t.Fatal("Wait() = nil, want the launch cancellation error")
 	}
 }
