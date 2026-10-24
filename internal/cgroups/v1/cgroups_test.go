@@ -80,6 +80,21 @@ func TestCpuQuotaAndPeriodEffectiveCPUCount(t *testing.T) {
 	}
 }
 
+func TestCpuQuotaAndPeriodRejectsInvalidNegativeQuota(t *testing.T) {
+	root := t.TempDir()
+	oldRoot := paths.RootfsDefaultPath
+	paths.RootfsDefaultPath = root
+	t.Cleanup(func() { paths.RootfsDefaultPath = oldRoot })
+
+	path := filepath.Join("test", "invalid-quota")
+	writeCgroupFile(t, paths.Path(subsystem.SubsystemCPU, path, "cpu.cfs_period_us"), "100000\n")
+	writeCgroupFile(t, paths.Path(subsystem.SubsystemCPU, path, "cpu.cfs_quota_us"), "-2\n")
+
+	if _, err := (&CgroupV1{}).CpuQuotaAndPeriod(path); err == nil {
+		t.Fatal("CpuQuotaAndPeriod() accepted an invalid negative quota")
+	}
+}
+
 func writeCgroupFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
