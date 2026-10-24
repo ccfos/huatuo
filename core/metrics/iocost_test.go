@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -1409,6 +1410,14 @@ func newSyntheticIOCostBTFFixture(
 		{Name: "si", Type: unsignedLongLong, Offset: 192},
 		{Name: "sp", Type: unsignedLongLong, Offset: 256},
 	}}
+	if runtime.GOARCH == "arm64" {
+		registers = &btf.Struct{Name: "user_pt_regs", Size: 272, Members: []btf.Member{
+			{Name: "regs", Type: &btf.Array{Type: unsignedLongLong, Index: unsignedInt, Nelems: 31}},
+			{Name: "sp", Type: unsignedLongLong, Offset: 1984},
+			{Name: "pc", Type: unsignedLongLong, Offset: 2048},
+			{Name: "pstate", Type: unsignedLongLong, Offset: 2112},
+		}}
+	}
 
 	wakeCallback := &btf.FuncProto{
 		Return: signedInt,
@@ -1495,7 +1504,7 @@ func newSyntheticIOCostBTFFixture(
 		"blkcg_gq":            blkg,
 		"blkcg":               blkcg,
 		"cgroup_subsys_state": css,
-		"pt_regs":             registers,
+		registers.Name:        registers,
 	}
 	// Model kernel BTF with structure records but no function records.
 	return &syntheticIOCostBTFFixture{
@@ -2668,11 +2677,29 @@ func testIOCostObjectRelocations(t *testing.T, objects ...*ebpf.CollectionSpec) 
 		// vary with the build headers. Target offsets are independent fixture values.
 		wantOffsets := make(map[string]int64)
 		fieldNames := make(map[string]string)
-		for _, field := range []struct {
+		type relocationField struct {
 			typeName string
 			path     string
 			offset   int64
-		}{
+		}
+		registerFields := []relocationField{
+			{typeName: "pt_regs", path: "ax"},
+			{typeName: "pt_regs", path: "cx", offset: 8},
+			{typeName: "pt_regs", path: "di", offset: 16},
+			{typeName: "pt_regs", path: "si", offset: 24},
+			{typeName: "pt_regs", path: "sp", offset: 32},
+		}
+		if runtime.GOARCH == "arm64" {
+			// libbpf accesses ARM64 arguments and return values through user_pt_regs.
+			registerFields = []relocationField{
+				{typeName: "user_pt_regs", path: "regs.0"},
+				{typeName: "user_pt_regs", path: "regs.1", offset: 8},
+				{typeName: "user_pt_regs", path: "regs.3", offset: 24},
+				{typeName: "user_pt_regs", path: "regs.30", offset: 240},
+				{typeName: "user_pt_regs", path: "sp", offset: 248},
+			}
+		}
+		fields := []relocationField{
 			{typeName: "bio", path: "bi_opf", offset: 8},
 			{typeName: "bio", path: "bi_disk", offset: 16},
 			{typeName: "bio___5_12", path: "bi_bdev", offset: 24},
@@ -2691,12 +2718,8 @@ func testIOCostObjectRelocations(t *testing.T, objects ...*ebpf.CollectionSpec) 
 			{typeName: "gendisk", path: "major"},
 			{typeName: "gendisk", path: "first_minor", offset: 4},
 			{typeName: "gendisk", path: "disk_name", offset: 8},
-			{typeName: "pt_regs", path: "ax"},
-			{typeName: "pt_regs", path: "cx", offset: 8},
-			{typeName: "pt_regs", path: "di", offset: 16},
-			{typeName: "pt_regs", path: "si", offset: 24},
-			{typeName: "pt_regs", path: "sp", offset: 32},
-		} {
+		}
+		for _, field := range append(fields, registerFields...) {
 			var local *btf.Struct
 			require.NoError(t, object.Types.TypeByName(field.typeName, &local))
 			id, err := object.Types.TypeID(local)
@@ -2704,6 +2727,13 @@ func testIOCostObjectRelocations(t *testing.T, objects ...*ebpf.CollectionSpec) 
 			accessor := "0"
 			var current btf.Type = local
 			for _, name := range strings.Split(field.path, ".") {
+				if array, ok := btf.UnderlyingType(current).(*btf.Array); ok {
+					index, err := strconv.Atoi(name)
+					require.NoError(t, err)
+					accessor += ":" + strconv.Itoa(index)
+					current = array.Type
+					continue
+				}
 				structure, ok := btf.UnderlyingType(current).(*btf.Struct)
 				require.True(t, ok, "local field "+field.typeName+"."+field.path)
 				index := slices.IndexFunc(structure.Members, func(member btf.Member) bool {
