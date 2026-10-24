@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
 
 	"github.com/ccfos/huatuo/core/autotracing"
 	"github.com/ccfos/huatuo/core/events"
@@ -217,7 +218,7 @@ func (c HTTPServerConfig) Validate() error {
 	if strings.TrimSpace(c.Auth.BearerToken) == "" {
 		return errors.New("auth bearer token is required")
 	}
-	if strings.ContainsAny(c.Auth.BearerToken, " \t\r\n") {
+	if strings.ContainsFunc(c.Auth.BearerToken, unicode.IsSpace) {
 		return errors.New("auth bearer token must not contain whitespace")
 	}
 	return nil
