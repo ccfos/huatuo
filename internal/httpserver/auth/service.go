@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -244,7 +245,7 @@ func ParseBearerToken(header string) (string, error) {
 		return "", ErrMissingBearerToken
 	}
 	token = strings.TrimSpace(token)
-	if token == "" {
+	if token == "" || strings.IndexFunc(token, unicode.IsSpace) >= 0 {
 		return "", ErrMissingBearerToken
 	}
 	return token, nil
