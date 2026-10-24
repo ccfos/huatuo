@@ -108,16 +108,17 @@ sudo make e2e
 ```
 
 Static API checks do not require Docker, perf, or a compiler. Sampling requires
-Linux, root, Docker, Python 3, gcc, curl, jq, ss, pgrep, sampling-enabled perf
-settings, and built BPF/profiler tools. ES data is bound to `elasticsearch-data/`
-in the case workspace. Reports include requests, responses, profiles, logs, and
-`summary.tsv`. Generated configurations contain test tokens and belong only in
-test environments.
+Linux, root, Docker, curl, jq, ss, timeout, sampling-enabled perf settings, and
+built BPF/profiler tools. Host workload cases also require gcc; the matrix
+compiles C/C++ inside Pods and does not require a host compiler. ES data is bound
+to `elasticsearch-data/` in the case workspace. Reports include requests,
+responses, profiles, logs, and `summary.tsv`. Generated configurations contain
+test tokens and belong only in test environments.
 
-The matrix also requires kubectl administration, crictl, local kubelet
-credentials, and packaged asprof/py-spy tools. It matches Node InternalIP against
-local addresses. `APISERVER_TEST_NODE` can select a Node explicitly but must still
-identify this machine; an absent or ambiguous match fails. Override credential
+The matrix also requires Python 3, ip, kubectl administration, crictl, local
+kubelet credentials, and packaged asprof/py-spy tools. It matches Node InternalIP
+against local addresses. `APISERVER_TEST_NODE` can select a Node explicitly but
+must still identify this machine; an absent or ambiguous match fails. Override credential
 paths with `KUBELET_CERT` and `KUBELET_KEY`. Images are prepared together through
 the local CRI before Pods start with `imagePullPolicy: Never`; failed pulls retain
 separate logs. Defaults are gcc:14, golang:1.24, eclipse-temurin:17-jdk, and

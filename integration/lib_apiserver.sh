@@ -68,7 +68,7 @@ pass() {
 }
 
 continuous_profiling_requirements
-require_commands curl python3 gcc ss pgrep
+require_commands curl ss
 APISERVER_PORT=$(allocate_available_port)
 NODE_PORT=$(allocate_available_port)
 while [[ $NODE_PORT == "$APISERVER_PORT" ]]; do NODE_PORT=$(allocate_available_port); done
@@ -96,12 +96,19 @@ request() {
 	local method=$1 path=$2 expected=$3 body=${4:-}
 	REQUEST_NO=$((REQUEST_NO + 1))
 	RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/request-${REQUEST_NO}.json"
-	local args=() status
+	local args=() status curl_status=0 error_file="${RESPONSE%.json}.curl-error"
 	[[ -z "$body" ]] || args=(-H 'Content-Type: application/json' --data-binary "$body")
 	printf '%s %s\n%s\n' "$method" "$path" "$body" > "${RESPONSE%.json}.request"
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -X "$method" -H "Authorization: Bearer ${API_TOKEN}" \
-		"${args[@]}" -o "$RESPONSE" -w '%{http_code}' "${APISERVER_ADDR}${path}")
-	assert_eq "$status" "$expected" "$method $path" || fatal "response: $(cat "$RESPONSE")"
+		"${args[@]}" -o "$RESPONSE" -w '%{http_code}' "${APISERVER_ADDR}${path}" 2> "$error_file") || curl_status=$?
+	log_info "$method $path: curl exit=$curl_status, HTTP status=$status"
+	if [[ $curl_status -eq 0 && $status == "$expected" && ($path == */raw* || $path == /metrics) ]]; then
+		log_info "response saved: $RESPONSE ($(wc -c < "$RESPONSE") bytes)"
+	else
+		report_http_response "$method $path" "$RESPONSE" "$error_file"
+	fi
+	[[ $curl_status -eq 0 ]] || fatal "$method $path: curl exited $curl_status"
+	assert_eq "$status" "$expected" "$method $path" || fatal "$method $path: HTTP status $status, expected $expected"
 }
 create() {
 	local duration=${1:-12} extra=${2:-'{}'} body
@@ -119,7 +126,11 @@ job_reached() {
 	return 1
 }
 wait_job() {
-	wait_until 90 1 job_reached "$1" "$2" || fatal "job $1 did not reach $2"
+	local id=$1 outcome=$2 status=0 file="${HUATUO_BAMAI_TEST_TMPDIR}/status-$1.json"
+	wait_until 90 1 job_reached "$id" "$outcome" || status=$?
+	log_info "job $id: $continuous_profile_status_diagnostic"
+	report_http_response "job $id latest status" "$file" "${file%.json}.curl-error"
+	[[ $status -eq 0 ]] || fatal "job $id did not reach $outcome"
 }
 
 assert_error() { jq -e --arg code "$1" '.error.code == $code' "$RESPONSE" > /dev/null || fatal "unexpected error: $(cat "$RESPONSE")"; }
