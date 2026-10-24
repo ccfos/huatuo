@@ -16,12 +16,75 @@ package main
 
 import (
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/pprof/profile"
 )
+
+func TestCaptureDirectoryLifecycle(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/debug/pprof/heap" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Query().Get("fail") == "1" {
+			http.Error(w, "capture failed", http.StatusBadGateway)
+
+			return
+		}
+
+		if _, err := w.Write([]byte("heap profile")); err != nil {
+			t.Errorf("write heap profile: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	newOptions := func(directory, endpoint string) captureOptions {
+		return captureOptions{
+			url:       server.URL + "/debug/pprof",
+			directory: directory,
+			endpoints: []string{endpoint},
+			timeout:   time.Second,
+			maxBytes:  1024,
+		}
+	}
+
+	t.Run("failed capture removes unpublished directory", func(t *testing.T) {
+		directory := filepath.Join(t.TempDir(), "failed")
+		opts := newOptions(directory, "heap?fail=1")
+		err := capture(t.Context(), &opts)
+		if err == nil {
+			t.Fatal("capture() error = nil, want HTTP error")
+		}
+
+		if _, statErr := os.Stat(directory); !os.IsNotExist(statErr) {
+			t.Fatalf("failed capture directory stat error = %v, want not-exist", statErr)
+		}
+	})
+
+	t.Run("successful capture publishes directory", func(t *testing.T) {
+		directory := filepath.Join(t.TempDir(), "success")
+		opts := newOptions(directory, "heap")
+		if err := capture(t.Context(), &opts); err != nil {
+			t.Fatalf("capture() error = %v", err)
+		}
+
+		for _, name := range []string{"heap.pprof", "capture.json"} {
+			if _, err := os.Stat(filepath.Join(directory, name)); err != nil {
+				t.Fatalf("published file %q: %v", name, err)
+			}
+		}
+	})
+}
 
 func TestAddProfileCPU(t *testing.T) {
 	t.Parallel()
