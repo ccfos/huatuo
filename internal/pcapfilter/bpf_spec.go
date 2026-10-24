@@ -29,6 +29,9 @@ import (
 //
 // If filterExpr is empty, spec is left unchanged (stub pass-through = accept all).
 func Apply(spec *ebpf.CollectionSpec, filterExpr string) error {
+	if spec == nil {
+		return fmt.Errorf("collection spec is required")
+	}
 	if filterExpr == "" {
 		return nil
 	}
