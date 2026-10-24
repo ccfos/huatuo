@@ -15,11 +15,34 @@
 
 package dcmi
 
+import (
+	"errors"
+	"fmt"
+)
+
 // DcInit loads and initializes the Ascend DCMI library.
 func DcInit() error {
 	if err := libdcmi.load(); err != nil {
 		return err
 	}
+	return checkReturnCode("dcmi_init", dcmiInit())
+}
+
+// DcReinitialize retries native initialization while retaining the caller's
+// existing library reference. Callers must first join their collector workers;
+// native network health requests that outlived a timeout defer reinitialization.
+func DcReinitialize() error {
+	libdcmi.Lock()
+	defer libdcmi.Unlock()
+
+	if libdcmi.refcount == 0 {
+		return errors.New("dcmi library is not initialized")
+	}
+
+	if pending := libdcmi.pendingNetworkRequests.Load(); pending != 0 {
+		return fmt.Errorf("dcmi network health requests still active: %d", pending)
+	}
+
 	return checkReturnCode("dcmi_init", dcmiInit())
 }
 

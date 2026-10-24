@@ -26,6 +26,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
 type dropwatchOptions struct {
@@ -90,7 +91,7 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 		log.Warn("devlink trap tracepoint unsupported; hardware drop tracing disabled")
 	}
 
-	sink, sinkCleanup, err := newWriter(options.output, &writerOptions{
+	sink, sinkCleanup, err := newWriter(runCtx, options.output, &writerOptions{
 		outputFormat: options.outputFormat,
 		socketPath:   options.outputStorage,
 		toolName:     dropwatchToolName,
@@ -137,6 +138,10 @@ func streamDropwatchEvents(
 			return err
 		}
 		if err := sink.Write(event); err != nil {
+			if errors.Is(err, toolstream.ErrEventOutputCanceled) {
+				return nil
+			}
+
 			return fmt.Errorf("write event: %w", err)
 		}
 	}

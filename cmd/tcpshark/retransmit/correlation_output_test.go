@@ -16,6 +16,7 @@ package retransmit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/dropwatch"
+	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -190,6 +192,23 @@ func TestEmitResultsPreservesErrors(t *testing.T) {
 	}
 	if !errors.Is(err, statusErr) {
 		t.Fatalf("emit error = %v, want %v", err, statusErr)
+	}
+}
+
+func TestEmitResultsRetainsStatusFailureAfterOutputCancellation(t *testing.T) {
+	statusErr := errors.New("status unavailable")
+	session := &retransmitDropSession{
+		readDropwatchStatus: func() (types.DropwatchStatus, error) {
+			return types.DropwatchStatus{}, statusErr
+		},
+		sink: &retransmitDropWriterStub{err: errors.Join(toolstream.ErrEventOutputCanceled, context.Canceled)},
+	}
+	err := session.emitResults([]correlationResult{{
+		retransmit: &retransmitEvent{},
+		reason:     types.CorrelationInterrupted,
+	}})
+	if !errors.Is(err, statusErr) || errors.Is(err, context.Canceled) {
+		t.Fatalf("emit after output cancellation = %v, want status failure only", err)
 	}
 }
 

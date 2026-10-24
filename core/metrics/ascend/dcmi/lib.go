@@ -18,6 +18,7 @@ package dcmi
 import (
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ccfos/huatuo/core/metrics/ascend/dl"
 
@@ -39,6 +40,8 @@ type library struct {
 	sync.Mutex
 	refcount refcount
 	dl       dynamicLibrary
+	// Network health requests may outlive their caller's timeout.
+	pendingNetworkRequests atomic.Int64
 }
 
 // global singleton instance

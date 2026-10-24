@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -72,6 +73,10 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 			))
 		}
 		if err := s.sink.Write(event); err != nil {
+			if errors.Is(err, toolstream.ErrEventOutputCanceled) {
+				return statusErr
+			}
+
 			return errors.Join(
 				statusErr,
 				fmt.Errorf("write correlated TCP retransmit event: %w", err),

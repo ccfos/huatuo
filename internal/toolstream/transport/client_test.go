@@ -45,6 +45,39 @@ func TestSendDoesNotOwnConnectionCleanup(t *testing.T) {
 	}
 }
 
+func TestSendPreservesWriteFailureDuringCancellation(t *testing.T) {
+	local, remote := net.Pipe()
+	defer local.Close()
+	defer remote.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	writeErr := errors.New("peer write failed")
+	conn := &cancelingWriteConn{
+		Conn:     local,
+		cancel:   cancel,
+		writeErr: writeErr,
+	}
+	client := &Client{
+		encoder: capnp.NewEncoder(conn),
+		conn:    conn,
+	}
+	err := client.Send(ctx, []byte("event"), SendOptions{})
+	if !errors.Is(err, writeErr) || errors.Is(err, context.Canceled) {
+		t.Fatalf("Send = %v, want write failure without cancellation", err)
+	}
+}
+
+type cancelingWriteConn struct {
+	net.Conn
+	cancel   context.CancelFunc
+	writeErr error
+}
+
+func (c *cancelingWriteConn) Write([]byte) (int, error) {
+	c.cancel()
+	return 0, c.writeErr
+}
+
 type failingConn struct {
 	writeErr   error
 	closeErr   error
@@ -110,5 +143,37 @@ func TestSendCancellationInterruptsBlockedWrite(t *testing.T) {
 		}
 	case <-deadline.Done():
 		t.Fatal("cancellation did not unblock Send")
+	}
+}
+
+func TestSendEndDeadlineInterruptsBlockedWrite(t *testing.T) {
+	local, remote := net.Pipe()
+	defer local.Close()
+	defer remote.Close()
+	client := &Client{
+		encoder: capnp.NewEncoder(local),
+		conn:    local,
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- client.Send(ctx, nil, SendOptions{End: true}) }()
+
+	if err := remote.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Leave the End frame partially written, just as a stalled receiver would.
+	if _, err := io.ReadFull(remote, make([]byte, 1)); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("End send = %v, want deadline", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("deadline did not interrupt End send")
 	}
 }

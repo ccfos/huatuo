@@ -15,7 +15,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,17 +50,17 @@ func (s *jsonWriter) Write(snapshot *types.IOTracingSnapshot) error {
 	return err
 }
 
-type socketWriter struct{ client *toolstream.Client }
+type socketWriter struct{ events *toolstream.EventWriter }
 
 func (s *socketWriter) Write(snapshot *types.IOTracingSnapshot) error {
-	return s.client.Send(context.Background(), snapshot, toolstream.SendOptions{})
+	return s.events.Write(snapshot)
 }
 
-// newWriter returns the appropriate writer based on flags. client may be nil.
-func newWriter(outputFmt string, client *toolstream.Client) writer {
+// newWriter returns the appropriate writer based on flags. events may be nil.
+func newWriter(outputFmt string, events *toolstream.EventWriter) writer {
 	switch {
-	case client != nil:
-		return &socketWriter{client: client}
+	case events != nil:
+		return &socketWriter{events: events}
 	case outputFmt == "json":
 		return &jsonWriter{w: os.Stdout}
 	default:
