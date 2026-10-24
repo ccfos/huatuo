@@ -30,6 +30,7 @@ package pcapfilter
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -273,9 +274,22 @@ func filterTokens(expr string) []string {
 	})
 }
 
+// safeFilterToken matches the character set of the supported filter
+// vocabulary: primitives, host and service names, numbers, IPv4/IPv6/CIDR
+// and MAC literals, and port ranges. Anything else - operator symbols glued
+// to a word ("icmp&&ip"), extra backslashes, or other characters the
+// compiler interprets unreliably - is rejected with the expression.
+var safeFilterToken = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
+
 func rejectUnimplementedPrimitives(expr string) error {
 	for _, token := range filterTokens(expr) {
 		token = strings.TrimPrefix(token, "\\")
+		if token == "" || !safeFilterToken.MatchString(token) {
+			return fmt.Errorf(
+				"%w: %q contains %q outside the supported filter vocabulary",
+				ErrInvalidFilter, expr, token,
+			)
+		}
 		if _, broken := unimplementedProtocolPrimitives[token]; !broken {
 			continue
 		}

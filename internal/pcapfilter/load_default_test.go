@@ -338,6 +338,9 @@ func TestCompileUnimplementedProtocolPrimitivesReturnsInvalidFilter(t *testing.T
 		"host 10.1.2.3 and!icmp",
 		"host 10.1.2.3 and ip (icmp)",
 		"host 10.1.2.3 and port (icmp)",
+		"host 10.1.2.3 and icmp&&ip",
+		"host 10.1.2.3 and (icmp&&ip)",
+		"esp||ip",
 	} {
 		t.Run(expr, func(t *testing.T) {
 			if _, _, err := buildL2L3FilterInsts(expr); !errors.Is(err, ErrInvalidFilter) {
