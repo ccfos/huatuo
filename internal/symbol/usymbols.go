@@ -15,7 +15,10 @@
 package symbol
 
 import (
+	"context"
 	"debug/elf"
+	"debug/gosym"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -28,14 +31,18 @@ import (
 )
 
 type executableCache struct {
-	sections sections
-	symbols  elfSymbolCache
-	typ      elf.Type
+	sections        sections
+	symbols         elfSymbolCache
+	typ             elf.Type
+	textVaddrOffset uint64
 }
 
 type elfSymbolCache struct {
-	state        *elfSymbolParseState
-	namesByELFPC map[uint64]string
+	state          *elfSymbolParseState
+	namesByELFPC   map[uint64]string
+	goTable        *gosym.Table
+	goTableChecked bool
+	goTableErr     error
 }
 
 type processELF struct {
@@ -164,7 +171,7 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 			if err = r.loadProcMaps(pid); err == nil {
 				if m := r.procmaps[pid].find(addr); m != nil && m.Pathname == module {
 					baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
-					addPendingELFPC(groups, path, &cache.symbols, addr-baseAddr, index, failFrame("elf-no-sym", ""))
+					addPendingELFPC(groups, path, &cache.symbols, addr-baseAddr+cache.textVaddrOffset, index, failFrame("elf-no-sym", ""))
 					continue
 				}
 			}
@@ -265,18 +272,58 @@ func (r *UsymResolver) resolveELFPCs(path string, cache *elfSymbolCache, pcs []u
 	if err != nil {
 		log.Debugf("symbol: parse ELF PCs for %q: %v", path, err)
 	}
+	for _, sym := range syms {
+		result[sym.Addr] = sym.Name
+	}
+	if remaining := unresolvedELFPCs(unresolved, result); len(remaining) > 0 {
+		table, goErr := cache.loadGoTable(f)
+		err = errors.Join(err, goErr)
+		if table != nil {
+			for _, pc := range remaining {
+				if fn := table.PCToFunc(pc); fn != nil {
+					result[pc] = fn.Name
+				}
+			}
+		}
+	}
 	if cache.namesByELFPC == nil {
 		cache.namesByELFPC = make(map[uint64]string)
 	}
-	for _, sym := range syms {
-		result[sym.Addr] = sym.Name
+	for pc, name := range result {
 		// Full caches still return this batch's results, but retain neither
 		// misses nor additional entries beyond the per-ELF symbol budget.
-		if sym.Name != "" && uint64(len(cache.namesByELFPC)) < r.elfSymbolLimits.MaxSymbolAndCacheCount {
-			cache.namesByELFPC[sym.Addr] = sym.Name
+		if name != "" && uint64(len(cache.namesByELFPC)) < r.elfSymbolLimits.MaxSymbolAndCacheCount {
+			cache.namesByELFPC[pc] = name
 		}
 	}
 	return result, err
+}
+
+func (cache *elfSymbolCache) loadGoTable(file *elf.File) (*gosym.Table, error) {
+	if cache.goTableChecked {
+		return cache.goTable, cache.goTableErr
+	}
+	cache.goTableChecked = true
+	// Stripped Go binaries retain pclntab even when ELF symbol tables are absent.
+	// Avoid scanning unrelated ELF tables when no Go metadata is present.
+	if file.Section(".gopclntab") == nil && file.Section(".data.rel.ro.gopclntab") == nil {
+		return nil, nil
+	}
+	state := cache.state
+	limits := state.limits
+	limits.MaxMetadataBytes -= state.metadataBytes
+	limits.MaxSymbolAndCacheCount -= state.symbolCount
+	limits.MaxNameBytes -= state.nameBytes
+	table, usage, err := readGoTable(context.Background(), file, limits)
+	if err != nil {
+		cache.goTableErr = fmt.Errorf("read Go fallback symbols: %w", err)
+		return nil, cache.goTableErr
+	}
+	state.metadataBytes += usage.metadataBytes
+	state.symbolCount += usage.symbolCount
+	state.nameBytes += usage.nameBytes
+	cache.goTable = table
+	return table, nil
 }
 
 func unresolvedELFPCs(pcs []uint64, cached map[uint64]string) []uint64 {
@@ -336,6 +383,14 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*executableCache, error) {
 		sections: secs,
 		typ:      f.Type,
 		symbols:  elfSymbolCache{state: newELFSymbolParseState(r.elfSymbolLimits)},
+	}
+	// Go PIE can retain a nonzero link-time base (for example, 0x400000).
+	// Mapping-relative file offsets must be translated back to ELF virtual PCs.
+	for _, program := range f.Progs {
+		if program.Type == elf.PT_LOAD && program.Flags&elf.PF_X != 0 {
+			cache.textVaddrOffset = program.Vaddr - program.Off
+			break
+		}
 	}
 	r.exeCache[key] = cache
 	r.processes[pid] = processELF{cacheKey: key, path: path}
