@@ -158,6 +158,10 @@ Elasticsearch 的存在性判断针对索引值，而不是 `_source` 中是否�
 
 `Count` 统计全部匹配记录；`Values` 使用独立的 `size`，由 `storage.Store.Values` 校验其非负约束。后端不重复校验这两个操作的分页参数或 `size`。
 
+Elasticsearch/OpenSearch 的 `Values` 保留整数聚合键，不经过浮点数转换，包括
+OpenSearch 返回的 `unsigned_long` 值。字符串键保持原文，浮点聚合键沿用原有格式。
+若服务端已发生舍入（例如跨索引查询时数值类型提升），客户端无法恢复丢失的精度。
+
 ### 后端差异
 
 - SQLite 使用一条带 `LIMIT/OFFSET` 的 SELECT 逐行读取。回调期间占用唯一数据库连接，回调不能同步再次访问同一后端。
