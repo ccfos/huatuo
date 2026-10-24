@@ -202,6 +202,46 @@ func TestCgroupSubsystemInitializationRetries(t *testing.T) {
 	}
 }
 
+func TestCgroupDeleteCssDataKeepsReusedCSS(t *testing.T) {
+	oldIDs := cgroupCssID2SubSysNameMap
+	t.Cleanup(func() {
+		cgroupCssID2SubSysNameMap = oldIDs
+		cgroupCssMetaDataMap.Clear()
+	})
+
+	cgroupCssID2SubSysNameMap = map[int]string{0: "memory"}
+	cgroupCssMetaDataMap.Clear()
+
+	const css = uint64(42)
+	oldEvent := &containerCssPerfEvent{Cgroup: 1}
+	oldEvent.CSS[0] = css
+	newEvent := &containerCssPerfEvent{Cgroup: 2}
+	newEvent.CSS[0] = css
+
+	if err := cgroupUpdateOrCreateCssData(oldEvent, "old-container"); err != nil {
+		t.Fatalf("cgroupUpdateOrCreateCssData(old) error = %v", err)
+	}
+	if err := cgroupUpdateOrCreateCssData(newEvent, "new-container"); err != nil {
+		t.Fatalf("cgroupUpdateOrCreateCssData(new) error = %v", err)
+	}
+
+	if err := cgroupDeleteCssData(oldEvent, "old-container"); err != nil {
+		t.Fatalf("cgroupDeleteCssData(old) error = %v", err)
+	}
+
+	got := cgroupListCssDataByKnode("new-container")
+	if len(got) != 1 || got[0].CSS != css || got[0].Cgroup != newEvent.Cgroup {
+		t.Fatalf("stale delete removed the replacement CSS: got %+v", got)
+	}
+
+	if err := cgroupDeleteCssData(newEvent, "new-container"); err != nil {
+		t.Fatalf("cgroupDeleteCssData(new) error = %v", err)
+	}
+	if got := cgroupListCssDataByKnode("new-container"); len(got) != 0 {
+		t.Fatalf("current delete left CSS data behind: got %+v", got)
+	}
+}
+
 type lifecycleReaderTest struct {
 	bpf.PerfEventReader
 	event  *containerCssPerfEvent
