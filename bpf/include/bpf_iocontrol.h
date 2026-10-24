@@ -26,6 +26,13 @@
 
 #include "abi/io_control_types.h"
 
+/* ARM64's LR is the return IP, not a pointer as older libbpf assumes. */
+#if defined(__TARGET_ARCH_arm64)
+#define IO_CONTROL_KPROBE_READ_RET_IP(ip, ctx) ((ip) = PT_REGS_RET(ctx))
+#else
+#define IO_CONTROL_KPROBE_READ_RET_IP(ip, ctx) BPF_KPROBE_READ_RET_IP(ip, ctx)
+#endif
+
 #define IO_CONTROL_WAIT_COUNT_MASK ((1ULL << IO_CONTROL_WAIT_COUNT_BITS) - 1)
 #define IO_CONTROL_WAIT_10US_MASK ((1ULL << IO_CONTROL_WAIT_10US_BITS) - 1)
 

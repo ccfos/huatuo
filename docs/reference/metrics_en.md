@@ -571,7 +571,7 @@ seconds of waiting, between successful collections. For example, 10,240 waits
 for one series, each lasting 270 seconds and settled on that CPU in the same
 interval, exceed the wait-time capacity.
 
-IOCOST requires a non-PREEMPT_RT Linux x86_64 kernel with IOCOST functions,
+IOCOST requires a non-PREEMPT_RT Linux kernel with IOCOST functions,
 BPF/BTF, and kprobes.
 
 ### Device health
