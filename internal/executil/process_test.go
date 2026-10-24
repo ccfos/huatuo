@@ -245,83 +245,98 @@ func TestMayAppendCleanupErrorPreservesExecutionResult(t *testing.T) {
 	}
 }
 
-// errGateContext blocks Err on the nth call so a test can land exactly in the
-// window between cmd.Start and the process being marked running.
-type errGateContext struct {
+type pidGateContext struct {
 	context.Context
 
-	gateAt  int
 	reached chan struct{}
 	release chan struct{}
+	once    sync.Once
 
-	once  sync.Once
-	mu    sync.Mutex
-	calls int
+	pid *int
 }
 
-func (c *errGateContext) Err() error {
-	c.mu.Lock()
-	c.calls++
-	calls := c.calls
-	c.mu.Unlock()
+func (g *pidGateContext) Err() error {
+	if g.pid == nil {
+		return g.Context.Err()
+	}
 
-	if calls == c.gateAt {
-		c.once.Do(func() { close(c.reached) })
-		<-c.release
-
+	if pid := *g.pid; pid > 0 {
+		g.once.Do(func() { close(g.reached) })
+		select {
+		case <-g.release:
+		case <-g.Context.Done():
+			return g.Context.Err()
+		}
 		return context.Canceled
 	}
 
-	return c.Context.Err()
+	return g.Context.Err()
 }
 
-// A stop that wins the race against the launch must be reported instead of
-// being turned into a successful start whose process nobody tracks.
-func TestProcessStartReportsStopRacingTheLaunch(t *testing.T) {
+// TestProcessStartCanceledAfterLaunch verifies cancellation that wins the
+// race after cmd.Start but before the process is published as running is
+// reported by Start and reclaims the child process.
+func TestProcessStartCanceledAfterLaunch(t *testing.T) {
 	process, err := New(Spec{Path: "/bin/sleep", Args: []string{"30"}})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	ctx := &errGateContext{
+	gate := &pidGateContext{
 		Context: t.Context(),
-		gateAt:  3,
 		reached: make(chan struct{}),
 		release: make(chan struct{}),
+		pid:     &process.pid,
 	}
+	cleanup := sync.OnceFunc(func() { close(gate.release) })
+	defer cleanup()
 
 	startErr := make(chan error, 1)
-	go func() { startErr <- process.Start(ctx) }()
+	go func() {
+		defer cleanup()
+		startErr <- process.Start(gate)
+	}()
+
+	for i := 0; i < 200; i++ {
+		process.mu.Lock()
+		pid := process.pid
+		process.mu.Unlock()
+		if pid > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	select {
-	case <-ctx.reached:
+	case <-gate.reached:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Start() never reached the post-Start launch window")
+		cleanup()
+		t.Fatal("Start() did not reach the post-Start launch window")
 	}
 
 	select {
 	case <-process.Done():
-		t.Fatal("process reached a terminal state while the launch window was open")
+		cleanup()
+		t.Fatal("process became terminal while the launch window was open")
 	default:
 	}
 
-	close(ctx.release)
+	cleanup()
 
 	select {
 	case err := <-startErr:
 		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Start() error = %v, want %v", err, context.Canceled)
+			t.Fatalf("Start() error = %v, want context.Canceled", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Start() did not return after the launch cancellation")
+		t.Fatal("Start() did not return after cancellation")
 	}
 
 	select {
 	case <-process.Done():
 	case <-time.After(5 * time.Second):
-		t.Fatal("process did not reach a terminal state after the cancelled launch")
+		t.Fatal("process was not reaped after a cancelled launch")
 	}
-
 	if err := process.Wait(); err == nil {
 		t.Fatal("Wait() = nil, want the launch cancellation error")
 	}

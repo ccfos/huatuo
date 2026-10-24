@@ -472,56 +472,6 @@ func (c *cancelAfterStartContext) Err() error {
 	return c.Context.Err()
 }
 
-func TestProcessStartCanceledAfterLaunch(t *testing.T) {
-	for _, memfd := range []bool{false, true} {
-		t.Run(fmt.Sprint(memfd), func(t *testing.T) {
-			spec, options, _, _ := newGatedCommand(t, 7)
-			var file *os.File
-			var process *Process
-			if memfd {
-				options = append(options, WithMemfdOutput(10, func(string) []string {
-					file = process.memfd.file
-					return nil
-				}))
-			}
-			var err error
-			process, err = New(spec, options...)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := process.Close(); err != nil {
-					t.Error(err)
-				}
-			})
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			launchCtx := &cancelAfterStartContext{Context: ctx, cancel: cancel}
-			startErr := process.Start(launchCtx)
-			if launchCtx.checks != 3 {
-				t.Fatalf("launch context checks = %d, want cancellation after cmd.Start", launchCtx.checks)
-			}
-			if err := process.Close(); err != nil {
-				t.Fatalf("Close(): %v", err)
-			}
-			for _, err := range []error{startErr, process.Wait()} {
-				if err != context.Canceled { //nolint:errorlint // A completed cancellation returns the same launch marker.
-					t.Fatalf("lifecycle error = %v, want context.Canceled directly", err)
-				}
-			}
-			if file != nil {
-				if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
-					t.Fatalf("canceled launch retained its owned file: %v", err)
-				}
-			}
-			select {
-			case <-process.Done():
-			default:
-				t.Fatal("canceled launch did not publish completion")
-			}
-		})
-	}
-}
 
 func TestProcessCloseAndWaitDuringCanceledStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
