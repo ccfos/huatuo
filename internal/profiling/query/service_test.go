@@ -501,3 +501,78 @@ func TestSelectMergeStacktracesPhysicalUsageRequiresTask(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectMergeStacktracesPreservesStacklessSamples(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		samples []types.AggregatedSample
+		want    map[string]int64
+	}{
+		{"resolved", []types.AggregatedSample{{UserStack: 1, Value: 7}}, map[string]int64{"work": 7}},
+		{"stackless", []types.AggregatedSample{{Value: 7}}, map[string]int64{"[unknown]": 7}},
+		{"mixed", []types.AggregatedSample{{UserStack: 1, Value: 3}, {Value: 7}}, map[string]int64{"work": 3, "[unknown]": 7}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Missing native stacks are valid observations, not dropped samples.
+			w := &types.AggregationWindow{
+				ProfileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+				Aggregated: types.AggregatedProfile{
+					TimeNanos: 1,
+					Frames:    []types.ProfileFrame{{Name: "work"}},
+					Stacks:    [][]uint32{{0}},
+					Samples:   tc.samples,
+				},
+			}
+			if err := window.Validate(w); err != nil {
+				t.Fatal(err)
+			}
+			p, err := window.BuildProfile(context.Background(), w)
+			if err != nil {
+				t.Fatal(err)
+			}
+			document, err := json.Marshal(map[string]any{
+				"hostname": "node-1", "uploaded_timestamp": "2026-10-08T00:00:00Z",
+				"started_timestamp": "2026-10-08T00:00:00Z", "tracer_type": "profiling", "tracer_id": "job-1",
+				"profile_data": map[string]any{"profile_type": w.ProfileType, "profile": p},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := newProfileQueryStore(t, 1, false, document)
+			service, err := NewProfileQueryService(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := service.SelectMergeStacktraces(context.Background(), &querierv1.SelectMergeStacktracesRequest{
+				LabelSelector: `{id="job-1"}`, ProfileTypeID: w.ProfileType,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			graph := response.Flamegraph
+			var total int64
+			for _, value := range tc.want {
+				total += value
+			}
+			if graph.Total != total {
+				t.Errorf("flamegraph total = %d, want %d", graph.Total, total)
+			}
+			if len(graph.Levels) != 2 {
+				t.Fatalf("flamegraph has %d levels, want root and observed frames", len(graph.Levels))
+			}
+			got := make(map[string]int64)
+			values := graph.Levels[1].Values
+			for i := 0; i < len(values); i += 4 {
+				got[graph.Names[values[i+3]]] = values[i+1]
+			}
+			if len(got) != len(tc.want) {
+				t.Errorf("frame weights = %v, want %v", got, tc.want)
+			}
+			for name, weight := range tc.want {
+				if got[name] != weight {
+					t.Errorf("frame %q weight = %d, want %d", name, got[name], weight)
+				}
+			}
+		})
+	}
+}
