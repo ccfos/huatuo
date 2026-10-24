@@ -170,6 +170,13 @@ func TestTCPSequenceSpan(t *testing.T) {
 	if span, ok := TCPSequenceSpan(invalid); ok || span != 0 {
 		t.Fatalf("TCPSequenceSpan(invalid) = (%d, %t), want (0, false)", span, ok)
 	}
+	invalidOffset := &Packet{
+		IPv4: &IPv4{IHL: 5, Length: 40, Protocol: "TCP"},
+		TCP:  &TCP{DataOffset: 4},
+	}
+	if span, ok := TCPSequenceSpan(invalidOffset); ok || span != 0 {
+		t.Fatalf("TCPSequenceSpan(invalidOffset) = (%d, %t), want (0, false)", span, ok)
+	}
 	if span, ok := TCPSequenceSpan(nil); ok || span != 0 {
 		t.Fatalf("TCPSequenceSpan(nil) = (%d, %t), want (0, false)", span, ok)
 	}
