@@ -195,6 +195,12 @@ func MatchesAnyPath(patterns []string, path string) bool {
 
 // MatchesPath matches complete path segments, including *, **, and :parameter.
 func MatchesPath(permission, path string) bool {
+	// Trimming an empty permission yields the same empty segment as "/", so
+	// reject it before matching to keep a malformed grant from authorizing root.
+	if permission == "" {
+		return false
+	}
+
 	if permission == path {
 		return true
 	}

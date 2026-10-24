@@ -183,6 +183,11 @@ func TestMatchesPath(t *testing.T) {
 		{name: "recursive keeps suffix", permission: "/v1/**/stop", path: "/v1/tracing/id/stop", want: true},
 		{name: "recursive rejects suffix", permission: "/v1/**/stop", path: "/v1/tracing/id/result"},
 		{name: "reject sibling prefix", permission: "/v1/tracing/**", path: "/v1/tracing-old/id"},
+		{name: "empty permission rejects empty path", permission: "", path: ""},
+		{name: "empty permission rejects root", permission: "", path: "/"},
+		{name: "empty permission rejects path", permission: "", path: "/api/x"},
+		{name: "root permission", permission: "/", path: "/", want: true},
+		{name: "root permission rejects child", permission: "/", path: "/api"},
 	}
 
 	for _, tt := range tests {
