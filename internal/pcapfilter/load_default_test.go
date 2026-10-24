@@ -314,3 +314,57 @@ func TestCompileMalformedNetReturnsInvalidFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestCompileUnimplementedProtocolPrimitivesReturnsInvalidFilter(t *testing.T) {
+	for _, expr := range []string{
+		"icmp",
+		"icmp6",
+		"host 10.1.2.3 and icmp",
+		"port 80 or icmp",
+		"not icmp",
+		"!igmp",
+		"host 10.1.2.3 and !igmp",
+		"ip proto icmp",
+		"ip proto \\icmp",
+		"proto \\igmp",
+		"host 10.1.2.3 and igrp",
+		"atalk",
+		"ipx",
+		"netbeui",
+		"(ah) and net 10.0.0.0/8",
+		"esp",
+		"vrrp",
+	} {
+		t.Run(expr, func(t *testing.T) {
+			if _, _, err := buildL2L3FilterInsts(expr); !errors.Is(err, ErrInvalidFilter) {
+				t.Fatalf("buildL2L3FilterInsts(%q) error = %v, want ErrInvalidFilter", expr, err)
+			}
+			if err := ValidateL3Compatible(expr); !errors.Is(err, ErrInvalidFilter) {
+				t.Fatalf("ValidateL3Compatible(%q) error = %v, want ErrInvalidFilter", expr, err)
+			}
+		})
+	}
+}
+
+func TestCompileSupportedPrimitivesUnaffectedByProtocolRejection(t *testing.T) {
+	// stp reads Ethernet fields and is legitimately rejected by
+	// ValidateL3Compatible; compile it as L2 only, like the rest.
+	for _, expr := range []string{
+		"tcp",
+		"udp",
+		"stp",
+		"ip",
+		"ip6",
+		"arp",
+		"rarp",
+		"port 80",
+		"net 10.0.0.0/8",
+		"tcp port 443",
+	} {
+		t.Run(expr, func(t *testing.T) {
+			if _, err := compileCBPF(expr, false); err != nil {
+				t.Fatalf("compileCBPF(%q) error = %v, want supported expression to compile", expr, err)
+			}
+		})
+	}
+}

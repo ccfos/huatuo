@@ -247,25 +247,29 @@ func patchPacketLoads(insts asm.Instructions, resultLabel string) (asm.Instructi
 	return insts, nil
 }
 
-// unimplementedProtocolPrimitives are bare protocol keywords that go-pcap's
-// compiler turns into an always-true term: the protocol constraint silently
-// disappears from conjunctions ("host 10.0.0.1 and icmp" compiles to the
-// program of "host 10.0.0.1", instruction for instruction) and disjunctions
-// degenerate to a match-all filter. Until go-pcap implements these
-// primitives, reject expressions that use them instead of installing a filter
-// that captures more than the expression requests.
+// unimplementedProtocolPrimitives are the protocol keywords go-pcap's parser
+// recognizes (filter/constants.go subProtocols) but its compiler turns into
+// an always-true term: the protocol constraint silently disappears from
+// conjunctions ("host 10.0.0.1 and icmp" compiles to the program of
+// "host 10.0.0.1", instruction for instruction) and disjunctions degenerate
+// to a match-all filter. Only ip, ip6, arp, rarp, tcp, udp and stp are
+// implemented by the compiler. Until go-pcap implements the rest, reject
+// expressions that use them instead of installing a filter that captures
+// more than the expression requests.
 var unimplementedProtocolPrimitives = map[string]struct{}{
-	"icmp": {}, "icmp6": {}, "igmp": {}, "esp": {}, "ah": {}, "pim": {},
-	"vrrp": {},
+	"icmp": {}, "icmp6": {}, "igmp": {}, "igrp": {}, "esp": {}, "ah": {},
+	"pim": {}, "vrrp": {}, "atalk": {}, "aarp": {}, "decnet": {}, "sca": {},
+	"lat": {}, "modpl": {}, "morpc": {}, "iso": {}, "ipx": {}, "netbeui": {},
 }
 
 // filterNameQualifiers are keywords that directly precede a name argument, so
 // a following token is a host or service name ("host icmp"), not a standalone
-// protocol primitive.
+// protocol primitive. "proto" is deliberately absent: the token after proto
+// is always a protocol condition ("ip proto \icmp"), never a name.
 var filterNameQualifiers = map[string]struct{}{
 	"host": {}, "net": {}, "port": {}, "portrange": {}, "gateway": {},
 	"sport": {}, "dport": {}, "sportrange": {}, "dportrange": {},
-	"src": {}, "dst": {}, "proto": {}, "ether": {}, "ip": {}, "ip6": {},
+	"src": {}, "dst": {}, "ether": {}, "ip": {}, "ip6": {},
 	"arp": {}, "rarp": {}, "vlan": {}, "mpls": {}, "stp": {},
 }
 
@@ -274,6 +278,10 @@ func rejectUnimplementedPrimitives(expr string) error {
 		return unicode.IsSpace(r) || r == '(' || r == ')'
 	})
 	for i, token := range tokens {
+		// "!" negates without whitespace ("!icmp") and tcpdump's man page
+		// quotes protocol names after proto with a leading backslash
+		// ("proto \icmp"); both spellings still name the primitive.
+		token = strings.TrimPrefix(strings.TrimPrefix(token, "!"), "\\")
 		if _, broken := unimplementedProtocolPrimitives[token]; !broken {
 			continue
 		}
