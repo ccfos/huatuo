@@ -133,4 +133,22 @@ runner_status=0
 (ROOT_DIR="${RUNNER_FIXTURE}/missing" require_build_output) > "${HUATUO_BAMAI_TEST_TMPDIR}/missing-output.log" 2>&1 || runner_status=$?
 [[ ${runner_status} == 1 ]] || fatal "missing build output did not fail: exit=${runner_status}"
 
+# Neither inherited host procfs nor a private procfs makes nested PIDs valid BPF filters.
+for runner_proc_mode in inherited private; do
+	runner_namespace_args=(--mount --pid --fork)
+	if [[ ${runner_proc_mode} == private ]]; then
+		runner_namespace_args+=(--mount-proc)
+	fi
+	runner_status=0
+	unshare "${runner_namespace_args[@]}" bash -c '
+		source "${ROOT_DIR}/integration/lib.sh"
+		require_host_pid_namespace
+		fatal "nested PID namespace accepted for native PID filtering"
+	' > "${HUATUO_BAMAI_TEST_TMPDIR}/pid-${runner_proc_mode}.log" 2>&1 || runner_status=$?
+	[[ ${runner_status} == 77 ]] \
+		|| fatal "${runner_proc_mode} procfs: nested PID namespace did not skip (exit=${runner_status})"
+	grep -qE 'host procfs|host PID namespace' "${HUATUO_BAMAI_TEST_TMPDIR}/pid-${runner_proc_mode}.log" \
+		|| fatal "${runner_proc_mode} procfs: missing PID prerequisite diagnostic"
+done
+
 log_info "runner prerequisites, result counts, fail-fast behavior, and cleanup passed"

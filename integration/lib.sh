@@ -105,6 +105,29 @@ require_readable() {
 	done
 }
 
+# Kernel PID 2 (kthreadd) anchors the initial PID namespace and host procfs.
+# Matching /proc/1 or a single NSpid value cannot establish either property.
+require_host_pid_namespace() {
+	require_commands readlink
+	local process_stat host_namespace current_namespace
+	local -a fields
+
+	read -r process_stat < /proc/2/stat 2> /dev/null \
+		|| skip "native PID filtering requires host procfs: cannot read /proc/2/stat"
+	read -r -a fields <<< "${process_stat##*) }"
+	# stat fields start at state (3); PPid is 4 and flags is 9.
+	if [[ ${fields[1]:-} != 0 || ! ${fields[6]:-} =~ ^[0-9]+$ ]] \
+		|| (((fields[6] & 0x00200000) == 0)); then # PF_KTHREAD
+		skip "native PID filtering requires host procfs: kernel PID 2 is not visible"
+	fi
+	host_namespace=$(readlink /proc/2/ns/pid) \
+		|| skip "cannot read the host PID namespace through /proc/2/ns/pid"
+	current_namespace=$(readlink /proc/self/ns/pid) \
+		|| skip "cannot read the current PID namespace through /proc/self/ns/pid"
+	[[ ${current_namespace} == "${host_namespace}" ]] \
+		|| skip "native PID filtering requires the host PID namespace"
+}
+
 require_build_output() {
 	[[ -d "${ROOT_DIR}/_output" ]] || fatal "build output directory missing: ${ROOT_DIR}/_output; run make build"
 }
@@ -350,25 +373,6 @@ stop_and_wait_by_pid() {
 }
 
 # ------------------------- virtualization detection -------------------------
-
-# Returns 0 when running inside a container.
-# Method 1: overlay/btrfs rootfs — container runtimes mount an overlay or
-# btrfs snapshot as /; bare-metal hosts use ext4/xfs/zfs.
-# Method 2: systemd-detect-virt -c — explicitly checks for container
-# virtualization (docker, lxc, podman, etc.).
-is_container() {
-	local fstype
-	fstype=$(findmnt -n -o FSTYPE / 2> /dev/null || true)
-	case "${fstype}" in
-	overlay | btrfs) return 0 ;;
-	esac
-
-	if command -v systemd-detect-virt > /dev/null 2>&1; then
-		[[ "$(systemd-detect-virt -c 2> /dev/null)" != "none" ]] && return 0
-	fi
-
-	return 1
-}
 
 # Returns 0 when running inside a virtual machine.
 is_virtual_machine() {

@@ -22,17 +22,16 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 # --- preconditions -----------------------------------------------------------
 
-is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
+require_host_pid_namespace
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-cpuid
 readonly PROFILER_BIN=${TOOL_BIN}
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 
 require_commands taskset
-[[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip "perf_event_paranoid not readable: perf unavailable"
-readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
-[[ "${PARANOID}" -le 2 ]] || skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
-[[ "$(nproc)" -ge 2 ]] || skip "need at least 2 CPUs"
+require_readable /proc/sys/kernel/perf_event_paranoid
+taskset -c 0 true || skip "CPU 0 is not available in the current affinity set"
+taskset -c 1 true || skip "CPU 1 is not available in the current affinity set"
 
 readonly CHAIN_PATTERN=';f1;f2;f3 [0-9]+$'
 

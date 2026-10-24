@@ -21,8 +21,8 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
+require_host_pid_namespace
 require_commands clang
-is_container && skip "native CPU profiler requires the host PID namespace"
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-cpp-symbols
 readonly CPP_SYMBOL_FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_cpp_symbols.user.cc"
@@ -32,11 +32,7 @@ readonly CPP_SYMBOL_AGGR_INTERVAL=5
 readonly CPP_SYMBOL_EXPECTED='void huatuo::symbol_fixture::consume<unsigned long>(unsigned long)'
 readonly CPP_SYMBOL_MANGLED='_ZN6huatuo14symbol_fixture7consumeImEEvT_'
 
-[[ -r /proc/sys/kernel/perf_event_paranoid ]] \
-	|| skip "perf_event_paranoid not readable: perf unavailable"
-readonly CPP_SYMBOL_PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
-[[ "${CPP_SYMBOL_PARANOID}" -le 2 ]] \
-	|| skip "kernel.perf_event_paranoid=${CPP_SYMBOL_PARANOID} (>2) blocks perf sampling"
+require_readable /proc/sys/kernel/perf_event_paranoid
 
 readonly CPP_SYMBOL_WORK_DIR=${TOOL_WORK_DIR}
 readonly CPP_SYMBOL_FIXTURE_BIN="${CPP_SYMBOL_WORK_DIR}/cpp-symbol-fixture"
