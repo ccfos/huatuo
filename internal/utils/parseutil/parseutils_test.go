@@ -135,6 +135,18 @@ func TestRawKV(t *testing.T) {
 			true,
 		},
 		{
+			"negative value",
+			"current_bw -1\n",
+			nil,
+			true,
+		},
+		{
+			"positive current_bw",
+			"current_bw 5000000\n",
+			map[string]uint64{"current_bw": 5000000},
+			false,
+		},
+		{
 			"empty",
 			"",
 			map[string]uint64{},
@@ -159,6 +171,34 @@ func TestRawKV(t *testing.T) {
 			t.Errorf("RawKV() expected error, got nil")
 		}
 	})
+}
+
+func TestRawKVIgnoredKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		ignoredKeys   []string
+		wantErr       bool
+	}{
+		{"negative", "current_bw -1\nnr_periods 3\n", []string{"current_bw"}, false},
+		{"positive", "nr_periods 3\ncurrent_bw 5000000\n", []string{"current_bw"}, false},
+		{"whitespace", "  current_bw\t-1 \n\tnr_periods 3 \n", []string{"current_bw"}, false},
+		{"multiple", "current_bw -1\nother -1\nnr_periods 3\n", []string{"current_bw", "other"}, false},
+		{"negative-counter", "current_bw -1\nnr_periods -1\n", []string{"current_bw"}, true},
+		{"invalid-counter", "current_bw -1\nnr_periods invalid\n", []string{"current_bw"}, true},
+		{"exact-key", "current_bw_extra -1\nnr_periods 3\n", []string{"current_bw"}, true},
+		{"invalid-format", "current_bw\nnr_periods 3\n", []string{"current_bw"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := RawKV(createTempFile(t, tc.content), tc.ignoredKeys...)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("RawKV() error=%v, wantErr=%t", err, tc.wantErr)
+			}
+			want := map[string]uint64{"nr_periods": 3}
+			if !tc.wantErr && !mapsEqual(got, want) {
+				t.Fatalf("RawKV()=%v, want %v", got, want)
+			}
+		})
+	}
 }
 
 func TestKV(t *testing.T) {

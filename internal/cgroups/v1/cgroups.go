@@ -113,7 +113,8 @@ func (c *CgroupV1) CpuUsage(path string) (*stats.CpuUsage, error) {
 }
 
 func (c *CgroupV1) CpuStatRaw(path string) (map[string]uint64, error) {
-	return parseutil.RawKV(paths.Path(subsystem.SubsystemCPU, path, "cpu.stat"))
+	// Some kernels expose unlimited runtime as current_bw -1, not a counter.
+	return parseutil.RawKV(paths.Path(subsystem.SubsystemCPU, path, "cpu.stat"), "current_bw")
 }
 
 func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
