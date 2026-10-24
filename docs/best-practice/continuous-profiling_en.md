@@ -359,6 +359,8 @@ A run with no samples may produce no display file; an existing file alone does n
 | `json` | One JSON line per collection window; streaming collection may emit multiple lines | Preserve windows, sample labels, and signed values |
 | `remote-store` | Uploads pprof-compatible data through a Unix socket without a local flame graph | HUATUO storage integration; not for offline viewing |
 
+Chrome Trace output places aggregate stacks on an estimated timeline, rather than reconstructing observation order. Timestamps and durations are JSON microseconds with up to three fractional digits, so a 500-nanosecond weight remains `0.5` microseconds. Timeline arithmetic retains integer nanoseconds across windows and unit conversions. Negative weights, non-time units, and a timeline beyond `2^53-1` microseconds remain errors. JSON preserves the fractional values; browser viewers still use IEEE-754 numbers.
+
 ### Flame Graphs
 
 A flame graph shows call direction from bottom to top. Rectangle width represents the accumulated value for a stack in the selected measurement. On-CPU widths represent estimated CPU time; off-CPU widths represent blocked or scheduling-wait time. Memory widths represent bytes for the selected memory mode. Horizontal position is not chronological.
