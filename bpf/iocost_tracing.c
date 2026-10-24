@@ -343,7 +343,7 @@ int kprobe_iocg_kick_waitq(struct pt_regs *ctx)
 	u32 operation;
 	int bio_result;
 
-	BPF_KPROBE_READ_RET_IP(caller, ctx);
+	IO_CONTROL_KPROBE_READ_RET_IP(caller, ctx);
 	if (!iocost_enqueue_caller(caller))
 		return 0;
 	if (iocost_unhealthy())
