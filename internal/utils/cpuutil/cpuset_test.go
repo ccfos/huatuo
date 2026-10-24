@@ -70,6 +70,8 @@ func TestParseOnlineCores(t *testing.T) {
 }
 
 func TestMaxOnlineCPU(t *testing.T) {
+	maxIntText := strconv.FormatInt(int64(^uint(0)>>1), 10)
+	overflowText := strconv.FormatUint(uint64(^uint(0)>>1)+1, 10)
 	tests := []struct {
 		name    string
 		content string
@@ -79,6 +81,12 @@ func TestMaxOnlineCPU(t *testing.T) {
 		{name: "single", content: "7\n", want: 7},
 		{name: "empty", content: "\n", want: -1},
 		{name: "invalid last ID", content: "0,x\n", want: -1},
+		{name: "invalid first ID", content: "x,0-3\n", want: -1},
+		{name: "invalid first range", content: "8-,0-3\n", want: -1},
+		{name: "descending range", content: "8-11,0-3\n", want: 11},
+		{name: "empty item", content: "0,,3\n", want: -1},
+		{name: "int upper bound", content: maxIntText + "\n", want: int(^uint(0) >> 1)},
+		{name: "int overflow", content: overflowText + "\n", want: -1},
 		{name: "invalid range end", content: "0-\n", want: -1},
 		{name: "descending range", content: "3-1\n", want: -1},
 		{name: "extra range separator", content: "0-1-2\n", want: -1},
