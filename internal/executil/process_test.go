@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -241,5 +242,102 @@ func TestMayAppendCleanupErrorPreservesExecutionResult(t *testing.T) {
 				t.Fatalf("incorrect cleanup classification: %v", got)
 			}
 		})
+	}
+}
+
+type pidGateContext struct {
+	context.Context
+
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+
+	pid *int
+}
+
+func (g *pidGateContext) Err() error {
+	if g.pid == nil {
+		return g.Context.Err()
+	}
+
+	if pid := *g.pid; pid > 0 {
+		g.once.Do(func() { close(g.reached) })
+		select {
+		case <-g.release:
+		case <-g.Context.Done():
+			return g.Context.Err()
+		}
+		return context.Canceled
+	}
+
+	return g.Context.Err()
+}
+
+// TestProcessStartCanceledAfterLaunch verifies cancellation that wins the
+// race after cmd.Start but before the process is published as running is
+// reported by Start and reclaims the child process.
+func TestProcessStartCanceledAfterLaunch(t *testing.T) {
+	process, err := New(Spec{Path: "/bin/sleep", Args: []string{"30"}})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	gate := &pidGateContext{
+		Context: t.Context(),
+		reached: make(chan struct{}),
+		release: make(chan struct{}),
+		pid:     &process.pid,
+	}
+	cleanup := sync.OnceFunc(func() { close(gate.release) })
+	defer cleanup()
+
+	startErr := make(chan error, 1)
+	go func() {
+		defer cleanup()
+		startErr <- process.Start(gate)
+	}()
+
+	for i := 0; i < 200; i++ {
+		process.mu.Lock()
+		pid := process.pid
+		process.mu.Unlock()
+		if pid > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	select {
+	case <-gate.reached:
+	case <-time.After(5 * time.Second):
+		cleanup()
+		t.Fatal("Start() did not reach the post-Start launch window")
+	}
+
+	select {
+	case <-process.Done():
+		cleanup()
+		t.Fatal("process became terminal while the launch window was open")
+	default:
+	}
+
+	cleanup()
+
+	select {
+	case err := <-startErr:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Start() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() did not return after cancellation")
+	}
+
+	select {
+	case <-process.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("process was not reaped after a cancelled launch")
+	}
+	if err := process.Wait(); err == nil {
+		t.Fatal("Wait() = nil, want the launch cancellation error")
 	}
 }
