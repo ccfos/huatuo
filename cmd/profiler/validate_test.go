@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -616,6 +617,20 @@ func TestValidatePythonProfileOptions(t *testing.T) {
 			}
 			require.NoError(t, err)
 		})
+	}
+}
+
+func TestValidateLanguageOptionsConflictingTargets(t *testing.T) {
+	for _, language := range []profiling.Language{
+		profiling.LanguageC, profiling.LanguageGo, profiling.LanguageCPP,
+		profiling.LanguageJava, profiling.LanguagePython,
+	} {
+		for _, profileType := range []profiling.Type{profiling.TypeCPU, profiling.TypeMemory} {
+			t.Run(string(language)+"/"+string(profileType), func(t *testing.T) {
+				ctx := newValidationCLIContext(t, "--pid", "1", "--container-id", strings.Repeat("a", 64))
+				require.EqualError(t, validateLanguageOptions(ctx, language, profileType), "--pid and --container-id are mutually exclusive")
+			})
+		}
 	}
 }
 

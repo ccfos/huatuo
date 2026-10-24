@@ -113,6 +113,10 @@ func validateLoggingOptions(opts loggingOptions, logSizeSet bool) error {
 }
 
 func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ profiling.Type) error {
+	if ctx.String("pid") != "" && ctx.String("container-id") != "" {
+		return fmt.Errorf("--pid and --container-id are mutually exclusive")
+	}
+
 	switch lang {
 	case profiling.LanguageGo, profiling.LanguageC, profiling.LanguageCPP:
 		if err := validateSinglePID(ctx, "native"); err != nil {
