@@ -314,3 +314,82 @@ func TestCompileMalformedNetReturnsInvalidFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestL2FilterNegatedEthertypeVerdicts(t *testing.T) {
+	frame := func(ethertype uint16, payload []byte) []byte {
+		frame := make([]byte, 14+len(payload))
+		copy(frame[12:], []byte{byte(ethertype >> 8), byte(ethertype)})
+		copy(frame[14:], payload)
+		return frame
+	}
+	ipv4 := func(proto byte, l4Len int) []byte {
+		ip := make([]byte, 20+l4Len)
+		ip[0] = 4<<4 | 5
+		ip[8] = 64
+		ip[9] = proto
+		return ip
+	}
+	ipv4TCP := frame(0x0800, ipv4(unix.IPPROTO_TCP, 20))
+	ipv4UDP := frame(0x0800, ipv4(unix.IPPROTO_UDP, 8))
+	ipv6 := make([]byte, 60)
+	ipv6[0] = 6 << 4
+	ipv6[6] = unix.IPPROTO_TCP
+	ipv6TCP := frame(0x86dd, ipv6)
+	arpFrame := frame(0x0806, make([]byte, 28))
+
+	// The standalone negations must match libpcap truth in both
+	// directions. For the compounds only the non-matching direction is
+	// asserted: their matching direction is miscompiled by go-pcap itself
+	// (see #1569) and must simply not regress.
+	tests := []struct {
+		expr   string
+		packet []byte
+		want   bool
+	}{
+		{expr: "not ip", packet: ipv6TCP, want: true},
+		{expr: "not ip", packet: ipv4TCP},
+		{expr: "not ip6", packet: ipv4TCP, want: true},
+		{expr: "not ip6", packet: ipv6TCP},
+		{expr: "not arp", packet: ipv4TCP, want: true},
+		{expr: "not arp", packet: arpFrame},
+		{expr: "not rarp", packet: ipv4UDP, want: true},
+		// go-pcap compiles these compounds to the same bytecode as the
+		// bare negation; the rewrite must not fire for them, so traffic
+		// these expressions reject stays rejected (libpcap agrees).
+		{expr: "not arp and not tcp", packet: ipv4TCP},
+		{expr: "not tcp and not arp", packet: ipv4TCP},
+		{expr: "not rarp and not tcp", packet: ipv4TCP},
+		{expr: "not tcp and not rarp", packet: ipv4TCP},
+		// These compounds accept TCP in libpcap (both conjuncts hold); the
+		// compiler's mis-rejection is tracked in #1569, so the regression
+		// asserts the non-matching direction (UDP fails "not udp").
+		{expr: "not arp and not udp", packet: ipv4UDP},
+		{expr: "not udp and not arp", packet: ipv4UDP},
+		// "not ! arp" is a double negation; the rewrite must not fire.
+		{expr: "not ! arp", packet: ipv4TCP},
+		{expr: "not ! ip", packet: ipv6TCP},
+		{expr: "tcp and not ip6", packet: ipv4UDP},
+		{expr: "tcp and not ip6", packet: arpFrame},
+		{expr: "udp and not ip6", packet: ipv4TCP},
+		{expr: "ip and not arp", packet: ipv6TCP},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s/%d", tt.expr, len(tt.packet)), func(t *testing.T) {
+			insts, err := compileCBPF(tt.expr, false)
+			if err != nil {
+				t.Fatalf("compileCBPF: %v", err)
+			}
+			vm, err := cbpf.NewVM(insts)
+			if err != nil {
+				t.Fatalf("NewVM: %v", err)
+			}
+			verdict, err := vm.Run(tt.packet)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if got := verdict != 0; got != tt.want {
+				t.Fatalf("L2 filter accepted = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
