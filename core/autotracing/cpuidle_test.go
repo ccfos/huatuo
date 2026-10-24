@@ -25,6 +25,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/matcher"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 )
@@ -391,6 +392,52 @@ func TestCPUIdleTracingReconcileContainerStates(t *testing.T) {
 	}
 	if state.lastTraceAt != traceTime {
 		t.Errorf("lastTraceAt = %s, want %s", state.lastTraceAt, traceTime)
+	}
+}
+
+// Each Excluded rule is a blacklist entry on its own, so a container hitting
+// only one of several rules must stop being tracked.
+func TestCPUIdleTracingReconcileContainerStatesExcludeRules(t *testing.T) {
+	t.Parallel()
+
+	config := ContainerFilterConfig{
+		Excluded: []*matcher.Rule{
+			{Field: matcher.FieldTypeContainerHostname, Pattern: `^sidecar-`},
+			{Field: matcher.FieldTypeContainerHostNamespace, Pattern: `^kube-system`},
+		},
+	}
+	filter, err := config.Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	tracer := &cpuIdleTracing{
+		filter:     filter,
+		containers: map[string]*containerCPUState{},
+	}
+	tracer.reconcileContainerStates(map[string]*pod.Container{
+		"hostname-rule": {
+			ID:       "hostname-rule",
+			Hostname: "sidecar-mesh",
+			Labels:   map[string]any{"HostNamespace": "application-ns"},
+		},
+		"namespace-rule": {
+			ID:       "namespace-rule",
+			Hostname: "node-exporter",
+			Labels:   map[string]any{"HostNamespace": "kube-system"},
+		},
+		"unmatched": {
+			ID:       "unmatched",
+			Hostname: "node-exporter",
+			Labels:   map[string]any{"HostNamespace": "application-ns"},
+		},
+	})
+
+	if len(tracer.containers) != 1 {
+		t.Fatalf("len(containers) = %d, want 1", len(tracer.containers))
+	}
+	if _, ok := tracer.containers["unmatched"]; !ok {
+		t.Errorf(`containers = %v, want only "unmatched"`, tracer.containers)
 	}
 }
 

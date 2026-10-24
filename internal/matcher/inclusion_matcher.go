@@ -51,7 +51,7 @@ func (im *inclusionMatcher[T]) match(v T) bool {
 	if im.include != nil && !im.include.Match(v) {
 		return false
 	}
-	if im.exclude != nil && im.exclude.Match(v) {
+	if im.exclude != nil && im.exclude.MatchAny(v) {
 		return false
 	}
 	return true
