@@ -89,7 +89,7 @@ func TestDecodeNetlinkMessageFallsBackToBasicPackets(t *testing.T) {
 }
 
 func TestDecodeNetlinkMessageLegacyStats(t *testing.T) {
-	legacy := legacyStats(1<<32+2, 3, 4, 5, 6, 7)
+	legacy := legacyStats(1<<32+2, 3, 4, 5, 6, 7, 8)
 	message := qdiscMessage(t, 1, 0, []netlink.Attribute{
 		{Type: unix.TCA_KIND, Data: []byte("fq_codel\x00")},
 		{Type: unix.TCA_STATS, Data: legacy},
@@ -104,10 +104,11 @@ func TestDecodeNetlinkMessageLegacyStats(t *testing.T) {
 		Kind:         "fq_codel",
 		Bytes:        1<<32 + 2,
 		Packets:      3,
-		Drops:        4,
-		Overlimits:   5,
-		QueueLength:  6,
-		BacklogBytes: 7,
+		QueueLength:  4,
+		BacklogBytes: 5,
+		Drops:        6,
+		Requeues:     7,
+		Overlimits:   8,
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("legacy qdisc statistics mismatch (-want +got):\n%s", diff)
@@ -115,7 +116,7 @@ func TestDecodeNetlinkMessageLegacyStats(t *testing.T) {
 }
 
 func TestDecodeNetlinkMessagePrefersStats2(t *testing.T) {
-	legacy := legacyStats(1, 2, 3, 4, 5, 6)
+	legacy := legacyStats(1, 2, 3, 4, 5, 6, 7)
 	stats2 := marshalAttributes(t, []netlink.Attribute{
 		{Type: tcaStatsBasic, Data: basicStats(10, 20)},
 		{Type: tcaStatsQueue, Data: queueStats(30, 40, 50, 60, 70)},
@@ -306,17 +307,15 @@ func queueStats(
 func legacyStats(
 	bytes uint64,
 	packets uint32,
-	drops uint32,
-	overlimits uint32,
 	queueLength uint32,
 	backlogBytes uint32,
+	drops uint32,
+	requeues uint32,
+	overlimits uint32,
 ) []byte {
 	data := make([]byte, 36)
 	nlenc.PutUint64(data[0:8], bytes)
 	nlenc.PutUint32(data[8:12], packets)
-	nlenc.PutUint32(data[12:16], drops)
-	nlenc.PutUint32(data[16:20], overlimits)
-	nlenc.PutUint32(data[28:32], queueLength)
-	nlenc.PutUint32(data[32:36], backlogBytes)
+	copy(data[16:36], queueStats(queueLength, backlogBytes, drops, requeues, overlimits))
 	return data
 }
