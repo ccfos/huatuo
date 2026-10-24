@@ -230,22 +230,23 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 				continue
 			}
 
-			// Get the first line entry (primary function)
-			line := loc.Line[0]
-			if line == nil {
-				continue
-			}
-			fn, exists := functionMap[line.FunctionId]
-			if !exists {
-				continue
-			}
+			// pprof stores inlined functions before their enclosing caller.
+			// Keep that leaf-first order until the complete stack is reversed.
+			for _, line := range loc.Line {
+				if line == nil {
+					continue
+				}
+				fn, exists := functionMap[line.FunctionId]
+				if !exists {
+					continue
+				}
 
-			// Get function name from string table
-			funcName, ok := profileString(profile.StringTable, fn.Name)
-			if !ok {
-				continue
+				funcName, ok := profileString(profile.StringTable, fn.Name)
+				if !ok {
+					continue
+				}
+				stack = append(stack, funcName)
 			}
-			stack = append(stack, funcName)
 		}
 
 		// Insert stack into tree (leaf is at stack[0], so we need to reverse for phlaremodel.Tree)
