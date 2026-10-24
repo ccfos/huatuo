@@ -96,10 +96,14 @@ ES 数据绑定到工作目录的 `elasticsearch-data/`；报告包含请求响�
 下载失败保留独立日志。默认镜像为 gcc:14、golang:1.24、eclipse-temurin:17-jdk、
 python:3.11-slim，可用 `APISERVER_TEST_{NATIVE,GO,JAVA,PYTHON}_IMAGE` 替换。
 
-每次只运行一个负载 Pod，依次覆盖 C/C++/Go 的 oncpu、offcpu 和三种内存模式、
-Java CPU/两种内存模式及 Python CPU。Go Pod 只读挂载预编译静态负载；
+各语言 Pod 与存储启动并行准备，准备完成后保持空闲，收到启动信号才运行负载。
+每次只激活一个负载并执行一个采样任务，依次覆盖 C/C++/Go 的 oncpu、offcpu 和三种
+内存模式、Java CPU/两种内存模式及 Python CPU。Go Pod 只读挂载预编译静态负载；
 C/C++ 和 Java 在对应运行时镜像中准备负载。原生负载保留 16 个 64 KiB 映射，
-使最终快照仍有存活内存。矩阵的 `summary.tsv` 逐项记录 19 个组合。
+使最终快照仍有存活内存，并在收到 SIGTERM 后退出。
+矩阵使用 2 秒聚合周期，原生任务采样 6 秒、Java 采样 8 秒，均至少检查 3 个结果窗口；
+Python 采样 5 秒并输出一个窗口。其他 profiling 用例仍使用 5 秒聚合周期。
+矩阵的 `summary.tsv` 逐项记录 19 个组合。
 
 结果检查包括类型、容器归属、非空采样结果和正采样值火焰图；Python 只有整个任务
 时长的采集窗口，不要求多个窗口。临时 namespace、ConfigMap、Pod 在退出时清理。

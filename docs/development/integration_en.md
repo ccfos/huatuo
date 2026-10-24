@@ -124,11 +124,17 @@ separate logs. Defaults are gcc:14, golang:1.24, eclipse-temurin:17-jdk, and
 python:3.11-slim. Override them with
 `APISERVER_TEST_{NATIVE,GO,JAVA,PYTHON}_IMAGE`.
 
-One workload Pod runs at a time, covering C/C++/Go oncpu, offcpu, and three memory
-modes; Java CPU and two memory modes; and Python CPU. Go runs a read-only mounted,
-prebuilt static binary. C/C++ and Java prepare workloads in their runtime images.
-Native workloads retain sixteen 64 KiB mappings for final physical-usage
-snapshots. The matrix summary records each of the 19 combinations separately.
+Workload Pods prepare together while storage starts, then wait idle for an
+explicit start signal. Only one workload and profiling task run at a time,
+covering C/C++/Go oncpu, offcpu, and three memory modes; Java CPU and two memory
+modes; and Python CPU. Go runs a read-only mounted, prebuilt static binary.
+C/C++ and Java prepare workloads in their runtime images. Native workloads retain
+sixteen 64 KiB mappings for final physical-usage snapshots and exit on SIGTERM.
+The matrix uses two-second aggregation windows with six-second native and
+eight-second Java tasks, requiring at least three result windows. Python runs
+for five seconds and publishes one result window. Other profiling cases retain
+their five-second aggregation interval. The matrix summary records each of the
+19 combinations separately.
 
 Assertions verify profile types, container ownership, nonempty results, and
 positive flamegraph totals. Python has one collection window for the task duration.

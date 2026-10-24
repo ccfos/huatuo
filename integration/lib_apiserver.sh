@@ -9,7 +9,8 @@ source "${ROOT_DIR}/integration/config.sh"
 source "${ROOT_DIR}/integration/lib_continuous_profiling.sh"
 
 readonly API_TOKEN=integration-admin OTHER_API_TOKEN=integration-other
-readonly ES_PASSWORD=huatuo-integration PROFILE_INTERVAL=5
+readonly ES_PASSWORD=huatuo-integration
+readonly PROFILE_INTERVAL=${APISERVER_PROFILE_INTERVAL:-5}
 CURL_TIMEOUT=(--connect-timeout 2 --max-time 5)
 TARGET_PID=""
 POD_NAMESPACE=""
@@ -45,7 +46,7 @@ cleanup() {
 	if [[ -n "$POD_NAMESPACE" ]]; then
 		kubectl --request-timeout=30s -n "$POD_NAMESPACE" get pods -o yaml > "${HUATUO_BAMAI_TEST_TMPDIR}/pods-at-exit.yaml"
 		kubectl --request-timeout=30s -n "$POD_NAMESPACE" get events > "${HUATUO_BAMAI_TEST_TMPDIR}/pod-events.txt"
-		kubectl --request-timeout=30s -n "$POD_NAMESPACE" logs workload > "${HUATUO_BAMAI_TEST_TMPDIR}/pod-at-exit.log" 2>&1
+		kubectl --request-timeout=30s -n "$POD_NAMESPACE" logs -l app=apiserver-profiling --all-containers=true --prefix=true > "${HUATUO_BAMAI_TEST_TMPDIR}/pod-at-exit.log" 2>&1
 		kubectl --request-timeout=30s delete namespace "$POD_NAMESPACE" --wait=false || status=1
 	fi
 	if [[ -n "$STORAGE_CONTAINER_ID" ]]; then
