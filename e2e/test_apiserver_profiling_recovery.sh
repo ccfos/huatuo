@@ -13,13 +13,15 @@ start_server
 continuous_profiling_start_native_cpu_fixture TARGET_PID "${ROOT_DIR}/integration/testdata/test_apiserver_profiling_workload.c"
 
 CURRENT_CASE=graceful-recovery
-create 40
+create 30
 first=$JOB_ID
 wait_job "$first" running
 huatuo_apiserver_stop_with_signal TERM
 curl -fsS "${CURL_TIMEOUT[@]}" -H 'Authorization: Bearer integration-node-token' "$HUATUO_BAMAI_ADDR/v1/operations/$first" > "${HUATUO_BAMAI_TEST_TMPDIR}/operation-before-restart.json"
 jq -e '.data.status == "running"' "${HUATUO_BAMAI_TEST_TMPDIR}/operation-before-restart.json" > /dev/null
 start_server
+curl -fsS "${CURL_TIMEOUT[@]}" -H 'Authorization: Bearer integration-node-token' "$HUATUO_BAMAI_ADDR/v1/operations/$first" > "${HUATUO_BAMAI_TEST_TMPDIR}/operation-after-restart.json"
+jq -e '.data.status == "running"' "${HUATUO_BAMAI_TEST_TMPDIR}/operation-after-restart.json" > /dev/null || fatal 'Node sampling ended before apiserver restart completed'
 verify_result "$first"
 request GET /metrics 200
 grep -q '^huatuo_apiserver_jobs_recovered_total 1$' "$RESPONSE" || fatal 'recovery counter is not one'

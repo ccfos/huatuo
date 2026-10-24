@@ -108,27 +108,34 @@ sudo make e2e
 ```
 
 Static API checks do not require Docker, perf, or a compiler. Sampling requires
-Linux, root, Docker, Python 3, gcc, curl, jq, ss, pgrep, sampling-enabled perf
-settings, and built BPF/profiler tools. ES data is bound to `elasticsearch-data/`
-in the case workspace. Reports include requests, responses, profiles, logs, and
-`summary.tsv`. Generated configurations contain test tokens and belong only in
-test environments.
+Linux, root, Docker, curl, jq, ss, timeout, sampling-enabled perf settings, and
+built BPF/profiler tools. Host workload cases also require gcc; the matrix
+compiles C/C++ inside Pods and does not require a host compiler. ES data is bound
+to `elasticsearch-data/` in the case workspace. Reports include requests,
+responses, profiles, logs, and `summary.tsv`. Generated configurations contain
+test tokens and belong only in test environments.
 
-The matrix also requires kubectl administration, crictl, local kubelet
-credentials, and packaged asprof/py-spy tools. It matches Node InternalIP against
-local addresses. `APISERVER_TEST_NODE` can select a Node explicitly but must still
-identify this machine; an absent or ambiguous match fails. Override credential
+The matrix also requires Python 3, ip, kubectl administration, crictl, local
+kubelet credentials, and packaged asprof/py-spy tools. It matches Node InternalIP
+against local addresses. `APISERVER_TEST_NODE` can select a Node explicitly but
+must still identify this machine; an absent or ambiguous match fails. Override credential
 paths with `KUBELET_CERT` and `KUBELET_KEY`. Images are prepared together through
 the local CRI before Pods start with `imagePullPolicy: Never`; failed pulls retain
 separate logs. Defaults are gcc:14, golang:1.24, eclipse-temurin:17-jdk, and
 python:3.11-slim. Override them with
 `APISERVER_TEST_{NATIVE,GO,JAVA,PYTHON}_IMAGE`.
 
-One workload Pod runs at a time, covering C/C++/Go oncpu, offcpu, and three memory
-modes; Java CPU and two memory modes; and Python CPU. Go runs a read-only mounted,
-prebuilt static binary. C/C++ and Java prepare workloads in their runtime images.
-Native workloads retain sixteen 64 KiB mappings for final physical-usage
-snapshots. The matrix summary records each of the 19 combinations separately.
+Workload Pods prepare together while storage starts, then wait idle for an
+explicit start signal. Only one workload and profiling task run at a time,
+covering C/C++/Go oncpu, offcpu, and three memory modes; Java CPU and two memory
+modes; and Python CPU. Go runs a read-only mounted, prebuilt static binary.
+C/C++ and Java prepare workloads in their runtime images. Native workloads retain
+sixteen 64 KiB mappings for final physical-usage snapshots and exit on SIGTERM.
+The matrix uses two-second aggregation windows with six-second native and
+eight-second Java tasks, requiring at least three result windows. Python runs
+for five seconds and publishes one result window. Other profiling cases retain
+their five-second aggregation interval. The matrix summary records each of the
+19 combinations separately.
 
 Assertions verify profile types, container ownership, nonempty results, and
 positive flamegraph totals. Python has one collection window for the task duration.

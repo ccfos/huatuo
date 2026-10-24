@@ -85,21 +85,27 @@ sudo make e2e
 ```
 
 静态 API 检查不依赖 Docker、perf 或编译器。采样检查需要 Linux、root、Docker、
-Python 3、gcc、curl、jq、ss、pgrep、允许采样的 perf 配置及已构建的 BPF/profiler 工具。
+curl、jq、ss、timeout、允许采样的 perf 配置及已构建的 BPF/profiler 工具。
+宿主机负载用例还需要 gcc；矩阵在 Pod 内编译 C/C++，不需要宿主机编译器。
 ES 数据绑定到工作目录的 `elasticsearch-data/`；报告包含请求响应、采样结果、日志及
 `summary.tsv`。生成配置含测试 token，仅供测试环境使用。
 
-矩阵还需要 kubectl 管理权限、crictl、本机 kubelet 凭证和已打包的 asprof/py-spy。
+矩阵还需要 Python 3、ip、kubectl 管理权限、crictl、本机 kubelet 凭证和已打包的
+asprof/py-spy。
 通过节点 InternalIP 自动匹配本机节点；`APISERVER_TEST_NODE` 可显式指定，仍须属于
 本机。使用 `KUBELET_CERT`、`KUBELET_KEY` 覆盖凭证路径。无法唯一匹配节点时失败。
 先通过本机 CRI 集中准备镜像，再以 `imagePullPolicy: Never` 启动 Pod；
 下载失败保留独立日志。默认镜像为 gcc:14、golang:1.24、eclipse-temurin:17-jdk、
 python:3.11-slim，可用 `APISERVER_TEST_{NATIVE,GO,JAVA,PYTHON}_IMAGE` 替换。
 
-每次只运行一个负载 Pod，依次覆盖 C/C++/Go 的 oncpu、offcpu 和三种内存模式、
-Java CPU/两种内存模式及 Python CPU。Go Pod 只读挂载预编译静态负载；
+各语言 Pod 与存储启动并行准备，准备完成后保持空闲，收到启动信号才运行负载。
+每次只激活一个负载并执行一个采样任务，依次覆盖 C/C++/Go 的 oncpu、offcpu 和三种
+内存模式、Java CPU/两种内存模式及 Python CPU。Go Pod 只读挂载预编译静态负载；
 C/C++ 和 Java 在对应运行时镜像中准备负载。原生负载保留 16 个 64 KiB 映射，
-使最终快照仍有存活内存。矩阵的 `summary.tsv` 逐项记录 19 个组合。
+使最终快照仍有存活内存，并在收到 SIGTERM 后退出。
+矩阵使用 2 秒聚合周期，原生任务采样 6 秒、Java 采样 8 秒，均至少检查 3 个结果窗口；
+Python 采样 5 秒并输出一个窗口。其他 profiling 用例仍使用 5 秒聚合周期。
+矩阵的 `summary.tsv` 逐项记录 19 个组合。
 
 结果检查包括类型、容器归属、非空采样结果和正采样值火焰图；Python 只有整个任务
 时长的采集窗口，不要求多个窗口。临时 namespace、ConfigMap、Pod 在退出时清理。

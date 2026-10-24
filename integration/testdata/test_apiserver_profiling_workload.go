@@ -15,6 +15,7 @@
 package main
 
 import (
+	"fmt"
 	"syscall"
 	"time"
 )
@@ -29,6 +30,7 @@ func hotLoop() {
 }
 
 func main() {
+	fmt.Println("ready")
 	// Keep live mappings so retained-memory snapshots have a stable target.
 	var retained [16][]byte
 	next := 0

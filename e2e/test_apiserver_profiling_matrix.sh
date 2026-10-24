@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
+APISERVER_PROFILE_INTERVAL=2
 source "${ROOT_DIR}/integration/lib_apiserver.sh"
 
 # Replace the runner baseline with the kubelet-enabled profiling daemon.
 huatuo_bamai_stop
 
 CURRENT_CASE=matrix-environment
-require_commands kubectl ip crictl
+require_commands kubectl ip crictl python3
 require_readable "$KUBELET_CERT" "$KUBELET_KEY"
 ip -j address > "${HUATUO_BAMAI_TEST_TMPDIR}/addresses.json"
 kubectl --request-timeout=30s get nodes -o json > "${HUATUO_BAMAI_TEST_TMPDIR}/nodes.json"
@@ -60,44 +61,57 @@ kubectl --request-timeout=30s -n "$POD_NAMESPACE" create configmap workloads \
 	--from-file="${ROOT_DIR}/integration/testdata/TestProfilerJavaMemory.java" \
 	--from-file="${ROOT_DIR}/integration/testdata/test_profiler_python_cpu.py"
 
-start_test_storage
-start_node
-start_server
-
 for language in c c++ go java python; do
 	case "$language" in
 	c)
 		image=$native_image
-		command='gcc -O2 -g -fno-omit-frame-pointer /src/workload.c -o /work/load && touch /work/ready && exec /work/load'
+		prepare='gcc -O2 -g -fno-omit-frame-pointer /src/workload.c -o /work/load'
+		command='exec /work/load'
 		;;
 	c++)
 		image=$native_image
-		command='g++ -O2 -g -fno-omit-frame-pointer -x c++ /src/workload.c -o /work/load && touch /work/ready && exec /work/load'
+		prepare='g++ -O2 -g -fno-omit-frame-pointer -x c++ /src/workload.c -o /work/load'
+		command='exec /work/load'
 		;;
 	go)
 		image=$go_image
-		command='touch /work/ready && exec /fixtures/apiserver-go-workload'
+		prepare='test -x /fixtures/apiserver-go-workload'
+		command='exec /fixtures/apiserver-go-workload'
 		;;
 	java)
 		image=$java_image
-		command='javac -d /work /src/TestProfilerJavaMemory.java && touch /work/ready && exec java -Xmx256m -cp /work TestProfilerJavaMemory'
+		prepare='javac -d /work /src/TestProfilerJavaMemory.java'
+		command='exec java -Xmx256m -cp /work TestProfilerJavaMemory'
 		;;
 	python)
 		image=$python_image
-		command='touch /work/ready && exec python3 /src/test_profiler_python_cpu.py independent'
+		prepare='command -v python3'
+		command='exec python3 /src/test_profiler_python_cpu.py independent'
 		;;
 	esac
-	CURRENT_CASE="matrix-${language}-setup"
-	jq -n --arg image "$image" --arg command "$command" --arg node "$APISERVER_TEST_NODE" --arg fixtures "$(dirname "$GO_WORKLOAD")" \
-		'{apiVersion:"v1",kind:"Pod",metadata:{name:"workload"},spec:{nodeName:$node,restartPolicy:"Never",
+	CURRENT_CASE="matrix-${language}-prepare"
+	pod="workload-${language//+/p}"
+	# Preparation may overlap storage startup; only one workload is activated at a time.
+	command="$prepare && mkfifo /work/start && touch /work/prepared && read -r start < /work/start && $command"
+	jq -n --arg pod "$pod" --arg image "$image" --arg command "$command" --arg node "$APISERVER_TEST_NODE" --arg fixtures "$(dirname "$GO_WORKLOAD")" \
+		'{apiVersion:"v1",kind:"Pod",metadata:{name:$pod,labels:{app:"apiserver-profiling"}},spec:{nodeName:$node,restartPolicy:"Never",terminationGracePeriodSeconds:2,
 		containers:[{name:"workload",image:$image,imagePullPolicy:"Never",command:["sh","-c",$command],
-		readinessProbe:{exec:{command:["test","-f","/work/ready"]},periodSeconds:1},
+		readinessProbe:{exec:{command:["test","-f","/work/prepared"]},periodSeconds:1},
 		volumeMounts:[{name:"source",mountPath:"/src",readOnly:true},{name:"work",mountPath:"/work"},{name:"fixtures",mountPath:"/fixtures",readOnly:true}]}],
 		volumes:[{name:"source",configMap:{name:"workloads"}},{name:"work",emptyDir:{}},{name:"fixtures",hostPath:{path:$fixtures,type:"Directory"}}]}}' \
-		> "${HUATUO_BAMAI_TEST_TMPDIR}/pod.json"
-	kubectl --request-timeout=30s -n "$POD_NAMESPACE" create -f "${HUATUO_BAMAI_TEST_TMPDIR}/pod.json"
-	kubectl --request-timeout=310s -n "$POD_NAMESPACE" wait pod/workload --for=condition=Ready --timeout=300s
-	container_id=$(kubectl --request-timeout=30s -n "$POD_NAMESPACE" get pod workload -o jsonpath='{.status.containerStatuses[0].containerID}')
+		> "${HUATUO_BAMAI_TEST_TMPDIR}/pod-${language}.json"
+	kubectl --request-timeout=30s -n "$POD_NAMESPACE" create -f "${HUATUO_BAMAI_TEST_TMPDIR}/pod-${language}.json"
+done
+
+start_test_storage
+start_node
+start_server
+kubectl --request-timeout=310s -n "$POD_NAMESPACE" wait pod -l app=apiserver-profiling --for=condition=Ready --timeout=300s
+
+for language in c c++ go java python; do
+	CURRENT_CASE="matrix-${language}-setup"
+	pod="workload-${language//+/p}"
+	container_id=$(kubectl --request-timeout=30s -n "$POD_NAMESPACE" get pod "$pod" -o jsonpath='{.status.containerStatuses[0].containerID}')
 	container_id=${container_id#*://}
 	container_visible() {
 		curl -fsS "${CURL_TIMEOUT[@]}" -H 'Authorization: Bearer integration-node-token' \
@@ -105,30 +119,48 @@ for language in c c++ go java python; do
 			> "${HUATUO_BAMAI_TEST_TMPDIR}/container-${language}.json"
 	}
 	wait_until 90 2 container_visible || fatal "bamai did not discover container $container_id"
+	# Each idle container must be discovered before its target process is released.
+	kubectl --request-timeout=30s -n "$POD_NAMESPACE" exec "$pod" -- sh -c 'printf "start\n" > /work/start'
+	workload_ready() {
+		kubectl --request-timeout=5s -n "$POD_NAMESPACE" logs "$pod" > "${HUATUO_BAMAI_TEST_TMPDIR}/workload-${language}.log" \
+			&& grep -qx ready "${HUATUO_BAMAI_TEST_TMPDIR}/workload-${language}.log"
+	}
+	wait_until 30 0.2 workload_ready || fatal "$language workload did not start"
+	minimum=3
 	case "$language" in
-	c | c++ | go) combinations=('cpu oncpu' 'cpu offcpu' 'memory virtual_alloc' 'memory physical_alloc' 'memory physical_usage') ;;
-	java) combinations=('cpu oncpu' 'memory object_alloc' 'memory object_usage') ;;
-	python) combinations=('cpu oncpu') ;;
+	c | c++ | go)
+		duration=6
+		combinations=('cpu oncpu' 'cpu offcpu' 'memory virtual_alloc' 'memory physical_alloc' 'memory physical_usage')
+		;;
+	java)
+		duration=8
+		combinations=('cpu oncpu' 'memory object_alloc' 'memory object_usage')
+		;;
+	python)
+		duration=5
+		minimum=1 # Python publishes a single profile at natural completion.
+		combinations=('cpu oncpu')
+		;;
 	esac
 	for combination in "${combinations[@]}"; do
 		read -r typ mode <<< "$combination"
 		CURRENT_CASE="matrix-${language}-${typ}-${mode}"
 		extra=$(jq -nc --arg language "$language" --arg type "$typ" --arg mode "$mode" --arg id "$container_id" \
 			'{language:$language,type:$type,mode:$mode,scope:"container",container_id:$id}')
-		create 15 "$extra"
+		create "$duration" "$extra"
 		case "$typ/$mode" in
 		cpu/oncpu) expected_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds ;;
 		cpu/offcpu) expected_type=process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds ;;
 		memory/physical_usage) expected_type=memory:physical_usage:bytes:space:bytes ;;
 		memory/*) expected_type=memory:alloc_space:bytes:space:bytes ;;
 		esac
-		verify_result "$JOB_ID" 1 "$expected_type"
+		verify_result "$JOB_ID" "$minimum" "$expected_type"
 		jq -e --arg id "$container_id" 'all(.data.items[]; .container_id == $id)' \
 			"${HUATUO_BAMAI_TEST_TMPDIR}/raw-${JOB_ID}.json" > /dev/null || fatal 'raw result belongs to another container'
 		pass
 	done
-	kubectl --request-timeout=30s -n "$POD_NAMESPACE" logs workload > "${HUATUO_BAMAI_TEST_TMPDIR}/workload-${language}.log"
-	kubectl --request-timeout=70s -n "$POD_NAMESPACE" delete pod workload --wait=true --timeout=60s
+	kubectl --request-timeout=30s -n "$POD_NAMESPACE" logs "$pod" > "${HUATUO_BAMAI_TEST_TMPDIR}/workload-${language}.log"
+	kubectl --request-timeout=70s -n "$POD_NAMESPACE" delete pod "$pod" --wait=true --timeout=60s
 done
 
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" apiserver
