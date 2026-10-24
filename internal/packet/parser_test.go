@@ -345,3 +345,36 @@ func TestParseUnknown(t *testing.T) {
 		t.Errorf("err: want ErrNoLayers, got %v", err)
 	}
 }
+
+func TestParseTCPOptionBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		options []byte
+		wantTCP bool
+	}{
+		{"zero length MPTCP", []byte{30, 0, 0xf0, 0}, false},
+		{"one byte MPTCP", []byte{30, 1, 0xf0, 0}, false},
+		{"missing MPTCP subtype", []byte{30, 2, 0, 0}, false},
+		{"MPTCP past header", []byte{30, 8, 0xf0, 0}, false},
+		{"truncated option length", []byte{1, 1, 1, 30}, false},
+		{"unknown MPTCP subtype", []byte{30, 3, 0xf0, 0}, true},
+		{"MPTCP capable", []byte{30, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, true},
+		{"no operation and end", []byte{1, 1, 0, 0}, true},
+		{"maximum segment size", []byte{2, 4, 5, 180}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pkt := buildIPv4TCPSYNHdr()
+			pkt.RawLen += uint8(len(tc.options))
+			binary.BigEndian.PutUint16(pkt.Raw[2:], uint16(pkt.RawLen))
+			pkt.Raw[32] = uint8((20+len(tc.options))/4) << 4
+			copy(pkt.Raw[40:], tc.options)
+			parsed, err := Parse(&pkt)
+			if err != nil || parsed == nil || parsed.IPv4 == nil {
+				t.Fatalf("partial IPv4 packet=%+v, error=%v", parsed, err)
+			}
+			if (parsed.TCP != nil) != tc.wantTCP {
+				t.Fatalf("TCP=%+v, want present=%v", parsed.TCP, tc.wantTCP)
+			}
+		})
+	}
+}
