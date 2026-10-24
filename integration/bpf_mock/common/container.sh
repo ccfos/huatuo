@@ -23,7 +23,7 @@ bpf_mock_pod_manifest() {
    apiVersion: "v1", kind: "Pod",
    metadata: {name: $pod, namespace: $namespace},
    spec: {
-    nodeName: $node, restartPolicy: "Never",
+    nodeName: $node, restartPolicy: "Never", terminationGracePeriodSeconds: 1,
     containers: [{
      name: "trigger", image: $image, imagePullPolicy: "Never",
      command: ["sleep", "infinity"],
