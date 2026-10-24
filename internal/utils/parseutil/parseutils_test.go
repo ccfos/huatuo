@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -135,6 +136,12 @@ func TestRawKV(t *testing.T) {
 			true,
 		},
 		{
+			"duplicate key",
+			"key1 2026\nkey1 2027\n",
+			nil,
+			true,
+		},
+		{
 			"empty",
 			"",
 			map[string]uint64{},
@@ -153,6 +160,14 @@ func TestRawKV(t *testing.T) {
 			}
 		})
 	}
+	t.Run("duplicate key reports the key", func(t *testing.T) {
+		path := createTempFile(t, "key1 2026\nkey1 2027\n")
+		_, err := RawKV(path)
+		if err == nil || !strings.Contains(err.Error(), "duplicate key") ||
+			!strings.Contains(err.Error(), "key1") {
+			t.Fatalf("RawKV() error = %v, want error naming duplicate key1", err)
+		}
+	})
 	t.Run("non-existent", func(t *testing.T) {
 		_, err := RawKV("/non/existent")
 		if err == nil {
