@@ -225,22 +225,36 @@ func TestXFSNoDevices(t *testing.T) {
 
 func TestXFSLogFreeBytes(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		tail string
-		head string
-		want float64
+		name    string
+		tail    string
+		head    string
+		want    float64
+		wantErr bool
 	}{
 		{name: "same cycle", tail: "1:8\n", head: "1:8192\n", want: 12288},
 		{name: "next cycle", tail: "1:24\n", head: "2:4096\n", want: 8192},
 		{name: "head more than one cycle ahead", tail: "1:24\n", head: "3:4096\n", want: 0},
 		{name: "head cycle behind tail", tail: "2:24\n", head: "1:4096\n", want: 16384},
 		{name: "head offset behind tail", tail: "1:24\n", head: "1:4096\n", want: 16384},
+		{name: "negative cycle", tail: "-2147483648:8\n", head: "-2147483648:8192\n", want: 12288},
+		{name: "negative cycle to zero", tail: "-1:24\n", head: "0:4096\n", want: 8192},
+		{name: "adjacent negative cycles", tail: "-2:24\n", head: "-1:4096\n", want: 8192},
+		{name: "signed cycle wrap", tail: "2147483647:24\n", head: "-2147483648:4096\n", want: 8192},
+		{name: "cycle underflow", tail: "0:24\n", head: "-2147483648:4096\n", want: 16384},
+		{name: "maximum valid fields", tail: "1:2147483647\n", head: "2:0\n", want: 1099511627264},
+		{name: "cycle outside kernel range", tail: "2147483648:8\n", head: "1:8192\n", wantErr: true},
+		{name: "value outside kernel range", tail: "1:2147483648\n", head: "1:8192\n", wantErr: true},
+		{name: "invalid head", tail: "1:8\n", head: "invalid\n", wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(root, "log_tail_lsn"), []byte(tt.tail), 0o600))
 			require.NoError(t, os.WriteFile(filepath.Join(root, "reserve_grant_head"), []byte(tt.head), 0o600))
 			got, err := calcuXlogFreeBytes(root, 16384)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
 		})
