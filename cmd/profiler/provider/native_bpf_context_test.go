@@ -15,6 +15,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -24,11 +25,13 @@ import (
 	"github.com/cilium/ebpf"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
 	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type closeBPFStub struct {
@@ -103,6 +106,7 @@ type frozenRingReaderStub struct {
 	batches []bpf.PerfEventBatch
 	reads   int
 	closed  bool
+	err     error
 }
 
 func (*frozenRingReaderStub) ReadInto(any) error {
@@ -110,6 +114,10 @@ func (*frozenRingReaderStub) ReadInto(any) error {
 }
 
 func (r *frozenRingReaderStub) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
+	if r.err != nil {
+		return bpf.PerfEventBatch{}, r.err
+	}
+
 	if r.reads >= len(r.batches) {
 		return bpf.PerfEventBatch{}, nil
 	}
@@ -123,6 +131,44 @@ func (r *frozenRingReaderStub) ReadBatch(func() any) (bpf.PerfEventBatch, error)
 func (r *frozenRingReaderStub) Close() error {
 	r.closed = true
 	return nil
+}
+
+type singleRingBPFStub struct {
+	bpf.BPF
+	readerCtx context.Context
+}
+
+func (*singleRingBPFStub) MapIDByName(name string) uint32 {
+	if name == "stack_map_a" {
+		return 1
+	}
+
+	return 0
+}
+
+func (b *singleRingBPFStub) EventPipeByName(ctx context.Context, _ string, _ uint32) (bpf.PerfEventReader, error) {
+	b.readerCtx = ctx
+
+	return &frozenRingReaderStub{}, nil
+}
+
+// The off-CPU consumer only checks cancellation on empty batches, so the reader
+// must follow the collection context instead of outliving it.
+func TestNewSingleRingBufferContextFollowsCancel(t *testing.T) {
+	stub := &singleRingBPFStub{}
+	ctx, cancel := context.WithCancel(t.Context())
+
+	ringCtx, err := newSingleRingBufferContext(stub, ctx, 4096)
+	if err != nil {
+		t.Fatalf("newSingleRingBufferContext() error = %v", err)
+	}
+
+	t.Cleanup(ringCtx.Close)
+	cancel()
+
+	if err := stub.readerCtx.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("reader context error = %v, want %v", err, context.Canceled)
+	}
 }
 
 func TestNativeProfilerStopClosesReadersAndBPF(t *testing.T) {
@@ -465,5 +511,151 @@ func TestNativeBatchesHandleStackErrors(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestDrainFinalNormalStopDeliversBufferedSamples(t *testing.T) {
+	event := &abi.ProfilerEventBase{
+		PIDTGID:   uint64(100) << 32,
+		Value:     1,
+		Kernstack: 1,
+		Userstack: -1,
+	}
+	obj := &frozenRingBPFStub{values: map[uint32]uint64{
+		bpfmap.TransferCountIdx: 0,
+		bpfmap.SampleCountAIdx:  1,
+	}}
+	ringCtx := &ringBufferContext{
+		bpf:                obj,
+		readerA:            &frozenRingReaderStub{batches: []bpf.PerfEventBatch{{Events: []any{event}}}},
+		transferStateMapID: 1,
+		stackMapAID:        2,
+	}
+
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(profile.ErrCollectionDurationElapsed)
+
+	var got int
+	err := ringCtx.drainFinal(
+		ctx,
+		func() any { return &abi.ProfilerEventBase{} },
+		func(batch *pipeline.SampleBatch) error {
+			got += len(batch.Samples)
+			return nil
+		},
+		func(value int64) (int64, error) { return value, nil },
+	)
+	if err != nil {
+		t.Fatalf("drainFinal() error = %v", err)
+	}
+
+	if got != 1 {
+		t.Fatalf("final samples delivered = %d, want 1", got)
+	}
+}
+
+func TestDrainFinalAbnormalCancelDeliversNothing(t *testing.T) {
+	event := &abi.ProfilerEventBase{
+		PIDTGID:   uint64(100) << 32,
+		Value:     1,
+		Kernstack: 1,
+		Userstack: -1,
+	}
+	obj := &frozenRingBPFStub{values: map[uint32]uint64{
+		bpfmap.TransferCountIdx: 0,
+		bpfmap.SampleCountAIdx:  1,
+	}}
+	reader := &frozenRingReaderStub{batches: []bpf.PerfEventBatch{{Events: []any{event}}}}
+	ringCtx := &ringBufferContext{
+		bpf:                obj,
+		readerA:            reader,
+		transferStateMapID: 1,
+		stackMapAID:        2,
+	}
+
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(errors.New("collection failed"))
+
+	var got int
+	err := ringCtx.drainFinal(
+		ctx,
+		func() any { return &abi.ProfilerEventBase{} },
+		func(batch *pipeline.SampleBatch) error {
+			got += len(batch.Samples)
+			return nil
+		},
+		func(value int64) (int64, error) { return value, nil },
+	)
+	if err != nil {
+		t.Fatalf("drainFinal() error = %v", err)
+	}
+
+	if got != 0 {
+		t.Fatalf("abnormal cancel delivered %d samples, want 0", got)
+	}
+
+	if reader.reads != 0 {
+		t.Fatalf("abnormal cancel read %d batches, want 0", reader.reads)
+	}
+}
+
+func TestDrainFinalSwallowsCancelledRead(t *testing.T) {
+	obj := &frozenRingBPFStub{values: map[uint32]uint64{
+		bpfmap.TransferCountIdx: 0,
+		bpfmap.SampleCountAIdx:  1,
+	}}
+	ringCtx := &ringBufferContext{
+		bpf:                obj,
+		readerA:            &frozenRingReaderStub{err: types.ErrExitByCancelCtx},
+		transferStateMapID: 1,
+		stackMapAID:        2,
+	}
+
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(profile.ErrCollectionDurationElapsed)
+
+	if err := ringCtx.drainFinal(
+		ctx,
+		func() any { return &abi.ProfilerEventBase{} },
+		func(*pipeline.SampleBatch) error { return nil },
+		func(value int64) (int64, error) { return value, nil },
+	); err != nil {
+		t.Fatalf("drainFinal() error = %v, want nil for a cancelled read", err)
+	}
+}
+
+func TestDrainFinalWrapsDrainError(t *testing.T) {
+	event := &abi.ProfilerEventBase{
+		PIDTGID:   uint64(100) << 32,
+		Value:     1,
+		Kernstack: 1,
+		Userstack: -1,
+	}
+	obj := &frozenRingBPFStub{values: map[uint32]uint64{
+		bpfmap.TransferCountIdx: 0,
+		bpfmap.SampleCountAIdx:  1,
+	}}
+	ringCtx := &ringBufferContext{
+		bpf:                obj,
+		readerA:            &frozenRingReaderStub{batches: []bpf.PerfEventBatch{{Events: []any{event}}}},
+		transferStateMapID: 1,
+		stackMapAID:        2,
+	}
+
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(profile.ErrCollectionDurationElapsed)
+
+	boom := errors.New("pipeline closed")
+	err := ringCtx.drainFinal(
+		ctx,
+		func() any { return &abi.ProfilerEventBase{} },
+		func(*pipeline.SampleBatch) error { return boom },
+		func(value int64) (int64, error) { return value, nil },
+	)
+	if !errors.Is(err, boom) {
+		t.Fatalf("drainFinal() error = %v, want %v", err, boom)
+	}
+	if err.Error() != "drain native samples: pipeline closed" {
+		t.Fatalf("drainFinal() error = %q, want wrapped drain error", err)
 	}
 }

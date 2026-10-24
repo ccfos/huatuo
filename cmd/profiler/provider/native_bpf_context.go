@@ -29,6 +29,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -68,12 +69,16 @@ func newRingBufferContext(
 	bufferSize int,
 	needsFallback bool,
 ) (*ringBufferContext, error) {
-	readerA, err := b.EventPipeByName(ctx, "profiler_output_a", uint32(bufferSize))
+	// Readers must outlive collection so a normal stop can still drain the
+	// events written since the last tick. Close owns their lifetime instead.
+	readerCtx := context.WithoutCancel(ctx)
+
+	readerA, err := b.EventPipeByName(readerCtx, "profiler_output_a", uint32(bufferSize))
 	if err != nil {
 		return nil, fmt.Errorf("create readerA: %w", err)
 	}
 
-	readerB, err := b.EventPipeByName(ctx, "profiler_output_b", uint32(bufferSize))
+	readerB, err := b.EventPipeByName(readerCtx, "profiler_output_b", uint32(bufferSize))
 	if err != nil {
 		readerA.Close()
 		return nil, fmt.Errorf("create readerB: %w", err)
@@ -101,6 +106,8 @@ func newSingleRingBufferContext(
 		return nil, errors.New("stack_map_a not found")
 	}
 
+	// The single-ring consumer only checks cancellation on empty batches, so a
+	// reader that outlives collection would keep draining while events arrive.
 	reader, err := b.EventPipeByName(ctx, "profiler_output_a", uint32(bufferSize))
 	if err != nil {
 		return nil, fmt.Errorf("create readerA: %w", err)
@@ -311,6 +318,27 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 		ring.sampleCountIdx,
 		0,
 	)
+}
+
+// drainFinal delivers the events written since the last tick when collection
+// ends normally. An abnormal cancel aborts collection, so nothing is drained.
+// The reader deadline bounds each read, keeping delivery finite.
+func (r *ringBufferContext) drainFinal(
+	ctx context.Context,
+	newEvent func() any,
+	enqueue func(*pipeline.SampleBatch) error,
+	convert func(int64) (int64, error),
+) error {
+	if !profile.IsNormalStop(ctx) {
+		return nil
+	}
+
+	err := r.drainFrozenRingBuffer(newEvent, enqueue, convert)
+	if err != nil && !errors.Is(err, types.ErrExitByCancelCtx) {
+		return fmt.Errorf("drain native samples: %w", err)
+	}
+
+	return nil
 }
 
 // Only missing IDs can belong to the other retained-memory stack map.
