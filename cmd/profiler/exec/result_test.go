@@ -74,6 +74,27 @@ func TestVerifyIncludesEveryFailure(t *testing.T) {
 	}
 }
 
+func TestVerifyReportsNilResults(t *testing.T) {
+	t.Parallel()
+
+	commandErr := errors.New("command failed")
+	err := Verify([]*Result{
+		nil,
+		{PID: 42, Err: commandErr},
+	})
+	if err == nil {
+		t.Fatal("Verify() error = nil, want nil-result failure")
+	}
+
+	if !strings.Contains(err.Error(), "profiler result is nil") {
+		t.Fatalf("Verify() error = %q, want nil-result detail", err)
+	}
+
+	if !errors.Is(err, commandErr) {
+		t.Fatalf("Verify() error = %v, want the other command failure", err)
+	}
+}
+
 func TestOutputForErrorTruncatesOversizedOutput(t *testing.T) {
 	t.Parallel()
 
