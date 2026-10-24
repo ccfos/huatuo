@@ -436,6 +436,16 @@ func TestSQLiteBackendTerms(t *testing.T) {
 	if len(limitedTerms) != 1 {
 		t.Errorf("backend Terms() limited count = %d, want 1", len(limitedTerms))
 	}
+
+	emptyTerms, err := backend.Values(t.Context(), "user_id", driver.Query{
+		Filters: []driver.Filter{{Field: "status", Op: driver.OpEq, Value: "running"}},
+	}, 0)
+	if err != nil {
+		t.Errorf("backend Terms() with zero limit returned error: %v", err)
+	}
+	if len(emptyTerms) != 0 {
+		t.Errorf("backend Terms() zero-limit count = %d, want 0", len(emptyTerms))
+	}
 }
 
 func TestSQLiteTimestampIndexFormat(t *testing.T) {
