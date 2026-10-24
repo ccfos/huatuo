@@ -160,7 +160,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			go generate -run BPF_COMPILE {}'
 	@touch $@
 
-build: $(APP_CMD_BIN_TARGETS)
+build: $(APP_CMD_BIN_TARGETS) $(PPROF_TOOL)
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
 	@cp *.conf $(APP_CMD_OUTPUT)/conf/
@@ -172,6 +172,10 @@ $(APP_CMD_BIN_TARGETS): gen-build $(GO_SRCS)
 $(APP_CMD_OUTPUT)/bin/%:
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
 	$(GO_BUILD_IMPL) -o $@ ./$(APP_CMD_DIR)/$*
+
+$(PPROF_TOOL): $(GO_SRCS) Makefile
+	@mkdir -p $(dir $@)
+	CGO_ENABLED=0 go build -o $@ ./build/pprof-tool
 
 docker-build:
 	@docker build --network=host --no-cache --build-arg BUILD_MODE=$(BUILD_MODE) -t $(IMAGE) -f Dockerfile .
@@ -214,7 +218,6 @@ unit: gen-build
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
 integration: build
-	go build -o $(PPROF_TOOL) ./build/pprof-tool
 	@bash integration/run.sh
 
 e2e: build
