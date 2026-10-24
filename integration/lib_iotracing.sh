@@ -43,6 +43,7 @@ iotracing_filesystem_test() {
 	fi
 	bpf_tool_setup iotracing
 	readonly DURATION=8
+	readonly READY_TIMEOUT=60
 	test_dirs=()
 	loop_devices=()
 	IO_PID=""
@@ -63,6 +64,12 @@ iotracing_filesystem_test() {
 		exit "${status}"
 	}
 	trap cleanup EXIT
+
+	iotracing_capture_is_ready() {
+		kill -0 "${IO_PID}" 2> /dev/null \
+			|| fatal "iotracing exited before capture was ready; see ${TOOL_ERR}"
+		grep -Fxq 'iotracing: capture ready' "${TOOL_ERR}"
+	}
 
 	run_filesystem_tests() {
 		local filesystem=$1 image_size=64M format_flag=-F
@@ -119,15 +126,16 @@ iotracing_filesystem_test() {
 		fi
 
 		log_info "iotracing: filesystem=${filesystem}, duration=${DURATION}s, device=${device}, io_test_dir=${io_test_dir}"
-		"${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
+		timeout --kill-after=5s "$((READY_TIMEOUT + DURATION))s" "${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
 			--duration "${DURATION}" \
 			--device "${device}" \
 			--output json \
 			> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
 		IO_PID=$!
 
-		# Let probes attach before the workload starts.
-		sleep 1
+		# The CLI confirms both event-channel creation and complete probe attachment.
+		wait_until "${READY_TIMEOUT}" 1 iotracing_capture_is_ready \
+			|| fatal "iotracing capture was not ready within ${READY_TIMEOUT} seconds; see ${TOOL_ERR}"
 
 		# Keep the sustained load within the private filesystem's bounded capacity.
 		timeout --kill-after=1s "$((DURATION - 2))" bash -c '
