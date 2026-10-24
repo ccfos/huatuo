@@ -124,6 +124,38 @@ func TestSpecToSystemdProperties(t *testing.T) {
 			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": 130000},
 		},
 		{
+			// A truncated quotient that is already a granularity multiple must
+			// not be rounded again because the exact quotient has a remainder.
+			name: "cpu-truncated-exact-granularity",
+			spec: &specs.LinuxResources{
+				CPU: &specs.LinuxCPU{
+					Quota:  i64ptr(10000),
+					Period: u64ptr(999999),
+				},
+			},
+			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": 10000},
+		},
+		{
+			name: "cpu-last-rounded-value",
+			spec: &specs.LinuxResources{
+				CPU: &specs.LinuxCPU{
+					Quota:  i64ptr(18446744073709549),
+					Period: u64ptr(1000),
+				},
+			},
+			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": 18446744073709550000},
+		},
+		{
+			name: "cpu-rounded-value-overflow-saturates",
+			spec: &specs.LinuxResources{
+				CPU: &specs.LinuxCPU{
+					Quota:  i64ptr(18446744073709551),
+					Period: u64ptr(1000),
+				},
+			},
+			wantValues: map[string]uint64{"CPUQuotaPerSecUSec": ^uint64(0)},
+		},
+		{
 			// CPU section present but Quota <= 0 must be ignored: systemd
 			// treats a zero/negative quota as "unlimited" which would silently
 			// erase an existing limit. The fix guards *Quota > 0.

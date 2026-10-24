@@ -118,12 +118,13 @@ func cpuQuotaPerSecond(quota, period uint64) uint64 {
 	if hi >= period {
 		return math.MaxUint64
 	}
-	value, remainder := bits.Div64(hi, lo, period)
-	if remainder != 0 || value%10000 != 0 {
-		if value > math.MaxUint64-9999 {
+	value, _ := bits.Div64(hi, lo, period)
+	if value%10000 != 0 {
+		delta := 10000 - value%10000
+		if value > math.MaxUint64-delta {
 			return math.MaxUint64
 		}
-		value = (value/10000 + 1) * 10000
+		value += delta
 	}
 	return value
 }
