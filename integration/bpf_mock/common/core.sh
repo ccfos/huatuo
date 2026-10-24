@@ -116,6 +116,8 @@ stop_bpf_mock_daemon() {
 # The caller owns the executable path; prebuilt overrides are validated in place.
 build_bpf_mock_checker() {
 	local feature=$1 checker=$2
+	# Reuse only a checker already validated by this shell.
+	if [[ ${bpf_mock_built_checker:-} == "${checker}" && -x ${checker} ]]; then return 0; fi
 	local build_log="${HUATUO_BAMAI_TEST_TMPDIR}/mock-event-checker-build.log"
 	if [[ -z "${BPF_MOCK_CHECKER_BIN:-}" ]]; then
 		require_commands go
@@ -123,6 +125,7 @@ build_bpf_mock_checker() {
 			> "${build_log}" 2>&1 || fatal "mock event checker build failed; see ${build_log}"
 	fi
 	[[ -x "${checker}" ]] || fatal "mock event checker is not executable: ${checker}"
+	bpf_mock_built_checker=${checker}
 }
 
 run_bpf_mock_checker() {
