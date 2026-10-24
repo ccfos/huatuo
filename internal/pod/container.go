@@ -53,7 +53,11 @@ func (c *Container) LifeResources(key string) any {
 
 // LabelHostNamespace returns namespace label
 func (c *Container) LabelHostNamespace() string {
-	return c.Labels[labelHostNamespace].(string)
+	if c == nil || c.Labels == nil {
+		return ""
+	}
+	value, _ := c.Labels[labelHostNamespace].(string)
+	return value
 }
 
 func (c *Container) InitPidOrInitnsPid() int {
