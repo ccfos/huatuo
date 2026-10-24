@@ -43,6 +43,7 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 	}
 
 	received := make(chan *types.AggregationWindow, 1)
+	var dataFrames atomic.Int32
 	var commits atomic.Int32
 	toolstream.Register(server, profilingapi.StoreServiceName, func(
 		_ context.Context,
@@ -64,6 +65,7 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 			return nil
 		}
 
+		dataFrames.Add(1)
 		result := request.Data
 		if request.TaskID != "task-1" {
 			t.Errorf("TaskID = %q, want task-1", request.TaskID)
@@ -104,6 +106,10 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 		DroppedSamples: map[string]uint64{types.DropReasonCollection: 3},
 	}
 
+	if err := formatter.Add(t.Context(), nil); err == nil {
+		t.Fatal("Add(nil) error = nil, want validation error")
+	}
+
 	if err := formatter.Add(t.Context(), result); err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +120,9 @@ func TestRemoteStoreFormatterSendsResult(t *testing.T) {
 
 	if commits.Load() != 1 {
 		t.Fatalf("commits = %d, want 1", commits.Load())
+	}
+	if dataFrames.Load() != 1 {
+		t.Fatalf("data frames = %d, want 1", dataFrames.Load())
 	}
 
 	select {

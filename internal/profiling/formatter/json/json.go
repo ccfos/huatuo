@@ -33,6 +33,9 @@ func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := output.RequireWindow(window); err != nil {
+		return err
+	}
 
 	writer, err := f.destination.Open()
 	if err != nil {
