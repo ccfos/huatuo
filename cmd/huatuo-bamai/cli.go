@@ -207,10 +207,12 @@ func configureRuntime(opts *Options) error {
 	if err := config.Load(filepath.Join(opts.ConfigDir, opts.ConfigFile)); err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+
 	nodeAPIAddress, err := localAPIAddress(config.Get().HTTPServer.ListenAddress)
 	if err != nil {
 		return err
 	}
+
 	internalconfig.CoreAPIAddress = nodeAPIAddress
 
 	// Log level: CLI --log-debug overrides config file; config file overrides
