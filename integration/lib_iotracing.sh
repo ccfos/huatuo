@@ -42,6 +42,7 @@ iotracing_filesystem_test() {
 	fi
 	bpf_tool_setup iotracing
 	readonly DURATION=8
+	readonly READY_TIMEOUT=60
 	test_dirs=()
 	loop_devices=()
 	IO_PID=""
@@ -273,6 +274,12 @@ iotracing_filesystem_test() {
 		fi
 	}
 
+	iotracing_capture_is_ready() {
+		kill -0 "${IO_PID}" 2> /dev/null \
+			|| fatal "iotracing exited before capture was ready; see ${TOOL_ERR}"
+		grep -Fxq 'iotracing: capture ready' "${TOOL_ERR}"
+	}
+
 	run_filesystem_tests() {
 		local filesystem=$1 image_size=64M format_flag=-F
 		local io_test_dir="${TOOL_WORK_DIR}/${filesystem}-mnt"
@@ -332,8 +339,20 @@ iotracing_filesystem_test() {
 		fi
 
 		log_info "iotracing: filesystem=${filesystem}, duration=${DURATION}s, device=${device}, io_test_dir=${io_test_dir}"
-		# Keep writes active through attachment and capture on slow hosts. Reusing
-		# the same bounded file avoids growing the private filesystem.
+		defer_interrupts
+		setsid timeout --kill-after=5s "$((READY_TIMEOUT + DURATION))s" "${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
+			--duration "${DURATION}" \
+			--device "${device}" \
+			--output json \
+			> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
+		IO_PID=$!
+		record_resources
+
+		# The CLI confirms both event-channel creation and complete probe attachment.
+		wait_until "${READY_TIMEOUT}" 1 iotracing_capture_is_ready \
+			|| fatal "iotracing capture was not ready within ${READY_TIMEOUT} seconds; see ${TOOL_ERR}"
+
+		# Keep writes active until capture ends without growing the private filesystem.
 		defer_interrupts
 		setsid timeout --preserve-status --kill-after=1s 30s bash -c '
 			while :; do
@@ -343,14 +362,6 @@ iotracing_filesystem_test() {
 		WORKLOAD_PID=$!
 		record_resources
 
-		defer_interrupts
-		setsid timeout --kill-after=5s 20s "${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
-			--duration "${DURATION}" \
-			--device "${device}" \
-			--output json \
-			> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
-		IO_PID=$!
-		record_resources
 		wait "${IO_PID}" || fatal "iotracing exited non-zero"
 		IO_PID=""
 		kill -0 "${WORKLOAD_PID}" 2> /dev/null || fatal "dd workload ended before capture completed"

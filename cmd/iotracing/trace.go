@@ -64,6 +64,9 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 	}
 	defer reader.Close()
 
+	// Loading can outlast a short workload; signal only after the reader and probes are ready.
+	fmt.Fprintln(os.Stderr, "iotracing: capture ready")
+
 	return collectReport(b, reader, cfg, started)
 }
 
