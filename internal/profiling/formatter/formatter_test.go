@@ -159,6 +159,29 @@ func TestFormatterCancellationDoesNotCreateFile(t *testing.T) {
 	}
 }
 
+func TestFormatterRejectsNilWindowWithoutCreatingFile(t *testing.T) {
+	for _, format := range []output.OutputFormat{
+		output.FormatCollapsed,
+		output.FormatSVG,
+		output.FormatJSON,
+		output.FormatSpeedscope,
+		output.FormatChromeTrace,
+	} {
+		t.Run(string(format), func(t *testing.T) {
+			destination := filepath.Join(t.TempDir(), "profile")
+			formatter := createFormatter(t, format, destination)
+			err := formatter.Add(t.Context(), nil)
+			if err == nil || err.Error() != "profiling aggregation window is required" {
+				t.Fatalf("Formatter.Add(nil) error = %v, want required-window error", err)
+			}
+
+			if _, err := os.Stat(destination); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("nil window created output: %v", err)
+			}
+		})
+	}
+}
+
 func createFormatter(t *testing.T, format output.OutputFormat, destination string) output.Formatter {
 	t.Helper()
 	formatter, err := factory.NewFormatter(output.Config{
