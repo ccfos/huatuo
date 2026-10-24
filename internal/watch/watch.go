@@ -45,9 +45,16 @@ func NewHub[T any]() *Hub[T] {
 // cancel function. Calling cancel unregisters the subscriber.
 func (h *Hub[T]) Subscribe() (<-chan T, func()) {
 	h.mu.Lock()
+	if h.subs == nil {
+		h.subs = make(map[uint64]*subscriber[T])
+	}
+	bufSize := h.bufSize
+	if bufSize <= 0 {
+		bufSize = defaultBufSize
+	}
 	id := h.nextID
 	h.nextID++
-	sub := &subscriber[T]{ch: make(chan T, h.bufSize)}
+	sub := &subscriber[T]{ch: make(chan T, bufSize)}
 	h.subs[id] = sub
 	h.mu.Unlock()
 

@@ -105,3 +105,32 @@ func TestHub_NoSubscribersNotifyIsNoop(t *testing.T) {
 		h.Notify(&testDoc{})
 	})
 }
+
+func TestHub_ZeroValueHub(t *testing.T) {
+	var empty Hub[*testDoc]
+	require.NotPanics(t, func() {
+		empty.Notify(&testDoc{})
+	})
+
+	var h Hub[*testDoc]
+	ch, cancel := h.Subscribe()
+	defer cancel()
+
+	require.Equal(t, defaultBufSize, cap(ch))
+
+	doc := &testDoc{}
+	h.Notify(doc)
+
+	select {
+	case got := <-ch:
+		require.Same(t, doc, got)
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for value on zero-value hub")
+	}
+
+	cancel()
+	h.mu.RLock()
+	count := len(h.subs)
+	h.mu.RUnlock()
+	require.Zero(t, count)
+}
