@@ -24,13 +24,24 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func netNamespaceInum(info os.FileInfo) (uint64, error) {
+	if info == nil {
+		return 0, errors.New("network namespace stat metadata is required")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat == nil {
+		return 0, fmt.Errorf("network namespace stat metadata has type %T, want *syscall.Stat_t", info.Sys())
+	}
+	return stat.Ino, nil
+}
+
 // NetNamespaceInumByPID returns the network namespace inum for pid.
 func NetNamespaceInumByPID(pid int) (uint64, error) {
 	netnsStat, err := os.Stat(fmt.Sprintf("/proc/%d/ns/net", pid))
 	if err != nil {
 		return 0, err
 	}
-	return netnsStat.Sys().(*syscall.Stat_t).Ino, nil
+	return netNamespaceInum(netnsStat)
 }
 
 // NetNamespaceCookieByPID returns the network namespace cookie for pid.

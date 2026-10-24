@@ -16,8 +16,19 @@ package netutil
 
 import (
 	"os"
+	"syscall"
 	"testing"
+	"time"
 )
+
+type testFileInfo struct{ sys any }
+
+func (f testFileInfo) Name() string       { return "net" }
+func (f testFileInfo) Size() int64        { return 0 }
+func (f testFileInfo) Mode() os.FileMode  { return 0 }
+func (f testFileInfo) ModTime() time.Time { return time.Time{} }
+func (f testFileInfo) IsDir() bool        { return false }
+func (f testFileInfo) Sys() any           { return f.sys }
 
 func TestNetNamespaceInumByPID(t *testing.T) {
 	tests := []struct {
@@ -25,23 +36,10 @@ func TestNetNamespaceInumByPID(t *testing.T) {
 		pid     int
 		wantErr bool
 	}{
-		{
-			name:    "valid current pid",
-			pid:     os.Getpid(),
-			wantErr: false,
-		},
-		{
-			name:    "invalid pid 0",
-			pid:     0,
-			wantErr: true,
-		},
-		{
-			name:    "invalid negative pid",
-			pid:     -1,
-			wantErr: true,
-		},
+		{name: "valid current pid", pid: os.Getpid()},
+		{name: "invalid pid 0", pid: 0, wantErr: true},
+		{name: "invalid negative pid", pid: -1, wantErr: true},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := NetNamespaceInumByPID(tt.pid)
@@ -52,5 +50,23 @@ func TestNetNamespaceInumByPID(t *testing.T) {
 				t.Errorf("NetNamespaceInumByPID() got = %v, want non-zero inum", got)
 			}
 		})
+	}
+}
+
+func TestNetNamespaceInumChecksStatMetadata(t *testing.T) {
+	for _, info := range []os.FileInfo{nil, testFileInfo{sys: "unexpected"}, testFileInfo{}} {
+		if _, err := netNamespaceInum(info); err == nil {
+			t.Fatalf("netNamespaceInum(%T) error = nil, want metadata error", info)
+		}
+	}
+}
+
+func TestNetNamespaceInumReturnsInode(t *testing.T) {
+	got, err := netNamespaceInum(testFileInfo{sys: &syscall.Stat_t{Ino: 42}})
+	if err != nil {
+		t.Fatalf("netNamespaceInum() error = %v", err)
+	}
+	if got != 42 {
+		t.Fatalf("netNamespaceInum() = %d, want 42", got)
 	}
 }
