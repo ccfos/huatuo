@@ -17,6 +17,7 @@ package provider
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -131,6 +132,10 @@ func TestJavaProcessName(t *testing.T) {
 			args := append([]string{"-test.run=TestJavaProcessNameHelper", "--"}, tt.args...)
 			cmd := exec.CommandContext(ctx, executable, args...)
 			cmd.Env = append(os.Environ(), "HUATUO_TEST_JAVA_PROCESS=1")
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := cmd.Start(); err != nil {
 				t.Fatal(err)
 			}
@@ -138,6 +143,11 @@ func TestJavaProcessName(t *testing.T) {
 				cancel()
 				_ = cmd.Wait()
 			}()
+			// Wait for the helper to report readiness before reading its
+			// command line, mirroring TestPythonProcessNameExecutableNames.
+			if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "ready\n" {
+				t.Fatalf("Java process did not become ready: line=%q, err=%v", line, err)
+			}
 
 			entry, err := javaProcessName(cmd.Process.Pid)
 			if err != nil || entry != tt.want {
@@ -151,6 +161,8 @@ func TestJavaProcessNameHelper(t *testing.T) {
 	if os.Getenv("HUATUO_TEST_JAVA_PROCESS") != "1" {
 		return
 	}
+
+	fmt.Println("ready")
 
 	time.Sleep(30 * time.Second)
 }
