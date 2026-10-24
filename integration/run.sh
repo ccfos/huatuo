@@ -104,6 +104,10 @@ unshare --uts --mount bash -c '
 	source "${ROOT_DIR}/integration/lib.sh"
 	if [[ ${test_suite} == e2e ]]; then
 		source "${ROOT_DIR}/e2e/lib.sh"
+		if ! kernel_version_le 6 5; then
+			log_info "disabling sched-blame on unsupported kernel $(uname -r)"
+			HUATUO_BAMAI_ARGS_E2E+=("--disable-tracing" "sched-blame")
+		fi
 	fi
 	test_results_init
 	active_test_workspace=""
