@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/bits"
 	"os"
 	"strconv"
 	"strings"
@@ -152,7 +153,12 @@ func parseCPUUsage(r io.Reader) (cpuUsage, error) {
 			)
 		}
 
-		usage.total += value
+		var carry uint64
+		usage.total, carry = bits.Add64(usage.total, value, 0)
+		if carry != 0 {
+			return cpuUsage{}, errors.New("cpu total counter overflows uint64")
+		}
+
 		if i == 2 {
 			usage.system = value
 		}

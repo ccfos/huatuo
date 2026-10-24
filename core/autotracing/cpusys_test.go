@@ -116,6 +116,21 @@ func TestParseCPUUsage(t *testing.T) {
 			input:     "cpu 1 2 invalid 4\n",
 			wantError: `parse cpu system counter "invalid"`,
 		},
+		{
+			name:      "total counter overflow",
+			input:     "cpu 18446744073709551615 1 0 0\n",
+			wantError: "cpu total counter overflows uint64",
+		},
+		{
+			name:     "total counter at uint64 maximum",
+			input:    "cpu 18446744073709551615 0 0 0\n",
+			expected: cpuUsage{total: ^uint64(0)},
+		},
+		{
+			name:      "later counter overflow",
+			input:     "cpu 18446744073709551614 0 0 2\n",
+			wantError: "cpu total counter overflows uint64",
+		},
 	}
 
 	for _, tt := range tests {
@@ -130,6 +145,9 @@ func TestParseCPUUsage(t *testing.T) {
 			if tt.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 					t.Fatalf("parseCPUUsage() error = %v, want contain %q", err, tt.wantError)
+				}
+				if actual != (cpuUsage{}) {
+					t.Fatalf("parseCPUUsage() = %+v on error, want zero value", actual)
 				}
 				return
 			}
