@@ -141,10 +141,12 @@ func (s *Store) Save(document *Document) error {
 	if document == nil {
 		return errors.New("tracing document is required")
 	}
-	document.UploadedTimestamp = timeutil.Now()
-	if err := document.validate(); err != nil {
+	candidate := *document
+	candidate.UploadedTimestamp = timeutil.Now()
+	if err := candidate.validate(); err != nil {
 		return err
 	}
+	document.UploadedTimestamp = candidate.UploadedTimestamp
 	s.hub.Notify(document)
 	var errs []error
 	for _, backend := range s.backends {

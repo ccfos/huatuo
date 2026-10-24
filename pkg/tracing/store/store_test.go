@@ -129,8 +129,12 @@ func TestStoreRejectsInvalidDocumentBeforePersistence(t *testing.T) {
 		hub:      watch.NewHub[*Document](),
 	}
 
-	if err := store.Save(&Document{}); err == nil {
+	document := &Document{}
+	if err := store.Save(document); err == nil {
 		t.Fatal("Store.Save() error = nil, want invalid document error")
+	}
+	if !document.UploadedTimestamp.IsZero() {
+		t.Fatalf("invalid document uploaded timestamp = %v, want zero", document.UploadedTimestamp)
 	}
 	if len(backend.saved) != 0 {
 		t.Fatalf("backend saves = %d, want 0", len(backend.saved))
