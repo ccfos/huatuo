@@ -353,6 +353,15 @@ func TestL2FilterNegatedEthertypeVerdicts(t *testing.T) {
 		{expr: "not arp", packet: ipv4TCP, want: true},
 		{expr: "not arp", packet: arpFrame},
 		{expr: "not rarp", packet: ipv4UDP, want: true},
+		// go-pcap compiles these compounds to the same bytecode as the
+		// bare negation; the rewrite must not fire for them, so traffic
+		// these expressions reject stays rejected (libpcap agrees).
+		{expr: "not arp and not tcp", packet: ipv4TCP},
+		{expr: "not tcp and not arp", packet: ipv4TCP},
+		{expr: "not rarp and not tcp", packet: ipv4TCP},
+		{expr: "not tcp and not rarp", packet: ipv4TCP},
+		{expr: "not arp and not udp", packet: ipv4TCP},
+		{expr: "not udp and not arp", packet: ipv4TCP},
 		{expr: "tcp and not ip6", packet: ipv4UDP},
 		{expr: "tcp and not ip6", packet: arpFrame},
 		{expr: "udp and not ip6", packet: ipv4TCP},

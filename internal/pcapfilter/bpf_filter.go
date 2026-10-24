@@ -30,6 +30,8 @@ package pcapfilter
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/cilium/ebpf/asm"
 	"github.com/cloudflare/cbpfc"
@@ -267,6 +269,25 @@ func compileGoPcap(expr string) (insns []cbpf.Instruction, err error) {
 	return f.Compile()
 }
 
+// isBareNegatedEthertype reports whether the whole expression is a single
+// negated ethertype primitive ("not ip", "!arp"). go-pcap compiles compounds
+// like "not arp and not tcp" to exactly the same instructions as the bare
+// "not arp", so the bytecode alone cannot distinguish them; the rewrite is
+// only correct for the bare form and must be gated on the expression.
+func isBareNegatedEthertype(expr string) bool {
+	tokens := strings.FieldsFunc(expr, func(r rune) bool {
+		return unicode.IsSpace(r) || r == '(' || r == ')' || r == '!'
+	})
+	if len(tokens) != 2 || tokens[0] != "not" {
+		return false
+	}
+	switch tokens[1] {
+	case "ip", "ip6", "arp", "rarp":
+		return true
+	}
+	return false
+}
+
 // fixNegatedEthertype rewrites the match branch of the bare negated
 // ethertype programs go-pcap emits ("not ip", "not ip6"). The program loads
 // the ethertype, jumps to the trailing drop return when it matches, and
@@ -321,7 +342,9 @@ func compileCBPF(expr string, l3 bool) ([]cbpf.Instruction, error) {
 		return nil, fmt.Errorf("go-pcap compile: %w", err)
 	}
 
-	fixNegatedEthertype(insns)
+	if isBareNegatedEthertype(expr) {
+		fixNegatedEthertype(insns)
+	}
 	if l3 {
 		insns, err = retargetToL3(insns)
 		if err != nil {
