@@ -44,13 +44,24 @@ build_bpf_mock_module() {
 	local source_dir="${ROOT_DIR}/integration/bpf_mock/${feature}"
 	local kernel_build_dir=${KERNEL_BUILD_DIR:-/lib/modules/$(uname -r)/build}
 	local build_log="${HUATUO_BAMAI_TEST_TMPDIR}/${feature}-mock-build.log"
+	local cached_module="${BPF_MOCK_BUILD_DIR:-}/${feature}_mock.ko"
 	[[ -d "${kernel_build_dir}" ]] || skip "kernel build directory is missing: ${kernel_build_dir}"
 	mkdir -p "${fixture_dir}"
+	# The runner owns this cache for one checkout and kernel, including repeats.
+	if [[ -n ${BPF_MOCK_BUILD_DIR:-} && -f ${cached_module} ]]; then
+		cp "${cached_module}" "${fixture_dir}/"
+		echo "reusing module: ${cached_module}" > "${build_log}"
+		return 0
+	fi
 	cp "${ROOT_DIR}/integration/bpf_mock/common/Makefile" "${source_dir}/Kbuild" \
 		"${source_dir}/${feature}_mock_kmod.c" \
 		"${source_dir}/${feature}_mock.h" "$@" "${fixture_dir}/"
 	make -C "${fixture_dir}" KERNEL_BUILD_DIR="${kernel_build_dir}" > "${build_log}" 2>&1 \
 		|| fatal "${feature} fixture module build failed; see ${build_log}"
+	if [[ -n ${BPF_MOCK_BUILD_DIR:-} ]]; then
+		mkdir -p "${BPF_MOCK_BUILD_DIR}"
+		cp "${fixture_dir}/${feature}_mock.ko" "${cached_module}"
+	fi
 }
 
 # Record loaded_module after insmod so EXIT cleanup also owns readiness failures.

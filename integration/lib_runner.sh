@@ -155,7 +155,7 @@ runner_cleanup() {
 	if [[ -n ${runner_last_bpf_mock} ]]; then stop_shared_bpf_mock_es "${status}" || runner_failed=1; fi
 	if ((runner_failed)) && [[ ${status} != 130 && ${status} != 143 ]]; then status=1; fi
 	if [[ ${runner_suite} == integration && ${status} -eq 0 ]]; then
-		rm -rf -- "${HUATUO_BAMAI_TEST_TMPDIR}/ports"
+		rm -rf -- "${HUATUO_BAMAI_TEST_TMPDIR}/ports" "${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-build"
 		rmdir -- "${HUATUO_BAMAI_TEST_TMPDIR}" || status=1
 	fi
 	test_results_summary
@@ -224,6 +224,7 @@ run_test_suite() {
 		source "${ROOT_DIR}/integration/lib_storage.sh"
 	fi
 	if [[ -n ${runner_last_bpf_mock} ]]; then
+		export BPF_MOCK_BUILD_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-build"
 		export BPF_MOCK_ES_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/bpf-mock-es"
 		source "${ROOT_DIR}/integration/bpf_mock/common/lib.sh"
 	fi
