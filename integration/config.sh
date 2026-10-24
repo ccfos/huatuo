@@ -486,3 +486,13 @@ write_runtime_limits_config() {
     ListenAddress = "127.0.0.1:${port}"
 EOF
 }
+
+# The caller supplies BAMAI_HTTP_PORT when invoking the service start helper.
+write_bamai_http_config() {
+	write_default_config
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${BAMAI_HTTP_PORT}"
+EOF
+}
