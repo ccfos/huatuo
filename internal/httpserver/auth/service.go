@@ -21,12 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 var (
 	// ErrMissingBearerToken indicates that a request has no usable bearer token.
 	ErrMissingBearerToken = errors.New("missing bearer token")
-	// ErrInvalidBearerToken indicates that a bearer token is not configured.
+	// ErrInvalidBearerToken indicates that a bearer token is malformed or not configured.
 	ErrInvalidBearerToken = errors.New("invalid bearer token")
 	// ErrPermissionDenied indicates that a principal cannot access a resource.
 	ErrPermissionDenied = errors.New("permission denied")
@@ -247,6 +248,13 @@ func ParseBearerToken(header string) (string, error) {
 	if token == "" {
 		return "", ErrMissingBearerToken
 	}
+
+	// A bearer token is one opaque credential. Any remaining whitespace means
+	// the header carries extra fields, not a token.
+	if strings.ContainsFunc(token, unicode.IsSpace) {
+		return "", ErrInvalidBearerToken
+	}
+
 	return token, nil
 }
 

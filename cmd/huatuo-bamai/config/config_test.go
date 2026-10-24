@@ -354,6 +354,13 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: "maximum event stream clients",
 		},
 		{
+			name: "auth token unicode whitespace",
+			mutate: func(cfg *Config) {
+				cfg.HTTPServer.Auth.BearerToken = "node\u00a0secret"
+			},
+			wantErr: "auth bearer token must not contain whitespace",
+		},
+		{
 			name: "invalid operation concurrency",
 			mutate: func(cfg *Config) {
 				cfg.Operations.MaxConcurrent = 0
