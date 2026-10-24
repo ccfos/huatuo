@@ -192,6 +192,22 @@ SCSI 使用 `TEST_SCSI_DEVICE=sdb`。这两类用例分别需要 `nvme-cli` 和
 Shell 用例负责命名空间、丢包规则、断言、日志和进程清理。
 需要真实 TCP 连接的负载继续使用 `testdata/tcp_server.py`。
 
+### 网卡硬件丢包指标
+
+`test_metrics_netdev_hw.sh` 运行真实 daemon、ethtool 设备发现和 BPF 软件丢包快照，
+通过 `/metrics` 验证 `text/plain` 响应类型、driver/device 标签、counter 类型及设备排除配置。
+即使计数为零，也必须观察到该设备的 BPF map 快照。设备排除还要求观察到先前
+已接受网卡的筛选决策，避免将 BPF 尚未发布时的空响应误判为排除成功。
+
+存在受支持物理网卡（`mlx5_core`、`i40e`、`ixgbe`、`bnxt_en`）时使用真实统计；
+否则使用真实 `virtio_net` 设备并以 fixture 控制统计文件。
+fixture 保留指向真实 `carrier_down_count` 属性的链接，确保读取时执行生产 BPF 探针。
+缺少 `curl`、`ss`、`carrier_down_count_show` 探针或受支持物理/virtio 设备时明确跳过。
+
+单测覆盖全部受支持驱动名、设备选择失败、计数优先级、连续非零 BPF 快照、
+扣除软件丢包及下溢边界。
+virtio 测试通过不代表四种物理驱动已经验证，各驱动仍需要对应的硬件测试。
+
 ## 新增指标测试
 
 ### 1. 准备模拟数据
