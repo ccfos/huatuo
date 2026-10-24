@@ -90,6 +90,9 @@ func (c *CgroupV2) DeleteRuntime() error {
 // convert OCI resource spec to dbus properties for cgroup v2 systemd
 func specToSystemdProperties(spec *specs.LinuxResources) []systemdDbus.Property {
 	var properties []systemdDbus.Property
+	if spec == nil {
+		return nil
+	}
 
 	if spec.CPU != nil && spec.CPU.Quota != nil && *spec.CPU.Quota > 0 &&
 		spec.CPU.Period != nil && *spec.CPU.Period != 0 {
