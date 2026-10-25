@@ -15,10 +15,14 @@
 package process
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -27,6 +31,8 @@ import (
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/procfs"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestExecutable(t *testing.T) {
@@ -155,9 +161,18 @@ func TestCommandLine(t *testing.T) {
 	}
 }
 
+const (
+	utsNamespaceHelperEnv      = "HUATUO_TEST_UTS_NAMESPACE_HELPER"
+	utsNamespaceHelperHostname = "huatuo-uts-namespace-test"
+)
+
 func TestHostname(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("UTS namespace lookup requires Linux")
+	}
+	if os.Getenv(utsNamespaceHelperEnv) == "1" {
+		runUTSNamespaceHelper()
+		return
 	}
 
 	pid := os.Getpid()
@@ -180,6 +195,82 @@ func TestHostname(t *testing.T) {
 	if got, err := Hostname(99999999); err == nil || got != "" {
 		t.Fatalf("Hostname(missing) = %q, %v, want empty result and error", got, err)
 	}
+
+	t.Run("restores caller namespace", testHostnameRestoresCallerNamespace)
+}
+
+func testHostnameRestoresCallerNamespace(t *testing.T) {
+	t.Helper()
+
+	hostBefore, err := os.Hostname()
+	if err != nil {
+		t.Fatalf("os.Hostname() error = %v", err)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHostname$")
+	cmd.Env = append(os.Environ(), utsNamespaceHelperEnv+"=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWUTS}
+
+	cmd.Stderr = os.Stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe() error = %v", err)
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("StdinPipe() error = %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		if errors.Is(err, syscall.EPERM) {
+			t.Skip("creating a UTS namespace requires CAP_SYS_ADMIN")
+		}
+		t.Fatalf("start UTS namespace helper: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		if err := cmd.Wait(); err != nil && !t.Failed() {
+			t.Errorf("UTS namespace helper: %v", err)
+		}
+	})
+
+	scanner := bufio.NewScanner(stdout)
+	if !scanner.Scan() {
+		t.Fatalf("UTS namespace helper produced no status: %v", scanner.Err())
+	}
+	status := strings.TrimSpace(scanner.Text())
+	if status != "ready" {
+		t.Fatalf("UTS namespace helper status = %q, want ready", status)
+	}
+
+	// A caller may already hold a lock on this OS thread. Keep holding it
+	// after Hostname returns so the assertion below observes the same thread
+	// that temporarily entered the helper's namespace.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	for range 2 {
+		got, err := Hostname(cmd.Process.Pid)
+		if err != nil {
+			t.Fatalf("Hostname(%d) error = %v", cmd.Process.Pid, err)
+		}
+		if got != utsNamespaceHelperHostname {
+			t.Fatalf("Hostname(%d) = %q, want %q", cmd.Process.Pid, got, utsNamespaceHelperHostname)
+		}
+		if got, err := os.Hostname(); err != nil {
+			t.Fatalf("os.Hostname() after Hostname() error = %v", err)
+		} else if got != hostBefore {
+			t.Fatalf("os.Hostname() after Hostname() = %q, want restored %q", got, hostBefore)
+		}
+	}
+}
+
+func runUTSNamespaceHelper() {
+	if err := unix.Sethostname([]byte(utsNamespaceHelperHostname)); err != nil {
+		fmt.Printf("fail: set hostname: %v\n", err)
+		return
+	}
+	fmt.Println("ready")
+	_, _ = io.Copy(io.Discard, os.Stdin)
 }
 
 func setProcRoot(t *testing.T) string {

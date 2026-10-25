@@ -15,6 +15,7 @@
 package process
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -80,18 +81,45 @@ func CommandLine(pid int) (string, error) {
 }
 
 // Hostname returns the hostname from pid's UTS namespace.
-func Hostname(pid int) (string, error) {
+func Hostname(pid int) (hostname string, err error) {
+	// setns changes the UTS namespace of one OS thread only. Keep this
+	// goroutine pinned until the caller's namespace has been restored.
+	runtime.LockOSThread()
+	unlock := true
+	defer func() {
+		if unlock {
+			runtime.UnlockOSThread()
+		}
+	}()
+
+	curNS, err := os.Open(procfs.Path("self", "ns/uts"))
+	if err != nil {
+		return "", fmt.Errorf("open current UTS namespace: %w", err)
+	}
+	defer curNS.Close()
+
 	fd, err := os.Open(procfs.Path(strconv.Itoa(pid), "ns/uts"))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("open UTS namespace for PID %d: %w", pid, err)
 	}
 	defer fd.Close()
 
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
 	if err := unix.Setns(int(fd.Fd()), unix.CLONE_NEWUTS); err != nil {
-		return "", err
+		return "", fmt.Errorf("enter UTS namespace for PID %d: %w", pid, err)
 	}
-	return os.Hostname()
+	defer func() {
+		if restoreErr := unix.Setns(int(curNS.Fd()), unix.CLONE_NEWUTS); restoreErr != nil {
+			// setns only changes the calling thread. Keep that contaminated
+			// thread out of the scheduler's reusable pool rather than letting
+			// unrelated goroutines observe the target hostname.
+			unlock = false
+			err = errors.Join(err, fmt.Errorf("restore UTS namespace after reading PID %d: %w", pid, restoreErr))
+		}
+	}()
+
+	hostname, err = os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("read hostname in UTS namespace of PID %d: %w", pid, err)
+	}
+	return hostname, nil
 }
