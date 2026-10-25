@@ -339,8 +339,12 @@ func (s *ProfileQueryService) ProfileTypes(ctx context.Context, req *querierv1.P
 //	request: typesv1.LabelNamesRequest
 //	response: typesv1.LabelNamesResponse
 func (s *ProfileQueryService) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
+	// The advertised names must match exactly the labels applyProfileMatcher
+	// accepts: advertising a rejected name (container_host_namespace) makes the
+	// UI build queries that fail with "invalid label". __profile_type__ is
+	// special-cased by LabelValues and is not part of the generic label list.
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"id", "region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
+		Names: []string{"id", "region", "hostname", "container_id", "container_hostname"},
 	}
 	return response, nil
 }
