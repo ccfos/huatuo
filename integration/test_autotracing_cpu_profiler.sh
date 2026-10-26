@@ -39,9 +39,11 @@ readonly CPU_PROFILER_STAT="${CPU_PROFILER_FIXTURE}/proc/stat"
 readonly CPU_PROFILER_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/cpusys"
 readonly CPU_PROFILER_RESULT="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-profile.json"
 readonly CPU_PROFILER_PUBLICATION="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-publication.json"
+cpu_profiler_load_pid=""
 
 cleanup_cpu_profiler() {
 	local status=$?
+	stop_and_wait_by_pid "${cpu_profiler_load_pid}" 5 || true
 	if ((status != 0)); then storage_dump_logs || true; fi
 	huatuo_bamai_stop "${HUATUO_BAMAI_TEST_TMPDIR}" || true
 	storage_stop || true
@@ -64,16 +66,17 @@ assert_cpu_profile_published() {
 		-d "$(jq -nc --arg id "${task_id}" '{query:{bool:{filter:[
             {term:{"tracer_id.keyword":$id}}, {term:{"tracer_type.keyword":"profiling"}}
         ]}}}')" > "${CPU_PROFILER_RESULT}" || return 1
-	jq -e '.hits.hits | length > 0 and all(.[]._source;
-        .tracer_name == "profiler" and
-        .profile_data.profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds" and
-        .profile_data.profile.time_nanos > 0 and
-        .profile_data.profile.duration_nanos > 0)
-    ' "${CPU_PROFILER_RESULT}" > /dev/null || return 1
 	storage_curl --fail -H 'Content-Type: application/json' \
 		"${STORAGE_ADDR}/cpu-profiler-integration*/_search" \
 		-d "$(jq -nc --arg id "profiling-publication:${task_id}" '{query:{ids:{values:[$id]}}}')" \
 		> "${CPU_PROFILER_PUBLICATION}" || return 1
+	jq -e '.hits.hits | length > 0 and all(.[]._source;
+        .tracer_name == "profiler" and
+        .profile_data.profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds" and
+        .profile_data.profile.time_nanos > 0 and
+	.profile_data.profile.duration_nanos > 0 and
+	(.profile_data.profile.sample | length > 0))
+    ' "${CPU_PROFILER_RESULT}" > /dev/null || return 1
 	jq -e '.hits.hits | length == 1' "${CPU_PROFILER_PUBLICATION}" > /dev/null
 }
 
@@ -86,6 +89,12 @@ integration_huatuo_bamai_start \
 	--procfs-prefix "${CPU_PROFILER_FIXTURE}" \
 	--disable-kubelet \
 	--log-debug
+
+# The synthetic counters only trigger profiling; real sampling needs CPU activity.
+bash -c 'while :; do :; done' &
+cpu_profiler_load_pid=$!
+kill -0 "${cpu_profiler_load_pid}" 2> /dev/null \
+	|| fatal "CPU profiling workload exited before collection"
 
 # Hold a 10% baseline for multiple sampling ticks before the 80% system spike.
 printf 'cpu 190 0 110 800\n' > "${CPU_PROFILER_STAT}"
