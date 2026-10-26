@@ -32,19 +32,25 @@ type nodeCloseErrorBody struct {
 func (b nodeCloseErrorBody) Close() error { return b.err }
 
 func nodeOperationJSON(requestID, status string) string {
+	return nodeOperationJSONForKind(requestID, status, "profiling")
+}
+
+func nodeOperationJSONForKind(requestID, status, kind string) string {
 	if status == "completed" || status == "failed" || status == "stopped" {
 		return fmt.Sprintf(
 			`{"data":{"created_at":"2026-08-24T12:00:00Z",`+
-				`"request_id":%q,"kind":"profiling","status":"terminal",`+
+				`"request_id":%q,"kind":%q,"status":"terminal",`+
 				`"terminal":{"outcome":%q}}}`,
 			requestID,
+			kind,
 			status,
 		)
 	}
 	return fmt.Sprintf(
 		`{"data":{"created_at":"2026-08-24T12:00:00Z",`+
-			`"request_id":%q,"kind":"profiling","status":%q}}`,
+			`"request_id":%q,"kind":%q,"status":%q}}`,
 		requestID,
+		kind,
 		status,
 	)
 }
@@ -67,13 +73,23 @@ func TestParseNodeOperationResponseRejectsProtocolViolations(t *testing.T) {
 			statusCode: http.StatusOK,
 			body:       nodeOperationJSON("other-job", "running"),
 		},
+		{
+			name:       "unsupported operation kind",
+			statusCode: http.StatusOK,
+			body:       nodeOperationJSONForKind("job-1", "running", "unknown"),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			response := nodeJSONResponse(tt.statusCode, tt.body)
 			defer response.Body.Close()
 
-			_, err := parseNodeOperationResponse(response, "job-1", tt.successMode)
+			_, err := parseNodeOperationResponse(
+				response,
+				"job-1",
+				"",
+				tt.successMode,
+			)
 			var nodeErr *NodeError
 			if !errors.As(err, &nodeErr) {
 				t.Fatalf("parseNodeOperationResponse() error = %v, want *NodeError", err)
@@ -97,7 +113,12 @@ func TestParseNodeOperationResponseUsesBodyInsteadOfContentType(t *testing.T) {
 			response := nodeJSONResponse(http.StatusOK, nodeOperationJSON("job-1", "pending"))
 			response.Header.Set("Content-Type", test.contentType)
 
-			operation, err := parseNodeOperationResponse(response, "job-1", nodeSuccessResponseOK)
+			operation, err := parseNodeOperationResponse(
+				response,
+				"job-1",
+				"",
+				nodeSuccessResponseOK,
+			)
 			if err != nil {
 				t.Fatalf("parseNodeOperationResponse() error = %v", err)
 			}
@@ -119,7 +140,12 @@ func TestParseNodeOperationResponseParsesTerminalOperation(t *testing.T) {
 		err:    errors.New("close response body"),
 	}
 
-	operation, err := parseNodeOperationResponse(response, "job-1", nodeSuccessResponseOK)
+	operation, err := parseNodeOperationResponse(
+		response,
+		"job-1",
+		"",
+		nodeSuccessResponseOK,
+	)
 	if err != nil {
 		t.Fatalf("parseNodeOperationResponse() error = %v", err)
 	}
