@@ -152,18 +152,3 @@ func ReadProcMapsContext(ctx context.Context, path string,
 	}
 	return result, nil
 }
-
-// FindLoadBias resolves an ELF load bias from a parsed maps entry.
-func FindLoadBias(mappings []ProcMap, target *ProcMap,
-	loadOffset, loadAddress uint64,
-) (uint64, error) {
-	for index := range mappings {
-		mapping := &mappings[index]
-		if mapping.Inode == target.Inode && mapping.DevMajor == target.DevMajor &&
-			mapping.DevMinor == target.DevMinor && mapping.Offset == loadOffset &&
-			mapping.Start >= loadAddress {
-			return mapping.Start - loadAddress, nil
-		}
-	}
-	return 0, errors.New("ELF load bias not found")
-}
