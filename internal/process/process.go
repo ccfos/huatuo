@@ -15,7 +15,9 @@
 package process
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"runtime"
@@ -62,14 +64,20 @@ func PPID(pid int) (int, error) {
 // CommandLine returns at most 128 bytes of pid's null-delimited command line
 // with null bytes replaced by spaces.
 func CommandLine(pid int) (string, error) {
-	data, err := os.ReadFile(procfs.Path(strconv.Itoa(pid), "cmdline"))
+	file, err := os.Open(procfs.Path(strconv.Itoa(pid), "cmdline"))
 	if err != nil {
 		return "", err
 	}
+	defer file.Close()
 
-	if len(data) > 128 {
-		data = data[:128]
+	// Only the displayed prefix is needed, even for a large argument vector.
+	data := make([]byte, 128)
+	n, err := io.ReadFull(file, data)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return "", err
 	}
+
+	data = data[:n]
 	for i := range data {
 		if data[i] == 0 {
 			data[i] = ' '
