@@ -501,3 +501,34 @@ func TestSelectMergeStacktracesPhysicalUsageRequiresTask(t *testing.T) {
 		}
 	}
 }
+
+func TestLabelNamesMatchSelectableLabels(t *testing.T) {
+	svc := &ProfileQueryService{}
+	resp, err := svc.LabelNames(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("LabelNames() error = %v", err)
+	}
+	reserved := map[string]bool{"__profile_type__": true}
+	for _, name := range resp.Names {
+		if reserved[name] {
+			t.Fatalf("LabelNames() advertises reserved label %q", name)
+		}
+		m, err := labels.NewMatcher(labels.MatchEqual, name, "x")
+		if err != nil {
+			t.Fatalf("NewMatcher(%q): %v", name, err)
+		}
+		if err := applyProfileMatcher(&profilingstore.Filter{}, m); err != nil {
+			t.Fatalf("LabelNames() advertises %q but the matcher rejects it: %v", name, err)
+		}
+	}
+	selectable := []string{"id", "region", "hostname", "container_id", "container_hostname"}
+	advertised := map[string]bool{}
+	for _, name := range resp.Names {
+		advertised[name] = true
+	}
+	for _, name := range selectable {
+		if !advertised[name] {
+			t.Fatalf("LabelNames() omits selectable label %q", name)
+		}
+	}
+}
