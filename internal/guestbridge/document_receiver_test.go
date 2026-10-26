@@ -186,7 +186,7 @@ func TestAuthenticatedStreamToLocalFile(t *testing.T) {
 			`"tracer_type":"event","observed_timestamp":"2026-10-16T01:00:00Z",` +
 			`"tracer_data":{"counter":18446744073709551615}}`,
 	)
-	if err := client.Send(t.Context(), raw, transport.SendOptions{}); err != nil {
+	if err := client.Send(raw, transport.SendOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	select {

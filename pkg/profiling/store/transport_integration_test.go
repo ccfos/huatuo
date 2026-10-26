@@ -137,11 +137,11 @@ func TestDocumentTransportIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := client.Send(t.Context(), item.data, transport.SendOptions{}); err != nil {
+		if err := client.Send(item.data, transport.SendOptions{}); err != nil {
 			client.Close()
 			t.Fatal(err)
 		}
-		if err := client.Send(t.Context(), nil, transport.SendOptions{End: true}); err != nil {
+		if err := client.Send(nil, transport.SendOptions{End: true}); err != nil {
 			t.Fatal(err)
 		}
 	}

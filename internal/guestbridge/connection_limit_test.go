@@ -184,7 +184,7 @@ func TestHandshakeTimeoutReleasesConnectionSlot(t *testing.T) {
 		t.Fatalf("NewClientWithConn: %v", err)
 	}
 	t.Cleanup(func() { _ = validClient.Close() })
-	if err := validClient.Send(t.Context(), []byte(`{"status":"ok"}`), transport.SendOptions{}); err != nil {
+	if err := validClient.Send([]byte(`{"status":"ok"}`), transport.SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	select {
