@@ -1,0 +1,8 @@
+# TYPE huatuo_bamai_diskio_io_time_seconds_total counter
+huatuo_bamai_diskio_io_time_seconds_total{device="vda",host="huatuo-dev",region="dev"} 8.765
+huatuo_bamai_diskio_io_time_seconds_total{device="vda1",host="huatuo-dev",region="dev"} 0.876
+huatuo_bamai_diskio_io_time_seconds_total{device="loop0",host="huatuo-dev",region="dev"} 0
+# TYPE huatuo_bamai_diskio_io_time_weighted_seconds_total counter
+huatuo_bamai_diskio_io_time_weighted_seconds_total{device="vda",host="huatuo-dev",region="dev"} 11.11
+huatuo_bamai_diskio_io_time_weighted_seconds_total{device="vda1",host="huatuo-dev",region="dev"} 1.11
+huatuo_bamai_diskio_io_time_weighted_seconds_total{device="loop0",host="huatuo-dev",region="dev"} 0

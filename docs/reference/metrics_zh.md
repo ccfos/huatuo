@@ -650,6 +650,29 @@ NVMe 证据包括 `critical_warning`、`media_errors_total`，以及最多八条
 
 无法获取日志可用空间时不输出 `xfs_log_free_bytes`。新增 XFS 挂载后需重启 `huatuo-bamai` 服务。
 
+### 磁盘繁忙时间和平均队列深度
+
+`diskio` 新增两个以秒为单位、带 `device`、`host`、`region` 标签的累计计数器：
+
+| 指标 | 含义 |
+| --- | --- |
+| `huatuo_bamai_diskio_io_time_seconds_total` | 存在未完成 I/O 的累计时间 |
+| `huatuo_bamai_diskio_io_time_weighted_seconds_total` | 按未完成 I/O 数量加权的累计时间 |
+
+从 `BlackList` 中移除 `diskio` 即可启用；新增指标不增加文件读取次数。
+
+```promql
+# 每个设备的近似繁忙时间百分比
+100 * rate(huatuo_bamai_diskio_io_time_seconds_total[5m])
+# 采样窗口内平均未完成 I/O 数量
+rate(huatuo_bamai_diskio_io_time_weighted_seconds_total[5m])
+```
+
+这些指标可结合 CPU iowait 和瞬时 `io_in_progress` 定位 I/O 排队。
+繁忙时间不代表 NVMe、RAID 等并行设备的容量利用率，Linux 对并发请求的繁忙时间也可能低估，详见
+[内核 I/O 统计说明](https://docs.kernel.org/admin-guide/iostats.html)。
+使用 `rate()` 处理计数器重置；不要同时汇总整盘及其分区，以免重复计算。
+
 ## 系统事件
 
 ### 软锁死
