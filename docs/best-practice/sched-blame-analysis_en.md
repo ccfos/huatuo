@@ -1,13 +1,21 @@
-# SchedBlame Analysis
+---
+title: SchedBlame Analysis
+type: docs
+description: "Chart and compare CPU scheduling contention measurements."
+author: HUATUO Team
+date: 2026-10-26
+weight: 9
+---
 
-`scripts/sched_contention.py` generates interactive HTML charts from SchedBlame
-ratio CSV files. It can also record SuperMonitor waitrate from cgroup v1 counters
-and compare that recording with the same container's SchedBlame measurements.
+`integration/testdata/sched_contention.py` generates interactive HTML charts
+from SchedBlame ratio CSV files. It can also record SuperMonitor waitrate from
+cgroup v1 counters and compare that recording with the same container's
+SchedBlame measurements.
 The script uses only the Python 3 standard library. Open the generated HTML in
 Chrome; the browser loads Plotly from its public CDN.
 
 To capture data without starting the daemon, use the
-[standalone SchedBlame command](sched-blame-standalone.md).
+[standalone SchedBlame command](sched-blame-standalone_en.md).
 
 ## Chart SchedBlame Ratios
 
@@ -21,7 +29,7 @@ Enable recording in the Huatuo configuration:
 Generate a chart from the current CSV format:
 
 ```bash
-python3 scripts/sched_contention.py chart /tmp/sched-blame-ratios.csv \
+python3 integration/testdata/sched_contention.py chart /tmp/sched-blame-ratios.csv \
     --html /tmp/sched-blame-ratios.html
 ```
 
@@ -45,7 +53,7 @@ Zoom, pan, use the time-range slider, or click legend entries to select lines.
 To connect lines across unavailable samples:
 
 ```bash
-python3 scripts/sched_contention.py chart /tmp/sched-blame-ratios.csv \
+python3 integration/testdata/sched_contention.py chart /tmp/sched-blame-ratios.csv \
     --html /tmp/sched-blame-ratios.html --connect-gaps
 ```
 
@@ -55,7 +63,7 @@ extrema, representative gaps, and its first and last emitted anomaly markers.
 `--max-buckets` controls the number of buckets, not an exact point limit:
 
 ```bash
-python3 scripts/sched_contention.py chart /tmp/sched-blame-ratios.csv \
+python3 integration/testdata/sched_contention.py chart /tmp/sched-blame-ratios.csv \
     --html /tmp/sched-blame-ratios.html --max-buckets 8000
 ```
 
@@ -71,7 +79,7 @@ prefix. The kernel must expose the custom `hierarchy_wait_sum`, `inner_wait_sum`
 and `throttle_wait_sum` counters for valid measurements.
 
 ```bash
-python3 scripts/sched_contention.py record-supermonitor CONTAINER_ID \
+python3 integration/testdata/sched_contention.py record-supermonitor CONTAINER_ID \
     --csv /tmp/supermonitor.csv --html /tmp/supermonitor.html \
     --duration 600
 ```
@@ -101,7 +109,7 @@ comparison is a trend reference rather than an equality check.
 ## Compare Recordings
 
 ```bash
-python3 scripts/sched_contention.py compare \
+python3 integration/testdata/sched_contention.py compare \
     /tmp/sched-blame-ratios.csv /tmp/supermonitor.csv \
     --html /tmp/comparison.html
 ```
@@ -115,5 +123,6 @@ produces an error. `--max-buckets`, `--connect-gaps`, and `-q` also apply here.
 ## Tests
 
 ```bash
-python3 -B -m unittest discover -s scripts -p 'test_sched_contention.py' -v
+python3 -B -m unittest discover -s integration/testdata \
+    -p 'test_sched_contention.py' -v
 ```
