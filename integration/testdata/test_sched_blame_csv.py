@@ -27,13 +27,14 @@ def read_samples(path):
 
 
 def sample_timestamp(value):
-    # Parse Go's variable-length nanoseconds separately: VM Python versions
-    # may only accept millisecond or microsecond fractions in fromisoformat.
+    # Keep Go's nanosecond fraction separate from datetime's microseconds.
     match = re.fullmatch(r"(.{19})(?:\.(\d{1,9}))?([+-]\d{2}:\d{2})", value)
     if match is None:
         raise ValueError(f"invalid sample timestamp: {value!r}")
     seconds, fraction, offset = match.groups()
-    return (datetime.datetime.fromisoformat(seconds + offset).timestamp()
+    sample_time = datetime.datetime.strptime(
+        seconds + offset.replace(":", ""), "%Y-%m-%dT%H:%M:%S%z")
+    return (sample_time.timestamp()
             + int((fraction or "0").ljust(9, "0")) / 1_000_000_000)
 
 
@@ -133,7 +134,8 @@ def verify(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(dest="command")
+    commands.required = True
     ready = commands.add_parser("ready")
     ready.add_argument("csv", type=Path)
     ready.add_argument("container_id")
