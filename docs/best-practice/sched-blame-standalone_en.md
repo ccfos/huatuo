@@ -1,4 +1,11 @@
-# Standalone SchedBlame
+---
+title: Standalone SchedBlame
+type: docs
+description: "Run SchedBlame independently and record contention diagnostics."
+author: HUATUO Team
+date: 2026-10-26
+weight: 8
+---
 
 The `sched-blame` command runs the SchedBlame tracer independently of the Huatuo
 daemon. It uses the same target selection, BPF program, attribution, ratio
@@ -110,10 +117,10 @@ SuperMonitor waitrate when its custom kernel counters are available. Missing
 counters produce unavailable SuperMonitor values while SchedBlame continues.
 
 ```bash
-python3 scripts/sched_contention.py chart ratios.csv --html ratios.html
+python3 integration/testdata/sched_contention.py chart ratios.csv --html ratios.html
 ```
 
-See [SchedBlame Analysis](sched-blame-analysis.md) for recording and comparison
+See [SchedBlame Analysis](sched-blame-analysis_en.md) for recording and comparison
 options.
 
 ## CPU Profiling
