@@ -33,7 +33,12 @@ import (
 
 func TestRunProfileCommand(t *testing.T) {
 	originalCoreBinDir := internalconfig.CoreBinDir
-	t.Cleanup(func() { internalconfig.CoreBinDir = originalCoreBinDir })
+	originalAPIAddress := internalconfig.CoreAPIAddress
+	t.Cleanup(func() {
+		internalconfig.CoreBinDir = originalCoreBinDir
+		internalconfig.CoreAPIAddress = originalAPIAddress
+	})
+	internalconfig.CoreAPIAddress = "127.0.0.1:29704"
 
 	tests := []struct {
 		name             string
@@ -173,7 +178,10 @@ exit 2`,
 
 			var wantArgs []string
 			if tt.tool == cpuToolPerf {
-				wantArgs = []string{"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "perf.o"), "--duration", "3"}
+				wantArgs = []string{
+					"--huatuo-api-address", "127.0.0.1:29704",
+					"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "perf.o"), "--duration", "3",
+				}
 				wantFrames := []flamegraph.FrameData{
 					{
 						Level: 0,
@@ -193,6 +201,7 @@ exit 2`,
 					t.Fatalf("profiler result = %+v", result)
 				}
 				wantArgs = []string{
+					"--huatuo-api-address", "127.0.0.1:29704",
 					"--type", "cpu", "--language", "c", "--cpu-mode", "oncpu",
 					"--duration", "3", "--aggr-interval", "3",
 					"--output-format", "remote-store", "--output-path", toolstream.DefaultSockPath,

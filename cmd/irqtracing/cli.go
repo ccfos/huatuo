@@ -35,6 +35,7 @@ const (
 	cliFlagOutputFormat             = "output-format"
 	cliFlagOutputPath               = "output-path"
 	cliFlagTaskID                   = "task-id"
+	cliFlagEnablePProf              = "enable-pprof"
 	defaultMaxEventsPerSecondPerCPU = uint64(0)
 	maxEventsPerSecondPerCPULimit   = uint64(math.MaxUint32) * 2
 	maxDurationSeconds              = int64(math.MaxInt64) / int64(time.Second)
@@ -82,6 +83,10 @@ func appFlags() []cli.Flag {
 		&cli.StringFlag{
 			Name:  cliFlagTaskID,
 			Usage: "Profiling task ID; required when --output-format=remote-store",
+		},
+		&cli.BoolFlag{
+			Name:  cliFlagEnablePProf,
+			Usage: "serve this process's Go runtime profiles on 127.0.0.1:6000",
 		},
 	}
 }

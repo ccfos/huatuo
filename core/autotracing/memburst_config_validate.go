@@ -16,6 +16,12 @@ package autotracing
 
 import "fmt"
 
+// maxMemBurstWindowSamples bounds the sliding window so its history buffer
+// stays allocatable. The window keeps one sample per Interval, so a day of
+// one-second samples is already far beyond any useful configuration; larger
+// values only expose the tracer to an unbounded make([]int, ...) panic.
+const maxMemBurstWindowSamples = 24 * 60 * 60
+
 func validateMemBurst(c *MemBurstConfig) error {
 	if c.DeltaMemoryBurst <= 0 {
 		return fmt.Errorf("memory burst delta must be positive, got %d", c.DeltaMemoryBurst)
@@ -31,6 +37,10 @@ func validateMemBurst(c *MemBurstConfig) error {
 	}
 	if c.SlidingWindowLength <= 0 {
 		return fmt.Errorf("memory burst sliding window length must be positive, got %d", c.SlidingWindowLength)
+	}
+	if c.SlidingWindowLength > maxMemBurstWindowSamples {
+		return fmt.Errorf("memory burst sliding window length must not exceed %d samples, got %d",
+			maxMemBurstWindowSamples, c.SlidingWindowLength)
 	}
 	if c.DumpProcessMaxNum <= 0 {
 		return fmt.Errorf("memory burst dump process max num must be positive, got %d", c.DumpProcessMaxNum)

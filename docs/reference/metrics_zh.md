@@ -386,36 +386,237 @@ netlink 还提供细分错误指标和 `receive_nohandler`，细分错误可能�
 
 ## I/O
 
-`iolatency` 通过 eBPF 统计块 I/O 请求的延迟分布和磁盘冻结事件。
+### 配置
 
-- `q2c`：从请求进入队列到完成，反映整个 I/O 生命周期延迟
-- `d2c`：从驱动层下发到完成，更接近磁盘和驱动本身的耗时
-- `freeze`：磁盘冻结事件次数
+`iotracing`、`iolatency`、`blk_throtl`、`iocost` 和 `io_health` 默认启用。
+向全局 `BlackList` 添加对应名称并重启 Huatuo 可关闭该功能。
+关闭 `iotracing` 会同时停止磁盘指标和自动诊断；关闭 `io_health` 会停止
+健康事件、取证及其指标，不影响 `iotracing`。
 
-### 请求延迟
+### 磁盘性能
 
-以下指标为累计 Counter。当前实现仅在 `q2c`、`d2c` 均可计算且均不少于 20 ms 时计数，因此这些分桶不能代表全部 I/O 请求。
+通过以下指标观测磁盘性能。指标使用 `huatuo_bamai_iotracing_` 前缀，
+均为区间 Gauge，带 `disk` 标签。
 
-`zone`：`0` 为 [20, 30] ms，`1` 为 (30, 50] ms，`2` 为 (50, 100] ms，`3` 为 (100, 200] ms，`4` 为 (200, 400] ms，`5` 为 >400 ms。`disk` 使用主、次设备号，例如 `253:1`。
+|指标后缀|含义|
+|---|---|
+|`read_bps`、`write_bps`|读写吞吐量，单位字节/秒|
+|`read_iops`、`write_iops`|每秒读写操作数|
+|`read_await_ms`、`write_await_ms`|读写平均完成时间，单位毫秒|
+|`io_util_percent`|磁盘忙碌时间占比|
+|`average_queue_size`|平均 IO 队列长度|
 
-| 指标 | 说明 | 单位 | 范围 | 附加标签 |
-| --- | --- | --- | --- | --- |
-| `iolatency_blkdisk_q2c` | 入队到完成的延迟分桶计数 | 计数 | 宿主机 | disk, zone |
-| `iolatency_blkdisk_d2c` | 驱动下发到完成的延迟分桶计数 | 计数 | 宿主机 | disk, zone |
-| `iolatency_container_blkdisk_q2c` | 入队到完成的延迟分桶计数 | 计数 | 容器 | disk, zone |
-| `iolatency_container_blkdisk_d2c` | 驱动下发到完成的延迟分桶计数 | 计数 | 容器 | disk, zone |
+指标覆盖整盘和支持的逻辑设备，不包含分区及 loop、ram、zram、fd 等伪设备。
 
-### 磁盘冻结
+### 延时与 IO 大小分布
 
-以下指标为累计 Counter，记录块设备冻结事件。
+`iolatency` 统计 SCSI/SAS、NVMe、virtio 磁盘及容器读写 IO 的延时和大小分布。
+仅采集启动时已开启 `iostats` 和请求时间统计的磁盘，运行中不支持关闭这些配置。
+启动时若软件 blk-crypto fallback 已初始化，整个 `iolatency` 不启动。
 
-| 指标 | 说明 | 单位 | 范围 | 附加标签 |
-| --- | --- | --- | --- | --- |
-| `iolatency_blkdisk_freeze` | 宿主机磁盘 freeze 事件次数 | 计数 | 宿主机 | disk |
+SCSI 下发大小沿用内核的 16 位扇区计数，达到 32 MiB 会回绕。
+跨 blkcg 合并 request 时，容器下发大小为近似归属，宿主机统计不受影响。
+
+块设备增删或重建时，`iolatency`、`blk_throtl` 和 `iocost` 重新开始统计，
+过渡期间的所有磁盘数据可能缺失。
+
+桶值为采集区间内小于等于 `le` 上界的 IO 数量，`+Inf` 为总数；延时边界
+单位为秒，大小边界单位为字节。指标为区间 Gauge。
+
+```text
+# TYPE huatuo_bamai_iolatency_q2d_seconds_bucket gauge
+huatuo_bamai_iolatency_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="0.001"} 3
+huatuo_bamai_iolatency_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_d2c_seconds_bucket gauge
+huatuo_bamai_iolatency_d2c_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_q2g_seconds_bucket gauge
+huatuo_bamai_iolatency_q2g_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_iolatency_container_q2g_seconds_bucket gauge
+huatuo_bamai_iolatency_container_q2g_seconds_bucket{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 2
+```
+
+|指标|意义|单位|对象|
+|---|---|---|---|
+|iolatency_q2d_seconds_bucket|入队到最后一次下发的延时分布|计数|宿主|
+|iolatency_d2c_seconds_bucket|最后一次下发到完成的延时分布|计数|宿主|
+|iolatency_q2g_seconds_bucket|入队到 request 起始时间的延时分布|计数|宿主|
+|iolatency_container_q2d_seconds_bucket|入队到最后一次下发的延时分布|计数|容器|
+|iolatency_container_d2c_seconds_bucket|最后一次下发到完成的延时分布|计数|容器|
+|iolatency_container_q2g_seconds_bucket|入队到 request 起始时间的延时分布|计数|容器|
+|iolatency_queued_io_size_bytes_bucket|入队 bio 大小分布|计数|宿主|
+|iolatency_issued_io_size_bytes_bucket|request 大小分布；SCSI 取最后一次下发的完整大小，NVMe/virtio 取完成字节数|计数|宿主|
+|iolatency_container_queued_io_size_bytes_bucket|入队 bio 大小分布|计数|容器|
+|iolatency_container_issued_io_size_bytes_bucket|request 大小分布；SCSI 取最后一次下发的完整大小，NVMe/virtio 取完成字节数|计数|容器|
+|iolatency_interval_start_timestamp_seconds|本区间开始时间|Unix 秒|宿主|
+|iolatency_interval_end_timestamp_seconds|本区间结束时间|Unix 秒|宿主|
+
+17 个延时桶界（秒）为 `0.00005`、`0.0001`、`0.00025`、`0.0005`、
+`0.001`、`0.002`、`0.004`、`0.008`、`0.016`、`0.032`、`0.064`、`0.128`、
+`0.256`、`0.512`、`1`、`2`、`+Inf`。
+
+#### Grafana
+
+IO 总览展示各采集区间的延时分布和 IO 数量，点击柱状图可查看该时段的
+延时与大小直方图。面板使用 Business Charts（`volkovlabs-echarts-panel`）。
+
+#### 旧指标变更指南
+
+升级后需更新自定义面板和告警，以下省略 `huatuo_bamai_` 前缀：
+
+|旧指标|替换方式|
+|---|---|
+|`iolatency_blkdisk_d2c`|`iolatency_d2c_seconds_bucket`|
+|`iolatency_container_blkdisk_d2c`|`iolatency_container_d2c_seconds_bucket`|
+|`iolatency_blkdisk_q2c`、`iolatency_container_blkdisk_q2c`|无直接等价指标，按所需阶段选择 Q2G、Q2D 或 D2C|
+|`iolatency_blkdisk_freeze`|`io_health_blkdisk_freeze`，仍为 Counter|
+
+`disk` 从 `8:0` 等设备号改为 `sda` 等磁盘名，新增 `operation` 区分读写。
+旧 `zone` 编号改为以秒为单位的 `le` 累计上界；桶界见上文，不能按编号直接替换。
+统计 `(a, b]` 范围的数量时，用 `le=b` 的值减去 `le=a` 的值。
+
+旧延时指标仅统计 20 ms 及以上的 IO；新指标覆盖支持盘的全部读写 IO，
+D2C 从最后一次下发计时。旧告警需按新的阶段和桶界调整，不能只改指标名称。
+
+新延时桶由累积 Counter 改为区间 Gauge，不能继续使用 `rate()` 或 `increase()`。
+单个采集区间直接查询；例如，统计最近五分钟某盘读 IO 的 D2C 样本总数：
+
+```promql
+sum_over_time(huatuo_bamai_iolatency_d2c_seconds_bucket{disk="sda",operation="read",le="+Inf"}[5m])
+```
+
+### 硬件
+
+```bash
+# HELP huatuo_bamai_io_health_blkdisk_freeze the disk freeze event count
+# TYPE huatuo_bamai_io_health_blkdisk_freeze counter
+huatuo_bamai_io_health_blkdisk_freeze{disk="sda",host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象|标签|
+|---|---|---|---|---|
+|io_health_blkdisk_freeze|宿主机磁盘 freeze 次数，换盘清零|计数|宿主|host, region, disk|
+
+可在宿主机仪表盘的 `Overview → Selected Metric` 中选择此指标。
+
+### blk-throttle 排队等待
+
+`blk_throtl` 统计 IO 因 blk-throttle 限速而排队的数量和平均等待时间。
+每个 IO 结束排队后计数一次，等待时间从首次排队算起。
+
+|指标|含义|
+|---|---|
+|`blk_throtl_delayed_io_count`|采集区间内完成等待的 IO 数量|
+|`blk_throtl_average_wait_ms`|这些 IO 的平均排队时间，单位毫秒|
+|`blk_throtl_container_delayed_io_count`|容器采集区间内完成等待的 IO 数量|
+|`blk_throtl_container_average_wait_ms`|容器 IO 的平均排队时间，单位毫秒|
+
+指标按 `disk` 和 `operation`（`read` 或 `write`）区分，`scope=host`
+表示宿主机总量，`scope=other` 表示其中无法归属容器的部分。
+容器指标使用容器标签，不带 `scope`。四项均为区间 Gauge。
+
+容器发现可选，宿主机采集不依赖 kubelet。容器查询失败或标签无效时，本轮数据
+归入 `other`；关联恢复后不补报历史数据。临时采集失败后，首次成功采集仅重建
+基线，下一次成功采集恢复输出，不补报失败区间。若错误导致采集停止，需排障后
+重启 Huatuo。
+
+cgroup 实际释放后，尚未采集的尾部等待增量归入 Host 和 Other，不再关联容器。
+两次成功采集之间，同一统计项在单 CPU 上完成至少 67,108,864 次等待，或累计
+等待约 274.9 万秒时，计数回绕可能导致少计。
+
+### IOCOST 等待统计
+
+`iocost` 统计预算不足造成的等待。等待时间从 IO 进入等待队列算到最终被唤醒，
+计入等待结束所在的采集区间。
+
+|指标|含义|
+|---|---|
+|`iocost_waitq_io_count`|本轮完成等待的读写 IO 数量|
+|`iocost_average_wait_ms`|这些 IO 的平均等待时间，单位毫秒|
+|`iocost_container_waitq_io_count`|容器本轮完成等待的读写 IO 数量|
+|`iocost_container_average_wait_ms`|容器 IO 的平均等待时间，单位毫秒|
+
+这些区间 Gauge 按 `disk`（如 `sda`、`nvme0n1`）和 `operation`
+（`read`、`write`）分组。`scope=host` 表示设备总量，包含所有
+容器；`scope=other` 表示其中未归属容器的部分。
+
+容器发现可选，宿主机采集不依赖 kubelet。容器查询失败或标签无效时，本轮数据
+归入 `other`；关联恢复后不补报历史数据。临时采集失败后，首次成功采集仅重建
+基线，下一次成功采集恢复输出，不补报失败区间。若错误导致采集停止，需排障后
+重启 Huatuo。
+
+cgroup 实际释放后，尚未采集的尾部等待增量归入 Host 和 Other，不再关联容器。
+两次成功采集之间，同一统计项在单 CPU 上完成至少 67,108,864 次等待，或累计
+等待约 274.9 万秒时，计数回绕可能导致少计。例如，同一统计项的 10,240 次等待
+各持续 270 秒、在同一区间由同一 CPU 结算，会超出等待时间容量。
+
+采集需要支持 IOCOST 的非 PREEMPT_RT Linux x86_64 内核，具备 BPF/BTF 和
+kprobe 能力。
+
+### 设备健康
+
+`io_health` 记录以下事件：
+
+|事件类型|触发条件|
+|---|---|
+|`block_error`|普通 block 请求完成时返回错误|
+|`nvme_timeout`|NVMe 请求超时|
+|`nvme_reset`|NVMe 控制器已接纳重置请求，不代表重置完成；仅记录事件，不触发取证|
+|`nvme_state_change`|NVMe controller 状态发生变化|
+|`scsi_timeout`|SCSI command 超时|
+|`scsi_dispatch_error`|SCSI command 派发失败|
+|`md_sync_action`|MD 同步动作发生变化|
+|`md_degraded`|MD 不可用成员数发生变化|
+|`md_member_state`|MD 成员状态发生变化或成员消失|
+
+NVMe 状态名不可用时，`new_state` 为 `unknown`，`new_state_raw` 保留状态码。
+
+block 错误、NVMe 超时、SCSI 异常及 MD 成员进入 `faulty`、`blocked`、
+`write_error` 或 `removed` 状态会触发只读健康取证：NVMe 使用 `nvme-cli`，
+SCSI 使用 `smartctl`，结果随事件保存。无法唯一确定目标时仅保留事件，不扫描
+其他设备。MD 监测不需要 `mdadm`。
+事件中的 `device` 可保留 MD 成员的分区名；取证目标归整为唯一物理磁盘或
+NVMe controller。
+同设备取证执行中及结束后的 60 秒冷却期内不重复取证，原始事件仍独立保存。
+
+`huatuo_bamai_io_health_` Counter 记录进程启动后观察到的事件：
+
+|指标后缀|标签|含义|
+|---|---|---|
+|`block_errors_total`|disk、operation、status|block 层错误次数|
+|`nvme_timeouts_total`|disk|NVMe timeout 次数|
+|`nvme_resets_total`|disk|NVMe 已接纳的重置请求次数|
+|`scsi_timeouts_total`|disk|SCSI timeout 次数|
+|`scsi_dispatch_errors_total`|disk、status|SCSI 派发失败次数|
+|`collection_errors_total`|disk、reason|健康取证失败次数|
+|`event_persistence_failures_total`|reason|事件保存返回错误的次数|
+
+MD 和 NVMe controller 状态变化以事件保存，不提供当前状态 Gauge。
+Counter 先于事件保存更新；保存失败计入
+`event_persistence_failures_total{reason="save_error"}`。
+
+健康事件单独保存为文档，不可获得或不适用的可选字段省略：
+
+|字段|含义|
+|---|---|
+|`type`|事件类型|
+|`device`|事件设备名；MD 成员事件可保留分区名|
+|`array`、`member`|MD 阵列和成员名|
+|`old_state`、`new_state`|MD 状态变化；NVMe 仅提供新状态|
+|`new_state_raw`|NVMe controller 状态码|
+|`operation`、`io_error_status`、`sector`|block 操作、错误及起始扇区|
+|`collection_status`|`ok`、`partial`、`unsupported`、`timeout` 或 `error`|
+|`nvme`、`scsi`|事件触发后采集的协议健康证据|
+
+NVMe 证据包括 `critical_warning`、`media_errors_total`，以及最多八条包含
+状态码、NSID 和 LBA 的错误日志。SCSI 证据包括整体健康状态、ASC/ASCQ、温度、
+缺陷数量、读/写/校验错误计数，以及待处理缺陷数量和最多八个示例 LBA。
 
 ### 磁盘统计
 
 `diskio` 读取 `/proc/diskstats` 和 `/proc/stat`，提供设备级请求数、吞吐量、累计耗时和宿主机 CPU iowait。
+
+磁盘名标签由 `device` 改为 `disk`，自定义查询的筛选和图例需同步更新；
+指标名称和类型不变。
 
 仓库配置默认通过 `BlackList` 禁用 `diskio`。从黑名单移除并重启 `huatuo-bamai` 服务后启用。
 
@@ -423,13 +624,13 @@ netlink 还提供细分错误指标和 `receive_nohandler`，细分错误可能�
 
 | 指标 | 说明 | 单位 | 范围 | 附加标签 |
 | --- | --- | --- | --- | --- |
-| `diskio_read_requests_total` | 累积读请求完成数，使用 `rate()` 计算读 IOPS | 计数 | 宿主机 | device |
-| `diskio_write_requests_total` | 累积写请求完成数，使用 `rate()` 计算写 IOPS | 计数 | 宿主机 | device |
-| `diskio_read_bytes_total` | 累积读取字节数，使用 `rate()` 计算读吞吐量 | 字节 | 宿主机 | device |
-| `diskio_written_bytes_total` | 累积写入字节数，使用 `rate()` 计算写吞吐量 | 字节 | 宿主机 | device |
-| `diskio_read_time_seconds_total` | 已完成读请求的累积耗时 | 秒 | 宿主机 | device |
-| `diskio_write_time_seconds_total` | 已完成写请求的累积耗时 | 秒 | 宿主机 | device |
-| `diskio_io_in_progress` | 当前正在进行的 I/O 请求数，即队列深度 | 计数 | 宿主机 | device |
+| `diskio_read_requests_total` | 累积读请求完成数，使用 `rate()` 计算读 IOPS | 计数 | 宿主机 | disk |
+| `diskio_write_requests_total` | 累积写请求完成数，使用 `rate()` 计算写 IOPS | 计数 | 宿主机 | disk |
+| `diskio_read_bytes_total` | 累积读取字节数，使用 `rate()` 计算读吞吐量 | 字节 | 宿主机 | disk |
+| `diskio_written_bytes_total` | 累积写入字节数，使用 `rate()` 计算写吞吐量 | 字节 | 宿主机 | disk |
+| `diskio_read_time_seconds_total` | 已完成读请求的累积耗时 | 秒 | 宿主机 | disk |
+| `diskio_write_time_seconds_total` | 已完成写请求的累积耗时 | 秒 | 宿主机 | disk |
+| `diskio_io_in_progress` | 当前正在进行的 I/O 请求数，即队列深度 | 计数 | 宿主机 | disk |
 | `diskio_disk_iowait_percent` | 采集区间内 CPU 等待 I/O 完成的时间占比 | % | 宿主机 | — |
 
 ### XFS

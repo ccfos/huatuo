@@ -42,7 +42,6 @@ readonly PROFILE_STATUS_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.jso
 
 TARGET_PID=""
 PROFILE_ID=""
-STOPPING_APISERVER_PID=""
 
 cleanup() {
 	local status=$?
@@ -68,24 +67,13 @@ node_operation_status_is() {
 		"${HUATUO_BAMAI_TEST_TMPDIR}/node-operation-status.json" > /dev/null
 }
 
-apiserver_process_exited() {
-	! kill -0 "${STOPPING_APISERVER_PID}" 2> /dev/null
-}
-
 stop_apiserver_for_restart() {
-	STOPPING_APISERVER_PID=$(
-		cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"
-	) || fatal "apiserver pid file is missing"
+	local pid
+	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid") \
+		|| fatal "apiserver pid file is missing"
 
-	kill -TERM "${STOPPING_APISERVER_PID}" \
-		|| fatal "failed to signal apiserver pid=${STOPPING_APISERVER_PID}"
-	wait_until 20 1 apiserver_process_exited \
+	stop_gracefully_by_pid "${pid}" 20 \
 		|| fatal "apiserver did not exit gracefully"
-
-	local exit_status=0
-	wait "${STOPPING_APISERVER_PID}" || exit_status=$?
-	assert_eq "${exit_status}" "0" "graceful apiserver exit" \
-		|| fatal "apiserver exited with status ${exit_status}"
 
 	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"
 	cp "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" \

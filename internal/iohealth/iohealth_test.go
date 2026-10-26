@@ -1,0 +1,1960 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Tests cover bounded evidence requests and MD change notifications.
+package iohealth
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/pkg/types"
+
+	"golang.org/x/sys/unix"
+)
+
+// Bounded command output and protocol parsing.
+
+func TestRunEvidenceCommandCapsCombinedOutput(t *testing.T) {
+	result := runEvidenceCommand(
+		context.Background(),
+		"/bin/sh",
+		[]string{
+			"-c",
+			"printf 12345678901234567890; printf abcdefghijklmnopqrst >&2",
+		},
+		32,
+	)
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if !result.isTooLarge {
+		t.Fatal("expected output_too_large")
+	}
+	if got := len(result.stdout) + len(result.stderr); got != 32 {
+		t.Fatalf("captured bytes = %d, want 32", got)
+	}
+}
+
+func TestParseNVMeEvidencePreservesPresenceAndFiltersErrorLog(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		warning  string
+		want     uint8
+		complete bool
+	}{
+		{"scalar zero", `0`, 0, true},
+		{"scalar string", `"0x5"`, 5, true},
+		{"object bitmap", `{"value":5,"available_spare":1,"reliability_degraded":1}`, 5, true},
+		{"object zero", `{"value":0}`, 0, true},
+		{"object string", `{"value":"0x5"}`, 5, true},
+		{"missing bitmap", `{}`, 0, false},
+		{"negative bitmap", `{"value":-1}`, 0, false},
+		{"oversized bitmap", `{"value":256}`, 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			smart, valid, complete := parseNVMeSMART([]byte(
+				`{"critical_warning":` + test.warning + `,"media_errors":"12"}`))
+			if !valid || complete != test.complete {
+				t.Fatalf("smart valid=%t complete=%t, want true/%t", valid, complete, test.complete)
+			}
+			if test.complete {
+				if smart.CriticalWarning == nil || *smart.CriticalWarning != test.want {
+					t.Fatalf("critical_warning = %#v, want %d", smart.CriticalWarning, test.want)
+				}
+			} else if smart.CriticalWarning != nil {
+				t.Fatalf("invalid critical_warning retained: %d", *smart.CriticalWarning)
+			}
+			if smart.MediaErrorsTotal == nil || *smart.MediaErrorsTotal != 12 {
+				t.Fatalf("media_errors_total = %#v, want 12", smart.MediaErrorsTotal)
+			}
+		})
+	}
+
+	rawEntries := []map[string]any{
+		{
+			"error_count": 0,
+		},
+		{
+			"error_count":  1,
+			"sqid":         0,
+			"status_field": 1,
+			"phase_tag":    0,
+			"nsid":         0,
+			"lba":          0,
+		},
+	}
+	for i := 1; i <= 9; i++ {
+		rawEntries = append(rawEntries, map[string]any{
+			"error_count":  i,
+			"sqid":         1,
+			"status_field": 0x280,
+			"phase_tag":    0,
+			"nsid":         3,
+			"lba":          i,
+		})
+	}
+	data, err := json.Marshal(map[string]any{"errors": rawEntries})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	errorLog, valid, complete := parseNVMeErrorLog(data)
+	if !valid || !complete {
+		t.Fatalf("error log valid=%t complete=%t, want true/true", valid, complete)
+	}
+	if len(errorLog) != maxEvidenceEntries {
+		t.Fatalf("error log entries = %d, want %d", len(errorLog), maxEvidenceEntries)
+	}
+	if errorLog[0].LBA != 1 || errorLog[7].LBA != 8 {
+		t.Fatalf("error log order/cap = %#v", errorLog)
+	}
+	if errorLog[0].StatusCodeType != 2 || errorLog[0].StatusCode != 0x80 {
+		t.Fatalf("decoded status = %#v, want SCT=2 SC=0x80", errorLog[0])
+	}
+}
+
+func TestParseNVMeErrorLogFormats(t *testing.T) {
+	// Older nvme-cli reports the phase bit inside status_field; newer JSON
+	// separates it into phase_tag. Neither format supplies an opcode.
+	for _, test := range []struct {
+		name    string
+		fixture string
+		isValid bool
+		count   int
+	}{
+		{
+			name: "1.8",
+			fixture: `{"errors":[{
+				"error_count":1,"sqid":1,"cmdid":7,"status_field":1280,
+				"parm_error_location":0,"lba":42,"nsid":3,"vs":0,"cs":0
+			}]}`,
+			isValid: true,
+			count:   1,
+		},
+		{
+			name: "1.8 phase set",
+			fixture: `{"errors":[{
+				"error_count":1,"sqid":1,"cmdid":7,"status_field":1281,
+				"parm_error_location":0,"lba":42,"nsid":3,"vs":0,"cs":0
+			}]}`,
+			isValid: true,
+			count:   1,
+		},
+		{name: "1.16", fixture: `{"errors":[{
+			"error_count":1,"sqid":1,"cmdid":7,"status_field":640,
+			"phase_tag":0,"parm_error_location":0,"lba":42,"nsid":3,
+			"vs":0,"trtype":0,"cs":0,"trtype_spec_info":0
+		}]}`, isValid: true, count: 1},
+		{name: "2.16", fixture: `{"errors":[{
+			"error_count":2,"sqid":2,"cmdid":8,"status_field":640,
+			"phase_tag":1,"parm_error_location":4,"lba":84,"nsid":6,
+			"vs":0,"trtype":0,"cs":0,"trtype_spec_info":0
+		}]}`, isValid: true, count: 1},
+		{
+			name:    "missing required fields",
+			fixture: `{"errors":[{"error_count":1,"status_field":640}]}`,
+			isValid: false,
+			count:   0,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			entries, valid, complete := parseNVMeErrorLog([]byte(test.fixture))
+			if valid != test.isValid || complete != test.isValid || len(entries) != test.count {
+				t.Fatalf(
+					"entries=%#v valid=%t complete=%t, want count=%d valid/complete=%t",
+					entries,
+					valid,
+					complete,
+					test.count,
+					test.isValid,
+				)
+			}
+			if test.count != 0 && (entries[0].StatusCodeType != 2 || entries[0].StatusCode != 0x80) {
+				t.Fatalf("decoded status = %#v, want SCT=2 SC=0x80", entries[0])
+			}
+		})
+	}
+}
+
+func TestParseSCSIHealthUsesOnlyWhitelistedStructuredFields(t *testing.T) {
+	data := []byte(`{
+		"smartctl":{"exit_status":8},
+		"smart_status":{
+			"passed":false,
+			"scsi":{"asc":93,"ascq":1,"ie_string":"discard me"}
+		},
+		"temperature":{"current":39,"drive_trip":65},
+		"scsi_grown_defect_list":0,
+		"scsi_error_counter_log":{
+			"read":{
+				"errors_corrected_by_eccfast":999,
+				"errors_corrected_by_eccdelayed":0,
+				"errors_corrected_by_rereads_rewrites":2,
+				"gigabytes_processed":"123.500",
+				"total_uncorrected_errors":4
+			},
+			"write":{"total_uncorrected_errors":0}
+		},
+		"scsi_pending_defects":{
+			"count":10,
+			"table":[
+				null,
+				{"lba":11},{"lba":12},{"lba":13},{"lba":14},{"lba":15},
+				{"lba":16},{"lba":17},{"lba":18},{"lba":19},{"lba":20}
+			]
+		}
+	}`)
+
+	evidence, valid, complete, exitStatus := parseSCSIHealth(data)
+	if !valid || !complete {
+		t.Fatalf("SCSI valid=%t complete=%t, want true/true", valid, complete)
+	}
+	if exitStatus == nil || *exitStatus != 8 {
+		t.Fatalf("exit status = %#v, want 8", exitStatus)
+	}
+	if evidence.SmartPassed == nil || *evidence.SmartPassed {
+		t.Fatalf("smart_passed = %#v, want present false", evidence.SmartPassed)
+	}
+	if evidence.InformationException == nil ||
+		evidence.InformationException.ASC != 93 ||
+		evidence.InformationException.ASCQ != 1 {
+		t.Fatalf("information exception = %#v", evidence.InformationException)
+	}
+	if evidence.Temperature == nil ||
+		evidence.Temperature.CurrentCelsius != 39 ||
+		evidence.Temperature.TripCelsius != 65 {
+		t.Fatalf("temperature = %#v", evidence.Temperature)
+	}
+	if evidence.GrownDefectCount == nil || *evidence.GrownDefectCount != 0 {
+		t.Fatalf("grown defects = %#v, want present zero", evidence.GrownDefectCount)
+	}
+	if evidence.Read == nil ||
+		evidence.Read.DelayedCorrections == nil ||
+		*evidence.Read.DelayedCorrections != 0 ||
+		evidence.Read.RereadRewriteCorrections == nil ||
+		*evidence.Read.RereadRewriteCorrections != 2 ||
+		evidence.Read.UncorrectedErrors == nil ||
+		*evidence.Read.UncorrectedErrors != 4 {
+		t.Fatalf("read counters = %#v", evidence.Read)
+	}
+	if evidence.PendingDefects == nil ||
+		evidence.PendingDefects.SampleLBAs == nil ||
+		len(*evidence.PendingDefects.SampleLBAs) != maxEvidenceEntries {
+		t.Fatalf("pending defects = %#v", evidence.PendingDefects)
+	}
+	if got := (*evidence.PendingDefects.SampleLBAs)[7]; got != 18 {
+		t.Fatalf("last retained pending LBA = %d, want 18", got)
+	}
+}
+
+func TestEvidenceWorkerCommandResults(t *testing.T) {
+	originalPrefix := filepath.Dir(procfs.DefaultPath())
+	root := t.TempDir()
+	procfs.RootPrefix(root)
+	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
+
+	execFailure := commandExecution{exitCode: -1, err: errors.New("command failed")}
+	criticalWarning := uint8(0)
+	mediaErrors := uint64(12)
+	emptyErrorLog := []types.NVMeErrorLogEntry{}
+	failedHealth := false
+
+	for _, test := range []struct {
+		name         string
+		protocol     EvidenceProtocol
+		lookupErr    error
+		executions   []commandExecution
+		timeoutFirst bool
+		wantStatus   string
+		wantReasons  []string
+		wantNVMe     *types.NVMeHealthEvidence
+		wantSCSI     *types.SCSIHealthEvidence
+	}{
+		{
+			name:        "nvme tool missing",
+			protocol:    EvidenceProtocolNVMe,
+			lookupErr:   errors.New("nvme not found"),
+			wantStatus:  "unsupported",
+			wantReasons: []string{CollectionReasonToolUnavailable},
+		},
+		{
+			name:        "scsi tool missing",
+			protocol:    EvidenceProtocolSCSI,
+			lookupErr:   errors.New("smartctl not found"),
+			wantStatus:  "unsupported",
+			wantReasons: []string{CollectionReasonToolUnavailable},
+		},
+		{
+			name:        "scsi execution failure",
+			protocol:    EvidenceProtocolSCSI,
+			executions:  []commandExecution{execFailure},
+			wantStatus:  "error",
+			wantReasons: []string{CollectionReasonExecError},
+		},
+		{
+			name:         "scsi command deadline",
+			protocol:     EvidenceProtocolSCSI,
+			executions:   []commandExecution{{}},
+			timeoutFirst: true,
+			wantStatus:   "timeout",
+			wantReasons:  []string{CollectionReasonTimeout},
+		},
+		{
+			name:     "nvme deadline leaves next command usable",
+			protocol: EvidenceProtocolNVMe,
+			executions: []commandExecution{
+				{},
+				{stdout: []byte(`{"errors":[]}`)},
+			},
+			timeoutFirst: true,
+			wantStatus:   "partial",
+			wantReasons:  []string{CollectionReasonTimeout},
+			wantNVMe:     &types.NVMeHealthEvidence{ErrorLog: &emptyErrorLog},
+		},
+		{
+			name:        "nvme execution failures deduplicate reason",
+			protocol:    EvidenceProtocolNVMe,
+			executions:  []commandExecution{execFailure, execFailure},
+			wantStatus:  "error",
+			wantReasons: []string{CollectionReasonExecError},
+		},
+		{
+			name:     "nvme retains smart evidence after error-log failure",
+			protocol: EvidenceProtocolNVMe,
+			executions: []commandExecution{
+				{stdout: []byte(`{"critical_warning":0,"media_errors":12}`)},
+				execFailure,
+			},
+			wantStatus:  "partial",
+			wantReasons: []string{CollectionReasonExecError},
+			wantNVMe: &types.NVMeHealthEvidence{
+				CriticalWarning:  &criticalWarning,
+				MediaErrorsTotal: &mediaErrors,
+			},
+		},
+		{
+			name:     "scsi retains complete evidence with execution error",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{{
+				stdout:   []byte(`{"smart_status":{"passed":false}}`),
+				exitCode: 2,
+				err:      errors.New("smartctl device access failure"),
+			}},
+			wantStatus:  "partial",
+			wantReasons: []string{CollectionReasonExecError},
+			wantSCSI:    &types.SCSIHealthEvidence{SmartPassed: &failedHealth},
+		},
+		{
+			name:     "scsi retains partial evidence with reported execution error",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{{
+				stdout: []byte(`{"smartctl":{"exit_status":2},` +
+					`"smart_status":{"passed":false},"scsi_grown_defect_list":"invalid"}`),
+			}},
+			wantStatus:  "partial",
+			wantReasons: []string{CollectionReasonParseError, CollectionReasonExecError},
+			wantSCSI:    &types.SCSIHealthEvidence{SmartPassed: &failedHealth},
+		},
+		{
+			name:     "scsi health exit bits are successful evidence",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{{
+				stdout:   []byte(`{"smartctl":{"exit_status":8},"smart_status":{"passed":false}}`),
+				exitCode: 8,
+				err:      errors.New("smartctl reported failed health"),
+			}},
+			wantStatus: "ok",
+			wantSCSI:   &types.SCSIHealthEvidence{SmartPassed: &failedHealth},
+		},
+		{
+			name:     "scsi oversized output is not trusted",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{{
+				stdout:     []byte(`{"smart_status":{"passed":false}}`),
+				isTooLarge: true,
+			}},
+			wantStatus:  "error",
+			wantReasons: []string{CollectionReasonOutputTooLarge},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			results := make(chan EvidenceResult, 2)
+			worker := NewEvidenceWorker(EvidenceWorkerOptions{
+				OnResult: func(result EvidenceResult) { results <- result },
+			})
+			worker.lookupPath = func(name string) (string, error) {
+				if test.lookupErr != nil {
+					return "", test.lookupErr
+				}
+				return "/usr/bin/" + name, nil
+			}
+			if test.timeoutFirst {
+				worker.commandTimeout = 20 * time.Millisecond
+			}
+			calls := 0
+			worker.runCommand = func(
+				ctx context.Context,
+				_ string,
+				args []string,
+				_ int,
+			) commandExecution {
+				target := "sda"
+				if test.protocol == EvidenceProtocolNVMe {
+					target = "nvme0"
+				}
+				if got, want := args[len(args)-1], filepath.Join(root, "dev", target); got != want {
+					t.Errorf("command device = %q, want %q", got, want)
+				}
+				if test.protocol == EvidenceProtocolSCSI {
+					want := []string{"--health", "--attributes", "--log=error", "--json=c", filepath.Join(root, "dev", target)}
+					if !reflect.DeepEqual(args, want) {
+						t.Errorf("smartctl command = %q, want %q", args, want)
+					}
+				}
+				calls++
+				if calls > len(test.executions) {
+					t.Errorf("unexpected command call %d", calls)
+					return execFailure
+				}
+				if test.timeoutFirst && calls == 1 {
+					<-ctx.Done()
+					return commandExecution{exitCode: -1, err: ctx.Err()}
+				}
+				return test.executions[calls-1]
+			}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			worker.Start(ctx)
+			done := make(chan struct{})
+			go func() {
+				worker.Wait()
+				close(done)
+			}()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Error("evidence worker did not stop")
+				}
+			})
+			target := "sda"
+			if test.protocol == EvidenceProtocolNVMe {
+				target = "nvme0"
+			}
+			request := EvidenceRequest{
+				Trigger:     types.IOHealthEvent{Type: "block_error", Device: target},
+				Target:      target,
+				Protocol:    test.protocol,
+				TriggeredAt: time.Unix(50, 0),
+			}
+			if !worker.Submit(request) {
+				t.Fatal("evidence request was not accepted")
+			}
+			result := receiveEvidenceResult(t, results)
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("evidence worker did not stop after callback")
+			}
+			wantEvent := request.Trigger
+			wantEvent.CollectionStatus = test.wantStatus
+			wantEvent.NVMe = test.wantNVMe
+			wantEvent.SCSI = test.wantSCSI
+			if !reflect.DeepEqual(result.Event, wantEvent) ||
+				!reflect.DeepEqual(result.Reasons, test.wantReasons) ||
+				result.Target != target || !result.TriggeredAt.Equal(request.TriggeredAt) {
+				t.Fatalf("result = %#v, want event=%#v reasons=%v", result, wantEvent, test.wantReasons)
+			}
+			if calls != len(test.executions) {
+				t.Fatalf("command calls = %d, want %d", calls, len(test.executions))
+			}
+			if len(results) != 0 {
+				t.Fatal("one accepted request produced duplicate callbacks")
+			}
+		})
+	}
+}
+
+// Serialized requests, cooldowns, and generation isolation.
+
+func TestEvidenceWorkerSerializesDeduplicatesAndAppliesCooldown(t *testing.T) {
+	clock := &fakeEvidenceClock{now: time.Unix(100, 0)}
+	results := make(chan EvidenceResult, 3)
+	started := make(chan string, 8)
+	releaseFirst := make(chan struct{})
+	var calls atomic.Int32
+	var active atomic.Int32
+	var maximum atomic.Int32
+
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) {
+			results <- result
+		},
+	})
+	worker.now = clock.Now
+	worker.lookupPath = func(name string) (string, error) {
+		return "/usr/bin/" + name, nil
+	}
+	worker.commandTimeout = time.Hour
+	worker.runCommand = func(
+		ctx context.Context,
+		executable string,
+		args []string,
+		maxBytes int,
+	) commandExecution {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			old := maximum.Load()
+			if current <= old || maximum.CompareAndSwap(old, current) {
+				break
+			}
+		}
+		started <- args[len(args)-1]
+		if calls.Add(1) == 1 {
+			select {
+			case <-releaseFirst:
+			case <-ctx.Done():
+				return commandExecution{exitCode: -1, err: ctx.Err()}
+			}
+		}
+		switch args[0] {
+		case "smart-log":
+			return commandExecution{
+				stdout:   []byte(`{"critical_warning":0,"media_errors":0}`),
+				exitCode: 0,
+			}
+		case "error-log":
+			return commandExecution{
+				stdout:   []byte(`{"errors":[]}`),
+				exitCode: 0,
+			}
+		default:
+			return commandExecution{exitCode: -1, err: errors.New("unexpected command")}
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	worker.Start(ctx)
+
+	request := func(target string) EvidenceRequest {
+		return EvidenceRequest{
+			Trigger: types.IOHealthEvent{
+				Type:   "nvme_timeout",
+				Device: target + "n1",
+			},
+			Target:      target,
+			Protocol:    EvidenceProtocolNVMe,
+			TriggeredAt: time.Unix(50, 0),
+		}
+	}
+	if !worker.Submit(request("nvme0")) {
+		t.Fatal("first nvme0 trigger was not accepted")
+	}
+	if got := <-started; got != "/dev/nvme0" {
+		t.Fatalf("first command target = %q, want /dev/nvme0", got)
+	}
+	if worker.Submit(request("nvme0")) {
+		t.Fatal("running nvme0 trigger should have been merged")
+	}
+	if !worker.Submit(request("nvme1")) {
+		t.Fatal("nvme1 trigger was not accepted")
+	}
+	if worker.Submit(request("nvme1")) {
+		t.Fatal("pending nvme1 trigger should have been merged")
+	}
+	close(releaseFirst)
+
+	first := receiveEvidenceResult(t, results)
+	second := receiveEvidenceResult(t, results)
+	if first.Target != "nvme0" || second.Target != "nvme1" {
+		t.Fatalf("result order = %q, %q", first.Target, second.Target)
+	}
+	if first.Event.CollectionStatus != "ok" ||
+		second.Event.CollectionStatus != "ok" {
+		t.Fatalf("collection statuses = %q, %q", first.Event.CollectionStatus, second.Event.CollectionStatus)
+	}
+	if maximum.Load() != 1 {
+		t.Fatalf("maximum concurrent commands = %d, want 1", maximum.Load())
+	}
+	if worker.Submit(request("nvme0")) {
+		t.Fatal("nvme0 trigger inside cooldown should not be accepted")
+	}
+
+	clock.Advance(evidenceCooldown)
+	if !worker.Submit(request("nvme0")) {
+		t.Fatal("nvme0 trigger after cooldown was not accepted")
+	}
+	if result := receiveEvidenceResult(t, results); result.Target != "nvme0" {
+		t.Fatalf("post-cooldown result target = %q, want nvme0", result.Target)
+	}
+
+	cancel()
+	worker.Wait()
+}
+
+func TestEvidenceWorkerSeparatesReusedTargetGenerations(t *testing.T) {
+	clock := &fakeEvidenceClock{now: time.Unix(100, 0)}
+	results := make(chan EvidenceResult, 3)
+	started := make(chan struct{}, 1)
+	releaseFirst := make(chan struct{})
+	var calls atomic.Int32
+
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) {
+			results <- result
+		},
+	})
+	worker.now = clock.Now
+	worker.lookupPath = func(string) (string, error) {
+		return "/usr/bin/smartctl", nil
+	}
+	worker.runCommand = func(
+		ctx context.Context,
+		_ string,
+		_ []string,
+		_ int,
+	) commandExecution {
+		if calls.Add(1) == 1 {
+			close(started)
+			select {
+			case <-releaseFirst:
+			case <-ctx.Done():
+				return commandExecution{exitCode: -1, err: ctx.Err()}
+			}
+		}
+		return commandExecution{
+			stdout:   []byte(`{"smart_status":{"passed":true}}`),
+			exitCode: 0,
+		}
+	}
+
+	request := func(identity string) EvidenceRequest {
+		return EvidenceRequest{
+			Trigger:  types.IOHealthEvent{Type: "block_error", Device: "sda"},
+			Target:   "sda",
+			Identity: identity,
+			Protocol: EvidenceProtocolSCSI,
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	if !worker.Submit(request("generation-1")) {
+		t.Fatal("first generation was not accepted")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first generation did not start")
+	}
+	if !worker.Submit(request("generation-2")) {
+		t.Fatal("replacement generation inherited old inflight state")
+	}
+	if worker.Submit(request("generation-2")) {
+		t.Fatal("duplicate replacement generation was not merged")
+	}
+	close(releaseFirst)
+	receiveEvidenceResult(t, results)
+	receiveEvidenceResult(t, results)
+	if worker.Submit(request("generation-2")) {
+		t.Fatal("replacement generation bypassed its own cooldown")
+	}
+
+	cancel()
+	worker.Wait()
+}
+
+func TestEvidenceWorkerStaleGenerationDoesNotReplaceCurrentCooldown(t *testing.T) {
+	results := make(chan EvidenceResult, 2)
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) {
+			results <- result
+		},
+		ValidateIdentity: func(request EvidenceRequest) bool {
+			return request.Identity == "generation-2"
+		},
+	})
+	worker.lookupPath = func(string) (string, error) {
+		return "/usr/bin/smartctl", nil
+	}
+	worker.runCommand = func(
+		context.Context,
+		string,
+		[]string,
+		int,
+	) commandExecution {
+		return commandExecution{
+			stdout:   []byte(`{"smart_status":{"passed":true}}`),
+			exitCode: 0,
+		}
+	}
+	request := func(identity string) EvidenceRequest {
+		return EvidenceRequest{
+			Trigger:  types.IOHealthEvent{Type: "block_error", Device: "sda"},
+			Target:   "sda",
+			Identity: identity,
+			Protocol: EvidenceProtocolSCSI,
+		}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	if !worker.Submit(request("generation-2")) {
+		t.Fatal("current generation was not accepted")
+	}
+	if result := receiveEvidenceResult(t, results); result.Event.CollectionStatus != "ok" {
+		t.Fatalf("current-generation result = %#v", result)
+	}
+	if !worker.Submit(request("generation-1")) {
+		t.Fatal("stale generation was not accepted for identity validation")
+	}
+	result := receiveEvidenceResult(t, results)
+	if result.Event.CollectionStatus != "unsupported" ||
+		len(result.Reasons) != 1 ||
+		result.Reasons[0] != CollectionReasonTargetChanged {
+		t.Fatalf("stale-generation result = %#v", result)
+	}
+	if worker.Submit(request("generation-2")) {
+		t.Fatal("stale generation replaced the current generation cooldown")
+	}
+	if !worker.Submit(EvidenceRequest{
+		Trigger: types.IOHealthEvent{Type: "block_error", Device: "sda"},
+		Reason:  CollectionReasonTargetUnresolved,
+	}) {
+		t.Fatal("unresolved request was not accepted for reporting")
+	}
+	result = receiveEvidenceResult(t, results)
+	if result.Event.CollectionStatus != "unsupported" ||
+		len(result.Reasons) != 1 ||
+		result.Reasons[0] != CollectionReasonTargetUnresolved {
+		t.Fatalf("unresolved result = %#v", result)
+	}
+	if worker.Submit(request("generation-2")) {
+		t.Fatal("unresolved request replaced the current generation cooldown")
+	}
+
+	cancel()
+	worker.Wait()
+}
+
+func TestEvidenceWorkerBoundsDistinctGenerationQueue(t *testing.T) {
+	started := make(chan struct{}, 1)
+	releaseFirst := make(chan struct{})
+	results := make(chan EvidenceResult, 2)
+	var calls atomic.Int32
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) {
+			results <- result
+		},
+	})
+	worker.queueCapacity = 1
+	worker.lookupPath = func(string) (string, error) {
+		return "/usr/bin/smartctl", nil
+	}
+	worker.runCommand = func(
+		ctx context.Context,
+		_ string,
+		_ []string,
+		_ int,
+	) commandExecution {
+		if calls.Add(1) == 1 {
+			close(started)
+			select {
+			case <-releaseFirst:
+			case <-ctx.Done():
+				return commandExecution{exitCode: -1, err: ctx.Err()}
+			}
+		}
+		return commandExecution{
+			stdout:   []byte(`{"smart_status":{"passed":true}}`),
+			exitCode: 0,
+		}
+	}
+	request := func(identity string) EvidenceRequest {
+		return EvidenceRequest{
+			Trigger:  types.IOHealthEvent{Type: "block_error", Device: "sda"},
+			Target:   "sda",
+			Identity: identity,
+			Protocol: EvidenceProtocolSCSI,
+		}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	if !worker.Submit(request("generation-1")) {
+		t.Fatal("running generation was not accepted")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("running generation did not start")
+	}
+	if !worker.Submit(request("generation-2")) {
+		t.Fatal("queued generation was not accepted")
+	}
+	if worker.Submit(request("generation-3")) {
+		t.Fatal("distinct-generation queue exceeded its capacity")
+	}
+
+	close(releaseFirst)
+	receiveEvidenceResult(t, results)
+	receiveEvidenceResult(t, results)
+	cancel()
+	worker.Wait()
+}
+
+func TestEvidenceWorkerBoundsAndExpiresCooldownTargets(t *testing.T) {
+	clock := &fakeEvidenceClock{now: time.Unix(100, 0)}
+	results := make(chan EvidenceResult, evidenceQueueCapacity+1)
+	release := make(chan struct{})
+	resume := sync.OnceFunc(func() { close(release) })
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) {
+			results <- result
+			<-release
+		},
+	})
+	worker.now = clock.Now
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	t.Cleanup(func() {
+		cancel()
+		resume()
+		worker.Wait()
+	})
+	request := func(target, identity string) EvidenceRequest {
+		return EvidenceRequest{
+			Trigger:  types.IOHealthEvent{Type: "block_error", Device: target},
+			Identity: identity,
+			Reason:   CollectionReasonTargetUnsupported,
+		}
+	}
+	waitIdle := func() {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			worker.mu.Lock()
+			idle := len(worker.inflight) == 0
+			worker.mu.Unlock()
+			if idle {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatal("evidence requests did not finish")
+	}
+
+	if !worker.Submit(request("dm-live", "old")) {
+		t.Fatal("first target was not accepted")
+	}
+	receiveEvidenceResult(t, results)
+	for i := 1; i < evidenceQueueCapacity; i++ {
+		if !worker.Submit(request(fmt.Sprintf("dm-%d", i), "old")) {
+			t.Fatalf("target %d was rejected before reaching capacity", i)
+		}
+	}
+	if worker.Submit(request("dm-overflow", "old")) {
+		t.Fatal("accepted more targets than the cooldown table can retain")
+	}
+	resume()
+	for i := 1; i < evidenceQueueCapacity; i++ {
+		receiveEvidenceResult(t, results)
+	}
+	waitIdle()
+	if worker.Submit(request("dm-overflow", "old")) {
+		t.Fatal("completed requests released live cooldown capacity")
+	}
+
+	clock.Advance(evidenceCooldown / 2)
+	if !worker.Submit(request("dm-live", "new")) {
+		t.Fatal("a replacement inherited the old generation's cooldown")
+	}
+	receiveEvidenceResult(t, results)
+	waitIdle()
+	clock.Advance(evidenceCooldown / 2)
+	if !worker.Submit(request("dm-fresh", "new")) {
+		t.Fatal("expired targets did not free capacity")
+	}
+	receiveEvidenceResult(t, results)
+	waitIdle()
+	worker.mu.Lock()
+	retained := len(worker.cooldownUntil)
+	worker.mu.Unlock()
+	if retained != 2 || worker.Submit(request("dm-live", "new")) {
+		t.Fatalf("expiration must keep only the two live cooldowns; retained=%d", retained)
+	}
+
+	for i := range 16 {
+		clock.Advance(evidenceCooldown)
+		if !worker.Submit(request(fmt.Sprintf("dm-churn-%d", i), "new")) {
+			t.Fatal("expired cooldown blocked a new target")
+		}
+		receiveEvidenceResult(t, results)
+		waitIdle()
+		worker.mu.Lock()
+		retained = len(worker.cooldownUntil)
+		worker.mu.Unlock()
+		if retained != 1 {
+			t.Fatalf("expired targets accumulated after churn: %d", retained)
+		}
+	}
+}
+
+func TestEvidenceWorkerUnsupportedTargets(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		device       string
+		target       string
+		identity     string
+		reason       string
+		validChecks  int32
+		wantCommands int32
+		wantReason   string
+	}{
+		{
+			name: "unsupported topology", device: "dm-0",
+			reason: CollectionReasonTargetUnsupported, wantReason: CollectionReasonTargetUnsupported,
+		},
+		{
+			name: "changed before command", device: "sda", target: "sda",
+			identity: "8:0/diskseq=1", wantReason: CollectionReasonTargetChanged,
+		},
+		{
+			name: "changed during command", device: "sda", target: "sda",
+			identity: "old-generation", validChecks: 1, wantCommands: 1,
+			wantReason: CollectionReasonTargetChanged,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			results := make(chan EvidenceResult, 1)
+			var validations, commands atomic.Int32
+			worker := NewEvidenceWorker(EvidenceWorkerOptions{
+				OnResult: func(result EvidenceResult) { results <- result },
+				ValidateIdentity: func(EvidenceRequest) bool {
+					return validations.Add(1) <= test.validChecks
+				},
+			})
+			worker.lookupPath = func(string) (string, error) { return "/usr/bin/smartctl", nil }
+			worker.runCommand = func(
+				context.Context,
+				string,
+				[]string,
+				int,
+			) commandExecution {
+				commands.Add(1)
+				return commandExecution{stdout: []byte(`{"smart_status":{"passed":true}}`)}
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			worker.Start(ctx)
+			t.Cleanup(func() {
+				cancel()
+				worker.Wait()
+			})
+			if !worker.Submit(EvidenceRequest{
+				Trigger:     types.IOHealthEvent{Type: "block_error", Device: test.device},
+				Target:      test.target,
+				Identity:    test.identity,
+				Protocol:    EvidenceProtocolSCSI,
+				Reason:      test.reason,
+				TriggeredAt: time.Unix(1, 0),
+			}) {
+				t.Fatal("unsupported attempt was not accepted")
+			}
+			result := receiveEvidenceResult(t, results)
+			if result.Target != test.device || result.Event.CollectionStatus != "unsupported" ||
+				result.Event.SCSI != nil || result.Event.NVMe != nil ||
+				len(result.Reasons) != 1 || result.Reasons[0] != test.wantReason {
+				t.Fatalf("unsupported result = %#v, want reason %s", result, test.wantReason)
+			}
+			if got := commands.Load(); got != test.wantCommands {
+				t.Fatalf("evidence commands = %d, want %d", got, test.wantCommands)
+			}
+		})
+	}
+}
+
+func TestEvidenceWorkerCancellationDrainsAcceptedRequests(t *testing.T) {
+	results := make(chan EvidenceResult, 3)
+	started := make(chan struct{}, 1)
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) { results <- result },
+	})
+	worker.lookupPath = func(string) (string, error) {
+		return "/usr/bin/smartctl", nil
+	}
+	worker.commandTimeout = time.Hour
+	worker.runCommand = func(ctx context.Context, _ string, _ []string, _ int) commandExecution {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return commandExecution{exitCode: -1, err: ctx.Err()}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	done := make(chan struct{})
+	go func() {
+		worker.Wait()
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("evidence worker did not stop")
+		}
+	})
+	request := func(target string) EvidenceRequest {
+		return EvidenceRequest{
+			Trigger:     types.IOHealthEvent{Type: "block_error", Device: target},
+			Target:      target,
+			Protocol:    EvidenceProtocolSCSI,
+			TriggeredAt: time.Unix(50, 0),
+		}
+	}
+	if !worker.Submit(request("sda")) {
+		t.Fatal("running request was not accepted")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first evidence command did not start")
+	}
+	if !worker.Submit(request("sdb")) {
+		t.Fatal("queued request was not accepted")
+	}
+
+	cancel()
+	if worker.Submit(request("sdc")) {
+		t.Fatal("request was accepted after cancellation")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not stop the running command and drain the queue")
+	}
+	if got := len(results); got != 2 {
+		t.Fatalf("callback count = %d, want one per accepted request (2)", got)
+	}
+	for _, target := range []string{"sda", "sdb"} {
+		result := receiveEvidenceResult(t, results)
+		if result.Target != target || result.Event.Device != target ||
+			result.Event.Type != "block_error" ||
+			!result.TriggeredAt.Equal(time.Unix(50, 0)) ||
+			result.Event.CollectionStatus != "error" ||
+			result.Event.NVMe != nil || result.Event.SCSI != nil ||
+			len(result.Reasons) != 1 || result.Reasons[0] != CollectionReasonExecError {
+			t.Fatalf("canceled result for %s = %#v", target, result)
+		}
+	}
+	if worker.Submit(request("sdc")) {
+		t.Fatal("request was accepted after worker exit")
+	}
+}
+
+type fakeEvidenceClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *fakeEvidenceClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeEvidenceClock) Advance(duration time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(duration)
+	c.mu.Unlock()
+}
+
+func receiveEvidenceResult(
+	t *testing.T,
+	results <-chan EvidenceResult,
+) EvidenceResult {
+	t.Helper()
+	select {
+	case result := <-results:
+		return result
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for evidence result")
+		return EvidenceResult{}
+	}
+}
+
+// MD baseline, topology, and change notifications.
+
+type mdFixture struct {
+	mdstat   string
+	sysBlock string
+}
+
+type mdPollResult struct {
+	fd     int32
+	events int16
+	err    error
+	run    func()
+	done   chan struct{}
+}
+
+type fakeMDPoller struct {
+	results chan mdPollResult
+}
+
+func newFakeMDPoller() *fakeMDPoller {
+	return &fakeMDPoller{results: make(chan mdPollResult, 16)}
+}
+
+func (p *fakeMDPoller) poll(fds []unix.PollFd, _ int) (int, error) {
+	result := <-p.results
+	if result.run != nil {
+		result.run()
+		close(result.done)
+		return 0, unix.EINTR
+	}
+	if result.err != nil {
+		return 0, result.err
+	}
+	for i := range fds {
+		if fds[i].Fd == result.fd {
+			fds[i].Revents = result.events
+			return 1, nil
+		}
+	}
+	return 0, unix.EINTR
+}
+
+func (p *fakeMDPoller) trigger(fd int32) {
+	p.results <- mdPollResult{fd: fd, events: unix.POLLPRI | unix.POLLERR}
+}
+
+func (p *fakeMDPoller) fail(err error) {
+	p.results <- mdPollResult{err: err}
+}
+
+// Execute test observations and synthetic events on the watcher's sole owner.
+func (p *fakeMDPoller) run(t *testing.T, action func()) {
+	t.Helper()
+	done := make(chan struct{})
+	p.results <- mdPollResult{run: action, done: done}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("MD watcher did not finish the test action")
+	}
+}
+
+func setupMDFixture(t *testing.T, devices map[string]map[string]string) mdFixture {
+	t.Helper()
+	root := t.TempDir()
+	mdstat := filepath.Join(root, "proc", "mdstat")
+	sysBlock := filepath.Join(root, "sys", "block")
+	if err := os.MkdirAll(filepath.Dir(mdstat), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sysBlock, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for device, files := range devices {
+		writeMDDevice(t, sysBlock, device, files)
+	}
+	deviceNames := make([]string, 0, len(devices))
+	for device := range devices {
+		deviceNames = append(deviceNames, device)
+	}
+	writeMDStatFixture(t, mdstat, deviceNames...)
+	return mdFixture{mdstat: mdstat, sysBlock: sysBlock}
+}
+
+func writeMDStatFixture(t *testing.T, path string, devices ...string) {
+	writeMDStatFixtureForLevel(t, path, "raid1", devices...)
+}
+
+func writeMDStatFixtureForLevel(
+	t *testing.T,
+	path, level string,
+	devices ...string,
+) {
+	t.Helper()
+	sort.Strings(devices)
+	var content strings.Builder
+	fmt.Fprintf(&content, "Personalities : [%s]\n", level)
+	for _, device := range devices {
+		fmt.Fprintf(&content, "%s : active %s\n", device, level)
+	}
+	content.WriteString("unused devices: <none>\n")
+	if err := os.WriteFile(path, []byte(content.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeMDDevice(t *testing.T, sysBlock, device string, files map[string]string) {
+	t.Helper()
+	mdDir := filepath.Join(sysBlock, device, "md")
+	for name, content := range files {
+		path := filepath.Join(mdDir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func startMDWatcher(t *testing.T, fixture mdFixture) (*MDWatcher, *fakeMDPoller, context.CancelFunc) {
+	t.Helper()
+	poller := newFakeMDPoller()
+	watcher := newMDWatcher(fixture.mdstat, fixture.sysBlock, poller.poll)
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := watcher.Start(ctx); err != nil {
+		cancel()
+		t.Fatalf("Start() error = %v", err)
+	}
+	return watcher, poller, cancel
+}
+
+func stopMDWatcher(
+	t *testing.T,
+	watcher *MDWatcher,
+	poller *fakeMDPoller,
+	cancel context.CancelFunc,
+) {
+	t.Helper()
+	watcher.lifecycleMu.Lock()
+	wakeRead := watcher.wakeRead
+	watcher.lifecycleMu.Unlock()
+	cancel()
+	poller.trigger(int32(wakeRead))
+	// Failure-path tests assert the run error before deferred cleanup.
+	_ = watcher.Wait()
+}
+
+func mdFileFD(t *testing.T, watcher *MDWatcher, poller *fakeMDPoller, array, member, field string) int32 {
+	t.Helper()
+	return int32(mdFileTarget(t, watcher, poller, array, member, field).file.Fd())
+}
+
+func mdFileTarget(
+	t *testing.T,
+	watcher *MDWatcher,
+	poller *fakeMDPoller,
+	array, member, field string,
+) *mdWatchFile {
+	t.Helper()
+	var found *mdWatchFile
+	poller.run(t, func() {
+		for _, target := range watcher.files {
+			if target.array == array && target.member == member && target.field == field {
+				found = target
+				break
+			}
+		}
+	})
+	if found != nil {
+		return found
+	}
+	t.Fatalf("watch %s/%s/%s not found", array, member, field)
+	return nil
+}
+
+func handleMDWatchEvent(t *testing.T, watcher *MDWatcher, poller *fakeMDPoller, target *mdWatchFile) {
+	t.Helper()
+	var err error
+	poller.run(t, func() { err = watcher.handleEvent(target, unix.POLLPRI|unix.POLLERR) })
+	if err != nil {
+		t.Fatalf("handleEvent() error = %v", err)
+	}
+}
+
+func waitMDChange(t *testing.T, watcher *MDWatcher, match func(MDChange) bool) MDChange {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case change := <-watcher.Changes():
+			if match(change) {
+				return change
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for MD change")
+		}
+	}
+}
+
+func assertNoMDChange(t *testing.T, watcher *MDWatcher) {
+	t.Helper()
+	select {
+	case change := <-watcher.Changes():
+		t.Fatalf("unexpected MD change: %+v", change)
+	default:
+	}
+}
+
+func assertMDMemberWatchPreserved(
+	t *testing.T,
+	watcher *MDWatcher,
+	poller *fakeMDPoller,
+	previous *mdWatchFile,
+	array, member, state string,
+) {
+	t.Helper()
+
+	current := mdFileTarget(t, watcher, poller, array, member, mdMemberState)
+	if current != previous {
+		t.Fatalf("%s/%s watch was replaced after failed rebuild", array, member)
+	}
+	var currentState string
+	poller.run(t, func() { currentState = watcher.members[array][member] })
+	if currentState != state {
+		t.Fatalf("%s/%s state = %q, want %q", array, member, currentState, state)
+	}
+	value, err := readOpenMDFile(current.file)
+	if err != nil {
+		t.Fatalf("preserved %s/%s watch cannot be read: %v", array, member, err)
+	}
+	if value != state {
+		t.Fatalf("preserved %s/%s watch value = %q, want %q", array, member, value, state)
+	}
+	assertNoMDChange(t, watcher)
+}
+
+func TestMDWatcherReportsTransitionsAfterInitialBaseline(t *testing.T) {
+	fixture := setupMDFixture(t, map[string]map[string]string{
+		"md0": {
+			mdLevel:                    "raid1\n",
+			mdSyncAction:               "idle\n",
+			mdDegraded:                 "0\n",
+			"dev-sda/" + mdMemberState: "in_sync\n",
+			"dev-sdb/" + mdMemberState: "in_sync\n",
+		},
+	})
+	watcher, poller, cancel := startMDWatcher(t, fixture)
+	defer stopMDWatcher(t, watcher, poller, cancel)
+
+	assertNoMDChange(t, watcher)
+
+	for _, test := range []struct {
+		field    string
+		file     string
+		member   string
+		oldState string
+		newState string
+	}{
+		{field: MDFieldSyncAction, file: mdSyncAction, member: "", oldState: "idle", newState: "recover"},
+		{field: MDFieldMemberState, file: mdMemberState, member: "sdb", oldState: "in_sync", newState: "faulty"},
+		{field: MDFieldMemberState, file: mdMemberState, member: "sda", oldState: "in_sync", newState: "in_sync,write_error"},
+		{field: MDFieldDegraded, file: mdDegraded, member: "", oldState: "0", newState: "1"},
+	} {
+		t.Run(test.file+"/"+test.member, func(t *testing.T) {
+			path := filepath.Join(fixture.sysBlock, "md0", "md")
+			if test.member != "" {
+				path = filepath.Join(path, "dev-"+test.member)
+			}
+			if err := os.WriteFile(filepath.Join(path, test.file), []byte(test.newState+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			poller.trigger(mdFileFD(
+				t,
+				watcher,
+				poller,
+				"md0",
+				test.member,
+				test.file,
+			))
+			change := waitMDChange(t, watcher, func(change MDChange) bool {
+				return change.Field == test.field && change.Member == test.member
+			})
+			if change.Array != "md0" || change.Member != test.member ||
+				change.OldState != test.oldState || change.NewState != test.newState ||
+				change.ObservedAt.IsZero() {
+				t.Fatalf("MD change = %+v", change)
+			}
+		})
+	}
+	assertNoMDChange(t, watcher)
+}
+
+func TestMDWatcherStartsWithoutRedundancyAttributes(t *testing.T) {
+	for _, level := range []string{"raid0", "linear"} {
+		t.Run(level, func(t *testing.T) {
+			fixture := setupMDFixture(t, map[string]map[string]string{
+				"md0": {
+					mdLevel:                    level + "\n",
+					"dev-sda/" + mdMemberState: "in_sync\n",
+				},
+			})
+			writeMDStatFixtureForLevel(t, fixture.mdstat, level, "md0")
+			watcher, poller, cancel := startMDWatcher(t, fixture)
+			defer stopMDWatcher(t, watcher, poller, cancel)
+
+			statePath := filepath.Join(
+				fixture.sysBlock,
+				"md0",
+				"md",
+				"dev-sda",
+				mdMemberState,
+			)
+			if err := os.WriteFile(statePath, []byte("faulty\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			poller.trigger(mdFileFD(t, watcher, poller, "md0", "sda", mdMemberState))
+
+			change := waitMDChange(t, watcher, func(change MDChange) bool {
+				return change.Field == MDFieldMemberState
+			})
+			if change.Array != "md0" || change.Member != "sda" ||
+				change.OldState != "in_sync" || change.NewState != "faulty" {
+				t.Fatalf("member change = %+v", change)
+			}
+		})
+	}
+}
+
+func TestMDWatcherStopsAfterNotificationRebuildFailure(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		array string
+		field string
+	}{
+		{name: "mdstat", field: mdStatField},
+		{name: "level", array: "md0", field: mdLevel},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := setupMDFixture(t, map[string]map[string]string{
+				"md0": {
+					mdLevel:                    "raid1\n",
+					mdSyncAction:               "idle\n",
+					mdDegraded:                 "0\n",
+					"dev-sda/" + mdMemberState: "in_sync\n",
+				},
+			})
+			watcher, poller, cancel := startMDWatcher(t, fixture)
+			defer stopMDWatcher(t, watcher, poller, cancel)
+
+			statePath := filepath.Join(
+				fixture.sysBlock,
+				"md0",
+				"md",
+				"dev-sda",
+				mdMemberState,
+			)
+			if err := os.Remove(statePath); err != nil {
+				t.Fatal(err)
+			}
+			poller.trigger(mdFileFD(t, watcher, poller, test.array, "", test.field))
+			sentinel := errors.New("unexpected second poll")
+			poller.fail(sentinel)
+
+			err := watcher.Wait()
+			if err == nil {
+				t.Fatal("Wait() error = nil, want rebuild error")
+			}
+			if errors.Is(err, sentinel) {
+				t.Fatalf("Wait() error = %v, watcher continued polling", err)
+			}
+			if !strings.Contains(err.Error(), "rebuild after "+test.field+" notification") {
+				t.Fatalf("Wait() error = %v, want notification rebuild context", err)
+			}
+		})
+	}
+}
+
+func TestMDWatcherPollsOnlyForPriorityChanges(t *testing.T) {
+	fixture := setupMDFixture(t, map[string]map[string]string{
+		"md0": {
+			mdLevel:      "raid1\n",
+			mdSyncAction: "idle\n",
+			mdDegraded:   "0\n",
+		},
+	})
+	watcher, poller, cancel := startMDWatcher(t, fixture)
+	defer stopMDWatcher(t, watcher, poller, cancel)
+
+	watcher.lifecycleMu.Lock()
+	wakeRead := watcher.wakeRead
+	watcher.lifecycleMu.Unlock()
+	pollFDs, targets := watcher.pollFDs(wakeRead)
+	if len(pollFDs) != len(targets) || len(pollFDs) < 2 {
+		t.Fatalf("poll set has %d fds and %d targets", len(pollFDs), len(targets))
+	}
+	if pollFDs[0].Events != unix.POLLIN {
+		t.Fatalf("wake pipe events = %#x, want POLLIN", pollFDs[0].Events)
+	}
+	for i := 1; i < len(pollFDs); i++ {
+		if pollFDs[i].Events != unix.POLLPRI {
+			t.Fatalf(
+				"watch %s events = %#x, want POLLPRI",
+				targets[i].field,
+				pollFDs[i].Events,
+			)
+		}
+	}
+}
+
+func TestMDWatcherRebuildPreservesMemberFaultNotification(t *testing.T) {
+	fixture := setupMDFixture(t, map[string]map[string]string{
+		"md0": {
+			mdLevel:                    "raid1\n",
+			mdSyncAction:               "idle\n",
+			mdDegraded:                 "0\n",
+			"dev-sda/" + mdMemberState: "in_sync\n",
+			"dev-sdb/" + mdMemberState: "in_sync\n",
+		},
+	})
+	watcher, poller, cancel := startMDWatcher(t, fixture)
+	defer stopMDWatcher(t, watcher, poller, cancel)
+
+	mdstatTarget := mdFileTarget(t, watcher, poller, "", "", mdStatField)
+	memberTarget := mdFileTarget(t, watcher, poller, "md0", "sdb", mdMemberState)
+	memberPath := filepath.Join(fixture.sysBlock, "md0", "md", "dev-sdb", mdMemberState)
+	if err := os.WriteFile(memberPath, []byte("faulty\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A failed running array can be listed as broken, not active.
+	mdstat, err := os.ReadFile(fixture.mdstat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.mdstat,
+		[]byte(strings.Replace(string(mdstat), " : active", " : broken", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A real fault can make mdstat and the member fd ready together. Model
+	// mdstat being handled first: rebuild replaces and closes memberTarget,
+	// so the state diff must preserve the notification before the stale fd is
+	// ignored.
+	handleMDWatchEvent(t, watcher, poller, mdstatTarget)
+	handleMDWatchEvent(t, watcher, poller, memberTarget)
+
+	select {
+	case change := <-watcher.Changes():
+		if change.Array != "md0" || change.Member != "sdb" ||
+			change.Field != MDFieldMemberState ||
+			change.OldState != "in_sync" || change.NewState != "faulty" {
+			t.Fatalf("member change = %+v", change)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for rebuilt member change")
+	}
+	assertNoMDChange(t, watcher)
+
+	// A recreated same-name member starts its own state history.
+	if err := os.Rename(memberPath, memberPath+"-retired"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(memberPath, []byte("spare\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mdstatTarget = mdFileTarget(t, watcher, poller, "", "", mdStatField)
+	handleMDWatchEvent(t, watcher, poller, mdstatTarget)
+	assertNoMDChange(t, watcher)
+
+	memberTarget = mdFileTarget(t, watcher, poller, "md0", "sdb", mdMemberState)
+	if err := os.WriteFile(memberPath, []byte("faulty\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handleMDWatchEvent(t, watcher, poller, memberTarget)
+	change := waitMDChange(t, watcher, func(change MDChange) bool {
+		return change.Field == MDFieldMemberState && change.Member == "sdb"
+	})
+	if change.OldState != "spare" || change.NewState != "faulty" {
+		t.Fatalf("replacement member change = %+v", change)
+	}
+}
+
+func TestMDWatcherEmitsEveryMemberFaultSeenWithDegradedChange(t *testing.T) {
+	fixture := setupMDFixture(t, map[string]map[string]string{
+		"md0": {
+			mdLevel:                    "raid1\n",
+			mdSyncAction:               "idle\n",
+			mdDegraded:                 "0\n",
+			"dev-sda/" + mdMemberState: "in_sync\n",
+			"dev-sdb/" + mdMemberState: "in_sync\n",
+		},
+	})
+	watcher, poller, cancel := startMDWatcher(t, fixture)
+	defer stopMDWatcher(t, watcher, poller, cancel)
+
+	degradedTarget := mdFileTarget(t, watcher, poller, "md0", "", mdDegraded)
+	memberTargets := []*mdWatchFile{
+		mdFileTarget(t, watcher, poller, "md0", "sda", mdMemberState),
+		mdFileTarget(t, watcher, poller, "md0", "sdb", mdMemberState),
+	}
+	mdDir := filepath.Join(fixture.sysBlock, "md0", "md")
+	for _, member := range []string{"sda", "sdb"} {
+		if err := os.WriteFile(
+			filepath.Join(mdDir, "dev-"+member, mdMemberState),
+			[]byte("faulty\n"),
+			0o600,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(mdDir, mdDegraded), []byte("2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	handleMDWatchEvent(t, watcher, poller, degradedTarget)
+	degraded := waitMDChange(t, watcher, func(change MDChange) bool {
+		return change.Field == MDFieldDegraded
+	})
+	if degraded.OldState != "0" || degraded.NewState != "2" {
+		t.Fatalf("degraded change = %+v", degraded)
+	}
+	changes := make(map[string]MDChange)
+	for range 2 {
+		select {
+		case change := <-watcher.Changes():
+			changes[change.Member] = change
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for both faulted member changes")
+		}
+	}
+	for _, member := range []string{"sda", "sdb"} {
+		change, ok := changes[member]
+		if !ok || change.Array != "md0" ||
+			change.Field != MDFieldMemberState ||
+			change.OldState != "in_sync" || change.NewState != "faulty" {
+			t.Fatalf("%s change = %+v, present=%t", member, change, ok)
+		}
+	}
+
+	// Member fds can already be ready when degraded is processed. Their stale
+	// notifications must not duplicate changes whose cache was refreshed above.
+	for _, target := range memberTargets {
+		handleMDWatchEvent(t, watcher, poller, target)
+	}
+	assertNoMDChange(t, watcher)
+}
+
+func TestMDWatcherReportsRemovedMemberFromActiveArray(t *testing.T) {
+	fixture := setupMDFixture(t, map[string]map[string]string{
+		"md0": {
+			mdLevel:                    "raid1\n",
+			mdSyncAction:               "idle\n",
+			mdDegraded:                 "0\n",
+			"dev-sda/" + mdMemberState: "in_sync\n",
+			"dev-sdb/" + mdMemberState: "in_sync\n",
+		},
+	})
+	blockPath := filepath.Join(fixture.sysBlock, "sdb")
+	if err := os.Mkdir(blockPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(blockPath, filepath.Join(fixture.sysBlock, "md0", "md", "dev-sdb", "block")); err != nil {
+		t.Fatal(err)
+	}
+	identity := BlockDeviceIdentity(blockPath)
+	watcher, poller, cancel := startMDWatcher(t, fixture)
+	defer stopMDWatcher(t, watcher, poller, cancel)
+
+	mdstatTarget := mdFileTarget(t, watcher, poller, "", "", mdStatField)
+	mdDir := filepath.Join(fixture.sysBlock, "md0", "md")
+	if err := os.RemoveAll(filepath.Join(mdDir, "dev-sdb")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(blockPath, blockPath+"-retired"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(blockPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	handleMDWatchEvent(t, watcher, poller, mdstatTarget)
+
+	select {
+	case change := <-watcher.Changes():
+		if change.Array != "md0" || change.Member != "sdb" ||
+			change.Field != MDFieldMemberState ||
+			change.OldState != "in_sync" ||
+			change.NewState != MDMemberStateRemoved ||
+			change.MemberIdentity == "" || change.MemberIdentity != identity {
+			t.Fatalf("removed member change = %+v", change)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for removed member change")
+	}
+
+	// Adding a replacement or expansion member is not a health failure.
+	writeMDDevice(t, fixture.sysBlock, "md0", map[string]string{
+		"dev-sdc/" + mdMemberState: "spare\n",
+	})
+	mdstatTarget = mdFileTarget(t, watcher, poller, "", "", mdStatField)
+	handleMDWatchEvent(t, watcher, poller, mdstatTarget)
+	assertNoMDChange(t, watcher)
+}
+
+func TestMDWatcherRejectsIncompleteArrayBaseline(t *testing.T) {
+	tests := []struct {
+		name       string
+		field      string
+		breakField func(*testing.T, string)
+	}{
+		{
+			name:  "unreadable sync action",
+			field: mdSyncAction,
+			breakField: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name:  "unreadable level",
+			field: mdLevel,
+			breakField: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name:  "malformed degraded",
+			field: mdDegraded,
+			breakField: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.WriteFile(path, []byte("invalid\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := setupMDFixture(t, map[string]map[string]string{
+				"md0": {
+					mdLevel:      "raid1\n",
+					mdSyncAction: "idle\n",
+					mdDegraded:   "0\n",
+				},
+			})
+			path := filepath.Join(fixture.sysBlock, "md0", "md", test.field)
+			test.breakField(t, path)
+
+			poller := newFakeMDPoller()
+			watcher := newMDWatcher(fixture.mdstat, fixture.sysBlock, poller.poll)
+			ctx, cancel := context.WithCancel(context.Background())
+			err := watcher.Start(ctx)
+			if err == nil {
+				stopMDWatcher(t, watcher, poller, cancel)
+				t.Fatal("Start() error = nil, want incomplete baseline error")
+			}
+			cancel()
+		})
+	}
+}
+
+func TestMDWatcherRejectsIncompleteMemberStateRebuild(t *testing.T) {
+	tests := []struct {
+		name       string
+		breakState func(*testing.T, string)
+	}{
+		{
+			name: "missing state",
+			breakState: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "unreadable state",
+			breakState: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := setupMDFixture(t, map[string]map[string]string{
+				"md0": {
+					mdLevel:                    "raid1\n",
+					mdSyncAction:               "idle\n",
+					mdDegraded:                 "0\n",
+					"dev-sda/" + mdMemberState: "in_sync\n",
+					"dev-sdb/" + mdMemberState: "in_sync\n",
+				},
+			})
+			watcher, poller, cancel := startMDWatcher(t, fixture)
+			defer stopMDWatcher(t, watcher, poller, cancel)
+
+			previous := mdFileTarget(t, watcher, poller, "md0", "sdb", mdMemberState)
+			statePath := filepath.Join(
+				fixture.sysBlock,
+				"md0",
+				"md",
+				"dev-sdb",
+				mdMemberState,
+			)
+			test.breakState(t, statePath)
+
+			var err error
+			poller.run(t, func() { err = watcher.rebuild(true) })
+			if err == nil {
+				t.Fatal("rebuild() error = nil, want member state error")
+			}
+			assertMDMemberWatchPreserved(
+				t,
+				watcher,
+				poller,
+				previous,
+				"md0",
+				"sdb",
+				"in_sync",
+			)
+		})
+	}
+}
+
+func TestMDWatcherReportsArrayChangeDuringTopologyRebuild(t *testing.T) {
+	fixture := setupMDFixture(t, map[string]map[string]string{
+		"md0": {
+			mdLevel:                    "raid1\n",
+			mdSyncAction:               "idle\n",
+			mdDegraded:                 "0\n",
+			"dev-sda/" + mdMemberState: "in_sync\n",
+			"dev-sdb/" + mdMemberState: "in_sync\n",
+		},
+	})
+	watcher, poller, cancel := startMDWatcher(t, fixture)
+	defer stopMDWatcher(t, watcher, poller, cancel)
+
+	levelPath := filepath.Join(fixture.sysBlock, "md0", "md", mdLevel)
+	syncPath := filepath.Join(fixture.sysBlock, "md0", "md", mdSyncAction)
+	if err := os.WriteFile(levelPath, []byte("raid10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(syncPath, []byte("reshape\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	poller.trigger(mdFileFD(t, watcher, poller, "md0", "", mdLevel))
+	change := waitMDChange(t, watcher, func(change MDChange) bool {
+		return change.Field == MDFieldSyncAction
+	})
+	if change.Array != "md0" || change.OldState != "idle" ||
+		change.NewState != "reshape" {
+		t.Fatalf("sync change = %+v", change)
+	}
+
+	writeMDDevice(t, fixture.sysBlock, "md1", map[string]string{
+		mdLevel:      "raid1\n",
+		mdSyncAction: "resync\n",
+		mdDegraded:   "1\n",
+	})
+	writeMDStatFixture(t, fixture.mdstat, "md0", "md1")
+	handleMDWatchEvent(
+		t, watcher, poller, mdFileTarget(t, watcher, poller, "", "", mdStatField),
+	)
+	_ = mdFileTarget(t, watcher, poller, "md1", "", mdSyncAction)
+	assertNoMDChange(t, watcher)
+
+	// A same-named replacement has its own baseline even when the watcher
+	// did not observe the interval in which the old array was absent.
+	oldLevel := mdFileTarget(t, watcher, poller, "md0", "", mdLevel)
+	if err := os.Rename(filepath.Join(fixture.sysBlock, "md0"),
+		filepath.Join(t.TempDir(), "old-md0")); err != nil {
+		t.Fatal(err)
+	}
+	writeMDDevice(t, fixture.sysBlock, "md0", map[string]string{
+		mdLevel:                    "raid1\n",
+		mdSyncAction:               "idle\n",
+		mdDegraded:                 "1\n",
+		"dev-sda/" + mdMemberState: "faulty\n",
+		"dev-sdc/" + mdMemberState: "in_sync\n",
+	})
+	handleMDWatchEvent(
+		t, watcher, poller, mdFileTarget(t, watcher, poller, "", "", mdStatField),
+	)
+	handleMDWatchEvent(t, watcher, poller, oldLevel)
+	assertNoMDChange(t, watcher)
+
+	writeMDDevice(t, fixture.sysBlock, "md0", map[string]string{
+		mdSyncAction:               "recover\n",
+		"dev-sdc/" + mdMemberState: "faulty\n",
+	})
+	handleMDWatchEvent(
+		t, watcher, poller, mdFileTarget(t, watcher, poller, "", "", mdStatField),
+	)
+	change = waitMDChange(t, watcher, func(change MDChange) bool {
+		return change.Field == MDFieldSyncAction
+	})
+	if change.Array != "md0" || change.OldState != "idle" ||
+		change.NewState != "recover" {
+		t.Fatalf("replacement sync change = %+v", change)
+	}
+	change = waitMDChange(t, watcher, func(change MDChange) bool {
+		return change.Field == MDFieldMemberState
+	})
+	if change.Array != "md0" || change.Member != "sdc" ||
+		change.OldState != "in_sync" || change.NewState != "faulty" {
+		t.Fatalf("replacement member change = %+v", change)
+	}
+	assertNoMDChange(t, watcher)
+
+	writeMDStatFixture(t, fixture.mdstat, "md1")
+	handleMDWatchEvent(
+		t, watcher, poller, mdFileTarget(t, watcher, poller, "", "", mdStatField),
+	)
+	assertNoMDChange(t, watcher)
+}
+
+func TestNormalizeMDSyncAction(t *testing.T) {
+	for input, want := range map[string]string{
+		"recover\n": "recover",
+		"FROZEN":    "frozen",
+		"reserved":  "unknown",
+		"":          "unknown",
+	} {
+		if got := normalizeMDSyncAction(input); got != want {
+			t.Fatalf("normalizeMDSyncAction(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

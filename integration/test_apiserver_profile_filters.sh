@@ -23,7 +23,7 @@ source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_storage.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-readonly PROFILE_FILTER_INDEX="huatuo_profile_filters"
+readonly PROFILE_FILTER_INDEX=$(storage_test_index huatuo_profile_filters)
 readonly PROFILE_FILTER_TOKEN="profile-filter-admin"
 readonly PROFILE_FILTER_TYPE="process_cpu:cpu:nanoseconds:cpu:nanoseconds"
 readonly PROFILE_FILTER_ENDPOINT="/v1/profiling/flamegraph/querier.v1.QuerierService/LabelValues"
@@ -98,6 +98,8 @@ assert_profile_storage_request "create index" "${HUATUO_BAMAI_TEST_TMPDIR}/creat
   "started_timestamp":{"type":"date"},
   "profile_data":{"properties":{"profile_type":{"type":"text","fields":{"keyword":{"type":"keyword"}}}}}
  }}}'
+assert_eq "$(jq -r '.shards_acknowledged' "${HUATUO_BAMAI_TEST_TMPDIR}/create-index.json")" \
+	true "profile index primary shard ready" || fatal "profile index primary shard is not active; check storage allocation and disk space"
 
 jq -cn --arg type "${PROFILE_FILTER_TYPE}" '
  [

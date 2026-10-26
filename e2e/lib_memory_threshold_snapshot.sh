@@ -41,6 +41,42 @@ memory_threshold_snapshot_setup() {
 	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 }
 
+# Declare the limit through CRI/systemd so reconciliation preserves it.
+# Handle TERM in PID 1 so successful cases do not spend the Pod grace period.
+snapshot_create_pod() {
+	kubectl run "${go_snapshot_pod}" --namespace "${GO_SNAPSHOT_NAMESPACE}" \
+		--image="${BUSINESS_POD_IMAGE}" --image-pull-policy=Never \
+		--restart=Never -l "${go_snapshot_pod_label}" --dry-run=client -o json --command -- sh -c '
+		sleep infinity &
+		child=$!
+		stop() {
+			kill -TERM "$child" 2>/dev/null || true
+			wait "$child" 2>/dev/null || true
+			exit 0
+		}
+		trap stop TERM INT
+		wait "$child"
+	' | jq --arg memory "${GO_SNAPSHOT_LIMIT}" '
+		.spec.containers[0].resources = {requests: {memory: $memory}, limits: {memory: $memory}}
+	' | kubectl create --namespace "${GO_SNAPSHOT_NAMESPACE}" -f -
+}
+
+# Keep the test scope's systemd configuration and cgroup value consistent.
+# Direct writes can be undone when systemd reapplies resource controls.
+snapshot_set_memory_high() {
+	local value=$1 property=$1 unit=${go_snapshot_cgroup##*/}
+	if [[ ${unit} == *.scope ]]; then
+		require_commands systemctl timeout
+		[[ ${value} != max ]] || property=infinity
+		timeout --kill-after=1 10 systemctl set-property --runtime "${unit}" "MemoryHigh=${property}" \
+			|| fatal "cannot configure MemoryHigh for snapshot scope ${unit}"
+	else
+		echo "${value}" > "${go_snapshot_cgroup}/memory.high"
+	fi
+	[[ $(< "${go_snapshot_cgroup}/memory.high") == "${value}" ]] \
+		|| fatal "snapshot memory.high does not match ${value}"
+}
+
 memory_threshold_snapshot_cleanup() {
 	local status=$? diagnosed=0
 	if [[ ${status} -ne 0 ]]; then

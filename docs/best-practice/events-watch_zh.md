@@ -242,6 +242,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 | `cpusys`                 | CPU 系统态占用率异常（AutoTracing 自动触发）   |
 | `dload`                  | 系统负载异常（AutoTracing 自动触发）           |
 | `iotracing`              | I/O 延迟异常（AutoTracing 自动触发）           |
+| `io_health`              | Block、NVMe、SCSI 和 MD 健康事件               |
 | `memburst`               | 内存突增异常（AutoTracing 自动触发）           |
 
 ## Go 客户端
