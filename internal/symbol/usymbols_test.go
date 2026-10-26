@@ -398,6 +398,22 @@ func TestUsymStackMainElf(t *testing.T) {
 	}
 }
 
+func TestUsymStackNonPositiveDepthReturnsEmpty(t *testing.T) {
+	resolver := NewUsymResolver()
+	stack := []uint64{0x400100}
+
+	for _, depth := range []int{-1, 0} {
+		t.Run(strconv.Itoa(depth), func(t *testing.T) {
+			if got := resolver.UsymStackStrs(1001, stack, depth); len(got) != 0 {
+				t.Fatalf("UsymStackStrs(%d) = %v, want empty", depth, got)
+			}
+			if got := resolver.UsymStackBytesReversed(1001, stack, depth); len(got) != 0 {
+				t.Fatalf("UsymStackBytesReversed(%d) = %v, want empty", depth, got)
+			}
+		})
+	}
+}
+
 func TestUsymResolverBatchesAndRelocatesPIEAddresses(t *testing.T) {
 	const (
 		pid      = uint32(1001)
