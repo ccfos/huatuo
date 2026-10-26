@@ -15,10 +15,10 @@
 package transport
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,9 +28,15 @@ import (
 func TestSendDoesNotOwnConnectionCleanup(t *testing.T) {
 	writeErr := errors.New("write failed")
 	closeErr := errors.New("close failed")
-	conn := &failingConn{writeErr: writeErr, closeErr: closeErr}
-	client := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
-	err := client.Send(t.Context(), nil, SendOptions{End: true})
+	conn := &failingConn{
+		writeErr: writeErr,
+		closeErr: closeErr,
+	}
+	client := &Client{
+		encoder: capnp.NewEncoder(conn),
+		conn:    conn,
+	}
+	err := client.Send(nil, SendOptions{End: true})
 	if !errors.Is(err, writeErr) {
 		t.Fatalf("Send: %v", err)
 	}
@@ -40,6 +46,22 @@ func TestSendDoesNotOwnConnectionCleanup(t *testing.T) {
 	if err := client.Close(); !errors.Is(err, closeErr) {
 		t.Fatalf("Close: %v", err)
 	}
+	if err := client.Close(); !errors.Is(err, closeErr) {
+		t.Fatalf("repeated Close: %v", err)
+	}
+
+	var closers sync.WaitGroup
+	for range 20 {
+		closers.Add(1)
+		go func() {
+			defer closers.Done()
+			if err := client.Close(); !errors.Is(err, closeErr) {
+				t.Errorf("concurrent Close: %v", err)
+			}
+		}()
+	}
+	closers.Wait()
+
 	if conn.closeCalls != 1 {
 		t.Fatalf("Close calls=%d", conn.closeCalls)
 	}
@@ -84,17 +106,16 @@ func (*failingConn) SetWriteDeadline(time.Time) error {
 	return nil
 }
 
-func TestSendCancellationInterruptsBlockedWrite(t *testing.T) {
+func TestCloseInterruptsBlockedWrite(t *testing.T) {
 	local, remote := net.Pipe()
 	defer local.Close()
 	defer remote.Close()
-	client := &Client{encoder: capnp.NewEncoder(local), conn: local}
-	deadline, stop := context.WithTimeout(t.Context(), time.Second)
-	defer stop()
-	ctx, cancel := context.WithCancel(deadline)
-	defer cancel()
+	client := &Client{
+		encoder: capnp.NewEncoder(local),
+		conn:    local,
+	}
 	done := make(chan error, 1)
-	go func() { done <- client.Send(ctx, []byte("payload"), SendOptions{}) }()
+	go func() { done <- client.Send([]byte("payload"), SendOptions{}) }()
 	if err := remote.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -102,13 +123,15 @@ func TestSendCancellationInterruptsBlockedWrite(t *testing.T) {
 	if _, err := io.ReadFull(remote, make([]byte, 1)); err != nil {
 		t.Fatal(err)
 	}
-	cancel()
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
+		if !errors.Is(err, io.ErrClosedPipe) {
 			t.Fatalf("Send: %v", err)
 		}
-	case <-deadline.Done():
-		t.Fatal("cancellation did not unblock Send")
+	case <-time.After(time.Second):
+		t.Fatal("Close did not unblock Send")
 	}
 }

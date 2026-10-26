@@ -108,10 +108,13 @@ func (s *jsonWriter) Write(ev *types.DropWatchTracing) error {
 	return err
 }
 
-type socketWriter struct{ client *toolstream.Client }
+type socketWriter struct {
+	client    *toolstream.Client
+	outputCtx context.Context
+}
 
 func (s *socketWriter) Write(ev *types.DropWatchTracing) error {
-	return s.client.Send(context.Background(), ev, toolstream.SendOptions{})
+	return s.client.Send(s.outputCtx, ev, toolstream.SendOptions{})
 }
 
 type writerOptions struct {
@@ -122,7 +125,7 @@ type writerOptions struct {
 	taskID       string
 }
 
-func newWriter(output io.Writer, options *writerOptions) (writer, func() error, error) {
+func newWriter(runCtx context.Context, output io.Writer, options *writerOptions) (writer, func() error, error) {
 	if options.socketPath != "" {
 		client, err := toolstream.NewClient(&toolstream.ClientOptions{
 			SockPath:    options.socketPath,
@@ -133,9 +136,24 @@ func newWriter(output io.Writer, options *writerOptions) (writer, func() error, 
 		if err != nil {
 			return nil, nil, fmt.Errorf("create event sink: %w", err)
 		}
-		return &socketWriter{client: client}, func() error {
-			return errors.Join(client.Send(context.Background(), nil, toolstream.SendOptions{End: true}), client.Close())
-		}, nil
+		outputCtx := context.WithoutCancel(runCtx)
+		cleanup := func() error {
+			endErr := client.Send(outputCtx, nil, toolstream.SendOptions{End: true})
+			if runCtx.Err() != nil && errors.Is(endErr, toolstream.ErrOutputTimeout) {
+				endErr = nil
+			}
+
+			if closeErr := client.Close(); closeErr != nil {
+				return errors.Join(endErr, closeErr)
+			}
+
+			return endErr
+		}
+
+		return &socketWriter{
+			client:    client,
+			outputCtx: outputCtx,
+		}, cleanup, nil
 	}
 
 	switch options.outputFormat {

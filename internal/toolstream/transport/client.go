@@ -15,10 +15,11 @@
 package transport
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
+	"sync"
+	"time"
 
 	capnp "capnproto.org/go/capnp/v3"
 )
@@ -27,6 +28,9 @@ import (
 type Client struct {
 	encoder *capnp.Encoder
 	conn    net.Conn
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // handshake writes the one-shot ConnectRequest frame. UDS has no handshake;
@@ -101,19 +105,12 @@ type SendOptions struct {
 }
 
 // Send writes one frame. Commit requires End and waits for its acknowledgement.
-// Cancellation closes the connection; callers serialize sends on each client.
-func (c *Client) Send(ctx context.Context, data []byte, opts SendOptions) error {
+// Callers serialize sends; Close may interrupt a blocked write or acknowledgement.
+func (c *Client) Send(data []byte, opts SendOptions) error {
 	if opts.Commit && !opts.End {
 		return errors.New("toolstream: commit requires end")
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// Event writers may use a non-cancelable context on every sample.
-	if ctx.Done() != nil {
-		stop := context.AfterFunc(ctx, func() { _ = c.conn.Close() })
-		defer stop()
-	}
+
 	if err := c.writeFrame(func(chunk Chunk) error {
 		chunk.SetEnd(opts.End)
 		chunk.SetCommit(opts.Commit)
@@ -122,21 +119,32 @@ func (c *Client) Send(ctx context.Context, data []byte, opts SendOptions) error 
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("send frame: %w", errors.Join(err, ctx.Err()))
+		return fmt.Errorf("send frame: %w", err)
 	}
 	if !opts.Commit {
 		return nil
 	}
-	return c.receiveCommitResult(ctx)
+	return c.receiveCommitResult()
+}
+
+// SetDeadline applies to both pending and subsequent protocol reads and writes.
+func (c *Client) SetDeadline(deadline time.Time) error {
+	return c.conn.SetDeadline(deadline)
 }
 
 // Close releases the connection without sending a protocol frame.
-func (c *Client) Close() error { return c.conn.Close() }
+func (c *Client) Close() error {
+	c.closeOnce.Do(func() {
+		c.closeErr = c.conn.Close()
+	})
 
-func (c *Client) receiveCommitResult(ctx context.Context) error {
+	return c.closeErr
+}
+
+func (c *Client) receiveCommitResult() error {
 	msg, err := capnp.NewDecoder(c.conn).Decode()
 	if err != nil {
-		return fmt.Errorf("receive commit result (outcome unconfirmed): %w", errors.Join(err, ctx.Err()))
+		return fmt.Errorf("receive commit result (outcome unconfirmed): %w", err)
 	}
 	defer msg.Release()
 	result, err := ReadRootMessage(msg)
@@ -167,10 +175,13 @@ func NewClient(path, serviceName, toolName, version, taskID string) (*Client, er
 		return nil, err
 	}
 
-	c := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
+	c := &Client{
+		encoder: capnp.NewEncoder(conn),
+		conn:    conn,
+	}
 	if err := c.handshake(serviceName, toolName, version, taskID); err != nil {
 		// The caller never sees the connection, so it must not leak.
-		_ = conn.Close()
+		_ = c.Close()
 		return nil, fmt.Errorf("transport: send connect: %w", err)
 	}
 

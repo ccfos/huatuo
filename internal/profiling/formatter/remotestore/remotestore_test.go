@@ -251,3 +251,45 @@ func TestRemoteStoreFormatterReturnsCommitFailure(t *testing.T) {
 		t.Fatalf("commit attempts = %d", commits.Load())
 	}
 }
+
+func TestRemoteStoreCommitCanExceedDefaultTimeout(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "s")
+	server, err := toolstream.NewServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolstream.Register(server, profilingapi.StoreServiceName, func(
+		ctx context.Context,
+		request *toolstream.Request[types.AggregationWindow],
+	) error {
+		if request.Commit {
+			timer := time.NewTimer(toolstream.DefaultSendTimeout + 200*time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	formatter, err := remotestore.NewFormatter(output.Config{
+		Format:      output.FormatRemoteStore,
+		Destination: path,
+		ToolName:    "profiler",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer formatter.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	if err := formatter.Complete(ctx); err != nil {
+		t.Fatalf("profiling Commit was limited by the default timeout: %v", err)
+	}
+}

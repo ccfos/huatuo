@@ -94,7 +94,10 @@ func newPipedServer(t *testing.T) (rawClient net.Conn, clientEnc *capnp.Encoder,
 // handshake sends a Connect frame via enc using Client.handshake.
 func handshake(t *testing.T, enc *capnp.Encoder, rawClient net.Conn, serviceName, version, taskID string) error {
 	t.Helper()
-	return (&Client{encoder: enc, conn: rawClient}).handshake(serviceName, "", version, taskID)
+	return (&Client{
+		encoder: enc,
+		conn:    rawClient,
+	}).handshake(serviceName, "", version, taskID)
 }
 
 // sendChunk sends a Chunk frame via enc.
@@ -358,10 +361,10 @@ func TestClientRoundTrip(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	if err := c.Send(t.Context(), []byte(`{"container_id":"abc","k":"v"}`), SendOptions{}); err != nil {
+	if err := c.Send([]byte(`{"container_id":"abc","k":"v"}`), SendOptions{}); err != nil {
 		t.Fatalf("send data: %v", err)
 	}
-	if err := c.Send(t.Context(), nil, SendOptions{End: true}); err != nil {
+	if err := c.Send(nil, SendOptions{End: true}); err != nil {
 		t.Fatalf("send end: %v", err)
 	}
 	_ = c.Close()
