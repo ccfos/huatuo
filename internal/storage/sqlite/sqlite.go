@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
 )
@@ -190,7 +191,9 @@ func (s *Storage) DeleteByQuery(ctx context.Context, query driver.DeleteQuery) (
 func normalizedFieldsJSON(fields map[string]any) (string, error) {
 	normalized := make(map[string]any, len(fields))
 	for k, v := range fields {
-		normalized[k] = driver.NormalizeValue(v)
+		if err := setJSONField(normalized, k, driver.NormalizeValue(v)); err != nil {
+			return "", err
+		}
 	}
 	fieldsJSON, err := json.Marshal(normalized)
 	if err != nil {
@@ -334,11 +337,52 @@ func decodeFields(data []byte) (map[string]any, error) {
 	if len(data) == 0 {
 		return map[string]any{}, nil
 	}
-	fields := make(map[string]any)
+	var document map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	if err := decoder.Decode(&fields); err != nil {
+	if err := decoder.Decode(&document); err != nil {
 		return nil, fmt.Errorf("sqlite backend decode fields: %w", err)
 	}
+	fields := make(map[string]any)
+	flattenJSONFields("", document, fields)
 	return fields, nil
+}
+
+func setJSONField(document map[string]any, field string, value any) error {
+	parts := strings.Split(field, ".")
+	if field == "" {
+		return driver.ErrInvalidField
+	}
+	for _, part := range parts {
+		if part == "" {
+			return driver.ErrInvalidField
+		}
+	}
+
+	current := document
+	for _, part := range parts[:len(parts)-1] {
+		next, ok := current[part].(map[string]any)
+		if !ok {
+			next = make(map[string]any)
+			current[part] = next
+		}
+		current = next
+	}
+	current[parts[len(parts)-1]] = value
+	return nil
+}
+
+func flattenJSONFields(prefix string, value any, fields map[string]any) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		fields[prefix] = value
+		return
+	}
+	for key, nested := range object {
+		field := key
+		if prefix != "" {
+			field = prefix + "." + key
+		}
+		flattenJSONFields(field, nested, fields)
+	}
 }
