@@ -30,7 +30,7 @@ k8s_create_pod() {
 		kubectl run "${name}-${i}" \
 			-n ${ns} \
 			--image=${image} \
-			--image-pull-policy=Never \
+			--image-pull-policy=IfNotPresent \
 			--restart=Never \
 			--overrides='{"spec":{"terminationGracePeriodSeconds":1}}' \
 			-l ${label} \
