@@ -79,6 +79,13 @@ assert_storage_rotation_file() {
 		|| fatal "persisted events: ${file}: expected nonempty dropwatch/event records for 127.0.0.99:${storage_target_port}, actual=${actual}"
 }
 
+assert_storage_rotation_log() {
+	local log_file="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	[[ -r "${log_file}" ]] || fatal "huatuo-bamai log is not readable: ${log_file}"
+	# XID timestamps can contain "fatal" inside successful debug records.
+	huatuo_bamai_log_check || fatal "huatuo-bamai logged an error during local storage rotation"
+}
+
 integration_huatuo_bamai_start write_storage_events_config \
 	--region integration --disable-kubelet --log-debug
 wait_until 120 0.1 storage_rotation_check_or_send \
@@ -92,6 +99,6 @@ assert_eq "${#storage_rotation_files[@]}" "$((STORAGE_MAX_ROTATED_FILES + 1))" "
 for storage_rotation_file in "${storage_rotation_files[@]}"; do
 	assert_storage_rotation_file "${storage_rotation_file}"
 done
-assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" huatuo-bamai
+assert_storage_rotation_log
 jq -s -c '.[-1] | {tracer_name, tracer_type, layers: .tracer_data.layers}' "${STORAGE_ROTATION_EVENT}"
 log_info "local storage evicted its first backup and retained ${STORAGE_MAX_ROTATED_FILES} backups"
