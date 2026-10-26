@@ -15,8 +15,10 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,6 +30,8 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/routers/legacy"
 	httpGin "github.com/gin-gonic/gin"
+	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestBundledOpenAPIRouterMatchesMethod(t *testing.T) {
@@ -312,6 +316,67 @@ func TestGeneratedStrictHandlerUsesSharedErrorBoundary(t *testing.T) {
 	}
 }
 
+func TestGeneratedStrictHandlerAcceptsEmptyLabelNames(t *testing.T) {
+	s := NewServer(&Config{ErrorStatusMapper: serverapi.HTTPStatusForErrorCode})
+	handler := &strictServerTestHandler{}
+	errorHandlers := s.StrictErrorHandlers()
+	strictHandler := serverapi.NewStrictHandlerWithOptions(
+		handler,
+		nil,
+		serverapi.StrictGinServerOptions{
+			RequestErrorHandlerFunc:  errorHandlers.RequestError,
+			HandlerErrorFunc:         errorHandlers.HandlerError,
+			ResponseErrorHandlerFunc: errorHandlers.ResponseError,
+		},
+	)
+	if err := s.RegisterOpenAPIHandlers(serverapi.OpenAPIJSON(), func(router httpGin.IRouter) {
+		serverapi.RegisterHandlers(router, strictHandler)
+	}); err != nil {
+		t.Fatalf("RegisterOpenAPIHandlers() error = %v", err)
+	}
+
+	body, err := proto.Marshal(&typesv1.LabelNamesRequest{})
+	if err != nil {
+		t.Fatalf("marshal LabelNames request: %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("default LabelNames request has %d bytes, want 0", len(body))
+	}
+
+	for _, method := range []string{"LabelNames", "LabelValues", "ProfileTypes", "SelectMergeStacktraces"} {
+		t.Run(method, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost,
+				"/v1/profiling/flamegraph/querier.v1.QuerierService/"+method,
+				bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/proto")
+			recorder := httptest.NewRecorder()
+			s.engine.ServeHTTP(recorder, request)
+
+			wantStatus := http.StatusBadRequest
+			if method == "LabelNames" {
+				wantStatus = http.StatusOK
+			}
+			if recorder.Code != wantStatus {
+				t.Fatalf("response status = %d, want %d; body=%s", recorder.Code, wantStatus, recorder.Body.String())
+			}
+			if method == "LabelNames" {
+				var result typesv1.LabelNamesResponse
+				if err := proto.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+					t.Fatalf("unmarshal LabelNames response: %v", err)
+				}
+				if len(result.Names) != 1 || result.Names[0] != "hostname" {
+					t.Errorf("label names = %v, want [hostname]", result.Names)
+				}
+			} else if !strings.Contains(recorder.Body.String(), `"code":"invalid_request"`) {
+				t.Errorf("response body = %q, want invalid request", recorder.Body.String())
+			}
+		})
+	}
+	if handler.calls != 1 {
+		t.Errorf("GetProfileLabelNames() calls = %d, want 1", handler.calls)
+	}
+}
+
 type strictServerTestHandler struct {
 	serverapi.StrictServerInterface
 	calls int
@@ -325,4 +390,27 @@ func (h *strictServerTestHandler) CreateProfilingJob(
 ) (serverapi.CreateProfilingJobResponseObject, error) {
 	h.calls++
 	return nil, response.NewAPIError(serverapi.ErrorCodeJobConflict, "job already exists")
+}
+
+func (h *strictServerTestHandler) GetProfileLabelNames(
+	_ context.Context,
+	request serverapi.GetProfileLabelNamesRequestObject,
+) (serverapi.GetProfileLabelNamesResponseObject, error) {
+	h.calls++
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		return nil, err
+	}
+	if err := proto.Unmarshal(body, &typesv1.LabelNamesRequest{}); err != nil {
+		return nil, err
+	}
+	result, err := proto.Marshal(&typesv1.LabelNamesResponse{Names: []string{"hostname"}})
+	if err != nil {
+		return nil, err
+	}
+	return serverapi.GetProfileLabelNames200ApplicationProtoResponse{
+		ProtobufResponseApplicationProtoResponse: serverapi.ProtobufResponseApplicationProtoResponse{
+			Body: bytes.NewReader(result), ContentLength: int64(len(result)),
+		},
+	}, nil
 }
