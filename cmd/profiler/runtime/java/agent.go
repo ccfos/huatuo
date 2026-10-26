@@ -42,8 +42,12 @@ func agentLibraryPath(toolPath string) string {
 	return filepath.Join(toolPath, "lib", "libasyncProfiler.so")
 }
 
+func agentTargetPath(sessionID string) string {
+	return "/tmp/libasyncProfiler-" + sessionID + ".so"
+}
+
 // Resolve all targets first so lookup failures cannot leave deployed libraries.
-func prepareJavaAgents(pids []int, toolPath string) ([]*os.File, error) {
+func prepareJavaAgents(pids []int, toolPath, sessionID string) ([]*os.File, error) {
 	directories := make([]string, 0, len(pids))
 	for _, pid := range pids {
 		different, err := process.HasDifferentMountNamespace(pid)
@@ -59,14 +63,14 @@ func prepareJavaAgents(pids []int, toolPath string) ([]*os.File, error) {
 		directories = append(directories, directory)
 	}
 
-	return installJavaAgents(toolPath, directories)
+	return installJavaAgents(toolPath, directories, sessionID)
 }
 
 // Directory handles keep cleanup independent of target PIDs exiting.
-func installJavaAgents(toolPath string, paths []string) (installed []*os.File, returnErr error) {
+func installJavaAgents(toolPath string, paths []string, sessionID string) (installed []*os.File, returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			returnErr = errors.Join(returnErr, cleanupJavaAgents(installed))
+			returnErr = errors.Join(returnErr, cleanupJavaAgents(installed, sessionID))
 			installed = nil
 		}
 	}()
@@ -99,7 +103,7 @@ func installJavaAgents(toolPath string, paths []string) (installed []*os.File, r
 			continue
 		}
 
-		if err := copyAgentLib(toolPath, agentDirectoryPath(directory)); err != nil {
+		if err := copyAgentLib(toolPath, agentDirectoryPath(directory), sessionID); err != nil {
 			return installed, errors.Join(fmt.Errorf("install Java agent in %q: %w", path, err), directory.Close())
 		}
 
@@ -114,10 +118,10 @@ func agentDirectoryPath(directory *os.File) string {
 	return fmt.Sprintf("/proc/self/fd/%d", directory.Fd())
 }
 
-func cleanupJavaAgents(directories []*os.File) error {
+func cleanupJavaAgents(directories []*os.File, sessionID string) error {
 	var errs []error
 	for _, directory := range directories {
-		path := filepath.Join(agentDirectoryPath(directory), "libasyncProfiler.so")
+		path := filepath.Join(agentDirectoryPath(directory), filepath.Base(agentTargetPath(sessionID)))
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, fmt.Errorf("remove Java agent from %q: %w", directory.Name(), err))
 		}
@@ -129,7 +133,7 @@ func cleanupJavaAgents(directories []*os.File) error {
 	return errors.Join(errs...)
 }
 
-func copyAgentLib(toolPath, targetDir string) error {
+func copyAgentLib(toolPath, targetDir, sessionID string) error {
 	sourcePath := agentLibraryPath(toolPath)
 	source, err := os.Open(sourcePath)
 	if err != nil {
@@ -150,7 +154,7 @@ func copyAgentLib(toolPath, targetDir string) error {
 		return err
 	}
 
-	targetPath := filepath.Join(targetDir, "libasyncProfiler.so")
+	targetPath := filepath.Join(targetDir, filepath.Base(agentTargetPath(sessionID)))
 	temp, err := os.CreateTemp(targetDir, ".libasyncProfiler.so-*")
 	if err != nil {
 		return fmt.Errorf("create temporary Java agent in %q: %w", targetDir, err)
