@@ -301,6 +301,11 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 | `RotationSizeMiB` | 每个追踪器记录文件的轮转大小，单位 MiB，默认 `100`。 |
 | `MaxRotatedFiles` | 每个追踪器最多保留的历史文件数，默认 `10`。超出数量后删除最早的文件。 |
 
+- **关闭行为**：本地文件写入器按 tracer 惰性打开，并在进程退出时统一关闭。
+
+  **说明**：每个已打开的写入器占用一个文件描述符。进程退出时后端会关闭全部写入器，
+  之后的写入会以 `storage: localfile backend closed` 被拒绝；关闭前写入的记录已落盘。
+
 ### 7. 自动追踪
 
 自动追踪根据资源使用情况和配置阈值触发性能采集。
