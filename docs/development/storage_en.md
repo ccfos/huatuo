@@ -126,6 +126,13 @@ Elasticsearch callers must specify the actual indexed field used for exact compa
 
 Elasticsearch existence checks apply to indexed values, not key presence in `_source`. Mapping settings such as `ignore_above`, `null_value`, and normalizers can alter existence or equality behavior. To match SQLite semantics, use mappings that preserve the intended scalar semantics. Date fields cannot be compared with empty strings; use existence operators to express "has a date value."
 
+`json.Number` values, including numbers read back in SQLite record fields, can
+also be reused in comparisons, membership filters, and conditional saves.
+Integer literals are converted to `int64` or `uint64` without floating-point
+rounding; decimal and exponent forms use finite `float64` values. Malformed,
+non-finite, and out-of-range numbers return `driver.ErrInvalidQuery`. Backend
+numeric limits still apply; SQLite cannot bind integers above `math.MaxInt64`.
+
 ## Batched Reads
 
 ### Parameters
