@@ -303,6 +303,29 @@ exit status; negative-result and rate-limit observation windows stay unchanged.
 
 Tests requiring raw packets reuse `integration/testdata/test_packet_sender.py`; extend it for new scenarios. It requires Python 3 and raw socket privileges and supports `ipv4-options` (TCP/UDP EOL options, including maximum IHL) and `icmpv6-echo`. Use each subcommand's `--help` for address, port, or Echo identifier parameters. The program sends packets every 100 ms and exits normally on SIGTERM. Shell cases manage namespaces, drop rules, assertions, logs, and process cleanup. Workloads needing real TCP connections continue to use `testdata/tcp_server.py`.
 
+### Network hardware drop metrics
+
+Both cases require root and the kernel capabilities used by device management.
+Run `sudo bash integration/run.sh test_metrics_netdev_hw.sh` on a host with
+`netdevsim` and the `carrier_down_count_show` probe. The case uses its own
+simulated device and does not select or modify physical NICs. Missing kernel
+capabilities cause an explicit skip, which does not establish kernel support
+or physical-driver compatibility.
+
+### RDMA link metrics
+
+Run `sudo bash integration/run.sh test_metrics_netdev_rdma_link.sh` with the
+`rdma` tools installed. The case reads existing hardware first, then existing
+software RDMA. If neither provides statistics, it tries `rdma_rxe` on a private
+veth pair. Missing RDMA capability causes an explicit skip rather than a pass;
+once a device is selected, startup or metric failures fail the case.
+
+Existing devices remain read-only and no physical RDMA traffic is generated.
+Both cases stop the daemon before deleting test-owned devices; if the daemon
+remains alive, they retain devices and report failure to avoid unregistering
+resources still in use. Other cleanup failures also fail the case. Shared
+modules are retained.
+
 ## Add a Metric Test
 
 ### 1. Prepare Simulated Data
