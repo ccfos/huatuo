@@ -21,7 +21,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/ccfos/huatuo/internal/flamegraph"
+	"github.com/ccfos/huatuo/internal/profiling/flamegraph"
 )
 
 func sampleFrames() []flamegraph.FrameData {
@@ -162,27 +162,82 @@ func TestSearchRefreshesAfterZoomOut(t *testing.T) {
 func TestModelBarWidthLargeValues(t *testing.T) {
 	model := NewModel(nil)
 	model.width = 120
+
 	tests := []struct {
 		name  string
 		value int64
 		total int64
 		want  int
 	}{
-		{name: "full maximum", value: math.MaxInt64, total: math.MaxInt64, want: 40},
-		{name: "just below maximum", value: math.MaxInt64 - 1, total: math.MaxInt64, want: 39},
-		{name: "large half", value: 1 << 59, total: 1 << 60, want: 20},
-		{name: "large three quarters", value: 3 << 58, total: 1 << 60, want: 30},
-		{name: "above total", value: math.MaxInt64, total: 1, want: 40},
-		{name: "ordinary quarter", value: 25, total: 100, want: 10},
-		{name: "small sample", value: 1, total: 100, want: barMinWidth},
-		{name: "zero sample", total: 100, want: barMinWidth},
-		{name: "zero total", value: 100, want: barMinWidth},
-		{name: "negative sample", value: -1, total: 100, want: barMinWidth},
+		{
+			name:  "full maximum",
+			value: math.MaxInt64,
+			total: math.MaxInt64,
+			want:  40,
+		},
+		{
+			name:  "just below maximum",
+			value: math.MaxInt64 - 1,
+			total: math.MaxInt64,
+			want:  39,
+		},
+		{
+			name:  "large half",
+			value: 1 << 59,
+			total: 1 << 60,
+			want:  20,
+		},
+		{
+			name:  "large three quarters",
+			value: 3 << 58,
+			total: 1 << 60,
+			want:  30,
+		},
+		{
+			name:  "above total",
+			value: math.MaxInt64,
+			total: 1,
+			want:  40,
+		},
+		{
+			name:  "ordinary quarter",
+			value: 25,
+			total: 100,
+			want:  10,
+		},
+		{
+			name:  "small sample",
+			value: 1,
+			total: 100,
+			want:  barMinWidth,
+		},
+		{
+			name:  "zero sample",
+			total: 100,
+			want:  barMinWidth,
+		},
+		{
+			name:  "zero total",
+			value: 100,
+			want:  barMinWidth,
+		},
+		{
+			name:  "negative sample",
+			value: -1,
+			total: 100,
+			want:  barMinWidth,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := model.barWidth(tt.value, tt.total); got != tt.want {
-				t.Fatalf("barWidth(%d, %d) = %d, want %d", tt.value, tt.total, got, tt.want)
+				t.Fatalf(
+					"barWidth(%d, %d) = %d, want %d",
+					tt.value,
+					tt.total,
+					got,
+					tt.want,
+				)
 			}
 		})
 	}

@@ -32,8 +32,9 @@ k8s_create_pod() {
 			--image=${image} \
 			--image-pull-policy=Never \
 			--restart=Never \
+			--overrides='{"spec":{"terminationGracePeriodSeconds":1}}' \
 			-l ${label} \
-			-- sleep infinity
+			-- sleep infinity || return $?
 	done
 }
 

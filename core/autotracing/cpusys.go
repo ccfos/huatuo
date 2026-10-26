@@ -25,9 +25,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/flamegraph"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/profiling/flamegraph"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/types"

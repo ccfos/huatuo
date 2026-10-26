@@ -1,4 +1,4 @@
-// Copyright 2026 The HuaTuo Authors
+// Copyright 2025-2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,29 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package flamegraph
 
-import (
-	"context"
-	"fmt"
-	"net"
-
-	serverpprof "github.com/ccfos/huatuo/internal/httpserver/pprof"
-)
-
-const profilerPprofAddress = ":6000"
-
-func startPprofServer(ctx context.Context, address string) (*serverpprof.Server, error) {
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return nil, fmt.Errorf("listen for pprof server on %s: %w", address, err)
-	}
-
-	server, err := serverpprof.Start(ctx, listener)
-	if err != nil {
-		_ = listener.Close()
-		return nil, err
-	}
-
-	return server, nil
+// FrameData Flamegraph json data
+type FrameData struct {
+	Level int64  `json:"level"`
+	Value int64  `json:"value"`
+	Self  int64  `json:"self"`
+	Label string `json:"label"`
 }

@@ -26,7 +26,7 @@ import (
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/executil"
-	"github.com/ccfos/huatuo/internal/flamegraph"
+	"github.com/ccfos/huatuo/internal/profiling/flamegraph"
 	"github.com/ccfos/huatuo/internal/randomid"
 	"github.com/ccfos/huatuo/internal/toolstream"
 )
@@ -68,6 +68,7 @@ func runPerfCommand(parent context.Context, request profileRequest) (profileResu
 	defer cancel()
 
 	args := []string{
+		"--huatuo-api-address", internalconfig.CoreAPIAddress,
 		"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "perf.o"),
 		"--duration", strconv.FormatInt(int64(request.duration/time.Second), 10),
 	}
@@ -113,6 +114,7 @@ func runProfilerCommand(parent context.Context, request profileRequest) (profile
 	}
 	duration := strconv.FormatInt(int64(request.duration/time.Second), 10)
 	args := []string{
+		"--huatuo-api-address", internalconfig.CoreAPIAddress,
 		"--type", "cpu",
 		"--language", "c",
 		"--cpu-mode", "oncpu",

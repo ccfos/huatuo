@@ -28,10 +28,12 @@ weight: 6
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
 | `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
 | `--task-id` | 空；本地输出时内部生成 | 全部；`remote-store` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
-| `--enable-pprof` | `false` | 工具自身 | 在 `:6000` 暴露 profiler 进程自身的 Go pprof 接口 |
+| `--enable-pprof` | `false` | 工具自身 | 在 `127.0.0.1:6000` 暴露工具自身的 Go runtime profile |
 | `--version-format` | `text` | 版本查询 | `--version` 的输出格式：`text`、`json` 或 `short` |
 | `--help`, `-h` | - | 全部 | 显示命令帮助 |
 | `--version`, `-v` | - | 全部 | 显示版本与构建信息 |
+
+这些 pprof 接口描述 profiler 进程自身的 Go runtime，不是 `--pid` 指定的目标或 Java/Python 采集子进程。监听范围由所有网卡收紧为 loopback；端口被占用时启动失败。
 
 ## 采集参数
 

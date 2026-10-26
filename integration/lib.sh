@@ -32,6 +32,14 @@ log_error() {
 	printf '[%s][%s][ERROR] %s\n' \
 		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
 }
+
+# Keep phase timings separate so the runner can show them on successful cases.
+record_test_timing() {
+	printf '[TIMING] case=%s subject=%s phase=%s duration=%ss\n' \
+		"${HUATUO_BAMAI_TEST_TMPDIR##*/}" "$1" "$2" "$((SECONDS - $3))" \
+		>> "${HUATUO_BAMAI_TEST_TMPDIR}/timings.log"
+}
+
 fatal() {
 	printf '[%s][%s][FAIL] %s\n' \
 		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
@@ -126,16 +134,40 @@ assert_log_has_no_failure() {
 }
 
 allocate_available_port() {
-	local protocol=${1:-tcp} attempt port
+	local protocol=${1:-tcp} attempt port sockets
 	[[ ${protocol} == tcp || ${protocol} == udp ]] \
 		|| fatal "unsupported port protocol: ${protocol}; expected tcp or udp"
+	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
+		mkdir -p "${INTEGRATION_PORT_DIR}"
+		allocate_worker_port "${protocol}" 9> "${INTEGRATION_PORT_DIR}/lock"
+		return
+	fi
+	sockets=$(ss -H -an "--${protocol}") || return 1
 	for ((attempt = 0; attempt < 20; attempt++)); do
 		port=$((20000 + RANDOM % 20001))
-		if ! ss -H -an "--${protocol}" | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
+		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
 			echo "${port}"
 			return 0
 		fi
 	done
+	return 1
+}
+
+# The counter reserves ports across command substitutions and test subprocesses.
+allocate_worker_port() {
+	local protocol=$1 port=${INTEGRATION_PORT_BASE:?worker port base is missing} sockets
+	flock 9
+	sockets=$(ss -H -an "--${protocol}") || return 1
+	if [[ -f ${INTEGRATION_PORT_DIR}/next ]]; then read -r port < "${INTEGRATION_PORT_DIR}/next"; fi
+	while ((port < INTEGRATION_PORT_BASE + 1000)); do
+		printf '%s\n' "$((port + 1))" > "${INTEGRATION_PORT_DIR}/next"
+		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
+			echo "${port}"
+			return 0
+		fi
+		port=$((port + 1))
+	done
+	log_error "worker port range is exhausted: ${INTEGRATION_PORT_BASE}"
 	return 1
 }
 
@@ -286,28 +318,66 @@ dump_text_files() {
 	while IFS= read -r -d '' file; do
 		grep -Iq '' "${file}" || continue
 		log_error "----- FILE (${file}) -----"
-		sed -n '1,160p' "${file}" >&2
+		if [[ ${file##*/} == test.log ]]; then cat "${file}" >&2; else sed -n '1,160p' "${file}" >&2; fi
 	done < <(find "${dir}" -type f -size +0c -print0)
 }
 
-# SIGTERM with graceful polling, then SIGKILL as fallback.
-# $1=pid  $2=timeout_seconds (default 10).
+# Call from the child's parent shell so wait can verify its exit status.
+# Unlike cleanup, a shutdown assertion must not hide a timeout with SIGKILL.
+stop_gracefully_by_pid() {
+	local pid=${1:-} timeout=${2:-10} status=0
+	if [[ ! ${pid} =~ ^[1-9][0-9]*$ || ! ${timeout} =~ ^[1-9][0-9]*$ ]]; then
+		log_error "invalid stop arguments: pid=${pid}, timeout=${timeout}; expected positive integers"
+		return 1
+	fi
+
+	if ! kill -TERM "${pid}" 2> /dev/null; then
+		log_error "failed to send SIGTERM to pid=${pid}"
+		return 1
+	fi
+	if ! wait_until "${timeout}" 0.1 process_exited "${pid}"; then
+		log_error "pid=${pid} did not exit within ${timeout}s after SIGTERM"
+		return 1
+	fi
+
+	wait "${pid}" || status=$?
+	if [[ ${status} -ne 0 ]]; then
+		log_error "pid=${pid} exited with status ${status} after SIGTERM"
+	fi
+	return "${status}"
+}
+
+# Signal with graceful polling, then SIGKILL as fallback.
+# $1=pid  $2=timeout_seconds (default 10)  $3=signal (default TERM).
 stop_by_pid() {
-	local pid=$1 timeout=${2:-10}
+	local pid=$1 timeout=${2:-10} signal=${3:-TERM}
 	kill -0 "${pid}" 2> /dev/null || return 0
-	kill -TERM "${pid}" 2> /dev/null || true
+	kill -"${signal}" "${pid}" 2> /dev/null || true
 	local waited=0
-	while kill -0 "${pid}" 2> /dev/null && [[ ${waited} -lt ${timeout} ]]; do
-		sleep 1
+	while kill -0 "${pid}" 2> /dev/null && ((waited < timeout * 10)); do
+		sleep 0.1
 		waited=$((waited + 1))
 	done
 	kill -KILL "${pid}" 2> /dev/null || true
 }
 
+# Sampling tools start separate process groups that can outlive their daemon.
+stop_by_process_group() {
+	local pgid=$1 timeout=${2:-5} waited=0
+	[[ ${pgid} =~ ^[0-9]+$ && ${pgid} -gt 1 ]] \
+		|| fatal "invalid process group ID: ${pgid}"
+	kill -TERM -- "-${pgid}" 2> /dev/null || return 0
+	while kill -0 -- "-${pgid}" 2> /dev/null && ((waited < timeout)); do
+		sleep 1
+		waited=$((waited + 1))
+	done
+	kill -KILL -- "-${pgid}" 2> /dev/null || true
+}
+
 stop_and_wait_by_pid() {
-	local pid=${1:-} timeout=${2:-10}
+	local pid=${1:-} timeout=${2:-10} signal=${3:-TERM}
 	[[ -n "${pid}" ]] || return 0
-	stop_by_pid "${pid}" "${timeout}"
+	stop_by_pid "${pid}" "${timeout}" "${signal}"
 	wait "${pid}"
 }
 
@@ -367,7 +437,6 @@ huatuo_bamai_start() {
 	echo "$pid" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
 	log_info "huatuo-bamai pid: ${pid}"
 
-	sleep 0.5
 	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" "${WAIT_HUATUO_BAMAI_INTERVAL}" \
 		huatuo_bamai_ready
 }
@@ -414,37 +483,48 @@ process_exited() {
 	[[ ${state} == Z ]]
 }
 
-# huatuo_bamai_stop_with_signal <TERM|KILL> [sent]
-# Lifecycle tests require the real exit status instead of best-effort teardown.
-huatuo_bamai_stop_with_signal() {
-	local signal=$1 already_sent=${2:-} pid status=0 expected
+# Call in the shell that started the daemon to verify its actual exit status.
+# stop_daemon_with_signal <pid_file> <TERM|KILL> [sent] [timeout_seconds]
+stop_daemon_with_signal() {
+	local pid_file=$1 signal=$2 already_sent=${3:-} timeout=${4:-65}
+	local pid status=0 expected
 	case ${signal} in
 	TERM) expected=0 ;;
 	KILL) expected=137 ;;
 	*) fatal "unsupported daemon stop signal: ${signal}" ;;
 	esac
-	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
+	[[ -r ${pid_file} ]] || fatal "daemon PID file is not readable: ${pid_file}"
+	pid=$(< "${pid_file}")
+	[[ ${pid} =~ ^[0-9]+$ && ${pid} -gt 1 ]] || fatal "invalid daemon PID in ${pid_file}: ${pid}"
 	[[ ${already_sent} == sent ]] || kill -"${signal}" "${pid}"
-	if ! wait_until 65 0.1 process_exited "${pid}"; then
+	if ! wait_until "${timeout}" 0.1 process_exited "${pid}"; then
 		kill -KILL "${pid}" 2> /dev/null || true
 		wait "${pid}" 2> /dev/null || true
-		fatal "daemon did not stop after ${signal} within 65 seconds"
+		rm -f "${pid_file}"
+		fatal "daemon pid=${pid} did not stop after ${signal} within ${timeout} seconds"
 	fi
 	wait "${pid}" || status=$?
-	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
-	[[ ${status} == "${expected}" ]] || fatal "daemon ${signal} exit status ${status}, expected ${expected}"
+	rm -f "${pid_file}"
+	[[ ${status} == "${expected}" ]] || fatal "daemon pid=${pid} ${signal} exit status ${status}, expected ${expected}"
+}
+
+# huatuo_bamai_stop_with_signal <TERM|KILL> [sent]
+# Lifecycle tests require the real exit status instead of best-effort teardown.
+huatuo_bamai_stop_with_signal() {
+	stop_daemon_with_signal "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" "$@"
 }
 
 # --------------------------- huatuo-apiserver -------------------------------
 
 huatuo_apiserver_start() {
+	[[ -f "${HUATUO_APISERVER_BIN}" && -x "${HUATUO_APISERVER_BIN}" ]] \
+		|| fatal "huatuo-apiserver binary missing or not executable: ${HUATUO_APISERVER_BIN}; run make build"
 	log_info "starting huatuo-apiserver: $*"
 	"${HUATUO_APISERVER_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" 2>&1 &
 	local pid=$!
 	echo "$pid" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"
 	log_info "huatuo-apiserver pid: ${pid}"
 
-	sleep 0.5
 	wait_until "${WAIT_HUATUO_APISERVER_TIMEOUT}" "${WAIT_HUATUO_APISERVER_INTERVAL}" \
 		huatuo_apiserver_ready
 }
@@ -468,6 +548,11 @@ huatuo_apiserver_stop() {
 	pid=$(cat "${test_workspace}/huatuo-apiserver.pid" 2> /dev/null || echo "")
 	[[ -n "$pid" ]] && stop_by_pid "${pid}"
 	rm -f "${test_workspace}/huatuo-apiserver.pid"
+}
+
+# Recovery checks must finish before the still-running sampling task ends.
+huatuo_apiserver_stop_with_signal() {
+	stop_daemon_with_signal "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid" "$1" "${2:-}" 20
 }
 
 # integration_huatuo_apiserver_start [config_writer_func] [apiserver args...]
@@ -552,7 +637,28 @@ integration_huatuo_bamai_start() {
 	fi
 
 	"$config_writer"
+	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
+		configure_worker_bamai_address
+	fi
 	huatuo_bamai_start "${runtime_args[@]}"
+}
+
+# Explicit addresses are already chosen by API and container config writers.
+configure_worker_bamai_address() {
+	local config="${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" port=${HUATUO_BAMAI_ADDR##*:}
+	if awk '
+		/^[[:space:]]*\[HTTPServer\][[:space:]]*$/ { http = 1; next }
+		/^[[:space:]]*\[/ { http = 0 }
+		http && /^[[:space:]]*ListenAddress[[:space:]]*=/ { found = 1 }
+		END { exit !found }
+	' "${config}"; then return 0; fi
+	if grep -Eq '^[[:space:]]*\[HTTPServer\][[:space:]]*$' "${config}"; then
+		sed -i "/^[[:space:]]*\\[HTTPServer\\][[:space:]]*$/a\\    ListenAddress = \"127.0.0.1:${port}\"" "${config}"
+	else
+		printf '\n[HTTPServer]\n    ListenAddress = "127.0.0.1:%s"\n' "${port}" >> "${config}"
+	fi
+	HUATUO_BAMAI_ADDR="http://127.0.0.1:${port}"
+	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 }
 
 # huatuo_bamai_collect_metrics saves /metrics output to the temp metrics file.
@@ -634,16 +740,16 @@ assert_java_profiler_streams() (
 		> "${out_dir}/windows.json" 2> "${out_dir}/profiler.err" &
 	profiler_pid=$!
 
-	profile_window_is_ready() {
-		jq -se 'length > 0 and any(.[]; (.profile.sample | length) > 0)' \
+	profile_windows_are_ready() {
+		jq -se '[.[] | select((.profile.sample | length) > 0)] | length >= 2' \
 			"${out_dir}/windows.json" > /dev/null 2>&1
 	}
-	wait_until 10 0.1 profile_window_is_ready \
-		|| fatal "no Java window published during collection (see ${out_dir}/profiler.err)"
+	wait_until 10 0.1 profile_windows_are_ready \
+		|| fatal "two Java windows not published during collection (see ${out_dir}/profiler.err)"
 	kill -0 "${profiler_pid}" 2> /dev/null \
 		|| fatal "Java profiler exited before streaming output was observed"
 	local status=0
-	wait "${profiler_pid}" || status=$?
+	stop_and_wait_by_pid "${profiler_pid}" 5 INT || status=$?
 	profiler_pid=""
 	[[ ${status} -eq 0 ]] || fatal "Java streaming profiler exited ${status} (see ${out_dir}/profiler.err)"
 	jq -se '[.[] | select((.profile.sample | length) > 0)] | length >= 2' \

@@ -48,13 +48,13 @@ func TestIOTracingFileReadLayouts(t *testing.T) {
 	includes = append(includes, "-I"+filepath.Join(bpfDir, "include"), "-I"+bpfDir)
 	source := filepath.Join("..", "..", "integration", "testdata", "iotracing_file_reads_test.c")
 
-	for _, iocb := range []string{"3", "2"} {
+	for _, file := range []string{"3", "2"} {
 		for _, inode := range []string{"2", "1"} {
-			t.Run("iocb_"+iocb+"_inode_"+inode, func(t *testing.T) {
+			t.Run("file_"+file+"_inode_"+inode, func(t *testing.T) {
 				binary := filepath.Join(t.TempDir(), "file-reads")
 				args := []string{
 					"-std=gnu11", "-O2", "-Wno-attributes", "-Wno-incompatible-pointer-types",
-					"-D__TARGET_ARCH_" + arch, "-DTEST_IOCB_PADDING=" + iocb, "-DTEST_INODE_PADDING=" + inode,
+					"-D__TARGET_ARCH_" + arch, "-DTEST_FILE_PADDING=" + file, "-DTEST_INODE_PADDING=" + inode,
 				}
 				args = append(args, includes...)
 				args = append(args, source, "-o", binary)
@@ -519,8 +519,7 @@ func TestIOTracingReadWrite(t *testing.T) {
 	require.Zero(t, n)
 	require.Equal(t, normalRead.Flags, check("EOF read", 256, 0).Flags)
 
-	// IOCB_DIRECT's bit position differs across target kernel backports.
-	// Check raw flags change for Direct IO and return to the ordinary value.
+	// Check file open flags change for Direct IO and return to the ordinary value.
 	n, err = unix.Pread(directFD, aligned, 0)
 	require.NoError(t, err)
 	require.Equal(t, len(aligned), n)

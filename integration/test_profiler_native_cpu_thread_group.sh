@@ -78,11 +78,12 @@ run_case() {
 		> "${tool_out}" 2> "${tool_err}") &
 	PROFILER_PID=$!
 
-	wait_until 15 1 profiler_ready "${tool_out}" || fatal "profiler did not start the read loop"
+	wait_until 15 0.1 profiler_ready "${tool_out}" || fatal "profiler did not start the read loop"
 	kill -USR1 "${TARGET_PID}" || fatal "failed to signal fixture pid=${TARGET_PID}"
 	wait "${PROFILER_PID}" || fatal "profiler exited non-zero (see ${tool_err})"
 	PROFILER_PID=""
-	wait "${TARGET_PID}" || fatal "fixture exited non-zero"
+	# The full profiling window has completed; no more workload is needed.
+	stop_and_wait_by_pid "${TARGET_PID}" 5 USR2 || fatal "fixture exited non-zero"
 	TARGET_PID=""
 
 	mapfile -t folded_files < <(find "${case_dir}" -maxdepth 1 -name 'perf_*.folded' -type f)

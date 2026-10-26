@@ -25,9 +25,11 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	serverpprof "github.com/ccfos/huatuo/internal/httpserver/pprof"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/version"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
@@ -93,6 +95,18 @@ func mainAction(c *cli.Context) (returnErr error) {
 		return err
 	}
 
+	if c.Bool(cliFlagEnablePProf) {
+		server, err := serverpprof.StartDefault(c.Context)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := server.Close(); err != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("close pprof server: %w", err))
+			}
+		}()
+	}
+
 	blockDevice, err := requestPartIsBlockDevice()
 	if err != nil {
 		return err
@@ -125,16 +139,20 @@ func mainAction(c *cli.Context) (returnErr error) {
 	defer bpf.Shutdown()
 
 	result, err := runTrace(c.Context, c.String(cliFlagBpfPath), cfg, filters)
-	if err != nil {
-		return err
+	return writeReport(newWriter(c.String(cliFlagOutput), client), result, err)
+}
+
+// Publish captured observations before returning a collection failure.
+func writeReport(sink writer, result *types.IOTracingSnapshot, traceErr error) error {
+	if result == nil {
+		return traceErr
 	}
 
-	sink := newWriter(c.String(cliFlagOutput), client)
-	if err := sink.Write(result); err != nil {
-		return fmt.Errorf("write output: %w", err)
+	writeErr := sink.Write(result)
+	if writeErr != nil {
+		writeErr = fmt.Errorf("write output: %w", writeErr)
 	}
-
-	return nil
+	return errors.Join(traceErr, writeErr)
 }
 
 // openToolstream returns a connected toolstream client when

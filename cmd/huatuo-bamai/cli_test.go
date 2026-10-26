@@ -16,7 +16,14 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
+
+	"github.com/ccfos/huatuo/internal/bpf"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
 
 	"github.com/urfave/cli/v2"
 )
@@ -40,5 +47,73 @@ func TestOptionsFromContextEnablesCgroup(t *testing.T) {
 	}
 	if !opts.EnableCgroup {
 		t.Fatal("EnableCgroup = false, want true")
+	}
+}
+
+func TestConfigureRuntimeAPIAddress(t *testing.T) {
+	// configureRuntime publishes process-global configuration and retains its path.
+	const childEnv = "HUATUO_TEST_CONFIGURE_RUNTIME"
+	if os.Getenv(childEnv) != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestConfigureRuntimeAPIAddress$")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("configuration subprocess failed: %v\n%s", err, output)
+		}
+
+		return
+	}
+
+	tests := []struct {
+		listen string
+		want   string
+	}{
+		{
+			listen: ":19704",
+			want:   "127.0.0.1:19704",
+		},
+		{
+			listen: "127.0.0.1:29704",
+			want:   "127.0.0.1:29704",
+		},
+		{
+			listen: ":29704",
+			want:   "127.0.0.1:29704",
+		},
+		{
+			listen: "0.0.0.0:29704",
+			want:   "127.0.0.1:29704",
+		},
+		{
+			listen: "[::]:29704",
+			want:   "127.0.0.1:29704",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.listen, func(t *testing.T) {
+			opts := &Options{
+				ConfigDir:  t.TempDir(),
+				ConfigFile: "bamai.conf",
+				BPFObjDir:  bpf.DefaultObjDir,
+				ToolBinDir: internalconfig.CoreBinDir,
+			}
+			content := fmt.Sprintf(`[HTTPServer]
+ListenAddress = %q
+
+[HTTPServer.Auth]
+BearerToken = "test-node-token"
+`, tt.listen)
+			if err := os.WriteFile(filepath.Join(opts.ConfigDir, opts.ConfigFile), []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			internalconfig.CoreAPIAddress = ""
+			if err := configureRuntime(opts); err != nil {
+				t.Fatalf("configureRuntime() error = %v", err)
+			}
+
+			if got := internalconfig.CoreAPIAddress; got != tt.want {
+				t.Fatalf("CoreAPIAddress = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

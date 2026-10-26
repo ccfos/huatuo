@@ -170,6 +170,8 @@ CPU 示例使用 `perf`。使用 `profiler` 时，事件保留触发指标，pro
 
 每 5 秒读取 `/proc/diskstats`。触发条件需连续两个采样周期成立：非 NVMe 设备检查利用率；NVMe 设备要求利用率和读、写吞吐率之一同时超阈值；各设备也会独立检查读、写平均等待时间。采集结果包含进程及文件 I/O 速率、I/O 调度等待栈。
 
+直接运行 `iotracing` 时，可通过 `--enable-pprof`（默认关闭）在 `http://127.0.0.1:6000/debug/pprof/` 提供 profile；若地址已被占用，命令启动失败。这些 profile 仅反映 `iotracing` 进程自身的 Go runtime，不包含 `huatuo-bamai` 或执行磁盘 I/O 的业务进程。自动追踪不会开启此选项。
+
 示例（省略部分公共字段）：
 
 ```json

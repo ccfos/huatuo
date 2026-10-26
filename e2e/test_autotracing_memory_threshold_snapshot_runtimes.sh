@@ -67,7 +67,7 @@ snapshot_run_case() (
 	mkdir -p "${go_snapshot_case_dir}"
 
 	snapshot_require_pod_image
-	k8s_create_pod "${GO_SNAPSHOT_NAMESPACE}" "${pod_name}" "${BUSINESS_POD_IMAGE}" "${go_snapshot_pod_label}" 1
+	snapshot_create_pod
 	assert_kubelet_pod_count "${GO_SNAPSHOT_NAMESPACE}" "^${go_snapshot_pod}$" 1
 	go_snapshot_container_id=$(kubelet_container_ids "${GO_SNAPSHOT_NAMESPACE}" "^${go_snapshot_pod}$")
 	cgroup_root=$(cgroup_memory_root) || fatal "${mode}: memory cgroup mount not found"
@@ -82,7 +82,7 @@ snapshot_run_case() (
 		go_snapshot_limit_file="${go_snapshot_cgroup}/memory.max"
 		usage_file="${go_snapshot_cgroup}/memory.current"
 		# V2 requires a high/max notification. Only this test Pod gets a high limit.
-		echo $((72 * 1024 * 1024)) > "${go_snapshot_cgroup}/memory.high"
+		snapshot_set_memory_high $((72 * 1024 * 1024))
 	fi
 
 	go_snapshot_stage="${mode}: start daemon and prepare workload"
@@ -118,7 +118,7 @@ snapshot_run_case() (
 		wait_until 15 0.1 awk -v before="${high_before}" '$1 == "high" { high = $2 } END { exit !(high > before) }' \
 			"${go_snapshot_cgroup}/memory.events" || fatal "${mode}: no kernel memory.high event"
 		# Release reclaim throttling after notification so the workload can finish.
-		echo max > "${go_snapshot_cgroup}/memory.high"
+		snapshot_set_memory_high max
 	fi
 	go_snapshot_stage="${mode}: wait for persisted snapshot"
 	wait_until 30 0.1 go_snapshot_read_event || fatal "${mode}: daemon did not persist a memory snapshot"

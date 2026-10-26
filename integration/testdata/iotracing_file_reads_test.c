@@ -41,16 +41,19 @@ struct inode {
 	struct super_block *i_sb;
 	u64 padding[TEST_INODE_PADDING];
 	u64 i_ino;
+	dev_t i_rdev;
 };
 
 struct file {
 	struct inode *f_inode;
+	u64 padding[TEST_FILE_PADDING];
+	u32 f_flags;
 	struct path f_path;
 };
 
 struct kiocb {
 	struct file *ki_filp;
-	u64 padding[TEST_IOCB_PADDING];
+	u64 padding[3];
 	int ki_flags;
 };
 
@@ -99,7 +102,7 @@ int main(void)
 {
 	struct super_block sb = { .s_dev = 0x123456 };
 	struct inode inode = { .i_sb = &sb, .i_ino = 0x100000123ULL };
-	struct file file = { .f_inode = &inode };
+	struct file file = { .f_inode = &inode, .f_flags = 0x4002 };
 	struct kiocb iocb = { .ki_filp = &file, .ki_flags = 0x41 };
 	struct iov_iter iter = { .count = 513 };
 	struct pt_regs regs = {};
@@ -113,14 +116,14 @@ int main(void)
 	regs.si = (u64)&iter;
 #endif
 	for (int write = 0; write < 2; write++) {
-		iocb.ki_flags += write;
+		file.f_flags += write;
 		if (bpf_file_read_write(&regs, write) || bad_key ||
 		    record.fs_read_bytes != 513 || record.fs_write_bytes != 513 * write ||
-		    record.flag != iocb.ki_flags) {
+		    record.flag != file.f_flags) {
 			printf("write=%d bad_key=%u bytes=%llu/%llu flags=%x want=%x\n",
 			       write, bad_key,
 			       record.fs_read_bytes, record.fs_write_bytes,
-			       record.flag, iocb.ki_flags);
+			       record.flag, file.f_flags);
 			return 1;
 		}
 	}

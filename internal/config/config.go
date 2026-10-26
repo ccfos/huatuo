@@ -32,6 +32,8 @@ var (
 	CoreBinDir = ""
 	// CoreBpfDir is the directory where BPF object files are stored.
 	CoreBpfDir = ""
+	// CoreAPIAddress is the local Node API endpoint passed to child tools.
+	CoreAPIAddress = "127.0.0.1:19704"
 )
 
 func init() {

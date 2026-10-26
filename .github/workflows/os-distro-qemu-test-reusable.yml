@@ -80,6 +80,7 @@ jobs:
     needs: distro-matrix
     env:
       ACT_RUN: false
+      INTEGRATION_JOBS: 3
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.distro-matrix.outputs.matrix) }}
@@ -100,6 +101,53 @@ jobs:
         run: |
           .github/workflows/scripts/qemu-1-start-vm.sh \
             "${{ matrix.arch }}" "${{ matrix.os }}"
+
+      - name: Receive generated sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # VM startup overlaps generation; wait for the same run's artifact.
+          generated_dir="$RUNNER_TEMP/huatuo-generated"
+          mkdir -p "$generated_dir"
+          for attempt in $(seq 1 180); do
+            status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+              --jq '.jobs[] | select(.name | endswith("Generate portable sources")) | .conclusion')
+            case "$status" in
+              success) break ;;
+              failure|cancelled|skipped|timed_out) echo "Source generation: $status" >&2; exit 1 ;;
+            esac
+            sleep 5
+          done
+          [[ "$status" == success ]] || { echo 'Timed out waiting for generated sources' >&2; exit 1; }
+          gh run download "$GITHUB_RUN_ID" --name portable-generated --dir "$generated_dir"
+          .github/workflows/scripts/vm-test/sync-generated-to-vm.sh "$generated_dir/portable-generated.tar"
+
+      - name: Prepare VM
+        id: prepare-in-vm
+        timeout-minutes: 20
+        run: .github/workflows/scripts/qemu-2-run-in-vm.sh --prepare-only
+
+      - name: Read VM Go cache key
+        id: go-cache-key
+        continue-on-error: true
+        env:
+          VM_IMAGE_REF: ${{ matrix.image }}
+        run: .github/workflows/scripts/vm-test/go-cache.sh key >> "$GITHUB_OUTPUT"
+
+      - name: Cache VM Go build
+        id: go-cache
+        if: steps.go-cache-key.outputs.key != ''
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/huatuo-go-build
+          key: vm-go-v1-${{ steps.go-cache-key.outputs.key }}-${{ hashFiles('go.mod', 'go.sum', 'Makefile') }}-${{ github.sha }}
+          restore-keys: |
+            vm-go-v1-${{ steps.go-cache-key.outputs.key }}-
+
+      - name: Restore Go cache into VM
+        if: steps.go-cache-key.outputs.key != ''
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh restore
 
       - name: 'Debug VM: Start session before test'
         id: upterm-before
@@ -128,7 +176,12 @@ jobs:
         id: run-in-vm
         timeout-minutes: 90
         run: |
-          .github/workflows/scripts/qemu-2-run-in-vm.sh
+          .github/workflows/scripts/qemu-2-run-in-vm.sh --test-only
+
+      - name: Collect VM Go cache
+        if: steps.run-in-vm.outcome == 'success' && steps.go-cache-key.outputs.key != '' && steps.go-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh save
 
       - name: 'Debug VM: Start session after test'
         id: upterm-after
@@ -140,7 +193,7 @@ jobs:
             inputs.debug_mode == 'After test always' ||
             (
               inputs.debug_mode == 'After test on failure' &&
-              steps.run-in-vm.outcome == 'failure'
+              (steps.prepare-in-vm.outcome == 'failure' || steps.run-in-vm.outcome == 'failure')
             )
           )
         continue-on-error: true
@@ -164,3 +217,27 @@ jobs:
         if: always()
         run: |
           .github/workflows/scripts/qemu-3-cleanup.sh
+
+  portable-generated:
+    name: Generate portable sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+      - name: Install generation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libbpf-dev libelf-dev capnproto
+          go install github.com/vektra/mockery/v2@v2.53.6
+          go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
+      - name: Generate and verify
+        run: make portable-generated
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-generated
+          path: _output/portable-generated.tar
+          if-no-files-found: error

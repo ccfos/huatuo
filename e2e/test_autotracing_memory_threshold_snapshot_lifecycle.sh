@@ -139,13 +139,13 @@ lifecycle_trigger() {
 	local phase=$1
 	if [[ -e ${go_snapshot_cgroup}/memory.max ]]; then
 		lifecycle_high_before=$(awk '$1=="high" {print $2}' "${go_snapshot_cgroup}/memory.events")
-		echo $((72 * 1024 * 1024)) > "${go_snapshot_cgroup}/memory.high"
+		snapshot_set_memory_high $((72 * 1024 * 1024))
 	fi
 	lifecycle_triggered_at=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')
 	printf p >&"${go_snapshot_input_fd}"
 	if [[ -e ${go_snapshot_cgroup}/memory.max ]]; then
 		wait_until 15 0.1 awk -v n="${lifecycle_high_before}" '$1=="high" {v=$2} END {exit !(v>n)}' "${go_snapshot_cgroup}/memory.events" || fatal "no real memory.high notification"
-		echo max > "${go_snapshot_cgroup}/memory.high"
+		snapshot_set_memory_high max
 	fi
 	wait_until 30 0.1 grep -qx 'pressure ready' "${go_snapshot_case_dir}/workload-${phase}.log" || fatal "pressure incomplete"
 	[[ $(< "${lifecycle_usage}") -ge ${GO_SNAPSHOT_THRESHOLD} ]] || fatal "pressure did not cross 50 percent"
@@ -382,7 +382,7 @@ lifecycle_case() (
 	trap 'memory_threshold_snapshot_cleanup || exit $?' EXIT
 	mkdir -p "${go_snapshot_case_dir}"
 	snapshot_require_pod_image
-	k8s_create_pod "${GO_SNAPSHOT_NAMESPACE}" "${pod_name}" "${BUSINESS_POD_IMAGE}" "${go_snapshot_pod_label}" 1
+	snapshot_create_pod
 	assert_kubelet_pod_count "${GO_SNAPSHOT_NAMESPACE}" "^${go_snapshot_pod}$" 1
 	go_snapshot_container_id=$(kubelet_container_ids "${GO_SNAPSHOT_NAMESPACE}" "^${go_snapshot_pod}$")
 	cgroup_root=$(cgroup_memory_root) || fatal "memory cgroup mount missing"
