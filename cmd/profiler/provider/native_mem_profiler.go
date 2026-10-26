@@ -191,6 +191,10 @@ func newNativeMemoryBPFLoadConfig(
 					ProgramName: "trace_mmap",
 					Symbol:      "do_mmap",
 				},
+				{
+					ProgramName: "trace_mmap_return",
+					Symbol:      "do_mmap",
+				},
 			},
 		}, nil
 	case profiling.ModePhysicalUsage:
