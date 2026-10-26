@@ -86,7 +86,7 @@ func TestServerConnectionContext(t *testing.T) {
 					t.Errorf("handshake: %v", err)
 					return
 				}
-				if err := client.Send(t.Context(), []byte("document"), SendOptions{}); err != nil {
+				if err := client.Send([]byte("document"), SendOptions{}); err != nil {
 					t.Errorf("SendChunk: %v", err)
 					return
 				}

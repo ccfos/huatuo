@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -161,10 +162,10 @@ func TestClientMetadataHandshake(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := client.Send(t.Context(), []byte("checkout-sample"), SendOptions{}); err != nil {
+			if err := client.Send([]byte("checkout-sample"), SendOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			if err := client.Send(t.Context(), nil, SendOptions{End: true}); err != nil {
+			if err := client.Send(nil, SendOptions{End: true}); err != nil {
 				t.Fatal(err)
 			}
 			wait()

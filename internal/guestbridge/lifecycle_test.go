@@ -102,7 +102,7 @@ func TestShutdownWaitsBeforeStorageClose(t *testing.T) {
 		`{"container_id":"orders","tracer_id":"guest-event","tracer_name":"cpu",` +
 			`"tracer_type":"event","observed_timestamp":"2026-10-16T01:00:00Z"}`,
 	)
-	if err := client.Send(t.Context(), raw, transport.SendOptions{}); err != nil {
+	if err := client.Send(raw, transport.SendOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	select {
