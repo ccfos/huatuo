@@ -15,11 +15,14 @@
 package profiling
 
 import (
+	"errors"
+	"math"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
 	"github.com/ccfos/huatuo/internal/job"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
@@ -49,6 +52,35 @@ func TestValidateCreateInput(t *testing.T) {
 			},
 			wantErr: "hostname",
 		},
+		{name: "minimum positive duration", mutate: func(input *CreateInput) { input.DurationSeconds = 1 }},
+		{
+			name: "zero duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = 0
+			},
+			wantErr: "duration_seconds",
+		},
+		{
+			name: "negative duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = -1
+			},
+			wantErr: "duration_seconds",
+		},
+		{
+			name: "overflowing duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = math.MaxInt64
+			},
+			wantErr: "duration_seconds",
+		},
+		{
+			name: "non-positive duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = 0
+			},
+			wantErr: "duration_seconds",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,6 +96,27 @@ func TestValidateCreateInput(t *testing.T) {
 				t.Fatalf("validateCreateInput() error = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestCreateRejectsInvalidDurationAtServiceBoundary(t *testing.T) {
+	service, err := NewService(&job.Manager{}, nil, Config{})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	input := &CreateInput{
+		Hostname:        "node-1",
+		DurationSeconds: 0,
+		Scope:           observation.ScopeHost,
+		Spec: profilingdomain.Spec{
+			Type:     profilingdomain.TypeCPU,
+			Language: profilingdomain.LanguageGo,
+			Mode:     profilingdomain.ModeOnCPU,
+		},
+	}
+	_, err = service.Create(t.Context(), auth.Principal{}, input)
+	if !errors.Is(err, job.ErrInvalidQuery) {
+		t.Fatalf("Create() error = %v, want ErrInvalidQuery", err)
 	}
 }
 

@@ -231,6 +231,21 @@ func TestLoadRepositoryConfig(t *testing.T) {
 	}
 }
 
+func TestLoadSchedBlameDefaults(t *testing.T) {
+	config := loadConfigDefaults(t).AutoTracing.SchedBlame
+
+	if config.TargetContainerScope != "normal" ||
+		config.SliceDropPercent != 0 ||
+		config.ExternalAnomalyK != 1 ||
+		config.SliceBatchSize != 128 ||
+		config.PerfEventPerCPUBufferBytes != 524288 ||
+		config.PerfEventWatermarkBytes != 8192 ||
+		config.PerfEventQueueRecords != 8192 ||
+		config.PollIntervalMs != 100 {
+		t.Fatalf("unexpected SchedBlame defaults: %#v", config)
+	}
+}
+
 func TestLoadEnablesCompleteElasticsearchConfig(t *testing.T) {
 	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
 [Storage.Elasticsearch]
@@ -382,6 +397,13 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: "validating autotracing config: validating issues list",
 		},
 		{
+			name: "invalid sched-blame queue capacity",
+			mutate: func(cfg *Config) {
+				cfg.AutoTracing.SchedBlame.PerfEventQueueRecords = 0
+			},
+			wantErr: "validating sched-blame config: perf event queue records",
+		},
+		{
 			name: "invalid scheduler tick threshold",
 			mutate: func(cfg *Config) {
 				cfg.EventTracing.SchedTick.IntervalThreshold = 0
@@ -483,9 +505,11 @@ ExcludedOnContainer = "writeback"
 	}
 
 	if err := UpdateAndSync(map[string]any{
-		"BlackList":               []string{"netdev_hw", "metax_gpu"},
-		"AutoTracing.IssuesList":  [][]string{{"cpuidle", "perf"}},
-		"EventTracing.IssuesList": [][]string{{"dropwatch", "kfree_skb"}},
+		"BlackList":                []string{"netdev_hw", "metax_gpu"},
+		"AutoTracing.IssuesList":   [][]string{{"cpuidle", "perf"}},
+		"AutoTracing.CPUIdle.Tool": "profiler",
+		"AutoTracing.CPUSys.Tool":  "perf",
+		"EventTracing.IssuesList":  [][]string{{"dropwatch", "kfree_skb"}},
 		"AutoTracing.MemoryThresholdSnapshot.ThresholdPercent":       85,
 		"AutoTracing.MemoryThresholdSnapshot.IntervalTracing":        60,
 		"AutoTracing.MemoryThresholdSnapshot.RunTracingToolTimeout":  3,
@@ -502,6 +526,10 @@ ExcludedOnContainer = "writeback"
 
 	if len(Get().BlackList) != 2 {
 		t.Errorf("unexpected BlackList length after reload: %d", len(Get().BlackList))
+	}
+	if Get().AutoTracing.CPUIdle.Tool != "profiler" || Get().AutoTracing.CPUSys.Tool != "perf" {
+		t.Fatalf("CPU tools were not independently persisted: cpuidle=%q cpusys=%q",
+			Get().AutoTracing.CPUIdle.Tool, Get().AutoTracing.CPUSys.Tool)
 	}
 	if Get().MetricCollector.Vmstat.IncludedOnHost != "pgsteal_direct" {
 		t.Errorf("unexpected Vmstat.IncludedOnHost after reload: %q", Get().MetricCollector.Vmstat.IncludedOnHost)
@@ -566,6 +594,27 @@ func TestUpdateRollsBackInvalidBatch(t *testing.T) {
 	}
 	if Get() != before {
 		t.Fatal("Update() published a partial config")
+	}
+}
+
+func TestUpdateRejectsInvalidCPUProfileTool(t *testing.T) {
+	for _, key := range []string{"AutoTracing.CPUIdle.Tool", "AutoTracing.CPUSys.Tool"} {
+		for _, value := range []string{"", "unknown"} {
+			t.Run(key+"/"+value, func(t *testing.T) {
+				loadConfigDefaults(t)
+				before := Get()
+				err := Update(map[string]any{
+					"BlackList": []string{"dropwatch"},
+					key:         value,
+				})
+				if !errors.Is(err, ErrInvalidUpdate) || !strings.Contains(err.Error(), key) {
+					t.Fatalf("Update() error = %v, want invalid %s", err, key)
+				}
+				if Get() != before {
+					t.Fatal("invalid tool update published a partial config")
+				}
+			})
+		}
 	}
 }
 

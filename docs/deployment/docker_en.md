@@ -1,17 +1,15 @@
 ---
-title: Docker
+title: Container Deployment
 type: docs
 description: 
-author: HUATUO Team
+author: HUATUO Team, hao022
 date: 2026-01-11
 weight: 1
 ---
 
-### Image Download
+Use Docker to run the collector or Compose to start the complete environment. Available image versions are listed in the [image registry](https://hub.docker.com/r/huatuo/huatuo-bamai/tags).
 
-Image repository: https://hub.docker.com/r/huatuo/huatuo-bamai/tags
-
-### Start a container with Docker
+## Docker
 
 ```bash
 docker run --detach \
@@ -29,13 +27,11 @@ docker run --detach \
   huatuo/huatuo-bamai:latest
 ```
 
-> Note: The built-in default configuration does not connect to kubelet or Elasticsearch.
+> Note: The image's default configuration does not connect to kubelet or Elasticsearch.
 
-Limit CPU and memory in production to isolate abnormal collection workloads.
-Docker manages the container cgroup; Huatuo does not create its own cgroup by default,
-so do not pass `--enable-cgroup` in a Docker deployment.
+Set CPU and memory limits in production to prevent abnormal collection tasks from affecting host workloads. Docker enforces these limits through the container cgroup. Huatuo does not create its own cgroup by default; do not pass `--enable-cgroup` in Docker deployments.
 
-Verify that the limits are active and observe actual usage:
+Use the following commands to verify the limits and inspect actual usage:
 
 ```bash
 docker inspect huatuo-bamai \
@@ -43,15 +39,17 @@ docker inspect huatuo-bamai \
 docker stats huatuo-bamai
 ```
 
-These values are an initial baseline. Adjust them based on node capacity,
-collection jobs, and observed resource peaks.
+These example values are a starting point. Adjust them for node capacity, collection tasks, and peak resource usage.
 
-### Start containers with Docker
+## Docker Compose
 
-The `docker compose` command allows you to quickly set up a complete local environment where you manage the collector, Elasticsearch, Prometheus, Grafana, and other components yourself.
+[Docker Compose](https://docs.docker.com/compose/) provides a complete local environment in which you manage the collector, Elasticsearch, Prometheus, Grafana, and other components.
 
 ```bash
 $ docker compose --project-directory ./build/docker up
 ```
 
-For installation instructions, see https://docs.docker.com/compose/install/linux/.
+See the [installation guide](https://docs.docker.com/compose/install/linux/) to install Docker Compose.
+
+Compose installs Business Charts (`volkovlabs-echarts-panel`) for the IO
+interval overview. Install this plugin when using an existing Grafana instance.

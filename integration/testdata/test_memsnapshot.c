@@ -14,6 +14,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef __cplusplus
+#include <iostream>
+#endif
 int main(void) {
  unsigned char *retained=NULL, *pressure=NULL;
  int command;
@@ -24,6 +27,10 @@ int main(void) {
    if(!p) return 1;
    for(size_t i=0;i<size;i+=4096) p[i]=1;
    if(command=='a') retained=p; else pressure=p;
+#ifdef __cplusplus
+   // Keep libstdc++ linked so runtime detection identifies the C++ workload.
+   std::cout << "";
+#endif
    puts(command=='a'?"ready":"pressure ready"); fflush(stdout);
   } else if(command=='q') break;
  }

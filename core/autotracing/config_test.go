@@ -94,6 +94,8 @@ func TestConfigValidate(t *testing.T) {
 					DumpProcessMaxNum:   10,
 				},
 			}
+			cfg.CPUIdle.Tool = cpuToolPerf
+			cfg.CPUSys.Tool = cpuToolPerf
 			cfg.MemoryThresholdSnapshot.ThresholdPercent = 90
 			cfg.MemoryThresholdSnapshot.IntervalTracing = 300
 			cfg.MemoryThresholdSnapshot.RunTracingToolTimeout = 2

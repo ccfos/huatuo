@@ -7,75 +7,164 @@ date: 2026-07-27
 weight: 3
 ---
 
-{{% alert color="info" title="🎯 关于 HUATUO（华佗）" %}}
-<div style="text-align: center;">
-HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵化的操作系统深度观测项目，专注为云原生通用计算、AI 计算、云服务、基础服务等提供操作系统内核级深度观测能力。
-</div>
-{{% /alert %}}
-
-## 📖 概述
+## 概述
 
 `/v1/events/watch` 是华佗（HUATUO）提供的实时内核事件订阅接口。客户端通过一次 HTTP POST 长连接即可持续接收节点上发生的内核异常事件。事件以 [CloudEvents 1.0](https://cloudevents.io/) 规范封装，通过 [Server-Sent Events（SSE）](https://html.spec.whatwg.org/multipage/server-sent-events.html) 协议推送。
 
----
+## 适用场景
 
-## 🎯 应用场景
+| 目标 | 使用方式 |
+| --- | --- |
+| 接入告警或诊断平台 | 按节点、命名空间和事件类型订阅，并结合业务指标判断影响 |
+| 记录异常时间线 | 将事件写入消息队列或存储，供后续查询 |
+| 验证测试场景 | 在压测或故障注入期间观察目标事件及其上下文 |
 
-内核事件订阅将操作系统层的异常信号直接暴露给上层系统，消除了传统轮询带来的延迟与开销。以下是典型的集成场景。
+订阅结果是诊断线索，不保证覆盖全部异常，也不能单独作为重启、隔离或扩容的依据。
 
-### 故障自愈系统
+## 服务配置
 
-内核事件是自愈决策的第一手信号源。订阅 `events/watch` 后，自愈控制器可在事件发生的瞬间触发处置动作，而不必等待监控系统的告警流转：
+在华佗配置文件的 `[HTTPServer]` 段配置事件流参数：
 
-- **OOM 自愈**：收到 `memory_oom_kill` 事件后，立即对触发容器执行扩容、重启或流量摘除，将服务中断时间从分钟级压缩到秒级。
-- **Hung Task 自愈**：收到 `hungtask` 事件后，自动隔离节点并驱逐 Pod，防止级联阻塞蔓延至整个集群。
-- **网络故障自愈**：收到 `netdev_txqueue_timeout` 或 `netdev_bonding_lacp` 事件后，触发网卡重置或流量切换，实现分钟级网络链路自愈。
-- **I/O 风暴自愈**：收到 `iotracing` 事件后，结合 cgroup blkio 限速策略动态降低问题容器的磁盘 I/O 配额，保护同节点其他服务。
+```toml
+[HTTPServer]
+    # 最大并发客户端连接数，超出后新连接返回 HTTP 429
+    # Default: 100
+    MaxEventStreamClients = 100
 
-### 可观测性平台
+    # SSE 心跳间隔（秒），防止代理/负载均衡因空闲而断开连接
+    # 连续 3 次心跳写入失败则主动关闭该客户端连接
+    # Default: 30
+    EventStreamKeepAliveIntervalSeconds = 30
+```
 
-将华佗内核事件接入可观测性平台，补齐应用指标和日志之外的内核视角：
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `MaxEventStreamClients` | 100 | `/v1/events/watch` 长连接上限，超出返回 HTTP 429 |
+| `EventStreamKeepAliveIntervalSeconds` | 30 | 心跳间隔，应小于上游代理的 idle timeout |
 
-- **事件时间线关联**：将 `softlockup`、`memory_oom_kill` 等内核事件叠加到 Grafana 时间线上，与应用错误率、延迟曲线精确对齐，快速定位根因。
-- **异常驱动告警**：以内核事件替代固定阈值告警，降低误报率。例如收到 `ras` 硬件错误事件时直接触发高优告警，而不依赖 CPU 错误率超阈值。
-- **容量与稳定性分析**：长期订阅 `memburst`、`dload` 等 AutoTracing 事件，建立节点稳定性基线，为容量规划提供内核级依据。
-- **多维下钻**：事件中携带容器 ID、命名空间、地域等上下文，告警链接可直接下钻到对应的 Pod、Node、Region 视图。
+## 订阅接口
 
-### 安全审计与合规
+### 接口地址
 
-- **异常行为检测**：`memory_oom_kill`、`hungtask`、`softlockup` 等事件若在非业务高峰期集中出现，可能指示资源滥用或恶意负载，触发安全审查流程。
-- **事件留存与追溯**：将 CloudEvents 事件流写入消息队列（Kafka、Pulsar）或对象存储，满足等保合规对系统异常事件留存的要求。
+```http
+POST /v1/events/watch
+```
 
-### 混沌工程与压测验证
+### 请求头
 
-- **故障注入验证**：混沌工程平台注入网络延迟、内存压力等故障后，实时订阅 `net_rx_latency`、`memburst` 事件验证故障是否生效，取代人工观察。
-- **压测基线建立**：压测期间持续订阅全量事件，记录首个内核异常事件的出现时机，精确标定系统承压极限。
+```http
+Authorization: Bearer <node-token>
+Content-Type: application/json
+```
 
-### AIOps 智能运维
+### 请求体结构
 
-- **事件驱动根因分析**：将内核事件作为特征输入 AI/ML 模型，结合应用指标进行多维根因推断，减少人工排查时间。
-- **预测性维护**：对 `ras` 硬件错误、`netdev_bonding_lacp` 等硬件层事件建模，在设备彻底失效前提前预警并触发迁移。
-- **智能抑制与聚合**：对同一时间窗口内同类事件自动聚合，避免告警风暴，向 On-call 工程师呈现精简的根因摘要。
+```json
+{
+  "filters": {
+    "tracer_name": "<regex>",
+    "hostname": "<regex>",
+    "container_hostname": "<regex>",
+    "container_host_namespace": "<regex>",
+    "container_qos": "<regex>",
+    "region": "<regex>"
+  }
+}
+```
 
----
+**filters 字段说明：**
 
-## 💎 价值
+| 字段                         | 类型   | 是否必填 | 说明                                         |
+|----------------------------|------|--------|----------------------------------------------|
+| `tracer_name`              | string | 否     | 按采集器名称过滤，支持正则表达式               |
+| `hostname`                 | string | 否     | 按节点主机名过滤，支持正则表达式               |
+| `container_hostname`       | string | 否     | 按容器主机名过滤，支持正则表达式               |
+| `container_host_namespace` | string | 否     | 按容器命名空间过滤，支持正则表达式             |
+| `container_qos`            | string | 否     | 按容器 QoS 过滤，支持正则表达式                |
+| `region`                   | string | 否     | 按地域过滤，支持正则表达式                     |
 
-| 维度         | 传统方案                              | 接入华佗 events/watch                              |
-|------------|-------------------------------------|---------------------------------------------------|
-| 时效性      | 告警触发延迟 1–5 分钟                  | 内核事件实时推送，延迟 < 1 秒                        |
-| 信号准确性  | 基于指标阈值，误报率高                 | 事件源自内核判定，误报率接近零                       |
-| 上下文丰富度 | 指标维度有限                          | 携带容器、节点、地域等完整上下文                     |
-| 集成成本    | 需自建 eBPF 采集或依赖第三方 Agent     | 一次 HTTP POST 即可订阅，标准 CloudEvents 格式       |
-| 协议兼容性  | 各厂商私有格式                         | 遵循 CloudEvents 1.0 标准，可接入任意兼容平台        |
+- 所有过滤字段均为可选；省略或留空表示匹配所有值。
+- 多个字段同时指定时，所有条件须**同时满足**（AND 语义）。
+- 过滤器在服务端生效，仅匹配的事件才会推送到客户端。
 
----
+### 响应格式（SSE 流）
 
-## 🚀 使用
+连接建立后，服务端以 SSE 格式持续推送事件：
 
-### 1. CloudEvents 规范说明
+```text
+data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom_kill",...}\n\n
+```
 
-#### 1.1 CloudEvents 1.0 信封字段
+服务端还会定期发送心跳注释行以保持连接：
+
+```text
+: ping\n
+```
+
+## curl 示例
+
+### 订阅所有内核事件
+
+```bash
+curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -H "Cache-Control: no-cache" \
+  -H "Connection: keep-alive" \
+  -d '{}'
+```
+
+### 只订阅 OOM 事件
+
+```bash
+curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -H "Cache-Control: no-cache" \
+  -H "Connection: keep-alive" \
+  -d '{"filters": {"tracer_name": "^memory_oom_kill$"}}'
+```
+
+### 订阅指定节点的网络类事件
+
+```bash
+curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -H "Cache-Control: no-cache" \
+  -H "Connection: keep-alive" \
+  -d '{
+    "filters": {
+      "hostname": "^node-1$",
+      "tracer_name": "netdev|dropwatch|net_rx_latency"
+    }
+  }'
+```
+
+### 订阅 prod 命名空间的容器事件
+
+```bash
+curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -H "Cache-Control: no-cache" \
+  -H "Connection: keep-alive" \
+  -d '{
+    "filters": {
+      "container_host_namespace": "^prod$"
+    }
+  }'
+```
+
+> **说明：** `-N` 参数禁用 curl 缓冲，使 SSE 事件即时输出到终端。
+
+## 事件格式
+
+### CloudEvents 字段
 
 每条推送事件均为一个符合 CloudEvents 1.0 规范的 JSON 对象：
 
@@ -89,7 +178,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 | `time`            | string | 事件采集时间（RFC 3339 纳秒精度，UTC）                   |
 | `data`            | object | 事件数据体，即 `WatchEventData` 结构体                   |
 
-#### 1.2 华佗事件数据结构（WatchEventData）
+### 事件数据
 
 `data` 字段包含华佗的标准事件记录：
 
@@ -134,9 +223,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 | `container_type`           | string | 容器运行时类型（docker / containerd 等）    |
 | `container_qos`            | string | 容器 QoS 等级                              |
 
----
-
-### 2. 支持的内核事件列表
+## 事件类型
 
 | `tracer_name`              | 说明                                           |
 |--------------------------|-----------------------------------------------|
@@ -155,158 +242,10 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 | `cpusys`                 | CPU 系统态占用率异常（AutoTracing 自动触发）   |
 | `dload`                  | 系统负载异常（AutoTracing 自动触发）           |
 | `iotracing`              | I/O 延迟异常（AutoTracing 自动触发）           |
+| `io_health`              | Block、NVMe、SCSI 和 MD 健康事件               |
 | `memburst`               | 内存突增异常（AutoTracing 自动触发）           |
 
----
-
-### 3. POST 请求说明
-
-#### 3.1 接口地址
-
-```http
-POST /v1/events/watch
-```
-
-#### 3.2 请求头
-
-```http
-Authorization: Bearer <node-token>
-Content-Type: application/json
-```
-
-#### 3.3 请求体结构
-
-```json
-{
-  "filters": {
-    "tracer_name": "<regex>",
-    "hostname": "<regex>",
-    "container_hostname": "<regex>",
-    "container_host_namespace": "<regex>",
-    "container_qos": "<regex>",
-    "region": "<regex>"
-  }
-}
-```
-
-**filters 字段说明：**
-
-| 字段                         | 类型   | 是否必填 | 说明                                         |
-|----------------------------|------|--------|----------------------------------------------|
-| `tracer_name`              | string | 否     | 按采集器名称过滤，支持正则表达式               |
-| `hostname`                 | string | 否     | 按节点主机名过滤，支持正则表达式               |
-| `container_hostname`       | string | 否     | 按容器主机名过滤，支持正则表达式               |
-| `container_host_namespace` | string | 否     | 按容器命名空间过滤，支持正则表达式             |
-| `container_qos`            | string | 否     | 按容器 QoS 过滤，支持正则表达式                |
-| `region`                   | string | 否     | 按地域过滤，支持正则表达式                     |
-
-- 所有过滤字段均为可选；省略或留空表示匹配所有值。
-- 多个字段同时指定时，所有条件须**同时满足**（AND 语义）。
-- 过滤器在服务端生效，仅匹配的事件才会推送到客户端。
-
-#### 3.4 响应格式（SSE 流）
-
-连接建立后，服务端以 SSE 格式持续推送事件：
-
-```text
-data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom_kill",...}\n\n
-```
-
-服务端还会定期发送心跳注释行以保持连接：
-
-```text
-: ping\n
-```
-
----
-
-### 4. HTTP 服务事件流配置
-
-在华佗配置文件的 `[HTTPServer]` 段配置事件流参数：
-
-```toml
-[HTTPServer]
-    # 最大并发客户端连接数，超出后新连接返回 HTTP 429
-    # Default: 100
-    MaxEventStreamClients = 100
-
-    # SSE 心跳间隔（秒），防止代理/负载均衡因空闲而断开连接
-    # 连续 3 次心跳写入失败则主动关闭该客户端连接
-    # Default: 30
-    EventStreamKeepAliveIntervalSeconds = 30
-```
-
-| 配置项 | 默认值 | 说明 |
-|---|---|---|
-| `MaxEventStreamClients` | 100 | `/v1/events/watch` 长连接上限，超出返回 HTTP 429 |
-| `EventStreamKeepAliveIntervalSeconds` | 30 | 心跳间隔，应小于上游代理的 idle timeout |
-
----
-
-### 5. Curl 调用示例
-
-#### 5.1 订阅所有内核事件
-
-```bash
-curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
-  -H "Authorization: Bearer <node-token>" \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -H "Cache-Control: no-cache" \
-  -H "Connection: keep-alive" \
-  -d '{}'
-```
-
-#### 5.2 只订阅 OOM 事件
-
-```bash
-curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
-  -H "Authorization: Bearer <node-token>" \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -H "Cache-Control: no-cache" \
-  -H "Connection: keep-alive" \
-  -d '{"filters": {"tracer_name": "^memory_oom_kill$"}}'
-```
-
-#### 5.3 订阅指定节点的网络类事件
-
-```bash
-curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
-  -H "Authorization: Bearer <node-token>" \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -H "Cache-Control: no-cache" \
-  -H "Connection: keep-alive" \
-  -d '{
-    "filters": {
-      "hostname": "^node-1$",
-      "tracer_name": "netdev|dropwatch|net_rx_latency"
-    }
-  }'
-```
-
-#### 5.4 订阅 prod 命名空间的容器事件
-
-```bash
-curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
-  -H "Authorization: Bearer <node-token>" \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -H "Cache-Control: no-cache" \
-  -H "Connection: keep-alive" \
-  -d '{
-    "filters": {
-      "container_host_namespace": "^prod$"
-    }
-  }'
-```
-
-> **说明：** `-N` 参数禁用 curl 缓冲，使 SSE 事件即时输出到终端。
-
----
-
-### 6. 生成的 Go 客户端示例
+## Go 客户端
 
 `POST /v1/events/watch` 已纳入 Node OpenAPI 契约。以下示例直接使用生成的
 请求类型、事件类型和客户端。
@@ -406,13 +345,13 @@ func main() {
 }
 ```
 
-#### 6.1 流式客户端选择
+### 流式客户端选择
 
 应使用生成的 `Client.WatchEvents` 方法直接获取 `http.Response`。不要对该接口使用
 `ClientWithResponses.WatchEventsWithResponse`：后者会读取响应体直到 EOF，而 SSE
 连接通常会持续到调用方取消 context。
 
-#### 6.2 重连机制建议
+### 断线重连
 
 生产环境中，网络抖动或服务重启会导致连接断开，建议加入指数退避重连逻辑：
 
@@ -446,52 +385,9 @@ func watchWithRetry(
 }
 ```
 
----
+## 实现原理
 
-## ⚙️ 原理
-
-### 系统架构
-
-HUATUO Agent 部署在每个节点上，通过 eBPF、Kprobe、Tracepoint 等机制挂钩内核关键路径，将内核异常事件采集后经过滤、封装，以 SSE 长连接推送给多个并发订阅客户端。
-
-```mermaid
-graph TB
-    subgraph kernel["Linux 内核"]
-        K1[OOM Killer]
-        K2[Hung Task 检测]
-        K3[Soft Lockup 检测]
-        K4[RAS 硬件错误]
-        K5[网络子系统]
-        K6[AutoTracing]
-    end
-
-    subgraph huatuo["HUATUO Agent（节点级）"]
-        T["Tracer 采集层\neBPF / Kprobe / Tracepoint"]
-        F["过滤器\nhostname / tracer / namespace / region"]
-        CE["CloudEvents 1.0 封装\nid / source / time / data"]
-        EW["EventsWatch 分发层\nSSE 长连接管理"]
-    end
-
-    subgraph clients["订阅客户端"]
-        C1[故障自愈系统]
-        C2[可观测性平台]
-        C3[AIOps 系统]
-        C4[安全审计系统]
-    end
-
-    kernel --> T
-    T --> F
-    F --> CE
-    CE --> EW
-    EW -->|SSE 推送| C1
-    EW -->|SSE 推送| C2
-    EW -->|SSE 推送| C3
-    EW -->|SSE 推送| C4
-```
-
-### 事件采集与推送原理
-
-客户端发起 POST 请求后，连接保持打开状态。内核每次触发异常事件，HUATUO Agent 完成过滤和封装后立即将事件写入所有匹配的 SSE 流，无需客户端轮询。
+客户端发起 POST 请求后保持 SSE 连接。节点采集内核事件，按订阅条件过滤，再将匹配事件封装为 CloudEvents 推送给客户端，无需轮询。连接按配置间隔发送心跳；事件送达延迟取决于采集、处理和网络状态。
 
 ```mermaid
 sequenceDiagram
@@ -515,30 +411,3 @@ sequenceDiagram
         EW-->>C: : ping（按配置间隔发送心跳）
     end
 ```
-
-### 事件处理流程
-
-从内核事件产生到推送至客户端，经过采集、过滤、封装三个阶段，整体链路延迟小于 1 秒。
-
-```mermaid
-flowchart LR
-    A([内核异常触发]) --> B["Tracer 采集\neBPF / Kprobe"]
-    B --> C{过滤器匹配?}
-    C -- 否 --> D([丢弃])
-    C -- 是 --> E["封装 CloudEvents 1.0\nid / source / time / data"]
-    E --> F[写入 SSE 流]
-    F --> G([推送至订阅客户端])
-```
-
----
-
-## 🌟 结尾
-
-{{% alert color="info" %}}
-<div style="text-align: center;">
-🌟 欢迎 Star: <a href="https://github.com/ccfos/huatuo" target="_blank">https://github.com/ccfos/huatuo</a>
-<br><br>
-👀 欢迎订阅官方微信公众号<br>
-<img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
-</div>
-{{% /alert %}}
