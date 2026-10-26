@@ -28,6 +28,7 @@ APP_CMD_DIR := cmd
 APP_CMD_OUTPUT := _output
 PPROF_TOOL := $(APP_CMD_OUTPUT)/tools/pprof-tool
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
+GO_BUILD_PARALLELISM ?= 2
 APP_CMD_BIN_TARGETS := $(patsubst %,$(APP_CMD_OUTPUT)/bin/%,$(notdir $(APP_CMD_SUBDIRS)))
 
 GO_BUILD_FLAGS := CGO_ENABLED=1 go build -tags "netgo osusergo" -gcflags=all="-N -l"
@@ -101,6 +102,10 @@ OPENAPI_DERIVED_FILES := \
 	apis/v1/node/http_status.gen.go \
 	apis/v1/node/openapi.gen.json
 OPENAPI_GENERATED_FILES := $(OPENAPI_CODEGEN_FILES) $(OPENAPI_DERIVED_FILES)
+PORTABLE_GENERATED_FILES := $(OPENAPI_GENERATED_FILES) \
+	pkg/metric/mock_collector_test.go \
+	internal/toolstream/transport/event.capnp.go
+SKIP_PORTABLE_GENERATION ?= 0
 
 define generate-openapi
 	output_root="$(1)"; \
@@ -119,8 +124,8 @@ endef
 
 define generate-non-openapi
 	go run ./build/bpfabi-tool; \
-	go generate -run "mockery.*" -x ./...; \
-	go generate -run "capnp.*" ./...
+	go generate -run "capnp.*" ./...; \
+	go generate -run "mockery.*" -x ./...
 endef
 
 define check-openapi
@@ -160,7 +165,11 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			go generate -run BPF_COMPILE {}'
 	@touch $@
 
-build: $(APP_CMD_BIN_TARGETS)
+build: gen-build $(GO_SRCS) \
+	_output/tests/apiserver-probe \
+	_output/tests/apiserver-go-workload
+	@mkdir -p $(APP_CMD_OUTPUT)/bin
+	$(GO_BUILD_IMPL) -p $(GO_BUILD_PARALLELISM) -o $(APP_CMD_OUTPUT)/bin/ $(addprefix ./,$(APP_CMD_SUBDIRS))
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
 	@cp *.conf $(APP_CMD_OUTPUT)/conf/
@@ -204,14 +213,38 @@ clean:
 		$(FIND_EXCLUDE_PATHS) -delete
 
 gen-build: $(BPF_BUILD_STAMP)
+ifeq ($(SKIP_PORTABLE_GENERATION),1)
+	@test "$$(cat $(APP_CMD_OUTPUT)/portable-generated.commit)" = "$$(git rev-parse HEAD)" \
+		|| { echo 'portable generated sources do not match this revision' >&2; exit 1; }
+	@git diff HEAD --exit-code
+	@for file in $(PORTABLE_GENERATED_FILES); do \
+		test -f "$$file" || { echo "missing generated source: $$file" >&2; exit 1; }; \
+	done
+	@go run ./build/bpfabi-tool
+else
 	@set -eu; $(call generate-openapi,.)
 	@set -eu; $(generate-non-openapi)
+endif
+
+portable-generated: gen-build
+	@git diff HEAD --exit-code
+	@git rev-parse HEAD > $(APP_CMD_OUTPUT)/portable-generated.commit
+	@tar -cf $(APP_CMD_OUTPUT)/portable-generated.tar \
+		$(PORTABLE_GENERATED_FILES) $(APP_CMD_OUTPUT)/portable-generated.commit
 
 test: unit integration e2e
 
 unit: gen-build
-	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
+	@go test -count=1 -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
+
+_output/tests/apiserver-probe: integration/testdata/test_apiserver_profiling_probe.go go.mod go.sum
+	@mkdir -p $(@D)
+	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
+
+_output/tests/apiserver-go-workload: integration/testdata/test_apiserver_profiling_workload.go
+	@mkdir -p $(@D)
+	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
 
 integration: build
 	go build -o $(PPROF_TOOL) ./build/pprof-tool
@@ -220,4 +253,4 @@ integration: build
 e2e: build
 	@bash e2e/run.sh
 
-.PHONY: build install-tools gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: build install-tools gen-build portable-generated check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

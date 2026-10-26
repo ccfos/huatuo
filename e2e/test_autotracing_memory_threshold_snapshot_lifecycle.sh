@@ -139,13 +139,13 @@ lifecycle_trigger() {
 	local phase=$1
 	if [[ -e ${go_snapshot_cgroup}/memory.max ]]; then
 		lifecycle_high_before=$(awk '$1=="high" {print $2}' "${go_snapshot_cgroup}/memory.events")
-		echo $((72 * 1024 * 1024)) > "${go_snapshot_cgroup}/memory.high"
+		snapshot_set_memory_high $((72 * 1024 * 1024))
 	fi
 	lifecycle_triggered_at=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')
 	printf p >&"${go_snapshot_input_fd}"
 	if [[ -e ${go_snapshot_cgroup}/memory.max ]]; then
 		wait_until 15 0.1 awk -v n="${lifecycle_high_before}" '$1=="high" {v=$2} END {exit !(v>n)}' "${go_snapshot_cgroup}/memory.events" || fatal "no real memory.high notification"
-		echo max > "${go_snapshot_cgroup}/memory.high"
+		snapshot_set_memory_high max
 	fi
 	wait_until 30 0.1 grep -qx 'pressure ready' "${go_snapshot_case_dir}/workload-${phase}.log" || fatal "pressure incomplete"
 	[[ $(< "${lifecycle_usage}") -ge ${GO_SNAPSHOT_THRESHOLD} ]] || fatal "pressure did not cross 50 percent"

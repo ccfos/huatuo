@@ -25,14 +25,13 @@ source "${ROOT_DIR}/integration/lib_cgroup.sh"
 readonly SUBSYS_ID_FIXTURE="${ROOT_DIR}/integration/testdata/cgroup_subsys_id.bpf.c"
 readonly SUBSYS_ID_OBJECT="${HUATUO_BAMAI_TEST_TMPDIR}/cgroup_subsys_id.bpf.o"
 readonly SUBSYS_ID_TEST_LOG="${HUATUO_BAMAI_TEST_TMPDIR}/cgroup-subsys-id.log"
-readonly SUBSYS_ID_GO_CACHE_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/go-cache"
 readonly SUBSYS_ID_GO_TMP_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/go-tmp"
 readonly SUBSYS_ID_CGROUP_NAME="cgroup-subsys-id-probe"
 
 subsys_id_cgroup_parent=""
 
 cleanup() {
-	rm -rf -- "${SUBSYS_ID_GO_CACHE_DIR}" "${SUBSYS_ID_GO_TMP_DIR}"
+	rm -rf -- "${SUBSYS_ID_GO_TMP_DIR}"
 	[[ -n "${subsys_id_cgroup_parent}" ]] || return 0
 	rmdir "${subsys_id_cgroup_parent}/${SUBSYS_ID_CGROUP_NAME}" 2> /dev/null || true
 	rmdir "${subsys_id_cgroup_parent}" 2> /dev/null || true
@@ -62,12 +61,11 @@ readonly SUBSYS_ID_NOTIFY_PATH="${subsys_id_cgroup_parent}/${SUBSYS_ID_CGROUP_NA
 
 compile_bpf_fixture "${SUBSYS_ID_FIXTURE}" "${SUBSYS_ID_OBJECT}"
 
-mkdir -p "${SUBSYS_ID_GO_CACHE_DIR}" "${SUBSYS_ID_GO_TMP_DIR}"
+mkdir -p "${SUBSYS_ID_GO_TMP_DIR}"
 
 if ! HUATUO_CGROUP_SUBSYS_ID_OBJECT="${SUBSYS_ID_OBJECT}" \
 	HUATUO_CGROUP_SUBSYS_ID_NOTIFY_PATH="${SUBSYS_ID_NOTIFY_PATH}" \
 	HUATUO_CGROUP_SUBSYS_ID_SYMBOL="${SUBSYS_ID_SYNC_SYMBOL}" \
-	GOCACHE="${SUBSYS_ID_GO_CACHE_DIR}" \
 	GOTMPDIR="${SUBSYS_ID_GO_TMP_DIR}" \
 	go test -mod=vendor -tags=integration ./internal/pod \
 	-run '^TestCgroupSubsysIDIntegration$' -count=1 \

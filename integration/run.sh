@@ -17,18 +17,37 @@
 set -euo pipefail
 
 usage() {
-	echo "usage: $0 [--suite integration|e2e] [test_*.sh] [repeat-count]" >&2
+	echo "usage: $0 [--suite integration|e2e] [-j 1..8] [test_*.sh] [repeat-count]" >&2
 }
 
 TEST_SUITE=integration
-if [[ ${1:-} == --suite ]]; then
-	if (($# < 2)); then
+REQUESTED_JOBS=${INTEGRATION_JOBS:-1}
+jobs_explicit=false
+while (($# > 0)); do
+	case $1 in
+	--suite | -j)
+		(($# >= 2)) || {
+			usage
+			exit 2
+		}
+		if [[ $1 == --suite ]]; then TEST_SUITE=$2; else
+			REQUESTED_JOBS=$2
+			jobs_explicit=true
+		fi
+		shift 2
+		;;
+	-j*)
+		REQUESTED_JOBS=${1#-j}
+		jobs_explicit=true
+		shift
+		;;
+	-*)
 		usage
 		exit 2
-	fi
-	TEST_SUITE=$2
-	shift 2
-fi
+		;;
+	*) break ;;
+	esac
+done
 case ${TEST_SUITE} in
 integration | e2e) ;;
 *)
@@ -36,6 +55,18 @@ integration | e2e) ;;
 	exit 2
 	;;
 esac
+if [[ ${TEST_SUITE} == e2e ]]; then
+	if [[ ${jobs_explicit} == true && ${REQUESTED_JOBS} != 1 ]]; then
+		echo 'e2e tests require -j 1' >&2
+		exit 2
+	fi
+	REQUESTED_JOBS=1
+fi
+[[ ${REQUESTED_JOBS} =~ ^[1-8]$ ]] || {
+	echo 'jobs must be between 1 and 8' >&2
+	exit 2
+}
+readonly REQUESTED_JOBS
 readonly TEST_SUITE
 
 if (($# > 2)); then
@@ -82,90 +113,25 @@ if [[ ${EUID} -ne 0 ]]; then
 	test_results_summary
 	exit 0
 fi
-if ! (require_commands unshare mount); then
+runner_prerequisites=(unshare mount)
+if ((REQUESTED_JOBS > 1)); then runner_prerequisites+=(flock ss); fi
+if ! (require_commands "${runner_prerequisites[@]}"); then
 	test_skipped=$((${#test_scripts[@]} * REQUESTED_REPEAT_COUNT))
 	test_results_summary
 	exit 0
 fi
 require_build_output
 
-unshare --uts --mount bash -c '
+exec unshare --uts --mount bash -c '
 	set -euo pipefail
 	mount --make-rprivate /
 	echo "huatuo-dev" > /proc/sys/kernel/hostname
 	hostname huatuo-dev 2>/dev/null || true
 
-	requested_repeat_count=$1
-	test_suite=$2
-	cd "$3"
-	shift 3
-	test_scripts=("$@")
-	source "./integration/env.sh"
-	source "${ROOT_DIR}/integration/lib.sh"
-	if [[ ${test_suite} == e2e ]]; then
-		source "${ROOT_DIR}/e2e/lib.sh"
-	fi
-	test_results_init
-	active_test_workspace=""
-	active_test_name=""
-
-	runner_test_exit() {
-		local status=$1
-		if [[ ${test_suite} == e2e ]]; then
-			HUATUO_BAMAI_TEST_TMPDIR="${active_test_workspace}" e2e_test_teardown "${status}" || status=1
-			if [[ ${status} -ne 0 && ${status} -ne 77 ]]; then
-				log_error "e2e artifacts: ${active_test_workspace}"
-				dump_text_files "${active_test_workspace}" || true
-			fi
-		else
-			integration_test_exit "${status}" "${active_test_workspace}" || status=1
-		fi
-		return "${status}"
-	}
-
-	runner_cleanup() {
-		local runner_status=$?
-		if [[ -n "${active_test_workspace}" ]]; then
-			runner_test_exit "${runner_status}" || runner_status=$?
-			test_result_record "${active_test_name}" "${runner_status}"
-		fi
-		test_results_summary
-		[[ ${runner_status} -ne 77 ]] || runner_status=0
-		exit "${runner_status}"
-	}
-	trap runner_cleanup EXIT
-
-	# Run each test in an isolated workspace owned by this runner.
-	for ((run = 1; run <= requested_repeat_count; run++)); do
-		for test_script in "${test_scripts[@]}"; do
-			[[ -f "${test_script}" ]] || continue
-			test_name=$(basename "${test_script}" .sh)
-			test_workspace=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${test_name}.XXXXXX")
-			active_test_workspace="${test_workspace}"
-			active_test_name="$(basename "${test_script}") (${run}/${requested_repeat_count})"
-			log_info "🚀🚀 start: $(basename "${test_script}") (${run}/${requested_repeat_count})"
-
-			if [[ ${test_suite} == e2e ]]; then
-				# Cases may restart bamai; restore the baseline for each next case.
-				HUATUO_BAMAI_TEST_TMPDIR="${test_workspace}" huatuo_bamai_start "${HUATUO_BAMAI_ARGS_E2E[@]}"
-			fi
-			if HUATUO_BAMAI_TEST_TMPDIR="${test_workspace}" bash "${test_script}"; then
-				test_status=0
-			else
-				test_status=$?
-			fi
-
-			runner_test_exit "${test_status}" || test_status=$?
-			active_test_workspace=""
-			test_result_record "${active_test_name}" "${test_status}"
-			if [[ ${test_status} -ne 0 && ${test_status} -ne 77 ]]; then
-				exit "${test_status}"
-			fi
-		done
-	done
-
-	# E2E retains artifacts; successful integration runs leave an empty root.
-	if [[ ${test_suite} == integration ]]; then
-		rmdir -- "${HUATUO_BAMAI_TEST_TMPDIR}"
-	fi
-' huatuo-test-runner "${REQUESTED_REPEAT_COUNT}" "${TEST_SUITE}" "${ROOT_DIR}" "${test_scripts[@]}"
+	cd "$1"
+	source ./integration/env.sh
+	source ./integration/lib.sh
+	source ./integration/lib_runner.sh
+	shift
+	run_test_suite "$@"
+' huatuo-test-runner "${ROOT_DIR}" "${REQUESTED_REPEAT_COUNT}" "${TEST_SUITE}" "${REQUESTED_JOBS}" "${test_scripts[@]}"

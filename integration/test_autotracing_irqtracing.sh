@@ -39,6 +39,7 @@ readonly IRQTRACING_FIXTURE_ROOT="${HUATUO_BAMAI_TEST_TMPDIR}/irqtracing-fixture
 readonly IRQTRACING_STAT="${IRQTRACING_FIXTURE_ROOT}/proc/stat"
 readonly IRQTRACING_RESULT="${HUATUO_BAMAI_TEST_TMPDIR}/irq-result.json"
 readonly IRQTRACING_PUBLICATION="${HUATUO_BAMAI_TEST_TMPDIR}/irq-publication.json"
+readonly IRQTRACING_INDEX=$(storage_test_index irqtracing-integration)
 
 mkdir -p \
 	"${IRQTRACING_FIXTURE_ROOT}/bin" \
@@ -84,7 +85,7 @@ serve_stat_samples() {
 
 assert_irqtracing_result_published() {
 	storage_curl --fail -H 'Content-Type: application/json' \
-		"${STORAGE_ADDR}/irqtracing-integration*/_search" \
+		"${STORAGE_ADDR}/${IRQTRACING_INDEX}*/_search" \
 		-d '{"query":{"term":{"tracer_name.keyword":"irqtracing"}}}' \
 		> "${IRQTRACING_RESULT}" || return 1
 	jq -e '.hits.hits | length == 1 and all(.[]._source;
@@ -96,7 +97,7 @@ assert_irqtracing_result_published() {
 	local task_id
 	task_id=$(jq -r '.hits.hits[0]._source.tracer_id' "${IRQTRACING_RESULT}")
 	storage_curl --fail -H 'Content-Type: application/json' \
-		"${STORAGE_ADDR}/irqtracing-integration*/_search" \
+		"${STORAGE_ADDR}/${IRQTRACING_INDEX}*/_search" \
 		-d "$(jq -nc --arg id "profiling-publication:${task_id}" '{query:{ids:{values:[$id]}}}')" \
 		> "${IRQTRACING_PUBLICATION}" || return 1
 	jq -e '.hits.hits | length == 1' "${IRQTRACING_PUBLICATION}" > /dev/null

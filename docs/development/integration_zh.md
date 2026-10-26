@@ -58,6 +58,60 @@ bash e2e/run.sh test_metrics.sh 2
 结束时停止服务并检查日志。integration 成功或跳过后删除工作目录，失败时保留；
 e2e 保留工作目录。
 
+apiserver 测试遵循相同的平铺目录约定：
+
+- `integration/test_apiserver_profile_disabled.sh`：能力表、认证和无存储 API。
+- `integration/test_apiserver_profiling.sh`：主机/全局配额、Node 容量、参数校验、
+  容器不存在、主机不可达和 Node 离线，共 7 项功能检查。
+- `e2e/test_apiserver_profiling.sh`：任务完成、list/raw 分页、火焰图和 agent 指标。
+- `e2e/test_apiserver_profiling_{stop,concurrent,recovery,node_recovery}.sh`：
+  停止、同机并发、apiserver 重启恢复和 Node 故障恢复。
+- `e2e/test_apiserver_profiling_matrix.sh`：19 个语言/采样模式组合。
+
+公共服务配置、请求、断言和清理由 `integration/lib_apiserver.sh` 提供，
+并复用 `integration/lib_storage.sh` 和 `integration/lib_continuous_profiling.sh`。
+协议客户端和源码夹具位于 `integration/testdata/`；`make build` 提前构建
+`_output/tests/apiserver-probe` 和静态 Go 负载 `apiserver-go-workload`。
+
+```bash
+make build
+sudo bash integration/run.sh test_apiserver_profile_disabled.sh
+sudo bash integration/run.sh test_apiserver_profiling.sh
+sudo bash e2e/run.sh test_apiserver_profiling.sh
+sudo bash e2e/run.sh test_apiserver_profiling_matrix.sh
+# 上述脚本也由标准入口自动发现；支持脚本名后加重复次数
+sudo make integration
+sudo make e2e
+```
+
+静态 API 检查不依赖 Docker、perf 或编译器。采样检查需要 Linux、root、Docker、
+curl、jq、ss、timeout、允许采样的 perf 配置及已构建的 BPF/profiler 工具。
+宿主机负载用例还需要 gcc；矩阵在 Pod 内编译 C/C++，不需要宿主机编译器。
+ES 数据绑定到工作目录的 `elasticsearch-data/`；报告包含请求响应、采样结果、日志及
+`summary.tsv`。生成配置含测试 token，仅供测试环境使用。
+
+矩阵还需要 Python 3、ip、kubectl 管理权限、crictl、本机 kubelet 凭证和已打包的
+asprof/py-spy。
+通过节点 InternalIP 自动匹配本机节点；`APISERVER_TEST_NODE` 可显式指定，仍须属于
+本机。使用 `KUBELET_CERT`、`KUBELET_KEY` 覆盖凭证路径。无法唯一匹配节点时失败。
+先通过本机 CRI 集中准备镜像，再以 `imagePullPolicy: Never` 启动 Pod；
+下载失败保留独立日志。默认镜像为 gcc:14、golang:1.24、eclipse-temurin:17-jdk、
+python:3.11-slim，可用 `APISERVER_TEST_{NATIVE,GO,JAVA,PYTHON}_IMAGE` 替换。
+
+各语言 Pod 与存储启动并行准备，准备完成后保持空闲，收到启动信号才运行负载。
+每次只激活一个负载并执行一个采样任务，依次覆盖 C/C++/Go 的 oncpu、offcpu 和三种
+内存模式、Java CPU/两种内存模式及 Python CPU。Go Pod 只读挂载预编译静态负载；
+C/C++ 和 Java 在对应运行时镜像中准备负载。原生负载保留 16 个 64 KiB 映射，
+使最终快照仍有存活内存，并在收到 SIGTERM 后退出。
+矩阵使用 2 秒聚合周期，原生任务采样 6 秒、Java 采样 8 秒，均至少检查 3 个结果窗口；
+Python 采样 5 秒并输出一个窗口。其他 profiling 用例仍使用 5 秒聚合周期。
+矩阵的 `summary.tsv` 逐项记录 19 个组合。
+
+结果检查包括类型、容器归属、非空采样结果和正采样值火焰图；Python 只有整个任务
+时长的采集窗口，不要求多个窗口。临时 namespace、ConfigMap、Pod 在退出时清理。
+Node 故障恢复主动 SIGKILL 测试 Node，验证原任务失败及恢复后新任务可用。
+故障期间允许预期错误日志，仍拒绝 runtime panic；不验证 Grafana 页面渲染。
+
 runner 只检查 `_output` 目录是否存在，不逐个检查项目二进制和 BPF 产物。
 直接运行脚本前先执行 `make build`；
 目录存在不代表构建完整，缺失产物会在实际使用时导致失败。
@@ -255,3 +309,34 @@ cd integration
 ```bash
 bash run.sh test_node_runtime_limits.sh
 ```
+
+## SchedBlame 真实采集
+
+`test_sched_blame.sh` 运行已构建的 `_output/bin/sched-blame`，使用真实 BPF
+对象、调度钩子、perf 传输和 kubelet 容器发现，不再用 Shell 包装 Go 组件测试，
+也不注入伪造 perf 记录。
+
+用例在本机节点创建两个名称唯一的 Pod，将负载绑定到同一个 CPU，依次采集
+目标独占、存在竞争、竞争容器删除三个阶段，再删除并重建高亮目标。每个阶段
+留出两秒稳定时间，随后至少获得五个运行时间非零的有效样本。检查目标身份、
+dense ID、比例计算、目标替换后的历史清零，以及传输没有丢失。竞争阶段的外部
+竞争比例应比前后两个安静阶段至少高五个百分点，不断言精确比例。SIGTERM
+必须让命令成功退出，最后必须完成测试 namespace 的删除。
+
+需要隔离的 Linux 4.18 至 6.5 环境、BTF、所需的调度和 cgroup 钩子、本机
+Kubernetes 节点、可认证访问的 kubelet，以及已缓存的 `BUSINESS_POD_IMAGE`。
+缺少前置条件时报告 SKIP；环境准备完成后，启动、采集、断言和清理失败均使
+测试失败。较新的不支持内核会直接跳过，不加载 SchedBlame BPF。不根据容器
+身份或根文件系统类型判断资格；满足前置条件的容器和 btrfs 主机不会因此跳过。
+
+CI 构建完成后，可以单独运行：
+
+```bash
+sudo bash integration/run.sh test_sched_blame.sh
+```
+
+成功日志为 `sched-blame live collection verified`。失败时保留 CSV、阶段时间窗、
+命令日志和 Pod 诊断信息。用例控制 CPU 负载，因此保持默认独占执行。CSV 断言
+不等待 60 个样本的异常基线；精确归因、P99、异常数据、上传、丢失计数和最终
+队列排空仍由普通 Go 组件测试验证。真实采集用例不证明精确记账，也不保证
+dense ID 复用时的事件代次隔离；后者仍是设计接受的近似。

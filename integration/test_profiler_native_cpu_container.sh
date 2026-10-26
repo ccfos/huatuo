@@ -31,6 +31,7 @@ readonly CONTAINERD_NAMESPACE="k8s.io"
 readonly PROFILER_DURATION=5
 readonly CHAIN_PATTERN=';f1;f2;f3 [0-9]+$'
 
+require_host_procfs
 require_readable /proc/sys/kernel/perf_event_paranoid
 
 WORK_DIR=${TOOL_WORK_DIR}
