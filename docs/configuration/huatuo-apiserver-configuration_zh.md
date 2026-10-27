@@ -308,3 +308,110 @@ Elasticsearch/OpenSearch 用于查询节点写入的剖析数据，与 `Jobs.Sto
 | `DashboardBaseURL` | 字符串，默认空，不生成 Dashboard URL。配置时必须为包含主机的 HTTP/HTTPS 地址；配置文件中的地址仅为示例。 |
 
 结果链接仅在任务已结束、结果为已完成或未知，且查询后端确认数据已发布时生成。Profiler 的执行和聚合参数在节点配置中维护。
+
+### 9. Model Context Protocol
+
+MCP 提供只读事件查询、profiling 数据分析和指标查询，不触发采集。以下为启用示例，地址和索引
+需替换为实际部署值。未配置的后端不注册对应数据 Tool；`diagnostic_guide` 始终可用。
+
+```toml
+[MCP]
+    Enabled = true
+    GuideOverlayDir = ""
+
+[[MCP.Events.Regions]]
+    NamePattern = "^us-"
+    Address = "http://127.0.0.1:9200"
+    Index = "huatuo_events"
+    AuthType = "none"
+
+[[MCP.Metrics.Regions]]
+    NamePattern = "^us-"
+    Address = "http://127.0.0.1:9090"
+    AuthType = "none"
+    MetricPrefix = "huatuo_"
+```
+
+#### 接入与后端
+
+- **入口**：`/v1/mcp` 使用无状态 Streamable HTTP，与 API server 共用端口和 Bearer
+  认证。默认关闭，可通过 `Enabled=true`、`--enable-mcp` 或 `ENABLE_MCP=true` 启用。
+  按客户端使用的方法，为非管理员的 `Permissions` 添加
+  `POST /v1/mcp`、`GET /v1/mcp`、`DELETE /v1/mcp`。
+- **事件后端**：`storage` 适配已有 Elasticsearch/OpenSearch 数据，使用
+  `[[MCP.Events.Regions]]` 内直接配置的地址和索引，独立于全局 `[Elasticsearch]`。
+  Elasticsearch 和 OpenSearch 共用同一套读取实现，无需 `Type` 选择字段。
+  `elasticsearch` 后端标签代表共用协议，不表示存储产品类型。
+- **后端认证**：事件连接使用 `AuthType="basic"` 配合 `Username`、`Password`；
+  空 AuthType 时按是否提供成对凭据选择认证，`none` 忽略凭据并匿名访问。
+  Prometheus 使用 `none`/空值匿名访问（不可同时填写凭据）、`bearer` 配合
+  `AuthToken`，或 `basic` 配合 `AuthUser`、`AuthPass`。连接地址不得内嵌凭据。
+- **注册与启动**：配置采用严格解析；无效配置阻止启动。后端按有效配置注册，不在
+  启动时探测连通性；运行时查询失败会明确返回，恢复后无需重启服务。
+
+#### 查询预算
+
+下表为默认值；标有上限的预算只能调低。`ToolTimeout`、`MaxQueryTimeRange` 单位为秒，
+速率限制单位为后端请求/分钟。
+
+| 配置项 | 默认值 | 约束与含义 |
+|--------|-------:|------------|
+| `MCP.MaxConcurrentRequests` | 200 | 单进程所有用户共享的 MCP 在途 HTTP 请求数，不是连接数或用户数；上限 200 |
+| `MCP.MaxQueryTimeRange` | 2592000 | 30 天；`0` 关闭跨度上限 |
+| `MCP.MaxRegionsPerQuery` | 5 | 单次调用 region 数，上限 5 |
+| `MCP.Events.RateLimit` | 300 | 事件后端共享额度；`0` 关闭 |
+| `MCP.Events.MaxDocumentsPerQuery` | 500 | 事件/Profile 源文档总预算，上限 500 |
+| `MCP.Events.ToolTimeout` | 60 | 事件/Profile Tool 总超时，必须为正 |
+| `MCP.Metrics.RateLimit` | 300 | 指标后端共享额度；`0` 关闭 |
+| `MCP.Metrics.MaxSeriesPerQuery` | 3000 | 查询返回序列总预算，上限 3000 |
+| `MCP.Metrics.MaxMetricsPerDiscovery` | 800 | 指标发现总预算，上限 800 |
+| `MCP.Metrics.ToolTimeout` | 60 | 指标 Tool 总超时，必须为正 |
+
+用户请求限速由外层 `APIServer.RateLimit` 统一控制，MCP 不再单独设置用户限速。
+每次后端尝试（含重试）均计入额度，同类后端的 region 连接共享预算。
+限流采用令牌桶，桶容量等于每分钟额度，允许短时突发，不是固定分钟窗口。
+临时错误在 Tool 总超时内最多重试 10 次；参数、认证、日期解析等永久错误不原样重试。
+MCP 内部设置普通 HTTP 响应写 deadline 为两类 Tool 超时较大值加 5 秒，默认 65 秒；
+GET 通知流清除写 deadline，同时占用总并发和通知流配额；通知流配额为
+`max(1, MaxConcurrentRequests / 4)`（整数除法）。退出时取消活跃请求并释放空闲连接。
+
+#### 多 region
+
+连接只在 `Regions` 中配置。每个 region 独立配置地址、事件索引和
+认证信息，不继承其他 region 的字段。匹配顺序为精确名称、声明顺序的正则表达式，
+均未匹配时回退到第一个配置项。`MetricPrefix` 未填写时为空，不限制指标名前缀。
+
+```toml
+[[MCP.Events.Regions]]
+    NamePattern = "^eu-"
+    Address = "http://eu-events:9200"
+    Index = "huatuo_events"
+    AuthType = "none"
+
+[[MCP.Metrics.Regions]]
+    NamePattern = "^eu-"
+    Address = "http://eu-prometheus:9090"
+    MetricPrefix = "huatuo_eu_"
+```
+
+`AuthType="none"` 表示匿名访问。凭据和 `MetricPrefix` 仅对所属 region 生效。
+后端路由回退不替代数据 Tool 要求的精确 region 过滤条件。
+
+#### 固定限制与结果
+
+- Tool 超时是整次调用预算，包括 region 查询、重试等待和结果处理，不是每次 HTTP 尝试的超时。
+- 文档、序列和发现预算按 region 分配；总预算小于请求 region 数时拒绝调用。
+- 区域事件统计最多 7 天、1000 个桶，与文档预算独立；区域指标统计最多
+  1000 条输出序列（受更低的配置限制），查询/重试共享最多 10 秒预算。
+- 解压后 ES 响应上限 8 MiB，Prometheus 响应上限 4 MiB，JSON 编码的 Tool 结果上限 4 MiB。
+  字节上限独立于记录数量，超限报错；小输出也不保证低扫描成本，后端仍需资源限制。
+- 查询失败返回 `isError=true`；部分结果返回 `status=partial`，需检查错误、warnings
+  和各工具的截断/完整性字段。失败和未知结果不能解释为“无数据”。
+
+#### 文本 guide
+
+`GuideOverlayDir` 默认为空，使用 `internal/mcp/guide/data` 内嵌的英文指南。设置外部目录后，可按 `prompts/`、
+`resources/` 层级更新 Markdown/YAML 文件；现有文件内容下次读取即生效，无需重新
+编译。缺失文件回退到内嵌版本，新增 Resource 后重启以刷新目录；新增 Prompt 文件不会自动注册为 Prompt。
+
+Tool 清单、时间字段兼容规则和知识库用法见 [MCP 诊断能力](/docs/key-feature/mcp_zh.md)。

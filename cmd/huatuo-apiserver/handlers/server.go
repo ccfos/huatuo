@@ -17,6 +17,10 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"net/http"
+
+	httpGin "github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
 
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
@@ -27,9 +31,6 @@ import (
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
 	"github.com/ccfos/huatuo/internal/version"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
-
-	httpGin "github.com/gin-gonic/gin"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ServerOptions groups the dependencies required to start the API server.
@@ -44,6 +45,7 @@ type ServerOptions struct {
 	EnablePProf         bool
 	VersionInfo         *version.Info
 	RateLimit           *httpserver.RateLimitConfig
+	MCPHandler          http.Handler
 }
 
 // Start starts the API service with generated business routes.
@@ -80,6 +82,7 @@ func Start(opts *ServerOptions) (*httpserver.Server, error) {
 		return nil, err
 	}
 
+	apiHandler.mcp = opts.MCPHandler
 	httpServer := httpserver.NewServer(&httpserver.Config{
 		EnablePProf: opts.EnablePProf,
 		RateLimit:   opts.RateLimit,
@@ -95,7 +98,6 @@ func Start(opts *ServerOptions) (*httpserver.Server, error) {
 			response.LegacyHTTPStatusForErrorCode,
 		),
 	})
-
 	errorHandlers := httpServer.StrictErrorHandlers()
 	strictHandler := serverapi.NewStrictHandlerWithOptions(
 		apiHandler,

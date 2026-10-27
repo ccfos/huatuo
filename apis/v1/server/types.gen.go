@@ -18,6 +18,7 @@
 package server
 
 import (
+	"encoding/json"
 	"time"
 
 	externalRef0 "github.com/ccfos/huatuo/apis/v1"
@@ -429,6 +430,9 @@ type UnsupportedMediaType = externalRef0.ErrorResponse
 // bearerAuthContextKey is the context key for BearerAuth security scheme
 type bearerAuthContextKey string
 
+// HandleMCPJSONBody defines parameters for HandleMCP.
+type HandleMCPJSONBody = json.RawMessage
+
 // ListProfilingJobsParams defines parameters for ListProfilingJobs.
 type ListProfilingJobsParams struct {
 	// Limit Maximum items in this page. Must be positive; omission uses the default.
@@ -449,6 +453,9 @@ type ListTracingJobsParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
 }
+
+// HandleMCPJSONRequestBody defines body for HandleMCP for application/json ContentType.
+type HandleMCPJSONRequestBody = HandleMCPJSONBody
 
 // CreateProfilingJobJSONRequestBody defines body for CreateProfilingJob for application/json ContentType.
 type CreateProfilingJobJSONRequestBody = CreateProfilingJobRequest

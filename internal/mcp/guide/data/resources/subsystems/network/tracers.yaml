@@ -1,0 +1,59 @@
+tracers:
+  dropwatch:
+    description: Network packet drops at kernel drop sites
+    target_type: [host, container]
+    has_profiler: false
+    key_fields:
+      type:
+        description: Drop type (such as kfree_skb)
+      drop_reason:
+        description: Drop reason
+      comm:
+        description: Process name at the drop site
+      netdev_name:
+        description: Network device name
+    match_field:
+      host: hostname
+      container: container_hostname
+    metric_keywords: [netdev, netdev_qdisc, softirq]
+  net_rx_latency:
+    description: Network receive-latency anomalies
+    target_type: [host, container]
+    has_profiler: false
+    key_fields:
+      latency_ms:
+        description: Receive latency (ms)
+        abnormal_threshold: 100
+      where:
+        description: Location of the delay (such as TO_NETIF_RCV)
+      saddr:
+        description: Source IP address
+      daddr:
+        description: Destination IP address
+      sport:
+        description: Source port
+      dport:
+        description: Destination port
+    match_field:
+      host: hostname
+      container: container_hostname
+    metric_keywords: [netdev, netdev_qdisc]
+  netdev_txqueue_timeout:
+    description: Network interface transmit-queue timeout
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      device_name:
+        description: Network device name
+      queue_index:
+        description: Index of the timed-out transmit queue
+      driver_name:
+        description: Driver name
+    match_field:
+      host: hostname
+    metric_keywords: [netdev, netdev_qdisc]
+
+related_tracers:
+  dropwatch: [cpusys, net_rx_latency]
+  net_rx_latency: [dropwatch]
+  netdev_txqueue_timeout: [dropwatch]

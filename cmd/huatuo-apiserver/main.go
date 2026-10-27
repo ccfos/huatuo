@@ -23,16 +23,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/ccfos/huatuo/client"
 	"github.com/ccfos/huatuo/internal/httpserver"
 	"github.com/ccfos/huatuo/internal/job"
 	"github.com/ccfos/huatuo/internal/log"
+	huatuomcp "github.com/ccfos/huatuo/internal/mcp"
 	"github.com/ccfos/huatuo/internal/pidfile"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
 	"github.com/ccfos/huatuo/internal/version"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
-
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -85,6 +86,7 @@ type Daemon struct {
 	profileQueryService *profilequery.ProfileQueryService
 	agentObserver       client.NodeRequestObserver
 	apiServer           *httpserver.Server
+	mcpHandler          *huatuomcp.Handler
 	steps               []daemonStep
 }
 

@@ -62,8 +62,8 @@ type Config struct {
 //
 // Save is asynchronous: items are queued in bulk and flushed by size, time, or
 // Close. A nil error from Save means the item was buffered, not that it landed
-// in the index. Permanent per-item failures are logged via OnFailure; transient
-// whole-batch failures (429, 5xx, transport errors) are retried by the client.
+// in the index. Async failures are logged via OnFailure, not returned to the
+// original caller. The SDK does not retry; callers own retry decisions.
 // Call Close on shutdown to flush any pending events.
 type Storage struct {
 	transport      esapi.Transport
@@ -177,9 +177,8 @@ func (s *Storage) Save(
 			}
 		},
 		OnFailure: func(_ context.Context, _ esutil.BulkIndexerItem, res esutil.BulkIndexerResponseItem, err error) {
-			// Reached only after client-level retries are exhausted, or the
-			// failure is per-item (parsing, mapping, version conflict). The
-			// item is dropped — caller does not learn about this synchronously.
+			// Async failures cannot reach the original Save caller. Retry policy
+			// belongs to the caller, not the SDK or this callback.
 			if err != nil {
 				log.Errorf("elasticsearch bulk save %s/%s: %v", s.index, rec.ID, err)
 				return

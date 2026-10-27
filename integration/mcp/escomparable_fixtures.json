@@ -1,0 +1,295 @@
+{
+  "indices": {
+    "huatuo_apiserver_mcp_keyword": {
+      "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+      "mappings": {
+        "properties": {
+          "region": {"type": "keyword"},
+          "hostname": {"type": "keyword"},
+          "container_hostname": {"type": "keyword"},
+          "container_host_namespace": {"type": "keyword"},
+          "tracer_name": {"type": "keyword"},
+          "uploaded_timestamp": {"type": "date", "format": "strict_date_optional_time||epoch_millis"},
+          "uploaded_time": {"type": "date", "format": "yyyy-MM-dd HH:mm:ss Z||epoch_millis"},
+          "time": {"type": "date", "format": "strict_date_optional_time||epoch_millis"}
+        }
+      },
+      "aliases": {"huatuo_apiserver_mcp": {}}
+    },
+    "huatuo_apiserver_mcp_multifield": {
+      "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+      "mappings": {
+        "properties": {
+          "region": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+          "hostname": {"type": "text", "fields": {"exact": {"type": "keyword"}}},
+          "container_hostname": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+          "container_host_namespace": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+          "tracer_name": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+          "uploaded_timestamp": {"type": "date", "format": "strict_date_optional_time||epoch_millis"},
+          "uploaded_time": {"type": "date", "format": "strict_date_optional_time||epoch_millis"},
+          "time": {"type": "date", "format": "strict_date_optional_time||epoch_millis"}
+        }
+      },
+      "aliases": {"huatuo_apiserver_mcp": {}}
+    }
+  },
+  "source_defaults": {
+    "region": "test-a",
+    "hostname": "node-a",
+    "container_hostname": "container-a",
+    "container_host_namespace": "namespace-a"
+  },
+  "profiles": {
+    "go": {
+      "profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+      "profile": {
+        "string_table": ["", "cpu", "nanoseconds", "root", "worker", "leaf", "other", "samples", "count"],
+        "sample_type": [{"type": 7, "unit": 8}, {"type": 1, "unit": 2}],
+        "function": [{"id": 1, "name": 3}, {"id": 2, "name": 4}, {"id": 3, "name": 5}, {"id": 4, "name": 6}],
+        "location": [
+          {"id": 1, "line": [{"function_id": 1}]},
+          {"id": 2, "line": [{"function_id": 2}]},
+          {"id": 3, "line": [{"function_id": 3}]},
+          {"id": 4, "line": [{"function_id": 4}]}
+        ],
+        "sample": [
+          {"location_id": [3, 2, 1], "value": [1, 70]},
+          {"location_id": [2, 1], "value": [1, 20]},
+          {"location_id": [4, 1], "value": [1, 10]}
+        ]
+      }
+    },
+    "proto": {
+      "profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+      "profile": {
+        "stringTable": ["", "cpu", "nanoseconds", "root", "worker", "leaf", "other", "samples", "count"],
+        "sampleType": [{"type": 7, "unit": 8}, {"type": 1, "unit": 2}],
+        "function": [{"id": "1", "name": 3}, {"id": "2", "name": 4}, {"id": "3", "name": 5}, {"id": "4", "name": 6}],
+        "location": [
+          {"id": "1", "line": [{"functionId": "1"}]},
+          {"id": "2", "line": [{"functionId": "2"}]},
+          {"id": "3", "line": [{"functionId": "3"}]},
+          {"id": "4", "line": [{"functionId": "4"}]}
+        ],
+        "sample": [
+          {"locationId": ["3", "2", "1"], "value": ["1", "140"]},
+          {"locationId": ["2", "1"], "value": ["1", "40"]},
+          {"locationId": ["4", "1"], "value": ["1", "20"]}
+        ]
+      }
+    }
+  },
+  "documents": [
+    {
+      "index": "huatuo_apiserver_mcp_keyword",
+      "id": "clock-uploaded",
+      "source": {
+        "tracer_name": "clock",
+        "tracer_type": "autotracing",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z",
+        "tracer_data": {"marker": "clock-uploaded"}
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_keyword",
+      "id": "clock-legacy",
+      "source": {
+        "tracer_name": "clock",
+        "tracer_type": "auto",
+        "uploaded_time": "2026-01-15 10:20:00 +0000",
+        "time": "2099-01-01T00:00:00Z",
+        "tracer_data": {"marker": "clock-legacy"}
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_multifield",
+      "id": "clock-time",
+      "source": {
+        "tracer_name": "clock",
+        "tracer_type": "event",
+        "time": "2026-01-15T18:30:00+08:00",
+        "tracer_data": {"marker": "clock-time"}
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_keyword",
+      "id": "clock-priority",
+      "source": {
+        "tracer_name": "clock",
+        "tracer_type": "profiling",
+        "uploaded_timestamp": "2026-01-15T10:05:00Z",
+        "uploaded_time": "2026-01-15 10:58:00 +0000",
+        "time": "2026-01-15T10:59:00Z",
+        "tracer_data": {"marker": "clock-priority"}
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_keyword",
+      "id": "clock-observed",
+      "source": {
+        "tracer_name": "clock",
+        "uploaded_timestamp": "2026-01-15T10:01:00Z",
+        "observed_timestamp": "2099-01-01T00:00:00Z",
+        "tracer_data": {"marker": "clock-observed"}
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_multifield",
+      "id": "clock-custom",
+      "source": {
+        "tracer_name": "clock",
+        "tracer_type": "custom",
+        "uploaded_timestamp": "2026-01-15T10:02:00Z",
+        "tracer_data": {"marker": "clock-custom"}
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_keyword",
+      "id": "clock-outside",
+      "source": {
+        "tracer_name": "clock",
+        "uploaded_timestamp": "2026-01-15T12:00:00Z",
+        "observed_timestamp": "2026-01-15T10:15:00Z",
+        "tracer_data": {"marker": "clock-outside"}
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_keyword",
+      "id": "wrong-region",
+      "source": {
+        "region": "test-a-extra",
+        "tracer_name": "clock",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z",
+        "tracer_data": {"marker": "wrong-region"}
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_keyword",
+      "id": "wrong-host",
+      "source": {
+        "hostname": "node-a-extra",
+        "container_hostname": "container-a-extra",
+        "container_host_namespace": "namespace-a-extra",
+        "tracer_name": "clock",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z",
+        "tracer_data": {"marker": "wrong-host"}
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_keyword",
+      "id": "wrong-tracer",
+      "source": {
+        "tracer_name": "clock-extra",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z",
+        "tracer_data": {"marker": "wrong-tracer"}
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_keyword",
+      "id": "frame",
+      "source": {
+        "tracer_name": "frame",
+        "tracer_type": "auto",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z",
+        "tracer_data": {
+          "flamedata": [
+            {"level": 0, "label": "root", "value": 100},
+            {"level": 1, "label": "worker", "value": 90, "self": 20},
+            {"level": 2, "label": "leaf", "value": 70, "self": 70},
+            {"level": 1, "label": "other", "value": 10, "self": 10}
+          ]
+        }
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_multifield",
+      "id": "pprof-go",
+      "profile": "go",
+      "source": {
+        "tracer_name": "pprof",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z"
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_multifield",
+      "id": "pprof-proto",
+      "profile": "proto",
+      "source": {
+        "tracer_name": "pprof",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z"
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_multifield",
+      "id": "unit-ns",
+      "profile": "go",
+      "source": {
+        "tracer_name": "mixed-units",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z"
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_multifield",
+      "id": "unit-count",
+      "profile": "go",
+      "profile_type": "process_cpu:cpu:count:cpu:count",
+      "profile_overrides": {
+        "string_table": ["", "cpu", "count", "root", "worker", "leaf", "other", "samples", "count"]
+      },
+      "source": {
+        "tracer_name": "mixed-units",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z"
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_multifield",
+      "id": "broken",
+      "profile": "go",
+      "profile_overrides": {
+        "sample": [
+          {"location_id": [999], "value": [1, 70]},
+          {"location_id": [2, 1], "value": [1, 20]},
+          {"location_id": [4, 1], "value": [1, 10]}
+        ]
+      },
+      "source": {
+        "tracer_name": "broken",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z"
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_multifield",
+      "id": "partial-good",
+      "profile": "go",
+      "source": {
+        "tracer_name": "partial-profile",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z"
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_multifield",
+      "id": "partial-bad",
+      "profile": "go",
+      "profile_overrides": {
+        "sample": [
+          {"location_id": [999], "value": [1, 70]},
+          {"location_id": [2, 1], "value": [1, 20]},
+          {"location_id": [4, 1], "value": [1, 10]}
+        ]
+      },
+      "source": {
+        "tracer_name": "partial-profile",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z"
+      }
+    },
+    {
+      "index": "huatuo_apiserver_mcp_multifield",
+      "id": "empty-profile",
+      "source": {
+        "tracer_name": "empty-profile",
+        "uploaded_timestamp": "2026-01-15T10:10:00Z",
+        "tracer_data": {"flamedata": {"profile": {}}}
+      }
+    }
+  ]
+}

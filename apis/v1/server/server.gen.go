@@ -38,6 +38,15 @@ type ServerInterface interface {
 
 	// (GET /readyz)
 	GetReadiness(c *gin.Context)
+	// Request MCP session termination.
+	// (DELETE /v1/mcp)
+	DeleteMCP(c *gin.Context)
+	// Open an MCP server-sent event stream when supported.
+	// (GET /v1/mcp)
+	StreamMCP(c *gin.Context)
+	// Dispatch a stateless MCP JSON-RPC message.
+	// (POST /v1/mcp)
+	HandleMCP(c *gin.Context)
 
 	// (GET /v1/profiling)
 	ListProfilingJobs(c *gin.Context, params ListProfilingJobsParams)
@@ -118,6 +127,51 @@ func (siw *ServerInterfaceWrapper) GetReadiness(c *gin.Context) {
 	}
 
 	siw.Handler.GetReadiness(c)
+}
+
+// DeleteMCP operation middleware
+func (siw *ServerInterfaceWrapper) DeleteMCP(c *gin.Context) {
+
+	c.Set(string(BearerAuthScopes), []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.DeleteMCP(c)
+}
+
+// StreamMCP operation middleware
+func (siw *ServerInterfaceWrapper) StreamMCP(c *gin.Context) {
+
+	c.Set(string(BearerAuthScopes), []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.StreamMCP(c)
+}
+
+// HandleMCP operation middleware
+func (siw *ServerInterfaceWrapper) HandleMCP(c *gin.Context) {
+
+	c.Set(string(BearerAuthScopes), []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.HandleMCP(c)
 }
 
 // ListProfilingJobs operation middleware
@@ -497,6 +551,9 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 
 	router.GET(options.BaseURL+"/openapi.json", wrapper.GetOpenAPI)
 	router.GET(options.BaseURL+"/readyz", wrapper.GetReadiness)
+	router.DELETE(options.BaseURL+"/v1/mcp", wrapper.DeleteMCP)
+	router.GET(options.BaseURL+"/v1/mcp", wrapper.StreamMCP)
+	router.POST(options.BaseURL+"/v1/mcp", wrapper.HandleMCP)
 	router.GET(options.BaseURL+"/v1/profiling", wrapper.ListProfilingJobs)
 	router.POST(options.BaseURL+"/v1/profiling", wrapper.CreateProfilingJob)
 	router.GET(options.BaseURL+"/v1/profiling/capabilities", wrapper.GetProfilingCapabilities)
@@ -580,6 +637,156 @@ type GetReadiness204Response struct {
 
 func (response GetReadiness204Response) VisitGetReadinessResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteMCPRequestObject struct {
+}
+
+type DeleteMCPResponseObject interface {
+	VisitDeleteMCPResponse(w http.ResponseWriter) error
+}
+
+type DeleteMCP200Response struct {
+}
+
+func (response DeleteMCP200Response) VisitDeleteMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(200)
+	return nil
+}
+
+type DeleteMCP404Response struct {
+}
+
+func (response DeleteMCP404Response) VisitDeleteMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type DeleteMCP405Response struct {
+}
+
+func (response DeleteMCP405Response) VisitDeleteMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(405)
+	return nil
+}
+
+type DeleteMCP429Response struct {
+}
+
+func (response DeleteMCP429Response) VisitDeleteMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(429)
+	return nil
+}
+
+type DeleteMCP503Response struct {
+}
+
+func (response DeleteMCP503Response) VisitDeleteMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(503)
+	return nil
+}
+
+type StreamMCPRequestObject struct {
+}
+
+type StreamMCPResponseObject interface {
+	VisitStreamMCPResponse(w http.ResponseWriter) error
+}
+
+type StreamMCP200Response struct {
+}
+
+func (response StreamMCP200Response) VisitStreamMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(200)
+	return nil
+}
+
+type StreamMCP404Response struct {
+}
+
+func (response StreamMCP404Response) VisitStreamMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type StreamMCP405Response struct {
+}
+
+func (response StreamMCP405Response) VisitStreamMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(405)
+	return nil
+}
+
+type StreamMCP429Response struct {
+}
+
+func (response StreamMCP429Response) VisitStreamMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(429)
+	return nil
+}
+
+type StreamMCP503Response struct {
+}
+
+func (response StreamMCP503Response) VisitStreamMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(503)
+	return nil
+}
+
+type HandleMCPRequestObject struct {
+	Body *HandleMCPJSONRequestBody
+}
+
+type HandleMCPResponseObject interface {
+	VisitHandleMCPResponse(w http.ResponseWriter) error
+}
+
+type HandleMCP200Response struct {
+}
+
+func (response HandleMCP200Response) VisitHandleMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(200)
+	return nil
+}
+
+type HandleMCP202Response struct {
+}
+
+func (response HandleMCP202Response) VisitHandleMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type HandleMCP400Response struct {
+}
+
+func (response HandleMCP400Response) VisitHandleMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(400)
+	return nil
+}
+
+type HandleMCP404Response struct {
+}
+
+func (response HandleMCP404Response) VisitHandleMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type HandleMCP429Response struct {
+}
+
+func (response HandleMCP429Response) VisitHandleMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(429)
+	return nil
+}
+
+type HandleMCP503Response struct {
+}
+
+func (response HandleMCP503Response) VisitHandleMCPResponse(w http.ResponseWriter) error {
+	w.WriteHeader(503)
 	return nil
 }
 
@@ -2103,6 +2310,15 @@ type StrictServerInterface interface {
 
 	// (GET /readyz)
 	GetReadiness(ctx context.Context, request GetReadinessRequestObject) (GetReadinessResponseObject, error)
+	// Request MCP session termination.
+	// (DELETE /v1/mcp)
+	DeleteMCP(ctx context.Context, request DeleteMCPRequestObject) (DeleteMCPResponseObject, error)
+	// Open an MCP server-sent event stream when supported.
+	// (GET /v1/mcp)
+	StreamMCP(ctx context.Context, request StreamMCPRequestObject) (StreamMCPResponseObject, error)
+	// Dispatch a stateless MCP JSON-RPC message.
+	// (POST /v1/mcp)
+	HandleMCP(ctx context.Context, request HandleMCPRequestObject) (HandleMCPResponseObject, error)
 
 	// (GET /v1/profiling)
 	ListProfilingJobs(ctx context.Context, request ListProfilingJobsRequestObject) (ListProfilingJobsResponseObject, error)
@@ -2248,6 +2464,85 @@ func (sh *strictHandler) GetReadiness(ctx *gin.Context) {
 		sh.options.HandlerErrorFunc(ctx, err)
 	} else if validResponse, ok := response.(GetReadinessResponseObject); ok {
 		if err := validResponse.VisitGetReadinessResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteMCP operation middleware
+func (sh *strictHandler) DeleteMCP(ctx *gin.Context) {
+	var request DeleteMCPRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteMCP(ctx, request.(DeleteMCPRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteMCP")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(DeleteMCPResponseObject); ok {
+		if err := validResponse.VisitDeleteMCPResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StreamMCP operation middleware
+func (sh *strictHandler) StreamMCP(ctx *gin.Context) {
+	var request StreamMCPRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.StreamMCP(ctx, request.(StreamMCPRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StreamMCP")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(StreamMCPResponseObject); ok {
+		if err := validResponse.VisitStreamMCPResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// HandleMCP operation middleware
+func (sh *strictHandler) HandleMCP(ctx *gin.Context) {
+	var request HandleMCPRequestObject
+
+	var body HandleMCPJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(ctx, err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.HandleMCP(ctx, request.(HandleMCPRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "HandleMCP")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(HandleMCPResponseObject); ok {
+		if err := validResponse.VisitHandleMCPResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {

@@ -16,9 +16,15 @@ package handlers
 
 import (
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 
 	apiv1 "github.com/ccfos/huatuo/apis/v1"
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
@@ -27,8 +33,6 @@ import (
 	"github.com/ccfos/huatuo/internal/job"
 	"github.com/ccfos/huatuo/pkg/observation"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
-
-	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
 func TestGetReadiness(t *testing.T) {
@@ -41,6 +45,50 @@ func TestGetReadiness(t *testing.T) {
 	}
 	if _, ok := response.(serverapi.GetReadiness204Response); !ok {
 		t.Fatalf("GetReadiness() response = %T, want GetReadiness204Response", response)
+	}
+}
+
+func TestMCPGeneratedRoutesPreserveProtocolTransport(t *testing.T) {
+	const message = `{"jsonrpc":"2.0","id":9007199254740993,"method":"ping"}`
+	for _, method := range []string{http.MethodPost, http.MethodGet, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			called := false
+			handler := &APIHandler{mcp: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				if r.Method != method || r.Header.Get("MCP-Protocol-Version") != "2025-03-26" {
+					t.Errorf("protocol request changed: %s %v", r.Method, r.Header)
+				}
+				if method == http.MethodPost {
+					body, err := io.ReadAll(r.Body)
+					if err != nil || string(body) != message {
+						t.Errorf("JSON-RPC body changed: %s, %v", body, err)
+					}
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "data: {}\n\n")
+				w.(http.Flusher).Flush()
+			})}
+			router := gin.New()
+			serverapi.RegisterHandlers(router, serverapi.NewStrictHandler(handler, nil))
+			body := ""
+			if method == http.MethodPost {
+				body = message
+			}
+			request := httptest.NewRequest(method, "/v1/mcp", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("MCP-Protocol-Version", "2025-03-26")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if !called || recorder.Code != http.StatusOK || !recorder.Flushed || recorder.Header().Get("Content-Type") != "text/event-stream" || recorder.Body.String() != "data: {}\n\n" {
+				t.Fatalf("MCP transport was not preserved: called=%t response=%+v", called, recorder)
+			}
+			handler.mcp = nil
+			disabled := httptest.NewRecorder()
+			router.ServeHTTP(disabled, httptest.NewRequest(method, "/v1/mcp", strings.NewReader(body)))
+			if disabled.Code != http.StatusNotFound {
+				t.Fatalf("disabled MCP status = %d, want 404", disabled.Code)
+			}
+		})
 	}
 }
 
