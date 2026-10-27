@@ -21,9 +21,9 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-# --- preconditions -----------------------------------------------------------
+require_readable /sys/kernel/btf/vmlinux
 
-is_container && skip "native memory profiler requires bare-metal cgroup/PMU access"
+# --- preconditions -----------------------------------------------------------
 
 bpf_tool_setup profiler native_virtual_alloc profiler-mem
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_mmap.user.c"

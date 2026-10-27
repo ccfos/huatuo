@@ -18,11 +18,11 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
+require_readable /sys/kernel/btf/vmlinux
+
 readonly CPU_LIMIT_PERCENT=10
 readonly SAMPLE_SECONDS=5
 readonly PROFILER_DURATION=15
-
-is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-selfcpu
 readonly PROFILER_BIN=${TOOL_BIN}

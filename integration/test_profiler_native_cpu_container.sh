@@ -21,7 +21,7 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
+require_readable /sys/kernel/btf/vmlinux
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-native-container
 readonly PROFILER_BIN=${TOOL_BIN}

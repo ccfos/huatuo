@@ -21,10 +21,9 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-# --- preconditions -----------------------------------------------------------
+require_readable /sys/kernel/btf/vmlinux
 
-is_container && skip "hardware PMU profiling requires bare-metal access"
-is_virtual_machine && skip "hardware PMU profiling requires a physical machine"
+# --- preconditions -----------------------------------------------------------
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-hardware-pmu
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"

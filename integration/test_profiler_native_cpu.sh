@@ -22,9 +22,9 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-# --- preconditions -----------------------------------------------------------
+require_readable /sys/kernel/btf/vmlinux
 
-is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
+# --- preconditions -----------------------------------------------------------
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-callchain
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"

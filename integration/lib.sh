@@ -433,51 +433,6 @@ stop_and_wait_by_pid() {
 	wait "${pid}"
 }
 
-# ------------------------- virtualization detection -------------------------
-
-# Returns 0 when running inside a container.
-# Method 1: overlay/btrfs rootfs — container runtimes mount an overlay or
-# btrfs snapshot as /; bare-metal hosts use ext4/xfs/zfs.
-# Method 2: systemd-detect-virt -c — explicitly checks for container
-# virtualization (docker, lxc, podman, etc.).
-is_container() {
-	local fstype
-	fstype=$(findmnt -n -o FSTYPE / 2> /dev/null || true)
-	case "${fstype}" in
-	overlay | btrfs) return 0 ;;
-	esac
-
-	if command -v systemd-detect-virt > /dev/null 2>&1; then
-		[[ "$(systemd-detect-virt -c 2> /dev/null)" != "none" ]] && return 0
-	fi
-
-	return 1
-}
-
-# Returns 0 when running inside a virtual machine.
-is_virtual_machine() {
-	if command -v systemd-detect-virt > /dev/null 2>&1; then
-		systemd-detect-virt --vm --quiet
-		return $?
-	fi
-
-	[[ -r /sys/hypervisor/type ]] && return 0
-	grep -qiE '(^|[[:space:]])hypervisor([[:space:]]|$)' /proc/cpuinfo && return 0
-
-	local dmi="" path
-	for path in \
-		/sys/class/dmi/id/sys_vendor \
-		/sys/class/dmi/id/product_name \
-		/sys/class/dmi/id/board_vendor; do
-		[[ -r "${path}" ]] || continue
-		dmi+=" $(< "${path}")"
-	done
-
-	grep -qiE \
-		'kvm|qemu|vmware|virtualbox|virtual machine|xen|bochs|bhyve|parallels|amazon ec2|google compute engine|openstack|alibaba cloud|nutanix|digitalocean' \
-		<<< "${dmi}"
-}
-
 # ----------------------------- huatuo-bamai ----------------------------------
 
 huatuo_bamai_start() {
