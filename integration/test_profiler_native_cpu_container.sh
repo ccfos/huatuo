@@ -58,8 +58,10 @@ FIXTURE_BIN="${WORK_DIR}/callchain"
 DOCKER_CONTAINER_ID=""
 CONTAINERD_CONTAINER_ID=""
 RUNTIMES_TESTED=0
+PROFILER_PID=""
 
 cleanup() {
+	[[ -z "${PROFILER_PID}" ]] || stop_by_pid "${PROFILER_PID}" 5 || true
 	if [[ -n "${DOCKER_CONTAINER_ID}" ]]; then
 		docker rm -f "${DOCKER_CONTAINER_ID}" > /dev/null 2>&1 || true
 	fi
@@ -258,6 +260,44 @@ assert_privileged_container() (
 	record_test_timing native-container privileged "${started}"
 )
 
+native_container_samples_ready() {
+	jq -se 'any(.[]; (.profile.sample | length) > 0)' "$1" > /dev/null 2>&1
+}
+
+run_removed_target_case() {
+	local target_id=${DOCKER_CONTAINER_ID}
+	local out_dir="${WORK_DIR}/docker-removed"
+	local output="${out_dir}/windows.json"
+	mkdir -p "${out_dir}"
+	"${PROFILER_BIN}" --type cpu --language c --container-id "${target_id}" \
+		--duration 10 --aggr-interval 1 --freq 99 \
+		--output-format json --output-path "${output}" \
+		> "${out_dir}/profiler.out" 2> "${out_dir}/profiler.err" &
+	PROFILER_PID=$!
+	wait_until 15 0.2 native_container_samples_ready "${output}" \
+		|| fatal "target produced no samples before container deletion"
+
+	docker rm -f "${DOCKER_CONTAINER_ID}" > /dev/null
+	DOCKER_CONTAINER_ID=""
+	# A distinct comm exposes samples attributed to the deleted target.
+	DOCKER_CONTAINER_ID=$(docker run --detach --rm \
+		--volume "${FIXTURE_BIN}:/work/replacement:ro" \
+		--entrypoint /work/replacement "${DOCKER_IMAGE}")
+	if ! wait "${PROFILER_PID}"; then
+		fatal "native profiler failed after target container deletion"
+	fi
+	PROFILER_PID=""
+	jq -se --arg target "${target_id}" '
+		any(.[]; (.profile.sample | length) > 0) and
+		all(.[]; .container_id == $target) and
+		all(.[]; .profile as $p | $p.sample[].label[]? |
+			select($p.string_table[.key] == "comm") |
+			$p.string_table[.str] != "replacement")
+	' "${output}" > /dev/null \
+		|| fatal "deleted target lost its samples or captured the replacement container"
+	log_info "native profiler preserved deleted target samples without replacement samples"
+}
+
 test_docker() {
 	local container_pid container_start_time
 	if ! command -v docker > /dev/null; then
@@ -283,6 +323,8 @@ test_docker() {
 	container_start_time=$(process_start_time "${container_pid}") || fatal "docker container identity unavailable"
 	run_profile_case docker "${DOCKER_CONTAINER_ID}"
 	assert_outside_pid_excluded docker "${DOCKER_CONTAINER_ID}" "${container_pid}" "${container_start_time}"
+	run_removed_target_case
+	container_pid=$(docker inspect --format '{{.State.Pid}}' "${DOCKER_CONTAINER_ID}")
 	assert_destroyed_container docker "${DOCKER_CONTAINER_ID}" "${container_pid}"
 	DOCKER_CONTAINER_ID=""
 	if [[ ${NATIVE_PROFILER_TEST_PRIVILEGED_CONTAINER:-0} == 1 ]]; then
