@@ -160,7 +160,7 @@ assert_snapshot_daemon_logs() {
 }
 
 assert_snapshot_logs() {
-	huatuo_bamai_log_check || fatal "${go_snapshot_stage}: unexpected daemon error log"
+	assert_huatuo_bamai_log_clean || fatal "${go_snapshot_stage}: unexpected daemon error log"
 	assert_snapshot_daemon_logs "${go_snapshot_case_dir}/huatuo.log" "${go_snapshot_case_dir}/snapshot.json" \
 		|| fatal "${go_snapshot_stage}: unexpected daemon warning/error"
 }

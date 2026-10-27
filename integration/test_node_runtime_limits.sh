@@ -154,12 +154,12 @@ limits_observe_startup() {
 assert_limits_shutdown() {
 	local phase=$1 pid
 	pid=$(< "${LIMITS_PID_FILE}")
-	stop_gracefully_by_pid "${pid}" 20 || fatal "daemon did not exit gracefully"
+	assert_process_shutdown_by_pid "${pid}" 20 || fatal "daemon did not exit gracefully"
 	rm -f "${LIMITS_PID_FILE}"
 
 	assert_limits_cgroups_removed || fatal "runtime cgroup remains after shutdown"
 
-	huatuo_bamai_log_check || fatal "daemon logged an error during startup or shutdown"
+	assert_huatuo_bamai_log_clean || fatal "daemon logged an error during startup or shutdown"
 	mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-${phase}.log"
 }
 

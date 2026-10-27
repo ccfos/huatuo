@@ -147,7 +147,7 @@ burst_start() {
 }
 burst_stop() {
 	local signal=$1
-	huatuo_bamai_stop_with_signal "${signal}" "${2:-}"
+	assert_huatuo_bamai_shutdown_with_signal "${signal}" "${2:-}"
 	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/expected-storage-failure ]]; then
 		# Only the deliberate directory obstruction may produce a save warning.
 		awk '!(/level="warning"/ && /msg="save memburst snapshot"/ && /not a directory/)' \

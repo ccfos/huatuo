@@ -31,8 +31,6 @@ HUATUO_APISERVER_BIN="${ROOT_DIR}/_output/bin/huatuo-apiserver"
 export HUATUO_APISERVER_BIN
 HUATUO_BAMAI_TEST_TMPDIR=$(mktemp -d /tmp/huatuo-test.XXXXXX)
 export HUATUO_BAMAI_TEST_TMPDIR
-HUATUO_BAMAI_MATCH_KEYWORDS='level="?(error|panic|fatal)"?|panic:'
-export HUATUO_BAMAI_MATCH_KEYWORDS
 HUATUO_BAMAI_TEST_FIXTURES="${ROOT_DIR}/integration/fixtures"
 export HUATUO_BAMAI_TEST_FIXTURES
 HUATUO_BAMAI_TEST_EXPECTED="${ROOT_DIR}/integration/testdata/expected_metrics"
@@ -95,9 +93,3 @@ KUBELET_CERT=${KUBELET_CERT:-/etc/kubernetes/pki/apiserver-kubelet-client.crt}
 export KUBELET_CERT
 KUBELET_KEY=${KUBELET_KEY:-/etc/kubernetes/pki/apiserver-kubelet-client.key}
 export KUBELET_KEY
-
-CURL_TIMEOUT=(
-	"--connect-timeout" "2"
-	"--max-time" "3"
-)
-export CURL_TIMEOUT

@@ -119,7 +119,7 @@ workload_pid=$!
 start_sched_tick_test write_sched_tick_config
 
 huatuo_bamai_collect_metrics
-check_metrics "sched_tick high threshold" \
+assert_metrics "sched_tick high threshold" \
 	'tracing_status_running\{[^}]*\} 1$'
 
 sleep "${SCHED_TICK_NO_EVENT_WINDOW}"

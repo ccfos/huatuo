@@ -25,7 +25,7 @@ integration_huatuo_bamai_start write_include_filter_config
 
 huatuo_bamai_await_metrics
 
-check_metrics "include filter" \
+assert_metrics "include filter" \
 	"memory_vmstat_pgfault" \
 	"netstat_Tcp_RetransSegs" "netstat_TcpExt_TCPLostRetransmit" \
 	'netdev_.*device="eth0"' \

@@ -16,6 +16,11 @@
 
 set -euo pipefail
 
+# Bash does not export arrays; every test subprocess needs its own defaults.
+if ! declare -p CURL_TIMEOUT > /dev/null 2>&1; then
+	CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
+fi
+
 # --------------------------------- log --------------------------------------
 
 TEST_LOG_TAG=${TEST_LOG_TAG:-INTEGRATION}
@@ -113,6 +118,29 @@ require_readable() {
 	done
 }
 
+require_toml_parser() {
+	require_commands python3 jq
+	python3 -c 'import importlib.util; __import__("tomllib" if importlib.util.find_spec("tomllib") else "tomli")' \
+		> /dev/null 2>&1 || skip "TOML parsing requires Python 3.11+ or the Python tomli module"
+	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}/tools"
+	cp "${ROOT_DIR}/integration/testdata/tools/test_toml_to_json.py" \
+		"${HUATUO_BAMAI_TEST_TMPDIR}/tools/toml-to-json.py"
+}
+
+assert_toml_values() {
+	local config_file=$1 expected=$2
+	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/$(basename "${config_file}").json"
+	local error_file="${response_file}.error"
+	python3 "${HUATUO_BAMAI_TEST_TMPDIR}/tools/toml-to-json.py" "${config_file}" \
+		> "${response_file}" 2> "${error_file}" \
+		|| fatal "cannot parse TOML ${config_file}: $(< "${error_file}")"
+	jq -e --argjson expected "${expected}" '
+		. as $actual | all($expected | to_entries[];
+			. as $entry | ($actual | getpath($entry.key | split("."))) == $entry.value)
+	' "${response_file}" > /dev/null \
+		|| fatal "${config_file}: expected ${expected}; actual $(< "${response_file}")"
+}
+
 require_build_output() {
 	[[ -d "${ROOT_DIR}/_output" ]] || fatal "build output directory missing: ${ROOT_DIR}/_output; run make build"
 }
@@ -141,12 +169,20 @@ assert_readiness_endpoint() {
 }
 
 assert_log_has_no_failure() {
-	local log_file=$1 component=$2
-	local failure_pattern='panic:|fatal|level="?(error|panic|fatal)"?|"level"[[:space:]]*:[[:space:]]*"(error|panic|fatal)"'
+	local log_file=$1 component=$2 status=0
+	local failure_pattern='(^|[[:space:]])panic:|(^|[[:space:]])level=(error|panic|fatal)([[:space:]]|$)|(^|[[:space:]])level="(error|panic|fatal)"([[:space:]]|$)|(^|[,{])[[:space:]]*"level"[[:space:]]*:[[:space:]]*"(error|panic|fatal)"'
 
-	[[ -r "${log_file}" ]] || fatal "${component} log is not readable: ${log_file}"
-	! grep -qiE "${failure_pattern}" "${log_file}" \
-		|| fatal "${component} log contains an unexpected failure"
+	if [[ ! -f "${log_file}" || ! -r "${log_file}" ]]; then
+		log_error "${component} log is not a readable file: ${log_file}"
+		return 1
+	fi
+	grep -niE "${failure_pattern}" "${log_file}" >&2 || status=$?
+	case ${status} in
+	1) return 0 ;;
+	0) log_error "${component} log contains an unexpected failure: ${log_file}" ;;
+	*) log_error "cannot scan ${component} log ${log_file}: grep exited ${status}" ;;
+	esac
+	return 1
 }
 
 allocate_available_port() {
@@ -340,7 +376,7 @@ dump_text_files() {
 
 # Call from the child's parent shell so wait can verify its exit status.
 # Unlike cleanup, a shutdown assertion must not hide a timeout with SIGKILL.
-stop_gracefully_by_pid() {
+assert_process_shutdown_by_pid() {
 	local pid=${1:-} timeout=${2:-10} status=0
 	if [[ ! ${pid} =~ ^[1-9][0-9]*$ || ! ${timeout} =~ ^[1-9][0-9]*$ ]]; then
 		log_error "invalid stop arguments: pid=${pid}, timeout=${timeout}; expected positive integers"
@@ -500,8 +536,8 @@ process_exited() {
 }
 
 # Call in the shell that started the daemon to verify its actual exit status.
-# stop_daemon_with_signal <pid_file> <TERM|KILL> [sent] [timeout_seconds]
-stop_daemon_with_signal() {
+# assert_daemon_shutdown_with_signal <pid_file> <TERM|KILL> [sent] [timeout_seconds]
+assert_daemon_shutdown_with_signal() {
 	local pid_file=$1 signal=$2 already_sent=${3:-} timeout=${4:-65}
 	local pid status=0 expected
 	case ${signal} in
@@ -524,10 +560,10 @@ stop_daemon_with_signal() {
 	[[ ${status} == "${expected}" ]] || fatal "daemon pid=${pid} ${signal} exit status ${status}, expected ${expected}"
 }
 
-# huatuo_bamai_stop_with_signal <TERM|KILL> [sent]
+# assert_huatuo_bamai_shutdown_with_signal <TERM|KILL> [sent]
 # Lifecycle tests require the real exit status instead of best-effort teardown.
-huatuo_bamai_stop_with_signal() {
-	stop_daemon_with_signal "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" "$@"
+assert_huatuo_bamai_shutdown_with_signal() {
+	assert_daemon_shutdown_with_signal "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" "$@"
 }
 
 # --------------------------- huatuo-apiserver -------------------------------
@@ -567,8 +603,8 @@ huatuo_apiserver_stop() {
 }
 
 # Recovery checks must finish before the still-running sampling task ends.
-huatuo_apiserver_stop_with_signal() {
-	stop_daemon_with_signal "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid" "$1" "${2:-}" 20
+assert_huatuo_apiserver_shutdown_with_signal() {
+	assert_daemon_shutdown_with_signal "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid" "$1" "${2:-}" 20
 }
 
 # integration_huatuo_apiserver_start [config_writer_func] [apiserver args...]
@@ -614,16 +650,25 @@ integration_test_exit() {
 }
 
 huatuo_bamai_metrics() {
-	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}"
+	local status curl_status=0
+	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.response"
+	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.curl-error"
+	: > "${response_file}"
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
+		"${HUATUO_BAMAI_METRICS_API}" 2> "${error_file}") || curl_status=$?
+	printf 'curl exit=%s HTTP status=%s\n' "${curl_status}" "${status:-unavailable}" \
+		> "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.status"
+	if [[ ${curl_status} -ne 0 || ${status} != 200 ]]; then
+		cat "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.status" >&2
+		report_http_response "GET /metrics" "${response_file}" "${error_file}" >&2
+		return 1
+	fi
+	cat "${response_file}"
 }
 
 # Reject error/panic/fatal levels and runtime panics in the log.
-huatuo_bamai_log_check() {
-	if grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"; then
-		sed -E "s/(${HUATUO_BAMAI_MATCH_KEYWORDS})/\x1b[1;31m\1\x1b[0m/gI" \
-			"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2
-		return 1
-	fi
+assert_huatuo_bamai_log_clean() {
+	assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" huatuo-bamai
 }
 
 # ----------------------------- metrics helpers --------------------------------
@@ -653,21 +698,24 @@ integration_huatuo_bamai_start() {
 	fi
 
 	"$config_writer"
-	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
-		configure_worker_bamai_address
-	fi
+	configure_bamai_address
 	huatuo_bamai_start "${runtime_args[@]}"
 }
 
 # Explicit addresses are already chosen by API and container config writers.
-configure_worker_bamai_address() {
-	local config="${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" port=${HUATUO_BAMAI_ADDR##*:}
+configure_bamai_address() {
+	local config="${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" port
 	if awk '
 		/^[[:space:]]*\[HTTPServer\][[:space:]]*$/ { http = 1; next }
 		/^[[:space:]]*\[/ { http = 0 }
 		http && /^[[:space:]]*ListenAddress[[:space:]]*=/ { found = 1 }
 		END { exit !found }
 	' "${config}"; then return 0; fi
+	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
+		port=${HUATUO_BAMAI_ADDR##*:}
+	else
+		port=$(allocate_available_port) || fatal "failed to allocate a huatuo-bamai API port"
+	fi
 	if grep -Eq '^[[:space:]]*\[HTTPServer\][[:space:]]*$' "${config}"; then
 		sed -i "/^[[:space:]]*\\[HTTPServer\\][[:space:]]*$/a\\    ListenAddress = \"127.0.0.1:${port}\"" "${config}"
 	else
@@ -689,8 +737,8 @@ huatuo_bamai_await_metrics() {
 		huatuo_bamai_collect_metrics
 }
 
-# check_metrics <desc> <present_pattern>... [-- <absent_pattern>...]
-check_metrics() {
+# assert_metrics <desc> <present_pattern>... [-- <absent_pattern>...]
+assert_metrics() {
 	local desc=$1
 	shift
 	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"

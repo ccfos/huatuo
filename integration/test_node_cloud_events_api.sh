@@ -19,13 +19,11 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/config.sh"
 
 readonly EVENT_API_TOKEN="integration-node-token"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 readonly EVENT_STREAM_CURL_TIMEOUT=(--connect-timeout 2 --max-time 10)
-event_stream_pid=""
-event_capacity_status=""
-event_capacity_curl_status=0
 
 require_commands curl jq ss
 
@@ -35,6 +33,10 @@ readonly EVENT_API_PORT
 HUATUO_BAMAI_ADDR="http://127.0.0.1:${EVENT_API_PORT}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 export HUATUO_BAMAI_ADDR HUATUO_BAMAI_METRICS_API
+
+event_stream_pid=""
+event_capacity_status=""
+event_capacity_curl_status=0
 
 cleanup() {
 	stop_event_stream
@@ -50,16 +52,14 @@ stop_event_stream() {
 }
 
 write_event_api_config() {
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["memory_threshold_snapshot", "metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "iocost", "blk_throtl", "sched-blame"]
+	write_default_config
+	# The test owns the dynamic HTTP port and event stream limits.
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 
 [HTTPServer]
     ListenAddress = "127.0.0.1:${EVENT_API_PORT}"
     MaxEventStreamClients = 1
     EventStreamKeepAliveIntervalSeconds = 1
-
-[HTTPServer.Auth]
-    BearerToken = "${EVENT_API_TOKEN}"
 EOF
 }
 

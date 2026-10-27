@@ -19,15 +19,13 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/config.sh"
 
 readonly CONFIG_API_TOKEN="integration-node-token"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
-config_response_file=""
-config_error_file=""
-config_curl_status=0
-config_http_status=""
 
 require_commands curl jq ss
+require_toml_parser
 
 CONFIG_API_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate a huatuo-bamai API port"
@@ -36,20 +34,23 @@ HUATUO_BAMAI_ADDR="http://127.0.0.1:${CONFIG_API_PORT}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 export HUATUO_BAMAI_ADDR HUATUO_BAMAI_METRICS_API
 
+config_response_file=""
+config_error_file=""
+config_curl_status=0
+config_http_status=""
+
 cleanup() {
 	huatuo_bamai_stop
 }
 trap cleanup EXIT
 
 write_config_api_config() {
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["memory_threshold_snapshot", "metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "iocost", "blk_throtl", "sched-blame"]
+	write_default_config
+	# The test owns the dynamic HTTP port.
+	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 
 [HTTPServer]
     ListenAddress = "127.0.0.1:${CONFIG_API_PORT}"
-
-[HTTPServer.Auth]
-    BearerToken = "${CONFIG_API_TOKEN}"
 EOF
 }
 
@@ -116,21 +117,23 @@ assert_openapi_contract() {
 }
 
 assert_persisted_config() {
-	local config_file="${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	grep -Fq 'BlackList = ["dropwatch", "netdev_hw"]' "${config_file}" \
-		|| fatal "persisted config omitted the BlackList update"
-	grep -Fq 'CPULimitCores = 1.5' "${config_file}" \
-		|| fatal "persisted config omitted the CPULimitCores update"
-	grep -Fq 'MemoryLimitMiB = 1024' "${config_file}" \
-		|| fatal "persisted config omitted the MemoryLimitMiB update"
-	grep -Fq '[AutoTracing.MemoryThresholdSnapshot]' "${config_file}" \
-		|| fatal "persisted config omitted the memory snapshot section"
-	grep -Fq 'IntervalTracing = 60' "${config_file}" \
-		|| fatal "persisted config omitted the snapshot tracing interval update"
-	grep -Fq 'RunTracingToolTimeout = 3' "${config_file}" \
-		|| fatal "persisted config omitted the snapshot tracing tool timeout update"
-	grep -Fq 'MaxMemoryObjectEntries = 7' "${config_file}" \
-		|| fatal "persisted config omitted the snapshot maximum memory object entries update"
+	assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{
+		"BlackList": ["dropwatch", "netdev_hw"],
+		"Runtime.CPULimitCores": 1.5,
+		"Runtime.MemoryLimitMiB": 1024,
+		"AutoTracing.MemoryThresholdSnapshot.IntervalTracing": 60,
+		"AutoTracing.MemoryThresholdSnapshot.RunTracingToolTimeout": 3,
+		"AutoTracing.MemoryThresholdSnapshot.MaxMemoryObjectEntries": 7
+	}'
+}
+
+assert_config_updated() {
+	[[ ${config_curl_status} -eq 0 ]] || fatal "update-config: curl exited ${config_curl_status}"
+	assert_eq "${config_http_status}" "204" "update-config status" \
+		|| fatal "update-config returned status ${config_http_status}, expected 204"
+	[[ ! -s "${config_response_file}" ]] \
+		|| fatal "update-config returned a non-empty response: $(< "${config_response_file}")"
+	assert_persisted_config
 }
 
 integration_huatuo_bamai_start write_config_api_config
@@ -161,12 +164,5 @@ request_config_api update-config /v1/config application/json \
         "AutoTracing.MemoryThresholdSnapshot.RunTracingToolTimeout":3,
         "AutoTracing.MemoryThresholdSnapshot.MaxMemoryObjectEntries":7
     }}' true
-if [[ ${config_curl_status} -ne 0 ]]; then
-	fatal "update-config: curl exited ${config_curl_status}"
-fi
-assert_eq "${config_http_status}" "204" "update-config status" \
-	|| fatal "update-config returned status ${config_http_status}, expected 204"
-[[ ! -s "${config_response_file}" ]] \
-	|| fatal "update-config returned a non-empty response: $(< "${config_response_file}")"
-assert_persisted_config
+assert_config_updated
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" huatuo-bamai

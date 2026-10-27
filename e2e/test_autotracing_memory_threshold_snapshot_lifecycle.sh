@@ -91,7 +91,7 @@ lifecycle_stop() {
 		assert_lifecycle_metrics
 		lifecycle_watch_verified_at=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')
 	fi
-	huatuo_bamai_stop_with_signal "${signal}"
+	assert_huatuo_bamai_shutdown_with_signal "${signal}"
 	mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${go_snapshot_case_dir}/daemon-${phase}.log"
 	assert_lifecycle_logs "${go_snapshot_case_dir}/daemon-${phase}.log" "${phase}"
 }
@@ -320,7 +320,7 @@ lifecycle_contention() {
 			kill -TERM "$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")"
 			wait_until 10 .01 grep -Fq 'msg="Caller request to stop"' "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" || fatal "memburst did not observe context cancellation"
 			touch "${MEMSNAP_READ_BARRIER_DIR}/release"
-			huatuo_bamai_stop_with_signal TERM sent
+			assert_huatuo_bamai_shutdown_with_signal TERM sent
 			assert_contention_canceled
 			assert_snapshot_daemon_logs "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "" "${lifecycle_watch_verified_at}" "revalidated target watch" || fatal "unexpected cancellation warning/error"
 			mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${go_snapshot_case_dir}/daemon-canceled.log"
@@ -490,7 +490,7 @@ lifecycle_case() (
 
 go build -mod=vendor -o "${GO_SNAPSHOT_BIN}" "${ROOT_DIR}/integration/testdata/test_memory_threshold_snapshot_golang.go"
 huatuo_bamai_stop
-huatuo_bamai_log_check || fatal "baseline daemon reported an error"
+assert_huatuo_bamai_log_clean || fatal "baseline daemon reported an error"
 export MEMSNAP_ACCEPTANCE_ARTIFACTS="${HUATUO_BAMAI_TEST_TMPDIR}/helpers"
 mkdir -p "${MEMSNAP_ACCEPTANCE_ARTIFACTS}"
 snapshot_build_read_barrier

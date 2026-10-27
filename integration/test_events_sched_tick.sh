@@ -38,7 +38,7 @@ tracepoint_available timer tick_stop \
 integration_huatuo_bamai_start write_sched_tick_config
 
 huatuo_bamai_collect_metrics
-check_metrics "sched_tick lifecycle" \
+assert_metrics "sched_tick lifecycle" \
 	'tracing_status_hitcount\{[^}]*tracing="sched_tick"[^}]*\} 0$' \
 	'tracing_status_running\{[^}]*\} 1$'
 

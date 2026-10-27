@@ -34,7 +34,7 @@ CURRENT_CASE=graceful-recovery
 create 30
 first=$JOB_ID
 wait_job "$first" running
-huatuo_apiserver_stop_with_signal TERM
+assert_huatuo_apiserver_shutdown_with_signal TERM
 assert_node_operation_running "$first" before-restart
 start_server
 assert_node_operation_running "$first" after-restart

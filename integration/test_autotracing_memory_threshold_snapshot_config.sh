@@ -43,7 +43,7 @@ assert_snapshot_configuration_rejected() {
 assert_snapshot_configuration_started() {
 	grep -Fq 'started successfully' "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
 		|| fatal "valid ${snapshot_config_case} did not finish startup"
-	huatuo_bamai_log_check || fatal "valid ${snapshot_config_case} reported an error"
+	assert_huatuo_bamai_log_clean || fatal "valid ${snapshot_config_case} reported an error"
 }
 
 while IFS='|' read -r snapshot_config_case snapshot_config_body snapshot_config_error; do

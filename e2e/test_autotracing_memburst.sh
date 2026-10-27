@@ -26,7 +26,7 @@ source "${ROOT_DIR}/integration/lib_memsnapshot.sh"
 require_commands go jq awk ss
 
 huatuo_bamai_stop
-huatuo_bamai_log_check || fatal "baseline daemon reported an error"
+assert_huatuo_bamai_log_clean || fatal "baseline daemon reported an error"
 go_snapshot_case_dir="${HUATUO_BAMAI_TEST_TMPDIR}/daemon-container"
 HUATUO_BAMAI_TEST_TMPDIR=${go_snapshot_case_dir}
 mkdir -p "${go_snapshot_case_dir}"

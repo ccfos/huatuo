@@ -36,7 +36,6 @@ APISERVER_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate an apiserver port"
 readonly APISERVER_PORT
 readonly APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
-readonly NODE_OPERATIONS_ADDR="${HUATUO_BAMAI_ADDR}/v1/operations"
 readonly PROFILE_CREATE_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/create-profile.json"
 readonly PROFILE_STATUS_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json"
 
@@ -53,7 +52,7 @@ node_operation_status_is() {
 	local expected_status=$1
 	curl -sf "${CURL_TIMEOUT[@]}" \
 		-H 'Authorization: Bearer integration-node-token' \
-		"${NODE_OPERATIONS_ADDR}/${PROFILE_ID}" \
+		"${HUATUO_BAMAI_ADDR}/v1/operations/${PROFILE_ID}" \
 		> "${HUATUO_BAMAI_TEST_TMPDIR}/node-operation-status.json" \
 		|| return 1
 	jq -e --arg expected_status "${expected_status}" \
@@ -72,7 +71,7 @@ stop_apiserver_for_restart() {
 	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid") \
 		|| fatal "apiserver pid file is missing"
 
-	stop_gracefully_by_pid "${pid}" 20 \
+	assert_process_shutdown_by_pid "${pid}" 20 \
 		|| fatal "apiserver did not exit gracefully"
 
 	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"

@@ -141,7 +141,7 @@ go build -mod=vendor -o "${GO_SNAPSHOT_BIN}" "${ROOT_DIR}/integration/testdata/t
 # The runner's baseline daemon serves the other e2e cases. This case needs
 # isolated configuration and a fresh node-wide cooldown for every scenario.
 huatuo_bamai_stop
-huatuo_bamai_log_check || fatal "baseline daemon reported an error before the snapshot scenario"
+assert_huatuo_bamai_log_clean || fatal "baseline daemon reported an error before the snapshot scenario"
 for snapshot_mode in aggregation topk disabled; do
 	snapshot_run_case "${snapshot_mode}"
 done

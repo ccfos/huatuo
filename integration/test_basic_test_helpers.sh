@@ -16,7 +16,167 @@
 
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
-require_commands python3 jq
+require_commands python3 jq curl ss
+require_toml_parser
+
+assert_helper_log_levels() {
+	# The logger quotes text fields; exercise both text variants and JSON output.
+	for helpers_log_format in text quoted json json-spaced; do
+		for helpers_log_level in info error panic fatal; do
+			helpers_log_probe="${HUATUO_BAMAI_TEST_TMPDIR}/log-${helpers_log_format}-${helpers_log_level}.log"
+			case ${helpers_log_format} in
+			text) printf 'level=%s msg=probe\n' "${helpers_log_level}" > "${helpers_log_probe}" ;;
+			quoted) printf 'level="%s" msg="probe"\n' "${helpers_log_level}" > "${helpers_log_probe}" ;;
+			json) printf '{"level":"%s","msg":"probe"}\n' "${helpers_log_level}" > "${helpers_log_probe}" ;;
+			json-spaced) printf '{"level": "%s", "msg": "probe"}\n' "${helpers_log_level}" > "${helpers_log_probe}" ;;
+			esac
+			helpers_log_status=0
+			(assert_log_has_no_failure "${helpers_log_probe}" fixture) \
+				> "${helpers_log_probe}.assertion" 2>&1 || helpers_log_status=$?
+			helpers_log_expected=1
+			[[ ${helpers_log_level} != info ]] || helpers_log_expected=0
+			assert_eq "${helpers_log_status}" "${helpers_log_expected}" "${helpers_log_format}/${helpers_log_level}" \
+				|| fatal "log assertion misclassified ${helpers_log_probe}; see ${helpers_log_probe}.assertion"
+		done
+	done
+	local helpers_log_status helpers_log_line
+	for helpers_log_line in \
+		'level="info" msg="nonfatal condition recovered"' \
+		'{"level":"info","msg":"fatal and error are field values"}'; do
+		printf '%s\n' "${helpers_log_line}" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+		assert_huatuo_bamai_log_clean
+	done
+	for helpers_log_line in 'panic: runtime failure' '{"level":"error","msg":"probe"}'; do
+		printf '%s\n' "${helpers_log_line}" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+		helpers_log_status=0
+		assert_huatuo_bamai_log_clean > "${HUATUO_BAMAI_TEST_TMPDIR}/log-rejected.log" 2>&1 || helpers_log_status=$?
+		assert_eq "${helpers_log_status}" 1 "failure log must be rejected"
+	done
+	mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${HUATUO_BAMAI_TEST_TMPDIR}/saved-huatuo.log"
+	helpers_log_status=0
+	assert_huatuo_bamai_log_clean > "${HUATUO_BAMAI_TEST_TMPDIR}/log-missing.log" 2>&1 || helpers_log_status=$?
+	assert_eq "${helpers_log_status}" 1 "missing log must fail"
+	log_info "text and JSON log levels checked"
+}
+
+assert_helper_pod_lifecycle() {
+	# Check idle Pod manifests and lifecycle errors without requiring a cluster.
+	for helpers_pod_failure in none run delete; do
+		helpers_pod_calls="${HUATUO_BAMAI_TEST_TMPDIR}/pods-${helpers_pod_failure}.log"
+		helpers_pod_status=0
+		TEST_POD_CALLS="${helpers_pod_calls}" TEST_POD_FAILURE="${helpers_pod_failure}" bash -euc '
+source "$ROOT_DIR/e2e/lib.sh"
+kubectl() {
+ printf "%s\n" "$*" >> "$TEST_POD_CALLS"
+ [[ $1 != "$TEST_POD_FAILURE" ]] || return 42
+}
+k8s_create_pod fixtures test busybox:1.36.1 app=test 2 || exit $?
+k8s_delete_pod fixtures app=test
+' > /dev/null 2>&1 || helpers_pod_status=$?
+		if [[ ${helpers_pod_failure} == none ]]; then
+			[[ ${helpers_pod_status} == 0 ]] || fatal "idle Pod lifecycle failed: exit=${helpers_pod_status}"
+			[[ $(grep -cF -- '--overrides={"spec":{"terminationGracePeriodSeconds":1}}' "${helpers_pod_calls}") == 2 ]] \
+				|| fatal "idle Pods must use a one-second termination grace period"
+			grep -Fxq 'delete pod --namespace fixtures -l app=test' "${helpers_pod_calls}" \
+				|| fatal "Pod deletion must retain default synchronous waiting"
+		else
+			[[ ${helpers_pod_status} == 42 ]] || fatal "kubectl ${helpers_pod_failure} failure was lost: exit=${helpers_pod_status}"
+			if [[ ${helpers_pod_failure} == run ]]; then
+				[[ $(wc -l < "${helpers_pod_calls}") == 1 ]] || fatal "Pod creation continued after failure"
+			fi
+		fi
+	done
+	log_info "idle Pod grace period and lifecycle failures checked"
+
+}
+
+assert_helper_log_levels
+assert_helper_pod_lifecycle
+
+assert_helper_toml_values() {
+	local helpers_config="${HUATUO_BAMAI_TEST_TMPDIR}/persisted.conf" helpers_case helpers_status
+	local helpers_expected='{"BlackList":["dropwatch","netdev_hw"],"Runtime.CPULimitCores":1.5,"Runtime.MemoryLimitMiB":1024}'
+	cp "${ROOT_DIR}/integration/testdata/test_toml_values.toml" "${helpers_config}"
+	assert_toml_values "${helpers_config}" "${helpers_expected}"
+	for helpers_case in comments section type value syntax; do
+		case ${helpers_case} in
+		comments) sed 's/^/# /' "${ROOT_DIR}/integration/testdata/test_toml_values.toml" > "${helpers_config}" ;;
+		section) sed 's/\[Runtime\]/[Other]/' "${ROOT_DIR}/integration/testdata/test_toml_values.toml" > "${helpers_config}" ;;
+		type) sed 's/CPULimitCores = 1.5/CPULimitCores = "1.5"/' "${ROOT_DIR}/integration/testdata/test_toml_values.toml" > "${helpers_config}" ;;
+		value) sed 's/MemoryLimitMiB = 1024/MemoryLimitMiB = 1/' "${ROOT_DIR}/integration/testdata/test_toml_values.toml" > "${helpers_config}" ;;
+		syntax) printf '[Runtime\n' > "${helpers_config}" ;;
+		esac
+		helpers_status=0
+		(assert_toml_values "${helpers_config}" "${helpers_expected}") \
+			> "${HUATUO_BAMAI_TEST_TMPDIR}/toml-${helpers_case}.log" 2>&1 || helpers_status=$?
+		assert_eq "${helpers_status}" 1 "${helpers_case}: invalid persisted configuration must fail"
+	done
+}
+
+assert_helper_http_defaults() (
+	# Match the runner's parent-to-child Bash boundary, including a non-exportable array.
+	CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
+	export CURL_TIMEOUT
+	bash -euc '
+		source "$ROOT_DIR/integration/lib.sh"
+		assert_eq "${CURL_TIMEOUT[*]}" "--connect-timeout 2 --max-time 3" "child HTTP defaults"
+	'
+	CURL_TIMEOUT=(--max-time 0.2)
+	source "${ROOT_DIR}/integration/lib.sh"
+	assert_eq "${CURL_TIMEOUT[*]}" "--max-time 0.2" "caller HTTP timeout override"
+)
+
+assert_helper_bamai_ports() (
+	source "${ROOT_DIR}/integration/config.sh"
+	INTEGRATION_PORT_DIR=""
+	allocate_available_port() { printf '23456\n'; }
+	huatuo_bamai_start() {
+		assert_eq "${HUATUO_BAMAI_ADDR}" "http://127.0.0.1:23456" "serial allocated address"
+		assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"HTTPServer.ListenAddress":"127.0.0.1:23456"}'
+	}
+	integration_huatuo_bamai_start
+	INTEGRATION_PORT_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/ports"
+	HUATUO_BAMAI_ADDR=http://127.0.0.1:24567
+	write_default_config
+	configure_bamai_address
+	assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"HTTPServer.ListenAddress":"127.0.0.1:24567"}'
+	NETDEV_HTTP_PORT=25678 NETDEV_DEVICE=probe
+	write_netdev_events_config
+	configure_bamai_address
+	assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"HTTPServer.ListenAddress":"127.0.0.1:25678"}'
+)
+
+assert_helper_metric_diagnostics() (
+	local helpers_pid="" helpers_port helpers_status
+	trap '[[ -z "${helpers_pid}" ]] || stop_and_wait_by_pid "${helpers_pid}" 1 || true' EXIT
+	helpers_port=$(allocate_available_port) || fatal "cannot allocate metrics fixture port"
+	python3 "${ROOT_DIR}/integration/testdata/test_http_metrics.py" "${helpers_port}" \
+		> "${HUATUO_BAMAI_TEST_TMPDIR}/metrics-server.log" 2>&1 &
+	helpers_pid=$!
+	wait_until 5 0.05 grep -q '^ready$' "${HUATUO_BAMAI_TEST_TMPDIR}/metrics-server.log"
+	export no_proxy=127.0.0.1 NO_PROXY=127.0.0.1
+	HUATUO_BAMAI_METRICS_API="http://127.0.0.1:${helpers_port}/ok"
+	huatuo_bamai_collect_metrics
+	assert_eq "$(< "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt")" 'test_counter 7' "metrics response"
+	HUATUO_BAMAI_METRICS_API="http://127.0.0.1:${helpers_port}/error"
+	helpers_status=0
+	huatuo_bamai_collect_metrics > /dev/null 2> "${HUATUO_BAMAI_TEST_TMPDIR}/metrics-failure.log" || helpers_status=$?
+	assert_eq "${helpers_status}" 1 "HTTP error must fail metrics collection"
+	assert_eq "$(< "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.status")" 'curl exit=0 HTTP status=503' "metrics HTTP diagnostics"
+	assert_eq "$(< "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.response")" '{"error":"metrics unavailable"}' "metrics error body"
+	CURL_TIMEOUT=(--connect-timeout 0.1 --max-time 0.1)
+	HUATUO_BAMAI_METRICS_API="http://127.0.0.1:${helpers_port}/stall"
+	helpers_status=0
+	huatuo_bamai_collect_metrics > /dev/null 2> "${HUATUO_BAMAI_TEST_TMPDIR}/metrics-timeout.log" 2>&1 || helpers_status=$?
+	assert_eq "${helpers_status}" 1 "stalled request must fail metrics collection"
+	assert_eq "$(< "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.status")" 'curl exit=28 HTTP status=000' "metrics timeout diagnostics"
+	[[ -s "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.curl-error" ]] || fatal "curl timeout diagnostic is empty"
+)
+
+assert_helper_toml_values
+assert_helper_http_defaults
+assert_helper_bamai_ports
+assert_helper_metric_diagnostics
 
 assert_process_shutdown() (
 	local mode=$1 expected_status=$2 signal=${3:-TERM} pid="" status=0
@@ -472,11 +632,11 @@ for config_mode in auth_only empty_server explicit_address; do
 		fi
 		printf '[HTTPServer.Auth]\nBearerToken = "secret"\n'
 	} > "${config_work}/bamai.conf"
-	HUATUO_BAMAI_TEST_TMPDIR="${config_work}" HUATUO_BAMAI_ADDR="http://${config_address}" bash -eu -s << 'SH'
+	INTEGRATION_PORT_DIR="${config_work}/ports" HUATUO_BAMAI_TEST_TMPDIR="${config_work}" HUATUO_BAMAI_ADDR="http://${config_address}" bash -eu -s << 'SH'
 source "$ROOT_DIR/integration/lib.sh"
 source "$ROOT_DIR/integration/config.sh"
 source "$ROOT_DIR/integration/lib_storage.sh"
-configure_worker_bamai_address
+configure_bamai_address
 APISERVER_PORT=21100 API_TOKEN=admin OTHER_API_TOKEN=reader ES_PASSWORD=test STORAGE_ADDR=http://127.0.0.1:9200 PROFILE_FILTER_INDEX=profile-filter
 for writer in write_apiserver_apis_config write_apiserver_without_profile_storage_config write_continuous_profiling_apiserver_config write_profile_query_apiserver_config; do
  "$writer"

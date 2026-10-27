@@ -25,7 +25,7 @@ integration_huatuo_bamai_start write_exclude_filter_config
 
 huatuo_bamai_await_metrics
 
-check_metrics "exclude filter" \
+assert_metrics "exclude filter" \
 	"memory_vmstat_thp_split_pmd" \
 	'netdev_.*device="eth0"' 'netdev_.*device="eth1"' \
 	-- \

@@ -83,7 +83,7 @@ assert_storage_rotation_log() {
 	local log_file="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 	[[ -r "${log_file}" ]] || fatal "huatuo-bamai log is not readable: ${log_file}"
 	# XID timestamps can contain "fatal" inside successful debug records.
-	huatuo_bamai_log_check || fatal "huatuo-bamai logged an error during local storage rotation"
+	assert_huatuo_bamai_log_clean || fatal "huatuo-bamai logged an error during local storage rotation"
 }
 
 integration_huatuo_bamai_start write_storage_events_config \
