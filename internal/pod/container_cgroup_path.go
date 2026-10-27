@@ -132,6 +132,24 @@ func ContainerCgroupPathByID(containerID string) (string, error) {
 	return cgroupPath, nil
 }
 
+// ContainerCgroupPathBySubsys returns the controller's absolute filesystem path.
+func ContainerCgroupPathBySubsys(containerID, subsys string) (string, error) {
+	paths, err := containerCgroupPathsByID(containerID)
+	if err != nil {
+		return "", err
+	}
+	root := cgroups.RootFsFilePath(subsys)
+	membership := paths.Controllers[subsys]
+	if cgroups.CgroupMode() == cgroups.Unified {
+		root = cgroups.RootfsDefaultPath()
+		membership = paths.Unified
+	}
+	if membership == "" {
+		return "", fmt.Errorf("container %q has no %s cgroup membership", containerID, subsys)
+	}
+	return filepath.Join(root, membership), nil
+}
+
 // ContainerMemoryCgroupPathByID resolves the memory hierarchy without a kubelet refresh.
 func ContainerMemoryCgroupPathByID(containerID string) (string, error) {
 	paths, err := containerCgroupPathsByID(containerID)
