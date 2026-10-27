@@ -215,6 +215,7 @@ sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 ```
 
 Container, thread-group, and CPU-specific examples are in `test_profiler_native_cpu_container.sh`, `test_profiler_native_cpu_thread_group.sh`, and `test_profiler_native_cpu_cpuid.sh`.
+`test_profiler_native_memory_container.sh` forces API lookup failure and verifies container memory CSS fallback on cgroup v1 and v2. Every sample must belong to the target PID, and captured allocation bytes must match the workload.
 
 The native CPU thread-group test keeps both five-second profiling windows and
 stops its worker normally after capture, avoiding the remaining workload tail.

@@ -176,6 +176,7 @@ sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 ```
 
 容器、线程组和指定 CPU 的示例分别位于 `test_profiler_native_cpu_container.sh`、`test_profiler_native_cpu_thread_group.sh` 和 `test_profiler_native_cpu_cpuid.sh`。
+`test_profiler_native_memory_container.sh` 强制 API 查询失败，验证 cgroup v1 和 v2 下的容器 memory CSS 本地回退。所有样本必须属于目标 PID，采集的分配字节数必须与 workload 一致。
 
 ## 存储测试
 
