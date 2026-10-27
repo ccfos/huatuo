@@ -20,6 +20,7 @@
 # Environment:
 # - VM_ENV_FILE: Required qemu-1 environment file containing VM connection state.
 # - INTEGRATION_JOBS: Integration workers (1..8); defaults to 1.
+# - TEST_IO_DISK: Guest scratch disk; defaults to the CI virtio disk.
 # - VM_PROXY_HOST: Optional host proxy address; requires VM_PROXY_PORT.
 # - VM_PROXY_PORT: Optional host proxy port; requires VM_PROXY_HOST.
 # Parameters:
@@ -90,5 +91,7 @@ fi
 
 # The streamed script owns all guest setup and test commands; qemu-2 only provides transport.
 vm_log "running guest tests on $VM_IP"
-ssh "${ssh_opts[@]}" "root@$VM_IP" env "INTEGRATION_JOBS=${integration_jobs}" bash -s -- "$@" \
+printf -v test_disk '%q' "${TEST_IO_DISK-/dev/disk/by-id/virtio-huatuo-ci-io}"
+ssh "${ssh_opts[@]}" "root@$VM_IP" env "INTEGRATION_JOBS=${integration_jobs}" \
+	"TEST_IO_DISK=${test_disk}" bash -s -- "$@" \
 	< "$ROOT_DIR/.github/workflows/scripts/vm-test/run-in-vm.sh"

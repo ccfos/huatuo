@@ -63,6 +63,40 @@ else
 	vm_log 'VM state is already absent; cleanup is not needed.'
 fi
 
+disk_owner="$run_root/test-disk.owner"
+if [[ -e "$disk_owner" || -L "$disk_owner" ]]; then
+	[[ -f "$disk_owner" && ! -L "$disk_owner" && "$(stat -c %u "$disk_owner")" == "$(id -u)" ]] || {
+		vm_log_error "cleanup: refusing unsafe test disk ownership file: $disk_owner"
+		exit 1
+	}
+	{
+		IFS= read -r owned_disk || true
+		IFS= read -r owned_run || true
+		IFS= read -r owned_identity || true
+	} < "$disk_owner"
+	[[ -n "$owned_disk" && "$owned_run" == "$(realpath -- "$run_root")" &&
+	"$owned_disk" == "$(sudo realpath -m -- "$owned_disk")" &&
+	(-z "${VM_TEST_DISK:-}" || "$VM_TEST_DISK" == "$owned_disk") ]] || {
+		vm_log_error "cleanup: test disk does not belong to this run: ${VM_TEST_DISK:-$owned_disk}"
+		exit 1
+	}
+	if sudo test -e "$owned_disk" || sudo test -L "$owned_disk"; then
+		if ! sudo test -f "$owned_disk" || sudo test -L "$owned_disk"; then
+			vm_log_error "cleanup: refusing non-regular test disk: $owned_disk"
+			exit 1
+		fi
+		[[ -n "$owned_identity" && "$(sudo stat -c '%d:%i' -- "$owned_disk")" == "$owned_identity" ]] || {
+			vm_log_error "cleanup: test disk identity changed: $owned_disk"
+			exit 1
+		}
+		sudo rm -f -- "$owned_disk"
+	fi
+	rm -f -- "$disk_owner"
+elif [[ -n "${VM_TEST_DISK:-}" ]] && { sudo test -e "$VM_TEST_DISK" || sudo test -L "$VM_TEST_DISK"; }; then
+	vm_log_error "cleanup: test disk ownership file is missing: $disk_owner"
+	exit 1
+fi
+
 if [[ -e "$package_dir" ]]; then
 	[[ -d "$package_dir" && ! -L "$package_dir" ]] || {
 		vm_log_error "cleanup: refusing unsafe package path: $package_dir"
