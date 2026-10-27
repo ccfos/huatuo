@@ -55,7 +55,6 @@ declare -A runner_test_groups=(
 	["test_profiler_native_cpu_cpp_symbols.sh"]=profiler
 	["test_profiler_native_cpu_rust_symbols.sh"]=profiler
 	["test_profiler_native_cpu_thread_group.sh"]=profiler
-	["test_profiler_native_memory_physical_usage.sh"]=independent
 	["test_profiler_native_memory_thread_group.sh"]=independent
 	["test_profiler_native_memory_virtual_alloc.sh"]=independent
 	["test_profiler_output_flags.sh"]=independent
