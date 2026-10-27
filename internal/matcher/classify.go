@@ -17,7 +17,45 @@ package matcher
 import (
 	"fmt"
 	"regexp"
+	"sync"
+	"sync/atomic"
 )
+
+// compiledCache memoizes compiled regular expressions. Configurations carry
+// a fixed, small set of patterns, so the cache stays bounded by config size.
+// Compile failures are not retained: a rejected config recompiles on its
+// next validation attempt instead of leaking the failed entry forever.
+var compiledCache sync.Map // map[string]compiledEntry
+
+// compiledCacheSize tracks retained entries for the generation reset.
+var compiledCacheSize int64
+
+// compiledCacheMax bounds retained entries; exceeded, the whole cache is
+// dropped (patterns recompile once) so process lifetime memory stays flat.
+const compiledCacheMax = 4096
+
+type compiledEntry struct {
+	reg *regexp.Regexp
+}
+
+func compile(expression string) (*regexp.Regexp, error) {
+	if cached, ok := compiledCache.Load(expression); ok {
+		return cached.(compiledEntry).reg, nil
+	}
+
+	reg, err := regexp.Compile(expression)
+	if err != nil {
+		return nil, err
+	}
+	if n := atomic.AddInt64(&compiledCacheSize, 1); n > compiledCacheMax {
+		// Generation reset: drop the whole cache rather than tracking
+		// LRU state; entries rebuild from the active config on next use.
+		compiledCache = sync.Map{}
+		atomic.StoreInt64(&compiledCacheSize, 0)
+	}
+	compiledCache.Store(expression, compiledEntry{reg: reg})
+	return reg, nil
+}
 
 // ValidateClassifications validates the name and regular expression in every
 // classification rule.
@@ -29,7 +67,7 @@ func ValidateClassifications(patternList [][]string) error {
 		if pattern[0] == "" {
 			return fmt.Errorf("rule %d has an empty name", i)
 		}
-		if _, err := regexp.Compile(pattern[1]); err != nil {
+		if _, err := compile(pattern[1]); err != nil {
 			return fmt.Errorf("rule %d %q has invalid regular expression %q: %w",
 				i, pattern[0], pattern[1], err)
 		}
@@ -43,7 +81,7 @@ func Classify(patternList [][]string, value string) (string, bool) {
 			return "none", false
 		}
 
-		reg, err := regexp.Compile(p[1])
+		reg, err := compile(p[1])
 		if err != nil {
 			return "none", false
 		}
