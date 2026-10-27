@@ -70,15 +70,30 @@ func TestParseOnlineCores(t *testing.T) {
 }
 
 func TestMaxOnlineCPU(t *testing.T) {
+	maxIntPlusOne := strconv.FormatUint(uint64(math.MaxInt)+1, 10)
+
 	tests := []struct {
 		name    string
 		content string
 		want    int
 	}{
 		{name: "sparse", content: "0,2-3\n", want: 3},
+		{name: "multiple ranges", content: "0-3,8-11\n", want: 11},
+		{name: "out-of-order ranges", content: "8-11,0-3\n", want: 11},
+		{name: "out-of-order singleton", content: "7,0-3\n", want: 7},
 		{name: "single", content: "7\n", want: 7},
 		{name: "empty", content: "\n", want: -1},
-		{name: "invalid last ID", content: "0,x\n", want: -1},
+		{name: "invalid ID", content: "0,x\n", want: -1},
+		{name: "invalid non-final item", content: "x,0-3\n", want: -1},
+		{name: "malformed range end", content: "0-3,8-\n", want: -1},
+		{name: "descending range", content: "3-1\n", want: -1},
+		{name: "descending range after valid item", content: "0-3,8-7\n", want: -1},
+		{name: "empty item", content: "0,,3\n", want: -1},
+		{name: "trailing comma", content: "0-3,\n", want: -1},
+		{name: "non-numeric", content: "abc\n", want: -1},
+		{name: "multiple dashes", content: "1-2-3\n", want: -1},
+		{name: "negative", content: "-3\n", want: -1},
+		{name: "int overflow", content: "0-" + maxIntPlusOne + "\n", want: -1},
 	}
 
 	for _, tt := range tests {
