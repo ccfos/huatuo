@@ -53,6 +53,9 @@ A separate profiler batch runs after shared Elasticsearch stops, with at most
 two concurrent cases. Java cases serialize because they share an agent library.
 CPU-pinned, benchmark, hardware PMU and dropwatch resource-budget cases remain
 exclusive.
+The native physical-memory usage case also runs exclusively: concurrent memory
+activity can trigger page migration that its allocation tracking does not preserve.
+This scheduling restriction reduces interference; it does not fix migration accounting.
 E2E stays serial even when `INTEGRATION_JOBS` is set.
 
 Each parallel case has private Huatuo PID files and toolstream sockets and a
