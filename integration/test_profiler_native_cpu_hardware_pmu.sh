@@ -23,17 +23,14 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 # --- preconditions -----------------------------------------------------------
 
-is_container && skip "hardware PMU profiling requires bare-metal access"
 is_virtual_machine && skip "hardware PMU profiling requires a physical machine"
+
+require_host_pid_namespace
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-hardware-pmu
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 
-[[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip \
-	"perf_event_paranoid not readable: perf unavailable"
-readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
-[[ "${PARANOID}" -le 2 ]] || skip \
-	"kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
+require_readable /proc/sys/kernel/perf_event_paranoid
 
 # --- tunables ----------------------------------------------------------------
 

@@ -23,7 +23,7 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 # --- preconditions -----------------------------------------------------------
 
-is_container && skip "native memory profiler requires bare-metal cgroup/PMU access"
+require_host_pid_namespace
 
 bpf_tool_setup profiler native_virtual_alloc profiler-mem
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_mmap.user.c"

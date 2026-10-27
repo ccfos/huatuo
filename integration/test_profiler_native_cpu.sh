@@ -24,16 +24,14 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 # --- preconditions -----------------------------------------------------------
 
-is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
+require_host_pid_namespace
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-callchain
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 
 # Missing perf_event_paranoid ⇒ perf not exposed; skip rather than default
 # to "2" which would mask the real issue as a misleading BPF load failure.
-[[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip "perf_event_paranoid not readable: perf unavailable"
-readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
-[[ "${PARANOID}" -le 2 ]] || skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
+require_readable /proc/sys/kernel/perf_event_paranoid
 
 # --- tunables ----------------------------------------------------------------
 

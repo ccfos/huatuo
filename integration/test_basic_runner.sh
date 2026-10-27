@@ -165,6 +165,45 @@ runner_status=0
 (ROOT_DIR="${RUNNER_FIXTURE}/missing" require_build_output) > "${HUATUO_BAMAI_TEST_TMPDIR}/missing-output.log" 2>&1 || runner_status=$?
 [[ ${runner_status} == 1 ]] || fatal "missing build output did not fail: exit=${runner_status}"
 
+# Host procfs permits symbol lookup even when the caller has nested PIDs.
+runner_inherited_procfs_status=77
+if [[ $(cat /proc/2/comm 2> /dev/null) == kthreadd ]]; then
+	runner_inherited_procfs_status=0
+	(require_host_procfs) || fatal "host procfs was rejected"
+	if [[ $(readlink /proc/self/ns/pid) == "$(readlink /proc/2/ns/pid)" ]]; then
+		(require_host_pid_namespace) || fatal "host PID namespace was rejected"
+	fi
+else
+	log_info "host procfs is unavailable; positive procfs coverage requires a host runner"
+fi
+
+# Neither inherited host procfs nor a private procfs makes nested PIDs valid BPF filters.
+for runner_proc_mode in inherited private; do
+	runner_namespace_args=(--mount --pid --fork)
+	runner_procfs_status=${runner_inherited_procfs_status}
+	if [[ ${runner_proc_mode} == private ]]; then
+		runner_namespace_args+=(--mount-proc)
+		runner_procfs_status=77
+	fi
+	runner_status=0
+	unshare "${runner_namespace_args[@]}" bash -c '
+		source "${ROOT_DIR}/integration/lib.sh"
+		require_host_procfs
+	' > "${HUATUO_BAMAI_TEST_TMPDIR}/procfs-${runner_proc_mode}.log" 2>&1 || runner_status=$?
+	[[ ${runner_status} == "${runner_procfs_status}" ]] \
+		|| fatal "${runner_proc_mode} procfs: exit=${runner_status}, expected=${runner_procfs_status}"
+	runner_status=0
+	unshare "${runner_namespace_args[@]}" bash -c '
+		source "${ROOT_DIR}/integration/lib.sh"
+		require_host_pid_namespace
+		fatal "nested PID namespace accepted for native PID filtering"
+	' > "${HUATUO_BAMAI_TEST_TMPDIR}/pid-${runner_proc_mode}.log" 2>&1 || runner_status=$?
+	[[ ${runner_status} == 77 ]] \
+		|| fatal "${runner_proc_mode} procfs: nested PID namespace did not skip (exit=${runner_status})"
+	grep -qE 'host procfs|host PID namespace' "${HUATUO_BAMAI_TEST_TMPDIR}/pid-${runner_proc_mode}.log" \
+		|| fatal "${runner_proc_mode} procfs: missing PID prerequisite diagnostic"
+done
+
 # Parallel cases have independent PID files, toolstream paths, and HTTP ports.
 rm -f "${RUNNER_FIXTURE}/integration/"test_*.sh
 RUNNER_SOCKET_ID=""
