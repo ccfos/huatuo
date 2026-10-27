@@ -237,7 +237,7 @@ Neither of these cases requires an Elasticsearch service:
 | `test_basic_storage_elasticsearch_config.sh` | All eight combinations of `Address`, `Username`, and `Password`: partial configurations must exit with a configuration error; empty and complete configurations must reach readiness. The complete case uses `--disable-storage` to isolate backend availability. |
 | `test_basic_storage_localfile_rotation.sh` | Enables only LocalFile and sends packets to a closed UDP port to trigger rotation through Dropwatch events. Checks that the first backup is evicted, two backups and one active file remain, and each file is at most 1 MiB and contains valid JSON for the target events. |
 
-The rotation case requires kernel BTF, the `skb/kfree_skb` tracepoint, and the Dropwatch binary and BPF object. It shares UDP sending and configuration helpers with the backend consistency test. Callers of `write_storage_events_config` must set `STORAGE_EVENT_RATE`, `STORAGE_ROTATION_MIB`, and `STORAGE_MAX_ROTATED_FILES`.
+The rotation case requires kernel BTF, the `skb/kfree_skb` tracepoint, and the Dropwatch binary and BPF object. It shares UDP sending and configuration helpers with the backend consistency test. Callers of `write_config_bamai_storage_events` must set `STORAGE_EVENT_RATE`, `STORAGE_ROTATION_MIB`, and `STORAGE_MAX_ROTATED_FILES`.
 
 Both cases call `integration_isolate_run_directory` before starting the service to isolate its PID lock and Toolstream socket. The configuration, rotation, and backend consistency cases call `assert_huatuo_bamai_shutdown` before checking final data and logs to confirm a clean shutdown; `EXIT` traps handle best-effort cleanup.
 

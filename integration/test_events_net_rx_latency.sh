@@ -44,7 +44,7 @@ namespace_setup_with_pair rxlat "${SERVER_IP}" "${CLIENT_IP}"
 sleep 0.5
 
 integration_huatuo_bamai_start \
-	write_net_rx_latency_config \
+	write_config_bamai_net_rx_latency \
 	--region dev \
 	--procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
 	--disable-kubelet

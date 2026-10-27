@@ -563,9 +563,9 @@ assert_huatuo_apiserver_shutdown_with_signal() {
 }
 
 # integration_huatuo_apiserver_start [config_writer_func] [apiserver args...]
-# Builds config paths from the current test workspace before starting apiserver.
+# Materialize writer stdout in the workspace; ":" preserves a prepared config.
 integration_huatuo_apiserver_start() {
-	local config_writer=${1:-write_apiserver_apis_config}
+	local config_writer=${1:-write_config_apiserver_base}
 	if [[ $# -gt 0 ]]; then
 		shift
 	fi
@@ -575,7 +575,9 @@ integration_huatuo_apiserver_start() {
 	)
 	runtime_args+=("$@")
 
-	"$config_writer"
+	if [[ $config_writer != : ]]; then
+		"$config_writer" > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf"
+	fi
 	huatuo_apiserver_start "${runtime_args[@]}"
 }
 
@@ -629,9 +631,9 @@ assert_huatuo_bamai_log_clean() {
 # ----------------------------- metrics helpers --------------------------------
 
 # integration_huatuo_bamai_start [config_writer_func] [huatuo-bamai args...]
-# Builds config paths from the current test workspace before starting huatuo-bamai.
+# Materialize writer stdout in the workspace; ":" preserves a prepared config.
 integration_huatuo_bamai_start() {
-	local config_writer=${1:-write_default_config}
+	local config_writer=${1:-write_config_bamai_default}
 	if [[ $# -gt 0 ]]; then
 		shift
 	fi
@@ -652,7 +654,9 @@ integration_huatuo_bamai_start() {
 		)
 	fi
 
-	"$config_writer"
+	if [[ $config_writer != : ]]; then
+		"$config_writer" > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	fi
 	configure_bamai_address
 	huatuo_bamai_start "${runtime_args[@]}"
 }

@@ -124,7 +124,7 @@ stat_writer_pid=$!
 
 HUATUO_BAMAI_BIN="${IRQTRACING_FIXTURE_ROOT}/bin/huatuo-bamai"
 integration_huatuo_bamai_start \
-	write_irqtracing_autotracing_config \
+	write_config_bamai_irqtracing_autotracing \
 	--region dev \
 	--procfs-prefix "${IRQTRACING_FIXTURE_ROOT}" \
 	--disable-kubelet \

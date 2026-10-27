@@ -22,14 +22,14 @@ require_commands timeout ss
 readonly SNAPSHOT_CONFIG_WORKSPACE=${HUATUO_BAMAI_TEST_TMPDIR}
 trap huatuo_bamai_stop EXIT
 
-write_snapshot_configuration() {
-	write_default_config
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << CONFIG
+write_config_bamai_snapshot_validation() {
+	write_config_bamai_default
+	cat << CONFIG
 [HTTPServer]
  ListenAddress = "127.0.0.1:${snapshot_config_port}"
 [AutoTracing.MemoryThresholdSnapshot]
 CONFIG
-	printf '%b\n' "${snapshot_config_body}" >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	printf '%b\n' "${snapshot_config_body}"
 }
 
 assert_snapshot_configuration_rejected() {
@@ -53,14 +53,14 @@ while IFS='|' read -r snapshot_config_case snapshot_config_body snapshot_config_
 	HUATUO_BAMAI_ADDR="http://127.0.0.1:${snapshot_config_port}"
 	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 	if [[ -z ${snapshot_config_error} ]]; then
-		integration_huatuo_bamai_start write_snapshot_configuration \
+		integration_huatuo_bamai_start write_config_bamai_snapshot_validation \
 			--region integration --disable-storage --disable-kubelet --log-debug
 		wait_until 20 .1 grep -Fq "started successfully" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
 			|| fatal "valid ${snapshot_config_case} did not finish startup"
 		assert_huatuo_bamai_shutdown
 		assert_snapshot_configuration_started
 	else
-		write_snapshot_configuration
+		write_config_bamai_snapshot_validation > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 		snapshot_config_status=0
 		timeout --kill-after=2s 10s "${HUATUO_BAMAI_BIN}" \
 			--config-dir "${HUATUO_BAMAI_TEST_TMPDIR}" --config bamai.conf \

@@ -137,13 +137,40 @@ assert_helper_bamai_ports() (
 	integration_huatuo_bamai_start
 	INTEGRATION_PORT_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/ports"
 	HUATUO_BAMAI_ADDR=http://127.0.0.1:24567
-	write_default_config
+	write_config_bamai_default > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	configure_bamai_address
 	assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"HTTPServer.ListenAddress":"127.0.0.1:24567"}'
 	NETDEV_HTTP_PORT=25678 NETDEV_DEVICE=probe
-	write_netdev_events_config
+	write_config_bamai_netdev_events > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	configure_bamai_address
 	assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"HTTPServer.ListenAddress":"127.0.0.1:25678"}'
+	# A prepared configuration must survive the launcher's explicit no-writer mode.
+	huatuo_bamai_start() {
+		assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"HTTPServer.ListenAddress":"127.0.0.1:25678","EventTracing.Netdev.DeviceList":["probe"]}'
+	}
+	integration_huatuo_bamai_start :
+)
+
+assert_helper_config_output() (
+	source "${ROOT_DIR}/integration/config.sh"
+	local helpers_output="${HUATUO_BAMAI_TEST_TMPDIR}/config-output.conf"
+	local helpers_saved
+	helpers_saved=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf")
+	{
+		write_config_bamai_default
+		write_config_bamai_http "127.0.0.1:25678"
+		write_config_storage_local ""
+		write_config_bamai_elasticsearch "http://127.0.0.1:29200" "" ""
+	} > "${helpers_output}"
+	assert_eq "$(< "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf")" "${helpers_saved}" "writers must not modify the existing service config"
+	assert_toml_values "${helpers_output}" '{"HTTPServer.ListenAddress":"127.0.0.1:25678","HTTPServer.Auth.BearerToken":"integration-node-token","Storage.LocalFile.Path":"","Storage.Elasticsearch.Address":"http://127.0.0.1:29200","Storage.Elasticsearch.Username":"","Storage.Elasticsearch.Password":"","Storage.Elasticsearch.Index":null}'
+	write_config_bamai_elasticsearch "" "" "" "" > "${helpers_output}"
+	assert_toml_values "${helpers_output}" '{"Storage.Elasticsearch.Address":"","Storage.Elasticsearch.Index":""}'
+	local APISERVER_PORT=25679 API_TOKEN=admin HUATUO_BAMAI_ADDR=http://127.0.0.1:25678
+	huatuo_apiserver_start() {
+		assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" '{"APIServer.ListenAddress":"127.0.0.1:25679","Agent.HTTPPort":25678,"Agent.Auth.BearerToken":"integration-node-token","Elasticsearch":null}'
+	}
+	integration_huatuo_apiserver_start
 )
 
 assert_helper_metric_diagnostics() (
@@ -176,6 +203,7 @@ assert_helper_metric_diagnostics() (
 assert_helper_toml_values
 assert_helper_http_defaults
 assert_helper_bamai_ports
+assert_helper_config_output
 assert_helper_metric_diagnostics
 
 assert_process_shutdown() (
@@ -581,12 +609,12 @@ log_info "shared and private storage lifecycles, isolation and failure cleanup p
 		for config_mode in continuous workflow_storage workflow_no_storage; do
 			WITH_STORAGE=true
 			if [[ ${config_mode} == continuous ]]; then
-				write_continuous_profiling_bamai_config
-				write_continuous_profiling_apiserver_config
+				write_config_bamai_continuous_profiling > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+				write_config_apiserver_continuous_profiling > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf"
 			else
 				if [[ ${config_mode} == workflow_no_storage ]]; then WITH_STORAGE=false; fi
-				write_apiserver_profiling_bamai_config
-				write_apiserver_profiling_config
+				write_config_bamai_apiserver_profiling > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+				write_config_apiserver_profiling > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf"
 			fi
 			assert_eq "$(grep -cFx "    Index = \"${expected_index}\"" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf")" 1 "${config_mode}: node index"
 			if [[ ${WITH_STORAGE} == true ]]; then
@@ -638,13 +666,13 @@ source "$ROOT_DIR/integration/config.sh"
 source "$ROOT_DIR/integration/lib_storage.sh"
 configure_bamai_address
 APISERVER_PORT=21100 API_TOKEN=admin OTHER_API_TOKEN=reader ES_PASSWORD=test STORAGE_ADDR=http://127.0.0.1:9200 PROFILE_FILTER_INDEX=profile-filter
-for writer in write_apiserver_apis_config write_apiserver_without_profile_storage_config write_continuous_profiling_apiserver_config write_profile_query_apiserver_config; do
- "$writer"
+for writer in write_config_apiserver_base write_config_apiserver_continuous_profiling write_config_apiserver_profile_query; do
+ "$writer" > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf"
  cp "$HUATUO_BAMAI_TEST_TMPDIR/apiserver.conf" "$HUATUO_BAMAI_TEST_TMPDIR/$writer.conf"
 done
 NODE_PORT=${HUATUO_BAMAI_ADDR##*:} MAX_HOST=2 MAX_TOTAL=4
 for WITH_STORAGE in false true; do
- write_apiserver_profiling_config
+ write_config_apiserver_profiling > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf"
  cp "$HUATUO_BAMAI_TEST_TMPDIR/apiserver.conf" "$HUATUO_BAMAI_TEST_TMPDIR/write_apiserver_profiling_${WITH_STORAGE}.conf"
 done
 SH

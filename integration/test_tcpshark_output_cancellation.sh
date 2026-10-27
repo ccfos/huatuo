@@ -143,7 +143,7 @@ assert_toolstream_exit() {
 # Keep bamai's fixed runtime socket and PID file private to this scenario.
 mkdir -p "${TOOL_WORK_DIR}/run"
 mount --bind "${TOOL_WORK_DIR}/run" /var/run
-integration_huatuo_bamai_start write_toolstream_receiver_config \
+integration_huatuo_bamai_start write_config_bamai_toolstream_receiver \
 	--region dev --disable-kubelet --procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
 	--bpf-dir "${ROOT_DIR}/_output/bpf" --tools-bin-dir "${ROOT_DIR}/_output/bin"
 

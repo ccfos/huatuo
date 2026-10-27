@@ -81,7 +81,7 @@ mkdir -p "${CPU_PROFILER_FIXTURE}/proc" "${CPU_PROFILER_FIXTURE}/sys"
 printf 'cpu 100 0 100 800\n' > "${CPU_PROFILER_STAT}"
 storage_start
 integration_huatuo_bamai_start \
-	write_cpusys_profiler_config \
+	write_config_bamai_cpusys_profiler \
 	--region dev \
 	--procfs-prefix "${CPU_PROFILER_FIXTURE}" \
 	--disable-kubelet \

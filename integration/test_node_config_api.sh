@@ -44,14 +44,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-write_config_api_config() {
-	write_default_config
-	# The test owns the dynamic HTTP port.
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-
-[HTTPServer]
-    ListenAddress = "127.0.0.1:${CONFIG_API_PORT}"
-EOF
+write_config_bamai_config_api() {
+	write_config_bamai_default
+	write_config_bamai_http "127.0.0.1:${CONFIG_API_PORT}"
 }
 
 request_config_api() {
@@ -136,7 +131,7 @@ assert_config_updated() {
 	assert_persisted_config
 }
 
-integration_huatuo_bamai_start write_config_api_config
+integration_huatuo_bamai_start write_config_bamai_config_api
 assert_openapi_contract
 assert_config_error missing-auth /v1/config application/json \
 	'{"config":{"Runtime.MemoryLimitMiB":1024}}' 401 unauthenticated false

@@ -35,7 +35,7 @@ fi
 tracepoint_available timer tick_stop \
 	|| skip "timer/tick_stop tracepoint is not available"
 
-integration_huatuo_bamai_start write_sched_tick_config
+integration_huatuo_bamai_start write_config_bamai_sched_tick
 
 huatuo_bamai_collect_metrics
 assert_metrics "sched_tick lifecycle" \

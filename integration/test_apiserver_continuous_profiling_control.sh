@@ -47,9 +47,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-write_control_bamai_config() {
-	write_continuous_profiling_bamai_config
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << 'EOF'
+write_config_bamai_profiling_control() {
+	write_config_bamai_continuous_profiling
+	cat << 'EOF'
 
 [Operations]
     MaxConcurrent = 1
@@ -59,12 +59,12 @@ EOF
 start_control_stack() {
 	storage_start
 	integration_huatuo_bamai_start \
-		write_control_bamai_config \
+		write_config_bamai_profiling_control \
 		--region integration \
 		--disable-kubelet \
 		--log-debug
 	integration_huatuo_apiserver_start \
-		write_continuous_profiling_apiserver_config
+		write_config_apiserver_continuous_profiling
 }
 
 assert_node_tracing_not_implemented() {

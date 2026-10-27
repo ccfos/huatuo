@@ -27,12 +27,9 @@ WAIT_HUATUO_BAMAI_TIMEOUT=20
 fixture_root="${HUATUO_BAMAI_TEST_TMPDIR}/iotracing-fixtures"
 metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/iotracing-metrics.txt"
 
-write_iotracing_metrics_config() {
-	write_default_config
-	# Enable only this tracer without changing the other fixture exclusions.
-	sed 's/, "iotracing"//' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" \
-		> "${HUATUO_BAMAI_TEST_TMPDIR}/iotracing-metrics.conf"
-	mv "${HUATUO_BAMAI_TEST_TMPDIR}/iotracing-metrics.conf" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+write_config_bamai_iotracing_metrics() {
+	# Enable this tracer while retaining the other fixture exclusions.
+	write_config_bamai_default | sed 's/, "iotracing"//'
 }
 
 assert_iotracing_metrics() {
@@ -69,7 +66,7 @@ mkdir -p "${fixture_root}/sys/dev/block/8:0"
 printf '%s\n' '8 0 sda 100 0 1000 100 100 0 1000 100 0 100 100' \
 	> "${fixture_root}/proc/diskstats"
 
-integration_huatuo_bamai_start write_iotracing_metrics_config \
+integration_huatuo_bamai_start write_config_bamai_iotracing_metrics \
 	--region dev --procfs-prefix "${fixture_root}" \
 	--disable-storage --disable-kubelet --log-debug
 assert_iotracing_metrics 0
@@ -85,7 +82,7 @@ assert_iotracing_metrics 1
 huatuo_bamai_stop
 cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-iotracing-enabled.log"
 
-integration_huatuo_bamai_start write_iotracing_metrics_config \
+integration_huatuo_bamai_start write_config_bamai_iotracing_metrics \
 	--region dev --procfs-prefix "${fixture_root}" \
 	--disable-storage --disable-kubelet --log-debug --disable-tracing iotracing
 huatuo_bamai_metrics > "${metrics_file}"

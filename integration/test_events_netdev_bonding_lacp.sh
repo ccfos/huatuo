@@ -141,7 +141,7 @@ ip link set lacpb up
 wait_until 30 0.2 lacp_converged || fatal "LACP did not enter collecting/distributing on all four slaves"
 
 # Registration runs during Go init, so the bonds must exist before startup.
-integration_huatuo_bamai_start write_lacp_events_config \
+integration_huatuo_bamai_start write_config_bamai_lacp_events \
 	--region dev --disable-kubelet --log-debug
 wait_until 15 0.2 lacp_bpf_attached || fatal "LACP BPF event pipe was not attached"
 wait_until 30 0.2 lacp_converged || fatal "LACP lost collecting/distributing before the fault"

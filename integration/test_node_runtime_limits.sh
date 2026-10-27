@@ -164,7 +164,7 @@ assert_limits_shutdown() {
 }
 
 # 1. Without --enable-cgroup, the daemon must inherit the launcher's membership.
-write_runtime_limits_config "${LIMITS_PORT}" 0.75 1.25 512
+write_config_bamai_runtime_limits "${LIMITS_PORT}" 0.75 1.25 512 > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 integration_huatuo_bamai_start : --region dev --procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
 	--disable-storage --disable-kubelet
 
@@ -181,7 +181,7 @@ limits_old_pid=${limits_pid}
 for limits_values in '0.75 1.25 512' '1.5 0.5 768'; do
 	# 3. Each restart must apply the new configuration in both startup and runtime.
 	read -r limits_startup_cpu limits_cpu limits_memory_mib <<< "${limits_values}"
-	write_runtime_limits_config "${LIMITS_PORT}" "${limits_startup_cpu}" "${limits_cpu}" "${limits_memory_mib}"
+	write_config_bamai_runtime_limits "${LIMITS_PORT}" "${limits_startup_cpu}" "${limits_cpu}" "${limits_memory_mib}" > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	rm -f "${LIMITS_GATE}"
 	mkfifo "${LIMITS_GATE}"
 

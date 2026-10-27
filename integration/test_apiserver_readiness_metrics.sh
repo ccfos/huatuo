@@ -65,7 +65,7 @@ assert_metrics_endpoint() {
 		|| fatal "/metrics omitted the /readyz HTTP request counter"
 }
 
-integration_huatuo_apiserver_start write_apiserver_apis_config \
+integration_huatuo_apiserver_start write_config_apiserver_base \
 	--log-debug
 assert_readiness_endpoint
 assert_metrics_endpoint

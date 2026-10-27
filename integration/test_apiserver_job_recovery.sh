@@ -102,7 +102,7 @@ node_operation_status_is running \
 	|| fatal "graceful apiserver shutdown stopped the Node Operation"
 
 integration_huatuo_apiserver_start \
-	write_continuous_profiling_apiserver_config
+	write_config_apiserver_continuous_profiling
 wait_until 10 1 recovered_job_metric_is_one \
 	|| fatal "replacement apiserver did not report one recovered job"
 wait_until 10 1 continuous_profile_status_is \

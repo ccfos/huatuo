@@ -83,14 +83,14 @@ PROBE="${ROOT_DIR}/_output/tests/apiserver-probe"
 start_server() {
 	[[ ! -f "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" ]] || cp "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver-${APISERVER_GENERATION}.log"
 	APISERVER_GENERATION=$((APISERVER_GENERATION + 1))
-	integration_huatuo_apiserver_start write_apiserver_profiling_config
+	integration_huatuo_apiserver_start write_config_apiserver_profiling
 }
 start_node() {
 	[[ ! -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" ]] || cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai-${BAMAI_GENERATION}.log"
 	BAMAI_GENERATION=$((BAMAI_GENERATION + 1))
 	local args=(--region "${TEST_LOG_TAG,,}")
 	[[ -n "$POD_NAMESPACE" ]] || args+=(--disable-kubelet)
-	integration_huatuo_bamai_start write_apiserver_profiling_bamai_config "${args[@]}"
+	integration_huatuo_bamai_start write_config_bamai_apiserver_profiling "${args[@]}"
 }
 request() {
 	local method=$1 path=$2 expected=$3 body=${4:-}

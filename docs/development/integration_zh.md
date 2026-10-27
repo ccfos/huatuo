@@ -186,7 +186,7 @@ sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 | `test_basic_storage_elasticsearch_config.sh` | `Address`、`Username`、`Password` 的全部八种组合：部分配置必须以配置错误退出，全空或全配必须启动就绪。全配用例使用 `--disable-storage`，隔离后端可用性的影响。 |
 | `test_basic_storage_localfile_rotation.sh` | 只启用 LocalFile，向未监听的 UDP 端口发包，以 Dropwatch 事件触发轮转。确认首个备份被淘汰，最终保留两个备份和一个活动文件；每个文件不超过 1 MiB，且包含有效的目标事件 JSON。 |
 
-轮转用例需要内核 BTF、`skb/kfree_skb` tracepoint，以及 Dropwatch 二进制和 BPF 对象。它与后端一致性测试共用 UDP 发包和配置函数。调用 `write_storage_events_config` 时必须设置 `STORAGE_EVENT_RATE`、`STORAGE_ROTATION_MIB` 和 `STORAGE_MAX_ROTATED_FILES`。
+轮转用例需要内核 BTF、`skb/kfree_skb` tracepoint，以及 Dropwatch 二进制和 BPF 对象。它与后端一致性测试共用 UDP 发包和配置函数。调用 `write_config_bamai_storage_events` 时必须设置 `STORAGE_EVENT_RATE`、`STORAGE_ROTATION_MIB` 和 `STORAGE_MAX_ROTATED_FILES`。
 
 两个用例均在启动服务前调用 `integration_isolate_run_directory`，隔离 PID 锁和 Toolstream socket。配置、轮转和后端一致性测试在检查最终数据和日志前调用 `assert_huatuo_bamai_shutdown`，确认服务正常退出；`EXIT` trap 负责尽力清理。
 

@@ -124,7 +124,7 @@ assert_eq "$(jq -r '.errors' "${HUATUO_BAMAI_TEST_TMPDIR}/seed-profiles.json")" 
 
 APISERVER_PORT="${PROFILE_FILTER_PORT}" APISERVER_ADDR="${PROFILE_FILTER_ADDR}" \
 	API_TOKEN="${PROFILE_FILTER_TOKEN}" \
-	integration_huatuo_apiserver_start write_profile_query_apiserver_config
+	integration_huatuo_apiserver_start write_config_apiserver_profile_query
 
 assert_profile_filter \
 	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",hostname=\"host-a\"}" \

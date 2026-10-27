@@ -21,7 +21,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-integration_huatuo_bamai_start write_exclude_filter_config
+integration_huatuo_bamai_start write_config_bamai_exclude_filter
 
 huatuo_bamai_await_metrics
 

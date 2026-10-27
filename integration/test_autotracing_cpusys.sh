@@ -78,7 +78,7 @@ cpusys_event_is_valid() {
 }
 
 integration_huatuo_bamai_start \
-	write_cpusys_autotracing_config \
+	write_config_bamai_cpusys_autotracing \
 	--region dev \
 	--procfs-prefix "${CPUSYS_FIXTURE_ROOT}" \
 	--tools-bin-dir "${CPUSYS_FIXTURE_ROOT}/tools" \

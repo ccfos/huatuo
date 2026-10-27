@@ -116,7 +116,7 @@ assert_sched_tick_stack_symbols() {
 taskset -c 0 bash -c 'while :; do :; done' &
 workload_pid=$!
 
-start_sched_tick_test write_sched_tick_config
+start_sched_tick_test write_config_bamai_sched_tick
 
 huatuo_bamai_collect_metrics
 assert_metrics "sched_tick high threshold" \
@@ -132,7 +132,7 @@ assert_log_has_no_failure \
 
 huatuo_bamai_stop
 
-start_sched_tick_test write_sched_tick_irqoff_config
+start_sched_tick_test write_config_bamai_sched_tick_irqoff
 
 wait_until "${SCHED_TICK_REPORT_TIMEOUT}" "${SCHED_TICK_REPORT_INTERVAL}" \
 	test -s "${SCHED_TICK_EVENT}" \

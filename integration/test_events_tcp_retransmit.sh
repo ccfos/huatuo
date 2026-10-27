@@ -105,7 +105,7 @@ ip -n "${TCP_RETRANS_NETNS}" addr add "${TCP_RETRANS_SOURCE_IP}/24" dev retransm
 ip -n "${TCP_RETRANS_NETNS}" link set retransmit0 up
 ip -n "${TCP_RETRANS_NETNS}" link set lo up
 
-integration_huatuo_bamai_start write_tcp_events_config \
+integration_huatuo_bamai_start write_config_bamai_tcp_events \
 	--region dev --disable-kubelet --log-debug
 wait_until 15 0.2 tcp_retransmit_child_started || fatal "bamai did not launch the tcpshark binary"
 

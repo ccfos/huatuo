@@ -120,12 +120,16 @@ burst_anon=0
 burst_blacklist=0
 burst_cooldown=30
 burst_window=2
-burst_write_config() {
-	go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
-	write_memory_threshold_snapshot_config
-	sed -i 's/"memburst", //; s/, "tracing_status"//; s/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	if [[ ${burst_blacklist} == 1 ]]; then sed -i 's/^BlackList = \[/BlackList = ["memburst", /' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"; fi
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << CONFIG
+write_config_bamai_memburst() {
+	local go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
+	local blacklist_filter=''
+	if [[ ${burst_blacklist} == 1 ]]; then
+		blacklist_filter='s/^BlackList = \[/BlackList = ["memburst", /'
+	fi
+	write_config_bamai_memory_threshold_snapshot \
+		| sed -e 's/"memburst", //; s/, "tracing_status"//; s/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /' \
+			-e "${blacklist_filter}"
+	cat << CONFIG
 [AutoTracing.MemoryBurst]
  DeltaMemoryBurst = ${burst_threshold}
  DeltaAnonThreshold = ${burst_anon}
@@ -134,13 +138,13 @@ burst_write_config() {
  DumpProcessMaxNum = ${burst_top}
 CONFIG
 	if [[ -n ${burst_window} ]]; then
-		printf ' SlidingWindowLength = %s\n' "${burst_window}" >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+		printf ' SlidingWindowLength = %s\n' "${burst_window}"
 	fi
 }
 burst_start() {
 	local pid
 	for pid in "${burst_workloads[@]}"; do kill -0 "${pid}" || fatal "workload exited before scenario"; done
-	integration_huatuo_bamai_start burst_write_config --region integration --disable-kubelet --log-debug
+	integration_huatuo_bamai_start write_config_bamai_memburst --region integration --disable-kubelet --log-debug
 	local enabled=1
 	[[ ${burst_blacklist} == 0 ]] || enabled=0
 	assert_memsnapshot_tracing_metrics memburst integration "${enabled}"
@@ -189,7 +193,7 @@ assert_burst_event() {
 while IFS='|' read -r memburst_invalid memburst_config_field memburst_input_value memburst_config_error; do
 	HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/invalid-${memburst_invalid}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
-	burst_write_config
+	write_config_bamai_memburst > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	sed -i "s/^ ${memburst_config_field} = .*/ ${memburst_config_field} = ${memburst_input_value}/" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	status=0
 	timeout --kill-after=2s 10s "${HUATUO_BAMAI_BIN}" \

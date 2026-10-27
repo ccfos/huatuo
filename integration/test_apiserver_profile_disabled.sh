@@ -89,7 +89,7 @@ assert_removed_profile_route_is_not_registered() {
 		|| fatal "GET /v1/profiles did not return route_not_found"
 }
 
-integration_huatuo_apiserver_start write_apiserver_without_profile_storage_config \
+integration_huatuo_apiserver_start write_config_apiserver_base \
 	--log-debug
 assert_profile_routes_require_authentication
 assert_profile_api_without_storage \

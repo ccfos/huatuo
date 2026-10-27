@@ -144,11 +144,11 @@ continuous_profile_windows_are_stored() {
 continuous_profiling_start_stack() {
 	storage_start
 	integration_huatuo_bamai_start \
-		write_continuous_profiling_bamai_config \
+		write_config_bamai_continuous_profiling \
 		--region integration \
 		--disable-kubelet \
 		--log-debug
 	integration_huatuo_apiserver_start \
-		write_continuous_profiling_apiserver_config \
+		write_config_apiserver_continuous_profiling \
 		"$@"
 }

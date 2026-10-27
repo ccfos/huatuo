@@ -74,7 +74,7 @@ write_diskstats 100
 # Running a copied daemon makes its executable and BPF directories test-owned.
 HUATUO_BAMAI_BIN="${IOTRACING_FIXTURE_ROOT}/bin/huatuo-bamai"
 integration_huatuo_bamai_start \
-	write_iotracing_autotracing_config \
+	write_config_bamai_iotracing_autotracing \
 	--region dev \
 	--procfs-prefix "${IOTRACING_FIXTURE_ROOT}" \
 	--disable-kubelet \

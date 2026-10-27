@@ -31,18 +31,20 @@ assert_lifecycle_logs() {
 	fi
 }
 
-lifecycle_write_config() {
-	write_memory_threshold_snapshot_config
-	sed -i "s/ThresholdPercent = 50/ThresholdPercent = ${lifecycle_threshold}/; s/IntervalTracing = 300/IntervalTracing = 30/" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+write_config_bamai_snapshot_lifecycle() {
+	local filters=(-e "s/ThresholdPercent = 50/ThresholdPercent = ${lifecycle_threshold}/; s/IntervalTracing = 300/IntervalTracing = 30/")
 	if [[ ${lifecycle_mode} == blacklist ]]; then
-		sed -i 's/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+		filters+=(-e 's/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /')
 	fi
 	if [[ ${lifecycle_mode} == contention_* ]]; then
-		sed -i 's/"memburst", //' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+		filters+=(-e 's/"memburst", //')
 		if [[ ${lifecycle_mode} == contention_burst || ${lifecycle_mode} == contention_target_exit ]]; then
-			sed -i 's/RunTracingToolTimeout = 10/RunTracingToolTimeout = 1/' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+			filters+=(-e 's/RunTracingToolTimeout = 10/RunTracingToolTimeout = 1/')
 		fi
-		cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << CONFIG
+	fi
+	write_config_bamai_memory_threshold_snapshot | sed "${filters[@]}"
+	if [[ ${lifecycle_mode} == contention_* ]]; then
+		cat << CONFIG
 [AutoTracing.MemoryBurst]
  DeltaMemoryBurst = 10
  DeltaAnonThreshold = 0
@@ -66,7 +68,7 @@ assert_lifecycle_metrics() {
 }
 
 lifecycle_start() {
-	integration_huatuo_bamai_start lifecycle_write_config --region e2e --log-debug \
+	integration_huatuo_bamai_start write_config_bamai_snapshot_lifecycle --region e2e --log-debug \
 		--bpf-dir "${ROOT_DIR}/_output/bpf"
 	if [[ ${lifecycle_mode} != blacklist ]]; then
 		wait_until 30 0.1 go_snapshot_watch_is_ready || fatal "limit watch not registered"

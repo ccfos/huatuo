@@ -162,16 +162,12 @@ done
 [[ -n "${tracefs}" ]] \
 	|| skip "IO health event test requires block_rq_complete"
 
-write_io_health_config() {
-	write_default_config
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-
-[Storage.LocalFile]
-    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/records"
-EOF
+write_config_bamai_io_health() {
+	write_config_bamai_default
+	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/records"
 }
 
-integration_huatuo_bamai_start write_io_health_config \
+integration_huatuo_bamai_start write_config_bamai_io_health \
 	--region dev --disable-kubelet --log-debug
 
 cat > "${HUATUO_BAMAI_TEST_TMPDIR}/sealed_memfd.py" << 'PY'

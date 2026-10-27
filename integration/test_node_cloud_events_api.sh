@@ -51,13 +51,10 @@ stop_event_stream() {
 	event_stream_pid=""
 }
 
-write_event_api_config() {
-	write_default_config
-	# The test owns the dynamic HTTP port and event stream limits.
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-
-[HTTPServer]
-    ListenAddress = "127.0.0.1:${EVENT_API_PORT}"
+write_config_bamai_cloud_events_api() {
+	write_config_bamai_default
+	write_config_bamai_http "127.0.0.1:${EVENT_API_PORT}"
+	cat << 'EOF'
     MaxEventStreamClients = 1
     EventStreamKeepAliveIntervalSeconds = 1
 EOF
@@ -169,7 +166,7 @@ assert_event_stream_heartbeat() {
 	}
 }
 
-integration_huatuo_bamai_start write_event_api_config
+integration_huatuo_bamai_start write_config_bamai_cloud_events_api
 assert_openapi_contract
 assert_error_response missing-auth application/json '{}' 401 unauthenticated false
 assert_error_response unsupported-media text/plain '{}' 415 unsupported_media_type true

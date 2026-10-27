@@ -184,7 +184,7 @@ ip -j link show dev "${NETDEV_DEVICE}" > "${HUATUO_BAMAI_TEST_TMPDIR}/interface.
 netdev_device_index=$(jq -r '.[0].ifindex' "${HUATUO_BAMAI_TEST_TMPDIR}/interface.json")
 netdev_device_mac=$(jq -r '.[0].address' "${HUATUO_BAMAI_TEST_TMPDIR}/interface.json")
 
-integration_huatuo_bamai_start write_netdev_events_config \
+integration_huatuo_bamai_start write_config_bamai_netdev_events \
 	--region dev \
 	--procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
 	--disable-kubelet

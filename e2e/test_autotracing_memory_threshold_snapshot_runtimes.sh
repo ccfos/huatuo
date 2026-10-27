@@ -88,7 +88,7 @@ snapshot_run_case() (
 	go_snapshot_stage="${mode}: start daemon and prepare workload"
 	# Set a finite limit before discovery; unavailable watches are not retried.
 	# A fresh daemon also isolates the node-wide cooldown between cases.
-	integration_huatuo_bamai_start write_memory_threshold_snapshot_config --region e2e --log-debug
+	integration_huatuo_bamai_start write_config_bamai_memory_threshold_snapshot --region e2e --log-debug
 	assert_memsnapshot_tracing_metrics memory_threshold_snapshot e2e 1
 	mkfifo "${go_snapshot_case_dir}/commands"
 	# The case subshell closes this descriptor on exit.

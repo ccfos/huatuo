@@ -131,7 +131,7 @@ storage_run_backend() {
 	record_test_timing "storage:${backend}" index_create "${started}"
 
 	started=${SECONDS}
-	integration_huatuo_bamai_start write_storage_events_config \
+	integration_huatuo_bamai_start write_config_bamai_storage_events \
 		--region integration --disable-kubelet --log-debug
 	record_test_timing "storage:${backend}" daemon_ready "${started}"
 	started=${SECONDS}

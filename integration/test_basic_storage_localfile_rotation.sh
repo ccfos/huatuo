@@ -86,7 +86,7 @@ assert_storage_rotation_log() {
 	assert_huatuo_bamai_log_clean || fatal "huatuo-bamai logged an error during local storage rotation"
 }
 
-integration_huatuo_bamai_start write_storage_events_config \
+integration_huatuo_bamai_start write_config_bamai_storage_events \
 	--region integration --disable-kubelet --log-debug
 wait_until 120 0.1 storage_rotation_check_or_send \
 	|| fatal "rotation did not evict first backup: first=${storage_rotation_first_backup:-none}, backups=${#storage_rotation_backups[@]}, expected=${STORAGE_MAX_ROTATED_FILES}"
