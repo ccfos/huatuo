@@ -138,8 +138,16 @@ func parseNetStat(fileName string) (map[string]map[string]string, error) {
 
 	for scanner.Scan() {
 		nameParts := strings.Split(scanner.Text(), " ")
+		if nameParts[0] == "" {
+			continue
+		}
 
-		scanner.Scan()
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return nil, fmt.Errorf("read value line: %s: %w", fileName, err)
+			}
+			return nil, fmt.Errorf("missing value line: %s", fileName)
+		}
 		valueParts := strings.Split(scanner.Text(), " ")
 
 		// remove trailing ":"
