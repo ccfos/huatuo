@@ -40,7 +40,6 @@ type cpuNativeProfiler struct {
 	bpf                bpf.BPF
 	ringCtx            *ringBufferContext
 	dbg                *bpf.BpfDbg
-	offCPUMode         bool
 	offCPUStatsEnabled bool
 }
 
@@ -53,7 +52,7 @@ func (p *cpuNativeProfiler) Finalize(ctx context.Context, enqueue func(*pipeline
 		return fmt.Errorf("stop native sampling: %w", err)
 	}
 
-	if p.offCPUMode {
+	if p.config.Mode == profiling.ModeOffCPU {
 		return p.drainOffCPUData(ctx, enqueue)
 	}
 
@@ -185,7 +184,6 @@ func (p *cpuNativeProfiler) Start(ctx context.Context) error {
 	p.bpf = b
 	p.ringCtx = ringCtx
 	p.dbg = dbg
-	p.offCPUMode = offCPU
 	p.offCPUStatsEnabled = offCPU && cfg.OffCPUStatsEnabled
 	log.Infof("eBPF attached")
 
@@ -254,7 +252,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipe
 
 	defer stopDbg()
 
-	if p.offCPUMode {
+	if p.config.Mode == profiling.ModeOffCPU {
 		return p.readOffCPUDataLoop(ctx, enqueue)
 	}
 

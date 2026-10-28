@@ -110,8 +110,8 @@ func (*offCPUReaderStub) Close() error {
 func newOffCPUReaderProfiler(reader bpf.PerfEventReader) *cpuNativeProfiler {
 	obj := stackLookupMissBPF{}
 	return &cpuNativeProfiler{
-		bpf:        obj,
-		offCPUMode: true,
+		bpf:    obj,
+		config: Config{Mode: profiling.ModeOffCPU},
 		ringCtx: &ringBufferContext{
 			bpf:         obj,
 			readerA:     reader,

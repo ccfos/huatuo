@@ -626,9 +626,9 @@ func TestOffCPUFinalizationDrainsUntilEmpty(t *testing.T) {
 		}}}},
 	}}
 	p := &cpuNativeProfiler{
-		bpf:        obj,
-		ringCtx:    &ringBufferContext{readerA: reader},
-		offCPUMode: true,
+		bpf:     obj,
+		ringCtx: &ringBufferContext{readerA: reader},
+		config:  Config{Mode: profiling.ModeOffCPU},
 	}
 	var total int64
 	var lost uint64
