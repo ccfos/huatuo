@@ -96,6 +96,43 @@ func TestXFSUpdate(t *testing.T) {
 	}
 }
 
+func TestXFSStatsExtensions(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		extension string
+	}{
+		{
+			name:      "nested labels",
+			extension: "gc xpc 18446744073709551615\n",
+		},
+		{
+			name:      "wide unused counter",
+			extension: "defer_relog 4294967296\n",
+		},
+		{
+			name:      "unknown groups",
+			extension: "zoned 1 2 3\nmetafile 4\nfuture_stats nested 18446744073709551615\n",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c, root := newXFSFixture(t, 1)
+			before, err := c.Update()
+			require.NoError(t, err)
+			path := filepath.Join(root, "sys/fs/xfs/sda0/stats/stats")
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			data = append(data, []byte("\n"+tt.extension)...)
+			require.NoError(t, os.WriteFile(path, data, 0o600))
+
+			attr, err := newXFSCollector()
+			require.NoError(t, err)
+			after, err := attr.TracingData.(*xfsCollector).Update()
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+		})
+	}
+}
+
 func TestXFSUpdateSnapshotIsolation(t *testing.T) {
 	c, root := newXFSFixture(t, 1)
 	first, err := c.Update()
