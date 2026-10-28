@@ -17,6 +17,23 @@ struct {
 	__uint(value_size, sizeof(u32));
 } hungtask_perf_events SEC(".maps");
 
+SEC("raw_tracepoint/sched_process_hang")
+int raw_sched_process_hang(struct bpf_raw_tracepoint_args *ctx)
+{
+	/* The current task is the detector, not the blocked task. */
+	struct task_struct *task = (void *)ctx->args[0];
+	struct hungtask_event info = {};
+	u32 cpu = bpf_core_enum_value(enum cgroup_subsys_id, cpu_cgrp_id);
+
+	info.tid = BPF_CORE_READ(task, pid);
+	BPF_CORE_READ_STR_INTO(&info.comm, task, comm);
+	info.cpu_css_addr = (u64)BPF_CORE_READ(task, cgroups, subsys[cpu]);
+
+	bpf_perf_event_output(ctx, &hungtask_perf_events,
+			      COMPAT_BPF_F_CURRENT_CPU, &info, sizeof(info));
+	return 0;
+}
+
 SEC("tracepoint/sched/sched_process_hang")
 int tracepoint_sched_process_hang(struct trace_event_raw_sched_process_hang *ctx)
 {
