@@ -12,12 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package runtime
+package runtime_test
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+
+	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/metric/runtime"
 )
 
 func TestRegisterCollector(t *testing.T) {
@@ -41,7 +46,7 @@ func TestRegisterCollector(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := prometheus.NewRegistry()
-			RegisterCollector(reg, tt.namespace)
+			runtime.RegisterCollector(reg, tt.namespace)
 			families, err := reg.Gather()
 			if err != nil {
 				t.Fatalf("Gather() returned error: %v", err)
@@ -61,7 +66,7 @@ func TestRegisterCollector(t *testing.T) {
 
 func TestRegisterCollectorProcessMetrics(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	RegisterCollector(reg, "huatuo")
+	runtime.RegisterCollector(reg, "huatuo")
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -90,7 +95,7 @@ func TestRegisterCollectorProcessMetrics(t *testing.T) {
 
 func TestRegisterCollectorGoMetrics(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	RegisterCollector(reg, "huatuo")
+	runtime.RegisterCollector(reg, "huatuo")
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -119,7 +124,7 @@ func TestRegisterCollectorGoMetrics(t *testing.T) {
 
 func TestRegisterCollectorNoDuplicate(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	RegisterCollector(reg, "test")
+	runtime.RegisterCollector(reg, "test")
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -135,6 +140,139 @@ func TestRegisterCollectorNoDuplicate(t *testing.T) {
 	for name, count := range seen {
 		if count > 1 {
 			t.Errorf("metric %q registered %d times, want 1", name, count)
+		}
+	}
+}
+
+func TestRegisterCollectorInfo(t *testing.T) {
+	tests := []struct {
+		name       string
+		namespace  string
+		metricName string
+		help       string
+		labels     map[string]string
+	}{
+		{
+			name:       "build information",
+			namespace:  "huatuo_bamai",
+			metricName: "build_info",
+			help:       "Build information for the application.",
+			labels: map[string]string{
+				"name":           "huatuo-bamai",
+				"version":        "2.3.0",
+				"git_commit":     "0123456789abcdef",
+				"git_tree_state": "dirty",
+				"build_time":     "20261028120000",
+				"go_version":     "go1.24.3",
+				"compiler":       "gc",
+				"platform":       "linux/amd64",
+			},
+		},
+		{
+			name:       "custom information without namespace",
+			metricName: "config_info",
+			help:       "Active configuration identity.",
+			labels:     map[string]string{"source": "local", "revision": ""},
+		},
+		{
+			name:       "information without labels",
+			namespace:  "test",
+			metricName: "feature_info",
+			help:       "Enabled feature information.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := prometheus.NewRegistry()
+			wantLabels := map[string]string{
+				metric.LabelHost:   metric.DefaultHostname(),
+				metric.LabelRegion: metric.DefaultRegion(),
+			}
+			maps.Copy(wantLabels, tt.labels)
+			runtime.RegisterCollector(
+				reg,
+				tt.namespace,
+				runtime.InfoMetric{
+					Name:   tt.metricName,
+					Help:   tt.help,
+					Labels: tt.labels,
+				},
+			)
+			// Registration must snapshot labels rather than retain the caller's map.
+			for name := range tt.labels {
+				tt.labels[name] = "changed after registration"
+			}
+			families, err := reg.Gather()
+			if err != nil {
+				t.Fatalf("Gather() returned error: %v", err)
+			}
+			wantName := tt.metricName
+			if tt.namespace != "" {
+				wantName = tt.namespace + "_" + wantName
+			}
+			var family *dto.MetricFamily
+			for _, candidate := range families {
+				if candidate.GetName() == wantName {
+					family = candidate
+					break
+				}
+			}
+			if family == nil {
+				t.Fatalf("expected %s to be registered", wantName)
+			}
+			if family.GetName() != wantName || family.GetHelp() != tt.help {
+				t.Fatalf("metric descriptor = %s / %s, want %s / %s", family.GetName(), family.GetHelp(), wantName, tt.help)
+			}
+			if family.GetType() != dto.MetricType_GAUGE || len(family.Metric) != 1 {
+				t.Fatalf("expected one information gauge, got %v", family)
+			}
+			sample := family.Metric[0]
+			if sample.GetGauge().GetValue() != 1 {
+				t.Errorf("information gauge value = %v, want 1", sample.GetGauge().GetValue())
+			}
+			labels := make(map[string]string, len(sample.Label))
+			for _, label := range sample.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if !maps.Equal(labels, wantLabels) {
+				t.Errorf("information labels = %v, want %v", labels, wantLabels)
+			}
+		})
+	}
+}
+
+func TestRegisterCollectorMultipleInfo(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	infos := []runtime.InfoMetric{
+		{
+			Name:   "build_info",
+			Help:   "Build information.",
+			Labels: map[string]string{"version": "1.2.3"},
+		},
+		{
+			Name:   "config_info",
+			Help:   "Configuration information.",
+			Labels: map[string]string{"source": "local"},
+		},
+	}
+	runtime.RegisterCollector(reg, "test", infos...)
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range infos {
+		var found bool
+		for _, family := range families {
+			if family.GetName() != "test_"+info.Name {
+				continue
+			}
+			found = true
+			if len(family.Metric) != 1 || family.Metric[0].GetGauge().GetValue() != 1 {
+				t.Errorf("expected one %s gauge fixed at 1, got %v", info.Name, family)
+			}
+		}
+		if !found {
+			t.Errorf("information metric %s missing", info.Name)
 		}
 	}
 }

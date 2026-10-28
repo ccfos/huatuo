@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package runtime registers Go runtime and process-level Prometheus
-// collectors (memory, GC, file descriptors, CPU time, etc.) under the
-// HuaTuo metrics namespace.
+// Package runtime registers process, Go runtime, and application information metrics.
 package runtime
 
 import (
@@ -24,12 +22,19 @@ import (
 	"github.com/ccfos/huatuo/pkg/metric"
 )
 
-// RegisterCollector registers the standard process and Go runtime
-// collectors with reg, prefixing their metric names with namespace so
-// they share a consistent prefix with the rest of the HuaTuo metrics.
-// All registered metrics carry host and region labels for unified
-// dashboard variable filtering.
-func RegisterCollector(reg *prometheus.Registry, namespace string) {
+// InfoMetric describes an information gauge with a constant value of 1.
+type InfoMetric struct {
+	Name   string
+	Help   string
+	Labels map[string]string
+}
+
+// RegisterCollector registers process and Go runtime collectors, plus the
+// supplied information gauges fixed at 1.
+// All metrics use the namespace prefix and common host/region labels.
+// Labels are copied during registration; host and region are reserved.
+// Invalid descriptors or duplicate registration panic, as with MustRegister.
+func RegisterCollector(reg *prometheus.Registry, namespace string, infos ...InfoMetric) {
 	prefix := ""
 	if namespace != "" {
 		prefix = namespace + "_"
@@ -42,4 +47,15 @@ func RegisterCollector(reg *prometheus.Registry, namespace string) {
 
 	labeledReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	labeledReg.MustRegister(collectors.NewGoCollector())
+
+	for _, info := range infos {
+		labeledReg.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Name:        info.Name,
+				Help:        info.Help,
+				ConstLabels: prometheus.Labels(info.Labels),
+			},
+			func() float64 { return 1 },
+		))
+	}
 }

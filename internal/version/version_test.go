@@ -16,6 +16,7 @@ package version
 
 import (
 	"encoding/json"
+	"maps"
 	"runtime"
 	"strings"
 	"testing"
@@ -197,5 +198,35 @@ func TestInfoJSONFieldNames(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("Info.JSON() missing field %s in:\n%s", want, got)
 		}
+	}
+}
+
+func TestInfoLabels(t *testing.T) {
+	info := Info{
+		Name:         "huatuo-bamai",
+		Version:      "1.2.3",
+		GitCommit:    "abc123",
+		GitTreeState: "clean",
+		BuildTime:    "20261029000000",
+		GoVersion:    "go1.24.3",
+		Compiler:     "gc",
+		Platform:     "linux/amd64",
+	}
+	// Labels and the public JSON version response share the same field names.
+	data, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want map[string]string
+	if err := json.Unmarshal(data, &want); err != nil {
+		t.Fatal(err)
+	}
+	got := info.Labels()
+	if !maps.Equal(got, want) {
+		t.Fatalf("Labels() = %v, want %v", got, want)
+	}
+	got["version"] = "changed"
+	if info.Version != "1.2.3" || !maps.Equal(info.Labels(), want) {
+		t.Fatal("modifying Labels() changed the version information")
 	}
 }
