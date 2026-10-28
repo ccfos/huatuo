@@ -376,25 +376,34 @@ dump_text_files() {
 
 # Call from the child's parent shell so wait can verify its exit status.
 # Unlike cleanup, a shutdown assertion must not hide a timeout with SIGKILL.
+# Optional third argument selects TERM (default) or INT.
 assert_process_shutdown_by_pid() {
-	local pid=${1:-} timeout=${2:-10} status=0
+	local pid=${1:-} timeout=${2:-10} signal=${3:-TERM} status=0
 	if [[ ! ${pid} =~ ^[1-9][0-9]*$ || ! ${timeout} =~ ^[1-9][0-9]*$ ]]; then
 		log_error "invalid stop arguments: pid=${pid}, timeout=${timeout}; expected positive integers"
 		return 1
 	fi
 
-	if ! kill -TERM "${pid}" 2> /dev/null; then
-		log_error "failed to send SIGTERM to pid=${pid}"
+	case ${signal} in
+	TERM | INT) ;;
+	*)
+		log_error "unsupported stop signal ${signal}; expected TERM or INT"
+		return 1
+		;;
+	esac
+
+	if ! kill -"${signal}" "${pid}" 2> /dev/null; then
+		log_error "failed to send SIG${signal} to pid=${pid}"
 		return 1
 	fi
 	if ! wait_until "${timeout}" 0.1 process_exited "${pid}"; then
-		log_error "pid=${pid} did not exit within ${timeout}s after SIGTERM"
+		log_error "pid=${pid} did not exit within ${timeout}s after SIG${signal}"
 		return 1
 	fi
 
 	wait "${pid}" || status=$?
 	if [[ ${status} -ne 0 ]]; then
-		log_error "pid=${pid} exited with status ${status} after SIGTERM"
+		log_error "pid=${pid} exited with status ${status} after SIG${signal}"
 	fi
 	return "${status}"
 }

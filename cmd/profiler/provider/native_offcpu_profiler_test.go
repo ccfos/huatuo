@@ -571,3 +571,25 @@ func TestOffCPUBatchStackCache(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkReadOffCPUDataLoop(b *testing.B) {
+	failure := errors.New("end benchmark batch")
+	reader := &offCPUReaderStub{readBatch: func() (bpf.PerfEventBatch, error) {
+		return bpf.PerfEventBatch{Events: []any{&abi.ProfilerOffCPUEvent{
+			Base: abi.ProfilerEventBase{
+				PIDTGID:   uint64(123) << 32,
+				Value:     7,
+				Userstack: -1,
+				Kernstack: -1,
+			},
+		}}}, nil
+	}}
+	p := newOffCPUReaderProfiler(reader)
+	enqueue := func(*pipeline.SampleBatch) error { return failure }
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := p.ReadDataLoop(b.Context(), enqueue); !errors.Is(err, failure) {
+			b.Fatal(err)
+		}
+	}
+}

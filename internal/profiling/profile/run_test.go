@@ -46,6 +46,9 @@ func (fakeProfiler) Start(context.Context) error { return nil }
 func (fakeProfiler) ReadDataLoop(_ context.Context, enqueue func(*pipeline.SampleBatch) error) error {
 	return enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 1}}})
 }
+
+func (fakeProfiler) Finalize(context.Context, func(*pipeline.SampleBatch) error) error { return nil }
+
 func (fakeProfiler) Stop() error { return nil }
 
 func testAggregationConfig() pipeline.AggregationConfig {
@@ -106,15 +109,18 @@ func TestRunLogsDataReadingLoopLifecycleOnce(t *testing.T) {
 
 type failingProfiler struct {
 	fakeProfiler
-	startErr, stopErr error
+	startErr, finalErr, stopErr error
 }
 
 func (p failingProfiler) Start(context.Context) error { return p.startErr }
-func (p failingProfiler) Stop() error                 { return p.stopErr }
+func (p failingProfiler) Finalize(context.Context, func(*pipeline.SampleBatch) error) error {
+	return p.finalErr
+}
+func (p failingProfiler) Stop() error { return p.stopErr }
 
 func TestRunPropagatesFailures(t *testing.T) {
 	failure := errors.New("test failure")
-	for _, phase := range []string{"start", "stop"} {
+	for _, phase := range []string{"start", "finalize", "stop"} {
 		t.Run(phase, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -123,6 +129,8 @@ func TestRunPropagatesFailures(t *testing.T) {
 			switch phase {
 			case "start":
 				provider.startErr = failure
+			case "finalize":
+				provider.finalErr = failure
 			case "stop":
 				provider.stopErr = failure
 			}
@@ -217,6 +225,7 @@ type loopProfiler struct {
 	fakeProfiler
 	read      func(context.Context, func(*pipeline.SampleBatch) error) error
 	stopErr   error
+	final     func(context.Context, func(*pipeline.SampleBatch) error) error
 	onStop    func()
 	loopEnded bool
 	stopped   bool
@@ -225,6 +234,18 @@ type loopProfiler struct {
 func (p *loopProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
 	defer func() { p.loopEnded = true }()
 	return p.read(ctx, enqueue)
+}
+
+func (p *loopProfiler) Finalize(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	if !p.loopEnded {
+		return errors.New("finalization started before read loop ended")
+	}
+
+	if p.final != nil {
+		return p.final(ctx, enqueue)
+	}
+
+	return nil
 }
 
 func (p *loopProfiler) Stop() error {
@@ -247,22 +268,45 @@ func TestRunCompletion(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
 		duration         time.Duration
+		cause            error
 		finalBatch       bool
 		cancelBeforeRun  bool
 		cancelDuringStop bool
 		loopErr          error
 		stopErr          error
 		wantErr          error
+		wantFinal        bool
 	}{
-		{name: "natural completion"},
 		{
-			name:     "normal duration",
-			duration: time.Millisecond,
+			name:      "natural completion",
+			wantFinal: true,
+		},
+		{
+			name:      "normal duration",
+			duration:  time.Millisecond,
+			wantFinal: true,
 		},
 		{
 			name:       "final batch after normal stop",
 			duration:   time.Millisecond,
 			finalBatch: true,
+			wantFinal:  true,
+		},
+		{
+			name:      "requested stop",
+			cause:     ErrStopRequested,
+			wantFinal: true,
+		},
+		{
+			name:    "external cancellation during collection",
+			cause:   context.Canceled,
+			wantErr: context.Canceled,
+		},
+		{
+			name:    "normal stop with collection failure",
+			cause:   ErrStopRequested,
+			loopErr: failure,
+			wantErr: failure,
 		},
 		{
 			name:            "external cancellation with clean loop",
@@ -302,33 +346,41 @@ func TestRunCompletion(t *testing.T) {
 			wantErr:  failure,
 		},
 		{
-			name:    "stop failure",
-			stopErr: stopFailure,
-			wantErr: stopFailure,
+			name:      "stop failure",
+			stopErr:   stopFailure,
+			wantErr:   stopFailure,
+			wantFinal: true,
 		},
 		{
 			name:             "external cancellation during cleanup",
 			cancelDuringStop: true,
 			wantErr:          context.Canceled,
+			wantFinal:        true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
 			if tc.cancelBeforeRun {
-				cancel()
+				cancel(context.Canceled)
 			}
 
 			cfg, received := newRunOutput(t)
+			finalized := false
 			collector := &loopProfiler{
 				stopErr: tc.stopErr,
 				read: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+					if tc.cause != nil {
+						cancel(tc.cause)
+						<-ctx.Done()
+					}
+
 					if tc.duration != 0 {
 						<-ctx.Done()
 					}
 
 					if tc.finalBatch {
-						// Final batches must remain deliverable after collection ends.
+						// A read already in progress can deliver its partial batch.
 						for range 8 {
 							if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 1}}}); err != nil {
 								return err
@@ -338,9 +390,17 @@ func TestRunCompletion(t *testing.T) {
 
 					return tc.loopErr
 				},
+				final: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+					finalized = true
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+
+					return enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 7}}})
+				},
 			}
 			if tc.cancelDuringStop {
-				collector.onStop = cancel
+				collector.onStop = func() { cancel(context.Canceled) }
 			}
 
 			cfg.Duration = tc.duration
@@ -349,15 +409,11 @@ func TestRunCompletion(t *testing.T) {
 				mode = pipeline.AggregationModeOneShot
 			}
 
-			err := Run(
-				ctx,
-				cfg,
-				&ProfilerMeta{
-					Impl:              collector,
-					AggregationMode:   mode,
-					AggregationConfig: testAggregationConfig(),
-				},
-			)
+			err := Run(ctx, cfg, &ProfilerMeta{
+				Impl:              collector,
+				AggregationMode:   mode,
+				AggregationConfig: testAggregationConfig(),
+			})
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Run() error = %v, want %v", err, tc.wantErr)
 			}
@@ -366,16 +422,28 @@ func TestRunCompletion(t *testing.T) {
 				t.Fatalf("Run() lost cancellation from loop error: %v", err)
 			}
 
-			if !tc.cancelBeforeRun && !tc.cancelDuringStop && ctx.Err() != nil {
+			if tc.cause == nil && !tc.cancelBeforeRun && !tc.cancelDuringStop && ctx.Err() != nil {
 				t.Fatalf("runner canceled caller context: %v", ctx.Err())
 			}
 
-			if !collector.stopped {
-				t.Fatal("collector was not stopped after its read loop ended")
+			if finalized != tc.wantFinal || !collector.stopped {
+				t.Fatalf(
+					"finalized=%t want=%t stopped=%t",
+					finalized,
+					tc.wantFinal,
+					collector.stopped,
+				)
 			}
 
-			if tc.finalBatch && tc.wantErr == nil && received.records.Load() != 8 {
-				t.Fatalf("delivered records = %d, want 8", received.records.Load())
+			if tc.wantErr == nil {
+				wantRecords := int64(7)
+				if tc.finalBatch {
+					wantRecords += 8
+				}
+
+				if got := received.records.Load(); got != wantRecords {
+					t.Fatalf("delivered records=%d want=%d", got, wantRecords)
+				}
 			}
 
 			wantWrites := int64(0)
@@ -383,8 +451,8 @@ func TestRunCompletion(t *testing.T) {
 				wantWrites = 1
 			}
 
-			if received.commits.Load() != wantWrites {
-				t.Fatalf("completion writes = %d, want %d", received.commits.Load(), wantWrites)
+			if got := received.commits.Load(); got != wantWrites {
+				t.Fatalf("completion writes=%d want=%d", got, wantWrites)
 			}
 		})
 	}
@@ -545,7 +613,7 @@ func TestRunRemoteTaskIdentity(t *testing.T) {
 			task.ToolName = "profiler"
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			if err := Run(ctx, RunConfig{
+			if err := Run(t.Context(), RunConfig{
 				ID:                taskID,
 				OutputFormat:      output.FormatRemoteStore,
 				OutputDestination: path,
@@ -568,8 +636,10 @@ func TestRunRemoteTaskIdentity(t *testing.T) {
 func TestRunAggregationFailureStopsCollectionWithoutCommit(t *testing.T) {
 	cfg, received := newRunOutput(t)
 	stopFailure := errors.New("collector cleanup failed")
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	watchdog := time.AfterFunc(5*time.Second, cancel)
+	defer watchdog.Stop()
 	collector := &loopProfiler{
 		stopErr: stopFailure,
 		read: func(_ context.Context, enqueue func(*pipeline.SampleBatch) error) error {
@@ -635,28 +705,36 @@ func TestRunRequestedStopPublishesFinalSamples(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(t.Context())
 	defer cancel(nil)
 	cfg, received := newRunOutput(t)
-	collector := &loopProfiler{read: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
-		cancel(ErrStopRequested)
-		<-ctx.Done()
-		if !IsNormalStop(ctx) {
-			return context.Cause(ctx)
-		}
-
-		// Final delivery can exceed the queue capacity after collection stops.
-		for range 128 {
-			if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 4096}}}); err != nil {
-				return err
+	collector := &loopProfiler{
+		read: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+			cancel(ErrStopRequested)
+			<-ctx.Done()
+			if !IsNormalStop(ctx) {
+				return context.Cause(ctx)
 			}
-		}
 
-		for range 128 {
-			if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: -4096}}}); err != nil {
-				return err
+			return nil
+		},
+		final: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
-		}
+			// Final delivery can exceed the queue capacity after collection stops.
+			for range 128 {
+				if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 4096}}}); err != nil {
+					return err
+				}
+			}
 
-		return enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 7}}})
-	}}
+			for range 128 {
+				if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: -4096}}}); err != nil {
+					return err
+				}
+			}
+
+			return enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 7}}})
+		},
+	}
 	err := Run(ctx, cfg, &ProfilerMeta{Impl: collector, AggregationMode: pipeline.AggregationModeOneShot, AggregationConfig: testAggregationConfig()})
 	if err != nil || received.commits.Load() != 1 || received.records.Load() != 7 {
 		t.Fatalf("error=%v commits=%d samples=%d", err, received.commits.Load(), received.records.Load())
@@ -666,30 +744,37 @@ func TestRunRequestedStopPublishesFinalSamples(t *testing.T) {
 func TestRunFailureDuringNormalFinalizationForbidsCommit(t *testing.T) {
 	cfg, received := newRunOutput(t)
 	cfg.Duration = time.Millisecond
-	collector := &loopProfiler{read: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
-		<-ctx.Done()
-		if !IsNormalStop(ctx) {
-			return context.Cause(ctx)
-		}
-		// Streaming aggregation rejects overflow while the collector is finalizing.
-		if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: math.MaxInt64}, {Value: 1}}}); err != nil {
-			return err
-		}
-		deadline := time.NewTimer(5 * time.Second)
-		defer deadline.Stop()
-		ticker := time.NewTicker(time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-deadline.C:
-				return errors.New("pipeline did not reject final delivery after failure")
-			case <-ticker.C:
-				if err := enqueue(&pipeline.SampleBatch{}); err != nil {
-					return err
+	collector := &loopProfiler{
+		read: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+			<-ctx.Done()
+			if !IsNormalStop(ctx) {
+				return context.Cause(ctx)
+			}
+
+			return nil
+		},
+		final: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+			// Streaming aggregation rejects overflow while the collector is finalizing.
+			if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: math.MaxInt64}, {Value: 1}}}); err != nil {
+				return err
+			}
+
+			deadline := time.NewTimer(5 * time.Second)
+			defer deadline.Stop()
+			ticker := time.NewTicker(time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-deadline.C:
+					return errors.New("pipeline did not reject final delivery after failure")
+				case <-ticker.C:
+					if err := enqueue(&pipeline.SampleBatch{}); err != nil {
+						return err
+					}
 				}
 			}
-		}
-	}}
+		},
+	}
 	err := Run(t.Context(), cfg, &ProfilerMeta{Impl: collector, AggregationConfig: testAggregationConfig()})
 	if err == nil || !strings.Contains(err.Error(), "overflow") || received.commits.Load() != 0 {
 		t.Fatalf("error=%v commits=%d", err, received.commits.Load())
@@ -704,29 +789,44 @@ func TestNormalStopDoesNotAcceptJoinedFailure(t *testing.T) {
 	}
 }
 
-func TestRunCallerDeadlineForbidsCommit(t *testing.T) {
+func TestRunRejectsCallerDeadline(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		timeout time.Duration
 	}{
-		{name: "expired before run", timeout: -time.Second},
-		{name: "expires during collection", timeout: 20 * time.Millisecond},
+		{
+			name:    "expired deadline",
+			timeout: -time.Second,
+		},
+		{
+			name:    "future deadline",
+			timeout: time.Hour,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), tc.timeout)
+			parent, cancel := context.WithTimeout(t.Context(), tc.timeout)
 			defer cancel()
-			cfg, received := newRunOutput(t)
-			collector := &loopProfiler{read: func(ctx context.Context, _ func(*pipeline.SampleBatch) error) error {
-				<-ctx.Done()
-				if !errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
-					t.Errorf("collection cause=%v, want deadline exceeded", context.Cause(ctx))
-				}
-				// Even a clean collector return must not allow a timed-out task to commit.
+			ctx, cancelChild := context.WithCancel(parent)
+			defer cancelChild()
+			destination := filepath.Join(t.TempDir(), "output")
+			collector := &initializingProfiler{start: func(context.Context) error {
+				t.Fatal("collector started with a caller deadline")
 				return nil
 			}}
-			err := Run(ctx, cfg, &ProfilerMeta{Impl: collector, AggregationConfig: testAggregationConfig()})
-			if !errors.Is(err, context.DeadlineExceeded) || received.commits.Load() != 0 {
-				t.Fatalf("error=%v commits=%d", err, received.commits.Load())
+			err := Run(ctx, RunConfig{
+				Duration:          time.Second,
+				OutputFormat:      output.FormatJSON,
+				OutputDestination: destination,
+			}, &ProfilerMeta{
+				Impl:              collector,
+				AggregationConfig: testAggregationConfig(),
+			})
+			if err == nil || err.Error() != "profiling context must not have a deadline; use RunConfig.Duration" {
+				t.Fatalf("Run() error = %v, want caller deadline rejection", err)
+			}
+
+			if _, err := os.Stat(destination); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("output initialized before deadline rejection: %v", err)
 			}
 		})
 	}
@@ -750,14 +850,25 @@ func TestRunDurationStartsAfterInitialization(t *testing.T) {
 		return ctx.Err()
 	}}
 	collector.read = func(ctx context.Context, _ func(*pipeline.SampleBatch) error) error {
-		if ctx.Done() != initializedDone {
-			t.Fatal("Start and ReadDataLoop received different contexts")
-		}
 		<-ctx.Done()
 		if !errors.Is(context.Cause(ctx), ErrCollectionDurationElapsed) {
 			return context.Cause(ctx)
 		}
+
+		select {
+		case <-initializedDone:
+			t.Fatal("normal collection stop canceled sampling resources")
+		default:
+		}
+
 		return nil
+	}
+	collector.final = func(ctx context.Context, _ func(*pipeline.SampleBatch) error) error {
+		if ctx.Done() != initializedDone {
+			t.Fatal("Start and Finalize received different task contexts")
+		}
+
+		return ctx.Err()
 	}
 	err := Run(t.Context(), cfg, &ProfilerMeta{Impl: collector, AggregationConfig: testAggregationConfig()})
 	if err != nil || received.commits.Load() != 1 {
@@ -870,7 +981,7 @@ func TestRunRemotePhysicalUsagePublishesRetainedTotals(t *testing.T) {
 
 		return waitForValue(0)
 	}}
-	err = Run(ctx, RunConfig{
+	err = Run(t.Context(), RunConfig{
 		OutputFormat:        output.FormatRemoteStore,
 		OutputDestination:   path,
 		AggregationInterval: time.Millisecond,
@@ -885,5 +996,294 @@ func TestRunRemotePhysicalUsagePublishesRetainedTotals(t *testing.T) {
 
 	if commits.Load() != 1 || !collector.stopped {
 		t.Fatalf("commits=%d stopped=%t", commits.Load(), collector.stopped)
+	}
+}
+
+func TestRunStopDuringFinalDelivery(t *testing.T) {
+	for _, cause := range []error{ErrStopRequested, context.Canceled} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			cfg, received := newRunOutput(t)
+			delivered := 0
+			collector := &loopProfiler{
+				read: func(context.Context, func(*pipeline.SampleBatch) error) error { return nil },
+				final: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+					for range 128 {
+						// Wait for the framework to observe abnormal cancellation deterministically.
+						if delivered == 1 && errors.Is(cause, context.Canceled) {
+							<-ctx.Done()
+						}
+
+						if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 1}}}); err != nil {
+							return err
+						}
+
+						delivered++
+						cancel(cause)
+					}
+
+					return nil
+				},
+			}
+			err := Run(ctx, cfg, &ProfilerMeta{
+				Impl:              collector,
+				AggregationMode:   pipeline.AggregationModeOneShot,
+				AggregationConfig: testAggregationConfig(),
+			})
+			if errors.Is(cause, ErrStopRequested) {
+				if err != nil || delivered != 128 || received.records.Load() != 128 || received.commits.Load() != 1 {
+					t.Fatalf(
+						"error=%v delivered=%d records=%d commits=%d",
+						err,
+						delivered,
+						received.records.Load(),
+						received.commits.Load(),
+					)
+				}
+			} else if !errors.Is(err, context.Canceled) || delivered != 1 || received.commits.Load() != 0 {
+				t.Fatalf(
+					"error=%v delivered=%d commits=%d",
+					err,
+					delivered,
+					received.commits.Load(),
+				)
+			}
+		})
+	}
+}
+
+func TestRunFinalizationTimeout(t *testing.T) {
+	for _, phase := range []string{"read loop", "finalize", "publication"} {
+		t.Run(phase, func(t *testing.T) {
+			cfg, received := newRunOutput(t)
+			if phase == "read loop" {
+				cfg.Duration = time.Millisecond
+			}
+
+			finalized := false
+			collector := &loopProfiler{
+				read: func(ctx context.Context, _ func(*pipeline.SampleBatch) error) error {
+					if phase == "read loop" {
+						<-ctx.Done()
+						if !IsNormalStop(ctx) {
+							return context.Cause(ctx)
+						}
+
+						time.Sleep(20 * time.Millisecond)
+					}
+
+					return nil
+				},
+				final: func(ctx context.Context, _ func(*pipeline.SampleBatch) error) error {
+					finalized = true
+					if phase == "finalize" {
+						<-ctx.Done()
+						return context.Cause(ctx)
+					}
+
+					return nil
+				},
+			}
+			if phase == "publication" {
+				collector.onStop = func() { time.Sleep(20 * time.Millisecond) }
+			}
+
+			err := run(
+				t.Context(),
+				cfg,
+				&ProfilerMeta{
+					Impl:              collector,
+					AggregationConfig: testAggregationConfig(),
+				},
+				5*time.Millisecond,
+			)
+			if !errors.Is(err, context.DeadlineExceeded) || !collector.stopped || received.commits.Load() != 0 {
+				t.Fatalf(
+					"error=%v stopped=%t commits=%d",
+					err,
+					collector.stopped,
+					received.commits.Load(),
+				)
+			}
+
+			if phase == "read loop" && finalized {
+				t.Fatal("finalization started after budget expired")
+			}
+		})
+	}
+}
+
+func TestRunFinalizationTimeoutUnblocksEnqueue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "output.sock")
+	server, err := toolstream.NewServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	received := make(chan struct{}, 1)
+	release := make(chan struct{})
+	toolstream.Register(server, profiling.StoreServiceName, func(_ context.Context, _ *toolstream.Request[types.AggregationWindow]) error {
+		select {
+		case received <- struct{}{}:
+		default:
+		}
+
+		<-release
+		return nil
+	})
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	defer server.Close()
+	defer close(release)
+	delivered := 0
+	largeFrames := []types.ProfileFrame{{Name: strings.Repeat("f", 1<<20)}}
+	collector := &loopProfiler{
+		read: func(context.Context, func(*pipeline.SampleBatch) error) error { return nil },
+		final: func(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+			if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{
+				Value:      1,
+				UserFrames: largeFrames,
+			}}}); err != nil {
+				return err
+			}
+
+			select {
+			case <-received:
+			case <-ctx.Done():
+				return context.Cause(ctx)
+			}
+
+			for range 128 {
+				if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{
+					Value:      1,
+					UserFrames: largeFrames,
+				}}}); err != nil {
+					return err
+				}
+
+				delivered++
+			}
+
+			return errors.New("blocked consumer did not apply queue backpressure")
+		},
+	}
+	err = run(
+		t.Context(),
+		RunConfig{
+			OutputFormat:      output.FormatRemoteStore,
+			OutputDestination: path,
+
+			AggregationInterval: time.Millisecond,
+		},
+		&ProfilerMeta{
+			Impl:              collector,
+			AggregationConfig: testAggregationConfig(),
+		},
+		500*time.Millisecond,
+	)
+	if !errors.Is(err, context.DeadlineExceeded) || delivered == 0 || delivered >= 128 || !collector.stopped {
+		t.Fatalf(
+			"error=%v delivered=%d stopped=%t",
+			err,
+			delivered,
+			collector.stopped,
+		)
+	}
+}
+
+func TestRunTaskContextInterruptsReading(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		cancelParent bool
+		want         error
+	}{
+		{
+			name:         "caller cancellation",
+			cancelParent: true,
+			want:         context.Canceled,
+		},
+		{
+			name: "finalization timeout",
+			want: context.DeadlineExceeded,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			cfg, received := newRunOutput(t)
+			if !tc.cancelParent {
+				cfg.Duration = time.Millisecond
+			}
+
+			var taskDone <-chan struct{}
+			finalized := false
+			collector := &initializingProfiler{start: func(ctx context.Context) error {
+				taskDone = ctx.Done()
+				return nil
+			}}
+			collector.read = func(ctx context.Context, _ func(*pipeline.SampleBatch) error) error {
+				if tc.cancelParent {
+					cancel()
+				}
+
+				<-ctx.Done()
+				// A blocking reader must observe task failure even when the collection
+				// context already carries an immutable normal-stop cause.
+				select {
+				case <-taskDone:
+					return nil
+				case <-time.After(time.Second):
+					return errors.New("task cancellation did not interrupt reading")
+				}
+			}
+			collector.final = func(context.Context, func(*pipeline.SampleBatch) error) error {
+				finalized = true
+				return nil
+			}
+			err := run(
+				ctx,
+				cfg,
+				&ProfilerMeta{
+					Impl:              collector,
+					AggregationConfig: testAggregationConfig(),
+				},
+				5*time.Millisecond,
+			)
+			if !errors.Is(err, tc.want) || finalized || !collector.stopped || received.commits.Load() != 0 {
+				t.Fatalf(
+					"error=%v finalized=%t stopped=%t commits=%d",
+					err,
+					finalized,
+					collector.stopped,
+					received.commits.Load(),
+				)
+			}
+		})
+	}
+}
+
+func TestRunFinalLossPreventsPhysicalUsagePublication(t *testing.T) {
+	cfg, received := newRunOutput(t)
+	collector := &loopProfiler{
+		read: func(context.Context, func(*pipeline.SampleBatch) error) error { return nil },
+		final: func(_ context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+			return enqueue(&pipeline.SampleBatch{DroppedSamples: map[string]uint64{types.DropReasonCollection: 3}})
+		},
+	}
+	err := Run(t.Context(), cfg, &ProfilerMeta{
+		Impl:              collector,
+		AggregationMode:   pipeline.AggregationModeOneShot,
+		AggregationConfig: pipeline.AggregationConfig{ProfileType: profiling.ProfileTypePhysicalUsage},
+	})
+	if err == nil || !strings.Contains(err.Error(), "physical usage collection lost samples") || received.commits.Load() != 0 || !collector.stopped {
+		t.Fatalf(
+			"error=%v commits=%d stopped=%t",
+			err,
+			received.commits.Load(),
+			collector.stopped,
+		)
 	}
 }

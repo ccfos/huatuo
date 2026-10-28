@@ -22,7 +22,9 @@ import (
 
 // RunConfig identifies the task and configures collection, window scheduling, and output.
 type RunConfig struct {
-	ID                  string
+	ID string
+
+	// Duration limits collection, allowing final samples to be processed afterward.
 	Duration            time.Duration
 	AggregationInterval time.Duration
 	OutputFormat        output.OutputFormat

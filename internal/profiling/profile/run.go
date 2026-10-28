@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -29,10 +30,29 @@ import (
 
 // Run blocks until cleanup completes so resources are guaranteed released.
 // Duration and explicit stop requests preserve final samples; failures forbid completion.
+// ctx must have no deadline; use RunConfig.Duration so expiry preserves final samples.
 func Run(
 	ctx context.Context,
 	cfg RunConfig,
 	p *ProfilerMeta,
+) (returnErr error) {
+	if _, ok := ctx.Deadline(); ok {
+		return errors.New("profiling context must not have a deadline; use RunConfig.Duration")
+	}
+
+	return run(
+		ctx,
+		cfg,
+		p,
+		FinalizationTimeout,
+	)
+}
+
+func run(
+	ctx context.Context,
+	cfg RunConfig,
+	p *ProfilerMeta,
+	finalizationTimeout time.Duration,
 ) (returnErr error) {
 	cfg.ID = randomid.NewIfEmpty(cfg.ID)
 
@@ -53,8 +73,29 @@ func Run(
 	defer cancelProcess(nil)
 	collectionCtx, cancelCollection := context.WithCancelCause(processCtx)
 	defer cancelCollection(nil)
+	var finalMu sync.Mutex
+	var finalTimer *time.Timer
+	finished := false
+	beginFinalization := func() {
+		finalMu.Lock()
+		defer finalMu.Unlock()
+		if finalTimer == nil && !finished {
+			finalTimer = time.AfterFunc(finalizationTimeout, func() {
+				cancelProcess(fmt.Errorf("profiling finalization timed out: %w", context.DeadlineExceeded))
+			})
+		}
+	}
+	defer func() {
+		finalMu.Lock()
+		defer finalMu.Unlock()
+		finished = true
+		if finalTimer != nil {
+			finalTimer.Stop()
+		}
+	}()
 	propagateCancellation := func() {
 		if IsNormalStop(ctx) {
+			beginFinalization()
 			cancelCollection(context.Cause(ctx))
 		} else {
 			cancelProcess(context.Cause(ctx))
@@ -78,7 +119,7 @@ func Run(
 	}
 
 	pipe := pipeline.NewPipeline(&pipelineConfig)
-	if err := p.Impl.Start(collectionCtx); err != nil {
+	if err := p.Impl.Start(processCtx); err != nil {
 		return fmt.Errorf("start profiler: %w", err)
 	}
 
@@ -96,15 +137,17 @@ func Run(
 	var timer *time.Timer
 	if cfg.Duration > 0 {
 		timer = time.AfterFunc(cfg.Duration, func() {
+			beginFinalization()
 			cancelCollection(ErrCollectionDurationElapsed)
 		})
 	}
 
 	// Integration workloads wait for this exact readiness barrier.
 	log.Info("data reading loop started")
-	loopErr := p.Impl.ReadDataLoop(collectionCtx, func(batch *pipeline.SampleBatch) error {
+	enqueue := func(batch *pipeline.SampleBatch) error {
 		return pipe.Enqueue(processCtx, batch)
-	})
+	}
+	loopErr := p.Impl.ReadDataLoop(collectionCtx, enqueue)
 	if timer != nil {
 		timer.Stop()
 	}
@@ -116,6 +159,19 @@ func Run(
 
 	if loopErr != nil {
 		cancelProcess(loopErr)
+	}
+	// Observe the caller synchronously before deciding whether final delivery is allowed.
+	if ctx.Err() != nil {
+		propagateCancellation()
+	}
+
+	var finalErr error
+	if processCtx.Err() == nil {
+		beginFinalization()
+		finalErr = p.Impl.Finalize(processCtx, enqueue)
+		if finalErr != nil {
+			cancelProcess(finalErr)
+		}
 	}
 	stopErr := p.Impl.Stop()
 	if stopErr != nil {
@@ -129,12 +185,16 @@ func Run(
 	if ctx.Err() != nil && !IsNormalStop(ctx) {
 		cancelProcess(context.Cause(ctx))
 	}
-	if err := errors.Join(context.Cause(processCtx), loopErr, stopErr, pipelineErr); err != nil {
+
+	if err := errors.Join(
+		context.Cause(processCtx),
+		loopErr,
+		finalErr,
+		stopErr,
+		pipelineErr,
+	); err != nil {
 		return err
 	}
 
-	completeCtx, cancelComplete := context.WithTimeout(processCtx, FinalizationTimeout)
-	defer cancelComplete()
-
-	return formatter.Complete(completeCtx)
+	return formatter.Complete(processCtx)
 }

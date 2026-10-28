@@ -63,16 +63,34 @@ type memNativeProfiler struct {
 
 var hasKprobeFunction = bpf.HasKprobeFunction
 
+func (p *memNativeProfiler) Finalize(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := p.bpf.Detach(); err != nil {
+		return fmt.Errorf("stop native sampling: %w", err)
+	}
+
+	return p.ringCtx.drainFinalRingBuffers(
+		ctx,
+		func() any { return &abi.ProfilerEventBase{} },
+		enqueue,
+		p.convertValueToBytes,
+	)
+}
+
 func (p *memNativeProfiler) Stop() error {
+	var readerErr error
 	if p.ringCtx != nil {
-		p.ringCtx.Close()
+		readerErr = p.ringCtx.Close()
 		p.ringCtx = nil
 	}
 
 	err := closeBPF(p.bpf)
 	p.bpf = nil
 
-	return err
+	return errors.Join(readerErr, err)
 }
 
 func (p *memNativeProfiler) Start(ctx context.Context) error {
@@ -145,12 +163,11 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 	}
 
 	if err := b.AttachWithOptions(loadConfig.AttachOpts); err != nil {
-		ringCtx.Close()
-		if cerr := b.Close(); cerr != nil {
-			log.Warn("closing eBPF after attach failure", "error", cerr)
-		}
-
-		return fmt.Errorf("failed to attach: %w", err)
+		return errors.Join(
+			fmt.Errorf("attach native memory probes: %w", err),
+			ringCtx.Close(),
+			b.Close(),
+		)
 	}
 
 	p.bpf = b

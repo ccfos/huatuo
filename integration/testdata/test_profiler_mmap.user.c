@@ -17,6 +17,7 @@
 // virtual_alloc profiling events.
 
 #include <stdlib.h>
+#include <string.h>
 #include <stdio.h>
 #include <signal.h>
 #include <unistd.h>
@@ -101,8 +102,10 @@ static void wait_for_start_signal(void) {
 	}
 }
 
-int main(void) {
-	const int iterations = 500;
+int main(int argc, char **argv)
+{
+	const int final_burst = argc > 1 && strcmp(argv[1], "final") == 0;
+	const int iterations = final_burst ? 1 : 500;
 	size_t actual_allocated_bytes = 0;
 
 	wait_for_start_signal();
@@ -114,5 +117,12 @@ int main(void) {
 	}
 
 	fprintf(stderr, "actual_allocated_bytes=%zu\n", actual_allocated_bytes);
+	if (final_burst) {
+		/* Keep /proc metadata available while userspace resolves final stacks. */
+		puts("final allocation complete");
+		fflush(stdout);
+		for (;;)
+			pause();
+	}
 	return 0;
 }

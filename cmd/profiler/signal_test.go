@@ -62,18 +62,27 @@ func TestSignalContextCleanup(t *testing.T) {
 func TestSignalContextHandlesTermination(t *testing.T) {
 	// Isolate process-wide signal delivery from other tests and the test runner.
 	const childEnv = "HUATUO_PROFILER_SIGNAL_TEST"
-	if os.Getenv(childEnv) != "1" {
-		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSignalContextHandlesTermination$")
-		cmd.Env = append(os.Environ(), childEnv+"=1")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("signal subprocess: %v\n%s", err, output)
+	childSignal := os.Getenv(childEnv)
+	if childSignal == "" {
+		for _, name := range []string{"TERM", "HUP"} {
+			t.Run(name, func(t *testing.T) {
+				cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSignalContextHandlesTermination$")
+				cmd.Env = append(os.Environ(), childEnv+"="+name)
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("signal subprocess: %v\n%s", err, output)
+				}
+			})
 		}
 		return
+	}
+	sig := syscall.SIGTERM
+	if childSignal == "HUP" {
+		sig = syscall.SIGHUP
 	}
 	var logs bytes.Buffer
 	ctx, cleanup := newSignalContext(t.Context(), &logs)
 	defer cleanup()
-	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+	if err := syscall.Kill(os.Getpid(), sig); err != nil {
 		t.Fatal(err)
 	}
 	timer := time.NewTimer(5 * time.Second)
@@ -81,10 +90,15 @@ func TestSignalContextHandlesTermination(t *testing.T) {
 	select {
 	case <-ctx.Done():
 	case <-timer.C:
-		t.Fatal("SIGTERM did not cancel collection")
+		t.Fatalf("%v did not cancel collection", sig)
 	}
+
+	if profile.IsNormalStop(ctx) || !errors.Is(context.Cause(ctx), context.Canceled) {
+		t.Fatalf("%v: expected cancellation without normal finalization, cause=%v", sig, context.Cause(ctx))
+	}
+
 	cleanup()
-	if !strings.Contains(logs.String(), "[signal] caught signal: terminated, canceling context") {
+	if !strings.Contains(logs.String(), "[signal] caught signal: "+sig.String()+", canceling context") {
 		t.Fatalf("missing signal diagnostic: %q", logs.String())
 	}
 }

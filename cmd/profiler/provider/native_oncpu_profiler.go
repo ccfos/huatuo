@@ -44,20 +44,42 @@ type cpuNativeProfiler struct {
 	offCPUStatsEnabled bool
 }
 
+func (p *cpuNativeProfiler) Finalize(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := p.bpf.Detach(); err != nil {
+		return fmt.Errorf("stop native sampling: %w", err)
+	}
+
+	if p.offCPUMode {
+		return p.drainOffCPUData(ctx, enqueue)
+	}
+
+	return p.ringCtx.drainFinalRingBuffers(
+		ctx,
+		func() any { return &abi.ProfilerOnCPUEvent{} },
+		enqueue,
+		p.convertCPUValue,
+	)
+}
+
 func (p *cpuNativeProfiler) Stop() error {
 	if p.offCPUStatsEnabled {
 		logOffCPUBPFStats(p.bpf)
 	}
 
+	var readerErr error
 	if p.ringCtx != nil {
-		p.ringCtx.Close()
+		readerErr = p.ringCtx.Close()
 		p.ringCtx = nil
 	}
 
 	err := closeBPF(p.bpf)
 	p.bpf = nil
 
-	return err
+	return errors.Join(readerErr, err)
 }
 
 func (p *cpuNativeProfiler) Start(ctx context.Context) error {
@@ -153,16 +175,11 @@ func (p *cpuNativeProfiler) Start(ctx context.Context) error {
 	}
 
 	if attachErr != nil {
-		ringCtx.Close()
-		attachErr = fmt.Errorf("attach native CPU %s probes: %w", cfg.Mode, attachErr)
-		if closeErr := b.Close(); closeErr != nil {
-			return errors.Join(
-				attachErr,
-				fmt.Errorf("close BPF after attach failure: %w", closeErr),
-			)
-		}
-
-		return attachErr
+		return errors.Join(
+			fmt.Errorf("attach native CPU %s probes: %w", cfg.Mode, attachErr),
+			ringCtx.Close(),
+			b.Close(),
+		)
 	}
 
 	p.bpf = b

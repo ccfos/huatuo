@@ -181,7 +181,7 @@ func TestJavaProfilerSampleWeights(t *testing.T) {
 			ctx, cancel := context.WithCancelCause(t.Context())
 			cancel(profile.ErrCollectionDurationElapsed)
 			var count int
-			err = p.ReadDataLoop(ctx, func(batch *pipeline.SampleBatch) error {
+			enqueue := func(batch *pipeline.SampleBatch) error {
 				for i := range batch.Samples {
 					count++
 					if got := batch.Samples[i].Value; got != tc.want {
@@ -189,8 +189,15 @@ func TestJavaProfilerSampleWeights(t *testing.T) {
 					}
 				}
 				return nil
-			})
-			if err != nil {
+			}
+			if err := p.ReadDataLoop(ctx, func(*pipeline.SampleBatch) error {
+				t.Fatal("final sample delivered to read-loop sink")
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := p.Finalize(t.Context(), enqueue); err != nil {
 				t.Fatal(err)
 			}
 			if count != 1 {
@@ -309,6 +316,11 @@ func TestJavaProfilerStreamsAndDrainsFinalFile(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			if err := p.Finalize(ctx, func(batch *pipeline.SampleBatch) error { return pipe.Enqueue(ctx, batch) }); err != nil {
+				t.Fatal(err)
+			}
+
 			pipe.Close()
 			checkWindow(3)
 			err = <-pipelineDone

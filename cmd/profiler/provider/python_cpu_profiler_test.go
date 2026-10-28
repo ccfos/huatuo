@@ -86,6 +86,15 @@ func TestBuildPySpyArgs(t *testing.T) {
 	))
 }
 
+func collectPythonCPU(t *testing.T, p *pythonCPUProfiler, ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	t.Helper()
+	if err := p.ReadDataLoop(ctx, enqueue); err != nil {
+		return err
+	}
+
+	return p.Finalize(ctx, enqueue)
+}
+
 func TestPythonCPUProfilerReadDataLoopUsesOnlyMemfdSamples(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -125,8 +134,13 @@ func TestPythonCPUProfilerReadDataLoopUsesOnlyMemfdSamples(t *testing.T) {
 				pids: []int{123, 456},
 			}
 			var samples []aggregation.Sample
-			err := p.ReadDataLoop(
+			err := collectPythonCPU(
+
+				t,
+				p,
+
 				t.Context(),
+
 				func(batch *pipeline.SampleBatch) error { samples = append(samples, batch.Samples...); return nil },
 			)
 			if tt.wantErr != "" {
@@ -306,8 +320,13 @@ RAW
 			}
 			require.NoError(
 				t,
-				p.ReadDataLoop(
+				collectPythonCPU(
+
+					t,
+					p,
+
 					ctx,
+
 					func(batch *pipeline.SampleBatch) error { samples = append(samples, batch.Samples...); return nil },
 				),
 			)

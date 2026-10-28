@@ -78,6 +78,10 @@ func TestBuildCommandUsesTypedRequestWithoutShellExpansion(t *testing.T) {
 	if spec.Path != config.ProfilerPath || !slices.Equal(spec.Args, want) {
 		t.Fatalf("command spec = %+v, want args %q", spec, want)
 	}
+	if spec.StopSignal != 0 {
+		t.Fatalf("StopSignal = %v, want default SIGTERM to abort without publishing", spec.StopSignal)
+	}
+
 	if spec.MaxStdoutBytes != config.CommandOutputLimitBytes {
 		t.Fatalf("MaxStdoutBytes = %d", spec.MaxStdoutBytes)
 	}

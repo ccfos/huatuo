@@ -33,14 +33,16 @@ type ProfilerMeta struct {
 	AggregationConfig pipeline.AggregationConfig
 }
 
-// Profiler owns sampling resources; Run owns the pipeline and formatter.
-// ReadDataLoop receives one context. IsNormalStop permits bounded final delivery
-// using WithoutCancel; other cancellation causes abort collection. Real errors
-// must always be returned, even after a normal stop. No enqueue may outlive the
-// loop. Stop releases resources even after cancellation; implementations own
-// timeouts for external cleanup operations.
+// Profiler owns sampling resources; Run owns finalization policy and the pipeline.
+// Start receives the task context, which survives normal collection stop but
+// is canceled on failure or finalization timeout. ReadDataLoop receives the
+// collection context and returns nil on natural completion or normal stop;
+// real failures must be returned. Finalize stops production and delivers remaining
+// samples under the runner's context. No enqueue may outlive either method.
+// Stop releases resources on success and failure, with bounded external cleanup.
 type Profiler interface {
 	Start(ctx context.Context) error
 	ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error
+	Finalize(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error
 	Stop() error
 }
