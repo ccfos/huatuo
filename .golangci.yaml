@@ -1,4 +1,8 @@
 ---
+run:
+  concurrency: 2
+  timeout: 5m
+
 linters:
   disable-all: true
   enable:

@@ -200,7 +200,7 @@ check: vendor $(BPF_BUILD_STAMP)
 	@$(check-openapi)
 	@set -eu; $(generate-non-openapi)
 	@set -eu; $(format-sources)
-	@golangci-lint run -v ./... --timeout=5m --config .golangci.yaml
+	@GOMEMLIMIT=2GiB GOFLAGS="$(GOFLAGS) -p=2" golangci-lint run -v ./... --config .golangci.yaml
 	@git diff --exit-code
 
 vendor:
