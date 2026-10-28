@@ -29,7 +29,15 @@ const promNamespace = "huatuo_apiserver"
 
 func setupMetrics(_ context.Context, d *Daemon) (func(context.Context) error, error) {
 	registry := prometheus.NewRegistry()
-	runtime.RegisterCollector(registry, promNamespace)
+	runtime.RegisterCollector(
+		registry,
+		promNamespace,
+		runtime.InfoMetric{
+			Name:   "build_info",
+			Help:   "Build information for the application.",
+			Labels: d.opts.VersionInfo.Labels(),
+		},
+	)
 	agentRequests := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: promNamespace,
 		Subsystem: "agent",
