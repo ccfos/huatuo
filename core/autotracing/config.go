@@ -237,6 +237,9 @@ func configSnapshot() *Config {
 
 // Validate rejects invalid autotracing settings.
 func (c *Config) Validate() error {
+	if err := c.validateSharedCPUThresholds(); err != nil {
+		return err
+	}
 	for _, entry := range []struct {
 		name string
 		tool string
@@ -380,4 +383,21 @@ func (c *Config) Clone() *Config {
 		dst.CPUIdle.Filter = &filter
 	}
 	return &dst
+}
+
+func (c *Config) validateSharedCPUThresholds() error {
+	for _, threshold := range []struct {
+		name  string
+		value int64
+	}{
+		{"UserThreshold", c.CPUIdle.UserThreshold},
+		{"DeltaUserThreshold", c.CPUIdle.DeltaUserThreshold},
+		{"UsageThreshold", c.CPUIdle.UsageThreshold},
+		{"DeltaUsageThreshold", c.CPUIdle.DeltaUsageThreshold},
+	} {
+		if err := validateCPUPercentage(threshold.value); err != nil {
+			return fmt.Errorf("CPUIdle.%s: %w", threshold.name, err)
+		}
+	}
+	return nil
 }

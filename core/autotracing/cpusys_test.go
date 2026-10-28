@@ -319,7 +319,7 @@ func TestCPUSysTracingShouldTrace(t *testing.T) {
 				threshold:        cpuSysThreshold{usage: 45, delta: 20},
 				lastTraceAt:      tt.lastTraceAt,
 			}
-			if actual := tracer.shouldTrace(state, sampledAt); actual != tt.expected {
+			if actual := tracer.shouldTrace(&state, sampledAt); actual != tt.expected {
 				t.Fatalf("shouldTrace() = %t, want %t", actual, tt.expected)
 			}
 		})

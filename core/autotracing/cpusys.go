@@ -59,6 +59,9 @@ func newCPUSys() (*tracing.EventTracingAttr, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("validate cpu system config: %w", err)
 	}
+	if err := cfg.validateSharedCPUThresholds(); err != nil {
+		return nil, err
+	}
 
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuSysTracing{
@@ -66,6 +69,14 @@ func newCPUSys() (*tracing.EventTracingAttr, error) {
 			minTraceInterval: time.Duration(minTraceIntervalSeconds) * time.Second,
 			traceDuration:    time.Duration(traceDurationSeconds) * time.Second,
 			threshold:        threshold,
+			userThreshold: cpuSysThreshold{
+				usage: cfg.CPUIdle.UserThreshold,
+				delta: cfg.CPUIdle.DeltaUserThreshold,
+			},
+			totalThreshold: cpuSysThreshold{
+				usage: cfg.CPUIdle.UsageThreshold,
+				delta: cfg.CPUIdle.DeltaUsageThreshold,
+			},
 		},
 		Interval: 20,
 		Flag:     tracing.FlagTracing,
@@ -75,6 +86,8 @@ func newCPUSys() (*tracing.EventTracingAttr, error) {
 type cpuUsage struct {
 	system uint64
 	total  uint64
+	user   uint64
+	busy   uint64
 }
 
 type cpuSysTracing struct {
@@ -83,6 +96,8 @@ type cpuSysTracing struct {
 	traceDuration    time.Duration
 	threshold        cpuSysThreshold
 	lastTraceAt      time.Time
+	userThreshold    cpuSysThreshold
+	totalThreshold   cpuSysThreshold
 }
 
 type cpuSysState struct {
@@ -91,6 +106,10 @@ type cpuSysState struct {
 	systemPercentDelta int64
 	hasUsage           bool
 	hasSystemPercent   bool
+	userPercent        int64
+	userPercentDelta   int64
+	totalPercent       int64
+	totalPercentDelta  int64
 }
 
 type cpuSysTracingData struct {
@@ -99,11 +118,24 @@ type cpuSysTracingData struct {
 	SystemPercentDelta          int64                  `json:"system_percent_delta"`
 	SystemPercentDeltaThreshold int64                  `json:"system_percent_delta_threshold"`
 	FlameData                   []flamegraph.FrameData `json:"flamedata"`
+	UserPercent                 int64                  `json:"user_percent,omitempty"`
+	UserPercentThreshold        int64                  `json:"user_percent_threshold,omitempty"`
+	UserPercentDelta            int64                  `json:"user_percent_delta,omitempty"`
+	UserPercentDeltaThreshold   int64                  `json:"user_percent_delta_threshold,omitempty"`
+	TotalPercent                int64                  `json:"total_percent,omitempty"`
+	TotalPercentThreshold       int64                  `json:"total_percent_threshold,omitempty"`
+	TotalPercentDelta           int64                  `json:"total_percent_delta,omitempty"`
+	TotalPercentDeltaThreshold  int64                  `json:"total_percent_delta_threshold,omitempty"`
 }
 
 type cpuSysThreshold struct {
 	delta int64
 	usage int64
+}
+
+func (t cpuSysThreshold) additionalTrigger(percent, delta int64) bool {
+	// A zero shared usage threshold disables the corresponding host trigger.
+	return t.usage > 0 && percent > t.usage && delta > t.delta
 }
 
 func parseCPUUsage(r io.Reader) (cpuUsage, error) {
@@ -156,6 +188,13 @@ func parseCPUUsage(r io.Reader) (cpuUsage, error) {
 		if i == 2 {
 			usage.system = value
 		}
+		if i < 2 {
+			usage.user += value
+		}
+		// Waiting and stolen time cannot be explained by a local CPU profile.
+		if i < 3 || i == 5 || i == 6 {
+			usage.busy += value
+		}
 	}
 
 	return usage, nil
@@ -186,22 +225,27 @@ func (s *cpuSysState) update(usage cpuUsage) bool {
 
 	// Counter rollback would underflow uint64 subtraction, so restart
 	// percentage tracking from the current sample.
-	if usage.system < previousUsage.system || usage.total < previousUsage.total {
-		s.hasSystemPercent = false
-		s.systemPercent = 0
-		s.systemPercentDelta = 0
+	if usage.system < previousUsage.system || usage.total < previousUsage.total ||
+		usage.user < previousUsage.user || usage.busy < previousUsage.busy {
+		*s = cpuSysState{
+			previousUsage: usage,
+			hasUsage:      true,
+		}
 		return false
 	}
 
 	systemDelta := usage.system - previousUsage.system
 	totalDelta := usage.total - previousUsage.total
+	userDelta := usage.user - previousUsage.user
+	busyDelta := usage.busy - previousUsage.busy
 
 	// System time is part of total CPU time, so a larger delta means the
 	// sampled counters are inconsistent.
-	if systemDelta > totalDelta {
-		s.hasSystemPercent = false
-		s.systemPercent = 0
-		s.systemPercentDelta = 0
+	if systemDelta > totalDelta || userDelta > totalDelta || busyDelta > totalDelta {
+		*s = cpuSysState{
+			previousUsage: usage,
+			hasUsage:      true,
+		}
 		return false
 	}
 
@@ -211,32 +255,41 @@ func (s *cpuSysState) update(usage cpuUsage) bool {
 	}
 
 	systemPercent := int64(100 * systemDelta / totalDelta)
+	userPercent := int64(100 * userDelta / totalDelta)
+	totalPercent := int64(100 * busyDelta / totalDelta)
 	if !s.hasSystemPercent {
 		s.hasSystemPercent = true
 		s.systemPercent = systemPercent
 		s.systemPercentDelta = 0
+		s.userPercent = userPercent
+		s.totalPercent = totalPercent
 		return true
 	}
 
 	s.systemPercentDelta = systemPercent - s.systemPercent
 	s.systemPercent = systemPercent
+	s.userPercentDelta = userPercent - s.userPercent
+	s.userPercent = userPercent
+	s.totalPercentDelta = totalPercent - s.totalPercent
+	s.totalPercent = totalPercent
 	return true
 }
 
-func (c *cpuSysTracing) shouldTrace(state cpuSysState, sampledAt time.Time) bool {
-	exceedsThreshold := state.systemPercent > c.threshold.usage &&
-		state.systemPercentDelta > c.threshold.delta
-	if !exceedsThreshold {
+func (c *cpuSysTracing) shouldTrace(state *cpuSysState, sampledAt time.Time) bool {
+	if !c.lastTraceAt.IsZero() && sampledAt.Sub(c.lastTraceAt) < c.minTraceInterval {
 		return false
 	}
 
-	return c.lastTraceAt.IsZero() ||
-		sampledAt.Sub(c.lastTraceAt) >= c.minTraceInterval
+	exceedsThreshold := state.systemPercent > c.threshold.usage &&
+		state.systemPercentDelta > c.threshold.delta
+	exceedsThreshold = exceedsThreshold || c.userThreshold.additionalTrigger(state.userPercent, state.userPercentDelta) ||
+		c.totalThreshold.additionalTrigger(state.totalPercent, state.totalPercentDelta)
+	return exceedsThreshold
 }
 
 func (c *cpuSysTracing) saveCPUSysTrace(
 	traceTime timeutil.Timestamp,
-	state cpuSysState,
+	state *cpuSysState,
 	result profileResult,
 ) error {
 	tracerData := cpuSysTracingData{
@@ -244,6 +297,14 @@ func (c *cpuSysTracing) saveCPUSysTrace(
 		SystemPercentThreshold:      c.threshold.usage,
 		SystemPercentDelta:          state.systemPercentDelta,
 		SystemPercentDeltaThreshold: c.threshold.delta,
+		UserPercent:                 state.userPercent,
+		UserPercentThreshold:        c.userThreshold.usage,
+		UserPercentDelta:            state.userPercentDelta,
+		UserPercentDeltaThreshold:   c.userThreshold.delta,
+		TotalPercent:                state.totalPercent,
+		TotalPercentThreshold:       c.totalThreshold.usage,
+		TotalPercentDelta:           state.totalPercentDelta,
+		TotalPercentDeltaThreshold:  c.totalThreshold.delta,
 		FlameData:                   result.flameData,
 	}
 
@@ -279,7 +340,11 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if !state.update(usage) || !c.shouldTrace(state, sampledAt) {
+			if !state.update(usage) {
+				continue
+			}
+			log.Debug("sampled host cpu")
+			if !c.shouldTrace(&state, sampledAt) {
 				continue
 			}
 
@@ -288,6 +353,8 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 			log.WithField("cpu_system_percent", state.systemPercent).
 				WithField("tool", tool).
 				WithField("cpu_system_delta", state.systemPercentDelta).
+				WithField("cpu_user_percent", state.userPercent).
+				WithField("cpu_total_percent", state.totalPercent).
 				WithField("duration_seconds", int64(c.traceDuration/time.Second)).
 				Info("starting system-wide cpu profiling")
 
@@ -298,7 +365,7 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err := c.saveCPUSysTrace(traceTime, state, result); err != nil {
+			if err := c.saveCPUSysTrace(traceTime, &state, result); err != nil {
 				return err
 			}
 			c.lastTraceAt = traceTime.Time
