@@ -5,8 +5,6 @@
 #include <bpf/bpf_tracing.h>
 
 #include "bpf_common.h"
-#include "bpf_ratelimit.h"
-#include "bpf_tracepoint.h"
 #include "abi/hungtask_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
@@ -17,29 +15,17 @@ struct {
 	__uint(value_size, sizeof(u32));
 } hungtask_perf_events SEC(".maps");
 
-SEC("tracepoint/sched/sched_process_hang")
-int tracepoint_sched_process_hang(struct trace_event_raw_sched_process_hang *ctx)
+SEC("raw_tracepoint/sched_process_hang")
+int raw_sched_process_hang(struct bpf_raw_tracepoint_args *ctx)
 {
+	/* The current task is the detector, not the blocked task. */
+	struct task_struct *task = (void *)ctx->args[0];
 	struct hungtask_event info = {};
+	u32 cpu = bpf_core_enum_value(enum cgroup_subsys_id, cpu_cgrp_id);
 
-	/* sched_process_hang::pid identifies the hung task's TID. */
-	info.tid = ctx->pid;
-
-	/*
-	 * trace_event_raw_sched_process_hang::comm changed across kernels:
-	 *   pre-7.0: fixed-size __array(char, comm, TASK_COMM_LEN)
-	 *   7.0+:    __string(comm, ...) -> u32 __data_loc_comm offset/length
-	 */
-	if (bpf_core_field_exists(ctx->comm)) {
-		BPF_CORE_READ_STR_INTO(&info.comm, ctx, comm);
-	} else {
-		struct trace_event_raw_sched_process_hang___7_0_compat *ctx7 =
-			(struct trace_event_raw_sched_process_hang___7_0_compat *)ctx;
-		u32 dl = BPF_CORE_READ(ctx7, __data_loc_comm);
-
-		bpf_probe_read_str(info.comm, sizeof(info.comm),
-				   (void *)ctx + (dl & 0xffff));
-	}
+	info.tid = BPF_CORE_READ(task, pid);
+	BPF_CORE_READ_STR_INTO(&info.comm, task, comm);
+	info.cpu_css_addr = (u64)BPF_CORE_READ(task, cgroups, subsys[cpu]);
 
 	bpf_perf_event_output(ctx, &hungtask_perf_events,
 			      COMPAT_BPF_F_CURRENT_CPU, &info, sizeof(info));
