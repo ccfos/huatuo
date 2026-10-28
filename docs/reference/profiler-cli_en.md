@@ -17,7 +17,7 @@ Both `--output-path` and `--output-format` must be explicit. The declared defaul
 | `--type`, `-t` | None | All | Observation type: `cpu` or `memory`; required |
 | `--language`, `-l` | None | All | Target language: `c`, `c++`, `go`, `java`, or `python`; required |
 | `--pid`, `-p` | None | All | Target PID; Java and Python accept comma-separated PIDs, native collection accepts at most one |
-| `--container-id` | None | All | Target container ID; mutually exclusive with `--pid` |
+| `--container-id` | None | All | Target container ID; native CPU combines it with `--pid` as an AND filter using the host PID; otherwise mutually exclusive with `--pid` |
 | `--duration`, `-d` | `10` | All | Total collection duration in seconds, minimum 1 |
 | `--aggr-interval` | `10` | All | Aggregation interval in seconds; cannot exceed duration |
 | `--freq`, `-F` | `99` | CPU | Samples per second; Java maximum: 1000 |

@@ -262,6 +262,7 @@ run_guest_tests() {
 	export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
 	export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
 	export NATIVE_PROFILER_CONTAINERD_IMAGE=docker.io/library/busybox:1.36.1
+	export NATIVE_PROFILER_TEST_PRIVILEGED_CONTAINER=1
 
 	pwd
 	ls -alh .

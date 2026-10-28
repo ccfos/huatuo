@@ -168,6 +168,13 @@ assert_readiness_endpoint() {
 	fi
 }
 
+# assert_process_alive <pid> <start_time> <description>
+assert_process_alive() {
+	local pid=$1 start_time=$2 description=$3
+	! process_exited "${pid}" "${start_time}" \
+		|| fatal "${description}: PID ${pid} exited or its identity changed"
+}
+
 assert_log_has_no_failure() {
 	local log_file=$1 component=$2 status=0
 	local failure_pattern='(^|[[:space:]])panic:|(^|[[:space:]])level=(error|panic|fatal)([[:space:]]|$)|(^|[[:space:]])level="(error|panic|fatal)"([[:space:]]|$)|(^|[,{])[[:space:]]*"level"[[:space:]]*:[[:space:]]*"(error|panic|fatal)"'
@@ -281,6 +288,165 @@ wait_until() {
 profiler_ready() {
 	local stdout=$1
 	[[ -f "${stdout}" ]] && grep -q "data reading loop started" "${stdout}"
+}
+
+# Expose the real PID, start time and pipes to the calling Shell test. A
+# temporary FIFO writer keeps a fast child exit from blocking the parent's open.
+# Callers own cleanup and close the returned descriptors when done.
+start_piped_process() {
+	local prefix=$1 gate_fd ready child_pid child_start_time
+	shift
+	mkfifo "${prefix}.stdin" "${prefix}.stdout"
+	exec {PROCESS_INPUT_FD}<> "${prefix}.stdin"
+	exec {gate_fd}<> "${prefix}.stdout"
+	(
+		exec {gate_fd}>&-
+		exec {PROCESS_INPUT_FD}>&-
+		# Record identity before exec so even a fast exit cannot race PID reuse.
+		child_pid=${BASHPID}
+		child_start_time=$(process_start_time "${child_pid}") || exit 1
+		printf 'pipe-ready %s\n' "${child_start_time}"
+		exec setsid "$@"
+	) < "${prefix}.stdin" > "${prefix}.stdout" 2> "${prefix}.err" &
+	PROCESS_PID=$!
+	exec {PROCESS_OUTPUT_FD}< "${prefix}.stdout"
+	# Keep the gate until the child owns stdout, avoiding a transient EOF if
+	# the parent reaches read before the child has opened its redirections.
+	IFS=' ' read -r -t 15 -u "${PROCESS_OUTPUT_FD}" ready PROCESS_START_TIME \
+		&& [[ ${ready} == pipe-ready && ${PROCESS_START_TIME} =~ ^[0-9]+$ ]] \
+		|| fatal "process pipe did not open: ${prefix}"
+	exec {gate_fd}>&-
+}
+
+assert_process_message() {
+	local output_fd=$1 output_log=$2 expected=$3 timeout=${4:-15}
+	local line remaining deadline=$((SECONDS + timeout))
+	while ((SECONDS < deadline)); do
+		remaining=$((deadline - SECONDS))
+		IFS= read -r -t "${remaining}" -u "${output_fd}" line \
+			|| fatal "process exited or timed out before '${expected}'; see ${output_log}"
+		printf '%s\n' "${line}" >> "${output_log}"
+		[[ ${line} == *"${expected}"* ]] && return 0
+	done
+	fatal "timed out waiting for '${expected}'; see ${output_log}"
+}
+
+# Only live jobs from this Shell are eligible for teardown. Reaped PIDs may
+# already have been reused; do not keep a global registry of old process IDs.
+cleanup_piped_processes() {
+	local pid
+	while IFS= read -r pid; do
+		kill -KILL -- "-${pid}" 2> /dev/null || kill -KILL "${pid}" 2> /dev/null || true
+		wait "${pid}" 2> /dev/null || true
+	done < <(jobs -pr)
+}
+
+# Shared by Java, Python and container exception tests; scenario choices and
+# fault injection stay in the caller. Only one profiler runs at a time.
+start_exception_profiler() {
+	local out_dir=$1 language=$2 duration=$3 interval=$4
+	shift 4
+	mkdir -p "${out_dir}"
+	PROFILER_OUT="${out_dir}/profiler.out"
+	PROFILER_ERR="${out_dir}/profiler.err"
+	PROFILER_STACKS="${out_dir}/stacks.json"
+	: > "${PROFILER_OUT}"
+	: > "${PROFILER_STACKS}"
+	start_piped_process "${out_dir}/profiler" "${ROOT_DIR}/_output/bin/profiler" \
+		--type cpu --language "${language}" --duration "${duration}" \
+		--aggr-interval "${interval}" --freq 99 \
+		--output-format json --output-path - --log-level info "$@"
+	PROFILER_PID=${PROCESS_PID}
+	PROFILER_OUTPUT_FD=${PROCESS_OUTPUT_FD}
+	exec {PROCESS_INPUT_FD}>&-
+}
+
+# Decode only complete profile records, keeping stack names and PID labels
+# together. Invalid profile JSON must fail, rather than look like no samples.
+read_profiler_output() {
+	local timeout=$1 line
+	IFS= read -r -t "${timeout}" -u "${PROFILER_OUTPUT_FD}" line || return $?
+	printf '%s\n' "${line}" >> "${PROFILER_OUT}"
+	case ${line} in
+	'{"profile_type":'* | '{"container_id":'*)
+		jq -c '
+			.profile as $p
+			| ($p.function // [] | map({key: (.id | tostring), value: $p.string_table[.name]}) | from_entries) as $functions
+			| ($p.location // [] | map({key: (.id | tostring), value: [.line[]? | $functions[.function_id | tostring]]}) | from_entries) as $locations
+			| $p.sample[]? | select(any(.value[]; tonumber > 0))
+			| {pid: ([.label[]? | select($p.string_table[.key] == "pid") | $p.string_table[.str]][0]),
+			   names: [.location_id[] | $locations[tostring][]]}
+		' <<< "${line}" >> "${PROFILER_STACKS}" \
+			|| fatal "invalid profiler output: ${PROFILER_OUT}"
+		;;
+	esac
+}
+
+profiler_has_stack() {
+	local pid=$1 method=$2
+	jq -se --arg pid "${pid}" --arg method "${method}" '
+		any(.[]; ($pid == "*" or .pid == $pid) and any(.names[]; contains($method)))
+	' "${PROFILER_STACKS}" > /dev/null
+}
+
+assert_profiler_stack() {
+	profiler_has_stack "$@" || fatal "missing stack PID=$1 method=$2; see ${PROFILER_OUT}"
+}
+
+assert_profiler_samples_before_deadline() {
+	local pid=$1 method=$2 deadline=$((SECONDS + 15))
+	while ! profiler_has_stack "${pid}" "${method}"; do
+		((SECONDS < deadline)) || fatal "timed out waiting for ${method}; see ${PROFILER_OUT}"
+		read_profiler_output "$((deadline - SECONDS))" \
+			|| fatal "profiler exited or timed out before ${method}; see ${PROFILER_ERR}"
+	done
+}
+
+# assert_profiler_exit <expected_status> [timeout_seconds]
+assert_profiler_exit() {
+	local expected=$1 timeout=${2:-15} status=0 read_status
+	local deadline=$((SECONDS + timeout))
+	while true; do
+		((SECONDS < deadline)) || fatal "profiler did not finish; see ${PROFILER_ERR}"
+		read_status=0
+		read_profiler_output "$((deadline - SECONDS))" || read_status=$?
+		[[ ${read_status} -eq 0 ]] && continue
+		[[ ${read_status} -eq 1 ]] || fatal "profiler output timed out; see ${PROFILER_ERR}"
+		break
+	done
+	exec {PROFILER_OUTPUT_FD}<&-
+	# EOF can precede process exit. Use only the remaining drain budget before
+	# collecting the exit status in the parent Shell.
+	process_exited "${PROFILER_PID}" \
+		|| wait_until "$((deadline - SECONDS))" 0.1 process_exited "${PROFILER_PID}" \
+		|| fatal "profiler did not exit before deadline; see ${PROFILER_ERR}"
+	wait "${PROFILER_PID}" || status=$?
+	PROFILER_PID=""
+	assert_eq "${status}" "${expected}" "profiler exit; see ${PROFILER_ERR}" \
+		|| fatal "unexpected profiler exit status"
+	! grep -q 'panic:' "${PROFILER_OUT}" "${PROFILER_ERR}" || fatal "profiler panicked"
+}
+
+# The FIFO and every recorded collector must finish within one deadline.
+# Call before fallback cleanup so a leaked collector fails the scenario.
+assert_collectors_exited() {
+	local timeout=${1:-5} line status index
+	local deadline=$((SECONDS + timeout))
+	while true; do
+		((SECONDS < deadline)) || fatal "py-spy collectors did not close their output pipe"
+		status=0
+		IFS= read -r -t "$((deadline - SECONDS))" -u "${collector_fd}" line || status=$?
+		[[ ${status} -ne 1 ]] || break
+		[[ ${status} -eq 0 ]] || fatal "py-spy collector still holds its output pipe"
+		printf '%s\n' "${line}" >> "${case_dir}/collectors.out"
+	done
+	exec {collector_fd}<&-
+	for index in "${!collector_pids[@]}"; do
+		process_exited "${collector_pids[index]}" "${collector_start_times[index]}" \
+			|| wait_until "$((deadline - SECONDS))" 0.1 process_exited \
+				"${collector_pids[index]}" "${collector_start_times[index]}" \
+			|| fatal "collector PID ${collector_pids[index]} did not exit before deadline"
+	done
 }
 
 kprobe_available() {
@@ -491,12 +657,24 @@ assert_huatuo_bamai_shutdown() {
 		|| fatal "huatuo-bamai pid=${pid} did not exit successfully: status=${status}"
 }
 
-# process_exited <pid>
-# Bash may reap a child between the procfs existence check and the read.
+# Field 22 identifies a process across exec and PID reuse. Strip comm first:
+# its parenthesized value may contain spaces or closing parentheses.
+process_start_time() {
+	local stat
+	local -a fields
+	IFS= read -r stat < "/proc/$1/stat" || return 1
+	read -r -a fields <<< "${stat##*) }"
+	printf '%s\n' "${fields[19]}"
+}
+
+# process_exited <pid> [start_time]
+# Read identity and state together; a replacement PID is not the original child.
 process_exited() {
-	local state
-	state=$(awk '{print $3}' "/proc/$1/stat" 2> /dev/null) || return 0
-	[[ ${state} == Z ]]
+	local stat
+	local -a fields
+	IFS= read -r stat 2> /dev/null < "/proc/$1/stat" || return 0
+	read -r -a fields <<< "${stat##*) }"
+	[[ ${fields[0]} == Z || ${fields[0]} == X || ($# -ge 2 && ${fields[19]} != "$2") ]]
 }
 
 # Call in the shell that started the daemon to verify its actual exit status.
