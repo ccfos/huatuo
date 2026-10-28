@@ -373,8 +373,8 @@ assert_cpuidle_invalid_config() (
 assert_cpuidle_invalid_config interval 'sampling interval: timer duration must be positive'
 assert_cpuidle_invalid_config cooldown 'minimum trace interval: timer duration must be positive'
 assert_cpuidle_invalid_config duration 'profile duration must be positive'
-assert_cpuidle_invalid_config negative 'user threshold: cpu percentage must be between 0 and 100'
-assert_cpuidle_invalid_config percentage 'total delta threshold: cpu percentage must be between 0 and 100'
+assert_cpuidle_invalid_config negative 'CPUIdle.UserThreshold: cpu percentage must be between 0 and 100'
+assert_cpuidle_invalid_config percentage 'CPUIdle.DeltaUsageThreshold: cpu percentage must be between 0 and 100'
 assert_cpuidle_invalid_config regex 'build container filter'
 
 storage_start elasticsearch_v8

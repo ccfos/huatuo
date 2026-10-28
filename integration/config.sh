@@ -325,6 +325,10 @@ write_config_bamai_cpusys_autotracing() {
     DeltaSysThreshold = 20
     Interval = 1
     RunTracingToolTimeout = 1
+    UserThreshold = 100
+    UsageThreshold = 100
+    DeltaUserThreshold = 45
+    DeltaUsageThreshold = 45
 
 EOF
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
