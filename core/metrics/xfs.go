@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"strings"
 
+	procfsxfs "github.com/prometheus/procfs/xfs"
+
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs/dev"
 	"github.com/ccfos/huatuo/internal/procfs/xfs"
@@ -179,12 +181,48 @@ func (c *xfsCollector) Update() ([]*metric.Data, error) {
 }
 
 func getXFSStatsList() ([]*xfs.Stats, error) {
-	fs, err := xfs.NewDefaultFS()
+	if _, err := xfs.NewDefaultFS(); err != nil {
+		return nil, err
+	}
+
+	paths, err := filepath.Glob(xfs.Path("*", "stats", "stats"))
 	if err != nil {
 		return nil, err
 	}
 
-	return fs.SysStats()
+	statsList := make([]*xfs.Stats, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+
+		var collected strings.Builder
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+
+			// Unused groups can contain sublabels or wider counters. Filter
+			// before parsing, but retain strict validation of collected groups.
+			switch fields[0] {
+			case "extent_alloc", "ig", "push_ail", "buf":
+				collected.WriteString(line)
+				collected.WriteByte('\n')
+			}
+		}
+
+		stats, err := procfsxfs.ParseStats(strings.NewReader(collected.String()))
+		if err != nil {
+			return nil, fmt.Errorf("parse XFS statistics %s: %w", path, err)
+		}
+
+		stats.Name = filepath.Base(filepath.Dir(filepath.Dir(path)))
+		statsList = append(statsList, stats)
+	}
+
+	return statsList, nil
 }
 
 // getXLogMaxBytes returns the maximum xlog size (in bytes) for each XFS device
