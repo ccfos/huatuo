@@ -412,3 +412,23 @@ func TestPrometheusMetric(t *testing.T) {
 		})
 	}
 }
+
+func TestContainerMetricHostFallback(t *testing.T) {
+	gauge := NewContainerGaugeData(nil, "latency", 5, "help", map[string]string{"source": "fixture"})
+	counter := NewContainerCounterData(nil, "latency", 5, "help", map[string]string{"source": "fixture"})
+	for _, datum := range []*Data{gauge, counter} {
+		if datum.Name() != "latency" || datum.Value != 5 || datum.Help() != "help" {
+			t.Fatalf("invalid host metric: %v", datum)
+		}
+		labels := datum.Labels()
+		if len(labels) != 3 || labels["source"] != "fixture" || labels[LabelHost] == "" {
+			t.Fatalf("invalid host labels: %v", labels)
+		}
+		if _, ok := labels[LabelContainerName]; ok {
+			t.Fatal("host metric has container labels")
+		}
+	}
+	if gauge.Type() != MetricTypeGauge || counter.Type() != MetricTypeCounter {
+		t.Fatal("host metric type changed")
+	}
+}

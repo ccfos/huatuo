@@ -496,7 +496,12 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 | `IntervalTracing` | 两次追踪之间的最小间隔，单位秒，默认 `1800`。 |
 | `RunTracingToolTimeout` | 采集时长，单位秒，默认 `10`。 |
 
-**触发条件**：满足追踪间隔后，系统态 CPU 使用率严格大于 `SysThreshold`，且其增量严格大于 `DeltaSysThreshold` 时触发。
+**触发条件**：共用冷却结束后，system/user/total 任一组的使用率及增幅同时严格超过阈值即可触发。
+system 使用上表中的 CPUSys 阈值；user 和 total 分别复用 AutoTracing.CPUIdle 的
+UserThreshold/DeltaUserThreshold（默认 75/45）和
+UsageThreshold/DeltaUsageThreshold（默认 90/55），无需新增 CPUSys 参数。
+调整这些现有阈值会同时影响主机和容器触发；使用率单位为百分比，增幅单位为百分点。
+共享使用率阈值设为 0 时，关闭对应的主机触发。CPUSys 的工具、采样周期、采集时长和冷却仍独立配置。
 
 #### 7.3 容器 D 状态负载
 

@@ -986,3 +986,39 @@ integration_isolate_run_directory() {
 		exec bash "$@"
 	' bash "$0" "$@"
 }
+
+assert_daemon_logs() {
+	local file=$1
+	[[ -r ${file} ]] || fatal "daemon log is not readable: ${file}"
+	if grep -qiE 'level="?(warn|warning|error|panic|fatal)"?|"level":"(warn|warning|error|panic|fatal)"|panic:' "${file}"; then
+		cat "${file}" >&2
+		fatal "unexpected warning/error in ${file}"
+	fi
+}
+
+# These long-running tracers increment hitcount when Start returns, not per event.
+# A zero count after a trigger also detects an unexpected tracer restart.
+assert_long_running_tracing_metrics() {
+	local tracer=$1 region=$2 enabled=$3
+	local running=${4:-${enabled}}
+	huatuo_bamai_collect_metrics
+	awk -v tracer="${tracer}" -v region="${region}" -v enabled="${enabled}" -v expected_running="${running}" '
+ function labels_ok(line) {
+  return line ~ /[{,]host="[^"]+"/ && index(line, "region=\"" region "\"") > 0
+ }
+ $0 == "# TYPE huatuo_bamai_tracing_status_hitcount gauge" { hit_type=1 }
+ $0 == "# TYPE huatuo_bamai_tracing_status_running gauge" { running_type=1 }
+ index($0,"huatuo_bamai_tracing_status_hitcount{")==1 && $0 ~ ("[{,]tracing=\"" tracer "\"") {
+  hits++
+  if (!labels_ok($0) || $NF !~ /^[0-9]+$/ || $NF+0 != 0) bad=1
+ }
+ index($0,"huatuo_bamai_tracing_status_running{")==1 {
+  running++
+  if (!labels_ok($0) || $NF !~ /^[0-9]+$/ || $NF+0 != expected_running) bad=1
+ }
+ END { exit bad || hits != enabled || running != 1 || !running_type || (enabled && !hit_type) }
+ ' "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt" || {
+		cat "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt" >&2
+		fatal "invalid tracing metrics for ${tracer}: expected enabled=${enabled}, running=${running}, hitcount=0"
+	}
+}

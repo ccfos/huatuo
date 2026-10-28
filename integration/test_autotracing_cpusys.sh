@@ -41,7 +41,8 @@ cp "${ROOT_DIR}/integration/testdata/tools/test_perf.sh" "${CPUSYS_FIXTURE_ROOT}
 # order. cpusys calculates total as their sum and system usage from deltas.
 hold_cpu_sample() {
 	local counters=$1
-	printf 'cpu %s\n' "${counters}" > "${CPUSYS_PROC_STAT}"
+	printf 'cpu %s\n' "${counters}" > "${CPUSYS_PROC_STAT}.next"
+	mv "${CPUSYS_PROC_STAT}.next" "${CPUSYS_PROC_STAT}"
 	# Hold each value across at least two one-second sampling ticks so the
 	# result does not depend on where the update lands relative to a tick.
 	sleep 3
@@ -113,3 +114,72 @@ wait_until 10 1 cpusys_event_is_valid \
 call_count=$(wc -l < "${CPUSYS_PERF_CALLS_FILE}")
 [[ "${call_count}" -eq 1 ]] \
 	|| fatal "cpusys invoked perf ${call_count} times, expected once"
+
+# Exercise each new trigger independently through the same daemon and store.
+# Keep the real workload case separate so these contracts also run off-VM.
+write_config_additional_cpu() {
+	write_config_bamai_cpusys_autotracing | awk -v mode="${cpusys_mode}" '
+ /SysThreshold = 45/ { sub(/45/, "100") }
+ /DeltaSysThreshold = 20/ { sub(/20/, "100") }
+ /UserThreshold = 100/ { sub(/100/, mode == "user" ? 75 : 100) }
+ /UsageThreshold = 100/ { sub(/100/, mode == "total" ? 75 : 100) }
+ { print }
+ /\[AutoTracing.CPUSys\]/ {
+   print "    IntervalTracing = 1800"
+ }'
+}
+assert_additional_cpu_event() {
+	[[ -s ${CPUSYS_EVENT} ]] || return 1
+	jq -e -s --arg mode "${cpusys_mode}" '
+ length == 1 and (.[0] |
+ .tracer_name == "cpusys" and .tracer_type == "autotracing"
+ and (.container_id // "") == ""
+ and .tracer_data[$mode + "_percent"] == 80
+ and .tracer_data[$mode + "_percent_delta"] == 70
+ and .tracer_data[$mode + "_percent_threshold"] == 75
+ and .tracer_data[$mode + "_percent_delta_threshold"] == 45
+ and .tracer_data.flamedata == [{"level":0,"value":1,"self":1,"label":"fixture_system_work"}])
+ ' "${CPUSYS_EVENT}" > /dev/null
+}
+cpusys_sample_after() {
+	local before=$1 count
+	count=$(grep -Fc 'msg="sampled host cpu"' "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" || true)
+	[[ ${count} -gt ${before} ]]
+}
+hold_additional_cpu_sample() {
+	local before
+	before=$(grep -Fc 'msg="sampled host cpu"' "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" || true)
+	printf 'cpu %s\n' "$1" > "${CPUSYS_PROC_STAT}.next"
+	mv "${CPUSYS_PROC_STAT}.next" "${CPUSYS_PROC_STAT}"
+	wait_until 5 .05 cpusys_sample_after "${before}" || fatal "CPU fixture sample was not consumed"
+}
+for cpusys_mode in user total; do
+	assert_huatuo_bamai_shutdown_with_signal TERM
+	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-before-${cpusys_mode}.log"
+	cp "${CPUSYS_EVENT}" "${CPUSYS_EVENT}.before-${cpusys_mode}"
+	rm -f "${CPUSYS_EVENT}" "${CPUSYS_PERF_CALLS_FILE}"
+	printf 'cpu 100 0 100 800\n' > "${CPUSYS_PROC_STAT}"
+	integration_huatuo_bamai_start write_config_additional_cpu \
+		--region dev --procfs-prefix "${CPUSYS_FIXTURE_ROOT}" \
+		--tools-bin-dir "${CPUSYS_FIXTURE_ROOT}/tools" --disable-kubelet --log-debug
+	if [[ ${cpusys_mode} == user ]]; then
+		hold_additional_cpu_sample "110 0 100 890"
+		perf_has_run && fatal "user trigger fired below threshold"
+		hold_additional_cpu_sample "190 0 100 910"
+	else
+		hold_additional_cpu_sample "105 0 105 890"
+		perf_has_run && fatal "total trigger fired below threshold"
+		hold_additional_cpu_sample "145 0 145 910"
+	fi
+	wait_until 10 .1 assert_additional_cpu_event || fatal "${cpusys_mode} CPU event invalid or missing"
+	if [[ ${cpusys_mode} == user ]]; then
+		hold_additional_cpu_sample "200 0 100 1000"
+		hold_additional_cpu_sample "280 0 100 1020"
+	else
+		hold_additional_cpu_sample "150 0 150 1000"
+		hold_additional_cpu_sample "190 0 190 1020"
+	fi
+	[[ $(wc -l < "${CPUSYS_PERF_CALLS_FILE}") -eq 1 ]] || fatal "${cpusys_mode} trigger bypassed cooldown"
+	assert_additional_cpu_event || fatal "${cpusys_mode} cooldown emitted another event"
+done
+assert_huatuo_bamai_shutdown_with_signal TERM
