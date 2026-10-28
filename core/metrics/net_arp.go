@@ -67,6 +67,7 @@ func nodeArpCacheEntries() ([]*metric.Data, error) {
 
 func (c *arpCollector) Update() ([]*metric.Data, error) {
 	var data []*metric.Data
+	var errs []error
 
 	containers, err := pod.NormalContainers()
 	if err != nil {
@@ -76,8 +77,8 @@ func (c *arpCollector) Update() ([]*metric.Data, error) {
 	for _, container := range containers {
 		count, err := CountLines(procfs.Path(strconv.Itoa(container.InitPid), "net/arp"))
 		if err != nil {
-			// return data collected
-			return data, err
+			errs = append(errs, err)
+			continue
 		}
 
 		data = append(data, metric.NewContainerGaugeData(container, "entries", float64(count-1), "arp entries in container netns", nil))
@@ -85,8 +86,8 @@ func (c *arpCollector) Update() ([]*metric.Data, error) {
 
 	entries, err := nodeArpCacheEntries()
 	if err != nil {
-		return data, err
+		errs = append(errs, err)
 	}
 
-	return append(data, entries...), nil
+	return append(data, entries...), errors.Join(errs...)
 }
