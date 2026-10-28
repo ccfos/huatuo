@@ -1096,6 +1096,54 @@
           ],
           "title": "Container CPU Throttle",
           "type": "timeseries"
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "ops"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 53,
+          "title": "Container Hung Task Event Rate",
+          "description": "Rate of received hung task events attributed to each container, before trace backoff. Repeated reports count separately; counts reset on agent restart.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "rate(huatuo_bamai_hungtask_container_total{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}[5m])",
+              "legendFormat": "Events/s {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 79
+          }
         }
       ],
       "targets": [
@@ -1831,6 +1879,64 @@
           ],
           "title": "Host kswapd Reclaim Volume (Cumulative)",
           "type": "timeseries"
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 52,
+          "title": "Container Reclaim and Compaction Stall Time (Cumulative)",
+          "description": "Cumulative container direct-reclaim and compaction stall time in milliseconds. Totals reset when the cgroup is released or BPF is reloaded; missing records are omitted.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_memory_free_container_allocpages_stall{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}",
+              "legendFormat": "Direct reclaim {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_memory_free_container_compaction_stall{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}",
+              "legendFormat": "Compaction {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "B",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 98
+          }
         }
       ],
       "targets": [

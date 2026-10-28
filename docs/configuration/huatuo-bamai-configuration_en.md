@@ -445,7 +445,7 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 - `Included` only: Monitor only matching containers.
 - Both: Monitor containers that match `Included` and do not match `Excluded`.
 
-#### 7.2 Host system CPU spikes
+#### 7.2 Host CPU bursts
 
 ```toml
 # cpusys
@@ -480,6 +480,10 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 [AutoTracing.CPUSys]
     # Tool: perf (default) or profiler. Both use RunTracingToolTimeout.
     # Tool = "perf"
+    # UserThreshold = 75
+    # DeltaUserThreshold = 45
+    # UsageThreshold = 90
+    # DeltaUsageThreshold = 55
     # SysThreshold = 45
     # DeltaSysThreshold = 20
     # Interval = 10
@@ -489,13 +493,22 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 
 | Field | Description |
 | --- | --- |
+| `UserThreshold` / `DeltaUserThreshold` | Host user-mode utilization / increase thresholds. Defaults: `75%` / `45` percentage points. |
+| `UsageThreshold` / `DeltaUsageThreshold` | Host executing-total utilization / increase thresholds. Defaults: `90%` / `55` percentage points. |
 | `SysThreshold` | Host system-mode CPU utilization threshold. Default: `45%`. |
 | `DeltaSysThreshold` | System-mode CPU utilization increase over the previous sample. Default: `20` percentage points. |
 | `Interval` | Host CPU utilization sampling interval in seconds. Default: `10`. |
 | `IntervalTracing` | Minimum interval between traces, in seconds. Default: `1800`. |
 | `RunTracingToolTimeout` | Collection duration in seconds. Default: `10`. |
 
-**Trigger conditions**: Once the tracing interval has elapsed, tracing starts when system-mode CPU utilization strictly exceeds `SysThreshold` and its increase strictly exceeds `DeltaSysThreshold`.
+**Trigger conditions**: After the shared cooldown, any system/user/total pair
+can trigger profiling when both utilization and its increase strictly exceed
+their thresholds. System uses the CPUSys thresholds above. User and total use
+CPUSys.UserThreshold/DeltaUserThreshold (75/45) and
+CPUSys.UsageThreshold/DeltaUsageThreshold (90/55), independently of CPUIdle.
+Utilization is percent and delta is percentage points. All three groups use
+strict threshold comparisons; zero is a normal threshold, not a disable switch.
+All three host conditions share the CPUSys capture cooldown.
 
 #### 7.3 Container D-state load
 

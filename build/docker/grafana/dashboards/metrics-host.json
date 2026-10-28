@@ -2388,6 +2388,54 @@
           ],
           "title": "Anon Pages",
           "type": "timeseries"
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 91,
+          "title": "Host Memcg Reclaim Events (Cumulative)",
+          "description": "Cumulative host-wide memcg reclaim count, including container activity. Do not add container counts to this total. Resets on BPF reload.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_memory_reclaim_directstall{host=~\"$host\",region=~\"$region\"}",
+              "legendFormat": "Memcg reclaim {{host}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 108
+          }
         }
       ],
       "targets": [
