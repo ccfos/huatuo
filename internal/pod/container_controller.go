@@ -111,6 +111,7 @@ func ReleaseManager() {
 	}
 	controller.cancel()
 	<-controller.done
+	kubeletPodListRunningEnabled.Store(false)
 	releaseCgroupLifecycle()
 }
 
