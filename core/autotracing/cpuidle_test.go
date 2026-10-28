@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/stats"
 	"github.com/ccfos/huatuo/internal/pod"
@@ -502,39 +504,109 @@ func TestCPUIdleTracingSelectTraceTargetHonorsMinTraceInterval(t *testing.T) {
 func TestCPUIdleTracingUpdateContainerCPUStatesErrors(t *testing.T) {
 	t.Parallel()
 
-	previousSampleAt := time.Unix(99, 0)
-	reader := &stubContainerCPUReader{
-		quotaErr: map[string]error{
-			"deleted": os.ErrNotExist,
+	tests := []struct {
+		name     string
+		quotaErr error
+		usageErr error
+		wantErr  error
+	}{
+		{
+			name:     "quota file removed before open",
+			quotaErr: os.ErrNotExist,
+		},
+		{
+			name:     "quota cgroup removed during read",
+			quotaErr: unix.ENODEV,
+		},
+		{
+			name:     "usage file removed before open",
+			usageErr: os.ErrNotExist,
+		},
+		{
+			name:     "usage cgroup removed during read",
+			usageErr: unix.ENODEV,
+		},
+		{
+			name:     "quota permission denied",
+			quotaErr: os.ErrPermission,
+			wantErr:  os.ErrPermission,
+		},
+		{
+			name:     "usage io failure",
+			usageErr: unix.EIO,
+			wantErr:  unix.EIO,
 		},
 	}
-	tracer := &cpuIdleTracing{
-		cgroupReader: reader,
-		containers: map[string]*containerCPUState{
-			"deleted": {
-				containerID:    "deleted",
-				cgroupPath:     "deleted",
-				currentPercent: cpuUsageBreakdown[int64]{user: 80},
-				percentDelta:   cpuUsageBreakdown[int64]{user: 45},
-				hasPercent:     true,
-				lastSampleAt:   previousSampleAt,
-			},
-		},
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	sampledAt := time.Unix(100, 0)
-	if err := tracer.updateContainerCPUStates(sampledAt); err != nil {
-		t.Fatalf("updateContainerCPUStates(deleted) error = %v", err)
-	}
-	if traceTarget := tracer.selectTraceTarget(sampledAt); traceTarget != nil {
-		t.Errorf("selectTraceTarget(deleted) = %q, want nil", traceTarget.containerID)
-	}
+			quota := stats.CpuQuota{
+				Quota:             100_000,
+				Period:            100_000,
+				EffectiveCPUCount: 1,
+			}
+			reader := &stubContainerCPUReader{
+				quota: map[string]stats.CpuQuota{
+					"removed": quota,
+					"running": quota,
+				},
+				quotaErr: make(map[string]error),
+				usageErr: make(map[string]error),
+			}
+			if tt.quotaErr != nil {
+				reader.quotaErr["removed"] = &os.PathError{
+					Op:   "read",
+					Path: "removed/cpu.max",
+					Err:  tt.quotaErr,
+				}
+			}
+			if tt.usageErr != nil {
+				reader.usageErr["removed"] = &os.PathError{
+					Op:   "read",
+					Path: "removed/cpu.stat",
+					Err:  tt.usageErr,
+				}
+			}
 
-	readErr := errors.New("permission denied")
-	reader.quotaErr["deleted"] = readErr
-	err := tracer.updateContainerCPUStates(time.Unix(101, 0))
-	if !errors.Is(err, readErr) {
-		t.Fatalf("updateContainerCPUStates(failed) error = %v, want %v", err, readErr)
+			previousSampleAt := time.Unix(99, 0)
+			tracer := &cpuIdleTracing{
+				cgroupReader: reader,
+				containers: map[string]*containerCPUState{
+					"removed": {
+						containerID:    "removed",
+						cgroupPath:     "removed",
+						currentPercent: cpuUsageBreakdown[int64]{user: 80},
+						percentDelta:   cpuUsageBreakdown[int64]{user: 45},
+						hasPercent:     true,
+						lastSampleAt:   previousSampleAt,
+					},
+					"running": {
+						containerID: "running",
+						cgroupPath:  "running",
+					},
+				},
+			}
+
+			sampledAt := time.Unix(100, 0)
+			err := tracer.updateContainerCPUStates(sampledAt)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("updateContainerCPUStates() error = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantErr != nil {
+				return
+			}
+
+			if !tracer.containers["removed"].lastSampleAt.Equal(previousSampleAt) {
+				t.Error("failed sample replaced the removed container's measurement")
+			}
+			if !tracer.containers["running"].lastSampleAt.Equal(sampledAt) {
+				t.Error("running container was not sampled after a container disappeared")
+			}
+			if traceTarget := tracer.selectTraceTarget(sampledAt); traceTarget != nil {
+				t.Errorf("selectTraceTarget() = %q, want nil", traceTarget.containerID)
+			}
+		})
 	}
 }
 

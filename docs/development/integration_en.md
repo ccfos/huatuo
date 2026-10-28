@@ -147,10 +147,6 @@ kills the test Node and verifies both the old task's failure and a new task afte
 restart. Expected fault logs are allowed; runtime panics are rejected. Grafana
 page rendering is outside this coverage.
 
-Pods created by `k8s_create_pod` use a one-second termination grace period. Cleanup still
-waits for pod deletion, and container discovery tests still verify that Huatuo
-removes their metadata.
-
 The runner checks only that `_output` exists, not individual binaries or BPF artifacts. Run `make build` before invoking scripts directly. An existing directory does not imply a complete build; missing artifacts fail when used.
 
 Cases use one helper to check commands on PATH or executable paths and skip if they are missing:

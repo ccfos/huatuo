@@ -59,9 +59,8 @@ assert_helper_log_levels() {
 	log_info "text and JSON log levels checked"
 }
 
-assert_helper_pod_lifecycle() {
-	# Check idle Pod manifests and lifecycle errors without requiring a cluster.
-	for helpers_pod_failure in none run delete; do
+assert_helper_pod_deletion() {
+	for helpers_pod_failure in none delete; do
 		helpers_pod_calls="${HUATUO_BAMAI_TEST_TMPDIR}/pods-${helpers_pod_failure}.log"
 		helpers_pod_status=0
 		TEST_POD_CALLS="${helpers_pod_calls}" TEST_POD_FAILURE="${helpers_pod_failure}" bash -euc '
@@ -70,28 +69,21 @@ kubectl() {
  printf "%s\n" "$*" >> "$TEST_POD_CALLS"
  [[ $1 != "$TEST_POD_FAILURE" ]] || return 42
 }
-k8s_create_pod fixtures test busybox:1.36.1 app=test 2 || exit $?
 k8s_delete_pod fixtures app=test
 ' > /dev/null 2>&1 || helpers_pod_status=$?
 		if [[ ${helpers_pod_failure} == none ]]; then
-			[[ ${helpers_pod_status} == 0 ]] || fatal "idle Pod lifecycle failed: exit=${helpers_pod_status}"
-			[[ $(grep -cF -- '--overrides={"spec":{"terminationGracePeriodSeconds":1}}' "${helpers_pod_calls}") == 2 ]] \
-				|| fatal "idle Pods must use a one-second termination grace period"
+			[[ ${helpers_pod_status} == 0 ]] || fatal "Pod deletion failed: exit=${helpers_pod_status}"
 			grep -Fxq 'delete pod --namespace fixtures -l app=test' "${helpers_pod_calls}" \
 				|| fatal "Pod deletion must retain default synchronous waiting"
 		else
-			[[ ${helpers_pod_status} == 42 ]] || fatal "kubectl ${helpers_pod_failure} failure was lost: exit=${helpers_pod_status}"
-			if [[ ${helpers_pod_failure} == run ]]; then
-				[[ $(wc -l < "${helpers_pod_calls}") == 1 ]] || fatal "Pod creation continued after failure"
-			fi
+			[[ ${helpers_pod_status} == 42 ]] || fatal "kubectl delete failure was lost: exit=${helpers_pod_status}"
 		fi
 	done
-	log_info "idle Pod grace period and lifecycle failures checked"
-
+	log_info "Pod deletion waiting and failure propagation checked"
 }
 
 assert_helper_log_levels
-assert_helper_pod_lifecycle
+assert_helper_pod_deletion
 
 assert_helper_toml_values() {
 	local helpers_config="${HUATUO_BAMAI_TEST_TMPDIR}/persisted.conf" helpers_case helpers_status

@@ -29,7 +29,7 @@ memory_threshold_snapshot_setup() {
 	readonly GO_SNAPSHOT_THRESHOLD=$((GO_SNAPSHOT_LIMIT / 2))
 	readonly GO_SNAPSHOT_NAMESPACE="${BUSINESS_POD_NS}"
 
-	require_commands go jq kubectl findmnt ss
+	require_commands go jq kubectl findmnt ss stat readlink awk
 	[[ ${EUID} -eq 0 ]] || skip "requires root for BPF, process inspection, and memory.high"
 	require_readable "${KUBELET_CERT}" "${KUBELET_KEY}"
 
@@ -77,6 +77,24 @@ snapshot_set_memory_high() {
 		|| fatal "snapshot memory.high does not match ${value}"
 }
 
+# Keep systemd's process ownership aligned with the memory controller. Moving
+# only cgroup.procs on v1 lets a later controller sync move the workload back.
+snapshot_join_container_cgroup() {
+	if [[ ${go_snapshot_cgroup} == *.scope ]]; then
+		busctl --timeout=5s call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+			org.freedesktop.systemd1.Manager AttachProcessesToUnit ssau \
+			"${go_snapshot_cgroup##*/}" "" 1 "${BASHPID}" || return 1
+	else
+		echo "${BASHPID}" > "${go_snapshot_cgroup}/cgroup.procs" || return 1
+	fi
+	assert_snapshot_workload_cgroup
+}
+
+assert_snapshot_workload_cgroup() {
+	grep -qx "${BASHPID}" "${go_snapshot_cgroup}/cgroup.procs" \
+		|| fatal "snapshot workload ${BASHPID} did not enter memory cgroup ${go_snapshot_cgroup}"
+}
+
 memory_threshold_snapshot_cleanup() {
 	local status=$? diagnosed=0
 	if [[ ${status} -ne 0 ]]; then
@@ -100,11 +118,10 @@ memory_threshold_snapshot_cleanup() {
 # API discovery precedes asynchronous watch registration. Wait for the actual
 # limit watch before allocating pressure, so registration cannot trigger the test.
 go_snapshot_watch_is_ready() {
-	local inode
-	inode=$(stat -c '%i' "${go_snapshot_limit_file}") || return 1
-	printf -v inode '%x' "${inode}"
-	grep -qE "^inotify wd:.*ino:${inode} " \
-		/proc/"$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")"/fdinfo/* 2> /dev/null
+	local identity watches="${go_snapshot_case_dir}/watches.txt"
+	identity=$(cgroup_watch_identity "${go_snapshot_limit_file}") || return 1
+	cgroup_read_inotify_watches "$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")" "$watches" || return 1
+	grep -qFx -- "$identity" "$watches"
 }
 
 go_snapshot_read_event() {
@@ -128,9 +145,14 @@ snapshot_log_timestamp() {
 }
 
 assert_snapshot_daemon_logs() {
-	local file=$1 snapshot=$2 recovered_at=${3:-}
-	local checkpoint=${4:-revalidated target watch} observed_at line
+	local file=$1 snapshot=$2 target_id=$3 recovered_at=${4:-}
+	local checkpoint=${5:-revalidated target watch} observed_at line
+	local creation_pending_pattern='error="container \\"([a-f0-9]{64})\\" creation is not yet reflected by kubelet"'
 	local LC_ALL=C
+	if [[ ! ${target_id} =~ ^[a-f0-9]{64}$ ]]; then
+		log_error "invalid snapshot target container ID: ${target_id}"
+		return 1
+	fi
 	if [[ -z ${recovered_at} ]]; then
 		recovered_at=$(jq -er '.started_timestamp' "${snapshot}") || return 1
 		checkpoint="validated snapshot"
@@ -140,6 +162,16 @@ assert_snapshot_daemon_logs() {
 		gsub(/\033\[[0-9;]*m/, "")
 		if (tolower($0) ~ /level="?(warn|warning|error|panic|fatal)"?|"level":"(warn|warning|error|panic|fatal)"|panic:/) print
 	}' "${file}" | while IFS= read -r line; do
+		# CSS hints may precede kubelet status for unrelated containers. Their
+		# bounded discovery retries do not invalidate this target's assertions.
+		if [[ ${line} == *'level="warning"'* &&
+			${line} == *'msg="refresh container view"'* &&
+			${line} == *'func="internal/pod.(*containerController).run"'* ]] \
+			&& grep -qE 'file="container_controller.go:[0-9]+"' <<< "${line}" \
+			&& [[ ${line} =~ ${creation_pending_pattern} && ${BASH_REMATCH[1]} != "${target_id}" ]]; then
+			log_info "unrelated container discovery retry: ${line}"
+			continue
+		fi
 		if [[ ${line} != *'level="warning"'* ||
 			${line} != *'msg="lost BPF perf event samples"'* ||
 			${line} != *'func="internal/pod.cgroupCssEventSyncHandler.func1"'* ]] \
@@ -161,7 +193,7 @@ assert_snapshot_daemon_logs() {
 
 assert_snapshot_logs() {
 	assert_huatuo_bamai_log_clean || fatal "${go_snapshot_stage}: unexpected daemon error log"
-	assert_snapshot_daemon_logs "${go_snapshot_case_dir}/huatuo.log" "${go_snapshot_case_dir}/snapshot.json" \
+	assert_snapshot_daemon_logs "${go_snapshot_case_dir}/huatuo.log" "${go_snapshot_case_dir}/snapshot.json" "${go_snapshot_container_id}" \
 		|| fatal "${go_snapshot_stage}: unexpected daemon warning/error"
 }
 
