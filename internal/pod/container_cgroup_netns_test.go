@@ -98,3 +98,24 @@ func TestContainerIDByCgroupNetNamespace(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildCSSMapsExcludeInvalidAddresses(t *testing.T) {
+	valid := &Container{
+		ID:        "valid",
+		CgroupCss: map[string]uint64{subsystem.SubsystemMemory: 42, subsystem.SubsystemCPU: 84},
+	}
+	containers := map[string]*Container{
+		"valid":   valid,
+		"zero":    {CgroupCss: map[string]uint64{subsystem.SubsystemMemory: 0, subsystem.SubsystemCPU: 0}},
+		"missing": {},
+	}
+	for subsys, address := range map[string]uint64{subsystem.SubsystemMemory: 42, subsystem.SubsystemCPU: 84} {
+		t.Run(subsys, func(t *testing.T) {
+			pointers := BuildCssContainers(containers, subsys)
+			ids := BuildCssContainersID(containers, subsys)
+			if len(pointers) != 1 || pointers[address] != valid || len(ids) != 1 || ids[address] != "valid" {
+				t.Fatalf("invalid CSS mapping: containers=%v ids=%v", pointers, ids)
+			}
+		})
+	}
+}
