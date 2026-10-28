@@ -50,6 +50,8 @@ These pprof endpoints describe the profiler process's own Go runtime, not the `-
 | `--physical-memory-probability` | `100` | Native physical memory | Physical-memory event sampling probability from 1 to 100 |
 | `--log-bpf-debug` | `false` | Native | Emit BPF debug events; not recommended for routine collection |
 
+When the hardware PMU event or sampling is unsupported, the command exits with code `1` and identifies the error on stderr with `Error: hardware_pmu_unavailable:`. Permission and other startup errors do not use this marker.
+
 ## Logging
 
 | Parameter | Default | Description |

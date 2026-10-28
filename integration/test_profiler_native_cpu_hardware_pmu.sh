@@ -80,6 +80,10 @@ if ! "${TOOL_BIN}" \
 	--output-path "${WORK_DIR}" \
 	--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}"; then
+	# VMs may expose a working vPMU, so skip based on actual PMU support.
+	if grep -q '^Error: hardware_pmu_unavailable:' "${TOOL_ERR}"; then
+		skip "hardware CPU cycles sampling unavailable (see ${TOOL_ERR})"
+	fi
 	fatal "hardware PMU profiler exited non-zero (see ${TOOL_ERR})"
 fi
 

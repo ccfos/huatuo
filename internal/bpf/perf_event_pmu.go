@@ -26,6 +26,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// ErrHardwarePMUUnavailable indicates that the requested hardware event is unsupported.
+var ErrHardwarePMUUnavailable = errors.New("hardware PMU unavailable")
+
 var errInvalidPerfEventOption = errors.New("invalid perf event option")
 
 type perfEventSampleMode uint8
@@ -77,6 +80,16 @@ func (opt *perfEventOption) Validate() error {
 func openPerfEvent(attr *unix.PerfEventAttr, progFD, cpuID int) (int, error) {
 	fd, err := unix.PerfEventOpen(attr, -1, cpuID, -1, unix.PERF_FLAG_FD_CLOEXEC)
 	if err != nil {
+		if attr.Type == unix.PERF_TYPE_HARDWARE &&
+			(errors.Is(err, unix.ENOENT) ||
+				errors.Is(err, unix.ENODEV) ||
+				errors.Is(err, unix.EOPNOTSUPP)) {
+			return -1, fmt.Errorf(
+				"%w: open perf event on cpu %d: %w",
+				ErrHardwarePMUUnavailable, cpuID, err,
+			)
+		}
+
 		return -1, fmt.Errorf("open perf event on cpu %d: %w", cpuID, err)
 	}
 
