@@ -154,7 +154,7 @@ func parsePerfEventAttachOptions(
 	if samplePeriod != 0 && sampleFreq != 0 {
 		return nil, fmt.Errorf(
 			"%w: sample period and frequency are mutually exclusive",
-			errInvalidPerfEventOption,
+			ErrInvalidPerfEventOption,
 		)
 	}
 

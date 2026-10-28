@@ -26,10 +26,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ErrHardwarePMUUnavailable indicates that the requested hardware event is unsupported.
-var ErrHardwarePMUUnavailable = errors.New("hardware PMU unavailable")
+var (
+	// ErrHardwarePMUUnavailable indicates that the requested hardware event is unsupported.
+	ErrHardwarePMUUnavailable = errors.New("hardware PMU unavailable")
 
-var errInvalidPerfEventOption = errors.New("invalid perf event option")
+	// ErrInvalidPerfEventOption indicates that perf event options are invalid.
+	ErrInvalidPerfEventOption = errors.New("invalid perf event option")
+)
 
 type perfEventSampleMode uint8
 
@@ -53,20 +56,20 @@ type perfEventOption struct {
 
 func (opt *perfEventOption) Validate() error {
 	if opt == nil {
-		return fmt.Errorf("%w: option required", errInvalidPerfEventOption)
+		return fmt.Errorf("%w: option required", ErrInvalidPerfEventOption)
 	}
 
 	var errs []error
 
 	if opt.program == nil {
 		errs = append(errs, fmt.Errorf(
-			"%w: program required", errInvalidPerfEventOption,
+			"%w: program required", ErrInvalidPerfEventOption,
 		))
 	}
 
 	if opt.sample == 0 {
 		errs = append(errs, fmt.Errorf(
-			"%w: sample value required", errInvalidPerfEventOption,
+			"%w: sample value required", ErrInvalidPerfEventOption,
 		))
 	}
 
