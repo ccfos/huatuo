@@ -25,6 +25,7 @@ import (
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
@@ -148,6 +149,7 @@ func TestBuildProfileAggregationQueryFiltersByRegion(t *testing.T) {
 }
 
 type recordingBackend struct {
+	valueField string
 	asyncSaves int
 	syncSaves  int
 }
@@ -183,7 +185,8 @@ func (*recordingBackend) Query(context.Context, driver.Query, func([]driver.Reco
 
 func (*recordingBackend) Count(context.Context, driver.Query) (int64, error) { return 0, nil }
 
-func (*recordingBackend) Values(context.Context, string, driver.Query, int) ([]string, error) {
+func (b *recordingBackend) Values(_ context.Context, field string, _ driver.Query, _ int) ([]string, error) {
+	b.valueField = field
 	return nil, nil
 }
 
@@ -233,10 +236,10 @@ func TestBuildAggregationQueryTimestampFormat(t *testing.T) {
 }
 
 func TestBuildProfileHostQueryUsesMissingContainer(t *testing.T) {
-	query := buildAggregationQuery(&Filter{Hostname: "host-a"})
+	query := buildAggregationQuery(&Filter{Scope: observation.ScopeHost, Hostname: "host-a"})
 	want := []driver.Filter{
 		{Field: types.DocumentFieldHostname + ".keyword", Op: driver.OpEq, Value: "host-a"},
-		{Field: types.DocumentFieldContainerHostname, Op: driver.OpNotExists},
+		{Field: types.DocumentFieldContainerID, Op: driver.OpNotExists},
 	}
 	if !reflect.DeepEqual(query.Filters, want) {
 		t.Fatalf("host filters = %#v, want %#v", query.Filters, want)
@@ -261,5 +264,63 @@ func TestPhysicalUsageQueryUsesObservationTime(t *testing.T) {
 				t.Fatalf("time filter=%+v", filter)
 			}
 		}
+	}
+}
+
+func TestBuildProfileScopeAndNodeFilters(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scope observation.Scope
+		want  driver.Op
+	}{
+		{name: "node spans scopes"},
+		{
+			name:  "host",
+			scope: observation.ScopeHost,
+			want:  driver.OpNotExists,
+		},
+		{
+			name:  "container",
+			scope: observation.ScopeContainer,
+			want:  driver.OpExists,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			query := buildAggregationQuery(&Filter{
+				Region:   "example",
+				Hostname: "node-1",
+				Scope:    tc.scope,
+			})
+			want := []driver.Filter{
+				{Field: types.DocumentFieldRegion + ".keyword", Op: driver.OpEq, Value: "example"},
+				{Field: types.DocumentFieldHostname + ".keyword", Op: driver.OpEq, Value: "node-1"},
+			}
+			if tc.want != "" {
+				want = append(want, driver.Filter{Field: types.DocumentFieldContainerID, Op: tc.want})
+			}
+			if !reflect.DeepEqual(query.Filters, want) {
+				t.Fatalf("filters = %#v, want %#v", query.Filters, want)
+			}
+		})
+	}
+}
+
+func TestProfileValuesUseKeywordFields(t *testing.T) {
+	for field, want := range map[string]string{
+		"region":       "region.keyword",
+		"hostname":     "hostname.keyword",
+		"container_id": "container_id.keyword",
+		"profile_type": "profile_data.profile_type.keyword",
+		"id":           "tracer_id.keyword",
+	} {
+		t.Run(field, func(t *testing.T) {
+			store, backend := newTestStore(t)
+			if _, err := store.Values(t.Context(), nil, field); err != nil {
+				t.Fatal(err)
+			}
+			if backend.valueField != want {
+				t.Fatalf("aggregation field = %q, want %q", backend.valueField, want)
+			}
+		})
 	}
 }

@@ -13,3 +13,15 @@ datasources:
     secureJsonData:
       httpHeaderValue1: 'Bearer huatuo-dev-api-token'
     editable: false
+
+  - name: huatuo-apiserver
+    uid: huatuo-apiserver
+    type: yesoreyeram-infinity-datasource
+    access: proxy
+    orgId: 1
+    url: http://127.0.0.1:12740
+    jsonData:
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: 'Bearer huatuo-dev-api-token'
+    editable: false

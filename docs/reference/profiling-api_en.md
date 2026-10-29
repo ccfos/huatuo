@@ -251,3 +251,19 @@ curl -sS \
 ```
 
 Success returns `200 OK` with the current task snapshot. Terminal tasks return `409 Conflict`. Because results may be incomplete, `stopped` tasks do not support result queries.
+
+## Unified flame graph queries
+
+Grafana uses the Pyroscope-compatible Protobuf endpoints under `/v1/profiling/flamegraph/`.
+`SelectMergeStacktraces` selectors require `scope="host"` or `scope="container"`.
+`region` is the Agent's configured region; `hostname` is only the collection node.
+Container queries require `container_id` or one task `id`. Host queries cannot include container filters.
+For example: `{region="example",hostname="node-01",scope="container",container_id="…",id="…"}`.
+
+The shared dashboard UID is `continuous-profiling`; variables are ordered as Region, node,
+scope, container, profile type, and task. The timeline and flame graph use the same task filter.
+With All containers selected, the task still identifies one target. Physical usage always
+requires one task and selects only the latest snapshot.
+The task summary uses the Infinity data source in `pyroscope.yaml`, with the same API token
+as the Pyroscope data source. `result_url` includes the stored windows' Region and actual
+profile type. Results without windows do not provide a dashboard link.

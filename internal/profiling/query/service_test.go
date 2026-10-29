@@ -152,7 +152,7 @@ func TestSelectMergeStacktracesConsumesAllBatches(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := service.SelectMergeStacktraces(context.Background(), &querierv1.SelectMergeStacktracesRequest{LabelSelector: `{id="job-1"}`, ProfileTypeID: "process_cpu:cpu:nanoseconds:cpu:nanoseconds"})
+			result, err := service.SelectMergeStacktraces(context.Background(), &querierv1.SelectMergeStacktracesRequest{LabelSelector: `{scope="host",id="job-1"}`, ProfileTypeID: "process_cpu:cpu:nanoseconds:cpu:nanoseconds"})
 			if tc.wantErr {
 				if err == nil || result != nil {
 					t.Fatalf("result=%v, error=%v; want error without partial flamegraph", result, err)
@@ -219,11 +219,11 @@ func TestSelectMergeStacktracesProfileCompatibility(t *testing.T) {
 		},
 		{
 			name: "matching selector", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-			selector: `{id="job-1",__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds"}`,
+			selector: `{scope="host",id="job-1",__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds"}`,
 		},
 		{
 			name: "matching repeated selector", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-			selector: `{id="job-1",__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds",` +
+			selector: `{scope="host",id="job-1",__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds",` +
 				`__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds"}`,
 		},
 		{
@@ -323,7 +323,7 @@ func TestSelectMergeStacktracesProfileCompatibility(t *testing.T) {
 			}
 			selector := tc.selector
 			if selector == "" {
-				selector = `{id="job-1"}`
+				selector = `{scope="host",id="job-1"}`
 			}
 			result, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
 				LabelSelector: selector,
@@ -357,30 +357,30 @@ func TestSelectMergeStacktracesRejectsConflictingProfileTypes(t *testing.T) {
 		profileType string
 		selector    string
 	}{
-		{name: "empty request type", selector: `{id="job-1"}`},
+		{name: "empty request type", selector: `{scope="host",id="job-1"}`},
 		{
 			name: "conflicting selector", profileType: cpuType,
-			selector: `{id="job-1",__profile_type__="` + offCPUType + `"}`,
+			selector: `{scope="host",id="job-1",__profile_type__="` + offCPUType + `"}`,
 		},
 		{
 			name: "conflicting repeated selector", profileType: cpuType,
-			selector: `{id="job-1",__profile_type__="` + offCPUType + `",__profile_type__="` + cpuType + `"}`,
+			selector: `{scope="host",id="job-1",__profile_type__="` + offCPUType + `",__profile_type__="` + cpuType + `"}`,
 		},
 		{
 			name: "empty selector type", profileType: cpuType,
-			selector: `{id="job-1",__profile_type__=""}`,
+			selector: `{scope="host",id="job-1",__profile_type__=""}`,
 		},
 		{
 			name: "wildcard selector type", profileType: cpuType,
-			selector: `{id="job-1",__profile_type__="*"}`,
+			selector: `{scope="host",id="job-1",__profile_type__="*"}`,
 		},
 		{
 			name: "regex selector type", profileType: cpuType,
-			selector: `{id="job-1",__profile_type__=~".*"}`,
+			selector: `{scope="host",id="job-1",__profile_type__=~".*"}`,
 		},
 		{
 			name: "negative selector type", profileType: cpuType,
-			selector: `{id="job-1",__profile_type__!="` + cpuType + `"}`,
+			selector: `{scope="host",id="job-1",__profile_type__!="` + cpuType + `"}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -408,7 +408,7 @@ func TestSelectMergeStacktracesRejectsConflictingProfileTypes(t *testing.T) {
 			}
 			result, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
 				ProfileTypeID: strings.Join(parts, ":"),
-				LabelSelector: `{id="job-1"}`,
+				LabelSelector: `{scope="host",id="job-1"}`,
 			})
 			if !errors.Is(err, ErrInvalidQuery) || result != nil {
 				t.Errorf("result=%v, error=%v; want invalid query for empty component %d", result, err, i)
@@ -475,7 +475,7 @@ func TestSelectMergeStacktracesPhysicalUsageSelectsLatestIncludingZero(t *testin
 			}
 
 			response, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
-				LabelSelector: `{id="job-1"}`,
+				LabelSelector: `{scope="host",id="job-1"}`,
 				ProfileTypeID: "memory:physical_usage:bytes:space:bytes",
 			})
 			if err != nil {
@@ -491,7 +491,7 @@ func TestSelectMergeStacktracesPhysicalUsageSelectsLatestIncludingZero(t *testin
 
 func TestSelectMergeStacktracesPhysicalUsageRequiresTask(t *testing.T) {
 	service := &ProfileQueryService{}
-	for _, selector := range []string{`{hostname="node-1"}`, `{hostname="node-1",__profile_type__="memory:physical_usage:bytes:space:bytes"}`} {
+	for _, selector := range []string{`{scope="host",hostname="node-1"}`, `{scope="host",hostname="node-1",__profile_type__="memory:physical_usage:bytes:space:bytes"}`} {
 		_, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
 			LabelSelector: selector,
 			ProfileTypeID: "memory:physical_usage:bytes:space:bytes",
@@ -499,5 +499,26 @@ func TestSelectMergeStacktracesPhysicalUsageRequiresTask(t *testing.T) {
 		if !errors.Is(err, ErrInvalidQuery) {
 			t.Fatalf("error=%v", err)
 		}
+	}
+}
+
+func TestSelectMergeStacktracesRejectsInvalidScope(t *testing.T) {
+	service := &ProfileQueryService{}
+	for _, selector := range []string{
+		`{id="job"}`,
+		`{scope="other",id="job"}`,
+		`{scope="host",scope="container",id="job"}`,
+		`{scope="host",container_id="container",id="job"}`,
+		`{scope="container",hostname="node"}`,
+	} {
+		t.Run(selector, func(t *testing.T) {
+			_, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
+				LabelSelector: selector,
+				ProfileTypeID: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			})
+			if !errors.Is(err, ErrInvalidQuery) {
+				t.Fatalf("error = %v, want invalid query before storage access", err)
+			}
+		})
 	}
 }

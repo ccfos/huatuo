@@ -65,10 +65,14 @@ assert_profile_storage_request() {
 assert_profile_filter() {
 	local matcher=$1 expected=$2 length status curl_status=0
 	# LabelValuesRequest: name (field 1), matcher (field 2), epoch time bounds.
-	# These fixed ASCII selectors fit a one-byte protobuf length.
-	((${#matcher} < 128)) || fatal "profile selector exceeds fixture encoding limit"
-	printf -v length '%03o' "${#matcher}"
-	printf '\012\002id\022%b%s' "\\${length}" "${matcher}" > "${PROFILE_FILTER_REQUEST}"
+	# Region, scope and container selectors can require a two-byte varint length.
+	((${#matcher} < 16384)) || fatal "profile selector exceeds fixture encoding limit"
+	if ((${#matcher} < 128)); then
+		printf -v length '\\%03o' "${#matcher}"
+	else
+		printf -v length '\\%03o\\%03o' "$((${#matcher} % 128 + 128))" "$((${#matcher} / 128))"
+	fi
+	printf '\012\002id\022%b%s' "${length}" "${matcher}" > "${PROFILE_FILTER_REQUEST}"
 	printf '%b' "${expected}" > "${PROFILE_FILTER_EXPECTED}"
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
 		-H "Authorization: Bearer ${PROFILE_FILTER_TOKEN}" \
@@ -93,6 +97,8 @@ assert_profile_storage_request "create index" "${HUATUO_BAMAI_TEST_TMPDIR}/creat
 	-H 'Content-Type: application/json' -d '{"mappings":{"properties":{
   "tracer_id":{"type":"keyword","fields":{"keyword":{"type":"keyword"}}},
   "hostname":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
+  "container_id":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
+  "region":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
   "container_hostname":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
   "uploaded_timestamp":{"type":"date"},
   "started_timestamp":{"type":"date"},
@@ -104,16 +110,17 @@ assert_eq "$(jq -r '.shards_acknowledged' "${HUATUO_BAMAI_TEST_TMPDIR}/create-in
 jq -cn --arg type "${PROFILE_FILTER_TYPE}" '
  [
   {tracer_id:"host-absent",hostname:"host-a"},
-  {tracer_id:"host-null",hostname:"host-a",container_hostname:null},
-  {tracer_id:"host-empty",hostname:"host-a",container_hostname:""},
-  {tracer_id:"container-exact",hostname:"host-a",container_hostname:"pod-a"},
-  {tracer_id:"container-phrase",hostname:"host-a",container_hostname:"pod-a extra"},
+  {tracer_id:"host-null",hostname:"host-a",container_id:null},
+  {tracer_id:"host-empty",hostname:"host-a",container_id:""},
+  {tracer_id:"container-exact",hostname:"host-a",container_id:"container-a",container_hostname:"pod-a"},
+  {tracer_id:"container-phrase",hostname:"host-a",container_id:"container-b",container_hostname:"pod-a extra"},
   {tracer_id:"host-other",hostname:"host-b"},
+  {tracer_id:"host-west",hostname:"host-a",region:"west"},
   {tracer_id:"host-phrase",hostname:"host-a extra"},
   {tracer_id:"host-before",hostname:"host-a",uploaded_timestamp:"1969-12-31T23:59:59.999Z"},
   {tracer_id:"host-after",hostname:"host-a",uploaded_timestamp:"1970-01-01T00:00:00.001Z"}
  ][] | {index:{_id:.tracer_id}},
- ({uploaded_timestamp:"1970-01-01T00:00:00.000Z",profile_data:{profile_type:$type}} + .)
+ ({region:"east",uploaded_timestamp:"1970-01-01T00:00:00.000Z",profile_data:{profile_type:$type}} + .)
 ' > "${HUATUO_BAMAI_TEST_TMPDIR}/profiles.ndjson"
 assert_profile_storage_request "seed profiles" "${HUATUO_BAMAI_TEST_TMPDIR}/seed-profiles.json" \
 	-X POST "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}/_bulk?refresh=true" \
@@ -122,16 +129,46 @@ assert_profile_storage_request "seed profiles" "${HUATUO_BAMAI_TEST_TMPDIR}/seed
 assert_eq "$(jq -r '.errors' "${HUATUO_BAMAI_TEST_TMPDIR}/seed-profiles.json")" \
 	"false" "seed profile documents" || fatal "profile fixture writes failed"
 
+# Exercise the dashboard's Lucene interpolation against real storage.
+assert_profile_dashboard_types() {
+	local scope=$1 container=$2 expected=$3 query response_file
+	response_file="${HUATUO_BAMAI_TEST_TMPDIR}/dashboard-types.json"
+	query=$(jq -r --arg scope "${scope}" --arg container "${container}" '
+		.templating.list[] | select(.name == "type") | .query | fromjson | .query |
+		split("${region:lucene}") | join("east") |
+		split("${hostname:lucene}") | join("host\\-a") |
+		split("${scope:raw}") | join($scope) |
+		split("${container_id:lucene}") | join($container)
+	' "${ROOT_DIR}/build/docker/grafana/dashboards/continuous-profiling.json")
+	assert_profile_storage_request "dashboard profile types" "${response_file}" \
+		-X POST "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}/_search" \
+		-H 'Content-Type: application/json' \
+		-d "$(jq -cn --arg query "${query}" '{size:0,query:{query_string:{query:$query}},aggs:{types:{terms:{field:"profile_data.profile_type.keyword"}}}}')"
+	assert_eq "$(jq -r '.aggregations.types.buckets[0].key // empty' "${response_file}")" \
+		"${PROFILE_FILTER_TYPE}" "dashboard profile type" || fatal "dashboard profile type is empty"
+	assert_eq "$(jq -r '.hits.total.value' "${response_file}")" \
+		"${expected}" "dashboard matching windows" || fatal "dashboard scope filter returned unexpected windows"
+}
+assert_profile_dashboard_types 'NOT _exists_:container_id' '*' 4
+assert_profile_dashboard_types '_exists_:container_id' 'container\-a' 1
+
 APISERVER_PORT="${PROFILE_FILTER_PORT}" APISERVER_ADDR="${PROFILE_FILTER_ADDR}" \
 	API_TOKEN="${PROFILE_FILTER_TOKEN}" \
 	integration_huatuo_apiserver_start write_config_apiserver_profile_query
 
 assert_profile_filter \
-	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",hostname=\"host-a\"}" \
+	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"east\",hostname=\"host-a\",scope=\"host\"}" \
 	'\012\013host-absent\012\011host-null'
 assert_profile_filter \
-	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",container_hostname=\"pod-a\"}" \
+	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"east\",hostname=\"host-a\",scope=\"container\",container_id=\"container-a\"}" \
 	'\012\017container-exact'
+assert_profile_filter \
+	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"west\",hostname=\"host-a\",scope=\"host\"}" \
+	'\012\011host-west'
+# Without scope, hostname is only a node filter and includes container records.
+assert_profile_filter \
+	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"east\",hostname=\"host-a\"}" \
+	'\012\017container-exact\012\020container-phrase\012\013host-absent\012\012host-empty\012\011host-null'
 # Observation order differs from delivery order. An out-of-range observation
 # delivered inside the range must not replace the latest zero snapshot.
 jq -cn '
@@ -158,7 +195,7 @@ assert_eq "$(jq -r '.errors' "${HUATUO_BAMAI_TEST_TMPDIR}/seed-live.json")" \
 	false "seed live snapshots" || fatal "live snapshot writes failed"
 
 assert_latest_zero_snapshot() {
-	local profile_type="memory:physical_usage:bytes:space:bytes" matcher='{id="live-task"}'
+	local profile_type="memory:physical_usage:bytes:space:bytes" matcher='{scope="host",id="live-task"}'
 	local type_length matcher_length status curl_status=0
 	printf -v type_length '%03o' "${#profile_type}"
 	printf -v matcher_length '%03o' "${#matcher}"

@@ -144,15 +144,15 @@ A successful response means the result is published. `items` may be empty, for e
 
 ### 5. View the Flame Graph
 
-This example profiles the local host. Open **Continuous Profiling (host)**; containers use a separate dashboard:
+This example profiles the local host. Open **Continuous Profiling**, shared by host and container scopes:
 
-- URL: [http://localhost:3000/d/continuous-profiling-host](http://localhost:3000/d/continuous-profiling-host). Replace `localhost:3000` for your environment.
+- URL: [http://localhost:3000/d/continuous-profiling](http://localhost:3000/d/continuous-profiling). Replace `localhost:3000` for your environment.
 - Username/password: `admin / admin`. Change the password when prompted on first login.
 
 Steps:
 
 1. Select a time range in the upper-right corner covering the collection period.
-2. Select the target `hostname`, enter this task's Task ID, and choose `process_cpu:cpu:nanoseconds:cpu:nanoseconds` as `type`.
+2. Select Region, the node `hostname`, scope `host`, and this Task ID, then choose `process_cpu:cpu:nanoseconds:cpu:nanoseconds` as `type`.
 3. Inspect aggregated stacks for the task and time range; use Focus block to focus on a frame.
 4. Choose Both to show the flame graph and function statistics together.
 

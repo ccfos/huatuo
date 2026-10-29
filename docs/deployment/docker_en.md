@@ -71,7 +71,8 @@ After startup, run from the repository root in another terminal with Bash,
 The script creates a 60-second host CPU profiling task, waits for completion,
 queries raw results and the flame graph, saves them to `_output/profiling/run.XXXXXX/`,
 and prints a Grafana URL with the task and time range selected. Run the target
-workload during collection. The initial Grafana login is `admin / admin`.
+workload during collection. The shared dashboard filters by Region, node, scope,
+container, profile type, and task, and displays task status. The initial Grafana login is `admin / admin`.
 
 The script uses fixed local development settings. If addresses, the node name, or
 credentials change, update the constants at the top of the script. See

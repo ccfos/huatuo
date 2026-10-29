@@ -30,6 +30,7 @@ done
 readonly API_BASE='http://127.0.0.1:12740'
 readonly GRAFANA_BASE='http://127.0.0.1:3000'
 readonly TARGET_HOST='huatuo-dev-node'
+readonly REGION='example'
 readonly API_TOKEN='huatuo-dev-api-token'
 readonly GRAFANA_AUTH='admin:admin'
 readonly DURATION_SECONDS=60
@@ -95,13 +96,13 @@ jq -er '.data.items | arrays | "Raw windows retrieved: \(length) (limit: 1)"' "$
 start_ms=$(jq -er '.data.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 * 1000' "${output_dir}/status.response.json")
 # Round up the server's end time to include subsecond publication timestamps.
 end_ms=$(jq -er '.data.ended_at | sub("\\.[0-9]+Z$"; "Z") | (fromdateiso8601 + 1) * 1000' "${output_dir}/status.response.json")
-jq -n --arg id "$job_id" --arg host "$TARGET_HOST" \
+jq -n --arg id "$job_id" --arg host "$TARGET_HOST" --arg region "$REGION" \
 	--arg from "$start_ms" --arg to "$end_ms" '{
 	from:$from, to:$to, queries:[{
 		refId:"A", queryType:"profile",
 		datasource:{type:"grafana-pyroscope-datasource",uid:"huatuo-apiserver-pyroscope"},
 		profileTypeId:"process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-		labelSelector:("{hostname=" + ($host | tojson) + ",id=" + ($id | tojson) + "}")
+		labelSelector:("{scope=\"host\",region=" + ($region | tojson) + ",hostname=" + ($host | tojson) + ",id=" + ($id | tojson) + "}")
 	}]
 }' > "${output_dir}/flamegraph.request.json"
 request flamegraph "${GRAFANA_BASE}/api/ds/query" \
@@ -118,7 +119,8 @@ else
 fi
 
 host_query=$(jq -rn --arg host "$TARGET_HOST" '$host | @uri')
-dashboard_url="${GRAFANA_BASE}/d/continuous-profiling-host?var-hostname=${host_query}&var-task_id=${job_id}&var-type=process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds&from=${start_ms}&to=${end_ms}"
+region_query=$(jq -rn --arg region "$REGION" '$region | @uri')
+dashboard_url="${GRAFANA_BASE}/d/continuous-profiling?var-region=${region_query}&var-scope=NOT%20_exists_%3Acontainer_id&var-hostname=${host_query}&var-task_id=${job_id}&var-type=process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds&from=${start_ms}&to=${end_ms}"
 printf '%s\n' "$dashboard_url" > "${output_dir}/grafana-url.txt"
 printf 'Flame graph saved: %s/flamegraph.json\n' "$output_dir"
 printf 'Grafana: %s\n' "$dashboard_url"
