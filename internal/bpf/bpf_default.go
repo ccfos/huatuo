@@ -327,14 +327,8 @@ func (b *defaultBPF) Close() error {
 
 	var closeErrs []error
 
-	for _, p := range b.programsByID {
-		for linkKey, l := range p.links {
-			if l != nil {
-				if err := l.Close(); err != nil {
-					closeErrs = append(closeErrs, fmt.Errorf("close link %s in program %s: %w", linkKey, p.name, err))
-				}
-			}
-		}
+	if err := b.detach(); err != nil {
+		closeErrs = append(closeErrs, err)
 	}
 
 	for _, p := range b.programsByID {
@@ -351,13 +345,6 @@ func (b *defaultBPF) Close() error {
 				closeErrs = append(closeErrs, fmt.Errorf("close map %s: %w", m.name, err))
 			}
 		}
-	}
-
-	if b.perfEvent != nil {
-		if err := b.perfEvent.detach(); err != nil {
-			closeErrs = append(closeErrs, fmt.Errorf("detach perf event: %w", err))
-		}
-		b.perfEvent = nil
 	}
 
 	return errors.Join(closeErrs...)
