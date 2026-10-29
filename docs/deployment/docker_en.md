@@ -53,3 +53,26 @@ See the [installation guide](https://docs.docker.com/compose/install/linux/) to 
 
 Compose installs Business Charts (`volkovlabs-echarts-panel`) for the IO
 interval overview. Install this plugin when using an existing Grafana instance.
+
+### Continuous profiling in the development stack
+
+`make compose-dev-up` uses `build/docker/devconf/` with ES storage, API credentials,
+and Grafana data sources configured. Fixed credentials are for development only.
+When changing the ES password in `.env`, update both development configuration
+files and the Grafana ES data source.
+
+After startup, run from the repository root in another terminal with Bash,
+`curl`, and `jq` installed:
+
+```bash
+./build/docker/run_test_profiling.sh
+```
+
+The script creates a 60-second host CPU profiling task, waits for completion,
+queries raw results and the flame graph, saves them to `_output/profiling/run.XXXXXX/`,
+and prints a Grafana URL with the task and time range selected. Run the target
+workload during collection. The initial Grafana login is `admin / admin`.
+
+The script uses fixed local development settings. If addresses, the node name, or
+credentials change, update the constants at the top of the script. See
+[Profiling API](/docs/reference/profiling-api_en.md) for other parameters. Stop the stack with `make compose-dev-down`.
