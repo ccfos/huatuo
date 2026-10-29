@@ -15,6 +15,8 @@
 package collector
 
 import (
+	"bytes"
+	"encoding/binary"
 	"math"
 	"testing"
 	"time"
@@ -182,4 +184,67 @@ func BenchmarkCPUUtilCollectorUpdateDataCache(b *testing.B) {
 			}
 		})
 	}
+}
+
+func TestRunqlatAggregatePerCPUValue(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		values []uint64
+		want   latencyBpfData
+	}{
+		{name: "empty"},
+		{
+			name:   "one CPU",
+			values: []uint64{1, 2, 3, 4, 5, 6},
+			want: latencyBpfData{
+				NumVoluntarySwitch:   1,
+				NumInVoluntarySwitch: 2,
+				NumLatencyZone0:      3,
+				NumLatencyZone1:      4,
+				NumLatencyZone2:      5,
+				NumLatencyZone3:      6,
+			},
+		},
+		{
+			name:   "two CPUs",
+			values: []uint64{1, 2, 3, 4, 5, 6, 10, 20, 30, 40, 50, 60},
+			want: latencyBpfData{
+				NumVoluntarySwitch:   11,
+				NumInVoluntarySwitch: 22,
+				NumLatencyZone0:      33,
+				NumLatencyZone1:      44,
+				NumLatencyZone2:      55,
+				NumLatencyZone3:      66,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var raw bytes.Buffer
+			if err := binary.Write(&raw, binary.LittleEndian, test.values); err != nil {
+				t.Fatal(err)
+			}
+
+			got := latencyBpfData{
+				NumVoluntarySwitch:   99,
+				NumInVoluntarySwitch: 99,
+				NumLatencyZone0:      99,
+				NumLatencyZone1:      99,
+				NumLatencyZone2:      99,
+				NumLatencyZone3:      99,
+			}
+			if err := aggregatePerCPUValue(raw.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+
+			if got != test.want {
+				t.Errorf("aggregatePerCPUValue() = %+v, want %+v", got, test.want)
+			}
+		})
+	}
+	t.Run("partial record", func(t *testing.T) {
+		var got latencyBpfData
+		if err := aggregatePerCPUValue(make([]byte, binary.Size(got)-1), &got); err == nil {
+			t.Error("aggregatePerCPUValue() accepted a partial record")
+		}
+	})
 }
