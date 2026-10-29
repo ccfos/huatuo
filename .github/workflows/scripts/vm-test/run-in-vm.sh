@@ -263,6 +263,14 @@ run_guest_tests() {
 	export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
 	export NATIVE_PROFILER_CONTAINERD_IMAGE=docker.io/library/busybox:1.36.1
 	export NATIVE_PROFILER_TEST_PRIVILEGED_CONTAINER=1
+	# These pinned PR images must keep exercising the split-v1 memory CSS path.
+	local ID VERSION_ID
+	source /etc/os-release
+	case "${ID,,}:${VERSION_ID}" in
+	ubuntu:20.04 | openeuler:22.03*)
+		export NATIVE_PROFILER_REQUIRE_SPLIT_CGROUP_V1=1
+		;;
+	esac
 
 	pwd
 	ls -alh .

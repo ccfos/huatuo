@@ -91,6 +91,8 @@ static void wait_for_start_signal(void) {
 		perror("sigprocmask");
 		exit(1);
 	}
+	puts("ready");
+	fflush(stdout);
 
 	if (sigwait(&set, &signo) != 0) {
 		perror("sigwait");
