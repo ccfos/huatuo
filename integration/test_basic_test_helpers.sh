@@ -483,6 +483,9 @@ print_sys_info() { echo info >> "$TEST_GUEST_WORK/calls"; }
 install_test_dependencies() { echo dependencies >> "$TEST_GUEST_WORK/calls"; }
 grow_root_filesystem() { echo grow >> "$TEST_GUEST_WORK/calls"; }
 install_temporary_go_tools() { exit 99; }
+prepare_cpu_workload() { exit 99; }
+stress-ng() { exit 99; }
+crictl() { exit 99; }
 make() { echo "make $*" >> "$TEST_GUEST_WORK/calls"; }
 git() { :; }
 prefetch_storage_images() { :; }
@@ -495,6 +498,18 @@ SH
 	assert_eq "$(cat "${guest_work}/calls")" "${guest_expected}" "${guest_mode}: guest phases"
 done
 log_info "VM cache transport and guest phase checks passed"
+
+cpu_image_status=0
+bash -eu -s > "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" 2>&1 << 'SH' || cpu_image_status=$?
+source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/e2e/lib_cpu_load.sh"
+crictl() { return 1; }
+timeout() { return 1; }
+cpu_load_prepare_image
+SH
+assert_eq "${cpu_image_status}" 1 "CPU image pull failure belongs to the CPU case"
+grep -Fq 'cannot pull CPU workload image' "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" \
+	|| fatal "CPU image pull failure lacks registry diagnostics"
 
 # Real storage ownership and cleanup with Docker replaced by a local fixture.
 cat > "${HUATUO_BAMAI_TEST_TMPDIR}/storage-fixture.sh" << 'SH'
