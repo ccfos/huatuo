@@ -118,6 +118,35 @@ configure_proxy() {
 	export NO_PROXY="$no_proxy"
 }
 
+quiesce_apt_updates() {
+	command -v apt-get > /dev/null 2>&1 || return 0
+	local unit state deadline=$((SECONDS + 600))
+	# Ubuntu/Debian background APT upgrades can reload/reexec systemd and
+	# reset test cgroup settings.
+	# Runtime masks cover this VM run without changing the reusable image.
+	for unit in apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service; do
+		[[ $(systemctl show --property=LoadState --value "$unit") != not-found ]] || continue
+		systemctl mask --runtime "$unit"
+		if [[ "$unit" == *.timer ]]; then
+			systemctl stop "$unit"
+			continue
+		fi
+		# Let in-flight dpkg transactions finish instead of interrupting them.
+		while true; do
+			state=$(systemctl show --property=ActiveState --value "$unit")
+			case "$state" in
+			inactive | failed) break ;;
+			esac
+			if ((SECONDS >= deadline)); then
+				vm_log_error "timed out waiting for $unit to finish; inspect journalctl -u $unit"
+				return 1
+			fi
+			vm_log "waiting for $unit to finish (state=$state)"
+			sleep 5
+		done
+	done
+}
+
 install_test_dependencies() {
 	local os_id os_like package_manager package toml_repo='' toml_repo_package=''
 	local -a deb_packages=(curl gdb fio mdadm xfsprogs build-essential libelf-dev kmod python3-toml stress-ng sysstat "linux-headers-$(uname -r)")
@@ -314,6 +343,7 @@ run_guest_tests() {
 	# Preparation and testing use separate SSH sessions.
 	export PYTHONPATH="/usr/local/lib/huatuo-test-python${PYTHONPATH:+:$PYTHONPATH}"
 	export GOCACHE=/root/.cache/go-build
+	quiesce_apt_updates
 	if [[ ${1:-} != --test-only ]]; then
 		grow_root_filesystem
 		print_sys_info
