@@ -317,6 +317,18 @@ assert_helper_port_allocation() (
 	if allocate_available_port; then fatal "allocation ignored failed socket query"; fi
 )
 
+cpu_image_status=0
+bash -eu -s > "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" 2>&1 << 'SH' || cpu_image_status=$?
+source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/e2e/lib_cpu_load.sh"
+crictl() { return 1; }
+timeout() { return 1; }
+cpu_load_prepare_image
+SH
+assert_eq "${cpu_image_status}" 1 "CPU image pull failure belongs to the CPU case"
+grep -Fq 'cannot pull CPU workload image' "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" \
+	|| fatal "CPU image pull failure lacks registry diagnostics"
+
 assert_helper_log_levels
 assert_helper_failure_diagnostics
 assert_helper_toml_values

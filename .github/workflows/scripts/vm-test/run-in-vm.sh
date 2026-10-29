@@ -120,9 +120,9 @@ configure_proxy() {
 
 install_test_dependencies() {
 	local os_id os_like package_manager package toml_repo='' toml_repo_package=''
-	local -a deb_packages=(curl gdb fio mdadm xfsprogs build-essential libelf-dev kmod python3-toml "linux-headers-$(uname -r)")
+	local -a deb_packages=(curl gdb fio mdadm xfsprogs build-essential libelf-dev kmod python3-toml stress-ng sysstat "linux-headers-$(uname -r)")
 	local -a rpm_packages=(
-		curl gdb fio mdadm xfsprogs gcc make elfutils-libelf-devel kmod kernel-headers
+		curl gdb fio mdadm xfsprogs gcc make elfutils-libelf-devel kmod kernel-headers stress-ng sysstat
 		"kernel-devel-$(uname -r)"
 	)
 	local -a missing_packages=()
@@ -196,14 +196,11 @@ install_test_dependencies() {
 			return 1
 		fi
 		if ((${#missing_packages[@]})); then
-			# openEuler publishes kernel-devel/kernel-headers in its binary OS
-			# repositories. Its update and everything repositories carry very
-			# large metadata (tens of MB) served by slow mirrors, so skip them
-			# and only fall back to the full set if a build dependency is missing
-			# from the restricted repositories.
+			# Keep EPOL available for packaged stress-ng while avoiding slow
+			# metadata unless a dependency needs the full repository set.
 			if [[ "$os_id" == openeuler ]]; then
 				package_options+=(
-					--disablerepo=EPOL --disablerepo=debuginfo --disablerepo=source
+					--disablerepo=debuginfo --disablerepo=source
 					--disablerepo=update-source --disablerepo=update
 					--disablerepo=everything
 				)
