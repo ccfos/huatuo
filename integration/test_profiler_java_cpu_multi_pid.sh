@@ -36,10 +36,12 @@ PROFILER_STDOUT="${WORK_DIR}/profiler.out"
 PROFILER_STDERR="${WORK_DIR}/profiler.err"
 PROFILER_TARGET_PID0=""
 PROFILER_TARGET_PID1=""
+PROFILER_TARGET_PID2=""
 
 cleanup() {
 	[[ -n "${PROFILER_TARGET_PID0}" ]] && stop_by_pid "${PROFILER_TARGET_PID0}" 5 || true
 	[[ -n "${PROFILER_TARGET_PID1}" ]] && stop_by_pid "${PROFILER_TARGET_PID1}" 5 || true
+	[[ -n "${PROFILER_TARGET_PID2}" ]] && stop_by_pid "${PROFILER_TARGET_PID2}" 5 || true
 }
 trap cleanup EXIT
 
@@ -57,16 +59,27 @@ java \
 	> "${WORK_DIR}/beta.out" 2> "${WORK_DIR}/beta.err" &
 PROFILER_TARGET_PID1=$!
 
+# Launch the third fixture through value-taking launcher options so a broken
+# entry scan would report an option value instead of the main class.
+java \
+	-XX:CompileCommand=dontinline,TestProfilerJavaMultiPID.alphaHotMethod \
+	--add-modules java.sql \
+	--class-path "${WORK_DIR}" TestProfilerJavaMultiPID alpha \
+	> "${WORK_DIR}/gamma.out" 2> "${WORK_DIR}/gamma.err" &
+PROFILER_TARGET_PID2=$!
+
 wait_until 30 1 grep -qx ready "${WORK_DIR}/alpha.out" \
 	|| fatal "alpha fixture did not become ready"
 wait_until 30 1 grep -qx ready "${WORK_DIR}/beta.out" \
 	|| fatal "beta fixture did not become ready"
+wait_until 30 1 grep -qx ready "${WORK_DIR}/gamma.out" \
+	|| fatal "gamma fixture did not become ready"
 
-log_info "profiling Java pids=${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1}"
+log_info "profiling Java pids=${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1},${PROFILER_TARGET_PID2}"
 if ! "${TOOL_BIN}" \
 	--type cpu \
 	--language java \
-	--pid "${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1}" \
+	--pid "${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1},${PROFILER_TARGET_PID2}" \
 	--tool-path "${PROFILER_TOOL_DIR}" \
 	--duration "${PROFILER_DURATION}" \
 	--freq "${PROFILER_FREQ}" \
@@ -85,10 +98,14 @@ assert_java_process_roots() {
 		|| fatal "PID ${PROFILER_TARGET_PID0} root not found"
 	grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID1}\";" "${FOLDED_FILES[@]}" \
 		|| fatal "PID ${PROFILER_TARGET_PID1} root not found"
+	grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID2}\";" "${FOLDED_FILES[@]}" \
+		|| fatal "PID ${PROFILER_TARGET_PID2} root not found (launcher option value was reported as the entry)"
 	grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID0}\";.*alphaHotMethod" "${FOLDED_FILES[@]}" \
 		|| fatal "alpha workload stack not found for PID ${PROFILER_TARGET_PID0}"
 	grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID1}\";.*betaHotMethod" "${FOLDED_FILES[@]}" \
 		|| fatal "beta workload stack not found for PID ${PROFILER_TARGET_PID1}"
+	grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID2}\";.*alphaHotMethod" "${FOLDED_FILES[@]}" \
+		|| fatal "alpha workload stack not found for PID ${PROFILER_TARGET_PID2}"
 
 	if grep -qh "java_entry=\"TestProfilerJavaMultiPID\";pid=\"${PROFILER_TARGET_PID0}\";.*betaHotMethod" "${FOLDED_FILES[@]}"; then
 		fatal "beta workload was attributed to PID ${PROFILER_TARGET_PID0}"
@@ -100,9 +117,9 @@ assert_java_process_roots() {
 }
 assert_java_process_roots
 
-log_info "both Java PIDs produced distinct correctly attributed stacks"
+log_info "all Java PIDs produced distinct correctly attributed stacks"
 
 assert_java_profiler_streams "${WORK_DIR}/streaming" "${TOOL_BIN}" \
 	--type cpu --language java \
-	--pid "${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1}" \
+	--pid "${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1},${PROFILER_TARGET_PID2}" \
 	--tool-path "${PROFILER_TOOL_DIR}" --freq "${PROFILER_FREQ}"
