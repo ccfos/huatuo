@@ -27,7 +27,7 @@ APP_VERSION = "2.3.0"
 APP_CMD_DIR := cmd
 APP_CMD_OUTPUT := _output
 PPROF_TOOL := $(APP_CMD_OUTPUT)/tools/pprof-tool
-CPU_TEST_HELPERS := $(addprefix $(APP_CMD_OUTPUT)/tests/,cpu-wait-reference)
+CPU_TEST_HELPERS := $(addprefix $(APP_CMD_OUTPUT)/tests/,cpu-wait-reference dload-reference)
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
 GO_BUILD_PARALLELISM ?= 2
 APP_CMD_BIN_TARGETS := $(patsubst %,$(APP_CMD_OUTPUT)/bin/%,$(notdir $(APP_CMD_SUBDIRS)))
@@ -248,6 +248,8 @@ _output/tests/apiserver-go-workload: integration/testdata/test_apiserver_profili
 	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
 
 _output/tests/cpu-wait-reference: integration/testdata/test_cpu_wait.go go.mod go.sum
+
+_output/tests/dload-reference: integration/testdata/test_autotracing_dload.go go.mod go.sum
 
 $(CPU_TEST_HELPERS):
 	@mkdir -p $(@D)
