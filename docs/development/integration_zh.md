@@ -44,6 +44,44 @@ bash integration/run.sh test_metrics_exclude_filter.sh 10
 make integration
 ```
 
+## CPU 指标与自动追踪 E2E
+
+先执行 `make build`，再在测试节点以 root 运行单用例：
+
+```bash
+sudo bash e2e/run.sh test_metrics_cpu_util.sh
+sudo bash e2e/run.sh test_metrics_cpu_stat.sh
+sudo bash e2e/run.sh test_metrics_cpu_runqlat_tracing.sh
+sudo bash e2e/run.sh test_autotracing_cpuidle.sh
+sudo bash e2e/run.sh test_autotracing_dload.sh
+```
+
+这些用例也由 `make e2e` 和标准 `make test` 自动发现。CPU 用例串行运行，
+基准环境为 4 核、8 GB 内存的 Kubernetes VM；需要可访问本机 kubelet API，
+客户端证书路径通过 `KUBELET_CERT`、`KUBELET_KEY` 指定。
+
+本地运行需安装 `stress-ng`；CPU util/stat 的 worker 参考采样还需要 `sysstat`。
+VM 流程会安装这两个软件包。
+Kubernetes 运行时需要能拉取负载镜像；CPU 参考采集、cpuidle 和 dload
+还需要 Docker 及其测试镜像的访问权限。提前执行 `make build`，
+测试运行时不需要 Go 编译器。
+
+cpu_util、cpu_stat 和 runqlat 支持 cgroup v1/v2。控制项可用时，cpu_stat 会临时切换
+`kernel.sched_schedstats` 并恢复原值；缺少该控制项只跳过开关和争抢子场景。
+仅在内核导出相应计数时执行可选的 `wait_sum_percent` 和 burst 检查。
+runqlat 要求对应调度 tracepoint 和
+`free_fair_sched_group` kprobe 可用；cpuidle 要求可加载 perf BPF 程序。
+
+dload 功能场景需要 Legacy cgroup、taskstats、dm-delay、`dmsetup`、
+`losetup`、`mkfs.ext4`、`modprobe`、`nsenter`、挂载权限和可用 loop 设备。
+其他 cgroup 模式先检查不支持时的行为，再报告 SKIP。
+这些用例会创建 Pod 和临时块设备，请在专用测试节点运行。
+
+缺少外部命令、内核 hook、设备能力或 kubelet 证书时，用例会报告带原因的 SKIP。
+构建产物缺失、指标错误、异常退出或清理失败属于 FAIL。日志和原始参考数据保存在
+`/tmp/huatuo-test.XXXXXX/<用例名>.<运行序号>.XXXXXX/`；E2E 成功后同样保留。
+排查失败时，先查看该目录中的 `stdout.log`、`stderr.log` 和 `huatuo.log`。
+
 ## 前置检查与结果汇总
 
 两套测试共用 `integration/run.sh`，默认运行 integration；`e2e/run.sh` 转发到

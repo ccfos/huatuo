@@ -71,6 +71,50 @@ seconds for EXIT cleanup before KILL. The runner preserves exit status 130 or 14
 New tests default to serial execution; review shared state before adding them
 to `integration/lib_runner.sh`.
 
+## CPU Metric and Autotracing E2E Tests
+
+Run `make build`, then execute a single case as root on the test node:
+
+```bash
+sudo bash e2e/run.sh test_metrics_cpu_util.sh
+sudo bash e2e/run.sh test_metrics_cpu_stat.sh
+sudo bash e2e/run.sh test_metrics_cpu_runqlat_tracing.sh
+sudo bash e2e/run.sh test_autotracing_cpuidle.sh
+sudo bash e2e/run.sh test_autotracing_dload.sh
+```
+
+`make e2e` and the standard `make test` discover these cases automatically.
+CPU cases run serially and target a Kubernetes VM with 4 CPUs and 8 GB of memory.
+They require access to the local kubelet API; set `KUBELET_CERT` and `KUBELET_KEY`
+to its client certificate and key.
+
+Install `stress-ng` for local runs. CPU util/stat worker reference measurements
+also require `sysstat`; the VM workflow installs both packages.
+The Kubernetes runtime must be able to pull workload images. CPU reference
+collection, cpuidle and dload also require Docker and access to their images.
+Run `make build` beforehand; test execution does not need a Go compiler.
+
+cpu_util, cpu_stat and runqlat support cgroup v1/v2. When available, cpu_stat
+temporarily changes `kernel.sched_schedstats` and restores its original value.
+Missing schedstats control skips only the toggle and contention subcases.
+Optional `wait_sum_percent` and burst checks require the corresponding kernel counters.
+Runqlat requires scheduling tracepoints and the `free_fair_sched_group` kprobe;
+cpuidle requires permission to load the perf BPF program.
+
+Dload functional cases require Legacy cgroups, taskstats, dm-delay,
+`dmsetup`, `losetup`, `mkfs.ext4`, `modprobe`, `nsenter`, mount privileges
+and an available loop device. Other cgroup modes verify unsupported behavior,
+then report SKIP. Use a dedicated test node because these cases create Pods
+and temporary block devices.
+
+Missing external commands, kernel hooks, device capabilities or kubelet
+certificates produce SKIP with a reason. Missing build artifacts, incorrect
+metrics, unexpected process exits and cleanup failures produce FAIL.
+Logs and raw reference data are retained under
+`/tmp/huatuo-test.XXXXXX/<case>.<run-index>.XXXXXX/`, including successful E2E runs.
+Start with `stdout.log`, `stderr.log` and `huatuo.log` in that directory when
+investigating a failure.
+
 ## Prerequisites and Results
 
 Both suites share `integration/run.sh`, which runs integration tests by default; `e2e/run.sh` forwards to `--suite e2e`. The `make integration`, `make e2e`, and single-case entry points remain available:
