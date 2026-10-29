@@ -64,9 +64,8 @@ assert_python_capture_has_no_samples() {
 
 assert_python_collector_failed() {
 	local target_pid=$1
-	grep -qF "PID[${target_pid}] sampling failed" "${PROFILER_OUT}" "${PROFILER_ERR}" \
-		|| fatal "missing failed collector PID diagnostic"
-	grep -q killed "${PROFILER_OUT}" "${PROFILER_ERR}" || fatal "missing killed collector diagnostic"
+	grep -qE "failed for pid ${target_pid}: .*signal: killed([[:space:]]|$)" "${PROFILER_OUT}" "${PROFILER_ERR}" \
+		|| fatal "missing SIGKILL diagnostic for collector target PID ${target_pid}"
 	assert_python_capture_has_no_samples
 }
 
