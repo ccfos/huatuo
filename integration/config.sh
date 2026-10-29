@@ -618,3 +618,21 @@ BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_stat", "cpuidle", "cpusys
     KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
 EOF
 }
+
+write_config_cpu_stat() {
+	local cpu_blacklist=""
+	[[ ${cpu_stat_disabled} != true ]] || cpu_blacklist='"cpu_stat", '
+	cat << EOF
+BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${CPU_STAT_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${CPU_STAT_KUBELET_PORT}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+EOF
+}
