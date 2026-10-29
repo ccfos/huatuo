@@ -91,6 +91,37 @@ assert_profile_filter() {
 	fi
 }
 
+assert_profile_label_names() {
+	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/label-names.proto"
+	local expected_file="${HUATUO_BAMAI_TEST_TMPDIR}/label-names-expected.proto"
+	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/label-names.err"
+	local result curl_status=0 name length
+	# LabelNamesResponse repeats string field 1; these ASCII names fit one-byte lengths.
+	for name in id region hostname container_id container_hostname container_host_namespace; do
+		printf -v length '%03o' "${#name}"
+		printf '\012%b%s' "\\${length}" "${name}"
+	done > "${expected_file}"
+
+	result=$(curl -sS "${CURL_TIMEOUT[@]}" \
+		-H "Authorization: Bearer ${PROFILE_FILTER_TOKEN}" \
+		-H 'Content-Type: application/proto' --data-binary '' \
+		-o "${response_file}" -w '%{http_code} %{content_type}' \
+		"${PROFILE_FILTER_ADDR}/v1/profiling/flamegraph/querier.v1.QuerierService/LabelNames" \
+		2> "${error_file}") || curl_status=$?
+	log_info "empty LabelNames status/content-type=${result}, curl=${curl_status}"
+	report_http_response "empty LabelNames" "${response_file}" "${error_file}"
+	assert_eq "${curl_status}" 0 "empty LabelNames transport" || fatal "LabelNames request failed"
+	assert_eq "${result}" '200 application/proto' "empty LabelNames response" \
+		|| fatal "empty LabelNames request returned unexpected status or content type"
+	if ! cmp -s "${expected_file}" "${response_file}"; then
+		log_error "expected LabelNames response:"
+		od -An -tx1c "${expected_file}"
+		log_error "actual LabelNames response:"
+		od -An -tx1c "${response_file}"
+		fatal "LabelNames returned unexpected labels"
+	fi
+}
+
 storage_start
 assert_profile_storage_request "create index" "${HUATUO_BAMAI_TEST_TMPDIR}/create-index.json" \
 	-X PUT "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}" \
@@ -156,6 +187,7 @@ APISERVER_PORT="${PROFILE_FILTER_PORT}" APISERVER_ADDR="${PROFILE_FILTER_ADDR}" 
 	API_TOKEN="${PROFILE_FILTER_TOKEN}" \
 	integration_huatuo_apiserver_start write_config_apiserver_profile_query
 
+assert_profile_label_names
 assert_profile_filter \
 	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"east\",hostname=\"host-a\",scope=\"host\"}" \
 	'\012\013host-absent\012\011host-null'

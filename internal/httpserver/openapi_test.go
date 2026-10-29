@@ -339,31 +339,43 @@ func TestGeneratedStrictHandlerAcceptsEmptyLabelNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal LabelNames request: %v", err)
 	}
+
 	if len(body) != 0 {
 		t.Fatalf("default LabelNames request has %d bytes, want 0", len(body))
 	}
 
 	for _, method := range []string{"LabelNames", "LabelValues", "ProfileTypes", "SelectMergeStacktraces"} {
 		t.Run(method, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost,
+			request := httptest.NewRequest(
+				http.MethodPost,
 				"/v1/profiling/flamegraph/querier.v1.QuerierService/"+method,
-				bytes.NewReader(body))
+				bytes.NewReader(body),
+			)
 			request.Header.Set("Content-Type", "application/proto")
 			recorder := httptest.NewRecorder()
+
 			s.engine.ServeHTTP(recorder, request)
 
 			wantStatus := http.StatusBadRequest
 			if method == "LabelNames" {
 				wantStatus = http.StatusOK
 			}
+
 			if recorder.Code != wantStatus {
-				t.Fatalf("response status = %d, want %d; body=%s", recorder.Code, wantStatus, recorder.Body.String())
+				t.Fatalf(
+					"response status = %d, want %d; body=%s",
+					recorder.Code,
+					wantStatus,
+					recorder.Body.String(),
+				)
 			}
+
 			if method == "LabelNames" {
 				var result typesv1.LabelNamesResponse
 				if err := proto.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
 					t.Fatalf("unmarshal LabelNames response: %v", err)
 				}
+
 				if len(result.Names) != 1 || result.Names[0] != "hostname" {
 					t.Errorf("label names = %v, want [hostname]", result.Names)
 				}
@@ -372,6 +384,7 @@ func TestGeneratedStrictHandlerAcceptsEmptyLabelNames(t *testing.T) {
 			}
 		})
 	}
+
 	if handler.calls != 1 {
 		t.Errorf("GetProfileLabelNames() calls = %d, want 1", handler.calls)
 	}
@@ -397,20 +410,25 @@ func (h *strictServerTestHandler) GetProfileLabelNames(
 	request serverapi.GetProfileLabelNamesRequestObject,
 ) (serverapi.GetProfileLabelNamesResponseObject, error) {
 	h.calls++
+
 	body, err := io.ReadAll(request.Body)
 	if err != nil {
 		return nil, err
 	}
+
 	if err := proto.Unmarshal(body, &typesv1.LabelNamesRequest{}); err != nil {
 		return nil, err
 	}
+
 	result, err := proto.Marshal(&typesv1.LabelNamesResponse{Names: []string{"hostname"}})
 	if err != nil {
 		return nil, err
 	}
+
 	return serverapi.GetProfileLabelNames200ApplicationProtoResponse{
 		ProtobufResponseApplicationProtoResponse: serverapi.ProtobufResponseApplicationProtoResponse{
-			Body: bytes.NewReader(result), ContentLength: int64(len(result)),
+			Body:          bytes.NewReader(result),
+			ContentLength: int64(len(result)),
 		},
 	}, nil
 }
