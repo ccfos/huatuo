@@ -317,6 +317,108 @@ assert_helper_port_allocation() (
 	if allocate_available_port; then fatal "allocation ignored failed socket query"; fi
 )
 
+assert_cpu_reference_startup() (
+	source "${ROOT_DIR}/integration/lib_cpu_reference.sh"
+	local work="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-reference-startup" mode status expected clock=0 calls=0
+	mkdir -p "${work}"
+	command() {
+		[[ $* != '-v pidstat' ]] || return 1
+		builtin command "$@"
+	}
+	pidstat() { fatal "cAdvisor startup unexpectedly invoked pidstat"; }
+	allocate_available_port() { echo 20000; }
+	docker() {
+		case $1 in
+		inspect) [[ ${mode} == exited ]] && echo false || echo true ;;
+		logs) echo 'cAdvisor fixture log' ;;
+		esac
+		return 0
+	}
+	curl() {
+		calls=$((calls + 1))
+		printf '%s\n' "${calls}" > "${work}/${mode}.calls"
+		[[ ${mode} == immediate || (${mode} == delayed && ${calls} -gt 1) ]] && return 0
+		echo 'cAdvisor fixture health check failed' >&2
+		return 22
+	}
+	date() { printf '%s\n' "${clock}"; }
+	sleep() { clock=$((clock + 15)); }
+	for mode in immediate delayed timeout exited; do
+		status=0 expected=0 clock=0 calls=0
+		printf '0\n' > "${work}/${mode}.calls"
+		(cpu_reference_start "${work}/${mode}") > "${work}/${mode}.log" 2>&1 || status=$?
+		[[ ${mode} != timeout && ${mode} != exited ]] || expected=1
+		assert_eq "${status}" "${expected}" "${mode}: cAdvisor readiness without pidstat"
+		case ${mode} in
+		immediate) expected=1 ;;
+		delayed | timeout) expected=2 ;;
+		exited) expected=0 ;;
+		esac
+		assert_eq "$(< "${work}/${mode}.calls")" "${expected}" "${mode}: health check attempts"
+	done
+	grep -Fq 'cAdvisor fixture log' "${work}/exited/reference/cadvisor.log" \
+		|| fatal "cAdvisor startup exit omitted container logs"
+	grep -Fq 'cAdvisor fixture log' "${work}/timeout/reference/cadvisor.log" \
+		|| fatal "cAdvisor readiness timeout omitted container logs"
+	grep -Fq 'health check failed' "${work}/timeout/reference/ready.err" \
+		|| fatal "cAdvisor readiness timeout omitted the latest health error"
+	status=0
+	(cpu_reference_prepare_pidstat) > "${work}/missing-pidstat.log" 2>&1 || status=$?
+	assert_eq "${status}" 77 "worker CPU sampling requires pidstat"
+	grep -Fq 'command is not installed: pidstat' "${work}/missing-pidstat.log" \
+		|| fatal "missing pidstat skip omitted the dependency name"
+)
+
+assert_cpu_reference_window() (
+	source "${ROOT_DIR}/integration/lib_cpu_reference.sh"
+	local work="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-reference-window" mode calls status expected end clock=0
+	mkdir -p "${work}"
+	CPU_REFERENCE_URL=http://fixture
+	end=$(jq -n '"2026-01-01T00:00:10Z" | fromdateiso8601')
+	jq -n --argjson window_end "${end}" '
+	 {"/fixture": [range(0; 10) | {timestamp: ($window_end-10+. | todateiso8601),
+	  cpu_inst: {usage: {user: 200000000, system: 300000000, total: 500000000}}}]}
+	' > "${work}/fixture-stale.json"
+	jq '."/fixture" += [(."/fixture"[-1] | .timestamp = "2026-01-01T00:00:10.125Z")]' \
+		"${work}/fixture-stale.json" > "${work}/fixture-fresh.json"
+	cpu_reference_name() { echo /fixture; }
+	curl() {
+		calls=$((calls + 1))
+		if [[ ${mode} == fresh || (${mode} == delayed && ${calls} -gt 1) ]]; then
+			cp "${work}/fixture-fresh.json" "${@: -1}"
+		else
+			cp "${work}/fixture-stale.json" "${@: -1}"
+		fi
+	}
+	# Advance the shared polling clock without waiting 30 seconds in this fixture.
+	date() { printf '%s\n' "${clock}"; }
+	sleep() { clock=$((clock + 15)); }
+	for mode in default fresh delayed timeout; do
+		calls=0 status=0 expected=0
+		if [[ ${mode} == default ]]; then
+			cpu_reference_stats /fixture "${work}/${mode}.json" \
+				> "${work}/${mode}.stdout" 2> "${work}/${mode}.log"
+		else
+			cpu_reference_stats /fixture "${work}/${mode}.json" "${end}" \
+				> "${work}/${mode}.stdout" 2> "${work}/${mode}.log" || status=$?
+		fi
+		[[ ${mode} != timeout ]] || expected=1
+		assert_eq "${status}" "${expected}" "${mode}: cAdvisor window coverage"
+		[[ ! -s ${work}/${mode}.stdout ]] || fatal "${mode}: cAdvisor polling logs polluted stdout"
+		grep -Fq 'wait attempt' "${work}/${mode}.log" || fatal "${mode}: cAdvisor polling diagnostics missing from stderr"
+		case ${mode} in
+		default | fresh) assert_eq "${calls}" 1 "${mode}: no unnecessary retry" ;;
+		delayed | timeout) assert_eq "${calls}" 2 "${mode}: bounded sample retry" ;;
+		esac
+	done
+	jq -e "${CPU_REFERENCE_JQ}""average($((end - 10)); ${end}; 1) | .Total == 50" \
+		"${work}/delayed.json" > /dev/null
+	grep -Fq 'precedes window end' "${work}/timeout.json.err" \
+		|| fatal "cAdvisor timeout omitted the latest sample timestamp"
+	grep -Fq "window end ${end}" "${work}/timeout.log" \
+		|| fatal "cAdvisor timeout omitted the required window endpoint"
+)
+
 cpu_image_status=0
 bash -eu -s > "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" 2>&1 << 'SH' || cpu_image_status=$?
 source "$ROOT_DIR/integration/lib.sh"
@@ -340,4 +442,6 @@ assert_process_shutdown graceful_failure 7
 assert_process_shutdown forced 137
 assert_process_shutdown custom_signal 0 USR2
 assert_helper_port_allocation
+assert_cpu_reference_startup
+assert_cpu_reference_window
 log_info "framework logging, assertions, HTTP diagnostics, service addresses, process shutdown and port allocation passed"
