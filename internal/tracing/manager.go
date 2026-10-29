@@ -29,14 +29,14 @@ type Manager struct {
 	isClosed bool
 }
 
-// NewManager initializes registered tracers that are not blacklisted.
-func NewManager(blacklist []string) (*Manager, error) {
-	registrations, err := NewRegister(blacklist)
-	if err != nil {
-		return nil, err
-	}
+// NewManager constructs runners for the supplied tracing registrations.
+func NewManager(registrations map[string]*EventTracingAttr) (*Manager, error) {
 	runners := make(map[string]*eventRunner, len(registrations))
 	for name, registration := range registrations {
+		if registration == nil {
+			return nil, fmt.Errorf("%w: %q registration is nil", ErrInvalidTracer, name)
+		}
+
 		if registration.Flag&FlagTracing == 0 {
 			continue
 		}

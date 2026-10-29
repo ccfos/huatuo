@@ -32,6 +32,13 @@ var (
 	defaultRegion   string
 )
 
+// ConfigureDefaultLabels sets the default host and region labels for metrics.
+// Call before initializing collectors, before any concurrent metric access.
+func ConfigureDefaultLabels(region string) {
+	defaultHostname, _ = os.Hostname()
+	defaultRegion = region
+}
+
 func DefaultHostname() string {
 	return defaultHostname
 }
