@@ -90,3 +90,37 @@ func TestValidateContainerRefKernelAndRuntimeBindings(t *testing.T) {
 		})
 	}
 }
+
+func TestKataHostDoesNotPublishApplicationMemoryTarget(t *testing.T) {
+	for _, test := range []struct {
+		name, runtime, sandbox string
+		available              bool
+	}{
+		{name: "ordinary", runtime: "io.containerd.runc.v2", available: true},
+		{name: "Kata Host", runtime: "io.containerd.kata-qemu.v2", sandbox: "orders-vm"},
+		{name: "Firecracker Host", runtime: "io.containerd.kata-fc.v2", sandbox: "orders-vm"},
+		{name: "Guest", available: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			container := &Container{
+				ID:          strings.Repeat("a", 64),
+				InitPid:     os.Getpid(),
+				RuntimeType: test.runtime,
+				SandboxID:   test.sandbox,
+				CgroupPath:  "/preserved-vm-cpu-path",
+			}
+			record, err := containerMemoryBinding(container)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := record.ref.MemoryCgroupPath != ""; got != test.available {
+				t.Errorf("memory target available=%t, want %t", got, test.available)
+			}
+			if record.ref.InitPID != container.InitPid ||
+				container.CgroupPath != "/preserved-vm-cpu-path" ||
+				record.directory == nil {
+				t.Error("memory exclusion changed process or CPU identity")
+			}
+		})
+	}
+}

@@ -16,6 +16,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 
 	"github.com/ccfos/huatuo/pkg/types"
@@ -62,4 +63,17 @@ func (d *Document) validate() error {
 		return errors.New("profiling document profile is required")
 	}
 	return nil
+}
+
+// DecodeDocument reads a typed profiling window; Store.Save validates its
+// producer timestamps after assigning the receiving storage timestamp.
+func DecodeDocument(data []byte) (*Document, error) {
+	var document *Document
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, err
+	}
+	if document == nil {
+		return nil, errors.New("profiling document is required")
+	}
+	return document, nil
 }

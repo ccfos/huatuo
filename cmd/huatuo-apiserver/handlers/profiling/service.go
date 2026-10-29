@@ -66,6 +66,7 @@ type CreateInput struct {
 
 // RawProfile is one stored profiling window without storage implementation fields.
 type RawProfile struct {
+	SourceType        string
 	Hostname          string
 	Region            string
 	UploadedTimestamp time.Time
@@ -244,6 +245,7 @@ func (s *Service) RawProfiles(
 	items := make([]*RawProfile, 0, len(documents))
 	for _, document := range documents {
 		items = append(items, &RawProfile{
+			SourceType:        document.SourceType,
 			Hostname:          document.Hostname,
 			Region:            document.Region,
 			UploadedTimestamp: document.UploadedTimestamp.Time,

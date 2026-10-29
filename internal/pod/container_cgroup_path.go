@@ -15,6 +15,7 @@
 package pod
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -207,6 +208,11 @@ func containerMemoryBinding(container *Container) (*containerRecord, error) {
 	if before.Starttime != after.Starttime {
 		return nil, fmt.Errorf("container %q init process was replaced", container.ID)
 	}
+	// A hypervisor's memory cgroup describes the shared VM, not each Guest
+	// application. Guest discovery supplies application memory bindings.
+	if container.HostKataSandboxID() != "" {
+		path = ""
+	}
 	return &containerRecord{
 		container: container,
 		ref:       ContainerRef{Key: ContainerKey{ID: container.ID}, InitPID: container.InitPid, MemoryCgroupPath: path},
@@ -226,14 +232,23 @@ func ValidateContainerRef(ref ContainerRef) error {
 	if previous == nil || previous.ref != ref {
 		return fmt.Errorf("container %q instance is no longer current", ref.Key.ID)
 	}
-	pid, err := containerInitPIDByID(ref.Key.ID)
-	if err != nil {
-		return err
+	var current *containerRecord
+	if previous.guest != nil {
+		process, readErr := previous.guest.readProcess(ref.InitPID)
+		if readErr != nil {
+			return readErr
+		}
+		current, err = previous.guest.bind(context.Background(), &process)
+	} else {
+		pid, pidErr := containerInitPIDByID(ref.Key.ID)
+		if pidErr != nil {
+			return pidErr
+		}
+		if pid != ref.InitPID {
+			return fmt.Errorf("container %q init pid changed", ref.Key.ID)
+		}
+		current, err = containerMemoryBinding(previous.container)
 	}
-	if pid != ref.InitPID {
-		return fmt.Errorf("container %q init pid changed", ref.Key.ID)
-	}
-	current, err := containerMemoryBinding(previous.container)
 	if err != nil {
 		return err
 	}

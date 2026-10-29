@@ -94,6 +94,16 @@ func containerInitPIDByID(containerID string) (int, error) {
 		return -1, err
 	}
 
+	if container, _ := ContainerByID(containerID); container != nil && container.HostKataSandboxID() != "" {
+		info, err := readContainerdRuntimeInfo(containerID)
+		if err != nil {
+			return -1, err
+		}
+		if info.RuntimeType != container.RuntimeType || info.SandboxID != container.SandboxID || info.PID <= 0 {
+			return -1, fmt.Errorf("container %q Kata runtime binding changed", containerID)
+		}
+		return info.PID, nil
+	}
 	provider, dockerRoot, containerdState := containerRuntimeState()
 	switch provider {
 	case containerProviderDocker:

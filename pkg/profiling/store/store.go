@@ -23,6 +23,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/vsock"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -32,8 +33,9 @@ const (
 	maxValuesSize = 1001
 )
 
-// Config contains the Elasticsearch settings used by profiling storage.
+// Config selects Elasticsearch or write-only Guest profiling storage.
 type Config struct {
+	VSOCK     *vsock.Options
 	Addresses []string
 	Username  string
 	Password  string
@@ -58,12 +60,33 @@ type Filter struct {
 
 // Store persists and queries profiling aggregation windows.
 type Store struct {
-	store   *storage.Store[*Document]
-	commits *commitStore
+	store            *storage.Store[*Document]
+	commits          *commitStore
+	isGuestTransport bool
 }
 
-// NewFromConfig creates profiling storage backed by Elasticsearch.
+// NewFromConfig creates profiling storage using the selected backend.
+//
+//nolint:gocritic // Startup configuration is copied once and remains immutable.
 func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
+	if config.VSOCK != nil {
+		if len(config.Addresses) > 0 {
+			return nil, errors.New("profiling store: VSOCK and Elasticsearch are mutually exclusive")
+		}
+		options := *config.VSOCK
+		options.ToolName = vsock.ProfilingTool
+		backend, err := vsock.New(options)
+		if err != nil {
+			return nil, err
+		}
+		store, err := storage.NewStore[*Document](ctx, "vsock", backend, Collection, mapper{})
+		if err != nil {
+			_ = backend.Close(context.Background())
+			return nil, err
+		}
+		return &Store{store: store, isGuestTransport: true}, nil
+	}
+
 	profileStore, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
 		Driver:      "elasticsearch",
 		ESAddresses: config.Addresses,
@@ -85,6 +108,18 @@ func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
 		return nil, errors.Join(err, profileStore.Close(context.WithoutCancel(ctx)))
 	}
 	return &Store{store: profileStore, commits: commits}, nil
+}
+
+// Save persists a window on Host, or queues it for best-effort Guest forwarding.
+// Guest success does not confirm delivery, visibility, or task completion.
+func (s *Store) Save(ctx context.Context, document *Document) error {
+	if !s.isGuestTransport {
+		return s.SaveSync(ctx, document)
+	}
+	if err := s.prepareDocument(document); err != nil {
+		return err
+	}
+	return s.store.Save(ctx, document, driver.SaveOptions{})
 }
 
 // SaveSync persists a profiling window and waits until subsequent queries can see it.
@@ -248,7 +283,8 @@ func normalizeAggregationField(field string) (string, error) {
 		return types.DocumentFieldTracerID, nil
 	case "profile_type":
 		return fieldProfileType, nil
-	case types.DocumentFieldRegion,
+	case types.DocumentFieldSourceType,
+		types.DocumentFieldRegion,
 		types.DocumentFieldHostname,
 		types.DocumentFieldContainerHostname,
 		types.DocumentFieldContainerHostNamespace,
@@ -283,6 +319,9 @@ func (s *Store) prepareDocument(document *Document) error {
 
 // Commit publishes a task after its caller has persisted all windows successfully.
 func (s *Store) Commit(ctx context.Context, taskID string) error {
+	if s != nil && s.isGuestTransport {
+		return fmt.Errorf("guest profiling completion acknowledgement: %w", driver.ErrUnsupportedOp)
+	}
 	if s == nil || s.commits == nil {
 		return errors.New("profiling commit store is not initialized")
 	}
@@ -294,6 +333,9 @@ func (s *Store) Commit(ctx context.Context, taskID string) error {
 
 // IsCommitted reports whether a task has a durable completion marker.
 func (s *Store) IsCommitted(ctx context.Context, taskID string) (bool, error) {
+	if s != nil && s.isGuestTransport {
+		return false, fmt.Errorf("guest profiling completion acknowledgement: %w", driver.ErrUnsupportedOp)
+	}
 	if s == nil || s.commits == nil {
 		return false, errors.New("profiling commit store is not initialized")
 	}

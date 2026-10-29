@@ -77,6 +77,8 @@ type cpuIdleTracing struct {
 	filter           *matcher.ContainerMatcher
 	containers       map[string]*containerCPUState
 	hostCPUCount     uint64
+	matchedKata      map[string]*pod.Container
+	cssContainers    map[uint64]*pod.Container
 }
 
 type containerCPUState struct {
@@ -86,6 +88,8 @@ type containerCPUState struct {
 	percentDelta    cpuUsageBreakdown[int64]
 
 	containerID  string
+	sandboxID    string
+	cpuCSS       uint64
 	cgroupPath   string
 	seen         bool
 	hasUsage     bool
@@ -107,6 +111,7 @@ type cpuIdleTracingData struct {
 	TotalPercentThreshold       int64                  `json:"total_percent_threshold"`
 	TotalPercentDelta           int64                  `json:"total_percent_delta"`
 	TotalPercentDeltaThreshold  int64                  `json:"total_percent_delta_threshold"`
+	SandboxID                   string                 `json:"sandbox_id,omitempty"`
 	FlameData                   []flamegraph.FrameData `json:"flamedata"`
 }
 
@@ -162,33 +167,71 @@ func newCPUIdleTracing(
 func (c *cpuIdleTracing) reconcileContainerStates(containers map[string]*pod.Container) {
 	for _, state := range c.containers {
 		state.seen = false
+		state.containerID = ""
 	}
 
+	// Clear pointers to departed containers while retaining map capacity.
+	clear(c.matchedKata)
+	clear(c.cssContainers)
+	var hasRepresentatives bool
 	for _, container := range containers {
-		if !c.filter.Match(container) {
-			continue
-		}
-
-		state, ok := c.containers[container.ID]
-		if !ok {
-			c.containers[container.ID] = &containerCPUState{
-				containerID: container.ID,
-				cgroupPath:  container.CgroupPath,
-				seen:        true,
+		// VM lifetime is independent of which business member can be sampled.
+		if sandboxID := container.HostKataSandboxID(); sandboxID != "" {
+			if state := c.containers["kata:"+sandboxID]; state != nil {
+				state.seen = true
 			}
+		}
+		if !container.Type.IsNormal() || !c.filter.Match(container) {
 			continue
 		}
-
-		if state.cgroupPath != container.CgroupPath {
-			state.resetMeasurements()
-			state.cgroupPath = container.CgroupPath
+		key := container.ID
+		sandboxID := container.HostKataSandboxID()
+		css := uint64(0)
+		var state *containerCPUState
+		if sandboxID != "" {
+			css = container.CgroupCss["cpu"]
+			if !hasRepresentatives {
+				if c.matchedKata == nil {
+					c.matchedKata = make(map[string]*pod.Container)
+					c.cssContainers = make(map[uint64]*pod.Container)
+				}
+				for id, member := range containers {
+					if member.HostKataSandboxID() != "" && member.Type.IsNormal() && c.filter.Match(member) {
+						c.matchedKata[id] = member
+					}
+				}
+				pod.FillCssContainers(c.matchedKata, "cpu", c.cssContainers)
+				hasRepresentatives = true
+			}
+			if css == 0 || c.cssContainers[css] != container {
+				continue
+			}
+			state = c.containers["kata:"+sandboxID]
+			if state == nil {
+				key = "kata:" + sandboxID
+			}
+		} else {
+			state = c.containers[key]
 		}
+		if state == nil {
+			state = &containerCPUState{}
+			c.containers[key] = state
+		} else if state.cgroupPath != container.CgroupPath || (sandboxID != "" && state.cpuCSS != css) {
+			// Replacing the VM resets the sample baseline but preserves its cooldown.
+			state.resetMeasurements()
+		}
+		state.containerID = container.ID
+		state.sandboxID = sandboxID
+		state.cpuCSS = css
+		state.cgroupPath = container.CgroupPath
 		state.seen = true
 	}
 
 	for containerID, state := range c.containers {
 		if !state.seen {
 			delete(c.containers, containerID)
+		} else if state.containerID == "" {
+			state.resetMeasurements()
 		}
 	}
 }
@@ -347,6 +390,9 @@ func (c *cpuIdleTracing) readContainerCPUSample(
 
 func (c *cpuIdleTracing) updateContainerCPUStates(sampledAt time.Time) error {
 	for _, state := range c.containers {
+		if state.containerID == "" {
+			continue
+		}
 		usage, capacity, err := c.readContainerCPUSample(state)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
@@ -370,7 +416,7 @@ func (c *cpuIdleTracing) selectTraceTarget(sampledAt time.Time) *containerCPUSta
 	var highestScore int64
 
 	for _, state := range c.containers {
-		if !state.hasPercent || !state.lastSampleAt.Equal(sampledAt) {
+		if state.containerID == "" || !state.hasPercent || !state.lastSampleAt.Equal(sampledAt) {
 			continue
 		}
 		if !state.lastTraceAt.IsZero() &&
@@ -390,6 +436,10 @@ func (c *cpuIdleTracing) selectTraceTarget(sampledAt time.Time) *containerCPUSta
 		}
 	}
 
+	// Reserve before perf or persistence can fail and restart the runner.
+	if traceTarget != nil {
+		traceTarget.lastTraceAt = sampledAt
+	}
 	return traceTarget
 }
 
@@ -399,6 +449,7 @@ func (c *cpuIdleTracing) saveCPUIdleTrace(
 	result profileResult,
 ) error {
 	tracerData := cpuIdleTracingData{
+		SandboxID:                   state.sandboxID,
 		UserPercent:                 state.currentPercent.user,
 		UserPercentThreshold:        c.threshold.percent.user,
 		UserPercentDelta:            state.percentDelta.user,
@@ -437,7 +488,7 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
 		case sampledAt := <-ticker.C:
-			containers, err := pod.NormalContainers()
+			containers, err := pod.Containers()
 			if err != nil {
 				return fmt.Errorf("list containers for cpu sampling: %w", err)
 			}
@@ -472,7 +523,6 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 			if err := c.saveCPUIdleTrace(traceTarget, traceTime, result); err != nil {
 				return err
 			}
-			traceTarget.lastTraceAt = traceTime.Time
 		}
 	}
 }

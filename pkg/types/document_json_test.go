@@ -119,3 +119,19 @@ func BenchmarkDocumentJSON(b *testing.B) {
 		})
 	}
 }
+
+func TestDocumentSourceCompatibility(t *testing.T) {
+	timestamp := timeutil.Now()
+	for _, source := range []string{"", types.DocumentSourceHost, types.DocumentSourceKataGuest, "unknown"} {
+		doc := types.Document{
+			SourceType:        source,
+			UploadedTimestamp: timestamp,
+			ObservedTimestamp: &timestamp,
+			TracerRunType:     types.TracerRunTypeEvent,
+		}
+		err := doc.Validate()
+		if (err != nil) != (source == "unknown") {
+			t.Errorf("source=%q error=%v", source, err)
+		}
+	}
+}

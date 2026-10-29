@@ -24,6 +24,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -96,7 +97,24 @@ func cgroupCssInitEventSync() error {
 	childCtx, cancel := context.WithCancel(context.Background())
 	cgroupCssBpfCancelFunc = cancel
 
-	reader, err := cssBpf.AttachAndEventPipe(childCtx, "cgroup_perf_events", bpf.DefaultPerfEventBufferBytes)
+	opts := []bpf.AttachOption{
+		{ProgramName: "bpf_cgroup_mkdir_prog", Symbol: "cgroup_mkdir"},
+		{ProgramName: "bpf_cgroup_rmdir_prog", Symbol: "cgroup_rmdir"},
+	}
+	if cgroups.CgroupMode() == cgroups.Unified {
+		opts = append(
+			opts,
+			bpf.AttachOption{ProgramName: "bpf_cgroup_cpu_weight_nice_prog", Symbol: "cpu_weight_nice_read_s64", Optional: true},
+		)
+	}
+	if err := cssBpf.AttachWithOptions(opts); err != nil {
+		cancel()
+		cssBpf.Close()
+		cgroupCssBpfInternal = nil
+		cgroupCssBpfCancelFunc = nil
+		return err
+	}
+	reader, err := cssBpf.EventPipeByName(childCtx, "cgroup_perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		cancel()
 		cssBpf.Close()
