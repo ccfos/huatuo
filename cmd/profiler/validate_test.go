@@ -801,3 +801,73 @@ func TestCLIOutputOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateLanguageOptionsTargetSelection(t *testing.T) {
+	const containerID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	toolDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		lang    profiling.Language
+		typ     profiling.Type
+		args    []string
+		wantErr string
+	}{
+		{
+			name: "native cpu rejects both targets",
+			lang: profiling.LanguageC, typ: profiling.TypeCPU,
+			args:    []string{"--pid", "1", "--container-id", containerID},
+			wantErr: "--container-id and --pid cannot be used together",
+		},
+		{
+			name: "native cpu samples the host without a target",
+			lang: profiling.LanguageC, typ: profiling.TypeCPU,
+		},
+		{
+			name: "native cpu accepts a pid alone",
+			lang: profiling.LanguageC, typ: profiling.TypeCPU,
+			args: []string{"--pid", "1"},
+		},
+		{
+			name: "native cpu accepts a container alone",
+			lang: profiling.LanguageC, typ: profiling.TypeCPU,
+			args: []string{"--container-id", containerID},
+		},
+		{
+			name: "native memory rejects both targets",
+			lang: profiling.LanguageGo, typ: profiling.TypeMemory,
+			args:    []string{"--pid", "1", "--container-id", containerID},
+			wantErr: "--container-id and --pid cannot be used together",
+		},
+		{
+			name: "native memory needs a target",
+			lang: profiling.LanguageGo, typ: profiling.TypeMemory,
+			wantErr: "exactly one of --container-id or --pid must be provided",
+		},
+		{
+			name: "java rejects both targets",
+			lang: profiling.LanguageJava, typ: profiling.TypeCPU,
+			args:    []string{"--pid", "1", "--container-id", containerID, "--tool-path", toolDir},
+			wantErr: "--container-id and --pid cannot be used together",
+		},
+		{
+			name: "python rejects both targets",
+			lang: profiling.LanguagePython, typ: profiling.TypeCPU,
+			args:    []string{"--pid", "1", "--container-id", containerID, "--tool-path", toolDir},
+			wantErr: "--container-id and --pid cannot be used together",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := newValidationCLIContext(t, tt.args...)
+			err := validateLanguageOptions(ctx, tt.lang, tt.typ)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}

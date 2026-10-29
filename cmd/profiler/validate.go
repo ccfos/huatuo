@@ -124,11 +124,10 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 		if err := validateSinglePID(ctx, "native"); err != nil {
 			return err
 		}
-		if typ == profiling.TypeMemory {
-			return validateExactlyOneTarget(ctx)
-		}
 
-		return nil
+		// Native CPU may sample the whole host without a target, but the two
+		// target flags are mutually exclusive for every language and type.
+		return validateTargetSelection(ctx, typ == profiling.TypeMemory)
 
 	case profiling.LanguageJava, profiling.LanguagePython:
 		toolDir := ctx.String("tool-path")
@@ -142,7 +141,7 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 		if !info.IsDir() {
 			return fmt.Errorf("profiling tool path %q must be a directory", toolDir)
 		}
-		return validateExactlyOneTarget(ctx)
+		return validateTargetSelection(ctx, true)
 
 	case profiling.LanguageUnknown:
 		return fmt.Errorf("missing required flag: --language")
@@ -169,11 +168,17 @@ func validatePythonProfileOptions(lang profiling.Language, typ profiling.Type, d
 	return nil
 }
 
-func validateExactlyOneTarget(ctx *cli.Context) error {
+// validateTargetSelection rejects the target combinations the docs forbid:
+// --pid and --container-id are mutually exclusive, and every profiler except
+// native CPU requires one of them.
+func validateTargetSelection(ctx *cli.Context, requireTarget bool) error {
 	hasContainer := ctx.String("container-id") != ""
 	hasPID := ctx.String("pid") != ""
 
-	if hasContainer == hasPID {
+	if hasContainer && hasPID {
+		return fmt.Errorf("--container-id and --pid cannot be used together")
+	}
+	if requireTarget && !hasContainer && !hasPID {
 		return fmt.Errorf("exactly one of --container-id or --pid must be provided")
 	}
 
