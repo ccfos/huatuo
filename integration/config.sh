@@ -600,3 +600,21 @@ write_config_bamai_toolstream_receiver() {
 	write_config_bamai_auth "integration-node-token"
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }
+
+write_config_cpu_util() {
+	local cpu_blacklist=""
+	[[ ${cpu_util_disabled} != true ]] || cpu_blacklist='"cpu_util", '
+	cat << EOF
+BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_stat", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
+
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${CPU_UTIL_PORT}"
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${CPU_UTIL_KUBELET_PORT}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+EOF
+}
