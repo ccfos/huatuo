@@ -27,6 +27,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/cgroups"
 
 	"github.com/cilium/ebpf/btf"
 )
@@ -139,6 +140,52 @@ func TestExtractContainerID(t *testing.T) {
 		if actual != tc.expected {
 			t.Errorf("parseContainerID input %s want %s  actual %s", tc.input, tc.expected, actual)
 		}
+	}
+}
+
+func TestCgroupMembershipForSubsystem(t *testing.T) {
+	paths := &cgroups.ProcessPaths{
+		Controllers: map[string]string{"cpu": "/cpu/container", "memory": "/memory/container"},
+		Unified:     "/unified/container",
+	}
+	tests := []struct {
+		name          string
+		paths         *cgroups.ProcessPaths
+		mode          cgroups.Mode
+		subsystem     string
+		expectedPath  string
+		expectedError string
+	}{
+		{name: "v1 memory uses its own hierarchy", paths: paths, mode: cgroups.Legacy, subsystem: "memory", expectedPath: "/memory/container"},
+		{name: "v1 CPU uses its own hierarchy", paths: paths, mode: cgroups.Legacy, subsystem: "cpu", expectedPath: "/cpu/container"},
+		{name: "hybrid memory ignores unified membership", paths: paths, mode: cgroups.Hybrid, subsystem: "memory", expectedPath: "/memory/container"},
+		{name: "v2 uses unified membership", paths: paths, mode: cgroups.Unified, subsystem: "memory", expectedPath: "/unified/container"},
+		{
+			name:  "missing v1 memory does not fall back to CPU or v2",
+			paths: &cgroups.ProcessPaths{Controllers: map[string]string{"cpu": "/cpu/container"}, Unified: "/unified/container"},
+			mode:  cgroups.Legacy, subsystem: "memory", expectedError: "no memory cgroup v1 membership",
+		},
+		{
+			name:  "missing v2 membership does not fall back to v1",
+			paths: &cgroups.ProcessPaths{Controllers: map[string]string{"memory": "/memory/container"}},
+			mode:  cgroups.Unified, subsystem: "memory", expectedError: "no cgroup v2 membership",
+		},
+		{name: "missing paths", mode: cgroups.Legacy, subsystem: "memory", expectedError: "missing process cgroup membership"},
+		{name: "unsupported mode", paths: paths, mode: cgroups.Mode(255), subsystem: "memory", expectedError: "unsupported cgroup mode"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actualPath, actualErr := cgroupMembershipForSubsystem(test.paths, test.mode, test.subsystem)
+			if test.expectedError != "" {
+				if actualErr == nil || !strings.Contains(actualErr.Error(), test.expectedError) {
+					t.Fatalf("expected error %q, got path %q and error %v", test.expectedError, actualPath, actualErr)
+				}
+				return
+			}
+			if actualErr != nil || actualPath != test.expectedPath {
+				t.Fatalf("expected path %q, got %q and error %v", test.expectedPath, actualPath, actualErr)
+			}
+		})
 	}
 }
 
