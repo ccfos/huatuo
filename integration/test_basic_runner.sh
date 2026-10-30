@@ -66,7 +66,10 @@ assert_runner_result() {
 			[[ -f ${report%/*}/${file} ]] || fatal "${suite}/${label}: missing retained log: ${file}"
 		done < <(jq -r '.test_executions[] | select(.logs != null) | .logs[]' "${report}")
 		if [[ ${label} == repeated_skip || ${label} == mixed ]]; then
-			grep -Fq 'command is not installed: huatuo-runner-missing-command' "${log}" || fatal "skip reason was not displayed"
+			grep -Eq "^\\[[^]]+\\]\\[${suite^^}\\] SKIP: test_skip.sh \\([0-9]+/[0-9]+\\) duration=[0-9.]+s$" "${log}" \
+				|| fatal "skip summary was not logged separately"
+			grep -Eq "^\\[[^]]+\\]\\[${suite^^}\\] SKIP: command is not installed: huatuo-runner-missing-command$" "${log}" \
+				|| fatal "skip reason was not logged separately"
 		fi
 	fi
 	if grep -q 'PASS: test_skip.sh' "${log}"; then

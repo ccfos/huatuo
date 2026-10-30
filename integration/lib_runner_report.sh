@@ -81,9 +81,13 @@ report_execution_finish() {
 	message=$(jq -r --arg name "${name}" --argjson run "${run}" '
 		.runs_per_test as $runs | .test_executions[] | select(.test_name == $name and .run_index == $run) |
 		({passed: "PASS", failed: "FAIL", skipped: "SKIP"}[.result]) + ": " + .test_name +
-		" (\(.run_index)/\($runs)) duration=\(.duration_seconds)s" + (if .reason == null then "" else ": " + .reason end)
+		" (\(.run_index)/\($runs)) duration=\(.duration_seconds)s" +
+		(if .result == "skipped" or .reason == null then "" else ": " + .reason end)
 	' "${RUNNER_OUTPUT_DIR}/result.json") || return 1
 	log_info "${message}"
+	if [[ ${result} == skipped && -n ${reason} ]]; then
+		log_info "SKIP: ${reason}"
+	fi
 }
 
 report_finish() {
