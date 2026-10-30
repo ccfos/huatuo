@@ -654,8 +654,12 @@ assert_case_namespaces() {
  if [[ $NAMESPACE_PROFILE == net ]]; then
   [[ $(readlink /proc/self/ns/net) != "$runner_parent_net" ]] || fatal "network namespace was not isolated"
   ip -j link show lo | jq -e '.[0].flags | index("UP") != null' >/dev/null || fatal "loopback is down"
+  for proxy_var in http_proxy https_proxy all_proxy ftp_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY FTP_PROXY no_proxy NO_PROXY; do
+   [[ ! -v $proxy_var ]] || fatal "network namespace inherited $proxy_var"
+  done
  else
   [[ $(readlink /proc/self/ns/net) == "$runner_parent_net" ]] || fatal "host network visibility was lost"
+  [[ ${http_proxy:-} == http://127.0.0.1:9 ]] || fatal "non-network case lost its proxy environment"
  fi
  if [[ $NAMESPACE_PROFILE == pid ]]; then
   [[ $(readlink /proc/self/ns/pid) != "$runner_parent_pid" ]] || fatal "PID namespace was not isolated"
@@ -676,11 +680,12 @@ EOF
 		[[ $profile == mount ]] || namespaces="mount $profile"
 		printf '\nrunner_test_namespaces=(["integration/test_metrics.sh"]="%s" ["integration/test_node_config_api.sh"]="%s" ["e2e/test_metrics.sh"]="%s")\n' "$namespaces" "$namespaces" "$namespaces" >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
 		for suite in integration e2e; do
-			NAMESPACE_PROFILE=$profile assert_runner_result "$suite" "namespace-$profile" 0 'total=2 passed=2 skipped=0 failed=0' test_metrics.sh 2
+			http_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 \
+				NAMESPACE_PROFILE=$profile assert_runner_result "$suite" "namespace-$profile" 0 'total=2 passed=2 skipped=0 failed=0' test_metrics.sh 2
 		done
-		NAMESPACE_PROFILE=$profile assert_runner_result integration "namespace-parallel-$profile" 0 'total=2 passed=2 skipped=0 failed=0' -j 2
+		http_proxy=http://127.0.0.1:9 NAMESPACE_PROFILE=$profile assert_runner_result integration "namespace-parallel-$profile" 0 'total=2 passed=2 skipped=0 failed=0' -j 2
 		: > "$RUNNER_FIXTURE/execution-addresses"
-		NAMESPACE_PROFILE=$profile assert_runner_result integration "namespace-repeat-$profile" 0 'total=2 passed=2 skipped=0 failed=0' -j 2 test_metrics.sh 2
+		http_proxy=http://127.0.0.1:9 NAMESPACE_PROFILE=$profile assert_runner_result integration "namespace-repeat-$profile" 0 'total=2 passed=2 skipped=0 failed=0' -j 2 test_metrics.sh 2
 		[[ $(sort -u "$RUNNER_FIXTURE/execution-addresses" | wc -l) == 2 ]] || fatal "repeated executions reused a slot port"
 
 	done

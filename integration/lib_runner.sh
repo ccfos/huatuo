@@ -74,6 +74,7 @@ declare -A runner_test_groups=(
 declare -A runner_test_namespaces=(
 	["integration/test_events_netdev_events.sh"]="mount net"
 	["integration/test_events_netdev_bonding_lacp.sh"]="mount net"
+	["integration/test_events_net_rx_latency.sh"]="mount net"
 	["integration/test_dropwatch_ratelimit.sh"]="mount net"
 	["integration/test_autotracing_memburst.sh"]="mount pid"
 	["integration/test_tcpshark_output_cancellation_blocked.sh"]="mount net"

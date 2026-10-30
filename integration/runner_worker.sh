@@ -71,6 +71,8 @@ mount --bind "${runtime_dir}" /var/run
 if [[ $namespaces == "mount net" ]]; then
 	require_commands ip
 	ip link set lo up || fatal "cannot enable loopback in case network namespace"
+	# Host proxies are unreachable from a private network namespace.
+	unset http_proxy https_proxy all_proxy ftp_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY FTP_PROXY no_proxy NO_PROXY
 fi
 prepare_execution_ports
 unset HUATUO_BAMAI_DEFAULT_ADDR
