@@ -37,12 +37,18 @@ EOF
 }
 
 write_config_bamai_http() {
-	local address=$1
-	cat << EOF
-
-[HTTPServer]
-    ListenAddress = "${address}"
-EOF
+	local address=${HUATUO_BAMAI_DEFAULT_ADDR:-}
+	address=${address#http://}
+	if (($#)); then
+		[[ -n $1 ]] || {
+			log_error "explicit bamai HTTP listen address must not be empty"
+			return 1
+		}
+		address=$1
+	fi
+	printf '\n[HTTPServer]\n'
+	# Prepared configs may precede address initialization in the shared launcher.
+	[[ -z $address ]] || printf '    ListenAddress = "%s"\n' "$address"
 }
 
 write_config_storage_local() {
@@ -249,7 +255,7 @@ write_config_bamai_storage_events() {
 		"netstat" "memory_oom_kill" "ras" "runqlat" "sched_tick" \
 		"sockstat" "softirq" "softlockup" "tcp_memory" "tcp_retransmit" \
 		"tracing_status" "iocost" "blk_throtl" "io_health" "sched-blame"
-	write_config_bamai_http "127.0.0.1:${storage_http_port}"
+	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 [EventTracing.Dropwatch]
@@ -278,7 +284,7 @@ write_config_bamai_tcp_events() {
 		"ras" "runqlat" "sched_tick" "sockstat" "softirq" \
 		"softlockup" "tcp_memory" "tracing_status" "iocost" "blk_throtl" \
 		"io_health" "sched-blame" "memory_threshold_snapshot"
-	write_config_bamai_http "127.0.0.1:${TCP_RETRANS_HTTP_PORT}"
+	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 
@@ -305,7 +311,7 @@ write_config_bamai_cpusys_autotracing() {
 		"netdev_txqueue_timeout" "netstat" "memory_oom_kill" "ras" "runqlat" \
 		"sched_tick" "sockstat" "softirq" "softlockup" "tcp_memory" \
 		"tracing_status" "iocost" "blk_throtl" "io_health" "sched-blame"
-	write_config_bamai_http "${HUATUO_BAMAI_ADDR#http://}"
+	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 
@@ -367,7 +373,7 @@ write_config_bamai_irqtracing_autotracing() {
 		"ras" "runqlat" "sched_tick" "sockstat" "softirq" \
 		"softlockup" "tcp_memory" "tcp_retransmit" "tracing_status" "iocost" \
 		"blk_throtl" "io_health" "sched-blame" "memory_threshold_snapshot"
-	write_config_bamai_http "127.0.0.1:${IRQTRACING_API_PORT}"
+	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 
@@ -471,7 +477,7 @@ CONFIG
 write_config_bamai_apiserver_profiling() {
 	# External runtimes use the same bundled tools as direct profiler tests.
 	write_config_bamai_continuous_profiling "${PROFILER_TOOL_DIR}"
-	write_config_bamai_http "127.0.0.1:${NODE_PORT}"
+	write_config_bamai_http
 	cat << CONFIG
 [Operations]
     MaxConcurrent = ${NODE_CAPACITY}
@@ -499,7 +505,7 @@ write_config_bamai_netdev_events() {
 		"netstat" "memory_oom_kill" "ras" "runqlat" "sched_tick" \
 		"sockstat" "softirq" "softlockup" "tcp_memory" "tcp_retransmit" \
 		"iocost" "blk_throtl" "io_health" "sched-blame"
-	write_config_bamai_http "127.0.0.1:${NETDEV_HTTP_PORT}"
+	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 
@@ -540,7 +546,7 @@ write_config_bamai_memory_threshold_snapshot() {
 		"netstat" "memory_oom_kill" "ras" "runqlat" "sched_tick" \
 		"sockstat" "softirq" "softlockup" "tcp_memory" "tcp_retransmit" \
 		"iocost" "blk_throtl" "io_health" "sched-blame"
-	write_config_bamai_http "127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
+	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 
@@ -559,17 +565,17 @@ EOF
 	write_config_storage_local "${go_snapshot_case_dir}/events"
 }
 
-# The Elasticsearch config test supplies the port and credential fields.
+# The Elasticsearch config test supplies the credential fields.
 write_config_bamai_elasticsearch_validation() {
 	write_config_bamai_default
-	write_config_bamai_http "127.0.0.1:${STORAGE_HTTP_PORT}"
+	write_config_bamai_http
 	write_config_bamai_elasticsearch "${storage_address:-}" "${storage_username:-}" "${storage_password:-}"
 	write_config_storage_local ""
 }
 
 # The baseline keeps XFS enabled so its device fixture can gate initialization.
 write_config_bamai_runtime_limits() {
-	local port=$1 startup_cpu=$2 cpu=$3 memory_mib=$4
+	local startup_cpu=$1 cpu=$2 memory_mib=$3
 
 	write_config_bamai_default
 	cat << EOF
@@ -579,12 +585,12 @@ write_config_bamai_runtime_limits() {
     CPULimitCores = ${cpu}
     MemoryLimitMiB = ${memory_mib}
 EOF
-	write_config_bamai_http "127.0.0.1:${port}"
+	write_config_bamai_http
 }
 
 # The test owns the sender; bamai only receives and persists its toolstream events.
 write_config_bamai_toolstream_receiver() {
-	# The caller supplies an isolated HTTP port and workspace.
+	# The caller supplies the execution address and workspace.
 	write_config_blacklist \
 		"dropwatch" "arp" "ascend_npu" "cpu_stat" "cpu_util" \
 		"cpuidle" "cpusys" "diskio" "dload" "hungtask" \
@@ -597,7 +603,7 @@ write_config_bamai_toolstream_receiver() {
 		"sched_tick" "sockstat" "softirq" "softlockup" "tcp_memory" \
 		"tcp_retransmit" "tracing_status" "iocost" "blk_throtl" "io_health" \
 		"sched-blame"
-	write_config_bamai_http "127.0.0.1:${TOOLSTREAM_HTTP_PORT}"
+	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }

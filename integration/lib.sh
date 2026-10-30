@@ -132,20 +132,37 @@ require_readable() {
 	done
 }
 
-prepare_toml_parser_tool() {
+require_toml_reader() {
 	require_commands python3 jq
 	python3 -c 'import importlib.util; __import__("tomllib" if importlib.util.find_spec("tomllib") else "tomli")' \
 		> /dev/null 2>&1 || skip "TOML parsing requires Python 3.11+ or the Python tomli module"
-	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}/tools"
-	cp "${ROOT_DIR}/integration/testdata/tools/test_toml_to_json.py" \
-		"${HUATUO_BAMAI_TEST_TMPDIR}/tools/toml-to-json.py"
+}
+
+# Decode framework configuration without installing a fixture into each workspace.
+read_toml_json() {
+	require_commands python3
+	python3 - "$1" << 'PYTHON'
+import json
+import sys
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        sys.exit("TOML parsing requires Python 3.11+ or the Python tomli module")
+with open(sys.argv[1], "rb") as source:
+    json.dump(tomllib.load(source), sys.stdout, default=str)
+print()
+PYTHON
 }
 
 assert_toml_values() {
+	require_toml_reader
 	local config_file=$1 expected=$2
 	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/$(basename "${config_file}").json"
 	local error_file="${response_file}.error"
-	python3 "${HUATUO_BAMAI_TEST_TMPDIR}/tools/toml-to-json.py" "${config_file}" \
+	read_toml_json "${config_file}" \
 		> "${response_file}" 2> "${error_file}" \
 		|| fatal "cannot parse TOML ${config_file}: $(< "${error_file}")"
 	jq -e --argjson expected "${expected}" '
@@ -207,40 +224,56 @@ assert_log_has_no_failure() {
 }
 
 allocate_available_port() {
-	local protocol=${1:-tcp} attempt port sockets
+	local protocol=${1:-tcp}
 	[[ ${protocol} == tcp || ${protocol} == udp ]] \
 		|| fatal "unsupported port protocol: ${protocol}; expected tcp or udp"
-	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
-		mkdir -p "${INTEGRATION_PORT_DIR}"
-		allocate_worker_port "${protocol}" 9> "${INTEGRATION_PORT_DIR}/lock"
-		return
-	fi
-	sockets=$(ss -H -an "--${protocol}") || return 1
-	for ((attempt = 0; attempt < 20; attempt++)); do
-		port=$((20000 + RANDOM % 20001))
-		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
-			echo "${port}"
-			return 0
-		fi
-	done
-	return 1
+	local INTEGRATION_PORT_DIR=${INTEGRATION_PORT_DIR:-${HUATUO_BAMAI_TEST_TMPDIR}/ports}
+	local INTEGRATION_PORT_BASE=${INTEGRATION_PORT_BASE:-20000}
+	require_commands flock ss
+	mkdir -p "${INTEGRATION_PORT_DIR}"
+	allocate_worker_port "${protocol}" 9> "${INTEGRATION_PORT_DIR}/lock"
 }
 
-# The counter reserves ports across command substitutions and test subprocesses.
+# Clear only the previous execution's reservations. The scheduler has reaped
+# that worker before assigning the slot again; keep the cursor across executions.
+prepare_execution_ports() {
+	require_commands flock ss
+	mkdir -p "${INTEGRATION_PORT_DIR}"
+	(
+		flock 9 || exit 1
+		: > "${INTEGRATION_PORT_DIR}/allocated"
+	) 9> "${INTEGRATION_PORT_DIR}/lock"
+}
+
+# Reservations coordinate unbound services in this execution; socket probing
+# also excludes listeners left by other processes when the cursor wraps.
 allocate_worker_port() {
-	local protocol=$1 port=${INTEGRATION_PORT_BASE:?worker port base is missing} sockets
-	flock 9
-	sockets=$(ss -H -an "--${protocol}") || return 1
+	local protocol=$1 port=${INTEGRATION_PORT_BASE:?worker port base is missing} sockets attempt used
+	local -A allocated=()
+	flock 9 || return 1
+	sockets=$(ss -H -an "--${protocol}") || {
+		log_error "cannot inspect ${protocol} sockets in the execution network namespace"
+		return 1
+	}
+	if [[ -f ${INTEGRATION_PORT_DIR}/allocated ]]; then
+		while read -r used; do allocated[$used]=1; done < "${INTEGRATION_PORT_DIR}/allocated"
+	fi
 	if [[ -f ${INTEGRATION_PORT_DIR}/next ]]; then read -r port < "${INTEGRATION_PORT_DIR}/next"; fi
-	while ((port < INTEGRATION_PORT_BASE + 1000)); do
-		printf '%s\n' "$((port + 1))" > "${INTEGRATION_PORT_DIR}/next"
-		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
-			echo "${port}"
+	for ((attempt = 0; attempt < 1000; attempt++)); do
+		((port < INTEGRATION_PORT_BASE + 1000)) || port=$INTEGRATION_PORT_BASE
+		printf '%s\n' "$((port + 1))" > "${INTEGRATION_PORT_DIR}/next" || return 1
+		# Consume all socket records so an early match cannot cause SIGPIPE under pipefail.
+		if [[ -z ${allocated[$port]:-} ]] && awk -v port="${port}" '
+			$4 ~ ("[:.]" port "$") { used = 1 }
+			END { exit used }
+		' <<< "${sockets}"; then
+			printf '%s\n' "$port" >> "${INTEGRATION_PORT_DIR}/allocated" || return 1
+			printf '%s\n' "$port"
 			return 0
 		fi
 		port=$((port + 1))
 	done
-	log_error "worker port range is exhausted: ${INTEGRATION_PORT_BASE}"
+	log_error "execution port range is exhausted: ${INTEGRATION_PORT_BASE}"
 	return 1
 }
 
@@ -722,6 +755,7 @@ assert_huatuo_bamai_log_clean() {
 # integration_huatuo_bamai_start [config_writer_func] [huatuo-bamai args...]
 # Materialize writer stdout in the workspace; ":" preserves a prepared config.
 integration_huatuo_bamai_start() {
+	huatuo_bamai_initialize_address
 	local config_writer=${1:-write_config_bamai_default}
 	if [[ $# -gt 0 ]]; then
 		shift
@@ -750,27 +784,83 @@ integration_huatuo_bamai_start() {
 	huatuo_bamai_start "${runtime_args[@]}"
 }
 
-# Explicit addresses are already chosen by API and container config writers.
+# The default belongs to this execution, not a service restart or config file.
+# Export it across the worker/test boundary; explicit configs may change the
+# client address without replacing the execution's default.
+huatuo_bamai_initialize_address() {
+	[[ -z ${HUATUO_BAMAI_DEFAULT_ADDR:-} ]] || return 0
+	local port
+	port=$(allocate_available_port) || fatal "cannot allocate bamai HTTP port"
+	export HUATUO_BAMAI_DEFAULT_ADDR="http://127.0.0.1:${port}"
+	export HUATUO_BAMAI_ADDR=${HUATUO_BAMAI_DEFAULT_ADDR}
+	export HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
+}
+
+# Preserve explicit listeners and derive the local client endpoint from them.
 huatuo_bamai_configure_default_address() {
-	local config="${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" port
-	if awk '
-		/^[[:space:]]*\[HTTPServer\][[:space:]]*$/ { http = 1; next }
-		/^[[:space:]]*\[/ { http = 0 }
-		http && /^[[:space:]]*ListenAddress[[:space:]]*=/ { found = 1 }
-		END { exit !found }
-	' "${config}"; then return 0; fi
-	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
-		port=${HUATUO_BAMAI_ADDR##*:}
-	else
-		port=$(allocate_available_port) || fatal "failed to allocate a huatuo-bamai API port"
+	require_toml_reader
+	local config="${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" address parsed port
+	parsed=$(read_toml_json "${config}") \
+		|| fatal "cannot parse bamai configuration: ${config}"
+	address=$(jq -er '
+		(.HTTPServer // {}) |
+		if has("ListenAddress") then .ListenAddress | select(type == "string" and length > 0)
+		else "" end
+	' <<< "${parsed}") \
+		|| fatal "HTTPServer.ListenAddress must be a nonempty string: ${config}"
+	if [[ -z ${address} ]]; then
+		address=${HUATUO_BAMAI_DEFAULT_ADDR#http://}
+		python3 -c 'import toml' > /dev/null 2>&1 \
+			|| skip "TOML writing requires the Python toml module; install python3-toml"
+		# A serializer handles quoted and inline tables. Reparse and compare before
+		# replacement so unsupported values cannot silently change other settings.
+		python3 - "${config}" "${address}" << 'PYTHON' || fatal "cannot update bamai listener; original configuration retained: ${config}"
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+try:
+    import toml
+except ModuleNotFoundError:
+    sys.exit("TOML writing requires the Python toml module; install python3-toml")
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+path = Path(sys.argv[1])
+with path.open("rb") as source:
+    expected = tomllib.load(source)
+expected.setdefault("HTTPServer", {})["ListenAddress"] = sys.argv[2]
+text = toml.dumps(expected)
+actual = tomllib.loads(text)
+# JSON normalization also compares TOML dates, times and NaN values consistently.
+if json.dumps(actual, sort_keys=True, default=str) != json.dumps(expected, sort_keys=True, default=str):
+    sys.exit("TOML serialization changed configuration values")
+temporary = None
+try:
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".bamai.", delete=False) as target:
+        temporary = target.name
+        os.fchmod(target.fileno(), path.stat().st_mode & 0o777)
+        target.write(text)
+    with open(temporary, "rb") as source:
+        tomllib.load(source)
+    os.replace(temporary, path)
+finally:
+    if temporary is not None and os.path.exists(temporary):
+        os.unlink(temporary)
+PYTHON
 	fi
-	if grep -Eq '^[[:space:]]*\[HTTPServer\][[:space:]]*$' "${config}"; then
-		sed -i "/^[[:space:]]*\\[HTTPServer\\][[:space:]]*$/a\\    ListenAddress = \"127.0.0.1:${port}\"" "${config}"
-	else
-		printf '\n[HTTPServer]\n    ListenAddress = "127.0.0.1:%s"\n' "${port}" >> "${config}"
-	fi
-	HUATUO_BAMAI_ADDR="http://127.0.0.1:${port}"
-	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
+	case ${address} in
+	:*) address="127.0.0.1${address}" ;;
+	0.0.0.0:*) address="127.0.0.1:${address##*:}" ;;
+	\[::\]:*) address="[::1]:${address##*:}" ;;
+	esac
+	port=${address##*:}
+	[[ ${port} =~ ^[0-9]{1,5}$ ]] && ((10#${port} > 0 && 10#${port} <= 65535)) \
+		|| fatal "bamai listener requires a port between 1 and 65535: ${address}"
+	export HUATUO_BAMAI_ADDR="http://${address}"
+	export HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 }
 
 # huatuo_bamai_collect_metrics saves /metrics output to the temp metrics file.

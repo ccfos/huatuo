@@ -99,13 +99,10 @@ assert_burst_configuration_rejected() {
 	! grep -q 'started successfully' "${file}" || fatal "daemon started with invalid ${name}"
 }
 
-GO_SNAPSHOT_BAMAI_PORT=$(allocate_available_port)
 GO_SNAPSHOT_KUBELET_PORT=10250
 go_snapshot_top_k=100
 KUBELET_CERT=${KUBELET_CERT:-unused}
 KUBELET_KEY=${KUBELET_KEY:-unused}
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 burst_top=10
 burst_threshold=10
 burst_anon=0

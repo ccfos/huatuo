@@ -34,11 +34,6 @@ readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
 require_commands ip jq curl awk ethtool ss
 
-NETDEV_HTTP_PORT=$(allocate_available_port) || fatal "failed to allocate a netdev_events API port"
-readonly NETDEV_HTTP_PORT
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${NETDEV_HTTP_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
-
 netdev_device_index=""
 netdev_device_mac=""
 netdev_baseline_event_count=""

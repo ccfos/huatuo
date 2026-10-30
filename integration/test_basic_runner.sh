@@ -71,6 +71,8 @@ runner_prepare_fixture() {
 	mkdir -p "${RUNNER_FIXTURE}"/{integration,e2e,_output}
 	cp "${ROOT_DIR}/integration/"{run.sh,env.sh,lib.sh,lib_runner.sh,lib_runner_report.sh,runner_worker.sh} "${RUNNER_FIXTURE}/integration/"
 	cp "${ROOT_DIR}/e2e/"{run.sh,lib.sh} "${RUNNER_FIXTURE}/e2e/"
+	mkdir -p "${RUNNER_FIXTURE}/_output/conf"
+	printf '[HTTPServer]\n' > "${RUNNER_FIXTURE}/_output/conf/huatuo-bamai.conf"
 	# Fixture cases have their own declarations; production entries name absent files.
 	printf '\nrunner_test_namespaces=()\n' >> "${RUNNER_FIXTURE}/integration/lib_runner.sh"
 	cat >> "${RUNNER_FIXTURE}/integration/lib_runner.sh" << 'METADATA'
@@ -84,6 +86,10 @@ done
 METADATA
 	# Keep result classification and workspace cleanup real; replace service I/O.
 	cat >> "${RUNNER_FIXTURE}/integration/lib.sh" << 'EOF'
+ss() {
+ readlink /proc/self/ns/net > "${HUATUO_BAMAI_TEST_TMPDIR}/port-namespace"
+ command ss "$@"
+}
 huatuo_bamai_start() {
     : > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
     if [[ ${RUNNER_LOG_FAIL:-0} == 1 ]]; then
@@ -633,6 +639,9 @@ assert_runner_namespaces() {
 set -euo pipefail
 source "$ROOT_DIR/integration/lib.sh"
 assert_case_namespaces() {
+ printf "%s\n" "$HUATUO_BAMAI_ADDR" >> "$ROOT_DIR/execution-addresses"
+ [[ $(< "$HUATUO_BAMAI_TEST_TMPDIR/port-namespace") == "$(readlink /proc/self/ns/net)" ]] || fatal "port allocation ran outside the execution namespace"
+ [[ $HUATUO_BAMAI_ADDR == "$HUATUO_BAMAI_DEFAULT_ADDR" ]] || fatal "execution address was not inherited"
  [[ /var/run -ef $HUATUO_BAMAI_TEST_TMPDIR/run ]] || fatal "case does not own /var/run"
  [[ $(readlink /proc/self/ns/mnt) != "$runner_parent_mount" ]] || fatal "case shares parent mount namespace"
  if [[ $NAMESPACE_PROFILE == net ]]; then
@@ -663,6 +672,10 @@ EOF
 			NAMESPACE_PROFILE=$profile assert_runner_result "$suite" "namespace-$profile" 0 'total=2 passed=2 skipped=0 failed=0' test_metrics.sh 2
 		done
 		NAMESPACE_PROFILE=$profile assert_runner_result integration "namespace-parallel-$profile" 0 'total=2 passed=2 skipped=0 failed=0' -j 2
+		: > "$RUNNER_FIXTURE/execution-addresses"
+		NAMESPACE_PROFILE=$profile assert_runner_result integration "namespace-repeat-$profile" 0 'total=2 passed=2 skipped=0 failed=0' -j 2 test_metrics.sh 2
+		[[ $(sort -u "$RUNNER_FIXTURE/execution-addresses" | wc -l) == 2 ]] || fatal "repeated executions reused a slot port"
+
 	done
 	# Exercise all metadata registries, not just namespace declarations.
 	local table

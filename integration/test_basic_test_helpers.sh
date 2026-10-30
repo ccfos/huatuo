@@ -18,7 +18,6 @@
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 require_commands python3 jq curl ss flock
-prepare_toml_parser_tool
 
 assert_helper_log_levels() {
 	local helpers_log_format helpers_log_level helpers_log_probe helpers_log_status helpers_log_expected helpers_log_line
@@ -95,29 +94,77 @@ assert_helper_http_defaults() (
 
 assert_helper_bamai_ports() (
 	source "${ROOT_DIR}/integration/config.sh"
-	INTEGRATION_PORT_DIR=""
-	allocate_available_port() { printf '23456\n'; }
-	huatuo_bamai_start() {
-		assert_eq "${HUATUO_BAMAI_ADDR}" "http://127.0.0.1:23456" "serial allocated address"
-		assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"HTTPServer.ListenAddress":"127.0.0.1:23456"}'
-	}
-	integration_huatuo_bamai_start
-	INTEGRATION_PORT_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/ports"
-	HUATUO_BAMAI_ADDR=http://127.0.0.1:24567
-	write_config_bamai_default > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	huatuo_bamai_configure_default_address
-	assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"HTTPServer.ListenAddress":"127.0.0.1:24567"}'
-	{
-		write_config_bamai_http "127.0.0.1:25678"
-		printf '\n[HTTPServer.Auth]\nBearerToken = "integration-node-token"\n'
-	} > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	huatuo_bamai_configure_default_address
-	assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"HTTPServer.ListenAddress":"127.0.0.1:25678"}'
-	# A prepared configuration must survive the launcher's explicit no-writer mode.
-	huatuo_bamai_start() {
-		assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"HTTPServer.ListenAddress":"127.0.0.1:25678","HTTPServer.Auth.BearerToken":"integration-node-token"}'
-	}
+	unset HUATUO_BAMAI_DEFAULT_ADDR INTEGRATION_PORT_DIR INTEGRATION_PORT_BASE
+	local first next address expected
+	huatuo_bamai_start() { :; }
+	HUATUO_BAMAI_ADDR=""
+	write_config_bamai_runtime_limits 0.75 1.25 512 > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	integration_huatuo_bamai_start :
+	assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" '{"Runtime.StartupCPULimitCores":0.75,"Runtime.CPULimitCores":1.25,"Runtime.MemoryLimitMiB":512}'
+	integration_huatuo_bamai_start
+	first=${HUATUO_BAMAI_ADDR}
+	assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" "{\"HTTPServer.ListenAddress\":\"${first#http://}\"}"
+	integration_huatuo_bamai_start
+	assert_eq "${HUATUO_BAMAI_ADDR}" "${first}" "restart preserves the execution address"
+	next=$(allocate_available_port)
+	[[ http://127.0.0.1:${next} != "${first}" ]] || fatal "unbound service ports were reused"
+	for address in "127.0.0.1:${next}" "0.0.0.0:${next}" ":${next}" "[::]:${next}" "[::1]:${next}"; do
+		{
+			write_config_bamai_http "${address}"
+			printf '\n[HTTPServer.Auth]\nBearerToken = "integration-node-token"\n'
+		} > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+		integration_huatuo_bamai_start :
+		case ${address} in
+		\[*) expected="http://[::1]:${next}" ;;
+		*) expected="http://127.0.0.1:${next}" ;;
+		esac
+		assert_eq "${HUATUO_BAMAI_ADDR}" "${expected}" "explicit listener client address"
+		assert_eq "${HUATUO_BAMAI_METRICS_API}" "${expected}/metrics" "explicit listener metrics URL"
+		assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" "{\"HTTPServer.ListenAddress\":\"${address}\",\"HTTPServer.Auth.BearerToken\":\"integration-node-token\"}"
+	done
+	integration_huatuo_bamai_start write_config_bamai_http
+	assert_eq "${HUATUO_BAMAI_ADDR}" "${first}" "implicit HTTP writer restores the execution address"
+	assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" "{\"HTTPServer.ListenAddress\":\"${first#http://}\"}"
+	local header
+	for header in '[HTTPServer] # keep authentication' '["HTTPServer"]' "['HTTPServer']" 'HTTPServer = {Auth = {BearerToken = "token"}}'; do
+		printf '%s\n' "${header}" > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+		if [[ $header != HTTPServer* ]]; then
+			printf '[HTTPServer.Auth]\nBearerToken="token"\n' >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+		fi
+		integration_huatuo_bamai_start :
+		assert_toml_values "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" "{\"HTTPServer.ListenAddress\":\"${first#http://}\",\"HTTPServer.Auth.BearerToken\":\"token\"}"
+	done
+	local status=0
+	write_config_bamai_http "" > "${HUATUO_BAMAI_TEST_TMPDIR}/empty-address.out" 2>&1 || status=$?
+	assert_eq "$status" 1 "explicit empty address is rejected"
+	# An unreplaceable destination forces failure after serialization, before rename.
+	printf '[HTTPServer]\n' > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	cp "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" "${HUATUO_BAMAI_TEST_TMPDIR}/original.conf"
+	status=0
+	(
+		python3() {
+			if [[ $1 == - && $# == 3 ]]; then
+				# Preserve parsing and writing; fail only the atomic replacement syscall.
+				{
+					printf 'import os\ndef denied(*args): raise PermissionError("fixture replace denied")\nos.replace = denied\n'
+					cat
+				} | command python3 "$@"
+			else command python3 "$@"; fi
+		}
+		integration_huatuo_bamai_start :
+	) > "${HUATUO_BAMAI_TEST_TMPDIR}/replace-failure.log" 2>&1 || status=$?
+	assert_eq "${status}" 1 "configuration replacement failure"
+	grep -q 'PermissionError: fixture replace denied' "${HUATUO_BAMAI_TEST_TMPDIR}/replace-failure.log" \
+		|| fatal "replacement failure was not exercised; see ${HUATUO_BAMAI_TEST_TMPDIR}/replace-failure.log"
+	cmp "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" "${HUATUO_BAMAI_TEST_TMPDIR}/original.conf" || fatal "failed replacement changed the original configuration"
+	[[ -z $(find "${HUATUO_BAMAI_TEST_TMPDIR}" -maxdepth 1 -name '.bamai.*' -print -quit) ]] || fatal "failed replacement leaked temporary configuration"
+	for address in ':0' '127.0.0.1:65536'; do
+		write_config_bamai_http "${address}" > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+		status=0
+		(integration_huatuo_bamai_start :) > "${HUATUO_BAMAI_TEST_TMPDIR}/invalid-listener.log" 2>&1 || status=$?
+		assert_eq "${status}" 1 "invalid listener port"
+		grep -q 'requires a port between 1 and 65535' "${HUATUO_BAMAI_TEST_TMPDIR}/invalid-listener.log" || fatal "missing invalid listener diagnosis"
+	done
 )
 
 assert_helper_metric_diagnostics() (
@@ -193,7 +240,11 @@ assert_helper_port_allocation() (
 	trap cleanup_running_jobs EXIT
 	work="${HUATUO_BAMAI_TEST_TMPDIR}/worker-ports"
 	mkdir -p "${work}"
-	ss() { echo 'LISTEN 0 128 127.0.0.1:20000 0.0.0.0:*'; }
+	ss() {
+		printf 'LISTEN 0 128 127.0.0.1:20000 0.0.0.0:*\n'
+		# Exceed pipe capacity after the match to expose early-reader SIGPIPE failures.
+		awk 'BEGIN { for (i = 0; i < 20000; i++) print "ESTAB 0 0 127.0.0.1:19999 0.0.0.0:*" }'
+	}
 	export INTEGRATION_PORT_BASE=20000 INTEGRATION_PORT_DIR="${work}/ports"
 	for ((i = 0; i < 12; i++)); do
 		allocate_available_port > "${work}/port-${i}" &
@@ -206,6 +257,19 @@ assert_helper_port_allocation() (
 		((port > 20000 && port < 21000)) || fatal "worker port outside its block: ${port}"
 	done
 	assert_eq "$(INTEGRATION_PORT_BASE=21000 INTEGRATION_PORT_DIR="${work}/other" allocate_available_port)" 21000 "separate worker block"
+	assert_eq "$(allocate_available_port udp)" 20013 "UDP shares the allocation counter"
+	printf '21000\n' > "${work}/ports/next"
+	assert_eq "$(allocate_available_port)" 20014 "wrap skips occupied and reserved ports"
+	seq 20000 20999 > "${work}/ports/allocated"
+	if allocate_available_port; then fatal "allocation ignored execution reservations"; fi
+	# Reset reservations while retaining the cursor across the slot boundary.
+	ss() { :; }
+	printf '20999\n' > "${work}/ports/next"
+	prepare_execution_ports
+	assert_eq "$(allocate_available_port)" 20999 "new execution clears reservations and retains cursor"
+	prepare_execution_ports
+	assert_eq "$(allocate_available_port)" 20000 "next execution wraps the cursor"
+	assert_eq "$(allocate_available_port udp)" 20001 "wrapped execution reserves distinct ports"
 	ss() { return 1; }
 	if allocate_available_port; then fatal "allocation ignored failed socket query"; fi
 )

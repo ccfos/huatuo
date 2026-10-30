@@ -44,10 +44,7 @@ run_tcpshark_output_cancellation() (
 	readonly TOOLSTREAM_ADDRESS="127.0.0.99"
 	TOOLSTREAM_PORT=$(allocate_available_port) || fatal "cannot allocate the retransmit traffic port"
 	readonly TOOLSTREAM_PORT
-	TOOLSTREAM_HTTP_PORT=$(allocate_available_port) || fatal "cannot allocate the bamai HTTP port"
-	readonly TOOLSTREAM_HTTP_PORT
-	HUATUO_BAMAI_ADDR="http://127.0.0.1:${TOOLSTREAM_HTTP_PORT}"
-	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
+
 	toolstream_pid=""
 	toolstream_traffic_pid=""
 	toolstream_full_since=-1

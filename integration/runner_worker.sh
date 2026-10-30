@@ -72,6 +72,9 @@ if [[ $namespaces == "mount net" ]]; then
 	require_commands ip
 	ip link set lo up || fatal "cannot enable loopback in case network namespace"
 fi
+prepare_execution_ports
+unset HUATUO_BAMAI_DEFAULT_ADDR
+huatuo_bamai_initialize_address
 if [[ $suite == e2e ]]; then
 	e2e_huatuo_bamai_start
 	e2e_service_ready=true

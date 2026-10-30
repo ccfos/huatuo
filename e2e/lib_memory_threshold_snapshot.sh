@@ -34,10 +34,8 @@ memory_threshold_snapshot_setup() {
 
 	GO_SNAPSHOT_KUBELET_PORT=${KUBELET_PODS_API##*:}
 	GO_SNAPSHOT_KUBELET_PORT=${GO_SNAPSHOT_KUBELET_PORT%%/*}
-	GO_SNAPSHOT_BAMAI_PORT=$(allocate_available_port) || fatal "cannot allocate bamai port"
-	readonly GO_SNAPSHOT_KUBELET_PORT GO_SNAPSHOT_BAMAI_PORT
-	HUATUO_BAMAI_ADDR="http://127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
-	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
+
+	readonly GO_SNAPSHOT_KUBELET_PORT
 }
 
 # Declare the limit through CRI/systemd so reconciliation preserves it.

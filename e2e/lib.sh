@@ -19,9 +19,12 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 
 e2e_huatuo_bamai_start() {
+	huatuo_bamai_initialize_address
+	cp "${ROOT_DIR}/_output/conf/huatuo-bamai.conf" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	huatuo_bamai_configure_default_address
 	local runtime_args=(
-		"--config-dir" "${ROOT_DIR}/_output/conf/"
-		"--config" "huatuo-bamai.conf"
+		"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
+		"--config" "bamai.conf"
 		"--region" "e2e"
 		"--disable-storage"
 	)

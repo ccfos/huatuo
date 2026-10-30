@@ -27,13 +27,6 @@ require_commands jq ss docker
 docker info > /dev/null 2>&1 || skip "docker daemon is unavailable"
 require_readable /sys/kernel/btf/vmlinux
 
-CPU_PROFILER_API_PORT=$(allocate_available_port) \
-	|| fatal "failed to allocate a huatuo-bamai API port"
-readonly CPU_PROFILER_API_PORT
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${CPU_PROFILER_API_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
-export HUATUO_BAMAI_ADDR HUATUO_BAMAI_METRICS_API
-
 readonly CPU_PROFILER_FIXTURE="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-profiler-fixture"
 readonly CPU_PROFILER_STAT="${CPU_PROFILER_FIXTURE}/proc/stat"
 readonly CPU_PROFILER_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/cpusys"

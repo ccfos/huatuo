@@ -197,7 +197,7 @@ memsnapshot_dump_failure_diagnostics() (
 		log_error 'memory_threshold_snapshot event file does not exist'
 	fi
 	log_error '----- CURRENT TRACING METRICS -----'
-	timeout 5s curl --silent --show-error "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API:-http://127.0.0.1:19704/metrics}" | grep -E 'tracing_status|memory_threshold|memburst' >&2
+	timeout 5s curl --silent --show-error "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" | grep -E 'tracing_status|memory_threshold|memburst' >&2
 	log_error '----- RECENT KUBELET MESSAGES -----'
 	timeout 5s journalctl -u kubelet --no-pager -n 100 >&2
 	return 0

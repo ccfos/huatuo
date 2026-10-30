@@ -33,10 +33,7 @@ require_commands jq ss curl stat
 require_readable /sys/kernel/btf/vmlinux
 tracepoint_available skb kfree_skb || skip "skb/kfree_skb tracepoint is unavailable"
 
-storage_http_port=$(allocate_available_port) || fatal "failed to allocate bamai HTTP port"
 storage_target_port=$(allocate_available_port udp) || fatal "failed to allocate UDP target port"
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${storage_http_port}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 # Keep this LocalFile-only case independent of inherited backend credentials.
 STORAGE_ADDR=""

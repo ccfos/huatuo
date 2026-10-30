@@ -189,8 +189,7 @@ if [[ ${EUID} -ne 0 ]]; then
 	log_info "SKIP: ${supervisor_reason}"
 	exit 0
 fi
-runner_prerequisites=(unshare mount)
-if ((REQUESTED_JOBS > 1)); then runner_prerequisites+=(flock ss); fi
+runner_prerequisites=(unshare mount flock ss)
 for prerequisite in "${runner_prerequisites[@]}"; do
 	if ! command -v "${prerequisite}" > /dev/null; then
 		supervisor_reason="command is not installed: ${prerequisite}"

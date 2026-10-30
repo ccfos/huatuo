@@ -24,9 +24,8 @@ trap huatuo_bamai_stop EXIT
 
 write_config_bamai_snapshot_validation() {
 	write_config_bamai_default
+	write_config_bamai_http
 	cat << CONFIG
-[HTTPServer]
- ListenAddress = "127.0.0.1:${snapshot_config_port}"
 [AutoTracing.MemoryThresholdSnapshot]
 CONFIG
 	printf '%b\n' "${snapshot_config_body}"
@@ -49,9 +48,7 @@ assert_snapshot_configuration_started() {
 while IFS='|' read -r snapshot_config_case snapshot_config_body snapshot_config_error; do
 	HUATUO_BAMAI_TEST_TMPDIR="${SNAPSHOT_CONFIG_WORKSPACE}/${snapshot_config_case}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
-	snapshot_config_port=$(allocate_available_port)
-	HUATUO_BAMAI_ADDR="http://127.0.0.1:${snapshot_config_port}"
-	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
+
 	if [[ -z ${snapshot_config_error} ]]; then
 		integration_huatuo_bamai_start write_config_bamai_snapshot_validation \
 			--region integration --disable-storage --disable-kubelet --log-debug

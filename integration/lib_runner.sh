@@ -116,7 +116,7 @@ runner_test_group() {
 
 runner_start_execution() {
 	local -a command=(unshare --mount)
-	local script=$1 slot=$2 group=$3 workspace name port_dir="" port_base="" address=${HUATUO_BAMAI_ADDR:-http://127.0.0.1:19704}
+	local script=$1 slot=$2 group=$3 workspace name port_dir port_base
 	name=${script##*/}
 	local namespaces=${runner_test_namespaces["${runner_suite}/${name}"]:-mount}
 	case $namespaces in
@@ -138,20 +138,12 @@ runner_start_execution() {
 		return 1
 	fi
 	log_info "🚀🚀 start: ${name} (${runner_run_index}/${runner_runs_per_test})"
-	RUNNER_REASON_DIR=${workspace}
-	if ((runner_jobs > 1)) && [[ ${group} != exclusive ]]; then
-		port_dir="${RUNNER_OUTPUT_DIR}/ports/${slot}"
-		port_base=$((20000 + slot * 1000))
-		local port
-		port=$(INTEGRATION_PORT_DIR="${port_dir}" INTEGRATION_PORT_BASE="${port_base}" allocate_available_port) \
-			|| fatal "cannot allocate worker ${slot} daemon port"
-		address="http://127.0.0.1:${port}"
-	fi
+	port_dir="${RUNNER_OUTPUT_DIR}/ports/${slot}"
+	port_base=$((20000 + slot * 1000))
 	unset RUNNER_REASON_DIR RUNNER_REASON_OWNER
 	# Job control gives each case its own process group and preserves SIGINT.
 	set -m
 	HUATUO_BAMAI_TEST_TMPDIR="${workspace}" RUNNER_REASON_DIR="${workspace}" INTEGRATION_PORT_DIR="${port_dir}" INTEGRATION_PORT_BASE="${port_base}" \
-		HUATUO_BAMAI_ADDR="${address}" HUATUO_BAMAI_METRICS_API="${address}/metrics" \
 		"${command[@]}" >> "${workspace}/stdout.log" 2>> "${workspace}/stderr.log" &
 	runner_pids[slot]=$!
 	set +m
@@ -374,7 +366,6 @@ run_test_suite() {
 			export STORAGE_SHARED_DIR
 		fi
 		if ((runner_jobs > 1)); then
-			rm -rf -- "${HUATUO_BAMAI_TEST_TMPDIR}/ports"
 			runner_parallel_cases "${runner_jobs}" "${parallel[@]}"
 			runner_stop_storage
 			((runner_failed == 0)) || exit 1

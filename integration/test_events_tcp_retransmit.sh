@@ -33,13 +33,9 @@ require_commands ip jq ss curl pgrep timeout
 tracepoint_available tcp tcp_retransmit_skb || skip "tcp/tcp_retransmit_skb tracepoint is unavailable"
 tracepoint_available tcp tcp_retransmit_synack || skip "tcp/tcp_retransmit_synack tracepoint is unavailable"
 
-TCP_RETRANS_HTTP_PORT=$(allocate_available_port) || fatal "failed to allocate bamai HTTP port"
-readonly TCP_RETRANS_HTTP_PORT
 TCP_RETRANS_TARGET_PORT=$(allocate_available_port) || fatal "failed to allocate TCP target port"
 readonly TCP_RETRANS_TARGET_PORT
 readonly TCP_RETRANS_FILTER="tcp and dst host ${TCP_RETRANS_TARGET_IP} and dst port ${TCP_RETRANS_TARGET_PORT}"
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${TCP_RETRANS_HTTP_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 tcp_retrans_child_pid=""
 tcp_retrans_workload_pid=""

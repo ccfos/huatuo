@@ -26,12 +26,6 @@ readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
 require_commands curl ss timeout
 
-STORAGE_HTTP_PORT=$(allocate_available_port) \
-	|| fatal "failed to allocate a huatuo-bamai API port"
-readonly STORAGE_HTTP_PORT
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${STORAGE_HTTP_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
-
 trap huatuo_bamai_stop EXIT
 
 assert_storage_config_error() {
