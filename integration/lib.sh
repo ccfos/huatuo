@@ -141,6 +141,41 @@ assert_toml_values() {
 		|| fatal "${config_file}: expected ${expected}; actual $(< "${response_file}")"
 }
 
+# Use the profiler's BTF loader so sysfs and vmlinux ELF fallback stay aligned.
+require_kernel_btf() {
+	require_commands go
+	local probe="${HUATUO_BAMAI_TEST_TMPDIR}/kernel-btf-check" diagnostic status=0
+	go -C "${ROOT_DIR}" build -mod=vendor -o "${probe}" \
+		"${ROOT_DIR}/integration/testdata/test_kernel_btf.go" \
+		> "${probe}.build.log" 2>&1 \
+		|| fatal "cannot build kernel BTF probe (see ${probe}.build.log)"
+	diagnostic=$("${probe}" 2>&1) || status=$?
+	case ${status} in
+	0) ;;
+	77) skip "kernel BTF unavailable (sysfs or vmlinux ELF): ${diagnostic}" ;;
+	*) fatal "kernel BTF probe failed (exit ${status}): ${diagnostic}" ;;
+	esac
+}
+
+require_profiler_bpf_sampling() {
+	require_readable /proc/self/status
+	local cap_eff
+	cap_eff=$(awk '$1 == "CapEff:" { print $2 }' /proc/self/status)
+	# BPF perf-event programs require both capabilities on newer kernels;
+	# CAP_SYS_ADMIN provides the legacy equivalent. Container identity is irrelevant.
+	if (((16#${cap_eff} & (1 << 21)) == 0)); then
+		(((16#${cap_eff} & (1 << 39)) != 0)) \
+			|| skip "BPF program loading requires CAP_BPF or CAP_SYS_ADMIN"
+		(((16#${cap_eff} & (1 << 38)) != 0)) \
+			|| skip "BPF perf-event sampling requires CAP_PERFMON or CAP_SYS_ADMIN"
+	fi
+	# The profiler raises RLIMIT_MEMLOCK to infinity during BPF initialization.
+	if [[ $(ulimit -Hl) != unlimited ]]; then
+		(((16#${cap_eff} & (1 << 24)) != 0)) \
+			|| skip "profiler BPF initialization requires CAP_SYS_RESOURCE to raise RLIMIT_MEMLOCK"
+	fi
+}
+
 require_build_output() {
 	[[ -d "${ROOT_DIR}/_output" ]] || fatal "build output directory missing: ${ROOT_DIR}/_output; run make build"
 }

@@ -15,6 +15,7 @@
 package memsnapshot
 
 import (
+	"debug/elf"
 	"errors"
 	"os"
 	"path/filepath"
@@ -67,6 +68,202 @@ func TestFindLoadBiasMappingIdentity(t *testing.T) {
 	}
 	if _, err := FindLoadBias(maps, &target, 0, 0x90000000); err == nil {
 		t.Fatal("accepted an underflowing relocation")
+	}
+}
+
+func TestFindELFLoadBiasSegments(t *testing.T) {
+	page := uint64(os.Getpagesize())
+	const base = uint64(0x70000000)
+	segment := elf.ProgHeader{
+		Type:   elf.PT_LOAD,
+		Off:    page + 0x80,
+		Vaddr:  4*page + 0x80,
+		Filesz: 3 * page,
+	}
+	for _, test := range []struct {
+		name      string
+		headers   []elf.ProgHeader
+		start     uint64
+		offset    uint64
+		want      uint64
+		wantError bool
+	}{
+		{
+			name:    "aligned segment start",
+			headers: []elf.ProgHeader{segment},
+			start:   base + 4*page,
+			offset:  page,
+			want:    base,
+		},
+		{
+			name:    "split mapping",
+			headers: []elf.ProgHeader{segment},
+			start:   base + 5*page,
+			offset:  2 * page,
+			want:    base,
+		},
+		{
+			name:    "last partial page",
+			headers: []elf.ProgHeader{segment},
+			start:   base + 7*page,
+			offset:  4 * page,
+			want:    base,
+		},
+		{
+			name:    "separate load instance",
+			headers: []elf.ProgHeader{segment},
+			start:   base + 0x100000 + 4*page,
+			offset:  page,
+			want:    base + 0x100000,
+		},
+		{
+			name:      "offset outside segment",
+			headers:   []elf.ProgHeader{segment},
+			start:     base,
+			offset:    5 * page,
+			wantError: true,
+		},
+		{
+			name:      "underflow",
+			headers:   []elf.ProgHeader{segment},
+			start:     page,
+			offset:    page,
+			wantError: true,
+		},
+		{
+			name:      "unaligned start",
+			headers:   []elf.ProgHeader{segment},
+			start:     base + 4*page + 1,
+			offset:    page,
+			wantError: true,
+		},
+		{
+			name:      "unaligned offset",
+			headers:   []elf.ProgHeader{segment},
+			start:     base + 4*page,
+			offset:    page + 1,
+			wantError: true,
+		},
+		{
+			name: "overflowing file range",
+			headers: []elf.ProgHeader{{
+				Type:   elf.PT_LOAD,
+				Off:    ^uint64(0) - page + 1,
+				Filesz: page,
+			}},
+			start:     base,
+			wantError: true,
+		},
+		{
+			name:      "missing load segment",
+			start:     base,
+			wantError: true,
+		},
+		{
+			name: "ambiguous segments",
+			headers: []elf.ProgHeader{segment, {
+				Type:   elf.PT_LOAD,
+				Off:    page,
+				Vaddr:  8 * page,
+				Filesz: page,
+			}},
+			start:     base + 8*page,
+			offset:    page,
+			wantError: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			file := &elf.File{}
+			for _, header := range test.headers {
+				file.Progs = append(file.Progs, &elf.Prog{ProgHeader: header})
+			}
+			target := ProcMap{
+				Start:  test.start,
+				Offset: test.offset,
+				Inode:  42,
+			}
+			// Another load of the same inode must never supply this instance's bias.
+			maps := []ProcMap{
+				{
+					Start:  base,
+					Offset: test.offset,
+					Inode:  42,
+				},
+				target,
+			}
+			bias, err := FindELFLoadBias(file, maps, &maps[1])
+			if (err != nil) != test.wantError || err == nil && bias != test.want {
+				t.Fatalf("bias=%#x err=%v, want %#x error=%t", bias, err, test.want, test.wantError)
+			}
+		})
+	}
+}
+
+func TestFindELFLoadBiasSharedFilePage(t *testing.T) {
+	page := uint64(os.Getpagesize())
+	const base = uint64(0x70000000)
+	file := &elf.File{Progs: []*elf.Prog{
+		{ProgHeader: elf.ProgHeader{
+			Type:   elf.PT_LOAD,
+			Flags:  elf.PF_R | elf.PF_X,
+			Filesz: page - 0x600,
+		}},
+		{ProgHeader: elf.ProgHeader{
+			Type:   elf.PT_LOAD,
+			Flags:  elf.PF_R | elf.PF_W,
+			Off:    page - 0x230,
+			Vaddr:  2*page - 0x230,
+			Filesz: 0x248,
+		}},
+	}}
+	for _, test := range []struct {
+		name        string
+		start       uint64
+		offset      uint64
+		permissions string
+		wantError   bool
+	}{
+		{
+			name:        "executable page excludes RW segment",
+			start:       base,
+			permissions: "r-xp",
+		},
+		{
+			name:        "writable page excludes RX segment",
+			start:       base + page,
+			permissions: "rw-p",
+		},
+		{
+			name:        "last writable partial page",
+			start:       base + 2*page,
+			offset:      page,
+			permissions: "rw-p",
+		},
+		{
+			name:        "RELRO retains ambiguity without loader identity",
+			start:       base + page,
+			permissions: "r--p",
+			wantError:   true,
+		},
+		{
+			name:      "unknown permissions do not guess",
+			start:     base,
+			wantError: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mapping := ProcMap{
+				Start:  test.start,
+				Offset: test.offset,
+				Perms:  test.permissions,
+				Inode:  42,
+			}
+			maps := []ProcMap{mapping}
+			bias, err := FindELFLoadBias(file, maps, &maps[0])
+			if (err != nil) != test.wantError || err == nil && bias != base {
+				t.Fatalf("bias=%#x err=%v, want %#x error=%t", bias, err, base, test.wantError)
+			}
+		})
 	}
 }
 

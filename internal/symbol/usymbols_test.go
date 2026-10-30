@@ -16,12 +16,15 @@ package symbol
 
 import (
 	"debug/elf"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"testing"
+
+	promprocfs "github.com/prometheus/procfs"
 
 	"github.com/ccfos/huatuo/internal/procfs"
 )
@@ -115,10 +118,33 @@ func setupLibraryResolverFixture(t *testing.T) (*UsymResolver, uint32, string, u
 	functionName, functionAddr := firstFunctionSymbol(t, libraryPath)
 
 	mapStart := uint64(0x70000000)
-	mapsContent := "70000000-71000000 r-xp 00000000 fd:01 1001 /usr/lib/libhuatuo.so\n"
+	mapsContent := fixtureLibraryMaps(t, libraryPath, "/usr/lib/libhuatuo.so", mapStart)
 	mustWriteFile(t, filepath.Join(procDir, "maps"), mapsContent)
 
 	return NewUsymResolver(), processID, functionName, mapStart + functionAddr
+}
+
+func fixtureLibraryMaps(t *testing.T, path, module string, bias uint64) string {
+	t.Helper()
+	file, err := elf.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	var maps string
+	mask := uint64(os.Getpagesize() - 1)
+	for _, program := range file.Progs {
+		if program.Type != elf.PT_LOAD || program.Filesz == 0 {
+			continue
+		}
+		perms := "r--p"
+		if program.Flags&elf.PF_X != 0 {
+			perms = "r-xp"
+		}
+		maps += fmt.Sprintf("%x-%x %s %08x fd:01 2001 %s\n", bias+(program.Vaddr&^mask),
+			bias+((program.Vaddr+program.Memsz+mask)&^mask), perms, program.Off&^mask, module)
+	}
+	return maps
 }
 
 func TestNewUsymResolver(t *testing.T) {
@@ -404,26 +430,136 @@ func TestUsymResolverBatchesAndRelocatesPIEAddresses(t *testing.T) {
 		baseAddr = uint64(0x70000000)
 		module   = "/usr/bin/huatuo-pie"
 	)
+	for _, linkBase := range []uint64{0, 0x400000} {
+		t.Run(strconv.FormatUint(linkBase, 16), func(t *testing.T) {
+			key := cacheKey{inode: 1}
+			cache := &executableCache{
+				symbols: elfSymbolCache{
+					namesByELFPC: map[uint64]string{linkBase + 0x3001: "pie_func"},
+					loadSegments: []elf.ProgHeader{{
+						Type:   elf.PT_LOAD,
+						Off:    0x1000,
+						Vaddr:  linkBase + 0x3000,
+						Filesz: 0x1000,
+					}},
+				},
+				typ: elf.ET_DYN,
+			}
+			resolver := NewUsymResolver()
+			resolver.processes[pid] = processELF{cacheKey: key, path: module}
+			resolver.exeCache[key] = cache
+			resolver.procmaps[pid] = sections{&procfs.ProcMap{
+				StartAddr: uintptr(baseAddr + 0x1000),
+				EndAddr:   uintptr(baseAddr + 0x2000),
+				Offset:    0x1000,
+				Pathname:  module,
+			}}
+
+			got := resolver.resolveAddrs(pid, []uint64{baseAddr + 0x1001, baseAddr + 0x1001})
+			if !slices.Equal(got, []string{"pie_func", "pie_func"}) {
+				t.Fatalf("resolveAddrs(PIE): got %v, want duplicate pie_func frames", got)
+			}
+			if len(cache.symbols.namesByELFPC) != 1 {
+				t.Fatalf("resolveAddrs(PIE): cached %d PCs, want one deduplicated PC", len(cache.symbols.namesByELFPC))
+			}
+			if len(resolver.processes[pid].loadBiases) != 1 {
+				t.Fatal("PIE load bias was not cached per process mapping")
+			}
+			// A second ASLR instance shares symbols, not the first PID's bias.
+			resolver.processes[pid+1] = processELF{cacheKey: key, path: module}
+			resolver.procmaps[pid+1] = sections{&procfs.ProcMap{
+				StartAddr: uintptr(baseAddr + 0x101000),
+				EndAddr:   uintptr(baseAddr + 0x102000),
+				Offset:    0x1000,
+				Pathname:  module,
+			}}
+			if got := resolver.resolveAddr(pid+1, baseAddr+0x101001); got != "pie_func" {
+				t.Fatalf("shared ELF borrowed another process's bias: %s", got)
+			}
+			resolver.procmaps[pid] = append(resolver.procmaps[pid], resolver.procmaps[pid+1][0])
+			if got := resolver.resolveAddr(pid, baseAddr+0x101001); got != "pie_func" {
+				t.Fatalf("second mapping instance borrowed the first mapping's bias: %s", got)
+			}
+			if len(resolver.processes[pid].loadBiases) != 2 {
+				t.Fatal("separate mappings did not retain separate load biases")
+			}
+		})
+	}
+}
+
+func TestUsymResolverPIESharedFilePage(t *testing.T) {
+	const (
+		pid    = uint32(1001)
+		base   = uint64(0x70000000)
+		module = "/usr/bin/compact-pie"
+	)
+	page := uint64(os.Getpagesize())
 	key := cacheKey{inode: 1}
-	cache := &executableCache{
+	resolver := NewUsymResolver()
+	resolver.processes[pid] = processELF{cacheKey: key, path: module}
+	resolver.exeCache[key] = &executableCache{
+		typ: elf.ET_DYN,
+		symbols: elfSymbolCache{
+			namesByELFPC: map[uint64]string{0x600: "compact_func"},
+			loadSegments: []elf.ProgHeader{
+				{
+					Type:   elf.PT_LOAD,
+					Flags:  elf.PF_R | elf.PF_X,
+					Filesz: page - 0x600,
+				},
+				{
+					Type:   elf.PT_LOAD,
+					Flags:  elf.PF_R | elf.PF_W,
+					Off:    page - 0x230,
+					Vaddr:  2*page - 0x230,
+					Filesz: 0x248,
+				},
+			},
+		},
+	}
+	resolver.procmaps[pid] = sections{&procfs.ProcMap{
+		StartAddr: uintptr(base),
+		EndAddr:   uintptr(base + page),
+		Pathname:  module,
+		Perms: &promprocfs.ProcMapPermissions{
+			Read:    true,
+			Execute: true,
+		},
+	}}
+	for range 2 {
+		if got := resolver.resolveAddr(pid, base+0x600); got != "compact_func" {
+			t.Fatalf("compact PIE frame resolved as %s", got)
+		}
+	}
+}
+
+func BenchmarkUsymResolverPIEAddresses(b *testing.B) {
+	const (
+		pid      = uint32(1001)
+		baseAddr = uint64(0x70000000)
+		module   = "/usr/bin/huatuo-pie"
+	)
+	key := cacheKey{inode: 1}
+	resolver := NewUsymResolver()
+	resolver.processes[pid] = processELF{cacheKey: key, path: module}
+	resolver.exeCache[key] = &executableCache{
 		symbols: elfSymbolCache{namesByELFPC: map[uint64]string{0x1001: "pie_func"}},
 		typ:     elf.ET_DYN,
 	}
-	resolver := NewUsymResolver()
-	resolver.processes[pid] = processELF{cacheKey: key, path: module}
-	resolver.exeCache[key] = cache
+	resolver.exeCache[key].symbols.loadSegments = []elf.ProgHeader{{
+		Type:   elf.PT_LOAD,
+		Filesz: 0x2000,
+	}}
 	resolver.procmaps[pid] = sections{&procfs.ProcMap{
 		StartAddr: uintptr(baseAddr),
 		EndAddr:   uintptr(baseAddr + 0x2000),
 		Pathname:  module,
 	}}
-
-	got := resolver.resolveAddrs(pid, []uint64{baseAddr + 0x1001, baseAddr + 0x1001})
-	if !slices.Equal(got, []string{"pie_func", "pie_func"}) {
-		t.Fatalf("resolveAddrs(PIE): got %v, want duplicate pie_func frames", got)
-	}
-	if len(cache.symbols.namesByELFPC) != 1 {
-		t.Fatalf("resolveAddrs(PIE): cached %d PCs, want one deduplicated PC", len(cache.symbols.namesByELFPC))
+	stack := []uint64{baseAddr + 0x1001, baseAddr + 0x1001}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		resolver.resolveAddrs(pid, stack)
 	}
 }
 
@@ -438,8 +574,8 @@ func TestUsymStackStrsLibraryFallback(t *testing.T) {
 	})
 
 	t.Run("pie-library-base-from-first-segment", func(t *testing.T) {
-		// PIE layout: r--p (offset=0) comes before r-xp (offset=0x1000).
-		// The base address must use the first segment, not the r-xp segment.
+		// Library mappings must describe the actual ELF virtual addresses,
+		// including nonzero link bases, not pretend every ELF starts at zero.
 		setTestXfsMounts(t, []string{"/"})
 		tmpRoot := setupTempProcRoot(t)
 		processID := uint32(1001)
@@ -459,12 +595,8 @@ func TestUsymStackStrsLibraryFallback(t *testing.T) {
 		copyCurrentExecutable(t, libraryPath)
 		functionName, functionAddr := firstFunctionSymbol(t, libraryPath)
 
-		// r--p (offset=0) before r-xp (offset=0x1000): PIE layout
-		// r-xp range must be large enough to cover Go test binary symbol addresses
 		pieBase := uint64(0x70000000)
-		mapsContent := "" +
-			"70000000-70001000 r--p 00000000 fd:01 2001 /usr/lib/libhuatuo-pie.so\n" +
-			"70001000-80000000 r-xp 00001000 fd:01 2001 /usr/lib/libhuatuo-pie.so\n"
+		mapsContent := fixtureLibraryMaps(t, libraryPath, "/usr/lib/libhuatuo-pie.so", pieBase)
 		mustWriteFile(t, filepath.Join(procDir, "maps"), mapsContent)
 
 		// Runtime addr = pieBase + ELF symbol Value (first segment offset=0)
@@ -584,7 +716,12 @@ func TestUsymResolveAddrFailFrames(t *testing.T) {
 				libPath := filepath.Join(procfs.Path(strconv.Itoa(int(pid))+"/root"), libPathname)
 				libKey := cacheKey{inode: 7}
 				resolver.libKeys[libPath] = libKey
-				resolver.libCaches[libKey] = &elfSymbolCache{}
+				resolver.libCaches[libKey] = &elfSymbolCache{
+					loadSegments: []elf.ProgHeader{{
+						Type:   elf.PT_LOAD,
+						Filesz: 0x1000,
+					}},
+				}
 			},
 			want: "unknown lib-no-sym/usr/lib/libhuatuo.so",
 		},

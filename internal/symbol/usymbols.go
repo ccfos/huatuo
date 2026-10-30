@@ -15,12 +15,16 @@
 package symbol
 
 import (
+	"context"
 	"debug/elf"
+	"debug/gosym"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/ccfos/huatuo/internal/elfmapping"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/procfs"
@@ -34,13 +38,24 @@ type executableCache struct {
 }
 
 type elfSymbolCache struct {
-	state        *elfSymbolParseState
-	namesByELFPC map[uint64]string
+	state          *elfSymbolParseState
+	namesByELFPC   map[uint64]string
+	goTable        *gosym.Table
+	goTableChecked bool
+	goTableErr     error
+	loadSegments   []elf.ProgHeader
 }
 
 type processELF struct {
 	cacheKey cacheKey
 	path     string
+	// Relocation belongs to this process mapping, never the shared ELF cache.
+	loadBiases map[uintptr]cachedLoadBias
+}
+
+type cachedLoadBias struct {
+	bias uint64
+	err  error
 }
 
 type cacheKey struct {
@@ -163,8 +178,12 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 		if cache.typ == elf.ET_DYN && module != "" {
 			if err = r.loadProcMaps(pid); err == nil {
 				if m := r.procmaps[pid].find(addr); m != nil && m.Pathname == module {
-					baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
-					addPendingELFPC(groups, path, &cache.symbols, addr-baseAddr, index, failFrame("elf-no-sym", ""))
+					pc, biasErr := r.elfPC(pid, addr, m, &cache.symbols)
+					if biasErr != nil {
+						result[index] = failFrame("elf-load-bias-fail", "")
+						continue
+					}
+					addPendingELFPC(groups, path, &cache.symbols, pc, index, failFrame("elf-no-sym", ""))
 					continue
 				}
 			}
@@ -196,8 +215,12 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 			result[index] = failFrame("lib-load-fail", m.Pathname)
 			continue
 		}
-		baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
-		addPendingELFPC(groups, libPath, libCache, addr-baseAddr, index, failFrame("lib-no-sym", m.Pathname))
+		pc, biasErr := r.elfPC(pid, addr, m, libCache)
+		if biasErr != nil {
+			result[index] = failFrame("lib-load-bias-fail", m.Pathname)
+			continue
+		}
+		addPendingELFPC(groups, libPath, libCache, pc, index, failFrame("lib-no-sym", m.Pathname))
 	}
 
 	for _, group := range groups {
@@ -208,6 +231,42 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 		r.fillELFFrames(result, group, names)
 	}
 	return result
+}
+
+func (r *UsymResolver) elfPC(pid uint32, addr uint64, mapping *procfs.ProcMap, cache *elfSymbolCache) (uint64, error) {
+	process := r.processes[pid]
+	if process.loadBiases == nil {
+		process.loadBiases = make(map[uintptr]cachedLoadBias)
+		r.processes[pid] = process
+	}
+	load, ok := process.loadBiases[mapping.StartAddr]
+	if !ok {
+		if mapping.Offset < 0 {
+			load.err = fmt.Errorf("negative ELF mapping offset %d", mapping.Offset)
+		} else {
+			var flags elf.ProgFlag
+			if mapping.Perms != nil {
+				if mapping.Perms.Read {
+					flags |= elf.PF_R
+				}
+				if mapping.Perms.Write {
+					flags |= elf.PF_W
+				}
+				if mapping.Perms.Execute {
+					flags |= elf.PF_X
+				}
+			}
+			load.bias, load.err = elfmapping.LoadBias(cache.loadSegments, uint64(mapping.StartAddr), uint64(mapping.Offset), flags)
+		}
+		process.loadBiases[mapping.StartAddr] = load
+	}
+	if load.err != nil {
+		return 0, load.err
+	}
+	if addr < load.bias {
+		return 0, fmt.Errorf("runtime PC %#x precedes ELF load bias %#x", addr, load.bias)
+	}
+	return addr - load.bias, nil
 }
 
 func addPendingELFPC(groups map[string]*pendingELFPCs, path string, cache *elfSymbolCache, pc uint64, index int, failure string) {
@@ -265,18 +324,58 @@ func (r *UsymResolver) resolveELFPCs(path string, cache *elfSymbolCache, pcs []u
 	if err != nil {
 		log.Debugf("symbol: parse ELF PCs for %q: %v", path, err)
 	}
+	for _, sym := range syms {
+		result[sym.Addr] = sym.Name
+	}
+	if remaining := unresolvedELFPCs(unresolved, result); len(remaining) > 0 {
+		table, goErr := cache.loadGoTable(f)
+		err = errors.Join(err, goErr)
+		if table != nil {
+			for _, pc := range remaining {
+				if fn := table.PCToFunc(pc); fn != nil {
+					result[pc] = fn.Name
+				}
+			}
+		}
+	}
 	if cache.namesByELFPC == nil {
 		cache.namesByELFPC = make(map[uint64]string)
 	}
-	for _, sym := range syms {
-		result[sym.Addr] = sym.Name
+	for pc, name := range result {
 		// Full caches still return this batch's results, but retain neither
 		// misses nor additional entries beyond the per-ELF symbol budget.
-		if sym.Name != "" && uint64(len(cache.namesByELFPC)) < r.elfSymbolLimits.MaxSymbolAndCacheCount {
-			cache.namesByELFPC[sym.Addr] = sym.Name
+		if name != "" && uint64(len(cache.namesByELFPC)) < r.elfSymbolLimits.MaxSymbolAndCacheCount {
+			cache.namesByELFPC[pc] = name
 		}
 	}
 	return result, err
+}
+
+func (cache *elfSymbolCache) loadGoTable(file *elf.File) (*gosym.Table, error) {
+	if cache.goTableChecked {
+		return cache.goTable, cache.goTableErr
+	}
+	cache.goTableChecked = true
+	// Stripped Go binaries retain pclntab even when ELF symbol tables are absent.
+	// Avoid scanning unrelated ELF tables when no Go metadata is present.
+	if file.Section(".gopclntab") == nil && file.Section(".data.rel.ro.gopclntab") == nil && file.Section(".go.buildinfo") == nil {
+		return nil, nil
+	}
+	state := cache.state
+	limits := state.limits
+	limits.MaxMetadataBytes -= state.metadataBytes
+	limits.MaxSymbolAndCacheCount -= state.symbolCount
+	limits.MaxNameBytes -= state.nameBytes
+	table, usage, err := readGoTable(context.Background(), file, limits)
+	if err != nil {
+		cache.goTableErr = fmt.Errorf("read Go fallback symbols: %w", err)
+		return nil, cache.goTableErr
+	}
+	state.metadataBytes += usage.metadataBytes
+	state.symbolCount += usage.symbolCount
+	state.nameBytes += usage.nameBytes
+	cache.goTable = table
+	return table, nil
 }
 
 func unresolvedELFPCs(pcs []uint64, cached map[uint64]string) []uint64 {
@@ -335,7 +434,10 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*executableCache, error) {
 	cache = &executableCache{
 		sections: secs,
 		typ:      f.Type,
-		symbols:  elfSymbolCache{state: newELFSymbolParseState(r.elfSymbolLimits)},
+		symbols: elfSymbolCache{
+			state:        newELFSymbolParseState(r.elfSymbolLimits),
+			loadSegments: elfmapping.LoadSegments(f),
+		},
 	}
 	r.exeCache[key] = cache
 	r.processes[pid] = processELF{cacheKey: key, path: path}
@@ -378,9 +480,12 @@ func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*elfSymbolCache
 	if err != nil {
 		return nil, fmt.Errorf("elf.Open %q: %w", libPath, err)
 	}
-	_ = f.Close()
+	defer f.Close()
 
-	cache = &elfSymbolCache{state: newELFSymbolParseState(r.elfSymbolLimits)}
+	cache = &elfSymbolCache{
+		state:        newELFSymbolParseState(r.elfSymbolLimits),
+		loadSegments: elfmapping.LoadSegments(f),
+	}
 	r.libCaches[key] = cache
 	r.libKeys[libPath] = key
 	return cache, nil

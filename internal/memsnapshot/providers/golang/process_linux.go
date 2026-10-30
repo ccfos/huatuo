@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/ccfos/huatuo/internal/elfmapping"
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 	"github.com/ccfos/huatuo/internal/utils/fileutil"
 )
@@ -112,51 +113,49 @@ func resolveExecutableLoadBias(ctx context.Context, pid int, file *elf.File) (ui
 	if err != nil {
 		return 0, err
 	}
-	mapping, err := executableMapping(exePath, inode, mappings)
-	if err != nil {
-		return 0, err
-	}
-	offset, vaddr, err := firstLoadSegment(file)
-	if err != nil {
-		return 0, err
-	}
-	return memsnapshot.FindLoadBias(mappings, mapping, offset, vaddr)
+	return executableLoadBias(exePath, inode, mappings, elfmapping.LoadSegments(file))
 }
 
-// Use the executable pathname and inode to select its maps identity. Device
-// numbers come from maps because Btrfs may report a different device in stat.
-func executableMapping(exePath string, inode uint64, mappings []memsnapshot.ProcMap) (*memsnapshot.ProcMap, error) {
+// File identity alone does not identify the main load instance. Without an
+// authoritative loader address, reject multiple candidate biases instead of
+// borrowing relocation from a second mmap of the executable.
+func executableLoadBias(exePath string, inode uint64, mappings []memsnapshot.ProcMap,
+	segments []elf.ProgHeader,
+) (uint64, error) {
 	path, err := os.Readlink(exePath)
 	if err != nil {
-		return nil, fmt.Errorf("read executable path: %w", err)
+		return 0, fmt.Errorf("read executable path: %w", err)
 	}
 	var selected *memsnapshot.ProcMap
+	var bias uint64
+	found := false
+	var segmentErr error
 	for index := range mappings {
 		mapping := &mappings[index]
 		if mapping.Inode != inode || mapping.Path != path {
 			continue
 		}
 		if selected != nil && (mapping.DevMajor != selected.DevMajor || mapping.DevMinor != selected.DevMinor) {
-			return nil, errors.New("executable maps identity is ambiguous")
+			return 0, errors.New("executable maps identity is ambiguous")
 		}
 		selected = mapping
+		candidate, err := elfmapping.LoadBias(segments, mapping.Start, mapping.Offset, elfmapping.MappingFlags(mapping.Perms))
+		if err != nil {
+			// A shared boundary page can belong to more than one PT_LOAD
+			// (RELRO). It cannot nominate a bias; other mappings must agree.
+			segmentErr = err
+			continue
+		}
+		if found && candidate != bias {
+			return 0, errors.New("executable load bias is ambiguous: multiple mapping instances")
+		}
+		bias, found = candidate, true
 	}
 	if selected == nil {
-		return nil, errors.New("executable mapping not found")
+		return 0, errors.New("executable mapping not found")
 	}
-	return selected, nil
-}
-
-func firstLoadSegment(file *elf.File) (uint64, uint64, error) {
-	pageSize := uint64(os.Getpagesize())
-	for _, program := range file.Progs {
-		if program.Type == elf.PT_LOAD {
-			return alignDown(program.Off, pageSize), alignDown(program.Vaddr, pageSize), nil
-		}
+	if !found {
+		return 0, fmt.Errorf("determine executable load bias: %w", segmentErr)
 	}
-	return 0, 0, errors.New("ELF has no PT_LOAD segment")
-}
-
-func alignDown(value, alignment uint64) uint64 {
-	return value &^ (alignment - 1)
+	return bias, nil
 }
