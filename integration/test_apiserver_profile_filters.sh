@@ -97,7 +97,7 @@ assert_profile_label_names() {
 	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/label-names.err"
 	local result curl_status=0 name length
 	# LabelNamesResponse repeats string field 1; these ASCII names fit one-byte lengths.
-	for name in id region hostname container_id container_hostname container_host_namespace; do
+	for name in id scope region hostname container_id container_hostname container_host_namespace; do
 		printf -v length '%03o' "${#name}"
 		printf '\012%b%s' "\\${length}" "${name}"
 	done > "${expected_file}"
