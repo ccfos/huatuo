@@ -26,19 +26,15 @@ import (
 )
 
 type (
-	target   struct{ CPUPath, UsagePath string }
-	counters struct {
-		CPU    float64
-		Fields map[string]float64
+	waitTarget struct {
+		CPUPath   string `json:"CPUPath"`
+		UsagePath string `json:"UsagePath"`
+	}
+	waitCounters struct {
+		CPU    float64            `json:"CPU"`
+		Fields map[string]float64 `json:"Fields"`
 	}
 )
-
-func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "cpu wait reference:", err)
-		os.Exit(1)
-	}
-}
 
 func readJSON(path string, value any) error {
 	data, err := os.ReadFile(path)
@@ -48,11 +44,11 @@ func readJSON(path string, value any) error {
 	return json.Unmarshal(data, value)
 }
 
-func run(args []string) error {
+func runCPUWait(args []string) error {
 	if len(args) == 0 {
 		return errors.New("use sample or percent")
 	}
-	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+	flags := flag.NewFlagSet("cpu-wait "+args[0], flag.ContinueOnError)
 	targets := flags.String("targets", "", "target CPU cgroups JSON")
 	before := flags.String("before", "", "initial wait/CPU samples JSON")
 	after := flags.String("after", "", "final wait/CPU samples JSON")
@@ -61,11 +57,11 @@ func run(args []string) error {
 	}
 	switch args[0] {
 	case "sample":
-		var list []target
+		var list []waitTarget
 		if err := readJSON(*targets, &list); err != nil {
 			return err
 		}
-		result := make([]counters, len(list))
+		result := make([]waitCounters, len(list))
 		for i, t := range list {
 			values, err := readWait(t)
 			if err != nil {
@@ -75,7 +71,7 @@ func run(args []string) error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(result)
 	case "percent":
-		var first, last []counters
+		var first, last []waitCounters
 		if err := readJSON(*before, &first); err != nil {
 			return err
 		}
@@ -103,12 +99,12 @@ func run(args []string) error {
 }
 
 // wait_sum has no portable external reference; keep its CPU denominator local.
-func readWait(t target) (counters, error) {
+func readWait(t waitTarget) (waitCounters, error) {
 	data, err := os.ReadFile(filepath.Join(t.CPUPath, "cpu.stat"))
 	if err != nil {
-		return counters{}, err
+		return waitCounters{}, err
 	}
-	result := counters{Fields: make(map[string]float64)}
+	result := waitCounters{Fields: make(map[string]float64)}
 	usage := 0.0
 	hasUsage := false
 	for _, line := range strings.Split(string(data), "\n") {
@@ -117,11 +113,11 @@ func readWait(t target) (counters, error) {
 			continue
 		}
 		if len(fields) != 2 {
-			return counters{}, fmt.Errorf("invalid wait/usage counter in %s: %q", t.CPUPath, line)
+			return waitCounters{}, fmt.Errorf("invalid wait/usage counter in %s: %q", t.CPUPath, line)
 		}
 		n, err := strconv.ParseFloat(fields[1], 64)
 		if err != nil || n < 0 {
-			return counters{}, fmt.Errorf("invalid %s counter in %s: %q", fields[0], t.CPUPath, fields[1])
+			return waitCounters{}, fmt.Errorf("invalid %s counter in %s: %q", fields[0], t.CPUPath, fields[1])
 		}
 		if fields[0] == "wait_sum" {
 			result.Fields["wait_sum"] = n
@@ -139,7 +135,7 @@ func readWait(t target) (counters, error) {
 	}
 	data, err = os.ReadFile(filepath.Join(t.UsagePath, "cpuacct.usage"))
 	if err != nil {
-		return counters{}, err
+		return waitCounters{}, err
 	}
 	result.CPU, err = strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
 	return result, err

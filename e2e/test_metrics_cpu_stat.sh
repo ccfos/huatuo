@@ -27,7 +27,6 @@ source "${ROOT_DIR}/integration/lib_cpu_reference.sh"
 require_commands kubectl jq findmnt ss sysctl taskset getconf
 require_readable "${KUBELET_CERT}" "${KUBELET_KEY}" /proc/sys/kernel/sched_schedstats
 readonly CPU_STAT_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-stat"
-readonly CPU_WAIT_BIN=${CPU_WAIT_HELPER_BIN:-${ROOT_DIR}/_output/tests/cpu-wait-reference}
 readonly CPU_STAT_LOAD="${CPU_STAT_DIR}/cpu-load"
 readonly CPU_STAT_NS="${BUSINESS_POD_NS}"
 readonly CPU_STAT_PREFIX="cpu-stat-${BASHPID}-${RANDOM}"

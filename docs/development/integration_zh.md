@@ -58,7 +58,9 @@ sudo bash e2e/run.sh test_autotracing_dload.sh
 基准环境为 4 核、8 GB 内存的 Kubernetes VM；需要可访问本机 kubelet API，
 客户端证书路径通过 `KUBELET_CERT`、`KUBELET_KEY` 指定。
 
-`make build` 将等待时间和 taskstats 辅助工具预编译到 `_output/tests/`；
+`make build` 将 `integration/testdata/sysbench/` 预编译为 `_output/tests/sysbench`，
+提供 `--cpu-wait sample`、`--cpu-wait percent` 和 `--loadavg sample`，
+可通过 `SYSBENCH_BIN` 指定其他构建产物。
 测试运行时不需要 Go 编译器，缺失构建产物会判为失败。Shell 负责场景编排、
 断言和清理。
 

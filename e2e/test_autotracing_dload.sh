@@ -27,7 +27,6 @@ source "${ROOT_DIR}/integration/lib_cpu_metrics.sh"
 
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 5)
 readonly DLOAD_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/dload"
-readonly DLOAD_BIN=${DLOAD_HELPER_BIN:-${ROOT_DIR}/_output/tests/dload-reference}
 readonly DLOAD_NS="${BUSINESS_POD_NS}"
 readonly DLOAD_PREFIX="dload-${BASHPID}-${RANDOM}"
 readonly DLOAD_LABEL="app=${DLOAD_PREFIX}"
@@ -329,7 +328,7 @@ dload_create_pod() {
 }
 
 dload_snapshot() {
-	"${DLOAD_BIN}" sample --cgroup "${dload_cgroup}" > "$1"
+	"${SYSBENCH_BIN}" --loadavg sample --cgroup "${dload_cgroup}" > "$1"
 }
 
 dload_local_events() {
@@ -513,7 +512,7 @@ dload_case_cleanup() {
 	if [[ ${status} -ne 0 ]]; then
 		# Preserve blocked tasks before releasing IO or deleting the Pod.
 		if [[ -n ${dload_cgroup:-} ]]; then
-			timeout 5 "${DLOAD_BIN}" sample --cgroup "${dload_cgroup}" \
+			timeout 5 "${SYSBENCH_BIN}" --loadavg sample --cgroup "${dload_cgroup}" \
 				> "${HUATUO_BAMAI_TEST_TMPDIR}/tasks-failure.json" \
 				2> "${HUATUO_BAMAI_TEST_TMPDIR}/tasks-failure.err" || true
 		fi
@@ -602,7 +601,7 @@ dload_run_case() (
 	fi
 	cpu_metrics_observe "$((dload_interval * 2))" 0.5 assert_dload_idle \
 		|| fatal "idle container has D tasks, unexpected events or invalid lifecycle status"
-	timeout 25 "${DLOAD_BIN}" sample --cgroup "${dload_cgroup}" --duration 18s \
+	timeout 25 "${SYSBENCH_BIN}" --loadavg sample --cgroup "${dload_cgroup}" --duration 18s \
 		> "${dload_work}/samples.jsonl" 2> "${dload_work}/reference.err" &
 	dload_reference_pid=$!
 	dload_delay 1000

@@ -254,7 +254,7 @@ cpu_reference_concurrent() {
 
 cpu_stat_reference() {
 	local targets=$1 output=$2 target i=0 path
-	"${CPU_WAIT_BIN}" sample --targets "${targets}" > "${output}.wait"
+	"${SYSBENCH_BIN}" --cpu-wait sample --targets "${targets}" > "${output}.wait"
 	while read -r target; do
 		path=$(jq -r '.CPUPath' <<< "${target}")
 		cpu_reference_stats "${path}" "${output}.${i}.cadvisor"
@@ -356,7 +356,7 @@ cpu_stat_collect() {
 			"${CPU_REFERENCE_JQ}"'average($start;$window_end;1).Total' "${output}/reference-${index}.json" > "${output}/cpu-${index}.json"
 		index=$((index + 1))
 	done < <(jq -c '.[]' "${targets}")
-	"${CPU_WAIT_BIN}" percent --before "${output}/00/after.json" --after "${output}/0$((count - 1))/after.json" > "${output}/wait.json"
+	"${SYSBENCH_BIN}" --cpu-wait percent --before "${output}/00/after.json" --after "${output}/0$((count - 1))/after.json" > "${output}/wait.json"
 	[[ -f ${output}/pidstat.txt.json ]] || echo '{"Total":0}' > "${output}/pidstat.txt.json"
 	jq --slurpfile cpu <(jq -s '.' "${output}"/cpu-*.json) --slurpfile waits "${output}/wait.json" \
 		--slurpfile worker "${output}/pidstat.txt.json" '

@@ -85,8 +85,10 @@ CPU cases run serially and target a Kubernetes VM with 4 CPUs and 8 GB of memory
 They require access to the local kubelet API; set `KUBELET_CERT` and `KUBELET_KEY`
 to its client certificate and key.
 
-`make build` precompiles the wait-time and taskstats helpers into
-`_output/tests/`. Test execution does not need a Go compiler; missing build
+`make build` precompiles `integration/testdata/sysbench/` into
+`_output/tests/sysbench`. It provides `--cpu-wait sample`, `--cpu-wait percent`
+and `--loadavg sample`; set `SYSBENCH_BIN` to use another build.
+Test execution does not need a Go compiler; missing build
 artifacts fail the case. Shell owns orchestration, assertions and cleanup.
 
 CPU references use a digest-pinned cAdvisor image and `pidstat` from `sysstat`.
