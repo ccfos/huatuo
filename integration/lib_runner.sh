@@ -44,6 +44,7 @@ declare -A runner_test_groups=(
 	["test_metrics.sh"]=independent
 	["test_metrics_exclude_filter.sh"]=independent
 	["test_metrics_include_filter.sh"]=independent
+	["test_metrics_memory_host.sh"]=independent
 	["test_node_cloud_events_api.sh"]=independent
 	["test_node_config_api.sh"]=independent
 	["test_profiler_config.sh"]=independent
