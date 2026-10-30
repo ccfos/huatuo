@@ -193,7 +193,7 @@ assert_log_has_no_failure() {
 }
 
 allocate_available_port() {
-	local protocol=${1:-tcp} attempt port sockets
+	local protocol=${1:-tcp} attempt port sockets ephemeral_start ephemeral_end lower upper count index
 	[[ ${protocol} == tcp || ${protocol} == udp ]] \
 		|| fatal "unsupported port protocol: ${protocol}; expected tcp or udp"
 	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
@@ -201,9 +201,19 @@ allocate_available_port() {
 		allocate_worker_port "${protocol}" 9> "${INTEGRATION_PORT_DIR}/lock"
 		return
 	fi
+	# A free port may become an outbound socket before the server binds it.
+	read -r ephemeral_start ephemeral_end < /proc/sys/net/ipv4/ip_local_port_range || return 1
+	lower=$((ephemeral_start > 1024 ? ephemeral_start - 1024 : 0))
+	upper=$((ephemeral_end >= 1024 ? ephemeral_end + 1 : 1024))
+	count=$((lower + 65536 - upper))
+	if ((count == 0)); then
+		log_error "no non-privileged test ports outside ephemeral range ${ephemeral_start}-${ephemeral_end}"
+		return 1
+	fi
 	sockets=$(ss -H -an "--${protocol}") || return 1
 	for ((attempt = 0; attempt < 20; attempt++)); do
-		port=$((20000 + RANDOM % 20001))
+		index=$((((RANDOM << 15) | RANDOM) % count))
+		if ((index < lower)); then port=$((1024 + index)); else port=$((upper + index - lower)); fi
 		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
 			echo "${port}"
 			return 0
@@ -215,12 +225,14 @@ allocate_available_port() {
 # The counter reserves ports across command substitutions and test subprocesses.
 allocate_worker_port() {
 	local protocol=$1 port=${INTEGRATION_PORT_BASE:?worker port base is missing} sockets
+	local ephemeral_start ephemeral_end
+	read -r ephemeral_start ephemeral_end < /proc/sys/net/ipv4/ip_local_port_range || return 1
 	flock 9
 	sockets=$(ss -H -an "--${protocol}") || return 1
 	if [[ -f ${INTEGRATION_PORT_DIR}/next ]]; then read -r port < "${INTEGRATION_PORT_DIR}/next"; fi
 	while ((port < INTEGRATION_PORT_BASE + 1000)); do
 		printf '%s\n' "$((port + 1))" > "${INTEGRATION_PORT_DIR}/next"
-		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
+		if ((port < ephemeral_start || port > ephemeral_end)) && ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
 			echo "${port}"
 			return 0
 		fi

@@ -42,6 +42,57 @@ bash integration/run.sh test_metrics_exclude_filter.sh 10
 make integration
 ```
 
+## CPU 指标与自动追踪 E2E
+
+先执行 `make build`，再在测试节点以 root 运行单用例：
+
+```bash
+sudo bash e2e/run.sh test_metrics_cpu_util.sh
+sudo bash e2e/run.sh test_metrics_cpu_stat.sh
+sudo bash e2e/run.sh test_metrics_cpu_runqlat_tracing.sh
+sudo bash e2e/run.sh test_autotracing_cpuidle.sh
+sudo bash e2e/run.sh test_autotracing_dload.sh
+```
+
+这些用例也由 `make e2e` 和标准 `make test` 自动发现。CPU 用例串行运行，
+基准环境为 4 核、8 GB 内存的 Kubernetes VM；需要可访问本机 kubelet API，
+客户端证书路径通过 `KUBELET_CERT`、`KUBELET_KEY` 指定。
+
+`make build` 将 `integration/testdata/sysbench/` 预编译为 `_output/tests/sysbench`，
+提供 `--cpu-wait sample`、`--cpu-wait percent` 和 `--loadavg sample`，
+可通过 `SYSBENCH_BIN` 指定其他构建产物。
+测试运行时不需要 Go 编译器，缺失构建产物会判为失败。Shell 负责场景编排、
+断言和清理。
+
+CPU 参考值使用固定摘要的 cAdvisor 镜像和 `sysstat` 提供的 `pidstat`；
+VM 流程会安装 `sysstat`，本地运行需自行准备。Prometheus 响应使用官方
+prom2json 1.5.0 二进制解析，按需下载到 `_output/tools/` 并校验 SHA256。
+cAdvisor 未提供的 cgroup v1 burst 计数通过读取 `cpu.stat` 补充。
+可以通过 `CPU_REFERENCE_IMAGE`、`PROM2JSON_BIN` 指定已准备好的工具。
+runqlat 聚合逻辑随普通 CPU 单测执行；真实内核行为通过 E2E 的
+公开指标、禁用、删除和重启场景验证，不依赖私有 BPF map 名称或布局。
+
+宿主负载需要安装 `stress-ng`，VM 流程会准备该软件包。Pod 使用固定摘要的
+`ghcr.io/colinianking/stress-ng` 镜像；每个用例会自行检查并通过 `crictl` 拉取，
+支持以 `CPU_LOAD_IMAGE` 覆盖镜像。需要 Kubernetes 运行时访问镜像仓库。
+镜像只在使用它的用例中准备；拉取失败由该用例报告 FAIL，不在 VM 入口阻断无关测试。
+
+cpu_util、cpu_stat 和 runqlat 支持 cgroup v1/v2。cpu_stat 会临时切换
+`kernel.sched_schedstats` 并恢复原值；仅在内核实际导出相应字段时验证
+`wait_sum_percent` 和 burst 指标。runqlat 要求对应调度 tracepoint 和
+`free_fair_sched_group` kprobe 可用；cpuidle 要求可加载 perf BPF 程序。
+
+cpuidle 和 dload 会启动测试 Elasticsearch 容器，需要 Docker。
+dload 功能场景只在 Legacy cgroup 下运行，使用 taskstats 和 dm-delay 制造 D 态任务；
+其他 cgroup 模式先检查不支持时的行为，再报告 SKIP。功能场景需要
+`dmsetup`、`losetup`、`mkfs.ext4`、`modprobe`、`nsenter`、挂载权限和可用 loop
+设备。测试磁盘镜像位于用例工作目录，清理顺序为删除 Pod、卸载文件系统、
+移除 mapper、释放 loop 和删除镜像；设备未释放时保留镜像并报告失败。
+
+缺少外部命令、内核 hook、设备能力或 kubelet 证书时，用例会报告带原因的 SKIP。
+构建产物缺失、指标错误、异常退出或清理失败属于 FAIL。日志和原始参考数据保存在
+`/tmp/huatuo-test.XXXXXX/<用例名>.XXXXXX/`；E2E 成功后同样保留。
+
 ## 前置检查与结果汇总
 
 两套测试共用 `integration/run.sh`，默认运行 integration；`e2e/run.sh` 转发到

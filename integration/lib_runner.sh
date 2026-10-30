@@ -75,6 +75,19 @@ runner_test_group() {
 	printf '%s\n' "${group}"
 }
 
+runner_prepare_port_blocks() {
+	local count=$1 base ephemeral_start ephemeral_end
+	read -r ephemeral_start ephemeral_end < /proc/sys/net/ipv4/ip_local_port_range || return 1
+	runner_port_bases=()
+	for ((base = 1024; base + 1000 <= 65536; base += 1000)); do
+		((base + 999 < ephemeral_start || base > ephemeral_end)) || continue
+		runner_port_bases+=("${base}")
+		((${#runner_port_bases[@]} < count)) || return 0
+	done
+	log_error "need ${count} worker port blocks of 1000 ports outside ephemeral range ${ephemeral_start}-${ephemeral_end}; found ${#runner_port_bases[@]}"
+	return 1
+}
+
 runner_start_case() {
 	local -a command=(bash "$1")
 	local script=$1 slot=$2 group=$3 workspace name port_dir="" port_base="" address=${HUATUO_BAMAI_ADDR:-http://127.0.0.1:19704}
@@ -82,7 +95,7 @@ runner_start_case() {
 	if ((runner_jobs > 1)) && [[ ${group} != exclusive ]]; then
 		command=(unshare --mount bash "${ROOT_DIR}/integration/exec_case.sh" "${script}")
 		port_dir="${HUATUO_BAMAI_TEST_TMPDIR}/ports/${slot}"
-		port_base=$((20000 + slot * 1000))
+		port_base=${runner_port_bases[slot]}
 		local port
 		port=$(INTEGRATION_PORT_DIR="${port_dir}" INTEGRATION_PORT_BASE="${port_base}" allocate_available_port) \
 			|| fatal "cannot allocate worker ${slot} daemon port"
@@ -164,6 +177,9 @@ runner_cleanup() {
 runner_parallel_cases() {
 	local jobs=$1
 	shift
+	(($# > 0)) || return 0
+	((jobs <= $#)) || jobs=$#
+	runner_prepare_port_blocks "${jobs}" || return 1
 	local -a pending=("$@")
 	local slot index group busy running_group
 	while ((${#pending[@]} || ${#runner_pids[@]})); do
@@ -199,7 +215,7 @@ run_test_suite() {
 	local -a scripts=("$@") parallel=() profilers=() exclusive=()
 	local script group
 	runner_last_storage="" runner_failed=0
-	declare -ga runner_pids=() runner_workspaces=() runner_names=() runner_started=() runner_groups=()
+	declare -ga runner_pids=() runner_workspaces=() runner_names=() runner_started=() runner_groups=() runner_port_bases=()
 	if [[ ${runner_suite} == e2e ]]; then
 		source "${ROOT_DIR}/e2e/lib.sh"
 		if ! kernel_version_le 6 5; then

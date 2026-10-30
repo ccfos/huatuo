@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+
+# Copyright 2026 The HuaTuo Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -euo pipefail
+
+cpu_metrics_query_pids=()
+
+cpu_metrics_prepare() {
+	require_commands curl jq tar sha256sum flock
+	PROM2JSON_BIN=${PROM2JSON_BIN:-${ROOT_DIR}/_output/tools/prom2json-1.5.0}
+	if [[ ! -x ${PROM2JSON_BIN} ]]; then
+		cpu_metrics_install_prom2json 9> "${ROOT_DIR}/_output/prom2json.lock"
+	fi
+}
+
+cpu_metrics_install_prom2json() {
+	flock 9
+	[[ ! -x ${PROM2JSON_BIN} ]] || return 0
+	local arch archive url directory checksum
+	case $(uname -m) in
+	x86_64)
+		arch=amd64
+		checksum=5935363cc8c88360e3aa275ddc5a754ad95f6bab6b6052978e686300baa5a4d6
+		;;
+	aarch64)
+		arch=arm64
+		checksum=9b60ac476ffb838e5eb80489394c0590254ff1303b9a0c83364ded2cfa5a7353
+		;;
+	*) fatal "no prom2json prebuilt binary selected for $(uname -m)" ;;
+	esac
+	directory=$(mktemp -d "${ROOT_DIR}/_output/prom2json.XXXXXX")
+	archive="prom2json-1.5.0.linux-${arch}.tar.gz"
+	url=https://github.com/prometheus/prom2json/releases/download/v1.5.0
+	curl -fLsS --connect-timeout 10 --max-time 120 "${url}/${archive}" -o "${directory}/${archive}"
+	(
+		cd "${directory}"
+		printf '%s  %s\n' "${checksum}" "${archive}" | sha256sum -c -
+	)
+	tar --no-same-owner -xzf "${directory}/${archive}" -C "${directory}"
+	mkdir -p "$(dirname "${PROM2JSON_BIN}")"
+	install -m 755 "${directory}/prom2json-1.5.0.linux-${arch}/prom2json" "${PROM2JSON_BIN}.tmp"
+	mv "${PROM2JSON_BIN}.tmp" "${PROM2JSON_BIN}"
+}
+
+cpu_metrics_read() {
+	local file=$1 status
+	status=$(curl --noproxy '*' -sS --connect-timeout 2 --max-time 5 -o "${file}.prom" -w '%{http_code}' \
+		"${HUATUO_BAMAI_METRICS_API}" 2> "${file}.http") || {
+		cat "${file}.http" >&2
+		return 1
+	}
+	printf 'http_status=%s\n' "${status}" >> "${file}.http"
+	[[ ${status} == 200 ]] || {
+		echo "metrics HTTP ${status}; inspect ${file}.prom" >&2
+		return 1
+	}
+	"${PROM2JSON_BIN}" < "${file}.prom" > "${file}.parsed" || return 1
+	jq 'map({key: .name, value: {type: (.type | ascii_upcase), help: .help,
+	 samples: [.metrics[]? | select(has("value")) | {labels: (.labels // {}), value: (.value | tonumber)}]}}) | from_entries' \
+		"${file}.parsed" > "${file}"
+}
+
+assert_cpu_tracing_status() {
+	local tracing=$1 enabled=$2 file="${HUATUO_BAMAI_TEST_TMPDIR}/tracing-status-${BASHPID}.json"
+	cpu_metrics_read "${file}" || return 1
+	assert_cpu_tracing_metrics "${tracing}" "${enabled}" "${file}"
+}
+
+assert_cpu_tracing_metrics() {
+	local tracing=$1 enabled=$2 file=$3
+	jq -e --arg tracing "${tracing}" --arg host "$(hostname)" --argjson enabled "${enabled}" '
+  def valid_labels: .labels.host == $host and .labels.region == "e2e";
+  .huatuo_bamai_tracing_status_running as $running |
+  .huatuo_bamai_tracing_status_hitcount as $hits |
+  ($running.type == "GAUGE" and ($running.samples | length) == 1
+   and ($running.samples[0] | valid_labels and .value == $enabled))
+  and ([$hits.samples[]? | select(.labels.tracing == $tracing)] |
+   length == $enabled and all(.[]; valid_labels and .value == 0))
+  and (if $enabled == 1 then $hits.type == "GAUGE" else true end)
+ ' "${file}" > /dev/null
+}
+
+# Keep metric structure checks shared while each case owns its numeric expectations.
+CPU_METRICS_JQ='
+def container_labels($t; $host):
+ {host: $host, region: "e2e", container_host: $t.Pod, container_name: $t.Container,
+  container_hostnamespace: $t.Namespace, container_type: ($t.Type // "normal"),
+  container_level: ($t.QoS // "burstable")};
+def cpu_metric($f; $labels):
+ [$f.samples[]? | select(.labels | contains($labels))] as $rows |
+ if $f.type == "GAUGE" and ($f.help | type == "string" and length > 0)
+  and ($rows | length) == 1 and $rows[0].labels == $labels
+  and ($rows[0].value | type == "number" and . >= 0)
+ then $rows[0].value else error("invalid Gauge sample for " + ($labels | tostring)) end;
+def collector_ok($families; $collector):
+ $families.huatuo_bamai_scrape_collector_success as $f |
+ [$f.samples[]? | select(.labels.collector == $collector)] as $rows |
+ $f.type == "GAUGE" and ($rows | length) == 1 and $rows[0].value == 1;
+'
+
+assert_cpu_metrics_absent() {
+	local collector=$1 targets=$2 file="${HUATUO_BAMAI_TEST_TMPDIR}/absent-${BASHPID}.json"
+	cpu_metrics_read "${file}" || return 1
+	jq -e --arg prefix "huatuo_bamai_${collector}_" --slurpfile targets "${targets}" '
+  [. | to_entries[] | select(.key | startswith($prefix)) | .value.samples[]? |
+   .labels as $labels | select(any($targets[0][];
+    .Pod == $labels.container_host and .Container == $labels.container_name
+    and .Namespace == $labels.container_hostnamespace))] | length == 0
+ ' "${file}" > /dev/null
+}
+
+assert_cpu_collector_disabled() {
+	local collector=$1 file="${HUATUO_BAMAI_TEST_TMPDIR}/disabled-${BASHPID}.json"
+	cpu_metrics_read "${file}" || return 1
+	jq -e --arg collector "${collector}" --arg prefix "huatuo_bamai_${collector}_" '
+  (keys | all(.[]; startswith($prefix) | not))
+  and ([.huatuo_bamai_scrape_collector_success.samples[]? | select(.labels.collector == $collector)] | length == 0)
+ ' "${file}" > /dev/null
+}
+
+# Keep observing after a successful sample so late failures are still detected.
+cpu_metrics_observe() {
+	local duration=$1 interval=$2 deadline
+	shift 2
+	deadline=$(($(date +%s%N) + duration * 1000000000))
+	while true; do
+		"$@" || return 1
+		(($(date +%s%N) < deadline)) || return 0
+		sleep "${interval}"
+	done
+}
+
+cpu_metrics_wait_queries() {
+	local status=0
+	while ((${#cpu_metrics_query_pids[@]})); do
+		wait "${cpu_metrics_query_pids[0]}" || status=1
+		cpu_metrics_query_pids=("${cpu_metrics_query_pids[@]:1}")
+	done
+	return "${status}"
+}
+
+cpu_metrics_stop_queries() {
+	local pid
+	for pid in "${cpu_metrics_query_pids[@]}"; do kill -TERM "${pid}" 2> /dev/null || true; done
+	for pid in "${cpu_metrics_query_pids[@]}"; do stop_and_wait_by_pid "${pid}" 5 || true; done
+	cpu_metrics_query_pids=()
+}
+
+cpu_metrics_query_batch() {
+	local directory=$1 workers=$2 rounds=$3 assertion=$4 round query file
+	for ((round = 1; round <= rounds; round++)); do
+		for ((query = 1; query <= workers; query++)); do
+			file="${directory}/query-${round}-${query}.json"
+			cpu_metrics_read "${file}" 2> "${file}.err" &
+			cpu_metrics_query_pids+=("$!")
+		done
+		cpu_metrics_wait_queries || return 1
+		for ((query = 1; query <= workers; query++)); do
+			"${assertion}" "${directory}/query-${round}-${query}.json" || return 1
+		done
+	done
+}

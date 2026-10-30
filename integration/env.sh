@@ -58,6 +58,8 @@ PROFILER_TOOL_DIR=${PROFILER_TOOL_DIR:-${ROOT_DIR}/_output/tools}
 export PROFILER_TOOL_DIR
 PPROF_TOOL_BIN=${PPROF_TOOL_BIN:-${ROOT_DIR}/_output/tools/pprof-tool}
 export PPROF_TOOL_BIN
+SYSBENCH_BIN=${SYSBENCH_BIN:-${ROOT_DIR}/_output/tests/sysbench}
+export SYSBENCH_BIN
 
 # Arrays cannot be exported to child processes via environment variables.
 # Convert the E2E array to a string for reconstruction in child processes.

@@ -483,6 +483,9 @@ print_sys_info() { echo info >> "$TEST_GUEST_WORK/calls"; }
 install_test_dependencies() { echo dependencies >> "$TEST_GUEST_WORK/calls"; }
 grow_root_filesystem() { echo grow >> "$TEST_GUEST_WORK/calls"; }
 install_temporary_go_tools() { exit 99; }
+prepare_cpu_workload() { exit 99; }
+stress-ng() { exit 99; }
+crictl() { exit 99; }
 make() { echo "make $*" >> "$TEST_GUEST_WORK/calls"; }
 git() { :; }
 prefetch_storage_images() { :; }
@@ -495,6 +498,18 @@ SH
 	assert_eq "$(cat "${guest_work}/calls")" "${guest_expected}" "${guest_mode}: guest phases"
 done
 log_info "VM cache transport and guest phase checks passed"
+
+cpu_image_status=0
+bash -eu -s > "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" 2>&1 << 'SH' || cpu_image_status=$?
+source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/e2e/lib_cpu_load.sh"
+crictl() { return 1; }
+timeout() { return 1; }
+cpu_load_prepare_image
+SH
+assert_eq "${cpu_image_status}" 1 "CPU image pull failure belongs to the CPU case"
+grep -Fq 'cannot pull CPU workload image' "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" \
+	|| fatal "CPU image pull failure lacks registry diagnostics"
 
 # Real storage ownership and cleanup with Docker replaced by a local fixture.
 cat > "${HUATUO_BAMAI_TEST_TMPDIR}/storage-fixture.sh" << 'SH'
@@ -630,6 +645,16 @@ log_info "profiling node and apiserver storage configs agree and isolate workspa
 (
 	work="${HUATUO_BAMAI_TEST_TMPDIR}/worker-ports"
 	mkdir -p "${work}"
+	# Simulate sysctl ranges without changing the host's networking settings.
+	test_ephemeral_range='32768 60999'
+	read() {
+		if [[ "$*" == '-r ephemeral_start ephemeral_end' ]]; then
+			builtin read "$@" <<< "${test_ephemeral_range}"
+		else
+			builtin read "$@"
+		fi
+	}
+	read -r ephemeral_start ephemeral_end < /proc/sys/net/ipv4/ip_local_port_range
 	ss() { echo 'LISTEN 0 128 127.0.0.1:20000 0.0.0.0:*'; }
 	export INTEGRATION_PORT_BASE=20000 INTEGRATION_PORT_DIR="${work}/ports"
 	pids=()
@@ -642,8 +667,58 @@ log_info "profiling node and apiserver storage configs agree and isolate workspa
 	for file in "${work}/"port-*; do
 		port=$(cat "${file}")
 		((port > 20000 && port < 21000)) || fatal "worker port outside its block: ${port}"
+		((port < ephemeral_start || port > ephemeral_end)) || fatal "worker port overlaps ephemeral range: ${port}"
 	done
 	assert_eq "$(INTEGRATION_PORT_BASE=21000 INTEGRATION_PORT_DIR="${work}/other" allocate_available_port)" 21000 "separate worker block"
+	(
+		unset INTEGRATION_PORT_BASE INTEGRATION_PORT_DIR
+		for protocol in tcp udp; do
+			for ((i = 0; i < 32; i++)); do
+				port=$(allocate_available_port "${protocol}") || fatal "${protocol} port allocation failed"
+				((port >= 1024 && port <= 65535)) || fatal "random port outside allocation range: ${port}"
+				((port < ephemeral_start || port > ephemeral_end)) || fatal "random port overlaps ephemeral range: ${port}"
+			done
+		done
+		ss() { return 1; }
+		if allocate_available_port; then fatal "random allocation ignored failed socket query"; fi
+	)
+	source "${ROOT_DIR}/integration/lib_runner.sh"
+	for test_ephemeral_range in '32768 60999' '20000 30000' '20000 40000' '1024 60000'; do
+		read -r ephemeral_start ephemeral_end < /proc/sys/net/ipv4/ip_local_port_range
+		blocks=8
+		if [[ ${ephemeral_start} == 1024 ]]; then blocks=2; fi
+		runner_prepare_port_blocks "${blocks}" || fatal "cannot select blocks for ${test_ephemeral_range}"
+		assert_eq "${#runner_port_bases[@]}" "${blocks}" "worker block count"
+		previous_end=1023
+		for base in "${runner_port_bases[@]}"; do
+			((base > previous_end && base + 999 <= 65535)) || fatal "worker blocks overlap or exceed port range"
+			((base + 999 < ephemeral_start || base > ephemeral_end)) || fatal "worker block overlaps ${test_ephemeral_range}"
+			previous_end=$((base + 999))
+			port=$(INTEGRATION_PORT_BASE="${base}" INTEGRATION_PORT_DIR="${work}/${ephemeral_start}-${base}" allocate_available_port)
+			((port >= base && port <= previous_end)) || fatal "allocated port outside selected worker block"
+		done
+		(
+			unset INTEGRATION_PORT_BASE INTEGRATION_PORT_DIR
+			for protocol in tcp udp; do
+				port=$(allocate_available_port "${protocol}") || fatal "no ${protocol} port outside ${test_ephemeral_range}"
+				((port < ephemeral_start || port > ephemeral_end)) || fatal "random port overlaps ${test_ephemeral_range}"
+			done
+		)
+	done
+	if runner_prepare_port_blocks 8 > "${work}/capacity.log" 2>&1; then fatal "insufficient worker port capacity was accepted"; fi
+	grep -Fq 'need 8 worker port blocks' "${work}/capacity.log" || fatal "missing worker port capacity diagnostic"
+	(
+		unset INTEGRATION_PORT_BASE INTEGRATION_PORT_DIR
+		for test_ephemeral_range in '1 65534' '1025 65535'; do
+			read -r ephemeral_start ephemeral_end < /proc/sys/net/ipv4/ip_local_port_range
+			port=$(allocate_available_port) || fatal "single remaining non-ephemeral port was missed"
+			((port == 1024 || port == 65535)) || fatal "unexpected boundary port: ${port}"
+		done
+		test_ephemeral_range='1 65535'
+		if allocate_available_port > "${work}/no-ports.log" 2>&1; then fatal "fully ephemeral range was accepted"; fi
+		if runner_prepare_port_blocks 1 > "${work}/no-blocks.log" 2>&1; then fatal "fully ephemeral worker block was accepted"; fi
+		grep -Fq 'found 0' "${work}/no-blocks.log" || fatal "missing empty worker port capacity diagnostic"
+	)
 	ss() { return 1; }
 	if allocate_available_port; then fatal "allocation ignored failed socket query"; fi
 )

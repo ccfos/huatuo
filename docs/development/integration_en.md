@@ -68,6 +68,68 @@ seconds for EXIT cleanup before KILL. The runner preserves exit status 130 or 14
 New tests default to serial execution; review shared state before adding them
 to `integration/lib_runner.sh`.
 
+## CPU Metric and Autotracing E2E Tests
+
+Run `make build`, then execute a single case as root on the test node:
+
+```bash
+sudo bash e2e/run.sh test_metrics_cpu_util.sh
+sudo bash e2e/run.sh test_metrics_cpu_stat.sh
+sudo bash e2e/run.sh test_metrics_cpu_runqlat_tracing.sh
+sudo bash e2e/run.sh test_autotracing_cpuidle.sh
+sudo bash e2e/run.sh test_autotracing_dload.sh
+```
+
+`make e2e` and the standard `make test` discover these cases automatically.
+CPU cases run serially and target a Kubernetes VM with 4 CPUs and 8 GB of memory.
+They require access to the local kubelet API; set `KUBELET_CERT` and `KUBELET_KEY`
+to its client certificate and key.
+
+`make build` precompiles `integration/testdata/sysbench/` into
+`_output/tests/sysbench`. It provides `--cpu-wait sample`, `--cpu-wait percent`
+and `--loadavg sample`; set `SYSBENCH_BIN` to use another build.
+Test execution does not need a Go compiler; missing build
+artifacts fail the case. Shell owns orchestration, assertions and cleanup.
+
+CPU references use a digest-pinned cAdvisor image and `pidstat` from `sysstat`.
+The VM workflow installs `sysstat`; local runs must provide it. Prometheus
+responses are decoded with the official prom2json 1.5.0 binary, downloaded
+on demand into `_output/tools/` and verified with SHA256. cgroup v1 burst
+counters are read from `cpu.stat` because cAdvisor does not populate them.
+Use `CPU_REFERENCE_IMAGE` or `PROM2JSON_BIN` to supply preloaded tools.
+
+Runqlat aggregation runs with the ordinary CPU unit tests. E2E verifies live
+kernel behavior through public metrics, disabling, deletion and restarts,
+without depending on private BPF map names or layouts.
+
+Install `stress-ng` for host workloads; the VM workflow installs the package.
+Pods use a digest-pinned `ghcr.io/colinianking/stress-ng` image. Each case checks
+and pulls it through `crictl`, so the Kubernetes runtime must reach the registry.
+Set `CPU_LOAD_IMAGE` to use another workload image.
+Image preparation runs only in cases that use it. A pull failure fails that
+case; it does not prevent unrelated tests from starting at the VM entry point.
+
+cpu_util, cpu_stat and runqlat support cgroup v1/v2. cpu_stat temporarily changes
+`kernel.sched_schedstats` and restores its original value. It checks
+`wait_sum_percent` and burst counters only when the kernel exports them.
+Runqlat requires the scheduling tracepoints and `free_fair_sched_group` kprobe;
+cpuidle requires permission to load the perf BPF program.
+
+cpuidle and dload start test Elasticsearch containers and require Docker.
+Dload functional cases require Legacy cgroups and create D-state workers using
+taskstats and dm-delay. Other cgroup modes verify unsupported behavior, then
+report SKIP. Functional cases require `dmsetup`, `losetup`, `mkfs.ext4`,
+`modprobe`, `nsenter`, mount privileges and an available loop device.
+The disk image stays inside the case workspace. Cleanup deletes Pods, unmounts
+the filesystem, removes the mapper, releases the loop device and deletes the
+image. If device cleanup fails, the image is retained and the case fails.
+
+Missing external commands, kernel hooks, device capabilities or kubelet
+certificates produce SKIP with a reason. Missing build artifacts, incorrect
+metrics, unexpected process exits and cleanup failures produce FAIL.
+Logs and raw reference data are retained under
+`/tmp/huatuo-test.XXXXXX/<case>.XXXXXX/`, including successful E2E runs.
+
 ## Prerequisites and Results
 
 Both suites share `integration/run.sh`, which runs integration tests by default; `e2e/run.sh` forwards to `--suite e2e`. The `make integration`, `make e2e`, and single-case entry points remain available:

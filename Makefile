@@ -167,7 +167,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 
 build: gen-build $(GO_SRCS) \
 	_output/tests/apiserver-probe \
-	_output/tests/apiserver-go-workload
+	_output/tests/apiserver-go-workload _output/tests/sysbench
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
 	$(GO_BUILD_IMPL) -p $(GO_BUILD_PARALLELISM) -o $(APP_CMD_OUTPUT)/bin/ $(addprefix ./,$(APP_CMD_SUBDIRS))
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
@@ -245,6 +245,10 @@ _output/tests/apiserver-probe: integration/testdata/test_apiserver_profiling_pro
 _output/tests/apiserver-go-workload: integration/testdata/test_apiserver_profiling_workload.go
 	@mkdir -p $(@D)
 	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
+
+_output/tests/sysbench: $(wildcard integration/testdata/sysbench/*.go) go.mod go.sum
+	@mkdir -p $(@D)
+	CGO_ENABLED=0 go build -mod=vendor -o $@ ./integration/testdata/sysbench
 
 integration: build
 	go build -o $(PPROF_TOOL) ./build/pprof-tool
