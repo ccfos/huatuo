@@ -56,7 +56,7 @@ record_exit_reason() {
 	local code=$1 reason=$2
 	[[ -n ${RUNNER_REASON_DIR:-} ]] || return 0
 	[[ ${RUNNER_REASON_OWNER:-${BASHPID}} == "${BASHPID}" ]] || return 0
-	printf '%s' "${reason}" > "${RUNNER_REASON_DIR}/reason.${code}"
+	printf '%s\n' "${reason}" > "${RUNNER_REASON_DIR}/reason.${code}.log"
 }
 
 fatal() {
@@ -93,7 +93,7 @@ run_test_step() {
 	wait "${pid}" || status=$?
 	if ((status)); then
 		reason="step command ${1} exited with code ${status}"
-		if [[ -f ${step_dir}/reason.${status} ]]; then reason=$(< "${step_dir}/reason.${status}"); fi
+		if [[ -f ${step_dir}/reason.${status}.log ]]; then reason=$(< "${step_dir}/reason.${status}.log"); fi
 		record_exit_reason "${status}" "${reason}" || log_error "cannot propagate step failure reason"
 	fi
 	rm -rf -- "${step_dir}" || fatal "cannot remove step reason directory: ${step_dir}"
@@ -460,21 +460,26 @@ bpf_tool_setup() {
 	TOOL_ERR="${TOOL_WORK_DIR}/${binary_name}.err"
 }
 
-# Print non-empty text files; empty and binary files add no useful diagnostics.
+# Fixtures can contain copied source; print only diagnostic file types.
 dump_text_files() {
 	local dir=$1
-	local file
+	local file size
 
 	[[ -d "${dir}" ]] || return 0
 
 	while IFS= read -r -d '' file; do
 		grep -Iq '' "${file}" || continue
 		log_error "----- FILE (${file}) -----"
-		case ${file##*/} in
-		test.log | stdout.log | stderr.log) cat "${file}" >&2 ;;
-		*) sed -n '1,160p' "${file}" >&2 ;;
-		esac
-	done < <(find "${dir}" -type f -size +0c -print0)
+		size=$(stat -c %s "${file}") || continue
+		if ((size > 65536)); then
+			log_error "showing the last 65536 of ${size} bytes: ${file}"
+			tail -c 65536 "${file}" >&2
+		else
+			cat "${file}" >&2
+		fi
+		printf '\n' >&2
+	done < <(find "${dir}" -type f -size +0c \
+		\( -name '*.log' -o -name '*.json' -o -name '*.conf' -o -name '*.err' \) -print0)
 }
 
 # Call from the child's parent shell so wait can verify its exit status.

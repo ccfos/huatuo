@@ -219,7 +219,7 @@ runner_finalize_execution() {
 		elif [[ $test_exit_code == null || $worker_exit_code != 0 ]]; then
 			result=failed reason="worker exit status $worker_exit_code disagrees with its result; see stderr.log"
 		fi
-		if [[ -f $workspace/reason.$status && $status != 0 ]]; then reason=$(< "$workspace/reason.$status"); fi
+		if [[ -f $workspace/reason.$status.log && $status != 0 ]]; then reason=$(< "$workspace/reason.$status.log"); fi
 	elif [[ -z ${runner_pids[slot]} ]]; then
 		result=failed
 	fi
