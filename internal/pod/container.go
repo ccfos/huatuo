@@ -165,7 +165,7 @@ func GetCSSToContainerID(subsys string) (map[uint64]string, error) {
 func BuildCssContainersID(containers map[string]*Container, subsys string) map[uint64]string {
 	cssToContainerMap := make(map[uint64]string, len(containers))
 	for _, container := range containers {
-		if addr, ok := container.CgroupCss[subsys]; ok {
+		if addr := container.CgroupCss[subsys]; addr != 0 {
 			cssToContainerMap[addr] = container.ID
 		}
 	}
@@ -176,7 +176,7 @@ func BuildCssContainersID(containers map[string]*Container, subsys string) map[u
 func BuildCssContainers(containers map[string]*Container, subsys string) map[uint64]*Container {
 	cssToContainerMap := make(map[uint64]*Container, len(containers))
 	for _, container := range containers {
-		if addr, ok := container.CgroupCss[subsys]; ok {
+		if addr := container.CgroupCss[subsys]; addr != 0 {
 			cssToContainerMap[addr] = container
 		}
 	}

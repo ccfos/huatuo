@@ -113,6 +113,8 @@ weight: 3
 
 观测器：`hungtask`。
 
+可识别容器的 hungtask 事件附带容器 ID，否则保留主机输出；诊断堆栈仍为全机范围。计数说明见 [HungTask 指标](metrics_zh.md#attribute-hungtask-events-and-counts-to-containers)。
+
 检测系统 hungtask 事件，采集 D 状态（不可中断睡眠）进程的内核栈及 CPU 回溯信息。重复事件的上报间隔从 10 分钟递增至最长 3 小时，期间仍累计事件计数。内核未提供 `hung_task_timeout_secs` 时不注册观测器；将该值设为 `0` 会禁用内核 hungtask 检测。
 
 示例（省略部分公共字段）：
@@ -205,7 +207,7 @@ weight: 3
 
 观测器：`memory_reclaim_events`。
 
-记录容器线程单次直接内存回收的耗时。`try_to_free_pages` 返回时，若本次调用超过阈值（默认 900 毫秒），则上报进程、线程和容器信息。未关联到容器的事件会被过滤。黑名单使用注册名 `memory_reclaim_events`，落盘记录的 `tracer_name` 为 `memory_reclaim`。
+记录线程单次直接内存回收的耗时。`try_to_free_pages` 返回时，若本次调用超过阈值（默认 900 毫秒），则上报进程、线程和容器信息。未解析到容器的事件经输出冷却后保留到主机事件流。黑名单使用注册名 `memory_reclaim_events`，落盘记录的 `tracer_name` 为 `memory_reclaim`。
 
 示例（省略部分公共字段）：
 
@@ -227,6 +229,8 @@ weight: 3
 | `pid` | 触发进程的 PID |
 | `tid` | 触发线程的 TID |
 | `reclaim_duration_ns` | 直接回收耗时（纳秒） |
+
+容器 ID 为空可能表示主机任务或容器归属未解析。未归属事件每个 tracer 每秒最多输出一条，其余丢弃；已归属容器事件不受影响，也不重复输出到主机流。
 
 ## 网络
 

@@ -329,3 +329,16 @@ Example (some common fields omitted):
 | `virtual_bytes` / `rss_bytes` | Virtual memory / RSS |
 | `rss_anon_bytes` / `rss_file_bytes` / `rss_shmem_bytes` | Anonymous / file-backed / shared memory in RSS |
 | `swap_bytes` / `page_table_bytes` | Swap space / page table memory |
+
+### Host user and total CPU burst triggers
+
+`cpusys` supports system, user (`user + nice`) and total executing CPU
+(`user + nice + system + irq + softirq`) bursts. Utilization covers the
+whole host, including containers. Each trigger requires both utilization
+and its increase to exceed their thresholds; all triggers share one
+profile capture and cooldown.
+
+User/total thresholds reuse CPUIdle settings; see the
+[configuration reference](../configuration/huatuo-bamai-configuration_en.md).
+Records retain system fields and add `user_percent*` and
+`total_percent*`; zero-valued additional fields are omitted.

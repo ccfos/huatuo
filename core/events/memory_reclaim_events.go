@@ -30,7 +30,22 @@ import (
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 )
 
-type memoryReclaimTracing struct{}
+type memoryReclaimTracing struct {
+	nextUnresolved time.Time
+}
+
+// Bound only the newly retained host stream; preserve resolved container output.
+func (c *memoryReclaimTracing) allowReclaimOutput(container *pod.Container, now time.Time) bool {
+	if container != nil {
+		return true
+	}
+	if now.Before(c.nextUnresolved) {
+		return false
+	}
+	// Commit before logging or storage so failures cannot bypass cooldown.
+	c.nextUnresolved = now.Add(time.Second)
+	return true
+}
 
 // MemoryReclaimTracingData is the full data structure.
 type MemoryReclaimTracingData struct {
@@ -53,6 +68,40 @@ func newMemoryReclaim() (*tracing.EventTracingAttr, error) {
 }
 
 const cssCacheTTL = 5 * time.Second
+
+// Retry misses sooner than the TTL without rediscovering containers for every
+// unresolved host event. The output scope must not change attribution refresh.
+const reclaimCacheMissRetry = time.Second
+
+type reclaimContainerCache struct {
+	containers  map[uint64]*pod.Container
+	refreshedAt time.Time
+	attemptedAt time.Time
+}
+
+func (c *reclaimContainerCache) lookup(css uint64, now time.Time) (*pod.Container, error) {
+	if css == 0 {
+		return nil, nil
+	}
+	expired := c.refreshedAt.IsZero() || now.Sub(c.refreshedAt) > cssCacheTTL
+	container := c.containers[css]
+	if !expired && (container != nil || now.Sub(c.attemptedAt) < reclaimCacheMissRetry) {
+		return container, nil
+	}
+	c.attemptedAt = now
+	containers, err := pod.Containers()
+	if err != nil {
+		if expired {
+			// Do not attribute through an expired cache after discovery fails.
+			c.containers = nil
+			c.refreshedAt = now
+		}
+		return nil, err
+	}
+	c.containers = pod.BuildCssContainers(containers, subsystem.SubsystemCPU)
+	c.refreshedAt = now
+	return c.containers[css], nil
+}
 
 // Start detect work, load bpf and wait data form perfevent
 //
@@ -78,20 +127,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 
 	b.DetachOnContextDone(childCtx, cancel)
 
-	var (
-		cssToContainer map[uint64]*pod.Container
-		cacheTime      time.Time
-	)
-
-	refreshContainerCache := func() error {
-		containers, err := pod.Containers()
-		if err != nil {
-			return err
-		}
-		cssToContainer = pod.BuildCssContainers(containers, subsystem.SubsystemCPU)
-		cacheTime = time.Now()
-		return nil
-	}
+	var cache reclaimContainerCache
 
 	for {
 		select {
@@ -107,27 +143,13 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
 
-			if cssToContainer == nil || time.Since(cacheTime) > cssCacheTTL {
-				if err := refreshContainerCache(); err != nil {
-					log.Errorf("refresh container cache: %v", err)
-					continue
-				}
+			now := time.Now()
+			container, err := cache.lookup(data.CPUCSSAddr, now)
+			if !c.allowReclaimOutput(container, now) {
+				continue
 			}
-
-			container := cssToContainer[data.CPUCSSAddr]
-			if container == nil {
-				if err := refreshContainerCache(); err != nil {
-					log.Errorf("refresh container cache: %v", err)
-					continue
-				}
-				container = cssToContainer[data.CPUCSSAddr]
-				if container == nil {
-					// We only care about the container and nothing else.
-					// Though it may be unfair, that's just how life is.
-					//
-					// -- Tonghao Zhang, tonghao@bamaicloud.com
-					continue
-				}
+			if err != nil {
+				log.Errorf("refresh container cache: %v", err)
 			}
 
 			// save storage
@@ -138,10 +160,15 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 				ReclaimDurationNS: data.ReclaimDurationNS,
 			}
 
+			containerID := ""
+			if container != nil {
+				containerID = container.ID
+			}
+
 			log.Infof("memory_reclaim saves storage: %+v", tracingData)
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "memory_reclaim",
-				ContainerID:       container.ID,
+				ContainerID:       containerID,
 				ObservedTimestamp: timeutil.Now(),
 				TracerData:        tracingData,
 			}); err != nil {

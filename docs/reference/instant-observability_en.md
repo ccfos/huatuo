@@ -113,6 +113,8 @@ Example with some common fields omitted:
 
 Observer: `hungtask`.
 
+Matched hungtask events carry a container ID; unresolved events retain host output. Stack snapshots remain system-wide. See [container counts](metrics_en.md#attribute-hungtask-events-and-counts-to-containers).
+
 Detects system hung-task events and collects kernel stacks of D-state (uninterruptible sleep) processes and CPU backtraces. The repeat reporting interval increases from 10 minutes to at most 3 hours, while events continue to be counted. The observer is not registered if the kernel does not provide `hung_task_timeout_secs`. Setting that value to `0` disables kernel hung-task detection.
 
 Example with some common fields omitted:
@@ -205,7 +207,7 @@ Example with some fields omitted:
 
 Observer: `memory_reclaim_events`.
 
-Records the duration of an individual direct memory reclaim by a container thread. When `try_to_free_pages` returns after exceeding the threshold (default: 900 milliseconds), it reports process, thread, and container details. Events without a container association are filtered out. Blacklists use the registration name `memory_reclaim_events`; stored records use `tracer_name=memory_reclaim`.
+Records the duration of an individual direct memory reclaim by a thread. When `try_to_free_pages` returns after exceeding the threshold (default: 900 milliseconds), it reports process, thread, and container details. Events without a resolved container are retained in the host stream with an output cooldown. Blacklists use the registration name `memory_reclaim_events`; stored records use `tracer_name=memory_reclaim`.
 
 Example with some common fields omitted:
 
@@ -227,6 +229,8 @@ Example with some common fields omitted:
 | `pid` | Triggering process PID |
 | `tid` | Triggering thread TID |
 | `reclaim_duration_ns` | Direct reclaim duration (nanoseconds) |
+
+An empty container ID can mean a host task or unresolved container attribution. Unresolved events are limited to one output per second per tracer; excess events are discarded. Resolved container events are unaffected and are not duplicated in the host stream.
 
 ## Network
 

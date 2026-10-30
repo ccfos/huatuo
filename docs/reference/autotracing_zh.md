@@ -329,3 +329,12 @@ CPU 示例使用 `perf`。使用 `profiler` 时，事件保留触发指标，pro
 | `virtual_bytes` / `rss_bytes` | 虚拟内存 / RSS |
 | `rss_anon_bytes` / `rss_file_bytes` / `rss_shmem_bytes` | RSS 中的匿名页 / 文件页 / 共享内存 |
 | `swap_bytes` / `page_table_bytes` | 交换空间 / 页表内存 |
+
+### 主机 user 和总执行 CPU 突增触发
+
+`cpusys` 支持 system、user（`user + nice`）和总执行 CPU
+（`user + nice + system + irq + softirq`）突增。使用率为包含容器工作的整机口径。
+每组均要求使用率及其增量同时超过阈值，三组共用一次 profile 采集与冷却。
+
+user/total 复用 CPUIdle 阈值，见[配置参考](../configuration/huatuo-bamai-configuration_zh.md)。
+事件保留原 system 字段，增加 `user_percent*`、`total_percent*`，零值新增字段省略。

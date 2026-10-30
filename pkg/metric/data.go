@@ -187,6 +187,9 @@ func NewCounterData(name string, value float64, help string, label map[string]st
 }
 
 func newContainerData(container *pod.Container, name string, value float64, typ int, help string, label map[string]string) *Data {
+	if container == nil {
+		return newData(name, value, typ, help, label)
+	}
 	data := &Data{
 		name:      fmt.Sprintf("container_%s", name),
 		valueType: typ,
@@ -255,7 +258,7 @@ func isDefaultContainerLabel(key string) bool {
 	}
 }
 
-// NewContainerGaugeData creates a new instance of container Data.
+// NewContainerGaugeData creates container data, or host data for a nil container.
 //
 // NOTE: the default labels 'LabelContainerHost...' will be added if it is not present.
 // in the label map.
@@ -263,7 +266,7 @@ func NewContainerGaugeData(container *pod.Container, name string, value float64,
 	return newContainerData(container, name, value, MetricTypeGauge, help, label)
 }
 
-// NewContainerCounterData creates a new instance of container Data.
+// NewContainerCounterData creates container data, or host data for a nil container.
 //
 // NOTE: the default labels 'LabelContainerHost...' will be added if it is not present.
 // in the label map.

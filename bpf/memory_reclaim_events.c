@@ -15,6 +15,13 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 volatile const u64 reclaim_duration_threshold_ns = 0;
 
 struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, u64);
+	__type(value, struct trace_entry_ctx);
+	__uint(max_entries, 10240);
+} func_trace_map SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
 	__uint(key_size, sizeof(int));
 	__uint(value_size, sizeof(u32));
@@ -23,7 +30,8 @@ struct {
 SEC("kprobe/try_to_free_pages")
 int kprobe_try_to_free_pages(struct pt_regs *ctx)
 {
-	func_trace_begin(bpf_get_current_pid_tgid());
+	u64 id = bpf_get_current_pid_tgid();
+	func_trace_begin(&func_trace_map, &id, id);
 	return 0;
 }
 
@@ -32,7 +40,8 @@ int kretprobe_try_to_free_pages(struct pt_regs *ctx)
 {
 	struct trace_entry_ctx *entry;
 
-	entry = func_trace_end(bpf_get_current_pid_tgid());
+	u64 id = bpf_get_current_pid_tgid();
+	entry = func_trace_end(&func_trace_map, &id);
 	if (!entry)
 		return 0;
 
@@ -51,6 +60,6 @@ int kretprobe_try_to_free_pages(struct pt_regs *ctx)
 				      sizeof(struct memory_reclaim_event));
 	}
 
-	func_trace_destroy(entry->id);
+	func_trace_destroy(&func_trace_map, &id);
 	return 0;
 }

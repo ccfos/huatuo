@@ -242,6 +242,27 @@ huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg"
 | --- | --- | --- | --- | --- | --- |
 | `memory_buddyinfo_blocks` | 指定 NUMA 节点、内存区域和阶数的空闲块数 | 块 | 宿主机 | procfs | node, order, zone |
 
+<a id="add-container-reclaim-and-compaction-stall-times"></a>
+
+### 容器直接回收与内存规整累计耗时
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|memory_free_container_allocpages_stall|容器任务参与全局直接回收的累计耗时| 毫秒|容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_compaction_stall|容器任务参与直接内存规整的累计耗时| 毫秒|容器| eBPF | 同上|
+
+两项为累计耗时 Gauge，统计全局直接回收与规整中的任务耗时。主机总量包含容器工作；缺失或归属不明确的容器记录不输出。容器采集失败仍保留主机数据，不支持容器采集时回退为主机指标。容器重建或 BPF 重载会重置累计值。
+
+<a id="add-a-host-wide-memcg-reclaim-count"></a>
+
+### 主机 memcg 回收累计次数
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|memory_reclaim_directstall|整台主机 memcg 限额回收累计次数| 计数| 物理机| eBPF | host, region|
+
+该 Gauge 统计全机 memcg 回收次数，排除 kswapd，不是全局回收次数或耗时。主机总量包含容器活动，不能与容器计数相加；BPF 重载后归零。
+
 ## 网络
 
 ### TCP 内存
@@ -667,6 +688,16 @@ NVMe 证据包括 `critical_warning`、`media_errors_total`，以及最多八条
 | 指标 | 说明 | 单位 | 范围 | 来源 | 附加标签 |
 | --- | --- | --- | --- | --- | --- |
 | `hungtask_total` | 系统 hungtask 事件计数 | 计数 | 宿主机 | eBPF | — |
+
+<a id="attribute-hungtask-events-and-counts-to-containers"></a>
+
+### HungTask 容器归属与计数
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|hungtask_container_total|已归属容器的阻塞任务事件计数|计数|容器|BPF + CSS 缓存|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+容器计数包含在主机 Counter 中，不受追踪退避影响。归属无法解析或不支持容器采集时，仍保留主机输出。容器退出后清理其计数，agent 重启后归零；同一阻塞任务重复上报按多次事件计数。
 
 ## GPU
 

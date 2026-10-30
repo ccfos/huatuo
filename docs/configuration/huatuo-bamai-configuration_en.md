@@ -445,7 +445,7 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 - `Included` only: Monitor only matching containers.
 - Both: Monitor containers that match `Included` and do not match `Excluded`.
 
-#### 7.2 Host system CPU spikes
+#### 7.2 Host CPU bursts
 
 ```toml
 # cpusys
@@ -495,7 +495,15 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 | `IntervalTracing` | Minimum interval between traces, in seconds. Default: `1800`. |
 | `RunTracingToolTimeout` | Collection duration in seconds. Default: `10`. |
 
-**Trigger conditions**: Once the tracing interval has elapsed, tracing starts when system-mode CPU utilization strictly exceeds `SysThreshold` and its increase strictly exceeds `DeltaSysThreshold`.
+**Trigger conditions**: After the shared cooldown, any system/user/total pair
+can trigger profiling when both utilization and its increase strictly exceed
+their thresholds. System uses the CPUSys thresholds above. User and total
+reuse AutoTracing.CPUIdle.UserThreshold/DeltaUserThreshold (75/45) and
+UsageThreshold/DeltaUsageThreshold (90/55). These existing settings affect
+both host and container triggers; no additional CPUSys settings are needed.
+Utilization is percent and delta is percentage points. Setting a shared usage
+threshold to zero disables that host trigger. The CPUSys tool, sampling
+interval, capture duration and cooldown remain independent of CPUIdle.
 
 #### 7.3 Container D-state load
 

@@ -242,6 +242,27 @@ Shows free block counts by NUMA node, memory zone, and order. `order=n` means ea
 | --- | --- | --- | --- | --- | --- |
 | `memory_buddyinfo_blocks` | Free blocks for the specified NUMA node, zone, and order | Blocks | Host | procfs | node, order, zone |
 
+<a id="add-container-reclaim-and-compaction-stall-times"></a>
+
+### Container reclaim and compaction stall times
+
+|Metric|Description|Unit|Target|Source|Labels|
+|---|---|---|---|---|---|
+|memory_free_container_allocpages_stall|Container task time in global direct reclaim| milliseconds|Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_compaction_stall|Container task time in direct compaction| milliseconds|Container| eBPF | same container labels|
+
+These cumulative Gauge values measure task time in global direct reclaim and compaction. Host totals include container work. Missing or ambiguous container records are omitted; container collection failures preserve host output. Unsupported container collection falls back to host-only metrics. Container recreation or BPF reload resets totals.
+
+<a id="add-a-host-wide-memcg-reclaim-count"></a>
+
+### Host-wide memcg reclaim count
+
+|Metric|Description|Unit|Target|Source|Labels|
+|---|---|---|---|---|---|
+|memory_reclaim_directstall|Cumulative host-wide memcg limit reclaim events| count| Host| eBPF | host, region|
+
+This Gauge counts host-wide memcg reclaim events, excluding kswapd; it is not a global reclaim count or duration. Host totals include container activity and must not be added to container counts. BPF reload resets the total.
+
 ## Network
 
 ### TCP Memory
@@ -694,6 +715,14 @@ Records hung-task events detected by the kernel.
 | Metric | Description | Unit | Scope | Source | Additional Labels |
 | --- | --- | --- | --- | --- | --- |
 | `hungtask_total` | System hung-task event count | Count | Host | eBPF | — |
+
+### attribute hungtask events and counts to containers
+
+|Metric|Description|Unit|Target|Source|Labels|
+|---|---|---|---|---|---|
+|hungtask_container_total|Events attributed to blocked container tasks|count|Container|BPF + CSS cache|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+Container counts are included in the host Counter and are independent of trace backoff. Unresolved attribution or unsupported container collection retains host output. Container exit removes its count; agent restart resets counts. Repeated reports of the same blocked task count as separate events.
 
 ## GPU
 
