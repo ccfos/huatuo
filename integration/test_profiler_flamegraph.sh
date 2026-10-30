@@ -33,7 +33,7 @@ trap cleanup EXIT
 
 assert_flamegraph_frame() {
 	local rows=$1 name=$2 samples=$3 percent=$4 x=$5 width=$6
-	local prefix="${name} (${samples} samples, " actual expected
+	local prefix="${name} (${samples} nanoseconds, " actual expected
 	actual=$(awk -F '\t' -v prefix="${prefix}" 'index($1, prefix) == 1' "${rows}")
 	printf -v expected '%s%s%%)\t%s\t%s' "${prefix}" "${percent}" "${x}" "${width}"
 	assert_eq "${actual}" "${expected}" "${rows}: SVG frame" \

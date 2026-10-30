@@ -24,7 +24,7 @@ weight: 6
 | `--output-path` | 必填 | 全部 | 本地文件、目录或 `stdout`，`remote-store` 时为 Unix socket；新目录路径以 `/` 结尾 |
 | `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg`、`json` 或 `remote-store`；必须与 `--output-path` 一起显式指定 |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
-| `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
+| `--tool-path` | 无 | Java、Python | Java/Python CPU 必填；Python 内存默认使用可执行文件旁的 `../tools/memray`，此参数可指定其他包根目录（相对路径以 profiler 而非目标进程的工作目录为基准） |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
 | `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
 | `--task-id` | 空；本地输出时内部生成 | 全部；`remote-store` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
@@ -39,7 +39,9 @@ weight: 6
 
 | 参数 | 默认值 | 适用范围 | 说明 |
 | --- | --- | --- | --- |
-| `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；使用 `--type memory` 时必填 |
+| `--memory-mode` | Python 默认 `object_usage` | 内存 | 原生和 Java 内存必填；Python 仅支持存活分配模式 `object_usage` |
+| `--python-memory-stack` | `python` | Python 内存 | 调用栈视图：`python`、`native` 或 `hybrid` |
+| `--python-memory-merge-threads` | `false` | Python 内存 | 合并不同线程的分配 |
 | `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围；off-CPU 样本按任务切出时所在 CPU 过滤 |
 | `--cpu-mode` | `oncpu` | 原生 CPU | `oncpu` 按频率采样，`offcpu` 归因阻塞与可运行调度延迟 |
 | `--require-hardware-pmu` | `false` | 原生 on-CPU | 强制使用硬件 PMU 采样；不可用时失败，不回退软件 CPU clock |
@@ -49,6 +51,9 @@ weight: 6
 | `--thread-group` | `false` | 原生 | 同时采集目标 PID 所在线程组中的其他线程 |
 | `--physical-memory-probability` | `100` | 原生物理内存 | 物理内存事件采样概率，范围为 1～100 |
 | `--log-bpf-debug` | `false` | 原生 | 输出 BPF 调试事件，常规采集不建议启用 |
+
+Python 内存的 `python` 和 `hybrid` 视图仅按函数名显示 Python 帧，不包含文件或
+分配行号。显示出的调用链相同时，不同文件中的同名函数、不同行的分配可能合并。
 
 硬件 PMU 事件或采样不受支持时，命令退出码为 `1`，标准错误以 `Error: hardware_pmu_unavailable:` 标识该错误；权限及其他启动错误不使用此标识。
 

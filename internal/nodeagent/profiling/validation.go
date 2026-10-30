@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/profiling/toolpath"
@@ -88,6 +89,12 @@ func validateEnvironment(request *StartRequest, config *Config) error {
 		}
 	}
 
+	if request.Spec.Language == profilingdomain.LanguagePython && request.Spec.Type == profilingdomain.TypeMemory {
+		if _, err := exec.LookPath("gdb"); err != nil {
+			return fmt.Errorf("%w: Python memory profiling requires gdb in PATH: %w", ErrEnvironmentUnsupported, err)
+		}
+		return nil
+	}
 	if err := toolpath.Validate(request.Spec.Language, config.ToolDir); err != nil {
 		return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
 	}

@@ -525,6 +525,15 @@ func TestValidateMemoryMode(t *testing.T) {
 			language: "python",
 			typ:      "cpu",
 		},
+		{name: "Python retained default", language: "python", typ: "memory"},
+		{name: "Python retained explicit", language: "python", typ: "memory", mode: "object_usage"},
+		{
+			name:      "Python rejects allocation throughput",
+			language:  "python",
+			typ:       "memory",
+			mode:      "object_alloc",
+			wantError: `memory mode "object_alloc" is not supported for python; supported modes: object_usage`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -585,13 +594,13 @@ func TestValidatePythonProfileOptions(t *testing.T) {
 	}{
 		{name: "Python CPU one-shot", language: "python", typ: "cpu", duration: 10, interval: 10},
 		{
-			name:      "Python memory",
-			language:  "python",
-			typ:       "memory",
-			duration:  10,
-			interval:  10,
-			wantError: "Python profiler supports only --type=cpu",
+			name:     "Python memory",
+			language: "python",
+			typ:      "memory",
+			duration: 10,
+			interval: 10,
 		},
+		{name: "Python memory shorter delta interval", language: "python", typ: "memory", duration: 30, interval: 10},
 		{
 			name:      "Python continuous profiling",
 			language:  "python",

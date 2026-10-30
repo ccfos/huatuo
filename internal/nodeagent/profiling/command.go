@@ -26,7 +26,8 @@ import (
 func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) {
 	durationSeconds := int64(request.Duration / time.Second)
 	aggregationInterval := min(config.AggregationInterval, request.Duration)
-	if request.Spec.Language == profilingdomain.LanguagePython {
+	pythonMemory := request.Spec.Language == profilingdomain.LanguagePython && request.Spec.Type == profilingdomain.TypeMemory
+	if request.Spec.Language == profilingdomain.LanguagePython && !pythonMemory {
 		aggregationInterval = request.Duration
 	}
 
@@ -40,7 +41,9 @@ func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) 
 		"--output-path", config.ToolstreamSocketPath,
 		"--task-id", request.RequestID,
 		"--huatuo-api-address", config.NodeAPIAddress,
-		"--tool-path", config.ToolDir,
+	}
+	if !pythonMemory {
+		args = append(args, "--tool-path", config.ToolDir)
 	}
 	if request.Scope == observation.ScopeContainer {
 		args = append(args, "--container-id", request.ContainerID)

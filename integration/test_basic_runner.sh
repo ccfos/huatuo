@@ -21,7 +21,7 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 readonly RUNNER_FIXTURE="${HUATUO_BAMAI_TEST_TMPDIR}/runner"
 [[ ${EUID} -eq 0 ]] || skip "runner tests require root for integration namespaces"
-require_commands unshare mount findmnt readlink flock ss stat
+require_commands unshare mount findmnt readlink flock ss stat jq
 runner_parent_uts=$(readlink /proc/self/ns/uts)
 runner_parent_mount=$(readlink /proc/self/ns/mnt)
 export runner_parent_uts runner_parent_mount
@@ -147,6 +147,68 @@ assert_runner_prerequisites() {
 	(ROOT_DIR="${RUNNER_FIXTURE}/missing" require_build_output) > "${HUATUO_BAMAI_TEST_TMPDIR}/missing-output.log" 2>&1 || runner_status=$?
 	[[ ${runner_status} == 1 ]] || fatal "missing build output did not fail: exit=${runner_status}"
 
+	# Cases use built binaries directly; a missing binary must fail, not skip.
+	cat > "${RUNNER_FIXTURE}/integration/test_missing_build_binary.sh" << 'EOF'
+set -euo pipefail
+"${ROOT_DIR}/_output/bin/profiler" --help
+EOF
+	assert_runner_result integration missing_build_binary 1 'total=1 passed=0 skipped=0 failed=1' test_missing_build_binary.sh
+	grep -Fq "${RUNNER_FIXTURE}/_output/bin/profiler" "${HUATUO_BAMAI_TEST_TMPDIR}/integration-missing_build_binary.log" \
+		|| fatal "missing build binary failed for an unrelated reason"
+}
+
+assert_runner_memray_artifacts() {
+	# Missing supported runtimes must fail; unsupported Python versions may skip.
+	cp "${ROOT_DIR}/integration/lib_profiler_python_memory.sh" "${RUNNER_FIXTURE}/integration/"
+	mkdir -p "${RUNNER_FIXTURE}/_output/tools/memray/runtimes/py3.12/python/memray"
+	cat > "${RUNNER_FIXTURE}/integration/test_memory_artifacts.sh" << 'EOF'
+set -euo pipefail
+source "${ROOT_DIR}/integration/lib.sh"
+PROFILER_TOOL_DIR="${ROOT_DIR}/_output/tools"
+source "${ROOT_DIR}/integration/lib_profiler_python_memory.sh"
+memory_require_runtime "${RUNNER_MEMORY_PYTHON_VERSION:-3.12}"
+EOF
+	assert_runner_result integration missing_memory_extension 1 'total=1 passed=0 skipped=0 failed=1' test_memory_artifacts.sh
+	grep -q 'Memray runtime for Python 3.12 missing' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-missing_memory_extension.log" \
+		|| fatal "missing Memray extension failed for an unrelated reason"
+	touch "${RUNNER_FIXTURE}/_output/tools/memray/runtimes/py3.12/python/memray/_memray.fixture.so"
+	assert_runner_result integration missing_memory_injector 1 'total=1 passed=0 skipped=0 failed=1' test_memory_artifacts.sh
+	grep -q 'Memray injector for Python 3.12 missing' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-missing_memory_injector.log" \
+		|| fatal "missing Memray injector failed for an unrelated reason"
+	touch "${RUNNER_FIXTURE}/_output/tools/memray/runtimes/py3.12/python/memray/_inject.fixture.so"
+	assert_runner_result integration complete_memory_artifacts 0 'total=1 passed=1 skipped=0 failed=0' test_memory_artifacts.sh
+	RUNNER_MEMORY_PYTHON_VERSION=3.6 assert_runner_result integration unsupported_memory_python_old 0 'total=1 passed=0 skipped=1 failed=0' test_memory_artifacts.sh
+	RUNNER_MEMORY_PYTHON_VERSION=3.15 assert_runner_result integration unsupported_memory_python_new 0 'total=1 passed=0 skipped=1 failed=0' test_memory_artifacts.sh
+
+	cat > "${RUNNER_FIXTURE}/integration/test_memory_node.sh" << 'EOF'
+set -euo pipefail
+source "${ROOT_DIR}/integration/lib.sh"
+PROFILER_TOOL_DIR="${ROOT_DIR}/_output/tools"
+source "${ROOT_DIR}/integration/lib_profiler_python_memory.sh"
+node=$(memory_node_for_local_addresses "$ROOT_DIR/${RUNNER_MEMORY_NODES}" "$ROOT_DIR/local-addresses.json")
+[[ "$node" == local-node ]] || fatal "selected a non-local Kubernetes node: $node"
+EOF
+	cat > "${RUNNER_FIXTURE}/local-addresses.json" << 'EOF'
+[{"addr_info":[{"local":"127.0.0.1"},{"local":"10.0.0.2"},{"local":"fd00::2"}]}]
+EOF
+	cat > "${RUNNER_FIXTURE}/local-node.json" << 'EOF'
+{"items":[{"metadata":{"name":"local-node"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.2"}]}}]}
+EOF
+	cat > "${RUNNER_FIXTURE}/remote-node.json" << 'EOF'
+{"items":[{"metadata":{"name":"remote-node"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.3"}]}}]}
+EOF
+	jq -s '{items:([.[].items[]] | reverse)}' \
+		"${RUNNER_FIXTURE}/local-node.json" "${RUNNER_FIXTURE}/remote-node.json" \
+		> "${RUNNER_FIXTURE}/multiple-nodes.json"
+	jq '.items[0].status.addresses[0].address = "fd00::2"' "${RUNNER_FIXTURE}/local-node.json" \
+		> "${RUNNER_FIXTURE}/ipv6-node.json"
+	jq '.items += [.items[0] | .metadata.name = "ambiguous-node"]' "${RUNNER_FIXTURE}/local-node.json" \
+		> "${RUNNER_FIXTURE}/ambiguous-nodes.json"
+	RUNNER_MEMORY_NODES=local-node.json assert_runner_result integration memory_single_node 0 'total=1 passed=1 skipped=0 failed=0' test_memory_node.sh
+	RUNNER_MEMORY_NODES=multiple-nodes.json assert_runner_result integration memory_multiple_nodes 0 'total=1 passed=1 skipped=0 failed=0' test_memory_node.sh
+	RUNNER_MEMORY_NODES=ipv6-node.json assert_runner_result integration memory_ipv6_node 0 'total=1 passed=1 skipped=0 failed=0' test_memory_node.sh
+	RUNNER_MEMORY_NODES=remote-node.json assert_runner_result integration memory_no_local_node 1 'total=1 passed=0 skipped=0 failed=1' test_memory_node.sh
+	RUNNER_MEMORY_NODES=ambiguous-nodes.json assert_runner_result integration memory_ambiguous_node 1 'total=1 passed=0 skipped=0 failed=1' test_memory_node.sh
 }
 
 assert_runner_parallel_isolation() {
@@ -255,6 +317,7 @@ EOF
 runner_prepare_fixture
 assert_runner_suites
 assert_runner_prerequisites
+assert_runner_memray_artifacts
 assert_runner_parallel_isolation
 assert_runner_storage_lifecycle
 log_info "runner prerequisites, result counts, fail-fast behavior, storage sharing, and cleanup passed"

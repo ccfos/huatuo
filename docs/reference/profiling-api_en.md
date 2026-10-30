@@ -77,6 +77,16 @@ CPU profiling for `c`, `c++`, and `go` supports `oncpu` and `offcpu`; `java` and
 | `c`, `c++`, `go` | `physical_usage` | Live bytes of physical pages tracked in this collection |
 | `java` | `object_alloc` | JVM object allocations |
 | `java` | `object_usage` | JVM live objects |
+| `python` | `object_usage` | Allocations made after Memray attaches and still live at collection end; bytes, not RSS |
+
+Python memory jobs use the installed Memray runtime, require `gdb` and ptrace
+permission on the node, and upload one final retained profile. The API uses
+Python-only stacks. To collect one, use the Java memory request below with
+`"language": "python"`, keeping `"mode": "object_usage"` and
+`"scope": "container"`. A job fails before attachment if its selected Python
+processes exceed the node's positive `Profiling.MaxConcurrentProcesses` limit.
+Concurrent memory jobs against the same Python process are rejected without
+interrupting the active capture.
 
 ## Create a Task
 

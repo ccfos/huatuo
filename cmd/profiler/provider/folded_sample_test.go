@@ -70,6 +70,46 @@ func TestPythonSamplesOwnSourceFrames(t *testing.T) {
 	}
 }
 
+func TestMemrayDeltasRetainAllocationsAcrossBatches(t *testing.T) {
+	aggr := aggregation.New()
+	labels := []types.ProfileLabel{types.ProfilePIDLabel(123)}
+	deliver := func(batch *pipeline.SampleBatch) error {
+		for i := range batch.Samples {
+			if err := aggr.Add(&batch.Samples[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, lines := range [][]string{
+		{"foo 10", "gone 5"},
+		{"foo -4", "gone -5"},
+	} {
+		if err := enqueueMemrayDeltas(lines, labels, deliver); err != nil {
+			t.Fatal(err)
+		}
+	}
+	profile := aggr.Drain()
+	var retained int64
+	for _, sample := range profile.Samples {
+		retained += sample.Value
+	}
+	if retained != 6 {
+		t.Fatalf("retained bytes = %d, want 6", retained)
+	}
+	for _, line := range []string{"foo invalid", "foo"} {
+		if err := enqueueMemrayDeltas([]string{line}, labels, deliver); err == nil {
+			t.Fatalf("accepted malformed delta %q", line)
+		}
+	}
+	want := errors.New("delivery failed")
+	if err := enqueueMemrayDeltas([]string{"foo -4"}, labels, func(*pipeline.SampleBatch) error {
+		return want
+	}); !errors.Is(err, want) {
+		t.Fatalf("delivery error = %v, want %v", err, want)
+	}
+}
+
 func TestFoldedDeliveryPropagatesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
