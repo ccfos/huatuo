@@ -41,6 +41,16 @@ import (
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
+// The build keeps its temporary files off the captured device; test fixtures
+// must still land on the mounted filesystem for device-filter assertions.
+func requireIOTracingTempDevice(t *testing.T, dir string) {
+	t.Helper()
+	var got, want unix.Stat_t
+	require.NoError(t, unix.Stat(dir, &got))
+	require.NoError(t, unix.Stat(os.Getenv("TMPDIR"), &want))
+	require.Equal(t, want.Dev, got.Dev, "set GOTMPDIR to TMPDIR for the test process")
+}
+
 // TestIOTracingBlockDevice observes real file IO on an ext4/XFS TMPDIR.
 func TestIOTracingBlockDevice(t *testing.T) {
 	object := os.Getenv("TEST_IOTRACING_FILE_BPF")
@@ -51,6 +61,7 @@ func TestIOTracingBlockDevice(t *testing.T) {
 	}))
 
 	dir := t.TempDir()
+	requireIOTracingTempDevice(t, dir)
 	var fs unix.Statfs_t
 	require.NoError(t, unix.Statfs(dir, &fs))
 	require.True(t, fs.Type == unix.EXT4_SUPER_MAGIC || fs.Type == unix.XFS_SUPER_MAGIC,

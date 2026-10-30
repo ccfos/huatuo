@@ -113,11 +113,13 @@ iotracing_filesystem_test() {
 		# A Go skip exits zero, so propagate unavailable XFS coverage explicitly.
 		mkdir -p "${TOOL_WORK_DIR}/go-tmp"
 		local runtime_log="${TOOL_WORK_DIR}/runtime.json" runtime_status=0
-		# A lazily faulted Go test executable must not reside on the captured device.
+		# Keep the test executable off the captured device while placing
+		# testing.T.TempDir fixtures there in the test process.
 		GOTMPDIR="${TOOL_WORK_DIR}/go-tmp" TMPDIR="${io_test_dir}" \
 			TEST_IOTRACING_OTHER_FS="${other_test_dir}" TEST_IOTRACING_FILE_BPF="${TOOL_BPF}" \
 			timeout --kill-after=5s 240s go test -mod=vendor -tags=integration ./cmd/iotracing \
-			-run '^TestIOTracing' -count=1 -json -timeout=230s > "${runtime_log}" || runtime_status=$?
+			-run '^TestIOTracing' -count=1 -json -timeout=230s \
+			-exec "env GOTMPDIR=${io_test_dir}" > "${runtime_log}" || runtime_status=$?
 		jq -rj 'select(.Action == "output") | .Output' "${runtime_log}" \
 			|| fatal "invalid iotracing runtime test results"
 		[[ ${runtime_status} -eq 0 ]] || fatal "iotracing runtime tests failed with ${runtime_status}"
