@@ -246,6 +246,25 @@ SCSI 使用 `TEST_SCSI_DEVICE=sdb`。这两类用例分别需要 `nvme-cli` 和
 Shell 用例负责命名空间、丢包规则、断言、日志和进程清理。
 需要真实 TCP 连接的负载继续使用 `testdata/tcp_server.py`。
 
+### 网卡硬件丢包指标
+
+两个用例要求 root 及设备管理所需的内核权限。
+在具备 `netdevsim` 和 `carrier_down_count_show` 探针的主机运行
+`sudo bash integration/run.sh test_metrics_netdev_hw.sh`。用例使用独立模拟设备，
+不选择或修改物理网卡。缺少内核能力时明确跳过；跳过不代表已经验证内核支持
+或物理驱动兼容性。
+
+### RDMA 链路指标
+
+安装 `rdma` 工具后运行 `sudo bash integration/run.sh test_metrics_netdev_rdma_link.sh`。
+用例优先只读现有硬件，其次尝试现有软件 RDMA；都无法提供统计时，在独立
+veth 对上尝试 `rdma_rxe`。缺少 RDMA 能力时明确跳过，不记为通过；选定设备后，
+启动或指标错误使测试失败。
+
+已有设备保持只读，不产生物理 RDMA 流量。两个用例先停止 daemon，再删除
+测试自建设备；若 daemon 仍存活，则保留设备并报告失败，避免注销仍在使用的
+资源。其他清理失败也会使测试失败。共享模块保持加载。
+
 ## 新增指标测试
 
 ### 1. 准备模拟数据

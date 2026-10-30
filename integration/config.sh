@@ -600,3 +600,29 @@ write_config_bamai_toolstream_receiver() {
 	write_config_bamai_auth "integration-node-token"
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }
+
+# Keep the legacy file writers unchanged while these scenarios compose stdout.
+write_config_bamai_netdev() {
+	local port=$1
+	cat << EOF
+BlackList = ["memory_threshold_snapshot", "metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "iocost", "blk_throtl", "sched-blame"]
+
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+[HTTPServer]
+    ListenAddress = "127.0.0.1:${port}"
+EOF
+}
+
+# The case supplies its port and device selection before startup.
+write_config_bamai_netdev_hw() {
+	write_config_bamai_netdev "${NETDEV_HW_PORT}"
+	cat << EOF
+[MetricCollector.NetdevHW]
+    DeviceList = ["${netdev_hw_pattern}"]
+EOF
+}
+
+write_config_bamai_netdev_rdma_link() {
+	write_config_bamai_netdev "${RDMA_PORT}"
+}
