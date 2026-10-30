@@ -31,7 +31,9 @@ weight: 5
 bash integration/run.sh
 ```
 
-指定文件名可以只运行一个集成测试，第二个参数指定循环次数，默认为 1：
+指定文件名可以只运行一个集成测试，第二个参数指定循环次数，默认为 1。
+循环次数范围为 1–1,000，所选测试数量乘以循环次数不得超过 10,000；超限返回 2，
+不创建运行目录或报告：
 
 ```bash
 bash integration/run.sh test_metrics_exclude_filter.sh 10
@@ -55,8 +57,37 @@ bash e2e/run.sh test_metrics.sh 2
 
 两套测试都在独立的 UTS、mount namespace 中运行，hostname 为 `huatuo-dev`，
 挂载传播设为 private。integration 由用例启动服务；e2e 在每例之前启动默认 bamai，
-结束时停止服务并检查日志。integration 成功或跳过后删除工作目录，失败时保留；
-e2e 保留工作目录。
+结束时停止服务并检查日志。两套测试均保留每次执行的日志和工作文件；
+资源清理仍会停止进程、删除容器和释放挂载。
+
+每次用例执行（串行、并行、独占、E2E、重复运行）还拥有独立 mount namespace 和
+`/var/run`，保留宿主运行时 socket，隔离 Huatuo PID 锁及 Toolstream socket。
+服务准备、用例执行和清理都在同一个用例环境内完成。
+
+新增测试时，在 `lib_runner.sh` 中分别维护 `runner_test_groups`（资源组）、
+`runner_test_namespaces`（隔离需求）和 `runner_shared_storage_tests`（共享存储消费者）。
+三者均以 `套件/文件名` 为键，调度前校验显式声明；未声明的测试默认独占执行并使用 mount 隔离。
+单次执行由 `runner_worker.sh` 承接；报告由 `lib_runner_report.sh` 管理。
+使用 profiler 专属 helper 的测试应先加载 `lib.sh`，再显式加载 `lib_profiler.sh`。
+
+用例的额外隔离需求在 `integration/lib_runner.sh` 的 `runner_test_namespaces`
+中声明，键为 `integration/test_*.sh` 或 `e2e/test_*.sh`：
+
+| 声明 | 执行环境 |
+| --- | --- |
+| 未声明或 `mount` | 独立 mount，保留宿主 PID 和网络可见性 |
+| `mount net` | 增加独立网络并启用 loopback；不保证宿主服务及代理可达 |
+| `mount pid` | 增加独立 PID 和匹配的 procfs，执行入口负责等待子进程；退出 namespace 时剩余进程由内核终止 |
+
+隔离声明与并发资源组独立。未知组合和无效用例名称在调度前失败；namespace 创建失败
+记为 FAIL，不降级到宿主环境。明确缺失的命令（例如私有网络需要的 `ip`）记为 SKIP。
+用例不再通过 `unshare` 重启自身；`lib_namespace.sh` 构造的客户端、服务端网络拓扑仍由
+场景创建和清理。新增或修改隔离声明时应验证服务可达性、退出码及取消清理。
+
+`test_tcpshark_output_cancellation_{blocked,healthy,timeout}.sh` 分别运行三个接收端场景，
+共用 `lib_tcpshark_output_cancellation.sh`，每个场景都有全新的 `mount net` 环境。
+用例目录中的 `execution.json` 是执行入口交给 runner 的内部清理结果；对外消费
+`result.json`。执行入口被强制终止且无法提交结果时，无法确认的用例退出码为 `null`。
 
 apiserver 测试遵循相同的平铺目录约定：
 
@@ -129,9 +160,70 @@ require_commands "${PROFILER_TOOL_DIR}/bin/asprof"
 require_readable "${KUBELET_CERT}" "${KUBELET_KEY}"
 ```
 
-`skip` 输出原因并以 77 退出，仍会执行 `EXIT` 清理。runner 将 0 记为 PASS、
-77 记为 SKIP，其他状态记为 FAIL；清理失败也记为 FAIL。只有成功和跳过时，
-runner 返回 0。失败时停止后续用例，并输出截至当前的统计。
+`skip` 输出原因并以 77 退出，仍会执行 `EXIT` 清理。runner 将正常完成记为 PASS、
+依赖不满足记为 SKIP、测试或清理失败记为 FAIL。失败后停止调度，等待正在执行的
+用例收尾；未启动项和被 runner 取消的执行均记为 SKIP，由原因说明区别。
+INT/TERM 中断整次运行时仍返回 130/143，不因用例计为 SKIP 而返回成功。
+
+`skip` / `fatal` 的原因由调用它们的用例主 shell 提交。需要把子进程的失败或跳过
+作为整个用例的结果时，使用 `run_test_step`；它执行外部命令，失败时立即以原始退出码
+终止当前用例，并传播该步骤的原因。步骤脚本应在主 shell 中加载 `lib.sh` 后调用
+`skip` / `fatal`；嵌套步骤继续使用同一 helper。
+
+```bash
+run_test_step bash -euc 'source "$ROOT_DIR/integration/lib.sh"; require_commands some_tool'
+```
+
+需要检查预期失败时，继续使用普通的 `if` / `wait` / `||`，不要用 `run_test_step`。
+普通子进程或裸 subshell 的原因不自动提升为用例原因；若最终退出非零且没有显式原因，
+报告保留实际退出码并提示查看日志。这避免把已经捕获的错误误报为最终失败原因。
+
+每次有效调用（包括单用例）创建 `/tmp/huatuo-test.XXXXXX/`，终端在用例结束时
+显示结果及原因，在运行结束时打印统计和 `result.json` 路径。报告依赖 `jq`；
+无效参数不创建执行计划或报告。
+
+```text
+/tmp/huatuo-test.XXXXXX/
+├── result.json
+├── test_metrics.1.ABCDEF/
+│   ├── stdout.log
+│   ├── stderr.log
+│   └── 配置、响应、服务日志等
+├── shared-elasticsearch.1.GHIJKL/
+└── ports/
+```
+
+用例目录名包含测试名、从 1 开始的执行序号和随机后缀。共享存储与端口目录按需
+创建；共享实例使用每个用例独立的索引。全部资料保留在运行目录，可整体归档或删除。
+stdout 与 stderr 分别保存，跨两个文件的先后顺序不作保证。
+
+报告的 `schema_version` 当前为 1：
+
+| 字段 | 含义 |
+| --- | --- |
+| `suite`、`runs_per_test` | 测试套件、每个测试计划执行的总次数 |
+| `status` | 运行状态：`running`、`completed`、`aborted`、`interrupted` |
+| `exit_code`、`reason` | runner 退出码和提前结束原因 |
+| `started_at`、`finished_at` | 带时区的 RFC 3339 时间 |
+| `duration_seconds` | 按单调时间计量的秒数 |
+| `execution_counts` | `total`、`passed`、`failed`、`skipped`；总数包含未启动项 |
+| `test_executions` | 每个测试每次计划执行的记录 |
+
+执行记录包含 `test_name`、`run_index`、`result`、`exit_code`、`reason`、三个时间字段
+及 `logs.stdout` / `logs.stderr`（相对于报告目录的路径）。最终 `result` 为
+`passed`、`failed` 或 `skipped`；运行中未结束的记录为 `null`。未启动项的时间、
+退出码和 `logs` 均为 `null`。准备或清理失败时，结果为 `failed`，退出码仍保留
+测试进程实际值；进程未启动则为 `null`。最终三类计数之和等于 `total`。
+
+报告随执行更新并原子替换。报告写入失败会停止调度、取消活动用例并继续资源清理，
+runner 返回非零并标明报告不完整，不补造用例结果。写入失败、SIGKILL 或主机退出均
+可能留下 `status: running` 的部分报告，不能把其中的计数当作最终结果。
+收尾阶段收到 INT/TERM 时，保留已完成用例的结果，更新运行整体的中断状态和退出码。
+读取跳过原因可以使用：
+
+```bash
+jq '.test_executions[] | select(.result == "skipped") | {test_name, run_index, reason}' /tmp/huatuo-test.XXXXXX/result.json
+```
 
 每次执行都单独计数，包括重复运行，例如：
 
@@ -188,7 +280,7 @@ sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 
 轮转用例需要内核 BTF、`skb/kfree_skb` tracepoint，以及 Dropwatch 二进制和 BPF 对象。它与后端一致性测试共用 UDP 发包和配置函数。调用 `write_config_bamai_storage_events` 时必须设置 `STORAGE_EVENT_RATE`、`STORAGE_ROTATION_MIB` 和 `STORAGE_MAX_ROTATED_FILES`。
 
-两个用例均在启动服务前调用 `integration_isolate_run_directory`，隔离 PID 锁和 Toolstream socket。配置、轮转和后端一致性测试在检查最终数据和日志前调用 `assert_huatuo_bamai_shutdown`，确认服务正常退出；`EXIT` trap 负责尽力清理。
+框架在启动服务前统一隔离每次执行的 PID 锁和 Toolstream socket。配置、轮转和后端一致性测试在检查最终数据和日志前调用 `assert_huatuo_bamai_shutdown`，确认服务正常退出；`EXIT` trap 负责尽力清理。
 
 ## 后台进程清理
 

@@ -25,7 +25,6 @@ source "${ROOT_DIR}/integration/config.sh"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
 require_commands curl ss timeout
-integration_isolate_run_directory "$@"
 
 STORAGE_HTTP_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate a huatuo-bamai API port"

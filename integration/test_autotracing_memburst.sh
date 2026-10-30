@@ -14,20 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Host-only integration: private procfs input, real processes, collector and daemon.
+# Controlled procfs input, real processes, collector and daemon in a private PID namespace.
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 source "${ROOT_DIR}/integration/lib_memsnapshot.sh"
-require_commands go jq mount umount awk unshare timeout
-[[ ${EUID} == 0 ]] || skip "requires root and a private mount namespace"
-# Never replace procfs in the host mount namespace when invoked manually.
-if [[ ${MEMBURST_PRIVATE_PIDNS:-0} != 1 ]]; then
-	[[ $(readlink /proc/self/ns/mnt) != $(readlink /proc/1/ns/mnt) ]] || fatal "run through integration/run.sh (private mount namespace required)"
-	# Product scenarios use controlled rankings in their own PID namespace.
-	export MEMBURST_PRIVATE_PIDNS=1
-	exec unshare --pid --fork --mount-proc bash "${BASH_SOURCE[0]}"
-fi
+require_commands go jq mount umount awk timeout
 readonly MEMBURST_ROOT_WORKSPACE=${HUATUO_BAMAI_TEST_TMPDIR}
 readonly MEMBURST_STANDARD_BIN=${HUATUO_BAMAI_BIN}
 export MEMSNAP_ACCEPTANCE_ARTIFACTS="${MEMBURST_ROOT_WORKSPACE}/helpers"

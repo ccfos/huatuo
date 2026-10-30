@@ -29,19 +29,12 @@ HUATUO_BAMAI_BIN="${ROOT_DIR}/_output/bin/huatuo-bamai"
 export HUATUO_BAMAI_BIN
 HUATUO_APISERVER_BIN="${ROOT_DIR}/_output/bin/huatuo-apiserver"
 export HUATUO_APISERVER_BIN
-HUATUO_BAMAI_TEST_TMPDIR=$(mktemp -d /tmp/huatuo-test.XXXXXX)
+HUATUO_BAMAI_TEST_TMPDIR=${RUNNER_OUTPUT_DIR:-$(mktemp -d /tmp/huatuo-test.XXXXXX)}
 export HUATUO_BAMAI_TEST_TMPDIR
 HUATUO_BAMAI_TEST_FIXTURES="${ROOT_DIR}/integration/fixtures"
 export HUATUO_BAMAI_TEST_FIXTURES
 HUATUO_BAMAI_TEST_EXPECTED="${ROOT_DIR}/integration/testdata/expected_metrics"
 export HUATUO_BAMAI_TEST_EXPECTED
-HUATUO_BAMAI_ARGS_E2E=(
-	"--config-dir" "${ROOT_DIR}/_output/conf/"
-	"--config" "huatuo-bamai.conf"
-	"--region" "e2e"
-	"--disable-storage"
-)
-export HUATUO_BAMAI_ARGS_E2E
 HUATUO_BAMAI_ADDR="http://127.0.0.1:19704"
 export HUATUO_BAMAI_ADDR
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
@@ -58,11 +51,6 @@ PROFILER_TOOL_DIR=${PROFILER_TOOL_DIR:-${ROOT_DIR}/_output/tools}
 export PROFILER_TOOL_DIR
 PPROF_TOOL_BIN=${PPROF_TOOL_BIN:-${ROOT_DIR}/_output/tools/pprof-tool}
 export PPROF_TOOL_BIN
-
-# Arrays cannot be exported to child processes via environment variables.
-# Convert the E2E array to a string for reconstruction in child processes.
-HUATUO_BAMAI_E2E_ARGS_STR="${HUATUO_BAMAI_ARGS_E2E[*]}"
-export HUATUO_BAMAI_E2E_ARGS_STR
 
 # k8s: metadata.name == pod-name, ct-hostname
 # huatuo-bamai: name == ct-hostname, hostname == pod-name == metadata.name

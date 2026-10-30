@@ -30,7 +30,6 @@ memory_threshold_snapshot_setup() {
 	readonly GO_SNAPSHOT_NAMESPACE="${BUSINESS_POD_NS}"
 
 	require_commands go jq kubectl findmnt ss
-	[[ ${EUID} -eq 0 ]] || skip "requires root for BPF, process inspection, and memory.high"
 	require_readable "${KUBELET_CERT}" "${KUBELET_KEY}"
 
 	GO_SNAPSHOT_KUBELET_PORT=${KUBELET_PODS_API##*:}

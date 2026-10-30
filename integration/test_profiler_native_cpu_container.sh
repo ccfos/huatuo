@@ -23,7 +23,6 @@ source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_profiler.sh"
 
 require_commands jq mkfifo setsid timeout awk findmnt
-[[ ${EUID} -eq 0 ]] || skip "native CPU container profiling requires root"
 
 # Tracing BPF needs CAP_BPF (39) and CAP_PERFMON (38), or CAP_SYS_ADMIN (21).
 NATIVE_EFFECTIVE_CAPS=$(awk '$1 == "CapEff:" { print $2 }' "/proc/$$/status")

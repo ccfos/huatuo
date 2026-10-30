@@ -32,7 +32,6 @@ readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 require_commands jq ss curl stat
 require_readable /sys/kernel/btf/vmlinux
 tracepoint_available skb kfree_skb || skip "skb/kfree_skb tracepoint is unavailable"
-integration_isolate_run_directory "$@"
 
 storage_http_port=$(allocate_available_port) || fatal "failed to allocate bamai HTTP port"
 storage_target_port=$(allocate_available_port udp) || fatal "failed to allocate UDP target port"

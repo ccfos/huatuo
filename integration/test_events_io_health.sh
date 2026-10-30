@@ -131,8 +131,6 @@ if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
 fi
 trap cleanup_io_health_fixture EXIT
 
-[[ ${EUID} -eq 0 ]] || skip "IO health event test requires root"
-
 for command in awk blockdev dd jq losetup python3 timeout; do
 	command -v "${command}" > /dev/null 2>&1 \
 		|| skip "IO health event test requires command: ${command}"

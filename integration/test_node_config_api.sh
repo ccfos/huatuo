@@ -25,7 +25,7 @@ readonly CONFIG_API_TOKEN="integration-node-token"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
 require_commands curl jq ss
-require_toml_parser
+prepare_toml_parser_tool
 
 CONFIG_API_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate a huatuo-bamai API port"

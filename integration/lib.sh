@@ -25,6 +25,13 @@ fi
 
 TEST_LOG_TAG=${TEST_LOG_TAG:-INTEGRATION}
 
+# A fresh execution context binds reasons to its main shell. Ordinary child
+# shells inherit the owner and cannot publish a caught error as the case result.
+if [[ -n ${RUNNER_REASON_DIR:-} && -z ${RUNNER_REASON_OWNER:-} ]]; then
+	RUNNER_REASON_OWNER=${BASHPID}
+	export RUNNER_REASON_OWNER
+fi
+
 log_info() {
 	printf '[%s][%s] %s\n' \
 		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*"
@@ -45,7 +52,15 @@ record_test_timing() {
 		>> "${HUATUO_BAMAI_TEST_TMPDIR}/timings.log"
 }
 
+record_exit_reason() {
+	local code=$1 reason=$2
+	[[ -n ${RUNNER_REASON_DIR:-} ]] || return 0
+	[[ ${RUNNER_REASON_OWNER:-${BASHPID}} == "${BASHPID}" ]] || return 0
+	printf '%s' "${reason}" > "${RUNNER_REASON_DIR}/reason.${code}"
+}
+
 fatal() {
+	record_exit_reason 1 "$*" || log_error "cannot record failure reason"
 	printf '[%s][%s][FAIL] %s\n' \
 		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
 	exit 1
@@ -53,37 +68,36 @@ fatal() {
 
 # The runner reserves 77 for skipped cases; cleanup still runs through EXIT.
 skip() {
+	record_exit_reason 77 "$*" || {
+		log_error "cannot record skip reason"
+		exit 1
+	}
 	printf '[%s][%s][SKIP] ⏭️ %s\n' \
 		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*"
 	exit 77
 }
 
-test_results_init() {
-	test_passed=0
-	test_skipped=0
-	test_failed=0
-}
-
-test_result_record() {
-	local name=$1 status=$2
-	case ${status} in
-	0)
-		test_passed=$((test_passed + 1))
-		log_info "PASS: ${name}"
-		;;
-	77)
-		test_skipped=$((test_skipped + 1))
-		log_info "SKIP: ${name}"
-		;;
-	*)
-		test_failed=$((test_failed + 1))
-		log_error "FAIL: ${name} (exit ${status})"
-		;;
-	esac
-}
-
-test_results_summary() {
-	log_info "summary: total=$((test_passed + test_skipped + test_failed)) passed=${test_passed} skipped=${test_skipped} failed=${test_failed}"
+# A failed step terminates its caller; use ordinary shell control flow for
+# expected failures. Each explicit step owns and consumes its reason channel.
+run_test_step() {
+	(($# > 0)) || fatal "run_test_step requires an external command"
+	local step_dir status=0 reason
+	step_dir=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/tmp.step.XXXXXX") \
+		|| fatal "cannot create step reason directory in ${HUATUO_BAMAI_TEST_TMPDIR}"
+	(
+		unset RUNNER_REASON_OWNER
+		export RUNNER_REASON_DIR=${step_dir}
+		exec "$@"
+	) &
+	local pid=$!
+	wait "${pid}" || status=$?
+	if ((status)); then
+		reason="step command ${1} exited with code ${status}"
+		if [[ -f ${step_dir}/reason.${status} ]]; then reason=$(< "${step_dir}/reason.${status}"); fi
+		record_exit_reason "${status}" "${reason}" || log_error "cannot propagate step failure reason"
+	fi
+	rm -rf -- "${step_dir}" || fatal "cannot remove step reason directory: ${step_dir}"
+	if ((status)); then exit "${status}"; fi
 }
 
 report_http_response() {
@@ -118,7 +132,7 @@ require_readable() {
 	done
 }
 
-require_toml_parser() {
+prepare_toml_parser_tool() {
 	require_commands python3 jq
 	python3 -c 'import importlib.util; __import__("tomllib" if importlib.util.find_spec("tomllib") else "tomli")' \
 		> /dev/null 2>&1 || skip "TOML parsing requires Python 3.11+ or the Python tomli module"
@@ -423,7 +437,10 @@ dump_text_files() {
 	while IFS= read -r -d '' file; do
 		grep -Iq '' "${file}" || continue
 		log_error "----- FILE (${file}) -----"
-		if [[ ${file##*/} == test.log ]]; then cat "${file}" >&2; else sed -n '1,160p' "${file}" >&2; fi
+		case ${file##*/} in
+		test.log | stdout.log | stderr.log) cat "${file}" >&2 ;;
+		*) sed -n '1,160p' "${file}" >&2 ;;
+		esac
 	done < <(find "${dir}" -type f -size +0c -print0)
 }
 
@@ -498,6 +515,7 @@ stop_and_wait_by_pid() {
 # ----------------------------- huatuo-bamai ----------------------------------
 
 huatuo_bamai_start() {
+	require_commands ss
 	[[ -f "${HUATUO_BAMAI_BIN}" && -x "${HUATUO_BAMAI_BIN}" ]] \
 		|| fatal "huatuo-bamai binary missing or not executable: ${HUATUO_BAMAI_BIN}; run make build"
 	log_info "starting huatuo-bamai: $*"
@@ -511,16 +529,21 @@ huatuo_bamai_start() {
 }
 
 huatuo_bamai_ready() {
-	local pid
+	local pid listeners port=${HUATUO_BAMAI_ADDR##*:}
 	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2> /dev/null || echo "")
 	[[ -n "$pid" ]] || return 1
 
-	if ! kill -0 "${pid}" 2> /dev/null; then
-		log_error "huatuo-bamai pid=${pid} exited"
-		return 1
+	if process_exited "${pid}"; then
+		fatal "huatuo-bamai pid=${pid} exited during startup; see ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 	fi
 
-	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" > /dev/null
+	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" > /dev/null || return 1
+	# A successful HTTP response can come from an older daemon on the same port.
+	listeners=$(ss -H -ltnp "sport = :${port}") || return 1
+	grep -Fq "pid=${pid}," <<< "${listeners}" || return 1
+	if process_exited "${pid}"; then
+		fatal "huatuo-bamai pid=${pid} exited during readiness check; see ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	fi
 }
 
 huatuo_bamai_stop() {
@@ -655,29 +678,21 @@ integration_huatuo_apiserver_start() {
 	huatuo_apiserver_start "${runtime_args[@]}"
 }
 
-# Stop shared services, then remove or report the runner-owned test workspace.
-integration_test_exit() {
-	local exit_code=$1
-	local test_workspace=$2
-
-	if [[ -z "${test_workspace}" || "${test_workspace}" != "${HUATUO_BAMAI_TEST_TMPDIR}/"* ]]; then
-		log_error "refusing to finalize test workspace outside ${HUATUO_BAMAI_TEST_TMPDIR}: ${test_workspace}"
-		return 1
-	fi
-
+# Cleanup runs inside the case namespace; diagnostics are printed by the runner
+# after stdout/stderr have closed, avoiding recursive reads of the live logs.
+integration_test_cleanup() {
+	local test_workspace=$1
 	local cleanup_status=0
-	huatuo_apiserver_stop "${test_workspace}" || cleanup_status=1
-	huatuo_bamai_stop "${test_workspace}" || cleanup_status=1
-	[[ ${cleanup_status} -eq 0 ]] || exit_code=1
+	huatuo_apiserver_stop "${test_workspace}" || {
+		cleanup_status=1
+		RUNNER_CLEANUP_REASON="failed to stop huatuo-apiserver"
+	}
+	huatuo_bamai_stop "${test_workspace}" || {
+		cleanup_status=1
+		RUNNER_CLEANUP_REASON="${RUNNER_CLEANUP_REASON:+${RUNNER_CLEANUP_REASON}; }failed to stop huatuo-bamai"
+	}
 
-	if [[ ${exit_code} -eq 0 || ${exit_code} -eq 77 ]]; then
-		rm -rf -- "${test_workspace}" || return 1
-		return 0
-	fi
-
-	dump_text_files "${test_workspace}" || true
-	log_error "integration test failed with exit code ${exit_code}; artifacts preserved at ${test_workspace}"
-	return "${cleanup_status}"
+	return "$cleanup_status"
 }
 
 huatuo_bamai_metrics() {
@@ -731,12 +746,12 @@ integration_huatuo_bamai_start() {
 	if [[ $config_writer != : ]]; then
 		"$config_writer" > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	fi
-	configure_bamai_address
+	huatuo_bamai_configure_default_address
 	huatuo_bamai_start "${runtime_args[@]}"
 }
 
 # Explicit addresses are already chosen by API and container config writers.
-configure_bamai_address() {
+huatuo_bamai_configure_default_address() {
 	local config="${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" port
 	if awk '
 		/^[[:space:]]*\[HTTPServer\][[:space:]]*$/ { http = 1; next }
@@ -832,15 +847,4 @@ storage_send_udp_packets() {
 			> "/dev/udp/127.0.0.99/${port}" \
 			|| fatal "failed to send UDP packet to 127.0.0.99:${port}"
 	done
-}
-
-# Keep fixed PID and socket paths private to this case and its child processes.
-integration_isolate_run_directory() {
-	[[ /var/run -ef "${HUATUO_BAMAI_TEST_TMPDIR}/run" ]] && return 0
-	require_commands unshare mount
-	exec unshare --mount --propagation private bash -euc '
-		mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}/run"
-		mount --bind "${HUATUO_BAMAI_TEST_TMPDIR}/run" /var/run
-		exec bash "$@"
-	' bash "$0" "$@"
 }

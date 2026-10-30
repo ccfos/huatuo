@@ -32,15 +32,7 @@ readonly NETDEV_EVENT_ERROR_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/netdev-events.err"
 readonly NETDEV_METRIC_ERROR_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/netdev-metrics.err"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
-require_commands ip jq curl awk ethtool ss unshare
-[[ ${EUID} -eq 0 ]] || skip "veth creation requires root and CAP_NET_ADMIN"
-# Host network managers cannot change these devices. The kernel destroys the
-# pair when the last process exits this unnamed namespace.
-if [[ ${1:-} != --netdev-isolated ]]; then
-	exec unshare --net bash "$0" --netdev-isolated
-fi
-integration_isolate_run_directory "$@"
-ip link set dev lo up
+require_commands ip jq curl awk ethtool ss
 
 NETDEV_HTTP_PORT=$(allocate_available_port) || fatal "failed to allocate a netdev_events API port"
 readonly NETDEV_HTTP_PORT

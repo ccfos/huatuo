@@ -29,15 +29,9 @@ readonly TCP_RETRANS_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/tcp_retransmit"
 readonly TCP_RETRANS_SAMPLE="${HUATUO_BAMAI_TEST_TMPDIR}/tcp-retransmit-event.json"
 readonly TCP_RETRANS_PARSE_ERROR="${HUATUO_BAMAI_TEST_TMPDIR}/event-parse.err"
 
-require_commands ip jq ss curl pgrep timeout unshare mount
+require_commands ip jq ss curl pgrep timeout
 tracepoint_available tcp tcp_retransmit_skb || skip "tcp/tcp_retransmit_skb tracepoint is unavailable"
 tracepoint_available tcp tcp_retransmit_synack || skip "tcp/tcp_retransmit_synack tracepoint is unavailable"
-
-# A private mount prevents the fixed Toolstream socket and PID file from
-# interfering with other daemons or subsequent tests in the runner.
-if [[ ${1:-} != --isolated ]]; then
-	exec unshare --mount --propagation private bash "$0" --isolated
-fi
 
 TCP_RETRANS_HTTP_PORT=$(allocate_available_port) || fatal "failed to allocate bamai HTTP port"
 readonly TCP_RETRANS_HTTP_PORT
@@ -96,8 +90,6 @@ assert_tcp_retransmit_shutdown() {
 	tcp_retrans_child_pid=""
 }
 
-mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}/run"
-mount --bind "${HUATUO_BAMAI_TEST_TMPDIR}/run" /var/run
 ip netns add "${TCP_RETRANS_NETNS}" || skip "network namespace creation is unavailable"
 tcp_retrans_netns_created=true
 ip -n "${TCP_RETRANS_NETNS}" link add retransmit0 type dummy || skip "dummy network device is unavailable"

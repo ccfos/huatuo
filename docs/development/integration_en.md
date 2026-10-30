@@ -31,7 +31,10 @@ Run integration tests from the repository root:
 bash integration/run.sh
 ```
 
-Pass a filename to run one integration test. The second argument sets the repetition count, which defaults to 1:
+Pass a filename to run one integration test. The second argument sets the repetition
+count, which defaults to 1 and must be between 1 and 1,000. The number of selected
+tests multiplied by the repetition count must not exceed 10,000. Exceeding either
+limit returns 2 without creating a run directory or report:
 
 ```bash
 bash integration/run.sh test_metrics_exclude_filter.sh 10
@@ -62,7 +65,7 @@ Each parallel case has private Huatuo PID files and toolstream sockets and a
 worker-specific port range. Host container runtime access is preserved. Run one
 suite runner per host. Shared Elasticsearch remains alive until the batch drains.
 On failure, scheduling stops and active cases finish their cleanup. Per-case
-`test.log` files are printed on failure, and results include elapsed durations.
+`stdout.log` and `stderr.log` files are printed in full on failure.
 INT or TERM cancels each active case's process group with TERM, allowing five
 seconds for EXIT cleanup before KILL. The runner preserves exit status 130 or 143.
 New tests default to serial execution; review shared state before adding them
@@ -78,7 +81,43 @@ bash integration/run.sh --suite e2e test_metrics.sh 2
 bash e2e/run.sh test_metrics.sh 2
 ```
 
-Both suites run in isolated UTS and mount namespaces, with hostname `huatuo-dev` and private mount propagation. Integration cases start their own services. E2E starts the default bamai before each case, then stops it and checks logs. Integration removes the working directory after a pass or skip and retains it on failure; E2E retains it for all outcomes.
+Both suites run in isolated UTS and mount namespaces, with hostname `huatuo-dev` and private mount propagation. Integration cases start their own services. E2E starts the default bamai before each case, then stops it and checks logs. Both suites retain execution logs and working files for all outcomes. Cleanup still stops processes, removes containers, and releases mounts.
+
+Every case execution, including serial, parallel, exclusive, E2E and repeated
+runs, also gets a private mount namespace and `/var/run`. Host runtime sockets
+remain accessible while Huatuo PID locks and its Toolstream socket are private.
+Service preparation, test execution and cleanup run in the same case environment.
+
+When adding tests, maintain `runner_test_groups` (resource groups),
+`runner_test_namespaces` (isolation), and `runner_shared_storage_tests` (shared
+storage consumers) in `lib_runner.sh`. All use `suite/filename` keys and validate
+explicit declarations before scheduling. Undeclared tests run exclusively with
+mount isolation. `runner_worker.sh` owns each execution; `lib_runner_report.sh`
+manages reports. Tests using profiler helpers load `lib.sh` followed explicitly
+by `lib_profiler.sh`.
+
+Declare additional isolation in `runner_test_namespaces` in
+`integration/lib_runner.sh`, keyed by `integration/test_*.sh` or `e2e/test_*.sh`:
+
+| Declaration | Execution environment |
+| --- | --- |
+| Unspecified or `mount` | Private mount; host PID and network visibility retained |
+| `mount net` | Private network with loopback enabled; host services and proxies may be unreachable |
+| `mount pid` | Private PID namespace and matching procfs; the entry point waits for its child, and the kernel terminates remaining processes when namespace init exits |
+
+Isolation declarations are independent of concurrency groups. Unknown combinations
+and invalid case names fail before scheduling. Namespace creation errors are FAIL;
+execution never falls back to the host environment. Explicitly missing commands,
+such as `ip` for a private network, produce SKIP. Cases no longer restart themselves
+with `unshare`. Client/server network topologies built with `lib_namespace.sh`
+remain scenario resources. Validate service reachability, exit codes and cancellation
+cleanup when adding or changing an isolation declaration.
+
+`test_tcpshark_output_cancellation_{blocked,healthy,timeout}.sh` share
+`lib_tcpshark_output_cancellation.sh`; each receiver scenario gets a fresh
+`mount net` environment. The case-local `execution.json` is an internal cleanup
+result passed to the runner; consumers use `result.json`. If the entry point is
+forcibly terminated before submitting its result, an unknown test exit code is null.
 
 Apiserver tests follow the same flat layout:
 
@@ -166,7 +205,74 @@ Check input files such as certificates with `require_readable`. An unreadable fi
 require_readable "${KUBELET_CERT}" "${KUBELET_KEY}"
 ```
 
-`skip` prints a reason and exits with 77; `EXIT` cleanup still runs. The runner records 0 as PASS, 77 as SKIP, and other statuses as FAIL. Cleanup failure is also FAIL. The runner returns 0 only for passes and skips. On failure, it stops subsequent cases and reports the counts so far.
+`skip` prints a reason and exits with 77; `EXIT` cleanup still runs. Normal completion is PASS, missing dependencies are SKIP, and test or cleanup errors are FAIL. On failure, scheduling stops while active cases finish. Unstarted executions and executions cancelled by the runner are SKIP, with a reason distinguishing them. INT/TERM still makes the runner return 130/143; classifying cancelled cases as SKIP does not turn an interrupted run into success.
+
+The main case shell publishes reasons from `skip` / `fatal`. Use `run_test_step`
+when a subprocess failure or skip should terminate the whole case. It runs an
+external command and propagates its reason and original nonzero exit code.
+Step scripts should source `lib.sh` in their main shell before calling `skip` /
+`fatal`; nested steps use the same helper.
+
+```bash
+run_test_step bash -euc 'source "$ROOT_DIR/integration/lib.sh"; require_commands some_tool'
+```
+
+Use ordinary `if`, `wait`, or `||` to inspect expected failures, rather than
+`run_test_step`. Reasons from ordinary children or bare subshells are not promoted
+automatically. A nonzero exit without an explicit reason retains its exit code
+and refers readers to the logs, avoiding attribution to an already handled error.
+
+Every valid invocation, including a single case, creates `/tmp/huatuo-test.XXXXXX/`.
+The terminal shows each completed result and reason, then the final counts and
+`result.json` path. Reports require `jq`; invalid arguments do not create a plan
+or report.
+
+```text
+/tmp/huatuo-test.XXXXXX/
+├── result.json
+├── test_metrics.1.ABCDEF/
+│   ├── stdout.log
+│   ├── stderr.log
+│   └── configuration, responses, service logs, ...
+├── shared-elasticsearch.1.GHIJKL/
+└── ports/
+```
+
+Case directories include the test name, execution index starting at 1, and a
+random suffix. Shared storage and port directories are created when needed.
+Cases sharing storage use separate indexes. Retained directories can be archived
+or deleted as a whole. Stdout and stderr are separate; their cross-stream order
+is not preserved.
+
+The report currently uses `schema_version: 1`:
+
+| Field | Meaning |
+| --- | --- |
+| `suite`, `runs_per_test` | Suite and planned executions per test |
+| `status` | `running`, `completed`, `aborted`, or `interrupted` |
+| `exit_code`, `reason` | Runner exit code and reason for early termination |
+| `started_at`, `finished_at` | RFC 3339 timestamps with timezone |
+| `duration_seconds` | Elapsed seconds measured using a monotonic clock |
+| `execution_counts` | `total`, `passed`, `failed`, `skipped`; total includes unstarted executions |
+| `test_executions` | One record per planned test execution |
+
+Each record has `test_name`, `run_index`, `result`, `exit_code`, `reason`, the three
+time fields, and `logs.stdout` / `logs.stderr` paths relative to the report.
+Final results are `passed`, `failed`, or `skipped`; unfinished records use `null`.
+Unstarted records have null timestamps, duration, exit code, and logs. Preparation
+or cleanup errors produce `failed` while preserving the actual test-process exit
+code, or null if the process never started. Final result counts sum to `total`.
+
+Updates replace the report atomically. A report write failure stops scheduling,
+cancels active cases, and continues resource cleanup. The runner exits nonzero
+and identifies the incomplete report without fabricating results. Write failures,
+SIGKILL, or host shutdown can leave a partial report with `status: running`; its
+counts are not final. INT/TERM during finalization preserves completed case results
+while updating the overall interruption status and exit code. To inspect skipped executions:
+
+```bash
+jq '.test_executions[] | select(.result == "skipped") | {test_name, run_index, reason}' /tmp/huatuo-test.XXXXXX/result.json
+```
 
 Each execution is counted separately, including repetitions, for example:
 
@@ -239,7 +345,7 @@ Neither of these cases requires an Elasticsearch service:
 
 The rotation case requires kernel BTF, the `skb/kfree_skb` tracepoint, and the Dropwatch binary and BPF object. It shares UDP sending and configuration helpers with the backend consistency test. Callers of `write_config_bamai_storage_events` must set `STORAGE_EVENT_RATE`, `STORAGE_ROTATION_MIB`, and `STORAGE_MAX_ROTATED_FILES`.
 
-Both cases call `integration_isolate_run_directory` before starting the service to isolate its PID lock and Toolstream socket. The configuration, rotation, and backend consistency cases call `assert_huatuo_bamai_shutdown` before checking final data and logs to confirm a clean shutdown; `EXIT` traps handle best-effort cleanup.
+The framework isolates each execution’s PID locks and Toolstream socket before service startup. The configuration, rotation, and backend consistency cases call `assert_huatuo_bamai_shutdown` before checking final data and logs to confirm a clean shutdown; `EXIT` traps handle best-effort cleanup.
 
 ## Background Process Cleanup
 
@@ -253,14 +359,6 @@ polls every 100 ms and uses KILL after the timeout if needed. A missing or empty
 PID returns success immediately. Clear the variable after waiting. Use
 `|| true` for best-effort cleanup; assert the exit status when it is part of
 the test contract.
-
-`test_basic_test_helpers.sh` checks graceful/forced shutdown, custom signals,
-Java streaming completion, shutdown failures, missing windows and complete
-network capture predicates using local process and packet fixtures. Shell owns
-the orchestration and assertions; Python supplies only process workloads. Capture
-predicates live in `lib_network_capture.sh`, shared with the live tests. The helper
-test also checks build/cache contracts, storage ownership, scheduling and bounded
-serial/parallel cancellation. It requires Python 3 and jq, without a JVM or BPF attachment.
 
 ## IO tests
 
