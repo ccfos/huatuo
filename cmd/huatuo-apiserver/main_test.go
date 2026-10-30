@@ -20,6 +20,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/version"
 )
 
 func TestDaemonRunCleansUpInReverseOrder(t *testing.T) {
@@ -85,7 +87,14 @@ func TestDaemonRunRollsBackInitializedSteps(t *testing.T) {
 }
 
 func TestSetupMetricsObservesAgentRequests(t *testing.T) {
-	daemon := &Daemon{}
+	daemon := &Daemon{
+		opts: &Options{
+			VersionInfo: version.Resolve(version.Seed{
+				Name:    "huatuo-apiserver",
+				Version: "1.2.3",
+			}),
+		},
+	}
 	if _, err := setupMetrics(t.Context(), daemon); err != nil {
 		t.Fatalf("setupMetrics() error = %v", err)
 	}
@@ -98,10 +107,25 @@ func TestSetupMetricsObservesAgentRequests(t *testing.T) {
 	want := map[string]bool{
 		"huatuo_apiserver_agent_requests_total":           false,
 		"huatuo_apiserver_agent_request_duration_seconds": false,
+		"huatuo_apiserver_build_info":                     false,
 	}
 	for _, family := range families {
 		if _, ok := want[family.GetName()]; ok {
 			want[family.GetName()] = true
+		}
+		if family.GetName() == "huatuo_apiserver_build_info" {
+			if len(family.Metric) != 1 || family.Metric[0].GetGauge().GetValue() != 1 {
+				t.Fatalf("expected one build-info gauge fixed at 1, got %v", family)
+			}
+			labels := make(map[string]string)
+			for _, label := range family.Metric[0].Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			for name, value := range daemon.opts.VersionInfo.Labels() {
+				if labels[name] != value {
+					t.Errorf("build-info label %s = %q, want %q", name, labels[name], value)
+				}
+			}
 		}
 	}
 	for name, found := range want {

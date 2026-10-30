@@ -24,7 +24,7 @@ source "${ROOT_DIR}/integration/config.sh"
 # The config writer reads the token from the calling test's scope.
 readonly API_TOKEN="integration-admin"
 
-require_commands curl ss
+require_commands curl jq ss
 
 APISERVER_PORT=$(allocate_available_port) || fatal "failed to allocate an apiserver port"
 readonly APISERVER_PORT
@@ -69,4 +69,5 @@ integration_huatuo_apiserver_start write_config_apiserver_base \
 	--log-debug
 assert_readiness_endpoint
 assert_metrics_endpoint
+assert_build_info "${APISERVER_ADDR}" huatuo_apiserver "" ""
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" huatuo-apiserver

@@ -793,6 +793,53 @@ integration_test_exit() {
 	return "${cleanup_status}"
 }
 
+# Compare the public build-info sample with the same service's /version response.
+assert_build_info() {
+	local address=$1 namespace=$2 expected_host=$3 expected_region=$4
+	local endpoint response_file error_file status curl_status
+	for endpoint in version metrics; do
+		response_file="${HUATUO_BAMAI_TEST_TMPDIR}/build-info-${endpoint}.body"
+		error_file="${HUATUO_BAMAI_TEST_TMPDIR}/build-info-${endpoint}.curl-error"
+		curl_status=0
+		status=$(curl -sS "${CURL_TIMEOUT[@]}" \
+			-D "${response_file}.headers" -o "${response_file}" -w '%{http_code}' \
+			"${address}/${endpoint}" 2> "${error_file}") || curl_status=$?
+		log_info "GET /${endpoint}: curl exit=${curl_status}, HTTP status=${status}"
+		if [[ ${endpoint} == version || ${curl_status} -ne 0 || ${status} != 200 ]]; then
+			report_http_response "GET /${endpoint}" "${response_file}" "${error_file}"
+		fi
+		[[ ${curl_status} -eq 0 ]] || fatal "GET /${endpoint}: curl exited ${curl_status}"
+		assert_eq "${status}" 200 "GET /${endpoint} status" \
+			|| fatal "GET /${endpoint}: expected HTTP 200, got ${status}"
+	done
+
+	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/build-info-metrics.body"
+	local version_file="${HUATUO_BAMAI_TEST_TMPDIR}/build-info-version.body"
+	grep -qiE '^Content-Type:[[:space:]]*text/plain([;[:space:]]|$)' "${metrics_file}.headers" \
+		|| fatal "GET /metrics: expected text/plain, headers: $(< "${metrics_file}.headers")"
+	grep -Fxq "# TYPE ${namespace}_build_info gauge" "${metrics_file}" \
+		|| fatal "expected ${namespace}_build_info to be a Gauge"
+
+	local count sample field value
+	count=$(grep -cE "^${namespace}_build_info(\{|[[:space:]])" "${metrics_file}" || true)
+	assert_eq "${count}" 1 "build-info sample count" \
+		|| fatal "expected one build-info sample, got ${count}"
+	sample=$(grep "^${namespace}_build_info{" "${metrics_file}")
+	log_info "build-info sample: ${sample}"
+	assert_eq "${sample##* }" 1 "build-info gauge value" \
+		|| fatal "expected build-info value 1, got ${sample}"
+	for field in name version git_commit git_tree_state build_time go_version compiler platform; do
+		value=$(jq -er --arg field "${field}" \
+			'.data[$field] | select(type == "string" and length > 0) | @json' "${version_file}") \
+			|| fatal "GET /version: missing nonempty ${field}"
+		[[ ${sample} == *"${field}=${value}"* ]] \
+			|| fatal "build-info ${field}: expected ${value}, got ${sample}"
+	done
+	value=$(jq -cn --arg host "${expected_host}" '$host')
+	[[ ${sample} == *"host=${value}"* && ${sample} == *"region=\"${expected_region}\""* ]] \
+		|| fatal "build-info: expected host=${value}, region=${expected_region}, got ${sample}"
+}
+
 huatuo_bamai_metrics() {
 	local status curl_status=0
 	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.response"
