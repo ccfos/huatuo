@@ -273,6 +273,7 @@ for helper_case in complete shutdown_failure missing_window; do
 	helper_status=0
 	bash -euc '
 source "$ROOT_DIR/integration/lib.sh"
+source "$ROOT_DIR/integration/lib_profiler.sh"
 # Bound the missing-window fixture without changing its completion predicate.
 wait_until() {
  shift 2

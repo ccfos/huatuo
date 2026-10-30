@@ -20,6 +20,7 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
 
 require_commands jq mkfifo setsid timeout awk findmnt
 [[ ${EUID} -eq 0 ]] || skip "native CPU container profiling requires root"
@@ -107,7 +108,7 @@ assert_outside_pid_excluded() (
 	local runtime=$1 container_id=$2 container_pid=$3 container_start_time=$4
 	local outside_pid outside_start_time
 	[[ ${container_pid} =~ ^[1-9][0-9]*$ ]] || fatal "invalid ${runtime} container PID: ${container_pid}"
-	trap cleanup_piped_processes EXIT
+	trap cleanup_running_jobs EXIT
 	log_info "checking native PID/container intersection: ${runtime}"
 	start_piped_process "${WORK_DIR}/${runtime}/outside" "${FIXTURE_BIN}"
 	outside_pid=${PROCESS_PID}
@@ -115,11 +116,11 @@ assert_outside_pid_excluded() (
 	exec {PROCESS_INPUT_FD}>&-
 	exec {PROCESS_OUTPUT_FD}<&-
 	# Prove the outside workload is sampled before checking that CSS excludes it.
-	start_exception_profiler "${WORK_DIR}/${runtime}/outside-control" c 30 1 --pid "${outside_pid}"
+	start_cpu_profiler "${WORK_DIR}/${runtime}/outside-control" c 30 1 --pid "${outside_pid}"
 	assert_profiler_samples_before_deadline "${outside_pid}" f3
 	kill -INT "${PROFILER_PID}"
 	assert_profiler_exit 0
-	start_exception_profiler "${WORK_DIR}/${runtime}/outside-excluded" c 2 2 \
+	start_cpu_profiler "${WORK_DIR}/${runtime}/outside-excluded" c 2 2 \
 		--pid "${outside_pid}" --container-id "${container_id}"
 	assert_process_message "${PROFILER_OUTPUT_FD}" "${PROFILER_OUT}" 'data reading loop started'
 	assert_profiler_exit 0
@@ -130,9 +131,9 @@ assert_outside_pid_excluded() (
 
 assert_destroyed_container() (
 	local runtime=$1 container_id=$2 container_pid=$3
-	trap cleanup_piped_processes EXIT
+	trap cleanup_running_jobs EXIT
 	log_info "destroying a profiled native container: ${runtime}"
-	start_exception_profiler "${WORK_DIR}/${runtime}/destroyed" c 30 1 \
+	start_cpu_profiler "${WORK_DIR}/${runtime}/destroyed" c 30 1 \
 		--container-id "${container_id}" --pid "${container_pid}"
 	assert_profiler_samples_before_deadline "${container_pid}" f3
 	if [[ ${runtime} == docker ]]; then

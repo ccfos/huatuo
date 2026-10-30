@@ -285,11 +285,6 @@ wait_until() {
 	return 1
 }
 
-profiler_ready() {
-	local stdout=$1
-	[[ -f "${stdout}" ]] && grep -q "data reading loop started" "${stdout}"
-}
-
 # Expose the real PID, start time and pipes to the calling Shell test. A
 # temporary FIFO writer keeps a fast child exit from blocking the parent's open.
 # Callers own cleanup and close the returned descriptors when done.
@@ -333,120 +328,12 @@ assert_process_message() {
 
 # Only live jobs from this Shell are eligible for teardown. Reaped PIDs may
 # already have been reused; do not keep a global registry of old process IDs.
-cleanup_piped_processes() {
+cleanup_running_jobs() {
 	local pid
 	while IFS= read -r pid; do
 		kill -KILL -- "-${pid}" 2> /dev/null || kill -KILL "${pid}" 2> /dev/null || true
 		wait "${pid}" 2> /dev/null || true
 	done < <(jobs -pr)
-}
-
-# Shared by Java, Python and container exception tests; scenario choices and
-# fault injection stay in the caller. Only one profiler runs at a time.
-start_exception_profiler() {
-	local out_dir=$1 language=$2 duration=$3 interval=$4
-	shift 4
-	mkdir -p "${out_dir}"
-	PROFILER_OUT="${out_dir}/profiler.out"
-	PROFILER_ERR="${out_dir}/profiler.err"
-	PROFILER_STACKS="${out_dir}/stacks.json"
-	: > "${PROFILER_OUT}"
-	: > "${PROFILER_STACKS}"
-	start_piped_process "${out_dir}/profiler" "${ROOT_DIR}/_output/bin/profiler" \
-		--type cpu --language "${language}" --duration "${duration}" \
-		--aggr-interval "${interval}" --freq 99 \
-		--output-format json --output-path - --log-level info "$@"
-	PROFILER_PID=${PROCESS_PID}
-	PROFILER_OUTPUT_FD=${PROCESS_OUTPUT_FD}
-	exec {PROCESS_INPUT_FD}>&-
-}
-
-# Decode only complete profile records, keeping stack names and PID labels
-# together. Invalid profile JSON must fail, rather than look like no samples.
-read_profiler_output() {
-	local timeout=$1 line
-	IFS= read -r -t "${timeout}" -u "${PROFILER_OUTPUT_FD}" line || return $?
-	printf '%s\n' "${line}" >> "${PROFILER_OUT}"
-	case ${line} in
-	'{"profile_type":'* | '{"container_id":'*)
-		jq -c '
-			.profile as $p
-			| ($p.function // [] | map({key: (.id | tostring), value: $p.string_table[.name]}) | from_entries) as $functions
-			| ($p.location // [] | map({key: (.id | tostring), value: [.line[]? | $functions[.function_id | tostring]]}) | from_entries) as $locations
-			| $p.sample[]? | select(any(.value[]; tonumber > 0))
-			| {pid: ([.label[]? | select($p.string_table[.key] == "pid") | $p.string_table[.str]][0]),
-			   names: [.location_id[] | $locations[tostring][]]}
-		' <<< "${line}" >> "${PROFILER_STACKS}" \
-			|| fatal "invalid profiler output: ${PROFILER_OUT}"
-		;;
-	esac
-}
-
-profiler_has_stack() {
-	local pid=$1 method=$2
-	jq -se --arg pid "${pid}" --arg method "${method}" '
-		any(.[]; ($pid == "*" or .pid == $pid) and any(.names[]; contains($method)))
-	' "${PROFILER_STACKS}" > /dev/null
-}
-
-assert_profiler_stack() {
-	profiler_has_stack "$@" || fatal "missing stack PID=$1 method=$2; see ${PROFILER_OUT}"
-}
-
-assert_profiler_samples_before_deadline() {
-	local pid=$1 method=$2 deadline=$((SECONDS + 15))
-	while ! profiler_has_stack "${pid}" "${method}"; do
-		((SECONDS < deadline)) || fatal "timed out waiting for ${method}; see ${PROFILER_OUT}"
-		read_profiler_output "$((deadline - SECONDS))" \
-			|| fatal "profiler exited or timed out before ${method}; see ${PROFILER_ERR}"
-	done
-}
-
-# assert_profiler_exit <expected_status> [timeout_seconds]
-assert_profiler_exit() {
-	local expected=$1 timeout=${2:-15} status=0 read_status
-	local deadline=$((SECONDS + timeout))
-	while true; do
-		((SECONDS < deadline)) || fatal "profiler did not finish; see ${PROFILER_ERR}"
-		read_status=0
-		read_profiler_output "$((deadline - SECONDS))" || read_status=$?
-		[[ ${read_status} -eq 0 ]] && continue
-		[[ ${read_status} -eq 1 ]] || fatal "profiler output timed out; see ${PROFILER_ERR}"
-		break
-	done
-	exec {PROFILER_OUTPUT_FD}<&-
-	# EOF can precede process exit. Use only the remaining drain budget before
-	# collecting the exit status in the parent Shell.
-	process_exited "${PROFILER_PID}" \
-		|| wait_until "$((deadline - SECONDS))" 0.1 process_exited "${PROFILER_PID}" \
-		|| fatal "profiler did not exit before deadline; see ${PROFILER_ERR}"
-	wait "${PROFILER_PID}" || status=$?
-	PROFILER_PID=""
-	assert_eq "${status}" "${expected}" "profiler exit; see ${PROFILER_ERR}" \
-		|| fatal "unexpected profiler exit status"
-	! grep -q 'panic:' "${PROFILER_OUT}" "${PROFILER_ERR}" || fatal "profiler panicked"
-}
-
-# The FIFO and every recorded collector must finish within one deadline.
-# Call before fallback cleanup so a leaked collector fails the scenario.
-assert_collectors_exited() {
-	local timeout=${1:-5} line status index
-	local deadline=$((SECONDS + timeout))
-	while true; do
-		((SECONDS < deadline)) || fatal "py-spy collectors did not close their output pipe"
-		status=0
-		IFS= read -r -t "$((deadline - SECONDS))" -u "${collector_fd}" line || status=$?
-		[[ ${status} -ne 1 ]] || break
-		[[ ${status} -eq 0 ]] || fatal "py-spy collector still holds its output pipe"
-		printf '%s\n' "${line}" >> "${case_dir}/collectors.out"
-	done
-	exec {collector_fd}<&-
-	for index in "${!collector_pids[@]}"; do
-		process_exited "${collector_pids[index]}" "${collector_start_times[index]}" \
-			|| wait_until "$((deadline - SECONDS))" 0.1 process_exited \
-				"${collector_pids[index]}" "${collector_start_times[index]}" \
-			|| fatal "collector PID ${collector_pids[index]} did not exit before deadline"
-	done
 }
 
 kprobe_available() {
@@ -937,35 +824,6 @@ assert_kernel_observation_timestamps() {
 		|| fatal "invalid kernel/userspace observation timestamps: ${events_file}"
 	log_info "event with UTC observation timestamps: $(head -n 1 "${events_file}")"
 }
-
-# Verify periodic JSON publication while the profiling command is still running.
-# The command arguments supply the target and sampling mode.
-assert_java_profiler_streams() (
-	local out_dir=$1
-	shift
-	local profiler_pid=""
-	mkdir -p "${out_dir}"
-	trap '[[ -z "${profiler_pid}" ]] || stop_and_wait_by_pid "${profiler_pid}" 5 || true' EXIT
-	"$@" --duration 12 --aggr-interval 2 --output-format json --output-path - \
-		> "${out_dir}/windows.json" 2> "${out_dir}/profiler.err" &
-	profiler_pid=$!
-
-	profile_windows_are_ready() {
-		jq -se '[.[] | select((.profile.sample | length) > 0)] | length >= 2' \
-			"${out_dir}/windows.json" > /dev/null 2>&1
-	}
-	wait_until 10 0.1 profile_windows_are_ready \
-		|| fatal "two Java windows not published during collection (see ${out_dir}/profiler.err)"
-	kill -0 "${profiler_pid}" 2> /dev/null \
-		|| fatal "Java profiler exited before streaming output was observed"
-	local status=0
-	stop_and_wait_by_pid "${profiler_pid}" 5 INT || status=$?
-	profiler_pid=""
-	[[ ${status} -eq 0 ]] || fatal "Java streaming profiler exited ${status} (see ${out_dir}/profiler.err)"
-	jq -se '[.[] | select((.profile.sample | length) > 0)] | length >= 2' \
-		"${out_dir}/windows.json" > /dev/null \
-		|| fatal "expected multiple non-empty Java windows in ${out_dir}/windows.json"
-)
 
 storage_send_udp_packets() {
 	local port=$1 count=${2:-1} packet

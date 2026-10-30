@@ -20,6 +20,7 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
 
 readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/TestProfilerJavaMultiPID.java"
@@ -94,9 +95,9 @@ run_runtime_cases() {
 
 assert_destroyed_container() (
 	local runtime=$1 container_id=$2
-	trap cleanup_piped_processes EXIT
+	trap cleanup_running_jobs EXIT
 	log_info "destroying a profiled Java container: ${runtime}"
-	start_exception_profiler "${WORK_DIR}/${runtime}/destroyed" java 30 1 \
+	start_cpu_profiler "${WORK_DIR}/${runtime}/destroyed" java 30 1 \
 		--tool-path "${PROFILER_TOOL_DIR}" --container-id "${container_id}"
 	assert_profiler_samples_before_deadline '*' alphaHotMethod
 	if [[ ${runtime} == docker ]]; then
