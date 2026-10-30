@@ -16,8 +16,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
 	"github.com/ccfos/huatuo/pkg/metric/runtime"
 
@@ -25,7 +26,21 @@ import (
 )
 
 func setupMetrics(d *Daemon) (func(context.Context) error, error) {
-	nc, err := metric.NewCollectorManager(config.Get().BlackList, d.opts.Region)
+	collectors := make(map[string]metric.Collector)
+	for name, registration := range d.registrations {
+		if registration.Flag&tracing.FlagMetric == 0 {
+			continue
+		}
+
+		collector, ok := registration.TracingData.(metric.Collector)
+		if !ok {
+			return nil, fmt.Errorf("%w: %q does not implement metric.Collector", tracing.ErrInvalidTracer, name)
+		}
+
+		collectors[name] = collector
+	}
+
+	nc, err := metric.NewCollectorManager(collectors, d.opts.Region)
 	if err != nil {
 		return nil, err
 	}

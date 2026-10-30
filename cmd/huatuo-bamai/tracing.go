@@ -28,6 +28,7 @@ import (
 	"github.com/ccfos/huatuo/internal/strutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 )
 
@@ -68,8 +69,20 @@ func startToolstream(d *Daemon) (func(context.Context) error, error) {
 	return func(ctx context.Context) error { return errors.Join(srv.Close(), cleanup(ctx)) }, nil
 }
 
+func setupRegistry(d *Daemon) (func(context.Context) error, error) {
+	// Factories may cache metrics, so default labels must be set first.
+	metric.ConfigureDefaultLabels(d.opts.Region)
+	registrations, err := tracing.NewRegister(config.Get().BlackList)
+	if err != nil {
+		return nil, err
+	}
+
+	d.registrations = registrations
+	return nil, nil
+}
+
 func startTracing(d *Daemon) (func(context.Context) error, error) {
-	mgr, err := tracing.NewManager(config.Get().BlackList)
+	mgr, err := tracing.NewManager(d.registrations)
 	if err != nil {
 		return nil, fmt.Errorf("new tracing manager: %w", err)
 	}

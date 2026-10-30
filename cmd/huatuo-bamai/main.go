@@ -30,6 +30,7 @@ import (
 	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
 	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
 	"github.com/ccfos/huatuo/internal/pidfile"
+	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/internal/version"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 
@@ -81,6 +82,7 @@ type Daemon struct {
 
 	cgr              cgroups.Cgroup
 	metrics          *prometheus.Registry
+	registrations    map[string]*tracing.EventTracingAttr
 	operationManager *operation.Manager
 	profilingService *nodeprofiling.Service
 	tracingService   *nodetracing.Service
@@ -143,6 +145,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		{"bpf", setupBPF},
 		{"storage", setupStorage},
 		{"pod", setupPodManager},
+		{"registry", setupRegistry},
 		{"metrics", setupMetrics},
 		{"toolstream", startToolstream},
 		{"tracing", startTracing},

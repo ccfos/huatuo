@@ -72,6 +72,46 @@ func successMetricValue(t *testing.T, metrics []prometheus.Metric) float64 {
 	return 0
 }
 
+func TestNewCollectorManager(t *testing.T) {
+	oldRegion, oldHostname := defaultRegion, defaultHostname
+	t.Cleanup(func() { defaultRegion, defaultHostname = oldRegion, oldHostname })
+	ConfigureDefaultLabels("collector-region")
+	cached := NewGaugeData("cached", 7, "cached metric", nil)
+	collector := &MockCollector{}
+	collector.On("Update").Return([]*Data{cached}, nil).Once()
+	registered := map[string]Collector{"cached": collector}
+	manager, err := NewCollectorManager(registered, "collector-region")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The manager owns its index; changing the caller's map must not remove it.
+	delete(registered, "cached")
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(manager)
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(families) != 3 {
+		t.Fatalf("metric families = %d, want cached value and two scrape diagnostics", len(families))
+	}
+	for _, family := range families {
+		for _, sample := range family.Metric {
+			region := ""
+			for _, label := range sample.Label {
+				if label.GetName() == LabelRegion {
+					region = label.GetValue()
+				}
+			}
+			if region != "collector-region" {
+				t.Errorf("%s region = %q, want collector-region", family.GetName(), region)
+			}
+		}
+	}
+	collector.AssertExpectations(t)
+}
+
 func TestCollectorManagerDescribe(t *testing.T) {
 	mgr := newTestCollectorManager()
 	ch := make(chan *prometheus.Desc, 2)

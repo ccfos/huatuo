@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/tracing"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -59,35 +58,18 @@ type CollectorManager struct {
 	scrapeSuccessDesc  *prometheus.Desc
 }
 
-func NewCollectorManager(blackListed []string, region string) (*CollectorManager, error) {
-	// Init defaultRegion, defaultHostname firstly,
-	// NewGaugeData may be used for data caching in tracing.NewRegister.
+// NewCollectorManager adapts the supplied collectors to Prometheus.
+// Call ConfigureDefaultLabels with the same region before constructing collectors;
+// region here labels scrape diagnostics and does not relabel collector data.
+func NewCollectorManager(registered map[string]Collector, region string) (*CollectorManager, error) {
 	hostname, _ := os.Hostname()
-	defaultRegion, defaultHostname = region, hostname
-
-	tracings, err := tracing.NewRegister(blackListed)
-	if err != nil {
-		return nil, err
-	}
-
-	collectors := make(map[string]*CollectorWrapper, len(tracings))
-	for key, trace := range tracings {
-		if trace.Flag&tracing.FlagMetric == 0 {
-			continue
+	collectors := make(map[string]*CollectorWrapper, len(registered))
+	for name, collector := range registered {
+		if collector == nil {
+			return nil, fmt.Errorf("metric collector %q is nil", name)
 		}
 
-		collector, ok := trace.TracingData.(Collector)
-		if !ok {
-			return nil, fmt.Errorf(
-				"%w: %q does not implement metric.Collector",
-				tracing.ErrInvalidTracer,
-				key,
-			)
-		}
-		collectors[key] = &CollectorWrapper{
-			collector: collector,
-			mu:        sync.Mutex{},
-		}
+		collectors[name] = &CollectorWrapper{collector: collector}
 	}
 
 	scrapeDurationDesc := prometheus.NewDesc(

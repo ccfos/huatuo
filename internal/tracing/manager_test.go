@@ -24,11 +24,8 @@ import (
 )
 
 func TestNewManager(t *testing.T) {
-	resetRegisterState()
-	t.Cleanup(resetRegisterState)
-
-	RegisterEventTracing("trace_only", func() (*EventTracingAttr, error) {
-		return &EventTracingAttr{
+	manager, err := NewManager(map[string]*EventTracingAttr{
+		"trace_only": {
 			Flag:     FlagTracing,
 			Interval: 1,
 			TracingData: &starterStub{
@@ -36,16 +33,12 @@ func TestNewManager(t *testing.T) {
 					return pkgtypes.ErrNotSupported
 				},
 			},
-		}, nil
-	})
-	RegisterEventTracing("metric_only", func() (*EventTracingAttr, error) {
-		return &EventTracingAttr{
+		},
+		"metric_only": {
 			Flag:        FlagMetric,
 			TracingData: struct{}{},
-		}, nil
+		},
 	})
-
-	manager, err := NewManager(nil)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v, want nil", err)
 	}
@@ -79,18 +72,13 @@ func TestNewManagerRejectsInvalidTracer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resetRegisterState()
-			t.Cleanup(resetRegisterState)
-
-			RegisterEventTracing("invalid", func() (*EventTracingAttr, error) {
-				return &EventTracingAttr{
+			_, err := NewManager(map[string]*EventTracingAttr{
+				"invalid": {
 					Flag:        FlagTracing,
 					Interval:    tt.interval,
 					TracingData: tt.tracingData,
-				}, nil
+				},
 			})
-
-			_, err := NewManager(nil)
 			if !errors.Is(err, ErrInvalidTracer) {
 				t.Errorf("NewManager() error = %v, want ErrInvalidTracer", err)
 			}
