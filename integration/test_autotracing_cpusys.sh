@@ -77,6 +77,10 @@ cpusys_event_is_valid() {
 	' "${CPUSYS_EVENT}" > /dev/null
 }
 
+cpusys_port=$(allocate_available_port) || fatal "failed to allocate a cpusys API port"
+HUATUO_BAMAI_ADDR="http://127.0.0.1:${cpusys_port}"
+HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
+
 integration_huatuo_bamai_start \
 	write_config_bamai_cpusys_autotracing \
 	--region dev \
@@ -113,3 +117,4 @@ wait_until 10 1 cpusys_event_is_valid \
 call_count=$(wc -l < "${CPUSYS_PERF_CALLS_FILE}")
 [[ "${call_count}" -eq 1 ]] \
 	|| fatal "cpusys invoked perf ${call_count} times, expected once"
+assert_huatuo_bamai_log_clean

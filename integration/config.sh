@@ -295,6 +295,7 @@ EOF
 write_config_bamai_cpusys_autotracing() {
 	local tool=${1:-perf}
 	write_config_blacklist \
+		"diskio" "irqtracing" "tcp_retransmit" "xfs" "mthreads_gpu" "mthreads_xid" \
 		"arp" "ascend_npu" "memory_threshold_snapshot" "cpu_stat" "cpu_util" \
 		"cpuidle" "dload" "dropwatch" "hungtask" "iolatency" \
 		"iotracing" "loadavg" "memburst" "memory_buddyinfo" "memory_events" \
