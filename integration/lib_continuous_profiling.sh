@@ -22,6 +22,7 @@ fi
 readonly __HUATUO_LIB_CONTINUOUS_PROFILING_SH_LOADED=1
 
 CONTINUOUS_PROFILE_DIAGNOSTIC="no raw profile request made"
+continuous_profile_status_diagnostic="no job status request made"
 
 continuous_profiling_requirements() {
 	require_commands docker
@@ -90,11 +91,15 @@ continuous_profile_create_cpu() {
 
 continuous_profile_status_is() {
 	local profile_id=$1 expected_status=$2 response_file=$3
+	local status curl_status=0 error_file="${response_file%.json}.curl-error"
 
-	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiling/${profile_id}" \
-		> "${response_file}" \
-		|| return 1
+	# Truncate the previous response even if curl fails before receiving a body.
+	: > "${response_file}"
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
+		-o "${response_file}" -w '%{http_code}' \
+		"${APISERVER_ADDR}/v1/profiling/${profile_id}" 2> "${error_file}") || curl_status=$?
+	continuous_profile_status_diagnostic="curl exit=${curl_status}, HTTP status=${status}"
+	[[ ${curl_status} -eq 0 && ${status} == 200 ]] || return 1
 	jq -e --arg expected_status "${expected_status}" \
 		'if ($expected_status == "completed" or
 			$expected_status == "failed" or
@@ -139,11 +144,11 @@ continuous_profile_windows_are_stored() {
 continuous_profiling_start_stack() {
 	storage_start
 	integration_huatuo_bamai_start \
-		write_continuous_profiling_bamai_config \
+		write_config_bamai_continuous_profiling \
 		--region integration \
 		--disable-kubelet \
 		--log-debug
 	integration_huatuo_apiserver_start \
-		write_continuous_profiling_apiserver_config \
+		write_config_apiserver_continuous_profiling \
 		"$@"
 }

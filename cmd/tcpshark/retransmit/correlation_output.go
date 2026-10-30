@@ -15,15 +15,17 @@
 package retransmit
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-func (s *retransmitDropSession) emitResults(results []correlationResult) error {
+func (s *retransmitDropSession) emitResults(ctx context.Context, results []correlationResult) error {
 	if len(results) == 0 {
 		return nil
 	}
@@ -72,6 +74,10 @@ func (s *retransmitDropSession) emitResults(results []correlationResult) error {
 			))
 		}
 		if err := s.sink.Write(event); err != nil {
+			if ctx.Err() != nil && errors.Is(err, toolstream.ErrOutputTimeout) {
+				return statusErr
+			}
+
 			return errors.Join(
 				statusErr,
 				fmt.Errorf("write correlated TCP retransmit event: %w", err),

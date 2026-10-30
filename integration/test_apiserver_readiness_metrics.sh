@@ -47,19 +47,6 @@ assert_curl_succeeded() {
 	fatal "${label}: curl exited ${curl_status}"
 }
 
-assert_readiness_endpoint() {
-	local body="${HUATUO_BAMAI_TEST_TMPDIR}/readyz.body"
-	local curl_status=0 status
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${body}" -w '%{http_code}' \
-		"${APISERVER_ADDR}/readyz") || curl_status=$?
-	assert_curl_succeeded "GET /readyz" "${body}" "${curl_status}"
-	assert_eq "${status}" "204" "GET /readyz status" \
-		|| fatal "GET /readyz returned status ${status}, expected 204"
-	if [[ -s "${body}" ]]; then
-		fatal "GET /readyz returned a non-empty response body"
-	fi
-}
-
 assert_metrics_endpoint() {
 	local body="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
 	local headers="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.headers"
@@ -78,7 +65,7 @@ assert_metrics_endpoint() {
 		|| fatal "/metrics omitted the /readyz HTTP request counter"
 }
 
-integration_huatuo_apiserver_start write_apiserver_apis_config \
+integration_huatuo_apiserver_start write_config_apiserver_base \
 	--log-debug
 assert_readiness_endpoint
 assert_metrics_endpoint

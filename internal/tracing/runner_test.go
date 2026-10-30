@@ -17,6 +17,7 @@ package tracing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -184,35 +185,46 @@ func TestEventRunnerStopsDuringRestartInterval(t *testing.T) {
 	}
 }
 
-func TestEventRunnerNotSupportedStops(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	starter := &starterStub{
-		startFunc: func(context.Context) error {
-			close(started)
-			<-release
-
-			return pkgtypes.ErrNotSupported
-		},
-	}
-	runner := newEventRunner("unsupported", starter, time.Hour, FlagTracing)
-
-	if err := runner.start(t.Context()); err != nil {
-		t.Fatalf("eventRunner.start() error = %v, want nil", err)
-	}
-	<-started
-
-	runner.mu.RLock()
-	done := runner.done
-	runner.mu.RUnlock()
-	close(release)
-	<-done
-
-	got := runner.snapshot()
-	if got.IsRunning {
-		t.Error("eventRunner.snapshot().IsRunning = true, want false")
-	}
-	if got.RunCount != 1 {
-		t.Errorf("eventRunner.snapshot().RunCount = %d, want 1", got.RunCount)
+func TestEventRunnerNonRetryableErrorStops(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "unsupported", err: pkgtypes.ErrNotSupported},
+		{name: "terminal", err: pkgtypes.ErrTracingStopped},
+		{name: "wrapped terminal", err: fmt.Errorf("%w: collector failed", pkgtypes.ErrTracingStopped)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			starter := &starterStub{startFunc: func(context.Context) error {
+				close(started)
+				<-release
+				return test.err
+			}}
+			runner := newEventRunner(
+				test.name,
+				starter,
+				time.Hour,
+				FlagTracing,
+			)
+			if err := runner.start(t.Context()); err != nil {
+				t.Fatalf("eventRunner.start() error = %v, want nil", err)
+			}
+			<-started
+			runner.mu.RLock()
+			done := runner.done
+			runner.mu.RUnlock()
+			close(release)
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				_ = runner.stop(t.Context())
+				t.Fatalf("runner did not stop after non-retryable error: %v", test.err)
+			}
+			if got := runner.snapshot(); got.IsRunning || got.RunCount != 1 {
+				t.Fatalf("eventRunner.snapshot() = %+v, want stopped with one run", got)
+			}
+		})
 	}
 }

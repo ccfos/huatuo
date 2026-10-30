@@ -26,26 +26,6 @@ import (
 // IsInContainer reports whether pid has a recognized container cgroup path.
 // Container membership is a userspace convention, so the result is heuristic.
 func IsInContainer(pid int) (bool, error) {
-	return isInContainerCgroup(pid)
-}
-
-// HasDifferentMountNamespace reports whether pid and host PID 1 use different
-// mount namespaces.
-func HasDifferentMountNamespace(pid int) (bool, error) {
-	hostNamespace, err := os.Readlink(procfs.Path("1", "ns/mnt"))
-	if err != nil {
-		return false, fmt.Errorf("read PID 1 mount namespace: %w", err)
-	}
-
-	processNamespace, err := os.Readlink(procfs.Path(strconv.Itoa(pid), "ns/mnt"))
-	if err != nil {
-		return false, fmt.Errorf("read PID %d mount namespace: %w", pid, err)
-	}
-
-	return hostNamespace != processNamespace, nil
-}
-
-func isInContainerCgroup(pid int) (bool, error) {
 	proc, err := procfs.NewProc(pid)
 	if err != nil {
 		return false, fmt.Errorf("open proc for PID %d: %w", pid, err)
@@ -63,6 +43,22 @@ func isInContainerCgroup(pid int) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// HasDifferentMountNamespace reports whether pid and host PID 1 use different
+// mount namespaces.
+func HasDifferentMountNamespace(pid int) (bool, error) {
+	hostNamespace, err := os.Readlink(procfs.Path("1", "ns/mnt"))
+	if err != nil {
+		return false, fmt.Errorf("read PID 1 mount namespace: %w", err)
+	}
+
+	processNamespace, err := os.Readlink(procfs.Path(strconv.Itoa(pid), "ns/mnt"))
+	if err != nil {
+		return false, fmt.Errorf("read PID %d mount namespace: %w", pid, err)
+	}
+
+	return hostNamespace != processNamespace, nil
 }
 
 func isContainerCgroupPath(path string) bool {

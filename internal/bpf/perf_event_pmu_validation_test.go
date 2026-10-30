@@ -70,7 +70,7 @@ func TestPerfEventOptionValidate(t *testing.T) {
 				return
 			}
 
-			require.ErrorIs(t, err, errInvalidPerfEventOption)
+			require.ErrorIs(t, err, ErrInvalidPerfEventOption)
 			for _, detail := range tt.wantDetails {
 				require.ErrorContains(t, err, detail)
 			}
@@ -123,7 +123,7 @@ func TestParsePerfEventAttachOptions(t *testing.T) {
 				0,
 			)
 			if tt.wantErr {
-				require.ErrorIs(t, err, errInvalidPerfEventOption)
+				require.ErrorIs(t, err, ErrInvalidPerfEventOption)
 				require.ErrorContains(t, err, "mutually exclusive")
 				return
 			}

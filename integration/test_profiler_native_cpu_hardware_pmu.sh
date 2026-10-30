@@ -21,10 +21,9 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-# --- preconditions -----------------------------------------------------------
+require_readable /sys/kernel/btf/vmlinux
 
-is_container && skip "hardware PMU profiling requires bare-metal access"
-is_virtual_machine && skip "hardware PMU profiling requires a physical machine"
+# --- preconditions -----------------------------------------------------------
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-hardware-pmu
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
@@ -81,6 +80,10 @@ if ! "${TOOL_BIN}" \
 	--output-path "${WORK_DIR}" \
 	--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}"; then
+	# VMs may expose a working vPMU, so skip based on actual PMU support.
+	if grep -q '^Error: hardware_pmu_unavailable:' "${TOOL_ERR}"; then
+		skip "hardware CPU cycles sampling unavailable (see ${TOOL_ERR})"
+	fi
 	fatal "hardware PMU profiler exited non-zero (see ${TOOL_ERR})"
 fi
 

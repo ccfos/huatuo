@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,24 +57,24 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
-			name: "tracer ID",
+			name: "task ID",
 			args: []string{
 				"--type", "cpu",
 				"--language", "c",
 				"--pid", strconv.Itoa(os.Getpid()),
-				"--tracer-id", "trace-123",
+				"--task-id", "trace-123",
 			},
 		},
 		{
-			name: "remote output requires tracer ID",
+			name: "remote output requires task ID",
 			args: []string{
 				"--type", "cpu",
 				"--language", "c",
 				"--pid", strconv.Itoa(os.Getpid()),
-				"--output-format", "remote",
-				"--output-storage", "/var/run/huatuo-toolstream.sock",
+				"--output-format", "remote-store",
+				"--output-path", "/var/run/huatuo-toolstream.sock",
 			},
-			wantError: "--tracer-id must not be empty when --output-format=remote",
+			wantError: "--task-id must not be empty when --output-format=remote-store",
 		},
 		{
 			name:      "legacy mem type",
@@ -117,7 +118,7 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 				ErrWriter:     io.Discard,
 				Action:        func(*cli.Context) error { return nil },
 			}
-			err := app.Run(append([]string{"profiler"}, tt.args...))
+			err := app.Run(append([]string{"profiler", "--output-path", t.TempDir(), "--output-format", "collapsed"}, tt.args...))
 			if tt.wantError == "" {
 				require.NoError(t, err)
 				return
@@ -421,7 +422,7 @@ func TestOffCPUStatsFlag(t *testing.T) {
 }
 
 func TestValidateOutputFormat(t *testing.T) {
-	for _, format := range []string{"collapsed", "flamegraph", "svg", "remote"} {
+	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "remote-store"} {
 		require.NoError(t, validateOutputFormat(format))
 	}
 	require.EqualError(t, validateOutputFormat("pprof"), `unsupported output format "pprof"`)
@@ -619,6 +620,140 @@ func TestValidatePythonProfileOptions(t *testing.T) {
 	}
 }
 
+func TestCLITargetFilters(t *testing.T) {
+	tests := []struct {
+		name        string
+		language    string
+		profileType string
+		modeFlag    string
+		mode        string
+		wantError   bool
+	}{
+		{
+			name:        "C on-CPU intersection",
+			language:    "c",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "oncpu",
+		},
+		{
+			name:        "C off-CPU intersection",
+			language:    "c",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "offcpu",
+		},
+		{
+			name:        "Go on-CPU intersection",
+			language:    "go",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "oncpu",
+		},
+		{
+			name:        "Go off-CPU intersection",
+			language:    "go",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "offcpu",
+		},
+		{
+			name:        "C++ on-CPU intersection",
+			language:    "c++",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "oncpu",
+		},
+		{
+			name:        "C++ off-CPU intersection",
+			language:    "c++",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "offcpu",
+		},
+		{
+			name:        "C memory conflict",
+			language:    "c",
+			profileType: "memory",
+			modeFlag:    "--memory-mode",
+			mode:        "virtual_alloc",
+			wantError:   true,
+		},
+		{
+			name:        "Go memory conflict",
+			language:    "go",
+			profileType: "memory",
+			modeFlag:    "--memory-mode",
+			mode:        "virtual_alloc",
+			wantError:   true,
+		},
+		{
+			name:        "C++ memory conflict",
+			language:    "c++",
+			profileType: "memory",
+			modeFlag:    "--memory-mode",
+			mode:        "virtual_alloc",
+			wantError:   true,
+		},
+		{
+			name:        "Java CPU conflict before tool discovery",
+			language:    "java",
+			profileType: "cpu",
+			wantError:   true,
+		},
+		{
+			name:        "Java memory conflict before tool discovery",
+			language:    "java",
+			profileType: "memory",
+			modeFlag:    "--memory-mode",
+			mode:        "object_alloc",
+			wantError:   true,
+		},
+		{
+			name:        "Python CPU conflict before tool discovery",
+			language:    "python",
+			profileType: "cpu",
+			wantError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actionCalled := false
+			app := &cli.App{
+				Flags:     appFlags,
+				Before:    runBefore,
+				Writer:    io.Discard,
+				ErrWriter: io.Discard,
+				Action: func(*cli.Context) error {
+					actionCalled = true
+					return nil
+				},
+			}
+			args := []string{
+				"profiler",
+				"--language", tt.language,
+				"--type", tt.profileType,
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--container-id", strings.Repeat("a", 64),
+				"--output-format", "collapsed",
+				"--output-path", filepath.Join(t.TempDir(), "profile"),
+			}
+			if tt.modeFlag != "" {
+				args = append(args, tt.modeFlag, tt.mode)
+			}
+			err := app.Run(args)
+			if tt.wantError {
+				require.EqualError(t, err, "--pid and --container-id are mutually exclusive")
+				require.False(t, actionCalled, "target conflict reached collection")
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, actionCalled, "native CPU combined target filters were rejected")
+		})
+	}
+}
+
 func TestValidateLanguageOptionsToolRoot(t *testing.T) {
 	root := t.TempDir()
 	for _, language := range []profiling.Language{
@@ -632,6 +767,36 @@ func TestValidateLanguageOptionsToolRoot(t *testing.T) {
 				if (err != nil) != wantError {
 					t.Errorf("validateLanguageOptions(%q) error = %v, want error %t", directory, err, wantError)
 				}
+			}
+		})
+	}
+}
+
+func TestCLIOutputOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		wantError string
+	}{
+		{name: "both missing", wantError: "must both be specified"},
+		{name: "format missing", args: []string{"--output-path", "profile"}, wantError: "must both be specified"},
+		{name: "path missing", args: []string{"--output-format", "collapsed"}, wantError: "must both be specified"},
+		{name: "empty path", args: []string{"--output-format", "collapsed", "--output-path", ""}, wantError: "must not be empty"},
+		{name: "stdout", args: []string{"--output-format", "collapsed", "--output-path", "stdout"}},
+		{name: "stdout alias", args: []string{"--output-format", "collapsed", "--output-path", "-"}},
+		{name: "collapsed", args: []string{"--output-format", "collapsed", "--output-path", "profile"}},
+		{name: "json", args: []string{"--output-format", "json", "--output-path", "profile.json"}},
+		{name: "remote-store", args: []string{"--output-format", "remote-store", "--output-path", "/run/toolstream.sock", "--task-id", "task"}},
+		{name: "removed storage flag", args: []string{"--output-storage", "/run/toolstream.sock"}, wantError: "flag provided but not defined"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := &cli.App{Flags: appFlags, Before: runBefore, Writer: io.Discard, ErrWriter: io.Discard, Action: func(*cli.Context) error { return nil }}
+			args := []string{"profiler", "--type", "cpu", "--language", "c", "--pid", strconv.Itoa(os.Getpid())}
+			err := app.Run(append(args, tc.args...))
+			if tc.wantError == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.wantError)
 			}
 		})
 	}

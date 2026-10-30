@@ -20,7 +20,7 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-is_container && skip "native memory profiler requires bare-metal cgroup/PMU access"
+require_readable /sys/kernel/btf/vmlinux
 
 bpf_tool_setup profiler native_virtual_alloc profiler-thread-group
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_thread_group.user.c"

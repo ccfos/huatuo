@@ -267,7 +267,7 @@ func TestStorageStoreListFiltersByID(t *testing.T) {
 		}
 	}
 
-	listed, err := store.List(t.Context(), &Query{ID: first.ID})
+	listed, err := store.List(t.Context(), &Query{ID: first.ID, Limit: 1})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}

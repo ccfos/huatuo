@@ -19,6 +19,7 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_cgroup.sh"
 
 readonly PROBE_SOURCE="${ROOT_DIR}/integration/testdata/test_cgroup_css_probe.go"
 readonly PROBE_BIN="${HUATUO_BAMAI_TEST_TMPDIR}/cgroup-css-probe"
@@ -27,7 +28,6 @@ readonly PROBE_BUILD_LOG="${HUATUO_BAMAI_TEST_TMPDIR}/cgroup-css-probe-build.log
 readonly EVENT_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/cgroup-css-events.jsonl"
 readonly VALID_EVENTS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/valid-cgroup-css-events.json"
 readonly READY_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/cgroup-css-probe.ready"
-readonly GO_CACHE_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/go-cache"
 readonly GO_TMP_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/go-tmp"
 readonly SYNC_ID="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 readonly EVENT_ID="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -42,7 +42,7 @@ cleanup() {
 		kill "${probe_pid}" 2> /dev/null || true
 		wait "${probe_pid}" 2> /dev/null || true
 	fi
-	rm -rf -- "${GO_CACHE_DIR}" "${GO_TMP_DIR}"
+	rm -rf -- "${GO_TMP_DIR}"
 	[[ -n "${cgroup_parent}" ]] || return 0
 	rmdir "${cgroup_parent}/${EVENT_ID}" 2> /dev/null || true
 	rmdir "${cgroup_parent}/${SYNC_ID}" 2> /dev/null || true
@@ -61,20 +61,8 @@ tracepoint_available cgroup cgroup_mkdir \
 tracepoint_available cgroup cgroup_rmdir \
 	|| skip "cgroup/cgroup_rmdir tracepoint is not available"
 
-if [[ -r /sys/fs/cgroup/cgroup.controllers ]]; then
-	readonly CGROUP_ROOT=/sys/fs/cgroup
-	readonly SYNC_SYMBOL=memory_current_read
-	readonly NOTIFY_FILE=memory.current
-elif [[ -d /sys/fs/cgroup/memory ]]; then
-	readonly CGROUP_ROOT=/sys/fs/cgroup/memory
-	readonly SYNC_SYMBOL=cgroup_clone_children_read
-	readonly NOTIFY_FILE=cgroup.clone_children
-else
-	skip "supported cgroup v1/v2 hierarchy is not available"
-fi
-
-kprobe_available "${SYNC_SYMBOL}" \
-	|| skip "${SYNC_SYMBOL} is not available for kprobe"
+cgroup_css_require_environment CGROUP_ROOT SYNC_SYMBOL NOTIFY_FILE
+readonly CGROUP_ROOT SYNC_SYMBOL NOTIFY_FILE
 
 parent_uuid=$(< /proc/sys/kernel/random/uuid)
 cgroup_parent="${CGROUP_ROOT}/huatuo-css-test-${parent_uuid}"
@@ -90,9 +78,8 @@ mkdir "${cgroup_parent}/${SYNC_ID}"
 [[ -r "${cgroup_parent}/${SYNC_ID}/${NOTIFY_FILE}" ]] \
 	|| skip "cgroup CSS notification file is not readable: ${cgroup_parent}/${SYNC_ID}/${NOTIFY_FILE}"
 
-mkdir -p "${GO_CACHE_DIR}" "${GO_TMP_DIR}"
-GOCACHE="${GO_CACHE_DIR}" \
-	GOTMPDIR="${GO_TMP_DIR}" \
+mkdir -p "${GO_TMP_DIR}"
+GOTMPDIR="${GO_TMP_DIR}" \
 	go build -mod=vendor -tags=integration -o "${PROBE_BIN}" "${PROBE_SOURCE}" \
 	> "${PROBE_BUILD_LOG}" 2>&1 \
 	|| fatal "failed to build cgroup CSS probe:"$'\n'"$(< "${PROBE_BUILD_LOG}")"

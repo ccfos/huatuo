@@ -1,5 +1,5 @@
 ---
-title: 扩展观测能力
+title: 扩展功能
 type: docs
 description:
 author: HUATUO Team
@@ -25,8 +25,8 @@ Metrics 通过 procfs、sysfs 或 eBPF 周期采集系统状态，以 Prometheus
 
 - CPU：sys、usr、util、load、nr_running 等。
 - 内存：vmstat、memory_stat、directreclaim、asyncreclaim 等。
-- IO：d2c、q2c、freeze、flush 等。
-- 网络：ARP、socket memory、qdisc、netstat、netdev、sockstat 等。
+- I/O：d2c、q2c、freeze、flush 等。
+- 网络：ARP、socket memory、qdisc、netstat、netdev、sockstat、conntrack 表项数与上限等。
 
 ### Event
 
@@ -35,8 +35,8 @@ Event 常态监听内核事件或阈值条件，在异常发生时保存内核�
 同步生成 Prometheus 指标。内置事件包括：
 
 - 调度 tick 间隔异常 `sched_tick`。
-- 内存异常分配 `memory_oom_kill`。
-- 软锁定 `softlockup`。
+- OOM 终止 `memory_oom_kill`。
+- 软锁死 `softlockup`。
 - D 状态进程 `hungtask`。
 - 内存回收 `memory_reclaim_events`。
 - 异常丢包 `dropwatch`。
@@ -48,10 +48,10 @@ AutoTracing 在检测到系统异常后自动调用诊断工具，采集火焰�
 现场信息。它适合采集成本较高、无法持续运行的诊断数据。结果写入
 Elasticsearch 和本地文件，也可以转换为 Prometheus 指标。内置能力包括：
 
-- CPU 空闲和系统态异常追踪 `cpuidle`、`cpusys`。
+- 容器 CPU 和宿主机系统态 CPU 异常追踪 `cpuidle`、`cpusys`。
 - D 状态负载追踪 `dload`。
 - 内存突发分配追踪 `memburst`。
-- 磁盘 IO 异常追踪 `iotracing`。
+- 磁盘 I/O 异常追踪 `iotracing`。
 
 Event 和 AutoTracing 都属于 Tracing 模式，共享 `ITracingEvent` 接口。它们既能
 保存异常上下文用于根因分析，也能通过实现 `Collector` 将统计结果暴露给
@@ -146,8 +146,8 @@ func (c *example) Update() ([]*metric.Data, error) {
 
 接口约束：
 
-- `Publish` 将对象所有权转移给 `Reference`。成功后不要直接调用`object.Close()`。
-- `Acquire` 返回的 `Lease` 将 BPF 对象固定到本次 `Update` 结束；必须配对调用`Release`，且不要复制 `Lease`。
+- `Publish` 将对象所有权转移给 `Reference`。成功后不要直接调用 `object.Close()`。
+- `Acquire` 返回的 `Lease` 将 BPF 对象固定到本次 `Update` 结束；必须配对调用 `Release`，且不要复制 `Lease`。
 - `UnPublish` 先阻止新的 `Acquire`，再等待所有 Lease 释放，最后关闭 BPF 对象并返回关闭错误。
 - `Publish` 和 `UnPublish` 必须串行调用。当前框架保证同一实例的 `Start` 不会并发执行。
 

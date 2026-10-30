@@ -189,6 +189,12 @@ func TestTracerReadStatusClearsMapCountersOnError(t *testing.T) {
 			rateRaw:   encodeBPFRatelimitEvent(t, 6)[:abi.BPFRatelimitEventSize-1],
 			wantError: "decode dropwatch BPF map",
 		},
+		{
+			name:      "oversized rate limit value after perf count",
+			perfRaw:   perfRaw,
+			rateRaw:   append(encodeBPFRatelimitEvent(t, 6), 0),
+			wantError: "value size",
+		},
 	}
 
 	for testIndex := range tests {
@@ -258,7 +264,7 @@ func TestTracerReadStatusRateLimitSize(t *testing.T) {
 		}
 		tracer.lostSamples.Store(7)
 		status, err := tracer.ReadStatus()
-		wantError := size < abi.BPFRatelimitEventSize
+		wantError := size != abi.BPFRatelimitEventSize
 		if (err != nil) != wantError || status.HasMapCounters == wantError || status.LostSamples != 7 {
 			t.Fatalf("size %d: status=%+v error=%v, want lost_samples=7 error present=%v", size, status, err, wantError)
 		}

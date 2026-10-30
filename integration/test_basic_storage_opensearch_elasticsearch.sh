@@ -26,6 +26,9 @@ source "${ROOT_DIR}/integration/config.sh"
 # Bash does not export the runner's timeout array to child shells.
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 readonly STORAGE_INDEX=huatuo_storage_consistency
+readonly STORAGE_EVENT_RATE=100
+readonly STORAGE_ROTATION_MIB=100
+readonly STORAGE_MAX_ROTATED_FILES=10
 
 require_commands docker curl jq timeout ss
 # These dependencies apply to all backends; a missing one skips the whole matrix.
@@ -38,13 +41,14 @@ storage_curl_status=0
 storage_http_status=""
 
 storage_cleanup() {
-	local status=$?
+	local status=$? started=${SECONDS}
 	trap - EXIT
 	huatuo_bamai_stop || status=1
 	if ((status != 0 && status != 77)); then
 		storage_dump_logs || true
 	fi
 	storage_stop || status=1
+	record_test_timing "storage:${storage_backend}" cleanup "${started}"
 	exit "${status}"
 }
 
@@ -54,9 +58,7 @@ storage_local_event_ready() {
 		return 0
 	fi
 	# Keep supplying input until storage receives an event, including collector startup.
-	printf 'huatuo-storage-drop' 2>> "${HUATUO_BAMAI_TEST_TMPDIR}/traffic.log" \
-		> "/dev/udp/127.0.0.99/${storage_target_port}" \
-		|| fatal "failed to send UDP packet to 127.0.0.99:${storage_target_port}"
+	storage_send_udp_packets "${storage_target_port}"
 	return 1
 }
 
@@ -65,19 +67,14 @@ assert_storage_request() {
 	local status=0 http_status
 	local -a arguments=(-X "${method}" -H 'Content-Type: application/json')
 	[[ -z ${body} ]] || arguments+=(--data "${body}")
-	http_status=$(storage_curl "${arguments[@]}" \
+	# Cluster metadata updates can outlast the short readiness probes on CI.
+	# Override only this request's deadline; polling keeps CURL_TIMEOUT.
+	http_status=$(storage_curl --max-time 30 "${arguments[@]}" \
 		-o "${STORAGE_RESPONSE}" -w '%{http_code}' \
 		"${STORAGE_ADDR}/${path}" 2> "${STORAGE_ERRORS}") || status=$?
 	report_http_response "${operation}" "${STORAGE_RESPONSE}" "${STORAGE_ERRORS}"
 	assert_eq "${status}" 0 "${operation} curl status" || fatal "${operation} request failed"
 	assert_eq "${http_status}" 200 "${operation} HTTP status" || fatal "${operation} returned HTTP ${http_status}"
-}
-
-assert_storage_shutdown() {
-	local bamai_pid
-	bamai_pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
-	huatuo_bamai_stop
-	wait "${bamai_pid}" || fatal "huatuo-bamai did not flush storage and exit successfully"
 }
 
 storage_remote_has_events() {
@@ -112,7 +109,7 @@ assert_storage_event_counts() {
 }
 
 storage_run_backend() {
-	local backend=$1
+	local backend=$1 started
 	HUATUO_BAMAI_TEST_TMPDIR="${HUATUO_BAMAI_TEST_TMPDIR}/${backend}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
 	readonly STORAGE_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/dropwatch"
@@ -126,17 +123,29 @@ storage_run_backend() {
 	HUATUO_BAMAI_ADDR="http://127.0.0.1:${storage_http_port}"
 	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
+	started=${SECONDS}
 	assert_storage_request "create index" PUT "${STORAGE_INDEX}" \
 		'{"settings":{"number_of_shards":1,"number_of_replicas":0}}'
 	jq -e '.acknowledged == true' "${STORAGE_RESPONSE}" > /dev/null \
 		|| fatal "storage did not acknowledge index creation"
+	record_test_timing "storage:${backend}" index_create "${started}"
 
-	integration_huatuo_bamai_start write_storage_consistency_config \
+	started=${SECONDS}
+	integration_huatuo_bamai_start write_config_bamai_storage_events \
 		--region integration --disable-kubelet --log-debug
+	record_test_timing "storage:${backend}" daemon_ready "${started}"
+	started=${SECONDS}
 	wait_until 20 0.2 storage_local_event_ready || fatal "localfile storage did not receive an event"
+	record_test_timing "storage:${backend}" local_event "${started}"
+	started=${SECONDS}
 	assert_storage_async_write
-	assert_storage_shutdown
+	record_test_timing "storage:${backend}" async_write "${started}"
+	started=${SECONDS}
+	assert_huatuo_bamai_shutdown
+	record_test_timing "storage:${backend}" daemon_flush "${started}"
+	started=${SECONDS}
 	assert_storage_event_counts
+	record_test_timing "storage:${backend}" count_verification "${started}"
 	assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"
 }
 

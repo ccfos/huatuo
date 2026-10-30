@@ -18,12 +18,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/profiling/aggregation"
+
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
-	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiler/bpfmap"
+	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -51,13 +56,23 @@ type ringBufferContext struct {
 	stackMapBID        uint32
 	needsFallback      bool // true for memory retained mode, false for CPU/non-retained
 	usym               *symbol.UsymResolver
+
+	// Perf loss records may arrive in a later window than their failed outputs.
+	sampleAttempts   uint64
+	accountedSamples uint64
 }
 
 // newRingBufferContext initializes the ring buffer infrastructure for dual-buffer profiling.
 // It creates perf event readers for both A/B outputs and resolves map IDs for state and stack maps.
 // The returned context can be used throughout the profiler's lifetime without passing individual components.
 // needsFallback: true for memory retained mode (requires dual-stack-map fallback), false for others.
-func newRingBufferContext(b bpf.BPF, ctx context.Context, bufferSize int, needsFallback bool) (*ringBufferContext, error) {
+func newRingBufferContext(
+	b bpf.BPF,
+	ctx context.Context,
+	bufferSize int,
+	needsFallback bool,
+) (*ringBufferContext, error) {
+	// Start supplies the task context, so failure and timeout interrupt reads.
 	readerA, err := b.EventPipeByName(ctx, "profiler_output_a", uint32(bufferSize))
 	if err != nil {
 		return nil, fmt.Errorf("create readerA: %w", err)
@@ -65,8 +80,10 @@ func newRingBufferContext(b bpf.BPF, ctx context.Context, bufferSize int, needsF
 
 	readerB, err := b.EventPipeByName(ctx, "profiler_output_b", uint32(bufferSize))
 	if err != nil {
-		readerA.Close()
-		return nil, fmt.Errorf("create readerB: %w", err)
+		return nil, errors.Join(
+			fmt.Errorf("create readerB: %w", err),
+			(&ringBufferContext{readerA: readerA}).Close(),
+		)
 	}
 
 	return &ringBufferContext{
@@ -91,6 +108,7 @@ func newSingleRingBufferContext(
 		return nil, errors.New("stack_map_a not found")
 	}
 
+	// Start supplies the task context, so failure and timeout interrupt reads.
 	reader, err := b.EventPipeByName(ctx, "profiler_output_a", uint32(bufferSize))
 	if err != nil {
 		return nil, fmt.Errorf("create readerA: %w", err)
@@ -105,13 +123,25 @@ func newSingleRingBufferContext(
 }
 
 // Close releases the ring buffer readers. Should be called when profiling ends.
-func (r *ringBufferContext) Close() {
+func (r *ringBufferContext) Close() error {
+	var readerAErr, readerBErr error
 	if r.readerA != nil {
-		r.readerA.Close()
+		if err := r.readerA.Close(); err != nil {
+			readerAErr = fmt.Errorf("close native reader A: %w", err)
+		}
+
+		r.readerA = nil
 	}
+
 	if r.readerB != nil {
-		r.readerB.Close()
+		if err := r.readerB.Close(); err != nil {
+			readerBErr = fmt.Errorf("close native reader B: %w", err)
+		}
+
+		r.readerB = nil
 	}
+
+	return errors.Join(readerAErr, readerBErr)
 }
 
 // frozenRingBuffer represents a frozen ring buffer that is ready to be drained.
@@ -161,278 +191,321 @@ func (r *ringBufferContext) advanceSwapParity() (frozenRingBuffer, error) {
 		}
 	}
 
-	if err := bpfmap.WriteUint64(r.bpf, r.transferStateMapID, bpfmap.TransferCountIdx, transferCount+1); err != nil {
+	if err := bpfmap.WriteUint64(
+		r.bpf,
+		r.transferStateMapID,
+		bpfmap.TransferCountIdx,
+		transferCount+1,
+	); err != nil {
 		return frozenRingBuffer{}, fmt.Errorf("write transferCnt: %w", err)
 	}
 
 	return ring, nil
 }
 
-// drainFrozenRingBuffer drains events from the frozen ring buffer and aggregates raw values by stack.
-// This unified method works for both CPU and Memory profilers.
+// drainFrozenRingBuffer preserves the A/B transfer boundary while delivering
+// bounded symbolized batches. Stack caches belong only to this frozen map.
 func (r *ringBufferContext) drainFrozenRingBuffer(
 	newEvent func() any,
-) (map[processKey]map[rawStackIDs]int64, frozenRingBuffer, error) {
+	enqueue func(*pipeline.SampleBatch) error,
+	convert func(int64) (int64, error),
+) error {
 	ring, err := r.advanceSwapParity()
 	if err != nil {
-		return nil, frozenRingBuffer{}, err
+		return err
 	}
 
-	// Use nested map structure for stack aggregation
-	sampleCountsByProcess := make(map[processKey]map[rawStackIDs]int64)
+	accounted, expected, err := r.drainRingBuffer(
+		ring,
+		newEvent,
+		enqueue,
+		convert,
+	)
+	if err != nil {
+		return err
+	}
 
-	// Batch-read events until everything the BPF side wrote has been consumed.
-	// The kernel may keep writing to the just-frozen ring briefly after the
-	// parity flip, so re-check the sample count and keep draining until the
-	// delivered and lost samples account for the BPF-reported count.
-	var totalRead, totalAccounted uint64
+	if err := r.accountSamples(expected, accounted); err != nil {
+		return err
+	}
+
+	return bpfmap.WriteUint64(
+		r.bpf,
+		r.transferStateMapID,
+		ring.sampleCountIdx,
+		0,
+	)
+}
+
+func (r *ringBufferContext) drainRingBuffer(
+	ring frozenRingBuffer,
+	newEvent func() any,
+	enqueue func(*pipeline.SampleBatch) error,
+	convert func(int64) (int64, error),
+) (accounted, expected uint64, returnErr error) {
+	kernelCache := make(map[int32][]types.ProfileFrame)
+	userCache := make(map[userStackCacheKey][]types.ProfileFrame)
 	for {
-		batch, err := ring.reader.ReadBatch(newEvent)
-		eventCount := uint64(len(batch.Events))
-		totalRead += eventCount
-		// BPF increments the sample count before output, so both delivered and
-		// lost samples satisfy the frozen-ring transfer protocol.
-		totalAccounted += eventCount + batch.LostSamples
+		batch, readErr := ring.reader.ReadBatch(newEvent)
+		if batch.LostSamples > math.MaxUint64-uint64(len(batch.Events)) ||
+			uint64(len(batch.Events))+batch.LostSamples > math.MaxUint64-accounted {
+			return accounted, expected, fmt.Errorf("BPF transfer event count overflows uint64")
+		}
 
-		for _, rec := range batch.Events {
+		accounted += uint64(len(batch.Events)) + batch.LostSamples
+		var builder pipeline.BatchBuilder
+		for _, record := range batch.Events {
 			var base *abi.ProfilerEventBase
-			switch event := rec.(type) {
+			var cpu *uint32
+			switch event := record.(type) {
 			case *abi.ProfilerEventBase:
 				base = event
 			case *abi.ProfilerOnCPUEvent:
 				base = &event.Base
+				cpu = &event.CPU
 			default:
-				continue
+				return accounted, expected, fmt.Errorf("unexpected native perf event %T", record)
 			}
 
-			// Skip events without valid stacks
-			if !validateStackID(base.Kernstack) &&
-				!validateStackID(base.Userstack) {
-				continue
+			pid := uint32(base.PIDTGID >> 32)
+			userKey := userStackCacheKey{
+				PID:     pid,
+				StackID: base.Userstack,
+			}
+			// Missing IDs preserve the sample weight; malformed data and I/O failures abort collection.
+			user, ok := userCache[userKey]
+			if !ok {
+				var err error
+				user, err = r.resolveUserStackWithFallback(ring, base.Userstack, pid)
+				if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
+					return accounted, expected, err
+				}
+
+				userCache[userKey] = user
 			}
 
-			// Keep the BPF-provided unit until final aggregation (CPU: samples,
-			// virtual memory: bytes, physical memory: pages).
-			value := base.Value
-			if value == 0 {
-				continue
+			kernel, ok := kernelCache[base.Kernstack]
+			if !ok {
+				var err error
+				kernel, err = r.resolveKernelStackWithFallback(ring, base.Kernstack)
+				if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
+					return accounted, expected, err
+				}
+
+				kernelCache[base.Kernstack] = kernel
 			}
 
-			// Aggregate by process and stack ID
-			stackIDs := rawStackIDs{KernelStackID: base.Kernstack, UserStackID: base.Userstack}
-			// Extract tgid (process ID) from upper 32 bits of pid_tgid
-			tgid := uint32(base.PIDTGID >> 32)
-			process := processKey{PID: tgid, Comm: taskCommString(base.Comm)}
-
-			if sampleCountsByProcess[process] == nil {
-				sampleCountsByProcess[process] = make(map[rawStackIDs]int64)
+			value, err := convert(base.Value)
+			if err != nil {
+				return accounted, expected, err
 			}
-			sampleCountsByProcess[process][stackIDs] += value
+
+			labels := nativeLabels(pid, taskCommString(base.Comm))
+			if cpu != nil {
+				labels = append(labels, types.ProfileCPULabel(*cpu))
+			}
+
+			labels, err = types.NormalizeLabels(labels)
+			if err != nil {
+				return accounted, expected, err
+			}
+
+			sample := aggregation.Sample{
+				UserFrames:   user,
+				KernelFrames: kernel,
+				Labels:       labels,
+				Value:        value,
+			}
+			if err := builder.Append(&sample, enqueue); err != nil {
+				return accounted, expected, err
+			}
+		}
+
+		if err := builder.Flush(enqueue); err != nil {
+			return accounted, expected, err
 		}
 
 		if batch.LostSamples != 0 {
-			log.Warnf("BPF perf event samples lost: %d", batch.LostSamples)
-		}
-
-		if err != nil {
-			if errors.Is(err, types.ErrExitByCancelCtx) {
-				return nil, frozenRingBuffer{}, err
+			if err := enqueue(&pipeline.SampleBatch{
+				DroppedSamples: map[string]uint64{types.DropReasonCollection: batch.LostSamples},
+			}); err != nil {
+				return accounted, expected, err
 			}
-			log.WithError(err).Warn("failed to read BPF event batch")
-			break
 		}
 
-		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch.Events), totalRead, len(sampleCountsByProcess))
-
-		// An empty batch means the ring is drained for now; avoid spinning
-		// even if the BPF count has not been fully matched.
-		if len(batch.Events) == 0 && batch.LostSamples == 0 {
-			break
+		if readErr != nil {
+			return accounted, expected, readErr
 		}
 
-		bpfCount, err := bpfmap.ReadUint64(r.bpf, r.transferStateMapID, ring.sampleCountIdx)
+		count, err := bpfmap.ReadUint64(r.bpf, r.transferStateMapID, ring.sampleCountIdx)
 		if err != nil {
-			return nil, frozenRingBuffer{}, fmt.Errorf("read sampleCnt: %w", err)
+			return accounted, expected, fmt.Errorf("read frozen sample count: %w", err)
 		}
 
-		log.Debugf(
-			"drain check: totalRead=%d totalAccounted=%d bpfCount=%d",
-			totalRead,
-			totalAccounted,
-			bpfCount,
+		expected = count
+		empty := len(batch.Events) == 0 && batch.LostSamples == 0
+		if empty || accounted >= expected {
+			break
+		}
+	}
+
+	return accounted, expected, nil
+}
+
+// drainFinalRingBuffers drains both rings after producers detach and accounts
+// for losses not reported by perf, keeping stack maps live during delivery.
+func (r *ringBufferContext) drainFinalRingBuffers(
+	ctx context.Context,
+	newEvent func() any,
+	enqueue func(*pipeline.SampleBatch) error,
+	convert func(int64) (int64, error),
+) error {
+	deliver := func(batch *pipeline.SampleBatch) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		return enqueue(batch)
+	}
+	var countIndices [2]uint32
+	for i := range countIndices {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		ring, err := r.advanceSwapParity()
+		if err != nil {
+			return err
+		}
+
+		// Production has stopped: counts include failed perf output attempts
+		// whose loss record may never arrive without another kernel event.
+		accounted, expected, err := r.drainRingBuffer(
+			ring,
+			newEvent,
+			deliver,
+			convert,
 		)
+		if err != nil {
+			return err
+		}
 
-		if totalAccounted >= bpfCount {
-			break
+		if err := r.accountSamples(expected, accounted); err != nil {
+			return err
+		}
+
+		countIndices[i] = ring.sampleCountIdx
+	}
+
+	if r.sampleAttempts > r.accountedSamples {
+		if err := deliver(&pipeline.SampleBatch{
+			DroppedSamples: map[string]uint64{types.DropReasonCollection: r.sampleAttempts - r.accountedSamples},
+		}); err != nil {
+			return err
 		}
 	}
 
-	log.Debugf("drain done: totalRead=%d procs=%d", totalRead, len(sampleCountsByProcess))
-
-	if err := bpfmap.WriteUint64(r.bpf, r.transferStateMapID, ring.sampleCountIdx, 0); err != nil {
-		log.Warnf("reset sample count: %v", err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
-	return sampleCountsByProcess, ring, nil
-}
-
-// aggregateStacksAndEnqueue resolves stack traces and emits aggregated records via enqueue callback.
-// For CPU profiler, convertValue is nil (samples are already counts).
-// For Memory profiler non-retained modes, convertValue converts raw value to bytes.
-// For Memory profiler retained mode, fallbackStackMapID provides fallback lookup path.
-//
-// Stack IDs are NOT deleted from the stack map after resolution for the following reasons:
-//
-//  1. Caching Performance: BPF_MAP_TYPE_STACK_TRACE is a cache-like map where stack IDs
-//     can be reused across multiple events. Keeping the IDs cached improves performance
-//     for subsequent lookups (10-20% hit rate for repeated stacks).
-//
-//  2. Fallback Support: In retained mode (physical_usage), free events may reference
-//     stack IDs from the previous cycle's stack_map. Deleting them would break the
-//     fallback lookup path that cross-references alloc-time stacks.
-//
-//  3. Automatic Management: The kernel's BPF stack map implementation uses a LRU-like
-//     eviction policy when the map is full, automatically managing the lifecycle of
-//     stack traces without requiring explicit deletion.
-//
-//  4. Reduced Overhead: Deleting stack IDs requires additional BPF map operations
-//     (one delete syscall per stack ID), which adds unnecessary overhead for a
-//     performance-critical path. The memory overhead of keeping stale entries is
-//     bounded by the map size limit (STACK_MAP_ENTRIES = 65536).
-func (r *ringBufferContext) aggregateStacksAndEnqueue(
-	sampleCountsByProcess map[processKey]map[rawStackIDs]int64,
-	ring frozenRingBuffer,
-	enqueue func(any),
-	convertValue func(int64) int64,
-) {
-	kstackCache := make(map[int32][]string)
-	ustackCache := make(map[userStackCacheKey][]string)
-
-	var records int
-	for process, stacks := range sampleCountsByProcess {
-		for stackIDs, rawValue := range stacks {
-			value := rawValue
-			if convertValue != nil {
-				value = convertValue(rawValue)
-			}
-
-			if value == 0 {
-				continue
-			}
-
-			if validateStackID(stackIDs.KernelStackID) {
-				if _, ok := kstackCache[stackIDs.KernelStackID]; !ok {
-					kstackCache[stackIDs.KernelStackID] = r.resolveKernelStackWithFallback(
-						ring,
-						stackIDs.KernelStackID,
-					)
-				}
-			}
-			userCacheKey := userStackCacheKey{
-				PID:     process.PID,
-				StackID: stackIDs.UserStackID,
-			}
-			if validateStackID(stackIDs.UserStackID) {
-				if _, ok := ustackCache[userCacheKey]; !ok {
-					ustackCache[userCacheKey] = r.resolveUserStackWithFallback(
-						ring,
-						stackIDs.UserStackID,
-						process.PID,
-					)
-				}
-			}
-
-			record := &stackSample{
-				Process: process,
-				StackTrace: symbolizedStackTrace{
-					UserFrames:   ustackCache[userCacheKey],
-					KernelFrames: kstackCache[stackIDs.KernelStackID],
-				},
-				Value: value,
-			}
-
-			enqueue(record)
-			records++
+	for _, index := range countIndices {
+		if err := bpfmap.WriteUint64(
+			r.bpf,
+			r.transferStateMapID,
+			index,
+			0,
+		); err != nil {
+			return err
 		}
 	}
 
-	log.Debugf(
-		"aggregate: procs=%d kstacks=%d ustacks=%d records=%d",
-		len(sampleCountsByProcess),
-		len(kstackCache),
-		len(ustackCache),
-		records,
-	)
-}
-
-// resolveKernelStackWithFallback resolves kernel stack with fallback support.
-// Fast path: lookup primary stackMapID (90-95% hit rate).
-// Slow path: fallback to another stackMapID if primary lookup fails.
-func (r *ringBufferContext) resolveKernelStackWithFallback(
-	ring frozenRingBuffer,
-	kernelStackID int32,
-) []string {
-	stack := r.resolveKernelStack(ring.stackMapID, kernelStackID)
-	if len(stack) > 0 {
-		return stack
-	}
-
-	if ring.fallbackStackMapID != 0 {
-		return r.resolveKernelStack(ring.fallbackStackMapID, kernelStackID)
-	}
-
+	r.sampleAttempts, r.accountedSamples = 0, 0
 	return nil
 }
 
-// resolveUserStackWithFallback resolves user stack with fallback support.
-// Fast path: lookup primary stackMapID (90-95% hit rate).
-// Slow path: fallback to another stackMapID if primary lookup fails.
+func (r *ringBufferContext) accountSamples(expected, accounted uint64) error {
+	if expected > math.MaxUint64-r.sampleAttempts || accounted > math.MaxUint64-r.accountedSamples {
+		return errors.New("native sample accounting overflows uint64")
+	}
+
+	r.sampleAttempts += expected
+	r.accountedSamples += accounted
+	return nil
+}
+
+// Only missing IDs can belong to the other retained-memory stack map.
+func (r *ringBufferContext) resolveKernelStackWithFallback(
+	ring frozenRingBuffer,
+	kernelStackID int32,
+) ([]types.ProfileFrame, error) {
+	stack, err := r.resolveKernelStack(ring.stackMapID, kernelStackID)
+	if errors.Is(err, bpfmap.ErrStackNotFound) && ring.fallbackStackMapID != 0 {
+		return r.resolveKernelStack(ring.fallbackStackMapID, kernelStackID)
+	}
+
+	return stack, err
+}
+
 func (r *ringBufferContext) resolveUserStackWithFallback(
 	ring frozenRingBuffer,
 	userStackID int32,
 	pid uint32,
-) []string {
-	stack := r.resolveUserStack(ring.stackMapID, userStackID, pid)
-	if len(stack) > 0 {
-		return stack
-	}
-
-	if ring.fallbackStackMapID != 0 {
+) ([]types.ProfileFrame, error) {
+	stack, err := r.resolveUserStack(ring.stackMapID, userStackID, pid)
+	if errors.Is(err, bpfmap.ErrStackNotFound) && ring.fallbackStackMapID != 0 {
 		return r.resolveUserStack(ring.fallbackStackMapID, userStackID, pid)
 	}
 
-	return nil
+	return stack, err
 }
 
-func (r *ringBufferContext) resolveKernelStack(stackMapID uint32, stackID int32) []string {
+func (r *ringBufferContext) resolveKernelStack(stackMapID uint32, stackID int32) ([]types.ProfileFrame, error) {
 	if !validateStackID(stackID) {
-		return nil
+		return nil, nil
 	}
 
-	trace, ok := readStackTrace(r.bpf, stackMapID, stackID)
-	if !ok {
-		return nil
+	trace, err := bpfmap.ReadStackTrace(r.bpf, stackMapID, uint32(stackID))
+	if err != nil {
+		return nil, err
 	}
 
-	return symbol.KsymStackStrsReversed(trace[:], len(trace))
+	return symbolizedFrames(trace[:], symbol.KsymStackStrsReversed(trace[:], len(trace))), nil
 }
 
-func (r *ringBufferContext) resolveUserStack(stackMapID uint32, stackID int32, pid uint32) []string {
+func (r *ringBufferContext) resolveUserStack(stackMapID uint32, stackID int32, pid uint32) ([]types.ProfileFrame, error) {
 	if !validateStackID(stackID) {
-		return nil
+		return nil, nil
 	}
 
-	trace, ok := readStackTrace(r.bpf, stackMapID, stackID)
-	if !ok {
-		return nil
+	trace, err := bpfmap.ReadStackTrace(r.bpf, stackMapID, uint32(stackID))
+	if err != nil {
+		return nil, err
 	}
 
-	return r.usym.UsymStackStrsReversed(pid, trace[:], len(trace))
+	return symbolizedFrames(trace[:], r.usym.UsymStackStrsReversed(pid, trace[:], len(trace))), nil
 }
 
 func closeBPF(b bpf.BPF) error {
 	if b == nil {
 		return nil
 	}
+
 	return b.Close()
+}
+
+// The symbol resolver emits one root-first name per nonzero address. Its
+// documented failure strings must retain the address instead of merging all
+// unresolved instructions into a single stack identity.
+func symbolizedFrames(addresses []uint64, names []string) []types.ProfileFrame {
+	frames := make([]types.ProfileFrame, len(names))
+	for i, name := range names {
+		if name == "" || name == "unknown" || strings.HasPrefix(name, "unknown ") || strings.HasPrefix(name, "[unknown]/") {
+			name = fmt.Sprintf("0x%x", addresses[len(names)-1-i])
+		}
+
+		frames[i] = types.ProfileFrame{Name: name}
+	}
+
+	return frames
 }

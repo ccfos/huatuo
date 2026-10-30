@@ -25,7 +25,6 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
-	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func init() {
@@ -41,9 +40,13 @@ func newMemBurst() (*tracing.EventTracingAttr, error) {
 }
 
 type (
-	memBurstTracing   struct{}
+	memBurstTracing struct {
+		snapshotJobs chan *burstSnapshotJob
+	}
 	MemoryTracingData struct {
-		TopMemoryUsage []*processMemInfo `json:"top_memory_usage"`
+		TopMemoryUsage   []*processMemInfo      `json:"top_memory_usage"`
+		ProcessSnapshots []burstProcessSnapshot `json:"process_snapshots,omitempty"`
+		SnapshotReason   string                 `json:"snapshot_reason,omitempty"`
 	}
 )
 
@@ -81,7 +84,7 @@ func readMemInfo(requiredKeys map[string]bool) (map[string]int, error) {
 }
 
 func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
-	memTotal int, history []int, historyWindowLength, topNProcesses int,
+	memTotal int, history []int, historySamples, topNProcesses int,
 	burstRatio float64, anonThreshold int,
 ) ([]*processMemInfo, error) {
 	memInfo, err := readMemInfo(map[string]bool{
@@ -93,10 +96,10 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 	}
 	currentSum := memInfo["Active(anon)"] + memInfo["Inactive(anon)"]
 	history[*currentIndex] = currentSum
-	if *currentIndex == historyWindowLength-1 {
+	if *currentIndex == historySamples-1 {
 		*isHistoryFull = true
 	}
-	*currentIndex = (*currentIndex + 1) % historyWindowLength
+	*currentIndex = (*currentIndex + 1) % historySamples
 	log.Debugf("Checked memory status. active_anon=%v KiB inactive_anon=%v KiB\n", memInfo["Active(anon)"], memInfo["Inactive(anon)"])
 	if *isHistoryFull {
 		oldestSum := history[*currentIndex] // current index is the oldest element
@@ -121,7 +124,7 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 
 	var err error
 
-	historyWindowLength := cfg.MemoryBurst.SlidingWindowLength
+	historySamples := cfg.MemoryBurst.SlidingWindowLength
 	sampleInterval := cfg.MemoryBurst.Interval
 	intervalTracing := cfg.MemoryBurst.IntervalTracing
 	topNProcesses := cfg.MemoryBurst.DumpProcessMaxNum
@@ -134,11 +137,16 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 		return err
 	}
 	memTotal := memInfo["MemTotal"]
-	history := make([]int, historyWindowLength) // circular buffer
+	workerCtx, stopWorker := context.WithCancel(ctx)
+	c.snapshotJobs = make(chan *burstSnapshotJob, 1)
+	workerDone := make(chan struct{})
+	go c.runBurstSnapshots(workerCtx, workerDone)
+	defer func() { close(c.snapshotJobs); stopWorker(); <-workerDone }()
+	history := make([]int, historySamples) // circular buffer
 	var currentIndex int
 	var isHistoryFull bool // don't check memory burst until we have enough data
 	lastReportTime := time.Now().Add(-24 * time.Hour)
-	_, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historyWindowLength, topNProcesses, burstRatio, anonThreshold)
+	_, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historySamples, topNProcesses, burstRatio, anonThreshold)
 	if err != nil {
 		log.Errorf("Fail to checkAndRecordMemoryUsage")
 		return err
@@ -155,7 +163,7 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 				log.Info("Caller request to stop")
 				return nil
 			case <-ticker.C:
-				topProcesses, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historyWindowLength, topNProcesses, burstRatio, anonThreshold)
+				topProcesses, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historySamples, topNProcesses, burstRatio, anonThreshold)
 				if err != nil {
 					log.Errorf("Fail to checkAndRecordMemoryUsage")
 					return err
@@ -169,14 +177,9 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 			continue
 		}
 		lastReportTime = currentTime.Time
-		if err := tracing.Save(&tracing.WriteRequest{
-			TracerName:       "memburst",
-			ContainerID:      "",
-			StartedTimestamp: currentTime,
-			TracerData:       &MemoryTracingData{TopMemoryUsage: topProcesses},
-			TracerRunType:    types.TracerRunTypeAutotracing,
-		}); err != nil {
-			log.Warnf("failed to save tracing data: %v", err)
-		}
+		c.enqueueBurst(ctx, &burstSnapshotJob{
+			processes: topProcesses,
+			started:   currentTime.Time,
+		})
 	}
 }

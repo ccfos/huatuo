@@ -16,135 +16,281 @@ package autotracing
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
+	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/internal/storage/localfile"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
-	"github.com/ccfos/huatuo/internal/toolstream/transport"
+	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
+
+	promblockdevice "github.com/prometheus/procfs/blockdevice"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestHandleIotracingEventReturnsPendingResult(t *testing.T) {
-	const taskID = "iotracing-test-task"
+// A blocking backend observes the real writer path before persistence completes.
+type blockingIOTracingBackend struct {
+	driver.Backend
+	started chan driver.Record
+	release chan struct{}
+	saveErr error
+}
 
-	pending := &pendingIOTracingReason{
-		reason:   &reasonSnapshot{Type: string(ioReasonUtil)},
-		received: make(chan struct{}),
-		result:   make(chan error, 1),
-	}
-	pendingReasons.Store(taskID, pending)
-	t.Cleanup(func() {
-		pendingReasons.Delete(taskID)
-	})
+func (*blockingIOTracingBackend) Init(context.Context, string, []driver.Index) error {
+	return nil
+}
 
-	err := handleIotracingEvent(
-		&toolstream.Session{
-			Session: &transport.Session{
-				TaskID: taskID,
-			},
-		},
-		&types.IOTracingSnapshot{},
-	)
-	if err != nil {
-		t.Fatalf("handleIotracingEvent() error = %v", err)
-	}
-
+func (b *blockingIOTracingBackend) Save(
+	ctx context.Context,
+	record driver.Record,
+	_ driver.SaveOptions,
+) error {
+	b.started <- record
 	select {
-	case <-pending.received:
-	default:
-		t.Fatal("handleIotracingEvent() did not mark the snapshot as received")
-	}
-	select {
-	case result := <-pending.result:
-		if result != nil {
-			t.Fatalf("pending result = %v, want nil", result)
-		}
-	default:
-		t.Fatal("handleIotracingEvent() did not return the pending result")
-	}
-	if _, ok := pendingReasons.Load(taskID); ok {
-		t.Fatal("handleIotracingEvent() left the pending reason in the registry")
+	case <-b.release:
+		return b.saveErr
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
-func TestDeleteMissingDiskState(t *testing.T) {
-	rawStats := map[string]*blockdevice.Diskstats{
-		"present": {},
-		"missing": {},
-	}
-	metrics := map[string]diskStatus{
-		"present": {},
-		"missing": {},
-	}
+func (*blockingIOTracingBackend) Close(context.Context) error { return nil }
 
-	deleteMissingDiskState(
-		rawStats,
-		metrics,
-		map[string]struct{}{"present": {}},
-	)
-
-	if _, ok := rawStats["missing"]; ok {
-		t.Error("raw stats retained a missing device")
-	}
-	if _, ok := metrics["missing"]; ok {
-		t.Error("metrics retained a missing device")
-	}
-	if _, ok := rawStats["present"]; !ok {
-		t.Error("raw stats removed a present device")
-	}
-	if _, ok := metrics["present"]; !ok {
-		t.Error("metrics removed a present device")
-	}
-}
-
-func TestWaitForSnapshotTimeouts(t *testing.T) {
-	t.Run("snapshot not received", func(t *testing.T) {
-		const taskID = "missing-snapshot-task"
-		pending := &pendingIOTracingReason{
-			received: make(chan struct{}),
-			result:   make(chan error, 1),
-		}
-		pendingReasons.Store(taskID, pending)
-		t.Cleanup(func() {
-			pendingReasons.Delete(taskID)
+func TestHandleIOTracingEventCompletesAfterSave(t *testing.T) {
+	exitErr := errors.New("child failed")
+	saveErr := errors.New("save failed")
+	for _, test := range []struct {
+		name    string
+		exitErr error
+		saveErr error
+	}{
+		{name: "success"},
+		{name: "failed child keeps partial report", exitErr: exitErr},
+		{name: "save failure", saveErr: saveErr},
+		{name: "child and save failure", exitErr: exitErr, saveErr: saveErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			taskID := t.Name()
+			backend := &blockingIOTracingBackend{
+				started: make(chan driver.Record, 1),
+				release: make(chan struct{}),
+				saveErr: test.saveErr,
+			}
+			driver.RegisterBackend("localfile", func(*driver.Config) (driver.Backend, error) {
+				return backend, nil
+			})
+			t.Cleanup(func() {
+				driver.RegisterBackend("localfile", func(cfg *driver.Config) (driver.Backend, error) {
+					return localfile.NewBackend(cfg.LocalFilePath, cfg.LocalFileRotationSize, cfg.LocalFileMaxRotation), nil
+				})
+			})
+			store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{
+				LocalFile: &tracingstore.LocalFileConfig{
+					Path: t.TempDir(), RotationSizeMiB: 1, MaxRotatedFiles: 1,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				tracing.DisableDocumentWriter()
+				if err := store.Close(context.Background()); err != nil {
+					t.Errorf("close tracing store: %v", err)
+				}
+			})
+			if err := tracing.EnableDocumentWriter(store, document.New("test-region")); err != nil {
+				t.Fatal(err)
+			}
+			pending := &pendingIOTracingReason{
+				reason: &reasonSnapshot{
+					Type: string(ioReasonUtil), Device: "sda", IOStatus: diskStatus{IOUtil: 95},
+				},
+				startedTimestamp: timeutil.Now(),
+				received:         make(chan struct{}),
+				result:           make(chan error, 1),
+			}
+			pendingReasons.Store(taskID, pending)
+			report := &types.IOTracingSnapshot{
+				Processes: []types.ProcessFileIOStats{{PID: 42, Comm: "writer", TotalDiskWriteBps: 4096}},
+				StallStacks: []types.IOScheduleEvent{{
+					PID: 42, TID: 43, CPU: 2, Comm: "writer", ScheduleLatencyUS: 2500,
+					ContainerHostname: "container", Stack: []string{"io_schedule"},
+				}},
+			}
+			if test.exitErr != nil {
+				report.FailureReason = types.IOTracingFailureReader
+			}
+			waitDone := make(chan error, 1)
+			go func() {
+				waitDone <- waitForSnapshotAfterExit(t.Context(), taskID, pending, test.exitErr, time.Second, time.Second)
+			}()
+			select {
+			case err := <-waitDone:
+				t.Fatalf("wait returned before snapshot delivery: %v", err)
+			case <-time.After(10 * time.Millisecond):
+			}
+			if value, ok := pendingReasons.Load(taskID); !ok || value != pending {
+				t.Fatal("child exit did not retain its pending reason")
+			}
+			handlerDone := make(chan error, 1)
+			handlerStopped := make(chan struct{})
+			go func() {
+				defer close(handlerStopped)
+				handlerDone <- handleIotracingEvent(t.Context(),
+					&toolstream.Request[types.IOTracingSnapshot]{TaskID: taskID, Data: report})
+			}()
+			t.Cleanup(func() {
+				select {
+				case <-backend.release:
+				default:
+					close(backend.release)
+				}
+				select {
+				case <-handlerStopped:
+				case <-time.After(time.Second):
+					t.Error("handler did not stop after releasing save")
+				}
+				pendingReasons.Delete(taskID)
+			})
+			var record driver.Record
+			select {
+			case record = <-backend.started:
+			case <-time.After(time.Second):
+				t.Fatal("save did not start")
+			}
+			var document struct {
+				TracerName       string             `json:"tracer_name"`
+				TracerRunType    string             `json:"tracer_type"`
+				StartedTimestamp timeutil.Timestamp `json:"started_timestamp"`
+				TracerData       ioStatusData       `json:"tracer_data"`
+			}
+			if err := json.Unmarshal(record.Data, &document); err != nil {
+				t.Fatal(err)
+			}
+			if document.TracerName != iotracingToolName ||
+				document.TracerRunType != types.TracerRunTypeAutotracing ||
+				!document.StartedTimestamp.Equal(pending.startedTimestamp.Time) {
+				t.Fatalf("saved document metadata = %+v", document)
+			}
+			wantData := ioStatusData{
+				Reason: pending.reason, FailureReason: report.FailureReason,
+				Processes: report.Processes, StallStacks: report.StallStacks,
+			}
+			if !reflect.DeepEqual(document.TracerData, wantData) {
+				t.Fatalf("saved snapshot = %+v, want %+v", document.TracerData, wantData)
+			}
+			if _, ok := pendingReasons.Load(taskID); ok {
+				t.Fatal("handler retained the delivered pending reason")
+			}
+			select {
+			case <-pending.received:
+			default:
+				t.Fatal("handler did not signal snapshot receipt before save")
+			}
+			select {
+			case err := <-waitDone:
+				t.Fatalf("snapshot wait completed before save returned: %v", err)
+			case <-time.After(10 * time.Millisecond):
+			}
+			close(backend.release)
+			select {
+			case err := <-handlerDone:
+				if !errors.Is(err, test.saveErr) {
+					t.Fatalf("handler error = %v, want %v", err, test.saveErr)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("handler did not finish after save returned")
+			}
+			select {
+			case err := <-waitDone:
+				if (test.exitErr == nil && test.saveErr == nil && err != nil) ||
+					(test.exitErr != nil && !errors.Is(err, test.exitErr)) ||
+					(test.saveErr != nil && !errors.Is(err, test.saveErr)) {
+					t.Fatalf("wait error = %v, want child %v and save %v", err, test.exitErr, test.saveErr)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("snapshot wait did not finish after save returned")
+			}
 		})
+	}
+}
 
-		err := waitForSnapshot(
-			context.Background(),
-			taskID,
-			pending,
-			time.Millisecond,
-			time.Second,
-		)
-		if err == nil || err.Error() != "iotracing exited without sending a snapshot" {
-			t.Fatalf("waitForSnapshot() error = %v", err)
-		}
-		if _, ok := pendingReasons.Load(taskID); ok {
-			t.Fatal("waitForSnapshot() left the pending reason in the registry")
-		}
-	})
+func TestWaitForSnapshotExitConditions(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		hasSnapshot   bool
+		isCanceled    bool
+		exitError     error
+		reportTimeout time.Duration
+		saveTimeout   time.Duration
+		wantError     string
+	}{
+		{
+			name: "snapshot not received", reportTimeout: time.Millisecond, saveTimeout: time.Second,
+			wantError: "iotracing exited without sending a snapshot",
+		},
+		{
+			name: "snapshot save", hasSnapshot: true, reportTimeout: time.Second, saveTimeout: time.Millisecond,
+			wantError: "timed out waiting for iotracing snapshot save",
+		},
+		{
+			name: "canceled after failed child", isCanceled: true, exitError: errors.New("child failed"),
+			reportTimeout: time.Second, saveTimeout: time.Second,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			taskID := t.Name()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			pending := &pendingIOTracingReason{
+				received: make(chan struct{}),
+				result:   make(chan error, 1),
+			}
+			if test.hasSnapshot {
+				close(pending.received)
+			} else {
+				pendingReasons.Store(taskID, pending)
+				t.Cleanup(func() { pendingReasons.Delete(taskID) })
+			}
+			if test.isCanceled {
+				cancel()
+			}
 
-	t.Run("snapshot save", func(t *testing.T) {
-		pending := &pendingIOTracingReason{
-			received: make(chan struct{}),
-			result:   make(chan error, 1),
-		}
-		close(pending.received)
-
-		err := waitForSnapshot(
-			context.Background(),
-			"saving-snapshot-task",
-			pending,
-			time.Second,
-			time.Millisecond,
-		)
-		if err == nil ||
-			err.Error() != "timed out waiting for iotracing snapshot save" {
-			t.Fatalf("waitForSnapshot() error = %v", err)
-		}
-	})
+			err := waitForSnapshotAfterExit(
+				ctx,
+				taskID,
+				pending,
+				test.exitError,
+				test.reportTimeout,
+				test.saveTimeout,
+			)
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("waitForSnapshotAfterExit() error = %v, want nil", err)
+				}
+			} else if err == nil || err.Error() != test.wantError {
+				t.Fatalf("waitForSnapshotAfterExit() error = %v, want %q", err, test.wantError)
+			}
+			if _, ok := pendingReasons.Load(taskID); ok {
+				t.Fatal("snapshot wait retained its pending reason")
+			}
+		})
+	}
 }
 
 func TestNewIOTracer(t *testing.T) {
@@ -271,4 +417,651 @@ func validIOTracingConfig() *Config {
 	config.IOTracing.MaxProcDump = 10
 	config.IOTracing.MaxFilesPerProcDump = 5
 	return config
+}
+
+// Disk window and exported metric contracts.
+
+func metricTestSnapshot(
+	at time.Time,
+	device string,
+	major,
+	minor uint32,
+	stats *promblockdevice.IOStats,
+) *rawDiskstatsSnapshot {
+	disk := blockdevice.Diskstats{
+		Info: promblockdevice.Info{
+			DeviceName:  device,
+			MajorNumber: major,
+			MinorNumber: minor,
+		},
+		IOStats: *stats,
+	}
+	return &rawDiskstatsSnapshot{
+		timestamp: at,
+		devices:   map[string]blockdevice.Diskstats{device: disk},
+		order:     []string{device},
+	}
+}
+
+func assertDiskMetrics(t *testing.T, metrics []*metric.Data, device string, values []float64) {
+	t.Helper()
+	names := []string{
+		"read_bps",
+		"write_bps",
+		"read_iops",
+		"write_iops",
+		"read_await_ms",
+		"write_await_ms",
+		"io_util_percent",
+		"average_queue_size",
+	}
+	require.Len(t, metrics, len(names))
+	require.Len(t, values, len(names))
+	for i, name := range names {
+		require.NotNil(t, metrics[i], name)
+		assert.Equal(t, name, metrics[i].Name())
+		assert.Equal(t, metric.MetricTypeGauge, metrics[i].Type(), name)
+		assert.Equal(t, values[i], metrics[i].Value, name)
+		assert.NotEmpty(t, metrics[i].Help(), name)
+		labels := metrics[i].Labels()
+		delete(labels, metric.LabelHost)
+		delete(labels, metric.LabelRegion)
+		assert.Equal(t, map[string]string{"disk": device}, labels, name)
+	}
+}
+
+func TestNewIOTracingInitializesMetricBaseline(t *testing.T) {
+	for _, hasDiskstats := range []bool{false, true} {
+		t.Run(fmt.Sprintf("diskstats available=%t", hasDiskstats), func(t *testing.T) {
+			previousConfig := configSnapshot()
+			Set(validIOTracingConfig())
+			t.Cleanup(func() { Set(previousConfig) })
+			originalPrefix := filepath.Dir(procfs.DefaultPath())
+			root := t.TempDir()
+			procfs.RootPrefix(root)
+			t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
+			if hasDiskstats {
+				require.NoError(t, os.MkdirAll(filepath.Join(root, "sys", "dev", "block", "8:0"), 0o755))
+				require.NoError(t, os.MkdirAll(filepath.Join(root, "proc"), 0o755))
+				require.NoError(t, os.WriteFile(
+					filepath.Join(root, "proc", "diskstats"),
+					[]byte("8 0 sda 100 0 1000 100 0 0 0 0 0 100 100\n"),
+					0o600,
+				))
+			}
+
+			attr, err := newIOTracing()
+			require.NoError(t, err)
+			assert.Equal(t, tracing.FlagTracing|tracing.FlagMetric, attr.Flag)
+			tracer, ok := attr.TracingData.(*ioTracing)
+			require.True(t, ok)
+			if !hasDiskstats {
+				assert.Nil(t, tracer.metricPrevious)
+				return
+			}
+			require.NotNil(t, tracer.metricPrevious)
+			assert.Contains(t, tracer.metricPrevious.devices, "sda")
+		})
+	}
+}
+
+func TestIOTracingUpdateUsesConsecutiveMetricReads(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	previous := metricTestSnapshot(
+		startedAt,
+		"sda",
+		8,
+		0,
+		&promblockdevice.IOStats{
+			ReadIOs:         100,
+			ReadSectors:     1000,
+			ReadTicks:       1000,
+			WriteIOs:        50,
+			WriteSectors:    500,
+			WriteTicks:      500,
+			IOsTotalTicks:   100,
+			WeightedIOTicks: 200,
+		},
+	)
+	reads := []*rawDiskstatsSnapshot{
+		metricTestSnapshot(
+			startedAt.Add(2*time.Second),
+			"sda",
+			8,
+			0,
+			&promblockdevice.IOStats{
+				ReadIOs:         103,
+				ReadSectors:     1005,
+				ReadTicks:       4751,
+				WriteIOs:        55,
+				WriteSectors:    507,
+				WriteTicks:      13003,
+				IOsTotalTicks:   2000,
+				WeightedIOTicks: 446,
+			},
+		),
+		metricTestSnapshot(
+			startedAt.Add(3*time.Second),
+			"sda",
+			8,
+			0,
+			&promblockdevice.IOStats{
+				ReadIOs:         107,
+				ReadSectors:     1015,
+				ReadTicks:       6751,
+				WriteIOs:        57,
+				WriteSectors:    511,
+				WriteTicks:      14003,
+				IOsTotalTicks:   2500,
+				WeightedIOTicks: 646,
+			},
+		),
+	}
+
+	readIndex := 0
+	tracer := &ioTracing{
+		metricPrevious: previous,
+		readMetricSnapshot: func() (*rawDiskstatsSnapshot, error) {
+			if readIndex >= len(reads) {
+				return nil, errors.New("unexpected metric diskstats read")
+			}
+			current := reads[readIndex]
+			readIndex++
+			return current, nil
+		},
+	}
+
+	first, err := tracer.Update()
+	require.NoError(t, err)
+	assertDiskMetrics(t, first, "sda", []float64{
+		1280,
+		1792,
+		1.5,
+		2.5,
+		1250.33,
+		2500.6,
+		95,
+		0.12,
+	})
+
+	second, err := tracer.Update()
+	require.NoError(t, err)
+	assertDiskMetrics(t, second, "sda", []float64{
+		5120,
+		2048,
+		4,
+		2,
+		500,
+		500,
+		50,
+		0.2,
+	})
+}
+
+func TestIOTracingUpdateRebuildsBaseline(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		hasBaseline  bool
+		readFailures int
+		major        uint32
+	}{
+		{name: "missing initial baseline", major: 8},
+		{name: "read failure", hasBaseline: true, readFailures: 2, major: 8},
+		{name: "device identity changed", hasBaseline: true, major: 9},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			startedAt := time.Unix(100, 0)
+			reads := []*rawDiskstatsSnapshot{
+				metricTestSnapshot(
+					startedAt.Add(2*time.Second),
+					"sda",
+					test.major,
+					0,
+					&promblockdevice.IOStats{ReadIOs: 20},
+				),
+				metricTestSnapshot(
+					startedAt.Add(3*time.Second),
+					"sda",
+					test.major,
+					0,
+					&promblockdevice.IOStats{ReadIOs: 24},
+				),
+			}
+			readFailure := errors.New("temporary diskstats failure")
+			readIndex := 0
+			tracer := &ioTracing{readMetricSnapshot: func() (*rawDiskstatsSnapshot, error) {
+				readIndex++
+				if readIndex <= test.readFailures {
+					return nil, readFailure
+				}
+				index := readIndex - test.readFailures - 1
+				if index >= len(reads) {
+					return nil, errors.New("unexpected metric diskstats read")
+				}
+				return reads[index], nil
+			}}
+			if test.hasBaseline {
+				tracer.metricPrevious = metricTestSnapshot(
+					startedAt,
+					"sda",
+					8,
+					0,
+					&promblockdevice.IOStats{ReadIOs: 10},
+				)
+			}
+
+			for range test.readFailures {
+				metrics, err := tracer.Update()
+				assert.Nil(t, metrics)
+				assert.ErrorIs(t, err, readFailure)
+			}
+			metrics, err := tracer.Update()
+			assert.Nil(t, metrics)
+			assert.ErrorIs(t, err, metric.ErrNoData)
+
+			metrics, err = tracer.Update()
+			require.NoError(t, err)
+			assert.Equal(t, float64(4), metrics[2].Value)
+		})
+	}
+}
+
+func TestIOTracingUpdateExportsMDSnapshot(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	tracer := &ioTracing{
+		metricPrevious: metricTestSnapshot(
+			startedAt,
+			"md0",
+			9,
+			0,
+			&promblockdevice.IOStats{},
+		),
+		readMetricSnapshot: func() (*rawDiskstatsSnapshot, error) {
+			return metricTestSnapshot(
+				startedAt.Add(time.Second),
+				"md0",
+				9,
+				0,
+				&promblockdevice.IOStats{},
+			), nil
+		},
+	}
+
+	metrics, err := tracer.Update()
+	require.NoError(t, err)
+	assertDiskMetrics(t, metrics, "md0", make([]float64, 8))
+}
+
+// Diskstats snapshots, elapsed time, and counter transitions.
+
+func TestBuildDiskMetricRejectsInvalidWindows(t *testing.T) {
+	previous := blockdevice.Diskstats{
+		Info: promblockdevice.Info{
+			MajorNumber: 8,
+			MinorNumber: 0,
+		},
+		IOStats: promblockdevice.IOStats{
+			ReadIOs:         10,
+			ReadSectors:     100,
+			ReadTicks:       20,
+			WriteIOs:        10,
+			WriteSectors:    100,
+			WriteTicks:      20,
+			IOsTotalTicks:   20,
+			WeightedIOTicks: 20,
+		},
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*blockdevice.Diskstats)
+	}{
+		{name: "major changed", mutate: func(s *blockdevice.Diskstats) { s.MajorNumber++ }},
+		{name: "minor changed", mutate: func(s *blockdevice.Diskstats) { s.MinorNumber++ }},
+		{name: "read IOs reset", mutate: func(s *blockdevice.Diskstats) { s.ReadIOs-- }},
+		{name: "read sectors reset", mutate: func(s *blockdevice.Diskstats) { s.ReadSectors-- }},
+		{name: "read ticks reset", mutate: func(s *blockdevice.Diskstats) { s.ReadTicks-- }},
+		{name: "write IOs reset", mutate: func(s *blockdevice.Diskstats) { s.WriteIOs-- }},
+		{name: "write sectors reset", mutate: func(s *blockdevice.Diskstats) { s.WriteSectors-- }},
+		{name: "write ticks reset", mutate: func(s *blockdevice.Diskstats) { s.WriteTicks-- }},
+		{name: "IO ticks reset", mutate: func(s *blockdevice.Diskstats) { s.IOsTotalTicks-- }},
+		{name: "weighted IO ticks reset", mutate: func(s *blockdevice.Diskstats) { s.WeightedIOTicks-- }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			current := previous
+			test.mutate(&current)
+			_, ok := buildDiskMetric(&previous, &current, time.Second)
+			assert.False(t, ok)
+		})
+	}
+}
+
+func TestBuildDiskStatusSnapshotDropsInvalidAndDisappearedDevices(t *testing.T) {
+	start := time.Unix(100, 0)
+	previous := &rawDiskstatsSnapshot{
+		timestamp: start,
+		devices: map[string]blockdevice.Diskstats{
+			"sda": {
+				Info: promblockdevice.Info{
+					DeviceName:  "sda",
+					MajorNumber: 8,
+					MinorNumber: 0,
+				},
+			},
+			"sdb": {
+				Info: promblockdevice.Info{
+					DeviceName:  "sdb",
+					MajorNumber: 8,
+					MinorNumber: 16,
+				},
+				IOStats: promblockdevice.IOStats{ReadSectors: 10},
+			},
+			"sdc": {
+				Info: promblockdevice.Info{
+					DeviceName:  "sdc",
+					MajorNumber: 8,
+					MinorNumber: 32,
+				},
+			},
+		},
+		order: []string{"sda", "sdb", "sdc"},
+	}
+	current := &rawDiskstatsSnapshot{
+		timestamp: start.Add(time.Second),
+		devices: map[string]blockdevice.Diskstats{
+			"sda": {
+				Info: promblockdevice.Info{
+					DeviceName:  "sda",
+					MajorNumber: 8,
+					MinorNumber: 0,
+				},
+			},
+			"sdb": {
+				Info: promblockdevice.Info{
+					DeviceName:  "sdb",
+					MajorNumber: 8,
+					MinorNumber: 16,
+				},
+				IOStats: promblockdevice.IOStats{ReadSectors: 9},
+			},
+		},
+		order: []string{"sda", "sdb"},
+	}
+
+	got := buildDiskStatusSnapshot(previous, current)
+	assert.Equal(t, []string{"sda"}, got.order)
+	assert.Contains(t, got.devices, "sda")
+	assert.NotContains(t, got.devices, "sdb")
+	assert.NotContains(t, got.devices, "sdc")
+	history := map[string]diskMetricStatus{"sda": {}, "sdb": {}, "sdc": {}}
+	evaluateThresholds(current, got, history, ioThresholds{})
+	assert.Equal(t, map[string]diskMetricStatus{"sda": {}}, history)
+}
+
+func TestIsMonitoredDiskFiltersPartitionsAndPseudoDevices(t *testing.T) {
+	originalPrefix := filepath.Dir(procfs.DefaultPath())
+	procfs.RootPrefix(t.TempDir())
+	t.Cleanup(func() {
+		procfs.RootPrefix(originalPrefix)
+	})
+
+	wholeDevicePath := filepath.Join(
+		procfs.DefaultPathByType("sys"),
+		"dev",
+		"block",
+		"8:0",
+	)
+	require.NoError(t, os.MkdirAll(wholeDevicePath, 0o755))
+
+	partitionPath := filepath.Join(
+		procfs.DefaultPathByType("sys"),
+		"dev",
+		"block",
+		"8:1",
+	)
+	require.NoError(t, os.MkdirAll(partitionPath, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(partitionPath, "partition"),
+		[]byte("1\n"),
+		0o600,
+	))
+
+	tests := []struct {
+		name string
+		stat *blockdevice.Diskstats
+		want bool
+	}{
+		{
+			name: "whole disk",
+			stat: &blockdevice.Diskstats{
+				Info: promblockdevice.Info{
+					DeviceName:  "sda",
+					MajorNumber: 8,
+					MinorNumber: 0,
+				},
+			},
+			want: true,
+		},
+		{
+			name: "partition",
+			stat: &blockdevice.Diskstats{
+				Info: promblockdevice.Info{
+					DeviceName:  "sda1",
+					MajorNumber: 8,
+					MinorNumber: 1,
+				},
+			},
+		},
+		{
+			name: "loop",
+			stat: &blockdevice.Diskstats{
+				Info: promblockdevice.Info{DeviceName: "loop0", MajorNumber: 8},
+			},
+		},
+		{
+			name: "ram",
+			stat: &blockdevice.Diskstats{
+				Info: promblockdevice.Info{DeviceName: "ram0", MajorNumber: 8},
+			},
+		},
+		{
+			name: "zram",
+			stat: &blockdevice.Diskstats{
+				Info: promblockdevice.Info{DeviceName: "zram0", MajorNumber: 8},
+			},
+		},
+		{
+			name: "floppy",
+			stat: &blockdevice.Diskstats{
+				Info: promblockdevice.Info{DeviceName: "fd0", MajorNumber: 8},
+			},
+		},
+	}
+
+	// Pseudo names also resolve to the valid 8:0 whole-device fixture, so
+	// missing sysfs cannot hide a regression in the name exclusion rule.
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, isMonitoredDisk(test.stat))
+		})
+	}
+}
+
+func TestMDSnapshotDoesNotTriggerDiagnostic(t *testing.T) {
+	status := diskMetricStatus{IOUtil: 100}
+	snapshot := &diskStatusSnapshot{
+		devices: map[string]diskMetricStatus{"md0": status},
+		order:   []string{"md0"},
+	}
+	raw := &rawDiskstatsSnapshot{
+		devices: map[string]blockdevice.Diskstats{
+			"md0": {
+				Info: promblockdevice.Info{
+					DeviceName:  "md0",
+					MajorNumber: 9,
+					MinorNumber: 0,
+				},
+			},
+		},
+	}
+
+	lastMetrics := map[string]diskMetricStatus{"md0": status}
+	reason := evaluateThresholds(
+		raw,
+		snapshot,
+		lastMetrics,
+		ioThresholds{UtilThreshold: 90},
+	)
+
+	assert.Nil(t, reason)
+	assert.Contains(t, lastMetrics, "md0")
+}
+
+func TestIOTracingThresholdsRequireConsecutiveWindows(t *testing.T) {
+	thresholds := ioThresholds{
+		UtilThreshold:  90,
+		RBPSThreshold:  1,
+		WBPSThreshold:  1,
+		AwaitThreshold: 10,
+	}
+	busy := diskMetricStatus{IOUtil: 90.5}
+	nvmeRead := diskMetricStatus{IOUtil: 90.5, ReadBPS: 1024*1024 + 0.5}
+	nvmeWrite := diskMetricStatus{IOUtil: 90.5, WriteBPS: 1024*1024 + 0.5}
+	readAwait := diskMetricStatus{ReadAwait: 10.5}
+	writeAwait := diskMetricStatus{WriteAwait: 10.5}
+	tests := []struct {
+		name     string
+		device   string
+		previous diskMetricStatus
+		current  diskMetricStatus
+		want     thresholdReason
+	}{
+		{name: "disk busy twice", device: "sda", previous: busy, current: busy, want: ioReasonUtil},
+		{name: "one busy window", device: "sda", current: busy, want: ioReasonNone},
+		{name: "busy then idle", device: "sda", previous: busy, want: ioReasonNone},
+		{
+			name: "util equals threshold", device: "sda", previous: busy,
+			current: diskMetricStatus{IOUtil: 90}, want: ioReasonNone,
+		},
+		{name: "NVMe util alone", device: "nvme0n1", previous: busy, current: busy, want: ioReasonNone},
+		{
+			name: "NVMe read throughput", device: "nvme0n1", previous: nvmeRead,
+			current: nvmeRead, want: ioReasonReadBPS,
+		},
+		{
+			name: "NVMe write throughput", device: "nvme0n1", previous: nvmeWrite,
+			current: nvmeWrite, want: ioReasonWriteBPS,
+		},
+		{
+			name: "NVMe throughput equals threshold", device: "nvme0n1", previous: nvmeRead,
+			current: diskMetricStatus{IOUtil: 90.5, ReadBPS: 1024 * 1024}, want: ioReasonNone,
+		},
+		{
+			name: "NVMe util equals threshold", device: "nvme0n1", previous: nvmeRead,
+			current: diskMetricStatus{IOUtil: 90, ReadBPS: 1024*1024 + 0.5}, want: ioReasonNone,
+		},
+		{name: "read await", device: "sda", previous: readAwait, current: readAwait, want: ioReasonReadAwait},
+		{
+			name: "write await", device: "nvme0n1", previous: writeAwait,
+			current: writeAwait, want: ioReasonWriteAwait,
+		},
+		{
+			name: "await equals threshold", device: "sda", previous: readAwait,
+			current: diskMetricStatus{ReadAwait: 10}, want: ioReasonNone,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := metricTestSnapshot(time.Unix(100, 0), test.device, 8, 0, &promblockdevice.IOStats{})
+			lastMetrics := make(map[string]diskMetricStatus)
+			for i, status := range []diskMetricStatus{test.previous, test.current} {
+				snapshot := &diskStatusSnapshot{
+					devices: map[string]diskMetricStatus{test.device: status},
+					order:   []string{test.device},
+				}
+				reason := evaluateThresholds(raw, snapshot, lastMetrics, thresholds)
+				if i == 0 || test.want == ioReasonNone {
+					assert.Nil(t, reason)
+					continue
+				}
+				require.NotNil(t, reason)
+				assert.Equal(t, string(test.want), reason.Type)
+				assert.Equal(t, test.device, reason.Device)
+			}
+		})
+	}
+}
+
+func TestIOTracingDiagnosticRestartsAfterInvalidWindow(t *testing.T) {
+	tests := []struct {
+		name       string
+		invalidate func(*blockdevice.Diskstats)
+	}{
+		{name: "major changed", invalidate: func(stat *blockdevice.Diskstats) { stat.MajorNumber++ }},
+		{name: "minor changed", invalidate: func(stat *blockdevice.Diskstats) { stat.MinorNumber++ }},
+		{name: "counter reset", invalidate: func(stat *blockdevice.Diskstats) { stat.ReadIOs = 0 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			previous := metricTestSnapshot(time.Unix(100, 0), "sda", 8, 0,
+				&promblockdevice.IOStats{ReadIOs: 100, IOsTotalTicks: 1000})
+			lastMetrics := make(map[string]diskMetricStatus)
+			// A busy window, an invalid window, then two new busy windows.
+			// Only the final window may trigger; old history cannot bridge the gap.
+			for step := 0; step < 4; step++ {
+				stat := previous.devices["sda"]
+				stat.ReadIOs++
+				stat.IOsTotalTicks += 950
+				if step == 1 {
+					test.invalidate(&stat)
+				}
+				current := metricTestSnapshot(previous.timestamp.Add(time.Second),
+					"sda", stat.MajorNumber, stat.MinorNumber, &stat.IOStats)
+				reason := evaluateThresholds(current,
+					buildDiskStatusSnapshot(previous, current), lastMetrics,
+					ioThresholds{UtilThreshold: 90})
+				if step < 3 {
+					assert.Nil(t, reason, "step %d", step)
+				} else {
+					require.NotNil(t, reason)
+					assert.Equal(t, "ioutil", reason.Type)
+					assert.Equal(t, "sda", reason.Device)
+				}
+				if step == 1 {
+					assert.NotContains(t, lastMetrics, "sda")
+				}
+				previous = current
+			}
+		})
+	}
+}
+
+func TestReasonSnapshotPreservesIntegerDiskStatusSchema(t *testing.T) {
+	status := persistedDiskStatus(diskMetricStatus{
+		ReadBPS:    1.75,
+		ReadIOPS:   2.5,
+		ReadAwait:  3.25,
+		WriteBPS:   4.75,
+		WriteIOPS:  5.5,
+		WriteAwait: 6.25,
+		IOUtil:     7.75,
+		QueueSize:  8.5,
+	})
+
+	raw, err := json.Marshal(reasonSnapshot{
+		Type:     string(ioReasonUtil),
+		Device:   "sda",
+		IOStatus: status,
+	})
+	require.NoError(t, err)
+	assert.JSONEq(
+		t,
+		`{"type":"ioutil","device":"sda","major_num":0,"minor_num":0,"iostatus":`+
+			`{"read_bps":1,"read_iops":2,"read_await":3,`+
+			`"write_bps":4,"write_iops":5,"write_await":6,`+
+			`"io_util":7,"queue_size":8},"summary":""}`,
+		string(raw),
+	)
 }

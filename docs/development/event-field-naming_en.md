@@ -1,83 +1,106 @@
 ---
-title: Event Field Naming
+title: Field Conventions
 type: docs
 author: HUATUO Team
 date: 2026-08-19
 weight: 31
 ---
 
-Event fields must use consistent semantics before following the naming
-conventions of each layer. The same name must not represent different concepts.
+Define consistent semantics before naming event fields according to each layer's conventions. The same name must not represent different concepts.
 
 ## Layer Rules
 
 | Layer | Rule | Example |
 | --- | --- | --- |
-| BPF C | Names reflect the original kernel semantics and units | `tgid`, `kernel_observed_ns` |
-| Go | MixedCaps; initialisms remain uppercase | `TGID`, `KernelObservedNS` |
-| JSON | Use user-facing statistical semantics | `pid`, `observed_timestamp` |
-| CLI flags | Lowercase kebab case | `--pid`, `--cpuid` |
-| CLI text and headers | Use standard uppercase initialisms | `PID`, `CPU`, `COMM` |
+| BPF C | Reflect raw kernel semantics and units | `tgid`, `kernel_observed_ns` |
+| Go | MixedCaps; keep initialisms uppercase | `TGID`, `KernelObservedNS` |
+| JSON | Use user-facing measurement semantics | `pid`, `observed_timestamp` |
+| CLI flags | Lowercase with hyphens | `--pid`, `--cpuid` |
+| CLI text and column headers | Use standard uppercase abbreviations | `PID`, `CPU`, `COMM` |
 
 ## CPUs and Tasks
 
 | Concept | Definition | BPF C | Go | JSON | CLI |
 | --- | --- | --- | --- | --- | --- |
-| Logical CPU number | Number returned by `bpf_get_smp_processor_id()` | `cpu` | `CPU` | `cpu` | `--cpu`, `CPU` |
-| Process ID | Userspace process identifier, namely the Linux TGID | `tgid` | `TGID` in raw events; `PID` in output | `pid` | `--pid`, `PID` |
+| Logical CPU ID | ID returned by `bpf_get_smp_processor_id()` | `cpu` | `CPU` | `cpu` | `--cpu`, `CPU` |
+| Process ID | User-space process identifier, the Linux TGID | `tgid` | `TGID` in raw events, `PID` in output | `pid` | `--pid`, `PID` |
 | Thread ID | Linux task PID | `tid` | `TID` | `tid` | `--tid`, `TID` |
-| Parent process ID | Parent process TGID | `parent_tgid` | `ParentTGID`, or `ParentPID` in the output layer | `parent_pid` | `PPID` |
+| Parent process ID | Parent process TGID | `parent_tgid` | `ParentTGID` or output-layer `ParentPID` | `parent_pid` | `PPID` |
 | Task comm | Kernel task `comm`, which may be a thread name | `comm` | `Comm` | `comm` | `COMM` |
-
-## Time and Numeric Units
-
-| Concept | Definition | BPF C | Go | JSON |
-| --- | --- | --- | --- | --- |
-| Raw kernel observation time | `CLOCK_MONOTONIC` nanoseconds, excluding system suspend | `kernel_observed_ns` | `KernelObservedNS` | Internal correlation only; not serialized |
-| Kernel observation time | Raw monotonic timestamp converted to UTC | Not applicable | `KernelObservedTimestamp` | `kernel_observed_timestamp` |
-| Userspace observation time | UTC time when the event producer observes the event in userspace | Not applicable | `ObservedTimestamp` | `observed_timestamp` |
-| Unix nanosecond time | Unix time in nanoseconds | `timestamp_ns` | `TimestampNS` | `timestamp_ns` |
-| Nanosecond duration | Difference between two time points | `<name>_ns` | `<Name>NS` | `<name>_ns` |
-| Nanosecond threshold | Duration corresponding to a trigger condition | `<name>_threshold_ns` | `<Name>ThresholdNS` | `<name>_threshold_ns` |
-| Count | Unitless cumulative value | `<name>_count` | `<Name>Count` | `<name>_count` |
-| Bytes | Data size, not bit count | `<name>_bytes` | `<Name>Bytes` | `<name>_bytes` |
 
 ## Containers, Cgroups, and Network Namespaces
 
 | Concept | BPF C | Go | JSON | CLI |
 | --- | --- | --- | --- | --- |
 | Container ID | `container_id` | `ContainerID` | `container_id` | `--container-id`, `CONTAINER_ID` |
-| Cgroup ID | `cgroup_id` | `CgroupID` | `cgroup_id` | `CGROUP_ID` |
+| cgroup ID | `cgroup_id` | `CgroupID` | `cgroup_id` | `CGROUP_ID` |
 | Cgroup CSS address | `<subsystem>_css_addr` | `<Subsystem>CSSAddr` | `<subsystem>_css_addr` | `<SUBSYSTEM>_CSS_ADDR` |
 | Network namespace inode | `netns_inum` | `NetNamespaceInum` | `net_namespace_inum` | `NETNS_INUM` |
 | Network namespace cookie | `netns_cookie` | `NetNamespaceCookie` | `net_namespace_cookie` | `NETNS_COOKIE` |
 | Network device index | `ifindex` or `<name>_ifindex` | `Ifindex` or `<Name>Ifindex` | `ifindex` or `<name>_ifindex` | `IFINDEX` |
 
-Kernel terms `inum` and `ifindex` remain single words in Go. Do not split them
-into `INum` or `IfIndex`. User-facing Go and JSON fields expand `netns` to
-`NetNamespace` and `net_namespace`.
+Keep the kernel terms `inum` and `ifindex` as single words in Go, not `INum` or `IfIndex`. Expand `netns` to `NetNamespace` and `net_namespace` in user-facing Go and JSON fields.
 
-## Observation times and compatibility
+<a id="time-and-numeric-units"></a>
 
-`kernel_observed_timestamp`, `observed_timestamp`, and `uploaded_timestamp`
-represent kernel observation, userspace observation, and storage write time.
-Kernel observation means the hook execution time, which may differ from the
-onset of a physical hardware error or network fault.
+## Numeric Units
 
-Document stores UTC timestamps at the top level and excludes
-`kernel_observed_ns`. Producers without kernel timestamps and older
-documents omit `kernel_observed_timestamp`; userspace or upload timestamps must
-not fill it. Historical RAS documents used `observed_timestamp` for kernel
-observation, so their userspace observation time cannot be reconstructed.
+| Concept | Definition | BPF C | Go | JSON |
+| --- | --- | --- | --- | --- |
+| Nanosecond duration | Difference between two times | `<name>_ns` | `<Name>NS` | `<name>_ns` |
+| Nanosecond threshold | Duration used as a trigger condition | `<name>_threshold_ns` | `<Name>ThresholdNS` | `<name>_threshold_ns` |
+| Count | Unitless cumulative value | `<name>_count` | `<Name>Count` | `<name>_count` |
+| Bytes | Data size, not bit count | `<name>_bytes` | `<Name>Bytes` | `<name>_bytes` |
 
-tcpshark and dropwatch use `kernel_observed_timestamp` for kernel observation
-time in JSON and text output. Upgrade tools and Agent together. Existing
-documents are not rewritten or backfilled. Conversion requires the same host,
-boot, and host time namespace. Historical events spanning a realtime clock
-step or system suspend cannot be mapped exactly to UTC from monotonic time alone.
+## Time Fields
 
-UTC conversion caches the monotonic-to-realtime offset. The first call one hour
-after the last successful sample refreshes it; ordinary calls do not extend
-its lifetime. Sampling failures are returned and retried on the next call.
-Realtime clock steps and system suspend do not trigger an early refresh; the
-offset is updated on the first call after the cache expires.
+### Field Semantics
+
+| Concept | Definition | BPF C | Go | JSON |
+| --- | --- | --- | --- | --- |
+| Raw kernel observation time | `CLOCK_MONOTONIC` reading in nanoseconds, excluding suspend time | `kernel_observed_ns` | `KernelObservedNS` | Not serialized; internal correlation only |
+| Kernel observation time | Raw monotonic time converted to UTC | Not applicable | `KernelObservedTimestamp` | `kernel_observed_timestamp` |
+| User-space observation time | UTC time when the producer observes the event in user space | Not applicable | `ObservedTimestamp` | `observed_timestamp` |
+| Unix nanosecond timestamp | Unix time in nanoseconds | `timestamp_ns` | `TimestampNS` | `timestamp_ns` |
+
+`kernel_observed_timestamp`, `observed_timestamp`, and `uploaded_timestamp` represent kernel observation, user-space observation, and storage write times, respectively. Kernel observation records when the hook runs; it does not necessarily mark the onset of a physical hardware error or network fault.
+
+### Serialization and Parsing
+
+HUATUO serializes timestamps in UTC with exactly nine fractional digits:
+
+```text
+2006-01-02T15:04:05.000000000Z
+```
+
+For example, the UTC time July 22, 2026, 00:30:00.123456789 is written as:
+
+```text
+2026-07-22T00:30:00.123456789Z
+```
+
+- All hosts use the `Z` time zone, so distributed queries do not need to handle different local time zones.
+- Nine fractional digits give strings a fixed width. Lexical order therefore matches chronological order, which helps sorting in logs and keyword indexes.
+- Nanosecond precision preserves the time information supplied by Go's `time.Time` and event-tracing pipelines.
+
+When writing data to HUATUO, use the shared helper:
+
+```go
+timestamp := timeutil.FormatUTC(time.Now())
+```
+
+Read timestamps with `timeutil.Parse`. It accepts the canonical format and legacy RFC 3339 values with 0 to 9 fractional digits. The returned value is always normalized to UTC.
+
+Compare timestamps as strings only when both values were generated by `FormatUTC`. Third-party RFC 3339 values may use variable fractional precision or non-UTC offsets.
+
+### Clock Conversion
+
+Conversion between monotonic time and UTC requires the same host, boot, and host time namespace. Monotonic time alone cannot precisely recover UTC for historical events across clock adjustments or system suspend.
+
+UTC conversion caches the offset between the monotonic and real-time clocks. The first call at least 1 hour after the last successful sample refreshes it; ordinary calls do not extend the cache lifetime. Sampling failures return an error and are retried on the next call. Clock adjustments or suspend do not trigger early refreshes; the offset updates on the first call after expiry.
+
+### Observation Time and Compatibility
+
+The top-level document stores UTC time, not `kernel_observed_ns`. Producers without kernel time and older documents omit `kernel_observed_timestamp`; do not fill it with user-space or write time. In historical RAS documents, `observed_timestamp` represented kernel observation time, so historical user-space observation time cannot be inferred from it.
+
+The JSON and text outputs of tcpshark and dropwatch use `kernel_observed_timestamp` for kernel observation time. Upgrade the tools and Agent together. Existing documents remain unchanged, without automatic backfill or rewriting.

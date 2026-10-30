@@ -30,7 +30,7 @@ readonly CONTAINERD_NAMESPACE="k8s.io"
 readonly PROFILER_DURATION=5
 readonly EXPECTED_METHOD="TestProfilerJavaMultiPID.alphaHotMethod"
 
-require_commands "${PROFILER_TOOL_DIR}/bin/asprof"
+require_commands jq mkfifo setsid timeout "${PROFILER_TOOL_DIR}/bin/asprof"
 [[ -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
 	|| skip "async-profiler library missing: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
 
@@ -92,6 +92,25 @@ run_runtime_cases() {
 	RUNTIMES_TESTED=$((RUNTIMES_TESTED + 1))
 }
 
+assert_destroyed_container() (
+	local runtime=$1 container_id=$2
+	trap cleanup_piped_processes EXIT
+	log_info "destroying a profiled Java container: ${runtime}"
+	start_exception_profiler "${WORK_DIR}/${runtime}/destroyed" java 30 1 \
+		--tool-path "${PROFILER_TOOL_DIR}" --container-id "${container_id}"
+	assert_profiler_samples_before_deadline '*' alphaHotMethod
+	if [[ ${runtime} == docker ]]; then
+		timeout 15 docker rm -f "${container_id}"
+	else
+		timeout 15 ctr --namespace "${CONTAINERD_NAMESPACE}" tasks delete --force "${container_id}"
+		timeout 15 ctr --namespace "${CONTAINERD_NAMESPACE}" containers delete "${container_id}"
+	fi
+	kill -INT "${PROFILER_PID}"
+	assert_profiler_exit 1
+	grep -q 'failed for pid' "${PROFILER_OUT}" "${PROFILER_ERR}" \
+		|| fatal "missing destroyed JVM diagnostic for ${runtime} container ${container_id}"
+)
+
 test_docker() {
 	local runtime_dir="${WORK_DIR}/docker"
 
@@ -123,7 +142,7 @@ test_docker() {
 	docker inspect --format '{{.State.Running}}' "${DOCKER_CONTAINER_ID}" | grep -qx true \
 		|| fatal "docker Java container exited before profiling: ${DOCKER_CONTAINER_ID}"
 	run_runtime_cases docker "${DOCKER_CONTAINER_ID}"
-	docker rm -f "${DOCKER_CONTAINER_ID}" > /dev/null
+	assert_destroyed_container docker "${DOCKER_CONTAINER_ID}"
 	DOCKER_CONTAINER_ID=""
 }
 
@@ -164,10 +183,7 @@ test_containerd() {
 		| awk -v id="${CONTAINERD_CONTAINER_ID}" '$1 == id && $3 == "RUNNING" { found = 1 } END { exit !found }' \
 		|| fatal "containerd Java container exited before profiling: ${CONTAINERD_CONTAINER_ID}"
 	run_runtime_cases containerd "${CONTAINERD_CONTAINER_ID}"
-	ctr --namespace "${CONTAINERD_NAMESPACE}" tasks delete --force \
-		"${CONTAINERD_CONTAINER_ID}" > /dev/null 2>&1
-	ctr --namespace "${CONTAINERD_NAMESPACE}" containers delete \
-		"${CONTAINERD_CONTAINER_ID}" > /dev/null 2>&1
+	assert_destroyed_container containerd "${CONTAINERD_CONTAINER_ID}"
 	CONTAINERD_CONTAINER_ID=""
 }
 

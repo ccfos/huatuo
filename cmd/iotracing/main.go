@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -23,9 +24,11 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	serverpprof "github.com/ccfos/huatuo/internal/httpserver/pprof"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/version"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
@@ -91,20 +94,32 @@ func mainAction(c *cli.Context) (returnErr error) {
 		return err
 	}
 
+	if c.Bool(cliFlagEnablePProf) {
+		server, err := serverpprof.StartDefault(c.Context)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := server.Close(); err != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("close pprof server: %w", err))
+			}
+		}()
+	}
+
+	blockDevice, err := requestPartIsBlockDevice()
+	if err != nil {
+		return err
+	}
+	filters[bpfRequestPartBlockDevice] = blockDevice
+
 	client, err := openToolstream(c)
 	if err != nil {
 		return err
 	}
 
 	if client != nil {
-		defer func() {
-			if err := client.End(); err != nil {
-				returnErr = errors.Join(
-					returnErr,
-					fmt.Errorf("close toolstream: %w", err),
-				)
-			}
-		}()
+		// Also cover setup failures before report finalization owns the connection.
+		defer client.Close()
 	}
 
 	if err := bpf.Init(&bpf.Option{
@@ -115,31 +130,60 @@ func mainAction(c *cli.Context) (returnErr error) {
 	defer bpf.Shutdown()
 
 	result, err := runTrace(c.Context, c.String(cliFlagBpfPath), cfg, filters)
-	if err != nil {
-		return err
+	if client != nil {
+		return writeToolstreamReport(c.Context, client, result, err)
 	}
 
-	sink := newWriter(c.String(cliFlagOutput), client)
-	if err := sink.Write(result); err != nil {
-		return fmt.Errorf("write output: %w", err)
-	}
-
-	return nil
+	return writeReport(newWriter(c.Context, c.String(cliFlagOutput), nil), result, err)
 }
 
-// openToolstream returns a connected toolstream client when
-// --output-storage is set, or nil otherwise. The caller owns End().
+func writeToolstreamReport(
+	ctx context.Context,
+	client *toolstream.Client,
+	result *types.IOTracingSnapshot,
+	traceErr error,
+) error {
+	outputCtx := context.WithoutCancel(ctx)
+
+	writeErr := writeReport(newWriter(outputCtx, "", client), result, traceErr)
+	endErr := client.Send(outputCtx, nil, toolstream.SendOptions{End: true})
+	if endErr != nil && errors.Is(writeErr, endErr) {
+		endErr = nil
+	}
+	if endErr != nil {
+		endErr = fmt.Errorf("finish output: %w", endErr)
+	}
+
+	return errors.Join(writeErr, endErr, client.Close())
+}
+
+// Preserve a captured report alongside any independent collection failure.
+func writeReport(sink writer, result *types.IOTracingSnapshot, traceErr error) error {
+	if result == nil {
+		return traceErr
+	}
+
+	writeErr := sink.Write(result)
+	if writeErr != nil {
+		writeErr = fmt.Errorf("write output: %w", writeErr)
+	}
+
+	return errors.Join(traceErr, writeErr)
+}
+
+// openToolstream returns a connected client when --output-storage is set.
+// The caller owns the connection and sends End during report finalization.
 func openToolstream(c *cli.Context) (*toolstream.Client, error) {
 	path := c.String(cliFlagOutputStorage)
 	if path == "" {
 		return nil, nil
 	}
 
-	client, err := toolstream.NewClient(toolstream.ClientOptions{
-		SockPath: path,
-		ToolName: iotracingToolName,
-		Version:  versionInfo.Version,
-		TaskID:   c.String(cliFlagTaskID),
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    path,
+		ServiceName: iotracingToolName,
+		Version:     versionInfo.Version,
+		TaskID:      c.String(cliFlagTaskID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("--output-storage: %w", err)

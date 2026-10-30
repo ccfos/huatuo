@@ -17,181 +17,110 @@ package executil
 import (
 	"bytes"
 	"strings"
+	"sync"
 	"testing"
 )
 
-func TestOutputBufferKeepsOldestBytesAndReportsOverflow(t *testing.T) {
-	buffer := outputBuffer{limit: 4}
-	if n, err := buffer.Write([]byte("12345")); err != nil || n != 5 {
-		t.Fatalf("Write() = (%d, %v), want (5, nil)", n, err)
-	}
-
-	if data, _ := buffer.Snapshot(); string(data) != "1234" {
-		t.Errorf("Snapshot() = %q, want 1234", data)
-	}
-
-	if _, exceeded := buffer.Snapshot(); !exceeded {
-		t.Error("Snapshot() overflow = false, want true")
-	}
-
-	output, _ := buffer.Snapshot()
-	output[0] = 'x'
-	if data, _ := buffer.Snapshot(); string(data) != "1234" {
-		t.Errorf("Snapshot() after caller mutation = %q, want 1234", data)
-	}
-}
-
-func TestOutputBufferLimitBoundaries(t *testing.T) {
+func TestOutputBufferKeepsNewestBytes(t *testing.T) {
 	tests := []struct {
-		name         string
-		limit        int
-		writes       []string
-		want         string
-		wantExceeded bool
+		name     string
+		maxBytes int
+		writes   []string
 	}{
-		{
-			name:   "empty writes",
-			limit:  4,
-			writes: []string{"", ""},
-		},
-		{
-			name:   "empty write at limit",
-			limit:  4,
-			writes: []string{"12", "34", ""},
-			want:   "1234",
-		},
-		{
-			name:         "cross limit",
-			limit:        4,
-			writes:       []string{"123", "45"},
-			want:         "1234",
-			wantExceeded: true,
-		},
-		{
-			name:         "write after limit",
-			limit:        4,
-			writes:       []string{"1234", "", "5", ""},
-			want:         "1234",
-			wantExceeded: true,
-		},
-		{
-			name:   "empty zero capacity buffer",
-			writes: []string{""},
-		},
-		{
-			name:         "write to zero capacity buffer",
-			writes:       []string{"1", ""},
-			wantExceeded: true,
-		},
+		{"empty", 4, nil},
+		{"empty writes", 4, []string{"", ""}},
+		{"below limit", 4, []string{"1", "23"}},
+		{"exact limit", 4, []string{"12", "34", ""}},
+		{"cross limit", 4, []string{"123", "45"}},
+		{"repeated overflow", 4, []string{"1234", "", "5", "67", "89", ""}},
+		{"oversized write", 4, []string{"12", "3456789", "ab"}},
+		{"replace full buffer", 4, []string{"1234", "5678"}},
+		{"single byte", 1, []string{"1", "23", "4", ""}},
+		{"zero capacity", 0, []string{"", "123", "4"}},
+		{"many writes", 64, strings.Split(strings.Repeat("0123456789", 100), "")},
 	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			buffer := outputBuffer{limit: test.limit}
-			for _, data := range test.writes {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buffer := outputBuffer{maxBytes: tt.maxBytes}
+			var written string
+			for _, data := range tt.writes {
 				if n, err := buffer.Write([]byte(data)); err != nil || n != len(data) {
-					t.Fatalf(
-						"Write() = (%d, %v), want (%d, nil)",
-						n,
-						err,
-						len(data),
-					)
+					t.Fatalf("Write() = (%d, %v), want (%d, nil)", n, err, len(data))
+				}
+				written += data
+				want := written[max(0, len(written)-tt.maxBytes):]
+				if got := string(buffer.Bytes()); got != want {
+					t.Fatalf("Bytes() = %q, want %q", got, want)
 				}
 			}
-
-			data, exceeded := buffer.Snapshot()
-			if string(data) != test.want {
-				t.Errorf("Snapshot() data = %q, want %q", data, test.want)
-			}
-
-			if exceeded != test.wantExceeded {
-				t.Errorf("Snapshot() overflow = %t, want %t", exceeded, test.wantExceeded)
+			if len(buffer.Bytes()) > tt.maxBytes {
+				t.Fatal("retained output exceeds capacity")
 			}
 		})
 	}
 }
 
-func TestTailBufferKeepsNewestBytes(t *testing.T) {
-	var buffer tailBuffer
-	first := strings.Repeat("a", maxErrorOutputBytes-2)
-	if _, err := buffer.Write([]byte(first)); err != nil {
-		t.Fatalf("Write() error = %v", err)
+func TestOutputBufferBytesOwnsSnapshot(t *testing.T) {
+	buffer := outputBuffer{maxBytes: 4}
+	input := []byte("1234")
+	_, _ = buffer.Write(input)
+	input[0] = 'x'
+	snapshot := buffer.Bytes()
+	if string(snapshot) != "1234" {
+		t.Fatalf("Bytes() retained caller's input: %q", snapshot)
 	}
-
-	if _, err := buffer.Write([]byte("bcde")); err != nil {
-		t.Fatalf("Write() overflow error = %v", err)
+	snapshot[0] = 'x'
+	if got := string(buffer.Bytes()); got != "1234" {
+		t.Fatalf("Bytes() exposed buffer storage: %q", got)
 	}
-
-	if _, err := buffer.Write([]byte("fgh")); err != nil {
-		t.Fatalf("Write() second overflow error = %v", err)
-	}
-
-	want := first[5:] + "bcdefgh"
-	if got := string(buffer.Bytes()); got != want {
-		t.Errorf(
-			"Bytes() length = %d, want %d; suffix = %q",
-			len(got),
-			len(want),
-			got[len(got)-8:],
-		)
-	}
-
-	oversized := strings.Repeat("x", maxErrorOutputBytes) + "tail"
-	if _, err := buffer.Write([]byte(oversized)); err != nil {
-		t.Fatalf("Write() oversized error = %v", err)
-	}
-
-	want = oversized[len(oversized)-maxErrorOutputBytes:]
-	if got := string(buffer.Bytes()); got != want {
-		t.Errorf("Bytes() after oversized write length = %d, want %d", len(got), len(want))
-	}
-
-	output := buffer.Bytes()
-	output[0] = 'z'
-	if got := string(buffer.Bytes()); got != want {
-		t.Error("Bytes() exposed the retained error buffer")
+	_, _ = buffer.Write([]byte("56789"))
+	if string(snapshot) != "x234" {
+		t.Fatalf("Write() modified a previous snapshot: %q", snapshot)
 	}
 }
 
-func TestTailBufferWriteWrapsAtEnd(t *testing.T) {
-	var buffer tailBuffer
-	writes := []string{
-		strings.Repeat("a", maxErrorOutputBytes),
-		strings.Repeat("b", maxErrorOutputBytes-1),
-		"cd",
+func TestOutputBufferConcurrentWritesAndSnapshots(t *testing.T) {
+	buffer := outputBuffer{maxBytes: 64}
+	var workers sync.WaitGroup
+	start := make(chan struct{})
+	for range 4 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			for range 1000 {
+				if n, err := buffer.Write([]byte("01234567")); n != 8 || err != nil {
+					t.Errorf("Write() = (%d, %v), want (8, nil)", n, err)
+					return
+				}
+			}
+		}()
 	}
-	for _, data := range writes {
-		if n, err := buffer.Write([]byte(data)); err != nil || n != len(data) {
-			t.Fatalf(
-				"Write() = (%d, %v), want (%d, nil)",
-				n,
-				err,
-				len(data),
-			)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		<-start
+		for range 1000 {
+			data := buffer.Bytes()
+			if len(data) > 64 || len(data)%8 != 0 || string(data) != strings.Repeat("01234567", len(data)/8) {
+				t.Errorf("inconsistent snapshot: %q", data)
+				return
+			}
+			if len(data) > 0 {
+				data[0] = 'x'
+			}
 		}
-	}
-
-	want := strings.Repeat("b", maxErrorOutputBytes-2) + "cd"
-	if got := string(buffer.Bytes()); got != want {
-		t.Errorf("Bytes() after wrapped write must contain %d b bytes followed by cd", maxErrorOutputBytes-2)
+	}()
+	close(start)
+	workers.Wait()
+	if got := string(buffer.Bytes()); got != strings.Repeat("01234567", 8) {
+		t.Fatalf("final snapshot = %q", got)
 	}
 }
 
 func BenchmarkOutputBufferWriteFull(b *testing.B) {
-	buffer := outputBuffer{limit: defaultMaxOutputBytes}
-	_, _ = buffer.Write(bytes.Repeat([]byte{'a'}, buffer.limit))
-	data := bytes.Repeat([]byte{'b'}, 64)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		_, _ = buffer.Write(data)
-	}
-}
-
-func BenchmarkTailBufferWriteFull(b *testing.B) {
-	var buffer tailBuffer
-	_, _ = buffer.Write(bytes.Repeat([]byte{'a'}, maxErrorOutputBytes))
+	buffer := outputBuffer{maxBytes: defaultMaxOutputBytes}
+	_, _ = buffer.Write(bytes.Repeat([]byte{'a'}, buffer.maxBytes))
 	data := bytes.Repeat([]byte{'b'}, 64)
 
 	b.ReportAllocs()

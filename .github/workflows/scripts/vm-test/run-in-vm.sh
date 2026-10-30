@@ -21,9 +21,9 @@
 # - HOME: Used to add the user's Go binary directory to PATH.
 # - PATH: Extended with system and user Go binary directories.
 # Parameters:
-# - None.
+# - Optional --prepare-only or --test-only; omitted runs both phases.
 # Examples:
-# - run-in-vm.sh  # prepare the guest and run make e2e
+# - run-in-vm.sh  # prepare the guest and run make test
 
 set -euo pipefail
 
@@ -50,6 +50,57 @@ print_sys_info() {
 	kubectl get pods -A || true
 }
 
+# Some images (e.g. anolis8.10) neither run cloud-init nor auto-grow their
+# root partition, so the extra space requested with --disk-size stays
+# invisible to the guest. Grow the root partition and filesystem to fill the
+# disk. Best effort: distros that already grew report NOCHANGE.
+grow_root_filesystem() {
+	local root_device filesystem parent partition output
+	filesystem=$(findmnt -n -o FSTYPE /)
+	case "$filesystem" in
+	ext4 | xfs) ;;
+	*)
+		vm_log "rootfs grow skipped: unsupported filesystem $filesystem"
+		return 0
+		;;
+	esac
+	root_device=$(findmnt -n -o SOURCE /)
+	# findmnt reports a btrfs root as "/dev/vda3[/root]"; never let that
+	# suffix reach readlink -f, which treats the embedded "/" as a path
+	# separator and fails (fatal under set -e).
+	root_device=${root_device%%\[*}
+	root_device=$(readlink -f "$root_device" 2> /dev/null || printf '%s' "$root_device")
+	if [[ ! -f /sys/class/block/${root_device##*/}/partition ]]; then
+		vm_log "rootfs grow skipped: $root_device is not a direct partition"
+		return 0
+	fi
+	if ! command -v growpart > /dev/null 2>&1; then
+		vm_log_error "rootfs grow skipped: growpart is not installed"
+		return 0
+	fi
+	parent=$(lsblk -n -o PKNAME "$root_device")
+	partition=$(< "/sys/class/block/${root_device##*/}/partition")
+	[[ -n "$parent" && "$partition" =~ ^[0-9]+$ ]] || {
+		vm_log_error "cannot identify root partition for $root_device"
+		return 1
+	}
+	vm_log "growing root partition $root_device on /dev/$parent"
+	if output=$(growpart "/dev/$parent" "$partition" 2>&1); then
+		vm_log "$output"
+	elif [[ "$output" == NOCHANGE:* ]]; then
+		vm_log "$output"
+	else
+		vm_log_error "root partition expansion failed: $output"
+		return 1
+	fi
+	case "$filesystem" in
+	ext4) resize2fs "$root_device" ;;
+	xfs) xfs_growfs / ;;
+	esac
+	lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT "/dev/$parent"
+	df -h /
+}
+
 configure_proxy() {
 	local guest_hostname guest_ip proxy_port=11008
 	if ! timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/$1' _ "$proxy_port" 2> /dev/null; then
@@ -69,9 +120,9 @@ configure_proxy() {
 
 install_test_dependencies() {
 	local os_id os_like package_manager package
-	local -a deb_packages=(curl gdb build-essential libelf-dev kmod "linux-headers-$(uname -r)")
+	local -a deb_packages=(curl gdb fio mdadm xfsprogs build-essential libelf-dev kmod "linux-headers-$(uname -r)")
 	local -a rpm_packages=(
-		curl gdb gcc make elfutils-libelf-devel kmod kernel-headers
+		curl gdb fio mdadm xfsprogs gcc make elfutils-libelf-devel kmod kernel-headers
 		"kernel-devel-$(uname -r)"
 	)
 	local -a missing_packages=()
@@ -112,14 +163,23 @@ install_test_dependencies() {
 		if [[ "$os_id" == rocky ]]; then
 			package_options+=(--disablerepo='epel*')
 		fi
-		# openEuler publishes kernel-devel in its binary OS repositories.
+		# openEuler publishes kernel-devel/kernel-headers in its binary OS
+		# repositories. Its update and everything repositories carry very
+		# large metadata (tens of MB) served by slow mirrors, so skip them
+		# and only fall back to the full set if a build dependency is missing
+		# from the restricted repositories.
 		if [[ "$os_id" == openeuler ]]; then
 			package_options+=(
 				--disablerepo=EPOL --disablerepo=debuginfo --disablerepo=source
-				--disablerepo=update-source
+				--disablerepo=update-source --disablerepo=update
+				--disablerepo=everything
 			)
 		fi
-		"$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"
+		if ! "$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"; then
+			((${#package_options[@]})) || return 1
+			vm_log "install with restricted repositories failed; retrying with all repositories"
+			"$package_manager" install -y "${missing_packages[@]}"
+		fi
 		;;
 	*)
 		vm_log_error "unsupported guest package family: ID=$ID ID_LIKE=${ID_LIKE:-}"
@@ -161,25 +221,78 @@ install_temporary_go_tools() {
 	done
 }
 
-configure_proxy
-print_sys_info
-export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
-install_test_dependencies
-install_temporary_go_tools
-export JAVA_PROFILER_DOCKER_IMAGE=eclipse-temurin:17-jdk
-export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
-export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
-export NATIVE_PROFILER_CONTAINERD_IMAGE=docker.io/library/busybox:1.36.1
+prefetch_storage_images() {
+	source integration/lib_storage.sh
+	local image
+	mkdir -p _output/storage-image-prefetch
+	for image in "${STORAGE_ES7_IMAGE}" "${STORAGE_OPENSEARCH_IMAGE}"; do
+		vm_log "preloading storage image: ${image}"
+		timeout 5m docker pull "${image}" > "_output/storage-image-prefetch/${image##*/}.log" 2>&1 &
+		storage_prefetch_pids+=("$!")
+	done
+}
 
-cd /mnt/host
-pwd
-ls -alh .
-git config --global --add safe.directory /mnt/host
+stop_storage_image_prefetch() {
+	local status=$? pid
+	trap - EXIT
+	for pid in "${storage_prefetch_pids[@]}"; do
+		# Only signal jobs still owned by this shell; completed PIDs may be reused.
+		if jobs -pr | grep -qx "${pid}"; then kill "${pid}" 2> /dev/null || true; fi
+		wait "${pid}" 2> /dev/null || vm_log "storage image prefetch did not finish successfully; see _output/storage-image-prefetch"
+	done
+	exit "${status}"
+}
 
-# This is the single entry point for all guest test targets.
-vm_log '⬅️⬅️⬅️ Running tests...'
+run_guest_tests() {
+	configure_proxy
+	export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
+	export GOCACHE=/root/.cache/go-build
+	if [[ ${1:-} != --test-only ]]; then
+		grow_root_filesystem
+		print_sys_info
+		install_test_dependencies
+	fi
+	# CI restores the Go cache after growing the filesystem, before any Go builds.
+	if [[ ${1:-} == --prepare-only ]]; then exit 0; fi
+	cd /mnt/host
+	if [[ ! -f _output/portable-generated.commit ]]; then
+		install_temporary_go_tools
+	fi
+	export JAVA_PROFILER_DOCKER_IMAGE=eclipse-temurin:17-jdk
+	export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
+	export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
+	export NATIVE_PROFILER_CONTAINERD_IMAGE=docker.io/library/busybox:1.36.1
+	export NATIVE_PROFILER_TEST_PRIVILEGED_CONTAINER=1
+	# These pinned PR images must keep exercising the split-v1 memory CSS path.
+	local ID VERSION_ID
+	source /etc/os-release
+	case "${ID,,}:${VERSION_ID}" in
+	ubuntu:20.04 | openeuler:22.03*)
+		export NATIVE_PROFILER_REQUIRE_SPLIT_CGROUP_V1=1
+		;;
+	esac
 
-make install-tools
-make test
+	pwd
+	ls -alh .
+	git config --global --add safe.directory /mnt/host
 
-vm_log '✅✅✅ Tests passed.'
+	# This is the single entry point for all guest test targets.
+	vm_log '⬅️⬅️⬅️ Running tests...'
+
+	# Hide image downloads behind compilation and unit tests. Compatibility cases
+	# still perform their normal pull checks, including when prefetch fails.
+	storage_prefetch_pids=()
+	trap stop_storage_image_prefetch EXIT
+	prefetch_storage_images
+	make install-tools
+	if [[ -f _output/portable-generated.commit ]]; then
+		make test SKIP_PORTABLE_GENERATION=1
+	else
+		make test
+	fi
+
+	vm_log '✅✅✅ Tests passed.'
+}
+
+# Also support sourcing the entry function in local regression fixtures.
+if [[ ${BASH_SOURCE[0]:-$0} == "$0" ]]; then run_guest_tests "$@"; fi

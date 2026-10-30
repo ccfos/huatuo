@@ -31,11 +31,11 @@ readonly CPUSYS_PROC_STAT="${CPUSYS_FIXTURE_ROOT}/proc/stat"
 readonly CPUSYS_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/cpusys"
 export CPUSYS_PERF_CALLS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/perf.calls"
 
-mkdir -p "${CPUSYS_FIXTURE_ROOT}/proc" "${CPUSYS_FIXTURE_ROOT}/tools"
+mkdir -p "${CPUSYS_FIXTURE_ROOT}/proc" "${CPUSYS_FIXTURE_ROOT}/sys" "${CPUSYS_FIXTURE_ROOT}/tools"
 # Sample 1: user=100, nice=0, system=100, idle=800, total=1000.
 # The daemon reads this initial value before starting its sampling ticker.
 cp "${HUATUO_BAMAI_TEST_FIXTURES}/proc/stat" "${CPUSYS_PROC_STAT}"
-cp "${HUATUO_BAMAI_TEST_FIXTURES}/tools/perf" "${CPUSYS_FIXTURE_ROOT}/tools/perf"
+cp "${ROOT_DIR}/integration/testdata/tools/test_perf.sh" "${CPUSYS_FIXTURE_ROOT}/tools/perf"
 
 # $1 contains cumulative user, nice, system, and idle ticks in /proc/stat
 # order. cpusys calculates total as their sum and system usage from deltas.
@@ -78,7 +78,7 @@ cpusys_event_is_valid() {
 }
 
 integration_huatuo_bamai_start \
-	write_cpusys_autotracing_config \
+	write_config_bamai_cpusys_autotracing \
 	--region dev \
 	--procfs-prefix "${CPUSYS_FIXTURE_ROOT}" \
 	--tools-bin-dir "${CPUSYS_FIXTURE_ROOT}/tools" \

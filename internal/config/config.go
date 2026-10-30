@@ -32,6 +32,8 @@ var (
 	CoreBinDir = ""
 	// CoreBpfDir is the directory where BPF object files are stored.
 	CoreBpfDir = ""
+	// CoreAPIAddress is the local Node API endpoint passed to child tools.
+	CoreAPIAddress = "127.0.0.1:19704"
 )
 
 func init() {
@@ -52,9 +54,36 @@ func Load(path string, dst any) error {
 	return toml.NewDecoder(f).Strict(true).Decode(dst)
 }
 
-// Sync atomically replaces path with the TOML encoding of src. Callers must
-// prevent concurrent mutation of src until Sync returns.
+// Sync atomically replaces the configuration target with the TOML encoding of
+// src, following existing symlinks. Broken symlinks are rejected. Callers must
+// prevent concurrent mutation of src until Sync returns. Sync does not coordinate
+// concurrent filesystem changes by other processes.
 func Sync(path string, src any) (retErr error) {
+	info, err := os.Lstat(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspecting config path %q: %w", path, err)
+	}
+
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		// Rename must replace the target rather than the configured link.
+		resolved, resolveErr := filepath.EvalSymlinks(path)
+		if resolveErr != nil {
+			return fmt.Errorf("resolving config symlink %q: %w", path, resolveErr)
+		}
+
+		info, err = os.Stat(resolved)
+		if err != nil {
+			return fmt.Errorf("inspecting config target %q: %w", resolved, err)
+		}
+
+		path = resolved
+	}
+
+	mode := os.FileMode(0o600)
+	if err == nil {
+		mode = info.Mode().Perm()
+	}
+
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -73,14 +102,6 @@ func Sync(path string, src any) (retErr error) {
 		}
 	}()
 
-	mode := os.FileMode(0o600)
-	info, err := os.Stat(path)
-	switch {
-	case err == nil:
-		mode = info.Mode().Perm()
-	case !errors.Is(err, os.ErrNotExist):
-		return fmt.Errorf("stating config file: %w", err)
-	}
 	if err := f.Chmod(mode); err != nil {
 		return fmt.Errorf("setting temporary config file permissions: %w", err)
 	}

@@ -1,5 +1,5 @@
 ---
-title: Events Watch
+title: Kernel Event Subscription
 type: docs
 description: ""
 author: HUATUO Team
@@ -7,91 +7,180 @@ date: 2026-07-27
 weight: 3
 ---
 
-{{% alert color="info" title="🎯 About HUATUO" %}}
-<div style="text-align: center;">
-HUATUO is an operating system observability project open-sourced by DiDi and incubated under CCF (China Computer Federation). It provides kernel-level deep observability for cloud-native general computing, AI computing, cloud services, and foundational services.
-</div>
-{{% /alert %}}
+## Overview
 
-## 📖 Overview
+`/v1/events/watch` is HUATUO's real-time kernel event subscription interface. A client opens one persistent HTTP POST connection to receive abnormal kernel events from a node. Events use [CloudEvents 1.0](https://cloudevents.io/) envelopes and are delivered through [Server-Sent Events (SSE)](https://html.spec.whatwg.org/multipage/server-sent-events.html).
 
-`/v1/events/watch` is HUATUO's real-time kernel event subscription endpoint. A single HTTP POST long-lived connection streams kernel anomaly events from the node continuously. Events are wrapped in the [CloudEvents 1.0](https://cloudevents.io/) specification and delivered via the [Server-Sent Events (SSE)](https://html.spec.whatwg.org/multipage/server-sent-events.html) protocol.
+## Use Cases
 
----
+| Goal | Approach |
+| --- | --- |
+| Integrate with alerting or diagnostic platforms | Subscribe by node, namespace, and event type; assess impact alongside application metrics |
+| Record a timeline of anomalies | Write events to a message queue or storage for later queries |
+| Validate test scenarios | Observe target events and context during load tests or fault injection |
 
-## 🎯 Use Cases
+Subscription results are diagnostic evidence. They do not guarantee coverage of every anomaly and cannot alone justify restarts, isolation, or scaling.
 
-Kernel event subscription surfaces OS-level anomaly signals directly to higher-level systems, eliminating the latency and overhead of traditional polling. The following are typical integration scenarios.
+## Server Configuration
 
-### Fault Self-Healing
+Configure event streaming in the `[HTTPServer]` section of the HUATUO configuration:
 
-Kernel events are the primary signal source for self-healing decisions. After subscribing to `events/watch`, a healing controller can trigger remediation the moment an event occurs, without waiting for an alert to propagate through a monitoring pipeline:
+```toml
+[HTTPServer]
+    # Maximum concurrent clients; new connections above this limit receive HTTP 429
+    # Default: 100
+    MaxEventStreamClients = 100
 
-- **OOM self-healing**: On receiving a `memory_oom_kill` event, immediately scale, restart, or drain traffic from the triggering container. Reduces service interruption from minutes to seconds.
-- **Hung task self-healing**: On receiving a `hungtask` event, automatically cordon the node and evict Pods to prevent cascading blockage from spreading across the cluster.
-- **Network fault self-healing**: On receiving a `netdev_txqueue_timeout` or `netdev_bonding_lacp` event, trigger a NIC reset or traffic failover to restore the network link within minutes.
-- **I/O storm self-healing**: On receiving an `iotracing` event, dynamically throttle the affected container's disk I/O quota via cgroup blkio to protect co-located services on the same node.
+    # SSE heartbeat interval in seconds, preventing proxy/load-balancer idle timeouts
+    # Close a client connection after 3 consecutive heartbeat write failures
+    # Default: 30
+    EventStreamKeepAliveIntervalSeconds = 30
+```
 
-### Observability Platforms
-
-Integrating HUATUO kernel events into an observability platform adds a kernel-level perspective beyond application metrics and logs:
-
-- **Event timeline correlation**: Overlay `softlockup`, `memory_oom_kill`, and other kernel events onto Grafana timelines, aligning them precisely with application error rates and latency curves for root-cause analysis.
-- **Anomaly-driven alerting**: Replace fixed-threshold alerts with kernel events to reduce false positives. For example, a `ras` hardware error event triggers a high-priority alert directly, without relying on a CPU error rate crossing a threshold.
-- **Capacity and stability analysis**: Subscribe to `memburst`, `dload`, and other AutoTracing events over time to establish a node stability baseline and provide kernel-level data for capacity planning.
-- **Multi-dimensional drill-down**: Events carry container ID, namespace, region, and other context fields. Alert links can drill down directly to the corresponding Pod, Node, or Region view.
-
-### Security Auditing and Compliance
-
-- **Anomalous behavior detection**: A cluster of `memory_oom_kill`, `hungtask`, or `softlockup` events outside business peak hours may indicate resource abuse or a malicious workload, triggering a security review workflow.
-- **Event retention and traceability**: Write the CloudEvents stream to a message queue (Kafka, Pulsar) or object storage to satisfy the event retention requirements of security compliance frameworks.
-
-### Chaos Engineering and Load Testing
-
-- **Fault injection verification**: After injecting network latency or memory pressure via a chaos engineering platform, subscribe to `net_rx_latency` and `memburst` events in real time to verify the fault is active, replacing manual observation.
-- **Load test baseline**: Subscribe to all events during a load test. The timestamp of the first kernel anomaly event precisely marks the system's stress threshold.
-
-### AIOps
-
-- **Event-driven root-cause analysis**: Feed kernel events as features into AI/ML models alongside application metrics for multi-dimensional root-cause inference, reducing manual investigation time.
-- **Predictive maintenance**: Model `ras` hardware errors and `netdev_bonding_lacp` hardware-layer events to detect anomalies before a device fails completely, triggering proactive migration.
-- **Intelligent suppression and aggregation**: Automatically aggregate similar events within the same time window to avoid alert storms. Deliver a concise root-cause summary to on-call engineers.
-
----
-
-## 💎 Value
-
-| Dimension | Traditional Approach | With HUATUO events/watch |
+| Setting | Default | Description |
 |---|---|---|
-| Timeliness | Alert trigger latency: 1–5 minutes | Real-time kernel event push; latency < 1 s |
-| Signal accuracy | Metric threshold-based; high false-positive rate | Events originate from kernel decisions; false-positive rate near zero |
-| Context richness | Limited metric dimensions | Full context: container, node, region, and more |
-| Integration cost | Requires custom eBPF collection or a third-party agent | Single HTTP POST to subscribe; standard CloudEvents format |
-| Protocol compatibility | Vendor-specific formats | Follows CloudEvents 1.0; compatible with any conformant platform |
+| `MaxEventStreamClients` | 100 | Maximum persistent `/v1/events/watch` connections; excess connections receive HTTP 429 |
+| `EventStreamKeepAliveIntervalSeconds` | 30 | Heartbeat interval; keep it below the upstream proxy's idle timeout |
 
----
+## Subscription API
 
-## 🚀 Usage
+### Endpoint
 
-### 1. CloudEvents Specification
+```http
+POST /v1/events/watch
+```
 
-#### 1.1 CloudEvents 1.0 Envelope Fields
+### Request Headers
 
-Each pushed event is a JSON object conforming to the CloudEvents 1.0 specification:
+```http
+Authorization: Bearer <node-token>
+Content-Type: application/json
+```
+
+### Request Body
+
+```json
+{
+  "filters": {
+    "tracer_name": "<regex>",
+    "hostname": "<regex>",
+    "container_hostname": "<regex>",
+    "container_host_namespace": "<regex>",
+    "container_qos": "<regex>",
+    "region": "<regex>"
+  }
+}
+```
+
+**Filter fields:**
+
+| Field | Type | Required | Description |
+|----------------------------|------|--------|----------------------------------------------|
+| `tracer_name` | string | No | Filter by collector name; supports regular expressions |
+| `hostname` | string | No | Filter by node hostname; supports regular expressions |
+| `container_hostname` | string | No | Filter by container hostname; supports regular expressions |
+| `container_host_namespace` | string | No | Filter by container namespace; supports regular expressions |
+| `container_qos` | string | No | Filter by container QoS; supports regular expressions |
+| `region` | string | No | Filter by region; supports regular expressions |
+
+- All filter fields are optional; omitted or empty fields match all values.
+- Multiple fields must **all match** (AND semantics).
+- Filters run on the server; only matching events are delivered.
+
+### Response Format (SSE)
+
+After establishing the connection, the server continuously sends SSE events:
+
+```text
+data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom_kill",...}\n\n
+```
+
+The server also sends periodic heartbeat comment lines to keep the connection alive:
+
+```text
+: ping\n
+```
+
+## curl Examples
+
+### Subscribe to All Kernel Events
+
+```bash
+curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -H "Cache-Control: no-cache" \
+  -H "Connection: keep-alive" \
+  -d '{}'
+```
+
+### Subscribe to OOM Events
+
+```bash
+curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -H "Cache-Control: no-cache" \
+  -H "Connection: keep-alive" \
+  -d '{"filters": {"tracer_name": "^memory_oom_kill$"}}'
+```
+
+### Subscribe to Network Events on a Node
+
+```bash
+curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -H "Cache-Control: no-cache" \
+  -H "Connection: keep-alive" \
+  -d '{
+    "filters": {
+      "hostname": "^node-1$",
+      "tracer_name": "netdev|dropwatch|net_rx_latency"
+    }
+  }'
+```
+
+### Subscribe to Container Events in the prod Namespace
+
+```bash
+curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
+  -H "Authorization: Bearer <node-token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -H "Cache-Control: no-cache" \
+  -H "Connection: keep-alive" \
+  -d '{
+    "filters": {
+      "container_host_namespace": "^prod$"
+    }
+  }'
+```
+
+> **Note:** `-N` disables curl buffering so SSE events appear immediately in the terminal.
+
+## Event Format
+
+### CloudEvents Fields
+
+Each delivered event is a JSON object conforming to CloudEvents 1.0:
 
 | Field | Type | Description |
-|---|---|---|
-| `specversion` | string | Fixed value `"1.0"` |
-| `id` | string | Unique event identifier (UUID v4), generated independently per event |
-| `source` | string | Event source path, format: `/huatuo/{hostname}/{tracer_name}` |
-| `type` | string | Fixed value `"tech.huatuo.kernel.event"` |
-| `datacontenttype` | string | Fixed value `"application/json"` |
-| `time` | string | Event collection timestamp (RFC 3339, nanosecond precision, UTC) |
-| `data` | object | Event payload — the `WatchEventData` struct |
+|-------------------|------|---------------------------------------------------------|
+| `specversion` | string | Always `"1.0"` |
+| `id` | string | Unique event ID (UUID v4), generated independently for each event |
+| `source` | string | Event source path: `/huatuo/{hostname}/{tracer_name}` |
+| `type` | string | Always `"tech.huatuo.kernel.event"` |
+| `datacontenttype` | string | Always `"application/json"` |
+| `time` | string | Event collection time (RFC 3339, nanosecond precision, UTC) |
+| `data` | object | Event body, the `WatchEventData` structure |
 
-#### 1.2 HUATUO Event Payload (WatchEventData)
+### Event Data
 
-The `data` field contains the standard HUATUO event record:
+The `data` field contains a standard HUATUO event record:
 
 ```json
 {
@@ -117,199 +206,48 @@ The `data` field contains the standard HUATUO event record:
 }
 ```
 
-**WatchEventData field reference:**
+**WatchEventData fields:**
 
 | Field | Type | Description |
-|---|---|---|
+|----------------------------|------|---------------------------------------------|
 | `hostname` | string | Node hostname |
-| `region` | string | Region where the node is located |
-| `observed_timestamp` | string | UTC time when the event producer observed the event in userspace |
-| `kernel_observed_timestamp` | string | Optional UTC time when the kernel observed the event |
-| `tracer_name` | string | Name of the tracer that triggered the event (see the event list below) |
-| `tracer_id` | string | Unique ID of this event instance |
-| `tracer_run_type` | string | Collection mode: `auto` (triggered automatically) or `manual` |
-| `container_id` | string | Container ID (present for container-level events) |
+| `region` | string | Node region |
+| `observed_timestamp` | string | UTC time when the producer observes the event in user space |
+| `kernel_observed_timestamp` | string | Optional kernel observation time in UTC |
+| `tracer_name` | string | Collector that triggered the event (see the event types below) |
+| `tracer_id` | string | Unique event instance ID |
+| `tracer_run_type` | string | Collection mode: `auto` (automatically triggered) or `manual` |
+| `container_id` | string | Container ID, present for container-level events |
 | `container_hostname` | string | Container hostname |
-| `container_host_namespace` | string | Namespace of the container |
-| `container_type` | string | Container runtime type (docker, containerd, etc.) |
-| `container_qos` | string | Container QoS class (`unknown`, `guaranteed`, `burstable`, or `besteffort`) |
+| `container_host_namespace` | string | Container namespace |
+| `container_type` | string | Container runtime type, such as docker or containerd |
+| `container_qos` | string | Container QoS class |
 
----
-
-### 2. Supported Kernel Events
+## Event Types
 
 | `tracer_name` | Description |
-|---|---|
-| `memory_oom_kill` | Out-of-memory (OOM Killer) triggered event |
-| `hungtask` | Kernel task stuck in D state (Hung Task) detection |
+|--------------------------|-----------------------------------------------|
+| `memory_oom_kill` | Out-of-memory (OOM Killer) events |
+| `hungtask` | Kernel detection of tasks in prolonged D state |
 | `softlockup` | CPU soft lockup detection |
 | `ras` | Hardware reliability (RAS) errors, such as ECC memory errors |
-| `dropwatch` | Kernel network packet drop (Drop Watch) events |
-| `netdev_events` | Network device state change events (Link Up/Down, etc.) |
-| `netdev_txqueue_timeout` | Network device transmit queue timeout events |
-| `netdev_bonding_lacp` | Bond device LACP protocol anomaly events |
-| `net_rx_latency` | Network receive latency anomaly events |
-| `sched_tick` | Scheduler tick interval tracing events |
-| `memory_reclaim_events` | Memory reclaim anomaly events |
-| `cpuidle` | CPU idle rate anomaly (AutoTracing, auto-triggered) |
-| `cpusys` | CPU system-mode usage anomaly (AutoTracing, auto-triggered) |
-| `dload` | System load anomaly (AutoTracing, auto-triggered) |
-| `iotracing` | I/O latency anomaly (AutoTracing, auto-triggered) |
-| `memburst` | Memory usage spike anomaly (AutoTracing, auto-triggered) |
+| `dropwatch` | Kernel packet drop events |
+| `netdev_events` | Network device state changes, such as Link Up/Down |
+| `netdev_txqueue_timeout` | Network device transmit queue timeouts |
+| `netdev_bonding_lacp` | Bond device LACP protocol anomalies |
+| `net_rx_latency` | Abnormal network receive latency |
+| `sched_tick` | Abnormal scheduling tick intervals |
+| `memory_reclaim_events` | Memory reclaim anomalies |
+| `cpuidle` | Abnormal CPU idle utilization (triggered by AutoTracing) |
+| `cpusys` | Abnormal system-mode CPU utilization (triggered by AutoTracing) |
+| `dload` | Abnormal system load (triggered by AutoTracing) |
+| `iotracing` | Abnormal I/O latency (triggered by AutoTracing) |
+| `io_health` | Block, NVMe, SCSI, and MD health events |
+| `memburst` | Memory usage bursts (triggered by AutoTracing) |
 
----
+## Go Client
 
-### 3. POST Request Reference
-
-#### 3.1 Endpoint
-
-```http
-POST /v1/events/watch
-```
-
-#### 3.2 Request Headers
-
-```http
-Authorization: Bearer <node-token>
-Content-Type: application/json
-```
-
-#### 3.3 Request Body
-
-```json
-{
-  "filters": {
-    "tracer_name": "<regex>",
-    "hostname": "<regex>",
-    "container_hostname": "<regex>",
-    "container_host_namespace": "<regex>",
-    "container_qos": "<regex>",
-    "region": "<regex>"
-  }
-}
-```
-
-**`filters` field reference:**
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `tracer_name` | string | No | Filter by tracer name; supports regular expressions |
-| `hostname` | string | No | Filter by node hostname; supports regular expressions |
-| `container_hostname` | string | No | Filter by container hostname; supports regular expressions |
-| `container_host_namespace` | string | No | Filter by container namespace; supports regular expressions |
-| `container_qos` | string | No | Filter by container QoS; supports regular expressions |
-| `region` | string | No | Filter by region; supports regular expressions |
-
-- All filter fields are optional. Omitting or leaving a field empty matches all values.
-- When multiple fields are specified, all conditions must be satisfied simultaneously (AND semantics).
-- Filters are evaluated server-side; only matching events are pushed to the client.
-
-#### 3.4 Response Format (SSE Stream)
-
-After the connection is established, the server continuously pushes events in SSE format:
-
-```text
-data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/memory_oom_kill",...}\n\n
-```
-
-The server also sends periodic heartbeat comment lines to keep the connection alive:
-
-```text
-: ping\n
-```
-
----
-
-### 4. HTTP Server Event Stream Configuration
-
-Configure the event stream controls under `[HTTPServer]`:
-
-```toml
-[HTTPServer]
-    # Maximum number of concurrent client connections. New connections receive HTTP 429 when the limit is reached.
-    # Default: 100
-    MaxEventStreamClients = 100
-
-    # SSE heartbeat interval in seconds. Prevents proxies and load balancers from closing idle connections.
-    # The connection is closed after three consecutive heartbeat write failures.
-    # Default: 30
-    EventStreamKeepAliveIntervalSeconds = 30
-```
-
-| Field | Default | Description |
-|---|---|---|
-| `MaxEventStreamClients` | 100 | Maximum concurrent `/v1/events/watch` connections. Excess connections receive HTTP 429. |
-| `EventStreamKeepAliveIntervalSeconds` | 30 | Heartbeat interval. Keep it below the upstream proxy's idle timeout. |
-
----
-
-### 5. curl Examples
-
-#### 5.1 Subscribe to All Kernel Events
-
-```bash
-curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
-  -H "Authorization: Bearer <node-token>" \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -H "Cache-Control: no-cache" \
-  -H "Connection: keep-alive" \
-  -d '{}'
-```
-
-#### 5.2 Subscribe to OOM Events Only
-
-```bash
-curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
-  -H "Authorization: Bearer <node-token>" \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -H "Cache-Control: no-cache" \
-  -H "Connection: keep-alive" \
-  -d '{"filters": {"tracer_name": "^memory_oom_kill$"}}'
-```
-
-#### 5.3 Subscribe to Network Events on a Specific Node
-
-```bash
-curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
-  -H "Authorization: Bearer <node-token>" \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -H "Cache-Control: no-cache" \
-  -H "Connection: keep-alive" \
-  -d '{
-    "filters": {
-      "hostname": "^node-1$",
-      "tracer_name": "netdev|dropwatch|net_rx_latency"
-    }
-  }'
-```
-
-#### 5.4 Subscribe to Container Events in the prod Namespace
-
-```bash
-curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
-  -H "Authorization: Bearer <node-token>" \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -H "Cache-Control: no-cache" \
-  -H "Connection: keep-alive" \
-  -d '{
-    "filters": {
-      "container_host_namespace": "^prod$"
-    }
-  }'
-```
-
-> **Note:** The `-N` flag disables curl buffering, causing SSE events to be printed to the terminal immediately.
-
----
-
-### 6. Generated Go Client Example
-
-`POST /v1/events/watch` is part of the Node OpenAPI contract. The generated
-client supplies the request and event types used below.
+`POST /v1/events/watch` is included in the Node OpenAPI contract. This example uses the generated request types, event types, and client directly.
 
 ```go
 package main
@@ -362,7 +300,7 @@ func watchEvents(
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// skip heartbeat comment lines and blank lines
+		// Skip heartbeat comments and empty lines.
 		if line == "" || strings.HasPrefix(line, ":") {
 			continue
 		}
@@ -406,16 +344,13 @@ func main() {
 }
 ```
 
-#### 6.1 Streaming Client Selection
+### Choose a Streaming Client
 
-Use the generated `Client.WatchEvents` method, which returns the raw
-`http.Response`. Do not use `ClientWithResponses.WatchEventsWithResponse` for
-this endpoint: that helper reads the body to EOF, while an SSE stream normally
-remains open until its context is canceled.
+Use the generated `Client.WatchEvents` method to obtain an `http.Response` directly. Do not use `ClientWithResponses.WatchEventsWithResponse` for this endpoint: it reads the response body until EOF, while an SSE connection normally remains open until the caller cancels its context.
 
-#### 6.2 Reconnection
+### Reconnect After Disconnection
 
-In production, network interruptions or service restarts will drop the connection. Use exponential backoff to reconnect:
+Network interruptions or service restarts can disconnect clients in production. Add reconnection logic with exponential backoff:
 
 ```go
 func watchWithRetry(
@@ -431,7 +366,7 @@ func watchWithRetry(
 				return
 			}
 			slog.Warn("disconnected, retrying", "err", err, "backoff", backoff)
-			// time.NewTimer + Stop releases the timer immediately when the context is cancelled
+			// time.NewTimer + Stop releases timer resources immediately on context cancellation.
 			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
@@ -447,99 +382,29 @@ func watchWithRetry(
 }
 ```
 
----
+## How It Works
 
-## ⚙️ How It Works
-
-### Architecture
-
-HUATUO Agent runs on each node. It hooks into critical kernel paths via eBPF, Kprobe, and Tracepoint, collects kernel anomaly events, applies filters, wraps them as CloudEvents, and pushes them to multiple concurrent SSE subscribers.
-
-```mermaid
-graph TB
-    subgraph kernel["Linux Kernel"]
-        K1[OOM Killer]
-        K2[Hung Task Detection]
-        K3[Soft Lockup Detection]
-        K4[RAS Hardware Errors]
-        K5[Network Subsystem]
-        K6[AutoTracing]
-    end
-
-    subgraph huatuo["HUATUO Agent (per node)"]
-        T["Tracer Collection Layer\neBPF / Kprobe / Tracepoint"]
-        F["Filter\nhostname / tracer / namespace / region"]
-        CE["CloudEvents 1.0 Wrapper\nid / source / time / data"]
-        EW["EventsWatch Dispatcher\nSSE connection management"]
-    end
-
-    subgraph clients["Subscribers"]
-        C1[Fault Self-Healing System]
-        C2[Observability Platform]
-        C3[AIOps System]
-        C4[Security Audit System]
-    end
-
-    kernel --> T
-    T --> F
-    F --> CE
-    CE --> EW
-    EW -->|SSE push| C1
-    EW -->|SSE push| C2
-    EW -->|SSE push| C3
-    EW -->|SSE push| C4
-```
-
-### Event Collection and Push
-
-After the client issues a POST request, the connection stays open. Each time the kernel triggers an anomaly event, HUATUO Agent filters and wraps it, then writes it immediately to all matching SSE streams. No client polling is required.
+The client keeps its SSE connection open after the POST request. The node collects kernel events, filters them by subscription, and sends matching events in CloudEvents envelopes without client polling. Heartbeats follow the configured interval. Delivery latency depends on collection, processing, and network conditions.
 
 ```mermaid
 sequenceDiagram
     participant C as Client
     participant EW as EventsWatch
-    participant T as Tracer Layer
-    participant K as Linux Kernel
+    participant T as Tracer collection layer
+    participant K as Linux kernel
 
     C->>EW: POST /v1/events/watch {"filters": {...}}
     EW-->>C: 200 OK (Content-Type: text/event-stream)
 
-    loop SSE long-lived connection
-        K->>T: Kernel event triggered (memory_oom_kill / hungtask / softlockup ...)
+    loop Continuous delivery over SSE
+        K->>T: Kernel event (memory_oom_kill / hungtask / softlockup ...)
         T->>EW: Report raw event
-        EW->>EW: Apply filter
-        alt Filter matched
+        EW->>EW: Match filters
+        alt Match
             EW-->>C: data: {CloudEvents JSON}\n\n
         else No match
-            note over EW: Discard, do not push
+            note over EW: Discard without delivery
         end
-        EW-->>C: : ping (keepalive, configured interval)
+        EW-->>C: : ping (heartbeat at the configured interval)
     end
 ```
-
-### Event Processing Pipeline
-
-From kernel event generation to client delivery, three stages are involved: collection, filtering, and wrapping. End-to-end latency is under 1 second.
-
-```mermaid
-flowchart LR
-    A([Kernel anomaly triggered]) --> B["Tracer collection\neBPF / Kprobe"]
-    B --> C{Filter matched?}
-    C -- No --> D([Discard])
-    C -- Yes --> E["Wrap as CloudEvents 1.0\nid / source / time / data"]
-    E --> F[Write to SSE stream]
-    F --> G([Push to subscribers])
-```
-
----
-
-## 🌟 Stay Connected
-
-{{% alert color="info" %}}
-<div style="text-align: center;">
-🌟 Star us on GitHub: <a href="https://github.com/ccfos/huatuo" target="_blank">https://github.com/ccfos/huatuo</a>
-<br><br>
-👀 Follow our official WeChat public account<br>
-<img src="/img/contact-weixin.png" alt="WeChat QR code" style="max-width: 200px; margin-top: 10px;">
-</div>
-{{% /alert %}}
