@@ -525,6 +525,24 @@ write_config_bamai_memory_metrics() {
 	write_config_bamai_auth "integration-node-token"
 }
 
+# The caller provides kubelet connection details and metric filter parameters.
+write_config_container_memory_metrics() {
+	write_config_bamai_memory_metrics
+	cat << CONFIG
+[Pod]
+ KubeletReadOnlyPort = 0
+ KubeletAuthorizedPort = ${kubelet_port}
+ KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+[MetricCollector.Vmstat]
+ IncludedOnHost = "^$"
+ IncludedOnContainer = "${vmstat_include}"
+ ExcludedOnContainer = "${vmstat_exclude}"
+[MetricCollector.MemoryEvents]
+ Included = "${events_include}"
+ Excluded = "${events_exclude}"
+CONFIG
+}
+
 # OOM capture uses host memory data; threshold snapshots need a container manager.
 write_config_bamai_memory_oom_kill() {
 	write_config_blacklist \
