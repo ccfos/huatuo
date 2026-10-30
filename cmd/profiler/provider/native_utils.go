@@ -17,6 +17,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 
 	"github.com/ccfos/huatuo/client"
@@ -24,14 +25,67 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
+
+	"golang.org/x/sys/unix"
 )
 
-func newNativeBPFConstants(pid int, cssAddr uint64, threadGroup bool) map[string]any {
+type nativeCgroupTarget struct {
+	CSS uint64
+	ID  uint64
+}
+
+func newNativeBPFConstants(pid int, target nativeCgroupTarget, threadGroup bool) map[string]any {
 	return map[string]any{
-		"profiler_filter_css":     cssAddr,
-		"profiler_filter_pid":     uint32(pid),
-		"profiler_filter_threads": threadGroup,
+		"profiler_filter_css":       target.CSS,
+		"profiler_filter_cgroup_id": target.ID,
+		"profiler_filter_pid":       uint32(pid),
+		"profiler_filter_threads":   threadGroup,
 	}
+}
+
+func resolveContainerCgroupTarget(ctx context.Context, cfg *Config, subsys string) (nativeCgroupTarget, error) {
+	if cfg.ContainerID == "" {
+		return nativeCgroupTarget{}, nil
+	}
+	path, err := pod.ContainerCgroupPathBySubsys(cfg.ContainerID, subsys)
+	if err != nil {
+		return nativeCgroupTarget{}, fmt.Errorf("resolve target %s cgroup: %w", subsys, err)
+	}
+	id, err := nativeCgroupID(path)
+	if err != nil {
+		return nativeCgroupTarget{}, err
+	}
+	css, err := resolveContainerCgroupCss(ctx, cfg, subsys)
+	if err != nil {
+		return nativeCgroupTarget{}, err
+	}
+	// CSS discovery may take time; never bind a replacement at the same path.
+	currentID, err := nativeCgroupID(path)
+	if err != nil {
+		return nativeCgroupTarget{}, err
+	}
+	if currentID != id {
+		return nativeCgroupTarget{}, fmt.Errorf("target cgroup %q changed during profiler startup", path)
+	}
+	if css == 0 {
+		return nativeCgroupTarget{}, fmt.Errorf("container %q has no %s CSS address", cfg.ContainerID, subsys)
+	}
+	return nativeCgroupTarget{CSS: css, ID: id}, nil
+}
+
+func nativeCgroupID(path string) (uint64, error) {
+	handle, _, err := unix.NameToHandleAt(unix.AT_FDCWD, path, unix.AT_SYMLINK_FOLLOW)
+	if err != nil {
+		return 0, fmt.Errorf("read target cgroup identity %q: %w", path, err)
+	}
+	if handle.Size() != 8 {
+		return 0, fmt.Errorf("target cgroup %q has unsupported file handle size %d", path, handle.Size())
+	}
+	id := binary.NativeEndian.Uint64(handle.Bytes())
+	if id == 0 {
+		return 0, fmt.Errorf("target cgroup %q has zero instance ID", path)
+	}
+	return id, nil
 }
 
 func taskCommString(comm [bpf.TaskCommLen]byte) string {
