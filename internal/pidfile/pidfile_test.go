@@ -78,7 +78,7 @@ func TestLock_AlreadyLocked(t *testing.T) {
 
 	// Record a foreign pid so a lost file cannot be masked by os.Getpid().
 	const ownerPid = 4242
-	require.NoError(t, os.WriteFile(path(name), []byte(strconv.Itoa(ownerPid)), 0o644))
+	require.NoError(t, os.WriteFile(path(name), []byte(strconv.Itoa(ownerPid)), 0o600))
 
 	_, err = Lock(name)
 	require.Error(t, err)
