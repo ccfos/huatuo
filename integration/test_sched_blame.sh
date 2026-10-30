@@ -20,6 +20,7 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/config.sh"
 
 kernel_version_le 6 5 || skip "SchedBlame requires Linux 4.18 through 6.5"
 kernel_version_le 4 17 && skip "SchedBlame requires Linux 4.18 through 6.5"
@@ -144,13 +145,13 @@ start_workload "${TARGET_POD}" target
 target_container_id=${workload_container_id}
 start_workload "${COMPETITOR_POD}" competitor
 
-cat > "${HUATUO_BAMAI_TEST_TMPDIR}/sched-blame.conf" << EOF
+{
+	cat << EOF
 [Log]
     Level = "debug"
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = 10250
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+EOF
+	write_config_bamai_pod
+	cat << EOF
 [AutoTracing.SchedBlame]
     TargetContainerScope = "normal"
     SliceDropPercent = 0
@@ -161,6 +162,7 @@ cat > "${HUATUO_BAMAI_TEST_TMPDIR}/sched-blame.conf" << EOF
     PerfEventWatermarkBytes = 8192
     PerfEventQueueRecords = 8192
 EOF
+} > "${HUATUO_BAMAI_TEST_TMPDIR}/sched-blame.conf"
 "${SCHED_BLAME_BIN}" --config "${HUATUO_BAMAI_TEST_TMPDIR}/sched-blame.conf" \
 	--bpf-dir "${BPF_DIR}" --output-file "${HUATUO_BAMAI_TEST_TMPDIR}/events.txt" \
 	--highlight-container "${TARGET_POD}" --ratio-debug-file "${RATIO_FILE}" --log-debug \

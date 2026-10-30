@@ -27,6 +27,17 @@ write_config_blacklist() {
 	printf ']\n'
 }
 
+write_config_bamai_pod() {
+	local port=${1:-10250}
+	cat << EOF
+
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${port}
+    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
+EOF
+}
+
 write_config_bamai_auth() {
 	local token=$1
 	cat << EOF
@@ -476,12 +487,7 @@ write_config_bamai_apiserver_profiling() {
     MaxConcurrent = ${NODE_CAPACITY}
 CONFIG
 	if [[ -n "$POD_NAMESPACE" ]]; then
-		cat << CONFIG
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = 10250
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
-CONFIG
+		write_config_bamai_pod
 	fi
 }
 
@@ -541,12 +547,8 @@ write_config_bamai_memory_threshold_snapshot() {
 		"iocost" "blk_throtl" "io_health" "sched-blame"
 	write_config_bamai_http "127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
 	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_pod "${GO_SNAPSHOT_KUBELET_PORT}"
 	cat << EOF
-
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = ${GO_SNAPSHOT_KUBELET_PORT}
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
 
 [AutoTracing.MemoryThresholdSnapshot]
     ThresholdPercent = 50
