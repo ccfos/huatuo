@@ -94,3 +94,36 @@ assert_storage_values ratio '["1.25","2.5"]'
 assert_storage_values unsigned '["42","7"]'
 assert_storage_values empty '[]'
 assert_storage_values unmapped '[]'
+
+assert_read_value_counts() {
+	local selector=$1 expected=$2 value=${3:-}
+	"${VALUES_BIN}" --read-query --address "${STORAGE_ADDR}" --index "${selector}" \
+		--field label --value "${value}" > "${VALUES_RESPONSE}" 2> "${VALUES_ERRORS}" \
+		|| fatal "shared read aggregation failed: $(< "${VALUES_ERRORS}")"
+	jq -e --argjson expected "${expected}" '. == $expected' "${VALUES_RESPONSE}" \
+		> /dev/null || fatal "shared read aggregation returned $(< "${VALUES_RESPONSE}"), want ${expected}"
+}
+
+assert_read_value_counts "${VALUES_INDEX}" '[{"value":"node-a","count":2},{"value":"node-b","count":1}]'
+
+# Mixing native keyword and text projections must retain the configured selector,
+# including alias filters, instead of dispatching to physical indices separately.
+curl -fsS "${CURL_TIMEOUT[@]}" -X PUT "${STORAGE_ADDR}/${VALUES_INDEX}_legacy" \
+	-H 'Content-Type: application/json' \
+	-d '{"mappings":{"properties":{"label":{"type":"text","fields":{"keyword":{"type":"keyword"}}},"number":{"type":"long"}}}}' \
+	> "${VALUES_RESPONSE}" || fatal "create legacy keyword mapping failed"
+curl -fsS "${CURL_TIMEOUT[@]}" -X POST "${STORAGE_ADDR}/${VALUES_INDEX}_legacy/_bulk?refresh=true" \
+	-H 'Content-Type: application/x-ndjson' \
+	--data-binary "@${HUATUO_BAMAI_TEST_TMPDIR}/values.ndjson" > "${VALUES_RESPONSE}" \
+	|| fatal "seed legacy keyword mapping failed"
+jq -e '.errors == false' "${VALUES_RESPONSE}" > /dev/null || fatal "legacy seed has failed bulk items"
+
+assert_read_value_counts "${VALUES_INDEX}_legacy" '[{"value":"node-a","count":2},{"value":"node-b","count":1}]'
+assert_read_value_counts "${VALUES_INDEX}*" '[{"value":"node-a","count":4},{"value":"node-b","count":2}]'
+assert_read_value_counts "${VALUES_INDEX}*" '[{"value":"node-b","count":2}]' node-b
+
+curl -fsS "${CURL_TIMEOUT[@]}" -X POST "${STORAGE_ADDR}/_aliases" \
+	-H 'Content-Type: application/json' \
+	-d "{\"actions\":[{\"add\":{\"index\":\"${VALUES_INDEX}*\",\"alias\":\"values_filtered\",\"filter\":{\"term\":{\"number\":42}}}}]}" \
+	> "${VALUES_RESPONSE}" || fatal "create filtered values alias failed"
+assert_read_value_counts values_filtered '[{"value":"node-a","count":4}]'

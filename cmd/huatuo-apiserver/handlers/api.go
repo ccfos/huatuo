@@ -21,7 +21,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
+
+	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
+	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
+	"google.golang.org/protobuf/proto"
 
 	apiv1 "github.com/ccfos/huatuo/apis/v1"
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
@@ -35,10 +40,6 @@ import (
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
-
-	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
-	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
-	"google.golang.org/protobuf/proto"
 )
 
 const maxRawProfileResponseBytes = 64 << 20
@@ -51,6 +52,7 @@ type APIHandler struct {
 	tracing      *tracehandler.Service
 	profileQuery profileQueryService
 	openAPI      serverapi.GetOpenAPI200JSONResponse
+	mcp          http.Handler
 }
 
 type profileQueryService interface {

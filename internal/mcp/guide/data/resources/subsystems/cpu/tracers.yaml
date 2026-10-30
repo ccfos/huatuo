@@ -1,0 +1,63 @@
+tracers:
+  cpusys:
+    description: Sudden increase in host system CPU time
+    target_type: [host]
+    has_profiler: true
+    key_fields:
+      sys:
+        description: Current system CPU utilization (%)
+        abnormal_threshold: 30
+      deltasys:
+        description: Increase in system CPU utilization (%)
+    match_field:
+      host: hostname
+    metric_keywords: [cpu_util, runqlat, loadavg]
+  cpuidle:
+    description: Container CPU idle time drops sharply
+    target_type: [container]
+    has_profiler: true
+    key_fields:
+      usage:
+        description: Total CPU utilization
+        abnormal_threshold: 90
+      user:
+        description: User CPU utilization
+      sys:
+        description: System CPU utilization
+        abnormal_threshold: 30
+    match_field:
+      container: container_hostname
+    metric_keywords: [cpu_util, runqlat]
+  dload:
+    description: Abnormal D-state load (tasks stuck in uninterruptible sleep)
+    target_type: [container]
+    has_profiler: false
+    key_fields:
+      nr_uninterruptible:
+        description: Number of tasks in D state
+        abnormal_threshold: 5
+      load_avg:
+        description: load average
+      dload_avg:
+        description: D-state load average (equal to nr_uninterruptible)
+    match_field:
+      container: container_hostname
+    metric_keywords: [loadavg]
+  softlockup:
+    description: CPU soft lockup
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      cpu:
+        description: CPU number affected by the soft lockup
+      pid:
+        description: PID of the task running during the soft lockup
+    match_field:
+      host: hostname
+    metric_keywords: [softlockup]
+
+related_tracers:
+  cpusys: [cpuidle, iotracing, memburst, softlockup]
+  cpuidle: [cpusys]
+  dload: [cpuidle, iotracing]
+  softlockup: [cpusys]

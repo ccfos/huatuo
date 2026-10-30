@@ -20,25 +20,28 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/urfave/cli/v2"
+
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/version"
-
-	"github.com/urfave/cli/v2"
 )
 
 const (
-	cliFlagConfig       = "config"
-	cliFlagConfigDir    = "config-dir"
-	cliFlagEnablePProf  = "enable-pprof"
-	cliFlagEnableCgroup = "enable-cgroup"
-	cliFlagLogDebug     = "log-debug"
+	mcpEnableEnvironmentVariable = "ENABLE_MCP"
+	cliFlagConfig                = "config"
+	cliFlagConfigDir             = "config-dir"
+	cliFlagEnableMCP             = "enable-mcp"
+	cliFlagEnablePProf           = "enable-pprof"
+	cliFlagEnableCgroup          = "enable-cgroup"
+	cliFlagLogDebug              = "log-debug"
 )
 
 // Options holds CLI-derived configuration independently of urfave/cli.
 type Options struct {
 	ConfigFile   string
 	ConfigDir    string
+	EnableMCP    bool
 	EnablePProf  bool
 	EnableCgroup bool
 	LogDebug     bool
@@ -85,6 +88,11 @@ func (o *Options) AddFlags(app *cli.App) {
 			Usage: "huatuo config dir",
 		},
 		&cli.BoolFlag{
+			Name:    cliFlagEnableMCP,
+			Usage:   "enable MCP endpoint for LLM agent integration on /v1/mcp",
+			EnvVars: []string{mcpEnableEnvironmentVariable},
+		},
+		&cli.BoolFlag{
 			Name:  cliFlagEnablePProf,
 			Usage: "package pprof serves via its HTTP server runtime profiling data, default(false)",
 		},
@@ -102,6 +110,7 @@ func (o *Options) AddFlags(app *cli.App) {
 // FromContext copies parsed flags into Options.
 func (o *Options) FromContext(ctx *cli.Context) error {
 	o.ConfigFile = ctx.String(cliFlagConfig)
+	o.EnableMCP = ctx.Bool(cliFlagEnableMCP)
 	o.EnablePProf = ctx.Bool(cliFlagEnablePProf)
 	o.EnableCgroup = ctx.Bool(cliFlagEnableCgroup)
 	o.LogDebug = ctx.Bool(cliFlagLogDebug)

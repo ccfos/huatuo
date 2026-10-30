@@ -308,3 +308,133 @@ When the backend is disabled, the endpoints remain registered, but raw Profile a
 | `DashboardBaseURL` | String. Empty by default, which omits Dashboard URLs. When set, must be an HTTP/HTTPS address with a host. The address in the configuration file is only an example. |
 
 Result links are generated only when a job has ended with a completed or unknown outcome and the query backend confirms that its data has been published. Profiler execution and aggregation settings are maintained in the node configuration.
+
+### 9. Model Context Protocol
+
+MCP provides read-only event queries, profiling data analysis, and metric queries without triggering
+collection. This example enables MCP; replace endpoints and indices with deployment
+values. Unconfigured backends expose no data tools; `diagnostic_guide` is always available.
+
+```toml
+[MCP]
+    Enabled = true
+    GuideOverlayDir = ""
+
+[[MCP.Events.Regions]]
+    NamePattern = "^us-"
+    Address = "http://127.0.0.1:9200"
+    Index = "huatuo_events"
+    AuthType = "none"
+
+[[MCP.Metrics.Regions]]
+    NamePattern = "^us-"
+    Address = "http://127.0.0.1:9090"
+    AuthType = "none"
+    MetricPrefix = "huatuo_"
+```
+
+#### Access and backends
+
+- **Endpoint:** `/v1/mcp` uses stateless Streamable HTTP on the API server's port
+  with existing bearer authentication. It is disabled by default; enable it with
+  `Enabled=true`, `--enable-mcp`, or `ENABLE_MCP=true`. Grant non-admin users
+  `POST /v1/mcp`, `GET /v1/mcp`, and `DELETE /v1/mcp` in `Permissions` as needed by their client.
+- **Events:** `storage` reads existing Elasticsearch/OpenSearch data using
+  the address and index directly in `[[MCP.Events.Regions]]`, independently of the global
+  `[Elasticsearch]` section. Elasticsearch and OpenSearch use the same read
+  implementation; no `Type` selector is required. The `elasticsearch` backend
+  label identifies their shared protocol, not the storage product.
+- **Backend authentication:** events use `AuthType="basic"` with `Username`/`Password`.
+  An empty AuthType uses paired credentials when supplied; `none` ignores them
+  and reads anonymously. Prometheus supports `none`/empty for anonymous access
+  (credentials must be omitted), `bearer` with `AuthToken`, or `basic` with
+  `AuthUser`/`AuthPass`. Connection URLs must not contain credentials.
+- **Startup:** configuration is decoded strictly and invalid settings prevent
+  startup. Tools are registered from valid configuration without connectivity
+  probes; runtime failures are reported explicitly, and backend recovery does not
+  require a service restart.
+
+#### Query budgets
+
+The table lists defaults; budgets with an upper limit can only be lowered.
+`ToolTimeout` and `MaxQueryTimeRange` use seconds. Rate limits count backend
+requests per minute.
+
+| Setting | Default | Constraint and purpose |
+|---------|--------:|------------------------|
+| `MCP.MaxConcurrentRequests` | 200 | In-flight MCP HTTP requests per process across all users, not connections or users; maximum 200 |
+| `MCP.MaxQueryTimeRange` | 2592000 | 30 days; `0` disables the span cap |
+| `MCP.MaxRegionsPerQuery` | 5 | Regions per call; maximum 5 |
+| `MCP.Events.RateLimit` | 300 | Shared event-backend budget; `0` disables |
+| `MCP.Events.MaxDocumentsPerQuery` | 500 | Total event/profile source documents; maximum 500 |
+| `MCP.Events.ToolTimeout` | 60 | Total event/profile Tool timeout; must be positive |
+| `MCP.Metrics.RateLimit` | 300 | Shared metrics-backend budget; `0` disables |
+| `MCP.Metrics.MaxSeriesPerQuery` | 3000 | Total returned query series; maximum 3000 |
+| `MCP.Metrics.MaxMetricsPerDiscovery` | 800 | Total discovered metrics; maximum 800 |
+| `MCP.Metrics.ToolTimeout` | 60 | Total metrics Tool timeout; must be positive |
+
+User request rate limiting is enforced by the outer API server's
+`APIServer.RateLimit`; MCP has no separate per-user rate limit.
+Every backend attempt, including retries, consumes budget. Regional connections
+share their backend budget. Token buckets allow bursts up to the configured RPM;
+these are not fixed-minute windows. Transient failures allow up to 10 retries
+within the total Tool timeout; permanent errors such as invalid arguments,
+authentication failures, and date parsing errors are not retried unchanged.
+MCP sets finite HTTP response write deadlines to the larger Tool timeout plus
+5 seconds, or 65 seconds by default. GET notification streams clear the write
+deadline and consume both total and stream quotas. Stream capacity is
+`max(1, MaxConcurrentRequests / 4)` using integer division. Shutdown cancels active
+requests and releases idle connections.
+
+#### Multiple regions
+
+Connections are configured only in `Regions`.
+Each region requires its own address, event index, and authentication settings.
+Routing uses exact names, then regular expressions in declaration order, then
+the first configured region. Fields never inherit from another region.
+An omitted `MetricPrefix` is empty and imposes no metric-name prefix restriction.
+
+```toml
+[[MCP.Events.Regions]]
+    NamePattern = "^eu-"
+    Address = "http://eu-events:9200"
+    Index = "huatuo_events"
+    AuthType = "none"
+
+[[MCP.Metrics.Regions]]
+    NamePattern = "^eu-"
+    Address = "http://eu-prometheus:9090"
+    MetricPrefix = "huatuo_eu_"
+```
+
+Use `AuthType="none"` for anonymous access. Credentials and `MetricPrefix` belong
+only to the region where they are configured. Backend fallback does not replace
+the exact region filter required by data Tools.
+
+#### Fixed limits and results
+
+- Tool timeouts cover the whole call: regional queries, retry waits, and result
+  processing, not each HTTP attempt separately.
+- Document, series, and discovery budgets are divided across regions. Calls fail
+  if the total budget is smaller than the requested region count.
+- Regional event statistics allow at most 7 days/1000 buckets, independently of
+  document budgets. Regional metric statistics allow at most 1000 output series
+  (lowered by configuration); queries/retries share at most 10 seconds.
+- Decompressed ES responses are capped at 8 MiB, Prometheus responses at 4 MiB,
+  and JSON-encoded Tool results at 4 MiB. Byte limits are independent of item
+  counts; overflow fails. Small output does not bound scans; backend resource limits remain necessary.
+- Failed queries return `isError=true`; partial results use `status=partial`.
+  Inspect errors, warnings, and each tool's truncation/completeness fields.
+  Failed or unknown results do not mean no matching data.
+
+#### Text guide
+
+`GuideOverlayDir` defaults to empty, using embedded English guides in `internal/mcp/guide/data`.
+Set an external directory
+to update Markdown/YAML files under the matching `prompts/` and `resources/`
+hierarchy. Existing file edits take effect on the next read without rebuilding.
+Missing files fall back to embedded copies; restart after adding Resources to
+refresh their catalog. New prompt files do not automatically register new Prompts.
+
+See [MCP diagnostics](/docs/key-feature/mcp_en.md) for the Tool catalog, timestamp
+compatibility, and knowledge usage.

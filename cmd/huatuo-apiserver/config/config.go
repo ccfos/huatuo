@@ -20,10 +20,18 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
+	huatuomcp "github.com/ccfos/huatuo/internal/mcp"
+	"github.com/ccfos/huatuo/internal/mcp/backend"
+	mcpevent "github.com/ccfos/huatuo/internal/mcp/backend/event"
+	prombackend "github.com/ccfos/huatuo/internal/mcp/backend/metrics"
+	"github.com/ccfos/huatuo/internal/mcp/backend/storage"
+	mcptool "github.com/ccfos/huatuo/internal/mcp/tool"
+	mcputils "github.com/ccfos/huatuo/internal/mcp/utils"
 )
 
 // LogConfig controls process logging.
@@ -67,6 +75,67 @@ type AuthConfig struct {
 	Users []UserConfig
 }
 
+// MCPConfig controls the Model Context Protocol endpoint.
+type MCPConfig struct {
+	Enabled bool
+	// MaxConcurrentRequests bounds in-flight MCP HTTP requests per process,
+	// shared by all users, not TCP connections or the number of users.
+	MaxConcurrentRequests int
+	MaxQueryTimeRange     int
+	MaxRegionsPerQuery    int
+	GuideOverlayDir       string
+	Events                MCPEventsConfig
+	Metrics               MCPMetricsConfig
+}
+
+// MCPEventsConfig selects a logical event reader and its resource policy.
+type MCPEventsConfig struct {
+	RateLimit            int
+	MaxDocumentsPerQuery int
+	// ToolTimeout is the whole-call budget in seconds, including regional queries,
+	// backend attempts, retry waits, and result processing; not a per-request timeout.
+	ToolTimeout int
+	Regions     []MCPEventRegionConfig
+}
+
+type MCPEventRegionConfig struct {
+	NamePattern string
+	Address     string
+	Index       string
+	AuthType    string
+	Username    string
+	Password    string
+}
+
+func (c *MCPEventRegionConfig) ReaderConfig() backend.EventConfig {
+	return backend.EventConfig{Storage: storage.Connection{
+		Address: c.Address, Index: c.Index, AuthType: c.AuthType,
+		Username: c.Username, Password: c.Password,
+	}}
+}
+
+// MCPMetricsConfig controls the time-series metrics backend exposed through MCP.
+type MCPMetricsConfig struct {
+	RateLimit              int
+	MaxSeriesPerQuery      int
+	MaxMetricsPerDiscovery int
+	// ToolTimeout is the whole-call budget in seconds, including regional queries,
+	// backend attempts, retry waits, and result processing; not a per-request timeout.
+	ToolTimeout int
+	Regions     []MCPMetricsRegionConfig
+}
+
+// MCPMetricsRegionConfig defines an independent connection for a region pattern.
+type MCPMetricsRegionConfig struct {
+	NamePattern  string
+	Address      string
+	AuthType     string
+	AuthToken    string
+	AuthUser     string
+	AuthPass     string
+	MetricPrefix string
+}
+
 // JobQuotaConfig controls active jobs for one job category.
 type JobQuotaConfig struct {
 	MaxConcurrentPerHost int
@@ -107,6 +176,7 @@ type Config struct {
 	Runtime       RuntimeConfig
 	APIServer     APIServerConfig
 	Auth          AuthConfig
+	MCP           MCPConfig
 	Jobs          JobsConfig
 	Agent         AgentConfig
 	Elasticsearch internalconfig.ElasticsearchConfig
@@ -151,6 +221,22 @@ func defaultConfig() Config {
 			HTTPPort: 19704,
 		},
 		Profiling: ProfilingConfig{},
+		MCP: MCPConfig{
+			MaxConcurrentRequests: 200,
+			MaxQueryTimeRange:     30 * 24 * 60 * 60,
+			MaxRegionsPerQuery:    5,
+			Events: MCPEventsConfig{
+				RateLimit:            300,
+				MaxDocumentsPerQuery: 500,
+				ToolTimeout:          60,
+			},
+			Metrics: MCPMetricsConfig{
+				RateLimit:              300,
+				MaxSeriesPerQuery:      3000,
+				MaxMetricsPerDiscovery: 800,
+				ToolTimeout:            60,
+			},
+		},
 	}
 }
 
@@ -179,6 +265,105 @@ func (c *Config) Validate() error {
 	}
 	if err := c.Elasticsearch.Validate(); err != nil {
 		return fmt.Errorf("validating Elasticsearch config: %w", err)
+	}
+	if err := c.MCP.Validate(); err != nil {
+		return fmt.Errorf("validating MCP config: %w", err)
+	}
+	return nil
+}
+
+// Validate rejects invalid MCP resource limits.
+func (c *MCPConfig) Validate() error {
+	events := c.Events
+	for _, bound := range []struct {
+		name           string
+		value, maximum int
+	}{
+		{"maximum concurrent requests", c.MaxConcurrentRequests, huatuomcp.MaxConcurrent},
+		{"maximum regions per query", c.MaxRegionsPerQuery, mcputils.MaxRegions},
+		{"event document limit", events.MaxDocumentsPerQuery, mcpevent.MaxDocuments},
+		{"metrics series limit", c.Metrics.MaxSeriesPerQuery, mcptool.MaxSeries},
+		{"metrics discovery limit", c.Metrics.MaxMetricsPerDiscovery, prombackend.MaxMetrics},
+	} {
+		if bound.value > bound.maximum {
+			return fmt.Errorf("%s must not exceed %d", bound.name, bound.maximum)
+		}
+	}
+	if c.MaxConcurrentRequests <= 0 {
+		return errors.New("maximum concurrent requests must be greater than zero")
+	}
+	if c.MaxQueryTimeRange < 0 {
+		return errors.New("maximum query range must not be negative")
+	}
+	if c.MaxRegionsPerQuery <= 0 {
+		return errors.New("maximum regions per query must be greater than zero")
+	}
+	if events.RateLimit < 0 || c.Metrics.RateLimit < 0 {
+		return errors.New("rate limits must not be negative")
+	}
+	if events.MaxDocumentsPerQuery <= 0 || events.ToolTimeout <= 0 {
+		return errors.New("event document limit and Tool timeout must be positive")
+	}
+	if c.Metrics.MaxSeriesPerQuery <= 0 || c.Metrics.MaxMetricsPerDiscovery <= 0 ||
+		c.Metrics.ToolTimeout <= 0 {
+		return errors.New("metrics query limits and Tool timeout must be positive")
+	}
+	maximumSeconds := math.MaxInt64 / int64(time.Second)
+	for _, value := range []struct {
+		name    string
+		seconds int
+	}{
+		{name: "maximum query range", seconds: c.MaxQueryTimeRange},
+		{name: "event Tool timeout", seconds: events.ToolTimeout},
+		{name: "metrics Tool timeout", seconds: c.Metrics.ToolTimeout},
+	} {
+		if int64(value.seconds) > maximumSeconds {
+			return fmt.Errorf("%s is outside the supported range", value.name)
+		}
+	}
+	metricNames := make([]string, 0, len(c.Metrics.Regions))
+	for _, region := range c.Metrics.Regions {
+		metricNames = append(metricNames, region.NamePattern)
+		address, err := url.Parse(region.Address)
+		if err != nil || (address.Scheme != "http" && address.Scheme != "https") || address.Host == "" || address.User != nil {
+			return fmt.Errorf("metrics region %q address must be an absolute HTTP URL without credentials", region.NamePattern)
+		}
+	}
+	if err := validateRegionPatterns(metricNames); err != nil {
+		return fmt.Errorf("metrics regions: %w", err)
+	}
+
+	eventNames := make([]string, 0, len(events.Regions))
+	for _, region := range events.Regions {
+		eventNames = append(eventNames, region.NamePattern)
+		override := region.ReaderConfig()
+		resolved, err := backend.ResolveEventConfig(&override)
+		if err != nil {
+			return fmt.Errorf("event region %q: %w", region.NamePattern, err)
+		}
+		if !backend.EventReaderConfigured(&resolved) {
+			return fmt.Errorf("event region %q: storage address and index are required", region.NamePattern)
+		}
+	}
+	if err := validateRegionPatterns(eventNames); err != nil {
+		return fmt.Errorf("event regions: %w", err)
+	}
+	return nil
+}
+
+func validateRegionPatterns(names []string) error {
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name == "" {
+			return errors.New("region name is required")
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("duplicate region name %q", name)
+		}
+		seen[name] = struct{}{}
+		if _, err := regexp.Compile(name); err != nil {
+			return fmt.Errorf("invalid region pattern %q: %w", name, err)
+		}
 	}
 	return nil
 }

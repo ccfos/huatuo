@@ -29,8 +29,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	es "github.com/elastic/go-elasticsearch/v8"
+	"github.com/elastic/go-elasticsearch/v8/esapi"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/timeutil"
@@ -40,6 +44,306 @@ type mockElasticsearchDocument struct {
 	ID     string
 	Source json.RawMessage
 	Fields map[string]any
+}
+
+type clientTestTransport struct {
+	roundTrip func(*http.Request) (*http.Response, error)
+	closes    atomic.Int64
+}
+
+func (t *clientTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return t.roundTrip(request)
+}
+
+func (t *clientTestTransport) CloseIdleConnections() {
+	t.closes.Add(1)
+}
+
+func TestClientFactoriesPreserveCompatibilityWithoutRetries(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		status       int
+		readOnly     bool
+		wantAttempts int
+	}{
+		{name: "read success", status: http.StatusOK, readOnly: true, wantAttempts: 1},
+		{name: "read does not retry", status: http.StatusServiceUnavailable, readOnly: true, wantAttempts: 1},
+		{name: "default client does not retry", status: http.StatusServiceUnavailable, wantAttempts: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var attempts atomic.Int64
+			transport := &clientTestTransport{roundTrip: func(request *http.Request) (*http.Response, error) {
+				attempts.Add(1)
+				if request.Method != http.MethodPost || request.URL.Path != "/prefix/events/_count" {
+					t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+				}
+				if request.Header.Get("Content-Type") != "application/json" || request.Header.Get("Accept") != "application/json" {
+					t.Errorf("ES vendor media types reached the transport: %v", request.Header)
+				}
+				user, password, ok := request.BasicAuth()
+				if !ok || user != "reader" || password != "secret" {
+					t.Error("configured credentials did not reach the caller-owned transport")
+				}
+				return &http.Response{
+					StatusCode: test.status,
+					Body:       io.NopCloser(strings.NewReader(`{"count":1}`)),
+				}, nil
+			}}
+			cfg := es.Config{
+				Addresses: []string{"http://backend/prefix"}, Username: "reader", Password: "secret",
+				Transport: transport, MaxRetries: 9, RetryOnStatus: []int{http.StatusTeapot},
+			}
+			var client esapi.Transport
+			var err error
+			if test.readOnly {
+				cfg.DiscoverNodesOnStart = true
+				cfg.DiscoverNodesInterval = time.Hour
+				client, err = NewReadClient(&ReadClientConfig{Config: cfg})
+			} else {
+				client, err = newCompatClient(&cfg)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if attempts.Load() != 0 {
+				t.Fatal("client construction probed the backend")
+			}
+			if cfg.DisableRetry || cfg.EnableCompatibilityMode || cfg.Transport != transport || cfg.MaxRetries != 9 || !slices.Equal(cfg.RetryOnStatus, []int{http.StatusTeapot}) {
+				t.Fatal("client construction mutated the caller's configuration")
+			}
+			if test.readOnly && (!cfg.DiscoverNodesOnStart || cfg.DiscoverNodesInterval != time.Hour) {
+				t.Fatal("read client construction mutated caller discovery settings")
+			}
+			response, err := (esapi.CountRequest{Index: []string{"events"}, Body: strings.NewReader(`{}`)}).Do(t.Context(), client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != test.status || attempts.Load() != int64(test.wantAttempts) || response.Header.Get("X-Elastic-Product") != "Elasticsearch" {
+				t.Fatalf("status=%d attempts=%d headers=%v, want status=%d attempts=%d", response.StatusCode, attempts.Load(), response.Header, test.status, test.wantAttempts)
+			}
+		})
+	}
+}
+
+func TestNewReadClientRequiresConfiguration(t *testing.T) {
+	if _, err := NewReadClient(nil); err == nil || !strings.Contains(err.Error(), "configuration is required") {
+		t.Fatalf("NewReadClient(nil) error = %v", err)
+	}
+}
+
+func TestReadClientOwnsOnlyItsDefaultPool(t *testing.T) {
+	config := &ReadClientConfig{Config: es.Config{Addresses: []string{"http://backend"}}}
+	var wrapped http.RoundTripper
+	config.WrapTransport = func(inner http.RoundTripper) http.RoundTripper {
+		wrapped = inner
+		return inner
+	}
+	first, err := NewReadClient(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+	if first.transport == nil || wrapped != first.transport || config.Transport != nil {
+		t.Fatal("default pool was not independently created and passed to the wrapper")
+	}
+	second, err := NewReadClient(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = second.Close() }()
+	if first.transport == second.transport || first.transport == defaultTransport {
+		t.Fatal("read clients must not share owned pools")
+	}
+	pool := first.transport
+	if pool.MaxConnsPerHost != 200 || pool.MaxIdleConnsPerHost != 100 || pool.Proxy == nil ||
+		pool.TLSClientConfig.ClientSessionCache == nil || pool.TLSHandshakeTimeout != 10*time.Second {
+		t.Fatalf("read pool lost framework transport defaults: %+v", pool)
+	}
+	borrowed := &clientTestTransport{roundTrip: func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	}}
+	config.Transport = borrowed
+	third, err := NewReadClient(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.transport != nil || wrapped != borrowed {
+		t.Fatal("caller-supplied transport must be borrowed")
+	}
+	if err := third.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := third.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if borrowed.closes.Load() != 0 {
+		t.Fatal("closing the read client closed its borrowed transport")
+	}
+}
+
+func TestReadClientValidatesConfigurationAndGuard(t *testing.T) {
+	for _, cfg := range []*ReadClientConfig{
+		{},
+		{Config: es.Config{Addresses: []string{"file:///events"}}},
+		{Config: es.Config{Addresses: []string{"http://user:secret@backend"}}},
+		{Config: es.Config{Addresses: []string{"http://backend?token=secret"}}},
+		{Config: es.Config{Addresses: []string{"http://backend#fragment"}}},
+		{Config: es.Config{Addresses: []string{"http://backend"}, Username: "reader"}},
+		{Config: es.Config{Addresses: []string{"http://backend"}}, WrapTransport: func(http.RoundTripper) http.RoundTripper { return nil }},
+	} {
+		if client, err := NewReadClient(cfg); err == nil {
+			_ = client.Close()
+			t.Fatal("invalid read configuration accepted")
+		}
+	}
+	blocked := errors.New("request budget exhausted")
+	client, err := NewReadClient(&ReadClientConfig{
+		Config: es.Config{Addresses: []string{"http://backend"}},
+		WrapTransport: func(http.RoundTripper) http.RoundTripper {
+			return &clientTestTransport{roundTrip: func(*http.Request) (*http.Response, error) { return nil, blocked }}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	if _, err := (esapi.CountRequest{Index: []string{"events"}}).Do(t.Context(), client); !errors.Is(err, blocked) {
+		t.Fatalf("request bypassed caller guard: %v", err)
+	}
+}
+
+func TestReadQueryResolvesExactFields(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		fields   map[string]map[string]FieldCapability
+		complete bool
+		variant  string
+	}{
+		{"native", map[string]map[string]FieldCapability{"host": {"keyword": {Searchable: true, Aggregatable: true}}}, true, "host"},
+		{"keyword preferred", map[string]map[string]FieldCapability{"host": {"text": {}}, "host.raw": {"keyword": {Searchable: true, Aggregatable: true}}, "host.keyword": {"keyword": {Searchable: true, Aggregatable: true}}}, true, "host.keyword"},
+		{"other projection", map[string]map[string]FieldCapability{"host": {"text": {}}, "host.raw": {"keyword": {Searchable: true, Aggregatable: true}}}, true, "host.raw"},
+		{"text only", map[string]map[string]FieldCapability{"host": {"text": {Searchable: true}}}, false, ""},
+		{"missing", nil, false, ""},
+		{"unindexed", map[string]map[string]FieldCapability{"host": {"keyword": {}}}, false, ""},
+		{"unmapped", map[string]map[string]FieldCapability{"host": {"keyword": {Searchable: true, Aggregatable: true}, "unmapped": {}}}, false, "host"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			caps := FieldCapabilities{Fields: test.fields}
+			mapping := caps.ResolveExactField("host")
+			if mapping.Complete != test.complete || test.variant == "" && len(mapping.Variants) != 0 || test.variant != "" && (len(mapping.Variants) != 1 || mapping.Variants[0].Name != test.variant) {
+				t.Fatalf("mapping=%+v, want complete=%t variant=%s", mapping, test.complete, test.variant)
+			}
+		})
+	}
+	caps := FieldCapabilities{Fields: map[string]map[string]FieldCapability{
+		"host":         {"keyword": {Searchable: true, Aggregatable: true, Indices: []string{"native"}}, "text": {Indices: []string{"legacy"}}},
+		"host.keyword": {"keyword": {Searchable: true, Aggregatable: true, Indices: []string{"legacy"}}},
+	}}
+	mapping := caps.ResolveExactField("host")
+	if !mapping.Complete || len(mapping.Variants) != 2 {
+		t.Fatalf("mixed mapping not resolved: %+v", mapping)
+	}
+	query, err := ExactTerms(mapping.Variants, []string{"node-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(query)
+	for _, required := range []string{`"_index":["native"]`, `"_index":["legacy"]`, `"host":["node-1"]`, `"host.keyword":["node-1"]`} {
+		if !strings.Contains(string(encoded), required) {
+			t.Errorf("missing %s in %s", required, encoded)
+		}
+	}
+	if _, err := ExactTerms(nil, []string{"node-1"}); err == nil {
+		t.Error("missing exact mapping must not become an unfiltered query")
+	}
+	caps.Fields["host"]["keyword"] = FieldCapability{Searchable: true, Aggregatable: true}
+	if caps.ResolveExactField("host").Complete {
+		t.Error("ambiguous mixed-index mapping must not be marked complete")
+	}
+}
+
+func TestReadQueryBuildsAndDecodesValueAggregation(t *testing.T) {
+	options := &TermsAggregationOptions{Field: "host", Variants: []ExactField{{Name: "host.keyword"}}, Limit: 10}
+	query, err := TermsAggregation(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(query)
+	if string(encoded) != `{"terms":{"field":"host.keyword","size":10}}` {
+		t.Fatalf("unexpected aggregation: %s", encoded)
+	}
+	options.Variants = append(options.Variants, ExactField{Name: "host"})
+	if _, err := TermsAggregation(options); err == nil {
+		t.Fatal("mixed mappings must require explicit source-script permission")
+	}
+	options.AllowSourceScript = true
+	query, err = TermsAggregation(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ = json.Marshal(query)
+	if !strings.Contains(string(encoded), `"script"`) || !strings.Contains(string(encoded), `"params":{"field":"host"}`) || strings.Contains(string(encoded), `"field":"host.keyword"`) {
+		t.Fatalf("mixed aggregation risks fielddata or loses field parameter: %s", encoded)
+	}
+	if _, err := TermsAggregation(nil); err == nil {
+		t.Error("invalid aggregation options accepted")
+	}
+	values, err := DecodeValueCounts(json.RawMessage(`{"buckets":[{"key":"node-1","doc_count":3},{"key":"node-2","doc_count":0}]}`), 1)
+	if err != nil || len(values) != 1 || values[0] != (ValueCount{Value: "node-1", Count: 3}) {
+		t.Fatalf("values=%+v, error=%v", values, err)
+	}
+	for _, raw := range []string{`{}`, `{"buckets":null}`, `{"buckets":[{"key":"node"}]}`, `{"buckets":[{"doc_count":2}]}`, `{"buckets":[{"key":1,"doc_count":2}]}`, `{"buckets":[{"key":"node","doc_count":-1}]}`} {
+		if _, err := DecodeValueCounts(json.RawMessage(raw), 10); err == nil {
+			t.Errorf("invalid aggregation accepted: %s", raw)
+		}
+	}
+	if _, err := DecodeValueCounts(json.RawMessage(`{"buckets":[]}`), 0); err == nil {
+		t.Error("invalid bucket limit accepted")
+	}
+}
+
+func TestExactCoverageDoesNotSkipPartiallyMappedIndices(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		base     map[string]FieldCapability
+		variants []ExactField
+		want     bool
+	}{
+		{"keyword", map[string]FieldCapability{"keyword": {Searchable: true, Aggregatable: true}}, []ExactField{{Name: "label"}}, true},
+		{"text keyword", map[string]FieldCapability{"text": {}}, []ExactField{{Name: "label.keyword"}}, true},
+		{"text only", map[string]FieldCapability{"text": {}}, nil, false},
+		{"mixed partial", map[string]FieldCapability{"keyword": {Searchable: true, Aggregatable: true, Indices: []string{"new"}}, "text": {Indices: []string{"old"}}}, []ExactField{{Name: "label", Indices: []string{"new"}}}, false},
+		{"text partial", map[string]FieldCapability{"text": {Indices: []string{"one", "two"}}}, []ExactField{{Name: "label.keyword", Indices: []string{"one"}}}, false},
+		{"unmapped source", map[string]FieldCapability{"text": {}, "unmapped": {}}, []ExactField{{Name: "label.keyword"}}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := exactCoverage(test.base, test.variants); got != test.want {
+				t.Fatalf("coverage=%t want=%t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestProductHeaderTransportDoesNotMutateCallerHeaders(t *testing.T) {
+	const vendorType = "application/vnd.elasticsearch+json;compatible-with=8"
+	request := httptest.NewRequest(http.MethodPost, "http://backend/events/_search", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", vendorType)
+	request.Header.Set("Accept", vendorType)
+	transport := &productHeaderTransport{inner: &clientTestTransport{roundTrip: func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("Content-Type") != "application/json" || r.Header.Get("Accept") != "application/json" {
+			t.Fatalf("compatibility headers = %v", r.Header)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Elastic-Product": {"Elasticsearch"}}, Body: http.NoBody}, nil
+	}}}
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if request.Header.Get("Content-Type") != vendorType || request.Header.Get("Accept") != vendorType {
+		t.Fatalf("caller headers changed: %v", request.Header)
+	}
 }
 
 type mockElasticsearchServer struct {
