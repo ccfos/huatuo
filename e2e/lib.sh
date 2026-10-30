@@ -41,16 +41,29 @@ k8s_create_pod() {
 k8s_delete_pod() {
 	local ns=$1
 	local label=$2
-	kubectl delete pod --namespace "$ns" -l "$label"
+	kubectl delete pod --namespace "$ns" -l "$label" \
+		--ignore-not-found --timeout=30s --request-timeout=10s
 }
 
 # kubelet
 kubelet_pods_json() {
-	curl -sk "${CURL_TIMEOUT[@]}" \
-		--cert ${KUBELET_CERT} \
-		--key ${KUBELET_KEY} \
+	local status curl_status=0
+	local response="${HUATUO_BAMAI_TEST_TMPDIR}/kubelet-pods.json"
+	status=$(curl -skS "${CURL_TIMEOUT[@]}" \
+		--cert "${KUBELET_CERT}" \
+		--key "${KUBELET_KEY}" \
 		--header "Content-Type: application/json" \
-		${KUBELET_PODS_API}
+		-o "${response}" -w '%{http_code}' "${KUBELET_PODS_API}") || curl_status=$?
+	if [[ ${curl_status} -ne 0 || ${status} != 200 ]]; then
+		log_error "kubelet pods request failed: curl=${curl_status} HTTP=${status:-unavailable}; response=${response}"
+		return 1
+	fi
+	jq -e '.items | type == "array"' "${response}" > /dev/null \
+		|| {
+			log_error "invalid kubelet PodList: ${response}"
+			return 1
+		}
+	cat "${response}"
 }
 
 kubelet_pod_count() {
@@ -63,7 +76,7 @@ kubelet_pod_count() {
           | select(.metadata.name | test($re))
           | select(.status.phase == "Running")
         ] | length
-        ' 2> /dev/null || echo 0
+        '
 }
 
 kubelet_container_ids() {
@@ -85,7 +98,7 @@ assert_kubelet_pod_count() {
 
 	_assert() {
 		local actual
-		actual="$(kubelet_pod_count "$ns" "$regex")"
+		actual="$(kubelet_pod_count "$ns" "$regex")" || return 1
 		assert_eq "$actual" "$expect" "$desc"
 	}
 
@@ -94,7 +107,7 @@ assert_kubelet_pod_count() {
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
 		_assert; then
 		# wait timeout, dump pods from kubelet
-		kubelet_pods_json
+		kubelet_pods_json || true
 
 		fatal "❌ wait timeout, kubelet pod count not expected"
 	fi
@@ -103,9 +116,10 @@ assert_kubelet_pod_count() {
 huatuo_bamai_containers_present() {
 	local ns=$1 regex=$2 expect=$3
 	local -a container_ids=()
-	local container_id
+	local container_id ids
 
-	mapfile -t container_ids < <(kubelet_container_ids "$ns" "$regex")
+	ids=$(kubelet_container_ids "$ns" "$regex") || return 1
+	if [[ -n ${ids} ]]; then mapfile -t container_ids <<< "${ids}"; fi
 	[[ ${#container_ids[@]} -eq ${expect} ]] || return 1
 	for container_id in "${container_ids[@]}"; do
 		curl -sf "${CURL_TIMEOUT[@]}" \
@@ -127,6 +141,7 @@ assert_huatuo_bamai_containers_present() {
 
 huatuo_bamai_containers_absent() {
 	local container_id status
+	[[ $# -gt 0 ]] || return 1
 	for container_id in "$@"; do
 		status=$(curl -sS "${CURL_TIMEOUT[@]}" \
 			-o /dev/null -w '%{http_code}' \
@@ -139,6 +154,7 @@ huatuo_bamai_containers_absent() {
 assert_huatuo_bamai_containers_absent() {
 	local desc=$1
 	shift
+	[[ $# -gt 0 ]] || fatal "${desc}: expected at least one container ID"
 
 	if ! wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
