@@ -509,6 +509,22 @@ EOF
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }
 
+# The memory metric cases share a collector-only agent configuration.
+write_config_bamai_memory_metrics() {
+	write_config_blacklist \
+		"arp" "ascend_npu" "cpu_stat" "cpu_util" "cpuidle" "cpusys" \
+		"diskio" "dload" "dropwatch" "hungtask" "iolatency" "iotracing" \
+		"irqtracing" "loadavg" "memburst" "memory_free" "memory_reclaim" \
+		"memory_reclaim_events" "memory_oom_kill" "memory_threshold_snapshot" \
+		"metax_gpu" "mountpoint_perm" "mthreads_gpu" "mthreads_xid" \
+		"net_rx_latency" "netdev" "netdev_bonding_lacp" "netdev_dcb" \
+		"netdev_events" "netdev_hw" "netdev_qdisc" "netdev_rdma_link" \
+		"netdev_txqueue_timeout" "netstat" "ras" "runqlat" "sched_tick" \
+		"sockstat" "softirq" "softlockup" "tcp_memory" "tcp_retransmit" \
+		"iocost" "blk_throtl" "io_health" "sched-blame"
+	write_config_bamai_auth "integration-node-token"
+}
+
 # OOM capture uses host memory data; threshold snapshots need a container manager.
 write_config_bamai_memory_oom_kill() {
 	write_config_blacklist \
