@@ -30,30 +30,23 @@ import (
 	"github.com/google/cadvisor/utils/cpuload/netlink"
 )
 
-type task struct {
+type dloadTask struct {
 	TID   int    `json:"tid"`
 	State string `json:"state"`
 	Stack string `json:"stack,omitempty"`
 }
 
-type sample struct {
+type dloadSample struct {
 	ElapsedMS int64          `json:"elapsed_ms"`
 	Stats     info.LoadStats `json:"stats"`
-	Tasks     []task         `json:"tasks"`
+	Tasks     []dloadTask    `json:"tasks"`
 }
 
-func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "dload reference:", err)
-		os.Exit(1)
-	}
-}
-
-func run(args []string) error {
+func runDload(args []string) error {
 	if len(args) == 0 || args[0] != "sample" {
 		return errors.New("use sample")
 	}
-	flags := flag.NewFlagSet("sample", flag.ContinueOnError)
+	flags := flag.NewFlagSet("loadavg sample", flag.ContinueOnError)
 	path := flags.String("cgroup", "", "CPU cgroup directory")
 	duration := flags.Duration("duration", 0, "sampling duration; zero reads once")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -77,7 +70,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := json.NewEncoder(os.Stdout).Encode(sample{
+		if err := json.NewEncoder(os.Stdout).Encode(dloadSample{
 			ElapsedMS: time.Since(start).Milliseconds(),
 			Stats:     stats,
 			Tasks:     tasks,
@@ -104,13 +97,13 @@ func taskState(data string) (string, error) {
 	return "", errors.New("task status has no valid State field")
 }
 
-func readTasks(path string) ([]task, error) {
+func readTasks(path string) ([]dloadTask, error) {
 	data, err := os.ReadFile(filepath.Join(path, "tasks"))
 	if err != nil {
 		return nil, err
 	}
 	ids := strings.Fields(string(data))
-	tasks := make([]task, 0, len(ids))
+	tasks := make([]dloadTask, 0, len(ids))
 	for _, id := range ids {
 		tid, err := strconv.Atoi(id)
 		if err != nil {
@@ -128,7 +121,7 @@ func readTasks(path string) ([]task, error) {
 		if err != nil {
 			return nil, err
 		}
-		t := task{
+		t := dloadTask{
 			TID:   tid,
 			State: state,
 		}

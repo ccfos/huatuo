@@ -52,6 +52,8 @@ PROFILER_TOOL_DIR=${PROFILER_TOOL_DIR:-${ROOT_DIR}/_output/tools}
 export PROFILER_TOOL_DIR
 PPROF_TOOL_BIN=${PPROF_TOOL_BIN:-${ROOT_DIR}/_output/tools/pprof-tool}
 export PPROF_TOOL_BIN
+SYSBENCH_BIN=${SYSBENCH_BIN:-${ROOT_DIR}/_output/tests/sysbench}
+export SYSBENCH_BIN
 
 # k8s: metadata.name == pod-name, ct-hostname
 # huatuo-bamai: name == ct-hostname, hostname == pod-name == metadata.name
