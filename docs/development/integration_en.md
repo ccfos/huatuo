@@ -264,31 +264,26 @@ serial/parallel cancellation. It requires Python 3 and jq, without a JVM or BPF 
 
 ## IO tests
 
-`make integration` includes live-kernel IO qualification for latency and size
-statistics, blk-throttle and IOCOST waits, device and cgroup lifecycles, and
-health evidence. These component tests do not replace black-box checks of
-service startup, configuration, and public output.
+IO cases run with `sudo make integration` and cover public metrics, container
+attribution, automatic diagnostics, health events and device evidence.
+`make unit` runs offline layout, compatibility-selection and accounting checks.
+Host and container metric cases verify real IOLatency output. These cases do not
+independently verify complete tracepoint argument counts on each kernel or
+exercise every remap path.
 
-Run as root on a dedicated Linux test host with BPF/BTF support. Cases create
-and clean up temporary virtual devices and cgroups. Run IOCOST alone with
-`sudo bash integration/run.sh test_iocost.sh`; `TEST_IOCOST_MODE` selects
-`functional`, `lifecycle`, `faults`, `pressure`, or `compat` (default: `all`).
+Use a dedicated Linux test host with BPF/BTF support; tests retain the caller's
+privileges. Ordinary disk metric cases use `TEST_IO_DISK`, defaulting to
+`/dev/disk/by-id/virtio-huatuo-ci-io`. This must be a dedicated scratch disk whose
+contents may be overwritten. A missing, mounted or partitioned disk fails the
+case. Select another unused disk with `sudo env TEST_IO_DISK=/dev/vdb make integration`.
+MD, loop and NVMe-loop backing files also reside on this disk. Shell system tests
+create separate `scsi_debug` devices for scenarios that require SCSI driver controls.
+Container metric cases use the local Kubernetes node, cached `BUSINESS_POD_IMAGE`,
+and existing `KUBELET_CERT`/`KUBELET_KEY` credentials to verify attribution through real Pods.
 
-IO tests prefer disks created with `scsi_debug`. If it is unavailable,
-they use an eligible existing SCSI/NVMe/virtio disk for read-only checks, or skip
-those checks when none is available. Configuration changes and device deletion use
-only test-owned disks. Metric checks start their own Huatuo daemon.
-
-IO health verifies health events and evidence on a live Linux kernel.
-Real NVMe/SCSI evidence commands require an explicit dedicated test device:
-
-```bash
-sudo env TEST_IO_CONFIRM_NON_SYSTEM=1 TEST_NVME_DEVICE=nvme0 \
-  bash integration/run.sh test_io_kernel.sh
-```
-
-For SCSI, use `TEST_SCSI_DEVICE=sdb`. These cases require `nvme-cli` and
-`smartmontools`, respectively.
+Health evidence cases invoke real `smartctl` and `nvme`, requiring
+`smartmontools` and `nvme-cli`, respectively. Controlled tool responses retain
+coverage of command failures.
 
 ## Network Namespace Helpers
 

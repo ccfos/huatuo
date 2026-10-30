@@ -549,7 +549,7 @@ cgroup 实际释放后，尚未采集的尾部等待增量归入 Host 和 Other�
 等待约 274.9 万秒时，计数回绕可能导致少计。例如，同一统计项的 10,240 次等待
 各持续 270 秒、在同一区间由同一 CPU 结算，会超出等待时间容量。
 
-采集需要支持 IOCOST 的非 PREEMPT_RT Linux x86_64 内核，具备 BPF/BTF 和
+采集需要支持 IOCOST 的非 PREEMPT_RT Linux 内核，具备 BPF/BTF 和
 kprobe 能力。
 
 ### 设备健康

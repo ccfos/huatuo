@@ -12,11 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Qualify request.part layouts without loading or attaching BPF.
+// Check request/file layouts and source-map admission without loading BPF.
 package main
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/cilium/ebpf/btf"
@@ -109,4 +114,48 @@ func requestPartLayoutBTF(t *testing.T, partName string, rqDisk, oldType, devt b
 	data, err := builder.Marshal(nil, nil)
 	require.NoError(t, err)
 	return data
+}
+
+func TestIOTracingFileReadLayouts(t *testing.T) {
+	compiler := strings.Fields(os.Getenv("CC"))
+	if len(compiler) == 0 {
+		compiler = []string{"cc"}
+	}
+	bpfDir := os.Getenv("BPF_DIR")
+	if bpfDir == "" {
+		bpfDir = filepath.Join("..", "..", "bpf")
+	}
+	arch := map[string]string{"amd64": "x86", "arm64": "arm64"}[runtime.GOARCH]
+	require.NotEmpty(t, arch, "native file-read fixture requires amd64 or arm64")
+	includes := strings.Fields(os.Getenv("BPF_INCLUDE"))
+	includes = append(includes, "-I"+filepath.Join(bpfDir, "include"), "-I"+bpfDir)
+	source := filepath.Join("testdata", "test_file_reads.c")
+
+	for _, file := range []string{"3", "2"} {
+		for _, inode := range []string{"2", "1"} {
+			t.Run("file_"+file+"_inode_"+inode, func(t *testing.T) {
+				binary := filepath.Join(t.TempDir(), "file-reads")
+				args := []string{
+					"-std=gnu11", "-O2", "-Wno-attributes", "-Wno-incompatible-pointer-types",
+					"-D__TARGET_ARCH_" + arch, "-DTEST_FILE_PADDING=" + file, "-DTEST_INODE_PADDING=" + inode,
+				}
+				args = append(args, includes...)
+				args = append(args, source, "-o", binary)
+				output, err := exec.CommandContext(t.Context(), compiler[0], append(compiler[1:], args...)...).CombinedOutput()
+				require.NoError(
+					t,
+					err,
+					"compile native file-read fixture: %s",
+					output,
+				)
+				output, err = exec.CommandContext(t.Context(), binary).CombinedOutput()
+				require.NoError(
+					t,
+					err,
+					"run native file-read fixture: %s",
+					output,
+				)
+			})
+		}
+	}
 }

@@ -855,10 +855,6 @@ func ioControlPublicContainerLabels(
 	}, nil
 }
 
-func ioControlDeviceName(major, minor uint32) string {
-	return fmt.Sprintf("%d:%d", major, minor)
-}
-
 // Resolve public disk labels once per collection, not in the BPF IO paths.
 func readIOControlDiskNames() (map[[2]uint32]string, error) {
 	fs, err := blockdevice.NewDiskstatsFS()

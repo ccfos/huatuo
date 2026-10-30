@@ -295,4 +295,11 @@ run_guest_tests() {
 }
 
 # Also support sourcing the entry function in local regression fixtures.
-if [[ ${BASH_SOURCE[0]:-$0} == "$0" ]]; then run_guest_tests "$@"; fi
+if [[ ${BASH_SOURCE[0]:-$0} == "$0" ]]; then
+	export TEST_IO_DISK=${TEST_IO_DISK-/dev/disk/by-id/virtio-huatuo-ci-io}
+	[[ -b ${TEST_IO_DISK} ]] || {
+		vm_log_error "test disk is missing: TEST_IO_DISK=${TEST_IO_DISK}"
+		exit 1
+	}
+	run_guest_tests "$@"
+fi
