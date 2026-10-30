@@ -27,7 +27,7 @@ import (
 )
 
 var (
-	// FIXME If you use this package to other project.
+	// FIXME: this package currently assumes HUATUO host/region defaults.
 	defaultHostname string
 	defaultRegion   string
 )
