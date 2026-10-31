@@ -92,6 +92,21 @@ assert_helper_toml_values() {
 	local helpers_expected='{"BlackList":["dropwatch","netdev_hw"],"Runtime.CPULimitCores":1.5,"Runtime.MemoryLimitMiB":1024}'
 	cp "${ROOT_DIR}/integration/testdata/test_toml_values.toml" "${helpers_config}"
 	assert_toml_values "${helpers_config}" "${helpers_expected}"
+	# Only exercise this fallback when the guest has the toml module.
+	if python3 -c 'import toml' > /dev/null 2>&1; then (
+		# Older guests use the toml package when neither stdlib nor tomli is available.
+		python3() {
+			if [[ $1 == -c ]]; then
+				command python3 -c "import sys; sys.modules['tomllib']=None; sys.modules['tomli']=None; ${2}"
+			else
+				{
+					printf 'import sys\nsys.modules["tomllib"]=None\nsys.modules["tomli"]=None\n'
+					cat
+				} | command python3 "$@"
+			fi
+		}
+		assert_toml_values "${helpers_config}" "${helpers_expected}"
+	); fi
 	for helpers_case in comments section type value syntax; do
 		case ${helpers_case} in
 		comments) sed 's/^/# /' "${ROOT_DIR}/integration/testdata/test_toml_values.toml" > "${helpers_config}" ;;

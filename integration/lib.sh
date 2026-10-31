@@ -134,8 +134,8 @@ require_readable() {
 
 require_toml_reader() {
 	require_commands python3 jq
-	python3 -c 'import importlib.util; __import__("tomllib" if importlib.util.find_spec("tomllib") else "tomli")' \
-		> /dev/null 2>&1 || skip "TOML parsing requires Python 3.11+ or the Python tomli module"
+	python3 -c 'import importlib.util; __import__(next(name for name in ("tomllib", "tomli", "toml") if importlib.util.find_spec(name)))' \
+		> /dev/null 2>&1 || skip "TOML parsing requires Python 3.11+ or the tomli or toml module"
 }
 
 # Decode framework configuration without installing a fixture into each workspace.
@@ -143,16 +143,14 @@ read_toml_json() {
 	require_commands python3
 	python3 - "$1" << 'PYTHON'
 import json
+import importlib.util
 import sys
-try:
-    import tomllib
-except ModuleNotFoundError:
-    try:
-        import tomli as tomllib
-    except ModuleNotFoundError:
-        sys.exit("TOML parsing requires Python 3.11+ or the Python tomli module")
-with open(sys.argv[1], "rb") as source:
-    json.dump(tomllib.load(source), sys.stdout, default=str)
+parser_name = next((name for name in ("tomllib", "tomli", "toml") if importlib.util.find_spec(name)), None)
+if parser_name is None:
+    sys.exit("TOML parsing requires Python 3.11+ or the tomli or toml module")
+parser = __import__(parser_name)
+with open(sys.argv[1], encoding="utf-8") as source:
+    json.dump(parser.loads(source.read()), sys.stdout, default=str)
 print()
 PYTHON
 }
@@ -815,12 +813,15 @@ huatuo_bamai_configure_default_address() {
 		|| fatal "HTTPServer.ListenAddress must be a nonempty string: ${config}"
 	if [[ -z ${address} ]]; then
 		address=${HUATUO_BAMAI_DEFAULT_ADDR#http://}
-		python3 -c 'import toml' > /dev/null 2>&1 \
-			|| skip "TOML writing requires the Python toml module; install python3-toml"
+		if ! python3 -c 'import toml' > /dev/null 2>&1 \
+			&& ! python3 -c 'import tomli_w' > /dev/null 2>&1; then
+			skip "TOML writing requires python3-toml or python3-tomli-w"
+		fi
 		# A serializer handles quoted and inline tables. Reparse and compare before
 		# replacement so unsupported values cannot silently change other settings.
 		python3 - "${config}" "${address}" << 'PYTHON' || fatal "cannot update bamai listener; original configuration retained: ${config}"
 import json
+import importlib.util
 import os
 from pathlib import Path
 import sys
@@ -828,17 +829,17 @@ import tempfile
 try:
     import toml
 except ModuleNotFoundError:
-    sys.exit("TOML writing requires the Python toml module; install python3-toml")
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
+    import tomli_w as toml
+parser_name = next((name for name in ("tomllib", "tomli", "toml") if importlib.util.find_spec(name)), None)
+if parser_name is None:
+    sys.exit("TOML parsing requires Python 3.11+ or the tomli or toml module")
+parser = __import__(parser_name)
 path = Path(sys.argv[1])
-with path.open("rb") as source:
-    expected = tomllib.load(source)
+with path.open(encoding="utf-8") as source:
+    expected = parser.loads(source.read())
 expected.setdefault("HTTPServer", {})["ListenAddress"] = sys.argv[2]
 text = toml.dumps(expected)
-actual = tomllib.loads(text)
+actual = parser.loads(text)
 # JSON normalization also compares TOML dates, times and NaN values consistently.
 if json.dumps(actual, sort_keys=True, default=str) != json.dumps(expected, sort_keys=True, default=str):
     sys.exit("TOML serialization changed configuration values")
@@ -848,8 +849,7 @@ try:
         temporary = target.name
         os.fchmod(target.fileno(), path.stat().st_mode & 0o777)
         target.write(text)
-    with open(temporary, "rb") as source:
-        tomllib.load(source)
+    parser.loads(Path(temporary).read_text(encoding="utf-8"))
     os.replace(temporary, path)
 finally:
     if temporary is not None and os.path.exists(temporary):
