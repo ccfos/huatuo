@@ -18,9 +18,7 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-for tool in clang mke2fs mount umount; do
-	command -v "$tool" > /dev/null || fatal "symbol cache integration prerequisite $tool is not installed"
-done
+require_commands clang mke2fs mount umount
 
 fixture_dir=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/symbol-device-cache.XXXXXX")
 mounted=()
