@@ -25,7 +25,7 @@ func TestJavaBoundedSnapshotStatus(t *testing.T) {
 	sampled := uint64(8192)
 	snapshot := &memsnapshot.Snapshot{}
 	finishStatus(snapshot, 0, 1<<20, sampled)
-	if snapshot.Status != memsnapshot.StatusPartial || !strings.Contains(snapshot.Reason, "bounded") {
+	if snapshot.Status != memsnapshot.SnapshotStatusPartial || !strings.Contains(snapshot.StatusReason, "bounded") {
 		t.Fatalf("bounded sample not marked partial: %+v", snapshot)
 	}
 }

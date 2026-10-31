@@ -19,13 +19,11 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/config.sh"
 
 readonly EVENT_API_TOKEN="integration-node-token"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 readonly EVENT_STREAM_CURL_TIMEOUT=(--connect-timeout 2 --max-time 10)
-event_stream_pid=""
-event_capacity_status=""
-event_capacity_curl_status=0
 
 require_commands curl jq ss
 
@@ -35,6 +33,10 @@ readonly EVENT_API_PORT
 HUATUO_BAMAI_ADDR="http://127.0.0.1:${EVENT_API_PORT}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 export HUATUO_BAMAI_ADDR HUATUO_BAMAI_METRICS_API
+
+event_stream_pid=""
+event_capacity_status=""
+event_capacity_curl_status=0
 
 cleanup() {
 	stop_event_stream
@@ -49,17 +51,12 @@ stop_event_stream() {
 	event_stream_pid=""
 }
 
-write_event_api_config() {
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["memory_threshold_snapshot", "metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
-
-[HTTPServer]
-    ListenAddress = "127.0.0.1:${EVENT_API_PORT}"
+write_config_bamai_cloud_events_api() {
+	write_config_bamai_default
+	write_config_bamai_http "127.0.0.1:${EVENT_API_PORT}"
+	cat << 'EOF'
     MaxEventStreamClients = 1
     EventStreamKeepAliveIntervalSeconds = 1
-
-[HTTPServer.Auth]
-    BearerToken = "${EVENT_API_TOKEN}"
 EOF
 }
 
@@ -169,7 +166,7 @@ assert_event_stream_heartbeat() {
 	}
 }
 
-integration_huatuo_bamai_start write_event_api_config
+integration_huatuo_bamai_start write_config_bamai_cloud_events_api
 assert_openapi_contract
 assert_error_response missing-auth application/json '{}' 401 unauthenticated false
 assert_error_response unsupported-media text/plain '{}' 415 unsupported_media_type true

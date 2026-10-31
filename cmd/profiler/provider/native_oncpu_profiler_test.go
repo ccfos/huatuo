@@ -18,8 +18,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+
 	"github.com/ccfos/huatuo/internal/bpf"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
 	"github.com/ccfos/huatuo/pkg/profiling"
 
 	"github.com/stretchr/testify/require"
@@ -27,17 +28,17 @@ import (
 )
 
 func TestNativeCPUReadDataLoopRequiresStart(t *testing.T) {
-	err := (&cpuNativeProfiler{}).ReadDataLoop(t.Context(), func(any) {})
+	err := (&cpuNativeProfiler{}).ReadDataLoop(t.Context(), func(*pipeline.SampleBatch) error { return nil })
 	require.EqualError(t, err, "native CPU event readers are not initialized; call Start before ReadDataLoop")
 }
 
 func TestNativeCPUStartRejectsUnsupportedMode(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{
+	cfg := &Config{
 		PIDs: []int{123},
 		Mode: profiling.Mode("invalid"),
 	}
 
-	err := (&cpuNativeProfiler{}).Start(pctx)
+	err := (&cpuNativeProfiler{config: *cfg}).Start(t.Context())
 	require.EqualError(t, err, `start native CPU profiler: unsupported mode "invalid"`)
 }
 
@@ -45,7 +46,10 @@ func TestNativeOnCPUAttachOptions(t *testing.T) {
 	t.Parallel()
 
 	options := nativeOnCPUAttachOptions(
-		&pcontext.ProfilerContext{Freq: 199, CPUIDs: []int{1, 3}},
+		&Config{
+			Freq:   199,
+			CPUIDs: []int{1, 3},
+		},
 		unix.PERF_TYPE_HARDWARE,
 		unix.PERF_COUNT_HW_CPU_CYCLES,
 	)
@@ -61,7 +65,7 @@ func TestNativeOnCPUAttachOptions(t *testing.T) {
 func TestAttachNativeOnCPU(t *testing.T) {
 	t.Parallel()
 
-	hardwareErr := errors.New("hardware unavailable")
+	hardwareErr := bpf.ErrHardwarePMUUnavailable
 	softwareErr := errors.New("software unavailable")
 	tests := []struct {
 		name               string
@@ -107,7 +111,7 @@ func TestAttachNativeOnCPU(t *testing.T) {
 				calls = append(calls, opts)
 				return tt.errs[len(calls)-1]
 			}
-			err := attachNativeOnCPU(attach, &pcontext.ProfilerContext{
+			err := attachNativeOnCPU(attach, &Config{
 				Freq:               99,
 				RequireHardwarePMU: tt.requireHardwarePMU,
 			})
@@ -134,6 +138,7 @@ func TestAttachNativeOnCPU(t *testing.T) {
 					calls[1][0].PerfEvent.Config,
 				)
 			}
+
 			if tt.wantErr == nil {
 				require.NoError(t, err)
 				return

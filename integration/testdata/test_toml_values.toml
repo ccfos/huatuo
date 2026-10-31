@@ -1,0 +1,10 @@
+BlackList = ["dropwatch", "netdev_hw"]
+
+[Runtime]
+CPULimitCores = 1.5
+MemoryLimitMiB = 1024
+
+[AutoTracing.MemoryThresholdSnapshot]
+IntervalTracing = 60
+RunTracingToolTimeout = 3
+MaxMemoryObjectEntries = 7

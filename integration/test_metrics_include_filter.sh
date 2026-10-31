@@ -21,11 +21,11 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-integration_huatuo_bamai_start write_include_filter_config
+integration_huatuo_bamai_start write_config_bamai_include_filter
 
 huatuo_bamai_await_metrics
 
-check_metrics "include filter" \
+assert_metrics "include filter" \
 	"memory_vmstat_pgfault" \
 	"netstat_Tcp_RetransSegs" "netstat_TcpExt_TCPLostRetransmit" \
 	'netdev_.*device="eth0"' \

@@ -21,78 +21,82 @@ import (
 	"io"
 	"path/filepath"
 	"strconv"
-	"strings"
+	"syscall"
+	"time"
 
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+
+	profilerexec "github.com/ccfos/huatuo/cmd/profiler/exec"
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/process"
-	"github.com/ccfos/huatuo/internal/profiler"
-	"github.com/ccfos/huatuo/internal/profiler/aggregator"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	profilerexec "github.com/ccfos/huatuo/internal/profiler/exec"
-	profilerprocess "github.com/ccfos/huatuo/internal/profiler/process"
-	"github.com/ccfos/huatuo/internal/profiler/registry"
-	"github.com/ccfos/huatuo/internal/profiler/toolpath"
+	"github.com/ccfos/huatuo/internal/profiling/profile"
+	"github.com/ccfos/huatuo/internal/profiling/toolpath"
 	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type pythonCPUProfiler struct {
-	duration int
-	freq     int
-	toolPath string
-	pids     []int
+	config  Config
+	pids    []int
+	labels  map[int][]types.ProfileLabel
+	results []*profilerexec.Result
 }
 
-func init() {
-	impl := &pythonCPUProfiler{}
-	registry.Register(registry.ProfilerMeta{
-		Type:           profiling.TypeCPU,
-		Implementation: profiling.ImplementationPython,
-		Description:    "Python CPU profiler using py-spy",
-		Impl:           impl,
-		NewAggregator:  impl.NewAggregator,
-	})
-}
-
-// ManagesDuration marks py-spy as self-terminating after record --duration.
-func (*pythonCPUProfiler) ManagesDuration() {}
-
-func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	return newPythonCPUAggregator(pctx)
-}
-
-func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if err := toolpath.Validate(profiling.LanguagePython, pctx.ToolDir); err != nil {
-		return err
-	}
-	if err := validatePythonAggregationWindow(pctx.Duration, pctx.AggrInterval); err != nil {
+func (p *pythonCPUProfiler) Start(_ context.Context) error {
+	cfg := &p.config
+	if err := toolpath.Validate(profiling.LanguagePython, cfg.ToolDir); err != nil {
 		return err
 	}
 
-	p.duration = pctx.Duration
-	p.freq = pctx.Freq
-	p.toolPath = pctx.ToolDir
+	if err := validatePythonAggregationWindow(cfg.Duration, cfg.AggregationInterval); err != nil {
+		return err
+	}
 
-	pids, err := resolvePythonPids(pctx)
+	if cfg.Duration <= 0 || cfg.Duration%time.Second != 0 {
+		return fmt.Errorf("Python profiling duration must be a positive whole number of seconds: %s", cfg.Duration)
+	}
+
+	pids, err := resolvePythonPids(cfg)
 	if err != nil {
 		return err
 	}
+
 	if err := validateResolvedPIDs("Python", pids); err != nil {
 		return err
 	}
-	if len(pctx.PIDs) > 0 {
+
+	if len(cfg.PIDs) > 0 {
 		if err := validateProcessExecutables("Python", "python", pids); err != nil {
 			return err
 		}
-		if err := validateExpectedExecPath(pids, pctx.ExecPath); err != nil {
+
+		if err := validateExpectedExecPath(pids, cfg.ExecPath); err != nil {
 			return err
 		}
 	}
+
 	pids, err = pythonRootPids(pids, process.PPID)
 	if err != nil {
 		return err
 	}
-	if err := validateMaxProfilerProcesses("Python", pids, pctx.MaxProfilerProcesses); err != nil {
+
+	if err := validateMaxProfilerProcesses("Python", pids, cfg.MaxProfilerProcesses); err != nil {
 		return err
+	}
+
+	p.labels = make(map[int][]types.ProfileLabel, len(pids))
+	for _, pid := range pids {
+		labels, err := readProcessLabels(pid)
+		if err != nil {
+			return fmt.Errorf("read Python process %d metadata: %w", pid, err)
+		}
+
+		entry, err := pythonProcessName(pid)
+		if err != nil {
+			return err
+		}
+
+		p.labels[pid] = append(labels, types.ProfileStringLabel("python_entry", entry))
 	}
 
 	p.pids = pids
@@ -100,93 +104,103 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	return nil
 }
 
-func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	return runPySpyAndEmit(ctx, p.duration, p.freq, p.toolPath, p.pids, enqueue)
+func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, _ func(*pipeline.SampleBatch) error) error {
+	p.results = runPySpy(
+		ctx,
+		p.pids,
+		p.config.Freq,
+		p.config.ToolDir,
+	)
+
+	return profilerexec.Verify(p.results)
 }
 
-func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
+func (p *pythonCPUProfiler) Finalize(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	defer func() { p.results = nil }()
+	deliver := func(batch *pipeline.SampleBatch) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return enqueue(batch)
+	}
+
+	for i := range p.results {
+		cmdRes := p.results[i]
+		targetPid := cmdRes.PID
+
+		if len(bytes.TrimSpace(cmdRes.Output)) == 0 {
+			return fmt.Errorf("PID[%d] sampling failed: no samples collected", targetPid)
+		}
+
+		if err := enqueueFolded(
+			profile.SampleOutput{
+				PID:    targetPid,
+				Output: string(cmdRes.Output),
+			},
+			p.labels[targetPid],
+			1000000000/int64(p.config.Freq),
+			profiling.LanguagePython,
+			deliver,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
-	if len(pctx.PIDs) > 0 {
-		return pctx.PIDs, nil
+func (p *pythonCPUProfiler) Stop() error {
+	p.results = nil
+	return nil
+}
+
+func resolvePythonPids(cfg *Config) ([]int, error) {
+	if len(cfg.PIDs) > 0 {
+		return cfg.PIDs, nil
 	}
 
-	pids, err := profilerprocess.ContainerRootPIDs(pctx.ContainerID, profilerprocess.ExecutableFilter{
+	pids, err := containerRootPIDs(cfg.ContainerID, executableFilter{
 		ExecutablePrefix: "python",
-		ExecutablePath:   pctx.ExecPath,
+		ExecutablePath:   cfg.ExecPath,
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	if len(pids) == 0 {
-		return nil, fmt.Errorf("sampling failed: no target Python processes found in container %q", pctx.ContainerID)
+		return nil, fmt.Errorf("sampling failed: no target Python processes found in container %q", cfg.ContainerID)
 	}
 
 	return pids, nil
 }
 
-func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids []int, enqueue func(any)) error {
-	cmdResults := runPySpy(ctx, pids, dur, freq, toolPath)
-
-	var errorMessages []string
-
-	for i := range cmdResults {
-		cmdRes := cmdResults[i]
-		targetPid := cmdRes.PID
-
-		if !cmdRes.Succeeded() {
-			errorMessages = append(errorMessages,
-				fmt.Sprintf(
-					"PID[%d] sampling failed: %v, diagnostics: %q",
-					targetPid,
-					cmdRes.Err,
-					string(cmdRes.Diagnostics),
-				))
-
-			continue
-		}
-
-		if len(bytes.TrimSpace(cmdRes.Output)) == 0 {
-			errorMessages = append(errorMessages,
-				fmt.Sprintf("PID[%d] sampling failed: no samples collected", targetPid))
-			continue
-		}
-		enqueue(profiler.SampleOutput{
-			PID:    targetPid,
-			Output: string(cmdRes.Output),
-		})
-	}
-
-	if len(errorMessages) > 0 {
-		return fmt.Errorf("sampling failed:\n%s", strings.Join(errorMessages, "\n"))
-	}
-
-	return nil
-}
-
 func runPySpy(
 	ctx context.Context,
 	pids []int,
-	dur int,
 	freq int,
 	pyspyPath string,
 ) []*profilerexec.Result {
 	pyspyBin := filepath.Join(pyspyPath, "py-spy")
-	durStr := strconv.Itoa(dur)
 	freqStr := strconv.Itoa(freq)
 
-	return profilerexec.RunWithMemfd(ctx, pids, pyspyBin, func(pid int, outputPath string) []string {
-		return buildPySpyArgs(pid, durStr, freqStr, outputPath)
-	}, executil.WithStdout(io.Discard))
+	return profilerexec.RunWithMemfd(
+		ctx,
+		pids,
+		&executil.Spec{Path: pyspyBin, StopSignal: syscall.SIGINT},
+		func(pid int, outputPath string) []string {
+			return buildPySpyArgs(
+				pid,
+				freqStr,
+				outputPath,
+			)
+		},
+		executil.WithStdout(io.Discard),
+	)
 }
 
-func buildPySpyArgs(pid int, duration, frequency, outputPath string) []string {
+func buildPySpyArgs(pid int, frequency, outputPath string) []string {
 	return []string{
 		"record",
-		"-d", duration,
 		"-f", "raw",
 		"-r", frequency,
 		"--subprocesses",

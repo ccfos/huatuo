@@ -39,10 +39,8 @@ func runRetransmitDropCorrelation(
 		return err
 	}
 	defer func() {
-		returnErr = errors.Join(
-			returnErr,
-			session.emitResults(correlator.drainRetransmits(time.Now())),
-		)
+		flushErr := session.emitResults(ctx, correlator.drainRetransmits(time.Now()))
+		returnErr = errors.Join(returnErr, flushErr)
 	}()
 
 	timer := time.NewTimer(retransmitRetentionDuration)
@@ -80,7 +78,7 @@ func runRetransmitDropCorrelation(
 		case <-ctx.Done():
 			return nil
 		}
-		if err := session.emitResults(results); err != nil {
+		if err := session.emitResults(ctx, results); err != nil {
 			return err
 		}
 	}

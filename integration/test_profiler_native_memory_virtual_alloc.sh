@@ -21,9 +21,9 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-# --- preconditions -----------------------------------------------------------
+require_readable /sys/kernel/btf/vmlinux
 
-is_container && skip "native memory profiler requires bare-metal cgroup/PMU access"
+# --- preconditions -----------------------------------------------------------
 
 bpf_tool_setup profiler native_virtual_alloc profiler-mem
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_mmap.user.c"
@@ -161,3 +161,30 @@ fi
 
 log_info "folded file has ${LINE_COUNT} lines; test passed"
 log_info "total captured bytes: ${TOTAL_CAPTURED_BYTES}"
+
+# Verify exact allocation bytes survive SIGINT after a short burst.
+# Periodic reads may consume the burst before stop; deterministic unit tests
+# verify the final drain of both rings.
+mkdir -p "${WORK_DIR}/final"
+"${FIXTURE_BIN}" final > "${WORK_DIR}/final/fixture.out" 2> "${WORK_DIR}/final/fixture.err" &
+TARGET_PID=$!
+"${TOOL_BIN}" --type memory --language c --memory-mode virtual_alloc \
+	--pid "${TARGET_PID}" --duration 30 --aggr-interval 30 \
+	--output-format collapsed --output-path "${WORK_DIR}/final/result.folded" --verbose \
+	> "${WORK_DIR}/final/profiler.out" 2> "${WORK_DIR}/final/profiler.err" &
+PROFILER_PID=$!
+wait_until 15 0.01 profiler_ready "${WORK_DIR}/final/profiler.out" \
+	|| fatal "final-burst profiler did not become ready"
+kill -USR1 "${TARGET_PID}" || fatal "failed to start final allocation burst"
+wait_until 5 0.01 grep -qx 'final allocation complete' "${WORK_DIR}/final/fixture.out" \
+	|| fatal "final allocation burst did not finish"
+assert_process_shutdown_by_pid "${PROFILER_PID}" 35 INT || fatal "SIGINT did not finalize native memory profiling"
+PROFILER_PID=""
+assert_final_allocation_bytes() {
+	local expected actual
+	expected=$(awk -F= '/^actual_allocated_bytes=/{print $2}' "${WORK_DIR}/final/fixture.err")
+	actual=$(awk -v symbol="${EXPECTED_SYMBOL}" 'index($0, symbol) {sum += $NF} END {print sum+0}' "${WORK_DIR}/final/result.folded")
+	[[ ${expected} =~ ^[0-9]+$ && ${actual} == "${expected}" ]] \
+		|| fatal "final allocation bytes: expected ${expected}, got ${actual}"
+}
+assert_final_allocation_bytes

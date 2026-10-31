@@ -19,12 +19,18 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"os"
+	"slices"
 	"testing"
 	"unsafe"
 
+	"github.com/ccfos/huatuo/internal/profiling/aggregation"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 
@@ -43,13 +49,34 @@ func TestOffCPUCategory(t *testing.T) {
 		kind abi.ProfilerOffCPUEventKind
 		want string
 	}{
-		{abi.ProfilerOffCPUEventUnknown, "off-CPU unknown"},
-		{abi.ProfilerOffCPUEventBlocked, "off-CPU blocked"},
-		{abi.ProfilerOffCPUEventRunqueue, "scheduling delay"},
-		{abi.ProfilerOffCPUEventRunqueuePreempted, "scheduling delay (preempted)"},
-		{abi.ProfilerOffCPUEventRunqueueYielded, "scheduling delay (yielded)"},
-		{abi.ProfilerOffCPUEventRunqueueMissedWakeup, "scheduling delay (wakeup not observed)"},
-		{99, "off-CPU unknown"},
+		{
+			kind: abi.ProfilerOffCPUEventUnknown,
+			want: "unknown",
+		},
+		{
+			kind: abi.ProfilerOffCPUEventBlocked,
+			want: "blocked",
+		},
+		{
+			kind: abi.ProfilerOffCPUEventRunqueue,
+			want: "runqueue",
+		},
+		{
+			kind: abi.ProfilerOffCPUEventRunqueuePreempted,
+			want: "runqueue_preempted",
+		},
+		{
+			kind: abi.ProfilerOffCPUEventRunqueueYielded,
+			want: "runqueue_yielded",
+		},
+		{
+			kind: abi.ProfilerOffCPUEventRunqueueMissedWakeup,
+			want: "runqueue_missed_wakeup",
+		},
+		{
+			kind: 99,
+			want: "unknown",
+		},
 	}
 	for _, tt := range tests {
 		require.Equal(t, tt.want, offCPUCategory(tt.kind))
@@ -83,8 +110,8 @@ func (*offCPUReaderStub) Close() error {
 func newOffCPUReaderProfiler(reader bpf.PerfEventReader) *cpuNativeProfiler {
 	obj := stackLookupMissBPF{}
 	return &cpuNativeProfiler{
-		bpf:        obj,
-		offCPUMode: true,
+		bpf:    obj,
+		config: Config{Mode: profiling.ModeOffCPU},
 		ringCtx: &ringBufferContext{
 			bpf:         obj,
 			readerA:     reader,
@@ -119,11 +146,12 @@ func TestReadOffCPUDataLoopReturnsReaderErrors(t *testing.T) {
 				if calls == 2 {
 					cancel()
 				}
+
 				return tt.batch, readErr
 			}}
 			profiler := newOffCPUReaderProfiler(reader)
 
-			err := profiler.ReadDataLoop(ctx, func(any) {})
+			err := profiler.ReadDataLoop(ctx, func(*pipeline.SampleBatch) error { return nil })
 			require.ErrorIs(t, err, readErr)
 			require.Equal(t, 1, calls)
 		})
@@ -140,11 +168,12 @@ func TestReadOffCPUDataLoopContinuesAfterSamplesLost(t *testing.T) {
 		if calls == 2 {
 			cancel()
 		}
+
 		return bpf.PerfEventBatch{LostSamples: 7}, nil
 	}}
 	profiler := newOffCPUReaderProfiler(reader)
 
-	require.NoError(t, profiler.readOffCPUDataLoop(ctx, func(any) {}))
+	require.NoError(t, profiler.readOffCPUDataLoop(ctx, func(*pipeline.SampleBatch) error { return nil }))
 	require.Equal(t, 2, calls)
 }
 
@@ -154,7 +183,10 @@ func TestReadOffCPUDataLoopTreatsCancellationAsCleanShutdown(t *testing.T) {
 		lostSamples uint64
 	}{
 		{name: "canceled"},
-		{name: "canceled after samples lost", lostSamples: 7},
+		{
+			name:        "canceled after samples lost",
+			lostSamples: 7,
+		},
 	}
 
 	for _, tt := range tests {
@@ -166,7 +198,10 @@ func TestReadOffCPUDataLoopTreatsCancellationAsCleanShutdown(t *testing.T) {
 			}}
 			profiler := newOffCPUReaderProfiler(reader)
 
-			require.NoError(t, profiler.readOffCPUDataLoop(t.Context(), func(any) {}))
+			require.NoError(
+				t,
+				profiler.readOffCPUDataLoop(t.Context(), func(*pipeline.SampleBatch) error { return nil }),
+			)
 			require.Equal(t, 1, calls)
 		})
 	}
@@ -188,15 +223,16 @@ func TestReadOffCPUDataLoopPreservesPartialBatchOnError(t *testing.T) {
 	}}
 	profiler := newOffCPUReaderProfiler(reader)
 
-	var got []any
-	err := profiler.readOffCPUDataLoop(t.Context(), func(record any) {
-		got = append(got, record)
-	})
+	var got []aggregation.Sample
+	err := profiler.readOffCPUDataLoop(
+		t.Context(),
+		func(batch *pipeline.SampleBatch) error { got = append(got, batch.Samples...); return nil },
+	)
 	require.ErrorIs(t, err, readErr)
 	require.Len(t, got, 1)
 }
 
-func TestAggregateOffCPUBatch(t *testing.T) {
+func TestEnqueueOffCPUBatch(t *testing.T) {
 	event := func(
 		pid uint32,
 		value int64,
@@ -216,44 +252,90 @@ func TestAggregateOffCPUBatch(t *testing.T) {
 	}
 
 	batch := []any{
-		event(100, 10, abi.ProfilerOffCPUEventBlocked, 0, -1),
-		event(100, 20, abi.ProfilerOffCPUEventBlocked, 0, -1),
-		event(100, 30, abi.ProfilerOffCPUEventRunqueue, 0, -1),
-		event(200, 40, abi.ProfilerOffCPUEventBlocked, 0, -1),
-		event(300, 50, abi.ProfilerOffCPUEventBlocked, -1, -1),
+		event(
+			100,
+			10,
+			abi.ProfilerOffCPUEventBlocked,
+			0,
+			-1,
+		),
+		event(
+			100,
+			20,
+			abi.ProfilerOffCPUEventBlocked,
+			0,
+			-1,
+		),
+		event(
+			100,
+			30,
+			abi.ProfilerOffCPUEventRunqueue,
+			0,
+			-1,
+		),
+		event(
+			200,
+			40,
+			abi.ProfilerOffCPUEventBlocked,
+			0,
+			-1,
+		),
+		event(
+			300,
+			50,
+			abi.ProfilerOffCPUEventBlocked,
+			-1,
+			-1,
+		),
 	}
 
-	ringCtx := &ringBufferContext{bpf: stackLookupMissBPF{}, stackMapAID: 1}
-	var samples []*stackSample
-	ringCtx.aggregateOffCPUBatch(batch, func(record any) {
-		samples = append(samples, record.(*stackSample))
-	})
-
-	require.Len(t, samples, 3)
-	type sampleKey struct {
-		PID      uint32
-		Category string
+	ringCtx := &ringBufferContext{
+		bpf:         stackLookupMissBPF{},
+		stackMapAID: 1,
 	}
+	var samples []aggregation.Sample
+	require.NoError(
+		t,
+		ringCtx.enqueueOffCPUBatch(
+			batch,
+			func(batch *pipeline.SampleBatch) error { samples = append(samples, batch.Samples...); return nil },
+		),
+	)
+	require.Len(t, samples, 5)
+	type sampleKey struct{ PID, Category string }
 	values := make(map[sampleKey]int64)
-	for _, sample := range samples {
-		values[sampleKey{sample.Process.PID, sample.Category}] = sample.Value
-	}
-	require.Equal(t, int64(30), values[sampleKey{100, "off-CPU blocked"}])
-	require.Equal(t, int64(30), values[sampleKey{100, "scheduling delay"}])
-	require.Equal(t, int64(40), values[sampleKey{200, "off-CPU blocked"}])
-}
+	for i := range samples {
+		sample := &samples[i]
+		var key sampleKey
+		for _, label := range sample.Labels {
+			if label.Name == "pid" {
+				key.PID = label.StringValue
+			}
 
-func TestNativeAggregatorSeparatesOffCPUCategories(t *testing.T) {
-	aggr := &nativeAggregator{stackSamples: make(map[stackSampleKey]int64)}
-	proc := processKey{PID: 123, Comm: "worker"}
-	trace := symbolizedStackTrace{UserFrames: []string{"main", "wait"}}
-	aggr.Aggregate(&stackSample{Process: proc, StackTrace: trace, Value: 10, Category: "off-CPU blocked"})
-	aggr.Aggregate(&stackSample{Process: proc, StackTrace: trace, Value: 20, Category: "scheduling delay"})
-	require.Len(t, aggr.stackSamples, 2)
+			if label.Name == "offcpu_category" {
+				key.Category = label.StringValue
+			}
+		}
+
+		values[key] += sample.Value
+	}
+
+	require.Equal(t, int64(30), values[sampleKey{
+		PID:      "100",
+		Category: "blocked",
+	}])
+	require.Equal(t, int64(30), values[sampleKey{
+		PID:      "100",
+		Category: "runqueue",
+	}])
+	require.Equal(t, int64(40), values[sampleKey{
+		PID:      "200",
+		Category: "blocked",
+	}])
 }
 
 func TestNativeOffCPUBPFConstants(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{
+	cfg := &Config{
 		PIDs:                []int{123},
 		CPUIDs:              []int{2, 4},
 		ThreadGroup:         true,
@@ -261,7 +343,7 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 		OffCPUMinDurationUS: 250,
 		OffCPUStatsEnabled:  true,
 	}
-	constants := newNativeOffCPUBPFConstants(pctx, 456)
+	constants := newNativeOffCPUBPFConstants(cfg, 456)
 	require.Equal(t, uint32(123), constants["profiler_filter_pid"])
 	require.Equal(t, uint64(456), constants["profiler_filter_css"])
 	require.Equal(t, true, constants["profiler_filter_threads"])
@@ -272,7 +354,7 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 }
 
 func TestNativeOffCPUBPFConstantsDisablesEmptyCPUSet(t *testing.T) {
-	constants := newNativeOffCPUBPFConstants(&pcontext.ProfilerContext{}, 0)
+	constants := newNativeOffCPUBPFConstants(&Config{}, 0)
 	require.Equal(t, uint32(0), constants["profiler_offcpu_cpu_set_enabled"])
 	require.Equal(t, uint32(0), constants["profiler_offcpu_stats_enabled"])
 }
@@ -315,6 +397,7 @@ func (f *offCPUCPUSetBPF) MapIDByName(string) uint32 {
 func (f *offCPUCPUSetBPF) WriteMapItems(mapID uint32, items []bpf.MapItem) error {
 	f.writtenMap = mapID
 	f.items = items
+
 	return f.writeErr
 }
 
@@ -332,7 +415,10 @@ func TestConfigureOffCPUSet(t *testing.T) {
 	})
 
 	t.Run("write failure", func(t *testing.T) {
-		obj := &offCPUCPUSetBPF{mapID: 7, writeErr: errors.New("update failed")}
+		obj := &offCPUCPUSetBPF{
+			mapID:    7,
+			writeErr: errors.New("update failed"),
+		}
 		err := configureOffCPUSet(obj, []int{1})
 		require.EqualError(t, err, `write BPF map "offcpu_cpu_set": update failed`)
 	})
@@ -360,9 +446,150 @@ func TestNativeCPUOffCPUAttachOptions(t *testing.T) {
 }
 
 func TestOffCPUProfileTypeUsesNanosecondsWithoutSampleRate(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, Mode: profiling.ModeOffCPU, Freq: 99}
-	opt, profileType, err := profileTypeOptions(pctx)
+	cfg := &Config{
+		Type: profiling.TypeCPU,
+		Mode: profiling.ModeOffCPU,
+		Freq: 99,
+	}
+	profileType, err := sampleType(cfg)
 	require.NoError(t, err)
-	require.Zero(t, opt.SampleRate)
 	require.Equal(t, "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds", profileType)
+}
+
+// offCPUStackBPF supplies stack bytes at the BPF I/O boundary.
+type offCPUStackBPF struct {
+	bpf.BPF
+	reads     map[uint32]int
+	failFirst bool
+	trace     []byte
+}
+
+func (b *offCPUStackBPF) ReadMap(_ uint32, key []byte) ([]byte, error) {
+	id := binary.LittleEndian.Uint32(key)
+	b.reads[id]++
+	if b.failFirst && b.reads[id] == 1 {
+		return nil, ebpf.ErrKeyNotExist
+	}
+
+	return slices.Clone(b.trace), nil
+}
+
+func newOffCPUStackBPF() *offCPUStackBPF {
+	trace := make([]byte, bpfmap.StackTraceLen*8)
+	binary.LittleEndian.PutUint64(trace, 0x1000)
+
+	return &offCPUStackBPF{
+		reads: make(map[uint32]int),
+		trace: trace,
+	}
+}
+
+func offCPUStackEvent(pid uint32, userStack, kernelStack int32) *abi.ProfilerOffCPUEvent {
+	return &abi.ProfilerOffCPUEvent{
+		Base: abi.ProfilerEventBase{
+			PIDTGID:   uint64(pid) << 32,
+			Userstack: userStack,
+			Kernstack: kernelStack,
+			Value:     7,
+		},
+		Kind: abi.ProfilerOffCPUEventBlocked,
+	}
+}
+
+func TestOffCPUBatchStackCache(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		differentPID    bool
+		failFirst       bool
+		wantUserReads   int
+		wantKernelReads int
+	}{
+		{
+			name:            "repeated stacks",
+			wantUserReads:   1,
+			wantKernelReads: 1,
+		},
+		{
+			name:            "different processes",
+			differentPID:    true,
+			wantUserReads:   2,
+			wantKernelReads: 1,
+		},
+		{
+			name:            "retry missing stacks",
+			failFirst:       true,
+			wantUserReads:   2,
+			wantKernelReads: 2,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			obj := newOffCPUStackBPF()
+			obj.failFirst = tc.failFirst
+			r := &ringBufferContext{
+				bpf:         obj,
+				stackMapAID: 1,
+				usym:        symbol.NewUsymResolver(),
+			}
+			pid := uint32(os.Getpid())
+			otherPID := pid
+			if tc.differentPID {
+				otherPID = uint32(os.Getppid())
+			}
+
+			events := []any{
+				offCPUStackEvent(pid, 0, 1),
+				offCPUStackEvent(otherPID, 0, 1),
+				offCPUStackEvent(pid, 0, 1),
+			}
+			var samples []aggregation.Sample
+			enqueue := func(batch *pipeline.SampleBatch) error {
+				samples = append(samples, batch.Samples...)
+				return nil
+			}
+			require.NoError(t, r.enqueueOffCPUBatch(events, enqueue))
+			require.Equal(t, tc.wantUserReads, obj.reads[0])
+			require.Equal(t, tc.wantKernelReads, obj.reads[1])
+			require.Len(t, samples, len(events))
+			for i := range samples {
+				if tc.failFirst && i == 0 {
+					require.Empty(t, samples[i].UserFrames)
+					require.Empty(t, samples[i].KernelFrames)
+				} else {
+					require.Len(t, samples[i].UserFrames, 1)
+					require.Len(t, samples[i].KernelFrames, 1)
+				}
+			}
+
+			// A new batch must resolve stacks again, including changed map contents.
+			binary.LittleEndian.PutUint64(obj.trace, 0x9000)
+			require.NoError(t, r.enqueueOffCPUBatch(events[:1], enqueue))
+			require.Len(t, samples, len(events)+1)
+			require.Equal(t, tc.wantUserReads+1, obj.reads[0])
+			require.Equal(t, tc.wantKernelReads+1, obj.reads[1])
+			require.NotEqual(t, samples[2].UserFrames, samples[3].UserFrames)
+			require.NotEqual(t, samples[2].KernelFrames, samples[3].KernelFrames)
+		})
+	}
+}
+
+func BenchmarkReadOffCPUDataLoop(b *testing.B) {
+	failure := errors.New("end benchmark batch")
+	reader := &offCPUReaderStub{readBatch: func() (bpf.PerfEventBatch, error) {
+		return bpf.PerfEventBatch{Events: []any{&abi.ProfilerOffCPUEvent{
+			Base: abi.ProfilerEventBase{
+				PIDTGID:   uint64(123) << 32,
+				Value:     7,
+				Userstack: -1,
+				Kernstack: -1,
+			},
+		}}}, nil
+	}}
+	p := newOffCPUReaderProfiler(reader)
+	enqueue := func(*pipeline.SampleBatch) error { return failure }
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := p.ReadDataLoop(b.Context(), enqueue); !errors.Is(err, failure) {
+			b.Fatal(err)
+		}
+	}
 }

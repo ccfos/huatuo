@@ -15,10 +15,13 @@
 package trace
 
 import (
+	"errors"
 	"math"
 	"strings"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
+	"github.com/ccfos/huatuo/internal/job"
 	"github.com/ccfos/huatuo/pkg/observation"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
@@ -43,6 +46,28 @@ func TestValidateCreateInput(t *testing.T) {
 			},
 			wantErr: "duration_seconds",
 		},
+		{name: "minimum positive duration", mutate: func(input *CreateInput) { input.DurationSeconds = 1 }},
+		{
+			name: "zero duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = 0
+			},
+			wantErr: "duration_seconds",
+		},
+		{
+			name: "negative duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = -1
+			},
+			wantErr: "duration_seconds",
+		},
+		{
+			name: "non-positive duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = -1
+			},
+			wantErr: "duration_seconds",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,6 +83,22 @@ func TestValidateCreateInput(t *testing.T) {
 				t.Fatalf("validateCreateInput() error = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestCreateRejectsInvalidDurationAtServiceBoundary(t *testing.T) {
+	service, err := NewService(&job.Manager{})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	_, err = service.Create(t.Context(), auth.Principal{}, CreateInput{
+		Hostname:        "node-1",
+		DurationSeconds: 0,
+		Scope:           observation.ScopeHost,
+		Spec:            tracingdomain.Spec{Type: tracingdomain.TypeNetworkingDrop},
+	})
+	if !errors.Is(err, job.ErrInvalidQuery) {
+		t.Fatalf("Create() error = %v, want ErrInvalidQuery", err)
 	}
 }
 

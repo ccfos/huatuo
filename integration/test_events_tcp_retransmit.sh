@@ -105,7 +105,7 @@ ip -n "${TCP_RETRANS_NETNS}" addr add "${TCP_RETRANS_SOURCE_IP}/24" dev retransm
 ip -n "${TCP_RETRANS_NETNS}" link set retransmit0 up
 ip -n "${TCP_RETRANS_NETNS}" link set lo up
 
-integration_huatuo_bamai_start write_tcp_events_config \
+integration_huatuo_bamai_start write_config_bamai_tcp_events \
 	--region dev --disable-kubelet --log-debug
 wait_until 15 0.2 tcp_retransmit_child_started || fatal "bamai did not launch the tcpshark binary"
 
@@ -119,10 +119,13 @@ tcp_retrans_workload_pid=$!
 wait_until 30 0.5 tcp_retransmit_event_is_stored || fatal \
 	"no matching TCP retransmit event persisted; parser: $(cat "${TCP_RETRANS_PARSE_ERROR}" 2> /dev/null || true)"
 tcp_retrans_connect_status=0
-wait "${tcp_retrans_workload_pid}" || tcp_retrans_connect_status=$?
+# Once persistence is verified, further SYN retries add no coverage.
+stop_and_wait_by_pid "${tcp_retrans_workload_pid}" 2 || tcp_retrans_connect_status=$?
 tcp_retrans_workload_pid=""
-[[ ${tcp_retrans_connect_status} -eq 124 ]] || fatal \
-	"TCP connect exited ${tcp_retrans_connect_status}, expected timeout (124)"
+case ${tcp_retrans_connect_status} in
+124 | 143) ;; # Natural timeout or requested termination.
+*) fatal "TCP connect exited ${tcp_retrans_connect_status}, expected timeout or termination" ;;
+esac
 
 assert_tcp_retransmit_shutdown
 # Parse again after shutdown so a partially appended JSON object cannot pass.

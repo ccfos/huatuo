@@ -26,7 +26,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var errInvalidPerfEventOption = errors.New("invalid perf event option")
+var (
+	// ErrHardwarePMUUnavailable indicates that the requested hardware event is unsupported.
+	ErrHardwarePMUUnavailable = errors.New("hardware PMU unavailable")
+
+	// ErrInvalidPerfEventOption indicates that perf event options are invalid.
+	ErrInvalidPerfEventOption = errors.New("invalid perf event option")
+)
 
 type perfEventSampleMode uint8
 
@@ -50,20 +56,20 @@ type perfEventOption struct {
 
 func (opt *perfEventOption) Validate() error {
 	if opt == nil {
-		return fmt.Errorf("%w: option required", errInvalidPerfEventOption)
+		return fmt.Errorf("%w: option required", ErrInvalidPerfEventOption)
 	}
 
 	var errs []error
 
 	if opt.program == nil {
 		errs = append(errs, fmt.Errorf(
-			"%w: program required", errInvalidPerfEventOption,
+			"%w: program required", ErrInvalidPerfEventOption,
 		))
 	}
 
 	if opt.sample == 0 {
 		errs = append(errs, fmt.Errorf(
-			"%w: sample value required", errInvalidPerfEventOption,
+			"%w: sample value required", ErrInvalidPerfEventOption,
 		))
 	}
 
@@ -77,6 +83,16 @@ func (opt *perfEventOption) Validate() error {
 func openPerfEvent(attr *unix.PerfEventAttr, progFD, cpuID int) (int, error) {
 	fd, err := unix.PerfEventOpen(attr, -1, cpuID, -1, unix.PERF_FLAG_FD_CLOEXEC)
 	if err != nil {
+		if attr.Type == unix.PERF_TYPE_HARDWARE &&
+			(errors.Is(err, unix.ENOENT) ||
+				errors.Is(err, unix.ENODEV) ||
+				errors.Is(err, unix.EOPNOTSUPP)) {
+			return -1, fmt.Errorf(
+				"%w: open perf event on cpu %d: %w",
+				ErrHardwarePMUUnavailable, cpuID, err,
+			)
+		}
+
 		return -1, fmt.Errorf("open perf event on cpu %d: %w", cpuID, err)
 	}
 

@@ -1,0 +1,243 @@
+name: OS Distro QEMU Tests (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: Comma-separated distro names, or all
+        type: string
+        required: false
+        default: all
+      debug_mode:
+        description: 'Debug VM: retain when'
+        type: string
+        required: false
+        default: Disabled
+      debug_timeout_minutes:
+        description: 'Debug VM: retention (minutes)'
+        type: string
+        required: false
+        default: '90'
+
+jobs:
+  # PRs cover representative kernels and cgroup modes; main runs every distro.
+  distro-matrix:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+    steps:
+      - name: Build matrix
+        id: build
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_OS: ${{ inputs.os }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            INPUT_OS=rocky8,openeuler22.03,openeuler24.03,ubuntu26.04,ubuntu20.04
+          elif [[ "$EVENT_NAME" != "workflow_dispatch" ]]; then
+            INPUT_OS=all
+          elif [[ -z "${INPUT_OS//[[:space:]]/}" ]]; then
+            echo "os is required for manual runs" >&2
+            exit 1
+          fi
+
+          distros='[
+            {"arch": "amd64", "os": "ubuntu26.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu26.04.amd64-20260915032000-8d05de220887-fae8fc715bea6500-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "ubuntu24.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu24.04.amd64-20260915032000-8d05de220887-fcedeb44fa774175-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "ubuntu22.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu22.04.amd64-20260915032000-8d05de220887-9548f93344760678-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "ubuntu20.04", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:ubuntu20.04.amd64-20260915032000-8d05de220887-763a29a10e27ccf1-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "debian12", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:debian12.amd64-20260915032000-8d05de220887-1c1844affc9ec324-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "debian13", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:debian13.amd64-20260915032000-8d05de220887-8fc205ebdce62ea0-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "rocky8", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:rocky8.amd64-20260915032000-8d05de220887-a80018bc4ab22aa3-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "rocky9", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:rocky9.amd64-20260915032000-8d05de220887-b7a56faa7fc2bf5c-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "fedora44", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:fedora44.amd64-20260915032000-8d05de220887-6f8e78db95104a60-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "openeuler22.03", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:openeuler22.03.amd64-20260915032000-8d05de220887-3c601405ed9199bb-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "openeuler24.03", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:openeuler24.03.amd64-20260915032000-8d05de220887-64101e9d1a712c78-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "anolis8.10", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:anolis8.10.amd64-20260915032000-f449e1ab76e5-a5153e73d65abc41-efbbd69167ddaa34"},
+            {"arch": "amd64", "os": "opencloudos9", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:opencloudos9.amd64-20260915032000-f449e1ab76e5-cf94cf60daa13e63-efbbd69167ddaa34"}
+          ]'
+          matrix=$(jq -cn \
+            --arg selected "$INPUT_OS" \
+            --argjson distros "${distros?}" '
+            def chunks: split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))
+              | map(select(length > 0));
+            ($selected | chunks) as $selected_distros
+            | ($selected_distros | length == 0 or any(. == "all")) as $all_selected
+            | [ $distros[] | select($all_selected or (.os as $os | $selected_distros | any(. == $os))) ]
+            | {include: .}
+          ')
+          if [ "$(jq '.include | length' <<< "$matrix")" -eq 0 ]; then
+            echo "Invalid os input: $INPUT_OS" >&2
+            exit 1
+          fi
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+  # start VMs and test in them
+  qemu-vm:
+    name: Test in VM (${{ matrix.arch }} ${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    needs: distro-matrix
+    env:
+      ACT_RUN: false
+      INTEGRATION_JOBS: 3
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.distro-matrix.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Host Init
+        run: |
+          .github/workflows/scripts/qemu-0-host-init.sh "${{ matrix.arch }}"
+
+      - name: Start VM
+        id: start-vm
+        timeout-minutes: 20
+        env:
+          VM_IMAGE_REF: ${{ matrix.image }}
+        run: |
+          .github/workflows/scripts/qemu-1-start-vm.sh \
+            "${{ matrix.arch }}" "${{ matrix.os }}"
+
+      - name: Receive generated sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # VM startup overlaps generation; wait for the same run's artifact.
+          generated_dir="$RUNNER_TEMP/huatuo-generated"
+          mkdir -p "$generated_dir"
+          for attempt in $(seq 1 180); do
+            status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+              --jq '.jobs[] | select(.name | endswith("Generate portable sources")) | .conclusion')
+            case "$status" in
+              success) break ;;
+              failure|cancelled|skipped|timed_out) echo "Source generation: $status" >&2; exit 1 ;;
+            esac
+            sleep 5
+          done
+          [[ "$status" == success ]] || { echo 'Timed out waiting for generated sources' >&2; exit 1; }
+          gh run download "$GITHUB_RUN_ID" --name portable-generated --dir "$generated_dir"
+          .github/workflows/scripts/vm-test/sync-generated-to-vm.sh "$generated_dir/portable-generated.tar"
+
+      - name: Prepare VM
+        id: prepare-in-vm
+        timeout-minutes: 20
+        run: .github/workflows/scripts/qemu-2-run-in-vm.sh --prepare-only
+
+      - name: Read VM Go cache key
+        id: go-cache-key
+        continue-on-error: true
+        env:
+          VM_IMAGE_REF: ${{ matrix.image }}
+        run: .github/workflows/scripts/vm-test/go-cache.sh key >> "$GITHUB_OUTPUT"
+
+      - name: Cache VM Go build
+        id: go-cache
+        if: steps.go-cache-key.outputs.key != ''
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/huatuo-go-build
+          key: vm-go-v1-${{ steps.go-cache-key.outputs.key }}-${{ hashFiles('go.mod', 'go.sum', 'Makefile') }}-${{ github.sha }}
+          restore-keys: |
+            vm-go-v1-${{ steps.go-cache-key.outputs.key }}-
+
+      - name: Restore Go cache into VM
+        if: steps.go-cache-key.outputs.key != ''
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh restore
+
+      - name: 'Debug VM: Start session before test'
+        id: upterm-before
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.debug_mode == 'Before test' &&
+          steps.start-vm.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: owenthereal/action-upterm@v1
+        with:
+          detached: true
+          limit-access-to-actor: true
+          wait-timeout-minutes: 1
+
+      - name: 'Debug VM: Retain before test'
+        if: steps.upterm-before.outcome == 'success'
+        timeout-minutes: 330
+        env:
+          DEBUG_TIMEOUT_MINUTES: ${{ inputs.debug_timeout_minutes }}
+          UPTERM_SSH_COMMAND: ${{ steps.upterm-before.outputs.ssh-command }}
+        run: |
+          bash .github/workflows/scripts/qemu-debug-vm.sh
+
+      - name: Run in VM
+        id: run-in-vm
+        timeout-minutes: 90
+        run: |
+          .github/workflows/scripts/qemu-2-run-in-vm.sh --test-only
+
+      - name: Collect VM Go cache
+        if: steps.run-in-vm.outcome == 'success' && steps.go-cache-key.outputs.key != '' && steps.go-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh save
+
+      - name: 'Debug VM: Start session after test'
+        id: upterm-after
+        if: >-
+          always() &&
+          github.event_name == 'workflow_dispatch' &&
+          steps.start-vm.outcome == 'success' &&
+          (
+            inputs.debug_mode == 'After test always' ||
+            (
+              inputs.debug_mode == 'After test on failure' &&
+              (steps.prepare-in-vm.outcome == 'failure' || steps.run-in-vm.outcome == 'failure')
+            )
+          )
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: owenthereal/action-upterm@v1
+        with:
+          detached: true
+          limit-access-to-actor: true
+          wait-timeout-minutes: 1
+
+      - name: 'Debug VM: Retain after test'
+        if: always() && steps.upterm-after.outcome == 'success'
+        timeout-minutes: 330
+        env:
+          DEBUG_TIMEOUT_MINUTES: ${{ inputs.debug_timeout_minutes }}
+          UPTERM_SSH_COMMAND: ${{ steps.upterm-after.outputs.ssh-command }}
+        run: |
+          bash .github/workflows/scripts/qemu-debug-vm.sh
+
+      - name: Cleanup VM
+        if: always()
+        run: |
+          .github/workflows/scripts/qemu-3-cleanup.sh
+
+  portable-generated:
+    name: Generate portable sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+      - name: Install generation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libbpf-dev libelf-dev capnproto
+          go install github.com/vektra/mockery/v2@v2.53.6
+          go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
+      - name: Generate and verify
+        run: make portable-generated
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-generated
+          path: _output/portable-generated.tar
+          if-no-files-found: error

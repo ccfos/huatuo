@@ -22,23 +22,23 @@ import (
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 )
 
-func processInstanceForTest(t *testing.T) memsnapshot.ProcessInstance {
+func processInstanceIDForTest(t *testing.T) memsnapshot.ProcessInstanceID {
 	t.Helper()
-	identity, err := memsnapshot.ReadProcessInstance(os.Getpid())
+	process, err := memsnapshot.ReadProcessInstanceID(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return identity
+	return process
 }
 
 func TestSnapshotRejectsInvalidOptions(t *testing.T) {
-	identity := processInstanceForTest(t)
+	process := processInstanceIDForTest(t)
 	for _, options := range []Options{
-		{TopK: -1},
-		{TopK: memsnapshot.MaxMemoryObjectEntries + 1},
+		{MaxMemoryObjectEntries: -1},
+		{MaxMemoryObjectEntries: memsnapshot.MaxMemoryObjectEntries + 1},
 		{SnapshotTimeout: -time.Second},
 	} {
-		result, err := Snapshot(t.Context(), identity, options)
+		result, err := Snapshot(t.Context(), process, options)
 		if err == nil || result != nil {
 			t.Fatalf("invalid options %+v accepted: result=%+v err=%v", options, result, err)
 		}

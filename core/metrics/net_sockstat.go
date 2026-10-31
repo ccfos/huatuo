@@ -35,6 +35,10 @@ type sockstatCollector struct{}
 
 var defaultHostPageSize = os.Getpagesize()
 
+func sockstatMemoryBytes(pages, pageSize int) float64 {
+	return float64(pages) * float64(pageSize)
+}
+
 func init() {
 	tracing.RegisterEventTracing("sockstat", newSockstatCollector)
 }
@@ -148,24 +152,14 @@ func (c *sockstatCollector) procStatMetrics(container *pod.Container) ([]*metric
 			},
 		}
 
-		// Also export mem_bytes values for sockets which have a mem value
-		// stored in pages.
-		if p.Mem != nil {
-			v := *p.Mem * defaultHostPageSize
-			pairs = append(pairs, ssPair{
-				name: "mem_bytes",
-				v:    &v,
-			})
-		}
-
 		for _, pair := range pairs {
 			if pair.v == nil {
 				// This value is not set for this protocol; nothing to do.
 				continue
 			}
 
-			// mem, mem_bytes are only for `Host` environment.
-			if container != nil && (pair.name == "mem" || pair.name == "mem_bytes") {
+			// mem is only for the host environment.
+			if container != nil && pair.name == "mem" {
 				continue
 			}
 
@@ -178,6 +172,15 @@ func (c *sockstatCollector) procStatMetrics(container *pod.Container) ([]*metric
 					metric.NewGaugeData(fmt.Sprintf("%s_%s", p.Protocol, pair.name), float64(*pair.v),
 						fmt.Sprintf("Number of %s sockets in state %s.", p.Protocol, pair.name), nil))
 			}
+		}
+
+		// Also export mem_bytes values for sockets which have a mem value
+		// stored in pages. Convert before multiplying to avoid integer overflow.
+		if p.Mem != nil && container == nil {
+			metrics = append(metrics,
+				metric.NewGaugeData(fmt.Sprintf("%s_mem_bytes", p.Protocol),
+					sockstatMemoryBytes(*p.Mem, defaultHostPageSize),
+					fmt.Sprintf("Number of %s sockets in state mem_bytes.", p.Protocol), nil))
 		}
 	}
 

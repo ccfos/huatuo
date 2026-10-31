@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
@@ -35,20 +36,21 @@ func blockDevName(major, minor uint32) string {
 // buildProcessFileIOStats reduces one pidGroup into a ProcessFileIOStats:
 // every entry contributes to the per-pid totals, while only the first
 // cfg.maxFilesPerProcess (the highest-IO files, since g.Files is pre-sorted)
-// produce structured per-file rows. cfg.durationSecond converts raw byte
-// counters to per-second rates.
-func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats {
+// produce structured per-file rows. The measured sample duration converts raw
+// byte counters to per-second rates, including sub-second partial captures.
+func buildProcessFileIOStats(g *pidGroup, cfg ioConfig, elapsed time.Duration) types.ProcessFileIOStats {
 	var read, write, dread, dwrite uint64
 	var fileStats []types.FileIOStats
 	var comm string
+	seconds := elapsed.Seconds()
 
 	for i, fe := range g.Files {
 		record := fe.Record
 
-		wbps := record.FsWriteBytes / cfg.durationSecond
-		rbps := record.FsReadBytes / cfg.durationSecond
-		dwbps := record.BlockWriteBytes / cfg.durationSecond
-		drbps := record.BlockReadBytes / cfg.durationSecond
+		wbps := uint64(float64(record.FsWriteBytes) / seconds)
+		rbps := uint64(float64(record.FsReadBytes) / seconds)
+		dwbps := uint64(float64(record.BlockWriteBytes) / seconds)
+		drbps := uint64(float64(record.BlockReadBytes) / seconds)
 
 		read += rbps
 		write += wbps
