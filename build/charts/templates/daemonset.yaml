@@ -48,6 +48,14 @@ spec:
         - name: huatuo
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["./bin/huatuo-bamai"]
+          args:
+            - --region
+            - example
+            - --config-dir
+            - {{ dir .Values.config.mountPath | quote }}
+            - --config
+            - {{ base .Values.config.mountPath | quote }}
           resources:
 {{ toYaml .Values.resources | nindent 12 }}
           securityContext:
@@ -66,8 +74,8 @@ spec:
             - name: huatuo-local
               mountPath: {{ .Values.localStorage.mountPath }}
             - name: huatuo-bamai-config-volume
-              mountPath: {{ .Values.config.mountPath }}
-              subPath: {{ .Values.config.fileName }}
+              mountPath: {{ .Values.config.mountPath | quote }}
+              subPath: {{ .Values.config.fileName | quote }}
               readOnly: true
       volumes:
         - name: proc
