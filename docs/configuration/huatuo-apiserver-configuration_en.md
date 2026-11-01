@@ -243,7 +243,7 @@ Configure at least one `[[Auth.Users]]` entry. The user configurations below are
 | Field | Description |
 | --- | --- |
 | `ID` | String. Required and unique. Stable user identifier persisted with jobs. |
-| `BearerToken` | String. Required and unique. Used only for request authentication. Rotating the token does not change job ownership. |
+| `BearerToken` | String. Required and unique. Must not contain whitespace. Used only for request authentication. Rotating the token does not change job ownership. |
 | `Admin` | Boolean. Default: `false`. When `true`, grants access to all APIs without restrictions from `Permissions`. |
 | `Permissions` | Array of strings. Empty by default; required for non-admin users. Each entry is a path or `HTTP method path`. A path without a method allows any method. |
 

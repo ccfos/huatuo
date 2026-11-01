@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 )
@@ -254,6 +255,9 @@ func (c AuthConfig) Validate() error {
 		if strings.TrimSpace(user.BearerToken) == "" {
 			return fmt.Errorf("user %d: bearer token is required", i)
 		}
+		if strings.ContainsFunc(user.BearerToken, unicode.IsSpace) {
+			return fmt.Errorf("user %d: bearer token must not contain whitespace", i)
+		}
 		if _, exists := seenTokens[user.BearerToken]; exists {
 			return fmt.Errorf("user %d: duplicate bearer token", i)
 		}
@@ -346,7 +350,7 @@ func (c AgentConfig) Validate() error {
 	if strings.TrimSpace(c.Auth.BearerToken) == "" {
 		return errors.New("Agent Auth BearerToken is required")
 	}
-	if strings.ContainsAny(c.Auth.BearerToken, " \t\r\n") {
+	if strings.ContainsFunc(c.Auth.BearerToken, unicode.IsSpace) {
 		return errors.New("Agent Auth BearerToken must not contain whitespace")
 	}
 	return nil

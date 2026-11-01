@@ -179,6 +179,20 @@ func TestConfigValidation(t *testing.T) {
 			wantErr: "must not contain whitespace",
 		},
 		{
+			name: "Agent token unicode whitespace",
+			mutate: func(config *Config) {
+				config.Agent.Auth.BearerToken = "node\u00a0secret"
+			},
+			wantErr: "must not contain whitespace",
+		},
+		{
+			name: "user token whitespace",
+			mutate: func(config *Config) {
+				config.Auth.Users[0].BearerToken = "user secret"
+			},
+			wantErr: "bearer token must not contain whitespace",
+		},
+		{
 			name: "dashboard scheme",
 			mutate: func(config *Config) {
 				config.Profiling.DashboardBaseURL = "ftp://grafana.example/d"
