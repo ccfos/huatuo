@@ -19,7 +19,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_profiler.sh"
 
-require_commands jq mkfifo setsid python3 "${PROFILER_TOOL_DIR}/py-spy"
+require_commands jq mkfifo setsid python3 timeout "${PROFILER_TOOL_DIR}/py-spy"
 
 PYTHON_EXCEPTIONS_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/python-exceptions.XXXXXX")
 readonly PYTHON_EXCEPTIONS_DIR
@@ -65,9 +65,8 @@ assert_python_capture_has_no_samples() {
 
 assert_python_collector_failed() {
 	local target_pid=$1
-	grep -qF "PID[${target_pid}] sampling failed" "${PROFILER_OUT}" "${PROFILER_ERR}" \
-		|| fatal "missing failed collector PID diagnostic"
-	grep -q killed "${PROFILER_OUT}" "${PROFILER_ERR}" || fatal "missing killed collector diagnostic"
+	grep -qE "failed for pid ${target_pid}: .*signal: killed([[:space:]]|$)" "${PROFILER_OUT}" "${PROFILER_ERR}" \
+		|| fatal "missing SIGKILL diagnostic for collector target PID ${target_pid}"
 	assert_python_capture_has_no_samples
 }
 
@@ -102,6 +101,27 @@ for test_case in some-killed all-killed interrupt-after-targets-exit backend-kil
 			target_output_fds+=("${PROCESS_OUTPUT_FD}")
 			assert_process_message "${PROCESS_OUTPUT_FD}" "${case_dir}/target-${index}.out" ready
 		done
+		if [[ ${test_case} == some-killed ]]; then
+			# Check the real tool before testing Huatuo; version strings do not
+			# establish whether this interpreter's layout can be sampled.
+			probe_status=0
+			timeout --kill-after=1 5 "${PROFILER_REAL_PYSPY}" dump --pid "${target_pids[0]}" \
+				> "${case_dir}/py-spy-probe.out" 2> "${case_dir}/py-spy-probe.err" || probe_status=$?
+			if [[ ${probe_status} -ne 0 ]]; then
+				assert_process_alive "${target_pids[0]}" "${target_start_times[0]}" "Python target during py-spy probe"
+				probe_diagnostic="py-spy probe for $(python3 --version 2>&1) exited ${probe_status}: $(< "${case_dir}/py-spy-probe.err")"
+				[[ ${probe_status} -ne 124 ]] || fatal "${probe_diagnostic}; probe timed out"
+				if grep -qE 'Permission denied|Operation not permitted' "${case_dir}/py-spy-probe.err"; then
+					fatal "${probe_diagnostic}; ptrace access denied: check CAP_SYS_PTRACE and the ptrace security policy"
+				fi
+				if [[ ${probe_status} -eq 1 ]] && grep -qE \
+					'^Error: (Unsupported version of Python: [0-9].*|Failed to find python version from target process)$' \
+					"${case_dir}/py-spy-probe.err"; then
+					skip "${probe_diagnostic}; unsupported interpreter"
+				fi
+				fatal "${probe_diagnostic}"
+			fi
+		fi
 		export PROFILER_EXCEPTION_FIFO="${case_dir}/collectors.fifo"
 		mkfifo "${PROFILER_EXCEPTION_FIFO}"
 		: > "${case_dir}/collectors.out"

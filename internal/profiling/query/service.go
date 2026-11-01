@@ -23,6 +23,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
@@ -97,6 +98,16 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		if err := applyProfileMatcher(filter, label); err != nil {
 			return nil, err
 		}
+	}
+
+	if filter.Scope == observation.ScopeUnknown {
+		return nil, fmt.Errorf("%w: scope must be host or container", ErrInvalidQuery)
+	}
+	if filter.Scope == observation.ScopeHost && (filter.ContainerID != "" || filter.ContainerHostname != "") {
+		return nil, fmt.Errorf("%w: host scope cannot include a container filter", ErrInvalidQuery)
+	}
+	if filter.Scope == observation.ScopeContainer && filter.ContainerID == "" && filter.ID == "" {
+		return nil, fmt.Errorf("%w: container scope requires a container id or task id", ErrInvalidQuery)
 	}
 
 	latestOnly := filter.ProfileType == profiling.ProfileTypePhysicalUsage
@@ -268,6 +279,15 @@ func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher)
 		return fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, matcher.Name)
 	}
 	switch matcher.Name {
+	case "scope":
+		scope, err := observation.ParseScope(matcher.Value)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidQuery, err)
+		}
+		if filter.Scope != observation.ScopeUnknown && filter.Scope != scope {
+			return fmt.Errorf("%w: conflicting scope matchers", ErrInvalidQuery)
+		}
+		filter.Scope = scope
 	case "id":
 		filter.ID = matcher.Value
 	case "region":
@@ -340,7 +360,7 @@ func (s *ProfileQueryService) ProfileTypes(ctx context.Context, req *querierv1.P
 //	response: typesv1.LabelNamesResponse
 func (s *ProfileQueryService) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"id", "region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
+		Names: []string{"id", "scope", "region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
 	}
 	return response, nil
 }
@@ -379,6 +399,10 @@ func (s *ProfileQueryService) LabelValues(ctx context.Context, req *typesv1.Labe
 
 	if !profileTypePresent {
 		return nil, fmt.Errorf("%w: no __profile_type__ matcher present", ErrInvalidQuery)
+	}
+
+	if req.Name == "scope" {
+		return &typesv1.LabelValuesResponse{Names: []string{string(observation.ScopeHost), string(observation.ScopeContainer)}}, nil
 	}
 
 	names, err := s.profileStorage.Values(ctx, filter, req.Name)

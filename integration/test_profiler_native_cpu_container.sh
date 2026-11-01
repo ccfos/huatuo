@@ -145,22 +145,91 @@ assert_destroyed_container() (
 	assert_profiler_exit 0
 )
 
+containerd_workload_available() {
+	if ! command -v ctr > /dev/null; then
+		log_warn "skipping containerd: ctr is not installed"
+		return 1
+	fi
+	if ! timeout --kill-after=2 10 ctr --namespace "${CONTAINERD_NAMESPACE}" version > /dev/null 2>&1; then
+		log_warn "skipping containerd: daemon is unavailable"
+		return 1
+	fi
+	if ! timeout --kill-after=2 10 ctr --namespace "${CONTAINERD_NAMESPACE}" images list --quiet \
+		| grep -Fx "${CONTAINERD_IMAGE}" > /dev/null; then
+		log_warn "skipping containerd: image is unavailable: ${CONTAINERD_IMAGE}"
+		return 1
+	fi
+}
+
 assert_privileged_container() (
 	local container_name="huatuo-native-privileged-${WORK_DIR##*/}" root_dir path status=0
-	local started=${SECONDS}
-	local -a tool_mounts=()
+	local runner_image="huatuo-native-privileged:${WORK_DIR##*/}"
+	local started=${SECONDS} docker_root docker_containers expected_runtimes=1
+	local containerd_selected=0 snapshotter=${CONTAINERD_SNAPSHOTTER:-} snapshotter_root
+	local -a runner_mounts=()
+	require_commands tar
+	docker_root=$(timeout --kill-after=2 10 docker info --format '{{.DockerRootDir}}') \
+		|| fatal "cannot determine Docker data root for privileged runner"
+	[[ ${docker_root} == /* ]] || fatal "invalid Docker data root: ${docker_root}"
+	docker_containers="${docker_root%/}/containers"
+	[[ -d ${docker_containers} && -r ${docker_containers} && -x ${docker_containers} ]] \
+		|| fatal "Docker container metadata directory is unavailable: ${docker_containers}"
+	runner_mounts+=(--mount "type=bind,src=${docker_containers},dst=${docker_containers},readonly")
+	# The standalone profiler's local fallback uses this default metadata path.
+	if [[ ${docker_containers} != /var/lib/docker/containers ]]; then
+		runner_mounts+=(--mount "type=bind,src=${docker_containers},dst=/var/lib/docker/containers,readonly")
+	fi
+	if containerd_workload_available; then
+		if [[ -z ${snapshotter} ]]; then
+			snapshotter=$(timeout --kill-after=2 10 ctr namespaces list \
+				| awk -v target_namespace="${CONTAINERD_NAMESPACE}" '
+					$1 == target_namespace {
+						sub(/^[^[:space:]]+[[:space:]]*/, "")
+						count = split($0, labels, ",")
+						for (i = 1; i <= count; i++) {
+							if (sub(/^containerd[.]io\/defaults\/snapshotter=/, "", labels[i])) {
+								sub(/[[:space:]]+$/, "", labels[i]); print labels[i]
+							}
+						}
+					}') || fatal "cannot determine containerd namespace snapshotter"
+			snapshotter=${snapshotter:-overlayfs}
+		fi
+		# Query the running snapshotter: daemon root and root_path can both vary.
+		snapshotter_root=$(timeout --kill-after=2 10 ctr plugins list --detailed \
+			"type==io.containerd.snapshotter.v1,id==${snapshotter}" \
+			| awk '$1 == "root" { sub(/^[[:space:]]*root[[:space:]]+/, ""); root = $0; count++ }
+				END { if (count != 1) exit 1; print root }') \
+			|| fatal "cannot determine containerd snapshotter root: ${snapshotter}"
+		[[ ${snapshotter_root} == /* && -d ${snapshotter_root} && -r ${snapshotter_root} && -w ${snapshotter_root} && -x ${snapshotter_root} ]] \
+			|| fatal "containerd snapshotter root is unavailable: ${snapshotter_root}"
+		runner_mounts+=(--mount "type=bind,src=${snapshotter_root},dst=${snapshotter_root}")
+		containerd_selected=1
+		expected_runtimes=2
+	fi
 	root_dir=$(cd "${ROOT_DIR}" && pwd -P)
-	mkdir "${WORK_DIR}/privileged"
-	trap 'timeout --kill-after=2 15 docker rm -f "${container_name}" > /dev/null 2>&1 || true' EXIT
-	# Reuse the VM toolchain and preloaded image; keep the container overlay root.
-	# Shared paths let the host daemon bind the fixtures created by this runner.
+	# Shared paths expose Docker metadata and let ctr mount containerd snapshots
+	# and the host runtimes bind fixtures created by this runner.
 	for path in /bin /sbin /usr /lib /lib64 /etc; do
-		[[ ! -e ${path} ]] || tool_mounts+=(--mount "type=bind,src=${path},dst=${path},readonly")
+		[[ -e ${path} ]] || continue
+		[[ -d ${path} ]] || fatal "privileged runner tool path is not a directory: ${path}"
+		runner_mounts+=(--mount "type=bind,src=${path},dst=${path},readonly")
 	done
+	for path in "${root_dir}" /tmp /run /var/run /sys; do
+		[[ -d ${path} ]] || fatal "privileged runner bind source is not a directory: ${path}"
+	done
+	mkdir "${WORK_DIR}/privileged"
+	trap '
+		timeout --kill-after=2 15 docker rm -f "${container_name}" > /dev/null 2>&1 || true
+		timeout --kill-after=2 15 docker image rm "${runner_image}" > /dev/null 2>&1 || true
+	' EXIT
+	# BusyBox aliases /lib64 to /lib, so mounting both VM directories there can
+	# hide the ELF loader. An empty root gives each mount its own destination.
+	tar -cf - --files-from /dev/null \
+		| timeout --kill-after=2 15 docker import - "${runner_image}" > "${WORK_DIR}/privileged/image.log"
 	log_info "running native intersection and destruction cases inside a privileged container"
 	timeout --kill-after=20 180 docker run --rm --name "${container_name}" \
 		--privileged --pid=host --network=host --cgroupns=host --ulimit memlock=-1:-1 \
-		"${tool_mounts[@]}" \
+		"${runner_mounts[@]}" \
 		--mount "type=bind,src=${root_dir},dst=${root_dir},readonly" \
 		--mount type=bind,src=/tmp,dst=/tmp \
 		--mount type=bind,src=/run,dst=/run \
@@ -172,7 +241,11 @@ assert_privileged_container() (
 		--env "NATIVE_PROFILER_DOCKER_IMAGE=${DOCKER_IMAGE}" \
 		--env "NATIVE_PROFILER_CONTAINERD_IMAGE=${CONTAINERD_IMAGE}" \
 		--env NATIVE_PROFILER_TEST_PRIVILEGED_CONTAINER=0 \
-		--entrypoint /bin/bash "${DOCKER_IMAGE}" -euc '
+		--env "NATIVE_PROFILER_TEST_CONTAINERD=${containerd_selected}" \
+		--env "CONTAINERD_SNAPSHOTTER=${snapshotter}" \
+		--env "NATIVE_PROFILER_EXPECTED_RUNTIMES=${expected_runtimes}" \
+		--env "DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}" \
+		--entrypoint /bin/bash "${runner_image}" -euc '
 			source "$ROOT_DIR/integration/lib.sh"
 			[[ -f /.dockerenv ]] || fatal "privileged validation did not start in a Docker container"
 			bash "$ROOT_DIR/integration/run.sh" -j 1 test_profiler_native_cpu_container.sh 2>&1 \
@@ -221,19 +294,10 @@ test_docker() {
 test_containerd() {
 	local random_id container_pid container_start_time
 
-	if ! command -v ctr > /dev/null; then
-		log_warn "skipping containerd: ctr is not installed"
-		return
-	fi
-	if ! ctr --namespace "${CONTAINERD_NAMESPACE}" version > /dev/null 2>&1; then
-		log_warn "skipping containerd: daemon is unavailable"
-		return
-	fi
-	if ! ctr --namespace "${CONTAINERD_NAMESPACE}" images list --quiet \
-		| grep -Fqx "${CONTAINERD_IMAGE}"; then
-		log_warn "skipping containerd: image is unavailable: ${CONTAINERD_IMAGE}"
-		return
-	fi
+	# The privileged runner must use the runtimes its parent mounted, even if
+	# another test makes a previously missing image available in the meantime.
+	[[ ${NATIVE_PROFILER_TEST_CONTAINERD:-1} == 1 ]] || return 0
+	containerd_workload_available || return 0
 
 	random_id=$(tr -d '-' < /proc/sys/kernel/random/uuid)
 	CONTAINERD_CONTAINER_ID="${random_id}${random_id}"
@@ -258,4 +322,8 @@ test_docker
 test_containerd
 
 ((RUNTIMES_TESTED > 0)) || skip "no docker or containerd runtime was testable"
+if [[ -n ${NATIVE_PROFILER_EXPECTED_RUNTIMES:-} ]]; then
+	assert_eq "${RUNTIMES_TESTED}" "${NATIVE_PROFILER_EXPECTED_RUNTIMES}" "privileged runner runtime count" \
+		|| fatal "privileged runner did not execute every selected runtime"
+fi
 log_info "native container-ID profiling passed for ${RUNTIMES_TESTED} runtime(s)"

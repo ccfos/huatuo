@@ -279,3 +279,17 @@ curl -sS \
 
 成功返回 `200 OK` 和当前 Job 快照。终态 Job 返回 `409 Conflict`。由于结果可能
 不完整，`stopped` Job 不提供结果查询。
+
+## 统一火焰图查询
+
+Grafana 使用 `/v1/profiling/flamegraph/` 下的 Pyroscope 兼容 Protobuf 接口。
+`SelectMergeStacktraces` 的标签选择器必须指定 `scope="host"` 或 `scope="container"`。
+`region` 是 Agent 配置的区域，`hostname` 仅表示采集节点，不隐含宿主机范围。
+容器查询使用 `container_id` 或单个任务 `id` 定位目标；宿主机查询不能携带容器条件。
+例如 `{region="example",hostname="node-01",scope="container",container_id="…",id="…"}`。
+
+统一面板 UID 为 `continuous-profiling`，变量顺序为 Region、节点、范围、容器、指标、任务。
+趋势图与火焰图使用相同任务过滤。容器选择 All 时，任务仍限定到一个目标；
+`physical_usage` 始终要求单个任务并只取最新快照。
+任务摘要使用 `pyroscope.yaml` 的 Infinity 数据源，需与 Pyroscope 数据源配置相同的 API token。
+`result_url` 包含从已存储窗口取得的 Region 和实际指标；没有窗口的结果不返回该链接。

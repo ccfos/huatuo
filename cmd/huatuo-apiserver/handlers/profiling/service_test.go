@@ -190,7 +190,7 @@ func TestBuildDashboardURL(t *testing.T) {
 			name:           "host cpu",
 			baseURL:        "https://grafana.example/d/",
 			input:          newJob(observation.ScopeHost, profilingdomain.TypeCPU),
-			wantPath:       "/d/host-cpu-profiling/e5aebf-e4b8bb-e69cba-cpu-profiling",
+			wantPath:       "/d/continuous-profiling",
 			wantScopeKey:   "var-hostname",
 			wantScopeValue: "node+1&debug",
 		},
@@ -198,7 +198,7 @@ func TestBuildDashboardURL(t *testing.T) {
 			name:           "container memory",
 			baseURL:        "https://grafana.example/d/",
 			input:          newJob(observation.ScopeContainer, profilingdomain.TypeMemory),
-			wantPath:       "/d/container-memory-profiling/e5aeb9-e599a8-memory-profiling",
+			wantPath:       "/d/continuous-profiling",
 			wantScopeKey:   "var-container_id",
 			wantScopeValue: "container+1&debug",
 		},
@@ -229,7 +229,7 @@ func TestBuildDashboardURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildDashboardURL(tt.baseURL, tt.input)
+			got := buildDashboardURL(tt.baseURL, tt.input, "example", "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds")
 			if tt.wantPath == "" {
 				if got != nil {
 					t.Fatalf("buildDashboardURL() = %q, want nil", *got)
@@ -247,16 +247,26 @@ func TestBuildDashboardURL(t *testing.T) {
 				t.Fatalf("buildDashboardURL() path = %q, want %q", parsed.Path, tt.wantPath)
 			}
 			query := parsed.Query()
+			if query.Get("var-region") != "example" || query.Get("var-type") != "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds" {
+				t.Fatalf("result metadata missing from URL: %v", query)
+			}
+			wantScope := "NOT _exists_:container_id"
+			if tt.input.Scope == observation.ScopeContainer {
+				wantScope = "_exists_:container_id"
+			}
+			if query.Get("var-scope") != wantScope {
+				t.Fatalf("scope = %q, want %q", query.Get("var-scope"), wantScope)
+			}
 			if got := query.Get(tt.wantScopeKey); got != tt.wantScopeValue {
 				t.Errorf("buildDashboardURL() scope = %q, want %q", got, tt.wantScopeValue)
 			}
-			if got := query.Get("var-tracer_id"); got != "job-1" {
+			if got := query.Get("var-task_id"); got != "job-1" {
 				t.Errorf("buildDashboardURL() tracer ID = %q, want %q", got, "job-1")
 			}
-			if got := query.Get("from"); got != "2026-08-24T12:00:00.000Z" {
+			if got := query.Get("from"); got != "1787572800000" {
 				t.Errorf("buildDashboardURL() from = %q", got)
 			}
-			if got := query.Get("to"); got != "2026-08-24T12:01:00.000Z" {
+			if got := query.Get("to"); got != "1787572861000" {
 				t.Errorf("buildDashboardURL() to = %q", got)
 			}
 		})

@@ -6,7 +6,18 @@ services:
       context: ../..
       dockerfile: Dockerfile.devel
       target: dev-runtime
+    extra_hosts:
+      - "huatuo-dev-node:127.0.0.1"
+    volumes:
+      - ./devconf/huatuo-apiserver.conf:${RUN_PATH}/conf/huatuo-apiserver.conf:ro
 
   huatuo-bamai:
     image: huatuo/huatuo-bamai:dev
     pull_policy: never
+    hostname: huatuo-dev-node
+    volumes:
+      - ./devconf/huatuo-bamai.conf:${RUN_PATH}/conf/huatuo-bamai.conf:ro
+
+  grafana:
+    volumes:
+      - ./devconf/pyroscope.yaml:/etc/grafana/provisioning/datasources/pyroscope.yaml:ro

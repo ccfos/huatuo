@@ -28,6 +28,7 @@ weight: 7
 先按 [Docker 部署](/docs/deployment/docker_zh.md)准备 Linux 节点、Docker Compose 和 `build/docker/.env`。执行示例需要 `curl` 和 `jq`，目标节点应有待分析的 CPU 活动。
 
 以下配置分别写入项目根目录的 `huatuo-bamai.conf` 和 `huatuo-apiserver.conf`，由 Compose 挂载。huatuo-bamai 负责写入剖析数据，huatuo-apiserver 负责查询；两者需连接同一 ES 索引。ES 密码应与 `.env` 的 `ELASTIC_PASSWORD` 一致。节点 token 在两份配置中保持一致，API token 用于后续请求。
+Grafana 的 `pyroscope.yaml` 中，Pyroscope 和 Infinity 两个数据源需配置相同的 API token。
 
 在 `huatuo-bamai.conf` 中配置：
 
@@ -144,15 +145,15 @@ curl -fsS -H "Authorization: Bearer ${API_TOKEN}" \
 
 ### 5. 查看火焰图
 
-示例是对本机进行剖析，打开 **Continuous Profiling (host)** 面板（容器是独立的面板）：
+示例是对本机进行剖析，打开统一的 **Continuous Profiling** 面板：
 
-- 地址：[http://localhost:3000/d/continuous-profiling-host](http://localhost:3000/d/continuous-profiling-host) （根据实际环境地址替换 `localhost:3000`）
+- 地址：[http://localhost:3000/d/continuous-profiling](http://localhost:3000/d/continuous-profiling) （根据实际环境地址替换 `localhost:3000`）
 - 账号/密码：`admin / admin` （首次登录按提示修改密码）
 
 操作步骤：
 
 1. 右上角选择时间范围，确保覆盖采样时间段
-2. 变量栏选择目标 `hostname`，填写本次任务的 Task ID，并选择 `type` 为 `process_cpu:cpu:nanoseconds:cpu:nanoseconds`
+2. 变量栏依次选择 Region、目标节点 `hostname`、范围 `host` 和本次 Task ID，并选择 `type` 为 `process_cpu:cpu:nanoseconds:cpu:nanoseconds`
 3. 查看所选任务和时间范围内的聚合调用栈，使用 Focus block 聚焦目标栈帧
 4. 选择 Both 同时展示火焰图和函数统计表
 
