@@ -144,9 +144,7 @@ func Panic(args ...any) {
 
 // Fatal logs a message at level Fatal on the standard logger then the process will exit with status set to 1.
 func Fatal(args ...any) {
-	if logger.IsLevelEnabled(logrus.FatalLevel) {
-		newLogrusEntry(2).Fatal(args...)
-	}
+	newLogrusEntry(2).Fatal(args...)
 }
 
 // Debugf logs a message at level Debug on the standard logger.
@@ -186,9 +184,7 @@ func Panicf(format string, args ...any) {
 
 // Fatalf logs a message at level Fatal on the standard logger then the process will exit with status set to 1.
 func Fatalf(format string, args ...any) {
-	if logger.IsLevelEnabled(logrus.FatalLevel) {
-		newLogrusEntry(2).Fatalf(format, args...)
-	}
+	newLogrusEntry(2).Fatalf(format, args...)
 }
 
 // WithCallerSkip creates an entry from the caller skip.
