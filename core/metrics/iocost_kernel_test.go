@@ -436,6 +436,10 @@ func TestIOCostKernelWorkload(t *testing.T) {
 		region := [2]uint64{0, uint64(size)}
 		_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), 0x1277, uintptr(unsafe.Pointer(&region)))
 		require.Zero(t, errno)
+	} else if operation == "read" {
+		read, err := unix.Read(fd, buffer)
+		require.NoError(t, err)
+		require.Equal(t, size, read)
 	} else {
 		written, err := unix.Write(fd, buffer)
 		require.NoError(t, err)
@@ -624,22 +628,27 @@ func (s *ioCostKernelSession) update(t *testing.T, disks ...*ioCostKernelDisk) [
 	require.NoError(t, err)
 	// Compare the committed snapshot with its public interval. A separate
 	// global walk could observe another generation of unrelated traffic.
-	totals := make(map[string]ioControlWaitCounters)
+	// A private device may still receive reads; keep operation labels separate.
+	totals := make(map[ioControlDeviceOperation]ioControlWaitCounters)
 	for key, lanes := range s.session.previous {
 		if !ioCostKernelOwnsDevice(key, disks) {
 			continue
 		}
-		require.Equal(t, uint32(1), key.Operation, "unexpected non-write IOCOST series: %+v", key)
+		operation, ok := ioOperationName(key.Operation)
+		require.True(t, ok, "unexpected IOCOST operation: %+v", key)
 		delta, err := deltaIOControlWaitCounters(previous[key], lanes)
 		require.NoError(t, err)
-		disk := ioControlDeviceName(key.Major, key.Minor)
-		totals[disk] = addIOControlWaitCounters(totals[disk], delta)
+		series := ioControlDeviceOperation{
+			device:    ioControlDeviceName(key.Major, key.Minor),
+			operation: operation,
+		}
+		totals[series] = addIOControlWaitCounters(totals[series], delta)
 	}
-	for device, total := range totals {
-		name, err := os.Readlink(filepath.Join("/sys/dev/block", device))
+	for series, total := range totals {
+		name, err := os.Readlink(filepath.Join("/sys/dev/block", series.device))
 		require.NoError(t, err)
 		average := total.averageMilliseconds()
-		requireIOCostKernelInterval(t, metrics, filepath.Base(name), int(total.IOCount), average, average)
+		requireIOCostKernelInterval(t, metrics, filepath.Base(name), series.operation, int(total.IOCount), average, average)
 	}
 	status, err := readIOControlStatus(s.session.object)
 	require.NoError(t, err)
@@ -647,11 +656,11 @@ func (s *ioCostKernelSession) update(t *testing.T, disks ...*ioCostKernelDisk) [
 	return metrics
 }
 
-func requireIOCostKernelInterval(t *testing.T, metrics []*metric.Data, disk string, count int, lower, upper float64) float64 {
+func requireIOCostKernelInterval(t *testing.T, metrics []*metric.Data, disk, operation string, count int, lower, upper float64) float64 {
 	t.Helper()
 	values := make(map[string]map[string]float64)
 	for _, data := range metrics {
-		if data.Labels()["disk"] != disk || data.Labels()["operation"] != "write" {
+		if data.Labels()["disk"] != disk || data.Labels()["operation"] != operation {
 			continue
 		}
 		require.Equal(t, metric.MetricTypeGauge, data.Type())
@@ -682,6 +691,24 @@ func ioCostKernelBounds(elapsed time.Duration) (float64, float64) {
 	return max(1, ms-200), ms + 200
 }
 
+func TestIOCostKernelIntervalOperations(t *testing.T) {
+	fixture := newIOCostIntervalTestFixture(t, 1, nil)
+	read := ioCostDefaultIntervalTestRow(2, 200)
+	write := ioCostDefaultIntervalTestRow(3, 600)
+	write.operation = 1
+	setIOCostIntervalTestRows(fixture.object, read, write)
+	metrics, err := fixture.collector.Update()
+	require.NoError(t, err)
+	disk := ioControlTestDiskNames()[[2]uint32{read.major, read.minor}]
+	requireIOCostKernelInterval(t, metrics, disk, "read", 2, 1, 1)
+	requireIOCostKernelInterval(t, metrics, disk, "write", 3, 2, 2)
+
+	metrics, err = fixture.collector.Update()
+	require.NoError(t, err)
+	requireIOCostKernelInterval(t, metrics, disk, "read", 0, 0, 0)
+	requireIOCostKernelInterval(t, metrics, disk, "write", 0, 0, 0)
+}
+
 func TestIOCostKernelFunctional(t *testing.T) {
 	f := requireIOCostKernel(t)
 	d := f.disk(t)
@@ -696,24 +723,42 @@ func TestIOCostKernelFunctional(t *testing.T) {
 	stat, err := os.ReadFile(filepath.Join(f.leaf, statFile))
 	require.NoError(t, err)
 	require.Contains(t, string(stat), writeStat, "direct IO must be charged to the private leaf")
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 0, 0, 0)
 	w := f.prepare(t, d, f.leaf, "discard", 4096)
 	w.release(t)
 	w.finish(t)
 	stat, err = os.ReadFile(filepath.Join(f.leaf, statFile))
 	require.NoError(t, err)
 	require.Contains(t, string(stat), discardStat, "discard must reach the block layer")
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 0, 0, 0)
 	var averages []float64
 	for _, rate := range []int{65536, 4096} {
 		f.condition(t, d, f.leaf, rate, rate/4096)
 		s.update(t, d)
 		elapsed := f.write(t, d, f.leaf, 4096)
 		lower, upper := ioCostKernelBounds(elapsed)
-		averages = append(averages, requireIOCostKernelInterval(t, s.update(t, d), d.name, 1, lower, upper))
-		requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
+		averages = append(averages, requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 1, lower, upper))
+		requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 0, 0, 0)
 	}
 	require.Greater(t, averages[1], averages[0])
+
+	// A read row must coexist with the preceding write baseline without being
+	// rejected or counted as a write in the public interval.
+	f.condition(t, d, f.leaf, 4096, 1)
+	s.update(t, d)
+	w = f.prepare(t, d, f.leaf, "read", 4096)
+	w.release(t)
+	w.finish(t)
+	readMetrics := s.update(t, d)
+	requireIOCostKernelInterval(t, readMetrics, d.name, "write", 0, 0, 0)
+	var readCount float64
+	for _, data := range readMetrics {
+		if data.Name() == ioCostWaitCountName && data.Labels()["disk"] == d.name &&
+			data.Labels()["operation"] == "read" && data.Labels()["scope"] == ioControlHostScope {
+			readCount += data.Value
+		}
+	}
+	require.GreaterOrEqual(t, readCount, float64(1), "direct read must produce an IOCOST wait sample")
 
 	f.condition(t, d, f.leaf, 512, 1)
 	s.update(t, d)
@@ -722,11 +767,11 @@ func TestIOCostKernelFunctional(t *testing.T) {
 	w.waitUntilBlocked(t, "IOCOST waiter before scrape")
 	metrics, err := s.tracing.Update()
 	require.NoError(t, err)
-	requireIOCostKernelInterval(t, metrics, d.name, 0, 0, 0)
+	requireIOCostKernelInterval(t, metrics, d.name, "write", 0, 0, 0)
 	elapsed := w.finish(t)
 	lower, upper := ioCostKernelBounds(elapsed)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 1, lower, upper)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 1, lower, upper)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 0, 0, 0)
 	s.stop(t)
 
 	// An existing waiter must not become a partial sample when probes attach.
@@ -737,7 +782,7 @@ func TestIOCostKernelFunctional(t *testing.T) {
 	s = f.start(t, nil)
 	require.Equal(t, byte('D'), w.state(), "waiter must span the attach boundary")
 	w.finish(t)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 0, 0, 0)
 	s.stop(t)
 }
 
@@ -786,8 +831,8 @@ func TestIOCostKernelCompatibility(t *testing.T) {
 	s := f.start(t, nil)
 	elapsed := f.write(t, d, f.leaf, 4096)
 	lower, upper := ioCostKernelBounds(elapsed)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 1, lower, upper)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 1, lower, upper)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 0, 0, 0)
 	owner := s.identity(t, d)
 	s.stop(t)
 	for _, size := range []int{4096, 1 << 20} {
@@ -958,8 +1003,8 @@ func TestIOCostKernelLifecycle(t *testing.T) {
 		metrics, err := s.tracing.Update()
 		require.NoError(t, err)
 		lower, upper := ioCostKernelBounds(elapsed)
-		requireIOCostKernelInterval(t, metrics, d.name, 1, lower, upper)
-		requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
+		requireIOCostKernelInterval(t, metrics, d.name, "write", 1, lower, upper)
+		requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 0, 0, 0)
 		retired, err = captureIOControlRetired(s.session.object, ioCostRetiredMap)
 		require.NoError(t, err)
 		require.NotContains(t, retired, identity)
@@ -969,15 +1014,15 @@ func TestIOCostKernelLifecycle(t *testing.T) {
 	s.update(t, d)
 	f.leaf = f.cgroup(t, "leaf")
 	f.write(t, d, f.leaf, 4096)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 1, 0, 90000)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 1, 0, 90000)
 	f.write(t, d, f.parking, 4096)
 	// rmdir does not synchronously release IOCGs. Verify public intervals while
 	// the kernel owns any old references; never force its deferred release.
 	require.NoError(t, os.Remove(f.leaf))
 	f.leaf = f.cgroup(t, "leaf")
 	f.write(t, d, f.leaf, 4096)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 2, 0, 90000)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 2, 0, 90000)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 0, 0, 0)
 
 	// Binding and detaching an unused loop must not discard other disks' IO.
 	topology := f.disk(t)
@@ -991,8 +1036,8 @@ func TestIOCostKernelLifecycle(t *testing.T) {
 			runIOControlKernelCommand(t, f.ctx, 15*time.Second, "losetup", "--detach", topology.path)
 		}
 		metrics := s.update(t, d, other)
-		requireIOCostKernelInterval(t, metrics, d.name, 1, 0, 90000)
-		requireIOCostKernelInterval(t, metrics, other.name, 1, 0, 90000)
+		requireIOCostKernelInterval(t, metrics, d.name, "write", 1, 0, 90000)
+		requireIOCostKernelInterval(t, metrics, other.name, "write", 1, 0, 90000)
 	}
 	f.write(t, d, f.leaf, 4096)
 	f.write(t, other, f.parking, 4096)
@@ -1000,15 +1045,15 @@ func TestIOCostKernelLifecycle(t *testing.T) {
 	metrics, err := s.tracing.Update()
 	require.ErrorIs(t, err, errIOControlDevicesChanged)
 	require.NotErrorIs(t, err, types.ErrTracingStopped)
-	requireIOCostKernelInterval(t, metrics, d.name, 0, 0, 0)
-	requireIOCostKernelInterval(t, metrics, other.name, 0, 0, 0)
+	requireIOCostKernelInterval(t, metrics, d.name, "write", 0, 0, 0)
+	requireIOCostKernelInterval(t, metrics, other.name, "write", 0, 0, 0)
 	s.stop(t)
 	s = f.start(t, nil)
 	f.write(t, d, f.leaf, 4096)
 	f.write(t, other, f.parking, 4096)
 	metrics = s.update(t, d, other)
-	requireIOCostKernelInterval(t, metrics, d.name, 1, 0, 90000)
-	requireIOCostKernelInterval(t, metrics, other.name, 1, 0, 90000)
+	requireIOCostKernelInterval(t, metrics, d.name, "write", 1, 0, 90000)
+	requireIOCostKernelInterval(t, metrics, other.name, "write", 1, 0, 90000)
 	s.stop(t)
 }
 
@@ -1028,7 +1073,7 @@ func TestIOCostKernelPressure(t *testing.T) {
 	for _, w := range writers {
 		w.finish(t)
 	}
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 0, 0, 0)
 
 	// Fresh cgroups exercise owner growth. This cohort is deliberately serial,
 	// unlike the preceding concurrent no-wait workload.
@@ -1039,14 +1084,14 @@ func TestIOCostKernelPressure(t *testing.T) {
 		total += f.write(t, d, group, 4096)
 	}
 	lower, upper := ioCostKernelBounds(total / 64)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 64, lower, upper)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 0, 0, 0)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 64, lower, upper)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 0, 0, 0)
 
 	f.condition(t, d, f.leaf, 4096, 1)
 	s.update(t, d)
 	elapsed := f.write(t, d, f.leaf, 4096)
 	lower, upper = ioCostKernelBounds(elapsed)
-	requireIOCostKernelInterval(t, s.update(t, d), d.name, 1, lower, upper)
+	requireIOCostKernelInterval(t, s.update(t, d), d.name, "write", 1, lower, upper)
 	s.stop(t)
 
 	other := f.disk(t)
@@ -1065,10 +1110,10 @@ func TestIOCostKernelPressure(t *testing.T) {
 	}
 	metrics := s.update(t, d, other)
 	for _, disk := range []*ioCostKernelDisk{d, other} {
-		requireIOCostKernelInterval(t, metrics, disk.name, 2, bounds[disk.name][0], bounds[disk.name][1])
+		requireIOCostKernelInterval(t, metrics, disk.name, "write", 2, bounds[disk.name][0], bounds[disk.name][1])
 	}
 	metrics = s.update(t, d, other)
 	for _, disk := range []*ioCostKernelDisk{d, other} {
-		requireIOCostKernelInterval(t, metrics, disk.name, 0, 0, 0)
+		requireIOCostKernelInterval(t, metrics, disk.name, "write", 0, 0, 0)
 	}
 }
