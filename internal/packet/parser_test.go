@@ -164,11 +164,39 @@ func TestTCPSequenceSpan(t *testing.T) {
 	}
 
 	invalid := &Packet{
-		IPv4: &IPv4{IHL: 5, Length: 30},
-		TCP:  &TCP{DataOffset: 5},
+		IPv4: &IPv4{
+			IHL:      5,
+			Length:   30,
+			Protocol: "TCP",
+		},
+		TCP: &TCP{DataOffset: 5},
 	}
 	if span, ok := TCPSequenceSpan(invalid); ok || span != 0 {
 		t.Fatalf("TCPSequenceSpan(invalid) = (%d, %t), want (0, false)", span, ok)
+	}
+
+	validIPv4 := &Packet{
+		IPv4: &IPv4{
+			IHL:      5,
+			Length:   60,
+			Protocol: "TCP",
+		},
+		TCP: &TCP{DataOffset: 5},
+	}
+	if span, ok := TCPSequenceSpan(validIPv4); !ok || span != 20 {
+		t.Fatalf("TCPSequenceSpan(validIPv4) = (%d, %t), want (20, true)", span, ok)
+	}
+
+	wrongProtocol := &Packet{
+		IPv4: &IPv4{
+			IHL:      5,
+			Length:   40,
+			Protocol: "UDP",
+		},
+		TCP: &TCP{DataOffset: 5},
+	}
+	if span, ok := TCPSequenceSpan(wrongProtocol); ok || span != 0 {
+		t.Fatalf("TCPSequenceSpan(wrongProtocol) = (%d, %t), want (0, false)", span, ok)
 	}
 	if span, ok := TCPSequenceSpan(nil); ok || span != 0 {
 		t.Fatalf("TCPSequenceSpan(nil) = (%d, %t), want (0, false)", span, ok)
