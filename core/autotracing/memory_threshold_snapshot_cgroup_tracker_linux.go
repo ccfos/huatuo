@@ -237,6 +237,11 @@ func (c *cgroupTracker) createContainer(ctx context.Context, ref pod.ContainerRe
 			errors.Is(err, errMemoryWatchEventOverflow) || errors.Is(err, errCgroupRegistrationConflict) {
 			return err
 		}
+
+		if errors.Is(err, pod.ErrContainersUnavailable) {
+			return nil
+		}
+
 		log.WithField("container", ref.Key.ID).WithError(err).Warn("memory watch registration failed; skipping container instance")
 	}
 
@@ -252,6 +257,13 @@ func (c *cgroupTracker) bindContainer(ctx context.Context, ref pod.ContainerRef,
 	if entry.cgroup.Path != "" {
 		entry.cgroup.directory, err = c.directory(ref)
 	}
+
+	// A refresh can invalidate the view after DrainEvents. Preserve the old
+	// binding so the next complete view can retry this container generation.
+	if errors.Is(err, pod.ErrContainersUnavailable) {
+		return err
+	}
+
 	if old != nil && err == nil && old.cgroup.SameInstance(entry.cgroup) {
 		old.container = ref
 		if old.registrationID != 0 {
