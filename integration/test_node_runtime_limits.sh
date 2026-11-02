@@ -75,7 +75,7 @@ limits_locate_cgroup() {
 	pid=$(< "${LIMITS_PID_FILE}")
 	[[ -r /proc/${pid}/cgroup ]] || return 1
 
-	if [[ ${RUNTIME_CGROUP_MODE} == v2 ]]; then
+	if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 		cpu_path=$(awk -F: '$1 == "0" {print $3}' "/proc/${pid}/cgroup")
 		memory_path=${cpu_path}
 	else
@@ -95,7 +95,7 @@ limits_locate_cgroup() {
 
 limits_match() {
 	local cpu=$1 memory_mib=$2
-	if [[ ${RUNTIME_CGROUP_MODE} == v2 ]]; then
+	if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 		read -r limits_quota limits_period < "${limits_cpu_path}/cpu.max" || return 1
 		limits_memory=$(< "${limits_memory_path}/memory.max")
 	else

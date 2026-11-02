@@ -29,7 +29,7 @@ all) tests=(Functional Compatibility Faults Lifecycle Pressure) ;;
 *) fatal "unknown IOCOST qualification mode: ${TEST_IOCOST_MODE}" ;;
 esac
 
-if [[ -e /sys/fs/cgroup/cgroup.controllers ]]; then
+if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 	cgroup_root=/sys/fs/cgroup
 	control_prefix=io
 else

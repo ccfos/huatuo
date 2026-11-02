@@ -37,7 +37,7 @@ assert_runner_result() {
 	# shell startup cannot be restored by its traps. The fixture launcher needs
 	# its own reset even when production workers reset theirs, or cancellation
 	# may time out instead of exercising the runner's signal handling.
-	INTEGRATION_JOBS=1 timeout --kill-after=2 "${runner_fixture_timeout:-30}" \
+	HUATUO_TEST_CGROUP_MODE=stale INTEGRATION_JOBS=1 timeout --kill-after=2 "${runner_fixture_timeout:-30}" \
 		"${RUNNER_UNSHARE}" --mount --pid --fork --kill-child=KILL --mount-proc \
 		"${signal_reset_launcher[@]}" \
 		bash -c 'export runner_parent_pid=$(readlink /proc/self/ns/pid); cd /; exec bash "$@"' \
@@ -79,7 +79,7 @@ assert_runner_result() {
 
 runner_prepare_fixture() {
 	mkdir -p "${RUNNER_FIXTURE}"/{integration,e2e,_output}
-	cp "${ROOT_DIR}/integration/"{run.sh,env.sh,lib.sh,lib_runner.sh,lib_runner_report.sh,runner_worker.sh} "${RUNNER_FIXTURE}/integration/"
+	cp "${ROOT_DIR}/integration/"{run.sh,env.sh,lib.sh,lib_cgroup.sh,lib_runner.sh,lib_runner_report.sh,runner_worker.sh} "${RUNNER_FIXTURE}/integration/"
 	cp "${ROOT_DIR}/e2e/"{run.sh,lib.sh} "${RUNNER_FIXTURE}/e2e/"
 	mkdir -p "${RUNNER_FIXTURE}/_output/conf"
 	printf '[HTTPServer]\n' > "${RUNNER_FIXTURE}/_output/conf/huatuo-bamai.conf"
@@ -129,6 +129,8 @@ source "${ROOT_DIR}/integration/lib.sh"
 require_commands bash "${ROOT_DIR}/integration/run.sh"
 require_build_output
 assert_runner_case() {
+source "${ROOT_DIR}/integration/lib_cgroup.sh"
+assert_eq "${HUATUO_TEST_CGROUP_MODE}" "$(cgroup_mode)" "runner refreshes and exports cgroup mode"
 [[ $(hostname) == huatuo-dev ]] || fatal "runner hostname was not isolated"
 [[ $(readlink /proc/self/ns/uts) != "${runner_parent_uts}" ]] || fatal "runner reused the parent UTS namespace"
 [[ $(readlink /proc/self/ns/mnt) != "${runner_parent_mount}" ]] || fatal "runner reused the parent mount namespace"
@@ -530,7 +532,7 @@ assert_runner_report_write_failure() (
 	local mode=${1:-scheduling}
 	local fixture="${RUNNER_FIXTURE}/report-failure-${mode}" pid="" status=0 case_pid child_pid report
 	mkdir -p "${fixture}/integration" "${fixture}/_output"
-	cp "${RUNNER_FIXTURE}/integration/"{run.sh,lib.sh,lib_runner.sh,lib_runner_report.sh,runner_worker.sh} "${fixture}/integration/"
+	cp "${RUNNER_FIXTURE}/integration/"{run.sh,lib.sh,lib_cgroup.sh,lib_runner.sh,lib_runner_report.sh,runner_worker.sh} "${fixture}/integration/"
 	cp "${RUNNER_FIXTURE}/integration/env.sh" "${fixture}/integration/env.sh"
 	# Keep real scheduling and report I/O, while observing resource teardown.
 	cat >> "${fixture}/integration/lib.sh" << 'EOF'

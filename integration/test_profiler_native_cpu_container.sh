@@ -33,7 +33,7 @@ readonly NATIVE_EFFECTIVE_CAPS
 (((16#${NATIVE_EFFECTIVE_CAPS} & ((1 << 21) | (1 << 38))) != 0)) \
 	|| skip "perf tracing requires CAP_PERFMON or CAP_SYS_ADMIN"
 require_readable /sys/kernel/btf/vmlinux /proc/sys/kernel/perf_event_paranoid
-if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
+if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 	grep -qw cpu /sys/fs/cgroup/cgroup.controllers \
 		|| skip "CPU controller is unavailable in cgroup v2"
 else

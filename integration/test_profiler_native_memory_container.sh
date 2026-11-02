@@ -39,7 +39,7 @@ trap cleanup EXIT
 
 assert_container_cgroup_hierarchy() {
 	local target_pid=$1 mode cpu_hierarchy="" memory_hierarchy=""
-	if [[ -r /sys/fs/cgroup/cgroup.controllers ]]; then
+	if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 		grep -qw memory /sys/fs/cgroup/cgroup.controllers || skip "cgroup v2 memory controller is unavailable"
 		mode="unified cgroup v2"
 	else

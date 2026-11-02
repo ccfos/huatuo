@@ -189,7 +189,7 @@ if [[ ${EUID} -ne 0 ]]; then
 	log_info "SKIP: ${supervisor_reason}"
 	exit 0
 fi
-runner_prerequisites=(unshare mount flock ss)
+runner_prerequisites=(unshare mount flock ss stat)
 for prerequisite in "${runner_prerequisites[@]}"; do
 	if ! command -v "${prerequisite}" > /dev/null; then
 		supervisor_reason="command is not installed: ${prerequisite}"
@@ -222,6 +222,10 @@ set -m
 	unset __HUATUO_ENV_SH_LOADED
 	source ./integration/env.sh
 	source ./integration/lib.sh
+	source ./integration/lib_cgroup.sh
+	HUATUO_TEST_CGROUP_MODE=$(cgroup_mode) || fatal "cannot determine cgroup mode from /sys/fs/cgroup"
+	readonly HUATUO_TEST_CGROUP_MODE
+	export HUATUO_TEST_CGROUP_MODE
 	source ./integration/lib_runner.sh
 	shift
 	run_test_suite "$@"

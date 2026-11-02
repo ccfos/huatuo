@@ -23,6 +23,26 @@ readonly CGROUP_HELPER_ROOT="${HUATUO_BAMAI_TEST_TMPDIR}/cgroup helpers"
 readonly CGROUP_HELPER_CONTAINER_ID=$(printf '%064d' 1)
 require_commands find
 
+# Exercise detection independently of the host filesystem and exported mode.
+stat() {
+	case ${cgroup_helper_mode}:${4} in
+	unified:/sys/fs/cgroup | hybrid:/sys/fs/cgroup/unified) printf '63677270\n' ;;
+	unavailable:/sys/fs/cgroup | legacy:/sys/fs/cgroup/unified) return 1 ;;
+	*) printf '1021994\n' ;;
+	esac
+}
+for cgroup_helper_mode in unified hybrid legacy; do
+	assert_eq "$(cgroup_mode)" "${cgroup_helper_mode}" "filesystem cgroup mode"
+done
+assert_cgroup_mode_unavailable() {
+	local cgroup_helper_mode=unavailable
+	if cgroup_mode; then
+		fatal "failed root stat was accepted as a cgroup mode"
+	fi
+}
+assert_cgroup_mode_unavailable
+unset -f stat
+
 # Model mount availability without changing the host cgroup hierarchy.
 findmnt() {
 	case " $* " in
@@ -41,15 +61,21 @@ findmnt() {
 cgroup_helper_v1="${CGROUP_HELPER_ROOT}/memory"
 cgroup_helper_v2="${CGROUP_HELPER_ROOT}/unified"
 mkdir -p "${cgroup_helper_v1}" "${cgroup_helper_v2}"
+HUATUO_TEST_CGROUP_MODE=hybrid
 assert_eq "$(cgroup_memory_root)" "${cgroup_helper_v1}" "hybrid host prefers v1 memory controller"
 assert_eq "$(cgroup_create fixture)" "${cgroup_helper_v1}/fixture" "create uses memory mount"
 cgroup_delete "${cgroup_helper_v1}/fixture"
 cgroup_helper_v1=""
-assert_eq "$(cgroup_memory_root)" "${cgroup_helper_v2}" "v2 fallback"
+assert_cgroup_memory_mount_missing() {
+	if cgroup_memory_root; then
+		fatal "missing memory mount was accepted for ${HUATUO_TEST_CGROUP_MODE}"
+	fi
+}
+assert_cgroup_memory_mount_missing
+HUATUO_TEST_CGROUP_MODE=unified
+assert_eq "$(cgroup_memory_root)" "${cgroup_helper_v2}" "unified host uses v2 memory controller"
 cgroup_helper_v2=""
-if cgroup_memory_root; then
-	fatal "missing memory mount was accepted"
-fi
+assert_cgroup_memory_mount_missing
 
 for cgroup_helper_name in "${CGROUP_HELPER_CONTAINER_ID}" \
 	"docker-${CGROUP_HELPER_CONTAINER_ID}.scope" \
