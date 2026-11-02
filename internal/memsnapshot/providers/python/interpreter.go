@@ -223,6 +223,18 @@ func (c *scanner) interpreterList(address, nextOffset, gcOffset uint64) (
 func (c *scanner) probeInterpreter(address uint64) (gcHeads,
 	uint64, error,
 ) {
+	// Nearby allocations can expose the same GC heads without being interpreters.
+	runtimeOffset := c.image.layout.interpreterRuntimeOffset
+	raw, err := c.memory.read(address, int(runtimeOffset)+8)
+	if err != nil {
+		return gcHeads{}, 0, fmt.Errorf("read CPython interpreter runtime pointer: %w", err)
+	}
+	if runtime := c.image.order.Uint64(raw[runtimeOffset:]); runtime != c.image.runtimeAddress {
+		return gcHeads{}, 0, fmt.Errorf(
+			"CPython interpreter at %#x references runtime %#x; expected %#x",
+			address, runtime, c.image.runtimeAddress,
+		)
+	}
 	var bestRaw []byte
 	bestOffset := -1
 	for size := 512; size <= maxInterpreterBytes; size *= 2 {
