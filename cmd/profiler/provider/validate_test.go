@@ -180,7 +180,7 @@ func TestValidateExpectedExecPath(t *testing.T) {
 func TestValidateExpectedExecPathRejectsLiteralDeletedSuffix(t *testing.T) {
 	procPath := newExecTestProcFS(t)
 	literal := filepath.Join(t.TempDir(), "python3.10 (deleted)")
-	if err := os.WriteFile(literal, nil, 0o700); err != nil {
+	if err := os.WriteFile(literal, nil, 0o600); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", literal, err)
 	}
 	writeTestExecutable(t, procPath, 100, literal)
@@ -196,7 +196,7 @@ func TestValidateExpectedExecPathAcceptsReplacedExecutable(t *testing.T) {
 	procPath := newExecTestProcFS(t)
 	dir := t.TempDir()
 	current := filepath.Join(dir, "python3.10")
-	if err := os.WriteFile(current, nil, 0o700); err != nil {
+	if err := os.WriteFile(current, nil, 0o600); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", current, err)
 	}
 	writeTestExecutable(t, procPath, 100, current+deletedExecutableMarker)
