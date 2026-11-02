@@ -260,6 +260,14 @@ Grafana uses the Pyroscope-compatible Protobuf endpoints under `/v1/profiling/fl
 Container queries require `container_id` or one task `id`. Host queries cannot include container filters.
 For example: `{region="example",hostname="node-01",scope="container",container_id="…",id="…"}`.
 
+Each label accepts one equality condition. On this endpoint the wildcard values `*`, `all`,
+and the empty string only drop the restriction for that label, so
+`{scope="host",hostname="*",id="job-1"}` still selects one task; `scope` is still required.
+Repeating a label with the same value is accepted, while contradictory duplicates such as
+`{hostname="host-a",hostname="host-b"}` are rejected with `400` and the error reports both
+values, because one query cannot select two hosts. A matcher that uses any operator other
+than `=` is rejected as well, including `hostname!="*"`.
+
 The shared dashboard UID is `continuous-profiling`; variables are ordered as Region, node,
 scope, container, profile type, and task. The timeline and flame graph use the same task filter.
 With All containers selected, the task still identifies one target. Physical usage always

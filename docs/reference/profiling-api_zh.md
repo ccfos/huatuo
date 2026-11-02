@@ -288,6 +288,12 @@ Grafana 使用 `/v1/profiling/flamegraph/` 下的 Pyroscope 兼容 Protobuf 接�
 容器查询使用 `container_id` 或单个任务 `id` 定位目标；宿主机查询不能携带容器条件。
 例如 `{region="example",hostname="node-01",scope="container",container_id="…",id="…"}`。
 
+每个标签只接受一个等值条件。在本接口上，通配值 `*`、`all` 和空字符串只表示取消该标签
+的限制，因此 `{scope="host",hostname="*",id="job-1"}` 仍只选中一个任务，`scope` 依旧必填。
+重复同一个等值条件会被接受，而 `{hostname="host-a",hostname="host-b"}` 这类互相矛盾的
+同名条件会返回 `400`，错误信息同时给出两个值，因为一次查询无法同时选中两台主机。
+使用 `=` 以外运算符的条件（包括 `hostname!="*"`）同样会被拒绝。
+
 统一面板 UID 为 `continuous-profiling`，变量顺序为 Region、节点、范围、容器、指标、任务。
 趋势图与火焰图使用相同任务过滤。容器选择 All 时，任务仍限定到一个目标；
 `physical_usage` 始终要求单个任务并只取最新快照。
