@@ -25,16 +25,17 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ccfos/huatuo/internal/profiling/window"
-	"github.com/ccfos/huatuo/pkg/observation"
-	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
-	"github.com/ccfos/huatuo/pkg/types"
 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	"github.com/grafana/pyroscope/pkg/pprof"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
+
+	"github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/observation"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestApplyProfileMatcherRegion(t *testing.T) {
