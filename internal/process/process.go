@@ -108,9 +108,13 @@ func Hostname(pid int) (string, error) {
 	done := make(chan hostnameResult, 1)
 	go func() {
 		hostname, err := hostnameInUTSNamespace(pid)
-		done <- hostnameResult{hostname: hostname, err: err}
+		done <- hostnameResult{
+			hostname: hostname,
+			err:      err,
+		}
 	}()
 	result := <-done
+
 	return result.hostname, result.err
 }
 
