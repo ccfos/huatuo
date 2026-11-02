@@ -250,7 +250,8 @@ assert_privileged_container() (
 			[[ -f /.dockerenv ]] || fatal "privileged validation did not start in a Docker container"
 			bash "$ROOT_DIR/integration/run.sh" -j 1 test_profiler_native_cpu_container.sh 2>&1 \
 				| tee "$HUATUO_BAMAI_TEST_TMPDIR/runner.log"
-			grep -qF "summary: total=1 passed=1 skipped=0 failed=0" "$HUATUO_BAMAI_TEST_TMPDIR/runner.log" \
+			sed -n "/^{/,/^}/p" "$HUATUO_BAMAI_TEST_TMPDIR/runner.log" \
+				| jq -e ".summary == {total: 1, passed: 1, skipped: 0, failed: 0}" > /dev/null \
 				|| fatal "privileged native container case did not pass without skips"
 		' || status=$?
 	assert_eq "${status}" 0 "privileged native container cases" \

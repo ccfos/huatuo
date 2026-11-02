@@ -238,7 +238,6 @@ runner_finalize_execution() {
 	fi
 	if [[ $result == failed ]]; then
 		runner_failed=1
-		dump_text_files "$workspace" || true
 	fi
 	if ! report_execution_finish "${runner_scripts[slot]}" "$runner_run_index" "$result" "$test_exit_code" "$reason" "${runner_started[slot]}"; then
 		runner_failed=1 runner_report_failed=1

@@ -91,10 +91,7 @@ report_execution_finish() {
 }
 
 report_finish() {
-	local status=$1 code=$2 reason=$3 name run
-	while IFS=$'\t' read -r name run; do
-		log_info "SKIP: ${name} (${run}): not started: ${reason}"
-	done < <(jq -r '.test_executions[] | select(.result == null and .started_at == null) | [.test_name, .run_index] | @tsv' "${RUNNER_OUTPUT_DIR}/result.json")
+	local status=$1 code=$2 reason=$3
 	report_update '.status = $status | .exit_code = $code |
 		.reason = (if $reason == "" then null else $reason end) |
 		.finished_at = $time | .duration_seconds = ((($now - $started) * 100 | round) / 100) |
@@ -106,8 +103,28 @@ report_finish() {
 }
 
 report_summary() {
-	local counts
-	counts=$(jq -r '.execution_counts | "total=\(.total) passed=\(.passed) skipped=\(.skipped) failed=\(.failed)"' "${RUNNER_OUTPUT_DIR}/result.json") || return 1
-	log_info "summary: ${counts}"
-	log_info "report: ${RUNNER_OUTPUT_DIR}/result.json"
+	local workspace
+	local failed_logs="${RUNNER_OUTPUT_DIR}/failed-logs.jsonl"
+	: > "${failed_logs}"
+	# Collect failed test logs after all outcomes are known; JSON escapes embedded
+	# newlines and quotes without mixing logs from parallel test executions.
+	while IFS= read -r workspace; do
+		dump_text_files "${workspace}" json \
+			| jq -sc --arg directory "${workspace}" '{dir: $directory, logs: .}' \
+				>> "${failed_logs}" || return 1
+	done < <(jq -r '.test_executions[] | select(.result == "failed" and .logs != null) |
+		$output + "/" + (.logs.stdout | rtrimstr("/stdout.log"))' \
+		--arg output "${RUNNER_OUTPUT_DIR}" "${RUNNER_OUTPUT_DIR}/result.json")
+	jq --arg output "${RUNNER_OUTPUT_DIR}" --slurpfile failed_logs "${failed_logs}" '
+		.suite as $suite |
+		($failed_logs | INDEX(.dir)) as $logs |
+		{summary: .execution_counts,
+		 skipped_tests: ([.test_executions[] | select(.result == "skipped") |
+			$suite + "/" + .test_name] | unique),
+		 failed_tests: [.test_executions[] | select(.result == "failed") |
+			(if .logs == null then null else
+				$output + "/" + (.logs.stdout | rtrimstr("/stdout.log")) end) as $directory |
+			{name: ($suite + "/" + .test_name), reason, dir: $directory,
+			 logs: (if $directory == null then [] else $logs[$directory].logs // [] end)}]}
+	' "${RUNNER_OUTPUT_DIR}/result.json"
 }
