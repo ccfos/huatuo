@@ -37,12 +37,19 @@ PROFILER_INDEPENDENT_PID=""
 PROFILER_UNLINKED_PID=""
 
 cleanup() {
+	local status=$?
 	[[ -n "${PROFILER_PARENT_PID}" ]] && stop_by_pid "${PROFILER_PARENT_PID}" 5 || true
 	[[ -n "${PROFILER_CHILD_PID}" ]] && stop_by_pid "${PROFILER_CHILD_PID}" 5 || true
 	[[ -n "${PROFILER_INDEPENDENT_PID}" ]] && stop_by_pid "${PROFILER_INDEPENDENT_PID}" 5 || true
 	[[ -n "${PROFILER_UNLINKED_PID}" ]] && stop_by_pid "${PROFILER_UNLINKED_PID}" 5 || true
-	rm -rf "${WORK_DIR}"
+	if [[ ${status} -eq 0 || ${status} -eq 77 ]]; then
+		rm -rf -- "${WORK_DIR}"
+	else
+		log_error "integration test failed; artifacts preserved at ${WORK_DIR}"
+	fi
+	return "${status}"
 }
+
 trap cleanup EXIT
 
 py_spy_supports_target() {

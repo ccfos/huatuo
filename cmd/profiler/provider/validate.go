@@ -33,18 +33,16 @@ func validateExpectedExecPath(pids []int, execPath string) error {
 		return nil
 	}
 	for _, pid := range pids {
-		actualPath, err := process.Executable(pid)
+		actualPath, err := process.ExecutablePath(pid)
 		if err != nil {
 			return err
 		}
-		// A running executable that was unlinked or replaced in place keeps
-		// its path but gains the kernel's " (deleted)" marker. That marker
-		// only has this meaning on the procfs side; the value the user passed
-		// through --binary-match-path may legitimately end in the same text,
-		// so normalize the procfs result and compare the literal request.
-		actual := process.TrimUnlinkedExecutable(actualPath)
-		if actual != execPath {
-			return fmt.Errorf("PID %d executable %q, want %q", pid, actual, execPath)
+		// ExecutablePath only removes a marker that procfs identifies as the
+		// kernel's unlinked-file suffix. The value supplied through
+		// --binary-match-path stays literal, including a real filename that
+		// ends in the same text.
+		if actualPath != execPath {
+			return fmt.Errorf("PID %d executable %q, want %q", pid, actualPath, execPath)
 		}
 	}
 	return nil
@@ -90,6 +88,12 @@ func validateProcessExecutables(profilerName, executablePrefix string, pids []in
 // runtime. Callers pass a basename from process.ExecutableName, which already
 // removed the kernel's unlinked marker.
 func hasExecutablePrefix(name, prefix string) bool {
+	// Runtime executable names do not contain whitespace. In particular, a
+	// literal file named "python (deleted)" is not an interpreter merely
+	// because the procfs marker has the same spelling.
+	if strings.ContainsAny(name, " \t") {
+		return false
+	}
 	if strings.HasPrefix(name, prefix) {
 		return true
 	}

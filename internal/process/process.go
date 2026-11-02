@@ -54,25 +54,74 @@ func Executable(pid int) (string, error) {
 // the marker describes the file rather than the process.
 const unlinkedExecutableMarker = " (deleted)"
 
-// TrimUnlinkedExecutable removes the marker from a procfs executable path, so
-// callers comparing process identity ignore an in-place replacement.
-func TrimUnlinkedExecutable(path string) string {
-	return strings.TrimSuffix(path, unlinkedExecutableMarker)
+// NormalizeExecutable removes the kernel's unlinked marker only when procfs
+// reports the marker for path. The same suffix is a legal filename component,
+// so compare the candidate paths with the actual /proc/<pid>/exe file identity
+// before changing the path.
+func NormalizeExecutable(path, procExePath string) string {
+	trimmed, found := strings.CutSuffix(path, unlinkedExecutableMarker)
+	if !found {
+		return path
+	}
+
+	procInfo, procErr := os.Stat(procExePath)
+	rawInfo, rawErr := os.Stat(path)
+	if procErr != nil {
+		// A fake or inaccessible procfs cannot establish file identity. Keep
+		// an existing literal suffix, but still handle the common unlinked
+		// case where neither the marked nor the trimmed path exists.
+		if rawErr == nil {
+			return path
+		}
+		if _, err := os.Stat(trimmed); err == nil {
+			return path
+		}
+		return trimmed
+	}
+
+	if rawErr == nil && os.SameFile(rawInfo, procInfo) {
+		return path
+	}
+
+	trimmedInfo, trimmedErr := os.Stat(trimmed)
+	if trimmedErr == nil && os.SameFile(trimmedInfo, procInfo) {
+		return trimmed
+	}
+
+	// A path that still exists but does not identify the running image is
+	// either a literal filename or a replacement executable. In both cases
+	// the marker must stay attached.
+	if rawErr == nil || trimmedErr == nil {
+		return path
+	}
+
+	return trimmed
 }
 
-// ExecutableName returns the basename of pid's executable without the kernel's
-// unlinked marker.
-//
-// Runtime recognition must match this value: filepath.Base of the raw link
-// reports "python3.10 (deleted)", which no longer matches the interpreter name
-// once the binary is unlinked.
-func ExecutableName(pid int) (string, error) {
+// ExecutablePath returns pid's executable path with a kernel unlinked marker
+// removed only when the marker belongs to the procfs entry.
+func ExecutablePath(pid int) (string, error) {
 	path, err := Executable(pid)
 	if err != nil {
 		return "", err
 	}
 
-	return filepath.Base(TrimUnlinkedExecutable(path)), nil
+	return NormalizeExecutable(path, procfs.Path(strconv.Itoa(pid), "exe")), nil
+}
+
+// ExecutableName returns the basename of pid's executable with a kernel
+// unlinked marker removed when procfs confirms it.
+//
+// Runtime recognition must match this value: filepath.Base of the raw link
+// reports "python3.10 (deleted)", which no longer matches the interpreter name
+// once the binary is unlinked.
+func ExecutableName(pid int) (string, error) {
+	path, err := ExecutablePath(pid)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Base(path), nil
 }
 
 // PPID returns pid's current parent PID.

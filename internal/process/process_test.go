@@ -68,22 +68,65 @@ func TestExecutableMissing(t *testing.T) {
 	}
 }
 
-func TestTrimUnlinkedExecutable(t *testing.T) {
+func TestNormalizeExecutable(t *testing.T) {
+	dir := t.TempDir()
+	oldExecutable := filepath.Join(dir, "old-python")
+	newExecutable := filepath.Join(dir, "python")
+	literalExecutable := filepath.Join(dir, "python (deleted)")
+	for _, path := range []string{oldExecutable, newExecutable, literalExecutable} {
+		if err := os.WriteFile(path, nil, 0o700); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+
 	tests := []struct {
-		path string
-		want string
+		name    string
+		path    string
+		procExe string
+		want    string
 	}{
-		{path: "/usr/bin/python3.10", want: "/usr/bin/python3.10"},
-		{path: "/usr/bin/python3.10 (deleted)", want: "/usr/bin/python3.10"},
-		{path: "/opt/python (deleted)/bin/python", want: "/opt/python (deleted)/bin/python"},
-		{path: "/tmp/python (deleted) (deleted)", want: "/tmp/python (deleted)"},
-		{path: "/usr/bin/python3.10 (deleted) ", want: "/usr/bin/python3.10 (deleted) "},
+		{
+			name:    "plain path",
+			path:    newExecutable,
+			procExe: newExecutable,
+			want:    newExecutable,
+		},
+		{
+			name:    "literal suffix points at the running image",
+			path:    literalExecutable,
+			procExe: literalExecutable,
+			want:    literalExecutable,
+		},
+		{
+			name:    "literal suffix is not the running image",
+			path:    literalExecutable,
+			procExe: oldExecutable,
+			want:    literalExecutable,
+		},
+		{
+			name:    "kernel marker with both paths removed",
+			path:    filepath.Join(dir, "gone", "python (deleted)"),
+			procExe: oldExecutable,
+			want:    filepath.Join(dir, "gone", "python"),
+		},
+		{
+			name:    "deleted literal suffix",
+			path:    filepath.Join(dir, "gone", "python (deleted) (deleted)"),
+			procExe: oldExecutable,
+			want:    filepath.Join(dir, "gone", "python (deleted)"),
+		},
+		{
+			name:    "replacement at the original path",
+			path:    newExecutable + unlinkedExecutableMarker,
+			procExe: oldExecutable,
+			want:    newExecutable + unlinkedExecutableMarker,
+		},
 	}
 
 	for _, test := range tests {
-		t.Run(test.path, func(t *testing.T) {
-			if got := TrimUnlinkedExecutable(test.path); got != test.want {
-				t.Errorf("TrimUnlinkedExecutable(%q) = %q, want %q", test.path, got, test.want)
+		t.Run(test.name, func(t *testing.T) {
+			if got := NormalizeExecutable(test.path, test.procExe); got != test.want {
+				t.Errorf("NormalizeExecutable(%q, %q) = %q, want %q", test.path, test.procExe, got, test.want)
 			}
 		})
 	}
@@ -96,9 +139,9 @@ func TestExecutableName(t *testing.T) {
 		want   string
 	}{
 		{name: "plain executable", target: "/usr/bin/java", want: "java"},
-		{name: "unlinked python", target: "/usr/bin/python3.10 (deleted)", want: "python3.10"},
-		{name: "unlinked platform python", target: "/usr/libexec/platform-python3.6 (deleted)", want: "platform-python3.6"},
-		{name: "unrelated executable", target: "/usr/bin/ruby3.1 (deleted)", want: "ruby3.1"},
+		{name: "unlinked python", target: "/huatuo-nonexistent/bin/python3.10 (deleted)", want: "python3.10"},
+		{name: "unlinked platform python", target: "/huatuo-nonexistent/libexec/platform-python3.6 (deleted)", want: "platform-python3.6"},
+		{name: "unrelated executable", target: "/huatuo-nonexistent/bin/ruby3.1 (deleted)", want: "ruby3.1"},
 		{name: "marker outside the basename", target: "/opt/(deleted)/python3", want: "python3"},
 	}
 
@@ -121,6 +164,31 @@ func TestExecutableName(t *testing.T) {
 				t.Fatalf("ExecutableName(100) = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestExecutableNameKeepsLiteralDeletedSuffix(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "python (deleted)")
+	if err := os.WriteFile(target, nil, 0o700); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", target, err)
+	}
+
+	tmpRoot := setProcRoot(t)
+	procPath := filepath.Join(tmpRoot, "proc", "100")
+	if err := os.MkdirAll(procPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procPath, err)
+	}
+	if err := os.Symlink(target, filepath.Join(procPath, "exe")); err != nil {
+		t.Fatalf("Symlink(%q) error = %v", target, err)
+	}
+
+	got, err := ExecutableName(100)
+	if err != nil {
+		t.Fatalf("ExecutableName(100) error = %v", err)
+	}
+	if got != "python (deleted)" {
+		t.Fatalf("ExecutableName(100) = %q, want %q", got, "python (deleted)")
 	}
 }
 
