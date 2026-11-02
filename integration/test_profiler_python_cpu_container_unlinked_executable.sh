@@ -26,7 +26,7 @@ readonly PYTHON_FIXTURE="${ROOT_DIR}/integration/testdata/test_profiler_python_c
 readonly PYTHON_CONTAINER_IMAGE="${PYTHON_PROFILER_CONTAINER_IMAGE:-python:3.11-slim}"
 readonly PYTHON_PROFILER_DURATION=10
 
-require_commands python3 timeout
+require_commands timeout
 readonly PYTHON_PYSPY_BIN="${PROFILER_TOOL_DIR}/py-spy"
 require_commands "${PYTHON_PYSPY_BIN}"
 command -v docker > /dev/null || skip "docker is not installed"
@@ -52,6 +52,13 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+assert_profiler_folded_contains() {
+	local folded=$1
+	local method=$2
+	grep -q "${method}" "${folded}" \
+		|| fatal "stack ${method} not found in ${folded}"
+}
 
 docker info > /dev/null 2>&1 || skip "docker daemon is unavailable"
 if ! docker image inspect "${PYTHON_CONTAINER_IMAGE}" > /dev/null 2>&1; then

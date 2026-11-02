@@ -61,28 +61,38 @@ const unlinkedExecutableMarker = " (deleted)"
 // process's mount namespace, which may not exist in the profiler's namespace.
 // When the original path already contains a replacement binary, the marked
 // path no longer identifies the running image and the marker must be dropped.
-// If the target root cannot be inspected, the suffix is treated as the kernel
-// marker so an in-place upgrade still matches the path the user supplied.
-func NormalizeExecutable(path, procExePath string) string {
+// A target root that cannot be inspected returns an error instead of rewriting
+// the path, because an unverified rewrite could select a different executable.
+func NormalizeExecutable(path, procExePath string) (string, error) {
 	trimmed, found := strings.CutSuffix(path, unlinkedExecutableMarker)
 	if !found {
-		return path
+		return path, nil
 	}
 	if !filepath.IsAbs(path) {
-		return trimmed
+		return trimmed, nil
 	}
 
 	procInfo, err := os.Stat(procExePath)
 	if err != nil {
-		return trimmed
-	}
-	procRoot := filepath.Join(filepath.Dir(procExePath), "root")
-	rawInfo, err := os.Stat(filepath.Join(procRoot, path))
-	if err == nil && os.SameFile(rawInfo, procInfo) {
-		return path
+		if errors.Is(err, fs.ErrNotExist) {
+			return trimmed, nil
+		}
+
+		return "", fmt.Errorf("stat %s: %w", procExePath, err)
 	}
 
-	return trimmed
+	candidatePath := filepath.Join(filepath.Dir(procExePath), "root", path)
+	rawInfo, err := os.Stat(candidatePath)
+	switch {
+	case err == nil:
+		if os.SameFile(rawInfo, procInfo) {
+			return path, nil
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("stat %s: %w", candidatePath, err)
+	}
+
+	return trimmed, nil
 }
 
 // ExecutablePath returns pid's executable path with a kernel unlinked marker
@@ -93,7 +103,7 @@ func ExecutablePath(pid int) (string, error) {
 		return "", err
 	}
 
-	return NormalizeExecutable(path, procfs.Path(strconv.Itoa(pid), "exe")), nil
+	return NormalizeExecutable(path, procfs.Path(strconv.Itoa(pid), "exe"))
 }
 
 // ExecutableName returns the basename of pid's executable with a kernel
