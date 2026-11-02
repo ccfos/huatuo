@@ -106,7 +106,8 @@ func newExecTestProcFS(t *testing.T) string {
 }
 
 // writeTestExecutable creates the fake /proc/<pid>/exe link used by the
-// executable checks.
+// executable checks. Every fake process also receives a root link so absolute
+// paths resolve through the target's mount namespace, as they do in procfs.
 func writeTestExecutable(t *testing.T, procPath string, pid int, target string) {
 	t.Helper()
 
@@ -116,6 +117,9 @@ func writeTestExecutable(t *testing.T, procPath string, pid int, target string) 
 	}
 	if err := os.Symlink(target, filepath.Join(processPath, "exe")); err != nil {
 		t.Fatalf("Symlink(%q) error = %v", target, err)
+	}
+	if err := os.Symlink("/", filepath.Join(processPath, "root")); err != nil {
+		t.Fatalf("Symlink(%q) error = %v", "/", err)
 	}
 }
 

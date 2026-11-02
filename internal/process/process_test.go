@@ -79,6 +79,15 @@ func TestNormalizeExecutable(t *testing.T) {
 		}
 	}
 
+	procDir := filepath.Join(dir, "proc", "100")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procDir, err)
+	}
+	if err := os.Symlink("/", filepath.Join(procDir, "root")); err != nil {
+		t.Fatalf("Symlink(root) error = %v", err)
+	}
+	procExePath := filepath.Join(procDir, "exe")
+
 	tests := []struct {
 		name    string
 		path    string
@@ -125,8 +134,70 @@ func TestNormalizeExecutable(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := NormalizeExecutable(test.path, test.procExe); got != test.want {
+			if err := os.Remove(procExePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("Remove(%q) error = %v", procExePath, err)
+			}
+			if err := os.Symlink(test.procExe, procExePath); err != nil {
+				t.Fatalf("Symlink(%q) error = %v", test.procExe, err)
+			}
+			if got := NormalizeExecutable(test.path, procExePath); got != test.want {
 				t.Errorf("NormalizeExecutable(%q, %q) = %q, want %q", test.path, test.procExe, got, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeExecutableUsesTargetProcessRoot(t *testing.T) {
+	dir := t.TempDir()
+	targetRoot := filepath.Join(dir, "container-root")
+	literalPath := filepath.Join(targetRoot, "app", "java (deleted)")
+	replacementPath := filepath.Join(targetRoot, "app", "java")
+	oldHostPath := filepath.Join(dir, "old-java")
+	for _, path := range []string{literalPath, replacementPath, oldHostPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, nil, 0o700); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+
+	procDir := filepath.Join(dir, "proc", "100")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procDir, err)
+	}
+	if err := os.Symlink(targetRoot, filepath.Join(procDir, "root")); err != nil {
+		t.Fatalf("Symlink(root) error = %v", err)
+	}
+	procExePath := filepath.Join(procDir, "exe")
+
+	tests := []struct {
+		name    string
+		procExe string
+		want    string
+	}{
+		{
+			name:    "literal suffix exists in the target root",
+			procExe: literalPath,
+			want:    "/app/java (deleted)",
+		},
+		{
+			name:    "kernel marker with a replacement in the target root",
+			procExe: oldHostPath,
+			want:    "/app/java",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.Remove(procExePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("Remove(%q) error = %v", procExePath, err)
+			}
+			if err := os.Symlink(test.procExe, procExePath); err != nil {
+				t.Fatalf("Symlink(%q) error = %v", test.procExe, err)
+			}
+			if got := NormalizeExecutable("/app/java (deleted)", procExePath); got != test.want {
+				t.Errorf("NormalizeExecutable() = %q, want %q", got, test.want)
 			}
 		})
 	}
@@ -178,6 +249,9 @@ func TestExecutableNameKeepsLiteralDeletedSuffix(t *testing.T) {
 	procPath := filepath.Join(tmpRoot, "proc", "100")
 	if err := os.MkdirAll(procPath, 0o755); err != nil {
 		t.Fatalf("MkdirAll(%q) error = %v", procPath, err)
+	}
+	if err := os.Symlink("/", filepath.Join(procPath, "root")); err != nil {
+		t.Fatalf("Symlink(root) error = %v", err)
 	}
 	if err := os.Symlink(target, filepath.Join(procPath, "exe")); err != nil {
 		t.Fatalf("Symlink(%q) error = %v", target, err)

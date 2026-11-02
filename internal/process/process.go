@@ -56,18 +56,27 @@ const unlinkedExecutableMarker = " (deleted)"
 
 // NormalizeExecutable removes the kernel's unlinked marker from path unless
 // path itself is the live file. The same suffix is a legal filename component,
-// so compare the marked path with /proc/<pid>/exe before preserving it. When
-// the original path already contains a replacement binary, the marked path no
-// longer identifies the running image and the kernel marker must be dropped.
+// so compare the marked path with /proc/<pid>/exe before preserving it. Resolve
+// the candidate through /proc/<pid>/root because path describes the target
+// process's mount namespace, which may not exist in the profiler's namespace.
+// When the original path already contains a replacement binary, the marked
+// path no longer identifies the running image and the marker must be dropped.
 func NormalizeExecutable(path, procExePath string) string {
 	trimmed, found := strings.CutSuffix(path, unlinkedExecutableMarker)
 	if !found {
 		return path
 	}
+	if !filepath.IsAbs(path) {
+		return trimmed
+	}
 
-	procInfo, procErr := os.Stat(procExePath)
-	rawInfo, rawErr := os.Stat(path)
-	if procErr == nil && rawErr == nil && os.SameFile(rawInfo, procInfo) {
+	procInfo, err := os.Stat(procExePath)
+	if err != nil {
+		return trimmed
+	}
+	procRoot := filepath.Join(filepath.Dir(procExePath), "root")
+	rawInfo, err := os.Stat(filepath.Join(procRoot, path))
+	if err == nil && os.SameFile(rawInfo, procInfo) {
 		return path
 	}
 
