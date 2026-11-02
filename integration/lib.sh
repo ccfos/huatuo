@@ -773,24 +773,28 @@ assert_build_info() {
 	grep -Fxq "# TYPE ${namespace}_build_info gauge" "${metrics_file}" \
 		|| fatal "expected ${namespace}_build_info to be a Gauge"
 
-	local count sample field value
+	local count sample labels expected
 	count=$(grep -cE "^${namespace}_build_info(\{|[[:space:]])" "${metrics_file}" || true)
 	assert_eq "${count}" 1 "build-info sample count" \
 		|| fatal "expected one build-info sample, got ${count}"
-	sample=$(grep "^${namespace}_build_info{" "${metrics_file}")
+	sample=$(grep -E "^${namespace}_build_info(\{|[[:space:]])" "${metrics_file}")
 	log_info "build-info sample: ${sample}"
-	assert_eq "${sample##* }" 1 "build-info gauge value" \
-		|| fatal "expected build-info value 1, got ${sample}"
-	for field in name version git_commit git_tree_state build_time go_version compiler platform; do
-		value=$(jq -er --arg field "${field}" \
-			'.data[$field] | select(type == "string" and length > 0) | @json' "${version_file}") \
-			|| fatal "GET /version: missing nonempty ${field}"
-		[[ ${sample} == *"${field}=${value}"* ]] \
-			|| fatal "build-info ${field}: expected ${value}, got ${sample}"
-	done
-	value=$(jq -cn --arg host "${expected_host}" '$host')
-	[[ ${sample} == *"host=${value}"* && ${sample} == *"region=\"${expected_region}\""* ]] \
-		|| fatal "build-info: expected host=${value}, region=${expected_region}, got ${sample}"
+	# Match the exporter's sorted labels and Prometheus text escaping, not JSON escaping.
+	labels=$(jq -er --arg host "${expected_host}" --arg region "${expected_region}" '
+		.data | {name, version, git_commit, git_tree_state, build_time, go_version, compiler, platform}
+		| if all(.[]; type == "string" and length > 0) then .
+		  else error("missing nonempty build identity field") end
+		| . + {host: $host, region: $region}
+		| to_entries | sort_by(.key)
+		| map(.key + "=\"" + (.value
+			| split("\\") | join("\\\\")
+			| split("\n") | join("\\n")
+			| split("\"") | join("\\\"")) + "\"")
+		| join(",")
+	' "${version_file}") || fatal "GET /version: cannot encode build identity labels"
+	expected="${namespace}_build_info{${labels}} 1"
+	assert_eq "${sample}" "${expected}" "build-info sample" \
+		|| fatal "build-info: expected ${expected}, got ${sample}"
 }
 
 huatuo_bamai_metrics() {

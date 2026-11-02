@@ -47,7 +47,9 @@ these build labels:
 | `compiler` | Go compiler, such as `gc` |
 | `platform` | Operating system and architecture, such as `linux/amd64` |
 
-Development builds without a release version or Git identifier use `(devel)`.
+When no release version is supplied, `version` uses `(devel)`. `git_commit`
+uses the injected identifier first, then the VCS revision from Go build information,
+and falls back to `(devel)` when neither is available.
 Build labels apply only to this metric; business metric labels remain unchanged.
 After scraping, join build information with business metrics using the same
 `job` and `instance`. Cross-cluster queries must also include the labels that

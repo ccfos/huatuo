@@ -22,8 +22,8 @@ import (
 	"github.com/ccfos/huatuo/pkg/metric"
 )
 
-// InfoMetric describes an information gauge with a constant value of 1.
-type InfoMetric struct {
+// BuildInOpts describes an information gauge with a constant value of 1.
+type BuildInOpts struct {
 	Name   string
 	Help   string
 	Labels map[string]string
@@ -34,7 +34,7 @@ type InfoMetric struct {
 // All metrics use the namespace prefix and common host/region labels.
 // Labels are copied during registration; host and region are reserved.
 // Invalid descriptors or duplicate registration panic, as with MustRegister.
-func RegisterCollector(reg *prometheus.Registry, namespace string, infos ...InfoMetric) {
+func RegisterCollector(reg *prometheus.Registry, namespace string, infos ...BuildInOpts) {
 	prefix := ""
 	if namespace != "" {
 		prefix = namespace + "_"

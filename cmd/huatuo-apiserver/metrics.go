@@ -32,7 +32,7 @@ func setupMetrics(_ context.Context, d *Daemon) (func(context.Context) error, er
 	runtime.RegisterCollector(
 		registry,
 		promNamespace,
-		runtime.InfoMetric{
+		runtime.BuildInOpts{
 			Name:   "build_info",
 			Help:   "Build information for the application.",
 			Labels: d.opts.VersionInfo.Labels(),

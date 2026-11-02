@@ -217,14 +217,17 @@ func TestInfoLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var want map[string]string
 	if err := json.Unmarshal(data, &want); err != nil {
 		t.Fatal(err)
 	}
+
 	got := info.Labels()
 	if !maps.Equal(got, want) {
 		t.Fatalf("Labels() = %v, want %v", got, want)
 	}
+
 	got["version"] = "changed"
 	if info.Version != "1.2.3" || !maps.Equal(info.Labels(), want) {
 		t.Fatal("modifying Labels() changed the version information")

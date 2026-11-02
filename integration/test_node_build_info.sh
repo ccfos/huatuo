@@ -22,7 +22,6 @@ source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
 readonly BUILD_INFO_REGION="build-info-test"
-readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
 require_commands curl jq ss
 

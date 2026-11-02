@@ -181,6 +181,7 @@ func TestRegisterCollectorInfo(t *testing.T) {
 			help:       "Enabled feature information.",
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := prometheus.NewRegistry()
@@ -188,11 +189,12 @@ func TestRegisterCollectorInfo(t *testing.T) {
 				metric.LabelHost:   metric.DefaultHostname(),
 				metric.LabelRegion: metric.DefaultRegion(),
 			}
+
 			maps.Copy(wantLabels, tt.labels)
 			runtime.RegisterCollector(
 				reg,
 				tt.namespace,
-				runtime.InfoMetric{
+				runtime.BuildInOpts{
 					Name:   tt.metricName,
 					Help:   tt.help,
 					Labels: tt.labels,
@@ -202,14 +204,17 @@ func TestRegisterCollectorInfo(t *testing.T) {
 			for name := range tt.labels {
 				tt.labels[name] = "changed after registration"
 			}
+
 			families, err := reg.Gather()
 			if err != nil {
 				t.Fatalf("Gather() returned error: %v", err)
 			}
+
 			wantName := tt.metricName
 			if tt.namespace != "" {
 				wantName = tt.namespace + "_" + wantName
 			}
+
 			var family *dto.MetricFamily
 			for _, candidate := range families {
 				if candidate.GetName() == wantName {
@@ -217,23 +222,29 @@ func TestRegisterCollectorInfo(t *testing.T) {
 					break
 				}
 			}
+
 			if family == nil {
 				t.Fatalf("expected %s to be registered", wantName)
 			}
+
 			if family.GetName() != wantName || family.GetHelp() != tt.help {
 				t.Fatalf("metric descriptor = %s / %s, want %s / %s", family.GetName(), family.GetHelp(), wantName, tt.help)
 			}
+
 			if family.GetType() != dto.MetricType_GAUGE || len(family.Metric) != 1 {
 				t.Fatalf("expected one information gauge, got %v", family)
 			}
+
 			sample := family.Metric[0]
 			if sample.GetGauge().GetValue() != 1 {
 				t.Errorf("information gauge value = %v, want 1", sample.GetGauge().GetValue())
 			}
+
 			labels := make(map[string]string, len(sample.Label))
 			for _, label := range sample.Label {
 				labels[label.GetName()] = label.GetValue()
 			}
+
 			if !maps.Equal(labels, wantLabels) {
 				t.Errorf("information labels = %v, want %v", labels, wantLabels)
 			}
@@ -243,7 +254,7 @@ func TestRegisterCollectorInfo(t *testing.T) {
 
 func TestRegisterCollectorMultipleInfo(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	infos := []runtime.InfoMetric{
+	infos := []runtime.BuildInOpts{
 		{
 			Name:   "build_info",
 			Help:   "Build information.",
@@ -255,22 +266,26 @@ func TestRegisterCollectorMultipleInfo(t *testing.T) {
 			Labels: map[string]string{"source": "local"},
 		},
 	}
+
 	runtime.RegisterCollector(reg, "test", infos...)
 	families, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, info := range infos {
 		var found bool
 		for _, family := range families {
 			if family.GetName() != "test_"+info.Name {
 				continue
 			}
+
 			found = true
 			if len(family.Metric) != 1 || family.Metric[0].GetGauge().GetValue() != 1 {
 				t.Errorf("expected one %s gauge fixed at 1, got %v", info.Name, family)
 			}
 		}
+
 		if !found {
 			t.Errorf("information metric %s missing", info.Name)
 		}

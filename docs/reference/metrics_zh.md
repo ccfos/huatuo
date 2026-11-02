@@ -45,7 +45,8 @@ Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自
 | `compiler` | Go 编译器，例如 `gc` |
 | `platform` | 操作系统和架构，例如 `linux/amd64` |
 
-未提供发布版本或 Git 标识的开发构建使用 `(devel)`。构建标签只附加到该指标，
+未提供发布版本时，`version` 使用 `(devel)`。`git_commit` 优先使用注入值，
+其次读取 Go 构建信息中的 VCS 提交标识，两者均不可用时使用 `(devel)`。构建标签只附加到该指标，
 业务指标的标签保持不变。Prometheus 抓取后，可通过相同的 `job`、`instance`
 将构建信息与业务指标关联；跨集群查询还需纳入实际用于区分目标的集群标签。
 

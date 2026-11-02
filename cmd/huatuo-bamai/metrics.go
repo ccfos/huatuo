@@ -36,7 +36,7 @@ func setupMetrics(d *Daemon) (func(context.Context) error, error) {
 	runtime.RegisterCollector(
 		reg,
 		metric.DefaultNamespace,
-		runtime.InfoMetric{
+		runtime.BuildInOpts{
 			Name:   "build_info",
 			Help:   "Build information for the application.",
 			Labels: d.opts.VersionInfo.Labels(),
