@@ -54,18 +54,6 @@ cleanup() {
 
 trap cleanup EXIT
 
-assert_profiler_output_file() {
-	[[ -s "$1" && -f "$1" ]] || fatal "expected a nonempty profile file at $1"
-}
-
-assert_profiler_stack_contains() {
-	local folded=$1
-	local pid=$2
-	local method=$3
-	grep -qh "pid=\"${pid}\";.*${method}" "${folded}" \
-		|| fatal "stack ${method} not found for PID ${pid} in ${folded}"
-}
-
 assert_folded_contains() {
 	local folded=$1
 	local method=$2
@@ -130,7 +118,7 @@ wait_until 10 1 test -s "${WORK_DIR}/replaced.out" || fatal "replaced Python did
 kill -0 "${REPLACED_PID}" || fatal "replaced Python exited immediately"
 
 rm -f "${REPLACED_PYTHON}"
-wait_until 5 1 sh -c '[[ "$(readlink "/proc/$1/exe")" == *" (deleted)" ]]' sh "${REPLACED_PID}" \
+wait_until 5 1 bash -c '[[ "$(readlink "/proc/$1/exe")" == *" (deleted)" ]]' bash "${REPLACED_PID}" \
 	|| fatal "/proc/${REPLACED_PID}/exe is not marked deleted"
 cp "${PYTHON_BIN}" "${REPLACED_PYTHON}"
 chmod +x "${REPLACED_PYTHON}"
