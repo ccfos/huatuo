@@ -135,10 +135,16 @@ func findProcesses(pids []int32, procFS procfs.FS, procRoot string, filter execu
 		}
 		// Drop the marker only when procfs confirms that it describes the
 		// running image rather than a literal filename component.
-		resolvedExecutable = hostprocess.NormalizeExecutable(
+		resolvedExecutable, err = hostprocess.NormalizeExecutable(
 			resolvedExecutable,
 			filepath.Join(procRoot, strconv.Itoa(pid), "exe"),
 		)
+		if processNoLongerExists(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("resolve executable for PID %d: %w", pid, err)
+		}
 
 		if !filter.matchesName(filepath.Base(resolvedExecutable)) {
 			continue

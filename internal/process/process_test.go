@@ -140,7 +140,11 @@ func TestNormalizeExecutable(t *testing.T) {
 			if err := os.Symlink(test.procExe, procExePath); err != nil {
 				t.Fatalf("Symlink(%q) error = %v", test.procExe, err)
 			}
-			if got := NormalizeExecutable(test.path, procExePath); got != test.want {
+			got, err := NormalizeExecutable(test.path, procExePath)
+			if err != nil {
+				t.Fatalf("NormalizeExecutable(%q, %q) error = %v", test.path, test.procExe, err)
+			}
+			if got != test.want {
 				t.Errorf("NormalizeExecutable(%q, %q) = %q, want %q", test.path, test.procExe, got, test.want)
 			}
 		})
@@ -196,10 +200,40 @@ func TestNormalizeExecutableUsesTargetProcessRoot(t *testing.T) {
 			if err := os.Symlink(test.procExe, procExePath); err != nil {
 				t.Fatalf("Symlink(%q) error = %v", test.procExe, err)
 			}
-			if got := NormalizeExecutable("/app/java (deleted)", procExePath); got != test.want {
+			got, err := NormalizeExecutable("/app/java (deleted)", procExePath)
+			if err != nil {
+				t.Fatalf("NormalizeExecutable() error = %v", err)
+			}
+			if got != test.want {
 				t.Errorf("NormalizeExecutable() = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestNormalizeExecutableRejectsUnreadableTargetRoot(t *testing.T) {
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "python")
+	if err := os.WriteFile(executable, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", executable, err)
+	}
+
+	procDir := filepath.Join(dir, "proc", "100")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procDir, err)
+	}
+	// A regular file at root makes every candidate lookup fail with ENOTDIR
+	// instead of reporting the marked path as missing.
+	if err := os.WriteFile(filepath.Join(procDir, "root"), nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(root) error = %v", err)
+	}
+	procExePath := filepath.Join(procDir, "exe")
+	if err := os.Symlink(executable, procExePath); err != nil {
+		t.Fatalf("Symlink(%q) error = %v", executable, err)
+	}
+
+	if _, err := NormalizeExecutable("/app/python (deleted)", procExePath); err == nil {
+		t.Fatal("NormalizeExecutable() error = nil, want a stat error")
 	}
 }
 
