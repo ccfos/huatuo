@@ -16,7 +16,6 @@ package provider
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/shirou/gopsutil/process"
@@ -25,14 +24,15 @@ import (
 )
 
 func pythonProcessName(pid int) (string, error) {
-	resolvedExe, err := hostprocess.Executable(pid)
+	// ExecutableName drops the kernel's unlinked marker, so an interpreter
+	// whose binary was replaced in place is still recognized as Python.
+	name, err := hostprocess.ExecutableName(pid)
 	if err != nil {
 		return "", err
 	}
 
-	base := filepath.Base(resolvedExe)
-	if !hasExecutablePrefix(base, "python") {
-		return "", fmt.Errorf("process %d exe is %q, not a python process", pid, base)
+	if !hasExecutablePrefix(name, "python") {
+		return "", fmt.Errorf("process %d exe is %q, not a python process", pid, name)
 	}
 
 	p, err := process.NewProcess(int32(pid))
