@@ -90,18 +90,6 @@ if ! "${TOOL_BIN}" \
 fi
 
 # A nonexistent destination without a trailing slash is an explicit file.
-assert_profiler_output_file() {
-	[[ -s "$1" && -f "$1" ]] || fatal "expected a nonempty profile file at $1"
-}
-
-assert_profiler_stack_contains() {
-	local folded=$1
-	local pid=$2
-	local method=$3
-	grep -qh "pid=\"${pid}\";.*${method}" "${folded}" \
-		|| fatal "stack ${method} not found for PID ${pid} in ${folded}"
-}
-
 assert_profiler_output_file "${WORK_DIR}/python.folded"
 FOLDED_FILES=("${WORK_DIR}/python.folded")
 

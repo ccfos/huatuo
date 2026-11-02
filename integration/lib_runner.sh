@@ -21,7 +21,6 @@ source "${ROOT_DIR}/integration/lib_runner_report.sh"
 # Unreviewed tests run alone. A group serializes cases sharing kernel resources.
 # Network tests share traffic and devices.
 declare -A runner_test_groups=(
-<<<<<<< HEAD
 	["integration/test_apiserver_continuous_profiling_api.sh"]=independent
 	["integration/test_apiserver_continuous_profiling_concurrent_jobs.sh"]=independent
 	["integration/test_apiserver_continuous_profiling_control.sh"]=independent
@@ -63,6 +62,7 @@ declare -A runner_test_groups=(
 	["integration/test_profiler_native_memory_virtual_alloc.sh"]=independent
 	["integration/test_profiler_output_flags.sh"]=independent
 	["integration/test_profiler_python_cpu_multi_pid.sh"]=profiler
+	["integration/test_profiler_python_cpu_unlinked_executable.sh"]=profiler
 	["integration/test_profiler_user_kernel_frames.sh"]=independent
 	["integration/test_tcp_retransmit_ratelimit.sh"]=network
 	["integration/test_tcp_retransmit_syn.sh"]=network
@@ -70,57 +70,6 @@ declare -A runner_test_groups=(
 	["integration/test_tcp_retransmit_tlp.sh"]=network
 	["integration/test_tcpshark_retransmit_dropwatch_correlation.sh"]=network
 	["integration/test_tcpshark_retransmit_fast.sh"]=network
-=======
-	["test_apiserver_continuous_profiling_api.sh"]=independent
-	["test_apiserver_continuous_profiling_concurrent_jobs.sh"]=independent
-	["test_apiserver_continuous_profiling_control.sh"]=independent
-	["test_apiserver_job_recovery.sh"]=independent
-	["test_apiserver_profile_disabled.sh"]=independent
-	["test_apiserver_profile_filters.sh"]=independent
-	["test_apiserver_readiness_metrics.sh"]=independent
-	["test_autotracing_cpusys.sh"]=independent
-	["test_autotracing_iotracing.sh"]=independent
-	["test_autotracing_irqtracing.sh"]=independent
-	["test_basic_bpf_debug_macro.sh"]=independent
-	["test_basic_dockerfile_check.sh"]=independent
-	["test_basic_storage_elasticsearch_values.sh"]=independent
-	["test_basic_storage_opensearch_elasticsearch.sh"]=network
-	["test_basic_startup_log.sh"]=independent
-	["test_dropwatch_devlink.sh"]=network
-	["test_dropwatch_icmpv6.sh"]=network
-	["test_dropwatch_ipv4_options.sh"]=network
-	["test_dropwatch_netdevsim.sh"]=network
-	["test_dropwatch_reason.sh"]=network
-	["test_events_net_rx_latency.sh"]=network
-	["test_events_tcp_retransmit.sh"]=network
-	["test_metrics.sh"]=independent
-	["test_metrics_exclude_filter.sh"]=independent
-	["test_metrics_include_filter.sh"]=independent
-	["test_metrics_memory_host.sh"]=independent
-	["test_node_cloud_events_api.sh"]=independent
-	["test_node_config_api.sh"]=independent
-	["test_profiler_config.sh"]=independent
-	["test_profiler_java_cpu_container.sh"]=profiler-java
-	["test_profiler_java_cpu_multi_pid.sh"]=profiler-java
-	["test_profiler_java_memory_usage_alloc.sh"]=profiler-java
-	["test_profiler_native_cpu.sh"]=profiler
-	["test_profiler_native_cpu_container.sh"]=profiler
-	["test_profiler_native_cpu_cpp_symbols.sh"]=profiler
-	["test_profiler_native_cpu_rust_symbols.sh"]=profiler
-	["test_profiler_native_cpu_thread_group.sh"]=profiler
-	["test_profiler_native_memory_thread_group.sh"]=independent
-	["test_profiler_native_memory_virtual_alloc.sh"]=independent
-	["test_profiler_output_flags.sh"]=independent
-	["test_profiler_python_cpu_multi_pid.sh"]=profiler
-	["test_profiler_python_cpu_unlinked_executable.sh"]=profiler
-	["test_profiler_user_kernel_frames.sh"]=independent
-	["test_tcp_retransmit_ratelimit.sh"]=network
-	["test_tcp_retransmit_syn.sh"]=network
-	["test_tcp_retransmit_synack.sh"]=network
-	["test_tcp_retransmit_tlp.sh"]=network
-	["test_tcpshark_retransmit_dropwatch_correlation.sh"]=network
-	["test_tcpshark_retransmit_fast.sh"]=network
->>>>>>> 35c02bb04 (fix(memsnap): resolve deleted markers in target root)
 )
 
 # Execution isolation is independent of scheduling/resource exclusion.
