@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -111,34 +112,44 @@ func TestReadInt(t *testing.T) {
 
 func TestRawKV(t *testing.T) {
 	tests := []struct {
-		name    string
-		content string
-		want    map[string]uint64
-		wantErr bool
+		name            string
+		content         string
+		want            map[string]uint64
+		wantErr         bool
+		wantErrContains string
 	}{
 		{
-			"valid multiple",
-			"key1 2026\nkey2 " + strconv.FormatUint(math.MaxUint64, 10) + "\n",
-			map[string]uint64{"key1": 2026, "key2": math.MaxUint64},
-			false,
+			name:    "valid multiple",
+			content: "key1 2026\nkey2 " + strconv.FormatUint(math.MaxUint64, 10) + "\n",
+			want:    map[string]uint64{"key1": 2026, "key2": math.MaxUint64},
 		},
 		{
-			"invalid format",
-			"key1 2026\ninvalid\n",
-			nil,
-			true,
+			name:    "invalid format",
+			content: "key1 2026\ninvalid\n",
+			wantErr: true,
 		},
 		{
-			"invalid value",
-			"key huatuo\n",
-			nil,
-			true,
+			name:    "invalid value",
+			content: "key huatuo\n",
+			wantErr: true,
 		},
 		{
-			"empty",
-			"",
-			map[string]uint64{},
-			false,
+			name:            "duplicate key",
+			content:         "key 1\nkey 2\n",
+			want:            nil,
+			wantErr:         true,
+			wantErrContains: `duplicate key "key"`,
+		},
+		{
+			name:            "invalid value takes precedence over duplicate key",
+			content:         "key 1\nkey invalid\n",
+			want:            nil,
+			wantErr:         true,
+			wantErrContains: "invalid syntax",
+		},
+		{
+			name: "empty",
+			want: map[string]uint64{},
 		},
 	}
 	for _, tt := range tests {
@@ -148,6 +159,17 @@ func TestRawKV(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("RawKV() error = %v, wantErr %v", err, tt.wantErr)
 			}
+
+			if tt.wantErrContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErrContains) {
+					t.Fatalf("RawKV() error = %v, want it to contain %q", err, tt.wantErrContains)
+				}
+
+				if got != nil {
+					t.Fatalf("RawKV() map = %v on error, want nil", got)
+				}
+			}
+
 			if !mapsEqual(got, tt.want) {
 				t.Errorf("RawKV() = %v, want %v", got, tt.want)
 			}
