@@ -357,6 +357,8 @@ A run with no samples may produce no display file; an existing file alone does n
 | `flamegraph` | `flamegraph_<Unix timestamp>.svg`; SVG with interactive scripts | Recommended for visual analysis; search, zoom, and inspect frame values in a browser |
 | `svg` | Same interactive SVG as `flamegraph` | For callers explicitly requesting SVG; currently equivalent to `flamegraph` |
 | `json` | One JSON line per collection window; streaming collection may emit multiple lines | Preserve windows, sample labels, and signed values |
+| `speedscope` | Speedscope profile JSON | Inspect the profile interactively at speedscope.app or in any Speedscope viewer |
+| `chrometrace` | Chrome tracing JSON | Load the collection into `chrome://tracing` or Perfetto; the timeline is synthesised from the sample unit, so it does not preserve the real event order or concurrency |
 | `remote-store` | Uploads pprof-compatible data through a Unix socket without a local flame graph | HUATUO storage integration; not for offline viewing |
 
 ### Flame Graphs

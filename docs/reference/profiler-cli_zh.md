@@ -22,7 +22,7 @@ weight: 6
 | `--aggr-interval` | `10` | 全部 | 聚合周期，单位为秒，不得大于采集时长 |
 | `--freq`, `-F` | `99` | CPU | 每秒采样次数；Java 最大为 1000 |
 | `--output-path` | 必填 | 全部 | 本地文件、目录或 `stdout`，`remote-store` 时为 Unix socket；新目录路径以 `/` 结尾 |
-| `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg`、`json` 或 `remote-store`；必须与 `--output-path` 一起显式指定 |
+| `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg`、`json`、`speedscope`、`chrometrace` 或 `remote-store`；`chrometrace` 需要带时间单位的采集，`--type=memory` 会被拒绝；必须与 `--output-path` 一起显式指定 |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
 | `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |

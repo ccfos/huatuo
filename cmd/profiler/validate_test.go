@@ -422,10 +422,19 @@ func TestOffCPUStatsFlag(t *testing.T) {
 }
 
 func TestValidateOutputFormat(t *testing.T) {
-	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "remote-store"} {
-		require.NoError(t, validateOutputFormat(format))
+	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "speedscope", "chrometrace", "remote-store"} {
+		require.NoError(t, validateOutputFormat(format, profiling.TypeCPU))
 	}
-	require.EqualError(t, validateOutputFormat("pprof"), `unsupported output format "pprof"`)
+	for _, typ := range []profiling.Type{profiling.TypeCPU, profiling.TypeLock} {
+		require.NoError(t, validateOutputFormat("chrometrace", typ))
+	}
+	require.EqualError(
+		t,
+		validateOutputFormat("chrometrace", profiling.TypeMemory),
+		"--output-format=chrometrace needs a time-based profile and is not supported by --type=memory",
+	)
+	require.NoError(t, validateOutputFormat("speedscope", profiling.TypeMemory))
+	require.EqualError(t, validateOutputFormat("pprof", profiling.TypeCPU), `unsupported output format "pprof"`)
 }
 
 func TestValidateNumericOptions(t *testing.T) {
