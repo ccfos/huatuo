@@ -19,14 +19,17 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"syscall"
+
+	"github.com/ccfos/huatuo/internal/procfs"
 
 	"golang.org/x/sys/unix"
 )
 
 // NetNamespaceInumByPID returns the network namespace inum for pid.
 func NetNamespaceInumByPID(pid int) (uint64, error) {
-	netnsStat, err := os.Stat(fmt.Sprintf("/proc/%d/ns/net", pid))
+	netnsStat, err := os.Stat(procfs.Path(strconv.Itoa(pid), "ns/net"))
 	if err != nil {
 		return 0, err
 	}
@@ -35,17 +38,56 @@ func NetNamespaceInumByPID(pid int) (uint64, error) {
 
 // NetNamespaceCookieByPID returns the network namespace cookie for pid.
 // Requires Linux 5.14+ (SO_NETNS_COOKIE). Returns 0, nil on older kernels.
+//
+// setns changes the namespace of one OS thread, not the whole process. Run the
+// switch on a short-lived worker so a restore failure can sacrifice that thread
+// instead of leaving its caller bound to the target namespace. A caller whose
+// thread already lives in a private network namespace must keep that namespace.
+// A restore failure is reported alongside the cookie so callers do not silently
+// accept a contaminated thread.
 func NetNamespaceCookieByPID(pid int) (uint64, error) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
+	done := make(chan netNamespaceCookieResult, 1)
+	go func() {
+		cookie, err := netNamespaceCookieInPIDNamespace(pid)
+		done <- netNamespaceCookieResult{
+			cookie: cookie,
+			err:    err,
+		}
+	}()
+	result := <-done
+	return result.cookie, result.err
+}
 
-	curNS, err := os.Open("/proc/self/ns/net")
+// restoreNetNamespace is a variable so tests can inject the otherwise
+// unreachable restore-failure path.
+var restoreNetNamespace = func(fd int) error {
+	return unix.Setns(fd, unix.CLONE_NEWNET)
+}
+
+type netNamespaceCookieResult struct {
+	cookie uint64
+	err    error
+}
+
+func netNamespaceCookieInPIDNamespace(pid int) (cookie uint64, err error) {
+	runtime.LockOSThread()
+	unlock := true
+	defer func() {
+		if unlock {
+			runtime.UnlockOSThread()
+		}
+	}()
+
+	// /proc/self names the thread-group leader. A thread may have entered a
+	// different network namespace, so snapshot this worker's own namespace
+	// through thread-self; restoring to /proc/self would silently discard it.
+	curNS, err := os.Open(procfs.Path("thread-self", "ns/net"))
 	if err != nil {
-		return 0, fmt.Errorf("open self netns: %w", err)
+		return 0, fmt.Errorf("open current netns: %w", err)
 	}
 	defer curNS.Close()
 
-	targetNS, err := os.Open(fmt.Sprintf("/proc/%d/ns/net", pid))
+	targetNS, err := os.Open(procfs.Path(strconv.Itoa(pid), "ns/net"))
 	if err != nil {
 		return 0, fmt.Errorf("open pid %d netns: %w", pid, err)
 	}
@@ -54,7 +96,14 @@ func NetNamespaceCookieByPID(pid int) (uint64, error) {
 	if err := unix.Setns(int(targetNS.Fd()), unix.CLONE_NEWNET); err != nil {
 		return 0, fmt.Errorf("setns pid %d: %w", pid, err)
 	}
-	defer unix.Setns(int(curNS.Fd()), unix.CLONE_NEWNET) //nolint:errcheck // best-effort restore
+	defer func() {
+		if restoreErr := restoreNetNamespace(int(curNS.Fd())); restoreErr != nil {
+			// Exiting while locked makes the runtime terminate this thread.
+			// The caller keeps its own clean thread and only sees the error.
+			unlock = false
+			err = errors.Join(err, fmt.Errorf("restore netns after reading PID %d: %w", pid, restoreErr))
+		}
+	}()
 
 	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
@@ -62,7 +111,7 @@ func NetNamespaceCookieByPID(pid int) (uint64, error) {
 	}
 	defer unix.Close(fd)
 
-	cookie, err := unix.GetsockoptUint64(fd, unix.SOL_SOCKET, unix.SO_NETNS_COOKIE)
+	cookie, err = unix.GetsockoptUint64(fd, unix.SOL_SOCKET, unix.SO_NETNS_COOKIE)
 	if err != nil {
 		if errors.Is(err, unix.ENOPROTOOPT) {
 			return 0, nil
