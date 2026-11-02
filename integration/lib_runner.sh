@@ -63,6 +63,7 @@ declare -A runner_test_groups=(
 	["integration/test_profiler_output_flags.sh"]=independent
 	["integration/test_profiler_python_cpu_multi_pid.sh"]=profiler
 	["integration/test_profiler_python_cpu_unlinked_executable.sh"]=profiler
+	["integration/test_profiler_python_cpu_container_unlinked_executable.sh"]=profiler
 	["integration/test_profiler_user_kernel_frames.sh"]=independent
 	["integration/test_tcp_retransmit_ratelimit.sh"]=network
 	["integration/test_tcp_retransmit_syn.sh"]=network
