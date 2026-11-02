@@ -125,6 +125,16 @@ func TestCommandLine(t *testing.T) {
 			want: strings.Repeat("a", 5) + " " + strings.Repeat("a", 121) + " ",
 		},
 		{
+			name: "exact limit",
+			data: bytes.Repeat([]byte{'a'}, 128),
+			want: strings.Repeat("a", 128),
+		},
+		{
+			name: "large command line",
+			data: bytes.Repeat([]byte{'a'}, 1024*1024),
+			want: strings.Repeat("a", 128),
+		},
+		{
 			name:    "missing process",
 			wantErr: true,
 		},
@@ -459,7 +469,29 @@ func currentThreadUTSNamespace() (string, error) {
 	return os.Readlink(procfs.Path("thread-self", "ns/uts"))
 }
 
-func setProcRoot(t *testing.T) string {
+func BenchmarkCommandLine(b *testing.B) {
+	for _, size := range []int{32, 128, 1024 * 1024} {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			root := setProcRoot(b)
+			path := filepath.Join(root, "proc", "100", "cmdline")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				b.Fatal(err)
+			}
+			if err := os.WriteFile(path, bytes.Repeat([]byte{'a'}, size), 0o600); err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := CommandLine(100); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func setProcRoot(t testing.TB) string {
 	t.Helper()
 	tmpRoot := t.TempDir()
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
