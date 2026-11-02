@@ -162,7 +162,19 @@ type runOutput struct {
 // Observe completion through the public output boundary, including empty runs.
 func newRunOutput(t *testing.T) (RunConfig, *runOutput) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "output.sock")
+
+	// Long subtest names in t.TempDir paths can exceed the Unix socket limit.
+	dir, err := os.MkdirTemp("", "huatuo-profile-")
+	if err != nil {
+		t.Fatalf("create output directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove output directory: %v", err)
+		}
+	})
+
+	path := filepath.Join(dir, "output.sock")
 	server, err := toolstream.NewServer(path)
 	if err != nil {
 		t.Fatal(err)
