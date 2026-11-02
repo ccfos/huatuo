@@ -77,7 +77,7 @@ DOCKER_CONTAINER_ID=$(docker run --detach --rm \
 		PYTHONHOME="$python_home" /work/python /src/test_profiler_python_cpu.py independent &
 		pid=$!
 		while [ ! -e "/proc/$pid/exe" ]; do
-			kill -0 "$pid" 2>/dev/null || {
+			kill -0 "$pid" 2> /dev/null || {
 				echo "python exited before its executable appeared" >&2
 				exit 1
 			}
@@ -85,10 +85,10 @@ DOCKER_CONTAINER_ID=$(docker run --detach --rm \
 		done
 		rm -f /work/python
 		while true; do
-			case "$(readlink "/proc/$pid/exe" 2>/dev/null || true)" in
+			case "$(readlink "/proc/$pid/exe" 2> /dev/null || true)" in
 				*" (deleted)") break ;;
 			esac
-			kill -0 "$pid" 2>/dev/null || {
+			kill -0 "$pid" 2> /dev/null || {
 				echo "python exited before the image was replaced" >&2
 				exit 1
 			}
@@ -102,7 +102,7 @@ DOCKER_CONTAINER_ID=$(docker run --detach --rm \
 
 container_ready() {
 	[[ -f "${PYTHON_RUNTIME_DIR}/python.ready" ]] && return 0
-	if [[ $(docker inspect --format '{{.State.Running}}' "${DOCKER_CONTAINER_ID}" 2>/dev/null || true) != true ]]; then
+	if [[ $(docker inspect --format '{{.State.Running}}' "${DOCKER_CONTAINER_ID}" 2> /dev/null || true) != true ]]; then
 		docker logs "${DOCKER_CONTAINER_ID}" > "${PYTHON_RUNTIME_DIR}/container.log" 2>&1 || true
 		fatal "container exited before the workload was ready (see ${PYTHON_RUNTIME_DIR}/container.log)"
 	fi
@@ -129,8 +129,7 @@ if ! "${PYTHON_TOOL_BIN}" \
 fi
 
 assert_profiler_output_file "${PYTHON_RUNTIME_DIR}/container.folded"
-grep -q independent_hot_method "${PYTHON_RUNTIME_DIR}/container.folded" \
-	|| fatal "container stack independent_hot_method not found in ${PYTHON_RUNTIME_DIR}/container.folded"
+assert_profiler_folded_contains "${PYTHON_RUNTIME_DIR}/container.folded" independent_hot_method
 log_info "Python container with a replaced executable is discovered and profiled"
 
 docker rm -f "${DOCKER_CONTAINER_ID}" > /dev/null 2>&1 || true
