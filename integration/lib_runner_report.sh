@@ -118,7 +118,7 @@ report_summary() {
 	jq --arg output "${RUNNER_OUTPUT_DIR}" --slurpfile failed_logs "${failed_logs}" '
 		.suite as $suite |
 		($failed_logs | INDEX(.dir)) as $logs |
-		{summary: .execution_counts,
+		{summary: .execution_counts, report: ($output + "/result.json"),
 		 skipped_tests: ([.test_executions[] | select(.result == "skipped") |
 			$suite + "/" + .test_name] | unique),
 		 failed_tests: [.test_executions[] | select(.result == "failed") |

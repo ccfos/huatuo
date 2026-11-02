@@ -26,10 +26,20 @@ runner_parent_uts=$(readlink /proc/self/ns/uts)
 runner_parent_mount=$(readlink /proc/self/ns/mnt)
 export runner_parent_uts runner_parent_mount
 
+assert_runner_summary() {
+	local log=$1
+	# Runner progress lines surround one pretty-printed JSON object; nested logs
+	# are escaped JSON strings and cannot introduce top-level object delimiters.
+	sed -n '/^{/,/^}/p' "${log}" | jq -se '
+		if length == 1 and (.[0].report | type == "string") then .[0]
+		else error("expected one JSON summary with a report path") end
+	' || fatal "invalid runner summary; see ${log}"
+}
+
 assert_runner_result() {
 	local suite=$1 label=$2 expected_status=$3 expected_summary=$4 status=0
 	shift 4
-	local log="${HUATUO_BAMAI_TEST_TMPDIR}/${suite}-${label}.log" summary_count=1
+	local log="${HUATUO_BAMAI_TEST_TMPDIR}/${suite}-${label}.log" summary
 	local -a signal_reset_launcher
 	runner_build_signal_reset_launcher signal_reset_launcher
 	# PID namespace teardown also reclaims workers that created new process groups.
@@ -46,15 +56,23 @@ assert_runner_result() {
 		cat "${log}"
 		fatal "${suite}/${label}: runner timed out after ${runner_fixture_timeout:-30} seconds; fixture processes were terminated"
 	fi
-	if [[ ${status} != "${expected_status}" ]] || { [[ -n "${expected_summary}" ]] && ! grep -Fq "summary: ${expected_summary}" "${log}"; }; then
+	if [[ ${status} != "${expected_status}" ]]; then
 		cat "${log}"
-		fatal "${suite}/${label}: exit=${status}, expected exit=${expected_status}, summary=${expected_summary}"
+		fatal "${suite}/${label}: exit=${status}, expected exit=${expected_status}; see ${log}"
 	fi
-	[[ -n "${expected_summary}" ]] || summary_count=0
-	[[ $(grep -c 'summary:' "${log}") == "${summary_count}" ]] || fatal "${suite}/${label}: unexpected summary count"
 	if [[ -n ${expected_summary} ]]; then
+		summary=$(assert_runner_summary "${log}")
+		jq -e --argjson expected "${expected_summary}" '.summary == $expected' <<< "${summary}" > /dev/null \
+			|| fatal "${suite}/${label}: expected counts=${expected_summary}, actual=$(jq -c .summary <<< "${summary}"); see ${log}"
 		local report
-		report=$(sed -n 's/.*report: //p' "${log}")
+		report=$(jq -r .report <<< "${summary}")
+		jq -e --argjson summary "${summary}" '
+			.suite as $suite |
+			$summary.summary == .execution_counts and
+			$summary.skipped_tests == ([.test_executions[] | select(.result == "skipped") | $suite + "/" + .test_name] | unique) and
+			([$summary.failed_tests[] | {name, reason}] ==
+			 [.test_executions[] | select(.result == "failed") | {name: ($suite + "/" + .test_name), reason}])
+		' "${report}" > /dev/null || fatal "${suite}/${label}: summary disagrees with report: ${report}"
 		jq -e --argjson code "${expected_status}" '
 			.exit_code == $code and .status != "running" and
 			(.execution_counts.total == (.test_executions | length)) and
@@ -71,6 +89,8 @@ assert_runner_result() {
 			grep -Eq "^\\[[^]]+\\]\\[${suite^^}\\] SKIP: command is not installed: huatuo-runner-missing-command$" "${log}" \
 				|| fatal "skip reason was not logged separately"
 		fi
+	else
+		[[ -z $(sed -n '/^{/,/^}/p' "${log}") ]] || fatal "${suite}/${label}: unexpected JSON summary; see ${log}"
 	fi
 	if grep -q 'PASS: test_skip.sh' "${log}"; then
 		fatal "${suite}/${label}: skipped case reported as passed"
@@ -151,11 +171,11 @@ source "${ROOT_DIR}/integration/lib.sh"
 trap 'touch "${ROOT_DIR}/skip-cleaned"' EXIT
 require_commands huatuo-runner-missing-command
 EOF
-		assert_runner_result "${runner_suite}" mixed 0 'total=2 passed=1 skipped=1 failed=0'
+		assert_runner_result "${runner_suite}" mixed 0 '{"total":2,"passed":1,"skipped":1,"failed":0}'
 		[[ -f "${RUNNER_FIXTURE}/skip-cleaned" ]] || fatal "${runner_suite}: skip bypassed EXIT cleanup"
-		assert_runner_result "${runner_suite}" repeated_pass 0 'total=2 passed=2 skipped=0 failed=0' test_pass.sh 2
-		assert_runner_result "${runner_suite}" repeated_skip 0 'total=2 passed=0 skipped=2 failed=0' test_skip.sh 2
-		RUNNER_STOP_FAIL=1 assert_runner_result "${runner_suite}" cleanup_failure 1 'total=1 passed=0 skipped=0 failed=1' test_skip.sh
+		assert_runner_result "${runner_suite}" repeated_pass 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' test_pass.sh 2
+		assert_runner_result "${runner_suite}" repeated_skip 0 '{"total":2,"passed":0,"skipped":2,"failed":0}' test_skip.sh 2
+		RUNNER_STOP_FAIL=1 assert_runner_result "${runner_suite}" cleanup_failure 1 '{"total":1,"passed":0,"skipped":0,"failed":1}' test_skip.sh
 
 		cat > "${RUNNER_FIXTURE}/${runner_suite}/test_zz_failure.sh" << 'EOF'
 set -euo pipefail
@@ -164,36 +184,36 @@ EOF
 		cat > "${RUNNER_FIXTURE}/${runner_suite}/test_zzz_not_run.sh" << 'EOF'
 touch "${ROOT_DIR}/unexpected-run"
 EOF
-		assert_runner_result "${runner_suite}" failure 1 'total=4 passed=1 skipped=2 failed=1'
+		assert_runner_result "${runner_suite}" failure 1 '{"total":4,"passed":1,"skipped":2,"failed":1}'
 		[[ ! -e "${RUNNER_FIXTURE}/unexpected-run" ]] || fatal "${runner_suite}: continued after failure"
 	done
-	RUNNER_START_FAIL=1 assert_runner_result e2e startup_failure 1 'total=1 passed=0 skipped=0 failed=1' test_pass.sh
+	RUNNER_START_FAIL=1 assert_runner_result e2e startup_failure 1 '{"total":1,"passed":0,"skipped":0,"failed":1}' test_pass.sh
 	local report
-	report=$(sed -n 's/.*report: //p' "${HUATUO_BAMAI_TEST_TMPDIR}/e2e-startup_failure.log")
+	report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/e2e-startup_failure.log" | jq -r .report)
 	jq -e '.test_executions[0] | .exit_code == null and .result == "failed" and .reason == "fixture startup failure"' "${report}" > /dev/null || fatal "startup failure lost its reason or fabricated a process exit code"
-	report=$(sed -n 's/.*report: //p' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-cleanup_failure.log")
+	report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-cleanup_failure.log" | jq -r .report)
 	jq -e '.test_executions[0] | .exit_code == 77 and .result == "failed" and (.reason | contains("failed to stop huatuo-bamai"))' "${report}" > /dev/null || fatal "cleanup failure overwrote the process exit code"
-	RUNNER_LOG_FAIL=1 assert_runner_result e2e log_failure 1 'total=1 passed=0 skipped=0 failed=1' test_skip.sh
+	RUNNER_LOG_FAIL=1 assert_runner_result e2e log_failure 1 '{"total":1,"passed":0,"skipped":0,"failed":1}' test_skip.sh
 	# Inject a missing network prerequisite while retaining real E2E log checks.
 	printf '\nrunner_test_namespaces=(["e2e/test_pass.sh"]="mount net")\n' >> "${RUNNER_FIXTURE}/integration/lib_runner.sh"
 	grep -Fq "require_commands ip" "${RUNNER_FIXTURE}/integration/runner_worker.sh" || fatal "missing network prerequisite injection point"
 	sed -i 's/require_commands ip/require_commands huatuo-runner-missing-command/' "${RUNNER_FIXTURE}/integration/runner_worker.sh"
-	assert_runner_result e2e preparation_skip 0 'total=1 passed=0 skipped=1 failed=0' test_pass.sh
-	report=$(sed -n 's/.*report: //p' "${HUATUO_BAMAI_TEST_TMPDIR}/e2e-preparation_skip.log")
+	assert_runner_result e2e preparation_skip 0 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_pass.sh
+	report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/e2e-preparation_skip.log" | jq -r .report)
 	jq -e '.test_executions[0] | .result == "skipped" and .exit_code == null and .reason == "command is not installed: huatuo-runner-missing-command"' "$report" > /dev/null || fatal "E2E preparation skip lost its reason or fabricated a process exit code"
-	RUNNER_STOP_FAIL=1 assert_runner_result e2e preparation_cleanup_failure 1 'total=1 passed=0 skipped=0 failed=1' test_pass.sh
+	RUNNER_STOP_FAIL=1 assert_runner_result e2e preparation_cleanup_failure 1 '{"total":1,"passed":0,"skipped":0,"failed":1}' test_pass.sh
 	cp "${ROOT_DIR}/integration/runner_worker.sh" "${RUNNER_FIXTURE}/integration/runner_worker.sh"
 	printf '\nrunner_test_namespaces=()\n' >> "${RUNNER_FIXTURE}/integration/lib_runner.sh"
 	mv "${RUNNER_FIXTURE}/_output" "${RUNNER_FIXTURE}/saved-output"
-	assert_runner_result integration missing_output 1 'total=1 passed=0 skipped=1 failed=0' test_pass.sh
+	assert_runner_result integration missing_output 1 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_pass.sh
 	mv "${RUNNER_FIXTURE}/saved-output" "${RUNNER_FIXTURE}/_output"
 	mkdir -p "${RUNNER_FIXTURE}/bin"
 	printf '#!/bin/sh\nexit 23\n' > "${RUNNER_FIXTURE}/bin/unshare"
 	chmod +x "${RUNNER_FIXTURE}/bin/unshare"
-	PATH="${RUNNER_FIXTURE}/bin:${PATH}" assert_runner_result integration namespace_failure 23 'total=1 passed=0 skipped=1 failed=0' test_pass.sh
-	assert_runner_result integration explicit_suite 0 'total=1 passed=1 skipped=0 failed=0' --suite integration test_pass.sh
+	PATH="${RUNNER_FIXTURE}/bin:${PATH}" assert_runner_result integration namespace_failure 23 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_pass.sh
+	assert_runner_result integration explicit_suite 0 '{"total":1,"passed":1,"skipped":0,"failed":0}' --suite integration test_pass.sh
 	cp "${RUNNER_FIXTURE}/e2e/test_pass.sh" "${RUNNER_FIXTURE}/e2e/test_e2e_only.sh"
-	assert_runner_result integration e2e_suite 0 'total=2 passed=2 skipped=0 failed=0' --suite e2e test_e2e_only.sh 2
+	assert_runner_result integration e2e_suite 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' --suite e2e test_e2e_only.sh 2
 	assert_runner_result integration missing_suite 2 '' --suite
 	assert_runner_result integration invalid_suite 2 '' --suite unknown
 	assert_runner_result integration missing_jobs 2 '' -j
@@ -205,7 +225,7 @@ EOF
 	assert_runner_result e2e invalid_repeat 2 '' test_pass.sh 0
 	assert_runner_result integration repeat_limit 2 '' test_pass.sh 1001
 	assert_runner_result integration repeat_overflow 2 '' test_pass.sh 99999999999999999999
-	PATH="${RUNNER_FIXTURE}/bin:${PATH}" assert_runner_result integration repeat_boundary 23 'total=1000 passed=0 skipped=1000 failed=0' test_pass.sh 1000
+	PATH="${RUNNER_FIXTURE}/bin:${PATH}" assert_runner_result integration repeat_boundary 23 '{"total":1000,"passed":0,"skipped":1000,"failed":0}' test_pass.sh 1000
 	local index
 	for ((index = 1; index <= 11; index++)); do
 		printf 'exit 0\n' > "${RUNNER_FIXTURE}/integration/test_limit_${index}.sh"
@@ -280,7 +300,7 @@ done
 assert_runner_isolation
 EOF
 	cp "${RUNNER_FIXTURE}/integration/"test_{metrics,node_config_api}.sh
-	assert_runner_result integration parallel_isolation 0 'total=2 passed=2 skipped=0 failed=0' -j 2
+	assert_runner_result integration parallel_isolation 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' -j 2
 	[[ $(cat "${RUNNER_FIXTURE}/"*.address | sort -u | wc -l) == 2 ]] || fatal "parallel workers shared a daemon port"
 
 }
@@ -320,9 +340,9 @@ EOF
 		: > "${RUNNER_FIXTURE}/storage-lifecycle"
 		: > "${RUNNER_FIXTURE}/storage-indices"
 		case ${runner_mode} in
-		success) assert_runner_result integration shared_storage 0 'total=2 passed=2 skipped=0 failed=0' ;;
-		skip) assert_runner_result integration shared_storage_skip 0 'total=2 passed=0 skipped=2 failed=0' ;;
-		failure) assert_runner_result integration shared_storage_failure 1 'total=2 passed=0 skipped=1 failed=1' ;;
+		success) assert_runner_result integration shared_storage 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' ;;
+		skip) assert_runner_result integration shared_storage_skip 0 '{"total":2,"passed":0,"skipped":2,"failed":0}' ;;
+		failure) assert_runner_result integration shared_storage_failure 1 '{"total":2,"passed":0,"skipped":1,"failed":1}' ;;
 		esac
 		[[ $(grep -c '^start$' "${RUNNER_FIXTURE}/storage-lifecycle") == 1 ]] || fatal "${runner_mode}: shared storage did not start once"
 		[[ $(grep -c '^stop$' "${RUNNER_FIXTURE}/storage-lifecycle") == 1 ]] || fatal "${runner_mode}: shared storage did not stop once"
@@ -332,7 +352,7 @@ EOF
 	done
 	export runner_storage_mode=success
 	: > "${RUNNER_FIXTURE}/storage-lifecycle"
-	assert_runner_result integration repeated_storage 0 'total=2 passed=2 skipped=0 failed=0' test_apiserver_continuous_profiling_api.sh 2
+	assert_runner_result integration repeated_storage 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' test_apiserver_continuous_profiling_api.sh 2
 	[[ $(grep -c '^start$' "${RUNNER_FIXTURE}/storage-lifecycle") == 2 ]] || fatal "repeated storage reused the previous round"
 	[[ $(grep -c '^stop$' "${RUNNER_FIXTURE}/storage-lifecycle") == 2 ]] || fatal "repeated storage cleanup did not run"
 	unset runner_storage_mode
@@ -347,7 +367,10 @@ printf 'stdout marker\n'
 printf 'stderr marker\n' >&2
 case ${REPORT_MODE} in
 skip) (fatal 'expected child failure') || true; skip $'missing "runtime"\n诊断路径: C:\\tmp';;
-fail) fatal 'fixture failed';;
+fail)
+ printf '%66000s' '' | tr ' ' x > "$HUATUO_BAMAI_TEST_TMPDIR/large.log"
+ printf '\nend marker\n' >> "$HUATUO_BAMAI_TEST_TMPDIR/large.log"
+ fatal $'fixture failed: "runtime"\n诊断路径: C:\\tmp';;
 namespace) run_test_step unshare --pid --fork --mount-proc bash -c 'source "$ROOT_DIR/integration/lib.sh"; skip "namespace dependency missing"';;
 step_skip) run_test_step bash -euc 'source "$ROOT_DIR/integration/lib.sh"; skip "step dependency missing"';;
 step_fail) run_test_step bash -euc 'source "$ROOT_DIR/integration/lib.sh"; fatal "step failed"';;
@@ -366,35 +389,47 @@ esac
 EOF
 	local mode report stdout stderr
 	for mode in pass skip fail; do
-		local code=0 counts='total=1 passed=1 skipped=0 failed=0'
+		local code=0 counts='{"total":1,"passed":1,"skipped":0,"failed":0}'
 		case ${mode} in
-		skip) counts='total=1 passed=0 skipped=1 failed=0' ;;
-		fail) code=1 counts='total=1 passed=0 skipped=0 failed=1' ;;
+		skip) counts='{"total":1,"passed":0,"skipped":1,"failed":0}' ;;
+		fail) code=1 counts='{"total":1,"passed":0,"skipped":0,"failed":1}' ;;
 		esac
 		REPORT_MODE=${mode} assert_runner_result integration "report-${mode}" "${code}" "${counts}" test_report.sh
-		report=$(sed -n 's/.*report: //p' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-${mode}.log")
+		report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-${mode}.log" | jq -r .report)
 		stdout=${report%/*}/$(jq -r '.test_executions[0].logs.stdout' "${report}")
 		stderr=${report%/*}/$(jq -r '.test_executions[0].logs.stderr' "${report}")
 		grep -Fxq 'stdout marker' "${stdout}" || fatal "stdout was not retained"
 		grep -Fxq 'stderr marker' "${stderr}" || fatal "stderr was not retained"
 		! grep -Fq 'stderr marker' "${stdout}" || fatal "stderr leaked into stdout"
 		jq -e 'all(.test_executions[]; .started_at != null and .finished_at != null and .duration_seconds >= 0)' "${report}" > /dev/null || fatal "execution timestamps missing"
+		if [[ ${mode} == fail ]]; then
+			assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-${mode}.log" \
+				| jq -e --arg directory "${stdout%/*}" --rawfile stdout "${stdout}" --rawfile stderr "${stderr}" \
+					--arg reason $'fixture failed: "runtime"\n诊断路径: C:\\tmp' '
+					.failed_tests | length == 1 and (.[0] |
+					.name == "integration/test_report.sh" and .reason == $reason and .dir == $directory and
+					any(.logs[]; .path == ($directory + "/stdout.log") and .content == $stdout and .truncated == false) and
+					any(.logs[]; .path == ($directory + "/stderr.log") and .content == $stderr and .truncated == false) and
+					any(.logs[]; .path == ($directory + "/large.log") and .truncated == true and
+						(.content | length == 65536 and endswith("\nend marker\n"))))
+					' > /dev/null || fatal "JSON failure diagnostics lost paths, escaped content, or truncated logs"
+		fi
 		if [[ ${mode} == skip ]]; then
 			jq -e --arg reason $'missing "runtime"\n诊断路径: C:\\tmp' '.test_executions[0] | .reason == $reason and .exit_code == 77' "${report}" > /dev/null || fatal "skip reason was not preserved"
 		fi
 	done
-	REPORT_MODE=namespace assert_runner_result integration report-namespace 0 'total=1 passed=0 skipped=1 failed=0' test_report.sh
-	report=$(sed -n 's/.*report: //p' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-namespace.log")
+	REPORT_MODE=namespace assert_runner_result integration report-namespace 0 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_report.sh
+	report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-namespace.log" | jq -r .report)
 	jq -e '.test_executions[0] | .reason == "namespace dependency missing" and .exit_code == 77' "${report}" > /dev/null || fatal "PID namespace lost the skip reason"
 	for mode in step_skip step_fail step_code caught_child caught_subshell; do
-		local code=1 counts='total=1 passed=0 skipped=0 failed=1' expected_reason='test exited with code 1; see stdout.log and stderr.log'
+		local code=1 counts='{"total":1,"passed":0,"skipped":0,"failed":1}' expected_reason='test exited with code 1; see stdout.log and stderr.log'
 		case ${mode} in
-		step_skip) code=0 counts='total=1 passed=0 skipped=1 failed=0' expected_reason='step dependency missing' ;;
+		step_skip) code=0 counts='{"total":1,"passed":0,"skipped":1,"failed":0}' expected_reason='step dependency missing' ;;
 		step_fail) expected_reason='step failed' ;;
 		step_code) expected_reason='step command bash exited with code 42' ;;
 		esac
 		REPORT_MODE=${mode} assert_runner_result integration "report-${mode}" "${code}" "${counts}" test_report.sh
-		report=$(sed -n 's/.*report: //p' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-${mode}.log")
+		report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-${mode}.log" | jq -r .report)
 		jq -e --arg reason "${expected_reason}" '.test_executions[0].reason == $reason' "${report}" > /dev/null || fatal "${mode}: reason crossed an unhandled execution boundary"
 		if [[ ${mode} == step_code ]]; then
 			jq -e '.test_executions[0].exit_code == 42' "${report}" > /dev/null || fatal "step overwrote the command exit code"
@@ -420,7 +455,7 @@ EOF
 			local expected=143
 			[[ ${signal} != INT ]] || expected=130
 			[[ ${status} == "${expected}" ]] || fatal "entry cancellation exit=${status}, expected=${expected}"
-			report=$(sed -n 's/.*report: //p' "${log}")
+			report=$(assert_runner_summary "${log}" | jq -r .report)
 			local skipped=2 failed=0
 			[[ ${mode} != cancel_failure ]] || {
 				skipped=1
@@ -463,9 +498,9 @@ EOF
 			expected=143
 			[[ ${signal} != INT ]] || expected=130
 			REPORT_SIGNAL=${signal} PATH="${RUNNER_FIXTURE}/bin:${PATH}" \
-				assert_runner_result integration "launch-${phase}-${signal}" "${expected}" 'total=1 passed=0 skipped=1 failed=0' test_report.sh
+				assert_runner_result integration "launch-${phase}-${signal}" "${expected}" '{"total":1,"passed":0,"skipped":1,"failed":0}' test_report.sh
 			[[ ! -e ${RUNNER_FIXTURE}/launch-completed ]] || fatal "${phase}/${signal}: child completed after cancellation"
-			report=$(sed -n 's/.*report: //p' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-launch-${phase}-${signal}.log")
+			report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-launch-${phase}-${signal}.log" | jq -r .report)
 			jq -e '.status == "interrupted" and .test_executions[0].started_at == null' "${report}" > /dev/null || fatal "${phase}/${signal}: invalid cancellation report"
 		done
 	done
@@ -486,8 +521,8 @@ EOF
 		expected=143
 		[[ ${signal} != INT ]] || expected=130
 		REPORT_MODE=pass REPORT_SIGNAL=${signal} PATH="${RUNNER_FIXTURE}/bin:${PATH}" \
-			assert_runner_result integration "late-${signal}" "${expected}" 'total=1 passed=1 skipped=0 failed=0' test_report.sh
-		report=$(sed -n 's/.*report: //p' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-late-${signal}.log")
+			assert_runner_result integration "late-${signal}" "${expected}" '{"total":1,"passed":1,"skipped":0,"failed":0}' test_report.sh
+		report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-late-${signal}.log" | jq -r .report)
 		jq -e '.status == "interrupted" and .test_executions[0].result == "passed" and .test_executions[0].exit_code == 0' "${report}" > /dev/null || fatal "late signal changed the completed test result"
 	done
 	# Inject after EXIT cleanup has begun, both while reading and writing JSON.
@@ -514,11 +549,11 @@ EOF
 			chmod +x "${RUNNER_FIXTURE}/bin/jq"
 			expected=143
 			[[ ${signal} != INT ]] || expected=130
-			counts='total=1 passed=1 skipped=0 failed=0'
-			[[ ${phase} != write ]] || counts='total=1 passed=0 skipped=1 failed=0'
+			counts='{"total":1,"passed":1,"skipped":0,"failed":0}'
+			[[ ${phase} != write ]] || counts='{"total":1,"passed":0,"skipped":1,"failed":0}'
 			REPORT_MODE=pass REPORT_PHASE=${phase} REPORT_SIGNAL=${signal} PATH="${RUNNER_FIXTURE}/bin:${PATH}" \
 				assert_runner_result integration "final-${phase}-${signal}" "${expected}" "${counts}" test_report.sh
-			report=$(sed -n 's/.*report: //p' "${HUATUO_BAMAI_TEST_TMPDIR}/integration-final-${phase}-${signal}.log")
+			report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-final-${phase}-${signal}.log" | jq -r .report)
 			jq -e --arg reason "runner received SIG${signal}" '.status == "interrupted" and .reason == $reason' "${report}" > /dev/null || fatal "${phase}/${signal}: finalization lost signal state"
 		done
 		if [[ ${phase} == write ]]; then mv "${RUNNER_FIXTURE}/saved-output" "${RUNNER_FIXTURE}/_output"; fi
@@ -630,8 +665,8 @@ EOF
 	for suite in integration e2e; do
 		for run in 1 2; do
 			log="${fixture}/${suite}-${run}.log"
-			[[ $(grep -c 'summary:' "${log}") == 1 && $(grep -c 'report:' "${log}") == 1 ]] || fatal "${suite}/${run}: expected one summary and report; see ${log}"
-			report=$(sed -n 's/.*report: //p' "${log}")
+
+			report=$(assert_runner_summary "${log}" | jq -r .report)
 			for previous in "${reports[@]}"; do [[ ${report} != "${previous}" ]] || fatal "invocations reused report ${report}"; done
 			reports+=("${report}")
 			jq -e --arg suite "${suite}" '.suite == $suite and .status == "completed" and .exit_code == 0 and .execution_counts == {total:1,passed:1,failed:0,skipped:0} and .test_executions[0].result == "passed"' "${report}" > /dev/null || fatal "${suite}/${run}: report disagrees with execution: ${report}"
@@ -686,11 +721,11 @@ EOF
 		printf '\nrunner_test_namespaces=(["integration/test_metrics.sh"]="%s" ["integration/test_node_config_api.sh"]="%s" ["e2e/test_metrics.sh"]="%s")\n' "$namespaces" "$namespaces" "$namespaces" >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
 		for suite in integration e2e; do
 			http_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 \
-				NAMESPACE_PROFILE=$profile assert_runner_result "$suite" "namespace-$profile" 0 'total=2 passed=2 skipped=0 failed=0' test_metrics.sh 2
+				NAMESPACE_PROFILE=$profile assert_runner_result "$suite" "namespace-$profile" 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' test_metrics.sh 2
 		done
-		http_proxy=http://127.0.0.1:9 NAMESPACE_PROFILE=$profile assert_runner_result integration "namespace-parallel-$profile" 0 'total=2 passed=2 skipped=0 failed=0' -j 2
+		http_proxy=http://127.0.0.1:9 NAMESPACE_PROFILE=$profile assert_runner_result integration "namespace-parallel-$profile" 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' -j 2
 		: > "$RUNNER_FIXTURE/execution-addresses"
-		http_proxy=http://127.0.0.1:9 NAMESPACE_PROFILE=$profile assert_runner_result integration "namespace-repeat-$profile" 0 'total=2 passed=2 skipped=0 failed=0' -j 2 test_metrics.sh 2
+		http_proxy=http://127.0.0.1:9 NAMESPACE_PROFILE=$profile assert_runner_result integration "namespace-repeat-$profile" 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' -j 2 test_metrics.sh 2
 		[[ $(sort -u "$RUNNER_FIXTURE/execution-addresses" | wc -l) == 2 ]] || fatal "repeated executions reused a slot port"
 
 	done
@@ -698,17 +733,17 @@ EOF
 	local table
 	for table in runner_test_groups runner_shared_storage_tests; do
 		printf '\n%s["integration/test_metrics.sh"]=invalid\n' "$table" >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
-		assert_runner_result integration "invalid-$table" 1 'total=1 passed=0 skipped=1 failed=0' test_metrics.sh
+		assert_runner_result integration "invalid-$table" 1 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_metrics.sh
 		printf '\nunset "%s[integration/test_metrics.sh]"\n' "$table" >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
 		printf '\n%s["integration/test_absent.sh"]=1\n' "$table" >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
-		assert_runner_result integration "unknown-$table" 1 'total=1 passed=0 skipped=1 failed=0' test_metrics.sh
+		assert_runner_result integration "unknown-$table" 1 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_metrics.sh
 		printf '\nunset "%s[integration/test_absent.sh]"\n' "$table" >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
 	done
 	# Invalid declarations fail before any case starts.
 	printf '\nrunner_test_namespaces=(["integration/test_metrics.sh"]="mount invalid")\n' >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
-	assert_runner_result integration invalid_namespaces 1 'total=1 passed=0 skipped=1 failed=0' test_metrics.sh
+	assert_runner_result integration invalid_namespaces 1 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_metrics.sh
 	printf '\nrunner_test_namespaces=(["integration/test_absent.sh"]="mount")\n' >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
-	assert_runner_result integration unknown_namespace_case 1 'total=1 passed=0 skipped=1 failed=0' test_metrics.sh
+	assert_runner_result integration unknown_namespace_case 1 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_metrics.sh
 	printf '\nrunner_test_namespaces=()\n' >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
 	cat > "$RUNNER_FIXTURE/bin/unshare" << 'EOF'
 #!/usr/bin/env bash
@@ -716,8 +751,8 @@ if [[ $1 == --mount ]]; then exit 23; fi
 exec /usr/bin/unshare "$@"
 EOF
 	chmod +x "$RUNNER_FIXTURE/bin/unshare"
-	PATH="$RUNNER_FIXTURE/bin:$PATH" assert_runner_result integration case_namespace_failure 1 'total=1 passed=0 skipped=0 failed=1' test_metrics.sh
-	report=$(sed -n 's/.*report: //p' "$HUATUO_BAMAI_TEST_TMPDIR/integration-case_namespace_failure.log")
+	PATH="$RUNNER_FIXTURE/bin:$PATH" assert_runner_result integration case_namespace_failure 1 '{"total":1,"passed":0,"skipped":0,"failed":1}' test_metrics.sh
+	report=$(assert_runner_summary "$HUATUO_BAMAI_TEST_TMPDIR/integration-case_namespace_failure.log" | jq -r .report)
 	jq -e '.test_executions[0] | .result == "failed" and .exit_code == null' "$report" > /dev/null || fatal "namespace creation failure fabricated a test exit code"
 	rm -f "$RUNNER_FIXTURE/bin/unshare"
 	# Exercise raw exit codes, reason ownership and INT/TERM in real net/PID contexts.
@@ -755,7 +790,7 @@ EOF
 	pid=""
 	[[ $status == 143 ]] || fatal "forced PID cancellation exit=$status, expected=143"
 	! lsns -t pid -n -o NS | awk -v ns="$namespace" '$1 == ns {found=1} END {exit !found}' || fatal "cancelled PID namespace still has live processes: $namespace"
-	report=$(sed -n 's/.*report: //p' "$RUNNER_FIXTURE/forced.log")
+	report=$(assert_runner_summary "$RUNNER_FIXTURE/forced.log" | jq -r .report)
 	jq -e '.status == "interrupted" and .exit_code == 143 and .test_executions[0].result == "skipped" and .test_executions[0].exit_code == null' "$report" > /dev/null || fatal "forced termination fabricated a case exit code"
 )
 
@@ -785,9 +820,9 @@ EOF
 	local mode report
 	for mode in missing invalid fields type range multiple cleanup; do
 		rm -f "$RUNNER_FIXTURE/peer-finished"
-		RESULT_MODE=$mode assert_runner_result integration "result-$mode" 1 'total=2 passed=1 skipped=0 failed=1' -j 2
+		RESULT_MODE=$mode assert_runner_result integration "result-$mode" 1 '{"total":2,"passed":1,"skipped":0,"failed":1}' -j 2
 		[[ -f $RUNNER_FIXTURE/peer-finished ]] || fatal "result error prevented peer completion: $mode"
-		report=$(sed -n 's/.*report: //p' "$HUATUO_BAMAI_TEST_TMPDIR/integration-result-$mode.log")
+		report=$(assert_runner_summary "$HUATUO_BAMAI_TEST_TMPDIR/integration-result-$mode.log" | jq -r .report)
 		if [[ $mode == cleanup ]]; then
 			jq -e '.test_executions[] | select(.test_name == "test_metrics.sh") | .exit_code == 0 and .reason == "first line\nsecond line\n"' "$report" > /dev/null || fatal "cleanup result lost the raw exit code or multiline reason"
 		else
