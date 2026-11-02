@@ -34,11 +34,14 @@ PROFILER_PROFILER_CHILD_PID_FILE="${WORK_DIR}/child.pid"
 PROFILER_PARENT_PID=""
 PROFILER_CHILD_PID=""
 PROFILER_INDEPENDENT_PID=""
+PROFILER_UNLINKED_PID=""
 
 cleanup() {
 	[[ -n "${PROFILER_PARENT_PID}" ]] && stop_by_pid "${PROFILER_PARENT_PID}" 5 || true
 	[[ -n "${PROFILER_CHILD_PID}" ]] && stop_by_pid "${PROFILER_CHILD_PID}" 5 || true
 	[[ -n "${PROFILER_INDEPENDENT_PID}" ]] && stop_by_pid "${PROFILER_INDEPENDENT_PID}" 5 || true
+	[[ -n "${PROFILER_UNLINKED_PID}" ]] && stop_by_pid "${PROFILER_UNLINKED_PID}" 5 || true
+	rm -rf "${WORK_DIR}"
 }
 trap cleanup EXIT
 
@@ -100,3 +103,53 @@ if grep -Eq 'py-spy>|Wrote raw flamegraph data|Sampling process .* times a secon
 fi
 
 log_info "Python parent, child, and independent stacks are correctly attributed"
+
+# Regression: an in-place interpreter upgrade unlinks the running image, so
+# /proc/<pid>/exe keeps the path but gains the kernel's " (deleted)" marker.
+# Discovery, executable validation, and sampling must keep working for that
+# process, and --binary-match-path must still compare against the literal path
+# the user passed rather than the marked procfs target.
+readonly UNLINKED_PYTHON="${WORK_DIR}/python-unlinked"
+readonly PYTHON_BIN="$(python3 -c 'import sys; print(sys.executable)')"
+readonly PYTHON_HOME="$(python3 -c 'import sys; print(sys.base_prefix)')"
+
+unlinked_executable_is_marked_deleted() {
+	[[ "$(readlink "/proc/${PROFILER_UNLINKED_PID}/exe")" == *" (deleted)" ]]
+}
+
+cp "${PYTHON_BIN}" "${UNLINKED_PYTHON}"
+chmod +x "${UNLINKED_PYTHON}"
+
+PYTHONHOME="${PYTHON_HOME}" "${UNLINKED_PYTHON}" "${FIXTURE}" independent \
+	> "${WORK_DIR}/unlinked.out" 2> "${WORK_DIR}/unlinked.err" &
+PROFILER_UNLINKED_PID=$!
+
+wait_until 10 1 test -s "${WORK_DIR}/unlinked.out" || fatal "unlinked Python did not start"
+kill -0 "${PROFILER_UNLINKED_PID}" || fatal "unlinked Python exited immediately"
+
+rm -f "${UNLINKED_PYTHON}"
+wait_until 5 1 unlinked_executable_is_marked_deleted \
+	|| fatal "/proc/${PROFILER_UNLINKED_PID}/exe is not marked deleted"
+
+log_info "profiling Python with an unlinked executable pid=${PROFILER_UNLINKED_PID}"
+if ! "${TOOL_BIN}" \
+	--type cpu \
+	--language python \
+	--pid "${PROFILER_UNLINKED_PID}" \
+	--binary-match-path "${UNLINKED_PYTHON}" \
+	--tool-path "${PROFILER_TOOL_DIR}" \
+	--duration "${PROFILER_DURATION}" \
+	--aggr-interval "${PROFILER_DURATION}" \
+	--freq 99 \
+	--output-format collapsed \
+	--output-path "${WORK_DIR}/python-unlinked.folded" \
+	> "${WORK_DIR}/profiler-unlinked.out" 2> "${WORK_DIR}/profiler-unlinked.err"; then
+	fatal "profiler failed for an unlinked Python executable (see ${WORK_DIR}/profiler-unlinked.err)"
+fi
+
+assert_profiler_output_file "${WORK_DIR}/python-unlinked.folded"
+grep -qh "pid=\"${PROFILER_UNLINKED_PID}\";.*independent_hot_method" \
+	"${WORK_DIR}/python-unlinked.folded" \
+	|| fatal "unlinked Python stack not found for PID ${PROFILER_UNLINKED_PID}"
+
+log_info "Python with an unlinked executable is still discovered and profiled"

@@ -157,8 +157,15 @@ func TestValidateExpectedExecPath(t *testing.T) {
 	// running while procfs reports the marker. The requested path still points
 	// at that binary and must be accepted.
 	require.NoError(t, validateExpectedExecPath([]int{100}, "/usr/bin/python3.10"))
-	require.NoError(t, validateExpectedExecPath([]int{100}, "/usr/bin/python3.10 (deleted)"))
 	require.NoError(t, validateExpectedExecPath([]int{100}, ""))
+
+	// The marker is only meaningful on the procfs side. A real file whose name
+	// ends in " (deleted)" is a different path and must not match.
+	require.EqualError(
+		t,
+		validateExpectedExecPath([]int{100}, "/usr/bin/python3.10 (deleted)"),
+		`PID 100 executable "/usr/bin/python3.10", want "/usr/bin/python3.10 (deleted)"`,
+	)
 }
 
 func TestValidateExpectedExecPathRejectsOtherExecutable(t *testing.T) {
@@ -168,6 +175,6 @@ func TestValidateExpectedExecPathRejectsOtherExecutable(t *testing.T) {
 	require.EqualError(
 		t,
 		validateExpectedExecPath([]int{100}, "/usr/bin/python3.10"),
-		`PID 100 executable "/usr/bin/python3.11 (deleted)", want "/usr/bin/python3.10"`,
+		`PID 100 executable "/usr/bin/python3.11", want "/usr/bin/python3.10"`,
 	)
 }

@@ -38,13 +38,13 @@ func validateExpectedExecPath(pids []int, execPath string) error {
 			return err
 		}
 		// A running executable that was unlinked or replaced in place keeps
-		// its path but gains the kernel's " (deleted)" marker. The marker
-		// describes the file, not the process, so trim it from both sides
-		// before deciding whether the target is still the requested binary.
+		// its path but gains the kernel's " (deleted)" marker. That marker
+		// only has this meaning on the procfs side; the value the user passed
+		// through --binary-match-path may legitimately end in the same text,
+		// so normalize the procfs result and compare the literal request.
 		actual := process.TrimUnlinkedExecutable(actualPath)
-		expected := process.TrimUnlinkedExecutable(execPath)
-		if actual != expected {
-			return fmt.Errorf("PID %d executable %q, want %q", pid, actualPath, execPath)
+		if actual != execPath {
+			return fmt.Errorf("PID %d executable %q, want %q", pid, actual, execPath)
 		}
 	}
 	return nil
