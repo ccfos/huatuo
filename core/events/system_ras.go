@@ -197,6 +197,20 @@ func dynamicWindow(dyn []byte, rawOffset, base, length uint32) []byte {
 	return dyn[off : off+length]
 }
 
+// dataLocWindow resolves a __data_loc descriptor into a sub-slice of dyn. The
+// kernel packs the absolute start of the dynamic data into the low 16 bits and
+// the number of bytes it captured into the high 16 bits. limit is an
+// independent upper bound supplied by the record (the CPER section length
+// here); the shorter of the two wins, and dynamicWindow still caps the result
+// at the copied window.
+func dataLocWindow(dyn []byte, dataLoc, base, limit uint32) []byte {
+	length := dataLoc >> 16
+	if limit < length {
+		length = limit
+	}
+	return dynamicWindow(dyn, dataLoc, base, length)
+}
+
 // cstring returns the NUL-terminated string that starts at the kernel-supplied
 // offset inside buf, or "" when the offset is outside the window. It is built
 // on dynamicWindow so the offset is bounds-checked exactly like the raw hex
@@ -523,11 +537,15 @@ func buildRasAcpiTracerData(data *rasEvent) (*RasTracingData, error) {
 	const nonStandardBase uint32 = 56
 	fru := cstring(payload.Msg[:], payload.FRUTxtOffset, nonStandardBase)
 
-	// Extract raw bytes at the FRU text location for the hex dump. payload.Len
-	// is the CPER section length reported by the kernel, which can exceed the
-	// fixed window we keep; dynamicWindow truncates it instead of slicing past
-	// the end of payload.Msg (or wrapping the uint32 bounds) and panicking.
-	rawData := dynamicWindow(payload.Msg[:], payload.FRUTxtOffset, nonStandardBase, payload.Len)
+	// payload.BufOffset is __data_loc_buf: the low 16 bits hold the absolute
+	// start of the section payload and the high 16 bits hold how many bytes
+	// the kernel captured. payload.Len is the section length it reported when
+	// the record was emitted. Non-standard sections (NVDIMM, CXL, vendor
+	// payloads) routinely report more than the fixed window kept in
+	// userspace, and the tail of that window is zero padding rather than
+	// payload, so the dump is capped by the smaller of the two lengths and by
+	// what was actually copied.
+	rawData := dataLocWindow(payload.Msg[:], payload.BufOffset, nonStandardBase, payload.Len)
 
 	return newRasTracingData(data, "ACPI", "NON_STANDARD", acpiErrType(payload.Sev), struct {
 		Severity uint8  `json:"severity"`

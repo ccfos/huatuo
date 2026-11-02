@@ -120,7 +120,7 @@ Register and bank meanings depend on the CPU model. Use the corresponding proces
 | `data_len` | Reported data length in bytes |
 | `raw_data` | Hex dump; interpret using the platform and vendor format |
 
-Non-standard sections (NVDIMM, CXL, and vendor payloads) are frequently larger than the fixed 456-byte window HUATUO keeps in userspace. When the kernel-reported section length exceeds that window, `raw_data` is truncated to the bytes actually available while `data_len` still reports the original kernel length. The excess bytes are dropped on purpose: the offset and length come from the hardware record, and honoring them blindly would let a single malformed event take down the event loop.
+Non-standard sections (NVDIMM, CXL, and vendor payloads) are frequently larger than the fixed 456-byte window HUATUO keeps in userspace. `raw_data` contains only the section's captured dynamic length and is further limited by the remaining window, so unused bytes at the end of the fixed window are never reported as payload. `data_len` still reports the length the kernel put in the record. Both values come from the hardware record and are clamped before slicing; honoring them blindly would let a single malformed event take down the event loop.
 
 ### PCIe AER
 
