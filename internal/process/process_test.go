@@ -74,7 +74,7 @@ func TestNormalizeExecutable(t *testing.T) {
 	newExecutable := filepath.Join(dir, "python")
 	literalExecutable := filepath.Join(dir, "python (deleted)")
 	for _, path := range []string{oldExecutable, newExecutable, literalExecutable} {
-		if err := os.WriteFile(path, nil, 0o700); err != nil {
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
 			t.Fatalf("WriteFile(%q) error = %v", path, err)
 		}
 	}
@@ -157,7 +157,7 @@ func TestNormalizeExecutableUsesTargetProcessRoot(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
 		}
-		if err := os.WriteFile(path, nil, 0o700); err != nil {
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
 			t.Fatalf("WriteFile(%q) error = %v", path, err)
 		}
 	}
@@ -241,7 +241,7 @@ func TestExecutableName(t *testing.T) {
 func TestExecutableNameKeepsLiteralDeletedSuffix(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "python (deleted)")
-	if err := os.WriteFile(target, nil, 0o700); err != nil {
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", target, err)
 	}
 
