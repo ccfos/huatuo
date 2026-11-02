@@ -642,7 +642,7 @@ write_config_bamai_toolstream_receiver() {
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }
 
-write_config_cpu_util() {
+write_config_bamai_cpu_util() {
 	local cpu_blacklist=""
 	[[ ${cpu_util_disabled} != true ]] || cpu_blacklist='"cpu_util", '
 	cat << EOF
@@ -660,7 +660,7 @@ BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_stat", "cpuidle", "cpusys
 EOF
 }
 
-write_config_cpu_stat() {
+write_config_bamai_cpu_stat() {
 	local cpu_blacklist=""
 	[[ ${cpu_stat_disabled} != true ]] || cpu_blacklist='"cpu_stat", '
 	cat << EOF
@@ -678,7 +678,7 @@ BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_util", "cpuidle", "cpusys
 EOF
 }
 
-write_config_runqlat() {
+write_config_bamai_runqlat() {
 	local runqlat_blacklist=""
 	[[ ${runqlat_disabled} != true ]] || runqlat_blacklist='"runqlat", '
 	cat << EOF
@@ -696,7 +696,7 @@ BlackList = [${runqlat_blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "c
 EOF
 }
 
-write_config_softirq() {
+write_config_bamai_softirq() {
 	local blacklist=""
 	[[ ${softirq_disabled} != true ]] || blacklist='"softirq", '
 	cat << EOF
@@ -706,7 +706,7 @@ EOF
 	write_config_bamai_auth "integration-node-token"
 }
 
-write_config_cpuidle_autotracing() {
+write_config_bamai_cpuidle_autotracing() {
 	local blacklist="" es_config=""
 	[[ ${cpuidle_disabled} != true ]] || blacklist='"cpuidle", '
 	if [[ -n ${STORAGE_ADDR} ]]; then
@@ -749,7 +749,7 @@ ${es_config}
 EOF
 }
 
-write_config_dload_autotracing() {
+write_config_bamai_dload_autotracing() {
 	local blacklist="" es_config=""
 	[[ ${dload_disabled} != true ]] || blacklist='"dload", '
 	if [[ -n ${STORAGE_ADDR} ]]; then

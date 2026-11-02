@@ -80,9 +80,6 @@ if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log ]]; then
 	assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
 	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${SOFTIRQ_DIR}/baseline.log"
 fi
-softirq_port=$(allocate_available_port) || fatal "cannot allocate softirq metrics port"
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${softirq_port}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 softirq_restart() {
 	local signal=${1:-TERM}
@@ -92,7 +89,7 @@ softirq_restart() {
 		cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${SOFTIRQ_DIR}/daemon-${softirq_generation}.log"
 	fi
 	softirq_generation=$((softirq_generation + 1))
-	integration_huatuo_bamai_start write_config_softirq --region e2e --disable-storage --disable-kubelet
+	integration_huatuo_bamai_start write_config_bamai_softirq --region e2e --disable-storage --disable-kubelet
 }
 
 assert_softirq_metrics() {

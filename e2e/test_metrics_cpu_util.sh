@@ -78,7 +78,7 @@ else
 	CPU_UTIL_CPUSET_ROOT=${CPU_UTIL_CPU_ROOT}
 fi
 readonly CPU_UTIL_CPU_ROOT CPU_UTIL_USAGE_ROOT CPU_UTIL_CPUSET_ROOT
-CPU_UTIL_PORT=$(allocate_available_port) || fatal "cannot allocate cpu_util metrics port"
+CPU_UTIL_PORT=${HUATUO_BAMAI_ADDR##*:}
 CPU_UTIL_KUBELET_PORT=${KUBELET_PODS_API##*:}
 CPU_UTIL_KUBELET_PORT=${CPU_UTIL_KUBELET_PORT%%/*}
 readonly CPU_UTIL_PORT CPU_UTIL_KUBELET_PORT
@@ -89,8 +89,6 @@ if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log ]]; then
 	assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
 	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${CPU_UTIL_DIR}/baseline.log"
 fi
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${CPU_UTIL_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 cpu_util_restart_daemon() {
 	local signal=${1:-TERM}
@@ -100,8 +98,7 @@ cpu_util_restart_daemon() {
 		cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${CPU_UTIL_DIR}/daemon-${cpu_util_daemon_generation}.log"
 	fi
 	cpu_util_daemon_generation=$((cpu_util_daemon_generation + 1))
-	write_config_cpu_util > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	huatuo_bamai_start --config-dir "${HUATUO_BAMAI_TEST_TMPDIR}" --config bamai.conf \
+	integration_huatuo_bamai_start write_config_bamai_cpu_util \
 		--region e2e --disable-storage
 }
 
