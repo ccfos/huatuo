@@ -54,10 +54,11 @@ func Executable(pid int) (string, error) {
 // the marker describes the file rather than the process.
 const unlinkedExecutableMarker = " (deleted)"
 
-// NormalizeExecutable removes the kernel's unlinked marker only when procfs
-// reports the marker for path. The same suffix is a legal filename component,
-// so compare the candidate paths with the actual /proc/<pid>/exe file identity
-// before changing the path.
+// NormalizeExecutable removes the kernel's unlinked marker from path unless
+// path itself is the live file. The same suffix is a legal filename component,
+// so compare the marked path with /proc/<pid>/exe before preserving it. When
+// the original path already contains a replacement binary, the marked path no
+// longer identifies the running image and the kernel marker must be dropped.
 func NormalizeExecutable(path, procExePath string) string {
 	trimmed, found := strings.CutSuffix(path, unlinkedExecutableMarker)
 	if !found {
@@ -66,32 +67,7 @@ func NormalizeExecutable(path, procExePath string) string {
 
 	procInfo, procErr := os.Stat(procExePath)
 	rawInfo, rawErr := os.Stat(path)
-	if procErr != nil {
-		// A fake or inaccessible procfs cannot establish file identity. Keep
-		// an existing literal suffix, but still handle the common unlinked
-		// case where neither the marked nor the trimmed path exists.
-		if rawErr == nil {
-			return path
-		}
-		if _, err := os.Stat(trimmed); err == nil {
-			return path
-		}
-		return trimmed
-	}
-
-	if rawErr == nil && os.SameFile(rawInfo, procInfo) {
-		return path
-	}
-
-	trimmedInfo, trimmedErr := os.Stat(trimmed)
-	if trimmedErr == nil && os.SameFile(trimmedInfo, procInfo) {
-		return trimmed
-	}
-
-	// A path that still exists but does not identify the running image is
-	// either a literal filename or a replacement executable. In both cases
-	// the marker must stay attached.
-	if rawErr == nil || trimmedErr == nil {
+	if procErr == nil && rawErr == nil && os.SameFile(rawInfo, procInfo) {
 		return path
 	}
 

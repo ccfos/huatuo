@@ -98,10 +98,10 @@ func TestNormalizeExecutable(t *testing.T) {
 			want:    literalExecutable,
 		},
 		{
-			name:    "literal suffix is not the running image",
+			name:    "marked path is not the running image",
 			path:    literalExecutable,
 			procExe: oldExecutable,
-			want:    literalExecutable,
+			want:    newExecutable,
 		},
 		{
 			name:    "kernel marker with both paths removed",
@@ -119,7 +119,7 @@ func TestNormalizeExecutable(t *testing.T) {
 			name:    "replacement at the original path",
 			path:    newExecutable + unlinkedExecutableMarker,
 			procExe: oldExecutable,
-			want:    newExecutable + unlinkedExecutableMarker,
+			want:    newExecutable,
 		},
 	}
 

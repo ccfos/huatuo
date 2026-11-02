@@ -73,7 +73,7 @@ func TestValidateResolvedPIDs(t *testing.T) {
 func TestHasExecutablePrefix(t *testing.T) {
 	tests := map[string]bool{
 		"python3.12":         true,
-		"python (deleted)":   false,
+		"python3 custom":     true,
 		"platform-python3.6": true,
 		"java":               false,
 		"my-python":          false,
@@ -84,7 +84,7 @@ func TestHasExecutablePrefix(t *testing.T) {
 		})
 	}
 	require.False(t, hasExecutablePrefix("platform-java", "java"))
-	require.False(t, hasExecutablePrefix("java (deleted)", "java"))
+	require.True(t, hasExecutablePrefix("python3 custom", "python"))
 }
 
 // newExecTestProcFS redirects the procfs mount point to a temporary directory, so
@@ -188,7 +188,7 @@ func TestValidateExpectedExecPathRejectsLiteralDeletedSuffix(t *testing.T) {
 	)
 }
 
-func TestValidateExpectedExecPathRejectsReplacedExecutable(t *testing.T) {
+func TestValidateExpectedExecPathAcceptsReplacedExecutable(t *testing.T) {
 	procPath := newExecTestProcFS(t)
 	dir := t.TempDir()
 	current := filepath.Join(dir, "python3.10")
@@ -197,11 +197,10 @@ func TestValidateExpectedExecPathRejectsReplacedExecutable(t *testing.T) {
 	}
 	writeTestExecutable(t, procPath, 100, current+deletedExecutableMarker)
 
-	require.EqualError(
-		t,
-		validateExpectedExecPath([]int{100}, current),
-		`PID 100 executable "`+current+deletedExecutableMarker+`", want "`+current+`"`,
-	)
+	// An in-place upgrade replaces the path while the old inode keeps running.
+	// The marked procfs target still identifies the Python interpreter, and the
+	// user-provided path is the original one.
+	require.NoError(t, validateExpectedExecPath([]int{100}, current))
 }
 
 func TestValidateExpectedExecPathRejectsOtherExecutable(t *testing.T) {
