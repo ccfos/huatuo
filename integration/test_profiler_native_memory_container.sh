@@ -26,7 +26,7 @@ cleanup() {
 		log_error "required split-v1 memory regression was skipped; expected a passing test"
 		status=1
 	fi
-	cleanup_piped_processes
+	cleanup_running_jobs
 	if [[ -n ${container_id} ]]; then
 		timeout --kill-after=2 15 docker rm -f "${container_id}" > /dev/null 2>&1 || {
 			log_error "cannot remove owned memory workload container: ${container_id}"

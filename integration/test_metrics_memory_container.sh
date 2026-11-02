@@ -41,7 +41,7 @@ cleanup() {
 	trap - EXIT
 	huatuo_bamai_stop || status=1
 	if [[ ${memory_high_set} == 1 ]]; then set_container_memory_high max || status=1; fi
-	cleanup_piped_processes
+	cleanup_running_jobs
 	if [[ -n ${memory_mount} ]]; then umount "${memory_mount}" || status=1; fi
 	if [[ ${pod_created} == 1 ]]; then k8s_delete_pod "${BUSINESS_POD_NS}" "app=${pod_name}" || status=1; fi
 	exit "${status}"
