@@ -61,6 +61,8 @@ const unlinkedExecutableMarker = " (deleted)"
 // process's mount namespace, which may not exist in the profiler's namespace.
 // When the original path already contains a replacement binary, the marked
 // path no longer identifies the running image and the marker must be dropped.
+// If the target root cannot be inspected, the suffix is treated as the kernel
+// marker so an in-place upgrade still matches the path the user supplied.
 func NormalizeExecutable(path, procExePath string) string {
 	trimmed, found := strings.CutSuffix(path, unlinkedExecutableMarker)
 	if !found {
