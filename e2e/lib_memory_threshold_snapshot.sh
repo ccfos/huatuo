@@ -203,7 +203,8 @@ assert_snapshot_event() {
 	if [[ ${language} == go ]]; then
 		assert_go_snapshot_statistics "${mode}"
 	else
-		assert_snapshot_runtime_payload "${language}"
+		# Unlike memburst, this ten-second capture must prove a full census.
+		assert_snapshot_runtime_payload "${language}" complete
 	fi
 }
 

@@ -373,6 +373,8 @@ assert_burst_runtime() {
  and all(.entries[]; .objects > 0 and .average_bytes == (.bytes / .objects))' \
 			"${go_snapshot_case_dir}/snapshot.json" > /dev/null || fatal "invalid concurrent allocation snapshot"
 		;;
+	# Each memburst process has only a two-second census budget.
+	python) assert_snapshot_runtime_payload python deadline-partial ;;
 	*) assert_snapshot_runtime_payload "${language}" ;;
 	esac
 	assert_burst_count "${count}"
