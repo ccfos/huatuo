@@ -125,6 +125,21 @@ require_commands() {
 	done
 }
 
+runner_build_signal_reset_launcher() {
+	local -n output_launcher=$1
+	# Ignored signals survive exec, so reset them before Bash starts.
+	output_launcher=(python3 -c '
+import os
+import signal
+import sys
+
+for signum in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(signum, signal.SIG_DFL)
+signal.pthread_sigmask(signal.SIG_UNBLOCK, (signal.SIGINT, signal.SIGTERM))
+os.execvp(sys.argv[1], sys.argv[1:])
+')
+}
+
 require_readable() {
 	local path
 	for path in "$@"; do

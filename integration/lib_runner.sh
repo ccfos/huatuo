@@ -124,13 +124,15 @@ runner_start_execution() {
 	case $namespaces in
 	"mount net") command+=(--net) ;;
 	"mount pid")
-		env --default-signal=INT,TERM true 2> /dev/null \
-			|| fatal "PID namespace workers require env with --default-signal support"
+		command -v python3 > /dev/null \
+			|| fatal "PID namespace workers require python3 to restore INT and TERM signal handling"
 		# Keep the reset after unshare --fork and before Bash: Bash cannot trap
 		# signals inherited as ignored. Resetting them inside runner_worker.sh
 		# is too late; cancellation can otherwise skip EXIT cleanup and leave
 		# execution.json missing when the runner forcibly kills the worker.
-		command+=(--pid --fork --kill-child=TERM --mount-proc env --default-signal=INT,TERM)
+		local -a signal_reset_launcher
+		runner_build_signal_reset_launcher signal_reset_launcher
+		command+=(--pid --fork --kill-child=TERM --mount-proc "${signal_reset_launcher[@]}")
 		;;
 	esac
 	command+=(bash "${ROOT_DIR}/integration/runner_worker.sh" "$runner_suite" "$namespaces" "$script")

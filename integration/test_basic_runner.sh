@@ -20,9 +20,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 
 readonly RUNNER_FIXTURE="${HUATUO_BAMAI_TEST_TMPDIR}/runner"
-require_commands unshare mount findmnt readlink flock ss stat lsns timeout setsid env
-env --default-signal=INT,TERM true 2> /dev/null \
-	|| skip "env must support --default-signal to restore fixture signals"
+require_commands unshare mount findmnt readlink flock ss stat lsns timeout setsid python3
 readonly RUNNER_UNSHARE=$(command -v unshare)
 runner_parent_uts=$(readlink /proc/self/ns/uts)
 runner_parent_mount=$(readlink /proc/self/ns/mnt)
@@ -32,14 +30,16 @@ assert_runner_result() {
 	local suite=$1 label=$2 expected_status=$3 expected_summary=$4 status=0
 	shift 4
 	local log="${HUATUO_BAMAI_TEST_TMPDIR}/${suite}-${label}.log" summary_count=1
+	local -a signal_reset_launcher
+	runner_build_signal_reset_launcher signal_reset_launcher
 	# PID namespace teardown also reclaims workers that created new process groups.
-	# Keep env between unshare --fork and Bash: ignored signals inherited at
+	# Keep the reset after unshare --fork and before Bash: ignored signals inherited at
 	# shell startup cannot be restored by its traps. The fixture launcher needs
 	# its own reset even when production workers reset theirs, or cancellation
 	# may time out instead of exercising the runner's signal handling.
 	INTEGRATION_JOBS=1 timeout --kill-after=2 "${runner_fixture_timeout:-30}" \
 		"${RUNNER_UNSHARE}" --mount --pid --fork --kill-child=KILL --mount-proc \
-		env --default-signal=INT,TERM \
+		"${signal_reset_launcher[@]}" \
 		bash -c 'export runner_parent_pid=$(readlink /proc/self/ns/pid); cd /; exec bash "$@"' \
 		huatuo-runner-fixture "${RUNNER_FIXTURE}/${suite}/run.sh" "$@" > "${log}" 2>&1 || status=$?
 	if [[ ${status} == 124 || ${status} == 137 ]]; then
