@@ -95,15 +95,21 @@ fi
 assert_profiler_output_file() {
 	[[ -s "$1" && -f "$1" ]] || fatal "expected a nonempty profile file at $1"
 }
+
+assert_profiler_stack_contains() {
+	local folded=$1
+	local pid=$2
+	local method=$3
+	grep -qh "pid=\"${pid}\";.*${method}" "${folded}" \
+		|| fatal "stack ${method} not found for PID ${pid} in ${folded}"
+}
+
 assert_profiler_output_file "${WORK_DIR}/python.folded"
 FOLDED_FILES=("${WORK_DIR}/python.folded")
 
-grep -qh "pid=\"${PROFILER_PARENT_PID}\";.*parent_hot_method" "${FOLDED_FILES[@]}" \
-	|| fatal "parent workload stack not found for PID ${PROFILER_PARENT_PID}"
-grep -qh "pid=\"${PROFILER_CHILD_PID}\";.*child_hot_method" "${FOLDED_FILES[@]}" \
-	|| fatal "child workload stack not found for PID ${PROFILER_CHILD_PID}"
-grep -qh "pid=\"${PROFILER_INDEPENDENT_PID}\";.*independent_hot_method" "${FOLDED_FILES[@]}" \
-	|| fatal "independent workload stack not found for PID ${PROFILER_INDEPENDENT_PID}"
+assert_profiler_stack_contains "${WORK_DIR}/python.folded" "${PROFILER_PARENT_PID}" parent_hot_method
+assert_profiler_stack_contains "${WORK_DIR}/python.folded" "${PROFILER_CHILD_PID}" child_hot_method
+assert_profiler_stack_contains "${WORK_DIR}/python.folded" "${PROFILER_INDEPENDENT_PID}" independent_hot_method
 
 if grep -Eq 'py-spy>|Wrote raw flamegraph data|Sampling process .* times a second|You can use the flamegraph\.pl' "${FOLDED_FILES[@]}"; then
 	fatal "py-spy status output was included in folded samples"
@@ -138,7 +144,12 @@ rm -f "${UNLINKED_PYTHON}"
 wait_until 5 1 unlinked_executable_is_marked_deleted \
 	|| fatal "/proc/${PROFILER_UNLINKED_PID}/exe is not marked deleted"
 
-log_info "profiling Python with an unlinked executable pid=${PROFILER_UNLINKED_PID}"
+# Model an in-place upgrade: the running inode stays unlinked while a different
+# binary is installed at the original path.
+cp "${PYTHON_BIN}" "${UNLINKED_PYTHON}"
+chmod +x "${UNLINKED_PYTHON}"
+
+log_info "profiling Python after an in-place executable replacement pid=${PROFILER_UNLINKED_PID}"
 if ! "${TOOL_BIN}" \
 	--type cpu \
 	--language python \
@@ -155,8 +166,6 @@ if ! "${TOOL_BIN}" \
 fi
 
 assert_profiler_output_file "${WORK_DIR}/python-unlinked.folded"
-grep -qh "pid=\"${PROFILER_UNLINKED_PID}\";.*independent_hot_method" \
-	"${WORK_DIR}/python-unlinked.folded" \
-	|| fatal "unlinked Python stack not found for PID ${PROFILER_UNLINKED_PID}"
+assert_profiler_stack_contains "${WORK_DIR}/python-unlinked.folded" "${PROFILER_UNLINKED_PID}" independent_hot_method
 
-log_info "Python with an unlinked executable is still discovered and profiled"
+log_info "Python with a replaced executable is still discovered and profiled"

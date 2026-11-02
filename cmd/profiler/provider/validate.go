@@ -85,15 +85,9 @@ func validateProcessExecutables(profilerName, executablePrefix string, pids []in
 }
 
 // hasExecutablePrefix reports whether name is the executable of the requested
-// runtime. Callers pass a basename from process.ExecutableName, which already
-// removed the kernel's unlinked marker.
+// runtime. Callers pass a basename from process.ExecutableName, which removes
+// the kernel's unlinked marker only when it does not belong to a literal name.
 func hasExecutablePrefix(name, prefix string) bool {
-	// Runtime executable names do not contain whitespace. In particular, a
-	// literal file named "python (deleted)" is not an interpreter merely
-	// because the procfs marker has the same spelling.
-	if strings.ContainsAny(name, " \t") {
-		return false
-	}
 	if strings.HasPrefix(name, prefix) {
 		return true
 	}
