@@ -79,6 +79,7 @@ func TestFindProcessesMatchesExactExecutableName(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100, 101},
 		procFS,
+		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err != nil {
@@ -92,14 +93,16 @@ func TestFindProcessesMatchesExactExecutableName(t *testing.T) {
 
 func TestFindProcessesMatchesUnlinkedExecutable(t *testing.T) {
 	root, procFS := newTestProcFS(t)
-	writeTestProcess(t, root, testProcess{pid: 100, executable: "/usr/bin/java (deleted)", ppid: 1})
+	javaPath := filepath.Join(root, "usr", "bin", "java")
+	writeTestProcess(t, root, testProcess{pid: 100, executable: javaPath + " (deleted)", ppid: 1})
 
 	got, err := findProcesses(
 		[]int32{100},
 		procFS,
+		root,
 		executableFilter{
 			ExecutableName: "java",
-			ExecutablePath: "/usr/bin/java",
+			ExecutablePath: javaPath,
 		},
 	)
 	if err != nil {
@@ -129,6 +132,7 @@ func TestFindProcessesMatchesExactCommandLineArgument(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100, 101},
 		procFS,
+		root,
 		executableFilter{
 			ExecutablePrefix: "python",
 			ExecutablePath:   "/app/main.py",
@@ -152,6 +156,7 @@ func TestFindProcessesMatchesPlatformPythonExecutable(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100, 101, 102},
 		procFS,
+		root,
 		executableFilter{ExecutablePrefix: "python"},
 	)
 	if err != nil {
@@ -174,6 +179,7 @@ func TestFindProcessesSkipsExitedProcess(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100},
 		procFS,
+		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err != nil {
@@ -195,6 +201,7 @@ func TestFindProcessesReturnsStatParseError(t *testing.T) {
 	_, err := findProcesses(
 		[]int32{100},
 		procFS,
+		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err == nil {

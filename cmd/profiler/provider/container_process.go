@@ -20,10 +20,12 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"syscall"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/pod"
+	hostprocess "github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
@@ -105,10 +107,10 @@ func findProcessesInCgroups(cgroupSuffix string, filter executableFilter) (map[i
 		return nil, fmt.Errorf("open procfs: %w", err)
 	}
 
-	return findProcesses(pids, procFS, filter)
+	return findProcesses(pids, procFS, procfs.DefaultPath(), filter)
 }
 
-func findProcesses(pids []int32, procFS procfs.FS, filter executableFilter) (map[int][]int, error) {
+func findProcesses(pids []int32, procFS procfs.FS, procRoot string, filter executableFilter) (map[int][]int, error) {
 	targetProcs := make([]procInfo, 0, len(pids))
 	for _, rawPID := range pids {
 		pid := int(rawPID)
@@ -131,8 +133,12 @@ func findProcesses(pids []int32, procFS procfs.FS, filter executableFilter) (map
 		if resolvedExecutable == "" {
 			continue
 		}
-		// The kernel's unlinked-file marker does not change executable identity.
-		resolvedExecutable = procfs.TrimDeletedMarker(resolvedExecutable)
+		// Drop the marker only when procfs confirms that it describes the
+		// running image rather than a literal filename component.
+		resolvedExecutable = hostprocess.NormalizeExecutable(
+			resolvedExecutable,
+			filepath.Join(procRoot, strconv.Itoa(pid), "exe"),
+		)
 
 		if !filter.matchesName(filepath.Base(resolvedExecutable)) {
 			continue
