@@ -98,8 +98,11 @@ func netNamespaceCookieInPIDNamespace(pid int) (cookie uint64, err error) {
 	}
 	defer func() {
 		if restoreErr := restoreNetNamespace(int(curNS.Fd())); restoreErr != nil {
-			// Exiting while locked makes the runtime terminate this thread.
-			// The caller keeps its own clean thread and only sees the error.
+			// Exiting while locked prevents reuse of the contaminated thread.
+			// runtime.mexit terminates ordinary threads but permanently parks
+			// the main thread (m0): exiting it on Linux would leave the process
+			// in a non-waitable zombie state while other threads still run.
+			// The caller remains on its own thread and receives the error.
 			unlock = false
 			err = errors.Join(err, fmt.Errorf("restore netns after reading PID %d: %w", pid, restoreErr))
 		}

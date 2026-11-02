@@ -17,6 +17,7 @@ package netutil
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -114,8 +116,7 @@ func runNetNamespaceTestSuite(t *testing.T) {
 func runNetNamespaceTestsInUserNamespace(t *testing.T) {
 	t.Helper()
 
-	cmd := exec.Command(os.Args[0], "-test.v", "-test.run=^TestNetNamespaceCookieByPID$")
-	cmd.Env = append(os.Environ(), netNamespaceModeEnv+"=namespaced")
+	cmd := newNetNamespaceCommand(t, "namespaced")
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: unix.CLONE_NEWUSER | unix.CLONE_NEWNET,
 		UidMappings: []syscall.SysProcIDMap{{
@@ -146,10 +147,9 @@ func runNetNamespaceTestsInUserNamespace(t *testing.T) {
 func testNetNamespaceRestoresCallerNamespace(t *testing.T, targetPID int, targetCookie uint64) {
 	t.Helper()
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestNetNamespaceCookieByPID$")
+	cmd := newNetNamespaceCommand(t, "caller")
 	cmd.Env = append(
-		os.Environ(),
-		netNamespaceModeEnv+"=caller",
+		cmd.Env,
 		netNamespaceTargetPIDEnv+"="+strconv.Itoa(targetPID),
 		netNamespaceExpectedEnv+"="+strconv.FormatUint(targetCookie, 10),
 	)
@@ -185,12 +185,25 @@ func testNetNamespaceRestoreFailureKeepsCaller(t *testing.T, targetPID int, targ
 
 	originalRestore := restoreNetNamespace
 	t.Cleanup(func() { restoreNetNamespace = originalRestore })
-	restoreNetNamespace = func(int) error { return errors.New("injected restore failure") }
+	restoreErr := errors.New("injected restore failure")
+	var workerTID int
+	restoreNetNamespace = func(int) error {
+		workerTID = unix.Gettid()
+		return restoreErr
+	}
 
+	var exitedWorkers int
 	for range 3 {
 		cookie, err := NetNamespaceCookieByPID(targetPID)
-		if err == nil || !strings.Contains(err.Error(), "restore netns") {
+		if !errors.Is(err, restoreErr) {
 			t.Fatalf("NetNamespaceCookieByPID(%d) error = %v, want restore failure", targetPID, err)
+		}
+		// runtime.mexit permanently parks m0 to preserve Linux process wait
+		// semantics, so its /proc task entry remains. Ordinary workers must
+		// disappear; receiving the result does not itself join a thread.
+		if workerTID != os.Getpid() {
+			assertNetNamespaceThreadExited(t, workerTID)
+			exitedWorkers++
 		}
 		if cookie != targetCookie {
 			t.Fatalf("NetNamespaceCookieByPID(%d) = %d, %v, want target cookie %d", targetPID, cookie, err, targetCookie)
@@ -209,6 +222,9 @@ func testNetNamespaceRestoreFailureKeepsCaller(t *testing.T, targetPID int, targ
 		if afterCookie != beforeCookie {
 			t.Fatalf("caller cookie changed after failed restore: %d -> %d", beforeCookie, afterCookie)
 		}
+	}
+	if exitedWorkers == 0 {
+		t.Fatal("restore failures never retired a non-main worker thread")
 	}
 
 	restoreNetNamespace = originalRestore
@@ -273,8 +289,7 @@ func testNetNamespaceInvalidPIDKeepsCaller(t *testing.T) {
 func startNetNamespaceTarget(t *testing.T) (int, uint64) {
 	t.Helper()
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestNetNamespaceCookieByPID$")
-	cmd.Env = append(os.Environ(), netNamespaceModeEnv+"=target")
+	cmd := newNetNamespaceCommand(t, "target")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWNET}
 	cmd.Stderr = os.Stderr
 
@@ -282,10 +297,12 @@ func startNetNamespaceTarget(t *testing.T) (int, uint64) {
 	if err != nil {
 		t.Fatalf("StdoutPipe() error = %v", err)
 	}
+	t.Cleanup(func() { _ = stdout.Close() })
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatalf("StdinPipe() error = %v", err)
 	}
+	t.Cleanup(func() { _ = stdin.Close() })
 	if err := cmd.Start(); err != nil {
 		if errors.Is(err, syscall.EPERM) {
 			t.Skip("creating a network namespace requires CAP_SYS_ADMIN")
@@ -315,6 +332,57 @@ func startNetNamespaceTarget(t *testing.T) (int, uint64) {
 		t.Skip("SO_NETNS_COOKIE is unavailable; requires Linux 5.14+")
 	}
 	return cmd.Process.Pid, cookie
+}
+
+func newNetNamespaceCommand(t *testing.T, mode string) *exec.Cmd {
+	t.Helper()
+
+	deadline := time.Now().Add(30 * time.Second)
+	if testDeadline, ok := t.Deadline(); ok && testDeadline.Add(-time.Second).Before(deadline) {
+		deadline = testDeadline.Add(-time.Second)
+	}
+	// Keep the context alive during cleanup so closing target stdin can
+	// terminate it normally. The deadline also bounds startup and Wait.
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.timeout=25s", "-test.run=^TestNetNamespaceCookieByPID$")
+	if mode == "namespaced" {
+		cmd.Args = append(cmd.Args, "-test.v")
+	}
+	cmd.Env = append(os.Environ(), netNamespaceModeEnv+"="+mode)
+	cmd.WaitDelay = time.Second
+
+	return cmd
+}
+
+func assertNetNamespaceThreadExited(t *testing.T, tid int) {
+	t.Helper()
+
+	if tid <= 0 {
+		t.Fatalf("restore hook did not capture a worker TID: %d", tid)
+	}
+
+	path := fmt.Sprintf("/proc/self/task/%d", tid)
+	timeout := time.NewTimer(2 * time.Second)
+	defer timeout.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		_, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("inspect worker thread %d: %v", tid, err)
+		}
+
+		select {
+		case <-timeout.C:
+			t.Fatalf("worker thread %d still exists after failed namespace restore", tid)
+		case <-ticker.C:
+		}
+	}
 }
 
 func runNetNamespaceTarget() {
