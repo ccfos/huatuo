@@ -362,6 +362,13 @@ assert_profiler_stack_contains() {
 		|| fatal "stack ${method} not found for PID ${pid} in ${folded}"
 }
 
+assert_profiler_folded_contains() {
+	local folded=$1
+	local method=$2
+	grep -q "${method}" "${folded}" \
+		|| fatal "stack ${method} not found in ${folded}"
+}
+
 # Expose the real PID, start time and pipes to the calling Shell test. A
 # temporary FIFO writer keeps a fast child exit from blocking the parent's open.
 # Callers own cleanup and close the returned descriptors when done.
