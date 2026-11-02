@@ -85,7 +85,7 @@ runqlat_prepare() {
 		RUNQLAT_CPU_ROOT=$(findmnt -rn -t cgroup2 -o TARGET) || skip "CPU cgroup controller is not mounted"
 		RUNQLAT_CPUSET_ROOT=${RUNQLAT_CPU_ROOT}
 	fi
-	RUNQLAT_PORT=$(allocate_available_port) || fatal "cannot allocate runqlat metrics port"
+	RUNQLAT_PORT=${HUATUO_BAMAI_ADDR##*:}
 	RUNQLAT_KUBELET_PORT=${KUBELET_PODS_API##*:}
 	RUNQLAT_KUBELET_PORT=${RUNQLAT_KUBELET_PORT%%/*}
 	readonly RUNQLAT_DIR RUNQLAT_LOAD RUNQLAT_NS RUNQLAT_PREFIX RUNQLAT_LABEL
@@ -98,9 +98,6 @@ runqlat_prepare() {
 		assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
 		cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${RUNQLAT_DIR}/baseline.log"
 	fi
-	HUATUO_BAMAI_ADDR="http://127.0.0.1:${RUNQLAT_PORT}"
-	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
-
 }
 
 runqlat_restart() {
@@ -111,8 +108,7 @@ runqlat_restart() {
 		cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${RUNQLAT_DIR}/daemon-${runqlat_daemon_generation}.log"
 	fi
 	runqlat_daemon_generation=$((runqlat_daemon_generation + 1))
-	write_config_runqlat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	huatuo_bamai_start --config-dir "${HUATUO_BAMAI_TEST_TMPDIR}" --config bamai.conf \
+	integration_huatuo_bamai_start write_config_bamai_runqlat \
 		--region e2e --disable-storage
 }
 

@@ -133,16 +133,10 @@ trap 'exit 143' TERM
 trap 'exit 130' INT
 
 cpu_metrics_prepare
-if [[ $(stat -fc %T /sys/fs/cgroup) == cgroup2fs ]]; then
-	DLOAD_MODE=unified
-elif [[ $(stat -fc %T /sys/fs/cgroup/unified 2> /dev/null || true) == cgroup2fs ]]; then
-	DLOAD_MODE=hybrid
-else
-	DLOAD_MODE=legacy
-fi
+DLOAD_MODE=$(cgroup_mode) || fatal "cannot determine host cgroup mode"
 # Match test workers without depending on kernel-specific stack frames.
 DLOAD_FIXTURE_ISSUES='[["e2e-unmatched","(?m)^Comm: dload-unmatched\\tPid: [0-9]+$"],["e2e-dload","(?m)^Comm: stress-ng-hdd\\tPid: [0-9]+$"]]'
-DLOAD_PORT=$(allocate_available_port) || fatal "cannot allocate dload metrics port"
+DLOAD_PORT=${HUATUO_BAMAI_ADDR##*:}
 DLOAD_KUBELET_PORT=${KUBELET_PODS_API##*:}
 DLOAD_KUBELET_PORT=${DLOAD_KUBELET_PORT%%/*}
 readonly DLOAD_MODE DLOAD_FIXTURE_ISSUES DLOAD_PORT DLOAD_KUBELET_PORT
@@ -152,8 +146,6 @@ if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid ]]; then
 	assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
 	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${DLOAD_DIR}/baseline.log"
 fi
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${DLOAD_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 dload_status() {
 	local enabled=1
@@ -187,8 +179,7 @@ assert_dload_logs() {
 }
 
 dload_start() {
-	write_config_dload_autotracing > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	huatuo_bamai_start --config-dir "${HUATUO_BAMAI_TEST_TMPDIR}" --config bamai.conf --region e2e
+	integration_huatuo_bamai_start write_config_bamai_dload_autotracing --region e2e
 	wait_until 10 0.5 dload_status || fatal "dload lifecycle metrics are incorrect"
 }
 
@@ -207,7 +198,7 @@ assert_dload_invalid_config() (
 	threshold) dload_threshold=-1 ;;
 	cooldown) dload_cooldown=-1 ;;
 	esac
-	write_config_dload_autotracing > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	write_config_bamai_dload_autotracing > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	timeout 15 "${HUATUO_BAMAI_BIN}" --region e2e --disable-kubelet \
 		--config-dir "${HUATUO_BAMAI_TEST_TMPDIR}" --config bamai.conf \
 		> "${HUATUO_BAMAI_TEST_TMPDIR}/expected-error.log" 2>&1 || status=$?

@@ -76,7 +76,7 @@ cpu_load_prepare "${CPUIDLE_DIR}"
 cpu_metrics_prepare
 cpu_reference_start "${CPUIDLE_DIR}"
 
-CPUIDLE_PORT=$(allocate_available_port) || fatal "cannot allocate cpuidle API port"
+CPUIDLE_PORT=${HUATUO_BAMAI_ADDR##*:}
 CPUIDLE_KUBELET_PORT=${KUBELET_PODS_API##*:}
 CPUIDLE_KUBELET_PORT=${CPUIDLE_KUBELET_PORT%%/*}
 CPUIDLE_NODE=$(kubelet_pods_json | jq -er '[.items[].spec.nodeName] | unique | if length == 1 then .[0] else error("cannot identify local node") end')
@@ -96,8 +96,6 @@ if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid ]]; then
 	assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
 	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${CPUIDLE_DIR}/baseline.log"
 fi
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${CPUIDLE_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 cpuidle_status() {
 	local enabled=1
@@ -233,8 +231,7 @@ assert_cpuidle_logs() {
 }
 
 cpuidle_start() {
-	write_config_cpuidle_autotracing > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	huatuo_bamai_start --config-dir "${HUATUO_BAMAI_TEST_TMPDIR}" --config bamai.conf --region e2e \
+	integration_huatuo_bamai_start write_config_bamai_cpuidle_autotracing --region e2e \
 		--tools-bin-dir "${ROOT_DIR}/_output/bin"
 	wait_until 15 0.5 cpuidle_status || fatal "cpuidle lifecycle metrics did not become ready"
 }
@@ -364,7 +361,7 @@ assert_cpuidle_invalid_config() (
 	percentage) cpuidle_thresholds[5]=101 ;;
 	regex) cpuidle_include='[' ;;
 	esac
-	write_config_cpuidle_autotracing > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	write_config_bamai_cpuidle_autotracing > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	timeout 15 "${HUATUO_BAMAI_BIN}" --region e2e --disable-kubelet --config-dir "${HUATUO_BAMAI_TEST_TMPDIR}" \
 		--config bamai.conf > "${HUATUO_BAMAI_TEST_TMPDIR}/expected-error.log" 2>&1 || status=$?
 	((status != 0 && status != 124 && status != 137)) || fatal "${name}: invalid cpuidle config did not fail promptly"
