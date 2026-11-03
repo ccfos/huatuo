@@ -15,9 +15,11 @@
 package factory_test
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -183,6 +185,121 @@ func TestSubpackageConstructors(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestChromeTraceTimelineAcrossWindows(t *testing.T) {
+	dir := t.TempDir()
+	f, err := factory.NewFormatter(output.Config{
+		Format:      output.FormatChromeTrace,
+		Destination: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	window := func(value int64) *types.AggregationWindow {
+		return &types.AggregationWindow{
+			ProfileType: "profiler:cpu:nanoseconds:cpu:nanoseconds",
+			Aggregated: types.AggregatedProfile{
+				Frames:  []types.ProfileFrame{{Name: "root"}},
+				Stacks:  [][]uint32{{0}},
+				Samples: []types.AggregatedSample{{UserStack: 1, Value: value}},
+			},
+		}
+	}
+	// Each window's stacks are appended to one estimated timeline, so the
+	// second event starts where the first one ends.
+	if err := f.Add(t.Context(), window(1000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Add(t.Context(), window(2000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Complete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := filepath.Glob(filepath.Join(dir, "*.chrometrace.json"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("output files: %v, %v", paths, err)
+	}
+	data, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trace struct {
+		Events []struct {
+			Name    string `json:"name"`
+			Phase   string `json:"ph"`
+			StartUS int64  `json:"ts"`
+			DurUS   int64  `json:"dur"`
+		} `json:"traceEvents"`
+	}
+	if err := json.Unmarshal(data, &trace); err != nil {
+		t.Fatal(err)
+	}
+	var events []struct {
+		StartUS int64
+		DurUS   int64
+	}
+	for _, event := range trace.Events {
+		if event.Phase == "X" {
+			events = append(events, struct {
+				StartUS int64
+				DurUS   int64
+			}{StartUS: event.StartUS, DurUS: event.DurUS})
+		}
+	}
+	want := []struct {
+		StartUS int64
+		DurUS   int64
+	}{{StartUS: 0, DurUS: 1}, {StartUS: 1, DurUS: 2}}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("trace events = %+v, want %+v", events, want)
+	}
+}
+
+func TestChromeTraceRejectsNegativeWindow(t *testing.T) {
+	dir := t.TempDir()
+	f, err := factory.NewFormatter(output.Config{
+		Format:      output.FormatChromeTrace,
+		Destination: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	window := &types.AggregationWindow{
+		ProfileType: "profiler:cpu:nanoseconds:cpu:nanoseconds",
+		Aggregated: types.AggregatedProfile{
+			Frames:  []types.ProfileFrame{{Name: "root"}},
+			Stacks:  [][]uint32{{0}},
+			Samples: []types.AggregatedSample{{UserStack: 1, Value: -1000}},
+		},
+	}
+	if err := f.Add(t.Context(), window); err == nil {
+		t.Fatal("Add() error = nil, want a negative weight error")
+	}
+	if err := f.Complete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := filepath.Glob(filepath.Join(dir, "*.chrometrace.json"))
+	if err != nil || len(paths) != 0 {
+		t.Fatalf("output files: %v, %v", paths, err)
 	}
 }
 
