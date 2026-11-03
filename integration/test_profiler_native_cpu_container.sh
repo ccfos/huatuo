@@ -248,10 +248,12 @@ assert_privileged_container() (
 		--entrypoint /bin/bash "${runner_image}" -euc '
 			source "$ROOT_DIR/integration/lib.sh"
 			[[ -f /.dockerenv ]] || fatal "privileged validation did not start in a Docker container"
-			bash "$ROOT_DIR/integration/run.sh" -j 1 test_profiler_native_cpu_container.sh 2>&1 \
+			bash "$ROOT_DIR/integration/run.sh" -j 1 \
+				--output-dir "$HUATUO_BAMAI_TEST_TMPDIR/report" test_profiler_native_cpu_container.sh 2>&1 \
 				| tee "$HUATUO_BAMAI_TEST_TMPDIR/runner.log"
-			sed -n "/^{/,/^}/p" "$HUATUO_BAMAI_TEST_TMPDIR/runner.log" \
-				| jq -se ".[-1].execution_counts == {total: 1, passed: 1, skipped: 0, failed: 0}" > /dev/null \
+			jq -e ".status == \"completed\" and .exit_code == 0 and
+				.execution_counts == {total: 1, passed: 1, skipped: 0, failed: 0}" \
+				"$HUATUO_BAMAI_TEST_TMPDIR/report/test_run_results.json" > /dev/null \
 				|| fatal "privileged native container case did not pass without skips"
 		' || status=$?
 	assert_eq "${status}" 0 "privileged native container cases" \
