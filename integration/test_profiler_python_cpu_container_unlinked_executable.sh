@@ -71,7 +71,8 @@ mkdir -p "${PYTHON_RUNTIME_DIR}"
 
 # The workload copies the interpreter, deletes it while it runs, and restores
 # the path. Both wait loops fail with a message if Python exits early.
-DOCKER_CONTAINER_ID=$(docker run --detach --rm \
+# Keep the container after exit so readiness checks and cleanup can save logs.
+DOCKER_CONTAINER_ID=$(docker run --detach \
 	--volume "${PYTHON_FIXTURE}:/src/test_profiler_python_cpu.py:ro" \
 	--volume "${PYTHON_RUNTIME_DIR}:/work" \
 	"${PYTHON_CONTAINER_IMAGE}" \
