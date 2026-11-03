@@ -20,15 +20,15 @@
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 
-readonly FLAMEGRAPH_TOOL_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/tools"
-readonly FLAMEGRAPH_CLASSES_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/classes"
-readonly FLAMEGRAPH_TARGET_LOG="${HUATUO_BAMAI_TEST_TMPDIR}/target.log"
+readonly OUTPUT_FORMATS_TOOL_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/tools"
+readonly OUTPUT_FORMATS_CLASSES_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/classes"
+readonly OUTPUT_FORMATS_TARGET_LOG="${HUATUO_BAMAI_TEST_TMPDIR}/target.log"
 
-require_commands java javac python3 timeout
+require_commands java javac jq python3 timeout
 
-flamegraph_target_pid=""
+target_pid=""
 cleanup() {
-	[[ -n ${flamegraph_target_pid} ]] && stop_by_pid "${flamegraph_target_pid}" 5 || true
+	[[ -n ${target_pid} ]] && stop_by_pid "${target_pid}" 5 || true
 }
 trap cleanup EXIT
 
@@ -98,24 +98,24 @@ assert_chrometrace_output() {
 		|| fatal "unexpected Chrome Trace output: $(cat "${output}")"
 }
 
-mkdir -p "${FLAMEGRAPH_TOOL_DIR}/bin" "${FLAMEGRAPH_TOOL_DIR}/lib" "${FLAMEGRAPH_CLASSES_DIR}"
-install -m 755 "${ROOT_DIR}/integration/testdata/test_profiler_pprof_asprof.sh" "${FLAMEGRAPH_TOOL_DIR}/bin/asprof"
+mkdir -p "${OUTPUT_FORMATS_TOOL_DIR}/bin" "${OUTPUT_FORMATS_TOOL_DIR}/lib" "${OUTPUT_FORMATS_CLASSES_DIR}"
+install -m 755 "${ROOT_DIR}/integration/testdata/test_profiler_pprof_asprof.sh" "${OUTPUT_FORMATS_TOOL_DIR}/bin/asprof"
 # The sampler fixture does not load an agent, but the provider requires its file.
-printf 'fixture agent\n' > "${FLAMEGRAPH_TOOL_DIR}/lib/libasyncProfiler.so"
-javac -d "${FLAMEGRAPH_CLASSES_DIR}" "${ROOT_DIR}/integration/testdata/TestProfilerJavaMultiPID.java"
+printf 'fixture agent\n' > "${OUTPUT_FORMATS_TOOL_DIR}/lib/libasyncProfiler.so"
+javac -d "${OUTPUT_FORMATS_CLASSES_DIR}" "${ROOT_DIR}/integration/testdata/TestProfilerJavaMultiPID.java"
 
-java -cp "${FLAMEGRAPH_CLASSES_DIR}" TestProfilerJavaMultiPID alpha \
-	> "${FLAMEGRAPH_TARGET_LOG}" 2>&1 &
-flamegraph_target_pid=$!
-wait_until 30 1 grep -qx ready "${FLAMEGRAPH_TARGET_LOG}" \
-	|| fatal "JVM fixture did not become ready: $(cat "${FLAMEGRAPH_TARGET_LOG}")"
+java -cp "${OUTPUT_FORMATS_CLASSES_DIR}" TestProfilerJavaMultiPID alpha \
+	> "${OUTPUT_FORMATS_TARGET_LOG}" 2>&1 &
+target_pid=$!
+wait_until 30 1 grep -qx ready "${OUTPUT_FORMATS_TARGET_LOG}" \
+	|| fatal "JVM fixture did not become ready: $(cat "${OUTPUT_FORMATS_TARGET_LOG}")"
 
 for flamegraph_format in svg flamegraph; do
 	flamegraph_output="${HUATUO_BAMAI_TEST_TMPDIR}/${flamegraph_format}.svg"
 	flamegraph_log="${HUATUO_BAMAI_TEST_TMPDIR}/${flamegraph_format}.log"
 	if ! timeout 30 "${ROOT_DIR}/_output/bin/profiler" \
-		--type cpu --language java --pid "${flamegraph_target_pid}" \
-		--tool-path "${FLAMEGRAPH_TOOL_DIR}" --duration 1 --freq 100 --aggr-interval 1 \
+		--type cpu --language java --pid "${target_pid}" \
+		--tool-path "${OUTPUT_FORMATS_TOOL_DIR}" --duration 1 --freq 100 --aggr-interval 1 \
 		--output-format "${flamegraph_format}" --output-path "${flamegraph_output}" \
 		> "${flamegraph_log}" 2>&1; then
 		fatal "profiler ${flamegraph_format} failed: $(cat "${flamegraph_log}")"
@@ -128,8 +128,8 @@ for output_format in speedscope chrometrace; do
 	output="${HUATUO_BAMAI_TEST_TMPDIR}/${output_format}.json"
 	output_log="${HUATUO_BAMAI_TEST_TMPDIR}/${output_format}.log"
 	if ! timeout 30 "${ROOT_DIR}/_output/bin/profiler" \
-		--type cpu --language java --pid "${flamegraph_target_pid}" \
-		--tool-path "${FLAMEGRAPH_TOOL_DIR}" --duration 1 --freq 100 --aggr-interval 1 \
+		--type cpu --language java --pid "${target_pid}" \
+		--tool-path "${OUTPUT_FORMATS_TOOL_DIR}" --duration 1 --freq 100 --aggr-interval 1 \
 		--output-format "${output_format}" --output-path "${output}" \
 		> "${output_log}" 2>&1; then
 		fatal "profiler ${output_format} failed: $(cat "${output_log}")"
