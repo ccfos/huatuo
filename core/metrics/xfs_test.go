@@ -16,6 +16,7 @@
 package collector
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -245,4 +246,29 @@ func TestXFSLogFreeBytes(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestXFSLogBytesDoesNotOverflowUint32(t *testing.T) {
+	got := xfsLogBytes(1<<31, 4096)
+	want := float64(1<<31) * 4096
+	if got != want {
+		t.Fatalf("xfsLogBytes() = %v, want %v", got, want)
+	}
+}
+
+func TestXFSLogSizePreservesLargeSuperblockProduct(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sda")
+	file, err := os.Create(path)
+	require.NoError(t, err)
+	superblock := xfsSuperBlock{
+		SbMagicnum:  XFS_SB_MAGIC,
+		SbBlocksize: 4096,
+		SbLogblocks: 1 << 31,
+	}
+	require.NoError(t, binary.Write(file, binary.BigEndian, &superblock))
+	require.NoError(t, file.Close())
+
+	got, err := xfsLogSize(path)
+	require.NoError(t, err)
+	require.Equal(t, float64(1<<31)*4096, got)
 }

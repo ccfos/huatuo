@@ -226,8 +226,12 @@ func xfsLogSize(path string) (float64, error) {
 		return -1, fmt.Errorf("invalid XFS superblock magic: 0x%x", sb.SbMagicnum)
 	}
 
-	xlogBytes := float64(sb.SbLogblocks * sb.SbBlocksize)
+	xlogBytes := xfsLogBytes(sb.SbLogblocks, sb.SbBlocksize)
 	return xlogBytes, nil
+}
+
+func xfsLogBytes(logblocks, blocksize uint32) float64 {
+	return float64(logblocks) * float64(blocksize)
 }
 
 // devXLogFreeBytes returns the available xlog space (in bytes) for each XFS device
