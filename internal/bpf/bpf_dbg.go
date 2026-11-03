@@ -61,7 +61,7 @@ func (d *BpfDbg) Enabled() bool {
 // When debug is disabled consts is returned unchanged.
 //
 // bpf_dbg_enabled is always defined in bpf_dbg.h (outside the DEBUG_BPF
-// guard), so RewriteConstants can rewrite it regardless of how the object
+// guard), so the loader can rewrite it regardless of how the object
 // was compiled. In non-debug builds nothing references it, so flipping it
 // to 1 is a harmless no-op; in debug builds it gates bpf_dbg() output.
 func (d *BpfDbg) WithBpfDbg(consts map[string]any) map[string]any {

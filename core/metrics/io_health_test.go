@@ -311,7 +311,7 @@ func TestIOHealthKernelABIAndLabels(t *testing.T) {
 
 func ioHealthBTFSpec(t *testing.T, types ...btf.Type) *btf.Spec {
 	t.Helper()
-	builder, err := btf.NewBuilder(types)
+	builder, err := btf.NewBuilder(types, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

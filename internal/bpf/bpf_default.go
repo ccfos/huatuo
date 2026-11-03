@@ -125,10 +125,19 @@ func loadBPFFromReader(bpfName string, rd io.ReaderAt, consts map[string]any) (B
 }
 
 func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
-	// RewriteConstants
-	if consts != nil {
-		if err := specs.RewriteConstants(consts); err != nil {
-			return nil, fmt.Errorf("rewrite constants: %w", err)
+	for name, value := range consts {
+		variable, ok := specs.Variables[name]
+		if !ok {
+			return nil, fmt.Errorf("rewrite constant %q: %w", name, ErrVariableNotFound)
+		}
+
+		dataMap, hasDataMap := specs.Maps[variable.SectionName]
+		if !variable.Constant() || !hasDataMap || dataMap.Flags&unix.BPF_F_RDONLY_PROG == 0 {
+			return nil, fmt.Errorf("rewrite constant %q: variable is not read-only", name)
+		}
+
+		if err := variable.Set(value); err != nil {
+			return nil, fmt.Errorf("rewrite constant %q: %w", name, err)
 		}
 	}
 

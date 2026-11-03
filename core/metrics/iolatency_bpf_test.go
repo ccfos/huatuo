@@ -379,7 +379,7 @@ func TestIOLatencyKernelBTFStartup(t *testing.T) {
 
 func writeIOLatencyKernelBTF(t *testing.T, kernelTypes []btf.Type) {
 	t.Helper()
-	builder, err := btf.NewBuilder(kernelTypes)
+	builder, err := btf.NewBuilder(kernelTypes, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +428,7 @@ func TestIOLatencyBioTraceCompletion(t *testing.T) {
 					},
 				})
 			}
-			builder, err := btf.NewBuilder(candidates)
+			builder, err := btf.NewBuilder(candidates, nil)
 			require.NoError(t, err)
 			raw, err := builder.Marshal(nil, nil)
 			require.NoError(t, err)
@@ -485,7 +485,7 @@ func TestIOLatencyCryptoModeCount(t *testing.T) {
 			if test.isReversed {
 				slices.Reverse(candidates)
 			}
-			builder, err := btf.NewBuilder(candidates)
+			builder, err := btf.NewBuilder(candidates, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
