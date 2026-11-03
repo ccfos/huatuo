@@ -321,6 +321,12 @@ Qdisc 指标描述发送队列积压、发送量、丢包和重入队次数，�
 | --- | --- | --- | --- | --- | --- |
 | `netdev_hw_rx_dropped_total` | 接收方向硬件丢包累计数 | 计数 | 宿主机 | sysfs、eBPF | device, driver |
 
+### RDMA 端口统计
+
+`netdev_rdma_link_<counter>` 输出内核的逐端口计数，具体名称取决于驱动。附加标签为 `device`、`nodeguid`、`index`、`num_ports` 和 `port`。
+
+新增 `port` 标签会产生新的时间序列，单端口设备也受影响。端口级查询保留该标签；对选定计数器，设备总量使用 `sum by (region, host, device) (<metric>)`，设备速率使用 `sum by (region, host, device) (rate(<metric>[5m]))`，将 `<metric>` 替换为完整指标名。只按 `device` 聚合会混合不同主机上的同名设备。
+
 ### 网卡统计
 
 通过 proc 或 netlink 采集网卡统计，公共指标遵循 [Linux `/proc/net/dev`](https://github.com/torvalds/linux/blob/v6.6/net/core/net-procfs.c#L72-L92) 的统计口径：

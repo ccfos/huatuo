@@ -123,6 +123,25 @@ write_config_bamai_default() {
 	write_config_bamai_auth "integration-node-token"
 }
 
+write_config_bamai_netdev() {
+	local port=$1
+	write_config_bamai_default
+	write_config_bamai_http "127.0.0.1:${port}"
+}
+
+# The case supplies its port and device selection before startup.
+write_config_bamai_netdev_hw() {
+	write_config_bamai_netdev "${NETDEV_HW_PORT}"
+	cat << EOF
+[MetricCollector.NetdevHW]
+    DeviceList = ["${netdev_hw_pattern}"]
+EOF
+}
+
+write_config_bamai_netdev_rdma_link() {
+	write_config_bamai_netdev "${RDMA_PORT}"
+}
+
 write_config_bamai_include_filter() {
 	write_config_bamai_default
 	cat << 'EOF'

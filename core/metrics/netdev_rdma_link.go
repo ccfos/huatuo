@@ -61,6 +61,7 @@ func (r *rdmaLink) Update() ([]*metric.Data, error) {
 		}
 
 		for _, s := range stats.RdmaPortStatistics {
+			tags["port"] = strconv.FormatUint(uint64(s.PortIndex), 10)
 			for lable, val := range s.Statistics {
 				data = append(data, metric.NewCounterData(lable, float64(val),
 					fmt.Sprintf("rdma device statistic %s.", lable), tags))
