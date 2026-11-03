@@ -17,20 +17,34 @@
 set -euo pipefail
 
 usage() {
-	echo "usage: $0 [--suite integration|e2e] [-j 1..8] [test_*.sh] [repeat-count]" >&2
+	echo "usage: $0 [--suite integration|e2e] [-j 1..8] [--test-list file] [--output-dir new-directory] [test_*.sh] [repeat-count]" >&2
 }
 
 TEST_SUITE=integration
 REQUESTED_JOBS=${INTEGRATION_JOBS:-1}
 jobs_explicit=false
+requested_test_list=""
+requested_output_dir=""
 while (($# > 0)); do
 	case $1 in
-	--suite | -j)
+	--suite | -j | --test-list | --output-dir)
 		(($# >= 2)) || {
 			usage
 			exit 2
 		}
-		if [[ $1 == --suite ]]; then TEST_SUITE=$2; else
+		if [[ $1 == --suite ]]; then TEST_SUITE=$2; elif [[ $1 == --test-list ]]; then
+			[[ -z ${requested_test_list} && -n $2 ]] || {
+				usage
+				exit 2
+			}
+			requested_test_list=$2
+		elif [[ $1 == --output-dir ]]; then
+			[[ -z ${requested_output_dir} && -n $2 ]] || {
+				usage
+				exit 2
+			}
+			requested_output_dir=$2
+		else
 			REQUESTED_JOBS=$2
 			jobs_explicit=true
 		fi
@@ -80,6 +94,11 @@ readonly INTEGRATION_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly ROOT_DIR=$(cd "${INTEGRATION_DIR}/.." && pwd)
 readonly TEST_DIR="${ROOT_DIR}/${TEST_SUITE}"
 
+if [[ -n ${requested_test_list} ]] && (($# > 0)); then
+	echo '--test-list cannot be combined with a positional test or repeat count' >&2
+	exit 2
+fi
+
 if [[ -n "${REQUESTED_TEST}" ]]; then
 	[[ "${REQUESTED_TEST}" == test_*.sh && "${REQUESTED_TEST}" != */* ]] || {
 		echo "${TEST_SUITE} test must be a test_*.sh file name: ${REQUESTED_TEST}" >&2
@@ -103,7 +122,27 @@ readonly MAX_TEST_EXECUTIONS=10000
 export TEST_LOG_TAG=${TEST_SUITE^^}
 source "${INTEGRATION_DIR}/lib.sh"
 shopt -s nullglob
-if [[ -n "${REQUESTED_TEST}" ]]; then
+if [[ -n ${requested_test_list} ]]; then
+	[[ -f ${requested_test_list} && -r ${requested_test_list} ]] || {
+		echo "test list is not readable: ${requested_test_list}" >&2
+		exit 2
+	}
+	mapfile -t selected_tests < "${requested_test_list}"
+	((${#selected_tests[@]} > 0)) || {
+		echo 'test list is empty' >&2
+		exit 2
+	}
+	declare -A selected_names=()
+	test_scripts=()
+	for name in "${selected_tests[@]}"; do
+		[[ ${name} == test_*.sh && ${name} != */* && -f ${TEST_DIR}/${name} && -z ${selected_names[${name}]:-} ]] || {
+			echo "unknown, invalid or duplicate ${TEST_SUITE} test: ${name}" >&2
+			exit 2
+		}
+		selected_names[${name}]=1
+		test_scripts+=("${TEST_DIR}/${name}")
+	done
+elif [[ -n "${REQUESTED_TEST}" ]]; then
 	test_scripts=("${TEST_DIR}/${REQUESTED_TEST}")
 else
 	test_scripts=("${TEST_DIR}"/test_*.sh)
@@ -121,7 +160,16 @@ command -v jq > /dev/null || {
 	log_error "test reports require jq; install jq"
 	exit 1
 }
-RUNNER_OUTPUT_DIR=$(mktemp -d /tmp/huatuo-test.XXXXXX)
+if [[ -n ${requested_output_dir} ]]; then
+	# Never reuse a prior run's report or logs, including through a symlink.
+	mkdir -- "${requested_output_dir}" || {
+		echo "output directory must be new: ${requested_output_dir}" >&2
+		exit 2
+	}
+	RUNNER_OUTPUT_DIR=$(cd "${requested_output_dir}" && pwd -P)
+else
+	RUNNER_OUTPUT_DIR=$(mktemp -d /tmp/huatuo-test.XXXXXX)
+fi
 export RUNNER_OUTPUT_DIR
 report_init "${TEST_SUITE}" "${REQUESTED_REPEAT_COUNT}" "${test_scripts[@]}"
 supervisor_pid="" supervisor_reason="" supervisor_signal=""
