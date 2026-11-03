@@ -16,7 +16,7 @@ struct folio___compat {
 	unsigned int _nr_pages;
 } __attribute__((preserve_access_index));
 
-static volatile const bool profiler_folio_npages = false;
+volatile const bool profiler_folio_npages = false;
 
 static __always_inline s64 profiler_folio_nr_pages(struct folio___compat *folio)
 {

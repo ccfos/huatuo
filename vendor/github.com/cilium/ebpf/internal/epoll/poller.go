@@ -1,3 +1,5 @@
+//go:build !windows
+
 package epoll
 
 import (
@@ -14,7 +16,11 @@ import (
 	"github.com/cilium/ebpf/internal/unix"
 )
 
-var ErrFlushed = errors.New("data was flushed")
+var (
+	ErrFlushed                   = errors.New("data was flushed")
+	errEpollWaitDeadlineExceeded = fmt.Errorf("epoll wait: %w", os.ErrDeadlineExceeded)
+	errEpollWaitClosed           = fmt.Errorf("epoll wait: %w", os.ErrClosed)
+)
 
 // Poller waits for readiness notifications from multiple file descriptors.
 //
@@ -28,6 +34,7 @@ type Poller struct {
 	eventMu    sync.Mutex
 	closeEvent *eventFd
 	flushEvent *eventFd
+	cleanup    runtime.Cleanup
 }
 
 func New() (_ *Poller, err error) {
@@ -44,7 +51,7 @@ func New() (_ *Poller, err error) {
 
 	epollFd, err := unix.EpollCreate1(unix.EPOLL_CLOEXEC)
 	if err != nil {
-		return nil, fmt.Errorf("create epoll fd: %v", err)
+		return nil, fmt.Errorf("create epoll fd: %w", err)
 	}
 	defer closeFDOnError(epollFd)
 
@@ -69,7 +76,10 @@ func New() (_ *Poller, err error) {
 		return nil, fmt.Errorf("add flush eventfd: %w", err)
 	}
 
-	runtime.SetFinalizer(p, (*Poller).Close)
+	p.cleanup = runtime.AddCleanup(p, func(raw int) {
+		_ = unix.Close(raw)
+	}, p.epollFd)
+
 	return p, nil
 }
 
@@ -78,7 +88,7 @@ func New() (_ *Poller, err error) {
 // Interrupts any calls to Wait. Multiple calls to Close are valid, but subsequent
 // calls will return os.ErrClosed.
 func (p *Poller) Close() error {
-	runtime.SetFinalizer(p, nil)
+	p.cleanup.Stop()
 
 	// Interrupt Wait() via the closeEvent fd if it's currently blocked.
 	if err := p.wakeWaitForClose(); err != nil {
@@ -158,19 +168,14 @@ func (p *Poller) Wait(events []unix.EpollEvent, deadline time.Time) (int, error)
 	defer p.epollMu.Unlock()
 
 	if p.epollFd == -1 {
-		return 0, fmt.Errorf("epoll wait: %w", os.ErrClosed)
+		return 0, errEpollWaitClosed
 	}
 
 	for {
 		timeout := int(-1)
 		if !deadline.IsZero() {
-			msec := time.Until(deadline).Milliseconds()
-			// Deadline is in the past, don't block.
-			msec = max(msec, 0)
-			// Deadline is too far in the future.
-			msec = min(msec, math.MaxInt)
-
-			timeout = int(msec)
+			// Ensure deadline is not in the past and not too far into the future.
+			timeout = int(internal.Between(time.Until(deadline).Milliseconds(), 0, math.MaxInt))
 		}
 
 		n, err := unix.EpollWait(p.epollFd, events, timeout)
@@ -184,7 +189,7 @@ func (p *Poller) Wait(events []unix.EpollEvent, deadline time.Time) (int, error)
 		}
 
 		if n == 0 {
-			return 0, fmt.Errorf("epoll wait: %w", os.ErrDeadlineExceeded)
+			return 0, errEpollWaitDeadlineExceeded
 		}
 
 		for i := 0; i < n; {
@@ -193,7 +198,7 @@ func (p *Poller) Wait(events []unix.EpollEvent, deadline time.Time) (int, error)
 				// Since we don't read p.closeEvent the event is never cleared and
 				// we'll keep getting this wakeup until Close() acquires the
 				// lock and sets p.epollFd = -1.
-				return 0, fmt.Errorf("epoll wait: %w", os.ErrClosed)
+				return 0, errEpollWaitClosed
 			}
 			if int(event.Fd) == p.flushEvent.raw {
 				// read event to prevent it from continuing to wake

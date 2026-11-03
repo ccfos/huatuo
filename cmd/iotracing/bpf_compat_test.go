@@ -104,7 +104,7 @@ func requestPartLayoutBTF(t *testing.T, partName string, rqDisk, oldType, devt b
 	if oldType {
 		types = append(types, hdStruct)
 	}
-	builder, err := btf.NewBuilder(types)
+	builder, err := btf.NewBuilder(types, nil)
 	require.NoError(t, err)
 	data, err := builder.Marshal(nil, nil)
 	require.NoError(t, err)

@@ -110,7 +110,7 @@ static __always_inline bool bpf_ratelimited(struct bpf_ratelimit_event *rate)
 				    &___bpf_rlimit_cfg_##rate)
 
 // BPF_RATELIMIT_IN_MAP_RC: like BPF_RATELIMIT_IN_MAP, but parameters come from
-// three .rodata globals that userspace patches via cilium/ebpf RewriteConstants
+// three read-only .rodata globals that userspace sets
 // before program load instead of being baked in at compile time. Use when the
 // rate must come from a CLI flag or config file. Layout matches the compile-
 // time variant exactly (same state map, same perf event channel, same payload),
