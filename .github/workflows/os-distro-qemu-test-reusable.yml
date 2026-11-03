@@ -3,6 +3,12 @@ name: OS Distro QEMU Tests (Reusable)
 on:
   workflow_call:
     inputs:
+      stage:
+        type: string
+        default: full
+      fast_selection:
+        type: string
+        default: ''
       os:
         description: Comma-separated distro names, or all
         type: string
@@ -25,6 +31,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.build.outputs.matrix }}
+      fast-image: ${{ steps.build.outputs.fast-image }}
     steps:
       - name: Build matrix
         id: build
@@ -71,13 +78,15 @@ jobs:
             exit 1
           fi
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "fast-image=$(jq -r '.[] | select(.os == "ubuntu26.04") | .image' <<< "$distros")" >> "$GITHUB_OUTPUT"
 
   # start VMs and test in them
   qemu-vm:
     name: Test in VM (${{ matrix.arch }} ${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
-    needs: distro-matrix
+    needs: [distro-matrix, fast-gate]
+    if: github.event_name != 'workflow_dispatch' || inputs.stage != 'fast'
     env:
       ACT_RUN: false
       INTEGRATION_JOBS: 3
@@ -239,5 +248,191 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: portable-generated
+          overwrite: true
           path: _output/portable-generated.tar
           if-no-files-found: error
+
+  fast-plan:
+    name: Plan Ubuntu shards
+    needs: distro-matrix
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    env:
+      VM_IMAGE_REF: ${{ needs.distro-matrix.outputs.fast-image }}
+      CI_STAGE: ${{ inputs.stage }}
+      FAST_SELECTION: ${{ inputs.fast_selection }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate workflow helpers
+        run: python3 -m unittest discover -s .github/workflows/scripts -p 'test_*.py'
+      - id: plan
+        run: |
+          [[ "$CI_STAGE" == full || "$CI_STAGE" == fast ]] || exit 2
+          python3 .github/workflows/scripts/fast-pass.py plan --selection "$FAST_SELECTION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-fast-plan
+          path: fast-plan/
+          overwrite: true
+          if-no-files-found: error
+
+  fast-build:
+    name: Build once in Ubuntu 26
+    needs: [distro-matrix, fast-plan, portable-generated]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      VM_IMAGE_REF: ${{ needs.distro-matrix.outputs.fast-image }}
+      VM_INIT_KUBERNETES: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free host disk for VM and caches
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h "$RUNNER_TEMP"
+      - name: Host Init
+        run: .github/workflows/scripts/qemu-0-host-init.sh amd64
+      - name: Start VM
+        timeout-minutes: 20
+        run: .github/workflows/scripts/qemu-1-start-vm.sh amd64 ubuntu26.04
+      # Keep CI artifacts out of the initial source sync.
+      - uses: actions/download-artifact@v4
+        with:
+          name: ubuntu-fast-plan
+          path: fast-plan
+      - uses: actions/download-artifact@v4
+        with:
+          name: portable-generated
+          path: fast-generated
+      - name: Receive generated sources
+        run: .github/workflows/scripts/vm-test/sync-generated-to-vm.sh fast-generated/portable-generated.tar
+      - name: Prepare VM
+        timeout-minutes: 20
+        run: .github/workflows/scripts/qemu-2-run-in-vm.sh --prepare-only
+      - name: Read VM Go cache key
+        id: cache-key
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh key >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: cache
+        if: steps.cache-key.outputs.key != ''
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/huatuo-go-build
+          key: vm-go-v1-${{ steps.cache-key.outputs.key }}-${{ hashFiles('go.mod', 'go.sum', 'Makefile') }}-${{ github.sha }}
+          restore-keys: vm-go-v1-${{ steps.cache-key.outputs.key }}-
+      - name: Restore Go cache
+        if: steps.cache-key.outputs.key != ''
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh restore
+      - name: Build shared artifacts
+        timeout-minutes: 20
+        run: bash .github/workflows/scripts/vm-test/fast-pass-vm.sh build
+      - name: Collect Go cache
+        if: steps.cache.outputs.cache-hit != 'true' && steps.cache-key.outputs.key != ''
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh save
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-fast-build
+          path: fast-build/
+          overwrite: true
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - name: Cleanup VM
+        if: always()
+        run: .github/workflows/scripts/qemu-3-cleanup.sh
+
+  fast-shard:
+    name: Ubuntu shard (${{ matrix.id }})
+    needs: [distro-matrix, fast-plan, fast-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.fast-plan.outputs.matrix) }}
+    env:
+      VM_IMAGE_REF: ${{ needs.distro-matrix.outputs.fast-image }}
+      VM_INIT_KUBERNETES: ${{ format('{0}', matrix.kubernetes) }}
+      SHARD_ID: ${{ matrix.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free host disk for VM and caches
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h "$RUNNER_TEMP"
+      - name: Host Init
+        run: .github/workflows/scripts/qemu-0-host-init.sh amd64
+      - name: Start VM
+        id: start
+        timeout-minutes: 20
+        run: .github/workflows/scripts/qemu-1-start-vm.sh amd64 ubuntu26.04
+      # Keep CI artifacts out of the initial source sync.
+      - uses: actions/download-artifact@v4
+        with:
+          name: ubuntu-fast-plan
+          path: fast-plan
+      - uses: actions/download-artifact@v4
+        with:
+          name: ubuntu-fast-build
+          path: fast-build
+      - name: Prepare VM
+        timeout-minutes: 20
+        run: .github/workflows/scripts/qemu-2-run-in-vm.sh --prepare-only
+      - name: Read VM Go cache key
+        id: cache-key
+        if: matrix.go_cache
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh key >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        if: matrix.go_cache && steps.cache-key.outputs.key != ''
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/huatuo-go-build
+          key: vm-go-v1-${{ steps.cache-key.outputs.key }}-${{ hashFiles('go.mod', 'go.sum', 'Makefile') }}-${{ github.sha }}
+          restore-keys: vm-go-v1-${{ steps.cache-key.outputs.key }}-
+      - name: Restore Go cache
+        if: matrix.go_cache && steps.cache-key.outputs.key != ''
+        continue-on-error: true
+        run: .github/workflows/scripts/vm-test/go-cache.sh restore
+      - name: Run selected tests
+        timeout-minutes: 35
+        run: bash .github/workflows/scripts/vm-test/fast-pass-vm.sh run
+      - name: Collect reports and logs
+        if: always() && steps.start.outcome == 'success'
+        run: bash .github/workflows/scripts/vm-test/fast-pass-vm.sh collect
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ubuntu-fast-result-${{ matrix.id }}-${{ github.run_attempt }}
+          path: fast-result/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Cleanup VM
+        if: always()
+        run: .github/workflows/scripts/qemu-3-cleanup.sh
+
+  fast-gate:
+    name: Verify Ubuntu coverage
+    needs: [distro-matrix, fast-plan, fast-build, fast-shard]
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    env:
+      VM_IMAGE_REF: ${{ needs.distro-matrix.outputs.fast-image }}
+      JOB_RESULTS: ${{ toJSON(needs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require successful shard jobs
+        run: jq -e 'all(.[]; .result == "success")' <<< "$JOB_RESULTS"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ubuntu-fast-plan
+          path: fast-plan
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ubuntu-fast-result-*
+          path: fast-results
+      - name: Check complete coverage and outcomes
+        run: python3 .github/workflows/scripts/fast-pass.py verify

@@ -19,6 +19,7 @@
 # Caller: os-distro-qemu-test-reusable.yml, as the qemu-1 step; qemu-local-test.sh locally.
 # Environment:
 # - VM_IMAGE_REF: Image reference; defaults from DISTRO and ARCH.
+# - VM_INIT_KUBERNETES: Initialize Kubernetes; true (default) or false.
 # - VM_IMAGE_PULL: Image pull policy, always (default) or never.
 # - RUNNER_TEMP: Preferred parent directory for per-run storage.
 # - TMPDIR: Storage fallback when RUNNER_TEMP is unset; defaults to /tmp.
@@ -76,8 +77,15 @@ start_args=(
 	--vcpus 4
 	--memory 8192
 	--disk-size 40G
-	--init-kubernetes
 )
+case ${VM_INIT_KUBERNETES:-true} in
+true) start_args+=(--init-kubernetes) ;;
+false) ;;
+*)
+	echo "VM_INIT_KUBERNETES must be true or false" >&2
+	exit 2
+	;;
+esac
 [[ -z "$VM_NAME" ]] || start_args+=(--name "$VM_NAME")
 [[ -z "$VM_MAC" ]] || start_args+=(--mac "$VM_MAC")
 [[ -z "$VM_IP" ]] || start_args+=(--ip "$VM_IP")
