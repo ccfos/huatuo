@@ -84,24 +84,35 @@ DOCKER_CONTAINER_ID=$(docker run --detach \
 		chmod +x /work/python
 		PYTHONHOME="$python_home" /work/python /src/test_profiler_python_cpu.py independent &
 		pid=$!
-		while [ ! -e "/proc/$pid/exe" ]; do
-			kill -0 "$pid" 2> /dev/null || {
-				echo "python exited before its executable appeared" >&2
-				exit 1
-			}
-			sleep 0.1
-		done
-		rm -f /work/python
-		while true; do
+		python_running() {
+			state=$(cut -d" " -f3 "/proc/$pid/stat" 2> /dev/null || true)
+			[ -n "$state" ] && [ "$state" != Z ]
+		}
+		deleted_marker() {
 			case "$(readlink "/proc/$pid/exe" 2> /dev/null || true)" in
-				*" (deleted)") break ;;
+				*" (deleted)") return 0 ;;
 			esac
-			kill -0 "$pid" 2> /dev/null || {
-				echo "python exited before the image was replaced" >&2
-				exit 1
-			}
-			sleep 0.1
-		done
+			return 1
+		}
+		wait_for() {
+			description=$1
+			shift
+			deadline=$(( $(date +%s) + 30 ))
+			while ! "$@"; do
+				python_running || {
+					echo "python exited before $description" >&2
+					exit 1
+				}
+				[ "$(date +%s)" -lt "$deadline" ] || {
+					echo "timed out waiting for $description" >&2
+					exit 1
+				}
+				sleep 0.1
+			done
+		}
+		wait_for "its executable to appear" test -e "/proc/$pid/exe"
+		rm -f /work/python
+		wait_for "the running image to be deleted" deleted_marker
 		cp "$python_bin" /work/python
 		chmod +x /work/python
 		touch /work/python.ready
@@ -140,5 +151,6 @@ assert_profiler_output_file "${PYTHON_RUNTIME_DIR}/container.folded"
 assert_profiler_folded_contains "${PYTHON_RUNTIME_DIR}/container.folded" independent_hot_method
 log_info "Python container with a replaced executable is discovered and profiled"
 
-docker rm -f "${DOCKER_CONTAINER_ID}" > /dev/null 2>&1 || true
+docker rm -f "${DOCKER_CONTAINER_ID}" > /dev/null 2>&1 \
+	|| fatal "failed to remove container ${DOCKER_CONTAINER_ID}"
 DOCKER_CONTAINER_ID=""
