@@ -68,7 +68,7 @@ func TestExecutableMissing(t *testing.T) {
 	}
 }
 
-func TestNormalizeExecutable(t *testing.T) {
+func TestResolveExecutablePath(t *testing.T) {
 	dir := t.TempDir()
 	oldExecutable := filepath.Join(dir, "old-python")
 	newExecutable := filepath.Join(dir, "python")
@@ -140,18 +140,18 @@ func TestNormalizeExecutable(t *testing.T) {
 			if err := os.Symlink(test.procExe, procExePath); err != nil {
 				t.Fatalf("Symlink(%q) error = %v", test.procExe, err)
 			}
-			got, err := NormalizeExecutable(test.path, procExePath)
+			got, err := ResolveExecutablePath(test.path, procExePath)
 			if err != nil {
-				t.Fatalf("NormalizeExecutable(%q, %q) error = %v", test.path, test.procExe, err)
+				t.Fatalf("ResolveExecutablePath(%q, %q) error = %v", test.path, test.procExe, err)
 			}
 			if got != test.want {
-				t.Errorf("NormalizeExecutable(%q, %q) = %q, want %q", test.path, test.procExe, got, test.want)
+				t.Errorf("ResolveExecutablePath(%q, %q) = %q, want %q", test.path, test.procExe, got, test.want)
 			}
 		})
 	}
 }
 
-func TestNormalizeExecutableUsesTargetProcessRoot(t *testing.T) {
+func TestResolveExecutablePathUsesTargetProcessRoot(t *testing.T) {
 	dir := t.TempDir()
 	targetRoot := filepath.Join(dir, "container-root")
 	literalPath := filepath.Join(targetRoot, "app", "java (deleted)")
@@ -200,18 +200,18 @@ func TestNormalizeExecutableUsesTargetProcessRoot(t *testing.T) {
 			if err := os.Symlink(test.procExe, procExePath); err != nil {
 				t.Fatalf("Symlink(%q) error = %v", test.procExe, err)
 			}
-			got, err := NormalizeExecutable("/app/java (deleted)", procExePath)
+			got, err := ResolveExecutablePath("/app/java (deleted)", procExePath)
 			if err != nil {
-				t.Fatalf("NormalizeExecutable() error = %v", err)
+				t.Fatalf("ResolveExecutablePath() error = %v", err)
 			}
 			if got != test.want {
-				t.Errorf("NormalizeExecutable() = %q, want %q", got, test.want)
+				t.Errorf("ResolveExecutablePath() = %q, want %q", got, test.want)
 			}
 		})
 	}
 }
 
-func TestNormalizeExecutableRejectsUnreadableTargetRoot(t *testing.T) {
+func TestResolveExecutablePathRejectsUnreadableTargetRoot(t *testing.T) {
 	dir := t.TempDir()
 	executable := filepath.Join(dir, "python")
 	if err := os.WriteFile(executable, nil, 0o600); err != nil {
@@ -232,12 +232,12 @@ func TestNormalizeExecutableRejectsUnreadableTargetRoot(t *testing.T) {
 		t.Fatalf("Symlink(%q) error = %v", executable, err)
 	}
 
-	if _, err := NormalizeExecutable("/app/python (deleted)", procExePath); err == nil {
-		t.Fatal("NormalizeExecutable() error = nil, want a stat error")
+	if _, err := ResolveExecutablePath("/app/python (deleted)", procExePath); err == nil {
+		t.Fatal("ResolveExecutablePath() error = nil, want a stat error")
 	}
 }
 
-func TestNormalizeExecutableKeepsAnAmbiguousHardLink(t *testing.T) {
+func TestResolveExecutablePathKeepsAnAmbiguousHardLink(t *testing.T) {
 	dir := t.TempDir()
 	original := filepath.Join(dir, "python3.10")
 	if err := os.WriteFile(original, nil, 0o600); err != nil {
@@ -267,12 +267,12 @@ func TestNormalizeExecutableKeepsAnAmbiguousHardLink(t *testing.T) {
 		t.Fatalf("Symlink(%q) error = %v", linked, err)
 	}
 
-	got, err := NormalizeExecutable(linked, procExePath)
+	got, err := ResolveExecutablePath(linked, procExePath)
 	if err != nil {
-		t.Fatalf("NormalizeExecutable(%q) error = %v", linked, err)
+		t.Fatalf("ResolveExecutablePath(%q) error = %v", linked, err)
 	}
 	if got != linked {
-		t.Errorf("NormalizeExecutable(%q) = %q, want the live path", linked, got)
+		t.Errorf("ResolveExecutablePath(%q) = %q, want the live path", linked, got)
 	}
 }
 

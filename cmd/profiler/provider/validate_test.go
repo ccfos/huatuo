@@ -130,10 +130,30 @@ func TestValidateProcessExecutablesAcceptsUnlinkedExecutable(t *testing.T) {
 		prefix string
 		target string
 	}{
-		{name: "python", prof: "Python", prefix: "python", target: "/huatuo-nonexistent/bin/python3.10"},
-		{name: "unlinked python", prof: "Python", prefix: "python", target: "/huatuo-nonexistent/bin/python3.10 (deleted)"},
-		{name: "unlinked platform python", prof: "Python", prefix: "python", target: "/huatuo-nonexistent/libexec/platform-python3.6 (deleted)"},
-		{name: "unlinked java", prof: "Java", prefix: "java", target: "/huatuo-nonexistent/jvm/java-17-openjdk/bin/java (deleted)"},
+		{
+			name:   "python",
+			prof:   "Python",
+			prefix: "python",
+			target: "/huatuo-nonexistent/bin/python3.10",
+		},
+		{
+			name:   "unlinked python",
+			prof:   "Python",
+			prefix: "python",
+			target: "/huatuo-nonexistent/bin/python3.10 (deleted)",
+		},
+		{
+			name:   "unlinked platform python",
+			prof:   "Python",
+			prefix: "python",
+			target: "/huatuo-nonexistent/libexec/platform-python3.6 (deleted)",
+		},
+		{
+			name:   "unlinked java",
+			prof:   "Java",
+			prefix: "java",
+			target: "/huatuo-nonexistent/jvm/java-17-openjdk/bin/java (deleted)",
+		},
 	}
 
 	for _, test := range tests {
