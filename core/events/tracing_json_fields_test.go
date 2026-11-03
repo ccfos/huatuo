@@ -285,7 +285,7 @@ func TestDynamicWindow(t *testing.T) {
 		wantNil   bool
 		want      string
 	}{
-		{name: "offset at base honours length", dyn: dyn, rawOffset: 8, base: 4, length: 4, want: "4567"},
+		{name: "offset at base honors length", dyn: dyn, rawOffset: 8, base: 4, length: 4, want: "4567"},
 		{name: "length beyond the window is clamped", dyn: dyn, rawOffset: 8, base: 4, length: 100, want: "456789"},
 		{name: "wrapped length does not overflow", dyn: dyn, rawOffset: 8, base: 4, length: ^uint32(0), want: "456789"},
 		{name: "offset below base yields nil", dyn: dyn, rawOffset: 3, base: 4, length: 1, wantNil: true},
