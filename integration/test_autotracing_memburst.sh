@@ -536,9 +536,10 @@ burst_anon=0
 burst_blacklist=0
 available_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
 ((available_kb > 1048576)) || fatal "real pressure scenario requires at least 1 GiB available"
-# A background burst during baseline must not suppress this smoke scenario.
-# Dedicated controlled-input cases above verify the longer cooldown separately.
+# Keep the increase eligible for two intervals if baseline activity consumes
+# the first interval's cooldown. Controlled-input cases cover longer cooldowns.
 burst_cooldown=1
+burst_window=3
 pressure_fds=()
 for i in 4 5 6 7 8 9; do
 	mkfifo "${MEMBURST_ROOT_WORKSPACE}/commands-${i}"
