@@ -937,39 +937,55 @@ huatuo_bamai_await_metrics() {
 		huatuo_bamai_collect_metrics
 }
 
+# Save every attempt, including failed retries, without retaining an older body.
+fetch_metrics_response() {
+	local prefix=$1 status curl_status=0
+	: > "${prefix}.headers" || return 1
+	: > "${prefix}.txt" || return 1
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -D "${prefix}.headers" -o "${prefix}.txt" \
+		-w '%{http_code}' "${HUATUO_BAMAI_METRICS_API}" 2> "${prefix}.err") || curl_status=$?
+	printf 'curl_exit=%s\nhttp_status=%s\n' "${curl_status}" "${status}" > "${prefix}.status" || return 1
+	[[ ${curl_status} -eq 0 && ${status} == 200 ]]
+}
+
+assert_metrics_response() {
+	local prefix=$1
+	if ! fetch_metrics_response "${prefix}"; then
+		cat "${prefix}.status" "${prefix}.headers" "${prefix}.txt" "${prefix}.err" >&2
+		fatal "/metrics: expected curl=0 HTTP=200; see ${prefix}.status"
+	fi
+	if ! grep -Eqi '^Content-Type:[[:blank:]]*text/plain([;[:space:]]|$)' "${prefix}.headers"; then
+		cat "${prefix}.headers" >&2
+		fatal "/metrics: expected text/plain; see ${prefix}.headers"
+	fi
+}
+
 # assert_metrics <desc> <present_pattern>... [-- <absent_pattern>...]
 assert_metrics() {
-	local desc=$1
-	shift
+	local desc=$1 pattern found status
 	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
-	local prefix="huatuo_bamai_"
+	shift
 
-	local present=() absent=()
-	while [[ $# -gt 0 && "$1" != "--" ]]; do
-		present+=("$1")
+	while (($#)) && [[ $1 != -- ]]; do
+		grep -qE "huatuo_bamai_($1)" "${metrics_file}" \
+			|| fatal "${desc}: expected present but not found: $1"
 		shift
 	done
-	shift 2> /dev/null || true
-	absent=("$@")
+	(($#)) || return 0
+	shift
 
-	if [[ ${#absent[@]} -gt 0 ]]; then
-		local absent_re
-		absent_re=$(
-			IFS='|'
-			echo "${absent[*]}"
-		)
-		local found
-		found=$(grep -oE "${prefix}(${absent_re})" "$metrics_file" || true)
-		[[ -z "$found" ]] || fatal "${desc}: expected absent but found: ${found}"
-	fi
-
-	if [[ ${#present[@]} -gt 0 ]]; then
-		local pat
-		for pat in "${present[@]}"; do
-			grep -qE "${prefix}(${pat})" "$metrics_file" \
-				|| fatal "${desc}: expected present but not found: ${pat}"
-		done
-	fi
+	(($#)) || return 0
+	local -a absent=()
+	for pattern in "$@"; do
+		absent+=(-e "huatuo_bamai_(${pattern})")
+	done
+	status=0
+	found=$(grep -oE "${absent[@]}" "${metrics_file}") || status=$?
+	case ${status} in
+	0) fatal "${desc}: expected absent but found: ${found}" ;;
+	1) ;;
+	*) fatal "${desc}: cannot search ${metrics_file}: grep exited ${status}" ;;
+	esac
 }
 
 # Both clocks must survive BPF decoding and JSON output without exposing host uptime.

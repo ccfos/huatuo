@@ -23,12 +23,10 @@ source "${ROOT_DIR}/integration/lib_net.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
 readonly NETDEV_HW_FIXTURES="${HUATUO_BAMAI_TEST_TMPDIR}/netdev-hw-fixtures"
-readonly NETDEV_HW_HEADERS="${HUATUO_BAMAI_TEST_TMPDIR}/netdev-hw-metrics.headers"
-readonly NETDEV_HW_METRICS="${HUATUO_BAMAI_TEST_TMPDIR}/netdev-hw-metrics.txt"
-readonly NETDEV_HW_STATUS="${HUATUO_BAMAI_TEST_TMPDIR}/netdev-hw-metrics.status"
-readonly NETDEV_HW_ERRORS="${HUATUO_BAMAI_TEST_TMPDIR}/netdev-hw-metrics.err"
+readonly NETDEV_HW_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/netdev-hw-metrics"
+readonly NETDEV_HW_METRICS="${NETDEV_HW_RESPONSE}.txt"
 
-require_commands curl ss
+require_commands curl ss awk grep
 kprobe_available carrier_down_count_show \
 	|| skip "netdev_hw requires the carrier_down_count_show kprobe"
 
@@ -36,31 +34,16 @@ NETDEV_HW_PORT=$(allocate_available_port) || fatal "cannot allocate netdev_hw HT
 readonly NETDEV_HW_PORT
 HUATUO_BAMAI_ADDR="http://127.0.0.1:${NETDEV_HW_PORT}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
-CURL_TIMEOUT=(--connect-timeout 2 --max-time 5)
 
 cleanup() {
-	local status=0 pid=""
-	if [[ -r ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid ]]; then
-		pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
-	fi
-	huatuo_bamai_stop || status=1
-	# Keep devices registered until all daemon readers have stopped.
-	if [[ -n ${pid} ]] && ! wait_until 2 0.1 process_exited "${pid}"; then
-		log_error "daemon pid=${pid} is still running; retaining test devices"
-		return 1
-	fi
-	netdevsim_destroy || status=1
-	return "${status}"
+	huatuo_bamai_stop || return 1
+	netdevsim_destroy
 }
 trap 'netdev_hw_exit_status=$?
 if ! cleanup && [[ ${netdev_hw_exit_status} == 0 || ${netdev_hw_exit_status} == 77 ]]; then
 	netdev_hw_exit_status=1
 fi
 exit "${netdev_hw_exit_status}"' EXIT
-
-netdevsim_create "${HUATUO_BAMAI_TEST_TMPDIR}"
-netdev_hw_pattern="^${NETDEVSIM_NETDEV}$"
-log_info "netdev_hw netdevsim device=${NETDEVSIM_NETDEV}"
 
 assert_netdev_hw_initial_stats() {
 	local stat value
@@ -71,62 +54,28 @@ assert_netdev_hw_initial_stats() {
 	done
 }
 
-netdev_hw_fetch_metrics() {
-	local http_status curl_status=0 artifact
-	# curl may leave an existing output file untouched on connection failure.
-	for artifact in "${NETDEV_HW_HEADERS}" "${NETDEV_HW_METRICS}" \
-		"${NETDEV_HW_STATUS}" "${NETDEV_HW_ERRORS}"; do
-		: > "${artifact}" || return 1
-	done
-
-	http_status=$(curl -sS "${CURL_TIMEOUT[@]}" -D "${NETDEV_HW_HEADERS}" -o "${NETDEV_HW_METRICS}" \
-		-w '%{http_code}' "${HUATUO_BAMAI_METRICS_API}" 2> "${NETDEV_HW_ERRORS}") || curl_status=$?
-	printf 'curl_exit=%s\nhttp_status=%s\n' "${curl_status}" "${http_status}" > "${NETDEV_HW_STATUS}" || return 1
-
-	[[ ${curl_status} -eq 0 && ${http_status} == 200 ]]
-}
-
-assert_netdev_hw_metrics_response() {
-	if ! netdev_hw_fetch_metrics; then
-		cat "${NETDEV_HW_STATUS}" "${NETDEV_HW_HEADERS}" "${NETDEV_HW_METRICS}" "${NETDEV_HW_ERRORS}" >&2
-		printf '\n' >&2
-		fatal "netdev_hw /metrics request failed; see ${NETDEV_HW_STATUS}"
-	fi
-	grep -Eqi '^Content-Type:[[:blank:]]*text/plain([;[:space:]]|$)' "${NETDEV_HW_HEADERS}" \
-		|| fatal "netdev_hw /metrics: expected text/plain content type; see ${NETDEV_HW_HEADERS}"
-}
-
 netdev_hw_sample_ready() {
-	netdev_hw_fetch_metrics || return 1
+	fetch_metrics_response "${NETDEV_HW_RESPONSE}" || return 1
 	grep -Fq "[rx_sw_dropped_stats] ${NETDEVSIM_NETDEV} => " "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" || return 1
 	grep -q '^huatuo_bamai_netdev_hw_rx_dropped_total' "${NETDEV_HW_METRICS}"
 }
 
 assert_netdev_hw_metrics() {
-	local expected=$1
-	assert_netdev_hw_metrics_response
-	awk -v device="${NETDEVSIM_NETDEV}" -v driver="netdevsim" -v expected="${expected}" '
-		function has_label(key, value) {
-			return index($1, "{" key "=\"" value "\"") || index($1, "," key "=\"" value "\"")
-		}
-		$1 ~ /^huatuo_bamai_scrape_collector_success\{/ && has_label("collector", "netdev_hw") {
-			success = ($2 == 1)
-		}
-		$1 == "#" && $2 == "TYPE" && $3 == "huatuo_bamai_netdev_hw_rx_dropped_total" {
-			counter = ($4 == "counter")
-		}
-		$1 ~ /^huatuo_bamai_netdev_hw_rx_dropped_total\{/ &&
-		has_label("device", device) && has_label("driver", driver) {
-			rows++
-			if ($2 !~ /^[0-9]+([.][0-9]+)?([eE][+]?[0-9]+)?$/) bad = 1
-			if ($2 + 0 != expected + 0) bad = 1
-		}
-		END { exit !(success && counter && rows == 1 && !bad) }
-	' "${NETDEV_HW_METRICS}" \
-		|| fatal "netdev_hw ${NETDEVSIM_NETDEV}/netdevsim: expected counter=${expected}; see ${NETDEV_HW_METRICS}"
+	local expected=$1 samples name value device driver rest
+	local metric=huatuo_bamai_netdev_hw_rx_dropped_total
+	assert_metrics_response "${NETDEV_HW_RESPONSE}"
+	assert_netdev_collector_success "${NETDEV_HW_METRICS}" netdev_hw
+	assert_netdev_counter_type "${NETDEV_HW_METRICS}" "${metric}"
+	samples=$(netdev_metric_samples "${NETDEV_HW_METRICS}" "${metric}") \
+		|| fatal "cannot parse netdev_hw metrics: ${NETDEV_HW_METRICS}"
+	[[ -n ${samples} && ${samples} != *$'\n'* ]] \
+		|| fatal "expected one netdev_hw sample, actual=${samples:-empty}; see ${NETDEV_HW_METRICS}"
+	IFS='|' read -r name value device driver rest <<< "${samples}"
+	assert_eq "${name}/${device}/${driver}" "${metric}/${NETDEVSIM_NETDEV}/netdevsim" "hardware drop sample" \
+		|| fatal "unexpected netdev_hw sample: ${name}/${device}/${driver}"
+	assert_netdev_counter_value "${value}" "${device} hardware drops" "${expected}"
 
-	# This message is emitted only after decoding a map entry for this NIC,
-	# so a metric computed with an empty BPF map cannot satisfy the test.
+	# An empty BPF map must not satisfy the test through a sysfs-only result.
 	grep -Fq "[rx_sw_dropped_stats] ${NETDEVSIM_NETDEV} => " "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
 		|| fatal "netdev_hw ${NETDEVSIM_NETDEV}: real BPF software-drop map entry was not observed"
 	grep '^huatuo_bamai_netdev_hw_rx_dropped_total' "${NETDEV_HW_METRICS}"
@@ -137,22 +86,23 @@ assert_netdev_hw_excluded() {
 	grep -Fq "${NETDEVSIM_NETDEV} is skipped (not in whitelist or driver not allowed)" \
 		"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
 		|| fatal "netdev_hw ${NETDEVSIM_NETDEV}: discovery did not report DeviceList exclusion"
-	assert_netdev_hw_metrics_response
-	awk '
-		$1 ~ /^huatuo_bamai_scrape_collector_success\{/ && ($1 ~ /[,{]collector="netdev_hw"/) {
-			success = ($2 == 1)
-		}
-		$1 ~ /^huatuo_bamai_netdev_hw_rx_dropped_total/ { rows++ }
-		END { exit !(success && rows == 0) }
-	' "${NETDEV_HW_METRICS}" \
-		|| fatal "netdev_hw: expected successful scrape with no counters for excluded devices; see ${NETDEV_HW_METRICS}"
+	assert_metrics_response "${NETDEV_HW_RESPONSE}"
+	assert_netdev_collector_success "${NETDEV_HW_METRICS}" netdev_hw
+	local samples
+	samples=$(netdev_metric_samples "${NETDEV_HW_METRICS}" huatuo_bamai_netdev_hw_rx_dropped_total) \
+		|| fatal "cannot parse netdev_hw metrics: ${NETDEV_HW_METRICS}"
+	assert_eq "${samples}" "" "excluded netdev_hw samples" \
+		|| fatal "excluded devices produced counters; see ${NETDEV_HW_METRICS}"
 }
+
+netdevsim_create "${HUATUO_BAMAI_TEST_TMPDIR}"
+netdev_hw_pattern="^${NETDEVSIM_NETDEV}$"
+log_info "netdev_hw netdevsim device=${NETDEVSIM_NETDEV}"
 
 # 1. Start with live sysfs links; a fresh simulated device has no RX drops.
 assert_netdev_hw_initial_stats
 cp -a "${HUATUO_BAMAI_TEST_FIXTURES}" "${NETDEV_HW_FIXTURES}"
 rm -rf "${NETDEV_HW_FIXTURES}/sys/class/net"
-mkdir -p "${NETDEV_HW_FIXTURES}/sys/class/net"
 netdev_hw_dir="${NETDEV_HW_FIXTURES}/sys/class/net/${NETDEVSIM_NETDEV}"
 mkdir -p "${netdev_hw_dir}/statistics"
 for netdev_hw_file in /sys/class/net/"${NETDEVSIM_NETDEV}"/*; do
@@ -164,8 +114,7 @@ for netdev_hw_file in /sys/class/net/"${NETDEVSIM_NETDEV}"/statistics/*; do
 done
 
 # 2. Run the real daemon; readiness must be followed by an observed BPF entry.
-write_config_bamai_netdev_hw > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-integration_huatuo_bamai_start : \
+integration_huatuo_bamai_start write_config_bamai_netdev_hw \
 	--region dev --procfs-prefix "${NETDEV_HW_FIXTURES}" \
 	--disable-storage --disable-kubelet --log-debug
 wait_until 20 0.2 netdev_hw_sample_ready \
@@ -190,8 +139,7 @@ mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${HUATUO_BAMAI_TEST_TMPDIR}/netdev-
 
 # 4. Restart with a whitelist matching no device and check the public result.
 netdev_hw_pattern='huatuo-test-no-device'
-write_config_bamai_netdev_hw > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-integration_huatuo_bamai_start : \
+integration_huatuo_bamai_start write_config_bamai_netdev_hw \
 	--region dev --procfs-prefix "${NETDEV_HW_FIXTURES}" \
 	--disable-storage --disable-kubelet --log-debug
 assert_netdev_hw_excluded

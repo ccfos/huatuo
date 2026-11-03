@@ -19,18 +19,18 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_net.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-readonly RDMA_METRICS="${HUATUO_BAMAI_TEST_TMPDIR}/rdma-metrics.txt"
-readonly RDMA_HEADERS="${HUATUO_BAMAI_TEST_TMPDIR}/rdma-metrics.headers"
+readonly RDMA_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/rdma-metrics"
+readonly RDMA_METRICS="${RDMA_RESPONSE}.txt"
 readonly RDMA_COUNTERS="${HUATUO_BAMAI_TEST_TMPDIR}/rdma-counters.txt"
 
-require_commands rdma jq curl ss
+require_commands rdma jq curl ss awk grep
 RDMA_PORT=$(allocate_available_port) || fatal "cannot allocate RDMA metrics HTTP port"
 readonly RDMA_PORT
 HUATUO_BAMAI_ADDR="http://127.0.0.1:${RDMA_PORT}"
 HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
-CURL_TIMEOUT=(--connect-timeout 2 --max-time 5)
 
 rdma_device=""
 rdma_owned_device=""
@@ -39,16 +39,8 @@ rdma_ports=0
 rdma_index=""
 
 cleanup() {
-	local status=0 pid=""
-	if [[ -r ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid ]]; then
-		pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
-	fi
-	huatuo_bamai_stop || status=1
-	# Keep devices registered until all daemon readers have stopped.
-	if [[ -n ${pid} ]] && ! wait_until 2 0.1 process_exited "${pid}"; then
-		log_error "daemon pid=${pid} is still running; retaining test devices"
-		return 1
-	fi
+	local status=0
+	huatuo_bamai_stop || return 1
 	if [[ -n ${rdma_owned_device} && -e /sys/class/infiniband/${rdma_owned_device} ]]; then
 		rdma link delete "${rdma_owned_device}" || status=1
 	fi
@@ -64,29 +56,28 @@ if ! cleanup && [[ ${rdma_exit_status} == 0 || ${rdma_exit_status} == 77 ]]; the
 fi
 exit "${rdma_exit_status}"' EXIT
 
-rdma_statistics_available() {
-	local device=$1 port
-	: > "${RDMA_COUNTERS}"
+rdma_read_statistics() {
+	local device=$1 port response counters
+	: > "${RDMA_COUNTERS}" || return 1
 	rdma_ports=0
 	for port in /sys/class/infiniband/"${device}"/ports/*; do
 		[[ -d ${port} ]] || continue
+		response="${HUATUO_BAMAI_TEST_TMPDIR}/rdma-statistics-${port##*/}.json"
 		if ! rdma -j statistic show link "${device}/${port##*/}" \
-			> "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-statistics-${port##*/}.json" \
-			2> "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-statistics.err"; then
+			> "${response}" 2> "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-statistics.err"; then
 			cat "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-statistics.err" >&2
 			return 1
 		fi
-		jq -e 'type == "array" and all(.[];
-			type == "object" and (.ifname | type == "string") and (.port | type == "number"))' \
-			"${HUATUO_BAMAI_TEST_TMPDIR}/rdma-statistics-${port##*/}.json" > /dev/null \
-			|| fatal "invalid RDMA statistics response; see rdma-statistics-${port##*/}.json"
-		jq -er --arg device "${device}" --argjson port "${port##*/}" '
-			[.[] | select(.ifname == $device and .port == $port)
-			 | del(.ifname, .port) | to_entries[]
-			 | select(.value | type == "number") | [.key, (.value | tostring), $port] | @tsv]
-			| select(length > 0) | .[]
-		' "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-statistics-${port##*/}.json" \
-			>> "${RDMA_COUNTERS}" || return 1
+		counters=$(jq -r --arg device "${device}" --argjson port "${port##*/}" '
+			if type != "array" or any(.[];
+				type != "object" or (.ifname | type != "string") or (.port | type != "number"))
+			then error("invalid RDMA statistics response") else . end
+			| .[] | select(.ifname == $device and .port == $port)
+			| del(.ifname, .port) | to_entries[] | select(.value | type == "number")
+			| [.key, .value, $port] | @tsv
+		' "${response}") || fatal "cannot parse RDMA statistics: ${response}"
+		[[ -n ${counters} ]] || return 1
+		printf '%s\n' "${counters}" >> "${RDMA_COUNTERS}" || return 1
 		rdma_ports=$((rdma_ports + 1))
 	done
 	[[ ${rdma_ports} -gt 0 && -s ${RDMA_COUNTERS} ]]
@@ -110,7 +101,7 @@ rdma_select_existing() {
 		else
 			rdma_is_hardware "${device}" && continue
 		fi
-		rdma_statistics_available "${device}" || continue
+		rdma_read_statistics "${device}" || continue
 		rdma_device=${device}
 		log_info "RDMA selected existing ${mode} device=${rdma_device} ports=${rdma_ports}"
 		return 0
@@ -122,9 +113,7 @@ rdma_setup_netdev() {
 	local operation=$1
 	shift
 	local output="${HUATUO_BAMAI_TEST_TMPDIR}/rdma-netdev-${operation}.log"
-	if LC_ALL=C ip "$@" > "${output}" 2>&1; then
-		return 0
-	fi
+	LC_ALL=C ip "$@" > "${output}" 2>&1 && return 0
 	cat "${output}" >&2
 	if grep -Eqi 'operation not permitted|permission denied|not supported' "${output}"; then
 		skip "software RDMA netdev ${operation} lacks network permissions or kernel support"
@@ -161,54 +150,48 @@ rdma_create_software() {
 	fi
 	rdma_owned_device=${device}
 	rdma_device=${device}
-	rdma_statistics_available "${device}" \
+	rdma_read_statistics "${device}" \
 		|| skip "software RDMA device has no readable netlink statistics"
 	log_info "RDMA selected test-owned RXE device=${rdma_device} netdev=${netdev}"
 }
 
 assert_rdma_metrics() {
-	local status curl_status=0
-	: > "${RDMA_METRICS}"
-	: > "${RDMA_HEADERS}"
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" -D "${RDMA_HEADERS}" -o "${RDMA_METRICS}" \
-		-w '%{http_code}' "${HUATUO_BAMAI_METRICS_API}" \
-		2> "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-metrics.err") || curl_status=$?
-	if [[ ${curl_status} -ne 0 || ${status} != 200 ]]; then
-		cat "${RDMA_HEADERS}" "${RDMA_METRICS}" "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-metrics.err" >&2
-		fatal "RDMA /metrics: curl=${curl_status}, HTTP=${status}; expected curl=0 HTTP=200"
-	fi
-	grep -Eqi '^Content-Type:[[:blank:]]*text/plain([;[:space:]]|$)' "${RDMA_HEADERS}" \
-		|| fatal "RDMA /metrics: expected text/plain; see ${RDMA_HEADERS}"
-	awk -v device="${rdma_device}" -v ports="${rdma_ports}" -v device_index="${rdma_index}" -v compare_values="${rdma_owned_device:+1}" '
-		function has_label(key, value) {
-			return index($1, "{" key "=\"" value "\"") || index($1, "," key "=\"" value "\"")
-		}
-		NR == FNR {
-			name = "huatuo_bamai_netdev_rdma_link_" $1
-			expected[name, $3] = 1; values[name, $3] = $2; next
-		}
-		$1 == "#" && $2 == "TYPE" && $4 == "counter" { types[$3] = 1 }
-		$1 ~ /^huatuo_bamai_scrape_collector_success\{/ && has_label("collector", "netdev_rdma_link") { success = ($2 == 1) }
-		$1 ~ /^huatuo_bamai_netdev_rdma_link_/ && has_label("device", device) {
-			name = $1; sub(/\{.*/, "", name)
-			port = $1; sub(/^.*[,{]port="/, "", port); sub(/".*$/, "", port)
-			if (!((name, port) in expected)) bad = 1
-			guid = $1; sub(/^.*nodeguid="/, "", guid); sub(/".*$/, "", guid)
-			if (!has_label("index", device_index) || !has_label("num_ports", ports) ||
-			    (!has_label("nodeguid", guid) || length(guid) != 23 || guid ~ /[^[:xdigit:]:]/) || $2 !~ /^[0-9]+([.][0-9]+)?([eE][+]?[0-9]+)?$/) bad = 1
-			# A fresh private RXE has no RDMA workload; its counters stay stable.
-			if (compare_values && $2 + 0 != values[name, port] + 0) bad = 1
-			found[name, port]++
-		}
-		END {
-			for (key in expected) {
-				split(key, metric, SUBSEP)
-				if (!types[metric[1]] || found[key] != 1) bad = 1
-			}
-			exit !(success && !bad)
-		}
-	' "${RDMA_COUNTERS}" "${RDMA_METRICS}" \
-		|| fatal "RDMA ${rdma_device}: missing counters, invalid types/labels or mismatched private RXE values; see ${RDMA_METRICS}"
+	local name value port key samples device driver index ports guid
+	local -A expected=() found=() metrics=()
+	while IFS=$'\t' read -r name value port; do
+		expected["huatuo_bamai_netdev_rdma_link_${name}/${port}"]=${value}
+		metrics["huatuo_bamai_netdev_rdma_link_${name}"]=1
+	done < "${RDMA_COUNTERS}"
+	((${#expected[@]} > 0)) || fatal "no RDMA counter expectations: ${RDMA_COUNTERS}"
+
+	assert_metrics_response "${RDMA_RESPONSE}"
+	assert_netdev_collector_success "${RDMA_METRICS}" netdev_rdma_link
+	samples=$(netdev_metric_samples "${RDMA_METRICS}" huatuo_bamai_netdev_rdma_link_) \
+		|| fatal "cannot parse RDMA metrics: ${RDMA_METRICS}"
+	while IFS='|' read -r name value device driver port index ports guid; do
+		[[ ${device} == "${rdma_device}" ]] || continue
+		key="${name}/${port}"
+		[[ -n ${expected[${key}]+present} ]] \
+			|| fatal "RDMA ${device}: unexpected counter/port ${key}"
+		found[${key}]=$((${found[${key}]:-0} + 1))
+		assert_eq "${index}/${ports}" "${rdma_index}/${rdma_ports}" "RDMA ${device} index/num_ports" \
+			|| fatal "RDMA ${device}: invalid device labels; see ${RDMA_METRICS}"
+		[[ ${guid} =~ ^([[:xdigit:]]{2}:){7}[[:xdigit:]]{2}$ ]] \
+			|| fatal "RDMA ${device}: expected eight-byte nodeguid, actual=${guid}"
+		# Existing hardware counters can advance between the two observations.
+		if [[ -n ${rdma_owned_device} ]]; then
+			assert_netdev_counter_value "${value}" "RDMA ${device} ${key}" "${expected[${key}]}"
+		else
+			assert_netdev_counter_value "${value}" "RDMA ${device} ${key}"
+		fi
+	done <<< "${samples}"
+	for key in "${!expected[@]}"; do
+		assert_eq "${found[${key}]:-0}" 1 "RDMA ${rdma_device} ${key} sample count" \
+			|| fatal "RDMA ${rdma_device}: expected each counter/port once; see ${RDMA_METRICS}"
+	done
+	for name in "${!metrics[@]}"; do
+		assert_netdev_counter_type "${RDMA_METRICS}" "${name}"
+	done
 	grep '^huatuo_bamai_netdev_rdma_link_' "${RDMA_METRICS}" | grep -F "device=\"${rdma_device}\""
 }
 
@@ -216,13 +199,15 @@ assert_rdma_metrics() {
 if ! rdma_select_existing hardware && ! rdma_select_existing fallback; then
 	rdma_create_software
 fi
-rdma -j dev show > "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-devices.json"
+rdma -j dev show > "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-devices.json" \
+	2> "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-devices.err" \
+	|| fatal "cannot query RDMA devices; see ${HUATUO_BAMAI_TEST_TMPDIR}/rdma-devices.err"
 rdma_index=$(jq -er --arg device "${rdma_device}" \
-	'.[] | select(.ifname == $device) | .ifindex' "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-devices.json")
+	'.[] | select(.ifname == $device) | .ifindex | select(type == "number")' "${HUATUO_BAMAI_TEST_TMPDIR}/rdma-devices.json") \
+	|| fatal "RDMA device ${rdma_device} has no numeric index; see rdma-devices.json"
 
 # 2. Use the real daemon and kernel statistics; hardware counters may change.
-write_config_bamai_netdev_rdma_link > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-integration_huatuo_bamai_start : \
+integration_huatuo_bamai_start write_config_bamai_netdev_rdma_link \
 	--region dev --procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
 	--disable-storage --disable-kubelet
 assert_rdma_metrics
