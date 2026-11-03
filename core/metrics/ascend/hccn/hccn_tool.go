@@ -116,20 +116,32 @@ func GetStatInfo(phyID int32) (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseStatInfo(outStr), nil
+}
+
+// parseStatInfo parses the "key : value" lines of `hccn_tool -stat -g`.
+// The real output pads both sides of the colon ("Rx packets : 306399") and
+// some values contain colons themselves, so the value must be split once
+// and trimmed; unparseable lines are skipped.
+func parseStatInfo(outStr string) map[string]int {
 	statInfoMap := make(map[string]int)
 	lines := strings.Split(outStr, "\n")
 	for _, line := range lines {
-		parts := strings.Split(line, ":")
-		if len(parts) != 2 || parts[1] == "" {
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
 			continue
 		}
-		num, err := strconv.Atoi(parts[1])
+		value := strings.TrimSpace(parts[1])
+		if value == "" {
+			continue
+		}
+		num, err := strconv.Atoi(value)
 		if err != nil {
 			continue
 		}
-		statInfoMap[parts[0]] = num
+		statInfoMap[strings.TrimSpace(parts[0])] = num
 	}
-	return statInfoMap, nil
+	return statInfoMap
 }
 
 // GetOpticalInfo returns optical module info for the given phyID.

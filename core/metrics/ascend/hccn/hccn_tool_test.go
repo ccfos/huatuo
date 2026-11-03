@@ -34,3 +34,29 @@ func TestGetInfoFromHccnToolInvalidArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestParseStatInfo(t *testing.T) {
+	// real hccn_tool -stat -g output: spaces around the colon, header lines,
+	// and values that themselves contain colons
+	out := "netdev macro stat:\n" +
+		"Rx packets : 306399\n" +
+		"Rx errors : 0\n" +
+		"Last reset : 12:34:56\n" +
+		"Tx packets:42"
+
+	got := parseStatInfo(out)
+	want := map[string]int{
+		"Rx packets": 306399,
+		"Rx errors":  0,
+		"Tx packets": 42,
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("parseStatInfo() = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("parseStatInfo()[%q] = %d, want %d", k, got[k], v)
+		}
+	}
+}
