@@ -237,6 +237,45 @@ func TestNormalizeExecutableRejectsUnreadableTargetRoot(t *testing.T) {
 	}
 }
 
+func TestNormalizeExecutableKeepsAnAmbiguousHardLink(t *testing.T) {
+	dir := t.TempDir()
+	original := filepath.Join(dir, "python3.10")
+	if err := os.WriteFile(original, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", original, err)
+	}
+	// A hard link ending in the marker keeps the running image reachable after
+	// the original name is unlinked. /proc/<pid>/exe then reports the same text
+	// for a kernel marker and for this literal name, so the contract is that the
+	// live path is returned unchanged.
+	linked := original + unlinkedExecutableMarker
+	if err := os.Link(original, linked); err != nil {
+		t.Fatalf("Link(%q, %q) error = %v", original, linked, err)
+	}
+	if err := os.Remove(original); err != nil {
+		t.Fatalf("Remove(%q) error = %v", original, err)
+	}
+
+	procDir := filepath.Join(dir, "proc", "100")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procDir, err)
+	}
+	if err := os.Symlink("/", filepath.Join(procDir, "root")); err != nil {
+		t.Fatalf("Symlink(root) error = %v", err)
+	}
+	procExePath := filepath.Join(procDir, "exe")
+	if err := os.Symlink(linked, procExePath); err != nil {
+		t.Fatalf("Symlink(%q) error = %v", linked, err)
+	}
+
+	got, err := NormalizeExecutable(linked, procExePath)
+	if err != nil {
+		t.Fatalf("NormalizeExecutable(%q) error = %v", linked, err)
+	}
+	if got != linked {
+		t.Errorf("NormalizeExecutable(%q) = %q, want the live path", linked, got)
+	}
+}
+
 func TestExecutableName(t *testing.T) {
 	tests := []struct {
 		name   string
