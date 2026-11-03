@@ -383,6 +383,11 @@ fail)
  printf '%66000s' '' | tr ' ' x > "$HUATUO_BAMAI_TEST_TMPDIR/large.log"
  printf '\nend marker\n' >> "$HUATUO_BAMAI_TEST_TMPDIR/large.log"
  printf '{\n  "results_path": "diagnostic-only"\n}\n' > "$HUATUO_BAMAI_TEST_TMPDIR/response.json"
+ printf 'source marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/test_case.sh"
+ printf 'output marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/tool.out"
+ printf 'binary\0marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/binary.log"
+ printf 'config marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/bamai.conf"
+ printf 'tool error marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/tool.err"
  fatal $'fixture failed: "runtime"\n诊断路径: C:\\tmp';;
 namespace) run_test_step unshare --pid --fork --mount-proc bash -c 'source "$ROOT_DIR/integration/lib.sh"; skip "namespace dependency missing"';;
 step_skip) run_test_step bash -euc 'source "$ROOT_DIR/integration/lib.sh"; skip "step dependency missing"';;
@@ -418,16 +423,22 @@ EOF
 		if [[ ${mode} == fail ]]; then
 			local log="${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-${mode}.log"
 			assert_runner_summary "${log}" | jq -e '
-				.failed_tests == [{name: "integration/test_report.sh", run_index: 1,
-				 reason: "fixture failed: \"runtime\""}]' > /dev/null \
-				|| fatal "failure summary lost its name, execution index, or concise reason"
-			local marker
+				[.failed_tests[] | {name, run_index, reason}] ==
+				[{name: "integration/test_report.sh", run_index: 1,
+				 reason: "fixture failed: \"runtime\""}] and
+				(.failed_tests[0].logs | any(.path | endswith("/execution.log"))) and
+				(.failed_tests[0].logs | any((.path | endswith("/large.log")) and
+				 .truncated and (.content | utf8bytelength) == 65536)) and
+				(.failed_tests[0].logs | all(.path | test("/(reason\\.[^/]*|test_case.sh|binary.log|test_run_results.json)$") | not))
+			' > /dev/null || fatal "failure summary lost its identity or bounded diagnostic logs"
+			local marker contents
+			contents=$(assert_runner_summary "${log}" | jq -r '.failed_tests[].logs[].content')
 			for marker in 'stdout marker' 'stderr marker' 'fixture failed: "runtime"' '诊断路径: C:\tmp' \
-				'end marker' 'showing the last 65536' '"results_path": "diagnostic-only"' "FILE (${stdout%/*}/execution.log)" 'exit_code=1'; do
-				grep -Fq "$marker" "$log" || fatal "raw failure diagnostics omitted $marker"
+				'end marker' '"results_path": "diagnostic-only"' 'exit_code=1' 'output marker' 'config marker' 'tool error marker'; do
+				grep -Fq "$marker" <<< "$contents" || fatal "JSON failure diagnostics omitted $marker"
 			done
-			! grep -Fq "FILE (${stdout%/*}/reason.1.log)" "$log" || fatal "failure reason file was printed twice"
-			[[ ! -e ${report%/*}/failed-logs.jsonl ]] || fatal "obsolete JSON log aggregation was created"
+			! grep -Fq -- '----- FILE (' "$log" || fatal "obsolete raw file diagnostics were printed"
+
 		fi
 		if [[ ${mode} == skip ]]; then
 			jq -e --arg reason $'missing "runtime"\n诊断路径: C:\\tmp' '.test_executions[0] | .reason == $reason and .exit_code == 77' "${report}" > /dev/null || fatal "skip reason was not preserved"

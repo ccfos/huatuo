@@ -125,7 +125,7 @@ bash e2e/run.sh test_metrics.sh 2
 `test_tcpshark_output_cancellation_{blocked,healthy,timeout}.sh` 分别运行三个接收端场景，
 共用 `lib_tcpshark_output_cancellation.sh`，每个场景都有全新的 `mount net` 环境。
 用例目录中的 `execution.json` 是执行入口交给 runner 的内部清理结果；对外消费
-`result.json`。执行入口被强制终止且无法提交结果时，无法确认的用例退出码为 `null`。
+`test_run_results.json`。执行入口被强制终止且无法提交结果时，无法确认的用例退出码为 `null`。
 
 apiserver 测试遵循相同的平铺目录约定：
 
@@ -217,12 +217,12 @@ run_test_step bash -euc 'source "$ROOT_DIR/integration/lib.sh"; require_commands
 报告保留实际退出码并提示查看日志。这避免把已经捕获的错误误报为最终失败原因。
 
 每次有效调用（包括单用例）创建 `/tmp/huatuo-test.XXXXXX/`，终端在用例结束时
-显示结果及原因，在运行结束时打印统计和 `result.json` 路径。报告依赖 `jq`；
+显示结果及原因，在运行结束时打印统计和 `test_run_results.json` 路径。报告依赖 `jq`；
 无效参数不创建执行计划或报告。
 
 ```text
 /tmp/huatuo-test.XXXXXX/
-├── result.json
+├── test_run_results.json
 ├── test_metrics.1.ABCDEF/
 │   ├── stdout.log
 │   ├── stderr.log
@@ -234,6 +234,11 @@ run_test_step bash -euc 'source "$ROOT_DIR/integration/lib.sh"; require_commands
 用例目录名包含测试名、从 1 开始的执行序号和随机后缀。共享存储与端口目录按需
 创建；共享实例使用每个用例独立的索引。全部资料保留在运行目录，可整体归档或删除。
 stdout 与 stderr 分别保存，跨两个文件的先后顺序不作保证。
+
+终端最后输出的 JSON 摘要使用 `execution_counts` 记录计数。`failed_tests` 中每项包含
+`name`、`run_index`、`reason` 和 `logs`；每个日志项包含相对于运行目录的 `path`、
+`content` 和 `truncated`。文本诊断文件最多保留末尾 64 KiB，完整文件仍保存在原目录。
+失败文件内容不再作为独立的 `FILE (...)` 段落打印。
 
 报告的 `schema_version` 当前为 1：
 
@@ -260,13 +265,13 @@ runner 返回非零并标明报告不完整，不补造用例结果。写入失�
 读取跳过原因可以使用：
 
 ```bash
-jq '.test_executions[] | select(.result == "skipped") | {test_name, run_index, reason}' /tmp/huatuo-test.XXXXXX/result.json
+jq '.test_executions[] | select(.result == "skipped") | {test_name, run_index, reason}' /tmp/huatuo-test.XXXXXX/test_run_results.json
 ```
 
 每次执行都单独计数，包括重复运行，例如：
 
-```text
-summary: total=5 passed=3 skipped=2 failed=0
+```json
+{"execution_counts": {"total": 5, "passed": 3, "skipped": 2, "failed": 0}}
 ```
 
 两套测试缺少 root 权限或 namespace 命令时，所选用例全部计为 SKIP。

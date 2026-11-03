@@ -160,7 +160,7 @@ cleanup when adding or changing an isolation declaration.
 `test_tcpshark_output_cancellation_{blocked,healthy,timeout}.sh` share
 `lib_tcpshark_output_cancellation.sh`; each receiver scenario gets a fresh
 `mount net` environment. The case-local `execution.json` is an internal cleanup
-result passed to the runner; consumers use `result.json`. If the entry point is
+result passed to the runner; consumers use `test_run_results.json`. If the entry point is
 forcibly terminated before submitting its result, an unknown test exit code is null.
 
 Apiserver tests follow the same flat layout:
@@ -264,12 +264,12 @@ and refers readers to the logs, avoiding attribution to an already handled error
 
 Every valid invocation, including a single case, creates `/tmp/huatuo-test.XXXXXX/`.
 The terminal shows each completed result and reason, then the final counts and
-`result.json` path. Reports require `jq`; invalid arguments do not create a plan
+`test_run_results.json` path. Reports require `jq`; invalid arguments do not create a plan
 or report.
 
 ```text
 /tmp/huatuo-test.XXXXXX/
-├── result.json
+├── test_run_results.json
 ├── test_metrics.1.ABCDEF/
 │   ├── stdout.log
 │   ├── stderr.log
@@ -283,6 +283,13 @@ random suffix. Shared storage and port directories are created when needed.
 Cases sharing storage use separate indexes. Retained directories can be archived
 or deleted as a whole. Stdout and stderr are separate; their cross-stream order
 is not preserved.
+
+The final console JSON summary records counts in `execution_counts`. Each
+`failed_tests` entry contains `name`, `run_index`, `reason`, and `logs`. Each log
+has a `path` relative to the run directory, `content`, and a `truncated` flag.
+Text diagnostics retain at most the last 64 KiB per file; full files remain in
+their original directories. File contents are no longer printed in separate
+`FILE (...)` blocks.
 
 The report currently uses `schema_version: 1`:
 
@@ -311,13 +318,13 @@ counts are not final. INT/TERM during finalization preserves completed case resu
 while updating the overall interruption status and exit code. To inspect skipped executions:
 
 ```bash
-jq '.test_executions[] | select(.result == "skipped") | {test_name, run_index, reason}' /tmp/huatuo-test.XXXXXX/result.json
+jq '.test_executions[] | select(.result == "skipped") | {test_name, run_index, reason}' /tmp/huatuo-test.XXXXXX/test_run_results.json
 ```
 
 Each execution is counted separately, including repetitions, for example:
 
-```text
-summary: total=5 passed=3 skipped=2 failed=0
+```json
+{"execution_counts": {"total": 5, "passed": 3, "skipped": 2, "failed": 0}}
 ```
 
 If root privileges or namespace commands are unavailable, both suites mark every selected case as SKIP.

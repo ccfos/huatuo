@@ -59,35 +59,6 @@ assert_helper_log_levels() {
 	log_info "text and JSON log levels checked"
 }
 
-assert_helper_failure_diagnostics() {
-	local fixture="${HUATUO_BAMAI_TEST_TMPDIR}/diagnostic-fixture"
-	local output="${HUATUO_BAMAI_TEST_TMPDIR}/diagnostic-output.log"
-	local marker
-	mkdir -p "${fixture}/runner"
-	printf 'stdout marker\n' > "${fixture}/stdout.log"
-	printf 'service marker\n' > "${fixture}/runner/huatuo.log"
-	printf '{"error":"json marker"}\n' > "${fixture}/response.json"
-	printf 'config marker\n' > "${fixture}/bamai.conf"
-	printf 'stderr marker\n' > "${fixture}/tool.err"
-	printf 'run results marker\n' > "${fixture}/test_run_results.json"
-	printf 'reason marker\n' > "${fixture}/reason.1.log"
-	printf 'source marker\n' > "${fixture}/runner/test_case.sh"
-	printf 'output marker\n' > "${fixture}/tool.out"
-	printf 'old reason marker\n' > "${fixture}/reason.1"
-	printf 'start marker\n' > "${fixture}/large.log"
-	printf '%66000s' '' | tr ' ' x >> "${fixture}/large.log"
-	printf '\nend marker\n' >> "${fixture}/large.log"
-	dump_text_files "${fixture}" 2> "${output}"
-	for marker in 'stdout marker' 'service marker' 'json marker' 'config marker' 'stderr marker' 'end marker' 'showing the last 65536'; do
-		grep -Fq "${marker}" "${output}" || fatal "failure diagnostics omitted ${marker}"
-	done
-	! grep -Fq "FILE (${fixture}/reason.1.log)" "${output}" \
-		|| fatal "failure diagnostics repeated the exit reason file"
-	for marker in 'source marker' 'output marker' 'old reason marker' 'reason marker' 'start marker' 'run results marker'; do
-		! grep -Fq "${marker}" "${output}" || fatal "failure diagnostics printed ${marker}"
-	done
-}
-
 assert_helper_toml_values() {
 	local helpers_config="${HUATUO_BAMAI_TEST_TMPDIR}/persisted.conf" helpers_case helpers_status
 	local helpers_expected='{"BlackList":["dropwatch","netdev_hw"],"Runtime.CPULimitCores":1.5,"Runtime.MemoryLimitMiB":1024}'
@@ -433,7 +404,6 @@ grep -Fq 'cannot pull CPU workload image' "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image
 	|| fatal "CPU image pull failure lacks registry diagnostics"
 
 assert_helper_log_levels
-assert_helper_failure_diagnostics
 assert_helper_toml_values
 assert_helper_http_defaults
 assert_helper_bamai_ports

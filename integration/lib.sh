@@ -473,29 +473,6 @@ bpf_tool_setup() {
 	TOOL_ERR="${TOOL_WORK_DIR}/${binary_name}.err"
 }
 
-# Fixtures can contain copied source; print only diagnostic file types.
-dump_text_files() {
-	local dir=$1
-	local file size
-
-	[[ -d "${dir}" ]] || return 0
-
-	while IFS= read -r -d '' file; do
-		grep -Iq '' "${file}" || continue
-		size=$(stat -c %s "${file}") || continue
-		log_error "----- FILE (${file}) -----"
-		if ((size > 65536)); then
-			log_error "showing the last 65536 of ${size} bytes: ${file}"
-			tail -c 65536 "${file}" >&2
-		else
-			cat "${file}" >&2
-		fi
-		printf '\n' >&2
-	done < <(find "${dir}" -type f -size +0c \
-		! -name 'test_run_results.json' ! -name 'reason.*.log' \
-		\( -name '*.log' -o -name '*.json' -o -name '*.conf' -o -name '*.err' \) -print0)
-}
-
 # Call from the child's parent shell so wait can verify its exit status.
 # Unlike cleanup, a shutdown assertion must not hide a timeout with SIGKILL.
 # Optional third argument selects TERM (default) or INT.

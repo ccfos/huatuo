@@ -102,15 +102,31 @@ report_finish() {
 		--argjson now "$(report_clock)" --argjson started "${RUNNER_STARTED_CLOCK}"
 }
 
+# Preserve diagnostic context without embedding copied sources or binary artifacts.
+report_failure_logs() {
+	local dir=$1 file size
+	[[ -d ${dir} ]] || return 0
+	while IFS= read -r -d '' file; do
+		grep -Iq '' "${file}" || continue
+		size=$(stat -c %s "${file}") || return 1
+		tail -c 65536 "${file}" | jq -Rsc --arg workspace "${dir}" \
+			--arg path "${file#"${RUNNER_OUTPUT_DIR}/"}" --argjson size "${size}" \
+			'{workspace: $workspace, path: $path, content: ., truncated: ($size > 65536)}' || return 1
+	done < <(find "${dir}" -type f -size +0c \
+		! -name 'test_run_results.json' ! -name 'reason.*.log' \
+		\( -name '*.log' -o -name '*.json' -o -name '*.conf' -o -name '*.err' -o -name '*.out' \) -print0 | sort -z)
+}
+
 report_summary() {
-	local workspace
-	# Print diagnostics after workers finish so parallel cases cannot interleave logs.
+	local workspace diagnostics="${RUNNER_OUTPUT_DIR}/failed-logs.jsonl"
+	# Workers have exited; collect each failed execution's files without interleaving output.
+	: > "${diagnostics}"
 	while IFS= read -r workspace; do
-		dump_text_files "${workspace}" || return 1
+		report_failure_logs "${workspace}" >> "${diagnostics}" || return 1
 	done < <(jq -r '.test_executions[] | select(.result == "failed" and .logs != null) |
 		$output + "/" + (.logs.stdout | rtrimstr("/stdout.log"))' \
 		--arg output "${RUNNER_OUTPUT_DIR}" "${RUNNER_OUTPUT_DIR}/test_run_results.json")
-	jq --arg output "${RUNNER_OUTPUT_DIR}" '
+	jq --arg output "${RUNNER_OUTPUT_DIR}" --slurpfile diagnostics "${diagnostics}" '
 		def short_reason: if . == null then null else split("\n")[0] end;
 		.suite as $suite |
 		{status, output_dir: $output, results_path: ($output + "/test_run_results.json"),
@@ -118,7 +134,10 @@ report_summary() {
 		 skipped_tests: ([.test_executions[] | select(.result == "skipped") |
 			$suite + "/" + .test_name] | unique),
 		 failed_tests: [.test_executions[] | select(.result == "failed") |
-			{name: ($suite + "/" + .test_name), run_index, reason: (.reason | short_reason)}]}
+			(if .logs == null then null else
+			 $output + "/" + (.logs.stdout | rtrimstr("/stdout.log")) end) as $workspace |
+			{name: ($suite + "/" + .test_name), run_index, reason: (.reason | short_reason),
+			 logs: [$diagnostics[] | select(.workspace == $workspace) | del(.workspace)]}]}
 		+ (if .reason == null then {} else {reason: (.reason | short_reason)} end)
 	' "${RUNNER_OUTPUT_DIR}/test_run_results.json"
 }
