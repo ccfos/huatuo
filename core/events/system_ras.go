@@ -538,13 +538,13 @@ func buildRasAcpiTracerData(data *rasEvent) (*RasTracingData, error) {
 	fru := cstring(payload.Msg[:], payload.FRUTxtOffset, nonStandardBase)
 
 	// payload.BufOffset is __data_loc_buf: the low 16 bits hold the absolute
-	// start of the section payload and the high 16 bits hold how many bytes
-	// the kernel captured. payload.Len is the section length it reported when
-	// the record was emitted. Non-standard sections (NVDIMM, CXL, vendor
-	// payloads) routinely report more than the fixed window kept in
-	// userspace, and the tail of that window is zero padding rather than
-	// payload, so the dump is capped by the smaller of the two lengths and by
-	// what was actually copied.
+	// start of the section payload and the high 16 bits hold the length the
+	// tracepoint declares for that dynamic field. payload.Len is the section
+	// length reported when the record was emitted, and bpf/system_ras.c copies
+	// at most RAS_PERFEVENT_INFO_SIZE bytes of the record. Non-standard
+	// sections (NVDIMM, CXL, vendor payloads) routinely declare more than the
+	// fixed window kept in userspace, so the dump is capped by the declared
+	// length, the section length, and the copied window.
 	rawData := dataLocWindow(payload.Msg[:], payload.BufOffset, nonStandardBase, payload.Len)
 
 	return newRasTracingData(data, "ACPI", "NON_STANDARD", acpiErrType(payload.Sev), struct {

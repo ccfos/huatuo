@@ -120,7 +120,7 @@ Register and bank meanings depend on the CPU model. Use the corresponding proces
 | `data_len` | Reported data length in bytes |
 | `raw_data` | Hex dump; interpret using the platform and vendor format |
 
-Non-standard sections (NVDIMM, CXL, and vendor payloads) can exceed the copied window. `raw_data` contains only the bytes available after the section offset: the length is capped by the remaining window, so unused bytes at the end are never reported as payload. The window also holds the record's fixed fields and any data before the section, so it is not a per-record `raw_data` capacity. `data_len` still reports the length the kernel put in the record. Both values come from the kernel record and are bounded before use, so a malformed event cannot expose bytes outside the copied window.
+Non-standard sections (NVDIMM, CXL, and vendor payloads) can exceed the copied window. `raw_data` contains only the bytes available after the section offset: the length is capped by the remaining window, so with a valid record length unused bytes at the end are not reported as payload. The window also holds the record's fixed fields and any data before the section, so it is not a per-record `raw_data` capacity. `data_len` still reports the length the kernel put in the record. Both values come from the kernel record and are bounded before use, so a malformed event cannot expose bytes outside the copied window.
 
 ### PCIe AER
 
