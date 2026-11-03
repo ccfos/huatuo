@@ -14,8 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Exercise the built profiler from deterministic async-profiler output to SVG.
-# JVM sampling and symbolization are outside this output-contract test.
+# Exercise the built profiler from deterministic async-profiler output across
+# the SVG, Speedscope, and Chrome Trace formatters. JVM sampling and symbolization
+# are outside this output-contract test.
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 
@@ -65,6 +66,38 @@ PY
 	log_info "${output}: parent=70%/826px, child=50%/590px, self=20%/236px"
 }
 
+assert_speedscope_output() {
+	local output=$1
+	jq -e '
+		.["$schema"] == "https://www.speedscope.app/file-format-schema.json"
+		and .exporter == "huatuo-profiler"
+		and (.profiles | length) == 1
+		and .profiles[0].type == "sampled"
+		and .profiles[0].unit == "nanoseconds"
+		and .profiles[0].endValue == 100000000
+		and ((.profiles[0].weights | add) == 100000000)
+		and ((.profiles[0].weights | sort) == [20000000, 30000000, 50000000])
+		and ([.shared.frames[].name] | index("shared") != null)
+		and ([.shared.frames[].name] | index("shared_[k]") != null)
+	' "${output}" > /dev/null \
+		|| fatal "unexpected Speedscope output: $(cat "${output}")"
+}
+
+assert_chrometrace_output() {
+	local output=$1
+	jq -e '
+		[.traceEvents[] | select(.ph == "M" and .name == "thread_name")] | length == 1
+	' "${output}" > /dev/null \
+		|| fatal "Chrome Trace metadata is missing: $(cat "${output}")"
+	jq -e '
+		[.traceEvents[] | select(.ph == "X" and (.name == "shared" or .name == "shared_[k]"))] as $events
+		| ($events | length) == 4
+			and ([$events[].dur] | sort) == [20000, 30000, 50000, 50000]
+			and ([$events[] | .ts + .dur] | max) == 100000
+	' "${output}" > /dev/null \
+		|| fatal "unexpected Chrome Trace output: $(cat "${output}")"
+}
+
 mkdir -p "${FLAMEGRAPH_TOOL_DIR}/bin" "${FLAMEGRAPH_TOOL_DIR}/lib" "${FLAMEGRAPH_CLASSES_DIR}"
 install -m 755 "${ROOT_DIR}/integration/testdata/test_profiler_pprof_asprof.sh" "${FLAMEGRAPH_TOOL_DIR}/bin/asprof"
 # The sampler fixture does not load an agent, but the provider requires its file.
@@ -89,6 +122,20 @@ for flamegraph_format in svg flamegraph; do
 	fi
 	assert_flamegraph_geometry "${flamegraph_output}" "${HUATUO_BAMAI_TEST_TMPDIR}/${flamegraph_format}.tsv"
 	assert_log_has_no_failure "${flamegraph_log}" "profiler ${flamegraph_format}"
+done
+
+for output_format in speedscope chrometrace; do
+	output="${HUATUO_BAMAI_TEST_TMPDIR}/${output_format}.json"
+	output_log="${HUATUO_BAMAI_TEST_TMPDIR}/${output_format}.log"
+	if ! timeout 30 "${ROOT_DIR}/_output/bin/profiler" \
+		--type cpu --language java --pid "${flamegraph_target_pid}" \
+		--tool-path "${FLAMEGRAPH_TOOL_DIR}" --duration 1 --freq 100 --aggr-interval 1 \
+		--output-format "${output_format}" --output-path "${output}" \
+		> "${output_log}" 2>&1; then
+		fatal "profiler ${output_format} failed: $(cat "${output_log}")"
+	fi
+	"assert_${output_format}_output" "${output}"
+	assert_log_has_no_failure "${output_log}" "profiler ${output_format}"
 done
 
 # Appendix: regression fixed by https://github.com/ccfos/huatuo/pull/1457
