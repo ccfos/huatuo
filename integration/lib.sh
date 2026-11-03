@@ -475,7 +475,7 @@ bpf_tool_setup() {
 
 # Fixtures can contain copied source; print only diagnostic file types.
 dump_text_files() {
-	local dir=$1 format=${2:-text}
+	local dir=$1
 	local file size
 
 	[[ -d "${dir}" ]] || return 0
@@ -483,11 +483,6 @@ dump_text_files() {
 	while IFS= read -r -d '' file; do
 		grep -Iq '' "${file}" || continue
 		size=$(stat -c %s "${file}") || continue
-		if [[ ${format} == json ]]; then
-			tail -c 65536 "${file}" | jq -Rsc --arg path "${file}" --argjson size "${size}" \
-				'{path: $path, content: ., truncated: ($size > 65536)}' || return 1
-			continue
-		fi
 		log_error "----- FILE (${file}) -----"
 		if ((size > 65536)); then
 			log_error "showing the last 65536 of ${size} bytes: ${file}"
@@ -497,6 +492,7 @@ dump_text_files() {
 		fi
 		printf '\n' >&2
 	done < <(find "${dir}" -type f -size +0c \
+		! -name 'test_run_results.json' ! -name 'reason.*.log' \
 		\( -name '*.log' -o -name '*.json' -o -name '*.conf' -o -name '*.err' \) -print0)
 }
 

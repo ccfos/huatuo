@@ -32,11 +32,10 @@ worker_finalize() {
 		integration_test_cleanup "$HUATUO_BAMAI_TEST_TMPDIR" || cleanup_status=$?
 	fi
 	# Preserve the test process exit code even when preparation or cleanup fails.
-	jq -n --argjson code "$test_exit_code" --argjson cleanup "$cleanup_status" \
-		--arg reason "$RUNNER_CLEANUP_REASON" \
-		'{exit_code:$code, cleanup_status:$cleanup, cleanup_reason:$reason}' \
-		> "$HUATUO_BAMAI_TEST_TMPDIR/execution.json.tmp" \
-		&& mv "$HUATUO_BAMAI_TEST_TMPDIR/execution.json.tmp" "$HUATUO_BAMAI_TEST_TMPDIR/execution.json" || status=1
+	printf 'exit_code=%s\ncleanup_status=%s\ncleanup_reason:\n%s' \
+		"$test_exit_code" "$cleanup_status" "$RUNNER_CLEANUP_REASON" \
+		> "$HUATUO_BAMAI_TEST_TMPDIR/execution.log.tmp" \
+		&& mv "$HUATUO_BAMAI_TEST_TMPDIR/execution.log.tmp" "$HUATUO_BAMAI_TEST_TMPDIR/execution.log" || status=1
 	((cleanup_status == 0)) || status=1
 	exit "$status"
 }

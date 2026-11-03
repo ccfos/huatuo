@@ -129,7 +129,7 @@ runner_start_execution() {
 		# Keep the reset after unshare --fork and before Bash: Bash cannot trap
 		# signals inherited as ignored. Resetting them inside runner_worker.sh
 		# is too late; cancellation can otherwise skip EXIT cleanup and leave
-		# execution.json missing when the runner forcibly kills the worker.
+		# execution.log missing when the runner forcibly kills the worker.
 		local -a signal_reset_launcher
 		runner_build_signal_reset_launcher signal_reset_launcher
 		command+=(--pid --fork --kill-child=TERM --mount-proc "${signal_reset_launcher[@]}")
@@ -162,25 +162,36 @@ runner_start_execution() {
 }
 
 runner_read_execution_result() {
-	local path=$1/execution.json
+	local path=$1/execution.log code cleanup header reason
 	[[ -f $path ]] || {
 		log_error "worker result is missing: $path"
 		return 1
 	}
-	# The final marker preserves trailing newlines through command substitution.
-	jq -esr '
-		if length != 1 then error("expected one result object") else .[0] end |
-		def valid_code: type == "number" and . >= 0 and . <= 255 and floor == .;
-		if type != "object" then error("expected an object")
-		elif (has("exit_code") | not) or (.exit_code != null and (.exit_code | valid_code | not)) then error("invalid exit_code")
-		elif (.cleanup_status != 0 and .cleanup_status != 1) then error("invalid cleanup_status")
-		elif (.cleanup_reason | type) != "string" then error("invalid cleanup_reason")
-		elif .cleanup_status == 1 and .cleanup_reason == "" then error("missing cleanup_reason")
-		else (.exit_code | tostring), (.cleanup_status | tostring), (.cleanup_reason + ".") end
-	' "$path" || {
-		log_error "worker result is invalid: $path"
+	# Only the fixed headers are parsed; the remaining bytes are the raw reason.
+	if ! {
+		IFS= read -r code && IFS= read -r cleanup && IFS= read -r header \
+			&& reason=$(cat && printf '.')
+	} < "$path"; then
+		log_error "worker result has incomplete headers: $path"
 		return 1
-	}
+	fi
+	if [[ ! $code =~ ^exit_code=(null|0|[1-9][0-9]{0,2})$ ||
+		! $cleanup =~ ^cleanup_status=[01]$ || $header != cleanup_reason: ]]; then
+		log_error "worker result has invalid headers: $path"
+		return 1
+	fi
+	code=${code#exit_code=}
+	cleanup=${cleanup#cleanup_status=}
+	if [[ $code != null ]] && ((code > 255)); then
+		log_error "worker exit code exceeds 255: $path"
+		return 1
+	fi
+	if [[ $cleanup == 1 && $reason == . ]]; then
+		log_error "worker cleanup failure has no reason: $path"
+		return 1
+	fi
+	# The marker preserves trailing newlines through the caller's substitution.
+	printf '%s\n%s\n%s' "$code" "$cleanup" "$reason"
 }
 
 runner_finalize_execution() {
@@ -209,10 +220,10 @@ runner_finalize_execution() {
 		fi
 		cleanup_reason=$RUNNER_CLEANUP_REASON
 		result=failed
-		if [[ -f $workspace/execution.json ]]; then
-			reason="worker result is invalid: $workspace/execution.json"
+		if [[ -f $workspace/execution.log ]]; then
+			reason="worker result is invalid: $workspace/execution.log"
 		else
-			reason="worker result is missing: $workspace/execution.json"
+			reason="worker result is missing: $workspace/execution.log"
 		fi
 	fi
 	if [[ $result_valid == true ]]; then
@@ -228,7 +239,7 @@ runner_finalize_execution() {
 		result=failed
 	fi
 	if [[ -n ${runner_cancelled[slot]:-} ]] && [[ $status == 0 || $status == 77 || $status == 130 || $status == 137 || $status == 143 ]] \
-		&& { [[ $result_valid == true ]] || { [[ ! -e $workspace/execution.json ]] && [[ $worker_exit_code == 130 || $worker_exit_code == 137 || $worker_exit_code == 143 ]]; }; }; then
+		&& { [[ $result_valid == true ]] || { [[ ! -e $workspace/execution.log ]] && [[ $worker_exit_code == 130 || $worker_exit_code == 137 || $worker_exit_code == 143 ]]; }; }; then
 		result=skipped reason="execution interrupted: ${runner_cancelled[slot]}"
 	fi
 	find "$workspace" -type f -name timings.log -exec cat {} + || true
@@ -301,11 +312,10 @@ runner_cleanup() {
 	fi
 	[[ ${status} -ne 77 ]] || status=0
 	if ((runner_report_failed)); then
-		log_error "test report is incomplete: ${RUNNER_OUTPUT_DIR}/result.json"
+		log_error "test report is incomplete: ${RUNNER_OUTPUT_DIR}/test_run_results.json"
 		status=1
 	else
 		report_finish "${final_status}" "${status}" "${reason}" || status=1
-		report_summary || status=1
 	fi
 	exit "${status}"
 }
@@ -349,7 +359,7 @@ run_test_suite() {
 	local script group
 	runner_last_storage_test="" runner_failed=0 runner_report_failed=0
 	declare -ga runner_pids=() runner_workspaces=() runner_started=() runner_groups=() runner_scripts=() runner_cancelled=()
-	if [[ -z ${RUNNER_OUTPUT_DIR:-} || ${RUNNER_OUTPUT_DIR} != "${HUATUO_BAMAI_TEST_TMPDIR}" || ! -f ${RUNNER_OUTPUT_DIR}/result.json ]]; then
+	if [[ -z ${RUNNER_OUTPUT_DIR:-} || ${RUNNER_OUTPUT_DIR} != "${HUATUO_BAMAI_TEST_TMPDIR}" || ! -f ${RUNNER_OUTPUT_DIR}/test_run_results.json ]]; then
 		fatal "runner report context mismatch: output=${RUNNER_OUTPUT_DIR:-unset}, workspace=${HUATUO_BAMAI_TEST_TMPDIR}; initialize the report before running the suite"
 	fi
 	runner_validate_test_metadata

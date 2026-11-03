@@ -134,13 +134,15 @@ supervisor_exit_interrupted() {
 	trap '' INT TERM
 	[[ ${signal} != INT ]] || code=130
 	supervisor_reason="runner received SIG${signal}"
-	report_status=$(jq -r .status "${RUNNER_OUTPUT_DIR}/result.json") || exit 1
-	if [[ ${report_status} == running ]] && jq -e 'any(.test_executions[]; .started_at != null)' "${RUNNER_OUTPUT_DIR}/result.json" > /dev/null; then
-		log_error "runner exited with an incomplete report: ${RUNNER_OUTPUT_DIR}/result.json"
-	elif ! jq -e --argjson code "${code}" '.status == "interrupted" and .exit_code == $code' "${RUNNER_OUTPUT_DIR}/result.json" > /dev/null; then
-		report_finish interrupted "${code}" "${supervisor_reason}" || exit 1
-		if [[ ${report_status} == running ]]; then report_summary || exit 1; fi
-		log_info "run interrupted during finalization: ${supervisor_reason}; exit code ${code}"
+	report_status=$(jq -r .status "${RUNNER_OUTPUT_DIR}/test_run_results.json") || exit 1
+	if [[ ${report_status} == running ]] && jq -e 'any(.test_executions[]; .started_at != null)' "${RUNNER_OUTPUT_DIR}/test_run_results.json" > /dev/null; then
+		log_error "runner exited with an incomplete report: ${RUNNER_OUTPUT_DIR}/test_run_results.json"
+	else
+		if ! jq -e --argjson code "${code}" '.status == "interrupted" and .exit_code == $code' "${RUNNER_OUTPUT_DIR}/test_run_results.json" > /dev/null; then
+			report_finish interrupted "${code}" "${supervisor_reason}" || exit 1
+			log_info "run interrupted during finalization: ${supervisor_reason}; exit code ${code}"
+		fi
+		report_summary || exit 1
 	fi
 	exit "${code}"
 }
@@ -154,18 +156,29 @@ supervisor_finalize() {
 	trap 'supervisor_exit_interrupted TERM' TERM
 	if [[ -n ${supervisor_signal} ]]; then supervisor_exit_interrupted "${supervisor_signal}"; fi
 	local report_status
-	report_status=$(jq -r .status "${RUNNER_OUTPUT_DIR}/result.json") || code=1
+	report_status=$(jq -r .status "${RUNNER_OUTPUT_DIR}/test_run_results.json") || {
+		log_error "cannot read test results: ${RUNNER_OUTPUT_DIR}/test_run_results.json"
+		exit 1
+	}
 	if [[ ${report_status} == running ]]; then
-		if jq -e 'any(.test_executions[]; .started_at != null)' "${RUNNER_OUTPUT_DIR}/result.json" > /dev/null; then
+		if jq -e 'any(.test_executions[]; .started_at != null)' "${RUNNER_OUTPUT_DIR}/test_run_results.json" > /dev/null; then
 			# An inner runner that started cases owns their outcomes. Do not turn
 			# lost results into skips when its report writer or cleanup failed.
-			log_error "runner exited with an incomplete report: ${RUNNER_OUTPUT_DIR}/result.json"
+			log_error "runner exited with an incomplete report: ${RUNNER_OUTPUT_DIR}/test_run_results.json"
 			[[ ${code} != 0 ]] || code=1
 		else
 			[[ -n ${supervisor_reason} ]] || supervisor_reason="runner setup exited with code ${code}"
-			report_finish aborted "${code}" "${supervisor_reason}" || code=1
-			report_summary || code=1
+			if report_finish aborted "${code}" "${supervisor_reason}"; then
+				report_status=aborted
+			else
+				code=1
+			fi
 		fi
+	fi
+	if [[ ${report_status} != running ]]; then
+		# Publish once after reconciling late signals; keep output and results consistent.
+		trap '' INT TERM
+		report_summary || code=1
 	fi
 	exit "${code}"
 }

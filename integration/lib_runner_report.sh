@@ -33,11 +33,11 @@ report_update() {
 	filter+=" | "' .execution_counts = reduce .test_executions[] as $test
 		({total: (.test_executions | length), passed: 0, failed: 0, skipped: 0};
 		 if $test.result == null then . else .[$test.result] += 1 end)'
-	if ! jq "$@" "${filter}" "${RUNNER_OUTPUT_DIR}/result.json" > "${RUNNER_OUTPUT_DIR}/result.json.tmp"; then
-		log_error "cannot serialize test report: ${RUNNER_OUTPUT_DIR}/result.json"
+	if ! jq "$@" "${filter}" "${RUNNER_OUTPUT_DIR}/test_run_results.json" > "${RUNNER_OUTPUT_DIR}/test_run_results.json.tmp"; then
+		log_error "cannot serialize test report: ${RUNNER_OUTPUT_DIR}/test_run_results.json"
 		return 1
 	fi
-	mv -- "${RUNNER_OUTPUT_DIR}/result.json.tmp" "${RUNNER_OUTPUT_DIR}/result.json"
+	mv -- "${RUNNER_OUTPUT_DIR}/test_run_results.json.tmp" "${RUNNER_OUTPUT_DIR}/test_run_results.json"
 }
 
 report_init() {
@@ -59,8 +59,8 @@ report_init() {
 		 test_executions: [range(1; $repeats + 1) as $run | $ARGS.positional[] |
 		 {test_name: (split("/") | last), run_index: $run, result: null, exit_code: null,
 		 reason: null, started_at: null, finished_at: null, duration_seconds: null, logs: null}]
-		}' "$@" > "${RUNNER_OUTPUT_DIR}/result.json.tmp"
-	mv -- "${RUNNER_OUTPUT_DIR}/result.json.tmp" "${RUNNER_OUTPUT_DIR}/result.json"
+		}' "$@" > "${RUNNER_OUTPUT_DIR}/test_run_results.json.tmp"
+	mv -- "${RUNNER_OUTPUT_DIR}/test_run_results.json.tmp" "${RUNNER_OUTPUT_DIR}/test_run_results.json"
 }
 
 report_execution_start() {
@@ -83,7 +83,7 @@ report_execution_finish() {
 		({passed: "PASS", failed: "FAIL", skipped: "SKIP"}[.result]) + ": " + .test_name +
 		" (\(.run_index)/\($runs)) duration=\(.duration_seconds)s" +
 		(if .result == "skipped" or .reason == null then "" else ": " + .reason end)
-	' "${RUNNER_OUTPUT_DIR}/result.json") || return 1
+	' "${RUNNER_OUTPUT_DIR}/test_run_results.json") || return 1
 	log_info "${message}"
 	if [[ ${result} == skipped && -n ${reason} ]]; then
 		log_info "SKIP: ${reason}"
@@ -104,27 +104,21 @@ report_finish() {
 
 report_summary() {
 	local workspace
-	local failed_logs="${RUNNER_OUTPUT_DIR}/failed-logs.jsonl"
-	: > "${failed_logs}"
-	# Collect failed test logs after all outcomes are known; JSON escapes embedded
-	# newlines and quotes without mixing logs from parallel test executions.
+	# Print diagnostics after workers finish so parallel cases cannot interleave logs.
 	while IFS= read -r workspace; do
-		dump_text_files "${workspace}" json \
-			| jq -sc --arg directory "${workspace}" '{dir: $directory, logs: .}' \
-				>> "${failed_logs}" || return 1
+		dump_text_files "${workspace}" || return 1
 	done < <(jq -r '.test_executions[] | select(.result == "failed" and .logs != null) |
 		$output + "/" + (.logs.stdout | rtrimstr("/stdout.log"))' \
-		--arg output "${RUNNER_OUTPUT_DIR}" "${RUNNER_OUTPUT_DIR}/result.json")
-	jq --arg output "${RUNNER_OUTPUT_DIR}" --slurpfile failed_logs "${failed_logs}" '
+		--arg output "${RUNNER_OUTPUT_DIR}" "${RUNNER_OUTPUT_DIR}/test_run_results.json")
+	jq --arg output "${RUNNER_OUTPUT_DIR}" '
+		def short_reason: if . == null then null else split("\n")[0] end;
 		.suite as $suite |
-		($failed_logs | INDEX(.dir)) as $logs |
-		{summary: .execution_counts, report: ($output + "/result.json"),
+		{status, output_dir: $output, results_path: ($output + "/test_run_results.json"),
+		 runs_per_test, started_at, finished_at, duration_seconds, execution_counts,
 		 skipped_tests: ([.test_executions[] | select(.result == "skipped") |
 			$suite + "/" + .test_name] | unique),
 		 failed_tests: [.test_executions[] | select(.result == "failed") |
-			(if .logs == null then null else
-				$output + "/" + (.logs.stdout | rtrimstr("/stdout.log")) end) as $directory |
-			{name: ($suite + "/" + .test_name), reason, dir: $directory,
-			 logs: (if $directory == null then [] else $logs[$directory].logs // [] end)}]}
-	' "${RUNNER_OUTPUT_DIR}/result.json"
+			{name: ($suite + "/" + .test_name), run_index, reason: (.reason | short_reason)}]}
+		+ (if .reason == null then {} else {reason: (.reason | short_reason)} end)
+	' "${RUNNER_OUTPUT_DIR}/test_run_results.json"
 }

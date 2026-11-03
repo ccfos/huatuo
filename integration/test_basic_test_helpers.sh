@@ -69,6 +69,7 @@ assert_helper_failure_diagnostics() {
 	printf '{"error":"json marker"}\n' > "${fixture}/response.json"
 	printf 'config marker\n' > "${fixture}/bamai.conf"
 	printf 'stderr marker\n' > "${fixture}/tool.err"
+	printf 'run results marker\n' > "${fixture}/test_run_results.json"
 	printf 'reason marker\n' > "${fixture}/reason.1.log"
 	printf 'source marker\n' > "${fixture}/runner/test_case.sh"
 	printf 'output marker\n' > "${fixture}/tool.out"
@@ -77,12 +78,12 @@ assert_helper_failure_diagnostics() {
 	printf '%66000s' '' | tr ' ' x >> "${fixture}/large.log"
 	printf '\nend marker\n' >> "${fixture}/large.log"
 	dump_text_files "${fixture}" 2> "${output}"
-	for marker in 'stdout marker' 'service marker' 'json marker' 'config marker' 'stderr marker' 'reason marker' 'end marker' 'showing the last 65536'; do
+	for marker in 'stdout marker' 'service marker' 'json marker' 'config marker' 'stderr marker' 'end marker' 'showing the last 65536'; do
 		grep -Fq "${marker}" "${output}" || fatal "failure diagnostics omitted ${marker}"
 	done
-	grep -Fq "FILE (${fixture}/reason.1.log)" "${output}" \
-		|| fatal "failure diagnostics omitted the exit reason file"
-	for marker in 'source marker' 'output marker' 'old reason marker' 'start marker'; do
+	! grep -Fq "FILE (${fixture}/reason.1.log)" "${output}" \
+		|| fatal "failure diagnostics repeated the exit reason file"
+	for marker in 'source marker' 'output marker' 'old reason marker' 'reason marker' 'start marker' 'run results marker'; do
 		! grep -Fq "${marker}" "${output}" || fatal "failure diagnostics printed ${marker}"
 	done
 }
