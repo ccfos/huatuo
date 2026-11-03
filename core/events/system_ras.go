@@ -199,7 +199,7 @@ func dynamicWindow(dyn []byte, rawOffset, base, length uint32) []byte {
 
 // dataLocWindow resolves a __data_loc descriptor into a sub-slice of dyn. The
 // kernel packs the absolute start of the dynamic data into the low 16 bits and
-// the number of bytes it captured into the high 16 bits. limit is an
+// the length of the tracepoint dynamic field into the high 16 bits. limit is an
 // independent upper bound supplied by the record (the CPER section length
 // here); the shorter of the two wins, and dynamicWindow still caps the result
 // at the copied window.
