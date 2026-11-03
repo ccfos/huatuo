@@ -54,11 +54,14 @@ func Executable(pid int) (string, error) {
 // the marker describes the file rather than the process.
 const unlinkedExecutableMarker = " (deleted)"
 
-// NormalizeExecutable removes the kernel's unlinked marker from path unless
-// path itself is the live file. The same suffix is a legal filename component,
-// so compare the marked path with /proc/<pid>/exe before preserving it. Resolve
-// the candidate through /proc/<pid>/root because path describes the target
-// process's mount namespace, which may not exist in the profiler's namespace.
+// ResolveExecutablePath returns path with the kernel's unlinked marker removed
+// unless path itself is the live file. It stats procExePath and the candidate
+// inside the target process root, so it reports I/O errors rather than editing
+// an unverified path. The same suffix is a legal filename component, so the
+// marked path is compared with /proc/<pid>/exe before it is preserved. The
+// candidate is resolved through /proc/<pid>/root because path describes the
+// target process's mount namespace, which may not exist in the profiler's
+// namespace.
 // When the original path already contains a replacement binary, the marked
 // path no longer identifies the running image and the marker must be dropped.
 // A target root that cannot be inspected returns an error instead of rewriting
@@ -70,7 +73,7 @@ const unlinkedExecutableMarker = " (deleted)"
 // image is never rewritten, because rewriting it could select a different file.
 // The marker is dropped only when the marked path no longer identifies the
 // running image, and callers match the resulting path exactly.
-func NormalizeExecutable(path, procExePath string) (string, error) {
+func ResolveExecutablePath(path, procExePath string) (string, error) {
 	trimmed, found := strings.CutSuffix(path, unlinkedExecutableMarker)
 	if !found {
 		return path, nil
@@ -110,7 +113,7 @@ func ExecutablePath(pid int) (string, error) {
 		return "", err
 	}
 
-	return NormalizeExecutable(path, procfs.Path(strconv.Itoa(pid), "exe"))
+	return ResolveExecutablePath(path, procfs.Path(strconv.Itoa(pid), "exe"))
 }
 
 // ExecutableName returns the basename of pid's executable with a kernel

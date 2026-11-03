@@ -79,6 +79,7 @@ func TestFindProcessesMatchesExactExecutableName(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100, 101},
 		procFS,
+		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err != nil {
@@ -98,6 +99,7 @@ func TestFindProcessesMatchesUnlinkedExecutable(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100},
 		procFS,
+		root,
 		executableFilter{
 			ExecutableName: "java",
 			ExecutablePath: javaPath,
@@ -130,6 +132,7 @@ func TestFindProcessesMatchesExactCommandLineArgument(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100, 101},
 		procFS,
+		root,
 		executableFilter{
 			ExecutablePrefix: "python",
 			ExecutablePath:   "/app/main.py",
@@ -153,6 +156,7 @@ func TestFindProcessesMatchesPlatformPythonExecutable(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100, 101, 102},
 		procFS,
+		root,
 		executableFilter{ExecutablePrefix: "python"},
 	)
 	if err != nil {
@@ -175,6 +179,7 @@ func TestFindProcessesSkipsExitedProcess(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100},
 		procFS,
+		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err != nil {
@@ -196,10 +201,42 @@ func TestFindProcessesReturnsStatParseError(t *testing.T) {
 	_, err := findProcesses(
 		[]int32{100},
 		procFS,
+		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err == nil {
 		t.Fatal("findProcesses() error = nil, want stat parse error")
+	}
+}
+
+func TestFindProcessesUsesTheGivenProcRoot(t *testing.T) {
+	root, procFS := newTestProcFS(t)
+	javaPath := filepath.Join(root, "usr", "bin", "java")
+	if err := os.MkdirAll(filepath.Dir(javaPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(javaPath), err)
+	}
+	if err := os.WriteFile(javaPath+" (deleted)", nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", javaPath+" (deleted)", err)
+	}
+	writeTestProcess(t, root, testProcess{pid: 100, executable: javaPath + " (deleted)", ppid: 1})
+	if err := os.Symlink("/", filepath.Join(root, "100", "root")); err != nil {
+		t.Fatalf("Symlink(root) error = %v", err)
+	}
+
+	// The literal file exists only in the test tree. Resolving the marker
+	// against the default proc mount would drop it and report the wrong name.
+	got, err := findProcesses(
+		[]int32{100},
+		procFS,
+		root,
+		executableFilter{ExecutableName: "java (deleted)"},
+	)
+	if err != nil {
+		t.Fatalf("findProcesses() error = %v", err)
+	}
+	want := map[int][]int{100: {100}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("findProcesses() = %v, want %v", got, want)
 	}
 }
 
@@ -242,9 +279,6 @@ func newTestProcFS(t *testing.T) (string, procfs.FS) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("MkdirAll(%q) error = %v", root, err)
 	}
-	procfs.RootPrefix(base)
-	t.Cleanup(func() { procfs.RootPrefix("/") })
-
 	procFS, err := procfs.NewFS(root)
 	if err != nil {
 		t.Fatalf("procfs.NewFS(%q) error = %v", root, err)
