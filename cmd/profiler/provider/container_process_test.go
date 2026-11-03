@@ -79,7 +79,6 @@ func TestFindProcessesMatchesExactExecutableName(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100, 101},
 		procFS,
-		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err != nil {
@@ -99,7 +98,6 @@ func TestFindProcessesMatchesUnlinkedExecutable(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100},
 		procFS,
-		root,
 		executableFilter{
 			ExecutableName: "java",
 			ExecutablePath: javaPath,
@@ -132,7 +130,6 @@ func TestFindProcessesMatchesExactCommandLineArgument(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100, 101},
 		procFS,
-		root,
 		executableFilter{
 			ExecutablePrefix: "python",
 			ExecutablePath:   "/app/main.py",
@@ -156,7 +153,6 @@ func TestFindProcessesMatchesPlatformPythonExecutable(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100, 101, 102},
 		procFS,
-		root,
 		executableFilter{ExecutablePrefix: "python"},
 	)
 	if err != nil {
@@ -179,7 +175,6 @@ func TestFindProcessesSkipsExitedProcess(t *testing.T) {
 	got, err := findProcesses(
 		[]int32{100},
 		procFS,
-		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err != nil {
@@ -201,7 +196,6 @@ func TestFindProcessesReturnsStatParseError(t *testing.T) {
 	_, err := findProcesses(
 		[]int32{100},
 		procFS,
-		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err == nil {
@@ -243,10 +237,13 @@ func TestGroupProcessesByRootRejectsParentCycle(t *testing.T) {
 
 func newTestProcFS(t *testing.T) (string, procfs.FS) {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "proc")
+	base := t.TempDir()
+	root := filepath.Join(base, "proc")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("MkdirAll(%q) error = %v", root, err)
 	}
+	procfs.RootPrefix(base)
+	t.Cleanup(func() { procfs.RootPrefix("/") })
 
 	procFS, err := procfs.NewFS(root)
 	if err != nil {

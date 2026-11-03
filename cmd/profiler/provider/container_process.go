@@ -107,10 +107,10 @@ func findProcessesInCgroups(cgroupSuffix string, filter executableFilter) (map[i
 		return nil, fmt.Errorf("open procfs: %w", err)
 	}
 
-	return findProcesses(pids, procFS, procfs.DefaultPath(), filter)
+	return findProcesses(pids, procFS, filter)
 }
 
-func findProcesses(pids []int32, procFS procfs.FS, procRoot string, filter executableFilter) (map[int][]int, error) {
+func findProcesses(pids []int32, procFS procfs.FS, filter executableFilter) (map[int][]int, error) {
 	targetProcs := make([]procInfo, 0, len(pids))
 	for _, rawPID := range pids {
 		pid := int(rawPID)
@@ -137,7 +137,7 @@ func findProcesses(pids []int32, procFS procfs.FS, procRoot string, filter execu
 		// running image rather than a literal filename component.
 		resolvedExecutable, err = hostprocess.NormalizeExecutable(
 			resolvedExecutable,
-			filepath.Join(procRoot, strconv.Itoa(pid), "exe"),
+			procfs.Path(strconv.Itoa(pid), "exe"),
 		)
 		if processNoLongerExists(err) {
 			continue
