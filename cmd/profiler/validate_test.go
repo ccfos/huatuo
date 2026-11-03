@@ -425,9 +425,7 @@ func TestValidateOutputFormat(t *testing.T) {
 	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "speedscope", "chrometrace", "remote-store"} {
 		require.NoError(t, validateOutputFormat(format, profiling.TypeCPU))
 	}
-	for _, typ := range []profiling.Type{profiling.TypeCPU, profiling.TypeLock} {
-		require.NoError(t, validateOutputFormat("chrometrace", typ))
-	}
+	require.NoError(t, validateOutputFormat("chrometrace", profiling.TypeCPU))
 	require.EqualError(
 		t,
 		validateOutputFormat("chrometrace", profiling.TypeMemory),
@@ -435,6 +433,25 @@ func TestValidateOutputFormat(t *testing.T) {
 	)
 	require.NoError(t, validateOutputFormat("speedscope", profiling.TypeMemory))
 	require.EqualError(t, validateOutputFormat("pprof", profiling.TypeCPU), `unsupported output format "pprof"`)
+}
+
+func TestValidateCommonOptionsOutputFormat(t *testing.T) {
+	pid := strconv.Itoa(os.Getpid())
+	outputPath := filepath.Join(t.TempDir(), "profile.out")
+
+	// Only CPU and memory reach the validator; chrometrace is limited to the
+	// time-based one.
+	ctx := newValidationCLIContext(t, "--pid", pid, "--type", "cpu",
+		"--output-path", outputPath, "--output-format", "chrometrace")
+	require.NoError(t, validateCommonOptions(ctx))
+
+	ctx = newValidationCLIContext(t, "--pid", pid, "--type", "memory",
+		"--output-path", outputPath, "--output-format", "chrometrace")
+	require.EqualError(
+		t,
+		validateCommonOptions(ctx),
+		"--output-format=chrometrace needs a time-based profile and is not supported by --type=memory",
+	)
 }
 
 func TestValidateNumericOptions(t *testing.T) {
