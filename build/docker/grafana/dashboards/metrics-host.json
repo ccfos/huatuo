@@ -734,7 +734,7 @@
           "exemplar": true,
           "expr": "$metric{host=~\"$host\",region=~\"$region\"}",
           "interval": "",
-          "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
+          "legendFormat": "{{host}}|{{container_host}}:{{container_type}} {{device}} {{port}}",
           "refId": "A"
         }
       ],

@@ -324,6 +324,12 @@ Counts receive-side hardware drops for supported NIC drivers. It prefers `rx_mis
 | --- | --- | --- | --- | --- | --- |
 | `netdev_hw_rx_dropped_total` | Cumulative receive-side hardware drops | Count | Host | sysfs, eBPF | device, driver |
 
+### RDMA Port Statistics
+
+`netdev_rdma_link_<counter>` exposes per-port kernel counters; available names depend on the driver. Additional labels are `device`, `nodeguid`, `index`, `num_ports`, and `port`.
+
+The new `port` label creates new time series, including on single-port devices. Keep it for port-level queries. For a selected counter, use `sum by (region, host, device) (<metric>)` for device totals, or `sum by (region, host, device) (rate(<metric>[5m]))` for device rates; replace `<metric>` with the full metric name. Grouping only by `device` mixes identically named devices across hosts.
+
 ### NIC Statistics
 
 Collects NIC statistics through proc or netlink. Common metrics follow [Linux `/proc/net/dev`](https://github.com/torvalds/linux/blob/v6.6/net/core/net-procfs.c#L72-L92) semantics:
