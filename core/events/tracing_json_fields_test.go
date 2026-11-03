@@ -209,12 +209,12 @@ func TestBuildRasAcpiTracerDataRawWindow(t *testing.T) {
 			wantRaw:    raw(4),
 		},
 		{
-			name:       "section length past the window is clamped",
+			name:       "descriptor length past the window is clamped",
 			fruTxt:     fruOffset,
-			bufLoc:     bufOffset | (32 << 16),
-			sectionLen: 1 << 20,
+			bufLoc:     bufOffset | (2048 << 16),
+			sectionLen: 2048,
 			wantText:   "DIMM_A1",
-			wantRaw:    raw(32),
+			wantRaw:    raw(DETAIL_INFO_SIZE_ACPI - int(bufOffset-base)),
 		},
 		{
 			name:       "zero padding in the fixed window is not payload",
