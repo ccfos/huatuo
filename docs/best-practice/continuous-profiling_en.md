@@ -380,7 +380,7 @@ main;handleRequest;writeResponse 172
 
 Stacks are aggregated by user stack, kernel stack, and the complete label set. CPU and wait times use nanoseconds; memory uses bytes. `comm` is only the process command name. Java and Python entry points are stored in `java_entry` and `python_entry` labels.
 
-`collapsed`, `flamegraph`, and `svg` produce final aggregates after successful collection. `json` preserves each window and signed values. Display formats clamp negative cumulative sample values to zero and log a warning. Stored labels do not imply that query APIs support arbitrary label indexing or filtering.
+`collapsed`, `flamegraph`, `svg`, `speedscope`, and `chrometrace` produce final aggregates after successful collection. `json` preserves each window and signed values. Display formats clamp negative cumulative sample values to zero and log a warning. Stored labels do not imply that query APIs support arbitrary label indexing or filtering.
 
 ### Live Physical Memory
 

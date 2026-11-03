@@ -385,7 +385,7 @@ main;handleRequest;writeResponse 172
 
 调用栈按用户栈、内核栈和完整标签组聚合。CPU 时间和等待时间使用纳秒，内存使用字节。`comm` 仅表示进程命令名，Java、Python 入口分别保存在 `java_entry`、`python_entry` 标签中。
 
-`collapsed`、`flamegraph` 和 `svg` 在采集成功结束后生成最终聚合结果；`json` 保留各窗口及有符号值。展示格式会将每个样本的负累计值归零并记录警告。标签已保存不代表查询接口支持任意标签索引或过滤。
+`collapsed`、`flamegraph`、`svg`、`speedscope` 和 `chrometrace` 在采集成功结束后生成最终聚合结果；`json` 保留各窗口及有符号值。展示格式会将每个样本的负累计值归零并记录警告。标签已保存不代表查询接口支持任意标签索引或过滤。
 
 ### 物理内存存活量
 
