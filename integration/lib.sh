@@ -345,11 +345,6 @@ wait_until() {
 	return 1
 }
 
-profiler_ready() {
-	local stdout=$1
-	[[ -f "${stdout}" ]] && grep -q "data reading loop started" "${stdout}"
-}
-
 assert_profiler_output_file() {
 	[[ -s "$1" && -f "$1" ]] || fatal "expected a nonempty profile file at $1"
 }
