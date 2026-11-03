@@ -113,4 +113,33 @@ func TestNetArpCache(t *testing.T) {
 		require.Equal(t, uint64(10), stats.Stats["entries"])
 		require.Equal(t, uint64(11), stats.Stats["allocs"])
 	})
+	t.Run("MultiCPULinesAreSummed", func(t *testing.T) {
+		content := `entries allocs destroys
+0a 0b 0c
+01 02 03`
+
+		err = os.WriteFile(arpCachePath, []byte(content), 0o600)
+		require.NoError(t, err)
+
+		stats, err := NetArpCache()
+		require.NoError(t, err)
+		require.Len(t, stats.Stats, 3)
+		require.Equal(t, uint64(11), stats.Stats["entries"])
+		require.Equal(t, uint64(13), stats.Stats["allocs"])
+		require.Equal(t, uint64(15), stats.Stats["destroys"])
+	})
+
+	t.Run("MoreValuesThanHeaders", func(t *testing.T) {
+		content := `entries
+0a 0b`
+
+		err = os.WriteFile(arpCachePath, []byte(content), 0o600)
+		require.NoError(t, err)
+
+		stats, err := NetArpCache()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "more arp_cache counters")
+		require.Nil(t, stats)
+	})
+
 }

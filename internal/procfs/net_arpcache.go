@@ -16,6 +16,7 @@ package procfs
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -40,20 +41,27 @@ func NetArpCache() (*ArpCacheStats, error) {
 	scanner := bufio.NewScanner(file)
 	scanner.Scan()
 
-	// First string is always a header for stats
-	var headers []string
-	headers = append(headers, strings.Fields(scanner.Text())...)
+	// The first line is the header; every following line carries the
+	// counters of one CPU, so the values must be summed across all of
+	// them (the same layout as the other /proc/net/stat files).
+	headers := strings.Fields(scanner.Text())
 
-	// Fast path ...
 	cache := &ArpCacheStats{Stats: make(map[string]uint64)}
-
-	scanner.Scan()
-	for num, counter := range strings.Fields(scanner.Text()) {
-		value, err := strconv.ParseUint(counter, 16, 64)
-		if err != nil {
-			return nil, err
+	for scanner.Scan() {
+		for num, counter := range strings.Fields(scanner.Text()) {
+			if num >= len(headers) {
+				return nil, fmt.Errorf("more arp_cache counters (%d) than headers (%d)",
+					num+1, len(headers))
+			}
+			value, err := strconv.ParseUint(counter, 16, 64)
+			if err != nil {
+				return nil, err
+			}
+			cache.Stats[headers[num]] += value
 		}
-		cache.Stats[headers[num]] = value
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 
 	return cache, nil
