@@ -76,18 +76,18 @@ func TestFindProcessesMatchesExactExecutableName(t *testing.T) {
 	writeTestProcess(t, root, testProcess{pid: 100, executable: "/usr/bin/java", ppid: 1})
 	writeTestProcess(t, root, testProcess{pid: 101, executable: "/usr/bin/javac", ppid: 1})
 
-	got, err := findProcesses(
+	got, err := findProcessesInFS(
 		[]int32{100, 101},
 		procFS,
 		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err != nil {
-		t.Fatalf("findProcesses() error = %v", err)
+		t.Fatalf("findProcessesInFS() error = %v", err)
 	}
 	want := map[int][]int{100: {100}}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("findProcesses() = %v, want %v", got, want)
+		t.Fatalf("findProcessesInFS() = %v, want %v", got, want)
 	}
 }
 
@@ -96,7 +96,7 @@ func TestFindProcessesMatchesUnlinkedExecutable(t *testing.T) {
 	javaPath := filepath.Join(root, "usr", "bin", "java")
 	writeTestProcess(t, root, testProcess{pid: 100, executable: javaPath + " (deleted)", ppid: 1})
 
-	got, err := findProcesses(
+	got, err := findProcessesInFS(
 		[]int32{100},
 		procFS,
 		root,
@@ -106,11 +106,11 @@ func TestFindProcessesMatchesUnlinkedExecutable(t *testing.T) {
 		},
 	)
 	if err != nil {
-		t.Fatalf("findProcesses() error = %v", err)
+		t.Fatalf("findProcessesInFS() error = %v", err)
 	}
 	want := map[int][]int{100: {100}}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("findProcesses() = %v, want %v", got, want)
+		t.Fatalf("findProcessesInFS() = %v, want %v", got, want)
 	}
 }
 
@@ -129,7 +129,7 @@ func TestFindProcessesMatchesExactCommandLineArgument(t *testing.T) {
 		cmdline:    []string{"/usr/bin/python3", "/app/main.py.backup"},
 	})
 
-	got, err := findProcesses(
+	got, err := findProcessesInFS(
 		[]int32{100, 101},
 		procFS,
 		root,
@@ -139,11 +139,11 @@ func TestFindProcessesMatchesExactCommandLineArgument(t *testing.T) {
 		},
 	)
 	if err != nil {
-		t.Fatalf("findProcesses() error = %v", err)
+		t.Fatalf("findProcessesInFS() error = %v", err)
 	}
 	want := map[int][]int{100: {100}}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("findProcesses() = %v, want %v", got, want)
+		t.Fatalf("findProcessesInFS() = %v, want %v", got, want)
 	}
 }
 
@@ -153,18 +153,18 @@ func TestFindProcessesMatchesPlatformPythonExecutable(t *testing.T) {
 	writeTestProcess(t, root, testProcess{pid: 101, executable: "/usr/libexec/platform-python", ppid: 1})
 	writeTestProcess(t, root, testProcess{pid: 102, executable: "/usr/bin/git", ppid: 1})
 
-	got, err := findProcesses(
+	got, err := findProcessesInFS(
 		[]int32{100, 101, 102},
 		procFS,
 		root,
 		executableFilter{ExecutablePrefix: "python"},
 	)
 	if err != nil {
-		t.Fatalf("findProcesses() error = %v", err)
+		t.Fatalf("findProcessesInFS() error = %v", err)
 	}
 	want := map[int][]int{100: {100}, 101: {101}}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("findProcesses() = %v, want %v", got, want)
+		t.Fatalf("findProcessesInFS() = %v, want %v", got, want)
 	}
 }
 
@@ -176,17 +176,17 @@ func TestFindProcessesSkipsExitedProcess(t *testing.T) {
 		t.Fatalf("Remove(%q) error = %v", statPath, err)
 	}
 
-	got, err := findProcesses(
+	got, err := findProcessesInFS(
 		[]int32{100},
 		procFS,
 		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err != nil {
-		t.Fatalf("findProcesses() error = %v", err)
+		t.Fatalf("findProcessesInFS() error = %v", err)
 	}
 	if len(got) != 0 {
-		t.Fatalf("findProcesses() = %v, want empty result", got)
+		t.Fatalf("findProcessesInFS() = %v, want empty result", got)
 	}
 }
 
@@ -198,14 +198,14 @@ func TestFindProcessesReturnsStatParseError(t *testing.T) {
 		t.Fatalf("WriteFile(%q) error = %v", statPath, err)
 	}
 
-	_, err := findProcesses(
+	_, err := findProcessesInFS(
 		[]int32{100},
 		procFS,
 		root,
 		executableFilter{ExecutableName: "java"},
 	)
 	if err == nil {
-		t.Fatal("findProcesses() error = nil, want stat parse error")
+		t.Fatal("findProcessesInFS() error = nil, want stat parse error")
 	}
 }
 
@@ -225,18 +225,18 @@ func TestFindProcessesUsesTheGivenProcRoot(t *testing.T) {
 
 	// The literal file exists only in the test tree. Resolving the marker
 	// against the default proc mount would drop it and report the wrong name.
-	got, err := findProcesses(
+	got, err := findProcessesInFS(
 		[]int32{100},
 		procFS,
 		root,
 		executableFilter{ExecutableName: "java (deleted)"},
 	)
 	if err != nil {
-		t.Fatalf("findProcesses() error = %v", err)
+		t.Fatalf("findProcessesInFS() error = %v", err)
 	}
 	want := map[int][]int{100: {100}}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("findProcesses() = %v, want %v", got, want)
+		t.Fatalf("findProcessesInFS() = %v, want %v", got, want)
 	}
 }
 

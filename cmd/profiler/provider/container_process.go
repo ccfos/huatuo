@@ -102,19 +102,24 @@ func findProcessesInCgroups(cgroupSuffix string, filter executableFilter) (map[i
 	if err != nil {
 		return nil, err
 	}
+	return findProcesses(pids, filter)
+}
+
+// findProcesses resolves PIDs through the default procfs mount.
+func findProcesses(pids []int32, filter executableFilter) (map[int][]int, error) {
 	procRoot := procfs.DefaultPath()
 	procFS, err := procfs.NewFS(procRoot)
 	if err != nil {
 		return nil, fmt.Errorf("open procfs: %w", err)
 	}
 
-	return findProcesses(pids, procFS, procRoot, filter)
+	return findProcessesInFS(pids, procFS, procRoot, filter)
 }
 
-// findProcesses resolves each PID through procFS and reads the inode behind
-// procRoot, so a caller that mounts procfs elsewhere keeps both lookups in the
-// same tree.
-func findProcesses(
+// findProcessesInFS is the test seam. The executable link and the inode check
+// share one root, so a caller that mounts procfs elsewhere keeps both lookups
+// in the same tree.
+func findProcessesInFS(
 	pids []int32,
 	procFS procfs.FS,
 	procRoot string,
