@@ -9,7 +9,7 @@ weight: 5
 
 集成测试运行真实程序，验证采集、接口和外部依赖之间的行为。指标测试使用模拟的 `/proc`、`/sys` 文件系统，并检查 `/metrics` 输出；其他用例按各自条件准备进程、网络或采集环境。
 
-直接执行测试脚本前需完成 `make build`。本文说明运行入口、结果判定和新增指标测试的方法。
+直接执行测试脚本前需完成 `make build test-build`。本文说明运行入口、结果判定和新增指标测试的方法。
 
 ## 指标测试流程
 
@@ -46,7 +46,7 @@ make integration
 
 ## CPU 指标与自动追踪 E2E
 
-先执行 `make build`，再在测试节点以 root 运行单用例：
+先执行 `make build test-build`，再在测试节点以 root 运行单用例：
 
 ```bash
 sudo bash e2e/run.sh test_metrics_cpu_util.sh
@@ -63,7 +63,7 @@ sudo bash e2e/run.sh test_autotracing_dload.sh
 本地运行需安装 `stress-ng`；CPU util/stat 的 worker 参考采样还需要 `sysstat`。
 VM 流程会安装这两个软件包。
 Kubernetes 运行时需要能拉取负载镜像；CPU 参考采集、cpuidle 和 dload
-还需要 Docker 及其测试镜像的访问权限。提前执行 `make build`，
+还需要 Docker 及其测试镜像的访问权限。提前执行 `make build test-build`，
 测试运行时不需要 Go 编译器。
 
 cpu_util、cpu_stat 和 runqlat 支持 cgroup v1/v2。控制项可用时，cpu_stat 会临时切换
@@ -139,11 +139,11 @@ apiserver 测试遵循相同的平铺目录约定：
 
 公共服务配置、请求、断言和清理由 `integration/lib_apiserver.sh` 提供，
 并复用 `integration/lib_storage.sh` 和 `integration/lib_continuous_profiling.sh`。
-协议客户端和源码夹具位于 `integration/testdata/`；`make build` 提前构建
+协议客户端和源码夹具位于 `integration/testdata/`；`make build test-build` 提前构建
 `_output/tests/apiserver-probe` 和静态 Go 负载 `apiserver-go-workload`。
 
 ```bash
-make build
+make build test-build
 sudo bash integration/run.sh test_apiserver_profile_disabled.sh
 sudo bash integration/run.sh test_apiserver_profiling.sh
 sudo bash e2e/run.sh test_apiserver_profiling.sh
@@ -182,7 +182,7 @@ Node 故障恢复主动 SIGKILL 测试 Node，验证原任务失败及恢复后�
 故障期间允许预期错误日志，仍拒绝 runtime panic；不验证 Grafana 页面渲染。
 
 runner 只检查 `_output` 目录是否存在，不逐个检查项目二进制和 BPF 产物。
-直接运行脚本前先执行 `make build`；
+直接运行脚本前先执行 `make build test-build`；
 目录存在不代表构建完整，缺失产物会在实际使用时导致失败。
 
 用例使用同一个函数检查 PATH 中的命令或可执行文件路径，缺失时跳过：
@@ -282,7 +282,7 @@ summary: total=5 passed=3 skipped=2 failed=0
 
 ## 性能剖析
 
-运行前需完成 `make build`，并根据 `integration/env.sh` 配置 Java 或 Python 采集工具路径。
+运行前需完成 `make build test-build`，并根据 `integration/env.sh` 配置 Java 或 Python 采集工具路径。
 
 仓库集成测试提供了可执行的端到端示例。测试会创建目标进程、运行 profiler，并校验输出中的预期调用栈：
 

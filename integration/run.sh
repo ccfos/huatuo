@@ -210,7 +210,7 @@ for prerequisite in "${runner_prerequisites[@]}"; do
 		exit 0
 	fi
 done
-supervisor_reason="build output directory missing: ${ROOT_DIR}/_output; run make build"
+supervisor_reason="build output directory missing: ${ROOT_DIR}/_output; run make build test-build"
 require_build_output
 supervisor_reason="namespace or runner initialization failed"
 [[ -z ${supervisor_signal} ]] || exit 1

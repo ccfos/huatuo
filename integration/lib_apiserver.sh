@@ -75,7 +75,7 @@ APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
 export APISERVER_ADDR API_TOKEN
 
 PROBE="${ROOT_DIR}/_output/tests/apiserver-probe"
-[[ -x $PROBE ]] || fatal 'missing apiserver probe; run make build'
+[[ -x $PROBE ]] || fatal 'missing apiserver probe; run make test-build'
 
 start_server() {
 	[[ ! -f "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" ]] || cp "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver-${APISERVER_GENERATION}.log"

@@ -9,7 +9,7 @@ weight: 5
 
 Integration tests run real programs to verify behavior across collectors, interfaces, and external dependencies. Metric tests use simulated `/proc` and `/sys` filesystems and check `/metrics` output. Other cases prepare processes, networking, or collection environments as needed.
 
-Run `make build` before invoking test scripts directly. This guide covers entry points, result interpretation, and adding metric tests.
+Run `make build test-build` before invoking test scripts directly. This guide covers entry points, result interpretation, and adding metric tests.
 
 ## Metric Test Flow
 
@@ -73,7 +73,7 @@ to `integration/lib_runner.sh`.
 
 ## CPU Metric and Autotracing E2E Tests
 
-Run `make build`, then execute a single case as root on the test node:
+Run `make build test-build`, then execute a single case as root on the test node:
 
 ```bash
 sudo bash e2e/run.sh test_metrics_cpu_util.sh
@@ -92,7 +92,7 @@ Install `stress-ng` for local runs. CPU util/stat worker reference measurements
 also require `sysstat`; the VM workflow installs both packages.
 The Kubernetes runtime must be able to pull workload images. CPU reference
 collection, cpuidle and dload also require Docker and access to their images.
-Run `make build` beforehand; test execution does not need a Go compiler.
+Run `make build test-build` beforehand; test execution does not need a Go compiler.
 
 cpu_util, cpu_stat and runqlat support cgroup v1/v2. When available, cpu_stat
 temporarily changes `kernel.sched_schedstats` and restores its original value.
@@ -179,11 +179,11 @@ Apiserver tests follow the same flat layout:
 `integration/lib_apiserver.sh` shares service configuration, requests, assertions,
 and cleanup across both suites, reusing the existing storage and continuous
 profiling helpers. The protocol client and workloads live in
-`integration/testdata/`. `make build` prepares `_output/tests/apiserver-probe`
+`integration/testdata/`. `make build test-build` prepares `_output/tests/apiserver-probe`
 and the static `apiserver-go-workload` binary before tests run.
 
 ```bash
-make build
+make build test-build
 sudo bash integration/run.sh test_apiserver_profile_disabled.sh
 sudo bash integration/run.sh test_apiserver_profiling.sh
 sudo bash e2e/run.sh test_apiserver_profiling.sh
@@ -230,7 +230,7 @@ kills the test Node and verifies both the old task's failure and a new task afte
 restart. Expected fault logs are allowed; runtime panics are rejected. Grafana
 page rendering is outside this coverage.
 
-The runner checks only that `_output` exists, not individual binaries or BPF artifacts. Run `make build` before invoking scripts directly. An existing directory does not imply a complete build; missing artifacts fail when used.
+The runner checks only that `_output` exists, not individual binaries or BPF artifacts. Run `make build test-build` before invoking scripts directly. An existing directory does not imply a complete build; missing artifacts fail when used.
 
 Cases use one helper to check commands on PATH or executable paths and skip if they are missing:
 
@@ -337,7 +337,7 @@ tests retain `-count=1` so cached dependencies never skip test execution.
 
 ## Profiling
 
-Run `make build` first and configure Java or Python tool paths according to `integration/env.sh`.
+Run `make build test-build` first and configure Java or Python tool paths according to `integration/env.sh`.
 
 Repository integration tests provide executable end-to-end examples. They create target processes, run profiler, and check expected stacks in the output:
 
