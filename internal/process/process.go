@@ -63,6 +63,13 @@ const unlinkedExecutableMarker = " (deleted)"
 // path no longer identifies the running image and the marker must be dropped.
 // A target root that cannot be inspected returns an error instead of rewriting
 // the path, because an unverified rewrite could select a different executable.
+//
+// A hard link whose literal name ends in the marker points at the same inode,
+// so once the original name is gone the filesystem cannot say which reading
+// produced the text. The live path wins: a path that still names the running
+// image is never rewritten, because rewriting it could select a different file.
+// The marker is dropped only when the marked path no longer identifies the
+// running image, and callers match the resulting path exactly.
 func NormalizeExecutable(path, procExePath string) (string, error) {
 	trimmed, found := strings.CutSuffix(path, unlinkedExecutableMarker)
 	if !found {

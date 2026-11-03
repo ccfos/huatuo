@@ -34,11 +34,13 @@ readonly PYTHON_BIN="$(python3 -c 'import sys; print(sys.executable)')"
 readonly PYTHON_HOME="$(python3 -c 'import sys; print(sys.base_prefix)')"
 LITERAL_PID=""
 REPLACED_PID=""
+LINKED_PID=""
 
 cleanup() {
 	local status=$?
 	[[ -n "${LITERAL_PID}" ]] && stop_by_pid "${LITERAL_PID}" 5 || true
 	[[ -n "${REPLACED_PID}" ]] && stop_by_pid "${REPLACED_PID}" 5 || true
+	[[ -n "${LINKED_PID}" ]] && stop_by_pid "${LINKED_PID}" 5 || true
 	if [[ ${status} -eq 0 || ${status} -eq 77 ]]; then
 		rm -rf -- "${WORK_DIR}"
 	else
@@ -114,3 +116,26 @@ chmod +x "${PYTHON_REPLACED}"
 log_info "profiling Python after an in-place executable replacement pid=${REPLACED_PID}"
 profile_explicit_pid "${REPLACED_PID}" "${PYTHON_REPLACED}" "${WORK_DIR}/replaced.folded"
 log_info "Python with a replaced executable is still discovered and profiled"
+
+# A hard link ending in the marker keeps the running image reachable after the
+# original name is unlinked. procfs then reports text that is both a kernel
+# marker and a live file name, and the live path is the one that matches.
+readonly PYTHON_LINKED="${WORK_DIR}/python-linked"
+readonly PYTHON_LINKED_MARKED="${PYTHON_LINKED} (deleted)"
+cp "${PYTHON_BIN}" "${PYTHON_LINKED}"
+chmod +x "${PYTHON_LINKED}"
+PYTHONHOME="${PYTHON_HOME}" "${PYTHON_LINKED}" "${PYTHON_FIXTURE}" independent \
+	> "${WORK_DIR}/linked.out" 2> "${WORK_DIR}/linked.err" &
+LINKED_PID=$!
+wait_until 10 1 test -s "${WORK_DIR}/linked.out" || fatal "hard-linked Python did not start"
+kill -0 "${LINKED_PID}" || fatal "hard-linked Python exited immediately"
+
+ln "${PYTHON_LINKED}" "${PYTHON_LINKED_MARKED}"
+rm -f "${PYTHON_LINKED}"
+[[ -e "${PYTHON_LINKED_MARKED}" ]] || fatal "hard link to the running image is missing"
+wait_until 5 1 bash -c '[[ "$(readlink "/proc/$1/exe")" == *" (deleted)" ]]' bash "${LINKED_PID}" \
+	|| fatal "/proc/${LINKED_PID}/exe is not marked deleted"
+
+log_info "profiling Python whose running image is reachable only through the marked path pid=${LINKED_PID}"
+profile_explicit_pid "${LINKED_PID}" "${PYTHON_LINKED_MARKED}" "${WORK_DIR}/linked.folded"
+log_info "Python behind a same-inode marked hard link is discovered and profiled"
