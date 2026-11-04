@@ -19,6 +19,30 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 require_commands python3 jq curl ss flock
 
+assert_native_pid_prerequisite() (
+	source "${ROOT_DIR}/integration/lib_profiler.sh"
+	local container_status status expected output
+	output="${HUATUO_BAMAI_TEST_TMPDIR}/native-pid-prerequisite.log"
+	for container_status in 0 1; do
+		is_container() { return "${container_status}"; }
+		status=0
+		(
+			require_native_pid_profiling
+			printf 'collection reached\n'
+		) > "${output}" 2>&1 || status=$?
+		expected=0
+		[[ ${container_status} != 0 ]] || expected=77
+		assert_eq "${status}" "${expected}" "native PID prerequisite exit status"
+		if [[ ${container_status} == 0 ]]; then
+			grep -Fq 'native PID profiling is unsupported inside containers' "${output}" \
+				|| fatal "native PID skip reason is missing"
+			! grep -Fq 'collection reached' "${output}" || fatal "native PID collection ran after skip"
+		else
+			grep -Fq 'collection reached' "${output}" || fatal "host native PID collection was skipped"
+		fi
+	done
+)
+
 assert_helper_log_levels() {
 	local helpers_log_format helpers_log_level helpers_log_probe helpers_log_status helpers_log_expected helpers_log_line
 	# The logger quotes text fields; exercise both text variants and JSON output.
@@ -448,6 +472,7 @@ assert_eq "${cpu_image_status}" 1 "CPU image pull failure belongs to the CPU cas
 grep -Fq 'cannot pull CPU workload image' "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" \
 	|| fatal "CPU image pull failure lacks registry diagnostics"
 
+assert_native_pid_prerequisite
 assert_helper_log_levels
 assert_helper_toml_values
 assert_helper_http_defaults

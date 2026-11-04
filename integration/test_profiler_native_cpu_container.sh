@@ -226,7 +226,7 @@ assert_privileged_container() (
 	# hide the ELF loader. An empty root gives each mount its own destination.
 	tar -cf - --files-from /dev/null \
 		| timeout --kill-after=2 15 docker import - "${runner_image}" > "${WORK_DIR}/privileged/image.log"
-	log_info "running native intersection and destruction cases inside a privileged container"
+	log_info "running native container-ID profiling inside a privileged container"
 	timeout --kill-after=20 180 docker run --rm --name "${container_name}" \
 		--privileged --pid=host --network=host --cgroupns=host --ulimit memlock=-1:-1 \
 		"${runner_mounts[@]}" \
@@ -280,9 +280,14 @@ test_docker() {
 		"${DOCKER_IMAGE}")
 	docker inspect --format '{{.State.Running}}' "${DOCKER_CONTAINER_ID}" | grep -qx true \
 		|| fatal "docker native container exited before profiling: ${DOCKER_CONTAINER_ID}"
+	run_profile_case docker "${DOCKER_CONTAINER_ID}"
+	if is_container; then
+		log_warn "skipping native PID intersection and destruction: PID profiling is unsupported inside containers"
+		RUNTIMES_TESTED=$((RUNTIMES_TESTED + 1))
+		return
+	fi
 	container_pid=$(docker inspect --format '{{.State.Pid}}' "${DOCKER_CONTAINER_ID}")
 	container_start_time=$(process_start_time "${container_pid}") || fatal "docker container identity unavailable"
-	run_profile_case docker "${DOCKER_CONTAINER_ID}"
 	assert_outside_pid_excluded docker "${DOCKER_CONTAINER_ID}" "${container_pid}" "${container_start_time}"
 	assert_destroyed_container docker "${DOCKER_CONTAINER_ID}" "${container_pid}"
 	DOCKER_CONTAINER_ID=""
@@ -307,12 +312,17 @@ test_containerd() {
 		"${CONTAINERD_IMAGE}" \
 		"${CONTAINERD_CONTAINER_ID}" \
 		/work/callchain
+	run_profile_case containerd "${CONTAINERD_CONTAINER_ID}"
+	if is_container; then
+		log_warn "skipping native PID intersection and destruction: PID profiling is unsupported inside containers"
+		RUNTIMES_TESTED=$((RUNTIMES_TESTED + 1))
+		return
+	fi
 	container_pid=$(ctr --namespace "${CONTAINERD_NAMESPACE}" tasks list \
 		| awk -v id="${CONTAINERD_CONTAINER_ID}" \
 			'$1 == id && $3 == "RUNNING" { print $2; found = 1 } END { exit !found }') \
 		|| fatal "containerd native container exited before profiling: ${CONTAINERD_CONTAINER_ID}"
 	container_start_time=$(process_start_time "${container_pid}") || fatal "containerd container identity unavailable"
-	run_profile_case containerd "${CONTAINERD_CONTAINER_ID}"
 	assert_outside_pid_excluded containerd "${CONTAINERD_CONTAINER_ID}" "${container_pid}" "${container_start_time}"
 	assert_destroyed_container containerd "${CONTAINERD_CONTAINER_ID}" "${container_pid}"
 	CONTAINERD_CONTAINER_ID=""

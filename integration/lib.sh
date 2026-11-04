@@ -21,6 +21,15 @@ if ! declare -p CURL_TIMEOUT > /dev/null 2>&1; then
 	CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 fi
 
+is_container() {
+	[[ -e /.dockerenv || -e /run/.containerenv || -s /run/systemd/container ]] && return 0
+	if command -v systemd-detect-virt > /dev/null 2>&1; then
+		systemd-detect-virt --container --quiet
+		return $?
+	fi
+	return 1
+}
+
 # --------------------------------- log --------------------------------------
 
 TEST_LOG_TAG=${TEST_LOG_TAG:-INTEGRATION}

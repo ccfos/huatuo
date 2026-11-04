@@ -17,6 +17,13 @@
 # Profiler scenarios load lib.sh before this library.
 set -euo pipefail
 
+# Native PID filters use host PIDs; container-local PIDs cannot select targets.
+require_native_pid_profiling() {
+	if is_container; then
+		skip "native PID profiling is unsupported inside containers; run on the host"
+	fi
+}
+
 profiler_ready() {
 	local stdout=$1
 	[[ -f "${stdout}" ]] && grep -q "data reading loop started" "${stdout}"
