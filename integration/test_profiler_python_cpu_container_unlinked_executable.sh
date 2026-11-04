@@ -120,12 +120,12 @@ DOCKER_CONTAINER_ID=$(docker run --detach \
 	')
 
 container_ready() {
-	[[ -f "${PYTHON_RUNTIME_DIR}/python.ready" ]] && return 0
+	# The ready file survives an early exit, so check the container first.
 	if [[ $(docker inspect --format '{{.State.Running}}' "${DOCKER_CONTAINER_ID}" 2> /dev/null || true) != true ]]; then
 		docker logs "${DOCKER_CONTAINER_ID}" > "${PYTHON_RUNTIME_DIR}/container.log" 2>&1 || true
 		fatal "container exited before the workload was ready (see ${PYTHON_RUNTIME_DIR}/container.log)"
 	fi
-	return 1
+	[[ -f "${PYTHON_RUNTIME_DIR}/python.ready" ]]
 }
 
 wait_until 30 1 container_ready || fatal "Python replacement container did not become ready: ${DOCKER_CONTAINER_ID}"
