@@ -15,7 +15,7 @@
 # limitations under the License.
 
 # Exercise the built profiler from deterministic async-profiler output across
-# the SVG, Speedscope, and Chrome Trace formatters. JVM sampling and symbolization
+# the SVG, Speedscope, Chrome Trace, and dump formatters. JVM sampling and symbolization
 # are outside this output-contract test.
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
@@ -98,6 +98,20 @@ assert_chrometrace_output() {
 		|| fatal "unexpected Chrome Trace output: $(cat "${output}")"
 }
 
+assert_dump_output() {
+	local output=$1
+	[[ $(grep -c '^Sample [0-9][0-9]* \[value=' "${output}") == 3 ]] \
+		|| fatal "unexpected dump sample count: $(cat "${output}")"
+	for value in 20000000 30000000 50000000; do
+		grep -Eq "^Sample [0-9]+ \[value=${value}\]$" "${output}" \
+			|| fatal "dump is missing weight ${value}: $(cat "${output}")"
+	done
+	grep -Fq '    shared' "${output}" \
+		|| fatal "dump is missing shared frame: $(cat "${output}")"
+	grep -Fq '    shared_[k]' "${output}" \
+		|| fatal "dump is missing kernel frame: $(cat "${output}")"
+}
+
 mkdir -p "${OUTPUT_FORMATS_TOOL_DIR}/bin" "${OUTPUT_FORMATS_TOOL_DIR}/lib" "${OUTPUT_FORMATS_CLASSES_DIR}"
 install -m 755 "${ROOT_DIR}/integration/testdata/test_profiler_pprof_asprof.sh" "${OUTPUT_FORMATS_TOOL_DIR}/bin/asprof"
 # The sampler fixture does not load an agent, but the provider requires its file.
@@ -124,8 +138,12 @@ for flamegraph_format in svg flamegraph; do
 	assert_log_has_no_failure "${flamegraph_log}" "profiler ${flamegraph_format}"
 done
 
-for output_format in speedscope chrometrace; do
-	output="${HUATUO_BAMAI_TEST_TMPDIR}/${output_format}.json"
+for output_format in speedscope chrometrace dump; do
+	extension=json
+	if [[ ${output_format} == dump ]]; then
+		extension=txt
+	fi
+	output="${HUATUO_BAMAI_TEST_TMPDIR}/${output_format}.${extension}"
 	output_log="${HUATUO_BAMAI_TEST_TMPDIR}/${output_format}.log"
 	if ! timeout 30 "${ROOT_DIR}/_output/bin/profiler" \
 		--type cpu --language java --pid "${target_pid}" \
