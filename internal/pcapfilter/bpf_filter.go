@@ -30,6 +30,8 @@ package pcapfilter
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/cilium/ebpf/asm"
 	"github.com/cloudflare/cbpfc"
@@ -267,6 +269,73 @@ func compileGoPcap(expr string) (insns []cbpf.Instruction, err error) {
 	return f.Compile()
 }
 
+// isBareNegatedEthertype reports whether the whole expression is a single
+// negated ethertype primitive ("not ip", "!arp"). go-pcap compiles compounds
+// like "not arp and not tcp" to exactly the same instructions as the bare
+// "not arp", so the bytecode alone cannot distinguish them; the rewrite is
+// only correct for the bare form and must be gated on the expression.
+func isBareNegatedEthertype(expr string) bool {
+	// "not ! arp" and "!arp" must not enable the rewrite: go-pcap mishandles
+	// "!" (it compiles "!arp" as a plain "arp"), so only the exact word form
+	// "not <ethertype>", with no other operator anywhere, is trusted.
+	if strings.ContainsRune(expr, '!') {
+		return false
+	}
+	tokens := strings.FieldsFunc(expr, func(r rune) bool {
+		return unicode.IsSpace(r) || r == '(' || r == ')'
+	})
+	if len(tokens) != 2 || tokens[0] != "not" {
+		return false
+	}
+	switch tokens[1] {
+	case "ip", "ip6", "arp", "rarp":
+		return true
+	}
+	return false
+}
+
+// fixNegatedEthertype rewrites the match branch of the bare negated
+// ethertype programs go-pcap emits ("not ip", "not ip6"). The program loads
+// the ethertype, jumps to the trailing drop return when it matches, and
+// jumps past the end of the program when it does not - and that past-end
+// branch must reach the final accept return. boundJumps resolves past-end
+// jumps as drops, so the L2 stub rejected every frame while the retargeted
+// L3 stub accepted non-matching frames. The template is deliberately narrow
+// - an equality test against an ethertype whose false branch lands
+// past the end of a program ending in drop-then-accept - because compound expressions and plain ethertype
+// tests also jump past the end and rely on the drop convention, which is
+// correct for them.
+func fixNegatedEthertype(insns []cbpf.Instruction) {
+	last := len(insns) - 1
+	if last < 3 {
+		return
+	}
+	if ret, ok := insns[last].(cbpf.RetConstant); !ok || ret.Val == 0 {
+		return
+	}
+	if ret, ok := insns[last-1].(cbpf.RetConstant); !ok || ret.Val != 0 {
+		return
+	}
+	jump, ok := insns[1].(cbpf.JumpIf)
+	if !ok || jump.Cond != cbpf.JumpEqual {
+		return
+	}
+	switch jump.Val {
+	case etherTypeIPv4, etherTypeIPv6, 0x0806, 0x8035: // arp, rarp
+	default:
+		return
+	}
+	if load, ok := insns[0].(cbpf.LoadAbsolute); !ok || load.Off != 12 || load.Size != 2 {
+		return
+	}
+	falseTarget := uint64(1) + 1 + uint64(jump.SkipFalse)
+	if falseTarget <= uint64(last) {
+		return
+	}
+	jump.SkipFalse = uint8(last - 2)
+	insns[1] = jump
+}
+
 // compileCBPF compiles expr to cBPF via go-pcap (pure Go, no libpcap dependency).
 // When l3 is true, packet offsets are retargeted from Ethernet-relative to raw-IP.
 func compileCBPF(expr string, l3 bool) ([]cbpf.Instruction, error) {
@@ -279,6 +348,9 @@ func compileCBPF(expr string, l3 bool) ([]cbpf.Instruction, error) {
 		return nil, fmt.Errorf("go-pcap compile: %w", err)
 	}
 
+	if isBareNegatedEthertype(expr) {
+		fixNegatedEthertype(insns)
+	}
 	if l3 {
 		insns, err = retargetToL3(insns)
 		if err != nil {
