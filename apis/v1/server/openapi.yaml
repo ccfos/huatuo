@@ -6,7 +6,68 @@ tags:
   - name: readiness
   - name: profiling
   - name: tracing
+  - name: mcp
 paths:
+  /v1/mcp:
+    post:
+      operationId: handleMCP
+      tags: [mcp]
+      summary: Dispatch a stateless MCP JSON-RPC message.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              x-go-type: json.RawMessage
+      responses:
+        '200':
+          description: MCP JSON-RPC response or server-sent event stream.
+        '202':
+          description: MCP notification accepted.
+        '400':
+          description: Invalid MCP message.
+        '404':
+          description: MCP is disabled.
+        '429':
+          description: API server user request rate limit reached.
+        '503':
+          description: MCP concurrency limit reached or handler is stopping.
+    get:
+      operationId: streamMCP
+      tags: [mcp]
+      summary: Open an MCP server-sent event stream when supported.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: MCP server-sent event stream.
+        '404':
+          description: MCP is disabled.
+        '405':
+          description: Streaming is disabled by the MCP transport.
+        '429':
+          description: API server user request rate limit reached.
+        '503':
+          description: MCP concurrency limit reached or handler is stopping.
+    delete:
+      operationId: deleteMCP
+      tags: [mcp]
+      summary: Request MCP session termination.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Termination request accepted; a no-op in stateless mode.
+        '404':
+          description: MCP is disabled.
+        '405':
+          description: Session termination is not allowed by the session manager.
+        '429':
+          description: API server user request rate limit reached.
+        '503':
+          description: MCP concurrency limit reached or handler is stopping.
   /openapi.json:
     get:
       operationId: getOpenAPI

@@ -49,6 +49,7 @@ services:
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-}
       ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
       RUN_PATH: ${RUN_PATH:-}
+      ENABLE_MCP: ${ENABLE_MCP:-false}
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - ../../huatuo-apiserver.conf:${RUN_PATH}/conf/huatuo-apiserver.conf:rw

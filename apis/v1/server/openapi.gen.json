@@ -862,6 +862,108 @@
         ]
       }
     },
+    "/v1/mcp": {
+      "delete": {
+        "operationId": "deleteMCP",
+        "responses": {
+          "200": {
+            "description": "Termination request accepted; a no-op in stateless mode."
+          },
+          "404": {
+            "description": "MCP is disabled."
+          },
+          "405": {
+            "description": "Session termination is not allowed by the session manager."
+          },
+          "429": {
+            "description": "API server user request rate limit reached."
+          },
+          "503": {
+            "description": "MCP concurrency limit reached or handler is stopping."
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Request MCP session termination.",
+        "tags": [
+          "mcp"
+        ]
+      },
+      "get": {
+        "operationId": "streamMCP",
+        "responses": {
+          "200": {
+            "description": "MCP server-sent event stream."
+          },
+          "404": {
+            "description": "MCP is disabled."
+          },
+          "405": {
+            "description": "Streaming is disabled by the MCP transport."
+          },
+          "429": {
+            "description": "API server user request rate limit reached."
+          },
+          "503": {
+            "description": "MCP concurrency limit reached or handler is stopping."
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Open an MCP server-sent event stream when supported.",
+        "tags": [
+          "mcp"
+        ]
+      },
+      "post": {
+        "operationId": "handleMCP",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "x-go-type": "json.RawMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "MCP JSON-RPC response or server-sent event stream."
+          },
+          "202": {
+            "description": "MCP notification accepted."
+          },
+          "400": {
+            "description": "Invalid MCP message."
+          },
+          "404": {
+            "description": "MCP is disabled."
+          },
+          "429": {
+            "description": "API server user request rate limit reached."
+          },
+          "503": {
+            "description": "MCP concurrency limit reached or handler is stopping."
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Dispatch a stateless MCP JSON-RPC message.",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
     "/v1/profiling": {
       "get": {
         "operationId": "listProfilingJobs",
@@ -1580,6 +1682,9 @@
     },
     {
       "name": "tracing"
+    },
+    {
+      "name": "mcp"
     }
   ],
   "x-error-codes": {

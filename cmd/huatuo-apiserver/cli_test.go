@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
 	"github.com/ccfos/huatuo/internal/log"
 
 	"github.com/urfave/cli/v2"
@@ -37,6 +38,7 @@ func TestOptionsFromContextPreservesExplicitRelativeConfigDir(t *testing.T) {
 	}
 	if err := flags.Parse([]string{
 		"--config-dir", "relative-conf",
+		"--enable-mcp",
 		"--enable-pprof",
 		"--enable-cgroup",
 		"--log-debug",
@@ -50,6 +52,9 @@ func TestOptionsFromContextPreservesExplicitRelativeConfigDir(t *testing.T) {
 	if opts.ConfigDir != "relative-conf" {
 		t.Errorf("ConfigDir = %q, want %q", opts.ConfigDir, "relative-conf")
 	}
+	if !opts.EnableMCP {
+		t.Error("EnableMCP = false, want true")
+	}
 	if !opts.EnablePProf {
 		t.Error("EnablePProf = false, want true")
 	}
@@ -58,6 +63,45 @@ func TestOptionsFromContextPreservesExplicitRelativeConfigDir(t *testing.T) {
 	}
 	if !opts.LogDebug {
 		t.Error("LogDebug = false, want true")
+	}
+}
+
+func TestMCPEnabled(t *testing.T) {
+	tests := []struct {
+		name    string
+		cli     bool
+		config  bool
+		enabled bool
+	}{
+		{name: "disabled"},
+		{name: "CLI", cli: true, enabled: true},
+		{name: "config", config: true, enabled: true},
+		{name: "both", cli: true, config: true, enabled: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			opts := &Options{EnableMCP: test.cli, Config: &config.Config{}}
+			opts.Config.MCP.Enabled = test.config
+			if got := mcpEnabled(opts); got != test.enabled {
+				t.Fatalf("mcpEnabled() = %t, want %t", got, test.enabled)
+			}
+		})
+	}
+}
+
+func TestEnableMCPEnvironmentVariable(t *testing.T) {
+	t.Setenv("ENABLE_MCP", "true")
+	app := cli.NewApp()
+	opts := &Options{}
+	opts.AddFlags(app)
+	app.Action = func(ctx *cli.Context) error {
+		return opts.FromContext(ctx)
+	}
+	if err := app.Run([]string{"huatuo-apiserver"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !opts.EnableMCP {
+		t.Fatal("EnableMCP = false, want true from ENABLE_MCP")
 	}
 }
 
