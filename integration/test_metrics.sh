@@ -196,3 +196,20 @@ mv "${METRICS_SOCKSTAT}.next" "${METRICS_SOCKSTAT}"
 huatuo_bamai_collect_metrics
 assert_sockstat_value TCP_inuse 3
 assert_metrics "removed Mem" -- 'sockstat_TCP_mem(_bytes)?\{'
+
+# Kernel extensions must not suppress XFS metrics during updates or startup.
+cat >> "${METRICS_FIXTURE_ROOT}/sys/fs/xfs/sda0/stats/stats" << 'EOF'
+
+gc xpc 18446744073709551615
+defer_relog 4294967296
+future_stats nested 1
+EOF
+huatuo_bamai_collect_metrics
+assert_expected_metrics "${HUATUO_BAMAI_TEST_EXPECTED}/test_xfs.txt"
+
+huatuo_bamai_stop
+integration_huatuo_bamai_start write_config_bamai_default \
+	--region dev --procfs-prefix "${METRICS_FIXTURE_ROOT}" \
+	--disable-storage --disable-kubelet --log-debug
+huatuo_bamai_await_metrics
+assert_expected_metrics "${HUATUO_BAMAI_TEST_EXPECTED}/test_xfs.txt"
