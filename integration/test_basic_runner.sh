@@ -226,6 +226,24 @@ EOF
 	assert_runner_result integration explicit_suite 0 '{"total":1,"passed":1,"skipped":0,"failed":0}' --suite integration test_pass.sh
 	cp "${RUNNER_FIXTURE}/e2e/test_pass.sh" "${RUNNER_FIXTURE}/e2e/test_e2e_only.sh"
 	assert_runner_result integration e2e_suite 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' --suite e2e test_e2e_only.sh 2
+	local selected_suite selected_list="${HUATUO_BAMAI_TEST_TMPDIR}/selected-tests.txt"
+	for selected_suite in integration e2e; do
+		printf 'test_pass.sh\ntest_skip.sh\n' > "${selected_list}"
+		assert_runner_result "${selected_suite}" selected_list 0 '{"total":2,"passed":1,"skipped":1,"failed":0}' --test-list "${selected_list}" \
+			--output-dir "${HUATUO_BAMAI_TEST_TMPDIR}/selected-report-${selected_suite}"
+	done
+	assert_runner_result integration existing_report 2 '' --test-list "${selected_list}" \
+		--output-dir "${HUATUO_BAMAI_TEST_TMPDIR}/selected-report-integration"
+	assert_runner_result integration list_and_test 2 '' --test-list "${selected_list}" test_pass.sh
+	assert_runner_result integration list_and_repeat 2 '' --test-list "${selected_list}" '' 2
+	printf 'test_pass.sh\ntest_pass.sh\n' > "${selected_list}"
+	assert_runner_result integration duplicate_list 2 '' --test-list "${selected_list}"
+	printf '../e2e/test_pass.sh\n' > "${selected_list}"
+	assert_runner_result integration traversal_list 2 '' --test-list "${selected_list}"
+	printf 'test_unknown.sh\n' > "${selected_list}"
+	assert_runner_result integration unknown_list 2 '' --test-list "${selected_list}"
+	: > "${selected_list}"
+	assert_runner_result integration empty_list 2 '' --test-list "${selected_list}"
 	assert_runner_result integration missing_suite 2 '' --suite
 	assert_runner_result integration invalid_suite 2 '' --suite unknown
 	assert_runner_result integration missing_jobs 2 '' -j

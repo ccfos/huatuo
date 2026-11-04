@@ -72,6 +72,8 @@ assert_python_collector_failed() {
 
 for test_case in some-killed all-killed interrupt-after-targets-exit backend-killed interrupt terminate kill; do
 	(
+		# An uncaught case failure terminates the test, so this shell owns its reason.
+		export RUNNER_REASON_OWNER=${BASHPID}
 		collector_pids=() collector_start_times=()
 		cleanup() {
 			local index pid

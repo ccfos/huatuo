@@ -134,6 +134,55 @@ Inspect failed or skipped executions:
 jq '.test_executions[] | select(.result == "failed" or .result == "skipped") | {test_name, run_index, result, reason, logs}' /tmp/huatuo-test.XXXXXX/test_run_results.json
 ```
 
+## Ubuntu Fast Pass CI
+
+The QEMU workflow first uses 15 Ubuntu 26.04 VMs: one shared binary/BPF build,
+one unit-test worker, ten integration shards, and three E2E shards. Each shard
+runs its assigned cases serially, so kernel and service state remain isolated
+between VMs. The shared bundle is compressed once; unit and Go-fixture workers
+restore the builder's Go cache. Fast-stage hosts free unused SDKs before VM
+setup to leave space for images and caches. Kubernetes starts for E2E, known Kubernetes cases, and unreviewed
+new tests. The existing runner starts storage only when a selected case needs it.
+
+`fast-pass-timings.json` records durations from a successful Ubuntu job, with its
+source URL. The planner assigns longer cases first to the least-loaded shard;
+new tests receive a 120-second estimate. Update the estimates from shard reports
+when test costs change. Every discovered `integration/test_*.sh` and
+`e2e/test_*.sh` must appear exactly once. An assignment list is saved in the
+`ubuntu-fast-plan` artifact, alongside revision and pinned-image identities.
+
+The coverage gate requires every shard to succeed and every assigned case to
+finish. Missing, duplicate, extra, failed, and unstarted cases fail the gate.
+Only explicitly listed Ubuntu platform skips with matching reasons are accepted;
+missing prerequisites do not unlock the compatibility stage. Result artifacts
+include the runner's JSON report, per-case diagnostics, VM command log, and
+host/guest disk, memory, kubelet, containerd, and kernel diagnostics.
+The unit artifact also contains coverage. Rerunning failed jobs retains successful
+shards and uses each shard's newest result attempt.
+
+After this gate passes, PRs run the existing five-OS compatibility matrix;
+main runs all thirteen OSs. The author concurrency slot covers both stages.
+The full matrix continues to build and test separately on every selected OS.
+
+For fork validation, manually dispatch **OS Distro QEMU CI** with `stage=fast`.
+This runs only the Ubuntu stage and skips every compatibility VM. Leave
+`fast_selection` empty for the full fast pass, or select `unit`, a shard such as
+`integration-01` / `e2e-01`, or one case such as
+`integration/test_profiler_python_exceptions.sh`. Partial runs are labelled
+as diagnostics; selectors are rejected in normal PR/main or `stage=full` runs.
+Use the same commit to reproduce a shard's deterministic assignment. Manual
+runs default to `stage=full`; `os` controls the subsequent compatibility matrix.
+
+The runner also accepts `--test-list file`, with one bare `test_*.sh` name per
+line, and `--output-dir new-directory` for a predictable report location. Lists
+must be nonempty, contain only existing cases from the chosen suite, and have
+no duplicates. A list cannot be combined with a positional case/repeat count.
+The output directory must be fresh to prevent stale reports from being reused.
+
+Measure cold and warm workflow time, including source generation, VM boot,
+artifact transfer, cache transfer, and account runner queues. The duration
+estimates describe test execution, not the total workflow latency.
+
 ## Common Test Cases
 
 ### CPU Metrics and Autotracing

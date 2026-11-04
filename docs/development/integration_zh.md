@@ -134,6 +134,40 @@ sudo env INTEGRATION_JOBS=2 make integration
 jq '.test_executions[] | select(.result == "failed" or .result == "skipped") | {test_name, run_index, result, reason, logs}' /tmp/huatuo-test.XXXXXX/test_run_results.json
 ```
 
+## Ubuntu 快速分片 CI
+
+QEMU CI 先使用 15 台相同镜像的 Ubuntu 26.04 VM：1 台构建共享的二进制和
+BPF 对象、1 台执行单元测试、10 台执行集成测试分片、3 台执行 E2E 分片。
+分片内部串行执行，VM 之间隔离内核和服务状态。共享构建包只压缩一次，单元测试
+和编译 Go fixture 的分片恢复构建缓存；快速阶段宿主机先释放不用的 SDK，给 VM
+和缓存留出空间。E2E、已知 Kubernetes 用例
+以及未经审核的新用例会初始化 Kubernetes；存储仍由现有 runner 按需启动。
+
+`fast-pass-timings.json` 保存成功 CI 的耗时和来源链接。规划器优先分配耗时长
+的测试到预计负载最小的分片；新测试按 120 秒估算。`ubuntu-fast-plan` artifact
+保存完整分配、提交和镜像标识。覆盖检查要求所有用例恰好执行一次并完成，
+缺失、重复、额外、失败或未启动的用例都会失败；只有明确列出的 Ubuntu 平台
+限制及对应原因可以跳过，缺少依赖不能放行。每个分片保留 JSON 报告、诊断
+日志、VM 命令日志，以及磁盘、内存、kubelet、containerd 和内核诊断；
+单元测试还保留覆盖率。重跑失败 job 时沿用成功 job 的
+结果，并使用各分片最新一次尝试。
+
+快速阶段全部通过后，PR 继续执行原有 5 个 OS 的兼容矩阵，main 执行全部
+13 个 OS；每个兼容 VM 仍独立构建并执行完整测试。作者并发限制覆盖两个阶段。
+
+在 fork 中验证时，手动触发 **OS Distro QEMU CI** 并设置 `stage=fast`，只运行
+Ubuntu 阶段，不启动兼容矩阵。`fast_selection` 留空表示完整快速阶段，也可选择
+`unit`、`integration-01`、`e2e-01` 或完整测试路径，例如
+`integration/test_profiler_python_exceptions.sh`。部分执行仅用于诊断；普通 PR、
+main 或 `stage=full` 不接受筛选。相同提交的分片分配确定不变，可用于复现。
+手动触发默认 `stage=full`，`os` 只控制后续兼容矩阵。
+
+runner 支持 `--test-list file`（每行一个不含目录的 `test_*.sh` 名称）和
+`--output-dir new-directory`。列表必须非空、属于所选 suite、文件存在且不重复，
+不能同时指定位置参数中的用例和重复次数；报告目录必须不存在，避免沿用旧结果。
+评估加速效果时应分别测量冷、热缓存，并计入生成、启动 VM、artifact 和缓存传输，
+以及账号 runner 排队时间。
+
 ## 常用专项测试
 
 ### CPU 指标与自动追踪

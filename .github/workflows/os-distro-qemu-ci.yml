@@ -12,6 +12,15 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
     inputs:
+      stage:
+        description: Full pipeline, or Ubuntu shards only (for fork/debug runs)
+        type: choice
+        default: full
+        options: [full, fast]
+      fast_selection:
+        description: 'Fast only: unit, integration-01, e2e-01, or integration/test_name.sh; empty runs all shards'
+        type: string
+        default: ''
       os:
         description: >-
           Enter comma-separated distro names. Use "all" to select every
@@ -76,6 +85,8 @@ jobs:
       cancel-in-progress: false
     uses: ./.github/workflows/os-distro-qemu-test-reusable.yml
     with:
+      stage: ${{ inputs.stage || 'full' }}
+      fast_selection: ${{ inputs.fast_selection || '' }}
       os: ${{ inputs.os || 'all' }}
       debug_mode: ${{ inputs.debug_mode || 'Disabled' }}
       debug_timeout_minutes: ${{ inputs.debug_timeout_minutes || '90' }}
