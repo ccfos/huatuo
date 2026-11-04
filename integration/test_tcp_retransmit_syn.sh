@@ -45,7 +45,7 @@ log_info "S0/EXP1: SYN retrans (connect/RTO) via isolated netns drop"
 namespace_setup_with_pair syn "${S_ADDR}" "${C_ADDR}"
 
 # Drop SYN packets in the peer namespace so the client enters TCP RTO retry.
-ip netns exec "${NETNS_SERVER}" iptables -I INPUT 1 -p tcp --dport "${TEST_PORT}" -j DROP
+ip netns exec "${NETNS_SERVER}" iptables -w 5 -I INPUT 1 -p tcp --dport "${TEST_PORT}" -j DROP
 
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
 	--filter "tcp and dst host ${NETNS_SERVER_ADDR} and dst port ${TEST_PORT}" \

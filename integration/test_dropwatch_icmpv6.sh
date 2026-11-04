@@ -62,7 +62,7 @@ run_case() {
 		rule_type=echo-reply
 	fi
 	local rule=(-i lo -s "${source}" -d "${destination}" -p ipv6-icmp --icmpv6-type "${rule_type}" -j DROP)
-	ip netns exec "${NETNS}" ip6tables -I INPUT 1 "${rule[@]}" \
+	ip netns exec "${NETNS}" ip6tables -w 5 -I INPUT 1 "${rule[@]}" \
 		|| skip "IPv6 ICMP netfilter rules are unavailable"
 
 	# Select the isolated test flow in the output to exercise the decoder/writer path.
@@ -79,7 +79,7 @@ run_case() {
 	icmpv6_dropwatch_pid=""
 	stop_and_wait_by_pid "${icmpv6_traffic_pid}" || traffic_status=$?
 	icmpv6_traffic_pid=""
-	ip netns exec "${NETNS}" ip6tables -D INPUT "${rule[@]}"
+	ip netns exec "${NETNS}" ip6tables -w 5 -D INPUT "${rule[@]}"
 	assert_eq "${dropwatch_status}" 0 "dropwatch exit status" || fatal "dropwatch failed; see ${err}"
 	assert_eq "${traffic_status}" 0 "traffic generator exit status" || fatal "traffic generator failed; see ${traffic_log}"
 
