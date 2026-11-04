@@ -422,7 +422,7 @@ func TestOffCPUStatsFlag(t *testing.T) {
 }
 
 func TestValidateOutputFormat(t *testing.T) {
-	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "speedscope", "chrometrace", "remote-store"} {
+	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "speedscope", "chrometrace", "dump", "remote-store"} {
 		require.NoError(t, validateOutputFormat(format, profiling.TypeCPU))
 	}
 	require.NoError(t, validateOutputFormat("chrometrace", profiling.TypeCPU))
@@ -812,6 +812,7 @@ func TestCLIOutputOptions(t *testing.T) {
 		{name: "stdout alias", args: []string{"--output-format", "collapsed", "--output-path", "-"}},
 		{name: "collapsed", args: []string{"--output-format", "collapsed", "--output-path", "profile"}},
 		{name: "json", args: []string{"--output-format", "json", "--output-path", "profile.json"}},
+		{name: "dump", args: []string{"--output-format", "dump", "--output-path", "profile.txt"}},
 		{name: "remote-store", args: []string{"--output-format", "remote-store", "--output-path", "/run/toolstream.sock", "--task-id", "task"}},
 		{name: "removed storage flag", args: []string{"--output-storage", "/run/toolstream.sock"}, wantError: "flag provided but not defined"},
 	} {

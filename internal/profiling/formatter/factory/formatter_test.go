@@ -26,6 +26,7 @@ import (
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/chrometrace"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/collapsed"
+	"github.com/ccfos/huatuo/internal/profiling/formatter/dump"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/factory"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/flamegraph"
 	jsonoutput "github.com/ccfos/huatuo/internal/profiling/formatter/json"
@@ -74,6 +75,11 @@ func TestNewFormatterFormats(t *testing.T) {
 			format: output.FormatChromeTrace,
 			name:   output.FormatChromeTrace,
 			suffix: ".chrometrace.json",
+		},
+		{
+			format: output.FormatDump,
+			name:   output.FormatDump,
+			suffix: ".txt",
 		},
 	} {
 		t.Run(string(tc.format), func(t *testing.T) {
@@ -151,6 +157,10 @@ func TestSubpackageConstructors(t *testing.T) {
 		{
 			name:         "chrometrace",
 			newFormatter: chrometrace.NewFormatter,
+		},
+		{
+			name:         "dump",
+			newFormatter: dump.NewFormatter,
 		},
 		{
 			name:         "remotestore",
@@ -353,7 +363,7 @@ func TestFormattersPreserveUnsymbolizedStack(t *testing.T) {
 		},
 	}
 	for _, format := range []output.OutputFormat{
-		output.FormatCollapsed, output.FormatSVG, output.FormatSpeedscope, output.FormatChromeTrace,
+		output.FormatCollapsed, output.FormatSVG, output.FormatSpeedscope, output.FormatChromeTrace, output.FormatDump,
 	} {
 		t.Run(string(format), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "profile")

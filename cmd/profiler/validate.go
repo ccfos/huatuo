@@ -322,7 +322,7 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 
 func validateOutputFormat(format string, profileType profiling.Type) error {
 	switch format {
-	case "collapsed", "flamegraph", "svg", "json", "speedscope", "remote-store":
+	case "collapsed", "flamegraph", "svg", "json", "speedscope", "dump", "remote-store":
 		return nil
 	case "chrometrace":
 		// The trace formatter derives event durations from the sample unit, and

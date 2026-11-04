@@ -359,6 +359,7 @@ A run with no samples may produce no display file; an existing file alone does n
 | `json` | One JSON line per collection window; streaming collection may emit multiple lines | Preserve windows, sample labels, and signed values |
 | `speedscope` | Speedscope profile JSON | Inspect the profile interactively at speedscope.app or in any Speedscope viewer |
 | `chrometrace` | Chrome tracing JSON | Load the collection into `chrome://tracing` or Perfetto; the timeline is synthesised from the sample unit, so it does not preserve the real event order or concurrency |
+| `dump` | `perf_<Unix timestamp>.txt`; numbered stacks and signed values | Read or attach aggregate stacks as plain text; samples retain collection window order |
 | `remote-store` | Uploads pprof-compatible data through a Unix socket without a local flame graph | HUATUO storage integration; not for offline viewing |
 
 ### Flame Graphs

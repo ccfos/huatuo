@@ -364,6 +364,7 @@ _output/bin/profiler \
 | `json` | 每个采集窗口一行 JSON，流式采集可输出多行 | 保留窗口、样本标签和有符号值 |
 | `speedscope` | Speedscope 格式的 profile JSON | 在 speedscope.app 或任意 Speedscope 查看器中交互分析 |
 | `chrometrace` | Chrome tracing 格式 JSON | 导入 `chrome://tracing` 或 Perfetto 查看；时间轴由样本单位合成，不代表真实事件顺序或并发关系 |
+| `dump` | `perf_<Unix 时间戳>.txt`；带有序号和有符号数值的调用栈 | 以纯文本阅读或附加聚合调用栈；样本保留采集窗口顺序 |
 | `remote-store` | 不生成本地火焰图，通过 Unix socket 上传 pprof 兼容数据 | 接入 HUATUO 存储链路时使用，不适合离线查看 |
 
 ### 火焰图
