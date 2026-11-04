@@ -52,22 +52,33 @@ func (r *rdmaLink) Update() ([]*metric.Data, error) {
 		if err != nil {
 			continue
 		}
+		data = append(data, rdmaPortMetrics(rdma, stats)...)
+	}
 
+	return data, nil
+}
+
+// rdmaPortMetrics converts one device's per-port counters into metric series.
+// RdmaStatistic returns one entry per port, so the port index is part of the
+// series identity: without it, two ports on the same device emit the same
+// metric name and labels, and one port's values overwrite the other.
+func rdmaPortMetrics(rdma *netlink.RdmaLink, stats *netlink.RdmaDeviceStatistic) []*metric.Data {
+	var data []*metric.Data
+
+	for _, port := range stats.RdmaPortStatistics {
 		tags := map[string]string{
 			"device":    rdma.Attrs.Name,
 			"nodeguid":  rdma.Attrs.NodeGuid,
 			"index":     strconv.FormatUint(uint64(rdma.Attrs.Index), 10),
 			"num_ports": strconv.FormatUint(uint64(rdma.Attrs.NumPorts), 10),
+			"port":      strconv.FormatUint(uint64(port.PortIndex), 10),
 		}
 
-		for _, s := range stats.RdmaPortStatistics {
-			tags["port"] = strconv.FormatUint(uint64(s.PortIndex), 10)
-			for lable, val := range s.Statistics {
-				data = append(data, metric.NewCounterData(lable, float64(val),
-					fmt.Sprintf("rdma device statistic %s.", lable), tags))
-			}
+		for name, value := range port.Statistics {
+			data = append(data, metric.NewCounterData(name, float64(value),
+				fmt.Sprintf("rdma device statistic %s.", name), tags))
 		}
 	}
 
-	return data, nil
+	return data
 }
