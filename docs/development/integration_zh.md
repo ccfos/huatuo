@@ -105,9 +105,11 @@ sudo env INTEGRATION_JOBS=2 make integration
 | `failed_tests` | 失败测试的名称、执行序号、原因和日志 |
 | `reason` | 提前结束原因；正常结束时省略 |
 
-`failed_tests` 每项包含 `name`、`run_index`、`reason` 和 `logs`。每个日志项包含相对于 `output_dir` 的 `path`、文本 `content` 和截断标记 `truncated`。
+`failed_tests` 每项包含 `name`、`run_index`、`reason` 和 `logs`。每个日志项包含相对于 `output_dir` 的 `path`、`content` 和截断标记 `truncated`。
 
 日志覆盖该次失败工作目录中的非空 `.log`、`.err`、`.out`、`.json`、`.conf` 文本文件，排除二进制、`test_run_results.json` 和 `reason.*.log`。每个文件最多展示末尾 64 KiB；完整内容仍保留在原文件中。排查失败时先读 `reason` 和 `stderr.log`，再查看相关服务日志及响应数据。
+
+完整、合法的 `.json` 文件以 JSON 值嵌入 `content`；无效或截断的 JSON 保留为文本。失败原因优先使用显式诊断；未捕获的命令失败记录脚本、行号、命令和退出码。无法记录原因时保留退出码兜底，已捕获的子进程错误不会作为测试失败原因。
 
 ### 完整报告
 

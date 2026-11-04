@@ -71,8 +71,8 @@ assert_runner_result() {
 		local report
 		report=$(jq -r .results_path <<< "${summary}")
 		[[ $(grep -Fc "\"results_path\": \"${report}\"" "${log}") == 1 ]] || fatal "${suite}/${label}: summary was printed more than once"
-		jq -e --argjson summary "${summary}" '
-			.suite as $suite |
+		jq -e --slurpfile report "${report}" '
+			. as $summary | $report[0] | .suite as $suite |
 			$summary.execution_counts == .execution_counts and
 			$summary.status == .status and $summary.runs_per_test == .runs_per_test and
 			$summary.started_at == .started_at and $summary.finished_at == .finished_at and
@@ -84,7 +84,7 @@ assert_runner_result() {
 			$summary.skipped_tests == ([.test_executions[] | select(.result == "skipped") | $suite + "/" + .test_name] | unique) and
 			([$summary.failed_tests[] | {name, run_index, reason}] ==
 			 [.test_executions[] | select(.result == "failed") | {name: ($suite + "/" + .test_name), run_index, reason: (.reason | if . == null then null else split("\n")[0] end)}])
-		' "${report}" > /dev/null || fatal "${suite}/${label}: summary disagrees with report: ${report}"
+		' <<< "${summary}" > /dev/null || fatal "${suite}/${label}: summary disagrees with report: ${report}"
 		jq -e --argjson code "${expected_status}" '
 			.exit_code == $code and .status != "running" and
 			(.execution_counts.total == (.test_executions | length)) and
@@ -383,6 +383,11 @@ fail)
  printf '%66000s' '' | tr ' ' x > "$HUATUO_BAMAI_TEST_TMPDIR/large.log"
  printf '\nend marker\n' >> "$HUATUO_BAMAI_TEST_TMPDIR/large.log"
  printf '{\n  "results_path": "diagnostic-only"\n}\n' > "$HUATUO_BAMAI_TEST_TMPDIR/response.json"
+ printf '[1, {"nested": true}]\n' > "$HUATUO_BAMAI_TEST_TMPDIR/array.json"
+ printf 'false\n' > "$HUATUO_BAMAI_TEST_TMPDIR/false.json"
+ printf 'null\n' > "$HUATUO_BAMAI_TEST_TMPDIR/null.json"
+ printf '{invalid\n' > "$HUATUO_BAMAI_TEST_TMPDIR/invalid.json"
+ cp "$HUATUO_BAMAI_TEST_TMPDIR/large.log" "$HUATUO_BAMAI_TEST_TMPDIR/large.json"
  printf 'source marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/test_case.sh"
  printf 'output marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/tool.out"
  printf 'binary\0marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/binary.log"
@@ -393,6 +398,10 @@ namespace) run_test_step unshare --pid --fork --mount-proc bash -c 'source "$ROO
 step_skip) run_test_step bash -euc 'source "$ROOT_DIR/integration/lib.sh"; skip "step dependency missing"';;
 step_fail) run_test_step bash -euc 'source "$ROOT_DIR/integration/lib.sh"; fatal "step failed"';;
 step_code) run_test_step bash -c 'exit 42';;
+command_failure) false;;
+function_failure) fail_command() { false; }; fail_command;;
+pipeline_failure) false | cat;;
+caught_success) (fatal 'caught') || true; set +e; false; set -e;;
 caught_child) bash -c 'source "$ROOT_DIR/integration/lib.sh"; fatal "expected child error"' || true; false;;
 caught_subshell) (fatal 'expected subshell error') || true; false;;
 cancel | cancel_failure)
@@ -406,7 +415,7 @@ cancel | cancel_failure)
 esac
 EOF
 	local mode report stdout stderr
-	for mode in pass skip fail; do
+	for mode in pass skip fail caught_success; do
 		local code=0 counts='{"total":1,"passed":1,"skipped":0,"failed":0}'
 		case ${mode} in
 		skip) counts='{"total":1,"passed":0,"skipped":1,"failed":0}' ;;
@@ -427,6 +436,12 @@ EOF
 				[{name: "integration/test_report.sh", run_index: 1,
 				 reason: "fixture failed: \"runtime\""}] and
 				(.failed_tests[0].logs | any(.path | endswith("/execution.log"))) and
+				(.failed_tests[0].logs | any((.path | endswith("/response.json")) and .content == {results_path: "diagnostic-only"})) and
+				(.failed_tests[0].logs | any((.path | endswith("/array.json")) and .content == [1, {nested: true}])) and
+				(.failed_tests[0].logs | any((.path | endswith("/false.json")) and .content == false)) and
+				(.failed_tests[0].logs | any((.path | endswith("/null.json")) and .content == null)) and
+				(.failed_tests[0].logs | any((.path | endswith("/invalid.json")) and .content == "{invalid\n")) and
+				(.failed_tests[0].logs | any((.path | endswith("/large.json")) and .truncated and (.content | type) == "string")) and
 				(.failed_tests[0].logs | any((.path | endswith("/large.log")) and
 				 .truncated and (.content | utf8bytelength) == 65536)) and
 				(.failed_tests[0].logs | all(.path | test("/(reason\\.[^/]*|test_case.sh|binary.log|test_run_results.json)$") | not))
@@ -447,8 +462,8 @@ EOF
 	REPORT_MODE=namespace assert_runner_result integration report-namespace 0 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_report.sh
 	report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-namespace.log" | jq -r .results_path)
 	jq -e '.test_executions[0] | .reason == "namespace dependency missing" and .exit_code == 77' "${report}" > /dev/null || fatal "PID namespace lost the skip reason"
-	for mode in step_skip step_fail step_code caught_child caught_subshell; do
-		local code=1 counts='{"total":1,"passed":0,"skipped":0,"failed":1}' expected_reason='test exited with code 1; see stdout.log and stderr.log'
+	for mode in step_skip step_fail step_code caught_child caught_subshell command_failure function_failure pipeline_failure; do
+		local code=1 counts='{"total":1,"passed":0,"skipped":0,"failed":1}' expected_reason=''
 		case ${mode} in
 		step_skip) code=0 counts='{"total":1,"passed":0,"skipped":1,"failed":0}' expected_reason='step dependency missing' ;;
 		step_fail) expected_reason='step failed' ;;
@@ -456,7 +471,17 @@ EOF
 		esac
 		REPORT_MODE=${mode} assert_runner_result integration "report-${mode}" "${code}" "${counts}" test_report.sh
 		report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-${mode}.log" | jq -r .results_path)
-		jq -e --arg reason "${expected_reason}" '.test_executions[0].reason == $reason' "${report}" > /dev/null || fatal "${mode}: reason crossed an unhandled execution boundary"
+		case $mode in
+		caught_child | caught_subshell | command_failure | function_failure | pipeline_failure)
+			local command=false
+			[[ $mode != pipeline_failure ]] || command=cat
+			jq -e --arg command "$command" '.test_executions[0] | .exit_code == 1 and
+				(.reason | test("test_report.sh:[0-9]+: command failed")) and
+				(.reason | endswith("(exit 1): " + $command))' "$report" > /dev/null \
+				|| fatal "${mode}: missing failing command location or captured a handled error"
+			;;
+		*) jq -e --arg reason "${expected_reason}" '.test_executions[0].reason == $reason' "${report}" > /dev/null || fatal "${mode}: reason crossed an unhandled execution boundary" ;;
+		esac
 		if [[ ${mode} == step_code ]]; then
 			jq -e '.test_executions[0].exit_code == 42' "${report}" > /dev/null || fatal "step overwrote the command exit code"
 		fi

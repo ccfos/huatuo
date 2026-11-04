@@ -111,7 +111,10 @@ report_failure_logs() {
 		size=$(stat -c %s "${file}") || return 1
 		tail -c 65536 "${file}" | jq -Rsc --arg workspace "${dir}" \
 			--arg path "${file#"${RUNNER_OUTPUT_DIR}/"}" --argjson size "${size}" \
-			'{workspace: $workspace, path: $path, content: ., truncated: ($size > 65536)}' || return 1
+			'{workspace: $workspace, path: $path,
+			 content: (if ($path | endswith(".json")) and $size <= 65536
+			 then . as $text | try fromjson catch $text else . end),
+			 truncated: ($size > 65536)}' || return 1
 	done < <(find "${dir}" -type f -size +0c \
 		! -name 'test_run_results.json' ! -name 'reason.*.log' \
 		\( -name '*.log' -o -name '*.json' -o -name '*.conf' -o -name '*.err' -o -name '*.out' \) -print0 | sort -z)

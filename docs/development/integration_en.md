@@ -105,9 +105,11 @@ The console shows individual results and ends with a JSON summary:
 | `failed_tests` | Failed test names, execution indexes, reasons, and logs |
 | `reason` | Reason for early termination; omitted on normal completion |
 
-Each `failed_tests` entry contains `name`, `run_index`, `reason`, and `logs`. Each log contains a `path` relative to `output_dir`, text `content`, and a `truncated` flag.
+Each `failed_tests` entry contains `name`, `run_index`, `reason`, and `logs`. Each log contains a `path` relative to `output_dir`, `content`, and a `truncated` flag.
 
 Logs include nonempty `.log`, `.err`, `.out`, `.json`, and `.conf` text files under the failed execution directory. Binary files, `test_run_results.json`, and `reason.*.log` are excluded. At most the last 64 KiB of each file is shown; full content remains in the original file. Start diagnosis with `reason` and `stderr.log`, then inspect related service logs and responses.
+
+Complete valid `.json` files are embedded as JSON values in `content`; invalid or truncated JSON remains text. Explicit failure reasons take precedence. Unhandled command failures record the script, line, command, and exit code. Failures without a recorded cause retain the exit-code fallback; caught child errors are not treated as the test failure.
 
 ### Full Report
 

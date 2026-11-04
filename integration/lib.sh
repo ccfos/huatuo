@@ -59,6 +59,22 @@ record_exit_reason() {
 	printf '%s\n' "${reason}" > "${RUNNER_REASON_DIR}/reason.${code}.log"
 }
 
+# ERR keeps the failing command location before EXIT cleanup changes it.
+# Only unhandled errors in the owning shell may become the execution reason.
+record_command_failure() {
+	local code=$1 source=$2 line=$3 command=$4 pipeline=""
+	[[ $- == *e* && ${RUNNER_REASON_OWNER:-} == "${BASHPID}" ]] || return 0
+	[[ ! -s ${RUNNER_REASON_DIR}/reason.${code}.log ]] || return 0
+	[[ $5 != *' '* ]] || pipeline=" [pipeline exit codes: $5]"
+	record_exit_reason "$code" "$source:$line: command failed${pipeline} (exit $code): $command" \
+		|| log_error "cannot record command failure reason"
+}
+
+if [[ -n ${RUNNER_REASON_DIR:-} ]]; then
+	set -E
+	trap 'record_command_failure "$?" "${BASH_SOURCE[0]:-$0}" "$LINENO" "$BASH_COMMAND" "${PIPESTATUS[*]}"' ERR
+fi
+
 fatal() {
 	record_exit_reason 1 "$*" || log_error "cannot record failure reason"
 	printf '[%s][%s][FAIL] %s\n' \
