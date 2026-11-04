@@ -75,6 +75,9 @@ func (t *productHeaderTransport) RoundTrip(req *http.Request) (*http.Response, e
 	if err != nil {
 		return nil, err
 	}
+	if resp.Header == nil {
+		resp.Header = make(http.Header)
+	}
 	if resp.Header.Get("X-Elastic-Product") == "" {
 		resp.Header.Set("X-Elastic-Product", "Elasticsearch")
 	}
@@ -83,8 +86,14 @@ func (t *productHeaderTransport) RoundTrip(req *http.Request) (*http.Response, e
 
 // newCompatClient shares wire compatibility and connections across retry policies.
 func newCompatClient(cfg *elasticsearch.Config) (*elasticsearch.Client, error) {
+	config := *cfg
+	cfg = &config
 	cfg.EnableCompatibilityMode = true
-	cfg.Transport = &productHeaderTransport{inner: defaultTransport}
+	transport := cfg.Transport
+	if transport == nil {
+		transport = defaultTransport
+	}
+	cfg.Transport = &productHeaderTransport{inner: transport}
 	// DisableRetry takes precedence for Scroll queries. Writes keep whole-batch
 	// retries; item failures inside a successful response remain with OnFailure.
 	cfg.RetryOnStatus = []int{429, 502, 503, 504}

@@ -109,6 +109,17 @@ type ClientInterface interface {
 	// GetReadiness request
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteMCP request
+	DeleteMCP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamMCP request
+	StreamMCP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// HandleMCPWithBody request with any body
+	HandleMCPWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	HandleMCP(ctx context.Context, body HandleMCPJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListProfilingJobs request
 	ListProfilingJobs(ctx context.Context, params *ListProfilingJobsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -173,6 +184,54 @@ func (c *Client) GetOpenAPI(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteMCP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteMCPRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) StreamMCP(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamMCPRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) HandleMCPWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHandleMCPRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) HandleMCP(ctx context.Context, body HandleMCPJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewHandleMCPRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -437,6 +496,100 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewDeleteMCPRequest generates requests for DeleteMCP
+func NewDeleteMCPRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/mcp")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStreamMCPRequest generates requests for StreamMCP
+func NewStreamMCPRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/mcp")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewHandleMCPRequest calls the generic HandleMCP builder with application/json body
+func NewHandleMCPRequest(server string, body HandleMCPJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewHandleMCPRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewHandleMCPRequestWithBody generates requests for HandleMCP with any type of body
+func NewHandleMCPRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/mcp")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -1081,6 +1234,17 @@ type ClientWithResponsesInterface interface {
 	// GetReadinessWithResponse request
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
 
+	// DeleteMCPWithResponse request
+	DeleteMCPWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DeleteMCPResponse, error)
+
+	// StreamMCPWithResponse request
+	StreamMCPWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*StreamMCPResponse, error)
+
+	// HandleMCPWithBodyWithResponse request with any body
+	HandleMCPWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HandleMCPResponse, error)
+
+	HandleMCPWithResponse(ctx context.Context, body HandleMCPJSONRequestBody, reqEditors ...RequestEditorFn) (*HandleMCPResponse, error)
+
 	// ListProfilingJobsWithResponse request
 	ListProfilingJobsWithResponse(ctx context.Context, params *ListProfilingJobsParams, reqEditors ...RequestEditorFn) (*ListProfilingJobsResponse, error)
 
@@ -1184,6 +1348,93 @@ func (r GetReadinessResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetReadinessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteMCPResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteMCPResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteMCPResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteMCPResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StreamMCPResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamMCPResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamMCPResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamMCPResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type HandleMCPResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r HandleMCPResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r HandleMCPResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r HandleMCPResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1734,6 +1985,41 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 	return ParseGetReadinessResponse(rsp)
 }
 
+// DeleteMCPWithResponse request returning *DeleteMCPResponse
+func (c *ClientWithResponses) DeleteMCPWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DeleteMCPResponse, error) {
+	rsp, err := c.DeleteMCP(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteMCPResponse(rsp)
+}
+
+// StreamMCPWithResponse request returning *StreamMCPResponse
+func (c *ClientWithResponses) StreamMCPWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*StreamMCPResponse, error) {
+	rsp, err := c.StreamMCP(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamMCPResponse(rsp)
+}
+
+// HandleMCPWithBodyWithResponse request with arbitrary body returning *HandleMCPResponse
+func (c *ClientWithResponses) HandleMCPWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*HandleMCPResponse, error) {
+	rsp, err := c.HandleMCPWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHandleMCPResponse(rsp)
+}
+
+func (c *ClientWithResponses) HandleMCPWithResponse(ctx context.Context, body HandleMCPJSONRequestBody, reqEditors ...RequestEditorFn) (*HandleMCPResponse, error) {
+	rsp, err := c.HandleMCP(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseHandleMCPResponse(rsp)
+}
+
 // ListProfilingJobsWithResponse request returning *ListProfilingJobsResponse
 func (c *ClientWithResponses) ListProfilingJobsWithResponse(ctx context.Context, params *ListProfilingJobsParams, reqEditors ...RequestEditorFn) (*ListProfilingJobsResponse, error) {
 	rsp, err := c.ListProfilingJobs(ctx, params, reqEditors...)
@@ -1920,6 +2206,54 @@ func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error
 	}
 
 	response := &GetReadinessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseDeleteMCPResponse parses an HTTP response from a DeleteMCPWithResponse call
+func ParseDeleteMCPResponse(rsp *http.Response) (*DeleteMCPResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteMCPResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseStreamMCPResponse parses an HTTP response from a StreamMCPWithResponse call
+func ParseStreamMCPResponse(rsp *http.Response) (*StreamMCPResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamMCPResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseHandleMCPResponse parses an HTTP response from a HandleMCPWithResponse call
+func ParseHandleMCPResponse(rsp *http.Response) (*HandleMCPResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &HandleMCPResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

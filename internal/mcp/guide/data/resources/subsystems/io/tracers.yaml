@@ -1,0 +1,17 @@
+tracers:
+  iotracing:
+    description: I/O latency anomalies with kernel stacks
+    target_type: [host]
+    has_profiler: false
+    key_fields:
+      reason_snapshot:
+        description: I/O anomaly snapshot with type/device/iostatus (io_util/read_bps/read_await/write_bps/write_await, etc.)
+      process_file_io_stats:
+        description: Per-process file I/O statistics
+      io_schedule_timeout_stacks:
+        description: Call stacks captured on I/O scheduling timeouts
+    match_field:
+      host: hostname
+    metric_keywords: [iolatency]
+related_tracers:
+  iotracing: [memburst, cpusys]

@@ -294,6 +294,29 @@ assert_helper_metric_diagnostics() (
 	helpers_pid=""
 )
 
+# Stdout-only writers must remain repeatable through the shared startup entry.
+(
+	source "${ROOT_DIR}/integration/config.sh"
+	APISERVER_PORT=19000
+	HUATUO_BAMAI_ADDR=http://127.0.0.1:19704
+	API_TOKEN=fixture-token
+	MCP_BACKEND=http://127.0.0.1:19200
+	HUATUO_BAMAI_TEST_TMPDIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/mcp-config.XXXXXX")
+	for MCP_SUITE in events metrics; do
+		first=$(write_config_apiserver_mcp)
+		second=$(write_config_apiserver_mcp)
+		assert_eq "${first}" "${second}" "MCP ${MCP_SUITE} stdout config is repeatable"
+		[[ ! -e ${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf ]] || fatal "MCP config writer created its own output file"
+		huatuo_apiserver_start() {
+			assert_eq "$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf")" "${first}" "MCP config startup redirection"
+		}
+		integration_huatuo_apiserver_start write_config_apiserver_mcp
+		integration_huatuo_apiserver_start write_config_apiserver_mcp
+		assert_eq "$(grep -cFx '[MCP]' "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf")" 1 "MCP table must not be appended twice"
+		rm "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf"
+	done
+)
+
 assert_process_shutdown() (
 	local mode=$1 expected_status=$2 signal=${3:-TERM} pid="" status=0
 	local ready="${HUATUO_BAMAI_TEST_TMPDIR}/${mode}.ready"

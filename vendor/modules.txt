@@ -1094,6 +1094,9 @@ github.com/google/go-cmp/cmp/internal/value
 ## explicit; go 1.12
 github.com/google/gofuzz
 github.com/google/gofuzz/bytesource
+# github.com/google/jsonschema-go v0.4.2
+## explicit; go 1.23.0
+github.com/google/jsonschema-go/jsonschema
 # github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e
 ## explicit; go 1.23
 github.com/google/pprof/profile
@@ -1258,6 +1261,11 @@ github.com/lucasb-eyer/go-colorful
 # github.com/mailru/easyjson v0.9.1
 ## explicit; go 1.20
 github.com/mailru/easyjson/jlexer
+# github.com/mark3labs/mcp-go v0.48.0
+## explicit; go 1.23.0
+github.com/mark3labs/mcp-go/mcp
+github.com/mark3labs/mcp-go/server
+github.com/mark3labs/mcp-go/util
 # github.com/mattetti/filebuffer v1.0.1
 ## explicit
 github.com/mattetti/filebuffer
@@ -1469,6 +1477,9 @@ github.com/speakeasy-api/openapi/internal/sliceutil
 github.com/speakeasy-api/openapi/internal/version
 github.com/speakeasy-api/openapi/overlay
 github.com/speakeasy-api/openapi/overlay/loader
+# github.com/spf13/cast v1.7.1
+## explicit; go 1.19
+github.com/spf13/cast
 # github.com/spf13/pflag v1.0.5
 ## explicit; go 1.12
 github.com/spf13/pflag
@@ -1564,6 +1575,9 @@ github.com/xo/terminfo
 # github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1
 ## explicit; go 1.15
 github.com/xrash/smetrics
+# github.com/yosida95/uritemplate/v3 v3.0.2
+## explicit; go 1.14
+github.com/yosida95/uritemplate/v3
 # github.com/yusufpapurcu/wmi v1.2.4
 ## explicit; go 1.16
 github.com/yusufpapurcu/wmi

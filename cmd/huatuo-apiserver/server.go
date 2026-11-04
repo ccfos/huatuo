@@ -16,7 +16,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/config"
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers"
@@ -24,7 +26,15 @@ import (
 	"github.com/ccfos/huatuo/internal/httpserver"
 )
 
-func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {
+func startHandlers(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
+	mcpCleanup, err := setupMCP(ctx, d)
+	if err != nil {
+		return nil, err
+	}
+	var mcpHandler http.Handler
+	if d.mcpHandler != nil {
+		mcpHandler = d.mcpHandler
+	}
 	runningServer, err := handlers.Start(&handlers.ServerOptions{
 		Addr:                d.opts.Config.APIServer.ListenAddress,
 		PromReg:             d.metrics,
@@ -41,14 +51,26 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 			RequestsPerSecond: d.opts.Config.APIServer.RateLimit.RequestsPerSecond,
 			Burst:             d.opts.Config.APIServer.RateLimit.Burst,
 		},
+		MCPHandler: mcpHandler,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("start api server: %w", err)
+		var cleanupErr error
+		if mcpCleanup != nil {
+			cleanupErr = mcpCleanup(context.WithoutCancel(ctx))
+		}
+		return nil, errors.Join(fmt.Errorf("start api server: %w", err), cleanupErr)
 	}
 
 	d.apiServer = runningServer
 
-	return runningServer.Shutdown, nil
+	return func(ctx context.Context) error {
+		var mcpErr error
+		if mcpCleanup != nil {
+			// Cancel MCP streams before waiting for the shared HTTP server to drain.
+			mcpErr = mcpCleanup(ctx)
+		}
+		return errors.Join(mcpErr, runningServer.Shutdown(ctx))
+	}, nil
 }
 
 func authUsers(users []config.UserConfig) []httpserver.UserConfig {

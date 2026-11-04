@@ -29,8 +29,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	es "github.com/elastic/go-elasticsearch/v8"
+	"github.com/elastic/go-elasticsearch/v8/esapi"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/timeutil"
@@ -40,6 +44,264 @@ type mockElasticsearchDocument struct {
 	ID     string
 	Source json.RawMessage
 	Fields map[string]any
+}
+
+type clientTestTransport struct {
+	roundTrip func(*http.Request) (*http.Response, error)
+	closes    atomic.Int64
+}
+
+func (t *clientTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return t.roundTrip(request)
+}
+
+func (t *clientTestTransport) CloseIdleConnections() {
+	t.closes.Add(1)
+}
+
+func TestClientFactoriesPreserveCompatibilityAndRetryPolicies(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		status       int
+		readOnly     bool
+		disableRetry bool
+		transportErr error
+		wantAttempts int
+	}{
+		{name: "read success", status: http.StatusOK, readOnly: true, wantAttempts: 1},
+		{name: "read does not retry", status: http.StatusServiceUnavailable, readOnly: true, wantAttempts: 1},
+		{name: "write retries 429", status: http.StatusTooManyRequests, wantAttempts: 4},
+		{name: "write retries 502", status: http.StatusBadGateway, wantAttempts: 4},
+		{name: "write retries 503", status: http.StatusServiceUnavailable, wantAttempts: 4},
+		{name: "write retries 504", status: http.StatusGatewayTimeout, wantAttempts: 4},
+		{name: "write does not retry 400", status: http.StatusBadRequest, wantAttempts: 1},
+		{name: "scroll does not retry", status: http.StatusServiceUnavailable, disableRetry: true, wantAttempts: 1},
+		{name: "write retries transport timeout", transportErr: context.DeadlineExceeded, wantAttempts: 4},
+		{name: "read does not retry transport timeout", readOnly: true, transportErr: context.DeadlineExceeded, wantAttempts: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var attempts atomic.Int64
+			transport := &clientTestTransport{roundTrip: func(request *http.Request) (*http.Response, error) {
+				attempts.Add(1)
+				if request.Method != http.MethodPost || request.URL.Path != "/prefix/events/_count" {
+					t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+				}
+				if request.Header.Get("Content-Type") != "application/json" || request.Header.Get("Accept") != "application/json" {
+					t.Errorf("ES vendor media types reached the transport: %v", request.Header)
+				}
+				user, password, ok := request.BasicAuth()
+				if !ok || user != "reader" || password != "secret" {
+					t.Error("configured credentials did not reach the caller-owned transport")
+				}
+				if test.transportErr != nil {
+					return nil, test.transportErr
+				}
+				return &http.Response{
+					StatusCode: test.status,
+					Body:       io.NopCloser(strings.NewReader(`{"count":1}`)),
+				}, nil
+			}}
+			cfg := es.Config{
+				Addresses: []string{"http://backend/prefix"}, Username: "reader", Password: "secret",
+				Transport: transport, MaxRetries: 9, RetryOnStatus: []int{http.StatusTeapot},
+				DisableRetry: test.disableRetry,
+			}
+			var client esapi.Transport
+			var err error
+			if test.readOnly {
+				cfg.DiscoverNodesOnStart = true
+				cfg.DiscoverNodesInterval = time.Hour
+				client, err = NewReadClient(&ReadClientConfig{Config: cfg})
+			} else {
+				client, err = newCompatClient(&cfg)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if attempts.Load() != 0 {
+				t.Fatal("client construction probed the backend")
+			}
+			if cfg.DisableRetry != test.disableRetry || cfg.EnableCompatibilityMode || cfg.Transport != transport || cfg.MaxRetries != 9 || !slices.Equal(cfg.RetryOnStatus, []int{http.StatusTeapot}) {
+				t.Fatal("client construction mutated the caller's configuration")
+			}
+			if test.readOnly && (!cfg.DiscoverNodesOnStart || cfg.DiscoverNodesInterval != time.Hour) {
+				t.Fatal("read client construction mutated caller discovery settings")
+			}
+			response, err := (esapi.CountRequest{Index: []string{"events"}, Body: strings.NewReader(`{}`)}).Do(t.Context(), client)
+			if test.transportErr != nil {
+				if !errors.Is(err, test.transportErr) || attempts.Load() != int64(test.wantAttempts) {
+					t.Fatalf("transport error=%v attempts=%d, want error=%v attempts=%d", err, attempts.Load(), test.transportErr, test.wantAttempts)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != test.status || attempts.Load() != int64(test.wantAttempts) || response.Header.Get("X-Elastic-Product") != "Elasticsearch" {
+				t.Fatalf("status=%d attempts=%d headers=%v, want status=%d attempts=%d", response.StatusCode, attempts.Load(), response.Header, test.status, test.wantAttempts)
+			}
+		})
+	}
+}
+
+func TestSaveRetainsWriteRetries(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		direct       bool
+		itemFailure  bool
+		wantAttempts int64
+	}{
+		{name: "synchronous write", direct: true, wantAttempts: 2},
+		{name: "bulk request", wantAttempts: 2},
+		{name: "bulk item failure is not retried", itemFailure: true, wantAttempts: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var attempts atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/" {
+					_, _ = io.WriteString(w, `{}`)
+					return
+				}
+				attempt := attempts.Add(1)
+				if !test.itemFailure && attempt == 1 {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = io.WriteString(w, `{"error":"temporarily unavailable"}`)
+					return
+				}
+				if test.direct {
+					_, _ = io.WriteString(w, `{"_index":"events","_id":"record","result":"created","_shards":{"total":1,"successful":1,"failed":0}}`)
+				} else if test.itemFailure {
+					_, _ = io.WriteString(w, `{"errors":true,"items":[{"index":{"_index":"events","_id":"record","status":429,"error":{"type":"rejected_execution_exception","reason":"item rejected"}}}]}`)
+				} else {
+					_, _ = io.WriteString(w, `{"errors":false,"items":[{"index":{"_index":"events","_id":"record","status":201}}]}`)
+				}
+			}))
+			defer server.Close()
+			backend, err := NewBackend(&Config{Addresses: []string{server.URL}, Index: "events"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			saveErr := backend.Save(t.Context(), driver.Record{ID: "record", Data: []byte(`{"value":1}`)}, driver.SaveOptions{
+				Mode: driver.SaveModeUpsert, WaitForVisibility: test.direct,
+			})
+			closeErr := backend.Close(t.Context())
+			if saveErr != nil || closeErr != nil {
+				t.Fatalf("Save() = %v, Close() = %v", saveErr, closeErr)
+			}
+			if attempts.Load() != test.wantAttempts {
+				t.Fatalf("write attempts = %d, want %d", attempts.Load(), test.wantAttempts)
+			}
+		})
+	}
+}
+
+func TestNewReadClientRequiresConfiguration(t *testing.T) {
+	if _, err := NewReadClient(nil); err == nil || !strings.Contains(err.Error(), "configuration is required") {
+		t.Fatalf("NewReadClient(nil) error = %v", err)
+	}
+}
+
+func TestReadClientOwnsOnlyItsDefaultPool(t *testing.T) {
+	config := &ReadClientConfig{Config: es.Config{Addresses: []string{"http://backend"}}}
+	var wrapped http.RoundTripper
+	config.WrapTransport = func(inner http.RoundTripper) http.RoundTripper {
+		wrapped = inner
+		return inner
+	}
+	first, err := NewReadClient(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+	if first.transport == nil || wrapped != first.transport || config.Transport != nil {
+		t.Fatal("default pool was not independently created and passed to the wrapper")
+	}
+	second, err := NewReadClient(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = second.Close() }()
+	if first.transport == second.transport || first.transport == defaultTransport {
+		t.Fatal("read clients must not share owned pools")
+	}
+	pool := first.transport
+	if pool.MaxConnsPerHost != 200 || pool.MaxIdleConnsPerHost != 100 || pool.Proxy == nil ||
+		pool.TLSClientConfig.ClientSessionCache == nil || pool.TLSHandshakeTimeout != 10*time.Second {
+		t.Fatalf("read pool lost framework transport defaults: %+v", pool)
+	}
+	borrowed := &clientTestTransport{roundTrip: func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	}}
+	config.Transport = borrowed
+	third, err := NewReadClient(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.transport != nil || wrapped != borrowed {
+		t.Fatal("caller-supplied transport must be borrowed")
+	}
+	if err := third.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := third.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if borrowed.closes.Load() != 0 {
+		t.Fatal("closing the read client closed its borrowed transport")
+	}
+}
+
+func TestReadClientValidatesConfigurationAndGuard(t *testing.T) {
+	for _, cfg := range []*ReadClientConfig{
+		{},
+		{Config: es.Config{Addresses: []string{"file:///events"}}},
+		{Config: es.Config{Addresses: []string{"http://user:secret@backend"}}},
+		{Config: es.Config{Addresses: []string{"http://backend?token=secret"}}},
+		{Config: es.Config{Addresses: []string{"http://backend#fragment"}}},
+		{Config: es.Config{Addresses: []string{"http://backend"}, Username: "reader"}},
+		{Config: es.Config{Addresses: []string{"http://backend"}}, WrapTransport: func(http.RoundTripper) http.RoundTripper { return nil }},
+	} {
+		if client, err := NewReadClient(cfg); err == nil {
+			_ = client.Close()
+			t.Fatal("invalid read configuration accepted")
+		}
+	}
+	blocked := errors.New("request budget exhausted")
+	client, err := NewReadClient(&ReadClientConfig{
+		Config: es.Config{Addresses: []string{"http://backend"}},
+		WrapTransport: func(http.RoundTripper) http.RoundTripper {
+			return &clientTestTransport{roundTrip: func(*http.Request) (*http.Response, error) { return nil, blocked }}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	if _, err := (esapi.CountRequest{Index: []string{"events"}}).Do(t.Context(), client); !errors.Is(err, blocked) {
+		t.Fatalf("request bypassed caller guard: %v", err)
+	}
+}
+
+func TestProductHeaderTransportDoesNotMutateCallerHeaders(t *testing.T) {
+	const vendorType = "application/vnd.elasticsearch+json;compatible-with=8"
+	request := httptest.NewRequest(http.MethodPost, "http://backend/events/_search", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", vendorType)
+	request.Header.Set("Accept", vendorType)
+	transport := &productHeaderTransport{inner: &clientTestTransport{roundTrip: func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("Content-Type") != "application/json" || r.Header.Get("Accept") != "application/json" {
+			t.Fatalf("compatibility headers = %v", r.Header)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Elastic-Product": {"Elasticsearch"}}, Body: http.NoBody}, nil
+	}}}
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if request.Header.Get("Content-Type") != vendorType || request.Header.Get("Accept") != vendorType {
+		t.Fatalf("caller headers changed: %v", request.Header)
+	}
 }
 
 type mockElasticsearchServer struct {

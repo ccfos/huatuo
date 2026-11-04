@@ -390,6 +390,64 @@ EOF
 	write_config_apiserver_admin "${API_TOKEN}"
 }
 
+# The caller owns the destination; repeated generation never appends tables.
+write_config_apiserver_mcp() {
+	write_config_apiserver_base
+	cat << 'EOF'
+
+[APIServer.RateLimit]
+RequestsPerSecond = 1000
+Burst = 1000
+[MCP]
+Enabled = true
+AllowedOrigins = ["https://mcp-client.test"]
+EOF
+	if [[ ${MCP_SUITE} == events ]]; then
+		cat << EOF
+[MCP.Events]
+RateLimit = 0
+ToolTimeout = 10
+[[MCP.Events.Regions]]
+NamePattern = "default"
+Address = "${MCP_BACKEND}"
+AuthType = "none"
+Index = "huatuo_apiserver_mcp"
+[[MCP.Events.Regions]]
+NamePattern = "failed"
+Address = "${MCP_BACKEND}"
+AuthType = "none"
+Index = "huatuo_apiserver_mcp_missing"
+EOF
+		local region
+		for region in alias aggregate plain source overflow millis payload mixed-payload scoped-payload payload-overflow; do
+			cat << EOF
+[[MCP.Events.Regions]]
+NamePattern = "^${region}-test\$"
+Address = "${MCP_BACKEND}"
+AuthType = "none"
+Index = "huatuo_apiserver_mcp_compat_${region}-test"
+EOF
+		done
+	else
+		cat << EOF
+[MCP.Metrics]
+RateLimit = 0
+MaxSeriesPerQuery = 2
+ToolTimeout = 10
+[[MCP.Metrics.Regions]]
+NamePattern = "default"
+Address = "${MCP_BACKEND}"
+AuthType = "none"
+MetricPrefix = "huatuo_mcp_"
+[[MCP.Metrics.Regions]]
+NamePattern = "failed"
+Address = "${MCP_BACKEND}/missing"
+AuthType = "none"
+MetricPrefix = "huatuo_mcp_"
+EOF
+	fi
+}
+
 # The profile filter case supplies its API settings and isolated storage index.
 write_config_apiserver_profile_query() {
 	write_config_apiserver_base

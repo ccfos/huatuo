@@ -47,6 +47,15 @@ func TestOpenAPIJSON(t *testing.T) {
 	if err := document.Validate(t.Context()); err != nil {
 		t.Errorf("Validate(OpenAPIJSON()) error = %v", err)
 	}
+	mcp := document.Paths.Value("/v1/mcp")
+	if mcp == nil || mcp.Get == nil || mcp.Post == nil || mcp.Delete == nil {
+		t.Fatal("MCP POST, GET, and DELETE must be owned by OpenAPI")
+	}
+	for _, operation := range []*openapi3.Operation{mcp.Get, mcp.Post, mcp.Delete} {
+		if operation.Responses.Status(http.StatusServiceUnavailable) == nil || operation.Responses.Status(http.StatusTooManyRequests) == nil {
+			t.Errorf("%s must document MCP concurrency rejection and API server rate limiting", operation.OperationID)
+		}
+	}
 }
 
 func TestGeneratedContractsCompile(t *testing.T) {
@@ -115,6 +124,18 @@ func TestRemovedServerRoutesAreNotRegistered(t *testing.T) {
 }
 
 type unimplementedStrictServer struct{}
+
+func (*unimplementedStrictServer) HandleMCP(context.Context, HandleMCPRequestObject) (HandleMCPResponseObject, error) {
+	return HandleMCP404Response{}, nil
+}
+
+func (*unimplementedStrictServer) StreamMCP(context.Context, StreamMCPRequestObject) (StreamMCPResponseObject, error) {
+	return StreamMCP404Response{}, nil
+}
+
+func (*unimplementedStrictServer) DeleteMCP(context.Context, DeleteMCPRequestObject) (DeleteMCPResponseObject, error) {
+	return DeleteMCP404Response{}, nil
+}
 
 var errNotImplemented = errors.New("test handler is not implemented")
 
