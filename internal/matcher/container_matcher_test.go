@@ -159,6 +159,32 @@ func TestContainerMatcher_MultipleIncludeSpecsAND(t *testing.T) {
 	assert.False(t, cmPartial.Match(testContainer))
 }
 
+// --- Match: OR-logic within exclude list ---
+
+func TestContainerMatcher_MultipleExcludeSpecsOR(t *testing.T) {
+	// a single exclude rule that hits is enough to skip the container
+	cmPartial, err := NewContainerMatcher(
+		[]FieldSpec[*pod.Container]{containerSpec(FieldTypeContainerHostNamespace, "^application-")},
+		[]FieldSpec[*pod.Container]{
+			containerSpec(FieldTypeContainerHostname, "prod-"),
+			containerSpec(FieldTypeContainerQos, "guaranteed"),
+		},
+	)
+	require.NoError(t, err)
+	assert.False(t, cmPartial.Match(testContainer))
+
+	// no exclude rule hits, so the container passes
+	cmNone, err := NewContainerMatcher(
+		[]FieldSpec[*pod.Container]{containerSpec(FieldTypeContainerHostNamespace, "^application-")},
+		[]FieldSpec[*pod.Container]{
+			containerSpec(FieldTypeContainerHostname, "prod-"),
+			containerSpec(FieldTypeContainerQos, "besteffort"),
+		},
+	)
+	require.NoError(t, err)
+	assert.True(t, cmNone.Match(testContainer))
+}
+
 // --- NewContainerMatcherFromRules ---
 
 func TestNewContainerMatcherFromRules_Include(t *testing.T) {
