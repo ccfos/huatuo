@@ -128,7 +128,8 @@ container_ready() {
 	[[ -f "${PYTHON_RUNTIME_DIR}/python.ready" ]]
 }
 
-wait_until 30 1 container_ready || fatal "Python replacement container did not become ready: ${DOCKER_CONTAINER_ID}"
+# The workload has two sequential 30-second waits before it signals readiness.
+wait_until 70 1 container_ready || fatal "Python replacement container did not become ready: ${DOCKER_CONTAINER_ID}"
 
 log_info "profiling Python container after an in-place replacement id=${DOCKER_CONTAINER_ID}"
 if ! "${PYTHON_TOOL_BIN}" \
