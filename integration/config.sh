@@ -27,6 +27,42 @@ write_config_blacklist() {
 	printf ']\n'
 }
 
+# Keep collector isolation in one place; cases name the collectors they retain.
+# Preserve explicit exceptions such as xfs and tracing_status at each call site.
+write_config_blacklist_except() {
+	local collector enabled
+	local -a blacklist=()
+	for collector in \
+		arp ascend_npu blk_throtl cpu_stat cpu_util \
+		cpuidle cpusys diskio dload dropwatch \
+		hungtask io_health iocost iolatency iotracing \
+		irqtracing loadavg memburst memory_buddyinfo memory_events \
+		memory_free memory_oom_kill memory_others memory_reclaim memory_reclaim_events \
+		memory_threshold_snapshot memory_vmstat metax_gpu mountpoint_perm mthreads_gpu \
+		mthreads_xid net_conntrack net_rx_latency netdev netdev_bonding_lacp \
+		netdev_dcb netdev_events netdev_hw netdev_qdisc netdev_rdma_link \
+		netdev_txqueue_timeout netstat ras runqlat sched-blame \
+		sched_tick sockstat softirq softlockup tcp_memory \
+		tcp_retransmit tracing_status xfs; do
+		for enabled in "$@"; do
+			[[ ${collector} != "${enabled}" ]] || continue 2
+		done
+		blacklist+=("${collector}")
+	done
+	write_config_blacklist "${blacklist[@]}"
+}
+
+write_config_bamai_kubelet() {
+	local port=$1 certificate=$2 key=$3
+	cat << EOF
+
+[Pod]
+    KubeletReadOnlyPort = 0
+    KubeletAuthorizedPort = ${port}
+    KubeletClientCertPath = "${certificate},${key}"
+EOF
+}
+
 write_config_bamai_auth() {
 	local token=$1
 	cat << EOF
@@ -207,18 +243,7 @@ EOF
 
 write_config_bamai_lacp_events() {
 	# The caller initializes and owns HUATUO_BAMAI_TEST_TMPDIR; expand its storage path.
-	write_config_blacklist \
-		"arp" "ascend_npu" "cpu_stat" "cpu_util" "cpuidle" \
-		"cpusys" "diskio" "dload" "dropwatch" "hungtask" \
-		"iolatency" "iotracing" "irqtracing" "loadavg" "memburst" \
-		"memory_buddyinfo" "memory_events" "memory_free" "memory_others" "memory_reclaim" \
-		"memory_reclaim_events" "memory_vmstat" "memory_threshold_snapshot" "metax_gpu" "mountpoint_perm" \
-		"mthreads_gpu" "mthreads_xid" "net_rx_latency" "netdev" "netdev_dcb" \
-		"netdev_events" "netdev_hw" "netdev_qdisc" "netdev_rdma_link" "netdev_txqueue_timeout" \
-		"netstat" "memory_oom_kill" "ras" "runqlat" "sched_tick" \
-		"sockstat" "softirq" "softlockup" "tcp_memory" "tcp_retransmit" \
-		"tracing_status" "sched-blame" "iocost" "blk_throtl" "io_health" \
-		"xfs" "net_conntrack"
+	write_config_blacklist_except netdev_bonding_lacp
 	write_config_bamai_auth "integration-node-token"
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }
@@ -227,17 +252,7 @@ write_config_bamai_lacp_events() {
 write_config_bamai_sched_tick_threshold() {
 	local interval_threshold=$1
 
-	write_config_blacklist \
-		"arp" "ascend_npu" "memory_threshold_snapshot" "cpu_stat" "cpu_util" \
-		"cpuidle" "cpusys" "diskio" "dload" "dropwatch" \
-		"hungtask" "iolatency" "iotracing" "irqtracing" "loadavg" \
-		"memburst" "memory_buddyinfo" "memory_events" "memory_free" "memory_others" \
-		"memory_reclaim" "memory_reclaim_events" "memory_vmstat" "metax_gpu" "mountpoint_perm" \
-		"net_rx_latency" "netdev" "netdev_bonding_lacp" "netdev_dcb" "netdev_events" \
-		"netdev_hw" "netdev_qdisc" "netdev_rdma_link" "netdev_txqueue_timeout" "netstat" \
-		"memory_oom_kill" "ras" "runqlat" "sockstat" "softirq" \
-		"softlockup" "tcp_memory" "tcp_retransmit" "iocost" "blk_throtl" \
-		"io_health" "sched-blame"
+	write_config_blacklist_except mthreads_gpu mthreads_xid net_conntrack sched_tick tracing_status xfs
 
 	write_config_bamai_auth "integration-node-token"
 
@@ -263,17 +278,7 @@ write_config_bamai_sched_tick_irqoff() {
 
 write_config_bamai_storage_events() {
 	# Tests supply isolated ports, packet filter, event limits and optional backend credentials.
-	write_config_blacklist \
-		"arp" "ascend_npu" "cpu_stat" "cpu_util" "cpuidle" \
-		"cpusys" "diskio" "dload" "hungtask" "iolatency" \
-		"iotracing" "irqtracing" "loadavg" "memburst" "memory_buddyinfo" \
-		"memory_events" "memory_free" "memory_others" "memory_reclaim" "memory_reclaim_events" \
-		"memory_vmstat" "memory_threshold_snapshot" "metax_gpu" "mountpoint_perm" "mthreads_gpu" \
-		"mthreads_xid" "net_rx_latency" "netdev" "netdev_bonding_lacp" "netdev_dcb" \
-		"netdev_events" "netdev_hw" "netdev_qdisc" "netdev_rdma_link" "netdev_txqueue_timeout" \
-		"netstat" "memory_oom_kill" "ras" "runqlat" "sched_tick" \
-		"sockstat" "softirq" "softlockup" "tcp_memory" "tcp_retransmit" \
-		"tracing_status" "iocost" "blk_throtl" "io_health" "sched-blame"
+	write_config_blacklist_except dropwatch net_conntrack xfs
 	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
@@ -292,17 +297,7 @@ EOF
 write_config_bamai_tcp_events() {
 	# Ports, filter and storage path belong to this test workspace.
 	# The case disables the container manager required by threshold snapshots.
-	write_config_blacklist \
-		"arp" "ascend_npu" "cpu_stat" "cpu_util" "cpuidle" \
-		"cpusys" "diskio" "dload" "dropwatch" "hungtask" \
-		"iolatency" "iotracing" "loadavg" "memburst" "memory_buddyinfo" \
-		"memory_events" "memory_free" "memory_others" "memory_reclaim" "memory_reclaim_events" \
-		"memory_vmstat" "metax_gpu" "mthreads_gpu" "mountpoint_perm" "net_rx_latency" \
-		"netdev" "netdev_bonding_lacp" "netdev_dcb" "netdev_events" "netdev_hw" \
-		"netdev_qdisc" "netdev_rdma_link" "netdev_txqueue_timeout" "netstat" "memory_oom_kill" \
-		"ras" "runqlat" "sched_tick" "sockstat" "softirq" \
-		"softlockup" "tcp_memory" "tracing_status" "iocost" "blk_throtl" \
-		"io_health" "sched-blame" "memory_threshold_snapshot"
+	write_config_blacklist_except irqtracing mthreads_xid net_conntrack tcp_retransmit xfs
 	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
@@ -319,17 +314,7 @@ EOF
 # The cpusys test controls proc/stat and perf through its isolated fixture root.
 write_config_bamai_cpusys_autotracing() {
 	local tool=${1:-perf}
-	write_config_blacklist \
-		"diskio" "irqtracing" "tcp_retransmit" "xfs" "mthreads_gpu" "mthreads_xid" \
-		"arp" "ascend_npu" "memory_threshold_snapshot" "cpu_stat" "cpu_util" \
-		"cpuidle" "dload" "dropwatch" "hungtask" "iolatency" \
-		"iotracing" "loadavg" "memburst" "memory_buddyinfo" "memory_events" \
-		"memory_free" "memory_others" "memory_reclaim" "memory_reclaim_events" "memory_vmstat" \
-		"metax_gpu" "mountpoint_perm" "net_rx_latency" "netdev" "netdev_bonding_lacp" \
-		"netdev_dcb" "netdev_events" "netdev_hw" "netdev_qdisc" "netdev_rdma_link" \
-		"netdev_txqueue_timeout" "netstat" "memory_oom_kill" "ras" "runqlat" \
-		"sched_tick" "sockstat" "softirq" "softlockup" "tcp_memory" \
-		"tracing_status" "iocost" "blk_throtl" "io_health" "sched-blame"
+	write_config_blacklist_except cpusys net_conntrack
 	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
@@ -353,16 +338,7 @@ write_config_bamai_cpusys_profiler() {
 
 # The iotracing test controls proc/diskstats and the toolstream subprocess.
 write_config_bamai_iotracing_autotracing() {
-	write_config_blacklist \
-		"arp" "ascend_npu" "memory_threshold_snapshot" "cpu_stat" "cpu_util" \
-		"cpuidle" "cpusys" "dload" "dropwatch" "hungtask" \
-		"iolatency" "loadavg" "memburst" "memory_buddyinfo" "memory_events" \
-		"memory_free" "memory_others" "memory_reclaim" "memory_reclaim_events" "memory_vmstat" \
-		"metax_gpu" "mountpoint_perm" "net_rx_latency" "netdev" "netdev_bonding_lacp" \
-		"netdev_dcb" "netdev_events" "netdev_hw" "netdev_qdisc" "netdev_rdma_link" \
-		"netdev_txqueue_timeout" "netstat" "memory_oom_kill" "ras" "runqlat" \
-		"sched_tick" "sockstat" "softirq" "softlockup" "tcp_memory" \
-		"tracing_status" "iocost" "blk_throtl" "sched-blame"
+	write_config_blacklist_except diskio io_health iotracing irqtracing mthreads_gpu mthreads_xid net_conntrack tcp_retransmit xfs
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 
@@ -381,17 +357,7 @@ EOF
 
 # The irqtracing fixture has no container manager or unrelated BPF objects.
 write_config_bamai_irqtracing_autotracing() {
-	write_config_blacklist \
-		"arp" "ascend_npu" "cpu_stat" "cpu_util" "cpuidle" \
-		"cpusys" "diskio" "dload" "dropwatch" "hungtask" \
-		"iolatency" "iotracing" "loadavg" "memburst" "memory_buddyinfo" \
-		"memory_events" "memory_free" "memory_others" "memory_reclaim" "memory_reclaim_events" \
-		"memory_vmstat" "metax_gpu" "mountpoint_perm" "mthreads_gpu" "net_rx_latency" \
-		"netdev" "netdev_bonding_lacp" "netdev_dcb" "netdev_events" "netdev_hw" \
-		"netdev_qdisc" "netdev_rdma_link" "netdev_txqueue_timeout" "netstat" "memory_oom_kill" \
-		"ras" "runqlat" "sched_tick" "sockstat" "softirq" \
-		"softlockup" "tcp_memory" "tcp_retransmit" "tracing_status" "iocost" \
-		"blk_throtl" "io_health" "sched-blame" "memory_threshold_snapshot"
+	write_config_blacklist_except irqtracing mthreads_xid net_conntrack xfs
 	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
@@ -502,28 +468,13 @@ write_config_bamai_apiserver_profiling() {
     MaxConcurrent = ${NODE_CAPACITY}
 CONFIG
 	if [[ -n "$POD_NAMESPACE" ]]; then
-		cat << CONFIG
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = 10250
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
-CONFIG
+		write_config_bamai_kubelet 10250 "${KUBELET_CERT}" "${KUBELET_KEY}"
 	fi
 }
 
 # The caller supplies the API port, monitored device and isolated storage path.
 write_config_bamai_netdev_events() {
-	write_config_blacklist \
-		"arp" "ascend_npu" "cpu_stat" "cpu_util" "cpuidle" \
-		"cpusys" "diskio" "dload" "dropwatch" "hungtask" \
-		"iolatency" "iotracing" "irqtracing" "loadavg" "memburst" \
-		"memory_buddyinfo" "memory_events" "memory_free" "memory_others" "memory_reclaim" \
-		"memory_reclaim_events" "memory_vmstat" "memory_threshold_snapshot" "metax_gpu" "mountpoint_perm" \
-		"mthreads_gpu" "mthreads_xid" "net_rx_latency" "netdev" "netdev_bonding_lacp" \
-		"netdev_dcb" "netdev_hw" "netdev_qdisc" "netdev_rdma_link" "netdev_txqueue_timeout" \
-		"netstat" "memory_oom_kill" "ras" "runqlat" "sched_tick" \
-		"sockstat" "softirq" "softlockup" "tcp_memory" "tcp_retransmit" \
-		"iocost" "blk_throtl" "io_health" "sched-blame"
+	write_config_blacklist_except net_conntrack netdev_events tracing_status xfs
 	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
@@ -537,28 +488,15 @@ EOF
 
 # The memory metric cases share a collector-only agent configuration.
 write_config_bamai_memory_metrics() {
-	write_config_blacklist \
-		"arp" "ascend_npu" "cpu_stat" "cpu_util" "cpuidle" "cpusys" \
-		"diskio" "dload" "dropwatch" "hungtask" "iolatency" "iotracing" \
-		"irqtracing" "loadavg" "memburst" "memory_free" "memory_reclaim" \
-		"memory_reclaim_events" "memory_oom_kill" "memory_threshold_snapshot" \
-		"metax_gpu" "mountpoint_perm" "mthreads_gpu" "mthreads_xid" \
-		"net_rx_latency" "netdev" "netdev_bonding_lacp" "netdev_dcb" \
-		"netdev_events" "netdev_hw" "netdev_qdisc" "netdev_rdma_link" \
-		"netdev_txqueue_timeout" "netstat" "ras" "runqlat" "sched_tick" \
-		"sockstat" "softirq" "softlockup" "tcp_memory" "tcp_retransmit" \
-		"iocost" "blk_throtl" "io_health" "sched-blame"
+	write_config_blacklist_except memory_buddyinfo memory_events memory_others memory_vmstat net_conntrack tracing_status xfs
 	write_config_bamai_auth "integration-node-token"
 }
 
 # The caller provides kubelet connection details and metric filter parameters.
 write_config_container_memory_metrics() {
 	write_config_bamai_memory_metrics
+	write_config_bamai_kubelet "${kubelet_port}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 	cat << CONFIG
-[Pod]
- KubeletReadOnlyPort = 0
- KubeletAuthorizedPort = ${kubelet_port}
- KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
 [MetricCollector.Vmstat]
  IncludedOnHost = "^$"
  IncludedOnContainer = "${vmstat_include}"
@@ -571,42 +509,18 @@ CONFIG
 
 # OOM capture uses host memory data; threshold snapshots need a container manager.
 write_config_bamai_memory_oom_kill() {
-	write_config_blacklist \
-		"arp" "ascend_npu" "cpu_stat" "cpu_util" "cpuidle" \
-		"cpusys" "diskio" "dload" "dropwatch" "hungtask" \
-		"iolatency" "iotracing" "loadavg" "memburst" "memory_buddyinfo" \
-		"memory_events" "memory_free" "memory_others" "memory_reclaim" "memory_reclaim_events" \
-		"memory_vmstat" "metax_gpu" "mountpoint_perm" "net_rx_latency" "netdev" \
-		"netdev_bonding_lacp" "netdev_dcb" "netdev_events" "netdev_hw" "netdev_qdisc" \
-		"netdev_rdma_link" "netdev_txqueue_timeout" "netstat" "sched_tick" "ras" \
-		"runqlat" "sockstat" "softirq" "softlockup" "tcp_memory" \
-		"tcp_retransmit" "iocost" "blk_throtl" "io_health" "sched-blame" \
-		"memory_threshold_snapshot"
+	write_config_blacklist_except irqtracing memory_oom_kill mthreads_gpu mthreads_xid net_conntrack tracing_status xfs
 	write_config_bamai_auth "integration-node-token"
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }
 
 # The caller supplies the real kubelet endpoint, certificates, and output limits.
 write_config_bamai_memory_threshold_snapshot() {
-	write_config_blacklist \
-		"arp" "ascend_npu" "cpu_stat" "cpu_util" "cpuidle" \
-		"cpusys" "diskio" "dload" "dropwatch" "hungtask" \
-		"iolatency" "iotracing" "irqtracing" "loadavg" "memburst" \
-		"memory_buddyinfo" "memory_events" "memory_free" "memory_others" "memory_reclaim" \
-		"memory_reclaim_events" "memory_vmstat" "metax_gpu" "mountpoint_perm" "mthreads_gpu" \
-		"mthreads_xid" "net_rx_latency" "netdev" "netdev_bonding_lacp" "netdev_dcb" \
-		"netdev_events" "netdev_hw" "netdev_qdisc" "netdev_rdma_link" "netdev_txqueue_timeout" \
-		"netstat" "memory_oom_kill" "ras" "runqlat" "sched_tick" \
-		"sockstat" "softirq" "softlockup" "tcp_memory" "tcp_retransmit" \
-		"iocost" "blk_throtl" "io_health" "sched-blame"
+	write_config_blacklist_except memory_threshold_snapshot net_conntrack tracing_status xfs
 	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_kubelet "${GO_SNAPSHOT_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 	cat << EOF
-
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = ${GO_SNAPSHOT_KUBELET_PORT}
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
 
 [AutoTracing.MemoryThresholdSnapshot]
     ThresholdPercent = 50
@@ -644,108 +558,56 @@ EOF
 # The test owns the sender; bamai only receives and persists its toolstream events.
 write_config_bamai_toolstream_receiver() {
 	# The caller supplies the execution address and workspace.
-	write_config_blacklist \
-		"dropwatch" "arp" "ascend_npu" "cpu_stat" "cpu_util" \
-		"cpuidle" "cpusys" "diskio" "dload" "hungtask" \
-		"iolatency" "iotracing" "irqtracing" "loadavg" "memburst" \
-		"memory_buddyinfo" "memory_events" "memory_free" "memory_others" "memory_reclaim" \
-		"memory_reclaim_events" "memory_vmstat" "memory_threshold_snapshot" "metax_gpu" "mountpoint_perm" \
-		"mthreads_gpu" "mthreads_xid" "net_rx_latency" "netdev" "netdev_bonding_lacp" \
-		"netdev_dcb" "netdev_events" "netdev_hw" "netdev_qdisc" "netdev_rdma_link" \
-		"netdev_txqueue_timeout" "netstat" "memory_oom_kill" "ras" "runqlat" \
-		"sched_tick" "sockstat" "softirq" "softlockup" "tcp_memory" \
-		"tcp_retransmit" "tracing_status" "iocost" "blk_throtl" "io_health" \
-		"sched-blame"
+	write_config_blacklist_except net_conntrack xfs
 	write_config_bamai_http
 	write_config_bamai_auth "integration-node-token"
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }
 
 write_config_bamai_cpu_util() {
-	local cpu_blacklist=""
-	[[ ${cpu_util_disabled} != true ]] || cpu_blacklist='"cpu_util", '
-	cat << EOF
-BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_stat", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
-
-[HTTPServer]
-    ListenAddress = "127.0.0.1:${CPU_UTIL_PORT}"
-[HTTPServer.Auth]
-    BearerToken = "integration-node-token"
-
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = ${CPU_UTIL_KUBELET_PORT}
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
-EOF
+	local -a enabled=()
+	[[ ${cpu_util_disabled} == true ]] || enabled+=(cpu_util)
+	write_config_blacklist_except "${enabled[@]}"
+	write_config_bamai_http "127.0.0.1:${CPU_UTIL_PORT}"
+	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_kubelet "${CPU_UTIL_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 }
 
 write_config_bamai_cpu_stat() {
-	local cpu_blacklist=""
-	[[ ${cpu_stat_disabled} != true ]] || cpu_blacklist='"cpu_stat", '
-	cat << EOF
-BlackList = [${cpu_blacklist}"arp", "ascend_npu", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "tracing_status", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
-
-[HTTPServer]
-    ListenAddress = "127.0.0.1:${CPU_STAT_PORT}"
-[HTTPServer.Auth]
-    BearerToken = "integration-node-token"
-
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = ${CPU_STAT_KUBELET_PORT}
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
-EOF
+	local -a enabled=()
+	[[ ${cpu_stat_disabled} == true ]] || enabled+=(cpu_stat)
+	write_config_blacklist_except "${enabled[@]}"
+	write_config_bamai_http "127.0.0.1:${CPU_STAT_PORT}"
+	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_kubelet "${CPU_STAT_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 }
 
 write_config_bamai_runqlat() {
-	local runqlat_blacklist=""
-	[[ ${runqlat_disabled} != true ]] || runqlat_blacklist='"runqlat", '
-	cat << EOF
-BlackList = [${runqlat_blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
-
-[HTTPServer]
-    ListenAddress = "127.0.0.1:${RUNQLAT_PORT}"
-[HTTPServer.Auth]
-    BearerToken = "integration-node-token"
-
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = ${RUNQLAT_KUBELET_PORT}
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
-EOF
+	local -a enabled=(tracing_status)
+	[[ ${runqlat_disabled} == true ]] || enabled+=(runqlat)
+	write_config_blacklist_except "${enabled[@]}"
+	write_config_bamai_http "127.0.0.1:${RUNQLAT_PORT}"
+	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_kubelet "${RUNQLAT_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 }
 
 write_config_bamai_softirq() {
-	local blacklist=""
-	[[ ${softirq_disabled} != true ]] || blacklist='"softirq", '
-	cat << EOF
-BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softlockup", "tcp_memory", "tcp_retransmit", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
-EOF
+	local -a enabled=(tracing_status)
+	[[ ${softirq_disabled} == true ]] || enabled+=(softirq)
+	write_config_blacklist_except "${enabled[@]}"
 	write_config_bamai_http "${HUATUO_BAMAI_ADDR#http://}"
 	write_config_bamai_auth "integration-node-token"
 }
 
 write_config_bamai_cpuidle_autotracing() {
-	local blacklist="" es_config=""
-	[[ ${cpuidle_disabled} != true ]] || blacklist='"cpuidle", '
-	if [[ -n ${STORAGE_ADDR} ]]; then
-		es_config="[Storage.Elasticsearch]
-    Address = \"${STORAGE_ADDR}\"
-    Username = \"${STORAGE_USERNAME}\"
-    Password = \"${STORAGE_PASSWORD}\"
-    Index = \"${CPUIDLE_INDEX}\""
-	fi
+	local -a enabled=(tracing_status)
+	[[ ${cpuidle_disabled} == true ]] || enabled+=(cpuidle)
+	write_config_blacklist_except "${enabled[@]}"
+	write_config_bamai_http "127.0.0.1:${CPUIDLE_PORT}"
+	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_kubelet "${CPUIDLE_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 	cat << EOF
-BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
 
-[HTTPServer]
-    ListenAddress = "127.0.0.1:${CPUIDLE_PORT}"
-[HTTPServer.Auth]
-    BearerToken = "integration-node-token"
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = ${CPUIDLE_KUBELET_PORT}
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
 [AutoTracing.CPUIdle]
     UserThreshold = ${cpuidle_thresholds[0]}
     SysThreshold = ${cpuidle_thresholds[1]}
@@ -762,33 +624,22 @@ BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpusys", 
 [[AutoTracing.CPUIdle.Filter.Excluded]]
     Field = "${cpuidle_exclude_field}"
     Pattern = "${cpuidle_exclude}"
-[Storage.LocalFile]
-    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
-${es_config}
 EOF
+	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+	if [[ -n ${STORAGE_ADDR} ]]; then
+		write_config_bamai_elasticsearch "${STORAGE_ADDR}" "${STORAGE_USERNAME}" "${STORAGE_PASSWORD}" "${CPUIDLE_INDEX}"
+	fi
 }
 
 write_config_bamai_dload_autotracing() {
-	local blacklist="" es_config=""
-	[[ ${dload_disabled} != true ]] || blacklist='"dload", '
-	if [[ -n ${STORAGE_ADDR} ]]; then
-		es_config="[Storage.Elasticsearch]
-    Address = \"${STORAGE_ADDR}\"
-    Username = \"${STORAGE_USERNAME}\"
-    Password = \"${STORAGE_PASSWORD}\"
-    Index = \"${DLOAD_INDEX}\""
-	fi
+	local -a enabled=(tracing_status)
+	[[ ${dload_disabled} == true ]] || enabled+=(dload)
+	write_config_blacklist_except "${enabled[@]}"
+	write_config_bamai_http "127.0.0.1:${DLOAD_PORT}"
+	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_kubelet "${DLOAD_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 	cat << EOF
-BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dropwatch", "hungtask", "iolatency", "iotracing", "irqtracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "memory_threshold_snapshot", "metax_gpu", "mountpoint_perm", "mthreads_gpu", "mthreads_xid", "net_conntrack", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "memory_oom_kill", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit", "xfs", "iocost", "blk_throtl", "io_health", "sched-blame"]
 
-[HTTPServer]
-    ListenAddress = "127.0.0.1:${DLOAD_PORT}"
-[HTTPServer.Auth]
-    BearerToken = "integration-node-token"
-[Pod]
-    KubeletReadOnlyPort = 0
-    KubeletAuthorizedPort = ${DLOAD_KUBELET_PORT}
-    KubeletClientCertPath = "${KUBELET_CERT},${KUBELET_KEY}"
 [AutoTracing]
     IssuesList = ${dload_issues}
 [AutoTracing.Dload]
@@ -796,8 +647,9 @@ BlackList = [${blacklist}"arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle",
     IntervalTracing = ${dload_cooldown}
     ThresholdLoad = ${dload_threshold}
     EnableDebug = ${dload_debug}
-[Storage.LocalFile]
-    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
-${es_config}
 EOF
+	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+	if [[ -n ${STORAGE_ADDR} ]]; then
+		write_config_bamai_elasticsearch "${STORAGE_ADDR}" "${STORAGE_USERNAME}" "${STORAGE_PASSWORD}" "${DLOAD_INDEX}"
+	fi
 }

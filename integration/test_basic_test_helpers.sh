@@ -107,6 +107,51 @@ assert_helper_http_defaults() (
 	assert_eq "${CURL_TIMEOUT[*]}" "--max-time 0.2" "caller HTTP timeout override"
 )
 
+assert_helper_config_fragments() (
+	source "${ROOT_DIR}/integration/config.sh"
+	local config="${HUATUO_BAMAI_TEST_TMPDIR}/fragments.conf" all selected expected
+	write_config_blacklist_except > "${config}"
+	all=$(read_toml_json "${config}" | jq -c '.BlackList | sort')
+	write_config_blacklist_except cpu_stat xfs cpu_stat > "${config}"
+	selected=$(read_toml_json "${config}" | jq -c '.BlackList | sort')
+	expected=$(jq -cn --argjson all "${all}" '$all - ["cpu_stat", "xfs"]')
+	assert_eq "${selected}" "${expected}" "collector exceptions preserve unrelated exclusions"
+	assert_eq "$(jq -c 'unique' <<< "${all}")" "${all}" "collector blacklist has no duplicates"
+
+	{
+		write_config_bamai_http "127.0.0.1:12345"
+		write_config_bamai_auth "test-token"
+		write_config_bamai_kubelet 10251 "/tmp/client cert" "/tmp/client key"
+		write_config_storage_local "/tmp/test events"
+	} > "${config}"
+	assert_toml_values "${config}" '{
+		"HTTPServer.ListenAddress":"127.0.0.1:12345",
+		"HTTPServer.Auth.BearerToken":"test-token",
+		"Pod.KubeletReadOnlyPort":0,
+		"Pod.KubeletAuthorizedPort":10251,
+		"Pod.KubeletClientCertPath":"/tmp/client cert,/tmp/client key",
+		"Storage.LocalFile.Path":"/tmp/test events"
+	}'
+
+	local CPU_STAT_PORT=12345 CPU_STAT_KUBELET_PORT=10251
+	local KUBELET_CERT="/tmp/client cert" KUBELET_KEY="/tmp/client key" cpu_stat_disabled
+	for cpu_stat_disabled in false true; do
+		write_config_bamai_cpu_stat > "${config}"
+		selected=$(read_toml_json "${config}" | jq -c '.BlackList | sort')
+		expected=${all}
+		if [[ ${cpu_stat_disabled} == false ]]; then
+			expected=$(jq -cn --argjson all "${all}" '$all - ["cpu_stat"]')
+		fi
+		assert_eq "${selected}" "${expected}" "cpu_stat disabled=${cpu_stat_disabled}"
+		assert_toml_values "${config}" '{
+			"HTTPServer.ListenAddress":"127.0.0.1:12345",
+			"HTTPServer.Auth.BearerToken":"integration-node-token",
+			"Pod.KubeletAuthorizedPort":10251,
+			"Pod.KubeletClientCertPath":"/tmp/client cert,/tmp/client key"
+		}'
+	done
+)
+
 assert_helper_bamai_ports() (
 	source "${ROOT_DIR}/integration/config.sh"
 	unset HUATUO_BAMAI_DEFAULT_ADDR INTEGRATION_PORT_DIR INTEGRATION_PORT_BASE
@@ -406,6 +451,7 @@ grep -Fq 'cannot pull CPU workload image' "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image
 assert_helper_log_levels
 assert_helper_toml_values
 assert_helper_http_defaults
+assert_helper_config_fragments
 assert_helper_bamai_ports
 assert_helper_metric_diagnostics
 stop_and_wait_by_pid ""
