@@ -62,9 +62,9 @@ sleep 0.5
 
 for i in $(seq 1 5); do
 	log_info "curl request #${i} to ${NETNS_SERVER_ADDR}:${TEST_PORT}"
-	ip netns exec "${NETNS_CLIENT}" curl -s --connect-timeout 1 --max-time 2 \
+	ip netns exec "${NETNS_CLIENT}" curl -fsS --connect-timeout 1 --max-time 2 \
 		http://${NETNS_SERVER_ADDR}:${TEST_PORT}/ \
-		>> "${WORK_DIR}/curl.log" 2>&1 || true
+		>> "${WORK_DIR}/curl.log" 2>&1 || fatal "curl request #${i} failed; see ${WORK_DIR}/curl.log"
 done
 
 EVENTS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/events/net_rx_latency"

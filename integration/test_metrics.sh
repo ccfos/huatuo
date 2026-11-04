@@ -23,6 +23,8 @@ source "${ROOT_DIR}/integration/config.sh"
 
 readonly METRICS_FIXTURE_ROOT="${HUATUO_BAMAI_TEST_TMPDIR}/metrics-fixtures"
 readonly METRICS_SOCKSTAT="${METRICS_FIXTURE_ROOT}/proc/1/net/sockstat"
+readonly METRICS_TCP_MEM_SOCKSTAT="${METRICS_FIXTURE_ROOT}/proc/net/sockstat"
+readonly METRICS_TCP_MEM="${METRICS_FIXTURE_ROOT}/proc/sys/net/ipv4/tcp_mem"
 readonly METRICS_SOCKSTAT_EXPECTED="${HUATUO_BAMAI_TEST_TMPDIR}/expected-sockstat.txt"
 require_commands getconf awk grep
 METRICS_PAGE_SIZE=$(getconf PAGESIZE) || fatal "getconf PAGESIZE failed"
@@ -47,6 +49,71 @@ assert_sockstat_value() {
 		|| fatal "sockstat mismatch; see ${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
 	grep -Fxq "# TYPE huatuo_bamai_sockstat_${name} gauge" "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt" \
 		|| fatal "sockstat ${name}: expected gauge type"
+}
+
+assert_tcp_memory_usage_percent() {
+	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
+	awk '
+		$1 ~ /^huatuo_bamai_tcp_memory_usage_pages\{/ { usage = $2 }
+		$1 ~ /^huatuo_bamai_tcp_memory_limit_pages\{/ { limit = $2 }
+		$1 ~ /^huatuo_bamai_tcp_memory_usage_percent\{/ { percent = $2 }
+		END {
+			if (usage == "" || limit == "" || percent == "") {
+				printf "tcp memory samples missing: usage_pages=%s limit_pages=%s usage_percent=%s\n", usage, limit, percent > "/dev/stderr"
+				exit 2
+			}
+			if (limit <= 0) {
+				printf "tcp memory limit_pages is not positive: %s\n", limit > "/dev/stderr"
+				exit 3
+			}
+			expected = usage / limit * 100
+			delta = percent - expected
+			if (delta < 0) {
+				delta = -delta
+			}
+			if (delta > 1e-12) {
+				printf "tcp memory usage_percent=%s, want %s (usage_pages=%s / limit_pages=%s * 100)\n", percent, expected, usage, limit > "/dev/stderr"
+				exit 4
+			}
+		}
+	' "${metrics_file}" \
+		|| fatal "tcp memory usage_percent does not match usage_pages / limit_pages * 100; see ${metrics_file}"
+}
+
+assert_tcp_memory_at_limit() {
+	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
+	awk '
+		$1 ~ /^huatuo_bamai_tcp_memory_usage_pages\{/ { usage = $2 }
+		$1 ~ /^huatuo_bamai_tcp_memory_limit_pages\{/ { limit = $2 }
+		$1 ~ /^huatuo_bamai_tcp_memory_usage_percent\{/ { percent = $2 }
+		END {
+			if (usage != 12340770 || limit != 12340770 || percent != 100) {
+				printf "at-limit check failed: usage_pages=%s limit_pages=%s usage_percent=%s\n", usage, limit, percent > "/dev/stderr"
+				exit 2
+			}
+		}
+	' "${metrics_file}" \
+		|| fatal "tcp memory at the limit must report usage_pages=limit_pages=12340770 and usage_percent=100; see ${metrics_file}"
+}
+
+assert_tcp_memory_zero_limit() {
+	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
+	awk '
+		$1 ~ /^huatuo_bamai_tcp_memory_usage_pages\{/ { usage = $2 }
+		$1 ~ /^huatuo_bamai_tcp_memory_limit_pages\{/ { limit = $2 }
+		$1 ~ /^huatuo_bamai_tcp_memory_usage_percent\{/ { percent = $2 }
+		END {
+			if (usage == "" || limit == "" || percent == "") {
+				printf "tcp memory samples missing: usage_pages=%s limit_pages=%s usage_percent=%s\n", usage, limit, percent > "/dev/stderr"
+				exit 2
+			}
+			if (limit != 0 || usage <= 0 || percent != 0) {
+				printf "zero-limit check failed: usage_pages=%s limit_pages=%s usage_percent=%s\n", usage, limit, percent > "/dev/stderr"
+				exit 3
+			}
+		}
+	' "${metrics_file}" \
+		|| fatal "tcp memory zero limit must report usage_percent=0 with non-zero usage_pages; see ${metrics_file}"
 }
 
 assert_expected_metrics() {
@@ -85,6 +152,23 @@ for metrics_expected in "${HUATUO_BAMAI_TEST_EXPECTED}"/test_*.txt; do
 	assert_expected_metrics "${metrics_expected}"
 done
 
+assert_tcp_memory_usage_percent
+
+# At the limit the documented percentage is 100, not the raw ratio 1.
+printf 'TCP: inuse 3 mem 12340770\nUDP: inuse 2 mem 6\nRAW: inuse 1\n' > "${METRICS_TCP_MEM_SOCKSTAT}.next"
+mv "${METRICS_TCP_MEM_SOCKSTAT}.next" "${METRICS_TCP_MEM_SOCKSTAT}"
+huatuo_bamai_collect_metrics
+assert_tcp_memory_at_limit
+
+# Changing the limit to zero must keep the percentage finite at zero instead
+# of producing NaN or dividing by zero.
+printf 'TCP: inuse 3 mem 10\nUDP: inuse 2 mem 6\nRAW: inuse 1\n' > "${METRICS_TCP_MEM_SOCKSTAT}.next"
+mv "${METRICS_TCP_MEM_SOCKSTAT}.next" "${METRICS_TCP_MEM_SOCKSTAT}"
+printf '0 0 0\n' > "${METRICS_TCP_MEM}.next"
+mv "${METRICS_TCP_MEM}.next" "${METRICS_TCP_MEM}"
+huatuo_bamai_collect_metrics
+assert_tcp_memory_zero_limit
+
 # Use a power of two so both the input and expected float64 result are exact.
 # The product exceeds native int on both 32-bit and 64-bit Linux.
 metrics_large_pages=$((1 << (METRICS_LONG_BITS - 2)))
@@ -112,3 +196,20 @@ mv "${METRICS_SOCKSTAT}.next" "${METRICS_SOCKSTAT}"
 huatuo_bamai_collect_metrics
 assert_sockstat_value TCP_inuse 3
 assert_metrics "removed Mem" -- 'sockstat_TCP_mem(_bytes)?\{'
+
+# Kernel extensions must not suppress XFS metrics during updates or startup.
+cat >> "${METRICS_FIXTURE_ROOT}/sys/fs/xfs/sda0/stats/stats" << 'EOF'
+
+gc xpc 18446744073709551615
+defer_relog 4294967296
+future_stats nested 1
+EOF
+huatuo_bamai_collect_metrics
+assert_expected_metrics "${HUATUO_BAMAI_TEST_EXPECTED}/test_xfs.txt"
+
+huatuo_bamai_stop
+integration_huatuo_bamai_start write_config_bamai_default \
+	--region dev --procfs-prefix "${METRICS_FIXTURE_ROOT}" \
+	--disable-storage --disable-kubelet --log-debug
+huatuo_bamai_await_metrics
+assert_expected_metrics "${HUATUO_BAMAI_TEST_EXPECTED}/test_xfs.txt"

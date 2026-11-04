@@ -163,19 +163,67 @@ func decodePayload[T any](info []byte) (*T, error) {
 	return &payload, nil
 }
 
-func cstring(buf []byte, rawOffset, base uint32) string {
+// dynamicWindow resolves a kernel-supplied data-location offset/length pair
+// into a sub-slice of dyn. Both values are read straight from the tracepoint
+// record, so they are device/driver controlled and must be treated as
+// untrusted: a non-standard CPER section (NVDIMM, CXL, or a vendor payload)
+// routinely claims an offset or length larger than the fixed window that
+// bpf/system_ras.c copies into userspace (RAS_PERFEVENT_INFO_SIZE). Trusting
+// either value directly turns a malformed hardware event into a slice-bounds
+// panic that escapes the event loop and takes down the agent, so every window
+// is clamped here instead:
+//
+//   - only the low 16 bits of rawOffset are used, matching the __data_loc
+//     encoding the kernel writes (16-bit offset);
+//   - an offset below base means "no dynamic data" and yields nil;
+//   - an offset at or beyond len(dyn) yields nil;
+//   - the requested length is clamped to what remains, which also avoids the
+//     uint32 addition wrapping when the kernel reports a wrapped length.
+//
+// The result aliases dyn rather than copying it, so callers must not retain it
+// past the lifetime of dyn.
+func dynamicWindow(dyn []byte, rawOffset, base, length uint32) []byte {
 	absOff := rawOffset & 0xffff
 	if absOff < base {
+		return nil
+	}
+	off := absOff - base
+	if off >= uint32(len(dyn)) {
+		return nil
+	}
+	if remaining := uint32(len(dyn)) - off; length > remaining {
+		length = remaining
+	}
+	return dyn[off : off+length]
+}
+
+// dataLocWindow resolves a __data_loc descriptor into a sub-slice of dyn. The
+// kernel packs the absolute start of the dynamic data into the low 16 bits and
+// the length of the tracepoint dynamic field into the high 16 bits. limit is an
+// independent upper bound supplied by the record (the CPER section length
+// here); the shorter of the two wins, and dynamicWindow still caps the result
+// at the copied window.
+func dataLocWindow(dyn []byte, dataLoc, base, limit uint32) []byte {
+	length := dataLoc >> 16
+	if limit < length {
+		length = limit
+	}
+	return dynamicWindow(dyn, dataLoc, base, length)
+}
+
+// cstring returns the NUL-terminated string that starts at the kernel-supplied
+// offset inside buf, or "" when the offset is outside the window. It is built
+// on dynamicWindow so the offset is bounds-checked exactly like the raw hex
+// dump path.
+func cstring(buf []byte, rawOffset, base uint32) string {
+	win := dynamicWindow(buf, rawOffset, base, uint32(len(buf)))
+	if win == nil {
 		return ""
 	}
-	off := int(absOff - base)
-	if off >= len(buf) {
-		return ""
+	if end := bytes.IndexByte(win, 0); end >= 0 {
+		return string(win[:end])
 	}
-	if end := bytes.IndexByte(buf[off:], 0); end >= 0 {
-		return string(buf[off : off+end])
-	}
-	return string(buf[off:])
+	return string(win)
 }
 
 // Bank's MCi_STATUS MSR
@@ -489,11 +537,15 @@ func buildRasAcpiTracerData(data *rasEvent) (*RasTracingData, error) {
 	const nonStandardBase uint32 = 56
 	fru := cstring(payload.Msg[:], payload.FRUTxtOffset, nonStandardBase)
 
-	// Extract raw bytes at the FRU text location for the hex dump.
-	var rawData []byte
-	if absOff := payload.FRUTxtOffset & 0xffff; absOff >= nonStandardBase {
-		rawData = bytes.Clone(payload.Msg[absOff-nonStandardBase : absOff-nonStandardBase+payload.Len])
-	}
+	// payload.BufOffset is __data_loc_buf: the low 16 bits hold the absolute
+	// start of the section payload and the high 16 bits hold the length the
+	// tracepoint declares for that dynamic field. payload.Len is the section
+	// length reported when the record was emitted, and bpf/system_ras.c copies
+	// at most RAS_PERFEVENT_INFO_SIZE bytes of the record. Non-standard
+	// sections (NVDIMM, CXL, vendor payloads) routinely declare more than the
+	// fixed window kept in userspace, so the dump is capped by the declared
+	// length, the section length, and the copied window.
+	rawData := dataLocWindow(payload.Msg[:], payload.BufOffset, nonStandardBase, payload.Len)
 
 	return newRasTracingData(data, "ACPI", "NON_STANDARD", acpiErrType(payload.Sev), struct {
 		Severity uint8  `json:"severity"`

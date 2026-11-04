@@ -17,6 +17,7 @@
 # Pipe acknowledgments and published windows coordinate failure injection.
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
 
 require_commands jq mkfifo setsid timeout java javac "${PROFILER_TOOL_DIR}/bin/asprof"
 require_readable "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so"
@@ -55,7 +56,7 @@ assert_java_final_samples() {
 
 for test_case in some-killed all-killed interrupt terminate; do
 	(
-		trap cleanup_piped_processes EXIT
+		trap cleanup_running_jobs EXIT
 		case_dir="${JAVA_EXCEPTIONS_DIR}/${test_case}"
 		mkdir -p "${case_dir}"
 		log_info "Java exception: ${test_case}"
@@ -78,7 +79,7 @@ for test_case in some-killed all-killed interrupt terminate; do
 			duration=60 interval=60
 		fi
 		profiler_start_seconds=${SECONDS}
-		start_exception_profiler "${case_dir}" java "${duration}" "${interval}" \
+		start_cpu_profiler "${case_dir}" java "${duration}" "${interval}" \
 			--tool-path "${PROFILER_TOOL_DIR}" --pid "${target_pids[0]},${target_pids[1]}"
 		if [[ ${test_case} == interrupt ]]; then
 			assert_process_message "${PROFILER_OUTPUT_FD}" "${PROFILER_OUT}" 'data reading loop started'
@@ -138,7 +139,7 @@ for test_case in some-killed all-killed interrupt terminate; do
 				recovery_method=alphaHotMethod
 			fi
 			assert_process_alive "${recovery_pid}" "${recovery_start_time}" "Java recovery target"
-			start_exception_profiler "${case_dir}/recovery" java 1 1 \
+			start_cpu_profiler "${case_dir}/recovery" java 1 1 \
 				--tool-path "${PROFILER_TOOL_DIR}" --pid "${recovery_pid}"
 			assert_profiler_exit 0
 			assert_profiler_stack "${recovery_pid}" "${recovery_method}"

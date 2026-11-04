@@ -28,13 +28,6 @@ docker info > /dev/null 2>&1 || skip "docker daemon is unavailable"
 tracepoint_available irq softirq_raise || skip "irq/softirq_raise is unavailable"
 tracepoint_available irq softirq_entry || skip "irq/softirq_entry is unavailable"
 
-IRQTRACING_API_PORT=$(allocate_available_port) \
-	|| fatal "failed to allocate a huatuo-bamai API port"
-readonly IRQTRACING_API_PORT
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${IRQTRACING_API_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
-export HUATUO_BAMAI_ADDR HUATUO_BAMAI_METRICS_API
-
 readonly IRQTRACING_FIXTURE_ROOT="${HUATUO_BAMAI_TEST_TMPDIR}/irqtracing-fixture"
 readonly IRQTRACING_STAT="${IRQTRACING_FIXTURE_ROOT}/proc/stat"
 readonly IRQTRACING_RESULT="${HUATUO_BAMAI_TEST_TMPDIR}/irq-result.json"

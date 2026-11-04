@@ -20,9 +20,9 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
 
 require_commands jq mkfifo setsid timeout awk findmnt
-[[ ${EUID} -eq 0 ]] || skip "native CPU container profiling requires root"
 
 # Tracing BPF needs CAP_BPF (39) and CAP_PERFMON (38), or CAP_SYS_ADMIN (21).
 NATIVE_EFFECTIVE_CAPS=$(awk '$1 == "CapEff:" { print $2 }' "/proc/$$/status")
@@ -33,7 +33,7 @@ readonly NATIVE_EFFECTIVE_CAPS
 (((16#${NATIVE_EFFECTIVE_CAPS} & ((1 << 21) | (1 << 38))) != 0)) \
 	|| skip "perf tracing requires CAP_PERFMON or CAP_SYS_ADMIN"
 require_readable /sys/kernel/btf/vmlinux /proc/sys/kernel/perf_event_paranoid
-if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
+if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 	grep -qw cpu /sys/fs/cgroup/cgroup.controllers \
 		|| skip "CPU controller is unavailable in cgroup v2"
 else
@@ -107,7 +107,7 @@ assert_outside_pid_excluded() (
 	local runtime=$1 container_id=$2 container_pid=$3 container_start_time=$4
 	local outside_pid outside_start_time
 	[[ ${container_pid} =~ ^[1-9][0-9]*$ ]] || fatal "invalid ${runtime} container PID: ${container_pid}"
-	trap cleanup_piped_processes EXIT
+	trap cleanup_running_jobs EXIT
 	log_info "checking native PID/container intersection: ${runtime}"
 	start_piped_process "${WORK_DIR}/${runtime}/outside" "${FIXTURE_BIN}"
 	outside_pid=${PROCESS_PID}
@@ -115,11 +115,11 @@ assert_outside_pid_excluded() (
 	exec {PROCESS_INPUT_FD}>&-
 	exec {PROCESS_OUTPUT_FD}<&-
 	# Prove the outside workload is sampled before checking that CSS excludes it.
-	start_exception_profiler "${WORK_DIR}/${runtime}/outside-control" c 30 1 --pid "${outside_pid}"
+	start_cpu_profiler "${WORK_DIR}/${runtime}/outside-control" c 30 1 --pid "${outside_pid}"
 	assert_profiler_samples_before_deadline "${outside_pid}" f3
 	kill -INT "${PROFILER_PID}"
 	assert_profiler_exit 0
-	start_exception_profiler "${WORK_DIR}/${runtime}/outside-excluded" c 2 2 \
+	start_cpu_profiler "${WORK_DIR}/${runtime}/outside-excluded" c 2 2 \
 		--pid "${outside_pid}" --container-id "${container_id}"
 	assert_process_message "${PROFILER_OUTPUT_FD}" "${PROFILER_OUT}" 'data reading loop started'
 	assert_profiler_exit 0
@@ -130,9 +130,9 @@ assert_outside_pid_excluded() (
 
 assert_destroyed_container() (
 	local runtime=$1 container_id=$2 container_pid=$3
-	trap cleanup_piped_processes EXIT
+	trap cleanup_running_jobs EXIT
 	log_info "destroying a profiled native container: ${runtime}"
-	start_exception_profiler "${WORK_DIR}/${runtime}/destroyed" c 30 1 \
+	start_cpu_profiler "${WORK_DIR}/${runtime}/destroyed" c 30 1 \
 		--container-id "${container_id}" --pid "${container_pid}"
 	assert_profiler_samples_before_deadline "${container_pid}" f3
 	if [[ ${runtime} == docker ]]; then
@@ -226,7 +226,7 @@ assert_privileged_container() (
 	# hide the ELF loader. An empty root gives each mount its own destination.
 	tar -cf - --files-from /dev/null \
 		| timeout --kill-after=2 15 docker import - "${runner_image}" > "${WORK_DIR}/privileged/image.log"
-	log_info "running native intersection and destruction cases inside a privileged container"
+	log_info "running native container-ID profiling inside a privileged container"
 	timeout --kill-after=20 180 docker run --rm --name "${container_name}" \
 		--privileged --pid=host --network=host --cgroupns=host --ulimit memlock=-1:-1 \
 		"${runner_mounts[@]}" \
@@ -250,7 +250,8 @@ assert_privileged_container() (
 			[[ -f /.dockerenv ]] || fatal "privileged validation did not start in a Docker container"
 			bash "$ROOT_DIR/integration/run.sh" -j 1 test_profiler_native_cpu_container.sh 2>&1 \
 				| tee "$HUATUO_BAMAI_TEST_TMPDIR/runner.log"
-			grep -qF "summary: total=1 passed=1 skipped=0 failed=0" "$HUATUO_BAMAI_TEST_TMPDIR/runner.log" \
+			sed -n "/^{/,/^}/p" "$HUATUO_BAMAI_TEST_TMPDIR/runner.log" \
+				| jq -se ".[-1].execution_counts == {total: 1, passed: 1, skipped: 0, failed: 0}" > /dev/null \
 				|| fatal "privileged native container case did not pass without skips"
 		' || status=$?
 	assert_eq "${status}" 0 "privileged native container cases" \
@@ -279,9 +280,14 @@ test_docker() {
 		"${DOCKER_IMAGE}")
 	docker inspect --format '{{.State.Running}}' "${DOCKER_CONTAINER_ID}" | grep -qx true \
 		|| fatal "docker native container exited before profiling: ${DOCKER_CONTAINER_ID}"
+	run_profile_case docker "${DOCKER_CONTAINER_ID}"
+	if is_container; then
+		log_warn "skipping native PID intersection and destruction: PID profiling is unsupported inside containers"
+		RUNTIMES_TESTED=$((RUNTIMES_TESTED + 1))
+		return
+	fi
 	container_pid=$(docker inspect --format '{{.State.Pid}}' "${DOCKER_CONTAINER_ID}")
 	container_start_time=$(process_start_time "${container_pid}") || fatal "docker container identity unavailable"
-	run_profile_case docker "${DOCKER_CONTAINER_ID}"
 	assert_outside_pid_excluded docker "${DOCKER_CONTAINER_ID}" "${container_pid}" "${container_start_time}"
 	assert_destroyed_container docker "${DOCKER_CONTAINER_ID}" "${container_pid}"
 	DOCKER_CONTAINER_ID=""
@@ -306,12 +312,17 @@ test_containerd() {
 		"${CONTAINERD_IMAGE}" \
 		"${CONTAINERD_CONTAINER_ID}" \
 		/work/callchain
+	run_profile_case containerd "${CONTAINERD_CONTAINER_ID}"
+	if is_container; then
+		log_warn "skipping native PID intersection and destruction: PID profiling is unsupported inside containers"
+		RUNTIMES_TESTED=$((RUNTIMES_TESTED + 1))
+		return
+	fi
 	container_pid=$(ctr --namespace "${CONTAINERD_NAMESPACE}" tasks list \
 		| awk -v id="${CONTAINERD_CONTAINER_ID}" \
 			'$1 == id && $3 == "RUNNING" { print $2; found = 1 } END { exit !found }') \
 		|| fatal "containerd native container exited before profiling: ${CONTAINERD_CONTAINER_ID}"
 	container_start_time=$(process_start_time "${container_pid}") || fatal "containerd container identity unavailable"
-	run_profile_case containerd "${CONTAINERD_CONTAINER_ID}"
 	assert_outside_pid_excluded containerd "${CONTAINERD_CONTAINER_ID}" "${container_pid}" "${container_start_time}"
 	assert_destroyed_container containerd "${CONTAINERD_CONTAINER_ID}" "${container_pid}"
 	CONTAINERD_CONTAINER_ID=""

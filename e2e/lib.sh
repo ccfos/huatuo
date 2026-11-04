@@ -16,28 +16,26 @@
 
 set -euo pipefail
 
-source ${ROOT_DIR}/integration/lib.sh
+source "${ROOT_DIR}/integration/lib.sh"
 
-# k8s
-k8s_create_pod() {
-	local ns=$1
-	local name=$2
-	local image=$3
-	local label=$4
-	local num=$5
-
-	for i in $(seq 1 ${num}); do
-		kubectl run "${name}-${i}" \
-			-n ${ns} \
-			--image=${image} \
-			--image-pull-policy=Never \
-			--restart=Never \
-			--overrides='{"spec":{"terminationGracePeriodSeconds":1}}' \
-			-l ${label} \
-			-- sleep infinity || return $?
-	done
+e2e_huatuo_bamai_start() {
+	huatuo_bamai_initialize_address
+	cp "${ROOT_DIR}/_output/conf/huatuo-bamai.conf" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	huatuo_bamai_configure_default_address
+	local runtime_args=(
+		"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
+		"--config" "bamai.conf"
+		"--region" "e2e"
+		"--disable-storage"
+	)
+	if ! kernel_version_le 6 5; then
+		log_info "disabling sched-blame on unsupported kernel $(uname -r)"
+		runtime_args+=("--disable-tracing" "sched-blame")
+	fi
+	huatuo_bamai_start "${runtime_args[@]}"
 }
 
+# k8s
 k8s_delete_pod() {
 	local ns=$1
 	local label=$2
@@ -172,16 +170,17 @@ assert_huatuo_bamai_containers_absent() {
 }
 
 e2e_test_teardown() {
-	local code=$1
+	local cleanup_status=0
 
-	huatuo_bamai_stop || code=1
+	huatuo_bamai_stop || {
+		cleanup_status=1
+		RUNNER_CLEANUP_REASON="failed to stop huatuo-bamai"
+	}
 	if ! assert_huatuo_bamai_log_clean; then
+		RUNNER_CLEANUP_REASON="${RUNNER_CLEANUP_REASON:+${RUNNER_CLEANUP_REASON}; }huatuo-bamai log verification failed"
 		log_error "❌ huatuo-bamai log check failed"
-		code=1
+		cleanup_status=1
 	fi
 
-	if [[ $code -ne 0 && $code -ne 77 ]]; then
-		log_error "❌ e2e test failed with exit code: $code"
-		return 1
-	fi
+	return "$cleanup_status"
 }

@@ -25,14 +25,6 @@ readonly CONFIG_API_TOKEN="integration-node-token"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
 require_commands curl jq ss
-require_toml_parser
-
-CONFIG_API_PORT=$(allocate_available_port) \
-	|| fatal "failed to allocate a huatuo-bamai API port"
-readonly CONFIG_API_PORT
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${CONFIG_API_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
-export HUATUO_BAMAI_ADDR HUATUO_BAMAI_METRICS_API
 
 config_response_file=""
 config_error_file=""
@@ -46,7 +38,7 @@ trap cleanup EXIT
 
 write_config_bamai_config_api() {
 	write_config_bamai_default
-	write_config_bamai_http "127.0.0.1:${CONFIG_API_PORT}"
+	write_config_bamai_http
 }
 
 request_config_api() {

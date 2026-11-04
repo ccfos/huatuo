@@ -30,11 +30,9 @@ assert_huatuo_bamai_log_clean || fatal "baseline daemon reported an error"
 go_snapshot_case_dir="${HUATUO_BAMAI_TEST_TMPDIR}/daemon-container"
 HUATUO_BAMAI_TEST_TMPDIR=${go_snapshot_case_dir}
 mkdir -p "${go_snapshot_case_dir}"
-GO_SNAPSHOT_BAMAI_PORT=$(allocate_available_port)
+
 GO_SNAPSHOT_KUBELET_PORT=10250
 go_snapshot_top_k=10
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 memburst_container_name="huatuo-memburst-daemon-${BASHPID}-${RANDOM}"
 memburst_container_client=""
 

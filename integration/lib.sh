@@ -21,9 +21,25 @@ if ! declare -p CURL_TIMEOUT > /dev/null 2>&1; then
 	CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 fi
 
+is_container() {
+	[[ -e /.dockerenv || -e /run/.containerenv || -s /run/systemd/container ]] && return 0
+	if command -v systemd-detect-virt > /dev/null 2>&1; then
+		systemd-detect-virt --container --quiet
+		return $?
+	fi
+	return 1
+}
+
 # --------------------------------- log --------------------------------------
 
 TEST_LOG_TAG=${TEST_LOG_TAG:-INTEGRATION}
+
+# A fresh execution context binds reasons to its main shell. Ordinary child
+# shells inherit the owner and cannot publish a caught error as the case result.
+if [[ -n ${RUNNER_REASON_DIR:-} && -z ${RUNNER_REASON_OWNER:-} ]]; then
+	RUNNER_REASON_OWNER=${BASHPID}
+	export RUNNER_REASON_OWNER
+fi
 
 log_info() {
 	printf '[%s][%s] %s\n' \
@@ -45,7 +61,31 @@ record_test_timing() {
 		>> "${HUATUO_BAMAI_TEST_TMPDIR}/timings.log"
 }
 
+record_exit_reason() {
+	local code=$1 reason=$2
+	[[ -n ${RUNNER_REASON_DIR:-} ]] || return 0
+	[[ ${RUNNER_REASON_OWNER:-${BASHPID}} == "${BASHPID}" ]] || return 0
+	printf '%s\n' "${reason}" > "${RUNNER_REASON_DIR}/reason.${code}.log"
+}
+
+# ERR keeps the failing command location before EXIT cleanup changes it.
+# Only unhandled errors in the owning shell may become the execution reason.
+record_command_failure() {
+	local code=$1 source=$2 line=$3 command=$4 pipeline=""
+	[[ $- == *e* && ${RUNNER_REASON_OWNER:-} == "${BASHPID}" ]] || return 0
+	[[ ! -s ${RUNNER_REASON_DIR}/reason.${code}.log ]] || return 0
+	[[ $5 != *' '* ]] || pipeline=" [pipeline exit codes: $5]"
+	record_exit_reason "$code" "$source:$line: command failed${pipeline} (exit $code): $command" \
+		|| log_error "cannot record command failure reason"
+}
+
+if [[ -n ${RUNNER_REASON_DIR:-} ]]; then
+	set -E
+	trap 'record_command_failure "$?" "${BASH_SOURCE[0]:-$0}" "$LINENO" "$BASH_COMMAND" "${PIPESTATUS[*]}"' ERR
+fi
+
 fatal() {
+	record_exit_reason 1 "$*" || log_error "cannot record failure reason"
 	printf '[%s][%s][FAIL] %s\n' \
 		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*" >&2
 	exit 1
@@ -53,37 +93,36 @@ fatal() {
 
 # The runner reserves 77 for skipped cases; cleanup still runs through EXIT.
 skip() {
+	record_exit_reason 77 "$*" || {
+		log_error "cannot record skip reason"
+		exit 1
+	}
 	printf '[%s][%s][SKIP] ⏭️ %s\n' \
 		"$(TZ=UTC-8 date '+%Y-%m-%dT%H:%M:%S+08:00')" "${TEST_LOG_TAG}" "$*"
 	exit 77
 }
 
-test_results_init() {
-	test_passed=0
-	test_skipped=0
-	test_failed=0
-}
-
-test_result_record() {
-	local name=$1 status=$2
-	case ${status} in
-	0)
-		test_passed=$((test_passed + 1))
-		log_info "PASS: ${name}"
-		;;
-	77)
-		test_skipped=$((test_skipped + 1))
-		log_info "SKIP: ${name}"
-		;;
-	*)
-		test_failed=$((test_failed + 1))
-		log_error "FAIL: ${name} (exit ${status})"
-		;;
-	esac
-}
-
-test_results_summary() {
-	log_info "summary: total=$((test_passed + test_skipped + test_failed)) passed=${test_passed} skipped=${test_skipped} failed=${test_failed}"
+# A failed step terminates its caller; use ordinary shell control flow for
+# expected failures. Each explicit step owns and consumes its reason channel.
+run_test_step() {
+	(($# > 0)) || fatal "run_test_step requires an external command"
+	local step_dir status=0 reason
+	step_dir=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/tmp.step.XXXXXX") \
+		|| fatal "cannot create step reason directory in ${HUATUO_BAMAI_TEST_TMPDIR}"
+	(
+		unset RUNNER_REASON_OWNER
+		export RUNNER_REASON_DIR=${step_dir}
+		exec "$@"
+	) &
+	local pid=$!
+	wait "${pid}" || status=$?
+	if ((status)); then
+		reason="step command ${1} exited with code ${status}"
+		if [[ -f ${step_dir}/reason.${status}.log ]]; then reason=$(< "${step_dir}/reason.${status}.log"); fi
+		record_exit_reason "${status}" "${reason}" || log_error "cannot propagate step failure reason"
+	fi
+	rm -rf -- "${step_dir}" || fatal "cannot remove step reason directory: ${step_dir}"
+	if ((status)); then exit "${status}"; fi
 }
 
 report_http_response() {
@@ -111,6 +150,21 @@ require_commands() {
 	done
 }
 
+runner_build_signal_reset_launcher() {
+	local -n output_launcher=$1
+	# Ignored signals survive exec, so reset them before Bash starts.
+	output_launcher=(python3 -c '
+import os
+import signal
+import sys
+
+for signum in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(signum, signal.SIG_DFL)
+signal.pthread_sigmask(signal.SIG_UNBLOCK, (signal.SIGINT, signal.SIGTERM))
+os.execvp(sys.argv[1], sys.argv[1:])
+')
+}
+
 require_readable() {
 	local path
 	for path in "$@"; do
@@ -118,20 +172,35 @@ require_readable() {
 	done
 }
 
-require_toml_parser() {
+require_toml_reader() {
 	require_commands python3 jq
-	python3 -c 'import importlib.util; __import__("tomllib" if importlib.util.find_spec("tomllib") else "tomli")' \
-		> /dev/null 2>&1 || skip "TOML parsing requires Python 3.11+ or the Python tomli module"
-	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}/tools"
-	cp "${ROOT_DIR}/integration/testdata/tools/test_toml_to_json.py" \
-		"${HUATUO_BAMAI_TEST_TMPDIR}/tools/toml-to-json.py"
+	python3 -c 'import importlib.util; __import__(next(name for name in ("tomllib", "tomli", "toml") if importlib.util.find_spec(name)))' \
+		> /dev/null 2>&1 || skip "TOML parsing requires Python 3.11+ or the tomli or toml module"
+}
+
+# Decode framework configuration without installing a fixture into each workspace.
+read_toml_json() {
+	require_commands python3
+	python3 - "$1" << 'PYTHON'
+import json
+import importlib.util
+import sys
+parser_name = next((name for name in ("tomllib", "tomli", "toml") if importlib.util.find_spec(name)), None)
+if parser_name is None:
+    sys.exit("TOML parsing requires Python 3.11+ or the tomli or toml module")
+parser = __import__(parser_name)
+with open(sys.argv[1], encoding="utf-8") as source:
+    json.dump(parser.loads(source.read()), sys.stdout, default=str)
+print()
+PYTHON
 }
 
 assert_toml_values() {
+	require_toml_reader
 	local config_file=$1 expected=$2
 	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/$(basename "${config_file}").json"
 	local error_file="${response_file}.error"
-	python3 "${HUATUO_BAMAI_TEST_TMPDIR}/tools/toml-to-json.py" "${config_file}" \
+	read_toml_json "${config_file}" \
 		> "${response_file}" 2> "${error_file}" \
 		|| fatal "cannot parse TOML ${config_file}: $(< "${error_file}")"
 	jq -e --argjson expected "${expected}" '
@@ -193,40 +262,56 @@ assert_log_has_no_failure() {
 }
 
 allocate_available_port() {
-	local protocol=${1:-tcp} attempt port sockets
+	local protocol=${1:-tcp}
 	[[ ${protocol} == tcp || ${protocol} == udp ]] \
 		|| fatal "unsupported port protocol: ${protocol}; expected tcp or udp"
-	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
-		mkdir -p "${INTEGRATION_PORT_DIR}"
-		allocate_worker_port "${protocol}" 9> "${INTEGRATION_PORT_DIR}/lock"
-		return
-	fi
-	sockets=$(ss -H -an "--${protocol}") || return 1
-	for ((attempt = 0; attempt < 20; attempt++)); do
-		port=$((20000 + RANDOM % 20001))
-		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
-			echo "${port}"
-			return 0
-		fi
-	done
-	return 1
+	local INTEGRATION_PORT_DIR=${INTEGRATION_PORT_DIR:-${HUATUO_BAMAI_TEST_TMPDIR}/ports}
+	local INTEGRATION_PORT_BASE=${INTEGRATION_PORT_BASE:-20000}
+	require_commands flock ss
+	mkdir -p "${INTEGRATION_PORT_DIR}"
+	allocate_worker_port "${protocol}" 9> "${INTEGRATION_PORT_DIR}/lock"
 }
 
-# The counter reserves ports across command substitutions and test subprocesses.
+# Clear only the previous execution's reservations. The scheduler has reaped
+# that worker before assigning the slot again; keep the cursor across executions.
+prepare_execution_ports() {
+	require_commands flock ss
+	mkdir -p "${INTEGRATION_PORT_DIR}"
+	(
+		flock 9 || exit 1
+		: > "${INTEGRATION_PORT_DIR}/allocated"
+	) 9> "${INTEGRATION_PORT_DIR}/lock"
+}
+
+# Reservations coordinate unbound services in this execution; socket probing
+# also excludes listeners left by other processes when the cursor wraps.
 allocate_worker_port() {
-	local protocol=$1 port=${INTEGRATION_PORT_BASE:?worker port base is missing} sockets
-	flock 9
-	sockets=$(ss -H -an "--${protocol}") || return 1
+	local protocol=$1 port=${INTEGRATION_PORT_BASE:?worker port base is missing} sockets attempt used
+	local -A allocated=()
+	flock 9 || return 1
+	sockets=$(ss -H -an "--${protocol}") || {
+		log_error "cannot inspect ${protocol} sockets in the execution network namespace"
+		return 1
+	}
+	if [[ -f ${INTEGRATION_PORT_DIR}/allocated ]]; then
+		while read -r used; do allocated[$used]=1; done < "${INTEGRATION_PORT_DIR}/allocated"
+	fi
 	if [[ -f ${INTEGRATION_PORT_DIR}/next ]]; then read -r port < "${INTEGRATION_PORT_DIR}/next"; fi
-	while ((port < INTEGRATION_PORT_BASE + 1000)); do
-		printf '%s\n' "$((port + 1))" > "${INTEGRATION_PORT_DIR}/next"
-		if ! awk '{ print $4 }' <<< "${sockets}" | grep -Eq "[:.]${port}$"; then
-			echo "${port}"
+	for ((attempt = 0; attempt < 1000; attempt++)); do
+		((port < INTEGRATION_PORT_BASE + 1000)) || port=$INTEGRATION_PORT_BASE
+		printf '%s\n' "$((port + 1))" > "${INTEGRATION_PORT_DIR}/next" || return 1
+		# Consume all socket records so an early match cannot cause SIGPIPE under pipefail.
+		if [[ -z ${allocated[$port]:-} ]] && awk -v port="${port}" '
+			$4 ~ ("[:.]" port "$") { used = 1 }
+			END { exit used }
+		' <<< "${sockets}"; then
+			printf '%s\n' "$port" >> "${INTEGRATION_PORT_DIR}/allocated" || return 1
+			printf '%s\n' "$port"
 			return 0
 		fi
 		port=$((port + 1))
 	done
-	log_error "worker port range is exhausted: ${INTEGRATION_PORT_BASE}"
+	log_error "execution port range is exhausted: ${INTEGRATION_PORT_BASE}"
 	return 1
 }
 
@@ -285,11 +370,6 @@ wait_until() {
 	return 1
 }
 
-profiler_ready() {
-	local stdout=$1
-	[[ -f "${stdout}" ]] && grep -q "data reading loop started" "${stdout}"
-}
-
 # Expose the real PID, start time and pipes to the calling Shell test. A
 # temporary FIFO writer keeps a fast child exit from blocking the parent's open.
 # Callers own cleanup and close the returned descriptors when done.
@@ -333,120 +413,12 @@ assert_process_message() {
 
 # Only live jobs from this Shell are eligible for teardown. Reaped PIDs may
 # already have been reused; do not keep a global registry of old process IDs.
-cleanup_piped_processes() {
+cleanup_running_jobs() {
 	local pid
 	while IFS= read -r pid; do
 		kill -KILL -- "-${pid}" 2> /dev/null || kill -KILL "${pid}" 2> /dev/null || true
 		wait "${pid}" 2> /dev/null || true
 	done < <(jobs -pr)
-}
-
-# Shared by Java, Python and container exception tests; scenario choices and
-# fault injection stay in the caller. Only one profiler runs at a time.
-start_exception_profiler() {
-	local out_dir=$1 language=$2 duration=$3 interval=$4
-	shift 4
-	mkdir -p "${out_dir}"
-	PROFILER_OUT="${out_dir}/profiler.out"
-	PROFILER_ERR="${out_dir}/profiler.err"
-	PROFILER_STACKS="${out_dir}/stacks.json"
-	: > "${PROFILER_OUT}"
-	: > "${PROFILER_STACKS}"
-	start_piped_process "${out_dir}/profiler" "${ROOT_DIR}/_output/bin/profiler" \
-		--type cpu --language "${language}" --duration "${duration}" \
-		--aggr-interval "${interval}" --freq 99 \
-		--output-format json --output-path - --log-level info "$@"
-	PROFILER_PID=${PROCESS_PID}
-	PROFILER_OUTPUT_FD=${PROCESS_OUTPUT_FD}
-	exec {PROCESS_INPUT_FD}>&-
-}
-
-# Decode only complete profile records, keeping stack names and PID labels
-# together. Invalid profile JSON must fail, rather than look like no samples.
-read_profiler_output() {
-	local timeout=$1 line
-	IFS= read -r -t "${timeout}" -u "${PROFILER_OUTPUT_FD}" line || return $?
-	printf '%s\n' "${line}" >> "${PROFILER_OUT}"
-	case ${line} in
-	'{"profile_type":'* | '{"container_id":'*)
-		jq -c '
-			.profile as $p
-			| ($p.function // [] | map({key: (.id | tostring), value: $p.string_table[.name]}) | from_entries) as $functions
-			| ($p.location // [] | map({key: (.id | tostring), value: [.line[]? | $functions[.function_id | tostring]]}) | from_entries) as $locations
-			| $p.sample[]? | select(any(.value[]; tonumber > 0))
-			| {pid: ([.label[]? | select($p.string_table[.key] == "pid") | $p.string_table[.str]][0]),
-			   names: [.location_id[] | $locations[tostring][]]}
-		' <<< "${line}" >> "${PROFILER_STACKS}" \
-			|| fatal "invalid profiler output: ${PROFILER_OUT}"
-		;;
-	esac
-}
-
-profiler_has_stack() {
-	local pid=$1 method=$2
-	jq -se --arg pid "${pid}" --arg method "${method}" '
-		any(.[]; ($pid == "*" or .pid == $pid) and any(.names[]; contains($method)))
-	' "${PROFILER_STACKS}" > /dev/null
-}
-
-assert_profiler_stack() {
-	profiler_has_stack "$@" || fatal "missing stack PID=$1 method=$2; see ${PROFILER_OUT}"
-}
-
-assert_profiler_samples_before_deadline() {
-	local pid=$1 method=$2 deadline=$((SECONDS + 15))
-	while ! profiler_has_stack "${pid}" "${method}"; do
-		((SECONDS < deadline)) || fatal "timed out waiting for ${method}; see ${PROFILER_OUT}"
-		read_profiler_output "$((deadline - SECONDS))" \
-			|| fatal "profiler exited or timed out before ${method}; see ${PROFILER_ERR}"
-	done
-}
-
-# assert_profiler_exit <expected_status> [timeout_seconds]
-assert_profiler_exit() {
-	local expected=$1 timeout=${2:-15} status=0 read_status
-	local deadline=$((SECONDS + timeout))
-	while true; do
-		((SECONDS < deadline)) || fatal "profiler did not finish; see ${PROFILER_ERR}"
-		read_status=0
-		read_profiler_output "$((deadline - SECONDS))" || read_status=$?
-		[[ ${read_status} -eq 0 ]] && continue
-		[[ ${read_status} -eq 1 ]] || fatal "profiler output timed out; see ${PROFILER_ERR}"
-		break
-	done
-	exec {PROFILER_OUTPUT_FD}<&-
-	# EOF can precede process exit. Use only the remaining drain budget before
-	# collecting the exit status in the parent Shell.
-	process_exited "${PROFILER_PID}" \
-		|| wait_until "$((deadline - SECONDS))" 0.1 process_exited "${PROFILER_PID}" \
-		|| fatal "profiler did not exit before deadline; see ${PROFILER_ERR}"
-	wait "${PROFILER_PID}" || status=$?
-	PROFILER_PID=""
-	assert_eq "${status}" "${expected}" "profiler exit; see ${PROFILER_ERR}" \
-		|| fatal "unexpected profiler exit status"
-	! grep -q 'panic:' "${PROFILER_OUT}" "${PROFILER_ERR}" || fatal "profiler panicked"
-}
-
-# The FIFO and every recorded collector must finish within one deadline.
-# Call before fallback cleanup so a leaked collector fails the scenario.
-assert_collectors_exited() {
-	local timeout=${1:-5} line status index
-	local deadline=$((SECONDS + timeout))
-	while true; do
-		((SECONDS < deadline)) || fatal "py-spy collectors did not close their output pipe"
-		status=0
-		IFS= read -r -t "$((deadline - SECONDS))" -u "${collector_fd}" line || status=$?
-		[[ ${status} -ne 1 ]] || break
-		[[ ${status} -eq 0 ]] || fatal "py-spy collector still holds its output pipe"
-		printf '%s\n' "${line}" >> "${case_dir}/collectors.out"
-	done
-	exec {collector_fd}<&-
-	for index in "${!collector_pids[@]}"; do
-		process_exited "${collector_pids[index]}" "${collector_start_times[index]}" \
-			|| wait_until "$((deadline - SECONDS))" 0.1 process_exited \
-				"${collector_pids[index]}" "${collector_start_times[index]}" \
-			|| fatal "collector PID ${collector_pids[index]} did not exit before deadline"
-	done
 }
 
 kprobe_available() {
@@ -526,20 +498,6 @@ bpf_tool_setup() {
 	TOOL_ERR="${TOOL_WORK_DIR}/${binary_name}.err"
 }
 
-# Print non-empty text files; empty and binary files add no useful diagnostics.
-dump_text_files() {
-	local dir=$1
-	local file
-
-	[[ -d "${dir}" ]] || return 0
-
-	while IFS= read -r -d '' file; do
-		grep -Iq '' "${file}" || continue
-		log_error "----- FILE (${file}) -----"
-		if [[ ${file##*/} == test.log ]]; then cat "${file}" >&2; else sed -n '1,160p' "${file}" >&2; fi
-	done < <(find "${dir}" -type f -size +0c -print0)
-}
-
 # Call from the child's parent shell so wait can verify its exit status.
 # Unlike cleanup, a shutdown assertion must not hide a timeout with SIGKILL.
 # Optional third argument selects TERM (default) or INT.
@@ -611,6 +569,7 @@ stop_and_wait_by_pid() {
 # ----------------------------- huatuo-bamai ----------------------------------
 
 huatuo_bamai_start() {
+	require_commands ss
 	[[ -f "${HUATUO_BAMAI_BIN}" && -x "${HUATUO_BAMAI_BIN}" ]] \
 		|| fatal "huatuo-bamai binary missing or not executable: ${HUATUO_BAMAI_BIN}; run make build"
 	log_info "starting huatuo-bamai: $*"
@@ -624,23 +583,35 @@ huatuo_bamai_start() {
 }
 
 huatuo_bamai_ready() {
-	local pid
+	local pid listeners port=${HUATUO_BAMAI_ADDR##*:}
 	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2> /dev/null || echo "")
 	[[ -n "$pid" ]] || return 1
 
-	if ! kill -0 "${pid}" 2> /dev/null; then
-		log_error "huatuo-bamai pid=${pid} exited"
-		return 1
+	if process_exited "${pid}"; then
+		fatal "huatuo-bamai pid=${pid} exited during startup; see ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 	fi
 
-	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" > /dev/null
+	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" > /dev/null || return 1
+	# A successful HTTP response can come from an older daemon on the same port.
+	listeners=$(ss -H -ltnp "sport = :${port}") || return 1
+	grep -Fq "pid=${pid}," <<< "${listeners}" || return 1
+	if process_exited "${pid}"; then
+		fatal "huatuo-bamai pid=${pid} exited during readiness check; see ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	fi
 }
 
 huatuo_bamai_stop() {
 	local test_workspace=${1:-${HUATUO_BAMAI_TEST_TMPDIR}}
 	local pid
 	pid=$(cat "${test_workspace}/huatuo-bamai.pid" 2> /dev/null || echo "")
-	[[ -n "$pid" ]] && stop_by_pid "${pid}"
+	if [[ -n ${pid} ]]; then
+		stop_by_pid "${pid}" || return 1
+		# Device-owning callers must not release resources while readers remain.
+		if ! wait_until 2 0.1 process_exited "${pid}"; then
+			log_error "huatuo-bamai pid=${pid} is still running; retaining PID file"
+			return 1
+		fi
+	fi
 	rm -f "${test_workspace}/huatuo-bamai.pid"
 }
 
@@ -740,7 +711,13 @@ huatuo_apiserver_stop() {
 	local test_workspace=${1:-${HUATUO_BAMAI_TEST_TMPDIR}}
 	local pid
 	pid=$(cat "${test_workspace}/huatuo-apiserver.pid" 2> /dev/null || echo "")
-	[[ -n "$pid" ]] && stop_by_pid "${pid}"
+	if [[ -n ${pid} ]]; then
+		stop_by_pid "${pid}" || return 1
+		if ! wait_until 2 0.1 process_exited "${pid}"; then
+			log_error "huatuo-apiserver pid=${pid} is still running; retaining PID file"
+			return 1
+		fi
+	fi
 	rm -f "${test_workspace}/huatuo-apiserver.pid"
 }
 
@@ -768,29 +745,72 @@ integration_huatuo_apiserver_start() {
 	huatuo_apiserver_start "${runtime_args[@]}"
 }
 
-# Stop shared services, then remove or report the runner-owned test workspace.
-integration_test_exit() {
-	local exit_code=$1
-	local test_workspace=$2
-
-	if [[ -z "${test_workspace}" || "${test_workspace}" != "${HUATUO_BAMAI_TEST_TMPDIR}/"* ]]; then
-		log_error "refusing to finalize test workspace outside ${HUATUO_BAMAI_TEST_TMPDIR}: ${test_workspace}"
-		return 1
-	fi
-
+# Cleanup runs inside the case namespace; diagnostics are printed by the runner
+# after stdout/stderr have closed, avoiding recursive reads of the live logs.
+integration_test_cleanup() {
+	local test_workspace=$1
 	local cleanup_status=0
-	huatuo_apiserver_stop "${test_workspace}" || cleanup_status=1
-	huatuo_bamai_stop "${test_workspace}" || cleanup_status=1
-	[[ ${cleanup_status} -eq 0 ]] || exit_code=1
+	huatuo_apiserver_stop "${test_workspace}" || {
+		cleanup_status=1
+		RUNNER_CLEANUP_REASON="failed to stop huatuo-apiserver"
+	}
+	huatuo_bamai_stop "${test_workspace}" || {
+		cleanup_status=1
+		RUNNER_CLEANUP_REASON="${RUNNER_CLEANUP_REASON:+${RUNNER_CLEANUP_REASON}; }failed to stop huatuo-bamai"
+	}
 
-	if [[ ${exit_code} -eq 0 || ${exit_code} -eq 77 ]]; then
-		rm -rf -- "${test_workspace}" || return 1
-		return 0
-	fi
+	return "$cleanup_status"
+}
 
-	dump_text_files "${test_workspace}" || true
-	log_error "integration test failed with exit code ${exit_code}; artifacts preserved at ${test_workspace}"
-	return "${cleanup_status}"
+# Compare the public build-info sample with the same service's /version response.
+assert_build_info() {
+	local address=$1 namespace=$2 expected_host=$3 expected_region=$4
+	local endpoint response_file error_file status curl_status
+	for endpoint in version metrics; do
+		response_file="${HUATUO_BAMAI_TEST_TMPDIR}/build-info-${endpoint}.body"
+		error_file="${HUATUO_BAMAI_TEST_TMPDIR}/build-info-${endpoint}.curl-error"
+		curl_status=0
+		status=$(curl -sS "${CURL_TIMEOUT[@]}" \
+			-D "${response_file}.headers" -o "${response_file}" -w '%{http_code}' \
+			"${address}/${endpoint}" 2> "${error_file}") || curl_status=$?
+		log_info "GET /${endpoint}: curl exit=${curl_status}, HTTP status=${status}"
+		if [[ ${endpoint} == version || ${curl_status} -ne 0 || ${status} != 200 ]]; then
+			report_http_response "GET /${endpoint}" "${response_file}" "${error_file}"
+		fi
+		[[ ${curl_status} -eq 0 ]] || fatal "GET /${endpoint}: curl exited ${curl_status}"
+		assert_eq "${status}" 200 "GET /${endpoint} status" \
+			|| fatal "GET /${endpoint}: expected HTTP 200, got ${status}"
+	done
+
+	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/build-info-metrics.body"
+	local version_file="${HUATUO_BAMAI_TEST_TMPDIR}/build-info-version.body"
+	grep -qiE '^Content-Type:[[:space:]]*text/plain([;[:space:]]|$)' "${metrics_file}.headers" \
+		|| fatal "GET /metrics: expected text/plain, headers: $(< "${metrics_file}.headers")"
+	grep -Fxq "# TYPE ${namespace}_build_info gauge" "${metrics_file}" \
+		|| fatal "expected ${namespace}_build_info to be a Gauge"
+
+	local count sample labels expected
+	count=$(grep -cE "^${namespace}_build_info(\{|[[:space:]])" "${metrics_file}" || true)
+	assert_eq "${count}" 1 "build-info sample count" \
+		|| fatal "expected one build-info sample, got ${count}"
+	sample=$(grep -E "^${namespace}_build_info(\{|[[:space:]])" "${metrics_file}")
+	log_info "build-info sample: ${sample}"
+	# Match the exporter's sorted labels and Prometheus text escaping, not JSON escaping.
+	labels=$(jq -er --arg host "${expected_host}" --arg region "${expected_region}" '
+		.data | {name, version, git_commit, git_tree_state, build_time, go_version, compiler, platform}
+		| if all(.[]; type == "string" and length > 0) then .
+		  else error("missing nonempty build identity field") end
+		| . + {host: $host, region: $region}
+		| to_entries | sort_by(.key)
+		| map(.key + "=\"" + (.value
+			| split("\\") | join("\\\\")
+			| split("\n") | join("\\n")
+			| split("\"") | join("\\\"")) + "\"")
+		| join(",")
+	' "${version_file}") || fatal "GET /version: cannot encode build identity labels"
+	expected="${namespace}_build_info{${labels}} 1"
+	assert_eq "${sample}" "${expected}" "build-info sample" \
+		|| fatal "build-info: expected ${expected}, got ${sample}"
 }
 
 huatuo_bamai_metrics() {
@@ -820,6 +840,7 @@ assert_huatuo_bamai_log_clean() {
 # integration_huatuo_bamai_start [config_writer_func] [huatuo-bamai args...]
 # Materialize writer stdout in the workspace; ":" preserves a prepared config.
 integration_huatuo_bamai_start() {
+	huatuo_bamai_initialize_address
 	local config_writer=${1:-write_config_bamai_default}
 	if [[ $# -gt 0 ]]; then
 		shift
@@ -844,31 +865,89 @@ integration_huatuo_bamai_start() {
 	if [[ $config_writer != : ]]; then
 		"$config_writer" > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	fi
-	configure_bamai_address
+	huatuo_bamai_configure_default_address
 	huatuo_bamai_start "${runtime_args[@]}"
 }
 
-# Explicit addresses are already chosen by API and container config writers.
-configure_bamai_address() {
-	local config="${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" port
-	if awk '
-		/^[[:space:]]*\[HTTPServer\][[:space:]]*$/ { http = 1; next }
-		/^[[:space:]]*\[/ { http = 0 }
-		http && /^[[:space:]]*ListenAddress[[:space:]]*=/ { found = 1 }
-		END { exit !found }
-	' "${config}"; then return 0; fi
-	if [[ -n ${INTEGRATION_PORT_DIR:-} ]]; then
-		port=${HUATUO_BAMAI_ADDR##*:}
-	else
-		port=$(allocate_available_port) || fatal "failed to allocate a huatuo-bamai API port"
+# The default belongs to this execution, not a service restart or config file.
+# Export it across the worker/test boundary; explicit configs may change the
+# client address without replacing the execution's default.
+huatuo_bamai_initialize_address() {
+	[[ -z ${HUATUO_BAMAI_DEFAULT_ADDR:-} ]] || return 0
+	local port
+	port=$(allocate_available_port) || fatal "cannot allocate bamai HTTP port"
+	export HUATUO_BAMAI_DEFAULT_ADDR="http://127.0.0.1:${port}"
+	export HUATUO_BAMAI_ADDR=${HUATUO_BAMAI_DEFAULT_ADDR}
+	export HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
+}
+
+# Preserve explicit listeners and derive the local client endpoint from them.
+huatuo_bamai_configure_default_address() {
+	require_toml_reader
+	local config="${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" address parsed port
+	parsed=$(read_toml_json "${config}") \
+		|| fatal "cannot parse bamai configuration: ${config}"
+	address=$(jq -er '
+		(.HTTPServer // {}) |
+		if has("ListenAddress") then .ListenAddress | select(type == "string" and length > 0)
+		else "" end
+	' <<< "${parsed}") \
+		|| fatal "HTTPServer.ListenAddress must be a nonempty string: ${config}"
+	if [[ -z ${address} ]]; then
+		address=${HUATUO_BAMAI_DEFAULT_ADDR#http://}
+		if ! python3 -c 'import toml' > /dev/null 2>&1 \
+			&& ! python3 -c 'import tomli_w' > /dev/null 2>&1; then
+			skip "TOML writing requires python3-toml or python3-tomli-w"
+		fi
+		# A serializer handles quoted and inline tables. Reparse and compare before
+		# replacement so unsupported values cannot silently change other settings.
+		python3 - "${config}" "${address}" << 'PYTHON' || fatal "cannot update bamai listener; original configuration retained: ${config}"
+import json
+import importlib.util
+import os
+from pathlib import Path
+import sys
+import tempfile
+try:
+    import toml
+except ModuleNotFoundError:
+    import tomli_w as toml
+parser_name = next((name for name in ("tomllib", "tomli", "toml") if importlib.util.find_spec(name)), None)
+if parser_name is None:
+    sys.exit("TOML parsing requires Python 3.11+ or the tomli or toml module")
+parser = __import__(parser_name)
+path = Path(sys.argv[1])
+with path.open(encoding="utf-8") as source:
+    expected = parser.loads(source.read())
+expected.setdefault("HTTPServer", {})["ListenAddress"] = sys.argv[2]
+text = toml.dumps(expected)
+actual = parser.loads(text)
+# JSON normalization also compares TOML dates, times and NaN values consistently.
+if json.dumps(actual, sort_keys=True, default=str) != json.dumps(expected, sort_keys=True, default=str):
+    sys.exit("TOML serialization changed configuration values")
+temporary = None
+try:
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".bamai.", delete=False) as target:
+        temporary = target.name
+        os.fchmod(target.fileno(), path.stat().st_mode & 0o777)
+        target.write(text)
+    parser.loads(Path(temporary).read_text(encoding="utf-8"))
+    os.replace(temporary, path)
+finally:
+    if temporary is not None and os.path.exists(temporary):
+        os.unlink(temporary)
+PYTHON
 	fi
-	if grep -Eq '^[[:space:]]*\[HTTPServer\][[:space:]]*$' "${config}"; then
-		sed -i "/^[[:space:]]*\\[HTTPServer\\][[:space:]]*$/a\\    ListenAddress = \"127.0.0.1:${port}\"" "${config}"
-	else
-		printf '\n[HTTPServer]\n    ListenAddress = "127.0.0.1:%s"\n' "${port}" >> "${config}"
-	fi
-	HUATUO_BAMAI_ADDR="http://127.0.0.1:${port}"
-	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
+	case ${address} in
+	:*) address="127.0.0.1${address}" ;;
+	0.0.0.0:*) address="127.0.0.1:${address##*:}" ;;
+	\[::\]:*) address="[::1]:${address##*:}" ;;
+	esac
+	port=${address##*:}
+	[[ ${port} =~ ^[0-9]{1,5}$ ]] && ((10#${port} > 0 && 10#${port} <= 65535)) \
+		|| fatal "bamai listener requires a port between 1 and 65535: ${address}"
+	export HUATUO_BAMAI_ADDR="http://${address}"
+	export HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 }
 
 # huatuo_bamai_collect_metrics saves /metrics output to the temp metrics file.
@@ -883,39 +962,55 @@ huatuo_bamai_await_metrics() {
 		huatuo_bamai_collect_metrics
 }
 
+# Save every attempt, including failed retries, without retaining an older body.
+fetch_metrics_response() {
+	local prefix=$1 status curl_status=0
+	: > "${prefix}.headers" || return 1
+	: > "${prefix}.txt" || return 1
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -D "${prefix}.headers" -o "${prefix}.txt" \
+		-w '%{http_code}' "${HUATUO_BAMAI_METRICS_API}" 2> "${prefix}.err") || curl_status=$?
+	printf 'curl_exit=%s\nhttp_status=%s\n' "${curl_status}" "${status}" > "${prefix}.status" || return 1
+	[[ ${curl_status} -eq 0 && ${status} == 200 ]]
+}
+
+assert_metrics_response() {
+	local prefix=$1
+	if ! fetch_metrics_response "${prefix}"; then
+		cat "${prefix}.status" "${prefix}.headers" "${prefix}.txt" "${prefix}.err" >&2
+		fatal "/metrics: expected curl=0 HTTP=200; see ${prefix}.status"
+	fi
+	if ! grep -Eqi '^Content-Type:[[:blank:]]*text/plain([;[:space:]]|$)' "${prefix}.headers"; then
+		cat "${prefix}.headers" >&2
+		fatal "/metrics: expected text/plain; see ${prefix}.headers"
+	fi
+}
+
 # assert_metrics <desc> <present_pattern>... [-- <absent_pattern>...]
 assert_metrics() {
-	local desc=$1
-	shift
+	local desc=$1 pattern found status
 	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
-	local prefix="huatuo_bamai_"
+	shift
 
-	local present=() absent=()
-	while [[ $# -gt 0 && "$1" != "--" ]]; do
-		present+=("$1")
+	while (($#)) && [[ $1 != -- ]]; do
+		grep -qE "huatuo_bamai_($1)" "${metrics_file}" \
+			|| fatal "${desc}: expected present but not found: $1"
 		shift
 	done
-	shift 2> /dev/null || true
-	absent=("$@")
+	(($#)) || return 0
+	shift
 
-	if [[ ${#absent[@]} -gt 0 ]]; then
-		local absent_re
-		absent_re=$(
-			IFS='|'
-			echo "${absent[*]}"
-		)
-		local found
-		found=$(grep -oE "${prefix}(${absent_re})" "$metrics_file" || true)
-		[[ -z "$found" ]] || fatal "${desc}: expected absent but found: ${found}"
-	fi
-
-	if [[ ${#present[@]} -gt 0 ]]; then
-		local pat
-		for pat in "${present[@]}"; do
-			grep -qE "${prefix}(${pat})" "$metrics_file" \
-				|| fatal "${desc}: expected present but not found: ${pat}"
-		done
-	fi
+	(($#)) || return 0
+	local -a absent=()
+	for pattern in "$@"; do
+		absent+=(-e "huatuo_bamai_(${pattern})")
+	done
+	status=0
+	found=$(grep -oE "${absent[@]}" "${metrics_file}") || status=$?
+	case ${status} in
+	0) fatal "${desc}: expected absent but found: ${found}" ;;
+	1) ;;
+	*) fatal "${desc}: cannot search ${metrics_file}: grep exited ${status}" ;;
+	esac
 }
 
 # Both clocks must survive BPF decoding and JSON output without exposing host uptime.
@@ -938,35 +1033,6 @@ assert_kernel_observation_timestamps() {
 	log_info "event with UTC observation timestamps: $(head -n 1 "${events_file}")"
 }
 
-# Verify periodic JSON publication while the profiling command is still running.
-# The command arguments supply the target and sampling mode.
-assert_java_profiler_streams() (
-	local out_dir=$1
-	shift
-	local profiler_pid=""
-	mkdir -p "${out_dir}"
-	trap '[[ -z "${profiler_pid}" ]] || stop_and_wait_by_pid "${profiler_pid}" 5 || true' EXIT
-	"$@" --duration 12 --aggr-interval 2 --output-format json --output-path - \
-		> "${out_dir}/windows.json" 2> "${out_dir}/profiler.err" &
-	profiler_pid=$!
-
-	profile_windows_are_ready() {
-		jq -se '[.[] | select((.profile.sample | length) > 0)] | length >= 2' \
-			"${out_dir}/windows.json" > /dev/null 2>&1
-	}
-	wait_until 10 0.1 profile_windows_are_ready \
-		|| fatal "two Java windows not published during collection (see ${out_dir}/profiler.err)"
-	kill -0 "${profiler_pid}" 2> /dev/null \
-		|| fatal "Java profiler exited before streaming output was observed"
-	local status=0
-	stop_and_wait_by_pid "${profiler_pid}" 5 INT || status=$?
-	profiler_pid=""
-	[[ ${status} -eq 0 ]] || fatal "Java streaming profiler exited ${status} (see ${out_dir}/profiler.err)"
-	jq -se '[.[] | select((.profile.sample | length) > 0)] | length >= 2' \
-		"${out_dir}/windows.json" > /dev/null \
-		|| fatal "expected multiple non-empty Java windows in ${out_dir}/windows.json"
-)
-
 storage_send_udp_packets() {
 	local port=$1 count=${2:-1} packet
 	for ((packet = 0; packet < count; packet++)); do
@@ -974,15 +1040,4 @@ storage_send_udp_packets() {
 			> "/dev/udp/127.0.0.99/${port}" \
 			|| fatal "failed to send UDP packet to 127.0.0.99:${port}"
 	done
-}
-
-# Keep fixed PID and socket paths private to this case and its child processes.
-integration_isolate_run_directory() {
-	[[ /var/run -ef "${HUATUO_BAMAI_TEST_TMPDIR}/run" ]] && return 0
-	require_commands unshare mount
-	exec unshare --mount --propagation private bash -euc '
-		mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}/run"
-		mount --bind "${HUATUO_BAMAI_TEST_TMPDIR}/run" /var/run
-		exec bash "$@"
-	' bash "$0" "$@"
 }

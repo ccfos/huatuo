@@ -41,7 +41,7 @@ cleanup() {
 	trap - EXIT
 	huatuo_bamai_stop || status=1
 	if [[ ${memory_high_set} == 1 ]]; then set_container_memory_high max || status=1; fi
-	cleanup_piped_processes
+	cleanup_running_jobs
 	if [[ -n ${memory_mount} ]]; then umount "${memory_mount}" || status=1; fi
 	if [[ ${pod_created} == 1 ]]; then k8s_delete_pod "${BUSINESS_POD_NS}" "app=${pod_name}" || status=1; fi
 	exit "${status}"
@@ -93,7 +93,7 @@ assert_container_memory_values() {
 
 set_container_memory_high() {
 	local value=$1 property=$1 unit=${container_cgroup##*/}
-	if [[ ${unit} == *.scope ]]; then
+	if [[ ${HUATUO_TEST_CGROUP_MODE} == unified && ${unit} == *.scope ]]; then
 		require_commands systemctl
 		[[ ${value} != max ]] || property=infinity
 		timeout --kill-after=1 10 systemctl set-property --runtime "${unit}" "MemoryHigh=${property}"
@@ -121,8 +121,8 @@ assert_real_memory_events() {
 		printf a >&"${input_fd}"
 		assert_process_message "${output_fd}" "${HUATUO_BAMAI_TEST_TMPDIR}/workload.log" ready
 		baseline=$(awk '$1 == "high" {print $2}' "${container_cgroup}/memory.events")
-		set_container_memory_high $((16 * 1024 * 1024))
 		memory_high_set=1
+		set_container_memory_high $((16 * 1024 * 1024))
 		printf p >&"${input_fd}"
 		wait_until 15 0.05 awk -v baseline="${baseline}" '$1 == "high" {value=$2} END {exit !(value>baseline)}' \
 			"${container_cgroup}/memory.events" || fatal "memory.high counter did not increase from ${baseline}"
@@ -167,7 +167,7 @@ original_root="${HUATUO_BAMAI_TEST_TMPDIR}/original-memory"
 fixture_root="${HUATUO_BAMAI_TEST_TMPDIR}/cgroup-fixtures"
 mkdir -p "${original_root}" "${fixture_root}"
 mount --bind "${cgroup_root}" "${original_root}"
-if [[ -e ${cgroup_root}/cgroup.controllers ]]; then
+if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 	# Keep the cgroup2 root filesystem intact so mode detection still sees v2.
 	cp -as "${original_root}${cgroup_relative}/." "${fixture_root}/"
 	fixture_container=${fixture_root}

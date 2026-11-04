@@ -27,13 +27,6 @@ readonly EVENT_STREAM_CURL_TIMEOUT=(--connect-timeout 2 --max-time 10)
 
 require_commands curl jq ss
 
-EVENT_API_PORT=$(allocate_available_port) \
-	|| fatal "failed to allocate a huatuo-bamai API port"
-readonly EVENT_API_PORT
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${EVENT_API_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
-export HUATUO_BAMAI_ADDR HUATUO_BAMAI_METRICS_API
-
 event_stream_pid=""
 event_capacity_status=""
 event_capacity_curl_status=0
@@ -53,7 +46,7 @@ stop_event_stream() {
 
 write_config_bamai_cloud_events_api() {
 	write_config_bamai_default
-	write_config_bamai_http "127.0.0.1:${EVENT_API_PORT}"
+	write_config_bamai_http
 	cat << 'EOF'
     MaxEventStreamClients = 1
     EventStreamKeepAliveIntervalSeconds = 1

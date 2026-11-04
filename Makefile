@@ -165,9 +165,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			go generate -run BPF_COMPILE {}'
 	@touch $@
 
-build: gen-build $(GO_SRCS) \
-	_output/tests/apiserver-probe \
-	_output/tests/apiserver-go-workload
+build: gen-build $(GO_SRCS)
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
 	$(GO_BUILD_IMPL) -p $(GO_BUILD_PARALLELISM) -o $(APP_CMD_OUTPUT)/bin/ $(addprefix ./,$(APP_CMD_SUBDIRS))
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
@@ -232,6 +230,13 @@ portable-generated: gen-build
 	@tar -cf $(APP_CMD_OUTPUT)/portable-generated.tar \
 		$(PORTABLE_GENERATED_FILES) $(APP_CMD_OUTPUT)/portable-generated.commit
 
+TEST_BINARIES := \
+	_output/tests/apiserver-probe \
+	_output/tests/apiserver-go-workload \
+	_output/tests/sysbench
+
+test-build: $(TEST_BINARIES)
+
 test: unit integration e2e
 
 unit: gen-build
@@ -246,11 +251,15 @@ _output/tests/apiserver-go-workload: integration/testdata/test_apiserver_profili
 	@mkdir -p $(@D)
 	CGO_ENABLED=0 go build -mod=vendor -o $@ $<
 
-integration: build
+_output/tests/sysbench: $(wildcard integration/testdata/sysbench/*.go) go.mod go.sum
+	@mkdir -p $(@D)
+	CGO_ENABLED=0 go build -mod=vendor -o $@ ./integration/testdata/sysbench
+
+integration: build test-build
 	go build -o $(PPROF_TOOL) ./build/pprof-tool
 	@bash integration/run.sh
 
-e2e: build
+e2e: build test-build
 	@bash e2e/run.sh
 
-.PHONY: build install-tools gen-build portable-generated check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: build install-tools gen-build portable-generated check vendor clean test test-build unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

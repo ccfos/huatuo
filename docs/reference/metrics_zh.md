@@ -27,6 +27,29 @@ huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg"
 
 此例分别展示宿主机和容器的调度延迟分桶计数，`zone` 的范围见下文。
 
+## 构建信息
+
+`huatuo_bamai_build_info` 和 `huatuo_apiserver_build_info` 是值恒为 `1` 的
+Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自程序的
+`/metrics` 暴露，构建信息与该程序的 `/version` 一致。它们包含既有公共标签
+`host`、`region`（apiserver 中为空），以及以下构建标签：
+
+| 标签 | 含义 |
+| --- | --- |
+| `name` | 程序名称，与 `/version` 中的 `name` 一致 |
+| `version` | 程序发布版本，与 `/version` 中的 `version` 一致 |
+| `git_commit` | 构建的 Git 标识，与 `/version` 中的 `git_commit` 一致；不保证是完整 SHA |
+| `git_tree_state` | 构建时的工作区状态：`clean`、`dirty` 或 `unknown` |
+| `build_time` | `/version` 中的时间戳：优先使用注入的构建时间，缺失时回退为 VCS 提交时间或 `(devel)` |
+| `go_version` | 构建程序所用的 Go 工具链版本 |
+| `compiler` | Go 编译器，例如 `gc` |
+| `platform` | 操作系统和架构，例如 `linux/amd64` |
+
+未提供发布版本时，`version` 使用 `(devel)`。`git_commit` 优先使用注入值，
+其次读取 Go 构建信息中的 VCS 提交标识，两者均不可用时使用 `(devel)`。构建标签只附加到该指标，
+业务指标的标签保持不变。Prometheus 抓取后，可通过相同的 `job`、`instance`
+将构建信息与业务指标关联；跨集群查询还需纳入实际用于区分目标的集群标签。
+
 ## CPU
 
 ### 调度延迟
@@ -297,6 +320,12 @@ Qdisc 指标描述发送队列积压、发送量、丢包和重入队次数，�
 | 指标 | 说明 | 单位 | 范围 | 来源 | 附加标签 |
 | --- | --- | --- | --- | --- | --- |
 | `netdev_hw_rx_dropped_total` | 接收方向硬件丢包累计数 | 计数 | 宿主机 | sysfs、eBPF | device, driver |
+
+### RDMA 端口统计
+
+`netdev_rdma_link_<counter>` 输出内核的逐端口计数，具体名称取决于驱动。附加标签为 `device`、`nodeguid`、`index`、`num_ports` 和 `port`。
+
+新增 `port` 标签会产生新的时间序列，单端口设备也受影响。端口级查询保留该标签；对选定计数器，设备总量使用 `sum by (region, host, device) (<metric>)`，设备速率使用 `sum by (region, host, device) (rate(<metric>[5m]))`，将 `<metric>` 替换为完整指标名。只按 `device` 聚合会混合不同主机上的同名设备。
 
 ### 网卡统计
 

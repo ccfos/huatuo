@@ -118,10 +118,8 @@ storage_run_backend() {
 	trap storage_cleanup EXIT
 	storage_start "${backend}"
 	log_info "checking storage consistency: ${backend} at ${STORAGE_ADDR}"
-	storage_http_port=$(allocate_available_port) || fatal "failed to allocate bamai HTTP port"
+
 	storage_target_port=$(allocate_available_port udp) || fatal "failed to allocate UDP target port"
-	HUATUO_BAMAI_ADDR="http://127.0.0.1:${storage_http_port}"
-	HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 	started=${SECONDS}
 	assert_storage_request "create index" PUT "${STORAGE_INDEX}" \

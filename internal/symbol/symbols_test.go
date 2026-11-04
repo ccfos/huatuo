@@ -812,7 +812,6 @@ func TestMatchXfsMount(t *testing.T) {
 		path      string
 		xfsMounts []string
 		want      string
-		wantErr   bool
 	}{
 		{
 			name:      "nested-mount-matches-first",
@@ -821,21 +820,12 @@ func TestMatchXfsMount(t *testing.T) {
 			want:      "/var/lib",
 		},
 		{name: "root-mount-matches", path: "/usr/lib/libc.so", xfsMounts: []string{"/"}, want: "/"},
-		{name: "no-match", path: "/usr/lib/libc.so", xfsMounts: []string{"/var/lib"}, wantErr: true},
+		{name: "non-xfs-path", path: "/usr/lib/libc.so", xfsMounts: []string{"/var/lib"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := matchXfsMount(tt.path, tt.xfsMounts)
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("matchXfsMount(%q): got nil error, want non-nil", tt.path)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("matchXfsMount(%q): %v", tt.path, err)
-			}
+			got := matchXfsMount(tt.path, tt.xfsMounts)
 			if got != tt.want {
 				t.Errorf("matchXfsMount(%q): got %q, want %q", tt.path, got, tt.want)
 			}

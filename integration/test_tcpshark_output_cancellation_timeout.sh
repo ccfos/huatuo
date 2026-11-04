@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env bash
 
 # Copyright 2026 The HuaTuo Authors.
 #
@@ -14,15 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-import sys
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
-
-# Shell owns the assertions; this adapter only decodes the persisted format.
-with open(sys.argv[1], "rb") as config:
-    json.dump(tomllib.load(config), sys.stdout, default=str)
-sys.stdout.write("\n")
+# Exercise the timeout receiver in its own framework-managed environment.
+set -euo pipefail
+source "$ROOT_DIR/integration/lib_tcpshark_output_cancellation.sh"
+run_tcpshark_output_cancellation timeout

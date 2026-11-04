@@ -14,20 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Host-only integration: private procfs input, real processes, collector and daemon.
+# Controlled procfs input, real processes, collector and daemon in a private PID namespace.
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 source "${ROOT_DIR}/integration/lib_memsnapshot.sh"
-require_commands go jq mount umount awk unshare timeout
-[[ ${EUID} == 0 ]] || skip "requires root and a private mount namespace"
-# Never replace procfs in the host mount namespace when invoked manually.
-if [[ ${MEMBURST_PRIVATE_PIDNS:-0} != 1 ]]; then
-	[[ $(readlink /proc/self/ns/mnt) != $(readlink /proc/1/ns/mnt) ]] || fatal "run through integration/run.sh (private mount namespace required)"
-	# Product scenarios use controlled rankings in their own PID namespace.
-	export MEMBURST_PRIVATE_PIDNS=1
-	exec unshare --pid --fork --mount-proc bash "${BASH_SOURCE[0]}"
-fi
+require_commands go jq mount umount awk timeout
 readonly MEMBURST_ROOT_WORKSPACE=${HUATUO_BAMAI_TEST_TMPDIR}
 readonly MEMBURST_STANDARD_BIN=${HUATUO_BAMAI_BIN}
 export MEMSNAP_ACCEPTANCE_ARTIFACTS="${MEMBURST_ROOT_WORKSPACE}/helpers"
@@ -107,13 +99,10 @@ assert_burst_configuration_rejected() {
 	! grep -q 'started successfully' "${file}" || fatal "daemon started with invalid ${name}"
 }
 
-GO_SNAPSHOT_BAMAI_PORT=$(allocate_available_port)
 GO_SNAPSHOT_KUBELET_PORT=10250
 go_snapshot_top_k=100
 KUBELET_CERT=${KUBELET_CERT:-unused}
 KUBELET_KEY=${KUBELET_KEY:-unused}
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 burst_top=10
 burst_threshold=10
 burst_anon=0
@@ -384,6 +373,8 @@ assert_burst_runtime() {
  and all(.entries[]; .objects > 0 and .average_bytes == (.bytes / .objects))' \
 			"${go_snapshot_case_dir}/snapshot.json" > /dev/null || fatal "invalid concurrent allocation snapshot"
 		;;
+	# Each memburst process has only a two-second census budget.
+	python) assert_snapshot_runtime_payload python deadline-partial ;;
 	*) assert_snapshot_runtime_payload "${language}" ;;
 	esac
 	assert_burst_count "${count}"

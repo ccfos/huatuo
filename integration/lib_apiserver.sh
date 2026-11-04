@@ -70,15 +70,12 @@ pass() {
 continuous_profiling_requirements
 require_commands curl ss
 APISERVER_PORT=$(allocate_available_port)
-NODE_PORT=$(allocate_available_port)
-while [[ $NODE_PORT == "$APISERVER_PORT" ]]; do NODE_PORT=$(allocate_available_port); done
+
 APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${NODE_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 export APISERVER_ADDR API_TOKEN
 
 PROBE="${ROOT_DIR}/_output/tests/apiserver-probe"
-[[ -x $PROBE ]] || fatal 'missing apiserver probe; run make build'
+[[ -x $PROBE ]] || fatal 'missing apiserver probe; run make test-build'
 
 start_server() {
 	[[ ! -f "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" ]] || cp "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver-${APISERVER_GENERATION}.log"

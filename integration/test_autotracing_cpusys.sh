@@ -113,3 +113,4 @@ wait_until 10 1 cpusys_event_is_valid \
 call_count=$(wc -l < "${CPUSYS_PERF_CALLS_FILE}")
 [[ "${call_count}" -eq 1 ]] \
 	|| fatal "cpusys invoked perf ${call_count} times, expected once"
+assert_huatuo_bamai_log_clean

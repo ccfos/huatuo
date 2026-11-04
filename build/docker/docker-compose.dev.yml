@@ -15,6 +15,7 @@ services:
     image: huatuo/huatuo-bamai:dev
     pull_policy: never
     hostname: huatuo-dev-node
+    command: ["./bin/huatuo-bamai", "--region", "example", "--config", "huatuo-bamai.conf"]
     volumes:
       - ./devconf/huatuo-bamai.conf:${RUN_PATH}/conf/huatuo-bamai.conf:ro
 

@@ -16,6 +16,7 @@
 
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
 
 require_commands mkfifo setsid python3
 PROFILER_EXIT_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-exit.XXXXXX")
@@ -24,12 +25,16 @@ readonly PROFILER_EXIT_DIR
 assert_exit_deadline_result() {
 	local test_case=$1 actual_status=$2 case_dir=$3 expected_status=0
 	local child_pid child_start_time
-	[[ ${test_case} != *-stalled ]] || expected_status=1
+	[[ ${test_case} != *-stalled && ${test_case} != collector-mismatched ]] || expected_status=1
 	assert_eq "${actual_status}" "${expected_status}" "${test_case}; see ${case_dir}/assertion.log" \
 		|| fatal "stdout EOF did not enforce the expected process-exit result"
 	if [[ ${test_case} == *-stalled ]]; then
 		grep -qF 'did not exit before deadline' "${case_dir}/assertion.log" \
 			|| fatal "stalled child failed for a reason other than its exit deadline"
+	fi
+	if [[ ${test_case} == collector-mismatched ]]; then
+		grep -Fq 'collector PID and start-time counts differ' "${case_dir}/assertion.log" \
+			|| fatal "collector array mismatch lacked a diagnosis"
 	fi
 	[[ -s ${case_dir}/child.identity ]] || fatal "child identity was not recorded"
 	read -r child_pid child_start_time < "${case_dir}/child.identity"
@@ -48,13 +53,13 @@ assert_liveness_result() {
 	fi
 }
 
-for test_case in profiler-exited profiler-stalled collector-exited collector-stalled collector-reused; do
+for test_case in profiler-exited profiler-stalled collector-exited collector-stalled collector-reused collector-mismatched; do
 	case_dir="${PROFILER_EXIT_DIR}/${test_case}"
 	mkdir "${case_dir}"
 	log_info "exit deadline: ${test_case} after stdout EOF"
 	status=0
 	(
-		trap cleanup_piped_processes EXIT
+		trap cleanup_running_jobs EXIT
 		# The parent records identity before allowing EOF. The fixture timeout
 		# bounds the regression even if an assertion loses its exit deadline.
 		start_piped_process "${case_dir}/child" bash -c '
@@ -78,14 +83,15 @@ for test_case in profiler-exited profiler-stalled collector-exited collector-sta
 			: > "${PROFILER_STACKS}"
 			assert_profiler_exit 7 1
 		else
-			collector_fd=${PROCESS_OUTPUT_FD}
-			collector_pids=("${PROCESS_PID}")
-			collector_start_times=("${child_start_time}")
+			exit_output_fd=${PROCESS_OUTPUT_FD}
+			exit_pids=("${PROCESS_PID}")
+			exit_start_times=("${child_start_time}")
 			if [[ ${test_case} == collector-reused ]]; then
 				# Model the same PID belonging to a different process instance.
-				collector_start_times=("$((child_start_time + 1))")
+				exit_start_times=("$((child_start_time + 1))")
 			fi
-			assert_collectors_exited 1
+			[[ ${test_case} != collector-mismatched ]] || exit_start_times=()
+			assert_collectors_exited "${exit_output_fd}" "${case_dir}/collectors.out" exit_pids exit_start_times 1
 			if [[ ${test_case} == collector-reused ]]; then
 				! process_exited "${PROCESS_PID}" "${child_start_time}" \
 					|| fatal "exit assertion touched the replacement process"
@@ -98,7 +104,7 @@ done
 
 for test_case in alive zombie reused; do
 	(
-		trap cleanup_piped_processes EXIT
+		trap cleanup_running_jobs EXIT
 		case_dir="${PROFILER_EXIT_DIR}/liveness-${test_case}"
 		mkdir "${case_dir}"
 		log_info "process identity: ${test_case}"

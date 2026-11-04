@@ -17,6 +17,9 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
+
+require_native_pid_profiling
 
 require_readable /sys/kernel/btf/vmlinux
 

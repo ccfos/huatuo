@@ -12,12 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ctypes
 import gc
+import re
 import sys
 class MemsnapshotPayload:
     __slots__ = ("payload",)
 objects = []
 pressure = None
+# Establish version discoverability independently of the remote scanner.
+with open("/proc/self/maps") as maps:
+    version_available = hasattr(ctypes.pythonapi, "Py_Version") or any(
+        re.search(r"/libpython3\.[0-9]+", line) for line in maps
+    )
 while True:
     command = sys.stdin.read(1)
     if command == "a":
@@ -25,6 +32,8 @@ while True:
         for obj in objects:
             obj.payload = list(range(64))
         gc.collect()
+        print("python_version=%d.%d.%d" % sys.version_info[:3], flush=True)
+        print("python_version_available=" + str(int(version_available)), flush=True)
         print("object_bytes=" + str(sys.getsizeof(objects[0])), flush=True)
         print("ready", flush=True)
     elif command == "p":

@@ -317,6 +317,7 @@ func TestIOTracingFilemapDeviceFilter(t *testing.T) {
 		}
 	}
 	dir := t.TempDir()
+	requireIOTracingTempDevice(t, dir)
 	var fs unix.Statfs_t
 	require.NoError(t, unix.Statfs(dir, &fs))
 	require.True(t, fs.Type == unix.EXT4_SUPER_MAGIC || fs.Type == unix.XFS_SUPER_MAGIC,

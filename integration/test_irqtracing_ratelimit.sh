@@ -32,7 +32,6 @@ readonly DURATION=3
 readonly MAX_EVENTS_PER_SECOND_PER_CPU=2
 readonly FLOOD_READY="${OUT_DIR}/flood.ready"
 
-[[ $EUID -eq 0 ]] || fatal "requires root (BPF requires CAP_BPF/CAP_SYS_ADMIN)"
 require_commands jq taskset
 tracepoint_available irq softirq_raise || skip "irq/softirq_raise is unavailable"
 tracepoint_available irq softirq_entry || skip "irq/softirq_entry is unavailable"

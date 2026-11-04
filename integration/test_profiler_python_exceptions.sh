@@ -17,6 +17,7 @@
 # Observe real py-spy attachment over a FIFO before killing targets or tools.
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
 
 require_commands jq mkfifo setsid python3 timeout "${PROFILER_TOOL_DIR}/py-spy"
 
@@ -74,7 +75,7 @@ for test_case in some-killed all-killed interrupt-after-targets-exit backend-kil
 		collector_pids=() collector_start_times=()
 		cleanup() {
 			local index pid
-			cleanup_piped_processes
+			cleanup_running_jobs
 			# py-spy has its own process group. Clean it up even when the CLI dies
 			# before its parent-death handling works, without touching reused PIDs.
 			for index in "${!collector_pids[@]}"; do
@@ -130,7 +131,7 @@ for test_case in some-killed all-killed interrupt-after-targets-exit backend-kil
 			IFS=,
 			echo "${target_pids[*]}"
 		)
-		start_exception_profiler "${case_dir}" python 30 30 \
+		start_cpu_profiler "${case_dir}" python 30 30 \
 			--tool-path "${PYTHON_EXCEPTIONS_DIR}/tools" --pid "${pid_list}"
 		assert_collector_messages 'Sampling process' "${target_count}"
 		assert_eq "${#collector_pids[@]}" "${target_count}" "py-spy collector count" \
@@ -192,9 +193,10 @@ for test_case in some-killed all-killed interrupt-after-targets-exit backend-kil
 			assert_process_alive "${target_pids[0]}" "${target_start_times[0]}" "Python target after profiler stop"
 			;;
 		esac
-		assert_collectors_exited
+		assert_collectors_exited "${collector_fd}" "${case_dir}/collectors.out" collector_pids collector_start_times
+		collector_fd=""
 		if [[ ${test_case} == kill ]]; then
-			start_exception_profiler "${case_dir}/recovery" python 1 1 \
+			start_cpu_profiler "${case_dir}/recovery" python 1 1 \
 				--tool-path "${PROFILER_TOOL_DIR}" --pid "${target_pids[0]}"
 			assert_profiler_exit 0
 			assert_profiler_stack "${target_pids[0]}" controlled_hot_method

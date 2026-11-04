@@ -26,7 +26,7 @@ cleanup() {
 		log_error "required split-v1 memory regression was skipped; expected a passing test"
 		status=1
 	fi
-	cleanup_piped_processes
+	cleanup_running_jobs
 	if [[ -n ${container_id} ]]; then
 		timeout --kill-after=2 15 docker rm -f "${container_id}" > /dev/null 2>&1 || {
 			log_error "cannot remove owned memory workload container: ${container_id}"
@@ -39,7 +39,7 @@ trap cleanup EXIT
 
 assert_container_cgroup_hierarchy() {
 	local target_pid=$1 mode cpu_hierarchy="" memory_hierarchy=""
-	if [[ -r /sys/fs/cgroup/cgroup.controllers ]]; then
+	if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 		grep -qw memory /sys/fs/cgroup/cgroup.controllers || skip "cgroup v2 memory controller is unavailable"
 		mode="unified cgroup v2"
 	else

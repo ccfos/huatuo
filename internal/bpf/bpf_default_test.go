@@ -693,7 +693,7 @@ func TestDefaultBPF_CloseOrder(t *testing.T) {
 	require.True(t, hasLinks, "expected at least one link after attach")
 
 	closeErr := b.Close()
-	require.NoError(t, closeErr, "Close after attach should not return EBUSY; wrong close order would cause kernel to refuse map/program close while links are active")
+	require.NoError(t, closeErr, "Close after attach should succeed")
 }
 
 func TestDefaultBPF_DetachOrder(t *testing.T) {

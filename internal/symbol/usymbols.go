@@ -443,7 +443,7 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 		return "", err
 	}
 	if !inContainer {
-		return matchXfsMount(hostPath, mounts)
+		return matchXfsMount(hostPath, mounts), nil
 	}
 
 	if process, ok := r.processes[pid]; ok {
@@ -453,5 +453,5 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	return matchXfsMount(lowerDir, mounts)
+	return matchXfsMount(lowerDir, mounts), nil
 }
