@@ -183,6 +183,21 @@ func TestFormatterDumpOutputCopiesFramesAndPreservesSignedWeights(t *testing.T) 
 	}
 }
 
+func TestFormatterDumpOutputKeepsMultilineFramesOnOneLine(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "profile.txt")
+	formatter := createFormatter(t, output.FormatDump, destination)
+	if err := formatter.Add(t.Context(), sampleWindow(1, "root", "leaf\nSample 2 [value=999]")); err != nil {
+		t.Fatal(err)
+	}
+	if err := formatter.Complete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	const want = "Sample 1 [value=1]\n    root\n    \"leaf\\nSample 2 [value=999]\"\n\n"
+	if got := string(readDestination(t, destination)); got != want {
+		t.Fatalf("dump output = %q, want %q", got, want)
+	}
+}
+
 func createFormatter(t *testing.T, format output.OutputFormat, destination string) output.Formatter {
 	t.Helper()
 	formatter, err := factory.NewFormatter(output.Config{

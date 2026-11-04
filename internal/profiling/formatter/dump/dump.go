@@ -19,6 +19,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -76,6 +78,9 @@ func (f *formatter) Complete(ctx context.Context) error {
 				return err
 			}
 			for _, frame := range item.frames {
+				if strings.ContainsAny(frame, "\r\n") {
+					frame = strconv.Quote(frame)
+				}
 				if _, err := fmt.Fprintf(writer, "    %s\n", frame); err != nil {
 					return err
 				}
