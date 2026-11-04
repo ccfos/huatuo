@@ -72,9 +72,7 @@ Common environment variables:
 | `PROFILER_TOOL_DIR` | Java/Python collection tool directory; default `_output/tools` |
 | `APISERVER_TEST_NODE` | Local Kubernetes node name for the apiserver matrix |
 | `APISERVER_TEST_NATIVE_IMAGE`, `APISERVER_TEST_GO_IMAGE`, `APISERVER_TEST_JAVA_IMAGE`, `APISERVER_TEST_PYTHON_IMAGE` | Apiserver matrix images |
-| `TEST_IOCOST_MODE` | IOCOST test scope; default `all` |
-| `TEST_NVME_DEVICE`, `TEST_SCSI_DEVICE` | Dedicated devices for IO health evidence |
-| `TEST_IO_CONFIRM_NON_SYSTEM` | Set to `1` when explicitly selecting an IO evidence device to confirm it is not a system device |
+| `TEST_IO_DISK` | Dedicated scratch disk for IO tests; contents may be overwritten |
 
 Pass overrides with `sudo env NAME=value ...` so sudo environment filtering does not discard them.
 
@@ -200,23 +198,31 @@ The resource-limit test checks CPU and memory configuration during startup and n
 
 ### IO
 
-Run on a dedicated Linux test node with BPF/BTF support. IO kernel tests require Go. IOCOST also needs the BPF compiler toolchain and writable `io.cost` or `blkio.cost` controls:
+IO cases cover public metrics, container attribution, automatic diagnostics,
+health events and device evidence. Run on a dedicated Linux test node with
+BPF/BTF support. Build as an ordinary user, then run the harness as root:
 
 ```bash
-sudo bash integration/run.sh test_iocost.sh
-sudo env TEST_IOCOST_MODE=pressure bash integration/run.sh test_iocost.sh
+make build test-build
+sudo bash integration/run.sh test_metrics_io_wait.sh
+sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_iolatency.sh
 ```
 
-`TEST_IOCOST_MODE` accepts `functional`, `lifecycle`, `faults`, `pressure`, and `compat`; the default is `all`. IO tests prefer temporary test disks. Without one, they perform only read-only checks on a suitable existing disk, or skip if none is available.
+`TEST_IO_DISK` defaults to `/dev/disk/by-id/virtio-huatuo-ci-io`. It must be a
+dedicated scratch disk whose contents may be overwritten. A missing, mounted
+or partitioned disk fails the case. MD, loop and NVMe-loop backing files also
+use this disk. Cases requiring SCSI driver controls create separate
+`scsi_debug` devices. Container cases use the local Kubernetes node and
+existing kubelet credentials.
 
-Real NVMe/SCSI health evidence requires an explicitly selected, dedicated non-system device:
+`make unit` runs offline layout, compatibility-selection and accounting checks.
+Host and container metric cases verify real IOLatency output; they do not
+independently verify complete tracepoint argument counts on each kernel or
+exercise every remap path.
 
-```bash
-sudo env TEST_IO_CONFIRM_NON_SYSTEM=1 TEST_NVME_DEVICE=nvme0 \
-  bash integration/run.sh test_io_kernel.sh
-```
-
-For SCSI, use `TEST_SCSI_DEVICE=sdb`. NVMe and SCSI require `nvme-cli` and `smartmontools`, respectively.
+Health evidence cases invoke real `smartctl` and `nvme`, requiring
+`smartmontools` and `nvme-cli`, respectively. Controlled tool responses cover
+command failures.
 
 ### SchedBlame
 

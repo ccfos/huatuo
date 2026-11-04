@@ -72,9 +72,7 @@ sudo env INTEGRATION_JOBS=2 make integration
 | `PROFILER_TOOL_DIR` | Java/Python 采集工具目录，默认 `_output/tools` |
 | `APISERVER_TEST_NODE` | apiserver 矩阵测试使用的本机 Kubernetes 节点名 |
 | `APISERVER_TEST_NATIVE_IMAGE`、`APISERVER_TEST_GO_IMAGE`、`APISERVER_TEST_JAVA_IMAGE`、`APISERVER_TEST_PYTHON_IMAGE` | apiserver 矩阵测试镜像 |
-| `TEST_IOCOST_MODE` | IOCOST 测试范围，默认 `all` |
-| `TEST_NVME_DEVICE`、`TEST_SCSI_DEVICE` | IO 健康取证使用的专用测试设备 |
-| `TEST_IO_CONFIRM_NON_SYSTEM` | 显式指定 IO 取证设备时设为 `1`，确认其不是系统设备 |
+| `TEST_IO_DISK` | IO 专用测试盘，内容可被覆盖 |
 
 通过 `sudo env NAME=value ...` 传入需要覆盖的环境变量，避免被 sudo 的环境过滤规则丢弃。
 
@@ -200,23 +198,19 @@ sudo bash integration/run.sh test_node_runtime_limits.sh
 
 ### IO
 
-在具备 BPF/BTF 的专用 Linux 测试节点运行。IO 内核测试需要 Go；IOCOST 还需要 BPF 编译工具链及可写的 `io.cost` 或 `blkio.cost` 控制项：
+IO 用例覆盖公开指标、容器归属、自动诊断及健康事件取证。在具备 BPF/BTF 支持的专用 Linux 测试节点运行，先以普通用户构建，再以 root 运行测试入口：
 
 ```bash
-sudo bash integration/run.sh test_iocost.sh
-sudo env TEST_IOCOST_MODE=pressure bash integration/run.sh test_iocost.sh
+make build test-build
+sudo bash integration/run.sh test_metrics_io_wait.sh
+sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_iolatency.sh
 ```
 
-`TEST_IOCOST_MODE` 支持 `functional`、`lifecycle`、`faults`、`pressure`、`compat`，默认 `all`。IO 测试优先使用临时测试盘；无临时盘时对合适的已有磁盘只做只读检查，没有合适磁盘则跳过。
+`TEST_IO_DISK` 默认 `/dev/disk/by-id/virtio-huatuo-ci-io`，必须是专用测试盘，内容可被覆盖；不存在、已挂载或有分区时直接失败。MD、loop 和 NVMe-loop 的后端文件也使用该盘。需要 SCSI 驱动控制的用例单独创建 `scsi_debug` 设备。容器用例使用本机 Kubernetes 节点和已有 kubelet 凭证。
 
-真实 NVMe/SCSI 健康取证需要显式指定非系统专用设备：
+`make unit` 执行离线布局、兼容选择和记账检查。宿主机及容器指标用例验证真实 IOLatency 输出，不逐一验证各内核的完整 tracepoint 参数数量，也不保证触发全部 remap 路径。
 
-```bash
-sudo env TEST_IO_CONFIRM_NON_SYSTEM=1 TEST_NVME_DEVICE=nvme0 \
-  bash integration/run.sh test_io_kernel.sh
-```
-
-SCSI 使用 `TEST_SCSI_DEVICE=sdb`。NVMe 和 SCSI 分别需要 `nvme-cli`、`smartmontools`。
+健康取证用例调用真实 `smartctl`、`nvme`，分别需要 `smartmontools`、`nvme-cli`；受控工具输出覆盖命令失败场景。
 
 ### SchedBlame
 
