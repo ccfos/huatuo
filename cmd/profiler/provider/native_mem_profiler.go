@@ -120,7 +120,7 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 
 	log.Info("starting native memory profiler mode: ", p.internalMode)
 
-	cssAddr, err := resolveContainerCgroupCss(ctx, cfg, subsystem.SubsystemMemory)
+	target, err := resolveContainerCgroupTarget(ctx, cfg, subsystem.SubsystemMemory)
 	if err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 	loadConfig, err := newNativeMemoryBPFLoadConfig(
 		p.internalMode,
 		cfg.PID(),
-		cssAddr,
+		target,
 		cfg.ThreadGroup,
 		p.probability,
 	)
@@ -192,11 +192,11 @@ type nativeMemoryBPFLoadConfig struct {
 func newNativeMemoryBPFLoadConfig(
 	internalMode profiling.Mode,
 	pid int,
-	cssAddr uint64,
+	target nativeCgroupTarget,
 	threadGroup bool,
 	probability uint,
 ) (*nativeMemoryBPFLoadConfig, error) {
-	constants := newNativeBPFConstants(pid, cssAddr, threadGroup)
+	constants := newNativeBPFConstants(pid, target, threadGroup)
 
 	switch internalMode {
 	case profiling.ModeVirtualAlloc:
