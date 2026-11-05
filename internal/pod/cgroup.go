@@ -16,23 +16,23 @@ package pod
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
 	promprocfs "github.com/prometheus/procfs"
 
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 // Directory returns a validated controller directory, never the host root.
 // Rechecking existence also stops file collection while discovery is unavailable.
 func (b *CgroupBinding) Directory(controller string) (string, error) {
-	directory, exists := b.directories[controller]
-	if !exists {
-		directory = b.directories[""]
-	}
+	directory := b.directoryFor(controller)
 	if directory == "" {
 		return "", fmt.Errorf("cgroup controller %q is not bound", controller)
 	}
@@ -44,6 +44,13 @@ func (b *CgroupBinding) Directory(controller string) (string, error) {
 		return "", fmt.Errorf("%s cgroup %q is not a directory", controller, directory)
 	}
 	return directory, nil
+}
+
+func (b *CgroupBinding) directoryFor(controller string) string {
+	if directory, exists := b.directories[controller]; exists {
+		return directory
+	}
+	return b.directories[""]
 }
 
 // Path returns membership only while the corresponding directory is usable.
@@ -170,11 +177,140 @@ func bindCgroups(locations CgroupBinding, mounts []*promprocfs.MountInfo) Cgroup
 		}
 		if previous := binding.CSS[metadata.SubSys]; previous != 0 && previous != metadata.CSS {
 			delete(binding.CSS, metadata.SubSys)
+			delete(binding.kernelGroups, metadata.SubSys)
 			conflicts[metadata.SubSys] = true
 		} else {
 			binding.CSS[metadata.SubSys] = metadata.CSS
+			if metadata.Cgroup != 0 {
+				if binding.kernelGroups == nil {
+					binding.kernelGroups = make(map[string]uint64)
+				}
+				binding.kernelGroups[metadata.SubSys] = metadata.Cgroup
+			}
 		}
 		return true
 	})
 	return binding
+}
+
+func (v *containerStore) indexCgroups(record *containerRecord, add bool) {
+	if record.pod == nil {
+		return
+	}
+	binding := &record.pod.Cgroups
+	for controller, css := range binding.CSS {
+		if css == 0 || binding.directoryFor(controller) == "" {
+			continue
+		}
+		// CSS and cgroup pointers use separate indexes even if their numeric
+		// values coincide. Only locally verified bindings enter these indexes.
+		for _, resource := range [...]struct {
+			address uint64
+			index   map[uint64]map[string]struct{}
+		}{{css, v.cssOwners}, {binding.kernelGroups[controller], v.cgroupOwners}} {
+			if resource.address == 0 {
+				continue
+			}
+			owners := resource.index[resource.address]
+			if add {
+				if owners == nil {
+					owners = make(map[string]struct{})
+					resource.index[resource.address] = owners
+				}
+				owners[record.ref.Key.ID] = struct{}{}
+			} else {
+				delete(owners, record.ref.Key.ID)
+				if len(owners) == 0 {
+					delete(resource.index, resource.address)
+				}
+			}
+		}
+	}
+}
+
+// cgroupEvent returns a targeted hint for one known owner. Unknown or shared
+// resources use a coalesced full refresh; kernel events never remove membership.
+func (v *containerStore) cgroupEvent(event *containerCssPerfEvent) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var hint string
+	multiple, invalidated := false, false
+	visit := func(owners map[string]struct{}) {
+		for id := range owners {
+			if hint != "" && hint != id {
+				multiple = true
+			}
+			hint = id
+			if event.Operation == abi.CgroupCSSOperationRemove {
+				record := v.records[id]
+				if record == nil {
+					continue
+				}
+				updated := *record
+				updated.pod = record.pod.copyMetadata()
+				for controller, css := range record.pod.Cgroups.CSS {
+					if (event.Cgroup != 0 && record.pod.Cgroups.kernelGroups[controller] == event.Cgroup) ||
+						(css != 0 && slices.Contains(event.CSS[:], css)) {
+						updated.pod.Cgroups.invalidateDirectory(record.pod.Cgroups.directoryFor(controller))
+					}
+				}
+				if record.container != nil {
+					legacy := *record.container
+					legacy.CgroupCss = maps.Clone(legacy.CgroupCss)
+					for controller, css := range record.pod.Cgroups.CSS {
+						if legacy.CgroupCss[controller] == css && updated.pod.Cgroups.CSS[controller] != css {
+							delete(legacy.CgroupCss, controller)
+						}
+					}
+					updated.container = &legacy
+				}
+				v.indexCgroups(record, false)
+				v.records[id] = &updated
+				v.indexCgroups(&updated, true)
+				invalidated = true
+			}
+		}
+	}
+	if owners := v.cgroupOwners[event.Cgroup]; len(owners) != 0 {
+		visit(owners)
+	} else {
+		for _, css := range event.CSS {
+			if css != 0 {
+				visit(v.cssOwners[css])
+			}
+		}
+	}
+	if invalidated {
+		v.revision++
+		for subscriber := range v.subscribers {
+			subscriber.needsFull = true
+			subscriber.signal()
+		}
+	}
+	if multiple {
+		return ""
+	}
+	return hint
+}
+
+func (b *CgroupBinding) invalidateDirectory(directory string) {
+	if directory == "" {
+		return
+	}
+	for controller := range b.CSS {
+		if b.directoryFor(controller) == directory {
+			delete(b.CSS, controller)
+			delete(b.kernelGroups, controller)
+		}
+	}
+	for controller, bound := range b.directories {
+		if bound == directory {
+			// Keep an explicit unavailable entry to mask unified fallback.
+			b.directories[controller] = ""
+			delete(b.Controllers, controller)
+			if controller == "" {
+				b.Unified = ""
+			}
+		}
+	}
 }

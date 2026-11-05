@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 )
 
 func TestContainerViewConcurrentCommitDrainAndClose(t *testing.T) {
@@ -98,5 +100,40 @@ func TestPodViewsConcurrentRefresh(t *testing.T) {
 			Labels: map[string]any{"revision": name},
 		}}
 		store.commit(containerSnapshot{records: map[string]*containerRecord{record.pod.ID: record}, isComplete: true}, nil)
+	}
+}
+
+// TestPodCgroupIndexConcurrentCommit 验证资源索引更新与内核事件查询并发时，
+// 只能返回当前 workload 或未知，不会读到残留归属；删除后索引清空。
+func TestPodCgroupIndexConcurrentCommit(t *testing.T) {
+	store := newTestContainerStore()
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate}
+		event.CSS[0] = 7500
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if id := store.cgroupEvent(event); id != "" && id != "checkout-sandbox" {
+				t.Errorf("unexpected concurrent owner %q", id)
+				return
+			}
+		}
+	}()
+	for index := range 100 {
+		record := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox, Cgroups: CgroupBinding{
+			CSS: map[string]uint64{"cpu": uint64(7500 + index%2)}, directories: map[string]string{"cpu": "/bound-checkout"},
+		}}}
+		store.commit(containerSnapshot{records: map[string]*containerRecord{record.pod.ID: record}, isComplete: true}, nil)
+	}
+	store.commit(containerSnapshot{isComplete: true}, nil)
+	close(stop)
+	<-done
+	if len(store.cgroupOwners)+len(store.cssOwners) != 0 {
+		t.Error("concurrent deletion retained cgroup ownership")
 	}
 }

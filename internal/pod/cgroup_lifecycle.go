@@ -71,15 +71,15 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, 
 					return
 				}
 
-				// Parse once: lifecycle notifications and the CSS cache share the ID.
+				// Container names remain compatibility metadata for the CSS cache.
 				containerID := extractContainerID(bytesutil.ToStr(data.KnodeName[:]))
 
 				if cgroupCSSCacheEvent != nil {
 					cgroupCSSCacheEvent(&data, containerID)
 				}
-				if lifecycle && containerID != "" &&
-					(data.Operation == abi.CgroupCSSOperationUpdate || data.Operation == abi.CgroupCSSOperationRemove) {
-					requestContainerRefresh(containerID, data.Operation == abi.CgroupCSSOperationRemove)
+				if lifecycle && (data.Operation == abi.CgroupCSSOperationUpdate || data.Operation == abi.CgroupCSSOperationRemove) {
+					id := containerView.cgroupEvent(&data)
+					requestContainerRefresh(id, id != "" && data.Operation == abi.CgroupCSSOperationRemove)
 				}
 			}
 		}

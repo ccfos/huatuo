@@ -169,6 +169,8 @@ func (c *containerController) run(ctx context.Context) {
 			s.closeLocked()
 		}
 		clear(c.store.records)
+		clear(c.store.cgroupOwners)
+		clear(c.store.cssOwners)
 	}()
 	timer := time.NewTimer(0)
 	defer timer.Stop()

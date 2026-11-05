@@ -58,7 +58,8 @@ type CgroupBinding struct {
 	Controllers map[string]string `json:"controllers,omitempty"`
 	CSS         map[string]uint64 `json:"css,omitempty"`
 
-	directories map[string]string
+	directories  map[string]string
+	kernelGroups map[string]uint64
 }
 
 type HostProcess struct {
@@ -233,7 +234,8 @@ func bindHostNetwork(location *HostNetwork, root string) *HostNetwork {
 // sameResources ignores labels and addresses that do not grant collection
 // capabilities. It compares published metadata without kernel I/O under the lock.
 func (p *Pod) sameResources(other *Pod) bool {
-	if !maps.Equal(p.Cgroups.directories, other.Cgroups.directories) || !maps.Equal(p.Cgroups.CSS, other.Cgroups.CSS) {
+	if !maps.Equal(p.Cgroups.directories, other.Cgroups.directories) || !maps.Equal(p.Cgroups.CSS, other.Cgroups.CSS) ||
+		!maps.Equal(p.Cgroups.kernelGroups, other.Cgroups.kernelGroups) {
 		return false
 	}
 	if (p.Process == nil) != (other.Process == nil) {
@@ -299,6 +301,7 @@ func (p *Pod) copyMetadata() *Pod {
 	view.Cgroups.Controllers = maps.Clone(p.Cgroups.Controllers)
 	view.Cgroups.CSS = maps.Clone(p.Cgroups.CSS)
 	view.Cgroups.directories = maps.Clone(p.Cgroups.directories)
+	view.Cgroups.kernelGroups = maps.Clone(p.Cgroups.kernelGroups)
 	if p.Process != nil {
 		process := *p.Process
 		view.Process = &process

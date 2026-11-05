@@ -17,6 +17,7 @@ package pod
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -280,16 +281,27 @@ func (r *lifecycleReaderTest) Close() error {
 	return nil
 }
 
+// TestCgroupReaderRecoversAndStops 验证 reader 故障后的全量恢复、基于已绑定
+// CSS 的定向提示，以及取消后的正常退出；归属不从目录名称推断。
 func TestCgroupReaderRecoversAndStops(t *testing.T) {
-	controller := newContainerController(newTestContainerStore())
+	store := newTestContainerStore()
+	oldView := containerView
+	containerView = store
+	t.Cleanup(func() { containerView = oldView })
+	id := strings.Repeat("a", 64)
+	record := containerRecordForTest(id)
+	record.pod = podFromContainer(record.container)
+	record.pod.Cgroups = CgroupBinding{CSS: map[string]uint64{"cpu": 9150}, directories: map[string]string{"cpu": "/bound-checkout"}}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{id: record}, isComplete: true}, nil)
+	controller := newContainerController(store)
 	containerManagerMu.Lock()
 	previous := containerManager
 	containerManager = controller
 	containerManagerMu.Unlock()
 	t.Cleanup(func() { containerManagerMu.Lock(); containerManager = previous; containerManagerMu.Unlock() })
-	id := strings.Repeat("a", 64)
 	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate}
-	copy(event.KnodeName[:], id)
+	event.CSS[0] = 9150
+	copy(event.KnodeName[:], "8")
 	first := &lifecycleReaderTest{closed: make(chan struct{}), fail: true}
 	next := &lifecycleReaderTest{closed: make(chan struct{}), event: event}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -356,5 +368,50 @@ func TestCPURefreshDoesNotRetriggerDiscovery(t *testing.T) {
 	defer controller.mu.Unlock()
 	if controller.full || len(controller.hints) != 0 {
 		t.Errorf("read-time refresh produced lifecycle hints: %+v", controller.hints)
+	}
+}
+
+// TestUnknownCgroupEventRequestsFullRefresh 验证无法归属的创建和删除事件只
+// 请求合并全量刷新，数字目录或看似容器 ID 的名称都不会生成成员变更。
+func TestUnknownCgroupEventRequestsFullRefresh(t *testing.T) {
+	for _, removed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("removed=%t", removed), func(t *testing.T) {
+			store := newTestContainerStore()
+			previousView := containerView
+			containerView = store
+			controller := newContainerController(store)
+			controller.full = false
+			containerManagerMu.Lock()
+			previous := containerManager
+			containerManager = controller
+			containerManagerMu.Unlock()
+			t.Cleanup(func() {
+				containerView = previousView
+				containerManagerMu.Lock()
+				containerManager = previous
+				containerManagerMu.Unlock()
+			})
+			event := &containerCssPerfEvent{Inode: 4200, Operation: abi.CgroupCSSOperationUpdate}
+			if removed {
+				event.Operation = abi.CgroupCSSOperationRemove
+			}
+			copy(event.KnodeName[:], "8")
+			processed := make(chan struct{})
+			reader := &lifecycleReaderTest{closed: make(chan struct{}), event: event, processed: processed}
+			ctx, cancel := context.WithCancel(t.Context())
+			done := cgroupCssEventSyncHandler(ctx, reader, true)
+			t.Cleanup(func() { cancel(); _ = reader.Close(); <-done })
+			select {
+			case <-processed:
+			case <-time.After(time.Second):
+				t.Error("unknown cgroup event was not processed")
+				return
+			}
+			controller.mu.Lock()
+			defer controller.mu.Unlock()
+			if !controller.full || len(controller.hints) != 0 || len(store.records) != 0 {
+				t.Error("unknown event created a targeted hint or changed membership")
+			}
+		})
 	}
 }

@@ -52,20 +52,24 @@ type containerSnapshot struct {
 }
 
 type containerStore struct {
-	mu          sync.RWMutex
-	records     map[string]*containerRecord
-	subscribers map[*subscription]struct{}
-	revision    uint64
-	err         error
-	isActive    bool
-	hasSnapshot bool
+	mu           sync.RWMutex
+	records      map[string]*containerRecord
+	subscribers  map[*subscription]struct{}
+	cgroupOwners map[uint64]map[string]struct{}
+	cssOwners    map[uint64]map[string]struct{}
+	revision     uint64
+	err          error
+	isActive     bool
+	hasSnapshot  bool
 }
 
 func newContainerStore() *containerStore {
 	return &containerStore{
-		records:     make(map[string]*containerRecord),
-		subscribers: make(map[*subscription]struct{}),
-		err:         ErrContainerManagerDisabled,
+		records:      make(map[string]*containerRecord),
+		subscribers:  make(map[*subscription]struct{}),
+		cgroupOwners: make(map[uint64]map[string]struct{}),
+		cssOwners:    make(map[uint64]map[string]struct{}),
+		err:          ErrContainerManagerDisabled,
 	}
 }
 
@@ -111,6 +115,7 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 	if snapshot.isComplete {
 		for id, previous := range v.records {
 			if _, exists := snapshot.records[id]; !exists {
+				v.indexCgroups(previous, false)
 				delete(v.records, id)
 				v.publish(PodDeleted, previous)
 			}
@@ -147,15 +152,23 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 				!previous.pod.sameResources(record.pod) || (previous.directory == nil && record.directory != nil) ||
 				(previous.startTime == 0 && record.startTime != 0)
 			record.setLifeResources(previous.pod.lifeResources)
+			if !maps.Equal(previous.pod.Cgroups.CSS, record.pod.Cgroups.CSS) ||
+				!maps.Equal(previous.pod.Cgroups.kernelGroups, record.pod.Cgroups.kernelGroups) ||
+				!maps.Equal(previous.pod.Cgroups.directories, record.pod.Cgroups.directories) {
+				v.indexCgroups(previous, false)
+				v.indexCgroups(record, true)
+			}
 			v.records[id] = record
 			continue
 		}
 		if previous != nil {
+			v.indexCgroups(previous, false)
 			v.publish(PodDeleted, previous)
 		}
 		record.ref.Key = ContainerKey{ID: id, Generation: v.revision + 1}
 		record.setLifeResources(newLifeResources())
 		v.records[id] = record
+		v.indexCgroups(record, true)
 		v.publish(PodCreated, record)
 	}
 	v.hasSnapshot = v.hasSnapshot || snapshot.isComplete || len(v.records) > 0

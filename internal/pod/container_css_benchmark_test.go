@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 )
 
 func BenchmarkBuildCPURepresentatives(b *testing.B) {
@@ -44,6 +46,36 @@ func BenchmarkBuildCPURepresentatives(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				_ = BuildCssContainers(members, "cpu")
+			}
+		})
+	}
+}
+
+// BenchmarkWorkloadCgroupEvent measures indexed routing without discovery I/O.
+func BenchmarkWorkloadCgroupEvent(b *testing.B) {
+	for _, kind := range []string{"cgroup", "css", "unknown"} {
+		b.Run(kind, func(b *testing.B) {
+			store := newTestContainerStore()
+			records := make(map[string]*containerRecord, 4096)
+			for index := range 4096 {
+				id := fmt.Sprintf("checkout-sandbox-%d", index)
+				records[id] = &containerRecord{pod: &Pod{ID: id, Type: TypeCubeSandbox, Cgroups: CgroupBinding{
+					CSS:          map[string]uint64{"cpu": uint64(7500 + index)},
+					kernelGroups: map[string]uint64{"cpu": uint64(17500 + index)},
+					directories:  map[string]string{"cpu": "/bound-checkout"},
+				}}}
+			}
+			store.commit(containerSnapshot{records: records, isComplete: true}, nil)
+			event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate}
+			switch kind {
+			case "cgroup":
+				event.Cgroup = 17500
+			case "css":
+				event.CSS[0] = 7500
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = store.cgroupEvent(event)
 			}
 		})
 	}

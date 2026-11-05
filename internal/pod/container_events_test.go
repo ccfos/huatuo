@@ -26,6 +26,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 )
 
 func newTestContainerStore() *containerStore {
@@ -713,5 +715,139 @@ func TestPodSubscriptionQueuedIdentity(t *testing.T) {
 	}
 	if update.Events[0].Key.Generation != 1 || update.Events[1].Key.Generation != 2 {
 		t.Errorf("queue retained a mutable record identity: %+v", update.Events)
+	}
+}
+
+// TestPodCgroupLifecycle 验证数字目录按已验证内核关联归属；v1 删除仅使对应
+// 控制器失效，v2 删除使统一绑定失效。来源失联时仍通知资源失效，不删除对象，
+// 恢复绑定保留代次和采集状态，完整空快照清除反向索引。
+func TestPodCgroupLifecycle(t *testing.T) {
+	for _, unified := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unified=%t", unified), func(t *testing.T) {
+			store := newTestContainerStore()
+			cpuDirectory, memoryDirectory := t.TempDir(), t.TempDir()
+			binding := CgroupBinding{
+				Controllers:  map[string]string{"cpu": "/cube_sandbox/sandbox/8", "memory": "/cube_sandbox/sandbox/8"},
+				directories:  map[string]string{"cpu": cpuDirectory, "memory": memoryDirectory},
+				CSS:          map[string]uint64{"cpu": 7501, "memory": 7502},
+				kernelGroups: map[string]uint64{"cpu": 9501, "memory": 9502},
+			}
+			if unified {
+				binding.Controllers = nil
+				binding.Unified = "/cube_sandbox/sandbox/8"
+				binding.directories = map[string]string{"": cpuDirectory}
+				binding.kernelGroups["memory"] = 9501
+			}
+			record := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox, Cgroups: binding}}
+			store.commit(containerSnapshot{records: map[string]*containerRecord{record.pod.ID: record}, isComplete: true}, nil)
+			baseline := &struct{ value uint64 }{value: 6400}
+			record.pod.lifeResources["lifecycle-baseline"] = baseline
+			subscriber, err := store.subscribePods(t.Context())
+			if err != nil {
+				t.Errorf("subscribe workloads: %v", err)
+				return
+			}
+			t.Cleanup(subscriber.Close)
+			_, _ = subscriber.DrainEvents()
+			store.commit(containerSnapshot{}, errors.New("cubelet offline"))
+			_, _ = subscriber.DrainEvents()
+			event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate, Cgroup: 9501}
+			copy(event.KnodeName[:], "8")
+			if id := store.cgroupEvent(event); id != record.pod.ID {
+				t.Errorf("numeric cgroup owner=%q", id)
+			}
+			event.Operation = abi.CgroupCSSOperationRemove
+			if id := store.cgroupEvent(event); id != record.pod.ID {
+				t.Errorf("removed cgroup owner=%q", id)
+			}
+			current := store.records[record.pod.ID]
+			if current == nil || current.ref.Key != record.ref.Key || current.pod.LifeResources("lifecycle-baseline") != baseline {
+				t.Error("cgroup deletion removed or replaced the workload")
+				return
+			}
+			if _, err := current.pod.Cgroups.Directory("cpu"); err == nil || current.pod.Cgroups.CSS["cpu"] != 0 {
+				t.Error("removed CPU binding remains usable")
+			}
+			_, memoryErr := current.pod.Cgroups.Directory("memory")
+			if (memoryErr != nil) != unified {
+				t.Errorf("memory availability after CPU deletion=%v", memoryErr)
+			}
+			if record.pod.Cgroups.CSS["cpu"] != 7501 {
+				t.Error("invalidation mutated the previously published view")
+			}
+			update, err := subscriber.DrainEvents()
+			if err != nil || update.DiscoveryError == nil || update.Mode != PodUpdateFull || len(update.Events) != 1 {
+				t.Errorf("resource invalidation during outage=%+v, %v", update, err)
+			}
+			restored := &containerRecord{pod: record.pod.copyMetadata()}
+			store.commit(containerSnapshot{records: map[string]*containerRecord{record.pod.ID: restored}, isComplete: true}, nil)
+			if restored.ref.Key != record.ref.Key || restored.pod.LifeResources("lifecycle-baseline") != baseline {
+				t.Error("resource recovery reset workload state")
+			}
+			event.Operation = abi.CgroupCSSOperationUpdate
+			if id := store.cgroupEvent(event); id != record.pod.ID {
+				t.Errorf("recovered resource index owner=%q", id)
+			}
+			store.commit(containerSnapshot{isComplete: true}, nil)
+			if len(store.cgroupOwners)+len(store.cssOwners) != 0 {
+				t.Error("confirmed deletion retained resource owners")
+			}
+		})
+	}
+}
+
+// TestSharedCgroupInvalidation 验证多个容器共享 VM cgroup 时全部绑定同时失效，
+// 不选择任意容器归属；旧容器 CSS 视图更新，成员和各自实例代次仍保留。
+func TestSharedCgroupInvalidation(t *testing.T) {
+	store := newTestContainerStore()
+	records := make(map[string]*containerRecord)
+	for _, id := range []string{"checkout-api", "checkout-worker"} {
+		record := containerRecordForTest(id)
+		record.container.RuntimeType, record.container.SandboxID = "io.containerd.kata-qemu.v2", "checkout-vm"
+		record.container.CgroupCss = map[string]uint64{"cpu": 8500}
+		record.pod = podFromContainer(record.container)
+		record.pod.Cgroups = CgroupBinding{CSS: map[string]uint64{"cpu": 8500}, directories: map[string]string{"cpu": "/bound-checkout"}}
+		records[id] = record
+	}
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
+	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRemove}
+	event.CSS[0] = 8500
+	if id := store.cgroupEvent(event); id != "" {
+		t.Errorf("shared resource arbitrarily assigned to %q", id)
+	}
+	for id, previous := range records {
+		current := store.records[id]
+		if current == nil || current.ref.Key != previous.ref.Key || len(current.pod.Cgroups.CSS) != 0 || len(current.container.CgroupCss) != 0 {
+			t.Errorf("shared resource invalidation failed for %s: %+v", id, current)
+		}
+	}
+}
+
+// TestUnboundCgroupIsNotIndexed 验证未经目录绑定的 CSS 以及未知事件不会进入
+// 归属索引或改变对象成员，目录名称不能冒充 workload ID。
+func TestUnboundCgroupIsNotIndexed(t *testing.T) {
+	store := newTestContainerStore()
+	record := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox, Cgroups: CgroupBinding{CSS: map[string]uint64{"cpu": 8500}}}}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{record.pod.ID: record}, isComplete: true}, nil)
+	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRemove}
+	event.CSS[0] = 8500
+	copy(event.KnodeName[:], record.pod.ID)
+	if id := store.cgroupEvent(event); id != "" || len(store.cgroupOwners)+len(store.cssOwners) != 0 || len(store.records) != 1 {
+		t.Errorf("unbound resource changed ownership: id=%q", id)
+	}
+	ready := *record
+	ready.pod = record.pod.copyMetadata()
+	ready.pod.Cgroups.directories = map[string]string{"cpu": "/bound-checkout"}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{ready.pod.ID: &ready}, isComplete: true}, nil)
+	event.Operation = abi.CgroupCSSOperationUpdate
+	if id := store.cgroupEvent(event); id != record.pod.ID {
+		t.Errorf("first directory binding did not index existing CSS: id=%q", id)
+	}
+	unbound := ready
+	unbound.pod = ready.pod.copyMetadata()
+	unbound.pod.Cgroups.directories = nil
+	store.commit(containerSnapshot{records: map[string]*containerRecord{unbound.pod.ID: &unbound}, isComplete: true}, nil)
+	if id := store.cgroupEvent(event); id != "" || len(store.cgroupOwners)+len(store.cssOwners) != 0 {
+		t.Errorf("lost directory binding retained CSS ownership: id=%q", id)
 	}
 }

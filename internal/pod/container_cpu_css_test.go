@@ -129,7 +129,7 @@ func TestWorkloadCgroupCSSBinding(t *testing.T) {
 			t.Errorf("stat %s directory: %v", controller, err)
 			return
 		}
-		entry := &containerCssMetaData{CSS: uint64(8100 + index), Inode: stat.Ino, SubSys: controller}
+		entry := &containerCssMetaData{CSS: uint64(8100 + index), Cgroup: uint64(9100 + index), Inode: stat.Ino, SubSys: controller}
 		metadata[controller] = entry
 		cgroupCssMetaDataMap.Store(entry.CSS, entry)
 		t.Cleanup(func() { cgroupCssMetaDataMap.Delete(entry.CSS) })
@@ -138,6 +138,9 @@ func TestWorkloadCgroupCSSBinding(t *testing.T) {
 	for controller, entry := range metadata {
 		if got := binding.CSS[controller]; got != entry.CSS {
 			t.Errorf("%s CSS=%d, want %d", controller, got, entry.CSS)
+		}
+		if binding.kernelGroups[controller] != entry.Cgroup {
+			t.Errorf("%s kernel group=%d, want %d", controller, binding.kernelGroups[controller], entry.Cgroup)
 		}
 	}
 	conflict := *metadata["cpu"]
