@@ -35,7 +35,7 @@ type BPF interface {
 	// Info gets bpf information.
 	Info() (*Info, error)
 
-	// Close the bpf bpf.
+	// Close the bpf.
 	Close() error
 
 	// AttachWithOptions attaches programs with options.
