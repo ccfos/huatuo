@@ -69,6 +69,12 @@ func guestFixture(t testing.TB) *guestScanner {
 		},
 	}
 	guestFile(t, s.options.ProcRoot, "self/cgroup", "0::/"+guestSidecarID+"\n")
+	guestFile(t, s.options.ProcRoot, "self/mountinfo", fmt.Sprintf(
+		"40 1 0:40 / %s rw - cgroup2 none rw\n"+
+			"41 1 0:41 / %s/cpu,cpuacct rw - cgroup none rw,cpu,cpuacct\n"+
+			"42 1 0:42 / %s/memory rw - cgroup none rw,memory\n"+
+			"43 1 0:43 / %s/blkio rw - cgroup none rw,blkio\n",
+		s.options.CgroupRoot, s.options.CgroupRoot, s.options.CgroupRoot, s.options.CgroupRoot))
 	return s
 }
 
@@ -448,5 +454,71 @@ func TestGuestScannerPrivateCgroupRoot(t *testing.T) {
 	}
 	if len(snapshot.records) != 1 || snapshot.records[guestCheckoutID] == nil {
 		t.Errorf("private namespace snapshot=%+v", snapshot)
+	}
+}
+
+// TestGuestScannerPublicResources 验证 Guest 的 v1 分控制器路径和 v2 统一路径
+// 都经公共绑定发布，保留独立 IO 路径、代表进程和 legacy 视图；没有 netns
+// 定位时不补出网络目标，旧的私有 cgroup 命名空间路径仍可解析。
+func TestGuestScannerPublicResources(t *testing.T) {
+	cases := []struct {
+		name        string
+		membership  string
+		directories []string
+		want        map[string]string
+	}{
+		{
+			name:        "legacy split controllers",
+			membership:  "2:cpu,cpuacct:/cpu-group/" + guestCheckoutID + "\n3:memory:/memory-group/" + guestCheckoutID + "\n4:blkio:/io-group/" + guestCheckoutID + "\n",
+			directories: []string{"cpu,cpuacct/cpu-group/" + guestCheckoutID, "memory/memory-group/" + guestCheckoutID, "blkio/io-group/" + guestCheckoutID},
+			want:        map[string]string{"cpu": "/cpu-group/" + guestCheckoutID, "cpuacct": "/cpu-group/" + guestCheckoutID, "memory": "/memory-group/" + guestCheckoutID, "blkio": "/io-group/" + guestCheckoutID},
+		},
+		{
+			name:        "legacy private namespaces",
+			membership:  "2:cpu,cpuacct:/../" + guestCheckoutID + "\n3:memory:/../" + guestCheckoutID + "\n4:blkio:/../" + guestCheckoutID + "\n",
+			directories: []string{"cpu,cpuacct/workloads/" + guestCheckoutID, "memory/workloads/" + guestCheckoutID, "blkio/workloads/" + guestCheckoutID},
+			want:        map[string]string{"cpu": "/workloads/" + guestCheckoutID, "cpuacct": "/workloads/" + guestCheckoutID, "memory": "/workloads/" + guestCheckoutID, "blkio": "/workloads/" + guestCheckoutID},
+		},
+		{
+			name:        "unified private namespace",
+			membership:  "0::/../" + guestCheckoutID + "\n",
+			directories: []string{"workloads/" + guestCheckoutID},
+			want:        map[string]string{"cpu": "/workloads/" + guestCheckoutID, "memory": "/workloads/" + guestCheckoutID},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scanner := guestFixture(t)
+			for _, directory := range tc.directories {
+				guestDirectory(t, scanner.options.CgroupRoot, directory)
+			}
+			guestProc(t, scanner, 150, 1, 100, tc.membership)
+			snapshot, err := scanner.scan(t.Context())
+			if err != nil {
+				t.Errorf("scan Guest: %v", err)
+				return
+			}
+			store := newTestContainerStore()
+			store.commit(snapshot, nil)
+			record := store.records[guestCheckoutID]
+			if record == nil || record.pod == nil {
+				t.Error("Guest workload was not published")
+				return
+			}
+			for controller, want := range tc.want {
+				if got, available := record.pod.Cgroups.Path(controller); !available || got != want {
+					t.Errorf("%s path=%q available=%t, want %q", controller, got, available, want)
+				}
+			}
+			if record.container.CgroupPath != tc.want["cpu"] || record.container.MemoryCgroupPath() != tc.want["memory"] {
+				t.Error("legacy Guest paths changed")
+			}
+			if pid, err := record.pod.ProcessPID(); err != nil || pid != 150 {
+				t.Errorf("Guest representative PID=%d, err=%v", pid, err)
+			}
+			if pid, err := record.pod.NetworkPID(); err == nil || pid != 0 {
+				t.Errorf("Guest fabricated network PID=%d, err=%v", pid, err)
+			}
+		})
 	}
 }

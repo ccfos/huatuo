@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -55,7 +56,7 @@ type guestProcess struct {
 	containerID string
 	cpuPath     string
 	memoryPath  string
-	legacy      bool
+	cgroups     *CgroupBinding
 }
 
 // InitGuestManager uses the same cached view and subscriptions as the Host
@@ -178,7 +179,7 @@ func (s *guestScanner) readProcess(pid int) (guestProcess, error) {
 	if err != nil {
 		return guestProcess{}, err
 	}
-	id, cpu, memory, legacy := parseGuestCgroups(string(data))
+	id, cpu, memory, locations := parseGuestCgroups(string(data))
 	if id == "" {
 		return guestProcess{}, nil
 	}
@@ -201,11 +202,11 @@ func (s *guestScanner) readProcess(pid int) (guestProcess, error) {
 		containerID: id,
 		cpuPath:     cpu,
 		memoryPath:  memory,
-		legacy:      legacy,
+		cgroups:     &locations,
 	}, nil
 }
 
-func parseGuestCgroups(content string) (id, cpu, memory string, legacy bool) {
+func parseGuestCgroups(content string) (id, cpu, memory string, locations CgroupBinding) {
 	var unified string
 	for _, line := range strings.Split(content, "\n") {
 		fields := strings.SplitN(line, ":", 3)
@@ -214,8 +215,15 @@ func parseGuestCgroups(content string) (id, cpu, memory string, legacy bool) {
 		}
 		if fields[1] == "" {
 			unified = fields[2]
+			locations.Unified = unified
 		}
 		for _, controller := range strings.Split(fields[1], ",") {
+			if controller != "" {
+				if locations.Controllers == nil {
+					locations.Controllers = make(map[string]string)
+				}
+				locations.Controllers[controller] = fields[2]
+			}
 			switch controller {
 			case "cpu":
 				cpu = fields[2]
@@ -224,8 +232,7 @@ func parseGuestCgroups(content string) (id, cpu, memory string, legacy bool) {
 			}
 		}
 	}
-	legacy = cpu != ""
-	if !legacy {
+	if cpu == "" {
 		cpu = unified
 		memory = unified
 	}
@@ -233,7 +240,7 @@ func parseGuestCgroups(content string) (id, cpu, memory string, legacy bool) {
 	if len(matches) > 0 {
 		id = matches[len(matches)-1]
 	}
-	return id, cpu, memory, legacy
+	return id, cpu, memory, locations
 }
 
 func (s *guestScanner) selfIDFromMounts() (string, error) {
@@ -316,14 +323,15 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 	if process.containerID == "" || process.pid <= 0 {
 		return nil, errors.New("guest process identity is missing")
 	}
-	cpu, err := resolveGuestCgroup(ctx, s.controllerRoot("cpu", process.legacy), process.cpuPath, process.containerID)
+	legacy := process.cgroups.Controllers["cpu"] != ""
+	cpu, err := resolveGuestCgroup(ctx, s.controllerRoot("cpu", legacy), process.cpuPath, process.containerID)
 	if err != nil {
 		return nil, err
 	}
 	var memory string
 	var directory os.FileInfo
 	if process.memoryPath != "" {
-		root := s.controllerRoot("memory", process.legacy)
+		root := s.controllerRoot("memory", legacy)
 		memory, err = resolveGuestCgroup(ctx, root, process.memoryPath, process.containerID)
 		if err != nil {
 			return nil, err
@@ -333,16 +341,7 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 			return nil, err
 		}
 	}
-	current, err := s.readProcess(process.pid)
-	if err != nil {
-		return nil, err
-	}
-	if current.startTime != process.startTime ||
-		current.containerID != process.containerID ||
-		current.cpuPath != process.cpuPath ||
-		current.memoryPath != process.memoryPath {
-		return nil, fmt.Errorf("guest process %d changed during discovery", process.pid)
-	}
+
 	qos := corev1.PodQOSClass("")
 	switch {
 	case strings.Contains(cpu, "besteffort"):
@@ -369,12 +368,67 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 		Labels:     map[string]any{labelHostNamespace: s.options.PodNamespace},
 	}
 	container.memoryCgroupPath = &memory
+	locations := *process.cgroups
+	locations.Controllers = maps.Clone(locations.Controllers)
+	if legacy {
+		locations.Controllers["cpu"] = cpu
+		if locations.Controllers["cpuacct"] == process.cpuPath {
+			locations.Controllers["cpuacct"] = cpu
+		}
+		if memory != "" {
+			locations.Controllers["memory"] = memory
+		}
+	} else {
+		locations.Unified = cpu
+	}
+	workload := podFromContainer(container)
+	workload.Cgroups = CgroupBinding{}
+	procFS, err := procfs.NewFS(s.options.ProcRoot)
+	if err != nil {
+		return nil, err
+	}
+	if mounts, err := procFS.GetMounts(); err == nil {
+		for controller, membership := range locations.Controllers {
+			if !strings.HasPrefix(membership, "/../") {
+				continue
+			}
+			for _, mount := range mounts {
+				if _, exists := mount.SuperOptions[controller]; mount.FSType != "cgroup" || !exists {
+					continue
+				}
+				resolved, err := resolveGuestCgroup(ctx, mountPathUnescape.Replace(mount.MountPoint), membership, process.containerID)
+				if err == nil {
+					locations.Controllers[controller] = filepath.Join(mountPathUnescape.Replace(mount.Root), resolved)
+					break
+				}
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+			}
+		}
+		workload.Cgroups = bindCgroups(locations, mounts)
+	}
+	bindHostResources(workload, s.options.ProcRoot)
+	current, err := s.readProcess(process.pid)
+	if err != nil {
+		return nil, err
+	}
+	if current.startTime != process.startTime ||
+		current.containerID != process.containerID ||
+		current.cpuPath != process.cpuPath ||
+		current.memoryPath != process.memoryPath ||
+		current.cgroups.Unified != process.cgroups.Unified ||
+		!maps.Equal(current.cgroups.Controllers, process.cgroups.Controllers) {
+		return nil, fmt.Errorf("guest process %d changed during discovery", process.pid)
+	}
 	return &containerRecord{
-		container: container,
-		ref:       ContainerRef{Key: ContainerKey{ID: process.containerID}, InitPID: process.pid, MemoryCgroupPath: memory},
-		startTime: process.startTime,
-		directory: directory,
-		guest:     s,
+		container:       container,
+		pod:             workload,
+		cgroupLocations: locations,
+		ref:             ContainerRef{Key: ContainerKey{ID: process.containerID}, InitPID: process.pid, MemoryCgroupPath: memory},
+		startTime:       process.startTime,
+		directory:       directory,
+		guest:           s,
 	}, nil
 }
 

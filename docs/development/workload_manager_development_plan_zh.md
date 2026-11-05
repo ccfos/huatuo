@@ -528,3 +528,13 @@ Container Host 的公共资源校验增加进程和网络部分，旧 Container 
 绑定缺失时查询返回 `0` 和错误，不回退到 PID 1 或默认网络命名空间。只有 IP 的对象保留地址元数据，不发布网络采集能力。进程和网络的任一失败不清除已有 cgroup。进程启动时间、proc 根目录只作为内部校验信息，不进入 JSON。Kata Guest 扫描的公共资源适配仍在步骤 02 后续提交中完成。
 
 测试机 `logs/step02b-*` 记录本次验证：pod race 测试、真实子进程/netns 集成测试、既有 Container/Kata 回归、v1/v2 挂载回归和 `make build` 均通过，无 SKIP。新增用例覆盖 PID 不存在、启动时间变化、进程退出、netns 变化、IP-only、网络 PID 与代表进程不同，以及 cgroup-only 对象不会获得宿主机进程目标。提交检查使用 `make check`，日志为 `step02b-check.log`；没有修改当前指标或 BPF 事件循环。
+
+### 步骤 02c：Kata Guest 公共资源适配
+
+现有 Guest 扫描保留原来的代表进程选择、容器 ID 识别和私有 cgroup 命名空间解析。扫描结果同时保留各控制器成员路径，依据 Guest 的 mountinfo 经过公共绑定后发布 Pod；不再由宿主机运行测试时的 cgroup 模式决定 Guest 公共视图。CPU、cpuacct、memory、IO 可以各用自己的路径，私有命名空间中的 IO 路径按对应挂载解析。进程通过 Guest 的 proc 树验证，没有 netns 定位时不发布网络目标。
+
+原 Container 和内存引用字段保持兼容。绑定完成后再次核对进程启动时间及全部控制器成员路径，避免把扫描期间已变化的位置发布出去。公共挂载信息暂不可读时不推测目录，既有容器兼容视图仍保留。
+
+本次验证记录在 `logs/step02c-*`：pod race 测试、Container/Kata 绑定回归、真实 v1/v2 挂载和进程/netns 集成测试、`make build` 通过；提交检查使用 `make check`，日志为 `step02c-check.log`。Guest 扫描使用已有 proc/cgroup fixture 补测分控制器及 v1/v2 私有命名空间，本次没有宣称真实 Kata VM 端到端验收完成。
+
+步骤 02 的公共绑定与已有发现适配已完成。下一步处理公共生命周期订阅和资源首次就绪通知；CubeSandbox 来源及其采集链路尚未开放。
